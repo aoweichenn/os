@@ -1,0 +1,4 @@
+interface:
+  display_name: "x86-64 教学操作系统开发"
+  short_description: "规范自研固件、引导程序、内核、测试和学习文档的完整开发流程"
+  default_prompt: "使用 $x86-64-os-development 按项目约束实现并验证下一个操作系统里程碑。"
