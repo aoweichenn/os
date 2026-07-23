@@ -21,39 +21,47 @@ export default function RoadmapPage() {
         <div className="roadmapSummary">
           <div>
             <span>当前总进度</span>
-            <strong>0 / 13</strong>
+            <strong>1 / 13</strong>
           </div>
           <div className="progressTrack">
             <i />
           </div>
-          <p>下一阶段：v0.0 工程基线</p>
+          <p>下一阶段：v0.1 复位与串口</p>
         </div>
 
         <div className="detailRoadmap">
-          {roadmap.map((phase, index) => (
-            <article
-              className={index === 0 ? "detailRoadmapItem active" : "detailRoadmapItem"}
-              key={phase.version}
-            >
-              <div className="phaseIdentity">
-                <span>{String(index + 1).padStart(2, "0")}</span>
-                <code>{phase.version}</code>
-                <span className="phaseState">{index === 0 ? "NEXT" : "QUEUED"}</span>
-              </div>
-              <div className="phaseDescription">
-                <h2>{phase.title}</h2>
-                <p>{phase.summary}</p>
-              </div>
-              <div>
-                <span className="acceptanceTitle">ACCEPTANCE</span>
-                <ul className="acceptanceList">
-                  {phase.acceptance.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
-            </article>
-          ))}
+          {roadmap.map((phase, index) => {
+            const phaseState =
+              index === 0 ? "DONE" : index === 1 ? "NEXT" : "QUEUED";
+            const phaseClassName =
+              phaseState === "DONE"
+                ? "detailRoadmapItem done"
+                : phaseState === "NEXT"
+                  ? "detailRoadmapItem active"
+                  : "detailRoadmapItem";
+
+            return (
+              <article className={phaseClassName} key={phase.version}>
+                <div className="phaseIdentity">
+                  <span>{String(index + 1).padStart(2, "0")}</span>
+                  <code>{phase.version}</code>
+                  <span className="phaseState">{phaseState}</span>
+                </div>
+                <div className="phaseDescription">
+                  <h2>{phase.title}</h2>
+                  <p>{phase.summary}</p>
+                </div>
+                <div>
+                  <span className="acceptanceTitle">ACCEPTANCE</span>
+                  <ul className="acceptanceList">
+                    {phase.acceptance.map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
     </main>

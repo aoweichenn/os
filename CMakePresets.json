@@ -1,0 +1,40 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 28,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "developer",
+      "displayName": "x86-64 OS Lab 开发构建",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/developer",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "developer",
+      "configurePreset": "developer",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "developer",
+      "configurePreset": "developer",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    }
+  ]
+}

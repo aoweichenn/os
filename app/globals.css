@@ -899,6 +899,10 @@ footer p {
   background: rgba(184, 255, 90, 0.04);
 }
 
+.detailRoadmapItem.done {
+  border-left: 2px solid var(--cyan);
+}
+
 .phaseIdentity {
   display: grid;
   grid-template-columns: 34px 1fr;
@@ -924,6 +928,10 @@ footer p {
 
 .active .phaseIdentity .phaseState {
   color: var(--amber);
+}
+
+.done .phaseIdentity .phaseState {
+  color: var(--cyan);
 }
 
 .phaseDescription h2 {

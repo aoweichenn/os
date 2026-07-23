@@ -10,9 +10,23 @@
 
 验证磁盘镜像、页表、启动信息和模块交接契约。测试既要覆盖正常输入，也要主动构造损坏、截断和越界输入。
 
+### 固定种子随机测试
+
+对纯逻辑模块生成大量有效与无效输入，验证不依赖具体样例的性质。随机测试必须：
+
+- 使用代码中明确命名的固定种子。
+- 保证相同提交、相同种子产生相同输入序列。
+- 在失败时输出种子、迭代位置和失败性质。
+- 同时生成合法输入和预期被拒绝的非法输入。
+- 将稳定复现的随机故障沉淀为独立回归样例。
+
 ### QEMU 系统测试
 
 从 CPU 复位向量启动，捕获串口输出和 QEMU 退出码。每个里程碑至少包含一条成功路径和一条失败路径。
+
+`v0.0` 尚无可执行固件，因此系统测试使用项目生成的空 ROM 和空磁盘，以
+`-bios` 显式传入 ROM，并使用 `-S` 暂停 CPU。该测试只验证 QEMU TCG、PC
+硬件模型、镜像尺寸和启动参数，不声明已经实现启动逻辑。
 
 ## 验收证据
 
@@ -25,3 +39,31 @@
 ## 完成标准
 
 实现、测试、文档和调试方法必须在同一次变更中保持一致。仅在本地手工启动成功不能视为阶段完成。
+
+## 运行方式
+
+完整验证：
+
+```bash
+./scripts/build_and_test.sh
+```
+
+按测试层运行：
+
+```bash
+ctest --preset developer --label-regex unit
+ctest --preset developer --label-regex integration
+ctest --preset developer --label-regex randomized
+ctest --preset developer --label-regex system
+```
+
+当前测试：
+
+| 测试 | 层级 | 主要验证 |
+| --- | --- | --- |
+| `os_foundation_unit_tests` | 单元 | 地址类型、半开区间、空区间和溢出 |
+| `os_foundation_integration_tests` | 集成 | ROM、复位向量、Stage 1 与内核区间关系 |
+| `os_foundation_randomized_tests` | 随机 | 10,000 组区间性质与溢出拒绝 |
+| `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
+| `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
+| `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |

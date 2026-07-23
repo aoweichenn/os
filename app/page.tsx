@@ -82,13 +82,13 @@ export default function HomePage() {
               </p>
               <p className="terminalMuted">[cpu] reset @ 0xFFFFFFF0</p>
               <p>
-                <strong>[firmware]</strong> reset vector reached
+                <strong>[foundation]</strong> x86-64 target verified
               </p>
               <p>
-                <strong>[firmware]</strong> serial initialized
+                <strong>[test]</strong> unit / integration / random passed
               </p>
               <p>
-                <strong>[stage1]</strong> waiting for first milestone...
+                <strong>[next]</strong> implement reset vector + serial
               </p>
               <div className="terminalRule" />
               <p className="cursorLine">
