@@ -46,6 +46,10 @@ body::before {
   );
 }
 
+main {
+  min-height: calc(100vh - 332px);
+}
+
 a {
   color: inherit;
   text-decoration: none;
@@ -103,6 +107,16 @@ code {
 
 .navLinks a:hover {
   color: var(--acid);
+}
+
+.navLinks a.active {
+  color: var(--acid);
+}
+
+.navLinks a.active::before {
+  margin-right: 7px;
+  content: "/";
+  font-family: var(--mono);
 }
 
 .topbar .statusPill {
@@ -663,10 +677,461 @@ footer p {
   text-align: right;
 }
 
+.homeRoutes {
+  background: #0c1211;
+}
+
+.routeGrid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  max-width: 1480px;
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.routeCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 320px;
+  padding: 26px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(17, 24, 23, 0.42);
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    transform 180ms ease;
+}
+
+.routeCard:hover {
+  color: var(--acid);
+  background: rgba(184, 255, 90, 0.045);
+  transform: translateY(-4px);
+}
+
+.routeCardIndex {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.routeCard h3 {
+  margin: 76px 0 18px;
+  color: var(--ink);
+  font-size: 24px;
+}
+
+.routeCard p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.routeCardAction {
+  margin-top: auto;
+  padding-top: 28px;
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.pageHero {
+  padding: 110px 5vw 90px;
+  border-bottom: 1px solid var(--line);
+  background:
+    linear-gradient(90deg, rgba(184, 255, 90, 0.025), transparent 50%),
+    #0b100f;
+}
+
+.pageHeroGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 480px);
+  gap: 70px;
+  align-items: end;
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.pageKicker {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+}
+
+.pageHero h1 {
+  max-width: 980px;
+  margin-bottom: 0;
+  font-size: clamp(54px, 7vw, 104px);
+}
+
+.pageLead {
+  margin: 0 0 8px;
+  color: #aeb9b4;
+  font-size: clamp(17px, 1.4vw, 21px);
+  line-height: 1.8;
+}
+
+.alternateSection {
+  background: #0c1211;
+}
+
+.modeTimeline {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  max-width: 1480px;
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.modeStep {
+  min-height: 310px;
+  padding: 26px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.modeStep > span,
+.modeStep > code {
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.modeStep > span {
+  color: var(--acid);
+}
+
+.modeStep > code {
+  float: right;
+  color: var(--muted);
+}
+
+.modeStep h3 {
+  margin: 78px 0 18px;
+  font-family: var(--mono);
+  font-size: 19px;
+}
+
+.modeStep p,
+.contractCard p,
+.codeRuleCard p,
+.testingLayer p,
+.knowledgeFlow p {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.contractGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.contractCard {
+  min-height: 250px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  background: rgba(17, 24, 23, 0.5);
+}
+
+.contractCard code,
+.testingLayer code {
+  color: var(--cyan);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.contractCard h3 {
+  margin: 62px 0 16px;
+  font-size: 21px;
+}
+
+.roadmapSummary {
+  max-width: 1480px;
+  margin: 0 auto 55px;
+  padding: 25px 28px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.roadmapSummary > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.roadmapSummary strong {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+
+.roadmapSummary p {
+  margin: 14px 0 0;
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.detailRoadmap {
+  max-width: 1480px;
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+}
+
+.detailRoadmapItem {
+  display: grid;
+  grid-template-columns: 160px minmax(260px, 0.8fr) minmax(300px, 1.2fr);
+  gap: 45px;
+  padding: 38px 24px;
+  border-bottom: 1px solid var(--line);
+}
+
+.detailRoadmapItem.active {
+  border-left: 2px solid var(--acid);
+  background: rgba(184, 255, 90, 0.04);
+}
+
+.phaseIdentity {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  align-content: start;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.phaseIdentity > span:first-child {
+  color: #55615c;
+}
+
+.phaseIdentity code {
+  color: var(--acid);
+}
+
+.phaseIdentity .phaseState {
+  grid-column: 2;
+  justify-self: start;
+  color: #66716c;
+}
+
+.active .phaseIdentity .phaseState {
+  color: var(--amber);
+}
+
+.phaseDescription h2 {
+  margin: 0 0 14px;
+  font-size: 25px;
+}
+
+.phaseDescription p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.acceptanceTitle {
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.acceptanceList {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 0;
+  color: #aeb9b4;
+  font-size: 13px;
+  line-height: 1.6;
+  list-style: none;
+}
+
+.acceptanceList li::before {
+  margin-right: 10px;
+  color: var(--acid);
+  content: "✓";
+  font-family: var(--mono);
+}
+
+.codeRuleGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  max-width: 1480px;
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.codeRuleCard {
+  min-height: 240px;
+  padding: 26px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.codeRuleCard > span {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.codeRuleCard h3 {
+  margin: 52px 0 14px;
+  font-size: 20px;
+}
+
+.testingLayers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 22px;
+  max-width: 1480px;
+  margin: 0 auto;
+}
+
+.testingLayer {
+  min-height: 260px;
+  padding: 30px;
+  border: 1px solid var(--line);
+  background: rgba(17, 24, 23, 0.45);
+}
+
+.testingLayer h3 {
+  margin: 64px 0 16px;
+  font-size: 23px;
+}
+
+.doneList {
+  max-width: 1480px;
+  margin: 0 auto;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+  counter-reset: done-item;
+}
+
+.doneList li {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  align-items: center;
+  min-height: 76px;
+  border-bottom: 1px solid var(--line);
+  color: #aeb9b4;
+  counter-increment: done-item;
+}
+
+.doneList li::before {
+  color: var(--acid);
+  content: "0" counter(done-item);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.docsIndex {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  max-width: 1480px;
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.docCard {
+  display: flex;
+  flex-direction: column;
+  min-height: 290px;
+  padding: 27px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(17, 24, 23, 0.35);
+}
+
+.docCard code {
+  color: var(--cyan);
+  font-size: 10px;
+}
+
+.docCard h2 {
+  margin: 62px 0 14px;
+  font-size: 26px;
+}
+
+.docCard p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.docCard > span {
+  margin-top: auto;
+  padding-top: 25px;
+  color: #66716c;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+}
+
+.knowledgeFlow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  max-width: 1480px;
+  margin: 0 auto;
+  border: 1px solid var(--line);
+}
+
+.knowledgeFlow article {
+  position: relative;
+  min-height: 260px;
+  padding: 30px;
+  border-right: 1px solid var(--line);
+}
+
+.knowledgeFlow article:last-child {
+  border-right: 0;
+}
+
+.knowledgeFlow article > span {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.knowledgeFlow h3 {
+  margin: 62px 0 14px;
+  font-size: 22px;
+}
+
+.knowledgeFlow i {
+  position: absolute;
+  z-index: 2;
+  top: 48%;
+  right: -15px;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  color: var(--acid);
+  background: var(--page);
+  font-family: var(--mono);
+  font-style: normal;
+}
+
 @media (max-width: 1000px) {
   .heroGrid,
   .sectionHeading,
-  .documentationPanel {
+  .documentationPanel,
+  .pageHeroGrid {
     grid-template-columns: 1fr;
   }
 
@@ -675,7 +1140,10 @@ footer p {
   }
 
   .bootFlow,
-  .ruleGrid {
+  .ruleGrid,
+  .routeGrid,
+  .codeRuleGrid,
+  .docsIndex {
     grid-template-columns: repeat(2, 1fr);
   }
 
@@ -694,20 +1162,42 @@ footer p {
   .documentationPanel {
     gap: 50px;
   }
+
+  .detailRoadmapItem {
+    grid-template-columns: 130px 1fr;
+  }
+
+  .detailRoadmapItem > div:last-child {
+    grid-column: 2;
+  }
 }
 
 @media (max-width: 700px) {
   .topbar {
     grid-template-columns: 1fr auto;
-    padding: 0 20px;
+    min-height: auto;
+    padding: 12px 20px 0;
   }
 
   .navLinks {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    gap: 24px;
+    overflow-x: auto;
+    margin-top: 11px;
+    padding: 12px 0 14px;
+    border-top: 1px solid var(--line);
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  .navLinks::-webkit-scrollbar {
     display: none;
   }
 
   .hero,
-  .section {
+  .section,
+  .pageHero {
     padding-right: 20px;
     padding-left: 20px;
   }
@@ -751,8 +1241,46 @@ footer p {
   }
 
   .bootFlow,
-  .ruleGrid {
+  .ruleGrid,
+  .routeGrid,
+  .modeTimeline,
+  .contractGrid,
+  .codeRuleGrid,
+  .testingLayers,
+  .docsIndex,
+  .knowledgeFlow {
     grid-template-columns: 1fr;
+  }
+
+  .pageHero {
+    padding-top: 75px;
+    padding-bottom: 65px;
+  }
+
+  .pageHeroGrid {
+    gap: 38px;
+  }
+
+  .pageHero h1 {
+    font-size: clamp(48px, 15vw, 72px);
+  }
+
+  .routeCard {
+    min-height: 270px;
+  }
+
+  .modeStep,
+  .knowledgeFlow article {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .knowledgeFlow article:last-child {
+    border-bottom: 0;
+  }
+
+  .knowledgeFlow i {
+    display: none;
   }
 
   .boundaryNote {
@@ -773,6 +1301,31 @@ footer p {
 
   .documentationPanel {
     padding: 30px 22px;
+  }
+
+  .detailRoadmapItem {
+    grid-template-columns: 1fr;
+    gap: 28px;
+    padding: 30px 18px;
+  }
+
+  .detailRoadmapItem > div:last-child {
+    grid-column: 1;
+  }
+
+  .phaseIdentity {
+    grid-template-columns: 34px 90px 1fr;
+  }
+
+  .phaseIdentity .phaseState {
+    grid-row: 1;
+    grid-column: 3;
+    justify-self: end;
+  }
+
+  .doneList li {
+    grid-template-columns: 48px 1fr;
+    padding: 16px 0;
   }
 
   .documentRow {
