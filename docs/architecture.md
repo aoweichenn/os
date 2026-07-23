@@ -46,3 +46,16 @@ kernel ──────────────→ foundation
 ## 项目门户
 
 门户使用 Next.js 静态导出，按主题拆分为首页、启动架构、开发路线、工程规范和文档中心。生产 Worker 只转发静态资源请求，不依赖 Node.js 服务端运行时。
+
+文档正文遵循单一来源原则：
+
+```text
+docs/*.md
+   ↓ 构建期读取
+React Markdown + GFM
+   ↓ 静态生成
+/docs/<slug>/index.html
+```
+
+文档目录由 `lib/document_catalog.ts` 维护，只允许读取固定 `docs/`
+目录中的已登记文件。这样既避免运行时文件系统依赖，也避免动态路径扩大构建打包范围。

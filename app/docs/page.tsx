@@ -1,37 +1,63 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { PageHero } from "@/components/page_hero";
-import { documents } from "@/lib/project_data";
+import { projectDocuments } from "@/lib/document_catalog";
 
 export const metadata: Metadata = {
   title: "文档中心",
-  description: "x86-64 OS Lab 的需求、架构、路线、测试、调试和决策文档索引。",
+  description: "x86-64 OS Lab 的背景知识、架构、构建、测试、模块和发布记录。",
 };
 
 const documentFlow = [
-  ["WHY", "需求", "明确为什么做、什么不做，以及怎样才算成功。"],
-  ["HOW", "架构与 ADR", "记录模块边界、关键契约和不可逆技术取舍。"],
-  ["PROVE", "测试与调试", "保留自动验收方式、失败现场和问题根因。"],
+  ["LEARN", "建立背景", "先理解 CPU、工具链和运行环境，再开始实现机制。"],
+  ["DESIGN", "明确契约", "记录目标、模块边界、失败语义和关键决策。"],
+  ["PROVE", "保存证据", "用测试、调试记录和发布档案证明阶段结论。"],
 ] as const;
 
 export default function DocsPage() {
+  const featuredDocument = projectDocuments[0];
+  const remainingDocuments = projectDocuments.slice(1);
+
   return (
     <main>
       <PageHero
         index="04"
         eyebrow="DOCUMENTATION"
         title="让每个结论都能追溯"
-        description="文档不用于事后补写，而是和代码一起定义问题、解释选择并保存可重复的证据。"
+        description="仓库 Markdown 直接生成网页正文：一份内容、一次维护，同时服务开发和学习。"
       />
 
       <section className="section">
-        <div className="docsIndex">
-          {documents.map(([title, description, path]) => (
-            <article className="docCard" key={path}>
-              <code>{path}</code>
-              <h2>{title}</h2>
-              <p>{description}</p>
-              <span>REPOSITORY DOCUMENT</span>
-            </article>
+        <Link
+          className="featuredDocument"
+          href={`/docs/${featuredDocument.slug}/`}
+        >
+          <div>
+            <span className="sectionIndex">START HERE / 入门必读</span>
+            <h2>{featuredDocument.title}</h2>
+          </div>
+          <div>
+            <p>{featuredDocument.description}</p>
+            <code>{featuredDocument.repositoryPath}</code>
+            <span>开始阅读 →</span>
+          </div>
+        </Link>
+
+        <div className="docsIndex docsLibrary">
+          {remainingDocuments.map((document) => (
+            <Link
+              className="docCard"
+              href={`/docs/${document.slug}/`}
+              key={document.slug}
+            >
+              <div>
+                <span className="docCategory">{document.category}</span>
+                <code>{document.repositoryPath}</code>
+              </div>
+              <h2>{document.title}</h2>
+              <p>{document.description}</p>
+              <span>READ DOCUMENT →</span>
+            </Link>
           ))}
         </div>
       </section>
@@ -40,9 +66,9 @@ export default function DocsPage() {
         <div className="sectionHeading">
           <div>
             <span className="sectionIndex">KNOWLEDGE FLOW</span>
-            <h2>从目标到证据，形成闭环</h2>
+            <h2>从背景到证据，形成学习闭环</h2>
           </div>
-          <p>每次重要改动都应该回答三个问题：为什么做、为什么这样做、如何证明它正确。</p>
+          <p>每次重要改动都回答三个问题：机制是什么、为什么这样设计、如何证明它正确。</p>
         </div>
         <div className="knowledgeFlow">
           {documentFlow.map(([tag, title, description], index) => (
@@ -53,28 +79,6 @@ export default function DocsPage() {
               {index < documentFlow.length - 1 && <i aria-hidden="true">→</i>}
             </article>
           ))}
-        </div>
-      </section>
-
-      <section className="section">
-        <div className="documentationPanel">
-          <div className="documentationIntro">
-            <span className="sectionIndex">MAINTENANCE RULE</span>
-            <h3>代码改变事实，文档必须在同一次提交中更新</h3>
-            <p>
-              新增约束进入需求或规范；改变模块边界更新架构；重要取舍新增
-              ADR；修复复杂故障沉淀到调试档案。
-            </p>
-          </div>
-          <div className="documentList">
-            {documents.map(([title, description, path]) => (
-              <div className="documentRow" key={path}>
-                <strong>{title}</strong>
-                <span>{description}</span>
-                <code>{path}</code>
-              </div>
-            ))}
-          </div>
         </div>
       </section>
     </main>

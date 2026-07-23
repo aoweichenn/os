@@ -1,5 +1,27 @@
 # 调试记录
 
+## v0.0：工程基线故障记录
+
+### 静态库符号审计误报
+
+`llvm-nm --undefined-only` 会打印静态库成员名称，即使成员没有未解析符号。审计脚本必须过滤空行和以冒号结尾的成员标题，不能把“命令有输出”直接等价为“存在外部依赖”。
+
+### QEMU 测试脚本语法错误
+
+Bash 的 `[[ ... ]]` 条件表达式不能在比较运算符后随意换行。首次测试在执行 QEMU
+前就因脚本语法失败。修复后对全部 Shell 脚本执行 `bash -n`，并保留无效镜像尺寸的失败路径测试。
+
+### 门户扫描 CMake 生成文件
+
+Next.js 的 TypeScript 配置曾扫描 `build/` 中由 CMake 生成的
+`compiler_depend.ts`。该文件不是 TypeScript，导致门户构建失败。`tsconfig.json`
+现已排除整个 `build/` 目录。
+
+### GitHub Actions 缺少 llvm-nm
+
+Ubuntu runner 中安装 `clang` 和 `lld` 不保证存在未版本化的 `llvm-nm`、
+`llvm-readelf` 命令。CI 工作流必须同时安装 `llvm` 工具包。工具链检查脚本应继续在构建前失败，不能静默跳过符号审计。
+
 ## 项目门户：Cloudflare Worker 1101
 
 ### 现象

@@ -135,12 +135,3 @@ export const engineeringRules = [
     text: "每个阶段都有正常路径、失败路径、自动测试和退出标准。",
   },
 ] as const;
-
-export const documents = [
-  ["需求", "范围、约束、可验证目标", "docs/requirements.md"],
-  ["架构", "启动链、模块边界、数据流", "docs/architecture.md"],
-  ["路线图", "阶段、依赖、验收标准", "docs/roadmap.md"],
-  ["测试", "单元、集成、系统回归", "docs/testing.md"],
-  ["调试", "GDB、QEMU 日志、故障档案", "docs/debugging.md"],
-  ["决策", "重要取舍和历史背景", "docs/adr/"],
-] as const;

@@ -13,3 +13,12 @@
 | half-open range | 包含起始地址、不包含结束地址的区间 `[begin, end)` |
 | property test | 通过大量生成输入验证通用性质的随机测试 |
 | ADR | Architecture Decision Record，记录重要架构决策及其原因 |
+| cross compilation | 在一种宿主架构上生成面向另一种目标架构或运行环境的代码 |
+| ELF | Executable and Linkable Format，保存目标文件、可执行文件和调试信息的格式 |
+| ABI | Application Binary Interface，规定调用、寄存器、栈和二进制布局的契约 |
+| GDT | Global Descriptor Table，x86 分段和特权级切换使用的描述符表 |
+| control register | CR0、CR3、CR4 等控制处理器模式、分页和特性的寄存器 |
+| EFER | Extended Feature Enable Register，包含长模式启用等控制位的 MSR |
+| red zone | System V AMD64 ABI 中栈指针下方可供叶函数使用、但不适合内核中断环境的区域 |
+| static library | 由多个可重定位目标文件组成的归档，本身不等于最终可执行镜像 |
+| symbol audit | 检查目标文件架构和未解析符号，防止引入未知运行时依赖 |

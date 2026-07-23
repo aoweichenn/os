@@ -35,6 +35,14 @@ npm run build:worker
 
 项目门户采用 Next.js 静态导出，生产 Worker 仅负责转发静态资源请求，不依赖 Node.js 服务端运行时。
 
+公开文档中心：
+
+```text
+https://x86-64-os-lab.aoweichenn.chatgpt.site/docs/
+```
+
+网页在构建时直接读取仓库 `docs/` 下的 Markdown，并静态生成每篇文档的独立路由。
+
 门户按主题拆分为独立路由：
 
 - `/`：项目首页与全局概览
