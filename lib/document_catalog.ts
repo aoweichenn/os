@@ -15,6 +15,13 @@ export const projectDocuments: readonly ProjectDocument[] = [
     category: "入门",
   },
   {
+    slug: "code-walkthrough",
+    title: "代码走读指南",
+    description: "按依赖方向阅读构建、基础模块、测试和门户代码。",
+    repositoryPath: "docs/code_walkthrough.md",
+    category: "入门",
+  },
+  {
     slug: "requirements",
     title: "项目需求",
     description: "项目目标、固定技术边界、质量要求和当前范围。",

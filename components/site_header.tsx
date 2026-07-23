@@ -9,6 +9,7 @@ const navigationItems = [
   { href: "/roadmap/", label: "开发路线" },
   { href: "/engineering/", label: "工程规范" },
   { href: "/docs/", label: "文档中心" },
+  { href: "/code/", label: "代码走读" },
 ] as const;
 
 function normalizePathname(pathname: string) {
@@ -17,6 +18,14 @@ function normalizePathname(pathname: string) {
   }
 
   return pathname.endsWith("/") ? pathname : `${pathname}/`;
+}
+
+function isNavigationItemActive(pathname: string, itemHref: string) {
+  if (itemHref === "/") {
+    return pathname === itemHref;
+  }
+
+  return pathname.startsWith(itemHref);
 }
 
 export function SiteHeader() {
@@ -31,7 +40,9 @@ export function SiteHeader() {
       <nav className="navLinks" aria-label="主导航">
         {navigationItems.map((item) => (
           <Link
-            className={pathname === item.href ? "active" : undefined}
+            className={
+              isNavigationItemActive(pathname, item.href) ? "active" : undefined
+            }
             href={item.href}
             key={item.href}
           >

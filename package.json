@@ -4,7 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "code:catalog": "node scripts/generate_code_catalog.mjs",
+    "predev": "npm run code:catalog",
     "dev": "next dev",
+    "prebuild": "npm run code:catalog",
     "build": "next build",
     "build:worker": "npm run build && node scripts/build_static_worker.mjs"
   },
@@ -13,7 +16,8 @@
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
-    "remark-gfm": "4.0.1"
+    "remark-gfm": "4.0.1",
+    "shiki": "4.3.1"
   },
   "devDependencies": {
     "@types/node": "24.10.1",

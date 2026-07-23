@@ -1,4 +1,6 @@
 import type { MetadataRoute } from "next";
+import { codeFiles } from "@/lib/code_catalog";
+import { codeFileHref } from "@/lib/code_paths";
 import { projectDocuments } from "@/lib/document_catalog";
 
 const SITE_BASE_URL = "https://x86-64-os-lab.aoweichenn.chatgpt.site";
@@ -12,7 +14,9 @@ export default function sitemap(): MetadataRoute.Sitemap {
     "/roadmap/",
     "/engineering/",
     "/docs/",
+    "/code/",
     ...projectDocuments.map((document) => `/docs/${document.slug}/`),
+    ...codeFiles.map((codeFile) => codeFileHref(codeFile.path)),
   ];
 
   return siteRoutes.map((path) => ({

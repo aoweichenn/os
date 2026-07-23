@@ -50,6 +50,7 @@ https://x86-64-os-lab.aoweichenn.chatgpt.site/docs/
 - `/roadmap/`：13 个开发阶段及其验收标准
 - `/engineering/`：C++20、测试与交付规范
 - `/docs/`：项目文档索引与维护规则
+- `/code/`：可搜索目录树、源码高亮和关键文件中文走读
 
 ## 固定技术路线
 

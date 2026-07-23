@@ -26,6 +26,12 @@ const routeCards = [
     title: "文档中心",
     description: "集中维护需求、架构、决策记录、测试方案和调试档案。",
   },
+  {
+    index: "05",
+    href: "/code/",
+    title: "代码走读",
+    description: "按目录搜索全部项目代码，结合中文说明、行号和阅读路线理解实现。",
+  },
 ] as const;
 
 function ArrowMark() {

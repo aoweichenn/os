@@ -17,11 +17,15 @@
 source/foundation/include/os/foundation/address_range.hpp
 ```
 
+[在线阅读头文件](/code/source/foundation/include/os/foundation/address_range.hpp/)
+
 实现位于：
 
 ```text
 source/foundation/address_range.cpp
 ```
+
+[在线阅读源文件](/code/source/foundation/address_range.cpp/)
 
 ## 不变量
 

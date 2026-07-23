@@ -16,6 +16,18 @@
   box-sizing: border-box;
 }
 
+.srOnly {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 html {
   scroll-behavior: smooth;
 }
@@ -683,7 +695,7 @@ footer p {
 
 .routeGrid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   max-width: 1480px;
   margin: 0 auto;
   border-top: 1px solid var(--line);
@@ -1384,6 +1396,561 @@ footer p {
   background: var(--line);
 }
 
+.codeBrowserMain {
+  min-height: calc(100vh - 72px);
+  background: #080c0b;
+}
+
+.codeBrowserShell {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  max-width: 1920px;
+  min-height: calc(100vh - 72px);
+  margin: 0 auto;
+  border-right: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.codeTreePanel {
+  position: sticky;
+  top: 72px;
+  align-self: start;
+  height: calc(100vh - 72px);
+  border-right: 1px solid var(--line);
+  background: #0b100f;
+}
+
+.codeTreeHeader {
+  padding: 22px 18px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.codeTreeHeader > a {
+  display: grid;
+  gap: 5px;
+  margin-bottom: 18px;
+}
+
+.codeTreeHeader > a span {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.codeTreeHeader > a strong {
+  font-family: var(--mono);
+  font-size: 13px;
+}
+
+.codeTreeHeader input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  outline: 0;
+  color: var(--ink);
+  background: #070b0a;
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.codeTreeHeader input:focus {
+  border-color: rgba(184, 255, 90, 0.55);
+  box-shadow: 0 0 0 2px rgba(184, 255, 90, 0.06);
+}
+
+.codeTreeBody {
+  overflow: auto;
+  height: calc(100% - 124px);
+  padding: 14px 10px 34px;
+  scrollbar-color: #35403c transparent;
+  scrollbar-width: thin;
+}
+
+.codeTreeRoot,
+.codeTreeRoot ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.codeTreeRoot ul {
+  margin-left: 12px;
+  padding-left: 9px;
+  border-left: 1px solid var(--line);
+}
+
+.codeTreeRoot button,
+.codeTreeRoot a {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 2px;
+  color: #9ca8a3;
+  background: none;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.codeTreeRoot button:hover,
+.codeTreeRoot a:hover,
+.codeTreeRoot a.active {
+  color: var(--ink);
+  background: rgba(184, 255, 90, 0.055);
+}
+
+.codeTreeRoot a.active {
+  color: var(--acid);
+}
+
+.codeTreeChevron {
+  flex: 0 0 12px;
+  color: #66736d;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.codeTreeFileMark {
+  flex: 0 0 12px;
+  color: var(--cyan);
+  font-size: 8px;
+}
+
+.codeSearchResults {
+  display: grid;
+  gap: 4px;
+}
+
+.codeSearchResults > span {
+  margin: 4px 7px 10px;
+  color: #65716c;
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.codeSearchResults a {
+  overflow: hidden;
+  padding: 9px 8px;
+  color: #aab5b0;
+  background: rgba(255, 255, 255, 0.018);
+  font-family: var(--mono);
+  font-size: 9px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+}
+
+.codeSearchResults a:hover {
+  color: var(--acid);
+  background: rgba(184, 255, 90, 0.055);
+}
+
+.codeBrowserContent {
+  min-width: 0;
+}
+
+.codeLanding {
+  padding: 80px clamp(28px, 5vw, 90px) 130px;
+}
+
+.codeLandingHero {
+  max-width: 1120px;
+  padding-bottom: 80px;
+}
+
+.codeLandingHero h1 {
+  max-width: 1050px;
+  margin: 26px 0 25px;
+  font-size: clamp(52px, 6.2vw, 94px);
+}
+
+.codeLandingHero > p {
+  max-width: 760px;
+  color: #aeb9b4;
+  font-size: 18px;
+  line-height: 1.8;
+}
+
+.codeCatalogStats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(130px, 190px));
+  margin-top: 50px;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.codeCatalogStats div {
+  display: grid;
+  gap: 7px;
+  padding: 20px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.codeCatalogStats strong {
+  font-family: var(--mono);
+  font-size: 22px;
+}
+
+.codeCatalogStats span {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.codeWalkthroughSection {
+  padding-top: 70px;
+  border-top: 1px solid var(--line);
+}
+
+.codeSectionHeading {
+  display: grid;
+  grid-template-columns: 0.7fr 1.3fr;
+  gap: 40px;
+  align-items: end;
+  margin-bottom: 45px;
+}
+
+.codeSectionHeading > span {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+}
+
+.codeSectionHeading h2 {
+  max-width: 720px;
+  margin: 0;
+  font-size: clamp(34px, 4vw, 58px);
+  line-height: 1.05;
+  letter-spacing: -0.035em;
+}
+
+.codeWalkthroughGrid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+}
+
+.codeWalkthroughGrid article {
+  min-height: 390px;
+  padding: 28px;
+  border-right: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(17, 24, 23, 0.35);
+}
+
+.codeWalkthroughGrid article > span {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.codeWalkthroughGrid h3 {
+  margin: 52px 0 15px;
+  font-size: 24px;
+}
+
+.codeWalkthroughGrid p {
+  max-width: 560px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.codeWalkthroughGrid ol {
+  display: grid;
+  gap: 8px;
+  margin: 28px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.codeWalkthroughGrid li {
+  min-width: 0;
+}
+
+.codeWalkthroughGrid a {
+  display: block;
+  overflow: hidden;
+  padding: 9px 10px;
+  color: var(--cyan);
+  background: rgba(94, 234, 212, 0.04);
+  font-family: var(--mono);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codeWalkthroughGrid a:hover {
+  color: var(--acid);
+}
+
+.codeScopeNote {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 25px;
+  margin-top: 28px;
+  padding: 22px;
+  border-left: 3px solid var(--amber);
+  background: rgba(255, 189, 102, 0.05);
+}
+
+.codeScopeNote span {
+  color: var(--amber);
+  font-family: var(--mono);
+  font-size: 10px;
+}
+
+.codeScopeNote p {
+  margin: 0;
+  color: #aaa49a;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.codeFilePage {
+  padding: 55px clamp(22px, 4vw, 65px) 100px;
+}
+
+.codeFileHeader {
+  margin-bottom: 40px;
+}
+
+.codeBreadcrumbs {
+  display: flex;
+  overflow-x: auto;
+  align-items: center;
+  gap: 8px;
+  color: #75817c;
+  font-family: var(--mono);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.codeBreadcrumbs a {
+  color: var(--acid);
+}
+
+.codeBreadcrumbs span {
+  display: flex;
+  gap: 8px;
+}
+
+.codeBreadcrumbs i {
+  color: #45504c;
+  font-style: normal;
+}
+
+.codeFileHeader h1 {
+  margin: 24px 0 22px;
+  font-family: var(--mono);
+  font-size: clamp(34px, 5vw, 64px);
+  overflow-wrap: anywhere;
+}
+
+.codeFileMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+}
+
+.codeFileMeta span {
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 9px;
+}
+
+.codeReadingGuide {
+  display: grid;
+  grid-template-columns: 0.85fr 1.15fr;
+  gap: 55px;
+  margin-bottom: 28px;
+  padding: 30px;
+  border: 1px solid rgba(184, 255, 90, 0.2);
+  background: rgba(184, 255, 90, 0.035);
+}
+
+.codeReadingGuide > div > span {
+  color: var(--acid);
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.codeReadingGuide h2 {
+  margin: 21px 0 14px;
+  font-size: 24px;
+}
+
+.codeReadingGuide p {
+  margin: 0;
+  color: #aeb9b4;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.codeReadingGuide ul {
+  display: grid;
+  gap: 11px;
+  align-content: center;
+  margin: 0;
+  padding: 0;
+  color: #aeb9b4;
+  font-size: 13px;
+  line-height: 1.65;
+  list-style: none;
+}
+
+.codeReadingGuide li::before {
+  margin-right: 10px;
+  color: var(--cyan);
+  content: "→";
+  font-family: var(--mono);
+}
+
+.codeViewer {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  background: #0d1117;
+}
+
+.codeViewerToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 50px;
+  padding: 8px 10px 8px 18px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  background: #111817;
+}
+
+.codeViewerToolbar > code {
+  overflow: hidden;
+  color: #8e9b96;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.codeViewerToolbar > div {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 7px;
+}
+
+.codeViewerToolbar button {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  color: #aeb9b4;
+  background: #0b100f;
+  font-family: var(--mono);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.codeViewerToolbar button:hover {
+  border-color: rgba(184, 255, 90, 0.4);
+  color: var(--acid);
+}
+
+.codeHighlight {
+  overflow: auto;
+  max-height: min(76vh, 1100px);
+}
+
+.codeHighlight pre {
+  min-width: 100%;
+  margin: 0;
+  padding: 20px 0;
+  background: #0d1117 !important;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.7;
+  tab-size: 4;
+}
+
+.codeHighlight code {
+  display: block;
+  min-width: max-content;
+}
+
+.codeHighlight .line {
+  display: inline-block;
+  width: 100%;
+  min-height: 20px;
+  padding-right: 28px;
+  cursor: pointer;
+}
+
+.codeHighlight .line::before {
+  position: sticky;
+  left: 0;
+  display: inline-block;
+  width: 60px;
+  margin-right: 18px;
+  padding-right: 13px;
+  color: #53605b;
+  background: #0d1117;
+  content: attr(data-line);
+  text-align: right;
+  user-select: none;
+}
+
+.codeHighlight .line:hover,
+.codeHighlight .line:target {
+  background: rgba(184, 255, 90, 0.055);
+}
+
+.codeHighlight .line:target::before {
+  color: var(--acid);
+  background: #111912;
+}
+
+.codeFilePagination {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 26px;
+}
+
+.codeFilePagination a {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--line);
+  color: #9ca8a3;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.codeFilePagination a:last-child {
+  text-align: right;
+}
+
+.codeFilePagination a:hover {
+  color: var(--ink);
+  background: rgba(184, 255, 90, 0.04);
+}
+
+.codeFilePagination a span {
+  color: var(--acid);
+  font-size: 8px;
+  letter-spacing: 0.1em;
+}
+
 .knowledgeFlow {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -1478,6 +2045,44 @@ footer p {
   .documentShell {
     grid-template-columns: 210px minmax(0, 1fr);
     gap: 55px;
+  }
+
+  .codeBrowserShell {
+    grid-template-columns: 270px minmax(0, 1fr);
+  }
+
+  .codeSectionHeading,
+  .codeReadingGuide {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 900px) {
+  .topbar {
+    grid-template-columns: 1fr auto;
+    min-height: auto;
+    padding: 12px 20px 0;
+  }
+
+  .navLinks {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    gap: 24px;
+    overflow-x: auto;
+    margin-top: 11px;
+    padding: 12px 0 14px;
+    border-top: 1px solid var(--line);
+    white-space: nowrap;
+    scrollbar-width: none;
+  }
+
+  .navLinks::-webkit-scrollbar {
+    display: none;
+  }
+
+  .codeTreePanel {
+    top: 120px;
+    height: calc(100vh - 120px);
   }
 }
 
@@ -1672,6 +2277,78 @@ footer p {
     display: block;
     overflow-x: auto;
     white-space: nowrap;
+  }
+
+  .codeBrowserShell {
+    grid-template-columns: 1fr;
+  }
+
+  .codeTreePanel {
+    position: static;
+    z-index: 1;
+    height: auto;
+    max-height: 430px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .codeTreeBody {
+    height: 270px;
+  }
+
+  .codeLanding {
+    padding: 60px 20px 90px;
+  }
+
+  .codeCatalogStats,
+  .codeWalkthroughGrid,
+  .codeSectionHeading,
+  .codeScopeNote {
+    grid-template-columns: 1fr;
+  }
+
+  .codeLandingHero h1 {
+    font-size: clamp(48px, 14vw, 70px);
+  }
+
+  .codeWalkthroughGrid article {
+    min-height: 350px;
+  }
+
+  .codeFilePage {
+    padding: 42px 14px 80px;
+  }
+
+  .codeReadingGuide {
+    padding: 24px 20px;
+  }
+
+  .codeViewerToolbar {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 12px;
+  }
+
+  .codeViewerToolbar > code {
+    max-width: 100%;
+  }
+
+  .codeHighlight pre {
+    font-size: 11px;
+  }
+
+  .codeHighlight .line::before {
+    width: 48px;
+    margin-right: 12px;
+    padding-right: 10px;
+  }
+
+  .codeFilePagination {
+    grid-template-columns: 1fr;
+  }
+
+  .codeFilePagination a:last-child {
+    text-align: left;
   }
 
   .documentRow {
