@@ -639,7 +639,7 @@ h1 em {
 
 footer {
   display: flex;
-  align-items: end;
+  align-items: flex-end;
   justify-content: space-between;
   min-height: 260px;
   padding: 60px 5vw;
@@ -808,4 +808,3 @@ footer p {
     transition-duration: 0.01ms !important;
   }
 }
-
