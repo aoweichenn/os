@@ -2,6 +2,6 @@ build/
 node_modules/
 .next/
 .open-next/
+out/
 .wrangler/
 *.log
-

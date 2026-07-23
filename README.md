@@ -20,6 +20,8 @@ npm run build
 npm run build:worker
 ```
 
+项目门户采用 Next.js 静态导出，生产 Worker 仅负责转发静态资源请求，不依赖 Node.js 服务端运行时。
+
 ## 固定技术路线
 
 - x86-64
