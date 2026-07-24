@@ -163,6 +163,17 @@ BSY=0 且 DRQ=1     -> 读取 DATA 的 256 个 16 位字
 
 当前计数不能直接当作时间戳，因为它会周期性回卷；必须由 IRQ0 软件滴答补足。
 
+### 5.2 System Control Port A 与 A20
+
+Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位 0 为零，
+避免触发快速复位。写入后并不直接相信控制位，而是暂存物理地址 `0x000000` 与
+`0x100000` 的原值，写入不同模式并检查它们是否仍然独立，最后恢复原值。
+
+| 位 | 名称 | 本项目处理 |
+| ---: | --- | --- |
+| 0 | Fast Reset | 始终写零，禁止复位 |
+| 1 | A20 Gate | 写一后执行地址别名验证 |
+
 - `docs/hardware/register_map.yaml`：芯片、寄存器、位和访问宽度的机器可读规格。
 - `source/firmware/src/reset_and_serial.asm`：当前 v0.2 的端口访问与状态机实现。
 - `source/boot/stage1/src/entry.asm`：Stage 1 复用 COM1 的最小发送器。

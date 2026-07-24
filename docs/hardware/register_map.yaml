@@ -180,3 +180,13 @@ chips:
     divisor:
       value: 0x04A9
       target_frequency_hz: 1000
+  system_control_port_a:
+    role: a20-gate-and-fast-reset
+    ports:
+      - name: CONTROL
+        address: 0x92
+        width_bits: 8
+        access: read-write
+        bits:
+          0: FAST_RESET
+          1: A20_GATE

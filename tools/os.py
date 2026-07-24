@@ -29,10 +29,19 @@ from os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
     OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
     OS_QEMU_STAGE1_ENTERED_MARKER,
+    OS_QEMU_STAGE1_A20_INVALID_MARKER,
+    OS_QEMU_STAGE1_A20_READY_MARKER,
     OS_QEMU_STAGE1_GDT_READY_MARKER,
     OS_QEMU_STAGE1_PAGE_TABLES_READY_MARKER,
     OS_QEMU_STAGE1_PAGE_TABLES_INVALID_MARKER,
     OS_QEMU_STAGE1_PROTECTED_MODE_MARKER,
+    OS_QEMU_STAGE1_PAE_INVALID_MARKER,
+    OS_QEMU_STAGE1_PAE_READY_MARKER,
+    OS_QEMU_STAGE1_LME_INVALID_MARKER,
+    OS_QEMU_STAGE1_LME_READY_MARKER,
+    OS_QEMU_STAGE1_PAGING_ENABLED_MARKER,
+    OS_QEMU_STAGE1_PAGING_INVALID_MARKER,
+    OS_QEMU_STAGE1_LONG_MODE_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
@@ -121,10 +130,15 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
 def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     completedStage1Markers = (
         OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
+        OS_QEMU_STAGE1_A20_READY_MARKER,
         OS_QEMU_STAGE1_ENTERED_MARKER,
         OS_QEMU_STAGE1_GDT_READY_MARKER,
         OS_QEMU_STAGE1_PROTECTED_MODE_MARKER,
         OS_QEMU_STAGE1_PAGE_TABLES_READY_MARKER,
+        OS_QEMU_STAGE1_PAE_READY_MARKER,
+        OS_QEMU_STAGE1_LME_READY_MARKER,
+        OS_QEMU_STAGE1_PAGING_ENABLED_MARKER,
+        OS_QEMU_STAGE1_LONG_MODE_MARKER,
     )
     if arguments.expectedOutcome == "success":
         requiredMarkers = (
@@ -136,6 +150,10 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         )
         forbiddenMarkers: tuple[str, ...] = (
             OS_QEMU_STAGE1_PAGE_TABLES_INVALID_MARKER,
+            OS_QEMU_STAGE1_PAE_INVALID_MARKER,
+            OS_QEMU_STAGE1_LME_INVALID_MARKER,
+            OS_QEMU_STAGE1_PAGING_INVALID_MARKER,
+            OS_QEMU_STAGE1_A20_INVALID_MARKER,
         )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)

@@ -38,11 +38,13 @@
 固件最终进入 `HLT`，测试进程以两秒预算运行 QEMU，预算结束后验证捕获的
 串口协议。异常提前退出视为失败。
 
-`v0.2` 在同一条真实复位路径上增加六类整机结果：
+`v0.2` 在同一条真实复位路径上增加磁盘加载及其失败结果；`v0.3` 继续验证
+从 A20 到 64 位入口的严格有序状态链：
 
 - 正常磁盘必须依次出现 `STAGE1_HEADER_VALID`、`STAGE1_LOADED`、
-  `[OS][STAGE1] ENTERED`、`[OS][STAGE1] GDT_READY` 和
-  `[OS][STAGE1] PROTECTED_MODE`、`[OS][STAGE1] PAGE_TABLES_READY`。
+  `A20_READY`、`ENTERED`、`GDT_READY`、`PROTECTED_MODE`、
+  `PAGE_TABLES_READY`、`PAE_READY`、`LME_READY`、`PAGING_ENABLED` 和
+  `LONG_MODE`。
 - 固件必须在串口初始化后输出一次 `CLOCK_READY`；当前阶段不要求毫秒数，禁止输出
   没有 PIT 计数依据的伪造时间戳。
 - IDE 永久忙必须在有界轮询后输出 `IDE_TIMEOUT`。
