@@ -24,6 +24,13 @@ OS_FIRMWARE_COM1_MODEM_CONFIGURATION equ 0x0B
 OS_FIRMWARE_COM1_TRANSMITTER_EMPTY_BIT equ 0x20
 OS_FIRMWARE_COM1_READY_POLL_LIMIT equ 0xFFFF
 
+OS_FIRMWARE_PIT_COMMAND_PORT equ 0x0043
+OS_FIRMWARE_PIT_CHANNEL_ZERO_PORT equ 0x0040
+OS_FIRMWARE_PIT_CHANNEL_ZERO_MODE_TWO equ 0x34
+OS_FIRMWARE_PIT_DIVISOR equ 0x04A9
+OS_FIRMWARE_PIT_DIVISOR_LOW equ (OS_FIRMWARE_PIT_DIVISOR & 0x00FF)
+OS_FIRMWARE_PIT_DIVISOR_HIGH equ (OS_FIRMWARE_PIT_DIVISOR >> 8)
+
 OS_FIRMWARE_ATA_DATA_PORT equ 0x01F0
 OS_FIRMWARE_ATA_SECTOR_COUNT_PORT equ 0x01F2
 OS_FIRMWARE_ATA_LBA_LOW_PORT equ 0x01F3
@@ -141,6 +148,7 @@ os_firmware_entry:
     xor bp, bp
 
     call os_firmware_initialize_com1
+    call os_firmware_initialize_pit
 
     mov si, OS_FIRMWARE_ENTRY_RUNTIME_OFFSET \
         + (os_firmware_reset_message - $$)
@@ -154,6 +162,11 @@ os_firmware_entry:
 
     mov si, OS_FIRMWARE_ENTRY_RUNTIME_OFFSET \
         + (os_firmware_serial_ready_message - $$)
+    call os_firmware_write_string
+    jnc os_firmware_halt
+
+    mov si, OS_FIRMWARE_ENTRY_RUNTIME_OFFSET \
+        + (os_firmware_clock_ready_message - $$)
     call os_firmware_write_string
     jnc os_firmware_halt
 
@@ -508,6 +521,15 @@ os_firmware_initialize_com1:
     out dx, al
     ret
 
+os_firmware_initialize_pit:
+    mov al, OS_FIRMWARE_PIT_CHANNEL_ZERO_MODE_TWO
+    out OS_FIRMWARE_PIT_COMMAND_PORT, al
+    mov al, OS_FIRMWARE_PIT_DIVISOR_LOW
+    out OS_FIRMWARE_PIT_CHANNEL_ZERO_PORT, al
+    mov al, OS_FIRMWARE_PIT_DIVISOR_HIGH
+    out OS_FIRMWARE_PIT_CHANNEL_ZERO_PORT, al
+    ret
+
 os_firmware_write_string:
     cs lodsb
     test al, al
@@ -573,6 +595,9 @@ os_firmware_reset_message:
 
 os_firmware_serial_ready_message:
     db "[OS][FIRMWARE] SERIAL_READY", 0x0D, 0x0A, 0x00
+
+os_firmware_clock_ready_message:
+    db "[OS][FIRMWARE] CLOCK_READY", 0x0D, 0x0A, 0x00
 
 os_firmware_stage1_header_valid_message:
     db "[OS][FIRMWARE] STAGE1_HEADER_VALID", 0x0D, 0x0A, 0x00
