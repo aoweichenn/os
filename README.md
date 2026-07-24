@@ -44,7 +44,9 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 
 当前 v0.4 已生成首个 freestanding C++20 ELF64 内核：
 `build/developer/source/kernel/kernel.elf`。它由 LLD 直接链接，入口固定为
-`0x00100000`，并由构建测试审计 ELF 头、加载段、入口和未解析符号。
+`0x00100000`，并由构建测试审计 ELF 头、加载段、入口和未解析符号。构建系统
+还会把它放入 `boot_disk.img` 的自描述 Kernel 区域，以 CRC32、磁盘边界和
+ELF64 双层规则独立审计；Stage 1 目标机装载将在下一增量实现。
 
 ## 固定技术路线
 
@@ -68,7 +70,7 @@ books/           可独立构建的 LaTeX 系统教材
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
-教材现为 5 部 10 个完整主题章、96 页；每章按“背景与历史约束、硬件或软件
+教材现为 5 部 10 个完整主题章、98 页；每章按“背景与历史约束、硬件或软件
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。

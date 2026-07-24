@@ -14,11 +14,13 @@ from os_tools.build import (
     testProject,
 )
 from os_tools.book_export import exportBookToPhone
+from os_tools.boot_image import writeBootDiskImages
 from os_tools.elf_audit import auditFreestandingLibrary
 from os_tools.errors import OsToolError
 from os_tools.firmware_audit import auditFirmwareImage
 from os_tools.images import createEmptyImages
 from os_tools.kernel_elf import auditKernelElf
+from os_tools.kernel_image import auditKernelDiskImage
 from os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
     OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
@@ -47,10 +49,7 @@ from os_tools.qemu_runner import (
     runQemuHardwareSmoke,
 )
 from os_tools.source_metrics import reportSourceMetrics
-from os_tools.stage1_image import (
-    auditStage1DiskImage,
-    writeStage1DiskImages,
-)
+from os_tools.stage1_image import auditStage1DiskImage
 from os_tools.toolchain import checkToolchain
 
 
@@ -110,9 +109,10 @@ def handleAuditFirmware(arguments: argparse.Namespace) -> None:
     auditFirmwareImage(arguments.firmwareImagePath)
 
 
-def handleCreateStage1Images(arguments: argparse.Namespace) -> None:
-    writeStage1DiskImages(
+def handleCreateBootImages(arguments: argparse.Namespace) -> None:
+    writeBootDiskImages(
         arguments.stage1BinaryPath,
+        arguments.kernelElfPath,
         arguments.outputDirectory,
         arguments.diskSizeBytes,
     )
@@ -120,6 +120,10 @@ def handleCreateStage1Images(arguments: argparse.Namespace) -> None:
 
 def handleAuditStage1(arguments: argparse.Namespace) -> None:
     auditStage1DiskImage(arguments.diskImagePath)
+
+
+def handleAuditKernelImage(arguments: argparse.Namespace) -> None:
+    auditKernelDiskImage(arguments.diskImagePath)
 
 
 def handleQemuSmoke(arguments: argparse.Namespace) -> None:
@@ -305,15 +309,16 @@ def createArgumentParser() -> argparse.ArgumentParser:
     )
     firmwareAuditParser.add_argument("firmwareImagePath", type=Path)
 
-    stage1ImageParser = addCommand(
+    bootImageParser = addCommand(
         subparsers,
-        "create-stage1-images",
-        "生成自研 Stage 1 正常与损坏磁盘镜像",
-        handleCreateStage1Images,
+        "create-boot-images",
+        "生成包含 Stage 1 与 Kernel ELF 的正常和损坏磁盘镜像",
+        handleCreateBootImages,
     )
-    stage1ImageParser.add_argument("stage1BinaryPath", type=Path)
-    stage1ImageParser.add_argument("outputDirectory", type=Path)
-    stage1ImageParser.add_argument("diskSizeBytes", type=int)
+    bootImageParser.add_argument("stage1BinaryPath", type=Path)
+    bootImageParser.add_argument("kernelElfPath", type=Path)
+    bootImageParser.add_argument("outputDirectory", type=Path)
+    bootImageParser.add_argument("diskSizeBytes", type=int)
 
     stage1AuditParser = addCommand(
         subparsers,
@@ -322,6 +327,14 @@ def createArgumentParser() -> argparse.ArgumentParser:
         handleAuditStage1,
     )
     stage1AuditParser.add_argument("diskImagePath", type=Path)
+
+    kernelImageAuditParser = addCommand(
+        subparsers,
+        "audit-kernel-image",
+        "检查磁盘中的 Kernel 描述符、ELF 文件校验和结构",
+        handleAuditKernelImage,
+    )
+    kernelImageAuditParser.add_argument("diskImagePath", type=Path)
 
     qemuParser = addCommand(
         subparsers,

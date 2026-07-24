@@ -75,9 +75,11 @@ images/firmware.bin
 images/firmware_serial_failure.bin
 images/firmware_ide_busy_failure.bin
 images/firmware_ide_error_failure.bin
-images/stage1_disk.img
+images/boot_disk.img
 images/stage1_invalid_header_disk.img
 images/stage1_invalid_checksum_disk.img
+images/kernel_invalid_header_disk.img
+images/kernel_invalid_checksum_disk.img
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
@@ -89,7 +91,7 @@ tests/os_foundation_randomized_tests
 `kernel.elf` 必须是入口为 `0x00100000` 的 x86-64 `ET_EXEC`，入口位于可执行
 `PT_LOAD` 段，且不能包含未解析符号。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
-Stage 1 磁盘镜像必须是精确 1048576 字节。
+全部启动磁盘镜像必须是精确 1048576 字节。
 `build/` 不进入 Git。
 
 ## 固件生成链
@@ -109,13 +111,10 @@ reset_and_serial.asm
 ```text
 source/boot/stage1/src/entry.asm
   └─ NASM bin → stage1.bin
-       └─ Python 格式编码与校验
-            ├─ stage1_disk.img
-            ├─ stage1_invalid_header_disk.img
-            └─ stage1_invalid_checksum_disk.img
+       └─ Python Stage 1 格式编码与校验
 ```
 
-使用 `python3 tools/os.py audit-stage1 build/developer/images/stage1_disk.img`
+使用 `python3 tools/os.py audit-stage1 build/developer/images/boot_disk.img`
 可以独立检查描述符、磁盘范围、加载范围和负载校验。Python 只负责宿主镜像
 编码与审计；目标机上的描述符解析、ATA PIO 和跳转全部由自研固件执行。
 
@@ -134,6 +133,25 @@ source/kernel/src/entry.cpp
 ```bash
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
+
+## Boot Disk 组合链
+
+```text
+stage1.bin ────────────────┐
+                           ├─ boot_disk.img
+kernel.elf ─ ELF64 审计 ───┘    ├─ Stage 1 描述符与负载
+                                └─ Kernel 描述符、CRC32 与 ELF 文件
+```
+
+可分别审计同一磁盘中的两个阶段：
+
+```bash
+python3 tools/os.py audit-stage1 build/developer/images/boot_disk.img
+python3 tools/os.py audit-kernel-image build/developer/images/boot_disk.img
+```
+
+构建同时生成 Kernel 描述符损坏和 Kernel ELF 内容损坏的失败镜像。当前宿主
+审计必须拒绝它们；Stage 1 的对应目标机失败标记在下一增量加入。
 
 ## 教材构建
 

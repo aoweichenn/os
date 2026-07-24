@@ -33,13 +33,6 @@ OS_STAGE1_IMAGE_PAYLOAD_LBA_OFFSET = 20
 OS_STAGE1_IMAGE_PAYLOAD_CHECKSUM_OFFSET = 24
 OS_STAGE1_IMAGE_HEADER_CHECKSUM_OFFSET = 26
 
-OS_STAGE1_IMAGE_VALID_FILE_NAME = "stage1_disk.img"
-OS_STAGE1_IMAGE_INVALID_HEADER_FILE_NAME = "stage1_invalid_header_disk.img"
-OS_STAGE1_IMAGE_INVALID_CHECKSUM_FILE_NAME = (
-    "stage1_invalid_checksum_disk.img"
-)
-
-
 @dataclass(frozen=True)
 class Stage1Descriptor:
     loadSegment: int
@@ -256,39 +249,6 @@ def parseAndValidateStage1DiskImage(
         payloadLba=payloadLba,
         payloadChecksum=payloadChecksum,
     )
-
-
-def writeStage1DiskImages(
-    stage1BinaryPath: Path,
-    outputDirectory: Path,
-    diskSizeBytes: int,
-) -> None:
-    validImage = createStage1DiskImageBytes(
-        stage1BinaryPath.read_bytes(),
-        diskSizeBytes,
-    )
-    outputDirectory.mkdir(parents=True, exist_ok=True)
-    (outputDirectory / OS_STAGE1_IMAGE_VALID_FILE_NAME).write_bytes(
-        validImage
-    )
-
-    invalidHeaderImage = bytearray(validImage)
-    invalidHeaderImage[
-        OS_STAGE1_IMAGE_MAGIC_OFFSET
-    ] ^= OS_STAGE1_IMAGE_CORRUPTION_BIT
-    (
-        outputDirectory / OS_STAGE1_IMAGE_INVALID_HEADER_FILE_NAME
-    ).write_bytes(invalidHeaderImage)
-
-    invalidChecksumImage = bytearray(validImage)
-    payloadOffset = (
-        OS_STAGE1_IMAGE_DEFAULT_PAYLOAD_LBA
-        * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
-    )
-    invalidChecksumImage[payloadOffset] ^= OS_STAGE1_IMAGE_CORRUPTION_BIT
-    (
-        outputDirectory / OS_STAGE1_IMAGE_INVALID_CHECKSUM_FILE_NAME
-    ).write_bytes(invalidChecksumImage)
 
 
 def auditStage1DiskImage(diskImagePath: Path) -> None:

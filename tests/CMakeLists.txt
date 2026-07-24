@@ -138,12 +138,56 @@ add_test(
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         audit-stage1
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
 )
 set_tests_properties(
     os_stage1_disk_layout
     PROPERTIES
         LABELS "integration"
+)
+
+add_test(
+    NAME os_kernel_disk_layout
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-kernel-image
+        "${OS_BOOT_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_kernel_disk_layout
+    PROPERTIES
+        LABELS "integration"
+)
+
+add_test(
+    NAME os_kernel_disk_rejects_invalid_header
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-kernel-image
+        "${OS_KERNEL_INVALID_HEADER_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_kernel_disk_rejects_invalid_header
+    PROPERTIES
+        LABELS "integration;failure-path"
+        WILL_FAIL TRUE
+)
+
+add_test(
+    NAME os_kernel_disk_rejects_invalid_checksum
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-kernel-image
+        "${OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_kernel_disk_rejects_invalid_checksum
+    PROPERTIES
+        LABELS "integration;failure-path"
+        WILL_FAIL TRUE
 )
 
 add_test(
@@ -168,7 +212,7 @@ add_test(
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
         "${OS_FIRMWARE_IMAGE}"
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
@@ -188,7 +232,7 @@ add_test(
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
         "${OS_FIRMWARE_SERIAL_FAILURE_IMAGE}"
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
@@ -208,7 +252,7 @@ add_test(
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
         "${OS_FIRMWARE_IDE_BUSY_FAILURE_IMAGE}"
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
@@ -228,7 +272,7 @@ add_test(
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
         "${OS_FIRMWARE_IDE_ERROR_FAILURE_IMAGE}"
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
@@ -339,7 +383,7 @@ set_tests_properties(
 )
 
 add_test(
-    NAME os_kernel_elf_randomized_tests
+    NAME os_kernel_randomized_tests
     COMMAND
         "${Python3_EXECUTABLE}"
         -m
@@ -351,7 +395,7 @@ add_test(
         "test_*.py"
 )
 set_tests_properties(
-    os_kernel_elf_randomized_tests
+    os_kernel_randomized_tests
     PROPERTIES
         LABELS "randomized"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"

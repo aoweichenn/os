@@ -32,28 +32,37 @@ add_custom_target(os_stage1_binary DEPENDS "${OS_STAGE1_BINARY}")
 
 add_custom_command(
     OUTPUT
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
         "${OS_STAGE1_INVALID_HEADER_DISK_IMAGE}"
         "${OS_STAGE1_INVALID_CHECKSUM_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_HEADER_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE}"
     COMMAND
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
-        create-stage1-images
+        create-boot-images
         "${OS_STAGE1_BINARY}"
+        "${OS_KERNEL_ELF_PATH}"
         "${OS_IMAGE_OUTPUT_DIRECTORY}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
     DEPENDS
         "${OS_STAGE1_BINARY}"
+        "${OS_KERNEL_ELF_PATH}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
-    COMMENT "生成自研 Stage 1 正常与损坏磁盘镜像"
+    COMMENT "生成包含 Stage 1 与 Kernel ELF 的正常和损坏磁盘镜像"
     VERBATIM
 )
 
 add_custom_target(
     os_stage1_images
     DEPENDS
-        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
         "${OS_STAGE1_INVALID_HEADER_DISK_IMAGE}"
         "${OS_STAGE1_INVALID_CHECKSUM_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_HEADER_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE}"
 )

@@ -87,3 +87,102 @@ Stage 1 不能假定 DS 随 CS 改变。其第一段代码用 \code{push cs}/
 每条失败路径禁止输出 \code{STAGE1\_LOADED} 与 Stage 1 进入标记。宿主单元
 测试另行拒绝短镜像和越界 LBA；固定种子测试覆盖 256 组有效负载往返和 256
 组越界输入，使格式性质不依赖单一样例。
+
+\section{v0.4 用独立容器把 ELF 放入同一磁盘}
+
+\subsection{磁盘位置不能成为构建系统的秘密}
+
+生成 \filepath{kernel.elf} 以后，Stage 1 仍需要知道从哪个 LBA 读取多少
+字节。如果构建脚本把内核简单拼接在 Stage 1 之后，Stage 1 每增长一个扇区，
+Kernel 的位置就随之变化；目标代码要么硬编码一个会漂移的数字，要么依赖宿主
+额外注入的隐含常量。二者都破坏了磁盘自身可以解释的原则。
+
+项目因而保留 v0.2 的 Stage 1 格式，并在同一原始磁盘上增加第二套独立容器：
+
+\begin{longtable}{L{0.16\textwidth}L{0.29\textwidth}L{0.43\textwidth}}
+\toprule
+\textbf{LBA} & \textbf{内容} & \textbf{边界}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{LBA} & \textbf{内容} & \textbf{边界}\\
+\midrule
+\endhead
+0 & Stage 1 描述符 & 固件最先读取并验证\\
+1 到 64 & Stage 1 最大负载区 & v1 格式最多允许 64 个扇区\\
+65 & Kernel v1 描述符 & 固定位置，不随 Stage 1 当前长度漂移\\
+66 起 & 精确 \filepath{kernel.elf} & 文件后只补零到扇区边界\\
+\bottomrule
+\end{longtable}
+
+固定 LBA 65 并不浪费重要容量：一块 1 MiB 教学磁盘包含 2048 个扇区，而稳定
+交接比节省几十个空扇区更重要。宿主打包器先完整解析 Stage 1 描述符，再证明
+其结束 LBA 不大于 65；它不因“当前 Stage 1 只有三个扇区”就放弃最大边界
+检查。
+
+\subsection{Kernel 描述符使用可扩展宽度但服从当前硬件}
+
+\begin{longtable}{L{0.13\textwidth}L{0.12\textwidth}L{0.24\textwidth}L{0.39\textwidth}}
+\toprule
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前约束}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前约束}\\
+\midrule
+\endhead
+\code{0x00} & 8 & magic & 精确等于 \code{OSKERN64}\\
+\code{0x08} & 2 & version & 等于 1\\
+\code{0x0A} & 2 & header size & 等于 48\\
+\code{0x0C} & 4 & flags & 当前必须为零\\
+\code{0x10} & 8 & payload LBA & 当前等于 66，且不得超过 LBA28\\
+\code{0x18} & 8 & file size & 精确 ELF 文件字节数\\
+\code{0x20} & 8 & sector count & 文件长度向上取整到 512 字节\\
+\code{0x28} & 4 & payload CRC32 & 只覆盖精确文件，不覆盖尾部补零\\
+\code{0x2C} & 4 & descriptor CRC32 & 计算时本字段置零，覆盖整扇区\\
+\code{0x30..0x1FF} & 464 & reserved & 当前版本必须全零\\
+\bottomrule
+\end{longtable}
+
+LBA、文件长度和扇区数使用 64 位字段，是为了避免格式很快因容量增长而升级；
+这不表示当前 ATA 驱动已经支持 LBA48。描述符解析仍把 LBA 与
+\code{0x0FFFFFFF} 比较。格式的表达范围、驱动的协议范围和真实磁盘范围是三
+个不同约束，必须分别成立。
+
+保留区全零规则也不能被 CRC 取代。CRC 能发现位变化，但攻击者或错误工具可以
+在修改保留字节后重新计算 CRC；版本 1 解析器若只检查校验值，就会默许未定义
+语义。先检查“当前字段是否允许”，再检查“字节是否完整”，两者回答的问题
+不同。
+
+\subsection{CRC32 检测损坏但不宣称提供认证}
+
+Stage 1 v1 使用 16 位字和，计算极小且适合最早 ROM。ELF 文件更大，v0.4
+选择 CRC32 检测常见的突发位错误、错位和内容替换。描述符 CRC 覆盖完整
+512 字节，Kernel CRC 只覆盖 \code{file size} 指定的精确字节；否则扇区尾部
+补零也会意外成为文件内容的一部分。
+
+CRC32 不是密码学散列，也没有密钥。能够主动同时改写文件和描述符的人可以
+重新计算 CRC。因此这里的安全结论是“偶然损坏可检测”，不是“来源可信”。
+ELF 的长度、对齐、权限、重叠和入口检查仍然不可省略。
+
+\subsection{验证顺序保持先证明再写入}
+
+宿主组合磁盘时按以下顺序提交：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 完整验证 Stage 1 镜像和它的负载结束位置。
+  \item 完整解析 Kernel ELF64，确认入口和 PT\_LOAD 契约。
+  \item 计算精确文件长度、扇区数与两个 CRC32。
+  \item 证明 LBA 65 之后的目标区域仍全零且落在磁盘内。
+  \item 最后一次性写入描述符与 ELF 字节。
+\end{enumerate}
+
+解析组合磁盘时反向执行同一证据链：Stage 1、阶段分离、Kernel 描述符、
+磁盘范围、文件 CRC、ELF64。单元测试覆盖重叠、保留区和损坏输入；固定种子
+测试完成 128 组不同文件长度往返和 256 组随机文件字节破坏；集成测试审计
+真实 \filepath{boot\_disk.img}，同时要求两份故障镜像被拒绝。
+
+这一增量仍没有让 Python 替代目标机工作。宿主工具只是生成和独立审计输入；
+下一增量由 64 位 Stage 1 自行通过 ATA PIO 读取 LBA 65，执行 CRC32 与 ELF
+程序头验证，再把段复制到 \code{0x00100000}。两端实现同一格式，才能互相
+发现错误。

@@ -61,10 +61,7 @@ set(
     OS_FIRMWARE_IDE_ERROR_FAILURE_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware_ide_error_failure.bin"
 )
-set(
-    OS_STAGE1_DISK_IMAGE
-    "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_disk.img"
-)
+set(OS_BOOT_DISK_IMAGE "${OS_IMAGE_OUTPUT_DIRECTORY}/boot_disk.img")
 set(
     OS_STAGE1_INVALID_HEADER_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_invalid_header_disk.img"
@@ -72,6 +69,14 @@ set(
 set(
     OS_STAGE1_INVALID_CHECKSUM_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_invalid_checksum_disk.img"
+)
+set(
+    OS_KERNEL_INVALID_HEADER_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_invalid_header_disk.img"
+)
+set(
+    OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_invalid_checksum_disk.img"
 )
 
 add_subdirectory(source/firmware)

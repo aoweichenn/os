@@ -81,14 +81,14 @@ x/20i $pc
 宿主侧先审计镜像：
 
 ```bash
-python3 tools/os.py audit-stage1 build/developer/images/stage1_disk.img
-xxd -g2 -l 32 build/developer/images/stage1_disk.img
+python3 tools/os.py audit-stage1 build/developer/images/boot_disk.img
+xxd -g2 -l 32 build/developer/images/boot_disk.img
 ```
 
 ### GDB 检查装载结果
 
 使用 v0.1 相同的 QEMU `-S -s` 参数，并把磁盘替换为
-`build/developer/images/stage1_disk.img`。在 GDB 中：
+`build/developer/images/boot_disk.img`。在 GDB 中：
 
 ```gdb
 set architecture i386
@@ -111,3 +111,18 @@ CS 应为 `0x0800`、IP 为零，证明远控制转移已经刷新代码段状�
 `rep insw` 每扇区读取 256 个字，并把 ES:DI 推进 512 字节。v0.2 最多接受
 64 个扇区，确保单次负载不让 16 位 DI 回绕。若后续需要更大 Stage 1，必须
 显式推进 ES 或切换到更宽的地址模式，不能只放宽描述符上限。
+
+## v0.4：Kernel 磁盘容器
+
+宿主先分别检查 ELF 文件和组合磁盘：
+
+```bash
+python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
+python3 tools/os.py audit-kernel-image build/developer/images/boot_disk.img
+xxd -g1 -s $((65 * 512)) -l 64 build/developer/images/boot_disk.img
+```
+
+LBA 65 应以 `OSKERN64` 开头；LBA 66 应以 ELF magic `7f 45 4c 46` 开头。
+若文件审计通过但磁盘审计失败，优先比较描述符中的精确文件长度、扇区数和
+CRC32；若二者都通过而未来目标机失败，再检查 ATA 状态、读取缓冲区和 Stage 1
+自身 CRC32 实现。

@@ -61,6 +61,11 @@
 页对齐和恒等装载失败；固定种子随机测试破坏 256 组 ELF 标识；集成测试直接
 检查构建得到的 `kernel.elf`，并通过 `llvm-nm` 保证没有未解析运行时符号。
 
+第二增量继续验证组合磁盘：单元测试覆盖描述符 CRC32、负载损坏、保留区、
+Stage 1 重叠和打包前 ELF 拒绝；固定种子测试完成 128 组不同 ELF 文件长度
+往返及 256 组随机负载损坏拒绝；集成测试审计真实 `boot_disk.img`，并确认
+Kernel 描述符损坏和负载损坏镜像均失败。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -104,6 +109,9 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
 | `os_stage1_disk_layout` | 集成 | 描述符、LBA、加载范围和负载校验 |
+| `os_kernel_disk_layout` | 集成 | 真实启动磁盘的 Kernel 描述符、CRC32、范围与内嵌 ELF |
+| `os_kernel_disk_rejects_invalid_header` | 集成/失败路径 | 损坏 Kernel 描述符必须被拒绝 |
+| `os_kernel_disk_rejects_invalid_checksum` | 集成/失败路径 | 损坏 Kernel ELF 文件必须被拒绝 |
 | `os_stage1_rejects_invalid_header` | 集成/失败路径 | 损坏描述符必须被宿主审计拒绝 |
 | `os_qemu_stage1_load_success` | 系统 | 真实 ATA PIO 加载、校验、远跳转和 Stage 1 入口 |
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
@@ -114,7 +122,7 @@ python3 tools/os.py test --layer failure-path
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
-| `os_kernel_elf_randomized_tests` | 随机 | 256 组 ELF64 受保护标识损坏必须被拒绝 |
+| `os_kernel_randomized_tests` | 随机 | ELF 标识破坏、128 组长度往返与 256 组负载破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
 QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过

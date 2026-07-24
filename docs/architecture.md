@@ -30,6 +30,11 @@ v0.4 的内核是独立 ELF64 `ET_EXEC` 文件，入口和首个链接地址为
 不允许宿主 GCC 或宿主运行库参与。Stage 1 之后只消费程序头中的 `PT_LOAD`
 契约，不依赖节表。
 
+同一块 `boot_disk.img` 保持两套独立格式：LBA 0 和 LBA 1..64 属于 Stage 1，
+LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Kernel
+描述符用 64 位字段记录 LBA、文件长度和扇区数，用两个 CRC32 分别覆盖完整
+描述符扇区和精确 ELF 文件。当前 ATA 驱动仍显式限制为 LBA28。
+
 当前使用的 CPU 架构状态、16550A UART、IDE/ATA 主通道寄存器、访问宽度和标志位
 统一记录在 [芯片与寄存器结构](hardware/chips.md)；机器可读版本位于
 `docs/hardware/register_map.yaml`。新增设备必须先补充这份结构化规格，再进入驱动实现。
@@ -82,6 +87,21 @@ Stage 1 独立入口
 负载扇区数、标志、LBA 和负载校验。固件不会把磁盘字节映射为宿主结构体，
 而是按固定偏移读取，并在任何 I/O 或验证失败后停机。
 
+## v0.4 Kernel 磁盘容器
+
+```text
+LBA 0       Stage 1 描述符
+LBA 1..64   Stage 1 最大负载区
+LBA 65      Kernel v1 描述符
+LBA 66..N   kernel.elf（精确长度 + 扇区补零）
+```
+
+宿主先验证 Stage 1 结束位置不越过 LBA 65，再验证 Kernel 描述符、CRC32、
+磁盘范围与内嵌 ELF64。格式详见
+[Boot Image 模块](modules/boot-image.md) 与
+[ADR 0006](adr/0006-kernel-image-container.md)。下一增量将在 Stage 1
+中实现同一验证顺序，而不是让 Python 替代目标机装载。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -128,6 +148,15 @@ source/boot/stage1/
 ├── CMakeLists.txt
 └── src/
     └── entry.asm
+
+source/kernel/
+├── CMakeLists.txt
+├── include/os/kernel/
+│   └── entry.hpp
+├── linker/
+│   └── kernel.ld.in
+└── src/
+    └── entry.cpp
 ```
 
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和
@@ -148,8 +177,7 @@ tests/
 └── support/cpp/
 ```
 
-尚未实现的固件、引导和内核模块不会预先创建空目录；开始对应最小增量时再按照
-相同边界落地。
+后续模块不会预先创建空目录；开始对应最小增量时再按照相同边界落地。
 
 ## 宿主工具边界
 
