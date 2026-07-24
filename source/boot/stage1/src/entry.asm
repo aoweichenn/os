@@ -7,6 +7,7 @@ OS_STAGE1_COM1_TRANSMITTER_EMPTY_BIT equ 0x20
 OS_STAGE1_COM1_READY_POLL_LIMIT equ 0xFFFF
 OS_STAGE1_GDT_CODE_SELECTOR equ 0x0008
 OS_STAGE1_GDT_DATA_SELECTOR equ 0x0010
+OS_STAGE1_LOAD_PHYSICAL_BASE equ 0x8000
 
 os_stage1_entry:
     cli
@@ -21,6 +22,7 @@ os_stage1_entry:
     lgdt [os_stage1_gdt_descriptor]
     mov si, os_stage1_gdt_ready_message
     call os_stage1_write_string
+
 
 os_stage1_halt:
     hlt
@@ -71,7 +73,7 @@ os_stage1_gdt:
 
 os_stage1_gdt_descriptor:
     dw os_stage1_gdt_descriptor - os_stage1_gdt - 1
-    dd os_stage1_gdt
+    dd OS_STAGE1_LOAD_PHYSICAL_BASE + os_stage1_gdt
 
 os_stage1_gdt_ready_message:
     db "[OS][STAGE1] GDT_READY", 0x0D, 0x0A, 0x00
