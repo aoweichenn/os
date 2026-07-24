@@ -28,6 +28,10 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][FIRMWARE] STAGE1_HEADER_VALID
 [OS][FIRMWARE] STAGE1_LOADED
 [OS][STAGE1] ENTERED
+[OS][STAGE1] GDT_READY
+
+日志规范见 [docs/logging.md](docs/logging.md)：启动日志只记录阶段里程碑和故障原因，
+不在轮询或逐字节路径中刷屏。
 ```
 
 ## 固定技术路线
