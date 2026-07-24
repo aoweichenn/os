@@ -57,6 +57,10 @@
 测试完成 256 组有效负载往返和 256 组越界 LBA 拒绝。QEMU 测试验证的是 ROM
 自身执行 ATA PIO 和远跳转，而不是宿主工具代替读取。
 
+`v0.4` 增加内核 ELF64 审计：单元测试构造最小有效 ELF，并覆盖截断、权限、
+页对齐和恒等装载失败；固定种子随机测试破坏 256 组 ELF 标识；集成测试直接
+检查构建得到的 `kernel.elf`，并通过 `llvm-nm` 保证没有未解析运行时符号。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -95,6 +99,7 @@ python3 tools/os.py test --layer failure-path
 | `os_foundation_integration_tests` | 集成 | ROM、复位向量、Stage 1 与内核区间关系 |
 | `os_foundation_randomized_tests` | 随机 | 10,000 组区间性质与溢出拒绝 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
+| `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
@@ -109,6 +114,7 @@ python3 tools/os.py test --layer failure-path
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
+| `os_kernel_elf_randomized_tests` | 随机 | 256 组 ELF64 受保护标识损坏必须被拒绝 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
 QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过

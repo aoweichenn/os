@@ -9,6 +9,7 @@ from .process import runCommand
 
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
+OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_GUEST_MEMORY_MEBIBYTES = 64
 OS_QEMU_FIRMWARE_RESET_MARKER = "[OS][FIRMWARE] RESET"
 OS_QEMU_FIRMWARE_SERIAL_READY_MARKER = "[OS][FIRMWARE] SERIAL_READY"
@@ -195,17 +196,26 @@ def runQemuWithTimedSerial(
 
     timedOut = False
     try:
-        returnCode = qemuProcess.wait(timeout=timeoutSeconds)
-    except subprocess.TimeoutExpired:
-        timedOut = True
-        qemuProcess.terminate()
         try:
-            returnCode = qemuProcess.wait(timeout=1.0)
+            returnCode = qemuProcess.wait(timeout=timeoutSeconds)
         except subprocess.TimeoutExpired:
+            timedOut = True
+            qemuProcess.terminate()
+            try:
+                returnCode = qemuProcess.wait(
+                    timeout=OS_QEMU_TERMINATION_TIMEOUT_SECONDS
+                )
+            except subprocess.TimeoutExpired:
+                qemuProcess.kill()
+                returnCode = qemuProcess.wait()
+    finally:
+        if qemuProcess.poll() is None:
             qemuProcess.kill()
-            returnCode = qemuProcess.wait()
+            qemuProcess.wait()
+        captureThread.join()
+        if qemuProcess.stdout is not None:
+            qemuProcess.stdout.close()
 
-    captureThread.join(timeout=1.0)
     return (
         "".join(serialLines),
         "".join(timedLines),

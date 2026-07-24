@@ -175,7 +175,7 @@ Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位
 | 1 | A20 Gate | 写一后执行地址别名验证 |
 
 - `docs/hardware/register_map.yaml`：芯片、寄存器、位和访问宽度的机器可读规格。
-- `source/firmware/src/reset_and_serial.asm`：当前 v0.2 的端口访问与状态机实现。
+- `source/firmware/src/reset_and_serial.asm`：固件端口访问与 ATA 状态机实现。
 - `source/boot/stage1/src/entry.asm`：Stage 1 复用 COM1 的最小发送器。
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。
 - `docs/testing.md`：状态边界对应的 QEMU 失败注入。

@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     x86_64_os_lab
-    VERSION 0.2.0
+    VERSION 0.4.0
     DESCRIPTION "从复位向量开始实现的 x86-64 教学操作系统"
     LANGUAGES CXX
 )
@@ -26,6 +26,7 @@ set(
 )
 
 add_subdirectory(source/foundation)
+add_subdirectory(source/kernel)
 
 set(OS_FIRMWARE_IMAGE_SIZE_BYTES 131072)
 set(OS_DISK_IMAGE_SIZE_BYTES 1048576)

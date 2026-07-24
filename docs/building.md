@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成 v0.2 自研 ROM、Stage 1 二进制和正常/损坏磁盘镜像，同时保留
+4. 生成自研 ROM、Stage 1、v0.4 ELF64 内核和正常/损坏磁盘镜像，同时保留
    v0.0 空镜像回归基线。
 5. 运行全部 CTest 测试。
 
@@ -70,6 +70,7 @@ source/firmware/generated/os_firmware_serial_failure.elf
 source/firmware/generated/os_firmware_ide_busy_failure.elf
 source/firmware/generated/os_firmware_ide_error_failure.elf
 source/boot/stage1/generated/stage1.bin
+source/kernel/kernel.elf
 images/firmware.bin
 images/firmware_serial_failure.bin
 images/firmware_ide_busy_failure.bin
@@ -85,6 +86,8 @@ tests/os_foundation_randomized_tests
 ```
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
+`kernel.elf` 必须是入口为 `0x00100000` 的 x86-64 `ET_EXEC`，入口位于可执行
+`PT_LOAD` 段，且不能包含未解析符号。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
 Stage 1 磁盘镜像必须是精确 1048576 字节。
 `build/` 不进入 Git。
@@ -115,6 +118,22 @@ source/boot/stage1/src/entry.asm
 使用 `python3 tools/os.py audit-stage1 build/developer/images/stage1_disk.img`
 可以独立检查描述符、磁盘范围、加载范围和负载校验。Python 只负责宿主镜像
 编码与审计；目标机上的描述符解析、ATA PIO 和跳转全部由自研固件执行。
+
+## Kernel ELF64 生成链
+
+```text
+source/kernel/src/entry.cpp
+  └─ Clang x86_64-unknown-none-elf → entry.cpp.o
+       └─ LLD elf_x86_64 + kernel.ld → kernel.elf
+            └─ Python ELF64 结构审计 + llvm-nm 符号审计
+```
+
+宿主为 ARM64 时不经过宿主 GCC 链接驱动，CMake 显式调用 LLD 的
+`elf_x86_64` 模式。可独立执行：
+
+```bash
+python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
+```
 
 ## 教材构建
 

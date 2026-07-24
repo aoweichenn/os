@@ -18,6 +18,7 @@ from os_tools.elf_audit import auditFreestandingLibrary
 from os_tools.errors import OsToolError
 from os_tools.firmware_audit import auditFirmwareImage
 from os_tools.images import createEmptyImages
+from os_tools.kernel_elf import auditKernelElf
 from os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
     OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
@@ -99,6 +100,10 @@ def handleCreateImages(arguments: argparse.Namespace) -> None:
 
 def handleAuditElf(arguments: argparse.Namespace) -> None:
     auditFreestandingLibrary(OS_TOOL_PROJECT_ROOT, arguments.libraryPath)
+
+
+def handleAuditKernelElf(arguments: argparse.Namespace) -> None:
+    auditKernelElf(OS_TOOL_PROJECT_ROOT, arguments.kernelElfPath)
 
 
 def handleAuditFirmware(arguments: argparse.Namespace) -> None:
@@ -283,6 +288,14 @@ def createArgumentParser() -> argparse.ArgumentParser:
         "libraryPath",
         type=Path,
     )
+
+    kernelElfAuditParser = addCommand(
+        subparsers,
+        "audit-kernel-elf",
+        "检查自研 ELF64 内核的头、程序段、入口和符号",
+        handleAuditKernelElf,
+    )
+    kernelElfAuditParser.add_argument("kernelElfPath", type=Path)
 
     firmwareAuditParser = addCommand(
         subparsers,

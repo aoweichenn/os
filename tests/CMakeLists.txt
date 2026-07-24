@@ -69,6 +69,20 @@ set_tests_properties(
 )
 
 add_test(
+    NAME os_kernel_elf_layout
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-kernel-elf
+        "${OS_KERNEL_ELF_PATH}"
+)
+set_tests_properties(
+    os_kernel_elf_layout
+    PROPERTIES
+        LABELS "integration"
+)
+
+add_test(
     NAME os_qemu_hardware_smoke
     COMMAND
         "${Python3_EXECUTABLE}"
@@ -319,6 +333,25 @@ add_test(
 )
 set_tests_properties(
     os_stage1_randomized_tests
+    PROPERTIES
+        LABELS "randomized"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(
+    NAME os_kernel_elf_randomized_tests
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        -m
+        unittest
+        discover
+        -s
+        tests/randomized/kernel
+        -p
+        "test_*.py"
+)
+set_tests_properties(
+    os_kernel_elf_randomized_tests
     PROPERTIES
         LABELS "randomized"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"

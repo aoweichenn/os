@@ -1,0 +1,49 @@
+OUTPUT_FORMAT(elf64-x86-64)
+OUTPUT_ARCH(i386:x86-64)
+ENTRY(osKernelEntry)
+
+OS_KERNEL_LINK_ADDRESS = @OS_KERNEL_LINK_ADDRESS@;
+OS_KERNEL_PAGE_SIZE_BYTES = @OS_KERNEL_PAGE_SIZE_BYTES@;
+
+PHDRS
+{
+    text PT_LOAD FLAGS(@OS_KERNEL_SEGMENT_FLAGS_READ_EXECUTE@);
+    rodata PT_LOAD FLAGS(@OS_KERNEL_SEGMENT_FLAGS_READ_ONLY@);
+    data PT_LOAD FLAGS(@OS_KERNEL_SEGMENT_FLAGS_READ_WRITE@);
+}
+
+SECTIONS
+{
+    . = OS_KERNEL_LINK_ADDRESS;
+
+    .text ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
+    {
+        KEEP(*(.text.os_kernel_entry))
+        *(.text .text.*)
+    } :text
+
+    .rodata ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
+    {
+        *(.rodata .rodata.*)
+    } :rodata
+
+    .data ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
+    {
+        *(.data .data.*)
+    } :data
+
+    .bss ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) (NOLOAD) :
+    {
+        *(.bss .bss.*)
+        *(COMMON)
+    } :data
+
+    /DISCARD/ :
+    {
+        *(.comment)
+        *(.eh_frame)
+        *(.note .note.*)
+    }
+}
+
+ASSERT(DEFINED(osKernelEntry), "缺少内核入口 osKernelEntry")
