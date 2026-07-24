@@ -42,6 +42,8 @@
 
 - 正常磁盘必须依次出现 `STAGE1_HEADER_VALID`、`STAGE1_LOADED`、
   `[OS][STAGE1] ENTERED` 和 `[OS][STAGE1] GDT_READY`。
+- 固件必须在串口初始化后输出一次 `CLOCK_READY`；当前阶段不要求毫秒数，禁止输出
+  没有 PIT 计数依据的伪造时间戳。
 - IDE 永久忙必须在有界轮询后输出 `IDE_TIMEOUT`。
 - ATA ERR 状态必须输出 `IDE_ERROR`。
 - 描述符任意受保护字节损坏必须输出 `STAGE1_HEADER_INVALID`。
