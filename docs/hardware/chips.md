@@ -13,13 +13,15 @@ x86-64 CPU
 ├── 描述符状态：CS、SS、GDTR、IDTR、TR、TSS
 ├── 端口 I/O 总线
 │   ├── 16550A 兼容 UART / COM1：0x3F8..0x3FF
-│   └── PATA primary master：0x1F0..0x1F7、控制端口 0x3F6
+│   ├── PATA primary master：0x1F0..0x1F7、控制端口 0x3F6
+│   └── QEMU fw_cfg：selector 0x510、data 0x511
 └── RAM
     ├── 固件栈：0x7000 向低地址增长
     ├── Stage 1 描述符：0x0500..0x06FF
     ├── Stage 1 负载：0x8000..0xFFFF
     ├── 页表：0x10000..0x12FFF
-    ├── Kernel 描述符与 BootInfo：0x13000..0x1404F
+    ├── Kernel 描述符与 BootInfo v2：0x13000..0x14067
+    ├── 内存图元数据、fw_cfg 暂存与内存图：0x16000..0x18BFF
     ├── Kernel ELF 暂存：0x20000..0x9FFFF
     ├── Kernel PT_LOAD：0x100000..0x3EFFFFF
     └── Kernel 初始栈：0x3FEF000..0x3FFEFFF
@@ -53,13 +55,13 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | 寄存器 | 位 | 名称 | 作用 | 前置/后置条件 |
 | --- | ---: | --- | --- | --- |
 | CR0 | 0 | PE | 进入保护模式 | GDT 已准备，随后必须远跳转刷新 CS |
-| CR0 | 16 | WP | 内核写保护页 | 建立分页策略后再启用 |
+| CR0 | 16 | WP | supervisor 写也遵守只读页 | v0.6 在切换内核 CR3 前启用并回读 |
 | CR0 | 31 | PG | 开启分页 | CR3、CR4.PAE、EFER.LME 和页表先有效 |
 | CR3 | 全宽地址字段 | PML4 | 当前页表根物理地址 | 必须满足页对齐和物理范围 |
 | CR4 | 5 | PAE | 启用物理地址扩展 | 设置后才能按长模式页表解释 |
 | EFER | 8 | LME | 请求长模式 | 通过 `RDMSR/WRMSR` 访问 |
 | EFER | 10 | LMA | 长模式已激活 | 只读结果，不能直接写 |
-| EFER | 11 | NXE | 启用 NX 位 | 只有策略需要且 CPU 支持时启用 |
+| EFER | 11 | NXE | 启用 NX 位 | v0.6 先用 CPUID 检查，再启用并回读 |
 
 模式切换是状态机，不是把几个 bit 任意置一。v0.3 已把每次写入和读回值加入
 串口证据与 QEMU 检查；v0.4 的内核还会读回 CR3，与 BootInfo 中的页表根比较。
@@ -169,8 +171,36 @@ TSS 内存布局：
 | 6 | SS | 非 shadow-stack 原因 | shadow-stack 访问 |
 | 15 | SGX | 非 SGX 原因 | SGX 访问控制违反 |
 
-v0.5 的页故障注入得到错误码 0：supervisor 读取一个 not-present 数据页。
+not-present 页故障注入得到错误码 0：supervisor 读取一个 not-present 数据页。
 CR2=`0x04000000`，正好是当前 64 MiB 身份映射的第一个未映射线性地址。
+v0.6 写保护注入得到错误码 3：P=1、W/R=1、U/S=0，表示 supervisor 写入
+present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
+
+### 2.8 四级页表项
+
+48 位 canonical 虚拟地址按以下位段拆分：
+
+```text
+63            48 47       39 38       30 29       21 20       12 11       0
++----------------+-----------+-----------+-----------+-----------+-----------+
+| bit47 符号扩展  | PML4 index| PDPT index|  PD index |  PT index | page off  |
++----------------+-----------+-----------+-----------+-----------+-----------+
+```
+
+四级索引各 9 位，一个页表页正好容纳 512 个 64 位表项。当前 4 KiB 叶项关键位：
+
+| 位 | 名称 | 当前语义 |
+| ---: | --- | --- |
+| 0 | P | 1 表示存在；guard 和零页保持 0 |
+| 1 | RW | 1 可写，0 只读；CR0.WP 使 Ring 0 也受约束 |
+| 2 | US | 当前所有内核映射为 0 |
+| 7 | PS | 中间层若为 1 表示大页；内核 4 KiB 遍历器明确拒绝 |
+| 12..51 | physical address | 4 KiB 对齐页帧地址 |
+| 63 | NX | EFER.NXE=1 时禁止取指 |
+
+上级权限会限制下级：任一层 US=0 都禁止用户访问，任一层 RW=0 都限制写。
+项目中间表保持 writable，使叶项决定内核页写权限；用户映射请求出现时才向
+父项传播 US。修改叶项后执行 `INVLPG`，加载新 CR3 时刷新当前地址空间翻译。
 
 ## 3. 16550A UART / COM1
 
@@ -289,12 +319,40 @@ Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位
 | 0 | Fast Reset | 始终写零，禁止复位 |
 | 1 | A20 Gate | 写一后执行地址别名验证 |
 
+### 5.3 QEMU fw_cfg 与 `etc/e820`
+
+当前 PC 机器模型提供传统端口形式的 `fw_cfg`：
+
+| 端口 | 宽度 | 方向 | 语义 |
+| ---: | ---: | --- | --- |
+| `0x510` | 16 | 写 | 选择 key；x86 端口写入采用本机小端 |
+| `0x511` | 8 | 读 | 顺序读取当前 key 的数据流 |
+
+关键 selector：
+
+| key | 内容 | 编码 |
+| ---: | --- | --- |
+| `0x0000` | 签名 | 四字节 ASCII `QEMU` |
+| `0x0019` | 文件目录 | 32 位大端数量 + 固定 64 字节目录项 |
+| 目录项 selector | `etc/e820` 文件 | selector 从目录项的 16 位大端字段取得 |
+
+目录项由 32 位大端 size、16 位大端 selector、16 位 reserved 和 56 字节
+NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 base、
+64 位 length、32 位 type，共 20 字节。目录与文件使用不同端序是最容易出现
+“找到文件但长度荒谬”的边界。
+
+项目不使用 DMA 扩展，只用 PIO 数据端口逐字节读取。Stage 1 把条目扩展为
+24 字节并排序；内核不直接依赖 `fw_cfg`。硬件接口依据 QEMU
+[fw_cfg 规范](https://qemu.readthedocs.io/en/master/specs/fw_cfg.html)。
+
 - `docs/hardware/register_map.yaml`：芯片、寄存器、位和访问宽度的机器可读规格。
 - `source/firmware/src/reset_and_serial.asm`：固件端口访问与 ATA 状态机实现。
 - `source/boot/stage1/src/entry.asm`：模式切换、页表和 Stage 1 串口路径。
 - `source/boot/stage1/src/kernel_loader.asm`：长模式 ATA、CRC32、ELF 和 BootInfo。
+- `source/boot/stage1/src/memory_map.asm`：`fw_cfg`、E820 转换与排序。
 - `source/kernel/src/architecture.asm`：LGDT/LIDT/LTR、异常桩和统一寄存器保存。
 - `source/kernel/src/descriptor_tables.cpp`：GDT、TSS、IDT 构造与硬件回读验证。
+- `source/kernel/src/memory_manager.cpp`：页帧、四级页表、权限、guard 与堆。
 - `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
 - `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。

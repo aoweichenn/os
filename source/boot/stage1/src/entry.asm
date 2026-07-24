@@ -284,6 +284,12 @@ os_stage1_long_mode_entry:
     mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE + os_stage1_long_mode_message
     call os_stage1_long_write_string
 
+    call os_stage1_discover_physical_memory
+    jnc os_stage1_report_memory_map_invalid
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_memory_map_ready_message
+    call os_stage1_long_write_string
+
     call os_stage1_load_kernel
     jnc os_stage1_report_kernel_load_failure
     mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
@@ -316,6 +322,12 @@ os_stage1_report_kernel_load_failure:
     je os_stage1_report_kernel_checksum_invalid
     cmp al, OS_STAGE1_RESULT_KERNEL_ELF_INVALID
     je os_stage1_report_kernel_elf_invalid
+    jmp os_stage1_long_halt
+
+os_stage1_report_memory_map_invalid:
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_memory_map_invalid_message
+    call os_stage1_long_write_string
     jmp os_stage1_long_halt
 
 os_stage1_report_kernel_ata_timeout:
@@ -533,6 +545,12 @@ os_stage1_paging_invalid_message:
 os_stage1_long_mode_message:
     db "[OS][STAGE1] LONG_MODE", 0x0D, 0x0A, 0x00
 
+os_stage1_memory_map_ready_message:
+    db "[OS][STAGE1] MEMORY_MAP_READY", 0x0D, 0x0A, 0x00
+
+os_stage1_memory_map_invalid_message:
+    db "[OS][STAGE1] MEMORY_MAP_INVALID", 0x0D, 0x0A, 0x00
+
 os_stage1_kernel_transfer_message:
     db "[OS][STAGE1] KERNEL_TRANSFER", 0x0D, 0x0A, 0x00
 
@@ -554,4 +572,5 @@ os_stage1_kernel_checksum_invalid_message:
 os_stage1_kernel_elf_invalid_message:
     db "[OS][STAGE1] KERNEL_ELF_INVALID", 0x0D, 0x0A, 0x00
 
+%include "memory_map.asm"
 %include "kernel_loader.asm"

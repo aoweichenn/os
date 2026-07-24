@@ -49,6 +49,14 @@ OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
         "osKernelExceptionDispatch",
         "osKernelDispatchException",
         "osKernelExceptionStubTable",
+        "osKernelImageStart",
+        "osKernelImageEnd",
+        "osKernelTextStart",
+        "osKernelTextEnd",
+        "osKernelReadOnlyDataStart",
+        "osKernelReadOnlyDataEnd",
+        "osKernelWritableDataStart",
+        "osKernelWritableDataEnd",
     )
 )
 

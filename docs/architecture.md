@@ -107,13 +107,16 @@ LBA 66..N   kernel.elf（精确长度 + 扇区补零）
 | `0x00008000..0x0000FFFF` | Stage 1 最大负载窗口 |
 | `0x00010000..0x00012FFF` | PML4、PDPT、PD |
 | `0x00013000..0x000131FF` | Kernel 描述符 |
-| `0x00014000..0x0001404F` | BootInfo v1 |
+| `0x00014000..0x00014067` | BootInfo v2 |
 | `0x00015000..0x00015FFF` | ELF 验证工作区 |
+| `0x00016000..0x00016FFF` | 物理内存图元数据 |
+| `0x00017000..0x00017FFF` | `fw_cfg` 名称暂存区 |
+| `0x00018000..0x00018BFF` | 最多 128 项的 24 字节物理内存图 |
 | `0x00020000..0x0009FFFF` | 最大 512 KiB ELF 暂存 |
 | `0x00100000..0x03EFFFFF` | Kernel `PT_LOAD` 目标窗口 |
 | `0x03FEF000..0x03FFEFFF` | 早期内核栈保留区 |
 
-BootInfo magic 为 `OSBOOT64`，10 个字段全部为 64 位。Stage 1 把其地址放入
+BootInfo magic 为 `OSBOOT64`，版本 2 的 13 个字段全部为 64 位。Stage 1 把其地址放入
 `RDI`，在 16 字节对齐的栈上使用 `CALL` 进入 `osKernelEntry`，从而满足
 System V AMD64 函数入口的栈约束。详细理由见
 [ADR 0007](adr/0007-two-pass-elf-loader-and-boot-info.md)。
@@ -169,6 +172,56 @@ NMI 和机器检查门分别指定 IST1、IST2、IST3。panic 不分配内存、
 指针或 QEMU 偶然状态。设计理由见
 [ADR 0008](adr/0008-kernel-descriptor-tables-and-exception-abi.md)。
 
+## v0.6 物理内存发现与内核页表
+
+自研 ROM 没有传统 PC BIOS 的 `INT 15h, E820h` 服务，Stage 1 又不能假设
+所有 QEMU `-m` 内存都连续可用。项目因此把 QEMU PC 的 `fw_cfg` 当作一个
+真实硬件配置设备：选择端口 `0x510`，数据端口 `0x511`。Stage 1 验证
+`QEMU` 签名、读取 selector `0x19` 的大端文件目录、找到 `etc/e820`，
+再把每个 20 字节 QEMU 项转换为项目的 24 字节项并按物理基址排序。
+
+```text
+fw_cfg selector/data 端口
+  ↓ 签名、目录数量和名称边界
+etc/e820 原始项
+  ↓ 20 B → 24 B、最多 128 项、基址排序
+BootInfo v2
+  ↓ 指针、数量、条目宽度
+内核验证：非空、无溢出、单调、不重叠、存在受管可用 RAM
+```
+
+内核不继续使用 Stage 1 的三个大页表页作为长期地址空间。它先在旧的低
+64 MiB 身份映射下初始化页帧分配器，保留低 1 MiB、实际 Kernel ELF 映像和
+64 KiB 初始栈，再从剩余页帧建立四级 4 KiB 页表。切换关系如下：
+
+```text
+Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
+       ↓ 分配并清零 PML4 / PDPT / PD / PT
+低半区 0..64 MiB 恒等映射
+  ├─ 0 页 not-present
+  ├─ Kernel text: RX
+  ├─ rodata: R + NX
+  ├─ data/BSS/stack: RW + NX
+  ├─ 初始栈底 4 KiB guard: not-present
+  └─ 三个 IST 栈底 guard: not-present
+高半区 0xFFFF800000000000
+  ├─ 64 KiB heap: RW + NX
+  └─ 0xFFFF800000100000: R + NX 写保护测试页
+       ↓ 设置 EFER.NXE 与 CR0.WP
+内核 CR3 = 新 PML4 物理地址
+```
+
+页帧状态用 2 bit 编码：不可用、空闲、已分配、已保留。相较一位位图，它多
+占 4 KiB 状态存储，却能区分“永不可分配”“启动所有权”“动态所有权”，从而
+让重复释放、释放保留页和跨已分配页保留都具有明确失败语义。当前只管理低
+64 MiB，接口和统计全部使用 64 位，后续扩大管理范围无需改变公共 ABI。
+
+高半区堆是单调早期分配器：支持二的幂对齐和显式失败，不支持释放。该选择用于
+启动期对象，而不是声称已经完成通用内核堆。页表管理器同样暂不回收空的中间
+页表；v0.7 设备初始化可以使用当前堆，通用释放和页表生命周期将在进程地址
+空间出现前补充。设计决策见
+[ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -217,7 +270,8 @@ source/boot/stage1/
 │   └── kernel_loader.inc
 └── src/
     ├── entry.asm
-    └── kernel_loader.asm
+    ├── kernel_loader.asm
+    └── memory_map.asm
 
 source/kernel/
 ├── CMakeLists.txt
@@ -228,8 +282,13 @@ source/kernel/
 │   ├── entry.hpp
 │   ├── exception_frame.hpp
 │   ├── exceptions.hpp
+│   ├── kernel_heap.hpp
 │   ├── kernel_main.hpp
+│   ├── memory_manager.hpp
+│   ├── page_table.hpp
 │   ├── panic.hpp
+│   ├── physical_frame_allocator.hpp
+│   ├── physical_memory_map.hpp
 │   ├── processor.hpp
 │   └── serial_port.hpp
 ├── linker/
@@ -242,8 +301,14 @@ source/kernel/
     ├── entry.cpp
     ├── exception_frame.cpp
     ├── exceptions.cpp
+    ├── kernel_heap.cpp
     ├── kernel_main.cpp
+    ├── memory_manager.cpp
+    ├── page_table.cpp
+    ├── page_table_layout.cpp
     ├── panic.cpp
+    ├── physical_frame_allocator.cpp
+    ├── physical_memory_map.cpp
     ├── processor.cpp
     └── serial_port.cpp
 ```

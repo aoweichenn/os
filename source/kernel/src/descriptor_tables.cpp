@@ -8,6 +8,7 @@ namespace os::kernel {
 const uint16_t OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR = 0x0008U;
 const uint16_t OS_KERNEL_DESCRIPTOR_KERNEL_DATA_SELECTOR = 0x0010U;
 const uint16_t OS_KERNEL_DESCRIPTOR_TASK_STATE_SELECTOR = 0x0018U;
+const uint64_t OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT = 3ULL;
 
 namespace {
 
@@ -22,6 +23,12 @@ constexpr uint64_t OS_KERNEL_DESCRIPTOR_LONG_MODE_CODE_SEGMENT = 0x00AF9A000000F
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_LONG_MODE_DATA_SEGMENT = 0x00CF92000000FFFFULL;
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_INCLUSIVE_LIMIT_ADJUSTMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES = 16ULL * 1024ULL;
+constexpr uint64_t OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES = 4ULL * 1024ULL;
+constexpr uint64_t OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES =
+    OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES + OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES;
+constexpr uint64_t OS_KERNEL_DESCRIPTOR_DOUBLE_FAULT_GUARD_INDEX = 0ULL;
+constexpr uint64_t OS_KERNEL_DESCRIPTOR_NMI_GUARD_INDEX = 1ULL;
+constexpr uint64_t OS_KERNEL_DESCRIPTOR_MACHINE_CHECK_GUARD_INDEX = 2ULL;
 constexpr uint8_t OS_KERNEL_DESCRIPTOR_NO_IST = 0U;
 constexpr uint8_t OS_KERNEL_DESCRIPTOR_DOUBLE_FAULT_IST = 1U;
 constexpr uint8_t OS_KERNEL_DESCRIPTOR_NMI_IST = 2U;
@@ -49,10 +56,12 @@ alignas(16) uint64_t kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_ENTRY_
 alignas(16) InterruptGateDescriptor
     kernelInterruptDescriptorTable[OS_KERNEL_DESCRIPTOR_INTERRUPT_GATE_COUNT];
 alignas(16) TaskStateSegment kernelTaskStateSegment;
-alignas(16) uint8_t kernelDoubleFaultStack[OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES];
-alignas(16) uint8_t
-    kernelNonMaskableInterruptStack[OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES];
-alignas(16) uint8_t kernelMachineCheckStack[OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES];
+alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
+    kernelDoubleFaultStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
+alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
+    kernelNonMaskableInterruptStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
+alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
+    kernelMachineCheckStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
 
 extern "C" const uint64_t osKernelExceptionStubTable[OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT];
 
@@ -100,11 +109,11 @@ void initializeGlobalDescriptorTable(const uint64_t privilegeStackTop) noexcept 
     kernelTaskStateSegment.privilegeStackPointer2 = 0ULL;
     kernelTaskStateSegment.reserved1 = 0ULL;
     kernelTaskStateSegment.interruptStackPointer1 =
-        stackTopAddress(kernelDoubleFaultStack, OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES);
+        stackTopAddress(kernelDoubleFaultStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
     kernelTaskStateSegment.interruptStackPointer2 = stackTopAddress(
-        kernelNonMaskableInterruptStack, OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES);
+        kernelNonMaskableInterruptStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
     kernelTaskStateSegment.interruptStackPointer3 =
-        stackTopAddress(kernelMachineCheckStack, OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES);
+        stackTopAddress(kernelMachineCheckStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
     kernelTaskStateSegment.interruptStackPointer4 = 0ULL;
     kernelTaskStateSegment.interruptStackPointer5 = 0ULL;
     kernelTaskStateSegment.interruptStackPointer6 = 0ULL;
@@ -192,6 +201,19 @@ validateDescriptorTables(const uint64_t expectedPrivilegeStackTop) noexcept {
         return DescriptorTableValidationStatus::InvalidTaskStateSegment;
     }
     return DescriptorTableValidationStatus::Succeeded;
+}
+
+uint64_t interruptStackGuardPageAddress(const uint64_t guardPageIndex) noexcept {
+    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_DOUBLE_FAULT_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernelDoubleFaultStack);
+    }
+    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_NMI_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernelNonMaskableInterruptStack);
+    }
+    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_MACHINE_CHECK_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernelMachineCheckStack);
+    }
+    return 0ULL;
 }
 
 }

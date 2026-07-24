@@ -135,6 +135,53 @@ set_tests_properties(
         LABELS "randomized"
 )
 
+function(os_add_kernel_memory_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_memory_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_memory_test(
+    os_kernel_physical_memory_map_unit_tests
+    unit/kernel/physical_memory_map_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
+    os_kernel_physical_frame_allocator_unit_tests
+    unit/kernel/physical_frame_allocator_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
+    os_kernel_heap_and_page_layout_unit_tests
+    unit/kernel/heap_and_page_layout_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
+    os_kernel_memory_bootstrap_integration_tests
+    integration/boot/kernel_memory_bootstrap_test.cpp
+    "integration"
+)
+os_add_kernel_memory_test(
+    os_kernel_memory_management_randomized_tests
+    randomized/kernel/memory_management_randomized_test.cpp
+    "randomized"
+)
+
 add_test(
     NAME os_freestanding_symbol_audit
     COMMAND
@@ -422,6 +469,26 @@ set_tests_properties(
 )
 
 add_test(
+    NAME os_qemu_stage1_memory_map_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_STAGE1_MEMORY_MAP_INVALID_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        memory-map-invalid
+)
+set_tests_properties(
+    os_qemu_stage1_memory_map_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
     NAME os_qemu_kernel_header_failure
     COMMAND
         "${Python3_EXECUTABLE}"
@@ -556,6 +623,26 @@ add_test(
 )
 set_tests_properties(
     os_qemu_kernel_page_fault_panic
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_write_protection_panic
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-write-protection
+)
+set_tests_properties(
+    os_qemu_kernel_write_protection_panic
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10

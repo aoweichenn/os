@@ -25,6 +25,17 @@
 | BSS | ELF 中只占内存、不保存初始化文件字节的零初始化区域 |
 | CRC32 | 32 位循环冗余校验；本项目用于检测描述符和 Kernel 文件的偶然损坏 |
 | BootInfo | Stage 1 传给内核的版本化固定宽度启动信息结构 |
+| `fw_cfg` | QEMU PC 提供的配置硬件接口；本项目通过端口读取 `etc/e820` |
+| E820 | 描述物理地址区间、长度和类型的内存图格式 |
+| physical frame | 按 4 KiB 页粒度管理的物理内存所有权单位 |
+| PML4 / PDPT / PD / PT | x86-64 四级页表的四层结构 |
+| canonical address | x86-64 要求高位为有效地址位符号扩展的线性地址 |
+| NX | 页表 no-execute 权限；需要 `IA32_EFER.NXE` 启用 |
+| WP | CR0 的 write-protect 位，使 supervisor 写也遵守只读页权限 |
+| guard page | 故意保持 not-present，用页故障捕获越界的保护页 |
+| TLB | 处理器缓存地址翻译和页权限的 Translation Lookaside Buffer |
+| `INVLPG` | 使当前处理器中一个线性地址的 TLB 翻译失效 |
+| monotonic heap | 只向前分配、不回收单个对象的早期堆 |
 | identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |
 | W^X | 同一内存段不同时具备可写和可执行权限的约束 |
 | ABI | Application Binary Interface，规定调用、寄存器、栈和二进制布局的契约 |

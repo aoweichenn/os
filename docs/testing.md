@@ -90,6 +90,28 @@
 - 两份故障镜像只替换入口选择，描述符、异常桩、分发器和 panic 均使用生产
   实现，避免“测试了一份并未交付的异常代码”。
 
+`v0.6` 把物理所有权、地址翻译和权限执行纳入同一证据链：
+
+- 内存图单元测试覆盖空指针、空图、零长度、地址溢出、乱序、重叠和受管范围
+  无可用 RAM，并核对描述字节、可用字节和受管可用字节。
+- 页帧单元测试覆盖初始化、保留、分配顺序、释放复用、重复释放、耗尽和释放
+  保留页；跨越已分配页的保留操作必须整体失败，不能留下部分修改。
+- 堆与页表布局单元测试覆盖对齐、失败不修改输出、耗尽、48 位 canonical
+  地址、四级索引和叶表项权限往返。
+- 集成测试用 QEMU 当前的内存图形状复现低端 RAM 与高端保留区，验证平台、
+  内核、栈保留后的首个可分配帧和统计；交接布局同步覆盖 BootInfo v2、
+  `fw_cfg` 暂存和内存图。
+- 固定种子 `0x6D656D6F72793634` 生成 8192 个物理地址/权限组合，并执行
+  4096 步随机分配/释放，与独立布尔所有权模型逐步比较。
+- 正常 QEMU 路径必须完成 `MEMORY_MAP_VALID`、`FRAME_ALLOCATOR_READY`、
+  `PAGING_READY`、`MEMORY_PERMISSIONS_VALID`、`HEAP_SELF_TEST_PASSED`
+  后才能到达 `READY`。
+- Stage 1 内存图失败镜像必须在 `LONG_MODE` 后输出 `MEMORY_MAP_INVALID`，
+  禁止读取 Kernel 或进入内核。
+- not-present 页故障继续验证错误码 0；新增 Ring 0 写只读页故障必须验证
+  错误码 `0x3` 和 CR2=`0xFFFF800000100000`。后者是 `CR0.WP` 的执行证据，
+  不能用软件查询页表项替代。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -131,6 +153,11 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_boot_info_unit_tests` | 单元 | BootInfo 全字段、上下界和失败状态 |
 | `os_kernel_descriptor_layout_unit_tests` | 单元 | TSS、IDT gate、异常错误码和恢复分类 |
 | `os_kernel_descriptor_layout_randomized_tests` | 随机 | 4096 组 64 位 TSS/IDT 地址编码往返 |
+| `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、排序、重叠、溢出与汇总 |
+| `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、保留原子性、分配释放与耗尽 |
+| `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
+| `os_kernel_memory_bootstrap_integration_tests` | 集成 | QEMU 内存图、启动保留范围与首个空闲帧 |
+| `os_kernel_memory_management_randomized_tests` | 随机 | 8192 组表项和 4096 步分配器模型对照 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
@@ -148,6 +175,7 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_firmware_ide_error_failure` | 系统/失败路径 | ATA ERR 必须进入设备错误分支 |
 | `os_qemu_stage1_header_failure` | 系统/失败路径 | ROM 必须拒绝损坏描述符 |
 | `os_qemu_stage1_checksum_failure` | 系统/失败路径 | ROM 必须拒绝损坏负载 |
+| `os_qemu_stage1_memory_map_failure` | 系统/失败路径 | Stage 1 内存发现失败不得进入 Kernel |
 | `os_qemu_kernel_header_failure` | 系统/失败路径 | Stage 1 必须拒绝损坏 Kernel 描述符 |
 | `os_qemu_kernel_checksum_failure` | 系统/失败路径 | Stage 1 必须拒绝损坏 Kernel 文件 |
 | `os_qemu_kernel_elf_failure` | 系统/失败路径 | Stage 1 必须拒绝 CRC 正确的非法 ELF |
@@ -155,14 +183,14 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_kernel_ata_error_failure` | 系统/失败路径 | Kernel 读取必须识别 ATA ERR/DF |
 | `os_qemu_kernel_invalid_opcode_panic` | 系统/失败路径 | UD2、向量 6、统一帧与 panic |
 | `os_qemu_kernel_page_fault_panic` | 系统/失败路径 | 向量 14、错误码、CR2 与 panic |
+| `os_qemu_kernel_write_protection_panic` | 系统/失败路径 | CR0.WP、错误码 3、只读页 CR2 与 panic |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 36 项 CTest：4 项单元、12 项集成、5 项随机、15 项系统，其中
-17 项带失败路径标签。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
+当前共 43 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
 `subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模

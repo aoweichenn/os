@@ -9,6 +9,10 @@ set(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kernel_loader.asm"
 )
 set(
+    OS_STAGE1_MEMORY_MAP_SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/memory_map.asm"
+)
+set(
     OS_STAGE1_KERNEL_LOADER_CONSTANTS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/kernel_loader.inc"
 )
@@ -38,6 +42,7 @@ add_custom_command(
     DEPENDS
         "${OS_STAGE1_SOURCE}"
         "${OS_STAGE1_KERNEL_LOADER_SOURCE}"
+        "${OS_STAGE1_MEMORY_MAP_SOURCE}"
         "${OS_STAGE1_KERNEL_LOADER_CONSTANTS}"
     COMMENT "汇编自研 Stage 1 模式切换与 ELF64 内核加载器"
     VERBATIM
@@ -74,6 +79,7 @@ function(
         DEPENDS
             "${OS_STAGE1_SOURCE}"
             "${OS_STAGE1_KERNEL_LOADER_SOURCE}"
+            "${OS_STAGE1_MEMORY_MAP_SOURCE}"
             "${OS_STAGE1_KERNEL_LOADER_CONSTANTS}"
         COMMENT "${OS_STAGE1_FAILURE_COMMENT}"
         VERBATIM
@@ -88,6 +94,10 @@ set(
     OS_STAGE1_KERNEL_ATA_ERROR_BINARY
     "${CMAKE_CURRENT_BINARY_DIR}/generated/stage1_kernel_ata_error.bin"
 )
+set(
+    OS_STAGE1_MEMORY_MAP_INVALID_BINARY
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/stage1_memory_map_invalid.bin"
+)
 os_add_stage1_failure_binary(
     "${OS_STAGE1_KERNEL_ATA_TIMEOUT_BINARY}"
     OS_STAGE1_TEST_FORCE_KERNEL_ATA_TIMEOUT
@@ -97,6 +107,11 @@ os_add_stage1_failure_binary(
     "${OS_STAGE1_KERNEL_ATA_ERROR_BINARY}"
     OS_STAGE1_TEST_FORCE_KERNEL_ATA_ERROR
     "汇编 Stage 1 Kernel ATA 设备错误测试镜像"
+)
+os_add_stage1_failure_binary(
+    "${OS_STAGE1_MEMORY_MAP_INVALID_BINARY}"
+    OS_STAGE1_TEST_FORCE_MEMORY_MAP_INVALID
+    "汇编 Stage 1 物理内存图发现失败测试镜像"
 )
 
 function(
@@ -139,6 +154,10 @@ os_add_stage1_failure_disk(
 os_add_stage1_failure_disk(
     "${OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE}"
     "${OS_STAGE1_KERNEL_ATA_ERROR_BINARY}"
+)
+os_add_stage1_failure_disk(
+    "${OS_STAGE1_MEMORY_MAP_INVALID_DISK_IMAGE}"
+    "${OS_STAGE1_MEMORY_MAP_INVALID_BINARY}"
 )
 
 function(
@@ -185,6 +204,11 @@ os_add_kernel_fault_disk(
     "${OS_KERNEL_PAGE_FAULT_ELF_PATH}"
     "生成页故障异常注入磁盘镜像"
 )
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE}"
+    "${OS_KERNEL_WRITE_PROTECTION_ELF_PATH}"
+    "生成内核写保护故障注入磁盘镜像"
+)
 
 add_custom_command(
     OUTPUT
@@ -225,6 +249,8 @@ add_custom_target(
         "${OS_KERNEL_INVALID_ELF_DISK_IMAGE}"
         "${OS_STAGE1_KERNEL_ATA_TIMEOUT_DISK_IMAGE}"
         "${OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE}"
+        "${OS_STAGE1_MEMORY_MAP_INVALID_DISK_IMAGE}"
         "${OS_KERNEL_INVALID_OPCODE_DISK_IMAGE}"
         "${OS_KERNEL_PAGE_FAULT_DISK_IMAGE}"
+        "${OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE}"
 )

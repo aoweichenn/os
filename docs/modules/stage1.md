@@ -15,10 +15,12 @@
   大页恒等映射低 64 MiB。
 - 依次启用 PAE、LME 和分页，回读控制状态后远跳到 64 位代码段。
 - 使用独立的 64 位 COM1 发送路径输出 `[OS][STAGE1] LONG_MODE`。
+- 通过 `fw_cfg` 端口验证 QEMU 签名，流式查找并读取 `etc/e820`。
+- 把 QEMU 20 字节内存项转换为 24 字节项目 ABI，并按物理基址排序。
 - 用自研 ATA PIO 驱动读取 LBA 65 描述符和 LBA 66 起的 Kernel ELF。
 - 验证描述符 CRC32、负载 CRC32、扇区补零和 ELF64 全部结构。
 - 先完整验证所有 `PT_LOAD`，再复制文件内容并清零 BSS。
-- 在 `0x14000` 构造 80 字节 BootInfo，切换独立内核栈并调用
+- 在 `0x14000` 构造 104 字节 BootInfo v2，切换独立内核栈并调用
   `0x00100000`。
 
 ## 磁盘格式
@@ -55,8 +57,11 @@ LBA 0 是 512 字节描述符，LBA 1 开始保存按扇区补零的负载。头
 | `0x00008000..0x0000FFFF` | Stage 1 自身，构建时限制不超过 32 KiB |
 | `0x00010000..0x00012FFF` | PML4、PDPT 和 PD |
 | `0x00013000..0x000131FF` | Kernel 描述符 |
-| `0x00014000..0x0001404F` | BootInfo |
+| `0x00014000..0x00014067` | BootInfo v2 |
 | `0x00015000..0x00015FFF` | ELF 遍历临时状态 |
+| `0x00016000..0x00016FFF` | 内存图条目数等元数据 |
+| `0x00017000..0x00017FFF` | `fw_cfg` 文件名暂存 |
+| `0x00018000..0x00018BFF` | 最多 128 个 24 字节内存图项 |
 | `0x00020000..0x0009FFFF` | Kernel ELF 暂存区，最大 512 KiB |
 | `0x00100000..0x03EFFFFF` | `PT_LOAD` 目标窗口 |
 | `0x03FEF000..0x03FFEFFF` | 内核初始栈保留区 |
@@ -66,6 +71,13 @@ ELF 校验采用两遍算法。第一遍验证 ELF64 标识、`ET_EXEC`、x86-64
 装载、R/W/X 权限、W^X、段间不重叠，以及入口确实被可执行段覆盖。任何验证
 失败都不会改写内核目标区。第二遍才执行复制和 BSS 清零。
 
+内存发现先从 selector `0x0000` 读取 `QEMU` 签名，再从 selector `0x0019`
+读取大端文件目录。目录最多遍历 256 项；找到名称精确为 `etc/e820` 的文件后，
+要求长度非零、是 20 的整数倍且不超过 128 项。每项的 base、length、type
+保持硬件宽度，尾部属性字段补零。由于 `fw_cfg` 文件顺序不是内核 ABI，
+Stage 1 最后执行有界冒泡排序。签名、目录、选择子、长度或数量任一失败都只
+输出一次 `MEMORY_MAP_INVALID`，并禁止继续读取 Kernel。
+
 交接时 RDI 指向 `0x14000` 的 BootInfo，RSP 设为 `0x03FFF000`，通过
 `CALL` 进入 C ABI 的 `osKernelEntry`。内核入口不应返回；若意外返回，
 Stage 1 输出 `KERNEL_RETURNED` 并停机。
@@ -74,6 +86,7 @@ Stage 1 输出 `KERNEL_RETURNED` 并停机。
 
 | 标记 | 含义 |
 | --- | --- |
+| `MEMORY_MAP_INVALID` | `fw_cfg` 签名、目录或 `etc/e820` 结构不满足边界 |
 | `KERNEL_ATA_TIMEOUT` | BSY/DRQ 轮询超过固定预算 |
 | `KERNEL_ATA_ERROR` | 设备返回 ERR 或 DF |
 | `KERNEL_HEADER_INVALID` | 描述符字段、范围、保留区或描述符 CRC 错误 |

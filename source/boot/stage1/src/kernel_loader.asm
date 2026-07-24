@@ -600,6 +600,19 @@ os_stage1_build_boot_info:
     mov qword [ \
         rdi + OS_STAGE1_BOOT_INFO_KERNEL_STACK_TOP_OFFSET \
     ], OS_STAGE1_KERNEL_STACK_TOP
+    mov qword [ \
+        rdi + OS_STAGE1_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS_OFFSET \
+    ], OS_STAGE1_PHYSICAL_MEMORY_MAP_ADDRESS
+    mov rax, [ \
+        OS_STAGE1_MEMORY_MAP_METADATA_ADDRESS \
+        + OS_STAGE1_MEMORY_MAP_ENTRY_COUNT_OFFSET \
+    ]
+    mov [ \
+        rdi + OS_STAGE1_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_COUNT_OFFSET \
+    ], rax
+    mov qword [ \
+        rdi + OS_STAGE1_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_OFFSET \
+    ], OS_STAGE1_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES
     ret
 
 os_stage1_read_ata_sector:

@@ -1,6 +1,7 @@
 #include "os/kernel/kernel_main.hpp"
 
 #include "os/kernel/descriptor_tables.hpp"
+#include "os/kernel/memory_manager.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
 
@@ -26,10 +27,32 @@ constexpr char OS_KERNEL_MAIN_DESCRIPTOR_TABLES_INVALID_MESSAGE[] =
     "[OS][KERNEL] DESCRIPTOR_TABLES_INVALID\r\n";
 constexpr char OS_KERNEL_MAIN_EXCEPTION_SELF_TEST_READY_MESSAGE[] =
     "[OS][KERNEL] EXCEPTION_SELF_TEST_READY\r\n";
+constexpr char OS_KERNEL_MAIN_MEMORY_MAP_VALID_MESSAGE[] = "[OS][KERNEL] MEMORY_MAP_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_MEMORY_INITIALIZATION_FAILED_PREFIX[] =
+    "[OS][KERNEL] MEMORY_INITIALIZATION_FAILED=";
+constexpr char OS_KERNEL_MAIN_MEMORY_MAP_ENTRY_COUNT_PREFIX[] = "[OS][KERNEL] MEMORY_MAP_ENTRIES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_DESCRIBED_PREFIX[] = "[OS][KERNEL] MEMORY_DESCRIBED_BYTES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_USABLE_PREFIX[] = "[OS][KERNEL] MEMORY_USABLE_BYTES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_MANAGED_PREFIX[] = "[OS][KERNEL] MEMORY_MANAGED_BYTES=";
+constexpr char OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE[] =
+    "[OS][KERNEL] FRAME_ALLOCATOR_READY\r\n";
+constexpr char OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX[] = "[OS][KERNEL] FREE_FRAMES=";
+constexpr char OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX[] = "[OS][KERNEL] ALLOCATED_FRAMES=";
+constexpr char OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX[] = "[OS][KERNEL] RESERVED_FRAMES=";
+constexpr char OS_KERNEL_MAIN_PAGING_READY_MESSAGE[] = "[OS][KERNEL] PAGING_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PAGING_ROOT_PREFIX[] = "[OS][KERNEL] PAGING_ROOT=";
+constexpr char OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE[] =
+    "[OS][KERNEL] MEMORY_PERMISSIONS_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_HEAP_READY_MESSAGE[] = "[OS][KERNEL] HEAP_READY\r\n";
+constexpr char OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX[] = "[OS][KERNEL] HEAP_CAPACITY_BYTES=";
+constexpr char OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] HEAP_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE[] =
     "[OS][KERNEL] FAULT_INJECTION=INVALID_OPCODE\r\n";
 constexpr char OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE[] =
     "[OS][KERNEL] FAULT_INJECTION=PAGE_FAULT\r\n";
+constexpr char OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE[] =
+    "[OS][KERNEL] FAULT_INJECTION=WRITE_PROTECTION\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
@@ -39,6 +62,13 @@ uint64_t kernelMainBssProbe;
 
 void writeRequiredMessage(const SerialPort &serialPort, const char *message) noexcept {
     if (!serialPort.tryWriteString(message)) {
+        haltProcessor();
+    }
+}
+
+void writeRequiredHexLine(const SerialPort &serialPort, const char *prefix,
+                          const uint64_t value) noexcept {
+    if (!serialPort.tryWriteHexLine(prefix, value)) {
         haltProcessor();
     }
 }
@@ -82,11 +112,50 @@ void initializeKernelArchitecture(const SerialPort &serialPort, const BootInfo &
     writeRequiredMessage(serialPort, OS_KERNEL_MAIN_EXCEPTION_SELF_TEST_READY_MESSAGE);
 }
 
+void initializeKernelMemorySubsystem(const SerialPort &serialPort,
+                                     const BootInfo &bootInfo) noexcept {
+    const KernelMemoryInitializationStatus status = initializeKernelMemory(bootInfo);
+    if (status != KernelMemoryInitializationStatus::Succeeded) {
+        writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_INITIALIZATION_FAILED_PREFIX,
+                             static_cast<uint64_t>(status));
+        haltProcessor();
+    }
+    const KernelMemoryStatistics &statistics = kernelMemoryStatistics();
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_MEMORY_MAP_VALID_MESSAGE);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_MAP_ENTRY_COUNT_PREFIX,
+                         statistics.memoryMapEntryCount);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_DESCRIBED_PREFIX,
+                         statistics.describedAddressBytes);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_USABLE_PREFIX,
+                         statistics.reportedUsableMemoryBytes);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_MANAGED_PREFIX,
+                         statistics.managedUsableMemoryBytes);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX,
+                         statistics.freeFrameCount);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX,
+                         statistics.allocatedFrameCount);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX,
+                         statistics.reservedFrameCount);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
+                         statistics.pageTableRootPhysicalAddress);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_HEAP_READY_MESSAGE);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX,
+                         statistics.heapCapacityBytes);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
+}
+
 [[noreturn]] void executeFaultInjection(const SerialPort &serialPort,
                                         const KernelFaultInjection faultInjection) noexcept {
     if (faultInjection == KernelFaultInjection::InvalidOpcode) {
         writeRequiredMessage(serialPort, OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE);
         triggerInvalidOpcode();
+    }
+    if (faultInjection == KernelFaultInjection::WriteProtection) {
+        writeRequiredMessage(serialPort, OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE);
+        triggerWriteProtectionFault(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS);
     }
     writeRequiredMessage(serialPort, OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE);
     triggerPageFault();
@@ -102,6 +171,7 @@ void initializeKernelArchitecture(const SerialPort &serialPort, const BootInfo &
 
     validateBootEnvironment(serialPort, bootInfo);
     initializeKernelArchitecture(serialPort, *bootInfo);
+    initializeKernelMemorySubsystem(serialPort, *bootInfo);
 
     if (faultInjection != KernelFaultInjection::None) {
         executeFaultInjection(serialPort, faultInjection);

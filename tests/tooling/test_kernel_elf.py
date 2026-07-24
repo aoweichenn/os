@@ -40,6 +40,14 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
     "osKernelExceptionDispatch",
     "osKernelDispatchException",
     "osKernelExceptionStubTable",
+    "osKernelImageStart",
+    "osKernelImageEnd",
+    "osKernelTextStart",
+    "osKernelTextEnd",
+    "osKernelReadOnlyDataStart",
+    "osKernelReadOnlyDataEnd",
+    "osKernelWritableDataStart",
+    "osKernelWritableDataEnd",
     *(f"os_kernel_exception_vector_{vector}" for vector in range(32)),
 }
 

@@ -43,8 +43,9 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v0.5 ELF64 内核，以及格式损坏、目标 ATA、
-   非法指令和页故障注入镜像，同时保留 v0.0 空镜像回归基线。
+4. 生成自研 ROM、Stage 1、v0.6 ELF64 内核，以及格式损坏、目标 ATA、
+   内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
+   回归基线。
 5. 运行全部 CTest 测试。
 
 ## 手动构建
@@ -70,9 +71,11 @@ source/firmware/generated/os_firmware_serial_failure.elf
 source/firmware/generated/os_firmware_ide_busy_failure.elf
 source/firmware/generated/os_firmware_ide_error_failure.elf
 source/boot/stage1/generated/stage1.bin
+source/boot/stage1/generated/stage1_memory_map_invalid.bin
 source/kernel/kernel.elf
 source/kernel/kernel_invalid_opcode.elf
 source/kernel/kernel_page_fault.elf
+source/kernel/kernel_write_protection.elf
 images/firmware.bin
 images/firmware_serial_failure.bin
 images/firmware_ide_busy_failure.bin
@@ -85,8 +88,10 @@ images/kernel_invalid_checksum_disk.img
 images/kernel_invalid_elf_disk.img
 images/stage1_kernel_ata_timeout/boot_disk.img
 images/stage1_kernel_ata_error/boot_disk.img
+images/stage1_memory_map_invalid/boot_disk.img
 images/kernel_invalid_opcode/boot_disk.img
 images/kernel_page_fault/boot_disk.img
+images/kernel_write_protection/boot_disk.img
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
@@ -96,6 +101,11 @@ tests/os_kernel_boot_info_unit_tests
 tests/os_kernel_descriptor_layout_unit_tests
 tests/os_kernel_descriptor_layout_randomized_tests
 tests/os_kernel_handoff_layout_integration_tests
+tests/os_kernel_physical_memory_map_unit_tests
+tests/os_kernel_physical_frame_allocator_unit_tests
+tests/os_kernel_heap_and_page_layout_unit_tests
+tests/os_kernel_memory_bootstrap_integration_tests
+tests/os_kernel_memory_management_randomized_tests
 ```
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
@@ -122,6 +132,7 @@ reset_and_serial.asm
 ```text
 source/boot/stage1/src/entry.asm
 source/boot/stage1/src/kernel_loader.asm
+source/boot/stage1/src/memory_map.asm
   └─ NASM bin → stage1.bin
        └─ Python Stage 1 格式编码与校验
 ```
@@ -167,9 +178,9 @@ python3 tools/os.py audit-kernel-image build/developer/images/boot_disk.img
 ```
 
 构建同时生成 Kernel 描述符损坏、Kernel ELF 内容损坏、CRC 正确但 ELF
-语义非法、目标 ATA 永久忙/设备错误，以及内核 `UD2`/页故障的失败镜像。
-宿主审计拒绝前三类不可信输入，QEMU 测试进一步证明 Stage 1 和 Kernel
-自己走到对应的失败边界。
+语义非法、目标 ATA 永久忙/设备错误、`fw_cfg` 内存图失败，以及内核
+`UD2`/not-present 页故障/写保护页故障的失败镜像。宿主审计拒绝前三类
+不可信输入，QEMU 测试进一步证明 Stage 1 和 Kernel 自己走到对应的失败边界。
 
 ## 教材构建
 

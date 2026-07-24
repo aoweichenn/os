@@ -21,8 +21,16 @@ constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_TOO_MANY_SEGMENTS =
 constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_PAGE_TABLE_ROOT = "错误页表根地址必须被拒绝";
 constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_MAP_SIZE = "错误身份映射范围必须被拒绝";
 constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_STACK = "错误内核栈地址必须被拒绝";
+constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ADDRESS =
+    "错误物理内存图地址必须被拒绝";
+constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_COUNT = "空物理内存图必须被拒绝";
+constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_TOO_LARGE =
+    "超出容量的物理内存图必须被拒绝";
+constexpr std::string_view OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ENTRY_SIZE =
+    "错误物理内存图条目宽度必须被拒绝";
 constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_VALID_FILE_SIZE_BYTES = 0x0000000000004000ULL;
 constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_VALID_SEGMENT_COUNT = 3ULL;
+constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_VALID_MEMORY_MAP_ENTRY_COUNT = 4ULL;
 constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS = 1ULL;
 
@@ -40,6 +48,10 @@ os::kernel::BootInfo createValidBootInfo() {
         .identityMappedSizeBytes = os::kernel::OS_KERNEL_BOOT_INFO_IDENTITY_MAPPED_SIZE_BYTES,
         .kernelStackTopPhysicalAddress =
             os::kernel::OS_KERNEL_BOOT_INFO_KERNEL_STACK_TOP_PHYSICAL_ADDRESS,
+        .physicalMemoryMapAddress = os::kernel::OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS,
+        .physicalMemoryMapEntryCount = OS_TEST_KERNEL_BOOT_INFO_VALID_MEMORY_MAP_ENTRY_COUNT,
+        .physicalMemoryMapEntrySizeBytes =
+            os::kernel::OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES,
     };
 }
 
@@ -123,6 +135,32 @@ int main() {
     testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidKernelStack,
                        OS_TEST_KERNEL_BOOT_INFO_STACK);
+
+    bootInfo = createValidBootInfo();
+    bootInfo.physicalMemoryMapAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ADDRESS);
+
+    bootInfo = createValidBootInfo();
+    bootInfo.physicalMemoryMapEntryCount = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_COUNT);
+
+    bootInfo = createValidBootInfo();
+    bootInfo.physicalMemoryMapEntryCount =
+        os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT +
+        OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
+    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_TOO_LARGE);
+
+    bootInfo = createValidBootInfo();
+    bootInfo.physicalMemoryMapEntrySizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ENTRY_SIZE);
 
     return testContext.exitCode();
 }

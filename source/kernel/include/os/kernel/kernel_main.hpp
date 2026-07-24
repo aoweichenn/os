@@ -10,6 +10,7 @@ enum class KernelFaultInjection : uint64_t {
     None,
     InvalidOpcode,
     PageFault,
+    WriteProtection,
 };
 
 [[noreturn]] void runKernel(const BootInfo *bootInfo, KernelFaultInjection faultInjection) noexcept;

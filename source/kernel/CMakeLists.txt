@@ -7,7 +7,12 @@ set(
     include/os/kernel/exception_frame.hpp
     include/os/kernel/exceptions.hpp
     include/os/kernel/kernel_main.hpp
+    include/os/kernel/kernel_heap.hpp
+    include/os/kernel/memory_manager.hpp
+    include/os/kernel/page_table.hpp
     include/os/kernel/panic.hpp
+    include/os/kernel/physical_frame_allocator.hpp
+    include/os/kernel/physical_memory_map.hpp
     include/os/kernel/processor.hpp
     include/os/kernel/serial_port.hpp
 )
@@ -20,7 +25,13 @@ set(
     src/exception_frame.cpp
     src/exceptions.cpp
     src/kernel_main.cpp
+    src/kernel_heap.cpp
+    src/memory_manager.cpp
+    src/page_table.cpp
+    src/page_table_layout.cpp
     src/panic.cpp
+    src/physical_frame_allocator.cpp
+    src/physical_memory_map.cpp
     src/processor.cpp
     src/serial_port.cpp
 )
@@ -57,6 +68,29 @@ target_include_directories(
 )
 target_compile_options(
     os_kernel_architecture_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
+add_library(
+    os_kernel_memory_model_host
+    STATIC
+        src/kernel_heap.cpp
+        src/page_table_layout.cpp
+        src/physical_frame_allocator.cpp
+        src/physical_memory_map.cpp
+        include/os/kernel/kernel_heap.hpp
+        include/os/kernel/page_table.hpp
+        include/os/kernel/physical_frame_allocator.hpp
+        include/os/kernel/physical_memory_map.hpp
+)
+target_include_directories(
+    os_kernel_memory_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_memory_model_host
     PRIVATE
         ${OS_COMMON_WARNING_FLAGS}
 )
@@ -199,6 +233,10 @@ os_add_kernel_object_target(
     os_kernel_page_fault_objects
     "${PROJECT_SOURCE_DIR}/tests/system/kernel/page_fault_entry.cpp"
 )
+os_add_kernel_object_target(
+    os_kernel_write_protection_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/write_protection_entry.cpp"
+)
 
 set(
     OS_KERNEL_ELF_PATH
@@ -217,6 +255,12 @@ set(
     "${CMAKE_CURRENT_BINARY_DIR}/kernel_page_fault.elf"
     CACHE INTERNAL
     "页故障注入 ELF64 内核路径"
+)
+set(
+    OS_KERNEL_WRITE_PROTECTION_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_write_protection.elf"
+    CACHE INTERNAL
+    "内核写保护故障注入 ELF64 内核路径"
 )
 
 function(
@@ -243,6 +287,7 @@ function(
             "${OS_KERNEL_ARCHITECTURE_OBJECT}"
         DEPENDS
             ${OS_KERNEL_OBJECT_TARGET}
+            $<TARGET_OBJECTS:${OS_KERNEL_OBJECT_TARGET}>
             os_kernel_architecture_object
             "${OS_KERNEL_LINKER_SCRIPT}"
         COMMENT "${OS_KERNEL_LINK_COMMENT}"
@@ -273,4 +318,10 @@ os_add_kernel_elf_target(
     os_kernel_page_fault_objects
     "${OS_KERNEL_PAGE_FAULT_ELF_PATH}"
     "链接页故障异常注入 ELF64 内核"
+)
+os_add_kernel_elf_target(
+    os_kernel_write_protection_elf
+    os_kernel_write_protection_objects
+    "${OS_KERNEL_WRITE_PROTECTION_ELF_PATH}"
+    "链接内核写保护故障注入 ELF64 内核"
 )

@@ -45,6 +45,8 @@ from os_tools.qemu_runner import (
     OS_QEMU_STAGE1_PAGING_ENABLED_MARKER,
     OS_QEMU_STAGE1_PAGING_INVALID_MARKER,
     OS_QEMU_STAGE1_LONG_MODE_MARKER,
+    OS_QEMU_STAGE1_MEMORY_MAP_INVALID_MARKER,
+    OS_QEMU_STAGE1_MEMORY_MAP_READY_MARKER,
     OS_QEMU_STAGE1_BOOT_INFO_READY_MARKER,
     OS_QEMU_STAGE1_KERNEL_CHECKSUM_INVALID_MARKER,
     OS_QEMU_STAGE1_KERNEL_ATA_ERROR_MARKER,
@@ -76,12 +78,30 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER,
     OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER,
     OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+    OS_QEMU_KERNEL_MEMORY_MANAGED_MARKER,
+    OS_QEMU_KERNEL_MEMORY_DESCRIBED_MARKER,
+    OS_QEMU_KERNEL_MEMORY_MAP_ENTRIES_MARKER,
+    OS_QEMU_KERNEL_MEMORY_MAP_VALID_MARKER,
+    OS_QEMU_KERNEL_MEMORY_PERMISSIONS_VALID_MARKER,
+    OS_QEMU_KERNEL_MEMORY_USABLE_MARKER,
+    OS_QEMU_KERNEL_FRAME_ALLOCATOR_READY_MARKER,
+    OS_QEMU_KERNEL_FREE_FRAMES_MARKER,
+    OS_QEMU_KERNEL_ALLOCATED_FRAMES_MARKER,
+    OS_QEMU_KERNEL_RESERVED_FRAMES_MARKER,
+    OS_QEMU_KERNEL_PAGING_READY_MARKER,
+    OS_QEMU_KERNEL_PAGING_ROOT_MARKER,
+    OS_QEMU_KERNEL_HEAP_READY_MARKER,
+    OS_QEMU_KERNEL_HEAP_CAPACITY_MARKER,
+    OS_QEMU_KERNEL_HEAP_SELF_TEST_PASSED_MARKER,
     OS_QEMU_KERNEL_PAGE_FAULT_ADDRESS_MARKER,
     OS_QEMU_KERNEL_PAGE_FAULT_INJECTION_MARKER,
     OS_QEMU_KERNEL_PAGE_FAULT_VECTOR_MARKER,
     OS_QEMU_KERNEL_PANIC_MARKER,
     OS_QEMU_KERNEL_READY_MARKER,
     OS_QEMU_KERNEL_TSS_READY_MARKER,
+    OS_QEMU_KERNEL_WRITE_PROTECTION_ADDRESS_MARKER,
+    OS_QEMU_KERNEL_WRITE_PROTECTION_ERROR_CODE_MARKER,
+    OS_QEMU_KERNEL_WRITE_PROTECTION_INJECTION_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
@@ -185,6 +205,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_STAGE1_LME_READY_MARKER,
         OS_QEMU_STAGE1_PAGING_ENABLED_MARKER,
         OS_QEMU_STAGE1_LONG_MODE_MARKER,
+        OS_QEMU_STAGE1_MEMORY_MAP_READY_MARKER,
     )
     completedKernelLoadMarkers = (
         OS_QEMU_STAGE1_KERNEL_HEADER_VALID_MARKER,
@@ -205,6 +226,21 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_DESCRIPTOR_TABLES_VALID_MARKER,
         OS_QEMU_KERNEL_BREAKPOINT_HANDLED_MARKER,
         OS_QEMU_KERNEL_EXCEPTION_SELF_TEST_READY_MARKER,
+        OS_QEMU_KERNEL_MEMORY_MAP_VALID_MARKER,
+        OS_QEMU_KERNEL_MEMORY_MAP_ENTRIES_MARKER,
+        OS_QEMU_KERNEL_MEMORY_DESCRIBED_MARKER,
+        OS_QEMU_KERNEL_MEMORY_USABLE_MARKER,
+        OS_QEMU_KERNEL_MEMORY_MANAGED_MARKER,
+        OS_QEMU_KERNEL_FRAME_ALLOCATOR_READY_MARKER,
+        OS_QEMU_KERNEL_FREE_FRAMES_MARKER,
+        OS_QEMU_KERNEL_ALLOCATED_FRAMES_MARKER,
+        OS_QEMU_KERNEL_RESERVED_FRAMES_MARKER,
+        OS_QEMU_KERNEL_PAGING_READY_MARKER,
+        OS_QEMU_KERNEL_PAGING_ROOT_MARKER,
+        OS_QEMU_KERNEL_MEMORY_PERMISSIONS_VALID_MARKER,
+        OS_QEMU_KERNEL_HEAP_READY_MARKER,
+        OS_QEMU_KERNEL_HEAP_CAPACITY_MARKER,
+        OS_QEMU_KERNEL_HEAP_SELF_TEST_PASSED_MARKER,
     )
     completedKernelEntryMarkers = (
         *completedKernelFoundationMarkers,
@@ -239,6 +275,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_STAGE1_LME_INVALID_MARKER,
             OS_QEMU_STAGE1_PAGING_INVALID_MARKER,
             OS_QEMU_STAGE1_A20_INVALID_MARKER,
+            OS_QEMU_STAGE1_MEMORY_MAP_INVALID_MARKER,
             *kernelFailureMarkers,
             OS_QEMU_KERNEL_BOOT_INFO_INVALID_MARKER,
             OS_QEMU_KERNEL_BSS_INVALID_MARKER,
@@ -287,6 +324,20 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
         )
         forbiddenMarkers = completedBootMarkers
+    elif arguments.expectedOutcome == "memory-map-invalid":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers[:-1],
+            OS_QEMU_STAGE1_MEMORY_MAP_INVALID_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_STAGE1_MEMORY_MAP_READY_MARKER,
+            *completedKernelLoadMarkers,
+            *completedKernelEntryMarkers,
+        )
     elif arguments.expectedOutcome == "kernel-header-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -391,6 +442,31 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         forbiddenMarkers = (
             OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER,
             OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER,
+            OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+            OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
+        )
+    elif arguments.expectedOutcome == "kernel-write-protection":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            OS_QEMU_KERNEL_WRITE_PROTECTION_INJECTION_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_VECTOR_MARKER,
+            OS_QEMU_KERNEL_WRITE_PROTECTION_ERROR_CODE_MARKER,
+            OS_QEMU_KERNEL_WRITE_PROTECTION_ADDRESS_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_INJECTION_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_ZERO_ERROR_CODE_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_ADDRESS_MARKER,
             OS_QEMU_KERNEL_FILE_SIZE_MARKER,
             OS_QEMU_KERNEL_READY_MARKER,
             OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
@@ -572,6 +648,7 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "ide-error",
             "stage1-header-invalid",
             "stage1-checksum-invalid",
+            "memory-map-invalid",
             "kernel-header-invalid",
             "kernel-checksum-invalid",
             "kernel-elf-invalid",
@@ -579,6 +656,7 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "kernel-ata-error",
             "kernel-invalid-opcode",
             "kernel-page-fault",
+            "kernel-write-protection",
         ),
         required=True,
         dest="expectedOutcome",

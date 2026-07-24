@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.5 完成后的知识验收}
+\section*{v0.6 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -22,7 +22,7 @@
   \item 两遍装载为何能在失败前保持目标区无副作用；
   \item BSS 的历史来源以及 \code{p\_memsz-p\_filesz} 必须清零的原因；
   \item W\^X、段间不重叠、恒等装载窗口和可执行入口检查；
-  \item BootInfo 十个固定宽度字段及 RDI、RSP 的 ABI 契约；
+  \item BootInfo v2 十三个固定宽度字段及 RDI、RSP 的 ABI 契约；
   \item 内核独立串口、BSS 探针和 CR3 读回分别证明什么；
   \item 五种 Kernel 失败路径怎样由真实 QEMU 故障注入到达。
   \item 长模式弱化分段后仍需要 GDT、代码段和 TSS 的历史与硬件原因；
@@ -37,6 +37,19 @@
   \item INT3、UD2 和页故障三条 QEMU 路径分别证明什么；
   \item 页故障错误码零与 CR2=\code{0x04000000} 的逐位含义；
   \item panic 为什么禁止动态分配、锁、递归日志和普通返回。
+  \item \code{fw\_cfg} selector/data 端口、文件目录大端序和
+        \code{etc/e820} 小端条目的边界；
+  \item 20 字节平台项为什么扩展为 24 字节 ABI，Stage 1 排序后内核为何仍验证；
+  \item 描述字节、可用字节与低 64 MiB 受管可用字节的区别；
+  \item 2-bit 页帧的 unavailable、free、allocated、reserved 状态迁移；
+  \item 启动保留为什么先检查完整范围再提交，避免部分状态；
+  \item 48 位 canonical 地址和 PML4、PDPT、PD、PT 四组 9 位索引；
+  \item present、RW、US、PS、物理地址和 NX 的页表项位布局；
+  \item text、rodata、data/BSS、heap、零页和 guard 的权限差异；
+  \item EFER.NXE 与 CR0.WP 分别解决取指和 supervisor 写保护；
+  \item 错误码 3 与 CR2=\code{0xFFFF800000100000} 为什么证明写保护执行；
+  \item 高半区 64 KiB 单调堆的对齐、溢出、容量和无释放边界；
+  \item 单元、集成、固定种子模型对照和 QEMU 执行各自证明什么。
 \end{itemize}
 
 \section*{进入下一阶段前}
@@ -50,13 +63,15 @@
   \item 能说明 A20、GDT、页表和长模式控制位的依赖顺序；
   \item 能逐项走读当前 ELF 第一遍验证和第二遍复制/BSS 清零；
   \item 能用 GDB 检查 \code{0x13000} 描述符、\code{0x14000} BootInfo、
-  \code{0x20000} ELF 暂存区与 \code{0x100000} 内核入口；
+  \code{0x18000} 内存图、\code{0x20000} ELF 暂存区与
+  \code{0x100000} 内核入口；
   \item 能说明 \code{BOOT\_INFO\_VALID}、\code{BSS\_ZEROED} 和
   \code{CR3\_VALID} 各自排除了哪类错误；
   \item 能从 GDT 十六进制值解码 P、DPL、type、L、D 和 TSS base/limit；
   \item 能从 IDT gate 解码 offset、selector、IST、DPL、type 和 present；
   \item 能在 GDB 中从 RDI 指向的异常帧定位 vector、error、RIP 和 RFLAGS；
   \item 能解释为什么 breakpoint 可以返回，而当前页故障必须 panic；
-  \item 能运行两份故障镜像并确认 panic 后不出现 \code{READY}；
+  \item 能运行非法指令、not-present 页和写保护页故障镜像，并确认 panic 后
+        不出现 \code{READY}；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

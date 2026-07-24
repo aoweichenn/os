@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     x86_64_os_lab
-    VERSION 0.5.0
+    VERSION 0.6.0
     DESCRIPTION "从复位向量开始实现的 x86-64 教学操作系统"
     LANGUAGES CXX
 )
@@ -91,12 +91,20 @@ set(
     "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_kernel_ata_error/boot_disk.img"
 )
 set(
+    OS_STAGE1_MEMORY_MAP_INVALID_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_memory_map_invalid/boot_disk.img"
+)
+set(
     OS_KERNEL_INVALID_OPCODE_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_invalid_opcode/boot_disk.img"
 )
 set(
     OS_KERNEL_PAGE_FAULT_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_page_fault/boot_disk.img"
+)
+set(
+    OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_write_protection/boot_disk.img"
 )
 
 add_subdirectory(source/firmware)

@@ -159,7 +159,7 @@ info registers cr3 rsp rdi rip
 
 - `0x13000` 应以 `OSKERN64` 开头。
 - `0x20000` 应以 ELF magic 开头。
-- `0x14000` 的十个 64 位字段应与 BootInfo 文档一致。
+- `0x14000` 的十三个 64 位字段应与 BootInfo v2 文档一致。
 - `0x100000` 是入口代码；当前 BSS 探针位于 RW 段，交接前必须为零。
 - 内核入口处 CR3 应为 `0x10000`，RDI 应为 `0x14000`，RSP 位于独立栈区。
 
@@ -258,6 +258,96 @@ PANIC
 | C++ 入口行为随机 | 调用前 RSP 没有按 System V AMD64 对齐 |
 | 页故障日志递归刷屏 | panic 路径再次访问无效内存，或不可重入状态未生效 |
 
-当前生产内核为 58,192 字节、114 个扇区，仍包含 3 个 `PT_LOAD`。RW 段的
-文件长度为零但内存长度约 52 KiB，主要来自 IDT、TSS 与三个 IST 栈；这是
-ELF BSS 的正常表现，不是镜像漏写。
+生产内核仍包含 3 个 `PT_LOAD`。RW 段的文件长度可以小于内存长度，差值来自
+IDT、TSS、IST 栈、页帧状态和其他 BSS；这是 ELF BSS 的正常表现，不是镜像
+漏写。精确文件字节和扇区数随实现变化，应读取当前构建日志。
+
+## v0.6：内存图、页帧与内核页表
+
+### 检查 Stage 1 规范化的内存图
+
+`fw_cfg` 文件目录的计数、size 和 selector 都是大端字段，而 `etc/e820`
+内容按 x86 小端存放。若 `MEMORY_MAP_INVALID` 出现在 `LONG_MODE` 之后，
+优先分别检查这两个端序边界，不要把整个目录按一种端序解释。
+
+在 Kernel 交接前用 GDB 查看：
+
+```gdb
+set architecture i386:x86-64
+target remote :1234
+x/4gx 0x16000
+x/32bx 0x17000
+x/12gx 0x18000
+x/13gx 0x14000
+```
+
+- `0x16000` 首个 64 位值是内存图条目数。
+- `0x17000` 在目录遍历时保存当前 56 字节文件名，完成后内容不属于 ABI。
+- `0x18000` 每 24 字节一项，顺序为 base、length、type/attributes。
+- `0x14000` 的最后三项应为 `0x18000`、条目数和 `24`。
+
+当前 `qemu64 -m 64` 可能同时报告低 64 MiB RAM 和一个很高的保留 MMIO
+窗口，所以 `MEMORY_DESCRIBED_BYTES` 大于 64 MiB 并不表示分配器管理了同等
+RAM。判断容量应分别看 `MEMORY_USABLE_BYTES` 和 `MEMORY_MANAGED_BYTES`。
+
+### 在 CR3 切换前后检查页表
+
+在 `activatePageTable` 下断点：
+
+```gdb
+break os::kernel::activatePageTable
+continue
+info registers cr0 cr3
+x/512gx $rdi
+stepi
+info registers cr0 cr3
+```
+
+符号名若被 C++ 修饰，可先用
+`llvm-nm -C build/developer/source/kernel/kernel.elf | rg activatePageTable`
+找到地址。函数参数 RDI 是新 PML4 的物理地址；切换前 CR3 为 Stage 1 的
+`0x10000`，切换后必须等于日志中的 `PAGING_ROOT`。CR0 位 16 应为 1，
+IA32_EFER 位 11 应为 1。
+
+页表项物理地址字段使用 `0x000FFFFFFFFFF000` 掩码。沿 PML4→PDPT→PD→PT
+四次取索引后，叶项 bit 0 是 present、bit 1 是 writable、bit 2 是 user、
+bit 63 是 NX。若切换 CR3 立刻 triple fault，优先检查当前 RIP、RSP、GDT、
+IDT、页表页本身和串口端口访问所需地址是否在新表中，而不是先放宽权限。
+
+### 写保护故障是权限执行证据
+
+```bash
+python3 tools/os.py qemu-firmware \
+  build/developer/images/firmware.bin \
+  build/developer/images/kernel_write_protection/boot_disk.img \
+  131072 1048576 --expected-outcome kernel-write-protection
+```
+
+预期关键现场：
+
+```text
+FAULT_INJECTION=WRITE_PROTECTION
+EXCEPTION_VECTOR=0x000000000000000E
+EXCEPTION_ERROR_CODE=0x0000000000000003
+PAGE_FAULT_ADDRESS=0xFFFF800000100000
+PANIC
+```
+
+错误码 `0x3` 是 P=1 与 W/R=1：页存在，但 supervisor 写违反只读权限。
+如果得到错误码 `0x2`，测试页没有 present；若写入成功，检查 CR0.WP 是否
+确实为 1，以及上级和叶级 RW 位是否错误开放。只读取软件页表项不能替代这条
+处理器执行测试。
+
+### Guard page 与早期堆
+
+初始栈 guard 位于 `kernelStackTop - 64 KiB`，每个 IST 存储块的第一页也是
+guard。它们应由 `queryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 KiB
+可写栈的末端。高半区堆从 `0xFFFF800000000000` 开始，共 16 页，全部 RW/NX。
+
+若 `HEAP_SELF_TEST_PASSED` 缺失：
+
+1. 先看是否已有 `MEMORY_INITIALIZATION_FAILED=0x...`，按状态枚举定位阶段。
+2. 检查 16 个后备帧是否均已分配和映射，首项物理地址不能为零。
+3. 检查 16 字节与 4 KiB 对齐计算是否发生溢出或越过 64 KiB 容量。
+4. 在两个分配地址观察写入模式 `0x13579BDF2468ACE0` 与
+   `0xC001D00DC0FFEE11`，避免把页表成功误判为堆对象可写。

@@ -220,8 +220,11 @@ v0.3 只需要让正在执行的 Stage 1、页表和早期栈跨过分页开启�
 \code{0x00008000..0x00010000} & Stage 1 & 与实模式加载位置一致，最大 32 KiB\\
 \code{0x00010000..0x00013000} & 页表 & 三张 4 KiB 对齐表\\
 \code{0x00013000..0x00013200} & Kernel 描述符 & 一个完整磁盘扇区\\
-\code{0x00014000..0x00014050} & BootInfo & 独立页面内的 80 字节 ABI\\
+\code{0x00014000..0x00014068} & BootInfo v2 & 独立页面内的 104 字节 ABI\\
 \code{0x00015000..0x00016000} & 加载器临时状态 & 程序头遍历索引和计数\\
+\code{0x00016000..0x00017000} & 内存图元数据 & 交接条目数量\\
+\code{0x00017000..0x00018000} & \code{fw\_cfg} 暂存 & 当前 56 字节目录名称\\
+\code{0x00018000..0x00018C00} & 物理内存图 & 最多 128 个 24 字节项\\
 \code{0x00020000..0x000A0000} & Kernel 文件暂存 & 512 KiB 的连续上限\\
 \code{0x00100000..0x03F00000} & \code{PT\_LOAD} 窗口 & 避开低端加载器与高端栈\\
 \code{0x03FEF000..0x03FFF000} & 初始内核栈 & 64 KiB，向低地址增长\\
@@ -331,9 +334,9 @@ ELF 头至少 64 字节。加载器先检查 magic、64 位类别、小端序、
   \item 内存区间完整落入 \code{0x00100000..0x03F00000}。
 \end{enumerate}
 
-要求 R 权限和 W\^X 不是当前大页已经能强制出来的最终安全策略；初始 2 MiB
-大页仍以较粗权限映射。它先保证 ELF 自身给出的意图没有矛盾，等 v0.6 拆成
-4 KiB 页时可直接依据段权限建立页表。
+要求 R 权限和 W\^X 不是 Stage 1 大页已经能强制出来的最终安全策略；初始
+2 MiB 大页仍以较粗权限映射。它先保证 ELF 自身给出的意图没有矛盾；v0.6
+内核随后依据链接器段边界拆成 4 KiB 页并真正执行权限。
 
 \subsection{跨段不变量不能在单个程序头中检查}
 
@@ -363,9 +366,68 @@ C++ 规定静态存储期对象在进一步初始化前先零初始化。freesta
 \code{BSS\_ZEROED}。若 Stage 1 只复制 \code{p\_filesz} 而忘记清零，
 QEMU 系统测试将在第一次 C++ 交接中暴露问题。
 
+\section{平台配置接口把物理内存事实交给自研加载器}
+
+\subsection{没有外部 BIOS，就不能调用一个不存在的 E820 服务}
+
+经典 PC 教材常让实模式代码执行 \code{INT 15h, EAX=E820h}。这个接口不是
+CPU 指令自动提供的能力，而是 BIOS 安装的软件中断服务。本项目的 ROM 从复位
+入口开始自行实现，没有 SeaBIOS；若为了获取内存图临时换回外部 BIOS，就等于
+把完整启动链最关键的硬件发现步骤交给了别人的固件。
+
+QEMU PC 另有 \code{fw\_cfg} 配置设备。PIO 形式只有两个端口：向
+\code{0x510} 写 16 位 selector，再从 \code{0x511} 顺序读取字节。QEMU
+模拟端口和数据，本项目仍负责协议状态机，边界与 UART、IDE 完全相同。
+
+Stage 1 首先选择 key \code{0x0000}，读四字节签名并要求为 \code{QEMU}；
+然后选择 key \code{0x0019} 读取文件目录。目录数量和每项的 size/selector
+采用大端序，而 x86 端口读到的单字节不自动完成转换。汇编逐字节左移和合并，
+把外部窄字段提升到 64 位后才比较上限。
+
+\subsection{目录流式遍历避免新的早期内存依赖}
+
+每个目录项固定 64 字节：
+
+\begin{longtable}{L{0.18\textwidth}L{0.19\textwidth}L{0.49\textwidth}}
+\toprule
+\textbf{偏移} & \textbf{宽度} & \textbf{语义}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{偏移} & \textbf{宽度} & \textbf{语义}\\
+\midrule
+\endhead
+\code{0x00} & 32 bit & 文件 size，大端\\
+\code{0x04} & 16 bit & 重新选择文件所需 selector，大端\\
+\code{0x06} & 16 bit & reserved\\
+\code{0x08} & 56 byte & NUL 结尾的文件名\\
+\bottomrule
+\end{longtable}
+
+Stage 1 不把整个目录复制到 RAM。它最多遍历 256 项，只把当前 56 字节名称
+放到 \code{0x17000}，精确匹配 \code{etc/e820} 后立即停止。这样目录大小
+不会迫使我们再设计一块可变暂存区，最坏循环次数也保持有界。
+
+\subsection{20 字节平台项怎样成为 24 字节内核 ABI}
+
+\code{etc/e820} 的一个原始项是小端
+\(\{u64\ base,u64\ length,u32\ type\}\)，共 20 字节。Stage 1 要求文件
+长度非零、能被 20 整除且最多 128 项。读每项后在尾部补一个 32 位
+attributes 零，形成 24 字节结构。扩展字段不是伪造硬件能力，而是预留稳定
+ABI 槽；内核当前不依据其作决策。
+
+QEMU 当前给出的高端保留项可能排在低端 RAM 前面。文件顺序不是内核排序契约，
+所以 Stage 1 在交接前按 base 做有界冒泡排序。内核随后仍检查单调和重叠；
+加载器排序负责建立候选规范形状，内核验证负责保护自己的信任边界，两者不是
+重复浪费。
+
+签名、目录数量、名称、selector、长度或条目数任一不合法，只输出
+\code{MEMORY\_MAP\_INVALID} 并停止。独立 QEMU 镜像在真实长模式边界强制这
+条失败，验证它不会继续读取 Kernel 或构造 BootInfo。
+
 \section{BootInfo 把寄存器瞬间变成版本化事实}
 
-\subsection{十个 64 位字段为何全部显式}
+\subsection{十三个 64 位字段为何全部显式}
 
 \small
 \begin{longtable}{L{0.14\textwidth}L{0.33\textwidth}L{0.39\textwidth}}
@@ -378,8 +440,8 @@ QEMU 系统测试将在第一次 C++ 交接中暴露问题。
 \midrule
 \endhead
 \code{0x00} & magic & 内存字节为 \code{OSBOOT64}\\
-\code{0x08} & version & 1\\
-\code{0x10} & structure size & 80 字节\\
+\code{0x08} & version & 2\\
+\code{0x10} & structure size & 104 字节\\
 \code{0x18} & Kernel 文件地址 & \code{0x20000}\\
 \code{0x20} & Kernel 文件长度 & 已通过 CRC 的精确长度\\
 \code{0x28} & Kernel 入口 & \code{0x100000}\\
@@ -387,6 +449,9 @@ QEMU 系统测试将在第一次 C++ 交接中暴露问题。
 \code{0x38} & 页表根 & \code{0x10000}\\
 \code{0x40} & 恒等映射大小 & \code{0x4000000}，即 64 MiB\\
 \code{0x48} & 初始栈顶 & \code{0x3FFF000}\\
+\code{0x50} & 物理内存图地址 & \code{0x18000}\\
+\code{0x58} & 物理内存图条目数 & 已验证的 1 到 128\\
+\code{0x60} & 内存图条目宽度 & 24 字节\\
 \bottomrule
 \end{longtable}
 \normalsize
@@ -437,13 +502,16 @@ Stage 1 已经配置 COM1，内核理论上可以直接发送。但那会形成�
 \code{KERNEL\_PAYLOAD\_VALID} & 精确 ELF CRC 和扇区补零成功\\
 \code{KERNEL\_ELF\_VALID} & 第一遍 ELF 与全部段关系成功\\
 \code{KERNEL\_SEGMENTS\_LOADED} & 第二遍复制与 BSS 清零完成\\
-\code{BOOT\_INFO\_READY} & 十字段交接结构已写完\\
+\code{BOOT\_INFO\_READY} & 十三字段 BootInfo v2 已写完\\
 \code{KERNEL\_TRANSFER} & RDI、RSP 已准备，即将调用入口\\
 \code{ENTERED} & C++ 入口和独立 COM1 代码确实执行\\
 \code{BOOT\_INFO\_VALID} & 内核逐字段接受交接 ABI\\
 \code{BSS\_ZEROED} & 加载器满足 C++ 零初始化前提\\
 \code{CR3\_VALID} & 处理器实际页表根与交接事实一致\\
-\code{READY} & 当前 v0.5 的内核入口、描述符与异常自检全部完成\\
+\code{MEMORY\_MAP\_VALID} & 内核接受排序、无重叠且无溢出的物理内存图\\
+\code{PAGING\_READY} & 内核四级 4 KiB 页表已经激活\\
+\code{HEAP\_SELF\_TEST\_PASSED} & 高半区早期堆真实写入与读回成功\\
+\code{READY} & 当前 v0.6 的入口、异常、内存与堆自检全部完成\\
 \bottomrule
 \end{longtable}
 
@@ -463,7 +531,7 @@ CRC，使目标必须通过两层完整性检查后才在 ELF 语义处失败；
 变体则直接作用于 Stage 1 的轮询函数。成功路径与五类 Kernel 失败路径共同
 保证日志没有把错误归入笼统的“启动失败”。
 
-当前完整命令运行 36 项 CTest。测试代码、宿主 Python、书稿和网站不计入操作
+当前完整命令运行 43 项 CTest。测试代码、宿主 Python、书稿和网站不计入操作
 系统本体代码量；统计只覆盖 \filepath{source/} 中实际进入目标系统的 C++、
 头文件和 Intel 语法汇编。这样增长曲线描述的是机器上真实执行的实现，不会被
 测试数量和文档篇幅稀释。

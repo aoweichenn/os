@@ -44,7 +44,7 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 - 若未来启用 `TRACE`，必须有编译期或启动期开关，并设置最大事件数；达到预算后只打印一次 `TRACE_LIMIT_REACHED`。
 - 日志文本不得依赖本地化、时间戳或不稳定地址，保证测试和文档可复现。
 
-## v0.5 验收
+## v0.6 验收
 
 正常启动日志应按阶段边界递进：
 
@@ -61,6 +61,7 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 [OS][STAGE1] LME_READY
 [OS][STAGE1] PAGING_ENABLED
 [OS][STAGE1] LONG_MODE
+[OS][STAGE1] MEMORY_MAP_READY
 [OS][STAGE1] KERNEL_HEADER_VALID
 [OS][STAGE1] KERNEL_PAYLOAD_VALID
 [OS][STAGE1] KERNEL_ELF_VALID
@@ -77,12 +78,27 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 [OS][KERNEL] DESCRIPTOR_TABLES_VALID
 [OS][KERNEL] BREAKPOINT_HANDLED
 [OS][KERNEL] EXCEPTION_SELF_TEST_READY
-[OS][KERNEL] FILE_SIZE=0x000000000000E350
+[OS][KERNEL] MEMORY_MAP_VALID
+[OS][KERNEL] MEMORY_MAP_ENTRIES=0x...
+[OS][KERNEL] MEMORY_DESCRIBED_BYTES=0x...
+[OS][KERNEL] MEMORY_USABLE_BYTES=0x...
+[OS][KERNEL] MEMORY_MANAGED_BYTES=0x...
+[OS][KERNEL] FRAME_ALLOCATOR_READY
+[OS][KERNEL] FREE_FRAMES=0x...
+[OS][KERNEL] ALLOCATED_FRAMES=0x...
+[OS][KERNEL] RESERVED_FRAMES=0x...
+[OS][KERNEL] PAGING_READY
+[OS][KERNEL] PAGING_ROOT=0x...
+[OS][KERNEL] MEMORY_PERMISSIONS_VALID
+[OS][KERNEL] HEAP_READY
+[OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
+[OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
 [OS][KERNEL] READY
 ```
 
-文件长度和加载段数使用固定 16 位十六进制宽度，便于人工对照 ELF，也避免
+文件长度和加载段数使用固定 16 个十六进制数字的宽度，便于人工对照 ELF，也避免
 十进制转换代码进入最早内核。数值日志只在结构验证完成后输出。
 
 测试必须验证顺序、失败标记唯一性以及失败路径不会继续输出后续成功标记。
@@ -108,3 +124,15 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 递归异常直接停机，不重复输出。RIP 和 RFLAGS 会随链接与处理器保存语义变化，
 系统测试只要求字段存在，不把不稳定地址硬编码为协议。向量、错误码、CR2 和
 `PANIC` 是稳定验收字段。
+
+内存日志采用“一个阶段边界 + 少量汇总值”，不逐页打印：
+
+- `MEMORY_MAP_VALID` 后只打印条目数、描述字节、可用字节和本阶段管理字节。
+- `FRAME_ALLOCATOR_READY` 后只打印 free、allocated、reserved 三类总数。
+- `PAGING_READY` 只附带一个根物理地址，页级权限由
+  `MEMORY_PERMISSIONS_VALID` 汇总。
+- `HEAP_READY` 只打印容量，并用一次 `HEAP_SELF_TEST_PASSED` 表示真实写回。
+
+写保护故障镜像使用 `FAULT_INJECTION=WRITE_PROTECTION`，随后必须报告向量
+14、错误码 `0x3` 和 CR2=`0xFFFF800000100000`。正常日志禁止出现任何
+`FAULT_INJECTION`、`EXCEPTION` 或 `PANIC`。

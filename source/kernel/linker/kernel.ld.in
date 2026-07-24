@@ -15,20 +15,26 @@ PHDRS
 SECTIONS
 {
     . = OS_KERNEL_LINK_ADDRESS;
+    osKernelImageStart = .;
 
     .text ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
     {
+        osKernelTextStart = .;
         KEEP(*(.text.os_kernel_entry))
         *(.text .text.*)
+        osKernelTextEnd = .;
     } :text
 
     .rodata ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
     {
+        osKernelReadOnlyDataStart = .;
         *(.rodata .rodata.*)
+        osKernelReadOnlyDataEnd = .;
     } :rodata
 
     .data ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
     {
+        osKernelWritableDataStart = .;
         *(.data .data.*)
     } :data
 
@@ -36,7 +42,10 @@ SECTIONS
     {
         *(.bss .bss.*)
         *(COMMON)
+        osKernelWritableDataEnd = .;
     } :data
+
+    osKernelImageEnd = .;
 
     /DISCARD/ :
     {

@@ -123,9 +123,9 @@ CS；只改变可见选择子而忽略隐藏描述符，会让日志看起来正
 执行 \code{LTR} 后，处理器会把 GDT 内描述符从 available type 9 改成 busy
 type 11；验证程序若仍要求字节值为 9，反而误解了硬件副作用。
 
-三个 IST 当前还没有 guard page，因为低 64 MiB 使用 2 MiB 大页恒等映射。
-v0.6 建立内核页表时要把每个栈下方留成 not-present 页，届时溢出才会稳定转成
-可定位页故障。
+v0.6 把每个 IST 存储块扩为 20 KiB：低端 4 KiB 保持 guard，随后 16 KiB
+才是可写栈。内核新页表明确跳过三个 guard 物理页；TSS 的 IST 指针仍指向可写
+部分的高端。这样栈向下越界会遇到 not-present 页，而不是静默写入相邻对象。
 
 \section{IDT 门描述符定义异常入口的硬件动作}
 
@@ -345,6 +345,10 @@ INT3 能返回，UD2 和页故障进入正确向量，panic 后不会继续成�
 完成时 36 项 CTest 全部通过，其中 17 项带失败路径标签；既有复位、ATA、
 长模式和 ELF 回归也必须同时通过。
 
+v0.6 在这条回归上增加七项测试，完整集合为 43 项。新增 QEMU 写保护镜像不
+复制异常实现，只让同一个生产内核入口选择 \code{WriteProtection} 注入；
+因此错误码 3、CR2 和 PANIC 同时验证页表、CR0.WP、IDT、统一帧与串口路径。
+
 \section{页故障错误码提供访问分类}
 
 页故障错误码的 P 位区分不存在与权限违反，W/R 区分写与读，U/S 区分用户与
@@ -354,25 +358,108 @@ INT3 能返回，UD2 和页故障进入正确向量，panic 后不会继续成�
 访问内核页应终止进程；内核访问非法地址通常是内核缺陷。处理器给出的位只描述
 机制原因，内核还要结合虚拟区间元数据决定策略。
 
-\section{内存图规范化先于物理页分配}
+\section{内存图在加载器排序，在内核验证}
 
-BootInfo 可能提供重叠、未对齐和不同类型区间。内核先验证每个
-\([begin,end)\) 不溢出，按地址排序并切分重叠，保留类型优先于可用类型，
-再按 4 KiB 边界向内收缩可用 RAM。零页、内核、BootInfo、页表、栈和设备
-窗口全部扣除。
+当前平台后端是 QEMU PC \code{fw\_cfg}。Stage 1 从
+\code{etc/e820} 读取 20 字节原始项，扩展成：
 
-规范化输出是互不重叠、按地址递增的区间集合。物理分配器只消费这个集合，
-不重复猜测固件语义。随机区间测试覆盖相邻、包含、部分重叠和最高地址溢出。
+\begin{lstlisting}[language=C++]
+struct PhysicalMemoryMapEntry final {
+    uint64_t baseAddress;
+    uint64_t lengthBytes;
+    uint32_t type;
+    uint32_t attributes;
+};
+\end{lstlisting}
 
-\section{位图分配器提供最小可审计实现}
+结构精确为 24 字节。base 和 length 必须保持 64 位，因为物理地址可能远高于
+当前管理窗口；type/attributes 是外部格式的 32 位字段，不能为了“用大的”
+擅自改变 ABI。Stage 1 在交接前按 base 排序，BootInfo v2 提供
+\code{0x18000}、条目数和条目宽度。
 
-每个物理页对应一位，0 与 1 的含义在模块契约固定。分配时寻找空闲位、原子
-标记占用并返回页号；释放时验证对齐、范围和当前占用。连续页需求可以扫描一段
-连续位，但时间复杂度随内存增长。
+内核不重新排序，也不尝试猜测重叠优先级。它把“已排序、互不重叠”视为交接
+契约并独立验证：
 
-位图自身也占物理页，必须在开放可用页之前保留。若管理 4 GiB RAM，共
-\(2^{20}\) 个 4 KiB 页，一位一页需要 128 KiB 位图。这个计算决定元数据
-放置与早期映射范围。
+\begin{enumerate}[label=\arabic*.]
+  \item 指针非空，数量在 1 到 128，管理上限非零；
+  \item 每项 length 非零，base+length 不发生 64 位溢出；
+  \item 当前 base 不小于前一项 base，也不小于前一项 end；
+  \item 所有描述长度求和、type 1 可用长度求和均不溢出；
+  \item 低 64 MiB 管理范围内至少存在可用字节。
+\end{enumerate}
+
+乱序和重叠使用不同状态返回，因为前者通常是平台规范化缺失，后者表示两个
+所有者对同一物理地址作了冲突声明。内核若自行切分并选择“保留优先”，反而会
+把上游错误悄悄变成某种策略；早期系统选择明确拒绝，现场更容易解释。
+
+汇总输出先写入局部候选对象，全部成功后才覆盖调用者。这样某个高地址条目在
+最后溢出时，调用者不会误用前面已经累加的半份统计。日志分别打印
+\code{MEMORY\_DESCRIBED\_BYTES}、\code{MEMORY\_USABLE\_BYTES} 和
+\code{MEMORY\_MANAGED\_BYTES}；高端保留 MMIO 窗口只进入第一个值，不能
+冒充 RAM。
+
+\section{2-bit 页帧状态把所有权错误变成显式状态}
+
+内核当前管理低 64 MiB：
+\[
+ \frac{64\ \mathrm{MiB}}{4\ \mathrm{KiB}}=16384\ \text{frames}.
+\]
+每帧不用一位，而用两位表示四种状态：
+
+\begin{longtable}{L{0.18\textwidth}L{0.25\textwidth}L{0.43\textwidth}}
+\toprule
+\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\
+\midrule
+\endhead
+unavailable & 默认、非 type 1、碎片页 & 不参与普通分配\\
+free & 完整落入可用区域的 4 KiB 帧 & allocate 或 reserve\\
+allocated & 动态分配成功 & 只能 release 回 free\\
+reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
+\bottomrule
+\end{longtable}
+
+状态存储大小为：
+\[
+  16384\times2/8=4096\ \mathrm{bytes}.
+\]
+这里使用 \code{uint8\_t} 数组并不是违背内部大位宽规范；密集状态的每字节
+恰好保存四帧，扩大为 64 位会把元数据增加八倍。对外地址、计数、容量和索引
+仍全部使用 64 位。
+
+初始化先把所有状态字节清零，对应 unavailable，再把可用区间按 4 KiB 向内
+收缩。若区域起点不是页边界，向上对齐；终点向下对齐。只有整个页都被平台声明
+为可用时才进入 free。全部扫描后仍没有 free 帧，分配器把 managed count
+恢复为零再返回 \code{NoUsableFrames}，不会留下“看似初始化”的对象。
+
+\section{启动保留采用先检查、后提交}
+
+内核依次保留三个范围：
+
+\begin{itemize}
+  \item \code{[0,1 MiB)}：复位、固件、Stage 1、旧页表、BootInfo、内存图、
+        VGA 传统窗口等低端平台资产；
+  \item 链接器符号 \code{osKernelImageStart..osKernelImageEnd}：精确覆盖
+        text、rodata、data、BSS、IDT、IST 和页帧状态；
+  \item BootInfo 给出的 64 KiB 初始栈。
+\end{itemize}
+
+任意起点和终点先向页边界扩张，保证部分接触的帧也被保留。
+\code{reserveRange} 第一遍只读状态；只要遇到 allocated 就立即失败。
+第二遍才把 free 改为 reserved 并更新计数。若边扫描边修改，范围前半段可能
+已经 reserved，后半段才发现冲突，调用者得到失败却留下不可恢复的部分副作用。
+
+分配从 next-search 索引开始环形搜索，成功后把状态改为 allocated 并把下一
+搜索点移到后一帧。释放验证页对齐、管理范围和 allocated 状态；重复释放、
+释放 reserved 或 unavailable 都返回明确错误。释放较低帧时回退搜索点，
+使刚释放的低地址能被及时复用。
+
+单元测试专门构造“第一帧 free、第二帧 allocated”的两页保留请求，确认失败
+后 free、allocated、reserved 三个计数完全不变。这条测试验证事务边界，而
+不只是某个返回枚举。
 
 \section{伙伴系统用阶数管理连续物理块}
 
@@ -380,27 +467,78 @@ BootInfo 可能提供重叠、未对齐和不同类型区间。内核先验证�
 空闲则递归合并。它能快速提供页表、DMA 或大页所需连续内存，但元数据和正确性
 比位图复杂。
 
-项目先用位图验证所有权，再在性能和连续分配需求出现后引入伙伴系统。替换时
-公共接口仍使用 \code{PhysicalPageNumber} 与 \code{PageCount}，上层不应
-依赖位图内部表示。
+项目先用每帧 2 bit 的状态数组验证所有权，再在性能和连续分配需求出现后引入
+伙伴系统。替换时公共接口仍使用 \code{PhysicalPageNumber} 与
+\code{PageCount}，上层不应依赖当前状态数组的内部表示。
+
+\section{从 Stage 1 大页平滑切换到内核 4 KiB 页表}
+
+构造新页表时处理器仍运行在 Stage 1 的 CR3 下。旧表把低 64 MiB 通过
+32 个 2 MiB 大页恒等映射，所以新分配的页表帧可以直接把物理地址解释为指针
+并清零。这个临时便利必须写进前置条件：一旦未来取消大范围身份映射，
+\code{tableAtPhysicalAddress} 就要改用物理直映区或临时映射窗口。
+
+内核先分配根 PML4，再对低 64 MiB 的每个 4 KiB 页执行映射。中间表缺失时，
+从同一个物理分配器取得一帧，清零 512 个 64 位项，再写入 parent。整个
+64 MiB 恒等映射需要若干 PT，而不是预先写死表数量；高半区 heap 会共享
+同一个 PML4 却走另一组索引。
+
+映射完成、NX 和 WP 打开之后才执行 \code{mov cr3,newRoot}。如果先切 CR3
+再补当前 RIP、RSP 或 IDT 所需映射，下一条取指或压栈就会故障；异常入口本身
+也可能未映射，最终表现为 triple fault。先构造完整候选、后一次激活，是页表
+版的两遍 ELF 副作用边界。
 
 \section{页表遍历必须验证每一级}
 
-映射函数从虚拟地址提取四级索引。中间表不存在时按策略分配并清零；存在时验证
-它不是意外的大页且物理地址对齐。叶表项写入前检查目标虚拟页未映射，取消映射
-则返回旧物理页和权限供所有权层处理。
+48 位 canonical 地址把 bit 47 符号扩展到 bit 63。若高 16 位既不是
+\code{0x0000} 也不是 \code{0xFFFF} 对应的扩展，映射器在写表前就返回
+\code{InvalidVirtualAddress}。四级索引为：
+\[
+\begin{aligned}
+i_4&=(v\gg39)\mathbin{\&}0x1FF, &
+i_3&=(v\gg30)\mathbin{\&}0x1FF,\\
+i_2&=(v\gg21)\mathbin{\&}0x1FF, &
+i_1&=(v\gg12)\mathbin{\&}0x1FF.
+\end{aligned}
+\]
 
-页表页本身来自物理分配器并通过内核直接映射或临时窗口访问。递归映射、物理
-内存直映区和临时映射各有不同复杂度，项目必须选定一种并写入地址空间契约。
+中间表不存在时分配并清零；存在时验证 PS 大页位没有意外置一，再用
+\code{0x000FFFFFFFFFF000} 取下一级物理地址。叶项写入前拒绝重复映射。
+物理和虚拟地址都必须 4 KiB 对齐，物理地址还不能越过表项可编码范围。
+
+取消映射把叶项清零并执行 \code{INVLPG}，当前不回收空的 PT/PD/PDPT。
+这是明确的早期边界：启动只映射固定集合，不会反复创建销毁地址空间。进程
+阶段必须补充中间表引用计数或空表扫描，才能把页表帧安全归还分配器。
 
 \section{权限在页表层级上累积}
 
-任一上级项 RW=0 都会限制下级写，任一上级 US=0 都会限制用户访问；NX 也按
-处理器规则生效。只正确设置叶项不够。映射器从请求权限推导所有层允许的最小
-集合，并在收紧权限后刷新 TLB。
+任一上级项 RW=0 都会限制下级写，任一上级 US=0 都会限制用户访问。当前中间
+表保持 RW，叶项决定具体内核页是否可写；用户映射请求出现时，映射器会把沿途
+parent 的 US 置一，但 supervisor 叶项仍因自身 US=0 对用户不可见。
 
-内核执行 W\^X，用户页默认不可执行，用户地址空间不映射可写内核对象。页表
-构造测试读取最终 64 位表项，检查地址掩码与权限位，而不是只查询上层缓存。
+链接脚本导出 image、text、rodata、writable 的起止符号。内核按页应用：
+
+\begin{longtable}{L{0.23\textwidth}L{0.18\textwidth}L{0.45\textwidth}}
+\toprule
+\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\
+\midrule
+\endhead
+text & R/X & 指令可取，Ring 0 不可写\\
+rodata & R/NX & 常量不可写，也不能作为代码执行\\
+data/BSS/普通栈 & RW/NX & 状态可变但不可取指\\
+heap & RW/NX & 动态对象默认不是代码\\
+零页与四个 guard & not-present & 把空指针和向下越界变成 \#PF\\
+\bottomrule
+\end{longtable}
+
+NX 叶位只有在 \code{IA32\_EFER.NXE}=1 时才具有预期语义。内核先用 CPUID
+扩展特性叶检查 NX，再设置 EFER.NXE；若硬件不支持就返回
+\code{MemoryProtectionUnsupported}，不默默退化为全可执行。随后设置
+\code{CR0.WP}，使 supervisor 写也遵守只读叶权限。
 
 \section{TLB 是页表结果的处理器缓存}
 
@@ -412,14 +550,69 @@ BootInfo 可能提供重叠、未对齐和不同类型区间。内核先验证�
 shootdown，并等待确认，才能释放和复用物理页。否则另一个核心可能通过旧翻译
 写入已经分配给新对象的页面。
 
-\section{内核堆需要检测破坏而不隐藏失败}
+\section{写保护故障证明权限不是软件自我声明}
 
-早期堆可以按大小类别维护空闲块，大对象直接占整页。块头记录大小、状态和
-校验，释放时检查重复释放与边界。调试构建用固定模式填充分配与释放内存，使
-未初始化读取和 use-after-free 更容易暴露。
+页表查询函数能解码 RW=0，却不能证明处理器当前真的使用这张表，也不能证明
+CR0.WP 已启用。v0.6 另外分配一帧，映射到
+\code{0xFFFF800000100000}，权限为 present、supervisor、read-only、NX。
+故障镜像在新 CR3 激活后执行 64 位写。
 
-分配器不能在持有自身锁时调用可能再次分配的日志格式化。panic 和低内存路径
-使用预分配缓冲与串口最小输出，避免诊断代码递归触发原故障。
+预期页故障错误码为 \code{0x3}：
+\[
+  \mathtt{0x3}=\underbrace{1}_{P}
+                 +\underbrace{2}_{W/R},
+\]
+U/S、RSVD 和 I/D 都为零。P=1 把它与“忘记映射测试页”的错误码 2 区分；
+W/R=1 把它与普通读取区分；CR2 必须精确等于高半区测试地址。只有随后进入同一
+panic 并禁止 \code{READY}，才能说明权限执行、异常入口和停止边界全部连通。
+
+\section{高半区早期堆用最小策略验证映射之上的对象分配}
+
+heap 虚拟基址为 \code{0xFFFF800000000000}，容量 64 KiB。页表管理器为
+16 个虚拟页分别取得物理帧；这些帧不要求连续，因为虚拟地址负责把它们组织成
+连续区间。每页权限为 RW/NX。
+
+\code{KernelHeap} 保存 base、size、consumed 和 allocation count。
+分配大小必须非零，对齐必须是二的幂。当前地址先检查
+\code{base+consumed} 溢出，再计算：
+\[
+  a=(current+alignment-1)\mathbin{\&}\sim(alignment-1).
+\]
+padding 和请求大小分别与剩余容量比较，避免组合加法先溢出。只有全部检查
+通过才更新 consumed、次数和输出指针；失败调用不会把调用者指针改成半有效值。
+
+这个 heap 故意没有 \code{free}。启动期的页表、设备对象和全局服务通常与
+内核同寿命，单调策略没有碎片合并、双重释放和锁状态。它的缺点同样明确：
+容量一旦消耗不能回收，所以后续通用堆仍需 size class、slab 或其他所有权
+策略，不能把早期 heap 当成最终实现。
+
+目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 字节、4096 字节对齐
+对象，分别写入
+\code{0x13579BDF2468ACE0} 和 \code{0xC001D00DC0FFEE11} 后读回。
+\code{HEAP\_SELF\_TEST\_PASSED} 因而同时证明高半区地址 canonical、四级
+映射存在、页可写、NX/WP 没有误伤数据、对齐算法和真实访存都成立。
+
+未来可释放分配器不能在持有自身锁时调用可能再次分配的日志格式化。panic 和
+低内存路径继续使用预分配缓冲与串口最小输出，避免诊断代码递归触发原故障。
+
+\section{内存测试从纯函数扩展到处理器执行}
+
+四层验证各自回答不同问题：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 单元测试验证内存图失败枚举、2-bit 状态迁移、heap 原子失败、
+        canonical 地址、四级索引和表项权限编码；
+  \item 集成测试按 QEMU 的低端 RAM/高端保留形状建立内存图，检查低 1 MiB、
+        Kernel、栈保留后第一个可分配帧，并检查交接物理区间不重叠；
+  \item 固定种子 \code{0x6D656D6F72793634} 完成 8192 组叶表项往返，
+        再执行 4096 步随机 allocate/release，与独立布尔模型逐步比较；
+  \item QEMU 正常路径真实加载 CR3、访问 heap；失败路径分别证明
+        \code{MEMORY\_MAP\_INVALID} 和错误码 3 的写保护 \#PF。
+\end{enumerate}
+
+随机测试不是用随机数替代设计。种子、迭代号和性质名都写入失败报告，任何失败
+可以精确重放。参考模型只记录“这一帧是否 allocated”，不调用被测分配器的
+内部状态，因此不会与实现犯同一种编码错误。
 
 \section{panic 是终止协议而不是普通日志函数}
 
