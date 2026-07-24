@@ -32,6 +32,10 @@
 | near jump | 只修改当前代码段内指令偏移、不重载 CS 的跳转 |
 | COM1 | 传统 PC 第一串口，默认 I/O 基址为 `0x3F8` |
 | 16550A | 项目最早使用的 UART 寄存器模型 |
+| RFLAGS | x86 架构标志寄存器；本项目重点使用 CF、ZF、IF、DF |
+| LSR | 16550A 线路状态寄存器；bit 5 THRE 表示发送保持寄存器为空 |
+| ATA STATUS | IDE 命令块状态寄存器；本项目重点处理 BSY、DRQ、ERR、DF |
+| ERROR | ATA 错误寄存器；记录 ABRT、IDNF、UNC 等设备错误原因 |
 | DLAB | UART 线路控制寄存器中的除数锁存访问位 |
 | THRE | UART 线路状态中的发送保持寄存器为空标志 |
 | fault injection | 主动制造设备或输入失败，以验证错误路径和恢复契约 |

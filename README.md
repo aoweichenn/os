@@ -52,7 +52,7 @@ books/           可独立构建的 LaTeX 系统教材
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
-教材现为 5 部 10 个完整主题章、93 页；每章按“背景与历史约束、硬件或软件
+教材现为 5 部 10 个完整主题章、95 页；每章按“背景与历史约束、硬件或软件
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。

@@ -1,0 +1,166 @@
+schema: x86-64-os-lab.hardware-register-map.v1
+description: >-
+  当前启动链直接使用的 CPU 架构状态、16550A UART 和 ATA/IDE 主通道寄存器。
+  数值均为目标硬件协议值；软件模型不得把它们替换为宿主平台类型。
+chips:
+  cpu_x86_64:
+    role: reset-and-mode-transition
+    architectural_state:
+      - name: RIP
+        width_bits: 64
+        kind: instruction-pointer
+      - name: RFLAGS
+        width_bits: 64
+        kind: flags
+        bits:
+          0: CF
+          2: PF
+          4: AF
+          6: ZF
+          7: SF
+          8: TF
+          9: IF
+          10: DF
+          11: OF
+      - name: CR0
+        width_bits: 64
+        kind: control-register
+        bits:
+          0: PE
+          16: WP
+          31: PG
+      - name: CR3
+        width_bits: 64
+        kind: page-table-root
+      - name: CR4
+        width_bits: 64
+        kind: control-register
+        bits:
+          5: PAE
+      - name: IA32_EFER
+        width_bits: 64
+        kind: msr
+        address: 0xC0000080
+        bits:
+          8: LME
+          10: LMA
+          11: NXE
+  ns16550a_com1:
+    role: serial-observability
+    io_base: 0x03F8
+    register_width_bits: 8
+    registers:
+      - offset: 0
+        name: RBR_THR_DLL
+        access: read-or-write
+        selector: LCR.DLAB
+        meaning: "DLAB=0: receive buffer/read; DLAB=0 write: transmit holding; DLAB=1: divisor low"
+      - offset: 1
+        name: IER_DLM
+        access: read-or-write
+        selector: LCR.DLAB
+        meaning: "DLAB=0: interrupt enable; DLAB=1: divisor high"
+      - offset: 2
+        name: IIR_FCR
+        access: read-or-write
+        meaning: "read interrupt identification; write FIFO control"
+      - offset: 3
+        name: LCR
+        access: read-write
+        bits:
+          0: WLS0
+          1: WLS1
+          2: STB
+          3: PEN
+          4: EPS
+          5: STICK
+          6: SET_BREAK
+          7: DLAB
+      - offset: 4
+        name: MCR
+        access: read-write
+        bits:
+          0: DTR
+          1: RTS
+          2: OUT1
+          3: OUT2
+          4: LOOP
+      - offset: 5
+        name: LSR
+        access: read-only
+        bits:
+          0: DR
+          1: OE
+          2: PE
+          3: FE
+          4: BI
+          5: THRE
+          6: TEMT
+          7: FIFO_ERROR
+  pata_primary_master:
+    role: stage1-disk-transport
+    command_block_base: 0x01F0
+    control_base: 0x03F6
+    registers:
+      - port: 0x01F0
+        name: DATA
+        width_bits: 16
+        access: read-write
+        meaning: 256 words per 512-byte sector
+      - port: 0x01F1
+        name: ERROR_FEATURES
+        width_bits: 8
+        access: read-or-write
+        meaning: "read: error; write: features"
+      - port: 0x01F2
+        name: SECTOR_COUNT
+        width_bits: 8
+        access: read-write
+      - port: 0x01F3
+        name: LBA_LOW
+        width_bits: 8
+        access: read-write
+      - port: 0x01F4
+        name: LBA_MID
+        width_bits: 8
+        access: read-write
+      - port: 0x01F5
+        name: LBA_HIGH
+        width_bits: 8
+        access: read-write
+      - port: 0x01F6
+        name: DRIVE_HEAD
+        width_bits: 8
+        access: read-write
+        bits:
+          4: DEV
+          5: DEV1
+          6: LBA
+          7: DEV0
+        meaning: "LBA[27:24] occupies bits 0..3; current target is master with LBA mode"
+      - port: 0x01F7
+        name: STATUS_COMMAND
+        width_bits: 8
+        access: read-or-write
+        meaning: "read: status; write: command; current command READ SECTORS=0x20"
+        bits:
+          0: ERR
+          3: DRQ
+          4: DSC
+          5: DF
+          6: DRDY
+          7: BSY
+      - port: 0x03F6
+        name: ALTERNATE_STATUS_DEVICE_CONTROL
+        width_bits: 8
+        access: read-or-write
+        meaning: "read: status without clearing pending interrupt; write: device control"
+    error_register_bits:
+      0: AMNF
+      1: TK0NF
+      2: ABRT
+      3: MCR
+      4: IDNF
+      5: MC
+      6: UNC
+      7: BBK
