@@ -199,8 +199,12 @@ set_tests_properties(
 add_test(
     NAME os_book_source_check
     COMMAND
-        "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/books/x86-64-os-from-reset/source/latex/scripts/check_inputs.py"
+        "${CMAKE_COMMAND}"
+        -E
+        chdir
+        "${PROJECT_SOURCE_DIR}/books/x86-64-os-from-reset"
+        make
+        source-check
 )
 set_tests_properties(
     os_book_source_check

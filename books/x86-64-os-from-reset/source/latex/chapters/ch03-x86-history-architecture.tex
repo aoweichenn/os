@@ -1,0 +1,123 @@
+\chapter{x86 的兼容历史与架构状态}
+
+\begin{keyidea}
+x86-64 不是从 64 位模式重新设计的一套孤立处理器。8086 的分段、IBM PC 的
+I/O 端口、80286 的保护机制、80386 的 32 位扩展和 AMD64 的长模式依次叠加，
+复位仍保留早期入口，现代内核必须沿这条兼容路径主动建立新状态。
+\end{keyidea}
+
+\section{一、从 8086 到 x86-64}
+
+1978 年的 8086 提供 16 位寄存器和 20 位地址总线。16 位寄存器无法直接保存
+20 位地址，处理器使用段值左移 4 位再加偏移的方式形成地址。多个
+\code{segment:offset} 可以指向同一物理字节，这给代码和数据重定位带来便利，
+也留下别名和边界复杂性。
+
+IBM PC 选择 8088 后，处理器架构与主板设备约定一起成为兼容平台。串口、
+定时器、键盘控制器和中断控制器占用固定 I/O 端口。后续处理器即使内部完全
+不同，也必须继续运行既有 DOS、固件和操作系统二进制。
+
+\begin{longtable}{L{0.15\linewidth}L{0.22\linewidth}L{0.27\linewidth}L{0.26\linewidth}}
+\toprule
+代际 & 代表能力 & 软件获得的新边界 & 保留下来的兼容条件 \\
+\midrule
+8086 & 16 位寄存器、20 位地址 & 分段实模式与 1 MiB 空间 & 复位入口、段寄存器 \\
+80286 & 保护模式、描述符 & 权限、界限与任务机制 & 仍从实模式复位 \\
+80386 & 32 位寄存器、分页 & 4 GiB 线性地址、页级保护 & 16/32 位模式并存 \\
+Pentium 系列 & cache、乱序、APIC & 性能和多处理器能力 & 指令集二进制兼容 \\
+AMD64 & 64 位寄存器、四级页表 & 长模式和更大地址空间 & 继续从兼容复位状态进入 \\
+\bottomrule
+\end{longtable}
+
+\section{二、架构状态与微架构状态}
+
+架构状态是软件可通过规范观察的寄存器、标志、内存和异常结果。通用寄存器、
+RIP、RFLAGS、段寄存器、控制寄存器和 MSR 属于这类状态。流水线深度、重排序
+缓冲、物理寄存器数量和分支预测表属于微架构实现；它们影响性能，却不能改变
+正确程序最终观察到的指令语义。
+
+\begin{pdfdiagram}
+  \node[os state] (software) {软件可见\\ISA 契约};
+  \node[os block,below left=of software] (regs) {寄存器\\RAX--R15、RIP};
+  \node[os block,below=of software] (control) {控制状态\\CR0、CR3、CR4、EFER};
+  \node[os block,below right=of software] (memory) {内存与 I/O\\地址、数据、异常};
+  \node[os hardware,below=22mm of control] (micro) {微架构\\流水线、cache、预测、执行单元};
+  \draw[os arrow] (software) -- (regs);
+  \draw[os arrow] (software) -- (control);
+  \draw[os arrow] (software) -- (memory);
+  \draw[os arrow] (regs) -- (micro);
+  \draw[os arrow] (control) -- (micro);
+  \draw[os arrow] (memory) -- (micro);
+\end{pdfdiagram}
+\diagramnote{ISA 规定软件可见结果，微架构负责在物理资源上实现这些结果。
+操作系统依赖前者，性能调优和侧信道分析才进一步关心后者。}
+
+\section{三、通用寄存器的宽度叠加}
+
+x86-64 的 RAX 低 32 位叫 EAX，低 16 位叫 AX，AX 的低高字节分别叫 AL 和
+AH。这些不是四份独立存储，而是同一个物理架构值的不同视图。写 EAX 会把 RAX
+高 32 位清零；写 AX 或 AL 只更新相应低位。固件使用 AL 访问 8 位 UART，
+使用 AX 配置 16 位段寄存器和栈，原因来自硬件接口与当前模式的精确宽度。
+
+\begin{center}
+\begin{tikzpicture}[os diagram,x=0.65cm]
+  \draw[BookBlue,thick] (0,0) rectangle (16,1);
+  \draw[BookTeal,thick] (8,0) rectangle (16,1);
+  \draw[BookAmber,thick] (12,0) rectangle (16,1);
+  \draw[BookRed,thick] (14,0) rectangle (16,1);
+  \node at (4,0.5) {RAX 高 32 位};
+  \node at (10,0.5) {EAX 高 16 位};
+  \node at (13,0.5) {AH};
+  \node at (15,0.5) {AL};
+  \node[below] at (8,-0.1) {RAX 64 位};
+  \node[below] at (12,-0.7) {EAX 32 位};
+  \node[below] at (14,-1.3) {AX 16 位};
+\end{tikzpicture}
+\end{center}
+
+\section{四、段寄存器包含可见值和隐藏缓存}
+
+段寄存器不仅保存软件可见的 16 位值，内部还缓存基址、界限和属性。普通实模式
+加载段寄存器时，基址按段值左移 4 位形成；保护模式加载选择子时，处理器从
+GDT/LDT 取得描述符并填入隐藏缓存。地址形成使用缓存内容，而不是每次重新计算
+可见值。
+
+复位状态利用了这个机制：CS 可见值与隐藏基址不是普通实模式加载后的组合。
+隐藏基址为 \code{0xFFFF0000}，IP 为 \code{0xFFF0}，两者相加到达
+\code{0xFFFFFFF0}。第一次重载 CS 会结束这份特殊状态，因此复位入口的跳转
+类型直接影响后续地址。
+
+\section{五、RFLAGS 保存算术与控制条件}
+
+进位 CF、零 ZF、符号 SF、溢出 OF 描述算术结果；中断允许 IF 和方向 DF
+控制处理器行为。入口执行 \code{cli} 清 IF，避免在 IDT 和栈尚未建立时接收
+可屏蔽中断；执行 \code{cld} 清 DF，让 \code{lodsb} 自动增加 SI。
+
+\begin{longtable}{L{0.12\linewidth}L{0.23\linewidth}L{0.55\linewidth}}
+\toprule
+标志 & 产生或修改方式 & 固件中的意义 \\
+\midrule
+CF & 算术、\code{stc}/\code{clc} & 字符发送函数返回成功或超时 \\
+ZF & 比较、测试和算术结果 & \code{test al,al} 判断字符串结尾 \\
+IF & \code{sti}/\code{cli} & IDT 建立前保持可屏蔽中断关闭 \\
+DF & \code{std}/\code{cld} & 控制字符串指令地址增加或减少 \\
+\bottomrule
+\end{longtable}
+
+\section{六、控制寄存器推进执行模式}
+
+CR0 包含保护模式与分页总开关；CR3 指向当前页表根；CR4 选择 PAE 等扩展；
+EFER 是 MSR，其中 LME 允许进入长模式。这些位不是互相独立的按钮。长模式
+激活需要 PAE 页表、CR3、EFER.LME 与 CR0.PG 按规范顺序共同成立。
+
+复位阶段保持这些复杂机制关闭，只建立最小可观察环境。后续每个里程碑只推进
+一组状态，使异常发生时仍能定位最后成功边界。
+
+\section{七、特权与异常属于处理器契约}
+
+保护模式引入特权级和描述符检查，分页继续增加页级读写执行权限。非法指令、
+除零、缺页和保护错误不会返回普通函数错误码，而是由处理器切换控制流到异常
+向量。内核必须在执行可能失败的机制之前建立 IDT 和诊断路径。
+
+复位固件尚未建立异常处理，错误指令可能连续触发异常并最终三重故障复位。
+串口标记和逐阶段实现的价值正在这里：最后一条已出现标记界定了故障所在区间。

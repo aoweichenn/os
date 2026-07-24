@@ -48,3 +48,5 @@ books/           可独立构建的 LaTeX 系统教材
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
+教材现为 5 部 18 章、73 页，并在构建时自动统计仅进入目标系统的真实代码量。
+可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。

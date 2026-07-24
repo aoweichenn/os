@@ -24,3 +24,59 @@ QEMU 提供 \code{pc} 机器、\code{qemu64} CPU、TCG 执行、RAM、ISA 串口
 IDE 磁盘模型。它不替固件初始化串口，不替引导器读磁盘，也不替内核建立页表。
 \code{-nodefaults} 减少无关默认设备，\code{-display none} 和
 \code{-serial stdio} 把最早日志绑定到测试进程。
+
+\section{地址译码把数值变成硬件事务}
+
+处理器发出的物理地址本身只是一个整数。芯片组或片上互连比较地址范围和属性，
+选择唯一响应者，并把读写请求转换成 DRAM、ROM 或设备事务。没有组件响应的
+范围称为空洞；多个组件同时响应则是平台设计错误。
+
+\begin{pdfdiagram}[node distance=9mm]
+  \node[os block] (cpu) {CPU\\物理地址与读写属性};
+  \node[os state,right=of cpu] (decode) {平台地址译码};
+  \node[os hardware,above right=5mm and 11mm of decode] (rom) {高地址 ROM};
+  \node[os hardware,right=11mm of decode] (ram) {低地址 RAM};
+  \node[os hardware,below right=5mm and 11mm of decode] (mmio) {设备窗口};
+  \draw[os arrow] (cpu) -- (decode);
+  \draw[os arrow] (decode) -- (rom);
+  \draw[os arrow] (decode) -- (ram);
+  \draw[os arrow] (decode) -- (mmio);
+\end{pdfdiagram}
+\diagramnote{同一条 MOV 指令最终访问 RAM、ROM 还是设备，取决于地址译码。}
+
+ROM 的“只读”性质也由平台实现。链接器允许在镜像中描述可写段，并不代表运行
+时硬件会接受写事务。本项目把栈安排在低地址 RAM，把指令和常量保留在高地址
+ROM，正是依据两类存储器不同的运行时属性。
+
+\section{端口空间与内存映射 I/O 的历史来源}
+
+8086 继承了独立 I/O 地址空间，使用 \code{IN} 和 \code{OUT} 指令访问最多
+64 KiB 的端口号。这种设计节省了早期宝贵的内存地址空间，也让硬件可以用专门
+控制信号区分内存与外设。后来设备寄存器数量和吞吐需求增长，PCI 等平台大量
+采用内存映射 I/O，使普通加载和存储指令也能访问设备。
+
+两种方式今天仍在 x86 平台共存。COM1 属于端口映射 I/O；局部 APIC、帧缓冲
+和许多 PCI BAR 通常属于内存映射 I/O。后者看似普通内存，实际上具有副作用、
+访问宽度和顺序约束，不能套用普通缓存内存的优化假设。
+
+\section{访问宽度、顺序与设备状态}
+
+设备协议规定每个寄存器接受的宽度。UART 寄存器是 8 位，因此代码使用
+\code{out dx, al}，不能因为处理器是 64 位就改成 64 位写入。“内部量优先
+使用 64 位”只适用于没有外部精确宽度约束的数据；硬件、磁盘格式和 ABI
+字段必须忠实采用协议宽度。
+
+设备还可能与处理器异步推进。软件写入发送保持寄存器后，UART 需要若干串行
+比特时间才能把字节送出；线路状态寄存器随后才重新报告可发送。轮询循环是在
+同步两个独立状态机，而不是为了拖延时间。有界轮询把设备失效从永久死循环
+转换为可诊断的失败。
+
+\section{QEMU PC 模型提供的实验边界}
+
+\code{qemu-system-x86_64} 表示目标家族，不要求宿主 CPU 本身支持 x86-64。
+TCG 把客户机指令翻译为宿主可执行代码，因此 ARM64 等宿主也能运行本项目。
+代价是速度低于硬件虚拟化，但启动阶段规模很小，可重复性和跨架构运行更重要。
+
+\code{-machine pc} 选择一组具有历史 PC 兼容关系的设备和地址布局。它不是
+“所有 x86-64 机器”的抽象；真实服务器、现代 UEFI 平台和不同芯片组会有
+不同拓扑。本书所有地址和设备假设都必须能够追溯到所选机器模型或项目契约。

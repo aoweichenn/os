@@ -23,6 +23,7 @@ from os_tools.qemu_runner import (
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
+from os_tools.source_metrics import reportSourceMetrics
 from os_tools.toolchain import checkToolchain
 
 
@@ -107,6 +108,13 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         arguments.expectedDiskSizeBytes,
         requiredMarkers,
         forbiddenMarkers,
+    )
+
+
+def handleSourceMetrics(arguments: argparse.Namespace) -> None:
+    reportSourceMetrics(
+        OS_TOOL_PROJECT_ROOT,
+        arguments.latexOutputPath,
     )
 
 
@@ -210,6 +218,18 @@ def createArgumentParser() -> argparse.ArgumentParser:
         choices=("success", "serial-failure"),
         required=True,
         dest="expectedOutcome",
+    )
+
+    sourceMetricsParser = addCommand(
+        subparsers,
+        "source-metrics",
+        "统计只进入目标系统的真实代码",
+        handleSourceMetrics,
+    )
+    sourceMetricsParser.add_argument(
+        "--latex-output",
+        dest="latexOutputPath",
+        type=Path,
     )
     return parser
 

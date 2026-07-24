@@ -3,6 +3,7 @@
 \input{preamble/packages}
 \input{preamble/layout}
 \input{preamble/macros}
+\input{generated/source_metrics}
 
 \setcounter{tocdepth}{1}
 \setcounter{secnumdepth}{2}
@@ -15,26 +16,40 @@
 \tableofcontents
 
 \mainmatter
-\part{方法、边界与硬件契约}
+\part{从物理机器到处理器复位}
 \begin{partbridge}
-这一部分先确定“自己写操作系统”的准确边界，再建立 CPU 复位、地址、总线和
-QEMU 硬件模型。它回答代码执行之前必须成立的条件。
+操作系统开始执行之前，电源、时钟、复位、地址译码和指令存储已经组成一条
+不可省略的硬件通路。本部分从整机放行条件进入处理器可见状态，沿 8086 到
+x86-64 的兼容历史建立寄存器、分段、地址和 I/O 的共同模型。
 \end{partbridge}
 \input{chapters/ch01-learning-and-engineering}
+\input{chapters/ch02-power-clock-reset}
+\input{chapters/ch03-x86-history-architecture}
 \input{chapters/ch02-x86-reset-model}
 \input{chapters/ch03-platform-memory-and-io}
 
-\part{从源文件到第一条串口日志}
+\part{从 bit、汇编到 ROM 字节}
 \begin{partbridge}
-这一部分把 NASM、链接脚本、ROM 字节、复位向量和 16550A 串口连成一条可
-逐字节审计的启动路径，并说明怎样证明成功与失败。
+源代码不会被处理器直接执行。本部分先建立二进制数、补码、小端序、指令编码
+与汇编语言，再把 NASM、ELF、链接脚本和裸 ROM 连成可逐字节审计的生成链。
+复位入口的每条指令都落到寄存器变化、机器码和物理地址。
 \end{partbridge}
+\input{chapters/ch06-data-representation}
+\input{chapters/ch07-assembly-language}
 \input{chapters/ch04-toolchain-and-binary}
+\input{chapters/ch08-freestanding-cpp}
 \input{chapters/ch05-rom-and-reset-code}
+
+\part{第一条可观察的硬件事务}
+\begin{partbridge}
+串口把处理器内部状态转换成宿主可以保存的字节流。本部分从异步通信的线路和
+时钟误差进入 16550A 寄存器协议，再建立有界轮询、故障注入、ROM 审计和
+QEMU 整机证据。
+\end{partbridge}
 \input{chapters/ch06-serial-driver}
 \input{chapters/ch07-testing-and-observability}
 
-\part{从实模式到内核}
+\part{从实模式到 64 位内核}
 \begin{partbridge}
 这一部分面向后续实现，完整解释保护模式、长模式、ELF64 装载、异常、内存、
 中断与设备驱动之间的依赖关系。
@@ -43,13 +58,14 @@ QEMU 硬件模型。它回答代码执行之前必须成立的条件。
 \input{chapters/ch09-kernel-and-memory}
 \input{chapters/ch10-interrupts-devices-users}
 
-\part{把最小内核发展成操作系统}
+\part{把内核发展成操作系统}
 \begin{partbridge}
 最后把执行流、同步、文件、系统调用和工程治理组织成长期可演进的学习项目，
 并给出从 v0.0 到 v1.0 的完整验收地图。
 \end{partbridge}
 \input{chapters/ch11-processes-files-system-calls}
 \input{chapters/ch12-roadmap-and-practice}
+\input{chapters/ch13-project-anatomy-metrics}
 
 \backmatter
 \input{backmatter/checklist}

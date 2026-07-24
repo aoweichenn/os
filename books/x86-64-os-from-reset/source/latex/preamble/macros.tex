@@ -1,6 +1,10 @@
 \DeclareRobustCommand{\code}[1]{\textcolor{BookBlue}{\texttt{\nolinkurl{#1}}}}
 \DeclareRobustCommand{\filepath}[1]{\textcolor{BookTeal}{\texttt{\nolinkurl{#1}}}}
 \DeclareRobustCommand{\term}[2]{\textbf{#1}（#2）}
+\newcommand{\topic}[1]{%
+  \par\medskip{\normalsize\bfseries\color{BookNavy}#1}\quad\ignorespaces
+}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
 \lstdefinestyle{oscode}{
   basicstyle=\ttfamily\small,
@@ -59,6 +63,14 @@
 {\clearpage\thispagestyle{plain}\vspace*{0.5em}
  \noindent{\Large\bfseries\color{BookNavy}本部分导读}\par\medskip}
 {\par\clearpage}
+
+\newenvironment{pdfdiagram}[1][]
+{\par\medskip\noindent\begin{center}\begin{tikzpicture}[os diagram,#1]}
+{\end{tikzpicture}\end{center}\medskip}
+
+\newcommand{\diagramnote}[1]{%
+  \par{\noindent\footnotesize\color{BookMuted}图示：#1\par}\smallskip
+}
 
 \tikzset{
   os diagram/.style={

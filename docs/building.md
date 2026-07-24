@@ -53,6 +53,7 @@ python3 tools/os.py doctor
 python3 tools/os.py configure
 python3 tools/os.py build
 python3 tools/os.py test
+python3 tools/os.py source-metrics
 ```
 
 ## 构建产物
@@ -100,6 +101,10 @@ make -C books/x86-64-os-from-reset pdf
 
 PDF 生成在 `books/x86-64-os-from-reset/source/latex/main.pdf`，属于构建产物，
 不进入 Git。
+
+`source-metrics` 只统计 `source/` 下 `.asm`、`.cpp`、`.hpp`、`.inc` 和
+`.tpp` 的非空、非纯注释行。测试、宿主工具、书稿、网站、构建描述和链接脚本
+不计入操作系统本体代码量。教材构建会自动刷新同一统计结果。
 
 ## 编译边界
 

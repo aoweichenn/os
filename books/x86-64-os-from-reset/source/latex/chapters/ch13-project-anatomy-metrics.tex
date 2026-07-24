@@ -1,0 +1,86 @@
+\chapter{工程剖面、真实代码量与演进纪律}
+
+\begin{keyidea}
+学习项目的规模用进入目标系统的真实机制衡量，不用测试、工具或文档行数制造
+体量。测试和教材仍是必要交付物，但它们分别证明和解释代码，不计入操作系统
+本体代码量。
+\end{keyidea}
+
+\section{一、仓库中的五类产物}
+
+\begin{longtable}{L{0.17\linewidth}L{0.24\linewidth}L{0.31\linewidth}L{0.18\linewidth}}
+\toprule
+目录 & 运行位置 & 职责 & 计入真实代码 \\
+\midrule
+\filepath{source/} & 目标 x86-64 机器 & 固件、基础模块、后续内核与用户程序 & 是 \\
+\filepath{tests/} & 宿主机/QEMU 调度 & 单元、集成、随机和整机断言 & 否 \\
+\filepath{tools/} & 宿主机 & 构建、审计、镜像和 QEMU 生命周期 & 否 \\
+\filepath{books/} & 文档构建环境 & 原理教材、图表和代码走读 & 否 \\
+\filepath{web/} & 网站运行环境 & 在线阅读与发布门户 & 否 \\
+\bottomrule
+\end{longtable}
+
+CMakeLists 和链接脚本属于构建与布局描述。链接脚本对 ROM 地址至关重要，但
+处理器不会把它作为指令执行，因此本书把它列为工程资产，不计入目标代码行。
+统计口径保留这种边界，避免随着测试和文档扩充产生“内核已经很大”的错觉。
+
+\section{二、当前真实代码量}
+
+本书构建时调用 \code{python3} \code{tools/os.py} \code{source-metrics} 自动扫描
+\filepath{source/}。只接受 \code{.asm}、\code{.cpp}、\code{.hpp}、
+\code{.inc} 和 \code{.tpp}；空行与纯注释行不计入代码行，行尾注释所在的
+指令或语句仍计入。
+
+\begin{longtable}{L{0.32\linewidth}L{0.22\linewidth}L{0.36\linewidth}}
+\toprule
+指标 & 当前值 & 含义 \\
+\midrule
+真实源文件 & \OsProductionFileCount & 进入目标系统语义的源文件 \\
+物理行 & \OsProductionPhysicalLineCount & 包含空行和注释的原始行数 \\
+有效代码行 & \OsProductionCodeLineCount & 非空、非纯注释行 \\
+freestanding C++20 & \OsProductionCppCodeLineCount & 头文件和源文件有效行 \\
+NASM Intel 汇编 & \OsProductionAssemblyCodeLineCount & 复位与串口有效行 \\
+\bottomrule
+\end{longtable}
+
+当前阶段汇编占比较高，因为 CPU 复位后还没有 C++ ABI、64 位栈和运行时。
+随着模式切换完成，高层机制会主要进入 C++20，汇编只保留入口、异常桩、上下文
+切换和端口边界。这个变化反映系统层次演进，不是追求某种语言比例。
+
+\section{三、代码行不是完成度}
+
+\OsProductionCodeLineCount 行有效目标代码已经完成真实复位和串口，但尚未读取一个磁盘扇区，也没有
+页表、异常入口或内核。相反，短小的复位向量只有三个有效字节，却承担整个系统
+是否获得执行权的关键边界。完成度必须由机制和验收项表示。
+
+\begin{longtable}{L{0.20\linewidth}L{0.30\linewidth}L{0.40\linewidth}}
+\toprule
+表面指标 & 能说明的事实 & 不能说明的事实 \\
+\midrule
+代码行增加 & 仓库出现更多目标语句 & 机制正确、边界完整或可维护 \\
+测试行增加 & 覆盖意图和输入数量增加 & 测试断言与规格一致 \\
+串口有输出 & CPU 至少执行到某个标记 & 后续状态、错误路径和硬件全部正确 \\
+阶段验收通过 & 当前明确契约有重复证据 & 尚未实现的下一阶段能力存在 \\
+\bottomrule
+\end{longtable}
+
+\section{四、自动统计的可重复性}
+
+统计实现位于宿主工具，不进入目标镜像。书籍 Makefile 在检查和 PDF 构建前
+重新生成 LaTeX 宏；源代码增加后，表格数字随构建更新。工具本身由单元测试
+覆盖 C++ 行注释、块注释、NASM 注释和扩展名过滤。
+
+统计值必须与提交绑定。发布记录保存当时阶段、提交和口径；未来改变统计规则时
+先更新规则说明，再重新生成数字，不能把不同口径的曲线直接比较。
+
+\section{五、从 v0.1 到 v1.0 的规模增长来源}
+
+后续真实代码增长主要来自磁盘状态机、模式转换、ELF 验证、异常入口、页分配、
+页表、驱动、调度、同步、文件系统和用户程序。每个模块都先建立类型与失败语义，
+再添加正常路径。测试和教材会同步增长，但继续从真实代码量中排除。
+
+\section{六、阅读工程的稳定顺序}
+
+阅读一个阶段先看发布记录和 ADR，确定范围与决策；再看链接脚本和公开头文件，
+建立地址与接口；随后走读实现和最终字节；最后看测试如何证伪错误输入。这个
+顺序让代码保持在硬件和契约上下文中，不会把某个函数误解为完整机制。

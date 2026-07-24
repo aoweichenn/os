@@ -7,7 +7,8 @@
 ## 目录
 
 - `source/latex/main.tex`：全书入口。
-- `source/latex/chapters/`：十二章正文。
+- `source/latex/chapters/`：按硬件基础、汇编与二进制、启动实现、内核机制和
+  工程度量组织的正文。
 - `source/latex/frontmatter/`：书名页与前言。
 - `source/latex/backmatter/`：验收清单与参考资料。
 - `source/latex/preamble/`：排版、颜色和教材环境。
@@ -20,5 +21,9 @@ make check
 make pdf
 ```
 
-`make check` 检查所有 `\input` 文件、章节数量、XeLaTeX 和 latexmk；
-`make pdf` 生成 `source/latex/main.pdf`。
+`make check` 更新生产目标代码统计，并检查所有 `\input` 文件、章节数量、
+XeLaTeX 和 latexmk；`make pdf` 生成 `source/latex/main.pdf`。
+
+生产代码统计只扫描仓库根目录的 `source/`，计入 `.asm`、`.cpp`、`.hpp`、
+`.inc` 和 `.tpp` 中的非空、非纯注释行。测试、宿主工具、书稿、网站、构建
+描述和链接脚本均不计入该数字。

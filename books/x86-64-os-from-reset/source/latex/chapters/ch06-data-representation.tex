@@ -1,0 +1,99 @@
+\chapter{bit、补码、字节序与地址}
+
+\begin{keyidea}
+处理器只接收固定宽度的 bit 模式。数值、字符、指令、地址和状态位都是软件对
+这些模式建立的解释。位宽、符号、字节序和对齐一旦没有写进契约，同一组字节
+就可能在不同层得到不同含义。
+\end{keyidea}
+
+\section{一、bit 与十六进制}
+
+一个 bit 只能取 0 或 1。八个 bit 组成一个 byte，可表示 \(2^8=256\) 种模式。
+十六进制每个数字恰好对应四个 bit，因此适合阅读寄存器和机器码：
+\[
+\texttt{0xE9}=1110\,1001_2,\qquad
+\texttt{0xF0}=1111\,0000_2.
+\]
+固件复位向量的三个字节 \code{E9 0D F0} 中，E9 是 near jump 操作码，
+后两个字节是有符号位移的低字节和高字节。
+
+\section{二、无符号与补码}
+
+n 位无符号数范围为 0 到 \(2^n-1\)。补码有符号数范围为
+\(-2^{n-1}\) 到 \(2^{n-1}-1\)。负数 \(-x\) 的 n 位补码可以用
+\(2^n-x\) 计算。复位跳转位移是 \(-4083\)：
+\[
+2^{16}-4083=61453=\texttt{0xF00D}.
+\]
+小端序把 \code{0xF00D} 存成低字节 \code{0D}、高字节 \code{F0}，所以
+ROM 中出现 \code{E9 0D F0}。
+
+\begin{longtable}{L{0.18\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.25\linewidth}}
+\toprule
+位模式 & 无符号解释 & 16 位补码解释 & 固件含义 \\
+\midrule
+\code{0x0003} & 3 & 3 & near jump 指令长度 \\
+\code{0xF000} & 61440 & -4096 & 目标 IP 按无符号偏移使用 \\
+\code{0xF00D} & 61453 & -4083 & near jump 有符号位移 \\
+\code{0xFFFF} & 65535 & -1 & 串口轮询次数按无符号使用 \\
+\bottomrule
+\end{longtable}
+
+\section{三、小端序来自字节地址顺序}
+
+x86 使用小端序保存多字节整数，最低有效字节位于最低地址。设内存地址
+\code{0x1000} 保存 16 位数 \code{0xF00D}：
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os block] (low) {地址 0x1000\\字节 0x0D};
+  \node[os block,right=of low] (high) {地址 0x1001\\字节 0xF0};
+  \draw[os arrow] (low) -- node[above]{地址增加} (high);
+\end{tikzpicture}
+\end{center}
+
+字节序只规定多字节对象与连续字节之间的映射。单字节 UART 寄存器没有端序
+问题；16 位 IDE 数据端口和 64 位页表项则必须同时遵守访问宽度与小端布局。
+
+\section{四、地址、偏移和长度是不同领域量}
+
+地址标识位置，偏移表示相对距离，长度表示对象覆盖多少字节。它们底层都可能是
+64 位整数，语义仍然不同。半开区间 \([begin,end)\) 的长度为
+\(end-begin\)，相邻区间 \([a,b)\) 与 \([b,c)\) 不重叠。
+
+项目的 \code{PhysicalAddress}、\code{ByteCount} 和 \code{AddressRange}
+用不同类型保存这些语义。创建区间前先检查加法溢出，避免
+\code{begin + size} 绕回低地址后被误判为小范围。
+
+\section{五、对齐把地址低位变成结构信息}
+
+若对象要求按 \(2^n\) 字节对齐，地址最低 n 位必须为零。4 KiB 页面地址低
+12 位为零，页表项可以复用这些低位保存 present、writable、user 等标志。
+对齐不是排版偏好，而是硬件地址分解和总线访问的条件。
+
+\begin{longtable}{L{0.18\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.25\linewidth}}
+\toprule
+对象 & 常见对齐 & 空出的地址低位 & 用途 \\
+\midrule
+16 位端口字 & 2 字节 & bit 0 & 总线字节通道选择 \\
+32 位字段 & 4 字节 & bit 1--0 & ABI 与访存效率 \\
+4 KiB 页面 & 4096 字节 & bit 11--0 & 页内偏移或页表标志 \\
+2 MiB 大页 & 2097152 字节 & bit 20--0 & 大页页内偏移 \\
+\bottomrule
+\end{longtable}
+
+\section{六、文本最终仍是字节协议}
+
+当前固件字符串使用 ASCII 范围内字符。字符 \code{'A'} 的字节值为
+\code{0x41}，回车 CR 为 \code{0x0D}，换行 LF 为 \code{0x0A}，零字节
+\code{0x00} 作为字符串终止标记。UART 不理解“日志行”，只依次发送这些
+字节；宿主终端把 CR/LF 解释成换行。
+
+\section{七、精确位宽与内部扩展}
+
+硬件寄存器必须使用规范宽度。COM1 数据寄存器是 8 位，端口地址在当前 x86
+I/O 指令中由 DX 的 16 位值选择。内部物理地址、容量和计数若没有窄格式约束，
+项目默认使用 64 位，避免规模扩大后改写接口。
+
+扩宽不能改变外部布局。读取窄硬件值时先按精确宽度接收，再验证并转换到内部
+大类型；写回窄寄存器前检查范围。这个顺序同时避免静默截断和平台相关类型差异。
