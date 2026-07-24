@@ -1,5 +1,6 @@
 from pathlib import Path
 import subprocess
+import time
 
 from .errors import OsToolError
 from .process import runCommand
@@ -133,6 +134,18 @@ def normalizeCapturedOutput(output: str | bytes | None) -> str:
     return output
 
 
+def formatQemuOutputWithElapsedTime(
+    serialOutput: str,
+    elapsedMilliseconds: int,
+) -> str:
+    """为捕获的 QEMU 串口行添加宿主单调时钟观测值。"""
+    timestamp = f"[QEMU][T+{elapsedMilliseconds:06d}ms] "
+    return "".join(
+        timestamp + line + "\n"
+        for line in serialOutput.splitlines()
+    )
+
+
 def validateSerialProtocol(
     serialOutput: str,
     requiredMarkers: tuple[str, ...],
@@ -182,6 +195,7 @@ def runQemuFirmwareBoot(
         firmwareImagePath,
         diskImagePath,
     )
+    startTime = time.monotonic()
     try:
         completedProcess = runCommand(
             command,
@@ -197,7 +211,16 @@ def runQemuFirmwareBoot(
             requiredMarkers,
             forbiddenMarkers,
         )
-        print(serialOutput, end="")
+        elapsedMilliseconds = int(
+            (time.monotonic() - startTime) * 1000
+        )
+        print(
+            formatQemuOutputWithElapsedTime(
+                serialOutput,
+                elapsedMilliseconds,
+            ),
+            end="",
+        )
         print("QEMU 固件串口协议验收通过。")
         return
 
