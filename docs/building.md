@@ -43,7 +43,8 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 汇编、链接并生成 v0.1 自研 ROM，同时保留 v0.0 空镜像回归基线。
+4. 生成 v0.2 自研 ROM、Stage 1 二进制和正常/损坏磁盘镜像，同时保留
+   v0.0 空镜像回归基线。
 5. 运行全部 CTest 测试。
 
 ## 手动构建
@@ -66,8 +67,16 @@ source/foundation/libos_foundation_host.a
 source/foundation/libos_foundation_x86_64.a
 source/firmware/generated/os_firmware.elf
 source/firmware/generated/os_firmware_serial_failure.elf
+source/firmware/generated/os_firmware_ide_busy_failure.elf
+source/firmware/generated/os_firmware_ide_error_failure.elf
+source/boot/stage1/generated/stage1.bin
 images/firmware.bin
 images/firmware_serial_failure.bin
+images/firmware_ide_busy_failure.bin
+images/firmware_ide_error_failure.bin
+images/stage1_disk.img
+images/stage1_invalid_header_disk.img
+images/stage1_invalid_checksum_disk.img
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
@@ -77,6 +86,7 @@ tests/os_foundation_randomized_tests
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
+Stage 1 磁盘镜像必须是精确 1048576 字节。
 `build/` 不进入 Git。
 
 ## 固件生成链
@@ -90,6 +100,21 @@ reset_and_serial.asm
 
 `elf32` 是保存 16 位代码节和符号的目标文件容器，不表示 CPU 已进入 32 位模式。
 链接脚本用 `ASSERT` 保证入口不侵占最后 16 字节的复位向量区域。
+
+## Stage 1 生成链
+
+```text
+source/boot/stage1/src/entry.asm
+  └─ NASM bin → stage1.bin
+       └─ Python 格式编码与校验
+            ├─ stage1_disk.img
+            ├─ stage1_invalid_header_disk.img
+            └─ stage1_invalid_checksum_disk.img
+```
+
+使用 `python3 tools/os.py audit-stage1 build/developer/images/stage1_disk.img`
+可以独立检查描述符、磁盘范围、加载范围和负载校验。Python 只负责宿主镜像
+编码与审计；目标机上的描述符解析、ATA PIO 和跳转全部由自研固件执行。
 
 ## 教材构建
 

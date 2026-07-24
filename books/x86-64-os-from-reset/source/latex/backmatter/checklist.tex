@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.1 完成后的知识验收}
+\section*{v0.2 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -11,6 +11,10 @@
   \item COM1 的 DLAB、除数、8N1、FIFO 和线路状态位；
   \item 串口轮询采用有限预算所建立的失败边界；
   \item ROM 审计、单元、随机和 QEMU 测试各自覆盖的错误类别。
+  \item ATA 主通道端口、LBA28 字段和 BSY/DRQ/ERR/DF 状态；
+  \item Stage 1 描述符、两级校验与加载范围承担的不同边界；
+  \item 远控制转移重载 CS 与 Stage 1 重新建立 DS 的原因；
+  \item IDE 超时、设备错误、头损坏和负载损坏的可区分证据。
 \end{itemize}
 
 \section*{进入下一阶段前}
@@ -19,6 +23,7 @@
   \item 完整执行 \code{python3 tools/os.py verify}；
   \item 能从镜像十六进制数据手算复位目标；
   \item 能在 QEMU 串口日志中区分复位成功和串口超时；
-  \item 能说明 v0.2 IDE PIO 的输入、输出、超时和越界条件；
+  \item 能从磁盘前 28 字节解释 Stage 1 的加载位置和入口；
+  \item 能说明 v0.3 A20、GDT、页表和长模式控制位的依赖顺序；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

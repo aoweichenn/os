@@ -114,3 +114,16 @@ os_add_firmware_image(
     "${OS_FIRMWARE_SERIAL_FAILURE_IMAGE}"
     "OS_FIRMWARE_TEST_FORCE_SERIAL_FAILURE"
 )
+
+# 这两个测试变体保持真实 ATA PIO 控制流，只替换状态寄存器观测结果。
+os_add_firmware_image(
+    os_firmware_ide_busy_failure
+    "${OS_FIRMWARE_IDE_BUSY_FAILURE_IMAGE}"
+    "OS_FIRMWARE_TEST_FORCE_IDE_BUSY_TIMEOUT"
+)
+
+os_add_firmware_image(
+    os_firmware_ide_error_failure
+    "${OS_FIRMWARE_IDE_ERROR_FAILURE_IMAGE}"
+    "OS_FIRMWARE_TEST_FORCE_IDE_DEVICE_ERROR"
+)

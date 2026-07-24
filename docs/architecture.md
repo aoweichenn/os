@@ -48,6 +48,26 @@ COM1 初始化
 HLT
 ```
 
+## v0.2 Stage 1 加载路径
+
+```text
+IDE 主盘 LBA 0
+   ↓ ATA PIO 单扇区读取
+0x0000:0x0500 描述符缓冲区
+   ↓ 格式、范围和描述符校验
+IDE 主盘 LBA 1..N
+   ↓ 每扇区等待 BSY=0、DRQ=1、ERR=0、DF=0
+0x0800:0x0000 Stage 1 负载
+   ↓ 负载校验
+far return 重载 CS:IP
+   ↓
+Stage 1 独立入口
+```
+
+描述符使用小端固定宽度字段，覆盖 magic、版本、头长度、加载段、入口偏移、
+负载扇区数、标志、LBA 和负载校验。固件不会把磁盘字节映射为宿主结构体，
+而是按固定偏移读取，并在任何 I/O 或验证失败后停机。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -89,6 +109,11 @@ source/firmware/
 │   └── rom.ld
 └── src/
     └── reset_and_serial.asm
+
+source/boot/stage1/
+├── CMakeLists.txt
+└── src/
+    └── entry.asm
 ```
 
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和

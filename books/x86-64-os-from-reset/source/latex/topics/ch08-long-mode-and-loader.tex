@@ -26,9 +26,9 @@ CR4.PAE、写 EFER.LME、设置 CR0.PG 和 CR0.PE，再通过远跳转装载 64 
 
 \subsection{Stage 1 与磁盘}
 
-v0.2 将通过 IDE PIO 读取自研 Stage 1。驱动需要选择通道、设备和 LBA，
-发送命令，轮询 BSY/DRQ/ERR，并按 16 位数据端口读取扇区。每次传输都要有
-超时、扇区范围和错误状态验证。
+v0.2 已通过 IDE PIO 读取自研 Stage 1。驱动选择主通道、主设备和 LBA28，
+发送 \code{READ SECTORS}，轮询 BSY/DRQ/ERR/DF，并从 16 位数据端口读取
+扇区。每次传输都有超时、扇区范围和错误状态验证；负载通过校验后才执行。
 
 \subsection{ELF64 装载}
 

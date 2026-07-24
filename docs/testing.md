@@ -38,6 +38,20 @@
 固件最终进入 `HLT`，测试进程以两秒预算运行 QEMU，预算结束后验证捕获的
 串口协议。异常提前退出视为失败。
 
+`v0.2` 在同一条真实复位路径上增加六类整机结果：
+
+- 正常磁盘必须依次出现 `STAGE1_HEADER_VALID`、`STAGE1_LOADED` 和
+  `[OS][STAGE1] ENTERED`。
+- IDE 永久忙必须在有界轮询后输出 `IDE_TIMEOUT`。
+- ATA ERR 状态必须输出 `IDE_ERROR`。
+- 描述符任意受保护字节损坏必须输出 `STAGE1_HEADER_INVALID`。
+- 负载字节损坏必须输出 `STAGE1_CHECKSUM_INVALID`。
+- 所有失败路径均禁止出现 `STAGE1_LOADED` 和 Stage 1 进入标记。
+
+宿主单元测试验证格式编码、整扇区校验、截断、LBA 和加载范围；固定种子随机
+测试完成 256 组有效负载往返和 256 组越界 LBA 拒绝。QEMU 测试验证的是 ROM
+自身执行 ATA PIO 和远跳转，而不是宿主工具代替读取。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -79,10 +93,17 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
-| `os_qemu_firmware_reset_serial_success` | 系统 | 真实复位和两阶段串口协议 |
+| `os_stage1_disk_layout` | 集成 | 描述符、LBA、加载范围和负载校验 |
+| `os_stage1_rejects_invalid_header` | 集成/失败路径 | 损坏描述符必须被宿主审计拒绝 |
+| `os_qemu_stage1_load_success` | 系统 | 真实 ATA PIO 加载、校验、远跳转和 Stage 1 入口 |
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
+| `os_qemu_firmware_ide_busy_timeout_failure` | 系统/失败路径 | BSY 永久置位必须有界失败 |
+| `os_qemu_firmware_ide_error_failure` | 系统/失败路径 | ATA ERR 必须进入设备错误分支 |
+| `os_qemu_stage1_header_failure` | 系统/失败路径 | ROM 必须拒绝损坏描述符 |
+| `os_qemu_stage1_checksum_failure` | 系统/失败路径 | ROM 必须拒绝损坏负载 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
+| `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
 QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过

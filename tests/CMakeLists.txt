@@ -119,20 +119,49 @@ set_tests_properties(
 )
 
 add_test(
-    NAME os_qemu_firmware_reset_serial_success
+    NAME os_stage1_disk_layout
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-stage1
+        "${OS_STAGE1_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_stage1_disk_layout
+    PROPERTIES
+        LABELS "integration"
+)
+
+add_test(
+    NAME os_stage1_rejects_invalid_header
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-stage1
+        "${OS_STAGE1_INVALID_HEADER_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_stage1_rejects_invalid_header
+    PROPERTIES
+        LABELS "integration;failure-path"
+        WILL_FAIL TRUE
+)
+
+add_test(
+    NAME os_qemu_stage1_load_success
     COMMAND
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
         "${OS_FIRMWARE_IMAGE}"
-        "${OS_EMPTY_DISK_IMAGE}"
+        "${OS_STAGE1_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
         success
 )
 set_tests_properties(
-    os_qemu_firmware_reset_serial_success
+    os_qemu_stage1_load_success
     PROPERTIES
         LABELS "system"
         TIMEOUT 10
@@ -145,7 +174,7 @@ add_test(
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
         "${OS_FIRMWARE_SERIAL_FAILURE_IMAGE}"
-        "${OS_EMPTY_DISK_IMAGE}"
+        "${OS_STAGE1_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
@@ -153,6 +182,86 @@ add_test(
 )
 set_tests_properties(
     os_qemu_firmware_serial_timeout_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_firmware_ide_busy_timeout_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IDE_BUSY_FAILURE_IMAGE}"
+        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        ide-timeout
+)
+set_tests_properties(
+    os_qemu_firmware_ide_busy_timeout_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_firmware_ide_error_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IDE_ERROR_FAILURE_IMAGE}"
+        "${OS_STAGE1_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        ide-error
+)
+set_tests_properties(
+    os_qemu_firmware_ide_error_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_stage1_header_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_STAGE1_INVALID_HEADER_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        stage1-header-invalid
+)
+set_tests_properties(
+    os_qemu_stage1_header_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_stage1_checksum_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_STAGE1_INVALID_CHECKSUM_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        stage1-checksum-invalid
+)
+set_tests_properties(
+    os_qemu_stage1_checksum_failure
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10
@@ -191,6 +300,25 @@ add_test(
 )
 set_tests_properties(
     os_firmware_randomized_tests
+    PROPERTIES
+        LABELS "randomized"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(
+    NAME os_stage1_randomized_tests
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        -m
+        unittest
+        discover
+        -s
+        tests/randomized/boot
+        -p
+        "test_*.py"
+)
+set_tests_properties(
+    os_stage1_randomized_tests
     PROPERTIES
         LABELS "randomized"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"

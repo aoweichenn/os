@@ -68,3 +68,46 @@ break *0xfffff000
 continue
 x/20i $pc
 ```
+
+## v0.2：IDE PIO 与 Stage 1
+
+### 区分格式错误与传输错误
+
+`IDE_TIMEOUT` 表示状态轮询预算耗尽；`IDE_ERROR` 表示设备返回 ERR 或 DF。
+`STAGE1_HEADER_INVALID` 表示扇区已经读入，但描述符字段、范围或整扇区校验
+失败；`STAGE1_CHECKSUM_INVALID` 表示负载已经读入，但内容与描述符不一致。
+四类错误不能合并，否则无法判断故障发生在硬件事务还是不可信输入验证。
+
+宿主侧先审计镜像：
+
+```bash
+python3 tools/os.py audit-stage1 build/developer/images/stage1_disk.img
+xxd -g2 -l 32 build/developer/images/stage1_disk.img
+```
+
+### GDB 检查装载结果
+
+使用 v0.1 相同的 QEMU `-S -s` 参数，并把磁盘替换为
+`build/developer/images/stage1_disk.img`。在 GDB 中：
+
+```gdb
+set architecture i386
+target remote :1234
+break *0xfffff000
+continue
+x/16hx 0x500
+x/32bx 0x8000
+break *0x8000
+continue
+x/12i $pc
+```
+
+`0x500` 应以 `OSSTAGE1` 开头；`0x8000` 应与
+`source/boot/stage1/generated/stage1.bin` 前缀一致。命中 `0x8000` 后，
+CS 应为 `0x0800`、IP 为零，证明远控制转移已经刷新代码段状态。
+
+### PIO 读取后 DI 的推进
+
+`rep insw` 每扇区读取 256 个字，并把 ES:DI 推进 512 字节。v0.2 最多接受
+64 个扇区，确保单次负载不让 16 位 DI 回绕。若后续需要更大 Stage 1，必须
+显式推进 ES 或切换到更宽的地址模式，不能只放宽描述符上限。

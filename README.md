@@ -2,8 +2,9 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.1 复位与串口`已完成。自研 128 KiB ROM 已能从
-`0xFFFFFFF0` 接管 CPU、初始化 COM1，并输出可机器验收的串口协议。
+当前状态：`v0.2 固件加载`已完成。自研 128 KiB ROM 从 `0xFFFFFFF0`
+接管 CPU、初始化 COM1，通过 IDE ATA PIO 读取并校验自研 Stage 1 格式，
+把负载装入 `0x8000` 后远跳转到 Stage 1。
 
 ## 最短构建与测试路径
 
@@ -24,6 +25,9 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 ```text
 [OS][FIRMWARE] RESET
 [OS][FIRMWARE] SERIAL_READY
+[OS][FIRMWARE] STAGE1_HEADER_VALID
+[OS][FIRMWARE] STAGE1_LOADED
+[OS][STAGE1] ENTERED
 ```
 
 ## 固定技术路线
@@ -48,7 +52,7 @@ books/           可独立构建的 LaTeX 系统教材
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
-教材现为 5 部 10 个完整主题章、91 页；每章按“背景与历史约束、硬件或软件
+教材现为 5 部 10 个完整主题章、93 页；每章按“背景与历史约束、硬件或软件
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。

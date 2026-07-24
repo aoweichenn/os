@@ -54,9 +54,9 @@ ATA 的扇区计数字段为 8 位，数值零在部分命令中表示 256 个�
 
 \section{Stage 1 镜像需要自描述头而不是裸跳转}
 
-磁盘第一个自研阶段至少包含 magic、格式版本、头长度、负载长度、加载物理地址、
-入口偏移和校验。所有字段采用固定端序和宽度，解析器逐字段读取，不能把磁盘
-字节直接重解释为可能带填充的 C++ 结构体。
+本项目 v0.2 已把 magic、格式版本、头长度、扇区数、加载段、入口、LBA 和
+两级校验固定为磁盘契约。所有字段采用小端精确宽度，解析器逐字段读取，不能把
+磁盘字节直接重解释为可能带填充的 C++ 结构体。
 
 \begin{longtable}{L{0.23\textwidth}L{0.18\textwidth}L{0.43\textwidth}}
 \toprule
@@ -67,13 +67,13 @@ ATA 的扇区计数字段为 8 位，数值零在部分命令中表示 256 个�
 \textbf{字段} & \textbf{宽度示意} & \textbf{验证}\\
 \midrule
 \endhead
-magic & 64 位 & 精确匹配项目格式常量\\
-version & 32 位 & 属于装载器支持集合\\
-header size & 32 位 & 不小于必需字段且不越过镜像\\
-payload size & 64 位 & 扇区换算、加法和目标区间不溢出\\
-load address & 64 位 & 位于 RAM 且不覆盖固件数据\\
-entry offset & 64 位 & 小于 payload 并落入可执行范围\\
-checksum & 64 位或更强摘要 & 覆盖规定的头与负载字节\\
+magic & 8 字节 & 精确匹配 \code{OSSTAGE1}\\
+version/header size & 各 16 位 & 当前等于 1 和 28\\
+sector count/flags & 各 16 位 & 1--64 个扇区，标志为零\\
+load segment/entry & 各 16 位 & 形成合法实模式地址和入口\\
+payload LBA & 32 位 & LBA28 且负载不越过 1 MiB 镜像\\
+payload checksum & 16 位 & 覆盖补零后的全部负载字\\
+header checksum & 16 位 & 使 512 字节描述符字和为零\\
 \bottomrule
 \end{longtable}
 

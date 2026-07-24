@@ -1,0 +1,89 @@
+\section{v0.2 从磁盘事务建立可执行交接}
+
+\subsection{磁盘布局先于读取代码确定}
+
+项目不采用 MBR 或文件系统作为最早入口。LBA 0 保存一扇区自描述头，负载从
+头中声明的 LBA 开始，当前构建值为 1。宿主镜像工具与 ROM 固件分别实现同一
+字段契约，使构建产物和目标解析能够相互校验。
+
+\begin{longtable}{L{0.12\textwidth}L{0.13\textwidth}L{0.25\textwidth}L{0.38\textwidth}}
+\toprule
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{固件约束}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{固件约束}\\
+\midrule
+\endhead
+\code{0x00} & 8 字节 & magic & 精确等于 \code{OSSTAGE1}\\
+\code{0x08} & 2 字节 & version & 当前等于 1\\
+\code{0x0A} & 2 字节 & header size & 当前等于 28\\
+\code{0x0C} & 2 字节 & load segment & 形成合法 RAM 加载窗口\\
+\code{0x0E} & 2 字节 & entry offset & 小于补零后负载长度\\
+\code{0x10} & 2 字节 & sector count & 1 到 64\\
+\code{0x12} & 2 字节 & flags & 当前必须为零\\
+\code{0x14} & 4 字节 & payload LBA & LBA28 且不越过镜像\\
+\code{0x18} & 2 字节 & payload checksum & 等于负载 16 位字和\\
+\code{0x1A} & 2 字节 & header checksum & 使描述符整扇区字和为零\\
+\bottomrule
+\end{longtable}
+
+描述符剩余字节同样参加校验。这样保留区被意外写入也会失败，未来只有提升格式
+版本并定义新字段后才能使用。magic 识别格式，校验发现变化，范围检查保护内存，
+三者承担不同职责。
+
+\subsection{加载窗口避开固件临时状态}
+
+描述符读入物理地址 \code{0x0500..0x06FF}，实模式栈从 \code{0x7000}
+向低地址增长。Stage 1 当前装入 \code{0x0800:0x0000}，即物理
+\code{0x8000}。固件只接受：
+\[
+  0x8000 \leq \mathrm{loadBegin}
+  < \mathrm{loadEnd} \leq 0x9FC00.
+\]
+结束地址由扇区数乘 512 后与起始地址相加，乘法、加法和 LBA 结束位置都先在
+32 位寄存器中检查。最多 64 个扇区同时保证 \code{rep insw} 推进 16 位 DI
+时不会绕回。
+
+\subsection{ATA PIO 状态机逐扇区提交}
+
+固件选择主 IDE 通道主盘，把 LBA 的低、中、高字节写入
+\code{0x1F3..0x1F5}，高四位与设备选择写入 \code{0x1F6}，再向
+\code{0x1F7} 写 \code{0x20}。四次读取 alternate status 提供设备选择后的
+400 ns 延时。
+
+命令发出后最多读取状态 \code{0xFFFF} 次。BSY 仍为一时继续等待；ERR 或 DF
+出现时立即返回设备错误；只有 BSY 清零且 DRQ 置位才从 \code{0x1F0} 执行
+256 次 16 位读取。每条命令只读一个扇区，完成后由外层增加 LBA 并减少剩余
+计数，使错误位置保持精确。
+
+\subsection{校验完成后才交出指令指针}
+
+所有扇区进入 RAM 后，固件把补零负载解释为小端 16 位字序列，计算模
+\(2^{16}\) 的和并与描述符比较。成功日志在控制转移前输出
+\code{STAGE1\_LOADED}。随后依次压入目标 CS 和 IP，执行远返回；处理器重载
+CS 隐藏状态，开始在 \code{0x0800:0x0000} 取指。
+
+Stage 1 不能假定 DS 随 CS 改变。其第一段代码用 \code{push cs}/
+\code{pop ds} 建立自身常量地址，再通过已经初始化的 COM1 独立输出
+\code{[OS][STAGE1] ENTERED}。这条标记证明磁盘读取、校验、RAM 写入、远跳转
+和新代码自身寻址全部完成。
+
+\subsection{失败证据对应不同边界}
+
+\small
+\begin{longtable}{L{0.36\textwidth}L{0.23\textwidth}L{0.27\textwidth}}
+\toprule
+\textbf{标记} & \textbf{失败边界} & \textbf{测试输入}\\
+\midrule
+\code{IDE\_TIMEOUT} & 状态始终忙或始终无 DRQ & 同源 ROM 强制 BSY\\
+\code{IDE\_ERROR} & 设备返回 ERR/DF & 同源 ROM 强制 ERR\\
+\code{STAGE1\_HEADER\_INVALID} & 格式、范围或描述符校验 & 损坏 magic\\
+\code{STAGE1\_CHECKSUM\_INVALID} & 已读取负载内容变化 & 翻转负载字节\\
+\bottomrule
+\end{longtable}
+\normalsize
+
+每条失败路径禁止输出 \code{STAGE1\_LOADED} 与 Stage 1 进入标记。宿主单元
+测试另行拒绝短镜像和越界 LBA；固定种子测试覆盖 256 组有效负载往返和 256
+组越界输入，使格式性质不依赖单一样例。

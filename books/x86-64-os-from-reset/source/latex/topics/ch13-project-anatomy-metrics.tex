@@ -49,9 +49,10 @@ NASM Intel 汇编 & \OsProductionAssemblyCodeLineCount & 复位与串口有效�
 
 \subsection{三、代码行不是完成度}
 
-\OsProductionCodeLineCount 行有效目标代码已经完成真实复位和串口，但尚未读取一个磁盘扇区，也没有
-页表、异常入口或内核。相反，短小的复位向量只有三个有效字节，却承担整个系统
-是否获得执行权的关键边界。完成度必须由机制和验收项表示。
+\OsProductionCodeLineCount 行有效目标代码已经完成真实复位、串口、ATA PIO
+和 Stage 1 交接，但尚未建立页表、异常入口或内核。相反，短小的复位向量只有
+三个有效字节，却承担整个系统是否获得执行权的关键边界。完成度必须由机制和
+验收项表示。
 
 \begin{longtable}{L{0.20\linewidth}L{0.30\linewidth}L{0.40\linewidth}}
 \toprule
@@ -73,9 +74,9 @@ NASM Intel 汇编 & \OsProductionAssemblyCodeLineCount & 复位与串口有效�
 统计值必须与提交绑定。发布记录保存当时阶段、提交和口径；未来改变统计规则时
 先更新规则说明，再重新生成数字，不能把不同口径的曲线直接比较。
 
-\subsection{五、从 v0.1 到 v1.0 的规模增长来源}
+\subsection{五、从 v0.2 到 v1.0 的规模增长来源}
 
-后续真实代码增长主要来自磁盘状态机、模式转换、ELF 验证、异常入口、页分配、
+后续真实代码增长主要来自模式转换、ELF 验证、异常入口、页分配、
 页表、驱动、调度、同步、文件系统和用户程序。每个模块都先建立类型与失败语义，
 再添加正常路径。测试和教材会同步增长，但继续从真实代码量中排除。
 

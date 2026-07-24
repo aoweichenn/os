@@ -331,7 +331,8 @@ CI 独立复现
 - CMake/Ninja 增量构建。
 - x86-64 freestanding 编译目标。
 - 基础地址类型。
-- 七项 CTest 测试。
+- 自研 ROM、COM1、IDE ATA PIO 和 Stage 1 磁盘加载。
+- 十九项 CTest，覆盖单元、集成、随机、失败注入和真实 QEMU 启动。
 - GitHub Actions 原生工程验证。
 - 构建、测试、模块、ADR 和发布文档。
 
@@ -351,8 +352,19 @@ CI 独立复现
   内核机制；每章同时给出状态模型、历史约束、失败路径和验证证据。
 - 自动化真实代码统计；只计入 `source/` 中进入目标系统的 C++ 与汇编代码。
 
-当前尚不具备磁盘读取、A20、GDT、模式切换、ELF64 加载和内核入口；这些能力
-从 `v0.2` 开始逐层增加。
+## 12. v0.2 增加了什么
+
+`v0.2` 把启动链从 ROM 延伸到磁盘和低端 RAM：
+
+- 自研 Stage 1 描述符、版本和固定宽度小端字段。
+- IDE ATA PIO 单扇区读取与 BSY、DRQ、ERR、DF 状态机。
+- LBA28、磁盘边界、RAM 加载窗口和入口检查。
+- 描述符整扇区校验与负载内容校验。
+- 从 ROM 远控制转移到 `0x0800:0x0000` 的独立 Stage 1。
+- IDE 超时、设备错误、头损坏和负载损坏的可机器验收路径。
+
+当前尚不具备 A20、GDT、保护模式、分页、长模式、ELF64 加载和内核入口；
+这些能力从 `v0.3` 开始逐层增加。
 
 ## 12. 建议阅读顺序
 
@@ -365,6 +377,6 @@ CI 独立复现
 5. `docs/testing.md`：理解每项测试究竟证明什么。
 6. `docs/modules/foundation.md`：阅读第一个基础模块。
 7. `docs/modules/firmware.md`：走读 ROM、复位向量和串口契约。
-8. `docs/releases/v0.1.md`：查看当前阶段的完整实施证据。
+8. `docs/releases/v0.1.md` 与 `docs/releases/v0.2.md`：按阶段查看实施证据。
 9. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 10. `docs/roadmap.md`：了解后续知识如何逐层展开。

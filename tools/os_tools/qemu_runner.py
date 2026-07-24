@@ -9,6 +9,19 @@ OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
 OS_QEMU_GUEST_MEMORY_MEBIBYTES = 64
 OS_QEMU_FIRMWARE_RESET_MARKER = "[OS][FIRMWARE] RESET"
 OS_QEMU_FIRMWARE_SERIAL_READY_MARKER = "[OS][FIRMWARE] SERIAL_READY"
+OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER = (
+    "[OS][FIRMWARE] STAGE1_HEADER_VALID"
+)
+OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER = "[OS][FIRMWARE] STAGE1_LOADED"
+OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER = "[OS][FIRMWARE] IDE_TIMEOUT"
+OS_QEMU_FIRMWARE_IDE_ERROR_MARKER = "[OS][FIRMWARE] IDE_ERROR"
+OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER = (
+    "[OS][FIRMWARE] STAGE1_HEADER_INVALID"
+)
+OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER = (
+    "[OS][FIRMWARE] STAGE1_CHECKSUM_INVALID"
+)
+OS_QEMU_STAGE1_ENTERED_MARKER = "[OS][STAGE1] ENTERED"
 
 
 def validateImageSize(
@@ -63,7 +76,7 @@ def runQemuHardwareSmoke(
         "-bios",
         str(firmwareImagePath),
         "-drive",
-        f"file={diskImagePath},format=raw,if=ide",
+        f"file={diskImagePath},format=raw,if=ide,snapshot=on",
     ]
 
     try:
@@ -106,7 +119,7 @@ def createQemuFirmwareCommand(
         "-bios",
         str(firmwareImagePath),
         "-drive",
-        f"file={diskImagePath},format=raw,if=ide",
+        f"file={diskImagePath},format=raw,if=ide,snapshot=on",
     ]
 
 
@@ -123,11 +136,18 @@ def validateSerialProtocol(
     requiredMarkers: tuple[str, ...],
     forbiddenMarkers: tuple[str, ...],
 ) -> None:
+    previousMarkerPosition = 0
     for requiredMarker in requiredMarkers:
-        if requiredMarker not in serialOutput:
+        markerPosition = serialOutput.find(
+            requiredMarker,
+            previousMarkerPosition,
+        )
+        if markerPosition < 0:
             raise OsToolError(
-                f"串口输出缺少必需标记：{requiredMarker!r}"
+                "串口输出缺少必需标记或标记顺序错误："
+                f"{requiredMarker!r}"
             )
+        previousMarkerPosition = markerPosition + len(requiredMarker)
 
     for forbiddenMarker in forbiddenMarkers:
         if forbiddenMarker in serialOutput:
@@ -153,7 +173,7 @@ def runQemuFirmwareBoot(
     validateImageSize(
         diskImagePath,
         expectedDiskSizeBytes,
-        "空磁盘镜像",
+        "启动磁盘镜像",
     )
 
     command = createQemuFirmwareCommand(

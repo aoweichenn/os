@@ -46,6 +46,10 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertIn("pc,accel=tcg", command)
         self.assertIn("qemu64", command)
         self.assertIn("firmware.bin", command)
+        self.assertIn(
+            "file=disk.img,format=raw,if=ide,snapshot=on",
+            command,
+        )
         self.assertNotIn("-kernel", command)
 
     def testAcceptsRequiredAndAbsentForbiddenMarkers(self) -> None:
@@ -69,6 +73,18 @@ class QemuRunnerToolTests(unittest.TestCase):
                 "[OS][FIRMWARE] SERIAL_READY",
                 (),
                 ("[OS][FIRMWARE] SERIAL_READY",),
+            )
+
+    def testRejectsRequiredMarkersInWrongOrder(self) -> None:
+        with self.assertRaises(OsToolError):
+            validateSerialProtocol(
+                "[OS][STAGE1] ENTERED\r\n"
+                "[OS][FIRMWARE] STAGE1_LOADED\r\n",
+                (
+                    "[OS][FIRMWARE] STAGE1_LOADED",
+                    "[OS][STAGE1] ENTERED",
+                ),
+                (),
             )
 
     def testNormalizesByteOutput(self) -> None:

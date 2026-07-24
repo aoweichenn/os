@@ -9,6 +9,12 @@
 | ROM | 映射到处理器复位地址附近的只读固件镜像 |
 | reset vector | x86 CPU 复位后开始取指的地址，本项目关注 `0xFFFFFFF0` |
 | Stage 1 | 固件从磁盘载入的第一阶段引导代码 |
+| ATA PIO | 处理器通过 ATA I/O 端口和数据寄存器主动搬运扇区的传输方式 |
+| IDE | 传统 PC 集成磁盘控制器接口；本项目 v0.2 使用其主通道 |
+| LBA | Logical Block Address，用连续扇区编号定位块设备数据 |
+| BSY | ATA 状态寄存器的设备忙位 |
+| DRQ | ATA 状态寄存器的数据请求位，表示数据端口可传输 |
+| DF | ATA 状态寄存器的设备故障位 |
 | Long Mode | x86-64 的 64 位执行模式 |
 | half-open range | 包含起始地址、不包含结束地址的区间 `[begin, end)` |
 | property test | 通过大量生成输入验证通用性质的随机测试 |

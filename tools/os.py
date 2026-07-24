@@ -19,12 +19,23 @@ from os_tools.errors import OsToolError
 from os_tools.firmware_audit import auditFirmwareImage
 from os_tools.images import createEmptyImages
 from os_tools.qemu_runner import (
+    OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
+    OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
     OS_QEMU_FIRMWARE_RESET_MARKER,
     OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+    OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
+    OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER,
+    OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+    OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
+    OS_QEMU_STAGE1_ENTERED_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
 from os_tools.source_metrics import reportSourceMetrics
+from os_tools.stage1_image import (
+    auditStage1DiskImage,
+    writeStage1DiskImages,
+)
 from os_tools.toolchain import checkToolchain
 
 
@@ -80,6 +91,18 @@ def handleAuditFirmware(arguments: argparse.Namespace) -> None:
     auditFirmwareImage(arguments.firmwareImagePath)
 
 
+def handleCreateStage1Images(arguments: argparse.Namespace) -> None:
+    writeStage1DiskImages(
+        arguments.stage1BinaryPath,
+        arguments.outputDirectory,
+        arguments.diskSizeBytes,
+    )
+
+
+def handleAuditStage1(arguments: argparse.Namespace) -> None:
+    auditStage1DiskImage(arguments.diskImagePath)
+
+
 def handleQemuSmoke(arguments: argparse.Namespace) -> None:
     runQemuHardwareSmoke(
         OS_TOOL_PROJECT_ROOT,
@@ -91,15 +114,53 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
 
 
 def handleQemuFirmware(arguments: argparse.Namespace) -> None:
+    completedStage1Markers = (
+        OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
+        OS_QEMU_STAGE1_ENTERED_MARKER,
+    )
     if arguments.expectedOutcome == "success":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedStage1Markers,
         )
         forbiddenMarkers: tuple[str, ...] = ()
-    else:
+    elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
-        forbiddenMarkers = (OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,)
+        forbiddenMarkers = (
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            *completedStage1Markers,
+        )
+    elif arguments.expectedOutcome == "ide-timeout":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
+        )
+        forbiddenMarkers = completedStage1Markers
+    elif arguments.expectedOutcome == "ide-error":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
+        )
+        forbiddenMarkers = completedStage1Markers
+    elif arguments.expectedOutcome == "stage1-header-invalid":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER,
+        )
+        forbiddenMarkers = completedStage1Markers
+    else:
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
+        )
+        forbiddenMarkers = completedStage1Markers
 
     runQemuFirmwareBoot(
         OS_TOOL_PROJECT_ROOT,
@@ -197,6 +258,24 @@ def createArgumentParser() -> argparse.ArgumentParser:
     )
     firmwareAuditParser.add_argument("firmwareImagePath", type=Path)
 
+    stage1ImageParser = addCommand(
+        subparsers,
+        "create-stage1-images",
+        "生成自研 Stage 1 正常与损坏磁盘镜像",
+        handleCreateStage1Images,
+    )
+    stage1ImageParser.add_argument("stage1BinaryPath", type=Path)
+    stage1ImageParser.add_argument("outputDirectory", type=Path)
+    stage1ImageParser.add_argument("diskSizeBytes", type=int)
+
+    stage1AuditParser = addCommand(
+        subparsers,
+        "audit-stage1",
+        "检查 Stage 1 描述符、加载范围和负载校验",
+        handleAuditStage1,
+    )
+    stage1AuditParser.add_argument("diskImagePath", type=Path)
+
     qemuParser = addCommand(
         subparsers,
         "qemu-smoke",
@@ -220,7 +299,14 @@ def createArgumentParser() -> argparse.ArgumentParser:
     qemuFirmwareParser.add_argument("expectedDiskSizeBytes", type=int)
     qemuFirmwareParser.add_argument(
         "--expected-outcome",
-        choices=("success", "serial-failure"),
+        choices=(
+            "success",
+            "serial-failure",
+            "ide-timeout",
+            "ide-error",
+            "stage1-header-invalid",
+            "stage1-checksum-invalid",
+        ),
         required=True,
         dest="expectedOutcome",
     )
