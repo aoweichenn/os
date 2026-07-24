@@ -63,10 +63,25 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
     OS_QEMU_KERNEL_CR3_INVALID_MARKER,
     OS_QEMU_KERNEL_CR3_VALID_MARKER,
+    OS_QEMU_KERNEL_BREAKPOINT_HANDLED_MARKER,
+    OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
+    OS_QEMU_KERNEL_DESCRIPTOR_TABLES_VALID_MARKER,
     OS_QEMU_KERNEL_ENTERED_MARKER,
+    OS_QEMU_KERNEL_EXCEPTION_MARKER,
+    OS_QEMU_KERNEL_EXCEPTION_SELF_TEST_READY_MARKER,
+    OS_QEMU_KERNEL_EXCEPTION_ZERO_ERROR_CODE_MARKER,
     OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+    OS_QEMU_KERNEL_GDT_READY_MARKER,
+    OS_QEMU_KERNEL_IDT_READY_MARKER,
+    OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER,
+    OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER,
     OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+    OS_QEMU_KERNEL_PAGE_FAULT_ADDRESS_MARKER,
+    OS_QEMU_KERNEL_PAGE_FAULT_INJECTION_MARKER,
+    OS_QEMU_KERNEL_PAGE_FAULT_VECTOR_MARKER,
+    OS_QEMU_KERNEL_PANIC_MARKER,
     OS_QEMU_KERNEL_READY_MARKER,
+    OS_QEMU_KERNEL_TSS_READY_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
@@ -179,11 +194,20 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_STAGE1_BOOT_INFO_READY_MARKER,
         OS_QEMU_STAGE1_KERNEL_TRANSFER_MARKER,
     )
-    completedKernelEntryMarkers = (
+    completedKernelFoundationMarkers = (
         OS_QEMU_KERNEL_ENTERED_MARKER,
         OS_QEMU_KERNEL_BOOT_INFO_VALID_MARKER,
         OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
         OS_QEMU_KERNEL_CR3_VALID_MARKER,
+        OS_QEMU_KERNEL_GDT_READY_MARKER,
+        OS_QEMU_KERNEL_TSS_READY_MARKER,
+        OS_QEMU_KERNEL_IDT_READY_MARKER,
+        OS_QEMU_KERNEL_DESCRIPTOR_TABLES_VALID_MARKER,
+        OS_QEMU_KERNEL_BREAKPOINT_HANDLED_MARKER,
+        OS_QEMU_KERNEL_EXCEPTION_SELF_TEST_READY_MARKER,
+    )
+    completedKernelEntryMarkers = (
+        *completedKernelFoundationMarkers,
         OS_QEMU_KERNEL_FILE_SIZE_MARKER,
         OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
         OS_QEMU_KERNEL_READY_MARKER,
@@ -219,6 +243,9 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_KERNEL_BOOT_INFO_INVALID_MARKER,
             OS_QEMU_KERNEL_BSS_INVALID_MARKER,
             OS_QEMU_KERNEL_CR3_INVALID_MARKER,
+            OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
         )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
@@ -321,6 +348,52 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             *completedKernelLoadMarkers,
             *completedKernelEntryMarkers,
             *kernelFailureMarkers[1:],
+        )
+    elif arguments.expectedOutcome == "kernel-invalid-opcode":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_ZERO_ERROR_CODE_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_PAGE_FAULT_INJECTION_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_VECTOR_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_ADDRESS_MARKER,
+            OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+            OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
+        )
+    elif arguments.expectedOutcome == "kernel-page-fault":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            OS_QEMU_KERNEL_PAGE_FAULT_INJECTION_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_VECTOR_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_ZERO_ERROR_CODE_MARKER,
+            OS_QEMU_KERNEL_PAGE_FAULT_ADDRESS_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER,
+            OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER,
+            OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+            OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
         )
     else:
         requiredMarkers = (
@@ -504,6 +577,8 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "kernel-elf-invalid",
             "kernel-ata-timeout",
             "kernel-ata-error",
+            "kernel-invalid-opcode",
+            "kernel-page-fault",
         ),
         required=True,
         dest="expectedOutcome",

@@ -85,6 +85,56 @@ set_tests_properties(
         LABELS "unit"
 )
 
+add_executable(
+    os_kernel_descriptor_layout_unit_tests
+    unit/kernel/descriptor_layout_test.cpp
+)
+target_link_libraries(
+    os_kernel_descriptor_layout_unit_tests
+    PRIVATE
+        os_kernel_architecture_model_host
+        os_test_support
+)
+target_compile_options(
+    os_kernel_descriptor_layout_unit_tests
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+add_test(
+    NAME os_kernel_descriptor_layout_unit_tests
+    COMMAND os_kernel_descriptor_layout_unit_tests
+)
+set_tests_properties(
+    os_kernel_descriptor_layout_unit_tests
+    PROPERTIES
+        LABELS "unit"
+)
+
+add_executable(
+    os_kernel_descriptor_layout_randomized_tests
+    randomized/kernel/descriptor_layout_randomized_test.cpp
+)
+target_link_libraries(
+    os_kernel_descriptor_layout_randomized_tests
+    PRIVATE
+        os_kernel_architecture_model_host
+        os_test_support
+)
+target_compile_options(
+    os_kernel_descriptor_layout_randomized_tests
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+add_test(
+    NAME os_kernel_descriptor_layout_randomized_tests
+    COMMAND os_kernel_descriptor_layout_randomized_tests
+)
+set_tests_properties(
+    os_kernel_descriptor_layout_randomized_tests
+    PROPERTIES
+        LABELS "randomized"
+)
+
 add_test(
     NAME os_freestanding_symbol_audit
     COMMAND
@@ -466,6 +516,46 @@ add_test(
 )
 set_tests_properties(
     os_qemu_kernel_ata_error_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_invalid_opcode_panic
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_INVALID_OPCODE_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-invalid-opcode
+)
+set_tests_properties(
+    os_qemu_kernel_invalid_opcode_panic
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_page_fault_panic
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_PAGE_FAULT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-page-fault
+)
+set_tests_properties(
+    os_qemu_kernel_page_fault_panic
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10

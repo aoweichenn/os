@@ -2,7 +2,8 @@
 
 \begin{keyidea}
 内存管理不只是分配空间。页表把地址翻译、所有权、权限、缓存属性和故障控制流
-连接在一起；异常入口则保证系统能够在机制出错时留下足够证据。
+连接在一起；v0.5 已经建立的 GDT、TSS、IDT、统一异常帧和 panic，保证后续
+内存机制出错时仍能留下足够证据。
 \end{keyidea}
 
 \input{topics/ch09-kernel-and-memory}

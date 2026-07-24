@@ -45,14 +45,15 @@ NASM Intel 汇编 & \OsProductionAssemblyCodeLineCount & 固件、模式切换�
 
 当前阶段汇编占比较高，因为复位固件、实模式、模式切换、ATA PIO 和第一版
 ELF64 加载器都必须在 C++ ABI 建立前工作。v0.4 已经建立 64 位栈和第一次
-C++ 交接；从 v0.5 起，高层机制会主要进入 C++20，汇编只保留入口、异常桩、
-上下文切换和必要硬件边界。这个变化反映系统层次演进，不是追求某种语言比例。
+C++ 交接；v0.5 已把 GDT/TSS/IDT 构造、异常策略和 panic 放入 C++20，
+汇编只保留描述符指令、异常桩、上下文切换和必要硬件边界。这个变化反映系统
+层次演进，不是追求某种语言比例。
 
 \subsection{三、代码行不是完成度}
 
 \OsProductionCodeLineCount 行有效目标代码已经完成真实复位、串口、ATA PIO、
-64 MiB 页表、长模式、两遍 ELF64 装载、BootInfo 和 C++ 内核入口，但尚未
-建立内核自己的 IDT、TSS 与异常分发。相反，短小的复位向量只有三个有效字节，
+64 MiB 页表、长模式、两遍 ELF64 装载、BootInfo、C++ 内核入口，以及内核
+自己的 GDT、TSS、IDT、异常分发和 panic。相反，短小的复位向量只有三个有效字节，
 却承担整个系统是否获得执行权的关键边界。完成度必须由机制和验收项表示。
 
 \begin{longtable}{L{0.20\linewidth}L{0.30\linewidth}L{0.40\linewidth}}

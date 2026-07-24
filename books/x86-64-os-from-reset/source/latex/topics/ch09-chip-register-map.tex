@@ -30,6 +30,37 @@ UART 和 ATA/IDE 主通道整理为机器可读的 \filepath{docs/hardware/regis
 不能孤立打开：页表根、PAE、EFER 和远跳转顺序共同决定处理器最终状态。
 EFER.LMA 是处理器激活后的只读结果，软件不能把“请求写入”误认为“已经进入长模式”。
 
+\subsection{描述符寄存器与异常位字段}
+
+v0.5 把 GDTR、IDTR、TR 和 CR2 加入结构化硬件图。GDTR/IDTR 都由 64 位
+base 与 16 位 inclusive limit 组成；TR 保存 TSS 选择子和处理器内部缓存。
+当前 GDT limit=39，IDT limit=4095，TR=\code{0x18}。
+
+\begin{longtable}{L{0.10\textwidth}L{0.18\textwidth}L{0.22\textwidth}L{0.34\textwidth}}
+\toprule
+\textbf{对象} & \textbf{宽度} & \textbf{访问指令} & \textbf{当前职责}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{对象} & \textbf{宽度} & \textbf{访问指令} & \textbf{当前职责}\\
+\midrule
+\endhead
+GDTR & 80 位 & LGDT/SGDT & 五槽 GDT 的 base/limit\\
+IDTR & 80 位 & LIDT/SIDT & 256 槽 IDT 的 base/limit\\
+TR & 16 位可见 & LTR/STR & 选择 104 字节 TSS\\
+CR2 & 64 位 & MOV & 最近页故障线性地址\\
+\bottomrule
+\end{longtable}
+
+页故障错误码 bit 0 是 present/permission，bit 1 是 read/write，bit 2 是
+supervisor/user，bit 3 是 reserved-bit violation，bit 4 是
+data/instruction fetch。当前注入结果为全零，CR2 为
+\code{0x04000000}：Ring 0 读取 not-present 数据页。
+
+机器可读 YAML 同时列出 32 个 present 异常门、十个硬件错误码向量，以及
+NMI→IST2、双重故障→IST1、机器检查→IST3 的结构关系。这样芯片文档、C++
+位字段测试和 NASM 异常桩共享同一组可审查事实。
+
 \subsection{16550A UART 的复用寄存器}
 
 COM1 基址为 \code{0x3F8}，寄存器宽度为 8 位。LCR 的 DLAB 位使偏移 0 和 1

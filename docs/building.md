@@ -43,8 +43,8 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v0.4 ELF64 内核，以及正常、格式损坏和目标 ATA
-   故障注入镜像，同时保留 v0.0 空镜像回归基线。
+4. 生成自研 ROM、Stage 1、v0.5 ELF64 内核，以及格式损坏、目标 ATA、
+   非法指令和页故障注入镜像，同时保留 v0.0 空镜像回归基线。
 5. 运行全部 CTest 测试。
 
 ## 手动构建
@@ -71,6 +71,8 @@ source/firmware/generated/os_firmware_ide_busy_failure.elf
 source/firmware/generated/os_firmware_ide_error_failure.elf
 source/boot/stage1/generated/stage1.bin
 source/kernel/kernel.elf
+source/kernel/kernel_invalid_opcode.elf
+source/kernel/kernel_page_fault.elf
 images/firmware.bin
 images/firmware_serial_failure.bin
 images/firmware_ide_busy_failure.bin
@@ -81,15 +83,19 @@ images/stage1_invalid_checksum_disk.img
 images/kernel_invalid_header_disk.img
 images/kernel_invalid_checksum_disk.img
 images/kernel_invalid_elf_disk.img
-images/kernel_ata_timeout_disk.img
-images/kernel_ata_error_disk.img
+images/stage1_kernel_ata_timeout/boot_disk.img
+images/stage1_kernel_ata_error/boot_disk.img
+images/kernel_invalid_opcode/boot_disk.img
+images/kernel_page_fault/boot_disk.img
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
 tests/os_foundation_integration_tests
 tests/os_foundation_randomized_tests
-tests/os_kernel_boot_protocol_unit_tests
-tests/os_kernel_handoff_layout_tests
+tests/os_kernel_boot_info_unit_tests
+tests/os_kernel_descriptor_layout_unit_tests
+tests/os_kernel_descriptor_layout_randomized_tests
+tests/os_kernel_handoff_layout_integration_tests
 ```
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
@@ -129,9 +135,11 @@ Kernel。
 ## Kernel ELF64 生成链
 
 ```text
-source/kernel/src/{entry,boot_info,serial_port}.cpp
-  └─ Clang x86_64-unknown-none-elf → C++ 目标文件
-       └─ LLD elf_x86_64 + kernel.ld → kernel.elf
+source/kernel/src/*.cpp ─ Clang x86_64-unknown-none-elf ─┐
+source/kernel/src/architecture.asm ─ NASM elf64 ─────────┤
+                                                        └─ LLD elf_x86_64
+                                                           + kernel.ld
+                                                           → kernel.elf
             └─ Python ELF64 结构审计 + llvm-nm 符号审计
 ```
 
@@ -159,8 +167,9 @@ python3 tools/os.py audit-kernel-image build/developer/images/boot_disk.img
 ```
 
 构建同时生成 Kernel 描述符损坏、Kernel ELF 内容损坏、CRC 正确但 ELF
-语义非法，以及目标 ATA 永久忙/设备错误的失败镜像。宿主审计拒绝前三类不可信
-输入，QEMU 测试进一步证明 Stage 1 自己走到对应的失败边界。
+语义非法、目标 ATA 永久忙/设备错误，以及内核 `UD2`/页故障的失败镜像。
+宿主审计拒绝前三类不可信输入，QEMU 测试进一步证明 Stage 1 和 Kernel
+自己走到对应的失败边界。
 
 ## 教材构建
 
@@ -174,8 +183,8 @@ make -C books/x86-64-os-from-reset pdf
 PDF 生成在 `books/x86-64-os-from-reset/source/latex/main.pdf`，属于构建产物，
 不进入 Git。
 
-`source-metrics` 只统计 `source/` 下 `.asm`、`.cpp`、`.hpp`、`.inc` 和
-`.tpp` 的非空、非纯注释行。测试、宿主工具、书稿、网站、构建描述和链接脚本
+`source-metrics` 只统计 `source/` 下核心 `.asm`、`.cpp` 和 `.hpp` 的非空、
+非纯注释行。汇编 include、测试、宿主工具、书稿、网站、构建描述和链接脚本
 不计入操作系统本体代码量。教材构建会自动刷新同一统计结果。
 
 ## 手机教材导出

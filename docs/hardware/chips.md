@@ -9,7 +9,8 @@
 
 ```text
 x86-64 CPU
-├── 架构寄存器：RIP、RFLAGS、CR0、CR3、CR4、IA32_EFER
+├── 架构寄存器：RIP、RFLAGS、CR0、CR2、CR3、CR4、IA32_EFER
+├── 描述符状态：CS、SS、GDTR、IDTR、TR、TSS
 ├── 端口 I/O 总线
 │   ├── 16550A 兼容 UART / COM1：0x3F8..0x3FF
 │   └── PATA primary master：0x1F0..0x1F7、控制端口 0x3F6
@@ -62,6 +63,114 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 
 模式切换是状态机，不是把几个 bit 任意置一。v0.3 已把每次写入和读回值加入
 串口证据与 QEMU 检查；v0.4 的内核还会读回 CR3，与 BootInfo 中的页表根比较。
+
+### 2.3 长模式描述符寄存器
+
+| 状态 | 可见内容 | 装载/读取 | v0.5 不变量 |
+| --- | --- | --- | --- |
+| GDTR | 64 位 base + 16 位 limit | `LGDT` / `SGDT` | base 指向五槽内核 GDT，limit=39 |
+| IDTR | 64 位 base + 16 位 limit | `LIDT` / `SIDT` | base 指向 256 槽 IDT，limit=4095 |
+| CS | 16 位选择子 + 隐藏描述符 | far control transfer | `0x08`，Ring 0 长模式代码段 |
+| SS | 16 位选择子 + 隐藏描述符 | `MOV SS` | `0x10`，Ring 0 数据段 |
+| TR | 16 位选择子 +隐藏 TSS 描述符 | `LTR` / `STR` | `0x18`，busy 64-bit TSS |
+| CR2 | 页故障线性地址 | `MOV reg, CR2` | 只在向量 14 的 panic 中读取 |
+
+描述符表 limit 都是“最后一个有效字节偏移”，不是字节数。五个 8 字节 GDT 槽
+的 limit 是 \(5\times8-1=39\)；256 个 16 字节 IDT 槽的 limit 是
+\(256\times16-1=4095\)。
+
+### 2.4 当前 GDT 与 TSS 结构
+
+```text
+GDT[0]  8 B  null
+GDT[1]  8 B  Ring 0 code, selector 0x08
+GDT[2]  8 B  Ring 0 data, selector 0x10
+GDT[3]  8 B  TSS descriptor low, selector 0x18
+GDT[4]  8 B  TSS descriptor high
+```
+
+64 位 TSS 描述符由 limit[19:0]、base[63:0]、type=9、DPL、present 和粒度
+字段组成。执行 `LTR` 后处理器把 type 从 available 9 改为 busy 11。
+TSS 内存布局：
+
+| 偏移 | 宽度 | 字段 | 当前用途 |
+| ---: | ---: | --- | --- |
+| `0x04` | 64 | RSP0 | 未来 Ring 3→Ring 0 的内核栈 |
+| `0x0C` / `0x14` | 64 | RSP1 / RSP2 | 保留为零 |
+| `0x24` | 64 | IST1 | 双重故障栈 |
+| `0x2C` | 64 | IST2 | NMI 栈 |
+| `0x34` | 64 | IST3 | 机器检查栈 |
+| `0x3C..0x5C` | 64 | IST4..IST7 | 保留为零 |
+| `0x66` | 16 | I/O bitmap offset | 104，位于 TSS limit 之后 |
+
+### 2.5 IDT gate 位字段
+
+一个长模式 IDT gate 为 16 字节：
+
+```text
+127                       96 95           64
++---------------------------+---------------+
+| reserved=0                | offset[63:32] |
++---------------------------+---------------+
+63            48 47 46 45 40 39 32 31 16 15 0
++---------------+--+--+-----+-----+-----+-----+
+| offset[31:16] |P |DPL|type | IST | sel |offlo|
++---------------+--+--+-----+-----+-----+-----+
+```
+
+- type=`1110b` 表示 64 位 interrupt gate。
+- P=1 表示门存在；DPL=0 禁止低特权软件随意 `INT n`。
+- breakpoint 与 overflow 使用 DPL=3，保持架构允许用户调试陷阱的语义。
+- IST 为 0 使用当前/特权栈；1..7 选择 TSS 的对应专用栈。
+- selector 固定引用当前 Ring 0 代码段 `0x08`。
+
+### 2.6 架构异常与错误码
+
+| 向量 | 缩写 | 类别 | CPU 错误码 | 当前 IST / 策略 |
+| ---: | --- | --- | --- | --- |
+| 0 | #DE | fault | 无 | panic |
+| 1 | #DB | fault/trap | 无 | panic |
+| 2 | NMI | interrupt | 无 | IST2 / panic |
+| 3 | #BP | trap | 无 | 受控自检可返回 |
+| 4 | #OF | trap | 无 | panic |
+| 5 | #BR | fault | 无 | panic |
+| 6 | #UD | fault | 无 | 故障注入 / panic |
+| 7 | #NM | fault | 无 | panic |
+| 8 | #DF | abort | 固定 0 | IST1 / panic |
+| 9 | 保留 | — | 无 | panic |
+| 10 | #TS | fault | 有 | panic |
+| 11 | #NP | fault | 有 | panic |
+| 12 | #SS | fault | 有 | panic |
+| 13 | #GP | fault | 有 | panic |
+| 14 | #PF | fault | 有 | 记录 CR2 / panic |
+| 15 | 保留 | — | 无 | panic |
+| 16 | #MF | fault | 无 | panic |
+| 17 | #AC | fault | 有 | panic |
+| 18 | #MC | abort | 无 | IST3 / panic |
+| 19 | #XM | fault | 无 | panic |
+| 20 | #VE | fault | 无 | panic |
+| 21 | #CP | fault | 有 | panic |
+| 22..27 | 保留 | — | 无 | panic |
+| 28 | #HV | fault | 无 | panic |
+| 29 | #VC | fault | 有 | panic |
+| 30 | #SX | fault | 有 | panic |
+| 31 | 保留 | — | 无 | panic |
+
+### 2.7 页故障错误码
+
+| 位 | 名称 | 0 | 1 |
+| ---: | --- | --- | --- |
+| 0 | P | 页不存在 | 页级权限违反 |
+| 1 | W/R | 读访问 | 写访问 |
+| 2 | U/S | supervisor 访问 | user 访问 |
+| 3 | RSVD | 正常页表遍历 | 页表保留位被置一 |
+| 4 | I/D | 数据访问 | 取指访问 |
+| 5 | PK | 非 protection-key 原因 | protection-key 违反 |
+| 6 | SS | 非 shadow-stack 原因 | shadow-stack 访问 |
+| 15 | SGX | 非 SGX 原因 | SGX 访问控制违反 |
+
+v0.5 的页故障注入得到错误码 0：supervisor 读取一个 not-present 数据页。
+CR2=`0x04000000`，正好是当前 64 MiB 身份映射的第一个未映射线性地址。
 
 ## 3. 16550A UART / COM1
 
@@ -184,6 +293,9 @@ Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位
 - `source/firmware/src/reset_and_serial.asm`：固件端口访问与 ATA 状态机实现。
 - `source/boot/stage1/src/entry.asm`：模式切换、页表和 Stage 1 串口路径。
 - `source/boot/stage1/src/kernel_loader.asm`：长模式 ATA、CRC32、ELF 和 BootInfo。
+- `source/kernel/src/architecture.asm`：LGDT/LIDT/LTR、异常桩和统一寄存器保存。
+- `source/kernel/src/descriptor_tables.cpp`：GDT、TSS、IDT 构造与硬件回读验证。
+- `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
 - `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。
 - `docs/testing.md`：状态边界对应的 QEMU 失败注入。

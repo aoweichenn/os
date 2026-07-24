@@ -72,6 +72,24 @@
 - QEMU 失败路径分别注入 Kernel ATA 永久忙、ATA ERR、描述符损坏、负载
   损坏和 CRC 正确但 ELF 语义非法，证明失败来自目标代码而非宿主预检查。
 
+`v0.5` 把描述符表和异常控制流纳入四层验证：
+
+- C++ 单元测试逐字段构造并解码 64 位 TSS 描述符和 IDT gate，检查精确
+  结构大小、TSS type/present、完整处理器地址、IST 三位掩码、保留字段和
+  32 个向量的硬件错误码分类。
+- 固定种子 `0xD35C71A05EED6405` 生成 4096 个完整 64 位地址，同时验证
+  TSS descriptor 与 IDT gate 编码解码往返，共 8192 条性质断言。
+- ELF 集成审计除入口、段和未解析符号外，还要求描述符装载、异常公共入口、
+  C++ 分发器、异常桩表和向量 0..31 的 32 个独立符号全部存在。
+- 正常 QEMU 路径必须回读并确认 GDTR、IDTR、CS、SS、TR 和 TSS，经过
+  `INT3 → BREAKPOINT_HANDLED → IRETQ` 后才能输出 `READY`。
+- 非法指令镜像必须在 `UD2` 后报告向量 6、错误码 0 和 `PANIC`，禁止
+  页故障字段及 `READY`。
+- 页故障镜像必须访问首个未映射地址 `0x04000000`，报告向量 14、错误码 0、
+  同值 CR2 和 `PANIC`，禁止 `READY`。
+- 两份故障镜像只替换入口选择，描述符、异常桩、分发器和 panic 均使用生产
+  实现，避免“测试了一份并未交付的异常代码”。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -111,6 +129,8 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_handoff_layout_integration_tests` | 集成 | 页表、描述符、BootInfo、暂存区、加载窗口与内核栈互不重叠 |
 | `os_foundation_randomized_tests` | 随机 | 10,000 组区间性质与溢出拒绝 |
 | `os_kernel_boot_info_unit_tests` | 单元 | BootInfo 全字段、上下界和失败状态 |
+| `os_kernel_descriptor_layout_unit_tests` | 单元 | TSS、IDT gate、异常错误码和恢复分类 |
+| `os_kernel_descriptor_layout_randomized_tests` | 随机 | 4096 组 64 位 TSS/IDT 地址编码往返 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
@@ -133,13 +153,16 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_kernel_elf_failure` | 系统/失败路径 | Stage 1 必须拒绝 CRC 正确的非法 ELF |
 | `os_qemu_kernel_ata_timeout_failure` | 系统/失败路径 | Kernel 读取的 ATA 轮询必须有界超时 |
 | `os_qemu_kernel_ata_error_failure` | 系统/失败路径 | Kernel 读取必须识别 ATA ERR/DF |
+| `os_qemu_kernel_invalid_opcode_panic` | 系统/失败路径 | UD2、向量 6、统一帧与 panic |
+| `os_qemu_kernel_page_fault_panic` | 系统/失败路径 | 向量 14、错误码、CR2 与 panic |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 32 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
+当前共 36 项 CTest：4 项单元、12 项集成、5 项随机、15 项系统，其中
+17 项带失败路径标签。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
 `subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模

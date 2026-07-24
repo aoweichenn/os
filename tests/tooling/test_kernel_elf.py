@@ -24,6 +24,7 @@ from tools.os_tools.kernel_elf import (
     OS_KERNEL_ELF_TYPE_EXECUTABLE,
     OS_KERNEL_ELF_VERSION_CURRENT,
     parseKernelLoadSegments,
+    validateKernelArchitectureSymbols,
     validateKernelEntry,
 )
 
@@ -32,6 +33,15 @@ OS_TEST_KERNEL_ELF_IDENTIFICATION_SIZE_BYTES = 16
 OS_TEST_KERNEL_ELF_PAYLOAD_SIZE_BYTES = 1
 OS_TEST_KERNEL_ELF_PROGRAM_HEADER_COUNT = 1
 OS_TEST_KERNEL_ELF_PAGE_ALIGNMENT_BYTES = 0x1000
+OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
+    "osKernelEntry",
+    "osKernelLoadGdtAndTss",
+    "osKernelLoadIdt",
+    "osKernelExceptionDispatch",
+    "osKernelDispatchException",
+    "osKernelExceptionStubTable",
+    *(f"os_kernel_exception_vector_{vector}" for vector in range(32)),
+}
 
 
 def createValidKernelElf(
@@ -178,6 +188,18 @@ class KernelElfToolTests(unittest.TestCase):
                     physicalAddress=invalidAddress,
                 )
             )
+
+    def testAcceptsCompleteKernelArchitectureSymbols(self) -> None:
+        validateKernelArchitectureSymbols(
+            set(OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS)
+        )
+
+    def testRejectsMissingExceptionVectorSymbol(self) -> None:
+        incompleteSymbols = set(OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS)
+        incompleteSymbols.remove("os_kernel_exception_vector_31")
+
+        with self.assertRaises(OsToolError):
+            validateKernelArchitectureSymbols(incompleteSymbols)
 
 
 if __name__ == "__main__":

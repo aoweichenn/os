@@ -39,6 +39,18 @@ OS_KERNEL_ELF_IDENT_VERSION_OFFSET = 6
 OS_KERNEL_ELF_NO_ALIGNMENT = 0
 OS_KERNEL_ELF_POWER_OF_TWO_DECREMENT = 1
 OS_KERNEL_ELF_EMPTY_SEGMENT_SIZE_BYTES = 0
+OS_KERNEL_ELF_ARCHITECTED_EXCEPTION_VECTOR_COUNT = 32
+OS_KERNEL_ELF_EXCEPTION_VECTOR_SYMBOL_PREFIX = "os_kernel_exception_vector_"
+OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
+    (
+        "osKernelEntry",
+        "osKernelLoadGdtAndTss",
+        "osKernelLoadIdt",
+        "osKernelExceptionDispatch",
+        "osKernelDispatchException",
+        "osKernelExceptionStubTable",
+    )
+)
 
 
 @dataclass(frozen=True)
@@ -280,6 +292,22 @@ def validateKernelEntry(
     raise OsToolError("内核 ELF 入口不在可执行加载段中。")
 
 
+def validateKernelArchitectureSymbols(definedSymbols: set[str]) -> None:
+    requiredSymbols = set(OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS)
+    requiredSymbols.update(
+        f"{OS_KERNEL_ELF_EXCEPTION_VECTOR_SYMBOL_PREFIX}{vector}"
+        for vector in range(
+            OS_KERNEL_ELF_ARCHITECTED_EXCEPTION_VECTOR_COUNT
+        )
+    )
+    missingSymbols = sorted(requiredSymbols - definedSymbols)
+    if missingSymbols:
+        raise OsToolError(
+            "内核 ELF 缺少描述符或异常入口符号："
+            + ", ".join(missingSymbols)
+        )
+
+
 def auditKernelElf(projectRoot: Path, kernelElfPath: Path) -> None:
     entryAddress, loadSegments = parseKernelLoadSegments(
         kernelElfPath.read_bytes()
@@ -293,6 +321,23 @@ def auditKernelElf(projectRoot: Path, kernelElfPath: Path) -> None:
     )
     if undefinedSymbolResult.stdout.strip():
         raise OsToolError("内核 ELF 包含未解析运行时符号。")
+
+    definedSymbolResult = runCommand(
+        [
+            "llvm-nm",
+            "--defined-only",
+            "--format=posix",
+            str(kernelElfPath),
+        ],
+        projectRoot,
+        captureOutput=True,
+    )
+    definedSymbols = {
+        symbolLine.split(maxsplit=1)[0]
+        for symbolLine in definedSymbolResult.stdout.splitlines()
+        if symbolLine.strip()
+    }
+    validateKernelArchitectureSymbols(definedSymbols)
 
     print(
         "内核 ELF64 审计通过："

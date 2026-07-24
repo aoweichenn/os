@@ -141,6 +141,51 @@ os_add_stage1_failure_disk(
     "${OS_STAGE1_KERNEL_ATA_ERROR_BINARY}"
 )
 
+function(
+    os_add_kernel_fault_disk
+    OS_KERNEL_FAULT_DISK_IMAGE
+    OS_KERNEL_FAULT_ELF
+    OS_KERNEL_FAULT_COMMENT
+)
+    get_filename_component(
+        OS_KERNEL_FAULT_OUTPUT_DIRECTORY
+        "${OS_KERNEL_FAULT_DISK_IMAGE}"
+        DIRECTORY
+    )
+    add_custom_command(
+        OUTPUT "${OS_KERNEL_FAULT_DISK_IMAGE}"
+        COMMAND
+            "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tools/os.py"
+            create-boot-images
+            "${OS_STAGE1_BINARY}"
+            "${OS_KERNEL_FAULT_ELF}"
+            "${OS_KERNEL_FAULT_OUTPUT_DIRECTORY}"
+            "${OS_DISK_IMAGE_SIZE_BYTES}"
+        DEPENDS
+            "${OS_STAGE1_BINARY}"
+            "${OS_KERNEL_FAULT_ELF}"
+            "${PROJECT_SOURCE_DIR}/tools/os.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
+        COMMENT "${OS_KERNEL_FAULT_COMMENT}"
+        VERBATIM
+    )
+endfunction()
+
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_INVALID_OPCODE_DISK_IMAGE}"
+    "${OS_KERNEL_INVALID_OPCODE_ELF_PATH}"
+    "生成非法指令异常注入磁盘镜像"
+)
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_PAGE_FAULT_DISK_IMAGE}"
+    "${OS_KERNEL_PAGE_FAULT_ELF_PATH}"
+    "生成页故障异常注入磁盘镜像"
+)
+
 add_custom_command(
     OUTPUT
         "${OS_BOOT_DISK_IMAGE}"
@@ -180,4 +225,6 @@ add_custom_target(
         "${OS_KERNEL_INVALID_ELF_DISK_IMAGE}"
         "${OS_STAGE1_KERNEL_ATA_TIMEOUT_DISK_IMAGE}"
         "${OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_OPCODE_DISK_IMAGE}"
+        "${OS_KERNEL_PAGE_FAULT_DISK_IMAGE}"
 )

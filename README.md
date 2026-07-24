@@ -2,11 +2,12 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.4 内核加载`已完成，下一阶段为 `v0.5 内核基础`。自研
+当前状态：`v0.5 内核基础`已完成，下一阶段为 `v0.6 内存管理`。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
-freestanding C++20 内核。
+freestanding C++20 内核。内核随即替换 Stage 1 的描述符状态，建立自己的
+GDT、TSS、IDT、32 个异常入口和无动态分配的 panic 路径。
 
 ## 最短构建与测试路径
 
@@ -49,7 +50,13 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] BOOT_INFO_VALID
 [OS][KERNEL] BSS_ZEROED
 [OS][KERNEL] CR3_VALID
-[OS][KERNEL] FILE_SIZE=0x0000000000006E08
+[OS][KERNEL] GDT_READY
+[OS][KERNEL] TSS_READY
+[OS][KERNEL] IDT_READY
+[OS][KERNEL] DESCRIPTOR_TABLES_VALID
+[OS][KERNEL] BREAKPOINT_HANDLED
+[OS][KERNEL] EXCEPTION_SELF_TEST_READY
+[OS][KERNEL] FILE_SIZE=0x000000000000E350
 [OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
 [OS][KERNEL] READY
 ```
@@ -61,7 +68,9 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 `0x00100000`。当前产物包含严格分权的 `R E`、`R`、`RW/BSS` 三个
 `PT_LOAD`；Stage 1 在目标机上以两遍算法先验证全部段，再复制文件内容并清零
 BSS。成功交接后内核重新初始化 COM1，验证 80 字节 BootInfo、BSS 和 CR3，
-再输出稳定的 `READY` 证据。
+再加载自己的 GDTR、IDTR 和 TR。正常镜像执行一次可恢复 `INT3` 自检；独立
+故障镜像分别执行 `UD2` 和访问首个未映射地址，验证异常向量、规范化错误码、
+CR2、诊断日志与最终 panic。
 
 ## 固定技术路线
 
@@ -85,9 +94,9 @@ books/           可独立构建的 LaTeX 系统教材
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
-教材现为 5 部 10 个完整主题章、103 页；每章按“背景与历史约束、硬件或软件
+教材现为 5 部 10 个完整主题章、107 页；每章按“背景与历史约束、硬件或软件
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
-目标系统的真实代码量。
+目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

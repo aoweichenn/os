@@ -32,6 +32,9 @@ chips:
       - name: CR3
         width_bits: 64
         kind: page-table-root
+      - name: CR2
+        width_bits: 64
+        kind: page-fault-linear-address
       - name: CR4
         width_bits: 64
         kind: control-register
@@ -45,6 +48,86 @@ chips:
           8: LME
           10: LMA
           11: NXE
+    descriptor_state:
+      gdtr:
+        base_width_bits: 64
+        limit_width_bits: 16
+        load_instruction: LGDT
+        store_instruction: SGDT
+        current_limit: 39
+      idtr:
+        base_width_bits: 64
+        limit_width_bits: 16
+        load_instruction: LIDT
+        store_instruction: SIDT
+        current_limit: 4095
+      selectors:
+        kernel_code: 0x0008
+        kernel_data: 0x0010
+        task_state: 0x0018
+      task_register:
+        load_instruction: LTR
+        store_instruction: STR
+        current_selector: 0x0018
+    global_descriptor_table:
+      entry_size_bytes: 8
+      entry_count: 5
+      entries:
+        - index: 0
+          kind: null
+        - index: 1
+          kind: long-mode-ring0-code
+          selector: 0x0008
+        - index: 2
+          kind: ring0-data
+          selector: 0x0010
+        - index: 3
+          kind: available-64-bit-tss-low
+          selector: 0x0018
+        - index: 4
+          kind: available-64-bit-tss-high
+    task_state_segment:
+      size_bytes: 104
+      io_permission_bitmap_offset: 104
+      stacks:
+        rsp0: boot-info-kernel-stack-top
+        ist1: double-fault-16-kib
+        ist2: non-maskable-interrupt-16-kib
+        ist3: machine-check-16-kib
+    interrupt_descriptor_table:
+      gate_size_bytes: 16
+      gate_count: 256
+      present_vectors: 0..31
+      gate_type: interrupt-gate
+      kernel_code_selector: 0x0008
+      ring3_callable_vectors:
+        - 3
+        - 4
+      interrupt_stack_table:
+        2: 2
+        8: 1
+        18: 3
+    exceptions:
+      hardware_error_code_vectors:
+        - 8
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 17
+        - 21
+        - 29
+        - 30
+      page_fault_error_code_bits:
+        0: PRESENT
+        1: WRITE
+        2: USER
+        3: RESERVED_WRITE
+        4: INSTRUCTION_FETCH
+        5: PROTECTION_KEY
+        6: SHADOW_STACK
+        15: SGX
   ns16550a_com1:
     role: serial-observability
     io_base: 0x03F8

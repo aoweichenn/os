@@ -29,6 +29,18 @@
 | W^X | 同一内存段不同时具备可写和可执行权限的约束 |
 | ABI | Application Binary Interface，规定调用、寄存器、栈和二进制布局的契约 |
 | GDT | Global Descriptor Table，x86 分段和特权级切换使用的描述符表 |
+| GDTR | 保存 GDT 线性基址与 inclusive limit 的架构寄存器，由 `LGDT`/`SGDT` 访问 |
+| IDT | Interrupt Descriptor Table，把 0..255 向量映射到门描述符 |
+| IDTR | 保存 IDT 线性基址与 inclusive limit 的架构寄存器，由 `LIDT`/`SIDT` 访问 |
+| TSS | Task State Segment；长模式下主要保存 RSP0..RSP2、IST1..IST7 和 I/O bitmap 位置 |
+| TR | Task Register，保存当前 TSS 选择子及隐藏描述符状态，由 `LTR`/`STR` 访问 |
+| IST | Interrupt Stack Table，允许指定异常门无条件切到 TSS 中的专用栈 |
+| interrupt gate | IDT 门类型；进入处理程序时硬件清 IF，返回时由 `IRETQ` 恢复 |
+| exception vector | CPU 为异常选择的 0..31 编号，例如 3=#BP、6=#UD、14=#PF |
+| exception error code | 部分异常由 CPU 压栈的原因字段；无错误码异常由项目桩规范化为零 |
+| `IRETQ` | 64 位中断返回指令，恢复 RIP、CS、RFLAGS 以及可选旧 RSP/SS |
+| CR2 | 保存最近一次页故障线性地址的控制寄存器 |
+| panic | 内核无法安全恢复时输出有限诊断、禁止继续执行并停机的终止协议 |
 | control register | CR0、CR3、CR4 等控制处理器模式、分页和特性的寄存器 |
 | EFER | Extended Feature Enable Register，包含长模式启用等控制位的 MSR |
 | red zone | System V AMD64 ABI 中栈指针下方可供叶函数使用、但不适合内核中断环境的区域 |

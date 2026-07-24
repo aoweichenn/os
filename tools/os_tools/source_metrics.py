@@ -6,7 +6,7 @@ from .errors import OsToolError
 
 OS_SOURCE_METRICS_PRODUCTION_DIRECTORY = "source"
 OS_SOURCE_METRICS_CPP_EXTENSIONS = frozenset(
-    (".cpp", ".hpp", ".inc", ".tpp")
+    (".cpp", ".hpp")
 )
 OS_SOURCE_METRICS_ASSEMBLY_EXTENSIONS = frozenset((".asm",))
 OS_SOURCE_METRICS_SUPPORTED_EXTENSIONS = (

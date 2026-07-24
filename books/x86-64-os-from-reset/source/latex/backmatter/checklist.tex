@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.4 完成后的知识验收}
+\section*{v0.5 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -25,6 +25,18 @@
   \item BootInfo 十个固定宽度字段及 RDI、RSP 的 ABI 契约；
   \item 内核独立串口、BSS 探针和 CR3 读回分别证明什么；
   \item 五种 Kernel 失败路径怎样由真实 QEMU 故障注入到达。
+  \item 长模式弱化分段后仍需要 GDT、代码段和 TSS 的历史与硬件原因；
+  \item 五槽 GDT 的索引、选择子、代码/数据属性和双槽 TSS 描述符；
+  \item GDTR/IDTR 的 inclusive limit 为什么分别是 39 和 4095；
+  \item RSP0 与 IST1--IST3 的用途，以及三个 16 KiB 专用栈的故障边界；
+  \item \code{LGDT} 后必须远控制转移刷新 CS 隐藏缓存的原因；
+  \item 32 个架构异常中哪些由 CPU 压入错误码；
+  \item 统一 160 字节异常帧的寄存器、向量、错误码和 CPU 返回字段顺序；
+  \item 异常公共桩为什么执行 CLD、重新对齐 RSP 并使用 IRETQ；
+  \item fault、trap、abort 的 RIP 与恢复语义差异；
+  \item INT3、UD2 和页故障三条 QEMU 路径分别证明什么；
+  \item 页故障错误码零与 CR2=\code{0x04000000} 的逐位含义；
+  \item panic 为什么禁止动态分配、锁、递归日志和普通返回。
 \end{itemize}
 
 \section*{进入下一阶段前}
@@ -41,5 +53,10 @@
   \code{0x20000} ELF 暂存区与 \code{0x100000} 内核入口；
   \item 能说明 \code{BOOT\_INFO\_VALID}、\code{BSS\_ZEROED} 和
   \code{CR3\_VALID} 各自排除了哪类错误；
+  \item 能从 GDT 十六进制值解码 P、DPL、type、L、D 和 TSS base/limit；
+  \item 能从 IDT gate 解码 offset、selector、IST、DPL、type 和 present；
+  \item 能在 GDB 中从 RDI 指向的异常帧定位 vector、error、RIP 和 RFLAGS；
+  \item 能解释为什么 breakpoint 可以返回，而当前页故障必须 panic；
+  \item 能运行两份故障镜像并确认 panic 后不出现 \code{READY}；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

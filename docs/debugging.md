@@ -177,3 +177,87 @@ python3 tools/os.py qemu-firmware \
 当前成功产物为 28,168 字节、56 个扇区，包含 3 个 `PT_LOAD`；这些数字会随
 代码变化，因此调试判断应以构建产物和 BootInfo 日志为准，而不是硬编码到测试
 逻辑。
+
+## v0.5：描述符表、异常帧与 panic
+
+### 区分装载器 GDT 与内核 GDT
+
+Stage 1 的 `GDT_READY` 只证明模式切换表有效；内核的 `GDT_READY`、
+`TSS_READY`、`IDT_READY` 表示内核已构造自己的对象。最终
+`DESCRIPTOR_TABLES_VALID` 还要求处理器回读状态与内存对象一致，不能用前三条
+构造日志替代。
+
+用 GDB 在 `osKernelDispatchException` 停止：
+
+```gdb
+set architecture i386:x86-64
+target remote :1234
+break osKernelDispatchException
+continue
+info registers rip rsp cs ss
+x/20gx $rdi
+```
+
+正常镜像第一次命中来自 `INT3`。`$rdi` 指向 `ExceptionFrame`，从低地址开始
+依次是 R15..RAX、vector、error code、RIP、CS、RFLAGS；第 16 个八字节应为
+向量 3，第 17 个应为零。`INT3` 是 trap，保存 RIP 指向下一条指令，因此直接
+`IRETQ` 可以继续。
+
+检查表寄存器与 TSS：
+
+```gdb
+maintenance packet qRcmd,696e666f20726567697374657273
+info registers
+disassemble osKernelLoadGdtAndTss
+disassemble osKernelExceptionDispatch
+x/5gx &kernelGlobalDescriptorTable
+x/32gx &kernelInterruptDescriptorTable
+```
+
+不同 GDB 版本不一定直接显示 GDTR、IDTR 和 TR；项目因此把 `SGDT`、`SIDT`、
+`STR` 封装为可下断点的汇编函数，串口回读验证是跨版本的主要证据。
+
+### 非法指令与页故障镜像
+
+不使用宿主 `timeout` 直接运行，优先让项目工具管理 QEMU 生命周期：
+
+```bash
+python3 tools/os.py qemu-firmware \
+  build/developer/images/firmware.bin \
+  build/developer/images/kernel_invalid_opcode/boot_disk.img \
+  131072 1048576 --expected-outcome kernel-invalid-opcode
+
+python3 tools/os.py qemu-firmware \
+  build/developer/images/firmware.bin \
+  build/developer/images/kernel_page_fault/boot_disk.img \
+  131072 1048576 --expected-outcome kernel-page-fault
+```
+
+非法指令的向量必须为 6。页故障必须同时满足：
+
+```text
+EXCEPTION_VECTOR=0x000000000000000E
+EXCEPTION_ERROR_CODE=0x0000000000000000
+PAGE_FAULT_ADDRESS=0x0000000004000000
+PANIC
+```
+
+错误码零表示 supervisor read 访问了 not-present 页；`0x04000000` 正好是
+64 MiB 恒等映射之后的首地址。如果向量正确而 CR2 不同，检查故障注入地址；
+如果没有任何 panic 日志，优先检查 IDTR limit、门 present 位、代码选择子和
+异常桩表地址；若 QEMU 直接复位，则检查异常路径自身是否又触发异常，尤其是
+栈映射、TSS/IST 和 `IRETQ` 布局。
+
+### 统一帧偏移错误的典型症状
+
+| 症状 | 优先检查 |
+| --- | --- |
+| vector 看起来像寄存器值 | 汇编保存顺序与 C++ 字段顺序不一致 |
+| 只有带错误码异常失败 | 桩错误地又压入一个占位错误码 |
+| breakpoint 日志后立即 #GP | 恢复时没有丢弃 vector/error 两个槽 |
+| C++ 入口行为随机 | 调用前 RSP 没有按 System V AMD64 对齐 |
+| 页故障日志递归刷屏 | panic 路径再次访问无效内存，或不可重入状态未生效 |
+
+当前生产内核为 58,192 字节、114 个扇区，仍包含 3 个 `PT_LOAD`。RW 段的
+文件长度为零但内存长度约 52 KiB，主要来自 IDT、TSS 与三个 IST 栈；这是
+ELF BSS 的正常表现，不是镜像漏写。

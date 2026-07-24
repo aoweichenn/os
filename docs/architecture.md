@@ -118,6 +118,57 @@ BootInfo magic 为 `OSBOOT64`，10 个字段全部为 64 位。Stage 1 把其地
 System V AMD64 函数入口的栈约束。详细理由见
 [ADR 0007](adr/0007-two-pass-elf-loader-and-boot-info.md)。
 
+## v0.5 内核描述符与异常路径
+
+Stage 1 的 GDT 只负责把加载器带进长模式，不属于内核长期 ABI。内核验证
+BootInfo、BSS 和 CR3 后，按以下顺序接管处理器描述符状态：
+
+```text
+构造 104 字节 TSS
+  ├─ RSP0 = BootInfo 初始内核栈顶
+  ├─ IST1 = 双重故障独立栈顶
+  ├─ IST2 = NMI 独立栈顶
+  └─ IST3 = 机器检查独立栈顶
+       ↓
+构造五槽 GDT → LGDT → 远返回刷新 CS → 重载数据段 → LTR
+       ↓
+构造 256 槽 IDT（0..31 present）→ LIDT
+       ↓
+SGDT / SIDT / CS / SS / STR 回读验证
+       ↓
+INT3 → 统一异常帧 → C++20 分发器 → IRETQ
+```
+
+GDT 当前选择子为代码段 `0x08`、数据段 `0x10`、TSS `0x18`。TSS 描述符占用
+GDT 的两个连续 8 字节槽，因为 64 位 TSS 基址无法放进传统单槽描述符。
+IDT 每槽 16 字节，完整表为 4096 字节；未进入 v0.7 的外部中断向量保持
+not-present，防止没有分发策略时误接收设备中断。
+
+异常入口分成硬件、汇编和 C++ 三层：
+
+```text
+CPU 压入 RIP / CS / RFLAGS / 可选错误码
+  ↓
+每向量 NASM 桩补齐“无错误码”占位并压入向量号
+  ↓
+公共桩清 DF、保存 RAX..R15、对齐 System V AMD64 栈
+  ↓
+osKernelDispatchException(ExceptionFrame*)
+  ├─ vector 3 且 error=0：记录 BREAKPOINT_HANDLED 后返回
+  └─ 其他：panic，记录现场后 CLI + HLT
+```
+
+统一 `ExceptionFrame` 精确为 160 字节。硬件错误码向量集合是
+8、10、11、12、13、14、17、21、29、30；其他异常由桩补零。双重故障、
+NMI 和机器检查门分别指定 IST1、IST2、IST3。panic 不分配内存、不依赖锁，
+通过单次状态位防止递归刷日志；页故障额外读取 CR2。
+
+真实失败镜像与生产内核共享全部描述符、分发和 panic 代码，只替换最薄入口：
+非法指令镜像执行 `UD2`，页故障镜像读取恒等映射末端后的
+`0x04000000`。该边界是 Stage 1 明确未映射的首地址，因此测试不依赖随机
+指针或 QEMU 偶然状态。设计理由见
+[ADR 0008](adr/0008-kernel-descriptor-tables-and-exception-abi.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -172,13 +223,28 @@ source/kernel/
 ├── CMakeLists.txt
 ├── include/os/kernel/
 │   ├── boot_info.hpp
+│   ├── descriptor_layout.hpp
+│   ├── descriptor_tables.hpp
 │   ├── entry.hpp
+│   ├── exception_frame.hpp
+│   ├── exceptions.hpp
+│   ├── kernel_main.hpp
+│   ├── panic.hpp
+│   ├── processor.hpp
 │   └── serial_port.hpp
 ├── linker/
 │   └── kernel.ld.in
 └── src/
+    ├── architecture.asm
     ├── boot_info.cpp
+    ├── descriptor_layout.cpp
+    ├── descriptor_tables.cpp
     ├── entry.cpp
+    ├── exception_frame.cpp
+    ├── exceptions.cpp
+    ├── kernel_main.cpp
+    ├── panic.cpp
+    ├── processor.cpp
     └── serial_port.cpp
 ```
 
@@ -198,6 +264,7 @@ tests/
 ├── integration/boot/
 ├── randomized/foundation/
 ├── randomized/kernel/
+├── system/kernel/
 ├── tooling/
 └── support/cpp/
 ```
