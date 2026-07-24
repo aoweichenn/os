@@ -21,6 +21,12 @@
 | ADR | Architecture Decision Record，记录重要架构决策及其原因 |
 | cross compilation | 在一种宿主架构上生成面向另一种目标架构或运行环境的代码 |
 | ELF | Executable and Linkable Format，保存目标文件、可执行文件和调试信息的格式 |
+| `PT_LOAD` | ELF 程序头类型，声明需要复制或清零到内存的可加载段 |
+| BSS | ELF 中只占内存、不保存初始化文件字节的零初始化区域 |
+| CRC32 | 32 位循环冗余校验；本项目用于检测描述符和 Kernel 文件的偶然损坏 |
+| BootInfo | Stage 1 传给内核的版本化固定宽度启动信息结构 |
+| identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |
+| W^X | 同一内存段不同时具备可写和可执行权限的约束 |
 | ABI | Application Binary Interface，规定调用、寄存器、栈和二进制布局的契约 |
 | GDT | Global Descriptor Table，x86 分段和特权级切换使用的描述符表 |
 | control register | CR0、CR3、CR4 等控制处理器模式、分页和特性的寄存器 |

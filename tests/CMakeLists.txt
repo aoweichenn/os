@@ -49,9 +49,40 @@ os_add_foundation_test(
 )
 
 os_add_foundation_test(
+    os_kernel_handoff_layout_integration_tests
+    integration/boot/kernel_handoff_layout_test.cpp
+    "integration"
+)
+
+os_add_foundation_test(
     os_foundation_randomized_tests
     randomized/foundation/address_range_randomized_test.cpp
     "randomized"
+)
+
+add_executable(
+    os_kernel_boot_info_unit_tests
+    unit/kernel/boot_info_test.cpp
+)
+target_link_libraries(
+    os_kernel_boot_info_unit_tests
+    PRIVATE
+        os_kernel_boot_protocol_host
+        os_test_support
+)
+target_compile_options(
+    os_kernel_boot_info_unit_tests
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+add_test(
+    NAME os_kernel_boot_info_unit_tests
+    COMMAND os_kernel_boot_info_unit_tests
+)
+set_tests_properties(
+    os_kernel_boot_info_unit_tests
+    PROPERTIES
+        LABELS "unit"
 )
 
 add_test(
@@ -191,6 +222,21 @@ set_tests_properties(
 )
 
 add_test(
+    NAME os_kernel_disk_rejects_invalid_elf
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-kernel-image
+        "${OS_KERNEL_INVALID_ELF_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_kernel_disk_rejects_invalid_elf
+    PROPERTIES
+        LABELS "integration;failure-path"
+        WILL_FAIL TRUE
+)
+
+add_test(
     NAME os_stage1_rejects_invalid_header
     COMMAND
         "${Python3_EXECUTABLE}"
@@ -320,6 +366,106 @@ add_test(
 )
 set_tests_properties(
     os_qemu_stage1_checksum_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_header_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_INVALID_HEADER_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-header-invalid
+)
+set_tests_properties(
+    os_qemu_kernel_header_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_checksum_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-checksum-invalid
+)
+set_tests_properties(
+    os_qemu_kernel_checksum_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_elf_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_INVALID_ELF_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-elf-invalid
+)
+set_tests_properties(
+    os_qemu_kernel_elf_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_ata_timeout_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_STAGE1_KERNEL_ATA_TIMEOUT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-ata-timeout
+)
+set_tests_properties(
+    os_qemu_kernel_ata_timeout_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_kernel_ata_error_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        kernel-ata-error
+)
+set_tests_properties(
+    os_qemu_kernel_ata_error_failure
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10

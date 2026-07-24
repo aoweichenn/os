@@ -124,5 +124,56 @@ xxd -g1 -s $((65 * 512)) -l 64 build/developer/images/boot_disk.img
 
 LBA 65 应以 `OSKERN64` 开头；LBA 66 应以 ELF magic `7f 45 4c 46` 开头。
 若文件审计通过但磁盘审计失败，优先比较描述符中的精确文件长度、扇区数和
-CRC32；若二者都通过而未来目标机失败，再检查 ATA 状态、读取缓冲区和 Stage 1
+CRC32；若二者都通过而目标机失败，再检查 ATA 状态、读取缓冲区和 Stage 1
 自身 CRC32 实现。
+
+### 区分 Kernel 装载失败
+
+Stage 1 为目标读取和格式验证保留五条互斥失败边界：
+
+| 日志 | 优先检查 |
+| --- | --- |
+| `KERNEL_ATA_TIMEOUT` | `0x1F7` 的 BSY/DRQ 与轮询预算 |
+| `KERNEL_ATA_ERROR` | `0x1F7` 的 ERR/DF 和 `0x1F1` 错误寄存器 |
+| `KERNEL_HEADER_INVALID` | `0x13000` 的字段、保留区和描述符 CRC |
+| `KERNEL_CHECKSUM_INVALID` | `0x20000` 起精确文件 CRC 与最后扇区补零 |
+| `KERNEL_ELF_INVALID` | ELF 头、程序头、地址、权限、重叠和入口 |
+
+调试时不要先修改失败标记或放宽边界；先使用构建生成的对应失败镜像确认该分支
+仍然可达。
+
+### GDB 检查两遍 ELF 装载
+
+以 `-S -s` 启动正常镜像后，可以检查固定物理布局：
+
+```gdb
+set architecture i386:x86-64
+target remote :1234
+x/8gx 0x13000
+x/16bx 0x20000
+x/10gx 0x14000
+x/16i 0x100000
+x/gx 0x102000
+info registers cr3 rsp rdi rip
+```
+
+- `0x13000` 应以 `OSKERN64` 开头。
+- `0x20000` 应以 ELF magic 开头。
+- `0x14000` 的十个 64 位字段应与 BootInfo 文档一致。
+- `0x100000` 是入口代码；当前 BSS 探针位于 RW 段，交接前必须为零。
+- 内核入口处 CR3 应为 `0x10000`，RDI 应为 `0x14000`，RSP 位于独立栈区。
+
+宿主侧可用以下命令对照程序头和入口：
+
+```bash
+llvm-readelf -h -l build/developer/source/kernel/kernel.elf
+llvm-nm --undefined-only build/developer/source/kernel/kernel.elf
+python3 tools/os.py qemu-firmware \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk.img \
+  131072 1048576 --expected-outcome success
+```
+
+当前成功产物为 28,168 字节、56 个扇区，包含 3 个 `PT_LOAD`；这些数字会随
+代码变化，因此调试判断应以构建产物和 BootInfo 日志为准，而不是硬编码到测试
+逻辑。

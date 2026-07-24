@@ -78,6 +78,18 @@ set(
     OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_invalid_checksum_disk.img"
 )
+set(
+    OS_KERNEL_INVALID_ELF_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_invalid_elf_disk.img"
+)
+set(
+    OS_STAGE1_KERNEL_ATA_TIMEOUT_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_kernel_ata_timeout/boot_disk.img"
+)
+set(
+    OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_kernel_ata_error/boot_disk.img"
+)
 
 add_subdirectory(source/firmware)
 add_subdirectory(source/boot/stage1)

@@ -195,6 +195,27 @@ class KernelImageToolTests(unittest.TestCase):
         with self.assertRaises(OsToolError):
             parseAndValidateKernelDiskImage(bytes(diskImage))
 
+    def testRejectsNonzeroPayloadPadding(self) -> None:
+        diskImage = bytearray(
+            createKernelDiskImageBytes(
+                createValidStage1DiskImage(),
+                createValidKernelElf(),
+            )
+        )
+        descriptor, kernelElf = parseAndValidateKernelDiskImage(
+            bytes(diskImage)
+        )
+        payloadOffset = (
+            descriptor.payloadLba
+            * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+        )
+        diskImage[payloadOffset + len(kernelElf)] = (
+            OS_KERNEL_IMAGE_CORRUPTION_BIT
+        )
+
+        with self.assertRaises(OsToolError):
+            parseAndValidateKernelDiskImage(bytes(diskImage))
+
 
 if __name__ == "__main__":
     unittest.main()

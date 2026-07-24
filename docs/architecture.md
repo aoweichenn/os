@@ -20,15 +20,15 @@ QEMU 只模拟 CPU、内存、串口、IDE 等硬件。每个箭头都是显式�
 
 启动代码按照实模式、保护模式、长模式的顺序推进。GDT、控制寄存器、EFER 和页表均由项目代码建立，并通过反汇编、GDB 和串口标记验证。
 
-v0.3 的页表位于物理地址 `0x10000..0x12FFF`，用一个 2 MiB 大页对低地址做
-身份映射。Stage 1 先打开并验证 A20，再加载平坦 GDT；进入保护模式后依次
+页表位于物理地址 `0x10000..0x12FFF`，使用 32 个 2 MiB 大页对低端
+64 MiB 做身份映射。Stage 1 先打开并验证 A20，再加载平坦 GDT；进入保护模式后依次
 构造页表、设置 `CR4.PAE`、加载 `CR3`、设置 `IA32_EFER.LME`、开启
 `CR0.PG`，最后通过 L 位代码段远跳进入 64 位子模式。
 
 v0.4 的内核是独立 ELF64 `ET_EXEC` 文件，入口和首个链接地址为
 `0x00100000`。编译层只产生 x86-64 freestanding 对象，链接层直接调用 LLD，
-不允许宿主 GCC 或宿主运行库参与。Stage 1 之后只消费程序头中的 `PT_LOAD`
-契约，不依赖节表。
+不允许宿主 GCC 或宿主运行库参与。Stage 1 只消费程序头中的 `PT_LOAD`
+契约，不依赖节表；第一遍验证全部段及相互关系，第二遍才复制并清零 BSS。
 
 同一块 `boot_disk.img` 保持两套独立格式：LBA 0 和 LBA 1..64 属于 Stage 1，
 LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Kernel
@@ -96,11 +96,27 @@ LBA 65      Kernel v1 描述符
 LBA 66..N   kernel.elf（精确长度 + 扇区补零）
 ```
 
-宿主先验证 Stage 1 结束位置不越过 LBA 65，再验证 Kernel 描述符、CRC32、
+宿主与目标机都先验证 Stage 1/Kernel 分离、Kernel 描述符、CRC32、扇区补零、
 磁盘范围与内嵌 ELF64。格式详见
 [Boot Image 模块](modules/boot-image.md) 与
-[ADR 0006](adr/0006-kernel-image-container.md)。下一增量将在 Stage 1
-中实现同一验证顺序，而不是让 Python 替代目标机装载。
+[ADR 0006](adr/0006-kernel-image-container.md)。目标机随后按下列内存布局
+完成交接：
+
+| 物理区间 | 用途 |
+| --- | --- |
+| `0x00008000..0x0000FFFF` | Stage 1 最大负载窗口 |
+| `0x00010000..0x00012FFF` | PML4、PDPT、PD |
+| `0x00013000..0x000131FF` | Kernel 描述符 |
+| `0x00014000..0x0001404F` | BootInfo v1 |
+| `0x00015000..0x00015FFF` | ELF 验证工作区 |
+| `0x00020000..0x0009FFFF` | 最大 512 KiB ELF 暂存 |
+| `0x00100000..0x03EFFFFF` | Kernel `PT_LOAD` 目标窗口 |
+| `0x03FEF000..0x03FFEFFF` | 早期内核栈保留区 |
+
+BootInfo magic 为 `OSBOOT64`，10 个字段全部为 64 位。Stage 1 把其地址放入
+`RDI`，在 16 字节对齐的栈上使用 `CALL` 进入 `osKernelEntry`，从而满足
+System V AMD64 函数入口的栈约束。详细理由见
+[ADR 0007](adr/0007-two-pass-elf-loader-and-boot-info.md)。
 
 ## 模块边界
 
@@ -146,17 +162,24 @@ source/firmware/
 
 source/boot/stage1/
 ├── CMakeLists.txt
+├── include/
+│   └── kernel_loader.inc
 └── src/
-    └── entry.asm
+    ├── entry.asm
+    └── kernel_loader.asm
 
 source/kernel/
 ├── CMakeLists.txt
 ├── include/os/kernel/
-│   └── entry.hpp
+│   ├── boot_info.hpp
+│   ├── entry.hpp
+│   └── serial_port.hpp
 ├── linker/
 │   └── kernel.ld.in
 └── src/
-    └── entry.cpp
+    ├── boot_info.cpp
+    ├── entry.cpp
+    └── serial_port.cpp
 ```
 
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和
@@ -171,8 +194,10 @@ source/kernel/
 ```text
 tests/
 ├── unit/foundation/
+├── unit/kernel/
 ├── integration/boot/
 ├── randomized/foundation/
+├── randomized/kernel/
 ├── tooling/
 └── support/cpp/
 ```

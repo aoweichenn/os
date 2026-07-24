@@ -27,11 +27,12 @@
 
 ## 当前范围
 
-当前已完成 `v0.3 Long Mode`：自研 128 KiB ROM 负责复位、串口与 IDE ATA
-PIO，Stage 1 自行验证 A20，建立 GDT、保护模式、初始四级页表，并按可审计
-顺序进入 64 位长模式。成功路径和串口、IDE、镜像、页表及控制位失败路径均有
-QEMU TCG 回归。
+当前已完成 `v0.4 内核加载`：Stage 1 在自研长模式环境中通过 ATA PIO 读取
+Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
+范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并
+清零 BSS。Stage 1 以 80 字节、全 64 位字段的 BootInfo 通过 System V AMD64
+首参数寄存器交给 C++20 内核。
 
-`v0.4 内核加载`正在实施。前两个增量已经生成并审计固定入口的 freestanding
-C++20 ELF64 内核，并把它放入带版本、64 位长度字段和 CRC32 的自描述启动
-磁盘；Stage 1 尚未在目标机读取该描述符、装载 ELF 段或完成 BootInfo 交接。
+正常路径与 Kernel ATA 超时、ATA 设备错误、描述符损坏、负载损坏和 CRC 正确
+但 ELF 语义损坏路径均有 QEMU TCG 回归。下一阶段 `v0.5` 建立内核自己的
+GDT、IDT、TSS、异常入口和 panic 机制。

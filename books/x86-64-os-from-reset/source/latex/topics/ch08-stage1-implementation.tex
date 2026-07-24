@@ -117,7 +117,7 @@ Kernel 的位置就随之变化；目标代码要么硬编码一个会漂移的�
 
 固定 LBA 65 并不浪费重要容量：一块 1 MiB 教学磁盘包含 2048 个扇区，而稳定
 交接比节省几十个空扇区更重要。宿主打包器先完整解析 Stage 1 描述符，再证明
-其结束 LBA 不大于 65；它不因“当前 Stage 1 只有三个扇区”就放弃最大边界
+其结束 LBA 不大于 65；它不因“当前 Stage 1 只有七个扇区”就放弃最大边界
 检查。
 
 \subsection{Kernel 描述符使用可扩展宽度但服从当前硬件}
@@ -182,7 +182,288 @@ ELF 的长度、对齐、权限、重叠和入口检查仍然不可省略。
 测试完成 128 组不同文件长度往返和 256 组随机文件字节破坏；集成测试审计
 真实 \filepath{boot\_disk.img}，同时要求两份故障镜像被拒绝。
 
-这一增量仍没有让 Python 替代目标机工作。宿主工具只是生成和独立审计输入；
-下一增量由 64 位 Stage 1 自行通过 ATA PIO 读取 LBA 65，执行 CRC32 与 ELF
-程序头验证，再把段复制到 \code{0x00100000}。两端实现同一格式，才能互相
-发现错误。
+这一层没有让 Python 替代目标机工作。宿主工具只是生成和独立审计输入；
+64 位 Stage 1 已自行通过 ATA PIO 读取 LBA 65，执行 CRC32 与 ELF 程序头
+验证，再把段复制到 \code{0x00100000}。两端实现同一格式，才能互相发现错误。
+
+\section{v0.4 的内存布局是一组同时成立的区间证明}
+
+\subsection{为什么映射从 2 MiB 扩展到 64 MiB}
+
+v0.3 只需要让正在执行的 Stage 1、页表和早期栈跨过分页开启点，首个 2 MiB
+大页已经足够。v0.4 增加了三个新对象：低端 ELF 暂存文件、1 MiB 起的加载段
+以及接近 64 MiB 的独立内核栈。若仍只映射第一张大页，代码段或栈的第一次
+访问就会触发页故障；IDT 尚未建立时，页故障会升级为双重故障甚至三重故障，
+表现为机器突然复位。
+
+项目没有因此增加四级页表数量。一个 PD 含 512 个 64 位项，每个设置 PS 的
+项映射 2 MiB；顺序填写前 32 项即可覆盖：
+\[
+  32\times 2\ \mathrm{MiB}=64\ \mathrm{MiB}.
+\]
+每项的物理基址是索引乘 2 MiB，再与 present、writable 和 page-size 位组合。
+构造后逐项回读，而不是只检查第一项。这既验证循环边界，也防止索引或步长错误
+让高地址栈成为未映射洞。
+
+\subsection{物理区间表同时是所有权表}
+
+\small
+\begin{longtable}{L{0.27\textwidth}L{0.27\textwidth}L{0.34\textwidth}}
+\toprule
+\textbf{半开区间} & \textbf{所有者} & \textbf{为何放在这里}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{半开区间} & \textbf{所有者} & \textbf{为何放在这里}\\
+\midrule
+\endhead
+\code{0x00008000..0x00010000} & Stage 1 & 与实模式加载位置一致，最大 32 KiB\\
+\code{0x00010000..0x00013000} & 页表 & 三张 4 KiB 对齐表\\
+\code{0x00013000..0x00013200} & Kernel 描述符 & 一个完整磁盘扇区\\
+\code{0x00014000..0x00014050} & BootInfo & 独立页面内的 80 字节 ABI\\
+\code{0x00015000..0x00016000} & 加载器临时状态 & 程序头遍历索引和计数\\
+\code{0x00020000..0x000A0000} & Kernel 文件暂存 & 512 KiB 的连续上限\\
+\code{0x00100000..0x03F00000} & \code{PT\_LOAD} 窗口 & 避开低端加载器与高端栈\\
+\code{0x03FEF000..0x03FFF000} & 初始内核栈 & 64 KiB，向低地址增长\\
+\bottomrule
+\end{longtable}
+\normalsize
+
+表中的空洞不是遗漏。描述符之后按页分开 BootInfo 和临时状态，使 GDB 可以
+按稳定地址检查，也给结构增长留下明确边界。暂存区结束于传统 PC 的
+\code{0xA0000}，避免把普通 RAM 假设延伸进 VGA 与固件保留窗口。加载窗口
+结束于 \code{0x03F00000}，在 64 MiB 映射末尾之前给内核栈留出空间。
+
+区间全部采用半开语义。验证段结束地址时先证明
+\(\mathrm{begin}+\mathrm{size}\) 不发生 64 位溢出，再比较结束地址不超过
+窗口上界；不能先做可能回绕的加法，然后用回绕后的“小数”通过检查。
+
+\section{长模式中的 ATA PIO 仍然是同一硬件协议}
+
+\subsection{寄存器变宽不会让端口字段变宽}
+
+CPU 进入 64 位模式后，通用寄存器宽度变成 64 位，但 ATA LBA28 命令块仍由
+8 位地址寄存器和 16 位数据端口组成。Stage 1 把 32 位 LBA 拆成低、中、高
+字节和高四位，选择 primary master，发送 \code{READ SECTORS}，每次只读
+一个扇区。数据目的地址放在 RDI，\code{rep insw} 仍执行 256 次 16 位输入。
+
+每扇区单独提交看似不如批量高效，却让三个边界非常清晰：扇区计数字段永远为
+1，不遇到“零表示 256”的历史语义；失败时当前 LBA 明确；目标指针每次只前进
+512 字节，容易证明不会越过暂存区。性能优化应在正确状态机之上进行，而不是
+让最早加载器先承担批量命令的额外状态。
+
+\subsection{有界轮询是没有调度器时的超时机制}
+
+Stage 1 尚无中断时钟和任务调度器，只能用固定次数预算防止设备永久忙。状态
+判定顺序保持：
+\[
+\begin{array}{ll}
+\mathrm{BSY}=1 & \rightarrow\ \text{继续等待}\\
+\mathrm{BSY}=0,\ \mathrm{ERR}\lor\mathrm{DF}=1
+  & \rightarrow\ \text{设备错误}\\
+\mathrm{BSY}=0,\ \mathrm{DRQ}=0 & \rightarrow\ \text{继续等待}\\
+\mathrm{BSY}=0,\ \mathrm{DRQ}=1 & \rightarrow\ \text{读取数据}.
+\end{array}
+\]
+
+超时与设备错误分别映射为 \code{KERNEL\_ATA\_TIMEOUT} 和
+\code{KERNEL\_ATA\_ERROR}。测试变体在真实轮询函数内强制状态，而不是在
+上层直接打印失败文字，因此能够证明错误分支、日志收敛和后续里程碑禁止条件。
+
+\section{CRC32 从多项式除法落到逐位汇编}
+
+\subsection{为什么它比简单字和更适合 Kernel}
+
+Stage 1 的 16 位字和能发现许多单字变化，但交换两个字不会改变和，某些成对
+误差也会抵消。CRC 把比特串解释为 \(GF(2)\) 上的多项式，除法中的加减都由
+异或实现；余数对连续突发错误有更系统的检测能力。IEEE CRC32 的标准多项式
+常写为 \code{0x04C11DB7}。按最低位先处理时使用它的反射形式
+\code{0xEDB88320}。
+
+项目算法以 \code{0xFFFFFFFF} 初始化余数，每个输入字节先与余数低字节异或，
+再进行八轮：
+\[
+  c_{i+1}=
+  \begin{cases}
+    (c_i\gg1)\oplus\mathtt{EDB88320},&c_i\text{ 的最低位为 1},\\
+    c_i\gg1,&\text{否则}.
+  \end{cases}
+\]
+所有字节处理后逐位取反。逐位实现比 256 项查表慢，但代码和常量更少，算法
+路径可以直接与宿主标准库结果对照；当前最大 512 KiB 文件仍有明确上限。
+
+\subsection{描述符、自身字段和尾部填充}
+
+描述符 CRC 覆盖整个 512 字节，但 CRC 字段不可能同时包含自己最终值并直接
+参与普通计算。目标实现先保存磁盘中的字段，把内存副本对应四字节置零，计算
+后恢复，再比较结果。恢复动作很重要：后续 BootInfo 和调试器看到的描述符仍
+应等于磁盘内容。
+
+负载 CRC 只覆盖 \code{file size} 个精确字节。扇区中最后的补零不属于 ELF，
+但也不能完全忽略：Stage 1 另行扫描从精确文件末尾到
+\(\mathrm{sectorCount}\times512\) 的区域，要求全部为零。这样既保持 CRC
+语义稳定，也不允许未校验数据藏在容器尾部。
+
+\section{两遍 ELF 验证把失败保持为无副作用}
+
+\subsection{第一层从文件身份建立边界}
+
+ELF 头至少 64 字节。加载器先检查 magic、64 位类别、小端序、当前标识版本、
+\code{ET\_EXEC}、x86-64 机器号、ELF 版本、固定入口、头大小和程序头项
+大小。程序头数量必须位于 1 到 64，程序头表偏移不得位于头之前，表末尾必须
+落在精确文件范围。
+
+限制最多 64 项不是 ELF 标准的普遍限制，而是本阶段的资源预算。它为两两重叠
+检查给出最多 \(64\times63/2=2016\) 次区间比较，也避免损坏文件用极大计数
+拖长最早启动。格式字段较宽不意味着实现必须无条件接受所有可表达值。
+
+\subsection{每个加载段有局部不变量}
+
+程序头类型不是 \code{PT\_LOAD} 时可以跳过；加载段则必须全部满足：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 权限只含 R、W、X，且 R 必须存在；
+  \item W 与 X 不能同时出现；
+  \item \code{p\_filesz <= p\_memsz}，且内存长度非零；
+  \item 文件偏移加文件长度不溢出且不越过精确 ELF；
+  \item 对齐字段精确为 4 KiB，文件偏移与虚拟地址页内偏移相同；
+  \item 虚拟地址等于物理地址，暂不引入重定位或非恒等目标；
+  \item 内存区间完整落入 \code{0x00100000..0x03F00000}。
+\end{enumerate}
+
+要求 R 权限和 W\^X 不是当前大页已经能强制出来的最终安全策略；初始 2 MiB
+大页仍以较粗权限映射。它先保证 ELF 自身给出的意图没有矛盾，等 v0.6 拆成
+4 KiB 页时可直接依据段权限建立页表。
+
+\subsection{跨段不变量不能在单个程序头中检查}
+
+单个段合法不代表段集合合法。加载器把当前段与所有先前
+\code{PT\_LOAD} 做半开区间比较，任何重叠都拒绝。否则后复制的段会覆盖先
+复制的段，最终内存内容依赖程序头顺序。固定入口
+\code{0x00100000} 还必须位于一个带 X 的加载段，不能仅等于 ELF 头中的
+\code{e\_entry} 就通过。
+
+第一遍只读取暂存文件和一页临时状态，不写
+\code{0x00100000} 之后的目标区。等全部程序头通过，第二遍才对每个加载段：
+\[
+  \operatorname{copy}(p\_offset,p\_vaddr,p\_filesz),\qquad
+  \operatorname{zero}(p\_vaddr+p\_filesz,p\_memsz-p\_filesz).
+\]
+验证失败因此保持“没有半个内核”的状态，日志和 GDB 现场仍可解释。
+
+\section{BSS 把语言保证变成加载器责任}
+
+BSS 名称来自早期汇编工具中的 Block Started by Symbol。未显式初始化或零
+初始化的全局对象不必在文件中存储一串零；链接器让段的内存大小大于文件大小，
+把差值交给加载器清零。这能缩小磁盘文件，却把责任从编译器转移到了装载阶段。
+
+C++ 规定静态存储期对象在进一步初始化前先零初始化。freestanding 环境不会
+有宿主运行时替加载器弥补错误。本项目在 BSS 放置一个 64 位探针：内核入口
+第一次读取必须为零，随后写入一个命名的非零值并输出
+\code{BSS\_ZEROED}。若 Stage 1 只复制 \code{p\_filesz} 而忘记清零，
+QEMU 系统测试将在第一次 C++ 交接中暴露问题。
+
+\section{BootInfo 把寄存器瞬间变成版本化事实}
+
+\subsection{十个 64 位字段为何全部显式}
+
+\small
+\begin{longtable}{L{0.14\textwidth}L{0.33\textwidth}L{0.39\textwidth}}
+\toprule
+\textbf{偏移} & \textbf{字段} & \textbf{当前值或来源}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{偏移} & \textbf{字段} & \textbf{当前值或来源}\\
+\midrule
+\endhead
+\code{0x00} & magic & 内存字节为 \code{OSBOOT64}\\
+\code{0x08} & version & 1\\
+\code{0x10} & structure size & 80 字节\\
+\code{0x18} & Kernel 文件地址 & \code{0x20000}\\
+\code{0x20} & Kernel 文件长度 & 已通过 CRC 的精确长度\\
+\code{0x28} & Kernel 入口 & \code{0x100000}\\
+\code{0x30} & 加载段数量 & 第一遍验证所得，1 到 64\\
+\code{0x38} & 页表根 & \code{0x10000}\\
+\code{0x40} & 恒等映射大小 & \code{0x4000000}，即 64 MiB\\
+\code{0x48} & 初始栈顶 & \code{0x3FFF000}\\
+\bottomrule
+\end{longtable}
+\normalsize
+
+这些字段都用 64 位不是为了“数值越大越好”，而是为了统一跨阶段 ABI 并给
+后续扩展留出范围。磁盘字段、汇编偏移和 C++ 的 \code{uint64\_t} 必须三方
+一致；不能用宿主平台的 \code{unsigned long} 或 \code{size\_t} 猜测宽度。
+同时，大类型也不取消语义上限：文件仍最多 512 KiB，段数仍最多 64。
+
+\subsection{System V AMD64 ABI 规定第一次函数调用}
+
+Stage 1 把 BootInfo 地址放入 RDI，把 RSP 设到独立栈顶，然后用
+\code{CALL} 进入 \code{osKernelEntry}。相较裸 \code{JMP}，\code{CALL}
+自动压入返回地址，使入口栈状态符合普通 C++ 函数调用约定。入口被声明为
+C ABI 和不返回，避免 C++ 名字修饰并明确生命周期；如果实现错误而返回，
+Stage 1 仍有 \code{KERNEL\_RETURNED} 诊断边界。
+
+初始阶段关闭红区，因为未来中断处理可能在当前栈指针下方写入状态，不能让
+编译器假定那 128 字节永远安全。异常、RTTI、栈保护、线程安全局部静态对象
+和宿主标准库也保持关闭，直到内核显式提供对应运行时。
+
+\section{内核入口建立独立可观察性}
+
+\subsection{重新初始化串口不是重复劳动}
+
+Stage 1 已经配置 COM1，内核理论上可以直接发送。但那会形成一个没有写进 ABI
+的隐藏依赖：任何固件改动都可能让内核日志失效。内核的
+\code{SerialPort} 类用自己的固定宽度端口常量依次关闭中断、设置 DLAB、
+写除数、恢复 8N1、配置 FIFO 与 modem control；每个字节发送仍有
+\code{0xFFFF} 次 THRE 轮询预算。
+
+类成员访问显式使用 \code{this->}，头文件只声明接口、源文件保存实现；常量
+以项目、模块和功能为前缀。即使这是最早内核代码，也不降低工程命名和分层
+要求。
+
+\subsection{成功日志是一条逐步增强的证据链}
+
+\begin{longtable}{L{0.38\textwidth}L{0.48\textwidth}}
+\toprule
+\textbf{标记} & \textbf{它实际证明的事实}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{标记} & \textbf{它实际证明的事实}\\
+\midrule
+\endhead
+\code{KERNEL\_HEADER\_VALID} & 目标 ATA 读取和描述符字段/CRC 成功\\
+\code{KERNEL\_PAYLOAD\_VALID} & 精确 ELF CRC 和扇区补零成功\\
+\code{KERNEL\_ELF\_VALID} & 第一遍 ELF 与全部段关系成功\\
+\code{KERNEL\_SEGMENTS\_LOADED} & 第二遍复制与 BSS 清零完成\\
+\code{BOOT\_INFO\_READY} & 十字段交接结构已写完\\
+\code{KERNEL\_TRANSFER} & RDI、RSP 已准备，即将调用入口\\
+\code{ENTERED} & C++ 入口和独立 COM1 代码确实执行\\
+\code{BOOT\_INFO\_VALID} & 内核逐字段接受交接 ABI\\
+\code{BSS\_ZEROED} & 加载器满足 C++ 零初始化前提\\
+\code{CR3\_VALID} & 处理器实际页表根与交接事实一致\\
+\code{READY} & 当前 v0.4 的全部内核入口验收完成\\
+\bottomrule
+\end{longtable}
+
+每扇区、每字节和每次轮询都不打印，避免串口耗时反过来改变启动行为。QEMU
+宿主读取线程给每行加 \code{[QEMU][T+...ms]} 单调时间，这只表示宿主观察到
+日志的时刻；来宾尚未有 IRQ0 软件滴答，因此不伪造操作系统时间。
+
+\section{四层测试共同证明完整交接}
+
+单元测试快速验证 BootInfo 每个错误状态、ELF 字段边界、CRC 与尾部补零；
+集成测试检查真实 ELF、磁盘和内存区间；固定种子随机测试覆盖大量标识、目标
+地址、文件长度、负载内容和填充变化；QEMU 系统测试才负责证明从
+\code{0xFFFFFFF0} 到 C++ \code{READY} 的真实指令链。
+
+失败镜像不是简单破坏后让宿主拒绝。语义非法 ELF 会重新计算描述符与负载
+CRC，使目标必须通过两层完整性检查后才在 ELF 语义处失败；ATA 超时和 ERR
+变体则直接作用于 Stage 1 的轮询函数。成功路径与五类 Kernel 失败路径共同
+保证日志没有把错误归入笼统的“启动失败”。
+
+当前完整命令运行 32 项 CTest。测试代码、宿主 Python、书稿和网站不计入操作
+系统本体代码量；统计只覆盖 \filepath{source/} 中实际进入目标系统的 C++、
+头文件和 Intel 语法汇编。这样增长曲线描述的是机器上真实执行的实现，不会被
+测试数量和文档篇幅稀释。

@@ -5,6 +5,14 @@ set(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/entry.asm"
 )
 set(
+    OS_STAGE1_KERNEL_LOADER_SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/kernel_loader.asm"
+)
+set(
+    OS_STAGE1_KERNEL_LOADER_CONSTANTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/kernel_loader.inc"
+)
+set(
     OS_STAGE1_BINARY
     "${CMAKE_CURRENT_BINARY_DIR}/generated/stage1.bin"
 )
@@ -18,17 +26,120 @@ add_custom_command(
         "${CMAKE_CURRENT_BINARY_DIR}/generated"
     COMMAND
         "${OS_STAGE1_NASM_EXECUTABLE}"
+        -I
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+        -I
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/"
         -f
         bin
         -o
         "${OS_STAGE1_BINARY}"
         "${OS_STAGE1_SOURCE}"
-    DEPENDS "${OS_STAGE1_SOURCE}"
-    COMMENT "汇编自研 16 位 Stage 1 入口"
+    DEPENDS
+        "${OS_STAGE1_SOURCE}"
+        "${OS_STAGE1_KERNEL_LOADER_SOURCE}"
+        "${OS_STAGE1_KERNEL_LOADER_CONSTANTS}"
+    COMMENT "汇编自研 Stage 1 模式切换与 ELF64 内核加载器"
     VERBATIM
 )
 
 add_custom_target(os_stage1_binary DEPENDS "${OS_STAGE1_BINARY}")
+
+function(
+    os_add_stage1_failure_binary
+    OS_STAGE1_FAILURE_BINARY
+    OS_STAGE1_FAILURE_DEFINITION
+    OS_STAGE1_FAILURE_COMMENT
+)
+    add_custom_command(
+        OUTPUT "${OS_STAGE1_FAILURE_BINARY}"
+        COMMAND
+            "${CMAKE_COMMAND}"
+            -E
+            make_directory
+            "${CMAKE_CURRENT_BINARY_DIR}/generated"
+        COMMAND
+            "${OS_STAGE1_NASM_EXECUTABLE}"
+            -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/"
+            -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/src/"
+            -D
+            "${OS_STAGE1_FAILURE_DEFINITION}=1"
+            -f
+            bin
+            -o
+            "${OS_STAGE1_FAILURE_BINARY}"
+            "${OS_STAGE1_SOURCE}"
+        DEPENDS
+            "${OS_STAGE1_SOURCE}"
+            "${OS_STAGE1_KERNEL_LOADER_SOURCE}"
+            "${OS_STAGE1_KERNEL_LOADER_CONSTANTS}"
+        COMMENT "${OS_STAGE1_FAILURE_COMMENT}"
+        VERBATIM
+    )
+endfunction()
+
+set(
+    OS_STAGE1_KERNEL_ATA_TIMEOUT_BINARY
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/stage1_kernel_ata_timeout.bin"
+)
+set(
+    OS_STAGE1_KERNEL_ATA_ERROR_BINARY
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/stage1_kernel_ata_error.bin"
+)
+os_add_stage1_failure_binary(
+    "${OS_STAGE1_KERNEL_ATA_TIMEOUT_BINARY}"
+    OS_STAGE1_TEST_FORCE_KERNEL_ATA_TIMEOUT
+    "汇编 Stage 1 Kernel ATA 超时测试镜像"
+)
+os_add_stage1_failure_binary(
+    "${OS_STAGE1_KERNEL_ATA_ERROR_BINARY}"
+    OS_STAGE1_TEST_FORCE_KERNEL_ATA_ERROR
+    "汇编 Stage 1 Kernel ATA 设备错误测试镜像"
+)
+
+function(
+    os_add_stage1_failure_disk
+    OS_STAGE1_FAILURE_DISK_IMAGE
+    OS_STAGE1_FAILURE_BINARY
+)
+    get_filename_component(
+        OS_STAGE1_FAILURE_OUTPUT_DIRECTORY
+        "${OS_STAGE1_FAILURE_DISK_IMAGE}"
+        DIRECTORY
+    )
+    add_custom_command(
+        OUTPUT "${OS_STAGE1_FAILURE_DISK_IMAGE}"
+        COMMAND
+            "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tools/os.py"
+            create-boot-images
+            "${OS_STAGE1_FAILURE_BINARY}"
+            "${OS_KERNEL_ELF_PATH}"
+            "${OS_STAGE1_FAILURE_OUTPUT_DIRECTORY}"
+            "${OS_DISK_IMAGE_SIZE_BYTES}"
+        DEPENDS
+            "${OS_STAGE1_FAILURE_BINARY}"
+            "${OS_KERNEL_ELF_PATH}"
+            "${PROJECT_SOURCE_DIR}/tools/os.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
+        COMMENT "生成 Stage 1 Kernel ATA 失败路径磁盘镜像"
+        VERBATIM
+    )
+endfunction()
+
+os_add_stage1_failure_disk(
+    "${OS_STAGE1_KERNEL_ATA_TIMEOUT_DISK_IMAGE}"
+    "${OS_STAGE1_KERNEL_ATA_TIMEOUT_BINARY}"
+)
+os_add_stage1_failure_disk(
+    "${OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE}"
+    "${OS_STAGE1_KERNEL_ATA_ERROR_BINARY}"
+)
 
 add_custom_command(
     OUTPUT
@@ -37,6 +148,7 @@ add_custom_command(
         "${OS_STAGE1_INVALID_CHECKSUM_DISK_IMAGE}"
         "${OS_KERNEL_INVALID_HEADER_DISK_IMAGE}"
         "${OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_ELF_DISK_IMAGE}"
     COMMAND
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
@@ -65,4 +177,7 @@ add_custom_target(
         "${OS_STAGE1_INVALID_CHECKSUM_DISK_IMAGE}"
         "${OS_KERNEL_INVALID_HEADER_DISK_IMAGE}"
         "${OS_KERNEL_INVALID_CHECKSUM_DISK_IMAGE}"
+        "${OS_KERNEL_INVALID_ELF_DISK_IMAGE}"
+        "${OS_STAGE1_KERNEL_ATA_TIMEOUT_DISK_IMAGE}"
+        "${OS_STAGE1_KERNEL_ATA_ERROR_DISK_IMAGE}"
 )

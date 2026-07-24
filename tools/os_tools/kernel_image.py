@@ -239,6 +239,12 @@ def parseAndValidateKernelDiskImage(
         raise OsToolError("Kernel ELF 文件被截断。")
     if calculateCrc32(kernelElf) != payloadChecksum:
         raise OsToolError("Kernel ELF 文件 CRC32 校验失败。")
+    paddedPayloadEnd = (
+        payloadOffset
+        + payloadSectorCount * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+    )
+    if any(diskImage[payloadEnd:paddedPayloadEnd]):
+        raise OsToolError("Kernel ELF 扇区填充区域必须为零。")
 
     entryAddress, loadSegments = parseKernelLoadSegments(kernelElf)
     validateKernelEntry(entryAddress, loadSegments)

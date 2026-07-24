@@ -2,9 +2,11 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.3 Long Mode` 已完成，`v0.4 内核加载`正在实施。自研
+当前状态：`v0.4 内核加载`已完成，下一阶段为 `v0.5 内核基础`。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
-读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、分页和长模式切换。
+读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
+长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
+freestanding C++20 内核。
 
 ## 最短构建与测试路径
 
@@ -37,16 +39,29 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][STAGE1] LME_READY
 [OS][STAGE1] PAGING_ENABLED
 [OS][STAGE1] LONG_MODE
+[OS][STAGE1] KERNEL_HEADER_VALID
+[OS][STAGE1] KERNEL_PAYLOAD_VALID
+[OS][STAGE1] KERNEL_ELF_VALID
+[OS][STAGE1] KERNEL_SEGMENTS_LOADED
+[OS][STAGE1] BOOT_INFO_READY
+[OS][STAGE1] KERNEL_TRANSFER
+[OS][KERNEL] ENTERED
+[OS][KERNEL] BOOT_INFO_VALID
+[OS][KERNEL] BSS_ZEROED
+[OS][KERNEL] CR3_VALID
+[OS][KERNEL] FILE_SIZE=0x0000000000006E08
+[OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
+[OS][KERNEL] READY
 ```
 
 日志规范见 [docs/logging.md](docs/logging.md)：启动日志只记录阶段里程碑和故障原因，
 不在轮询或逐字节路径中刷屏。
 
-当前 v0.4 已生成首个 freestanding C++20 ELF64 内核：
-`build/developer/source/kernel/kernel.elf`。它由 LLD 直接链接，入口固定为
-`0x00100000`，并由构建测试审计 ELF 头、加载段、入口和未解析符号。构建系统
-还会把它放入 `boot_disk.img` 的自描述 Kernel 区域，以 CRC32、磁盘边界和
-ELF64 双层规则独立审计；Stage 1 目标机装载将在下一增量实现。
+`build/developer/source/kernel/kernel.elf` 由 LLD 直接链接，入口固定为
+`0x00100000`。当前产物包含严格分权的 `R E`、`R`、`RW/BSS` 三个
+`PT_LOAD`；Stage 1 在目标机上以两遍算法先验证全部段，再复制文件内容并清零
+BSS。成功交接后内核重新初始化 COM1，验证 80 字节 BootInfo、BSS 和 CR3，
+再输出稳定的 `READY` 证据。
 
 ## 固定技术路线
 
@@ -70,7 +85,7 @@ books/           可独立构建的 LaTeX 系统教材
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
-教材现为 5 部 10 个完整主题章、98 页；每章按“背景与历史约束、硬件或软件
+教材现为 5 部 10 个完整主题章、103 页；每章按“背景与历史约束、硬件或软件
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。

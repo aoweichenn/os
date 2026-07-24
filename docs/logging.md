@@ -12,8 +12,9 @@
 | `TRACE` | 调试内部细节 | 默认关闭 | 轮询计数、寄存器快照 |
 
 当前串口格式使用稳定的组件和事件名代替显式等级字段：固件事件使用
-`[OS][FIRMWARE]`，Stage 1 事件使用 `[OS][STAGE1]`。事件名必须是大写下划线形式，
-并且纳入 QEMU 测试的顺序或禁止标记集合。
+`[OS][FIRMWARE]`，Stage 1 事件使用 `[OS][STAGE1]`，内核事件使用
+`[OS][KERNEL]`。事件名必须是大写下划线形式，并且纳入 QEMU 测试的顺序或
+禁止标记集合。
 
 ## 时间戳方案
 
@@ -43,7 +44,7 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 - 若未来启用 `TRACE`，必须有编译期或启动期开关，并设置最大事件数；达到预算后只打印一次 `TRACE_LIMIT_REACHED`。
 - 日志文本不得依赖本地化、时间戳或不稳定地址，保证测试和文档可复现。
 
-## v0.3 验收
+## v0.4 验收
 
 正常启动日志应按阶段边界递进：
 
@@ -54,6 +55,32 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 [OS][FIRMWARE] STAGE1_LOADED
 [OS][STAGE1] ENTERED
 [OS][STAGE1] GDT_READY
+[OS][STAGE1] PROTECTED_MODE
+[OS][STAGE1] PAGE_TABLES_READY
+[OS][STAGE1] PAE_READY
+[OS][STAGE1] LME_READY
+[OS][STAGE1] PAGING_ENABLED
+[OS][STAGE1] LONG_MODE
+[OS][STAGE1] KERNEL_HEADER_VALID
+[OS][STAGE1] KERNEL_PAYLOAD_VALID
+[OS][STAGE1] KERNEL_ELF_VALID
+[OS][STAGE1] KERNEL_SEGMENTS_LOADED
+[OS][STAGE1] BOOT_INFO_READY
+[OS][STAGE1] KERNEL_TRANSFER
+[OS][KERNEL] ENTERED
+[OS][KERNEL] BOOT_INFO_VALID
+[OS][KERNEL] BSS_ZEROED
+[OS][KERNEL] CR3_VALID
+[OS][KERNEL] FILE_SIZE=0x0000000000006E08
+[OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
+[OS][KERNEL] READY
 ```
 
+文件长度和加载段数使用固定 16 位十六进制宽度，便于人工对照 ELF，也避免
+十进制转换代码进入最早内核。数值日志只在结构验证完成后输出。
+
 测试必须验证顺序、失败标记唯一性以及失败路径不会继续输出后续成功标记。
+Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
+`KERNEL_HEADER_INVALID`、`KERNEL_CHECKSUM_INVALID` 和
+`KERNEL_ELF_INVALID`；它们不能合并，否则硬件事务、容器完整性和 ELF 语义
+三种问题无法区分。

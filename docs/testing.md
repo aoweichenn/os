@@ -57,14 +57,20 @@
 测试完成 256 组有效负载往返和 256 组越界 LBA 拒绝。QEMU 测试验证的是 ROM
 自身执行 ATA PIO 和远跳转，而不是宿主工具代替读取。
 
-`v0.4` 增加内核 ELF64 审计：单元测试构造最小有效 ELF，并覆盖截断、权限、
-页对齐和恒等装载失败；固定种子随机测试破坏 256 组 ELF 标识；集成测试直接
-检查构建得到的 `kernel.elf`，并通过 `llvm-nm` 保证没有未解析运行时符号。
+`v0.4` 完成内核 ELF64 审计与真实目标加载：
 
-第二增量继续验证组合磁盘：单元测试覆盖描述符 CRC32、负载损坏、保留区、
-Stage 1 重叠和打包前 ELF 拒绝；固定种子测试完成 128 组不同 ELF 文件长度
-往返及 256 组随机负载损坏拒绝；集成测试审计真实 `boot_disk.img`，并确认
-Kernel 描述符损坏和负载损坏镜像均失败。
+- 单元测试构造最小有效 ELF，并覆盖截断、程序头数量、权限、页对齐、目标
+  窗口、段重叠、恒等装载和入口失败。
+- BootInfo C++ 单元测试逐字段验证空指针、版本、结构大小、文件范围、入口、
+  段数、页表根、映射大小和栈顶。
+- 固定种子随机测试破坏 256 组 ELF 标识、256 组加载地址、256 组负载字节和
+  128 组扇区补零，并完成 128 组不同文件长度往返。
+- 集成测试审计真实 `kernel.elf`、组合磁盘和 Stage 1/页表/暂存区/加载窗口/
+  内核栈之间的物理布局，且通过 `llvm-nm` 保证没有未解析运行时符号。
+- QEMU 成功路径必须从复位依次到达 Kernel 的 `BOOT_INFO_VALID`、
+  `BSS_ZEROED`、`CR3_VALID` 和 `READY`。
+- QEMU 失败路径分别注入 Kernel ATA 永久忙、ATA ERR、描述符损坏、负载
+  损坏和 CRC 正确但 ELF 语义非法，证明失败来自目标代码而非宿主预检查。
 
 ## 验收证据
 
@@ -102,7 +108,9 @@ python3 tools/os.py test --layer failure-path
 | --- | --- | --- |
 | `os_foundation_unit_tests` | 单元 | 地址类型、半开区间、空区间和溢出 |
 | `os_foundation_integration_tests` | 集成 | ROM、复位向量、Stage 1 与内核区间关系 |
+| `os_kernel_handoff_layout_integration_tests` | 集成 | 页表、描述符、BootInfo、暂存区、加载窗口与内核栈互不重叠 |
 | `os_foundation_randomized_tests` | 随机 | 10,000 组区间性质与溢出拒绝 |
+| `os_kernel_boot_info_unit_tests` | 单元 | BootInfo 全字段、上下界和失败状态 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
@@ -112,6 +120,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_disk_layout` | 集成 | 真实启动磁盘的 Kernel 描述符、CRC32、范围与内嵌 ELF |
 | `os_kernel_disk_rejects_invalid_header` | 集成/失败路径 | 损坏 Kernel 描述符必须被拒绝 |
 | `os_kernel_disk_rejects_invalid_checksum` | 集成/失败路径 | 损坏 Kernel ELF 文件必须被拒绝 |
+| `os_kernel_disk_rejects_invalid_elf` | 集成/失败路径 | CRC 正确但 ELF 语义非法仍必须被拒绝 |
 | `os_stage1_rejects_invalid_header` | 集成/失败路径 | 损坏描述符必须被宿主审计拒绝 |
 | `os_qemu_stage1_load_success` | 系统 | 真实 ATA PIO 加载、校验、远跳转和 Stage 1 入口 |
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
@@ -119,13 +128,18 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_firmware_ide_error_failure` | 系统/失败路径 | ATA ERR 必须进入设备错误分支 |
 | `os_qemu_stage1_header_failure` | 系统/失败路径 | ROM 必须拒绝损坏描述符 |
 | `os_qemu_stage1_checksum_failure` | 系统/失败路径 | ROM 必须拒绝损坏负载 |
+| `os_qemu_kernel_header_failure` | 系统/失败路径 | Stage 1 必须拒绝损坏 Kernel 描述符 |
+| `os_qemu_kernel_checksum_failure` | 系统/失败路径 | Stage 1 必须拒绝损坏 Kernel 文件 |
+| `os_qemu_kernel_elf_failure` | 系统/失败路径 | Stage 1 必须拒绝 CRC 正确的非法 ELF |
+| `os_qemu_kernel_ata_timeout_failure` | 系统/失败路径 | Kernel 读取的 ATA 轮询必须有界超时 |
+| `os_qemu_kernel_ata_error_failure` | 系统/失败路径 | Kernel 读取必须识别 ATA ERR/DF |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
-| `os_kernel_randomized_tests` | 随机 | ELF 标识破坏、128 组长度往返与 256 组负载破坏 |
+| `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
+当前共 32 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
 `subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模

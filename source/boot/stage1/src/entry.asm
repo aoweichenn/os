@@ -1,6 +1,8 @@
 bits 16
 org 0
 
+%include "kernel_loader.inc"
+
 OS_STAGE1_COM1_BASE_PORT equ 0x03F8
 OS_STAGE1_COM1_LINE_STATUS_OFFSET equ 0x0005
 OS_STAGE1_COM1_TRANSMITTER_EMPTY_BIT equ 0x20
@@ -30,6 +32,10 @@ OS_STAGE1_PD_ADDRESS equ 0x00012000
 OS_STAGE1_PAGE_TABLE_TOTAL_DWORD_COUNT equ 0x00000C00
 OS_STAGE1_PAGE_TABLE_PRESENT_WRITABLE_FLAGS equ 0x00000003
 OS_STAGE1_PAGE_TABLE_LARGE_PAGE_FLAGS equ 0x00000083
+OS_STAGE1_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES equ 0x00200000
+OS_STAGE1_PAGE_DIRECTORY_ENTRY_SIZE_BYTES equ 0x00000008
+OS_STAGE1_PAGE_DIRECTORY_ENTRY_COUNT equ 0x00000020
+OS_STAGE1_IDENTITY_MAPPED_SIZE_BYTES equ 0x04000000
 OS_STAGE1_PAGE_TABLE_ENTRY_HIGH_DWORD_OFFSET equ 0x00000004
 OS_STAGE1_PAGE_TABLE_EMPTY_HIGH_DWORD equ 0x00000000
 OS_STAGE1_GDT_LIMIT_INCLUSIVE_ADJUSTMENT equ 0x0001
@@ -38,6 +44,7 @@ OS_STAGE1_IA32_EFER_MSR equ 0xC0000080
 OS_STAGE1_IA32_EFER_LME_BIT equ 0x00000100
 OS_STAGE1_IA32_EFER_LMA_BIT equ 0x00000400
 OS_STAGE1_CR0_PAGING_BIT equ 0x80000000
+OS_STAGE1_KERNEL_STACK_TOP equ 0x03FFF000
 
 os_stage1_entry:
     cli
@@ -162,8 +169,18 @@ os_stage1_build_page_tables:
         OS_STAGE1_PDPT_ADDRESS | OS_STAGE1_PAGE_TABLE_PRESENT_WRITABLE_FLAGS
     mov dword [OS_STAGE1_PDPT_ADDRESS], \
         OS_STAGE1_PD_ADDRESS | OS_STAGE1_PAGE_TABLE_PRESENT_WRITABLE_FLAGS
-    mov dword [OS_STAGE1_PD_ADDRESS], \
-        OS_STAGE1_PAGE_TABLE_LARGE_PAGE_FLAGS
+    mov edi, OS_STAGE1_PD_ADDRESS
+    mov eax, OS_STAGE1_PAGE_TABLE_LARGE_PAGE_FLAGS
+    mov ecx, OS_STAGE1_PAGE_DIRECTORY_ENTRY_COUNT
+
+os_stage1_build_page_directory_entry:
+    mov dword [edi], eax
+    mov dword [ \
+        edi + OS_STAGE1_PAGE_TABLE_ENTRY_HIGH_DWORD_OFFSET \
+    ], OS_STAGE1_PAGE_TABLE_EMPTY_HIGH_DWORD
+    add eax, OS_STAGE1_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES
+    add edi, OS_STAGE1_PAGE_DIRECTORY_ENTRY_SIZE_BYTES
+    loop os_stage1_build_page_directory_entry
     ret
 
 os_stage1_validate_page_tables:
@@ -181,13 +198,20 @@ os_stage1_validate_page_tables:
         + OS_STAGE1_PAGE_TABLE_ENTRY_HIGH_DWORD_OFFSET], \
         OS_STAGE1_PAGE_TABLE_EMPTY_HIGH_DWORD
     jne os_stage1_page_tables_invalid
-    cmp dword [OS_STAGE1_PD_ADDRESS], \
-        OS_STAGE1_PAGE_TABLE_LARGE_PAGE_FLAGS
+    mov edi, OS_STAGE1_PD_ADDRESS
+    mov eax, OS_STAGE1_PAGE_TABLE_LARGE_PAGE_FLAGS
+    mov ecx, OS_STAGE1_PAGE_DIRECTORY_ENTRY_COUNT
+
+os_stage1_validate_page_directory_entry:
+    cmp dword [edi], eax
     jne os_stage1_page_tables_invalid
-    cmp dword [OS_STAGE1_PD_ADDRESS \
-        + OS_STAGE1_PAGE_TABLE_ENTRY_HIGH_DWORD_OFFSET], \
-        OS_STAGE1_PAGE_TABLE_EMPTY_HIGH_DWORD
+    cmp dword [ \
+        edi + OS_STAGE1_PAGE_TABLE_ENTRY_HIGH_DWORD_OFFSET \
+    ], OS_STAGE1_PAGE_TABLE_EMPTY_HIGH_DWORD
     jne os_stage1_page_tables_invalid
+    add eax, OS_STAGE1_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES
+    add edi, OS_STAGE1_PAGE_DIRECTORY_ENTRY_SIZE_BYTES
+    loop os_stage1_validate_page_directory_entry
     stc
     ret
 
@@ -260,8 +284,68 @@ os_stage1_long_mode_entry:
     mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE + os_stage1_long_mode_message
     call os_stage1_long_write_string
 
+    call os_stage1_load_kernel
+    jnc os_stage1_report_kernel_load_failure
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_transfer_message
+    call os_stage1_long_write_string
+
+    mov rsp, OS_STAGE1_KERNEL_STACK_TOP
+    mov rdi, OS_STAGE1_KERNEL_BOOT_INFO_ADDRESS
+    mov rax, [ \
+        rdi + OS_STAGE1_BOOT_INFO_KERNEL_ENTRY_OFFSET \
+    ]
+    call rax
+
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_returned_message
+    call os_stage1_long_write_string
+
 os_stage1_long_halt:
     hlt
+    jmp os_stage1_long_halt
+
+os_stage1_report_kernel_load_failure:
+    cmp al, OS_STAGE1_RESULT_ATA_TIMEOUT
+    je os_stage1_report_kernel_ata_timeout
+    cmp al, OS_STAGE1_RESULT_ATA_DEVICE_ERROR
+    je os_stage1_report_kernel_ata_error
+    cmp al, OS_STAGE1_RESULT_KERNEL_HEADER_INVALID
+    je os_stage1_report_kernel_header_invalid
+    cmp al, OS_STAGE1_RESULT_KERNEL_CHECKSUM_INVALID
+    je os_stage1_report_kernel_checksum_invalid
+    cmp al, OS_STAGE1_RESULT_KERNEL_ELF_INVALID
+    je os_stage1_report_kernel_elf_invalid
+    jmp os_stage1_long_halt
+
+os_stage1_report_kernel_ata_timeout:
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_ata_timeout_message
+    call os_stage1_long_write_string
+    jmp os_stage1_long_halt
+
+os_stage1_report_kernel_ata_error:
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_ata_error_message
+    call os_stage1_long_write_string
+    jmp os_stage1_long_halt
+
+os_stage1_report_kernel_header_invalid:
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_header_invalid_message
+    call os_stage1_long_write_string
+    jmp os_stage1_long_halt
+
+os_stage1_report_kernel_checksum_invalid:
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_checksum_invalid_message
+    call os_stage1_long_write_string
+    jmp os_stage1_long_halt
+
+os_stage1_report_kernel_elf_invalid:
+    mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
+        + os_stage1_kernel_elf_invalid_message
+    call os_stage1_long_write_string
     jmp os_stage1_long_halt
 
 os_stage1_long_write_string:
@@ -448,3 +532,26 @@ os_stage1_paging_invalid_message:
 
 os_stage1_long_mode_message:
     db "[OS][STAGE1] LONG_MODE", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_transfer_message:
+    db "[OS][STAGE1] KERNEL_TRANSFER", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_returned_message:
+    db "[OS][STAGE1] KERNEL_RETURNED", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_ata_timeout_message:
+    db "[OS][STAGE1] KERNEL_ATA_TIMEOUT", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_ata_error_message:
+    db "[OS][STAGE1] KERNEL_ATA_ERROR", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_header_invalid_message:
+    db "[OS][STAGE1] KERNEL_HEADER_INVALID", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_checksum_invalid_message:
+    db "[OS][STAGE1] KERNEL_CHECKSUM_INVALID", 0x0D, 0x0A, 0x00
+
+os_stage1_kernel_elf_invalid_message:
+    db "[OS][STAGE1] KERNEL_ELF_INVALID", 0x0D, 0x0A, 0x00
+
+%include "kernel_loader.asm"

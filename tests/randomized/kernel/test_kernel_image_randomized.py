@@ -17,6 +17,7 @@ from tests.tooling.test_kernel_elf import createValidKernelElf
 OS_TEST_KERNEL_IMAGE_RANDOM_SEED = 0x4B45_524E_494D_47
 OS_TEST_KERNEL_IMAGE_RANDOM_VALID_CASE_COUNT = 128
 OS_TEST_KERNEL_IMAGE_RANDOM_CORRUPTION_CASE_COUNT = 256
+OS_TEST_KERNEL_IMAGE_RANDOM_PADDING_CASE_COUNT = 128
 OS_TEST_KERNEL_IMAGE_RANDOM_DISK_SECTOR_COUNT = 256
 OS_TEST_KERNEL_IMAGE_RANDOM_MAXIMUM_SUFFIX_SIZE_BYTES = 16_384
 OS_TEST_KERNEL_IMAGE_RANDOM_STAGE1_BINARY = b"\xFA\xFC\xF4"
@@ -87,6 +88,51 @@ class KernelImageRandomizedTests(unittest.TestCase):
             corruptedDiskImage[
                 payloadOffset + mutationOffset
             ] ^= OS_TEST_KERNEL_IMAGE_RANDOM_CORRUPTION_BIT
+
+            with self.subTest(
+                seed=OS_TEST_KERNEL_IMAGE_RANDOM_SEED,
+                caseIndex=caseIndex,
+                mutationOffset=mutationOffset,
+            ):
+                with self.assertRaises(OsToolError):
+                    parseAndValidateKernelDiskImage(
+                        bytes(corruptedDiskImage)
+                    )
+
+    def testRejectsRandomNonzeroKernelPadding(self) -> None:
+        generator = random.Random(OS_TEST_KERNEL_IMAGE_RANDOM_SEED)
+        kernelElf = createValidKernelElf()
+        validDiskImage = createKernelDiskImageBytes(
+            createStage1DiskImage(),
+            kernelElf,
+        )
+        payloadOffset = (
+            OS_KERNEL_IMAGE_DEFAULT_PAYLOAD_LBA
+            * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+        )
+        paddedPayloadSizeBytes = (
+            (
+                len(kernelElf)
+                + OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+                - 1
+            )
+            // OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+            * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+        )
+        paddingBeginOffset = payloadOffset + len(kernelElf)
+        paddingEndOffset = payloadOffset + paddedPayloadSizeBytes
+
+        for caseIndex in range(
+            OS_TEST_KERNEL_IMAGE_RANDOM_PADDING_CASE_COUNT
+        ):
+            mutationOffset = generator.randrange(
+                paddingBeginOffset,
+                paddingEndOffset,
+            )
+            corruptedDiskImage = bytearray(validDiskImage)
+            corruptedDiskImage[mutationOffset] = (
+                OS_TEST_KERNEL_IMAGE_RANDOM_CORRUPTION_BIT
+            )
 
             with self.subTest(
                 seed=OS_TEST_KERNEL_IMAGE_RANDOM_SEED,

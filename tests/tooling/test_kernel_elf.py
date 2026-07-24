@@ -12,6 +12,8 @@ from tools.os_tools.kernel_elf import (
     OS_KERNEL_ELF_IDENT_DATA_OFFSET,
     OS_KERNEL_ELF_IDENT_VERSION_OFFSET,
     OS_KERNEL_ELF_MACHINE_X86_64,
+    OS_KERNEL_ELF_MAXIMUM_LOAD_END_ADDRESS,
+    OS_KERNEL_ELF_MINIMUM_LOAD_ADDRESS,
     OS_KERNEL_ELF_MAGIC,
     OS_KERNEL_ELF_PROGRAM_FLAG_EXECUTE,
     OS_KERNEL_ELF_PROGRAM_FLAG_READ,
@@ -148,6 +150,32 @@ class KernelElfToolTests(unittest.TestCase):
                         OS_KERNEL_ELF_EXPECTED_ENTRY_ADDRESS
                         + OS_TEST_KERNEL_ELF_PAGE_ALIGNMENT_BYTES
                     )
+                )
+            )
+
+    def testRejectsSegmentBelowTargetLoadArea(self) -> None:
+        invalidAddress = OS_KERNEL_ELF_MINIMUM_LOAD_ADDRESS - (
+            OS_TEST_KERNEL_ELF_PAGE_ALIGNMENT_BYTES
+        )
+
+        with self.assertRaises(OsToolError):
+            parseKernelLoadSegments(
+                createValidKernelElf(
+                    entryAddress=invalidAddress,
+                    virtualAddress=invalidAddress,
+                    physicalAddress=invalidAddress,
+                )
+            )
+
+    def testRejectsSegmentPastTargetLoadArea(self) -> None:
+        invalidAddress = OS_KERNEL_ELF_MAXIMUM_LOAD_END_ADDRESS
+
+        with self.assertRaises(OsToolError):
+            parseKernelLoadSegments(
+                createValidKernelElf(
+                    entryAddress=invalidAddress,
+                    virtualAddress=invalidAddress,
+                    physicalAddress=invalidAddress,
                 )
             )
 

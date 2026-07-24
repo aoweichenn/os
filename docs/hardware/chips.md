@@ -16,7 +16,12 @@ x86-64 CPU
 └── RAM
     ├── 固件栈：0x7000 向低地址增长
     ├── Stage 1 描述符：0x0500..0x06FF
-    └── Stage 1 负载：0x8000..0x9FC00 窗口
+    ├── Stage 1 负载：0x8000..0xFFFF
+    ├── 页表：0x10000..0x12FFF
+    ├── Kernel 描述符与 BootInfo：0x13000..0x1404F
+    ├── Kernel ELF 暂存：0x20000..0x9FFFF
+    ├── Kernel PT_LOAD：0x100000..0x3EFFFFF
+    └── Kernel 初始栈：0x3FEF000..0x3FFEFFF
 ```
 
 QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态位和错误处理都由项目
@@ -55,8 +60,8 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | EFER | 10 | LMA | 长模式已激活 | 只读结果，不能直接写 |
 | EFER | 11 | NXE | 启用 NX 位 | 只有策略需要且 CPU 支持时启用 |
 
-模式切换是状态机，不是把几个 bit 任意置一。v0.3 会把每次写入和读回值都加入
-串口证据与 QEMU 检查。
+模式切换是状态机，不是把几个 bit 任意置一。v0.3 已把每次写入和读回值加入
+串口证据与 QEMU 检查；v0.4 的内核还会读回 CR3，与 BootInfo 中的页表根比较。
 
 ## 3. 16550A UART / COM1
 
@@ -144,8 +149,9 @@ BSY=0 且 DRQ=1     -> 读取 DATA 的 256 个 16 位字
 | 6 | UNC | 不可校正数据错误 |
 | 7 | BBK | 坏块标记 |
 
-当前阶段只把 ERROR 寄存器作为诊断来源，统一通过 `IDE_ERROR` 收敛；后续设备
-驱动阶段会保留原始 status/error 字节，形成更细的错误类型。
+固件加载 Stage 1 时统一输出 `IDE_ERROR`；Stage 1 加载 Kernel 时输出
+`KERNEL_ATA_ERROR`。两条路径都把 ERROR 寄存器作为诊断来源，后续设备驱动
+阶段会保留原始 status/error 字节，形成更细的错误类型。
 
 ## 5. 结构化描述与代码的对应关系
 
@@ -176,7 +182,9 @@ Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位
 
 - `docs/hardware/register_map.yaml`：芯片、寄存器、位和访问宽度的机器可读规格。
 - `source/firmware/src/reset_and_serial.asm`：固件端口访问与 ATA 状态机实现。
-- `source/boot/stage1/src/entry.asm`：Stage 1 复用 COM1 的最小发送器。
+- `source/boot/stage1/src/entry.asm`：模式切换、页表和 Stage 1 串口路径。
+- `source/boot/stage1/src/kernel_loader.asm`：长模式 ATA、CRC32、ELF 和 BootInfo。
+- `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。
 - `docs/testing.md`：状态边界对应的 QEMU 失败注入。
 

@@ -15,6 +15,10 @@ OS_KERNEL_ELF_MACHINE_X86_64 = 0x003E
 OS_KERNEL_ELF_HEADER_SIZE_BYTES = 64
 OS_KERNEL_ELF_PROGRAM_HEADER_SIZE_BYTES = 56
 OS_KERNEL_ELF_EXPECTED_ENTRY_ADDRESS = 0x0010_0000
+OS_KERNEL_ELF_MAXIMUM_FILE_SIZE_BYTES = 0x0008_0000
+OS_KERNEL_ELF_MAXIMUM_PROGRAM_HEADER_COUNT = 64
+OS_KERNEL_ELF_MINIMUM_LOAD_ADDRESS = 0x0010_0000
+OS_KERNEL_ELF_MAXIMUM_LOAD_END_ADDRESS = 0x03F0_0000
 OS_KERNEL_ELF_PROGRAM_TYPE_LOAD = 1
 OS_KERNEL_ELF_PROGRAM_FLAG_EXECUTE = 0x1
 OS_KERNEL_ELF_PROGRAM_FLAG_WRITE = 0x2
@@ -116,6 +120,8 @@ def parseKernelLoadSegments(
 ) -> tuple[int, tuple[KernelLoadSegment, ...]]:
     if len(kernelElf) < OS_KERNEL_ELF_HEADER_SIZE_BYTES:
         raise OsToolError("内核 ELF 头被截断。")
+    if len(kernelElf) > OS_KERNEL_ELF_MAXIMUM_FILE_SIZE_BYTES:
+        raise OsToolError("内核 ELF 超出 Stage 1 暂存区容量。")
 
     (
         identification,
@@ -161,6 +167,12 @@ def parseKernelLoadSegments(
         raise OsToolError("内核 ELF 头长度不正确。")
     if programHeaderSizeBytes != OS_KERNEL_ELF_PROGRAM_HEADER_SIZE_BYTES:
         raise OsToolError("内核 ELF 程序头长度不正确。")
+    if (
+        programHeaderCount == 0
+        or programHeaderCount
+        > OS_KERNEL_ELF_MAXIMUM_PROGRAM_HEADER_COUNT
+    ):
+        raise OsToolError("内核 ELF 程序头数量超出 Stage 1 能力。")
     if programHeaderOffset < OS_KERNEL_ELF_HEADER_SIZE_BYTES:
         raise OsToolError("内核 ELF 程序头表与文件头重叠。")
 
@@ -199,7 +211,12 @@ def parseKernelLoadSegments(
             raise OsToolError("内核可加载段的文件长度大于内存长度。")
         if memorySizeBytes == OS_KERNEL_ELF_EMPTY_SEGMENT_SIZE_BYTES:
             raise OsToolError("内核可加载段的内存长度为零。")
-        if fileOffset + fileSizeBytes > len(kernelElf):
+        fileRangeEnd = checkedAddressEnd(
+            fileOffset,
+            fileSizeBytes,
+            "文件加载范围",
+        )
+        if fileRangeEnd > len(kernelElf):
             raise OsToolError("内核可加载段越过文件末尾。")
         if not isPowerOfTwo(alignmentBytes):
             raise OsToolError("内核可加载段对齐不是二的幂。")
@@ -209,6 +226,15 @@ def parseKernelLoadSegments(
             raise OsToolError("内核可加载段的文件与虚拟地址对齐不一致。")
         if virtualAddress != physicalAddress:
             raise OsToolError("内核可加载段不符合初期恒等装载契约。")
+        physicalEndAddress = checkedAddressEnd(
+            physicalAddress,
+            memorySizeBytes,
+            "物理装载范围",
+        )
+        if physicalAddress < OS_KERNEL_ELF_MINIMUM_LOAD_ADDRESS:
+            raise OsToolError("内核可加载段低于目标装载区。")
+        if physicalEndAddress > OS_KERNEL_ELF_MAXIMUM_LOAD_END_ADDRESS:
+            raise OsToolError("内核可加载段越过目标装载区。")
         if programFlags & ~OS_KERNEL_ELF_PROGRAM_FLAG_KNOWN_MASK:
             raise OsToolError("内核可加载段包含未知权限位。")
         if not programFlags & OS_KERNEL_ELF_PROGRAM_FLAG_READ:

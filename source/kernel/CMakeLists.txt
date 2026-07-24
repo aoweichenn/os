@@ -1,11 +1,32 @@
 set(
     OS_KERNEL_PUBLIC_HEADERS
+    include/os/kernel/boot_info.hpp
     include/os/kernel/entry.hpp
+    include/os/kernel/serial_port.hpp
 )
 
 set(
     OS_KERNEL_PRIVATE_SOURCES
+    src/boot_info.cpp
     src/entry.cpp
+    src/serial_port.cpp
+)
+
+add_library(
+    os_kernel_boot_protocol_host
+    STATIC
+        src/boot_info.cpp
+        include/os/kernel/boot_info.hpp
+)
+target_include_directories(
+    os_kernel_boot_protocol_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_boot_protocol_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
 )
 
 set(
@@ -77,6 +98,7 @@ target_compile_options(
         -fno-threadsafe-statics
         -fno-use-cxa-atexit
         -m64
+        -masm=intel
         -mcmodel=kernel
         -mno-mmx
         -mno-red-zone

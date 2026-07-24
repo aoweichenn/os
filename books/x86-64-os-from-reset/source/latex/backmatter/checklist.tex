@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.2 完成后的知识验收}
+\section*{v0.4 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -15,6 +15,16 @@
   \item Stage 1 描述符、两级校验与加载范围承担的不同边界；
   \item 远控制转移重载 CS 与 Stage 1 重新建立 DS 的原因；
   \item IDE 超时、设备错误、头损坏和负载损坏的可区分证据。
+  \item 32 个 2 MiB 大页如何形成低 64 MiB 恒等映射；
+  \item Kernel 描述符 CRC、精确文件 CRC 与扇区零填充的不同边界；
+  \item IEEE CRC32 反射多项式和逐位更新过程；
+  \item ELF64 文件头、程序头与 \code{PT\_LOAD} 的职责区别；
+  \item 两遍装载为何能在失败前保持目标区无副作用；
+  \item BSS 的历史来源以及 \code{p\_memsz-p\_filesz} 必须清零的原因；
+  \item W\^X、段间不重叠、恒等装载窗口和可执行入口检查；
+  \item BootInfo 十个固定宽度字段及 RDI、RSP 的 ABI 契约；
+  \item 内核独立串口、BSS 探针和 CR3 读回分别证明什么；
+  \item 五种 Kernel 失败路径怎样由真实 QEMU 故障注入到达。
 \end{itemize}
 
 \section*{进入下一阶段前}
@@ -24,6 +34,12 @@
   \item 能从镜像十六进制数据手算复位目标；
   \item 能在 QEMU 串口日志中区分复位成功和串口超时；
   \item 能从磁盘前 28 字节解释 Stage 1 的加载位置和入口；
-  \item 能说明 v0.3 A20、GDT、页表和长模式控制位的依赖顺序；
+  \item 能从 LBA 65 的 48 字节头解释 Kernel 文件位置、长度和 CRC；
+  \item 能说明 A20、GDT、页表和长模式控制位的依赖顺序；
+  \item 能逐项走读当前 ELF 第一遍验证和第二遍复制/BSS 清零；
+  \item 能用 GDB 检查 \code{0x13000} 描述符、\code{0x14000} BootInfo、
+  \code{0x20000} ELF 暂存区与 \code{0x100000} 内核入口；
+  \item 能说明 \code{BOOT\_INFO\_VALID}、\code{BSS\_ZEROED} 和
+  \code{CR3\_VALID} 各自排除了哪类错误；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

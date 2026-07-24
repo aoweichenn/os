@@ -43,8 +43,8 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v0.4 ELF64 内核和正常/损坏磁盘镜像，同时保留
-   v0.0 空镜像回归基线。
+4. 生成自研 ROM、Stage 1、v0.4 ELF64 内核，以及正常、格式损坏和目标 ATA
+   故障注入镜像，同时保留 v0.0 空镜像回归基线。
 5. 运行全部 CTest 测试。
 
 ## 手动构建
@@ -80,11 +80,16 @@ images/stage1_invalid_header_disk.img
 images/stage1_invalid_checksum_disk.img
 images/kernel_invalid_header_disk.img
 images/kernel_invalid_checksum_disk.img
+images/kernel_invalid_elf_disk.img
+images/kernel_ata_timeout_disk.img
+images/kernel_ata_error_disk.img
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
 tests/os_foundation_integration_tests
 tests/os_foundation_randomized_tests
+tests/os_kernel_boot_protocol_unit_tests
+tests/os_kernel_handoff_layout_tests
 ```
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
@@ -110,19 +115,22 @@ reset_and_serial.asm
 
 ```text
 source/boot/stage1/src/entry.asm
+source/boot/stage1/src/kernel_loader.asm
   └─ NASM bin → stage1.bin
        └─ Python Stage 1 格式编码与校验
 ```
 
 使用 `python3 tools/os.py audit-stage1 build/developer/images/boot_disk.img`
 可以独立检查描述符、磁盘范围、加载范围和负载校验。Python 只负责宿主镜像
-编码与审计；目标机上的描述符解析、ATA PIO 和跳转全部由自研固件执行。
+编码与审计；目标机上的 Stage 1 描述符解析、ATA PIO 和跳转全部由自研固件
+执行。进入长模式后，`kernel_loader.asm` 用另一条自研 ATA PIO 路径读取
+Kernel。
 
 ## Kernel ELF64 生成链
 
 ```text
-source/kernel/src/entry.cpp
-  └─ Clang x86_64-unknown-none-elf → entry.cpp.o
+source/kernel/src/{entry,boot_info,serial_port}.cpp
+  └─ Clang x86_64-unknown-none-elf → C++ 目标文件
        └─ LLD elf_x86_64 + kernel.ld → kernel.elf
             └─ Python ELF64 结构审计 + llvm-nm 符号审计
 ```
@@ -150,8 +158,9 @@ python3 tools/os.py audit-stage1 build/developer/images/boot_disk.img
 python3 tools/os.py audit-kernel-image build/developer/images/boot_disk.img
 ```
 
-构建同时生成 Kernel 描述符损坏和 Kernel ELF 内容损坏的失败镜像。当前宿主
-审计必须拒绝它们；Stage 1 的对应目标机失败标记在下一增量加入。
+构建同时生成 Kernel 描述符损坏、Kernel ELF 内容损坏、CRC 正确但 ELF
+语义非法，以及目标 ATA 永久忙/设备错误的失败镜像。宿主审计拒绝前三类不可信
+输入，QEMU 测试进一步证明 Stage 1 自己走到对应的失败边界。
 
 ## 教材构建
 

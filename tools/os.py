@@ -45,6 +45,28 @@ from os_tools.qemu_runner import (
     OS_QEMU_STAGE1_PAGING_ENABLED_MARKER,
     OS_QEMU_STAGE1_PAGING_INVALID_MARKER,
     OS_QEMU_STAGE1_LONG_MODE_MARKER,
+    OS_QEMU_STAGE1_BOOT_INFO_READY_MARKER,
+    OS_QEMU_STAGE1_KERNEL_CHECKSUM_INVALID_MARKER,
+    OS_QEMU_STAGE1_KERNEL_ATA_ERROR_MARKER,
+    OS_QEMU_STAGE1_KERNEL_ATA_TIMEOUT_MARKER,
+    OS_QEMU_STAGE1_KERNEL_ELF_INVALID_MARKER,
+    OS_QEMU_STAGE1_KERNEL_ELF_VALID_MARKER,
+    OS_QEMU_STAGE1_KERNEL_HEADER_INVALID_MARKER,
+    OS_QEMU_STAGE1_KERNEL_HEADER_VALID_MARKER,
+    OS_QEMU_STAGE1_KERNEL_PAYLOAD_VALID_MARKER,
+    OS_QEMU_STAGE1_KERNEL_RETURNED_MARKER,
+    OS_QEMU_STAGE1_KERNEL_SEGMENTS_LOADED_MARKER,
+    OS_QEMU_STAGE1_KERNEL_TRANSFER_MARKER,
+    OS_QEMU_KERNEL_BOOT_INFO_INVALID_MARKER,
+    OS_QEMU_KERNEL_BOOT_INFO_VALID_MARKER,
+    OS_QEMU_KERNEL_BSS_INVALID_MARKER,
+    OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
+    OS_QEMU_KERNEL_CR3_INVALID_MARKER,
+    OS_QEMU_KERNEL_CR3_VALID_MARKER,
+    OS_QEMU_KERNEL_ENTERED_MARKER,
+    OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+    OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+    OS_QEMU_KERNEL_READY_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
@@ -137,7 +159,7 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
 
 
 def handleQemuFirmware(arguments: argparse.Namespace) -> None:
-    completedStage1Markers = (
+    completedLongModeMarkers = (
         OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
         OS_QEMU_STAGE1_A20_READY_MARKER,
         OS_QEMU_STAGE1_ENTERED_MARKER,
@@ -149,13 +171,43 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_STAGE1_PAGING_ENABLED_MARKER,
         OS_QEMU_STAGE1_LONG_MODE_MARKER,
     )
+    completedKernelLoadMarkers = (
+        OS_QEMU_STAGE1_KERNEL_HEADER_VALID_MARKER,
+        OS_QEMU_STAGE1_KERNEL_PAYLOAD_VALID_MARKER,
+        OS_QEMU_STAGE1_KERNEL_ELF_VALID_MARKER,
+        OS_QEMU_STAGE1_KERNEL_SEGMENTS_LOADED_MARKER,
+        OS_QEMU_STAGE1_BOOT_INFO_READY_MARKER,
+        OS_QEMU_STAGE1_KERNEL_TRANSFER_MARKER,
+    )
+    completedKernelEntryMarkers = (
+        OS_QEMU_KERNEL_ENTERED_MARKER,
+        OS_QEMU_KERNEL_BOOT_INFO_VALID_MARKER,
+        OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
+        OS_QEMU_KERNEL_CR3_VALID_MARKER,
+        OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+        OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+        OS_QEMU_KERNEL_READY_MARKER,
+    )
+    completedBootMarkers = (
+        *completedLongModeMarkers,
+        *completedKernelLoadMarkers,
+        *completedKernelEntryMarkers,
+    )
+    kernelFailureMarkers = (
+        OS_QEMU_STAGE1_KERNEL_ATA_TIMEOUT_MARKER,
+        OS_QEMU_STAGE1_KERNEL_ATA_ERROR_MARKER,
+        OS_QEMU_STAGE1_KERNEL_HEADER_INVALID_MARKER,
+        OS_QEMU_STAGE1_KERNEL_CHECKSUM_INVALID_MARKER,
+        OS_QEMU_STAGE1_KERNEL_ELF_INVALID_MARKER,
+        OS_QEMU_STAGE1_KERNEL_RETURNED_MARKER,
+    )
     if arguments.expectedOutcome == "success":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
-            *completedStage1Markers,
+            *completedBootMarkers,
         )
         forbiddenMarkers: tuple[str, ...] = (
             OS_QEMU_STAGE1_PAGE_TABLES_INVALID_MARKER,
@@ -163,13 +215,17 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_STAGE1_LME_INVALID_MARKER,
             OS_QEMU_STAGE1_PAGING_INVALID_MARKER,
             OS_QEMU_STAGE1_A20_INVALID_MARKER,
+            *kernelFailureMarkers,
+            OS_QEMU_KERNEL_BOOT_INFO_INVALID_MARKER,
+            OS_QEMU_KERNEL_BSS_INVALID_MARKER,
+            OS_QEMU_KERNEL_CR3_INVALID_MARKER,
         )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
         forbiddenMarkers = (
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
-            *completedStage1Markers,
+            *completedBootMarkers,
         )
     elif arguments.expectedOutcome == "ide-timeout":
         requiredMarkers = (
@@ -178,7 +234,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
         )
-        forbiddenMarkers = completedStage1Markers
+        forbiddenMarkers = completedBootMarkers
     elif arguments.expectedOutcome == "ide-error":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -186,7 +242,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
         )
-        forbiddenMarkers = completedStage1Markers
+        forbiddenMarkers = completedBootMarkers
     elif arguments.expectedOutcome == "stage1-header-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -194,8 +250,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER,
         )
-        forbiddenMarkers = completedStage1Markers
-    else:
+        forbiddenMarkers = completedBootMarkers
+    elif arguments.expectedOutcome == "stage1-checksum-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
@@ -203,7 +259,84 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
         )
-        forbiddenMarkers = completedStage1Markers
+        forbiddenMarkers = completedBootMarkers
+    elif arguments.expectedOutcome == "kernel-header-invalid":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            OS_QEMU_STAGE1_KERNEL_HEADER_INVALID_MARKER,
+        )
+        forbiddenMarkers = (
+            *completedKernelLoadMarkers,
+            *completedKernelEntryMarkers,
+            *kernelFailureMarkers[:2],
+            *kernelFailureMarkers[3:],
+        )
+    elif arguments.expectedOutcome == "kernel-checksum-invalid":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            OS_QEMU_STAGE1_KERNEL_HEADER_VALID_MARKER,
+            OS_QEMU_STAGE1_KERNEL_CHECKSUM_INVALID_MARKER,
+        )
+        forbiddenMarkers = (
+            *completedKernelLoadMarkers[1:],
+            *completedKernelEntryMarkers,
+            *kernelFailureMarkers[:3],
+            *kernelFailureMarkers[4:],
+        )
+    elif arguments.expectedOutcome == "kernel-elf-invalid":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            OS_QEMU_STAGE1_KERNEL_HEADER_VALID_MARKER,
+            OS_QEMU_STAGE1_KERNEL_PAYLOAD_VALID_MARKER,
+            OS_QEMU_STAGE1_KERNEL_ELF_INVALID_MARKER,
+        )
+        forbiddenMarkers = (
+            *completedKernelLoadMarkers[2:],
+            *completedKernelEntryMarkers,
+            *kernelFailureMarkers[:4],
+            *kernelFailureMarkers[5:],
+        )
+    elif arguments.expectedOutcome == "kernel-ata-timeout":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            OS_QEMU_STAGE1_KERNEL_ATA_TIMEOUT_MARKER,
+        )
+        forbiddenMarkers = (
+            *completedKernelLoadMarkers,
+            *completedKernelEntryMarkers,
+            *kernelFailureMarkers[1:],
+        )
+    else:
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            OS_QEMU_STAGE1_KERNEL_ATA_ERROR_MARKER,
+        )
+        forbiddenMarkers = (
+            *completedKernelLoadMarkers,
+            *completedKernelEntryMarkers,
+            *kernelFailureMarkers[:1],
+            *kernelFailureMarkers[2:],
+        )
 
     runQemuFirmwareBoot(
         OS_TOOL_PROJECT_ROOT,
@@ -366,6 +499,11 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "ide-error",
             "stage1-header-invalid",
             "stage1-checksum-invalid",
+            "kernel-header-invalid",
+            "kernel-checksum-invalid",
+            "kernel-elf-invalid",
+            "kernel-ata-timeout",
+            "kernel-ata-error",
         ),
         required=True,
         dest="expectedOutcome",
