@@ -12,20 +12,21 @@
 - NASM
 - QEMU `qemu-system-x86_64`
 - GDB
+- Python 3.11 或更高版本
 - CMake 3.28 或更高版本
-- GNU Make
+- Ninja
 - LLVM `nm`、`objdump` 与 `readelf`
 
 Fedora：
 
 ```bash
-sudo dnf install clang lld nasm qemu-system-x86-core gdb cmake make
+sudo dnf install clang lld nasm qemu-system-x86-core gdb cmake ninja-build python3
 ```
 
 Ubuntu：
 
 ```bash
-sudo apt-get install clang lld nasm qemu-system-x86 gdb cmake make
+sudo apt-get install clang lld nasm qemu-system-x86 gdb cmake ninja-build python3
 ```
 
 QEMU 软件包可能连带安装 SeaBIOS 或 OVMF 文件，但项目运行命令始终通过
@@ -34,10 +35,10 @@ QEMU 软件包可能连带安装 SeaBIOS 或 OVMF 文件，但项目运行命令
 ## 一键验证
 
 ```bash
-./scripts/build_and_test.sh
+python3 tools/os.py verify
 ```
 
-脚本依次执行：
+Python 入口依次执行：
 
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
@@ -48,10 +49,10 @@ QEMU 软件包可能连带安装 SeaBIOS 或 OVMF 文件，但项目运行命令
 ## 手动构建
 
 ```bash
-./scripts/check_toolchain.sh
-cmake --preset developer
-cmake --build --preset developer
-ctest --preset developer
+python3 tools/os.py doctor
+python3 tools/os.py configure
+python3 tools/os.py build
+python3 tools/os.py test
 ```
 
 ## 构建产物
@@ -59,8 +60,8 @@ ctest --preset developer
 所有产物位于 `build/developer/`：
 
 ```text
-libos_foundation_host.a
-libos_foundation_x86_64.a
+source/foundation/libos_foundation_host.a
+source/foundation/libos_foundation_x86_64.a
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
@@ -86,3 +87,12 @@ x86-64 目标使用 freestanding C++20，并关闭：
 - 宿主 C++ 标准库头文件
 
 这些限制由 CMake 目标 `os_foundation_x86_64` 集中管理，后续固件与内核目标必须复用同一策略。
+
+## 构建职责
+
+- CMake 描述模块、目标、源文件和依赖关系。
+- Ninja 执行增量构建。
+- Python 提供稳定命令入口并管理外部进程。
+- CTest 保存测试注册、标签和完成判定。
+
+Python 工具只使用标准库，不自行扫描 C++ 依赖，也不替代 CMake 生成构建图。

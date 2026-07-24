@@ -1,3 +1,5 @@
 build/
 /web/
+__pycache__/
+*.py[cod]
 *.log

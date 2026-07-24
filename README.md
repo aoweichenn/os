@@ -6,10 +6,11 @@
 
 ## 最短构建与测试路径
 
-在 Linux 环境安装 Clang、LLD、NASM、QEMU、GDB、CMake 和 Make 后执行：
+在 Linux 环境安装 Python 3.11+、Clang、LLD、NASM、QEMU、GDB、CMake
+和 Ninja 后执行：
 
 ```bash
-./scripts/build_and_test.sh
+python3 tools/os.py verify
 ```
 
 该命令会完成工具链检查、宿主机测试构建、x86-64 freestanding
@@ -32,6 +33,6 @@ TCG 整机冒烟测试。详细说明见 [docs/building.md](docs/building.md) �
 ```text
 source/          操作系统与 freestanding 基础模块
 tests/           单元、集成、随机和 QEMU 系统测试
-scripts/         工具链检查、构建与镜像脚本
+tools/           Python 构建、检查、镜像和 QEMU 调度工具
 docs/            需求、架构、模块、测试、调试和发布记录
 ```

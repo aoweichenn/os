@@ -45,16 +45,16 @@
 完整验证：
 
 ```bash
-./scripts/build_and_test.sh
+python3 tools/os.py verify
 ```
 
 按测试层运行：
 
 ```bash
-ctest --preset developer --label-regex unit
-ctest --preset developer --label-regex integration
-ctest --preset developer --label-regex randomized
-ctest --preset developer --label-regex system
+python3 tools/os.py test --layer unit
+python3 tools/os.py test --layer integration
+python3 tools/os.py test --layer randomized
+python3 tools/os.py test --layer system
 ```
 
 当前测试：
@@ -67,3 +67,12 @@ ctest --preset developer --label-regex system
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
+| `os_python_tooling_unit_tests` | 单元 | 镜像、ELF 输出解析和 QEMU 镜像校验 |
+
+QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
+`subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
+
+宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模
+不需要 fixture 或宏注册；避免 `TEST`、`EXPECT_*` 等宏也与项目的宏约束一致。
+如果以后出现大量共享 fixture、参数化组合或外部报告格式需求，再通过 ADR
+重新评估，不提前增加依赖。

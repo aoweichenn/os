@@ -328,11 +328,12 @@ CI 独立复现
 当前已经具备：
 
 - 统一 CMake preset。
-- 工具链检查。
+- Python 统一工具入口与工具链检查。
+- CMake/Ninja 增量构建。
 - x86-64 freestanding 编译目标。
 - 基础地址类型。
-- 六项 CTest 测试。
-- GitHub Actions 双任务验证。
+- 七项 CTest 测试。
+- GitHub Actions 原生工程验证。
 - 构建、测试、模块、ADR 和发布文档。
 
 当前尚不具备：

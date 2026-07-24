@@ -42,3 +42,43 @@ kernel ──────────────→ foundation
 ```
 
 `foundation` 不得反向依赖固件、引导阶段、内核或宿主测试框架。
+
+## 源码组织与可见性
+
+源码按领域模块组织，不按文件扩展名集中堆放。当前模块采用以下结构：
+
+```text
+source/foundation/
+├── CMakeLists.txt
+├── include/os/foundation/
+│   └── address_range.hpp
+└── src/
+    └── address_range.cpp
+```
+
+`include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和
+模块私有头文件。CMake 将公开目录标记为 `PUBLIC`、私有目录标记为 `PRIVATE`，
+消费者不能通过传递依赖获得私有包含路径。
+
+每个源码模块拥有独立 `CMakeLists.txt` 和 CMake target。根构建文件只负责
+公共策略、模块组合、镜像产物和测试入口，不保存具体模块的源文件清单。
+
+测试目录按测试层和被测领域镜像生产代码：
+
+```text
+tests/
+├── unit/foundation/
+├── integration/boot/
+├── randomized/foundation/
+├── tooling/
+└── support/cpp/
+```
+
+尚未实现的固件、引导和内核模块不会预先创建空目录；开始对应最小增量时再按照
+相同边界落地。
+
+## 宿主工具边界
+
+Python 只运行在宿主机，负责工具链检查、CMake/CTest 调度、镜像生成、ELF
+审计和 QEMU 生命周期管理。Python 不进入操作系统镜像，也不解析或替代 CMake
+构建图。所有外部程序均以参数列表直接启动，不经过 Shell 字符串求值。

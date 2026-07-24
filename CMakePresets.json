@@ -9,7 +9,7 @@
     {
       "name": "developer",
       "displayName": "x86-64 OS Lab 开发构建",
-      "generator": "Unix Makefiles",
+      "generator": "Ninja",
       "binaryDir": "${sourceDir}/build/developer",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",

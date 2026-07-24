@@ -1,13 +1,13 @@
 set(
     OS_TEST_SUPPORT_SOURCES
-    support/test_context.cpp
+    support/cpp/test_context.cpp
 )
 
 add_library(os_test_support STATIC ${OS_TEST_SUPPORT_SOURCES})
 target_include_directories(
     os_test_support
     PUBLIC
-        "${CMAKE_CURRENT_SOURCE_DIR}/support"
+        "${CMAKE_CURRENT_SOURCE_DIR}/support/cpp"
 )
 target_compile_options(
     os_test_support
@@ -38,26 +38,28 @@ endfunction()
 
 os_add_foundation_test(
     os_foundation_unit_tests
-    unit/address_range_test.cpp
+    unit/foundation/address_range_test.cpp
     "unit"
 )
 
 os_add_foundation_test(
     os_foundation_integration_tests
-    integration/boot_memory_layout_test.cpp
+    integration/boot/boot_memory_layout_test.cpp
     "integration"
 )
 
 os_add_foundation_test(
     os_foundation_randomized_tests
-    randomized/address_range_randomized_test.cpp
+    randomized/foundation/address_range_randomized_test.cpp
     "randomized"
 )
 
 add_test(
     NAME os_freestanding_symbol_audit
     COMMAND
-        "${CMAKE_CURRENT_SOURCE_DIR}/integration/freestanding_symbol_audit.sh"
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-elf
         "$<TARGET_FILE:os_foundation_x86_64>"
 )
 set_tests_properties(
@@ -69,7 +71,9 @@ set_tests_properties(
 add_test(
     NAME os_qemu_hardware_smoke
     COMMAND
-        "${CMAKE_CURRENT_SOURCE_DIR}/system/qemu_hardware_smoke.sh"
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-smoke
         "${OS_EMPTY_FIRMWARE_IMAGE}"
         "${OS_EMPTY_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
@@ -85,7 +89,9 @@ set_tests_properties(
 add_test(
     NAME os_qemu_rejects_invalid_image_size
     COMMAND
-        "${CMAKE_CURRENT_SOURCE_DIR}/system/qemu_hardware_smoke.sh"
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-smoke
         "${OS_EMPTY_FIRMWARE_IMAGE}"
         "${OS_EMPTY_DISK_IMAGE}"
         "${OS_INVALID_FIRMWARE_IMAGE_SIZE_BYTES}"
@@ -96,4 +102,23 @@ set_tests_properties(
     PROPERTIES
         LABELS "system;failure-path"
         WILL_FAIL TRUE
+)
+
+add_test(
+    NAME os_python_tooling_unit_tests
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        -m
+        unittest
+        discover
+        -s
+        tests/tooling
+        -p
+        "test_*.py"
+)
+set_tests_properties(
+    os_python_tooling_unit_tests
+    PROPERTIES
+        LABELS "unit"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )

@@ -30,7 +30,8 @@ jobs:
             qemu-system-x86 \
             gdb \
             cmake \
-            make
+            ninja-build \
+            python3
 
       - name: Build and test
-        run: ./scripts/build_and_test.sh
+        run: python3 tools/os.py verify

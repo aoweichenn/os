@@ -9,9 +9,11 @@
 ### QEMU 测试脚本语法错误
 
 Bash 的 `[[ ... ]]` 条件表达式不能在比较运算符后随意换行。首次测试在执行 QEMU
-前就因脚本语法失败。修复后对全部 Shell 脚本执行 `bash -n`，并保留无效镜像尺寸的失败路径测试。
+前就因脚本语法失败。宿主自动化迁移到 Python 后，QEMU 参数、超时和退出状态由
+`subprocess` 直接管理，并继续保留无效镜像尺寸的失败路径测试。
 
 ### GitHub Actions 缺少 llvm-nm
 
 Ubuntu runner 中安装 `clang` 和 `lld` 不保证存在未版本化的 `llvm-nm`、
-`llvm-readelf` 命令。CI 工作流必须同时安装 `llvm` 工具包。工具链检查脚本应继续在构建前失败，不能静默跳过符号审计。
+`llvm-readelf` 命令。CI 工作流必须同时安装 `llvm` 工具包。Python 工具链检查
+应继续在构建前失败，不能静默跳过符号审计。

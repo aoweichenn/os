@@ -20,7 +20,7 @@ source/foundation/include/os/foundation/address_range.hpp
 实现位于：
 
 ```text
-source/foundation/address_range.cpp
+source/foundation/src/address_range.cpp
 ```
 
 ## 不变量
@@ -52,6 +52,13 @@ size = end - begin
 
 目标实现只依赖 freestanding C 头文件 `<stdint.h>`，不依赖 libc、libstdc++、
 libc++、异常、RTTI 或动态分配。
+
+## 目录与可见性
+
+- `include/os/foundation/` 是其他模块唯一允许包含的公开接口目录。
+- `src/` 保存实现和未来的私有头文件，不通过 CMake 传递给消费者。
+- `source/foundation/CMakeLists.txt` 独立维护模块源文件和 host、x86-64
+  两个构建目标。
 
 ## 失败语义
 
