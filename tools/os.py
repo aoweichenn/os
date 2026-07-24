@@ -28,6 +28,7 @@ from os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
     OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
     OS_QEMU_STAGE1_ENTERED_MARKER,
+    OS_QEMU_STAGE1_GDT_READY_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
@@ -117,6 +118,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     completedStage1Markers = (
         OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
         OS_QEMU_STAGE1_ENTERED_MARKER,
+        OS_QEMU_STAGE1_GDT_READY_MARKER,
     )
     if arguments.expectedOutcome == "success":
         requiredMarkers = (

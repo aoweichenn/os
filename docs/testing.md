@@ -40,8 +40,8 @@
 
 `v0.2` 在同一条真实复位路径上增加六类整机结果：
 
-- 正常磁盘必须依次出现 `STAGE1_HEADER_VALID`、`STAGE1_LOADED` 和
-  `[OS][STAGE1] ENTERED`。
+- 正常磁盘必须依次出现 `STAGE1_HEADER_VALID`、`STAGE1_LOADED`、
+  `[OS][STAGE1] ENTERED` 和 `[OS][STAGE1] GDT_READY`。
 - IDE 永久忙必须在有界轮询后输出 `IDE_TIMEOUT`。
 - ATA ERR 状态必须输出 `IDE_ERROR`。
 - 描述符任意受保护字节损坏必须输出 `STAGE1_HEADER_INVALID`。
