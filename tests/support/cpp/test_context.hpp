@@ -1,12 +1,11 @@
 #pragma once
 
-#include <stddef.h>
 #include <stdint.h>
 #include <string_view>
 
 namespace os::test {
 
-using TestCount = size_t;
+using TestCount = uint64_t;
 using RandomSeed = uint64_t;
 
 class TestContext final {

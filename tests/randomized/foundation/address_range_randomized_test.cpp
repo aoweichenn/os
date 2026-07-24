@@ -33,15 +33,18 @@ auto main() -> int {
 
     for (os::test::TestCount iteration{}; iteration < OS_TEST_RANDOMIZED_ADDRESS_RANGE_CASE_COUNT;
          ++iteration) {
-        const auto beginValue = randomEngine() | os::foundation::OS_FOUNDATION_ADDRESS_UNIT;
-        const auto maximumSize = os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM - beginValue;
-        const auto sizeValue =
+        const os::foundation::AddressValue beginValue =
+            randomEngine() | os::foundation::OS_FOUNDATION_ADDRESS_UNIT;
+        const os::foundation::AddressValue maximumSize =
+            os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM - beginValue;
+        const os::foundation::AddressValue sizeValue =
             randomEngine() % (maximumSize + os::foundation::OS_FOUNDATION_ADDRESS_UNIT);
 
         const os::foundation::PhysicalAddress begin{beginValue};
         const os::foundation::ByteCount size{sizeValue};
         os::foundation::AddressRange range{};
-        const auto creationStatus = os::foundation::AddressRange::tryCreate(begin, size, range);
+        const os::foundation::AddressRangeCreationStatus creationStatus =
+            os::foundation::AddressRange::tryCreate(begin, size, range);
 
         testContext.expectRandom(creationStatus ==
                                      os::foundation::AddressRangeCreationStatus::Succeeded,
@@ -66,9 +69,11 @@ auto main() -> int {
 
         if (range.end().value() < os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM) {
             os::foundation::AddressRange adjacentRange{};
-            const auto adjacentStatus = os::foundation::AddressRange::tryCreate(
-                range.end(), os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT},
-                adjacentRange);
+            const os::foundation::AddressRangeCreationStatus adjacentStatus =
+                os::foundation::AddressRange::tryCreate(
+                    range.end(),
+                    os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT},
+                    adjacentRange);
             testContext.expectRandom(adjacentStatus ==
                                          os::foundation::AddressRangeCreationStatus::Succeeded,
                                      OS_TEST_RANDOMIZED_ADJACENT_CREATION,
@@ -79,10 +84,11 @@ auto main() -> int {
         }
 
         os::foundation::AddressRange overflowRange = range;
-        const auto overflowStatus = os::foundation::AddressRange::tryCreate(
-            begin,
-            os::foundation::ByteCount{maximumSize + os::foundation::OS_FOUNDATION_ADDRESS_UNIT},
-            overflowRange);
+        const os::foundation::AddressRangeCreationStatus overflowStatus =
+            os::foundation::AddressRange::tryCreate(
+                begin,
+                os::foundation::ByteCount{maximumSize + os::foundation::OS_FOUNDATION_ADDRESS_UNIT},
+                overflowRange);
         testContext.expectRandom(overflowStatus ==
                                      os::foundation::AddressRangeCreationStatus::AddressOverflow,
                                  OS_TEST_RANDOMIZED_OVERFLOW_REJECTION,

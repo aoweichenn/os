@@ -34,7 +34,7 @@ AddressRange::AddressRange(const PhysicalAddress begin, const PhysicalAddress en
 
 auto AddressRange::tryCreate(const PhysicalAddress begin, const ByteCount size,
                              AddressRange &outputRange) noexcept -> AddressRangeCreationStatus {
-    const auto maximumSize = OS_FOUNDATION_ADDRESS_MAXIMUM - begin.value();
+    const AddressValue maximumSize = OS_FOUNDATION_ADDRESS_MAXIMUM - begin.value();
 
     if (size.value() > maximumSize) {
         return AddressRangeCreationStatus::AddressOverflow;

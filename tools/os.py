@@ -19,6 +19,7 @@ from os_tools.errors import OsToolError
 from os_tools.firmware_audit import auditFirmwareImage
 from os_tools.images import createEmptyImages
 from os_tools.qemu_runner import (
+    OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
     OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
     OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
     OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -29,6 +30,8 @@ from os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
     OS_QEMU_STAGE1_ENTERED_MARKER,
     OS_QEMU_STAGE1_GDT_READY_MARKER,
+    OS_QEMU_STAGE1_PAGE_TABLES_READY_MARKER,
+    OS_QEMU_STAGE1_PAGE_TABLES_INVALID_MARKER,
     OS_QEMU_STAGE1_PROTECTED_MODE_MARKER,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
@@ -121,25 +124,31 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_STAGE1_ENTERED_MARKER,
         OS_QEMU_STAGE1_GDT_READY_MARKER,
         OS_QEMU_STAGE1_PROTECTED_MODE_MARKER,
+        OS_QEMU_STAGE1_PAGE_TABLES_READY_MARKER,
     )
     if arguments.expectedOutcome == "success":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedStage1Markers,
         )
-        forbiddenMarkers: tuple[str, ...] = ()
+        forbiddenMarkers: tuple[str, ...] = (
+            OS_QEMU_STAGE1_PAGE_TABLES_INVALID_MARKER,
+        )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
         forbiddenMarkers = (
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             *completedStage1Markers,
         )
     elif arguments.expectedOutcome == "ide-timeout":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
         )
         forbiddenMarkers = completedStage1Markers
@@ -147,6 +156,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
         )
         forbiddenMarkers = completedStage1Markers
@@ -154,6 +164,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER,
         )
         forbiddenMarkers = completedStage1Markers
@@ -161,6 +172,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
             OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
         )

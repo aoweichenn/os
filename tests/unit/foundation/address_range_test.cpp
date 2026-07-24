@@ -49,16 +49,17 @@ auto main() -> int {
     testContext.expect(rangeSize.value() == OS_TEST_UNIT_RANGE_SIZE, OS_TEST_UNIT_BYTE_COUNT_VALUE);
 
     os::foundation::AddressRange emptyRange{};
-    const auto emptyStatus = os::foundation::AddressRange::tryCreate(
-        smallAddress, os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_ZERO},
-        emptyRange);
+    const os::foundation::AddressRangeCreationStatus emptyStatus =
+        os::foundation::AddressRange::tryCreate(
+            smallAddress, os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_ZERO},
+            emptyRange);
     testContext.expect(emptyStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_UNIT_EMPTY_RANGE_CREATION);
     testContext.expect(emptyRange.isEmpty(), OS_TEST_UNIT_EMPTY_RANGE_STATE);
     testContext.expect(!emptyRange.contains(smallAddress), OS_TEST_UNIT_EMPTY_RANGE_CONTAINMENT);
 
     os::foundation::AddressRange regularRange{};
-    const auto regularStatus =
+    const os::foundation::AddressRangeCreationStatus regularStatus =
         os::foundation::AddressRange::tryCreate(smallAddress, rangeSize, regularRange);
     testContext.expect(regularStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_UNIT_REGULAR_RANGE_CREATION);
@@ -70,9 +71,10 @@ auto main() -> int {
                        OS_TEST_UNIT_REGULAR_RANGE_END_EXCLUSION);
 
     os::foundation::AddressRange overflowRange = regularRange;
-    const auto overflowStatus = os::foundation::AddressRange::tryCreate(
-        os::foundation::PhysicalAddress{os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM},
-        os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT}, overflowRange);
+    const os::foundation::AddressRangeCreationStatus overflowStatus =
+        os::foundation::AddressRange::tryCreate(
+            os::foundation::PhysicalAddress{os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM},
+            os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT}, overflowRange);
     testContext.expect(overflowStatus ==
                            os::foundation::AddressRangeCreationStatus::AddressOverflow,
                        OS_TEST_UNIT_OVERFLOW_REJECTION);

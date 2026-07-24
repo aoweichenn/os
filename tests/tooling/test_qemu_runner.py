@@ -1,4 +1,6 @@
 from pathlib import Path
+import re
+import sys
 import tempfile
 import unittest
 
@@ -6,6 +8,7 @@ from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
     createQemuFirmwareCommand,
     normalizeCapturedOutput,
+    runQemuWithTimedSerial,
     validateImageSize,
     validateSerialProtocol,
 )
@@ -92,6 +95,36 @@ class QemuRunnerToolTests(unittest.TestCase):
             normalizeCapturedOutput(b"serial"),
             "serial",
         )
+
+    def testCapturesIndependentElapsedTimeForEachSerialLine(self) -> None:
+        command = [
+            sys.executable,
+            "-c",
+            (
+                "import time; "
+                "print('FIRST', flush=True); "
+                "time.sleep(0.05); "
+                "print('SECOND', flush=True)"
+            ),
+        ]
+
+        serialOutput, timedOutput, timedOut, returnCode = (
+            runQemuWithTimedSerial(
+                command,
+                Path.cwd(),
+                1.0,
+            )
+        )
+
+        self.assertEqual(serialOutput, "FIRST\nSECOND\n")
+        self.assertFalse(timedOut)
+        self.assertEqual(returnCode, 0)
+        timestamps = [
+            int(timestamp)
+            for timestamp in re.findall(r"T\+(\d{6})ms", timedOutput)
+        ]
+        self.assertEqual(len(timestamps), 2)
+        self.assertLess(timestamps[0], timestamps[1])
 
 
 if __name__ == "__main__":

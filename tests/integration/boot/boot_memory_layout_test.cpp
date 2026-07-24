@@ -10,6 +10,7 @@ constexpr std::string_view OS_TEST_INTEGRATION_SUITE_NAME =
 constexpr std::string_view OS_TEST_INTEGRATION_FIRMWARE_CREATION = "固件 ROM 区间应可表示";
 constexpr std::string_view OS_TEST_INTEGRATION_STAGE1_CREATION = "Stage 1 加载区间应可表示";
 constexpr std::string_view OS_TEST_INTEGRATION_KERNEL_CREATION = "内核加载区间应可表示";
+constexpr std::string_view OS_TEST_INTEGRATION_PAGE_TABLES_CREATION = "早期页表区间应可表示";
 constexpr std::string_view OS_TEST_INTEGRATION_RESET_VECTOR_IN_FIRMWARE =
     "CPU 复位向量必须位于固件 ROM 区间";
 constexpr std::string_view OS_TEST_INTEGRATION_STAGE1_FIRMWARE_SEPARATION =
@@ -18,6 +19,10 @@ constexpr std::string_view OS_TEST_INTEGRATION_KERNEL_FIRMWARE_SEPARATION =
     "内核加载区间不得与固件 ROM 重叠";
 constexpr std::string_view OS_TEST_INTEGRATION_STAGE1_KERNEL_SEPARATION =
     "Stage 1 加载区间不得与内核加载区间重叠";
+constexpr std::string_view OS_TEST_INTEGRATION_STAGE1_PAGE_TABLES_SEPARATION =
+    "Stage 1 最大加载区间不得与早期页表重叠";
+constexpr std::string_view OS_TEST_INTEGRATION_PAGE_TABLES_KERNEL_SEPARATION =
+    "早期页表不得与内核加载区间重叠";
 
 constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_FIRMWARE_BEGIN =
     os::foundation::AddressValue{0xFFFE0000};
@@ -26,9 +31,13 @@ constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_FIRMWARE_SIZE =
 constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_RESET_VECTOR =
     os::foundation::AddressValue{0xFFFFFFF0};
 constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_STAGE1_BEGIN =
-    os::foundation::AddressValue{0x00007C00};
+    os::foundation::AddressValue{0x00008000};
 constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_STAGE1_SIZE =
     os::foundation::AddressValue{0x00008000};
+constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_PAGE_TABLES_BEGIN =
+    os::foundation::AddressValue{0x00010000};
+constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_PAGE_TABLES_SIZE =
+    os::foundation::AddressValue{0x00003000};
 constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_KERNEL_BEGIN =
     os::foundation::AddressValue{0x00100000};
 constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_KERNEL_SIZE =
@@ -40,23 +49,34 @@ auto main() -> int {
     os::test::TestContext testContext{OS_TEST_INTEGRATION_SUITE_NAME};
 
     os::foundation::AddressRange firmwareRange{};
-    const auto firmwareStatus = os::foundation::AddressRange::tryCreate(
-        os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_FIRMWARE_BEGIN},
-        os::foundation::ByteCount{OS_TEST_INTEGRATION_FIRMWARE_SIZE}, firmwareRange);
+    const os::foundation::AddressRangeCreationStatus firmwareStatus =
+        os::foundation::AddressRange::tryCreate(
+            os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_FIRMWARE_BEGIN},
+            os::foundation::ByteCount{OS_TEST_INTEGRATION_FIRMWARE_SIZE}, firmwareRange);
     testContext.expect(firmwareStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_FIRMWARE_CREATION);
 
     os::foundation::AddressRange stage1Range{};
-    const auto stage1Status = os::foundation::AddressRange::tryCreate(
-        os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_STAGE1_BEGIN},
-        os::foundation::ByteCount{OS_TEST_INTEGRATION_STAGE1_SIZE}, stage1Range);
+    const os::foundation::AddressRangeCreationStatus stage1Status =
+        os::foundation::AddressRange::tryCreate(
+            os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_STAGE1_BEGIN},
+            os::foundation::ByteCount{OS_TEST_INTEGRATION_STAGE1_SIZE}, stage1Range);
     testContext.expect(stage1Status == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_STAGE1_CREATION);
 
+    os::foundation::AddressRange pageTablesRange{};
+    const os::foundation::AddressRangeCreationStatus pageTablesStatus =
+        os::foundation::AddressRange::tryCreate(
+            os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_PAGE_TABLES_BEGIN},
+            os::foundation::ByteCount{OS_TEST_INTEGRATION_PAGE_TABLES_SIZE}, pageTablesRange);
+    testContext.expect(pageTablesStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
+                       OS_TEST_INTEGRATION_PAGE_TABLES_CREATION);
+
     os::foundation::AddressRange kernelRange{};
-    const auto kernelStatus = os::foundation::AddressRange::tryCreate(
-        os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_KERNEL_BEGIN},
-        os::foundation::ByteCount{OS_TEST_INTEGRATION_KERNEL_SIZE}, kernelRange);
+    const os::foundation::AddressRangeCreationStatus kernelStatus =
+        os::foundation::AddressRange::tryCreate(
+            os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_KERNEL_BEGIN},
+            os::foundation::ByteCount{OS_TEST_INTEGRATION_KERNEL_SIZE}, kernelRange);
     testContext.expect(kernelStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_KERNEL_CREATION);
 
@@ -69,6 +89,10 @@ auto main() -> int {
                        OS_TEST_INTEGRATION_KERNEL_FIRMWARE_SEPARATION);
     testContext.expect(!stage1Range.overlaps(kernelRange),
                        OS_TEST_INTEGRATION_STAGE1_KERNEL_SEPARATION);
+    testContext.expect(!stage1Range.overlaps(pageTablesRange),
+                       OS_TEST_INTEGRATION_STAGE1_PAGE_TABLES_SEPARATION);
+    testContext.expect(!pageTablesRange.overlaps(kernelRange),
+                       OS_TEST_INTEGRATION_PAGE_TABLES_KERNEL_SEPARATION);
 
     return testContext.exitCode();
 }
