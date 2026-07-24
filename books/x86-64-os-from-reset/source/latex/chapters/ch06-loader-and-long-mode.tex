@@ -1,0 +1,9 @@
+\chapter{磁盘装载与 x86-64 长模式转换}
+
+\begin{keyidea}
+模式转换是一组具有严格依赖顺序的状态提交。A20、GDT、控制寄存器、页表、
+ELF64 与 BootInfo 必须共同形成从 16 位固件到 64 位内核的可证明交接。
+\end{keyidea}
+
+\input{topics/ch08-long-mode-and-loader}
+\input{deepening/ch06-loader-and-long-mode}

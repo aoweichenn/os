@@ -1,6 +1,6 @@
-\chapter{十三个里程碑与实践方法}
+\section{十三个里程碑与实践方法}
 
-\section{完整路线}
+\subsection{完整路线}
 
 \begin{longtable}{p{0.11\textwidth}p{0.20\textwidth}p{0.60\textwidth}}
 \toprule
@@ -22,7 +22,7 @@ v1.0 & 用户环境 & Shell、基础命令和整机回归 \\
 \bottomrule
 \end{longtable}
 
-\section{每个阶段的固定契约}
+\subsection{每个阶段的固定契约}
 
 \begin{enumerate}[label=\arabic*.]
   \item 记录硬件或上阶段提供的输入状态。
@@ -33,13 +33,13 @@ v1.0 & 用户环境 & Shell、基础命令和整机回归 \\
   \item 用单元、集成、随机和整机测试保存证据。
 \end{enumerate}
 
-\section{代码走读方法}
+\subsection{代码走读方法}
 
 先从链接脚本和入口找最终地址，再沿调用链跟踪寄存器和内存所有权；遇到端口
 访问就回到设备寄存器协议；遇到跨层调用就写下输入、输出与失败状态；最后对照
 测试，确认每个关键分支都能被外部证据区分。
 
-\section{学习记录}
+\subsection{学习记录}
 
 每完成一个机制，写一页实验记录：假设、最小实现、观察结果、失败案例、根因和
 后续限制。不要只保存成功截图。失败记录要定位无输出所处的阶段、错误字节的

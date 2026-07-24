@@ -83,7 +83,7 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
-| `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 18 章教材结构 |
+| `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
 QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
 `subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。

@@ -22,11 +22,8 @@
 不可省略的硬件通路。本部分从整机放行条件进入处理器可见状态，沿 8086 到
 x86-64 的兼容历史建立寄存器、分段、地址和 I/O 的共同模型。
 \end{partbridge}
-\input{chapters/ch01-learning-and-engineering}
-\input{chapters/ch02-power-clock-reset}
-\input{chapters/ch03-x86-history-architecture}
-\input{chapters/ch02-x86-reset-model}
-\input{chapters/ch03-platform-memory-and-io}
+\input{chapters/ch01-machine-and-operating-system}
+\input{chapters/ch02-reset-platform-and-io}
 
 \part{从 bit、汇编到 ROM 字节}
 \begin{partbridge}
@@ -34,11 +31,8 @@ x86-64 的兼容历史建立寄存器、分段、地址和 I/O 的共同模型�
 与汇编语言，再把 NASM、ELF、链接脚本和裸 ROM 连成可逐字节审计的生成链。
 复位入口的每条指令都落到寄存器变化、机器码和物理地址。
 \end{partbridge}
-\input{chapters/ch06-data-representation}
-\input{chapters/ch07-assembly-language}
-\input{chapters/ch04-toolchain-and-binary}
-\input{chapters/ch08-freestanding-cpp}
-\input{chapters/ch05-rom-and-reset-code}
+\input{chapters/ch03-bits-assembly-and-machine-code}
+\input{chapters/ch04-toolchain-cpp-and-rom}
 
 \part{第一条可观察的硬件事务}
 \begin{partbridge}
@@ -46,26 +40,24 @@ x86-64 的兼容历史建立寄存器、分段、地址和 I/O 的共同模型�
 时钟误差进入 16550A 寄存器协议，再建立有界轮询、故障注入、ROM 审计和
 QEMU 整机证据。
 \end{partbridge}
-\input{chapters/ch06-serial-driver}
-\input{chapters/ch07-testing-and-observability}
+\input{chapters/ch05-uart-testing-and-evidence}
 
 \part{从实模式到 64 位内核}
 \begin{partbridge}
 这一部分面向后续实现，完整解释保护模式、长模式、ELF64 装载、异常、内存、
 中断与设备驱动之间的依赖关系。
 \end{partbridge}
-\input{chapters/ch08-long-mode-and-loader}
-\input{chapters/ch09-kernel-and-memory}
-\input{chapters/ch10-interrupts-devices-users}
+\input{chapters/ch06-loader-and-long-mode}
+\input{chapters/ch07-kernel-exceptions-and-memory}
+\input{chapters/ch08-interrupts-devices-and-users}
 
 \part{把内核发展成操作系统}
 \begin{partbridge}
 最后把执行流、同步、文件、系统调用和工程治理组织成长期可演进的学习项目，
 并给出从 v0.0 到 v1.0 的完整验收地图。
 \end{partbridge}
-\input{chapters/ch11-processes-files-system-calls}
-\input{chapters/ch12-roadmap-and-practice}
-\input{chapters/ch13-project-anatomy-metrics}
+\input{chapters/ch09-processes-files-and-shell}
+\input{chapters/ch10-roadmap-metrics-and-practice}
 
 \backmatter
 \input{backmatter/checklist}

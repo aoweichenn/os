@@ -1,0 +1,194 @@
+\section{IDE PIO 控制器以寄存器协议搬运扇区}
+
+经典主通道使用 \code{0x1F0..0x1F7}，控制端口位于 \code{0x3F6}。
+数据寄存器宽 16 位，其余命令块寄存器按 8 位访问。设备与 LBA 高位复用在
+drive/head 寄存器，LBA 低 24 位分布在三个端口。写寄存器顺序属于 ATA
+协议，不能由通用“结构体映射”替代。
+
+\begin{longtable}{L{0.16\textwidth}L{0.23\textwidth}L{0.24\textwidth}L{0.25\textwidth}}
+\toprule
+\textbf{端口偏移} & \textbf{读语义} & \textbf{写语义} & \textbf{访问宽度}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{端口偏移} & \textbf{读语义} & \textbf{写语义} & \textbf{访问宽度}\\
+\midrule
+\endhead
+0 & 数据 & 数据 & 16 位，共 256 次/扇区\\
+1 & 错误 & 特性 & 8 位\\
+2 & 扇区计数 & 扇区计数 & 8 位\\
+3--5 & LBA 低、中、高 & LBA 低、中、高 & 8 位\\
+6 & drive/head & drive/head & 8 位\\
+7 & 状态 & 命令 & 8 位\\
+\bottomrule
+\end{longtable}
+
+读取命令前先等待 BSY 清除，选择主从设备与 LBA，写入计数和地址，再写 READ
+SECTORS 命令。设备置 BSY 处理请求；准备好数据后清 BSY 并置 DRQ。软件同时
+检查 ERR 与 DF，只有 \code{BSY=0, DRQ=1, ERR=0, DF=0} 才能读取数据端口。
+
+\section{状态轮询要区分忙、就绪、错误和浮空总线}
+
+状态 \code{0xFF} 常表示没有设备响应或总线浮空，不能当作所有能力位都置位。
+\code{0x00} 也可能表示设备不存在。探测先选择通道和设备，等待必要延时，
+再结合 status、signature 和 IDENTIFY 结果判断。
+
+轮询函数返回强状态而不是布尔值：成功、忙超时、设备错误、设备故障和不存在。
+上层日志保留状态寄存器与错误寄存器原值，使 QEMU 与真实控制器差异可诊断。
+
+\section{LBA28 计算同时受协议宽度与镜像范围约束}
+
+LBA28 最多表达 \(2^{28}\) 个扇区，单扇区 512 字节。计算文件范围时先用
+64 位检查：
+\[
+  \mathrm{byteOffset}=\mathrm{LBA}\times512,\qquad
+  \mathrm{byteEnd}=\mathrm{byteOffset}+
+  \mathrm{sectorCount}\times512.
+\]
+乘法与加法均要在执行前证明不溢出，结果还要小于磁盘镜像或分区长度。硬件
+寄存器只接受 28 位，不代表软件内部也应使用狭窄类型。
+
+ATA 的扇区计数字段为 8 位，数值零在部分命令中表示 256 个扇区，不能直接
+等同“读取零个”。项目初期每次只读一个扇区，简化协议并让失败位置精确，后续
+再增加批量传输。
+
+\section{Stage 1 镜像需要自描述头而不是裸跳转}
+
+磁盘第一个自研阶段至少包含 magic、格式版本、头长度、负载长度、加载物理地址、
+入口偏移和校验。所有字段采用固定端序和宽度，解析器逐字段读取，不能把磁盘
+字节直接重解释为可能带填充的 C++ 结构体。
+
+\begin{longtable}{L{0.23\textwidth}L{0.18\textwidth}L{0.43\textwidth}}
+\toprule
+\textbf{字段} & \textbf{宽度示意} & \textbf{验证}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{字段} & \textbf{宽度示意} & \textbf{验证}\\
+\midrule
+\endhead
+magic & 64 位 & 精确匹配项目格式常量\\
+version & 32 位 & 属于装载器支持集合\\
+header size & 32 位 & 不小于必需字段且不越过镜像\\
+payload size & 64 位 & 扇区换算、加法和目标区间不溢出\\
+load address & 64 位 & 位于 RAM 且不覆盖固件数据\\
+entry offset & 64 位 & 小于 payload 并落入可执行范围\\
+checksum & 64 位或更强摘要 & 覆盖规定的头与负载字节\\
+\bottomrule
+\end{longtable}
+
+magic 只能识别格式，校验只能发现数据变化，都不能替代范围与权限检查。装载器
+先验证完整头和所有区间，再读入最终位置，避免损坏当前栈或页表后才发现错误。
+
+\section{A20 验证需要可恢复的内存别名实验}
+
+A20 关闭时，地址位 20 被清零，\code{0x000000} 与 \code{0x100000}
+发生别名。验证选择两个不会覆盖代码、栈和平台数据的地址，保存原字节，写入
+不同模式，再比较是否互相影响，最后恢复。
+
+开启路径可依次尝试快速 A20 端口与键盘控制器协议，每条路径都有超时。直接
+写控制端口后继续启动只能证明“发出过命令”，验证读回行为才证明地址线实际
+开放。
+
+\section{CPUID 在使用特性之前建立能力边界}
+
+先用 EFLAGS.ID 位确认 CPUID 可用，再查询最大基本和扩展叶。长模式能力位、
+PAE、MSR 与 NX 都必须在访问对应控制位或 MSR 前验证。读取一个处理器不支持
+的 MSR 会产生 \#GP，早期无异常处理时可能发展为三重故障。
+
+能力检测与策略分开：硬件支持 1 GiB 大页不表示初始页表必须使用；支持 SSE
+也不表示内核已经保存扩展上下文。检测结果进入 BootInfo，内核在相应子系统
+建立后再启用策略。
+
+\section{GDT 描述符按位定义代码环境}
+
+一个传统段描述符包含 base、limit、type、S、DPL、P、AVL、L、D/B 和 G。
+字段跨越多个字节，构造函数用位移与掩码显式编码，并用静态断言验证最终 64 位
+数值。长模式代码段要求 L=1、D=0，present 和 executable 必须置位。
+
+\begin{longtable}{L{0.14\textwidth}L{0.24\textwidth}L{0.48\textwidth}}
+\toprule
+\textbf{字段} & \textbf{名称} & \textbf{模式切换中的含义}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{字段} & \textbf{名称} & \textbf{模式切换中的含义}\\
+\midrule
+\endhead
+P & present & 描述符可被装载\\
+DPL & privilege & Ring 0 或 Ring 3 访问级别\\
+S/type & 类别与权限 & 代码、数据、可读、可写\\
+L & long & 代码段按 64 位子模式执行\\
+D/B & default/big & 16/32 位默认操作数；L=1 时必须为 0\\
+G & granularity & limit 按字节或 4 KiB 粒度\\
+\bottomrule
+\end{longtable}
+
+GDTR 保存表基址与最后有效字节偏移，limit 因此为
+\(\mathrm{sizeof(GDT)}-1\)。少减一会扩大有效范围，错误更隐蔽；多减一则
+最后描述符无法装载。
+
+\section{保护模式转换的每条指令都有前置条件}
+
+固件关闭中断，装载 GDT，把 CR0.PE 置位，再执行远跳转刷新 CS。远跳转后的
+代码用 \code{BITS 32} 编码，随后装载数据段和 32 位栈。汇编器 BITS 切换
+必须与运行时控制流到达的新模式严格对齐。
+
+在 PE 置位与远跳转之间不能插入依赖旧分段语义的复杂代码。错误 GDT、无效
+选择子或错误编码会产生异常；IDT 尚未可靠时，调试依赖 QEMU 异常日志和
+控制寄存器跟踪。
+
+\section{初始四级页表的每个表项都要可推导}
+
+PML4、PDPT、PD 和 PT 都要求 4 KiB 对齐。表项低位保存 P、RW、US、PWT、
+PCD、A、D、PS、G 与软件位，高位保存物理页号和 NX。地址字段必须屏蔽低
+12 位，不能把标志混入物理地址。
+
+初始 identity map 让线性地址等于物理地址，使打开分页前后的当前 RIP、栈和
+页表仍可访问。若内核最终链接到高半地址，还要同时建立高半映射；跳入高半后
+才能移除不需要的低端别名。
+
+使用 2 MiB 大页时，PD 项设置 PS 并直接保存大页物理基址，地址需 2 MiB
+对齐。它减少初始表数量，但权限粒度也变粗。代码、只读数据和可写数据需要不同
+权限时再拆成 4 KiB 页。
+
+\section{进入长模式的控制寄存器顺序}
+
+可验证的顺序为：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 建立有效 GDT、32 位栈和初始页表。
+  \item 把 PML4 物理地址写入 CR3。
+  \item 在 CR4 设置 PAE。
+  \item 通过 RDMSR/WRMSR 在 EFER 设置 LME，按能力选择 NXE。
+  \item 在 CR0 设置 PG，同时保持 PE。
+  \item 执行远跳转，装载 L=1 的 64 位代码段。
+  \item 在 64 位入口重新装载数据段约定、栈和参数。
+\end{enumerate}
+
+EFER.LMA 是只读激活结果，不由软件直接写。只有 LME、PAE 与分页组合满足后，
+处理器才置 LMA。检查控制寄存器读回值能区分“请求设置”与“模式已激活”。
+
+\section{ELF64 解析从文件头建立层层边界}
+
+装载器先确认 magic、64 位类别、小端序、当前版本、x86-64 机器类型与可执行
+文件类型。程序头表范围计算为：
+\[
+  [e\_phoff,\ e\_phoff+e\_phnum\times e\_phentsize).
+\]
+乘法与加法先检查溢出，entry size 至少覆盖项目读取字段，整个范围必须落在
+已加载文件内。
+
+对每个 PT\_LOAD，验证文件区间、内存区间、\code{filesz <= memsz}、
+对齐关系、权限和目标保留区。所有段先通过验证再复制；重叠段若格式策略不允许
+就拒绝，不能依赖遍历顺序决定最终字节。
+
+\section{BootInfo 是带版本的跨阶段 ABI}
+
+BootInfo 头包含 magic、版本、总长度和校验，后续字段包含内存区、保留区、
+内核段、启动设备、串口配置与能力位。数组使用显式计数和元素大小，未知尾部
+字段可由总长度跳过，从而支持向后兼容扩展。
+
+交接寄存器只传一个指向 BootInfo 的地址，文档规定它是当前页表下的虚拟地址，
+对象所在页面在内核复制前不得回收。固件与内核分别用静态断言检查字段偏移，
+集成测试用构造样例验证版本拒绝和区间边界。

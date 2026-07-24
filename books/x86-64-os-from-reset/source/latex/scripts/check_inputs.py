@@ -8,7 +8,7 @@ OS_BOOK_ROOT = Path(__file__).resolve().parents[1]
 OS_BOOK_MAIN_FILE = OS_BOOK_ROOT / "main.tex"
 OS_BOOK_INPUT_PATTERN = re.compile(r"\\input\{([^}]+)\}")
 OS_BOOK_CHAPTER_PATTERN = re.compile(r"\\chapter\{")
-OS_BOOK_MINIMUM_CHAPTER_COUNT = 12
+OS_BOOK_EXPECTED_CHAPTER_COUNT = 10
 
 
 def resolveInput(inputName: str) -> Path:
@@ -45,10 +45,10 @@ def main() -> int:
         visitedFiles.add(inputPath)
 
     visit(OS_BOOK_MAIN_FILE.resolve())
-    if chapterCount < OS_BOOK_MINIMUM_CHAPTER_COUNT:
+    if chapterCount != OS_BOOK_EXPECTED_CHAPTER_COUNT:
         raise SystemExit(
-            f"正文章节不足：实际 {chapterCount}，"
-            f"至少 {OS_BOOK_MINIMUM_CHAPTER_COUNT}"
+            f"正文章节数量不符合主题章设计：实际 {chapterCount}，"
+            f"预期 {OS_BOOK_EXPECTED_CHAPTER_COUNT}"
         )
 
     print(
