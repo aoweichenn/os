@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     x86_64_os_lab
-    VERSION 0.0.0
+    VERSION 0.1.0
     DESCRIPTION "从复位向量开始实现的 x86-64 教学操作系统"
     LANGUAGES CXX
 )
@@ -44,6 +44,16 @@ set(
     OS_EMPTY_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/empty_disk.img"
 )
+set(
+    OS_FIRMWARE_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware.bin"
+)
+set(
+    OS_FIRMWARE_SERIAL_FAILURE_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware_serial_failure.bin"
+)
+
+add_subdirectory(source/firmware)
 
 add_custom_command(
     OUTPUT
@@ -70,6 +80,8 @@ add_custom_target(
     os_images
     ALL
     DEPENDS
+        os_firmware
+        os_firmware_serial_failure
         "${OS_EMPTY_FIRMWARE_IMAGE}"
         "${OS_EMPTY_DISK_IMAGE}"
 )

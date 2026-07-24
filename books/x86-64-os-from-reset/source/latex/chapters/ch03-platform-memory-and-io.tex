@@ -1,0 +1,26 @@
+\chapter{平台、地址空间与 I/O 端口}
+
+\section{CPU 地址不等于 RAM}
+
+物理地址空间由平台译码。某段地址可以落入 DRAM、ROM、PCI 窗口或空洞。
+固件所在的高地址 ROM 和低地址 RAM 同时存在；把栈设为 \code{0x7000}
+是平台布局决策，不是 x86 指令自动保证的事实。
+
+\section{端口映射 I/O}
+
+传统 PC 串口使用独立 I/O 端口空间，由 \code{in}、\code{out} 指令访问。
+COM1 基址是 \code{0x3F8}。基址加偏移选择寄存器：数据寄存器偏移 0，
+中断使能偏移 1，线路控制偏移 3，线路状态偏移 5。某些偏移的含义还会受
+DLAB 位影响，因此寄存器访问是一段状态协议，不能看成互不相关的赋值。
+
+\begin{contractbox}
+软件写寄存器前必须知道设备状态；设备返回状态位后，软件才能推进所有权。
+轮询必须有界，错误路径必须有可观察结果。
+\end{contractbox}
+
+\section{QEMU 在本项目中的职责}
+
+QEMU 提供 \code{pc} 机器、\code{qemu64} CPU、TCG 执行、RAM、ISA 串口和
+IDE 磁盘模型。它不替固件初始化串口，不替引导器读磁盘，也不替内核建立页表。
+\code{-nodefaults} 减少无关默认设备，\code{-display none} 和
+\code{-serial stdio} 把最早日志绑定到测试进程。

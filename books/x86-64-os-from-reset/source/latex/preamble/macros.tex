@@ -1,0 +1,80 @@
+\DeclareRobustCommand{\code}[1]{\textcolor{BookBlue}{\texttt{\nolinkurl{#1}}}}
+\DeclareRobustCommand{\filepath}[1]{\textcolor{BookTeal}{\texttt{\nolinkurl{#1}}}}
+\DeclareRobustCommand{\term}[2]{\textbf{#1}（#2）}
+
+\lstdefinestyle{oscode}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{BookCodeBg},
+  frame=single,
+  rulecolor=\color{BookRule},
+  columns=fullflexible,
+  keepspaces=true,
+  breaklines=true,
+  showstringspaces=false,
+  xleftmargin=0.8em,
+  xrightmargin=0.4em
+}
+\lstset{style=oscode}
+
+\newtcolorbox{keyidea}{
+  enhanced,
+  breakable,
+  sharp corners,
+  boxrule=0pt,
+  leftrule=0.7pt,
+  colback=BookCodeBg,
+  colframe=BookBlue,
+  title=核心思想,
+  fonttitle=\bfseries,
+  coltitle=BookNavy
+}
+
+\newtcolorbox{contractbox}{
+  enhanced,
+  breakable,
+  sharp corners,
+  boxrule=0pt,
+  leftrule=0.7pt,
+  colback=white,
+  colframe=BookTeal,
+  title=边界契约,
+  fonttitle=\bfseries,
+  coltitle=BookTeal
+}
+
+\newtcolorbox{failurebox}{
+  enhanced,
+  breakable,
+  sharp corners,
+  boxrule=0pt,
+  leftrule=0.7pt,
+  colback=white,
+  colframe=BookRed,
+  title=失败路径,
+  fonttitle=\bfseries,
+  coltitle=BookRed
+}
+
+\newenvironment{partbridge}
+{\clearpage\thispagestyle{plain}\vspace*{0.5em}
+ \noindent{\Large\bfseries\color{BookNavy}本部分导读}\par\medskip}
+{\par\clearpage}
+
+\tikzset{
+  os diagram/.style={
+    font=\footnotesize\sffamily,
+    >=Latex,
+    node distance=10mm and 14mm
+  },
+  os block/.style={
+    draw=BookBlue,
+    fill=BookCodeBg,
+    rounded corners=2pt,
+    align=center,
+    minimum height=9mm,
+    inner xsep=6pt
+  },
+  os hardware/.style={os block,draw=BookAmber,fill=white},
+  os state/.style={os block,draw=BookTeal},
+  os arrow/.style={-{Stealth[length=2.4mm]},draw=BookMuted,thick}
+}

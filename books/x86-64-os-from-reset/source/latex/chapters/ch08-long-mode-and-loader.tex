@@ -1,0 +1,38 @@
+\chapter{从实模式走向 64 位内核}
+
+\section{转换不是一条指令}
+
+进入长模式至少需要验证 CPU 能力、建立 GDT、打开 A20、建立页表、设置
+CR4.PAE、写 EFER.LME、设置 CR0.PG 和 CR0.PE，再通过远跳转装载 64 位代码
+段。顺序错误会导致通用保护异常或三重故障。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (real) {16 位实模式};
+  \node[os block,right=of real] (protected) {32 位保护模式};
+  \node[os block,right=of protected] (paging) {PAE 四级页表};
+  \node[os state,right=of paging] (long) {64 位长模式};
+  \draw[os arrow] (real) -- (protected);
+  \draw[os arrow] (protected) -- (paging);
+  \draw[os arrow] (paging) -- (long);
+\end{tikzpicture}
+\end{center}
+
+\section{A20 与地址环绕}
+
+早期 PC 为兼容 8086 曾让地址第 20 位可屏蔽。若 A20 未开启，1 MiB 以上地址
+可能回绕。项目必须自行启用并验证 A20，不能因为 QEMU 默认环境“似乎可用”
+就删除这项契约。
+
+\section{Stage 1 与磁盘}
+
+v0.2 将通过 IDE PIO 读取自研 Stage 1。驱动需要选择通道、设备和 LBA，
+发送命令，轮询 BSY/DRQ/ERR，并按 16 位数据端口读取扇区。每次传输都要有
+超时、扇区范围和错误状态验证。
+
+\section{ELF64 装载}
+
+ELF 头不是值得盲目信任的结构体。装载器验证 magic、类别、端序、机器类型、
+程序头表范围和每个 PT\_LOAD 段；检查文件范围不越界、
+\code{filesz <= memsz}、目标区间不重叠保留内存；复制文件字节并清零 BSS，
+最后构造 BootInfo 交给内核入口。

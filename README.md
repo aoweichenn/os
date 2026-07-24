@@ -2,7 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.0 工程基线`已完成，下一阶段为`v0.1 复位与串口`。
+当前状态：`v0.1 复位与串口`已完成。自研 128 KiB ROM 已能从
+`0xFFFFFFF0` 接管 CPU、初始化 COM1，并输出可机器验收的串口协议。
 
 ## 最短构建与测试路径
 
@@ -14,9 +15,16 @@ python3 tools/os.py verify
 ```
 
 该命令会完成工具链检查、宿主机测试构建、x86-64 freestanding
-交叉编译、空镜像生成、单元测试、集成测试、固定种子随机测试和 QEMU
-TCG 整机冒烟测试。详细说明见 [docs/building.md](docs/building.md) 和
+交叉编译、自研 ROM 生成与审计、单元测试、集成测试、固定种子随机测试和
+QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [docs/testing.md](docs/testing.md)。
+
+固件成功日志：
+
+```text
+[OS][FIRMWARE] RESET
+[OS][FIRMWARE] SERIAL_READY
+```
 
 ## 固定技术路线
 
@@ -35,4 +43,8 @@ source/          操作系统与 freestanding 基础模块
 tests/           单元、集成、随机和 QEMU 系统测试
 tools/           Python 构建、检查、镜像和 QEMU 调度工具
 docs/            需求、架构、模块、测试、调试和发布记录
+books/           可独立构建的 LaTeX 系统教材
 ```
+
+完整教材入口见
+[books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。

@@ -3,3 +3,10 @@ build/
 __pycache__/
 *.py[cod]
 *.log
+*.aux
+*.fdb_latexmk
+*.fls
+*.out
+*.toc
+*.xdv
+books/**/source/latex/main.pdf

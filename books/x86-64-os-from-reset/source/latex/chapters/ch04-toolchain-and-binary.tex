@@ -1,0 +1,37 @@
+\chapter{工具链怎样制造可执行事实}
+
+\section{三个不同层次}
+
+NASM 把 Intel 语法汇编成 ELF32 可重定位目标文件；LLD 按链接脚本为各节
+分配最终虚拟地址；\code{llvm-objcopy} 去掉 ELF 元数据并用
+\code{0xFF} 填充地址空洞，生成 QEMU 读取的裸 ROM。每一步解决不同问题：
+指令编码、地址决议、介质字节布局。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os block] (asm) {.asm\\符号与指令};
+  \node[os state,right=of asm] (obj) {.o\\可重定位节};
+  \node[os block,right=of obj] (elf) {.elf\\最终地址};
+  \node[os state,right=of elf] (bin) {.bin\\128 KiB 字节};
+  \draw[os arrow] (asm) -- node[above]{NASM} (obj);
+  \draw[os arrow] (obj) -- node[above]{LLD} (elf);
+  \draw[os arrow] (elf) -- node[above]{objcopy} (bin);
+\end{tikzpicture}
+\end{center}
+
+\section{链接脚本是硬件布局的一部分}
+
+普通应用程序由操作系统装载器解释 ELF；ROM 没有装载器。链接脚本必须直接
+表达 ROM 起点、入口、复位向量和末端，并用 \code{ASSERT} 阻止入口代码覆盖
+最后 16 字节。地址选择一旦错误，源码语义再正确也无法执行。
+
+\section{为什么固件先使用 ELF32}
+
+当前入口只包含 16 位指令，但 NASM 的 \code{elf32} 输出能让 LLD 处理节和
+符号；它不表示 CPU 已进入 32 位模式。执行模式由 CPU 状态和指令前缀决定，
+目标文件容器格式与运行模式必须分开理解。
+
+\section{宿主与目标}
+
+工具可能运行在 AArch64、x86-64 或其他宿主架构，产物仍由 NASM 和 LLD
+明确指向 x86。QEMU TCG 翻译目标指令，因此构建机和模拟 CPU 不必同构。

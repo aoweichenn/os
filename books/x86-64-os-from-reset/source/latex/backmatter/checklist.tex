@@ -1,0 +1,24 @@
+\chapter*{能力与验收清单}
+\addcontentsline{toc}{chapter}{能力与验收清单}
+
+\section*{v0.1 完成后应能解释}
+
+\begin{itemize}
+  \item CPU 为什么从物理地址 \code{0xFFFFFFF0} 取第一条指令；
+  \item 128 KiB ROM 的文件偏移怎样对应高端物理地址；
+  \item 近跳转为什么能保留复位时的 CS 隐藏基址；
+  \item NASM、LLD、objcopy 分别解决什么问题；
+  \item COM1 的 DLAB、除数、8N1、FIFO 和线路状态位；
+  \item 为什么串口轮询必须有界；
+  \item ROM 审计、单元、随机和 QEMU 测试各自捕获什么错误。
+\end{itemize}
+
+\section*{进入下一阶段前}
+
+\begin{itemize}
+  \item 完整执行 \code{python3 tools/os.py verify}；
+  \item 能从镜像十六进制数据手算复位目标；
+  \item 能在 QEMU 串口日志中区分复位成功和串口超时；
+  \item 能说明 v0.2 IDE PIO 的输入、输出、超时和越界条件；
+  \item 新设计先写 ADR 和验收条件，再扩展实现。
+\end{itemize}

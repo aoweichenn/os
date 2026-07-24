@@ -1,0 +1,36 @@
+\chapter{测试、故障注入与可观察性}
+
+\section{测试金字塔必须落到硬件边界}
+
+宿主单元测试验证地址范围、ROM 解码和串口协议解析；集成测试验证链接产物；
+固定种子随机测试生成大量错误复位位移，确认审计器不会误接受；QEMU 系统测试
+执行真实目标字节。它们不是重复劳动，而是分别缩小不同故障的定位范围。
+
+\section{有界运行}
+
+固件最终执行 \code{hlt}，符合当前没有后续任务的状态。测试进程给 QEMU
+两秒预算，超时后读取捕获的串口内容。成功用例要求两个标记都存在；失败用例
+要求 \code{RESET} 存在且 \code{SERIAL_READY} 不存在。异常提前退出同样
+视为失败。
+
+\begin{failurebox}
+仅检查进程“还活着”不能证明 CPU 执行了我们的代码；仅检查一个字符串也不能
+区分初始化成功与发送路径中途失效。可观察协议应让不同执行阶段留下不同证据。
+\end{failurebox}
+
+\section{随机测试的边界}
+
+随机测试不替代规格样例。固定种子保证失败可重现；生成器只改变复位位移并保持
+其他布局合法；断言是“任何不指向 0xF000 的位移都必须被拒绝”。这种测试
+检验的是性质，而不是堆积随机输入。
+
+\section{完整验证命令}
+
+\begin{lstlisting}[language=bash]
+python3 tools/os.py verify
+python3 tools/os.py test --layer unit
+python3 tools/os.py test --layer integration
+python3 tools/os.py test --layer randomized
+python3 tools/os.py test --layer system
+python3 tools/os.py test --layer failure-path
+\end{lstlisting}

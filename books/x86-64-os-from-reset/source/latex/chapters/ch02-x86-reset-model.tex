@@ -1,0 +1,53 @@
+\chapter{x86 复位状态与第一条指令}
+
+\section{复位是契约，不是初始化完成}
+
+上电复位后，处理器处于实地址模式。最关键的可观察状态是指令入口：
+\code{CS} 的可见值为 \code{0xF000}，隐藏基址为
+\code{0xFFFF0000}，\code{IP/EIP} 指向 \code{0xFFF0}，因此第一条
+指令的物理地址是：
+\[
+  0xFFFF0000 + 0xFFF0 = 0xFFFFFFF0.
+\]
+隐藏基址是理解现代 x86 复位地址的关键。此时不能简单套用普通实模式
+\(segment \times 16 + offset\) 去解释第一次取指。
+
+\section{128 KiB ROM 的顶端映射}
+
+项目 ROM 覆盖 \code{0xFFFE0000} 到 \code{0xFFFFFFFF}。文件偏移与物理
+地址之间满足：
+\[
+  physical = 0xFFFE0000 + file\_offset.
+\]
+所以复位向量的文件偏移是 \code{0x1FFF0}，入口
+\code{0xFFFFF000} 的文件偏移是 \code{0x1F000}。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os hardware,minimum width=42mm] (rom) {ROM 起点\\0xFFFE0000};
+  \node[os state,above=12mm of rom,minimum width=42mm] (entry)
+    {16 位入口\\0xFFFFF000};
+  \node[os block,above=12mm of entry,minimum width=42mm] (reset)
+    {复位向量\\0xFFFFFFF0};
+  \node[os hardware,above=8mm of reset,minimum width=42mm] (end)
+    {ROM 末端\\0xFFFFFFFF};
+  \draw[os arrow] (rom) -- node[right]{128 KiB 地址空间} (entry);
+  \draw[os arrow] (entry) -- (reset);
+  \draw[os arrow] (reset) -- (end);
+\end{tikzpicture}
+\end{center}
+
+\section{为什么使用 16 位近跳转}
+
+复位向量放置操作码 \code{E9} 和有符号 16 位位移。近跳转只修改 IP，不
+重载 CS，因而保留隐藏基址 \code{0xFFFF0000}。目标 IP 是
+\code{0xF000}，物理目标正好是 \code{0xFFFFF000}。位移为：
+\[
+  0xF000 - (0xFFF0 + 3) = -4083 = 0xF00D.
+\]
+因此复位向量前三个字节是 \code{E9 0D F0}。
+
+\begin{failurebox}
+如果使用会重载 CS 的远跳转，就必须重新证明目标段如何映射到 ROM；如果链接
+脚本把入口放错一个字节，CPU 也不会给出友好错误，只会执行填充值或触发异常。
+\end{failurebox}

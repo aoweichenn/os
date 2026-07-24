@@ -1,0 +1,54 @@
+\definecolor{BookInk}{HTML}{17202A}
+\definecolor{BookMuted}{HTML}{5D6D7E}
+\definecolor{BookNavy}{HTML}{17365D}
+\definecolor{BookBlue}{HTML}{2471A3}
+\definecolor{BookTeal}{HTML}{148F77}
+\definecolor{BookAmber}{HTML}{B9770E}
+\definecolor{BookRed}{HTML}{B03A2E}
+\definecolor{BookCodeBg}{HTML}{F4F6F7}
+\definecolor{BookRule}{HTML}{CCD1D1}
+
+\defaultfontfeatures{Ligatures=TeX}
+\setmainfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+\setsansfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+\setmonofont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+\setCJKmainfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+\setCJKsansfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+\setCJKmonofont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+
+\linespread{1.08}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.08em}
+\raggedbottom
+\sloppy
+\emergencystretch=2em
+
+\ctexset{
+  chapter={
+    format=\Huge\bfseries\color{BookNavy},
+    titleformat=\Huge\bfseries\color{BookNavy}
+  },
+  section={format=\Large\bfseries\color{BookBlue}},
+  subsection={format=\large\bfseries\color{BookNavy}}
+}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[LE]{\footnotesize\color{BookMuted}\thepage\quad\leftmark}
+\fancyhead[RO]{\footnotesize\color{BookMuted}\leftmark\quad\thepage}
+\renewcommand{\headrulewidth}{0.25pt}
+\fancypagestyle{plain}{
+  \fancyhf{}
+  \fancyfoot[C]{\small\color{BookMuted}\thepage}
+  \renewcommand{\headrulewidth}{0pt}
+}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=BookBlue,
+  urlcolor=BookBlue,
+  citecolor=BookBlue,
+  pdftitle={从复位向量到自研 x86-64 操作系统},
+  pdfauthor={x86-64 OS Lab},
+  pdfsubject={硬件、启动链、内核与软件工程实践}
+}

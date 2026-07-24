@@ -24,6 +24,7 @@ OS_TOOLCHAIN_REQUIRED_TOOLS = (
     ToolRequirement("CTest", "ctest"),
     ToolRequirement("LLVM nm", "llvm-nm"),
     ToolRequirement("LLVM objdump", "llvm-objdump"),
+    ToolRequirement("LLVM objcopy", "llvm-objcopy"),
     ToolRequirement("LLVM readelf", "llvm-readelf"),
 )
 OS_TOOLCHAIN_VERSION_ARGUMENT = "--version"

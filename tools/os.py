@@ -15,8 +15,14 @@ from os_tools.build import (
 )
 from os_tools.elf_audit import auditFreestandingLibrary
 from os_tools.errors import OsToolError
+from os_tools.firmware_audit import auditFirmwareImage
 from os_tools.images import createEmptyImages
-from os_tools.qemu_runner import runQemuHardwareSmoke
+from os_tools.qemu_runner import (
+    OS_QEMU_FIRMWARE_RESET_MARKER,
+    OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+    runQemuFirmwareBoot,
+    runQemuHardwareSmoke,
+)
 from os_tools.toolchain import checkToolchain
 
 
@@ -68,6 +74,10 @@ def handleAuditElf(arguments: argparse.Namespace) -> None:
     auditFreestandingLibrary(OS_TOOL_PROJECT_ROOT, arguments.libraryPath)
 
 
+def handleAuditFirmware(arguments: argparse.Namespace) -> None:
+    auditFirmwareImage(arguments.firmwareImagePath)
+
+
 def handleQemuSmoke(arguments: argparse.Namespace) -> None:
     runQemuHardwareSmoke(
         OS_TOOL_PROJECT_ROOT,
@@ -75,6 +85,28 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
         arguments.diskImagePath,
         arguments.expectedFirmwareSizeBytes,
         arguments.expectedDiskSizeBytes,
+    )
+
+
+def handleQemuFirmware(arguments: argparse.Namespace) -> None:
+    if arguments.expectedOutcome == "success":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+        )
+        forbiddenMarkers: tuple[str, ...] = ()
+    else:
+        requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
+        forbiddenMarkers = (OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,)
+
+    runQemuFirmwareBoot(
+        OS_TOOL_PROJECT_ROOT,
+        arguments.firmwareImagePath,
+        arguments.diskImagePath,
+        arguments.expectedFirmwareSizeBytes,
+        arguments.expectedDiskSizeBytes,
+        requiredMarkers,
+        forbiddenMarkers,
     )
 
 
@@ -144,6 +176,14 @@ def createArgumentParser() -> argparse.ArgumentParser:
         type=Path,
     )
 
+    firmwareAuditParser = addCommand(
+        subparsers,
+        "audit-firmware",
+        "检查 128 KiB ROM、复位向量和固件入口",
+        handleAuditFirmware,
+    )
+    firmwareAuditParser.add_argument("firmwareImagePath", type=Path)
+
     qemuParser = addCommand(
         subparsers,
         "qemu-smoke",
@@ -154,6 +194,23 @@ def createArgumentParser() -> argparse.ArgumentParser:
     qemuParser.add_argument("diskImagePath", type=Path)
     qemuParser.add_argument("expectedFirmwareSizeBytes", type=int)
     qemuParser.add_argument("expectedDiskSizeBytes", type=int)
+
+    qemuFirmwareParser = addCommand(
+        subparsers,
+        "qemu-firmware",
+        "运行并验收自研固件的串口协议",
+        handleQemuFirmware,
+    )
+    qemuFirmwareParser.add_argument("firmwareImagePath", type=Path)
+    qemuFirmwareParser.add_argument("diskImagePath", type=Path)
+    qemuFirmwareParser.add_argument("expectedFirmwareSizeBytes", type=int)
+    qemuFirmwareParser.add_argument("expectedDiskSizeBytes", type=int)
+    qemuFirmwareParser.add_argument(
+        "--expected-outcome",
+        choices=("success", "serial-failure"),
+        required=True,
+        dest="expectedOutcome",
+    )
     return parser
 
 

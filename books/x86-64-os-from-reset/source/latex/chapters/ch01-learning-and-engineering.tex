@@ -1,0 +1,45 @@
+\chapter{把操作系统学习变成可验收工程}
+
+\section{学习对象不是代码量}
+
+操作系统连接处理器、内存和设备，同时向程序提供受保护的抽象。学习项目真正
+要获得的是机制之间的因果关系：复位向量为什么必须位于固定地址；页表为什么
+同时承担翻译和权限；中断为什么改变执行流；调度器为什么不能只维护一个函数
+指针数组。代码只是把这些关系变成可执行证据。
+
+\begin{keyidea}
+每次只增加一个新的硬件或软件不变量。先让 ROM 可执行，再让串口可观察，再
+加载下一阶段；不要同时引入模式切换、ELF、页表和 C++ 运行时。
+\end{keyidea}
+
+\section{项目边界}
+
+本项目允许 QEMU TCG 模拟硬件，因而宿主机不需要是 x86-64。QEMU 不提供
+启动软件；传给 \code{-bios} 的 128 KiB 镜像完全由项目生成。宿主 Python
+负责调度 CMake、CTest、NASM、LLD 和 QEMU，但不会进入目标镜像。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os block] (source) {NASM / C++20\\项目源代码};
+  \node[os state,right=of source] (image) {ROM / 磁盘\\可审计镜像};
+  \node[os hardware,right=of image] (qemu) {QEMU TCG\\硬件模型};
+  \node[os state,below=of qemu] (evidence) {串口、状态、\\测试证据};
+  \draw[os arrow] (source) -- (image);
+  \draw[os arrow] (image) -- (qemu);
+  \draw[os arrow] (qemu) -- (evidence);
+\end{tikzpicture}
+\end{center}
+
+\section{软件工程闭环}
+
+需求定义“必须做到什么”；架构说明模块和交接；ADR 记录关键取舍；代码实现
+机制；测试保存可重复证据；发布记录对应一个可复现里程碑。完成阶段必须同时
+满足构建、静态审计、宿主测试、整机测试、失败路径和文档六个方面。
+
+\section{语言与代码规则}
+
+目标代码使用显式宽度类型，如 \code{std::uint32_t} 和
+\code{std::uint64_t}。硬件寄存器按协议宽度表示；内部计数、容量和地址若
+没有更窄的硬件约束，优先使用 64 位。类成员访问显式写 \code{this->}；
+常量采用 \code{OS_模块_功能} 的全大写命名；头文件与实现分离；中文注释
+解释约束和原因，不复述语法。

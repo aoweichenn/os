@@ -22,16 +22,26 @@
 
 ### QEMU 系统测试
 
-从 CPU 复位向量启动，捕获串口输出和 QEMU 退出码。每个里程碑至少包含一条成功路径和一条失败路径。
+从 CPU 复位向量启动，捕获串口输出和 QEMU 生命周期。每个里程碑至少包含
+一条成功路径和一条失败路径。
 
 `v0.0` 尚无可执行固件，因此系统测试使用项目生成的空 ROM 和空磁盘，以
 `-bios` 显式传入 ROM，并使用 `-S` 暂停 CPU。该测试只验证 QEMU TCG、PC
 硬件模型、镜像尺寸和启动参数，不声明已经实现启动逻辑。
 
+`v0.1` 使用两份由同一源码生成的 ROM：
+
+- 正常镜像必须输出 `RESET` 和 `SERIAL_READY`。
+- 故障注入镜像在第一条消息后屏蔽串口就绪状态，必须触发有界轮询超时，
+  且不得输出 `SERIAL_READY`。
+
+固件最终进入 `HLT`，测试进程以两秒预算运行 QEMU，预算结束后验证捕获的
+串口协议。异常提前退出视为失败。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
-- 可机器判断的串口标记和退出码。
+- 可机器判断的串口标记和有界 QEMU 生命周期。
 - 失败日志包含阶段、模块和错误类型。
 - 关键数据结构可通过反汇编或 GDB 检查。
 - 回归测试可以在无图形界面的环境中运行。
@@ -55,6 +65,7 @@ python3 tools/os.py test --layer unit
 python3 tools/os.py test --layer integration
 python3 tools/os.py test --layer randomized
 python3 tools/os.py test --layer system
+python3 tools/os.py test --layer failure-path
 ```
 
 当前测试：
@@ -67,7 +78,12 @@ python3 tools/os.py test --layer system
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
-| `os_python_tooling_unit_tests` | 单元 | 镜像、ELF 输出解析和 QEMU 镜像校验 |
+| `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
+| `os_qemu_firmware_reset_serial_success` | 系统 | 真实复位和两阶段串口协议 |
+| `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
+| `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM 和串口协议工具 |
+| `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
+| `os_book_source_check` | 集成 | LaTeX 输入图和 12 章教材结构 |
 
 QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
 `subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。

@@ -15,7 +15,7 @@
 - Python 3.11 或更高版本
 - CMake 3.28 或更高版本
 - Ninja
-- LLVM `nm`、`objdump` 与 `readelf`
+- LLVM `nm`、`objdump`、`objcopy` 与 `readelf`
 
 Fedora：
 
@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成 v0.0 空固件与空磁盘镜像。
+4. 汇编、链接并生成 v0.1 自研 ROM，同时保留 v0.0 空镜像回归基线。
 5. 运行全部 CTest 测试。
 
 ## 手动构建
@@ -62,6 +62,10 @@ python3 tools/os.py test
 ```text
 source/foundation/libos_foundation_host.a
 source/foundation/libos_foundation_x86_64.a
+source/firmware/generated/os_firmware.elf
+source/firmware/generated/os_firmware_serial_failure.elf
+images/firmware.bin
+images/firmware_serial_failure.bin
 images/empty_firmware.bin
 images/empty_disk.img
 tests/os_foundation_unit_tests
@@ -70,7 +74,32 @@ tests/os_foundation_randomized_tests
 ```
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
+`firmware.bin` 和失败路径变体必须都是精确 131072 字节。
 `build/` 不进入 Git。
+
+## 固件生成链
+
+```text
+reset_and_serial.asm
+  └─ NASM elf32 → .o
+       └─ LLD + rom.ld → .elf
+            └─ llvm-objcopy --gap-fill=0xff → 128 KiB .bin
+```
+
+`elf32` 是保存 16 位代码节和符号的目标文件容器，不表示 CPU 已进入 32 位模式。
+链接脚本用 `ASSERT` 保证入口不侵占最后 16 字节的复位向量区域。
+
+## 教材构建
+
+教材是独立工程，不强制 CI 安装完整 TeX Live：
+
+```bash
+make -C books/x86-64-os-from-reset check
+make -C books/x86-64-os-from-reset pdf
+```
+
+PDF 生成在 `books/x86-64-os-from-reset/source/latex/main.pdf`，属于构建产物，
+不进入 Git。
 
 ## 编译边界
 

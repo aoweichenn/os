@@ -1,0 +1,35 @@
+\chapter{内核入口、异常与内存管理}
+
+\section{内核入口契约}
+
+64 位入口要明确栈对齐、方向标志、中断状态、参数寄存器、页表和可写内存范围。
+汇编适配层建立 C++ ABI 后才调用 \code{kernelMain}。freestanding 环境没有
+宿主标准库、异常展开和默认运行时，链接审计必须拒绝未知未解析符号。
+
+\section{先处理异常，再增加复杂性}
+
+GDT 定义代码段和数据段，TSS 提供特权切换所需栈，IDT 把向量映射到门描述符。
+每个异常桩统一保存寄存器并规范化错误码，再交给 C++ 分发器。页故障日志至少
+包含 CR2、错误码和 RIP，否则后续内存管理无法定位。
+
+\section{物理页与虚拟地址空间}
+
+物理页分配器管理“哪些页可用”；页表管理“虚拟地址怎样映射、具有什么权限”；
+内核堆管理“小对象怎样复用页面”。三者不能混成一个分配器。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os block] (heap) {内核堆\\对象分配};
+  \node[os state,below=of heap] (vmm) {虚拟内存\\页表与权限};
+  \node[os hardware,below=of vmm] (pmm) {物理页\\所有权位图};
+  \draw[os arrow] (heap) -- (vmm);
+  \draw[os arrow] (vmm) -- (pmm);
+\end{tikzpicture}
+\end{center}
+
+\section{大类型与精确宽度}
+
+物理地址、虚拟地址和全局计数优先用 64 位，为后续扩展保留空间；页表项必须
+严格用 \code{std::uint64_t}，设备寄存器则按 8/16/32 位协议宽度访问。
+“能用大的就用大的”不意味着把端口寄存器错误地扩大，而是避免内部模型被
+无意义的小上限锁死。

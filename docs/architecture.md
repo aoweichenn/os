@@ -20,10 +20,38 @@ QEMU 只模拟 CPU、内存、串口、IDE 等硬件。每个箭头都是显式�
 
 启动代码按照实模式、保护模式、长模式的顺序推进。GDT、控制寄存器、EFER 和页表均由项目代码建立，并通过反汇编、GDB 和串口标记验证。
 
+## v0.1 ROM 与复位路径
+
+```text
+128 KiB ROM 文件偏移             x86 物理地址
+0x00000                         0xFFFE0000
+0x1F000  16 位入口              0xFFFFF000
+0x1FFF0  E9 0D F0              0xFFFFFFF0  ← CPU 复位取指
+0x1FFFF                         0xFFFFFFFF
+```
+
+复位时 CS 隐藏基址为 `0xFFFF0000`，IP 为 `0xFFF0`。复位向量使用 16 位
+near jump，只修改 IP 为 `0xF000`，因此目标物理地址为 `0xFFFFF000`。
+入口建立低端 RAM 栈，使用 CS override 从高端 ROM 读取常量。
+
+```text
+CPU Reset
+   ↓ 物理地址 0xFFFFFFF0
+near jump
+   ↓
+16 位入口（CLI、CLD、段寄存器、栈）
+   ↓
+COM1 初始化
+   ↓
+有界 THRE 轮询与串口协议
+   ↓
+HLT
+```
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
-- 固件负责最小硬件初始化与 Stage 1 加载。
+- `firmware` 当前负责复位入口和最小串口初始化；v0.2 增加 Stage 1 加载。
 - 引导阶段负责模式切换、内存探测与 ELF64 内核加载。
 - 内核负责异常、中断、内存、调度、设备和系统调用。
 - 用户空间只通过受控 ABI 使用内核能力。
@@ -54,6 +82,13 @@ source/foundation/
 │   └── address_range.hpp
 └── src/
     └── address_range.cpp
+
+source/firmware/
+├── CMakeLists.txt
+├── linker/
+│   └── rom.ld
+└── src/
+    └── reset_and_serial.asm
 ```
 
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和
@@ -80,5 +115,6 @@ tests/
 ## 宿主工具边界
 
 Python 只运行在宿主机，负责工具链检查、CMake/CTest 调度、镜像生成、ELF
-审计和 QEMU 生命周期管理。Python 不进入操作系统镜像，也不解析或替代 CMake
-构建图。所有外部程序均以参数列表直接启动，不经过 Shell 字符串求值。
+与 ROM 审计和 QEMU 生命周期管理。Python 不进入操作系统镜像，也不解析或
+替代 CMake 构建图。所有外部程序均以参数列表直接启动，不经过 Shell 字符串
+求值。

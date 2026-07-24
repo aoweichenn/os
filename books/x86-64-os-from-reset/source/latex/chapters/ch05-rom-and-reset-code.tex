@@ -1,0 +1,31 @@
+\chapter{ROM 布局与复位代码走读}
+
+\section{入口先建立确定状态}
+
+入口依次执行 \code{cli}、\code{cld}，清零数据段、附加段和栈段，设置栈顶，
+再初始化串口。关闭中断是因为 IDT 尚不存在；清除方向标志保证字符串读取向
+高地址推进；显式设置栈是因为 \code{call}、\code{ret} 和
+\code{push} 已经依赖它。
+
+\section{为什么字符串使用 CS 覆盖}
+
+固件代码和常量位于高地址 ROM。入口的 CS 隐藏基址仍指向 ROM 高区，而 DS
+被清零并用于低地址 RAM。使用 \code{cs lodsb} 可以按当前代码段读取日志
+字符串，避免假设 ROM 在低端还存在别名。
+
+\section{源码走读}
+
+下面的清单直接引用配套工程，书与代码保持同源：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=1,
+  lastline=177,
+  caption={16 位复位与串口入口}
+]{../../../../source/firmware/src/reset_and_serial.asm}
+
+\section{ROM 审计}
+
+宿主工具不通过“文件存在”判断成功。它检查镜像恰为 131072 字节，复位偏移的
+操作码为 \code{E9}，解码位移后目标为 \code{0xF000}，入口以
+\code{CLI/CLD} 开始。这是对最终字节的独立验证，不依赖汇编源码意图。

@@ -105,6 +105,60 @@ set_tests_properties(
 )
 
 add_test(
+    NAME os_firmware_rom_layout
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-firmware
+        "${OS_FIRMWARE_IMAGE}"
+)
+set_tests_properties(
+    os_firmware_rom_layout
+    PROPERTIES
+        LABELS "integration"
+)
+
+add_test(
+    NAME os_qemu_firmware_reset_serial_success
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_EMPTY_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        success
+)
+set_tests_properties(
+    os_qemu_firmware_reset_serial_success
+    PROPERTIES
+        LABELS "system"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_firmware_serial_timeout_failure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_SERIAL_FAILURE_IMAGE}"
+        "${OS_EMPTY_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        serial-failure
+)
+set_tests_properties(
+    os_qemu_firmware_serial_timeout_failure
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
     NAME os_python_tooling_unit_tests
     COMMAND
         "${Python3_EXECUTABLE}"
@@ -120,5 +174,37 @@ set_tests_properties(
     os_python_tooling_unit_tests
     PROPERTIES
         LABELS "unit"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(
+    NAME os_firmware_randomized_tests
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        -m
+        unittest
+        discover
+        -s
+        tests/randomized/firmware
+        -p
+        "test_*.py"
+)
+set_tests_properties(
+    os_firmware_randomized_tests
+    PROPERTIES
+        LABELS "randomized"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+)
+
+add_test(
+    NAME os_book_source_check
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/books/x86-64-os-from-reset/source/latex/scripts/check_inputs.py"
+)
+set_tests_properties(
+    os_book_source_check
+    PROPERTIES
+        LABELS "integration"
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
