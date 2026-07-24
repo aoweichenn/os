@@ -41,40 +41,4 @@ boot stages ─────────→ foundation
 kernel ──────────────→ foundation
 ```
 
-`foundation` 不得反向依赖固件、引导阶段、内核、宿主测试框架或项目门户。
-
-## 项目门户
-
-门户使用 Next.js 静态导出，按主题拆分为首页、启动架构、开发路线、工程规范和文档中心。生产 Worker 只转发静态资源请求，不依赖 Node.js 服务端运行时。
-
-文档正文遵循单一来源原则：
-
-```text
-docs/*.md
-   ↓ 构建期读取
-React Markdown + GFM
-   ↓ 静态生成
-/docs/<slug>/index.html
-```
-
-文档目录由 `lib/document_catalog.ts` 维护，只允许读取固定 `docs/`
-目录中的已登记文件。这样既避免运行时文件系统依赖，也避免动态路径扩大构建打包范围。
-
-### 代码浏览器
-
-代码浏览器同样使用构建期静态生成：
-
-```text
-允许的项目目录
-   ↓ scripts/generate_code_catalog.mjs
-generated/code_catalog.json
-   ↓ Shiki 构建期高亮
-/code/<file-path>/index.html
-```
-
-目录生成器使用明确的顶层允许列表，不扫描 `.openai/`、`.codex/`、依赖目录或构建产物。
-`generated/` 只存在于构建工作区，不进入 Git。
-
-浏览器客户端只接收文件路径用于搜索和目录树。每个文件页面只携带当前文件源码，
-不会把整个源码目录注入单个客户端包。语法高亮在构建期完成，生产 Worker
-仍然只负责静态资源转发。
+`foundation` 不得反向依赖固件、引导阶段、内核或宿主测试框架。

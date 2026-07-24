@@ -1,9 +1,0 @@
-{
-  "name": "x86-64-os-lab",
-  "main": ".open-next/worker.js",
-  "compatibility_date": "2026-07-23",
-  "assets": {
-    "binding": "ASSETS",
-    "directory": ".open-next/assets"
-  }
-}

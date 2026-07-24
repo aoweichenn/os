@@ -1,8 +1,3 @@
 build/
-generated/
-node_modules/
-.next/
-.open-next/
-out/
-.wrangler/
+/web/
 *.log
