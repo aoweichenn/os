@@ -2,7 +2,7 @@ LATEX_SOURCE_DIR := source/latex
 PROJECT_ROOT := ../..
 SOURCE_METRICS_FILE := $(LATEX_SOURCE_DIR)/generated/source_metrics.tex
 
-.PHONY: metrics source-check check pdf clean
+.PHONY: metrics source-check check pdf phone-export clean
 
 metrics:
 	python3 $(PROJECT_ROOT)/tools/os.py source-metrics --latex-output $(SOURCE_METRICS_FILE)
@@ -16,6 +16,9 @@ check: source-check
 
 pdf: check
 	cd $(LATEX_SOURCE_DIR) && latexmk -xelatex -interaction=nonstopmode -halt-on-error main.tex
+
+phone-export: pdf
+	python3 $(PROJECT_ROOT)/tools/os.py phone-book-export
 
 clean:
 	cd $(LATEX_SOURCE_DIR) && latexmk -C

@@ -13,6 +13,7 @@ from os_tools.build import (
     configureProject,
     testProject,
 )
+from os_tools.book_export import exportBookToPhone
 from os_tools.elf_audit import auditFreestandingLibrary
 from os_tools.errors import OsToolError
 from os_tools.firmware_audit import auditFirmwareImage
@@ -116,6 +117,10 @@ def handleSourceMetrics(arguments: argparse.Namespace) -> None:
         OS_TOOL_PROJECT_ROOT,
         arguments.latexOutputPath,
     )
+
+
+def handlePhoneBookExport(_: argparse.Namespace) -> None:
+    exportBookToPhone(OS_TOOL_PROJECT_ROOT)
 
 
 def addCommand(
@@ -230,6 +235,12 @@ def createArgumentParser() -> argparse.ArgumentParser:
         "--latex-output",
         dest="latexOutputPath",
         type=Path,
+    )
+    addCommand(
+        subparsers,
+        "phone-book-export",
+        "把教材 PDF 导出到手机独立书籍目录",
+        handlePhoneBookExport,
     )
     return parser
 

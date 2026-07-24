@@ -54,6 +54,7 @@ python3 tools/os.py configure
 python3 tools/os.py build
 python3 tools/os.py test
 python3 tools/os.py source-metrics
+python3 tools/os.py phone-book-export
 ```
 
 ## 构建产物
@@ -105,6 +106,20 @@ PDF 生成在 `books/x86-64-os-from-reset/source/latex/main.pdf`，属于构建�
 `source-metrics` 只统计 `source/` 下 `.asm`、`.cpp`、`.hpp`、`.inc` 和
 `.tpp` 的非空、非纯注释行。测试、宿主工具、书稿、网站、构建描述和链接脚本
 不计入操作系统本体代码量。教材构建会自动刷新同一统计结果。
+
+## 手机教材导出
+
+手机书库沿用硬件教材的分类和命名规则：
+
+```bash
+make -C books/x86-64-os-from-reset phone-export
+```
+
+目标文件为
+`/mnt/sdcard/STU/BOOKS/按卷类型/原理卷/从复位向量到自研x8664操作系统/从复位向量到自研x8664操作系统.pdf`。
+目录与文件名不含短横线、空格或 `+`，避免微信读书导入链路误处理。导出工具
+只允许替换这个目录中的同名 PDF；若目录含有其他文件则拒绝覆盖。复制完成后
+会核对 SHA-256。
 
 ## 编译边界
 

@@ -81,7 +81,7 @@ python3 tools/os.py test --layer failure-path
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
 | `os_qemu_firmware_reset_serial_success` | 系统 | 真实复位和两阶段串口协议 |
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
-| `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM 和串口协议工具 |
+| `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 18 章教材结构 |
 

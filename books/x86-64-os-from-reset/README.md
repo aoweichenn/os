@@ -19,10 +19,13 @@
 ```bash
 make check
 make pdf
+make phone-export
 ```
 
 `make check` 更新生产目标代码统计，并检查所有 `\input` 文件、章节数量、
 XeLaTeX 和 latexmk；`make pdf` 生成 `source/latex/main.pdf`。
+`make phone-export` 重新构建 PDF，并导出到手机书库的独立目录
+`按卷类型/原理卷/从复位向量到自研x8664操作系统/`。
 
 生产代码统计只扫描仓库根目录的 `source/`，计入 `.asm`、`.cpp`、`.hpp`、
 `.inc` 和 `.tpp` 中的非空、非纯注释行。测试、宿主工具、书稿、网站、构建
