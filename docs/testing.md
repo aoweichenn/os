@@ -41,7 +41,8 @@
 `v0.2` 在同一条真实复位路径上增加六类整机结果：
 
 - 正常磁盘必须依次出现 `STAGE1_HEADER_VALID`、`STAGE1_LOADED`、
-  `[OS][STAGE1] ENTERED` 和 `[OS][STAGE1] GDT_READY`。
+  `[OS][STAGE1] ENTERED`、`[OS][STAGE1] GDT_READY` 和
+  `[OS][STAGE1] PROTECTED_MODE`。
 - 固件必须在串口初始化后输出一次 `CLOCK_READY`；当前阶段不要求毫秒数，禁止输出
   没有 PIT 计数依据的伪造时间戳。
 - IDE 永久忙必须在有界轮询后输出 `IDE_TIMEOUT`。
