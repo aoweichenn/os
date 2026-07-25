@@ -1,7 +1,9 @@
 #pragma once
 
+#include "os/kernel/console_input.hpp"
 #include "os/kernel/exception_frame.hpp"
 #include "os/kernel/file_system.hpp"
+#include "os/kernel/io_descriptor.hpp"
 #include "os/kernel/physical_frame_allocator.hpp"
 #include "os/kernel/pipe.hpp"
 #include "os/kernel/process_scheduler.hpp"
@@ -31,6 +33,18 @@ enum class ProcessRuntimeStatus : uint64_t {
     NoReadyProcess,
 };
 
+enum class ProcessIoStatus : uint64_t {
+    Succeeded,
+    WouldBlock,
+    EndOfFile,
+    BrokenPipe,
+    InvalidDescriptor,
+    PermissionDenied,
+    DeviceFailure,
+    FileSystemFailure,
+    InvalidArgument,
+};
+
 struct ProcessCreationResult final {
     uint64_t processId;
     uint64_t processIndex;
@@ -57,6 +71,8 @@ struct ProcessExecutionResult final {
     uint64_t pipeBytesWritten;
     uint64_t fileSystemBytesRead;
     uint64_t fileSystemBytesWritten;
+    uint64_t consoleBytesRead;
+    uint64_t consoleBytesWritten;
 };
 
 struct ProcessIpcStatistics final {
@@ -72,6 +88,7 @@ struct ProcessRuntimeStatistics final {
     PhysicalFrameAllocatorStatistics framesBeforeProcesses;
     PhysicalFrameAllocatorStatistics framesAfterProcesses;
     ProcessIpcStatistics ipc;
+    ConsoleInputStatistics consoleInput;
     ProcessExecutionResult processes[OS_KERNEL_PROCESS_CAPACITY];
 };
 
@@ -110,6 +127,25 @@ CloseCurrentProcessFile(uint64_t fileDescriptor) noexcept;
 [[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(
     const uint8_t *path, uint64_t pathLengthBytes) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
+[[nodiscard]] ProcessIoStatus TryReadCurrentProcessDescriptor(
+    uint64_t descriptor, uint8_t *destination, uint64_t capacityBytes,
+    uint64_t &readBytes, FileSystemStatus &fileSystemStatus) noexcept;
+[[nodiscard]] ProcessIoStatus TryWriteCurrentProcessDescriptor(
+    uint64_t descriptor, const uint8_t *source, uint64_t lengthBytes,
+    uint64_t &writtenBytes, FileSystemStatus &fileSystemStatus) noexcept;
+[[nodiscard]] ProcessIoStatus CloseCurrentProcessDescriptor(
+    uint64_t descriptor, FileSystemStatus &fileSystemStatus) noexcept;
+[[nodiscard]] FileSystemStatus OpenCurrentProcessDirectory(
+    const uint8_t *path, uint64_t pathLengthBytes,
+    uint64_t &fileDescriptor) noexcept;
+[[nodiscard]] FileSystemStatus ReadCurrentProcessDirectory(
+    uint64_t fileDescriptor, FileSystemDirectoryEntry &entry,
+    bool &endOfDirectory) noexcept;
+[[nodiscard]] ProcessIoStatus CurrentProcessDescriptorReadCanProgress(
+    uint64_t descriptor, bool &canProgress) noexcept;
+[[nodiscard]] ProcessIoStatus CurrentProcessDescriptorWriteCanProgress(
+    uint64_t descriptor, bool &canProgress) noexcept;
+void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] bool ProcessPipeReadCanProgress() noexcept;
 [[nodiscard]] bool ProcessPipeWriteCanProgress() noexcept;
 [[nodiscard]] ProcessRuntimeStatus BlockCurrentProcess(ExceptionFrame &frame,

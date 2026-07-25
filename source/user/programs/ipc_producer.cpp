@@ -17,7 +17,9 @@ constexpr char OS_USER_IPC_PRODUCER_FILE_WRITTEN_MESSAGE[] =
     "[OS][USER][FS] FILE_WRITTEN\r\n";
 constexpr char OS_USER_IPC_PRODUCER_DIRECTORY_PATH[] = "/shared";
 constexpr char OS_USER_IPC_PRODUCER_FILE_PATH[] = "/shared/payload.bin";
-constexpr uint64_t OS_USER_IPC_PRODUCER_PROCESS_ID = 1ULL;
+constexpr uint64_t OS_USER_IPC_PRODUCER_PROCESS_ID = 2ULL;
+constexpr uint64_t OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR =
+    os::abi::OS_ABI_FIRST_DYNAMIC_DESCRIPTOR;
 constexpr uint64_t OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_USER_IPC_PRODUCER_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_IPC_PRODUCER_POINTER_PROBE_SIZE_BYTES = 1ULL;
@@ -66,9 +68,12 @@ void FillPayload() noexcept {
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() noexcept {
     uint8_t permissionProbe = OS_USER_IPC_PRODUCER_ZERO_BYTE;
     if (os::user::GetProcessId() != OS_USER_IPC_PRODUCER_PROCESS_ID ||
-        os::user::TryReadPipe(&permissionProbe, OS_USER_IPC_PRODUCER_POINTER_PROBE_SIZE_BYTES) !=
-            os::abi::OS_ABI_SYSTEM_CALL_RESULT_PIPE_PERMISSION_DENIED ||
-        os::user::TryWritePipe(
+        os::user::TryReadDescriptor(
+            OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR, &permissionProbe,
+            OS_USER_IPC_PRODUCER_POINTER_PROBE_SIZE_BYTES) !=
+            os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED ||
+        os::user::TryWriteDescriptor(
+            OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR,
             reinterpret_cast<const uint8_t *>(OS_USER_IPC_PRODUCER_UNMAPPED_POINTER),
             OS_USER_IPC_PRODUCER_POINTER_PROBE_SIZE_BYTES) !=
             os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY) {
@@ -103,18 +108,22 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
             OS_USER_IPC_PRODUCER_STRING_TERMINATOR_SIZE_BYTES,
         OS_USER_IPC_PRODUCER_FILE_OPEN_FLAGS);
     if (fileDescriptor < OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
-        os::user::WriteFile(static_cast<uint64_t>(fileDescriptor),
-                            producerPayload,
-                            OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
+        os::user::WriteDescriptor(
+            static_cast<uint64_t>(fileDescriptor), producerPayload,
+            OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
             static_cast<int64_t>(OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) ||
-        os::user::CloseFile(static_cast<uint64_t>(fileDescriptor)) !=
+        os::user::CloseDescriptor(static_cast<uint64_t>(fileDescriptor)) !=
             OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
         os::user::SyncFileSystem() != OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
         !WriteMessage(OS_USER_IPC_PRODUCER_FILE_WRITTEN_MESSAGE) ||
-        os::user::WritePipe(producerPayload, OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
+        os::user::WriteDescriptor(
+            OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR, producerPayload,
+            OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
             static_cast<int64_t>(OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) ||
-        os::user::ClosePipeWriter() != OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
-        os::user::ClosePipeWriter() != os::abi::OS_ABI_SYSTEM_CALL_RESULT_ENDPOINT_CLOSED ||
+        os::user::CloseDescriptor(OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR) !=
+            OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
+        os::user::CloseDescriptor(OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR) !=
+            os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_FILE_DESCRIPTOR ||
         !WriteMessage(OS_USER_IPC_PRODUCER_COMPLETED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_IPC_PRODUCER_FAILURE_EXIT_CODE);
     }

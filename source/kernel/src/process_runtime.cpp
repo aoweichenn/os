@@ -4,6 +4,7 @@
 #include "os/kernel/memory_manager.hpp"
 #include "os/kernel/process_memory_layout.hpp"
 #include "os/kernel/processor.hpp"
+#include "os/kernel/serial_port.hpp"
 
 namespace os::kernel {
 
@@ -15,15 +16,37 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_WAKE_ALL_COUNT = OS_KERNEL_PROCESS_CAPACITY;
 constexpr int64_t OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE = 0LL;
 
+[[nodiscard]] ProcessIoStatus MapPipeIoStatus(
+    const PipeStatus status) noexcept {
+    if (status == PipeStatus::Succeeded) {
+        return ProcessIoStatus::Succeeded;
+    }
+    if (status == PipeStatus::WouldBlock) {
+        return ProcessIoStatus::WouldBlock;
+    }
+    if (status == PipeStatus::EndOfFile) {
+        return ProcessIoStatus::EndOfFile;
+    }
+    if (status == PipeStatus::BrokenPipe) {
+        return ProcessIoStatus::BrokenPipe;
+    }
+    if (status == PipeStatus::AlreadyClosed) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return ProcessIoStatus::InvalidArgument;
+}
+
 struct ProcessControlBlock final {
     UserAddressSpace addressSpace;
     ExceptionFrame *savedFrame;
     ProcessExecutionResult result;
-    FileSystemHandle fileDescriptors[OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT];
+    IoDescriptorTable descriptors;
+    FileSystemHandle fileHandles[OS_KERNEL_IO_DESCRIPTOR_CAPACITY];
 };
 
 ProcessScheduler processScheduler;
 Pipe processPipe;
+ConsoleInput processConsoleInput;
 ProcessControlBlock processControlBlocks[OS_KERNEL_PROCESS_CAPACITY];
 FileSystem *processFileSystem;
 PhysicalFrameAllocatorStatistics framesBeforeProcesses;
@@ -111,35 +134,43 @@ void WakeRequiredProcesses(const ProcessWaitReason waitReason) noexcept {
     }
 }
 
-void CloseProcessPipeEndpoints(const UserProgramSelection selection) noexcept {
-    if (selection == UserProgramSelection::IpcProducer) {
-        const PipeStatus status = processPipe.CloseWriter();
-        if (status == PipeStatus::Succeeded) {
-            WakeRequiredProcesses(ProcessWaitReason::PipeReadable);
-        } else if (status != PipeStatus::AlreadyClosed) {
-            HaltProcessor();
-        }
-    }
-    if (selection == UserProgramSelection::IpcConsumer) {
-        const PipeStatus status = processPipe.CloseReader();
-        if (status == PipeStatus::Succeeded) {
-            WakeRequiredProcesses(ProcessWaitReason::PipeWritable);
-        } else if (status != PipeStatus::AlreadyClosed) {
-            HaltProcessor();
-        }
-    }
-}
-
-void CloseProcessFileDescriptors(ProcessControlBlock &process) noexcept {
+void CloseProcessIoDescriptors(ProcessControlBlock &process) noexcept {
     if (processFileSystem == nullptr) {
         HaltProcessor();
     }
-    for (uint64_t descriptorIndex = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
-         descriptorIndex < OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT;
+    for (uint64_t descriptorIndex = OS_KERNEL_IO_FIRST_DYNAMIC_DESCRIPTOR;
+         descriptorIndex < OS_KERNEL_IO_DESCRIPTOR_CAPACITY;
          ++descriptorIndex) {
-        FileSystemHandle &handle = process.fileDescriptors[descriptorIndex];
-        if (handle.open &&
-            processFileSystem->Close(handle) != FileSystemStatus::Succeeded) {
+        IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+        if (process.descriptors.Lookup(descriptorIndex, descriptorKind) !=
+            IoDescriptorStatus::Succeeded) {
+            continue;
+        }
+        if ((descriptorKind == IoDescriptorKind::RegularFile ||
+             descriptorKind == IoDescriptorKind::Directory) &&
+            processFileSystem->Close(process.fileHandles[descriptorIndex]) !=
+                FileSystemStatus::Succeeded) {
+            HaltProcessor();
+        }
+        if (descriptorKind == IoDescriptorKind::PipeReader) {
+            const PipeStatus closeStatus = processPipe.CloseReader();
+            if (closeStatus != PipeStatus::Succeeded &&
+                closeStatus != PipeStatus::AlreadyClosed) {
+                HaltProcessor();
+            }
+            WakeRequiredProcesses(ProcessWaitReason::DescriptorWritable);
+        }
+        if (descriptorKind == IoDescriptorKind::PipeWriter) {
+            const PipeStatus closeStatus = processPipe.CloseWriter();
+            if (closeStatus != PipeStatus::Succeeded &&
+                closeStatus != PipeStatus::AlreadyClosed) {
+                HaltProcessor();
+            }
+            WakeRequiredProcesses(ProcessWaitReason::DescriptorReadable);
+        }
+        IoDescriptorKind closedKind = IoDescriptorKind::Closed;
+        if (process.descriptors.Close(descriptorIndex, closedKind) !=
+            IoDescriptorStatus::Succeeded) {
             HaltProcessor();
         }
     }
@@ -163,8 +194,7 @@ CompleteCurrentProcess(ExceptionFrame &frame, const ProcessTerminationReason ter
         process.result.exceptionInstructionPointer = frame.instructionPointer;
         process.result.pageFaultAddress = pageFaultAddress;
     }
-    CloseProcessPipeEndpoints(process.result.selection);
-    CloseProcessFileDescriptors(process);
+    CloseProcessIoDescriptors(process);
 
     ProcessSchedulingDecision decision{};
     if (processScheduler.TerminateCurrentProcess(decision) != ProcessSchedulerStatus::Succeeded) {
@@ -184,7 +214,13 @@ CompleteCurrentProcess(ExceptionFrame &frame, const ProcessTerminationReason ter
         }
         osKernelReturnFromUserMode();
     }
-    if (!decision.switched || !ActivateProcess(decision.currentProcessIndex)) {
+    if (!decision.switched) {
+        if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
+            HaltProcessor();
+        }
+        osKernelReturnFromUserMode();
+    }
+    if (!ActivateProcess(decision.currentProcessIndex)) {
         HaltProcessor();
     }
     return processControlBlocks[decision.currentProcessIndex].savedFrame;
@@ -204,6 +240,7 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     framesBeforeProcesses = GetPhysicalFrameAllocatorStatistics();
     framesAfterProcesses = PhysicalFrameAllocatorStatistics{};
     processPipe.Initialize();
+    processConsoleInput.Initialize();
     pipeReaderBlockCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipeWriterBlockCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipeEndOfFileObservationCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -288,9 +325,15 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
                 .pipeBytesWritten = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
                 .fileSystemBytesRead = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
                 .fileSystemBytesWritten = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                .consoleBytesRead = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                .consoleBytesWritten = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
             },
-        .fileDescriptors = {},
+        .descriptors = {},
+        .fileHandles = {},
     };
+    processControlBlocks[processIndex].descriptors.Initialize(
+        selection == UserProgramSelection::IpcConsumer,
+        selection == UserProgramSelection::IpcProducer);
     creationResult = ProcessCreationResult{
         .processId = processId,
         .processIndex = processIndex,
@@ -310,20 +353,30 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
     }
 
     const bool interruptsWereEnabled = DisableInterrupts();
-    ProcessSchedulingDecision decision{};
-    if (processScheduler.Start(decision) != ProcessSchedulerStatus::Succeeded) {
-        RestoreInterrupts(interruptsWereEnabled);
-        return ProcessRuntimeStatus::SchedulerFailure;
-    }
     processSchedulingActive = true;
-    if (!ActivateProcess(decision.currentProcessIndex)) {
-        processSchedulingActive = false;
-        RestoreInterrupts(interruptsWereEnabled);
-        return ProcessRuntimeStatus::PageTableActivationFailure;
-    }
-    osKernelEnterScheduledProcess(processControlBlocks[decision.currentProcessIndex].savedFrame);
-    if (processSchedulingActive || ReadPageTableRoot() != GetKernelPageTableRoot()) {
-        HaltProcessor();
+    while (processSchedulingActive) {
+        ProcessSchedulingDecision decision{};
+        const ProcessSchedulerStatus schedulerStatus =
+            processScheduler.Start(decision);
+        if (schedulerStatus == ProcessSchedulerStatus::NoReadyProcess) {
+            EnableInterruptsWaitAndDisable();
+            continue;
+        }
+        if (schedulerStatus != ProcessSchedulerStatus::Succeeded) {
+            processSchedulingActive = false;
+            RestoreInterrupts(interruptsWereEnabled);
+            return ProcessRuntimeStatus::SchedulerFailure;
+        }
+        if (!ActivateProcess(decision.currentProcessIndex)) {
+            processSchedulingActive = false;
+            RestoreInterrupts(interruptsWereEnabled);
+            return ProcessRuntimeStatus::PageTableActivationFailure;
+        }
+        osKernelEnterScheduledProcess(
+            processControlBlocks[decision.currentProcessIndex].savedFrame);
+        if (ReadPageTableRoot() != GetKernelPageTableRoot()) {
+            HaltProcessor();
+        }
     }
     RestoreInterrupts(interruptsWereEnabled);
     return ProcessRuntimeStatus::Succeeded;
@@ -342,6 +395,7 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
                 .endOfFileObservationCount = pipeEndOfFileObservationCount,
                 .brokenPipeObservationCount = pipeBrokenObservationCount,
             },
+        .consoleInput = processConsoleInput.Statistics(),
         .processes = {},
     };
     for (uint64_t processIndex = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -406,6 +460,7 @@ PipeStatus TryReadCurrentProcessPipe(uint8_t *destination, const uint64_t capaci
     if (status == PipeStatus::Succeeded) {
         processControlBlocks[processScheduler.CurrentProcessIndex()].result.pipeBytesRead +=
             readBytes;
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorWritable);
     } else if (status == PipeStatus::EndOfFile) {
         ++pipeEndOfFileObservationCount;
     }
@@ -422,6 +477,7 @@ PipeStatus TryWriteCurrentProcessPipe(const uint8_t *source, const uint64_t leng
     if (status == PipeStatus::Succeeded) {
         processControlBlocks[processScheduler.CurrentProcessIndex()].result.pipeBytesWritten +=
             writtenBytes;
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorReadable);
     } else if (status == PipeStatus::BrokenPipe) {
         ++pipeBrokenObservationCount;
     }
@@ -435,6 +491,7 @@ PipeStatus CloseCurrentProcessPipeReader() noexcept {
     const PipeStatus status = processPipe.CloseReader();
     if (status == PipeStatus::Succeeded) {
         WakeRequiredProcesses(ProcessWaitReason::PipeWritable);
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorWritable);
     }
     return status;
 }
@@ -446,6 +503,7 @@ PipeStatus CloseCurrentProcessPipeWriter() noexcept {
     const PipeStatus status = processPipe.CloseWriter();
     if (status == PipeStatus::Succeeded) {
         WakeRequiredProcesses(ProcessWaitReason::PipeReadable);
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorReadable);
     }
     return status;
 }
@@ -459,27 +517,22 @@ FileSystemStatus OpenCurrentProcessFile(
     }
     ProcessControlBlock &process =
         processControlBlocks[processScheduler.CurrentProcessIndex()];
-    uint64_t availableDescriptor =
-        OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT;
-    for (uint64_t descriptorIndex = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
-         descriptorIndex < OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT;
-         ++descriptorIndex) {
-        if (!process.fileDescriptors[descriptorIndex].open) {
-            availableDescriptor = descriptorIndex;
-            break;
-        }
-    }
-    if (availableDescriptor ==
-        OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
-        return FileSystemStatus::DataCapacityExhausted;
-    }
     FileSystemHandle handle{};
     const FileSystemStatus status =
         processFileSystem->Open(path, pathLengthBytes, options, handle);
     if (status != FileSystemStatus::Succeeded) {
         return status;
     }
-    process.fileDescriptors[availableDescriptor] = handle;
+    uint64_t availableDescriptor = OS_KERNEL_IO_DESCRIPTOR_CAPACITY;
+    if (process.descriptors.Allocate(IoDescriptorKind::RegularFile,
+                                     availableDescriptor) !=
+        IoDescriptorStatus::Succeeded) {
+        if (processFileSystem->Close(handle) != FileSystemStatus::Succeeded) {
+            HaltProcessor();
+        }
+        return FileSystemStatus::DataCapacityExhausted;
+    }
+    process.fileHandles[availableDescriptor] = handle;
     fileDescriptor = availableDescriptor;
     return FileSystemStatus::Succeeded;
 }
@@ -491,13 +544,19 @@ FileSystemStatus ReadCurrentProcessFile(
     if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    if (fileDescriptor >= OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+    if (fileDescriptor >= OS_KERNEL_IO_DESCRIPTOR_CAPACITY) {
         return FileSystemStatus::InvalidHandle;
     }
     ProcessControlBlock &process =
         processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(fileDescriptor, descriptorKind) !=
+            IoDescriptorStatus::Succeeded ||
+        descriptorKind != IoDescriptorKind::RegularFile) {
+        return FileSystemStatus::InvalidHandle;
+    }
     const FileSystemStatus status = processFileSystem->Read(
-        process.fileDescriptors[fileDescriptor], destination, capacityBytes,
+        process.fileHandles[fileDescriptor], destination, capacityBytes,
         readBytes);
     if (status == FileSystemStatus::Succeeded) {
         process.result.fileSystemBytesRead += readBytes;
@@ -512,13 +571,19 @@ FileSystemStatus WriteCurrentProcessFile(
     if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    if (fileDescriptor >= OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+    if (fileDescriptor >= OS_KERNEL_IO_DESCRIPTOR_CAPACITY) {
         return FileSystemStatus::InvalidHandle;
     }
     ProcessControlBlock &process =
         processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(fileDescriptor, descriptorKind) !=
+            IoDescriptorStatus::Succeeded ||
+        descriptorKind != IoDescriptorKind::RegularFile) {
+        return FileSystemStatus::InvalidHandle;
+    }
     const FileSystemStatus status = processFileSystem->Write(
-        process.fileDescriptors[fileDescriptor], source, lengthBytes,
+        process.fileHandles[fileDescriptor], source, lengthBytes,
         writtenBytes);
     if (status == FileSystemStatus::Succeeded) {
         process.result.fileSystemBytesWritten += writtenBytes;
@@ -531,12 +596,27 @@ CloseCurrentProcessFile(const uint64_t fileDescriptor) noexcept {
     if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    if (fileDescriptor >= OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+    if (fileDescriptor >= OS_KERNEL_IO_DESCRIPTOR_CAPACITY) {
         return FileSystemStatus::InvalidHandle;
     }
     ProcessControlBlock &process =
         processControlBlocks[processScheduler.CurrentProcessIndex()];
-    return processFileSystem->Close(process.fileDescriptors[fileDescriptor]);
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(fileDescriptor, descriptorKind) !=
+            IoDescriptorStatus::Succeeded ||
+        descriptorKind != IoDescriptorKind::RegularFile) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    const FileSystemStatus closeStatus =
+        processFileSystem->Close(process.fileHandles[fileDescriptor]);
+    if (closeStatus != FileSystemStatus::Succeeded) {
+        return closeStatus;
+    }
+    IoDescriptorKind closedKind = IoDescriptorKind::Closed;
+    return process.descriptors.Close(fileDescriptor, closedKind) ==
+                   IoDescriptorStatus::Succeeded
+               ? FileSystemStatus::Succeeded
+               : FileSystemStatus::InvalidHandle;
 }
 
 FileSystemStatus CreateCurrentProcessDirectory(
@@ -552,6 +632,277 @@ FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
         return FileSystemStatus::NotInitialized;
     }
     return processFileSystem->Sync();
+}
+
+ProcessIoStatus TryReadCurrentProcessDescriptor(
+    const uint64_t descriptor, uint8_t *const destination,
+    const uint64_t capacityBytes, uint64_t &readBytes,
+    FileSystemStatus &fileSystemStatus) noexcept {
+    readBytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    fileSystemStatus = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(descriptor, descriptorKind) !=
+        IoDescriptorStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    if (descriptorKind == IoDescriptorKind::ConsoleInput) {
+        const ConsoleInputStatus status =
+            processConsoleInput.TryRead(destination, capacityBytes, readBytes);
+        if (status == ConsoleInputStatus::Empty) {
+            return ProcessIoStatus::WouldBlock;
+        }
+        if (status != ConsoleInputStatus::Succeeded) {
+            return ProcessIoStatus::InvalidArgument;
+        }
+        process.result.consoleBytesRead += readBytes;
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::RegularFile) {
+        fileSystemStatus = processFileSystem->Read(
+            process.fileHandles[descriptor], destination, capacityBytes,
+            readBytes);
+        if (fileSystemStatus != FileSystemStatus::Succeeded) {
+            return ProcessIoStatus::FileSystemFailure;
+        }
+        process.result.fileSystemBytesRead += readBytes;
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::PipeReader) {
+        const PipeStatus status =
+            processPipe.TryRead(destination, capacityBytes, readBytes);
+        if (status == PipeStatus::Succeeded) {
+            process.result.pipeBytesRead += readBytes;
+            WakeRequiredProcesses(ProcessWaitReason::DescriptorWritable);
+        } else if (status == PipeStatus::EndOfFile) {
+            ++pipeEndOfFileObservationCount;
+        }
+        return MapPipeIoStatus(status);
+    }
+    return ProcessIoStatus::PermissionDenied;
+}
+
+ProcessIoStatus TryWriteCurrentProcessDescriptor(
+    const uint64_t descriptor, const uint8_t *const source,
+    const uint64_t lengthBytes, uint64_t &writtenBytes,
+    FileSystemStatus &fileSystemStatus) noexcept {
+    writtenBytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    fileSystemStatus = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(descriptor, descriptorKind) !=
+        IoDescriptorStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    if (descriptorKind == IoDescriptorKind::ConsoleOutput ||
+        descriptorKind == IoDescriptorKind::ConsoleError) {
+        const SerialPort serialPort{OS_KERNEL_SERIAL_COM1_BASE_PORT};
+        while (writtenBytes < lengthBytes) {
+            if (!serialPort.TryWriteByte(
+                    static_cast<char>(source[writtenBytes]))) {
+                return ProcessIoStatus::DeviceFailure;
+            }
+            ++writtenBytes;
+        }
+        process.result.consoleBytesWritten += writtenBytes;
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::RegularFile) {
+        fileSystemStatus = processFileSystem->Write(
+            process.fileHandles[descriptor], source, lengthBytes,
+            writtenBytes);
+        if (fileSystemStatus != FileSystemStatus::Succeeded) {
+            return ProcessIoStatus::FileSystemFailure;
+        }
+        process.result.fileSystemBytesWritten += writtenBytes;
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::PipeWriter) {
+        const PipeStatus status =
+            processPipe.TryWrite(source, lengthBytes, writtenBytes);
+        if (status == PipeStatus::Succeeded) {
+            process.result.pipeBytesWritten += writtenBytes;
+            WakeRequiredProcesses(ProcessWaitReason::DescriptorReadable);
+        } else if (status == PipeStatus::BrokenPipe) {
+            ++pipeBrokenObservationCount;
+        }
+        return MapPipeIoStatus(status);
+    }
+    return ProcessIoStatus::PermissionDenied;
+}
+
+ProcessIoStatus CloseCurrentProcessDescriptor(
+    const uint64_t descriptor,
+    FileSystemStatus &fileSystemStatus) noexcept {
+    fileSystemStatus = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    const IoDescriptorStatus lookupStatus =
+        process.descriptors.Lookup(descriptor, descriptorKind);
+    if (lookupStatus != IoDescriptorStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    if (descriptor < OS_KERNEL_IO_FIRST_DYNAMIC_DESCRIPTOR) {
+        return ProcessIoStatus::PermissionDenied;
+    }
+    if (descriptorKind == IoDescriptorKind::RegularFile ||
+        descriptorKind == IoDescriptorKind::Directory) {
+        fileSystemStatus =
+            processFileSystem->Close(process.fileHandles[descriptor]);
+        if (fileSystemStatus != FileSystemStatus::Succeeded) {
+            return ProcessIoStatus::FileSystemFailure;
+        }
+    } else if (descriptorKind == IoDescriptorKind::PipeReader) {
+        const PipeStatus status = processPipe.CloseReader();
+        if (status != PipeStatus::Succeeded) {
+            return MapPipeIoStatus(status);
+        }
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorWritable);
+    } else if (descriptorKind == IoDescriptorKind::PipeWriter) {
+        const PipeStatus status = processPipe.CloseWriter();
+        if (status != PipeStatus::Succeeded) {
+            return MapPipeIoStatus(status);
+        }
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorReadable);
+    } else {
+        return ProcessIoStatus::PermissionDenied;
+    }
+    IoDescriptorKind closedKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Close(descriptor, closedKind) !=
+        IoDescriptorStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return ProcessIoStatus::Succeeded;
+}
+
+FileSystemStatus OpenCurrentProcessDirectory(
+    const uint8_t *const path, const uint64_t pathLengthBytes,
+    uint64_t &fileDescriptor) noexcept {
+    fileDescriptor = OS_KERNEL_IO_DESCRIPTOR_CAPACITY;
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    FileSystemHandle handle{};
+    FileSystemStatus status =
+        processFileSystem->OpenDirectory(path, pathLengthBytes, handle);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    if (process.descriptors.Allocate(IoDescriptorKind::Directory,
+                                     fileDescriptor) !=
+        IoDescriptorStatus::Succeeded) {
+        if (processFileSystem->Close(handle) != FileSystemStatus::Succeeded) {
+            HaltProcessor();
+        }
+        return FileSystemStatus::DataCapacityExhausted;
+    }
+    process.fileHandles[fileDescriptor] = handle;
+    return FileSystemStatus::Succeeded;
+}
+
+FileSystemStatus ReadCurrentProcessDirectory(
+    const uint64_t fileDescriptor, FileSystemDirectoryEntry &entry,
+    bool &endOfDirectory) noexcept {
+    entry = FileSystemDirectoryEntry{};
+    endOfDirectory = false;
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr ||
+        fileDescriptor >= OS_KERNEL_IO_DESCRIPTOR_CAPACITY) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(fileDescriptor, descriptorKind) !=
+            IoDescriptorStatus::Succeeded ||
+        descriptorKind != IoDescriptorKind::Directory) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    return processFileSystem->ReadDirectory(
+        process.fileHandles[fileDescriptor], entry, endOfDirectory);
+}
+
+ProcessIoStatus CurrentProcessDescriptorReadCanProgress(
+    const uint64_t descriptor, bool &canProgress) noexcept {
+    canProgress = false;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(descriptor, descriptorKind) !=
+        IoDescriptorStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    if (descriptorKind == IoDescriptorKind::ConsoleInput) {
+        canProgress = processConsoleInput.ReadCanProgress();
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::RegularFile ||
+        descriptorKind == IoDescriptorKind::Directory) {
+        canProgress = true;
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::PipeReader) {
+        canProgress = processPipe.ReadCanProgress();
+        if (!canProgress) {
+            ++pipeReaderBlockCount;
+        }
+        return ProcessIoStatus::Succeeded;
+    }
+    return ProcessIoStatus::PermissionDenied;
+}
+
+ProcessIoStatus CurrentProcessDescriptorWriteCanProgress(
+    const uint64_t descriptor, bool &canProgress) noexcept {
+    canProgress = false;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    IoDescriptorKind descriptorKind = IoDescriptorKind::Closed;
+    if (process.descriptors.Lookup(descriptor, descriptorKind) !=
+        IoDescriptorStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    if (descriptorKind == IoDescriptorKind::ConsoleOutput ||
+        descriptorKind == IoDescriptorKind::ConsoleError ||
+        descriptorKind == IoDescriptorKind::RegularFile) {
+        canProgress = true;
+        return ProcessIoStatus::Succeeded;
+    }
+    if (descriptorKind == IoDescriptorKind::PipeWriter) {
+        canProgress = processPipe.WriteCanProgress();
+        if (!canProgress) {
+            ++pipeWriterBlockCount;
+        }
+        return ProcessIoStatus::Succeeded;
+    }
+    return ProcessIoStatus::PermissionDenied;
+}
+
+void SubmitConsoleCharacter(const uint8_t character) noexcept {
+    const ConsoleInputStatus submitStatus =
+        processConsoleInput.Submit(character);
+    if (submitStatus == ConsoleInputStatus::Succeeded &&
+        processSchedulingActive) {
+        WakeRequiredProcesses(ProcessWaitReason::DescriptorReadable);
+    }
 }
 
 bool ProcessPipeReadCanProgress() noexcept { return processPipe.ReadCanProgress(); }
@@ -574,8 +925,7 @@ ProcessRuntimeStatus BlockCurrentProcess(ExceptionFrame &frame, const ProcessWai
     if (status == ProcessSchedulerStatus::NoReadyProcess) {
         return ProcessRuntimeStatus::NoReadyProcess;
     }
-    if (status != ProcessSchedulerStatus::Succeeded || !decision.switched ||
-        !ActivateProcess(decision.currentProcessIndex)) {
+    if (status != ProcessSchedulerStatus::Succeeded) {
         return ProcessRuntimeStatus::SchedulerFailure;
     }
     if (waitReason == ProcessWaitReason::PipeReadable) {
@@ -583,7 +933,18 @@ ProcessRuntimeStatus BlockCurrentProcess(ExceptionFrame &frame, const ProcessWai
     } else if (waitReason == ProcessWaitReason::PipeWritable) {
         ++pipeWriterBlockCount;
     }
-    resumeFrame = processControlBlocks[decision.currentProcessIndex].savedFrame;
+    if (!decision.switched) {
+        ActivateKernelPageTable();
+        if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
+            HaltProcessor();
+        }
+        osKernelReturnFromUserMode();
+    }
+    if (!ActivateProcess(decision.currentProcessIndex)) {
+        return ProcessRuntimeStatus::SchedulerFailure;
+    }
+    resumeFrame =
+        processControlBlocks[decision.currentProcessIndex].savedFrame;
     return ProcessRuntimeStatus::Succeeded;
 }
 

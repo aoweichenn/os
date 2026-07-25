@@ -52,6 +52,10 @@ OS_KERNEL_ELF_FORBIDDEN_RUNTIME_INITIALIZATION_SECTIONS = (
     ".ctors",
     ".dtors",
 )
+OS_KERNEL_ELF_IDLE_WAIT_SYMBOL = (
+    "os::kernel::EnableInterruptsWaitAndDisable()"
+)
+OS_KERNEL_ELF_IDLE_WAIT_INSTRUCTION_SEQUENCE = ("sti", "hlt", "cli")
 OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
     (
         "osKernelEntry",
@@ -80,6 +84,8 @@ OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
         "osKernelUserIpcProducerElfEnd",
         "osKernelUserIpcConsumerElfStart",
         "osKernelUserIpcConsumerElfEnd",
+        "osKernelUserShellElfStart",
+        "osKernelUserShellElfEnd",
         "osKernelImageStart",
         "osKernelImageEnd",
         "osKernelTextStart",
@@ -368,6 +374,43 @@ def validateKernelRuntimeInitializationSections(sectionHeaders: str) -> None:
         )
 
 
+def validateKernelIdleWaitInstructionSequence(disassembly: str) -> None:
+    functionHeader = f"<{OS_KERNEL_ELF_IDLE_WAIT_SYMBOL}>:"
+    functionInstructions: list[str] = []
+    insideFunction = False
+    for line in disassembly.splitlines():
+        strippedLine = line.strip()
+        if strippedLine.endswith(functionHeader):
+            insideFunction = True
+            continue
+        if insideFunction and strippedLine.endswith(">:"):
+            break
+        if not insideFunction or "\t" not in line:
+            continue
+        instructionText = line.rsplit("\t", maxsplit=1)[-1].strip()
+        if instructionText:
+            functionInstructions.append(instructionText.split(maxsplit=1)[0])
+
+    if not insideFunction:
+        raise OsToolError("内核 ELF 缺少原子空闲等待函数。")
+    sequenceLength = len(OS_KERNEL_ELF_IDLE_WAIT_INSTRUCTION_SEQUENCE)
+    for instructionIndex in range(
+        len(functionInstructions) - sequenceLength + 1
+    ):
+        if (
+            tuple(
+                functionInstructions[
+                    instructionIndex : instructionIndex + sequenceLength
+                ]
+            )
+            == OS_KERNEL_ELF_IDLE_WAIT_INSTRUCTION_SEQUENCE
+        ):
+            return
+    raise OsToolError(
+        "内核空闲等待没有生成相邻的 STI、HLT、CLI 指令。"
+    )
+
+
 def auditKernelElf(projectRoot: Path, kernelElfPath: Path) -> None:
     entryAddress, loadSegments = parseKernelLoadSegments(
         kernelElfPath.read_bytes()
@@ -405,6 +448,18 @@ def auditKernelElf(projectRoot: Path, kernelElfPath: Path) -> None:
         captureOutput=True,
     )
     validateKernelRuntimeInitializationSections(sectionHeaderResult.stdout)
+
+    disassemblyResult = runCommand(
+        [
+            "llvm-objdump",
+            "--disassemble",
+            "--demangle",
+            str(kernelElfPath),
+        ],
+        projectRoot,
+        captureOutput=True,
+    )
+    validateKernelIdleWaitInstructionSequence(disassemblyResult.stdout)
 
     print(
         "内核 ELF64 审计通过："

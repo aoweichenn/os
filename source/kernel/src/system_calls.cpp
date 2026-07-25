@@ -22,6 +22,8 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_PROCESS_COUNT = OS_KERNEL_PROC
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT = 0LL;
+constexpr int64_t OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT = 0LL;
+constexpr int64_t OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESULT = 1LL;
 
 [[nodiscard]] int64_t MapPipeStatus(const PipeStatus status,
                                     const uint64_t transferredBytes) noexcept {
@@ -83,6 +85,38 @@ constexpr int64_t OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT = 0LL;
     }
     if (status == FileSystemStatus::DeviceFailure) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+}
+
+[[nodiscard]] int64_t MapProcessIoStatus(
+    const ProcessIoStatus status, const uint64_t transferredBytes,
+    const FileSystemStatus fileSystemStatus) noexcept {
+    if (status == ProcessIoStatus::Succeeded) {
+        return static_cast<int64_t>(transferredBytes);
+    }
+    if (status == ProcessIoStatus::WouldBlock) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK;
+    }
+    if (status == ProcessIoStatus::EndOfFile) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == ProcessIoStatus::BrokenPipe) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_BROKEN_PIPE;
+    }
+    if (status == ProcessIoStatus::InvalidDescriptor) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_FILE_DESCRIPTOR;
+    }
+    if (status == ProcessIoStatus::PermissionDenied) {
+        return os::abi::
+            OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED;
+    }
+    if (status == ProcessIoStatus::DeviceFailure) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
+    }
+    if (status == ProcessIoStatus::FileSystemFailure) {
+        return MapFileSystemStatus(fileSystemStatus,
+                                   transferredBytes);
     }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
@@ -351,6 +385,181 @@ DispatchCloseFile(const uint64_t fileDescriptor) noexcept {
         static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
 }
 
+[[nodiscard]] int64_t DispatchTryReadDescriptor(
+    const uint64_t descriptor, const uint64_t userAddress,
+    const uint64_t capacityBytes) noexcept {
+    if (capacityBytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (capacityBytes >
+        os::abi::
+            OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES) {
+        return os::abi::
+            OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_TRANSFER_TOO_LARGE;
+    }
+    if (ValidateUserWritableMemory(userAddress, capacityBytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint8_t buffer
+        [os::abi::
+             OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES]{};
+    uint64_t readBytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    FileSystemStatus fileSystemStatus = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status = TryReadCurrentProcessDescriptor(
+        descriptor, buffer, capacityBytes, readBytes, fileSystemStatus);
+    if (status == ProcessIoStatus::Succeeded &&
+        readBytes != OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES &&
+        CopyToUser(userAddress, readBytes, buffer, capacityBytes) !=
+            UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return MapProcessIoStatus(status, readBytes, fileSystemStatus);
+}
+
+[[nodiscard]] int64_t DispatchTryWriteDescriptor(
+    const uint64_t descriptor, const uint64_t userAddress,
+    const uint64_t lengthBytes) noexcept {
+    if (lengthBytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (lengthBytes >
+        os::abi::
+            OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES) {
+        return os::abi::
+            OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_TRANSFER_TOO_LARGE;
+    }
+    uint8_t buffer
+        [os::abi::
+             OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES]{};
+    if (CopyFromUser(
+            userAddress, lengthBytes, buffer,
+            os::abi::
+                OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint64_t writtenBytes =
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    FileSystemStatus fileSystemStatus = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status = TryWriteCurrentProcessDescriptor(
+        descriptor, buffer, lengthBytes, writtenBytes, fileSystemStatus);
+    return MapProcessIoStatus(status, writtenBytes, fileSystemStatus);
+}
+
+[[nodiscard]] ExceptionFrame *DispatchWaitDescriptor(
+    ExceptionFrame &frame, const uint64_t descriptor,
+    const bool waitForRead) noexcept {
+    bool canProgress = false;
+    const ProcessIoStatus ioStatus =
+        waitForRead
+            ? CurrentProcessDescriptorReadCanProgress(descriptor,
+                                                      canProgress)
+            : CurrentProcessDescriptorWriteCanProgress(descriptor,
+                                                       canProgress);
+    if (ioStatus != ProcessIoStatus::Succeeded) {
+        frame.registerRax = static_cast<uint64_t>(MapProcessIoStatus(
+            ioStatus, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+            FileSystemStatus::Succeeded));
+        return &frame;
+    }
+    frame.registerRax = static_cast<uint64_t>(
+        OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT);
+    if (canProgress) {
+        return &frame;
+    }
+    ExceptionFrame *resumeFrame = &frame;
+    const ProcessRuntimeStatus blockStatus = BlockCurrentProcess(
+        frame,
+        waitForRead ? ProcessWaitReason::DescriptorReadable
+                    : ProcessWaitReason::DescriptorWritable,
+        resumeFrame);
+    if (blockStatus != ProcessRuntimeStatus::Succeeded) {
+        frame.registerRax = static_cast<uint64_t>(
+            blockStatus == ProcessRuntimeStatus::NoReadyProcess
+                ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_NO_READY_PROCESS
+                : os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    return resumeFrame;
+}
+
+[[nodiscard]] int64_t DispatchCloseDescriptor(
+    const uint64_t descriptor) noexcept {
+    FileSystemStatus fileSystemStatus = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status =
+        CloseCurrentProcessDescriptor(descriptor, fileSystemStatus);
+    return MapProcessIoStatus(
+        status,
+        static_cast<uint64_t>(
+            OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT),
+        fileSystemStatus);
+}
+
+[[nodiscard]] int64_t DispatchOpenDirectory(
+    const uint64_t userPathAddress,
+    const uint64_t pathLengthBytes) noexcept {
+    if (pathLengthBytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
+        pathLengthBytes >
+            os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    if (CopyFromUser(
+            userPathAddress, pathLengthBytes, path,
+            os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint64_t descriptor = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    return MapFileSystemStatus(
+        OpenCurrentProcessDirectory(path, pathLengthBytes, descriptor),
+        descriptor);
+}
+
+[[nodiscard]] int64_t DispatchReadDirectory(
+    const uint64_t descriptor, const uint64_t userEntryAddress,
+    const uint64_t entrySizeBytes) noexcept {
+    if (entrySizeBytes != sizeof(os::abi::DirectoryEntry)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(userEntryAddress, entrySizeBytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    FileSystemDirectoryEntry fileSystemEntry{};
+    bool endOfDirectory = false;
+    const FileSystemStatus status = ReadCurrentProcessDirectory(
+        descriptor, fileSystemEntry, endOfDirectory);
+    if (status != FileSystemStatus::Succeeded) {
+        return MapFileSystemStatus(
+            status,
+            static_cast<uint64_t>(
+                OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESULT));
+    }
+    if (endOfDirectory) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    os::abi::DirectoryEntry entry{
+        .inodeNumber = fileSystemEntry.inodeNumber,
+        .type = fileSystemEntry.type == FileSystemNodeType::Directory
+                    ? os::abi::DirectoryEntryType::Directory
+                    : os::abi::DirectoryEntryType::RegularFile,
+        .nameLengthBytes = fileSystemEntry.nameLengthBytes,
+        .name = {},
+    };
+    for (uint64_t byteIndex = OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX;
+         byteIndex < fileSystemEntry.nameLengthBytes; ++byteIndex) {
+        entry.name[byteIndex] = fileSystemEntry.name[byteIndex];
+    }
+    if (CopyToUser(userEntryAddress, sizeof(entry),
+                   reinterpret_cast<const uint8_t *>(&entry),
+                   entrySizeBytes) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESULT;
+}
+
 }
 
 extern "C" ExceptionFrame *osKernelDispatchSystemCall(ExceptionFrame *frame) noexcept {
@@ -436,6 +645,58 @@ extern "C" ExceptionFrame *osKernelDispatchSystemCall(ExceptionFrame *frame) noe
     }
     if (systemCallNumber == static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem)) {
         frame->registerRax = static_cast<uint64_t>(DispatchSyncFileSystem());
+        return frame;
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::TryReadDescriptor)) {
+        frame->registerRax = static_cast<uint64_t>(
+            DispatchTryReadDescriptor(frame->registerRdi,
+                                      frame->registerRsi,
+                                      frame->registerRdx));
+        return frame;
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::TryWriteDescriptor)) {
+        frame->registerRax = static_cast<uint64_t>(
+            DispatchTryWriteDescriptor(frame->registerRdi,
+                                       frame->registerRsi,
+                                       frame->registerRdx));
+        return frame;
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::WaitDescriptorReadable)) {
+        return DispatchWaitDescriptor(*frame, frame->registerRdi, true);
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::WaitDescriptorWritable)) {
+        return DispatchWaitDescriptor(*frame, frame->registerRdi, false);
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::CloseDescriptor)) {
+        frame->registerRax = static_cast<uint64_t>(
+            DispatchCloseDescriptor(frame->registerRdi));
+        return frame;
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::OpenDirectory)) {
+        frame->registerRax = static_cast<uint64_t>(
+            DispatchOpenDirectory(frame->registerRdi,
+                                  frame->registerRsi));
+        return frame;
+    }
+    if (systemCallNumber ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::ReadDirectory)) {
+        frame->registerRax = static_cast<uint64_t>(
+            DispatchReadDirectory(frame->registerRdi,
+                                  frame->registerRsi,
+                                  frame->registerRdx));
         return frame;
     }
     frame->registerRax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

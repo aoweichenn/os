@@ -9,6 +9,7 @@ from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
     createQemuFirmwareCommand,
     normalizeCapturedOutput,
+    qemuKeyNameForCharacter,
     runQemuWithTimedSerial,
     validateImageSize,
     validateSerialProtocol,
@@ -69,6 +70,17 @@ class QemuRunnerToolTests(unittest.TestCase):
             f"unix:{qmpSocketPath},server=on,wait=off",
             command,
         )
+
+    def testMapsShellCharactersToQemuKeys(self) -> None:
+        self.assertEqual(qemuKeyNameForCharacter("a"), "a")
+        self.assertEqual(qemuKeyNameForCharacter("7"), "7")
+        self.assertEqual(qemuKeyNameForCharacter(" "), "spc")
+        self.assertEqual(qemuKeyNameForCharacter("/"), "slash")
+        self.assertEqual(qemuKeyNameForCharacter("\n"), "ret")
+
+    def testRejectsUnsupportedQemuKeyCharacter(self) -> None:
+        with self.assertRaises(OsToolError):
+            qemuKeyNameForCharacter("中")
 
     def testAcceptsRequiredAndAbsentForbiddenMarkers(self) -> None:
         validateSerialProtocol(

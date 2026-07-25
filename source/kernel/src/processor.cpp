@@ -99,6 +99,11 @@ void EnableInterrupts() noexcept { asm volatile("sti" : : : "memory"); }
 
 void WaitForInterrupt() noexcept { asm volatile("hlt" : : : "memory"); }
 
+void EnableInterruptsWaitAndDisable() noexcept {
+    // 三条指令必须相邻：STI 的中断影子覆盖 HLT，唤醒返回后立即恢复内核临界区。
+    asm volatile("sti; hlt; cli" : : : "memory");
+}
+
 uint64_t ReadPageTableRoot() noexcept {
     uint64_t pageTableRoot = 0ULL;
     asm volatile("mov %0, cr3" : "=r"(pageTableRoot));

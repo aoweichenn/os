@@ -6,20 +6,22 @@ namespace os::user {
 
 namespace {
 
-constexpr uint64_t OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT = 0ULL;
 constexpr uint64_t OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES = 0ULL;
 constexpr int64_t OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_RESULT = 0LL;
 constexpr int64_t OS_USER_SYSTEM_CALL_FIRST_ERROR_RESULT = -1LL;
 
 extern "C" [[nodiscard]] int64_t
 osUserInvokeSystemCall(uint64_t systemCallNumber, uint64_t argument0,
-                       uint64_t argument1, uint64_t argument2) noexcept;
+                       uint64_t argument1, uint64_t argument2,
+                       uint64_t argument3) noexcept;
 
 }
 
 int64_t InvokeSystemCall(const uint64_t systemCallNumber, const uint64_t argument0,
-                         const uint64_t argument1, const uint64_t argument2) noexcept {
-    return osUserInvokeSystemCall(systemCallNumber, argument0, argument1, argument2);
+                         const uint64_t argument1, const uint64_t argument2,
+                         const uint64_t argument3) noexcept {
+    return osUserInvokeSystemCall(systemCallNumber, argument0, argument1,
+                                  argument2, argument3);
 }
 
 int64_t WriteLog(const char *message, const uint64_t messageSizeBytes) noexcept {
@@ -149,6 +151,108 @@ int64_t SyncFileSystem() noexcept {
         static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem),
         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t TryReadDescriptor(const uint64_t descriptor,
+                          uint8_t *const destination,
+                          const uint64_t capacityBytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::TryReadDescriptor),
+        descriptor, reinterpret_cast<uint64_t>(destination), capacityBytes);
+}
+
+int64_t TryWriteDescriptor(const uint64_t descriptor,
+                           const uint8_t *const source,
+                           const uint64_t lengthBytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::TryWriteDescriptor),
+        descriptor, reinterpret_cast<uint64_t>(source), lengthBytes);
+}
+
+int64_t ReadDescriptor(const uint64_t descriptor,
+                       uint8_t *const destination,
+                       const uint64_t capacityBytes) noexcept {
+    if (capacityBytes == OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_RESULT;
+    }
+    while (true) {
+        const int64_t readResult =
+            TryReadDescriptor(descriptor, destination, capacityBytes);
+        if (readResult != os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+            return readResult;
+        }
+        const int64_t waitResult = InvokeSystemCall(
+            static_cast<uint64_t>(
+                os::abi::SystemCallNumber::WaitDescriptorReadable),
+            descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+        if (waitResult <= OS_USER_SYSTEM_CALL_FIRST_ERROR_RESULT) {
+            return waitResult;
+        }
+    }
+}
+
+int64_t WriteDescriptor(const uint64_t descriptor,
+                        const uint8_t *const source,
+                        const uint64_t lengthBytes) noexcept {
+    uint64_t writtenBytes = OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    while (writtenBytes < lengthBytes) {
+        const uint64_t remainingBytes = lengthBytes - writtenBytes;
+        const uint64_t transferBytes =
+            remainingBytes <
+                    os::abi::
+                        OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES
+                ? remainingBytes
+                : os::abi::
+                      OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES;
+        const int64_t writeResult =
+            TryWriteDescriptor(descriptor, source + writtenBytes,
+                               transferBytes);
+        if (writeResult > OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_RESULT) {
+            writtenBytes += static_cast<uint64_t>(writeResult);
+            continue;
+        }
+        if (writeResult != os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+            return writeResult;
+        }
+        const int64_t waitResult = InvokeSystemCall(
+            static_cast<uint64_t>(
+                os::abi::SystemCallNumber::WaitDescriptorWritable),
+            descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+        if (waitResult <= OS_USER_SYSTEM_CALL_FIRST_ERROR_RESULT) {
+            return waitResult;
+        }
+    }
+    return static_cast<int64_t>(writtenBytes);
+}
+
+int64_t CloseDescriptor(const uint64_t descriptor) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::CloseDescriptor),
+        descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t OpenDirectory(const char *const path,
+                      const uint64_t pathLengthBytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::OpenDirectory),
+        reinterpret_cast<uint64_t>(path), pathLengthBytes,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t ReadDirectory(const uint64_t descriptor,
+                      os::abi::DirectoryEntry &entry) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::ReadDirectory),
+        descriptor, reinterpret_cast<uint64_t>(&entry),
+        sizeof(os::abi::DirectoryEntry));
 }
 
 [[noreturn]] void ExitProcess(const int64_t exitCode) noexcept {

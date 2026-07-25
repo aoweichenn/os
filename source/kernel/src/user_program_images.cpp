@@ -18,6 +18,8 @@ extern "C" const uint8_t osKernelUserIpcProducerElfStart[];
 extern "C" const uint8_t osKernelUserIpcProducerElfEnd[];
 extern "C" const uint8_t osKernelUserIpcConsumerElfStart[];
 extern "C" const uint8_t osKernelUserIpcConsumerElfEnd[];
+extern "C" const uint8_t osKernelUserShellElfStart[];
+extern "C" const uint8_t osKernelUserShellElfEnd[];
 
 [[nodiscard]] uint64_t CalculateImageSize(const uint8_t *start, const uint8_t *end) noexcept {
     return static_cast<uint64_t>(end - start);
@@ -26,6 +28,13 @@ extern "C" const uint8_t osKernelUserIpcConsumerElfEnd[];
 }
 
 UserProgramImage SelectUserProgramImage(const UserProgramSelection selection) noexcept {
+    if (selection == UserProgramSelection::Shell) {
+        return UserProgramImage{
+            .image = osKernelUserShellElfStart,
+            .imageSizeBytes = CalculateImageSize(
+                osKernelUserShellElfStart, osKernelUserShellElfEnd),
+        };
+    }
     if (selection == UserProgramSelection::InvalidOpcode) {
         return UserProgramImage{
             .image = osKernelUserInvalidOpcodeElfStart,

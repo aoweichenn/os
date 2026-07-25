@@ -46,8 +46,13 @@ enum class KeyboardKey : uint64_t {
     Escape,
     Backspace,
     Enter,
+    Tab,
     Space,
     A,
+    Printable,
+    LeftShift,
+    RightShift,
+    CapsLock,
     ArrowUp,
     ArrowDown,
     ArrowLeft,
@@ -57,6 +62,7 @@ enum class KeyboardKey : uint64_t {
 struct KeyboardEvent final {
     KeyboardKey key;
     uint8_t scanCode;
+    uint8_t character;
     bool pressed;
     bool extended;
 };
@@ -75,8 +81,12 @@ class ScanCodeSet1Decoder final {
 
   private:
     [[nodiscard]] KeyboardKey KeyForScanCode(uint8_t makeCode, bool extended) const noexcept;
+    [[nodiscard]] uint8_t CharacterForScanCode(uint8_t makeCode) const noexcept;
 
     bool extendedPrefixPending_{false};
+    bool leftShiftPressed_{false};
+    bool rightShiftPressed_{false};
+    bool capsLockEnabled_{false};
 };
 
 enum class AtaReadRequestStatus : uint64_t {

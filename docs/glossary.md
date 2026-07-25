@@ -75,6 +75,11 @@
 | i8042 | PC 键盘/鼠标控制器，通过 `0x60/0x64` 连接 PS/2 设备与 IRQ1/IRQ12 |
 | scan code | 键盘报告物理键按下/释放的编码序列，不等同于字符或 Unicode |
 | QMP | QEMU Machine Protocol；测试用它产生可重复虚拟键盘输入和管理模拟器 |
+| console input FIFO | IRQ1 解码字符进入的 256 字节先进先出缓冲；把异步硬件生产与进程读取解耦 |
+| file descriptor | 进程局部的非负整数句柄；描述符表把它解析为控制台、文件、目录或管道对象及访问方向 |
+| standard input/output/error | 固定为 fd 0/1/2 的标准输入、标准输出和标准错误约定 |
+| Shell | 从标准输入读取并解析命令、再通过系统调用组合内核服务的 Ring 3 用户程序 |
+| idle state | 没有 Ready 进程但仍存在可唤醒 Blocked 进程时，内核以相邻的 `sti; hlt; cli` 开放中断、等待并恢复临界区的状态 |
 | exception vector | CPU 为异常选择的 0..31 编号，例如 3=#BP、6=#UD、14=#PF |
 | exception error code | 部分异常由 CPU 压栈的原因字段；无错误码异常由项目桩规范化为零 |
 | `IRETQ` | 64 位中断返回指令，恢复 RIP、CS、RFLAGS 以及可选旧 RSP/SS |

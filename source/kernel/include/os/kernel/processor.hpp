@@ -11,6 +11,7 @@ extern const uint64_t OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS;
 void RestoreInterrupts(bool interruptsWereEnabled) noexcept;
 void EnableInterrupts() noexcept;
 void WaitForInterrupt() noexcept;
+void EnableInterruptsWaitAndDisable() noexcept;
 [[nodiscard]] uint64_t ReadPageTableRoot() noexcept;
 [[nodiscard]] uint64_t ReadPageFaultLinearAddress() noexcept;
 [[nodiscard]] bool ProcessorSupportsNoExecute() noexcept;

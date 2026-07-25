@@ -16,8 +16,43 @@ constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_MAKE_CODE_MASK = 0x7FU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ESCAPE_MAKE_CODE = 0x01U;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_BACKSPACE_MAKE_CODE = 0x0EU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ENTER_MAKE_CODE = 0x1CU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_TAB_MAKE_CODE = 0x0FU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_A_MAKE_CODE = 0x1EU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_SPACE_MAKE_CODE = 0x39U;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_LEFT_SHIFT_MAKE_CODE = 0x2AU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_RIGHT_SHIFT_MAKE_CODE = 0x36U;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_CAPS_LOCK_MAKE_CODE = 0x3AU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_BACKTICK_MAKE_CODE = 0x29U;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_BACKSLASH_MAKE_CODE = 0x2BU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW_FIRST_MAKE_CODE = 0x02U;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_FIRST_MAKE_CODE = 0x10U;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_A_ROW_FIRST_MAKE_CODE = 0x1EU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_FIRST_MAKE_CODE = 0x2CU;
+constexpr uint64_t OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES = 1ULL;
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW[] = "1234567890-=";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_DIGIT_ROW[] = "!@#$%^&*()_+";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_Q_ROW[] = "qwertyuiop[]";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_Q_ROW[] = "QWERTYUIOP{}";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_A_ROW[] = "asdfghjkl;'";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_A_ROW[] = "ASDFGHJKL:\"";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_Z_ROW[] = "zxcvbnm,./";
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_Z_ROW[] = "ZXCVBNM<>?";
+constexpr uint64_t OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_LETTER_COUNT = 10ULL;
+constexpr uint64_t OS_KERNEL_DEVICE_KEYBOARD_A_ROW_LETTER_COUNT = 9ULL;
+constexpr uint64_t OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_LETTER_COUNT = 7ULL;
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_BACKTICK_CHARACTER = '`';
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_BACKTICK_CHARACTER = '~';
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_BACKSLASH_CHARACTER = '\\';
+constexpr char OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_BACKSLASH_CHARACTER = '|';
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_NO_CHARACTER = 0U;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ENTER_CHARACTER =
+    static_cast<uint8_t>('\n');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_BACKSPACE_CHARACTER =
+    static_cast<uint8_t>('\b');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_TAB_CHARACTER =
+    static_cast<uint8_t>('\t');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_SPACE_CHARACTER =
+    static_cast<uint8_t>(' ');
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ARROW_UP_MAKE_CODE = 0x48U;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ARROW_LEFT_MAKE_CODE = 0x4BU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ARROW_RIGHT_MAKE_CODE = 0x4DU;
@@ -116,10 +151,36 @@ KeyboardDecodeStatus ScanCodeSet1Decoder::Decode(const uint8_t scanCode,
         return KeyboardDecodeStatus::UnsupportedScanCode;
     }
 
+    const bool pressed = !released;
+    if (key == KeyboardKey::LeftShift) {
+        this->leftShiftPressed_ = pressed;
+    }
+    if (key == KeyboardKey::RightShift) {
+        this->rightShiftPressed_ = pressed;
+    }
+    if (key == KeyboardKey::CapsLock && pressed) {
+        this->capsLockEnabled_ = !this->capsLockEnabled_;
+    }
+    uint8_t character = OS_KERNEL_DEVICE_KEYBOARD_NO_CHARACTER;
+    if (pressed) {
+        if (key == KeyboardKey::Enter) {
+            character = OS_KERNEL_DEVICE_KEYBOARD_ENTER_CHARACTER;
+        } else if (key == KeyboardKey::Backspace) {
+            character = OS_KERNEL_DEVICE_KEYBOARD_BACKSPACE_CHARACTER;
+        } else if (key == KeyboardKey::Tab) {
+            character = OS_KERNEL_DEVICE_KEYBOARD_TAB_CHARACTER;
+        } else if (key == KeyboardKey::Space) {
+            character = OS_KERNEL_DEVICE_KEYBOARD_SPACE_CHARACTER;
+        } else if (key == KeyboardKey::A ||
+                   key == KeyboardKey::Printable) {
+            character = this->CharacterForScanCode(makeCode);
+        }
+    }
     event = KeyboardEvent{
         .key = key,
         .scanCode = scanCode,
-        .pressed = !released,
+        .character = character,
+        .pressed = pressed,
         .extended = extended,
     };
     return KeyboardDecodeStatus::EventReady;
@@ -149,13 +210,118 @@ KeyboardKey ScanCodeSet1Decoder::KeyForScanCode(const uint8_t makeCode,
         return KeyboardKey::Backspace;
     case OS_KERNEL_DEVICE_KEYBOARD_ENTER_MAKE_CODE:
         return KeyboardKey::Enter;
+    case OS_KERNEL_DEVICE_KEYBOARD_TAB_MAKE_CODE:
+        return KeyboardKey::Tab;
     case OS_KERNEL_DEVICE_KEYBOARD_SPACE_MAKE_CODE:
         return KeyboardKey::Space;
     case OS_KERNEL_DEVICE_KEYBOARD_A_MAKE_CODE:
         return KeyboardKey::A;
+    case OS_KERNEL_DEVICE_KEYBOARD_LEFT_SHIFT_MAKE_CODE:
+        return KeyboardKey::LeftShift;
+    case OS_KERNEL_DEVICE_KEYBOARD_RIGHT_SHIFT_MAKE_CODE:
+        return KeyboardKey::RightShift;
+    case OS_KERNEL_DEVICE_KEYBOARD_CAPS_LOCK_MAKE_CODE:
+        return KeyboardKey::CapsLock;
     default:
-        return KeyboardKey::Unknown;
+        break;
     }
+    if ((makeCode >= OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW_FIRST_MAKE_CODE &&
+         makeCode < OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW_FIRST_MAKE_CODE +
+                        sizeof(OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW) -
+                            OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) ||
+        (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_FIRST_MAKE_CODE &&
+         makeCode < OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_FIRST_MAKE_CODE +
+                        sizeof(OS_KERNEL_DEVICE_KEYBOARD_Q_ROW) -
+                            OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) ||
+        (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_A_ROW_FIRST_MAKE_CODE &&
+         makeCode < OS_KERNEL_DEVICE_KEYBOARD_A_ROW_FIRST_MAKE_CODE +
+                        sizeof(OS_KERNEL_DEVICE_KEYBOARD_A_ROW) -
+                            OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) ||
+        (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_FIRST_MAKE_CODE &&
+         makeCode < OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_FIRST_MAKE_CODE +
+                        sizeof(OS_KERNEL_DEVICE_KEYBOARD_Z_ROW) -
+                            OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) ||
+        makeCode == OS_KERNEL_DEVICE_KEYBOARD_BACKTICK_MAKE_CODE ||
+        makeCode == OS_KERNEL_DEVICE_KEYBOARD_BACKSLASH_MAKE_CODE) {
+        return KeyboardKey::Printable;
+    }
+    return KeyboardKey::Unknown;
+}
+
+uint8_t ScanCodeSet1Decoder::CharacterForScanCode(
+    const uint8_t makeCode) const noexcept {
+    const bool shiftPressed =
+        this->leftShiftPressed_ || this->rightShiftPressed_;
+    if (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW_FIRST_MAKE_CODE &&
+        makeCode < OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW_FIRST_MAKE_CODE +
+                       sizeof(OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW) -
+                           OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) {
+        const uint64_t characterIndex =
+            makeCode - OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW_FIRST_MAKE_CODE;
+        return static_cast<uint8_t>(
+            shiftPressed
+                ? OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_DIGIT_ROW[characterIndex]
+                : OS_KERNEL_DEVICE_KEYBOARD_DIGIT_ROW[characterIndex]);
+    }
+    const bool uppercaseLetter = shiftPressed != this->capsLockEnabled_;
+    if (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_FIRST_MAKE_CODE &&
+        makeCode < OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_FIRST_MAKE_CODE +
+                       sizeof(OS_KERNEL_DEVICE_KEYBOARD_Q_ROW) -
+                           OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) {
+        const uint64_t characterIndex =
+            makeCode - OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_FIRST_MAKE_CODE;
+        const bool useShiftedCharacter =
+            characterIndex < OS_KERNEL_DEVICE_KEYBOARD_Q_ROW_LETTER_COUNT
+                ? uppercaseLetter
+                : shiftPressed;
+        return static_cast<uint8_t>(
+            useShiftedCharacter
+                ? OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_Q_ROW[characterIndex]
+                : OS_KERNEL_DEVICE_KEYBOARD_Q_ROW[characterIndex]);
+    }
+    if (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_A_ROW_FIRST_MAKE_CODE &&
+        makeCode < OS_KERNEL_DEVICE_KEYBOARD_A_ROW_FIRST_MAKE_CODE +
+                       sizeof(OS_KERNEL_DEVICE_KEYBOARD_A_ROW) -
+                           OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) {
+        const uint64_t characterIndex =
+            makeCode - OS_KERNEL_DEVICE_KEYBOARD_A_ROW_FIRST_MAKE_CODE;
+        const bool useShiftedCharacter =
+            characterIndex < OS_KERNEL_DEVICE_KEYBOARD_A_ROW_LETTER_COUNT
+                ? uppercaseLetter
+                : shiftPressed;
+        return static_cast<uint8_t>(
+            useShiftedCharacter
+                ? OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_A_ROW[characterIndex]
+                : OS_KERNEL_DEVICE_KEYBOARD_A_ROW[characterIndex]);
+    }
+    if (makeCode >= OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_FIRST_MAKE_CODE &&
+        makeCode < OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_FIRST_MAKE_CODE +
+                       sizeof(OS_KERNEL_DEVICE_KEYBOARD_Z_ROW) -
+                           OS_KERNEL_DEVICE_KEYBOARD_ROW_TERMINATOR_SIZE_BYTES) {
+        const uint64_t characterIndex =
+            makeCode - OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_FIRST_MAKE_CODE;
+        const bool useShiftedCharacter =
+            characterIndex < OS_KERNEL_DEVICE_KEYBOARD_Z_ROW_LETTER_COUNT
+                ? uppercaseLetter
+                : shiftPressed;
+        return static_cast<uint8_t>(
+            useShiftedCharacter
+                ? OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_Z_ROW[characterIndex]
+                : OS_KERNEL_DEVICE_KEYBOARD_Z_ROW[characterIndex]);
+    }
+    if (makeCode == OS_KERNEL_DEVICE_KEYBOARD_BACKTICK_MAKE_CODE) {
+        return static_cast<uint8_t>(
+            shiftPressed
+                ? OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_BACKTICK_CHARACTER
+                : OS_KERNEL_DEVICE_KEYBOARD_BACKTICK_CHARACTER);
+    }
+    if (makeCode == OS_KERNEL_DEVICE_KEYBOARD_BACKSLASH_MAKE_CODE) {
+        return static_cast<uint8_t>(
+            shiftPressed
+                ? OS_KERNEL_DEVICE_KEYBOARD_SHIFTED_BACKSLASH_CHARACTER
+                : OS_KERNEL_DEVICE_KEYBOARD_BACKSLASH_CHARACTER);
+    }
+    return OS_KERNEL_DEVICE_KEYBOARD_NO_CHARACTER;
 }
 
 AtaReadRequestStatus ValidateAtaReadRequest(const uint64_t logicalBlockAddress,

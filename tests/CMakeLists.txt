@@ -327,6 +327,80 @@ os_add_kernel_ipc_test(
     "randomized"
 )
 
+function(
+    os_add_kernel_user_environment_test
+    OS_TEST_TARGET
+    OS_TEST_SOURCE
+    OS_TEST_LABEL
+)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_user_environment_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_user_environment_test(
+    os_kernel_console_input_unit_tests
+    unit/kernel/console_input_test.cpp
+    "unit"
+)
+os_add_kernel_user_environment_test(
+    os_kernel_io_descriptor_unit_tests
+    unit/kernel/io_descriptor_test.cpp
+    "unit"
+)
+
+function(
+    os_add_user_shell_test
+    OS_TEST_TARGET
+    OS_TEST_SOURCE
+    OS_TEST_LABEL
+)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_user_shell_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_user_shell_test(
+    os_user_shell_parser_unit_tests
+    unit/user/shell_parser_test.cpp
+    "unit"
+)
+os_add_user_shell_test(
+    os_user_shell_parser_randomized_tests
+    randomized/user/shell_parser_randomized_test.cpp
+    "randomized"
+)
+
 function(os_add_kernel_file_system_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
     target_link_libraries(
@@ -443,6 +517,10 @@ os_add_user_elf_audit_test(
 os_add_user_elf_audit_test(
     os_user_ipc_consumer_elf_layout
     "${OS_USER_IPC_CONSUMER_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_shell_elf_layout
+    "${OS_USER_SHELL_ELF_PATH}"
 )
 
 add_test(

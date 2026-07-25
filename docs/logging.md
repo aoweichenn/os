@@ -44,9 +44,10 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 - 若未来启用 `TRACE`，必须有编译期或启动期开关，并设置最大事件数；达到预算后只打印一次 `TRACE_LIMIT_REACHED`。
 - 日志文本不得依赖本地化、时间戳或不稳定地址，保证测试和文档可复现。
 
-## v0.11 验收
+## v0.11 验收（历史基线）
 
-正常启动日志应按阶段边界递进：
+以下日志记录 v0.11 完成时的正常启动边界，保留用于历史回归。v1.0 的当前
+Shell 与控制台协议见文末。
 
 ```text
 [OS][FIRMWARE] RESET
@@ -254,3 +255,52 @@ IPC 同样遵循“热路径零日志、冷路径可核对”的规则：
 持久化 QEMU 用例中，每行仍带 `[QEMU][T+......ms]`，因此能直接比较第一次
 格式化、第二次挂载恢复与第三次损坏拒绝的宿主到达时间；这个前缀不改变来宾
 日志的稳定文本，也不冒充磁盘中的文件时间戳。
+
+## v1.0 当前交互与控制台日志协议
+
+v1.0 保留上述冷路径原则，但把“首个 A 键”扩展为完整 Shell 会话。稳定协议
+只记录命令的语义边界，不记录每个扫描码、字符、系统调用重试或提示符：
+
+```text
+[OS][USER][SHELL] READY
+[OS][USER][SHELL] COMMAND=HELP
+[OS][USER][SHELL] COMMAND=ECHO
+[OS][USER][SHELL] COMMAND=PWD
+[OS][USER][SHELL] COMMAND=MKDIR
+[OS][USER][SHELL] COMMAND=WRITE
+[OS][USER][SHELL] COMMAND=CAT
+[OS][USER][SHELL] COMMAND=LS
+[OS][USER][SHELL] COMMAND=SYNC
+[OS][USER][SHELL] UNKNOWN_COMMAND_REJECTED
+[OS][USER][SHELL] COMMAND=EXIT
+[OS][USER][SHELL] EXIT
+```
+
+用户输入和进程调度是异步的，因此 Shell 命令标记可以与生产者、消费者和
+worker 文本交错；Shell 自身的十条命令顺序、每条精确一次才是稳定契约。
+帮助正文、提示符、回显和 `cat` 内容便于人工使用，但测试不以整屏文本为唯一
+成功条件，避免显示层空格变化破坏语义协议。
+
+进程全部结束后，内核一次性输出控制台汇总：
+
+```text
+[OS][KERNEL] CONSOLE_SUBMITTED_BYTES=0x000000000000006D
+[OS][KERNEL] CONSOLE_READ_BYTES=0x000000000000006D
+[OS][KERNEL] CONSOLE_DROPPED_BYTES=0x0000000000000000
+[OS][KERNEL] CONSOLE_BUFFERED_BYTES=0x0000000000000000
+```
+
+其中 `0x6D` 是当前自动化脚本的 109 个输入字节，不是通用容量常量。验收要求
+submitted=read、dropped=0、buffered=0；若以后更改脚本，应同时更新期望值，
+而不是在内核里伪造固定统计。每个 PCB 只在终止汇总中记录控制台读写字节，
+Shell 读取全部输入，后台三个程序均不读取控制台。
+
+没有 Ready 进程时，内核不会周期性打印 `IDLE`。它在永久地址空间和默认
+RSP0 上执行同一汇编块中的 `sti; hlt; cli`；IRQ0 可能只推进时间，IRQ1 提交有效字符后才按原因
+唤醒等待 fd 0 的 Shell。禁止逐 tick、逐按键、逐 FIFO 操作打印，是为了不让
+115200 波特串口反向改变中断时序，也让“日志丰富”保持为可解释的状态摘要。
+
+当前正常镜像的进程编号固定为 PID1 Shell、PID2 生产者、PID3 消费者、PID4
+worker。创建、终止、描述符关闭、管道字节、文件系统一致性与控制台统计都在
+冷路径汇总；任何 `PANIC`、`EXCEPTION`、`USER_EXECUTION_FAILED`、
+`DEVICE_INITIALIZATION_FAILED` 或控制台丢弃都使成功路径失败。

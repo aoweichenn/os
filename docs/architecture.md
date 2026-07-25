@@ -261,7 +261,7 @@ PIC 全屏蔽
        ↓ 全部成功
 PIC mask = 0xFFFC（仅 IRQ0、IRQ1）
        ↓ 软件 INT 0x27 验证虚假 IRQ7
-STI → HLT → IRQ0/IRQ1
+STI → HLT → IRQ0/IRQ1 → CLI
 ```
 
 IRQ0 只递增 64 位 tick，按 PIT 实际除数换算单调毫秒。IRQ1 从数据端口读取
@@ -456,6 +456,51 @@ PID1 只持写端，PID2 只持读端；PID3/PID4 继续承担抢占和地址空
 [ADR 0014](adr/0014-transactional-educational-file-system.md)，详细实现见
 [File System 模块](modules/file-system.md)。
 
+## v1.0 统一描述符、控制台与用户 Shell
+
+v1.0 把进程资源入口收束为八槽描述符表：
+
+```text
+PCB descriptor[0..7]
+  ├─ 0 ConsoleInput  ← 256 B FIFO ← IRQ1 / Set 1
+  ├─ 1 ConsoleOutput → COM1
+  ├─ 2 ConsoleError  → COM1
+  └─ 3..7
+      ├─ RegularFile / Directory → FileSystemHandle[fd]
+      └─ PipeReader / PipeWriter → bootstrap Pipe
+```
+
+用户通用 I/O 先 Try；WouldBlock 后用同一 fd 执行 Wait，唤醒后重新 Try。
+内核先验证完整用户区间，再用最多 256 字节的内核缓冲访问对象。目录不伪装成
+字节流，而由 OpenDirectory/ReadDirectory 返回固定 64 字节类型化目录项。
+关闭统一经过描述符表，进程退出和异常不再分别遗漏文件或管道资源。
+
+交互输入链为：
+
+```text
+QEMU sendkey
+  → i8042 scan code
+  → IRQ1 / IDT / NASM 公共入口
+  → ScanCodeSet1Decoder
+  → ConsoleInput::Submit
+  → Wake DescriptorReadable
+  → Shell 保存帧从 Blocked 变 Ready
+  → CR3 + TSS.RSP0 + IRETQ
+  → fd 0 返回字符
+```
+
+如果 Shell 阻塞时没有其他 Ready，调度器不会把它误判为全部完成。运行时激活
+永久内核页表和默认特权栈，回到执行循环完成相邻的 `sti; hlt; cli`；任意可屏蔽中断都会
+让 CPU 返回，只有条件变化产生 Ready 后才重新进入用户态。该路径使键盘等待
+不忙等，也不需要创建一个伪造的用户 idle 进程。
+
+Shell 自身是独立 Ring 3 ELF，解析和命令实现全部位于 `source/user`。它只
+使用固定容量数组和公开 ABI，提供 help、echo、pwd、ls、mkdir、write、
+cat、sync 与 exit。正常启动还保留一个生产者、消费者和 worker，从而让
+统一描述符变更同时回归管道、持久文件和抢占地址空间。详细决策见
+[ADR 0015](adr/0015-unified-descriptors-interactive-shell-and-idle.md)，代码
+边界见[用户环境模块](modules/user-environment.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -514,6 +559,7 @@ source/kernel/
 ├── include/os/kernel/
 │   ├── boot_info.hpp
 │   ├── ata_pio.hpp
+│   ├── console_input.hpp
 │   ├── device_model.hpp
 │   ├── descriptor_layout.hpp
 │   ├── descriptor_tables.hpp
@@ -521,6 +567,7 @@ source/kernel/
 │   ├── exception_frame.hpp
 │   ├── exceptions.hpp
 │   ├── interrupt_runtime.hpp
+│   ├── io_descriptor.hpp
 │   ├── kernel_heap.hpp
 │   ├── kernel_main.hpp
 │   ├── memory_manager.hpp
@@ -543,6 +590,7 @@ source/kernel/
 └── src/
     ├── architecture.asm
     ├── ata_pio.cpp
+    ├── console_input.cpp
     ├── boot_info.cpp
     ├── descriptor_layout.cpp
     ├── descriptor_tables.cpp
@@ -553,6 +601,7 @@ source/kernel/
     ├── kernel_heap.cpp
     ├── kernel_main.cpp
     ├── interrupt_runtime.cpp
+    ├── io_descriptor.cpp
     ├── legacy_pic.cpp
     ├── memory_manager.cpp
     ├── page_table.cpp
@@ -578,6 +627,9 @@ source/abi/
 source/user/
 ├── CMakeLists.txt
 ├── include/os/user/
+│   ├── freestanding_memory.hpp
+│   ├── shell.hpp
+│   ├── shell_parser.hpp
 │   └── system_call.hpp
 ├── linker/
 │   └── user.ld.in
@@ -587,8 +639,12 @@ source/user/
 │   ├── page_fault.cpp
 │   ├── scheduler_worker.cpp
 │   ├── ipc_producer.cpp
-│   └── ipc_consumer.cpp
+│   ├── ipc_consumer.cpp
+│   └── shell_entry.cpp
 └── src/
+    ├── freestanding_memory.cpp
+    ├── shell.cpp
+    ├── shell_parser.cpp
     ├── system_call.asm
     └── system_call.cpp
 ```

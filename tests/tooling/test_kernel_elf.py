@@ -26,6 +26,7 @@ from tools.os_tools.kernel_elf import (
     parseKernelLoadSegments,
     validateKernelArchitectureSymbols,
     validateKernelEntry,
+    validateKernelIdleWaitInstructionSequence,
     validateKernelRuntimeInitializationSections,
 )
 
@@ -61,6 +62,8 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
     "osKernelUserIpcProducerElfEnd",
     "osKernelUserIpcConsumerElfStart",
     "osKernelUserIpcConsumerElfEnd",
+    "osKernelUserShellElfStart",
+    "osKernelUserShellElfEnd",
     "osKernelImageStart",
     "osKernelImageEnd",
     "osKernelTextStart",
@@ -75,6 +78,21 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
         for vector in range(32, 48)
     ),
 }
+OS_TEST_KERNEL_ELF_VALID_IDLE_WAIT_DISASSEMBLY = """
+00000000001119e0 <os::kernel::EnableInterruptsWaitAndDisable()>:
+  1119e0:\t55\tpushq %rbp
+  1119e4:\tfb\tsti
+  1119e5:\tf4\thlt
+  1119e6:\tfa\tcli
+  1119e8:\tc3\tretq
+"""
+OS_TEST_KERNEL_ELF_INVALID_IDLE_WAIT_DISASSEMBLY = """
+00000000001119e0 <os::kernel::EnableInterruptsWaitAndDisable()>:
+  1119e0:\tfb\tsti
+  1119e1:\tc3\tretq
+  1119f0:\tf4\thlt
+  1119f1:\tfa\tcli
+"""
 
 
 def createValidKernelElf(
@@ -250,6 +268,17 @@ class KernelElfToolTests(unittest.TestCase):
         with self.assertRaises(OsToolError):
             validateKernelRuntimeInitializationSections(
                 "[ 5] .init_array INIT_ARRAY\n"
+            )
+
+    def testAcceptsAdjacentIdleWaitInstructionSequence(self) -> None:
+        validateKernelIdleWaitInstructionSequence(
+            OS_TEST_KERNEL_ELF_VALID_IDLE_WAIT_DISASSEMBLY
+        )
+
+    def testRejectsSeparatedIdleWaitInstructionSequence(self) -> None:
+        with self.assertRaises(OsToolError):
+            validateKernelIdleWaitInstructionSequence(
+                OS_TEST_KERNEL_ELF_INVALID_IDLE_WAIT_DISASSEMBLY
             )
 
 

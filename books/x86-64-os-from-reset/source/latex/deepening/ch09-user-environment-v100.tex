@@ -1,0 +1,443 @@
+\section{v1.0 把内核服务组合成可交互的用户环境}
+
+此前各阶段已经拥有进程、管道、文件和键盘，但它们仍是由内核在启动时安排的
+验收程序。用户无法在机器运行以后选择动作，也没有一个统一名字表达“从键盘读”
+“向串口写”“从文件读”和“从管道读”。v1.0 的目标不是堆叠更多演示程序，
+而是建立一条完整的人机交互因果链：
+
+\begin{pdfdiagram}
+  \node[os hardware] (key) {QEMU 键盘\\PS/2 扫描码};
+  \node[os block,right=of key] (irq) {i8042 + IRQ1\\Set 1 解码};
+  \node[os state,right=of irq] (fifo) {控制台 FIFO\\256 字节};
+  \node[os block,below=of fifo] (fd) {PID1 fd 0\\通用 read/wait};
+  \node[os state,left=of fd] (parser) {Shell 解析器\\固定容量};
+  \node[os block,left=of parser] (services) {文件/目录/同步\\系统调用};
+  \draw[os arrow] (key) -- (irq);
+  \draw[os arrow] (irq) -- (fifo);
+  \draw[os arrow] (fifo) -- (fd);
+  \draw[os arrow] (fd) -- (parser);
+  \draw[os arrow] (parser) -- (services);
+\end{pdfdiagram}
+\diagramnote{宿主只产生虚拟按键；字符解码、排队、阻塞、唤醒、解析和命令执行全部发生在自研软件中。}
+
+\begin{contractbox}
+Shell 输出 \code{READY} 后，宿主逐字产生十条命令，共 109 字节。每个字节
+必须经过 i8042、IRQ1、键盘状态机、控制台 FIFO、PID1 的 fd 0 和 Ring 3
+解析器；最终提交数与读取数相等，丢弃数和残留数都为零。把命令预存在内核、
+直接修改来宾内存或调用宿主文件 API 都不满足本阶段定义。
+\end{contractbox}
+
+\section{从电传终端到标准描述符}
+
+早期大型机终端本质上是低速字符设备：操作员敲入字符，机器把结果打印在纸张
+或屏幕上。程序若直接记住某一种终端控制器的端口，就无法把输入改为磁盘文件，
+也无法把输出交给另一个程序。UNIX 延续并简化了“打开文件表”思想，让进程用
+小整数引用内核对象。约定中的 0、1、2 分别成为标准输入、标准输出和标准错误。
+
+小整数本身没有能力。安全边界来自内核在当前进程的描述符表中解析这个整数，
+得到对象类型、对象索引和允许方向。两个进程都可以有 fd 3，但它们不必指向
+同一个对象；关闭 PID1 的 fd 3 也不能改变 PID2 的槽位。这是一种两级命名：
+
+\[
+  (\mathrm{PID},\mathrm{fd})
+  \longrightarrow
+  (\mathrm{type},\mathrm{objectIndex},\mathrm{rights}).
+\]
+
+v1.0 每个 PCB 固定八个槽。固定容量让所有状态都能在退出路径完整遍历，也
+避免在尚无通用内核对象分配器时假装支持无限打开。表的初始布局如下：
+
+\begin{longtable}{L{0.10\textwidth}L{0.22\textwidth}L{0.18\textwidth}L{0.38\textwidth}}
+\toprule
+fd & 类型 & 方向 & 当前语义\\
+\midrule
+\endfirsthead
+\toprule
+fd & 类型 & 方向 & 当前语义\\
+\midrule
+\endhead
+0 & ConsoleInput & 只读 & 从全局控制台 FIFO 取字符；空时可以等待\\
+1 & ConsoleOutput & 只写 & 经内核校验后写 COM1，作为用户标准输出\\
+2 & ConsoleError & 只写 & 当前同样写 COM1，但保留独立语义通道\\
+3--7 & 动态槽 & 由对象决定 & 普通文件、目录、管道读端或管道写端\\
+\bottomrule
+\end{longtable}
+
+描述符表并不把所有对象强行变成同一种行为。普通文件具有偏移和 EOF；目录
+产生结构化目录项；管道受端点关闭和背压影响；控制台输入由中断异步产生。
+统一的是命名、权限检查、关闭和等待入口，差异仍由对象类型的分派保留。
+
+\begin{keyidea}
+抽象不是删除差异，而是把共同生命周期提升到一个接口，同时让不可互换的语义
+继续由类型和错误值表达。若目录能被普通字节读取、写端能被当作读端，所谓
+“统一”只是丢失了约束。
+\end{keyidea}
+
+\section{描述符生命周期必须覆盖正常与异常退出}
+
+动态槽从 fd 3 起寻找第一个未使用位置。分配只有在底层对象已经成功打开后才
+提交；若表已满，刚取得的文件句柄或管道端点必须回滚。关闭则先验证 fd 属于
+动态范围，再按类型释放底层资源，最后清空槽位。顺序不能颠倒：先清槽会失去
+定位资源所需的信息，底层失败后又无法恢复原状态。
+
+进程结束是资源生命周期的最后防线。Shell 主动 \code{exit}、程序返回错误、
+用户 \#UD 或用户 \#PF 都必须走同一个描述符清理循环。管道写端的最后一个
+引用关闭后，读者才能在缓冲耗尽时看到 EOF；读端的最后一个引用关闭后，写者
+才能看到 broken pipe。普通文件关闭则释放 PCB 中对应的文件句柄槽。
+
+当前文件系统仍保留四个具体文件句柄，因为它们保存 inode、偏移和打开标志；
+统一描述符中的 object index 指向这些句柄。这个间接层避免把不断变化的文件
+偏移复制到通用表，也为以后把内核对象拆成带引用计数的 open-file description
+留下边界。
+
+\section{扫描码不是字符：键盘状态机的历史负担}
+
+PC/AT 键盘报告的是键位置变化，不是 ASCII。集合 1 中，按下称为 make，
+释放通常把基础码最高位置一；扩展键还可能先发送 \code{0xE0}。同一个
+\code{0x1E} 在当前 US 布局中代表 A 键按下，但输出 \code{a} 还是
+\code{A} 取决于 Shift 和 Caps Lock 的状态。
+
+\begin{longtable}{L{0.18\textwidth}L{0.18\textwidth}L{0.22\textwidth}L{0.30\textwidth}}
+\toprule
+输入 & 类别 & 状态变化 & 字符结果\\
+\midrule
+左/右 Shift make & 修饰键 & 对应 shift=true & 不提交字符\\
+左/右 Shift break & 修饰键 & 对应 shift=false & 不提交字符\\
+Caps Lock make & 锁定键 & caps 取反 & 不提交字符\\
+字母 make & 可打印键 & 状态不变 & shift XOR caps 选择大小写\\
+数字/标点 make & 可打印键 & 状态不变 & 只由 shift 选择符号\\
+Enter make & 控制键 & 状态不变 & 提交换行\\
+Backspace make & 控制键 & 状态不变 & 提交退格\\
+任意 break & 释放事件 & 必要时更新修饰键 & 普通键不重复提交\\
+\bottomrule
+\end{longtable}
+
+Caps Lock 只改变字母大小写。若把 \code{shift XOR caps} 套到整个键盘，
+Caps Lock 打开后数字 1 会错误变成感叹号。这个边界由设备单元测试单独覆盖，
+因为十条 Shell 脚本不可能穷举整个键盘矩阵。
+
+当前解码器只覆盖基础 US 键区和 Shell 所需控制键，不声称已经实现 Unicode、
+输入法、键盘布局切换、自动重复或完整扩展键。扫描码到字符的转换属于终端输入
+层；把它明确放在 i8042 驱动之后，使未来布局转换不需要修改 IRQ 汇编入口。
+
+\section{IRQ 到 FIFO：用有界队列跨越异步边界}
+
+键盘可以在任意用户指令之间产生 IRQ1。Shell 则只在调度到 PID1 且执行读取
+系统调用时消费字符。两者需要一个独立于当前进程栈的共享缓冲。v1.0 使用
+256 字节环形 FIFO，并维护读索引、写索引、当前数量以及累计提交、读取、
+丢弃统计。
+
+其核心守恒关系为
+\[
+  \mathrm{submitted}
+  =
+  \mathrm{read}
+  + \mathrm{buffered},
+  \qquad
+  0\le \mathrm{buffered}\le256,
+\]
+其中 submitted 只统计成功进入队列的字符；缓冲已满时新字符不覆盖旧字符，
+而是递增 dropped 并返回失败。这样输入损失可被观察，不会伪装成一条内容
+悄然变化的命令。
+
+单核当前实现依靠 interrupt gate 在 IRQ 分发期间关闭 IF，并在系统调用状态
+转换期间保持同一中断边界。未来允许嵌套 IRQ 或 SMP 后，FIFO 必须增加明确的
+同步协议；当前不能因为“QEMU 看起来没有竞争”就声称它已经是无锁多生产者
+队列。
+
+字符提交成功后，内核唤醒所有等待 \code{DescriptorReadable} 的进程。当前
+等待队列按原因而非具体 fd 组织，所以被唤醒者必须重新检查自己的描述符。
+唤醒只把 Blocked 改回 Ready，不直接在 IRQ 栈上运行 Shell，也不保证下一次
+读取一定成功。这个规则与管道一致：条件变化是调度资格，不是资源所有权转移。
+
+\section{没有 Ready 进程不等于系统失败}
+
+v0.10 的管道验收总有 worker 可以运行，因此“当前进程阻塞且没有 Ready
+后继”曾返回 \code{NoReadyProcess}。交互式 Shell 改变了这个前提：用户不
+按键时，所有仍存活的进程完全可能都在等待 I/O。此时正确行为是让 CPU 空闲，
+而不是强行运行 Blocked 进程或宣告调度失败。
+
+最后一个 Running 进程阻塞后，调度器清除 current。执行循环切换回永久内核
+CR3，把 TSS.RSP0 恢复为默认转换栈，然后进入：
+
+\begin{lstlisting}[language={[x86masm]Assembler}]
+sti
+hlt
+cli
+\end{lstlisting}
+
+\code{HLT} 在允许的中断到达前停止取指，避免无意义忙等。这三条指令位于
+同一个内联汇编块，不能拆成两个 C++ 函数调用。关键细节是
+\code{STI} 的中断影子：可屏蔽中断不会在紧随其后的那条指令之前被接受，
+因此“打开 IF”与“真正 HLT”之间没有一个会丢失唤醒的普通指令窗口。中断返回
+后执行 \code{CLI}，内核在关闭中断的状态下重新检查 Ready 队列。
+
+\begin{pdfdiagram}
+  \node[os state] (running) {Shell Running};
+  \node[os block,right=of running] (blocked) {fd 0 空\\Shell Blocked};
+  \node[os state,right=of blocked] (idle) {无 Ready\\STI; HLT};
+  \node[os hardware,below=of idle] (irq) {IRQ1\\字符入 FIFO};
+  \node[os block,left=of irq] (ready) {按原因唤醒\\Shell Ready};
+  \node[os state,left=of ready] (resume) {派发用户帧\\继续 read};
+  \draw[os arrow] (running) -- (blocked);
+  \draw[os arrow] (blocked) -- (idle);
+  \draw[os arrow] (idle) -- (irq);
+  \draw[os arrow] (irq) -- (ready);
+  \draw[os arrow] (ready) -- (resume);
+\end{pdfdiagram}
+\diagramnote{Idle 是调度状态，不是第五个用户进程；IRQ 在内核永久地址空间中完成唤醒，再由普通派发恢复用户帧。}
+
+PIT 的 IRQ0 也会唤醒 HLT，但若没有等待条件变为可用，重新检查后仍会睡眠。
+因此日志不能逐次输出“进入 idle”或每个 tick；否则串口本身会成为持续工作，
+既刷屏又改变系统空闲行为。
+
+\section{Try 与 Wait 分离，避免把睡眠误当成 I/O 完成}
+
+通用描述符 ABI 沿用管道阶段建立的两步协议：
+
+\begin{enumerate}[label=\arabic*.]
+  \item \code{TryReadDescriptor} 或 \code{TryWriteDescriptor} 尝试实际传输；
+  \item 返回 would-block 时，\code{WaitDescriptorReadable/Writable} 登记等待；
+  \item 被唤醒后回到第 1 步重新检查，而不是直接向调用者报告成功。
+\end{enumerate}
+
+这种循环处理了条件竞争。即使当前只有单核，一个事件也可能唤醒多个未来等待者；
+先获得调度的进程会消费数据，后继必须重新看到空状态。把 Wait 设计成“等待
+完成一次 read”会把调度策略和对象操作捆在一起，也难以区分 EOF、权限错误与
+暂时不可用。
+
+用户包装的抽象控制流可写成：
+
+\begin{lstlisting}[language=C++]
+for (;;) {
+    const int64_t result =
+        TryReadDescriptor(descriptor, buffer, capacity);
+    if (result != OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+        return result;
+    }
+    const int64_t waitResult =
+        WaitDescriptorReadable(descriptor);
+    if (waitResult < OS_USER_SYSTEM_CALL_SUCCESS) {
+        return waitResult;
+    }
+}
+\end{lstlisting}
+
+这里的循环位于 Ring 3 库，不是内核忙等。Wait 会把进程置为 Blocked，CPU
+可以运行其他进程或进入 HLT。普通文件通常立即可读写，管道和控制台才真正
+使用等待；同一包装让调用者不必知道对象来自哪一种驱动。
+
+\section{系统调用第四参数为什么落在 R10}
+
+用户 C++ 函数遵循 System V AMD64 ABI，前六个整数参数依次位于 RDI、RSI、
+RDX、RCX、R8、R9。项目的 \code{INT 0x80} ABI 则已经把前三个参数放在
+RDI、RSI、RDX，并为第四参数选择 R10。用户汇编包装因此要把 C++ 入口中的
+R8 搬到 R10，再触发软件中断。
+
+选择 R10 不是 x86 \code{INT} 指令的硬件要求；\code{INT} 不自动解释通用
+寄存器。它是项目 ABI 的明确约定，也与常见 x86-64 系统调用 ABI 避开 RCX
+特殊用途的习惯一致。真正重要的是用户头文件、汇编包装、内核保存帧、分发器、
+测试和教材共享同一个位置，不能让某一层根据源代码参数顺序猜测。
+
+v1.0 新增编号 16--22：
+
+\begin{longtable}{L{0.12\textwidth}L{0.30\textwidth}L{0.46\textwidth}}
+\toprule
+编号 & 调用 & 主要边界\\
+\midrule
+16 & 尝试读描述符 & fd、写入用户范围、长度、对象读权限\\
+17 & 尝试写描述符 & fd、读取用户范围、长度、对象写权限\\
+18 & 等待描述符可读 & 当前 fd 权限、条件复查与等待原因\\
+19 & 等待描述符可写 & 当前 fd 权限、条件复查与等待原因\\
+20 & 关闭描述符 & 动态 fd、类型化资源释放、重复关闭\\
+21 & 打开目录 & 绝对路径复制、目录类型、动态槽容量\\
+22 & 读取目录项 & 64 字节目录项 ABI、游标、目录 EOF\\
+\bottomrule
+\end{longtable}
+
+旧的专用管道和普通文件调用暂时保留为兼容入口，让历史失败镜像和章节仍可
+回归；正常生产者、消费者和 Shell 已经迁移到统一描述符路径。兼容不是让新
+代码继续复制旧逻辑，内核分发最终仍应汇合到底层对象操作。
+
+\section{目录迭代为何使用结构化 64 字节 ABI}
+
+\code{ls} 不能只把目录原始字节当普通文件读出。磁盘目录项是文件系统内部
+格式，未来可能改变 CRC、填充或块布局；用户真正需要的是 inode、对象类型和
+名称。因此 \code{ReadDirectory} 返回独立的 ABI 结构：
+
+\begin{longtable}{L{0.24\textwidth}L{0.13\textwidth}L{0.47\textwidth}}
+\toprule
+字段 & 大小 & 语义\\
+\midrule
+inodeNumber & 8 B & 当前文件系统中的稳定 inode 编号\\
+type & 8 B & RegularFile 或 Directory\\
+nameLengthBytes & 8 B & 后续名称中的有效字节数\\
+name & 40 B & 不依赖 NUL 的固定容量名称\\
+\bottomrule
+\end{longtable}
+
+总大小精确为 64 字节，并由 \code{static\_assert} 对最终 C++ 布局执行检查。
+内核先在自己的固定对象中构造目录项，再验证用户目标的完整可写范围，最后
+复制。返回 1 表示产生一项，返回 0 表示目录 EOF，负值表示错误。用户 Shell
+只有在类型为 Directory 时追加斜杠，不读取文件系统磁盘结构体。
+
+打开目录建立独立游标，所以两个进程或同一进程的两个描述符可以从不同位置
+迭代。普通文件句柄现在也记录节点类型；ReadFile 明确拒绝目录，避免一条旧
+路径绕过新目录 ABI。
+
+\section{固定容量 Shell 先解决边界，再扩展语法}
+
+Shell 是普通 Ring 3 ELF，不拥有特权后门。它的行缓冲为 128 字节，最多
+八个参数，文件传输和输出拼接也使用固定数组。没有堆、libc、iostream、
+异常、RTTI 或全局动态构造。
+
+解析器同时维护读索引、写索引、参数起点、引号状态和 escape 状态。输入字符
+被压紧写入一份 129 字节存储，每个参数只保存 offset 和 length。这样参数
+视图不依赖外部行缓冲生命周期，也不需要为每个字符串分配内存。
+
+\begin{pdfdiagram}
+  \node[os state] (none) {无引号};
+  \node[os block,right=of none] (single) {单引号};
+  \node[os block,below=of single] (double) {双引号};
+  \node[os hardware,left=of double] (escape) {转义下一字节};
+  \draw[os arrow] (none) to[bend left] node[above]{'} (single);
+  \draw[os arrow] (single) to[bend left] node[below]{'} (none);
+  \draw[os arrow] (none) -- node[right]{"} (double);
+  \draw[os arrow] (double) -- node[below]{"} (none);
+  \draw[os arrow] (none) -- node[left]{\textbackslash} (escape);
+  \draw[os arrow] (double) -- node[right]{\textbackslash} (escape);
+\end{pdfdiagram}
+\diagramnote{单引号内反斜杠按普通字符处理；无引号和双引号状态中，转义使下一字节失去语法含义。}
+
+解析错误包括超长、参数过多、引号未闭合、末尾孤立反斜杠和非法参数。输出
+对象在解析开始时清零，失败结果不会留下一个看似可执行的半命令。空行是独立
+状态，不作为 unknown command。
+
+当前命令集刻意对应已经实现的内核能力：
+
+\begin{longtable}{L{0.20\textwidth}L{0.30\textwidth}L{0.34\textwidth}}
+\toprule
+命令 & 系统调用组合 & 学习重点\\
+\midrule
+\code{help} & 标准输出 & 用户程序自己的静态数据与写包装\\
+\code{echo} & 参数拼接、标准输出 & 引号、转义和有界输出\\
+\code{pwd} & 标准输出 & 当前仅根目录的显式范围\\
+\code{ls [path]} & 打开目录、逐项读取、关闭 & 类型化目录 EOF 与游标\\
+\code{mkdir path} & CreateDirectory & 路径复制和已存在语义\\
+\code{write path text} & Open/Write/Close & create、truncate、部分写循环\\
+\code{cat path} & Open/Read/Close & 文件 EOF 和固定块读取\\
+\code{sync} & SyncFileSystem & 缓存写回与 ATA flush 边界\\
+\code{exit} & ExitProcess & 资源自动关闭和进程终止\\
+\bottomrule
+\end{longtable}
+
+\code{pwd} 当前永远输出根路径，因为尚未实现 chdir 或每进程当前目录。这种
+限制被直接写在行为和文档中；返回一个看似变化但内核不解析的路径会制造虚假
+能力。
+
+\section{用户最小运行时也是必须拥有的目标代码}
+
+freestanding C++ 源码没有显式调用标准库，不代表编译器永远只生成项目符号。
+对固定聚合执行清零或复制时，优化器可能合法地生成 \code{memset} 或
+\code{memcpy} 调用。没有 CRT 和 libc 的用户 ELF 若不提供它们，会在链接
+或运行时留下缺口。
+
+v1.0 在用户模块实现最小的 C ABI \code{memset/memcpy}，只使用固定宽度
+\code{uint8\_t} 和 \code{uint64\_t} 循环。函数名与 \code{int} 参数来自
+编译器约定的外部 ABI，不代表项目内部放弃固定宽度类型。每个用户 ELF 都链接
+这份目标运行时，并继续执行未解析符号审计。
+
+另一个实际问题来自描述符表。最初给类保留了会使其成为非平凡类型的构造方式，
+编译器为命名空间对象生成 \code{\_GLOBAL\_\_sub\_I\_...} 和
+\code{.init\_array}。自研入口没有 CRT 去遍历初始化数组，Kernel ELF 审计
+因此正确失败。最终设计让描述符表保持平凡存储，由
+\code{Initialize} 显式覆盖全部槽位。
+
+\begin{failurebox}
+删除链接脚本中的 \code{.init\_array} 不能修复动态初始化；它只会让构造器
+永远不运行。正确做法是让目标对象可常量初始化，或在明确的启动阶段调用显式
+初始化函数，并由 ELF 审计继续拒绝未知启动机制。
+\end{failurebox}
+
+\section{QMP 是可重复的手指，不是来宾软件替代}
+
+人工在图形窗口中输入十条命令难以回归，也无法精确判断是否丢了一个字符。
+QEMU runner 在 Shell 报告 \code{READY} 后，通过 QMP
+\code{sendkey} 一次产生一个按键，并在字符间保留短间隔。映射器明确处理
+字母、数字、空格、斜杠、换行和需要 Shift 的符号。
+
+QMP 操作的是 QEMU 的虚拟键盘前端。之后仍由 QEMU i8042 模型产生扫描码与
+IRQ1；来宾仍要读 \code{0x60/0x64}、发送 EOI、更新修饰键、提交 FIFO 并
+唤醒进程。若测试直接调用内核 \code{Submit} 或写来宾内存，中间所有硬件和
+并发状态都会失去证据。
+
+自动化会话依次执行：
+
+\begin{lstlisting}
+help
+echo hello world
+pwd
+mkdir /demo
+write /demo/message hello
+cat /demo/message
+ls /demo
+sync
+unknown
+exit
+\end{lstlisting}
+
+系统测试精确检查九个已知命令标记、一次未知命令拒绝和一次 Shell 退出。
+\code{cat} 必须产生 \code{hello}，\code{ls} 必须产生
+\code{message}，但后台管道进程和 worker 的串口文本可以合法交错。测试
+约束每个执行流内部顺序，而不把一种 TCG 调度交错误写成 ABI。
+
+\section{四层证据共同封闭 v1.0}
+
+\begin{longtable}{L{0.19\textwidth}L{0.31\textwidth}L{0.36\textwidth}}
+\toprule
+层级 & 主要输入 & 能证明的边界\\
+\midrule
+单元 & FIFO、描述符表、扫描码、解析器 & 容量、顺序、权限、状态机和错误原子性\\
+集成 & 调度器、目录生命周期、真实 ELF & 无 Ready 状态、类型化目录、ABI 与链接结构\\
+随机 & 4096 轮任意解析字节 & 所有切片位于固定存储、失败不越界、结果可重复\\
+整机 & QMP 十命令、同盘双启动、损坏盘 & IRQ 到 Ring 3、idle 唤醒、持久化与拒绝路径\\
+\bottomrule
+\end{longtable}
+
+最终目标内核汇总：
+\[
+  \mathrm{consoleSubmitted}
+  =
+  \mathrm{consoleRead}
+  =109,\qquad
+  \mathrm{dropped}
+  =
+  \mathrm{buffered}
+  =0.
+\]
+调度创建与终止均为 4；PID1 是 Shell，PID2/3 是管道生产者/消费者，PID4
+是地址空间隔离 worker。管道仍满足写入=读取=256、最终为空、EOF 一次；
+文件系统仍完成同步、一致性检查和独立读回；页帧统计仍恢复到创建前。
+
+完整回归共 73 项 CTest。数字本身不是质量指标，它只说明新增验证没有替换旧
+证据：复位、固件、Stage 1、长模式、异常、内存、设备、用户隔离、调度、
+IPC、文件系统和失败注入仍与 Shell 同时执行。
+
+\section{v1.0 的完成边界与下一步问题}
+
+当前系统已经形成最小可交互操作系统，但仍不是通用 UNIX。它没有 fork/exec、
+父子等待、信号、权限用户、chdir、路径 \code{.}/\code{..}、删除、rename、
+管道创建、重定向、作业控制、虚拟终端、Unicode 或多 CPU。Shell 命令也由
+单个程序内部直接分发，不会装载新的磁盘可执行文件。
+
+这些限制指出后续学习顺序。若先实现 exec，必须回答磁盘 ELF 的可信加载和
+进程镜像替换；若先实现 fork，必须回答地址空间复制或 copy-on-write、描述符
+引用计数和父子回收；若先实现终端，则要区分行规程、回显、控制字符和多个
+前台会话。每一项都应新建 ADR、状态机和失败路径，不能只在 Shell 中增加一个
+看似存在的命令。
+
+\begin{keyidea}
+v1.0 最重要的产物不是命令数量，而是一条可重复解释的闭环：真实硬件事件进入
+内核，被有界对象保存，以进程局部描述符暴露给 Ring 3，在没有工作时让 CPU
+正确休眠，并由测试从外部输入一直核对到资源回收。
+\end{keyidea}

@@ -20,6 +20,7 @@ OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_READY_TIMEOUT_SECONDS = OS_QEMU_FIRMWARE_TIMEOUT_SECONDS
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
+OS_QEMU_KEY_INJECTION_INTERVAL_SECONDS = 0.003
 OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
 OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
 OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
@@ -272,6 +273,12 @@ OS_QEMU_KERNEL_PROCESS_FILE_READ_BYTES_MARKER = (
 OS_QEMU_KERNEL_PROCESS_FILE_WRITTEN_BYTES_MARKER = (
     "[OS][KERNEL] PROCESS_FILE_WRITTEN_BYTES=0x"
 )
+OS_QEMU_KERNEL_PROCESS_CONSOLE_READ_BYTES_MARKER = (
+    "[OS][KERNEL] PROCESS_CONSOLE_READ_BYTES=0x"
+)
+OS_QEMU_KERNEL_PROCESS_CONSOLE_WRITTEN_BYTES_MARKER = (
+    "[OS][KERNEL] PROCESS_CONSOLE_WRITTEN_BYTES=0x"
+)
 OS_QEMU_KERNEL_SCHEDULER_STARTED_MARKER = "[OS][KERNEL] SCHEDULER_STARTED"
 OS_QEMU_KERNEL_SCHEDULER_CREATED_PROCESSES_MARKER = (
     "[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=0x"
@@ -308,6 +315,18 @@ OS_QEMU_KERNEL_PIPE_WRITER_BLOCKS_MARKER = (
 )
 OS_QEMU_KERNEL_PIPE_END_OF_FILE_MARKER = (
     "[OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x0000000000000001"
+)
+OS_QEMU_KERNEL_CONSOLE_SUBMITTED_BYTES_MARKER = (
+    "[OS][KERNEL] CONSOLE_SUBMITTED_BYTES=0x"
+)
+OS_QEMU_KERNEL_CONSOLE_READ_BYTES_MARKER = (
+    "[OS][KERNEL] CONSOLE_READ_BYTES=0x"
+)
+OS_QEMU_KERNEL_CONSOLE_DROPPED_BYTES_MARKER = (
+    "[OS][KERNEL] CONSOLE_DROPPED_BYTES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_CONSOLE_BUFFERED_BYTES_MARKER = (
+    "[OS][KERNEL] CONSOLE_BUFFERED_BYTES=0x0000000000000000"
 )
 OS_QEMU_KERNEL_PIPE_TRANSFER_VALID_MARKER = (
     "[OS][KERNEL] PIPE_TRANSFER_VALID"
@@ -366,6 +385,34 @@ OS_QEMU_USER_PIPE_END_OF_FILE_MARKER = (
 )
 OS_QEMU_USER_FILE_WRITTEN_MARKER = "[OS][USER][FS] FILE_WRITTEN"
 OS_QEMU_USER_FILE_VERIFIED_MARKER = "[OS][USER][FS] FILE_VERIFIED"
+OS_QEMU_USER_SHELL_READY_MARKER = "[OS][USER][SHELL] READY"
+OS_QEMU_USER_SHELL_HELP_MARKER = "[OS][USER][SHELL] COMMAND=HELP"
+OS_QEMU_USER_SHELL_ECHO_MARKER = "[OS][USER][SHELL] COMMAND=ECHO"
+OS_QEMU_USER_SHELL_PWD_MARKER = "[OS][USER][SHELL] COMMAND=PWD"
+OS_QEMU_USER_SHELL_MKDIR_MARKER = "[OS][USER][SHELL] COMMAND=MKDIR"
+OS_QEMU_USER_SHELL_WRITE_MARKER = "[OS][USER][SHELL] COMMAND=WRITE"
+OS_QEMU_USER_SHELL_CAT_MARKER = "[OS][USER][SHELL] COMMAND=CAT"
+OS_QEMU_USER_SHELL_LS_MARKER = "[OS][USER][SHELL] COMMAND=LS"
+OS_QEMU_USER_SHELL_SYNC_MARKER = "[OS][USER][SHELL] COMMAND=SYNC"
+OS_QEMU_USER_SHELL_UNKNOWN_MARKER = (
+    "[OS][USER][SHELL] UNKNOWN_COMMAND_REJECTED"
+)
+OS_QEMU_USER_SHELL_EXIT_COMMAND_MARKER = (
+    "[OS][USER][SHELL] COMMAND=EXIT"
+)
+OS_QEMU_USER_SHELL_EXIT_MARKER = "[OS][USER][SHELL] EXIT"
+OS_QEMU_USER_SHELL_TEST_INPUT = (
+    "help\n"
+    "echo hello world\n"
+    "pwd\n"
+    "mkdir /demo\n"
+    "write /demo/message hello\n"
+    "cat /demo/message\n"
+    "ls /demo\n"
+    "sync\n"
+    "unknown\n"
+    "exit\n"
+)
 OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER = (
     "[OS][KERNEL] USER_RESULT_INVALID"
 )
@@ -654,9 +701,30 @@ def sendQmpCommand(
         raise OsToolError(f"QMP 命令执行失败：{response['error']!r}")
 
 
-def injectQemuKey(
+def qemuKeyNameForCharacter(character: str) -> str:
+    if len(character) != 1:
+        raise OsToolError("QEMU 键盘映射只接受单个字符。")
+    if "a" <= character <= "z" or "0" <= character <= "9":
+        return character
+    keyNames = {
+        "\n": "ret",
+        " ": "spc",
+        "/": "slash",
+        ".": "dot",
+        "-": "minus",
+        "=": "equal",
+        ",": "comma",
+    }
+    if character not in keyNames:
+        raise OsToolError(
+            f"QEMU 键盘输入包含未支持字符：{character!r}"
+        )
+    return keyNames[character]
+
+
+def injectQemuText(
     qmpSocketPath: Path,
-    keyName: str,
+    inputText: str,
     readyEvent: threading.Event,
     finishedEvent: threading.Event,
     failureMessages: list[str],
@@ -688,15 +756,20 @@ def injectQemuKey(
                 if "QMP" not in greeting:
                     raise OsToolError("QMP 握手缺少版本对象。")
                 sendQmpCommand(qmpStream, {"execute": "qmp_capabilities"})
-                sendQmpCommand(
-                    qmpStream,
-                    {
-                        "execute": "human-monitor-command",
-                        "arguments": {
-                            "command-line": f"sendkey {keyName}",
+                for character in inputText:
+                    if finishedEvent.is_set():
+                        return
+                    keyName = qemuKeyNameForCharacter(character)
+                    sendQmpCommand(
+                        qmpStream,
+                        {
+                            "execute": "human-monitor-command",
+                            "arguments": {
+                                "command-line": f"sendkey {keyName} 1",
+                            },
                         },
-                    },
-                )
+                    )
+                    time.sleep(OS_QEMU_KEY_INJECTION_INTERVAL_SECONDS)
     except (OSError, ValueError, OsToolError) as error:
         failureMessages.append(str(error))
 
@@ -758,7 +831,8 @@ def runQemuFirmwareBoot(
     expectedDiskSizeBytes: int,
     requiredMarkers: tuple[str, ...],
     forbiddenMarkers: tuple[str, ...],
-    keyboardInputKey: str | None = None,
+    keyboardInputText: str | None = None,
+    keyboardReadyMarker: str = OS_QEMU_KERNEL_READY_MARKER,
     expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
     persistentDiskWrites: bool = False,
@@ -783,18 +857,18 @@ def runQemuFirmwareBoot(
         finalRequiredMarker = requiredMarkers[-1]
 
         def observeSerialLine(line: str) -> None:
-            if OS_QEMU_KERNEL_READY_MARKER in line:
+            if keyboardReadyMarker in line:
                 keyboardReadyEvent.set()
             if finalRequiredMarker in line:
                 protocolCompleteEvent.set()
 
         qmpThread: threading.Thread | None = None
-        if keyboardInputKey is not None:
+        if keyboardInputText is not None:
             qmpThread = threading.Thread(
-                target=injectQemuKey,
+                target=injectQemuText,
                 args=(
                     qmpSocketPath,
-                    keyboardInputKey,
+                    keyboardInputText,
                     keyboardReadyEvent,
                     qemuFinishedEvent,
                     qmpFailureMessages,
@@ -807,7 +881,7 @@ def runQemuFirmwareBoot(
         command = createQemuFirmwareCommand(
             firmwareImagePath,
             diskImagePath,
-            qmpSocketPath if keyboardInputKey is not None else None,
+            qmpSocketPath if keyboardInputText is not None else None,
             persistentDiskWrites,
         )
         try:
@@ -901,6 +975,8 @@ def runQemuFileSystemPersistence(
                 OS_QEMU_KERNEL_READY_MARKER,
             ),
             forbiddenRuntimeFailureMarkers,
+            keyboardInputText=OS_QEMU_USER_SHELL_TEST_INPUT,
+            keyboardReadyMarker=OS_QEMU_USER_SHELL_READY_MARKER,
             persistentDiskWrites=True,
         )
         runQemuFirmwareBoot(
@@ -918,6 +994,8 @@ def runQemuFileSystemPersistence(
                 OS_QEMU_KERNEL_READY_MARKER,
             ),
             forbiddenRuntimeFailureMarkers,
+            keyboardInputText=OS_QEMU_USER_SHELL_TEST_INPUT,
+            keyboardReadyMarker=OS_QEMU_USER_SHELL_READY_MARKER,
             persistentDiskWrites=True,
         )
 

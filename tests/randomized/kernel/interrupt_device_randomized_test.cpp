@@ -27,6 +27,11 @@ constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_A_MAKE = 0x1EU;
 constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_A_BREAK = 0x9EU;
 constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SPACE_MAKE = 0x39U;
 constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SPACE_BREAK = 0xB9U;
+constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_A_CHARACTER =
+    static_cast<uint8_t>('a');
+constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SPACE_CHARACTER =
+    static_cast<uint8_t>(' ');
+constexpr uint8_t OS_TEST_INTERRUPT_RANDOM_KEYBOARD_NO_CHARACTER = 0U;
 
 }
 
@@ -70,15 +75,24 @@ int main() {
                                           : OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SPACE_BREAK;
         const os::kernel::KeyboardKey expectedKey =
             selectA ? os::kernel::KeyboardKey::A : os::kernel::KeyboardKey::Space;
+        const uint8_t expectedCharacter =
+            selectA ? OS_TEST_INTERRUPT_RANDOM_KEYBOARD_A_CHARACTER
+                    : OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SPACE_CHARACTER;
         os::kernel::ScanCodeSet1Decoder keyboardDecoder{};
         os::kernel::KeyboardEvent keyboardEvent{};
         const bool makeDecoded = keyboardDecoder.Decode(makeCode, keyboardEvent) ==
                                      os::kernel::KeyboardDecodeStatus::EventReady &&
                                  keyboardEvent.key == expectedKey && keyboardEvent.pressed;
+        const bool makeCharacterMatches =
+            keyboardEvent.character == expectedCharacter;
         const bool breakDecoded = keyboardDecoder.Decode(breakCode, keyboardEvent) ==
                                       os::kernel::KeyboardDecodeStatus::EventReady &&
                                   keyboardEvent.key == expectedKey && !keyboardEvent.pressed;
-        testContext.ExpectRandom(makeDecoded && breakDecoded,
+        const bool breakCharacterMatches =
+            keyboardEvent.character ==
+            OS_TEST_INTERRUPT_RANDOM_KEYBOARD_NO_CHARACTER;
+        testContext.ExpectRandom(makeDecoded && makeCharacterMatches &&
+                                     breakDecoded && breakCharacterMatches,
                                  OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SEQUENCE,
                                  OS_TEST_INTERRUPT_RANDOM_SEED, iteration);
     }

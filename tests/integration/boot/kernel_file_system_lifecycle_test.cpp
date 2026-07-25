@@ -12,6 +12,8 @@ constexpr std::string_view OS_TEST_FILE_SYSTEM_LIFECYCLE_FORMATS_BLANK_DISK =
     "空白磁盘必须只在首次挂载时格式化并创建有效根目录";
 constexpr std::string_view OS_TEST_FILE_SYSTEM_LIFECYCLE_PERSISTS_FILE =
     "跨文件系统实例重挂载后必须完整读取多块文件";
+constexpr std::string_view OS_TEST_FILE_SYSTEM_LIFECYCLE_READS_DIRECTORY =
+    "目录句柄必须按稳定顺序读取类型、名称和目录结束";
 constexpr std::string_view OS_TEST_FILE_SYSTEM_LIFECYCLE_PATH_VALIDATION =
     "路径解析必须拒绝相对路径、空组件、点组件和过长名称";
 constexpr std::string_view OS_TEST_FILE_SYSTEM_LIFECYCLE_TRUNCATES_FILE =
@@ -38,6 +40,14 @@ constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
     static_cast<uint8_t>('a'), static_cast<uint8_t>('r'), static_cast<uint8_t>('e'),
     static_cast<uint8_t>('d'),
+};
+constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME[] = {
+    static_cast<uint8_t>('p'), static_cast<uint8_t>('a'),
+    static_cast<uint8_t>('y'), static_cast<uint8_t>('l'),
+    static_cast<uint8_t>('o'), static_cast<uint8_t>('a'),
+    static_cast<uint8_t>('d'), static_cast<uint8_t>('.'),
+    static_cast<uint8_t>('b'), static_cast<uint8_t>('i'),
+    static_cast<uint8_t>('n'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
@@ -81,6 +91,23 @@ constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH[] = {
             static_cast<uint64_t>(
                 OS_TEST_FILE_SYSTEM_LIFECYCLE_BYTE_MULTIPLIER) +
         static_cast<uint64_t>(OS_TEST_FILE_SYSTEM_LIFECYCLE_BYTE_OFFSET));
+}
+
+[[nodiscard]] bool DirectoryEntryNameEquals(
+    const os::kernel::FileSystemDirectoryEntry &entry,
+    const uint8_t *const expectedName,
+    const uint64_t expectedNameLengthBytes) noexcept {
+    if (expectedName == nullptr ||
+        entry.nameLengthBytes != expectedNameLengthBytes) {
+        return false;
+    }
+    for (uint64_t byteIndex = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
+         byteIndex < expectedNameLengthBytes; ++byteIndex) {
+        if (entry.name[byteIndex] != expectedName[byteIndex]) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }
@@ -192,6 +219,34 @@ int main() {
     }
     testContext.Expect(persisted,
                        OS_TEST_FILE_SYSTEM_LIFECYCLE_PERSISTS_FILE);
+
+    os::kernel::FileSystemHandle directoryHandle{};
+    os::kernel::FileSystemDirectoryEntry directoryEntry{};
+    bool endOfDirectory = true;
+    const bool directoryRead =
+        secondFileSystem.OpenDirectory(
+            OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH,
+            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH),
+            directoryHandle) == os::kernel::FileSystemStatus::Succeeded &&
+        secondFileSystem.ReadDirectory(
+            directoryHandle, directoryEntry, endOfDirectory) ==
+            os::kernel::FileSystemStatus::Succeeded &&
+        !endOfDirectory &&
+        directoryEntry.type ==
+            os::kernel::FileSystemNodeType::RegularFile &&
+        DirectoryEntryNameEquals(
+            directoryEntry,
+            OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME,
+            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME)) &&
+        secondFileSystem.ReadDirectory(
+            directoryHandle, directoryEntry, endOfDirectory) ==
+            os::kernel::FileSystemStatus::Succeeded &&
+        endOfDirectory &&
+        secondFileSystem.Close(directoryHandle) ==
+            os::kernel::FileSystemStatus::Succeeded;
+    testContext.Expect(
+        directoryRead,
+        OS_TEST_FILE_SYSTEM_LIFECYCLE_READS_DIRECTORY);
 
     os::kernel::FileSystemHandle truncateHandle{};
     const os::kernel::FileSystemOpenOptions truncateOptions{

@@ -44,4 +44,11 @@ osKernelUserIpcConsumerElfStart:
     incbin "@OS_USER_IPC_CONSUMER_ELF_PATH@"
 osKernelUserIpcConsumerElfEnd:
 
+align 16
+global osKernelUserShellElfStart
+global osKernelUserShellElfEnd
+osKernelUserShellElfStart:
+    incbin "@OS_USER_SHELL_ELF_PATH@"
+osKernelUserShellElfEnd:
+
 section .note.GNU-stack noalloc noexec nowrite progbits

@@ -20,6 +20,8 @@ constexpr std::string_view OS_TEST_DEVICE_MODEL_KEYBOARD_A =
     "Set 1 字母 A 的按下与释放必须正确解码";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED =
     "Set 1 扩展方向键必须跨前缀保存状态";
+constexpr std::string_view OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_PUNCTUATION =
+    "Caps Lock 只能改变字母，标点必须仅由 Shift 改变";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED = "未知扫描码必须返回明确状态";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_ATA_REQUEST =
     "ATA 读取请求必须校验指针、扇区长度和 LBA28";
@@ -46,7 +48,17 @@ constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_A_MAKE = 0x1EU;
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_A_BREAK = 0x9EU;
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED_PREFIX = 0xE0U;
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_ARROW_UP_MAKE = 0x48U;
-constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED_CODE = 0x02U;
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED_CODE = 0x3BU;
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_LOCK_MAKE = 0x3AU;
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_LEFT_SHIFT_MAKE = 0x2AU;
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE = 0x27U;
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_A_CHARACTER =
+    static_cast<uint8_t>('a');
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_CHARACTER =
+    static_cast<uint8_t>(';');
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_COLON_CHARACTER =
+    static_cast<uint8_t>(':');
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_NO_CHARACTER = 0U;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_ATA_VALID_LBA = 0x00000042ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_ATA_INVALID_LBA = 0x10000000ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_ATA_INVALID_SIZE_BYTES = 511ULL;
@@ -125,11 +137,15 @@ int main() {
         keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_A_MAKE, keyboardEvent) ==
             os::kernel::KeyboardDecodeStatus::EventReady &&
         keyboardEvent.key == os::kernel::KeyboardKey::A && keyboardEvent.pressed &&
+        keyboardEvent.character == OS_TEST_DEVICE_MODEL_KEYBOARD_A_CHARACTER &&
         !keyboardEvent.extended;
     const bool decodedARelease =
         keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_A_BREAK, keyboardEvent) ==
             os::kernel::KeyboardDecodeStatus::EventReady &&
-        keyboardEvent.key == os::kernel::KeyboardKey::A && !keyboardEvent.pressed;
+        keyboardEvent.key == os::kernel::KeyboardKey::A &&
+        keyboardEvent.character ==
+            OS_TEST_DEVICE_MODEL_KEYBOARD_NO_CHARACTER &&
+        !keyboardEvent.pressed;
     testContext.Expect(decodedA && decodedARelease, OS_TEST_DEVICE_MODEL_KEYBOARD_A);
     testContext.Expect(
         keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED_PREFIX, keyboardEvent) ==
@@ -139,6 +155,28 @@ int main() {
             keyboardEvent.key == os::kernel::KeyboardKey::ArrowUp && keyboardEvent.pressed &&
             keyboardEvent.extended,
         OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED);
+    os::kernel::ScanCodeSet1Decoder modifierDecoder{};
+    const bool capsLockPreservesPunctuation =
+        modifierDecoder.Decode(
+            OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_LOCK_MAKE,
+            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
+        modifierDecoder.Decode(
+            OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE,
+            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
+        keyboardEvent.character ==
+            OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_CHARACTER;
+    const bool shiftChangesPunctuation =
+        modifierDecoder.Decode(
+            OS_TEST_DEVICE_MODEL_KEYBOARD_LEFT_SHIFT_MAKE,
+            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
+        modifierDecoder.Decode(
+            OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE,
+            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
+        keyboardEvent.character ==
+            OS_TEST_DEVICE_MODEL_KEYBOARD_COLON_CHARACTER;
+    testContext.Expect(
+        capsLockPreservesPunctuation && shiftChangesPunctuation,
+        OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_PUNCTUATION);
     testContext.Expect(
         keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED_CODE, keyboardEvent) ==
             os::kernel::KeyboardDecodeStatus::UnsupportedScanCode,

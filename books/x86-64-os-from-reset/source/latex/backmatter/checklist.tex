@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.11 完成后的知识验收}
+\section*{v1.0 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -61,7 +61,8 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 68 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度/IPC/文件系统性质与整机异步事件；
+  \item 73 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度/IPC/文件系统/
+        Shell 性质与整机异步事件；
   \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
   \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；
   \item 严格用户 ELF 对标识、范围、对齐、W\^X、重叠、页数和入口的检查；
@@ -101,11 +102,11 @@
         控制器、路由与入口四层故障；
   \item 能解释 \code{0xFFFC} 掩码、\code{0x04A9} PIT 除数与
         \code{0x1E}/\code{0x9E} 键盘扫描码；
-  \item 能从 \code{READY} 后的 QMP 输入走读到
-        \code{KEYBOARD\_EVENT=A\_PRESSED}；
+  \item 能从 Shell \code{READY} 后的 QMP 输入走读到 IRQ1、控制台 FIFO、
+        fd 0、阻塞唤醒、命令解析与资源回收；
   \item 能从 \code{USER\_RING3\_ENTER} 走读到 \code{INT 0x80}、
         TSS.RSP0、系统调用分发、exit 与 \code{USER\_RETURNED\_TO\_KERNEL}；
-  \item 能运行三个用户 ELF 审计和三条用户失败/隔离 QEMU 路径；
+  \item 能运行七个用户 ELF 审计和三条用户失败/隔离 QEMU 路径；
   \item 能说明 v0.9 为何需要每进程地址空间、每线程内核栈和资源回收；
   \item 能说明 v0.10 的 Blocked/Ready 转换、丢失唤醒、acquire/release、
   管道背压、EOF 与 broken pipe；
@@ -115,5 +116,13 @@
   \item 能说明为什么从根 BFS、块唯一性和 bitmap 对照必须同时成立；
   \item 能走读 Ring 3 文件 ABI、每进程 fd、用户复制、路径解析与 ATA 写入链路；
   \item 能运行同盘双启动持久化和超级块损坏拒绝测试，并区分它们的证据；
+  \item 能解释 fd 0/1/2、动态描述符、对象类型、访问方向和进程局部命名；
+  \item 能说明 Set 1 make/break、左右 Shift、Caps Lock 与字符转换的边界；
+  \item 能证明控制台 submitted=read=109、dropped=buffered=0 的守恒意义；
+  \item 能解释唯一 Running 进程阻塞后为何必须允许无 Ready 状态，以及
+        \code{sti; hlt; cli} 如何避免丢失中断唤醒；
+  \item 能走读通用 Try/Wait/Close 描述符 ABI、第四参数 R10 和目录项 64 字节布局；
+  \item 能说明 Shell 固定容量解析器的引号、转义、参数上限和失败原子性；
+  \item 能解释 QMP 逐键输入为何没有替代 i8042、IRQ1 和来宾驱动；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

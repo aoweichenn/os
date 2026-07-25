@@ -21,8 +21,8 @@ constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_TERMINATES_TO_COMPLETION =
     "终止必须依次交接并在无 Ready 进程时完成";
 constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_BLOCKS_AND_WAKES =
     "阻塞和唤醒必须原子迁移状态并保持等待原因统计";
-constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_REJECTS_UNSCHEDULABLE_BLOCK =
-    "没有其他 Ready 进程时阻塞必须失败且保留当前运行进程";
+constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_ENTERS_IDLE =
+    "最后一个运行进程阻塞后必须进入无当前进程的可唤醒 idle 状态";
 constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_REJECTS_INVALID_INDEX =
     "读取越界 PCB 索引必须返回明确错误";
 constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_KERNEL_STACK_LAYOUT =
@@ -194,7 +194,10 @@ int main() {
     uint64_t singleProcessIndex = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
     uint64_t singleProcessId = OS_TEST_PROCESS_SCHEDULER_EMPTY_VALUE;
     os::kernel::ProcessSchedulingDecision singleProcessDecision{};
-    const bool unschedulableBlockRejected =
+    os::kernel::ProcessSchedulerEntry singleProcessEntry{};
+    uint64_t singleWokenProcessCount =
+        OS_TEST_PROCESS_SCHEDULER_EMPTY_VALUE;
+    const bool idleBlockResumes =
         singleProcessScheduler.Initialize(OS_TEST_PROCESS_SCHEDULER_QUANTUM_TICKS) ==
             os::kernel::ProcessSchedulerStatus::Succeeded &&
         singleProcessScheduler.CreateProcess(singleProcessIndex, singleProcessId) ==
@@ -203,11 +206,28 @@ int main() {
             os::kernel::ProcessSchedulerStatus::Succeeded &&
         singleProcessScheduler.BlockCurrentProcess(os::kernel::ProcessWaitReason::PipeReadable,
                                                    singleProcessDecision) ==
-            os::kernel::ProcessSchedulerStatus::NoReadyProcess &&
-        singleProcessScheduler.CurrentProcessIndex() == singleProcessIndex &&
+            os::kernel::ProcessSchedulerStatus::Succeeded &&
+        !singleProcessDecision.switched &&
+        singleProcessScheduler.CurrentProcessIndex() ==
+            os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX &&
+        !singleProcessScheduler.IsActive() &&
+        singleProcessScheduler.ReadEntry(singleProcessIndex,
+                                         singleProcessEntry) ==
+            os::kernel::ProcessSchedulerStatus::Succeeded &&
+        singleProcessEntry.state == os::kernel::ProcessState::Blocked &&
+        singleProcessScheduler.WakeBlockedProcesses(
+            os::kernel::ProcessWaitReason::PipeReadable,
+            OS_TEST_PROCESS_SCHEDULER_SINGLE_WAKE_COUNT,
+            singleWokenProcessCount) ==
+            os::kernel::ProcessSchedulerStatus::Succeeded &&
+        singleWokenProcessCount ==
+            OS_TEST_PROCESS_SCHEDULER_SINGLE_WAKE_COUNT &&
+        singleProcessScheduler.Start(singleProcessDecision) ==
+            os::kernel::ProcessSchedulerStatus::Succeeded &&
+        singleProcessDecision.currentProcessIndex == singleProcessIndex &&
         singleProcessScheduler.IsActive();
-    testContext.Expect(unschedulableBlockRejected,
-                       OS_TEST_PROCESS_SCHEDULER_REJECTS_UNSCHEDULABLE_BLOCK);
+    testContext.Expect(idleBlockResumes,
+                       OS_TEST_PROCESS_SCHEDULER_ENTERS_IDLE);
 
     os::kernel::ProcessSchedulerEntry invalidEntry{};
     testContext.Expect(scheduler.ReadEntry(os::kernel::OS_KERNEL_PROCESS_CAPACITY, invalidEntry) ==

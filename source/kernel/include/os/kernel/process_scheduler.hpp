@@ -20,6 +20,8 @@ enum class ProcessWaitReason : uint64_t {
     None,
     PipeReadable,
     PipeWritable,
+    DescriptorReadable,
+    DescriptorWritable,
 };
 
 enum class ProcessSchedulerStatus : uint64_t {

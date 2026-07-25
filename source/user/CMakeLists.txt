@@ -2,6 +2,23 @@ find_program(OS_USER_CLANG_EXECUTABLE NAMES clang++ REQUIRED)
 find_program(OS_USER_LLD_EXECUTABLE NAMES ld.lld REQUIRED)
 find_program(OS_USER_NASM_EXECUTABLE NAMES nasm REQUIRED)
 
+add_library(
+    os_user_shell_model_host
+    STATIC
+        src/shell_parser.cpp
+        include/os/user/shell_parser.hpp
+)
+target_include_directories(
+    os_user_shell_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_user_shell_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
 set(OS_USER_VIRTUAL_BASE 0x40000000)
 set(OS_USER_PAGE_SIZE_BYTES 0x1000)
 set(OS_USER_MAXIMUM_PAGE_SIZE_BYTES 0x1000)
@@ -88,8 +105,10 @@ function(
     add_library(
         ${OS_USER_OBJECT_TARGET}
         OBJECT
+            src/freestanding_memory.cpp
             src/system_call.cpp
             "${OS_USER_PROGRAM_SOURCE}"
+            ${ARGN}
     )
     target_link_libraries(${OS_USER_OBJECT_TARGET} PRIVATE os_system_abi)
     target_include_directories(
@@ -166,6 +185,12 @@ set(
     CACHE INTERNAL
     "Ring 3 有界管道消费者验收程序"
 )
+set(
+    OS_USER_SHELL_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_shell.elf"
+    CACHE INTERNAL
+    "Ring 3 交互式 Shell 用户环境"
+)
 
 os_add_user_program(
     os_user_smoke_elf
@@ -202,4 +227,12 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/ipc_consumer.cpp"
     "${OS_USER_IPC_CONSUMER_ELF_PATH}"
     "链接 Ring 3 有界管道消费者 ELF64 程序"
+)
+os_add_user_program(
+    os_user_shell_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/shell_entry.cpp"
+    "${OS_USER_SHELL_ELF_PATH}"
+    "链接 Ring 3 交互式 Shell ELF64 程序"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shell.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_parser.cpp"
 )

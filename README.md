@@ -2,7 +2,7 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.11 文件系统` 已完成，下一阶段为 `v1.0 用户环境`。自研
+当前状态：`v1.0 用户环境` 已完成，十三阶段路线全部验收。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
@@ -26,6 +26,16 @@ Dirty/Clean 提交协议与 ATA PIO 写入/FLUSH CACHE。每个 PCB 拥有四个
 描述符；生产者把 256 字节载荷持久化为 `/shared/payload.bin`，消费者从
 文件和管道分别验证。系统测试使用同一磁盘连续启动两次证明跨实例持久化，
 再破坏超级块证明损坏不会被自动格式化掩盖。
+
+v1.0 进一步把控制台、文件、目录和启动期管道并入每进程八槽描述符表；
+fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解码为
+字符并提交到 256 字节 FIFO，Ring 3 Shell 通过通用 Try/Wait 系统调用阻塞
+读取。没有 Ready 但仍有 Blocked 时，内核切回永久地址空间执行
+同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
+freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
+sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 73 项
+CTest。
 
 ## 最短构建与测试路径
 
@@ -101,6 +111,7 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] PROCESS_CR3=0x...
 [OS][KERNEL] USER_RING3_ENTER
 [OS][KERNEL] SCHEDULER_STARTED
+[OS][USER][SHELL] READY
 [OS][USER][PIPE] PRODUCER_STARTED
 [OS][USER][PIPE] CONSUMER_STARTED
 [OS][USER][FS] FILE_WRITTEN
@@ -110,8 +121,19 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][USER][PIPE] PAYLOAD_VERIFIED
 [OS][USER][PIPE] EOF_OBSERVED
 [OS][USER][FS] FILE_VERIFIED
-[OS][USER][PID3] WORKER_STEP_1
+[OS][USER][PID4] WORKER_STEP_1
 [OS][USER] ADDRESS_SPACE_ISOLATED
+[OS][USER][SHELL] COMMAND=HELP
+[OS][USER][SHELL] COMMAND=ECHO
+[OS][USER][SHELL] COMMAND=PWD
+[OS][USER][SHELL] COMMAND=MKDIR
+[OS][USER][SHELL] COMMAND=WRITE
+[OS][USER][SHELL] COMMAND=CAT
+[OS][USER][SHELL] COMMAND=LS
+[OS][USER][SHELL] COMMAND=SYNC
+[OS][USER][SHELL] UNKNOWN_COMMAND_REJECTED
+[OS][USER][SHELL] COMMAND=EXIT
+[OS][USER][SHELL] EXIT
 [OS][KERNEL] SCHEDULER_CREATED_PROCESSES=0x0000000000000004
 [OS][KERNEL] SCHEDULER_TERMINATED_PROCESSES=0x0000000000000004
 [OS][KERNEL] SCHEDULER_PREEMPTIONS=0x...
@@ -121,6 +143,10 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] PIPE_WRITTEN_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x0000000000000001
+[OS][KERNEL] CONSOLE_SUBMITTED_BYTES=0x...
+[OS][KERNEL] CONSOLE_READ_BYTES=0x...
+[OS][KERNEL] CONSOLE_DROPPED_BYTES=0x0000000000000000
+[OS][KERNEL] CONSOLE_BUFFERED_BYTES=0x0000000000000000
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
 [OS][KERNEL] PIPE_TRANSFER_VALID
 [OS][KERNEL] PIPE_ENDPOINTS_CLOSED

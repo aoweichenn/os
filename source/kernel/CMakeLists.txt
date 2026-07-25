@@ -2,6 +2,7 @@ set(
     OS_KERNEL_PUBLIC_HEADERS
     include/os/kernel/boot_info.hpp
     include/os/kernel/block_cache.hpp
+    include/os/kernel/console_input.hpp
     include/os/kernel/descriptor_layout.hpp
     include/os/kernel/descriptor_tables.hpp
     include/os/kernel/device_model.hpp
@@ -14,6 +15,7 @@ set(
     include/os/kernel/kernel_main.hpp
     include/os/kernel/kernel_heap.hpp
     include/os/kernel/interrupt_runtime.hpp
+    include/os/kernel/io_descriptor.hpp
     include/os/kernel/legacy_pic.hpp
     include/os/kernel/memory_manager.hpp
     include/os/kernel/page_table.hpp
@@ -42,6 +44,7 @@ set(
     src/ata_pio.cpp
     src/block_cache.cpp
     src/boot_info.cpp
+    src/console_input.cpp
     src/device_model.cpp
     src/descriptor_layout.cpp
     src/descriptor_tables.cpp
@@ -53,6 +56,7 @@ set(
     src/kernel_main.cpp
     src/kernel_heap.cpp
     src/interrupt_runtime.cpp
+    src/io_descriptor.cpp
     src/legacy_pic.cpp
     src/memory_manager.cpp
     src/page_table.cpp
@@ -175,6 +179,25 @@ add_library(
         src/spin_lock.cpp
         include/os/kernel/pipe.hpp
         include/os/kernel/spin_lock.hpp
+)
+
+add_library(
+    os_kernel_user_environment_model_host
+    STATIC
+        src/console_input.cpp
+        src/io_descriptor.cpp
+        include/os/kernel/console_input.hpp
+        include/os/kernel/io_descriptor.hpp
+)
+target_include_directories(
+    os_kernel_user_environment_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_user_environment_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
 )
 
 add_library(
@@ -334,7 +357,8 @@ add_custom_command(
         "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
         "${OS_USER_IPC_PRODUCER_ELF_PATH}"
         "${OS_USER_IPC_CONSUMER_ELF_PATH}"
-    COMMENT "嵌入六个自研 Ring 3 ELF64 程序"
+        "${OS_USER_SHELL_ELF_PATH}"
+    COMMENT "嵌入七个自研 Ring 3 ELF64 程序"
     VERBATIM
 )
 add_custom_target(

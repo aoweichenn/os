@@ -147,6 +147,10 @@ constexpr char OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX[] =
     "[OS][KERNEL] PROCESS_FILE_READ_BYTES=";
 constexpr char OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX[] =
     "[OS][KERNEL] PROCESS_FILE_WRITTEN_BYTES=";
+constexpr char OS_KERNEL_MAIN_PROCESS_CONSOLE_READ_BYTES_PREFIX[] =
+    "[OS][KERNEL] PROCESS_CONSOLE_READ_BYTES=";
+constexpr char OS_KERNEL_MAIN_PROCESS_CONSOLE_WRITTEN_BYTES_PREFIX[] =
+    "[OS][KERNEL] PROCESS_CONSOLE_WRITTEN_BYTES=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE[] = "[OS][KERNEL] SCHEDULER_STARTED\r\n";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX[] =
     "[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=";
@@ -167,6 +171,14 @@ constexpr char OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] P
 constexpr char OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] PIPE_WRITER_BLOCKS=";
 constexpr char OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX[] =
     "[OS][KERNEL] PIPE_EOF_OBSERVATIONS=";
+constexpr char OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX[] =
+    "[OS][KERNEL] CONSOLE_SUBMITTED_BYTES=";
+constexpr char OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX[] =
+    "[OS][KERNEL] CONSOLE_READ_BYTES=";
+constexpr char OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX[] =
+    "[OS][KERNEL] CONSOLE_DROPPED_BYTES=";
+constexpr char OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX[] =
+    "[OS][KERNEL] CONSOLE_BUFFERED_BYTES=";
 constexpr char OS_KERNEL_MAIN_PIPE_READY_MESSAGE[] = "[OS][KERNEL] PIPE_READY\r\n";
 constexpr char OS_KERNEL_MAIN_PIPE_TRANSFER_VALID_MESSAGE[] =
     "[OS][KERNEL] PIPE_TRANSFER_VALID\r\n";
@@ -195,6 +207,7 @@ constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_END_OF_FILE_OBSERVATION_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_SECOND_PROCESS_INDEX = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_THIRD_PROCESS_INDEX = 2ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -520,8 +533,10 @@ void PrepareRequiredProcesses(const SerialPort &serialPort,
         UserProgramSelection processSelection = selection;
         if (selection == UserProgramSelection::Smoke) {
             if (processIndex == OS_KERNEL_MAIN_FIRST_PROCESS_INDEX) {
-                processSelection = UserProgramSelection::IpcProducer;
+                processSelection = UserProgramSelection::Shell;
             } else if (processIndex == OS_KERNEL_MAIN_SECOND_PROCESS_INDEX) {
+                processSelection = UserProgramSelection::IpcProducer;
+            } else if (processIndex == OS_KERNEL_MAIN_THIRD_PROCESS_INDEX) {
                 processSelection = UserProgramSelection::IpcConsumer;
             } else {
                 processSelection = UserProgramSelection::SchedulerWorker;
@@ -534,6 +549,17 @@ void PrepareRequiredProcesses(const SerialPort &serialPort,
 [[nodiscard]] bool IsExpectedProcessExecutionResult(const ProcessExecutionResult &result) noexcept {
     const bool exitedSuccessfully = result.terminationReason == ProcessTerminationReason::Exited &&
                                     result.exitCode == OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE;
+    if (result.selection == UserProgramSelection::Shell) {
+        return exitedSuccessfully &&
+               result.pipeBytesRead ==
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.pipeBytesWritten ==
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.consoleBytesRead !=
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.consoleBytesWritten !=
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+    }
     if (result.selection == UserProgramSelection::IpcProducer) {
         return exitedSuccessfully &&
                result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
@@ -607,6 +633,12 @@ void WriteProcessExecutionResult(const SerialPort &serialPort,
     WriteRequiredHexLine(serialPort,
                          OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX,
                          result.fileSystemBytesWritten);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_PROCESS_CONSOLE_READ_BYTES_PREFIX,
+                         result.consoleBytesRead);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_PROCESS_CONSOLE_WRITTEN_BYTES_PREFIX,
+                         result.consoleBytesWritten);
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
 
     if (!IsExpectedProcessExecutionResult(result)) {
@@ -665,6 +697,17 @@ void ExecuteRequiredProcesses(const SerialPort &serialPort,
                          statistics.ipc.writerBlockCount);
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX,
                          statistics.ipc.endOfFileObservationCount);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
+                         statistics.consoleInput.submittedByteCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
+                         statistics.consoleInput.readByteCount);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX,
+                         statistics.consoleInput.droppedByteCount);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
+                         statistics.consoleInput.bufferedByteCount);
 
     const uint64_t expectedProcessCount = selection == UserProgramSelection::Smoke
                                               ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
@@ -683,7 +726,15 @@ void ExecuteRequiredProcesses(const SerialPort &serialPort,
           statistics.ipc.endOfFileObservationCount !=
               OS_KERNEL_MAIN_EXPECTED_END_OF_FILE_OBSERVATION_COUNT ||
           statistics.ipc.brokenPipeObservationCount !=
-              OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT)) ||
+              OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT ||
+          statistics.consoleInput.submittedByteCount ==
+              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
+          statistics.consoleInput.submittedByteCount !=
+              statistics.consoleInput.readByteCount ||
+          statistics.consoleInput.droppedByteCount !=
+              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
+          statistics.consoleInput.bufferedByteCount !=
+              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT)) ||
         !ProcessResourcesWereReclaimed(statistics)) {
         WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();

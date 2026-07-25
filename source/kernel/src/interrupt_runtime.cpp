@@ -155,6 +155,10 @@ void InterruptRuntime::HandleKeyboardInterrupt() noexcept {
     }
     this->supportedKeyboardEventCount_ =
         this->supportedKeyboardEventCount_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
+    if (decodedEvent.pressed &&
+        decodedEvent.character != OS_KERNEL_INTERRUPT_ZERO_BYTE) {
+        SubmitConsoleCharacter(decodedEvent.character);
+    }
     if (!this->keyboardEventPending_) {
         this->pendingKeyboardEvent_ = decodedEvent;
         this->keyboardEventPending_ = true;

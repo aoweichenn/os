@@ -917,10 +917,105 @@ FileSystemStatus FileSystem::Open(
     handle = FileSystemHandle{
         .inodeNumber = inodeNumber,
         .offsetBytes = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE,
+        .nodeType = FileSystemNodeType::RegularFile,
         .readable = options.readable,
         .writable = options.writable,
         .open = true,
     };
+    return FileSystemStatus::Succeeded;
+}
+
+FileSystemStatus FileSystem::OpenDirectory(
+    const uint8_t *const path, const uint64_t pathLengthBytes,
+    FileSystemHandle &handle) noexcept {
+    SpinLockGuard guard{this->lock_};
+    handle = FileSystemHandle{};
+    if (!this->initialized_) {
+        return FileSystemStatus::NotInitialized;
+    }
+    PathComponent components[OS_KERNEL_FILE_SYSTEM_MAXIMUM_PATH_COMPONENT_COUNT]{};
+    uint64_t componentCount = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE;
+    FileSystemStatus status = this->ParsePath(
+        path, pathLengthBytes, components,
+        OS_KERNEL_FILE_SYSTEM_MAXIMUM_PATH_COMPONENT_COUNT, componentCount);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    uint64_t inodeNumber = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE;
+    FileSystemInode inode{};
+    status = this->ResolvePath(components, componentCount, inodeNumber, inode);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    if (inode.type != FileSystemNodeType::Directory) {
+        return FileSystemStatus::NotDirectory;
+    }
+    handle = FileSystemHandle{
+        .inodeNumber = inodeNumber,
+        .offsetBytes = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE,
+        .nodeType = FileSystemNodeType::Directory,
+        .readable = true,
+        .writable = false,
+        .open = true,
+    };
+    return FileSystemStatus::Succeeded;
+}
+
+FileSystemStatus FileSystem::ReadDirectory(
+    FileSystemHandle &handle, FileSystemDirectoryEntry &entry,
+    bool &endOfDirectory) noexcept {
+    SpinLockGuard guard{this->lock_};
+    entry = FileSystemDirectoryEntry{};
+    endOfDirectory = false;
+    if (!this->initialized_) {
+        return FileSystemStatus::NotInitialized;
+    }
+    if (!handle.open || handle.nodeType != FileSystemNodeType::Directory) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    if (!handle.readable) {
+        return FileSystemStatus::PermissionDenied;
+    }
+    FileSystemInode inode{};
+    FileSystemStatus status =
+        this->ReadInode(handle.inodeNumber, inode);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    if (inode.type != FileSystemNodeType::Directory ||
+        (handle.offsetBytes %
+         OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES) !=
+            OS_KERNEL_FILE_SYSTEM_ZERO_VALUE ||
+        handle.offsetBytes > inode.sizeBytes) {
+        return FileSystemStatus::Corrupt;
+    }
+    if (handle.offsetBytes == inode.sizeBytes) {
+        endOfDirectory = true;
+        return FileSystemStatus::Succeeded;
+    }
+    const uint64_t entryIndex =
+        handle.offsetBytes /
+        OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES;
+    const uint64_t blockIndex =
+        entryIndex / OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRIES_PER_BLOCK;
+    if (blockIndex >= inode.allocatedBlockCount) {
+        return FileSystemStatus::Corrupt;
+    }
+    uint8_t block[OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES]{};
+    status = this->ReadRelativeBlock(inode.directBlocks[blockIndex], block);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    const uint64_t entryOffset =
+        (entryIndex % OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRIES_PER_BLOCK) *
+        OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES;
+    if (!FileSystemFormatSucceeded(DecodeFileSystemDirectoryEntry(
+            block + entryOffset,
+            OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES, entry))) {
+        return FileSystemStatus::Corrupt;
+    }
+    handle.offsetBytes +=
+        OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES;
     return FileSystemStatus::Succeeded;
 }
 
@@ -968,7 +1063,8 @@ FileSystemStatus FileSystem::Read(FileSystemHandle &handle,
     if (!this->initialized_) {
         return FileSystemStatus::NotInitialized;
     }
-    if (!handle.open) {
+    if (!handle.open ||
+        handle.nodeType != FileSystemNodeType::RegularFile) {
         return FileSystemStatus::InvalidHandle;
     }
     if (!handle.readable) {
@@ -1059,7 +1155,8 @@ FileSystemStatus FileSystem::Write(FileSystemHandle &handle,
     if (!this->initialized_) {
         return FileSystemStatus::NotInitialized;
     }
-    if (!handle.open) {
+    if (!handle.open ||
+        handle.nodeType != FileSystemNodeType::RegularFile) {
         return FileSystemStatus::InvalidHandle;
     }
     if (!handle.writable) {

@@ -8,8 +8,6 @@
 
 namespace os::kernel {
 
-inline constexpr uint64_t OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT = 4ULL;
-
 struct FileSystemOpenOptions final {
     bool readable;
     bool writable;
@@ -20,6 +18,7 @@ struct FileSystemOpenOptions final {
 struct FileSystemHandle final {
     uint64_t inodeNumber;
     uint64_t offsetBytes;
+    FileSystemNodeType nodeType;
     bool readable;
     bool writable;
     bool open;
@@ -71,6 +70,12 @@ class FileSystem final {
     [[nodiscard]] FileSystemStatus Open(const uint8_t *path, uint64_t pathLengthBytes,
                                         const FileSystemOpenOptions &options,
                                         FileSystemHandle &handle) noexcept;
+    [[nodiscard]] FileSystemStatus OpenDirectory(const uint8_t *path,
+                                                 uint64_t pathLengthBytes,
+                                                 FileSystemHandle &handle) noexcept;
+    [[nodiscard]] FileSystemStatus ReadDirectory(
+        FileSystemHandle &handle, FileSystemDirectoryEntry &entry,
+        bool &endOfDirectory) noexcept;
     [[nodiscard]] FileSystemStatus Read(FileSystemHandle &handle, uint8_t *destination,
                                         uint64_t capacityBytes, uint64_t &readBytes) noexcept;
     [[nodiscard]] FileSystemStatus Write(FileSystemHandle &handle, const uint8_t *source,

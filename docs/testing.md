@@ -127,7 +127,8 @@ QEMU 自行异常退出仍视为失败。
   `os_kernel_hardware_interrupt_vector_32..47` 全部符号。
 - 正常 QEMU 路径必须证明传统路由已接管、PIC/PIT/PS2/ATA 已初始化，等待
   至少 16 个真实 IRQ0 并输出单调毫秒，然后才到达 `READY`。
-- `READY` 后宿主通过 QMP 键盘前端注入 `A`。测试必须观察目标机 IRQ1 输出
+- 当时的 `v0.7` 成功路径在 `READY` 后由宿主通过 QMP 键盘前端注入 `A`。
+  测试必须观察目标机 IRQ1 输出
   扫描码 `0x1E` 与 `A_PRESSED`；宿主不写端口、不写来宾内存，也不调用内核。
 - 成功路径禁止 `DEVICE_INITIALIZATION_FAILED`、异常与 panic。IRQ 热路径
   不逐 tick 输出；宿主为每条串口行附加单调到达时间，便于判断停滞边界。
@@ -203,6 +204,26 @@ QEMU 自行异常退出仍视为失败。
   必须报告 `FILE_SYSTEM_CORRUPT`，禁止进入 Ring 3、自动格式化或到达
   `READY`。
 
+`v1.0` 把交互式用户环境、统一描述符和空闲唤醒纳入同一证据链：
+
+- 控制台输入单元测试覆盖 FIFO 顺序、满缓冲拒绝、丢弃计数、空读和统计守恒；
+  描述符表单元测试覆盖标准描述符、动态分配、端点权限、容量、关闭与槽位复用。
+- Shell 解析器单元测试覆盖空白、引号、转义、参数上限、行长上限和错误原子性；
+  固定种子随机测试执行 4096 轮任意字节输入，要求所有切片始终位于固定存储内。
+- 文件系统生命周期集成测试通过 `OpenDirectory/ReadDirectory` 枚举目录，
+  同时确认普通文件描述符不能当作目录读取。
+- 调度器测试新增“唯一运行进程阻塞且没有 Ready 后继”的合法状态，并证明
+  条件变化后按等待原因唤醒，用户包装会重新检查具体描述符。
+- 第七个真实用户 ELF 为 Shell；每个用户 ELF 都执行 AMD64、入口、加载段、
+  W^X 和符号审计，Kernel ELF 继续禁止 `.init_array` 等动态初始化区段；
+  反汇编审计还要求空闲函数内的 `STI/HLT/CLI` 三条指令精确相邻。
+- 正常 QEMU 在 Shell 输出 `READY` 后，通过 QMP 逐字符输入十条命令。109 个
+  字符必须全部经过 i8042、IRQ1、控制台 FIFO、描述符 0 和 Shell，提交数与
+  读取数精确相等，丢弃数和最终缓冲数均为零。
+- 宿主精确检查每条 `COMMAND` 标记、文件内容、目录枚举、未知命令和退出，
+  同时保留管道、抢占、资源回收与失败路径证据；持久化双启动也执行同一套
+  Shell 脚本，避免另设绕过用户边界的测试入口。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -261,17 +282,22 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_pipe_unit_tests` | 单元 | 管道读写、回绕、关闭、EOF、broken pipe 与统计 |
 | `os_kernel_pipe_randomized_tests` | 随机 | 32,768 步管道状态与独立字节队列模型对照 |
 | `os_kernel_synchronization_integration_tests` | 集成 | 四线程、200,000 次受锁更新的互斥与可见性 |
+| `os_kernel_console_input_unit_tests` | 单元 | 控制台 FIFO 顺序、容量、丢弃策略与统计守恒 |
+| `os_kernel_io_descriptor_unit_tests` | 单元 | 标准/动态描述符、端点权限、分配、关闭与槽位复用 |
 | `os_kernel_file_system_format_unit_tests` | 单元 | superblock、inode、目录项显式编码、布局与 CRC32 |
 | `os_kernel_file_system_lifecycle_integration_tests` | 集成 | 格式化、目录、跨块文件、重挂载、截断与语义损坏拒绝 |
 | `os_kernel_file_system_randomized_tests` | 随机 | 128 轮随机 rewrite、重挂载与参考模型逐字节对照 |
+| `os_user_shell_parser_unit_tests` | 单元 | Shell 空白、引号、转义、参数/行长上限与错误原子性 |
+| `os_user_shell_parser_randomized_tests` | 随机 | 4096 轮随机字节输入的边界、切片归属与可重复性 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
-| `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
+| `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限、符号与相邻空闲指令 |
 | `os_user_smoke_elf_layout` | 集成 | 正常用户 ELF 的 AMD64、段权限与入口 |
 | `os_user_invalid_opcode_elf_layout` | 集成 | 用户 `UD2` 测试 ELF 的结构与权限 |
 | `os_user_page_fault_elf_layout` | 集成 | 用户越权访问测试 ELF 的结构与权限 |
 | `os_user_scheduler_worker_elf_layout` | 集成 | 同址多进程 worker ELF 的结构、权限与入口 |
 | `os_user_ipc_producer_elf_layout` | 集成 | 管道生产者 ELF 的结构、权限与入口 |
 | `os_user_ipc_consumer_elf_layout` | 集成 | 管道消费者 ELF 的结构、权限与入口 |
+| `os_user_shell_elf_layout` | 集成 | 交互式 Shell ELF 的结构、权限、入口与无动态运行时依赖 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
@@ -306,19 +332,20 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 68 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
+当前共 73 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
 捕获器同时拥有“最终里程碑到达”和“五秒总截止”两个终止条件，并通过
 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 
-成功 QEMU 用例不只检查标记“至少出现一次”。v0.11 对四次 ELF/栈创建、
-生产者/消费者里程碑、两个 worker 的进度与地址隔离、四份终止结果和单次资源
-回收执行精确计数；同时解析固定 16 位十六进制统计，要求创建/终止为 4、
-PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、管道写入/读取均为 256。内核
-也独立验证同一组进程、管道、文件系统和页帧不变量，形成目标内自检与宿主
-协议检查两层证据。持久化测试另用同一临时磁盘的两次全新 QEMU 进程，避免
-把缓存内读回误当作跨启动持久化。
+成功 QEMU 用例不只检查标记“至少出现一次”。v1.0 对 Shell、生产者、消费者
+和一个 worker 的四次 ELF/栈创建，十条命令、管道里程碑、地址隔离、四份
+终止结果和单次资源回收执行精确计数；同时解析固定 16 位十六进制统计，要求
+创建/终止为 4、PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、管道写入/读取
+均为 256，控制台提交/读取均为 109 且无丢弃。内核也独立验证同一组进程、
+描述符、管道、文件系统和页帧不变量，形成目标内自检与宿主协议检查两层证据。
+持久化测试另用同一临时磁盘的两次全新 QEMU 进程，避免把缓存内读回误当作
+跨启动持久化。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模
 不需要 fixture 或宏注册；避免 `TEST`、`EXPECT_*` 等宏也与项目的宏约束一致。

@@ -156,7 +156,7 @@ ProcessScheduler::TerminateCurrentProcess(ProcessSchedulingDecision &decision) n
     if (!this->FindNextReadyProcess(firstCandidateIndex, nextProcessIndex)) {
         decision.previousProcessIndex = terminatedProcessIndex;
         if (this->HasBlockedProcess()) {
-            return ProcessSchedulerStatus::NoReadyProcess;
+            return ProcessSchedulerStatus::Succeeded;
         }
         decision.completed = true;
         return ProcessSchedulerStatus::Succeeded;
@@ -184,9 +184,8 @@ ProcessScheduler::BlockCurrentProcess(const ProcessWaitReason waitReason,
     uint64_t nextProcessIndex = OS_KERNEL_PROCESS_INVALID_INDEX;
     const uint64_t firstCandidateIndex =
         (blockedProcessIndex + OS_KERNEL_PROCESS_COUNTER_INCREMENT) % OS_KERNEL_PROCESS_CAPACITY;
-    if (!this->FindNextReadyProcess(firstCandidateIndex, nextProcessIndex)) {
-        return ProcessSchedulerStatus::NoReadyProcess;
-    }
+    const bool readyProcessAvailable =
+        this->FindNextReadyProcess(firstCandidateIndex, nextProcessIndex);
 
     ProcessSchedulerEntry &blockedEntry = this->entries_[blockedProcessIndex];
     blockedEntry.state = ProcessState::Blocked;
@@ -194,6 +193,12 @@ ProcessScheduler::BlockCurrentProcess(const ProcessWaitReason waitReason,
     blockedEntry.blockCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
     this->statistics_.blockCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
     this->elapsedQuantumTicks_ = OS_KERNEL_PROCESS_EMPTY_VALUE;
+    if (!readyProcessAvailable) {
+        this->currentProcessIndex_ = OS_KERNEL_PROCESS_INVALID_INDEX;
+        decision.previousProcessIndex = blockedProcessIndex;
+        decision.currentProcessIndex = OS_KERNEL_PROCESS_INVALID_INDEX;
+        return ProcessSchedulerStatus::Succeeded;
+    }
     this->ActivateProcess(nextProcessIndex, blockedProcessIndex, true, decision);
     return ProcessSchedulerStatus::Succeeded;
 }

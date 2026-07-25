@@ -22,6 +22,7 @@ user 包装与程序    kernel 分发与校验
 | `RDI` | 参数 0 |
 | `RSI` | 参数 1 |
 | `RDX` | 参数 2 |
+| `R10` | 参数 3；当前保留给后续扩展 |
 | `INT 0x80` | 进入内核的指令与门向量 |
 
 | 编号 | 接口 | 参数 | 结果 |
@@ -41,6 +42,13 @@ user 包装与程序    kernel 分发与校验
 | 13 | `CloseFile` | `RDI=fd` | 成功 0 或负错误码 |
 | 14 | `CreateDirectory` | `RDI=路径`，`RSI=长度` | 成功 0 或负错误码 |
 | 15 | `SyncFileSystem` | 无 | 成功 0 或负错误码 |
+| 16 | `TryReadDescriptor` | `RDI=fd`，`RSI=可写地址`，`RDX=容量` | 字节数、EOF 0、would block 或错误 |
+| 17 | `TryWriteDescriptor` | `RDI=fd`，`RSI=只读地址`，`RDX=长度` | 字节数、would block 或错误 |
+| 18 | `WaitDescriptorReadable` | `RDI=fd` | 唤醒后 0 或错误；调用者重试 |
+| 19 | `WaitDescriptorWritable` | `RDI=fd` | 唤醒后 0 或错误；调用者重试 |
+| 20 | `CloseDescriptor` | `RDI=fd` | 成功 0 或错误 |
+| 21 | `OpenDirectory` | `RDI=路径`，`RSI=长度` | fd 或错误 |
+| 22 | `ReadDirectory` | `RDI=fd`，`RSI=目录项地址`，`RDX=64` | 一项为 1，末尾为 0，失败为负值 |
 
 错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 串口失败。
 v0.10 又定义 `-5` would block、`-6` broken pipe、`-7` 端点权限、
@@ -52,6 +60,11 @@ v0.11 再定义 `-12..-21`，分别表示非法 fd、文件不存在、文件已
 非目录、目标是目录、文件系统容量耗尽、文件过大、文件系统损坏、文件系统
 未初始化和文件权限拒绝。Open 标志为 read、write、create、truncate 四个
 具名位；未知位与没有 read/write 能力的组合均被拒绝。
+
+v1.0 再定义 `-22` 描述符能力拒绝与 `-23` 描述符单次传输过长。通用描述符
+单次最多传输 256 字节，fd 0/1/2 固定为标准输入/输出/错误，动态 fd 从 3
+开始。目录项固定 64 字节，ABI 通过 `static_assert` 和独立 ELF/系统调用
+测试锁定布局。
 
 ## 代码走读
 
@@ -81,12 +94,12 @@ QEMU 协议检查每条固定日志的精确出现次数，避免某个进程重
 
 ## v0.10 管道验收程序
 
-`programs/ipc_producer.cpp` 作为 PID1，只拥有写端。它先验证读权限被拒绝、
+历史 v0.10 镜像中，`programs/ipc_producer.cpp` 作为 PID1，只拥有写端。它先验证读权限被拒绝、
 非法写指针被拒绝和未知系统调用仍被拒绝，再按
 `(index × 37 + 11) & 0xFF` 生成 256 字节载荷。`WritePipe` 在部分写或
 would block 后继续推进，写完关闭端点，并验证第二次关闭得到稳定错误。
 
-`programs/ipc_consumer.cpp` 作为 PID2，只拥有读端。它先验证写权限和非法
+历史 v0.10 镜像中，`programs/ipc_consumer.cpp` 作为 PID2，只拥有读端。它先验证写权限和非法
 读指针，再以 31 字节缓冲循环 `ReadPipe`。每个返回字节都在用户态独立重算
 期望值；零长度只接受为写端关闭后的 EOF。最终要求总量恰为 256 字节，再关闭
 读端并验证重复关闭。
@@ -110,6 +123,24 @@ PID2 消费者先从管道读到 EOF。因为生产者在关闭管道写端前�
 每个 PCB 固定拥有四个普通文件句柄槽；fd 是当前进程的槽索引，不是 inode。
 退出和用户异常路径会关闭全部仍开放的文件句柄。管道端点目前仍使用编号 4..9
 的专用 ABI，尚未伪装为统一 VFS 描述符。
+
+## v1.0 统一描述符与 Shell
+
+当前正常镜像把 Shell 安排为 PID1，生产者、消费者和唯一调度 worker 依次为
+PID2、PID3、PID4。生产者 fd 3 为管道写端，消费者 fd 3 为管道读端；两者
+使用通用 Try/Wait/Close 包装传输原有 256 字节载荷。OpenFile 仍负责按路径
+创建打开对象，但后续读写和关闭走同一描述符分发。
+
+`programs/shell_entry.cpp` 是普通 Ring 3 入口。`src/shell.cpp` 在标准输入
+fd 0 上阻塞读取并向 fd 1 回显，解析后执行 help、echo、pwd、ls、mkdir、
+write、cat、sync、exit。`src/shell_parser.cpp` 只使用固定数组、offset 和
+length，支持单双引号与反斜杠，不链接标准库或堆。
+
+目录通过 OpenDirectory 获得动态 fd，再以 ReadDirectory 逐项读取 64 字节
+ABI 结构；名称按显式长度输出，不假定 NUL 终止。所有动态 fd 无论正常退出
+还是用户异常都会由进程运行时关闭。完整数据流和空闲唤醒见
+[用户环境模块](user-environment.md)，架构理由见
+[ADR 0015](../adr/0015-unified-descriptors-interactive-shell-and-idle.md)。
 
 ## 依赖与命名
 

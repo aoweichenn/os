@@ -578,3 +578,66 @@ llvm-nm -n build/developer/source/kernel/kernel.elf
 若出现 `.init_array` 或 `_GLOBAL__sub_I_...`，查找命名空间作用域下具有非
 constexpr 构造器的对象。将状态改为常量初始化或显式初始化函数；不要为了
 通过审计而删除区段，因为那只会留下未执行构造器的对象。
+
+## v1.0：Shell、统一描述符与空闲唤醒
+
+### Shell 已输出 `READY`，但输入后没有命令
+
+先按因果链核对四组证据，不要直接把字符塞进来宾内存：
+
+1. QMP `sendkey` 是否成功发给当前 QEMU 实例；
+2. i8042 是否产生 IRQ1，Set 1 解码器是否把 make code 转成非零字符；
+3. `CONSOLE_SUBMITTED_BYTES` 是否增长，fd 0 等待者是否从 Blocked 变为 Ready；
+4. Shell 的通用描述符读取是否返回字符并最终遇到 Enter。
+
+Shift 和 Caps Lock 只共同决定字母大小写；数字与标点只受 Shift 影响。如果
+`CapsLock + 1` 错误地产生 `!`，说明解码器把 `shift XOR caps` 错用于整个
+键盘，而不是仅用于字母行。
+
+### 所有进程 Blocked 后 QEMU 看似卡住
+
+v1.0 允许“无 Running、无 Ready、至少一个 Blocked”。此时
+`BlockCurrentProcess` 成功并清除当前进程，执行循环切回永久 CR3、恢复默认
+TSS.RSP0，再进入：
+
+```asm
+sti
+hlt
+cli
+```
+
+`STI` 后一条指令具有中断影子，保证不会在“检查无 Ready”和真正睡眠之间丢失
+已经到达的可屏蔽中断。这三条指令必须位于同一个内联汇编块；若分别调用
+`EnableInterrupts()` 和 `WaitForInterrupt()`，中间的 `RET/CALL` 会破坏紧邻
+保证。被 IRQ 唤醒后先 `CLI` 再检查队列，避免在普通调度器状态转换中嵌套
+硬件中断。若持续停顿，用 GDB 检查 RFLAGS.IF、PIC IRR/ISR、当前 PCB 状态和
+`waitReason=DescriptorReadable`；不要让 Blocked 进程参与 Ready 搜索来掩盖
+唤醒缺失。
+
+### 描述符调用返回权限或类型错误
+
+每个 PCB 的八槽表先解析 fd，再按对象类型分派。fd 0 只读，fd 1/2 只写；
+管道端点也保留方向；普通文件拒绝目录迭代，目录拒绝字节流读写。优先检查：
+
+- fd 是否属于当前进程，而不是误用另一进程返回值；
+- 槽位类型、对象索引和 readable/writable 位是否一致；
+- `OpenDirectory` 是否建立目录游标，`ReadDirectory` 是否使用 64 字节 ABI；
+- 进程退出是否先逐槽关闭，再释放文件句柄和地址空间。
+
+系统调用第四参数在 C++ System V 入口是 R8，但执行 `INT 0x80` 前必须搬到
+约定的 R10。目录项缓冲长度或用户可写范围错误都应返回稳定错误，不应触发
+用户异常或内核 panic。
+
+### 控制台统计不守恒
+
+正常自动化脚本提交 109 字节，因此最终应满足：
+
+```text
+submitted = read = 109
+dropped = buffered = 0
+```
+
+`submitted > read` 通常表示 Shell 在完整消费前退出或唤醒丢失；
+`dropped > 0` 表示宿主输入速度超过 256 字节 FIFO 的消费能力；
+`buffered > 0` 表示结束条件过早。调试时可以降低 QMP 逐键发送速度，但不能
+扩大 FIFO 来掩盖错误，也不能逐字符写串口，因为那会改变生产/消费速度。
