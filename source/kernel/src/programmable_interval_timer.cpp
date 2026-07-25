@@ -15,19 +15,19 @@ constexpr uint16_t OS_KERNEL_PIT_DIVISOR_BYTE_MASK = 0x00FFU;
 }
 
 PitConfigurationStatus
-ProgrammableIntervalTimer::initialize(const uint64_t requestedFrequencyHz,
+ProgrammableIntervalTimer::Initialize(const uint64_t requestedFrequencyHz,
                                       PitConfiguration &configuration) const noexcept {
     const PitConfigurationStatus status =
-        createPitConfiguration(requestedFrequencyHz, configuration);
+        CreatePitConfiguration(requestedFrequencyHz, configuration);
     if (status != PitConfigurationStatus::Succeeded) {
         return status;
     }
 
-    writePort8(OS_KERNEL_PIT_MODE_COMMAND_PORT, OS_KERNEL_PIT_CHANNEL0_LOW_HIGH_MODE2_BINARY);
+    WritePort8(OS_KERNEL_PIT_MODE_COMMAND_PORT, OS_KERNEL_PIT_CHANNEL0_LOW_HIGH_MODE2_BINARY);
     // 访问模式规定同一数据端口先接收低字节、再接收高字节。
-    writePort8(OS_KERNEL_PIT_CHANNEL0_DATA_PORT,
+    WritePort8(OS_KERNEL_PIT_CHANNEL0_DATA_PORT,
                static_cast<uint8_t>(configuration.divisor & OS_KERNEL_PIT_DIVISOR_BYTE_MASK));
-    writePort8(
+    WritePort8(
         OS_KERNEL_PIT_CHANNEL0_DATA_PORT,
         static_cast<uint8_t>((configuration.divisor >> OS_KERNEL_PIT_DIVISOR_HIGH_SHIFT_BITS) &
                              OS_KERNEL_PIT_DIVISOR_BYTE_MASK));

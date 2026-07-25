@@ -25,7 +25,7 @@ TestContext::TestContext(const std::string_view suiteName) noexcept
     std::cout << OS_TEST_SUPPORT_SUITE_PREFIX << this->suiteName << OS_TEST_SUPPORT_LINE_END;
 }
 
-void TestContext::expect(const bool condition, const std::string_view description) noexcept {
+void TestContext::Expect(const bool condition, const std::string_view description) noexcept {
     this->assertionCount += OS_TEST_SUPPORT_COUNT_INCREMENT;
 
     if (!condition) {
@@ -34,7 +34,7 @@ void TestContext::expect(const bool condition, const std::string_view descriptio
     }
 }
 
-void TestContext::expectRandom(const bool condition, const std::string_view description,
+void TestContext::ExpectRandom(const bool condition, const std::string_view description,
                                const RandomSeed seed, const TestCount iteration) noexcept {
     this->assertionCount += OS_TEST_SUPPORT_COUNT_INCREMENT;
 
@@ -46,7 +46,7 @@ void TestContext::expectRandom(const bool condition, const std::string_view desc
     }
 }
 
-auto TestContext::exitCode() const noexcept -> int {
+int TestContext::ExitCode() const noexcept {
     std::cout << OS_TEST_SUPPORT_RESULT_PREFIX << this->assertionCount
               << OS_TEST_SUPPORT_ASSERTION_LABEL << this->failureCount
               << OS_TEST_SUPPORT_FAILURE_LABEL << OS_TEST_SUPPORT_LINE_END;

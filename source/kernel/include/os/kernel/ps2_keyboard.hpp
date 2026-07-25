@@ -14,14 +14,14 @@ enum class Ps2KeyboardStatus : uint64_t {
 
 class Ps2Keyboard final {
   public:
-    [[nodiscard]] Ps2KeyboardStatus initialize() const noexcept;
-    [[nodiscard]] Ps2KeyboardStatus tryReadScanCode(uint8_t &scanCode) const noexcept;
+    [[nodiscard]] Ps2KeyboardStatus Initialize() const noexcept;
+    [[nodiscard]] Ps2KeyboardStatus TryReadScanCode(uint8_t &scanCode) const noexcept;
 
   private:
-    [[nodiscard]] bool waitForControllerInput() const noexcept;
-    [[nodiscard]] bool waitForControllerOutput() const noexcept;
-    void flushControllerOutput() const noexcept;
-    [[nodiscard]] Ps2KeyboardStatus writeDeviceCommand(uint8_t command) const noexcept;
+    [[nodiscard]] bool WaitForControllerInput() const noexcept;
+    [[nodiscard]] bool WaitForControllerOutput() const noexcept;
+    void FlushControllerOutput() const noexcept;
+    [[nodiscard]] Ps2KeyboardStatus WriteDeviceCommand(uint8_t command) const noexcept;
 };
 
 }

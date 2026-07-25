@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/kernel/boot_info.hpp"
+#include "os/kernel/user_program_images.hpp"
 
 #include <stdint.h>
 
@@ -13,6 +14,7 @@ enum class KernelFaultInjection : uint64_t {
     WriteProtection,
 };
 
-[[noreturn]] void runKernel(const BootInfo *bootInfo, KernelFaultInjection faultInjection) noexcept;
+[[noreturn]] void RunKernel(const BootInfo *bootInfo, KernelFaultInjection faultInjection,
+                            UserProgramSelection userProgramSelection) noexcept;
 
 }

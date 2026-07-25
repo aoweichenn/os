@@ -132,6 +132,27 @@ QEMU 自行异常退出仍视为失败。
 - 成功路径禁止 `DEVICE_INITIALIZATION_FAILED`、异常与 panic。IRQ 热路径
   不逐 tick 输出；宿主为每条串口行附加单调到达时间，便于判断停滞边界。
 
+`v0.8` 把特权级、用户 ELF、系统调用和故障隔离纳入同一证据链：
+
+- 用户 ELF 单元测试从最小合法文件出发，覆盖空指针、截断、标识、类型、
+  机器、版本、头大小、程序头数量与范围、未知头、权限、对齐、文件范围、
+  内存范围、重叠、总页数和入口失败。
+- 固定种子 C++ 随机测试对 16,384 条地址范围性质断言，特别覆盖低地址、
+  规范边界和无符号加法溢出；Python 随机测试独立破坏 ELF 字段并检查拒绝。
+- 边界集成测试验证 Ring 3 扩展帧、四页栈与 guard、用户地址范围，以及
+  `0x80`、调用 1/2 的 ABI 稳定性。
+- 三个实际用户 ELF 分别由独立 Python 审计器检查 AMD64 `ET_EXEC`、入口、
+  `PT_LOAD`、W^X、对齐和用户窗口，不以“链接成功”替代格式证据。
+- 正常 QEMU 必须拒绝未映射用户指针和未知编号，输出 Ring 3 消息，以 0
+  退出，报告六次系统调用，恢复内核后继续输出 `READY` 并处理键盘 IRQ。
+- 用户非法指令镜像必须报告向量 6、错误码 0；用户页故障镜像必须报告向量
+  14、错误码 `0x4` 和 CR2=`0x30000000`。两者必须输出
+  `USER_TERMINATED` 和 `USER_RETURNED_TO_KERNEL`，禁止 `PANIC`。
+- 截断用户 ELF 必须在 Ring 3 和设备初始化前报告验证状态 2；禁止出现用户
+  入口、用户文本或 `READY`。
+- Kernel ELF 审计新增系统调用入口/分发、用户进入/恢复和三个内嵌 ELF
+  边界符号，防止链接图漏掉关键汇编路径。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -181,8 +202,14 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
+| `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
+| `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、用户栈、地址窗口与系统调用 ABI |
+| `os_kernel_user_elf_randomized_tests` | 随机 | 16,384 条用户地址范围与溢出性质 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
+| `os_user_smoke_elf_layout` | 集成 | 正常用户 ELF 的 AMD64、段权限与入口 |
+| `os_user_invalid_opcode_elf_layout` | 集成 | 用户 `UD2` 测试 ELF 的结构与权限 |
+| `os_user_page_fault_elf_layout` | 集成 | 用户越权访问测试 ELF 的结构与权限 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
@@ -207,13 +234,16 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_kernel_invalid_opcode_panic` | 系统/失败路径 | UD2、向量 6、统一帧与 panic |
 | `os_qemu_kernel_page_fault_panic` | 系统/失败路径 | 向量 14、错误码、CR2 与 panic |
 | `os_qemu_kernel_write_protection_panic` | 系统/失败路径 | CR0.WP、错误码 3、只读页 CR2 与 panic |
+| `os_qemu_user_invalid_opcode_isolation` | 系统/失败路径 | Ring 3 #UD 只终止用户并恢复内核 |
+| `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
+| `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 46 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
+当前共 55 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
 捕获器同时拥有“最终里程碑到达”和“五秒总截止”两个终止条件，并通过
 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`

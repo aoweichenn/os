@@ -34,7 +34,7 @@ constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_VALID_MEMORY_MAP_ENTRY_COUNT = 4ULL;
 constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS = 1ULL;
 
-os::kernel::BootInfo createValidBootInfo() {
+os::kernel::BootInfo CreateValidBootInfo() {
     return os::kernel::BootInfo{
         .magic = os::kernel::OS_KERNEL_BOOT_INFO_MAGIC,
         .version = os::kernel::OS_KERNEL_BOOT_INFO_VERSION,
@@ -60,107 +60,107 @@ os::kernel::BootInfo createValidBootInfo() {
 int main() {
     os::test::TestContext testContext{OS_TEST_KERNEL_BOOT_INFO_SUITE_NAME};
 
-    os::kernel::BootInfo bootInfo = createValidBootInfo();
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    os::kernel::BootInfo bootInfo = CreateValidBootInfo();
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::Succeeded,
                        OS_TEST_KERNEL_BOOT_INFO_VALID);
-    testContext.expect(os::kernel::validateBootInfo(nullptr) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(nullptr) ==
                            os::kernel::BootInfoValidationStatus::NullPointer,
                        OS_TEST_KERNEL_BOOT_INFO_NULL);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.magic = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidMagic,
                        OS_TEST_KERNEL_BOOT_INFO_MAGIC);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.version = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::UnsupportedVersion,
                        OS_TEST_KERNEL_BOOT_INFO_VERSION);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.structureSizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidStructureSize,
                        OS_TEST_KERNEL_BOOT_INFO_SIZE);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.kernelFileSizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidKernelFileRange,
                        OS_TEST_KERNEL_BOOT_INFO_FILE_RANGE);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.kernelFileSizeBytes = os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_KERNEL_FILE_SIZE_BYTES +
                                    OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidKernelFileRange,
                        OS_TEST_KERNEL_BOOT_INFO_FILE_TOO_LARGE);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.kernelEntryAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidKernelEntry,
                        OS_TEST_KERNEL_BOOT_INFO_ENTRY);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.kernelLoadSegmentCount = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidLoadSegmentCount,
                        OS_TEST_KERNEL_BOOT_INFO_SEGMENT_COUNT);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.kernelLoadSegmentCount = os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_LOAD_SEGMENT_COUNT +
                                       OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidLoadSegmentCount,
                        OS_TEST_KERNEL_BOOT_INFO_TOO_MANY_SEGMENTS);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.pageTableRootPhysicalAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidPageTableRoot,
                        OS_TEST_KERNEL_BOOT_INFO_PAGE_TABLE_ROOT);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.identityMappedSizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidIdentityMapSize,
                        OS_TEST_KERNEL_BOOT_INFO_MAP_SIZE);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.kernelStackTopPhysicalAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidKernelStack,
                        OS_TEST_KERNEL_BOOT_INFO_STACK);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.physicalMemoryMapAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ADDRESS);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.physicalMemoryMapEntryCount = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_COUNT);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.physicalMemoryMapEntryCount =
         os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT +
         OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_TOO_LARGE);
 
-    bootInfo = createValidBootInfo();
+    bootInfo = CreateValidBootInfo();
     bootInfo.physicalMemoryMapEntrySizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.expect(os::kernel::validateBootInfo(&bootInfo) ==
+    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ENTRY_SIZE);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

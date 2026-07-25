@@ -46,18 +46,18 @@ int main() {
         const uint64_t expectedInterruptRequest = irqDistribution(generator);
         uint64_t vector = 0ULL;
         uint64_t actualInterruptRequest = UINT64_MAX;
-        testContext.expectRandom(
-            os::kernel::calculateLegacyPicVector(expectedInterruptRequest, vector) ==
+        testContext.ExpectRandom(
+            os::kernel::CalculateLegacyPicVector(expectedInterruptRequest, vector) ==
                     os::kernel::LegacyPicModelStatus::Succeeded &&
-                os::kernel::calculateLegacyPicInterruptRequest(vector, actualInterruptRequest) ==
+                os::kernel::CalculateLegacyPicInterruptRequest(vector, actualInterruptRequest) ==
                     os::kernel::LegacyPicModelStatus::Succeeded &&
                 actualInterruptRequest == expectedInterruptRequest,
             OS_TEST_INTERRUPT_RANDOM_PIC_ROUND_TRIP, OS_TEST_INTERRUPT_RANDOM_SEED, iteration);
 
         const uint64_t requestedFrequencyHz = frequencyDistribution(generator);
         os::kernel::PitConfiguration pitConfiguration{};
-        testContext.expectRandom(
-            os::kernel::createPitConfiguration(requestedFrequencyHz, pitConfiguration) ==
+        testContext.ExpectRandom(
+            os::kernel::CreatePitConfiguration(requestedFrequencyHz, pitConfiguration) ==
                     os::kernel::PitConfigurationStatus::Succeeded &&
                 pitConfiguration.divisor != 0U && pitConfiguration.actualFrequencyHz != 0ULL,
             OS_TEST_INTERRUPT_RANDOM_PIT_CONFIGURATION, OS_TEST_INTERRUPT_RANDOM_SEED, iteration);
@@ -72,16 +72,16 @@ int main() {
             selectA ? os::kernel::KeyboardKey::A : os::kernel::KeyboardKey::Space;
         os::kernel::ScanCodeSet1Decoder keyboardDecoder{};
         os::kernel::KeyboardEvent keyboardEvent{};
-        const bool makeDecoded = keyboardDecoder.decode(makeCode, keyboardEvent) ==
+        const bool makeDecoded = keyboardDecoder.Decode(makeCode, keyboardEvent) ==
                                      os::kernel::KeyboardDecodeStatus::EventReady &&
                                  keyboardEvent.key == expectedKey && keyboardEvent.pressed;
-        const bool breakDecoded = keyboardDecoder.decode(breakCode, keyboardEvent) ==
+        const bool breakDecoded = keyboardDecoder.Decode(breakCode, keyboardEvent) ==
                                       os::kernel::KeyboardDecodeStatus::EventReady &&
                                   keyboardEvent.key == expectedKey && !keyboardEvent.pressed;
-        testContext.expectRandom(makeDecoded && breakDecoded,
+        testContext.ExpectRandom(makeDecoded && breakDecoded,
                                  OS_TEST_INTERRUPT_RANDOM_KEYBOARD_SEQUENCE,
                                  OS_TEST_INTERRUPT_RANDOM_SEED, iteration);
     }
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

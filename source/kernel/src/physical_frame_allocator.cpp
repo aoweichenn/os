@@ -12,11 +12,11 @@ constexpr uint64_t OS_KERNEL_FRAME_ALLOCATOR_BYTE_ROUNDING =
 constexpr uint64_t OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - 1ULL;
 constexpr uint64_t OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE = 0ULL;
 
-[[nodiscard]] uint64_t alignUpToPage(const uint64_t address) noexcept {
+[[nodiscard]] uint64_t AlignUpToPage(const uint64_t address) noexcept {
     return (address + OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK) & ~OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK;
 }
 
-[[nodiscard]] uint64_t alignDownToPage(const uint64_t address) noexcept {
+[[nodiscard]] uint64_t AlignDownToPage(const uint64_t address) noexcept {
     return address & ~OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK;
 }
 
@@ -29,7 +29,7 @@ PhysicalFrameAllocator::PhysicalFrameAllocator(uint8_t *stateStorage,
       reservedFrameCount_{0ULL}, nextSearchFrameIndex_{0ULL} {}
 
 PhysicalFrameAllocatorStatus
-PhysicalFrameAllocator::initialize(const PhysicalMemoryMapEntry *entries, const uint64_t entryCount,
+PhysicalFrameAllocator::Initialize(const PhysicalMemoryMapEntry *entries, const uint64_t entryCount,
                                    const uint64_t managedLimitAddress) noexcept {
     if (this->stateStorage_ == nullptr) {
         return PhysicalFrameAllocatorStatus::NullStateStorage;
@@ -41,7 +41,7 @@ PhysicalFrameAllocator::initialize(const PhysicalMemoryMapEntry *entries, const 
     }
 
     PhysicalMemorySummary memorySummary{};
-    if (validateAndSummarizePhysicalMemoryMap(entries, entryCount, managedLimitAddress,
+    if (ValidateAndSummarizePhysicalMemoryMap(entries, entryCount, managedLimitAddress,
                                               memorySummary) !=
         PhysicalMemoryMapValidationStatus::Succeeded) {
         return PhysicalFrameAllocatorStatus::InvalidMemoryMap;
@@ -73,17 +73,17 @@ PhysicalFrameAllocator::initialize(const PhysicalMemoryMapEntry *entries, const 
             continue;
         }
         const uint64_t entryEndAddress = entry.baseAddress + entry.lengthBytes;
-        const uint64_t firstFrameAddress = alignUpToPage(entry.baseAddress);
+        const uint64_t firstFrameAddress = AlignUpToPage(entry.baseAddress);
         const uint64_t clampedEndAddress =
             entryEndAddress < managedLimitAddress ? entryEndAddress : managedLimitAddress;
-        const uint64_t endFrameAddress = alignDownToPage(clampedEndAddress);
+        const uint64_t endFrameAddress = AlignDownToPage(clampedEndAddress);
         if (firstFrameAddress >= endFrameAddress) {
             continue;
         }
         for (uint64_t frameAddress = firstFrameAddress; frameAddress < endFrameAddress;
              frameAddress += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
             const uint64_t frameIndex = frameAddress / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-            this->setFrameState(frameIndex, FrameState::Free);
+            this->SetFrameState(frameIndex, FrameState::Free);
             ++this->freeFrameCount_;
         }
     }
@@ -97,9 +97,9 @@ PhysicalFrameAllocator::initialize(const PhysicalMemoryMapEntry *entries, const 
 }
 
 PhysicalFrameAllocatorStatus
-PhysicalFrameAllocator::reserveRange(const uint64_t beginAddress,
+PhysicalFrameAllocator::ReserveRange(const uint64_t beginAddress,
                                      const uint64_t lengthBytes) noexcept {
-    if (!this->isInitialized()) {
+    if (!this->IsInitialized()) {
         return PhysicalFrameAllocatorStatus::NotInitialized;
     }
     if (lengthBytes == OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE ||
@@ -107,26 +107,26 @@ PhysicalFrameAllocator::reserveRange(const uint64_t beginAddress,
         return PhysicalFrameAllocatorStatus::InvalidReservation;
     }
     const uint64_t endAddress = beginAddress + lengthBytes;
-    const uint64_t managedLimit = this->managedLimitAddress();
+    const uint64_t managedLimit = this->ManagedLimitAddress();
     if (beginAddress >= managedLimit || endAddress > managedLimit ||
         endAddress > UINT64_MAX - OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK) {
         return PhysicalFrameAllocatorStatus::InvalidReservation;
     }
-    const uint64_t firstFrameAddress = alignDownToPage(beginAddress);
-    const uint64_t endFrameAddress = alignUpToPage(endAddress);
+    const uint64_t firstFrameAddress = AlignDownToPage(beginAddress);
+    const uint64_t endFrameAddress = AlignUpToPage(endAddress);
     for (uint64_t frameAddress = firstFrameAddress; frameAddress < endFrameAddress;
          frameAddress += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
         const uint64_t frameIndex = frameAddress / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-        if (this->frameState(frameIndex) == FrameState::Allocated) {
+        if (this->GetFrameState(frameIndex) == FrameState::Allocated) {
             return PhysicalFrameAllocatorStatus::InvalidReservation;
         }
     }
     for (uint64_t frameAddress = firstFrameAddress; frameAddress < endFrameAddress;
          frameAddress += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
         const uint64_t frameIndex = frameAddress / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-        const FrameState state = this->frameState(frameIndex);
+        const FrameState state = this->GetFrameState(frameIndex);
         if (state == FrameState::Free) {
-            this->setFrameState(frameIndex, FrameState::Reserved);
+            this->SetFrameState(frameIndex, FrameState::Reserved);
             --this->freeFrameCount_;
             ++this->reservedFrameCount_;
         }
@@ -134,8 +134,8 @@ PhysicalFrameAllocator::reserveRange(const uint64_t beginAddress,
     return PhysicalFrameAllocatorStatus::Succeeded;
 }
 
-PhysicalFrameAllocatorStatus PhysicalFrameAllocator::allocate(PhysicalFrame &frame) noexcept {
-    if (!this->isInitialized()) {
+PhysicalFrameAllocatorStatus PhysicalFrameAllocator::Allocate(PhysicalFrame &frame) noexcept {
+    if (!this->IsInitialized()) {
         return PhysicalFrameAllocatorStatus::NotInitialized;
     }
     if (this->freeFrameCount_ == OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE) {
@@ -145,10 +145,10 @@ PhysicalFrameAllocatorStatus PhysicalFrameAllocator::allocate(PhysicalFrame &fra
     for (uint64_t offset = 0ULL; offset < this->managedFrameCount_; ++offset) {
         const uint64_t frameIndex =
             (this->nextSearchFrameIndex_ + offset) % this->managedFrameCount_;
-        if (this->frameState(frameIndex) != FrameState::Free) {
+        if (this->GetFrameState(frameIndex) != FrameState::Free) {
             continue;
         }
-        this->setFrameState(frameIndex, FrameState::Allocated);
+        this->SetFrameState(frameIndex, FrameState::Allocated);
         --this->freeFrameCount_;
         ++this->allocatedFrameCount_;
         this->nextSearchFrameIndex_ = (frameIndex + 1ULL) % this->managedFrameCount_;
@@ -158,20 +158,20 @@ PhysicalFrameAllocatorStatus PhysicalFrameAllocator::allocate(PhysicalFrame &fra
     return PhysicalFrameAllocatorStatus::OutOfMemory;
 }
 
-PhysicalFrameAllocatorStatus PhysicalFrameAllocator::release(const PhysicalFrame frame) noexcept {
-    if (!this->isInitialized()) {
+PhysicalFrameAllocatorStatus PhysicalFrameAllocator::Release(const PhysicalFrame frame) noexcept {
+    if (!this->IsInitialized()) {
         return PhysicalFrameAllocatorStatus::NotInitialized;
     }
     if ((frame.physicalAddress & OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK) !=
             OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE ||
-        frame.physicalAddress >= this->managedLimitAddress()) {
+        frame.physicalAddress >= this->ManagedLimitAddress()) {
         return PhysicalFrameAllocatorStatus::InvalidFrameAddress;
     }
     const uint64_t frameIndex = frame.physicalAddress / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-    if (this->frameState(frameIndex) != FrameState::Allocated) {
+    if (this->GetFrameState(frameIndex) != FrameState::Allocated) {
         return PhysicalFrameAllocatorStatus::FrameNotAllocated;
     }
-    this->setFrameState(frameIndex, FrameState::Free);
+    this->SetFrameState(frameIndex, FrameState::Free);
     ++this->freeFrameCount_;
     --this->allocatedFrameCount_;
     if (frameIndex < this->nextSearchFrameIndex_) {
@@ -180,7 +180,7 @@ PhysicalFrameAllocatorStatus PhysicalFrameAllocator::release(const PhysicalFrame
     return PhysicalFrameAllocatorStatus::Succeeded;
 }
 
-PhysicalFrameAllocatorStatistics PhysicalFrameAllocator::statistics() const noexcept {
+PhysicalFrameAllocatorStatistics PhysicalFrameAllocator::Statistics() const noexcept {
     return PhysicalFrameAllocatorStatistics{
         .managedFrameCount = this->managedFrameCount_,
         .freeFrameCount = this->freeFrameCount_,
@@ -189,12 +189,12 @@ PhysicalFrameAllocatorStatistics PhysicalFrameAllocator::statistics() const noex
     };
 }
 
-uint64_t PhysicalFrameAllocator::managedLimitAddress() const noexcept {
+uint64_t PhysicalFrameAllocator::ManagedLimitAddress() const noexcept {
     return this->managedFrameCount_ * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 }
 
 PhysicalFrameAllocator::FrameState
-PhysicalFrameAllocator::frameState(const uint64_t frameIndex) const noexcept {
+PhysicalFrameAllocator::GetFrameState(const uint64_t frameIndex) const noexcept {
     const uint64_t byteIndex = frameIndex / OS_KERNEL_FRAME_ALLOCATOR_STATES_PER_BYTE;
     const uint64_t stateIndex = frameIndex % OS_KERNEL_FRAME_ALLOCATOR_STATES_PER_BYTE;
     const uint64_t shift = stateIndex * OS_KERNEL_FRAME_ALLOCATOR_BITS_PER_STATE;
@@ -202,7 +202,7 @@ PhysicalFrameAllocator::frameState(const uint64_t frameIndex) const noexcept {
                                                         OS_KERNEL_FRAME_ALLOCATOR_STATE_MASK));
 }
 
-void PhysicalFrameAllocator::setFrameState(const uint64_t frameIndex,
+void PhysicalFrameAllocator::SetFrameState(const uint64_t frameIndex,
                                            const FrameState state) noexcept {
     const uint64_t byteIndex = frameIndex / OS_KERNEL_FRAME_ALLOCATOR_STATES_PER_BYTE;
     const uint64_t stateIndex = frameIndex % OS_KERNEL_FRAME_ALLOCATOR_STATES_PER_BYTE;
@@ -213,7 +213,7 @@ void PhysicalFrameAllocator::setFrameState(const uint64_t frameIndex,
         static_cast<uint8_t>((this->stateStorage_[byteIndex] & ~shiftedMask) | shiftedState);
 }
 
-bool PhysicalFrameAllocator::isInitialized() const noexcept {
+bool PhysicalFrameAllocator::IsInitialized() const noexcept {
     return this->managedFrameCount_ != OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE;
 }
 

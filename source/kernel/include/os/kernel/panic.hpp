@@ -4,6 +4,6 @@
 
 namespace os::kernel {
 
-[[noreturn]] void panicFromException(const ExceptionFrame &frame) noexcept;
+[[noreturn]] void PanicFromException(const ExceptionFrame &frame) noexcept;
 
 }

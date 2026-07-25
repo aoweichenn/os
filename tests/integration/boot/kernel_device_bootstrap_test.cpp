@@ -42,14 +42,14 @@ int main() {
     uint16_t picMaskAfterTimer = 0U;
     uint16_t picMaskAfterKeyboard = 0U;
     uint64_t keyboardVector = 0ULL;
-    testContext.expect(
-        os::kernel::enableLegacyPicInterruptRequest(
+    testContext.Expect(
+        os::kernel::EnableLegacyPicInterruptRequest(
             OS_TEST_DEVICE_BOOTSTRAP_INITIAL_PIC_MASK, OS_TEST_DEVICE_BOOTSTRAP_TIMER_IRQ,
             picMaskAfterTimer) == os::kernel::LegacyPicModelStatus::Succeeded &&
-            os::kernel::enableLegacyPicInterruptRequest(
+            os::kernel::EnableLegacyPicInterruptRequest(
                 picMaskAfterTimer, OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ, picMaskAfterKeyboard) ==
                 os::kernel::LegacyPicModelStatus::Succeeded &&
-            os::kernel::calculateLegacyPicVector(OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ,
+            os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ,
                                                  keyboardVector) ==
                 os::kernel::LegacyPicModelStatus::Succeeded &&
             picMaskAfterKeyboard == OS_TEST_DEVICE_BOOTSTRAP_EXPECTED_PIC_MASK &&
@@ -58,21 +58,21 @@ int main() {
         OS_TEST_DEVICE_BOOTSTRAP_PIC_LAYOUT);
 
     os::kernel::PitConfiguration pitConfiguration{};
-    testContext.expect(
-        os::kernel::createPitConfiguration(OS_TEST_DEVICE_BOOTSTRAP_PIT_FREQUENCY_HZ,
+    testContext.Expect(
+        os::kernel::CreatePitConfiguration(OS_TEST_DEVICE_BOOTSTRAP_PIT_FREQUENCY_HZ,
                                            pitConfiguration) ==
                 os::kernel::PitConfigurationStatus::Succeeded &&
-            os::kernel::calculatePitElapsedMilliseconds(OS_TEST_DEVICE_BOOTSTRAP_SELF_TEST_TICKS,
+            os::kernel::CalculatePitElapsedMilliseconds(OS_TEST_DEVICE_BOOTSTRAP_SELF_TEST_TICKS,
                                                         pitConfiguration.divisor) >=
                 OS_TEST_DEVICE_BOOTSTRAP_MINIMUM_ELAPSED_MILLISECONDS,
         OS_TEST_DEVICE_BOOTSTRAP_PIT_CLOCK);
 
     os::kernel::ScanCodeSet1Decoder keyboardDecoder{};
     os::kernel::KeyboardEvent keyboardEvent{};
-    testContext.expect(
-        keyboardDecoder.decode(OS_TEST_DEVICE_BOOTSTRAP_EXTENDED_PREFIX, keyboardEvent) ==
+    testContext.Expect(
+        keyboardDecoder.Decode(OS_TEST_DEVICE_BOOTSTRAP_EXTENDED_PREFIX, keyboardEvent) ==
                 os::kernel::KeyboardDecodeStatus::AwaitingSequence &&
-            keyboardDecoder.decode(OS_TEST_DEVICE_BOOTSTRAP_ARROW_LEFT_MAKE, keyboardEvent) ==
+            keyboardDecoder.Decode(OS_TEST_DEVICE_BOOTSTRAP_ARROW_LEFT_MAKE, keyboardEvent) ==
                 os::kernel::KeyboardDecodeStatus::EventReady &&
             keyboardEvent.key == os::kernel::KeyboardKey::ArrowLeft && keyboardEvent.extended &&
             keyboardEvent.pressed,
@@ -82,14 +82,14 @@ int main() {
     for (uint64_t index = 0ULL; index < OS_TEST_DEVICE_BOOTSTRAP_STAGE1_MAGIC_SIZE_BYTES; ++index) {
         bootDescriptorSector[index] = OS_TEST_DEVICE_BOOTSTRAP_STAGE1_MAGIC[index];
     }
-    testContext.expect(
-        os::kernel::validateAtaReadRequest(OS_TEST_DEVICE_BOOTSTRAP_BOOT_DESCRIPTOR_LBA,
+    testContext.Expect(
+        os::kernel::ValidateAtaReadRequest(OS_TEST_DEVICE_BOOTSTRAP_BOOT_DESCRIPTOR_LBA,
                                            bootDescriptorSector,
                                            os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) ==
                 os::kernel::AtaReadRequestStatus::Succeeded &&
-            os::kernel::stage1BootDescriptorMagicMatches(
+            os::kernel::Stage1BootDescriptorMagicMatches(
                 bootDescriptorSector, os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES),
         OS_TEST_DEVICE_BOOTSTRAP_DISK_CONTRACT);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

@@ -33,9 +33,9 @@ struct InterruptRuntimeStatistics final {
     uint64_t pitActualFrequencyHz;
 };
 
-[[nodiscard]] InterruptRuntimeStatus initializeInterruptRuntime() noexcept;
-[[nodiscard]] InterruptRuntimeStatistics interruptRuntimeStatistics() noexcept;
-[[nodiscard]] bool tryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
+[[nodiscard]] InterruptRuntimeStatus InitializeInterruptRuntime() noexcept;
+[[nodiscard]] InterruptRuntimeStatistics GetInterruptRuntimeStatistics() noexcept;
+[[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
 
 extern "C" void osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept;
 

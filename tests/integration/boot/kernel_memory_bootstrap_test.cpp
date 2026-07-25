@@ -64,23 +64,23 @@ int main() {
             .attributes = 0U,
         },
     };
-    testContext.expect(allocator.initialize(qemuMemoryMap,
+    testContext.Expect(allocator.Initialize(qemuMemoryMap,
                                             OS_TEST_MEMORY_BOOTSTRAP_MEMORY_MAP_ENTRY_COUNT,
                                             OS_TEST_MEMORY_BOOTSTRAP_MANAGED_SIZE_BYTES) ==
                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
                        OS_TEST_MEMORY_BOOTSTRAP_INITIALIZE);
 
     const bool reservationsSucceeded =
-        allocator.reserveRange(0ULL, OS_TEST_MEMORY_BOOTSTRAP_LOW_RESERVED_SIZE_BYTES) ==
+        allocator.ReserveRange(0ULL, OS_TEST_MEMORY_BOOTSTRAP_LOW_RESERVED_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        allocator.reserveRange(OS_TEST_MEMORY_BOOTSTRAP_KERNEL_BEGIN,
+        allocator.ReserveRange(OS_TEST_MEMORY_BOOTSTRAP_KERNEL_BEGIN,
                                OS_TEST_MEMORY_BOOTSTRAP_KERNEL_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        allocator.reserveRange(OS_TEST_MEMORY_BOOTSTRAP_STACK_BEGIN,
+        allocator.ReserveRange(OS_TEST_MEMORY_BOOTSTRAP_STACK_BEGIN,
                                OS_TEST_MEMORY_BOOTSTRAP_STACK_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
-    const os::kernel::PhysicalFrameAllocatorStatistics statistics = allocator.statistics();
-    testContext.expect(reservationsSucceeded &&
+    const os::kernel::PhysicalFrameAllocatorStatistics statistics = allocator.Statistics();
+    testContext.Expect(reservationsSucceeded &&
                            statistics.reservedFrameCount ==
                                OS_TEST_MEMORY_BOOTSTRAP_EXPECTED_RESERVED_FRAME_COUNT &&
                            statistics.freeFrameCount ==
@@ -88,11 +88,11 @@ int main() {
                        OS_TEST_MEMORY_BOOTSTRAP_RESERVATIONS);
 
     os::kernel::PhysicalFrame firstFrame{};
-    testContext.expect(
-        allocator.allocate(firstFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+    testContext.Expect(
+        allocator.Allocate(firstFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
             firstFrame.physicalAddress ==
                 OS_TEST_MEMORY_BOOTSTRAP_KERNEL_BEGIN + OS_TEST_MEMORY_BOOTSTRAP_KERNEL_SIZE_BYTES,
         OS_TEST_MEMORY_BOOTSTRAP_FIRST_FRAME);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

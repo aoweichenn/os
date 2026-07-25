@@ -32,7 +32,7 @@ constexpr uint64_t OS_KERNEL_DEVICE_ATA_LBA28_MAXIMUM = 0x0FFFFFFFULL;
 
 }
 
-LegacyPicModelStatus calculateLegacyPicVector(const uint64_t interruptRequest,
+LegacyPicModelStatus CalculateLegacyPicVector(const uint64_t interruptRequest,
                                               uint64_t &vector) noexcept {
     if (interruptRequest >= OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT) {
         return LegacyPicModelStatus::InvalidInterruptRequest;
@@ -41,7 +41,7 @@ LegacyPicModelStatus calculateLegacyPicVector(const uint64_t interruptRequest,
     return LegacyPicModelStatus::Succeeded;
 }
 
-LegacyPicModelStatus calculateLegacyPicInterruptRequest(const uint64_t vector,
+LegacyPicModelStatus CalculateLegacyPicInterruptRequest(const uint64_t vector,
                                                         uint64_t &interruptRequest) noexcept {
     if (vector < OS_KERNEL_DEVICE_PIC_MASTER_VECTOR_BASE ||
         vector >= OS_KERNEL_DEVICE_PIC_MASTER_VECTOR_BASE + OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT) {
@@ -51,7 +51,7 @@ LegacyPicModelStatus calculateLegacyPicInterruptRequest(const uint64_t vector,
     return LegacyPicModelStatus::Succeeded;
 }
 
-LegacyPicModelStatus enableLegacyPicInterruptRequest(const uint16_t currentMask,
+LegacyPicModelStatus EnableLegacyPicInterruptRequest(const uint16_t currentMask,
                                                      const uint64_t interruptRequest,
                                                      uint16_t &updatedMask) noexcept {
     if (interruptRequest >= OS_KERNEL_DEVICE_PIC_MASK_BIT_COUNT) {
@@ -63,7 +63,7 @@ LegacyPicModelStatus enableLegacyPicInterruptRequest(const uint16_t currentMask,
     return LegacyPicModelStatus::Succeeded;
 }
 
-PitConfigurationStatus createPitConfiguration(const uint64_t requestedFrequencyHz,
+PitConfigurationStatus CreatePitConfiguration(const uint64_t requestedFrequencyHz,
                                               PitConfiguration &configuration) noexcept {
     if (requestedFrequencyHz == 0ULL) {
         return PitConfigurationStatus::InvalidFrequency;
@@ -85,7 +85,7 @@ PitConfigurationStatus createPitConfiguration(const uint64_t requestedFrequencyH
     return PitConfigurationStatus::Succeeded;
 }
 
-uint64_t calculatePitElapsedMilliseconds(const uint64_t tickCount,
+uint64_t CalculatePitElapsedMilliseconds(const uint64_t tickCount,
                                          const uint16_t divisor) noexcept {
     if (divisor == 0U) {
         return 0ULL;
@@ -101,7 +101,7 @@ uint64_t calculatePitElapsedMilliseconds(const uint64_t tickCount,
 
 ScanCodeSet1Decoder::ScanCodeSet1Decoder() noexcept : extendedPrefixPending_{false} {}
 
-KeyboardDecodeStatus ScanCodeSet1Decoder::decode(const uint8_t scanCode,
+KeyboardDecodeStatus ScanCodeSet1Decoder::Decode(const uint8_t scanCode,
                                                  KeyboardEvent &event) noexcept {
     if (scanCode == OS_KERNEL_DEVICE_KEYBOARD_EXTENDED_PREFIX) {
         this->extendedPrefixPending_ = true;
@@ -113,7 +113,7 @@ KeyboardDecodeStatus ScanCodeSet1Decoder::decode(const uint8_t scanCode,
         static_cast<uint8_t>(scanCode & OS_KERNEL_DEVICE_KEYBOARD_MAKE_CODE_MASK);
     const bool extended = this->extendedPrefixPending_;
     this->extendedPrefixPending_ = false;
-    const KeyboardKey key = this->keyForScanCode(makeCode, extended);
+    const KeyboardKey key = this->KeyForScanCode(makeCode, extended);
     if (key == KeyboardKey::Unknown) {
         return KeyboardDecodeStatus::UnsupportedScanCode;
     }
@@ -127,7 +127,7 @@ KeyboardDecodeStatus ScanCodeSet1Decoder::decode(const uint8_t scanCode,
     return KeyboardDecodeStatus::EventReady;
 }
 
-KeyboardKey ScanCodeSet1Decoder::keyForScanCode(const uint8_t makeCode,
+KeyboardKey ScanCodeSet1Decoder::KeyForScanCode(const uint8_t makeCode,
                                                 const bool extended) const noexcept {
     if (extended) {
         switch (makeCode) {
@@ -160,7 +160,7 @@ KeyboardKey ScanCodeSet1Decoder::keyForScanCode(const uint8_t makeCode,
     }
 }
 
-AtaReadRequestStatus validateAtaReadRequest(const uint64_t logicalBlockAddress,
+AtaReadRequestStatus ValidateAtaReadRequest(const uint64_t logicalBlockAddress,
                                             const uint8_t *buffer,
                                             const uint64_t bufferSizeBytes) noexcept {
     if (buffer == nullptr) {
@@ -175,7 +175,7 @@ AtaReadRequestStatus validateAtaReadRequest(const uint64_t logicalBlockAddress,
     return AtaReadRequestStatus::Succeeded;
 }
 
-bool stage1BootDescriptorMagicMatches(const uint8_t *sector,
+bool Stage1BootDescriptorMagicMatches(const uint8_t *sector,
                                       const uint64_t sectorSizeBytes) noexcept {
     if (sector == nullptr || sectorSizeBytes < OS_KERNEL_DEVICE_STAGE1_MAGIC_SIZE_BYTES) {
         return false;

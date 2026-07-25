@@ -51,7 +51,7 @@ extern const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS;
 extern const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES;
 extern const uint64_t OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT;
 
-[[nodiscard]] BootInfoValidationStatus validateBootInfo(const BootInfo *bootInfo) noexcept;
+[[nodiscard]] BootInfoValidationStatus ValidateBootInfo(const BootInfo *bootInfo) noexcept;
 
 static_assert(sizeof(BootInfo) == OS_KERNEL_BOOT_INFO_ABI_SIZE_BYTES);
 

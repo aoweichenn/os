@@ -116,6 +116,27 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_TIMER_SELF_TEST_PASSED_MARKER,
     OS_QEMU_KERNEL_TIMER_TICKS_MARKER,
     OS_QEMU_KERNEL_TSS_READY_MARKER,
+    OS_QEMU_KERNEL_USER_ELF_REJECTED_MARKER,
+    OS_QEMU_KERNEL_USER_ELF_VALID_MARKER,
+    OS_QEMU_KERNEL_USER_ENTRY_MARKER,
+    OS_QEMU_KERNEL_USER_EXCEPTION_RIP_MARKER,
+    OS_QEMU_KERNEL_USER_EXCEPTION_ZERO_ERROR_CODE_MARKER,
+    OS_QEMU_KERNEL_USER_EXIT_ZERO_MARKER,
+    OS_QEMU_KERNEL_USER_INVALID_OPCODE_VECTOR_MARKER,
+    OS_QEMU_KERNEL_USER_MAPPED_PAGES_MARKER,
+    OS_QEMU_KERNEL_USER_PAGE_FAULT_ADDRESS_MARKER,
+    OS_QEMU_KERNEL_USER_PAGE_FAULT_ERROR_CODE_MARKER,
+    OS_QEMU_KERNEL_USER_PAGE_FAULT_VECTOR_MARKER,
+    OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
+    OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER,
+    OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+    OS_QEMU_KERNEL_USER_SMOKE_SYSTEM_CALL_COUNT_MARKER,
+    OS_QEMU_KERNEL_USER_STACK_READY_MARKER,
+    OS_QEMU_KERNEL_USER_TERMINATED_MARKER,
+    OS_QEMU_KERNEL_USER_ZERO_SYSTEM_CALL_COUNT_MARKER,
+    OS_QEMU_USER_HELLO_FROM_RING3_MARKER,
+    OS_QEMU_USER_INVALID_POINTER_REJECTED_MARKER,
+    OS_QEMU_USER_UNKNOWN_SYSTEM_CALL_REJECTED_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_ADDRESS_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_ERROR_CODE_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_INJECTION_MARKER,
@@ -125,6 +146,7 @@ from os_tools.qemu_runner import (
 from os_tools.source_metrics import reportSourceMetrics
 from os_tools.stage1_image import auditStage1DiskImage
 from os_tools.toolchain import checkToolchain
+from os_tools.user_elf import auditUserElf
 
 
 OS_TOOL_PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -177,6 +199,10 @@ def handleAuditElf(arguments: argparse.Namespace) -> None:
 
 def handleAuditKernelElf(arguments: argparse.Namespace) -> None:
     auditKernelElf(OS_TOOL_PROJECT_ROOT, arguments.kernelElfPath)
+
+
+def handleAuditUserElf(arguments: argparse.Namespace) -> None:
+    auditUserElf(OS_TOOL_PROJECT_ROOT, arguments.userElfPath)
 
 
 def handleAuditFirmware(arguments: argparse.Namespace) -> None:
@@ -259,8 +285,13 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_HEAP_CAPACITY_MARKER,
         OS_QEMU_KERNEL_HEAP_SELF_TEST_PASSED_MARKER,
     )
-    completedKernelEntryMarkers = (
-        *completedKernelFoundationMarkers,
+    completedKernelUserPreparationMarkers = (
+        OS_QEMU_KERNEL_USER_ELF_VALID_MARKER,
+        OS_QEMU_KERNEL_USER_ENTRY_MARKER,
+        OS_QEMU_KERNEL_USER_MAPPED_PAGES_MARKER,
+        OS_QEMU_KERNEL_USER_STACK_READY_MARKER,
+    )
+    completedKernelDeviceMarkers = (
         OS_QEMU_KERNEL_LEGACY_INTERRUPT_ROUTING_READY_MARKER,
         OS_QEMU_KERNEL_PIC_READY_MARKER,
         OS_QEMU_KERNEL_PIC_MASK_MARKER,
@@ -275,6 +306,22 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_TIMER_TICKS_MARKER,
         OS_QEMU_KERNEL_MONOTONIC_MILLISECONDS_MARKER,
         OS_QEMU_KERNEL_TIMER_SELF_TEST_PASSED_MARKER,
+    )
+    completedKernelUserSmokeMarkers = (
+        OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+        OS_QEMU_USER_INVALID_POINTER_REJECTED_MARKER,
+        OS_QEMU_USER_UNKNOWN_SYSTEM_CALL_REJECTED_MARKER,
+        OS_QEMU_USER_HELLO_FROM_RING3_MARKER,
+        OS_QEMU_KERNEL_USER_EXIT_ZERO_MARKER,
+        OS_QEMU_KERNEL_USER_SMOKE_SYSTEM_CALL_COUNT_MARKER,
+        OS_QEMU_KERNEL_USER_TERMINATED_MARKER,
+        OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER,
+    )
+    completedKernelEntryMarkers = (
+        *completedKernelFoundationMarkers,
+        *completedKernelUserPreparationMarkers,
+        *completedKernelDeviceMarkers,
+        *completedKernelUserSmokeMarkers,
         OS_QEMU_KERNEL_FILE_SIZE_MARKER,
         OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
         OS_QEMU_KERNEL_READY_MARKER,
@@ -317,6 +364,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
             OS_QEMU_KERNEL_EXCEPTION_MARKER,
             OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
         )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
@@ -505,6 +553,86 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_KERNEL_READY_MARKER,
             OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
         )
+    elif arguments.expectedOutcome == "user-invalid-opcode":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+            OS_QEMU_KERNEL_USER_INVALID_OPCODE_VECTOR_MARKER,
+            OS_QEMU_KERNEL_USER_EXCEPTION_ZERO_ERROR_CODE_MARKER,
+            OS_QEMU_KERNEL_USER_EXCEPTION_RIP_MARKER,
+            OS_QEMU_KERNEL_USER_ZERO_SYSTEM_CALL_COUNT_MARKER,
+            OS_QEMU_KERNEL_USER_TERMINATED_MARKER,
+            OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER,
+            OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+            OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_USER_PAGE_FAULT_VECTOR_MARKER,
+            OS_QEMU_KERNEL_USER_PAGE_FAULT_ADDRESS_MARKER,
+            OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
+            OS_QEMU_USER_HELLO_FROM_RING3_MARKER,
+        )
+    elif arguments.expectedOutcome == "user-page-fault":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+            OS_QEMU_KERNEL_USER_PAGE_FAULT_VECTOR_MARKER,
+            OS_QEMU_KERNEL_USER_PAGE_FAULT_ERROR_CODE_MARKER,
+            OS_QEMU_KERNEL_USER_EXCEPTION_RIP_MARKER,
+            OS_QEMU_KERNEL_USER_PAGE_FAULT_ADDRESS_MARKER,
+            OS_QEMU_KERNEL_USER_ZERO_SYSTEM_CALL_COUNT_MARKER,
+            OS_QEMU_KERNEL_USER_TERMINATED_MARKER,
+            OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER,
+            OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+            OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_USER_INVALID_OPCODE_VECTOR_MARKER,
+            OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
+            OS_QEMU_USER_HELLO_FROM_RING3_MARKER,
+        )
+    elif arguments.expectedOutcome == "user-invalid-elf":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            OS_QEMU_KERNEL_USER_ELF_REJECTED_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_USER_ELF_VALID_MARKER,
+            OS_QEMU_KERNEL_USER_STACK_READY_MARKER,
+            OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+            OS_QEMU_KERNEL_INTERRUPTS_ENABLED_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
     else:
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -618,6 +746,14 @@ def createArgumentParser() -> argparse.ArgumentParser:
     )
     kernelElfAuditParser.add_argument("kernelElfPath", type=Path)
 
+    userElfAuditParser = addCommand(
+        subparsers,
+        "audit-user-elf",
+        "检查自研 Ring 3 ELF64 程序的格式、权限、入口和符号",
+        handleAuditUserElf,
+    )
+    userElfAuditParser.add_argument("userElfPath", type=Path)
+
     firmwareAuditParser = addCommand(
         subparsers,
         "audit-firmware",
@@ -692,6 +828,9 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "kernel-invalid-opcode",
             "kernel-page-fault",
             "kernel-write-protection",
+            "user-invalid-opcode",
+            "user-page-fault",
+            "user-invalid-elf",
         ),
         required=True,
         dest="expectedOutcome",

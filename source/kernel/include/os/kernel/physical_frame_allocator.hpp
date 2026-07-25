@@ -37,15 +37,15 @@ class PhysicalFrameAllocator final {
   public:
     PhysicalFrameAllocator(uint8_t *stateStorage, uint64_t stateStorageSizeBytes) noexcept;
 
-    [[nodiscard]] PhysicalFrameAllocatorStatus initialize(const PhysicalMemoryMapEntry *entries,
+    [[nodiscard]] PhysicalFrameAllocatorStatus Initialize(const PhysicalMemoryMapEntry *entries,
                                                           uint64_t entryCount,
                                                           uint64_t managedLimitAddress) noexcept;
-    [[nodiscard]] PhysicalFrameAllocatorStatus reserveRange(uint64_t beginAddress,
+    [[nodiscard]] PhysicalFrameAllocatorStatus ReserveRange(uint64_t beginAddress,
                                                             uint64_t lengthBytes) noexcept;
-    [[nodiscard]] PhysicalFrameAllocatorStatus allocate(PhysicalFrame &frame) noexcept;
-    [[nodiscard]] PhysicalFrameAllocatorStatus release(PhysicalFrame frame) noexcept;
-    [[nodiscard]] PhysicalFrameAllocatorStatistics statistics() const noexcept;
-    [[nodiscard]] uint64_t managedLimitAddress() const noexcept;
+    [[nodiscard]] PhysicalFrameAllocatorStatus Allocate(PhysicalFrame &frame) noexcept;
+    [[nodiscard]] PhysicalFrameAllocatorStatus Release(PhysicalFrame frame) noexcept;
+    [[nodiscard]] PhysicalFrameAllocatorStatistics Statistics() const noexcept;
+    [[nodiscard]] uint64_t ManagedLimitAddress() const noexcept;
 
   private:
     enum class FrameState : uint8_t {
@@ -55,9 +55,9 @@ class PhysicalFrameAllocator final {
         Reserved = 3U,
     };
 
-    [[nodiscard]] FrameState frameState(uint64_t frameIndex) const noexcept;
-    void setFrameState(uint64_t frameIndex, FrameState state) noexcept;
-    [[nodiscard]] bool isInitialized() const noexcept;
+    [[nodiscard]] FrameState GetFrameState(uint64_t frameIndex) const noexcept;
+    void SetFrameState(uint64_t frameIndex, FrameState state) noexcept;
+    [[nodiscard]] bool IsInitialized() const noexcept;
 
     uint8_t *stateStorage_;
     uint64_t stateStorageSizeBytes_;

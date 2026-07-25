@@ -39,10 +39,10 @@ constexpr uint64_t OS_KERNEL_ATA_DEVICE_SELECT_DELAY_READ_COUNT = 4ULL;
 
 }
 
-AtaPioStatus AtaPioDevice::readSector(const uint64_t logicalBlockAddress, uint8_t *buffer,
+AtaPioStatus AtaPioDevice::ReadSector(const uint64_t logicalBlockAddress, uint8_t *buffer,
                                       const uint64_t bufferSizeBytes) const noexcept {
     const AtaReadRequestStatus requestStatus =
-        validateAtaReadRequest(logicalBlockAddress, buffer, bufferSizeBytes);
+        ValidateAtaReadRequest(logicalBlockAddress, buffer, bufferSizeBytes);
     if (requestStatus == AtaReadRequestStatus::NullBuffer) {
         return AtaPioStatus::NullBuffer;
     }
@@ -55,8 +55,8 @@ AtaPioStatus AtaPioDevice::readSector(const uint64_t logicalBlockAddress, uint8_
 
     // 本阶段以轮询完成单扇区请求，显式关闭设备 IRQ，避免未开放的 IRQ14
     // 与同步状态机同时拥有完成事件。
-    writePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT, OS_KERNEL_ATA_DISABLE_DEVICE_INTERRUPTS);
-    AtaPioStatus status = this->waitUntilNotBusy();
+    WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT, OS_KERNEL_ATA_DISABLE_DEVICE_INTERRUPTS);
+    AtaPioStatus status = this->WaitUntilNotBusy();
     if (status != AtaPioStatus::Succeeded) {
         return status;
     }
@@ -65,22 +65,22 @@ AtaPioStatus AtaPioDevice::readSector(const uint64_t logicalBlockAddress, uint8_
         OS_KERNEL_ATA_PRIMARY_MASTER_LBA_BASE |
         static_cast<uint8_t>((logicalBlockAddress >> OS_KERNEL_ATA_LBA_HEAD_SHIFT_BITS) &
                              OS_KERNEL_ATA_DRIVE_HEAD_LBA_NIBBLE_MASK));
-    writePort8(OS_KERNEL_ATA_DRIVE_HEAD_PORT, driveHead);
-    this->applyDeviceSelectDelay();
-    writePort8(OS_KERNEL_ATA_SECTOR_COUNT_PORT, OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
-    writePort8(OS_KERNEL_ATA_LBA_LOW_PORT, static_cast<uint8_t>(logicalBlockAddress));
-    writePort8(OS_KERNEL_ATA_LBA_MID_PORT,
+    WritePort8(OS_KERNEL_ATA_DRIVE_HEAD_PORT, driveHead);
+    this->ApplyDeviceSelectDelay();
+    WritePort8(OS_KERNEL_ATA_SECTOR_COUNT_PORT, OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
+    WritePort8(OS_KERNEL_ATA_LBA_LOW_PORT, static_cast<uint8_t>(logicalBlockAddress));
+    WritePort8(OS_KERNEL_ATA_LBA_MID_PORT,
                static_cast<uint8_t>(logicalBlockAddress >> OS_KERNEL_ATA_LBA_MID_SHIFT_BITS));
-    writePort8(OS_KERNEL_ATA_LBA_HIGH_PORT,
+    WritePort8(OS_KERNEL_ATA_LBA_HIGH_PORT,
                static_cast<uint8_t>(logicalBlockAddress >> OS_KERNEL_ATA_LBA_HIGH_SHIFT_BITS));
-    writePort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT, OS_KERNEL_ATA_READ_SECTORS_COMMAND);
+    WritePort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT, OS_KERNEL_ATA_READ_SECTORS_COMMAND);
 
-    status = this->waitForDataRequest();
+    status = this->WaitForDataRequest();
     if (status != AtaPioStatus::Succeeded) {
         return status;
     }
     for (uint64_t wordIndex = 0ULL; wordIndex < OS_KERNEL_ATA_WORDS_PER_SECTOR; ++wordIndex) {
-        const uint16_t word = readPort16(OS_KERNEL_ATA_DATA_PORT);
+        const uint16_t word = ReadPort16(OS_KERNEL_ATA_DATA_PORT);
         const uint64_t byteIndex = wordIndex * OS_KERNEL_ATA_BYTES_PER_WORD;
         buffer[byteIndex] = static_cast<uint8_t>(word & OS_KERNEL_ATA_LOW_BYTE_MASK);
         buffer[byteIndex + OS_KERNEL_ATA_HIGH_BYTE_OFFSET_BYTES] =
@@ -89,10 +89,10 @@ AtaPioStatus AtaPioDevice::readSector(const uint64_t logicalBlockAddress, uint8_
     return AtaPioStatus::Succeeded;
 }
 
-AtaPioStatus AtaPioDevice::waitUntilNotBusy() const noexcept {
+AtaPioStatus AtaPioDevice::WaitUntilNotBusy() const noexcept {
     uint64_t remainingPollCount = OS_KERNEL_ATA_STATUS_POLL_LIMIT;
     while (remainingPollCount > 0ULL) {
-        const uint8_t status = readPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
+        const uint8_t status = ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
         if ((status & OS_KERNEL_ATA_STATUS_BUSY_BIT) == 0U) {
             if ((status & OS_KERNEL_ATA_ERROR_STATUS_MASK) != 0U) {
                 return AtaPioStatus::DeviceError;
@@ -104,10 +104,10 @@ AtaPioStatus AtaPioDevice::waitUntilNotBusy() const noexcept {
     return AtaPioStatus::BusyTimeout;
 }
 
-AtaPioStatus AtaPioDevice::waitForDataRequest() const noexcept {
+AtaPioStatus AtaPioDevice::WaitForDataRequest() const noexcept {
     uint64_t remainingPollCount = OS_KERNEL_ATA_STATUS_POLL_LIMIT;
     while (remainingPollCount > 0ULL) {
-        const uint8_t status = readPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
+        const uint8_t status = ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
         if ((status & OS_KERNEL_ATA_STATUS_BUSY_BIT) == 0U) {
             if ((status & OS_KERNEL_ATA_ERROR_STATUS_MASK) != 0U) {
                 return AtaPioStatus::DeviceError;
@@ -121,10 +121,10 @@ AtaPioStatus AtaPioDevice::waitForDataRequest() const noexcept {
     return AtaPioStatus::DataRequestTimeout;
 }
 
-void AtaPioDevice::applyDeviceSelectDelay() const noexcept {
+void AtaPioDevice::ApplyDeviceSelectDelay() const noexcept {
     for (uint64_t readCount = 0ULL; readCount < OS_KERNEL_ATA_DEVICE_SELECT_DELAY_READ_COUNT;
          ++readCount) {
-        static_cast<void>(readPort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT));
+        static_cast<void>(ReadPort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT));
     }
 }
 

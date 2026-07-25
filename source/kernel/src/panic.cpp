@@ -21,37 +21,37 @@ constexpr char OS_KERNEL_PANIC_TERMINAL_MESSAGE[] = "[OS][KERNEL] PANIC\r\n";
 
 uint64_t kernelPanicState;
 
-void tryWritePanicReport(const SerialPort &serialPort, const ExceptionFrame &frame) noexcept {
-    if (!serialPort.tryWriteString(OS_KERNEL_PANIC_EXCEPTION_MESSAGE) ||
-        !serialPort.tryWriteHexLine(OS_KERNEL_PANIC_VECTOR_PREFIX, frame.vector) ||
-        !serialPort.tryWriteHexLine(OS_KERNEL_PANIC_ERROR_CODE_PREFIX, frame.errorCode) ||
-        !serialPort.tryWriteHexLine(OS_KERNEL_PANIC_INSTRUCTION_POINTER_PREFIX,
+void TryWritePanicReport(const SerialPort &serialPort, const ExceptionFrame &frame) noexcept {
+    if (!serialPort.TryWriteString(OS_KERNEL_PANIC_EXCEPTION_MESSAGE) ||
+        !serialPort.TryWriteHexLine(OS_KERNEL_PANIC_VECTOR_PREFIX, frame.vector) ||
+        !serialPort.TryWriteHexLine(OS_KERNEL_PANIC_ERROR_CODE_PREFIX, frame.errorCode) ||
+        !serialPort.TryWriteHexLine(OS_KERNEL_PANIC_INSTRUCTION_POINTER_PREFIX,
                                     frame.instructionPointer) ||
-        !serialPort.tryWriteHexLine(OS_KERNEL_PANIC_CODE_SEGMENT_PREFIX, frame.codeSegment) ||
-        !serialPort.tryWriteHexLine(OS_KERNEL_PANIC_FLAGS_PREFIX, frame.flags)) {
+        !serialPort.TryWriteHexLine(OS_KERNEL_PANIC_CODE_SEGMENT_PREFIX, frame.codeSegment) ||
+        !serialPort.TryWriteHexLine(OS_KERNEL_PANIC_FLAGS_PREFIX, frame.flags)) {
         return;
     }
     if (frame.vector == OS_KERNEL_PANIC_PAGE_FAULT_VECTOR &&
-        !serialPort.tryWriteHexLine(OS_KERNEL_PANIC_PAGE_FAULT_ADDRESS_PREFIX,
-                                    readPageFaultLinearAddress())) {
+        !serialPort.TryWriteHexLine(OS_KERNEL_PANIC_PAGE_FAULT_ADDRESS_PREFIX,
+                                    ReadPageFaultLinearAddress())) {
         return;
     }
-    static_cast<void>(serialPort.tryWriteString(OS_KERNEL_PANIC_TERMINAL_MESSAGE));
+    static_cast<void>(serialPort.TryWriteString(OS_KERNEL_PANIC_TERMINAL_MESSAGE));
 }
 
 }
 
-[[noreturn]] void panicFromException(const ExceptionFrame &frame) noexcept {
+[[noreturn]] void PanicFromException(const ExceptionFrame &frame) noexcept {
     asm volatile("cli");
     if (kernelPanicState != OS_KERNEL_PANIC_STATE_INACTIVE) {
-        haltProcessor();
+        HaltProcessor();
     }
     kernelPanicState = OS_KERNEL_PANIC_STATE_ACTIVE;
 
     const SerialPort serialPort{OS_KERNEL_SERIAL_COM1_BASE_PORT};
-    serialPort.initialize();
-    tryWritePanicReport(serialPort, frame);
-    haltProcessor();
+    serialPort.Initialize();
+    TryWritePanicReport(serialPort, frame);
+    HaltProcessor();
 }
 
 }

@@ -58,48 +58,48 @@ int main() {
         },
     };
 
-    testContext.expect(allocator.initialize(memoryMap,
+    testContext.Expect(allocator.Initialize(memoryMap,
                                             OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
                                             OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
                        OS_TEST_FRAME_ALLOCATOR_INITIALIZE);
-    testContext.expect(allocator.reserveRange(0ULL, OS_TEST_FRAME_ALLOCATOR_RESERVED_SIZE_BYTES) ==
+    testContext.Expect(allocator.ReserveRange(0ULL, OS_TEST_FRAME_ALLOCATOR_RESERVED_SIZE_BYTES) ==
                                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-                           allocator.statistics().freeFrameCount ==
+                           allocator.Statistics().freeFrameCount ==
                                OS_TEST_FRAME_ALLOCATOR_FREE_AFTER_RESERVATION,
                        OS_TEST_FRAME_ALLOCATOR_RESERVE);
 
     os::kernel::PhysicalFrame firstFrame{};
-    testContext.expect(
-        allocator.allocate(firstFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+    testContext.Expect(
+        allocator.Allocate(firstFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
             firstFrame.physicalAddress == OS_TEST_FRAME_ALLOCATOR_EXPECTED_FIRST_ADDRESS,
         OS_TEST_FRAME_ALLOCATOR_ORDER);
-    testContext.expect(allocator.release(firstFrame) ==
+    testContext.Expect(allocator.Release(firstFrame) ==
                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
                        OS_TEST_FRAME_ALLOCATOR_RELEASE);
     os::kernel::PhysicalFrame recycledFrame{};
-    testContext.expect(allocator.allocate(recycledFrame) ==
+    testContext.Expect(allocator.Allocate(recycledFrame) ==
                                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
                            recycledFrame.physicalAddress == firstFrame.physicalAddress,
                        OS_TEST_FRAME_ALLOCATOR_RELEASE);
-    testContext.expect(allocator.release(recycledFrame) ==
+    testContext.Expect(allocator.Release(recycledFrame) ==
                                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-                           allocator.release(recycledFrame) ==
+                           allocator.Release(recycledFrame) ==
                                os::kernel::PhysicalFrameAllocatorStatus::FrameNotAllocated,
                        OS_TEST_FRAME_ALLOCATOR_DOUBLE_RELEASE);
 
-    testContext.expect(allocator.release(os::kernel::PhysicalFrame{.physicalAddress = 0ULL}) ==
+    testContext.Expect(allocator.Release(os::kernel::PhysicalFrame{.physicalAddress = 0ULL}) ==
                            os::kernel::PhysicalFrameAllocatorStatus::FrameNotAllocated,
                        OS_TEST_FRAME_ALLOCATOR_RESERVED_RELEASE);
 
     os::kernel::PhysicalFrame frame{};
     uint64_t successfulAllocationCount = 0ULL;
-    while (allocator.allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
+    while (allocator.Allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
         ++successfulAllocationCount;
     }
-    testContext.expect(
+    testContext.Expect(
         successfulAllocationCount == OS_TEST_FRAME_ALLOCATOR_FREE_AFTER_RESERVATION &&
-            allocator.allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::OutOfMemory,
+            allocator.Allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::OutOfMemory,
         OS_TEST_FRAME_ALLOCATOR_EXHAUSTION);
 
     uint8_t atomicStateStorage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
@@ -110,22 +110,22 @@ int main() {
     os::kernel::PhysicalFrame atomicFirstFrame{};
     os::kernel::PhysicalFrame atomicSecondFrame{};
     const bool atomicSetupSucceeded =
-        atomicAllocator.initialize(memoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
+        atomicAllocator.Initialize(memoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
                                    OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        atomicAllocator.allocate(atomicFirstFrame) ==
+        atomicAllocator.Allocate(atomicFirstFrame) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        atomicAllocator.allocate(atomicSecondFrame) ==
+        atomicAllocator.Allocate(atomicSecondFrame) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        atomicAllocator.release(atomicFirstFrame) ==
+        atomicAllocator.Release(atomicFirstFrame) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
     const bool atomicReservationRejected =
-        atomicAllocator.reserveRange(atomicFirstFrame.physicalAddress,
+        atomicAllocator.ReserveRange(atomicFirstFrame.physicalAddress,
                                      OS_TEST_FRAME_ALLOCATOR_TWO_PAGE_LENGTH) ==
         os::kernel::PhysicalFrameAllocatorStatus::InvalidReservation;
     const os::kernel::PhysicalFrameAllocatorStatistics atomicStatistics =
-        atomicAllocator.statistics();
-    testContext.expect(atomicSetupSucceeded && atomicReservationRejected &&
+        atomicAllocator.Statistics();
+    testContext.Expect(atomicSetupSucceeded && atomicReservationRejected &&
                            atomicStatistics.freeFrameCount ==
                                OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_FREE_FRAME_COUNT &&
                            atomicStatistics.allocatedFrameCount ==
@@ -146,12 +146,12 @@ int main() {
             .attributes = 0U,
         },
     };
-    testContext.expect(emptyRangeAllocator.initialize(
+    testContext.Expect(emptyRangeAllocator.Initialize(
                            incompletePageMemoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
                            OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
                                os::kernel::PhysicalFrameAllocatorStatus::NoUsableFrames &&
-                           emptyRangeAllocator.statistics().managedFrameCount == 0ULL,
+                           emptyRangeAllocator.Statistics().managedFrameCount == 0ULL,
                        OS_TEST_FRAME_ALLOCATOR_EMPTY_ALIGNED_RANGE);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

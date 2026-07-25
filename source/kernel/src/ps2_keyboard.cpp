@@ -26,25 +26,25 @@ constexpr uint64_t OS_KERNEL_PS2_OUTPUT_FLUSH_LIMIT = 32ULL;
 
 }
 
-Ps2KeyboardStatus Ps2Keyboard::initialize() const noexcept {
-    if (!this->waitForControllerInput()) {
+Ps2KeyboardStatus Ps2Keyboard::Initialize() const noexcept {
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_DISABLE_FIRST_PORT_COMMAND);
-    if (!this->waitForControllerInput()) {
+    WritePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_DISABLE_FIRST_PORT_COMMAND);
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_DISABLE_SECOND_PORT_COMMAND);
-    this->flushControllerOutput();
+    WritePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_DISABLE_SECOND_PORT_COMMAND);
+    this->FlushControllerOutput();
 
-    if (!this->waitForControllerInput()) {
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_READ_CONFIGURATION_COMMAND);
-    if (!this->waitForControllerOutput()) {
+    WritePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_READ_CONFIGURATION_COMMAND);
+    if (!this->WaitForControllerOutput()) {
         return Ps2KeyboardStatus::ControllerOutputTimeout;
     }
-    uint8_t configuration = readPort8(OS_KERNEL_PS2_DATA_PORT);
+    uint8_t configuration = ReadPort8(OS_KERNEL_PS2_DATA_PORT);
     configuration =
         static_cast<uint8_t>(configuration | OS_KERNEL_PS2_CONFIGURATION_FIRST_PORT_INTERRUPT_BIT |
                              OS_KERNEL_PS2_CONFIGURATION_TRANSLATION_BIT);
@@ -53,35 +53,35 @@ Ps2KeyboardStatus Ps2Keyboard::initialize() const noexcept {
         static_cast<uint8_t>(~(OS_KERNEL_PS2_CONFIGURATION_SECOND_PORT_INTERRUPT_BIT |
                                OS_KERNEL_PS2_CONFIGURATION_FIRST_PORT_CLOCK_DISABLED_BIT)));
 
-    if (!this->waitForControllerInput()) {
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_WRITE_CONFIGURATION_COMMAND);
-    if (!this->waitForControllerInput()) {
+    WritePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_WRITE_CONFIGURATION_COMMAND);
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_DATA_PORT, configuration);
-    if (!this->waitForControllerInput()) {
+    WritePort8(OS_KERNEL_PS2_DATA_PORT, configuration);
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_ENABLE_FIRST_PORT_COMMAND);
+    WritePort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT, OS_KERNEL_PS2_ENABLE_FIRST_PORT_COMMAND);
 
-    return this->writeDeviceCommand(OS_KERNEL_PS2_KEYBOARD_ENABLE_SCANNING_COMMAND);
+    return this->WriteDeviceCommand(OS_KERNEL_PS2_KEYBOARD_ENABLE_SCANNING_COMMAND);
 }
 
-Ps2KeyboardStatus Ps2Keyboard::tryReadScanCode(uint8_t &scanCode) const noexcept {
-    if ((readPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
+Ps2KeyboardStatus Ps2Keyboard::TryReadScanCode(uint8_t &scanCode) const noexcept {
+    if ((ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
          OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) == 0U) {
         return Ps2KeyboardStatus::NoScanCodeAvailable;
     }
-    scanCode = readPort8(OS_KERNEL_PS2_DATA_PORT);
+    scanCode = ReadPort8(OS_KERNEL_PS2_DATA_PORT);
     return Ps2KeyboardStatus::Succeeded;
 }
 
-bool Ps2Keyboard::waitForControllerInput() const noexcept {
+bool Ps2Keyboard::WaitForControllerInput() const noexcept {
     uint64_t remainingPollCount = OS_KERNEL_PS2_CONTROLLER_POLL_LIMIT;
     while (remainingPollCount > 0ULL) {
-        if ((readPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
+        if ((ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
              OS_KERNEL_PS2_STATUS_INPUT_BUFFER_FULL_BIT) == 0U) {
             return true;
         }
@@ -90,10 +90,10 @@ bool Ps2Keyboard::waitForControllerInput() const noexcept {
     return false;
 }
 
-bool Ps2Keyboard::waitForControllerOutput() const noexcept {
+bool Ps2Keyboard::WaitForControllerOutput() const noexcept {
     uint64_t remainingPollCount = OS_KERNEL_PS2_CONTROLLER_POLL_LIMIT;
     while (remainingPollCount > 0ULL) {
-        if ((readPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
+        if ((ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
              OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) != 0U) {
             return true;
         }
@@ -102,24 +102,24 @@ bool Ps2Keyboard::waitForControllerOutput() const noexcept {
     return false;
 }
 
-void Ps2Keyboard::flushControllerOutput() const noexcept {
+void Ps2Keyboard::FlushControllerOutput() const noexcept {
     uint64_t remainingReadCount = OS_KERNEL_PS2_OUTPUT_FLUSH_LIMIT;
-    while (remainingReadCount > 0ULL && (readPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
+    while (remainingReadCount > 0ULL && (ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
                                          OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) != 0U) {
-        static_cast<void>(readPort8(OS_KERNEL_PS2_DATA_PORT));
+        static_cast<void>(ReadPort8(OS_KERNEL_PS2_DATA_PORT));
         --remainingReadCount;
     }
 }
 
-Ps2KeyboardStatus Ps2Keyboard::writeDeviceCommand(const uint8_t command) const noexcept {
-    if (!this->waitForControllerInput()) {
+Ps2KeyboardStatus Ps2Keyboard::WriteDeviceCommand(const uint8_t command) const noexcept {
+    if (!this->WaitForControllerInput()) {
         return Ps2KeyboardStatus::ControllerInputTimeout;
     }
-    writePort8(OS_KERNEL_PS2_DATA_PORT, command);
-    if (!this->waitForControllerOutput()) {
+    WritePort8(OS_KERNEL_PS2_DATA_PORT, command);
+    if (!this->WaitForControllerOutput()) {
         return Ps2KeyboardStatus::ControllerOutputTimeout;
     }
-    if (readPort8(OS_KERNEL_PS2_DATA_PORT) != OS_KERNEL_PS2_KEYBOARD_ACKNOWLEDGEMENT) {
+    if (ReadPort8(OS_KERNEL_PS2_DATA_PORT) != OS_KERNEL_PS2_KEYBOARD_ACKNOWLEDGEMENT) {
         return Ps2KeyboardStatus::DeviceRejectedCommand;
     }
     return Ps2KeyboardStatus::Succeeded;

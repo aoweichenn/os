@@ -2,7 +2,7 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.7 中断与设备`已完成，下一阶段为 `v0.8 用户边界`。自研
+当前状态：`v0.8 用户边界`已完成，下一阶段为 `v0.9 进程调度`。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
@@ -10,7 +10,9 @@ freestanding C++20 内核。内核随即替换 Stage 1 的描述符状态，建�
 GDT、TSS、IDT、32 个异常入口和无动态分配的 panic 路径。Stage 1 还通过
 QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo v2；
 内核据此管理物理页帧，建立新的四级 4 KiB 页表、W^X/NX/WP 权限、四个
-guard page、64 KiB 高半区早期堆，并真实切换 CR3。
+guard page、64 KiB 高半区早期堆，并真实切换 CR3。在此基础上，内核严格
+验证并装入自研 `ET_EXEC` 用户 ELF64，以 `IRETQ` 进入 Ring 3，通过
+TSS.RSP0 与 `INT 0x80` 安全进入内核，并把用户异常与内核 panic 隔离。
 
 ## 最短构建与测试路径
 
@@ -75,6 +77,15 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] USER_ELF_VALID
+[OS][KERNEL] USER_ENTRY=0x0000000040000000
+[OS][KERNEL] USER_STACK_READY
+[OS][KERNEL] USER_RING3_ENTER
+[OS][USER] INVALID_POINTER_REJECTED
+[OS][USER] UNKNOWN_SYSCALL_REJECTED
+[OS][USER] HELLO_FROM_RING3
+[OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
+[OS][KERNEL] USER_RETURNED_TO_KERNEL
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
 [OS][KERNEL] READY
@@ -90,7 +101,9 @@ BSS。成功交接后内核重新初始化 COM1，验证 104 字节 BootInfo v2�
 Stage 1 的 CR3，再加载自己的 GDTR、IDTR 和 TR。正常镜像执行一次可恢复
 `INT3` 自检，随后验证内存图、分配器、页权限和堆。独立故障镜像分别执行
 `UD2`、访问首个未映射地址，以及让 Ring 0 写入只读页；最后一项必须产生
-错误码 `0x3` 的 #PF，证明 `CR0.WP` 和只读页权限真实生效。
+错误码 `0x3` 的 #PF，证明 `CR0.WP` 和只读页权限真实生效。用户阶段另有
+Ring 3 `#UD`、Ring 3 `#PF` 和截断 ELF 三条隔离/拒绝路径；用户错误不得
+输出 `PANIC`，内核仍需继续到达 `READY`。
 
 ## 固定技术路线
 
@@ -111,6 +124,10 @@ tools/           Python 构建、检查、镜像和 QEMU 调度工具
 docs/            需求、架构、模块、测试、调试和发布记录
 books/           可独立构建的 LaTeX 系统教材
 ```
+
+`source/abi` 保存用户态与内核共享的固定宽度 ABI，`source/user` 保存独立
+用户 ELF 和系统调用包装；详细边界见
+[docs/modules/user.md](docs/modules/user.md)。
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。

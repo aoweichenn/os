@@ -45,54 +45,54 @@ constexpr os::foundation::AddressValue OS_TEST_INTEGRATION_KERNEL_SIZE =
 
 }
 
-auto main() -> int {
+int main() {
     os::test::TestContext testContext{OS_TEST_INTEGRATION_SUITE_NAME};
 
     os::foundation::AddressRange firmwareRange{};
     const os::foundation::AddressRangeCreationStatus firmwareStatus =
-        os::foundation::AddressRange::tryCreate(
+        os::foundation::AddressRange::TryCreate(
             os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_FIRMWARE_BEGIN},
             os::foundation::ByteCount{OS_TEST_INTEGRATION_FIRMWARE_SIZE}, firmwareRange);
-    testContext.expect(firmwareStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
+    testContext.Expect(firmwareStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_FIRMWARE_CREATION);
 
     os::foundation::AddressRange stage1Range{};
     const os::foundation::AddressRangeCreationStatus stage1Status =
-        os::foundation::AddressRange::tryCreate(
+        os::foundation::AddressRange::TryCreate(
             os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_STAGE1_BEGIN},
             os::foundation::ByteCount{OS_TEST_INTEGRATION_STAGE1_SIZE}, stage1Range);
-    testContext.expect(stage1Status == os::foundation::AddressRangeCreationStatus::Succeeded,
+    testContext.Expect(stage1Status == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_STAGE1_CREATION);
 
     os::foundation::AddressRange pageTablesRange{};
     const os::foundation::AddressRangeCreationStatus pageTablesStatus =
-        os::foundation::AddressRange::tryCreate(
+        os::foundation::AddressRange::TryCreate(
             os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_PAGE_TABLES_BEGIN},
             os::foundation::ByteCount{OS_TEST_INTEGRATION_PAGE_TABLES_SIZE}, pageTablesRange);
-    testContext.expect(pageTablesStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
+    testContext.Expect(pageTablesStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_PAGE_TABLES_CREATION);
 
     os::foundation::AddressRange kernelRange{};
     const os::foundation::AddressRangeCreationStatus kernelStatus =
-        os::foundation::AddressRange::tryCreate(
+        os::foundation::AddressRange::TryCreate(
             os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_KERNEL_BEGIN},
             os::foundation::ByteCount{OS_TEST_INTEGRATION_KERNEL_SIZE}, kernelRange);
-    testContext.expect(kernelStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
+    testContext.Expect(kernelStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_INTEGRATION_KERNEL_CREATION);
 
-    testContext.expect(
-        firmwareRange.contains(os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_RESET_VECTOR}),
+    testContext.Expect(
+        firmwareRange.Contains(os::foundation::PhysicalAddress{OS_TEST_INTEGRATION_RESET_VECTOR}),
         OS_TEST_INTEGRATION_RESET_VECTOR_IN_FIRMWARE);
-    testContext.expect(!stage1Range.overlaps(firmwareRange),
+    testContext.Expect(!stage1Range.Overlaps(firmwareRange),
                        OS_TEST_INTEGRATION_STAGE1_FIRMWARE_SEPARATION);
-    testContext.expect(!kernelRange.overlaps(firmwareRange),
+    testContext.Expect(!kernelRange.Overlaps(firmwareRange),
                        OS_TEST_INTEGRATION_KERNEL_FIRMWARE_SEPARATION);
-    testContext.expect(!stage1Range.overlaps(kernelRange),
+    testContext.Expect(!stage1Range.Overlaps(kernelRange),
                        OS_TEST_INTEGRATION_STAGE1_KERNEL_SEPARATION);
-    testContext.expect(!stage1Range.overlaps(pageTablesRange),
+    testContext.Expect(!stage1Range.Overlaps(pageTablesRange),
                        OS_TEST_INTEGRATION_STAGE1_PAGE_TABLES_SEPARATION);
-    testContext.expect(!pageTablesRange.overlaps(kernelRange),
+    testContext.Expect(!pageTablesRange.Overlaps(kernelRange),
                        OS_TEST_INTEGRATION_PAGE_TABLES_KERNEL_SEPARATION);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

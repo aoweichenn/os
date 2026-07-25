@@ -191,7 +191,7 @@ volatile 表达中断可见存储，并用“读取 RFLAGS、CLI、复制、按�
 形成一致快照。
 
 恢复函数不能无条件 STI。调用者可能本来就在 IF=0 的初始化或中断上下文，
-无条件开启会扩大可重入区域。v0.7 的 \code{disableInterrupts} 返回旧 IF，
+无条件开启会扩大可重入区域。v0.7 的 \code{DisableInterrupts} 返回旧 IF，
 \code{restoreInterrupts} 只在旧状态为一时 STI。进入多核后，这只保护本地
 IRQ，不保护另一颗 CPU；届时还需锁或原子顺序。
 
@@ -295,9 +295,9 @@ QEMU 系统 & 真实 IRQ0、QMP 键盘、串口有序标记 &
 \end{longtable}
 
 固定种子随机测试另外执行 4096 轮 IRQ 往返、PIT 有效频率和键盘 make/break
-组合。完整集合为 46 项 CTest，并继续运行之前的 ROM、ATA、长模式、ELF、
-异常、内存和 19 条失败路径。阶段完成的含义不是“新增测试绿了”，而是新增
-异步状态没有破坏旧的确定性证据。
+组合。v0.7 当时的完整集合为 46 项 CTest；v0.8 加入用户边界后为 55 项，
+并继续运行之前的 ROM、ATA、长模式、ELF、异常、内存与失败路径。阶段完成
+的含义不是“新增测试绿了”，而是新增异步状态没有破坏旧的确定性证据。
 
 \section{环形缓冲需要明确满与空的表示}
 
@@ -337,39 +337,300 @@ submitted 推进到 in-flight，IRQ 或轮询确认才进入 completed。超时�
 释放缓冲区，驱动也不能在报告完成后继续 DMA。所有权与硬件完成语义必须同一
 接口表达。
 
-\section{从 Ring 0 进入 Ring 3 需要五项共同成立}
+\section{保护环来自兼容历史，也形成今天的硬边界}
 
-用户代码和数据页设置 U/S，GDT 提供 DPL=3 的代码与数据段，TSS.RSP0 指向
-可信内核栈，用户栈已经映射，\code{iretq} 帧包含用户 SS、RSP、RFLAGS、
-CS 和 RIP。任一项错误都会在边界处产生保护异常或页故障。
+8086 的分段主要解决 16 位寄存器怎样形成更大地址；80286 加入保护模式后，
+段描述符又承担访问类型与特权级。x86-64 长模式把普通代码/数据段的基址和
+界限作用大幅削弱，却保留 present、type、DPL 与代码段 L 位。现代页表负责
+绝大部分地址隔离，分段仍决定当前代码能否跨越特权边界。
 
-进入前清理不应泄漏的寄存器，限制 RFLAGS 中 IOPL 等敏感位。用户 RIP 与
-RSP 必须是规范地址并位于对应用户 VMA，不能只依赖处理器在返回时发现错误。
+三个容易混淆的数字必须一起理解。CPL 来自当前 CS 选择子的低两位；描述符
+DPL 声明目标特权；选择子 RPL 声明请求特权。数字越小，权限越高。内核
+CS=\code{0x08} 的 RPL 为零，用户 CS=\code{0x23} 的 RPL 为三。修改一个
+C++ 布尔量不能改变 CPL，只有合法控制转移让处理器装入 DPL3 的 CS 后，
+硬件才真正按 Ring 3 约束取指和访问。
 
-\section{系统调用入口先离开不可信栈}
+v0.8 的七槽 GDT 结构如下：
 
-\code{syscall} 不会像中断门一样自动切换栈。入口通过受控 GS 基址取得当前
-线程内核栈，保存用户 RSP，再切换到内核栈和统一帧。RCX 与 R11 按指令语义
-保存返回 RIP 与 RFLAGS，属于固定破坏寄存器。
+\begin{longtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.28\textwidth}L{0.33\textwidth}}
+\toprule
+槽 & 选择子 & 类型 & 关键属性\\
+\midrule
+0 & --- & null & 永不引用\\
+1 & \code{0x08} & Ring 0 code & DPL0、execute/read、L=1\\
+2 & \code{0x10} & Ring 0 data & DPL0、read/write\\
+3 & \code{0x1B} & Ring 3 data & DPL3、read/write、RPL3\\
+4 & \code{0x23} & Ring 3 code & DPL3、execute/read、L=1、RPL3\\
+5--6 & \code{0x28} & 64-bit TSS & 104 字节基址与界限\\
+\bottomrule
+\end{longtable}
 
-\code{sysret} 对非规范地址等边界敏感，初期可以使用更统一的 \code{iretq}
-返回。无论选择哪种，系统调用 ABI 都固定编号、参数寄存器、返回值和错误表示，
-用户库与内核共享版本化定义。
+执行 \code{LTR} 后，处理器把 TSS 描述符从 available 改为 busy。运行时
+因此回读 TR=\code{0x28} 和 TSS 字段，而不能再要求内存中的 type 永远等于
+初始值九。这个硬件副作用也是“代码写过寄存器”和“处理器已经接受状态”之间
+的区别。
 
-\section{用户内存复制是可能失败的内核操作}
+\section{严格用户 ELF 把文件声明转换为可执行布局}
 
-用户给出的地址可能未映射、只读、跨越页面或在并发线程中变化。内核先检查
-\([address,address+length)\) 加法，再逐页验证用户权限，并在受控故障恢复
-区域复制。验证与使用必须受地址空间锁或页面固定保护。
+用户程序不是内核中的普通函数。Clang 以
+\code{x86\_64-unknown-none-elf} 编译 freestanding C++20，NASM 生成
+\code{INT 0x80} 包装，LLD 按独立链接脚本生成基址
+\code{0x40000000} 的 AMD64 \code{ET\_EXEC}。Kernel 只嵌入原始文件字节；
+目标内核仍必须把它当作不可信输入重新解析。
 
-字符串接口还要限制最大长度并保证终止。内核不能先用普通
-\code{strlen} 扫描未知用户地址，再检查范围；扫描本身已经可能越界故障。
+ELF program header 描述运行时装载，section header 主要服务链接和调试。
+v0.8 只接受最多八个 \code{PT\_LOAD}，对每个 64 位字段执行以下检查：
 
-\section{用户错误与内核错误采用不同终止边界}
+\begin{enumerate}
+  \item ELF magic、64 位 class、小端编码、AMD64 machine 与当前 version
+        必须匹配；
+  \item ELF header 与 program-header entry 大小必须精确，表的乘法和末端
+        加法不能溢出或超出文件；
+  \item 不接受未知 program header，段必须可读，且不能同时 W 与 X；
+  \item \code{p\_offset}、\code{p\_vaddr}、\code{p\_paddr} 与
+        \code{p\_align} 满足本阶段 4 KiB 恒等约束；
+  \item \code{p\_filesz <= p\_memsz}，文件和用户虚拟半开区间都无溢出；
+  \item 段互不重叠，总映射不超过 32 页，入口落在可执行段。
+\end{enumerate}
 
-用户非法指令、越权页访问和坏系统调用只终止当前进程并释放资源；内核在持锁
-或修改全局结构时发生同类异常通常需要 panic。异常分发器根据 CPL、故障地址
-和当前恢复上下文区分。
+解析器先完成全部检查，再交付候选 \code{UserElfLayout}。映射层又拒绝 ELF
+段与高端用户栈保留区相撞。这个两层边界防止格式合法的程序把自身放到初始栈
+之上，也防止后一个程序头失败时留下半份可信布局。
 
-隔离验收不仅运行正常程序，还让用户代码执行 \code{out}、访问内核页、传入
-跨页指针和制造除零。内核应持续运行其他进程，并留下稳定退出原因。
+\begin{contractbox}
+ELF 是一种文件契约，不是信任证明。偏移、长度、地址和权限都来自文件；任何
+未经溢出、范围与交叉检查的字段都不能直接参与复制或页表修改。
+\end{contractbox}
+
+\section{用户页权限要在四级路径上同时成立}
+
+x86-64 的 U/S 与 RW 权限沿 PML4E、PDPTE、PDE、PTE 路径合并。叶项
+U/S=1 而上级任一项 U/S=0，用户访问仍会故障。v0.8 的页表管理器在建立用户
+映射时向所有中间项传播 user 位；既有内核叶项仍是 supervisor，因此中间项
+开放不会自动把内核页暴露给 Ring 3。
+
+\begin{longtable}{L{0.31\textwidth}L{0.17\textwidth}L{0.38\textwidth}}
+\toprule
+虚拟范围 & 权限 & 用途\\
+\midrule
+\code{0..0xFFFF} & 非用户范围 & 捕获空指针与低地址错误\\
+\code{0x40000000...} & ELF 决定 RX、R/NX、RW/NX & 用户代码、常量和数据\\
+\code{0x00007FFFFFFEA000} & not-present & 用户栈 guard\\
+\code{0x00007FFFFFFEB000..EFFFF} & user RW/NX & 四个用户栈页\\
+\code{0x00007FFFFFFF0000} & 初始端点 & RSP 指向其下方已映射字节\\
+\bottomrule
+\end{longtable}
+
+装载每一页时，内核先分配物理帧、建立最终权限、清零整页，再复制该页拥有的
+文件字节。清零先于复制，使 \code{p\_memsz-p\_filesz} 的 BSS 与页尾填充
+都具有确定值。任何分配或映射失败都会按逆序解除本轮页并释放物理帧；失败
+回滚本身也有独立状态，不能把资源泄漏伪装成普通输入错误。
+
+\section{五项 IRETQ 帧让处理器真正进入 CPL3}
+
+跨特权返回比同特权异常多出栈段与栈指针。进入 Ring 3 前，
+\code{osKernelEnterUserMode} 关闭中断窗口，保存内核 RFLAGS、非易失寄存器
+和当前 RSP，再压入：
+
+\begin{pdfdiagram}
+  \node[os state] (ss) {SS=\code{0x1B}};
+  \node[os state,below=of ss] (rsp) {RSP=用户栈顶};
+  \node[os state,below=of rsp] (flags) {RFLAGS=\code{0x202}};
+  \node[os state,below=of flags] (cs) {CS=\code{0x23}};
+  \node[os state,below=of cs] (rip) {RIP=ELF 入口};
+  \node[os block,right=of flags] (iret) {\code{IRETQ}\\装载五项};
+  \node[os hardware,right=of iret] (ring3) {CPU CPL3\\按用户权限执行};
+  \draw[os arrow] (ss.east) -- (iret.west);
+  \draw[os arrow] (rsp.east) -- (iret.west);
+  \draw[os arrow] (flags.east) -- (iret.west);
+  \draw[os arrow] (cs.east) -- (iret.west);
+  \draw[os arrow] (rip.east) -- (iret.west);
+  \draw[os arrow] (iret) -- (ring3);
+\end{pdfdiagram}
+\diagramnote{图按概念列出五项；实际栈向低地址增长，IRETQ 先取 RIP，再取 CS、RFLAGS、RSP 和 SS。}
+
+\code{0x202} 保持架构要求的 bit 1，并把 IF 置一；IOPL 仍为零，所以用户
+程序可以被 IRQ 抢占，却不能直接执行受保护端口 I/O。RIP 和 RSP 均来自已经
+验证并映射的低半 canonical 范围。任一段选择子、页权限或帧次序错误，都可能
+产生 \#GP、\#SS、\#PF，严重时在入口递归故障形成 triple fault。
+
+\section{TSS.RSP0 必须与等待返回的内核栈分离}
+
+从 CPL3 通过 interrupt gate 进入 CPL0 时，CPU 不继续使用用户栈，而从当前
+TSS 取 RSP0，随后在该内核栈保存用户 SS、RSP、RFLAGS、CS 与 RIP。这一步
+把入口从不可信内存移到内核拥有的页。
+
+早期实现若把 RSP0 指向当前启动栈顶，会产生隐蔽覆盖：调用
+\code{ExecuteUserProgram} 的 C++ 帧仍在启动栈等待返回，第一次系统调用却
+从同一顶端向下压入硬件帧和 15 个通用寄存器，恰好破坏未来需要恢复的调用链。
+故障可能随编译布局、日志长度或寄存器保存量变化，看起来像随机返回地址损坏。
+
+v0.8 为 RSP0 分配独立 16 KiB 特权转换栈，底端另有 4 KiB not-present
+guard。进入用户态前的内核 RSP 保存在内核 BSS。普通系统调用在转换栈上
+\code{IRETQ} 回用户；exit 或用户异常则丢弃整条转换栈，把 RSP 恢复为先前
+值，从 \code{ExecuteUserProgram} 的调用点继续。
+
+\begin{pdfdiagram}
+  \node[os state] (kernel) {原内核栈\\等待用户结果};
+  \node[os block,right=of kernel] (user) {Ring 3\\用户栈};
+  \node[os state,right=of user] (tss) {TSS.RSP0\\转换栈};
+  \node[os block,below=of tss] (dispatch) {系统调用/异常\\内核处理};
+  \node[os state,below=of kernel] (resume) {恢复原 RSP\\交付结果};
+  \draw[os arrow] (kernel) -- node[above]{保存 RSP} (user);
+  \draw[os arrow] (user) -- node[above]{INT/异常} (tss);
+  \draw[os arrow] (tss) -- (dispatch);
+  \draw[os arrow] (dispatch) -- node[below]{exit/终止} (resume);
+\end{pdfdiagram}
+\diagramnote{转换栈承担不可信到可信的入口帧；原内核栈承担用户执行结束后的结构化续体。}
+
+\section{选择 INT 0x80 是控制学习变量，不是忽略现代指令}
+
+AMD64 的 \code{SYSCALL/SYSRET} 更快，但入口前要配置 EFER.SCE、STAR、
+LSTAR 与 FMASK。\code{SYSCALL} 不自动读取 TSS.RSP0，软件必须先保存用户
+RSP 并取得当前线程内核栈；RCX/R11 还具有特殊破坏语义，\code{SYSRET} 对
+非规范返回地址尤其敏感。
+
+v0.8 已经拥有真实验证的 IDT、统一寄存器帧与 TSS，所以把 IDT
+\code{0x80} 安装成 present、DPL3 的 interrupt gate。DPL3 只允许用户显式
+\code{INT 0x80}，不会放宽其他内核向量。硬件自动换栈和压五项返回状态，
+入口机制更适合逐字段审计。
+
+这不是永久性能决策。共享 ABI 把调用号与入口指令分开：
+
+\begin{longtable}{L{0.10\textwidth}L{0.22\textwidth}L{0.30\textwidth}L{0.22\textwidth}}
+\toprule
+编号 & 名称 & 参数 & 返回\\
+\midrule
+1 & \code{WriteLog} & RDI=地址，RSI=长度 & 写入字节数或负错误\\
+2 & \code{ExitProcess} & RDI=有符号退出码 & 不回到用户态\\
+\bottomrule
+\end{longtable}
+
+RAX 保存调用号与返回值，RDI/RSI 保存前两个参数。所有协议字段使用固定宽度
+\code{uint64\_t}/\code{int64\_t}，不把宿主 \code{long} 或
+\code{size\_t} 的平台宽度带入用户 ABI。后续增加 \code{SYSCALL} 快路径时，
+仍可进入同一 C++ 分发层。
+
+\section{系统调用入口验证控制流，也验证当前栈}
+
+汇编公共入口保存通用寄存器并形成公共 160 字节
+\code{ExceptionFrame}；特权切换时硬件多保存用户 RSP 与 SS，完整
+\code{UserPrivilegeFrame} 为 176 字节。C++ 分发器不因向量来自预期 IDT
+门就盲目信任，它要求：
+
+\begin{itemize}
+  \item 当前确实存在活跃用户执行，保存 CS 的 RPL 为三；
+  \item vector=\code{0x80}、CS=\code{0x23}、SS=\code{0x1B}；
+  \item RIP 位于用户地址范围，RSP 位于四页用户栈；
+  \item RSP 对应叶页 present、U/S、RW，并且 NX。
+\end{itemize}
+
+未知系统调用是普通不可信输入，返回 \code{-2}；上述结构不变量失败则意味着
+内核入口、汇编帧或生命周期已经损坏，当前最小内核直接停机。把两类错误分开，
+可以避免攻击者用未知编号触发 panic，也避免内核损坏被包装成可继续的用户错误。
+
+\section{用户内存复制从 64 位区间证明开始}
+
+用户提供的地址不是 C++ 指针承诺。首地址可能在用户范围，而长度使末端回绕；
+缓冲也可能跨越 user 页和 supervisor/not-present 页。v0.8 的
+\code{CopyFromUser} 顺序为：
+
+\begin{enumerate}
+  \item 目标内核缓冲非空，容量不小于请求长度；
+  \item 长度非零，\code{address+length} 在 64 位中不溢出；
+  \item 整个半开区间位于
+        \code{0x10000..0x0000800000000000}；
+  \item 从首叶页迭代到末叶页，每页查询 present 与 U/S；
+  \item 全部通过后一次性复制到固定内核缓冲。
+\end{enumerate}
+
+\code{WriteLog} 把最大长度固定为 160 字节，先复制再访问串口，不用
+\code{strlen} 扫描不可信、可能没有 NUL 的用户地址。空写、超长、未映射
+内存、未知编号和设备失败各有稳定负错误码。当前只有单个同步用户执行，没有
+另一线程并发解除映射，所以检查与复制之间不存在 v0.8 可触发的 TOCTOU；
+调度阶段必须引入地址空间锁、页固定或可恢复 fault 的复制原语。
+
+\section{用户异常与内核异常共享向量而不共享命运}
+
+异常帧中的 CS.RPL 给出来源。Ring 0 的 \#UD/\#PF 仍表明内核自身违反不变量，
+进入有界 panic；Ring 3 的同类故障只写入
+\code{UserExecutionResult}：终止原因、向量、错误码、RIP、可选 CR2 与已经
+完成的系统调用数。随后恢复原内核栈，内核继续设备和事件循环。
+
+页故障错误码逐位提供硬件证据。用户程序读取未映射
+\code{0x30000000} 得到 \code{0x4}：
+
+\[
+  \mathrm{P}=0,\qquad \mathrm{W/R}=0,\qquad \mathrm{U/S}=1.
+\]
+
+它表示“用户读 not-present”，与 v0.6 的 \code{0x3}
+“supervisor 写 present 只读页”形成鲜明对照。两者虽然都是向量 14，却证明
+不同特权、访问类型和页表状态。
+
+\section{代码走读沿控制权而不是文件名展开}
+
+\begin{enumerate}
+  \item \filepath{source/user/linker/user.ld.in} 把用户入口与三个
+        \code{PT\_LOAD} 固定到 4 KiB 边界；
+  \item \filepath{source/kernel/src/user\_elf.cpp} 只解析并产生纯布局，
+        不分配页面；
+  \item \filepath{source/kernel/src/user\_memory.cpp} 映射段、清零 BSS、
+        建栈并负责失败回滚；
+  \item \filepath{source/kernel/src/architecture.asm} 保存原内核调用链，
+        执行降权和终止恢复；
+  \item \filepath{source/user/src/system\_call.asm} 执行
+        \code{INT 0x80}；
+  \item \filepath{source/kernel/src/system\_calls.cpp} 校验帧、复制用户数据
+        并分发调用；
+  \item \filepath{source/kernel/src/exceptions.cpp} 按 CPL 选择用户终止或
+        内核 panic；
+  \item \filepath{source/kernel/src/user\_runtime.cpp} 把上述路径收敛为
+        一个结构化执行结果。
+\end{enumerate}
+
+这里的头源分离不是排版习惯。公开头只暴露布局、状态枚举和稳定操作，实现
+文件保留 ELF 字节偏移、页回滚数组、全局单执行状态等策略细节。普通 C++ 函数
+统一使用大驼峰，例如 \code{ValidateUserElf}、\code{LoadUserAddressSpace}
+和 \code{ExecuteUserProgram}；\code{osKernel...}/\code{osUser...} 只保留
+给 C/汇编链接 ABI。
+
+\section{四类用户路径构成可反驳的验收证据}
+
+\begin{longtable}{L{0.18\textwidth}L{0.34\textwidth}L{0.34\textwidth}}
+\toprule
+路径 & 必须观察 & 必须禁止\\
+\midrule
+正常程序 & 非法指针拒绝、未知号拒绝、Ring 3 文本、exit 0、六次调用、
+恢复内核、IRQ 与 READY & 用户结果非法、panic\\
+用户 \#UD & vector 6、error 0、零次调用、恢复内核、READY &
+内核 EXCEPTION/PANIC\\
+用户 \#PF & vector 14、error 4、CR2=\code{0x30000000}、恢复内核、
+READY & 内核 EXCEPTION/PANIC\\
+截断 ELF & validation status 2，降权前停止 & 设备启动、Ring 3、READY\\
+\bottomrule
+\end{longtable}
+
+宿主单元测试覆盖二十类 ELF 结果；C++ 固定种子测试验证 16384 条用户地址
+性质；Python 随机测试以独立实现破坏 ELF 字段；三个真实用户 ELF 再经过
+宿主审计。四条 QEMU 路径全部从 \code{0xFFFFFFF0} 复位向量开始，因而同时
+经过自研 ROM、Stage 1、长模式、Kernel ELF 与内核初始化。完整集合为
+55 项 CTest，并保留 v0.0--v0.7 的所有回归。
+
+\section{v0.8 的边界为调度阶段保留真实问题}
+
+当前只有一个同步用户执行单元，全局只保存一个原内核 RSP，所有用户页仍位于
+当前内核页表根。用户结束后页面尚未回收，也没有 PID、进程状态、等待队列或
+上下文切换。这些不是隐藏的“以后优化”，而是 v0.9 必须新增并验证的所有权：
+
+\begin{itemize}
+  \item 每进程地址空间与用户页回收；
+  \item 每线程独立内核栈和可重入的保存现场；
+  \item ready/running/blocked/zombie 状态机；
+  \item PIT 触发的抢占与寄存器上下文切换；
+  \item 系统调用、异常、退出与调度器之间的锁和生命周期。
+\end{itemize}
+
+先让单一用户边界在硬件上成立，再引入多个可切换主体，可以把“权限错误”和
+“调度生命周期错误”分开定位。阶段拆分的价值正在于每次只增加一组可证伪
+不变量。

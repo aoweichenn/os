@@ -36,7 +36,7 @@ struct CpuIdResult final {
     uint32_t data;
 };
 
-[[nodiscard]] CpuIdResult readCpuId(const uint32_t leaf) noexcept {
+[[nodiscard]] CpuIdResult ReadCpuId(const uint32_t leaf) noexcept {
     CpuIdResult result{};
     asm volatile("cpuid"
                  : "=a"(result.accumulator), "=b"(result.base), "=c"(result.counter),
@@ -45,7 +45,7 @@ struct CpuIdResult final {
     return result;
 }
 
-[[nodiscard]] uint64_t readModelSpecificRegister(const uint32_t registerIndex) noexcept {
+[[nodiscard]] uint64_t ReadModelSpecificRegister(const uint32_t registerIndex) noexcept {
     uint32_t lowValue = 0U;
     uint32_t highValue = 0U;
     asm volatile("rdmsr" : "=a"(lowValue), "=d"(highValue) : "c"(registerIndex));
@@ -53,113 +53,114 @@ struct CpuIdResult final {
            (static_cast<uint64_t>(highValue) << OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
 }
 
-void writeModelSpecificRegister(const uint32_t registerIndex, const uint64_t value) noexcept {
+void WriteModelSpecificRegister(const uint32_t registerIndex, const uint64_t value) noexcept {
     const uint32_t lowValue = static_cast<uint32_t>(value);
     const uint32_t highValue =
         static_cast<uint32_t>(value >> OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
     asm volatile("wrmsr" : : "c"(registerIndex), "a"(lowValue), "d"(highValue));
 }
 
-[[nodiscard]] uint64_t readControlRegister0() noexcept {
+[[nodiscard]] uint64_t ReadControlRegister0() noexcept {
     uint64_t value = 0ULL;
     asm volatile("mov %0, cr0" : "=r"(value));
     return value;
 }
 
-void writeControlRegister0(const uint64_t value) noexcept {
+void WriteControlRegister0(const uint64_t value) noexcept {
     asm volatile("mov cr0, %0" : : "r"(value) : "memory");
 }
 
-[[nodiscard]] volatile uint32_t *localApicRegister(const uint64_t registerOffset) noexcept {
-    return reinterpret_cast<volatile uint32_t *>(localApicPhysicalAddress() + registerOffset);
+[[nodiscard]] volatile uint32_t *LocalApicRegister(const uint64_t registerOffset) noexcept {
+    return reinterpret_cast<volatile uint32_t *>(LocalApicPhysicalAddress() + registerOffset);
 }
 
 }
 
-[[noreturn]] void haltProcessor() noexcept {
+[[noreturn]] void HaltProcessor() noexcept {
     asm volatile("cli");
     while (true) {
         asm volatile("hlt");
     }
 }
 
-bool disableInterrupts() noexcept {
+bool DisableInterrupts() noexcept {
     uint64_t flags = 0ULL;
     asm volatile("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
     return (flags & OS_KERNEL_PROCESSOR_RFLAGS_INTERRUPT_ENABLE_BIT) != 0ULL;
 }
 
-void restoreInterrupts(const bool interruptsWereEnabled) noexcept {
+void RestoreInterrupts(const bool interruptsWereEnabled) noexcept {
     if (interruptsWereEnabled) {
         asm volatile("sti" : : : "memory");
     }
 }
 
-void enableInterrupts() noexcept { asm volatile("sti" : : : "memory"); }
+void EnableInterrupts() noexcept { asm volatile("sti" : : : "memory"); }
 
-void waitForInterrupt() noexcept { asm volatile("hlt" : : : "memory"); }
+void WaitForInterrupt() noexcept { asm volatile("hlt" : : : "memory"); }
 
-uint64_t readPageTableRoot() noexcept {
+uint64_t ReadPageTableRoot() noexcept {
     uint64_t pageTableRoot = 0ULL;
     asm volatile("mov %0, cr3" : "=r"(pageTableRoot));
     return pageTableRoot;
 }
 
-uint64_t readPageFaultLinearAddress() noexcept {
+uint64_t ReadPageFaultLinearAddress() noexcept {
     uint64_t pageFaultLinearAddress = 0ULL;
     asm volatile("mov %0, cr2" : "=r"(pageFaultLinearAddress));
     return pageFaultLinearAddress;
 }
 
-bool processorSupportsNoExecute() noexcept {
-    const CpuIdResult maximumLeaf = readCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+bool ProcessorSupportsNoExecute() noexcept {
+    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
     if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF) {
         return false;
     }
-    const CpuIdResult features = readCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF);
+    const CpuIdResult features = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF);
     return (features.data & OS_KERNEL_PROCESSOR_CPUID_NO_EXECUTE_BIT) != 0U;
 }
 
-bool processorSupportsLocalApic() noexcept {
-    const CpuIdResult features = readCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF);
+bool ProcessorSupportsLocalApic() noexcept {
+    const CpuIdResult features = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF);
     return (features.data & OS_KERNEL_PROCESSOR_CPUID_LOCAL_APIC_BIT) != 0U;
 }
 
-uint64_t localApicPhysicalAddress() noexcept {
-    return readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
+uint64_t LocalApicPhysicalAddress() noexcept {
+    return ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
            OS_KERNEL_PROCESSOR_IA32_APIC_BASE_ADDRESS_MASK;
 }
 
-bool enableKernelMemoryProtection() noexcept {
-    if (!processorSupportsNoExecute()) {
+bool EnableKernelMemoryProtection() noexcept {
+    if (!ProcessorSupportsNoExecute()) {
         return false;
     }
     const uint64_t extendedFeatureRegister =
-        readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) |
+        ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) |
         OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT;
-    writeModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR, extendedFeatureRegister);
-    writeControlRegister0(readControlRegister0() | OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT);
-    return kernelMemoryProtectionEnabled();
+    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR, extendedFeatureRegister);
+    WriteControlRegister0(ReadControlRegister0() | OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT);
+    return KernelMemoryProtectionEnabled();
 }
 
-bool kernelMemoryProtectionEnabled() noexcept {
-    return (readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) &
+bool KernelMemoryProtectionEnabled() noexcept {
+    return (ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) &
             OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT) != 0ULL &&
-           (readControlRegister0() & OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT) != 0ULL;
+           (ReadControlRegister0() & OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT) != 0ULL;
 }
 
-bool configureLegacyInterruptRouting() noexcept {
-    if (!processorSupportsLocalApic()) {
+bool ConfigureLegacyInterruptRouting() noexcept {
+    if (!ProcessorSupportsLocalApic()) {
         return true;
     }
-    const uint64_t localApicBase = readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
+    const uint64_t localApicBase =
+        ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
     if ((localApicBase & OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL ||
         (localApicBase & OS_KERNEL_PROCESSOR_IA32_APIC_X2_ENABLE_BIT) != 0ULL) {
         return false;
     }
 
     volatile uint32_t *const spuriousRegister =
-        localApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_REGISTER_OFFSET);
+        LocalApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_REGISTER_OFFSET);
     const uint32_t spuriousValue =
         (*spuriousRegister & ~OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) |
         OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR |
@@ -167,11 +168,10 @@ bool configureLegacyInterruptRouting() noexcept {
     *spuriousRegister = spuriousValue;
 
     volatile uint32_t *const lint0Register =
-        localApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_LINT0_REGISTER_OFFSET);
+        LocalApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_LINT0_REGISTER_OFFSET);
     const uint32_t lint0Value =
-        (*lint0Register &
-         ~(OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK |
-           OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT)) |
+        (*lint0Register & ~(OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK |
+                            OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT)) |
         OS_KERNEL_PROCESSOR_LOCAL_APIC_EXTINT_DELIVERY_MODE;
     *lint0Register = lint0Value;
     asm volatile("" : : : "memory");
@@ -184,35 +184,35 @@ bool configureLegacyInterruptRouting() noexcept {
            (*lint0Register & OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT) == 0U;
 }
 
-void activatePageTable(const uint64_t rootPhysicalAddress) noexcept {
+void ActivatePageTable(const uint64_t rootPhysicalAddress) noexcept {
     asm volatile("mov cr3, %0" : : "r"(rootPhysicalAddress) : "memory");
 }
 
-void invalidatePage(const uint64_t virtualAddress) noexcept {
+void InvalidatePage(const uint64_t virtualAddress) noexcept {
     asm volatile("invlpg [%0]" : : "r"(virtualAddress) : "memory");
 }
 
-void triggerBreakpoint() noexcept { asm volatile("int3"); }
+void TriggerBreakpoint() noexcept { asm volatile("int3"); }
 
-void triggerLegacyPicSpuriousInterrupt() noexcept { asm volatile("int 0x27"); }
+void TriggerLegacyPicSpuriousInterrupt() noexcept { asm volatile("int 0x27"); }
 
-[[noreturn]] void triggerInvalidOpcode() noexcept {
+[[noreturn]] void TriggerInvalidOpcode() noexcept {
     asm volatile("ud2");
-    haltProcessor();
+    HaltProcessor();
 }
 
-[[noreturn]] void triggerPageFault() noexcept {
+[[noreturn]] void TriggerPageFault() noexcept {
     const volatile uint64_t *const unmappedAddress =
         reinterpret_cast<const volatile uint64_t *>(OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS);
     static_cast<void>(*unmappedAddress);
-    haltProcessor();
+    HaltProcessor();
 }
 
-[[noreturn]] void triggerWriteProtectionFault(const uint64_t protectedAddress) noexcept {
+[[noreturn]] void TriggerWriteProtectionFault(const uint64_t protectedAddress) noexcept {
     volatile uint64_t *const writeProtectedAddress =
         reinterpret_cast<volatile uint64_t *>(protectedAddress);
     *writeProtectedAddress = protectedAddress;
-    haltProcessor();
+    HaltProcessor();
 }
 
 }

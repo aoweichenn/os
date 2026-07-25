@@ -41,7 +41,7 @@ int main() {
     alignas(OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES)
         uint8_t heapBuffer[OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES]{};
     os::kernel::KernelHeap heap{};
-    testContext.expect(heap.initialize(reinterpret_cast<uint64_t>(heapBuffer),
+    testContext.Expect(heap.Initialize(reinterpret_cast<uint64_t>(heapBuffer),
                                        OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES) ==
                            os::kernel::KernelHeapStatus::Succeeded,
                        OS_TEST_HEAP_PAGE_HEAP_INITIALIZE);
@@ -49,43 +49,43 @@ int main() {
     void *firstAllocation = nullptr;
     void *secondAllocation = nullptr;
     const bool allocationsSucceeded =
-        heap.tryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
+        heap.TryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
                          OS_TEST_HEAP_PAGE_MINIMUM_ALIGNMENT_BYTES,
                          firstAllocation) == os::kernel::KernelHeapStatus::Succeeded &&
-        heap.tryAllocate(OS_TEST_HEAP_PAGE_SECOND_ALLOCATION_SIZE_BYTES,
+        heap.TryAllocate(OS_TEST_HEAP_PAGE_SECOND_ALLOCATION_SIZE_BYTES,
                          OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES,
                          secondAllocation) == os::kernel::KernelHeapStatus::Succeeded;
-    testContext.expect(allocationsSucceeded &&
+    testContext.Expect(allocationsSucceeded &&
                            (reinterpret_cast<uint64_t>(secondAllocation) &
                             (OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES -
                              OS_TEST_HEAP_PAGE_ALIGNMENT_MASK_DECREMENT)) == 0ULL,
                        OS_TEST_HEAP_PAGE_HEAP_ALIGNMENT);
 
     void *unchangedAllocation = reinterpret_cast<void *>(OS_TEST_HEAP_PAGE_INVALID_POINTER_VALUE);
-    testContext.expect(heap.tryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
+    testContext.Expect(heap.TryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
                                         OS_TEST_HEAP_PAGE_INVALID_ALIGNMENT_BYTES,
                                         unchangedAllocation) ==
                                os::kernel::KernelHeapStatus::InvalidAlignment &&
                            reinterpret_cast<uint64_t>(unchangedAllocation) ==
                                OS_TEST_HEAP_PAGE_INVALID_POINTER_VALUE,
                        OS_TEST_HEAP_PAGE_HEAP_FAILURE_ATOMIC);
-    testContext.expect(heap.tryAllocate(OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES,
+    testContext.Expect(heap.TryAllocate(OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES,
                                         OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES,
                                         unchangedAllocation) ==
                            os::kernel::KernelHeapStatus::OutOfMemory,
                        OS_TEST_HEAP_PAGE_HEAP_EXHAUSTION);
 
-    testContext.expect(
-        os::kernel::isCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_LOW_CANONICAL_ADDRESS) &&
-            os::kernel::isCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_HIGH_CANONICAL_ADDRESS),
+    testContext.Expect(
+        os::kernel::IsCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_LOW_CANONICAL_ADDRESS) &&
+            os::kernel::IsCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_HIGH_CANONICAL_ADDRESS),
         OS_TEST_HEAP_PAGE_CANONICAL);
-    testContext.expect(
-        !os::kernel::isCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_NON_CANONICAL_ADDRESS),
+    testContext.Expect(
+        !os::kernel::IsCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_NON_CANONICAL_ADDRESS),
         OS_TEST_HEAP_PAGE_NON_CANONICAL);
 
     const os::kernel::PageTableIndices indices =
-        os::kernel::calculatePageTableIndices(OS_TEST_HEAP_PAGE_INDEX_ADDRESS);
-    testContext.expect(indices.level4 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL4_INDEX &&
+        os::kernel::CalculatePageTableIndices(OS_TEST_HEAP_PAGE_INDEX_ADDRESS);
+    testContext.Expect(indices.level4 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL4_INDEX &&
                            indices.level3 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL3_INDEX &&
                            indices.level2 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL2_INDEX &&
                            indices.level1 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL1_INDEX,
@@ -97,14 +97,14 @@ int main() {
         .userAccessible = true,
         .cacheDisabled = true,
     };
-    const os::kernel::PageMapping mapping = os::kernel::decodePageTableLeafEntry(
-        os::kernel::encodePageTableLeafEntry(OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS, permissions));
-    testContext.expect(mapping.physicalAddress == OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS &&
+    const os::kernel::PageMapping mapping = os::kernel::DecodePageTableLeafEntry(
+        os::kernel::EncodePageTableLeafEntry(OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS, permissions));
+    testContext.Expect(mapping.physicalAddress == OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS &&
                            mapping.permissions.writable == permissions.writable &&
                            mapping.permissions.executable == permissions.executable &&
                            mapping.permissions.userAccessible == permissions.userAccessible &&
                            mapping.permissions.cacheDisabled == permissions.cacheDisabled,
                        OS_TEST_HEAP_PAGE_ENTRY_ROUND_TRIP);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

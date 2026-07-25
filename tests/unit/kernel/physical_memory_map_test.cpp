@@ -68,29 +68,29 @@ int main() {
     };
 
     os::kernel::PhysicalMemorySummary summary{};
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            validEntries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
                            summary) == os::kernel::PhysicalMemoryMapValidationStatus::Succeeded,
                        OS_TEST_MEMORY_MAP_VALID);
-    testContext.expect(summary.totalBytes == OS_TEST_MEMORY_MAP_EXPECTED_TOTAL_BYTES &&
+    testContext.Expect(summary.totalBytes == OS_TEST_MEMORY_MAP_EXPECTED_TOTAL_BYTES &&
                            summary.usableBytes == OS_TEST_MEMORY_MAP_EXPECTED_USABLE_BYTES &&
                            summary.managedUsableBytes == OS_TEST_MEMORY_MAP_EXPECTED_USABLE_BYTES,
                        OS_TEST_MEMORY_MAP_SUMMARY);
 
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            nullptr, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
                            summary) == os::kernel::PhysicalMemoryMapValidationStatus::NullEntries,
                        OS_TEST_MEMORY_MAP_NULL);
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            validEntries, 0ULL, OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
                            os::kernel::PhysicalMemoryMapValidationStatus::InvalidEntryCount,
                        OS_TEST_MEMORY_MAP_EMPTY);
 
     os::kernel::PhysicalMemoryMapEntry invalidEntries[] = {validEntries[0], validEntries[1]};
     invalidEntries[0].lengthBytes = 0ULL;
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            invalidEntries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
                            summary) == os::kernel::PhysicalMemoryMapValidationStatus::EmptyRegion,
@@ -99,7 +99,7 @@ int main() {
     invalidEntries[0] = validEntries[0];
     invalidEntries[0].baseAddress = UINT64_MAX;
     invalidEntries[0].lengthBytes = OS_TEST_MEMORY_MAP_OVERFLOW_LENGTH_BYTES;
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            invalidEntries, OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
                            os::kernel::PhysicalMemoryMapValidationStatus::AddressOverflow,
@@ -107,7 +107,7 @@ int main() {
 
     invalidEntries[0] = validEntries[1];
     invalidEntries[1] = validEntries[0];
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            invalidEntries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
                            os::kernel::PhysicalMemoryMapValidationStatus::UnsortedRegions,
@@ -117,18 +117,18 @@ int main() {
     invalidEntries[1] = validEntries[1];
     invalidEntries[1].baseAddress =
         OS_TEST_MEMORY_MAP_RESERVED_BASE - OS_TEST_MEMORY_MAP_ADDRESS_BOUNDARY_OFFSET;
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            invalidEntries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
                            os::kernel::PhysicalMemoryMapValidationStatus::OverlappingRegions,
                        OS_TEST_MEMORY_MAP_OVERLAP);
 
     invalidEntries[0] = validEntries[1];
-    testContext.expect(os::kernel::validateAndSummarizePhysicalMemoryMap(
+    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
                            invalidEntries, OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT,
                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
                            os::kernel::PhysicalMemoryMapValidationStatus::NoManagedUsableMemory,
                        OS_TEST_MEMORY_MAP_NO_USABLE);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

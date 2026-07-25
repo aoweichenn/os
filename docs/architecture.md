@@ -142,10 +142,12 @@ SGDT / SIDT / CS / SS / STR 回读验证
 INT3 → 统一异常帧 → C++20 分发器 → IRETQ
 ```
 
-GDT 当前选择子为代码段 `0x08`、数据段 `0x10`、TSS `0x18`。TSS 描述符占用
+v0.5 当时的选择子为代码段 `0x08`、数据段 `0x10`、TSS `0x18`。TSS 描述符占用
 GDT 的两个连续 8 字节槽，因为 64 位 TSS 基址无法放进传统单槽描述符。
 IDT 每槽 16 字节，完整表为 4096 字节；v0.5 时外部中断向量保持
 not-present，直到 v0.7 建立控制器确认协议后才开放 32..47。
+v0.8 又加入 Ring 3 数据/代码段，把 TSS 移到 `0x28`，并开放 DPL3 的
+`0x80` 系统调用门；后文用户边界记录当前布局。
 
 异常入口分成硬件、汇编和 C++ 三层：
 
@@ -203,7 +205,8 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
   ├─ rodata: R + NX
   ├─ data/BSS/stack: RW + NX
   ├─ 初始栈底 4 KiB guard: not-present
-  └─ 三个 IST 栈底 guard: not-present
+  ├─ 三个 IST 栈底 guard: not-present
+  └─ TSS.RSP0 特权转换栈底 guard: not-present
 高半区 0xFFFF800000000000
   ├─ 64 KiB heap: RW + NX
   └─ 0xFFFF800000100000: R + NX 写保护测试页
@@ -272,6 +275,48 @@ QEMU 系统测试启动同一生产镜像，等待 `READY` 后通过 QMP 向虚�
 [ADR 0010](adr/0010-legacy-interrupt-routing-and-device-bootstrap.md)，模块
 契约见 [Interrupt 与 Devices 模块](modules/devices.md)。
 
+## v0.8 用户执行边界
+
+用户 ELF 在宿主构建时只是作为原始文件嵌入 Kernel；决定它能否执行的是目标
+内核的严格解析器。正常路径的控制与数据关系如下：
+
+```text
+embedded ET_EXEC ELF64
+        ↓ ValidateUserElf：结构、范围、权限、入口
+PageFrameAllocator → AllocateAndMapUserPage
+        ↓ PML4/PDPT/PD/PT 全层 U/S=1
+0x40000000 用户段 + 高端四页用户栈
+        ↓ osKernelEnterUserMode
+保存内核 RSP → 压 SS:RSP:RFLAGS:CS:RIP → IRETQ
+        ↓ CPL3
+用户 C++ → INT 0x80
+        ↓ CPU 从 TSS 取 RSP0，压用户 SS/RSP/FLAGS/CS/RIP
+系统调用汇编入口 → ValidateUserSystemCallFrame → C++ 分发
+        ├─ 普通返回：恢复帧 → IRETQ → CPL3
+        └─ exit/异常：丢弃转换栈 → 恢复原内核 RSP → C++ 调用者
+```
+
+关键地址布局：
+
+| 虚拟范围 | 权限 | 所有者/用途 |
+| --- | --- | --- |
+| `0..0xFFFF` | 不允许作为用户范围 | 捕获低地址与空指针 |
+| `0x40000000...` | 按 ELF 为 RX、R/NX 或 RW/NX | 首批用户程序 |
+| `0x00007FFFFFFEA000` | not-present | 用户栈 guard |
+| `0x00007FFFFFFEB000..0x00007FFFFFFEFFFF` | user RW/NX | 四页用户栈 |
+| `0x00007FFFFFFF0000` | 栈顶，不映射为叶页 | 初始用户 RSP |
+
+GDT 中 CPL3 数据/代码选择子分别为 `0x1B`、`0x23`，TSS 选择子为
+`0x28`。TSS.RSP0 不再指向当前启动调用栈，而指向专用 16 KiB 转换栈，
+避免系统调用压栈覆盖“等待用户程序返回”的内核帧。
+
+用户系统调用帧比 Ring 0 异常帧多旧 RSP 与 SS，公共前 160 字节保持兼容，
+完整 `UserPrivilegeFrame` 为 176 字节。异常分发先查看保存 CS 的 RPL：
+CPL0 故障沿用 panic；CPL3 故障写入有界的 `UserExecutionResult` 并恢复内核。
+设计权衡见
+[ADR 0011](adr/0011-user-mode-elf-and-int80-boundary.md)，代码边界见
+[User 与 ABI 模块](modules/user.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -291,6 +336,8 @@ tests ───────────────→ foundation
 firmware ────────────→ foundation
 boot stages ─────────→ foundation
 kernel ──────────────→ foundation
+user ────────────────→ abi
+kernel ──────────────→ abi
 ```
 
 `foundation` 不得反向依赖固件、引导阶段、内核或宿主测试框架。
@@ -375,6 +422,25 @@ source/kernel/
     ├── programmable_interval_timer.cpp
     ├── ps2_keyboard.cpp
     └── serial_port.cpp
+
+source/abi/
+├── CMakeLists.txt
+└── include/os/abi/
+    └── system_call.hpp
+
+source/user/
+├── CMakeLists.txt
+├── include/os/user/
+│   └── system_call.hpp
+├── linker/
+│   └── user.ld.in
+├── programs/
+│   ├── smoke.cpp
+│   ├── invalid_opcode.cpp
+│   └── page_fault.cpp
+└── src/
+    ├── system_call.asm
+    └── system_call.cpp
 ```
 
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和

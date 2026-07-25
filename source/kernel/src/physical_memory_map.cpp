@@ -7,7 +7,7 @@ namespace {
 constexpr uint64_t OS_KERNEL_MEMORY_MAP_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_MAP_PREVIOUS_ENTRY_OFFSET = 1ULL;
 
-[[nodiscard]] bool tryAdd(const uint64_t left, const uint64_t right, uint64_t &result) noexcept {
+[[nodiscard]] bool TryAdd(const uint64_t left, const uint64_t right, uint64_t &result) noexcept {
     const uint64_t maximumValue = UINT64_MAX;
     if (right > maximumValue - left) {
         return false;
@@ -19,7 +19,7 @@ constexpr uint64_t OS_KERNEL_MEMORY_MAP_PREVIOUS_ENTRY_OFFSET = 1ULL;
 }
 
 PhysicalMemoryMapValidationStatus
-validateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
+ValidateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
                                       const uint64_t entryCount, const uint64_t managedLimitAddress,
                                       PhysicalMemorySummary &summary) noexcept {
     if (entries == nullptr) {
@@ -44,7 +44,7 @@ validateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
         }
 
         uint64_t endAddress = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
-        if (!tryAdd(entry.baseAddress, entry.lengthBytes, endAddress)) {
+        if (!TryAdd(entry.baseAddress, entry.lengthBytes, endAddress)) {
             return PhysicalMemoryMapValidationStatus::AddressOverflow;
         }
         if (hasPreviousRegion && entry.baseAddress < previousEndAddress) {
@@ -57,7 +57,7 @@ validateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
         previousEndAddress = endAddress;
         hasPreviousRegion = true;
 
-        if (!tryAdd(candidateSummary.totalBytes, entry.lengthBytes, candidateSummary.totalBytes)) {
+        if (!TryAdd(candidateSummary.totalBytes, entry.lengthBytes, candidateSummary.totalBytes)) {
             return PhysicalMemoryMapValidationStatus::TotalSizeOverflow;
         }
         if (endAddress > candidateSummary.highestAddressExclusive) {
@@ -68,7 +68,7 @@ validateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
             continue;
         }
         ++candidateSummary.usableRegionCount;
-        if (!tryAdd(candidateSummary.usableBytes, entry.lengthBytes,
+        if (!TryAdd(candidateSummary.usableBytes, entry.lengthBytes,
                     candidateSummary.usableBytes)) {
             return PhysicalMemoryMapValidationStatus::UsableSizeOverflow;
         }
@@ -78,7 +78,7 @@ validateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
         const uint64_t managedEnd =
             endAddress < managedLimitAddress ? endAddress : managedLimitAddress;
         if (managedBegin < managedEnd &&
-            !tryAdd(candidateSummary.managedUsableBytes, managedEnd - managedBegin,
+            !TryAdd(candidateSummary.managedUsableBytes, managedEnd - managedBegin,
                     candidateSummary.managedUsableBytes)) {
             return PhysicalMemoryMapValidationStatus::UsableSizeOverflow;
         }

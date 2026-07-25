@@ -5,6 +5,7 @@
 #include "os/kernel/physical_frame_allocator.hpp"
 #include "os/kernel/physical_memory_map.hpp"
 #include "os/kernel/processor.hpp"
+#include "os/kernel/user_elf.hpp"
 
 namespace os::kernel {
 
@@ -44,15 +45,15 @@ extern "C" uint8_t osKernelReadOnlyDataEnd[];
 extern "C" uint8_t osKernelWritableDataStart[];
 extern "C" uint8_t osKernelWritableDataEnd[];
 
-[[nodiscard]] uint64_t addressOf(uint8_t *symbol) noexcept {
+[[nodiscard]] uint64_t AddressOf(uint8_t *symbol) noexcept {
     return reinterpret_cast<uint64_t>(symbol);
 }
 
-[[nodiscard]] uint64_t alignUpToPage(const uint64_t address) noexcept {
+[[nodiscard]] uint64_t AlignUpToPage(const uint64_t address) noexcept {
     return (address + OS_KERNEL_MEMORY_PAGE_MASK) & ~OS_KERNEL_MEMORY_PAGE_MASK;
 }
 
-[[nodiscard]] PhysicalFrameAllocator &frameAllocator() noexcept {
+[[nodiscard]] PhysicalFrameAllocator &FrameAllocator() noexcept {
     static PhysicalFrameAllocator allocator{
         kernelFrameStateStorage,
         OS_KERNEL_MEMORY_FRAME_STATE_STORAGE_SIZE_BYTES,
@@ -60,12 +61,12 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return allocator;
 }
 
-[[nodiscard]] PageTableManager &pageTableManager() noexcept {
-    static PageTableManager manager{frameAllocator()};
+[[nodiscard]] PageTableManager &GetPageTableManager() noexcept {
+    static PageTableManager manager{FrameAllocator()};
     return manager;
 }
 
-[[nodiscard]] bool isGuardPage(const uint64_t pageAddress, const BootInfo &bootInfo) noexcept {
+[[nodiscard]] bool IsGuardPage(const uint64_t pageAddress, const BootInfo &bootInfo) noexcept {
     const uint64_t earlyStackGuardAddress =
         bootInfo.kernelStackTopPhysicalAddress - OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES;
     if (pageAddress == earlyStackGuardAddress) {
@@ -73,16 +74,16 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     }
     for (uint64_t guardPageIndex = 0ULL;
          guardPageIndex < OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT; ++guardPageIndex) {
-        if (pageAddress == interruptStackGuardPageAddress(guardPageIndex)) {
+        if (pageAddress == InterruptStackGuardPageAddress(guardPageIndex)) {
             return true;
         }
     }
     return false;
 }
 
-[[nodiscard]] PagePermissions identityPermissions(const uint64_t pageAddress) noexcept {
-    const uint64_t textBegin = addressOf(osKernelTextStart);
-    const uint64_t textEnd = alignUpToPage(addressOf(osKernelTextEnd));
+[[nodiscard]] PagePermissions IdentityPermissions(const uint64_t pageAddress) noexcept {
+    const uint64_t textBegin = AddressOf(osKernelTextStart);
+    const uint64_t textEnd = AlignUpToPage(AddressOf(osKernelTextEnd));
     if (pageAddress >= textBegin && pageAddress < textEnd) {
         return PagePermissions{
             .writable = false,
@@ -91,8 +92,8 @@ extern "C" uint8_t osKernelWritableDataEnd[];
             .cacheDisabled = false,
         };
     }
-    const uint64_t readOnlyBegin = addressOf(osKernelReadOnlyDataStart);
-    const uint64_t readOnlyEnd = alignUpToPage(addressOf(osKernelReadOnlyDataEnd));
+    const uint64_t readOnlyBegin = AddressOf(osKernelReadOnlyDataStart);
+    const uint64_t readOnlyEnd = AlignUpToPage(AddressOf(osKernelReadOnlyDataEnd));
     if (pageAddress >= readOnlyBegin && pageAddress < readOnlyEnd) {
         return PagePermissions{
             .writable = false,
@@ -109,28 +110,28 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     };
 }
 
-[[nodiscard]] bool reserveBootCriticalRanges(const BootInfo &bootInfo) noexcept {
-    PhysicalFrameAllocator &allocator = frameAllocator();
-    const uint64_t kernelBegin = addressOf(osKernelImageStart);
-    const uint64_t kernelEnd = addressOf(osKernelImageEnd);
+[[nodiscard]] bool ReserveBootCriticalRanges(const BootInfo &bootInfo) noexcept {
+    PhysicalFrameAllocator &allocator = FrameAllocator();
+    const uint64_t kernelBegin = AddressOf(osKernelImageStart);
+    const uint64_t kernelEnd = AddressOf(osKernelImageEnd);
     const uint64_t earlyStackBegin =
         bootInfo.kernelStackTopPhysicalAddress - OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES;
-    return allocator.reserveRange(0ULL, OS_KERNEL_MEMORY_LOW_PLATFORM_RESERVATION_SIZE_BYTES) ==
+    return allocator.ReserveRange(0ULL, OS_KERNEL_MEMORY_LOW_PLATFORM_RESERVATION_SIZE_BYTES) ==
                PhysicalFrameAllocatorStatus::Succeeded &&
-           allocator.reserveRange(kernelBegin, kernelEnd - kernelBegin) ==
+           allocator.ReserveRange(kernelBegin, kernelEnd - kernelBegin) ==
                PhysicalFrameAllocatorStatus::Succeeded &&
-           allocator.reserveRange(earlyStackBegin, OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES) ==
+           allocator.ReserveRange(earlyStackBegin, OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES) ==
                PhysicalFrameAllocatorStatus::Succeeded;
 }
 
-[[nodiscard]] bool mapIdentityRange(const BootInfo &bootInfo) noexcept {
-    PageTableManager &manager = pageTableManager();
+[[nodiscard]] bool MapIdentityRange(const BootInfo &bootInfo) noexcept {
+    PageTableManager &manager = GetPageTableManager();
     for (uint64_t pageAddress = 0ULL; pageAddress < bootInfo.identityMappedSizeBytes;
          pageAddress += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
-        if (pageAddress == 0ULL || isGuardPage(pageAddress, bootInfo)) {
+        if (pageAddress == 0ULL || IsGuardPage(pageAddress, bootInfo)) {
             continue;
         }
-        if (manager.mapPage(pageAddress, pageAddress, identityPermissions(pageAddress)) !=
+        if (manager.MapPage(pageAddress, pageAddress, IdentityPermissions(pageAddress)) !=
             PageTableStatus::Succeeded) {
             return false;
         }
@@ -138,9 +139,9 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return true;
 }
 
-[[nodiscard]] bool mapKernelHeap() noexcept {
-    PhysicalFrameAllocator &allocator = frameAllocator();
-    PageTableManager &manager = pageTableManager();
+[[nodiscard]] bool MapKernelHeap() noexcept {
+    PhysicalFrameAllocator &allocator = FrameAllocator();
+    PageTableManager &manager = GetPageTableManager();
     const PagePermissions heapPermissions{
         .writable = true,
         .executable = false,
@@ -149,12 +150,12 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     };
     for (uint64_t pageIndex = 0ULL; pageIndex < OS_KERNEL_MEMORY_HEAP_PAGE_COUNT; ++pageIndex) {
         PhysicalFrame frame{};
-        if (allocator.allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
+        if (allocator.Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
             return false;
         }
         const uint64_t virtualAddress =
             OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE + pageIndex * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-        if (manager.mapPage(virtualAddress, frame.physicalAddress, heapPermissions) !=
+        if (manager.MapPage(virtualAddress, frame.physicalAddress, heapPermissions) !=
             PageTableStatus::Succeeded) {
             return false;
         }
@@ -162,11 +163,11 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return true;
 }
 
-[[nodiscard]] bool mapLocalApicRegisters() noexcept {
-    if (!processorSupportsLocalApic()) {
+[[nodiscard]] bool MapLocalApicRegisters() noexcept {
+    if (!ProcessorSupportsLocalApic()) {
         return true;
     }
-    const uint64_t localApicAddress = localApicPhysicalAddress();
+    const uint64_t localApicAddress = LocalApicPhysicalAddress();
     if (localApicAddress == 0ULL || (localApicAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return false;
     }
@@ -176,13 +177,13 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         .userAccessible = false,
         .cacheDisabled = true,
     };
-    return pageTableManager().mapPage(localApicAddress, localApicAddress, devicePermissions) ==
+    return GetPageTableManager().MapPage(localApicAddress, localApicAddress, devicePermissions) ==
            PageTableStatus::Succeeded;
 }
 
-[[nodiscard]] bool mapWriteProtectionTestPage() noexcept {
+[[nodiscard]] bool MapWriteProtectionTestPage() noexcept {
     PhysicalFrame frame{};
-    if (frameAllocator().allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
+    if (FrameAllocator().Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
         return false;
     }
     const PagePermissions readOnlyPermissions{
@@ -191,31 +192,31 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         .userAccessible = false,
         .cacheDisabled = false,
     };
-    PageTableManager &manager = pageTableManager();
-    if (manager.mapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
+    PageTableManager &manager = GetPageTableManager();
+    if (manager.MapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
                         frame.physicalAddress, readOnlyPermissions) != PageTableStatus::Succeeded ||
-        manager.mapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
+        manager.MapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
                         frame.physicalAddress,
                         readOnlyPermissions) != PageTableStatus::AlreadyMapped ||
-        manager.unmapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS) !=
+        manager.UnmapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS) !=
             PageTableStatus::Succeeded) {
         return false;
     }
     PageMapping removedMapping{};
-    if (manager.queryPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS, removedMapping) !=
+    if (manager.QueryPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS, removedMapping) !=
         PageTableStatus::NotMapped) {
         return false;
     }
-    return manager.mapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
+    return manager.MapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
                            frame.physicalAddress,
                            readOnlyPermissions) == PageTableStatus::Succeeded;
 }
 
-[[nodiscard]] bool validateMapping(const uint64_t virtualAddress,
+[[nodiscard]] bool ValidateMapping(const uint64_t virtualAddress,
                                    const uint64_t expectedPhysicalAddress,
                                    const PagePermissions expectedPermissions) noexcept {
     PageMapping mapping{};
-    if (pageTableManager().queryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
+    if (GetPageTableManager().QueryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
         return false;
     }
     return mapping.physicalAddress == expectedPhysicalAddress &&
@@ -225,10 +226,10 @@ extern "C" uint8_t osKernelWritableDataEnd[];
            mapping.permissions.cacheDisabled == expectedPermissions.cacheDisabled;
 }
 
-[[nodiscard]] bool validatePermissions(const uint64_t virtualAddress,
+[[nodiscard]] bool ValidatePermissions(const uint64_t virtualAddress,
                                        const PagePermissions expectedPermissions) noexcept {
     PageMapping mapping{};
-    if (pageTableManager().queryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
+    if (GetPageTableManager().QueryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
         return false;
     }
     return mapping.physicalAddress != 0ULL &&
@@ -238,7 +239,7 @@ extern "C" uint8_t osKernelWritableDataEnd[];
            mapping.permissions.cacheDisabled == expectedPermissions.cacheDisabled;
 }
 
-[[nodiscard]] bool validateKernelMappings(const BootInfo &bootInfo) noexcept {
+[[nodiscard]] bool ValidateKernelMappings(const BootInfo &bootInfo) noexcept {
     const PagePermissions textPermissions{
         .writable = false,
         .executable = true,
@@ -258,61 +259,61 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         .cacheDisabled = false,
     };
     PageMapping ignoredMapping{};
-    if (!validateMapping(addressOf(osKernelTextStart), addressOf(osKernelTextStart),
+    if (!ValidateMapping(AddressOf(osKernelTextStart), AddressOf(osKernelTextStart),
                          textPermissions) ||
-        !validateMapping(addressOf(osKernelReadOnlyDataStart), addressOf(osKernelReadOnlyDataStart),
+        !ValidateMapping(AddressOf(osKernelReadOnlyDataStart), AddressOf(osKernelReadOnlyDataStart),
                          readOnlyPermissions) ||
-        !validateMapping(addressOf(osKernelWritableDataStart), addressOf(osKernelWritableDataStart),
+        !ValidateMapping(AddressOf(osKernelWritableDataStart), AddressOf(osKernelWritableDataStart),
                          writablePermissions) ||
-        !validatePermissions(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE, writablePermissions) ||
-        !validatePermissions(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
+        !ValidatePermissions(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE, writablePermissions) ||
+        !ValidatePermissions(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
                              readOnlyPermissions)) {
         return false;
     }
-    if (processorSupportsLocalApic()) {
+    if (ProcessorSupportsLocalApic()) {
         const PagePermissions devicePermissions{
             .writable = true,
             .executable = false,
             .userAccessible = false,
             .cacheDisabled = true,
         };
-        const uint64_t localApicAddress = localApicPhysicalAddress();
-        if (!validateMapping(localApicAddress, localApicAddress, devicePermissions)) {
+        const uint64_t localApicAddress = LocalApicPhysicalAddress();
+        if (!ValidateMapping(localApicAddress, localApicAddress, devicePermissions)) {
             return false;
         }
     }
-    if (pageTableManager().queryPage(0ULL, ignoredMapping) != PageTableStatus::NotMapped ||
-        pageTableManager().queryPage(OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS, ignoredMapping) !=
-            PageTableStatus::NotMapped) {
+    if (GetPageTableManager().QueryPage(0ULL, ignoredMapping) != PageTableStatus::NotMapped ||
+        GetPageTableManager().QueryPage(OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS,
+                                        ignoredMapping) != PageTableStatus::NotMapped) {
         return false;
     }
     const uint64_t earlyStackGuardAddress =
         bootInfo.kernelStackTopPhysicalAddress - OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES;
-    if (pageTableManager().queryPage(earlyStackGuardAddress, ignoredMapping) !=
+    if (GetPageTableManager().QueryPage(earlyStackGuardAddress, ignoredMapping) !=
         PageTableStatus::NotMapped) {
         return false;
     }
     for (uint64_t guardPageIndex = 0ULL;
          guardPageIndex < OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT; ++guardPageIndex) {
-        if (pageTableManager().queryPage(interruptStackGuardPageAddress(guardPageIndex),
-                                         ignoredMapping) != PageTableStatus::NotMapped) {
+        if (GetPageTableManager().QueryPage(InterruptStackGuardPageAddress(guardPageIndex),
+                                            ignoredMapping) != PageTableStatus::NotMapped) {
             return false;
         }
     }
     return true;
 }
 
-[[nodiscard]] bool runHeapSelfTest() noexcept {
+[[nodiscard]] bool RunHeapSelfTest() noexcept {
     void *smallAllocation = nullptr;
-    if (kernelHeap().tryAllocate(OS_KERNEL_MEMORY_HEAP_SELF_TEST_SMALL_SIZE_BYTES,
-                                 OS_KERNEL_MEMORY_HEAP_SELF_TEST_SMALL_ALIGNMENT_BYTES,
-                                 smallAllocation) != KernelHeapStatus::Succeeded) {
+    if (GetKernelHeap().TryAllocate(OS_KERNEL_MEMORY_HEAP_SELF_TEST_SMALL_SIZE_BYTES,
+                                    OS_KERNEL_MEMORY_HEAP_SELF_TEST_SMALL_ALIGNMENT_BYTES,
+                                    smallAllocation) != KernelHeapStatus::Succeeded) {
         return false;
     }
     void *pageAllocation = nullptr;
-    if (kernelHeap().tryAllocate(OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_SIZE_BYTES,
-                                 OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_ALIGNMENT_BYTES,
-                                 pageAllocation) != KernelHeapStatus::Succeeded) {
+    if (GetKernelHeap().TryAllocate(OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_SIZE_BYTES,
+                                    OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_ALIGNMENT_BYTES,
+                                    pageAllocation) != KernelHeapStatus::Succeeded) {
         return false;
     }
     volatile uint64_t *const smallValue = reinterpret_cast<volatile uint64_t *>(smallAllocation);
@@ -325,58 +326,59 @@ extern "C" uint8_t osKernelWritableDataEnd[];
 
 }
 
-KernelMemoryInitializationStatus initializeKernelMemory(const BootInfo &bootInfo) noexcept {
-    const auto *memoryMap =
+KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &bootInfo) noexcept {
+    const PhysicalMemoryMapEntry *const memoryMap =
         reinterpret_cast<const PhysicalMemoryMapEntry *>(bootInfo.physicalMemoryMapAddress);
     PhysicalMemorySummary memorySummary{};
-    if (validateAndSummarizePhysicalMemoryMap(memoryMap, bootInfo.physicalMemoryMapEntryCount,
+    if (ValidateAndSummarizePhysicalMemoryMap(memoryMap, bootInfo.physicalMemoryMapEntryCount,
                                               bootInfo.identityMappedSizeBytes, memorySummary) !=
         PhysicalMemoryMapValidationStatus::Succeeded) {
         return KernelMemoryInitializationStatus::InvalidMemoryMap;
     }
-    if (frameAllocator().initialize(memoryMap, bootInfo.physicalMemoryMapEntryCount,
+    if (FrameAllocator().Initialize(memoryMap, bootInfo.physicalMemoryMapEntryCount,
                                     bootInfo.identityMappedSizeBytes) !=
         PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelMemoryInitializationStatus::FrameAllocatorInitializationFailed;
     }
-    if (!reserveBootCriticalRanges(bootInfo)) {
+    if (!ReserveBootCriticalRanges(bootInfo)) {
         return KernelMemoryInitializationStatus::ReservationFailed;
     }
-    if (pageTableManager().initialize() != PageTableStatus::Succeeded) {
+    if (GetPageTableManager().Initialize() != PageTableStatus::Succeeded) {
         return KernelMemoryInitializationStatus::PageTableInitializationFailed;
     }
-    if (!mapIdentityRange(bootInfo)) {
+    if (!MapIdentityRange(bootInfo)) {
         return KernelMemoryInitializationStatus::IdentityMappingFailed;
     }
-    if (!mapLocalApicRegisters()) {
+    if (!MapLocalApicRegisters()) {
         return KernelMemoryInitializationStatus::LocalApicMappingFailed;
     }
-    if (!mapKernelHeap()) {
+    if (!MapKernelHeap()) {
         return KernelMemoryInitializationStatus::HeapMappingFailed;
     }
-    if (!mapWriteProtectionTestPage()) {
+    if (!MapWriteProtectionTestPage()) {
         return KernelMemoryInitializationStatus::ProtectionTestMappingFailed;
     }
-    if (!enableKernelMemoryProtection()) {
+    if (!EnableKernelMemoryProtection()) {
         return KernelMemoryInitializationStatus::MemoryProtectionUnsupported;
     }
-    activatePageTable(pageTableManager().rootPhysicalAddress());
-    if (readPageTableRoot() != pageTableManager().rootPhysicalAddress() ||
-        !kernelMemoryProtectionEnabled()) {
+    ActivatePageTable(GetPageTableManager().RootPhysicalAddress());
+    if (ReadPageTableRoot() != GetPageTableManager().RootPhysicalAddress() ||
+        !KernelMemoryProtectionEnabled()) {
         return KernelMemoryInitializationStatus::PageTableActivationFailed;
     }
-    if (!validateKernelMappings(bootInfo)) {
+    if (!ValidateKernelMappings(bootInfo)) {
         return KernelMemoryInitializationStatus::PermissionValidationFailed;
     }
-    if (kernelHeap().initialize(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE,
-                                OS_KERNEL_MEMORY_HEAP_SIZE_BYTES) != KernelHeapStatus::Succeeded) {
+    if (GetKernelHeap().Initialize(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE,
+                                   OS_KERNEL_MEMORY_HEAP_SIZE_BYTES) !=
+        KernelHeapStatus::Succeeded) {
         return KernelMemoryInitializationStatus::HeapInitializationFailed;
     }
-    if (!runHeapSelfTest()) {
+    if (!RunHeapSelfTest()) {
         return KernelMemoryInitializationStatus::HeapSelfTestFailed;
     }
 
-    const PhysicalFrameAllocatorStatistics frameStatistics = frameAllocator().statistics();
+    const PhysicalFrameAllocatorStatistics frameStatistics = FrameAllocator().Statistics();
     currentKernelMemoryStatistics = KernelMemoryStatistics{
         .memoryMapEntryCount = bootInfo.physicalMemoryMapEntryCount,
         .describedAddressBytes = memorySummary.totalBytes,
@@ -385,19 +387,74 @@ KernelMemoryInitializationStatus initializeKernelMemory(const BootInfo &bootInfo
         .freeFrameCount = frameStatistics.freeFrameCount,
         .allocatedFrameCount = frameStatistics.allocatedFrameCount,
         .reservedFrameCount = frameStatistics.reservedFrameCount,
-        .pageTableRootPhysicalAddress = pageTableManager().rootPhysicalAddress(),
+        .pageTableRootPhysicalAddress = GetPageTableManager().RootPhysicalAddress(),
         .heapCapacityBytes = OS_KERNEL_MEMORY_HEAP_SIZE_BYTES,
     };
     return KernelMemoryInitializationStatus::Succeeded;
 }
 
-const KernelMemoryStatistics &kernelMemoryStatistics() noexcept {
+const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept {
     return currentKernelMemoryStatistics;
 }
 
-KernelHeap &kernelHeap() noexcept {
+KernelHeap &GetKernelHeap() noexcept {
     static KernelHeap heap{};
     return heap;
+}
+
+KernelUserPageStatus AllocateAndMapUserPage(const uint64_t virtualAddress, const bool writable,
+                                            const bool executable,
+                                            uint64_t &physicalAddress) noexcept {
+    if ((virtualAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        !IsUserVirtualAddressRange(virtualAddress, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        return KernelUserPageStatus::InvalidVirtualAddress;
+    }
+    if (writable && executable) {
+        return KernelUserPageStatus::InvalidPermissions;
+    }
+    PhysicalFrame frame{};
+    if (FrameAllocator().Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
+        return KernelUserPageStatus::FrameAllocationFailed;
+    }
+    const PagePermissions permissions{
+        .writable = writable,
+        .executable = executable,
+        .userAccessible = true,
+        .cacheDisabled = false,
+    };
+    if (GetPageTableManager().MapPage(virtualAddress, frame.physicalAddress, permissions) !=
+        PageTableStatus::Succeeded) {
+        static_cast<void>(FrameAllocator().Release(frame));
+        return KernelUserPageStatus::PageMappingFailed;
+    }
+    physicalAddress = frame.physicalAddress;
+    return KernelUserPageStatus::Succeeded;
+}
+
+KernelUserPageStatus ReleaseUserPage(const uint64_t virtualAddress) noexcept {
+    if ((virtualAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        !IsUserVirtualAddressRange(virtualAddress, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        return KernelUserPageStatus::InvalidVirtualAddress;
+    }
+    PageMapping mapping{};
+    if (GetPageTableManager().QueryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
+        return KernelUserPageStatus::PageNotMapped;
+    }
+    if (!mapping.permissions.userAccessible) {
+        return KernelUserPageStatus::NotUserAccessible;
+    }
+    if (GetPageTableManager().UnmapPage(virtualAddress) != PageTableStatus::Succeeded) {
+        return KernelUserPageStatus::PageUnmappingFailed;
+    }
+    if (FrameAllocator().Release(PhysicalFrame{.physicalAddress = mapping.physicalAddress}) !=
+        PhysicalFrameAllocatorStatus::Succeeded) {
+        return KernelUserPageStatus::FrameReleaseFailed;
+    }
+    return KernelUserPageStatus::Succeeded;
+}
+
+PageTableStatus QueryKernelPage(const uint64_t virtualAddress, PageMapping &mapping) noexcept {
+    return GetPageTableManager().QueryPage(virtualAddress, mapping);
 }
 
 }

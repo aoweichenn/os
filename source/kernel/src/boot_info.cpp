@@ -16,7 +16,7 @@ const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS = 0x0000000000018
 const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES = 24ULL;
 const uint64_t OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT = 128ULL;
 
-BootInfoValidationStatus validateBootInfo(const BootInfo *bootInfo) noexcept {
+BootInfoValidationStatus ValidateBootInfo(const BootInfo *bootInfo) noexcept {
     if (bootInfo == nullptr) {
         return BootInfoValidationStatus::NullPointer;
     }

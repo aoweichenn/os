@@ -46,13 +46,13 @@ base、limit、type、DPL 和 present。长模式随后把大多数代码/数据
   \item CS 必须引用 present 的 64 位代码段，L 位决定 64 位指令语义；
   \item IDT gate 必须给出目标代码段选择子；
   \item TSS 描述符仍位于 GDT，\code{LTR} 通过选择子找到它；
-  \item 未来 Ring 3 到 Ring 0 的控制转移仍依赖特权级和 RSP0。
+  \item v0.8 的 Ring 3 到 Ring 0 控制转移依赖特权级和 RSP0。
 \end{itemize}
 
 Stage 1 的 GDT 是模式切换工具，不是内核资产。v0.5 用内核 BSS 中的新表覆盖
 GDTR，从依赖方向上切断内核对加载器私有内存的长期依赖。
 
-\section{五槽 GDT 的逐位结构}
+\section{v0.5 五槽 GDT 的逐位结构}
 
 \begin{longtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.25\textwidth}L{0.36\textwidth}}
 \toprule
@@ -91,6 +91,11 @@ DS、ES、FS、GS、SS，最后执行 \code{LTR}。
 CS；只改变可见选择子而忽略隐藏描述符，会让日志看起来正确、处理器实际仍沿用
 旧属性。v0.5 最终用 CS、SS 和 \code{STR} 回读分别得到
 \code{0x08}、\code{0x10}、\code{0x18}。
+
+这是 v0.5 的阶段形状。v0.8 在 Ring 0 数据段之后插入用户数据段与用户
+代码段，TSS 随之移到索引 5--6、选择子 \code{0x28}；对应的七槽结构在
+用户边界章节逐项展开。把两个阶段区分开，才能理解选择子变化是 GDT 演进，
+而不是文档与二进制冲突。
 
 \section{104 字节 TSS 不再承担硬件任务切换}
 
@@ -239,9 +244,9 @@ CPU 保存的 RIP、CS、RFLAGS。公共入口执行 \code{CLD}，因为 C++ ABI
 \bottomrule
 \end{longtable}
 
-共 20 个 64 位字段，即 160 字节。当前异常来自 Ring 0，没有特权级切换，
-所以 CPU 不另压旧 RSP 和 SS。未来 Ring 3 入口会扩展边界结构，但不能在
-当前固定帧中假装这两个字段已经存在。
+共 20 个 64 位字段，即 160 字节。v0.5 的异常来自 Ring 0，没有特权级切换，
+所以 CPU 不另压旧 RSP 和 SS。v0.8 的 Ring 3 入口在公共结构之后真实增加
+旧 RSP 与 SS，形成 176 字节 \code{UserPrivilegeFrame}；公共前缀保持不变。
 
 C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把帧地址放入 RDI，
 再把 RSP 向下按 16 字节对齐，预留一槽保存原帧地址后调用分发器。若分发器
@@ -448,7 +453,7 @@ reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
 \end{itemize}
 
 任意起点和终点先向页边界扩张，保证部分接触的帧也被保留。
-\code{reserveRange} 第一遍只读状态；只要遇到 allocated 就立即失败。
+\code{ReserveRange} 第一遍只读状态；只要遇到 allocated 就立即失败。
 第二遍才把 free 改为 reserved 并更新计数。若边扫描边修改，范围前半段可能
 已经 reserved，后半段才发现冲突，调用者得到失败却留下不可恢复的部分副作用。
 

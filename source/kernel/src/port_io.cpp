@@ -9,28 +9,28 @@ constexpr uint8_t OS_KERNEL_PORT_IO_LEGACY_DELAY_VALUE = 0x00U;
 
 }
 
-uint8_t readPort8(const uint16_t port) noexcept {
+uint8_t ReadPort8(const uint16_t port) noexcept {
     uint8_t value = 0U;
     asm volatile("in al, dx" : "=a"(value) : "d"(port));
     return value;
 }
 
-uint16_t readPort16(const uint16_t port) noexcept {
+uint16_t ReadPort16(const uint16_t port) noexcept {
     uint16_t value = 0U;
     asm volatile("in ax, dx" : "=a"(value) : "d"(port));
     return value;
 }
 
-void writePort8(const uint16_t port, const uint8_t value) noexcept {
+void WritePort8(const uint16_t port, const uint8_t value) noexcept {
     asm volatile("out dx, al" : : "a"(value), "d"(port));
 }
 
-void writePort16(const uint16_t port, const uint16_t value) noexcept {
+void WritePort16(const uint16_t port, const uint16_t value) noexcept {
     asm volatile("out dx, ax" : : "a"(value), "d"(port));
 }
 
-void waitForPortIo() noexcept {
-    writePort8(OS_KERNEL_PORT_IO_LEGACY_DELAY_PORT, OS_KERNEL_PORT_IO_LEGACY_DELAY_VALUE);
+void WaitForPortIo() noexcept {
+    WritePort8(OS_KERNEL_PORT_IO_LEGACY_DELAY_PORT, OS_KERNEL_PORT_IO_LEGACY_DELAY_VALUE);
 }
 
 }

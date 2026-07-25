@@ -30,7 +30,7 @@ constexpr uint16_t OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR = 0x0008U;
 constexpr uint8_t OS_TEST_KERNEL_DESCRIPTOR_GATE_IST = 0x03U;
 constexpr uint8_t OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES = 0x8EU;
 
-[[nodiscard]] uint64_t nextRandom(uint64_t &state) noexcept {
+[[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
     state ^= state >> OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SHIFT_FIRST;
     state ^= state << OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SHIFT_SECOND;
     state ^= state >> OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SHIFT_THIRD;
@@ -38,7 +38,7 @@ constexpr uint8_t OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES = 0x8EU;
 }
 
 [[nodiscard]] uint64_t
-decodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor) noexcept {
+DecodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor) noexcept {
     return ((descriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_LOW_SHIFT) &
             OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_LOW_MASK) |
            (((descriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_BYTE_SHIFT) &
@@ -48,7 +48,7 @@ decodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor
 }
 
 [[nodiscard]] uint64_t
-decodeInterruptGateAddress(const os::kernel::InterruptGateDescriptor &descriptor) noexcept {
+DecodeInterruptGateAddress(const os::kernel::InterruptGateDescriptor &descriptor) noexcept {
     return static_cast<uint64_t>(descriptor.offsetLow) |
            (static_cast<uint64_t>(descriptor.offsetMiddle)
             << OS_TEST_KERNEL_DESCRIPTOR_GATE_MIDDLE_SHIFT) |
@@ -64,22 +64,22 @@ int main() {
 
     for (uint64_t iteration = 0ULL; iteration < OS_TEST_KERNEL_DESCRIPTOR_RANDOM_ITERATION_COUNT;
          ++iteration) {
-        const uint64_t address = nextRandom(randomState);
+        const uint64_t address = NextRandom(randomState);
         const os::kernel::SystemSegmentDescriptor taskStateDescriptor =
-            os::kernel::createTaskStateSegmentDescriptor(address,
+            os::kernel::CreateTaskStateSegmentDescriptor(address,
                                                          OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT);
-        testContext.expectRandom(decodeTaskStateSegmentBase(taskStateDescriptor) == address,
+        testContext.ExpectRandom(DecodeTaskStateSegmentBase(taskStateDescriptor) == address,
                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_TSS_MESSAGE,
                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED, iteration);
 
         const os::kernel::InterruptGateDescriptor interruptGate =
-            os::kernel::createInterruptGateDescriptor(
+            os::kernel::CreateInterruptGateDescriptor(
                 address, OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
                 OS_TEST_KERNEL_DESCRIPTOR_GATE_IST, OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES);
-        testContext.expectRandom(decodeInterruptGateAddress(interruptGate) == address,
+        testContext.ExpectRandom(DecodeInterruptGateAddress(interruptGate) == address,
                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_GATE_MESSAGE,
                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED, iteration);
     }
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

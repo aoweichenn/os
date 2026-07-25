@@ -14,9 +14,9 @@ class PhysicalAddress final {
   public:
     explicit PhysicalAddress(AddressValue value) noexcept;
 
-    [[nodiscard]] auto value() const noexcept -> AddressValue;
-    [[nodiscard]] auto equals(const PhysicalAddress &other) const noexcept -> bool;
-    [[nodiscard]] auto isBefore(const PhysicalAddress &other) const noexcept -> bool;
+    [[nodiscard]] AddressValue Value() const noexcept;
+    [[nodiscard]] bool Equals(const PhysicalAddress &other) const noexcept;
+    [[nodiscard]] bool IsBefore(const PhysicalAddress &other) const noexcept;
 
   private:
     AddressValue rawValue;
@@ -26,8 +26,8 @@ class ByteCount final {
   public:
     explicit ByteCount(AddressValue value) noexcept;
 
-    [[nodiscard]] auto value() const noexcept -> AddressValue;
-    [[nodiscard]] auto equals(const ByteCount &other) const noexcept -> bool;
+    [[nodiscard]] AddressValue Value() const noexcept;
+    [[nodiscard]] bool Equals(const ByteCount &other) const noexcept;
 
   private:
     AddressValue rawValue;
@@ -42,16 +42,15 @@ class AddressRange final {
   public:
     AddressRange() noexcept;
 
-    [[nodiscard]] static auto tryCreate(PhysicalAddress begin, ByteCount size,
-                                        AddressRange &outputRange) noexcept
-        -> AddressRangeCreationStatus;
+    [[nodiscard]] static AddressRangeCreationStatus TryCreate(PhysicalAddress begin, ByteCount size,
+                                                              AddressRange &outputRange) noexcept;
 
-    [[nodiscard]] auto begin() const noexcept -> PhysicalAddress;
-    [[nodiscard]] auto end() const noexcept -> PhysicalAddress;
-    [[nodiscard]] auto size() const noexcept -> ByteCount;
-    [[nodiscard]] auto isEmpty() const noexcept -> bool;
-    [[nodiscard]] auto contains(PhysicalAddress address) const noexcept -> bool;
-    [[nodiscard]] auto overlaps(const AddressRange &other) const noexcept -> bool;
+    [[nodiscard]] PhysicalAddress Begin() const noexcept;
+    [[nodiscard]] PhysicalAddress End() const noexcept;
+    [[nodiscard]] ByteCount Size() const noexcept;
+    [[nodiscard]] bool IsEmpty() const noexcept;
+    [[nodiscard]] bool Contains(PhysicalAddress address) const noexcept;
+    [[nodiscard]] bool Overlaps(const AddressRange &other) const noexcept;
 
   private:
     AddressRange(PhysicalAddress begin, PhysicalAddress end) noexcept;

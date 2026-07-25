@@ -38,7 +38,7 @@ enum class PhysicalMemoryMapValidationStatus : uint64_t {
 };
 
 [[nodiscard]] PhysicalMemoryMapValidationStatus
-validateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries, uint64_t entryCount,
+ValidateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries, uint64_t entryCount,
                                       uint64_t managedLimitAddress,
                                       PhysicalMemorySummary &summary) noexcept;
 

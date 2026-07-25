@@ -16,14 +16,15 @@ enum class DescriptorTableValidationStatus : uint64_t {
 
 extern const uint16_t OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR;
 extern const uint16_t OS_KERNEL_DESCRIPTOR_KERNEL_DATA_SELECTOR;
+extern const uint16_t OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR;
+extern const uint16_t OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR;
 extern const uint16_t OS_KERNEL_DESCRIPTOR_TASK_STATE_SELECTOR;
 extern const uint64_t OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT;
 
-void initializeGlobalDescriptorTable(uint64_t privilegeStackTop) noexcept;
-void initializeInterruptDescriptorTable() noexcept;
+void InitializeGlobalDescriptorTable() noexcept;
+void InitializeInterruptDescriptorTable() noexcept;
 
-[[nodiscard]] DescriptorTableValidationStatus
-validateDescriptorTables(uint64_t expectedPrivilegeStackTop) noexcept;
-[[nodiscard]] uint64_t interruptStackGuardPageAddress(uint64_t guardPageIndex) noexcept;
+[[nodiscard]] DescriptorTableValidationStatus ValidateDescriptorTables() noexcept;
+[[nodiscard]] uint64_t InterruptStackGuardPageAddress(uint64_t guardPageIndex) noexcept;
 
 }

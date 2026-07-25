@@ -2,6 +2,7 @@
 
 #include "os/kernel/boot_info.hpp"
 #include "os/kernel/kernel_heap.hpp"
+#include "os/kernel/page_table.hpp"
 
 #include <stdint.h>
 
@@ -41,9 +42,27 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     LocalApicMappingFailed,
 };
 
+enum class KernelUserPageStatus : uint64_t {
+    Succeeded,
+    InvalidVirtualAddress,
+    InvalidPermissions,
+    FrameAllocationFailed,
+    PageMappingFailed,
+    PageNotMapped,
+    NotUserAccessible,
+    PageUnmappingFailed,
+    FrameReleaseFailed,
+};
+
 [[nodiscard]] KernelMemoryInitializationStatus
-initializeKernelMemory(const BootInfo &bootInfo) noexcept;
-[[nodiscard]] const KernelMemoryStatistics &kernelMemoryStatistics() noexcept;
-[[nodiscard]] KernelHeap &kernelHeap() noexcept;
+InitializeKernelMemory(const BootInfo &bootInfo) noexcept;
+[[nodiscard]] const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept;
+[[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
+[[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t virtualAddress, bool writable,
+                                                          bool executable,
+                                                          uint64_t &physicalAddress) noexcept;
+[[nodiscard]] KernelUserPageStatus ReleaseUserPage(uint64_t virtualAddress) noexcept;
+[[nodiscard]] PageTableStatus QueryKernelPage(uint64_t virtualAddress,
+                                              PageMapping &mapping) noexcept;
 
 }

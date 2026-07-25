@@ -16,13 +16,13 @@ enum class AtaPioStatus : uint64_t {
 
 class AtaPioDevice final {
   public:
-    [[nodiscard]] AtaPioStatus readSector(uint64_t logicalBlockAddress, uint8_t *buffer,
+    [[nodiscard]] AtaPioStatus ReadSector(uint64_t logicalBlockAddress, uint8_t *buffer,
                                           uint64_t bufferSizeBytes) const noexcept;
 
   private:
-    [[nodiscard]] AtaPioStatus waitUntilNotBusy() const noexcept;
-    [[nodiscard]] AtaPioStatus waitForDataRequest() const noexcept;
-    void applyDeviceSelectDelay() const noexcept;
+    [[nodiscard]] AtaPioStatus WaitUntilNotBusy() const noexcept;
+    [[nodiscard]] AtaPioStatus WaitForDataRequest() const noexcept;
+    void ApplyDeviceSelectDelay() const noexcept;
 };
 
 }

@@ -39,29 +39,29 @@ enum class PageTableStatus : uint64_t {
     NotMapped,
 };
 
-[[nodiscard]] bool isCanonicalVirtualAddress(uint64_t virtualAddress) noexcept;
-[[nodiscard]] PageTableIndices calculatePageTableIndices(uint64_t virtualAddress) noexcept;
-[[nodiscard]] uint64_t encodePageTableLeafEntry(uint64_t physicalAddress,
+[[nodiscard]] bool IsCanonicalVirtualAddress(uint64_t virtualAddress) noexcept;
+[[nodiscard]] PageTableIndices CalculatePageTableIndices(uint64_t virtualAddress) noexcept;
+[[nodiscard]] uint64_t EncodePageTableLeafEntry(uint64_t physicalAddress,
                                                 PagePermissions permissions) noexcept;
-[[nodiscard]] PageMapping decodePageTableLeafEntry(uint64_t entry) noexcept;
+[[nodiscard]] PageMapping DecodePageTableLeafEntry(uint64_t entry) noexcept;
 
 class PageTableManager final {
   public:
     explicit PageTableManager(PhysicalFrameAllocator &frameAllocator) noexcept;
 
-    [[nodiscard]] PageTableStatus initialize() noexcept;
-    [[nodiscard]] PageTableStatus mapPage(uint64_t virtualAddress, uint64_t physicalAddress,
+    [[nodiscard]] PageTableStatus Initialize() noexcept;
+    [[nodiscard]] PageTableStatus MapPage(uint64_t virtualAddress, uint64_t physicalAddress,
                                           PagePermissions permissions) noexcept;
-    [[nodiscard]] PageTableStatus unmapPage(uint64_t virtualAddress) noexcept;
-    [[nodiscard]] PageTableStatus queryPage(uint64_t virtualAddress,
+    [[nodiscard]] PageTableStatus UnmapPage(uint64_t virtualAddress) noexcept;
+    [[nodiscard]] PageTableStatus QueryPage(uint64_t virtualAddress,
                                             PageMapping &mapping) const noexcept;
-    [[nodiscard]] uint64_t rootPhysicalAddress() const noexcept;
+    [[nodiscard]] uint64_t RootPhysicalAddress() const noexcept;
 
   private:
-    [[nodiscard]] PageTableStatus allocateTable(uint64_t &physicalAddress) noexcept;
-    [[nodiscard]] PageTableStatus ensureNextTable(uint64_t &entry, bool userAccessible,
+    [[nodiscard]] PageTableStatus AllocateTable(uint64_t &physicalAddress) noexcept;
+    [[nodiscard]] PageTableStatus EnsureNextTable(uint64_t &entry, bool userAccessible,
                                                   uint64_t &physicalAddress) noexcept;
-    [[nodiscard]] PageTableStatus walkToLeaf(uint64_t virtualAddress,
+    [[nodiscard]] PageTableStatus WalkToLeaf(uint64_t virtualAddress,
                                              uint64_t *&leafEntry) const noexcept;
 
     PhysicalFrameAllocator *frameAllocator_;

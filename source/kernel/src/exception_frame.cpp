@@ -15,10 +15,12 @@ constexpr uint64_t OS_KERNEL_EXCEPTION_VECTOR_CONTROL_PROTECTION = 21ULL;
 constexpr uint64_t OS_KERNEL_EXCEPTION_VECTOR_VMM_COMMUNICATION = 29ULL;
 constexpr uint64_t OS_KERNEL_EXCEPTION_VECTOR_SECURITY = 30ULL;
 constexpr uint64_t OS_KERNEL_EXCEPTION_VECTOR_BREAKPOINT = 3ULL;
+constexpr uint64_t OS_KERNEL_EXCEPTION_REQUESTED_PRIVILEGE_LEVEL_MASK = 0x03ULL;
+constexpr uint64_t OS_KERNEL_EXCEPTION_USER_PRIVILEGE_LEVEL = 0x03ULL;
 
 }
 
-bool exceptionPushesHardwareErrorCode(const uint64_t vector) noexcept {
+bool ExceptionPushesHardwareErrorCode(const uint64_t vector) noexcept {
     switch (vector) {
     case OS_KERNEL_EXCEPTION_VECTOR_DOUBLE_FAULT:
     case OS_KERNEL_EXCEPTION_VECTOR_INVALID_TSS:
@@ -36,8 +38,17 @@ bool exceptionPushesHardwareErrorCode(const uint64_t vector) noexcept {
     }
 }
 
-bool isResumableKernelException(const uint64_t vector) noexcept {
+bool IsResumableKernelException(const uint64_t vector) noexcept {
     return vector == OS_KERNEL_EXCEPTION_VECTOR_BREAKPOINT;
+}
+
+bool FrameOriginatedFromUser(const ExceptionFrame &frame) noexcept {
+    return (frame.codeSegment & OS_KERNEL_EXCEPTION_REQUESTED_PRIVILEGE_LEVEL_MASK) ==
+           OS_KERNEL_EXCEPTION_USER_PRIVILEGE_LEVEL;
+}
+
+const UserPrivilegeFrame &AsUserPrivilegeFrame(const ExceptionFrame &frame) noexcept {
+    return *reinterpret_cast<const UserPrivilegeFrame *>(&frame);
 }
 
 }

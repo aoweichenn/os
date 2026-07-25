@@ -164,6 +164,18 @@ source/kernel/src/architecture.asm ─ NASM elf64 ─────────┤
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
+三个 Ring 3 程序是独立 ELF64 产物，可分别审计：
+
+```bash
+python3 tools/os.py audit-user-elf build/developer/source/user/user_smoke.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_invalid_opcode.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_page_fault.elf
+```
+
+审计器要求 AMD64 `ET_EXEC`、入口位于可执行 `PT_LOAD`、段 4 KiB 对齐、
+用户地址范围、W^X、无重叠和零未解析符号。它不替代内核解析器：宿主审计
+证明“构建产生了预期文件”，QEMU 路径证明“目标内核自己拒绝或装入文件”。
+
 ## Boot Disk 组合链
 
 ```text
@@ -181,9 +193,10 @@ python3 tools/os.py audit-kernel-image build/developer/images/boot_disk.img
 ```
 
 构建同时生成 Kernel 描述符损坏、Kernel ELF 内容损坏、CRC 正确但 ELF
-语义非法、目标 ATA 永久忙/设备错误、`fw_cfg` 内存图失败，以及内核
-`UD2`/not-present 页故障/写保护页故障的失败镜像。宿主审计拒绝前三类
-不可信输入，QEMU 测试进一步证明 Stage 1 和 Kernel 自己走到对应的失败边界。
+语义非法、目标 ATA 永久忙/设备错误、`fw_cfg` 内存图失败，内核
+`UD2`/not-present 页故障/写保护页故障，以及用户 `#UD`、用户 `#PF` 和
+截断用户 ELF 的失败镜像。宿主审计拒绝磁盘和 ELF 不可信输入，QEMU 测试
+进一步证明 Stage 1 与 Kernel 自己走到对应边界。
 
 ## 教材构建
 

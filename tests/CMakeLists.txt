@@ -219,6 +219,45 @@ os_add_kernel_device_test(
     "randomized"
 )
 
+function(os_add_kernel_user_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_user_model_host
+            os_kernel_architecture_model_host
+            os_system_abi
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_user_test(
+    os_kernel_user_elf_unit_tests
+    unit/kernel/user_elf_test.cpp
+    "unit"
+)
+os_add_kernel_user_test(
+    os_kernel_user_boundary_integration_tests
+    integration/boot/kernel_user_boundary_test.cpp
+    "integration"
+)
+os_add_kernel_user_test(
+    os_kernel_user_elf_randomized_tests
+    randomized/kernel/user_elf_randomized_test.cpp
+    "randomized"
+)
+
 add_test(
     NAME os_freestanding_symbol_audit
     COMMAND
@@ -245,6 +284,35 @@ set_tests_properties(
     os_kernel_elf_layout
     PROPERTIES
         LABELS "integration"
+)
+
+function(os_add_user_elf_audit_test OS_TEST_TARGET OS_USER_ELF_PATH)
+    add_test(
+        NAME ${OS_TEST_TARGET}
+        COMMAND
+            "${Python3_EXECUTABLE}"
+            "${PROJECT_SOURCE_DIR}/tools/os.py"
+            audit-user-elf
+            "${OS_USER_ELF_PATH}"
+    )
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "integration"
+    )
+endfunction()
+
+os_add_user_elf_audit_test(
+    os_user_smoke_elf_layout
+    "${OS_USER_SMOKE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_invalid_opcode_elf_layout
+    "${OS_USER_INVALID_OPCODE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_page_fault_elf_layout
+    "${OS_USER_PAGE_FAULT_ELF_PATH}"
 )
 
 add_test(
@@ -680,6 +748,66 @@ add_test(
 )
 set_tests_properties(
     os_qemu_kernel_write_protection_panic
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_user_invalid_opcode_isolation
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_USER_INVALID_OPCODE_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        user-invalid-opcode
+)
+set_tests_properties(
+    os_qemu_user_invalid_opcode_isolation
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_user_page_fault_isolation
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        user-page-fault
+)
+set_tests_properties(
+    os_qemu_user_page_fault_isolation
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_user_invalid_elf_rejection
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --expected-outcome
+        user-invalid-elf
+)
+set_tests_properties(
+    os_qemu_user_invalid_elf_rejection
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10

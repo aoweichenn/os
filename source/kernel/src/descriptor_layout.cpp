@@ -25,7 +25,7 @@ constexpr uint32_t OS_KERNEL_DESCRIPTOR_RESERVED_ZERO = 0U;
 
 }
 
-SystemSegmentDescriptor createTaskStateSegmentDescriptor(const uint64_t baseAddress,
+SystemSegmentDescriptor CreateTaskStateSegmentDescriptor(const uint64_t baseAddress,
                                                          const uint32_t inclusiveLimit) noexcept {
     const uint64_t widenedLimit = static_cast<uint64_t>(inclusiveLimit);
     const uint64_t low =
@@ -45,7 +45,7 @@ SystemSegmentDescriptor createTaskStateSegmentDescriptor(const uint64_t baseAddr
     };
 }
 
-InterruptGateDescriptor createInterruptGateDescriptor(const uint64_t handlerAddress,
+InterruptGateDescriptor CreateInterruptGateDescriptor(const uint64_t handlerAddress,
                                                       const uint16_t segmentSelector,
                                                       const uint8_t interruptStackTable,
                                                       const uint8_t typeAttributes) noexcept {

@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.7 完成后的知识验收}
+\section*{v0.8 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -26,8 +26,8 @@
   \item 内核独立串口、BSS 探针和 CR3 读回分别证明什么；
   \item 五种 Kernel 失败路径怎样由真实 QEMU 故障注入到达。
   \item 长模式弱化分段后仍需要 GDT、代码段和 TSS 的历史与硬件原因；
-  \item 五槽 GDT 的索引、选择子、代码/数据属性和双槽 TSS 描述符；
-  \item GDTR/IDTR 的 inclusive limit 为什么分别是 39 和 4095；
+  \item v0.5 五槽 GDT 如何在 v0.8 扩为七槽，TSS 为何移到 \code{0x28}；
+  \item GDTR/IDTR 的 inclusive limit 为什么当前分别是 55 和 4095；
   \item RSP0 与 IST1--IST3 的用途，以及三个 16 KiB 专用栈的故障边界；
   \item \code{LGDT} 后必须远控制转移刷新 CS 隐藏缓存的原因；
   \item 32 个架构异常中哪些由 CPU 压入错误码；
@@ -61,7 +61,18 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 46 项 CTest 如何分别覆盖模型、组合、ELF ABI 与整机异步事件。
+  \item 55 项 CTest 如何分别覆盖模型、组合、ELF ABI 与整机异步事件；
+  \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
+  \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；
+  \item 严格用户 ELF 对标识、范围、对齐、W\^X、重叠、页数和入口的检查；
+  \item 五项 \code{IRETQ} 帧如何装载用户 SS、RSP、RFLAGS、CS 与 RIP；
+  \item TSS.RSP0 为什么不能复用等待用户结果的原内核栈；
+  \item \code{INT 0x80} 与 \code{SYSCALL/SYSRET} 的历史、状态和阶段权衡；
+  \item RAX/RDI/RSI 系统调用 ABI 与固定宽度有符号错误结果；
+  \item 用户指针半开区间、溢出、跨页 U/S 验证和固定内核缓冲复制；
+  \item Ring 3 页故障错误码 \code{0x4} 与 Ring 0 写保护
+        \code{0x3} 的逐位差异；
+  \item 正常、用户 \#UD、用户 \#PF、截断 ELF 四条 QEMU 路径分别证明什么。
 \end{itemize}
 
 \section*{进入下一阶段前}
@@ -82,7 +93,8 @@
   \item 能从 GDT 十六进制值解码 P、DPL、type、L、D 和 TSS base/limit；
   \item 能从 IDT gate 解码 offset、selector、IST、DPL、type 和 present；
   \item 能在 GDB 中从 RDI 指向的异常帧定位 vector、error、RIP 和 RFLAGS；
-  \item 能解释为什么 breakpoint 可以返回，而当前页故障必须 panic；
+  \item 能解释为什么 breakpoint 可以返回、Ring 0 页故障必须 panic，而
+        Ring 3 页故障只终止用户执行；
   \item 能运行非法指令、not-present 页和写保护页故障镜像，并确认 panic 后
         不出现 \code{READY}；
   \item 能从 PIC 的 IRR/ISR/IMR、CPU IF/HLT 和 QEMU IRQ 统计区分设备、
@@ -91,5 +103,9 @@
         \code{0x1E}/\code{0x9E} 键盘扫描码；
   \item 能从 \code{READY} 后的 QMP 输入走读到
         \code{KEYBOARD\_EVENT=A\_PRESSED}；
+  \item 能从 \code{USER\_RING3\_ENTER} 走读到 \code{INT 0x80}、
+        TSS.RSP0、系统调用分发、exit 与 \code{USER\_RETURNED\_TO\_KERNEL}；
+  \item 能运行三个用户 ELF 审计和三条用户失败/隔离 QEMU 路径；
+  \item 能说明 v0.9 为何需要每进程地址空间、每线程内核栈和资源回收；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

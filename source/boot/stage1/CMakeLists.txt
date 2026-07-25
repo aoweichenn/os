@@ -209,6 +209,21 @@ os_add_kernel_fault_disk(
     "${OS_KERNEL_WRITE_PROTECTION_ELF_PATH}"
     "生成内核写保护故障注入磁盘镜像"
 )
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_USER_INVALID_OPCODE_DISK_IMAGE}"
+    "${OS_KERNEL_USER_INVALID_OPCODE_ELF_PATH}"
+    "生成 Ring 3 非法指令隔离磁盘镜像"
+)
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
+    "${OS_KERNEL_USER_PAGE_FAULT_ELF_PATH}"
+    "生成 Ring 3 页故障隔离磁盘镜像"
+)
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
+    "${OS_KERNEL_USER_INVALID_ELF_PATH}"
+    "生成 Ring 3 非法 ELF 拒绝磁盘镜像"
+)
 
 add_custom_command(
     OUTPUT
@@ -253,4 +268,7 @@ add_custom_target(
         "${OS_KERNEL_INVALID_OPCODE_DISK_IMAGE}"
         "${OS_KERNEL_PAGE_FAULT_DISK_IMAGE}"
         "${OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE}"
+        "${OS_KERNEL_USER_INVALID_OPCODE_DISK_IMAGE}"
+        "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
+        "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
 )

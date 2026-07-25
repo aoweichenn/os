@@ -7,6 +7,7 @@ set(
     include/os/kernel/entry.hpp
     include/os/kernel/exception_frame.hpp
     include/os/kernel/exceptions.hpp
+    include/os/kernel/freestanding_memory.hpp
     include/os/kernel/kernel_main.hpp
     include/os/kernel/kernel_heap.hpp
     include/os/kernel/interrupt_runtime.hpp
@@ -21,7 +22,12 @@ set(
     include/os/kernel/programmable_interval_timer.hpp
     include/os/kernel/ps2_keyboard.hpp
     include/os/kernel/serial_port.hpp
+    include/os/kernel/system_calls.hpp
     include/os/kernel/ata_pio.hpp
+    include/os/kernel/user_elf.hpp
+    include/os/kernel/user_memory.hpp
+    include/os/kernel/user_program_images.hpp
+    include/os/kernel/user_runtime.hpp
 )
 
 set(
@@ -33,6 +39,7 @@ set(
     src/descriptor_tables.cpp
     src/exception_frame.cpp
     src/exceptions.cpp
+    src/freestanding_memory.cpp
     src/kernel_main.cpp
     src/kernel_heap.cpp
     src/interrupt_runtime.cpp
@@ -48,6 +55,11 @@ set(
     src/programmable_interval_timer.cpp
     src/ps2_keyboard.cpp
     src/serial_port.cpp
+    src/system_calls.cpp
+    src/user_elf.cpp
+    src/user_memory.cpp
+    src/user_program_images.cpp
+    src/user_runtime.cpp
 )
 
 add_library(
@@ -126,6 +138,23 @@ target_compile_options(
         ${OS_COMMON_WARNING_FLAGS}
 )
 
+add_library(
+    os_kernel_user_model_host
+    STATIC
+        src/user_elf.cpp
+        include/os/kernel/user_elf.hpp
+)
+target_include_directories(
+    os_kernel_user_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_user_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
 set(
     OS_KERNEL_LINKER_SCRIPT_TEMPLATE
     "${CMAKE_CURRENT_SOURCE_DIR}/linker/kernel.ld.in"
@@ -196,6 +225,46 @@ add_custom_target(
 )
 
 set(
+    OS_KERNEL_USER_IMAGES_ASSEMBLY_SOURCE
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/user_images.asm"
+)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/user_images.asm.in"
+    "${OS_KERNEL_USER_IMAGES_ASSEMBLY_SOURCE}"
+    @ONLY
+)
+set(
+    OS_KERNEL_USER_IMAGES_OBJECT
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/user_images.o"
+)
+add_custom_command(
+    OUTPUT "${OS_KERNEL_USER_IMAGES_OBJECT}"
+    COMMAND
+        "${CMAKE_COMMAND}"
+        -E
+        make_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND
+        "${OS_KERNEL_NASM_EXECUTABLE}"
+        -f
+        elf64
+        -o
+        "${OS_KERNEL_USER_IMAGES_OBJECT}"
+        "${OS_KERNEL_USER_IMAGES_ASSEMBLY_SOURCE}"
+    DEPENDS
+        "${OS_KERNEL_USER_IMAGES_ASSEMBLY_SOURCE}"
+        "${OS_USER_SMOKE_ELF_PATH}"
+        "${OS_USER_INVALID_OPCODE_ELF_PATH}"
+        "${OS_USER_PAGE_FAULT_ELF_PATH}"
+    COMMENT "嵌入三个自研 Ring 3 ELF64 程序"
+    VERBATIM
+)
+add_custom_target(
+    os_kernel_user_images_object
+    DEPENDS "${OS_KERNEL_USER_IMAGES_OBJECT}"
+)
+
+set(
     OS_KERNEL_FREESTANDING_COMPILE_OPTIONS
     ${OS_COMMON_WARNING_FLAGS}
     --target=x86_64-unknown-none-elf
@@ -235,6 +304,7 @@ function(
         PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
     )
+    target_link_libraries(${OS_KERNEL_OBJECT_TARGET} PRIVATE os_system_abi)
     target_compile_options(
         ${OS_KERNEL_OBJECT_TARGET}
         PRIVATE
@@ -268,6 +338,18 @@ os_add_kernel_object_target(
     os_kernel_write_protection_objects
     "${PROJECT_SOURCE_DIR}/tests/system/kernel/write_protection_entry.cpp"
 )
+os_add_kernel_object_target(
+    os_kernel_user_invalid_opcode_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/user_invalid_opcode_entry.cpp"
+)
+os_add_kernel_object_target(
+    os_kernel_user_page_fault_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/user_page_fault_entry.cpp"
+)
+os_add_kernel_object_target(
+    os_kernel_user_invalid_elf_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/user_invalid_elf_entry.cpp"
+)
 
 set(
     OS_KERNEL_ELF_PATH
@@ -293,6 +375,24 @@ set(
     CACHE INTERNAL
     "内核写保护故障注入 ELF64 内核路径"
 )
+set(
+    OS_KERNEL_USER_INVALID_OPCODE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_invalid_opcode.elf"
+    CACHE INTERNAL
+    "Ring 3 非法指令隔离测试 ELF64 内核路径"
+)
+set(
+    OS_KERNEL_USER_PAGE_FAULT_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_page_fault.elf"
+    CACHE INTERNAL
+    "Ring 3 页故障隔离测试 ELF64 内核路径"
+)
+set(
+    OS_KERNEL_USER_INVALID_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_invalid_elf.elf"
+    CACHE INTERNAL
+    "Ring 3 非法 ELF 拒绝测试 ELF64 内核路径"
+)
 
 function(
     os_add_kernel_elf_target
@@ -316,10 +416,12 @@ function(
             "${OS_KERNEL_OUTPUT_PATH}"
             $<TARGET_OBJECTS:${OS_KERNEL_OBJECT_TARGET}>
             "${OS_KERNEL_ARCHITECTURE_OBJECT}"
+            "${OS_KERNEL_USER_IMAGES_OBJECT}"
         DEPENDS
             ${OS_KERNEL_OBJECT_TARGET}
             $<TARGET_OBJECTS:${OS_KERNEL_OBJECT_TARGET}>
             os_kernel_architecture_object
+            os_kernel_user_images_object
             "${OS_KERNEL_LINKER_SCRIPT}"
         COMMENT "${OS_KERNEL_LINK_COMMENT}"
         COMMAND_EXPAND_LISTS
@@ -355,4 +457,22 @@ os_add_kernel_elf_target(
     os_kernel_write_protection_objects
     "${OS_KERNEL_WRITE_PROTECTION_ELF_PATH}"
     "链接内核写保护故障注入 ELF64 内核"
+)
+os_add_kernel_elf_target(
+    os_kernel_user_invalid_opcode_elf
+    os_kernel_user_invalid_opcode_objects
+    "${OS_KERNEL_USER_INVALID_OPCODE_ELF_PATH}"
+    "链接 Ring 3 非法指令隔离测试 ELF64 内核"
+)
+os_add_kernel_elf_target(
+    os_kernel_user_page_fault_elf
+    os_kernel_user_page_fault_objects
+    "${OS_KERNEL_USER_PAGE_FAULT_ELF_PATH}"
+    "链接 Ring 3 页故障隔离测试 ELF64 内核"
+)
+os_add_kernel_elf_target(
+    os_kernel_user_invalid_elf
+    os_kernel_user_invalid_elf_objects
+    "${OS_KERNEL_USER_INVALID_ELF_PATH}"
+    "链接 Ring 3 非法 ELF 拒绝测试 ELF64 内核"
 )

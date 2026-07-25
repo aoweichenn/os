@@ -14,14 +14,14 @@ class LegacyPic final {
   public:
     LegacyPic() noexcept;
 
-    void initialize() noexcept;
-    [[nodiscard]] LegacyPicStatus enableInterruptRequest(uint64_t interruptRequest) noexcept;
-    [[nodiscard]] LegacyPicStatus acknowledge(uint64_t interruptRequest) noexcept;
-    [[nodiscard]] uint16_t mask() const noexcept;
+    void Initialize() noexcept;
+    [[nodiscard]] LegacyPicStatus EnableInterruptRequest(uint64_t interruptRequest) noexcept;
+    [[nodiscard]] LegacyPicStatus Acknowledge(uint64_t interruptRequest) noexcept;
+    [[nodiscard]] uint16_t Mask() const noexcept;
 
   private:
-    [[nodiscard]] uint8_t readInServiceRegister(bool slave) const noexcept;
-    void writeMasks() const noexcept;
+    [[nodiscard]] uint8_t ReadInServiceRegister(bool slave) const noexcept;
+    void WriteMasks() const noexcept;
 
     uint8_t masterMask_;
     uint8_t slaveMask_;

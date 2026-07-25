@@ -16,11 +16,11 @@ enum class LegacyPicModelStatus : uint64_t {
     InvalidVector,
 };
 
-[[nodiscard]] LegacyPicModelStatus calculateLegacyPicVector(uint64_t interruptRequest,
+[[nodiscard]] LegacyPicModelStatus CalculateLegacyPicVector(uint64_t interruptRequest,
                                                             uint64_t &vector) noexcept;
 [[nodiscard]] LegacyPicModelStatus
-calculateLegacyPicInterruptRequest(uint64_t vector, uint64_t &interruptRequest) noexcept;
-[[nodiscard]] LegacyPicModelStatus enableLegacyPicInterruptRequest(uint16_t currentMask,
+CalculateLegacyPicInterruptRequest(uint64_t vector, uint64_t &interruptRequest) noexcept;
+[[nodiscard]] LegacyPicModelStatus EnableLegacyPicInterruptRequest(uint16_t currentMask,
                                                                    uint64_t interruptRequest,
                                                                    uint16_t &updatedMask) noexcept;
 
@@ -37,8 +37,8 @@ enum class PitConfigurationStatus : uint64_t {
 };
 
 [[nodiscard]] PitConfigurationStatus
-createPitConfiguration(uint64_t requestedFrequencyHz, PitConfiguration &configuration) noexcept;
-[[nodiscard]] uint64_t calculatePitElapsedMilliseconds(uint64_t tickCount,
+CreatePitConfiguration(uint64_t requestedFrequencyHz, PitConfiguration &configuration) noexcept;
+[[nodiscard]] uint64_t CalculatePitElapsedMilliseconds(uint64_t tickCount,
                                                        uint16_t divisor) noexcept;
 
 enum class KeyboardKey : uint64_t {
@@ -71,10 +71,10 @@ class ScanCodeSet1Decoder final {
   public:
     ScanCodeSet1Decoder() noexcept;
 
-    [[nodiscard]] KeyboardDecodeStatus decode(uint8_t scanCode, KeyboardEvent &event) noexcept;
+    [[nodiscard]] KeyboardDecodeStatus Decode(uint8_t scanCode, KeyboardEvent &event) noexcept;
 
   private:
-    [[nodiscard]] KeyboardKey keyForScanCode(uint8_t makeCode, bool extended) const noexcept;
+    [[nodiscard]] KeyboardKey KeyForScanCode(uint8_t makeCode, bool extended) const noexcept;
 
     bool extendedPrefixPending_;
 };
@@ -86,10 +86,10 @@ enum class AtaReadRequestStatus : uint64_t {
     InvalidLogicalBlockAddress,
 };
 
-[[nodiscard]] AtaReadRequestStatus validateAtaReadRequest(uint64_t logicalBlockAddress,
+[[nodiscard]] AtaReadRequestStatus ValidateAtaReadRequest(uint64_t logicalBlockAddress,
                                                           const uint8_t *buffer,
                                                           uint64_t bufferSizeBytes) noexcept;
-[[nodiscard]] bool stage1BootDescriptorMagicMatches(const uint8_t *sector,
+[[nodiscard]] bool Stage1BootDescriptorMagicMatches(const uint8_t *sector,
                                                     uint64_t sectorSizeBytes) noexcept;
 
 }

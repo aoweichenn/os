@@ -73,7 +73,9 @@ docs/releases/
 使用以下命名规则：
 
 - 类型、类、结构体、枚举和 concepts：`PascalCase`。
-- 函数、成员函数、变量和参数：`lowerCamelCase`。
+- 函数和成员函数：统一使用 `PascalCase`，不得以小写字母开头，也不得用下划线连接
+  普通函数名；外部 ABI 强制的入口符号除外。
+- 变量和参数：`lowerCamelCase`。
 - 命名空间、目录和文件：`lower_snake_case`。
 - NASM 标签：`lower_snake_case`。
 - 常量：`OS_<模块名>_<功能名>`，模块名和功能名全部大写。

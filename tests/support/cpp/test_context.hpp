@@ -12,11 +12,11 @@ class TestContext final {
   public:
     explicit TestContext(std::string_view suiteName) noexcept;
 
-    void expect(bool condition, std::string_view description) noexcept;
-    void expectRandom(bool condition, std::string_view description, RandomSeed seed,
+    void Expect(bool condition, std::string_view description) noexcept;
+    void ExpectRandom(bool condition, std::string_view description, RandomSeed seed,
                       TestCount iteration) noexcept;
 
-    [[nodiscard]] auto exitCode() const noexcept -> int;
+    [[nodiscard]] int ExitCode() const noexcept;
 
   private:
     std::string_view suiteName;

@@ -27,7 +27,7 @@ constexpr os::test::TestCount OS_TEST_RANDOMIZED_ADDRESS_RANGE_CASE_COUNT =
 
 }
 
-auto main() -> int {
+int main() {
     os::test::TestContext testContext{OS_TEST_RANDOMIZED_SUITE_NAME};
     std::mt19937_64 randomEngine{OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED};
 
@@ -44,60 +44,60 @@ auto main() -> int {
         const os::foundation::ByteCount size{sizeValue};
         os::foundation::AddressRange range{};
         const os::foundation::AddressRangeCreationStatus creationStatus =
-            os::foundation::AddressRange::tryCreate(begin, size, range);
+            os::foundation::AddressRange::TryCreate(begin, size, range);
 
-        testContext.expectRandom(creationStatus ==
+        testContext.ExpectRandom(creationStatus ==
                                      os::foundation::AddressRangeCreationStatus::Succeeded,
                                  OS_TEST_RANDOMIZED_VALID_RANGE_CREATION,
                                  OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
-        testContext.expectRandom(range.size().equals(size), OS_TEST_RANDOMIZED_SIZE_PRESERVATION,
+        testContext.ExpectRandom(range.Size().Equals(size), OS_TEST_RANDOMIZED_SIZE_PRESERVATION,
                                  OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
-        testContext.expectRandom(!range.contains(range.end()), OS_TEST_RANDOMIZED_END_EXCLUSION,
+        testContext.ExpectRandom(!range.Contains(range.End()), OS_TEST_RANDOMIZED_END_EXCLUSION,
                                  OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
 
         if (sizeValue != os::foundation::OS_FOUNDATION_ADDRESS_ZERO) {
             const os::foundation::PhysicalAddress lastAddress{
-                range.end().value() - os::foundation::OS_FOUNDATION_ADDRESS_UNIT};
-            testContext.expectRandom(range.contains(begin), OS_TEST_RANDOMIZED_BEGIN_CONTAINMENT,
+                range.End().Value() - os::foundation::OS_FOUNDATION_ADDRESS_UNIT};
+            testContext.ExpectRandom(range.Contains(begin), OS_TEST_RANDOMIZED_BEGIN_CONTAINMENT,
                                      OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
-            testContext.expectRandom(range.contains(lastAddress),
+            testContext.ExpectRandom(range.Contains(lastAddress),
                                      OS_TEST_RANDOMIZED_LAST_BYTE_CONTAINMENT,
                                      OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
-            testContext.expectRandom(range.overlaps(range), OS_TEST_RANDOMIZED_SELF_OVERLAP,
+            testContext.ExpectRandom(range.Overlaps(range), OS_TEST_RANDOMIZED_SELF_OVERLAP,
                                      OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
         }
 
-        if (range.end().value() < os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM) {
+        if (range.End().Value() < os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM) {
             os::foundation::AddressRange adjacentRange{};
             const os::foundation::AddressRangeCreationStatus adjacentStatus =
-                os::foundation::AddressRange::tryCreate(
-                    range.end(),
+                os::foundation::AddressRange::TryCreate(
+                    range.End(),
                     os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT},
                     adjacentRange);
-            testContext.expectRandom(adjacentStatus ==
+            testContext.ExpectRandom(adjacentStatus ==
                                          os::foundation::AddressRangeCreationStatus::Succeeded,
                                      OS_TEST_RANDOMIZED_ADJACENT_CREATION,
                                      OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
-            testContext.expectRandom(!range.overlaps(adjacentRange),
+            testContext.ExpectRandom(!range.Overlaps(adjacentRange),
                                      OS_TEST_RANDOMIZED_ADJACENT_SEPARATION,
                                      OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
         }
 
         os::foundation::AddressRange overflowRange = range;
         const os::foundation::AddressRangeCreationStatus overflowStatus =
-            os::foundation::AddressRange::tryCreate(
+            os::foundation::AddressRange::TryCreate(
                 begin,
                 os::foundation::ByteCount{maximumSize + os::foundation::OS_FOUNDATION_ADDRESS_UNIT},
                 overflowRange);
-        testContext.expectRandom(overflowStatus ==
+        testContext.ExpectRandom(overflowStatus ==
                                      os::foundation::AddressRangeCreationStatus::AddressOverflow,
                                  OS_TEST_RANDOMIZED_OVERFLOW_REJECTION,
                                  OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
-        testContext.expectRandom(overflowRange.begin().equals(range.begin()) &&
-                                     overflowRange.size().equals(range.size()),
+        testContext.ExpectRandom(overflowRange.Begin().Equals(range.Begin()) &&
+                                     overflowRange.Size().Equals(range.Size()),
                                  OS_TEST_RANDOMIZED_OVERFLOW_PRESERVES_OUTPUT,
                                  OS_TEST_RANDOMIZED_ADDRESS_RANGE_SEED, iteration);
     }
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

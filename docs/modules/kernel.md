@@ -80,7 +80,9 @@ BootInfo 位于物理地址 `0x14000`，共 104 字节；每个字段都是明�
 | 0 | `0x00` | 空描述符 | 必须全零 |
 | 1 | `0x08` | Ring 0 代码段 | present、execute/read、L=1、DPL=0 |
 | 2 | `0x10` | Ring 0 数据段 | present、read/write、DPL=0 |
-| 3..4 | `0x18` | 64 位 TSS | available TSS，完整 64 位基址 |
+| 3 | `0x1B` | Ring 3 数据段 | present、read/write、DPL=3 |
+| 4 | `0x23` | Ring 3 代码段 | present、execute/read、L=1、DPL=3 |
+| 5..6 | `0x28` | 64 位 TSS | available TSS，完整 64 位基址 |
 
 `LGDT` 不会自动刷新 CS 的隐藏属性，因此装载后使用远返回重新载入代码段，
 再写 DS、ES、FS、GS、SS。`LTR` 会把 available TSS 描述符硬件类型改为
@@ -89,23 +91,24 @@ busy；运行时验证选择子和 TSS 内容，不错误要求内存仍保持�
 ### TSS
 
 TSS 精确为 104 字节，I/O bitmap offset 等于结构末端，使当前没有实际 I/O
-权限位图。RSP0 取自 BootInfo。IST1、IST2、IST3 指向三个独立 16 KiB
-BSS 栈，分别服务双重故障、NMI、机器检查；每个存储块下方另有一个 4 KiB
-guard page，其余 RSP/IST 保持零。
+权限位图。RSP0 指向独立 16 KiB 特权转换栈，不能复用等待用户程序返回的
+启动栈；该栈底部有单独 4 KiB guard。IST1、IST2、IST3 指向三个独立
+16 KiB BSS 栈，分别服务双重故障、NMI、机器检查；每个存储块下方另有一个
+4 KiB guard page，其余 RSP/IST 保持零。
 
 ### IDT
 
 IDT 分配 256 个 16 字节门。向量 0..31 是架构异常，32..47 是传统 PIC
-硬件 IRQ，均为 present interrupt gate；48..255 保持 not-present。双重
-故障、NMI、机器检查分别选择 IST1、IST2、IST3。
-breakpoint 和 overflow 的门 DPL 为 3，为未来用户态合法软件触发保留架构
-语义；其余门 DPL 为 0。
+硬件 IRQ，均为 present interrupt gate；`0x80` 是系统调用 interrupt gate；
+其余保持 not-present。双重故障、NMI、机器检查分别选择 IST1、IST2、IST3。
+breakpoint、overflow 和系统调用门的 DPL 为 3，允许 Ring 3 显式触发；
+其余门 DPL 为 0。
 
 加载后必须同时满足：
 
 - `SGDT` 的 base/limit 指向当前 GDT。
 - `SIDT` 的 base/limit 指向完整 4096 字节 IDT。
-- CS=`0x08`，SS=`0x10`，`STR`=`0x18`。
+- CS=`0x08`，SS=`0x10`，`STR`=`0x28`。
 - TSS.RSP0、三个 IST 和 I/O bitmap offset 与构造值一致。
 
 ## v0.6 内存子系统契约
@@ -138,7 +141,7 @@ breakpoint 和 overflow 的门 DPL 为 3，为未来用户态合法软件触发�
 
 2-bit 状态数组为 4096 字节。选择精确 `uint8_t` 存储是为了避免状态元数据扩大，
 对外帧数、容量和地址仍全部使用 `uint64_t`。初始化后依次保留低 1 MiB、
-链接器符号界定的 Kernel 映像和 64 KiB 初始栈。`reserveRange` 先预检完整范围，
+链接器符号界定的 Kernel 映像和 64 KiB 初始栈。`ReserveRange` 先预检完整范围，
 发现任意 allocated 帧就整体失败，避免只保留前半段。
 
 ### 页表与权限
@@ -157,7 +160,7 @@ present、writable、user 和物理地址；叶项另外编码 NX。映射拒绝
 | Kernel `.text` | RX | 可执行且不可写 |
 | Kernel `.rodata` | R/NX | 常量不可写、不可执行 |
 | Kernel `.data/.bss` | RW/NX | 状态和栈不可执行 |
-| 初始栈及三个 IST 栈底页 | not-present | 溢出 guard |
+| 初始栈、三个 IST 栈及特权转换栈底页 | not-present | 溢出 guard |
 | `0xFFFF800000000000..+64KiB` | RW/NX | 高半区早期堆 |
 | `0xFFFF800000100000` | R/NX | Ring 0 写保护故障验收页 |
 
@@ -231,6 +234,41 @@ PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，
 
 详细端口、位和测试边界见 [设备模块](devices.md)。
 
+## v0.8 用户 ELF、用户内存与系统调用契约
+
+### 解析与装载
+
+`ValidateUserElf()` 是不接触硬件的纯解析层。它先把候选结果写入局部
+`UserElfLayout`，全部程序头成功后才交付输出，因此格式失败不会留下半份布局。
+它拒绝未知程序头，不把 section header 或调试信息当成装载依据。加载器随后：
+
+1. 检查 ELF 段与用户栈/guard 不相交。
+2. 按段页数分配物理帧并建立 U/S 映射。
+3. 清零整页，再复制 `p_filesz`，使 BSS 区自然为零。
+4. 映射四页 RW/NX 用户栈。
+5. 任一步失败都逆序解除映射并释放本轮页帧。
+
+用户页接口拒绝非对齐、低地址、高半地址、W+X 权限和非用户映射释放。
+`CopyFromUser()` 先验证完整半开区间，再逐页查询 present/U/S，最后从当前
+恒等可访问的用户虚拟地址复制。v0.8 没有并发解除映射，因此验证与复制之间
+没有本阶段可触发的 TOCTOU；调度和多线程出现后必须重新设计页生命周期。
+
+### 进入、系统调用与返回
+
+`osKernelEnterUserMode` 保存进入前内核 RSP、RFLAGS 和非易失寄存器，
+加载用户数据选择子并执行五项 `IRETQ`。`INT 0x80` 让 CPU 自动从
+TSS.RSP0 取安全内核栈，系统调用公共入口复用统一寄存器帧。
+
+分发前必须满足当前存在活跃用户执行、帧来自 CPL3、向量为 `0x80`、
+CS=`0x23`、SS=`0x1B`、RIP 在用户范围、RSP 位于四页用户栈，而且当前栈
+叶页是 user RW/NX。普通系统调用按原帧 `IRETQ`；exit 和用户异常不能回到
+用户 RIP，而是记录结果并用 `osKernelReturnFromUserMode` 恢复进入用户态前
+的内核调用链。
+
+`WriteLog` 最多复制 160 字节到固定内核缓冲后再访问串口。用户日志带
+`[OS][USER]` 只是协议来源标记，不获得内核可信度。ABI 详见
+[User 与 ABI 模块](user.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -261,6 +299,10 @@ PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] USER_ELF_VALID
+[OS][KERNEL] USER_ENTRY=0x0000000040000000
+[OS][KERNEL] USER_MAPPED_PAGES=0x...
+[OS][KERNEL] USER_STACK_READY
 [OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
 [OS][KERNEL] PIC_READY
 [OS][KERNEL] PIC_MASK=0x...FFFC
@@ -275,6 +317,14 @@ PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，
 [OS][KERNEL] TIMER_TICKS=0x...
 [OS][KERNEL] MONOTONIC_MILLISECONDS=0x...
 [OS][KERNEL] TIMER_SELF_TEST_PASSED
+[OS][KERNEL] USER_RING3_ENTER
+[OS][USER] INVALID_POINTER_REJECTED
+[OS][USER] UNKNOWN_SYSCALL_REJECTED
+[OS][USER] HELLO_FROM_RING3
+[OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
+[OS][KERNEL] USER_SYSCALL_COUNT=0x0000000000000006
+[OS][KERNEL] USER_TERMINATED
+[OS][KERNEL] USER_RETURNED_TO_KERNEL
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x...
 [OS][KERNEL] READY
@@ -301,4 +351,7 @@ PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，
 - 页帧分配器当前只管理低 64 MiB；高端 RAM、NUMA 和稀疏物理内存以后扩展。
 - 早期堆不释放，页表取消映射也不回收空中间表；通用生命周期尚未实现。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
-- 页故障当前全部 panic；按需映射、用户进程终止和写时复制要等内存与进程模块。
+- Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
+  写时复制要等进程地址空间拥有完整生命周期后再实现。
+- 当前只有一个同步用户执行，页表根仍为内核全局根；PID、独立地址空间、
+  调度和用户页回收属于 v0.9。

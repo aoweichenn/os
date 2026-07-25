@@ -341,7 +341,7 @@ PANIC
 ### Guard page 与早期堆
 
 初始栈 guard 位于 `kernelStackTop - 64 KiB`，每个 IST 存储块的第一页也是
-guard。它们应由 `queryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 KiB
+guard。它们应由 `QueryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 KiB
 可写栈的末端。高半区堆从 `0xFFFF800000000000` 开始，共 16 页，全部 RW/NX。
 
 若 `HEAP_SELF_TEST_PASSED` 缺失：
@@ -427,3 +427,55 @@ QEMU 捕获器因此使用两个边界：
 “所有宿主都同速”的假设，也让稳定停顿成为可重复诊断证据；不会把缺失 IRQ、
 缺失按键或 panic 误判为成功。Python 工具单元测试另用一个输出 `READY` 后
 睡眠的子进程，证明观察者能够提前、完整且无残留地结束捕获。
+
+## v0.8：用户 ELF、Ring 3 与系统调用
+
+### `USER_ELF_REJECTED` 出现在降权前
+
+状态值对应 `UserElfValidationStatus`，先用独立宿主审计缩小范围：
+
+```bash
+python3 tools/os.py audit-user-elf build/developer/source/user/user_smoke.elf
+```
+
+宿主通过而内核失败时，核对嵌入符号的 start/end 是否包住精确 ELF 文件，
+不要把段对齐填充误算为文件长度。状态 2 是头不足 64 字节；范围或总页数失败
+时重点检查所有加法/乘法是否在比较前发生无符号回绕。
+
+### `IRETQ` 后立即 triple fault
+
+按硬件依赖顺序检查：
+
+1. GDT 用户数据/代码描述符 DPL 是否为 3，选择子是否为 `0x1B/0x23`。
+2. TSS 是否已用 `LTR 0x28` 装载，RSP0 是否指向已映射 16 KiB 转换栈顶。
+3. 用户 RIP 与 RSP 所在的 PML4E、PDPTE、PDE、PTE 是否每级 U/S=1。
+4. 五项帧顺序是否为 SS、RSP、RFLAGS、CS、RIP，压栈方向不能按表格阅读
+   顺序想当然地倒置。
+5. 用户代码页必须 executable，栈页必须 RW/NX。
+
+若首次 `INT 0x80` 才失败，观察 TSS.RSP0 附近是否覆盖了原内核调用帧。
+v0.8 必须使用专用转换栈；把 BootInfo 启动栈顶重新写入 RSP0 会复现隐蔽损坏。
+
+### 系统调用被停止而不是返回错误
+
+未映射用户缓冲和未知调用编号属于普通输入错误，应返回 `-1/-2`。处理器直接
+停止说明入口结构不变量失败：当前没有活跃用户执行，或 vector、CS、SS、
+RIP、RSP、栈页 U/S/RW/NX 与约定不一致。用 GDB 检查 176 字节
+`UserPrivilegeFrame`，不要先放宽校验；校验失败通常暴露的是汇编栈布局错误。
+
+### 用户故障错误地进入 `PANIC`
+
+异常分发必须先通过保存 CS 的 RPL 判断来源。Ring 3 `#UD` 应报告向量 6；
+读取未映射 `0x30000000` 应报告向量 14、错误码 `0x4` 和同值 CR2。两者都
+应出现 `USER_TERMINATED`、`USER_RETURNED_TO_KERNEL`，并继续到 `READY`。
+
+若 CS 仍为 `0x08`，故障实际发生在内核入口而非用户程序；若 CS 为 `0x23`
+却 panic，检查分发器是否在 panic 决策前调用了
+`FrameOriginatedFromUser()`，以及汇编是否把 vector/error slots 压反。
+
+### 用户指针跨页时偶发错误
+
+地址检查必须使用完整半开区间 `[address, address+length)`，先拒绝 64 位
+溢出，再从首叶页迭代到末叶页。只检查起点会让第二页的 supervisor 或
+not-present 映射漏过。v0.8 没有并发解除映射；若后续调度阶段才出现偶发
+错误，应优先检查地址空间锁和页生命周期，而不是移除逐页检查。

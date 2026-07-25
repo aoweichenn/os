@@ -33,7 +33,7 @@ constexpr os::foundation::AddressValue OS_TEST_UNIT_RANGE_SIZE =
 
 }
 
-auto main() -> int {
+int main() {
     os::test::TestContext testContext{OS_TEST_UNIT_SUITE_NAME};
 
     const os::foundation::PhysicalAddress smallAddress{OS_TEST_UNIT_SMALL_ADDRESS};
@@ -41,46 +41,46 @@ auto main() -> int {
     const os::foundation::PhysicalAddress largeAddress{OS_TEST_UNIT_LARGE_ADDRESS};
     const os::foundation::ByteCount rangeSize{OS_TEST_UNIT_RANGE_SIZE};
 
-    testContext.expect(smallAddress.value() == OS_TEST_UNIT_SMALL_ADDRESS,
+    testContext.Expect(smallAddress.Value() == OS_TEST_UNIT_SMALL_ADDRESS,
                        OS_TEST_UNIT_PHYSICAL_ADDRESS_VALUE);
-    testContext.expect(smallAddress.equals(sameSmallAddress),
+    testContext.Expect(smallAddress.Equals(sameSmallAddress),
                        OS_TEST_UNIT_PHYSICAL_ADDRESS_EQUALITY);
-    testContext.expect(smallAddress.isBefore(largeAddress), OS_TEST_UNIT_PHYSICAL_ADDRESS_ORDER);
-    testContext.expect(rangeSize.value() == OS_TEST_UNIT_RANGE_SIZE, OS_TEST_UNIT_BYTE_COUNT_VALUE);
+    testContext.Expect(smallAddress.IsBefore(largeAddress), OS_TEST_UNIT_PHYSICAL_ADDRESS_ORDER);
+    testContext.Expect(rangeSize.Value() == OS_TEST_UNIT_RANGE_SIZE, OS_TEST_UNIT_BYTE_COUNT_VALUE);
 
     os::foundation::AddressRange emptyRange{};
     const os::foundation::AddressRangeCreationStatus emptyStatus =
-        os::foundation::AddressRange::tryCreate(
+        os::foundation::AddressRange::TryCreate(
             smallAddress, os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_ZERO},
             emptyRange);
-    testContext.expect(emptyStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
+    testContext.Expect(emptyStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_UNIT_EMPTY_RANGE_CREATION);
-    testContext.expect(emptyRange.isEmpty(), OS_TEST_UNIT_EMPTY_RANGE_STATE);
-    testContext.expect(!emptyRange.contains(smallAddress), OS_TEST_UNIT_EMPTY_RANGE_CONTAINMENT);
+    testContext.Expect(emptyRange.IsEmpty(), OS_TEST_UNIT_EMPTY_RANGE_STATE);
+    testContext.Expect(!emptyRange.Contains(smallAddress), OS_TEST_UNIT_EMPTY_RANGE_CONTAINMENT);
 
     os::foundation::AddressRange regularRange{};
     const os::foundation::AddressRangeCreationStatus regularStatus =
-        os::foundation::AddressRange::tryCreate(smallAddress, rangeSize, regularRange);
-    testContext.expect(regularStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
+        os::foundation::AddressRange::TryCreate(smallAddress, rangeSize, regularRange);
+    testContext.Expect(regularStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
                        OS_TEST_UNIT_REGULAR_RANGE_CREATION);
-    testContext.expect(regularRange.begin().equals(smallAddress), OS_TEST_UNIT_REGULAR_RANGE_BEGIN);
-    testContext.expect(regularRange.size().equals(rangeSize), OS_TEST_UNIT_REGULAR_RANGE_SIZE);
-    testContext.expect(regularRange.contains(smallAddress),
+    testContext.Expect(regularRange.Begin().Equals(smallAddress), OS_TEST_UNIT_REGULAR_RANGE_BEGIN);
+    testContext.Expect(regularRange.Size().Equals(rangeSize), OS_TEST_UNIT_REGULAR_RANGE_SIZE);
+    testContext.Expect(regularRange.Contains(smallAddress),
                        OS_TEST_UNIT_REGULAR_RANGE_BEGIN_CONTAINMENT);
-    testContext.expect(!regularRange.contains(regularRange.end()),
+    testContext.Expect(!regularRange.Contains(regularRange.End()),
                        OS_TEST_UNIT_REGULAR_RANGE_END_EXCLUSION);
 
     os::foundation::AddressRange overflowRange = regularRange;
     const os::foundation::AddressRangeCreationStatus overflowStatus =
-        os::foundation::AddressRange::tryCreate(
+        os::foundation::AddressRange::TryCreate(
             os::foundation::PhysicalAddress{os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM},
             os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT}, overflowRange);
-    testContext.expect(overflowStatus ==
+    testContext.Expect(overflowStatus ==
                            os::foundation::AddressRangeCreationStatus::AddressOverflow,
                        OS_TEST_UNIT_OVERFLOW_REJECTION);
-    testContext.expect(overflowRange.begin().equals(regularRange.begin()) &&
-                           overflowRange.size().equals(regularRange.size()),
+    testContext.Expect(overflowRange.Begin().Equals(regularRange.Begin()) &&
+                           overflowRange.Size().Equals(regularRange.Size()),
                        OS_TEST_UNIT_OVERFLOW_PRESERVES_OUTPUT);
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

@@ -44,7 +44,7 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 - 若未来启用 `TRACE`，必须有编译期或启动期开关，并设置最大事件数；达到预算后只打印一次 `TRACE_LIMIT_REACHED`。
 - 日志文本不得依赖本地化、时间戳或不稳定地址，保证测试和文档可复现。
 
-## v0.7 验收
+## v0.8 验收
 
 正常启动日志应按阶段边界递进：
 
@@ -93,6 +93,10 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] USER_ELF_VALID
+[OS][KERNEL] USER_ENTRY=0x0000000040000000
+[OS][KERNEL] USER_MAPPED_PAGES=0x...
+[OS][KERNEL] USER_STACK_READY
 [OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
 [OS][KERNEL] PIC_READY
 [OS][KERNEL] PIC_MASK=0x000000000000FFFC
@@ -107,6 +111,14 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 [OS][KERNEL] TIMER_TICKS=0x...
 [OS][KERNEL] MONOTONIC_MILLISECONDS=0x...
 [OS][KERNEL] TIMER_SELF_TEST_PASSED
+[OS][KERNEL] USER_RING3_ENTER
+[OS][USER] INVALID_POINTER_REJECTED
+[OS][USER] UNKNOWN_SYSCALL_REJECTED
+[OS][USER] HELLO_FROM_RING3
+[OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
+[OS][KERNEL] USER_SYSCALL_COUNT=0x0000000000000006
+[OS][KERNEL] USER_TERMINATED
+[OS][KERNEL] USER_RETURNED_TO_KERNEL
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
 [OS][KERNEL] READY
@@ -162,3 +174,17 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 
 这样 1000 Hz 时钟不会淹没键盘、异常与失败标记，也避免串口轮询延长中断
 服务时间。
+
+用户日志分可信级别：
+
+- `[OS][KERNEL] USER_*` 是内核根据已验证状态产生的生命周期证据。
+- `[OS][USER] ...` 是经长度和地址检查后转发的用户文本，不能作为安全决策
+  依据；测试只把三个内置验收程序的固定文本当作该镜像的行为证据。
+- 系统调用不逐次打印。正常程序结束后只汇总一次
+  `USER_SYSCALL_COUNT`，避免未来高频调用冲垮串口。
+- 用户异常只输出向量、错误码、RIP 和可选 CR2，再输出一次终止与返回标记；
+  不复用 `[OS][KERNEL] EXCEPTION`/`PANIC`，从协议上区分隔离事件与内核崩溃。
+
+QEMU 捕获器继续给包括 Ring 3 文本在内的每一行加
+`[QEMU][T+......ms]`。这解决“QEMU 里面也要看到时间”的观察需求，但该
+前缀仍是宿主接收时间；来宾自身的可信单调时间只来自 PIT 汇总字段。

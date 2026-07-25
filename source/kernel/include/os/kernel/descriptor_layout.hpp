@@ -50,10 +50,10 @@ struct [[gnu::packed]] TaskStateSegment final {
 };
 
 [[nodiscard]] SystemSegmentDescriptor
-createTaskStateSegmentDescriptor(uint64_t baseAddress, uint32_t inclusiveLimit) noexcept;
+CreateTaskStateSegmentDescriptor(uint64_t baseAddress, uint32_t inclusiveLimit) noexcept;
 
 [[nodiscard]] InterruptGateDescriptor
-createInterruptGateDescriptor(uint64_t handlerAddress, uint16_t segmentSelector,
+CreateInterruptGateDescriptor(uint64_t handlerAddress, uint16_t segmentSelector,
                               uint8_t interruptStackTable, uint8_t typeAttributes) noexcept;
 
 static_assert(sizeof(DescriptorTablePointer) == OS_KERNEL_DESCRIPTOR_TABLE_POINTER_SIZE_BYTES);

@@ -5,7 +5,7 @@ namespace os::kernel {
 
 extern "C" [[noreturn, gnu::section(".text.os_kernel_entry")]]
 void osKernelEntry(const BootInfo *bootInfo) noexcept {
-    runKernel(bootInfo, KernelFaultInjection::WriteProtection);
+    RunKernel(bootInfo, KernelFaultInjection::WriteProtection, UserProgramSelection::Smoke);
 }
 
 }

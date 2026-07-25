@@ -64,7 +64,7 @@ constexpr uint64_t OS_TEST_KERNEL_EXCEPTION_SECURITY_VECTOR = 30ULL;
 constexpr uint32_t OS_TEST_KERNEL_DESCRIPTOR_RESERVED_ZERO = 0U;
 
 [[nodiscard]] uint64_t
-decodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor) noexcept {
+DecodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor) noexcept {
     return ((descriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_LOW_SHIFT) &
             OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_LOW_MASK) |
            (((descriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_HIGH_BYTE_SHIFT) &
@@ -74,7 +74,7 @@ decodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor
 }
 
 [[nodiscard]] uint64_t
-decodeTaskStateSegmentLimit(const os::kernel::SystemSegmentDescriptor &descriptor) noexcept {
+DecodeTaskStateSegmentLimit(const os::kernel::SystemSegmentDescriptor &descriptor) noexcept {
     return (descriptor.low & OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT_LOW_MASK) |
            (((descriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT_HIGH_SOURCE_SHIFT) &
              OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT_HIGH_MASK)
@@ -82,7 +82,7 @@ decodeTaskStateSegmentLimit(const os::kernel::SystemSegmentDescriptor &descripto
 }
 
 [[nodiscard]] uint64_t
-decodeInterruptGateAddress(const os::kernel::InterruptGateDescriptor &descriptor) noexcept {
+DecodeInterruptGateAddress(const os::kernel::InterruptGateDescriptor &descriptor) noexcept {
     return static_cast<uint64_t>(descriptor.offsetLow) |
            (static_cast<uint64_t>(descriptor.offsetMiddle)
             << OS_TEST_KERNEL_DESCRIPTOR_GATE_MIDDLE_SHIFT) |
@@ -96,35 +96,35 @@ int main() {
     os::test::TestContext testContext{OS_TEST_KERNEL_DESCRIPTOR_SUITE_NAME};
 
     const os::kernel::SystemSegmentDescriptor taskStateDescriptor =
-        os::kernel::createTaskStateSegmentDescriptor(OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE,
+        os::kernel::CreateTaskStateSegmentDescriptor(OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE,
                                                      OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT);
-    testContext.expect(decodeTaskStateSegmentBase(taskStateDescriptor) ==
+    testContext.Expect(DecodeTaskStateSegmentBase(taskStateDescriptor) ==
                            OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE,
                        OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_MESSAGE);
-    testContext.expect(decodeTaskStateSegmentLimit(taskStateDescriptor) ==
+    testContext.Expect(DecodeTaskStateSegmentLimit(taskStateDescriptor) ==
                            static_cast<uint64_t>(OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT),
                        OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT_MESSAGE);
-    testContext.expect(((taskStateDescriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_SHIFT) &
+    testContext.Expect(((taskStateDescriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_SHIFT) &
                         OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_MASK) ==
                            OS_TEST_KERNEL_DESCRIPTOR_TSS_EXPECTED_TYPE,
                        OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_MESSAGE);
 
     const os::kernel::InterruptGateDescriptor interruptGate =
-        os::kernel::createInterruptGateDescriptor(
+        os::kernel::CreateInterruptGateDescriptor(
             OS_TEST_KERNEL_DESCRIPTOR_GATE_HANDLER, OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
             OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_INPUT, OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES);
-    testContext.expect(decodeInterruptGateAddress(interruptGate) ==
+    testContext.Expect(DecodeInterruptGateAddress(interruptGate) ==
                            OS_TEST_KERNEL_DESCRIPTOR_GATE_HANDLER,
                        OS_TEST_KERNEL_DESCRIPTOR_GATE_ADDRESS_MESSAGE);
-    testContext.expect(interruptGate.segmentSelector == OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
+    testContext.Expect(interruptGate.segmentSelector == OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
                        OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR_MESSAGE);
-    testContext.expect(interruptGate.interruptStackTable ==
+    testContext.Expect(interruptGate.interruptStackTable ==
                            static_cast<uint8_t>(OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_INPUT &
                                                 OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_MASK),
                        OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_MESSAGE);
-    testContext.expect(interruptGate.typeAttributes == OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES,
+    testContext.Expect(interruptGate.typeAttributes == OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES,
                        OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES_MESSAGE);
-    testContext.expect(interruptGate.reserved == OS_TEST_KERNEL_DESCRIPTOR_RESERVED_ZERO,
+    testContext.Expect(interruptGate.reserved == OS_TEST_KERNEL_DESCRIPTOR_RESERVED_ZERO,
                        OS_TEST_KERNEL_DESCRIPTOR_GATE_RESERVED_MESSAGE);
 
     for (uint64_t vector = 0ULL; vector < OS_TEST_KERNEL_EXCEPTION_VECTOR_COUNT; ++vector) {
@@ -139,13 +139,13 @@ int main() {
             vector == OS_TEST_KERNEL_EXCEPTION_CONTROL_PROTECTION_VECTOR ||
             vector == OS_TEST_KERNEL_EXCEPTION_VMM_COMMUNICATION_VECTOR ||
             vector == OS_TEST_KERNEL_EXCEPTION_SECURITY_VECTOR;
-        testContext.expect(os::kernel::exceptionPushesHardwareErrorCode(vector) ==
+        testContext.Expect(os::kernel::ExceptionPushesHardwareErrorCode(vector) ==
                                expectedErrorCode,
                            OS_TEST_KERNEL_EXCEPTION_ERROR_CODE_MESSAGE);
-        testContext.expect(os::kernel::isResumableKernelException(vector) ==
+        testContext.Expect(os::kernel::IsResumableKernelException(vector) ==
                                (vector == OS_TEST_KERNEL_EXCEPTION_BREAKPOINT_VECTOR),
                            OS_TEST_KERNEL_EXCEPTION_BREAKPOINT_MESSAGE);
     }
 
-    return testContext.exitCode();
+    return testContext.ExitCode();
 }

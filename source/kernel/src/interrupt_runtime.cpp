@@ -18,13 +18,13 @@ class InterruptRuntime final {
   public:
     InterruptRuntime() noexcept;
 
-    [[nodiscard]] InterruptRuntimeStatus initialize() noexcept;
-    void dispatch(uint64_t vector) noexcept;
-    [[nodiscard]] InterruptRuntimeStatistics statistics() const noexcept;
-    [[nodiscard]] bool tryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
+    [[nodiscard]] InterruptRuntimeStatus Initialize() noexcept;
+    void Dispatch(uint64_t vector) noexcept;
+    [[nodiscard]] InterruptRuntimeStatistics Statistics() const noexcept;
+    [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
 
   private:
-    void handleKeyboardInterrupt() noexcept;
+    void HandleKeyboardInterrupt() noexcept;
 
     LegacyPic pic_;
     ProgrammableIntervalTimer timer_;
@@ -51,19 +51,19 @@ InterruptRuntime::InterruptRuntime() noexcept
       spuriousInterruptCount_{0ULL}, pendingKeyboardEvent_{}, keyboardEventPending_{false},
       initialized_{false} {}
 
-InterruptRuntimeStatus InterruptRuntime::initialize() noexcept {
+InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
     // 固件没有替内核建立 APIC 虚拟线模式；先把 LAPIC LINT0 配置为 ExtINT，
     // 再初始化 PIC，保证后续 IRQ 边沿沿明确的跨控制器路径交付。
-    if (!configureLegacyInterruptRouting()) {
+    if (!ConfigureLegacyInterruptRouting()) {
         return InterruptRuntimeStatus::LegacyInterruptRoutingFailed;
     }
-    this->pic_.initialize();
+    this->pic_.Initialize();
 
-    if (this->timer_.initialize(OS_KERNEL_INTERRUPT_TARGET_TIMER_FREQUENCY_HZ,
+    if (this->timer_.Initialize(OS_KERNEL_INTERRUPT_TARGET_TIMER_FREQUENCY_HZ,
                                 this->pitConfiguration_) != PitConfigurationStatus::Succeeded) {
         return InterruptRuntimeStatus::InvalidPitConfiguration;
     }
-    if (this->keyboard_.initialize() != Ps2KeyboardStatus::Succeeded) {
+    if (this->keyboard_.Initialize() != Ps2KeyboardStatus::Succeeded) {
         return InterruptRuntimeStatus::KeyboardInitializationFailed;
     }
 
@@ -72,19 +72,19 @@ InterruptRuntimeStatus InterruptRuntime::initialize() noexcept {
          ++byteIndex) {
         bootDescriptorSector[byteIndex] = OS_KERNEL_INTERRUPT_ZERO_BYTE;
     }
-    if (this->ataDevice_.readSector(OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA, bootDescriptorSector,
+    if (this->ataDevice_.ReadSector(OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA, bootDescriptorSector,
                                     OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) !=
         AtaPioStatus::Succeeded) {
         return InterruptRuntimeStatus::AtaReadFailed;
     }
-    if (!stage1BootDescriptorMagicMatches(bootDescriptorSector,
+    if (!Stage1BootDescriptorMagicMatches(bootDescriptorSector,
                                           OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES)) {
         return InterruptRuntimeStatus::InvalidBootDescriptor;
     }
 
-    if (this->pic_.enableInterruptRequest(OS_KERNEL_INTERRUPT_TIMER_REQUEST) !=
+    if (this->pic_.EnableInterruptRequest(OS_KERNEL_INTERRUPT_TIMER_REQUEST) !=
             LegacyPicStatus::Succeeded ||
-        this->pic_.enableInterruptRequest(OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) !=
+        this->pic_.EnableInterruptRequest(OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) !=
             LegacyPicStatus::Succeeded) {
         return InterruptRuntimeStatus::PicConfigurationFailed;
     }
@@ -92,68 +92,68 @@ InterruptRuntimeStatus InterruptRuntime::initialize() noexcept {
     return InterruptRuntimeStatus::Succeeded;
 }
 
-void InterruptRuntime::dispatch(const uint64_t vector) noexcept {
+void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
     uint64_t interruptRequest = 0ULL;
-    if (!this->initialized_ || calculateLegacyPicInterruptRequest(vector, interruptRequest) !=
+    if (!this->initialized_ || CalculateLegacyPicInterruptRequest(vector, interruptRequest) !=
                                    LegacyPicModelStatus::Succeeded) {
-        haltProcessor();
+        HaltProcessor();
     }
 
     if (interruptRequest == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
         this->timerTickCount_ = this->timerTickCount_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
     } else if (interruptRequest == OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) {
-        this->handleKeyboardInterrupt();
+        this->HandleKeyboardInterrupt();
     }
 
-    const LegacyPicStatus acknowledgeStatus = this->pic_.acknowledge(interruptRequest);
+    const LegacyPicStatus acknowledgeStatus = this->pic_.Acknowledge(interruptRequest);
     if (acknowledgeStatus == LegacyPicStatus::SpuriousInterrupt) {
         this->spuriousInterruptCount_ =
             this->spuriousInterruptCount_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
     } else if (acknowledgeStatus != LegacyPicStatus::Succeeded) {
-        haltProcessor();
+        HaltProcessor();
     }
 }
 
-InterruptRuntimeStatistics InterruptRuntime::statistics() const noexcept {
+InterruptRuntimeStatistics InterruptRuntime::Statistics() const noexcept {
     // 当前单核由 IRQ 修改计数；保存并关闭原 IF 后复制，避免交付跨中断的快照。
-    const bool interruptsWereEnabled = disableInterrupts();
+    const bool interruptsWereEnabled = DisableInterrupts();
     const uint64_t timerTickCount = this->timerTickCount_;
     const InterruptRuntimeStatistics statistics{
         .timerTickCount = timerTickCount,
         .monotonicMilliseconds =
-            calculatePitElapsedMilliseconds(timerTickCount, this->pitConfiguration_.divisor),
+            CalculatePitElapsedMilliseconds(timerTickCount, this->pitConfiguration_.divisor),
         .keyboardInterruptCount = this->keyboardInterruptCount_,
         .supportedKeyboardEventCount = this->supportedKeyboardEventCount_,
         .spuriousInterruptCount = this->spuriousInterruptCount_,
-        .picMask = this->pic_.mask(),
+        .picMask = this->pic_.Mask(),
         .pitDivisor = this->pitConfiguration_.divisor,
         .pitActualFrequencyHz = this->pitConfiguration_.actualFrequencyHz,
     };
-    restoreInterrupts(interruptsWereEnabled);
+    RestoreInterrupts(interruptsWereEnabled);
     return statistics;
 }
 
-bool InterruptRuntime::tryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
-    const bool interruptsWereEnabled = disableInterrupts();
+bool InterruptRuntime::TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
+    const bool interruptsWereEnabled = DisableInterrupts();
     const bool eventAvailable = this->keyboardEventPending_;
     if (eventAvailable) {
         event = this->pendingKeyboardEvent_;
         this->keyboardEventPending_ = false;
     }
-    restoreInterrupts(interruptsWereEnabled);
+    RestoreInterrupts(interruptsWereEnabled);
     return eventAvailable;
 }
 
-void InterruptRuntime::handleKeyboardInterrupt() noexcept {
+void InterruptRuntime::HandleKeyboardInterrupt() noexcept {
     this->keyboardInterruptCount_ =
         this->keyboardInterruptCount_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
     uint8_t scanCode = 0U;
-    if (this->keyboard_.tryReadScanCode(scanCode) != Ps2KeyboardStatus::Succeeded) {
+    if (this->keyboard_.TryReadScanCode(scanCode) != Ps2KeyboardStatus::Succeeded) {
         return;
     }
 
     KeyboardEvent decodedEvent{};
-    if (this->scanCodeDecoder_.decode(scanCode, decodedEvent) != KeyboardDecodeStatus::EventReady) {
+    if (this->scanCodeDecoder_.Decode(scanCode, decodedEvent) != KeyboardDecodeStatus::EventReady) {
         return;
     }
     this->supportedKeyboardEventCount_ =
@@ -164,23 +164,23 @@ void InterruptRuntime::handleKeyboardInterrupt() noexcept {
     }
 }
 
-InterruptRuntimeStatus initializeInterruptRuntime() noexcept {
-    return kernelInterruptRuntime.initialize();
+InterruptRuntimeStatus InitializeInterruptRuntime() noexcept {
+    return kernelInterruptRuntime.Initialize();
 }
 
-InterruptRuntimeStatistics interruptRuntimeStatistics() noexcept {
-    return kernelInterruptRuntime.statistics();
+InterruptRuntimeStatistics GetInterruptRuntimeStatistics() noexcept {
+    return kernelInterruptRuntime.Statistics();
 }
 
-bool tryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
-    return kernelInterruptRuntime.tryTakeKeyboardEvent(event);
+bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
+    return kernelInterruptRuntime.TryTakeKeyboardEvent(event);
 }
 
 extern "C" void osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept {
     if (frame == nullptr) {
-        haltProcessor();
+        HaltProcessor();
     }
-    kernelInterruptRuntime.dispatch(frame->vector);
+    kernelInterruptRuntime.Dispatch(frame->vector);
 }
 
 }

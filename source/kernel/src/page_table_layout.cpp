@@ -23,7 +23,7 @@ constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_SINGLE_BIT_MASK = 0x0000000000000001ULL
 
 }
 
-bool isCanonicalVirtualAddress(const uint64_t virtualAddress) noexcept {
+bool IsCanonicalVirtualAddress(const uint64_t virtualAddress) noexcept {
     const uint64_t upper = virtualAddress >> OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_SHIFT;
     const bool signBit = ((virtualAddress >> OS_KERNEL_PAGE_LAYOUT_CANONICAL_SIGN_SHIFT) &
                           OS_KERNEL_PAGE_LAYOUT_SINGLE_BIT_MASK) != 0ULL;
@@ -31,7 +31,7 @@ bool isCanonicalVirtualAddress(const uint64_t virtualAddress) noexcept {
                              : OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_POSITIVE);
 }
 
-PageTableIndices calculatePageTableIndices(const uint64_t virtualAddress) noexcept {
+PageTableIndices CalculatePageTableIndices(const uint64_t virtualAddress) noexcept {
     return PageTableIndices{
         .level4 = (virtualAddress >> OS_KERNEL_PAGE_LAYOUT_LEVEL4_SHIFT) &
                   OS_KERNEL_PAGE_LAYOUT_INDEX_MASK,
@@ -44,7 +44,7 @@ PageTableIndices calculatePageTableIndices(const uint64_t virtualAddress) noexce
     };
 }
 
-uint64_t encodePageTableLeafEntry(const uint64_t physicalAddress,
+uint64_t EncodePageTableLeafEntry(const uint64_t physicalAddress,
                                   const PagePermissions permissions) noexcept {
     uint64_t entry = (physicalAddress & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK) |
                      OS_KERNEL_PAGE_LAYOUT_PRESENT_BIT;
@@ -63,7 +63,7 @@ uint64_t encodePageTableLeafEntry(const uint64_t physicalAddress,
     return entry;
 }
 
-PageMapping decodePageTableLeafEntry(const uint64_t entry) noexcept {
+PageMapping DecodePageTableLeafEntry(const uint64_t entry) noexcept {
     return PageMapping{
         .physicalAddress = entry & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK,
         .permissions =

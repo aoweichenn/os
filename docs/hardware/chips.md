@@ -47,7 +47,7 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | 6 | ZF | 结果为零 | `test`、`cmp`、循环与状态判断 |
 | 7 | SF | 结果最高位 | 当前不单独作为启动条件 |
 | 8 | TF | 单步陷阱 | 调试器使用，正常启动必须保持关闭 |
-| 9 | IF | 可屏蔽中断开关 | 固件初始化期间由 `CLI` 关闭 |
+| 9 | IF | 可屏蔽中断开关 | 初始化期间关闭；用户初始帧设为 1 |
 | 10 | DF | 字符串方向 | 入口由 `CLD` 清零，保证 `lodsb`/`lodsw` 向高地址推进 |
 | 11 | OF | 有符号溢出 | 当前不用于硬件协议判断 |
 
@@ -75,17 +75,17 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 
 ### 2.3 长模式描述符寄存器
 
-| 状态 | 可见内容 | 装载/读取 | v0.5 不变量 |
+| 状态 | 可见内容 | 装载/读取 | v0.8 不变量 |
 | --- | --- | --- | --- |
-| GDTR | 64 位 base + 16 位 limit | `LGDT` / `SGDT` | base 指向五槽内核 GDT，limit=39 |
+| GDTR | 64 位 base + 16 位 limit | `LGDT` / `SGDT` | base 指向七槽内核 GDT，limit=55 |
 | IDTR | 64 位 base + 16 位 limit | `LIDT` / `SIDT` | base 指向 256 槽 IDT，limit=4095 |
 | CS | 16 位选择子 + 隐藏描述符 | far control transfer | `0x08`，Ring 0 长模式代码段 |
 | SS | 16 位选择子 + 隐藏描述符 | `MOV SS` | `0x10`，Ring 0 数据段 |
-| TR | 16 位选择子 +隐藏 TSS 描述符 | `LTR` / `STR` | `0x18`，busy 64-bit TSS |
-| CR2 | 页故障线性地址 | `MOV reg, CR2` | 只在向量 14 的 panic 中读取 |
+| TR | 16 位选择子 +隐藏 TSS 描述符 | `LTR` / `STR` | `0x28`，busy 64-bit TSS |
+| CR2 | 页故障线性地址 | `MOV reg, CR2` | 向量 14 的 panic 或用户终止现场 |
 
-描述符表 limit 都是“最后一个有效字节偏移”，不是字节数。五个 8 字节 GDT 槽
-的 limit 是 \(5\times8-1=39\)；256 个 16 字节 IDT 槽的 limit 是
+描述符表 limit 都是“最后一个有效字节偏移”，不是字节数。七个 8 字节 GDT 槽
+的 limit 是 \(7\times8-1=55\)；256 个 16 字节 IDT 槽的 limit 是
 \(256\times16-1=4095\)。
 
 ### 2.4 当前 GDT 与 TSS 结构
@@ -94,8 +94,10 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 GDT[0]  8 B  null
 GDT[1]  8 B  Ring 0 code, selector 0x08
 GDT[2]  8 B  Ring 0 data, selector 0x10
-GDT[3]  8 B  TSS descriptor low, selector 0x18
-GDT[4]  8 B  TSS descriptor high
+GDT[3]  8 B  Ring 3 data, selector 0x1B
+GDT[4]  8 B  Ring 3 code, selector 0x23
+GDT[5]  8 B  TSS descriptor low, selector 0x28
+GDT[6]  8 B  TSS descriptor high
 ```
 
 64 位 TSS 描述符由 limit[19:0]、base[63:0]、type=9、DPL、present 和粒度
@@ -104,7 +106,7 @@ TSS 内存布局：
 
 | 偏移 | 宽度 | 字段 | 当前用途 |
 | ---: | ---: | --- | --- |
-| `0x04` | 64 | RSP0 | 未来 Ring 3→Ring 0 的内核栈 |
+| `0x04` | 64 | RSP0 | Ring 3→Ring 0 的独立 16 KiB 特权转换栈 |
 | `0x0C` / `0x14` | 64 | RSP1 / RSP2 | 保留为零 |
 | `0x24` | 64 | IST1 | 双重故障栈 |
 | `0x2C` | 64 | IST2 | NMI 栈 |
@@ -129,7 +131,7 @@ TSS 内存布局：
 
 - type=`1110b` 表示 64 位 interrupt gate。
 - P=1 表示门存在；DPL=0 禁止低特权软件随意 `INT n`。
-- breakpoint 与 overflow 使用 DPL=3，保持架构允许用户调试陷阱的语义。
+- breakpoint、overflow 与 `0x80` 系统调用门使用 DPL=3；其余门 DPL=0。
 - IST 为 0 使用当前/特权栈；1..7 选择 TSS 的对应专用栈。
 - selector 固定引用当前 Ring 0 代码段 `0x08`。
 
@@ -182,6 +184,8 @@ not-present 页故障注入得到错误码 0：supervisor 读取一个 not-prese
 CR2=`0x04000000`，正好是当前 64 MiB 身份映射的第一个未映射线性地址。
 v0.6 写保护注入得到错误码 3：P=1、W/R=1、U/S=0，表示 supervisor 写入
 present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
+v0.8 用户程序读取未映射 `0x30000000` 得到错误码 4：P=0、W/R=0、
+U/S=1，证明访问确实来自 CPL3，而不是内核替用户触发故障。
 
 ### 2.8 四级页表项
 
@@ -200,7 +204,7 @@ present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
 | ---: | --- | --- |
 | 0 | P | 1 表示存在；guard 和零页保持 0 |
 | 1 | RW | 1 可写，0 只读；CR0.WP 使 Ring 0 也受约束 |
-| 2 | US | 当前所有内核映射为 0 |
+| 2 | US | 内核映射为 0；用户映射在四级路径上均为 1 |
 | 4 | PCD | 1 禁用页级缓存；LAPIC MMIO 映射必须置一 |
 | 7 | PS | 中间层若为 1 表示大页；内核 4 KiB 遍历器明确拒绝 |
 | 12..51 | physical address | 4 KiB 对齐页帧地址 |
@@ -212,14 +216,15 @@ present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
 
 ### 2.9 异常、硬件 IRQ 与 IDT 向量
 
-v0.7 把 IDT present 范围扩展为：
+v0.8 的 IDT present 范围为：
 
 | 向量 | 来源 | 汇编入口 | C++ 策略 |
 | ---: | --- | --- | --- |
-| `0x00..0x1F` | CPU 架构异常 | exception stubs | 恢复 breakpoint 或 panic |
+| `0x00..0x1F` | CPU 架构异常 | exception stubs | Ring 0 恢复/panic；Ring 3 终止用户 |
 | `0x20..0x27` | 8259A master IRQ0..7 | hardware IRQ stubs | 设备处理、主片 EOI |
 | `0x28..0x2F` | 8259A slave IRQ8..15 | hardware IRQ stubs | 设备处理、从片后主片 EOI |
-| `0x30..0xFF` | 未分配 | not-present | 禁止误入 |
+| `0x80` | Ring 3 `INT 0x80` | system call entry | 校验帧、分发、返回或退出 |
+| 其他 | 未分配 | not-present | 禁止误入 |
 
 本地 APIC、I/O APIC 和 PIC 是三种不同状态。只设置 RFLAGS.IF 不能建立它们
 之间的路由；当前单核阶段保持本地 APIC 启用，把 SVR 与 LVT LINT0 配成
@@ -238,6 +243,29 @@ LAPIC 基址来自当前 xAPIC 实现使用的 `IA32_APIC_BASE[35:12]`，内核�
 初始化先验证 CPUID 的 APIC 能力、全局启用位和 x2APIC 关闭状态，再写 SVR、
 写 LINT0 并逐字段回读。LAPIC 此时只把 8259A 输出桥接到处理器；中断向量仍由
 PIC 的 INTA 周期提供，处理完成也仍向 PIC 发送 EOI，不写 LAPIC EOI。
+
+### 2.11 特权转换时的硬件栈帧
+
+从 CPL3 通过 interrupt gate 进入 CPL0 时，CPU 先从当前 TSS 读取 RSP0，
+再在新内核栈上保存：
+
+```text
+高地址  用户 SS
+        用户 RSP
+        RFLAGS
+        用户 CS
+低地址  用户 RIP
+```
+
+随后汇编入口补入错误码/向量并保存 15 个通用寄存器。公共
+`ExceptionFrame` 占 160 字节，特权来源额外带 RSP/SS，总计 176 字节。
+返回 Ring 3 的 `IRETQ` 消费全部五个硬件字段；exit 与用户异常不再消费该帧，
+而是丢弃转换栈并恢复进入用户态前单独保存的内核 RSP。
+
+首次从 Ring 0 降到 Ring 3 也使用同一种五字段形状，但由软件主动压入
+SS=`0x1B`、用户栈顶、RFLAGS=`0x202`、CS=`0x23` 和 ELF 入口。RFLAGS
+的 IOPL 位保持 0，所以用户程序即使 IF=1 也不能绕过系统调用直接访问 I/O
+端口。
 
 ## 3. 8259A 可编程中断控制器
 
@@ -430,6 +458,10 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/kernel/src/ata_pio.cpp`：内核 LBA28 单扇区读取。
 - `source/kernel/src/descriptor_tables.cpp`：GDT、TSS、IDT 构造与硬件回读验证。
 - `source/kernel/src/memory_manager.cpp`：页帧、四级页表、权限、guard 与堆。
+- `source/kernel/src/user_elf.cpp`：严格 ELF64 用户文件解析。
+- `source/kernel/src/user_memory.cpp`：用户页装载、栈与指针逐页检查。
+- `source/kernel/src/system_calls.cpp`：`INT 0x80` 帧验证与系统调用分发。
+- `source/user/src/system_call.asm`：Ring 3 系统调用指令入口。
 - `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
 - `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。

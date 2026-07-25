@@ -25,10 +25,10 @@ class KernelHeap final {
   public:
     KernelHeap() noexcept;
 
-    [[nodiscard]] KernelHeapStatus initialize(uint64_t baseAddress, uint64_t sizeBytes) noexcept;
-    [[nodiscard]] KernelHeapStatus tryAllocate(uint64_t sizeBytes, uint64_t alignmentBytes,
+    [[nodiscard]] KernelHeapStatus Initialize(uint64_t baseAddress, uint64_t sizeBytes) noexcept;
+    [[nodiscard]] KernelHeapStatus TryAllocate(uint64_t sizeBytes, uint64_t alignmentBytes,
                                                void *&allocation) noexcept;
-    [[nodiscard]] KernelHeapStatistics statistics() const noexcept;
+    [[nodiscard]] KernelHeapStatistics Statistics() const noexcept;
 
   private:
     uint64_t baseAddress_;

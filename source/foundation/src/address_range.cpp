@@ -8,21 +8,21 @@ const AddressValue OS_FOUNDATION_ADDRESS_MAXIMUM = ~AddressValue{};
 
 PhysicalAddress::PhysicalAddress(const AddressValue value) noexcept : rawValue{value} {}
 
-auto PhysicalAddress::value() const noexcept -> AddressValue { return this->rawValue; }
+AddressValue PhysicalAddress::Value() const noexcept { return this->rawValue; }
 
-auto PhysicalAddress::equals(const PhysicalAddress &other) const noexcept -> bool {
+bool PhysicalAddress::Equals(const PhysicalAddress &other) const noexcept {
     return this->rawValue == other.rawValue;
 }
 
-auto PhysicalAddress::isBefore(const PhysicalAddress &other) const noexcept -> bool {
+bool PhysicalAddress::IsBefore(const PhysicalAddress &other) const noexcept {
     return this->rawValue < other.rawValue;
 }
 
 ByteCount::ByteCount(const AddressValue value) noexcept : rawValue{value} {}
 
-auto ByteCount::value() const noexcept -> AddressValue { return this->rawValue; }
+AddressValue ByteCount::Value() const noexcept { return this->rawValue; }
 
-auto ByteCount::equals(const ByteCount &other) const noexcept -> bool {
+bool ByteCount::Equals(const ByteCount &other) const noexcept {
     return this->rawValue == other.rawValue;
 }
 
@@ -32,38 +32,37 @@ AddressRange::AddressRange() noexcept
 AddressRange::AddressRange(const PhysicalAddress begin, const PhysicalAddress end) noexcept
     : beginAddress{begin}, endAddress{end} {}
 
-auto AddressRange::tryCreate(const PhysicalAddress begin, const ByteCount size,
-                             AddressRange &outputRange) noexcept -> AddressRangeCreationStatus {
-    const AddressValue maximumSize = OS_FOUNDATION_ADDRESS_MAXIMUM - begin.value();
+AddressRangeCreationStatus AddressRange::TryCreate(const PhysicalAddress begin,
+                                                   const ByteCount size,
+                                                   AddressRange &outputRange) noexcept {
+    const AddressValue maximumSize = OS_FOUNDATION_ADDRESS_MAXIMUM - begin.Value();
 
-    if (size.value() > maximumSize) {
+    if (size.Value() > maximumSize) {
         return AddressRangeCreationStatus::AddressOverflow;
     }
 
-    const PhysicalAddress end{begin.value() + size.value()};
+    const PhysicalAddress end{begin.Value() + size.Value()};
     outputRange = AddressRange{begin, end};
     return AddressRangeCreationStatus::Succeeded;
 }
 
-auto AddressRange::begin() const noexcept -> PhysicalAddress { return this->beginAddress; }
+PhysicalAddress AddressRange::Begin() const noexcept { return this->beginAddress; }
 
-auto AddressRange::end() const noexcept -> PhysicalAddress { return this->endAddress; }
+PhysicalAddress AddressRange::End() const noexcept { return this->endAddress; }
 
-auto AddressRange::size() const noexcept -> ByteCount {
-    return ByteCount{this->endAddress.value() - this->beginAddress.value()};
+ByteCount AddressRange::Size() const noexcept {
+    return ByteCount{this->endAddress.Value() - this->beginAddress.Value()};
 }
 
-auto AddressRange::isEmpty() const noexcept -> bool {
-    return this->beginAddress.equals(this->endAddress);
+bool AddressRange::IsEmpty() const noexcept { return this->beginAddress.Equals(this->endAddress); }
+
+bool AddressRange::Contains(const PhysicalAddress address) const noexcept {
+    return !address.IsBefore(this->beginAddress) && address.IsBefore(this->endAddress);
 }
 
-auto AddressRange::contains(const PhysicalAddress address) const noexcept -> bool {
-    return !address.isBefore(this->beginAddress) && address.isBefore(this->endAddress);
-}
-
-auto AddressRange::overlaps(const AddressRange &other) const noexcept -> bool {
-    return this->beginAddress.isBefore(other.endAddress) &&
-           other.beginAddress.isBefore(this->endAddress);
+bool AddressRange::Overlaps(const AddressRange &other) const noexcept {
+    return this->beginAddress.IsBefore(other.endAddress) &&
+           other.beginAddress.IsBefore(this->endAddress);
 }
 
 }

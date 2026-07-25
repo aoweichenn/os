@@ -108,13 +108,15 @@ chips:
         heap: read-write-no-execute
         local_apic: read-write-no-execute-cache-disabled
         stack_guards: not-present
+        user_text: user-read-execute
+        user_data_and_stack: user-read-write-no-execute
     descriptor_state:
       gdtr:
         base_width_bits: 64
         limit_width_bits: 16
         load_instruction: LGDT
         store_instruction: SGDT
-        current_limit: 39
+        current_limit: 55
       idtr:
         base_width_bits: 64
         limit_width_bits: 16
@@ -124,14 +126,16 @@ chips:
       selectors:
         kernel_code: 0x0008
         kernel_data: 0x0010
-        task_state: 0x0018
+        user_data: 0x001B
+        user_code: 0x0023
+        task_state: 0x0028
       task_register:
         load_instruction: LTR
         store_instruction: STR
-        current_selector: 0x0018
+        current_selector: 0x0028
     global_descriptor_table:
       entry_size_bytes: 8
-      entry_count: 5
+      entry_count: 7
       entries:
         - index: 0
           kind: null
@@ -142,33 +146,54 @@ chips:
           kind: ring0-data
           selector: 0x0010
         - index: 3
-          kind: available-64-bit-tss-low
-          selector: 0x0018
+          kind: ring3-data
+          selector: 0x001B
         - index: 4
+          kind: long-mode-ring3-code
+          selector: 0x0023
+        - index: 5
+          kind: available-64-bit-tss-low
+          selector: 0x0028
+        - index: 6
           kind: available-64-bit-tss-high
     task_state_segment:
       size_bytes: 104
       io_permission_bitmap_offset: 104
       stacks:
-        rsp0: boot-info-kernel-stack-top
+        rsp0: privilege-transition-16-kib
         ist1: double-fault-16-kib
         ist2: non-maskable-interrupt-16-kib
         ist3: machine-check-16-kib
+      guard_pages:
+        - privilege-transition
+        - double-fault
+        - non-maskable-interrupt
+        - machine-check
     interrupt_descriptor_table:
       gate_size_bytes: 16
       gate_count: 256
       present_vectors:
         exceptions: 0..31
         legacy_hardware_interrupts: 32..47
+        system_call: 128
       gate_type: interrupt-gate
       kernel_code_selector: 0x0008
       ring3_callable_vectors:
         - 3
         - 4
+        - 128
       interrupt_stack_table:
         2: 2
         8: 1
         18: 3
+    privilege_transition:
+      user_data_selector: 0x001B
+      user_code_selector: 0x0023
+      initial_rflags: 0x0000000000000202
+      system_call_vector: 0x80
+      user_stack_top: 0x00007FFFFFFF0000
+      user_stack_page_count: 4
+      user_stack_guard: 0x00007FFFFFFEA000
     exceptions:
       hardware_error_code_vectors:
         - 8

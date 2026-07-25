@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     x86_64_os_lab
-    VERSION 0.7.0
+    VERSION 0.8.0
     DESCRIPTION "从复位向量开始实现的 x86-64 教学操作系统"
     LANGUAGES CXX
 )
@@ -26,6 +26,8 @@ set(
 )
 
 add_subdirectory(source/foundation)
+add_subdirectory(source/abi)
+add_subdirectory(source/user)
 add_subdirectory(source/kernel)
 
 set(OS_FIRMWARE_IMAGE_SIZE_BYTES 131072)
@@ -105,6 +107,18 @@ set(
 set(
     OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_write_protection/boot_disk.img"
+)
+set(
+    OS_KERNEL_USER_INVALID_OPCODE_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_user_invalid_opcode/boot_disk.img"
+)
+set(
+    OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_user_page_fault/boot_disk.img"
+)
+set(
+    OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_user_invalid_elf/boot_disk.img"
 )
 
 add_subdirectory(source/firmware)
