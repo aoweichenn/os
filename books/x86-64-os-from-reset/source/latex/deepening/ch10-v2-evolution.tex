@@ -1,246 +1,412 @@
-\section{从可交互内核到类 Unix 系统}
+\section{从能运行的原型走向可演进的系统}
 
-v1.0 已经能从真实键盘 IRQ 唤醒 Ring 3 Shell，读写持久文件并安全回到 idle。
-它证明整条垂直链路成立，却还没有形成可扩展的用户系统。正常镜像一次创建四个
-固定进程；用户 ELF 是 Kernel 的内嵌字节；Shell 自己实现文件命令；进程容量、
-内核栈和描述符表都由固定数组形状决定。
+v1.0 已经把复位、装载、异常、分页、中断、Ring 3、调度、IPC、持久文件和
+交互式 Shell 连成一条真实路径。它回答了“能否完全不用现成固件与引导器，
+让自己的用户程序在 x86-64 上运行”。第二周期要回答的问题不同：
 
-这些限制不是“小一点的性能问题”。如果 PID 同时充当数组位置，就很难表达
-槽位复用后仍保持身份唯一；如果 fd 同时充当磁盘句柄，就无法让 fork 后的父子
-共享文件偏移；如果虚拟区间同时意味着物理页已经存在，就无法实现按需分页。
-第二周期的任务是逐一拆开这些被早期规模掩盖的概念。
+\begin{quote}
+当对象数量增加、程序来自磁盘、地址页可以延迟出现、多个执行流共享资源，
+并且磁盘写入可能被断电打断时，系统还能否保持身份、所有权和失败边界清晰？
+\end{quote}
 
-\begin{longtable}{L{0.22\textwidth}L{0.30\textwidth}L{0.36\textwidth}}
+早期原型常把两个概念压进同一份存储，因为这能缩短第一次闭环。四个 PCB
+槽位看起来就是四个 PID；八个描述符槽看起来就是八个打开文件；装载一段 ELF
+看起来就意味着已经为整段分配物理页。这些做法并非错误，但它们只在对象少、
+生命周期一致、没有共享时成立。
+
+\begin{longtable}{L{0.22\textwidth}L{0.31\textwidth}L{0.35\textwidth}}
 \toprule
-\textbf{v1.0 静态边界} & \textbf{为什么阻碍扩展} & \textbf{v2.0 长期抽象}\\
+\textbf{早期等价关系} & \textbf{扩展后为何失效} & \textbf{v2 长期关系}\\
 \midrule
 \endfirsthead
 \toprule
-\textbf{v1.0 静态边界} & \textbf{为什么阻碍扩展} & \textbf{v2.0 长期抽象}\\
+\textbf{早期等价关系} & \textbf{扩展后为何失效} & \textbf{v2 长期关系}\\
 \midrule
 \endhead
-四个 PCB 槽位 & PID、状态和存储位置耦合 & 单调 PID 与可复用进程槽\\
-八槽描述符 & fd 直接携带底层对象形状 & fd 引用 open-file description\\
-内嵌用户 ELF & 不能由 Shell 选择磁盘程序 & VFS vnode 上的严格 exec\\
-固定用户页 & 装载时立即消耗全部物理页 & VMA、COW 与 demand paging\\
-具体文件句柄 & 路径和 inode 布局泄漏到进程层 & VFS、mount 与 vnode\\
-同步 ATA PIO & I/O 等待占用 CPU，提交恢复能力弱 & 块请求队列、IRQ14 与 journal\\
+PID 等于 PCB 槽位 & 槽位复用会让陈旧身份指向新对象 & PID 标识 Process，对象位置可以变化\\
+Process 等于调度现场 & 一个地址空间可能有多个独立执行流 & Process 共享资源，Thread 参与调度\\
+fd 等于文件句柄 & dup 和 fork 后需要共享偏移而独立关闭 & fd 引用 FileDescription，后者引用 Vnode\\
+虚拟区等于物理页 & 未访问页面不应立即占用 RAM & VMA 描述意图，PTE 描述驻留事实\\
+文件等于 inode 布局 & 挂载、设备与多种文件系统不共享磁盘格式 & VFS 对象隔离命名语义与存储格式\\
+脏标志等于持久提交 & 断电可能把多块更新切在任意位置 & journal 记录事务边界和重放顺序\\
 \bottomrule
 \end{longtable}
 
-\section{v2.0 的收敛目标}
+因此 v2 不是简单增加系统调用数量。它要把早期被合并的身份拆开，并使每一条
+引用都能回答四个问题：谁创建它，谁可以共享它，什么时候最后释放，任一步
+失败后怎样恢复到调用前状态。
 
-v2.0 定位为单处理器、多进程、类 Unix 的教学操作系统。它仍由自研 ROM 和
-Stage 1 从复位向量启动，不借用 BIOS、UEFI 或现成 bootloader。区别在于
-Kernel 完成初始化后不再直接创建 Shell、生产者、消费者和 worker，而是从
-自研根文件系统读取 \code{/sbin/init}：
+\section{v2.0 的边界与三类机器配置}
+
+v2.0 仍从项目自己的 128 KiB ROM 开始，由自研 Stage 1 完成长模式与 ELF64
+Kernel 装载。QEMU TCG 只模拟 x86-64 CPU、内存、传统中断控制器、时钟、
+键盘与 IDE。Kernel 初始化后从自研 rootfs 执行 \code{/sbin/init}，PID1
+再启动 \code{/bin/sh} 并回收孤儿。Shell 从磁盘执行普通工具，通过
+fork、exec、pipe、dup、wait、signal 和 TTY 组合它们。
 
 \begin{pdfdiagram}
-  \node[os state] (boot) {ROM 与 Stage 1\\自研启动链};
-  \node[os block,right=of boot] (kernel) {Kernel\\内存、VFS、调度};
-  \node[os state,right=of kernel] (init) {PID1\\init 与孤儿回收};
-  \node[os block,below=of init] (shell) {外部 Shell\\fork/exec/wait};
-  \node[os state,left=of shell] (tools) {\code{/bin} 工具\\管道与重定向};
-  \node[os block,left=of tools] (storage) {rootfs v2\\journal 与重放};
+  \node[os state] (boot) {ROM / Stage 1\\自研启动链};
+  \node[os block,right=of boot] (kernel) {Kernel\\资源与硬件};
+  \node[os state,right=of kernel] (init) {\code{/sbin/init}\\PID1};
+  \node[os block,below=of init] (shell) {\code{/bin/sh}\\作业控制};
+  \node[os state,left=of shell] (tools) {\code{/bin/*}\\外部 ELF};
+  \node[os block,left=of tools] (fs) {rootfs v2\\journal};
   \draw[os arrow] (boot) -- (kernel);
   \draw[os arrow] (kernel) -- (init);
   \draw[os arrow] (init) -- (shell);
   \draw[os arrow] (shell) -- (tools);
-  \draw[os arrow] (tools) -- (storage);
+  \draw[os arrow] (tools) -- (fs);
 \end{pdfdiagram}
-\diagramnote{用户程序从文件系统取得身份；Shell 组合进程和描述符，不再实现所有命令。}
+\diagramnote{Kernel 只建立最初的 Process/Thread；用户空间的后续结构由 PID1 和 Shell 通过稳定 ABI 形成。}
 
-最终用户应能输入：
+\subsection{Linux 对齐指分层能力，不指源码规模}
 
-\begin{lstlisting}[language={},caption={v2.0 目标用户场景}]
-cat input.txt | wc > output.txt
-sleep 1000 &
-jobs
-kill <pid>
-\end{lstlisting}
+现代 Linux 能覆盖多架构、多处理器、网络、容器和大量设备。教学内核若把
+“对齐”理解为复制这些表面数量，主线会很快失去可解释性。本项目只选择直接
+决定长期正确性的结构：
 
-这四行表面上只是 Shell 语法，背后分别要求文件描述符继承、动态管道、dup、
-父子进程、阻塞 wait、deadline 唤醒、信号、进程组、终端前台所有权和持久
-文件提交。它们比“增加一个新命令”更适合作为系统集成目标。
+\begin{itemize}
+  \item Process 与 Thread 分离，调度器选择 Thread；
+  \item 地址空间、文件表、工作目录和信号状态通过显式引用共享；
+  \item fd、FileDescription 与 Vnode 分属三层身份；
+  \item VMA 与页表项分别表示地址意图和当前硬件映射；
+  \item 页缓存、块请求、journal 事务和磁盘块分别拥有状态；
+  \item 容量由分配器和运行时资源限制决定，不由固定数组形状决定。
+\end{itemize}
 
-\subsection{容量是验收下限，不是 ABI 位宽}
+SMP、网络、USB、AHCI/NVMe、动态链接和完整 POSIX 不进入 v2.0。这个边界
+不是降低质量，而是让单核系统中的每个共享对象、阻塞点和故障恢复都能够真正
+完成并被证明。
 
-\begin{longtable}{L{0.25\textwidth}L{0.56\textwidth}}
+\subsection{内存配置必须对应不同证据}
+
+把所有配置都要求成“完整系统”会产生错误优化：为了让 64 MiB 跑最大并发，
+实现可能重新引入狭窄固定表；为了让 64 GiB 启动，测试又可能忽略低内存下的
+分配失败。三种正式配置因此承担不同角色。
+
+\begin{longtable}{L{0.18\textwidth}L{0.16\textwidth}L{0.48\textwidth}}
 \toprule
-\textbf{领域} & \textbf{v2.0 验收下限}\\
+\textbf{配置} & \textbf{RAM} & \textbf{提供的证据}\\
 \midrule
-物理内存 & 64 GiB 主规格与 64 MiB 最小回归；容量由 E820/CPUID/direct-map 驱动\\
-进程 & 至少 64 个同时存在的槽位，PID 使用单调 64 位值\\
-描述符 & 每进程至少 64 个 fd，系统级打开对象具有引用计数\\
-路径与参数 & 1024 字节路径、255 字节组件、64 个参数和 32 KiB 参数环境区\\
-文件系统 & 至少 64 MiB 根文件系统，单文件至少 16 MiB\\
-管道 & 至少 128 条动态 4 KiB 管道\\
-用户空间 & 至少 16 个独立磁盘 ELF 工具和八级流水线\\
+bootstrap & 64 MiB & 复位、启动链、异常、基础分页和历史失败路径仍能工作\\
+functional & 256 MiB & PID1、Shell、VM、线程、信号、TTY 和持久化的完整功能\\
+capacity & 64 GiB & 管理全部 E820 RAM、访问 4 GiB 以上地址并运行规模压力\\
 \bottomrule
 \end{longtable}
 
-这里的容量是测试必须跨越的下限，不表示可以把协议字段改成窄整数。64 GiB
-也不是实现硬上限；物理内存管理仍取 E820、处理器地址宽度与当前 64 TiB
-direct-map 的共同边界。内部计数、标识、偏移和容量仍优先使用 64 位；页表项、
-磁盘块号和硬件寄存器则严格服从实际格式。耗尽容量必须返回明确错误，并保持
-已有对象不变。
+64 GiB 是当前主容量规格，不是硬编码实现上限。实际受管上界仍取 E820、
+\code{CPUID.80000008H} 的物理地址宽度、64 TiB direct-map 与运行时资源
+限制的交集。
 
-\section{阶段顺序由资源依赖决定}
+\subsection{容量数字是压力目标，不是数组长度}
+
+\begin{longtable}{L{0.25\textwidth}L{0.55\textwidth}}
+\toprule
+\textbf{领域} & \textbf{v2.0 容量配置验收下限}\\
+\midrule
+执行实体 & 同时至少 512 个 Thread，其中至少 256 个 Process\\
+线程共享 & 单 Process 至少 64 个 Thread，具有独立栈、TLS 与 TID\\
+描述符 & 分块动态表，默认 soft limit 256，hard limit 至少 4096\\
+管道 & 至少 1024 条 64 KiB 管道，缓冲页按需获得\\
+路径与参数 & 路径 4096 字节、组件 255 字节、参数环境合计 128 KiB\\
+存储 & 至少 1 GiB 稀疏镜像、256 MiB rootfs、64 MiB 单文件\\
+用户环境 & 至少 32 个独立 ELF 工具和 16 级流水线\\
+\bottomrule
+\end{longtable}
+
+内部标识、容量、偏移和时间优先使用固定宽度的大类型；硬件寄存器、页表项和
+磁盘字段则服从真实协议。达到限制必须返回明确错误，不能覆盖旧对象、静默截断
+或只完成一半操作。
+
+\section{路线不是功能清单，而是依赖图}
+
+旧路线把 VFS 与新磁盘格式放在同一个阶段，把 COW 放在 VMA 之前，也把
+\code{SYSCALL/SYSRET} 推迟到所有调用都完成以后。这些顺序都能写出短期代码，
+却会制造第二次重构。新路线把十三个小版本组织成五个依赖波次：
+
+\begin{longtable}{L{0.17\textwidth}L{0.20\textwidth}L{0.43\textwidth}}
+\toprule
+\textbf{波次} & \textbf{版本} & \textbf{建立的稳定边界}\\
+\midrule
+A：资源与实体 & v1.1--v1.3 & 内存生命周期、Process/Thread、动态对象与 fd\\
+B：命名与来源 & v1.4--v1.6 & VFS、rootfs v2、PID1、磁盘 exec 和 wait\\
+C：内存与组合 & v1.7--v1.9 & VMA/按需分页、COW、Unix I/O 和外部 Shell\\
+D：并发与控制 & v1.10--v1.11 & 用户线程、futex、信号、TTY 与作业控制\\
+E：持久与收口 & v1.12--v1.13 & 异步块层、journal、ABI 冻结与加固\\
+\bottomrule
+\end{longtable}
 
 \begin{pdfdiagram}
-  \node[os state] (resource) {v1.1\\可回收资源};
-  \node[os block,right=of resource] (vfs) {v1.2\\VFS 与 rootfs v2};
-  \node[os state,right=of vfs] (exec) {v1.3\\进程树与 exec};
-  \node[os block,below=of exec] (cow) {v1.4\\fork 与 COW};
-  \node[os state,left=of cow] (io) {v1.5\\Unix I/O};
-  \node[os block,left=of io] (signal) {v1.6\\信号与终端};
-  \node[os state,below=of signal] (vm) {v1.7\\按需虚拟内存};
-  \node[os block,right=of vm] (journal) {v1.8\\块层与 journal};
-  \node[os state,right=of journal] (abi) {v1.9\\ABI v2 与加固};
-  \draw[os arrow] (resource) -- (vfs);
-  \draw[os arrow] (vfs) -- (exec);
-  \draw[os arrow] (exec) -- (cow);
-  \draw[os arrow] (cow) -- (io);
-  \draw[os arrow] (io) -- (signal);
-  \draw[os arrow] (signal) -- (vm);
-  \draw[os arrow] (vm) -- (journal);
-  \draw[os arrow] (journal) -- (abi);
+  \node[os state] (a) {A\\资源与执行实体};
+  \node[os block,right=of a] (b) {B\\VFS 与磁盘程序};
+  \node[os state,right=of b] (c) {C\\VM 与用户组合};
+  \node[os block,below=of c] (d) {D\\线程与交互控制};
+  \node[os state,left=of d] (e) {E\\持久化与冻结};
+  \node[os block,left=of e] (release) {v2.0\\集成发布};
+  \draw[os arrow] (a) -- (b);
+  \draw[os arrow] (b) -- (c);
+  \draw[os arrow] (c) -- (d);
+  \draw[os arrow] (d) -- (e);
+  \draw[os arrow] (e) -- (release);
 \end{pdfdiagram}
-\diagramnote{箭头表示后一个状态模型可以依赖的已验收所有权；不能只按用户可见程度调换顺序。}
+\diagramnote{每个箭头都表示后一个波次依赖前一个波次已经通过失败路径和回收验证的对象关系。}
 
-\subsection{v1.1：先让资源能够归还}
+\section{波次 A：先建立可回收资源与真实执行实体}
 
-v1.1 的第一增量已经解除低 64 MiB 页帧上限：2-bit 元数据按最高 RAM PFN
-动态选址，\code{0xFFFF888000000000} 高半区 direct-map 覆盖全部 type 1
-RAM，页表与用户页访问不再依赖物理地址等于指针。64 GiB 主规格已经在
-4 GiB 以上完成页帧读写回收，64 MiB 仍作为启动兼容回归。
+\subsection{v1.1：分配成功不等于生命周期完成}
 
-这只是资源层的地址与容量基础。64 KiB 单调堆仍不适合作为 VFS 对象、页缓存
-和大量进程的长期来源。后续增量继续实现可分裂合并的页分配、可释放内核对象和
-动态 Ring 0 栈，再把进程与描述符容量提高到 64。
+v1.1 的第一增量已经解除低 64 MiB 页帧限制。2-bit 帧元数据根据最高可用
+RAM PFN 动态计算，在低端启动映射中选择合法位置；正式页表从
+\code{0xFFFF888000000000} 建立高半区 direct-map。64 GiB QEMU 已经在
+4 GiB 以上执行分配、两种 64 位模式写入、读回和释放。
 
-本阶段最重要的证据不是同时打印 64 个 PID，而是每轮销毁后 free frame、堆
-字节、栈和对象计数精确回到基线。固定种子模型应反复覆盖分裂、合并、耗尽、
-重复释放和保留页拒绝；最终 ELF 审计继续拒绝 \code{.init\_array} 与未解析
-运行时符号。
+后续 Vnode、VMA、Thread、Pipe 和缓存页不能依赖 64 KiB 单调堆。v1.1
+因此还要交付可分裂合并的页分配器、可释放内核堆或对象缓存、动态 Ring 0
+栈、中间页表回收和统一资源快照。
 
-\subsection{v1.2：VFS 必须位于磁盘 exec 之前}
+分配器最容易被忽略的性质是失败原子性。例如申请四页时若第三页失败，前两页
+不能遗留；释放范围必须先完整验证，再改变任意状态。固定种子模型至少执行
+十万次分配、释放、分裂、合并、耗尽和错误释放，每轮结束后空闲页集合必须与
+参考模型完全一致。
 
-当前用户 ELF 文件尺寸已经大于 5120 字节。如果直接给具体 FileSystem 增加
-\code{Exec}，进程层会依赖 inode、直接块和当前磁盘句柄，随后引入 cwd、
-挂载和设备文件时又要重写接口。v1.2 先建立 vnode、mount、dentry 和
-open-file description，再让 rootfs v2 使用 4 KiB 逻辑块和间接索引支持
-至少 16 MiB 普通文件。
+\subsection{v1.2：Process 是资源容器，Thread 才是调度实体}
 
-路径解析在本阶段统一处理绝对/相对路径、点、双点、根目录夹取和组件上限；
-rename、unlink、truncate 和非空目录拒绝同时进入失败模型。旧磁盘必须通过
-magic/version 被明确识别，未知非零介质不能被当作空盘格式化。
+历史 Unix 最初把单个进程既当资源所有者又当执行流。线程出现后，一个地址
+空间中可以有多条寄存器现场和栈；若仍只保存一个 PCB，就无法说明哪一部分
+应共享，哪一部分应独立。
 
-\subsection{v1.3：先有 exec、父子关系和 wait}
+\begin{pdfdiagram}
+  \node[os block] (process) {Process\\PID};
+  \node[os state,below left=of process] (address) {AddressSpace\\VMA / PTE};
+  \node[os state,below=of process] (files) {FileTable\\FsContext};
+  \node[os state,below right=of process] (signals) {SignalState\\children};
+  \node[os block,right=of process] (thread) {Thread\\TID};
+  \node[os state,below=of thread] (private) {CPU context\\kernel/user stack\\TLS / mask};
+  \draw[os arrow] (process) -- (address);
+  \draw[os arrow] (process) -- (files);
+  \draw[os arrow] (process) -- (signals);
+  \draw[os arrow] (process) -- node[above]{owns many} (thread);
+  \draw[os arrow] (thread) -- (private);
+\end{pdfdiagram}
+\diagramnote{Process 退出和 Thread 退出不是同一个事件；最后一个 Thread 消失后才开始释放共享资源。}
 
-正常启动只创建 PID1。PID1 从 \code{/sbin/init} ELF 得到地址空间，再启动
-\code{/bin/sh} 并负责回收孤儿。PCB 新增 parent、children、exit status
-和 Zombie；Zombie 不再运行，也已释放大部分资源，但必须保留退出信息直到
-父进程成功 wait 一次。
+v1.2 先在内核中建立这一区分，即使用户线程尚未开放。调度器的 Ready、
+Running、Blocked 和 Zombie 状态属于 Thread；父子关系、地址空间和打开
+文件属于 Process。PID 与 TID 都是 \code{uint64\_t} 身份，不等于数组位置。
 
-exec 使用既有两遍 ELF 原则：先读取并验证全部结构、权限、范围和相互关系，
-再建立新地址空间。只有新地址空间、初始用户栈和 \code{argc/argv/envp}
-全部准备好后，才原子替换旧进程映像。任何路径错误、非法 ELF、参数过大或
-内存不足都必须让调用进程继续执行旧程序。
+\code{SYSCALL/SYSRET} 也在本阶段建立骨架。该指令不会像特权级变化的中断门
+一样自动读取 TSS.RSP0，所以入口必须保存用户 RSP，切换到当前 Thread 的
+内核栈，再保存 RIP 与 RFLAGS。STAR、LSTAR、FMASK 和 canonical 返回地址
+都与 Thread 现场直接相关。若等到 v1.13 才加入，信号现场和所有新系统调用
+都要重新验证一次入口边界。
 
-\subsection{v1.4：fork 通过页故障完成延迟复制}
+\subsection{v1.3：fd、打开状态和文件身份必须分层}
 
-fork 时父子共享代码和只读数据；原本可写的用户页暂时改成只读 COW，并增加
-物理帧引用。当一方第一次写入时，\#PF 分发器确认 present、write 和 COW
-三项原因，分配新页、复制内容、修改本进程 PTE，再执行 \code{INVLPG}。
+fd 是 Process 局部小整数。FileDescription 保存当前偏移与打开状态，Vnode
+表示命名空间中的文件身份。两次独立 open 应产生不同 FileDescription；
+dup 或 fork 复制 fd 引用时则应共享同一个 FileDescription，因此共享偏移，
+但每个 fd 可以独立关闭。
 
-普通只读代码写故障不能被 COW 分支放行。页表或物理页不足时，也不能留下半个
-子进程或错误引用计数。随机模型需要把 fork、写入、exec、父先退出和子先退出
-交错，最终引用总数仍与实际 PTE 集合一致。
+\begin{lstlisting}[language={},caption={动态描述符的引用方向}]
+Process::FileTable[fd]
+    -> FileDescription { offset, status_flags, reference_count }
+        -> Vnode or Pipe or Console
+\end{lstlisting}
 
-\subsection{v1.5：描述符组合替代 Shell 内建}
+动态并不表示“每次都无限增长”。FileTable 按块扩展，并有独立 soft limit
+与 hard limit。限制是策略，存储是机制；测试可以在 256 MiB 下调低 soft
+limit，却不能切换回固定 64 槽实现。随机 open、duplicate、close 和 limit
+变化要证明陈旧 fd 不会因槽位复用而访问新对象。
 
-动态 pipe、dup、close-on-exec 和描述符继承完成后，Shell 才能安全地把
-标准输入输出重接到文件或管道。fd 是进程局部整数；open-file description
-保存共享偏移和状态；vnode 表示文件身份；pipe 端点负责字节流方向。四者不能
-合并为一个“大句柄”。
+\section{波次 B：先稳定命名空间，再改变磁盘格式}
 
-除 cd、export、jobs 和 exit 等必须改变 Shell 自身状态的命令外，cat、ls、
-mkdir、cp 和 wc 都迁移成 \code{/bin} 下的独立 ELF。流水线中途任何一次
-pipe、fork、dup 或 exec 失败，都要关闭已获得端点并终止/回收已创建子进程，
-否则读者可能永远等不到 EOF。
+\subsection{v1.4：VFS 先运行在旧文件系统适配器上}
 
-\subsection{v1.6：信号把异步事件变成进程语义}
+Unix 把“路径是什么”和“磁盘字节怎样排列”分开，才允许同一个 open/read
+接口访问磁盘文件、设备和伪文件。VFS 的 Superblock、Mount、Vnode、
+Dentry/Path 与 FileDescription 分别表示文件系统实例、挂载关系、对象身份、
+解析结果和一次打开状态。
 
-PIT tick 先维护 deadline 队列，使 sleep 进程阻塞而不是忙等。信号再建立
-pending、mask、default action 和经过验证的用户 signal frame。进程组和
-前台终端让 Ctrl-C 只投递给当前前台任务，不误杀 Shell 或后台进程。
+v1.4 不改变 v0.11 磁盘格式，而是写一个 legacy-fs 适配器。这样绝对路径、
+相对路径、\code{.}、\code{..}、根目录夹取、cwd、rename 和 unlink 的错误
+可以在内存后端与旧磁盘后端上交叉验证。若 VFS 和 rootfs v2 同时改变，测试
+发现 \code{/a/b} 解析错误时无法判断问题来自目录遍历还是间接块布局。
 
-canonical line discipline 在字符设备和用户读取之间解释退格、Ctrl-C 和
-Ctrl-D。SIGCHLD 必须与 wait 状态协作，多个子进程近同时退出时也不能丢失；
-SIGKILL 不能被用户屏蔽；伪造 signal frame 不能改变 CS、SS、IOPL 或返回到
-非 canonical 地址。
+路径缓存也必须有失效规则。负缓存若记录“名字不存在”，create 后就必须失效；
+rename 同时改变源父目录与目标父目录；mount 则改变越过目录项后的对象身份。
+缓存只能加速已经定义的语义，不能成为语义来源。
 
-\subsection{v1.7：VMA 把地址区间与物理页分开}
+\subsection{v1.5：rootfs v2 只改变持久布局}
 
-VMA 只记录区间、权限、来源和映射策略。exec 先登记文件段，首次访问才由页
-故障读取文件、清零 BSS 或分配匿名页。Brk、Mmap 和 Munmap 让用户运行时可以
-实现 malloc/free；受控栈增长仍必须在最大区间和 guard page 内。
+rootfs v2 使用新 magic/version、固定宽度小端字段、4 KiB 逻辑块和可扩展
+索引，支持至少 1 GiB 稀疏磁盘、256 MiB 根文件系统和 64 MiB 单文件。
+启动区域与文件系统区域各有唯一所有者，mkfs 和镜像工具不能覆盖 ROM、
+Stage 1 或 Kernel 容器。
 
-这一阶段必须特别验证文件尾页补零、私有映射写入、unmap 后访问、区间拆分合并、
-fork 后 VMA/COW 协作与 OOM。按需分页的价值不由“页故障更多”证明，而由大型
-ELF 启动时常驻页显著少于总可装载页证明。
+这一阶段仍采用同步写入与明确 flush，不急于增加 journal。独立 fsck 从原始
+字节重建 bitmap、inode、目录可达性和块所有权，避免“由写入实现检查自己的
+输出”。旧 magic、未知非零介质、重复块、索引循环、孤儿 inode 和越界块都
+必须安全拒绝，不能通过自动格式化掩盖损坏。
 
-\subsection{v1.8：持久化完成点必须可重放}
+\subsection{v1.6：PID1 与磁盘 exec 终结内嵌程序脚手架}
 
-同步 PIO 会让调用 CPU 在设备状态上等待；Dirty/Clean 全盘协议能发现未完成
-提交，却不能细粒度重放。v1.8 建立块请求队列，用 ATA IRQ14 推进事务并唤醒
-等待者；页缓存和块缓存统一所有权，元数据更新写入带序号、校验和和 commit
-record 的 journal。
+正常 Kernel 只创建最初的 Process/Thread，从 rootfs 读取
+\code{/sbin/init}。PID1 启动 Shell，接收失去父进程的子进程，并对 Zombie
+执行 wait/reap。Zombie 已不能运行，大部分资源已经释放，但退出状态和最小
+身份必须保存到父进程成功收取一次。
 
-崩溃测试应在每一个日志边界终止 QEMU，再用同一磁盘启动新实例。挂载结果只能
-是事务前或事务后，不能出现 bitmap、inode 和目录各自来自不同时间点。Fsync
-只有在数据、必要元数据、commit 和设备 flush 全部完成后才能返回。
+exec 沿用 Kernel ELF 装载阶段的两遍原则：第一遍读取并验证全部程序头、
+W\^X、地址范围、重叠、入口和参数；第二遍建立新 AddressSpace 与初始
+\code{argc/argv/envp} 栈。只有新映像完全可运行后才替换旧映像。路径错误、
+畸形 ELF、128 KiB 参数环境超限或内存不足时，调用者仍继续执行原程序。
 
-\subsection{v1.9：冻结长期 ABI，而不是继续增加过渡入口}
+\section{波次 C：先解释地址意图，再做共享复制}
 
-x86-64 \code{SYSCALL/SYSRET} 不像中断门那样自动切换到 TSS.RSP0，因此入口
-必须先进入受控内核栈，保存用户 RSP/RIP/RFLAGS，再允许 C++ 分发。
-STAR、LSTAR 和 FMASK 决定段与标志状态；非 canonical 返回目标不能直接交给
-SYSRET，而要拒绝或改走受控 IRETQ。
+\subsection{v1.7：VMA 必须先于 COW}
 
-v1.9 冻结 ABI v2，并删除已经有统一替代的历史专用文件和管道调用。只读
-\code{/proc} 提供进程、内存和资源快照，\code{/dev/console} 与
-\code{/dev/null} 进入 VFS。固定种子变异覆盖系统调用结构、signal frame、
-路径、ELF 和 journal；日志继续限流，热路径只累加统计。
+页表项是硬件转换缓存的输入，只能表达某个虚拟页此刻是否 present、可写、
+可执行以及映射哪个物理帧。它不能完整表达“这个区间来自 ELF 文件”“允许
+按需增长”“是文件私有映射”或“尚未访问的匿名内存”。这些意图属于 VMA。
 
-\section{为什么 v2.0 仍然保持单处理器}
+\begin{pdfdiagram}
+  \node[os block] (fault) {用户 \#PF\\地址、访问类型、错误码};
+  \node[os state,right=of fault] (vma) {查找 VMA\\区间、权限、来源};
+  \node[os block,right=of vma] (classify) {分类\\非法 / 匿名 / 文件 / 栈 / COW};
+  \node[os state,below=of classify] (page) {取得页\\zero / page cache / copy};
+  \node[os block,left=of page] (pte) {提交 PTE\\TLB 失效};
+  \node[os state,left=of pte] (resume) {恢复用户\\或明确终止};
+  \draw[os arrow] (fault) -- (vma);
+  \draw[os arrow] (vma) -- (classify);
+  \draw[os arrow] (classify) -- (page);
+  \draw[os arrow] (page) -- (pte);
+  \draw[os arrow] (pte) -- (resume);
+\end{pdfdiagram}
+\diagramnote{处理程序先依据 VMA 判断访问是否合法，再依据 PTE 判断当前驻留状态；两者不能反过来。}
 
-SMP 不是把 QEMU 参数改成 \code{-smp 2}。它还要求 AP 启动、每 CPU GDT/TSS、
-本地调度状态、IOAPIC 或其他中断路由、跨核唤醒、并行引用计数、TLB
-shootdown 和更严格的锁顺序。如果在进程树、VFS、信号和按需分页尚未稳定时
-加入 SMP，几乎每个普通失败都会同时成为竞态。
+v1.7 建立按需 ELF、匿名 mmap、munmap、brk、受控栈增长和文件页缓存。大型
+BSS 在未触碰时不占物理页，文件尾页未被文件覆盖的部分必须清零。VMA 拆分、
+合并和 unmap 用十万步随机区间模型验证；exec、exit 和 unmap 后，VMA、
+页表页、缓存引用和物理页都回到基线。
 
-v2.0 保持一个 BSP，可以完整解释单核抢占、阻塞和异步设备；现有
-acquire/release 锁仍为后续多核提供语义准备，但不能据此宣称已经 SMP 安全。
-网络、图形、USB、AHCI/NVMe、完整 POSIX、动态链接和自举编译器也不进入本
-周期。明确非目标是为了让“完成”具有可判断的边界。
+\subsection{v1.8：COW 是 VMA、PTE 与引用计数的协作}
 
-\section{v2.0 的最终验收不是一张启动截图}
+fork 创建子 Process 时复制 VMA 元数据和资源引用，把私有可写驻留页在父子
+PTE 中都改为只读 COW，并增加物理页引用。写故障到达时，处理器只报告
+present/write 等硬件事实；Kernel 还必须从 VMA 与软件 PTE 位确认这是合法
+COW，而不是对只读代码的非法写入。
 
-最终发布必须在同一个干净提交上同时证明：
+若物理页只有一个引用，可以直接恢复可写权限；若仍有多个引用，才分配新页、
+复制、替换 PTE 并递减旧页引用。分配失败必须保持旧 PTE 和引用计数不变。
+多线程 Process 调用 fork 时，v2 明确只在子 Process 复制调用 Thread，
+避免复制其他 Thread 正在执行的现场。
+
+\subsection{v1.9：Unix I/O 让程序通过资源图组合}
+
+pipe、dup、close-on-exec 与描述符继承完成后，Shell 可以先创建管道，再
+fork 子进程，把子进程的 fd 0/1 重接到端点，关闭不需要的引用，最后 exec
+磁盘工具。EOF 只有在最后一个写端引用关闭后出现；若 Shell 遗留一个写端，
+读者将永久等待。
+
+外部 Shell 只保留 \code{cd}、\code{export} 和 \code{exit} 等必须改变自身
+状态的内建命令，至少 32 个普通工具位于 \code{/bin}。16 级流水线故意让
+管道容量小于输入总量，从而证明生产者、消费者、阻塞唤醒与调度可以持续推进，
+而不是依靠一次性大缓冲。
+
+\section{波次 D：共享地址空间中的并发与终端控制}
+
+\subsection{v1.10：线程需要 TLS，也需要原子的 compare-and-block}
+
+用户 Thread 共享 Process 的 AddressSpace 与 FileTable，但拥有独立用户栈、
+Kernel 栈、寄存器现场、TID、TLS 和 signal mask。线程入口使用 trampoline，
+入口函数返回后统一 ThreadExit；最后一个 Thread 退出才进入 Process 退出。
+
+大多数 mutex 获取在用户态原子指令上成功，不应每次陷入内核。发生竞争时，
+futex wait 读取一个对齐的 32 位用户 word：只有值仍等于调用者期望值时才
+加入等待队列。比较和阻塞必须相对于 wake 原子，否则 wake 可能落在“已经
+比较但尚未排队”的窗口中，形成永久丢失唤醒。
+
+\begin{lstlisting}[language={},caption={futex wait 必须保持的原子关系}]
+lock(futex_bucket)
+if (copy_from_user(word) != expected)
+    return WouldBlock
+enqueue(current_thread)
+block_and_unlock(futex_bucket)
+\end{lstlisting}
+
+单 Process 的 64 Thread、全系统 512 Thread、TLS 隔离、虚假唤醒和地址
+失效都进入验收。热竞争路径只累加计数，不按每次 wait/wake 打印日志。
+
+\subsection{v1.11：信号和 TTY 把异步硬件事件变成用户语义}
+
+PIT 提供 tick，但 sleep 不应每个 tick 扫描所有 Thread。绝对 deadline
+进入有序 timer queue，到期时只唤醒相关等待者。串口日志的来宾时间也来自
+这一单调时钟；时钟初始化前的日志明确标为 boot phase，避免伪造时间零点。
+
+信号需要 disposition、mask、pending 和严格验证的用户 signal frame。
+进程组、session 与 controlling TTY 决定 Ctrl-C、Ctrl-Z 应到达哪个前台
+任务。Shell 自身通常不应被前台 Ctrl-C 终止；后台任务也不能抢走规范输入。
+sigreturn 必须拒绝非 canonical RIP/RSP、非法 CS/SS 和提升 IOPL 的 RFLAGS。
+
+\section{波次 E：先稳定写集合，再引入崩溃恢复}
+
+\subsection{v1.12：journal 位于稳定 VFS 与页缓存之后}
+
+同步 ATA PIO 会让调用 Thread 在端口状态上轮询。IRQ14 请求队列把设备操作
+表示为独立 BlockRequest，提交者阻塞后其他 Ready Thread 仍可运行。缓存页
+经历 loading、clean、dirty、writeback 和 error 状态，状态迁移必须与 I/O
+完成和对象引用一致。
+
+journal 只保证明确事务中的元数据写集合。事务描述和数据先落盘，commit
+record 与设备 flush 完成后才算提交。崩溃测试在具名写点终止 QEMU，再用同一
+镜像重启；恢复结果只能是完整旧状态或完整新状态。至少一千个固定种子断电点
+用于验证重放幂等、bitmap/inode/目录一致和未提交事务不可见。
+
+\subsection{v1.13：冻结 ABI，比继续加功能更重要}
+
+ABI v2 固定系统调用号、寄存器约定、错误码、结构版本、字段宽度和对齐。
+\code{SYSCALL/SYSRET} 成为正式入口；\code{INT 0x80} 只保留具名兼容测试
+或明确移除。所有用户指针先复制或固定，长度加法、乘法和半开区间都进行溢出
+检查，任何用户输入都不能使 Kernel panic。
+
+\code{/dev} 与最小只读 \code{/proc} 或等价接口提供 Process、Thread、内存、
+VFS、块层、信号和系统调用汇总。可观测性不等于刷日志：IRQ、每页故障和每次
+futex 不打印；阶段完成、异常、速率受限告警和最终资源快照才形成结构化日志。
+256 MiB 功能 soak 与 64 GiB 容量 soak 必须证明对象数不会随时间单调增长。
+
+\section{每个版本怎样达到软件工程意义上的完成}
+
+同一机制需要由不同层次的证据夹逼：
 
 \begin{enumerate}[label=\arabic*.]
-  \item 自研启动链挂载 rootfs v2，从磁盘执行 PID1 和外部 Shell。
-  \item 64 个并发进程完成 fork、exec、wait、sleep、signal 和退出回收。
-  \item Shell 完成八级流水线、重定向、后台任务与 Ctrl-C。
-  \item COW、按需 ELF、匿名内存、文件映射和用户堆压力后无页帧泄漏。
-  \item 至少 16 个用户 ELF 只依赖项目自研运行时。
-  \item 断电注入后的 journal 重放保持文件系统一致。
-  \item 64、128、256 MiB 三种 QEMU 内存配置均通过核心场景。
-  \item 单元、集成、随机、产物审计、成功整机和全部失败镜像一次通过。
-  \item 需求、架构、ADR、模块文档、教材、手机 PDF 与网站来自同一提交。
+  \item ADR 记录问题、选择、替代方案、状态机、所有权和失败原子性。
+  \item 宿主单元测试验证与硬件无关的边界，参考模型提供独立判断来源。
+  \item 模块集成和固定种子随机测试交错创建、失败、共享、关闭与回收。
+  \item ELF、ABI、汇编入口、磁盘镜像或 journal 格式由产物测试读取真实字节。
+  \item QEMU 在适用内存配置上执行正常、容量、低资源和故障注入场景。
+  \item 结束快照比较页、堆、Thread、Process、fd、Vnode、Pipe 与请求计数。
+  \item 需求、架构、模块文档、教材、网站、手机 PDF 和发布记录来自同一提交。
 \end{enumerate}
 
-版本号因此表示已经保存的系统证据，而不是完成比例。v1.1 到 v1.9 每次只跨越
-一个主要状态模型；v2.0 本身不再加入新机制，只冻结契约并完成端到端验收。
+随机测试失败必须报告 seed、迭代位置、被破坏的不变量和可复现命令。QEMU
+测试必须有总截止时间，串口标记要区分成功完成、预期拒绝与意外 panic。没有
+资源回到基线的证据，“场景输出正确”仍不能算完成。
+
+\section{v2.0 只发布已经稳定的机制}
+
+v2.0 不新增主要对象和状态机。最终发布在同一干净提交上完成：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 64 MiB 验证自研启动链和基础异常，256 MiB 执行完整功能套件。
+  \item 64 GiB 管理全部可用 RAM，并在 4 GiB 以上执行真实读写回收。
+  \item rootfs v2 启动 PID1、Shell 和至少 32 个磁盘 ELF 工具。
+  \item 16 级流水线、重定向、前后台任务和 Ctrl-C 形成交互闭环。
+  \item fork/COW、按需分页、文件映射、64 Thread 和 futex 压力后无泄漏。
+  \item 至少 256 个 Process、512 个 Thread、4096 fd 和 1024 条管道达到
+        明确容量下限。
+  \item journal 在断电注入后重放，fsck 独立证明文件系统一致。
+  \item 全部测试、ABI、格式文档、教材、手机导出和公开网站可复现。
+\end{enumerate}
+
+这样的版本号表示一组已经保存的工程证据，而不是功能完成比例。十三个小版本
+让每次只跨越一个主要状态边界；v2.0 则把这些边界组合成一个能够启动、交互、
+并发、持久化并在失败后恢复的完整教学系统。

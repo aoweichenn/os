@@ -39,42 +39,44 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 统一记录在 [芯片与寄存器结构](hardware/chips.md)；机器可读版本位于
 `docs/hardware/register_map.yaml`。新增设备必须先补充这份结构化规格，再进入驱动实现。
 
-## v2.0 目标架构（尚未实现）
+## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向，不代表当前 v1.0 已经具备这些模块。每个箭头
+本节描述第二周期的目标依赖方向，不代表当前 v1.1 已经具备这些模块。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
-页表或 PCB 内部数组。
+页表或执行实体内部结构。
 
 ```text
-/sbin/init ──fork/exec/wait/signal──> /bin/sh ──pipe/dup/redirection──> /bin/*
-       │                                   │
-       └──────────────── User ABI v2 / 自研用户运行时 ────────────────┘
-                                           ↓
-                          Process / Signal / Terminal
-                                           ↓
-                   Descriptor table / Open-file description
-                                           ↓
-                    VFS ── rootfs v2 / devfs / procfs
-                                           ↓
-                  Page cache / Journal / Block request queue
-                                           ↓
-                            ATA PIO + IRQ14
-
-用户 #PF ──> VMA / COW / Demand paging ──> Page tables
-                                              ↓
-                        Kernel object allocator / Frame allocator
-                                              ↓
-                              E820 facts / Physical direct map
+/sbin/init ──fork/exec/wait──> /bin/sh ──pipe/dup/job control──> /bin/*
+       └──────────── User ABI v2 / 自研用户运行时 / TLS / futex ─────────┘
+                                      ↓
+             Process ──owns──> Thread(s) ──> Scheduler / Timer / Signal / TTY
+                │
+                ├──> FileTable ──> FileDescription ──> VFS
+                │                                      ├─ rootfs v2
+                │                                      ├─ devfs
+                │                                      └─ procfs
+                │
+                └──> AddressSpace ──> VMA ──> #PF / Demand paging / COW
+                                            ↓
+                                    Page cache / Page tables
+                                            ↓
+                         Journal / Block request queue / ATA PIO + IRQ14
+                                            ↓
+                         Object allocator / Frame allocator / Direct map
+                                            ↓
+                                  E820 / CPUID hardware facts
 ```
 
 目标架构把“身份”和“存储位置”分开：
 
-- PID 是单调 64 位身份，不是 PCB 数组下标；
+- PID 与 TID 是相互独立的 64 位身份，不是对象数组下标；
+- Process 是共享资源容器，Thread 才是调度实体；
 - fd 是进程局部引用，不是文件系统句柄或管道数组下标；
 - open-file description 持有偏移和状态，多个 fd 可以引用同一对象；
 - vnode 表示文件系统对象，不暴露具体 inode 的磁盘布局；
 - VMA 表示用户虚拟区间，不等同于已经分配的物理页；
-- block request 表示设备事务，不等同于缓存条目或文件页。
+- block request 表示设备事务，不等同于缓存条目或文件页；
+- 资源限制是运行时策略，不是对象表的编译期长度。
 
 ### v2.0 正常启动控制流
 
@@ -84,8 +86,8 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
   → 初始化可回收页/对象分配器
   → 建立 VFS，挂载 rootfs v2、devfs、procfs
   → 从 /sbin/init 读取并严格验证 ELF
-  → 创建唯一初始用户进程 PID1
-  → PID1 exec /bin/sh，并持续 wait/reap 孤儿
+  → 创建唯一初始 Process/Thread 并 exec /sbin/init（PID1）
+  → PID1 启动 /bin/sh，并持续 wait/reap 孤儿
   → Shell fork/exec 外部命令，使用描述符组合 I/O
   → 无 Ready 进程时进入 STI/HLT/CLI idle
 ```
@@ -99,8 +101,8 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 v2.0 仍是单处理器内核。interrupt gate、关中断提交区和自旋锁共同保护当前
 状态，但“单核”不等于可以忽略资源生命周期：
 
-- 进程、页、VMA、vnode、open-file description、pipe、signal frame 和
-  block request 都必须有唯一所有者或显式引用计数；
+- Process、Thread、页、VMA、vnode、open-file description、pipe、
+  signal frame 和 block request 都必须有唯一所有者或显式引用计数；
 - 任意可阻塞路径在睡眠前不得持有禁止调度的自旋锁；
 - 用户复制不得发生在 VFS、页缓存、日志或设备锁内；
 - 锁顺序由模块文档统一固定，失败回滚按获得资源的逆序执行；

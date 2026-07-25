@@ -43,13 +43,16 @@ sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，�
 完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 73 项
 CTest。
 
-第二周期已经完成架构规划：v1.1 已先解除低 64 MiB 物理内存上限，下一步
-继续完成可回收内核对象、动态栈和 64 进程容量基础，随后
-依次建设 VFS/文件系统 v2、磁盘 exec 与父子进程、fork/COW、Unix I/O、
-信号与终端、按需分页、异步块层和 ABI v2。最终 v2.0 收敛为单核、多进程、
-可从自研文件系统启动 `/sbin/init` 与外部 Shell 的类 Unix 教学系统。
+第二周期已经按依赖波次重新规划：v1.1 先完成可回收内存和对象生命周期；
+随后分离 Process/Thread、建立动态调度和 `SYSCALL/SYSRET` 骨架，再完成
+类型化对象与动态 fd。VFS 先运行在旧文件系统适配器上，rootfs v2 独立演进，
+之后才引入 PID1 和磁盘 exec。虚拟内存严格按 VMA/按需分页先于 fork/COW
+的顺序建设，再进入 Unix I/O、外部 Shell、用户线程/TLS/futex、信号/TTY、
+journal 和 ABI 冻结。最终 v2.0 收敛为单 BSP、多进程、多线程、可从自研
+文件系统启动 `/sbin/init` 与外部 Shell 的类 Unix 教学系统。64 MiB、
+256 MiB 和 64 GiB 分别承担启动兼容、完整功能和容量压力，不再混为一项验收。
 详细阶段和量化验收见 [docs/roadmap.md](docs/roadmap.md)，范围取舍见
-[ADR 0016](docs/adr/0016-single-core-unix-like-v2-evolution.md)。
+[ADR 0018](docs/adr/0018-v2-program-rebaseline.md)。
 
 ## 最短构建与测试路径
 
