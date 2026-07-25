@@ -26,61 +26,61 @@ constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE = 0ULL;
 
 }
 
-bool IsCanonicalVirtualAddress(const uint64_t virtualAddress) noexcept {
-    const uint64_t upper = virtualAddress >> OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_SHIFT;
-    const bool signBit = ((virtualAddress >> OS_KERNEL_PAGE_LAYOUT_CANONICAL_SIGN_SHIFT) &
-                          OS_KERNEL_PAGE_LAYOUT_SINGLE_BIT_MASK) != 0ULL;
-    return upper == (signBit ? OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_NEGATIVE
-                             : OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_POSITIVE);
+bool IsCanonicalVirtualAddress(const uint64_t virtual_address) noexcept {
+    const uint64_t upper = virtual_address >> OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_SHIFT;
+    const bool sign_bit = ((virtual_address >> OS_KERNEL_PAGE_LAYOUT_CANONICAL_SIGN_SHIFT) &
+                           OS_KERNEL_PAGE_LAYOUT_SINGLE_BIT_MASK) != 0ULL;
+    return upper == (sign_bit ? OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_NEGATIVE
+                              : OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_POSITIVE);
 }
 
-PageTableIndices CalculatePageTableIndices(const uint64_t virtualAddress) noexcept {
+PageTableIndices CalculatePageTableIndices(const uint64_t virtual_address) noexcept {
     return PageTableIndices{
-        .level4 = (virtualAddress >> OS_KERNEL_PAGE_LAYOUT_LEVEL4_SHIFT) &
+        .level4 = (virtual_address >> OS_KERNEL_PAGE_LAYOUT_LEVEL4_SHIFT) &
                   OS_KERNEL_PAGE_LAYOUT_INDEX_MASK,
-        .level3 = (virtualAddress >> OS_KERNEL_PAGE_LAYOUT_LEVEL3_SHIFT) &
+        .level3 = (virtual_address >> OS_KERNEL_PAGE_LAYOUT_LEVEL3_SHIFT) &
                   OS_KERNEL_PAGE_LAYOUT_INDEX_MASK,
-        .level2 = (virtualAddress >> OS_KERNEL_PAGE_LAYOUT_LEVEL2_SHIFT) &
+        .level2 = (virtual_address >> OS_KERNEL_PAGE_LAYOUT_LEVEL2_SHIFT) &
                   OS_KERNEL_PAGE_LAYOUT_INDEX_MASK,
-        .level1 = (virtualAddress >> OS_KERNEL_PAGE_LAYOUT_LEVEL1_SHIFT) &
+        .level1 = (virtual_address >> OS_KERNEL_PAGE_LAYOUT_LEVEL1_SHIFT) &
                   OS_KERNEL_PAGE_LAYOUT_INDEX_MASK,
     };
 }
 
-bool IsPageTableMemoryAccessValid(const PageTableMemoryAccess memoryAccess) noexcept {
-    if (memoryAccess.maximumPhysicalAddressExclusive == OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
-        memoryAccess.maximumPhysicalAddressExclusive >
+bool IsPageTableMemoryAccessValid(const PageTableMemoryAccess memory_access) noexcept {
+    if (memory_access.maximum_physical_address_exclusive == OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
+        memory_access.maximum_physical_address_exclusive >
             OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_LIMIT ||
-        (memoryAccess.maximumPhysicalAddressExclusive & OS_KERNEL_PAGE_LAYOUT_PAGE_MASK) !=
+        (memory_access.maximum_physical_address_exclusive & OS_KERNEL_PAGE_LAYOUT_PAGE_MASK) !=
             OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
-        memoryAccess.allocationMaximumPhysicalAddressExclusive ==
+        memory_access.allocation_maximum_physical_address_exclusive ==
             OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
-        memoryAccess.allocationMaximumPhysicalAddressExclusive >
-            memoryAccess.maximumPhysicalAddressExclusive ||
-        (memoryAccess.allocationMaximumPhysicalAddressExclusive &
+        memory_access.allocation_maximum_physical_address_exclusive >
+            memory_access.maximum_physical_address_exclusive ||
+        (memory_access.allocation_maximum_physical_address_exclusive &
          OS_KERNEL_PAGE_LAYOUT_PAGE_MASK) != OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
-        memoryAccess.physicalMemoryVirtualBase >
-            UINT64_MAX -
-                (memoryAccess.maximumPhysicalAddressExclusive - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        memory_access.physical_memory_virtual_base >
+            UINT64_MAX - (memory_access.maximum_physical_address_exclusive -
+                          OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return false;
     }
-    return IsCanonicalVirtualAddress(memoryAccess.physicalMemoryVirtualBase) &&
-           IsCanonicalVirtualAddress(memoryAccess.physicalMemoryVirtualBase +
-                                     memoryAccess.maximumPhysicalAddressExclusive -
+    return IsCanonicalVirtualAddress(memory_access.physical_memory_virtual_base) &&
+           IsCanonicalVirtualAddress(memory_access.physical_memory_virtual_base +
+                                     memory_access.maximum_physical_address_exclusive -
                                      OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
 }
 
-uint64_t EncodePageTableLeafEntry(const uint64_t physicalAddress,
+uint64_t EncodePageTableLeafEntry(const uint64_t physical_address,
                                   const PagePermissions permissions) noexcept {
-    uint64_t entry = (physicalAddress & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK) |
+    uint64_t entry = (physical_address & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK) |
                      OS_KERNEL_PAGE_LAYOUT_PRESENT_BIT;
     if (permissions.writable) {
         entry |= OS_KERNEL_PAGE_LAYOUT_WRITABLE_BIT;
     }
-    if (permissions.userAccessible) {
+    if (permissions.user_accessible) {
         entry |= OS_KERNEL_PAGE_LAYOUT_USER_BIT;
     }
-    if (permissions.cacheDisabled) {
+    if (permissions.cache_disabled) {
         entry |= OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT;
     }
     if (!permissions.executable) {
@@ -91,14 +91,14 @@ uint64_t EncodePageTableLeafEntry(const uint64_t physicalAddress,
 
 PageMapping DecodePageTableLeafEntry(const uint64_t entry) noexcept {
     return PageMapping{
-        .physicalAddress = entry & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK,
-        .pageSizeBytes = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .physical_address = entry & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK,
+        .page_size_bytes = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
         .permissions =
             PagePermissions{
                 .writable = (entry & OS_KERNEL_PAGE_LAYOUT_WRITABLE_BIT) != 0ULL,
                 .executable = (entry & OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT) == 0ULL,
-                .userAccessible = (entry & OS_KERNEL_PAGE_LAYOUT_USER_BIT) != 0ULL,
-                .cacheDisabled = (entry & OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT) != 0ULL,
+                .user_accessible = (entry & OS_KERNEL_PAGE_LAYOUT_USER_BIT) != 0ULL,
+                .cache_disabled = (entry & OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT) != 0ULL,
             },
     };
 }

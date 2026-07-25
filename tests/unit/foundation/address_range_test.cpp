@@ -34,53 +34,55 @@ constexpr os::foundation::AddressValue OS_TEST_UNIT_RANGE_SIZE =
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_UNIT_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_UNIT_SUITE_NAME};
 
-    const os::foundation::PhysicalAddress smallAddress{OS_TEST_UNIT_SMALL_ADDRESS};
-    const os::foundation::PhysicalAddress sameSmallAddress{OS_TEST_UNIT_SMALL_ADDRESS};
-    const os::foundation::PhysicalAddress largeAddress{OS_TEST_UNIT_LARGE_ADDRESS};
-    const os::foundation::ByteCount rangeSize{OS_TEST_UNIT_RANGE_SIZE};
+    const os::foundation::PhysicalAddress small_address{OS_TEST_UNIT_SMALL_ADDRESS};
+    const os::foundation::PhysicalAddress same_small_address{OS_TEST_UNIT_SMALL_ADDRESS};
+    const os::foundation::PhysicalAddress large_address{OS_TEST_UNIT_LARGE_ADDRESS};
+    const os::foundation::ByteCount range_size{OS_TEST_UNIT_RANGE_SIZE};
 
-    testContext.Expect(smallAddress.Value() == OS_TEST_UNIT_SMALL_ADDRESS,
-                       OS_TEST_UNIT_PHYSICAL_ADDRESS_VALUE);
-    testContext.Expect(smallAddress.Equals(sameSmallAddress),
-                       OS_TEST_UNIT_PHYSICAL_ADDRESS_EQUALITY);
-    testContext.Expect(smallAddress.IsBefore(largeAddress), OS_TEST_UNIT_PHYSICAL_ADDRESS_ORDER);
-    testContext.Expect(rangeSize.Value() == OS_TEST_UNIT_RANGE_SIZE, OS_TEST_UNIT_BYTE_COUNT_VALUE);
+    test_context.Expect(small_address.Value() == OS_TEST_UNIT_SMALL_ADDRESS,
+                        OS_TEST_UNIT_PHYSICAL_ADDRESS_VALUE);
+    test_context.Expect(small_address.Equals(same_small_address),
+                        OS_TEST_UNIT_PHYSICAL_ADDRESS_EQUALITY);
+    test_context.Expect(small_address.IsBefore(large_address), OS_TEST_UNIT_PHYSICAL_ADDRESS_ORDER);
+    test_context.Expect(range_size.Value() == OS_TEST_UNIT_RANGE_SIZE,
+                        OS_TEST_UNIT_BYTE_COUNT_VALUE);
 
-    os::foundation::AddressRange emptyRange{};
-    const os::foundation::AddressRangeCreationStatus emptyStatus =
+    os::foundation::AddressRange empty_range{};
+    const os::foundation::AddressRangeCreationStatus empty_status =
         os::foundation::AddressRange::TryCreate(
-            smallAddress, os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_ZERO},
-            emptyRange);
-    testContext.Expect(emptyStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
-                       OS_TEST_UNIT_EMPTY_RANGE_CREATION);
-    testContext.Expect(emptyRange.IsEmpty(), OS_TEST_UNIT_EMPTY_RANGE_STATE);
-    testContext.Expect(!emptyRange.Contains(smallAddress), OS_TEST_UNIT_EMPTY_RANGE_CONTAINMENT);
+            small_address, os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_ZERO},
+            empty_range);
+    test_context.Expect(empty_status == os::foundation::AddressRangeCreationStatus::Succeeded,
+                        OS_TEST_UNIT_EMPTY_RANGE_CREATION);
+    test_context.Expect(empty_range.IsEmpty(), OS_TEST_UNIT_EMPTY_RANGE_STATE);
+    test_context.Expect(!empty_range.Contains(small_address), OS_TEST_UNIT_EMPTY_RANGE_CONTAINMENT);
 
-    os::foundation::AddressRange regularRange{};
-    const os::foundation::AddressRangeCreationStatus regularStatus =
-        os::foundation::AddressRange::TryCreate(smallAddress, rangeSize, regularRange);
-    testContext.Expect(regularStatus == os::foundation::AddressRangeCreationStatus::Succeeded,
-                       OS_TEST_UNIT_REGULAR_RANGE_CREATION);
-    testContext.Expect(regularRange.Begin().Equals(smallAddress), OS_TEST_UNIT_REGULAR_RANGE_BEGIN);
-    testContext.Expect(regularRange.Size().Equals(rangeSize), OS_TEST_UNIT_REGULAR_RANGE_SIZE);
-    testContext.Expect(regularRange.Contains(smallAddress),
-                       OS_TEST_UNIT_REGULAR_RANGE_BEGIN_CONTAINMENT);
-    testContext.Expect(!regularRange.Contains(regularRange.End()),
-                       OS_TEST_UNIT_REGULAR_RANGE_END_EXCLUSION);
+    os::foundation::AddressRange regular_range{};
+    const os::foundation::AddressRangeCreationStatus regular_status =
+        os::foundation::AddressRange::TryCreate(small_address, range_size, regular_range);
+    test_context.Expect(regular_status == os::foundation::AddressRangeCreationStatus::Succeeded,
+                        OS_TEST_UNIT_REGULAR_RANGE_CREATION);
+    test_context.Expect(regular_range.Begin().Equals(small_address),
+                        OS_TEST_UNIT_REGULAR_RANGE_BEGIN);
+    test_context.Expect(regular_range.Size().Equals(range_size), OS_TEST_UNIT_REGULAR_RANGE_SIZE);
+    test_context.Expect(regular_range.Contains(small_address),
+                        OS_TEST_UNIT_REGULAR_RANGE_BEGIN_CONTAINMENT);
+    test_context.Expect(!regular_range.Contains(regular_range.End()),
+                        OS_TEST_UNIT_REGULAR_RANGE_END_EXCLUSION);
 
-    os::foundation::AddressRange overflowRange = regularRange;
-    const os::foundation::AddressRangeCreationStatus overflowStatus =
+    os::foundation::AddressRange overflow_range = regular_range;
+    const os::foundation::AddressRangeCreationStatus overflow_status =
         os::foundation::AddressRange::TryCreate(
             os::foundation::PhysicalAddress{os::foundation::OS_FOUNDATION_ADDRESS_MAXIMUM},
-            os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT}, overflowRange);
-    testContext.Expect(overflowStatus ==
-                           os::foundation::AddressRangeCreationStatus::AddressOverflow,
-                       OS_TEST_UNIT_OVERFLOW_REJECTION);
-    testContext.Expect(overflowRange.Begin().Equals(regularRange.Begin()) &&
-                           overflowRange.Size().Equals(regularRange.Size()),
-                       OS_TEST_UNIT_OVERFLOW_PRESERVES_OUTPUT);
+            os::foundation::ByteCount{os::foundation::OS_FOUNDATION_ADDRESS_UNIT}, overflow_range);
+    test_context.Expect(overflow_status ==
+                            os::foundation::AddressRangeCreationStatus::AddressOverflow,
+                        OS_TEST_UNIT_OVERFLOW_REJECTION);
+    test_context.Expect(overflow_range.Begin().Equals(regular_range.Begin()) &&
+                            overflow_range.Size().Equals(regular_range.Size()),
+                        OS_TEST_UNIT_OVERFLOW_PRESERVES_OUTPUT);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

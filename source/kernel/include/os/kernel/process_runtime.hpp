@@ -46,59 +46,58 @@ enum class ProcessIoStatus : uint64_t {
 };
 
 struct ProcessCreationResult final {
-    uint64_t processId;
-    uint64_t processIndex;
-    uint64_t rootPhysicalAddress;
-    uint64_t entryVirtualAddress;
-    uint64_t mappedPageCount;
+    uint64_t process_id;
+    uint64_t process_index;
+    uint64_t root_physical_address;
+    uint64_t entry_virtual_address;
+    uint64_t mapped_page_count;
 };
 
 struct ProcessExecutionResult final {
-    uint64_t processId;
+    uint64_t process_id;
     UserProgramSelection selection;
-    ProcessTerminationReason terminationReason;
-    int64_t exitCode;
-    uint64_t exceptionVector;
-    uint64_t exceptionErrorCode;
-    uint64_t exceptionInstructionPointer;
-    uint64_t pageFaultAddress;
-    uint64_t systemCallCount;
-    uint64_t rootPhysicalAddress;
-    uint64_t mappedPageCount;
-    uint64_t runTickCount;
-    uint64_t dispatchCount;
-    uint64_t pipeBytesRead;
-    uint64_t pipeBytesWritten;
-    uint64_t fileSystemBytesRead;
-    uint64_t fileSystemBytesWritten;
-    uint64_t consoleBytesRead;
-    uint64_t consoleBytesWritten;
+    ProcessTerminationReason termination_reason;
+    int64_t exit_code;
+    uint64_t exception_vector;
+    uint64_t exception_error_code;
+    uint64_t exception_instruction_pointer;
+    uint64_t page_fault_address;
+    uint64_t system_call_count;
+    uint64_t root_physical_address;
+    uint64_t mapped_page_count;
+    uint64_t run_tick_count;
+    uint64_t dispatch_count;
+    uint64_t pipe_bytes_read;
+    uint64_t pipe_bytes_written;
+    uint64_t file_system_bytes_read;
+    uint64_t file_system_bytes_written;
+    uint64_t console_bytes_read;
+    uint64_t console_bytes_written;
 };
 
 struct ProcessIpcStatistics final {
     PipeStatistics pipe;
-    uint64_t readerBlockCount;
-    uint64_t writerBlockCount;
-    uint64_t endOfFileObservationCount;
-    uint64_t brokenPipeObservationCount;
+    uint64_t reader_block_count;
+    uint64_t writer_block_count;
+    uint64_t end_of_file_observation_count;
+    uint64_t broken_pipe_observation_count;
 };
 
 struct ProcessRuntimeStatistics final {
     ProcessSchedulerStatistics scheduler;
-    PhysicalFrameAllocatorStatistics framesBeforeProcesses;
-    PhysicalFrameAllocatorStatistics framesAfterProcesses;
+    PhysicalFrameAllocatorStatistics frames_before_processes;
+    PhysicalFrameAllocatorStatistics frames_after_processes;
     ProcessIpcStatistics ipc;
-    ConsoleInputStatistics consoleInput;
+    ConsoleInputStatistics console_input;
     ProcessExecutionResult processes[OS_KERNEL_PROCESS_CAPACITY];
 };
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
+[[nodiscard]] ProcessRuntimeStatus AttachProcessFileSystem(FileSystem &file_system) noexcept;
 [[nodiscard]] ProcessRuntimeStatus
-AttachProcessFileSystem(FileSystem &fileSystem) noexcept;
-[[nodiscard]] ProcessRuntimeStatus
-CreateProcess(UserProgramSelection selection, ProcessCreationResult &creationResult,
-              UserElfValidationStatus &elfValidationStatus,
-              UserAddressSpaceStatus &addressSpaceStatus) noexcept;
+CreateProcess(UserProgramSelection selection, ProcessCreationResult &creation_result,
+              UserElfValidationStatus &elf_validation_status,
+              UserAddressSpaceStatus &address_space_status) noexcept;
 [[nodiscard]] ProcessRuntimeStatus ExecuteProcesses() noexcept;
 [[nodiscard]] ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept;
 [[nodiscard]] bool IsProcessSchedulingActive() noexcept;
@@ -107,57 +106,58 @@ CreateProcess(UserProgramSelection selection, ProcessCreationResult &creationRes
 void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] bool CurrentProcessCanReadPipe() noexcept;
 [[nodiscard]] bool CurrentProcessCanWritePipe() noexcept;
-[[nodiscard]] PipeStatus TryReadCurrentProcessPipe(uint8_t *destination, uint64_t capacityBytes,
-                                                   uint64_t &readBytes) noexcept;
-[[nodiscard]] PipeStatus TryWriteCurrentProcessPipe(const uint8_t *source, uint64_t lengthBytes,
-                                                    uint64_t &writtenBytes) noexcept;
+[[nodiscard]] PipeStatus TryReadCurrentProcessPipe(uint8_t *destination, uint64_t capacity_bytes,
+                                                   uint64_t &read_bytes) noexcept;
+[[nodiscard]] PipeStatus TryWriteCurrentProcessPipe(const uint8_t *source, uint64_t length_bytes,
+                                                    uint64_t &written_bytes) noexcept;
 [[nodiscard]] PipeStatus CloseCurrentProcessPipeReader() noexcept;
 [[nodiscard]] PipeStatus CloseCurrentProcessPipeWriter() noexcept;
-[[nodiscard]] FileSystemStatus OpenCurrentProcessFile(
-    const uint8_t *path, uint64_t pathLengthBytes,
-    const FileSystemOpenOptions &options, uint64_t &fileDescriptor) noexcept;
-[[nodiscard]] FileSystemStatus ReadCurrentProcessFile(
-    uint64_t fileDescriptor, uint8_t *destination, uint64_t capacityBytes,
-    uint64_t &readBytes) noexcept;
-[[nodiscard]] FileSystemStatus WriteCurrentProcessFile(
-    uint64_t fileDescriptor, const uint8_t *source, uint64_t lengthBytes,
-    uint64_t &writtenBytes) noexcept;
-[[nodiscard]] FileSystemStatus
-CloseCurrentProcessFile(uint64_t fileDescriptor) noexcept;
-[[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(
-    const uint8_t *path, uint64_t pathLengthBytes) noexcept;
+[[nodiscard]] FileSystemStatus OpenCurrentProcessFile(const uint8_t *path,
+                                                      uint64_t path_length_bytes,
+                                                      const FileSystemOpenOptions &options,
+                                                      uint64_t &file_descriptor) noexcept;
+[[nodiscard]] FileSystemStatus ReadCurrentProcessFile(uint64_t file_descriptor,
+                                                      uint8_t *destination, uint64_t capacity_bytes,
+                                                      uint64_t &read_bytes) noexcept;
+[[nodiscard]] FileSystemStatus WriteCurrentProcessFile(uint64_t file_descriptor,
+                                                       const uint8_t *source, uint64_t length_bytes,
+                                                       uint64_t &written_bytes) noexcept;
+[[nodiscard]] FileSystemStatus CloseCurrentProcessFile(uint64_t file_descriptor) noexcept;
+[[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(const uint8_t *path,
+                                                             uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
-[[nodiscard]] ProcessIoStatus TryReadCurrentProcessDescriptor(
-    uint64_t descriptor, uint8_t *destination, uint64_t capacityBytes,
-    uint64_t &readBytes, FileSystemStatus &fileSystemStatus) noexcept;
-[[nodiscard]] ProcessIoStatus TryWriteCurrentProcessDescriptor(
-    uint64_t descriptor, const uint8_t *source, uint64_t lengthBytes,
-    uint64_t &writtenBytes, FileSystemStatus &fileSystemStatus) noexcept;
-[[nodiscard]] ProcessIoStatus CloseCurrentProcessDescriptor(
-    uint64_t descriptor, FileSystemStatus &fileSystemStatus) noexcept;
-[[nodiscard]] FileSystemStatus OpenCurrentProcessDirectory(
-    const uint8_t *path, uint64_t pathLengthBytes,
-    uint64_t &fileDescriptor) noexcept;
-[[nodiscard]] FileSystemStatus ReadCurrentProcessDirectory(
-    uint64_t fileDescriptor, FileSystemDirectoryEntry &entry,
-    bool &endOfDirectory) noexcept;
-[[nodiscard]] ProcessIoStatus CurrentProcessDescriptorReadCanProgress(
-    uint64_t descriptor, bool &canProgress) noexcept;
-[[nodiscard]] ProcessIoStatus CurrentProcessDescriptorWriteCanProgress(
-    uint64_t descriptor, bool &canProgress) noexcept;
+[[nodiscard]] ProcessIoStatus
+TryReadCurrentProcessDescriptor(uint64_t descriptor, uint8_t *destination, uint64_t capacity_bytes,
+                                uint64_t &read_bytes,
+                                FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+TryWriteCurrentProcessDescriptor(uint64_t descriptor, const uint8_t *source, uint64_t length_bytes,
+                                 uint64_t &written_bytes,
+                                 FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+CloseCurrentProcessDescriptor(uint64_t descriptor, FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *path,
+                                                           uint64_t path_length_bytes,
+                                                           uint64_t &file_descriptor) noexcept;
+[[nodiscard]] FileSystemStatus ReadCurrentProcessDirectory(uint64_t file_descriptor,
+                                                           FileSystemDirectoryEntry &entry,
+                                                           bool &end_of_directory) noexcept;
+[[nodiscard]] ProcessIoStatus CurrentProcessDescriptorReadCanProgress(uint64_t descriptor,
+                                                                      bool &can_progress) noexcept;
+[[nodiscard]] ProcessIoStatus CurrentProcessDescriptorWriteCanProgress(uint64_t descriptor,
+                                                                       bool &can_progress) noexcept;
 void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] bool ProcessPipeReadCanProgress() noexcept;
 [[nodiscard]] bool ProcessPipeWriteCanProgress() noexcept;
 [[nodiscard]] ProcessRuntimeStatus BlockCurrentProcess(ExceptionFrame &frame,
-                                                       ProcessWaitReason waitReason,
-                                                       ExceptionFrame *&resumeFrame) noexcept;
-[[nodiscard]] ProcessRuntimeStatus WakeProcesses(ProcessWaitReason waitReason,
-                                                 uint64_t maximumWakeCount,
-                                                 uint64_t &wokenProcessCount) noexcept;
+                                                       ProcessWaitReason wait_reason,
+                                                       ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] ProcessRuntimeStatus WakeProcesses(ProcessWaitReason wait_reason,
+                                                 uint64_t maximum_wake_count,
+                                                 uint64_t &woken_process_count) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
-                                                              int64_t exitCode) noexcept;
+                                                              int64_t exit_code) noexcept;
 [[nodiscard]] ExceptionFrame *
-TerminateCurrentProcessFromException(ExceptionFrame &frame, uint64_t pageFaultAddress) noexcept;
-
+TerminateCurrentProcessFromException(ExceptionFrame &frame, uint64_t page_fault_address) noexcept;
 }

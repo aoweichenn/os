@@ -187,12 +187,12 @@ Stage 1 的 `GDT_READY` 只证明模式切换表有效；内核的 `GDT_READY`�
 `DESCRIPTOR_TABLES_VALID` 还要求处理器回读状态与内存对象一致，不能用前三条
 构造日志替代。
 
-用 GDB 在 `osKernelDispatchException` 停止：
+用 GDB 在 `OsKernelDispatchException` 停止：
 
 ```gdb
 set architecture i386:x86-64
 target remote :1234
-break osKernelDispatchException
+break OsKernelDispatchException
 continue
 info registers rip rsp cs ss
 x/20gx $rdi
@@ -208,10 +208,10 @@ x/20gx $rdi
 ```gdb
 maintenance packet qRcmd,696e666f20726567697374657273
 info registers
-disassemble osKernelLoadGdtAndTss
-disassemble osKernelExceptionDispatch
-x/5gx &kernelGlobalDescriptorTable
-x/32gx &kernelInterruptDescriptorTable
+disassemble OsKernelLoadGdtAndTss
+disassemble OsKernelExceptionDispatch
+x/5gx &kernel_global_descriptor_table
+x/32gx &kernel_interrupt_descriptor_table
 ```
 
 不同 GDB 版本不一定直接显示 GDTR、IDTR 和 TR；项目因此把 `SGDT`、`SIDT`、
@@ -292,10 +292,10 @@ RAM。判断容量应分别看 `MEMORY_USABLE_BYTES` 和 `MEMORY_MANAGED_BYTES`�
 
 ### 在 CR3 切换前后检查页表
 
-在 `activatePageTable` 下断点：
+在 `ActivatePageTable` 下断点：
 
 ```gdb
-break os::kernel::activatePageTable
+break os::kernel::ActivatePageTable
 continue
 info registers cr0 cr3
 x/512gx $rdi
@@ -304,7 +304,7 @@ info registers cr0 cr3
 ```
 
 符号名若被 C++ 修饰，可先用
-`llvm-nm -C build/developer/source/kernel/kernel.elf | rg activatePageTable`
+`llvm-nm -C build/developer/source/kernel/kernel.elf | rg ActivatePageTable`
 找到地址。函数参数 RDI 是新 PML4 的物理地址；切换前 CR3 为 Stage 1 的
 `0x10000`，切换后必须等于日志中的 `PAGING_ROOT`。CR0 位 16 应为 1，
 IA32_EFER 位 11 应为 1。
@@ -340,7 +340,7 @@ PANIC
 
 ### Guard page 与早期堆
 
-初始栈 guard 位于 `kernelStackTop - 64 KiB`，每个 IST 存储块的第一页也是
+初始栈 guard 位于 `kernel_stack_top - 64 KiB`，每个 IST 存储块的第一页也是
 guard。它们应由 `QueryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 KiB
 可写栈的末端。高半区堆从 `0xFFFF800000000000` 开始，共 16 页，全部 RW/NX。
 
@@ -530,7 +530,7 @@ PDPT[0] 指向的 supervisor 内核子树，但不能直接共享整个低端 PD
 ### `SCHEDULER_STARTED` 后所有进程停止
 
 先看冷路径是否输出 `USER_EXECUTION_FAILED=NoReadyProcess`。若所有存活进程
-都为 Blocked，逐个检查 PCB 的 `waitReason`：生产者只能等待
+都为 Blocked，逐个检查 PCB 的 `wait_reason`：生产者只能等待
 `PipeWritable`，消费者只能等待 `PipeReadable`，worker 不应进入 Blocked。
 还要检查一次读或写成功后是否调用了对侧定向唤醒，以及关闭端点是否同样唤醒。
 
@@ -543,14 +543,14 @@ PDPT[0] 指向的 supervisor 内核子树，但不能直接共享整个低端 PD
 统计。环形不变量始终应满足：
 
 ```text
-bytesWritten - bytesRead = bufferedByteCount
-0 <= bufferedByteCount <= 64
-readIndex, writeIndex < 64
+bytes_written - bytes_read = buffered_byte_count
+0 <= buffered_byte_count <= 64
+read_index, write_index < 64
 ```
 
 若只在回绕后损坏，检查索引是否在每个字节提交后模 64，而不是在整块之后只
 推进一次。若内核统计正确而消费者校验失败，检查 `CopyToUser` 的跨页可写
-验证和用户端 `totalReadBytes + byteIndex` 期望索引。
+验证和用户端 `total_read_bytes + byte_index` 期望索引。
 
 ### EOF 永远不出现
 
@@ -611,7 +611,7 @@ cli
 `EnableInterrupts()` 和 `WaitForInterrupt()`，中间的 `RET/CALL` 会破坏紧邻
 保证。被 IRQ 唤醒后先 `CLI` 再检查队列，避免在普通调度器状态转换中嵌套
 硬件中断。若持续停顿，用 GDB 检查 RFLAGS.IF、PIC IRR/ISR、当前 PCB 状态和
-`waitReason=DescriptorReadable`；不要让 Blocked 进程参与 Ready 搜索来掩盖
+`wait_reason=DescriptorReadable`；不要让 Blocked 进程参与 Ready 搜索来掩盖
 唤醒缺失。
 
 ### 描述符调用返回权限或类型错误

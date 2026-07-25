@@ -20,26 +20,26 @@ constexpr char OS_TEST_SUPPORT_LINE_END = '\n';
 
 namespace os::test {
 
-TestContext::TestContext(const std::string_view suiteName) noexcept
-    : suiteName{suiteName}, assertionCount{}, failureCount{} {
-    std::cout << OS_TEST_SUPPORT_SUITE_PREFIX << this->suiteName << OS_TEST_SUPPORT_LINE_END;
+TestContext::TestContext(const std::string_view suite_name) noexcept
+    : suite_name_{suite_name}, assertion_count_{}, failure_count_{} {
+    std::cout << OS_TEST_SUPPORT_SUITE_PREFIX << this->suite_name_ << OS_TEST_SUPPORT_LINE_END;
 }
 
 void TestContext::Expect(const bool condition, const std::string_view description) noexcept {
-    this->assertionCount += OS_TEST_SUPPORT_COUNT_INCREMENT;
+    this->assertion_count_ += OS_TEST_SUPPORT_COUNT_INCREMENT;
 
     if (!condition) {
-        this->failureCount += OS_TEST_SUPPORT_COUNT_INCREMENT;
+        this->failure_count_ += OS_TEST_SUPPORT_COUNT_INCREMENT;
         std::cerr << OS_TEST_SUPPORT_FAILURE_PREFIX << description << OS_TEST_SUPPORT_LINE_END;
     }
 }
 
 void TestContext::ExpectRandom(const bool condition, const std::string_view description,
                                const RandomSeed seed, const TestCount iteration) noexcept {
-    this->assertionCount += OS_TEST_SUPPORT_COUNT_INCREMENT;
+    this->assertion_count_ += OS_TEST_SUPPORT_COUNT_INCREMENT;
 
     if (!condition) {
-        this->failureCount += OS_TEST_SUPPORT_COUNT_INCREMENT;
+        this->failure_count_ += OS_TEST_SUPPORT_COUNT_INCREMENT;
         std::cerr << OS_TEST_SUPPORT_FAILURE_PREFIX << description << OS_TEST_SUPPORT_SEED_LABEL
                   << seed << OS_TEST_SUPPORT_ITERATION_LABEL << iteration
                   << OS_TEST_SUPPORT_LINE_END;
@@ -47,11 +47,11 @@ void TestContext::ExpectRandom(const bool condition, const std::string_view desc
 }
 
 int TestContext::ExitCode() const noexcept {
-    std::cout << OS_TEST_SUPPORT_RESULT_PREFIX << this->assertionCount
-              << OS_TEST_SUPPORT_ASSERTION_LABEL << this->failureCount
+    std::cout << OS_TEST_SUPPORT_RESULT_PREFIX << this->assertion_count_
+              << OS_TEST_SUPPORT_ASSERTION_LABEL << this->failure_count_
               << OS_TEST_SUPPORT_FAILURE_LABEL << OS_TEST_SUPPORT_LINE_END;
 
-    if (this->failureCount == TestCount{}) {
+    if (this->failure_count_ == TestCount{}) {
         return OS_TEST_SUPPORT_EXIT_SUCCESS;
     }
 

@@ -192,7 +192,7 @@ volatile 表达中断可见存储，并用“读取 RFLAGS、CLI、复制、按�
 
 恢复函数不能无条件 STI。调用者可能本来就在 IF=0 的初始化或中断上下文，
 无条件开启会扩大可重入区域。v0.7 的 \code{DisableInterrupts} 返回旧 IF，
-\code{restoreInterrupts} 只在旧状态为一时 STI。进入多核后，这只保护本地
+\code{RestoreInterrupts} 只在旧状态为一时 STI。进入多核后，这只保护本地
 IRQ，不保护另一颗 CPU；届时还需锁或原子顺序。
 
 \section{中断延迟由关闭窗口和处理时间共同决定}
@@ -431,7 +431,7 @@ U/S=1 而上级任一项 U/S=0，用户访问仍会故障。v0.8 的页表管理
 \section{五项 IRETQ 帧让处理器真正进入 CPL3}
 
 跨特权返回比同特权异常多出栈段与栈指针。进入 Ring 3 前，
-\code{osKernelEnterUserMode} 关闭中断窗口，保存内核 RFLAGS、非易失寄存器
+\code{OsKernelEnterUserMode} 关闭中断窗口，保存内核 RFLAGS、非易失寄存器
 和当前 RSP，再压入：
 
 \begin{pdfdiagram}
@@ -594,7 +594,7 @@ RAX 保存调用号与返回值，RDI/RSI 保存前两个参数。所有协议�
 这里的头源分离不是排版习惯。公开头只暴露布局、状态枚举和稳定操作，实现
 文件保留 ELF 字节偏移、页回滚数组、全局单执行状态等策略细节。普通 C++ 函数
 统一使用大驼峰，例如 \code{ValidateUserElf}、\code{LoadUserAddressSpace}
-和 \code{ExecuteUserProgram}；\code{osKernel...}/\code{osUser...} 只保留
+和 \code{ExecuteUserProgram}；\code{OsKernel...}/\code{OsUser...} 只保留
 给 C/汇编链接 ABI。
 
 \section{四类用户路径构成可反驳的验收证据}

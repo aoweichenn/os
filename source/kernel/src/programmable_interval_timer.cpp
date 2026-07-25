@@ -15,10 +15,10 @@ constexpr uint16_t OS_KERNEL_PIT_DIVISOR_BYTE_MASK = 0x00FFU;
 }
 
 PitConfigurationStatus
-ProgrammableIntervalTimer::Initialize(const uint64_t requestedFrequencyHz,
+ProgrammableIntervalTimer::Initialize(const uint64_t requested_frequency_hz,
                                       PitConfiguration &configuration) const noexcept {
     const PitConfigurationStatus status =
-        CreatePitConfiguration(requestedFrequencyHz, configuration);
+        CreatePitConfiguration(requested_frequency_hz, configuration);
     if (status != PitConfigurationStatus::Succeeded) {
         return status;
     }
@@ -33,5 +33,4 @@ ProgrammableIntervalTimer::Initialize(const uint64_t requestedFrequencyHz,
                              OS_KERNEL_PIT_DIVISOR_BYTE_MASK));
     return PitConfigurationStatus::Succeeded;
 }
-
 }

@@ -42,12 +42,10 @@ constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH[] = {
     static_cast<uint8_t>('d'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME[] = {
-    static_cast<uint8_t>('p'), static_cast<uint8_t>('a'),
-    static_cast<uint8_t>('y'), static_cast<uint8_t>('l'),
-    static_cast<uint8_t>('o'), static_cast<uint8_t>('a'),
-    static_cast<uint8_t>('d'), static_cast<uint8_t>('.'),
-    static_cast<uint8_t>('b'), static_cast<uint8_t>('i'),
-    static_cast<uint8_t>('n'),
+    static_cast<uint8_t>('p'), static_cast<uint8_t>('a'), static_cast<uint8_t>('y'),
+    static_cast<uint8_t>('l'), static_cast<uint8_t>('o'), static_cast<uint8_t>('a'),
+    static_cast<uint8_t>('d'), static_cast<uint8_t>('.'), static_cast<uint8_t>('b'),
+    static_cast<uint8_t>('i'), static_cast<uint8_t>('n'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
@@ -59,14 +57,17 @@ constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH[] = {
     static_cast<uint8_t>('n'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_RELATIVE_PATH[] = {
-    static_cast<uint8_t>('b'), static_cast<uint8_t>('a'), static_cast<uint8_t>('d'),
+    static_cast<uint8_t>('b'),
+    static_cast<uint8_t>('a'),
+    static_cast<uint8_t>('d'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_COMPONENT_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('a'), static_cast<uint8_t>('/'),
     static_cast<uint8_t>('/'), static_cast<uint8_t>('b'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_DOT_PATH[] = {
-    static_cast<uint8_t>('/'), static_cast<uint8_t>('.'),
+    static_cast<uint8_t>('/'),
+    static_cast<uint8_t>('.'),
 };
 constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('0'), static_cast<uint8_t>('1'),
@@ -85,246 +86,201 @@ constexpr uint8_t OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH[] = {
     static_cast<uint8_t>('8'), static_cast<uint8_t>('9'), static_cast<uint8_t>('x'),
 };
 
-[[nodiscard]] uint8_t ExpectedPayloadByte(const uint64_t byteIndex) noexcept {
+[[nodiscard]] uint8_t ExpectedPayloadByte(const uint64_t byte_index) noexcept {
     return static_cast<uint8_t>(
-        byteIndex *
-            static_cast<uint64_t>(
-                OS_TEST_FILE_SYSTEM_LIFECYCLE_BYTE_MULTIPLIER) +
+        byte_index * static_cast<uint64_t>(OS_TEST_FILE_SYSTEM_LIFECYCLE_BYTE_MULTIPLIER) +
         static_cast<uint64_t>(OS_TEST_FILE_SYSTEM_LIFECYCLE_BYTE_OFFSET));
 }
 
-[[nodiscard]] bool DirectoryEntryNameEquals(
-    const os::kernel::FileSystemDirectoryEntry &entry,
-    const uint8_t *const expectedName,
-    const uint64_t expectedNameLengthBytes) noexcept {
-    if (expectedName == nullptr ||
-        entry.nameLengthBytes != expectedNameLengthBytes) {
+[[nodiscard]] bool DirectoryEntryNameEquals(const os::kernel::FileSystemDirectoryEntry &entry,
+                                            const uint8_t *const expected_name,
+                                            const uint64_t expected_name_length_bytes) noexcept {
+    if (expected_name == nullptr || entry.name_length_bytes != expected_name_length_bytes) {
         return false;
     }
-    for (uint64_t byteIndex = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
-         byteIndex < expectedNameLengthBytes; ++byteIndex) {
-        if (entry.name[byteIndex] != expectedName[byteIndex]) {
+    for (uint64_t byte_index = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
+         byte_index < expected_name_length_bytes; ++byte_index) {
+        if (entry.name[byte_index] != expected_name[byte_index]) {
             return false;
         }
     }
     return true;
 }
-
 }
 
 int main() {
-    os::test::TestContext testContext{
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_FILE_SYSTEM_LIFECYCLE_SUITE_NAME};
     static os::test::MemoryBlockDevice device{};
 
-    os::kernel::FileSystem firstFileSystem{};
+    os::kernel::FileSystem first_file_system{};
     bool formatted = false;
-    const bool firstMountSucceeded =
-        firstFileSystem.MountOrFormat(device, formatted) ==
+    const bool first_mount_succeeded =
+        first_file_system.MountOrFormat(device, formatted) ==
             os::kernel::FileSystemStatus::Succeeded &&
         formatted &&
-        firstFileSystem.CheckConsistency() ==
-            os::kernel::FileSystemStatus::Succeeded;
-    const os::kernel::FileSystemStatistics initialStatistics =
-        firstFileSystem.Statistics();
-    testContext.Expect(
-        firstMountSucceeded &&
-            initialStatistics.mountedDirectoryCount ==
-                OS_TEST_FILE_SYSTEM_LIFECYCLE_COUNTER_INCREMENT &&
-            initialStatistics.mountedFileCount ==
-                OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_FORMATS_BLANK_DISK);
+        first_file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded;
+    const os::kernel::FileSystemStatistics initial_statistics = first_file_system.Statistics();
+    test_context.Expect(first_mount_succeeded &&
+                            initial_statistics.mounted_directory_count ==
+                                OS_TEST_FILE_SYSTEM_LIFECYCLE_COUNTER_INCREMENT &&
+                            initial_statistics.mounted_file_count ==
+                                OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE,
+                        OS_TEST_FILE_SYSTEM_LIFECYCLE_FORMATS_BLANK_DISK);
 
-    const bool pathsRejected =
-        firstFileSystem.CreateDirectory(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_RELATIVE_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_RELATIVE_PATH)) ==
+    const bool paths_rejected =
+        first_file_system.CreateDirectory(OS_TEST_FILE_SYSTEM_LIFECYCLE_RELATIVE_PATH,
+                                          sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_RELATIVE_PATH)) ==
             os::kernel::FileSystemStatus::InvalidPath &&
-        firstFileSystem.CreateDirectory(
+        first_file_system.CreateDirectory(
             OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_COMPONENT_PATH,
             sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_COMPONENT_PATH)) ==
             os::kernel::FileSystemStatus::InvalidPath &&
-        firstFileSystem.CreateDirectory(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_DOT_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_DOT_PATH)) ==
+        first_file_system.CreateDirectory(OS_TEST_FILE_SYSTEM_LIFECYCLE_DOT_PATH,
+                                          sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_DOT_PATH)) ==
             os::kernel::FileSystemStatus::InvalidPath &&
-        firstFileSystem.CreateDirectory(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH)) ==
+        first_file_system.CreateDirectory(OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH,
+                                          sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_LONG_NAME_PATH)) ==
             os::kernel::FileSystemStatus::NameTooLong;
-    testContext.Expect(pathsRejected,
-                       OS_TEST_FILE_SYSTEM_LIFECYCLE_PATH_VALIDATION);
+    test_context.Expect(paths_rejected, OS_TEST_FILE_SYSTEM_LIFECYCLE_PATH_VALIDATION);
 
     uint8_t payload[OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES]{};
-    for (uint64_t byteIndex = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
-         byteIndex < OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES;
-         ++byteIndex) {
-        payload[byteIndex] = ExpectedPayloadByte(byteIndex);
+    for (uint64_t byte_index = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
+         byte_index < OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES; ++byte_index) {
+        payload[byte_index] = ExpectedPayloadByte(byte_index);
     }
-    os::kernel::FileSystemHandle writeHandle{};
-    const os::kernel::FileSystemOpenOptions createOptions{
+    os::kernel::FileSystemHandle write_handle{};
+    const os::kernel::FileSystemOpenOptions create_options{
         .readable = false,
         .writable = true,
         .create = true,
         .truncate = true,
     };
-    uint64_t writtenBytes = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
-    const bool createdAndWritten =
-        firstFileSystem.CreateDirectory(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH)) ==
+    uint64_t written_bytes = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
+    const bool created_and_written =
+        first_file_system.CreateDirectory(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH,
+                                          sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH)) ==
             os::kernel::FileSystemStatus::Succeeded &&
-        firstFileSystem.Open(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH), createOptions,
-            writeHandle) == os::kernel::FileSystemStatus::Succeeded &&
-        firstFileSystem.Write(
-            writeHandle, payload,
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES,
-            writtenBytes) == os::kernel::FileSystemStatus::Succeeded &&
-        writtenBytes == OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES &&
-        firstFileSystem.Close(writeHandle) ==
-            os::kernel::FileSystemStatus::Succeeded &&
-        firstFileSystem.Sync() == os::kernel::FileSystemStatus::Succeeded;
+        first_file_system.Open(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH,
+                               sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH), create_options,
+                               write_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        first_file_system.Write(write_handle, payload,
+                                OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES,
+                                written_bytes) == os::kernel::FileSystemStatus::Succeeded &&
+        written_bytes == OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES &&
+        first_file_system.Close(write_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        first_file_system.Sync() == os::kernel::FileSystemStatus::Succeeded;
 
-    os::kernel::FileSystem secondFileSystem{};
+    os::kernel::FileSystem second_file_system{};
     formatted = true;
     uint8_t output[OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES]{};
-    uint64_t readBytes = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
-    os::kernel::FileSystemHandle readHandle{};
-    const os::kernel::FileSystemOpenOptions readOptions{
+    uint64_t read_bytes = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
+    os::kernel::FileSystemHandle read_handle{};
+    const os::kernel::FileSystemOpenOptions read_options{
         .readable = true,
         .writable = false,
         .create = false,
         .truncate = false,
     };
     bool persisted =
-        createdAndWritten &&
-        secondFileSystem.MountOrFormat(device, formatted) ==
+        created_and_written &&
+        second_file_system.MountOrFormat(device, formatted) ==
             os::kernel::FileSystemStatus::Succeeded &&
         !formatted &&
-        secondFileSystem.Open(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH), readOptions,
-            readHandle) == os::kernel::FileSystemStatus::Succeeded &&
-        secondFileSystem.Read(
-            readHandle, output,
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES,
-            readBytes) == os::kernel::FileSystemStatus::Succeeded &&
-        readBytes == OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES;
-    for (uint64_t byteIndex = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
-         byteIndex < OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES;
-         ++byteIndex) {
-        persisted = persisted && output[byteIndex] == payload[byteIndex];
+        second_file_system.Open(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH,
+                                sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH), read_options,
+                                read_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        second_file_system.Read(read_handle, output,
+                                OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES,
+                                read_bytes) == os::kernel::FileSystemStatus::Succeeded &&
+        read_bytes == OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES;
+    for (uint64_t byte_index = OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE;
+         byte_index < OS_TEST_FILE_SYSTEM_LIFECYCLE_PAYLOAD_SIZE_BYTES; ++byte_index) {
+        persisted = persisted && output[byte_index] == payload[byte_index];
     }
-    testContext.Expect(persisted,
-                       OS_TEST_FILE_SYSTEM_LIFECYCLE_PERSISTS_FILE);
+    test_context.Expect(persisted, OS_TEST_FILE_SYSTEM_LIFECYCLE_PERSISTS_FILE);
 
-    os::kernel::FileSystemHandle directoryHandle{};
-    os::kernel::FileSystemDirectoryEntry directoryEntry{};
-    bool endOfDirectory = true;
-    const bool directoryRead =
-        secondFileSystem.OpenDirectory(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH),
-            directoryHandle) == os::kernel::FileSystemStatus::Succeeded &&
-        secondFileSystem.ReadDirectory(
-            directoryHandle, directoryEntry, endOfDirectory) ==
+    os::kernel::FileSystemHandle directory_handle{};
+    os::kernel::FileSystemDirectoryEntry directory_entry{};
+    bool end_of_directory = true;
+    const bool directory_read =
+        second_file_system.OpenDirectory(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH,
+                                         sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_SHARED_PATH),
+                                         directory_handle) ==
             os::kernel::FileSystemStatus::Succeeded &&
-        !endOfDirectory &&
-        directoryEntry.type ==
-            os::kernel::FileSystemNodeType::RegularFile &&
-        DirectoryEntryNameEquals(
-            directoryEntry,
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME)) &&
-        secondFileSystem.ReadDirectory(
-            directoryHandle, directoryEntry, endOfDirectory) ==
+        second_file_system.ReadDirectory(directory_handle, directory_entry, end_of_directory) ==
             os::kernel::FileSystemStatus::Succeeded &&
-        endOfDirectory &&
-        secondFileSystem.Close(directoryHandle) ==
-            os::kernel::FileSystemStatus::Succeeded;
-    testContext.Expect(
-        directoryRead,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_READS_DIRECTORY);
+        !end_of_directory && directory_entry.type == os::kernel::FileSystemNodeType::RegularFile &&
+        DirectoryEntryNameEquals(directory_entry, OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME,
+                                 sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_FILE_NAME)) &&
+        second_file_system.ReadDirectory(directory_handle, directory_entry, end_of_directory) ==
+            os::kernel::FileSystemStatus::Succeeded &&
+        end_of_directory &&
+        second_file_system.Close(directory_handle) == os::kernel::FileSystemStatus::Succeeded;
+    test_context.Expect(directory_read, OS_TEST_FILE_SYSTEM_LIFECYCLE_READS_DIRECTORY);
 
-    os::kernel::FileSystemHandle truncateHandle{};
-    const os::kernel::FileSystemOpenOptions truncateOptions{
+    os::kernel::FileSystemHandle truncate_handle{};
+    const os::kernel::FileSystemOpenOptions truncate_options{
         .readable = true,
         .writable = true,
         .create = false,
         .truncate = true,
     };
-    uint8_t emptyReadByte = 0U;
-    readBytes = OS_TEST_FILE_SYSTEM_LIFECYCLE_COUNTER_INCREMENT;
+    uint8_t empty_read_byte = 0U;
+    read_bytes = OS_TEST_FILE_SYSTEM_LIFECYCLE_COUNTER_INCREMENT;
     const bool truncated =
-        secondFileSystem.Close(readHandle) ==
-            os::kernel::FileSystemStatus::Succeeded &&
-        secondFileSystem.Open(
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH,
-            sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH), truncateOptions,
-            truncateHandle) == os::kernel::FileSystemStatus::Succeeded &&
-        secondFileSystem.Read(
-            truncateHandle, &emptyReadByte,
-            OS_TEST_FILE_SYSTEM_LIFECYCLE_COUNTER_INCREMENT,
-            readBytes) == os::kernel::FileSystemStatus::Succeeded &&
-        readBytes == OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE &&
-        secondFileSystem.Close(truncateHandle) ==
-            os::kernel::FileSystemStatus::Succeeded &&
-        secondFileSystem.CheckConsistency() ==
-            os::kernel::FileSystemStatus::Succeeded &&
-        secondFileSystem.Statistics().allocatedDataBlockCount ==
+        second_file_system.Close(read_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        second_file_system.Open(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH,
+                                sizeof(OS_TEST_FILE_SYSTEM_LIFECYCLE_FILE_PATH), truncate_options,
+                                truncate_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        second_file_system.Read(truncate_handle, &empty_read_byte,
+                                OS_TEST_FILE_SYSTEM_LIFECYCLE_COUNTER_INCREMENT,
+                                read_bytes) == os::kernel::FileSystemStatus::Succeeded &&
+        read_bytes == OS_TEST_FILE_SYSTEM_LIFECYCLE_EMPTY_VALUE &&
+        second_file_system.Close(truncate_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        second_file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded &&
+        second_file_system.Statistics().allocated_data_block_count ==
             OS_TEST_FILE_SYSTEM_LIFECYCLE_EXPECTED_DIRECTORY_BLOCK_COUNT;
-    testContext.Expect(truncated,
-                       OS_TEST_FILE_SYSTEM_LIFECYCLE_TRUNCATES_FILE);
+    test_context.Expect(truncated, OS_TEST_FILE_SYSTEM_LIFECYCLE_TRUNCATES_FILE);
 
-    device.XorByte(
-        os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
-            os::kernel::OS_KERNEL_FILE_SYSTEM_INODE_BITMAP_RELATIVE_BLOCK,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_BITMAP_BYTE_OFFSET,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_ORPHAN_INODE_MASK);
-    os::kernel::FileSystem orphanFileSystem{};
+    device.XorByte(os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
+                       os::kernel::OS_KERNEL_FILE_SYSTEM_INODE_BITMAP_RELATIVE_BLOCK,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_BITMAP_BYTE_OFFSET,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_ORPHAN_INODE_MASK);
+    os::kernel::FileSystem orphan_file_system{};
     formatted = true;
-    testContext.Expect(
-        orphanFileSystem.MountOrFormat(device, formatted) ==
-                os::kernel::FileSystemStatus::Corrupt &&
-            !formatted,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_REJECTS_ORPHAN_INODE);
-    device.XorByte(
-        os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
-            os::kernel::OS_KERNEL_FILE_SYSTEM_INODE_BITMAP_RELATIVE_BLOCK,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_BITMAP_BYTE_OFFSET,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_ORPHAN_INODE_MASK);
+    test_context.Expect(orphan_file_system.MountOrFormat(device, formatted) ==
+                                os::kernel::FileSystemStatus::Corrupt &&
+                            !formatted,
+                        OS_TEST_FILE_SYSTEM_LIFECYCLE_REJECTS_ORPHAN_INODE);
+    device.XorByte(os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
+                       os::kernel::OS_KERNEL_FILE_SYSTEM_INODE_BITMAP_RELATIVE_BLOCK,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_BITMAP_BYTE_OFFSET,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_ORPHAN_INODE_MASK);
 
-    device.XorByte(
-        os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
-            os::kernel::OS_KERNEL_FILE_SYSTEM_DATA_START_RELATIVE_BLOCK,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_ROOT_NAME_OFFSET_BYTES,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_INVALID_NAME_MASK);
-    os::kernel::FileSystem invalidNameFileSystem{};
+    device.XorByte(os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
+                       os::kernel::OS_KERNEL_FILE_SYSTEM_DATA_START_RELATIVE_BLOCK,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_ROOT_NAME_OFFSET_BYTES,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_INVALID_NAME_MASK);
+    os::kernel::FileSystem invalid_name_file_system{};
     formatted = true;
-    testContext.Expect(
-        invalidNameFileSystem.MountOrFormat(device, formatted) ==
-                os::kernel::FileSystemStatus::Corrupt &&
-            !formatted,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_REJECTS_INVALID_NAME);
-    device.XorByte(
-        os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
-            os::kernel::OS_KERNEL_FILE_SYSTEM_DATA_START_RELATIVE_BLOCK,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_ROOT_NAME_OFFSET_BYTES,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_INVALID_NAME_MASK);
+    test_context.Expect(invalid_name_file_system.MountOrFormat(device, formatted) ==
+                                os::kernel::FileSystemStatus::Corrupt &&
+                            !formatted,
+                        OS_TEST_FILE_SYSTEM_LIFECYCLE_REJECTS_INVALID_NAME);
+    device.XorByte(os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA +
+                       os::kernel::OS_KERNEL_FILE_SYSTEM_DATA_START_RELATIVE_BLOCK,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_ROOT_NAME_OFFSET_BYTES,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_INVALID_NAME_MASK);
 
-    device.XorByte(
-        os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_SUPERBLOCK_CORRUPTION_OFFSET,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_CORRUPTION_MASK);
-    os::kernel::FileSystem corruptFileSystem{};
+    device.XorByte(os::kernel::OS_KERNEL_FILE_SYSTEM_START_LBA,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_SUPERBLOCK_CORRUPTION_OFFSET,
+                   OS_TEST_FILE_SYSTEM_LIFECYCLE_CORRUPTION_MASK);
+    os::kernel::FileSystem corrupt_file_system{};
     formatted = true;
-    testContext.Expect(
-        corruptFileSystem.MountOrFormat(device, formatted) ==
-                os::kernel::FileSystemStatus::Corrupt &&
-            !formatted,
-        OS_TEST_FILE_SYSTEM_LIFECYCLE_DETECTS_CORRUPTION);
+    test_context.Expect(corrupt_file_system.MountOrFormat(device, formatted) ==
+                                os::kernel::FileSystemStatus::Corrupt &&
+                            !formatted,
+                        OS_TEST_FILE_SYSTEM_LIFECYCLE_DETECTS_CORRUPTION);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

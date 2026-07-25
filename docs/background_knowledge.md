@@ -495,7 +495,7 @@ E820 中“最高被描述地址”和“最高可用 RAM 地址”也不是同�
 
 物理地址是总线和页表使用的编号，不天然是 C++ 可以解引用的虚拟地址。早期
 身份映射恰好令两者数值相等，容易诱导代码把
-`reinterpret_cast<uint8_t *>(physicalAddress)` 当成永久接口；一旦页帧位于
+`reinterpret_cast<uint8_t *>(physical_address)` 当成永久接口；一旦页帧位于
 4 GiB 以上或低端身份映射被缩小，这个假设立即失效。
 
 direct-map 为普通 RAM 建立稳定关系：

@@ -39,8 +39,7 @@ static_assert(OS_KERNEL_FILE_SYSTEM_DATA_BITMAP_RELATIVE_BLOCK +
 static_assert(OS_KERNEL_FILE_SYSTEM_DATA_START_RELATIVE_BLOCK +
                   OS_KERNEL_FILE_SYSTEM_DATA_BLOCK_COUNT ==
               OS_KERNEL_FILE_SYSTEM_TOTAL_BLOCK_COUNT);
-static_assert(OS_KERNEL_FILE_SYSTEM_INODE_COUNT *
-                  OS_KERNEL_FILE_SYSTEM_INODE_SIZE_BYTES ==
+static_assert(OS_KERNEL_FILE_SYSTEM_INODE_COUNT * OS_KERNEL_FILE_SYSTEM_INODE_SIZE_BYTES ==
               OS_KERNEL_FILE_SYSTEM_INODE_TABLE_BLOCK_COUNT *
                   OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES);
 static_assert(OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES *
@@ -74,58 +73,54 @@ enum class FileSystemFormatStatus : uint64_t {
 
 struct FileSystemSuperblock final {
     uint64_t version;
-    uint64_t blockSizeBytes;
-    uint64_t totalBlockCount;
-    uint64_t inodeBitmapRelativeBlock;
-    uint64_t inodeTableStartRelativeBlock;
-    uint64_t inodeTableBlockCount;
-    uint64_t dataBitmapRelativeBlock;
-    uint64_t dataStartRelativeBlock;
-    uint64_t inodeCount;
-    uint64_t dataBlockCount;
-    uint64_t rootInodeNumber;
-    FileSystemTransactionState transactionState;
-    uint64_t transactionGeneration;
+    uint64_t block_size_bytes;
+    uint64_t total_block_count;
+    uint64_t inode_bitmap_relative_block;
+    uint64_t inode_table_start_relative_block;
+    uint64_t inode_table_block_count;
+    uint64_t data_bitmap_relative_block;
+    uint64_t data_start_relative_block;
+    uint64_t inode_count;
+    uint64_t data_block_count;
+    uint64_t root_inode_number;
+    FileSystemTransactionState transaction_state;
+    uint64_t transaction_generation;
 };
 
 struct FileSystemInode final {
     FileSystemNodeType type;
-    uint64_t sizeBytes;
+    uint64_t size_bytes;
     uint64_t generation;
-    uint64_t linkCount;
-    uint64_t allocatedBlockCount;
-    uint64_t directBlocks[OS_KERNEL_FILE_SYSTEM_DIRECT_BLOCK_COUNT];
+    uint64_t link_count;
+    uint64_t allocated_block_count;
+    uint64_t direct_blocks[OS_KERNEL_FILE_SYSTEM_DIRECT_BLOCK_COUNT];
 };
 
 struct FileSystemDirectoryEntry final {
-    uint64_t inodeNumber;
+    uint64_t inode_number;
     FileSystemNodeType type;
-    uint64_t nameLengthBytes;
+    uint64_t name_length_bytes;
     uint8_t name[OS_KERNEL_FILE_SYSTEM_MAXIMUM_NAME_LENGTH_BYTES];
 };
 
 [[nodiscard]] uint32_t CalculateFileSystemCrc32(const uint8_t *bytes,
-                                                uint64_t lengthBytes) noexcept;
-[[nodiscard]] bool FileSystemBlockIsZero(const uint8_t *block,
-                                         uint64_t blockSizeBytes) noexcept;
+                                                uint64_t length_bytes) noexcept;
+[[nodiscard]] bool FileSystemBlockIsZero(const uint8_t *block, uint64_t block_size_bytes) noexcept;
 [[nodiscard]] FileSystemSuperblock CreateFileSystemSuperblock() noexcept;
 [[nodiscard]] FileSystemFormatStatus
 EncodeFileSystemSuperblock(const FileSystemSuperblock &superblock, uint8_t *block,
-                           uint64_t blockSizeBytes) noexcept;
+                           uint64_t block_size_bytes) noexcept;
 [[nodiscard]] FileSystemFormatStatus
-DecodeFileSystemSuperblock(const uint8_t *block, uint64_t blockSizeBytes,
+DecodeFileSystemSuperblock(const uint8_t *block, uint64_t block_size_bytes,
                            FileSystemSuperblock &superblock) noexcept;
 [[nodiscard]] FileSystemFormatStatus
-EncodeFileSystemInode(const FileSystemInode &inode, uint8_t *bytes,
-                      uint64_t byteCount) noexcept;
+EncodeFileSystemInode(const FileSystemInode &inode, uint8_t *bytes, uint64_t byte_count) noexcept;
 [[nodiscard]] FileSystemFormatStatus
-DecodeFileSystemInode(const uint8_t *bytes, uint64_t byteCount,
-                      FileSystemInode &inode) noexcept;
+DecodeFileSystemInode(const uint8_t *bytes, uint64_t byte_count, FileSystemInode &inode) noexcept;
 [[nodiscard]] FileSystemFormatStatus
 EncodeFileSystemDirectoryEntry(const FileSystemDirectoryEntry &entry, uint8_t *bytes,
-                               uint64_t byteCount) noexcept;
+                               uint64_t byte_count) noexcept;
 [[nodiscard]] FileSystemFormatStatus
-DecodeFileSystemDirectoryEntry(const uint8_t *bytes, uint64_t byteCount,
+DecodeFileSystemDirectoryEntry(const uint8_t *bytes, uint64_t byte_count,
                                FileSystemDirectoryEntry &entry) noexcept;
-
 }

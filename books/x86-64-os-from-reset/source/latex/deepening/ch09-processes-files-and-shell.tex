@@ -180,12 +180,12 @@ PIT 目标约 1000 Hz，默认量子 \(q=4\) tick。每个用户 IRQ0 先增加�
 三个进程、总计 24 tick、量子 4 的纯模型集成测试中：
 \[
   \mathrm{preemptions}=24/4=6,\qquad
-  \mathrm{runTicks}_i=24/3=8.
+  \mathrm{run_ticks}_i=24/3=8.
 \]
 固定种子随机测试再生成 4096 组进程数、量子和 tick 序列。每一步检查：
 \[
   \sum_i [\mathrm{state}_i=\mathrm{Running}] = 1,\qquad
-  \sum_i \mathrm{runTicks}_i = \mathrm{timerTicks}.
+  \sum_i \mathrm{run_ticks}_i = \mathrm{timer_ticks}.
 \]
 这些守恒比断言某一长序列更强：它们覆盖不同量子和队列长度，又不会把实现
 内部循环写死成测试。
@@ -215,10 +215,10 @@ PDPT[0] 是共享内核所有权，绝不能递归释放。接口还拒绝销毁
 
 正常镜像创建 PID1 smoke，以及 PID2、PID3、PID4 三个完全相同的 worker
 ELF。每个 worker 先调用 \code{GetProcessId}，再执行三轮各 1,500,000 次
-递增。全局 \code{workerCounter} 位于每个地址空间相同 BSS 虚拟地址；第
+递增。全局 \code{worker_counter} 位于每个地址空间相同 BSS 虚拟地址；第
 \(r\) 轮结束必须满足：
 \[
-  \mathrm{workerCounter}=r\times1\,500\,000.
+  \mathrm{worker_counter}=r\times1\,500\,000.
 \]
 若三个 CR3 错误共享叶帧，后运行实例看到的初值不为零，至少一个检查失败。
 三个实例各输出一次 \code{ADDRESS\_SPACE\_ISOLATED}，同时长计算区间让
@@ -419,8 +419,8 @@ CloseReader 与 CloseWriter。负结果分别区分无效用户内存、未知�
 在验证与复制之间被另一个执行流销毁；多线程/内核抢占阶段仍需页固定或地址
 空间锁。
 
-成功写入后运行时累计当前 PCB 的 \code{pipeBytesWritten}，成功读出后累计
-\code{pipeBytesRead}。这两项和管道全局统计从不同所有权视角证明同一事实：
+成功写入后运行时累计当前 PCB 的 \code{pipe_bytes_written}，成功读出后累计
+\code{pipe_bytes_read}。这两项和管道全局统计从不同所有权视角证明同一事实：
 生产者只能写 256、消费者只能读 256，两个调度 worker 两项都为零。
 
 \section{端点关闭改变等待谓词，所以关闭本身也必须唤醒}

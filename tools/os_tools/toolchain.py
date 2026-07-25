@@ -15,6 +15,7 @@ class ToolRequirement:
 OS_TOOLCHAIN_REQUIRED_TOOLS = (
     ToolRequirement("Python", "python3"),
     ToolRequirement("Clang", "clang++"),
+    ToolRequirement("Clang-Tidy", "clang-tidy"),
     ToolRequirement("LLD", "ld.lld"),
     ToolRequirement("NASM", "nasm"),
     ToolRequirement("QEMU", "qemu-system-x86_64"),

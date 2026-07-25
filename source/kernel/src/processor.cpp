@@ -54,19 +54,19 @@ struct CpuIdResult final {
     return result;
 }
 
-[[nodiscard]] uint64_t ReadModelSpecificRegister(const uint32_t registerIndex) noexcept {
-    uint32_t lowValue = 0U;
-    uint32_t highValue = 0U;
-    asm volatile("rdmsr" : "=a"(lowValue), "=d"(highValue) : "c"(registerIndex));
-    return static_cast<uint64_t>(lowValue) |
-           (static_cast<uint64_t>(highValue) << OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
+[[nodiscard]] uint64_t ReadModelSpecificRegister(const uint32_t register_index) noexcept {
+    uint32_t low_value = 0U;
+    uint32_t high_value = 0U;
+    asm volatile("rdmsr" : "=a"(low_value), "=d"(high_value) : "c"(register_index));
+    return static_cast<uint64_t>(low_value) |
+           (static_cast<uint64_t>(high_value) << OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
 }
 
-void WriteModelSpecificRegister(const uint32_t registerIndex, const uint64_t value) noexcept {
-    const uint32_t lowValue = static_cast<uint32_t>(value);
-    const uint32_t highValue =
+void WriteModelSpecificRegister(const uint32_t register_index, const uint64_t value) noexcept {
+    const uint32_t low_value = static_cast<uint32_t>(value);
+    const uint32_t high_value =
         static_cast<uint32_t>(value >> OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
-    asm volatile("wrmsr" : : "c"(registerIndex), "a"(lowValue), "d"(highValue));
+    asm volatile("wrmsr" : : "c"(register_index), "a"(low_value), "d"(high_value));
 }
 
 [[nodiscard]] uint64_t ReadControlRegister0() noexcept {
@@ -79,10 +79,9 @@ void WriteControlRegister0(const uint64_t value) noexcept {
     asm volatile("mov cr0, %0" : : "r"(value) : "memory");
 }
 
-[[nodiscard]] volatile uint32_t *LocalApicRegister(const uint64_t registerOffset) noexcept {
-    return reinterpret_cast<volatile uint32_t *>(LocalApicPhysicalAddress() + registerOffset);
+[[nodiscard]] volatile uint32_t *LocalApicRegister(const uint64_t register_offset) noexcept {
+    return reinterpret_cast<volatile uint32_t *>(LocalApicPhysicalAddress() + register_offset);
 }
-
 }
 
 [[noreturn]] void HaltProcessor() noexcept {
@@ -98,8 +97,8 @@ bool DisableInterrupts() noexcept {
     return (flags & OS_KERNEL_PROCESSOR_RFLAGS_INTERRUPT_ENABLE_BIT) != 0ULL;
 }
 
-void RestoreInterrupts(const bool interruptsWereEnabled) noexcept {
-    if (interruptsWereEnabled) {
+void RestoreInterrupts(const bool interrupts_were_enabled) noexcept {
+    if (interrupts_were_enabled) {
         asm volatile("sti" : : : "memory");
     }
 }
@@ -114,53 +113,53 @@ void EnableInterruptsWaitAndDisable() noexcept {
 }
 
 uint64_t ReadPageTableRoot() noexcept {
-    uint64_t pageTableRoot = 0ULL;
-    asm volatile("mov %0, cr3" : "=r"(pageTableRoot));
-    return pageTableRoot;
+    uint64_t page_table_root = 0ULL;
+    asm volatile("mov %0, cr3" : "=r"(page_table_root));
+    return page_table_root;
 }
 
 uint64_t ReadPageFaultLinearAddress() noexcept {
-    uint64_t pageFaultLinearAddress = 0ULL;
-    asm volatile("mov %0, cr2" : "=r"(pageFaultLinearAddress));
-    return pageFaultLinearAddress;
+    uint64_t page_fault_linear_address = 0ULL;
+    asm volatile("mov %0, cr2" : "=r"(page_fault_linear_address));
+    return page_fault_linear_address;
 }
 
 uint64_t ProcessorPhysicalAddressWidthBits() noexcept {
-    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
-    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {
+    const CpuIdResult maximum_leaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+    if (maximum_leaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {
         return 0ULL;
     }
-    const CpuIdResult addressWidths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
-    const uint64_t physicalAddressWidthBits =
-        addressWidths.accumulator & OS_KERNEL_PROCESSOR_CPUID_PHYSICAL_ADDRESS_WIDTH_MASK;
-    if (physicalAddressWidthBits < OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS ||
-        physicalAddressWidthBits > OS_KERNEL_PROCESSOR_MAXIMUM_PAGE_TABLE_ADDRESS_WIDTH_BITS) {
+    const CpuIdResult address_widths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
+    const uint64_t physical_address_width_bits =
+        address_widths.accumulator & OS_KERNEL_PROCESSOR_CPUID_PHYSICAL_ADDRESS_WIDTH_MASK;
+    if (physical_address_width_bits < OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS ||
+        physical_address_width_bits > OS_KERNEL_PROCESSOR_MAXIMUM_PAGE_TABLE_ADDRESS_WIDTH_BITS) {
         return 0ULL;
     }
-    return physicalAddressWidthBits;
+    return physical_address_width_bits;
 }
 
 uint64_t ProcessorVirtualAddressWidthBits() noexcept {
-    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
-    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {
+    const CpuIdResult maximum_leaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+    if (maximum_leaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {
         return 0ULL;
     }
-    const CpuIdResult addressWidths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
-    return (addressWidths.accumulator & OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_MASK) >>
+    const CpuIdResult address_widths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
+    return (address_widths.accumulator & OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_MASK) >>
            OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_SHIFT;
 }
 
 uint64_t ProcessorMaximumPhysicalAddressExclusive() noexcept {
-    const uint64_t physicalAddressWidthBits = ProcessorPhysicalAddressWidthBits();
-    if (physicalAddressWidthBits == 0ULL) {
+    const uint64_t physical_address_width_bits = ProcessorPhysicalAddressWidthBits();
+    if (physical_address_width_bits == 0ULL) {
         return 0ULL;
     }
-    return 1ULL << physicalAddressWidthBits;
+    return 1ULL << physical_address_width_bits;
 }
 
 bool ProcessorSupportsNoExecute() noexcept {
-    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
-    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF) {
+    const CpuIdResult maximum_leaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+    if (maximum_leaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF) {
         return false;
     }
     const CpuIdResult features = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF);
@@ -173,13 +172,13 @@ bool ProcessorSupportsLocalApic() noexcept {
 }
 
 bool ProcessorSupportsFiveLevelPaging() noexcept {
-    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_MAXIMUM_LEAF);
-    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_STRUCTURED_FEATURES_LEAF) {
+    const CpuIdResult maximum_leaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_MAXIMUM_LEAF);
+    if (maximum_leaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_STRUCTURED_FEATURES_LEAF) {
         return false;
     }
-    const CpuIdResult structuredFeatures =
+    const CpuIdResult structured_features =
         ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STRUCTURED_FEATURES_LEAF);
-    return (structuredFeatures.counter & OS_KERNEL_PROCESSOR_CPUID_FIVE_LEVEL_PAGING_BIT) != 0U;
+    return (structured_features.counter & OS_KERNEL_PROCESSOR_CPUID_FIVE_LEVEL_PAGING_BIT) != 0U;
 }
 
 uint64_t LocalApicPhysicalAddress() noexcept {
@@ -191,10 +190,10 @@ bool EnableKernelMemoryProtection() noexcept {
     if (!ProcessorSupportsNoExecute()) {
         return false;
     }
-    const uint64_t extendedFeatureRegister =
+    const uint64_t extended_feature_register =
         ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) |
         OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT;
-    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR, extendedFeatureRegister);
+    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR, extended_feature_register);
     WriteControlRegister0(ReadControlRegister0() | OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT);
     return KernelMemoryProtectionEnabled();
 }
@@ -209,44 +208,44 @@ bool ConfigureLegacyInterruptRouting() noexcept {
     if (!ProcessorSupportsLocalApic()) {
         return true;
     }
-    const uint64_t localApicBase =
+    const uint64_t local_apic_base =
         ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
-    if ((localApicBase & OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL ||
-        (localApicBase & OS_KERNEL_PROCESSOR_IA32_APIC_X2_ENABLE_BIT) != 0ULL) {
+    if ((local_apic_base & OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL ||
+        (local_apic_base & OS_KERNEL_PROCESSOR_IA32_APIC_X2_ENABLE_BIT) != 0ULL) {
         return false;
     }
 
-    volatile uint32_t *const spuriousRegister =
+    volatile uint32_t *const spurious_register =
         LocalApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_REGISTER_OFFSET);
-    const uint32_t spuriousValue =
-        (*spuriousRegister & ~OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) |
+    const uint32_t spurious_value =
+        (*spurious_register & ~OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) |
         OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR |
         OS_KERNEL_PROCESSOR_LOCAL_APIC_SOFTWARE_ENABLE_BIT;
-    *spuriousRegister = spuriousValue;
+    *spurious_register = spurious_value;
 
-    volatile uint32_t *const lint0Register =
+    volatile uint32_t *const lint0_register =
         LocalApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_LINT0_REGISTER_OFFSET);
-    const uint32_t lint0Value =
-        (*lint0Register & ~(OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK |
-                            OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT)) |
+    const uint32_t lint0_value =
+        (*lint0_register & ~(OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK |
+                             OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT)) |
         OS_KERNEL_PROCESSOR_LOCAL_APIC_EXTINT_DELIVERY_MODE;
-    *lint0Register = lint0Value;
+    *lint0_register = lint0_value;
     asm volatile("" : : : "memory");
 
-    return (*spuriousRegister & OS_KERNEL_PROCESSOR_LOCAL_APIC_SOFTWARE_ENABLE_BIT) != 0U &&
-           (*spuriousRegister & OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) ==
+    return (*spurious_register & OS_KERNEL_PROCESSOR_LOCAL_APIC_SOFTWARE_ENABLE_BIT) != 0U &&
+           (*spurious_register & OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) ==
                OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR &&
-           (*lint0Register & OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK) ==
+           (*lint0_register & OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK) ==
                OS_KERNEL_PROCESSOR_LOCAL_APIC_EXTINT_DELIVERY_MODE &&
-           (*lint0Register & OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT) == 0U;
+           (*lint0_register & OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT) == 0U;
 }
 
-void ActivatePageTable(const uint64_t rootPhysicalAddress) noexcept {
-    asm volatile("mov cr3, %0" : : "r"(rootPhysicalAddress) : "memory");
+void ActivatePageTable(const uint64_t root_physical_address) noexcept {
+    asm volatile("mov cr3, %0" : : "r"(root_physical_address) : "memory");
 }
 
-void InvalidatePage(const uint64_t virtualAddress) noexcept {
-    asm volatile("invlpg [%0]" : : "r"(virtualAddress) : "memory");
+void InvalidatePage(const uint64_t virtual_address) noexcept {
+    asm volatile("invlpg [%0]" : : "r"(virtual_address) : "memory");
 }
 
 void TriggerBreakpoint() noexcept { asm volatile("int3"); }
@@ -259,17 +258,16 @@ void TriggerLegacyPicSpuriousInterrupt() noexcept { asm volatile("int 0x27"); }
 }
 
 [[noreturn]] void TriggerPageFault() noexcept {
-    const volatile uint64_t *const unmappedAddress =
+    const volatile uint64_t *const unmapped_address =
         reinterpret_cast<const volatile uint64_t *>(OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS);
-    static_cast<void>(*unmappedAddress);
+    static_cast<void>(*unmapped_address);
     HaltProcessor();
 }
 
-[[noreturn]] void TriggerWriteProtectionFault(const uint64_t protectedAddress) noexcept {
-    volatile uint64_t *const writeProtectedAddress =
-        reinterpret_cast<volatile uint64_t *>(protectedAddress);
-    *writeProtectedAddress = protectedAddress;
+[[noreturn]] void TriggerWriteProtectionFault(const uint64_t protected_address) noexcept {
+    volatile uint64_t *const write_protected_address =
+        reinterpret_cast<volatile uint64_t *>(protected_address);
+    *write_protected_address = protected_address;
     HaltProcessor();
 }
-
 }

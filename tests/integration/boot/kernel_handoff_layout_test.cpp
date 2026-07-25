@@ -99,77 +99,78 @@ bool CreateRange(const os::foundation::AddressValue begin, const os::foundation:
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_HANDOFF_LAYOUT_SUITE_NAME};
-    os::foundation::AddressRange stage1Range{};
-    os::foundation::AddressRange pageTablesRange{};
-    os::foundation::AddressRange descriptorRange{};
-    os::foundation::AddressRange bootInfoRange{};
-    os::foundation::AddressRange scratchRange{};
-    os::foundation::AddressRange metadataRange{};
-    os::foundation::AddressRange fwCfgScratchRange{};
-    os::foundation::AddressRange memoryMapRange{};
-    os::foundation::AddressRange stagingRange{};
-    os::foundation::AddressRange kernelRange{};
-    os::foundation::AddressRange stackRange{};
-    os::foundation::AddressRange identityMapRange{};
+    os::test::TestContext test_context{OS_TEST_HANDOFF_LAYOUT_SUITE_NAME};
+    os::foundation::AddressRange stage1_range{};
+    os::foundation::AddressRange page_tables_range{};
+    os::foundation::AddressRange descriptor_range{};
+    os::foundation::AddressRange boot_info_range{};
+    os::foundation::AddressRange scratch_range{};
+    os::foundation::AddressRange metadata_range{};
+    os::foundation::AddressRange fw_cfg_scratch_range{};
+    os::foundation::AddressRange memory_map_range{};
+    os::foundation::AddressRange staging_range{};
+    os::foundation::AddressRange kernel_range{};
+    os::foundation::AddressRange stack_range{};
+    os::foundation::AddressRange identity_map_range{};
 
-    const bool allRangesCreated =
+    const bool all_ranges_created =
         CreateRange(OS_TEST_HANDOFF_LAYOUT_STAGE1_BEGIN, OS_TEST_HANDOFF_LAYOUT_STAGE1_SIZE,
-                    stage1Range) &&
+                    stage1_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_PAGE_TABLES_BEGIN,
-                    OS_TEST_HANDOFF_LAYOUT_PAGE_TABLES_SIZE, pageTablesRange) &&
+                    OS_TEST_HANDOFF_LAYOUT_PAGE_TABLES_SIZE, page_tables_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_DESCRIPTOR_BEGIN, OS_TEST_HANDOFF_LAYOUT_DESCRIPTOR_SIZE,
-                    descriptorRange) &&
+                    descriptor_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_BOOT_INFO_BEGIN, OS_TEST_HANDOFF_LAYOUT_BOOT_INFO_SIZE,
-                    bootInfoRange) &&
+                    boot_info_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_SCRATCH_BEGIN, OS_TEST_HANDOFF_LAYOUT_SCRATCH_SIZE,
-                    scratchRange) &&
+                    scratch_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_METADATA_BEGIN, OS_TEST_HANDOFF_LAYOUT_METADATA_SIZE,
-                    metadataRange) &&
+                    metadata_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_FW_CFG_SCRATCH_BEGIN,
-                    OS_TEST_HANDOFF_LAYOUT_FW_CFG_SCRATCH_SIZE, fwCfgScratchRange) &&
+                    OS_TEST_HANDOFF_LAYOUT_FW_CFG_SCRATCH_SIZE, fw_cfg_scratch_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_BEGIN, OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_SIZE,
-                    memoryMapRange) &&
+                    memory_map_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_STAGING_BEGIN, OS_TEST_HANDOFF_LAYOUT_STAGING_SIZE,
-                    stagingRange) &&
+                    staging_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_KERNEL_BEGIN, OS_TEST_HANDOFF_LAYOUT_KERNEL_SIZE,
-                    kernelRange) &&
+                    kernel_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_STACK_BEGIN, OS_TEST_HANDOFF_LAYOUT_STACK_SIZE,
-                    stackRange) &&
+                    stack_range) &&
         CreateRange(OS_TEST_HANDOFF_LAYOUT_MAP_BEGIN, OS_TEST_HANDOFF_LAYOUT_MAP_SIZE,
-                    identityMapRange);
-    testContext.Expect(allRangesCreated, OS_TEST_HANDOFF_LAYOUT_RANGE_CREATION);
+                    identity_map_range);
+    test_context.Expect(all_ranges_created, OS_TEST_HANDOFF_LAYOUT_RANGE_CREATION);
 
-    testContext.Expect(!stage1Range.Overlaps(pageTablesRange),
-                       OS_TEST_HANDOFF_LAYOUT_STAGE1_PAGE_TABLES);
-    testContext.Expect(!pageTablesRange.Overlaps(descriptorRange),
-                       OS_TEST_HANDOFF_LAYOUT_PAGE_TABLES_DESCRIPTOR);
-    testContext.Expect(!descriptorRange.Overlaps(bootInfoRange),
-                       OS_TEST_HANDOFF_LAYOUT_DESCRIPTOR_BOOT_INFO);
-    testContext.Expect(!bootInfoRange.Overlaps(scratchRange),
-                       OS_TEST_HANDOFF_LAYOUT_BOOT_INFO_SCRATCH);
-    testContext.Expect(!scratchRange.Overlaps(metadataRange),
-                       OS_TEST_HANDOFF_LAYOUT_SCRATCH_METADATA);
-    testContext.Expect(!metadataRange.Overlaps(fwCfgScratchRange),
-                       OS_TEST_HANDOFF_LAYOUT_METADATA_FW_CFG);
-    testContext.Expect(!fwCfgScratchRange.Overlaps(memoryMapRange),
-                       OS_TEST_HANDOFF_LAYOUT_FW_CFG_MEMORY_MAP);
-    testContext.Expect(!memoryMapRange.Overlaps(stagingRange),
-                       OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_STAGING);
-    testContext.Expect(!stagingRange.Overlaps(kernelRange), OS_TEST_HANDOFF_LAYOUT_STAGING_KERNEL);
-    testContext.Expect(!stagingRange.Overlaps(stackRange), OS_TEST_HANDOFF_LAYOUT_STAGING_STACK);
-    testContext.Expect(identityMapRange.Contains(
-                           os::foundation::PhysicalAddress{OS_TEST_HANDOFF_LAYOUT_STAGE1_BEGIN}),
-                       OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGE1);
-    testContext.Expect(identityMapRange.Contains(os::foundation::PhysicalAddress{
-                           OS_TEST_HANDOFF_LAYOUT_STAGING_LAST_ADDRESS}),
-                       OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGING);
-    testContext.Expect(identityMapRange.Contains(os::foundation::PhysicalAddress{
-                           OS_TEST_HANDOFF_LAYOUT_KERNEL_LAST_ADDRESS}),
-                       OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_KERNEL);
-    testContext.Expect(identityMapRange.Contains(os::foundation::PhysicalAddress{
-                           OS_TEST_HANDOFF_LAYOUT_STACK_LAST_ADDRESS}),
-                       OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STACK);
+    test_context.Expect(!stage1_range.Overlaps(page_tables_range),
+                        OS_TEST_HANDOFF_LAYOUT_STAGE1_PAGE_TABLES);
+    test_context.Expect(!page_tables_range.Overlaps(descriptor_range),
+                        OS_TEST_HANDOFF_LAYOUT_PAGE_TABLES_DESCRIPTOR);
+    test_context.Expect(!descriptor_range.Overlaps(boot_info_range),
+                        OS_TEST_HANDOFF_LAYOUT_DESCRIPTOR_BOOT_INFO);
+    test_context.Expect(!boot_info_range.Overlaps(scratch_range),
+                        OS_TEST_HANDOFF_LAYOUT_BOOT_INFO_SCRATCH);
+    test_context.Expect(!scratch_range.Overlaps(metadata_range),
+                        OS_TEST_HANDOFF_LAYOUT_SCRATCH_METADATA);
+    test_context.Expect(!metadata_range.Overlaps(fw_cfg_scratch_range),
+                        OS_TEST_HANDOFF_LAYOUT_METADATA_FW_CFG);
+    test_context.Expect(!fw_cfg_scratch_range.Overlaps(memory_map_range),
+                        OS_TEST_HANDOFF_LAYOUT_FW_CFG_MEMORY_MAP);
+    test_context.Expect(!memory_map_range.Overlaps(staging_range),
+                        OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_STAGING);
+    test_context.Expect(!staging_range.Overlaps(kernel_range),
+                        OS_TEST_HANDOFF_LAYOUT_STAGING_KERNEL);
+    test_context.Expect(!staging_range.Overlaps(stack_range), OS_TEST_HANDOFF_LAYOUT_STAGING_STACK);
+    test_context.Expect(identity_map_range.Contains(
+                            os::foundation::PhysicalAddress{OS_TEST_HANDOFF_LAYOUT_STAGE1_BEGIN}),
+                        OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGE1);
+    test_context.Expect(identity_map_range.Contains(os::foundation::PhysicalAddress{
+                            OS_TEST_HANDOFF_LAYOUT_STAGING_LAST_ADDRESS}),
+                        OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGING);
+    test_context.Expect(identity_map_range.Contains(os::foundation::PhysicalAddress{
+                            OS_TEST_HANDOFF_LAYOUT_KERNEL_LAST_ADDRESS}),
+                        OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_KERNEL);
+    test_context.Expect(identity_map_range.Contains(os::foundation::PhysicalAddress{
+                            OS_TEST_HANDOFF_LAYOUT_STACK_LAST_ADDRESS}),
+                        OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STACK);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

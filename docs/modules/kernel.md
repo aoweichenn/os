@@ -7,7 +7,7 @@
 
 - 由 Clang 以 `x86_64-unknown-none-elf` 目标编译。
 - 由 LLD 的 `elf_x86_64` 模式直接链接，不经过 ARM64 宿主 GCC。
-- 入口符号为 C ABI 的 `osKernelEntry`，链接地址为 `0x00100000`。
+- 入口符号为 C ABI 的 `OsKernelEntry`，链接地址为 `0x00100000`。
 - 不链接 libc、C++ 标准库、异常、RTTI、栈保护或宿主运行时。
 - 入口按 System V AMD64 ABI 从 RDI 接收 BootInfo。
 - 内核独立初始化 COM1，不依赖 Stage 1 函数或隐藏状态。
@@ -16,7 +16,7 @@
 - 可恢复 breakpoint 经 `IRETQ` 返回，其他异常输出固定现场并 panic。
 - 验证 BootInfo v2 的物理内存图，初始化 2-bit 页帧分配器。
 - 建立并激活内核自己的四级 4 KiB 页表，执行 W^X、NX、WP 和 guard page。
-- 映射并自检 64 KiB 高半区单调早期堆。
+- 映射并自检 64 KiB 高半区可回收内核堆。
 - 映射 LAPIC MMIO 并建立 LINT0 ExtINT virtual-wire，接管 8259A、8254、
   i8042 和 ATA PIO。
 - 向量 32..47 使用独立硬件 IRQ 汇编入口，设备处理后严格执行 PIC EOI。
@@ -115,7 +115,7 @@ breakpoint、overflow 和系统调用门的 DPL 为 3，允许 Ring 3 显式触�
 
 ### 物理内存图
 
-每个 24 字节条目由 `uint64_t baseAddress`、`uint64_t lengthBytes`、
+每个 24 字节条目由 `uint64_t base_address`、`uint64_t length_bytes`、
 `uint32_t type`、`uint32_t attributes` 组成，结构大小由 `static_assert`
 固定。内核只把 type 1 视为可用 RAM；未知类型保持不可分配。验证必须满足：
 
@@ -140,7 +140,7 @@ breakpoint、overflow 和系统调用门的 DPL 为 3，允许 Ring 3 显式触�
 | allocated | 动态所有者持有 | 只允许对应释放 |
 | reserved | 平台或启动关键对象 | 不允许普通释放 |
 
-状态数组大小为 `ceil(frameCount / 4)` 字节，再向上取整到完整页。内核先在
+状态数组大小为 `ceil(frame_count / 4)` 字节，再向上取整到完整页。内核先在
 Stage 1 的低 64 MiB 身份映射中搜索连续可用区，跳过低 1 MiB、链接器符号
 界定的 Kernel 映像和 64 KiB 初始栈；配置并初始化分配器后，再把状态数组
 自身标为 reserved。64 GiB QEMU 机器含 3--4 GiB 物理洞，受管上界为 65 GiB，
@@ -178,13 +178,22 @@ present、writable、user 和物理地址；叶项另外编码 NX。映射拒绝
 `INVLPG`；切换 CR3 刷新当前地址空间的普通 TLB 项。当前单核启动阶段不需要
 TLB shootdown。
 
-### 早期堆
+### 可回收内核堆
 
-`KernelHeap` 是显式初始化的单调分配器。它验证非零范围、地址溢出、非零且
-为二的幂的对齐、padding 和剩余容量；失败时不修改输出指针。它不提供释放，
-只服务设备子系统启动前的小量永久对象。目标机分别做 16 字节和 4 KiB 对齐
-分配，实际写入两个 64 位模式并读回，成功后才输出
-`HEAP_SELF_TEST_PASSED`。
+v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.1 保留同一
+`0xFFFF800000000000..+64KiB` RW/NX 区间，把实现升级为边界标记与地址
+有序空闲链表。每块包含自身长度、前块长度、请求长度、状态签名和双向空闲
+链接；分配使用 best-fit，对齐前缀和剩余后缀只有达到最小块尺寸才独立拆分。
+
+`TryRelease` 只接受活动负载的精确首地址，预检前后块后执行双向合并。空指针、
+区间外/内部指针、重复释放和损坏元数据拥有独立状态。`Validate` 同时核对
+物理块无缝覆盖、边界标记、空闲链排序/反链/无环、空闲集合唯一性，以及活动、
+累计、峰值和最大连续空闲负载统计。分配失败不修改输出指针和堆拓扑。
+
+目标机仍做 16 字节和 4 KiB 对齐分配，写入并读回两个 64 位模式；随后逆序
+释放、合并并确认活动数与当前占用均为零。只有完整生命周期通过才输出
+`HEAP_SELF_TEST_PASSED`。实现取舍见
+[ADR 0020](../adr/0020-reclaimable-kernel-heap.md)。
 
 ## 异常 ABI
 
@@ -266,7 +275,7 @@ CR3 中的用户虚拟地址复制。v0.9 仍是单核且 `INT 0x80` interrupt g
 
 ### 进入、系统调用与返回
 
-`osKernelEnterScheduledProcess` 保存调度启动前的内核 RSP、RFLAGS 和
+`OsKernelEnterScheduledProcess` 保存调度启动前的内核 RSP、RFLAGS 和
 非易失寄存器，再从首个 PCB 的完整现场执行 `IRETQ`。`INT 0x80` 让 CPU 自动从
 TSS.RSP0 取安全内核栈，系统调用公共入口复用统一寄存器帧。
 
@@ -274,7 +283,7 @@ TSS.RSP0 取安全内核栈，系统调用公共入口复用统一寄存器帧�
 CS=`0x23`、SS=`0x1B`、RIP 所在叶页为 user RX、RSP 位于四页用户栈，
 而且栈叶页是 user RW/NX。普通系统调用按原帧 `IRETQ`；exit 和用户异常
 终止当前 PCB 并交接到下一个 Ready 进程，只有最后一个进程结束时才用
-`osKernelReturnFromUserMode` 恢复调度启动前的内核调用链。
+`OsKernelReturnFromUserMode` 恢复调度启动前的内核调用链。
 
 `WriteLog` 最多复制 160 字节到固定内核缓冲后再访问串口。用户日志带
 `[OS][USER]` 只是协议来源标记，不获得内核可信度。ABI 详见
@@ -359,6 +368,9 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] MEMORY_PERMISSIONS_VALID
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x...
+[OS][KERNEL] HEAP_ACTIVE_ALLOCATIONS=0x0000000000000000
+[OS][KERNEL] HEAP_PEAK_CONSUMED_BYTES=0x...
+[OS][KERNEL] HEAP_LARGEST_FREE_ALLOCATION_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] PIPE_READY
@@ -416,7 +428,7 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 `BSS_ZEROED` 才能出现。CR3 读回值必须等于 BootInfo 中的页表根；这两项把
 “段复制完成”和“处理器仍使用约定页表”变成目标机可观测证据。
 
-故障镜像与生产内核共享所有实现，只替换 `osKernelEntry` 选择的注入模式。
+故障镜像与生产内核共享所有实现，只替换 `OsKernelEntry` 选择的注入模式。
 `UD2` 必须得到向量 6、错误码 0；访问 `0x04000000` 必须得到向量 14、
 错误码 0 和同值 CR2。写 `0xFFFF800000100000` 必须得到向量 14、错误码
 `0x3` 和同值 CR2，逐位表示 present 页上的 supervisor write 权限违反。
@@ -430,11 +442,12 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
   环形队列、IRQ14、DMA 与通用块请求尚未实现。
 - 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态仍按最高
   RAM PFN 线性编码，极端稀疏物理地址空间、NUMA 和分段 `vmemmap` 以后扩展。
-- 早期堆不释放，页表取消映射也不回收空中间表；通用生命周期尚未实现。
+- 内核堆已支持释放与合并，但后备区仍固定为 64 KiB，尚无 type cache、
+  KVA 按需增长和内存压力回收；页表取消映射也不回收空中间表。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。
 - 当前是单核、固定四进程、单线程模型；没有阻塞、唤醒、优先级、父子关系、
   zombie/wait、FPU/SSE 状态保存或 SMP 负载均衡。
-- 用户地址空间已完整回收，但 64 KiB 早期内核堆仍是单调分配器；通用内核
-  对象释放要随 v0.10 同步与 IPC 的所有权模型一起设计。
+- 用户地址空间和通用内核堆均可回收；动态 KernelObject、引用计数与类型化
+  对象缓存仍等待 v1.1 后续增量和 v1.4 对象模型。

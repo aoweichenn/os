@@ -35,88 +35,89 @@ constexpr uint64_t OS_TEST_PROCESS_INTEGRATION_EXPECTED_DISPATCHES =
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_PROCESS_INTEGRATION_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_PROCESS_INTEGRATION_SUITE_NAME};
     os::kernel::ProcessScheduler scheduler{};
-    bool setupSucceeded = scheduler.Initialize(OS_TEST_PROCESS_INTEGRATION_QUANTUM_TICKS) ==
-                          os::kernel::ProcessSchedulerStatus::Succeeded;
-    for (uint64_t processIndex = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-         processIndex < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++processIndex) {
-        uint64_t createdProcessIndex = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
-        uint64_t processId = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-        setupSucceeded =
-            setupSucceeded && scheduler.CreateProcess(createdProcessIndex, processId) ==
-                                  os::kernel::ProcessSchedulerStatus::Succeeded;
+    bool setup_succeeded = scheduler.Initialize(OS_TEST_PROCESS_INTEGRATION_QUANTUM_TICKS) ==
+                           os::kernel::ProcessSchedulerStatus::Succeeded;
+    for (uint64_t process_index = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+         process_index < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++process_index) {
+        uint64_t created_process_index = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
+        uint64_t process_id = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+        setup_succeeded =
+            setup_succeeded && scheduler.CreateProcess(created_process_index, process_id) ==
+                                   os::kernel::ProcessSchedulerStatus::Succeeded;
     }
 
     os::kernel::ProcessSchedulingDecision decision{};
-    setupSucceeded = setupSucceeded &&
-                     scheduler.Start(decision) == os::kernel::ProcessSchedulerStatus::Succeeded;
-    for (uint64_t tickIndex = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-         tickIndex < OS_TEST_PROCESS_INTEGRATION_TOTAL_TICKS; ++tickIndex) {
-        setupSucceeded = setupSucceeded && scheduler.HandleTimerTick(decision) ==
-                                               os::kernel::ProcessSchedulerStatus::Succeeded;
+    setup_succeeded = setup_succeeded &&
+                      scheduler.Start(decision) == os::kernel::ProcessSchedulerStatus::Succeeded;
+    for (uint64_t tick_index = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+         tick_index < OS_TEST_PROCESS_INTEGRATION_TOTAL_TICKS; ++tick_index) {
+        setup_succeeded = setup_succeeded && scheduler.HandleTimerTick(decision) ==
+                                                 os::kernel::ProcessSchedulerStatus::Succeeded;
     }
 
-    bool fair = setupSucceeded;
-    for (uint64_t processIndex = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-         processIndex < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++processIndex) {
+    bool fair = setup_succeeded;
+    for (uint64_t process_index = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+         process_index < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++process_index) {
         os::kernel::ProcessSchedulerEntry entry{};
         fair = fair &&
-               scheduler.ReadEntry(processIndex, entry) ==
+               scheduler.ReadEntry(process_index, entry) ==
                    os::kernel::ProcessSchedulerStatus::Succeeded &&
-               entry.runTickCount == OS_TEST_PROCESS_INTEGRATION_EXPECTED_TICKS_PER_PROCESS;
+               entry.run_tick_count == OS_TEST_PROCESS_INTEGRATION_EXPECTED_TICKS_PER_PROCESS;
     }
-    const os::kernel::ProcessSchedulerStatistics runningStatistics = scheduler.Statistics();
-    testContext.Expect(fair && runningStatistics.preemptionCount ==
-                                   OS_TEST_PROCESS_INTEGRATION_EXPECTED_PREEMPTIONS,
-                       OS_TEST_PROCESS_INTEGRATION_FAIRNESS);
+    const os::kernel::ProcessSchedulerStatistics running_statistics = scheduler.Statistics();
+    test_context.Expect(fair && running_statistics.preemption_count ==
+                                    OS_TEST_PROCESS_INTEGRATION_EXPECTED_PREEMPTIONS,
+                        OS_TEST_PROCESS_INTEGRATION_FAIRNESS);
 
-    const uint64_t waitingProcessIndex = scheduler.CurrentProcessIndex();
-    bool waitHandoffSucceeded =
+    const uint64_t waiting_process_index = scheduler.CurrentProcessIndex();
+    bool wait_handoff_succeeded =
         scheduler.BlockCurrentProcess(os::kernel::ProcessWaitReason::PipeWritable, decision) ==
             os::kernel::ProcessSchedulerStatus::Succeeded &&
-        decision.switched && decision.previousProcessIndex == waitingProcessIndex;
-    uint64_t wokenProcessCount = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-    waitHandoffSucceeded =
-        waitHandoffSucceeded &&
+        decision.switched && decision.previous_process_index == waiting_process_index;
+    uint64_t woken_process_count = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+    wait_handoff_succeeded =
+        wait_handoff_succeeded &&
         scheduler.WakeBlockedProcesses(os::kernel::ProcessWaitReason::PipeWritable,
                                        OS_TEST_PROCESS_INTEGRATION_EXPECTED_WAKEUP_COUNT,
-                                       wokenProcessCount) ==
+                                       woken_process_count) ==
             os::kernel::ProcessSchedulerStatus::Succeeded &&
-        wokenProcessCount == OS_TEST_PROCESS_INTEGRATION_EXPECTED_WAKEUP_COUNT;
-    os::kernel::ProcessSchedulerEntry waitingEntry{};
-    waitHandoffSucceeded = waitHandoffSucceeded &&
-                           scheduler.ReadEntry(waitingProcessIndex, waitingEntry) ==
-                               os::kernel::ProcessSchedulerStatus::Succeeded &&
-                           waitingEntry.state == os::kernel::ProcessState::Ready &&
-                           waitingEntry.waitReason == os::kernel::ProcessWaitReason::None;
-    testContext.Expect(waitHandoffSucceeded, OS_TEST_PROCESS_INTEGRATION_WAIT_HANDOFF);
+        woken_process_count == OS_TEST_PROCESS_INTEGRATION_EXPECTED_WAKEUP_COUNT;
+    os::kernel::ProcessSchedulerEntry waiting_entry{};
+    wait_handoff_succeeded = wait_handoff_succeeded &&
+                             scheduler.ReadEntry(waiting_process_index, waiting_entry) ==
+                                 os::kernel::ProcessSchedulerStatus::Succeeded &&
+                             waiting_entry.state == os::kernel::ProcessState::Ready &&
+                             waiting_entry.wait_reason == os::kernel::ProcessWaitReason::None;
+    test_context.Expect(wait_handoff_succeeded, OS_TEST_PROCESS_INTEGRATION_WAIT_HANDOFF);
 
-    bool terminationSucceeded = true;
-    for (uint64_t processIndex = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-         processIndex < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++processIndex) {
-        terminationSucceeded =
-            terminationSucceeded && scheduler.TerminateCurrentProcess(decision) ==
-                                        os::kernel::ProcessSchedulerStatus::Succeeded;
+    bool termination_succeeded = true;
+    for (uint64_t process_index = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+         process_index < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++process_index) {
+        termination_succeeded =
+            termination_succeeded && scheduler.TerminateCurrentProcess(decision) ==
+                                         os::kernel::ProcessSchedulerStatus::Succeeded;
     }
-    bool allTerminated = terminationSucceeded && decision.completed;
-    for (uint64_t processIndex = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
-         processIndex < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++processIndex) {
+    bool all_terminated = termination_succeeded && decision.completed;
+    for (uint64_t process_index = OS_TEST_PROCESS_INTEGRATION_EMPTY_VALUE;
+         process_index < OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT; ++process_index) {
         os::kernel::ProcessSchedulerEntry entry{};
-        allTerminated = allTerminated &&
-                        scheduler.ReadEntry(processIndex, entry) ==
-                            os::kernel::ProcessSchedulerStatus::Succeeded &&
-                        entry.state == os::kernel::ProcessState::Terminated;
+        all_terminated = all_terminated &&
+                         scheduler.ReadEntry(process_index, entry) ==
+                             os::kernel::ProcessSchedulerStatus::Succeeded &&
+                         entry.state == os::kernel::ProcessState::Terminated;
     }
-    const os::kernel::ProcessSchedulerStatistics finalStatistics = scheduler.Statistics();
-    testContext.Expect(
-        allTerminated &&
-            finalStatistics.terminatedProcessCount == OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT &&
-            finalStatistics.dispatchCount ==
+    const os::kernel::ProcessSchedulerStatistics final_statistics = scheduler.Statistics();
+    test_context.Expect(
+        all_terminated &&
+            final_statistics.terminated_process_count ==
+                OS_TEST_PROCESS_INTEGRATION_PROCESS_COUNT &&
+            final_statistics.dispatch_count ==
                 OS_TEST_PROCESS_INTEGRATION_EXPECTED_DISPATCHES +
                     OS_TEST_PROCESS_INTEGRATION_WAIT_HANDOFF_DISPATCH_COUNT &&
-            finalStatistics.blockCount == OS_TEST_PROCESS_INTEGRATION_EXPECTED_BLOCK_COUNT &&
-            finalStatistics.wakeupCount == OS_TEST_PROCESS_INTEGRATION_EXPECTED_WAKEUP_COUNT,
+            final_statistics.block_count == OS_TEST_PROCESS_INTEGRATION_EXPECTED_BLOCK_COUNT &&
+            final_statistics.wakeup_count == OS_TEST_PROCESS_INTEGRATION_EXPECTED_WAKEUP_COUNT,
         OS_TEST_PROCESS_INTEGRATION_LIFECYCLE);
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

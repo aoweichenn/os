@@ -85,7 +85,7 @@ Stage 1 最后执行有界冒泡排序。签名、目录、选择子、长度或
 输出一次 `MEMORY_MAP_INVALID`，并禁止继续读取 Kernel。
 
 交接时 RDI 指向 `0x14000` 的 BootInfo，RSP 设为 `0x03FFF000`，通过
-`CALL` 进入 C ABI 的 `osKernelEntry`。内核入口不应返回；若意外返回，
+`CALL` 进入 C ABI 的 `OsKernelEntry`。内核入口不应返回；若意外返回，
 Stage 1 输出 `KERNEL_RETURNED` 并停机。
 
 ## 失败边界

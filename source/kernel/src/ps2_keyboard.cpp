@@ -69,45 +69,45 @@ Ps2KeyboardStatus Ps2Keyboard::Initialize() const noexcept {
     return this->WriteDeviceCommand(OS_KERNEL_PS2_KEYBOARD_ENABLE_SCANNING_COMMAND);
 }
 
-Ps2KeyboardStatus Ps2Keyboard::TryReadScanCode(uint8_t &scanCode) const noexcept {
+Ps2KeyboardStatus Ps2Keyboard::TryReadScanCode(uint8_t &scan_code) const noexcept {
     if ((ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
          OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) == 0U) {
         return Ps2KeyboardStatus::NoScanCodeAvailable;
     }
-    scanCode = ReadPort8(OS_KERNEL_PS2_DATA_PORT);
+    scan_code = ReadPort8(OS_KERNEL_PS2_DATA_PORT);
     return Ps2KeyboardStatus::Succeeded;
 }
 
 bool Ps2Keyboard::WaitForControllerInput() const noexcept {
-    uint64_t remainingPollCount = OS_KERNEL_PS2_CONTROLLER_POLL_LIMIT;
-    while (remainingPollCount > 0ULL) {
+    uint64_t remaining_poll_count = OS_KERNEL_PS2_CONTROLLER_POLL_LIMIT;
+    while (remaining_poll_count > 0ULL) {
         if ((ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
              OS_KERNEL_PS2_STATUS_INPUT_BUFFER_FULL_BIT) == 0U) {
             return true;
         }
-        --remainingPollCount;
+        --remaining_poll_count;
     }
     return false;
 }
 
 bool Ps2Keyboard::WaitForControllerOutput() const noexcept {
-    uint64_t remainingPollCount = OS_KERNEL_PS2_CONTROLLER_POLL_LIMIT;
-    while (remainingPollCount > 0ULL) {
+    uint64_t remaining_poll_count = OS_KERNEL_PS2_CONTROLLER_POLL_LIMIT;
+    while (remaining_poll_count > 0ULL) {
         if ((ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
              OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) != 0U) {
             return true;
         }
-        --remainingPollCount;
+        --remaining_poll_count;
     }
     return false;
 }
 
 void Ps2Keyboard::FlushControllerOutput() const noexcept {
-    uint64_t remainingReadCount = OS_KERNEL_PS2_OUTPUT_FLUSH_LIMIT;
-    while (remainingReadCount > 0ULL && (ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
-                                         OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) != 0U) {
+    uint64_t remaining_read_count = OS_KERNEL_PS2_OUTPUT_FLUSH_LIMIT;
+    while (remaining_read_count > 0ULL && (ReadPort8(OS_KERNEL_PS2_STATUS_COMMAND_PORT) &
+                                           OS_KERNEL_PS2_STATUS_OUTPUT_BUFFER_FULL_BIT) != 0U) {
         static_cast<void>(ReadPort8(OS_KERNEL_PS2_DATA_PORT));
-        --remainingReadCount;
+        --remaining_read_count;
     }
 }
 

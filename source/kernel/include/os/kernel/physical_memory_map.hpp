@@ -9,24 +9,24 @@ inline constexpr uint64_t OS_KERNEL_MEMORY_MAP_MAXIMUM_ENTRY_COUNT = 128ULL;
 inline constexpr uint32_t OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE = 1U;
 
 struct PhysicalMemoryMapEntry final {
-    uint64_t baseAddress;
-    uint64_t lengthBytes;
+    uint64_t base_address;
+    uint64_t length_bytes;
     uint32_t type;
     uint32_t attributes;
 };
 
 struct PhysicalMemorySummary final {
-    uint64_t totalBytes;
-    uint64_t usableBytes;
-    uint64_t managedUsableBytes;
-    uint64_t highestAddressExclusive;
-    uint64_t highestUsableAddressExclusive;
-    uint64_t usableRegionCount;
+    uint64_t total_bytes;
+    uint64_t usable_bytes;
+    uint64_t managed_usable_bytes;
+    uint64_t highest_address_exclusive;
+    uint64_t highest_usable_address_exclusive;
+    uint64_t usable_region_count;
 };
 
 struct PhysicalMemoryRange final {
-    uint64_t beginAddress;
-    uint64_t lengthBytes;
+    uint64_t begin_address;
+    uint64_t length_bytes;
 };
 
 enum class PhysicalMemoryMapValidationStatus : uint64_t {
@@ -56,14 +56,14 @@ enum class PhysicalMemoryRangeSearchStatus : uint64_t {
 };
 
 [[nodiscard]] PhysicalMemoryMapValidationStatus
-ValidateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries, uint64_t entryCount,
-                                      uint64_t managedLimitAddress,
+ValidateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries, uint64_t entry_count,
+                                      uint64_t managed_limit_address,
                                       PhysicalMemorySummary &summary) noexcept;
 [[nodiscard]] PhysicalMemoryRangeSearchStatus
-FindUsablePhysicalMemoryRange(const PhysicalMemoryMapEntry *entries, uint64_t entryCount,
-                              const PhysicalMemoryRange *reservations, uint64_t reservationCount,
-                              uint64_t minimumAddress, uint64_t maximumAddressExclusive,
-                              uint64_t requiredLengthBytes, uint64_t requiredAlignmentBytes,
+FindUsablePhysicalMemoryRange(const PhysicalMemoryMapEntry *entries, uint64_t entry_count,
+                              const PhysicalMemoryRange *reservations, uint64_t reservation_count,
+                              uint64_t minimum_address, uint64_t maximum_address_exclusive,
+                              uint64_t required_length_bytes, uint64_t required_alignment_bytes,
                               PhysicalMemoryRange &range) noexcept;
 
 static_assert(sizeof(PhysicalMemoryMapEntry) == OS_KERNEL_MEMORY_MAP_ENTRY_SIZE_BYTES);

@@ -88,11 +88,11 @@ superblock、inode 和目录项均使用显式小端编码/解码函数。持久
 
 `INT 0x80` ABI 扩展第三参数寄存器 RDX，并新增：
 
-- `OpenFile(path, pathLength, flags)`；
+- `OpenFile(path, path_length, flags)`；
 - `ReadFile(fd, destination, capacity)`；
 - `WriteFile(fd, source, length)`；
 - `CloseFile(fd)`；
-- `CreateDirectory(path, pathLength)`；
+- `CreateDirectory(path, path_length)`；
 - `SyncFileSystem()`。
 
 每个进程拥有四个文件描述符槽，退出或异常终止会自动关闭。打开标志支持读、

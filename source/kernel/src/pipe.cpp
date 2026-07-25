@@ -12,26 +12,26 @@ constexpr uint8_t OS_KERNEL_PIPE_CLEARED_BYTE = 0U;
 
 void Pipe::Initialize() noexcept {
     SpinLockGuard guard{this->lock_};
-    for (uint64_t byteIndex = OS_KERNEL_PIPE_EMPTY_VALUE; byteIndex < OS_KERNEL_PIPE_CAPACITY_BYTES;
-         ++byteIndex) {
-        this->buffer_[byteIndex] = OS_KERNEL_PIPE_CLEARED_BYTE;
+    for (uint64_t byte_index = OS_KERNEL_PIPE_EMPTY_VALUE;
+         byte_index < OS_KERNEL_PIPE_CAPACITY_BYTES; ++byte_index) {
+        this->buffer_[byte_index] = OS_KERNEL_PIPE_CLEARED_BYTE;
     }
-    this->readIndex_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->writeIndex_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->bufferedByteCount_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->bytesWritten_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->bytesRead_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->writeOperationCount_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->readOperationCount_ = OS_KERNEL_PIPE_EMPTY_VALUE;
-    this->readerClosed_ = false;
-    this->writerClosed_ = false;
+    this->read_index_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->write_index_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->buffered_byte_count_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->bytes_written_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->bytes_read_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->write_operation_count_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->read_operation_count_ = OS_KERNEL_PIPE_EMPTY_VALUE;
+    this->reader_closed_ = false;
+    this->writer_closed_ = false;
     this->initialized_ = true;
 }
 
-PipeStatus Pipe::TryWrite(const uint8_t *source, const uint64_t lengthBytes,
-                          uint64_t &writtenBytes) noexcept {
-    writtenBytes = OS_KERNEL_PIPE_EMPTY_VALUE;
-    if (source == nullptr || lengthBytes == OS_KERNEL_PIPE_EMPTY_VALUE) {
+PipeStatus Pipe::TryWrite(const uint8_t *source, const uint64_t length_bytes,
+                          uint64_t &written_bytes) noexcept {
+    written_bytes = OS_KERNEL_PIPE_EMPTY_VALUE;
+    if (source == nullptr || length_bytes == OS_KERNEL_PIPE_EMPTY_VALUE) {
         return PipeStatus::InvalidArgument;
     }
 
@@ -39,30 +39,31 @@ PipeStatus Pipe::TryWrite(const uint8_t *source, const uint64_t lengthBytes,
     if (!this->initialized_) {
         return PipeStatus::NotInitialized;
     }
-    if (this->readerClosed_) {
+    if (this->reader_closed_) {
         return PipeStatus::BrokenPipe;
     }
-    const uint64_t writableByteCount = this->WritableByteCount();
-    if (writableByteCount == OS_KERNEL_PIPE_EMPTY_VALUE) {
+    const uint64_t writable_byte_count = this->WritableByteCount();
+    if (writable_byte_count == OS_KERNEL_PIPE_EMPTY_VALUE) {
         return PipeStatus::WouldBlock;
     }
 
-    writtenBytes = this->Minimum(lengthBytes, writableByteCount);
-    for (uint64_t byteIndex = OS_KERNEL_PIPE_EMPTY_VALUE; byteIndex < writtenBytes; ++byteIndex) {
-        this->buffer_[this->writeIndex_] = source[byteIndex];
-        this->writeIndex_ =
-            (this->writeIndex_ + OS_KERNEL_PIPE_COUNTER_INCREMENT) % OS_KERNEL_PIPE_CAPACITY_BYTES;
+    written_bytes = this->Minimum(length_bytes, writable_byte_count);
+    for (uint64_t byte_index = OS_KERNEL_PIPE_EMPTY_VALUE; byte_index < written_bytes;
+         ++byte_index) {
+        this->buffer_[this->write_index_] = source[byte_index];
+        this->write_index_ =
+            (this->write_index_ + OS_KERNEL_PIPE_COUNTER_INCREMENT) % OS_KERNEL_PIPE_CAPACITY_BYTES;
     }
-    this->bufferedByteCount_ += writtenBytes;
-    this->bytesWritten_ += writtenBytes;
-    this->writeOperationCount_ += OS_KERNEL_PIPE_COUNTER_INCREMENT;
+    this->buffered_byte_count_ += written_bytes;
+    this->bytes_written_ += written_bytes;
+    this->write_operation_count_ += OS_KERNEL_PIPE_COUNTER_INCREMENT;
     return PipeStatus::Succeeded;
 }
 
-PipeStatus Pipe::TryRead(uint8_t *destination, const uint64_t capacityBytes,
-                         uint64_t &readBytes) noexcept {
-    readBytes = OS_KERNEL_PIPE_EMPTY_VALUE;
-    if (destination == nullptr || capacityBytes == OS_KERNEL_PIPE_EMPTY_VALUE) {
+PipeStatus Pipe::TryRead(uint8_t *destination, const uint64_t capacity_bytes,
+                         uint64_t &read_bytes) noexcept {
+    read_bytes = OS_KERNEL_PIPE_EMPTY_VALUE;
+    if (destination == nullptr || capacity_bytes == OS_KERNEL_PIPE_EMPTY_VALUE) {
         return PipeStatus::InvalidArgument;
     }
 
@@ -70,19 +71,19 @@ PipeStatus Pipe::TryRead(uint8_t *destination, const uint64_t capacityBytes,
     if (!this->initialized_) {
         return PipeStatus::NotInitialized;
     }
-    if (this->bufferedByteCount_ == OS_KERNEL_PIPE_EMPTY_VALUE) {
-        return this->writerClosed_ ? PipeStatus::EndOfFile : PipeStatus::WouldBlock;
+    if (this->buffered_byte_count_ == OS_KERNEL_PIPE_EMPTY_VALUE) {
+        return this->writer_closed_ ? PipeStatus::EndOfFile : PipeStatus::WouldBlock;
     }
 
-    readBytes = this->Minimum(capacityBytes, this->bufferedByteCount_);
-    for (uint64_t byteIndex = OS_KERNEL_PIPE_EMPTY_VALUE; byteIndex < readBytes; ++byteIndex) {
-        destination[byteIndex] = this->buffer_[this->readIndex_];
-        this->readIndex_ =
-            (this->readIndex_ + OS_KERNEL_PIPE_COUNTER_INCREMENT) % OS_KERNEL_PIPE_CAPACITY_BYTES;
+    read_bytes = this->Minimum(capacity_bytes, this->buffered_byte_count_);
+    for (uint64_t byte_index = OS_KERNEL_PIPE_EMPTY_VALUE; byte_index < read_bytes; ++byte_index) {
+        destination[byte_index] = this->buffer_[this->read_index_];
+        this->read_index_ =
+            (this->read_index_ + OS_KERNEL_PIPE_COUNTER_INCREMENT) % OS_KERNEL_PIPE_CAPACITY_BYTES;
     }
-    this->bufferedByteCount_ -= readBytes;
-    this->bytesRead_ += readBytes;
-    this->readOperationCount_ += OS_KERNEL_PIPE_COUNTER_INCREMENT;
+    this->buffered_byte_count_ -= read_bytes;
+    this->bytes_read_ += read_bytes;
+    this->read_operation_count_ += OS_KERNEL_PIPE_COUNTER_INCREMENT;
     return PipeStatus::Succeeded;
 }
 
@@ -91,10 +92,10 @@ PipeStatus Pipe::CloseReader() noexcept {
     if (!this->initialized_) {
         return PipeStatus::NotInitialized;
     }
-    if (this->readerClosed_) {
+    if (this->reader_closed_) {
         return PipeStatus::AlreadyClosed;
     }
-    this->readerClosed_ = true;
+    this->reader_closed_ = true;
     return PipeStatus::Succeeded;
 }
 
@@ -103,40 +104,40 @@ PipeStatus Pipe::CloseWriter() noexcept {
     if (!this->initialized_) {
         return PipeStatus::NotInitialized;
     }
-    if (this->writerClosed_) {
+    if (this->writer_closed_) {
         return PipeStatus::AlreadyClosed;
     }
-    this->writerClosed_ = true;
+    this->writer_closed_ = true;
     return PipeStatus::Succeeded;
 }
 
 bool Pipe::ReadCanProgress() noexcept {
     SpinLockGuard guard{this->lock_};
     return this->initialized_ &&
-           (this->bufferedByteCount_ != OS_KERNEL_PIPE_EMPTY_VALUE || this->writerClosed_);
+           (this->buffered_byte_count_ != OS_KERNEL_PIPE_EMPTY_VALUE || this->writer_closed_);
 }
 
 bool Pipe::WriteCanProgress() noexcept {
     SpinLockGuard guard{this->lock_};
     return this->initialized_ &&
-           (this->readerClosed_ || this->WritableByteCount() != OS_KERNEL_PIPE_EMPTY_VALUE);
+           (this->reader_closed_ || this->WritableByteCount() != OS_KERNEL_PIPE_EMPTY_VALUE);
 }
 
 PipeStatistics Pipe::Statistics() noexcept {
     SpinLockGuard guard{this->lock_};
     return PipeStatistics{
-        .bytesWritten = this->bytesWritten_,
-        .bytesRead = this->bytesRead_,
-        .writeOperationCount = this->writeOperationCount_,
-        .readOperationCount = this->readOperationCount_,
-        .bufferedByteCount = this->bufferedByteCount_,
-        .readerClosed = this->readerClosed_,
-        .writerClosed = this->writerClosed_,
+        .bytes_written = this->bytes_written_,
+        .bytes_read = this->bytes_read_,
+        .write_operation_count = this->write_operation_count_,
+        .read_operation_count = this->read_operation_count_,
+        .buffered_byte_count = this->buffered_byte_count_,
+        .reader_closed = this->reader_closed_,
+        .writer_closed = this->writer_closed_,
     };
 }
 
 uint64_t Pipe::WritableByteCount() const noexcept {
-    return OS_KERNEL_PIPE_CAPACITY_BYTES - this->bufferedByteCount_;
+    return OS_KERNEL_PIPE_CAPACITY_BYTES - this->buffered_byte_count_;
 }
 
 uint64_t Pipe::Minimum(const uint64_t left, const uint64_t right) const noexcept {

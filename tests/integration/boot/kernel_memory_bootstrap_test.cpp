@@ -77,33 +77,33 @@ constexpr uint64_t OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MEMORY_MAP_ENTRY_COUNT = 3UL
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_MEMORY_BOOTSTRAP_SUITE_NAME};
-    uint8_t stateStorage[OS_TEST_MEMORY_BOOTSTRAP_STATE_STORAGE_SIZE_BYTES]{};
+    os::test::TestContext test_context{OS_TEST_MEMORY_BOOTSTRAP_SUITE_NAME};
+    uint8_t state_storage[OS_TEST_MEMORY_BOOTSTRAP_STATE_STORAGE_SIZE_BYTES]{};
     os::kernel::PhysicalFrameAllocator allocator{
-        stateStorage,
+        state_storage,
         OS_TEST_MEMORY_BOOTSTRAP_STATE_STORAGE_SIZE_BYTES,
     };
-    const os::kernel::PhysicalMemoryMapEntry qemuMemoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry qemu_memory_map[] = {
         {
-            .baseAddress = 0ULL,
-            .lengthBytes = OS_TEST_MEMORY_BOOTSTRAP_MANAGED_SIZE_BYTES,
+            .base_address = 0ULL,
+            .length_bytes = OS_TEST_MEMORY_BOOTSTRAP_MANAGED_SIZE_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
         {
-            .baseAddress = OS_TEST_MEMORY_BOOTSTRAP_HIGH_RESERVED_BASE,
-            .lengthBytes = OS_TEST_MEMORY_BOOTSTRAP_HIGH_RESERVED_LENGTH,
+            .base_address = OS_TEST_MEMORY_BOOTSTRAP_HIGH_RESERVED_BASE,
+            .length_bytes = OS_TEST_MEMORY_BOOTSTRAP_HIGH_RESERVED_LENGTH,
             .type = OS_TEST_MEMORY_BOOTSTRAP_RESERVED_TYPE,
             .attributes = 0U,
         },
     };
-    testContext.Expect(allocator.Initialize(qemuMemoryMap,
-                                            OS_TEST_MEMORY_BOOTSTRAP_MEMORY_MAP_ENTRY_COUNT,
-                                            OS_TEST_MEMORY_BOOTSTRAP_MANAGED_SIZE_BYTES) ==
-                           os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
-                       OS_TEST_MEMORY_BOOTSTRAP_INITIALIZE);
+    test_context.Expect(allocator.Initialize(qemu_memory_map,
+                                             OS_TEST_MEMORY_BOOTSTRAP_MEMORY_MAP_ENTRY_COUNT,
+                                             OS_TEST_MEMORY_BOOTSTRAP_MANAGED_SIZE_BYTES) ==
+                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
+                        OS_TEST_MEMORY_BOOTSTRAP_INITIALIZE);
 
-    const bool reservationsSucceeded =
+    const bool reservations_succeeded =
         allocator.ReserveRange(0ULL, OS_TEST_MEMORY_BOOTSTRAP_LOW_RESERVED_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
         allocator.ReserveRange(OS_TEST_MEMORY_BOOTSTRAP_KERNEL_BEGIN,
@@ -113,70 +113,72 @@ int main() {
                                OS_TEST_MEMORY_BOOTSTRAP_STACK_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
     const os::kernel::PhysicalFrameAllocatorStatistics statistics = allocator.Statistics();
-    testContext.Expect(reservationsSucceeded &&
-                           statistics.reservedFrameCount ==
-                               OS_TEST_MEMORY_BOOTSTRAP_EXPECTED_RESERVED_FRAME_COUNT &&
-                           statistics.freeFrameCount ==
-                               OS_TEST_MEMORY_BOOTSTRAP_EXPECTED_FREE_FRAME_COUNT,
-                       OS_TEST_MEMORY_BOOTSTRAP_RESERVATIONS);
+    test_context.Expect(reservations_succeeded &&
+                            statistics.reserved_frame_count ==
+                                OS_TEST_MEMORY_BOOTSTRAP_EXPECTED_RESERVED_FRAME_COUNT &&
+                            statistics.free_frame_count ==
+                                OS_TEST_MEMORY_BOOTSTRAP_EXPECTED_FREE_FRAME_COUNT,
+                        OS_TEST_MEMORY_BOOTSTRAP_RESERVATIONS);
 
-    os::kernel::PhysicalFrame firstFrame{};
-    testContext.Expect(
-        allocator.Allocate(firstFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-            firstFrame.physicalAddress ==
+    os::kernel::PhysicalFrame first_frame{};
+    test_context.Expect(
+        allocator.Allocate(first_frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+            first_frame.physical_address ==
                 OS_TEST_MEMORY_BOOTSTRAP_KERNEL_BEGIN + OS_TEST_MEMORY_BOOTSTRAP_KERNEL_SIZE_BYTES,
         OS_TEST_MEMORY_BOOTSTRAP_FIRST_FRAME);
 
-    static uint8_t primaryStateStorage[OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_STATE_STORAGE_SIZE_BYTES]{};
-    os::kernel::PhysicalFrameAllocator primaryAllocator{
-        primaryStateStorage,
+    static uint8_t
+        primary_state_storage[OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_STATE_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator primary_allocator{
+        primary_state_storage,
         OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_STATE_STORAGE_SIZE_BYTES,
     };
-    const os::kernel::PhysicalMemoryMapEntry primaryMemoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry primary_memory_map[] = {
         {
-            .baseAddress = 0ULL,
-            .lengthBytes = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_LOW_USABLE_SIZE_BYTES,
+            .base_address = 0ULL,
+            .length_bytes = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_LOW_USABLE_SIZE_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
         {
-            .baseAddress = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_LOW_USABLE_SIZE_BYTES,
-            .lengthBytes = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HOLE_SIZE_BYTES,
+            .base_address = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_LOW_USABLE_SIZE_BYTES,
+            .length_bytes = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HOLE_SIZE_BYTES,
             .type = OS_TEST_MEMORY_BOOTSTRAP_RESERVED_TYPE,
             .attributes = 0U,
         },
         {
-            .baseAddress = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_USABLE_BEGIN,
-            .lengthBytes = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_USABLE_SIZE_BYTES,
+            .base_address = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_USABLE_BEGIN,
+            .length_bytes = OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_USABLE_SIZE_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
     };
-    const bool primaryInitialized =
-        primaryAllocator.Initialize(primaryMemoryMap,
-                                    OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MEMORY_MAP_ENTRY_COUNT,
-                                    OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MANAGED_LIMIT) ==
+    const bool primary_initialized =
+        primary_allocator.Initialize(primary_memory_map,
+                                     OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MEMORY_MAP_ENTRY_COUNT,
+                                     OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MANAGED_LIMIT) ==
         os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
-    const os::kernel::PhysicalFrameAllocatorStatistics primaryStatistics =
-        primaryAllocator.Statistics();
-    testContext.Expect(primaryInitialized &&
-                           primaryStatistics.freeFrameCount ==
-                               OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_USABLE_PAGE_COUNT &&
-                           primaryStatistics.managedFrameCount ==
-                               OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_PAGE_COUNT,
-                       OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_CAPACITY);
+    const os::kernel::PhysicalFrameAllocatorStatistics primary_statistics =
+        primary_allocator.Statistics();
+    test_context.Expect(primary_initialized &&
+                            primary_statistics.free_frame_count ==
+                                OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_USABLE_PAGE_COUNT &&
+                            primary_statistics.managed_frame_count ==
+                                OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_PAGE_COUNT,
+                        OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_CAPACITY);
 
-    os::kernel::PhysicalFrame primaryHighFrame{};
-    testContext.Expect(
-        primaryInitialized &&
-            primaryAllocator.AllocateInRange(OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_TEST_BEGIN,
-                                             OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MANAGED_LIMIT,
-                                             primaryHighFrame) ==
+    os::kernel::PhysicalFrame primary_high_frame{};
+    test_context.Expect(
+        primary_initialized &&
+            primary_allocator.AllocateInRange(OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_TEST_BEGIN,
+                                              OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_MANAGED_LIMIT,
+                                              primary_high_frame) ==
                 os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-            primaryHighFrame.physicalAddress >= OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_TEST_BEGIN &&
-            primaryAllocator.Release(primaryHighFrame) ==
+            primary_high_frame.physical_address >=
+                OS_TEST_MEMORY_BOOTSTRAP_PRIMARY_HIGH_TEST_BEGIN &&
+            primary_allocator.Release(primary_high_frame) ==
                 os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
         OS_TEST_MEMORY_BOOTSTRAP_HIGH_FRAME);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

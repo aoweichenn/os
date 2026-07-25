@@ -49,5 +49,4 @@ bool SpinLock::IsLocked() const noexcept {
 SpinLockGuard::SpinLockGuard(SpinLock &lock) noexcept : lock_(lock) { this->lock_.Lock(); }
 
 SpinLockGuard::~SpinLockGuard() noexcept { this->lock_.Unlock(); }
-
 }

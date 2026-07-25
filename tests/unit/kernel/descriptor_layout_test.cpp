@@ -83,52 +83,52 @@ DecodeTaskStateSegmentLimit(const os::kernel::SystemSegmentDescriptor &descripto
 
 [[nodiscard]] uint64_t
 DecodeInterruptGateAddress(const os::kernel::InterruptGateDescriptor &descriptor) noexcept {
-    return static_cast<uint64_t>(descriptor.offsetLow) |
-           (static_cast<uint64_t>(descriptor.offsetMiddle)
+    return static_cast<uint64_t>(descriptor.offset_low) |
+           (static_cast<uint64_t>(descriptor.offset_middle)
             << OS_TEST_KERNEL_DESCRIPTOR_GATE_MIDDLE_SHIFT) |
-           (static_cast<uint64_t>(descriptor.offsetHigh)
+           (static_cast<uint64_t>(descriptor.offset_high)
             << OS_TEST_KERNEL_DESCRIPTOR_GATE_HIGH_SHIFT);
 }
 
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_KERNEL_DESCRIPTOR_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_KERNEL_DESCRIPTOR_SUITE_NAME};
 
-    const os::kernel::SystemSegmentDescriptor taskStateDescriptor =
+    const os::kernel::SystemSegmentDescriptor task_state_descriptor =
         os::kernel::CreateTaskStateSegmentDescriptor(OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE,
                                                      OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT);
-    testContext.Expect(DecodeTaskStateSegmentBase(taskStateDescriptor) ==
-                           OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE,
-                       OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_MESSAGE);
-    testContext.Expect(DecodeTaskStateSegmentLimit(taskStateDescriptor) ==
-                           static_cast<uint64_t>(OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT),
-                       OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT_MESSAGE);
-    testContext.Expect(((taskStateDescriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_SHIFT) &
-                        OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_MASK) ==
-                           OS_TEST_KERNEL_DESCRIPTOR_TSS_EXPECTED_TYPE,
-                       OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_MESSAGE);
+    test_context.Expect(DecodeTaskStateSegmentBase(task_state_descriptor) ==
+                            OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE,
+                        OS_TEST_KERNEL_DESCRIPTOR_TSS_BASE_MESSAGE);
+    test_context.Expect(DecodeTaskStateSegmentLimit(task_state_descriptor) ==
+                            static_cast<uint64_t>(OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT),
+                        OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT_MESSAGE);
+    test_context.Expect(((task_state_descriptor.low >> OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_SHIFT) &
+                         OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_MASK) ==
+                            OS_TEST_KERNEL_DESCRIPTOR_TSS_EXPECTED_TYPE,
+                        OS_TEST_KERNEL_DESCRIPTOR_TSS_TYPE_MESSAGE);
 
-    const os::kernel::InterruptGateDescriptor interruptGate =
+    const os::kernel::InterruptGateDescriptor interrupt_gate =
         os::kernel::CreateInterruptGateDescriptor(
             OS_TEST_KERNEL_DESCRIPTOR_GATE_HANDLER, OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
             OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_INPUT, OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES);
-    testContext.Expect(DecodeInterruptGateAddress(interruptGate) ==
-                           OS_TEST_KERNEL_DESCRIPTOR_GATE_HANDLER,
-                       OS_TEST_KERNEL_DESCRIPTOR_GATE_ADDRESS_MESSAGE);
-    testContext.Expect(interruptGate.segmentSelector == OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
-                       OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR_MESSAGE);
-    testContext.Expect(interruptGate.interruptStackTable ==
-                           static_cast<uint8_t>(OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_INPUT &
-                                                OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_MASK),
-                       OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_MESSAGE);
-    testContext.Expect(interruptGate.typeAttributes == OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES,
-                       OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES_MESSAGE);
-    testContext.Expect(interruptGate.reserved == OS_TEST_KERNEL_DESCRIPTOR_RESERVED_ZERO,
-                       OS_TEST_KERNEL_DESCRIPTOR_GATE_RESERVED_MESSAGE);
+    test_context.Expect(DecodeInterruptGateAddress(interrupt_gate) ==
+                            OS_TEST_KERNEL_DESCRIPTOR_GATE_HANDLER,
+                        OS_TEST_KERNEL_DESCRIPTOR_GATE_ADDRESS_MESSAGE);
+    test_context.Expect(interrupt_gate.segment_selector == OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
+                        OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR_MESSAGE);
+    test_context.Expect(interrupt_gate.interrupt_stack_table ==
+                            static_cast<uint8_t>(OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_INPUT &
+                                                 OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_MASK),
+                        OS_TEST_KERNEL_DESCRIPTOR_GATE_IST_MESSAGE);
+    test_context.Expect(interrupt_gate.type_attributes == OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES,
+                        OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES_MESSAGE);
+    test_context.Expect(interrupt_gate.reserved == OS_TEST_KERNEL_DESCRIPTOR_RESERVED_ZERO,
+                        OS_TEST_KERNEL_DESCRIPTOR_GATE_RESERVED_MESSAGE);
 
     for (uint64_t vector = 0ULL; vector < OS_TEST_KERNEL_EXCEPTION_VECTOR_COUNT; ++vector) {
-        const bool expectedErrorCode =
+        const bool expected_error_code =
             vector == OS_TEST_KERNEL_EXCEPTION_DOUBLE_FAULT_VECTOR ||
             vector == OS_TEST_KERNEL_EXCEPTION_INVALID_TSS_VECTOR ||
             vector == OS_TEST_KERNEL_EXCEPTION_SEGMENT_NOT_PRESENT_VECTOR ||
@@ -139,13 +139,13 @@ int main() {
             vector == OS_TEST_KERNEL_EXCEPTION_CONTROL_PROTECTION_VECTOR ||
             vector == OS_TEST_KERNEL_EXCEPTION_VMM_COMMUNICATION_VECTOR ||
             vector == OS_TEST_KERNEL_EXCEPTION_SECURITY_VECTOR;
-        testContext.Expect(os::kernel::ExceptionPushesHardwareErrorCode(vector) ==
-                               expectedErrorCode,
-                           OS_TEST_KERNEL_EXCEPTION_ERROR_CODE_MESSAGE);
-        testContext.Expect(os::kernel::IsResumableKernelException(vector) ==
-                               (vector == OS_TEST_KERNEL_EXCEPTION_BREAKPOINT_VECTOR),
-                           OS_TEST_KERNEL_EXCEPTION_BREAKPOINT_MESSAGE);
+        test_context.Expect(os::kernel::ExceptionPushesHardwareErrorCode(vector) ==
+                                expected_error_code,
+                            OS_TEST_KERNEL_EXCEPTION_ERROR_CODE_MESSAGE);
+        test_context.Expect(os::kernel::IsResumableKernelException(vector) ==
+                                (vector == OS_TEST_KERNEL_EXCEPTION_BREAKPOINT_VECTOR),
+                            OS_TEST_KERNEL_EXCEPTION_BREAKPOINT_MESSAGE);
     }
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

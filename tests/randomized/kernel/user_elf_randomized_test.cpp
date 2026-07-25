@@ -28,29 +28,30 @@ constexpr uint64_t OS_TEST_USER_ELF_RANDOM_NONZERO_ADJUSTMENT = 1ULL;
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_USER_ELF_RANDOM_SUITE_NAME};
-    uint64_t randomState = OS_TEST_USER_ELF_RANDOM_SEED;
+    os::test::TestContext test_context{OS_TEST_USER_ELF_RANDOM_SUITE_NAME};
+    uint64_t random_state = OS_TEST_USER_ELF_RANDOM_SEED;
     for (uint64_t iteration = 0ULL; iteration < OS_TEST_USER_ELF_RANDOM_ITERATION_COUNT;
          ++iteration) {
-        const uint64_t maximumBegin = os::kernel::OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE -
-                                      OS_TEST_USER_ELF_RANDOM_MAXIMUM_LENGTH_BYTES;
-        const uint64_t beginAddress =
+        const uint64_t maximum_begin =
+            os::kernel::OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE -
+            OS_TEST_USER_ELF_RANDOM_MAXIMUM_LENGTH_BYTES;
+        const uint64_t begin_address =
             os::kernel::OS_KERNEL_USER_MINIMUM_VIRTUAL_ADDRESS +
-            NextRandom(randomState) %
-                (maximumBegin - os::kernel::OS_KERNEL_USER_MINIMUM_VIRTUAL_ADDRESS);
-        const uint64_t lengthBytes =
-            NextRandom(randomState) % OS_TEST_USER_ELF_RANDOM_MAXIMUM_LENGTH_BYTES +
+            NextRandom(random_state) %
+                (maximum_begin - os::kernel::OS_KERNEL_USER_MINIMUM_VIRTUAL_ADDRESS);
+        const uint64_t length_bytes =
+            NextRandom(random_state) % OS_TEST_USER_ELF_RANDOM_MAXIMUM_LENGTH_BYTES +
             OS_TEST_USER_ELF_RANDOM_NONZERO_ADJUSTMENT;
-        testContext.ExpectRandom(os::kernel::IsUserVirtualAddressRange(beginAddress, lengthBytes),
-                                 OS_TEST_USER_ELF_RANDOM_VALID_RANGE_MESSAGE,
-                                 OS_TEST_USER_ELF_RANDOM_SEED, iteration);
+        test_context.ExpectRandom(
+            os::kernel::IsUserVirtualAddressRange(begin_address, length_bytes),
+            OS_TEST_USER_ELF_RANDOM_VALID_RANGE_MESSAGE, OS_TEST_USER_ELF_RANDOM_SEED, iteration);
 
-        const uint64_t overflowingLength =
-            os::kernel::OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE - beginAddress +
+        const uint64_t overflowing_length =
+            os::kernel::OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE - begin_address +
             OS_TEST_USER_ELF_RANDOM_NONZERO_ADJUSTMENT;
-        testContext.ExpectRandom(
-            !os::kernel::IsUserVirtualAddressRange(beginAddress, overflowingLength),
+        test_context.ExpectRandom(
+            !os::kernel::IsUserVirtualAddressRange(begin_address, overflowing_length),
             OS_TEST_USER_ELF_RANDOM_OVERFLOW_MESSAGE, OS_TEST_USER_ELF_RANDOM_SEED, iteration);
     }
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

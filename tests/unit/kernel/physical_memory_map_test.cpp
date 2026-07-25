@@ -57,140 +57,141 @@ constexpr uint64_t OS_TEST_MEMORY_MAP_EXPECTED_HIGHEST_USABLE_ADDRESS_EXCLUSIVE 
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_MEMORY_MAP_SUITE_NAME};
-    const os::kernel::PhysicalMemoryMapEntry validEntries[] = {
+    os::test::TestContext test_context{OS_TEST_MEMORY_MAP_SUITE_NAME};
+    const os::kernel::PhysicalMemoryMapEntry valid_entries[] = {
         {
-            .baseAddress = 0ULL,
-            .lengthBytes = OS_TEST_MEMORY_MAP_LOW_RAM_LENGTH,
+            .base_address = 0ULL,
+            .length_bytes = OS_TEST_MEMORY_MAP_LOW_RAM_LENGTH,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
         {
-            .baseAddress = OS_TEST_MEMORY_MAP_RESERVED_BASE,
-            .lengthBytes = OS_TEST_MEMORY_MAP_RESERVED_LENGTH,
+            .base_address = OS_TEST_MEMORY_MAP_RESERVED_BASE,
+            .length_bytes = OS_TEST_MEMORY_MAP_RESERVED_LENGTH,
             .type = OS_TEST_MEMORY_MAP_RESERVED_TYPE,
             .attributes = 0U,
         },
         {
-            .baseAddress = OS_TEST_MEMORY_MAP_HIGH_RAM_BASE,
-            .lengthBytes = OS_TEST_MEMORY_MAP_HIGH_RAM_LENGTH,
+            .base_address = OS_TEST_MEMORY_MAP_HIGH_RAM_BASE,
+            .length_bytes = OS_TEST_MEMORY_MAP_HIGH_RAM_LENGTH,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
         {
-            .baseAddress = OS_TEST_MEMORY_MAP_HIGH_RESERVED_BASE,
-            .lengthBytes = OS_TEST_MEMORY_MAP_HIGH_RESERVED_LENGTH,
+            .base_address = OS_TEST_MEMORY_MAP_HIGH_RESERVED_BASE,
+            .length_bytes = OS_TEST_MEMORY_MAP_HIGH_RESERVED_LENGTH,
             .type = OS_TEST_MEMORY_MAP_RESERVED_TYPE,
             .attributes = 0U,
         },
     };
 
     os::kernel::PhysicalMemorySummary summary{};
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           validEntries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
-                           summary) == os::kernel::PhysicalMemoryMapValidationStatus::Succeeded,
-                       OS_TEST_MEMORY_MAP_VALID);
-    testContext.Expect(summary.totalBytes == OS_TEST_MEMORY_MAP_EXPECTED_TOTAL_BYTES &&
-                           summary.usableBytes == OS_TEST_MEMORY_MAP_EXPECTED_USABLE_BYTES &&
-                           summary.managedUsableBytes == OS_TEST_MEMORY_MAP_EXPECTED_USABLE_BYTES,
-                       OS_TEST_MEMORY_MAP_SUMMARY);
-    testContext.Expect(summary.highestAddressExclusive ==
-                               OS_TEST_MEMORY_MAP_EXPECTED_HIGHEST_ADDRESS_EXCLUSIVE &&
-                           summary.highestUsableAddressExclusive ==
-                               OS_TEST_MEMORY_MAP_EXPECTED_HIGHEST_USABLE_ADDRESS_EXCLUSIVE,
-                       OS_TEST_MEMORY_MAP_USABLE_LIMIT);
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            valid_entries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
+                            summary) == os::kernel::PhysicalMemoryMapValidationStatus::Succeeded,
+                        OS_TEST_MEMORY_MAP_VALID);
+    test_context.Expect(summary.total_bytes == OS_TEST_MEMORY_MAP_EXPECTED_TOTAL_BYTES &&
+                            summary.usable_bytes == OS_TEST_MEMORY_MAP_EXPECTED_USABLE_BYTES &&
+                            summary.managed_usable_bytes ==
+                                OS_TEST_MEMORY_MAP_EXPECTED_USABLE_BYTES,
+                        OS_TEST_MEMORY_MAP_SUMMARY);
+    test_context.Expect(summary.highest_address_exclusive ==
+                                OS_TEST_MEMORY_MAP_EXPECTED_HIGHEST_ADDRESS_EXCLUSIVE &&
+                            summary.highest_usable_address_exclusive ==
+                                OS_TEST_MEMORY_MAP_EXPECTED_HIGHEST_USABLE_ADDRESS_EXCLUSIVE,
+                        OS_TEST_MEMORY_MAP_USABLE_LIMIT);
 
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           nullptr, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
-                           summary) == os::kernel::PhysicalMemoryMapValidationStatus::NullEntries,
-                       OS_TEST_MEMORY_MAP_NULL);
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           validEntries, 0ULL, OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
-                           os::kernel::PhysicalMemoryMapValidationStatus::InvalidEntryCount,
-                       OS_TEST_MEMORY_MAP_EMPTY);
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            nullptr, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
+                            summary) == os::kernel::PhysicalMemoryMapValidationStatus::NullEntries,
+                        OS_TEST_MEMORY_MAP_NULL);
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            valid_entries, 0ULL, OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
+                            os::kernel::PhysicalMemoryMapValidationStatus::InvalidEntryCount,
+                        OS_TEST_MEMORY_MAP_EMPTY);
 
-    os::kernel::PhysicalMemoryMapEntry invalidEntries[] = {validEntries[0], validEntries[1]};
-    invalidEntries[0].lengthBytes = 0ULL;
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           invalidEntries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
-                           summary) == os::kernel::PhysicalMemoryMapValidationStatus::EmptyRegion,
-                       OS_TEST_MEMORY_MAP_ZERO_LENGTH);
+    os::kernel::PhysicalMemoryMapEntry invalid_entries[] = {valid_entries[0], valid_entries[1]};
+    invalid_entries[0].length_bytes = 0ULL;
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            invalid_entries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT,
+                            summary) == os::kernel::PhysicalMemoryMapValidationStatus::EmptyRegion,
+                        OS_TEST_MEMORY_MAP_ZERO_LENGTH);
 
-    invalidEntries[0] = validEntries[0];
-    invalidEntries[0].baseAddress = UINT64_MAX;
-    invalidEntries[0].lengthBytes = OS_TEST_MEMORY_MAP_OVERFLOW_LENGTH_BYTES;
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           invalidEntries, OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
-                           os::kernel::PhysicalMemoryMapValidationStatus::AddressOverflow,
-                       OS_TEST_MEMORY_MAP_OVERFLOW);
+    invalid_entries[0] = valid_entries[0];
+    invalid_entries[0].base_address = UINT64_MAX;
+    invalid_entries[0].length_bytes = OS_TEST_MEMORY_MAP_OVERFLOW_LENGTH_BYTES;
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            invalid_entries, OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
+                            os::kernel::PhysicalMemoryMapValidationStatus::AddressOverflow,
+                        OS_TEST_MEMORY_MAP_OVERFLOW);
 
-    invalidEntries[0] = validEntries[1];
-    invalidEntries[1] = validEntries[0];
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           invalidEntries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
-                           os::kernel::PhysicalMemoryMapValidationStatus::UnsortedRegions,
-                       OS_TEST_MEMORY_MAP_UNSORTED);
+    invalid_entries[0] = valid_entries[1];
+    invalid_entries[1] = valid_entries[0];
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            invalid_entries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
+                            os::kernel::PhysicalMemoryMapValidationStatus::UnsortedRegions,
+                        OS_TEST_MEMORY_MAP_UNSORTED);
 
-    invalidEntries[0] = validEntries[0];
-    invalidEntries[1] = validEntries[1];
-    invalidEntries[1].baseAddress =
+    invalid_entries[0] = valid_entries[0];
+    invalid_entries[1] = valid_entries[1];
+    invalid_entries[1].base_address =
         OS_TEST_MEMORY_MAP_RESERVED_BASE - OS_TEST_MEMORY_MAP_ADDRESS_BOUNDARY_OFFSET;
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           invalidEntries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
-                           os::kernel::PhysicalMemoryMapValidationStatus::OverlappingRegions,
-                       OS_TEST_MEMORY_MAP_OVERLAP);
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            invalid_entries, OS_TEST_MEMORY_MAP_TWO_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
+                            os::kernel::PhysicalMemoryMapValidationStatus::OverlappingRegions,
+                        OS_TEST_MEMORY_MAP_OVERLAP);
 
-    invalidEntries[0] = validEntries[1];
-    testContext.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
-                           invalidEntries, OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT,
-                           OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
-                           os::kernel::PhysicalMemoryMapValidationStatus::NoManagedUsableMemory,
-                       OS_TEST_MEMORY_MAP_NO_USABLE);
+    invalid_entries[0] = valid_entries[1];
+    test_context.Expect(os::kernel::ValidateAndSummarizePhysicalMemoryMap(
+                            invalid_entries, OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT,
+                            OS_TEST_MEMORY_MAP_MANAGED_LIMIT, summary) ==
+                            os::kernel::PhysicalMemoryMapValidationStatus::NoManagedUsableMemory,
+                        OS_TEST_MEMORY_MAP_NO_USABLE);
 
     const os::kernel::PhysicalMemoryRange reservations[] = {
         {
-            .beginAddress = OS_TEST_MEMORY_MAP_RANGE_RESERVATION_BEGIN,
-            .lengthBytes = OS_TEST_MEMORY_MAP_RANGE_RESERVATION_LENGTH,
+            .begin_address = OS_TEST_MEMORY_MAP_RANGE_RESERVATION_BEGIN,
+            .length_bytes = OS_TEST_MEMORY_MAP_RANGE_RESERVATION_LENGTH,
         },
     };
-    os::kernel::PhysicalMemoryRange selectedRange{};
-    testContext.Expect(os::kernel::FindUsablePhysicalMemoryRange(
-                           validEntries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT, reservations,
-                           OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT, OS_TEST_MEMORY_MAP_HIGH_RAM_BASE,
-                           OS_TEST_MEMORY_MAP_RANGE_MAXIMUM_ADDRESS,
-                           OS_TEST_MEMORY_MAP_RANGE_REQUIRED_LENGTH,
-                           OS_TEST_MEMORY_MAP_RANGE_ALIGNMENT, selectedRange) ==
-                               os::kernel::PhysicalMemoryRangeSearchStatus::Succeeded &&
-                           selectedRange.beginAddress == OS_TEST_MEMORY_MAP_RANGE_EXPECTED_BEGIN &&
-                           selectedRange.lengthBytes == OS_TEST_MEMORY_MAP_RANGE_REQUIRED_LENGTH,
-                       OS_TEST_MEMORY_MAP_RANGE_SEARCH);
-    testContext.Expect(
+    os::kernel::PhysicalMemoryRange selected_range{};
+    test_context.Expect(
         os::kernel::FindUsablePhysicalMemoryRange(
-            validEntries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT, nullptr, 0ULL,
+            valid_entries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT, reservations,
+            OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT, OS_TEST_MEMORY_MAP_HIGH_RAM_BASE,
+            OS_TEST_MEMORY_MAP_RANGE_MAXIMUM_ADDRESS, OS_TEST_MEMORY_MAP_RANGE_REQUIRED_LENGTH,
+            OS_TEST_MEMORY_MAP_RANGE_ALIGNMENT,
+            selected_range) == os::kernel::PhysicalMemoryRangeSearchStatus::Succeeded &&
+            selected_range.begin_address == OS_TEST_MEMORY_MAP_RANGE_EXPECTED_BEGIN &&
+            selected_range.length_bytes == OS_TEST_MEMORY_MAP_RANGE_REQUIRED_LENGTH,
+        OS_TEST_MEMORY_MAP_RANGE_SEARCH);
+    test_context.Expect(
+        os::kernel::FindUsablePhysicalMemoryRange(
+            valid_entries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT, nullptr, 0ULL,
             OS_TEST_MEMORY_MAP_HIGH_RAM_BASE, OS_TEST_MEMORY_MAP_RANGE_MAXIMUM_ADDRESS,
             OS_TEST_MEMORY_MAP_MANAGED_LIMIT, OS_TEST_MEMORY_MAP_RANGE_ALIGNMENT,
-            selectedRange) == os::kernel::PhysicalMemoryRangeSearchStatus::NoSuitableRange,
+            selected_range) == os::kernel::PhysicalMemoryRangeSearchStatus::NoSuitableRange,
         OS_TEST_MEMORY_MAP_RANGE_SEARCH_EXHAUSTED);
-    const os::kernel::PhysicalMemoryRange invalidReservation[] = {
+    const os::kernel::PhysicalMemoryRange invalid_reservation[] = {
         {
-            .beginAddress = UINT64_MAX,
-            .lengthBytes = OS_TEST_MEMORY_MAP_OVERFLOW_LENGTH_BYTES,
+            .begin_address = UINT64_MAX,
+            .length_bytes = OS_TEST_MEMORY_MAP_OVERFLOW_LENGTH_BYTES,
         },
     };
-    testContext.Expect(os::kernel::FindUsablePhysicalMemoryRange(
-                           validEntries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT, invalidReservation,
-                           OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT, OS_TEST_MEMORY_MAP_HIGH_RAM_BASE,
-                           OS_TEST_MEMORY_MAP_RANGE_MAXIMUM_ADDRESS,
-                           OS_TEST_MEMORY_MAP_RANGE_REQUIRED_LENGTH,
-                           OS_TEST_MEMORY_MAP_RANGE_ALIGNMENT, selectedRange) ==
-                           os::kernel::PhysicalMemoryRangeSearchStatus::InvalidReservation,
-                       OS_TEST_MEMORY_MAP_RANGE_INVALID_RESERVATION);
+    test_context.Expect(
+        os::kernel::FindUsablePhysicalMemoryRange(
+            valid_entries, OS_TEST_MEMORY_MAP_VALID_ENTRY_COUNT, invalid_reservation,
+            OS_TEST_MEMORY_MAP_SINGLE_ENTRY_COUNT, OS_TEST_MEMORY_MAP_HIGH_RAM_BASE,
+            OS_TEST_MEMORY_MAP_RANGE_MAXIMUM_ADDRESS, OS_TEST_MEMORY_MAP_RANGE_REQUIRED_LENGTH,
+            OS_TEST_MEMORY_MAP_RANGE_ALIGNMENT,
+            selected_range) == os::kernel::PhysicalMemoryRangeSearchStatus::InvalidReservation,
+        OS_TEST_MEMORY_MAP_RANGE_INVALID_RESERVATION);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

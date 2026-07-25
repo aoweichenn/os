@@ -34,8 +34,7 @@ inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_WRITE_SIZE_BYTES = 160ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_PIPE_TRANSFER_SIZE_BYTES = 64ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_FILE_TRANSFER_SIZE_BYTES = 256ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES = 128ULL;
-inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES =
-    256ULL;
+inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES = 256ULL;
 inline constexpr uint64_t OS_ABI_STANDARD_INPUT_DESCRIPTOR = 0ULL;
 inline constexpr uint64_t OS_ABI_STANDARD_OUTPUT_DESCRIPTOR = 1ULL;
 inline constexpr uint64_t OS_ABI_STANDARD_ERROR_DESCRIPTOR = 2ULL;
@@ -47,8 +46,8 @@ inline constexpr uint64_t OS_ABI_FILE_OPEN_WRITE_FLAG = 0x02ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_CREATE_FLAG = 0x04ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_TRUNCATE_FLAG = 0x08ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_VALID_FLAG_MASK =
-    OS_ABI_FILE_OPEN_READ_FLAG | OS_ABI_FILE_OPEN_WRITE_FLAG |
-    OS_ABI_FILE_OPEN_CREATE_FLAG | OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
+    OS_ABI_FILE_OPEN_READ_FLAG | OS_ABI_FILE_OPEN_WRITE_FLAG | OS_ABI_FILE_OPEN_CREATE_FLAG |
+    OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY = -1LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER = -2LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_WRITE_TOO_LARGE = -3LL;
@@ -79,9 +78,9 @@ enum class DirectoryEntryType : uint64_t {
 };
 
 struct DirectoryEntry final {
-    uint64_t inodeNumber;
+    uint64_t inode_number;
     DirectoryEntryType type;
-    uint64_t nameLengthBytes;
+    uint64_t name_length_bytes;
     uint8_t name[OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES];
 };
 

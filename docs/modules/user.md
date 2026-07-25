@@ -81,7 +81,7 @@ v1.0 再定义 `-22` 描述符能力拒绝与 `-23` 描述符单次传输过长�
 ## v0.9 调度验收程序
 
 `programs/scheduler_worker.cpp` 同一份 ELF 被创建三次，三个实例都链接到
-`0x40000000`，并在同一 BSS 虚拟地址维护 `workerCounter`。每个 worker
+`0x40000000`，并在同一 BSS 虚拟地址维护 `worker_counter`。每个 worker
 先通过 `GetProcessId` 选择 PID2/PID3/PID4 的固定进度标记，再执行三轮
 有界计算。若地址空间错误共享，后运行实例会看到其他进程写过的计数并以非零
 状态退出；三个实例都输出 `ADDRESS_SPACE_ISOLATED` 才能证明独立物理叶页。
@@ -148,6 +148,6 @@ ABI 结构；名称按显式长度输出，不假定 NUL 终止。所有动态 f
   `source/abi/include/os/abi/`，实现位于各自 `src/`。
 - 普通 C++ 函数使用大驼峰，例如 `InvokeSystemCall()`、`WriteLog()` 和
   `ExitProcess()`。
-- `osUserEntry` 与 `osUserInvokeSystemCall` 是 C/汇编 ABI 符号，因链接契约
+- `OsUserEntry` 与 `OsUserInvokeSystemCall` 是 C/汇编 ABI 符号，因链接契约
   保留既定前缀，不作为普通函数命名的例外扩散到业务代码。
 - 所有协议数字和字符串均使用“项目 + 模块 + 功能”的全大写命名常量。

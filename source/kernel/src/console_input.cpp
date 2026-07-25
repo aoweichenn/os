@@ -10,61 +10,54 @@ constexpr uint64_t OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT = 1ULL;
 }
 
 void ConsoleInput::Initialize() noexcept {
-    for (uint64_t byteIndex = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
-         byteIndex < OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES; ++byteIndex) {
-        this->bytes_[byteIndex] = static_cast<uint8_t>(OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE);
+    for (uint64_t byte_index = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
+         byte_index < OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES; ++byte_index) {
+        this->bytes_[byte_index] = static_cast<uint8_t>(OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE);
     }
-    this->readIndex_ = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
-    this->writeIndex_ = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
+    this->read_index_ = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
+    this->write_index_ = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
     this->statistics_ = ConsoleInputStatistics{};
 }
 
 ConsoleInputStatus ConsoleInput::Submit(const uint8_t character) noexcept {
-    if (this->statistics_.bufferedByteCount >= OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES) {
-        this->statistics_.droppedByteCount += OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT;
+    if (this->statistics_.buffered_byte_count >= OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES) {
+        this->statistics_.dropped_byte_count += OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT;
         return ConsoleInputStatus::Full;
     }
-    this->bytes_[this->writeIndex_] = character;
-    this->writeIndex_ =
-        (this->writeIndex_ + OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT) %
-        OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES;
-    this->statistics_.submittedByteCount += OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT;
-    this->statistics_.bufferedByteCount += OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT;
+    this->bytes_[this->write_index_] = character;
+    this->write_index_ = (this->write_index_ + OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT) %
+                         OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES;
+    this->statistics_.submitted_byte_count += OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT;
+    this->statistics_.buffered_byte_count += OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT;
     return ConsoleInputStatus::Succeeded;
 }
 
-ConsoleInputStatus ConsoleInput::TryRead(uint8_t *const destination,
-                                        const uint64_t capacityBytes,
-                                        uint64_t &readBytes) noexcept {
-    readBytes = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
-    if (destination == nullptr || capacityBytes == OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE) {
+ConsoleInputStatus ConsoleInput::TryRead(uint8_t *const destination, const uint64_t capacity_bytes,
+                                         uint64_t &read_bytes) noexcept {
+    read_bytes = OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
+    if (destination == nullptr || capacity_bytes == OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE) {
         return ConsoleInputStatus::InvalidArgument;
     }
-    if (this->statistics_.bufferedByteCount == OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE) {
+    if (this->statistics_.buffered_byte_count == OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE) {
         return ConsoleInputStatus::Empty;
     }
-    const uint64_t transferableBytes =
-        capacityBytes < this->statistics_.bufferedByteCount
-            ? capacityBytes
-            : this->statistics_.bufferedByteCount;
-    while (readBytes < transferableBytes) {
-        destination[readBytes] = this->bytes_[this->readIndex_];
-        this->readIndex_ =
-            (this->readIndex_ + OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT) %
-            OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES;
-        ++readBytes;
+    const uint64_t transferable_bytes = capacity_bytes < this->statistics_.buffered_byte_count
+                                            ? capacity_bytes
+                                            : this->statistics_.buffered_byte_count;
+    while (read_bytes < transferable_bytes) {
+        destination[read_bytes] = this->bytes_[this->read_index_];
+        this->read_index_ = (this->read_index_ + OS_KERNEL_CONSOLE_INPUT_COUNTER_INCREMENT) %
+                            OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES;
+        ++read_bytes;
     }
-    this->statistics_.readByteCount += readBytes;
-    this->statistics_.bufferedByteCount -= readBytes;
+    this->statistics_.read_byte_count += read_bytes;
+    this->statistics_.buffered_byte_count -= read_bytes;
     return ConsoleInputStatus::Succeeded;
 }
 
 bool ConsoleInput::ReadCanProgress() const noexcept {
-    return this->statistics_.bufferedByteCount != OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
+    return this->statistics_.buffered_byte_count != OS_KERNEL_CONSOLE_INPUT_EMPTY_VALUE;
 }
 
-ConsoleInputStatistics ConsoleInput::Statistics() const noexcept {
-    return this->statistics_;
-}
-
+ConsoleInputStatistics ConsoleInput::Statistics() const noexcept { return this->statistics_; }
 }

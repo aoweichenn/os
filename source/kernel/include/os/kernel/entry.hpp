@@ -4,6 +4,5 @@
 
 namespace os::kernel {
 
-extern "C" [[noreturn]] void osKernelEntry(const BootInfo *bootInfo) noexcept;
-
+extern "C" [[noreturn]] void OsKernelEntry(const BootInfo *boot_info) noexcept;
 }

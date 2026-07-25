@@ -52,12 +52,9 @@ constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED_CODE = 0x3BU;
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_LOCK_MAKE = 0x3AU;
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_LEFT_SHIFT_MAKE = 0x2AU;
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE = 0x27U;
-constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_A_CHARACTER =
-    static_cast<uint8_t>('a');
-constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_CHARACTER =
-    static_cast<uint8_t>(';');
-constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_COLON_CHARACTER =
-    static_cast<uint8_t>(':');
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_A_CHARACTER = static_cast<uint8_t>('a');
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_CHARACTER = static_cast<uint8_t>(';');
+constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_COLON_CHARACTER = static_cast<uint8_t>(':');
 constexpr uint8_t OS_TEST_DEVICE_MODEL_KEYBOARD_NO_CHARACTER = 0U;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_ATA_VALID_LBA = 0x00000042ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_ATA_INVALID_LBA = 0x10000000ULL;
@@ -73,125 +70,120 @@ constexpr uint8_t OS_TEST_DEVICE_MODEL_STAGE1_MAGIC[OS_TEST_DEVICE_MODEL_STAGE1_
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_DEVICE_MODEL_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_DEVICE_MODEL_SUITE_NAME};
 
-    uint64_t timerVector = 0ULL;
-    uint64_t lastVector = 0ULL;
-    uint64_t roundTripInterruptRequest = 0ULL;
-    testContext.Expect(
-        os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_MODEL_MASTER_TIMER_IRQ, timerVector) ==
+    uint64_t timer_vector = 0ULL;
+    uint64_t last_vector = 0ULL;
+    uint64_t round_trip_interrupt_request = 0ULL;
+    test_context.Expect(
+        os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_MODEL_MASTER_TIMER_IRQ, timer_vector) ==
                 os::kernel::LegacyPicModelStatus::Succeeded &&
-            os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_MODEL_SLAVE_LAST_IRQ, lastVector) ==
+            os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_MODEL_SLAVE_LAST_IRQ,
+                                                 last_vector) ==
                 os::kernel::LegacyPicModelStatus::Succeeded &&
-            timerVector == OS_TEST_DEVICE_MODEL_EXPECTED_TIMER_VECTOR &&
-            lastVector == OS_TEST_DEVICE_MODEL_EXPECTED_LAST_VECTOR &&
-            os::kernel::CalculateLegacyPicInterruptRequest(lastVector, roundTripInterruptRequest) ==
+            timer_vector == OS_TEST_DEVICE_MODEL_EXPECTED_TIMER_VECTOR &&
+            last_vector == OS_TEST_DEVICE_MODEL_EXPECTED_LAST_VECTOR &&
+            os::kernel::CalculateLegacyPicInterruptRequest(last_vector,
+                                                           round_trip_interrupt_request) ==
                 os::kernel::LegacyPicModelStatus::Succeeded &&
-            roundTripInterruptRequest == OS_TEST_DEVICE_MODEL_SLAVE_LAST_IRQ,
+            round_trip_interrupt_request == OS_TEST_DEVICE_MODEL_SLAVE_LAST_IRQ,
         OS_TEST_DEVICE_MODEL_PIC_VECTOR_ROUND_TRIP);
 
-    uint64_t unchangedVector = OS_TEST_DEVICE_MODEL_UNCHANGED_VALUE;
-    testContext.Expect(
-        os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_MODEL_INVALID_IRQ, unchangedVector) ==
+    uint64_t unchanged_vector = OS_TEST_DEVICE_MODEL_UNCHANGED_VALUE;
+    test_context.Expect(
+        os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_MODEL_INVALID_IRQ, unchanged_vector) ==
                 os::kernel::LegacyPicModelStatus::InvalidInterruptRequest &&
-            unchangedVector == OS_TEST_DEVICE_MODEL_UNCHANGED_VALUE,
+            unchanged_vector == OS_TEST_DEVICE_MODEL_UNCHANGED_VALUE,
         OS_TEST_DEVICE_MODEL_PIC_INVALID);
 
-    uint16_t timerEnabledMask = 0U;
-    uint16_t timerKeyboardEnabledMask = 0U;
-    testContext.Expect(
+    uint16_t timer_enabled_mask = 0U;
+    uint16_t timer_keyboard_enabled_mask = 0U;
+    test_context.Expect(
         os::kernel::EnableLegacyPicInterruptRequest(
             OS_TEST_DEVICE_MODEL_INITIAL_PIC_MASK, OS_TEST_DEVICE_MODEL_MASTER_TIMER_IRQ,
-            timerEnabledMask) == os::kernel::LegacyPicModelStatus::Succeeded &&
+            timer_enabled_mask) == os::kernel::LegacyPicModelStatus::Succeeded &&
             os::kernel::EnableLegacyPicInterruptRequest(
-                timerEnabledMask, OS_TEST_DEVICE_MODEL_MASTER_KEYBOARD_IRQ,
-                timerKeyboardEnabledMask) == os::kernel::LegacyPicModelStatus::Succeeded &&
-            timerKeyboardEnabledMask == OS_TEST_DEVICE_MODEL_TIMER_KEYBOARD_PIC_MASK,
+                timer_enabled_mask, OS_TEST_DEVICE_MODEL_MASTER_KEYBOARD_IRQ,
+                timer_keyboard_enabled_mask) == os::kernel::LegacyPicModelStatus::Succeeded &&
+            timer_keyboard_enabled_mask == OS_TEST_DEVICE_MODEL_TIMER_KEYBOARD_PIC_MASK,
         OS_TEST_DEVICE_MODEL_PIC_MASK);
 
-    os::kernel::PitConfiguration pitConfiguration{};
-    testContext.Expect(os::kernel::CreatePitConfiguration(
-                           OS_TEST_DEVICE_MODEL_PIT_TARGET_FREQUENCY_HZ, pitConfiguration) ==
-                               os::kernel::PitConfigurationStatus::Succeeded &&
-                           pitConfiguration.divisor == OS_TEST_DEVICE_MODEL_EXPECTED_PIT_DIVISOR &&
-                           pitConfiguration.actualFrequencyHz ==
-                               OS_TEST_DEVICE_MODEL_EXPECTED_PIT_ACTUAL_FREQUENCY_HZ,
-                       OS_TEST_DEVICE_MODEL_PIT_CONFIGURATION);
-    testContext.Expect(
+    os::kernel::PitConfiguration pit_configuration{};
+    test_context.Expect(
+        os::kernel::CreatePitConfiguration(OS_TEST_DEVICE_MODEL_PIT_TARGET_FREQUENCY_HZ,
+                                           pit_configuration) ==
+                os::kernel::PitConfigurationStatus::Succeeded &&
+            pit_configuration.divisor == OS_TEST_DEVICE_MODEL_EXPECTED_PIT_DIVISOR &&
+            pit_configuration.actual_frequency_hz ==
+                OS_TEST_DEVICE_MODEL_EXPECTED_PIT_ACTUAL_FREQUENCY_HZ,
+        OS_TEST_DEVICE_MODEL_PIT_CONFIGURATION);
+    test_context.Expect(
         os::kernel::CreatePitConfiguration(OS_TEST_DEVICE_MODEL_INVALID_PIT_ZERO_FREQUENCY_HZ,
-                                           pitConfiguration) ==
+                                           pit_configuration) ==
                 os::kernel::PitConfigurationStatus::InvalidFrequency &&
             os::kernel::CreatePitConfiguration(OS_TEST_DEVICE_MODEL_INVALID_PIT_LOW_FREQUENCY_HZ,
-                                               pitConfiguration) ==
+                                               pit_configuration) ==
                 os::kernel::PitConfigurationStatus::FrequencyOutOfRange,
         OS_TEST_DEVICE_MODEL_PIT_REJECTS_RANGE);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::CalculatePitElapsedMilliseconds(OS_TEST_DEVICE_MODEL_ELAPSED_TICK_COUNT,
                                                     OS_TEST_DEVICE_MODEL_EXPECTED_PIT_DIVISOR) ==
             OS_TEST_DEVICE_MODEL_EXPECTED_ELAPSED_MILLISECONDS,
         OS_TEST_DEVICE_MODEL_PIT_ELAPSED_TIME);
 
-    os::kernel::ScanCodeSet1Decoder keyboardDecoder{};
-    os::kernel::KeyboardEvent keyboardEvent{};
-    const bool decodedA =
-        keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_A_MAKE, keyboardEvent) ==
+    os::kernel::ScanCodeSet1Decoder keyboard_decoder{};
+    os::kernel::KeyboardEvent keyboard_event{};
+    const bool decoded_a =
+        keyboard_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_A_MAKE, keyboard_event) ==
             os::kernel::KeyboardDecodeStatus::EventReady &&
-        keyboardEvent.key == os::kernel::KeyboardKey::A && keyboardEvent.pressed &&
-        keyboardEvent.character == OS_TEST_DEVICE_MODEL_KEYBOARD_A_CHARACTER &&
-        !keyboardEvent.extended;
-    const bool decodedARelease =
-        keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_A_BREAK, keyboardEvent) ==
+        keyboard_event.key == os::kernel::KeyboardKey::A && keyboard_event.pressed &&
+        keyboard_event.character == OS_TEST_DEVICE_MODEL_KEYBOARD_A_CHARACTER &&
+        !keyboard_event.extended;
+    const bool decoded_a_release =
+        keyboard_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_A_BREAK, keyboard_event) ==
             os::kernel::KeyboardDecodeStatus::EventReady &&
-        keyboardEvent.key == os::kernel::KeyboardKey::A &&
-        keyboardEvent.character ==
-            OS_TEST_DEVICE_MODEL_KEYBOARD_NO_CHARACTER &&
-        !keyboardEvent.pressed;
-    testContext.Expect(decodedA && decodedARelease, OS_TEST_DEVICE_MODEL_KEYBOARD_A);
-    testContext.Expect(
-        keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED_PREFIX, keyboardEvent) ==
+        keyboard_event.key == os::kernel::KeyboardKey::A &&
+        keyboard_event.character == OS_TEST_DEVICE_MODEL_KEYBOARD_NO_CHARACTER &&
+        !keyboard_event.pressed;
+    test_context.Expect(decoded_a && decoded_a_release, OS_TEST_DEVICE_MODEL_KEYBOARD_A);
+    test_context.Expect(
+        keyboard_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED_PREFIX, keyboard_event) ==
                 os::kernel::KeyboardDecodeStatus::AwaitingSequence &&
-            keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_ARROW_UP_MAKE, keyboardEvent) ==
+            keyboard_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_ARROW_UP_MAKE, keyboard_event) ==
                 os::kernel::KeyboardDecodeStatus::EventReady &&
-            keyboardEvent.key == os::kernel::KeyboardKey::ArrowUp && keyboardEvent.pressed &&
-            keyboardEvent.extended,
+            keyboard_event.key == os::kernel::KeyboardKey::ArrowUp && keyboard_event.pressed &&
+            keyboard_event.extended,
         OS_TEST_DEVICE_MODEL_KEYBOARD_EXTENDED);
-    os::kernel::ScanCodeSet1Decoder modifierDecoder{};
-    const bool capsLockPreservesPunctuation =
-        modifierDecoder.Decode(
-            OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_LOCK_MAKE,
-            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
-        modifierDecoder.Decode(
-            OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE,
-            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
-        keyboardEvent.character ==
-            OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_CHARACTER;
-    const bool shiftChangesPunctuation =
-        modifierDecoder.Decode(
-            OS_TEST_DEVICE_MODEL_KEYBOARD_LEFT_SHIFT_MAKE,
-            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
-        modifierDecoder.Decode(
-            OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE,
-            keyboardEvent) == os::kernel::KeyboardDecodeStatus::EventReady &&
-        keyboardEvent.character ==
-            OS_TEST_DEVICE_MODEL_KEYBOARD_COLON_CHARACTER;
-    testContext.Expect(
-        capsLockPreservesPunctuation && shiftChangesPunctuation,
-        OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_PUNCTUATION);
-    testContext.Expect(
-        keyboardDecoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED_CODE, keyboardEvent) ==
+    os::kernel::ScanCodeSet1Decoder modifier_decoder{};
+    const bool caps_lock_preserves_punctuation =
+        modifier_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_LOCK_MAKE, keyboard_event) ==
+            os::kernel::KeyboardDecodeStatus::EventReady &&
+        modifier_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE, keyboard_event) ==
+            os::kernel::KeyboardDecodeStatus::EventReady &&
+        keyboard_event.character == OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_CHARACTER;
+    const bool shift_changes_punctuation =
+        modifier_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_LEFT_SHIFT_MAKE, keyboard_event) ==
+            os::kernel::KeyboardDecodeStatus::EventReady &&
+        modifier_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_SEMICOLON_MAKE, keyboard_event) ==
+            os::kernel::KeyboardDecodeStatus::EventReady &&
+        keyboard_event.character == OS_TEST_DEVICE_MODEL_KEYBOARD_COLON_CHARACTER;
+    test_context.Expect(caps_lock_preserves_punctuation && shift_changes_punctuation,
+                        OS_TEST_DEVICE_MODEL_KEYBOARD_CAPS_PUNCTUATION);
+    test_context.Expect(
+        keyboard_decoder.Decode(OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED_CODE, keyboard_event) ==
             os::kernel::KeyboardDecodeStatus::UnsupportedScanCode,
         OS_TEST_DEVICE_MODEL_KEYBOARD_UNSUPPORTED);
 
-    uint8_t ataSector[os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES]{};
-    testContext.Expect(
-        os::kernel::ValidateAtaReadRequest(OS_TEST_DEVICE_MODEL_ATA_VALID_LBA, ataSector,
+    uint8_t ata_sector[os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES]{};
+    test_context.Expect(
+        os::kernel::ValidateAtaReadRequest(OS_TEST_DEVICE_MODEL_ATA_VALID_LBA, ata_sector,
                                            os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) ==
                 os::kernel::AtaReadRequestStatus::Succeeded &&
             os::kernel::ValidateAtaReadRequest(
-                OS_TEST_DEVICE_MODEL_ATA_INVALID_LBA, ataSector,
+                OS_TEST_DEVICE_MODEL_ATA_INVALID_LBA, ata_sector,
                 os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) ==
                 os::kernel::AtaReadRequestStatus::InvalidLogicalBlockAddress &&
-            os::kernel::ValidateAtaReadRequest(OS_TEST_DEVICE_MODEL_ATA_VALID_LBA, ataSector,
+            os::kernel::ValidateAtaReadRequest(OS_TEST_DEVICE_MODEL_ATA_VALID_LBA, ata_sector,
                                                OS_TEST_DEVICE_MODEL_ATA_INVALID_SIZE_BYTES) ==
                 os::kernel::AtaReadRequestStatus::InvalidBufferSize &&
             os::kernel::ValidateAtaReadRequest(
@@ -201,15 +193,15 @@ int main() {
         OS_TEST_DEVICE_MODEL_ATA_REQUEST);
 
     for (uint64_t index = 0ULL; index < OS_TEST_DEVICE_MODEL_STAGE1_MAGIC_SIZE_BYTES; ++index) {
-        ataSector[index] = OS_TEST_DEVICE_MODEL_STAGE1_MAGIC[index];
+        ata_sector[index] = OS_TEST_DEVICE_MODEL_STAGE1_MAGIC[index];
     }
-    const bool validMagic = os::kernel::Stage1BootDescriptorMagicMatches(
-        ataSector, os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES);
-    ataSector[0] = static_cast<uint8_t>('X');
-    testContext.Expect(validMagic &&
-                           !os::kernel::Stage1BootDescriptorMagicMatches(
-                               ataSector, os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES),
-                       OS_TEST_DEVICE_MODEL_ATA_MAGIC);
+    const bool valid_magic = os::kernel::Stage1BootDescriptorMagicMatches(
+        ata_sector, os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES);
+    ata_sector[0] = static_cast<uint8_t>('X');
+    test_context.Expect(valid_magic &&
+                            !os::kernel::Stage1BootDescriptorMagicMatches(
+                                ata_sector, os::kernel::OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES),
+                        OS_TEST_DEVICE_MODEL_ATA_MAGIC);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

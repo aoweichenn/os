@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v1.0 用户环境` 已完成，第二周期 `v1.1` 的动态物理内存基础已经
-落地。自研
+当前状态：`v1.0 用户环境` 已完成，第二周期 `v1.1` 已落地动态物理内存和
+可回收内核堆两个增量。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
@@ -15,8 +15,10 @@ QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo
 直映窗口。直映内部优先使用 2 MiB 页，边界退回 4 KiB 页；Stage 1 的低
 64 MiB 身份映射只负责启动，不再限制正式页帧管理。主 QEMU 规格为 64 GiB，
 最小兼容规格仍为 64 MiB；64 GiB 启动必须在 4 GiB 以上分配、写回并回收
-页帧。内核同时建立 W^X/NX/WP 权限、guard page、64 KiB 高半区早期堆，并
-真实切换 CR3。在此基础上，内核严格
+页帧。内核同时建立 W^X/NX/WP 权限、guard page 和 64 KiB 高半区内核堆，
+并真实切换 CR3。该堆现已支持 best-fit、二次幂对齐、释放、前后合并、非法
+释放检测、完整一致性检查和生命周期统计；QEMU 启动自检完成真实写回后会
+释放全部对象并确认活动数归零。在此基础上，内核严格
 验证并装入自研 `ET_EXEC` 用户 ELF64。内核为四个进程分别建立 PML4、
 同址用户代码/数据、四页用户栈、16 KiB Ring 0 栈和保护页；8254 PIT
 每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0 和完整
@@ -40,11 +42,14 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
 freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
 sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
-完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 73 项
-CTest。
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 77 项
+CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、函数和
+命名空间。
 
-第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 只完成 buddy、
-kernel heap/object cache、KVA、动态内核栈和页表回收，并保留当前四进程通路；
+第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
+buddy、kernel heap/type cache、KVA、动态内核栈和页表回收，并保留当前
+四进程通路；其中通用可回收 kernel heap 已完成，其他资源层继续按独立闭环
+推进；
 v1.2 再迁移到 Process/Thread、统一 WaitQueue/WakeReason 和完整 FXSAVE
 现场，v1.3 独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
 PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
@@ -58,8 +63,8 @@ Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB
 
 ## 最短构建与测试路径
 
-在 Linux 环境安装 Python 3.11+、Clang、LLD、NASM、QEMU、GDB、CMake
-和 Ninja 后执行：
+在 Linux 环境安装 Python 3.11+、Clang、Clang-Tidy、LLD、NASM、QEMU、
+GDB、CMake 和 Ninja 后执行：
 
 ```bash
 python3 tools/os.py verify
@@ -130,6 +135,9 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] MEMORY_PERMISSIONS_VALID
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
+[OS][KERNEL] HEAP_ACTIVE_ALLOCATIONS=0x0000000000000000
+[OS][KERNEL] HEAP_PEAK_CONSUMED_BYTES=0x...
+[OS][KERNEL] HEAP_LARGEST_FREE_ALLOCATION_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] PIPE_READY

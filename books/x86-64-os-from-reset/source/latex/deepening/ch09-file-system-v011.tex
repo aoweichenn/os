@@ -152,7 +152,7 @@ bitmap 仍占完整扇区，但有效位之外必须全零。这个规则能发�
 字节编码时清零。当前拒绝空名称、超过 40 字节、斜杠、C0 控制字符、
 \code{DEL}、\code{.} 和 \code{..}。
 
-目录本身也是 inode，其 \code{sizeBytes} 必须是 64 的整数倍。一个块容纳
+目录本身也是 inode，其 \code{size_bytes} 必须是 64 的整数倍。一个块容纳
 8 项，十个直接块最多容纳 80 项。inode 不保存路径；路径来自从根目录开始
 的一串目录项，这正是 rename 不需要搬动文件数据的原因。
 
@@ -176,14 +176,14 @@ inode 各自 CRC 都正确，却可能引用同一数据块；目录项也可能
 \section{bitmap 分配把空间所有权变成守恒关系}
 
 inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 个有效位中寻找
-零位，再转换为相对块 \code{11+bitIndex}。释放文件时逐个验证块位于数据区，
+零位，再转换为相对块 \code{11+bit_index}。释放文件时逐个验证块位于数据区，
 清对应位，并把 inode 的直接块、块数和长度归零。
 
-一致性检查维护一张 \code{seenDataBitmap}。遍历每个已分配 inode 时：
+一致性检查维护一张 \code{seen_data_bitmap}。遍历每个已分配 inode 时：
 
 \begin{itemize}
-  \item 前 \code{allocatedBlockCount} 个直接块必须位于数据区且 bitmap 为 1；
-  \item 同一块在 \code{seenDataBitmap} 中不能已经出现；
+  \item 前 \code{allocated_block_count} 个直接块必须位于数据区且 bitmap 为 1；
+  \item 同一块在 \code{seen_data_bitmap} 中不能已经出现；
   \item 块数之后的直接块必须为零；
   \item 最终 data bitmap 的每个有效位必须与 seen 位完全相等。
 \end{itemize}
@@ -191,7 +191,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 所以“位图说已分配但没有 inode 拥有”和“inode 使用了位图中的空闲块”都会
 失败。文件所需块数还必须等于
 \[
-  \left\lceil\frac{\mathrm{sizeBytes}}{512}\right\rceil,
+  \left\lceil\frac{\mathrm{size_bytes}}{512}\right\rceil,
 \]
 不接受隐藏的尾部已分配块。
 
@@ -220,7 +220,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 \section{Dirty/Clean 协议先保证可检测，再讨论恢复}
 
 创建目录、创建/截断文件和写文件会同时改变多个块。v0.11 使用超级块中的
-\code{transactionState} 和 64 位代次建立最小提交协议：
+\code{transaction_state} 和 64 位代次建立最小提交协议：
 
 \begin{enumerate}[label=\arabic*.]
   \item 完成路径、权限和容量预检；

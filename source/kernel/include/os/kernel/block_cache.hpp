@@ -25,11 +25,10 @@ class FileSystemBlockDevice {
     FileSystemBlockDevice &operator=(const FileSystemBlockDevice &) = delete;
 
     [[nodiscard]] virtual FileSystemBlockDeviceStatus
-    ReadBlock(uint64_t logicalBlockAddress, uint8_t *block,
-              uint64_t blockSizeBytes) noexcept;
+    ReadBlock(uint64_t logical_block_address, uint8_t *block, uint64_t block_size_bytes) noexcept;
     [[nodiscard]] virtual FileSystemBlockDeviceStatus
-    WriteBlock(uint64_t logicalBlockAddress, const uint8_t *block,
-               uint64_t blockSizeBytes) noexcept;
+    WriteBlock(uint64_t logical_block_address, const uint8_t *block,
+               uint64_t block_size_bytes) noexcept;
     [[nodiscard]] virtual FileSystemBlockDeviceStatus Flush() noexcept;
 
   protected:
@@ -47,12 +46,12 @@ enum class BlockCacheStatus : uint64_t {
 };
 
 struct BlockCacheStatistics final {
-    uint64_t hitCount;
-    uint64_t missCount;
-    uint64_t evictionCount;
-    uint64_t deviceReadCount;
-    uint64_t deviceWriteCount;
-    uint64_t flushCount;
+    uint64_t hit_count;
+    uint64_t miss_count;
+    uint64_t eviction_count;
+    uint64_t device_read_count;
+    uint64_t device_write_count;
+    uint64_t flush_count;
 };
 
 class BlockCache final {
@@ -60,11 +59,10 @@ class BlockCache final {
     BlockCache() noexcept = default;
 
     void Initialize(FileSystemBlockDevice &device) noexcept;
-    [[nodiscard]] BlockCacheStatus ReadBlock(uint64_t logicalBlockAddress, uint8_t *block,
-                                             uint64_t blockSizeBytes) noexcept;
-    [[nodiscard]] BlockCacheStatus WriteBlock(uint64_t logicalBlockAddress,
-                                              const uint8_t *block,
-                                              uint64_t blockSizeBytes) noexcept;
+    [[nodiscard]] BlockCacheStatus ReadBlock(uint64_t logical_block_address, uint8_t *block,
+                                             uint64_t block_size_bytes) noexcept;
+    [[nodiscard]] BlockCacheStatus WriteBlock(uint64_t logical_block_address, const uint8_t *block,
+                                              uint64_t block_size_bytes) noexcept;
     [[nodiscard]] BlockCacheStatus Sync() noexcept;
     void Invalidate() noexcept;
     [[nodiscard]] BlockCacheStatistics Statistics() const noexcept;
@@ -72,19 +70,19 @@ class BlockCache final {
   private:
     struct Entry final {
         uint8_t bytes[OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES];
-        uint64_t logicalBlockAddress;
-        uint64_t accessGeneration;
+        uint64_t logical_block_address;
+        uint64_t access_generation;
         bool valid;
         bool dirty;
     };
 
-    [[nodiscard]] BlockCacheStatus AcquireEntry(uint64_t logicalBlockAddress, bool loadFromDevice,
-                                                Entry *&entry) noexcept;
+    [[nodiscard]] BlockCacheStatus AcquireEntry(uint64_t logical_block_address,
+                                                bool load_from_device, Entry *&entry) noexcept;
     [[nodiscard]] BlockCacheStatus FlushEntry(Entry &entry) noexcept;
 
     FileSystemBlockDevice *device_{nullptr};
     Entry entries_[OS_KERNEL_BLOCK_CACHE_ENTRY_COUNT]{};
-    uint64_t accessGeneration_{};
+    uint64_t access_generation_{};
     BlockCacheStatistics statistics_{};
     mutable SpinLock lock_{};
     bool initialized_{false};

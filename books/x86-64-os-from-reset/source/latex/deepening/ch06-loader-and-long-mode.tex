@@ -41,9 +41,9 @@ SECTORS 命令。设备置 BSY 处理请求；准备好数据后清 BSY 并置 D
 LBA28 最多表达 \(2^{28}\) 个扇区，单扇区 512 字节。计算文件范围时先用
 64 位检查：
 \[
-  \mathrm{byteOffset}=\mathrm{LBA}\times512,\qquad
-  \mathrm{byteEnd}=\mathrm{byteOffset}+
-  \mathrm{sectorCount}\times512.
+  \mathrm{byte_offset}=\mathrm{LBA}\times512,\qquad
+  \mathrm{byte_end}=\mathrm{byte_offset}+
+  \mathrm{sector_count}\times512.
 \]
 乘法与加法均要在执行前证明不溢出，结果还要小于磁盘镜像或分区长度。硬件
 寄存器只接受 28 位，不代表软件内部也应使用狭窄类型。

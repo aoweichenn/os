@@ -14,7 +14,6 @@ enum class KernelFaultInjection : uint64_t {
     WriteProtection,
 };
 
-[[noreturn]] void RunKernel(const BootInfo *bootInfo, KernelFaultInjection faultInjection,
-                            UserProgramSelection userProgramSelection) noexcept;
-
+[[noreturn]] void RunKernel(const BootInfo *boot_info, KernelFaultInjection fault_injection,
+                            UserProgramSelection user_program_selection) noexcept;
 }

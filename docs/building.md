@@ -7,7 +7,7 @@
 
 必需工具：
 
-- Clang 与 Clang++
+- Clang、Clang++、Clang-Tidy 与 `run-clang-tidy`
 - LLD
 - NASM
 - QEMU `qemu-system-x86_64`
@@ -20,13 +20,13 @@
 Fedora：
 
 ```bash
-sudo dnf install clang lld nasm qemu-system-x86-core gdb cmake ninja-build python3
+sudo dnf install clang clang-tools-extra lld nasm qemu-system-x86-core gdb cmake ninja-build python3
 ```
 
 Ubuntu：
 
 ```bash
-sudo apt-get install clang lld nasm qemu-system-x86 gdb cmake ninja-build python3
+sudo apt-get install clang clang-tidy lld nasm qemu-system-x86 gdb cmake ninja-build python3
 ```
 
 QEMU 软件包可能连带安装 SeaBIOS 或 OVMF 文件，但项目运行命令始终通过
@@ -46,7 +46,8 @@ Python 入口依次执行：
 4. 生成自研 ROM、Stage 1、v1.0 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
-5. 运行全部 CTest 测试。
+5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁和
+   命名空间单词门禁。
 
 正常 QEMU 系统用例显式使用 `-m 65536`，即 64 GiB 主规格；故障注入和
 最小兼容路径保留 64 MiB，以免重复为不相关失败分支建立大容量模型。QEMU
@@ -273,5 +274,7 @@ x86-64 目标使用 freestanding C++20，并关闭：
 - Ninja 执行增量构建。
 - Python 提供稳定命令入口并管理外部进程。
 - CTest 保存测试注册、标签和完成判定。
+- Clang-Tidy 按 `.clang-tidy` 检查变量、函数和命名空间；Python 词法门禁
+  另外保证命名空间每层匹配 `[a-z]+`。二者都不参与依赖扫描或目标代码生成。
 
 Python 工具只使用标准库，不自行扫描 C++ 依赖，也不替代 CMake 生成构建图。

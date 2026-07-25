@@ -9,32 +9,32 @@ inline constexpr uint64_t OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES = 176ULL;
 inline constexpr uint64_t OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT = 32ULL;
 
 struct ExceptionFrame final {
-    uint64_t registerR15;
-    uint64_t registerR14;
-    uint64_t registerR13;
-    uint64_t registerR12;
-    uint64_t registerR11;
-    uint64_t registerR10;
-    uint64_t registerR9;
-    uint64_t registerR8;
-    uint64_t registerRdi;
-    uint64_t registerRsi;
-    uint64_t registerRbp;
-    uint64_t registerRdx;
-    uint64_t registerRcx;
-    uint64_t registerRbx;
-    uint64_t registerRax;
+    uint64_t register_r15;
+    uint64_t register_r14;
+    uint64_t register_r13;
+    uint64_t register_r12;
+    uint64_t register_r11;
+    uint64_t register_r10;
+    uint64_t register_r9;
+    uint64_t register_r8;
+    uint64_t register_rdi;
+    uint64_t register_rsi;
+    uint64_t register_rbp;
+    uint64_t register_rdx;
+    uint64_t register_rcx;
+    uint64_t register_rbx;
+    uint64_t register_rax;
     uint64_t vector;
-    uint64_t errorCode;
-    uint64_t instructionPointer;
-    uint64_t codeSegment;
+    uint64_t error_code;
+    uint64_t instruction_pointer;
+    uint64_t code_segment;
     uint64_t flags;
 };
 
 struct UserPrivilegeFrame final {
     ExceptionFrame common;
-    uint64_t userStackPointer;
-    uint64_t userStackSegment;
+    uint64_t user_stack_pointer;
+    uint64_t user_stack_segment;
 };
 
 [[nodiscard]] bool ExceptionPushesHardwareErrorCode(uint64_t vector) noexcept;

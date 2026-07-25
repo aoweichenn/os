@@ -10,12 +10,10 @@ constexpr char OS_USER_IPC_CONSUMER_STARTED_MESSAGE[] = "[OS][USER][PIPE] CONSUM
 constexpr char OS_USER_IPC_CONSUMER_PAYLOAD_VERIFIED_MESSAGE[] =
     "[OS][USER][PIPE] PAYLOAD_VERIFIED\r\n";
 constexpr char OS_USER_IPC_CONSUMER_END_OF_FILE_MESSAGE[] = "[OS][USER][PIPE] EOF_OBSERVED\r\n";
-constexpr char OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE[] =
-    "[OS][USER][FS] FILE_VERIFIED\r\n";
+constexpr char OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE[] = "[OS][USER][FS] FILE_VERIFIED\r\n";
 constexpr char OS_USER_IPC_CONSUMER_FILE_PATH[] = "/shared/payload.bin";
 constexpr uint64_t OS_USER_IPC_CONSUMER_PROCESS_ID = 3ULL;
-constexpr uint64_t OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR =
-    os::abi::OS_ABI_FIRST_DYNAMIC_DESCRIPTOR;
+constexpr uint64_t OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR = os::abi::OS_ABI_FIRST_DYNAMIC_DESCRIPTOR;
 constexpr uint64_t OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES = 31ULL;
 constexpr uint64_t OS_USER_IPC_CONSUMER_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
@@ -33,8 +31,8 @@ constexpr int64_t OS_USER_IPC_CONSUMER_FIRST_ERROR_RESULT = -1LL;
 constexpr int64_t OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT = 0LL;
 constexpr int64_t OS_USER_IPC_CONSUMER_SUCCESS_RESULT = 0LL;
 
-uint8_t consumerBuffer[OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES];
-uint8_t fileBuffer[OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES];
+uint8_t consumer_buffer[OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES];
+uint8_t file_buffer[OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES];
 
 template <uint64_t MessageSizeBytes>
 [[nodiscard]] bool WriteMessage(const char (&message)[MessageSizeBytes]) noexcept {
@@ -43,20 +41,18 @@ template <uint64_t MessageSizeBytes>
            OS_USER_IPC_CONSUMER_FIRST_ERROR_RESULT;
 }
 
-[[nodiscard]] uint8_t ExpectedPayloadByte(const uint64_t byteIndex) noexcept {
+[[nodiscard]] uint8_t ExpectedPayloadByte(const uint64_t byte_index) noexcept {
     return static_cast<uint8_t>(
-        (byteIndex * OS_USER_IPC_CONSUMER_BYTE_MULTIPLIER + OS_USER_IPC_CONSUMER_BYTE_INCREMENT) &
+        (byte_index * OS_USER_IPC_CONSUMER_BYTE_MULTIPLIER + OS_USER_IPC_CONSUMER_BYTE_INCREMENT) &
         OS_USER_IPC_CONSUMER_BYTE_MASK);
 }
-
 }
 
-extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() noexcept {
-    uint8_t permissionProbe = OS_USER_IPC_CONSUMER_ZERO_BYTE;
+extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void OsUserEntry() noexcept {
+    uint8_t permission_probe = OS_USER_IPC_CONSUMER_ZERO_BYTE;
     if (os::user::GetProcessId() != OS_USER_IPC_CONSUMER_PROCESS_ID ||
-        os::user::TryWriteDescriptor(
-            OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR, &permissionProbe,
-            OS_USER_IPC_CONSUMER_POINTER_PROBE_SIZE_BYTES) !=
+        os::user::TryWriteDescriptor(OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR, &permission_probe,
+                                     OS_USER_IPC_CONSUMER_POINTER_PROBE_SIZE_BYTES) !=
             os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED ||
         os::user::TryReadDescriptor(
             OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR,
@@ -67,32 +63,31 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
         os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
     }
 
-    uint64_t totalReadBytes = OS_USER_IPC_CONSUMER_EMPTY_BYTE_COUNT;
+    uint64_t total_read_bytes = OS_USER_IPC_CONSUMER_EMPTY_BYTE_COUNT;
     while (true) {
-        const int64_t readResult =
-            os::user::ReadDescriptor(
-                OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR, consumerBuffer,
-                OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES);
-        if (readResult < OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT) {
+        const int64_t read_result =
+            os::user::ReadDescriptor(OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR, consumer_buffer,
+                                     OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES);
+        if (read_result < OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT) {
             os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
         }
-        if (readResult == OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT) {
+        if (read_result == OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT) {
             break;
         }
-        const uint64_t readBytes = static_cast<uint64_t>(readResult);
-        if (totalReadBytes + readBytes > OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES) {
+        const uint64_t read_bytes = static_cast<uint64_t>(read_result);
+        if (total_read_bytes + read_bytes > OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES) {
             os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
         }
-        for (uint64_t byteIndex = OS_USER_IPC_CONSUMER_FIRST_BYTE_INDEX;
-             byteIndex < readBytes; ++byteIndex) {
-            if (consumerBuffer[byteIndex] != ExpectedPayloadByte(totalReadBytes + byteIndex)) {
+        for (uint64_t byte_index = OS_USER_IPC_CONSUMER_FIRST_BYTE_INDEX; byte_index < read_bytes;
+             ++byte_index) {
+            if (consumer_buffer[byte_index] != ExpectedPayloadByte(total_read_bytes + byte_index)) {
                 os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
             }
         }
-        totalReadBytes += readBytes;
+        total_read_bytes += read_bytes;
     }
 
-    if (totalReadBytes != OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES ||
+    if (total_read_bytes != OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES ||
         !WriteMessage(OS_USER_IPC_CONSUMER_PAYLOAD_VERIFIED_MESSAGE) ||
         !WriteMessage(OS_USER_IPC_CONSUMER_END_OF_FILE_MESSAGE) ||
         os::user::CloseDescriptor(OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR) !=
@@ -102,29 +97,26 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
         os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
     }
 
-    const int64_t fileDescriptor = os::user::OpenFile(
+    const int64_t file_descriptor = os::user::OpenFile(
         OS_USER_IPC_CONSUMER_FILE_PATH,
-        sizeof(OS_USER_IPC_CONSUMER_FILE_PATH) -
-            OS_USER_IPC_CONSUMER_STRING_TERMINATOR_SIZE_BYTES,
+        sizeof(OS_USER_IPC_CONSUMER_FILE_PATH) - OS_USER_IPC_CONSUMER_STRING_TERMINATOR_SIZE_BYTES,
         os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
-    if (fileDescriptor < OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
-        os::user::ReadDescriptor(
-            static_cast<uint64_t>(fileDescriptor), fileBuffer,
-            OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES) !=
+    if (file_descriptor < OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
+        os::user::ReadDescriptor(static_cast<uint64_t>(file_descriptor), file_buffer,
+                                 OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES) !=
             static_cast<int64_t>(OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES)) {
         os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
     }
-    for (uint64_t byteIndex = OS_USER_IPC_CONSUMER_FIRST_BYTE_INDEX;
-         byteIndex < OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES; ++byteIndex) {
-        if (fileBuffer[byteIndex] != ExpectedPayloadByte(byteIndex)) {
+    for (uint64_t byte_index = OS_USER_IPC_CONSUMER_FIRST_BYTE_INDEX;
+         byte_index < OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES; ++byte_index) {
+        if (file_buffer[byte_index] != ExpectedPayloadByte(byte_index)) {
             os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
         }
     }
-    if (os::user::ReadDescriptor(
-            static_cast<uint64_t>(fileDescriptor), fileBuffer,
-            OS_USER_IPC_CONSUMER_POINTER_PROBE_SIZE_BYTES) !=
+    if (os::user::ReadDescriptor(static_cast<uint64_t>(file_descriptor), file_buffer,
+                                 OS_USER_IPC_CONSUMER_POINTER_PROBE_SIZE_BYTES) !=
             OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT ||
-        os::user::CloseDescriptor(static_cast<uint64_t>(fileDescriptor)) !=
+        os::user::CloseDescriptor(static_cast<uint64_t>(file_descriptor)) !=
             OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
         !WriteMessage(OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);

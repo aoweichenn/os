@@ -43,7 +43,7 @@ bool IsResumableKernelException(const uint64_t vector) noexcept {
 }
 
 bool FrameOriginatedFromUser(const ExceptionFrame &frame) noexcept {
-    return (frame.codeSegment & OS_KERNEL_EXCEPTION_REQUESTED_PRIVILEGE_LEVEL_MASK) ==
+    return (frame.code_segment & OS_KERNEL_EXCEPTION_REQUESTED_PRIVILEGE_LEVEL_MASK) ==
            OS_KERNEL_EXCEPTION_USER_PRIVILEGE_LEVEL;
 }
 

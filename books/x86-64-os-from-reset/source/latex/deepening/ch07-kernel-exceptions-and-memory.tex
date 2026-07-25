@@ -1,10 +1,10 @@
 \section{64 位入口先把加载器状态收敛为内核 ABI}
 
 Stage 1 已经把 RSP 放到独立的 64 KiB 栈顶，用 \code{CALL} 进入固定地址
-\code{osKernelEntry}，并在 RDI 中传入 BootInfo。这里故意使用正常 System V
+\code{OsKernelEntry}，并在 RDI 中传入 BootInfo。这里故意使用正常 System V
 AMD64 调用形状：函数入口的 RSP 模 16 等于 8，编译器可以按普通 C++20 ABI
 生成代码。入口函数自身只有一项职责：选择“无故障注入”并进入
-\code{runKernel}，不复制启动逻辑。
+\code{RunKernel}，不复制启动逻辑。
 
 内核先重新初始化 COM1，然后逐字段验证 BootInfo、BSS 探针和 CR3。任何失败
 只输出一次对应边界并停机。只有这三项都成立，才开始覆盖 Stage 1 留下的 GDT。
@@ -15,6 +15,56 @@ System V AMD64 ABI 区分调用者与被调用者保存寄存器。内核入口�
 \code{CALL}，但协议规定它永不返回；若意外返回，Stage 1 会输出
 \code{KERNEL\_RETURNED} 并停机。异常入口则不是普通调用，必须由单独汇编边界
 转换后才能进入 C++。
+
+\section{标识符在跨语言边界上也是 ABI}
+
+C++ 标识符主要服务于类型检查和源码阅读，NASM 标签与链接脚本符号则直接进入
+ELF 符号表。两边都区分大小写，\code{OsKernelEntry} 与
+\code{osKernelEntry} 是两个完全不同的链接名字。早期项目把一部分变量写成
+小驼峰，也把自研 C/汇编入口写成小写开头；代码量较小时尚可辨认，模块增多后，
+函数、变量和链接数据在走读中很难一眼区分。
+
+当前规则按语义角色拆开：
+
+\begin{longtable}{L{0.25\textwidth}L{0.27\textwidth}L{0.38\textwidth}}
+\toprule
+\textbf{对象} & \textbf{形式} & \textbf{示例}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{对象} & \textbf{形式} & \textbf{示例}\\
+\midrule
+\endhead
+类型与函数 & 大驼峰 & \code{PhysicalAddress}、\code{RunKernel}\\
+局部变量与参数 & 小写蛇形 & \code{physical\_address}、\code{frame\_index}\\
+私有数据成员 & 小写蛇形，可带尾部下划线 &
+\code{free\_frame\_count\_}\\
+项目常量 & 项目/模块/功能全大写 &
+\code{OS\_KERNEL\_MEMORY\_PAGE\_SIZE\_BYTES}\\
+自研汇编函数符号 & 大驼峰 & \code{OsKernelExceptionDispatch}\\
+自研链接数据符号 & 小写蛇形 & \code{os\_kernel\_image\_start}\\
+\bottomrule
+\end{longtable}
+
+成员尾部下划线解决参数遮蔽，\code{this->} 则说明一次访问确实读取对象状态；
+二者用途不同。命名空间的每一层只放一个简短小写单词，例如
+\code{os::kernel::memory}，需要更细归属时增加层级，不把多个模块压成一个
+冗长名称。Clang-Tidy 的 \code{lower\_case} 风格仍允许下划线，不能单独证明
+“每层一个单词”；因此同一 CTest 先用 Python 词法扫描要求每层匹配
+\code{[a-z]+}，再用 Clang AST 区分变量、函数、成员和类型。词法扫描会屏蔽
+注释、普通/原始字符串和字符字面量，匿名命名空间则按 C++ 语义保留。
+
+\code{extern "C"} 只关闭 C++ 名字改编，不会替我们同步 NASM 或链接脚本。
+因此一次符号重命名必须同时修改声明、定义、\code{global}/\code{extern}、
+链接器 \code{ENTRY}、ELF 审计器和调试文档。项目自己拥有这些 ABI，所以函数
+统一为 \code{OsKernel...}/\code{OsUser...}，数据统一为
+\code{os\_kernel\_...}；只有 C 标准和编译器明确要求的
+\code{main}、\code{memset}、\code{memcpy} 保留固定拼写。
+
+文本正则无法判断一个单词究竟是类型、函数还是变量。本次迁移用 Clang AST 扫描
+136 个 C++ 头文件和源文件；初始 7018 条编译单元诊断包含公共头文件的重复报告，
+迁移后诊断为零。第 77 项 CTest 会在每次完整回归中重新执行同一检查，使命名
+规范从说明文字变成可失败的工程契约。
 
 \section{BSS 让大表和专用栈不膨胀磁盘文件}
 
@@ -210,11 +260,11 @@ CPU 对向量 8、10、11、12、13、14、17、21、29、30 压入错误码，�
 ; 无硬件错误码
 push qword 0
 push qword vector
-jmp osKernelExceptionDispatch
+jmp OsKernelExceptionDispatch
 
 ; 有硬件错误码：CPU 已经压入 error_code
 push qword vector
-jmp osKernelExceptionDispatch
+jmp OsKernelExceptionDispatch
 \end{lstlisting}
 
 两条路径到达公共入口时，栈顶永远是 vector，其后永远是 error code，再后是
@@ -341,8 +391,8 @@ limit、type 和 IDT offset、selector、IST、attributes 逐字段解码。固�
 \code{0xD35C71A05EED6405} 再生成 4096 个完整 64 位地址，分别经过 TSS
 descriptor 和 IDT gate 编码解码，共执行 8192 条往返性质断言。
 
-集成审计读取真实 ELF，要求 \code{osKernelLoadGdtAndTss}、
-\code{osKernelExceptionDispatch}、\code{osKernelDispatchException}、
+集成审计读取真实 ELF，要求 \code{OsKernelLoadGdtAndTss}、
+\code{OsKernelExceptionDispatch}、\code{OsKernelDispatchException}、
 桩表和向量 0..31 的全部符号存在，同时拒绝任何未解析运行时符号。
 
 QEMU 则验证纯逻辑无法证明的事实：处理器接受 GDT/TSS/IDT，TR 真正装载，
@@ -370,8 +420,8 @@ v0.6 在这条回归上增加七项测试，完整集合为 43 项。新增 QEMU
 
 \begin{lstlisting}[language=C++]
 struct PhysicalMemoryMapEntry final {
-    uint64_t baseAddress;
-    uint64_t lengthBytes;
+    uint64_t base_address;
+    uint64_t length_bytes;
     uint32_t type;
     uint32_t attributes;
 };
@@ -469,7 +519,7 @@ managed count 恢复为零再返回 \code{NoUsableFrames}，不会留下“看�
 \begin{itemize}
   \item \code{[0,1 MiB)}：复位、固件、Stage 1、旧页表、BootInfo、内存图、
         VGA 传统窗口等低端平台资产；
-  \item 链接器符号 \code{osKernelImageStart..osKernelImageEnd}：精确覆盖
+  \item 链接器符号 \code{os_kernel_image_start..os_kernel_image_end}：精确覆盖
         text、rodata、data、BSS、IDT 与 IST；
   \item BootInfo 给出的 64 KiB 初始栈。
   \item 动态选出的页帧状态数组自身。
@@ -531,7 +581,7 @@ begin 设为 4 GiB+4 KiB。范围接口没有复制第二套所有权规则，�
 \code{0xFFFF888000000000+physical} 建立 direct-map。未声明为 RAM 的
 保留区与 MMIO 洞保持 not-present；LAPIC 继续使用独立 PCD 映射。
 
-映射完成、NX 和 WP 打开之后才执行 \code{mov cr3,newRoot}。如果先切 CR3
+映射完成、NX 和 WP 打开之后才执行 \code{mov cr3,new_root}。如果先切 CR3
 再补当前 RIP、RSP 或 IDT 所需映射，下一条取指或压栈就会故障；异常入口本身
 也可能未映射，最终表现为 triple fault。先构造完整候选、后一次激活，是页表
 版的两遍 ELF 副作用边界。CR3 读回成功后，管理器原子切换访问基址，页表
@@ -640,13 +690,13 @@ U/S、RSVD 和 I/D 都为零。P=1 把它与“忘记映射测试页”的错误
 W/R=1 把它与普通读取区分；CR2 必须精确等于高半区测试地址。只有随后进入同一
 panic 并禁止 \code{READY}，才能说明权限执行、异常入口和停止边界全部连通。
 
-\section{高半区早期堆用最小策略验证映射之上的对象分配}
+\section{v0.6 高半区早期堆用最小策略验证对象分配}
 
 heap 虚拟基址为 \code{0xFFFF800000000000}，容量 64 KiB。页表管理器为
 16 个虚拟页分别取得物理帧；这些帧不要求连续，因为虚拟地址负责把它们组织成
 连续区间。每页权限为 RW/NX。
 
-\code{KernelHeap} 保存 base、size、consumed 和 allocation count。
+v0.6 的 \code{KernelHeap} 保存 base、size、consumed 和 allocation count。
 分配大小必须非零，对齐必须是二的幂。当前地址先检查
 \code{base+consumed} 溢出，再计算：
 \[
@@ -660,7 +710,8 @@ padding 和请求大小分别与剩余容量比较，避免组合加法先溢出
 容量一旦消耗不能回收，所以后续通用堆仍需 size class、slab 或其他所有权
 策略，不能把早期 heap 当成最终实现。
 
-目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 字节、4096 字节对齐
+v0.6 目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 字节、
+4096 字节对齐
 对象，分别写入
 \code{0x13579BDF2468ACE0} 和 \code{0xC001D00DC0FFEE11} 后读回。
 \code{HEAP\_SELF\_TEST\_PASSED} 因而同时证明高半区地址 canonical、四级
@@ -669,6 +720,138 @@ padding 和请求大小分别与剩余容量比较，避免组合加法先溢出
 未来可释放分配器不能在持有自身锁时调用可能再次分配的日志格式化。panic 和
 低内存路径继续使用预分配缓冲与串口最小输出，避免诊断代码递归触发原故障。
 
+\section{v1.1 用边界标记把早期堆推进到完整生命周期}
+
+\subsection{为什么“能够分配”还不是资源管理}
+
+单调堆的 consumed 指针只回答“下一块从哪里开始”。它没有记录一个返回指针
+对应多大的物理块，也没有办法判断相邻空间是否空闲，因此不存在可靠的
+\code{free}。这不是少写一个接口的问题，而是缺少恢复所有权所需的信息。
+
+动态 Thread、内核栈、FileTable 和缓存对象都有明确销毁点。若仍把它们放进
+单调堆，功能测试可能短时间成功，长时间创建/退出却只会让 consumed 单向增长。
+这类泄漏尤其危险：它不一定破坏当前对象，而是在距离根因很远的后来请求上
+表现为耗尽。v1.1 因而先建立通用字节块的申请、释放和守恒，再引入 buddy、
+KVA 与类型缓存；每层只回答一种所有权问题。
+
+\subsection{块头同时服务物理邻接和空闲集合}
+
+64 KiB 后备虚拟区间保持不变，块头固定为 48 字节并按 16 字节对齐：
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+字段 & 宽度 & 作用\\
+\midrule
+\code{size_bytes} & 64 bit & 当前物理块的完整跨度\\
+\code{previous_block_size_bytes} & 64 bit & 从当前头反向定位前块\\
+\code{requested_size_bytes} & 64 bit & 区分调用者负载与内部开销\\
+\code{state_signature} & 64 bit & 区分 free、allocated 与旧 released 头\\
+\code{previous_free_block} & 64 bit & 空闲链反向链接\\
+\code{next_free_block} & 64 bit & 空闲链正向链接\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+物理块链与空闲链不是同一件事。前者必须无缝覆盖整个 heap，包括活动块；
+后者只索引 free 块，并按地址递增。对地址为 \(b_i\)、长度为 \(s_i\) 的块，
+相邻关系为
+\[
+  b_{i+1}=b_i+s_i,\qquad
+  b_{i-1}=b_i-\operatorname{previous_size}(b_i).
+\]
+保存前块长度就是 boundary tag 的核心。释放时可以在常数时间找到两个物理
+邻居，无需从 heap 起点重新搜索；空闲链则让分配只遍历可用候选。
+
+48 字节头看起来昂贵，这是本阶段有意识的取舍。一个 16 字节小对象会占用至少
+64 字节块，空间效率不高；但每个字段都可在 GDB 和一致性检查器中直接解释。
+后续固定尺寸热对象交给 type cache，通用 heap 不需要同时承担 slab 的职责。
+
+\subsection{对齐会同时产生前缀、活动块和后缀}
+
+请求负载长度 \(n\)、对齐 \(a\) 时，先取
+\[
+  a_{\mathrm{effective}}=\max(a,16).
+\]
+负载必须紧跟 48 字节块头，因此先对
+\(\operatorname{block_begin}+48\) 向上对齐，再反推出活动块起点。若前缀
+非零但小于最小块 64 字节，它既不能进入空闲链，又不能放在负载与块头之间；
+实现继续前进一个对齐单位，直到前缀为零或足够形成完整块。
+
+活动块初始跨度为
+\[
+  \operatorname{align_up}(48+n,16).
+\]
+尾部不足 64 字节时并入活动块，避免制造永远不能分配的碎片；否则尾部形成
+新的 free 块。只有候选地址、三段长度、溢出和边界全部验证后，best-fit
+选择才会提交。失败调用不修改空闲链、块头、统计或调用者输出指针。
+
+best-fit 从所有可容纳请求的 free 块中选最小者。它仍是线性搜索，也不保证
+消灭外部碎片；当前 heap 只有 64 KiB，这个策略的可解释性和确定性比复杂
+索引更重要。对象尺寸分布明确后再用 type cache 消除高频扫描与块头开销。
+
+\subsection{释放先预检，再完成唯一一次状态提交}
+
+\code{TryRelease} 只接受原分配返回的精确负载首地址。它先验证：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 指针非空、位于 heap 内并满足最小对齐；
+  \item 负载前 48 字节确实是 allocated 块头；
+  \item 该块确实出现在从 heap 基址遍历得到的物理块链中；
+  \item requested、size 和活动统计不会下溢；
+  \item 前后块边界、状态和反向长度彼此一致。
+\end{enumerate}
+
+全部预检成功后，当前块才改为 released。若前块 free，先从空闲链摘除并向前
+扩展；若后块 free，再摘除并向后扩展。最后更新后继块保存的 previous size，
+把一个合并结果按地址插回空闲链并提交统计。于是
+
+\[
+  \mathrm{successful_allocation_count}
+  =
+  \mathrm{releases}
+  +
+  \mathrm{allocation_count}
+\]
+
+在任意合法时刻都成立。重复释放会命中 free 或 released 签名并明确失败；
+内部指针即使碰巧按 16 字节对齐，也无法通过物理块成员检查。
+
+\subsection{一致性检查不能只数链表节点}
+
+两个集合节点数相同，不代表它们包含相同块。\code{Validate} 先沿物理块链
+验证尺寸、对齐、状态、前块长度和完整覆盖；再沿空闲链验证地址递增、双向链接
+和有界无环；最后逐个确认每个物理 free 块在空闲链中恰好出现一次。它还重新
+计算活动请求字节、活动块完整跨度和活动数量，与保存统计交叉比较。
+
+统计特意区分 requested 与 consumed。前者是调用者可见负载，后者包含 48 字节
+块头和被吸收的短尾部。\code{remaining_bytes} 只是
+\(\mathrm{capacity}-\mathrm{consumed}\)，可能散落在多个块；真正的单次
+上限由 \code{largest_free_allocation_bytes} 描述。峰值则记录启动周期曾经
+占用的最大完整跨度。
+
+\subsection{测试从样例释放扩展到十万步状态机}
+
+单元测试覆盖无效区间、重复初始化、五种对齐、耗尽失败原子性、空/区间外/
+内部/重复释放、乱序三向合并、起始地址复用和统计守恒。集成测试使用目标同样
+的 64 KiB 区间，混合分配小对象、缓存行对象与 4 KiB 对齐对象，写入模式后
+乱序释放，再申请整个最大连续负载。
+
+固定种子 \code{0x4845415056313031} 执行 100000 次随机申请与释放。参考
+模型独立保存每个活动负载的地址、长度、对齐与首尾模式；每一步核对数据未被
+邻接分裂破坏、区间不重叠、活动请求字节和累计计数一致，并周期性执行完整
+拓扑检查。失败输出包含种子与精确迭代号。
+
+QEMU 自检仍完成 64 字节/16 字节对齐和 4096 字节/4096 字节对齐的真实
+写回，但随后逆序释放并执行 \code{Validate}。日志要求
+\code{HEAP\_ACTIVE\_ALLOCATIONS=0}，同时报告非零峰值和合并后的最大连续
+空闲负载，最后才输出 \code{HEAP\_SELF\_TEST\_PASSED}。分裂和释放不逐次
+写串口，避免诊断改变时序。
+
+当前实现仍有清晰边界：后备区固定为 64 KiB，没有内部并发锁，也不能在 IRQ、
+NMI 或 panic 中调用。buddy、KVA、动态 guard stack、空中间页表回收和
+type cache 仍是 v1.1 后续独立闭环，而不是本次接口暗中承担的能力。
+
 \section{内存测试从纯函数扩展到处理器执行}
 
 四层验证各自回答不同问题：
@@ -676,12 +859,12 @@ padding 和请求大小分别与剩余容量比较，避免组合加法先溢出
 \begin{enumerate}[label=\arabic*.]
   \item 单元测试验证最高可用 RAM 与高端保留洞的区别、元数据区搜索、
         64 GiB 状态尺寸、高地址范围分配、direct-map canonical 边界、
-        heap 原子失败和表项权限编码；
+        heap 原子失败、释放合并和表项权限编码；
   \item 集成测试同时保留 64 MiB 启动图，并构造 3--4 GiB 洞和总计 64 GiB
         可用 RAM，核对 16777216 个 free frame 和 4 GiB 以上分配/回收；
   \item 固定种子 \code{0x6D656D6F72793634} 完成 8192 组叶表项往返，
         执行 4096 步随机 allocate/release，再执行 1024 轮随机高地址窗口
-        分配并立即回收；
+        分配并立即回收；独立 heap 种子另执行 100000 步对象申请/释放；
   \item QEMU 主路径固定使用 64 GiB RAM，真实加载 CR3、访问 heap，并要求
         direct-map 精确覆盖 64 GiB、使用 32768 个 2 MiB 页，在
         \code{0x0000000100001000} 或更高帧写入读回两个 64 位模式；失败路径

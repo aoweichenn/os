@@ -9,17 +9,17 @@ inline constexpr uint64_t OS_KERNEL_BOOT_INFO_ABI_SIZE_BYTES = 104ULL;
 struct BootInfo final {
     uint64_t magic;
     uint64_t version;
-    uint64_t structureSizeBytes;
-    uint64_t kernelFilePhysicalAddress;
-    uint64_t kernelFileSizeBytes;
-    uint64_t kernelEntryAddress;
-    uint64_t kernelLoadSegmentCount;
-    uint64_t pageTableRootPhysicalAddress;
-    uint64_t identityMappedSizeBytes;
-    uint64_t kernelStackTopPhysicalAddress;
-    uint64_t physicalMemoryMapAddress;
-    uint64_t physicalMemoryMapEntryCount;
-    uint64_t physicalMemoryMapEntrySizeBytes;
+    uint64_t structure_size_bytes;
+    uint64_t kernel_file_physical_address;
+    uint64_t kernel_file_size_bytes;
+    uint64_t kernel_entry_address;
+    uint64_t kernel_load_segment_count;
+    uint64_t page_table_root_physical_address;
+    uint64_t identity_mapped_size_bytes;
+    uint64_t kernel_stack_top_physical_address;
+    uint64_t physical_memory_map_address;
+    uint64_t physical_memory_map_entry_count;
+    uint64_t physical_memory_map_entry_size_bytes;
 };
 
 enum class BootInfoValidationStatus : uint64_t {
@@ -51,7 +51,7 @@ extern const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS;
 extern const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES;
 extern const uint64_t OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT;
 
-[[nodiscard]] BootInfoValidationStatus ValidateBootInfo(const BootInfo *bootInfo) noexcept;
+[[nodiscard]] BootInfoValidationStatus ValidateBootInfo(const BootInfo *boot_info) noexcept;
 
 static_assert(sizeof(BootInfo) == OS_KERNEL_BOOT_INFO_ABI_SIZE_BYTES);
 

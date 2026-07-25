@@ -1,6 +1,6 @@
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
-ENTRY(osKernelEntry)
+ENTRY(OsKernelEntry)
 
 OS_KERNEL_LINK_ADDRESS = @OS_KERNEL_LINK_ADDRESS@;
 OS_KERNEL_PAGE_SIZE_BYTES = @OS_KERNEL_PAGE_SIZE_BYTES@;
@@ -15,26 +15,26 @@ PHDRS
 SECTIONS
 {
     . = OS_KERNEL_LINK_ADDRESS;
-    osKernelImageStart = .;
+    os_kernel_image_start = .;
 
     .text ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
     {
-        osKernelTextStart = .;
+        os_kernel_text_start = .;
         KEEP(*(.text.os_kernel_entry))
         *(.text .text.*)
-        osKernelTextEnd = .;
+        os_kernel_text_end = .;
     } :text
 
     .rodata ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
     {
-        osKernelReadOnlyDataStart = .;
+        os_kernel_read_only_data_start = .;
         *(.rodata .rodata.*)
-        osKernelReadOnlyDataEnd = .;
+        os_kernel_read_only_data_end = .;
     } :rodata
 
     .data ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) :
     {
-        osKernelWritableDataStart = .;
+        os_kernel_writable_data_start = .;
         *(.data .data.*)
     } :data
 
@@ -42,10 +42,10 @@ SECTIONS
     {
         *(.bss .bss.*)
         *(COMMON)
-        osKernelWritableDataEnd = .;
+        os_kernel_writable_data_end = .;
     } :data
 
-    osKernelImageEnd = .;
+    os_kernel_image_end = .;
 
     /DISCARD/ :
     {
@@ -55,4 +55,4 @@ SECTIONS
     }
 }
 
-ASSERT(DEFINED(osKernelEntry), "缺少内核入口 osKernelEntry")
+ASSERT(DEFINED(OsKernelEntry), "缺少内核入口 OsKernelEntry")

@@ -10,12 +10,9 @@ constexpr std::string_view OS_TEST_FILE_SYSTEM_RANDOMIZED_SUITE_NAME =
     "kernel/file_system/randomized";
 constexpr std::string_view OS_TEST_FILE_SYSTEM_RANDOMIZED_RESTART_MODEL =
     "固定种子随机长度与内容必须在每次重挂载后和参考模型一致";
-constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_SEED =
-    0xF17E5A57C0DEC0DEULL;
-constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_MULTIPLIER =
-    6364136223846793005ULL;
-constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_INCREMENT =
-    1442695040888963407ULL;
+constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_SEED = 0xF17E5A57C0DEC0DEULL;
+constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_MULTIPLIER = 6364136223846793005ULL;
+constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_INCREMENT = 1442695040888963407ULL;
 constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_ITERATION_COUNT = 128ULL;
 constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_MINIMUM_PAYLOAD_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE = 0ULL;
@@ -43,104 +40,84 @@ constexpr uint8_t OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH[] = {
 }
 
 int main() {
-    os::test::TestContext testContext{
-        OS_TEST_FILE_SYSTEM_RANDOMIZED_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_FILE_SYSTEM_RANDOMIZED_SUITE_NAME};
     static os::test::MemoryBlockDevice device{};
     uint8_t expected[os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES]{};
-    uint64_t expectedSize = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
-    uint64_t randomState = OS_TEST_FILE_SYSTEM_RANDOMIZED_SEED;
-    bool modelConsistent = true;
+    uint64_t expected_size = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
+    uint64_t random_state = OS_TEST_FILE_SYSTEM_RANDOMIZED_SEED;
+    bool model_consistent = true;
 
     for (uint64_t iteration = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
-         iteration < OS_TEST_FILE_SYSTEM_RANDOMIZED_ITERATION_COUNT;
-         ++iteration) {
-        os::kernel::FileSystem fileSystem{};
+         iteration < OS_TEST_FILE_SYSTEM_RANDOMIZED_ITERATION_COUNT; ++iteration) {
+        os::kernel::FileSystem file_system{};
         bool formatted = false;
-        modelConsistent =
-            modelConsistent &&
-            fileSystem.MountOrFormat(device, formatted) ==
-                os::kernel::FileSystemStatus::Succeeded;
+        model_consistent = model_consistent && file_system.MountOrFormat(device, formatted) ==
+                                                   os::kernel::FileSystemStatus::Succeeded;
         if (iteration == OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE) {
-            modelConsistent =
-                modelConsistent && formatted &&
-                fileSystem.CreateDirectory(
-                    OS_TEST_FILE_SYSTEM_RANDOMIZED_DIRECTORY_PATH,
-                    sizeof(OS_TEST_FILE_SYSTEM_RANDOMIZED_DIRECTORY_PATH)) ==
-                    os::kernel::FileSystemStatus::Succeeded;
+            model_consistent = model_consistent && formatted &&
+                               file_system.CreateDirectory(
+                                   OS_TEST_FILE_SYSTEM_RANDOMIZED_DIRECTORY_PATH,
+                                   sizeof(OS_TEST_FILE_SYSTEM_RANDOMIZED_DIRECTORY_PATH)) ==
+                                   os::kernel::FileSystemStatus::Succeeded;
         } else {
-            modelConsistent = modelConsistent && !formatted;
-            os::kernel::FileSystemHandle readHandle{};
-            const os::kernel::FileSystemOpenOptions readOptions{
+            model_consistent = model_consistent && !formatted;
+            os::kernel::FileSystemHandle read_handle{};
+            const os::kernel::FileSystemOpenOptions read_options{
                 .readable = true,
                 .writable = false,
                 .create = false,
                 .truncate = false,
             };
-            uint8_t actual[
-                os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES]{};
-            uint64_t readBytes = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
-            modelConsistent =
-                modelConsistent &&
-                fileSystem.Open(
-                    OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH,
-                    sizeof(OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH),
-                    readOptions, readHandle) ==
-                    os::kernel::FileSystemStatus::Succeeded &&
-                fileSystem.Read(
-                    readHandle, actual,
-                    os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES,
-                    readBytes) == os::kernel::FileSystemStatus::Succeeded &&
-                readBytes == expectedSize &&
-                fileSystem.Close(readHandle) ==
-                    os::kernel::FileSystemStatus::Succeeded;
-            for (uint64_t byteIndex =
-                     OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
-                 byteIndex < expectedSize; ++byteIndex) {
-                modelConsistent =
-                    modelConsistent &&
-                    actual[byteIndex] == expected[byteIndex];
+            uint8_t actual[os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES]{};
+            uint64_t read_bytes = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
+            model_consistent =
+                model_consistent &&
+                file_system.Open(OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH,
+                                 sizeof(OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH), read_options,
+                                 read_handle) == os::kernel::FileSystemStatus::Succeeded &&
+                file_system.Read(read_handle, actual,
+                                 os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES,
+                                 read_bytes) == os::kernel::FileSystemStatus::Succeeded &&
+                read_bytes == expected_size &&
+                file_system.Close(read_handle) == os::kernel::FileSystemStatus::Succeeded;
+            for (uint64_t byte_index = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
+                 byte_index < expected_size; ++byte_index) {
+                model_consistent = model_consistent && actual[byte_index] == expected[byte_index];
             }
         }
 
-        expectedSize =
-            NextRandom(randomState) %
-                os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES +
+        expected_size =
+            NextRandom(random_state) % os::kernel::OS_KERNEL_FILE_SYSTEM_MAXIMUM_FILE_SIZE_BYTES +
             OS_TEST_FILE_SYSTEM_RANDOMIZED_MINIMUM_PAYLOAD_SIZE_BYTES;
-        for (uint64_t byteIndex = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
-             byteIndex < expectedSize; ++byteIndex) {
-            expected[byteIndex] = static_cast<uint8_t>(
-                NextRandom(randomState) &
-                OS_TEST_FILE_SYSTEM_RANDOMIZED_BYTE_MASK);
+        for (uint64_t byte_index = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
+             byte_index < expected_size; ++byte_index) {
+            expected[byte_index] = static_cast<uint8_t>(NextRandom(random_state) &
+                                                        OS_TEST_FILE_SYSTEM_RANDOMIZED_BYTE_MASK);
         }
-        os::kernel::FileSystemHandle writeHandle{};
-        const os::kernel::FileSystemOpenOptions writeOptions{
+        os::kernel::FileSystemHandle write_handle{};
+        const os::kernel::FileSystemOpenOptions write_options{
             .readable = false,
             .writable = true,
             .create = true,
             .truncate = true,
         };
-        uint64_t writtenBytes = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
-        modelConsistent =
-            modelConsistent &&
-            fileSystem.Open(
-                OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH,
-                sizeof(OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH), writeOptions,
-                writeHandle) == os::kernel::FileSystemStatus::Succeeded &&
-            fileSystem.Write(writeHandle, expected, expectedSize,
-                             writtenBytes) ==
+        uint64_t written_bytes = OS_TEST_FILE_SYSTEM_RANDOMIZED_EMPTY_VALUE;
+        model_consistent =
+            model_consistent &&
+            file_system.Open(OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH,
+                             sizeof(OS_TEST_FILE_SYSTEM_RANDOMIZED_FILE_PATH), write_options,
+                             write_handle) == os::kernel::FileSystemStatus::Succeeded &&
+            file_system.Write(write_handle, expected, expected_size, written_bytes) ==
                 os::kernel::FileSystemStatus::Succeeded &&
-            writtenBytes == expectedSize &&
-            fileSystem.Close(writeHandle) ==
-                os::kernel::FileSystemStatus::Succeeded &&
-            fileSystem.CheckConsistency() ==
-                os::kernel::FileSystemStatus::Succeeded;
-        testContext.ExpectRandom(
-            modelConsistent, OS_TEST_FILE_SYSTEM_RANDOMIZED_RESTART_MODEL,
-            OS_TEST_FILE_SYSTEM_RANDOMIZED_SEED, iteration);
-        if (!modelConsistent) {
+            written_bytes == expected_size &&
+            file_system.Close(write_handle) == os::kernel::FileSystemStatus::Succeeded &&
+            file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded;
+        test_context.ExpectRandom(model_consistent, OS_TEST_FILE_SYSTEM_RANDOMIZED_RESTART_MODEL,
+                                  OS_TEST_FILE_SYSTEM_RANDOMIZED_SEED, iteration);
+        if (!model_consistent) {
             break;
         }
     }
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

@@ -41,7 +41,7 @@ Shell 输出 \code{READY} 后，宿主逐字产生十条命令，共 109 字节�
 \[
   (\mathrm{PID},\mathrm{fd})
   \longrightarrow
-  (\mathrm{type},\mathrm{objectIndex},\mathrm{rights}).
+  (\mathrm{type},\mathrm{object_index},\mathrm{rights}).
 \]
 
 v1.0 每个 PCB 固定八个槽。固定容量让所有状态都能在退出路径完整遍历，也
@@ -215,10 +215,10 @@ for (;;) {
     if (result != OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
         return result;
     }
-    const int64_t waitResult =
+    const int64_t wait_result =
         WaitDescriptorReadable(descriptor);
-    if (waitResult < OS_USER_SYSTEM_CALL_SUCCESS) {
-        return waitResult;
+    if (wait_result < OS_USER_SYSTEM_CALL_SUCCESS) {
+        return wait_result;
     }
 }
 \end{lstlisting}
@@ -269,10 +269,10 @@ v1.0 新增编号 16--22：
 \toprule
 字段 & 大小 & 语义\\
 \midrule
-inodeNumber & 8 B & 当前文件系统中的稳定 inode 编号\\
-type & 8 B & RegularFile 或 Directory\\
-nameLengthBytes & 8 B & 后续名称中的有效字节数\\
-name & 40 B & 不依赖 NUL 的固定容量名称\\
+\code{inode_number} & 8 B & 当前文件系统中的稳定 inode 编号\\
+\code{type} & 8 B & RegularFile 或 Directory\\
+\code{name_length_bytes} & 8 B & 后续名称中的有效字节数\\
+\code{name} & 40 B & 不依赖 NUL 的固定容量名称\\
 \bottomrule
 \end{longtable}
 
@@ -406,9 +406,9 @@ exit
 
 最终目标内核汇总：
 \[
-  \mathrm{consoleSubmitted}
+  \mathrm{console_submitted}
   =
-  \mathrm{consoleRead}
+  \mathrm{console_read}
   =109,\qquad
   \mathrm{dropped}
   =
@@ -419,7 +419,10 @@ exit
 是地址空间隔离 worker。管道仍满足写入=读取=256、最终为空、EOF 一次；
 文件系统仍完成同步、一致性检查和独立读回；页帧统计仍恢复到创建前。
 
-完整回归共 73 项 CTest。数字本身不是质量指标，它只说明新增验证没有替换旧
+完整回归共 77 项 CTest，其中三项分别验证可回收堆的单元、集成和
+100000 步固定种子生命周期，另一项组合 Clang AST 与 Python 词法扫描，锁定
+变量蛇形、函数大驼峰与单词级小写命名空间。数字本身不是质量指标，它只说明
+新增验证没有替换旧
 证据：复位、固件、Stage 1、长模式、异常、内存、设备、用户隔离、调度、
 IPC、文件系统和失败注入仍与 Shell 同时执行。
 

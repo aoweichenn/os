@@ -48,93 +48,93 @@ constexpr uint64_t OS_TEST_HEAP_PAGE_INVALID_DIRECT_MAP_CAPACITY_BYTES =
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_HEAP_PAGE_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_HEAP_PAGE_SUITE_NAME};
     alignas(OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES)
-        uint8_t heapBuffer[OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES]{};
+        uint8_t heap_buffer[OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES]{};
     os::kernel::KernelHeap heap{};
-    testContext.Expect(heap.Initialize(reinterpret_cast<uint64_t>(heapBuffer),
-                                       OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES) ==
-                           os::kernel::KernelHeapStatus::Succeeded,
-                       OS_TEST_HEAP_PAGE_HEAP_INITIALIZE);
+    test_context.Expect(heap.Initialize(reinterpret_cast<uint64_t>(heap_buffer),
+                                        OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES) ==
+                            os::kernel::KernelHeapStatus::Succeeded,
+                        OS_TEST_HEAP_PAGE_HEAP_INITIALIZE);
 
-    void *firstAllocation = nullptr;
-    void *secondAllocation = nullptr;
-    const bool allocationsSucceeded =
+    void *first_allocation = nullptr;
+    void *second_allocation = nullptr;
+    const bool allocations_succeeded =
         heap.TryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
                          OS_TEST_HEAP_PAGE_MINIMUM_ALIGNMENT_BYTES,
-                         firstAllocation) == os::kernel::KernelHeapStatus::Succeeded &&
+                         first_allocation) == os::kernel::KernelHeapStatus::Succeeded &&
         heap.TryAllocate(OS_TEST_HEAP_PAGE_SECOND_ALLOCATION_SIZE_BYTES,
                          OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES,
-                         secondAllocation) == os::kernel::KernelHeapStatus::Succeeded;
-    testContext.Expect(allocationsSucceeded &&
-                           (reinterpret_cast<uint64_t>(secondAllocation) &
-                            (OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES -
-                             OS_TEST_HEAP_PAGE_ALIGNMENT_MASK_DECREMENT)) == 0ULL,
-                       OS_TEST_HEAP_PAGE_HEAP_ALIGNMENT);
+                         second_allocation) == os::kernel::KernelHeapStatus::Succeeded;
+    test_context.Expect(allocations_succeeded &&
+                            (reinterpret_cast<uint64_t>(second_allocation) &
+                             (OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES -
+                              OS_TEST_HEAP_PAGE_ALIGNMENT_MASK_DECREMENT)) == 0ULL,
+                        OS_TEST_HEAP_PAGE_HEAP_ALIGNMENT);
 
-    void *unchangedAllocation = reinterpret_cast<void *>(OS_TEST_HEAP_PAGE_INVALID_POINTER_VALUE);
-    testContext.Expect(heap.TryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
-                                        OS_TEST_HEAP_PAGE_INVALID_ALIGNMENT_BYTES,
-                                        unchangedAllocation) ==
-                               os::kernel::KernelHeapStatus::InvalidAlignment &&
-                           reinterpret_cast<uint64_t>(unchangedAllocation) ==
-                               OS_TEST_HEAP_PAGE_INVALID_POINTER_VALUE,
-                       OS_TEST_HEAP_PAGE_HEAP_FAILURE_ATOMIC);
-    testContext.Expect(heap.TryAllocate(OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES,
-                                        OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES,
-                                        unchangedAllocation) ==
-                           os::kernel::KernelHeapStatus::OutOfMemory,
-                       OS_TEST_HEAP_PAGE_HEAP_EXHAUSTION);
+    void *unchanged_allocation = reinterpret_cast<void *>(OS_TEST_HEAP_PAGE_INVALID_POINTER_VALUE);
+    test_context.Expect(heap.TryAllocate(OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES,
+                                         OS_TEST_HEAP_PAGE_INVALID_ALIGNMENT_BYTES,
+                                         unchanged_allocation) ==
+                                os::kernel::KernelHeapStatus::InvalidAlignment &&
+                            reinterpret_cast<uint64_t>(unchanged_allocation) ==
+                                OS_TEST_HEAP_PAGE_INVALID_POINTER_VALUE,
+                        OS_TEST_HEAP_PAGE_HEAP_FAILURE_ATOMIC);
+    test_context.Expect(heap.TryAllocate(OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES,
+                                         OS_TEST_HEAP_PAGE_SECOND_ALIGNMENT_BYTES,
+                                         unchanged_allocation) ==
+                            os::kernel::KernelHeapStatus::OutOfMemory,
+                        OS_TEST_HEAP_PAGE_HEAP_EXHAUSTION);
 
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::IsCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_LOW_CANONICAL_ADDRESS) &&
             os::kernel::IsCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_HIGH_CANONICAL_ADDRESS),
         OS_TEST_HEAP_PAGE_CANONICAL);
-    testContext.Expect(
+    test_context.Expect(
         !os::kernel::IsCanonicalVirtualAddress(OS_TEST_HEAP_PAGE_NON_CANONICAL_ADDRESS),
         OS_TEST_HEAP_PAGE_NON_CANONICAL);
 
     const os::kernel::PageTableIndices indices =
         os::kernel::CalculatePageTableIndices(OS_TEST_HEAP_PAGE_INDEX_ADDRESS);
-    testContext.Expect(indices.level4 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL4_INDEX &&
-                           indices.level3 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL3_INDEX &&
-                           indices.level2 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL2_INDEX &&
-                           indices.level1 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL1_INDEX,
-                       OS_TEST_HEAP_PAGE_INDICES);
+    test_context.Expect(indices.level4 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL4_INDEX &&
+                            indices.level3 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL3_INDEX &&
+                            indices.level2 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL2_INDEX &&
+                            indices.level1 == OS_TEST_HEAP_PAGE_EXPECTED_LEVEL1_INDEX,
+                        OS_TEST_HEAP_PAGE_INDICES);
 
     const os::kernel::PagePermissions permissions{
         .writable = true,
         .executable = false,
-        .userAccessible = true,
-        .cacheDisabled = true,
+        .user_accessible = true,
+        .cache_disabled = true,
     };
     const os::kernel::PageMapping mapping = os::kernel::DecodePageTableLeafEntry(
         os::kernel::EncodePageTableLeafEntry(OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS, permissions));
-    testContext.Expect(mapping.physicalAddress == OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS &&
-                           mapping.permissions.writable == permissions.writable &&
-                           mapping.permissions.executable == permissions.executable &&
-                           mapping.permissions.userAccessible == permissions.userAccessible &&
-                           mapping.permissions.cacheDisabled == permissions.cacheDisabled,
-                       OS_TEST_HEAP_PAGE_ENTRY_ROUND_TRIP);
+    test_context.Expect(mapping.physical_address == OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS &&
+                            mapping.permissions.writable == permissions.writable &&
+                            mapping.permissions.executable == permissions.executable &&
+                            mapping.permissions.user_accessible == permissions.user_accessible &&
+                            mapping.permissions.cache_disabled == permissions.cache_disabled,
+                        OS_TEST_HEAP_PAGE_ENTRY_ROUND_TRIP);
 
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::IsPageTableMemoryAccessValid(os::kernel::PageTableMemoryAccess{
-            .maximumPhysicalAddressExclusive = OS_TEST_HEAP_PAGE_DIRECT_MAP_CAPACITY_BYTES,
-            .physicalMemoryVirtualBase = OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE,
-            .allocationMaximumPhysicalAddressExclusive =
+            .maximum_physical_address_exclusive = OS_TEST_HEAP_PAGE_DIRECT_MAP_CAPACITY_BYTES,
+            .physical_memory_virtual_base = OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE,
+            .allocation_maximum_physical_address_exclusive =
                 OS_TEST_HEAP_PAGE_DIRECT_MAP_ALLOCATION_LIMIT_BYTES,
-            .invalidateActiveMappings = true,
+            .invalidate_active_mappings = true,
         }),
         OS_TEST_HEAP_PAGE_DIRECT_MAP_ACCESS);
-    testContext.Expect(
-        !os::kernel::IsPageTableMemoryAccessValid(os::kernel::PageTableMemoryAccess{
-            .maximumPhysicalAddressExclusive = OS_TEST_HEAP_PAGE_INVALID_DIRECT_MAP_CAPACITY_BYTES,
-            .physicalMemoryVirtualBase = OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE,
-            .allocationMaximumPhysicalAddressExclusive =
-                OS_TEST_HEAP_PAGE_DIRECT_MAP_ALLOCATION_LIMIT_BYTES,
-            .invalidateActiveMappings = true,
-        }),
-        OS_TEST_HEAP_PAGE_DIRECT_MAP_OVERFLOW);
+    test_context.Expect(!os::kernel::IsPageTableMemoryAccessValid(os::kernel::PageTableMemoryAccess{
+                            .maximum_physical_address_exclusive =
+                                OS_TEST_HEAP_PAGE_INVALID_DIRECT_MAP_CAPACITY_BYTES,
+                            .physical_memory_virtual_base = OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE,
+                            .allocation_maximum_physical_address_exclusive =
+                                OS_TEST_HEAP_PAGE_DIRECT_MAP_ALLOCATION_LIMIT_BYTES,
+                            .invalidate_active_mappings = true,
+                        }),
+                        OS_TEST_HEAP_PAGE_DIRECT_MAP_OVERFLOW);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

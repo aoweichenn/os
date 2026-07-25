@@ -19,7 +19,7 @@ class PhysicalAddress final {
     [[nodiscard]] bool IsBefore(const PhysicalAddress &other) const noexcept;
 
   private:
-    AddressValue rawValue;
+    AddressValue raw_value_;
 };
 
 class ByteCount final {
@@ -30,7 +30,7 @@ class ByteCount final {
     [[nodiscard]] bool Equals(const ByteCount &other) const noexcept;
 
   private:
-    AddressValue rawValue;
+    AddressValue raw_value_;
 };
 
 enum class AddressRangeCreationStatus : uint8_t {
@@ -43,7 +43,7 @@ class AddressRange final {
     AddressRange() noexcept;
 
     [[nodiscard]] static AddressRangeCreationStatus TryCreate(PhysicalAddress begin, ByteCount size,
-                                                              AddressRange &outputRange) noexcept;
+                                                              AddressRange &output_range) noexcept;
 
     [[nodiscard]] PhysicalAddress Begin() const noexcept;
     [[nodiscard]] PhysicalAddress End() const noexcept;
@@ -55,8 +55,8 @@ class AddressRange final {
   private:
     AddressRange(PhysicalAddress begin, PhysicalAddress end) noexcept;
 
-    PhysicalAddress beginAddress;
-    PhysicalAddress endAddress;
+    PhysicalAddress begin_address_;
+    PhysicalAddress end_address_;
 };
 
 }

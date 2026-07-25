@@ -25,43 +25,42 @@ constexpr uint32_t OS_KERNEL_DESCRIPTOR_RESERVED_ZERO = 0U;
 
 }
 
-SystemSegmentDescriptor CreateTaskStateSegmentDescriptor(const uint64_t baseAddress,
-                                                         const uint32_t inclusiveLimit) noexcept {
-    const uint64_t widenedLimit = static_cast<uint64_t>(inclusiveLimit);
+SystemSegmentDescriptor CreateTaskStateSegmentDescriptor(const uint64_t base_address,
+                                                         const uint32_t inclusive_limit) noexcept {
+    const uint64_t widened_limit = static_cast<uint64_t>(inclusive_limit);
     const uint64_t low =
-        (widenedLimit & OS_KERNEL_DESCRIPTOR_TSS_LIMIT_LOW_MASK) |
-        ((baseAddress & OS_KERNEL_DESCRIPTOR_TSS_BASE_LOW_MASK)
+        (widened_limit & OS_KERNEL_DESCRIPTOR_TSS_LIMIT_LOW_MASK) |
+        ((base_address & OS_KERNEL_DESCRIPTOR_TSS_BASE_LOW_MASK)
          << OS_KERNEL_DESCRIPTOR_TSS_BASE_LOW_SHIFT) |
         (OS_KERNEL_DESCRIPTOR_TSS_TYPE_PRESENT << OS_KERNEL_DESCRIPTOR_TSS_TYPE_SHIFT) |
-        (((widenedLimit & OS_KERNEL_DESCRIPTOR_TSS_LIMIT_HIGH_MASK) >>
+        (((widened_limit & OS_KERNEL_DESCRIPTOR_TSS_LIMIT_HIGH_MASK) >>
           OS_KERNEL_DESCRIPTOR_TSS_LIMIT_HIGH_SOURCE_SHIFT)
          << OS_KERNEL_DESCRIPTOR_TSS_LIMIT_HIGH_TARGET_SHIFT) |
-        (((baseAddress & OS_KERNEL_DESCRIPTOR_TSS_BASE_MIDDLE_MASK) >>
+        (((base_address & OS_KERNEL_DESCRIPTOR_TSS_BASE_MIDDLE_MASK) >>
           OS_KERNEL_DESCRIPTOR_TSS_BASE_MIDDLE_SOURCE_SHIFT)
          << OS_KERNEL_DESCRIPTOR_TSS_BASE_MIDDLE_TARGET_SHIFT);
     return SystemSegmentDescriptor{
         .low = low,
-        .high = baseAddress >> OS_KERNEL_DESCRIPTOR_TSS_BASE_HIGH_SHIFT,
+        .high = base_address >> OS_KERNEL_DESCRIPTOR_TSS_BASE_HIGH_SHIFT,
     };
 }
 
-InterruptGateDescriptor CreateInterruptGateDescriptor(const uint64_t handlerAddress,
-                                                      const uint16_t segmentSelector,
-                                                      const uint8_t interruptStackTable,
-                                                      const uint8_t typeAttributes) noexcept {
+InterruptGateDescriptor CreateInterruptGateDescriptor(const uint64_t handler_address,
+                                                      const uint16_t segment_selector,
+                                                      const uint8_t interrupt_stack_table,
+                                                      const uint8_t type_attributes) noexcept {
     return InterruptGateDescriptor{
-        .offsetLow = static_cast<uint16_t>(handlerAddress & OS_KERNEL_DESCRIPTOR_OFFSET_LOW_MASK),
-        .segmentSelector = segmentSelector,
-        .interruptStackTable =
-            static_cast<uint8_t>(interruptStackTable & OS_KERNEL_DESCRIPTOR_IST_INDEX_MASK),
-        .typeAttributes = typeAttributes,
-        .offsetMiddle =
-            static_cast<uint16_t>((handlerAddress & OS_KERNEL_DESCRIPTOR_OFFSET_MIDDLE_MASK) >>
+        .offset_low = static_cast<uint16_t>(handler_address & OS_KERNEL_DESCRIPTOR_OFFSET_LOW_MASK),
+        .segment_selector = segment_selector,
+        .interrupt_stack_table =
+            static_cast<uint8_t>(interrupt_stack_table & OS_KERNEL_DESCRIPTOR_IST_INDEX_MASK),
+        .type_attributes = type_attributes,
+        .offset_middle =
+            static_cast<uint16_t>((handler_address & OS_KERNEL_DESCRIPTOR_OFFSET_MIDDLE_MASK) >>
                                   OS_KERNEL_DESCRIPTOR_OFFSET_MIDDLE_SHIFT),
-        .offsetHigh =
-            static_cast<uint32_t>(handlerAddress >> OS_KERNEL_DESCRIPTOR_OFFSET_HIGH_SHIFT),
+        .offset_high =
+            static_cast<uint32_t>(handler_address >> OS_KERNEL_DESCRIPTOR_OFFSET_HIGH_SHIFT),
         .reserved = OS_KERNEL_DESCRIPTOR_RESERVED_ZERO,
     };
 }
-
 }

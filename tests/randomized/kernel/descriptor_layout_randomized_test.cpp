@@ -49,37 +49,37 @@ DecodeTaskStateSegmentBase(const os::kernel::SystemSegmentDescriptor &descriptor
 
 [[nodiscard]] uint64_t
 DecodeInterruptGateAddress(const os::kernel::InterruptGateDescriptor &descriptor) noexcept {
-    return static_cast<uint64_t>(descriptor.offsetLow) |
-           (static_cast<uint64_t>(descriptor.offsetMiddle)
+    return static_cast<uint64_t>(descriptor.offset_low) |
+           (static_cast<uint64_t>(descriptor.offset_middle)
             << OS_TEST_KERNEL_DESCRIPTOR_GATE_MIDDLE_SHIFT) |
-           (static_cast<uint64_t>(descriptor.offsetHigh)
+           (static_cast<uint64_t>(descriptor.offset_high)
             << OS_TEST_KERNEL_DESCRIPTOR_GATE_HIGH_SHIFT);
 }
 
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SUITE_NAME};
-    uint64_t randomState = OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED;
+    os::test::TestContext test_context{OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SUITE_NAME};
+    uint64_t random_state = OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED;
 
     for (uint64_t iteration = 0ULL; iteration < OS_TEST_KERNEL_DESCRIPTOR_RANDOM_ITERATION_COUNT;
          ++iteration) {
-        const uint64_t address = NextRandom(randomState);
-        const os::kernel::SystemSegmentDescriptor taskStateDescriptor =
+        const uint64_t address = NextRandom(random_state);
+        const os::kernel::SystemSegmentDescriptor task_state_descriptor =
             os::kernel::CreateTaskStateSegmentDescriptor(address,
                                                          OS_TEST_KERNEL_DESCRIPTOR_TSS_LIMIT);
-        testContext.ExpectRandom(DecodeTaskStateSegmentBase(taskStateDescriptor) == address,
-                                 OS_TEST_KERNEL_DESCRIPTOR_RANDOM_TSS_MESSAGE,
-                                 OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED, iteration);
+        test_context.ExpectRandom(DecodeTaskStateSegmentBase(task_state_descriptor) == address,
+                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_TSS_MESSAGE,
+                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED, iteration);
 
-        const os::kernel::InterruptGateDescriptor interruptGate =
+        const os::kernel::InterruptGateDescriptor interrupt_gate =
             os::kernel::CreateInterruptGateDescriptor(
                 address, OS_TEST_KERNEL_DESCRIPTOR_GATE_SELECTOR,
                 OS_TEST_KERNEL_DESCRIPTOR_GATE_IST, OS_TEST_KERNEL_DESCRIPTOR_GATE_ATTRIBUTES);
-        testContext.ExpectRandom(DecodeInterruptGateAddress(interruptGate) == address,
-                                 OS_TEST_KERNEL_DESCRIPTOR_RANDOM_GATE_MESSAGE,
-                                 OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED, iteration);
+        test_context.ExpectRandom(DecodeInterruptGateAddress(interrupt_gate) == address,
+                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_GATE_MESSAGE,
+                                  OS_TEST_KERNEL_DESCRIPTOR_RANDOM_SEED, iteration);
     }
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

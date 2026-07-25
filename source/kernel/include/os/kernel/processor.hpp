@@ -8,7 +8,7 @@ extern const uint64_t OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS;
 
 [[noreturn]] void HaltProcessor() noexcept;
 [[nodiscard]] bool DisableInterrupts() noexcept;
-void RestoreInterrupts(bool interruptsWereEnabled) noexcept;
+void RestoreInterrupts(bool interrupts_were_enabled) noexcept;
 void EnableInterrupts() noexcept;
 void WaitForInterrupt() noexcept;
 void EnableInterruptsWaitAndDisable() noexcept;
@@ -24,12 +24,11 @@ void EnableInterruptsWaitAndDisable() noexcept;
 [[nodiscard]] bool EnableKernelMemoryProtection() noexcept;
 [[nodiscard]] bool KernelMemoryProtectionEnabled() noexcept;
 [[nodiscard]] bool ConfigureLegacyInterruptRouting() noexcept;
-void ActivatePageTable(uint64_t rootPhysicalAddress) noexcept;
-void InvalidatePage(uint64_t virtualAddress) noexcept;
+void ActivatePageTable(uint64_t root_physical_address) noexcept;
+void InvalidatePage(uint64_t virtual_address) noexcept;
 void TriggerBreakpoint() noexcept;
 void TriggerLegacyPicSpuriousInterrupt() noexcept;
 [[noreturn]] void TriggerInvalidOpcode() noexcept;
 [[noreturn]] void TriggerPageFault() noexcept;
-[[noreturn]] void TriggerWriteProtectionFault(uint64_t protectedAddress) noexcept;
-
+[[noreturn]] void TriggerWriteProtectionFault(uint64_t protected_address) noexcept;
 }

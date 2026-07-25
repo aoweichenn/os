@@ -17,10 +17,10 @@ inline constexpr uint64_t OS_KERNEL_USER_STACK_GUARD_VIRTUAL_ADDRESS =
     OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 
 struct UserAddressSpace final {
-    uint64_t rootPhysicalAddress;
-    uint64_t entryVirtualAddress;
-    uint64_t stackTopVirtualAddress;
-    uint64_t mappedPageCount;
+    uint64_t root_physical_address;
+    uint64_t entry_virtual_address;
+    uint64_t stack_top_virtual_address;
+    uint64_t mapped_page_count;
 };
 
 enum class UserAddressSpaceStatus : uint64_t {
@@ -46,17 +46,17 @@ enum class UserMemoryCopyStatus : uint64_t {
 };
 
 [[nodiscard]] UserAddressSpaceStatus
-LoadUserAddressSpace(const uint8_t *image, uint64_t imageSizeBytes, UserAddressSpace &addressSpace,
-                     UserElfValidationStatus &elfValidationStatus) noexcept;
+LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
+                     UserAddressSpace &address_space,
+                     UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
-DestroyUserAddressSpace(UserAddressSpace &addressSpace) noexcept;
-[[nodiscard]] UserMemoryCopyStatus CopyFromUser(uint64_t userAddress, uint64_t lengthBytes,
+DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
+[[nodiscard]] UserMemoryCopyStatus CopyFromUser(uint64_t user_address, uint64_t length_bytes,
                                                 uint8_t *destination,
-                                                uint64_t destinationCapacityBytes) noexcept;
-[[nodiscard]] UserMemoryCopyStatus ValidateUserWritableMemory(uint64_t userAddress,
-                                                              uint64_t lengthBytes) noexcept;
-[[nodiscard]] UserMemoryCopyStatus CopyToUser(uint64_t userAddress, uint64_t lengthBytes,
+                                                uint64_t destination_capacity_bytes) noexcept;
+[[nodiscard]] UserMemoryCopyStatus ValidateUserWritableMemory(uint64_t user_address,
+                                                              uint64_t length_bytes) noexcept;
+[[nodiscard]] UserMemoryCopyStatus CopyToUser(uint64_t user_address, uint64_t length_bytes,
                                               const uint8_t *source,
-                                              uint64_t sourceSizeBytes) noexcept;
-
+                                              uint64_t source_size_bytes) noexcept;
 }

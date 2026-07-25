@@ -1,0 +1,34 @@
+---
+Checks: '-*,readability-identifier-naming'
+HeaderFilterRegex: '.*[/\\](source|tests)[/\\].*'
+CheckOptions:
+  readability-identifier-naming.FunctionCase: CamelCase
+  readability-identifier-naming.FunctionIgnoredRegexp: '^(main|memset|memcpy)$'
+  readability-identifier-naming.GlobalFunctionCase: CamelCase
+  readability-identifier-naming.GlobalFunctionIgnoredRegexp: '^(main|memset|memcpy)$'
+  readability-identifier-naming.MethodCase: CamelCase
+  readability-identifier-naming.NamespaceCase: lower_case
+  readability-identifier-naming.VariableCase: lower_case
+  readability-identifier-naming.VariableIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.GlobalVariableCase: lower_case
+  readability-identifier-naming.GlobalVariableIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.LocalVariableCase: lower_case
+  readability-identifier-naming.LocalVariableIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.StaticVariableCase: lower_case
+  readability-identifier-naming.StaticVariableIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.MemberCase: lower_case
+  readability-identifier-naming.MemberIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.ClassMemberCase: lower_case
+  readability-identifier-naming.ClassMemberIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.PublicMemberCase: lower_case
+  readability-identifier-naming.PublicMemberIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.ProtectedMemberCase: lower_case
+  readability-identifier-naming.ProtectedMemberIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.ProtectedMemberSuffix: '_'
+  readability-identifier-naming.PrivateMemberCase: lower_case
+  readability-identifier-naming.PrivateMemberIgnoredRegexp: '^OS_[A-Z0-9_]+$'
+  readability-identifier-naming.PrivateMemberSuffix: '_'
+  readability-identifier-naming.ParameterCase: lower_case
+  readability-identifier-naming.PointerParameterCase: lower_case
+  readability-identifier-naming.StructuredBindingCase: lower_case
+...

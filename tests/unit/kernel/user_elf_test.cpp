@@ -86,38 +86,41 @@ void WriteLittleEndian16(uint8_t *bytes, const uint64_t offset, const uint16_t v
 }
 
 void WriteLittleEndian32(uint8_t *bytes, const uint64_t offset, const uint32_t value) noexcept {
-    for (uint64_t byteIndex = 0ULL; byteIndex < OS_TEST_USER_ELF_WORD32_BYTE_COUNT; ++byteIndex) {
-        bytes[offset + byteIndex] =
-            static_cast<uint8_t>(value >> (byteIndex * OS_TEST_USER_ELF_BITS_PER_BYTE));
+    for (uint64_t byte_index = 0ULL; byte_index < OS_TEST_USER_ELF_WORD32_BYTE_COUNT;
+         ++byte_index) {
+        bytes[offset + byte_index] =
+            static_cast<uint8_t>(value >> (byte_index * OS_TEST_USER_ELF_BITS_PER_BYTE));
     }
 }
 
 void WriteLittleEndian64(uint8_t *bytes, const uint64_t offset, const uint64_t value) noexcept {
-    for (uint64_t byteIndex = 0ULL; byteIndex < OS_TEST_USER_ELF_WORD64_BYTE_COUNT; ++byteIndex) {
-        bytes[offset + byteIndex] =
-            static_cast<uint8_t>(value >> (byteIndex * OS_TEST_USER_ELF_BITS_PER_BYTE));
+    for (uint64_t byte_index = 0ULL; byte_index < OS_TEST_USER_ELF_WORD64_BYTE_COUNT;
+         ++byte_index) {
+        bytes[offset + byte_index] =
+            static_cast<uint8_t>(value >> (byte_index * OS_TEST_USER_ELF_BITS_PER_BYTE));
     }
 }
 
-void WriteLoadSegment(uint8_t *bytes, const uint64_t programHeaderOffset, const uint64_t fileOffset,
-                      const uint64_t virtualAddress, const uint64_t memorySizeBytes) noexcept {
-    WriteLittleEndian32(bytes, programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_TYPE_OFFSET,
+void WriteLoadSegment(uint8_t *bytes, const uint64_t program_header_offset,
+                      const uint64_t file_offset, const uint64_t virtual_address,
+                      const uint64_t memory_size_bytes) noexcept {
+    WriteLittleEndian32(bytes, program_header_offset + OS_TEST_USER_ELF_PROGRAM_TYPE_OFFSET,
                         OS_TEST_USER_ELF_LOAD_TYPE);
-    WriteLittleEndian32(bytes, programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_FLAGS_OFFSET,
+    WriteLittleEndian32(bytes, program_header_offset + OS_TEST_USER_ELF_PROGRAM_FLAGS_OFFSET,
                         OS_TEST_USER_ELF_READ_EXECUTE_FLAGS);
-    WriteLittleEndian64(bytes, programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_FILE_OFFSET,
-                        fileOffset);
+    WriteLittleEndian64(bytes, program_header_offset + OS_TEST_USER_ELF_PROGRAM_FILE_OFFSET,
+                        file_offset);
     WriteLittleEndian64(bytes,
-                        programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_VIRTUAL_ADDRESS_OFFSET,
-                        virtualAddress);
+                        program_header_offset + OS_TEST_USER_ELF_PROGRAM_VIRTUAL_ADDRESS_OFFSET,
+                        virtual_address);
     WriteLittleEndian64(bytes,
-                        programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_PHYSICAL_ADDRESS_OFFSET,
-                        virtualAddress);
-    WriteLittleEndian64(bytes, programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_FILE_SIZE_OFFSET,
+                        program_header_offset + OS_TEST_USER_ELF_PROGRAM_PHYSICAL_ADDRESS_OFFSET,
+                        virtual_address);
+    WriteLittleEndian64(bytes, program_header_offset + OS_TEST_USER_ELF_PROGRAM_FILE_SIZE_OFFSET,
                         OS_TEST_USER_ELF_SINGLE_FILE_BYTE);
-    WriteLittleEndian64(bytes, programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET,
-                        memorySizeBytes);
-    WriteLittleEndian64(bytes, programHeaderOffset + OS_TEST_USER_ELF_PROGRAM_ALIGNMENT_OFFSET,
+    WriteLittleEndian64(bytes, program_header_offset + OS_TEST_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET,
+                        memory_size_bytes);
+    WriteLittleEndian64(bytes, program_header_offset + OS_TEST_USER_ELF_PROGRAM_ALIGNMENT_OFFSET,
                         OS_TEST_USER_ELF_PAGE_SIZE_BYTES);
 }
 
@@ -154,70 +157,70 @@ void WriteLoadSegment(uint8_t *bytes, const uint64_t programHeaderOffset, const 
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_USER_ELF_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_USER_ELF_SUITE_NAME};
     os::kernel::UserElfLayout layout{};
     UserElfTestImage image = CreateValidUserElf();
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
                 os::kernel::UserElfValidationStatus::Succeeded &&
-            layout.entryVirtualAddress == OS_TEST_USER_ELF_ENTRY_ADDRESS &&
-            layout.loadSegmentCount == OS_TEST_USER_ELF_PROGRAM_HEADER_COUNT_ONE,
+            layout.entry_virtual_address == OS_TEST_USER_ELF_ENTRY_ADDRESS &&
+            layout.load_segment_count == OS_TEST_USER_ELF_PROGRAM_HEADER_COUNT_ONE,
         OS_TEST_USER_ELF_VALID_MESSAGE);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(nullptr, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::NullImage,
         OS_TEST_USER_ELF_NULL_MESSAGE);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_TRUNCATED_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::HeaderTruncated,
         OS_TEST_USER_ELF_TRUNCATED_MESSAGE);
 
     image = CreateValidUserElf();
     image.bytes[0] = 0U;
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidIdentification,
         OS_TEST_USER_ELF_IDENTIFICATION_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian16(image.bytes, OS_TEST_USER_ELF_IDENTIFICATION_TYPE_OFFSET, 0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidExecutableType,
         OS_TEST_USER_ELF_TYPE_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian16(image.bytes, OS_TEST_USER_ELF_IDENTIFICATION_MACHINE_OFFSET, 0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidMachine,
         OS_TEST_USER_ELF_MACHINE_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian32(image.bytes, OS_TEST_USER_ELF_VERSION_OFFSET, 0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidVersion,
         OS_TEST_USER_ELF_VERSION_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian16(image.bytes, OS_TEST_USER_ELF_HEADER_SIZE_OFFSET, 0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidHeaderSize,
         OS_TEST_USER_ELF_HEADER_SIZE_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian16(image.bytes, OS_TEST_USER_ELF_PROGRAM_HEADER_SIZE_OFFSET, 0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidProgramHeaderSize,
         OS_TEST_USER_ELF_PROGRAM_SIZE_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian16(image.bytes, OS_TEST_USER_ELF_PROGRAM_HEADER_COUNT_OFFSET, 0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidProgramHeaderCount,
         OS_TEST_USER_ELF_PROGRAM_COUNT_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian64(image.bytes, OS_TEST_USER_ELF_PROGRAM_TABLE_OFFSET,
                         OS_TEST_USER_ELF_INVALID_TABLE_OFFSET);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::ProgramHeaderTableOutOfRange,
         OS_TEST_USER_ELF_PROGRAM_TABLE_MESSAGE);
@@ -225,7 +228,7 @@ int main() {
     WriteLittleEndian32(
         image.bytes, OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET + OS_TEST_USER_ELF_PROGRAM_TYPE_OFFSET,
         0U);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::UnsupportedProgramHeader,
         OS_TEST_USER_ELF_PROGRAM_TYPE_MESSAGE);
@@ -233,7 +236,7 @@ int main() {
     WriteLittleEndian32(
         image.bytes, OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET + OS_TEST_USER_ELF_PROGRAM_FLAGS_OFFSET,
         OS_TEST_USER_ELF_READ_WRITE_EXECUTE_FLAGS);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidSegmentFlags,
         OS_TEST_USER_ELF_FLAGS_MESSAGE);
@@ -241,7 +244,7 @@ int main() {
     WriteLittleEndian64(
         image.bytes,
         OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET + OS_TEST_USER_ELF_PROGRAM_ALIGNMENT_OFFSET, 1ULL);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidSegmentAlignment,
         OS_TEST_USER_ELF_ALIGNMENT_MESSAGE);
@@ -254,7 +257,7 @@ int main() {
                         OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET +
                             OS_TEST_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET,
                         OS_TEST_USER_ELF_IMAGE_SIZE_BYTES);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidSegmentFileRange,
         OS_TEST_USER_ELF_FILE_RANGE_MESSAGE);
@@ -262,7 +265,7 @@ int main() {
     WriteLittleEndian64(
         image.bytes,
         OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET + OS_TEST_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET, 0ULL);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::InvalidSegmentMemoryRange,
         OS_TEST_USER_ELF_MEMORY_RANGE_MESSAGE);
@@ -275,7 +278,7 @@ int main() {
                          OS_TEST_USER_ELF_PROGRAM_HEADER_SIZE_BYTES,
                      OS_TEST_USER_ELF_SECOND_SEGMENT_FILE_OFFSET, OS_TEST_USER_ELF_ENTRY_ADDRESS,
                      OS_TEST_USER_ELF_PAGE_SIZE_BYTES);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::OverlappingSegments,
         OS_TEST_USER_ELF_OVERLAP_MESSAGE);
@@ -284,24 +287,24 @@ int main() {
                         OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET +
                             OS_TEST_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET,
                         OS_TEST_USER_ELF_TOO_MANY_PAGE_COUNT * OS_TEST_USER_ELF_PAGE_SIZE_BYTES);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::TooManyMappedPages,
         OS_TEST_USER_ELF_PAGE_LIMIT_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian64(image.bytes, OS_TEST_USER_ELF_ENTRY_OFFSET,
                         OS_TEST_USER_ELF_NON_EXECUTABLE_ENTRY);
-    testContext.Expect(
+    test_context.Expect(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::EntryNotExecutable,
         OS_TEST_USER_ELF_ENTRY_MESSAGE);
 
     image = CreateValidUserElf();
-    layout.entryVirtualAddress = OS_TEST_USER_ELF_SENTINEL_ENTRY;
+    layout.entry_virtual_address = OS_TEST_USER_ELF_SENTINEL_ENTRY;
     image.bytes[0] = 0U;
     static_cast<void>(
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout));
-    testContext.Expect(layout.entryVirtualAddress == OS_TEST_USER_ELF_SENTINEL_ENTRY,
-                       OS_TEST_USER_ELF_ATOMIC_OUTPUT_MESSAGE);
-    return testContext.ExitCode();
+    test_context.Expect(layout.entry_virtual_address == OS_TEST_USER_ELF_SENTINEL_ENTRY,
+                        OS_TEST_USER_ELF_ATOMIC_OUTPUT_MESSAGE);
+    return test_context.ExitCode();
 }

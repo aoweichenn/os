@@ -61,7 +61,7 @@ Ring 3 地址。
 
 ## 第四个系统调用参数
 
-C++ System V AMD64 调用 `osUserInvokeSystemCall(number, arg0..arg3)` 时，第
+C++ System V AMD64 调用 `OsUserInvokeSystemCall(number, arg0..arg3)` 时，第
 五个函数参数位于 R8。NASM 桩把 number 从 RDI 移到 RAX，把 arg0..arg2
 依次移到 RDI、RSI、RDX，并把 arg3 从 R8 移到 R10。当前目录读取包装把
 64 字节结构大小作为第三个系统调用参数传给内核；R10 为以后扩展保留稳定
@@ -73,9 +73,9 @@ C++ System V AMD64 调用 `osUserInvokeSystemCall(number, arg0..arg3)` 时，第
 
 | 偏移 | 长度 | 字段 |
 | ---: | ---: | --- |
-| 0 | 8 | inodeNumber |
+| 0 | 8 | inode_number |
 | 8 | 8 | DirectoryEntryType |
-| 16 | 8 | nameLengthBytes |
+| 16 | 8 | name_length_bytes |
 | 24 | 40 | name |
 
 OpenDirectory 只接受现存目录。ReadDirectory 每次按句柄偏移读取一个磁盘目录

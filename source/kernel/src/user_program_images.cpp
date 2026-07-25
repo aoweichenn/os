@@ -6,20 +6,20 @@ namespace {
 
 constexpr uint64_t OS_KERNEL_USER_IMAGE_TRUNCATED_ELF_SIZE_BYTES = 63ULL;
 
-extern "C" const uint8_t osKernelUserSmokeElfStart[];
-extern "C" const uint8_t osKernelUserSmokeElfEnd[];
-extern "C" const uint8_t osKernelUserInvalidOpcodeElfStart[];
-extern "C" const uint8_t osKernelUserInvalidOpcodeElfEnd[];
-extern "C" const uint8_t osKernelUserPageFaultElfStart[];
-extern "C" const uint8_t osKernelUserPageFaultElfEnd[];
-extern "C" const uint8_t osKernelUserSchedulerWorkerElfStart[];
-extern "C" const uint8_t osKernelUserSchedulerWorkerElfEnd[];
-extern "C" const uint8_t osKernelUserIpcProducerElfStart[];
-extern "C" const uint8_t osKernelUserIpcProducerElfEnd[];
-extern "C" const uint8_t osKernelUserIpcConsumerElfStart[];
-extern "C" const uint8_t osKernelUserIpcConsumerElfEnd[];
-extern "C" const uint8_t osKernelUserShellElfStart[];
-extern "C" const uint8_t osKernelUserShellElfEnd[];
+extern "C" const uint8_t os_kernel_user_smoke_elf_start[];
+extern "C" const uint8_t os_kernel_user_smoke_elf_end[];
+extern "C" const uint8_t os_kernel_user_invalid_opcode_elf_start[];
+extern "C" const uint8_t os_kernel_user_invalid_opcode_elf_end[];
+extern "C" const uint8_t os_kernel_user_page_fault_elf_start[];
+extern "C" const uint8_t os_kernel_user_page_fault_elf_end[];
+extern "C" const uint8_t os_kernel_user_scheduler_worker_elf_start[];
+extern "C" const uint8_t os_kernel_user_scheduler_worker_elf_end[];
+extern "C" const uint8_t os_kernel_user_ipc_producer_elf_start[];
+extern "C" const uint8_t os_kernel_user_ipc_producer_elf_end[];
+extern "C" const uint8_t os_kernel_user_ipc_consumer_elf_start[];
+extern "C" const uint8_t os_kernel_user_ipc_consumer_elf_end[];
+extern "C" const uint8_t os_kernel_user_shell_elf_start[];
+extern "C" const uint8_t os_kernel_user_shell_elf_end[];
 
 [[nodiscard]] uint64_t CalculateImageSize(const uint8_t *start, const uint8_t *end) noexcept {
     return static_cast<uint64_t>(end - start);
@@ -30,57 +30,57 @@ extern "C" const uint8_t osKernelUserShellElfEnd[];
 UserProgramImage SelectUserProgramImage(const UserProgramSelection selection) noexcept {
     if (selection == UserProgramSelection::Shell) {
         return UserProgramImage{
-            .image = osKernelUserShellElfStart,
-            .imageSizeBytes = CalculateImageSize(
-                osKernelUserShellElfStart, osKernelUserShellElfEnd),
+            .image = os_kernel_user_shell_elf_start,
+            .image_size_bytes =
+                CalculateImageSize(os_kernel_user_shell_elf_start, os_kernel_user_shell_elf_end),
         };
     }
     if (selection == UserProgramSelection::InvalidOpcode) {
         return UserProgramImage{
-            .image = osKernelUserInvalidOpcodeElfStart,
-            .imageSizeBytes = CalculateImageSize(osKernelUserInvalidOpcodeElfStart,
-                                                 osKernelUserInvalidOpcodeElfEnd),
+            .image = os_kernel_user_invalid_opcode_elf_start,
+            .image_size_bytes = CalculateImageSize(os_kernel_user_invalid_opcode_elf_start,
+                                                   os_kernel_user_invalid_opcode_elf_end),
         };
     }
     if (selection == UserProgramSelection::PageFault) {
         return UserProgramImage{
-            .image = osKernelUserPageFaultElfStart,
-            .imageSizeBytes =
-                CalculateImageSize(osKernelUserPageFaultElfStart, osKernelUserPageFaultElfEnd),
+            .image = os_kernel_user_page_fault_elf_start,
+            .image_size_bytes = CalculateImageSize(os_kernel_user_page_fault_elf_start,
+                                                   os_kernel_user_page_fault_elf_end),
         };
     }
     if (selection == UserProgramSelection::SchedulerWorker) {
         return UserProgramImage{
-            .image = osKernelUserSchedulerWorkerElfStart,
-            .imageSizeBytes = CalculateImageSize(osKernelUserSchedulerWorkerElfStart,
-                                                 osKernelUserSchedulerWorkerElfEnd),
+            .image = os_kernel_user_scheduler_worker_elf_start,
+            .image_size_bytes = CalculateImageSize(os_kernel_user_scheduler_worker_elf_start,
+                                                   os_kernel_user_scheduler_worker_elf_end),
         };
     }
     if (selection == UserProgramSelection::IpcProducer) {
         return UserProgramImage{
-            .image = osKernelUserIpcProducerElfStart,
-            .imageSizeBytes =
-                CalculateImageSize(osKernelUserIpcProducerElfStart, osKernelUserIpcProducerElfEnd),
+            .image = os_kernel_user_ipc_producer_elf_start,
+            .image_size_bytes = CalculateImageSize(os_kernel_user_ipc_producer_elf_start,
+                                                   os_kernel_user_ipc_producer_elf_end),
         };
     }
     if (selection == UserProgramSelection::IpcConsumer) {
         return UserProgramImage{
-            .image = osKernelUserIpcConsumerElfStart,
-            .imageSizeBytes =
-                CalculateImageSize(osKernelUserIpcConsumerElfStart, osKernelUserIpcConsumerElfEnd),
+            .image = os_kernel_user_ipc_consumer_elf_start,
+            .image_size_bytes = CalculateImageSize(os_kernel_user_ipc_consumer_elf_start,
+                                                   os_kernel_user_ipc_consumer_elf_end),
         };
     }
-    const uint64_t smokeImageSizeBytes =
-        CalculateImageSize(osKernelUserSmokeElfStart, osKernelUserSmokeElfEnd);
+    const uint64_t smoke_image_size_bytes =
+        CalculateImageSize(os_kernel_user_smoke_elf_start, os_kernel_user_smoke_elf_end);
     if (selection == UserProgramSelection::TruncatedSmoke) {
         return UserProgramImage{
-            .image = osKernelUserSmokeElfStart,
-            .imageSizeBytes = OS_KERNEL_USER_IMAGE_TRUNCATED_ELF_SIZE_BYTES,
+            .image = os_kernel_user_smoke_elf_start,
+            .image_size_bytes = OS_KERNEL_USER_IMAGE_TRUNCATED_ELF_SIZE_BYTES,
         };
     }
     return UserProgramImage{
-        .image = osKernelUserSmokeElfStart,
-        .imageSizeBytes = smokeImageSizeBytes,
+        .image = os_kernel_user_smoke_elf_start,
+        .image_size_bytes = smoke_image_size_bytes,
     };
 }
 

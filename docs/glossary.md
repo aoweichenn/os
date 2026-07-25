@@ -39,6 +39,9 @@
 | TLB | 处理器缓存地址翻译和页权限的 Translation Lookaside Buffer |
 | `INVLPG` | 使当前处理器中一个线性地址的 TLB 翻译失效 |
 | monotonic heap | 只向前分配、不回收单个对象的早期堆 |
+| boundary tag | 在块头保存自身与相邻块尺寸，使分配器能定位物理前后块 |
+| coalescing | 释放时把相邻空闲块合并，恢复更大的连续可分配区间 |
+| best-fit | 从所有可容纳请求的空闲块中选择最小者的分配策略 |
 | buddy allocator | 以二次幂阶拆分与合并连续页块、能够回收物理页的分配器 |
 | KVA allocator | Kernel Virtual Address allocator；只分配内核虚拟区间，物理页和映射由调用者另行提交 |
 | identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |

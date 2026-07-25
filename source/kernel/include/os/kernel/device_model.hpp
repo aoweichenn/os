@@ -16,18 +16,18 @@ enum class LegacyPicModelStatus : uint64_t {
     InvalidVector,
 };
 
-[[nodiscard]] LegacyPicModelStatus CalculateLegacyPicVector(uint64_t interruptRequest,
+[[nodiscard]] LegacyPicModelStatus CalculateLegacyPicVector(uint64_t interrupt_request,
                                                             uint64_t &vector) noexcept;
 [[nodiscard]] LegacyPicModelStatus
-CalculateLegacyPicInterruptRequest(uint64_t vector, uint64_t &interruptRequest) noexcept;
-[[nodiscard]] LegacyPicModelStatus EnableLegacyPicInterruptRequest(uint16_t currentMask,
-                                                                   uint64_t interruptRequest,
-                                                                   uint16_t &updatedMask) noexcept;
+CalculateLegacyPicInterruptRequest(uint64_t vector, uint64_t &interrupt_request) noexcept;
+[[nodiscard]] LegacyPicModelStatus EnableLegacyPicInterruptRequest(uint16_t current_mask,
+                                                                   uint64_t interrupt_request,
+                                                                   uint16_t &updated_mask) noexcept;
 
 struct PitConfiguration final {
     uint16_t divisor;
-    uint64_t requestedFrequencyHz;
-    uint64_t actualFrequencyHz;
+    uint64_t requested_frequency_hz;
+    uint64_t actual_frequency_hz;
 };
 
 enum class PitConfigurationStatus : uint64_t {
@@ -37,8 +37,8 @@ enum class PitConfigurationStatus : uint64_t {
 };
 
 [[nodiscard]] PitConfigurationStatus
-CreatePitConfiguration(uint64_t requestedFrequencyHz, PitConfiguration &configuration) noexcept;
-[[nodiscard]] uint64_t CalculatePitElapsedMilliseconds(uint64_t tickCount,
+CreatePitConfiguration(uint64_t requested_frequency_hz, PitConfiguration &configuration) noexcept;
+[[nodiscard]] uint64_t CalculatePitElapsedMilliseconds(uint64_t tick_count,
                                                        uint16_t divisor) noexcept;
 
 enum class KeyboardKey : uint64_t {
@@ -61,7 +61,7 @@ enum class KeyboardKey : uint64_t {
 
 struct KeyboardEvent final {
     KeyboardKey key;
-    uint8_t scanCode;
+    uint8_t scan_code;
     uint8_t character;
     bool pressed;
     bool extended;
@@ -77,16 +77,16 @@ class ScanCodeSet1Decoder final {
   public:
     constexpr ScanCodeSet1Decoder() noexcept = default;
 
-    [[nodiscard]] KeyboardDecodeStatus Decode(uint8_t scanCode, KeyboardEvent &event) noexcept;
+    [[nodiscard]] KeyboardDecodeStatus Decode(uint8_t scan_code, KeyboardEvent &event) noexcept;
 
   private:
-    [[nodiscard]] KeyboardKey KeyForScanCode(uint8_t makeCode, bool extended) const noexcept;
-    [[nodiscard]] uint8_t CharacterForScanCode(uint8_t makeCode) const noexcept;
+    [[nodiscard]] KeyboardKey KeyForScanCode(uint8_t make_code, bool extended) const noexcept;
+    [[nodiscard]] uint8_t CharacterForScanCode(uint8_t make_code) const noexcept;
 
-    bool extendedPrefixPending_{false};
-    bool leftShiftPressed_{false};
-    bool rightShiftPressed_{false};
-    bool capsLockEnabled_{false};
+    bool extended_prefix_pending_{false};
+    bool left_shift_pressed_{false};
+    bool right_shift_pressed_{false};
+    bool caps_lock_enabled_{false};
 };
 
 enum class AtaReadRequestStatus : uint64_t {
@@ -96,10 +96,9 @@ enum class AtaReadRequestStatus : uint64_t {
     InvalidLogicalBlockAddress,
 };
 
-[[nodiscard]] AtaReadRequestStatus ValidateAtaReadRequest(uint64_t logicalBlockAddress,
+[[nodiscard]] AtaReadRequestStatus ValidateAtaReadRequest(uint64_t logical_block_address,
                                                           const uint8_t *buffer,
-                                                          uint64_t bufferSizeBytes) noexcept;
+                                                          uint64_t buffer_size_bytes) noexcept;
 [[nodiscard]] bool Stage1BootDescriptorMagicMatches(const uint8_t *sector,
-                                                    uint64_t sectorSizeBytes) noexcept;
-
+                                                    uint64_t sector_size_bytes) noexcept;
 }

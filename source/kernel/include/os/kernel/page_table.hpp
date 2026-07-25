@@ -19,21 +19,21 @@ struct PageTableIndices final {
 struct PagePermissions final {
     bool writable;
     bool executable;
-    bool userAccessible;
-    bool cacheDisabled;
+    bool user_accessible;
+    bool cache_disabled;
 };
 
 struct PageMapping final {
-    uint64_t physicalAddress;
-    uint64_t pageSizeBytes;
+    uint64_t physical_address;
+    uint64_t page_size_bytes;
     PagePermissions permissions;
 };
 
 struct PageTableMemoryAccess final {
-    uint64_t maximumPhysicalAddressExclusive;
-    uint64_t physicalMemoryVirtualBase;
-    uint64_t allocationMaximumPhysicalAddressExclusive;
-    bool invalidateActiveMappings;
+    uint64_t maximum_physical_address_exclusive;
+    uint64_t physical_memory_virtual_base;
+    uint64_t allocation_maximum_physical_address_exclusive;
+    bool invalidate_active_mappings;
 };
 
 enum class PageTableStatus : uint64_t {
@@ -51,49 +51,49 @@ enum class PageTableStatus : uint64_t {
     InvalidMemoryAccess,
 };
 
-[[nodiscard]] bool IsCanonicalVirtualAddress(uint64_t virtualAddress) noexcept;
-[[nodiscard]] PageTableIndices CalculatePageTableIndices(uint64_t virtualAddress) noexcept;
-[[nodiscard]] bool IsPageTableMemoryAccessValid(PageTableMemoryAccess memoryAccess) noexcept;
-[[nodiscard]] uint64_t EncodePageTableLeafEntry(uint64_t physicalAddress,
+[[nodiscard]] bool IsCanonicalVirtualAddress(uint64_t virtual_address) noexcept;
+[[nodiscard]] PageTableIndices CalculatePageTableIndices(uint64_t virtual_address) noexcept;
+[[nodiscard]] bool IsPageTableMemoryAccessValid(PageTableMemoryAccess memory_access) noexcept;
+[[nodiscard]] uint64_t EncodePageTableLeafEntry(uint64_t physical_address,
                                                 PagePermissions permissions) noexcept;
 [[nodiscard]] PageMapping DecodePageTableLeafEntry(uint64_t entry) noexcept;
 
 class PageTableManager final {
   public:
-    PageTableManager(PhysicalFrameAllocator &frameAllocator,
-                     PageTableMemoryAccess memoryAccess) noexcept;
-    PageTableManager(PhysicalFrameAllocator &frameAllocator, uint64_t rootPhysicalAddress,
-                     PageTableMemoryAccess memoryAccess) noexcept;
+    PageTableManager(PhysicalFrameAllocator &frame_allocator,
+                     PageTableMemoryAccess memory_access) noexcept;
+    PageTableManager(PhysicalFrameAllocator &frame_allocator, uint64_t root_physical_address,
+                     PageTableMemoryAccess memory_access) noexcept;
 
     [[nodiscard]] PageTableStatus Initialize() noexcept;
     [[nodiscard]] PageTableStatus
-    InitializeProcessRoot(uint64_t templateRootPhysicalAddress) noexcept;
+    InitializeProcessRoot(uint64_t template_root_physical_address) noexcept;
     [[nodiscard]] PageTableStatus ReleaseProcessRoot() noexcept;
-    [[nodiscard]] PageTableStatus MapPage(uint64_t virtualAddress, uint64_t physicalAddress,
+    [[nodiscard]] PageTableStatus MapPage(uint64_t virtual_address, uint64_t physical_address,
                                           PagePermissions permissions) noexcept;
-    [[nodiscard]] PageTableStatus MapLargePage(uint64_t virtualAddress, uint64_t physicalAddress,
+    [[nodiscard]] PageTableStatus MapLargePage(uint64_t virtual_address, uint64_t physical_address,
                                                PagePermissions permissions) noexcept;
-    [[nodiscard]] PageTableStatus UnmapPage(uint64_t virtualAddress) noexcept;
-    [[nodiscard]] PageTableStatus QueryPage(uint64_t virtualAddress,
+    [[nodiscard]] PageTableStatus UnmapPage(uint64_t virtual_address) noexcept;
+    [[nodiscard]] PageTableStatus QueryPage(uint64_t virtual_address,
                                             PageMapping &mapping) const noexcept;
     [[nodiscard]] uint64_t RootPhysicalAddress() const noexcept;
-    [[nodiscard]] PageTableStatus SetMemoryAccess(PageTableMemoryAccess memoryAccess) noexcept;
+    [[nodiscard]] PageTableStatus SetMemoryAccess(PageTableMemoryAccess memory_access) noexcept;
 
   private:
-    [[nodiscard]] uint64_t *TableAtPhysicalAddress(uint64_t physicalAddress) const noexcept;
-    [[nodiscard]] bool IsPhysicalAddressValid(uint64_t physicalAddress,
-                                              uint64_t pageSizeBytes) const noexcept;
-    [[nodiscard]] PageTableStatus AllocateTable(uint64_t &physicalAddress) noexcept;
-    [[nodiscard]] PageTableStatus EnsureNextTable(uint64_t &entry, bool userAccessible,
-                                                  uint64_t &physicalAddress) noexcept;
-    [[nodiscard]] PageTableStatus WalkToLeaf(uint64_t virtualAddress,
-                                             uint64_t *&leafEntry) const noexcept;
-    [[nodiscard]] PageTableStatus ReleaseOwnedTable(uint64_t tablePhysicalAddress,
-                                                    uint64_t tableLevel) noexcept;
+    [[nodiscard]] uint64_t *TableAtPhysicalAddress(uint64_t physical_address) const noexcept;
+    [[nodiscard]] bool IsPhysicalAddressValid(uint64_t physical_address,
+                                              uint64_t page_size_bytes) const noexcept;
+    [[nodiscard]] PageTableStatus AllocateTable(uint64_t &physical_address) noexcept;
+    [[nodiscard]] PageTableStatus EnsureNextTable(uint64_t &entry, bool user_accessible,
+                                                  uint64_t &physical_address) noexcept;
+    [[nodiscard]] PageTableStatus WalkToLeaf(uint64_t virtual_address,
+                                             uint64_t *&leaf_entry) const noexcept;
+    [[nodiscard]] PageTableStatus ReleaseOwnedTable(uint64_t table_physical_address,
+                                                    uint64_t table_level) noexcept;
 
-    PhysicalFrameAllocator *frameAllocator_;
-    uint64_t rootPhysicalAddress_;
-    PageTableMemoryAccess memoryAccess_;
+    PhysicalFrameAllocator *frame_allocator_;
+    uint64_t root_physical_address_;
+    PageTableMemoryAccess memory_access_;
 };
 
 }

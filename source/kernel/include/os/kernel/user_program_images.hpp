@@ -17,7 +17,7 @@ enum class UserProgramSelection : uint64_t {
 
 struct UserProgramImage final {
     const uint8_t *image;
-    uint64_t imageSizeBytes;
+    uint64_t image_size_bytes;
 };
 
 [[nodiscard]] UserProgramImage SelectUserProgramImage(UserProgramSelection selection) noexcept;

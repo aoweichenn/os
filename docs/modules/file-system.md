@@ -42,7 +42,7 @@ inode 0 永不分配；inode 1 是根目录。inode 使用十个 64 位直接块
   inode；拒绝孤儿、环和重复目录引用；
 - data bitmap 中的已分配位必须与全部可达 inode 拥有的数据块一致；
 - inode 类型只能是目录或普通文件；
-- `sizeBytes <= allocatedBlockCount × 512`；
+- `size_bytes <= allocated_block_count × 512`；
 - 目录大小必须是 64 字节目录项的整数倍；
 - 目录项名称长度为 `1..40`，未使用尾部字节必须为零；名称拒绝斜杠、C0
   控制字符、`DEL`、`.` 和 `..`；

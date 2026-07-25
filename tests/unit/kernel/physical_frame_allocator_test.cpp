@@ -66,149 +66,152 @@ constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_UNALIGNED_OFFSET = 1ULL;
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_FRAME_ALLOCATOR_SUITE_NAME};
-    uint8_t stateStorage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
-    os::kernel::PhysicalFrameAllocator allocator{stateStorage,
+    os::test::TestContext test_context{OS_TEST_FRAME_ALLOCATOR_SUITE_NAME};
+    uint8_t state_storage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator allocator{state_storage,
                                                  OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES};
-    const os::kernel::PhysicalMemoryMapEntry memoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry memory_map[] = {
         {
-            .baseAddress = 0ULL,
-            .lengthBytes = OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES,
+            .base_address = 0ULL,
+            .length_bytes = OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
     };
 
-    testContext.Expect(allocator.Initialize(memoryMap,
-                                            OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
-                                            OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
-                           os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
-                       OS_TEST_FRAME_ALLOCATOR_INITIALIZE);
-    testContext.Expect(allocator.ReserveRange(0ULL, OS_TEST_FRAME_ALLOCATOR_RESERVED_SIZE_BYTES) ==
-                               os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-                           allocator.Statistics().freeFrameCount ==
-                               OS_TEST_FRAME_ALLOCATOR_FREE_AFTER_RESERVATION,
-                       OS_TEST_FRAME_ALLOCATOR_RESERVE);
+    test_context.Expect(allocator.Initialize(memory_map,
+                                             OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
+                                             OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
+                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
+                        OS_TEST_FRAME_ALLOCATOR_INITIALIZE);
+    test_context.Expect(allocator.ReserveRange(0ULL, OS_TEST_FRAME_ALLOCATOR_RESERVED_SIZE_BYTES) ==
+                                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+                            allocator.Statistics().free_frame_count ==
+                                OS_TEST_FRAME_ALLOCATOR_FREE_AFTER_RESERVATION,
+                        OS_TEST_FRAME_ALLOCATOR_RESERVE);
 
-    os::kernel::PhysicalFrame firstFrame{};
-    testContext.Expect(
-        allocator.Allocate(firstFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-            firstFrame.physicalAddress == OS_TEST_FRAME_ALLOCATOR_EXPECTED_FIRST_ADDRESS,
+    os::kernel::PhysicalFrame first_frame{};
+    test_context.Expect(
+        allocator.Allocate(first_frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+            first_frame.physical_address == OS_TEST_FRAME_ALLOCATOR_EXPECTED_FIRST_ADDRESS,
         OS_TEST_FRAME_ALLOCATOR_ORDER);
-    testContext.Expect(allocator.Release(firstFrame) ==
-                           os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
-                       OS_TEST_FRAME_ALLOCATOR_RELEASE);
-    os::kernel::PhysicalFrame recycledFrame{};
-    testContext.Expect(allocator.Allocate(recycledFrame) ==
-                               os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-                           recycledFrame.physicalAddress == firstFrame.physicalAddress,
-                       OS_TEST_FRAME_ALLOCATOR_RELEASE);
-    testContext.Expect(allocator.Release(recycledFrame) ==
-                               os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-                           allocator.Release(recycledFrame) ==
-                               os::kernel::PhysicalFrameAllocatorStatus::FrameNotAllocated,
-                       OS_TEST_FRAME_ALLOCATOR_DOUBLE_RELEASE);
+    test_context.Expect(allocator.Release(first_frame) ==
+                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
+                        OS_TEST_FRAME_ALLOCATOR_RELEASE);
+    os::kernel::PhysicalFrame recycled_frame{};
+    test_context.Expect(allocator.Allocate(recycled_frame) ==
+                                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+                            recycled_frame.physical_address == first_frame.physical_address,
+                        OS_TEST_FRAME_ALLOCATOR_RELEASE);
+    test_context.Expect(allocator.Release(recycled_frame) ==
+                                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+                            allocator.Release(recycled_frame) ==
+                                os::kernel::PhysicalFrameAllocatorStatus::FrameNotAllocated,
+                        OS_TEST_FRAME_ALLOCATOR_DOUBLE_RELEASE);
 
-    testContext.Expect(allocator.Release(os::kernel::PhysicalFrame{.physicalAddress = 0ULL}) ==
-                           os::kernel::PhysicalFrameAllocatorStatus::FrameNotAllocated,
-                       OS_TEST_FRAME_ALLOCATOR_RESERVED_RELEASE);
+    test_context.Expect(allocator.Release(os::kernel::PhysicalFrame{.physical_address = 0ULL}) ==
+                            os::kernel::PhysicalFrameAllocatorStatus::FrameNotAllocated,
+                        OS_TEST_FRAME_ALLOCATOR_RESERVED_RELEASE);
 
     os::kernel::PhysicalFrame frame{};
-    uint64_t successfulAllocationCount = 0ULL;
+    uint64_t successful_allocation_count = 0ULL;
     while (allocator.Allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
-        ++successfulAllocationCount;
+        ++successful_allocation_count;
     }
-    testContext.Expect(
-        successfulAllocationCount == OS_TEST_FRAME_ALLOCATOR_FREE_AFTER_RESERVATION &&
+    test_context.Expect(
+        successful_allocation_count == OS_TEST_FRAME_ALLOCATOR_FREE_AFTER_RESERVATION &&
             allocator.Allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::OutOfMemory,
         OS_TEST_FRAME_ALLOCATOR_EXHAUSTION);
 
-    uint8_t atomicStateStorage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
-    os::kernel::PhysicalFrameAllocator atomicAllocator{
-        atomicStateStorage,
+    uint8_t atomic_state_storage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator atomic_allocator{
+        atomic_state_storage,
         OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES,
     };
-    os::kernel::PhysicalFrame atomicFirstFrame{};
-    os::kernel::PhysicalFrame atomicSecondFrame{};
-    const bool atomicSetupSucceeded =
-        atomicAllocator.Initialize(memoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
-                                   OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
+    os::kernel::PhysicalFrame atomic_first_frame{};
+    os::kernel::PhysicalFrame atomic_second_frame{};
+    const bool atomic_setup_succeeded =
+        atomic_allocator.Initialize(memory_map, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
+                                    OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        atomicAllocator.Allocate(atomicFirstFrame) ==
+        atomic_allocator.Allocate(atomic_first_frame) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        atomicAllocator.Allocate(atomicSecondFrame) ==
+        atomic_allocator.Allocate(atomic_second_frame) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-        atomicAllocator.Release(atomicFirstFrame) ==
+        atomic_allocator.Release(atomic_first_frame) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
-    const bool atomicReservationRejected =
-        atomicAllocator.ReserveRange(atomicFirstFrame.physicalAddress,
-                                     OS_TEST_FRAME_ALLOCATOR_TWO_PAGE_LENGTH) ==
+    const bool atomic_reservation_rejected =
+        atomic_allocator.ReserveRange(atomic_first_frame.physical_address,
+                                      OS_TEST_FRAME_ALLOCATOR_TWO_PAGE_LENGTH) ==
         os::kernel::PhysicalFrameAllocatorStatus::InvalidReservation;
-    const os::kernel::PhysicalFrameAllocatorStatistics atomicStatistics =
-        atomicAllocator.Statistics();
-    testContext.Expect(atomicSetupSucceeded && atomicReservationRejected &&
-                           atomicStatistics.freeFrameCount ==
-                               OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_FREE_FRAME_COUNT &&
-                           atomicStatistics.allocatedFrameCount ==
-                               OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_ALLOCATED_FRAME_COUNT &&
-                           atomicStatistics.reservedFrameCount == 0ULL,
-                       OS_TEST_FRAME_ALLOCATOR_RESERVATION_ATOMIC);
+    const os::kernel::PhysicalFrameAllocatorStatistics atomic_statistics =
+        atomic_allocator.Statistics();
+    test_context.Expect(atomic_setup_succeeded && atomic_reservation_rejected &&
+                            atomic_statistics.free_frame_count ==
+                                OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_FREE_FRAME_COUNT &&
+                            atomic_statistics.allocated_frame_count ==
+                                OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_ALLOCATED_FRAME_COUNT &&
+                            atomic_statistics.reserved_frame_count == 0ULL,
+                        OS_TEST_FRAME_ALLOCATOR_RESERVATION_ATOMIC);
 
-    uint8_t emptyRangeStateStorage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
-    os::kernel::PhysicalFrameAllocator emptyRangeAllocator{
-        emptyRangeStateStorage,
+    uint8_t empty_range_state_storage[OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator empty_range_allocator{
+        empty_range_state_storage,
         OS_TEST_FRAME_ALLOCATOR_STORAGE_SIZE_BYTES,
     };
-    const os::kernel::PhysicalMemoryMapEntry incompletePageMemoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry incomplete_page_memory_map[] = {
         {
-            .baseAddress = 0ULL,
-            .lengthBytes = OS_TEST_FRAME_ALLOCATOR_NO_COMPLETE_FRAME_LENGTH_BYTES,
+            .base_address = 0ULL,
+            .length_bytes = OS_TEST_FRAME_ALLOCATOR_NO_COMPLETE_FRAME_LENGTH_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
     };
-    testContext.Expect(emptyRangeAllocator.Initialize(
-                           incompletePageMemoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
-                           OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
-                               os::kernel::PhysicalFrameAllocatorStatus::NoUsableFrames &&
-                           emptyRangeAllocator.Statistics().managedFrameCount == 0ULL,
-                       OS_TEST_FRAME_ALLOCATOR_EMPTY_ALIGNED_RANGE);
+    test_context.Expect(
+        empty_range_allocator.Initialize(incomplete_page_memory_map,
+                                         OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
+                                         OS_TEST_FRAME_ALLOCATOR_MANAGED_SIZE_BYTES) ==
+                os::kernel::PhysicalFrameAllocatorStatus::NoUsableFrames &&
+            empty_range_allocator.Statistics().managed_frame_count == 0ULL,
+        OS_TEST_FRAME_ALLOCATOR_EMPTY_ALIGNED_RANGE);
 
-    testContext.Expect(os::kernel::CalculatePhysicalFrameStateStorageSizeBytes(
-                           OS_TEST_FRAME_ALLOCATOR_PRIMARY_MEMORY_SIZE_BYTES) ==
-                           OS_TEST_FRAME_ALLOCATOR_PRIMARY_STATE_STORAGE_SIZE_BYTES,
-                       OS_TEST_FRAME_ALLOCATOR_STATE_SIZE_64_GIB);
+    test_context.Expect(os::kernel::CalculatePhysicalFrameStateStorageSizeBytes(
+                            OS_TEST_FRAME_ALLOCATOR_PRIMARY_MEMORY_SIZE_BYTES) ==
+                            OS_TEST_FRAME_ALLOCATOR_PRIMARY_STATE_STORAGE_SIZE_BYTES,
+                        OS_TEST_FRAME_ALLOCATOR_STATE_SIZE_64_GIB);
 
-    static uint8_t highStateStorage[OS_TEST_FRAME_ALLOCATOR_HIGH_STATE_STORAGE_SIZE_BYTES]{};
-    os::kernel::PhysicalFrameAllocator highAllocator{
-        highStateStorage,
+    static uint8_t high_state_storage[OS_TEST_FRAME_ALLOCATOR_HIGH_STATE_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator high_allocator{
+        high_state_storage,
         OS_TEST_FRAME_ALLOCATOR_HIGH_STATE_STORAGE_SIZE_BYTES,
     };
-    const os::kernel::PhysicalMemoryMapEntry highMemoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry high_memory_map[] = {
         {
-            .baseAddress = OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN,
-            .lengthBytes = OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_LENGTH_BYTES,
+            .base_address = OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN,
+            .length_bytes = OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_LENGTH_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
     };
-    os::kernel::PhysicalFrame highFrame{};
-    testContext.Expect(
-        highAllocator.Initialize(highMemoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
-                                 OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT) ==
+    os::kernel::PhysicalFrame high_frame{};
+    test_context.Expect(
+        high_allocator.Initialize(high_memory_map, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
+                                  OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT) ==
                 os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-            highAllocator.AllocateInRange(OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN,
-                                          OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT, highFrame) ==
+            high_allocator.AllocateInRange(OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN,
+                                           OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT,
+                                           high_frame) ==
                 os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-            highFrame.physicalAddress == OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN &&
-            highAllocator.Release(highFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
+            high_frame.physical_address == OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN &&
+            high_allocator.Release(high_frame) ==
+                os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
         OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE);
-    testContext.Expect(highAllocator.AllocateInRange(OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN +
-                                                         OS_TEST_FRAME_ALLOCATOR_UNALIGNED_OFFSET,
-                                                     OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT,
-                                                     highFrame) ==
-                           os::kernel::PhysicalFrameAllocatorStatus::InvalidAllocationRange,
-                       OS_TEST_FRAME_ALLOCATOR_INVALID_RANGE);
+    test_context.Expect(high_allocator.AllocateInRange(OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN +
+                                                           OS_TEST_FRAME_ALLOCATOR_UNALIGNED_OFFSET,
+                                                       OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT,
+                                                       high_frame) ==
+                            os::kernel::PhysicalFrameAllocatorStatus::InvalidAllocationRange,
+                        OS_TEST_FRAME_ALLOCATOR_INVALID_RANGE);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

@@ -3,28 +3,28 @@ default rel
 
 section .text
 
-global osKernelLoadGdtAndTss
-global osKernelLoadIdt
-global osKernelReadGdtr
-global osKernelReadIdtr
-global osKernelReadCodeSegment
-global osKernelReadStackSegment
-global osKernelReadTaskRegister
-global osKernelExceptionDispatch
-global osKernelHardwareInterruptDispatch
-global osKernelSystemCallEntry
-global osKernelSystemCallDispatch
-global osKernelEnterScheduledProcess
-global osKernelReturnFromUserMode
+global OsKernelLoadGdtAndTss
+global OsKernelLoadIdt
+global OsKernelReadGdtr
+global OsKernelReadIdtr
+global OsKernelReadCodeSegment
+global OsKernelReadStackSegment
+global OsKernelReadTaskRegister
+global OsKernelExceptionDispatch
+global OsKernelHardwareInterruptDispatch
+global OsKernelSystemCallEntry
+global OsKernelSystemCallDispatch
+global OsKernelEnterScheduledProcess
+global OsKernelReturnFromUserMode
 
-extern osKernelDispatchException
-extern osKernelDispatchHardwareInterrupt
-extern osKernelDispatchSystemCall
+extern OsKernelDispatchException
+extern OsKernelDispatchHardwareInterrupt
+extern OsKernelDispatchSystemCall
 
 OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR equ 0x10
 OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR equ 0x1B
 
-osKernelLoadGdtAndTss:
+OsKernelLoadGdtAndTss:
     lgdt [rdi]
     push rsi
     lea rax, [rel .code_segment_reloaded]
@@ -42,36 +42,36 @@ osKernelLoadGdtAndTss:
     ltr ax
     ret
 
-osKernelLoadIdt:
+OsKernelLoadIdt:
     lidt [rdi]
     ret
 
-osKernelReadGdtr:
+OsKernelReadGdtr:
     sgdt [rdi]
     ret
 
-osKernelReadIdtr:
+OsKernelReadIdtr:
     sidt [rdi]
     ret
 
-osKernelReadCodeSegment:
+OsKernelReadCodeSegment:
     xor eax, eax
     mov ax, cs
     ret
 
-osKernelReadStackSegment:
+OsKernelReadStackSegment:
     xor eax, eax
     mov ax, ss
     ret
 
-osKernelReadTaskRegister:
+OsKernelReadTaskRegister:
     xor eax, eax
     str ax
     ret
 
 ; 所有入口先形成相同的 vector/error_code 布局，再保存 System V
 ; AMD64 的通用寄存器。这样 C++ 分发器不需要猜测异常是否由 CPU 压入错误码。
-osKernelExceptionDispatch:
+OsKernelExceptionDispatch:
     cld
     push rax
     push rbx
@@ -91,7 +91,7 @@ osKernelExceptionDispatch:
 
     mov rdi, rsp
     and rsp, -16
-    call osKernelDispatchException
+    call OsKernelDispatchException
     mov rsp, rax
 
     pop r15
@@ -117,14 +117,14 @@ global os_kernel_exception_vector_%1
 os_kernel_exception_vector_%1:
     push qword 0
     push qword %1
-    jmp osKernelExceptionDispatch
+    jmp OsKernelExceptionDispatch
 %endmacro
 
 %macro OS_KERNEL_EXCEPTION_WITH_ERROR_CODE 1
 global os_kernel_exception_vector_%1
 os_kernel_exception_vector_%1:
     push qword %1
-    jmp osKernelExceptionDispatch
+    jmp OsKernelExceptionDispatch
 %endmacro
 
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 0
@@ -162,7 +162,7 @@ OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 31
 
 ; 8259A 已重映射到向量 32..47。硬件 IRQ 不压入错误码，因此所有入口都补零，
 ; 并使用与异常相同的寄存器帧布局，但交给独立的硬件中断分发器。
-osKernelHardwareInterruptDispatch:
+OsKernelHardwareInterruptDispatch:
     cld
     push rax
     push rbx
@@ -182,7 +182,7 @@ osKernelHardwareInterruptDispatch:
 
     mov rdi, rsp
     and rsp, -16
-    call osKernelDispatchHardwareInterrupt
+    call OsKernelDispatchHardwareInterrupt
     mov rsp, rax
 
     pop r15
@@ -208,7 +208,7 @@ global os_kernel_hardware_interrupt_vector_%1
 os_kernel_hardware_interrupt_vector_%1:
     push qword 0
     push qword %1
-    jmp osKernelHardwareInterruptDispatch
+    jmp OsKernelHardwareInterruptDispatch
 %endmacro
 
 OS_KERNEL_HARDWARE_INTERRUPT 32
@@ -230,12 +230,12 @@ OS_KERNEL_HARDWARE_INTERRUPT 47
 
 ; INT 0x80 不携带硬件错误码，因此先补齐统一的 vector/error_code 布局。
 ; 独立分发器复用异常帧结构，但只允许系统调用处理器修改返回值寄存器。
-osKernelSystemCallEntry:
+OsKernelSystemCallEntry:
     push qword 0
     push qword 0x80
-    jmp osKernelSystemCallDispatch
+    jmp OsKernelSystemCallDispatch
 
-osKernelSystemCallDispatch:
+OsKernelSystemCallDispatch:
     cld
     push rax
     push rbx
@@ -255,7 +255,7 @@ osKernelSystemCallDispatch:
 
     mov rdi, rsp
     and rsp, -16
-    call osKernelDispatchSystemCall
+    call OsKernelDispatchSystemCall
     mov rsp, rax
 
     pop r15
@@ -278,7 +278,7 @@ osKernelSystemCallDispatch:
 
 ; 调度启动前保存内核调用链，再直接恢复 PCB 中预构造的 176 字节用户现场。
 ; 最后一个进程结束后，退出路径恢复这里的栈并返回 ExecuteProcesses。
-osKernelEnterScheduledProcess:
+OsKernelEnterScheduledProcess:
     pushfq
     cli
     push rbx
@@ -287,7 +287,7 @@ osKernelEnterScheduledProcess:
     push r13
     push r14
     push r15
-    mov [rel osKernelSavedUserModeKernelStack], rsp
+    mov [rel os_kernel_saved_user_mode_kernel_stack], rsp
     mov rsp, rdi
 
     mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
@@ -314,10 +314,10 @@ osKernelEnterScheduledProcess:
     add rsp, 16
     iretq
 
-osKernelReturnFromUserMode:
+OsKernelReturnFromUserMode:
     cli
-    mov rsp, [rel osKernelSavedUserModeKernelStack]
-    mov qword [rel osKernelSavedUserModeKernelStack], 0
+    mov rsp, [rel os_kernel_saved_user_mode_kernel_stack]
+    mov qword [rel os_kernel_saved_user_mode_kernel_stack], 0
 
     mov ax, OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR
     mov ds, ax
@@ -338,16 +338,16 @@ osKernelReturnFromUserMode:
 section .rodata
 align 16
 
-global osKernelExceptionStubTable
-osKernelExceptionStubTable:
+global os_kernel_exception_stub_table
+os_kernel_exception_stub_table:
 %assign OS_KERNEL_EXCEPTION_TABLE_VECTOR 0
 %rep 32
     dq os_kernel_exception_vector_%+OS_KERNEL_EXCEPTION_TABLE_VECTOR
 %assign OS_KERNEL_EXCEPTION_TABLE_VECTOR OS_KERNEL_EXCEPTION_TABLE_VECTOR + 1
 %endrep
 
-global osKernelHardwareInterruptStubTable
-osKernelHardwareInterruptStubTable:
+global os_kernel_hardware_interrupt_stub_table
+os_kernel_hardware_interrupt_stub_table:
 %assign OS_KERNEL_HARDWARE_INTERRUPT_TABLE_VECTOR 32
 %rep 16
     dq os_kernel_hardware_interrupt_vector_%+OS_KERNEL_HARDWARE_INTERRUPT_TABLE_VECTOR
@@ -358,7 +358,7 @@ osKernelHardwareInterruptStubTable:
 section .bss
 align 8
 
-osKernelSavedUserModeKernelStack:
+os_kernel_saved_user_mode_kernel_stack:
     resq 1
 
 section .note.GNU-stack noalloc noexec nowrite progbits

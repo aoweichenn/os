@@ -92,8 +92,8 @@ ELF 文件还保存节表、符号表、程序头和机器类型等元数据，�
 文件偏移描述字节位于镜像中的下标。普通程序由装载器把三者关联起来；本项目
 的 ROM 由平台固定映射，因此链接脚本和镜像生成步骤必须直接保持这组关系：
 \[
-  \mathrm{fileOffset} =
-  \mathrm{physicalAddress} - \mathrm{romPhysicalBase}.
+  \mathrm{file_offset} =
+  \mathrm{physical_address} - \mathrm{rom_physical_base}.
 \]
 
 复位向量位于文件偏移 \code{0x1FFF0}，不是因为源文件在第几行，而是因为

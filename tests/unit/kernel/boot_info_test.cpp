@@ -38,19 +38,20 @@ os::kernel::BootInfo CreateValidBootInfo() {
     return os::kernel::BootInfo{
         .magic = os::kernel::OS_KERNEL_BOOT_INFO_MAGIC,
         .version = os::kernel::OS_KERNEL_BOOT_INFO_VERSION,
-        .structureSizeBytes = os::kernel::OS_KERNEL_BOOT_INFO_STRUCTURE_SIZE_BYTES,
-        .kernelFilePhysicalAddress = os::kernel::OS_KERNEL_BOOT_INFO_KERNEL_FILE_PHYSICAL_ADDRESS,
-        .kernelFileSizeBytes = OS_TEST_KERNEL_BOOT_INFO_VALID_FILE_SIZE_BYTES,
-        .kernelEntryAddress = os::kernel::OS_KERNEL_BOOT_INFO_KERNEL_ENTRY_ADDRESS,
-        .kernelLoadSegmentCount = OS_TEST_KERNEL_BOOT_INFO_VALID_SEGMENT_COUNT,
-        .pageTableRootPhysicalAddress =
+        .structure_size_bytes = os::kernel::OS_KERNEL_BOOT_INFO_STRUCTURE_SIZE_BYTES,
+        .kernel_file_physical_address =
+            os::kernel::OS_KERNEL_BOOT_INFO_KERNEL_FILE_PHYSICAL_ADDRESS,
+        .kernel_file_size_bytes = OS_TEST_KERNEL_BOOT_INFO_VALID_FILE_SIZE_BYTES,
+        .kernel_entry_address = os::kernel::OS_KERNEL_BOOT_INFO_KERNEL_ENTRY_ADDRESS,
+        .kernel_load_segment_count = OS_TEST_KERNEL_BOOT_INFO_VALID_SEGMENT_COUNT,
+        .page_table_root_physical_address =
             os::kernel::OS_KERNEL_BOOT_INFO_PAGE_TABLE_ROOT_PHYSICAL_ADDRESS,
-        .identityMappedSizeBytes = os::kernel::OS_KERNEL_BOOT_INFO_IDENTITY_MAPPED_SIZE_BYTES,
-        .kernelStackTopPhysicalAddress =
+        .identity_mapped_size_bytes = os::kernel::OS_KERNEL_BOOT_INFO_IDENTITY_MAPPED_SIZE_BYTES,
+        .kernel_stack_top_physical_address =
             os::kernel::OS_KERNEL_BOOT_INFO_KERNEL_STACK_TOP_PHYSICAL_ADDRESS,
-        .physicalMemoryMapAddress = os::kernel::OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS,
-        .physicalMemoryMapEntryCount = OS_TEST_KERNEL_BOOT_INFO_VALID_MEMORY_MAP_ENTRY_COUNT,
-        .physicalMemoryMapEntrySizeBytes =
+        .physical_memory_map_address = os::kernel::OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS,
+        .physical_memory_map_entry_count = OS_TEST_KERNEL_BOOT_INFO_VALID_MEMORY_MAP_ENTRY_COUNT,
+        .physical_memory_map_entry_size_bytes =
             os::kernel::OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES,
     };
 }
@@ -58,109 +59,111 @@ os::kernel::BootInfo CreateValidBootInfo() {
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_KERNEL_BOOT_INFO_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_KERNEL_BOOT_INFO_SUITE_NAME};
 
-    os::kernel::BootInfo bootInfo = CreateValidBootInfo();
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::Succeeded,
-                       OS_TEST_KERNEL_BOOT_INFO_VALID);
-    testContext.Expect(os::kernel::ValidateBootInfo(nullptr) ==
-                           os::kernel::BootInfoValidationStatus::NullPointer,
-                       OS_TEST_KERNEL_BOOT_INFO_NULL);
+    os::kernel::BootInfo boot_info = CreateValidBootInfo();
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::Succeeded,
+                        OS_TEST_KERNEL_BOOT_INFO_VALID);
+    test_context.Expect(os::kernel::ValidateBootInfo(nullptr) ==
+                            os::kernel::BootInfoValidationStatus::NullPointer,
+                        OS_TEST_KERNEL_BOOT_INFO_NULL);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.magic = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidMagic,
-                       OS_TEST_KERNEL_BOOT_INFO_MAGIC);
+    boot_info = CreateValidBootInfo();
+    boot_info.magic = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidMagic,
+                        OS_TEST_KERNEL_BOOT_INFO_MAGIC);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.version = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::UnsupportedVersion,
-                       OS_TEST_KERNEL_BOOT_INFO_VERSION);
+    boot_info = CreateValidBootInfo();
+    boot_info.version = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::UnsupportedVersion,
+                        OS_TEST_KERNEL_BOOT_INFO_VERSION);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.structureSizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidStructureSize,
-                       OS_TEST_KERNEL_BOOT_INFO_SIZE);
+    boot_info = CreateValidBootInfo();
+    boot_info.structure_size_bytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidStructureSize,
+                        OS_TEST_KERNEL_BOOT_INFO_SIZE);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.kernelFileSizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidKernelFileRange,
-                       OS_TEST_KERNEL_BOOT_INFO_FILE_RANGE);
+    boot_info = CreateValidBootInfo();
+    boot_info.kernel_file_size_bytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidKernelFileRange,
+                        OS_TEST_KERNEL_BOOT_INFO_FILE_RANGE);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.kernelFileSizeBytes = os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_KERNEL_FILE_SIZE_BYTES +
-                                   OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidKernelFileRange,
-                       OS_TEST_KERNEL_BOOT_INFO_FILE_TOO_LARGE);
+    boot_info = CreateValidBootInfo();
+    boot_info.kernel_file_size_bytes =
+        os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_KERNEL_FILE_SIZE_BYTES +
+        OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidKernelFileRange,
+                        OS_TEST_KERNEL_BOOT_INFO_FILE_TOO_LARGE);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.kernelEntryAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidKernelEntry,
-                       OS_TEST_KERNEL_BOOT_INFO_ENTRY);
+    boot_info = CreateValidBootInfo();
+    boot_info.kernel_entry_address = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidKernelEntry,
+                        OS_TEST_KERNEL_BOOT_INFO_ENTRY);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.kernelLoadSegmentCount = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidLoadSegmentCount,
-                       OS_TEST_KERNEL_BOOT_INFO_SEGMENT_COUNT);
+    boot_info = CreateValidBootInfo();
+    boot_info.kernel_load_segment_count = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidLoadSegmentCount,
+                        OS_TEST_KERNEL_BOOT_INFO_SEGMENT_COUNT);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.kernelLoadSegmentCount = os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_LOAD_SEGMENT_COUNT +
-                                      OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidLoadSegmentCount,
-                       OS_TEST_KERNEL_BOOT_INFO_TOO_MANY_SEGMENTS);
+    boot_info = CreateValidBootInfo();
+    boot_info.kernel_load_segment_count =
+        os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_LOAD_SEGMENT_COUNT +
+        OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidLoadSegmentCount,
+                        OS_TEST_KERNEL_BOOT_INFO_TOO_MANY_SEGMENTS);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.pageTableRootPhysicalAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidPageTableRoot,
-                       OS_TEST_KERNEL_BOOT_INFO_PAGE_TABLE_ROOT);
+    boot_info = CreateValidBootInfo();
+    boot_info.page_table_root_physical_address = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidPageTableRoot,
+                        OS_TEST_KERNEL_BOOT_INFO_PAGE_TABLE_ROOT);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.identityMappedSizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidIdentityMapSize,
-                       OS_TEST_KERNEL_BOOT_INFO_MAP_SIZE);
+    boot_info = CreateValidBootInfo();
+    boot_info.identity_mapped_size_bytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidIdentityMapSize,
+                        OS_TEST_KERNEL_BOOT_INFO_MAP_SIZE);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.kernelStackTopPhysicalAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidKernelStack,
-                       OS_TEST_KERNEL_BOOT_INFO_STACK);
+    boot_info = CreateValidBootInfo();
+    boot_info.kernel_stack_top_physical_address = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidKernelStack,
+                        OS_TEST_KERNEL_BOOT_INFO_STACK);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.physicalMemoryMapAddress = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
-                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ADDRESS);
+    boot_info = CreateValidBootInfo();
+    boot_info.physical_memory_map_address = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ADDRESS);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.physicalMemoryMapEntryCount = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
-                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_COUNT);
+    boot_info = CreateValidBootInfo();
+    boot_info.physical_memory_map_entry_count = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_COUNT);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.physicalMemoryMapEntryCount =
+    boot_info = CreateValidBootInfo();
+    boot_info.physical_memory_map_entry_count =
         os::kernel::OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT +
         OS_TEST_KERNEL_BOOT_INFO_LIMIT_EXCESS;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
-                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_TOO_LARGE);
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_TOO_LARGE);
 
-    bootInfo = CreateValidBootInfo();
-    bootInfo.physicalMemoryMapEntrySizeBytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
-    testContext.Expect(os::kernel::ValidateBootInfo(&bootInfo) ==
-                           os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
-                       OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ENTRY_SIZE);
+    boot_info = CreateValidBootInfo();
+    boot_info.physical_memory_map_entry_size_bytes = OS_TEST_KERNEL_BOOT_INFO_INVALID_VALUE;
+    test_context.Expect(os::kernel::ValidateBootInfo(&boot_info) ==
+                            os::kernel::BootInfoValidationStatus::InvalidPhysicalMemoryMap,
+                        OS_TEST_KERNEL_BOOT_INFO_MEMORY_MAP_ENTRY_SIZE);
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

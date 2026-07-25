@@ -62,35 +62,37 @@ constexpr uint16_t OS_KERNEL_DESCRIPTOR_IDT_INCLUSIVE_LIMIT = static_cast<uint16
     OS_KERNEL_DESCRIPTOR_INTERRUPT_GATE_COUNT * OS_KERNEL_DESCRIPTOR_IDT_ENTRY_SIZE_BYTES -
     OS_KERNEL_DESCRIPTOR_INCLUSIVE_LIMIT_ADJUSTMENT);
 
-alignas(16) uint64_t kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_ENTRY_COUNT];
+alignas(16) uint64_t kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_ENTRY_COUNT];
 alignas(16) InterruptGateDescriptor
-    kernelInterruptDescriptorTable[OS_KERNEL_DESCRIPTOR_INTERRUPT_GATE_COUNT];
-alignas(16) TaskStateSegment kernelTaskStateSegment;
+    kernel_interrupt_descriptor_table[OS_KERNEL_DESCRIPTOR_INTERRUPT_GATE_COUNT];
+alignas(16) TaskStateSegment kernel_task_state_segment;
 alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
-    kernelDoubleFaultStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
+    kernel_double_fault_stack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
 alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
-    kernelNonMaskableInterruptStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
+    kernel_non_maskable_interrupt_stack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
 alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
-    kernelMachineCheckStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
+    kernel_machine_check_stack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
 alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
-    kernelPrivilegeTransitionStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
+    kernel_privilege_transition_stack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
 
-extern "C" const uint64_t osKernelExceptionStubTable[OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT];
-extern "C" const uint64_t osKernelHardwareInterruptStubTable[OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT];
-extern "C" void osKernelSystemCallEntry() noexcept;
+extern "C" const uint64_t
+    os_kernel_exception_stub_table[OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT];
+extern "C" const uint64_t
+    os_kernel_hardware_interrupt_stub_table[OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT];
+extern "C" void OsKernelSystemCallEntry() noexcept;
 
-extern "C" void osKernelLoadGdtAndTss(const DescriptorTablePointer *descriptorTable,
-                                      uint64_t codeSelector, uint64_t dataSelector,
-                                      uint64_t taskStateSelector) noexcept;
-extern "C" void osKernelLoadIdt(const DescriptorTablePointer *descriptorTable) noexcept;
-extern "C" void osKernelReadGdtr(DescriptorTablePointer *descriptorTable) noexcept;
-extern "C" void osKernelReadIdtr(DescriptorTablePointer *descriptorTable) noexcept;
-extern "C" uint64_t osKernelReadCodeSegment() noexcept;
-extern "C" uint64_t osKernelReadStackSegment() noexcept;
-extern "C" uint64_t osKernelReadTaskRegister() noexcept;
+extern "C" void OsKernelLoadGdtAndTss(const DescriptorTablePointer *descriptor_table,
+                                      uint64_t code_selector, uint64_t data_selector,
+                                      uint64_t task_state_selector) noexcept;
+extern "C" void OsKernelLoadIdt(const DescriptorTablePointer *descriptor_table) noexcept;
+extern "C" void OsKernelReadGdtr(DescriptorTablePointer *descriptor_table) noexcept;
+extern "C" void OsKernelReadIdtr(DescriptorTablePointer *descriptor_table) noexcept;
+extern "C" uint64_t OsKernelReadCodeSegment() noexcept;
+extern "C" uint64_t OsKernelReadStackSegment() noexcept;
+extern "C" uint64_t OsKernelReadTaskRegister() noexcept;
 
-[[nodiscard]] uint64_t StackTopAddress(uint8_t *stack, const uint64_t sizeBytes) noexcept {
-    return reinterpret_cast<uint64_t>(stack + sizeBytes);
+[[nodiscard]] uint64_t StackTopAddress(uint8_t *stack, const uint64_t size_bytes) noexcept {
+    return reinterpret_cast<uint64_t>(stack + size_bytes);
 }
 
 [[nodiscard]] uint8_t InterruptStackTableForVector(const uint64_t vector) noexcept {
@@ -117,47 +119,49 @@ extern "C" uint64_t osKernelReadTaskRegister() noexcept;
 }
 
 void InitializeGlobalDescriptorTable() noexcept {
-    kernelTaskStateSegment.reserved0 = 0U;
-    kernelTaskStateSegment.privilegeStackPointer0 = StackTopAddress(
-        kernelPrivilegeTransitionStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
-    kernelTaskStateSegment.privilegeStackPointer1 = 0ULL;
-    kernelTaskStateSegment.privilegeStackPointer2 = 0ULL;
-    kernelTaskStateSegment.reserved1 = 0ULL;
-    kernelTaskStateSegment.interruptStackPointer1 =
-        StackTopAddress(kernelDoubleFaultStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
-    kernelTaskStateSegment.interruptStackPointer2 = StackTopAddress(
-        kernelNonMaskableInterruptStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
-    kernelTaskStateSegment.interruptStackPointer3 =
-        StackTopAddress(kernelMachineCheckStack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
-    kernelTaskStateSegment.interruptStackPointer4 = 0ULL;
-    kernelTaskStateSegment.interruptStackPointer5 = 0ULL;
-    kernelTaskStateSegment.interruptStackPointer6 = 0ULL;
-    kernelTaskStateSegment.interruptStackPointer7 = 0ULL;
-    kernelTaskStateSegment.reserved2 = 0ULL;
-    kernelTaskStateSegment.reserved3 = 0U;
-    kernelTaskStateSegment.ioPermissionBitmapOffset = OS_KERNEL_DESCRIPTOR_TSS_IO_MAP_OFFSET;
+    kernel_task_state_segment.reserved0 = 0U;
+    kernel_task_state_segment.privilege_stack_pointer0 = StackTopAddress(
+        kernel_privilege_transition_stack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
+    kernel_task_state_segment.privilege_stack_pointer1 = 0ULL;
+    kernel_task_state_segment.privilege_stack_pointer2 = 0ULL;
+    kernel_task_state_segment.reserved1 = 0ULL;
+    kernel_task_state_segment.interrupt_stack_pointer1 =
+        StackTopAddress(kernel_double_fault_stack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
+    kernel_task_state_segment.interrupt_stack_pointer2 = StackTopAddress(
+        kernel_non_maskable_interrupt_stack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
+    kernel_task_state_segment.interrupt_stack_pointer3 =
+        StackTopAddress(kernel_machine_check_stack, OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
+    kernel_task_state_segment.interrupt_stack_pointer4 = 0ULL;
+    kernel_task_state_segment.interrupt_stack_pointer5 = 0ULL;
+    kernel_task_state_segment.interrupt_stack_pointer6 = 0ULL;
+    kernel_task_state_segment.interrupt_stack_pointer7 = 0ULL;
+    kernel_task_state_segment.reserved2 = 0ULL;
+    kernel_task_state_segment.reserved3 = 0U;
+    kernel_task_state_segment.io_permission_bitmap_offset = OS_KERNEL_DESCRIPTOR_TSS_IO_MAP_OFFSET;
 
-    const SystemSegmentDescriptor taskStateDescriptor =
-        CreateTaskStateSegmentDescriptor(reinterpret_cast<uint64_t>(&kernelTaskStateSegment),
+    const SystemSegmentDescriptor task_state_descriptor =
+        CreateTaskStateSegmentDescriptor(reinterpret_cast<uint64_t>(&kernel_task_state_segment),
                                          OS_KERNEL_DESCRIPTOR_TSS_INCLUSIVE_LIMIT);
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_NULL_INDEX] =
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_NULL_INDEX] =
         OS_KERNEL_DESCRIPTOR_NULL_SEGMENT;
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_CODE_INDEX] =
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_CODE_INDEX] =
         OS_KERNEL_DESCRIPTOR_LONG_MODE_CODE_SEGMENT;
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_DATA_INDEX] =
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_DATA_INDEX] =
         OS_KERNEL_DESCRIPTOR_LONG_MODE_DATA_SEGMENT;
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_USER_DATA_INDEX] =
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_USER_DATA_INDEX] =
         OS_KERNEL_DESCRIPTOR_LONG_MODE_USER_DATA_SEGMENT;
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_USER_CODE_INDEX] =
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_USER_CODE_INDEX] =
         OS_KERNEL_DESCRIPTOR_LONG_MODE_USER_CODE_SEGMENT;
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_TSS_LOW_INDEX] = taskStateDescriptor.low;
-    kernelGlobalDescriptorTable[OS_KERNEL_DESCRIPTOR_GDT_TSS_HIGH_INDEX] = taskStateDescriptor.high;
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_TSS_LOW_INDEX] =
+        task_state_descriptor.low;
+    kernel_global_descriptor_table[OS_KERNEL_DESCRIPTOR_GDT_TSS_HIGH_INDEX] =
+        task_state_descriptor.high;
 
-    const DescriptorTablePointer globalDescriptorTablePointer{
+    const DescriptorTablePointer global_descriptor_table_pointer{
         .limit = OS_KERNEL_DESCRIPTOR_GDT_INCLUSIVE_LIMIT,
-        .baseAddress = reinterpret_cast<uint64_t>(kernelGlobalDescriptorTable),
+        .base_address = reinterpret_cast<uint64_t>(kernel_global_descriptor_table),
     };
-    osKernelLoadGdtAndTss(&globalDescriptorTablePointer,
+    OsKernelLoadGdtAndTss(&global_descriptor_table_pointer,
                           static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR),
                           static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_KERNEL_DATA_SELECTOR),
                           static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_TASK_STATE_SELECTOR));
@@ -165,111 +169,113 @@ void InitializeGlobalDescriptorTable() noexcept {
 
 void InitializeInterruptDescriptorTable() noexcept {
     for (uint64_t vector = 0ULL; vector < OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT; ++vector) {
-        kernelInterruptDescriptorTable[vector] = CreateInterruptGateDescriptor(
-            osKernelExceptionStubTable[vector], OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR,
+        kernel_interrupt_descriptor_table[vector] = CreateInterruptGateDescriptor(
+            os_kernel_exception_stub_table[vector], OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR,
             InterruptStackTableForVector(vector), TypeAttributesForVector(vector));
     }
 
-    const InterruptGateDescriptor notPresentGate{};
+    const InterruptGateDescriptor not_present_gate{};
     for (uint64_t vector = OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT;
          vector < OS_KERNEL_DESCRIPTOR_INTERRUPT_GATE_COUNT; ++vector) {
-        kernelInterruptDescriptorTable[vector] = notPresentGate;
+        kernel_interrupt_descriptor_table[vector] = not_present_gate;
     }
-    for (uint64_t interruptRequest = 0ULL; interruptRequest < OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT;
-         ++interruptRequest) {
+    for (uint64_t interrupt_request = 0ULL; interrupt_request < OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT;
+         ++interrupt_request) {
         uint64_t vector = 0ULL;
-        if (CalculateLegacyPicVector(interruptRequest, vector) != LegacyPicModelStatus::Succeeded) {
+        if (CalculateLegacyPicVector(interrupt_request, vector) !=
+            LegacyPicModelStatus::Succeeded) {
             continue;
         }
-        kernelInterruptDescriptorTable[vector] = CreateInterruptGateDescriptor(
-            osKernelHardwareInterruptStubTable[interruptRequest],
+        kernel_interrupt_descriptor_table[vector] = CreateInterruptGateDescriptor(
+            os_kernel_hardware_interrupt_stub_table[interrupt_request],
             OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR, OS_KERNEL_DESCRIPTOR_NO_IST,
             OS_KERNEL_DESCRIPTOR_RING0_INTERRUPT_GATE);
     }
-    kernelInterruptDescriptorTable[os::abi::OS_ABI_SYSTEM_CALL_VECTOR] =
-        CreateInterruptGateDescriptor(reinterpret_cast<uint64_t>(&osKernelSystemCallEntry),
+    kernel_interrupt_descriptor_table[os::abi::OS_ABI_SYSTEM_CALL_VECTOR] =
+        CreateInterruptGateDescriptor(reinterpret_cast<uint64_t>(&OsKernelSystemCallEntry),
                                       OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR,
                                       OS_KERNEL_DESCRIPTOR_NO_IST,
                                       OS_KERNEL_DESCRIPTOR_RING3_INTERRUPT_GATE);
 
-    const DescriptorTablePointer interruptDescriptorTablePointer{
+    const DescriptorTablePointer interrupt_descriptor_table_pointer{
         .limit = OS_KERNEL_DESCRIPTOR_IDT_INCLUSIVE_LIMIT,
-        .baseAddress = reinterpret_cast<uint64_t>(kernelInterruptDescriptorTable),
+        .base_address = reinterpret_cast<uint64_t>(kernel_interrupt_descriptor_table),
     };
-    osKernelLoadIdt(&interruptDescriptorTablePointer);
+    OsKernelLoadIdt(&interrupt_descriptor_table_pointer);
 }
 
 DescriptorTableValidationStatus ValidateDescriptorTables() noexcept {
-    DescriptorTablePointer currentGlobalDescriptorTable{};
-    osKernelReadGdtr(&currentGlobalDescriptorTable);
-    if (currentGlobalDescriptorTable.limit != OS_KERNEL_DESCRIPTOR_GDT_INCLUSIVE_LIMIT ||
-        currentGlobalDescriptorTable.baseAddress !=
-            reinterpret_cast<uint64_t>(kernelGlobalDescriptorTable)) {
+    DescriptorTablePointer current_global_descriptor_table{};
+    OsKernelReadGdtr(&current_global_descriptor_table);
+    if (current_global_descriptor_table.limit != OS_KERNEL_DESCRIPTOR_GDT_INCLUSIVE_LIMIT ||
+        current_global_descriptor_table.base_address !=
+            reinterpret_cast<uint64_t>(kernel_global_descriptor_table)) {
         return DescriptorTableValidationStatus::InvalidGlobalDescriptorTable;
     }
 
-    DescriptorTablePointer currentInterruptDescriptorTable{};
-    osKernelReadIdtr(&currentInterruptDescriptorTable);
-    if (currentInterruptDescriptorTable.limit != OS_KERNEL_DESCRIPTOR_IDT_INCLUSIVE_LIMIT ||
-        currentInterruptDescriptorTable.baseAddress !=
-            reinterpret_cast<uint64_t>(kernelInterruptDescriptorTable)) {
+    DescriptorTablePointer current_interrupt_descriptor_table{};
+    OsKernelReadIdtr(&current_interrupt_descriptor_table);
+    if (current_interrupt_descriptor_table.limit != OS_KERNEL_DESCRIPTOR_IDT_INCLUSIVE_LIMIT ||
+        current_interrupt_descriptor_table.base_address !=
+            reinterpret_cast<uint64_t>(kernel_interrupt_descriptor_table)) {
         return DescriptorTableValidationStatus::InvalidInterruptDescriptorTable;
     }
-    if (osKernelReadCodeSegment() !=
+    if (OsKernelReadCodeSegment() !=
         static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR)) {
         return DescriptorTableValidationStatus::InvalidCodeSegment;
     }
-    if (osKernelReadStackSegment() !=
+    if (OsKernelReadStackSegment() !=
         static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_KERNEL_DATA_SELECTOR)) {
         return DescriptorTableValidationStatus::InvalidStackSegment;
     }
-    if (osKernelReadTaskRegister() !=
+    if (OsKernelReadTaskRegister() !=
         static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_TASK_STATE_SELECTOR)) {
         return DescriptorTableValidationStatus::InvalidTaskRegister;
     }
-    if (kernelTaskStateSegment.privilegeStackPointer0 !=
-            StackTopAddress(kernelPrivilegeTransitionStack,
+    if (kernel_task_state_segment.privilege_stack_pointer0 !=
+            StackTopAddress(kernel_privilege_transition_stack,
                             OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES) ||
-        kernelTaskStateSegment.interruptStackPointer1 == 0ULL ||
-        kernelTaskStateSegment.interruptStackPointer2 == 0ULL ||
-        kernelTaskStateSegment.interruptStackPointer3 == 0ULL ||
-        kernelTaskStateSegment.ioPermissionBitmapOffset != OS_KERNEL_DESCRIPTOR_TSS_IO_MAP_OFFSET) {
+        kernel_task_state_segment.interrupt_stack_pointer1 == 0ULL ||
+        kernel_task_state_segment.interrupt_stack_pointer2 == 0ULL ||
+        kernel_task_state_segment.interrupt_stack_pointer3 == 0ULL ||
+        kernel_task_state_segment.io_permission_bitmap_offset !=
+            OS_KERNEL_DESCRIPTOR_TSS_IO_MAP_OFFSET) {
         return DescriptorTableValidationStatus::InvalidTaskStateSegment;
     }
     return DescriptorTableValidationStatus::Succeeded;
 }
 
-uint64_t InterruptStackGuardPageAddress(const uint64_t guardPageIndex) noexcept {
-    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_DOUBLE_FAULT_GUARD_INDEX) {
-        return reinterpret_cast<uint64_t>(kernelDoubleFaultStack);
+uint64_t InterruptStackGuardPageAddress(const uint64_t guard_page_index) noexcept {
+    if (guard_page_index == OS_KERNEL_DESCRIPTOR_DOUBLE_FAULT_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernel_double_fault_stack);
     }
-    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_NMI_GUARD_INDEX) {
-        return reinterpret_cast<uint64_t>(kernelNonMaskableInterruptStack);
+    if (guard_page_index == OS_KERNEL_DESCRIPTOR_NMI_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernel_non_maskable_interrupt_stack);
     }
-    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_MACHINE_CHECK_GUARD_INDEX) {
-        return reinterpret_cast<uint64_t>(kernelMachineCheckStack);
+    if (guard_page_index == OS_KERNEL_DESCRIPTOR_MACHINE_CHECK_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernel_machine_check_stack);
     }
-    if (guardPageIndex == OS_KERNEL_DESCRIPTOR_PRIVILEGE_TRANSITION_GUARD_INDEX) {
-        return reinterpret_cast<uint64_t>(kernelPrivilegeTransitionStack);
+    if (guard_page_index == OS_KERNEL_DESCRIPTOR_PRIVILEGE_TRANSITION_GUARD_INDEX) {
+        return reinterpret_cast<uint64_t>(kernel_privilege_transition_stack);
     }
     return 0ULL;
 }
 
 uint64_t DefaultPrivilegeStackPointer0() noexcept {
-    return StackTopAddress(kernelPrivilegeTransitionStack,
+    return StackTopAddress(kernel_privilege_transition_stack,
                            OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
 }
 
 uint64_t CurrentPrivilegeStackPointer0() noexcept {
-    return kernelTaskStateSegment.privilegeStackPointer0;
+    return kernel_task_state_segment.privilege_stack_pointer0;
 }
 
-bool SetPrivilegeStackPointer0(const uint64_t stackPointer) noexcept {
-    if (stackPointer == 0ULL || stackPointer % OS_KERNEL_DESCRIPTOR_STACK_ALIGNMENT_BYTES != 0ULL) {
+bool SetPrivilegeStackPointer0(const uint64_t stack_pointer) noexcept {
+    if (stack_pointer == 0ULL ||
+        stack_pointer % OS_KERNEL_DESCRIPTOR_STACK_ALIGNMENT_BYTES != 0ULL) {
         return false;
     }
-    kernelTaskStateSegment.privilegeStackPointer0 = stackPointer;
-    return kernelTaskStateSegment.privilegeStackPointer0 == stackPointer;
+    kernel_task_state_segment.privilege_stack_pointer0 = stack_pointer;
+    return kernel_task_state_segment.privilege_stack_pointer0 == stack_pointer;
 }
-
 }

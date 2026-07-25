@@ -64,151 +64,153 @@ constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES =
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_MEMORY_RANDOM_SUITE_NAME};
-    uint64_t randomState = OS_TEST_MEMORY_RANDOM_SEED;
+    os::test::TestContext test_context{OS_TEST_MEMORY_RANDOM_SUITE_NAME};
+    uint64_t random_state = OS_TEST_MEMORY_RANDOM_SEED;
 
     for (uint64_t iteration = 0ULL; iteration < OS_TEST_MEMORY_RANDOM_PAGE_ITERATION_COUNT;
          ++iteration) {
-        const uint64_t physicalAddress = NextRandom(randomState) &
-                                         OS_TEST_MEMORY_RANDOM_PHYSICAL_ADDRESS_MASK &
-                                         ~OS_TEST_MEMORY_RANDOM_PAGE_OFFSET_MASK;
-        const uint64_t permissionBits = NextRandom(randomState);
+        const uint64_t physical_address = NextRandom(random_state) &
+                                          OS_TEST_MEMORY_RANDOM_PHYSICAL_ADDRESS_MASK &
+                                          ~OS_TEST_MEMORY_RANDOM_PAGE_OFFSET_MASK;
+        const uint64_t permission_bits = NextRandom(random_state);
         const os::kernel::PagePermissions permissions{
-            .writable = (permissionBits & OS_TEST_MEMORY_RANDOM_WRITABLE_PERMISSION_BIT) != 0ULL,
+            .writable = (permission_bits & OS_TEST_MEMORY_RANDOM_WRITABLE_PERMISSION_BIT) != 0ULL,
             .executable =
-                (permissionBits & OS_TEST_MEMORY_RANDOM_EXECUTABLE_PERMISSION_BIT) != 0ULL,
-            .userAccessible = (permissionBits & OS_TEST_MEMORY_RANDOM_USER_PERMISSION_BIT) != 0ULL,
-            .cacheDisabled =
-                (permissionBits & OS_TEST_MEMORY_RANDOM_CACHE_DISABLE_PERMISSION_BIT) != 0ULL,
+                (permission_bits & OS_TEST_MEMORY_RANDOM_EXECUTABLE_PERMISSION_BIT) != 0ULL,
+            .user_accessible =
+                (permission_bits & OS_TEST_MEMORY_RANDOM_USER_PERMISSION_BIT) != 0ULL,
+            .cache_disabled =
+                (permission_bits & OS_TEST_MEMORY_RANDOM_CACHE_DISABLE_PERMISSION_BIT) != 0ULL,
         };
         const os::kernel::PageMapping mapping = os::kernel::DecodePageTableLeafEntry(
-            os::kernel::EncodePageTableLeafEntry(physicalAddress, permissions));
-        testContext.ExpectRandom(
-            mapping.physicalAddress == physicalAddress &&
+            os::kernel::EncodePageTableLeafEntry(physical_address, permissions));
+        test_context.ExpectRandom(
+            mapping.physical_address == physical_address &&
                 mapping.permissions.writable == permissions.writable &&
                 mapping.permissions.executable == permissions.executable &&
-                mapping.permissions.userAccessible == permissions.userAccessible &&
-                mapping.permissions.cacheDisabled == permissions.cacheDisabled,
+                mapping.permissions.user_accessible == permissions.user_accessible &&
+                mapping.permissions.cache_disabled == permissions.cache_disabled,
             OS_TEST_MEMORY_RANDOM_PAGE_ROUND_TRIP, OS_TEST_MEMORY_RANDOM_SEED, iteration);
     }
 
-    uint8_t stateStorage[OS_TEST_MEMORY_RANDOM_ALLOCATOR_STORAGE_SIZE_BYTES]{};
-    bool allocatedPages[OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT]{};
+    uint8_t state_storage[OS_TEST_MEMORY_RANDOM_ALLOCATOR_STORAGE_SIZE_BYTES]{};
+    bool allocated_pages[OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT]{};
     os::kernel::PhysicalFrameAllocator allocator{
-        stateStorage,
+        state_storage,
         OS_TEST_MEMORY_RANDOM_ALLOCATOR_STORAGE_SIZE_BYTES,
     };
-    const os::kernel::PhysicalMemoryMapEntry memoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry memory_map[] = {
         {
-            .baseAddress = 0ULL,
-            .lengthBytes = OS_TEST_MEMORY_RANDOM_ALLOCATOR_MANAGED_SIZE_BYTES,
+            .base_address = 0ULL,
+            .length_bytes = OS_TEST_MEMORY_RANDOM_ALLOCATOR_MANAGED_SIZE_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
     };
-    if (allocator.Initialize(memoryMap, OS_TEST_MEMORY_RANDOM_MEMORY_MAP_ENTRY_COUNT,
+    if (allocator.Initialize(memory_map, OS_TEST_MEMORY_RANDOM_MEMORY_MAP_ENTRY_COUNT,
                              OS_TEST_MEMORY_RANDOM_ALLOCATOR_MANAGED_SIZE_BYTES) !=
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded ||
         allocator.ReserveRange(0ULL, OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_SIZE_BYTES) !=
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
-        testContext.Expect(false, OS_TEST_MEMORY_RANDOM_ALLOCATOR_COUNTS);
-        return testContext.ExitCode();
+        test_context.Expect(false, OS_TEST_MEMORY_RANDOM_ALLOCATOR_COUNTS);
+        return test_context.ExitCode();
     }
 
-    uint64_t allocatedPageCount = 0ULL;
-    const uint64_t allocatablePageCount = OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT -
-                                          OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_PAGE_COUNT;
+    uint64_t allocated_page_count = 0ULL;
+    const uint64_t allocatable_page_count = OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT -
+                                            OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_PAGE_COUNT;
     for (uint64_t iteration = 0ULL; iteration < OS_TEST_MEMORY_RANDOM_ALLOCATOR_ITERATION_COUNT;
          ++iteration) {
-        const bool shouldAllocate =
-            allocatedPageCount == 0ULL ||
-            (allocatedPageCount < allocatablePageCount &&
-             (NextRandom(randomState) & OS_TEST_MEMORY_RANDOM_ALLOCATION_DECISION_BIT) != 0ULL);
-        if (shouldAllocate) {
+        const bool should_allocate =
+            allocated_page_count == 0ULL ||
+            (allocated_page_count < allocatable_page_count &&
+             (NextRandom(random_state) & OS_TEST_MEMORY_RANDOM_ALLOCATION_DECISION_BIT) != 0ULL);
+        if (should_allocate) {
             os::kernel::PhysicalFrame frame{};
-            const bool allocationSucceeded =
+            const bool allocation_succeeded =
                 allocator.Allocate(frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
-            const uint64_t frameIndex =
-                frame.physicalAddress / os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-            const bool frameWasFree =
-                allocationSucceeded &&
-                frameIndex >= OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_PAGE_COUNT &&
-                frameIndex < OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT &&
-                !allocatedPages[frameIndex];
-            testContext.ExpectRandom(frameWasFree, OS_TEST_MEMORY_RANDOM_ALLOCATOR_UNIQUE,
-                                     OS_TEST_MEMORY_RANDOM_SEED, iteration);
-            if (frameWasFree) {
-                allocatedPages[frameIndex] = true;
-                ++allocatedPageCount;
+            const uint64_t frame_index =
+                frame.physical_address / os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+            const bool frame_was_free =
+                allocation_succeeded &&
+                frame_index >= OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_PAGE_COUNT &&
+                frame_index < OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT &&
+                !allocated_pages[frame_index];
+            test_context.ExpectRandom(frame_was_free, OS_TEST_MEMORY_RANDOM_ALLOCATOR_UNIQUE,
+                                      OS_TEST_MEMORY_RANDOM_SEED, iteration);
+            if (frame_was_free) {
+                allocated_pages[frame_index] = true;
+                ++allocated_page_count;
             }
         } else {
-            uint64_t frameIndex =
-                NextRandom(randomState) % OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT;
-            while (!allocatedPages[frameIndex]) {
-                frameIndex = (frameIndex + OS_TEST_MEMORY_RANDOM_NEXT_PAGE_OFFSET) %
-                             OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT;
+            uint64_t frame_index =
+                NextRandom(random_state) % OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT;
+            while (!allocated_pages[frame_index]) {
+                frame_index = (frame_index + OS_TEST_MEMORY_RANDOM_NEXT_PAGE_OFFSET) %
+                              OS_TEST_MEMORY_RANDOM_ALLOCATOR_PAGE_COUNT;
             }
             const os::kernel::PhysicalFrame frame{
-                .physicalAddress = frameIndex * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                .physical_address = frame_index * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
             };
             if (allocator.Release(frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
-                allocatedPages[frameIndex] = false;
-                --allocatedPageCount;
+                allocated_pages[frame_index] = false;
+                --allocated_page_count;
             }
         }
 
         const os::kernel::PhysicalFrameAllocatorStatistics statistics = allocator.Statistics();
-        testContext.ExpectRandom(
-            statistics.allocatedFrameCount == allocatedPageCount &&
-                statistics.freeFrameCount == allocatablePageCount - allocatedPageCount &&
-                statistics.reservedFrameCount ==
+        test_context.ExpectRandom(
+            statistics.allocated_frame_count == allocated_page_count &&
+                statistics.free_frame_count == allocatable_page_count - allocated_page_count &&
+                statistics.reserved_frame_count ==
                     OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_PAGE_COUNT,
             OS_TEST_MEMORY_RANDOM_ALLOCATOR_COUNTS, OS_TEST_MEMORY_RANDOM_SEED, iteration);
     }
 
-    static uint8_t highStateStorage[OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES]{};
-    os::kernel::PhysicalFrameAllocator highAllocator{
-        highStateStorage,
+    static uint8_t high_state_storage[OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator high_allocator{
+        high_state_storage,
         OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES,
     };
-    const os::kernel::PhysicalMemoryMapEntry highMemoryMap[] = {
+    const os::kernel::PhysicalMemoryMapEntry high_memory_map[] = {
         {
-            .baseAddress = OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN,
-            .lengthBytes = OS_TEST_MEMORY_RANDOM_HIGH_RANGE_SIZE_BYTES,
+            .base_address = OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN,
+            .length_bytes = OS_TEST_MEMORY_RANDOM_HIGH_RANGE_SIZE_BYTES,
             .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
             .attributes = 0U,
         },
     };
-    if (highAllocator.Initialize(highMemoryMap, OS_TEST_MEMORY_RANDOM_MEMORY_MAP_ENTRY_COUNT,
-                                 OS_TEST_MEMORY_RANDOM_HIGH_MANAGED_LIMIT) !=
+    if (high_allocator.Initialize(high_memory_map, OS_TEST_MEMORY_RANDOM_MEMORY_MAP_ENTRY_COUNT,
+                                  OS_TEST_MEMORY_RANDOM_HIGH_MANAGED_LIMIT) !=
         os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
-        testContext.Expect(false, OS_TEST_MEMORY_RANDOM_HIGH_RANGE);
-        return testContext.ExitCode();
+        test_context.Expect(false, OS_TEST_MEMORY_RANDOM_HIGH_RANGE);
+        return test_context.ExitCode();
     }
     for (uint64_t iteration = 0ULL; iteration < OS_TEST_MEMORY_RANDOM_HIGH_RANGE_ITERATION_COUNT;
          ++iteration) {
-        const uint64_t firstPageIndex =
-            NextRandom(randomState) % OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT;
-        const uint64_t availablePageCount =
-            OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT - firstPageIndex;
-        const uint64_t requestedPageCount = NextRandom(randomState) % availablePageCount + 1ULL;
-        const uint64_t minimumAddress =
+        const uint64_t first_page_index =
+            NextRandom(random_state) % OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT;
+        const uint64_t available_page_count =
+            OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT - first_page_index;
+        const uint64_t requested_page_count =
+            NextRandom(random_state) % available_page_count + 1ULL;
+        const uint64_t minimum_address =
             OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN +
-            firstPageIndex * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-        const uint64_t maximumAddressExclusive =
-            minimumAddress + requestedPageCount * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-        os::kernel::PhysicalFrame highFrame{};
-        const bool allocationValid =
-            highAllocator.AllocateInRange(minimumAddress, maximumAddressExclusive, highFrame) ==
-                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
-            highFrame.physicalAddress >= minimumAddress &&
-            highFrame.physicalAddress < maximumAddressExclusive;
-        const bool releaseValid =
-            allocationValid &&
-            highAllocator.Release(highFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
-        testContext.ExpectRandom(releaseValid, OS_TEST_MEMORY_RANDOM_HIGH_RANGE,
-                                 OS_TEST_MEMORY_RANDOM_SEED, iteration);
+            first_page_index * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        const uint64_t maximum_address_exclusive =
+            minimum_address + requested_page_count * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        os::kernel::PhysicalFrame high_frame{};
+        const bool allocation_valid = high_allocator.AllocateInRange(
+                                          minimum_address, maximum_address_exclusive, high_frame) ==
+                                          os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+                                      high_frame.physical_address >= minimum_address &&
+                                      high_frame.physical_address < maximum_address_exclusive;
+        const bool release_valid =
+            allocation_valid && high_allocator.Release(high_frame) ==
+                                    os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
+        test_context.ExpectRandom(release_valid, OS_TEST_MEMORY_RANDOM_HIGH_RANGE,
+                                  OS_TEST_MEMORY_RANDOM_SEED, iteration);
     }
 
-    return testContext.ExitCode();
+    return test_context.ExitCode();
 }

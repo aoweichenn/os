@@ -14,8 +14,7 @@ constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_INCREMENT = 1442695040888963407ULL;
 constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_OPERATION_COUNT = 32768ULL;
 constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_MULTIPLIER = 4ULL;
 constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_BYTES =
-    OS_TEST_PIPE_RANDOMIZED_OPERATION_COUNT *
-    OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_MULTIPLIER;
+    OS_TEST_PIPE_RANDOMIZED_OPERATION_COUNT * OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_MULTIPLIER;
 constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES = 17ULL;
 constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE = 0ULL;
@@ -30,89 +29,90 @@ constexpr uint8_t OS_TEST_PIPE_RANDOMIZED_BYTE_MASK = 0xFFU;
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_PIPE_RANDOMIZED_SUITE_NAME};
+    os::test::TestContext test_context{OS_TEST_PIPE_RANDOMIZED_SUITE_NAME};
     os::kernel::Pipe pipe{};
     pipe.Initialize();
 
     uint8_t reference[OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_BYTES]{};
-    uint64_t referenceReadIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-    uint64_t referenceWriteIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-    uint64_t randomState = OS_TEST_PIPE_RANDOMIZED_SEED;
-    bool modelConsistent = true;
+    uint64_t reference_read_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+    uint64_t reference_write_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+    uint64_t random_state = OS_TEST_PIPE_RANDOMIZED_SEED;
+    bool model_consistent = true;
 
-    for (uint64_t operationIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-         operationIndex < OS_TEST_PIPE_RANDOMIZED_OPERATION_COUNT; ++operationIndex) {
-        const bool chooseWrite =
-            (NextRandom(randomState) & OS_TEST_PIPE_RANDOMIZED_WRITE_SELECTION_MASK) !=
+    for (uint64_t operation_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+         operation_index < OS_TEST_PIPE_RANDOMIZED_OPERATION_COUNT; ++operation_index) {
+        const bool choose_write =
+            (NextRandom(random_state) & OS_TEST_PIPE_RANDOMIZED_WRITE_SELECTION_MASK) !=
             OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-        const uint64_t transferBytes =
-            NextRandom(randomState) % OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES +
+        const uint64_t transfer_bytes =
+            NextRandom(random_state) % OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES +
             OS_TEST_PIPE_RANDOMIZED_COUNTER_INCREMENT;
 
-        if (chooseWrite && referenceWriteIndex + transferBytes <=
-                               OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_BYTES) {
+        if (choose_write && reference_write_index + transfer_bytes <=
+                                OS_TEST_PIPE_RANDOMIZED_REFERENCE_CAPACITY_BYTES) {
             uint8_t input[OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES]{};
-            for (uint64_t byteIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-                 byteIndex < transferBytes; ++byteIndex) {
-                input[byteIndex] =
-                    static_cast<uint8_t>(NextRandom(randomState) &
+            for (uint64_t byte_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+                 byte_index < transfer_bytes; ++byte_index) {
+                input[byte_index] =
+                    static_cast<uint8_t>(NextRandom(random_state) &
                                          static_cast<uint64_t>(OS_TEST_PIPE_RANDOMIZED_BYTE_MASK));
             }
-            uint64_t writtenBytes = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-            const os::kernel::PipeStatus status = pipe.TryWrite(input, transferBytes, writtenBytes);
-            modelConsistent = modelConsistent && (status == os::kernel::PipeStatus::Succeeded ||
-                                                  status == os::kernel::PipeStatus::WouldBlock);
+            uint64_t written_bytes = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+            const os::kernel::PipeStatus status =
+                pipe.TryWrite(input, transfer_bytes, written_bytes);
+            model_consistent = model_consistent && (status == os::kernel::PipeStatus::Succeeded ||
+                                                    status == os::kernel::PipeStatus::WouldBlock);
             if (status == os::kernel::PipeStatus::Succeeded) {
-                for (uint64_t byteIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-                     byteIndex < writtenBytes; ++byteIndex) {
-                    reference[referenceWriteIndex + byteIndex] = input[byteIndex];
+                for (uint64_t byte_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+                     byte_index < written_bytes; ++byte_index) {
+                    reference[reference_write_index + byte_index] = input[byte_index];
                 }
-                referenceWriteIndex += writtenBytes;
+                reference_write_index += written_bytes;
             }
         } else {
             uint8_t output[OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES]{};
-            uint64_t readBytes = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-            const os::kernel::PipeStatus status = pipe.TryRead(output, transferBytes, readBytes);
-            modelConsistent = modelConsistent && (status == os::kernel::PipeStatus::Succeeded ||
-                                                  status == os::kernel::PipeStatus::WouldBlock);
+            uint64_t read_bytes = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+            const os::kernel::PipeStatus status = pipe.TryRead(output, transfer_bytes, read_bytes);
+            model_consistent = model_consistent && (status == os::kernel::PipeStatus::Succeeded ||
+                                                    status == os::kernel::PipeStatus::WouldBlock);
             if (status == os::kernel::PipeStatus::Succeeded) {
-                modelConsistent =
-                    modelConsistent && referenceReadIndex + readBytes <= referenceWriteIndex;
-                for (uint64_t byteIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
-                     byteIndex < readBytes; ++byteIndex) {
-                    modelConsistent =
-                        modelConsistent &&
-                        output[byteIndex] == reference[referenceReadIndex + byteIndex];
+                model_consistent =
+                    model_consistent && reference_read_index + read_bytes <= reference_write_index;
+                for (uint64_t byte_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+                     byte_index < read_bytes; ++byte_index) {
+                    model_consistent =
+                        model_consistent &&
+                        output[byte_index] == reference[reference_read_index + byte_index];
                 }
-                referenceReadIndex += readBytes;
+                reference_read_index += read_bytes;
             }
         }
         const os::kernel::PipeStatistics statistics = pipe.Statistics();
-        modelConsistent =
-            modelConsistent && statistics.bytesWritten == referenceWriteIndex &&
-            statistics.bytesRead == referenceReadIndex &&
-            statistics.bufferedByteCount == referenceWriteIndex - referenceReadIndex &&
-            statistics.bufferedByteCount <= os::kernel::OS_KERNEL_PIPE_CAPACITY_BYTES;
+        model_consistent =
+            model_consistent && statistics.bytes_written == reference_write_index &&
+            statistics.bytes_read == reference_read_index &&
+            statistics.buffered_byte_count == reference_write_index - reference_read_index &&
+            statistics.buffered_byte_count <= os::kernel::OS_KERNEL_PIPE_CAPACITY_BYTES;
     }
 
-    modelConsistent = modelConsistent && pipe.CloseWriter() == os::kernel::PipeStatus::Succeeded;
-    uint8_t drainBuffer[OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES]{};
+    model_consistent = model_consistent && pipe.CloseWriter() == os::kernel::PipeStatus::Succeeded;
+    uint8_t drain_buffer[OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES]{};
     while (true) {
-        uint64_t readBytes = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
+        uint64_t read_bytes = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE;
         const os::kernel::PipeStatus status =
-            pipe.TryRead(drainBuffer, OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES, readBytes);
+            pipe.TryRead(drain_buffer, OS_TEST_PIPE_RANDOMIZED_MAXIMUM_TRANSFER_BYTES, read_bytes);
         if (status == os::kernel::PipeStatus::EndOfFile) {
             break;
         }
-        modelConsistent = modelConsistent && status == os::kernel::PipeStatus::Succeeded;
-        for (uint64_t byteIndex = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE; byteIndex < readBytes;
-             ++byteIndex) {
-            modelConsistent = modelConsistent &&
-                              drainBuffer[byteIndex] == reference[referenceReadIndex + byteIndex];
+        model_consistent = model_consistent && status == os::kernel::PipeStatus::Succeeded;
+        for (uint64_t byte_index = OS_TEST_PIPE_RANDOMIZED_EMPTY_VALUE; byte_index < read_bytes;
+             ++byte_index) {
+            model_consistent = model_consistent && drain_buffer[byte_index] ==
+                                                       reference[reference_read_index + byte_index];
         }
-        referenceReadIndex += readBytes;
+        reference_read_index += read_bytes;
     }
-    modelConsistent = modelConsistent && referenceReadIndex == referenceWriteIndex;
-    testContext.Expect(modelConsistent, OS_TEST_PIPE_RANDOMIZED_MODEL_CONSISTENCY);
-    return testContext.ExitCode();
+    model_consistent = model_consistent && reference_read_index == reference_write_index;
+    test_context.Expect(model_consistent, OS_TEST_PIPE_RANDOMIZED_MODEL_CONSISTENCY);
+    return test_context.ExitCode();
 }

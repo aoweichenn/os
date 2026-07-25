@@ -8,7 +8,7 @@ extern const uint16_t OS_KERNEL_SERIAL_COM1_BASE_PORT;
 
 class SerialPort final {
   public:
-    explicit SerialPort(uint16_t basePort) noexcept;
+    explicit SerialPort(uint16_t base_port) noexcept;
 
     void Initialize() const noexcept;
     [[nodiscard]] bool TryWriteByte(char byte) const noexcept;
@@ -20,7 +20,7 @@ class SerialPort final {
     void WriteRegister(uint16_t offset, uint8_t value) const noexcept;
     [[nodiscard]] bool WaitForTransmitter() const noexcept;
 
-    uint16_t basePort_;
+    uint16_t base_port_;
 };
 
 }

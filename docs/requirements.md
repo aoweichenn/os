@@ -30,6 +30,9 @@
 - 构建应当可复现，串口日志和有界 QEMU 生命周期应当支持自动回归。
 - 每个源码模块必须隔离公开头文件和私有实现，并由独立 CMake target
   强制单向依赖。
+- C++ 变量和参数的语义单词使用下划线分隔；普通函数使用大驼峰；命名空间
+  每一层使用一个简短小写单词。完整回归必须通过 Clang AST 与命名空间词法
+  门禁。
 
 ## v2.0 最终目标
 
@@ -188,12 +191,13 @@ FIFO。Ring 3 Shell 在 fd 0 为空时阻塞；如果此时没有 Ready 进程�
 命令预置到内核。
 
 Shell 是独立 freestanding C++20 ELF，使用固定容量解析器实现 help、echo、
-pwd、ls、mkdir、write、cat、sync 和 exit。当前完整回归为 73 项 CTest，
+pwd、ls、mkdir、write、cat、sync 和 exit。当前完整回归为 77 项 CTest，
 覆盖单元、集成、固定种子随机、最终产物审计、真实交互、双启动持久化与历史
 失败路径。v1.0 是第一周期 `13 / 13` 的完成基线。v1.1 已经完成动态物理
-内存元数据、64 TiB direct-map、64 GiB 管理以及 4 GiB 以上页帧读写回收；
-buddy、通用可释放堆/对象缓存、KVA、动态内核栈和页表回收仍是本版本的剩余
-工作。v1.1 明确保留当前四 PCB 用户路径，直到 v1.2 的 Process/Thread 模型
+内存元数据、64 TiB direct-map、64 GiB 管理、4 GiB 以上页帧读写回收，
+以及可释放、可合并并经过十万步模型验证的通用内核堆；buddy、type cache、
+KVA、动态内核栈和页表回收仍是本版本的剩余工作。v1.1 明确保留当前四 PCB
+用户路径，直到 v1.2 的 Process/Thread 模型
 通过对等测试后再迁移删除。v2 路线按
 [ADR 0019](adr/0019-v2-executable-program-baseline.md) 划分为 v1.1 至
 v1.18，v2.0 只承担集成发布。

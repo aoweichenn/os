@@ -31,13 +31,12 @@ enum class IoDescriptorStatus : uint64_t {
 
 class IoDescriptorTable final {
   public:
-    void Initialize(bool attachPipeReader, bool attachPipeWriter) noexcept;
-    [[nodiscard]] IoDescriptorStatus Allocate(IoDescriptorKind kind,
-                                              uint64_t &descriptor) noexcept;
+    void Initialize(bool attach_pipe_reader, bool attach_pipe_writer) noexcept;
+    [[nodiscard]] IoDescriptorStatus Allocate(IoDescriptorKind kind, uint64_t &descriptor) noexcept;
     [[nodiscard]] IoDescriptorStatus Lookup(uint64_t descriptor,
                                             IoDescriptorKind &kind) const noexcept;
     [[nodiscard]] IoDescriptorStatus Close(uint64_t descriptor,
-                                           IoDescriptorKind &closedKind) noexcept;
+                                           IoDescriptorKind &closed_kind) noexcept;
 
   private:
     // Initialize 会在任何读取前完整覆盖表项；去掉类内初始化可保持该类型

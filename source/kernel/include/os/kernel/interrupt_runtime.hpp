@@ -23,14 +23,14 @@ enum class InterruptRuntimeStatus : uint64_t {
 };
 
 struct InterruptRuntimeStatistics final {
-    uint64_t timerTickCount;
-    uint64_t monotonicMilliseconds;
-    uint64_t keyboardInterruptCount;
-    uint64_t supportedKeyboardEventCount;
-    uint64_t spuriousInterruptCount;
-    uint16_t picMask;
-    uint16_t pitDivisor;
-    uint64_t pitActualFrequencyHz;
+    uint64_t timer_tick_count;
+    uint64_t monotonic_milliseconds;
+    uint64_t keyboard_interrupt_count;
+    uint64_t supported_keyboard_event_count;
+    uint64_t spurious_interrupt_count;
+    uint16_t pic_mask;
+    uint16_t pit_divisor;
+    uint64_t pit_actual_frequency_hz;
 };
 
 [[nodiscard]] InterruptRuntimeStatus InitializeInterruptRuntime() noexcept;
@@ -38,6 +38,6 @@ struct InterruptRuntimeStatistics final {
 [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
 
 extern "C" [[nodiscard]] ExceptionFrame *
-osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept;
+OsKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept;
 
 }

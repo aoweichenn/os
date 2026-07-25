@@ -50,7 +50,8 @@
   \item text、rodata、data/BSS、heap、零页和 guard 的权限差异；
   \item EFER.NXE 与 CR0.WP 分别解决取指和 supervisor 写保护；
   \item 错误码 3 与 CR2=\code{0xFFFF800000100000} 为什么证明写保护执行；
-  \item 高半区 64 KiB 单调堆的对齐、溢出、容量和无释放边界；
+  \item v0.6 高半区 64 KiB 单调堆为何没有释放语义；
+  \item v1.1 边界标记、best-fit、对齐分裂、双向合并和统计守恒；
   \item 单元、集成、固定种子模型对照和 QEMU 执行各自证明什么。
   \item PIC、I/O APIC、本地 APIC 和 RFLAGS.IF 分别处于哪一层；
   \item 为什么没有 BIOS 时必须显式处理 \code{IA32\_APIC\_BASE[11]}；
@@ -63,8 +64,8 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 73 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度/IPC/文件系统/
-        Shell 性质与整机异步事件；
+  \item 77 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+        调度/IPC/文件系统/Shell 性质与整机异步事件；
   \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
   \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；
   \item 严格用户 ELF 对标识、范围、对齐、W\^X、重叠、页数和入口的检查；

@@ -172,13 +172,28 @@ os_add_kernel_memory_test(
     "unit"
 )
 os_add_kernel_memory_test(
+    os_kernel_heap_unit_tests
+    unit/kernel/kernel_heap_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
     os_kernel_memory_bootstrap_integration_tests
     integration/boot/kernel_memory_bootstrap_test.cpp
     "integration"
 )
 os_add_kernel_memory_test(
+    os_kernel_heap_lifecycle_integration_tests
+    integration/boot/kernel_heap_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_memory_test(
     os_kernel_memory_management_randomized_tests
     randomized/kernel/memory_management_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_memory_test(
+    os_kernel_heap_randomized_tests
+    randomized/kernel/kernel_heap_randomized_test.cpp
     "randomized"
 )
 
@@ -1057,6 +1072,34 @@ set_tests_properties(
     os_python_tooling_unit_tests
     PROPERTIES
         LABELS "unit"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+)
+
+find_program(
+    OS_RUN_CLANG_TIDY_EXECUTABLE
+    NAMES run-clang-tidy
+    REQUIRED
+)
+set(OS_CPP_IDENTIFIER_AUDIT_PARALLEL_JOB_COUNT 4)
+add_test(
+    NAME os_cpp_identifier_naming_check
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/cpp_identifier_naming.py"
+        --project-root
+        "${PROJECT_SOURCE_DIR}"
+        --build-directory
+        "${PROJECT_BINARY_DIR}"
+        --run-clang-tidy
+        "${OS_RUN_CLANG_TIDY_EXECUTABLE}"
+        --jobs
+        "${OS_CPP_IDENTIFIER_AUDIT_PARALLEL_JOB_COUNT}"
+)
+set_tests_properties(
+    os_cpp_identifier_naming_check
+    PROPERTIES
+        LABELS "integration"
+        TIMEOUT 120
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
 

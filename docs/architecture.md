@@ -285,7 +285,7 @@ LBA 66..N   kernel.elf（精确长度 + 扇区补零）
 | `0x03FEF000..0x03FFEFFF` | 早期内核栈保留区 |
 
 BootInfo magic 为 `OSBOOT64`，版本 2 的 13 个字段全部为 64 位。Stage 1 把其地址放入
-`RDI`，在 16 字节对齐的栈上使用 `CALL` 进入 `osKernelEntry`，从而满足
+`RDI`，在 16 字节对齐的栈上使用 `CALL` 进入 `OsKernelEntry`，从而满足
 System V AMD64 函数入口的栈约束。详细理由见
 [ADR 0007](adr/0007-two-pass-elf-loader-and-boot-info.md)。
 
@@ -326,7 +326,7 @@ CPU 压入 RIP / CS / RFLAGS / 可选错误码
   ↓
 公共桩清 DF、保存 RAX..R15、对齐 System V AMD64 栈
   ↓
-osKernelDispatchException(ExceptionFrame*)
+OsKernelDispatchException(ExceptionFrame*)
   ├─ vector 3 且 error=0：记录 BREAKPOINT_HANDLED 后返回
   └─ 其他：panic，记录现场后 CLI + HLT
 ```
@@ -455,7 +455,7 @@ PageFrameAllocator → AllocateAndMapUserPage
         ↓ PML4/PDPT/PD/PT 全层 U/S=1
 0x40000000 用户段 + 高端四页用户栈
         ↓ ProcessRuntime 构造首个 176 字节保存现场
-osKernelEnterScheduledProcess → 恢复通用寄存器与五项特权帧 → IRETQ
+OsKernelEnterScheduledProcess → 恢复通用寄存器与五项特权帧 → IRETQ
         ↓ CPL3
 用户 C++ → INT 0x80
         ↓ CPU 从 TSS 取 RSP0，压用户 SS/RSP/FLAGS/CS/RIP
@@ -464,9 +464,9 @@ osKernelEnterScheduledProcess → 恢复通用寄存器与五项特权帧 → IR
         └─ exit/异常：回收当前地址空间 → 切换下一个进程或恢复内核调用者
 ```
 
-v0.8 首次打通该边界时使用单次进入函数 `osKernelEnterUserMode`；v0.9 已将
+v0.8 首次打通该边界时使用单次进入函数 `OsKernelEnterUserMode`；v0.9 已将
 它替换为可从每进程内核栈恢复完整现场的
-`osKernelEnterScheduledProcess`。因此当前实现不存在“全局保存一个用户调用
+`OsKernelEnterScheduledProcess`。因此当前实现不存在“全局保存一个用户调用
 者栈”的隐式单进程前提。
 
 关键地址布局：
@@ -703,7 +703,7 @@ etc/e820 type 1 RAM ─────────> 最高可用完整页
 | --- | --- | --- |
 | `0xFFFF888000000000 + P` | E820 type 1 物理地址 `P` | supervisor RW/NX，普通缓存 |
 | `0xFFFF888000000000..+64TiB` | 保留窗口 | 未声明 RAM 的洞保持 not-present |
-| `0xFFFF800000000000..+64KiB` | 离散页帧 | 既有早期堆，RW/NX |
+| `0xFFFF800000000000..+64KiB` | 离散页帧 | 可回收内核堆，RW/NX |
 
 每个对齐且完整的 RAM 内部区间优先用 2 MiB PDE 大页映射；E820 边界与尾部用
 4 KiB PTE。LAPIC 等 MMIO 不进入普通 RAM 直映，继续由显式 PCD 映射负责。
@@ -716,6 +716,35 @@ direct-map 使用 32768 个 2 MiB 页，并在 `0x0000000100001000` 或更高地
 完成两组 64 位模式的写入、读回和页帧回收。64 MiB 配置保留为最小兼容回归，
 用于证明高内存自检可以有条件跳过，而通用初始化不会退回固定容量。设计与
 取舍见 [ADR 0017](adr/0017-linux-style-physical-memory-and-direct-map.md)。
+
+## v1.1 可回收内核堆
+
+物理直映解决“任意普通 RAM 如何被内核访问”，通用内核堆解决“页之上的
+不同尺寸对象如何拥有生命周期”。两者不能合并：页帧分配器管理物理所有权，
+`KernelHeap` 管理已经映射为连续虚拟区间的字节块。
+
+```text
+64 KiB RW/NX 虚拟区间
+  └─ 物理块链：size + previous-size 边界标记
+       ├─ allocated：块头 + 调用者负载
+       └─ free ───────────────┐
+                              ↓
+             地址递增双向空闲链
+                    │
+                    ├─ best-fit + 对齐分裂
+                    └─ release + 前后合并
+```
+
+分配只在候选布局全部通过后提交，失败不改变调用者输出和旧拓扑。释放先验证
+精确负载首地址、活动签名、物理块成员与相邻边界，再从空闲链摘除相邻块并
+形成唯一合并结果。完整校验器把物理块集合与空闲链集合交叉核对，而不是只看
+局部指针。
+
+启动自检完成两次不同对齐的真实写回后逆序释放，要求活动对象和当前占用归零，
+累计分配等于累计释放；日志只报告容量、峰值和最大连续空闲负载。当前分配器
+由串行启动路径调用，尚不承诺 IRQ/NMI/panic 或多 Thread 并发分配。详细
+布局、状态和取舍见
+[ADR 0020](adr/0020-reclaimable-kernel-heap.md)。
 
 ## 模块边界
 

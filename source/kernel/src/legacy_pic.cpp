@@ -47,28 +47,28 @@ void LegacyPic::Initialize() noexcept {
     WritePort8(OS_KERNEL_PIC_SLAVE_DATA_PORT, OS_KERNEL_PIC_ICW4_8086_MODE);
     WaitForPortIo();
 
-    this->masterMask_ = OS_KERNEL_PIC_INITIAL_MASK;
-    this->slaveMask_ = OS_KERNEL_PIC_INITIAL_MASK;
+    this->master_mask_ = OS_KERNEL_PIC_INITIAL_MASK;
+    this->slave_mask_ = OS_KERNEL_PIC_INITIAL_MASK;
     this->WriteMasks();
 }
 
-LegacyPicStatus LegacyPic::EnableInterruptRequest(const uint64_t interruptRequest) noexcept {
-    if (interruptRequest >= OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT) {
+LegacyPicStatus LegacyPic::EnableInterruptRequest(const uint64_t interrupt_request) noexcept {
+    if (interrupt_request >= OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT) {
         return LegacyPicStatus::InvalidInterruptRequest;
     }
 
-    if (interruptRequest < OS_KERNEL_PIC_MASTER_INTERRUPT_REQUEST_COUNT) {
-        this->masterMask_ = static_cast<uint8_t>(
-            this->masterMask_ & static_cast<uint8_t>(~(static_cast<uint8_t>(
-                                    OS_KERNEL_PIC_SINGLE_MASK_BIT << interruptRequest))));
+    if (interrupt_request < OS_KERNEL_PIC_MASTER_INTERRUPT_REQUEST_COUNT) {
+        this->master_mask_ = static_cast<uint8_t>(
+            this->master_mask_ & static_cast<uint8_t>(~(static_cast<uint8_t>(
+                                     OS_KERNEL_PIC_SINGLE_MASK_BIT << interrupt_request))));
     } else {
-        const uint64_t slaveInterruptRequest =
-            interruptRequest - OS_KERNEL_PIC_MASTER_INTERRUPT_REQUEST_COUNT;
-        this->slaveMask_ = static_cast<uint8_t>(
-            this->slaveMask_ & static_cast<uint8_t>(~(static_cast<uint8_t>(
-                                   OS_KERNEL_PIC_SINGLE_MASK_BIT << slaveInterruptRequest))));
-        this->masterMask_ = static_cast<uint8_t>(
-            this->masterMask_ &
+        const uint64_t slave_interrupt_request =
+            interrupt_request - OS_KERNEL_PIC_MASTER_INTERRUPT_REQUEST_COUNT;
+        this->slave_mask_ = static_cast<uint8_t>(
+            this->slave_mask_ & static_cast<uint8_t>(~(static_cast<uint8_t>(
+                                    OS_KERNEL_PIC_SINGLE_MASK_BIT << slave_interrupt_request))));
+        this->master_mask_ = static_cast<uint8_t>(
+            this->master_mask_ &
             static_cast<uint8_t>(~(static_cast<uint8_t>(
                 OS_KERNEL_PIC_SINGLE_MASK_BIT << OS_KERNEL_PIC_CASCADE_INTERRUPT_REQUEST))));
     }
@@ -76,24 +76,24 @@ LegacyPicStatus LegacyPic::EnableInterruptRequest(const uint64_t interruptReques
     return LegacyPicStatus::Succeeded;
 }
 
-LegacyPicStatus LegacyPic::Acknowledge(const uint64_t interruptRequest) noexcept {
-    if (interruptRequest >= OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT) {
+LegacyPicStatus LegacyPic::Acknowledge(const uint64_t interrupt_request) noexcept {
+    if (interrupt_request >= OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT) {
         return LegacyPicStatus::InvalidInterruptRequest;
     }
 
-    if (interruptRequest == OS_KERNEL_PIC_MASTER_SPURIOUS_INTERRUPT_REQUEST &&
+    if (interrupt_request == OS_KERNEL_PIC_MASTER_SPURIOUS_INTERRUPT_REQUEST &&
         (this->ReadInServiceRegister(false) & OS_KERNEL_PIC_HIGHEST_IN_SERVICE_BIT) == 0U) {
         // 虚假 IRQ7 未进入主片 ISR，发送 EOI 会错误结束另一条在服务请求。
         return LegacyPicStatus::SpuriousInterrupt;
     }
-    if (interruptRequest == OS_KERNEL_PIC_SLAVE_SPURIOUS_INTERRUPT_REQUEST &&
+    if (interrupt_request == OS_KERNEL_PIC_SLAVE_SPURIOUS_INTERRUPT_REQUEST &&
         (this->ReadInServiceRegister(true) & OS_KERNEL_PIC_HIGHEST_IN_SERVICE_BIT) == 0U) {
         // 虚假 IRQ15 不确认从片，但主片已经接受级联 IRQ2，仍需向主片 EOI。
         WritePort8(OS_KERNEL_PIC_MASTER_COMMAND_PORT, OS_KERNEL_PIC_OCW2_NON_SPECIFIC_EOI);
         return LegacyPicStatus::SpuriousInterrupt;
     }
 
-    if (interruptRequest >= OS_KERNEL_PIC_MASTER_INTERRUPT_REQUEST_COUNT) {
+    if (interrupt_request >= OS_KERNEL_PIC_MASTER_INTERRUPT_REQUEST_COUNT) {
         // 真实从片 IRQ 必须先释放从片优先级，再释放主片级联优先级。
         WritePort8(OS_KERNEL_PIC_SLAVE_COMMAND_PORT, OS_KERNEL_PIC_OCW2_NON_SPECIFIC_EOI);
     }
@@ -102,21 +102,21 @@ LegacyPicStatus LegacyPic::Acknowledge(const uint64_t interruptRequest) noexcept
 }
 
 uint16_t LegacyPic::Mask() const noexcept {
-    return static_cast<uint16_t>(this->masterMask_) |
-           static_cast<uint16_t>(static_cast<uint16_t>(this->slaveMask_)
+    return static_cast<uint16_t>(this->master_mask_) |
+           static_cast<uint16_t>(static_cast<uint16_t>(this->slave_mask_)
                                  << OS_KERNEL_PIC_SLAVE_MASK_SHIFT_BITS);
 }
 
 uint8_t LegacyPic::ReadInServiceRegister(const bool slave) const noexcept {
-    const uint16_t commandPort =
+    const uint16_t command_port =
         slave ? OS_KERNEL_PIC_SLAVE_COMMAND_PORT : OS_KERNEL_PIC_MASTER_COMMAND_PORT;
-    WritePort8(commandPort, OS_KERNEL_PIC_OCW3_READ_ISR);
-    return ReadPort8(commandPort);
+    WritePort8(command_port, OS_KERNEL_PIC_OCW3_READ_ISR);
+    return ReadPort8(command_port);
 }
 
 void LegacyPic::WriteMasks() const noexcept {
-    WritePort8(OS_KERNEL_PIC_MASTER_DATA_PORT, this->masterMask_);
-    WritePort8(OS_KERNEL_PIC_SLAVE_DATA_PORT, this->slaveMask_);
+    WritePort8(OS_KERNEL_PIC_MASTER_DATA_PORT, this->master_mask_);
+    WritePort8(OS_KERNEL_PIC_SLAVE_DATA_PORT, this->slave_mask_);
 }
 
 }

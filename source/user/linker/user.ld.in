@@ -1,6 +1,6 @@
 OUTPUT_FORMAT(elf64-x86-64)
 OUTPUT_ARCH(i386:x86-64)
-ENTRY(osUserEntry)
+ENTRY(OsUserEntry)
 
 OS_USER_VIRTUAL_BASE = @OS_USER_VIRTUAL_BASE@;
 OS_USER_PAGE_SIZE_BYTES = @OS_USER_PAGE_SIZE_BYTES@;
@@ -46,4 +46,4 @@ SECTIONS
     }
 }
 
-ASSERT(DEFINED(osUserEntry), "缺少用户入口 osUserEntry")
+ASSERT(DEFINED(OsUserEntry), "缺少用户入口 OsUserEntry")

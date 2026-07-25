@@ -15,10 +15,10 @@ enum class ConsoleInputStatus : uint64_t {
 };
 
 struct ConsoleInputStatistics final {
-    uint64_t submittedByteCount;
-    uint64_t readByteCount;
-    uint64_t droppedByteCount;
-    uint64_t bufferedByteCount;
+    uint64_t submitted_byte_count;
+    uint64_t read_byte_count;
+    uint64_t dropped_byte_count;
+    uint64_t buffered_byte_count;
 };
 
 class ConsoleInput final {
@@ -27,15 +27,15 @@ class ConsoleInput final {
 
     void Initialize() noexcept;
     [[nodiscard]] ConsoleInputStatus Submit(uint8_t character) noexcept;
-    [[nodiscard]] ConsoleInputStatus TryRead(uint8_t *destination, uint64_t capacityBytes,
-                                             uint64_t &readBytes) noexcept;
+    [[nodiscard]] ConsoleInputStatus TryRead(uint8_t *destination, uint64_t capacity_bytes,
+                                             uint64_t &read_bytes) noexcept;
     [[nodiscard]] bool ReadCanProgress() const noexcept;
     [[nodiscard]] ConsoleInputStatistics Statistics() const noexcept;
 
   private:
     uint8_t bytes_[OS_KERNEL_CONSOLE_INPUT_CAPACITY_BYTES]{};
-    uint64_t readIndex_{OS_KERNEL_CONSOLE_INPUT_INITIAL_INDEX};
-    uint64_t writeIndex_{OS_KERNEL_CONSOLE_INPUT_INITIAL_INDEX};
+    uint64_t read_index_{OS_KERNEL_CONSOLE_INPUT_INITIAL_INDEX};
+    uint64_t write_index_{OS_KERNEL_CONSOLE_INPUT_INITIAL_INDEX};
     ConsoleInputStatistics statistics_{};
 };
 

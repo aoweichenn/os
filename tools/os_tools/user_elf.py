@@ -37,8 +37,8 @@ OS_USER_ELF_IDENT_DATA_OFFSET = 5
 OS_USER_ELF_IDENT_VERSION_OFFSET = 6
 OS_USER_ELF_REQUIRED_SYMBOLS = frozenset(
     (
-        "osUserEntry",
-        "osUserInvokeSystemCall",
+        "OsUserEntry",
+        "OsUserInvokeSystemCall",
     )
 )
 

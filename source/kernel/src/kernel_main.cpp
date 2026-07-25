@@ -72,6 +72,12 @@ constexpr char OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE[] =
     "[OS][KERNEL] MEMORY_PERMISSIONS_VALID\r\n";
 constexpr char OS_KERNEL_MAIN_HEAP_READY_MESSAGE[] = "[OS][KERNEL] HEAP_READY\r\n";
 constexpr char OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX[] = "[OS][KERNEL] HEAP_CAPACITY_BYTES=";
+constexpr char OS_KERNEL_MAIN_HEAP_ACTIVE_ALLOCATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] HEAP_ACTIVE_ALLOCATIONS=";
+constexpr char OS_KERNEL_MAIN_HEAP_PEAK_CONSUMED_BYTES_PREFIX[] =
+    "[OS][KERNEL] HEAP_PEAK_CONSUMED_BYTES=";
+constexpr char OS_KERNEL_MAIN_HEAP_LARGEST_FREE_ALLOCATION_BYTES_PREFIX[] =
+    "[OS][KERNEL] HEAP_LARGEST_FREE_ALLOCATION_BYTES=";
 constexpr char OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] HEAP_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX[] =
@@ -244,168 +250,176 @@ constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
 };
 
 // 非零初值不能用于证明加载器执行了 p_memsz 对应的 BSS 清零。
-uint64_t kernelMainBssProbe;
+uint64_t kernel_main_bss_probe;
 
-void WriteRequiredMessage(const SerialPort &serialPort, const char *message) noexcept {
-    if (!serialPort.TryWriteString(message)) {
+void WriteRequiredMessage(const SerialPort &serial_port, const char *message) noexcept {
+    if (!serial_port.TryWriteString(message)) {
         HaltProcessor();
     }
 }
 
-void WriteRequiredHexLine(const SerialPort &serialPort, const char *prefix,
+void WriteRequiredHexLine(const SerialPort &serial_port, const char *prefix,
                           const uint64_t value) noexcept {
-    if (!serialPort.TryWriteHexLine(prefix, value)) {
+    if (!serial_port.TryWriteHexLine(prefix, value)) {
         HaltProcessor();
     }
 }
 
-void ValidateBootEnvironment(const SerialPort &serialPort, const BootInfo *bootInfo) noexcept {
-    if (ValidateBootInfo(bootInfo) != BootInfoValidationStatus::Succeeded) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_BOOT_INFO_INVALID_MESSAGE);
+void ValidateBootEnvironment(const SerialPort &serial_port, const BootInfo *boot_info) noexcept {
+    if (ValidateBootInfo(boot_info) != BootInfoValidationStatus::Succeeded) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BOOT_INFO_INVALID_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_BOOT_INFO_VALID_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BOOT_INFO_VALID_MESSAGE);
 
-    if (kernelMainBssProbe != OS_KERNEL_MAIN_BSS_PROBE_ZERO_VALUE) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_BSS_INVALID_MESSAGE);
+    if (kernel_main_bss_probe != OS_KERNEL_MAIN_BSS_PROBE_ZERO_VALUE) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BSS_INVALID_MESSAGE);
         HaltProcessor();
     }
-    kernelMainBssProbe = OS_KERNEL_MAIN_BSS_PROBE_WRITTEN_VALUE;
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_BSS_ZEROED_MESSAGE);
+    kernel_main_bss_probe = OS_KERNEL_MAIN_BSS_PROBE_WRITTEN_VALUE;
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BSS_ZEROED_MESSAGE);
 
-    if (ReadPageTableRoot() != bootInfo->pageTableRootPhysicalAddress) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_CR3_INVALID_MESSAGE);
+    if (ReadPageTableRoot() != boot_info->page_table_root_physical_address) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CR3_INVALID_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_CR3_VALID_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CR3_VALID_MESSAGE);
 }
 
-void InitializeKernelArchitecture(const SerialPort &serialPort, const BootInfo &bootInfo) noexcept {
-    static_cast<void>(bootInfo);
+void InitializeKernelArchitecture(const SerialPort &serial_port,
+                                  const BootInfo &boot_info) noexcept {
+    static_cast<void>(boot_info);
     InitializeGlobalDescriptorTable();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_GDT_READY_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_TSS_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_GDT_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TSS_READY_MESSAGE);
 
     InitializeInterruptDescriptorTable();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_IDT_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_IDT_READY_MESSAGE);
     if (ValidateDescriptorTables() != DescriptorTableValidationStatus::Succeeded) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_INVALID_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_INVALID_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_VALID_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_VALID_MESSAGE);
 
     TriggerBreakpoint();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_EXCEPTION_SELF_TEST_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_EXCEPTION_SELF_TEST_READY_MESSAGE);
 }
 
-void InitializeKernelMemorySubsystem(const SerialPort &serialPort,
-                                     const BootInfo &bootInfo) noexcept {
-    const KernelMemoryInitializationStatus status = InitializeKernelMemory(bootInfo);
+void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
+                                     const BootInfo &boot_info) noexcept {
+    const KernelMemoryInitializationStatus status = InitializeKernelMemory(boot_info);
     if (status != KernelMemoryInitializationStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(status));
         HaltProcessor();
     }
     const KernelMemoryStatistics &statistics = GetKernelMemoryStatistics();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_MEMORY_MAP_VALID_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_MAP_ENTRY_COUNT_PREFIX,
-                         statistics.memoryMapEntryCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_DESCRIBED_PREFIX,
-                         statistics.describedAddressBytes);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_USABLE_PREFIX,
-                         statistics.reportedUsableMemoryBytes);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_MANAGED_PREFIX,
-                         statistics.managedUsableMemoryBytes);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MEMORY_MANAGED_LIMIT_PREFIX,
-                         statistics.managedPhysicalAddressLimit);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PHYSICAL_ADDRESS_WIDTH_PREFIX,
-                         statistics.physicalAddressWidthBits);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_VIRTUAL_ADDRESS_WIDTH_PREFIX,
-                         statistics.virtualAddressWidthBits);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FIVE_LEVEL_PAGING_SUPPORTED_PREFIX,
-                         statistics.fiveLevelPagingSupported);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_ADDRESS_PREFIX,
-                         statistics.frameStateStoragePhysicalAddress);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_SIZE_PREFIX,
-                         statistics.frameStateStorageSizeBytes);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX,
-                         statistics.freeFrameCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX,
-                         statistics.allocatedFrameCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX,
-                         statistics.reservedFrameCount);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
-                         statistics.pageTableRootPhysicalAddress);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_DIRECT_MAP_BASE_PREFIX,
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMORY_MAP_VALID_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_MAP_ENTRY_COUNT_PREFIX,
+                         statistics.memory_map_entry_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_DESCRIBED_PREFIX,
+                         statistics.described_address_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_USABLE_PREFIX,
+                         statistics.reported_usable_memory_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_MANAGED_PREFIX,
+                         statistics.managed_usable_memory_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_MANAGED_LIMIT_PREFIX,
+                         statistics.managed_physical_address_limit);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PHYSICAL_ADDRESS_WIDTH_PREFIX,
+                         statistics.physical_address_width_bits);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VIRTUAL_ADDRESS_WIDTH_PREFIX,
+                         statistics.virtual_address_width_bits);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FIVE_LEVEL_PAGING_SUPPORTED_PREFIX,
+                         statistics.five_level_paging_supported);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_ADDRESS_PREFIX,
+                         statistics.frame_state_storage_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_SIZE_PREFIX,
+                         statistics.frame_state_storage_size_bytes);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX,
+                         statistics.free_frame_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX,
+                         statistics.allocated_frame_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX,
+                         statistics.reserved_frame_count);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
+                         statistics.page_table_root_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_BASE_PREFIX,
                          OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_DIRECT_MAP_MAPPED_BYTES_PREFIX,
-                         statistics.directMapMappedBytes);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_DIRECT_MAP_LARGE_PAGE_COUNT_PREFIX,
-                         statistics.directMapLargePageCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_DIRECT_MAP_SMALL_PAGE_COUNT_PREFIX,
-                         statistics.directMapSmallPageCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_HIGH_MEMORY_TEST_ADDRESS_PREFIX,
-                         statistics.highMemoryTestPhysicalAddress);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_HIGH_MEMORY_VALIDATION_COMPLETE_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_HEAP_READY_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX,
-                         statistics.heapCapacityBytes);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_MAPPED_BYTES_PREFIX,
+                         statistics.direct_map_mapped_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_LARGE_PAGE_COUNT_PREFIX,
+                         statistics.direct_map_large_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_SMALL_PAGE_COUNT_PREFIX,
+                         statistics.direct_map_small_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HIGH_MEMORY_TEST_ADDRESS_PREFIX,
+                         statistics.high_memory_test_physical_address);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HIGH_MEMORY_VALIDATION_COMPLETE_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HEAP_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX,
+                         statistics.heap_capacity_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_ACTIVE_ALLOCATION_COUNT_PREFIX,
+                         statistics.heap_active_allocation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_PEAK_CONSUMED_BYTES_PREFIX,
+                         statistics.heap_peak_consumed_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_LARGEST_FREE_ALLOCATION_BYTES_PREFIX,
+                         statistics.heap_largest_free_allocation_bytes);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
 }
 
-void InitializeKernelDevices(const SerialPort &serialPort) noexcept {
+void InitializeKernelDevices(const SerialPort &serial_port) noexcept {
     const InterruptRuntimeStatus status = InitializeInterruptRuntime();
     if (status != InterruptRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(status));
         HaltProcessor();
     }
 
     InterruptRuntimeStatistics statistics = GetInterruptRuntimeStatistics();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIC_READY_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIC_MASK_PREFIX, statistics.picMask);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIT_READY_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIT_DIVISOR_PREFIX, statistics.pitDivisor);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIT_FREQUENCY_PREFIX,
-                         statistics.pitActualFrequencyHz);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIC_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIC_MASK_PREFIX, statistics.pic_mask);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIT_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIT_DIVISOR_PREFIX, statistics.pit_divisor);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIT_FREQUENCY_PREFIX,
+                         statistics.pit_actual_frequency_hz);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE);
 
     TriggerLegacyPicSpuriousInterrupt();
     statistics = GetInterruptRuntimeStatistics();
-    if (statistics.spuriousInterruptCount != OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
-                             statistics.spuriousInterruptCount);
+    if (statistics.spurious_interrupt_count !=
+        OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
+                             statistics.spurious_interrupt_count);
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE);
 
     EnableInterrupts();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE);
     do {
         WaitForInterrupt();
         statistics = GetInterruptRuntimeStatistics();
-    } while (statistics.timerTickCount < OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT);
+    } while (statistics.timer_tick_count < OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT);
 
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_TIMER_TICK_COUNT_PREFIX,
-                         statistics.timerTickCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_MONOTONIC_MILLISECONDS_PREFIX,
-                         statistics.monotonicMilliseconds);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TIMER_TICK_COUNT_PREFIX,
+                         statistics.timer_tick_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MONOTONIC_MILLISECONDS_PREFIX,
+                         statistics.monotonic_milliseconds);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
 }
 
-[[nodiscard]] uint8_t ExpectedFileSystemPayloadByte(const uint64_t byteIndex) noexcept {
-    return static_cast<uint8_t>((byteIndex * OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER +
+[[nodiscard]] uint8_t ExpectedFileSystemPayloadByte(const uint64_t byte_index) noexcept {
+    return static_cast<uint8_t>((byte_index * OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER +
                                  OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT) &
                                 OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK);
 }
 
-[[nodiscard]] bool ValidateFileSystemPayload(FileSystem &fileSystem) noexcept {
+[[nodiscard]] bool ValidateFileSystemPayload(FileSystem &file_system) noexcept {
     const FileSystemOpenOptions options{
         .readable = true,
         .writable = false,
@@ -413,414 +427,416 @@ void InitializeKernelDevices(const SerialPort &serialPort) noexcept {
         .truncate = false,
     };
     FileSystemHandle handle{};
-    if (fileSystem.Open(OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH,
-                        sizeof(OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH), options,
-                        handle) != FileSystemStatus::Succeeded) {
+    if (file_system.Open(OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH,
+                         sizeof(OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH), options,
+                         handle) != FileSystemStatus::Succeeded) {
         return false;
     }
     uint8_t payload[OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES]{};
-    uint64_t readBytes = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
-    bool valid = fileSystem.Read(handle, payload, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES,
-                                 readBytes) == FileSystemStatus::Succeeded &&
-                 readBytes == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
-    for (uint64_t byteIndex = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
-         byteIndex < OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES; ++byteIndex) {
-        valid = valid && payload[byteIndex] == ExpectedFileSystemPayloadByte(byteIndex);
+    uint64_t read_bytes = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
+    bool valid = file_system.Read(handle, payload, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES,
+                                  read_bytes) == FileSystemStatus::Succeeded &&
+                 read_bytes == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
+    for (uint64_t byte_index = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
+         byte_index < OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES; ++byte_index) {
+        valid = valid && payload[byte_index] == ExpectedFileSystemPayloadByte(byte_index);
     }
-    uint8_t endOfFileProbe = OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE;
-    readBytes = OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
+    uint8_t end_of_file_probe = OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE;
+    read_bytes = OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
     valid = valid &&
-            fileSystem.Read(handle, &endOfFileProbe, sizeof(endOfFileProbe), readBytes) ==
+            file_system.Read(handle, &end_of_file_probe, sizeof(end_of_file_probe), read_bytes) ==
                 FileSystemStatus::Succeeded &&
-            readBytes == OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE &&
-            fileSystem.Close(handle) == FileSystemStatus::Succeeded;
+            read_bytes == OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE &&
+            file_system.Close(handle) == FileSystemStatus::Succeeded;
     return valid;
 }
 
-void WriteFileSystemStatistics(const SerialPort &serialPort,
-                               const FileSystem &fileSystem) noexcept {
-    const FileSystemStatistics statistics = fileSystem.Statistics();
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_GENERATION_PREFIX,
-                         statistics.transactionGeneration);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX,
-                         statistics.allocatedInodeCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX,
-                         statistics.allocatedDataBlockCount);
+void WriteFileSystemStatistics(const SerialPort &serial_port,
+                               const FileSystem &file_system) noexcept {
+    const FileSystemStatistics statistics = file_system.Statistics();
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_GENERATION_PREFIX,
+                         statistics.transaction_generation);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX,
+                         statistics.allocated_inode_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX,
+                         statistics.allocated_data_block_count);
 }
 
-void InitializeKernelFileSystem(const SerialPort &serialPort, FileSystem &fileSystem,
+void InitializeKernelFileSystem(const SerialPort &serial_port, FileSystem &file_system,
                                 AtaPioDevice &device) noexcept {
     bool formatted = false;
-    const FileSystemStatus mountStatus = fileSystem.MountOrFormat(device, formatted);
-    if (mountStatus != FileSystemStatus::Succeeded) {
-        if (mountStatus == FileSystemStatus::Corrupt ||
-            mountStatus == FileSystemStatus::IncompleteTransaction) {
-            WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+    const FileSystemStatus mount_status = file_system.MountOrFormat(device, formatted);
+    if (mount_status != FileSystemStatus::Succeeded) {
+        if (mount_status == FileSystemStatus::Corrupt ||
+            mount_status == FileSystemStatus::IncompleteTransaction) {
+            WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         }
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
-                             static_cast<uint64_t>(mountStatus));
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
+                             static_cast<uint64_t>(mount_status));
         HaltProcessor();
     }
     if (formatted) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_FORMATTED_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_FORMATTED_MESSAGE);
     } else {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_MOUNTED_MESSAGE);
-        if (!ValidateFileSystemPayload(fileSystem)) {
-            WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_MOUNTED_MESSAGE);
+        if (!ValidateFileSystemPayload(file_system)) {
+            WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
             HaltProcessor();
         }
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE);
     }
-    if (fileSystem.CheckConsistency() != FileSystemStatus::Succeeded) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+    if (file_system.CheckConsistency() != FileSystemStatus::Succeeded) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
-    WriteFileSystemStatistics(serialPort, fileSystem);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteFileSystemStatistics(serial_port, file_system);
 }
 
-void FinalizeKernelFileSystem(const SerialPort &serialPort, FileSystem &fileSystem,
-                              const bool requirePayload) noexcept {
-    if (fileSystem.Sync() != FileSystemStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
+void FinalizeKernelFileSystem(const SerialPort &serial_port, FileSystem &file_system,
+                              const bool require_payload) noexcept {
+    if (file_system.Sync() != FileSystemStatus::Succeeded) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
                              static_cast<uint64_t>(FileSystemStatus::DeviceFailure));
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE);
-    if (fileSystem.CheckConsistency() != FileSystemStatus::Succeeded ||
-        (requirePayload && !ValidateFileSystemPayload(fileSystem))) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE);
+    if (file_system.CheckConsistency() != FileSystemStatus::Succeeded ||
+        (require_payload && !ValidateFileSystemPayload(file_system))) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         HaltProcessor();
     }
-    if (requirePayload) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE);
+    if (require_payload) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE);
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
-    WriteFileSystemStatistics(serialPort, fileSystem);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteFileSystemStatistics(serial_port, file_system);
 }
 
-void CreateRequiredProcess(const SerialPort &serialPort,
+void CreateRequiredProcess(const SerialPort &serial_port,
                            const UserProgramSelection selection) noexcept {
-    ProcessCreationResult creationResult{};
-    UserElfValidationStatus elfValidationStatus = UserElfValidationStatus::Succeeded;
-    UserAddressSpaceStatus addressSpaceStatus = UserAddressSpaceStatus::Succeeded;
-    const ProcessRuntimeStatus runtimeStatus =
-        CreateProcess(selection, creationResult, elfValidationStatus, addressSpaceStatus);
-    if (runtimeStatus == ProcessRuntimeStatus::InvalidElf) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
-                             static_cast<uint64_t>(elfValidationStatus));
+    ProcessCreationResult creation_result{};
+    UserElfValidationStatus elf_validation_status = UserElfValidationStatus::Succeeded;
+    UserAddressSpaceStatus address_space_status = UserAddressSpaceStatus::Succeeded;
+    const ProcessRuntimeStatus runtime_status =
+        CreateProcess(selection, creation_result, elf_validation_status, address_space_status);
+    if (runtime_status == ProcessRuntimeStatus::InvalidElf) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
+                             static_cast<uint64_t>(elf_validation_status));
         HaltProcessor();
     }
-    if (runtimeStatus != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
-                             static_cast<uint64_t>(addressSpaceStatus));
+    if (runtime_status != ProcessRuntimeStatus::Succeeded) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
+                             static_cast<uint64_t>(address_space_status));
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_ELF_VALID_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_ENTRY_PREFIX,
-                         creationResult.entryVirtualAddress);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_MAPPED_PAGE_COUNT_PREFIX,
-                         creationResult.mappedPageCount);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_STACK_READY_MESSAGE);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, creationResult.processId);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_CR3_PREFIX,
-                         creationResult.rootPhysicalAddress);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX,
-                         ProcessKernelStackTopAddress(creationResult.processIndex));
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_ELF_VALID_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ENTRY_PREFIX,
+                         creation_result.entry_virtual_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_MAPPED_PAGE_COUNT_PREFIX,
+                         creation_result.mapped_page_count);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_STACK_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, creation_result.process_id);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CR3_PREFIX,
+                         creation_result.root_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX,
+                         ProcessKernelStackTopAddress(creation_result.process_index));
 }
 
-void PrepareRequiredProcesses(const SerialPort &serialPort,
+void PrepareRequiredProcesses(const SerialPort &serial_port,
                               const UserProgramSelection selection) noexcept {
     if (InitializeProcessRuntime() != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::SchedulerFailure));
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIPE_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_READY_MESSAGE);
 
-    const uint64_t processCount = selection == UserProgramSelection::Smoke
-                                      ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
-                                      : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
-    for (uint64_t processIndex = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX; processIndex < processCount;
-         ++processIndex) {
-        UserProgramSelection processSelection = selection;
+    const uint64_t process_count = selection == UserProgramSelection::Smoke
+                                       ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
+                                       : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
+    for (uint64_t process_index = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX; process_index < process_count;
+         ++process_index) {
+        UserProgramSelection process_selection = selection;
         if (selection == UserProgramSelection::Smoke) {
-            if (processIndex == OS_KERNEL_MAIN_FIRST_PROCESS_INDEX) {
-                processSelection = UserProgramSelection::Shell;
-            } else if (processIndex == OS_KERNEL_MAIN_SECOND_PROCESS_INDEX) {
-                processSelection = UserProgramSelection::IpcProducer;
-            } else if (processIndex == OS_KERNEL_MAIN_THIRD_PROCESS_INDEX) {
-                processSelection = UserProgramSelection::IpcConsumer;
+            if (process_index == OS_KERNEL_MAIN_FIRST_PROCESS_INDEX) {
+                process_selection = UserProgramSelection::Shell;
+            } else if (process_index == OS_KERNEL_MAIN_SECOND_PROCESS_INDEX) {
+                process_selection = UserProgramSelection::IpcProducer;
+            } else if (process_index == OS_KERNEL_MAIN_THIRD_PROCESS_INDEX) {
+                process_selection = UserProgramSelection::IpcConsumer;
             } else {
-                processSelection = UserProgramSelection::SchedulerWorker;
+                process_selection = UserProgramSelection::SchedulerWorker;
             }
         }
-        CreateRequiredProcess(serialPort, processSelection);
+        CreateRequiredProcess(serial_port, process_selection);
     }
 }
 
 [[nodiscard]] bool IsExpectedProcessExecutionResult(const ProcessExecutionResult &result) noexcept {
-    const bool exitedSuccessfully = result.terminationReason == ProcessTerminationReason::Exited &&
-                                    result.exitCode == OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE;
+    const bool exited_successfully =
+        result.termination_reason == ProcessTerminationReason::Exited &&
+        result.exit_code == OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE;
     if (result.selection == UserProgramSelection::Shell) {
-        return exitedSuccessfully &&
-               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.consoleBytesRead != OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.consoleBytesWritten != OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+        return exited_successfully &&
+               result.pipe_bytes_read == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.pipe_bytes_written == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.console_bytes_read != OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.console_bytes_written != OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
     }
     if (result.selection == UserProgramSelection::IpcProducer) {
-        return exitedSuccessfully &&
-               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
-               result.fileSystemBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.fileSystemBytesWritten == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
+        return exited_successfully &&
+               result.pipe_bytes_read == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.pipe_bytes_written == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
+               result.file_system_bytes_read == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.file_system_bytes_written == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
     }
     if (result.selection == UserProgramSelection::IpcConsumer) {
-        return exitedSuccessfully &&
-               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.fileSystemBytesRead == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES &&
-               result.fileSystemBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+        return exited_successfully &&
+               result.pipe_bytes_read == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
+               result.pipe_bytes_written == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.file_system_bytes_read == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES &&
+               result.file_system_bytes_written == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
     }
     if (result.selection == UserProgramSelection::Smoke ||
         result.selection == UserProgramSelection::SchedulerWorker) {
-        return exitedSuccessfully &&
-               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.fileSystemBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.fileSystemBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+        return exited_successfully &&
+               result.pipe_bytes_read == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.pipe_bytes_written == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.file_system_bytes_read == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.file_system_bytes_written == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
     }
     if (result.selection == UserProgramSelection::InvalidOpcode) {
-        return result.terminationReason == ProcessTerminationReason::Exception &&
-               result.exceptionVector == OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR;
+        return result.termination_reason == ProcessTerminationReason::Exception &&
+               result.exception_vector == OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR;
     }
     if (result.selection == UserProgramSelection::PageFault) {
-        return result.terminationReason == ProcessTerminationReason::Exception &&
-               result.exceptionVector == OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR &&
-               result.exceptionErrorCode == OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE &&
-               result.pageFaultAddress == OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS;
+        return result.termination_reason == ProcessTerminationReason::Exception &&
+               result.exception_vector == OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR &&
+               result.exception_error_code == OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE &&
+               result.page_fault_address == OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS;
     }
     return false;
 }
 
-void WriteProcessExecutionResult(const SerialPort &serialPort,
+void WriteProcessExecutionResult(const SerialPort &serial_port,
                                  const ProcessExecutionResult &result) noexcept {
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, result.processId);
-    if (result.terminationReason == ProcessTerminationReason::Exited) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXIT_CODE_PREFIX,
-                             static_cast<uint64_t>(result.exitCode));
-    } else if (result.terminationReason == ProcessTerminationReason::Exception) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXCEPTION_VECTOR_PREFIX,
-                             result.exceptionVector);
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXCEPTION_ERROR_CODE_PREFIX,
-                             result.exceptionErrorCode);
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXCEPTION_RIP_PREFIX,
-                             result.exceptionInstructionPointer);
-        if (result.exceptionVector == OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR) {
-            WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS_PREFIX,
-                                 result.pageFaultAddress);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, result.process_id);
+    if (result.termination_reason == ProcessTerminationReason::Exited) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXIT_CODE_PREFIX,
+                             static_cast<uint64_t>(result.exit_code));
+    } else if (result.termination_reason == ProcessTerminationReason::Exception) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXCEPTION_VECTOR_PREFIX,
+                             result.exception_vector);
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXCEPTION_ERROR_CODE_PREFIX,
+                             result.exception_error_code);
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXCEPTION_RIP_PREFIX,
+                             result.exception_instruction_pointer);
+        if (result.exception_vector == OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR) {
+            WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS_PREFIX,
+                                 result.page_fault_address);
         }
     }
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_SYSTEM_CALL_COUNT_PREFIX,
-                         result.systemCallCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX, result.runTickCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX,
-                         result.dispatchCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX,
-                         result.pipeBytesRead);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX,
-                         result.pipeBytesWritten);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX,
-                         result.fileSystemBytesRead);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX,
-                         result.fileSystemBytesWritten);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_CONSOLE_READ_BYTES_PREFIX,
-                         result.consoleBytesRead);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_CONSOLE_WRITTEN_BYTES_PREFIX,
-                         result.consoleBytesWritten);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_SYSTEM_CALL_COUNT_PREFIX,
+                         result.system_call_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX,
+                         result.run_tick_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX,
+                         result.dispatch_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX,
+                         result.pipe_bytes_read);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX,
+                         result.pipe_bytes_written);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX,
+                         result.file_system_bytes_read);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX,
+                         result.file_system_bytes_written);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CONSOLE_READ_BYTES_PREFIX,
+                         result.console_bytes_read);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CONSOLE_WRITTEN_BYTES_PREFIX,
+                         result.console_bytes_written);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
 
     if (!IsExpectedProcessExecutionResult(result)) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
     }
 }
 
 [[nodiscard]] bool
 ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics) noexcept {
-    return statistics.framesBeforeProcesses.managedFrameCount ==
-               statistics.framesAfterProcesses.managedFrameCount &&
-           statistics.framesBeforeProcesses.freeFrameCount ==
-               statistics.framesAfterProcesses.freeFrameCount &&
-           statistics.framesBeforeProcesses.allocatedFrameCount ==
-               statistics.framesAfterProcesses.allocatedFrameCount &&
-           statistics.framesBeforeProcesses.reservedFrameCount ==
-               statistics.framesAfterProcesses.reservedFrameCount;
+    return statistics.frames_before_processes.managed_frame_count ==
+               statistics.frames_after_processes.managed_frame_count &&
+           statistics.frames_before_processes.free_frame_count ==
+               statistics.frames_after_processes.free_frame_count &&
+           statistics.frames_before_processes.allocated_frame_count ==
+               statistics.frames_after_processes.allocated_frame_count &&
+           statistics.frames_before_processes.reserved_frame_count ==
+               statistics.frames_after_processes.reserved_frame_count;
 }
 
-void ExecuteRequiredProcesses(const SerialPort &serialPort,
+void ExecuteRequiredProcesses(const SerialPort &serial_port,
                               const UserProgramSelection selection) noexcept {
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RING3_ENTER_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE);
-    const ProcessRuntimeStatus runtimeStatus = ExecuteProcesses();
-    if (runtimeStatus != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
-                             static_cast<uint64_t>(runtimeStatus));
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RING3_ENTER_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE);
+    const ProcessRuntimeStatus runtime_status = ExecuteProcesses();
+    if (runtime_status != ProcessRuntimeStatus::Succeeded) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+                             static_cast<uint64_t>(runtime_status));
         HaltProcessor();
     }
 
     const ProcessRuntimeStatistics statistics = GetProcessRuntimeStatistics();
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX,
-                         statistics.scheduler.createdProcessCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_TERMINATED_PROCESS_COUNT_PREFIX,
-                         statistics.scheduler.terminatedProcessCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_TIMER_TICK_COUNT_PREFIX,
-                         statistics.scheduler.timerTickCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX,
-                         statistics.scheduler.preemptionCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX,
-                         statistics.scheduler.dispatchCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX,
-                         statistics.scheduler.blockCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
-                         statistics.scheduler.wakeupCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_CAPACITY_PREFIX,
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX,
+                         statistics.scheduler.created_process_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_TERMINATED_PROCESS_COUNT_PREFIX,
+                         statistics.scheduler.terminated_process_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_TIMER_TICK_COUNT_PREFIX,
+                         statistics.scheduler.timer_tick_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX,
+                         statistics.scheduler.preemption_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX,
+                         statistics.scheduler.dispatch_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX,
+                         statistics.scheduler.block_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
+                         statistics.scheduler.wakeup_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_CAPACITY_PREFIX,
                          OS_KERNEL_PIPE_CAPACITY_BYTES);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_WRITTEN_BYTES_PREFIX,
-                         statistics.ipc.pipe.bytesWritten);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_READ_BYTES_PREFIX,
-                         statistics.ipc.pipe.bytesRead);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX,
-                         statistics.ipc.readerBlockCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX,
-                         statistics.ipc.writerBlockCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX,
-                         statistics.ipc.endOfFileObservationCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
-                         statistics.consoleInput.submittedByteCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
-                         statistics.consoleInput.readByteCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX,
-                         statistics.consoleInput.droppedByteCount);
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
-                         statistics.consoleInput.bufferedByteCount);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_WRITTEN_BYTES_PREFIX,
+                         statistics.ipc.pipe.bytes_written);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_READ_BYTES_PREFIX,
+                         statistics.ipc.pipe.bytes_read);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX,
+                         statistics.ipc.reader_block_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX,
+                         statistics.ipc.writer_block_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX,
+                         statistics.ipc.end_of_file_observation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
+                         statistics.console_input.submitted_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
+                         statistics.console_input.read_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX,
+                         statistics.console_input.dropped_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
+                         statistics.console_input.buffered_byte_count);
 
-    const uint64_t expectedProcessCount = selection == UserProgramSelection::Smoke
-                                              ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
-                                              : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
-    if (statistics.scheduler.createdProcessCount != expectedProcessCount ||
-        statistics.scheduler.terminatedProcessCount != expectedProcessCount ||
+    const uint64_t expected_process_count = selection == UserProgramSelection::Smoke
+                                                ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
+                                                : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
+    if (statistics.scheduler.created_process_count != expected_process_count ||
+        statistics.scheduler.terminated_process_count != expected_process_count ||
         (selection == UserProgramSelection::Smoke &&
-         (statistics.scheduler.preemptionCount < OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT ||
-          statistics.scheduler.blockCount < OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT ||
-          statistics.scheduler.wakeupCount != statistics.scheduler.blockCount ||
-          statistics.ipc.pipe.bytesWritten != OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES ||
-          statistics.ipc.pipe.bytesRead != OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES ||
-          statistics.ipc.pipe.bufferedByteCount != OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
-          !statistics.ipc.pipe.readerClosed || !statistics.ipc.pipe.writerClosed ||
-          statistics.ipc.writerBlockCount < OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT ||
-          statistics.ipc.endOfFileObservationCount !=
+         (statistics.scheduler.preemption_count < OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT ||
+          statistics.scheduler.block_count < OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT ||
+          statistics.scheduler.wakeup_count != statistics.scheduler.block_count ||
+          statistics.ipc.pipe.bytes_written != OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES ||
+          statistics.ipc.pipe.bytes_read != OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES ||
+          statistics.ipc.pipe.buffered_byte_count !=
+              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
+          !statistics.ipc.pipe.reader_closed || !statistics.ipc.pipe.writer_closed ||
+          statistics.ipc.writer_block_count < OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT ||
+          statistics.ipc.end_of_file_observation_count !=
               OS_KERNEL_MAIN_EXPECTED_END_OF_FILE_OBSERVATION_COUNT ||
-          statistics.ipc.brokenPipeObservationCount !=
+          statistics.ipc.broken_pipe_observation_count !=
               OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT ||
-          statistics.consoleInput.submittedByteCount ==
+          statistics.console_input.submitted_byte_count ==
               OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
-          statistics.consoleInput.submittedByteCount != statistics.consoleInput.readByteCount ||
-          statistics.consoleInput.droppedByteCount !=
+          statistics.console_input.submitted_byte_count !=
+              statistics.console_input.read_byte_count ||
+          statistics.console_input.dropped_byte_count !=
               OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
-          statistics.consoleInput.bufferedByteCount !=
+          statistics.console_input.buffered_byte_count !=
               OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT)) ||
         !ProcessResourcesWereReclaimed(statistics)) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
     }
 
-    for (uint64_t processIndex = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX;
-         processIndex < expectedProcessCount; ++processIndex) {
-        WriteProcessExecutionResult(serialPort, statistics.processes[processIndex]);
+    for (uint64_t process_index = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX;
+         process_index < expected_process_count; ++process_index) {
+        WriteProcessExecutionResult(serial_port, statistics.processes[process_index]);
     }
     if (selection == UserProgramSelection::Smoke) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIPE_TRANSFER_VALID_MESSAGE);
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIPE_ENDPOINTS_CLOSED_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_TRANSFER_VALID_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_ENDPOINTS_CLOSED_MESSAGE);
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);
 }
 
-void WriteKeyboardEvent(const SerialPort &serialPort, const KeyboardEvent &event) noexcept {
-    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_KEYBOARD_SCAN_CODE_PREFIX, event.scanCode);
+void WriteKeyboardEvent(const SerialPort &serial_port, const KeyboardEvent &event) noexcept {
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KEYBOARD_SCAN_CODE_PREFIX, event.scan_code);
     if (event.key == KeyboardKey::A && event.pressed) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_KEYBOARD_A_PRESSED_MESSAGE);
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KEYBOARD_A_PRESSED_MESSAGE);
         return;
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_KEYBOARD_SUPPORTED_EVENT_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KEYBOARD_SUPPORTED_EVENT_MESSAGE);
 }
 
-[[noreturn]] void RunKernelEventLoop(const SerialPort &serialPort) noexcept {
+[[noreturn]] void RunKernelEventLoop(const SerialPort &serial_port) noexcept {
     while (true) {
         WaitForInterrupt();
         KeyboardEvent event{};
         if (TryTakeKeyboardEvent(event)) {
-            WriteKeyboardEvent(serialPort, event);
+            WriteKeyboardEvent(serial_port, event);
         }
     }
 }
 
-[[noreturn]] void ExecuteFaultInjection(const SerialPort &serialPort,
-                                        const KernelFaultInjection faultInjection) noexcept {
-    if (faultInjection == KernelFaultInjection::InvalidOpcode) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE);
+[[noreturn]] void ExecuteFaultInjection(const SerialPort &serial_port,
+                                        const KernelFaultInjection fault_injection) noexcept {
+    if (fault_injection == KernelFaultInjection::InvalidOpcode) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE);
         TriggerInvalidOpcode();
     }
-    if (faultInjection == KernelFaultInjection::WriteProtection) {
-        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE);
+    if (fault_injection == KernelFaultInjection::WriteProtection) {
+        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE);
         TriggerWriteProtectionFault(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS);
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE);
     TriggerPageFault();
 }
-
 }
 
-[[noreturn]] void RunKernel(const BootInfo *bootInfo, const KernelFaultInjection faultInjection,
-                            const UserProgramSelection userProgramSelection) noexcept {
-    const SerialPort serialPort{OS_KERNEL_SERIAL_COM1_BASE_PORT};
-    serialPort.Initialize();
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_ENTERED_MESSAGE);
+[[noreturn]] void RunKernel(const BootInfo *boot_info, const KernelFaultInjection fault_injection,
+                            const UserProgramSelection user_program_selection) noexcept {
+    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
+    serial_port.Initialize();
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ENTERED_MESSAGE);
 
-    ValidateBootEnvironment(serialPort, bootInfo);
-    InitializeKernelArchitecture(serialPort, *bootInfo);
-    InitializeKernelMemorySubsystem(serialPort, *bootInfo);
+    ValidateBootEnvironment(serial_port, boot_info);
+    InitializeKernelArchitecture(serial_port, *boot_info);
+    InitializeKernelMemorySubsystem(serial_port, *boot_info);
 
-    if (faultInjection != KernelFaultInjection::None) {
-        ExecuteFaultInjection(serialPort, faultInjection);
+    if (fault_injection != KernelFaultInjection::None) {
+        ExecuteFaultInjection(serial_port, fault_injection);
     }
 
-    PrepareRequiredProcesses(serialPort, userProgramSelection);
-    InitializeKernelDevices(serialPort);
-    AtaPioDevice fileSystemDevice{};
-    FileSystem fileSystem{};
-    InitializeKernelFileSystem(serialPort, fileSystem, fileSystemDevice);
-    if (AttachProcessFileSystem(fileSystem) != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+    PrepareRequiredProcesses(serial_port, user_program_selection);
+    InitializeKernelDevices(serial_port);
+    AtaPioDevice file_system_device{};
+    FileSystem file_system{};
+    InitializeKernelFileSystem(serial_port, file_system, file_system_device);
+    if (AttachProcessFileSystem(file_system) != ProcessRuntimeStatus::Succeeded) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::NotInitialized));
         HaltProcessor();
     }
-    ExecuteRequiredProcesses(serialPort, userProgramSelection);
-    FinalizeKernelFileSystem(serialPort, fileSystem,
-                             userProgramSelection == UserProgramSelection::Smoke);
+    ExecuteRequiredProcesses(serial_port, user_program_selection);
+    FinalizeKernelFileSystem(serial_port, file_system,
+                             user_program_selection == UserProgramSelection::Smoke);
 
-    if (!serialPort.TryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
-                                    bootInfo->kernelFileSizeBytes) ||
-        !serialPort.TryWriteHexLine(OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX,
-                                    bootInfo->kernelLoadSegmentCount)) {
+    if (!serial_port.TryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
+                                     boot_info->kernel_file_size_bytes) ||
+        !serial_port.TryWriteHexLine(OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX,
+                                     boot_info->kernel_load_segment_count)) {
         HaltProcessor();
     }
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_READY_MESSAGE);
-    RunKernelEventLoop(serialPort);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_READY_MESSAGE);
+    RunKernelEventLoop(serial_port);
 }
-
 }

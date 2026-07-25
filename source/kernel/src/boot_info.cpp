@@ -16,51 +16,51 @@ const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS = 0x0000000000018
 const uint64_t OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES = 24ULL;
 const uint64_t OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT = 128ULL;
 
-BootInfoValidationStatus ValidateBootInfo(const BootInfo *bootInfo) noexcept {
-    if (bootInfo == nullptr) {
+BootInfoValidationStatus ValidateBootInfo(const BootInfo *boot_info) noexcept {
+    if (boot_info == nullptr) {
         return BootInfoValidationStatus::NullPointer;
     }
-    if (bootInfo->magic != OS_KERNEL_BOOT_INFO_MAGIC) {
+    if (boot_info->magic != OS_KERNEL_BOOT_INFO_MAGIC) {
         return BootInfoValidationStatus::InvalidMagic;
     }
-    if (bootInfo->version != OS_KERNEL_BOOT_INFO_VERSION) {
+    if (boot_info->version != OS_KERNEL_BOOT_INFO_VERSION) {
         return BootInfoValidationStatus::UnsupportedVersion;
     }
-    if (bootInfo->structureSizeBytes != OS_KERNEL_BOOT_INFO_STRUCTURE_SIZE_BYTES) {
+    if (boot_info->structure_size_bytes != OS_KERNEL_BOOT_INFO_STRUCTURE_SIZE_BYTES) {
         return BootInfoValidationStatus::InvalidStructureSize;
     }
-    if (bootInfo->kernelFilePhysicalAddress != OS_KERNEL_BOOT_INFO_KERNEL_FILE_PHYSICAL_ADDRESS ||
-        bootInfo->kernelFileSizeBytes == 0ULL ||
-        bootInfo->kernelFileSizeBytes > OS_KERNEL_BOOT_INFO_MAXIMUM_KERNEL_FILE_SIZE_BYTES) {
+    if (boot_info->kernel_file_physical_address !=
+            OS_KERNEL_BOOT_INFO_KERNEL_FILE_PHYSICAL_ADDRESS ||
+        boot_info->kernel_file_size_bytes == 0ULL ||
+        boot_info->kernel_file_size_bytes > OS_KERNEL_BOOT_INFO_MAXIMUM_KERNEL_FILE_SIZE_BYTES) {
         return BootInfoValidationStatus::InvalidKernelFileRange;
     }
-    if (bootInfo->kernelEntryAddress != OS_KERNEL_BOOT_INFO_KERNEL_ENTRY_ADDRESS) {
+    if (boot_info->kernel_entry_address != OS_KERNEL_BOOT_INFO_KERNEL_ENTRY_ADDRESS) {
         return BootInfoValidationStatus::InvalidKernelEntry;
     }
-    if (bootInfo->kernelLoadSegmentCount == 0ULL ||
-        bootInfo->kernelLoadSegmentCount > OS_KERNEL_BOOT_INFO_MAXIMUM_LOAD_SEGMENT_COUNT) {
+    if (boot_info->kernel_load_segment_count == 0ULL ||
+        boot_info->kernel_load_segment_count > OS_KERNEL_BOOT_INFO_MAXIMUM_LOAD_SEGMENT_COUNT) {
         return BootInfoValidationStatus::InvalidLoadSegmentCount;
     }
-    if (bootInfo->pageTableRootPhysicalAddress !=
+    if (boot_info->page_table_root_physical_address !=
         OS_KERNEL_BOOT_INFO_PAGE_TABLE_ROOT_PHYSICAL_ADDRESS) {
         return BootInfoValidationStatus::InvalidPageTableRoot;
     }
-    if (bootInfo->identityMappedSizeBytes != OS_KERNEL_BOOT_INFO_IDENTITY_MAPPED_SIZE_BYTES) {
+    if (boot_info->identity_mapped_size_bytes != OS_KERNEL_BOOT_INFO_IDENTITY_MAPPED_SIZE_BYTES) {
         return BootInfoValidationStatus::InvalidIdentityMapSize;
     }
-    if (bootInfo->kernelStackTopPhysicalAddress !=
+    if (boot_info->kernel_stack_top_physical_address !=
         OS_KERNEL_BOOT_INFO_KERNEL_STACK_TOP_PHYSICAL_ADDRESS) {
         return BootInfoValidationStatus::InvalidKernelStack;
     }
-    if (bootInfo->physicalMemoryMapAddress != OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS ||
-        bootInfo->physicalMemoryMapEntryCount == 0ULL ||
-        bootInfo->physicalMemoryMapEntryCount >
+    if (boot_info->physical_memory_map_address != OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ADDRESS ||
+        boot_info->physical_memory_map_entry_count == 0ULL ||
+        boot_info->physical_memory_map_entry_count >
             OS_KERNEL_BOOT_INFO_MAXIMUM_PHYSICAL_MEMORY_MAP_ENTRY_COUNT ||
-        bootInfo->physicalMemoryMapEntrySizeBytes !=
+        boot_info->physical_memory_map_entry_size_bytes !=
             OS_KERNEL_BOOT_INFO_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES) {
         return BootInfoValidationStatus::InvalidPhysicalMemoryMap;
     }
     return BootInfoValidationStatus::Succeeded;
 }
-
 }

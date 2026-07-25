@@ -19,22 +19,22 @@ enum class PipeStatus : uint64_t {
 };
 
 struct PipeStatistics final {
-    uint64_t bytesWritten;
-    uint64_t bytesRead;
-    uint64_t writeOperationCount;
-    uint64_t readOperationCount;
-    uint64_t bufferedByteCount;
-    bool readerClosed;
-    bool writerClosed;
+    uint64_t bytes_written;
+    uint64_t bytes_read;
+    uint64_t write_operation_count;
+    uint64_t read_operation_count;
+    uint64_t buffered_byte_count;
+    bool reader_closed;
+    bool writer_closed;
 };
 
 class Pipe final {
   public:
     void Initialize() noexcept;
-    [[nodiscard]] PipeStatus TryWrite(const uint8_t *source, uint64_t lengthBytes,
-                                      uint64_t &writtenBytes) noexcept;
-    [[nodiscard]] PipeStatus TryRead(uint8_t *destination, uint64_t capacityBytes,
-                                     uint64_t &readBytes) noexcept;
+    [[nodiscard]] PipeStatus TryWrite(const uint8_t *source, uint64_t length_bytes,
+                                      uint64_t &written_bytes) noexcept;
+    [[nodiscard]] PipeStatus TryRead(uint8_t *destination, uint64_t capacity_bytes,
+                                     uint64_t &read_bytes) noexcept;
     [[nodiscard]] PipeStatus CloseReader() noexcept;
     [[nodiscard]] PipeStatus CloseWriter() noexcept;
     [[nodiscard]] bool ReadCanProgress() noexcept;
@@ -47,15 +47,15 @@ class Pipe final {
 
     SpinLock lock_;
     uint8_t buffer_[OS_KERNEL_PIPE_CAPACITY_BYTES];
-    uint64_t readIndex_;
-    uint64_t writeIndex_;
-    uint64_t bufferedByteCount_;
-    uint64_t bytesWritten_;
-    uint64_t bytesRead_;
-    uint64_t writeOperationCount_;
-    uint64_t readOperationCount_;
-    bool readerClosed_;
-    bool writerClosed_;
+    uint64_t read_index_;
+    uint64_t write_index_;
+    uint64_t buffered_byte_count_;
+    uint64_t bytes_written_;
+    uint64_t bytes_read_;
+    uint64_t write_operation_count_;
+    uint64_t read_operation_count_;
+    bool reader_closed_;
+    bool writer_closed_;
     bool initialized_;
 };
 

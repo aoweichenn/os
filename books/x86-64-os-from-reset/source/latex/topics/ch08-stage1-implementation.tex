@@ -38,8 +38,8 @@
 向低地址增长。Stage 1 当前装入 \code{0x0800:0x0000}，即物理
 \code{0x8000}。固件只接受：
 \[
-  0x8000 \leq \mathrm{loadBegin}
-  < \mathrm{loadEnd} \leq 0x9FC00.
+  0x8000 \leq \mathrm{load_begin}
+  < \mathrm{load_end} \leq 0x9FC00.
 \]
 结束地址由扇区数乘 512 后与起始地址相加，乘法、加法和 LBA 结束位置都先在
 32 位寄存器中检查。最多 64 个扇区同时保证 \code{rep insw} 推进 16 位 DI
@@ -305,7 +305,7 @@ Stage 1 的 16 位字和能发现许多单字变化，但交换两个字不会�
 
 负载 CRC 只覆盖 \code{file size} 个精确字节。扇区中最后的补零不属于 ELF，
 但也不能完全忽略：Stage 1 另行扫描从精确文件末尾到
-\(\mathrm{sectorCount}\times512\) 的区域，要求全部为零。这样既保持 CRC
+\(\mathrm{sector_count}\times512\) 的区域，要求全部为零。这样既保持 CRC
 语义稳定，也不允许未校验数据藏在容器尾部。
 
 \section{两遍 ELF 验证把失败保持为无副作用}
@@ -465,7 +465,7 @@ QEMU 当前给出的高端保留项可能排在低端 RAM 前面。文件顺序�
 \subsection{System V AMD64 ABI 规定第一次函数调用}
 
 Stage 1 把 BootInfo 地址放入 RDI，把 RSP 设到独立栈顶，然后用
-\code{CALL} 进入 \code{osKernelEntry}。相较裸 \code{JMP}，\code{CALL}
+\code{CALL} 进入 \code{OsKernelEntry}。相较裸 \code{JMP}，\code{CALL}
 自动压入返回地址，使入口栈状态符合普通 C++ 函数调用约定。入口被声明为
 C ABI 和不返回，避免 C++ 名字修饰并明确生命周期；如果实现错误而返回，
 Stage 1 仍有 \code{KERNEL\_RETURNED} 诊断边界。
@@ -511,7 +511,7 @@ Stage 1 已经配置 COM1，内核理论上可以直接发送。但那会形成�
 \code{CR3\_VALID} & 处理器实际页表根与交接事实一致\\
 \code{MEMORY\_MAP\_VALID} & 内核接受排序、无重叠且无溢出的物理内存图\\
 \code{PAGING\_READY} & 内核四级 4 KiB 页表已经激活\\
-\code{HEAP\_SELF\_TEST\_PASSED} & 高半区早期堆真实写入与读回成功\\
+\code{HEAP\_SELF\_TEST\_PASSED} & 高半区堆真实写入、释放、合并与一致性检查成功\\
 \code{USER\_RETURNED\_TO\_KERNEL} & 用户 exit 或异常已恢复原内核调用链\\
 \code{READY} & 当前 v1.0 的入口、异常、内存、设备、进程、IPC、文件系统与交互环境自检全部完成\\
 \bottomrule
@@ -533,7 +533,7 @@ CRC，使目标必须通过两层完整性检查后才在 ELF 语义处失败；
 变体则直接作用于 Stage 1 的轮询函数。成功路径与五类 Kernel 失败路径共同
 保证日志没有把错误归入笼统的“启动失败”。
 
-当前完整命令运行 73 项 CTest。测试代码、宿主 Python、书稿和网站不计入操作
+当前完整命令运行 77 项 CTest。测试代码、宿主 Python、书稿和网站不计入操作
 系统本体代码量；统计只覆盖 \filepath{source/} 中实际进入目标系统的 C++、
 头文件和 Intel 语法汇编。这样增长曲线描述的是机器上真实执行的实现，不会被
 测试数量和文档篇幅稀释。

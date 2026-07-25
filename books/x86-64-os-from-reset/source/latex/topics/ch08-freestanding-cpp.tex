@@ -85,9 +85,9 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 创建范围时不能直接计算 \code{begin + size} 再检查结果，因为无符号加法溢出
 后已经回绕。实现先计算从起点到最大值的剩余空间：
 \[
-  \mathrm{maximumSize}=UINT64\_MAX-begin.
+  \mathrm{maximum_size}=UINT64\_MAX-begin.
 \]
-只有 \code{size <= maximumSize} 时才执行加法。失败通过强枚举
+只有 \code{size <= maximum_size} 时才执行加法。失败通过强枚举
 \code{AddressRangeCreationStatus} 返回，不依赖异常、全局错误码或宿主
 运行库。
 

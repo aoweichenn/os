@@ -26,104 +26,107 @@ constexpr uint64_t OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE = 0ULL;
 }
 
 int main() {
-    os::test::TestContext testContext{OS_TEST_PROCESS_RANDOMIZED_SUITE_NAME};
-    uint64_t randomState = OS_TEST_PROCESS_RANDOMIZED_SEED;
-    bool allInvariantsHeld = true;
+    os::test::TestContext test_context{OS_TEST_PROCESS_RANDOMIZED_SUITE_NAME};
+    uint64_t random_state = OS_TEST_PROCESS_RANDOMIZED_SEED;
+    bool all_invariants_held = true;
 
-    for (uint64_t scenarioIndex = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-         scenarioIndex < OS_TEST_PROCESS_RANDOMIZED_SCENARIO_COUNT; ++scenarioIndex) {
-        const uint64_t quantumTicks =
-            NextRandom(randomState) % OS_TEST_PROCESS_RANDOMIZED_MAXIMUM_QUANTUM_TICKS +
+    for (uint64_t scenario_index = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+         scenario_index < OS_TEST_PROCESS_RANDOMIZED_SCENARIO_COUNT; ++scenario_index) {
+        const uint64_t quantum_ticks =
+            NextRandom(random_state) % OS_TEST_PROCESS_RANDOMIZED_MAXIMUM_QUANTUM_TICKS +
             OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
-        const uint64_t processCount =
-            NextRandom(randomState) % os::kernel::OS_KERNEL_PROCESS_CAPACITY +
+        const uint64_t process_count =
+            NextRandom(random_state) % os::kernel::OS_KERNEL_PROCESS_CAPACITY +
             OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
-        const uint64_t timerTickCount =
-            NextRandom(randomState) % OS_TEST_PROCESS_RANDOMIZED_MAXIMUM_TIMER_TICKS +
+        const uint64_t timer_tick_count =
+            NextRandom(random_state) % OS_TEST_PROCESS_RANDOMIZED_MAXIMUM_TIMER_TICKS +
             OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
 
         os::kernel::ProcessScheduler scheduler{};
-        allInvariantsHeld = allInvariantsHeld && scheduler.Initialize(quantumTicks) ==
-                                                     os::kernel::ProcessSchedulerStatus::Succeeded;
-        for (uint64_t processIndex = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-             processIndex < processCount; ++processIndex) {
-            uint64_t createdProcessIndex = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
-            uint64_t processId = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-            allInvariantsHeld =
-                allInvariantsHeld && scheduler.CreateProcess(createdProcessIndex, processId) ==
-                                         os::kernel::ProcessSchedulerStatus::Succeeded;
+        all_invariants_held =
+            all_invariants_held &&
+            scheduler.Initialize(quantum_ticks) == os::kernel::ProcessSchedulerStatus::Succeeded;
+        for (uint64_t process_index = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+             process_index < process_count; ++process_index) {
+            uint64_t created_process_index = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
+            uint64_t process_id = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+            all_invariants_held =
+                all_invariants_held && scheduler.CreateProcess(created_process_index, process_id) ==
+                                           os::kernel::ProcessSchedulerStatus::Succeeded;
         }
 
         os::kernel::ProcessSchedulingDecision decision{};
-        allInvariantsHeld = allInvariantsHeld && scheduler.Start(decision) ==
-                                                     os::kernel::ProcessSchedulerStatus::Succeeded;
-        for (uint64_t tickIndex = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-             tickIndex < timerTickCount; ++tickIndex) {
-            allInvariantsHeld =
-                allInvariantsHeld && scheduler.HandleTimerTick(decision) ==
-                                         os::kernel::ProcessSchedulerStatus::Succeeded;
-            uint64_t runningProcessCount = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-            uint64_t accumulatedRunTickCount = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-            for (uint64_t processIndex = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-                 processIndex < processCount; ++processIndex) {
+        all_invariants_held =
+            all_invariants_held &&
+            scheduler.Start(decision) == os::kernel::ProcessSchedulerStatus::Succeeded;
+        for (uint64_t tick_index = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+             tick_index < timer_tick_count; ++tick_index) {
+            all_invariants_held =
+                all_invariants_held && scheduler.HandleTimerTick(decision) ==
+                                           os::kernel::ProcessSchedulerStatus::Succeeded;
+            uint64_t running_process_count = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+            uint64_t accumulated_run_tick_count = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+            for (uint64_t process_index = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+                 process_index < process_count; ++process_index) {
                 os::kernel::ProcessSchedulerEntry entry{};
-                allInvariantsHeld =
-                    allInvariantsHeld && scheduler.ReadEntry(processIndex, entry) ==
-                                             os::kernel::ProcessSchedulerStatus::Succeeded;
+                all_invariants_held =
+                    all_invariants_held && scheduler.ReadEntry(process_index, entry) ==
+                                               os::kernel::ProcessSchedulerStatus::Succeeded;
                 if (entry.state == os::kernel::ProcessState::Running) {
-                    runningProcessCount += OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
+                    running_process_count += OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
                 }
-                accumulatedRunTickCount += entry.runTickCount;
+                accumulated_run_tick_count += entry.run_tick_count;
             }
-            allInvariantsHeld =
-                allInvariantsHeld &&
-                runningProcessCount == OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT &&
-                accumulatedRunTickCount == tickIndex + OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
+            all_invariants_held =
+                all_invariants_held &&
+                running_process_count == OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT &&
+                accumulated_run_tick_count ==
+                    tick_index + OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
         }
 
-        if (processCount > OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT) {
-            const os::kernel::ProcessWaitReason waitReason =
-                (NextRandom(randomState) & OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT) ==
+        if (process_count > OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT) {
+            const os::kernel::ProcessWaitReason wait_reason =
+                (NextRandom(random_state) & OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT) ==
                         OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE
                     ? os::kernel::ProcessWaitReason::PipeReadable
                     : os::kernel::ProcessWaitReason::PipeWritable;
-            const uint64_t blockedProcessIndex = scheduler.CurrentProcessIndex();
-            allInvariantsHeld =
-                allInvariantsHeld && scheduler.BlockCurrentProcess(waitReason, decision) ==
-                                         os::kernel::ProcessSchedulerStatus::Succeeded;
-            os::kernel::ProcessSchedulerEntry blockedEntry{};
-            allInvariantsHeld = allInvariantsHeld &&
-                                scheduler.ReadEntry(blockedProcessIndex, blockedEntry) ==
-                                    os::kernel::ProcessSchedulerStatus::Succeeded &&
-                                blockedEntry.state == os::kernel::ProcessState::Blocked &&
-                                blockedEntry.waitReason == waitReason;
-            uint64_t wokenProcessCount = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-            allInvariantsHeld =
-                allInvariantsHeld &&
+            const uint64_t blocked_process_index = scheduler.CurrentProcessIndex();
+            all_invariants_held =
+                all_invariants_held && scheduler.BlockCurrentProcess(wait_reason, decision) ==
+                                           os::kernel::ProcessSchedulerStatus::Succeeded;
+            os::kernel::ProcessSchedulerEntry blocked_entry{};
+            all_invariants_held = all_invariants_held &&
+                                  scheduler.ReadEntry(blocked_process_index, blocked_entry) ==
+                                      os::kernel::ProcessSchedulerStatus::Succeeded &&
+                                  blocked_entry.state == os::kernel::ProcessState::Blocked &&
+                                  blocked_entry.wait_reason == wait_reason;
+            uint64_t woken_process_count = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+            all_invariants_held =
+                all_invariants_held &&
                 scheduler.WakeBlockedProcesses(
-                    waitReason, OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT, wokenProcessCount) ==
-                    os::kernel::ProcessSchedulerStatus::Succeeded &&
-                wokenProcessCount == OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
+                    wait_reason, OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT,
+                    woken_process_count) == os::kernel::ProcessSchedulerStatus::Succeeded &&
+                woken_process_count == OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT;
         }
 
-        for (uint64_t processIndex = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
-             processIndex < processCount; ++processIndex) {
-            allInvariantsHeld =
-                allInvariantsHeld && scheduler.TerminateCurrentProcess(decision) ==
-                                         os::kernel::ProcessSchedulerStatus::Succeeded;
+        for (uint64_t process_index = OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE;
+             process_index < process_count; ++process_index) {
+            all_invariants_held =
+                all_invariants_held && scheduler.TerminateCurrentProcess(decision) ==
+                                           os::kernel::ProcessSchedulerStatus::Succeeded;
         }
         const os::kernel::ProcessSchedulerStatistics statistics = scheduler.Statistics();
-        allInvariantsHeld =
-            allInvariantsHeld && decision.completed && !scheduler.IsActive() &&
-            statistics.createdProcessCount == processCount &&
-            statistics.terminatedProcessCount == processCount &&
-            statistics.timerTickCount == timerTickCount &&
-            statistics.blockCount == (processCount > OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT
-                                          ? OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT
-                                          : OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE) &&
-            statistics.wakeupCount == statistics.blockCount;
+        all_invariants_held =
+            all_invariants_held && decision.completed && !scheduler.IsActive() &&
+            statistics.created_process_count == process_count &&
+            statistics.terminated_process_count == process_count &&
+            statistics.timer_tick_count == timer_tick_count &&
+            statistics.block_count == (process_count > OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT
+                                           ? OS_TEST_PROCESS_RANDOMIZED_COUNTER_INCREMENT
+                                           : OS_TEST_PROCESS_RANDOMIZED_EMPTY_VALUE) &&
+            statistics.wakeup_count == statistics.block_count;
     }
 
-    testContext.Expect(allInvariantsHeld, OS_TEST_PROCESS_RANDOMIZED_INVARIANTS);
-    return testContext.ExitCode();
+    test_context.Expect(all_invariants_held, OS_TEST_PROCESS_RANDOMIZED_INVARIANTS);
+    return test_context.ExitCode();
 }

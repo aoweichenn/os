@@ -31,7 +31,7 @@ constexpr char OS_KERNEL_SERIAL_LINE_ENDING[] = "\r\n";
 
 }
 
-SerialPort::SerialPort(const uint16_t basePort) noexcept : basePort_{basePort} {}
+SerialPort::SerialPort(const uint16_t base_port) noexcept : base_port_{base_port} {}
 
 void SerialPort::Initialize() const noexcept {
     this->WriteRegister(OS_KERNEL_SERIAL_INTERRUPT_ENABLE_OFFSET,
@@ -72,14 +72,14 @@ bool SerialPort::TryWriteHexLine(const char *prefix, const uint64_t value) const
         return false;
     }
 
-    uint64_t remainingDigitCount = OS_KERNEL_SERIAL_HEXADECIMAL_DIGIT_COUNT;
-    while (remainingDigitCount > 0ULL) {
-        --remainingDigitCount;
-        const uint64_t shiftBitCount =
-            remainingDigitCount * OS_KERNEL_SERIAL_HEXADECIMAL_BITS_PER_DIGIT;
-        const uint64_t digitIndex =
-            (value >> shiftBitCount) & OS_KERNEL_SERIAL_HEXADECIMAL_DIGIT_MASK;
-        if (!this->TryWriteByte(OS_KERNEL_SERIAL_HEXADECIMAL_DIGITS[digitIndex])) {
+    uint64_t remaining_digit_count = OS_KERNEL_SERIAL_HEXADECIMAL_DIGIT_COUNT;
+    while (remaining_digit_count > 0ULL) {
+        --remaining_digit_count;
+        const uint64_t shift_bit_count =
+            remaining_digit_count * OS_KERNEL_SERIAL_HEXADECIMAL_BITS_PER_DIGIT;
+        const uint64_t digit_index =
+            (value >> shift_bit_count) & OS_KERNEL_SERIAL_HEXADECIMAL_DIGIT_MASK;
+        if (!this->TryWriteByte(OS_KERNEL_SERIAL_HEXADECIMAL_DIGITS[digit_index])) {
             return false;
         }
     }
@@ -87,25 +87,25 @@ bool SerialPort::TryWriteHexLine(const char *prefix, const uint64_t value) const
 }
 
 uint8_t SerialPort::ReadRegister(const uint16_t offset) const noexcept {
-    const uint16_t port = static_cast<uint16_t>(this->basePort_ + offset);
+    const uint16_t port = static_cast<uint16_t>(this->base_port_ + offset);
     uint8_t value = 0U;
     asm volatile("in al, dx" : "=a"(value) : "d"(port));
     return value;
 }
 
 void SerialPort::WriteRegister(const uint16_t offset, const uint8_t value) const noexcept {
-    const uint16_t port = static_cast<uint16_t>(this->basePort_ + offset);
+    const uint16_t port = static_cast<uint16_t>(this->base_port_ + offset);
     asm volatile("out dx, al" : : "a"(value), "d"(port));
 }
 
 bool SerialPort::WaitForTransmitter() const noexcept {
-    uint64_t remainingPollCount = OS_KERNEL_SERIAL_READY_POLL_LIMIT;
-    while (remainingPollCount > 0ULL) {
-        const uint8_t lineStatus = this->ReadRegister(OS_KERNEL_SERIAL_LINE_STATUS_OFFSET);
-        if ((lineStatus & OS_KERNEL_SERIAL_TRANSMITTER_EMPTY_BIT) != 0U) {
+    uint64_t remaining_poll_count = OS_KERNEL_SERIAL_READY_POLL_LIMIT;
+    while (remaining_poll_count > 0ULL) {
+        const uint8_t line_status = this->ReadRegister(OS_KERNEL_SERIAL_LINE_STATUS_OFFSET);
+        if ((line_status & OS_KERNEL_SERIAL_TRANSMITTER_EMPTY_BIT) != 0U) {
             return true;
         }
-        --remainingPollCount;
+        --remaining_poll_count;
     }
     return false;
 }

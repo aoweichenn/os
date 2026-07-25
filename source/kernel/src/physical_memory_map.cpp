@@ -9,8 +9,8 @@ constexpr uint64_t OS_KERNEL_MEMORY_MAP_PREVIOUS_ENTRY_OFFSET = 1ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_MAP_ALIGNMENT_DECREMENT = 1ULL;
 
 [[nodiscard]] bool TryAdd(const uint64_t left, const uint64_t right, uint64_t &result) noexcept {
-    const uint64_t maximumValue = UINT64_MAX;
-    if (right > maximumValue - left) {
+    const uint64_t maximum_value = UINT64_MAX;
+    if (right > maximum_value - left) {
         return false;
     }
     result = left + right;
@@ -24,175 +24,174 @@ constexpr uint64_t OS_KERNEL_MEMORY_MAP_ALIGNMENT_DECREMENT = 1ULL;
 }
 
 [[nodiscard]] bool TryAlignUp(const uint64_t value, const uint64_t alignment,
-                              uint64_t &alignedValue) noexcept {
-    const uint64_t alignmentMask = alignment - OS_KERNEL_MEMORY_MAP_ALIGNMENT_DECREMENT;
-    if (value > UINT64_MAX - alignmentMask) {
+                              uint64_t &aligned_value) noexcept {
+    const uint64_t alignment_mask = alignment - OS_KERNEL_MEMORY_MAP_ALIGNMENT_DECREMENT;
+    if (value > UINT64_MAX - alignment_mask) {
         return false;
     }
-    alignedValue = (value + alignmentMask) & ~alignmentMask;
+    aligned_value = (value + alignment_mask) & ~alignment_mask;
     return true;
 }
-
 }
 
-PhysicalMemoryMapValidationStatus
-ValidateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries,
-                                      const uint64_t entryCount, const uint64_t managedLimitAddress,
-                                      PhysicalMemorySummary &summary) noexcept {
+PhysicalMemoryMapValidationStatus ValidateAndSummarizePhysicalMemoryMap(
+    const PhysicalMemoryMapEntry *entries, const uint64_t entry_count,
+    const uint64_t managed_limit_address, PhysicalMemorySummary &summary) noexcept {
     if (entries == nullptr) {
         return PhysicalMemoryMapValidationStatus::NullEntries;
     }
-    if (entryCount == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
-        entryCount > OS_KERNEL_MEMORY_MAP_MAXIMUM_ENTRY_COUNT) {
+    if (entry_count == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
+        entry_count > OS_KERNEL_MEMORY_MAP_MAXIMUM_ENTRY_COUNT) {
         return PhysicalMemoryMapValidationStatus::InvalidEntryCount;
     }
-    if (managedLimitAddress == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
+    if (managed_limit_address == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
         return PhysicalMemoryMapValidationStatus::InvalidManagedLimit;
     }
 
-    PhysicalMemorySummary candidateSummary{};
-    uint64_t previousEndAddress = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
-    bool hasPreviousRegion = false;
+    PhysicalMemorySummary candidate_summary{};
+    uint64_t previous_end_address = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
+    bool has_previous_region = false;
 
-    for (uint64_t entryIndex = 0ULL; entryIndex < entryCount; ++entryIndex) {
-        const PhysicalMemoryMapEntry &entry = entries[entryIndex];
-        if (entry.lengthBytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
+    for (uint64_t entry_index = 0ULL; entry_index < entry_count; ++entry_index) {
+        const PhysicalMemoryMapEntry &entry = entries[entry_index];
+        if (entry.length_bytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
             return PhysicalMemoryMapValidationStatus::EmptyRegion;
         }
 
-        uint64_t endAddress = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
-        if (!TryAdd(entry.baseAddress, entry.lengthBytes, endAddress)) {
+        uint64_t end_address = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
+        if (!TryAdd(entry.base_address, entry.length_bytes, end_address)) {
             return PhysicalMemoryMapValidationStatus::AddressOverflow;
         }
-        if (hasPreviousRegion && entry.baseAddress < previousEndAddress) {
-            if (entry.baseAddress <
-                entries[entryIndex - OS_KERNEL_MEMORY_MAP_PREVIOUS_ENTRY_OFFSET].baseAddress) {
+        if (has_previous_region && entry.base_address < previous_end_address) {
+            if (entry.base_address <
+                entries[entry_index - OS_KERNEL_MEMORY_MAP_PREVIOUS_ENTRY_OFFSET].base_address) {
                 return PhysicalMemoryMapValidationStatus::UnsortedRegions;
             }
             return PhysicalMemoryMapValidationStatus::OverlappingRegions;
         }
-        previousEndAddress = endAddress;
-        hasPreviousRegion = true;
+        previous_end_address = end_address;
+        has_previous_region = true;
 
-        if (!TryAdd(candidateSummary.totalBytes, entry.lengthBytes, candidateSummary.totalBytes)) {
+        if (!TryAdd(candidate_summary.total_bytes, entry.length_bytes,
+                    candidate_summary.total_bytes)) {
             return PhysicalMemoryMapValidationStatus::TotalSizeOverflow;
         }
-        if (endAddress > candidateSummary.highestAddressExclusive) {
-            candidateSummary.highestAddressExclusive = endAddress;
+        if (end_address > candidate_summary.highest_address_exclusive) {
+            candidate_summary.highest_address_exclusive = end_address;
         }
 
         if (entry.type != OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE) {
             continue;
         }
-        ++candidateSummary.usableRegionCount;
-        if (endAddress > candidateSummary.highestUsableAddressExclusive) {
-            candidateSummary.highestUsableAddressExclusive = endAddress;
+        ++candidate_summary.usable_region_count;
+        if (end_address > candidate_summary.highest_usable_address_exclusive) {
+            candidate_summary.highest_usable_address_exclusive = end_address;
         }
-        if (!TryAdd(candidateSummary.usableBytes, entry.lengthBytes,
-                    candidateSummary.usableBytes)) {
+        if (!TryAdd(candidate_summary.usable_bytes, entry.length_bytes,
+                    candidate_summary.usable_bytes)) {
             return PhysicalMemoryMapValidationStatus::UsableSizeOverflow;
         }
 
-        const uint64_t managedBegin =
-            entry.baseAddress < managedLimitAddress ? entry.baseAddress : managedLimitAddress;
-        const uint64_t managedEnd =
-            endAddress < managedLimitAddress ? endAddress : managedLimitAddress;
-        if (managedBegin < managedEnd &&
-            !TryAdd(candidateSummary.managedUsableBytes, managedEnd - managedBegin,
-                    candidateSummary.managedUsableBytes)) {
+        const uint64_t managed_begin =
+            entry.base_address < managed_limit_address ? entry.base_address : managed_limit_address;
+        const uint64_t managed_end =
+            end_address < managed_limit_address ? end_address : managed_limit_address;
+        if (managed_begin < managed_end &&
+            !TryAdd(candidate_summary.managed_usable_bytes, managed_end - managed_begin,
+                    candidate_summary.managed_usable_bytes)) {
             return PhysicalMemoryMapValidationStatus::UsableSizeOverflow;
         }
     }
 
-    if (candidateSummary.managedUsableBytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
+    if (candidate_summary.managed_usable_bytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
         return PhysicalMemoryMapValidationStatus::NoManagedUsableMemory;
     }
-    summary = candidateSummary;
+    summary = candidate_summary;
     return PhysicalMemoryMapValidationStatus::Succeeded;
 }
 
 PhysicalMemoryRangeSearchStatus FindUsablePhysicalMemoryRange(
-    const PhysicalMemoryMapEntry *entries, const uint64_t entryCount,
-    const PhysicalMemoryRange *reservations, const uint64_t reservationCount,
-    const uint64_t minimumAddress, const uint64_t maximumAddressExclusive,
-    const uint64_t requiredLengthBytes, const uint64_t requiredAlignmentBytes,
+    const PhysicalMemoryMapEntry *entries, const uint64_t entry_count,
+    const PhysicalMemoryRange *reservations, const uint64_t reservation_count,
+    const uint64_t minimum_address, const uint64_t maximum_address_exclusive,
+    const uint64_t required_length_bytes, const uint64_t required_alignment_bytes,
     PhysicalMemoryRange &range) noexcept {
     if (entries == nullptr) {
         return PhysicalMemoryRangeSearchStatus::NullEntries;
     }
-    if (entryCount == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
-        entryCount > OS_KERNEL_MEMORY_MAP_MAXIMUM_ENTRY_COUNT) {
+    if (entry_count == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
+        entry_count > OS_KERNEL_MEMORY_MAP_MAXIMUM_ENTRY_COUNT) {
         return PhysicalMemoryRangeSearchStatus::InvalidEntryCount;
     }
-    if (reservationCount != OS_KERNEL_MEMORY_MAP_EMPTY_VALUE && reservations == nullptr) {
+    if (reservation_count != OS_KERNEL_MEMORY_MAP_EMPTY_VALUE && reservations == nullptr) {
         return PhysicalMemoryRangeSearchStatus::NullReservations;
     }
-    if (minimumAddress >= maximumAddressExclusive) {
+    if (minimum_address >= maximum_address_exclusive) {
         return PhysicalMemoryRangeSearchStatus::InvalidSearchRange;
     }
-    if (requiredLengthBytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
+    if (required_length_bytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE) {
         return PhysicalMemoryRangeSearchStatus::InvalidLength;
     }
-    if (!IsPowerOfTwo(requiredAlignmentBytes)) {
+    if (!IsPowerOfTwo(required_alignment_bytes)) {
         return PhysicalMemoryRangeSearchStatus::InvalidAlignment;
     }
-    for (uint64_t reservationIndex = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
-         reservationIndex < reservationCount; ++reservationIndex) {
-        const PhysicalMemoryRange &reservation = reservations[reservationIndex];
-        if (reservation.lengthBytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
-            reservation.beginAddress > UINT64_MAX - reservation.lengthBytes) {
+    for (uint64_t reservation_index = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
+         reservation_index < reservation_count; ++reservation_index) {
+        const PhysicalMemoryRange &reservation = reservations[reservation_index];
+        if (reservation.length_bytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
+            reservation.begin_address > UINT64_MAX - reservation.length_bytes) {
             return PhysicalMemoryRangeSearchStatus::InvalidReservation;
         }
     }
 
-    for (uint64_t entryIndex = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE; entryIndex < entryCount;
-         ++entryIndex) {
-        const PhysicalMemoryMapEntry &entry = entries[entryIndex];
+    for (uint64_t entry_index = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE; entry_index < entry_count;
+         ++entry_index) {
+        const PhysicalMemoryMapEntry &entry = entries[entry_index];
         if (entry.type != OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE ||
-            entry.lengthBytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
-            entry.baseAddress > UINT64_MAX - entry.lengthBytes) {
+            entry.length_bytes == OS_KERNEL_MEMORY_MAP_EMPTY_VALUE ||
+            entry.base_address > UINT64_MAX - entry.length_bytes) {
             continue;
         }
-        const uint64_t entryEndAddress = entry.baseAddress + entry.lengthBytes;
-        const uint64_t searchBeginAddress =
-            entry.baseAddress > minimumAddress ? entry.baseAddress : minimumAddress;
-        const uint64_t searchEndAddress =
-            entryEndAddress < maximumAddressExclusive ? entryEndAddress : maximumAddressExclusive;
-        uint64_t candidateBeginAddress = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
-        if (searchBeginAddress >= searchEndAddress ||
-            !TryAlignUp(searchBeginAddress, requiredAlignmentBytes, candidateBeginAddress)) {
+        const uint64_t entry_end_address = entry.base_address + entry.length_bytes;
+        const uint64_t search_begin_address =
+            entry.base_address > minimum_address ? entry.base_address : minimum_address;
+        const uint64_t search_end_address = entry_end_address < maximum_address_exclusive
+                                                ? entry_end_address
+                                                : maximum_address_exclusive;
+        uint64_t candidate_begin_address = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
+        if (search_begin_address >= search_end_address ||
+            !TryAlignUp(search_begin_address, required_alignment_bytes, candidate_begin_address)) {
             continue;
         }
 
-        while (candidateBeginAddress < searchEndAddress &&
-               requiredLengthBytes <= searchEndAddress - candidateBeginAddress) {
-            const uint64_t candidateEndAddress = candidateBeginAddress + requiredLengthBytes;
-            uint64_t blockingReservationEndAddress = candidateBeginAddress;
-            for (uint64_t reservationIndex = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
-                 reservationIndex < reservationCount; ++reservationIndex) {
-                const PhysicalMemoryRange &reservation = reservations[reservationIndex];
-                const uint64_t reservationEndAddress =
-                    reservation.beginAddress + reservation.lengthBytes;
-                if (candidateBeginAddress < reservationEndAddress &&
-                    reservation.beginAddress < candidateEndAddress &&
-                    reservationEndAddress > blockingReservationEndAddress) {
-                    blockingReservationEndAddress = reservationEndAddress;
+        while (candidate_begin_address < search_end_address &&
+               required_length_bytes <= search_end_address - candidate_begin_address) {
+            const uint64_t candidate_end_address = candidate_begin_address + required_length_bytes;
+            uint64_t blocking_reservation_end_address = candidate_begin_address;
+            for (uint64_t reservation_index = OS_KERNEL_MEMORY_MAP_EMPTY_VALUE;
+                 reservation_index < reservation_count; ++reservation_index) {
+                const PhysicalMemoryRange &reservation = reservations[reservation_index];
+                const uint64_t reservation_end_address =
+                    reservation.begin_address + reservation.length_bytes;
+                if (candidate_begin_address < reservation_end_address &&
+                    reservation.begin_address < candidate_end_address &&
+                    reservation_end_address > blocking_reservation_end_address) {
+                    blocking_reservation_end_address = reservation_end_address;
                 }
             }
-            if (blockingReservationEndAddress == candidateBeginAddress) {
+            if (blocking_reservation_end_address == candidate_begin_address) {
                 range = PhysicalMemoryRange{
-                    .beginAddress = candidateBeginAddress,
-                    .lengthBytes = requiredLengthBytes,
+                    .begin_address = candidate_begin_address,
+                    .length_bytes = required_length_bytes,
                 };
                 return PhysicalMemoryRangeSearchStatus::Succeeded;
             }
-            if (!TryAlignUp(blockingReservationEndAddress, requiredAlignmentBytes,
-                            candidateBeginAddress)) {
+            if (!TryAlignUp(blocking_reservation_end_address, required_alignment_bytes,
+                            candidate_begin_address)) {
                 break;
             }
         }
     }
     return PhysicalMemoryRangeSearchStatus::NoSuitableRange;
 }
-
 }

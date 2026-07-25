@@ -62,7 +62,7 @@ libc++、异常、RTTI 或动态分配。
 
 ## 失败语义
 
-`AddressRange::tryCreate` 在 `begin + size` 超出可表示地址时返回
+`AddressRange::TryCreate` 在 `begin + size` 超出可表示地址时返回
 `AddressRangeCreationStatus::AddressOverflow`。调用方必须检查返回值，不得假定输入合法。
 
 接口使用状态返回值和输出参数，是因为目标环境当前不引入标准库

@@ -16,26 +16,26 @@ constexpr char OS_KERNEL_EXCEPTION_BREAKPOINT_HANDLED_MESSAGE[] =
     "[OS][KERNEL] BREAKPOINT_HANDLED\r\n";
 
 void WriteBreakpointHandled() noexcept {
-    const SerialPort serialPort{OS_KERNEL_SERIAL_COM1_BASE_PORT};
-    if (!serialPort.TryWriteString(OS_KERNEL_EXCEPTION_BREAKPOINT_HANDLED_MESSAGE)) {
+    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
+    if (!serial_port.TryWriteString(OS_KERNEL_EXCEPTION_BREAKPOINT_HANDLED_MESSAGE)) {
         HaltProcessor();
     }
 }
 
 }
 
-extern "C" ExceptionFrame *osKernelDispatchException(ExceptionFrame *frame) noexcept {
+extern "C" ExceptionFrame *OsKernelDispatchException(ExceptionFrame *frame) noexcept {
     if (frame == nullptr) {
         HaltProcessor();
     }
     if (FrameOriginatedFromUser(*frame)) {
-        const uint64_t pageFaultAddress = frame->vector == OS_KERNEL_EXCEPTION_PAGE_FAULT_VECTOR
-                                              ? ReadPageFaultLinearAddress()
-                                              : OS_KERNEL_EXCEPTION_NON_PAGE_FAULT_ADDRESS;
-        return TerminateCurrentProcessFromException(*frame, pageFaultAddress);
+        const uint64_t page_fault_address = frame->vector == OS_KERNEL_EXCEPTION_PAGE_FAULT_VECTOR
+                                                ? ReadPageFaultLinearAddress()
+                                                : OS_KERNEL_EXCEPTION_NON_PAGE_FAULT_ADDRESS;
+        return TerminateCurrentProcessFromException(*frame, page_fault_address);
     }
     if (IsResumableKernelException(frame->vector) &&
-        frame->errorCode == OS_KERNEL_EXCEPTION_NORMALIZED_ERROR_CODE) {
+        frame->error_code == OS_KERNEL_EXCEPTION_NORMALIZED_ERROR_CODE) {
         WriteBreakpointHandled();
         return frame;
     }

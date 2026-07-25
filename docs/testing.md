@@ -287,6 +287,18 @@ QEMU 自行异常退出仍视为失败。
 - 目标内高内存自检查询 direct-map 权限，写入并读回两个 64 位模式，再释放
   页帧；最终进程资源回收检查继续证明后续高地址页表没有泄漏。
 
+`v1.1` 可回收内核堆增量把对象生命周期纳入同一证据链：
+
+- 单元测试覆盖无效区间、重复初始化、1/16/64/256/4096 字节对齐、失败
+  原子性、非法/内部/重复释放、向前/向后/三向合并、地址复用和全部统计；
+- 集成测试使用目标同规格 64 KiB 缓冲，组合小对象、缓存行和页对齐对象，
+  写入模式后乱序释放，并证明完整堆最大负载可以再次分配；
+- 固定种子 `0x4845415056313031` 执行 100000 次随机申请/释放，逐步核对
+  对齐、活动负载首尾模式、区间不重叠、请求字节、累计计数和失败输出，
+  每 64 步执行完整物理块/空闲链交叉校验；
+- 目标启动自检写回两个不同对齐对象后逆序释放，QEMU 要求活动分配精确为
+  零、峰值和最大连续空闲负载非零，再接受 `HEAP_SELF_TEST_PASSED`。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -331,8 +343,11 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、最高可用地址、元数据区搜索与溢出 |
 | `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、64 GiB 容量、高地址范围分配与回收 |
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
+| `os_kernel_heap_unit_tests` | 单元 | 可回收堆的对齐、原子失败、非法释放、合并、复用与统计 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
+| `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 目标堆的混合对象、数据保持、耗尽与完整恢复 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
+| `os_kernel_heap_randomized_tests` | 随机 | 固定种子 100000 步分配/释放与独立活动对象模型 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
@@ -390,12 +405,17 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
+| `os_cpp_identifier_naming_check` | 集成 | 136 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 73 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
+当前共 77 项 CTest。命名门禁使用编译数据库和 Clang AST 区分标识符种类；
+Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前
+屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
+成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
+工具由 Python 标准库实现。QEMU
 捕获器同时拥有“最终里程碑到达”和“十五秒总截止”两个终止条件，并通过
 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
