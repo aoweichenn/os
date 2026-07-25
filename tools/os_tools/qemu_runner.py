@@ -13,10 +13,14 @@ from .process import runCommand
 
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
+OS_QEMU_FIRMWARE_TIMEOUT_SECONDS = 5.0
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
+OS_QEMU_QMP_READY_TIMEOUT_SECONDS = OS_QEMU_FIRMWARE_TIMEOUT_SECONDS
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
 OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
+OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
+OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
 OS_QEMU_GUEST_MEMORY_MEBIBYTES = 64
 OS_QEMU_FIRMWARE_RESET_MARKER = "[OS][FIRMWARE] RESET"
 OS_QEMU_FIRMWARE_SERIAL_READY_MARKER = "[OS][FIRMWARE] SERIAL_READY"
@@ -330,8 +334,9 @@ def runQemuWithTimedSerial(
     projectRoot: Path,
     timeoutSeconds: float,
     lineObserver: Callable[[str], None] | None = None,
-) -> tuple[str, str, bool, int]:
-    """逐行捕获串口，并用宿主单调时钟记录每行抵达时间。"""
+    completionEvent: threading.Event | None = None,
+) -> tuple[str, str, bool, bool, int]:
+    """逐行捕获串口，并按最终里程碑或总截止条件回收目标进程。"""
     normalizedCommand = [str(argument) for argument in command]
     print(f"+ {shlex.join(normalizedCommand)}", flush=True)
 
@@ -370,11 +375,28 @@ def runQemuWithTimedSerial(
     captureThread.start()
 
     timedOut = False
+    completedByObserver = False
     try:
-        try:
-            returnCode = qemuProcess.wait(timeout=timeoutSeconds)
-        except subprocess.TimeoutExpired:
-            timedOut = True
+        completionDeadline = startTime + timeoutSeconds
+        while qemuProcess.poll() is None:
+            if completionEvent is not None and completionEvent.is_set():
+                completedByObserver = True
+                time.sleep(OS_QEMU_COMPLETION_SETTLE_SECONDS)
+                break
+            remainingSeconds = completionDeadline - time.monotonic()
+            if remainingSeconds <= 0.0:
+                timedOut = True
+                break
+            waitSeconds = min(
+                remainingSeconds,
+                OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS,
+            )
+            if completionEvent is None:
+                time.sleep(waitSeconds)
+            else:
+                completionEvent.wait(waitSeconds)
+
+        if qemuProcess.poll() is None:
             qemuProcess.terminate()
             try:
                 returnCode = qemuProcess.wait(
@@ -383,6 +405,8 @@ def runQemuWithTimedSerial(
             except subprocess.TimeoutExpired:
                 qemuProcess.kill()
                 returnCode = qemuProcess.wait()
+        else:
+            returnCode = qemuProcess.returncode
     finally:
         if qemuProcess.poll() is None:
             qemuProcess.kill()
@@ -395,6 +419,7 @@ def runQemuWithTimedSerial(
         "".join(serialLines),
         "".join(timedLines),
         timedOut,
+        completedByObserver,
         returnCode,
     )
 
@@ -433,7 +458,7 @@ def injectQemuKey(
     finishedEvent: threading.Event,
     failureMessages: list[str],
 ) -> None:
-    if not readyEvent.wait(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS):
+    if not readyEvent.wait(OS_QEMU_QMP_READY_TIMEOUT_SECONDS):
         return
 
     connectionDeadline = (
@@ -522,12 +547,16 @@ def runQemuFirmwareBoot(
     with tempfile.TemporaryDirectory(prefix="os-qemu-") as temporaryDirectory:
         qmpSocketPath = Path(temporaryDirectory) / "qmp.sock"
         keyboardReadyEvent = threading.Event()
+        protocolCompleteEvent = threading.Event()
         qemuFinishedEvent = threading.Event()
         qmpFailureMessages: list[str] = []
+        finalRequiredMarker = requiredMarkers[-1]
 
         def observeSerialLine(line: str) -> None:
             if OS_QEMU_KERNEL_READY_MARKER in line:
                 keyboardReadyEvent.set()
+            if finalRequiredMarker in line:
+                protocolCompleteEvent.set()
 
         qmpThread: threading.Thread | None = None
         if keyboardInputKey is not None:
@@ -551,13 +580,18 @@ def runQemuFirmwareBoot(
             qmpSocketPath if keyboardInputKey is not None else None,
         )
         try:
-            serialOutput, timedSerialOutput, timedOut, returnCode = (
-                runQemuWithTimedSerial(
-                    command,
-                    projectRoot,
-                    OS_QEMU_SMOKE_TIMEOUT_SECONDS,
-                    observeSerialLine if keyboardInputKey is not None else None,
-                )
+            (
+                serialOutput,
+                timedSerialOutput,
+                timedOut,
+                completedByObserver,
+                returnCode,
+            ) = runQemuWithTimedSerial(
+                command,
+                projectRoot,
+                OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+                observeSerialLine,
+                protocolCompleteEvent,
             )
         finally:
             qemuFinishedEvent.set()
@@ -570,7 +604,7 @@ def runQemuFirmwareBoot(
         raise OsToolError(
             "QEMU 键盘注入失败：" + "; ".join(qmpFailureMessages)
         )
-    if timedOut:
+    if timedOut or completedByObserver:
         try:
             validateSerialProtocol(
                 serialOutput,

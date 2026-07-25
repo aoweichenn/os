@@ -35,8 +35,10 @@
 - 故障注入镜像在第一条消息后屏蔽串口就绪状态，必须触发有界轮询超时，
   且不得输出 `SERIAL_READY`。
 
-固件最终进入 `HLT`，测试进程以两秒预算运行 QEMU，预算结束后验证捕获的
-串口协议。异常提前退出视为失败。
+固件最终进入 `HLT`。测试进程逐行捕获串口；观察到当前用例最后一个必需
+里程碑后保留短暂收尾窗口并主动回收 QEMU，尚未完成时最多等待五秒。这样既不
+用固定两秒去猜慢速 CI 的调度延迟，也不会让已停机的失败用例白白耗尽预算。
+QEMU 自行异常退出仍视为失败。
 
 `v0.2` 在同一条真实复位路径上增加磁盘加载及其失败结果；`v0.3` 继续验证
 从 A20 到 64 位入口的严格有序状态链：
@@ -211,8 +213,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 46 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
-`subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
+当前共 46 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
+捕获器同时拥有“最终里程碑到达”和“五秒总截止”两个终止条件，并通过
+`subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 

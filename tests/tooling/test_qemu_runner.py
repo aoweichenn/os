@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 import sys
 import tempfile
+import threading
 import unittest
 
 from tools.os_tools.errors import OsToolError
@@ -122,7 +123,7 @@ class QemuRunnerToolTests(unittest.TestCase):
             ),
         ]
 
-        serialOutput, timedOutput, timedOut, returnCode = (
+        serialOutput, timedOutput, timedOut, completedByObserver, returnCode = (
             runQemuWithTimedSerial(
                 command,
                 Path.cwd(),
@@ -132,6 +133,7 @@ class QemuRunnerToolTests(unittest.TestCase):
 
         self.assertEqual(serialOutput, "FIRST\nSECOND\n")
         self.assertFalse(timedOut)
+        self.assertFalse(completedByObserver)
         self.assertEqual(returnCode, 0)
         timestamps = [
             int(timestamp)
@@ -143,7 +145,7 @@ class QemuRunnerToolTests(unittest.TestCase):
     def testNotifiesObserverForEachSerialLine(self) -> None:
         observedLines: list[str] = []
 
-        serialOutput, _timedOutput, timedOut, returnCode = (
+        serialOutput, _timedOutput, timedOut, completedByObserver, returnCode = (
             runQemuWithTimedSerial(
                 [sys.executable, "-c", "print('READY', flush=True)"],
                 Path.cwd(),
@@ -155,7 +157,37 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(serialOutput, "READY\n")
         self.assertEqual(observedLines, ["READY\n"])
         self.assertFalse(timedOut)
+        self.assertFalse(completedByObserver)
         self.assertEqual(returnCode, 0)
+
+    def testStopsCaptureAfterObservedCompletion(self) -> None:
+        completionEvent = threading.Event()
+
+        def observeLine(line: str) -> None:
+            if "READY" in line:
+                completionEvent.set()
+
+        serialOutput, _timedOutput, timedOut, completedByObserver, _returnCode = (
+            runQemuWithTimedSerial(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "import time; "
+                        "print('READY', flush=True); "
+                        "time.sleep(10.0)"
+                    ),
+                ],
+                Path.cwd(),
+                1.0,
+                observeLine,
+                completionEvent,
+            )
+        )
+
+        self.assertEqual(serialOutput, "READY\n")
+        self.assertFalse(timedOut)
+        self.assertTrue(completedByObserver)
 
 
 if __name__ == "__main__":
