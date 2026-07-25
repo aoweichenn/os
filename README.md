@@ -43,16 +43,18 @@ sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，�
 完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 73 项
 CTest。
 
-第二周期已经按依赖波次重新规划：v1.1 先完成可回收内存和对象生命周期；
-随后分离 Process/Thread、建立动态调度和 `SYSCALL/SYSRET` 骨架，再完成
-类型化对象与动态 fd。VFS 先运行在旧文件系统适配器上，rootfs v2 独立演进，
-之后才引入 PID1 和磁盘 exec。虚拟内存严格按 VMA/按需分页先于 fork/COW
-的顺序建设，再进入 Unix I/O、外部 Shell、用户线程/TLS/futex、信号/TTY、
-journal 和 ABI 冻结。最终 v2.0 收敛为单 BSP、多进程、多线程、可从自研
-文件系统启动 `/sbin/init` 与外部 Shell 的类 Unix 教学系统。64 MiB、
-256 MiB 和 64 GiB 分别承担启动兼容、完整功能和容量压力，不再混为一项验收。
-详细阶段和量化验收见 [docs/roadmap.md](docs/roadmap.md)，范围取舍见
-[ADR 0018](docs/adr/0018-v2-program-rebaseline.md)。
+第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 只完成 buddy、
+kernel heap/object cache、KVA、动态内核栈和页表回收，并保留当前四进程通路；
+v1.2 再迁移到 Process/Thread、统一 WaitQueue/WakeReason 和完整 FXSAVE
+现场，v1.3 独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
+PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
+也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
+metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
+v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
+Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
+分别承担启动兼容、完整功能和容量压力。详细阶段见
+[docs/roadmap.md](docs/roadmap.md)，执行模型、语义边界和取舍见
+[ADR 0019](docs/adr/0019-v2-executable-program-baseline.md)。
 
 ## 最短构建与测试路径
 

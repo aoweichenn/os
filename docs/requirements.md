@@ -13,6 +13,8 @@
   不要求低内存配置承担高并发压力。
 - 64 GiB 是测试规格而不是实现上限；内核容量由 E820、处理器物理地址宽度
   和当前 direct-map 容量共同决定。
+- 正式 QEMU CPU 型号与必需 CPUID 特性必须冻结并在启动时检查；v2.0 要求
+  long mode、NX、SSE2 与 `SYSCALL/SYSRET`。
 - 固件、磁盘加载、模式切换、ELF64 加载和运行时均由项目实现。
 - 高级语言使用 freestanding C++20，汇编使用 NASM Intel 语法。
 - 宿主自动化使用 Python 3.11+ 标准库，构建图由 CMake 与 Ninja 管理。
@@ -39,11 +41,18 @@ v2.0 的目标不是成为完整 POSIX 或现代桌面系统，而是形成一�
   父子进程树；
 - Process 与 Thread 分离：Process 共享地址空间、文件表和文件系统上下文，
   调度器调度拥有独立 CPU 现场、栈、TLS 与信号掩码的 Thread；
-- 64 GiB 容量配置至少同时存在 512 个 Thread、其中至少 256 个 Process，
-  单 Process 至少创建 64 个 Thread；PID/TID 使用独立 `uint64_t` 身份；
+- 内核采用“中断可进入、内核不可抢占”的单 BSP 执行模型；IRQ 不阻塞，
+  调度只发生在显式阻塞/让出/退出和返回用户态前；
+- WaitQueue 统一全部阻塞，条件、超时、信号、关闭和取消只允许一个
+  WakeReason 获胜；spinlock、irq-save spinlock 和 sleep mutex 不混用；
+- CpuLocal、`SYSCALL/SYSRET` 与 `INT 0x80` 共同进入统一 UserContext 和
+  dispatcher；返回前验证 canonical 地址、RFLAGS 和特权状态；
+- 每 Thread 使用 `FXSAVE/FXRSTOR` 隔离 x87/SSE2 现场；AVX/XSAVE 在 v2.0
+  保持禁用；
 - 物理内存、内核堆、进程栈、页表、描述符和 VFS 对象都具有可回收生命周期；
 - VMA 描述地址空间意图，PTE 只表示当前驻留事实；用户地址空间支持按需
-  ELF、匿名映射、文件映射、受控栈增长、写时复制和自研用户堆；
+  ELF、匿名映射、`MAP_PRIVATE`、只读 `MAP_SHARED`、受控栈增长、写时
+  复制和自研用户堆；
 - VFS 统一根文件系统、设备和只读进程信息，根文件系统支持大文件、命名空间
   修改、同步、日志与崩溃重放；
 - 描述符使用分块动态表，支持继承、dup、close-on-exec、动态管道和共享
@@ -51,15 +60,27 @@ v2.0 的目标不是成为完整 POSIX 或现代桌面系统，而是形成一�
 - Shell 只保留必须修改自身状态的内建命令，其他命令从 `/bin` 执行，并支持
   流水线、重定向、环境、前后台任务和 Ctrl-C；
 - 用户线程通过 TLS 和 futex 构造 mutex、condition variable 等同步原语，
-  futex 的 compare-and-block 不允许丢失唤醒；
+  private futex 以 `(AddressSpaceId, aligned VA)` 为键，compare-and-block
+  不允许丢失唤醒，unmap 必须取消相关等待；
 - 信号、进程组、终端前台所有权和 sleep 使用阻塞/唤醒，不允许用户态或内核
   热路径忙等；
-- 系统调用主入口演进为 x86-64 SYSCALL/SYSRET，所有用户返回状态和结构都
-  经过固定宽度 ABI 与 canonical 地址检查。
+- 多线程语义固定：fork 只复制调用 Thread；exec 先构造候选映像，成功后才
+  汇合兄弟 Thread；ThreadExit 与 ProcessExit 分离；信号处置属于 Process，
+  signal mask 属于 Thread；
+- clean page cache、dirty/writeback 和 ordered metadata journal 分阶段
+  建立；事务必须预留 credits，并以 flush/commit/replay 证明恢复边界。
 
-完整功能在 256 MiB 配置验收；64 GiB 配置另行验证高内存、至少 1024 条
-64 KiB 管道、4096 fd、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB 单文件、
-32 个独立用户 ELF 和 16 级流水线。量化下限、版本依赖和逐阶段验收见
+正式功能矩阵如下；数字是运行时验收下限，不是固定数组长度：
+
+| 配置 | RAM | Process | Thread | 每 Process Thread | fd hard | Pipe |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| bootstrap | 64 MiB | 不规定 | 不规定 | 不规定 | 不规定 | 不规定 |
+| functional | 256 MiB | 64 | 128 | 32 | 256 | 128 |
+| capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 |
+
+capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
+单文件、32 个独立用户 ELF 和 16 级流水线。`argv/envp` 合计 128 KiB 必须
+用可回收页暂存，禁止放入大型内核栈缓冲。量化下限、运行频率和逐阶段验收见
 [开发路线](roadmap.md)。
 
 ## v2.0 非目标
@@ -67,6 +88,9 @@ v2.0 的目标不是成为完整 POSIX 或现代桌面系统，而是形成一�
 以下内容不进入 v2.0，以避免进程、内存、文件和用户环境主线被硬件广度稀释：
 
 - SMP、多核调度和跨核 TLB shootdown；
+- writable `MAP_SHARED`、`msync`、swap、overcommit 和 OOM killer；
+- 正/负 dentry cache、数据 journal、快照和在线扩容；
+- AVX/XSAVE；
 - 网络、图形、音频、USB、AHCI、NVMe 和通用 PCI 设备框架；
 - 多用户权限模型、完整 POSIX、动态链接器、共享库和自举编译器。
 
@@ -168,6 +192,8 @@ pwd、ls、mkdir、write、cat、sync 和 exit。当前完整回归为 73 项 CT
 覆盖单元、集成、固定种子随机、最终产物审计、真实交互、双启动持久化与历史
 失败路径。v1.0 是第一周期 `13 / 13` 的完成基线。v1.1 已经完成动态物理
 内存元数据、64 TiB direct-map、64 GiB 管理以及 4 GiB 以上页帧读写回收；
-通用可释放堆、动态内核栈和对象生命周期仍是本版本的剩余工作。v2 路线按
-[ADR 0018](adr/0018-v2-program-rebaseline.md) 重新划分为 v1.1 至 v1.13，
-v2.0 只承担集成发布。
+buddy、通用可释放堆/对象缓存、KVA、动态内核栈和页表回收仍是本版本的剩余
+工作。v1.1 明确保留当前四 PCB 用户路径，直到 v1.2 的 Process/Thread 模型
+通过对等测试后再迁移删除。v2 路线按
+[ADR 0019](adr/0019-v2-executable-program-baseline.md) 划分为 v1.1 至
+v1.18，v2.0 只承担集成发布。

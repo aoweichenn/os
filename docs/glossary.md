@@ -39,10 +39,18 @@
 | TLB | 处理器缓存地址翻译和页权限的 Translation Lookaside Buffer |
 | `INVLPG` | 使当前处理器中一个线性地址的 TLB 翻译失效 |
 | monotonic heap | 只向前分配、不回收单个对象的早期堆 |
+| buddy allocator | 以二次幂阶拆分与合并连续页块、能够回收物理页的分配器 |
+| KVA allocator | Kernel Virtual Address allocator；只分配内核虚拟区间，物理页和映射由调用者另行提交 |
 | identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |
 | address space | 一个页表根定义的虚拟地址到物理页及权限的映射集合 |
-| PCB | Process Control Block，保存 PID、状态、地址空间、现场与资源归属的进程控制块 |
+| PCB | v0.9–v1.1 把 Process、调度现场与固定槽合并的过渡控制块；v1.2 后由 Process/Thread 取代 |
+| Process | 共享 AddressSpace、FileTable、FsContext 和 signal disposition 的资源容器，不直接作为调度实体 |
+| Thread | 调度器选择的执行实体，拥有 TID、CPU/FXSAVE 现场、内核栈、用户栈、TLS 和 signal mask |
 | PID | Process Identifier；本项目 v0.9 使用从 1 开始单调分配的 64 位标识符 |
+| TID | Thread Identifier；与 PID、对象地址和容器槽位相互独立的 64 位身份 |
+| CpuLocal | 当前 BSP 的本地内核状态，保存 current Thread、入口栈、IRQ/抢占深度和重调度标记 |
+| UserContext | 把 INT 0x80、SYSCALL、异常和信号返回规范化后的统一用户寄存器现场 |
+| FXSAVE / FXRSTOR | 保存和恢复 x87、MMX、SSE/SSE2 扩展现场的 x86 指令 |
 | context switch | 保存当前执行现场并恢复另一个执行现场，同时切换相关地址空间与内核栈状态 |
 | round-robin | 就绪实体按循环次序取得固定时间片的调度策略 |
 | time quantum | 一个进程在被抢占前可消费的调度 tick 预算；v0.9 固定为 4 tick |
@@ -52,6 +60,10 @@
 | wakeup | 条件变化后把匹配的 Blocked 进程移回 Ready；不保证资源仍归该进程 |
 | lost wakeup | 条件检查与登记等待不原子，事件发生在两者之间而被永久错过的并发故障 |
 | spin lock | 用原子 read-modify-write 忙等取得的短临界区互斥；持有期间不得睡眠 |
+| irq-save spin lock | 取得锁前保存并关闭当前 CPU 中断、释放时恢复原 IF 的短临界区原语 |
+| sleep mutex | 竞争失败时把 Thread 放入 WaitQueue，而不是持续占用 CPU 的互斥原语 |
+| WaitQueue | 把 Blocked Thread 与可使条件改变的对象关联起来的统一等待队列 |
+| WakeReason | 条件满足、超时、信号、关闭或取消中的单赢家等待完成原因 |
 | acquire / release | 建立临界区跨执行流可见性和 happens-before 的原子内存顺序 |
 | backpressure | 有界缓冲已满时阻止生产者继续提交，使资源占用保持在容量上限内 |
 | pipe | 提供顺序字节流的 IPC 对象；空/满、端点关闭和等待者共同决定读写语义 |
@@ -92,10 +104,17 @@
 | COW | Copy-on-Write，父子暂时共享只读物理页，在首次写故障时再创建私有副本 |
 | VMA | Virtual Memory Area，描述用户虚拟区间、来源、权限和映射策略，不表示物理页已经存在 |
 | demand paging | 先登记 VMA，在首次访问页故障时才分配或读取实际页面的策略 |
+| page cache | 以 vnode 与页索引为身份缓存文件内容的内存页；clean、dirty、writeback 是不同状态 |
+| `MAP_PRIVATE` | 写入时产生私有 COW 页面、不把修改回写到底层文件的文件映射 |
+| `MAP_SHARED` | 多个映射观察同一文件页的策略；v2.0 仅支持只读形式 |
+| futex | 以用户地址上的值作为快速路径、仅在竞争时进入内核 WaitQueue 的同步机制 |
 | process group | 用于信号投递和终端作业控制的一组进程身份 |
 | session | 包含一个或多个进程组并关联控制终端的作业控制边界 |
 | line discipline | 位于字符设备和用户读取之间，处理 canonical 输入、退格、EOF 与控制字符的终端状态机 |
-| journal | 文件系统提交前记录可重放事务的持久区域，用于在断电后恢复到事务前或事务后状态 |
+| journal | 文件系统提交前记录可重放事务的持久区域；v2.0 只记录 ordered metadata |
+| transaction credit | journal 在修改前为事务预留的元数据块额度，防止执行到一半才发现日志空间不足 |
+| ordered mode | 先持久化相关文件数据、再允许元数据 commit 落盘的 journal 顺序约束 |
+| BlockRequest | 表示一次可等待设备 I/O 的独立对象，具有提交、完成、错误和超时状态 |
 | `SYSCALL` / `SYSRET` | x86-64 快速特权转换指令；需要 MSR、内核栈、RFLAGS 掩码和 canonical 返回地址共同保证安全 |
 | exception vector | CPU 为异常选择的 0..31 编号，例如 3=#BP、6=#UD、14=#PF |
 | exception error code | 部分异常由 CPU 压栈的原因字段；无错误码异常由项目桩规范化为零 |

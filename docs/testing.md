@@ -25,6 +25,54 @@
 从 CPU 复位向量启动，捕获串口输出和 QEMU 生命周期。每个里程碑至少包含
 一条成功路径和一条失败路径。
 
+## v2 演进测试配置契约
+
+当前 v1.1 已具备 64 MiB 启动回归和 64 GiB 高内存系统路径；下表是第二周期
+必须逐阶段建成的正式配置矩阵。v1.1 退出前要补齐具名的 256 MiB functional
+smoke。尚未实现的 Process/Thread、fd 与 pipe 数字是未来验收目标，不得在
+测试中伪造为已完成。
+
+| 配置 | QEMU RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 测试职责 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| bootstrap | 64 MiB | 不规定 | 不规定 | 不规定 | 不规定 | 不规定 | 启动链、异常、基础内存、全部历史故障镜像 |
+| functional | 256 MiB | 64 | 128 | 32 | 256 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
+| capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
+
+三种配置必须走同一启动链、相同动态对象实现和相同 ABI。测试配置只改变内存
+容量和运行时资源上限，不得通过条件编译换回固定 PCB、fd 或 pipe 表。
+
+执行频率固定如下：
+
+| 时机 | 门禁 |
+| --- | --- |
+| 每次提交 | 受影响单元/集成/固定种子随机测试；64 MiB boot；256 MiB smoke |
+| 每个小版本 | 全部宿主测试与产物审计；完整 256 MiB functional |
+| nightly / 候选发布 | 完整 64 GiB capacity；soak；故障和崩溃点矩阵 |
+| v2.0 发布 | 三配置全量、全部故障镜像、教材/网站构建和发布溯源 |
+
+capacity 测试必须解析来宾日志证明实际使用 4 GiB 以上物理页，不能以
+“QEMU 参数写了 64G”替代高地址证据。functional/capacity 达到资源限制时，
+必须验证调用返回明确错误、旧对象保持不变、本次资源全部回滚。
+
+### 第二周期新增通用 oracle
+
+后续每个版本除模块特有断言外，还必须复用以下性质：
+
+- `ResourceSnapshot`：操作前后的 frame、KVA、heap、Thread、Process、
+  FileDescription、Vnode、CachePage 和 BlockRequest 计数按契约守恒；
+- `WaitQueue`：condition、deadline、signal、close、cancel 中恰有一个
+  WakeReason 获胜，Thread 最多进入一次 Ready；
+- `UserContext`：`INT 0x80` 与 `SYSCALL` 对相同请求产生相同结果，非法
+  canonical 地址、RFLAGS 和特权状态被拒绝；
+- `AddressSpace`：VMA 永不重叠，PTE 权限由 VMA 推导，`CopyToUser` 不得
+  绕过 COW；
+- `PageCache`：同一 `(Vnode, page index)` 只有一个权威页面，truncate/write
+  后旧映射不可见；
+- `Journal`：每个断电点恢复为旧事务或完整新事务，replay 幂等且 fsck 一致。
+
+随机 oracle 失败时输出固定种子、精确迭代和最后一项成功操作。崩溃注入还要
+输出断电点、镜像哈希、journal 序号和第一次不一致的 fsck 事实。
+
 `v0.0` 尚无可执行固件，因此系统测试使用项目生成的空 ROM 和空磁盘，以
 `-bios` 显式传入 ROM，并使用 `-S` 暂停 CPU。该测试只验证 QEMU TCG、PC
 硬件模型、镜像尺寸和启动参数，不声明已经实现启动逻辑。

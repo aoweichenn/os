@@ -49,22 +49,26 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 /sbin/init ──fork/exec/wait──> /bin/sh ──pipe/dup/job control──> /bin/*
        └──────────── User ABI v2 / 自研用户运行时 / TLS / futex ─────────┘
                                       ↓
-             Process ──owns──> Thread(s) ──> Scheduler / Timer / Signal / TTY
-                │
-                ├──> FileTable ──> FileDescription ──> VFS
-                │                                      ├─ rootfs v2
-                │                                      ├─ devfs
-                │                                      └─ procfs
-                │
-                └──> AddressSpace ──> VMA ──> #PF / Demand paging / COW
+          SignalDisposition <── Process ──owns──> Thread(s) ──> Scheduler
+                                  │                      │          │
+                                  │                      │          └─ WaitQueue / Deadline
+                                  │                      └─ UserContext / TLS / SignalMask
+                                  ├──> FileTable ──> FileDescription ──> VFS
+                                  │                                      ├─ rootfs v2
+                                  │                                      ├─ devfs
+                                  │                                      └─ procfs
+                                  │
+                                  └──> AddressSpace ──> VMA ──> #PF / Demand paging / COW
                                             ↓
-                                    Page cache / Page tables
+                              clean → dirty → writeback cache
                                             ↓
-                         Journal / Block request queue / ATA PIO + IRQ14
+                      ordered metadata journal / BlockRequest / ATA IRQ14
                                             ↓
-                         Object allocator / Frame allocator / Direct map
+                    KVA / Object allocator / Buddy / Direct map
                                             ↓
                                   E820 / CPUID hardware facts
+
+          CpuLocal ──> current Thread / trusted entry stack / need-resched
 ```
 
 目标架构把“身份”和“存储位置”分开：
@@ -77,6 +81,98 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 - VMA 表示用户虚拟区间，不等同于已经分配的物理页；
 - block request 表示设备事务，不等同于缓存条目或文件页；
 - 资源限制是运行时策略，不是对象表的编译期长度。
+
+### Process、Thread 与架构现场
+
+Process 是共享资源容器，Thread 是唯一调度实体。Process 的终止状态与
+Thread 的退出状态属于不同状态机：
+
+```text
+Process
+  ├─ ProcessId / parent / children / process group
+  ├─ AddressSpace / FileTable / FsContext / SignalDisposition
+  └─ Thread list
+       └─ Thread
+            ├─ ThreadId / Ready | Running | Blocked | Exited
+            ├─ general registers + FXSAVE x87/SSE2 state
+            ├─ kernel stack / user stack / TLS base
+            └─ SignalMask / WaitQueue membership / WakeReason
+```
+
+`ThreadExit` 只发布当前 Thread 的栈、现场和等待关系；最后一个 Thread
+离开才触发 ProcessExit。ProcessExit 发布共享对象后为父 Process 留下
+Process Zombie，`wait` 只观察这个 Process 层状态。
+
+v1.3 的两个用户入口规范化为同一个 `UserContext`：
+
+```text
+INT 0x80 ─┐
+          ├─ validate + normalize → dispatcher → return validation
+SYSCALL ──┘                                      ├─ safe → SYSRETQ
+                                                 └─ fallback → IRETQ
+```
+
+`SYSCALL` 入口先通过 `SWAPGS` 取得单元素 CpuLocal，再从可信字段加载当前
+Thread 的内核栈；绝不在用户 RSP 上压入内核数据。CpuLocal 还保存 IRQ 深度、
+禁止调度深度和 need-resched。它是 BSP 本地入口状态，不表示已经实现 SMP。
+每次上下文切换都用 `FXSAVE/FXRSTOR` 隔离 x87/SSE2；AVX/XSAVE 在 v2.0
+禁用。
+
+### 单 BSP 内核执行与锁模型
+
+目标内核允许 IRQ 打断可中断 Ring 0 代码，但不允许调度器在任意内核调用链
+中抢占。合法调度点只有显式阻塞、让出、Thread 退出和返回用户态之前。IRQ
+只提交设备状态、唤醒 WaitQueue 并设置 need-resched，永不直接切换到另一
+Thread。
+
+| 原语 | 使用边界 | 禁止事项 |
+| --- | --- | --- |
+| SpinLock | 仅 Thread 上下文访问的短提交区 | 睡眠、调度、用户复制和无界日志 |
+| IrqSaveSpinLock | 与当前 BSP IRQ 共享的短状态 | IRQ 递归取得、睡眠和长循环 |
+| Mutex | Thread 上下文中的可睡眠临界区 | IRQ/NMI 使用、持有 spinlock 后等待 |
+
+所有阻塞对象统一使用 WaitQueue。条件满足、deadline、signal、对象关闭和
+unmap cancellation 竞争同一个原子 WakeReason；只有第一个成功提交者负责
+移除等待关系和让 Thread Ready。NMI 不进入这些通用路径，只能记录最小故障
+事实或进入不依赖动态资源的 panic。
+
+### 多线程系统调用语义
+
+| 操作 | 目标语义 |
+| --- | --- |
+| fork | 子 Process 只包含调用 fork 的 Thread |
+| exec | 先在候选 AddressSpace 完成验证；成功后汇合兄弟 Thread 并原子替换，失败保持原组不变 |
+| ThreadExit | 只退出当前 Thread |
+| ProcessExit | 终止整个 Thread 组并产生 Process Zombie |
+| signal | disposition 属于 Process，mask 属于 Thread |
+| private futex | key 为 `(AddressSpaceId, aligned user VA)`，unmap 必须取消 waiter |
+| CopyToUser | 写 COW 页前必须执行与写页故障相同的私有化 |
+
+阻塞 syscall 对“已有部分进度、尚无进度、被 signal、超时、对象关闭”的返回
+规则必须逐调用冻结。exec 的 `argv/envp` 使用可回收页分批暂存，不能在动态
+内核栈上申请 128 KiB 连续缓冲。
+
+### VM、缓存与持久化层次
+
+VMA 只描述地址意图，PTE 只描述当前驻留。匿名页故障先于文件页故障，文件页
+先进入有界 clean cache；dirty/writeback 状态在异步块层稳定后才开放。
+
+```text
+VMA policy
+  ├─ anonymous → zero-fill fault → private PhysicalPage
+  └─ file      → (Vnode, page index) clean CachePage
+                       ├─ MAP_PRIVATE write → COW private page
+                       └─ read-only MAP_SHARED → shared clean page
+```
+
+v2.0 不支持 writable `MAP_SHARED` 或 `msync`。write/truncate 必须使受影响
+clean cache 失效并撤销现有文件映射，不能继续暴露陈旧页面。clean 页可由
+LRU 丢弃后重读；dirty/writeback 页必须等写入完成或报告明确错误。
+
+journal 只记录元数据，并使用 ordered mode：相关文件数据先写到稳定介质，
+元数据 commit 才允许持久化。每个事务在修改前预留 credits，经
+descriptor、metadata、flush、commit、checkpoint 与 replay 前进。任意
+已覆盖断电点恢复后只能看到旧事务或完整新事务。
 
 ### v2.0 正常启动控制流
 
@@ -98,8 +194,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ### 资源与并发边界
 
-v2.0 仍是单处理器内核。interrupt gate、关中断提交区和自旋锁共同保护当前
-状态，但“单核”不等于可以忽略资源生命周期：
+v2.0 仍是单处理器内核，但“单核”不等于可以忽略资源生命周期：
 
 - Process、Thread、页、VMA、vnode、open-file description、pipe、
   signal frame 和 block request 都必须有唯一所有者或显式引用计数；
@@ -108,8 +203,9 @@ v2.0 仍是单处理器内核。interrupt gate、关中断提交区和自旋锁�
 - 锁顺序由模块文档统一固定，失败回滚按获得资源的逆序执行；
 - 热路径只更新有界统计，日志在状态提交后汇总输出。
 
-多核启动、per-CPU 调度队列和跨核 TLB shootdown 不进入当前目标。系统调用
-入口可以预留单 CPU 的内核本地状态，但不能虚构已经具备 SMP 安全性。
+多核启动、per-CPU 调度队列和跨核 TLB shootdown 不进入当前目标。正/负
+dentry cache、writable shared mapping、swap 和 OOM killer 同样延后，避免
+在 v2.0 主线中引入尚无独立验收闭环的并发状态。
 
 ## v0.1 ROM 与复位路径
 
