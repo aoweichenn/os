@@ -115,6 +115,10 @@ constexpr char OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX[] =
 constexpr char OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX[] = "[OS][KERNEL] PROCESS_RUN_TICKS=";
 constexpr char OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX[] =
     "[OS][KERNEL] PROCESS_DISPATCH_COUNT=";
+constexpr char OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX[] =
+    "[OS][KERNEL] PROCESS_PIPE_READ_BYTES=";
+constexpr char OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX[] =
+    "[OS][KERNEL] PROCESS_PIPE_WRITTEN_BYTES=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE[] = "[OS][KERNEL] SCHEDULER_STARTED\r\n";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX[] =
     "[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=";
@@ -126,6 +130,20 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX[] =
     "[OS][KERNEL] SCHEDULER_PREEMPTIONS=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX[] =
     "[OS][KERNEL] SCHEDULER_DISPATCHES=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] SCHEDULER_BLOCKS=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX[] = "[OS][KERNEL] SCHEDULER_WAKEUPS=";
+constexpr char OS_KERNEL_MAIN_PIPE_CAPACITY_PREFIX[] = "[OS][KERNEL] PIPE_CAPACITY_BYTES=";
+constexpr char OS_KERNEL_MAIN_PIPE_WRITTEN_BYTES_PREFIX[] = "[OS][KERNEL] PIPE_WRITTEN_BYTES=";
+constexpr char OS_KERNEL_MAIN_PIPE_READ_BYTES_PREFIX[] = "[OS][KERNEL] PIPE_READ_BYTES=";
+constexpr char OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] PIPE_READER_BLOCKS=";
+constexpr char OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] PIPE_WRITER_BLOCKS=";
+constexpr char OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX[] =
+    "[OS][KERNEL] PIPE_EOF_OBSERVATIONS=";
+constexpr char OS_KERNEL_MAIN_PIPE_READY_MESSAGE[] = "[OS][KERNEL] PIPE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PIPE_TRANSFER_VALID_MESSAGE[] =
+    "[OS][KERNEL] PIPE_TRANSFER_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_PIPE_ENDPOINTS_CLOSED_MESSAGE[] =
+    "[OS][KERNEL] PIPE_ENDPOINTS_CLOSED\r\n";
 constexpr char OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE[] =
     "[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED\r\n";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE[] = "[OS][KERNEL] SCHEDULER_COMPLETE\r\n";
@@ -142,6 +160,13 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000UL
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES = 256ULL;
+constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT = 0ULL;
+constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_END_OF_FILE_OBSERVATION_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT = 0ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
+constexpr uint64_t OS_KERNEL_MAIN_SECOND_PROCESS_INDEX = 1ULL;
 
 // 非零初值不能用于证明加载器执行了 p_memsz 对应的 BSS 清零。
 uint64_t kernelMainBssProbe;
@@ -314,22 +339,44 @@ void PrepareRequiredProcesses(const SerialPort &serialPort,
         HaltProcessor();
     }
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIPE_READY_MESSAGE);
 
     const uint64_t processCount = selection == UserProgramSelection::Smoke
                                       ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
                                       : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
     for (uint64_t processIndex = 0ULL; processIndex < processCount; ++processIndex) {
-        const UserProgramSelection processSelection =
-            processIndex == 0ULL ? selection : UserProgramSelection::SchedulerWorker;
+        UserProgramSelection processSelection = selection;
+        if (selection == UserProgramSelection::Smoke) {
+            if (processIndex == OS_KERNEL_MAIN_FIRST_PROCESS_INDEX) {
+                processSelection = UserProgramSelection::IpcProducer;
+            } else if (processIndex == OS_KERNEL_MAIN_SECOND_PROCESS_INDEX) {
+                processSelection = UserProgramSelection::IpcConsumer;
+            } else {
+                processSelection = UserProgramSelection::SchedulerWorker;
+            }
+        }
         CreateRequiredProcess(serialPort, processSelection);
     }
 }
 
 [[nodiscard]] bool IsExpectedProcessExecutionResult(const ProcessExecutionResult &result) noexcept {
+    const bool exitedSuccessfully = result.terminationReason == ProcessTerminationReason::Exited &&
+                                    result.exitCode == OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE;
+    if (result.selection == UserProgramSelection::IpcProducer) {
+        return exitedSuccessfully &&
+               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES;
+    }
+    if (result.selection == UserProgramSelection::IpcConsumer) {
+        return exitedSuccessfully &&
+               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
+               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+    }
     if (result.selection == UserProgramSelection::Smoke ||
         result.selection == UserProgramSelection::SchedulerWorker) {
-        return result.terminationReason == ProcessTerminationReason::Exited &&
-               result.exitCode == OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE;
+        return exitedSuccessfully &&
+               result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
     }
     if (result.selection == UserProgramSelection::InvalidOpcode) {
         return result.terminationReason == ProcessTerminationReason::Exception &&
@@ -367,6 +414,10 @@ void WriteProcessExecutionResult(const SerialPort &serialPort,
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX, result.runTickCount);
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX,
                          result.dispatchCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX,
+                         result.pipeBytesRead);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX,
+                         result.pipeBytesWritten);
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
 
     if (!IsExpectedProcessExecutionResult(result)) {
@@ -409,6 +460,22 @@ void ExecuteRequiredProcesses(const SerialPort &serialPort,
                          statistics.scheduler.preemptionCount);
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX,
                          statistics.scheduler.dispatchCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX,
+                         statistics.scheduler.blockCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
+                         statistics.scheduler.wakeupCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_CAPACITY_PREFIX,
+                         OS_KERNEL_PIPE_CAPACITY_BYTES);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_WRITTEN_BYTES_PREFIX,
+                         statistics.ipc.pipe.bytesWritten);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_READ_BYTES_PREFIX,
+                         statistics.ipc.pipe.bytesRead);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX,
+                         statistics.ipc.readerBlockCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX,
+                         statistics.ipc.writerBlockCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX,
+                         statistics.ipc.endOfFileObservationCount);
 
     const uint64_t expectedProcessCount = selection == UserProgramSelection::Smoke
                                               ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
@@ -416,7 +483,18 @@ void ExecuteRequiredProcesses(const SerialPort &serialPort,
     if (statistics.scheduler.createdProcessCount != expectedProcessCount ||
         statistics.scheduler.terminatedProcessCount != expectedProcessCount ||
         (selection == UserProgramSelection::Smoke &&
-         statistics.scheduler.preemptionCount < OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT) ||
+         (statistics.scheduler.preemptionCount < OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT ||
+          statistics.scheduler.blockCount < OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT ||
+          statistics.scheduler.wakeupCount != statistics.scheduler.blockCount ||
+          statistics.ipc.pipe.bytesWritten != OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES ||
+          statistics.ipc.pipe.bytesRead != OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES ||
+          statistics.ipc.pipe.bufferedByteCount != OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
+          !statistics.ipc.pipe.readerClosed || !statistics.ipc.pipe.writerClosed ||
+          statistics.ipc.writerBlockCount < OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT ||
+          statistics.ipc.endOfFileObservationCount !=
+              OS_KERNEL_MAIN_EXPECTED_END_OF_FILE_OBSERVATION_COUNT ||
+          statistics.ipc.brokenPipeObservationCount !=
+              OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT)) ||
         !ProcessResourcesWereReclaimed(statistics)) {
         WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
@@ -424,6 +502,10 @@ void ExecuteRequiredProcesses(const SerialPort &serialPort,
 
     for (uint64_t processIndex = 0ULL; processIndex < expectedProcessCount; ++processIndex) {
         WriteProcessExecutionResult(serialPort, statistics.processes[processIndex]);
+    }
+    if (selection == UserProgramSelection::Smoke) {
+        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIPE_TRANSFER_VALID_MESSAGE);
+        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PIPE_ENDPOINTS_CLOSED_MESSAGE);
     }
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);

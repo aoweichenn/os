@@ -30,4 +30,18 @@ osKernelUserSchedulerWorkerElfStart:
     incbin "@OS_USER_SCHEDULER_WORKER_ELF_PATH@"
 osKernelUserSchedulerWorkerElfEnd:
 
+align 16
+global osKernelUserIpcProducerElfStart
+global osKernelUserIpcProducerElfEnd
+osKernelUserIpcProducerElfStart:
+    incbin "@OS_USER_IPC_PRODUCER_ELF_PATH@"
+osKernelUserIpcProducerElfEnd:
+
+align 16
+global osKernelUserIpcConsumerElfStart
+global osKernelUserIpcConsumerElfEnd
+osKernelUserIpcConsumerElfStart:
+    incbin "@OS_USER_IPC_CONSUMER_ELF_PATH@"
+osKernelUserIpcConsumerElfEnd:
+
 section .note.GNU-stack noalloc noexec nowrite progbits

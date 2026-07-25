@@ -57,7 +57,7 @@ BootInfo 位于物理地址 `0x14000`，共 104 字节；每个字段都是明�
 | `0x00` | magic | `OSBOOT64` |
 | `0x08` | version | `2` |
 | `0x10` | structure size | `104` |
-| `0x18` | Kernel 文件物理地址 | `0x20000` |
+| `0x18` | Kernel 文件物理地址 | `0x03E00000` |
 | `0x20` | Kernel 精确文件大小 | 来自已校验描述符 |
 | `0x28` | Kernel 入口 | `0x100000` |
 | `0x30` | `PT_LOAD` 数量 | `1..64` |
@@ -291,6 +291,35 @@ IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预�
 不分配、不释放、不写串口；用户页和页表只在进程退出/异常路径切回内核 CR3 后
 释放。全部结束后一次性输出调度汇总与每进程结果，并比较物理页帧统计。
 
+## v0.10 同步与 IPC 运行时契约
+
+`SpinLock` 使用编译器原子内建完成 exchange-acquire、store-release 和
+relaxed 观察；忙等内层执行 x86 `PAUSE`，降低共享执行资源上的无效竞争。
+`SpinLockGuard` 以 RAII 限定锁生命周期。该锁只保护不能睡眠的短临界区；
+锁内禁止系统调用阻塞、串口输出和用户内存复制。
+
+`ProcessScheduler` 新增 `Blocked` 与
+`PipeReadable/PipeWritable` 等待原因。`BlockCurrentProcess` 只允许
+Running 进程在存在后继 Ready 进程时阻塞；`WakeBlockedProcesses` 只把
+原因匹配的槽位转回 Ready，并分别累计 block/wakeup。若不存在 Ready 但仍有
+Blocked，运行时报告 `NoReadyProcess`，不把死锁误报为正常完成。
+
+`Pipe` 使用固定 64 字节环形数组，不依赖早期堆。所有索引和统计使用
+`uint64_t`；数据元素使用 `uint8_t`。读写在锁内提交索引、计数和字节统计，
+用户地址验证与 `CopyFromUser/CopyToUser` 在锁外完成。系统调用先把数据复制
+到最多 64 字节的内核临时缓冲，再操作管道，避免持锁访问不可信页。
+
+ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
+`WaitPipeReadable`、`WaitPipeWritable`、`ClosePipeReader` 和
+`ClosePipeWriter`。返回值区分 `WouldBlock`、`BrokenPipe`、端点权限、
+重复关闭、非法参数、用户内存和传输过长。等待调用被唤醒后只返回“允许重试”，
+不会假装已经完成原读写；高层用户包装必须循环执行 Try。
+
+当前只有一个 bootstrap pipe。PID1 的生产者独占写端，PID2 的消费者独占
+读端；这是显式阶段边界，不是通用文件描述符接口。进程正常/异常终止时，
+`ProcessRuntime` 自动关闭仍归其所有的端点并唤醒对侧，随后才回收地址空间。
+冷路径最终核对 256 字节写入/读取、空缓冲、端点关闭、阻塞/唤醒守恒与 EOF。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -322,6 +351,7 @@ IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预�
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
+[OS][KERNEL] PIPE_READY
 [OS][KERNEL] USER_ELF_VALID
 [OS][KERNEL] USER_ENTRY=0x0000000040000000
 [OS][KERNEL] USER_MAPPED_PAGES=0x...
@@ -344,12 +374,24 @@ IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预�
 [OS][KERNEL] TIMER_SELF_TEST_PASSED
 [OS][KERNEL] USER_RING3_ENTER
 [OS][KERNEL] SCHEDULER_STARTED
-[OS][USER] INVALID_POINTER_REJECTED
+[OS][USER][PIPE] PRODUCER_STARTED
+[OS][USER][PIPE] CONSUMER_STARTED
 [OS][USER] UNKNOWN_SYSCALL_REJECTED
 [OS][USER] HELLO_FROM_RING3
+[OS][USER][PIPE] PRODUCER_COMPLETED
+[OS][USER][PIPE] PAYLOAD_VERIFIED
+[OS][USER][PIPE] EOF_OBSERVED
+[OS][KERNEL] SCHEDULER_BLOCKS=0x...
+[OS][KERNEL] SCHEDULER_WAKEUPS=0x...
+[OS][KERNEL] PIPE_CAPACITY_BYTES=0x0000000000000040
+[OS][KERNEL] PIPE_WRITTEN_BYTES=0x0000000000000100
+[OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100
+[OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x0000000000000001
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
 [OS][KERNEL] USER_SYSCALL_COUNT=0x0000000000000006
 [OS][KERNEL] USER_TERMINATED
+[OS][KERNEL] PIPE_TRANSFER_VALID
+[OS][KERNEL] PIPE_ENDPOINTS_CLOSED
 [OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
 [OS][KERNEL] SCHEDULER_COMPLETE
 [OS][KERNEL] USER_RETURNED_TO_KERNEL

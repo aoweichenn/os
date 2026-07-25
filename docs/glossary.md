@@ -45,6 +45,15 @@
 | time quantum | 一个进程在被抢占前可消费的调度 tick 预算；v0.9 固定为 4 tick |
 | preemption | 进程未主动退出时，由时钟中断和调度策略收回 CPU 并切换到其他进程 |
 | dispatch | 调度器选择一个进程成为 Running 并恢复其现场的一次动作 |
+| blocked | 进程因具名条件暂时不能推进、不参与 Ready 调度，但保留现场等待唤醒的状态 |
+| wakeup | 条件变化后把匹配的 Blocked 进程移回 Ready；不保证资源仍归该进程 |
+| lost wakeup | 条件检查与登记等待不原子，事件发生在两者之间而被永久错过的并发故障 |
+| spin lock | 用原子 read-modify-write 忙等取得的短临界区互斥；持有期间不得睡眠 |
+| acquire / release | 建立临界区跨执行流可见性和 happens-before 的原子内存顺序 |
+| backpressure | 有界缓冲已满时阻止生产者继续提交，使资源占用保持在容量上限内 |
+| pipe | 提供顺序字节流的 IPC 对象；空/满、端点关闭和等待者共同决定读写语义 |
+| EOF | End Of File；管道中表示缓冲已空且所有写端已关闭，不等同于暂时无数据 |
+| broken pipe | 所有读端已关闭后写入无法被消费的永久错误 |
 | W^X | 同一内存段不同时具备可写和可执行权限的约束 |
 | ABI | Application Binary Interface，规定调用、寄存器、栈和二进制布局的契约 |
 | GDT | Global Descriptor Table，x86 分段和特权级切换使用的描述符表 |

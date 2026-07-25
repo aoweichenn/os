@@ -12,7 +12,14 @@ enum class ProcessState : uint64_t {
     Unused,
     Ready,
     Running,
+    Blocked,
     Terminated,
+};
+
+enum class ProcessWaitReason : uint64_t {
+    None,
+    PipeReadable,
+    PipeWritable,
 };
 
 enum class ProcessSchedulerStatus : uint64_t {
@@ -24,6 +31,8 @@ enum class ProcessSchedulerStatus : uint64_t {
     AlreadyRunning,
     InvalidCurrentProcess,
     InvalidProcessIndex,
+    InvalidWaitReason,
+    InvalidWakeCount,
 };
 
 struct ProcessSchedulingDecision final {
@@ -38,6 +47,9 @@ struct ProcessSchedulerEntry final {
     ProcessState state;
     uint64_t runTickCount;
     uint64_t dispatchCount;
+    uint64_t blockCount;
+    uint64_t wakeupCount;
+    ProcessWaitReason waitReason;
 };
 
 struct ProcessSchedulerStatistics final {
@@ -46,6 +58,8 @@ struct ProcessSchedulerStatistics final {
     uint64_t timerTickCount;
     uint64_t preemptionCount;
     uint64_t dispatchCount;
+    uint64_t blockCount;
+    uint64_t wakeupCount;
 };
 
 class ProcessScheduler final {
@@ -60,7 +74,12 @@ class ProcessScheduler final {
     [[nodiscard]] ProcessSchedulerStatus
     TerminateCurrentProcess(ProcessSchedulingDecision &decision) noexcept;
     [[nodiscard]] ProcessSchedulerStatus
-    ReadEntry(uint64_t processIndex, ProcessSchedulerEntry &entry) const noexcept;
+    BlockCurrentProcess(ProcessWaitReason waitReason, ProcessSchedulingDecision &decision) noexcept;
+    [[nodiscard]] ProcessSchedulerStatus WakeBlockedProcesses(ProcessWaitReason waitReason,
+                                                              uint64_t maximumWakeCount,
+                                                              uint64_t &wokenProcessCount) noexcept;
+    [[nodiscard]] ProcessSchedulerStatus ReadEntry(uint64_t processIndex,
+                                                   ProcessSchedulerEntry &entry) const noexcept;
     [[nodiscard]] ProcessSchedulerStatistics Statistics() const noexcept;
     [[nodiscard]] uint64_t CurrentProcessIndex() const noexcept;
     [[nodiscard]] bool IsActive() const noexcept;
@@ -69,8 +88,9 @@ class ProcessScheduler final {
     [[nodiscard]] bool FindFreeProcess(uint64_t &processIndex) const noexcept;
     [[nodiscard]] bool FindNextReadyProcess(uint64_t firstProcessIndex,
                                             uint64_t &processIndex) const noexcept;
-    void ActivateProcess(uint64_t processIndex, uint64_t previousProcessIndex,
-                         bool switched, ProcessSchedulingDecision &decision) noexcept;
+    [[nodiscard]] bool HasBlockedProcess() const noexcept;
+    void ActivateProcess(uint64_t processIndex, uint64_t previousProcessIndex, bool switched,
+                         ProcessSchedulingDecision &decision) noexcept;
     void ResetDecision(ProcessSchedulingDecision &decision) const noexcept;
 
     ProcessSchedulerEntry entries_[OS_KERNEL_PROCESS_CAPACITY];

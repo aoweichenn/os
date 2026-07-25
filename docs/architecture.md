@@ -112,8 +112,8 @@ LBA 66..N   kernel.elf（精确长度 + 扇区补零）
 | `0x00016000..0x00016FFF` | 物理内存图元数据 |
 | `0x00017000..0x00017FFF` | `fw_cfg` 名称暂存区 |
 | `0x00018000..0x00018BFF` | 最多 128 项的 24 字节物理内存图 |
-| `0x00020000..0x0009FFFF` | 最大 512 KiB ELF 暂存 |
-| `0x00100000..0x03EFFFFF` | Kernel `PT_LOAD` 目标窗口 |
+| `0x00100000..0x03DFFFFF` | Kernel `PT_LOAD` 目标窗口 |
+| `0x03E00000..0x03EFFFFF` | 最大 1 MiB ELF 暂存 |
 | `0x03FEF000..0x03FFEFFF` | 早期内核栈保留区 |
 
 BootInfo magic 为 `OSBOOT64`，版本 2 的 13 个字段全部为 64 位。Stage 1 把其地址放入
@@ -372,6 +372,49 @@ TSS.RSP0 选取该进程的栈；切换前若不更新 RSP0，下一个进程的
 页帧统计，避免把“状态变成 Terminated”误当作资源已回收。详细决策见
 [ADR 0012](adr/0012-preemptive-process-scheduling.md)。
 
+## v0.10 同步、阻塞/唤醒与有界管道
+
+v0.10 在既有四槽调度器中加入 `Blocked`，并为每个阻塞 PCB 保存具名
+`ProcessWaitReason`。阻塞不是忙等：当前进程保存系统调用现场后离开运行集合，
+调度器立刻派发另一个 Ready 进程；条件变化时，唤醒方把匹配原因的 PCB 移回
+Ready。单核 interrupt gate 已清 IF，所以“检查条件—标记阻塞—选择后继”
+构成当前实现的原子窗口；面向未来 SMP 的共享管道状态仍由自旋锁保护。
+
+```text
+用户 ReadPipe / WritePipe
+        ↓
+TryRead / TryWrite（只尝试，不隐式切换）
+   ├─ 成功/EOF/错误 → 返回用户态
+   └─ WouldBlock
+          ↓
+WaitPipeReadable / WaitPipeWritable
+          ↓ 保存当前 176 B 帧
+Running → Blocked(wait reason) → 派发另一个 Ready
+          ↑
+对侧读/写/关闭 → 条件变化 → WakeBlockedProcesses
+```
+
+“尝试”和“等待”使用不同系统调用编号。若在一次调用中先发现资源不足、再保存
+现场，唤醒后重放同一入口容易重复副作用或错误修改 RIP；分离后等待调用只负责
+调度，返回成功表示“现在应重新尝试”，用户包装始终以循环重新检查条件。
+
+内核管道是 64 字节环形缓冲，保存读索引、写索引和当前字节数。读写允许部分
+传输，每次用户复制最多 64 字节：
+
+- 缓冲为空且写端仍开：读返回 `WouldBlock`；
+- 缓冲为空且写端关闭：读返回 EOF（零字节）；
+- 缓冲已满且读端仍开：写返回 `WouldBlock`；
+- 读端关闭：写返回 `BrokenPipe`；
+- 任一读操作释放空间后唤醒写等待者，任一写操作提交数据后唤醒读等待者；
+- 关闭端点也必须唤醒对侧，因为 EOF 或 broken pipe 已让条件发生变化。
+
+本阶段只有一个启动期管道对象、一个生产者和一个消费者，没有文件描述符表。
+PID1 只持写端，PID2 只持读端；PID3/PID4 继续承担抢占和地址空间隔离验收。
+生产者生成 256 字节确定性序列，消费者用 31 字节用户缓冲分批读取并逐字节
+验证，保证环形回绕、部分读写、满/空阻塞和 EOF 均实际发生。异常终止路径会
+自动关闭当前进程持有的端点并唤醒对侧，避免永久睡眠。详细取舍见
+[ADR 0013](adr/0013-blocking-wakeup-and-bounded-pipe.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -442,14 +485,18 @@ source/kernel/
 │   ├── memory_manager.hpp
 │   ├── legacy_pic.hpp
 │   ├── page_table.hpp
+│   ├── pipe.hpp
 │   ├── panic.hpp
 │   ├── physical_frame_allocator.hpp
 │   ├── physical_memory_map.hpp
 │   ├── port_io.hpp
 │   ├── processor.hpp
+│   ├── process_runtime.hpp
+│   ├── process_scheduler.hpp
 │   ├── programmable_interval_timer.hpp
 │   ├── ps2_keyboard.hpp
-│   └── serial_port.hpp
+│   ├── serial_port.hpp
+│   └── spin_lock.hpp
 ├── linker/
 │   └── kernel.ld.in
 └── src/
@@ -469,14 +516,18 @@ source/kernel/
     ├── memory_manager.cpp
     ├── page_table.cpp
     ├── page_table_layout.cpp
+    ├── pipe.cpp
     ├── panic.cpp
     ├── physical_frame_allocator.cpp
     ├── physical_memory_map.cpp
     ├── port_io.cpp
     ├── processor.cpp
+    ├── process_runtime.cpp
+    ├── process_scheduler.cpp
     ├── programmable_interval_timer.cpp
     ├── ps2_keyboard.cpp
-    └── serial_port.cpp
+    ├── serial_port.cpp
+    └── spin_lock.cpp
 
 source/abi/
 ├── CMakeLists.txt
@@ -492,7 +543,10 @@ source/user/
 ├── programs/
 │   ├── smoke.cpp
 │   ├── invalid_opcode.cpp
-│   └── page_fault.cpp
+│   ├── page_fault.cpp
+│   ├── scheduler_worker.cpp
+│   ├── ipc_producer.cpp
+│   └── ipc_consumer.cpp
 └── src/
     ├── system_call.asm
     └── system_call.cpp

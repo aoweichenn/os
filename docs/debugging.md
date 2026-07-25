@@ -136,7 +136,7 @@ Stage 1 为目标读取和格式验证保留五条互斥失败边界：
 | `KERNEL_ATA_TIMEOUT` | `0x1F7` 的 BSY/DRQ 与轮询预算 |
 | `KERNEL_ATA_ERROR` | `0x1F7` 的 ERR/DF 和 `0x1F1` 错误寄存器 |
 | `KERNEL_HEADER_INVALID` | `0x13000` 的字段、保留区和描述符 CRC |
-| `KERNEL_CHECKSUM_INVALID` | `0x20000` 起精确文件 CRC 与最后扇区补零 |
+| `KERNEL_CHECKSUM_INVALID` | `0x03E00000` 起精确文件 CRC 与最后扇区补零 |
 | `KERNEL_ELF_INVALID` | ELF 头、程序头、地址、权限、重叠和入口 |
 
 调试时不要先修改失败标记或放宽边界；先使用构建生成的对应失败镜像确认该分支
@@ -150,7 +150,7 @@ Stage 1 为目标读取和格式验证保留五条互斥失败边界：
 set architecture i386:x86-64
 target remote :1234
 x/8gx 0x13000
-x/16bx 0x20000
+x/16bx 0x03e00000
 x/10gx 0x14000
 x/16i 0x100000
 x/gx 0x102000
@@ -158,7 +158,7 @@ info registers cr3 rsp rdi rip
 ```
 
 - `0x13000` 应以 `OSKERN64` 开头。
-- `0x20000` 应以 ELF magic 开头。
+- `0x03E00000` 应以 ELF magic 开头。
 - `0x14000` 的十三个 64 位字段应与 BootInfo v2 文档一致。
 - `0x100000` 是入口代码；当前 BSS 探针位于 RW 段，交接前必须为零。
 - 内核入口处 CR3 应为 `0x10000`，RDI 应为 `0x14000`，RSP 位于独立栈区。
@@ -524,3 +524,57 @@ PDPT[0] 指向的 supervisor 内核子树，但不能直接共享整个低端 PD
 若只在地址空间创建失败时泄漏，重点检查“叶帧已分配但 MapPage 失败”和
 “中间表已建立但后续栈映射失败”两条回滚；销毁整个未激活进程根应统一覆盖
 二者。
+
+## v0.10：阻塞/唤醒与管道
+
+### `SCHEDULER_STARTED` 后所有进程停止
+
+先看冷路径是否输出 `USER_EXECUTION_FAILED=NoReadyProcess`。若所有存活进程
+都为 Blocked，逐个检查 PCB 的 `waitReason`：生产者只能等待
+`PipeWritable`，消费者只能等待 `PipeReadable`，worker 不应进入 Blocked。
+还要检查一次读或写成功后是否调用了对侧定向唤醒，以及关闭端点是否同样唤醒。
+
+不要通过让 Blocked 参与 Ready 搜索来“恢复运行”；这会掩盖丢失唤醒，并让
+进程在条件未满足时错误返回用户态。
+
+### 管道字节数不相等
+
+对照 `PIPE_WRITTEN_BYTES`、`PIPE_READ_BYTES`、buffered count 和每进程方向
+统计。环形不变量始终应满足：
+
+```text
+bytesWritten - bytesRead = bufferedByteCount
+0 <= bufferedByteCount <= 64
+readIndex, writeIndex < 64
+```
+
+若只在回绕后损坏，检查索引是否在每个字节提交后模 64，而不是在整块之后只
+推进一次。若内核统计正确而消费者校验失败，检查 `CopyToUser` 的跨页可写
+验证和用户端 `totalReadBytes + byteIndex` 期望索引。
+
+### EOF 永远不出现
+
+EOF 的条件是“缓冲为空且写端关闭”，二者缺一不可。写端关闭时仍有残留数据，
+读者应先继续读，最后一次空读才返回零。生产者正常退出、用户异常和显式 close
+都必须收敛到同一端点关闭逻辑；双重关闭返回 `ENDPOINT_CLOSED`，不能再次改
+统计或产生虚假的第二个 EOF。
+
+### `PIPE_ENDPOINTS_CLOSED` 缺失
+
+检查进程终止路径是否在销毁地址空间前根据用户程序选择关闭其端点。端点归属
+不能通过“最后运行的 PID”推测；生产者/消费者权限由 `UserProgramSelection`
+明确决定。关闭读端必须唤醒写者以得到 broken pipe，关闭写端必须唤醒读者以
+得到 EOF。
+
+### ELF 审计拒绝 `.init_array`
+
+自研入口没有 CRT，不会自动遍历 C++ 动态初始化数组。使用：
+
+```bash
+llvm-readelf --section-headers --wide build/developer/source/kernel/kernel.elf
+llvm-nm -n build/developer/source/kernel/kernel.elf
+```
+
+若出现 `.init_array` 或 `_GLOBAL__sub_I_...`，查找命名空间作用域下具有非
+constexpr 构造器的对象。将状态改为常量初始化或显式初始化函数；不要为了
+通过审计而删除区段，因为那只会留下未执行构造器的对象。

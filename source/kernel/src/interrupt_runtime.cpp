@@ -13,11 +13,12 @@ namespace {
 
 constexpr uint64_t OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA = 0ULL;
 constexpr uint64_t OS_KERNEL_INTERRUPT_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_INTERRUPT_EMPTY_COUNTER = 0ULL;
 constexpr uint8_t OS_KERNEL_INTERRUPT_ZERO_BYTE = 0U;
 
 class InterruptRuntime final {
   public:
-    InterruptRuntime() noexcept;
+    constexpr InterruptRuntime() noexcept = default;
 
     [[nodiscard]] InterruptRuntimeStatus Initialize() noexcept;
     void Dispatch(uint64_t vector) noexcept;
@@ -27,30 +28,25 @@ class InterruptRuntime final {
   private:
     void HandleKeyboardInterrupt() noexcept;
 
-    LegacyPic pic_;
-    ProgrammableIntervalTimer timer_;
-    Ps2Keyboard keyboard_;
-    AtaPioDevice ataDevice_;
-    ScanCodeSet1Decoder scanCodeDecoder_;
-    PitConfiguration pitConfiguration_;
-    volatile uint64_t timerTickCount_;
-    volatile uint64_t keyboardInterruptCount_;
-    volatile uint64_t supportedKeyboardEventCount_;
-    volatile uint64_t spuriousInterruptCount_;
-    KeyboardEvent pendingKeyboardEvent_;
-    volatile bool keyboardEventPending_;
-    bool initialized_;
+    LegacyPic pic_{};
+    ProgrammableIntervalTimer timer_{};
+    Ps2Keyboard keyboard_{};
+    AtaPioDevice ataDevice_{};
+    ScanCodeSet1Decoder scanCodeDecoder_{};
+    PitConfiguration pitConfiguration_{};
+    volatile uint64_t timerTickCount_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
+    volatile uint64_t keyboardInterruptCount_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
+    volatile uint64_t supportedKeyboardEventCount_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
+    volatile uint64_t spuriousInterruptCount_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
+    KeyboardEvent pendingKeyboardEvent_{};
+    volatile bool keyboardEventPending_{false};
+    bool initialized_{false};
 };
 
-InterruptRuntime kernelInterruptRuntime;
+// 自举代码不执行 C++ 运行时的 .init_array；强制设备运行时由链接期常量完成初始化。
+constinit InterruptRuntime kernelInterruptRuntime{};
 
 }
-
-InterruptRuntime::InterruptRuntime() noexcept
-    : pic_{}, timer_{}, keyboard_{}, ataDevice_{}, scanCodeDecoder_{}, pitConfiguration_{},
-      timerTickCount_{0ULL}, keyboardInterruptCount_{0ULL}, supportedKeyboardEventCount_{0ULL},
-      spuriousInterruptCount_{0ULL}, pendingKeyboardEvent_{}, keyboardEventPending_{false},
-      initialized_{false} {}
 
 InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
     // 固件没有替内核建立 APIC 虚拟线模式；先把 LAPIC LINT0 配置为 ExtINT，
@@ -69,8 +65,8 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
     }
 
     uint8_t bootDescriptorSector[OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES];
-    for (uint64_t byteIndex = 0ULL; byteIndex < OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES;
-         ++byteIndex) {
+    for (uint64_t byteIndex = OS_KERNEL_INTERRUPT_EMPTY_COUNTER;
+         byteIndex < OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES; ++byteIndex) {
         bootDescriptorSector[byteIndex] = OS_KERNEL_INTERRUPT_ZERO_BYTE;
     }
     if (this->ataDevice_.ReadSector(OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA, bootDescriptorSector,
@@ -94,7 +90,7 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
 }
 
 void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
-    uint64_t interruptRequest = 0ULL;
+    uint64_t interruptRequest = OS_KERNEL_INTERRUPT_EMPTY_COUNTER;
     if (!this->initialized_ || CalculateLegacyPicInterruptRequest(vector, interruptRequest) !=
                                    LegacyPicModelStatus::Succeeded) {
         HaltProcessor();

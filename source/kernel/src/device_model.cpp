@@ -99,8 +99,6 @@ uint64_t CalculatePitElapsedMilliseconds(const uint64_t tickCount,
            OS_KERNEL_DEVICE_PIT_INPUT_FREQUENCY_HZ;
 }
 
-ScanCodeSet1Decoder::ScanCodeSet1Decoder() noexcept : extendedPrefixPending_{false} {}
-
 KeyboardDecodeStatus ScanCodeSet1Decoder::Decode(const uint8_t scanCode,
                                                  KeyboardEvent &event) noexcept {
     if (scanCode == OS_KERNEL_DEVICE_KEYBOARD_EXTENDED_PREFIX) {

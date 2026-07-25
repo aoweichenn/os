@@ -61,7 +61,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 59 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度性质与整机异步事件；
+  \item 64 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度/IPC 性质与整机异步事件；
   \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
   \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；
   \item 严格用户 ELF 对标识、范围、对齐、W\^X、重叠、页数和入口的检查；
@@ -86,7 +86,7 @@
   \item 能说明 A20、GDT、页表和长模式控制位的依赖顺序；
   \item 能逐项走读当前 ELF 第一遍验证和第二遍复制/BSS 清零；
   \item 能用 GDB 检查 \code{0x13000} 描述符、\code{0x14000} BootInfo、
-  \code{0x18000} 内存图、\code{0x20000} ELF 暂存区与
+  \code{0x18000} 内存图、\code{0x03E00000} ELF 暂存区与
   \code{0x100000} 内核入口；
   \item 能说明 \code{BOOT\_INFO\_VALID}、\code{BSS\_ZEROED} 和
   \code{CR3\_VALID} 各自排除了哪类错误；
@@ -107,5 +107,7 @@
         TSS.RSP0、系统调用分发、exit 与 \code{USER\_RETURNED\_TO\_KERNEL}；
   \item 能运行三个用户 ELF 审计和三条用户失败/隔离 QEMU 路径；
   \item 能说明 v0.9 为何需要每进程地址空间、每线程内核栈和资源回收；
+  \item 能说明 v0.10 的 Blocked/Ready 转换、丢失唤醒、acquire/release、
+  管道背压、EOF 与 broken pipe；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

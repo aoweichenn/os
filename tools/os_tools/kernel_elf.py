@@ -15,10 +15,10 @@ OS_KERNEL_ELF_MACHINE_X86_64 = 0x003E
 OS_KERNEL_ELF_HEADER_SIZE_BYTES = 64
 OS_KERNEL_ELF_PROGRAM_HEADER_SIZE_BYTES = 56
 OS_KERNEL_ELF_EXPECTED_ENTRY_ADDRESS = 0x0010_0000
-OS_KERNEL_ELF_MAXIMUM_FILE_SIZE_BYTES = 0x0008_0000
+OS_KERNEL_ELF_MAXIMUM_FILE_SIZE_BYTES = 0x0010_0000
 OS_KERNEL_ELF_MAXIMUM_PROGRAM_HEADER_COUNT = 64
 OS_KERNEL_ELF_MINIMUM_LOAD_ADDRESS = 0x0010_0000
-OS_KERNEL_ELF_MAXIMUM_LOAD_END_ADDRESS = 0x03F0_0000
+OS_KERNEL_ELF_MAXIMUM_LOAD_END_ADDRESS = 0x03E0_0000
 OS_KERNEL_ELF_PROGRAM_TYPE_LOAD = 1
 OS_KERNEL_ELF_PROGRAM_FLAG_EXECUTE = 0x1
 OS_KERNEL_ELF_PROGRAM_FLAG_WRITE = 0x2
@@ -46,6 +46,12 @@ OS_KERNEL_ELF_LEGACY_INTERRUPT_VECTOR_COUNT = 16
 OS_KERNEL_ELF_HARDWARE_INTERRUPT_VECTOR_SYMBOL_PREFIX = (
     "os_kernel_hardware_interrupt_vector_"
 )
+OS_KERNEL_ELF_FORBIDDEN_RUNTIME_INITIALIZATION_SECTIONS = (
+    ".init_array",
+    ".fini_array",
+    ".ctors",
+    ".dtors",
+)
 OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
     (
         "osKernelEntry",
@@ -68,6 +74,12 @@ OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
         "osKernelUserInvalidOpcodeElfEnd",
         "osKernelUserPageFaultElfStart",
         "osKernelUserPageFaultElfEnd",
+        "osKernelUserSchedulerWorkerElfStart",
+        "osKernelUserSchedulerWorkerElfEnd",
+        "osKernelUserIpcProducerElfStart",
+        "osKernelUserIpcProducerElfEnd",
+        "osKernelUserIpcConsumerElfStart",
+        "osKernelUserIpcConsumerElfEnd",
         "osKernelImageStart",
         "osKernelImageEnd",
         "osKernelTextStart",
@@ -343,6 +355,19 @@ def validateKernelArchitectureSymbols(definedSymbols: set[str]) -> None:
         )
 
 
+def validateKernelRuntimeInitializationSections(sectionHeaders: str) -> None:
+    forbiddenSections = [
+        sectionName
+        for sectionName in OS_KERNEL_ELF_FORBIDDEN_RUNTIME_INITIALIZATION_SECTIONS
+        if sectionName in sectionHeaders
+    ]
+    if forbiddenSections:
+        raise OsToolError(
+            "内核 ELF 依赖自举代码未执行的 C++ 动态初始化区段："
+            + ", ".join(forbiddenSections)
+        )
+
+
 def auditKernelElf(projectRoot: Path, kernelElfPath: Path) -> None:
     entryAddress, loadSegments = parseKernelLoadSegments(
         kernelElfPath.read_bytes()
@@ -373,6 +398,13 @@ def auditKernelElf(projectRoot: Path, kernelElfPath: Path) -> None:
         if symbolLine.strip()
     }
     validateKernelArchitectureSymbols(definedSymbols)
+
+    sectionHeaderResult = runCommand(
+        ["llvm-readelf", "--section-headers", "--wide", str(kernelElfPath)],
+        projectRoot,
+        captureOutput=True,
+    )
+    validateKernelRuntimeInitializationSections(sectionHeaderResult.stdout)
 
     print(
         "内核 ELF64 审计通过："

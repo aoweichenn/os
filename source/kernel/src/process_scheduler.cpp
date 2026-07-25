@@ -13,13 +13,15 @@ constexpr uint64_t OS_KERNEL_PROCESS_EMPTY_VALUE = 0ULL;
 
 ProcessSchedulerStatus ProcessScheduler::Initialize(const uint64_t quantumTicks) noexcept {
     for (uint64_t processIndex = OS_KERNEL_PROCESS_FIRST_INDEX;
-         processIndex < OS_KERNEL_PROCESS_CAPACITY;
-         ++processIndex) {
+         processIndex < OS_KERNEL_PROCESS_CAPACITY; ++processIndex) {
         this->entries_[processIndex] = ProcessSchedulerEntry{
             .processId = OS_KERNEL_PROCESS_EMPTY_VALUE,
             .state = ProcessState::Unused,
             .runTickCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
             .dispatchCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+            .blockCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+            .wakeupCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+            .waitReason = ProcessWaitReason::None,
         };
     }
     this->statistics_ = ProcessSchedulerStatistics{};
@@ -48,6 +50,9 @@ ProcessSchedulerStatus ProcessScheduler::CreateProcess(uint64_t &processIndex,
         .state = ProcessState::Ready,
         .runTickCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
         .dispatchCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+        .blockCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+        .wakeupCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+        .waitReason = ProcessWaitReason::None,
     };
     this->statistics_.createdProcessCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
     processIndex = freeProcessIndex;
@@ -55,8 +60,7 @@ ProcessSchedulerStatus ProcessScheduler::CreateProcess(uint64_t &processIndex,
     return ProcessSchedulerStatus::Succeeded;
 }
 
-ProcessSchedulerStatus
-ProcessScheduler::DiscardReadyProcess(const uint64_t processIndex) noexcept {
+ProcessSchedulerStatus ProcessScheduler::DiscardReadyProcess(const uint64_t processIndex) noexcept {
     if (!this->initialized_) {
         return ProcessSchedulerStatus::NotInitialized;
     }
@@ -69,13 +73,15 @@ ProcessScheduler::DiscardReadyProcess(const uint64_t processIndex) noexcept {
         .state = ProcessState::Unused,
         .runTickCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
         .dispatchCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+        .blockCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+        .wakeupCount = OS_KERNEL_PROCESS_EMPTY_VALUE,
+        .waitReason = ProcessWaitReason::None,
     };
     --this->statistics_.createdProcessCount;
     return ProcessSchedulerStatus::Succeeded;
 }
 
-ProcessSchedulerStatus
-ProcessScheduler::Start(ProcessSchedulingDecision &decision) noexcept {
+ProcessSchedulerStatus ProcessScheduler::Start(ProcessSchedulingDecision &decision) noexcept {
     this->ResetDecision(decision);
     if (!this->initialized_) {
         return ProcessSchedulerStatus::NotInitialized;
@@ -146,10 +152,12 @@ ProcessScheduler::TerminateCurrentProcess(ProcessSchedulingDecision &decision) n
 
     uint64_t nextProcessIndex = OS_KERNEL_PROCESS_INVALID_INDEX;
     const uint64_t firstCandidateIndex =
-        (terminatedProcessIndex + OS_KERNEL_PROCESS_COUNTER_INCREMENT) %
-        OS_KERNEL_PROCESS_CAPACITY;
+        (terminatedProcessIndex + OS_KERNEL_PROCESS_COUNTER_INCREMENT) % OS_KERNEL_PROCESS_CAPACITY;
     if (!this->FindNextReadyProcess(firstCandidateIndex, nextProcessIndex)) {
         decision.previousProcessIndex = terminatedProcessIndex;
+        if (this->HasBlockedProcess()) {
+            return ProcessSchedulerStatus::NoReadyProcess;
+        }
         decision.completed = true;
         return ProcessSchedulerStatus::Succeeded;
     }
@@ -158,8 +166,71 @@ ProcessScheduler::TerminateCurrentProcess(ProcessSchedulingDecision &decision) n
 }
 
 ProcessSchedulerStatus
-ProcessScheduler::ReadEntry(const uint64_t processIndex,
-                            ProcessSchedulerEntry &entry) const noexcept {
+ProcessScheduler::BlockCurrentProcess(const ProcessWaitReason waitReason,
+                                      ProcessSchedulingDecision &decision) noexcept {
+    this->ResetDecision(decision);
+    if (!this->initialized_) {
+        return ProcessSchedulerStatus::NotInitialized;
+    }
+    if (waitReason == ProcessWaitReason::None) {
+        return ProcessSchedulerStatus::InvalidWaitReason;
+    }
+    if (this->currentProcessIndex_ == OS_KERNEL_PROCESS_INVALID_INDEX ||
+        this->entries_[this->currentProcessIndex_].state != ProcessState::Running) {
+        return ProcessSchedulerStatus::InvalidCurrentProcess;
+    }
+
+    const uint64_t blockedProcessIndex = this->currentProcessIndex_;
+    uint64_t nextProcessIndex = OS_KERNEL_PROCESS_INVALID_INDEX;
+    const uint64_t firstCandidateIndex =
+        (blockedProcessIndex + OS_KERNEL_PROCESS_COUNTER_INCREMENT) % OS_KERNEL_PROCESS_CAPACITY;
+    if (!this->FindNextReadyProcess(firstCandidateIndex, nextProcessIndex)) {
+        return ProcessSchedulerStatus::NoReadyProcess;
+    }
+
+    ProcessSchedulerEntry &blockedEntry = this->entries_[blockedProcessIndex];
+    blockedEntry.state = ProcessState::Blocked;
+    blockedEntry.waitReason = waitReason;
+    blockedEntry.blockCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
+    this->statistics_.blockCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
+    this->elapsedQuantumTicks_ = OS_KERNEL_PROCESS_EMPTY_VALUE;
+    this->ActivateProcess(nextProcessIndex, blockedProcessIndex, true, decision);
+    return ProcessSchedulerStatus::Succeeded;
+}
+
+ProcessSchedulerStatus
+ProcessScheduler::WakeBlockedProcesses(const ProcessWaitReason waitReason,
+                                       const uint64_t maximumWakeCount,
+                                       uint64_t &wokenProcessCount) noexcept {
+    wokenProcessCount = OS_KERNEL_PROCESS_EMPTY_VALUE;
+    if (!this->initialized_) {
+        return ProcessSchedulerStatus::NotInitialized;
+    }
+    if (waitReason == ProcessWaitReason::None) {
+        return ProcessSchedulerStatus::InvalidWaitReason;
+    }
+    if (maximumWakeCount == OS_KERNEL_PROCESS_EMPTY_VALUE) {
+        return ProcessSchedulerStatus::InvalidWakeCount;
+    }
+
+    for (uint64_t processIndex = OS_KERNEL_PROCESS_FIRST_INDEX;
+         processIndex < OS_KERNEL_PROCESS_CAPACITY && wokenProcessCount < maximumWakeCount;
+         ++processIndex) {
+        ProcessSchedulerEntry &entry = this->entries_[processIndex];
+        if (entry.state != ProcessState::Blocked || entry.waitReason != waitReason) {
+            continue;
+        }
+        entry.state = ProcessState::Ready;
+        entry.waitReason = ProcessWaitReason::None;
+        entry.wakeupCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
+        this->statistics_.wakeupCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
+        wokenProcessCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;
+    }
+    return ProcessSchedulerStatus::Succeeded;
+}
+
+ProcessSchedulerStatus ProcessScheduler::ReadEntry(const uint64_t processIndex,
+                                                   ProcessSchedulerEntry &entry) const noexcept {
     if (processIndex >= OS_KERNEL_PROCESS_CAPACITY) {
         return ProcessSchedulerStatus::InvalidProcessIndex;
     }
@@ -176,14 +247,12 @@ uint64_t ProcessScheduler::CurrentProcessIndex() const noexcept {
 }
 
 bool ProcessScheduler::IsActive() const noexcept {
-    return this->initialized_ &&
-           this->currentProcessIndex_ != OS_KERNEL_PROCESS_INVALID_INDEX;
+    return this->initialized_ && this->currentProcessIndex_ != OS_KERNEL_PROCESS_INVALID_INDEX;
 }
 
 bool ProcessScheduler::FindFreeProcess(uint64_t &processIndex) const noexcept {
     for (uint64_t candidateIndex = OS_KERNEL_PROCESS_FIRST_INDEX;
-         candidateIndex < OS_KERNEL_PROCESS_CAPACITY;
-         ++candidateIndex) {
+         candidateIndex < OS_KERNEL_PROCESS_CAPACITY; ++candidateIndex) {
         if (this->entries_[candidateIndex].state == ProcessState::Unused) {
             processIndex = candidateIndex;
             return true;
@@ -194,10 +263,9 @@ bool ProcessScheduler::FindFreeProcess(uint64_t &processIndex) const noexcept {
 
 bool ProcessScheduler::FindNextReadyProcess(const uint64_t firstProcessIndex,
                                             uint64_t &processIndex) const noexcept {
-    for (uint64_t offset = OS_KERNEL_PROCESS_FIRST_INDEX;
-         offset < OS_KERNEL_PROCESS_CAPACITY; ++offset) {
-        const uint64_t candidateIndex =
-            (firstProcessIndex + offset) % OS_KERNEL_PROCESS_CAPACITY;
+    for (uint64_t offset = OS_KERNEL_PROCESS_FIRST_INDEX; offset < OS_KERNEL_PROCESS_CAPACITY;
+         ++offset) {
+        const uint64_t candidateIndex = (firstProcessIndex + offset) % OS_KERNEL_PROCESS_CAPACITY;
         if (this->entries_[candidateIndex].state == ProcessState::Ready) {
             processIndex = candidateIndex;
             return true;
@@ -206,9 +274,18 @@ bool ProcessScheduler::FindNextReadyProcess(const uint64_t firstProcessIndex,
     return false;
 }
 
+bool ProcessScheduler::HasBlockedProcess() const noexcept {
+    for (uint64_t processIndex = OS_KERNEL_PROCESS_FIRST_INDEX;
+         processIndex < OS_KERNEL_PROCESS_CAPACITY; ++processIndex) {
+        if (this->entries_[processIndex].state == ProcessState::Blocked) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void ProcessScheduler::ActivateProcess(const uint64_t processIndex,
-                                       const uint64_t previousProcessIndex,
-                                       const bool switched,
+                                       const uint64_t previousProcessIndex, const bool switched,
                                        ProcessSchedulingDecision &decision) noexcept {
     this->entries_[processIndex].state = ProcessState::Running;
     this->entries_[processIndex].dispatchCount += OS_KERNEL_PROCESS_COUNTER_INCREMENT;

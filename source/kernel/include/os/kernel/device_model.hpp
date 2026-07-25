@@ -69,14 +69,14 @@ enum class KeyboardDecodeStatus : uint64_t {
 
 class ScanCodeSet1Decoder final {
   public:
-    ScanCodeSet1Decoder() noexcept;
+    constexpr ScanCodeSet1Decoder() noexcept = default;
 
     [[nodiscard]] KeyboardDecodeStatus Decode(uint8_t scanCode, KeyboardEvent &event) noexcept;
 
   private:
     [[nodiscard]] KeyboardKey KeyForScanCode(uint8_t makeCode, bool extended) const noexcept;
 
-    bool extendedPrefixPending_;
+    bool extendedPrefixPending_{false};
 };
 
 enum class AtaReadRequestStatus : uint64_t {

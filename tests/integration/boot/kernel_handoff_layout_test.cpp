@@ -24,7 +24,8 @@ constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_FW_CFG_MEMORY_MAP =
 constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_STAGING =
     "物理内存图不得覆盖 ELF 暂存区";
 constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_STAGING_KERNEL = "ELF 暂存区不得覆盖内核装载区";
-constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_KERNEL_STACK = "内核装载区不得覆盖早期内核栈";
+constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_STAGING_STACK =
+    "高端 ELF 暂存区不得覆盖早期内核栈";
 constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGE1 = "身份映射必须覆盖 Stage 1";
 constexpr std::string_view OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGING =
     "身份映射必须覆盖 ELF 暂存区末字节";
@@ -66,13 +67,13 @@ constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_BEGIN =
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_SIZE =
     os::foundation::AddressValue{0x00000C00};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STAGING_BEGIN =
-    os::foundation::AddressValue{0x00020000};
+    os::foundation::AddressValue{0x03E00000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STAGING_SIZE =
-    os::foundation::AddressValue{0x00080000};
+    os::foundation::AddressValue{0x00100000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_BEGIN =
     os::foundation::AddressValue{0x00100000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_SIZE =
-    os::foundation::AddressValue{0x03E00000};
+    os::foundation::AddressValue{0x03D00000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STACK_BEGIN =
     os::foundation::AddressValue{0x03FEF000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STACK_SIZE =
@@ -82,9 +83,9 @@ constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MAP_BEGIN =
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MAP_SIZE =
     os::foundation::AddressValue{0x04000000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STAGING_LAST_ADDRESS =
-    os::foundation::AddressValue{0x0009FFFF};
-constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_LAST_ADDRESS =
     os::foundation::AddressValue{0x03EFFFFF};
+constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_LAST_ADDRESS =
+    os::foundation::AddressValue{0x03DFFFFF};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STACK_LAST_ADDRESS =
     os::foundation::AddressValue{0x03FFEFFF};
 
@@ -156,7 +157,7 @@ int main() {
     testContext.Expect(!memoryMapRange.Overlaps(stagingRange),
                        OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_STAGING);
     testContext.Expect(!stagingRange.Overlaps(kernelRange), OS_TEST_HANDOFF_LAYOUT_STAGING_KERNEL);
-    testContext.Expect(!kernelRange.Overlaps(stackRange), OS_TEST_HANDOFF_LAYOUT_KERNEL_STACK);
+    testContext.Expect(!stagingRange.Overlaps(stackRange), OS_TEST_HANDOFF_LAYOUT_STAGING_STACK);
     testContext.Expect(identityMapRange.Contains(
                            os::foundation::PhysicalAddress{OS_TEST_HANDOFF_LAYOUT_STAGE1_BEGIN}),
                        OS_TEST_HANDOFF_LAYOUT_MAP_CONTAINS_STAGE1);

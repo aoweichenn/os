@@ -36,10 +36,13 @@ enum class UserAddressSpaceStatus : uint64_t {
 enum class UserMemoryCopyStatus : uint64_t {
     Succeeded,
     NullDestination,
+    NullSource,
     DestinationTooSmall,
+    SourceTooSmall,
     InvalidUserRange,
     PageNotMapped,
     PageNotUserAccessible,
+    PageNotWritable,
 };
 
 [[nodiscard]] UserAddressSpaceStatus
@@ -50,5 +53,10 @@ DestroyUserAddressSpace(UserAddressSpace &addressSpace) noexcept;
 [[nodiscard]] UserMemoryCopyStatus CopyFromUser(uint64_t userAddress, uint64_t lengthBytes,
                                                 uint8_t *destination,
                                                 uint64_t destinationCapacityBytes) noexcept;
+[[nodiscard]] UserMemoryCopyStatus ValidateUserWritableMemory(uint64_t userAddress,
+                                                              uint64_t lengthBytes) noexcept;
+[[nodiscard]] UserMemoryCopyStatus CopyToUser(uint64_t userAddress, uint64_t lengthBytes,
+                                              const uint8_t *source,
+                                              uint64_t sourceSizeBytes) noexcept;
 
 }

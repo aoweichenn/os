@@ -239,6 +239,234 @@ run tick、dispatch、syscall。创建前与全部销毁后的物理页统计必
 另外两层。
 \end{contractbox}
 
+\section{v0.10 让暂时不能推进的进程离开运行集合}
+
+分时只解决“多个可运行进程怎样分享 CPU”。当消费者等待数据、生产者等待
+空间时，继续给它们时间片只会反复检查同一条件。早期系统常用轮询，因为机器
+只有一个控制流、外设接口简单；多道程序设计出现后，等待 I/O 的作业让出
+处理器成为提高利用率的关键。同步对象也遵循同一道理：等待条件不是计算工作，
+不应继续消耗 Ready 队列中的机会。
+
+v0.10 在原四态中加入 \code{Blocked}：
+
+\begin{pdfdiagram}
+  \node[os state] (unused) {Unused};
+  \node[os block,right=of unused] (ready) {Ready};
+  \node[os state,right=of ready] (running) {Running};
+  \node[os block,below=of running] (blocked) {Blocked\\wait reason};
+  \node[os hardware,left=of blocked] (terminated) {Terminated};
+  \draw[os arrow] (unused) -- node[above]{创建} (ready);
+  \draw[os arrow] (ready) -- node[above]{派发} (running);
+  \draw[os arrow] (running) to[bend left] node[above]{抢占} (ready);
+  \draw[os arrow] (running) -- node[right]{条件不满足} (blocked);
+  \draw[os arrow] (blocked) -- node[below]{条件变化} (ready);
+  \draw[os arrow] (running) -- node[below]{退出/异常} (terminated);
+\end{pdfdiagram}
+\diagramnote{唤醒只恢复调度资格，不把 Blocked 直接变成 Running，也不承诺资源仍然可用。}
+
+每个 PCB 新增 \code{ProcessWaitReason}，当前只接受
+\code{PipeReadable} 与 \code{PipeWritable}。原因不是装饰日志：唤醒方
+只移动等待对应条件的进程，读出一个字节不能错误唤醒另一个读者，写入一个字节
+也不能错误唤醒写者。成功阻塞增加当前 PCB 与全局 block 计数，成功唤醒增加
+对应 wakeup 计数；结束时两者相等是本次有限执行没有遗留睡眠者的必要证据。
+
+\code{BlockCurrentProcess} 还要求至少存在一个 Ready 后继。若当前进程睡眠后
+只剩 Blocked，CPU 没有可以恢复的用户帧；运行时返回
+\code{NoReadyProcess}，不能把“没有 Ready”误解释为“所有进程完成”。完整
+系统以后会有内核 idle 线程，此时可以在无用户 Ready 时执行 \code{hlt}；
+当前阶段明确报错更能暴露等待环。
+
+\section{互斥、内存可见性和阻塞是三种不同机制}
+
+共享缓冲区有三个独立问题：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 两个执行流不能同时修改读写索引与计数；
+  \item 一个执行流提交的数据必须对随后取得保护的执行流可见；
+  \item 条件不满足的进程应离开 Ready 集合。
+\end{enumerate}
+
+自旋锁处理前两项，调度状态处理第三项。\code{volatile} 只影响编译器对
+单次访问的省略与合并，不会把“读值、比较、写新值”变成不可分割动作，也不
+形成跨 CPU 的 happens-before。x86 对普通存储的排序比许多弱序处理器强，
+但编译器仍能重排 C++ 操作；接口必须同时表达编译器与处理器边界。
+
+本项目的 \code{SpinLock::TryLock} 使用原子 exchange-acquire。交换把
+内存中的零改为一并返回旧值，在 x86 上落到具有原子读改写语义的指令；只有
+观察到旧值为零的一方取得锁。acquire 阻止后续临界区读取移动到成功获取之前。
+\code{Unlock} 用 store-release 写回零，保证临界区的字节和索引更新在另一方
+成功 acquire 后可见。只观察“锁是否仍占用”的内层加载使用 relaxed，因为
+真正进入临界区仍必须通过下一次 acquire exchange。
+
+竞争循环执行 \code{pause}。这条 x86 提示不提供互斥，也不改变锁值；它告诉
+处理器当前处于自旋等待，可减少同时多线程执行资源上的推测与流水线惩罚。
+当前 QEMU 只启用一个 CPU，自旋几乎不会承受跨核竞争，但实现从一开始就不把
+单核偶然性写成锁语义。
+
+\code{SpinLockGuard} 在构造时获取、析构时释放，使 \code{Pipe} 的多个
+早退分支不会漏锁。它不是可睡眠 mutex：持锁期间禁止阻塞、切换进程、输出
+串口或访问可能失败的不可信用户页面。临界区只复制固定内核缓冲、更新索引和
+统计。
+
+\section{丢失唤醒发生在“看见条件”和“登记等待”之间}
+
+设消费者观察到管道为空。若执行以下错误顺序：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 消费者检查 \code{buffered=0}；
+  \item 消费者释放保护；
+  \item 生产者写入数据并尝试唤醒，但此时没有登记的等待者；
+  \item 消费者把自己标为 Blocked。
+\end{enumerate}
+
+数据已经存在，生产者也已经发过唯一一次唤醒，但消费者会永久睡眠。这不是
+“唤醒速度太快”，而是条件状态与等待者状态没有共同的线性化点。
+
+当前系统用两层边界解决。管道内部状态在自旋锁下检查和修改；系统调用通过
+interrupt gate 进入，硬件清 IF，单核上不会有另一个普通 IRQ 在
+\code{ReadCanProgress} 与 PCB 状态转换中插入。Wait 系统调用再次检查条件，
+只有仍不能推进才保存 176 字节帧并从 Running 变 Blocked。SMP 后另一 CPU
+不受本地 IF 影响，必须把条件检查、等待队列登记和调度转换纳入同一共享锁协议；
+本阶段文档明确保留这项边界。
+
+唤醒后仍要循环检查。写者可能只释放了少量空间，多个等待者也可能竞争同一资源；
+从 Blocked 变 Ready 到实际再次 Running 之间，条件可能再次变化。因此 wakeup
+表示“值得重试”，不是把管道字节预留给某个 PID。
+
+\section{Try 与 Wait 分离使挂起的系统调用现场没有隐式副作用}
+
+用户执行 \code{INT 0x80} 时，硬件保存的 RIP 已经指向系统调用指令之后。
+如果一个 \code{ReadPipe} 内核分支发现空管道并直接阻塞，唤醒后有三种困难：
+
+\begin{itemize}
+  \item 直接 \code{iretq} 会让用户误以为原读已经完成；
+  \item 修改保存 RIP 重做 \code{INT 0x80} 会隐式重放寄存器与副作用；
+  \item 在内核中保留半完成调用需要额外 continuation 状态和生命周期。
+\end{itemize}
+
+v0.10 因此把 ABI 分成 \code{TryReadPipe/TryWritePipe} 和
+\code{WaitPipeReadable/WaitPipeWritable}。Try 只尝试一次：成功返回部分
+字节数，稳定终态返回 EOF 或错误，暂时条件返回 \code{WouldBlock}。Wait
+只负责条件检查和调度；被唤醒后返回零，用户包装再从头 Try。
+
+\begin{pdfdiagram}
+  \node[os state] (user) {用户 ReadPipe};
+  \node[os block,right=of user] (try) {TryRead};
+  \node[os state,right=of try] (result) {data / EOF / error};
+  \node[os block,below=of try] (wait) {WaitReadable};
+  \node[os state,left=of wait] (blocked) {Blocked};
+  \draw[os arrow] (user) -- (try);
+  \draw[os arrow] (try) -- node[above]{可完成} (result);
+  \draw[os arrow] (try) -- node[right]{WouldBlock} (wait);
+  \draw[os arrow] (wait) -- node[below]{仍不可读} (blocked);
+  \draw[os arrow] (blocked) -- node[left]{唤醒} (user);
+\end{pdfdiagram}
+\diagramnote{循环位于用户包装，内核每个系统调用都有单一、可统计的职责。}
+
+编号 4--9 依次表示 TryRead、TryWrite、WaitReadable、WaitWritable、
+CloseReader 与 CloseWriter。负结果分别区分无效用户内存、未知编号、设备
+失败、would block、broken pipe、端点权限、端点已关闭、无 Ready 后继、
+非法参数和单次传输过长。错误值使用 \code{int64\_t}，不让宿主
+\code{long} 宽度进入 ABI。
+
+\section{64 字节环形缓冲把有限资源变成可证明的背压}
+
+管道保存 \code{buffer[64]}、读索引 \(r\)、写索引 \(w\) 与缓冲字节数
+\(B\)。索引更新为：
+\[
+  r'=(r+n)\bmod 64,\qquad
+  w'=(w+n)\bmod 64,
+\]
+其中 \(n\) 是本次实际读写的字节数。累计写入 \(W\) 与累计读取 \(R\)
+满足：
+\[
+  0\le B\le64,\qquad B=W-R.
+\]
+
+写最多接受 \(\min(\mathrm{request},64-B)\) 字节，读最多返回
+\(\min(\mathrm{capacity},B)\) 字节。允许部分传输让固定容量可以服务任意
+长度用户请求，也迫使包装层正确推进指针和剩余长度。生产者写 256 字节，
+消费者每次最多接收 31 字节；31 与 64 不整除，读写索引会多次跨数组末端，
+所以整机路径真实覆盖回绕，而不是只复制缓冲前缀。
+
+容量满时生产者 Blocked，消费者读出后唤醒写条件；容量空时消费者 Blocked，
+生产者写入后唤醒读条件。这就是背压：系统不为速度差无限分配内存，而让更快
+一方在固定上界处等待。
+
+\begin{longtable}{L{0.25\textwidth}L{0.24\textwidth}L{0.39\textwidth}}
+\toprule
+状态 & 操作结果 & 条件语义\\
+\midrule
+\(B>0\) & 读部分或全部字节 & 消费数据并可能释放写空间\\
+\(B=0\)，写端开放 & WouldBlock & 未来仍可能写入\\
+\(B=0\)，写端关闭 & EOF，返回 0 & 未来不再有字节\\
+\(B<64\)，读端开放 & 写部分或全部字节 & 提交数据并可能满足读取\\
+\(B=64\)，读端开放 & WouldBlock & 等待消费者释放空间\\
+读端关闭 & BrokenPipe & 未来无人消费写入\\
+\bottomrule
+\end{longtable}
+
+\section{用户复制不能藏在管道锁里}
+
+系统调用寄存器来自 Ring 3。写路径先验证完整只读用户范围，再复制到最大
+64 字节的内核栈缓冲，最后取得管道锁提交。读路径先验证完整可写用户范围，
+在管道锁下取到内核缓冲并释放锁，再复制到用户页。这样锁内操作不会因页表
+遍历、错误返回或未来可恢复 page fault 而睡眠。
+
+\code{ValidateUserWritableMemory} 除 present 与 U/S 外还要求叶页 writable；
+代码页或只读数据页不能成为管道读目的地。范围仍使用半开区间，先检查地址加法
+溢出，再逐页查询。当前 interrupt gate 在单核内核段关闭 IF，地址空间不会
+在验证与复制之间被另一个执行流销毁；多线程/内核抢占阶段仍需页固定或地址
+空间锁。
+
+成功写入后运行时累计当前 PCB 的 \code{pipeBytesWritten}，成功读出后累计
+\code{pipeBytesRead}。这两项和管道全局统计从不同所有权视角证明同一事实：
+生产者只能写 256、消费者只能读 256，两个调度 worker 两项都为零。
+
+\section{端点关闭改变等待谓词，所以关闭本身也必须唤醒}
+
+“暂时为空”与 EOF 的区别不是缓冲内容，而是未来是否仍有写者。写端关闭时，
+缓冲中的旧数据仍要先读完；只有 \(B=0\) 后读才返回零。对称地，读端关闭后
+任何新写都成为 broken pipe。
+
+关闭写端要唤醒 \code{PipeReadable} 等待者，让它观察剩余数据或 EOF；
+关闭读端要唤醒 \code{PipeWritable} 等待者，让它观察 broken pipe。若只在
+传输字节时唤醒，等待者会永远等一个已经不可能发生的状态变化。
+
+当前 bootstrap pipe 固定一个读端和一个写端：PID1 生产者只获写权限，
+PID2 消费者只获读权限。错误方向返回 permission denied，第二次关闭返回
+endpoint closed。进程正常退出、用户异常或失败退出都在释放地址空间前自动
+关闭仍归它所有的端点；关闭与唤醒先于页表回收，避免对侧依赖已经消失的所有者。
+文件描述符阶段会把布尔端点改成引用计数，但“最后一个写引用关闭产生 EOF”
+与“最后一个读引用关闭产生 broken pipe”的条件保持不变。
+
+\section{三层测试把互斥、状态机与真实 Ring 3 行为分开证明}
+
+管道单元测试从空对象开始，覆盖初始化、非法参数、空/满、部分读写、回绕、
+EOF、broken pipe、双重关闭和统计。固定种子随机测试执行 32768 步操作，
+每一步与独立字节队列模型比较内容和结果；它不会复用被测索引算法，因此能发现
+“实现和测试犯同一个模运算错误”。
+
+自旋锁集成测试使用四个宿主线程，每个执行 50000 次受锁递增。最终计数必须
+精确为 200000，既观察互斥，也观察 acquire/release 交接后的可见性。它不
+声称宿主调度等于 x86 目标调度，而是快速压力验证同一 C++ 原子实现。
+
+QEMU 正常镜像创建生产者、消费者和两个 worker。稳定验收要求：
+
+\begin{itemize}
+  \item 管道容量为 64，累计写入和读取均为 256，最终缓冲为零；
+  \item reader/writer block 均至少一次，全局 block 与 wakeup 相等；
+  \item EOF 恰观察一次，读写端最终均关闭；
+  \item 消费者逐字节接受公式
+  \((i\times37+11)\mathbin{\&}\mathtt{0xFF}\) 的完整序列；
+  \item 四个进程退出码均为零，创建前后物理页统计一致；
+  \item 既有 PIT 抢占、同址 BSS 隔离和键盘 IRQ 仍然通过。
+\end{itemize}
+
+生产者与消费者谁先打印 STARTED 受 PIT 与 QEMU TCG 边界影响，不作为协议；
+各自内部顺序、固定出现次数和冷路径统计才稳定。完整回归为 64 项 CTest，
+其中包括 20 项 QEMU 系统测试、22 项失败路径和 10 项固定种子随机测试。
+
 \section{完整进程生命周期是一组受约束状态转换}
 
 新进程从 created 进入 runnable，调度后成为 running；等待 I/O 或同步条件时

@@ -295,6 +295,50 @@ os_add_kernel_process_test(
     "randomized"
 )
 
+function(os_add_kernel_ipc_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_ipc_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_ipc_test(
+    os_kernel_pipe_unit_tests
+    unit/kernel/pipe_test.cpp
+    "unit"
+)
+os_add_kernel_ipc_test(
+    os_kernel_pipe_randomized_tests
+    randomized/kernel/pipe_randomized_test.cpp
+    "randomized"
+)
+
+find_package(Threads REQUIRED)
+os_add_kernel_ipc_test(
+    os_kernel_synchronization_integration_tests
+    integration/boot/kernel_synchronization_test.cpp
+    "integration"
+)
+target_link_libraries(
+    os_kernel_synchronization_integration_tests
+    PRIVATE
+        Threads::Threads
+)
+
 add_test(
     NAME os_freestanding_symbol_audit
     COMMAND
@@ -354,6 +398,14 @@ os_add_user_elf_audit_test(
 os_add_user_elf_audit_test(
     os_user_scheduler_worker_elf_layout
     "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_ipc_producer_elf_layout
+    "${OS_USER_IPC_PRODUCER_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_ipc_consumer_elf_layout
+    "${OS_USER_IPC_CONSUMER_ELF_PATH}"
 )
 
 add_test(

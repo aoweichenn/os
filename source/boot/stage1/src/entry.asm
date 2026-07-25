@@ -286,6 +286,8 @@ os_stage1_long_mode_entry:
 
     call os_stage1_discover_physical_memory
     jnc os_stage1_report_memory_map_invalid
+    call os_stage1_validate_kernel_staging_memory
+    jnc os_stage1_report_memory_map_invalid
     mov rsi, OS_STAGE1_LOAD_PHYSICAL_BASE \
         + os_stage1_memory_map_ready_message
     call os_stage1_long_write_string

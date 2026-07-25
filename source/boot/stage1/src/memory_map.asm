@@ -161,3 +161,46 @@ os_stage1_sort_physical_memory_map_next:
 
 os_stage1_sort_physical_memory_map_complete:
     ret
+
+os_stage1_validate_kernel_staging_memory:
+    ; 高端暂存区必须完整落在同一条可用 RAM 记录中，不能只依赖 QEMU
+    ; 的默认内存大小，也不能跨越保留区间。
+    mov r12, [ \
+        OS_STAGE1_MEMORY_MAP_METADATA_ADDRESS \
+        + OS_STAGE1_MEMORY_MAP_ENTRY_COUNT_OFFSET \
+    ]
+    mov rsi, OS_STAGE1_PHYSICAL_MEMORY_MAP_ADDRESS
+
+os_stage1_validate_kernel_staging_memory_entry:
+    test r12, r12
+    jz os_stage1_validate_kernel_staging_memory_invalid
+    cmp dword [ \
+        rsi + OS_STAGE1_PHYSICAL_MEMORY_MAP_ENTRY_TYPE_OFFSET \
+    ], OS_STAGE1_PHYSICAL_MEMORY_MAP_USABLE_TYPE
+    jne os_stage1_validate_kernel_staging_memory_next
+
+    mov rax, [ \
+        rsi + OS_STAGE1_PHYSICAL_MEMORY_MAP_ENTRY_BASE_OFFSET \
+    ]
+    cmp rax, OS_STAGE1_KERNEL_STAGING_ADDRESS
+    ja os_stage1_validate_kernel_staging_memory_next
+    mov rdx, [ \
+        rsi + OS_STAGE1_PHYSICAL_MEMORY_MAP_ENTRY_LENGTH_OFFSET \
+    ]
+    add rdx, rax
+    jc os_stage1_validate_kernel_staging_memory_next
+    cmp rdx, OS_STAGE1_KERNEL_STAGING_END_ADDRESS
+    jae os_stage1_validate_kernel_staging_memory_valid
+
+os_stage1_validate_kernel_staging_memory_next:
+    add rsi, OS_STAGE1_PHYSICAL_MEMORY_MAP_ENTRY_SIZE_BYTES
+    dec r12
+    jmp os_stage1_validate_kernel_staging_memory_entry
+
+os_stage1_validate_kernel_staging_memory_valid:
+    stc
+    ret
+
+os_stage1_validate_kernel_staging_memory_invalid:
+    clc
+    ret

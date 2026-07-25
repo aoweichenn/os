@@ -26,6 +26,7 @@ from tools.os_tools.kernel_elf import (
     parseKernelLoadSegments,
     validateKernelArchitectureSymbols,
     validateKernelEntry,
+    validateKernelRuntimeInitializationSections,
 )
 
 
@@ -54,6 +55,12 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
     "osKernelUserInvalidOpcodeElfEnd",
     "osKernelUserPageFaultElfStart",
     "osKernelUserPageFaultElfEnd",
+    "osKernelUserSchedulerWorkerElfStart",
+    "osKernelUserSchedulerWorkerElfEnd",
+    "osKernelUserIpcProducerElfStart",
+    "osKernelUserIpcProducerElfEnd",
+    "osKernelUserIpcConsumerElfStart",
+    "osKernelUserIpcConsumerElfEnd",
     "osKernelImageStart",
     "osKernelImageEnd",
     "osKernelTextStart",
@@ -233,6 +240,17 @@ class KernelElfToolTests(unittest.TestCase):
 
         with self.assertRaises(OsToolError):
             validateKernelArchitectureSymbols(incompleteSymbols)
+
+    def testAcceptsKernelWithoutRuntimeInitializationSections(self) -> None:
+        validateKernelRuntimeInitializationSections(
+            "[ 1] .text PROGBITS\n[ 2] .rodata PROGBITS\n"
+        )
+
+    def testRejectsKernelWithDynamicInitializationSection(self) -> None:
+        with self.assertRaises(OsToolError):
+            validateKernelRuntimeInitializationSections(
+                "[ 5] .init_array INIT_ARRAY\n"
+            )
 
 
 if __name__ == "__main__":

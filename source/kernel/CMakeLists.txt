@@ -15,6 +15,7 @@ set(
     include/os/kernel/memory_manager.hpp
     include/os/kernel/page_table.hpp
     include/os/kernel/panic.hpp
+    include/os/kernel/pipe.hpp
     include/os/kernel/physical_frame_allocator.hpp
     include/os/kernel/physical_memory_map.hpp
     include/os/kernel/port_io.hpp
@@ -25,6 +26,7 @@ set(
     include/os/kernel/programmable_interval_timer.hpp
     include/os/kernel/ps2_keyboard.hpp
     include/os/kernel/serial_port.hpp
+    include/os/kernel/spin_lock.hpp
     include/os/kernel/system_calls.hpp
     include/os/kernel/ata_pio.hpp
     include/os/kernel/user_elf.hpp
@@ -50,6 +52,7 @@ set(
     src/page_table.cpp
     src/page_table_layout.cpp
     src/panic.cpp
+    src/pipe.cpp
     src/physical_frame_allocator.cpp
     src/physical_memory_map.cpp
     src/port_io.cpp
@@ -60,6 +63,7 @@ set(
     src/programmable_interval_timer.cpp
     src/ps2_keyboard.cpp
     src/serial_port.cpp
+    src/spin_lock.cpp
     src/system_calls.cpp
     src/user_elf.cpp
     src/user_memory.cpp
@@ -156,6 +160,25 @@ add_library(
         src/process_scheduler.cpp
         include/os/kernel/process_memory_layout.hpp
         include/os/kernel/process_scheduler.hpp
+)
+
+add_library(
+    os_kernel_ipc_model_host
+    STATIC
+        src/pipe.cpp
+        src/spin_lock.cpp
+        include/os/kernel/pipe.hpp
+        include/os/kernel/spin_lock.hpp
+)
+target_include_directories(
+    os_kernel_ipc_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_ipc_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
 )
 target_include_directories(
     os_kernel_process_model_host
@@ -280,7 +303,9 @@ add_custom_command(
         "${OS_USER_INVALID_OPCODE_ELF_PATH}"
         "${OS_USER_PAGE_FAULT_ELF_PATH}"
         "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
-    COMMENT "嵌入四个自研 Ring 3 ELF64 程序"
+        "${OS_USER_IPC_PRODUCER_ELF_PATH}"
+        "${OS_USER_IPC_CONSUMER_ELF_PATH}"
+    COMMENT "嵌入六个自研 Ring 3 ELF64 程序"
     VERBATIM
 )
 add_custom_target(

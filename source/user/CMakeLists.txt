@@ -154,6 +154,18 @@ set(
     CACHE INTERNAL
     "Ring 3 进程调度与地址空间隔离验收程序"
 )
+set(
+    OS_USER_IPC_PRODUCER_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_ipc_producer.elf"
+    CACHE INTERNAL
+    "Ring 3 有界管道生产者验收程序"
+)
+set(
+    OS_USER_IPC_CONSUMER_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_ipc_consumer.elf"
+    CACHE INTERNAL
+    "Ring 3 有界管道消费者验收程序"
+)
 
 os_add_user_program(
     os_user_smoke_elf
@@ -178,4 +190,16 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/scheduler_worker.cpp"
     "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
     "链接 Ring 3 进程调度与地址空间隔离 ELF64 程序"
+)
+os_add_user_program(
+    os_user_ipc_producer_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/ipc_producer.cpp"
+    "${OS_USER_IPC_PRODUCER_ELF_PATH}"
+    "链接 Ring 3 有界管道生产者 ELF64 程序"
+)
+os_add_user_program(
+    os_user_ipc_consumer_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/ipc_consumer.cpp"
+    "${OS_USER_IPC_CONSUMER_ELF_PATH}"
+    "链接 Ring 3 有界管道消费者 ELF64 程序"
 )

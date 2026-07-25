@@ -9,6 +9,8 @@ enum class UserProgramSelection : uint64_t {
     InvalidOpcode,
     PageFault,
     SchedulerWorker,
+    IpcProducer,
+    IpcConsumer,
     TruncatedSmoke,
 };
 
