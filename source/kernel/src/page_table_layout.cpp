@@ -16,6 +16,7 @@ constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_CANONICAL_UPPER_NEGATIVE = 0xFFFFULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PRESENT_BIT = 0x0000000000000001ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_WRITABLE_BIT = 0x0000000000000002ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_USER_BIT = 0x0000000000000004ULL;
+constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT = 0x0000000000000010ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT = 0x8000000000000000ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK = 0x000FFFFFFFFFF000ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_SINGLE_BIT_MASK = 0x0000000000000001ULL;
@@ -53,6 +54,9 @@ uint64_t encodePageTableLeafEntry(const uint64_t physicalAddress,
     if (permissions.userAccessible) {
         entry |= OS_KERNEL_PAGE_LAYOUT_USER_BIT;
     }
+    if (permissions.cacheDisabled) {
+        entry |= OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT;
+    }
     if (!permissions.executable) {
         entry |= OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT;
     }
@@ -67,6 +71,7 @@ PageMapping decodePageTableLeafEntry(const uint64_t entry) noexcept {
                 .writable = (entry & OS_KERNEL_PAGE_LAYOUT_WRITABLE_BIT) != 0ULL,
                 .executable = (entry & OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT) == 0ULL,
                 .userAccessible = (entry & OS_KERNEL_PAGE_LAYOUT_USER_BIT) != 0ULL,
+                .cacheDisabled = (entry & OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT) != 0ULL,
             },
     };
 }

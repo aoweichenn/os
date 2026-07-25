@@ -32,9 +32,16 @@ EOI，控制器可能不再交付同优先级 IRQ。顺序来自控制器触发�
 为了让旧 PIC 与新 APIC 共存，PC 固件通常建立 virtual wire mode，把 PIC
 输出作为本地 APIC 的 ExtINT 输入。这里的关键词是“固件通常”：它不是
 x86 指令集自动完成的复位承诺。本项目没有 SeaBIOS/OVMF，自研 ROM 尚未配置
-LAPIC LVT，因此 v0.7 选择清除 \code{IA32\_APIC\_BASE} 的 bit 11，让
-单核处理器直接接收传统 INTR。写后必须 \code{RDMSR} 回读，不能把执行过
-\code{WRMSR} 当作状态已经建立。
+LAPIC LVT，因此 v0.7 由内核显式建立 virtual wire。内存管理器先从当前
+xAPIC 实现使用的 \code{IA32\_APIC\_BASE[35:12]} 取得 4 KiB MMIO 基址，
+把该页做 supervisor RW/NX/PCD 身份映射；PCD 禁止把带副作用的设备寄存器
+当作普通缓存内存。
+
+设备运行时要求 \code{IA32\_APIC\_BASE} 的全局启用 bit 11 保持为一、
+x2APIC bit 10 为零。随后把 SVR 偏移 \code{0x0F0} 的软件启用 bit 8 置一，
+并选择未分配向量 \code{0xFF}；再把 LVT LINT0 偏移 \code{0x350} 的
+delivery mode[10:8] 写为 ExtINT \code{111b}，清除 mask bit 16。每个字段
+都必须回读，不能把执行过一次 MMIO store 当作路由已经建立。
 
 \begin{pdfdiagram}
   \node[os hardware] (pit) {PIT\\IRQ0 边沿};
@@ -54,8 +61,10 @@ LAPIC LVT，因此 v0.7 选择清除 \code{IA32\_APIC\_BASE} 的 bit 11，让
 这条差异在真实 QEMU 中形成过一个很有价值的失败：PIT 的 IRQ 统计持续增长，
 PIC 的 IRR bit 0 为一、IMR bit 0 为零，CPU 的 IF 为一且处于 HLT，
 IDT[32] 也存在，但入口计数始终为零。延长等待、重写 PIT 除数或重复 STI
-都不能修复“连接不存在”。关闭未配置的本地 APIC 后，下一次 IRQ0 立即沿
-INTR 进入。这说明跨芯片拓扑和单芯片寄存器同样属于软件契约。
+都不能修复“连接不存在”。第一次尝试直接关闭 LAPIC，在 QEMU 10.2 能让
+IRQ0 进入，却在 QEMU 8.2 即使等待五秒仍停在同一位置。最终显式配置 SVR 与
+LVT LINT0 后，PIC 输出稳定地经 ExtINT 交付。这说明跨芯片拓扑、模拟器版本
+边界和单芯片寄存器同样属于软件契约。
 
 \section{代码按纯模型、端口驱动、运行时和入口分层}
 
@@ -249,11 +258,12 @@ Unix socket，等串口出现 \code{READY} 后协商 capabilities，并执行
 硬件边界。
 
 捕获生命周期不能把某一台宿主机的速度写成来宾契约。最初固定等待两秒再验收，
-慢速 CI runner 曾在 \code{INTERRUPTS\_ENABLED} 后结束进程；这只能说明宿主
-墙钟预算耗尽，不能单独说明 PIC 或 PIT 错误。当前捕获器观察每个用例最后一个
-必需里程碑：到达后短暂收尾并主动回收 QEMU；未到达才等待五秒总截止。QMP
-线程等待 \code{READY} 也使用同一上界。结束后仍完整检查所有必需标记的顺序和
-禁止标记，因此放宽的是宿主调度假设，不是来宾正确性。
+远端 QEMU 曾在 \code{INTERRUPTS\_ENABLED} 后结束进程。把上界增至五秒后
+停顿位置完全不变，这反证了“只是 runner 较慢”的假设，并把问题收窄到 PIC
+与 CPU 之间的路由。当前捕获器观察每个用例最后一个必需里程碑：到达后短暂
+收尾并主动回收 QEMU；未到达才等待五秒总截止。QMP 线程等待 \code{READY}
+也使用同一上界。里程碑机制用于准确分类失败，结束后仍完整检查所有必需标记
+的顺序和禁止标记，不能用延长宿主时间替代来宾正确性。
 
 \section{时间与日志必须区分来宾语义和宿主观察}
 

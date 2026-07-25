@@ -19,6 +19,7 @@ struct PagePermissions final {
     bool writable;
     bool executable;
     bool userAccessible;
+    bool cacheDisabled;
 };
 
 struct PageMapping final {

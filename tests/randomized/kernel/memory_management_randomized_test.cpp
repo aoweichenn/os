@@ -36,6 +36,7 @@ constexpr uint64_t OS_TEST_MEMORY_RANDOM_MEMORY_MAP_ENTRY_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_WRITABLE_PERMISSION_BIT = 0x1ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_EXECUTABLE_PERMISSION_BIT = 0x2ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_USER_PERMISSION_BIT = 0x4ULL;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_CACHE_DISABLE_PERMISSION_BIT = 0x8ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_ALLOCATION_DECISION_BIT = 0x1ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_NEXT_PAGE_OFFSET = 1ULL;
 
@@ -64,6 +65,8 @@ int main() {
             .executable =
                 (permissionBits & OS_TEST_MEMORY_RANDOM_EXECUTABLE_PERMISSION_BIT) != 0ULL,
             .userAccessible = (permissionBits & OS_TEST_MEMORY_RANDOM_USER_PERMISSION_BIT) != 0ULL,
+            .cacheDisabled =
+                (permissionBits & OS_TEST_MEMORY_RANDOM_CACHE_DISABLE_PERMISSION_BIT) != 0ULL,
         };
         const os::kernel::PageMapping mapping = os::kernel::decodePageTableLeafEntry(
             os::kernel::encodePageTableLeafEntry(physicalAddress, permissions));
@@ -71,7 +74,8 @@ int main() {
             mapping.physicalAddress == physicalAddress &&
                 mapping.permissions.writable == permissions.writable &&
                 mapping.permissions.executable == permissions.executable &&
-                mapping.permissions.userAccessible == permissions.userAccessible,
+                mapping.permissions.userAccessible == permissions.userAccessible &&
+                mapping.permissions.cacheDisabled == permissions.cacheDisabled,
             OS_TEST_MEMORY_RANDOM_PAGE_ROUND_TRIP, OS_TEST_MEMORY_RANDOM_SEED, iteration);
     }
 

@@ -225,12 +225,16 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 ## v0.7 传统中断与设备闭环
 
 QEMU `pc` 同时包含 8259A、I/O APIC 和本地 APIC。没有外部 BIOS 时，内核
-不能假定复位后的 APIC 已替 8259A 建立虚拟线模式。设备启动先清除并回读
-`IA32_APIC_BASE[11]`，让传统 INTR 路径成为显式契约，再初始化两片 PIC：
+不能假定复位后的 APIC 已替 8259A 建立虚拟线模式。内存管理器先把
+`IA32_APIC_BASE` 给出的 LAPIC MMIO 页映射为 supervisor RW/NX/PCD；设备
+启动保持 LAPIC 全局启用和 x2APIC 关闭，设置 SVR 软件启用，再把 LVT LINT0
+配置为未屏蔽的 ExtINT。全部字段回读成功后才初始化两片 PIC：
 
 ```text
-LAPIC global enable = 0
-       ↓
+IA32_APIC_BASE → LAPIC MMIO page（RW/NX/PCD）
+       ↓ SVR[8]=1、vector=0xFF
+LVT LINT0 delivery=ExtINT、mask=0
+       ↓ virtual wire
 8259A master 0x20/0x21 ──IRQ2 级联── slave 0xA0/0xA1
        ↓ 重映射
 IRQ0..7 → IDT 32..39，IRQ8..15 → IDT 40..47

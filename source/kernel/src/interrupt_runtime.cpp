@@ -52,8 +52,8 @@ InterruptRuntime::InterruptRuntime() noexcept
       initialized_{false} {}
 
 InterruptRuntimeStatus InterruptRuntime::initialize() noexcept {
-    // 固件没有替内核建立 APIC 虚拟线模式；关闭本地 APIC 后，8259A 的 INTR
-    // 才会沿处理器的传统中断输入交付。后续 APIC 阶段会显式替换这条路径。
+    // 固件没有替内核建立 APIC 虚拟线模式；先把 LAPIC LINT0 配置为 ExtINT，
+    // 再初始化 PIC，保证后续 IRQ 边沿沿明确的跨控制器路径交付。
     if (!configureLegacyInterruptRouting()) {
         return InterruptRuntimeStatus::LegacyInterruptRoutingFailed;
     }

@@ -18,8 +18,10 @@ PIT 计数不能证明外部输入；只复用 Stage 1 ATA 结果又不能证明
 
 ## 决策
 
-1. v0.7 采用传统 8259A 路由。内核清除 `IA32_APIC_BASE` 的全局启用位并
-   回读确认，再初始化 PIC。后续 APIC 里程碑会显式替换这一策略。
+1. v0.7 采用 LAPIC virtual-wire 与传统 8259A 的兼容路由。内核把
+   `IA32_APIC_BASE` 指定的 LAPIC MMIO 页映射为 supervisor RW/NX/PCD，
+   保持 APIC 全局启用并拒绝 x2APIC 模式；随后设置 SVR 软件启用且向量为
+   `0xFF`，把 LVT LINT0 配成未屏蔽的 ExtINT，回读确认后再初始化 PIC。
 2. PIC 主从片重映射到向量 32 和 40。全部 IRQ 默认屏蔽，设备就绪后只开放
    IRQ0 与 IRQ1；不开放尚无驱动的 IRQ。
 3. 向量 32..47 使用独立汇编桩和 C++ 硬件分发器。寄存器保存布局与异常帧
@@ -37,8 +39,8 @@ PIT 计数不能证明外部输入；只复用 Stage 1 ATA 结果又不能证明
 ## 结果
 
 - 首次建立了从物理设备模型到 IDT、汇编 ABI、C++ 状态和 EOI 的完整异步链。
-- 关闭本地 APIC让当前单核 PIC 模型可确定复现，但暂不支持多核和 I/O APIC
-  路由；升级时必须新增控制器抽象和相应 ADR。
+- LAPIC 当前只作为 PIC 输出的 virtual-wire 兼容桥；暂不使用 LAPIC timer、
+  IPI、I/O APIC 或多核目标路由。升级时必须新增控制器抽象和相应 ADR。
 - PIT 提供启动后的单调时间基础，但不是墙钟，也不保证每 tick 恰好 1 ms。
 - PS/2 只保留一个待消费事件；持续输入的环形缓冲、溢出统计和终端处理属于
   下一次最小增量。
@@ -50,6 +52,13 @@ PIT 计数不能证明外部输入；只复用 Stage 1 ATA 结果又不能证明
 
 真实 QEMU 诊断显示 PIC 的 IRR 已出现 IRQ0/IRQ1、IF=1 且 CPU 处于 HLT，
 事件仍未交付。隐含平台状态不可作为内核 ABI，因此否决。
+
+### 直接关闭 LAPIC 全局启用位
+
+这一策略在 QEMU 10.2 可以让 PIC 直接交付 INTR，但 QEMU 8.2 中 PIC 已置
+IRR、IF 已开启并等待五秒后仍没有向量 32，说明跨版本行为不足以作为稳定平台
+契约。显式配置 SVR 与 LVT LINT0 的 ExtINT 路径同时保留 APIC 架构状态并
+匹配 PC virtual-wire 模型，因此否决直接关闭方案。
 
 ### 立即实现 I/O APIC 和本地 APIC timer
 

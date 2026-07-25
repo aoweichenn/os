@@ -17,7 +17,8 @@
 - 验证 BootInfo v2 的物理内存图，初始化 2-bit 页帧分配器。
 - 建立并激活内核自己的四级 4 KiB 页表，执行 W^X、NX、WP 和 guard page。
 - 映射并自检 64 KiB 高半区单调早期堆。
-- 关闭未配置虚拟线模式的本地 APIC，接管 8259A、8254、i8042 和 ATA PIO。
+- 映射 LAPIC MMIO 并建立 LINT0 ExtINT virtual-wire，接管 8259A、8254、
+  i8042 和 ATA PIO。
 - 向量 32..47 使用独立硬件 IRQ 汇编入口，设备处理后严格执行 PIC EOI。
 - 验收完成后进入 IF 开启的 `HLT` 事件循环，不返回 Stage 1。
 
@@ -205,10 +206,11 @@ panic 不使用动态分配、格式化库、锁、异常、RTTI 或可失败的
 
 ## v0.7 硬件 IRQ 与设备契约
 
-`InterruptRuntime` 在 IF 关闭时完成全部设备配置。它先清除并回读
-`IA32_APIC_BASE` 的全局启用位，避免依赖不存在的 BIOS 虚拟线路由；随后
-重映射 8259A，初始屏蔽所有 IRQ。只有 PIT、PS/2 和 ATA 自检全部成功后，
-才把掩码改为 `0xFFFC` 并开放 IRQ0/IRQ1。
+`InterruptRuntime` 在 IF 关闭时完成全部设备配置。内存管理器已把
+`IA32_APIC_BASE` 指定页映射为 RW/NX/PCD；运行时保持 LAPIC 全局启用，
+启用 SVR，并把 LVT LINT0 配为未屏蔽的 ExtINT，回读后再重映射 8259A。
+PIC 初始屏蔽所有 IRQ，只有 PIT、PS/2 和 ATA 自检全部成功后，才把掩码改为
+`0xFFFC` 并开放 IRQ0/IRQ1。
 
 硬件 IRQ 桩统一压入零错误码和向量号，保存集合与异常 ABI 相同。分发器把
 向量 32..47 还原为 IRQ0..15：
@@ -292,8 +294,8 @@ PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，
 
 ## 已知边界
 
-- 当前仅使用单核传统 PIC；本地 APIC、I/O APIC、MSI/MSI-X 与 SMP 路由
-  尚未实现。
+- 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
+  timer/IPI、I/O APIC、MSI/MSI-X 与 SMP 路由尚未实现。
 - 键盘只保存一个待处理语义事件，ATA 仍是禁用设备 IRQ 的同步单扇区 PIO；
   环形队列、IRQ14、DMA 与通用块请求尚未实现。
 - 页帧分配器当前只管理低 64 MiB；高端 RAM、NUMA 和稀疏物理内存以后扩展。

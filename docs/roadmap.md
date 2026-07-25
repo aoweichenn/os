@@ -127,8 +127,9 @@
 
 - IDT 向量 32..47 安装 present、DPL0 的 interrupt gate；16 个 NASM IRQ
   桩补齐零错误码，复用 160 字节寄存器帧布局，但进入独立硬件中断分发器。
-- 内核显式清除 `IA32_APIC_BASE[11]` 并回读，恢复传统 INTR 路由；该步骤
-  解决“PIC 已积累 IRR、IF 已置位而 CPU 仍收不到 IRQ”的真实兼容边界。
+- 内核把 LAPIC MMIO 页映射为 RW/NX/PCD，保持 `IA32_APIC_BASE[11]`，
+  设置 SVR 软件启用，并将 LVT LINT0 配为未屏蔽的 ExtINT；该 virtual-wire
+  路径解决“PIC 已积累 IRR、IF 已置位而 CPU 仍收不到 IRQ”的兼容边界。
 - 主从 8259A 依次写 ICW1..4，重映射为 `0x20/0x28`，初始全屏蔽后只开放
   IRQ0、IRQ1；从片 EOI 先从后主，IRQ7/IRQ15 通过 ISR 正确分类虚假中断。
 - 8254 通道 0 使用模式 2、低高字节写入除数 `0x04A9`，目标 1000 Hz；

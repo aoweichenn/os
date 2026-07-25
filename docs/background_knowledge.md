@@ -509,9 +509,11 @@ free list、slab 或其他策略，学习顺序会更清晰。
 - IDT 向量 32 已存在，却从未进入。
 
 这说明设备、控制器和 CPU 本身分别“看起来正确”，但它们之间的路由没有建立。
-当前单核阶段选择清除 `IA32_APIC_BASE[11]`，让 CPU 回到传统 INTR 接收路径；
-将来实现本地 APIC/I/O APIC 时再显式配置 LVT、重定向表与 EOI。兼容历史不是
-背景趣闻，它直接决定初始化序列。
+当前单核阶段显式建立 virtual-wire：映射 LAPIC MMIO 页，保持全局启用，
+设置 Spurious Interrupt Vector Register 的软件启用位，再把 LVT LINT0
+配置为未屏蔽的 ExtINT。PIC 的输出因此经 LAPIC 进入处理器；将来实现
+I/O APIC 时再引入重定向表、LAPIC EOI 和目标 CPU 选择。兼容历史不是背景
+趣闻，它直接决定初始化序列。
 
 ### 为什么中断入口不能直接写成普通 C++ 函数
 

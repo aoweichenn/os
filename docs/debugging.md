@@ -359,8 +359,10 @@ guard。它们应由 `queryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 
 先抓取 QEMU monitor 的 `info registers`、`info pic` 和 `info irq`。若
 RFLAGS.IF=1、CPU HLT=1、PIC IRR 的 bit0=1，但没有向量 32 入口，问题在
 PIC 到 CPU 的路由，不在 PIT。自研固件没有传统 BIOS 替本地 APIC配置虚拟线；
-内核必须在 PIC 初始化前清除并回读 `IA32_APIC_BASE[11]`。正常串口应先出现
-`LEGACY_INTERRUPT_ROUTING_READY`。
+内核必须先把 LAPIC MMIO 页映射为 RW/NX/PCD，保持全局启用，设置
+SVR 软件启用，并把 LVT LINT0 配为未屏蔽的 ExtINT。正常串口应先出现
+`LEGACY_INTERRUPT_ROUTING_READY`，否则检查 `IA32_APIC_BASE` 的 x2APIC
+位、MMIO 映射权限以及 SVR/LINT0 回读。
 
 若 PIC IRR 没有 bit0，检查：
 
@@ -371,6 +373,17 @@ PIC 到 CPU 的路由，不在 PIT。自研固件没有传统 BIOS 替本地 API
 
 `info irq` 证明设备产生过边沿，`info pic` 的 IRR/ISR/IMR 证明控制器状态，
 串口 `TIMER_TICKS` 才证明来宾处理并确认了 IRQ。三类证据不能互相替代。
+
+### 本地 QEMU 通过而 CI 停在 `INTERRUPTS_ENABLED`
+
+先增加宿主截止时间只能检验“是否调度较慢”，不能修复来宾路由。本项目曾在
+QEMU 10.2 通过直接关闭 LAPIC 的方案，但 QEMU 8.2 即使等待五秒仍停在相同
+位置；PIC IRR、IF 和 HLT 状态进一步排除了 PIT、IDT 与宿主速度。最终修复是
+显式建立 LAPIC LINT0 ExtINT virtual-wire。
+
+测试运行器仍采用里程碑驱动收尾和五秒失败上界。这个机制让失败分类更准确，
+但验收以真实 `TIMER_TICKS`、`READY` 与键盘事件为准，绝不能把延长超时当作
+硬件路径正确的证据。
 
 ### IRQ 后 triple fault
 
@@ -399,18 +412,18 @@ QEMU 系统测试在 `READY` 后才用 QMP `sendkey a`，以免把初始化 ACK 
 成功但 magic 错误，检查目标是否为 primary master LBA 0，以及 256 个 16 位
 DATA 字是否按小端拆成 512 字节。
 
-### 本地通过但 CI 在 `INTERRUPTS_ENABLED` 后超时
+### QEMU 捕获器为什么使用里程碑和总截止
 
-先看带宿主时间戳的最后一行。若来宾已完成设备初始化，但固定墙钟预算先耗尽，
-不能据此直接判定 PIT 或 PIC 错误：共享 CI runner 可能在来宾即将交付 IRQ 时
-长时间停调 QEMU 进程。反过来，无限延长超时也会掩盖真实停滞。
+先看带宿主时间戳的最后一行。一次固定墙钟预算耗尽不能单独判定 PIT 或 PIC
+错误；但扩大预算后总在同一来宾标记停顿，就应检查硬件状态与模拟器版本差异，
+不能继续用“runner 较慢”解释。无限延长超时同样会掩盖真实停滞。
 
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
 2. 未到达时以五秒为总失败上界；QMP 等待 `READY` 使用同一预算。
 
-协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计只移除
-“所有宿主两秒内都同速”的错误假设，不会把缺失 IRQ、缺失按键或 panic 误判为
-成功。Python 工具单元测试另用一个输出 `READY` 后睡眠的子进程，证明观察者能够
-提前、完整且无残留地结束捕获。
+协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计既移除
+“所有宿主都同速”的假设，也让稳定停顿成为可重复诊断证据；不会把缺失 IRQ、
+缺失按键或 panic 误判为成功。Python 工具单元测试另用一个输出 `READY` 后
+睡眠的子进程，证明观察者能够提前、完整且无残留地结束捕获。

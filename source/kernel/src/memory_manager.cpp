@@ -88,6 +88,7 @@ extern "C" uint8_t osKernelWritableDataEnd[];
             .writable = false,
             .executable = true,
             .userAccessible = false,
+            .cacheDisabled = false,
         };
     }
     const uint64_t readOnlyBegin = addressOf(osKernelReadOnlyDataStart);
@@ -97,12 +98,14 @@ extern "C" uint8_t osKernelWritableDataEnd[];
             .writable = false,
             .executable = false,
             .userAccessible = false,
+            .cacheDisabled = false,
         };
     }
     return PagePermissions{
         .writable = true,
         .executable = false,
         .userAccessible = false,
+        .cacheDisabled = false,
     };
 }
 
@@ -142,6 +145,7 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         .writable = true,
         .executable = false,
         .userAccessible = false,
+        .cacheDisabled = false,
     };
     for (uint64_t pageIndex = 0ULL; pageIndex < OS_KERNEL_MEMORY_HEAP_PAGE_COUNT; ++pageIndex) {
         PhysicalFrame frame{};
@@ -158,6 +162,24 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return true;
 }
 
+[[nodiscard]] bool mapLocalApicRegisters() noexcept {
+    if (!processorSupportsLocalApic()) {
+        return true;
+    }
+    const uint64_t localApicAddress = localApicPhysicalAddress();
+    if (localApicAddress == 0ULL || (localApicAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
+        return false;
+    }
+    const PagePermissions devicePermissions{
+        .writable = true,
+        .executable = false,
+        .userAccessible = false,
+        .cacheDisabled = true,
+    };
+    return pageTableManager().mapPage(localApicAddress, localApicAddress, devicePermissions) ==
+           PageTableStatus::Succeeded;
+}
+
 [[nodiscard]] bool mapWriteProtectionTestPage() noexcept {
     PhysicalFrame frame{};
     if (frameAllocator().allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
@@ -167,6 +189,7 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         .writable = false,
         .executable = false,
         .userAccessible = false,
+        .cacheDisabled = false,
     };
     PageTableManager &manager = pageTableManager();
     if (manager.mapPage(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
@@ -198,7 +221,8 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return mapping.physicalAddress == expectedPhysicalAddress &&
            mapping.permissions.writable == expectedPermissions.writable &&
            mapping.permissions.executable == expectedPermissions.executable &&
-           mapping.permissions.userAccessible == expectedPermissions.userAccessible;
+           mapping.permissions.userAccessible == expectedPermissions.userAccessible &&
+           mapping.permissions.cacheDisabled == expectedPermissions.cacheDisabled;
 }
 
 [[nodiscard]] bool validatePermissions(const uint64_t virtualAddress,
@@ -210,7 +234,8 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return mapping.physicalAddress != 0ULL &&
            mapping.permissions.writable == expectedPermissions.writable &&
            mapping.permissions.executable == expectedPermissions.executable &&
-           mapping.permissions.userAccessible == expectedPermissions.userAccessible;
+           mapping.permissions.userAccessible == expectedPermissions.userAccessible &&
+           mapping.permissions.cacheDisabled == expectedPermissions.cacheDisabled;
 }
 
 [[nodiscard]] bool validateKernelMappings(const BootInfo &bootInfo) noexcept {
@@ -218,16 +243,19 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         .writable = false,
         .executable = true,
         .userAccessible = false,
+        .cacheDisabled = false,
     };
     const PagePermissions readOnlyPermissions{
         .writable = false,
         .executable = false,
         .userAccessible = false,
+        .cacheDisabled = false,
     };
     const PagePermissions writablePermissions{
         .writable = true,
         .executable = false,
         .userAccessible = false,
+        .cacheDisabled = false,
     };
     PageMapping ignoredMapping{};
     if (!validateMapping(addressOf(osKernelTextStart), addressOf(osKernelTextStart),
@@ -240,6 +268,18 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         !validatePermissions(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
                              readOnlyPermissions)) {
         return false;
+    }
+    if (processorSupportsLocalApic()) {
+        const PagePermissions devicePermissions{
+            .writable = true,
+            .executable = false,
+            .userAccessible = false,
+            .cacheDisabled = true,
+        };
+        const uint64_t localApicAddress = localApicPhysicalAddress();
+        if (!validateMapping(localApicAddress, localApicAddress, devicePermissions)) {
+            return false;
+        }
     }
     if (pageTableManager().queryPage(0ULL, ignoredMapping) != PageTableStatus::NotMapped ||
         pageTableManager().queryPage(OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS, ignoredMapping) !=
@@ -307,6 +347,9 @@ KernelMemoryInitializationStatus initializeKernelMemory(const BootInfo &bootInfo
     }
     if (!mapIdentityRange(bootInfo)) {
         return KernelMemoryInitializationStatus::IdentityMappingFailed;
+    }
+    if (!mapLocalApicRegisters()) {
+        return KernelMemoryInitializationStatus::LocalApicMappingFailed;
     }
     if (!mapKernelHeap()) {
         return KernelMemoryInitializationStatus::HeapMappingFailed;

@@ -8,14 +8,26 @@ namespace {
 
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF = 0x80000000U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF = 0x80000001U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF = 0x00000001U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_NO_EXECUTE_BIT = 0x00100000U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_LOCAL_APIC_BIT = 0x00000200U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_EFER_MSR = 0xC0000080U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR = 0x0000001BU;
 constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT = 0x0000000000000800ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT = 0x0000000000000800ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_APIC_X2_ENABLE_BIT = 0x0000000000000400ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_APIC_BASE_ADDRESS_MASK = 0x0000000FFFFFF000ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT = 0x0000000000010000ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS = 32ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_RFLAGS_INTERRUPT_ENABLE_BIT = 0x0000000000000200ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_REGISTER_OFFSET = 0x00000000000000F0ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_LOCAL_APIC_LINT0_REGISTER_OFFSET = 0x0000000000000350ULL;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK = 0x000000FFU;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR = 0x000000FFU;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SOFTWARE_ENABLE_BIT = 0x00000100U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK = 0x00000700U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_EXTINT_DELIVERY_MODE = 0x00000700U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT = 0x00010000U;
 
 struct CpuIdResult final {
     uint32_t accumulator;
@@ -56,6 +68,10 @@ void writeModelSpecificRegister(const uint32_t registerIndex, const uint64_t val
 
 void writeControlRegister0(const uint64_t value) noexcept {
     asm volatile("mov cr0, %0" : : "r"(value) : "memory");
+}
+
+[[nodiscard]] volatile uint32_t *localApicRegister(const uint64_t registerOffset) noexcept {
+    return reinterpret_cast<volatile uint32_t *>(localApicPhysicalAddress() + registerOffset);
 }
 
 }
@@ -104,6 +120,16 @@ bool processorSupportsNoExecute() noexcept {
     return (features.data & OS_KERNEL_PROCESSOR_CPUID_NO_EXECUTE_BIT) != 0U;
 }
 
+bool processorSupportsLocalApic() noexcept {
+    const CpuIdResult features = readCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF);
+    return (features.data & OS_KERNEL_PROCESSOR_CPUID_LOCAL_APIC_BIT) != 0U;
+}
+
+uint64_t localApicPhysicalAddress() noexcept {
+    return readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
+           OS_KERNEL_PROCESSOR_IA32_APIC_BASE_ADDRESS_MASK;
+}
+
 bool enableKernelMemoryProtection() noexcept {
     if (!processorSupportsNoExecute()) {
         return false;
@@ -123,12 +149,39 @@ bool kernelMemoryProtectionEnabled() noexcept {
 }
 
 bool configureLegacyInterruptRouting() noexcept {
-    const uint64_t localApicBase =
-        readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
-    writeModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR,
-                               localApicBase & ~OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT);
-    return (readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
-            OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL;
+    if (!processorSupportsLocalApic()) {
+        return true;
+    }
+    const uint64_t localApicBase = readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
+    if ((localApicBase & OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL ||
+        (localApicBase & OS_KERNEL_PROCESSOR_IA32_APIC_X2_ENABLE_BIT) != 0ULL) {
+        return false;
+    }
+
+    volatile uint32_t *const spuriousRegister =
+        localApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_REGISTER_OFFSET);
+    const uint32_t spuriousValue =
+        (*spuriousRegister & ~OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) |
+        OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR |
+        OS_KERNEL_PROCESSOR_LOCAL_APIC_SOFTWARE_ENABLE_BIT;
+    *spuriousRegister = spuriousValue;
+
+    volatile uint32_t *const lint0Register =
+        localApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_LINT0_REGISTER_OFFSET);
+    const uint32_t lint0Value =
+        (*lint0Register &
+         ~(OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK |
+           OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT)) |
+        OS_KERNEL_PROCESSOR_LOCAL_APIC_EXTINT_DELIVERY_MODE;
+    *lint0Register = lint0Value;
+    asm volatile("" : : : "memory");
+
+    return (*spuriousRegister & OS_KERNEL_PROCESSOR_LOCAL_APIC_SOFTWARE_ENABLE_BIT) != 0U &&
+           (*spuriousRegister & OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK) ==
+               OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR &&
+           (*lint0Register & OS_KERNEL_PROCESSOR_LOCAL_APIC_DELIVERY_MODE_MASK) ==
+               OS_KERNEL_PROCESSOR_LOCAL_APIC_EXTINT_DELIVERY_MODE &&
+           (*lint0Register & OS_KERNEL_PROCESSOR_LOCAL_APIC_MASK_BIT) == 0U;
 }
 
 void activatePageTable(const uint64_t rootPhysicalAddress) noexcept {

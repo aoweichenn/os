@@ -11,6 +11,8 @@
 x86-64 CPU
 ├── 架构寄存器：RIP、RFLAGS、CR0、CR2、CR3、CR4、IA32_EFER
 ├── 描述符状态：CS、SS、GDTR、IDTR、TR、TSS
+├── MMIO
+│   └── Local APIC：IA32_APIC_BASE 指定的 4 KiB 页，当前为 0xFEE00000
 ├── 端口 I/O 总线
 │   ├── 16550A 兼容 UART / COM1：0x3F8..0x3FF
 │   ├── 8259A 主从中断控制器：0x20/0x21、0xA0/0xA1
@@ -65,7 +67,8 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | EFER | 8 | LME | 请求长模式 | 通过 `RDMSR/WRMSR` 访问 |
 | EFER | 10 | LMA | 长模式已激活 | 只读结果，不能直接写 |
 | EFER | 11 | NXE | 启用 NX 位 | v0.6 先用 CPUID 检查，再启用并回读 |
-| IA32_APIC_BASE | 11 | APIC global enable | 本地 APIC 全局开关 | v0.7 清零并回读，显式恢复传统 INTR 路由 |
+| IA32_APIC_BASE | 10 | x2APIC enable | 切换 MSR 型 x2APIC 接口 | v0.7 要求为 0，使用 xAPIC MMIO |
+| IA32_APIC_BASE | 11 | APIC global enable | 本地 APIC 全局开关 | v0.7 保持为 1，并回读确认 |
 
 模式切换是状态机，不是把几个 bit 任意置一。v0.3 已把每次写入和读回值加入
 串口证据与 QEMU 检查；v0.4 的内核还会读回 CR3，与 BootInfo 中的页表根比较。
@@ -198,6 +201,7 @@ present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
 | 0 | P | 1 表示存在；guard 和零页保持 0 |
 | 1 | RW | 1 可写，0 只读；CR0.WP 使 Ring 0 也受约束 |
 | 2 | US | 当前所有内核映射为 0 |
+| 4 | PCD | 1 禁用页级缓存；LAPIC MMIO 映射必须置一 |
 | 7 | PS | 中间层若为 1 表示大页；内核 4 KiB 遍历器明确拒绝 |
 | 12..51 | physical address | 4 KiB 对齐页帧地址 |
 | 63 | NX | EFER.NXE=1 时禁止取指 |
@@ -218,7 +222,22 @@ v0.7 把 IDT present 范围扩展为：
 | `0x30..0xFF` | 未分配 | not-present | 禁止误入 |
 
 本地 APIC、I/O APIC 和 PIC 是三种不同状态。只设置 RFLAGS.IF 不能建立它们
-之间的路由；当前单核阶段先关闭本地 APIC全局启用位，再使用传统 8259A。
+之间的路由；当前单核阶段保持本地 APIC 启用，把 SVR 与 LVT LINT0 配成
+virtual-wire，再使用传统 8259A。
+
+### 2.10 Local APIC virtual-wire 寄存器
+
+LAPIC 基址来自当前 xAPIC 实现使用的 `IA32_APIC_BASE[35:12]`，内核将对应页
+做 supervisor RW/NX/PCD 身份映射。当前只使用两个 32 位 MMIO 寄存器：
+
+| 基址内偏移 | 寄存器 | 字段 | v0.7 策略 |
+| ---: | --- | --- | --- |
+| `0x0F0` | SVR | vector[7:0]、software enable[8] | vector=`0xFF`，enable=1 |
+| `0x350` | LVT LINT0 | delivery mode[10:8]、mask[16] | ExtINT=`111b`，mask=0 |
+
+初始化先验证 CPUID 的 APIC 能力、全局启用位和 x2APIC 关闭状态，再写 SVR、
+写 LINT0 并逐字段回读。LAPIC 此时只把 8259A 输出桥接到处理器；中断向量仍由
+PIC 的 INTA 周期提供，处理完成也仍向 PIC 发送 EOI，不写 LAPIC EOI。
 
 ## 3. 8259A 可编程中断控制器
 

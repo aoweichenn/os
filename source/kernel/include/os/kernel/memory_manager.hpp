@@ -38,6 +38,7 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     PermissionValidationFailed,
     HeapInitializationFailed,
     HeapSelfTestFailed,
+    LocalApicMappingFailed,
 };
 
 [[nodiscard]] KernelMemoryInitializationStatus

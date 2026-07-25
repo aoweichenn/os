@@ -19,7 +19,8 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
 ## 启动次序
 
 ```text
-关闭本地 APIC全局启用并回读
+映射 LAPIC MMIO 页为 RW/NX/PCD
+  → SVR 软件启用、LVT LINT0=ExtINT 且未屏蔽
   → 8259A 重映射、全屏蔽
   → PIT 通道 0 编程
   → i8042/键盘握手
@@ -70,7 +71,8 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
 
 ## 当前限制
 
-- 单核、传统 PIC；没有 I/O APIC、MSI/MSI-X 或 SMP 路由。
+- 单核、PIC 经 LAPIC virtual-wire 交付；没有 I/O APIC、LAPIC timer、
+  MSI/MSI-X 或 SMP 路由。
 - ATA 是同步 PIO 单扇区读取，未启用 IRQ14、DMA、队列与写入。
 - PS/2 只解码一组教学键，尚无修饰键、键盘布局、重复键和事件环形缓冲。
 - PIT 是调度时钟基础，不是 RTC 墙钟；尚无睡眠队列和 tickless 模式。

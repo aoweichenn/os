@@ -14,6 +14,8 @@ void waitForInterrupt() noexcept;
 [[nodiscard]] uint64_t readPageTableRoot() noexcept;
 [[nodiscard]] uint64_t readPageFaultLinearAddress() noexcept;
 [[nodiscard]] bool processorSupportsNoExecute() noexcept;
+[[nodiscard]] bool processorSupportsLocalApic() noexcept;
+[[nodiscard]] uint64_t localApicPhysicalAddress() noexcept;
 [[nodiscard]] bool enableKernelMemoryProtection() noexcept;
 [[nodiscard]] bool kernelMemoryProtectionEnabled() noexcept;
 [[nodiscard]] bool configureLegacyInterruptRouting() noexcept;

@@ -1,7 +1,7 @@
 schema: x86-64-os-lab.hardware-register-map.v1
 description: >-
-  当前启动链直接使用的 CPU 架构状态、8259A、8254、i8042、16550A
-  UART、ATA/IDE 主通道与 QEMU fw_cfg 寄存器。
+  当前启动链直接使用的 CPU 架构状态、Local APIC、8259A、8254、i8042、
+  16550A UART、ATA/IDE 主通道与 QEMU fw_cfg 寄存器。
   数值均为目标硬件协议值；软件模型不得把它们替换为宿主平台类型。
 chips:
   cpu_x86_64:
@@ -57,7 +57,31 @@ chips:
           8: BSP
           10: X2APIC_ENABLE
           11: APIC_GLOBAL_ENABLE
-        current_policy: "clear bit 11 and read back before legacy PIC routing"
+        current_policy: "keep bit 11 set, require bit 10 clear, and map the xAPIC MMIO base"
+    local_apic:
+      role: legacy-pic-virtual-wire-bridge
+      base_source: "IA32_APIC_BASE bits 35..12 in the current xAPIC implementation"
+      register_width_bits: 32
+      page_mapping:
+        writable: true
+        executable: false
+        user_accessible: false
+        cache_disabled: true
+      registers:
+        - offset: 0x00F0
+          name: SPURIOUS_INTERRUPT_VECTOR
+          access: read-write
+          bits:
+            7..0: VECTOR
+            8: SOFTWARE_ENABLE
+          current_policy: "vector 0xFF and software enable set"
+        - offset: 0x0350
+          name: LVT_LINT0
+          access: read-write
+          bits:
+            10..8: DELIVERY_MODE
+            16: MASK
+          current_policy: "delivery mode ExtINT (0b111), mask clear"
     page_translation:
       page_size_bytes: 4096
       table_entry_width_bits: 64
@@ -72,6 +96,7 @@ chips:
         0: PRESENT
         1: WRITABLE
         2: USER
+        4: CACHE_DISABLE
         7: LARGE_PAGE
         63: NO_EXECUTE
       physical_address_bits: 51..12
@@ -81,6 +106,7 @@ chips:
         kernel_read_only_data: read-no-execute
         kernel_writable_data: read-write-no-execute
         heap: read-write-no-execute
+        local_apic: read-write-no-execute-cache-disabled
         stack_guards: not-present
     descriptor_state:
       gdtr:

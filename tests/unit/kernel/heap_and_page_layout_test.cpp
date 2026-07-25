@@ -95,13 +95,15 @@ int main() {
         .writable = true,
         .executable = false,
         .userAccessible = true,
+        .cacheDisabled = true,
     };
     const os::kernel::PageMapping mapping = os::kernel::decodePageTableLeafEntry(
         os::kernel::encodePageTableLeafEntry(OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS, permissions));
     testContext.expect(mapping.physicalAddress == OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS &&
                            mapping.permissions.writable == permissions.writable &&
                            mapping.permissions.executable == permissions.executable &&
-                           mapping.permissions.userAccessible == permissions.userAccessible,
+                           mapping.permissions.userAccessible == permissions.userAccessible &&
+                           mapping.permissions.cacheDisabled == permissions.cacheDisabled,
                        OS_TEST_HEAP_PAGE_ENTRY_ROUND_TRIP);
 
     return testContext.exitCode();

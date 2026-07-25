@@ -44,8 +44,9 @@ Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权
 验证。真实 `INT3`、`UD2`、not-present 页故障和写保护页故障覆盖恢复、错误码、
 CR2 与 panic。
 
-内核现已为向量 32..47 安装独立 NASM 硬件 IRQ 桩，关闭复位后仍启用但尚未
-建立虚拟线路由的本地 APIC，再把两片 8259A 重映射到 `0x20..0x2F`。8254
+内核现已为向量 32..47 安装独立 NASM 硬件 IRQ 桩，映射本地 APIC MMIO 页，
+通过 SVR 与 LVT LINT0 建立 ExtINT virtual-wire，再把两片 8259A 重映射到
+`0x20..0x2F`。8254
 PIT 通道 0 以模式 2 提供约 1000 Hz IRQ0，内核用 64 位 tick 和实际除数换算
 单调毫秒；PS/2 控制器启用 IRQ1 与扫描码集合 1 翻译，C++ 解码器区分 make、
 break 和 `E0` 扩展序列。内核还用自写 ATA PIO 驱动重读 LBA 0 并校验
