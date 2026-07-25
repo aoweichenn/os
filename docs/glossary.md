@@ -80,6 +80,20 @@
 | standard input/output/error | 固定为 fd 0/1/2 的标准输入、标准输出和标准错误约定 |
 | Shell | 从标准输入读取并解析命令、再通过系统调用组合内核服务的 Ring 3 用户程序 |
 | idle state | 没有 Ready 进程但仍存在可唤醒 Blocked 进程时，内核以相邻的 `sti; hlt; cli` 开放中断、等待并恢复临界区的状态 |
+| Zombie | 子进程已经停止执行并释放运行资源，但退出状态尚未被父进程 wait 收取的进程状态 |
+| reparent | 父进程先退出时，把仍存活或 Zombie 子进程的回收责任转交 PID1 |
+| VFS | Virtual File System，用 vnode、挂载和统一操作隔离路径语义与具体磁盘格式 |
+| vnode | VFS 中表示一个命名对象身份和操作集合的内存对象，不等同于磁盘 inode 字节布局 |
+| open-file description | 保存打开状态、共享文件偏移和 vnode 引用的系统级对象；一个或多个 fd 可以引用它 |
+| cwd | Current Working Directory，进程解析相对路径时使用的目录引用 |
+| COW | Copy-on-Write，父子暂时共享只读物理页，在首次写故障时再创建私有副本 |
+| VMA | Virtual Memory Area，描述用户虚拟区间、来源、权限和映射策略，不表示物理页已经存在 |
+| demand paging | 先登记 VMA，在首次访问页故障时才分配或读取实际页面的策略 |
+| process group | 用于信号投递和终端作业控制的一组进程身份 |
+| session | 包含一个或多个进程组并关联控制终端的作业控制边界 |
+| line discipline | 位于字符设备和用户读取之间，处理 canonical 输入、退格、EOF 与控制字符的终端状态机 |
+| journal | 文件系统提交前记录可重放事务的持久区域，用于在断电后恢复到事务前或事务后状态 |
+| `SYSCALL` / `SYSRET` | x86-64 快速特权转换指令；需要 MSR、内核栈、RFLAGS 掩码和 canonical 返回地址共同保证安全 |
 | exception vector | CPU 为异常选择的 0..31 编号，例如 3=#BP、6=#UD、14=#PF |
 | exception error code | 部分异常由 CPU 压栈的原因字段；无错误码异常由项目桩规范化为零 |
 | `IRETQ` | 64 位中断返回指令，恢复 RIP、CS、RFLAGS 以及可选旧 RSP/SS |

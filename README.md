@@ -37,6 +37,13 @@ sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，�
 完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 73 项
 CTest。
 
+第二周期已经完成架构规划：v1.1 从可回收资源和 64 进程容量基础开始，随后
+依次建设 VFS/文件系统 v2、磁盘 exec 与父子进程、fork/COW、Unix I/O、
+信号与终端、按需分页、异步块层和 ABI v2。最终 v2.0 收敛为单核、多进程、
+可从自研文件系统启动 `/sbin/init` 与外部 Shell 的类 Unix 教学系统。
+详细阶段和量化验收见 [docs/roadmap.md](docs/roadmap.md)，范围取舍见
+[ADR 0016](docs/adr/0016-single-core-unix-like-v2-evolution.md)。
+
 ## 最短构建与测试路径
 
 在 Linux 环境安装 Python 3.11+、Clang、LLD、NASM、QEMU、GDB、CMake

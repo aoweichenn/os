@@ -39,6 +39,76 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 统一记录在 [芯片与寄存器结构](hardware/chips.md)；机器可读版本位于
 `docs/hardware/register_map.yaml`。新增设备必须先补充这份结构化规格，再进入驱动实现。
 
+## v2.0 目标架构（尚未实现）
+
+本节描述第二周期的目标依赖方向，不代表当前 v1.0 已经具备这些模块。每个箭头
+只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
+页表或 PCB 内部数组。
+
+```text
+/sbin/init ──fork/exec/wait/signal──> /bin/sh ──pipe/dup/redirection──> /bin/*
+       │                                   │
+       └──────────────── User ABI v2 / 自研用户运行时 ────────────────┘
+                                           ↓
+                          Process / Signal / Terminal
+                                           ↓
+                   Descriptor table / Open-file description
+                                           ↓
+                    VFS ── rootfs v2 / devfs / procfs
+                                           ↓
+                  Page cache / Journal / Block request queue
+                                           ↓
+                            ATA PIO + IRQ14
+
+用户 #PF ──> VMA / COW / Demand paging ──> Page tables
+                                              ↓
+                        Kernel object allocator / Frame allocator
+                                              ↓
+                              E820 facts / Physical direct map
+```
+
+目标架构把“身份”和“存储位置”分开：
+
+- PID 是单调 64 位身份，不是 PCB 数组下标；
+- fd 是进程局部引用，不是文件系统句柄或管道数组下标；
+- open-file description 持有偏移和状态，多个 fd 可以引用同一对象；
+- vnode 表示文件系统对象，不暴露具体 inode 的磁盘布局；
+- VMA 表示用户虚拟区间，不等同于已经分配的物理页；
+- block request 表示设备事务，不等同于缓存条目或文件页。
+
+### v2.0 正常启动控制流
+
+```text
+自研 ROM → Stage 1 → Kernel ELF
+  → 验证 BootInfo、内存图和处理器状态
+  → 初始化可回收页/对象分配器
+  → 建立 VFS，挂载 rootfs v2、devfs、procfs
+  → 从 /sbin/init 读取并严格验证 ELF
+  → 创建唯一初始用户进程 PID1
+  → PID1 exec /bin/sh，并持续 wait/reap 孤儿
+  → Shell fork/exec 外部命令，使用描述符组合 I/O
+  → 无 Ready 进程时进入 STI/HLT/CLI idle
+```
+
+生产正常路径不再内嵌 Shell、生产者、消费者和 worker 四个用户 ELF。故障测试
+可以继续使用最小内嵌载荷验证“根文件系统尚未可信之前”的用户异常边界，但它们
+不得成为正常启动依赖。
+
+### 资源与并发边界
+
+v2.0 仍是单处理器内核。interrupt gate、关中断提交区和自旋锁共同保护当前
+状态，但“单核”不等于可以忽略资源生命周期：
+
+- 进程、页、VMA、vnode、open-file description、pipe、signal frame 和
+  block request 都必须有唯一所有者或显式引用计数；
+- 任意可阻塞路径在睡眠前不得持有禁止调度的自旋锁；
+- 用户复制不得发生在 VFS、页缓存、日志或设备锁内；
+- 锁顺序由模块文档统一固定，失败回滚按获得资源的逆序执行；
+- 热路径只更新有界统计，日志在状态提交后汇总输出。
+
+多核启动、per-CPU 调度队列和跨核 TLB shootdown 不进入当前目标。系统调用
+入口可以预留单 CPU 的内核本地状态，但不能虚构已经具备 SMP 安全性。
+
 ## v0.1 ROM 与复位路径
 
 ```text
