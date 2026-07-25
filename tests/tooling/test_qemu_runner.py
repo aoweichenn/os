@@ -105,6 +105,34 @@ class QemuRunnerToolTests(unittest.TestCase):
                 (),
             )
 
+    def testAcceptsExactMarkerCountsAndHexMinimumValues(self) -> None:
+        validateSerialProtocol(
+            "WORKER\r\nWORKER\r\nPREEMPTIONS=0x0000000000000004\r\n",
+            (),
+            (),
+            (("WORKER", 2),),
+            (("PREEMPTIONS=0x", 1),),
+        )
+
+    def testRejectsUnexpectedMarkerCount(self) -> None:
+        with self.assertRaises(OsToolError):
+            validateSerialProtocol(
+                "WORKER\r\n",
+                (),
+                (),
+                (("WORKER", 2),),
+            )
+
+    def testRejectsHexValueBelowMinimum(self) -> None:
+        with self.assertRaises(OsToolError):
+            validateSerialProtocol(
+                "PREEMPTIONS=0x0000000000000000\r\n",
+                (),
+                (),
+                (),
+                (("PREEMPTIONS=0x", 1),),
+            )
+
     def testNormalizesByteOutput(self) -> None:
         self.assertEqual(
             normalizeCapturedOutput(b"serial"),

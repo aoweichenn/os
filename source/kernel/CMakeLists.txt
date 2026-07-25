@@ -18,6 +18,9 @@ set(
     include/os/kernel/physical_frame_allocator.hpp
     include/os/kernel/physical_memory_map.hpp
     include/os/kernel/port_io.hpp
+    include/os/kernel/process_memory_layout.hpp
+    include/os/kernel/process_runtime.hpp
+    include/os/kernel/process_scheduler.hpp
     include/os/kernel/processor.hpp
     include/os/kernel/programmable_interval_timer.hpp
     include/os/kernel/ps2_keyboard.hpp
@@ -27,7 +30,6 @@ set(
     include/os/kernel/user_elf.hpp
     include/os/kernel/user_memory.hpp
     include/os/kernel/user_program_images.hpp
-    include/os/kernel/user_runtime.hpp
 )
 
 set(
@@ -51,6 +53,9 @@ set(
     src/physical_frame_allocator.cpp
     src/physical_memory_map.cpp
     src/port_io.cpp
+    src/process_memory_layout.cpp
+    src/process_runtime.cpp
+    src/process_scheduler.cpp
     src/processor.cpp
     src/programmable_interval_timer.cpp
     src/ps2_keyboard.cpp
@@ -59,7 +64,6 @@ set(
     src/user_elf.cpp
     src/user_memory.cpp
     src/user_program_images.cpp
-    src/user_runtime.cpp
 )
 
 add_library(
@@ -143,6 +147,25 @@ add_library(
     STATIC
         src/user_elf.cpp
         include/os/kernel/user_elf.hpp
+)
+
+add_library(
+    os_kernel_process_model_host
+    STATIC
+        src/process_memory_layout.cpp
+        src/process_scheduler.cpp
+        include/os/kernel/process_memory_layout.hpp
+        include/os/kernel/process_scheduler.hpp
+)
+target_include_directories(
+    os_kernel_process_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_process_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
 )
 target_include_directories(
     os_kernel_user_model_host
@@ -256,7 +279,8 @@ add_custom_command(
         "${OS_USER_SMOKE_ELF_PATH}"
         "${OS_USER_INVALID_OPCODE_ELF_PATH}"
         "${OS_USER_PAGE_FAULT_ELF_PATH}"
-    COMMENT "嵌入三个自研 Ring 3 ELF64 程序"
+        "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
+    COMMENT "嵌入四个自研 Ring 3 ELF64 程序"
     VERBATIM
 )
 add_custom_target(

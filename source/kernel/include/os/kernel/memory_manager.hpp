@@ -46,23 +46,37 @@ enum class KernelUserPageStatus : uint64_t {
     Succeeded,
     InvalidVirtualAddress,
     InvalidPermissions,
+    InvalidPageTableRoot,
+    PageTableCreationFailed,
     FrameAllocationFailed,
     PageMappingFailed,
     PageNotMapped,
     NotUserAccessible,
     PageUnmappingFailed,
     FrameReleaseFailed,
+    PageTableDestructionFailed,
 };
 
 [[nodiscard]] KernelMemoryInitializationStatus
 InitializeKernelMemory(const BootInfo &bootInfo) noexcept;
 [[nodiscard]] const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept;
+[[nodiscard]] PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
-[[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t virtualAddress, bool writable,
+[[nodiscard]] KernelUserPageStatus CreateUserPageTable(uint64_t &rootPhysicalAddress) noexcept;
+[[nodiscard]] KernelUserPageStatus DestroyUserPageTable(uint64_t rootPhysicalAddress) noexcept;
+[[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t rootPhysicalAddress,
+                                                          uint64_t virtualAddress, bool writable,
                                                           bool executable,
                                                           uint64_t &physicalAddress) noexcept;
-[[nodiscard]] KernelUserPageStatus ReleaseUserPage(uint64_t virtualAddress) noexcept;
-[[nodiscard]] PageTableStatus QueryKernelPage(uint64_t virtualAddress,
+[[nodiscard]] KernelUserPageStatus ReleaseUserPage(uint64_t rootPhysicalAddress,
+                                                   uint64_t virtualAddress) noexcept;
+[[nodiscard]] PageTableStatus QueryAddressSpacePage(uint64_t rootPhysicalAddress,
+                                                    uint64_t virtualAddress,
+                                                    PageMapping &mapping) noexcept;
+[[nodiscard]] PageTableStatus QueryActivePage(uint64_t virtualAddress,
                                               PageMapping &mapping) noexcept;
+[[nodiscard]] uint64_t GetKernelPageTableRoot() noexcept;
+[[nodiscard]] bool ActivateUserPageTable(uint64_t rootPhysicalAddress) noexcept;
+void ActivateKernelPageTable() noexcept;
 
 }

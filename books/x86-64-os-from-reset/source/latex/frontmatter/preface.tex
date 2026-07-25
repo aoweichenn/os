@@ -21,7 +21,7 @@ freestanding C++20。构建和测试脚本运行在宿主机，可以使用 Pyth
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v0.8：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v0.9：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图，管理页帧，建立四级 4 KiB 页表、guard page
@@ -32,4 +32,8 @@ PS/2 按键，并用独立 ATA PIO 驱动重读启动盘。QEMU 自动注入的�
 真实 i8042、IRQ1、IDT 与解码状态机才能成为语义事件。内核进一步严格装入
 自研用户 ELF，以 GDT、TSS.RSP0、用户页权限和 \code{IRETQ} 进入 Ring 3，
 通过 \code{INT 0x80} 提供有界系统调用，并把用户非法指令与页故障隔离为
-用户终止而非内核 panic。
+用户终止而非内核 panic。在这条边界上，内核进一步为四个进程创建独立
+PML4、同址用户 ELF/栈、带 guard 的 Ring 0 栈和保存现场；真实 PIT
+每四个 tick 驱动 round-robin，切换 CR3 与 TSS.RSP0。三个相同 worker
+分别验证 BSS 物理隔离，退出后递归释放用户叶页和页表，并以创建前后页帧
+统计证明资源生命周期闭环。

@@ -2,6 +2,7 @@
 
 #include "os/kernel/ata_pio.hpp"
 #include "os/kernel/legacy_pic.hpp"
+#include "os/kernel/process_runtime.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/programmable_interval_timer.hpp"
 #include "os/kernel/ps2_keyboard.hpp"
@@ -176,11 +177,20 @@ bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
     return kernelInterruptRuntime.TryTakeKeyboardEvent(event);
 }
 
-extern "C" void osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept {
+extern "C" ExceptionFrame *osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept {
     if (frame == nullptr) {
         HaltProcessor();
     }
     kernelInterruptRuntime.Dispatch(frame->vector);
+    uint64_t interruptRequest = 0ULL;
+    if (CalculateLegacyPicInterruptRequest(frame->vector, interruptRequest) !=
+        LegacyPicModelStatus::Succeeded) {
+        HaltProcessor();
+    }
+    if (interruptRequest == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
+        return HandleProcessTimerInterrupt(*frame);
+    }
+    return frame;
 }
 
 }

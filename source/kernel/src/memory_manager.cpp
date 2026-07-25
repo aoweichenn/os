@@ -4,6 +4,7 @@
 #include "os/kernel/page_table.hpp"
 #include "os/kernel/physical_frame_allocator.hpp"
 #include "os/kernel/physical_memory_map.hpp"
+#include "os/kernel/process_memory_layout.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/user_elf.hpp"
 
@@ -75,6 +76,11 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     for (uint64_t guardPageIndex = 0ULL;
          guardPageIndex < OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT; ++guardPageIndex) {
         if (pageAddress == InterruptStackGuardPageAddress(guardPageIndex)) {
+            return true;
+        }
+    }
+    for (uint64_t processIndex = 0ULL; processIndex < OS_KERNEL_PROCESS_CAPACITY; ++processIndex) {
+        if (pageAddress == ProcessKernelStackGuardPageAddress(processIndex)) {
             return true;
         }
     }
@@ -300,6 +306,12 @@ extern "C" uint8_t osKernelWritableDataEnd[];
             return false;
         }
     }
+    for (uint64_t processIndex = 0ULL; processIndex < OS_KERNEL_PROCESS_CAPACITY; ++processIndex) {
+        if (GetPageTableManager().QueryPage(ProcessKernelStackGuardPageAddress(processIndex),
+                                            ignoredMapping) != PageTableStatus::NotMapped) {
+            return false;
+        }
+    }
     return true;
 }
 
@@ -397,14 +409,44 @@ const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept {
     return currentKernelMemoryStatistics;
 }
 
+PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept {
+    return FrameAllocator().Statistics();
+}
+
 KernelHeap &GetKernelHeap() noexcept {
     static KernelHeap heap{};
     return heap;
 }
 
-KernelUserPageStatus AllocateAndMapUserPage(const uint64_t virtualAddress, const bool writable,
+KernelUserPageStatus CreateUserPageTable(uint64_t &rootPhysicalAddress) noexcept {
+    PageTableManager processPageTable{FrameAllocator()};
+    if (processPageTable.InitializeProcessRoot(GetPageTableManager().RootPhysicalAddress()) !=
+        PageTableStatus::Succeeded) {
+        return KernelUserPageStatus::PageTableCreationFailed;
+    }
+    rootPhysicalAddress = processPageTable.RootPhysicalAddress();
+    return KernelUserPageStatus::Succeeded;
+}
+
+KernelUserPageStatus DestroyUserPageTable(const uint64_t rootPhysicalAddress) noexcept {
+    if (rootPhysicalAddress == 0ULL || (rootPhysicalAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        rootPhysicalAddress == GetPageTableManager().RootPhysicalAddress() ||
+        rootPhysicalAddress == ReadPageTableRoot()) {
+        return KernelUserPageStatus::InvalidPageTableRoot;
+    }
+    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress};
+    return processPageTable.ReleaseProcessRoot() == PageTableStatus::Succeeded
+               ? KernelUserPageStatus::Succeeded
+               : KernelUserPageStatus::PageTableDestructionFailed;
+}
+
+KernelUserPageStatus AllocateAndMapUserPage(const uint64_t rootPhysicalAddress,
+                                            const uint64_t virtualAddress, const bool writable,
                                             const bool executable,
                                             uint64_t &physicalAddress) noexcept {
+    if (rootPhysicalAddress == 0ULL || (rootPhysicalAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
+        return KernelUserPageStatus::InvalidPageTableRoot;
+    }
     if ((virtualAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
         !IsUserVirtualAddressRange(virtualAddress, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
@@ -422,7 +464,8 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t virtualAddress, const
         .userAccessible = true,
         .cacheDisabled = false,
     };
-    if (GetPageTableManager().MapPage(virtualAddress, frame.physicalAddress, permissions) !=
+    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress};
+    if (processPageTable.MapPage(virtualAddress, frame.physicalAddress, permissions) !=
         PageTableStatus::Succeeded) {
         static_cast<void>(FrameAllocator().Release(frame));
         return KernelUserPageStatus::PageMappingFailed;
@@ -431,19 +474,24 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t virtualAddress, const
     return KernelUserPageStatus::Succeeded;
 }
 
-KernelUserPageStatus ReleaseUserPage(const uint64_t virtualAddress) noexcept {
+KernelUserPageStatus ReleaseUserPage(const uint64_t rootPhysicalAddress,
+                                     const uint64_t virtualAddress) noexcept {
+    if (rootPhysicalAddress == 0ULL || (rootPhysicalAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
+        return KernelUserPageStatus::InvalidPageTableRoot;
+    }
     if ((virtualAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
         !IsUserVirtualAddressRange(virtualAddress, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
+    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress};
     PageMapping mapping{};
-    if (GetPageTableManager().QueryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
+    if (processPageTable.QueryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageNotMapped;
     }
     if (!mapping.permissions.userAccessible) {
         return KernelUserPageStatus::NotUserAccessible;
     }
-    if (GetPageTableManager().UnmapPage(virtualAddress) != PageTableStatus::Succeeded) {
+    if (processPageTable.UnmapPage(virtualAddress) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageUnmappingFailed;
     }
     if (FrameAllocator().Release(PhysicalFrame{.physicalAddress = mapping.physicalAddress}) !=
@@ -453,8 +501,33 @@ KernelUserPageStatus ReleaseUserPage(const uint64_t virtualAddress) noexcept {
     return KernelUserPageStatus::Succeeded;
 }
 
-PageTableStatus QueryKernelPage(const uint64_t virtualAddress, PageMapping &mapping) noexcept {
-    return GetPageTableManager().QueryPage(virtualAddress, mapping);
+PageTableStatus QueryAddressSpacePage(const uint64_t rootPhysicalAddress,
+                                      const uint64_t virtualAddress,
+                                      PageMapping &mapping) noexcept {
+    if (rootPhysicalAddress == 0ULL || (rootPhysicalAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
+        return PageTableStatus::NotInitialized;
+    }
+    PageTableManager pageTable{FrameAllocator(), rootPhysicalAddress};
+    return pageTable.QueryPage(virtualAddress, mapping);
+}
+
+PageTableStatus QueryActivePage(const uint64_t virtualAddress, PageMapping &mapping) noexcept {
+    return QueryAddressSpacePage(ReadPageTableRoot(), virtualAddress, mapping);
+}
+
+uint64_t GetKernelPageTableRoot() noexcept { return GetPageTableManager().RootPhysicalAddress(); }
+
+bool ActivateUserPageTable(const uint64_t rootPhysicalAddress) noexcept {
+    if (rootPhysicalAddress == 0ULL || (rootPhysicalAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        rootPhysicalAddress == GetPageTableManager().RootPhysicalAddress()) {
+        return false;
+    }
+    ActivatePageTable(rootPhysicalAddress);
+    return ReadPageTableRoot() == rootPhysicalAddress;
+}
+
+void ActivateKernelPageTable() noexcept {
+    ActivatePageTable(GetPageTableManager().RootPhysicalAddress());
 }
 
 }

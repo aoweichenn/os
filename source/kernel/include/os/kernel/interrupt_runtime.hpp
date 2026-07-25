@@ -37,6 +37,7 @@ struct InterruptRuntimeStatistics final {
 [[nodiscard]] InterruptRuntimeStatistics GetInterruptRuntimeStatistics() noexcept;
 [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
 
-extern "C" void osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept;
+extern "C" [[nodiscard]] ExceptionFrame *
+osKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept;
 
 }

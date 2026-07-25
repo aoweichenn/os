@@ -1,9 +1,9 @@
 #include "os/kernel/exceptions.hpp"
 
 #include "os/kernel/panic.hpp"
+#include "os/kernel/process_runtime.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
-#include "os/kernel/user_runtime.hpp"
 
 namespace os::kernel {
 
@@ -24,7 +24,7 @@ void WriteBreakpointHandled() noexcept {
 
 }
 
-extern "C" void osKernelDispatchException(ExceptionFrame *frame) noexcept {
+extern "C" ExceptionFrame *osKernelDispatchException(ExceptionFrame *frame) noexcept {
     if (frame == nullptr) {
         HaltProcessor();
     }
@@ -32,12 +32,12 @@ extern "C" void osKernelDispatchException(ExceptionFrame *frame) noexcept {
         const uint64_t pageFaultAddress = frame->vector == OS_KERNEL_EXCEPTION_PAGE_FAULT_VECTOR
                                               ? ReadPageFaultLinearAddress()
                                               : OS_KERNEL_EXCEPTION_NON_PAGE_FAULT_ADDRESS;
-        TerminateUserExecutionFromException(*frame, pageFaultAddress);
+        return TerminateCurrentProcessFromException(*frame, pageFaultAddress);
     }
     if (IsResumableKernelException(frame->vector) &&
         frame->errorCode == OS_KERNEL_EXCEPTION_NORMALIZED_ERROR_CODE) {
         WriteBreakpointHandled();
-        return;
+        return frame;
     }
     PanicFromException(*frame);
 }

@@ -16,6 +16,8 @@ constexpr std::string_view OS_TEST_USER_BOUNDARY_STACK_MESSAGE =
     "用户栈必须包含四个数据页和一个未映射保护页";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_ADDRESS_MESSAGE =
     "用户地址边界必须排除低地址和非规范高半区";
+constexpr std::string_view OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE =
+    "用户 ELF 必须限制在独立的 1 GiB 进程程序窗口";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_ABI_MESSAGE = "系统调用 ABI 编号和向量必须稳定";
 constexpr uint64_t OS_TEST_USER_BOUNDARY_KERNEL_CODE_SELECTOR = 0x0008ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_USER_CODE_SELECTOR = 0x0023ULL;
@@ -23,6 +25,7 @@ constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT = 4ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR = 0x80ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER = 1ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER = 2ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER = 3ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 
 }
@@ -61,12 +64,26 @@ int main() {
                 OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES),
         OS_TEST_USER_BOUNDARY_ADDRESS_MESSAGE);
 
+    testContext.Expect(!os::kernel::IsUserProgramVirtualAddressRange(
+                           os::kernel::OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS -
+                               OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES,
+                           OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES) &&
+                           os::kernel::IsUserProgramVirtualAddressRange(
+                               os::kernel::OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS,
+                               OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES) &&
+                           !os::kernel::IsUserProgramVirtualAddressRange(
+                               os::kernel::OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE,
+                               OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES),
+                       OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE);
+
     testContext.Expect(os::abi::OS_ABI_SYSTEM_CALL_VECTOR ==
                                OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR &&
                            static_cast<uint64_t>(os::abi::SystemCallNumber::WriteLog) ==
                                OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER &&
                            static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess) ==
-                               OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER,
+                               OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER &&
+                           static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId) ==
+                               OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER,
                        OS_TEST_USER_BOUNDARY_ABI_MESSAGE);
     return testContext.ExitCode();
 }

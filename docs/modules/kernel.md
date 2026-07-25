@@ -250,24 +250,46 @@ PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，
 
 用户页接口拒绝非对齐、低地址、高半地址、W+X 权限和非用户映射释放。
 `CopyFromUser()` 先验证完整半开区间，再逐页查询 present/U/S，最后从当前
-恒等可访问的用户虚拟地址复制。v0.8 没有并发解除映射，因此验证与复制之间
-没有本阶段可触发的 TOCTOU；调度和多线程出现后必须重新设计页生命周期。
+CR3 中的用户虚拟地址复制。v0.9 仍是单核且 `INT 0x80` interrupt gate
+在内核入口清 IF，没有另一个线程能并发解除当前地址空间；加入内核抢占或
+多线程后必须引入页固定、地址空间锁或可恢复的用户复制原语。
 
 ### 进入、系统调用与返回
 
-`osKernelEnterUserMode` 保存进入前内核 RSP、RFLAGS 和非易失寄存器，
-加载用户数据选择子并执行五项 `IRETQ`。`INT 0x80` 让 CPU 自动从
+`osKernelEnterScheduledProcess` 保存调度启动前的内核 RSP、RFLAGS 和
+非易失寄存器，再从首个 PCB 的完整现场执行 `IRETQ`。`INT 0x80` 让 CPU 自动从
 TSS.RSP0 取安全内核栈，系统调用公共入口复用统一寄存器帧。
 
-分发前必须满足当前存在活跃用户执行、帧来自 CPL3、向量为 `0x80`、
-CS=`0x23`、SS=`0x1B`、RIP 在用户范围、RSP 位于四页用户栈，而且当前栈
-叶页是 user RW/NX。普通系统调用按原帧 `IRETQ`；exit 和用户异常不能回到
-用户 RIP，而是记录结果并用 `osKernelReturnFromUserMode` 恢复进入用户态前
-的内核调用链。
+分发前必须满足当前存在活跃进程、帧来自 CPL3、向量为 `0x80`、
+CS=`0x23`、SS=`0x1B`、RIP 所在叶页为 user RX、RSP 位于四页用户栈，
+而且栈叶页是 user RW/NX。普通系统调用按原帧 `IRETQ`；exit 和用户异常
+终止当前 PCB 并交接到下一个 Ready 进程，只有最后一个进程结束时才用
+`osKernelReturnFromUserMode` 恢复调度启动前的内核调用链。
 
 `WriteLog` 最多复制 160 字节到固定内核缓冲后再访问串口。用户日志带
 `[OS][USER]` 只是协议来源标记，不获得内核可信度。ABI 详见
 [User 与 ABI 模块](user.md)。
+
+## v0.9 进程运行时契约
+
+`ProcessScheduler` 是可在宿主执行的纯模型，只保存状态、PID、tick、派发和
+抢占统计。`ProcessRuntime` 拥有固定四槽 PCB，把每个槽位关联到独立
+`UserAddressSpace`、保存帧、终止结果和 Ring 0 栈。IRQ、系统调用和异常
+分发器都返回“下一份要恢复的帧地址”，汇编不内置调度策略。
+
+地址空间根以当前内核 PML4 为模板。创建时克隆低端 PDPT，清空用户程序所在
+PDPT[1]，并让用户栈从空的 PML4[255] 开始建立。销毁时只递归遍历这两个
+独占子树，绝不释放共享内核页表。`DestroyUserPageTable` 拒绝销毁当前 CR3
+或内核根，迫使终止路径先切回安全根。
+
+进程栈存储按“4 KiB guard + 16 KiB 可用栈”连续排列。内存管理器构建低端
+身份映射时跳过每块 guard；PCB 只接受落在自己可用范围内的 176 字节帧。
+每次进程切换同时更新 CR3 和 TSS.RSP0，两者任一失败都停止系统，不能带着
+不一致的页表/栈所有权继续执行。
+
+IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预算。中断热路径
+不分配、不释放、不写串口；用户页和页表只在进程退出/异常路径切回内核 CR3 后
+释放。全部结束后一次性输出调度汇总与每进程结果，并比较物理页帧统计。
 
 ## 入口验收序列
 
@@ -299,10 +321,13 @@ CS=`0x23`、SS=`0x1B`、RIP 在用户范围、RSP 位于四页用户栈，而且
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] USER_ELF_VALID
 [OS][KERNEL] USER_ENTRY=0x0000000040000000
 [OS][KERNEL] USER_MAPPED_PAGES=0x...
 [OS][KERNEL] USER_STACK_READY
+[OS][KERNEL] PROCESS_ID=0x...
+[OS][KERNEL] PROCESS_CR3=0x...
 [OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
 [OS][KERNEL] PIC_READY
 [OS][KERNEL] PIC_MASK=0x...FFFC
@@ -318,12 +343,15 @@ CS=`0x23`、SS=`0x1B`、RIP 在用户范围、RSP 位于四页用户栈，而且
 [OS][KERNEL] MONOTONIC_MILLISECONDS=0x...
 [OS][KERNEL] TIMER_SELF_TEST_PASSED
 [OS][KERNEL] USER_RING3_ENTER
+[OS][KERNEL] SCHEDULER_STARTED
 [OS][USER] INVALID_POINTER_REJECTED
 [OS][USER] UNKNOWN_SYSCALL_REJECTED
 [OS][USER] HELLO_FROM_RING3
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
 [OS][KERNEL] USER_SYSCALL_COUNT=0x0000000000000006
 [OS][KERNEL] USER_TERMINATED
+[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] SCHEDULER_COMPLETE
 [OS][KERNEL] USER_RETURNED_TO_KERNEL
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x...
@@ -353,5 +381,7 @@ CS=`0x23`、SS=`0x1B`、RIP 在用户范围、RSP 位于四页用户栈，而且
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。
-- 当前只有一个同步用户执行，页表根仍为内核全局根；PID、独立地址空间、
-  调度和用户页回收属于 v0.9。
+- 当前是单核、固定四进程、单线程模型；没有阻塞、唤醒、优先级、父子关系、
+  zombie/wait、FPU/SSE 状态保存或 SMP 负载均衡。
+- 用户地址空间已完整回收，但 64 KiB 早期内核堆仍是单调分配器；通用内核
+  对象释放要随 v0.10 同步与 IPC 的所有权模型一起设计。

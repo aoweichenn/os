@@ -7,6 +7,7 @@ namespace os::abi {
 enum class SystemCallNumber : uint64_t {
     WriteLog = 1ULL,
     ExitProcess = 2ULL,
+    GetProcessId = 3ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;

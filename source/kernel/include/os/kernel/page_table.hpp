@@ -34,9 +34,11 @@ enum class PageTableStatus : uint64_t {
     InvalidPhysicalAddress,
     InvalidAlignment,
     FrameAllocationFailed,
+    TemplateRootInvalid,
     UnexpectedLargePage,
     AlreadyMapped,
     NotMapped,
+    FrameReleaseFailed,
 };
 
 [[nodiscard]] bool IsCanonicalVirtualAddress(uint64_t virtualAddress) noexcept;
@@ -48,8 +50,12 @@ enum class PageTableStatus : uint64_t {
 class PageTableManager final {
   public:
     explicit PageTableManager(PhysicalFrameAllocator &frameAllocator) noexcept;
+    PageTableManager(PhysicalFrameAllocator &frameAllocator, uint64_t rootPhysicalAddress) noexcept;
 
     [[nodiscard]] PageTableStatus Initialize() noexcept;
+    [[nodiscard]] PageTableStatus
+    InitializeProcessRoot(uint64_t templateRootPhysicalAddress) noexcept;
+    [[nodiscard]] PageTableStatus ReleaseProcessRoot() noexcept;
     [[nodiscard]] PageTableStatus MapPage(uint64_t virtualAddress, uint64_t physicalAddress,
                                           PagePermissions permissions) noexcept;
     [[nodiscard]] PageTableStatus UnmapPage(uint64_t virtualAddress) noexcept;
@@ -63,6 +69,8 @@ class PageTableManager final {
                                                   uint64_t &physicalAddress) noexcept;
     [[nodiscard]] PageTableStatus WalkToLeaf(uint64_t virtualAddress,
                                              uint64_t *&leafEntry) const noexcept;
+    [[nodiscard]] PageTableStatus ReleaseOwnedTable(uint64_t tablePhysicalAddress,
+                                                    uint64_t tableLevel) noexcept;
 
     PhysicalFrameAllocator *frameAllocator_;
     uint64_t rootPhysicalAddress_;

@@ -2,7 +2,7 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.8 用户边界`已完成，下一阶段为 `v0.9 进程调度`。自研
+当前状态：`v0.9 进程调度`已完成，下一阶段为 `v0.10 同步与 IPC`。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
@@ -11,8 +11,11 @@ GDT、TSS、IDT、32 个异常入口和无动态分配的 panic 路径。Stage 1
 QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo v2；
 内核据此管理物理页帧，建立新的四级 4 KiB 页表、W^X/NX/WP 权限、四个
 guard page、64 KiB 高半区早期堆，并真实切换 CR3。在此基础上，内核严格
-验证并装入自研 `ET_EXEC` 用户 ELF64，以 `IRETQ` 进入 Ring 3，通过
-TSS.RSP0 与 `INT 0x80` 安全进入内核，并把用户异常与内核 panic 隔离。
+验证并装入自研 `ET_EXEC` 用户 ELF64。内核为四个进程分别建立 PML4、
+同址用户代码/数据、四页用户栈、16 KiB Ring 0 栈和保护页；8254 PIT
+每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0 和完整
+176 字节用户现场。`INT 0x80` 提供日志、退出和 PID 查询；进程退出或用户
+异常会释放其用户页与页表，Ring 0 故障仍进入 panic。
 
 ## 最短构建与测试路径
 
@@ -77,14 +80,25 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] USER_ELF_VALID
 [OS][KERNEL] USER_ENTRY=0x0000000040000000
 [OS][KERNEL] USER_STACK_READY
+[OS][KERNEL] PROCESS_ID=0x0000000000000001
+[OS][KERNEL] PROCESS_CR3=0x...
 [OS][KERNEL] USER_RING3_ENTER
+[OS][KERNEL] SCHEDULER_STARTED
 [OS][USER] INVALID_POINTER_REJECTED
 [OS][USER] UNKNOWN_SYSCALL_REJECTED
 [OS][USER] HELLO_FROM_RING3
+[OS][USER][PID2] WORKER_STEP_1
+[OS][USER] ADDRESS_SPACE_ISOLATED
+[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=0x0000000000000004
+[OS][KERNEL] SCHEDULER_TERMINATED_PROCESSES=0x0000000000000004
+[OS][KERNEL] SCHEDULER_PREEMPTIONS=0x...
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
+[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] SCHEDULER_COMPLETE
 [OS][KERNEL] USER_RETURNED_TO_KERNEL
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003

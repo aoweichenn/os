@@ -123,6 +123,17 @@ bool IsUserVirtualAddressRange(const uint64_t beginAddress, const uint64_t lengt
            endAddress <= OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE;
 }
 
+bool IsUserProgramVirtualAddressRange(const uint64_t beginAddress,
+                                      const uint64_t lengthBytes) noexcept {
+    if (lengthBytes == OS_KERNEL_USER_ELF_EMPTY_VALUE ||
+        beginAddress < OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS) {
+        return false;
+    }
+    uint64_t endAddress = 0ULL;
+    return CheckedRangeEnd(beginAddress, lengthBytes, endAddress) &&
+           endAddress <= OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE;
+}
+
 UserElfValidationStatus ValidateUserElf(const uint8_t *image, const uint64_t imageSizeBytes,
                                         UserElfLayout &layout) noexcept {
     if (image == nullptr) {
@@ -235,7 +246,7 @@ UserElfValidationStatus ValidateUserElf(const uint8_t *image, const uint64_t ima
             fileEnd > imageSizeBytes) {
             return UserElfValidationStatus::InvalidSegmentFileRange;
         }
-        if (!IsUserVirtualAddressRange(segment.virtualAddress, segment.memorySizeBytes)) {
+        if (!IsUserProgramVirtualAddressRange(segment.virtualAddress, segment.memorySizeBytes)) {
             return UserElfValidationStatus::InvalidSegmentMemoryRange;
         }
         for (uint64_t existingIndex = 0ULL; existingIndex < candidateLayout.loadSegmentCount;

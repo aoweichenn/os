@@ -148,6 +148,12 @@ set(
     CACHE INTERNAL
     "Ring 3 页故障隔离程序"
 )
+set(
+    OS_USER_SCHEDULER_WORKER_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_scheduler_worker.elf"
+    CACHE INTERNAL
+    "Ring 3 进程调度与地址空间隔离验收程序"
+)
 
 os_add_user_program(
     os_user_smoke_elf
@@ -166,4 +172,10 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/page_fault.cpp"
     "${OS_USER_PAGE_FAULT_ELF_PATH}"
     "链接 Ring 3 页故障隔离 ELF64 程序"
+)
+os_add_user_program(
+    os_user_scheduler_worker_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/scheduler_worker.cpp"
+    "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
+    "链接 Ring 3 进程调度与地址空间隔离 ELF64 程序"
 )

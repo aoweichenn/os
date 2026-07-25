@@ -26,5 +26,8 @@ void InitializeInterruptDescriptorTable() noexcept;
 
 [[nodiscard]] DescriptorTableValidationStatus ValidateDescriptorTables() noexcept;
 [[nodiscard]] uint64_t InterruptStackGuardPageAddress(uint64_t guardPageIndex) noexcept;
+[[nodiscard]] uint64_t DefaultPrivilegeStackPointer0() noexcept;
+[[nodiscard]] uint64_t CurrentPrivilegeStackPointer0() noexcept;
+[[nodiscard]] bool SetPrivilegeStackPointer0(uint64_t stackPointer) noexcept;
 
 }

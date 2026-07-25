@@ -6,6 +6,9 @@ namespace os::kernel {
 
 inline constexpr uint64_t OS_KERNEL_USER_MINIMUM_VIRTUAL_ADDRESS = 0x0000000000010000ULL;
 inline constexpr uint64_t OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE = 0x0000800000000000ULL;
+inline constexpr uint64_t OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS = 0x0000000040000000ULL;
+inline constexpr uint64_t OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE =
+    0x0000000080000000ULL;
 inline constexpr uint64_t OS_KERNEL_USER_ELF_MAXIMUM_LOAD_SEGMENT_COUNT = 8ULL;
 inline constexpr uint64_t OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT = 32ULL;
 
@@ -47,6 +50,8 @@ enum class UserElfValidationStatus : uint64_t {
 };
 
 [[nodiscard]] bool IsUserVirtualAddressRange(uint64_t beginAddress, uint64_t lengthBytes) noexcept;
+[[nodiscard]] bool IsUserProgramVirtualAddressRange(uint64_t beginAddress,
+                                                    uint64_t lengthBytes) noexcept;
 [[nodiscard]] UserElfValidationStatus ValidateUserElf(const uint8_t *image, uint64_t imageSizeBytes,
                                                       UserElfLayout &layout) noexcept;
 

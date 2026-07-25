@@ -258,6 +258,43 @@ os_add_kernel_user_test(
     "randomized"
 )
 
+function(os_add_kernel_process_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_process_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_process_test(
+    os_kernel_process_scheduler_unit_tests
+    unit/kernel/process_scheduler_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
+    os_kernel_process_scheduling_integration_tests
+    integration/boot/kernel_process_scheduling_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
+    os_kernel_process_scheduler_randomized_tests
+    randomized/kernel/process_scheduler_randomized_test.cpp
+    "randomized"
+)
+
 add_test(
     NAME os_freestanding_symbol_audit
     COMMAND
@@ -313,6 +350,10 @@ os_add_user_elf_audit_test(
 os_add_user_elf_audit_test(
     os_user_page_fault_elf_layout
     "${OS_USER_PAGE_FAULT_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_scheduler_worker_elf_layout
+    "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
 )
 
 add_test(

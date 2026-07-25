@@ -14,7 +14,7 @@ global osKernelExceptionDispatch
 global osKernelHardwareInterruptDispatch
 global osKernelSystemCallEntry
 global osKernelSystemCallDispatch
-global osKernelEnterUserMode
+global osKernelEnterScheduledProcess
 global osKernelReturnFromUserMode
 
 extern osKernelDispatchException
@@ -23,8 +23,6 @@ extern osKernelDispatchSystemCall
 
 OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR equ 0x10
 OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR equ 0x1B
-OS_KERNEL_ARCHITECTURE_USER_CODE_SELECTOR equ 0x23
-OS_KERNEL_ARCHITECTURE_USER_INITIAL_FLAGS equ 0x202
 
 osKernelLoadGdtAndTss:
     lgdt [rdi]
@@ -93,10 +91,8 @@ osKernelExceptionDispatch:
 
     mov rdi, rsp
     and rsp, -16
-    sub rsp, 16
-    mov [rsp], rdi
     call osKernelDispatchException
-    mov rsp, [rsp]
+    mov rsp, rax
 
     pop r15
     pop r14
@@ -186,10 +182,8 @@ osKernelHardwareInterruptDispatch:
 
     mov rdi, rsp
     and rsp, -16
-    sub rsp, 16
-    mov [rsp], rdi
     call osKernelDispatchHardwareInterrupt
-    mov rsp, [rsp]
+    mov rsp, rax
 
     pop r15
     pop r14
@@ -261,10 +255,8 @@ osKernelSystemCallDispatch:
 
     mov rdi, rsp
     and rsp, -16
-    sub rsp, 16
-    mov [rsp], rdi
     call osKernelDispatchSystemCall
-    mov rsp, [rsp]
+    mov rsp, rax
 
     pop r15
     pop r14
@@ -284,9 +276,9 @@ osKernelSystemCallDispatch:
     add rsp, 16
     iretq
 
-; 进入 Ring 3 前保存当前内核调用链。用户态的任意退出路径都会丢弃 TSS
-; 权限切换栈，并恢复这里保存的栈，从而回到 ExecuteUserProgram 的调用点。
-osKernelEnterUserMode:
+; 调度启动前保存内核调用链，再直接恢复 PCB 中预构造的 176 字节用户现场。
+; 最后一个进程结束后，退出路径恢复这里的栈并返回 ExecuteProcesses。
+osKernelEnterScheduledProcess:
     pushfq
     cli
     push rbx
@@ -296,6 +288,7 @@ osKernelEnterUserMode:
     push r14
     push r15
     mov [rel osKernelSavedUserModeKernelStack], rsp
+    mov rsp, rdi
 
     mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
     mov ds, ax
@@ -303,11 +296,22 @@ osKernelEnterUserMode:
     mov fs, ax
     mov gs, ax
 
-    push qword OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
-    push rsi
-    push qword OS_KERNEL_ARCHITECTURE_USER_INITIAL_FLAGS
-    push qword OS_KERNEL_ARCHITECTURE_USER_CODE_SELECTOR
-    push rdi
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16
     iretq
 
 osKernelReturnFromUserMode:

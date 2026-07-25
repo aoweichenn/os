@@ -4,6 +4,6 @@
 
 namespace os::kernel {
 
-extern "C" void osKernelDispatchException(ExceptionFrame *frame) noexcept;
+extern "C" [[nodiscard]] ExceptionFrame *osKernelDispatchException(ExceptionFrame *frame) noexcept;
 
 }

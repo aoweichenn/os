@@ -3,9 +3,10 @@
 #include "os/kernel/descriptor_tables.hpp"
 #include "os/kernel/interrupt_runtime.hpp"
 #include "os/kernel/memory_manager.hpp"
+#include "os/kernel/process_memory_layout.hpp"
+#include "os/kernel/process_runtime.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
-#include "os/kernel/user_runtime.hpp"
 
 namespace os::kernel {
 
@@ -105,6 +106,29 @@ constexpr char OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE[] =
     "[OS][KERNEL] USER_RETURNED_TO_KERNEL\r\n";
 constexpr char OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE[] =
     "[OS][KERNEL] USER_RESULT_INVALID\r\n";
+constexpr char OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE[] =
+    "[OS][KERNEL] PROCESS_RUNTIME_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PROCESS_ID_PREFIX[] = "[OS][KERNEL] PROCESS_ID=";
+constexpr char OS_KERNEL_MAIN_PROCESS_CR3_PREFIX[] = "[OS][KERNEL] PROCESS_CR3=";
+constexpr char OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX[] =
+    "[OS][KERNEL] PROCESS_KERNEL_STACK_TOP=";
+constexpr char OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX[] = "[OS][KERNEL] PROCESS_RUN_TICKS=";
+constexpr char OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX[] =
+    "[OS][KERNEL] PROCESS_DISPATCH_COUNT=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE[] = "[OS][KERNEL] SCHEDULER_STARTED\r\n";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX[] =
+    "[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_TERMINATED_PROCESS_COUNT_PREFIX[] =
+    "[OS][KERNEL] SCHEDULER_TERMINATED_PROCESSES=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_TIMER_TICK_COUNT_PREFIX[] =
+    "[OS][KERNEL] SCHEDULER_TIMER_TICKS=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX[] =
+    "[OS][KERNEL] SCHEDULER_PREEMPTIONS=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX[] =
+    "[OS][KERNEL] SCHEDULER_DISPATCHES=";
+constexpr char OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE[] =
+    "[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED\r\n";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE[] = "[OS][KERNEL] SCHEDULER_COMPLETE\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
@@ -115,6 +139,9 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR = 6ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 4ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT = 1ULL;
 
 // 非零初值不能用于证明加载器执行了 p_memsz 对应的 BSS 清零。
 uint64_t kernelMainBssProbe;
@@ -249,45 +276,67 @@ void InitializeKernelDevices(const SerialPort &serialPort) noexcept {
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
 }
 
-[[nodiscard]] PreparedUserProgram
-PrepareRequiredUserProgram(const SerialPort &serialPort,
+void CreateRequiredProcess(const SerialPort &serialPort,
                            const UserProgramSelection selection) noexcept {
-    PreparedUserProgram program{};
+    ProcessCreationResult creationResult{};
     UserElfValidationStatus elfValidationStatus = UserElfValidationStatus::Succeeded;
     UserAddressSpaceStatus addressSpaceStatus = UserAddressSpaceStatus::Succeeded;
-    const UserRuntimeStatus runtimeStatus =
-        PrepareUserProgram(selection, program, elfValidationStatus, addressSpaceStatus);
-    if (runtimeStatus == UserRuntimeStatus::InvalidElf) {
+    const ProcessRuntimeStatus runtimeStatus =
+        CreateProcess(selection, creationResult, elfValidationStatus, addressSpaceStatus);
+    if (runtimeStatus == ProcessRuntimeStatus::InvalidElf) {
         WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
                              static_cast<uint64_t>(elfValidationStatus));
         HaltProcessor();
     }
-    if (runtimeStatus != UserRuntimeStatus::Succeeded) {
+    if (runtimeStatus != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
                              static_cast<uint64_t>(addressSpaceStatus));
         HaltProcessor();
     }
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_ELF_VALID_MESSAGE);
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_ENTRY_PREFIX,
-                         program.addressSpace.entryVirtualAddress);
+                         creationResult.entryVirtualAddress);
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_MAPPED_PAGE_COUNT_PREFIX,
-                         program.addressSpace.mappedPageCount);
+                         creationResult.mappedPageCount);
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_STACK_READY_MESSAGE);
-    return program;
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, creationResult.processId);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_CR3_PREFIX,
+                         creationResult.rootPhysicalAddress);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX,
+                         ProcessKernelStackTopAddress(creationResult.processIndex));
 }
 
-[[nodiscard]] bool IsExpectedUserExecutionResult(const UserProgramSelection selection,
-                                                 const UserExecutionResult &result) noexcept {
-    if (selection == UserProgramSelection::Smoke) {
-        return result.terminationReason == UserTerminationReason::Exited &&
+void PrepareRequiredProcesses(const SerialPort &serialPort,
+                              const UserProgramSelection selection) noexcept {
+    if (InitializeProcessRuntime() != ProcessRuntimeStatus::Succeeded) {
+        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+                             static_cast<uint64_t>(ProcessRuntimeStatus::SchedulerFailure));
+        HaltProcessor();
+    }
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
+
+    const uint64_t processCount = selection == UserProgramSelection::Smoke
+                                      ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
+                                      : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
+    for (uint64_t processIndex = 0ULL; processIndex < processCount; ++processIndex) {
+        const UserProgramSelection processSelection =
+            processIndex == 0ULL ? selection : UserProgramSelection::SchedulerWorker;
+        CreateRequiredProcess(serialPort, processSelection);
+    }
+}
+
+[[nodiscard]] bool IsExpectedProcessExecutionResult(const ProcessExecutionResult &result) noexcept {
+    if (result.selection == UserProgramSelection::Smoke ||
+        result.selection == UserProgramSelection::SchedulerWorker) {
+        return result.terminationReason == ProcessTerminationReason::Exited &&
                result.exitCode == OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE;
     }
-    if (selection == UserProgramSelection::InvalidOpcode) {
-        return result.terminationReason == UserTerminationReason::Exception &&
+    if (result.selection == UserProgramSelection::InvalidOpcode) {
+        return result.terminationReason == ProcessTerminationReason::Exception &&
                result.exceptionVector == OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR;
     }
-    if (selection == UserProgramSelection::PageFault) {
-        return result.terminationReason == UserTerminationReason::Exception &&
+    if (result.selection == UserProgramSelection::PageFault) {
+        return result.terminationReason == ProcessTerminationReason::Exception &&
                result.exceptionVector == OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR &&
                result.exceptionErrorCode == OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE &&
                result.pageFaultAddress == OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS;
@@ -295,21 +344,13 @@ PrepareRequiredUserProgram(const SerialPort &serialPort,
     return false;
 }
 
-void ExecuteRequiredUserProgram(const SerialPort &serialPort,
-                                const PreparedUserProgram &program) noexcept {
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RING3_ENTER_MESSAGE);
-    UserExecutionResult result{};
-    const UserRuntimeStatus runtimeStatus = ExecuteUserProgram(program, result);
-    if (runtimeStatus != UserRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
-                             static_cast<uint64_t>(runtimeStatus));
-        HaltProcessor();
-    }
-
-    if (result.terminationReason == UserTerminationReason::Exited) {
+void WriteProcessExecutionResult(const SerialPort &serialPort,
+                                 const ProcessExecutionResult &result) noexcept {
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, result.processId);
+    if (result.terminationReason == ProcessTerminationReason::Exited) {
         WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXIT_CODE_PREFIX,
                              static_cast<uint64_t>(result.exitCode));
-    } else if (result.terminationReason == UserTerminationReason::Exception) {
+    } else if (result.terminationReason == ProcessTerminationReason::Exception) {
         WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXCEPTION_VECTOR_PREFIX,
                              result.exceptionVector);
         WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXCEPTION_ERROR_CODE_PREFIX,
@@ -323,13 +364,70 @@ void ExecuteRequiredUserProgram(const SerialPort &serialPort,
     }
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_SYSTEM_CALL_COUNT_PREFIX,
                          result.systemCallCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX, result.runTickCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX,
+                         result.dispatchCount);
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
-    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);
 
-    if (!IsExpectedUserExecutionResult(program.selection, result)) {
+    if (!IsExpectedProcessExecutionResult(result)) {
         WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
     }
+}
+
+[[nodiscard]] bool
+ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics) noexcept {
+    return statistics.framesBeforeProcesses.managedFrameCount ==
+               statistics.framesAfterProcesses.managedFrameCount &&
+           statistics.framesBeforeProcesses.freeFrameCount ==
+               statistics.framesAfterProcesses.freeFrameCount &&
+           statistics.framesBeforeProcesses.allocatedFrameCount ==
+               statistics.framesAfterProcesses.allocatedFrameCount &&
+           statistics.framesBeforeProcesses.reservedFrameCount ==
+               statistics.framesAfterProcesses.reservedFrameCount;
+}
+
+void ExecuteRequiredProcesses(const SerialPort &serialPort,
+                              const UserProgramSelection selection) noexcept {
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RING3_ENTER_MESSAGE);
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE);
+    const ProcessRuntimeStatus runtimeStatus = ExecuteProcesses();
+    if (runtimeStatus != ProcessRuntimeStatus::Succeeded) {
+        WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+                             static_cast<uint64_t>(runtimeStatus));
+        HaltProcessor();
+    }
+
+    const ProcessRuntimeStatistics statistics = GetProcessRuntimeStatistics();
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX,
+                         statistics.scheduler.createdProcessCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_TERMINATED_PROCESS_COUNT_PREFIX,
+                         statistics.scheduler.terminatedProcessCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_TIMER_TICK_COUNT_PREFIX,
+                         statistics.scheduler.timerTickCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX,
+                         statistics.scheduler.preemptionCount);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX,
+                         statistics.scheduler.dispatchCount);
+
+    const uint64_t expectedProcessCount = selection == UserProgramSelection::Smoke
+                                              ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
+                                              : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
+    if (statistics.scheduler.createdProcessCount != expectedProcessCount ||
+        statistics.scheduler.terminatedProcessCount != expectedProcessCount ||
+        (selection == UserProgramSelection::Smoke &&
+         statistics.scheduler.preemptionCount < OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT) ||
+        !ProcessResourcesWereReclaimed(statistics)) {
+        WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
+        HaltProcessor();
+    }
+
+    for (uint64_t processIndex = 0ULL; processIndex < expectedProcessCount; ++processIndex) {
+        WriteProcessExecutionResult(serialPort, statistics.processes[processIndex]);
+    }
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);
 }
 
 void WriteKeyboardEvent(const SerialPort &serialPort, const KeyboardEvent &event) noexcept {
@@ -381,10 +479,9 @@ void WriteKeyboardEvent(const SerialPort &serialPort, const KeyboardEvent &event
         ExecuteFaultInjection(serialPort, faultInjection);
     }
 
-    const PreparedUserProgram userProgram =
-        PrepareRequiredUserProgram(serialPort, userProgramSelection);
+    PrepareRequiredProcesses(serialPort, userProgramSelection);
     InitializeKernelDevices(serialPort);
-    ExecuteRequiredUserProgram(serialPort, userProgram);
+    ExecuteRequiredProcesses(serialPort, userProgramSelection);
 
     if (!serialPort.TryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
                                     bootInfo->kernelFileSizeBytes) ||

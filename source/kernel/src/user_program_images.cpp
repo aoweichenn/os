@@ -12,6 +12,8 @@ extern "C" const uint8_t osKernelUserInvalidOpcodeElfStart[];
 extern "C" const uint8_t osKernelUserInvalidOpcodeElfEnd[];
 extern "C" const uint8_t osKernelUserPageFaultElfStart[];
 extern "C" const uint8_t osKernelUserPageFaultElfEnd[];
+extern "C" const uint8_t osKernelUserSchedulerWorkerElfStart[];
+extern "C" const uint8_t osKernelUserSchedulerWorkerElfEnd[];
 
 [[nodiscard]] uint64_t CalculateImageSize(const uint8_t *start, const uint8_t *end) noexcept {
     return static_cast<uint64_t>(end - start);
@@ -32,6 +34,13 @@ UserProgramImage SelectUserProgramImage(const UserProgramSelection selection) no
             .image = osKernelUserPageFaultElfStart,
             .imageSizeBytes =
                 CalculateImageSize(osKernelUserPageFaultElfStart, osKernelUserPageFaultElfEnd),
+        };
+    }
+    if (selection == UserProgramSelection::SchedulerWorker) {
+        return UserProgramImage{
+            .image = osKernelUserSchedulerWorkerElfStart,
+            .imageSizeBytes = CalculateImageSize(osKernelUserSchedulerWorkerElfStart,
+                                                 osKernelUserSchedulerWorkerElfEnd),
         };
     }
     const uint64_t smokeImageSizeBytes =

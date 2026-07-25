@@ -153,6 +153,22 @@ QEMU 自行异常退出仍视为失败。
 - Kernel ELF 审计新增系统调用入口/分发、用户进入/恢复和三个内嵌 ELF
   边界符号，防止链接图漏掉关键汇编路径。
 
+`v0.9` 把调度策略、硬件切换和资源生命周期分层验证：
+
+- 纯 `ProcessScheduler` 单元测试覆盖未初始化、零量子、容量、创建回滚、
+  PID 单调、量子边界、终止和越界读取；内核栈布局同时验证对齐、guard 与
+  相邻槽位不重叠。
+- 集成模型让三个进程执行 24 tick，断言每个恰得 8 tick，并核对抢占、
+  终止交接和派发统计。
+- 固定种子随机测试生成 4096 组 1..4 进程、1..8 tick 量子和 1..64 tick
+  序列；每个 tick 后都要求恰有一个 Running，所有 run tick 之和守恒。
+- QEMU 真实路径由 PIT IRQ0 抢占一个 smoke 和三个同址 worker，要求每个
+  worker 按自己的 PID 完成三轮计算，三个 BSS 隔离标记全部出现。
+- 内核在最后退出后比较创建前后页帧统计；宿主再对调度日志执行顺序、精确次数
+  和十六进制下界验证。两层都通过才接受 `SCHEDULER_COMPLETE`。
+- 既有 Ring 3 `#UD/#PF` 用例改走单进程调度生命周期，证明新增调度器没有
+  把用户异常重新退化成内核 panic。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -205,11 +221,15 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
 | `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、用户栈、地址窗口与系统调用 ABI |
 | `os_kernel_user_elf_randomized_tests` | 随机 | 16,384 条用户地址范围与溢出性质 |
+| `os_kernel_process_scheduler_unit_tests` | 单元 | PID、容量、创建回滚、时间片、终止与 Ring 0 栈 guard |
+| `os_kernel_process_scheduling_integration_tests` | 集成 | 多进程公平 tick、轮转次序、终止交接与统计守恒 |
+| `os_kernel_process_scheduler_randomized_tests` | 随机 | 4096 组量子/进程/tick 组合的单 Running 与计数守恒 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_user_smoke_elf_layout` | 集成 | 正常用户 ELF 的 AMD64、段权限与入口 |
 | `os_user_invalid_opcode_elf_layout` | 集成 | 用户 `UD2` 测试 ELF 的结构与权限 |
 | `os_user_page_fault_elf_layout` | 集成 | 用户越权访问测试 ELF 的结构与权限 |
+| `os_user_scheduler_worker_elf_layout` | 集成 | 同址多进程 worker ELF 的结构、权限与入口 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
 | `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
@@ -243,11 +263,17 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 55 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
+当前共 59 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
 捕获器同时拥有“最终里程碑到达”和“五秒总截止”两个终止条件，并通过
 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
+
+成功 QEMU 用例不只检查标记“至少出现一次”。v0.9 对四次 ELF/栈创建、
+八次 PID 行、三个 worker 的九条进度日志、三次地址隔离、四份终止结果和单次
+资源回收执行精确计数；同时解析固定 16 位十六进制统计，要求创建/终止至少为
+4、PIT tick 和抢占至少为 1、派发至少为 4。内核也独立验证进程数和页帧回收，
+形成目标内自检与宿主协议检查两层证据。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模
 不需要 fixture 或宏注册；避免 `TEST`、`EXPECT_*` 等宏也与项目的宏约束一致。

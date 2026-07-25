@@ -12,6 +12,7 @@ from tools.os_tools.user_elf import (
     OS_USER_ELF_IDENT_VERSION_OFFSET,
     OS_USER_ELF_MACHINE_X86_64,
     OS_USER_ELF_MAGIC,
+    OS_USER_ELF_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE,
     OS_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT,
     OS_USER_ELF_MINIMUM_VIRTUAL_ADDRESS,
     OS_USER_ELF_PAGE_SIZE_BYTES,
@@ -134,6 +135,18 @@ class UserElfToolTests(unittest.TestCase):
             OS_USER_ELF_MINIMUM_VIRTUAL_ADDRESS
             - OS_USER_ELF_PAGE_SIZE_BYTES
         )
+
+        with self.assertRaises(OsToolError):
+            parseUserLoadSegments(
+                createValidUserElf(
+                    entryAddress=invalidAddress,
+                    virtualAddress=invalidAddress,
+                    physicalAddress=invalidAddress,
+                )
+            )
+
+    def testRejectsSegmentPastProcessProgramWindow(self) -> None:
+        invalidAddress = OS_USER_ELF_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE
 
         with self.assertRaises(OsToolError):
             parseUserLoadSegments(

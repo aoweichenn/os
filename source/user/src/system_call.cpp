@@ -23,6 +23,12 @@ int64_t WriteLog(const char *message, const uint64_t messageSizeBytes) noexcept 
                             reinterpret_cast<uint64_t>(message), messageSizeBytes);
 }
 
+uint64_t GetProcessId() noexcept {
+    return static_cast<uint64_t>(
+        InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId),
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+}
+
 [[noreturn]] void ExitProcess(const int64_t exitCode) noexcept {
     static_cast<void>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess),

@@ -1,4 +1,245 @@
-\section{进程生命周期是一组受约束状态转换}
+\section{分时系统把中断、地址转换和保存现场连成进程}
+
+早期批处理系统一次把一个作业交给机器；作业等待慢速外设时，昂贵的 CPU 也
+跟着空闲。多道程序设计让多个作业同时驻留内存，一个作业等待时运行另一个。
+交互式分时又加入周期时钟，使不主动让出 CPU 的计算也会被操作系统收回。
+这里出现了进程的三个根本组成：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 地址空间回答“这条地址属于哪些物理页、具有什么权限”；
+  \item 处理器现场回答“下一条指令和所有寄存器从什么状态继续”；
+  \item 调度状态回答“谁有资格在何时取得处理器”。
+\end{enumerate}
+
+仅有 PID 表不是进程，仅轮流调用函数也不是抢占。v0.9 的验收要求 QEMU 中的
+x86-64 CPU 真实响应 8254 PIT IRQ0，保存 CPL3 现场，切换 CR3 与
+TSS.RSP0，再从另一份现场执行 \code{iretq}。QEMU 只产生硬件事件；上述
+所有状态和策略均由自研代码维护。
+
+\begin{pdfdiagram}
+  \node[os hardware] (pit) {8254 PIT\\IRQ0};
+  \node[os block,right=of pit] (entry) {IDT/汇编入口\\176 B 帧};
+  \node[os state,right=of entry] (scheduler) {round-robin\\Ready/Running};
+  \node[os block,below=of scheduler] (switch) {CR3 + TSS.RSP0\\帧地址};
+  \node[os state,left=of switch] (process) {另一进程\\同址用户 ELF};
+  \draw[os arrow] (pit) -- (entry);
+  \draw[os arrow] (entry) -- (scheduler);
+  \draw[os arrow] (scheduler) -- (switch);
+  \draw[os arrow] (switch) -- (process);
+\end{pdfdiagram}
+\diagramnote{时钟只提供机制；选择下一个 Ready 进程是策略；页表和内核栈使策略结果可由硬件安全执行。}
+
+\section{v0.9 只实现拥有完整语义的四态模型}
+
+本阶段固定四个 PCB，状态为
+\code{Unused -> Ready -> Running -> Terminated}。创建失败可以把尚未运行
+的 Ready 槽回滚为 Unused；启动选择第一个 Ready；时间片到期把当前 Running
+放回 Ready 并选择后继；退出或用户异常进入 Terminated。
+
+\begin{pdfdiagram}
+  \node[os state] (unused) {Unused};
+  \node[os block,right=of unused] (ready) {Ready};
+  \node[os state,right=of ready] (running) {Running};
+  \node[os hardware,right=of running] (terminated) {Terminated};
+  \draw[os arrow] (unused) -- node[above]{创建} (ready);
+  \draw[os arrow] (ready) -- node[above]{派发} (running);
+  \draw[os arrow] (running) to[bend left] node[above]{抢占} (ready);
+  \draw[os arrow] (running) -- node[above]{退出/异常} (terminated);
+  \draw[os arrow] (ready) to[bend right] node[below]{创建回滚} (unused);
+\end{pdfdiagram}
+\diagramnote{本阶段没有等待条件，所以不伪造 Blocked；也没有父进程 wait，所以不伪造 Zombie。}
+
+PCB 把地址空间、保存帧和可观测结果聚合：
+
+\begin{longtable}{L{0.25\textwidth}L{0.27\textwidth}L{0.36\textwidth}}
+\toprule
+字段组 & 代表字段 & 所有权/不变量\\
+\midrule
+标识与状态 & 64 位 PID、状态、槽索引 & PID 单调；恰有零或一个 Running\\
+地址空间 & PML4 根、入口、用户栈顶、页数 & 根不等于永久内核根；退出后释放\\
+执行现场 & Ring 0 栈内的帧指针 & 完整 176 B 落在本 PCB 栈范围\\
+终止结果 & exit code、异常向量/error/RIP/CR2 & 只在对应终止原因下有效\\
+统计 & syscall、run tick、dispatch & 只在短中断临界路径更新\\
+\bottomrule
+\end{longtable}
+
+PID 从 1 开始递增。创建 ELF 失败会释放 Ready 槽，但不会倒退 PID；已经写入
+日志或被用户观察的标识不能悄悄指代另一个对象。固定容量不是通用限制，而是
+当前教学增量：它让 PCB 本身不依赖尚无通用释放能力的早期堆。
+
+\section{相同虚拟地址通过不同 CR3 到达不同物理页}
+
+x86-64 四级页表把 48 位规范虚拟地址拆成四个 9 位索引和 12 位页内偏移：
+\[
+  v =
+  \mathrm{PML4}[47{:}39]\,
+  \mathrm{PDPT}[38{:}30]\,
+  \mathrm{PD}[29{:}21]\,
+  \mathrm{PT}[20{:}12]\,
+  \mathrm{offset}[11{:}0].
+\]
+用户程序基址 \code{0x40000000} 的 PML4 索引为 0、PDPT 索引为 1；用户
+栈接近低半规范地址顶端，PML4 索引为 255。这个布局允许进程只克隆一小段
+页表，而不复制所有内核映射。
+
+\begin{pdfdiagram}
+  \node[os state] (template) {永久内核 PML4};
+  \node[os block,below left=of template] (p1) {PID 1 PML4\\独立根};
+  \node[os block,below right=of template] (p2) {PID 2 PML4\\独立根};
+  \node[os state,below=of p1] (pdpt1) {克隆 PDPT[0]\\[0] 共享内核\\[1] 独占程序};
+  \node[os state,below=of p2] (pdpt2) {克隆 PDPT[0]\\[0] 共享内核\\[1] 独占程序};
+  \node[os hardware,below=of pdpt1] (leaf1) {VA 0x40000000\\物理帧 A};
+  \node[os hardware,below=of pdpt2] (leaf2) {VA 0x40000000\\物理帧 B};
+  \draw[os arrow] (template) -- (p1);
+  \draw[os arrow] (template) -- (p2);
+  \draw[os arrow] (p1) -- (pdpt1);
+  \draw[os arrow] (p2) -- (pdpt2);
+  \draw[os arrow] (pdpt1) -- (leaf1);
+  \draw[os arrow] (pdpt2) -- (leaf2);
+\end{pdfdiagram}
+\diagramnote{虚拟地址只有和 CR3 选择的根放在一起才有意义；同址不是共享物理页的证据。}
+
+创建地址空间时，页表管理器分配新 PML4 和新低端 PDPT，复制模板 PML4，
+清空 PML4[255]；再复制模板低端 PDPT，清空 PDPT[1]。PDPT[0] 仍指向
+共享 supervisor 内核子树。随后映射用户程序时，\code{MapPage} 为
+PDPT[1] 分配独立 PD、PT 和叶帧；映射用户栈时从空 PML4[255] 分配另一
+棵独占树。
+
+PML4[0] 会因程序映射而带 U/S=1，但共享内核路径的 PDPT[0] 仍为
+U/S=0。x86 权限取路径各级限制的交集，所以 CPL3 仍不能访问低端内核。
+这说明“某一级 user”既不自动授权所有后代，也不能省略叶项和其他中间项检查。
+
+写 CR3 会使当前处理器的大多数非 global TLB 翻译失效。PCID 可以减少这种
+代价，但会新增标识分配、复用和定向失效协议。v0.9 先接受完整刷新，优先让
+所有权和故障边界可解释。
+
+\section{每进程 Ring 0 栈保存可跨时间片存活的现场}
+
+从 CPL3 接受中断时，CPU 从 TSS.RSP0 取得新栈，依次保存旧 SS、RSP、
+RFLAGS、CS 和 RIP。IRQ 桩再补 vector/error，并保存 15 个通用寄存器。
+内存从低地址到高地址形成：
+
+\begin{longtable}{L{0.22\textwidth}L{0.20\textwidth}L{0.46\textwidth}}
+\toprule
+偏移范围 & 长度 & 内容\\
+\midrule
+\code{0..119} & 120 B & R15..RAX 共 15 个 64 位通用寄存器\\
+\code{120..135} & 16 B & vector 与规范化 error code\\
+\code{136..159} & 24 B & RIP、CS、RFLAGS\\
+\code{160..175} & 16 B & 旧用户 RSP、SS\\
+\bottomrule
+\end{longtable}
+
+普通 Ring 0 异常没有特权切换，只有前 160 B；C++ 用保存 CS 的 RPL 判断
+是否可以把公共帧扩展解释为 176 B 用户帧。首次运行没有硬件生成的旧现场，
+创建代码在进程栈顶下方人工构造同一布局；因此首次进入和后续恢复共用一条
+汇编弹栈路径。
+
+每个槽位拥有 20 KiB 连续存储：底部 4 KiB 保持 not-present，其上 16 KiB
+可用。guard 不是数组边界检查；它依赖当前页表真的省略叶映射。内存管理器在
+建立低端身份映射时遍历四个 guard 地址并跳过它们，宿主布局测试则验证对齐、
+相邻关系和帧范围。
+
+若多个进程共用一块 RSP0 栈，第二个进程的 IRQ 或系统调用会覆盖第一进程挂起
+的现场。切换 CR3 后必须同步把 TSS.RSP0 改为新栈顶；TSS 是每 CPU 状态，
+不是自动随 CR3 切换的进程字段。
+
+\section{汇编只搬运帧，C++ 只作有界决策}
+
+异常、硬件 IRQ 和系统调用公共入口都遵循同一边界：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 汇编清 DF、保存通用寄存器，把当前 RSP 作为首参数；
+  \item 调整 RSP 到 System V AMD64 调用对齐并调用 C++；
+  \item C++ 返回“下一份要恢复的帧地址”；
+  \item 汇编用返回值替换 RSP，逆序恢复寄存器，丢弃 vector/error；
+  \item \code{iretq} 恢复该帧中的处理器状态。
+\end{enumerate}
+
+不切换时 C++ 返回原帧；抢占、退出或用户异常时返回另一 PCB 的帧。汇编因此
+不认识 Ready 队列、PID 或量子，C++ 也不复制十五个寄存器。边界的代价是
+返回指针必须严格验证：当前帧应属于当前进程栈，目标帧应属于目标进程栈，
+当前 CR3 应与当前 PCB 一致。
+
+切换发生在 interrupt gate 清 IF 的窗口内。v0.9 单核环境不会在修改 PCB、
+CR3 和 RSP0 的中间再次进入普通可屏蔽 IRQ；这不是多核锁。SMP 后另一 CPU
+仍可并发访问共享队列，必须加入原子顺序和锁。
+
+\section{四 tick 轮转用守恒性质证明公平}
+
+PIT 目标约 1000 Hz，默认量子 \(q=4\) tick。每个用户 IRQ0 先增加当前
+进程 run tick 和全局 timer tick，再增加已用预算。若预算小于 \(q\)，原帧
+返回；预算达到 \(q\) 时，从当前槽位之后循环寻找 Ready：
+\[
+  \mathrm{candidate}(k) =
+  (\mathrm{current}+1+k)\bmod 4,\qquad k=0,1,2,3.
+\]
+找不到其他 Ready 时只重置预算，不计抢占；找到时旧 Running 变 Ready，
+候选变 Running，并同时增加 preemption 与 dispatch。
+
+三个进程、总计 24 tick、量子 4 的纯模型集成测试中：
+\[
+  \mathrm{preemptions}=24/4=6,\qquad
+  \mathrm{runTicks}_i=24/3=8.
+\]
+固定种子随机测试再生成 4096 组进程数、量子和 tick 序列。每一步检查：
+\[
+  \sum_i [\mathrm{state}_i=\mathrm{Running}] = 1,\qquad
+  \sum_i \mathrm{runTicks}_i = \mathrm{timerTicks}.
+\]
+这些守恒比断言某一长序列更强：它们覆盖不同量子和队列长度，又不会把实现
+内部循环写死成测试。
+
+\section{退出路径先离开将被释放的地址空间}
+
+当前进程调用 \code{ExitProcess} 或发生用户异常后，运行时记录终止原因并
+让调度器选择后继。此时 C++ 仍在当前进程 Ring 0 栈上，当前 CR3 也仍指向
+将被销毁的 PML4。若立即释放根，下一次取指或栈访问会使用已归还帧。
+
+正确顺序为：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 保存当前帧和终止现场，状态改为 Terminated；
+  \item 得到后继索引或“全部完成”决定；
+  \item 激活永久内核 CR3；
+  \item 递归释放程序叶页、用户栈页、中间表、克隆 PDPT 和 PML4；
+  \item 有后继则激活其 CR3/RSP0 并返回其帧；
+  \item 无后继则恢复默认 RSP0 和调度启动前的内核调用链。
+\end{enumerate}
+
+销毁函数只遍历已知独占的 PDPT[1] 与 PML4[255]。复制来的其他 PML4 项和
+PDPT[0] 是共享内核所有权，绝不能递归释放。接口还拒绝销毁当前活动 CR3 和
+永久内核根，把正确顺序从注释提升成运行时前置条件。
+
+\section{三个同址 worker 同时证明抢占与地址隔离}
+
+正常镜像创建 PID1 smoke，以及 PID2、PID3、PID4 三个完全相同的 worker
+ELF。每个 worker 先调用 \code{GetProcessId}，再执行三轮各 1,500,000 次
+递增。全局 \code{workerCounter} 位于每个地址空间相同 BSS 虚拟地址；第
+\(r\) 轮结束必须满足：
+\[
+  \mathrm{workerCounter}=r\times1\,500\,000.
+\]
+若三个 CR3 错误共享叶帧，后运行实例看到的初值不为零，至少一个检查失败。
+三个实例各输出一次 \code{ADDRESS\_SPACE\_ISOLATED}，同时长计算区间让
+真实 IRQ0 有机会产生多次抢占。
+
+QEMU 一次代表执行观察到 107 个调度 tick、24 次抢占和 28 次派发。具体数字
+受 TCG 速度和 IRQ 指令边界影响，不能硬编码；稳定验收是创建/终止恰为 4、
+抢占至少 1、派发至少 4、九条 PID 进度日志各一次、四份退出码为零。
+
+IRQ0 热路径完全不写串口。全部进程结束后，内核才批量输出调度总量和每进程
+run tick、dispatch、syscall。创建前与全部销毁后的物理页统计必须一致，
+才能输出 \code{PROCESS\_RESOURCES\_RECLAIMED}。这避免日志反过来延长量子，
+也避免把 Terminated 状态误当作内存已经释放。
+
+\begin{contractbox}
+调度正确性由三层证据共同成立：宿主纯模型证明状态与守恒，ELF 审计证明同址
+程序契约，QEMU 证明真实 IRQ、CR3、TSS、IRETQ 和页回收。任一层不能替代
+另外两层。
+\end{contractbox}
+
+\section{完整进程生命周期是一组受约束状态转换}
 
 新进程从 created 进入 runnable，调度后成为 running；等待 I/O 或同步条件时
 进入 blocked，条件满足后回到 runnable；退出后进入 zombie，父进程取得退出

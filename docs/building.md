@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v0.7 ELF64 内核，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v0.9 ELF64 内核、四个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试。
@@ -164,17 +164,20 @@ source/kernel/src/architecture.asm ─ NASM elf64 ─────────┤
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
-三个 Ring 3 程序是独立 ELF64 产物，可分别审计：
+四个 Ring 3 程序是独立 ELF64 产物，可分别审计：
 
 ```bash
 python3 tools/os.py audit-user-elf build/developer/source/user/user_smoke.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_invalid_opcode.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_page_fault.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/scheduler_worker.elf
 ```
 
 审计器要求 AMD64 `ET_EXEC`、入口位于可执行 `PT_LOAD`、段 4 KiB 对齐、
 用户地址范围、W^X、无重叠和零未解析符号。它不替代内核解析器：宿主审计
 证明“构建产生了预期文件”，QEMU 路径证明“目标内核自己拒绝或装入文件”。
+正常镜像会从同一个 `scheduler_worker.elf` 创建三个进程；三者共享虚拟地址
+布局但拥有不同 CR3，用 BSS 私有计数器证明地址空间隔离。
 
 ## Boot Disk 组合链
 

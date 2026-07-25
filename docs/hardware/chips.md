@@ -106,13 +106,33 @@ TSS 内存布局：
 
 | 偏移 | 宽度 | 字段 | 当前用途 |
 | ---: | ---: | --- | --- |
-| `0x04` | 64 | RSP0 | Ring 3→Ring 0 的独立 16 KiB 特权转换栈 |
+| `0x04` | 64 | RSP0 | 当前进程 Ring 3→Ring 0 的 16 KiB 内核栈顶 |
 | `0x0C` / `0x14` | 64 | RSP1 / RSP2 | 保留为零 |
 | `0x24` | 64 | IST1 | 双重故障栈 |
 | `0x2C` | 64 | IST2 | NMI 栈 |
 | `0x34` | 64 | IST3 | 机器检查栈 |
 | `0x3C..0x5C` | 64 | IST4..IST7 | 保留为零 |
 | `0x66` | 16 | I/O bitmap offset | 104，位于 TSS limit 之后 |
+
+### 2.5 v0.9 调度切换的 CPU 状态
+
+round-robin 的一次切换跨越三个硬件状态集合：
+
+| 状态 | 旧进程保存位置 | 新进程恢复动作 | 不变量 |
+| --- | --- | --- | --- |
+| 通用寄存器 | Ring 0 栈上的 15 个 64 位槽 | 汇编逆序 `POP` | 帧地址属于对应 PCB 栈 |
+| RIP/CS/RFLAGS/RSP/SS | CPU 特权帧 | `IRETQ` | CS.RPL=3、SS.RPL=3、IF=1 |
+| CR3 | PCB 地址空间根 | `MOV CR3` | 4 KiB 对齐且不是永久内核根 |
+| TSS.RSP0 | TSS 内存字段 | 普通 64 位写并读回 | 指向新 PCB 栈顶且 16 字节对齐 |
+
+IRQ0 到来时 CPU 已自动使用“旧”RSP0 压帧。C++ 可以在该栈上切换 CR3，
+因为所有进程页表都共享 supervisor 内核代码和所有四块 Ring 0 栈映射。
+但在执行新进程 `IRETQ` 前必须写入“新”RSP0；否则下一次系统调用会在旧栈
+压帧并破坏被挂起现场。
+
+写 CR3 会刷新当前处理器的大多数非 global TLB 项。本阶段没有设置 global
+页或 PCID，所以每次抢占都支付完整地址空间切换成本。这是明确、可验证的初始
+语义；以后优化必须同时定义 PCID 分配、复用和失效规则。
 
 ### 2.5 IDT gate 位字段
 
@@ -461,6 +481,9 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/kernel/src/user_elf.cpp`：严格 ELF64 用户文件解析。
 - `source/kernel/src/user_memory.cpp`：用户页装载、栈与指针逐页检查。
 - `source/kernel/src/system_calls.cpp`：`INT 0x80` 帧验证与系统调用分发。
+- `source/kernel/src/process_scheduler.cpp`：与硬件无关的进程状态和量子决策。
+- `source/kernel/src/process_runtime.cpp`：CR3、TSS.RSP0、保存帧与资源生命周期。
+- `source/kernel/src/process_memory_layout.cpp`：每进程 Ring 0 栈和 guard 布局。
 - `source/user/src/system_call.asm`：Ring 3 系统调用指令入口。
 - `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
 - `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。

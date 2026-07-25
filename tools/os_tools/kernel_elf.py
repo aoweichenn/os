@@ -60,7 +60,7 @@ OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
         "osKernelSystemCallEntry",
         "osKernelSystemCallDispatch",
         "osKernelDispatchSystemCall",
-        "osKernelEnterUserMode",
+        "osKernelEnterScheduledProcess",
         "osKernelReturnFromUserMode",
         "osKernelUserSmokeElfStart",
         "osKernelUserSmokeElfEnd",

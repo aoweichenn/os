@@ -275,7 +275,7 @@ QEMU 系统测试启动同一生产镜像，等待 `READY` 后通过 QMP 向虚�
 [ADR 0010](adr/0010-legacy-interrupt-routing-and-device-bootstrap.md)，模块
 契约见 [Interrupt 与 Devices 模块](modules/devices.md)。
 
-## v0.8 用户执行边界
+## v0.8 用户执行边界与 v0.9 调度入口
 
 用户 ELF 在宿主构建时只是作为原始文件嵌入 Kernel；决定它能否执行的是目标
 内核的严格解析器。正常路径的控制与数据关系如下：
@@ -286,15 +286,20 @@ embedded ET_EXEC ELF64
 PageFrameAllocator → AllocateAndMapUserPage
         ↓ PML4/PDPT/PD/PT 全层 U/S=1
 0x40000000 用户段 + 高端四页用户栈
-        ↓ osKernelEnterUserMode
-保存内核 RSP → 压 SS:RSP:RFLAGS:CS:RIP → IRETQ
+        ↓ ProcessRuntime 构造首个 176 字节保存现场
+osKernelEnterScheduledProcess → 恢复通用寄存器与五项特权帧 → IRETQ
         ↓ CPL3
 用户 C++ → INT 0x80
         ↓ CPU 从 TSS 取 RSP0，压用户 SS/RSP/FLAGS/CS/RIP
 系统调用汇编入口 → ValidateUserSystemCallFrame → C++ 分发
         ├─ 普通返回：恢复帧 → IRETQ → CPL3
-        └─ exit/异常：丢弃转换栈 → 恢复原内核 RSP → C++ 调用者
+        └─ exit/异常：回收当前地址空间 → 切换下一个进程或恢复内核调用者
 ```
+
+v0.8 首次打通该边界时使用单次进入函数 `osKernelEnterUserMode`；v0.9 已将
+它替换为可从每进程内核栈恢复完整现场的
+`osKernelEnterScheduledProcess`。因此当前实现不存在“全局保存一个用户调用
+者栈”的隐式单进程前提。
 
 关键地址布局：
 
@@ -316,6 +321,56 @@ CPL0 故障沿用 panic；CPL3 故障写入有界的 `UserExecutionResult` 并�
 设计权衡见
 [ADR 0011](adr/0011-user-mode-elf-and-int80-boundary.md)，代码边界见
 [User 与 ABI 模块](modules/user.md)。
+
+## v0.9 独立地址空间与抢占调度
+
+v0.8 的单次“进入用户态—返回内核”被扩展成可反复保存与恢复的进程现场。
+调度器是纯状态模型，不接触 CR3、TSS 或串口；`process_runtime` 负责把状态
+决策落实到硬件和资源生命周期：
+
+```text
+PIT IRQ0 → 统一 176 字节用户帧 → HandleTimerTick
+                                    │
+                         时间片未到 ├─→ 原帧 IRETQ
+                                    │
+                         时间片到期 └─→ PCB 保存旧帧
+                                           ↓
+                              Ready/Running 状态轮转
+                                           ↓
+                              CR3 + TSS.RSP0 切换
+                                           ↓
+                         返回新 PCB 的帧地址 → IRETQ
+```
+
+页表所有权不是“复制整个地址空间”。内核 PML4 作为模板，每个进程只复制
+PML4[0] 指向的 PDPT，保留其中 supervisor 内核子树并清空 PDPT[1]。
+用户程序固定在 `0x40000000..0x7fffffff`，因此每个进程第一次映射时都会
+分配独立 PD/PT/叶页；高端用户栈位于 PML4[255]，也完全归进程所有。高半区
+堆、LAPIC MMIO 和低端内核映射仍共享，但沿途至少一层 U/S=0，CPL3 不可达。
+
+```text
+kernel PML4 template
+├─ [0]   kernel low PDPT ── supervisor mappings
+├─ [256] high-half heap  ── supervisor mappings
+└─ [...]
+
+process PML4
+├─ [0] cloned PDPT
+│  ├─ [0] shared supervisor kernel subtree
+│  └─ [1] owned user program subtree
+└─ [255] owned user stack subtree
+```
+
+四个 PCB 使用固定数组，避免在调度热路径依赖尚不能释放的早期堆。每个 PCB
+关联独立 16 KiB Ring 0 栈，底部一页不映射。用户态 IRQ 到来时 CPU 从当前
+TSS.RSP0 选取该进程的栈；切换前若不更新 RSP0，下一个进程的系统调用会覆盖
+旧进程保存的现场。
+
+退出和异常采用同一资源顺序：记录终止原因，选择后继，切回内核 CR3，释放
+用户叶页和独占页表，再激活后继。最后一个进程结束时，汇编恢复
+`ExecuteProcesses` 启动前保存的内核调用链。正常 QEMU 路径比较进程创建前后
+页帧统计，避免把“状态变成 Terminated”误当作资源已回收。详细决策见
+[ADR 0012](adr/0012-preemptive-process-scheduling.md)。
 
 ## 模块边界
 

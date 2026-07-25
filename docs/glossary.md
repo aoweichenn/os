@@ -37,6 +37,14 @@
 | `INVLPG` | 使当前处理器中一个线性地址的 TLB 翻译失效 |
 | monotonic heap | 只向前分配、不回收单个对象的早期堆 |
 | identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |
+| address space | 一个页表根定义的虚拟地址到物理页及权限的映射集合 |
+| PCB | Process Control Block，保存 PID、状态、地址空间、现场与资源归属的进程控制块 |
+| PID | Process Identifier；本项目 v0.9 使用从 1 开始单调分配的 64 位标识符 |
+| context switch | 保存当前执行现场并恢复另一个执行现场，同时切换相关地址空间与内核栈状态 |
+| round-robin | 就绪实体按循环次序取得固定时间片的调度策略 |
+| time quantum | 一个进程在被抢占前可消费的调度 tick 预算；v0.9 固定为 4 tick |
+| preemption | 进程未主动退出时，由时钟中断和调度策略收回 CPU 并切换到其他进程 |
+| dispatch | 调度器选择一个进程成为 Running 并恢复其现场的一次动作 |
 | W^X | 同一内存段不同时具备可写和可执行权限的约束 |
 | ABI | Application Binary Interface，规定调用、寄存器、栈和二进制布局的契约 |
 | GDT | Global Descriptor Table，x86 分段和特权级切换使用的描述符表 |

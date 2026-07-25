@@ -17,6 +17,7 @@ inline constexpr uint64_t OS_KERNEL_USER_STACK_GUARD_VIRTUAL_ADDRESS =
     OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 
 struct UserAddressSpace final {
+    uint64_t rootPhysicalAddress;
     uint64_t entryVirtualAddress;
     uint64_t stackTopVirtualAddress;
     uint64_t mappedPageCount;
@@ -26,6 +27,7 @@ enum class UserAddressSpaceStatus : uint64_t {
     Succeeded,
     InvalidElf,
     StackCollision,
+    PageTableCreationFailed,
     PageAllocationFailed,
     PageMappingFailed,
     RollbackFailed,
@@ -43,6 +45,8 @@ enum class UserMemoryCopyStatus : uint64_t {
 [[nodiscard]] UserAddressSpaceStatus
 LoadUserAddressSpace(const uint8_t *image, uint64_t imageSizeBytes, UserAddressSpace &addressSpace,
                      UserElfValidationStatus &elfValidationStatus) noexcept;
+[[nodiscard]] UserAddressSpaceStatus
+DestroyUserAddressSpace(UserAddressSpace &addressSpace) noexcept;
 [[nodiscard]] UserMemoryCopyStatus CopyFromUser(uint64_t userAddress, uint64_t lengthBytes,
                                                 uint8_t *destination,
                                                 uint64_t destinationCapacityBytes) noexcept;

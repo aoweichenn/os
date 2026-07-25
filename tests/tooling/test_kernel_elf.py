@@ -46,7 +46,7 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
     "osKernelSystemCallEntry",
     "osKernelSystemCallDispatch",
     "osKernelDispatchSystemCall",
-    "osKernelEnterUserMode",
+    "osKernelEnterScheduledProcess",
     "osKernelReturnFromUserMode",
     "osKernelUserSmokeElfStart",
     "osKernelUserSmokeElfEnd",

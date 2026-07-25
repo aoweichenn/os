@@ -32,6 +32,7 @@ constexpr uint64_t OS_KERNEL_DESCRIPTOR_LONG_MODE_USER_CODE_SEGMENT = 0x00AFFA00
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_INCLUSIVE_LIMIT_ADJUSTMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES = 16ULL * 1024ULL;
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES = 4ULL * 1024ULL;
+constexpr uint64_t OS_KERNEL_DESCRIPTOR_STACK_ALIGNMENT_BYTES = 16ULL;
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES =
     OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES + OS_KERNEL_DESCRIPTOR_PRIVILEGED_STACK_SIZE_BYTES;
 constexpr uint64_t OS_KERNEL_DESCRIPTOR_DOUBLE_FAULT_GUARD_INDEX = 0ULL;
@@ -252,6 +253,23 @@ uint64_t InterruptStackGuardPageAddress(const uint64_t guardPageIndex) noexcept 
         return reinterpret_cast<uint64_t>(kernelPrivilegeTransitionStack);
     }
     return 0ULL;
+}
+
+uint64_t DefaultPrivilegeStackPointer0() noexcept {
+    return StackTopAddress(kernelPrivilegeTransitionStack,
+                           OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES);
+}
+
+uint64_t CurrentPrivilegeStackPointer0() noexcept {
+    return kernelTaskStateSegment.privilegeStackPointer0;
+}
+
+bool SetPrivilegeStackPointer0(const uint64_t stackPointer) noexcept {
+    if (stackPointer == 0ULL || stackPointer % OS_KERNEL_DESCRIPTOR_STACK_ALIGNMENT_BYTES != 0ULL) {
+        return false;
+    }
+    kernelTaskStateSegment.privilegeStackPointer0 = stackPointer;
+    return kernelTaskStateSegment.privilegeStackPointer0 == stackPointer;
 }
 
 }

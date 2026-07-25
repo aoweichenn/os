@@ -23,4 +23,11 @@ osKernelUserPageFaultElfStart:
     incbin "@OS_USER_PAGE_FAULT_ELF_PATH@"
 osKernelUserPageFaultElfEnd:
 
+align 16
+global osKernelUserSchedulerWorkerElfStart
+global osKernelUserSchedulerWorkerElfEnd
+osKernelUserSchedulerWorkerElfStart:
+    incbin "@OS_USER_SCHEDULER_WORKER_ELF_PATH@"
+osKernelUserSchedulerWorkerElfEnd:
+
 section .note.GNU-stack noalloc noexec nowrite progbits

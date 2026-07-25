@@ -3,11 +3,11 @@
 #include "os/abi/system_call.hpp"
 #include "os/kernel/descriptor_tables.hpp"
 #include "os/kernel/memory_manager.hpp"
+#include "os/kernel/process_runtime.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
 #include "os/kernel/user_elf.hpp"
 #include "os/kernel/user_memory.hpp"
-#include "os/kernel/user_runtime.hpp"
 
 namespace os::kernel {
 
@@ -18,7 +18,7 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 
 [[nodiscard]] bool ValidateUserSystemCallFrame(const ExceptionFrame &frame) noexcept {
-    if (!IsUserExecutionActive() || !FrameOriginatedFromUser(frame) ||
+    if (!IsProcessSchedulingActive() || !FrameOriginatedFromUser(frame) ||
         frame.vector != os::abi::OS_ABI_SYSTEM_CALL_VECTOR ||
         frame.codeSegment != static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR)) {
         return false;
@@ -26,14 +26,19 @@ constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
     const UserPrivilegeFrame &userFrame = AsUserPrivilegeFrame(frame);
     if (userFrame.userStackSegment !=
             static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR) ||
-        !IsUserVirtualAddressRange(frame.instructionPointer,
-                                   OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES) ||
+        !IsUserProgramVirtualAddressRange(frame.instructionPointer,
+                                          OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES) ||
         userFrame.userStackPointer < OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
         userFrame.userStackPointer >= OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
         return false;
     }
+    PageMapping instructionMapping{};
     PageMapping stackMapping{};
-    return QueryKernelPage(userFrame.userStackPointer, stackMapping) ==
+    return QueryActivePage(frame.instructionPointer, instructionMapping) ==
+               PageTableStatus::Succeeded &&
+           instructionMapping.permissions.userAccessible &&
+           instructionMapping.permissions.executable && !instructionMapping.permissions.writable &&
+           QueryActivePage(userFrame.userStackPointer, stackMapping) ==
                PageTableStatus::Succeeded &&
            stackMapping.permissions.userAccessible && stackMapping.permissions.writable &&
            !stackMapping.permissions.executable;
@@ -64,22 +69,27 @@ constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 
 }
 
-extern "C" void osKernelDispatchSystemCall(ExceptionFrame *frame) noexcept {
+extern "C" ExceptionFrame *osKernelDispatchSystemCall(ExceptionFrame *frame) noexcept {
     if (frame == nullptr || !ValidateUserSystemCallFrame(*frame)) {
         HaltProcessor();
     }
-    RecordUserSystemCall();
+    RecordCurrentProcessSystemCall();
 
     const uint64_t systemCallNumber = frame->registerRax;
     if (systemCallNumber == static_cast<uint64_t>(os::abi::SystemCallNumber::WriteLog)) {
         frame->registerRax =
             static_cast<uint64_t>(DispatchWriteLog(frame->registerRdi, frame->registerRsi));
-        return;
+        return frame;
     }
     if (systemCallNumber == static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess)) {
-        TerminateUserExecutionFromExit(static_cast<int64_t>(frame->registerRdi));
+        return TerminateCurrentProcessFromExit(*frame, static_cast<int64_t>(frame->registerRdi));
+    }
+    if (systemCallNumber == static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId)) {
+        frame->registerRax = CurrentProcessId();
+        return frame;
     }
     frame->registerRax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
+    return frame;
 }
 
 }

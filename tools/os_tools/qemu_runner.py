@@ -1,6 +1,7 @@
 from collections.abc import Callable
 import json
 from pathlib import Path
+import re
 import shlex
 import socket
 import subprocess
@@ -217,6 +218,70 @@ OS_QEMU_KERNEL_USER_PAGE_FAULT_ADDRESS_MARKER = (
 OS_QEMU_KERNEL_USER_TERMINATED_MARKER = "[OS][KERNEL] USER_TERMINATED"
 OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER = (
     "[OS][KERNEL] USER_RETURNED_TO_KERNEL"
+)
+OS_QEMU_KERNEL_PROCESS_RUNTIME_READY_MARKER = (
+    "[OS][KERNEL] PROCESS_RUNTIME_READY"
+)
+OS_QEMU_KERNEL_PROCESS_ID_MARKER = "[OS][KERNEL] PROCESS_ID=0x"
+OS_QEMU_KERNEL_PROCESS_CR3_MARKER = "[OS][KERNEL] PROCESS_CR3=0x"
+OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_TOP_MARKER = (
+    "[OS][KERNEL] PROCESS_KERNEL_STACK_TOP=0x"
+)
+OS_QEMU_KERNEL_PROCESS_RUN_TICKS_MARKER = (
+    "[OS][KERNEL] PROCESS_RUN_TICKS=0x"
+)
+OS_QEMU_KERNEL_PROCESS_DISPATCH_COUNT_MARKER = (
+    "[OS][KERNEL] PROCESS_DISPATCH_COUNT=0x"
+)
+OS_QEMU_KERNEL_SCHEDULER_STARTED_MARKER = "[OS][KERNEL] SCHEDULER_STARTED"
+OS_QEMU_KERNEL_SCHEDULER_CREATED_PROCESSES_MARKER = (
+    "[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=0x"
+)
+OS_QEMU_KERNEL_SCHEDULER_TERMINATED_PROCESSES_MARKER = (
+    "[OS][KERNEL] SCHEDULER_TERMINATED_PROCESSES=0x"
+)
+OS_QEMU_KERNEL_SCHEDULER_TIMER_TICKS_MARKER = (
+    "[OS][KERNEL] SCHEDULER_TIMER_TICKS=0x"
+)
+OS_QEMU_KERNEL_SCHEDULER_PREEMPTIONS_MARKER = (
+    "[OS][KERNEL] SCHEDULER_PREEMPTIONS=0x"
+)
+OS_QEMU_KERNEL_SCHEDULER_DISPATCHES_MARKER = (
+    "[OS][KERNEL] SCHEDULER_DISPATCHES=0x"
+)
+OS_QEMU_KERNEL_PROCESS_RESOURCES_RECLAIMED_MARKER = (
+    "[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED"
+)
+OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER = "[OS][KERNEL] SCHEDULER_COMPLETE"
+OS_QEMU_USER_WORKER_PROCESS_2_STEP_1_MARKER = (
+    "[OS][USER][PID2] WORKER_STEP_1"
+)
+OS_QEMU_USER_WORKER_PROCESS_2_STEP_2_MARKER = (
+    "[OS][USER][PID2] WORKER_STEP_2"
+)
+OS_QEMU_USER_WORKER_PROCESS_2_STEP_3_MARKER = (
+    "[OS][USER][PID2] WORKER_STEP_3"
+)
+OS_QEMU_USER_WORKER_PROCESS_3_STEP_1_MARKER = (
+    "[OS][USER][PID3] WORKER_STEP_1"
+)
+OS_QEMU_USER_WORKER_PROCESS_3_STEP_2_MARKER = (
+    "[OS][USER][PID3] WORKER_STEP_2"
+)
+OS_QEMU_USER_WORKER_PROCESS_3_STEP_3_MARKER = (
+    "[OS][USER][PID3] WORKER_STEP_3"
+)
+OS_QEMU_USER_WORKER_PROCESS_4_STEP_1_MARKER = (
+    "[OS][USER][PID4] WORKER_STEP_1"
+)
+OS_QEMU_USER_WORKER_PROCESS_4_STEP_2_MARKER = (
+    "[OS][USER][PID4] WORKER_STEP_2"
+)
+OS_QEMU_USER_WORKER_PROCESS_4_STEP_3_MARKER = (
+    "[OS][USER][PID4] WORKER_STEP_3"
+)
+OS_QEMU_USER_ADDRESS_SPACE_ISOLATED_MARKER = (
+    "[OS][USER] ADDRESS_SPACE_ISOLATED"
 )
 OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER = (
     "[OS][KERNEL] USER_RESULT_INVALID"
@@ -555,6 +620,8 @@ def validateSerialProtocol(
     serialOutput: str,
     requiredMarkers: tuple[str, ...],
     forbiddenMarkers: tuple[str, ...],
+    expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
+    minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
 ) -> None:
     previousMarkerPosition = 0
     for requiredMarker in requiredMarkers:
@@ -575,6 +642,28 @@ def validateSerialProtocol(
                 f"串口输出包含禁止标记：{forbiddenMarker!r}"
             )
 
+    for marker, expectedCount in expectedMarkerCounts:
+        actualCount = serialOutput.count(marker)
+        if actualCount != expectedCount:
+            raise OsToolError(
+                "串口标记出现次数不正确："
+                f"{marker!r} 实际 {actualCount} 次，预期 {expectedCount} 次"
+            )
+
+    for marker, minimumValue in minimumHexMarkerValues:
+        markerPattern = re.compile(
+            re.escape(marker) + r"([0-9A-Fa-f]{16})(?:\r?\n|$)"
+        )
+        markerValues = [
+            int(match.group(1), 16)
+            for match in markerPattern.finditer(serialOutput)
+        ]
+        if not markerValues or min(markerValues) < minimumValue:
+            raise OsToolError(
+                "串口十六进制统计未达到下界："
+                f"{marker!r} 下界 {minimumValue}"
+            )
+
 
 def runQemuFirmwareBoot(
     projectRoot: Path,
@@ -585,6 +674,8 @@ def runQemuFirmwareBoot(
     requiredMarkers: tuple[str, ...],
     forbiddenMarkers: tuple[str, ...],
     keyboardInputKey: str | None = None,
+    expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
+    minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
 ) -> None:
     validateImageSize(
         firmwareImagePath,
@@ -663,6 +754,8 @@ def runQemuFirmwareBoot(
                 serialOutput,
                 requiredMarkers,
                 forbiddenMarkers,
+                expectedMarkerCounts,
+                minimumHexMarkerValues,
             )
         except OsToolError:
             print(timedSerialOutput, end="")
