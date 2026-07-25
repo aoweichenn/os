@@ -33,7 +33,7 @@
 QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格式为
 `[QEMU][T+000123ms]`。该字段由逐行读取线程在收到换行时生成，只描述测试进程
 观察到日志的时间，不冒充来宾 PIT 时间。捕获器在最终必需里程碑到达后主动结束，
-未完成路径最多等待五秒；两种路径都必须显式终止并等待回收 QEMU，避免后台残留
+未完成路径最多等待十五秒；两种路径都必须显式终止并等待回收 QEMU，避免后台残留
 模拟器进程。
 
 ## 防刷屏规则
@@ -43,6 +43,29 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 - 故障路径只打印一次稳定故障事件，然后停止或转入明确的故障处理状态。
 - 若未来启用 `TRACE`，必须有编译期或启动期开关，并设置最大事件数；达到预算后只打印一次 `TRACE_LIMIT_REACHED`。
 - 日志文本不得依赖本地化、时间戳或不稳定地址，保证测试和文档可复现。
+
+动态物理内存只在初始化事务提交后输出一次容量摘要：
+
+```text
+[OS][KERNEL] MEMORY_MANAGED_PHYSICAL_LIMIT=0x...
+[OS][KERNEL] PHYSICAL_ADDRESS_BITS=0x...
+[OS][KERNEL] VIRTUAL_ADDRESS_BITS=0x...
+[OS][KERNEL] FIVE_LEVEL_PAGING_SUPPORTED=0x...
+[OS][KERNEL] FRAME_STATE_STORAGE_ADDRESS=0x...
+[OS][KERNEL] FRAME_STATE_STORAGE_BYTES=0x...
+[OS][KERNEL] DIRECT_MAP_BASE=0xFFFF888000000000
+[OS][KERNEL] DIRECT_MAP_MAPPED_BYTES=0x...
+[OS][KERNEL] DIRECT_MAP_2M_PAGES=0x...
+[OS][KERNEL] DIRECT_MAP_4K_PAGES=0x...
+[OS][KERNEL] HIGH_MEMORY_TEST_ADDRESS=0x...
+[OS][KERNEL] HIGH_MEMORY_VALIDATION_COMPLETE
+```
+
+这些字段不是逐 E820 项或逐页映射 TRACE。`MEMORY_MANAGED_PHYSICAL_LIMIT`
+可以大于 `MEMORY_MANAGED_BYTES`，因为物理地址洞占用页号却不是 RAM；
+`DIRECT_MAP_MAPPED_BYTES` 只统计完整 type 1 RAM 页。64 MiB 兼容配置的
+高内存地址为零，表示策略检查完成但容量不足以执行 4 GiB 以上读写；64 GiB
+主规格必须报告非零且不低于 `0x0000000100001000` 的地址。
 
 ## v0.11 验收（历史基线）
 

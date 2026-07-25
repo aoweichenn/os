@@ -24,7 +24,8 @@ freestanding C++20。构建和测试脚本运行在宿主机，可以使用 Pyth
 当前配套实现已经完成 v1.0：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
-异常；再读取并验证物理内存图，管理页帧，建立四级 4 KiB 页表、guard page
+异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
+建立带 2 MiB/4 KiB 高半区物理直映的四级页表、guard page
 与高半区早期堆。INT3、UD2、not-present 页故障和 Ring 0 写只读页共同验证
 异常返回、panic、NX 与 CR0.WP。内核又接管本地 APIC/PIC 兼容路由，为
 向量 32--47 建立硬件 IRQ 入口，以 PIT 形成单调 tick，处理中断驱动的

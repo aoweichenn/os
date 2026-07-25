@@ -17,12 +17,23 @@ constexpr uint8_t OS_KERNEL_USER_MEMORY_ZERO_BYTE = 0U;
     return left < right ? left : right;
 }
 
-void ZeroPhysicalPage(const uint64_t physicalAddress) noexcept {
-    uint8_t *const page = reinterpret_cast<uint8_t *>(physicalAddress);
+[[nodiscard]] uint8_t *PhysicalPagePointer(const uint64_t physicalAddress) noexcept {
+    const uint64_t directMapAddress = PhysicalMemoryDirectMapAddress(physicalAddress);
+    return directMapAddress == OS_KERNEL_USER_MEMORY_EMPTY_VALUE
+               ? nullptr
+               : reinterpret_cast<uint8_t *>(directMapAddress);
+}
+
+[[nodiscard]] bool ZeroPhysicalPage(const uint64_t physicalAddress) noexcept {
+    uint8_t *const page = PhysicalPagePointer(physicalAddress);
+    if (page == nullptr) {
+        return false;
+    }
     for (uint64_t byteIndex = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
          byteIndex < OS_KERNEL_MEMORY_PAGE_SIZE_BYTES; ++byteIndex) {
         page[byteIndex] = OS_KERNEL_USER_MEMORY_ZERO_BYTE;
     }
+    return true;
 }
 
 void CopyBytes(uint8_t *destination, const uint8_t *source, const uint64_t lengthBytes) noexcept {
@@ -86,11 +97,14 @@ void CopyBytes(uint8_t *destination, const uint8_t *source, const uint64_t lengt
         }
         ++mappedPageCount;
 
-        ZeroPhysicalPage(pagePhysicalAddress);
+        uint8_t *const page = PhysicalPagePointer(pagePhysicalAddress);
+        if (page == nullptr || !ZeroPhysicalPage(pagePhysicalAddress)) {
+            return UserAddressSpaceStatus::PageMappingFailed;
+        }
         const uint64_t pageFileSizeBytes =
             Minimum(remainingFileSizeBytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
         if (pageFileSizeBytes > OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
-            CopyBytes(reinterpret_cast<uint8_t *>(pagePhysicalAddress),
+            CopyBytes(page,
                       image + segment.fileOffset + pageIndex * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
                       pageFileSizeBytes);
             remainingFileSizeBytes -= pageFileSizeBytes;
@@ -115,7 +129,9 @@ void CopyBytes(uint8_t *destination, const uint8_t *source, const uint64_t lengt
             return UserAddressSpaceStatus::PageMappingFailed;
         }
         ++mappedPageCount;
-        ZeroPhysicalPage(pagePhysicalAddress);
+        if (!ZeroPhysicalPage(pagePhysicalAddress)) {
+            return UserAddressSpaceStatus::PageMappingFailed;
+        }
     }
     return UserAddressSpaceStatus::Succeeded;
 }

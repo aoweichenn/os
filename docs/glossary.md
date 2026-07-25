@@ -28,7 +28,10 @@
 | `fw_cfg` | QEMU PC 提供的配置硬件接口；本项目通过端口读取 `etc/e820` |
 | E820 | 描述物理地址区间、长度和类型的内存图格式 |
 | physical frame | 按 4 KiB 页粒度管理的物理内存所有权单位 |
+| PFN | Page Frame Number，物理地址除以页大小得到的页帧编号 |
 | PML4 / PDPT / PD / PT | x86-64 四级页表的四层结构 |
+| direct-map | 用固定高半区基址加物理地址访问普通 RAM 的线性映射窗口 |
+| large page | 跳过最低级 PT 的 2 MiB PDE 叶映射；本项目用于物理直映内部区间 |
 | canonical address | x86-64 要求高位为有效地址位符号扩展的线性地址 |
 | NX | 页表 no-execute 权限；需要 `IA32_EFER.NXE` 启用 |
 | WP | CR0 的 write-protect 位，使 supervisor 写也遵守只读页权限 |

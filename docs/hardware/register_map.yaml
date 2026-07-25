@@ -41,6 +41,8 @@ chips:
         kind: control-register
         bits:
           5: PAE
+          12: LA57
+        current_policy: "PAE set; LA57 remains clear because the active layout uses four levels"
       - name: IA32_EFER
         width_bits: 64
         kind: msr
@@ -58,6 +60,20 @@ chips:
           10: X2APIC_ENABLE
           11: APIC_GLOBAL_ENABLE
         current_policy: "keep bit 11 set, require bit 10 clear, and map the xAPIC MMIO base"
+    cpuid:
+      - leaf: 0x80000008
+        subleaf: 0
+        fields:
+          eax_7_0: MAXIMUM_PHYSICAL_ADDRESS_BITS
+          eax_15_8: MAXIMUM_LINEAR_ADDRESS_BITS
+        current_qemu64_values:
+          physical_address_bits: 40
+          linear_address_bits: 48
+      - leaf: 0x00000007
+        subleaf: 0
+        fields:
+          ecx_16: LA57_SUPPORTED
+        current_policy: "record capability without enabling five-level paging"
     local_apic:
       role: legacy-pic-virtual-wire-bridge
       base_source: "IA32_APIC_BASE bits 35..12 in the current xAPIC implementation"
@@ -83,7 +99,9 @@ chips:
             16: MASK
           current_policy: "delivery mode ExtINT (0b111), mask clear"
     page_translation:
-      page_size_bytes: 4096
+      page_sizes_bytes:
+        normal: 4096
+        large: 2097152
       table_entry_width_bits: 64
       entries_per_table: 512
       virtual_address_indices:
@@ -100,6 +118,15 @@ chips:
         7: LARGE_PAGE
         63: NO_EXECUTE
       physical_address_bits: 51..12
+      large_page_physical_address_bits: 51..21
+      direct_map:
+        virtual_base: 0xFFFF888000000000
+        capacity_bytes: 0x0000400000000000
+        source: E820_TYPE_1_COMPLETE_PAGES
+        permissions: supervisor-read-write-no-execute
+        internal_page_size_bytes: 2097152
+        boundary_page_size_bytes: 4096
+        excluded_regions: reserved-unknown-and-mmio
       kernel_root_policy:
         null_page: not-present
         kernel_text: read-execute

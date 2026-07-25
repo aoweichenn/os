@@ -2,15 +2,21 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v1.0 用户环境` 已完成，十三阶段路线全部验收。自研
+当前状态：`v1.0 用户环境` 已完成，第二周期 `v1.1` 的动态物理内存基础已经
+落地。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
 freestanding C++20 内核。内核随即替换 Stage 1 的描述符状态，建立自己的
 GDT、TSS、IDT、32 个异常入口和无动态分配的 panic 路径。Stage 1 还通过
 QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo v2；
-内核据此管理物理页帧，建立新的四级 4 KiB 页表、W^X/NX/WP 权限、四个
-guard page、64 KiB 高半区早期堆，并真实切换 CR3。在此基础上，内核严格
+内核读取 `CPUID.80000008H` 与 E820，按实际可用 RAM 动态放置 2-bit 页帧
+元数据，并建立从 `0xFFFF888000000000` 开始、容量 64 TiB 的高半区物理
+直映窗口。直映内部优先使用 2 MiB 页，边界退回 4 KiB 页；Stage 1 的低
+64 MiB 身份映射只负责启动，不再限制正式页帧管理。主 QEMU 规格为 64 GiB，
+最小兼容规格仍为 64 MiB；64 GiB 启动必须在 4 GiB 以上分配、写回并回收
+页帧。内核同时建立 W^X/NX/WP 权限、guard page、64 KiB 高半区早期堆，并
+真实切换 CR3。在此基础上，内核严格
 验证并装入自研 `ET_EXEC` 用户 ELF64。内核为四个进程分别建立 PML4、
 同址用户代码/数据、四页用户栈、16 KiB Ring 0 栈和保护页；8254 PIT
 每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0 和完整
@@ -37,7 +43,8 @@ sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，�
 完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 73 项
 CTest。
 
-第二周期已经完成架构规划：v1.1 从可回收资源和 64 进程容量基础开始，随后
+第二周期已经完成架构规划：v1.1 已先解除低 64 MiB 物理内存上限，下一步
+继续完成可回收内核对象、动态栈和 64 进程容量基础，随后
 依次建设 VFS/文件系统 v2、磁盘 exec 与父子进程、fork/COW、Unix I/O、
 信号与终端、按需分页、异步块层和 ABI v2。最终 v2.0 收敛为单核、多进程、
 可从自研文件系统启动 `/sbin/init` 与外部 Shell 的类 Unix 教学系统。
@@ -97,12 +104,24 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] MEMORY_DESCRIBED_BYTES=0x...
 [OS][KERNEL] MEMORY_USABLE_BYTES=0x...
 [OS][KERNEL] MEMORY_MANAGED_BYTES=0x...
+[OS][KERNEL] MEMORY_MANAGED_PHYSICAL_LIMIT=0x...
+[OS][KERNEL] PHYSICAL_ADDRESS_BITS=0x...
+[OS][KERNEL] VIRTUAL_ADDRESS_BITS=0x...
+[OS][KERNEL] FIVE_LEVEL_PAGING_SUPPORTED=0x...
+[OS][KERNEL] FRAME_STATE_STORAGE_ADDRESS=0x...
+[OS][KERNEL] FRAME_STATE_STORAGE_BYTES=0x...
 [OS][KERNEL] FRAME_ALLOCATOR_READY
 [OS][KERNEL] FREE_FRAMES=0x...
 [OS][KERNEL] ALLOCATED_FRAMES=0x...
 [OS][KERNEL] RESERVED_FRAMES=0x...
 [OS][KERNEL] PAGING_READY
 [OS][KERNEL] PAGING_ROOT=0x...
+[OS][KERNEL] DIRECT_MAP_BASE=0xFFFF888000000000
+[OS][KERNEL] DIRECT_MAP_MAPPED_BYTES=0x...
+[OS][KERNEL] DIRECT_MAP_2M_PAGES=0x...
+[OS][KERNEL] DIRECT_MAP_4K_PAGES=0x...
+[OS][KERNEL] HIGH_MEMORY_TEST_ADDRESS=0x...
+[OS][KERNEL] HIGH_MEMORY_VALIDATION_COMPLETE
 [OS][KERNEL] MEMORY_PERMISSIONS_VALID
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000

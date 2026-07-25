@@ -20,7 +20,13 @@ struct PhysicalMemorySummary final {
     uint64_t usableBytes;
     uint64_t managedUsableBytes;
     uint64_t highestAddressExclusive;
+    uint64_t highestUsableAddressExclusive;
     uint64_t usableRegionCount;
+};
+
+struct PhysicalMemoryRange final {
+    uint64_t beginAddress;
+    uint64_t lengthBytes;
 };
 
 enum class PhysicalMemoryMapValidationStatus : uint64_t {
@@ -37,10 +43,28 @@ enum class PhysicalMemoryMapValidationStatus : uint64_t {
     NoManagedUsableMemory,
 };
 
+enum class PhysicalMemoryRangeSearchStatus : uint64_t {
+    Succeeded,
+    NullEntries,
+    InvalidEntryCount,
+    NullReservations,
+    InvalidSearchRange,
+    InvalidLength,
+    InvalidAlignment,
+    InvalidReservation,
+    NoSuitableRange,
+};
+
 [[nodiscard]] PhysicalMemoryMapValidationStatus
 ValidateAndSummarizePhysicalMemoryMap(const PhysicalMemoryMapEntry *entries, uint64_t entryCount,
                                       uint64_t managedLimitAddress,
                                       PhysicalMemorySummary &summary) noexcept;
+[[nodiscard]] PhysicalMemoryRangeSearchStatus
+FindUsablePhysicalMemoryRange(const PhysicalMemoryMapEntry *entries, uint64_t entryCount,
+                              const PhysicalMemoryRange *reservations, uint64_t reservationCount,
+                              uint64_t minimumAddress, uint64_t maximumAddressExclusive,
+                              uint64_t requiredLengthBytes, uint64_t requiredAlignmentBytes,
+                              PhysicalMemoryRange &range) noexcept;
 
 static_assert(sizeof(PhysicalMemoryMapEntry) == OS_KERNEL_MEMORY_MAP_ENTRY_SIZE_BYTES);
 

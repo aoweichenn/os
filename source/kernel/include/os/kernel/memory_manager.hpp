@@ -12,12 +12,25 @@ inline constexpr uint64_t OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE = 0xFFFF80000000000
 inline constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SIZE_BYTES = 64ULL * 1024ULL;
 inline constexpr uint64_t OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS =
     0xFFFF800000100000ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE = 0xFFFF888000000000ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_DIRECT_MAP_CAPACITY_BYTES =
+    64ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 
 struct KernelMemoryStatistics final {
     uint64_t memoryMapEntryCount;
     uint64_t describedAddressBytes;
     uint64_t reportedUsableMemoryBytes;
     uint64_t managedUsableMemoryBytes;
+    uint64_t managedPhysicalAddressLimit;
+    uint64_t physicalAddressWidthBits;
+    uint64_t virtualAddressWidthBits;
+    uint64_t fiveLevelPagingSupported;
+    uint64_t frameStateStoragePhysicalAddress;
+    uint64_t frameStateStorageSizeBytes;
+    uint64_t directMapMappedBytes;
+    uint64_t directMapLargePageCount;
+    uint64_t directMapSmallPageCount;
+    uint64_t highMemoryTestPhysicalAddress;
     uint64_t freeFrameCount;
     uint64_t allocatedFrameCount;
     uint64_t reservedFrameCount;
@@ -28,17 +41,24 @@ struct KernelMemoryStatistics final {
 enum class KernelMemoryInitializationStatus : uint64_t {
     Succeeded,
     InvalidMemoryMap,
+    InvalidProcessorAddressWidth,
+    InvalidManagedPhysicalAddressLimit,
+    FrameStateStorageUnavailable,
+    FrameAllocatorConfigurationFailed,
     FrameAllocatorInitializationFailed,
     ReservationFailed,
     PageTableInitializationFailed,
     IdentityMappingFailed,
+    DirectMapMappingFailed,
     HeapMappingFailed,
     ProtectionTestMappingFailed,
     MemoryProtectionUnsupported,
     PageTableActivationFailed,
+    PageTableMemoryAccessFailed,
     PermissionValidationFailed,
     HeapInitializationFailed,
     HeapSelfTestFailed,
+    HighMemorySelfTestFailed,
     LocalApicMappingFailed,
 };
 
@@ -61,6 +81,7 @@ enum class KernelUserPageStatus : uint64_t {
 InitializeKernelMemory(const BootInfo &bootInfo) noexcept;
 [[nodiscard]] const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept;
 [[nodiscard]] PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept;
+[[nodiscard]] uint64_t PhysicalMemoryDirectMapAddress(uint64_t physicalAddress) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
 [[nodiscard]] KernelUserPageStatus CreateUserPageTable(uint64_t &rootPhysicalAddress) noexcept;
 [[nodiscard]] KernelUserPageStatus DestroyUserPageTable(uint64_t rootPhysicalAddress) noexcept;

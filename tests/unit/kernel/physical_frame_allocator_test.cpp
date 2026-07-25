@@ -18,6 +18,11 @@ constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_RESERVATION_ATOMIC =
     "跨越已分配页的保留请求不能留下部分修改";
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_EMPTY_ALIGNED_RANGE =
     "没有完整页帧时初始化必须失败且保持未初始化";
+constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_STATE_SIZE_64_GIB =
+    "64 GiB RAM 的二位页帧状态容量必须准确";
+constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE =
+    "范围分配必须返回 4 GiB 以上的可用页帧";
+constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_INVALID_RANGE = "未按页对齐的分配范围必须被拒绝";
 
 constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_PAGE_COUNT = 16ULL;
 constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT = 1ULL;
@@ -41,6 +46,22 @@ constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_NO_COMPLETE_FRAME_LENGTH_BYTES = 1ULL
 constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_FREE_FRAME_COUNT =
     OS_TEST_FRAME_ALLOCATOR_PAGE_COUNT - 1ULL;
 constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_EXPECTED_ATOMIC_ALLOCATED_FRAME_COUNT = 1ULL;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_PRIMARY_MEMORY_SIZE_BYTES =
+    64ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_PRIMARY_STATE_STORAGE_SIZE_BYTES =
+    4ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN =
+    4ULL * 1024ULL * 1024ULL * 1024ULL + os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_PAGE_COUNT = 2ULL;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_LENGTH_BYTES =
+    OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_PAGE_COUNT * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT =
+    OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN + OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_LENGTH_BYTES;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_HIGH_STATE_STORAGE_SIZE_BYTES =
+    (OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT / os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES +
+     OS_TEST_FRAME_ALLOCATOR_STORAGE_STATES_PER_BYTE - 1ULL) /
+    OS_TEST_FRAME_ALLOCATOR_STORAGE_STATES_PER_BYTE;
+constexpr uint64_t OS_TEST_FRAME_ALLOCATOR_UNALIGNED_OFFSET = 1ULL;
 
 }
 
@@ -152,6 +173,42 @@ int main() {
                                os::kernel::PhysicalFrameAllocatorStatus::NoUsableFrames &&
                            emptyRangeAllocator.Statistics().managedFrameCount == 0ULL,
                        OS_TEST_FRAME_ALLOCATOR_EMPTY_ALIGNED_RANGE);
+
+    testContext.Expect(os::kernel::CalculatePhysicalFrameStateStorageSizeBytes(
+                           OS_TEST_FRAME_ALLOCATOR_PRIMARY_MEMORY_SIZE_BYTES) ==
+                           OS_TEST_FRAME_ALLOCATOR_PRIMARY_STATE_STORAGE_SIZE_BYTES,
+                       OS_TEST_FRAME_ALLOCATOR_STATE_SIZE_64_GIB);
+
+    static uint8_t highStateStorage[OS_TEST_FRAME_ALLOCATOR_HIGH_STATE_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator highAllocator{
+        highStateStorage,
+        OS_TEST_FRAME_ALLOCATOR_HIGH_STATE_STORAGE_SIZE_BYTES,
+    };
+    const os::kernel::PhysicalMemoryMapEntry highMemoryMap[] = {
+        {
+            .baseAddress = OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN,
+            .lengthBytes = OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_LENGTH_BYTES,
+            .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
+            .attributes = 0U,
+        },
+    };
+    os::kernel::PhysicalFrame highFrame{};
+    testContext.Expect(
+        highAllocator.Initialize(highMemoryMap, OS_TEST_FRAME_ALLOCATOR_MEMORY_MAP_ENTRY_COUNT,
+                                 OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT) ==
+                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+            highAllocator.AllocateInRange(OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN,
+                                          OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT, highFrame) ==
+                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+            highFrame.physicalAddress == OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN &&
+            highAllocator.Release(highFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
+        OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE);
+    testContext.Expect(highAllocator.AllocateInRange(OS_TEST_FRAME_ALLOCATOR_HIGH_RANGE_BEGIN +
+                                                         OS_TEST_FRAME_ALLOCATOR_UNALIGNED_OFFSET,
+                                                     OS_TEST_FRAME_ALLOCATOR_HIGH_MANAGED_LIMIT,
+                                                     highFrame) ==
+                           os::kernel::PhysicalFrameAllocatorStatus::InvalidAllocationRange,
+                       OS_TEST_FRAME_ALLOCATOR_INVALID_RANGE);
 
     return testContext.ExitCode();
 }

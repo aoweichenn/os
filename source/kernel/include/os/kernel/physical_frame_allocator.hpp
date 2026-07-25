@@ -23,26 +23,37 @@ enum class PhysicalFrameAllocatorStatus : uint64_t {
     Succeeded,
     NullStateStorage,
     InvalidStateStorageSize,
+    AlreadyInitialized,
     InvalidManagedLimit,
     InvalidMemoryMap,
     NoUsableFrames,
     NotInitialized,
     InvalidReservation,
+    InvalidAllocationRange,
     OutOfMemory,
     InvalidFrameAddress,
     FrameNotAllocated,
 };
 
+[[nodiscard]] uint64_t
+CalculatePhysicalFrameStateStorageSizeBytes(uint64_t managedLimitAddress) noexcept;
+
 class PhysicalFrameAllocator final {
   public:
+    PhysicalFrameAllocator() noexcept;
     PhysicalFrameAllocator(uint8_t *stateStorage, uint64_t stateStorageSizeBytes) noexcept;
 
+    [[nodiscard]] PhysicalFrameAllocatorStatus
+    ConfigureStateStorage(uint8_t *stateStorage, uint64_t stateStorageSizeBytes) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus Initialize(const PhysicalMemoryMapEntry *entries,
                                                           uint64_t entryCount,
                                                           uint64_t managedLimitAddress) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus ReserveRange(uint64_t beginAddress,
                                                             uint64_t lengthBytes) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus Allocate(PhysicalFrame &frame) noexcept;
+    [[nodiscard]] PhysicalFrameAllocatorStatus AllocateInRange(uint64_t minimumAddress,
+                                                               uint64_t maximumAddressExclusive,
+                                                               PhysicalFrame &frame) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus Release(PhysicalFrame frame) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatistics Statistics() const noexcept;
     [[nodiscard]] uint64_t ManagedLimitAddress() const noexcept;
@@ -57,6 +68,7 @@ class PhysicalFrameAllocator final {
 
     [[nodiscard]] FrameState GetFrameState(uint64_t frameIndex) const noexcept;
     void SetFrameState(uint64_t frameIndex, FrameState state) noexcept;
+    void SetFreeFrameStateRange(uint64_t firstFrameIndex, uint64_t endFrameIndex) noexcept;
     [[nodiscard]] bool IsInitialized() const noexcept;
 
     uint8_t *stateStorage_;

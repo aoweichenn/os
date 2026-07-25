@@ -8,9 +8,18 @@ namespace {
 
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF = 0x80000000U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF = 0x80000001U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF = 0x80000008U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_STANDARD_MAXIMUM_LEAF = 0x00000000U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF = 0x00000001U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_STRUCTURED_FEATURES_LEAF = 0x00000007U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_NO_EXECUTE_BIT = 0x00100000U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_LOCAL_APIC_BIT = 0x00000200U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_FIVE_LEVEL_PAGING_BIT = 0x00010000U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_PHYSICAL_ADDRESS_WIDTH_MASK = 0x000000FFU;
+constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_MASK = 0x0000FF00U;
+constexpr uint64_t OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_SHIFT = 8ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS = 36ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_MAXIMUM_PAGE_TABLE_ADDRESS_WIDTH_BITS = 52ULL;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_EFER_MSR = 0xC0000080U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR = 0x0000001BU;
 constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT = 0x0000000000000800ULL;
@@ -116,6 +125,39 @@ uint64_t ReadPageFaultLinearAddress() noexcept {
     return pageFaultLinearAddress;
 }
 
+uint64_t ProcessorPhysicalAddressWidthBits() noexcept {
+    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {
+        return 0ULL;
+    }
+    const CpuIdResult addressWidths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
+    const uint64_t physicalAddressWidthBits =
+        addressWidths.accumulator & OS_KERNEL_PROCESSOR_CPUID_PHYSICAL_ADDRESS_WIDTH_MASK;
+    if (physicalAddressWidthBits < OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS ||
+        physicalAddressWidthBits > OS_KERNEL_PROCESSOR_MAXIMUM_PAGE_TABLE_ADDRESS_WIDTH_BITS) {
+        return 0ULL;
+    }
+    return physicalAddressWidthBits;
+}
+
+uint64_t ProcessorVirtualAddressWidthBits() noexcept {
+    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {
+        return 0ULL;
+    }
+    const CpuIdResult addressWidths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
+    return (addressWidths.accumulator & OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_MASK) >>
+           OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_SHIFT;
+}
+
+uint64_t ProcessorMaximumPhysicalAddressExclusive() noexcept {
+    const uint64_t physicalAddressWidthBits = ProcessorPhysicalAddressWidthBits();
+    if (physicalAddressWidthBits == 0ULL) {
+        return 0ULL;
+    }
+    return 1ULL << physicalAddressWidthBits;
+}
+
 bool ProcessorSupportsNoExecute() noexcept {
     const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
     if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF) {
@@ -128,6 +170,16 @@ bool ProcessorSupportsNoExecute() noexcept {
 bool ProcessorSupportsLocalApic() noexcept {
     const CpuIdResult features = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF);
     return (features.data & OS_KERNEL_PROCESSOR_CPUID_LOCAL_APIC_BIT) != 0U;
+}
+
+bool ProcessorSupportsFiveLevelPaging() noexcept {
+    const CpuIdResult maximumLeaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_MAXIMUM_LEAF);
+    if (maximumLeaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_STRUCTURED_FEATURES_LEAF) {
+        return false;
+    }
+    const CpuIdResult structuredFeatures =
+        ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STRUCTURED_FEATURES_LEAF);
+    return (structuredFeatures.counter & OS_KERNEL_PROCESSOR_CPUID_FIVE_LEVEL_PAGING_BIT) != 0U;
 }
 
 uint64_t LocalApicPhysicalAddress() noexcept {

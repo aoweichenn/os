@@ -671,6 +671,8 @@ add_test(
         "${OS_BOOT_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        65536
         --expected-outcome
         success
 )
@@ -678,7 +680,7 @@ set_tests_properties(
     os_qemu_stage1_load_success
     PROPERTIES
         LABELS "system"
-        TIMEOUT 10
+        TIMEOUT 30
 )
 
 add_test(

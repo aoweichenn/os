@@ -12,6 +12,8 @@ constexpr std::string_view OS_TEST_MEMORY_RANDOM_PAGE_ROUND_TRIP =
 constexpr std::string_view OS_TEST_MEMORY_RANDOM_ALLOCATOR_UNIQUE = "随机分配不能返回仍在使用的页";
 constexpr std::string_view OS_TEST_MEMORY_RANDOM_ALLOCATOR_COUNTS =
     "随机分配释放后的统计必须与参考模型一致";
+constexpr std::string_view OS_TEST_MEMORY_RANDOM_HIGH_RANGE =
+    "随机高地址窗口分配必须严格落在请求范围内";
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_SEED = 0x6D656D6F72793634ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_PAGE_ITERATION_COUNT = 8192ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_ALLOCATOR_ITERATION_COUNT = 4096ULL;
@@ -39,6 +41,17 @@ constexpr uint64_t OS_TEST_MEMORY_RANDOM_USER_PERMISSION_BIT = 0x4ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_CACHE_DISABLE_PERMISSION_BIT = 0x8ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_ALLOCATION_DECISION_BIT = 0x1ULL;
 constexpr uint64_t OS_TEST_MEMORY_RANDOM_NEXT_PAGE_OFFSET = 1ULL;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_RANGE_ITERATION_COUNT = 1024ULL;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT = 256ULL;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_RANGE_SIZE_BYTES =
+    OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_MANAGED_LIMIT =
+    OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN + OS_TEST_MEMORY_RANDOM_HIGH_RANGE_SIZE_BYTES;
+constexpr uint64_t OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES =
+    (OS_TEST_MEMORY_RANDOM_HIGH_MANAGED_LIMIT / os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES +
+     OS_TEST_MEMORY_RANDOM_STORAGE_STATES_PER_BYTE - 1ULL) /
+    OS_TEST_MEMORY_RANDOM_STORAGE_STATES_PER_BYTE;
 
 [[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
     state ^= state >> OS_TEST_MEMORY_RANDOM_SHIFT_FIRST;
@@ -151,6 +164,50 @@ int main() {
                 statistics.reservedFrameCount ==
                     OS_TEST_MEMORY_RANDOM_ALLOCATOR_RESERVED_PAGE_COUNT,
             OS_TEST_MEMORY_RANDOM_ALLOCATOR_COUNTS, OS_TEST_MEMORY_RANDOM_SEED, iteration);
+    }
+
+    static uint8_t highStateStorage[OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES]{};
+    os::kernel::PhysicalFrameAllocator highAllocator{
+        highStateStorage,
+        OS_TEST_MEMORY_RANDOM_HIGH_STORAGE_SIZE_BYTES,
+    };
+    const os::kernel::PhysicalMemoryMapEntry highMemoryMap[] = {
+        {
+            .baseAddress = OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN,
+            .lengthBytes = OS_TEST_MEMORY_RANDOM_HIGH_RANGE_SIZE_BYTES,
+            .type = os::kernel::OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE,
+            .attributes = 0U,
+        },
+    };
+    if (highAllocator.Initialize(highMemoryMap, OS_TEST_MEMORY_RANDOM_MEMORY_MAP_ENTRY_COUNT,
+                                 OS_TEST_MEMORY_RANDOM_HIGH_MANAGED_LIMIT) !=
+        os::kernel::PhysicalFrameAllocatorStatus::Succeeded) {
+        testContext.Expect(false, OS_TEST_MEMORY_RANDOM_HIGH_RANGE);
+        return testContext.ExitCode();
+    }
+    for (uint64_t iteration = 0ULL; iteration < OS_TEST_MEMORY_RANDOM_HIGH_RANGE_ITERATION_COUNT;
+         ++iteration) {
+        const uint64_t firstPageIndex =
+            NextRandom(randomState) % OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT;
+        const uint64_t availablePageCount =
+            OS_TEST_MEMORY_RANDOM_HIGH_RANGE_PAGE_COUNT - firstPageIndex;
+        const uint64_t requestedPageCount = NextRandom(randomState) % availablePageCount + 1ULL;
+        const uint64_t minimumAddress =
+            OS_TEST_MEMORY_RANDOM_HIGH_RANGE_BEGIN +
+            firstPageIndex * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        const uint64_t maximumAddressExclusive =
+            minimumAddress + requestedPageCount * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        os::kernel::PhysicalFrame highFrame{};
+        const bool allocationValid =
+            highAllocator.AllocateInRange(minimumAddress, maximumAddressExclusive, highFrame) ==
+                os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
+            highFrame.physicalAddress >= minimumAddress &&
+            highFrame.physicalAddress < maximumAddressExclusive;
+        const bool releaseValid =
+            allocationValid &&
+            highAllocator.Release(highFrame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
+        testContext.ExpectRandom(releaseValid, OS_TEST_MEMORY_RANDOM_HIGH_RANGE,
+                                 OS_TEST_MEMORY_RANDOM_SEED, iteration);
     }
 
     return testContext.ExitCode();

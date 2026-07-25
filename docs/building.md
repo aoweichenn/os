@@ -48,6 +48,12 @@ Python 入口依次执行：
    回归基线。
 5. 运行全部 CTest 测试。
 
+正常 QEMU 系统用例显式使用 `-m 65536`，即 64 GiB 主规格；故障注入和
+最小兼容路径保留 64 MiB，以免重复为不相关失败分支建立大容量模型。QEMU
+默认按需提交来宾 RAM，宿主不要求实际装有 64 GiB 空闲内存，但必须允许创建
+相应大小的虚拟地址映射。若容器或 `ulimit` 限制虚拟内存，测试会在启动前
+明确失败。
+
 ## 手动构建
 
 ```bash
@@ -58,6 +64,20 @@ python3 tools/os.py test
 python3 tools/os.py source-metrics
 python3 tools/os.py phone-book-export
 ```
+
+只运行 64 GiB 正常整机验收：
+
+```bash
+python3 tools/os.py qemu-firmware \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk.img \
+  131072 2097152 \
+  --memory-mebibytes 65536 \
+  --expected-outcome success
+```
+
+`--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 64 GiB
+容量、高地址直映和回收验收。
 
 ## 构建产物
 

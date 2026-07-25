@@ -390,7 +390,8 @@ struct PhysicalMemoryMapEntry final {
   \item 每项 length 非零，base+length 不发生 64 位溢出；
   \item 当前 base 不小于前一项 base，也不小于前一项 end；
   \item 所有描述长度求和、type 1 可用长度求和均不溢出；
-  \item 低 64 MiB 管理范围内至少存在可用字节。
+  \item 由最高 type 1 RAM 页、处理器物理地址宽度与 direct-map 容量共同
+        确定的管理范围内至少存在完整可用页。
 \end{enumerate}
 
 乱序和重叠使用不同状态返回，因为前者通常是平台规范化缺失，后者表示两个
@@ -405,10 +406,20 @@ struct PhysicalMemoryMapEntry final {
 
 \section{2-bit 页帧状态把所有权错误变成显式状态}
 
-内核当前管理低 64 MiB：
-\[
- \frac{64\ \mathrm{MiB}}{4\ \mathrm{KiB}}=16384\ \text{frames}.
-\]
+v0.6 最初固定管理低 64 MiB；v1.1 已把这个教学脚手架替换为运行期容量。内核
+先读取 \code{CPUID.80000008H:EAX[7:0]} 的物理地址宽度，再取三个上限
+的最小值：
+
+\begin{enumerate}[label=\arabic*.]
+  \item E820 中最高 type 1 RAM 完整页的末端；
+  \item 处理器能够表达的物理地址上限；
+  \item 四级页表为高半区 direct-map 保留的 64 TiB。
+\end{enumerate}
+
+这里必须使用“最高可用 RAM”而不是“最高被描述地址”。64 MiB QEMU 配置会
+同时描述一个延伸到 1 TiB 的保留窗口；保留洞要阻止分配，却不能让 64 MiB
+机器为 1 TiB PFN 建表。
+
 每帧不用一位，而用两位表示四种状态：
 
 \begin{longtable}{L{0.18\textwidth}L{0.25\textwidth}L{0.43\textwidth}}
@@ -427,29 +438,41 @@ reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
 \bottomrule
 \end{longtable}
 
-状态存储大小为：
+设管理上界为 \(L\)，页大小为 \(P=4096\)，状态存储为：
 \[
-  16384\times2/8=4096\ \mathrm{bytes}.
+  N_{\mathrm{frame}}=\frac{L}{P},\qquad
+  S_{\mathrm{state}}=
+  \left\lceil\frac{N_{\mathrm{frame}}}{4}\right\rceil.
 \]
+64 MiB 连续 RAM 仍只需 4096 字节。64 GiB QEMU 机器在 3--4 GiB 有一段
+物理地址洞，最高 RAM 末端为 65 GiB，因此状态存储需要
+\code{0x410000} 字节；洞中的 PFN 保持 unavailable，实际可用 RAM 仍精确为
+64 GiB。
 这里使用 \code{uint8\_t} 数组并不是违背内部大位宽规范；密集状态的每字节
 恰好保存四帧，扩大为 64 位会把元数据增加八倍。对外地址、计数、容量和索引
 仍全部使用 64 位。
 
-初始化先把所有状态字节清零，对应 unavailable，再把可用区间按 4 KiB 向内
+初始化先把所需状态字节清零，对应 unavailable，再把可用区间按 4 KiB 向内
 收缩。若区域起点不是页边界，向上对齐；终点向下对齐。只有整个页都被平台声明
-为可用时才进入 free。全部扫描后仍没有 free 帧，分配器把 managed count
-恢复为零再返回 \code{NoUsableFrames}，不会留下“看似初始化”的对象。
+为可用时才进入 free。连续四帧使用预计算的 \code{0x55} 状态字节批量提交，
+避免 64 GiB 启动执行一千六百万次逐帧 read-modify-write；边界不足四帧时
+仍逐项更新，不会把相邻洞误标为 free。全部扫描后仍没有 free 帧，分配器把
+managed count 恢复为零再返回 \code{NoUsableFrames}，不会留下“看似初始化”
+的对象。
 
 \section{启动保留采用先检查、后提交}
 
-内核依次保留三个范围：
+状态数组本身不能继续放在固定 BSS。内核先根据上式计算并向页对齐所需大小，
+再在 Stage 1 可访问的低 64 MiB RAM 中搜索连续区间；搜索器逐个跳过重叠
+保留区，并在每次跳转后重新满足 4 KiB 对齐。内核随后依次保留四类范围：
 
 \begin{itemize}
   \item \code{[0,1 MiB)}：复位、固件、Stage 1、旧页表、BootInfo、内存图、
         VGA 传统窗口等低端平台资产；
   \item 链接器符号 \code{osKernelImageStart..osKernelImageEnd}：精确覆盖
-        text、rodata、data、BSS、IDT、IST 和页帧状态；
+        text、rodata、data、BSS、IDT 与 IST；
   \item BootInfo 给出的 64 KiB 初始栈。
+  \item 动态选出的页帧状态数组自身。
 \end{itemize}
 
 任意起点和终点先向页边界扩张，保证部分接触的帧也被保留。
@@ -461,6 +484,11 @@ reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
 搜索点移到后一帧。释放验证页对齐、管理范围和 allocated 状态；重复释放、
 释放 reserved 或 unavailable 都返回明确错误。释放较低帧时回退搜索点，
 使刚释放的低地址能被及时复用。
+
+\code{AllocateInRange(begin,end)} 在同一状态机上增加页对齐的半开区间约束。
+启动新 CR3 前用它把页表帧限制在低 64 MiB 身份映射中；高内存验收则把
+begin 设为 4 GiB+4 KiB。范围接口没有复制第二套所有权规则，因此普通分配、
+受限分配和释放共享重复释放与统计不变量。
 
 单元测试专门构造“第一帧 free、第二帧 allocated”的两页保留请求，确认失败
 后 free、allocated、reserved 三个计数完全不变。这条测试验证事务边界，而
@@ -480,18 +508,55 @@ reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
 
 构造新页表时处理器仍运行在 Stage 1 的 CR3 下。旧表把低 64 MiB 通过
 32 个 2 MiB 大页恒等映射，所以新分配的页表帧可以直接把物理地址解释为指针
-并清零。这个临时便利必须写进前置条件：一旦未来取消大范围身份映射，
-\code{tableAtPhysicalAddress} 就要改用物理直映区或临时映射窗口。
+并清零。但这个等式只是启动前置条件，不是运行期 C++ 地址模型。
+\code{PageTableMemoryAccess} 因而显式保存“物理内存通过哪个虚拟基址访问”
+和“页表帧本轮最多从哪里分配”：
 
-内核先分配根 PML4，再对低 64 MiB 的每个 4 KiB 页执行映射。中间表缺失时，
-从同一个物理分配器取得一帧，清零 512 个 64 位项，再写入 parent。整个
-64 MiB 恒等映射需要若干 PT，而不是预先写死表数量；高半区 heap 会共享
-同一个 PML4 却走另一组索引。
+\begin{longtable}{L{0.28\textwidth}L{0.25\textwidth}L{0.35\textwidth}}
+\toprule
+\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\
+\midrule
+\endhead
+旧 CR3 下构造 & 0，依赖身份映射 & 低 64 MiB\\
+新 CR3 激活后 & \code{FFFF888000000000} & 全部受管 RAM\\
+\bottomrule
+\end{longtable}
+
+内核先分配根 PML4，再对低 64 MiB 的启动访问逐页建立带精细权限的身份映射。
+随后遍历 E820 type 1 RAM，在
+\code{0xFFFF888000000000+physical} 建立 direct-map。未声明为 RAM 的
+保留区与 MMIO 洞保持 not-present；LAPIC 继续使用独立 PCD 映射。
 
 映射完成、NX 和 WP 打开之后才执行 \code{mov cr3,newRoot}。如果先切 CR3
 再补当前 RIP、RSP 或 IDT 所需映射，下一条取指或压栈就会故障；异常入口本身
 也可能未映射，最终表现为 triple fault。先构造完整候选、后一次激活，是页表
-版的两遍 ELF 副作用边界。
+版的两遍 ELF 副作用边界。CR3 读回成功后，管理器原子切换访问基址，页表
+遍历、用户页清零和 ELF 段复制从此都不再把物理地址直接转换成指针。
+
+\section{direct-map 为什么同时使用 2 MiB 与 4 KiB 页}
+
+若把 64 GiB RAM 全部用 4 KiB PTE 映射，叶项数量为：
+\[
+ \frac{64\ \mathrm{GiB}}{4\ \mathrm{KiB}}=16777216,
+\]
+仅叶 PT 就需要约 32 MiB。使用 2 MiB PDE 大页时只需：
+\[
+ \frac{64\ \mathrm{GiB}}{2\ \mathrm{MiB}}=32768
+\]
+个叶项。大页显著减少页表内存，并让一个 TLB 项覆盖更大范围。
+
+内核不能简单把每个 E820 条目向外取整到 2 MiB：那会把条目两侧的保留页也
+映射成普通 RAM。算法先把起点向内对齐到 4 KiB，再用 4 KiB 页走到下一个
+2 MiB 边界；中间完整区间使用大页，尾部回到 4 KiB。因而页粒度是每段的
+局部选择，所有权边界仍由 E820 决定。
+
+2 MiB PDE 设置 bit 7 的 PS，并把物理基址放在 bit 21..51；查询任意内部
+地址时必须把虚拟地址低 21 位加回基址。普通用户页、Kernel 段和 guard page
+仍使用 4 KiB PTE，因为它们需要细粒度权限或单页 not-present 语义。
 
 \section{页表遍历必须验证每一级}
 
@@ -507,9 +572,12 @@ i_1&=(v\gg12)\mathbin{\&}0x1FF.
 \end{aligned}
 \]
 
-中间表不存在时分配并清零；存在时验证 PS 大页位没有意外置一，再用
-\code{0x000FFFFFFFFFF000} 取下一级物理地址。叶项写入前拒绝重复映射。
-物理和虚拟地址都必须 4 KiB 对齐，物理地址还不能越过表项可编码范围。
+中间表不存在时分配并清零。PML4E 与 PDPTE 出现 PS 仍属于当前实现不支持的
+1 GiB 页并明确拒绝；PDE 的 PS=1 则是合法 2 MiB 叶，查询时使用
+\code{0x000FFFFFFFE00000} 取物理基址。普通路径用
+\code{0x000FFFFFFFFFF000} 取得下一级表。叶项写入前拒绝重复映射。
+4 KiB 或 2 MiB 映射分别验证对应对齐，物理地址还不能越过处理器、页表字段
+和 direct-map 访问环境的共同范围。
 
 取消映射把叶项清零并执行 \code{INVLPG}，当前不回收空的 PT/PD/PDPT。
 这是明确的早期边界：启动只映射固定集合，不会反复创建销毁地址空间。进程
@@ -536,6 +604,7 @@ text & R/X & 指令可取，Ring 0 不可写\\
 rodata & R/NX & 常量不可写，也不能作为代码执行\\
 data/BSS/普通栈 & RW/NX & 状态可变但不可取指\\
 heap & RW/NX & 动态对象默认不是代码\\
+type 1 RAM direct-map & RW/NX & supervisor 访问物理页内容，未知洞不映射\\
 零页与四个 guard & not-present & 把空指针和向下越界变成 \#PF\\
 \bottomrule
 \end{longtable}
@@ -605,14 +674,18 @@ padding 和请求大小分别与剩余容量比较，避免组合加法先溢出
 四层验证各自回答不同问题：
 
 \begin{enumerate}[label=\arabic*.]
-  \item 单元测试验证内存图失败枚举、2-bit 状态迁移、heap 原子失败、
-        canonical 地址、四级索引和表项权限编码；
-  \item 集成测试按 QEMU 的低端 RAM/高端保留形状建立内存图，检查低 1 MiB、
-        Kernel、栈保留后第一个可分配帧，并检查交接物理区间不重叠；
+  \item 单元测试验证最高可用 RAM 与高端保留洞的区别、元数据区搜索、
+        64 GiB 状态尺寸、高地址范围分配、direct-map canonical 边界、
+        heap 原子失败和表项权限编码；
+  \item 集成测试同时保留 64 MiB 启动图，并构造 3--4 GiB 洞和总计 64 GiB
+        可用 RAM，核对 16777216 个 free frame 和 4 GiB 以上分配/回收；
   \item 固定种子 \code{0x6D656D6F72793634} 完成 8192 组叶表项往返，
-        再执行 4096 步随机 allocate/release，与独立布尔模型逐步比较；
-  \item QEMU 正常路径真实加载 CR3、访问 heap；失败路径分别证明
-        \code{MEMORY\_MAP\_INVALID} 和错误码 3 的写保护 \#PF。
+        执行 4096 步随机 allocate/release，再执行 1024 轮随机高地址窗口
+        分配并立即回收；
+  \item QEMU 主路径固定使用 64 GiB RAM，真实加载 CR3、访问 heap，并要求
+        direct-map 精确覆盖 64 GiB、使用 32768 个 2 MiB 页，在
+        \code{0x0000000100001000} 或更高帧写入读回两个 64 位模式；失败路径
+        继续证明 \code{MEMORY\_MAP\_INVALID} 和错误码 3 的写保护 \#PF。
 \end{enumerate}
 
 随机测试不是用随机数替代设计。种子、迭代号和性质名都写入失败报告，任何失败

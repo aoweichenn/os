@@ -40,8 +40,10 @@
   \item \code{fw\_cfg} selector/data 端口、文件目录大端序和
         \code{etc/e820} 小端条目的边界；
   \item 20 字节平台项为什么扩展为 24 字节 ABI，Stage 1 排序后内核为何仍验证；
-  \item 描述字节、可用字节与低 64 MiB 受管可用字节的区别；
+  \item 描述字节、可用字节、最高可用 RAM PFN 与受管可用字节的区别；
   \item 2-bit 页帧的 unavailable、free、allocated、reserved 状态迁移；
+  \item 64 GiB 主规格为何需要 \code{0x410000} 字节状态，而非固定数组；
+  \item \code{0xFFFF888000000000} direct-map、2 MiB 内部页与 4 KiB 边界页；
   \item 启动保留为什么先检查完整范围再提交，避免部分状态；
   \item 48 位 canonical 地址和 PML4、PDPT、PD、PT 四组 9 位索引；
   \item present、RW、US、PS、物理地址和 NX 的页表项位布局；

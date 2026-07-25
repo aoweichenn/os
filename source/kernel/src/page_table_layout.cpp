@@ -20,6 +20,9 @@ constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT = 0x0000000000000010U
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT = 0x8000000000000000ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK = 0x000FFFFFFFFFF000ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_SINGLE_BIT_MASK = 0x0000000000000001ULL;
+constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_LIMIT = 0x0010000000000000ULL;
+constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PAGE_MASK = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - 1ULL;
+constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE = 0ULL;
 
 }
 
@@ -44,6 +47,29 @@ PageTableIndices CalculatePageTableIndices(const uint64_t virtualAddress) noexce
     };
 }
 
+bool IsPageTableMemoryAccessValid(const PageTableMemoryAccess memoryAccess) noexcept {
+    if (memoryAccess.maximumPhysicalAddressExclusive == OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
+        memoryAccess.maximumPhysicalAddressExclusive >
+            OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_LIMIT ||
+        (memoryAccess.maximumPhysicalAddressExclusive & OS_KERNEL_PAGE_LAYOUT_PAGE_MASK) !=
+            OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
+        memoryAccess.allocationMaximumPhysicalAddressExclusive ==
+            OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
+        memoryAccess.allocationMaximumPhysicalAddressExclusive >
+            memoryAccess.maximumPhysicalAddressExclusive ||
+        (memoryAccess.allocationMaximumPhysicalAddressExclusive &
+         OS_KERNEL_PAGE_LAYOUT_PAGE_MASK) != OS_KERNEL_PAGE_LAYOUT_EMPTY_VALUE ||
+        memoryAccess.physicalMemoryVirtualBase >
+            UINT64_MAX -
+                (memoryAccess.maximumPhysicalAddressExclusive - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        return false;
+    }
+    return IsCanonicalVirtualAddress(memoryAccess.physicalMemoryVirtualBase) &&
+           IsCanonicalVirtualAddress(memoryAccess.physicalMemoryVirtualBase +
+                                     memoryAccess.maximumPhysicalAddressExclusive -
+                                     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
+}
+
 uint64_t EncodePageTableLeafEntry(const uint64_t physicalAddress,
                                   const PagePermissions permissions) noexcept {
     uint64_t entry = (physicalAddress & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK) |
@@ -66,6 +92,7 @@ uint64_t EncodePageTableLeafEntry(const uint64_t physicalAddress,
 PageMapping DecodePageTableLeafEntry(const uint64_t entry) noexcept {
     return PageMapping{
         .physicalAddress = entry & OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK,
+        .pageSizeBytes = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
         .permissions =
             PagePermissions{
                 .writable = (entry & OS_KERNEL_PAGE_LAYOUT_WRITABLE_BIT) != 0ULL,

@@ -15,6 +15,10 @@ constexpr std::string_view OS_TEST_HEAP_PAGE_CANONICAL = "低半区与高半区�
 constexpr std::string_view OS_TEST_HEAP_PAGE_NON_CANONICAL = "48 位 canonical 空洞必须被拒绝";
 constexpr std::string_view OS_TEST_HEAP_PAGE_INDICES = "四级页表索引必须按硬件位段提取";
 constexpr std::string_view OS_TEST_HEAP_PAGE_ENTRY_ROUND_TRIP = "页表物理地址与权限必须往返";
+constexpr std::string_view OS_TEST_HEAP_PAGE_DIRECT_MAP_ACCESS =
+    "64 TiB 高半区物理直映访问环境必须有效";
+constexpr std::string_view OS_TEST_HEAP_PAGE_DIRECT_MAP_OVERFLOW =
+    "物理直映越过 canonical 或整数边界必须被拒绝";
 
 constexpr uint64_t OS_TEST_HEAP_PAGE_BUFFER_SIZE_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_HEAP_PAGE_FIRST_ALLOCATION_SIZE_BYTES = 3ULL;
@@ -33,6 +37,13 @@ constexpr uint64_t OS_TEST_HEAP_PAGE_EXPECTED_LEVEL2_INDEX = 0x02BULL;
 constexpr uint64_t OS_TEST_HEAP_PAGE_EXPECTED_LEVEL1_INDEX = 0x078ULL;
 constexpr uint64_t OS_TEST_HEAP_PAGE_PHYSICAL_ADDRESS = 0x0000000012345000ULL;
 constexpr uint64_t OS_TEST_HEAP_PAGE_ALIGNMENT_MASK_DECREMENT = 1ULL;
+constexpr uint64_t OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE = 0xFFFF888000000000ULL;
+constexpr uint64_t OS_TEST_HEAP_PAGE_DIRECT_MAP_CAPACITY_BYTES =
+    64ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_TEST_HEAP_PAGE_DIRECT_MAP_ALLOCATION_LIMIT_BYTES =
+    65ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_TEST_HEAP_PAGE_INVALID_DIRECT_MAP_CAPACITY_BYTES =
+    128ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 
 }
 
@@ -105,6 +116,25 @@ int main() {
                            mapping.permissions.userAccessible == permissions.userAccessible &&
                            mapping.permissions.cacheDisabled == permissions.cacheDisabled,
                        OS_TEST_HEAP_PAGE_ENTRY_ROUND_TRIP);
+
+    testContext.Expect(
+        os::kernel::IsPageTableMemoryAccessValid(os::kernel::PageTableMemoryAccess{
+            .maximumPhysicalAddressExclusive = OS_TEST_HEAP_PAGE_DIRECT_MAP_CAPACITY_BYTES,
+            .physicalMemoryVirtualBase = OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE,
+            .allocationMaximumPhysicalAddressExclusive =
+                OS_TEST_HEAP_PAGE_DIRECT_MAP_ALLOCATION_LIMIT_BYTES,
+            .invalidateActiveMappings = true,
+        }),
+        OS_TEST_HEAP_PAGE_DIRECT_MAP_ACCESS);
+    testContext.Expect(
+        !os::kernel::IsPageTableMemoryAccessValid(os::kernel::PageTableMemoryAccess{
+            .maximumPhysicalAddressExclusive = OS_TEST_HEAP_PAGE_INVALID_DIRECT_MAP_CAPACITY_BYTES,
+            .physicalMemoryVirtualBase = OS_TEST_HEAP_PAGE_DIRECT_MAP_BASE,
+            .allocationMaximumPhysicalAddressExclusive =
+                OS_TEST_HEAP_PAGE_DIRECT_MAP_ALLOCATION_LIMIT_BYTES,
+            .invalidateActiveMappings = true,
+        }),
+        OS_TEST_HEAP_PAGE_DIRECT_MAP_OVERFLOW);
 
     return testContext.ExitCode();
 }

@@ -224,6 +224,21 @@ QEMU 自行异常退出仍视为失败。
   同时保留管道、抢占、资源回收与失败路径证据；持久化双启动也执行同一套
   Shell 脚本，避免另设绕过用户边界的测试入口。
 
+`v1.1` 动态物理内存第一增量新增容量与高地址证据：
+
+- 内存图单元测试区分“最高描述地址”和“最高可用 RAM 地址”，并覆盖启动
+  元数据搜索的保留区跳过、对齐、容量不足和溢出保留区拒绝。
+- 页帧单元测试精确验证 64 GiB 的 2-bit 状态容量为 4 MiB，并用稀疏图在
+  4 GiB 以上执行范围分配、释放与未对齐拒绝。
+- 集成模型构造 3--4 GiB 物理洞和总计 64 GiB 可用 RAM，要求全部
+  16777216 个可用页进入状态机；随机测试再执行 1024 轮高地址窗口分配。
+- 主系统用例明确传入 `--memory-mebibytes 65536`，而不是依赖工具默认值。
+  宿主解析来宾十六进制统计，要求可用/受管/direct-map 字节均至少 64 GiB、
+  物理/虚拟地址宽度至少 36/48、状态存储至少 4 MiB、至少一个 2 MiB
+  direct-map 页，并且高内存自检地址不低于 4 GiB+4 KiB。
+- 目标内高内存自检查询 direct-map 权限，写入并读回两个 64 位模式，再释放
+  页帧；最终进程资源回收检查继续证明后续高地址页表没有泄漏。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -265,11 +280,11 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_boot_info_unit_tests` | 单元 | BootInfo 全字段、上下界和失败状态 |
 | `os_kernel_descriptor_layout_unit_tests` | 单元 | TSS、IDT gate、异常错误码和恢复分类 |
 | `os_kernel_descriptor_layout_randomized_tests` | 随机 | 4096 组 64 位 TSS/IDT 地址编码往返 |
-| `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、排序、重叠、溢出与汇总 |
-| `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、保留原子性、分配释放与耗尽 |
+| `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、最高可用地址、元数据区搜索与溢出 |
+| `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、64 GiB 容量、高地址范围分配与回收 |
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
-| `os_kernel_memory_bootstrap_integration_tests` | 集成 | QEMU 内存图、启动保留范围与首个空闲帧 |
-| `os_kernel_memory_management_randomized_tests` | 随机 | 8192 组表项和 4096 步分配器模型对照 |
+| `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
+| `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
@@ -307,7 +322,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_disk_rejects_invalid_checksum` | 集成/失败路径 | 损坏 Kernel ELF 文件必须被拒绝 |
 | `os_kernel_disk_rejects_invalid_elf` | 集成/失败路径 | CRC 正确但 ELF 语义非法仍必须被拒绝 |
 | `os_stage1_rejects_invalid_header` | 集成/失败路径 | 损坏描述符必须被宿主审计拒绝 |
-| `os_qemu_stage1_load_success` | 系统 | 真实 ATA PIO 加载、校验、远跳转和 Stage 1 入口 |
+| `os_qemu_stage1_load_success` | 系统 | 64 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
 | `os_qemu_file_system_persistence` | 系统/失败路径 | 同盘双启动持久化与损坏 superblock 拒绝挂载 |
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
 | `os_qemu_firmware_ide_busy_timeout_failure` | 系统/失败路径 | BSY 永久置位必须有界失败 |
@@ -333,7 +348,7 @@ python3 tools/os.py test --layer failure-path
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
 当前共 73 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
-捕获器同时拥有“最终里程碑到达”和“五秒总截止”两个终止条件，并通过
+捕获器同时拥有“最终里程碑到达”和“十五秒总截止”两个终止条件，并通过
 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。

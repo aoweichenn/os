@@ -7,6 +7,8 @@ import unittest
 
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
+    OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
+    OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
     createQemuFirmwareCommand,
     normalizeCapturedOutput,
     qemuKeyNameForCharacter,
@@ -50,12 +52,40 @@ class QemuRunnerToolTests(unittest.TestCase):
 
         self.assertIn("pc,accel=tcg", command)
         self.assertIn("qemu64", command)
+        memoryOptionIndex = command.index("-m")
+        self.assertEqual(
+            command[memoryOptionIndex + 1],
+            str(OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES),
+        )
         self.assertIn("firmware.bin", command)
         self.assertIn(
             "file=disk.img,format=raw,if=ide,snapshot=on",
             command,
         )
         self.assertNotIn("-kernel", command)
+
+    def testCreatesPrimary64GibMemoryCommand(self) -> None:
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            memoryMebibytes=OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
+        )
+
+        memoryOptionIndex = command.index("-m")
+        self.assertEqual(
+            command[memoryOptionIndex + 1],
+            str(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES),
+        )
+
+    def testRejectsMemoryBelowBootstrapMinimum(self) -> None:
+        with self.assertRaises(OsToolError):
+            createQemuFirmwareCommand(
+                Path("firmware.bin"),
+                Path("disk.img"),
+                memoryMebibytes=(
+                    OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES - 1
+                ),
+            )
 
     def testCreatesQmpSocketForKeyboardInjection(self) -> None:
         qmpSocketPath = Path("/tmp/os-qemu-test.sock")

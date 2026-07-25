@@ -12,30 +12,43 @@ namespace os::kernel {
 
 namespace {
 
-constexpr uint64_t OS_KERNEL_MEMORY_MANAGED_LIMIT_BYTES = 64ULL * 1024ULL * 1024ULL;
-constexpr uint64_t OS_KERNEL_MEMORY_MANAGED_FRAME_COUNT =
-    OS_KERNEL_MEMORY_MANAGED_LIMIT_BYTES / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-constexpr uint64_t OS_KERNEL_MEMORY_FRAME_STATES_PER_BYTE = 4ULL;
-constexpr uint64_t OS_KERNEL_MEMORY_FRAME_STATE_STORAGE_SIZE_BYTES =
-    OS_KERNEL_MEMORY_MANAGED_FRAME_COUNT / OS_KERNEL_MEMORY_FRAME_STATES_PER_BYTE;
 constexpr uint64_t OS_KERNEL_MEMORY_LOW_PLATFORM_RESERVATION_SIZE_BYTES = 1ULL * 1024ULL * 1024ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_PAGE_MASK = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - 1ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_LARGE_PAGE_MASK =
+    OS_KERNEL_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES - 1ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_PAGE_COUNT =
     OS_KERNEL_MEMORY_HEAP_SIZE_BYTES / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_KERNEL_MEMORY_BOOTSTRAP_RESERVATION_COUNT = 3ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_BOOTSTRAP_METADATA_ALIGNMENT_BYTES =
+    OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_MINIMUM_ADDRESS =
+    4ULL * 1024ULL * 1024ULL * 1024ULL + OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_SMALL_SIZE_BYTES = 64ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_SMALL_ALIGNMENT_BYTES = 16ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_SIZE_BYTES =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_ALIGNMENT_BYTES =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-constexpr uint64_t OS_KERNEL_MEMORY_FRAME_STATE_STORAGE_ALIGNMENT_BYTES = 16ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_FIRST_PATTERN = 0x13579BDF2468ACE0ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_SECOND_PATTERN = 0xC001D00DC0FFEE11ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_PATTERN = 0x484947484652414DULL;
+constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_PATTERN = 0x4449524543544D50ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_VALUE_INDEX = 0ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_VALUE_INDEX = 1ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_MINIMUM_PAGE_TABLE_PHYSICAL_LIMIT =
+    OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 
-alignas(OS_KERNEL_MEMORY_FRAME_STATE_STORAGE_ALIGNMENT_BYTES) uint8_t
-    kernelFrameStateStorage[OS_KERNEL_MEMORY_FRAME_STATE_STORAGE_SIZE_BYTES];
 KernelMemoryStatistics currentKernelMemoryStatistics{};
+uint64_t currentManagedPhysicalAddressLimit = 0ULL;
+uint64_t currentPageTablePhysicalAddressLimit = 0ULL;
+bool directMapActive = false;
+
+struct DirectMapStatistics final {
+    uint64_t mappedBytes;
+    uint64_t largePageCount;
+    uint64_t smallPageCount;
+};
 
 extern "C" uint8_t osKernelImageStart[];
 extern "C" uint8_t osKernelImageEnd[];
@@ -54,17 +67,40 @@ extern "C" uint8_t osKernelWritableDataEnd[];
     return (address + OS_KERNEL_MEMORY_PAGE_MASK) & ~OS_KERNEL_MEMORY_PAGE_MASK;
 }
 
+[[nodiscard]] uint64_t AlignDownToPage(const uint64_t address) noexcept {
+    return address & ~OS_KERNEL_MEMORY_PAGE_MASK;
+}
+
+[[nodiscard]] uint64_t Minimum(const uint64_t left, const uint64_t right) noexcept {
+    return left < right ? left : right;
+}
+
 [[nodiscard]] PhysicalFrameAllocator &FrameAllocator() noexcept {
-    static PhysicalFrameAllocator allocator{
-        kernelFrameStateStorage,
-        OS_KERNEL_MEMORY_FRAME_STATE_STORAGE_SIZE_BYTES,
-    };
+    static PhysicalFrameAllocator allocator{};
     return allocator;
 }
 
 [[nodiscard]] PageTableManager &GetPageTableManager() noexcept {
-    static PageTableManager manager{FrameAllocator()};
+    static PageTableManager manager{
+        FrameAllocator(),
+        PageTableMemoryAccess{
+            .maximumPhysicalAddressExclusive = OS_KERNEL_MEMORY_MINIMUM_PAGE_TABLE_PHYSICAL_LIMIT,
+            .physicalMemoryVirtualBase = 0ULL,
+            .allocationMaximumPhysicalAddressExclusive =
+                OS_KERNEL_MEMORY_MINIMUM_PAGE_TABLE_PHYSICAL_LIMIT,
+            .invalidateActiveMappings = false,
+        },
+    };
     return manager;
+}
+
+[[nodiscard]] PageTableMemoryAccess ActivePageTableMemoryAccess() noexcept {
+    return PageTableMemoryAccess{
+        .maximumPhysicalAddressExclusive = currentPageTablePhysicalAddressLimit,
+        .physicalMemoryVirtualBase = OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE,
+        .allocationMaximumPhysicalAddressExclusive = currentManagedPhysicalAddressLimit,
+        .invalidateActiveMappings = true,
+    };
 }
 
 [[nodiscard]] bool IsGuardPage(const uint64_t pageAddress, const BootInfo &bootInfo) noexcept {
@@ -130,6 +166,43 @@ extern "C" uint8_t osKernelWritableDataEnd[];
                PhysicalFrameAllocatorStatus::Succeeded;
 }
 
+[[nodiscard]] bool FindFrameStateStorageRange(const PhysicalMemoryMapEntry *memoryMap,
+                                              const uint64_t memoryMapEntryCount,
+                                              const BootInfo &bootInfo,
+                                              const uint64_t requiredStorageSizeBytes,
+                                              PhysicalMemoryRange &storageRange) noexcept {
+    const uint64_t kernelBegin = AddressOf(osKernelImageStart);
+    const uint64_t kernelEnd = AddressOf(osKernelImageEnd);
+    const uint64_t earlyStackBegin =
+        bootInfo.kernelStackTopPhysicalAddress - OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES;
+    const PhysicalMemoryRange reservations[OS_KERNEL_MEMORY_BOOTSTRAP_RESERVATION_COUNT] = {
+        {
+            .beginAddress = 0ULL,
+            .lengthBytes = OS_KERNEL_MEMORY_LOW_PLATFORM_RESERVATION_SIZE_BYTES,
+        },
+        {
+            .beginAddress = kernelBegin,
+            .lengthBytes = kernelEnd - kernelBegin,
+        },
+        {
+            .beginAddress = earlyStackBegin,
+            .lengthBytes = OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES,
+        },
+    };
+    return FindUsablePhysicalMemoryRange(memoryMap, memoryMapEntryCount, reservations,
+                                         OS_KERNEL_MEMORY_BOOTSTRAP_RESERVATION_COUNT,
+                                         OS_KERNEL_MEMORY_LOW_PLATFORM_RESERVATION_SIZE_BYTES,
+                                         bootInfo.identityMappedSizeBytes, requiredStorageSizeBytes,
+                                         OS_KERNEL_MEMORY_BOOTSTRAP_METADATA_ALIGNMENT_BYTES,
+                                         storageRange) ==
+           PhysicalMemoryRangeSearchStatus::Succeeded;
+}
+
+[[nodiscard]] bool ReserveFrameStateStorage(const PhysicalMemoryRange storageRange) noexcept {
+    return FrameAllocator().ReserveRange(storageRange.beginAddress, storageRange.lengthBytes) ==
+           PhysicalFrameAllocatorStatus::Succeeded;
+}
+
 [[nodiscard]] bool MapIdentityRange(const BootInfo &bootInfo) noexcept {
     PageTableManager &manager = GetPageTableManager();
     for (uint64_t pageAddress = 0ULL; pageAddress < bootInfo.identityMappedSizeBytes;
@@ -139,6 +212,86 @@ extern "C" uint8_t osKernelWritableDataEnd[];
         }
         if (manager.MapPage(pageAddress, pageAddress, IdentityPermissions(pageAddress)) !=
             PageTableStatus::Succeeded) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool MapDirectPage(const uint64_t physicalAddress,
+                                 DirectMapStatistics &statistics) noexcept {
+    const uint64_t virtualAddress = OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE + physicalAddress;
+    const PagePermissions directMapPermissions{
+        .writable = true,
+        .executable = false,
+        .userAccessible = false,
+        .cacheDisabled = false,
+    };
+    if (GetPageTableManager().MapPage(virtualAddress, physicalAddress, directMapPermissions) !=
+        PageTableStatus::Succeeded) {
+        return false;
+    }
+    statistics.mappedBytes += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    ++statistics.smallPageCount;
+    return true;
+}
+
+[[nodiscard]] bool MapDirectLargePage(const uint64_t physicalAddress,
+                                      DirectMapStatistics &statistics) noexcept {
+    const uint64_t virtualAddress = OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE + physicalAddress;
+    const PagePermissions directMapPermissions{
+        .writable = true,
+        .executable = false,
+        .userAccessible = false,
+        .cacheDisabled = false,
+    };
+    if (GetPageTableManager().MapLargePage(virtualAddress, physicalAddress, directMapPermissions) !=
+        PageTableStatus::Succeeded) {
+        return false;
+    }
+    statistics.mappedBytes += OS_KERNEL_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES;
+    ++statistics.largePageCount;
+    return true;
+}
+
+[[nodiscard]] bool MapDirectMemoryRange(const PhysicalMemoryMapEntry &entry,
+                                        DirectMapStatistics &statistics) noexcept {
+    if (entry.type != OS_KERNEL_MEMORY_MAP_USABLE_REGION_TYPE ||
+        entry.baseAddress >= currentManagedPhysicalAddressLimit) {
+        return true;
+    }
+    const uint64_t entryEndAddress = entry.baseAddress + entry.lengthBytes;
+    uint64_t physicalAddress = AlignUpToPage(entry.baseAddress);
+    const uint64_t mappedEndAddress =
+        AlignDownToPage(Minimum(entryEndAddress, currentManagedPhysicalAddressLimit));
+    while (physicalAddress < mappedEndAddress &&
+           (physicalAddress & OS_KERNEL_MEMORY_LARGE_PAGE_MASK) != 0ULL) {
+        if (!MapDirectPage(physicalAddress, statistics)) {
+            return false;
+        }
+        physicalAddress += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    }
+    while (physicalAddress < mappedEndAddress &&
+           OS_KERNEL_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES <= mappedEndAddress - physicalAddress) {
+        if (!MapDirectLargePage(physicalAddress, statistics)) {
+            return false;
+        }
+        physicalAddress += OS_KERNEL_PAGE_TABLE_LARGE_PAGE_SIZE_BYTES;
+    }
+    while (physicalAddress < mappedEndAddress) {
+        if (!MapDirectPage(physicalAddress, statistics)) {
+            return false;
+        }
+        physicalAddress += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    }
+    return true;
+}
+
+[[nodiscard]] bool MapDirectMemory(const PhysicalMemoryMapEntry *memoryMap,
+                                   const uint64_t memoryMapEntryCount,
+                                   DirectMapStatistics &statistics) noexcept {
+    for (uint64_t entryIndex = 0ULL; entryIndex < memoryMapEntryCount; ++entryIndex) {
+        if (!MapDirectMemoryRange(memoryMap[entryIndex], statistics)) {
             return false;
         }
     }
@@ -245,7 +398,9 @@ extern "C" uint8_t osKernelWritableDataEnd[];
            mapping.permissions.cacheDisabled == expectedPermissions.cacheDisabled;
 }
 
-[[nodiscard]] bool ValidateKernelMappings(const BootInfo &bootInfo) noexcept {
+[[nodiscard]] bool
+ValidateKernelMappings(const BootInfo &bootInfo,
+                       const PhysicalMemoryRange frameStateStorageRange) noexcept {
     const PagePermissions textPermissions{
         .writable = false,
         .executable = true,
@@ -273,7 +428,10 @@ extern "C" uint8_t osKernelWritableDataEnd[];
                          writablePermissions) ||
         !ValidatePermissions(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE, writablePermissions) ||
         !ValidatePermissions(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
-                             readOnlyPermissions)) {
+                             readOnlyPermissions) ||
+        !ValidateMapping(OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE +
+                             frameStateStorageRange.beginAddress,
+                         frameStateStorageRange.beginAddress, writablePermissions)) {
         return false;
     }
     if (ProcessorSupportsLocalApic()) {
@@ -336,30 +494,114 @@ extern "C" uint8_t osKernelWritableDataEnd[];
            *pageValue == OS_KERNEL_MEMORY_HEAP_SELF_TEST_SECOND_PATTERN;
 }
 
+[[nodiscard]] bool RunHighMemorySelfTest(uint64_t &testPhysicalAddress) noexcept {
+    testPhysicalAddress = 0ULL;
+    if (currentManagedPhysicalAddressLimit <= OS_KERNEL_MEMORY_HIGH_FRAME_MINIMUM_ADDRESS) {
+        return true;
+    }
+    PhysicalFrame frame{};
+    if (FrameAllocator().AllocateInRange(OS_KERNEL_MEMORY_HIGH_FRAME_MINIMUM_ADDRESS,
+                                         currentManagedPhysicalAddressLimit,
+                                         frame) != PhysicalFrameAllocatorStatus::Succeeded) {
+        return false;
+    }
+    const uint64_t directMapAddress = PhysicalMemoryDirectMapAddress(frame.physicalAddress);
+    PageMapping mapping{};
+    if (directMapAddress == 0ULL ||
+        GetPageTableManager().QueryPage(directMapAddress, mapping) != PageTableStatus::Succeeded ||
+        mapping.physicalAddress != frame.physicalAddress || !mapping.permissions.writable ||
+        mapping.permissions.executable || mapping.permissions.userAccessible ||
+        mapping.permissions.cacheDisabled) {
+        static_cast<void>(FrameAllocator().Release(frame));
+        return false;
+    }
+    volatile uint64_t *const values = reinterpret_cast<volatile uint64_t *>(directMapAddress);
+    values[OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_VALUE_INDEX] =
+        OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_PATTERN;
+    values[OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_VALUE_INDEX] =
+        OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_PATTERN;
+    const bool patternsValid = values[OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_VALUE_INDEX] ==
+                                   OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_PATTERN &&
+                               values[OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_VALUE_INDEX] ==
+                                   OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_PATTERN;
+    testPhysicalAddress = frame.physicalAddress;
+    const PhysicalFrameAllocatorStatus releaseStatus = FrameAllocator().Release(frame);
+    return patternsValid && releaseStatus == PhysicalFrameAllocatorStatus::Succeeded;
+}
+
 }
 
 KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &bootInfo) noexcept {
     const PhysicalMemoryMapEntry *const memoryMap =
         reinterpret_cast<const PhysicalMemoryMapEntry *>(bootInfo.physicalMemoryMapAddress);
+    const uint64_t physicalAddressWidthBits = ProcessorPhysicalAddressWidthBits();
+    const uint64_t virtualAddressWidthBits = ProcessorVirtualAddressWidthBits();
+    const uint64_t fiveLevelPagingSupported = ProcessorSupportsFiveLevelPaging() ? 1ULL : 0ULL;
+    const uint64_t processorPhysicalAddressLimit = ProcessorMaximumPhysicalAddressExclusive();
+    if (physicalAddressWidthBits == 0ULL || virtualAddressWidthBits == 0ULL ||
+        processorPhysicalAddressLimit == 0ULL) {
+        return KernelMemoryInitializationStatus::InvalidProcessorAddressWidth;
+    }
+    currentPageTablePhysicalAddressLimit =
+        Minimum(processorPhysicalAddressLimit, OS_KERNEL_MEMORY_DIRECT_MAP_CAPACITY_BYTES);
+
     PhysicalMemorySummary memorySummary{};
+    if (ValidateAndSummarizePhysicalMemoryMap(
+            memoryMap, bootInfo.physicalMemoryMapEntryCount, currentPageTablePhysicalAddressLimit,
+            memorySummary) != PhysicalMemoryMapValidationStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::InvalidMemoryMap;
+    }
+    currentManagedPhysicalAddressLimit = AlignDownToPage(
+        Minimum(memorySummary.highestUsableAddressExclusive, currentPageTablePhysicalAddressLimit));
+    if (currentManagedPhysicalAddressLimit == 0ULL ||
+        currentManagedPhysicalAddressLimit < bootInfo.identityMappedSizeBytes) {
+        return KernelMemoryInitializationStatus::InvalidManagedPhysicalAddressLimit;
+    }
     if (ValidateAndSummarizePhysicalMemoryMap(memoryMap, bootInfo.physicalMemoryMapEntryCount,
-                                              bootInfo.identityMappedSizeBytes, memorySummary) !=
+                                              currentManagedPhysicalAddressLimit, memorySummary) !=
         PhysicalMemoryMapValidationStatus::Succeeded) {
         return KernelMemoryInitializationStatus::InvalidMemoryMap;
     }
+
+    const uint64_t requiredFrameStateStorageSizeBytes =
+        CalculatePhysicalFrameStateStorageSizeBytes(currentManagedPhysicalAddressLimit);
+    const uint64_t frameStateStorageSizeBytes = AlignUpToPage(requiredFrameStateStorageSizeBytes);
+    PhysicalMemoryRange frameStateStorageRange{};
+    if (requiredFrameStateStorageSizeBytes == 0ULL || frameStateStorageSizeBytes == 0ULL ||
+        !FindFrameStateStorageRange(memoryMap, bootInfo.physicalMemoryMapEntryCount, bootInfo,
+                                    frameStateStorageSizeBytes, frameStateStorageRange)) {
+        return KernelMemoryInitializationStatus::FrameStateStorageUnavailable;
+    }
+    if (FrameAllocator().ConfigureStateStorage(
+            reinterpret_cast<uint8_t *>(frameStateStorageRange.beginAddress),
+            frameStateStorageRange.lengthBytes) != PhysicalFrameAllocatorStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::FrameAllocatorConfigurationFailed;
+    }
     if (FrameAllocator().Initialize(memoryMap, bootInfo.physicalMemoryMapEntryCount,
-                                    bootInfo.identityMappedSizeBytes) !=
+                                    currentManagedPhysicalAddressLimit) !=
         PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelMemoryInitializationStatus::FrameAllocatorInitializationFailed;
     }
-    if (!ReserveBootCriticalRanges(bootInfo)) {
+    if (!ReserveBootCriticalRanges(bootInfo) || !ReserveFrameStateStorage(frameStateStorageRange)) {
         return KernelMemoryInitializationStatus::ReservationFailed;
+    }
+    if (GetPageTableManager().SetMemoryAccess(PageTableMemoryAccess{
+            .maximumPhysicalAddressExclusive = currentPageTablePhysicalAddressLimit,
+            .physicalMemoryVirtualBase = 0ULL,
+            .allocationMaximumPhysicalAddressExclusive = bootInfo.identityMappedSizeBytes,
+            .invalidateActiveMappings = false,
+        }) != PageTableStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::PageTableMemoryAccessFailed;
     }
     if (GetPageTableManager().Initialize() != PageTableStatus::Succeeded) {
         return KernelMemoryInitializationStatus::PageTableInitializationFailed;
     }
     if (!MapIdentityRange(bootInfo)) {
         return KernelMemoryInitializationStatus::IdentityMappingFailed;
+    }
+    DirectMapStatistics directMapStatistics{};
+    if (!MapDirectMemory(memoryMap, bootInfo.physicalMemoryMapEntryCount, directMapStatistics)) {
+        return KernelMemoryInitializationStatus::DirectMapMappingFailed;
     }
     if (!MapLocalApicRegisters()) {
         return KernelMemoryInitializationStatus::LocalApicMappingFailed;
@@ -378,7 +620,12 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &bootInfo
         !KernelMemoryProtectionEnabled()) {
         return KernelMemoryInitializationStatus::PageTableActivationFailed;
     }
-    if (!ValidateKernelMappings(bootInfo)) {
+    if (GetPageTableManager().SetMemoryAccess(ActivePageTableMemoryAccess()) !=
+        PageTableStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::PageTableMemoryAccessFailed;
+    }
+    directMapActive = true;
+    if (!ValidateKernelMappings(bootInfo, frameStateStorageRange)) {
         return KernelMemoryInitializationStatus::PermissionValidationFailed;
     }
     if (GetKernelHeap().Initialize(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE,
@@ -389,13 +636,31 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &bootInfo
     if (!RunHeapSelfTest()) {
         return KernelMemoryInitializationStatus::HeapSelfTestFailed;
     }
+    uint64_t highMemoryTestPhysicalAddress = 0ULL;
+    if (!RunHighMemorySelfTest(highMemoryTestPhysicalAddress)) {
+        return KernelMemoryInitializationStatus::HighMemorySelfTestFailed;
+    }
 
     const PhysicalFrameAllocatorStatistics frameStatistics = FrameAllocator().Statistics();
+    const uint64_t managedUsableMemoryBytes =
+        (frameStatistics.freeFrameCount + frameStatistics.allocatedFrameCount +
+         frameStatistics.reservedFrameCount) *
+        OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
     currentKernelMemoryStatistics = KernelMemoryStatistics{
         .memoryMapEntryCount = bootInfo.physicalMemoryMapEntryCount,
         .describedAddressBytes = memorySummary.totalBytes,
         .reportedUsableMemoryBytes = memorySummary.usableBytes,
-        .managedUsableMemoryBytes = memorySummary.managedUsableBytes,
+        .managedUsableMemoryBytes = managedUsableMemoryBytes,
+        .managedPhysicalAddressLimit = currentManagedPhysicalAddressLimit,
+        .physicalAddressWidthBits = physicalAddressWidthBits,
+        .virtualAddressWidthBits = virtualAddressWidthBits,
+        .fiveLevelPagingSupported = fiveLevelPagingSupported,
+        .frameStateStoragePhysicalAddress = frameStateStorageRange.beginAddress,
+        .frameStateStorageSizeBytes = frameStateStorageRange.lengthBytes,
+        .directMapMappedBytes = directMapStatistics.mappedBytes,
+        .directMapLargePageCount = directMapStatistics.largePageCount,
+        .directMapSmallPageCount = directMapStatistics.smallPageCount,
+        .highMemoryTestPhysicalAddress = highMemoryTestPhysicalAddress,
         .freeFrameCount = frameStatistics.freeFrameCount,
         .allocatedFrameCount = frameStatistics.allocatedFrameCount,
         .reservedFrameCount = frameStatistics.reservedFrameCount,
@@ -413,13 +678,21 @@ PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept 
     return FrameAllocator().Statistics();
 }
 
+uint64_t PhysicalMemoryDirectMapAddress(const uint64_t physicalAddress) noexcept {
+    if (!directMapActive || physicalAddress >= currentManagedPhysicalAddressLimit ||
+        physicalAddress > UINT64_MAX - OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE) {
+        return 0ULL;
+    }
+    return OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE + physicalAddress;
+}
+
 KernelHeap &GetKernelHeap() noexcept {
     static KernelHeap heap{};
     return heap;
 }
 
 KernelUserPageStatus CreateUserPageTable(uint64_t &rootPhysicalAddress) noexcept {
-    PageTableManager processPageTable{FrameAllocator()};
+    PageTableManager processPageTable{FrameAllocator(), ActivePageTableMemoryAccess()};
     if (processPageTable.InitializeProcessRoot(GetPageTableManager().RootPhysicalAddress()) !=
         PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageTableCreationFailed;
@@ -434,7 +707,8 @@ KernelUserPageStatus DestroyUserPageTable(const uint64_t rootPhysicalAddress) no
         rootPhysicalAddress == ReadPageTableRoot()) {
         return KernelUserPageStatus::InvalidPageTableRoot;
     }
-    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress};
+    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress,
+                                      ActivePageTableMemoryAccess()};
     return processPageTable.ReleaseProcessRoot() == PageTableStatus::Succeeded
                ? KernelUserPageStatus::Succeeded
                : KernelUserPageStatus::PageTableDestructionFailed;
@@ -464,7 +738,8 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t rootPhysicalAddress,
         .userAccessible = true,
         .cacheDisabled = false,
     };
-    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress};
+    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress,
+                                      ActivePageTableMemoryAccess()};
     if (processPageTable.MapPage(virtualAddress, frame.physicalAddress, permissions) !=
         PageTableStatus::Succeeded) {
         static_cast<void>(FrameAllocator().Release(frame));
@@ -483,7 +758,8 @@ KernelUserPageStatus ReleaseUserPage(const uint64_t rootPhysicalAddress,
         !IsUserVirtualAddressRange(virtualAddress, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
-    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress};
+    PageTableManager processPageTable{FrameAllocator(), rootPhysicalAddress,
+                                      ActivePageTableMemoryAccess()};
     PageMapping mapping{};
     if (processPageTable.QueryPage(virtualAddress, mapping) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageNotMapped;
@@ -507,7 +783,8 @@ PageTableStatus QueryAddressSpacePage(const uint64_t rootPhysicalAddress,
     if (rootPhysicalAddress == 0ULL || (rootPhysicalAddress & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return PageTableStatus::NotInitialized;
     }
-    PageTableManager pageTable{FrameAllocator(), rootPhysicalAddress};
+    PageTableManager pageTable{FrameAllocator(), rootPhysicalAddress,
+                               ActivePageTableMemoryAccess()};
     return pageTable.QueryPage(virtualAddress, mapping);
 }
 

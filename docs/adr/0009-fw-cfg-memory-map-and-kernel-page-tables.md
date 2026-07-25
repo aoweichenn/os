@@ -1,6 +1,7 @@
 # ADR 0009：fw_cfg 物理内存图与内核自建页表
 
-- 状态：接受
+- 状态：接受；其中固定低 64 MiB 管理上限与缺少正式物理直映的部分已由
+  [ADR 0017](0017-linux-style-physical-memory-and-direct-map.md) 取代
 - 日期：2026-07-24
 - 关联阶段：v0.6 内存管理
 

@@ -79,17 +79,28 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER,
     OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
     OS_QEMU_KERNEL_MEMORY_MANAGED_MARKER,
+    OS_QEMU_KERNEL_MEMORY_MANAGED_LIMIT_MARKER,
     OS_QEMU_KERNEL_MEMORY_DESCRIBED_MARKER,
     OS_QEMU_KERNEL_MEMORY_MAP_ENTRIES_MARKER,
     OS_QEMU_KERNEL_MEMORY_MAP_VALID_MARKER,
     OS_QEMU_KERNEL_MEMORY_PERMISSIONS_VALID_MARKER,
     OS_QEMU_KERNEL_MEMORY_USABLE_MARKER,
+    OS_QEMU_KERNEL_PHYSICAL_ADDRESS_WIDTH_MARKER,
+    OS_QEMU_KERNEL_VIRTUAL_ADDRESS_WIDTH_MARKER,
+    OS_QEMU_KERNEL_FRAME_STATE_STORAGE_ADDRESS_MARKER,
+    OS_QEMU_KERNEL_FRAME_STATE_STORAGE_SIZE_MARKER,
     OS_QEMU_KERNEL_FRAME_ALLOCATOR_READY_MARKER,
     OS_QEMU_KERNEL_FREE_FRAMES_MARKER,
     OS_QEMU_KERNEL_ALLOCATED_FRAMES_MARKER,
     OS_QEMU_KERNEL_RESERVED_FRAMES_MARKER,
     OS_QEMU_KERNEL_PAGING_READY_MARKER,
     OS_QEMU_KERNEL_PAGING_ROOT_MARKER,
+    OS_QEMU_KERNEL_DIRECT_MAP_BASE_MARKER,
+    OS_QEMU_KERNEL_DIRECT_MAP_MAPPED_BYTES_MARKER,
+    OS_QEMU_KERNEL_DIRECT_MAP_LARGE_PAGE_COUNT_MARKER,
+    OS_QEMU_KERNEL_DIRECT_MAP_SMALL_PAGE_COUNT_MARKER,
+    OS_QEMU_KERNEL_HIGH_MEMORY_TEST_ADDRESS_MARKER,
+    OS_QEMU_KERNEL_HIGH_MEMORY_VALIDATION_COMPLETE_MARKER,
     OS_QEMU_KERNEL_HEAP_READY_MARKER,
     OS_QEMU_KERNEL_HEAP_CAPACITY_MARKER,
     OS_QEMU_KERNEL_HEAP_SELF_TEST_PASSED_MARKER,
@@ -209,6 +220,8 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_WRITE_PROTECTION_ADDRESS_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_ERROR_CODE_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_INJECTION_MARKER,
+    OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
+    OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
     runQemuFileSystemPersistence,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
@@ -221,6 +234,18 @@ from os_tools.user_elf import auditUserElf
 
 OS_TOOL_PROJECT_ROOT = Path(__file__).resolve().parent.parent
 OS_TOOL_MINIMUM_PYTHON_VERSION = (3, 11)
+OS_TOOL_QEMU_MEBIBYTE_SIZE_BYTES = 1024 * 1024
+OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES = (
+    OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES *
+    OS_TOOL_QEMU_MEBIBYTE_SIZE_BYTES
+)
+OS_TOOL_QEMU_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS = 36
+OS_TOOL_QEMU_MINIMUM_VIRTUAL_ADDRESS_WIDTH_BITS = 48
+OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES = 4 * 1024 * 1024
+OS_TOOL_QEMU_MINIMUM_LARGE_PAGE_COUNT = 1
+OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS = (
+    4 * 1024 * 1024 * 1024 + 4 * 1024
+)
 
 
 class SubparserCollection(Protocol):
@@ -344,12 +369,23 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_MEMORY_DESCRIBED_MARKER,
         OS_QEMU_KERNEL_MEMORY_USABLE_MARKER,
         OS_QEMU_KERNEL_MEMORY_MANAGED_MARKER,
+        OS_QEMU_KERNEL_MEMORY_MANAGED_LIMIT_MARKER,
+        OS_QEMU_KERNEL_PHYSICAL_ADDRESS_WIDTH_MARKER,
+        OS_QEMU_KERNEL_VIRTUAL_ADDRESS_WIDTH_MARKER,
+        OS_QEMU_KERNEL_FRAME_STATE_STORAGE_ADDRESS_MARKER,
+        OS_QEMU_KERNEL_FRAME_STATE_STORAGE_SIZE_MARKER,
         OS_QEMU_KERNEL_FRAME_ALLOCATOR_READY_MARKER,
         OS_QEMU_KERNEL_FREE_FRAMES_MARKER,
         OS_QEMU_KERNEL_ALLOCATED_FRAMES_MARKER,
         OS_QEMU_KERNEL_RESERVED_FRAMES_MARKER,
         OS_QEMU_KERNEL_PAGING_READY_MARKER,
         OS_QEMU_KERNEL_PAGING_ROOT_MARKER,
+        OS_QEMU_KERNEL_DIRECT_MAP_BASE_MARKER,
+        OS_QEMU_KERNEL_DIRECT_MAP_MAPPED_BYTES_MARKER,
+        OS_QEMU_KERNEL_DIRECT_MAP_LARGE_PAGE_COUNT_MARKER,
+        OS_QEMU_KERNEL_DIRECT_MAP_SMALL_PAGE_COUNT_MARKER,
+        OS_QEMU_KERNEL_HIGH_MEMORY_TEST_ADDRESS_MARKER,
+        OS_QEMU_KERNEL_HIGH_MEMORY_VALIDATION_COMPLETE_MARKER,
         OS_QEMU_KERNEL_MEMORY_PERMISSIONS_VALID_MARKER,
         OS_QEMU_KERNEL_HEAP_READY_MARKER,
         OS_QEMU_KERNEL_HEAP_CAPACITY_MARKER,
@@ -574,6 +610,48 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_PROCESS_RUN_TICKS_MARKER, 1),
             (OS_QEMU_KERNEL_PROCESS_DISPATCH_COUNT_MARKER, 1),
         )
+        if (
+            arguments.memoryMebibytes >=
+            OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES
+        ):
+            minimumHexMarkerValues += (
+                (
+                    OS_QEMU_KERNEL_MEMORY_USABLE_MARKER,
+                    OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES,
+                ),
+                (
+                    OS_QEMU_KERNEL_MEMORY_MANAGED_MARKER,
+                    OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES,
+                ),
+                (
+                    OS_QEMU_KERNEL_MEMORY_MANAGED_LIMIT_MARKER,
+                    OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES,
+                ),
+                (
+                    OS_QEMU_KERNEL_PHYSICAL_ADDRESS_WIDTH_MARKER,
+                    OS_TOOL_QEMU_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS,
+                ),
+                (
+                    OS_QEMU_KERNEL_VIRTUAL_ADDRESS_WIDTH_MARKER,
+                    OS_TOOL_QEMU_MINIMUM_VIRTUAL_ADDRESS_WIDTH_BITS,
+                ),
+                (
+                    OS_QEMU_KERNEL_FRAME_STATE_STORAGE_SIZE_MARKER,
+                    OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES,
+                ),
+                (
+                    OS_QEMU_KERNEL_DIRECT_MAP_MAPPED_BYTES_MARKER,
+                    OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES,
+                ),
+                (
+                    OS_QEMU_KERNEL_DIRECT_MAP_LARGE_PAGE_COUNT_MARKER,
+                    OS_TOOL_QEMU_MINIMUM_LARGE_PAGE_COUNT,
+                ),
+                (
+                    OS_QEMU_KERNEL_HIGH_MEMORY_TEST_ADDRESS_MARKER,
+                    OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS,
+                ),
+            )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
         forbiddenMarkers = (
@@ -873,6 +951,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         keyboardReadyMarker=OS_QEMU_USER_SHELL_READY_MARKER,
         expectedMarkerCounts=expectedMarkerCounts,
         minimumHexMarkerValues=minimumHexMarkerValues,
+        memoryMebibytes=arguments.memoryMebibytes,
     )
 
 
@@ -1037,6 +1116,18 @@ def createArgumentParser() -> argparse.ArgumentParser:
     qemuFirmwareParser.add_argument("diskImagePath", type=Path)
     qemuFirmwareParser.add_argument("expectedFirmwareSizeBytes", type=int)
     qemuFirmwareParser.add_argument("expectedDiskSizeBytes", type=int)
+    qemuFirmwareParser.add_argument(
+        "--memory-mebibytes",
+        type=int,
+        default=OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
+        dest="memoryMebibytes",
+        help=(
+            "QEMU 客户机 RAM 容量；兼容基线为 "
+            f"{OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES} MiB，"
+            "主规格为 "
+            f"{OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES} MiB"
+        ),
+    )
     qemuFirmwareParser.add_argument(
         "--expected-outcome",
         choices=(
