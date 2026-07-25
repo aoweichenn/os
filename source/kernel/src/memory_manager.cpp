@@ -36,6 +36,13 @@ constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_PATTERN = 0x48494
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_PATTERN = 0x4449524543544D50ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_VALUE_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_VALUE_INDEX = 1ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_BUDDY_SELF_TEST_ORDER = 3ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_BUDDY_SELF_TEST_FRAME_COUNT =
+    1ULL << OS_KERNEL_MEMORY_BUDDY_SELF_TEST_ORDER;
+constexpr uint64_t OS_KERNEL_MEMORY_BUDDY_SELF_TEST_SIZE_BYTES =
+    OS_KERNEL_MEMORY_BUDDY_SELF_TEST_FRAME_COUNT * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_KERNEL_MEMORY_BUDDY_SELF_TEST_FIRST_PATTERN = 0x4255444459464952ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_BUDDY_SELF_TEST_LAST_PATTERN = 0x42554444594C4153ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_MINIMUM_PAGE_TABLE_PHYSICAL_LIMIT =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 
@@ -169,11 +176,11 @@ extern "C" uint8_t os_kernel_writable_data_end[];
                PhysicalFrameAllocatorStatus::Succeeded;
 }
 
-[[nodiscard]] bool FindFrameStateStorageRange(const PhysicalMemoryMapEntry *memory_map,
-                                              const uint64_t memory_map_entry_count,
-                                              const BootInfo &boot_info,
-                                              const uint64_t required_storage_size_bytes,
-                                              PhysicalMemoryRange &storage_range) noexcept {
+[[nodiscard]] bool FindFrameAllocatorMetadataRange(const PhysicalMemoryMapEntry *memory_map,
+                                                   const uint64_t memory_map_entry_count,
+                                                   const BootInfo &boot_info,
+                                                   const uint64_t required_storage_size_bytes,
+                                                   PhysicalMemoryRange &storage_range) noexcept {
     const uint64_t kernel_begin = AddressOf(os_kernel_image_start);
     const uint64_t kernel_end = AddressOf(os_kernel_image_end);
     const uint64_t early_stack_begin =
@@ -201,7 +208,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
                storage_range) == PhysicalMemoryRangeSearchStatus::Succeeded;
 }
 
-[[nodiscard]] bool ReserveFrameStateStorage(const PhysicalMemoryRange storage_range) noexcept {
+[[nodiscard]] bool ReserveFrameAllocatorMetadata(const PhysicalMemoryRange storage_range) noexcept {
     return FrameAllocator().ReserveRange(storage_range.begin_address, storage_range.length_bytes) ==
            PhysicalFrameAllocatorStatus::Succeeded;
 }
@@ -404,7 +411,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
 
 [[nodiscard]] bool
 ValidateKernelMappings(const BootInfo &boot_info,
-                       const PhysicalMemoryRange frame_state_storage_range) noexcept {
+                       const PhysicalMemoryRange frame_allocator_metadata_range) noexcept {
     const PagePermissions text_permissions{
         .writable = false,
         .executable = true,
@@ -434,8 +441,8 @@ ValidateKernelMappings(const BootInfo &boot_info,
         !ValidatePermissions(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS,
                              read_only_permissions) ||
         !ValidateMapping(OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE +
-                             frame_state_storage_range.begin_address,
-                         frame_state_storage_range.begin_address, writable_permissions)) {
+                             frame_allocator_metadata_range.begin_address,
+                         frame_allocator_metadata_range.begin_address, writable_permissions)) {
         return false;
     }
     if (ProcessorSupportsLocalApic()) {
@@ -548,6 +555,70 @@ ValidateKernelMappings(const BootInfo &boot_info,
     const PhysicalFrameAllocatorStatus release_status = FrameAllocator().Release(frame);
     return patterns_valid && release_status == PhysicalFrameAllocatorStatus::Succeeded;
 }
+
+[[nodiscard]] bool RunBuddySelfTest(uint64_t &test_physical_address) noexcept {
+    test_physical_address = 0ULL;
+    PhysicalFrameAllocator &allocator = FrameAllocator();
+    const PhysicalFrameAllocatorStatistics frames_before_test = allocator.Statistics();
+    const PhysicalFrameBuddyStatistics buddy_before_test = allocator.BuddyStatistics();
+    const uint64_t minimum_address =
+        current_managed_physical_address_limit > OS_KERNEL_MEMORY_HIGH_FRAME_MINIMUM_ADDRESS +
+                                                     OS_KERNEL_MEMORY_BUDDY_SELF_TEST_SIZE_BYTES
+            ? OS_KERNEL_MEMORY_HIGH_FRAME_MINIMUM_ADDRESS
+            : 0ULL;
+    PhysicalFrameBlock block{};
+    if (allocator.AllocateBlockInRange(OS_KERNEL_MEMORY_BUDDY_SELF_TEST_ORDER, minimum_address,
+                                       current_managed_physical_address_limit,
+                                       block) != PhysicalFrameAllocatorStatus::Succeeded) {
+        return false;
+    }
+
+    const uint64_t last_frame_physical_address = block.physical_address +
+                                                 OS_KERNEL_MEMORY_BUDDY_SELF_TEST_SIZE_BYTES -
+                                                 OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    const uint64_t first_direct_map_address =
+        PhysicalMemoryDirectMapAddress(block.physical_address);
+    const uint64_t last_direct_map_address =
+        PhysicalMemoryDirectMapAddress(last_frame_physical_address);
+    PageMapping first_mapping{};
+    PageMapping last_mapping{};
+    if (first_direct_map_address == 0ULL || last_direct_map_address == 0ULL ||
+        GetPageTableManager().QueryPage(first_direct_map_address, first_mapping) !=
+            PageTableStatus::Succeeded ||
+        GetPageTableManager().QueryPage(last_direct_map_address, last_mapping) !=
+            PageTableStatus::Succeeded ||
+        first_mapping.physical_address != block.physical_address ||
+        last_mapping.physical_address != last_frame_physical_address ||
+        !first_mapping.permissions.writable || first_mapping.permissions.executable ||
+        !last_mapping.permissions.writable || last_mapping.permissions.executable) {
+        static_cast<void>(allocator.ReleaseBlock(block));
+        return false;
+    }
+
+    volatile uint64_t *const first_value =
+        reinterpret_cast<volatile uint64_t *>(first_direct_map_address);
+    volatile uint64_t *const last_value =
+        reinterpret_cast<volatile uint64_t *>(last_direct_map_address);
+    *first_value = OS_KERNEL_MEMORY_BUDDY_SELF_TEST_FIRST_PATTERN;
+    *last_value = OS_KERNEL_MEMORY_BUDDY_SELF_TEST_LAST_PATTERN;
+    const bool patterns_valid = *first_value == OS_KERNEL_MEMORY_BUDDY_SELF_TEST_FIRST_PATTERN &&
+                                *last_value == OS_KERNEL_MEMORY_BUDDY_SELF_TEST_LAST_PATTERN;
+    test_physical_address = block.physical_address;
+    if (allocator.ReleaseBlock(block) != PhysicalFrameAllocatorStatus::Succeeded) {
+        return false;
+    }
+    const PhysicalFrameAllocatorStatistics frames_after_test = allocator.Statistics();
+    const PhysicalFrameBuddyStatistics buddy_after_test = allocator.BuddyStatistics();
+    return patterns_valid &&
+           frames_after_test.free_frame_count == frames_before_test.free_frame_count &&
+           frames_after_test.allocated_frame_count == frames_before_test.allocated_frame_count &&
+           frames_after_test.reserved_frame_count == frames_before_test.reserved_frame_count &&
+           buddy_after_test.active_block_count == buddy_before_test.active_block_count &&
+           buddy_after_test.successful_allocation_count ==
+               buddy_before_test.successful_allocation_count + 1ULL &&
+           buddy_after_test.release_count == buddy_before_test.release_count + 1ULL &&
+           allocator.ValidateBuddy() == PhysicalFrameAllocatorStatus::Succeeded;
+}
 }
 
 KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_info) noexcept {
@@ -589,17 +660,40 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         CalculatePhysicalFrameStateStorageSizeBytes(current_managed_physical_address_limit);
     const uint64_t frame_state_storage_size_bytes =
         AlignUpToPage(required_frame_state_storage_size_bytes);
-    PhysicalMemoryRange frame_state_storage_range{};
+    const uint64_t required_buddy_storage_size_bytes =
+        CalculatePhysicalFrameBuddyStorageSizeBytes(current_managed_physical_address_limit);
+    const uint64_t buddy_storage_size_bytes = AlignUpToPage(required_buddy_storage_size_bytes);
     if (required_frame_state_storage_size_bytes == 0ULL || frame_state_storage_size_bytes == 0ULL ||
-        !FindFrameStateStorageRange(memory_map, boot_info.physical_memory_map_entry_count,
-                                    boot_info, frame_state_storage_size_bytes,
-                                    frame_state_storage_range)) {
+        required_buddy_storage_size_bytes == 0ULL || buddy_storage_size_bytes == 0ULL ||
+        frame_state_storage_size_bytes > UINT64_MAX - buddy_storage_size_bytes) {
         return KernelMemoryInitializationStatus::FrameStateStorageUnavailable;
     }
+    const uint64_t frame_allocator_metadata_size_bytes =
+        frame_state_storage_size_bytes + buddy_storage_size_bytes;
+    PhysicalMemoryRange frame_allocator_metadata_range{};
+    if (!FindFrameAllocatorMetadataRange(memory_map, boot_info.physical_memory_map_entry_count,
+                                         boot_info, frame_allocator_metadata_size_bytes,
+                                         frame_allocator_metadata_range)) {
+        return KernelMemoryInitializationStatus::FrameStateStorageUnavailable;
+    }
+    const PhysicalMemoryRange frame_state_storage_range{
+        .begin_address = frame_allocator_metadata_range.begin_address,
+        .length_bytes = frame_state_storage_size_bytes,
+    };
+    const PhysicalMemoryRange buddy_storage_range{
+        .begin_address =
+            frame_allocator_metadata_range.begin_address + frame_state_storage_size_bytes,
+        .length_bytes = buddy_storage_size_bytes,
+    };
     if (FrameAllocator().ConfigureStateStorage(
             reinterpret_cast<uint8_t *>(frame_state_storage_range.begin_address),
             frame_state_storage_range.length_bytes) != PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelMemoryInitializationStatus::FrameAllocatorConfigurationFailed;
+    }
+    if (FrameAllocator().ConfigureBuddyStorage(
+            reinterpret_cast<uint8_t *>(buddy_storage_range.begin_address),
+            buddy_storage_range.length_bytes) != PhysicalFrameAllocatorStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::BuddyAllocatorConfigurationFailed;
     }
     if (FrameAllocator().Initialize(memory_map, boot_info.physical_memory_map_entry_count,
                                     current_managed_physical_address_limit) !=
@@ -607,8 +701,11 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         return KernelMemoryInitializationStatus::FrameAllocatorInitializationFailed;
     }
     if (!ReserveBootCriticalRanges(boot_info) ||
-        !ReserveFrameStateStorage(frame_state_storage_range)) {
+        !ReserveFrameAllocatorMetadata(frame_allocator_metadata_range)) {
         return KernelMemoryInitializationStatus::ReservationFailed;
+    }
+    if (FrameAllocator().InitializeBuddy() != PhysicalFrameAllocatorStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::BuddyAllocatorInitializationFailed;
     }
     if (GetPageTableManager().SetMemoryAccess(PageTableMemoryAccess{
             .maximum_physical_address_exclusive = current_page_table_physical_address_limit,
@@ -651,7 +748,7 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         return KernelMemoryInitializationStatus::PageTableMemoryAccessFailed;
     }
     direct_map_active = true;
-    if (!ValidateKernelMappings(boot_info, frame_state_storage_range)) {
+    if (!ValidateKernelMappings(boot_info, frame_allocator_metadata_range)) {
         return KernelMemoryInitializationStatus::PermissionValidationFailed;
     }
     if (GetKernelHeap().Initialize(OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE,
@@ -666,8 +763,13 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
     if (!RunHighMemorySelfTest(high_memory_test_physical_address)) {
         return KernelMemoryInitializationStatus::HighMemorySelfTestFailed;
     }
+    uint64_t buddy_self_test_physical_address = 0ULL;
+    if (!RunBuddySelfTest(buddy_self_test_physical_address)) {
+        return KernelMemoryInitializationStatus::BuddySelfTestFailed;
+    }
 
     const PhysicalFrameAllocatorStatistics frame_statistics = FrameAllocator().Statistics();
+    const PhysicalFrameBuddyStatistics buddy_statistics = FrameAllocator().BuddyStatistics();
     const uint64_t managed_usable_memory_bytes =
         (frame_statistics.free_frame_count + frame_statistics.allocated_frame_count +
          frame_statistics.reserved_frame_count) *
@@ -684,6 +786,18 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         .five_level_paging_supported = five_level_paging_supported,
         .frame_state_storage_physical_address = frame_state_storage_range.begin_address,
         .frame_state_storage_size_bytes = frame_state_storage_range.length_bytes,
+        .buddy_storage_physical_address = buddy_storage_range.begin_address,
+        .buddy_storage_size_bytes = buddy_storage_range.length_bytes,
+        .buddy_maximum_order = buddy_statistics.maximum_order,
+        .buddy_free_block_count = buddy_statistics.free_block_count,
+        .buddy_active_block_count = buddy_statistics.active_block_count,
+        .buddy_successful_allocation_count = buddy_statistics.successful_allocation_count,
+        .buddy_release_count = buddy_statistics.release_count,
+        .buddy_split_count = buddy_statistics.split_count,
+        .buddy_merge_count = buddy_statistics.merge_count,
+        .buddy_largest_free_order = buddy_statistics.largest_free_order,
+        .buddy_self_test_physical_address = buddy_self_test_physical_address,
+        .buddy_self_test_order = OS_KERNEL_MEMORY_BUDDY_SELF_TEST_ORDER,
         .direct_map_mapped_bytes = direct_map_statistics.mapped_bytes,
         .direct_map_large_page_count = direct_map_statistics.large_page_count,
         .direct_map_small_page_count = direct_map_statistics.small_page_count,

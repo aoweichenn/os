@@ -167,6 +167,11 @@ os_add_kernel_memory_test(
     "unit"
 )
 os_add_kernel_memory_test(
+    os_kernel_buddy_frame_allocator_unit_tests
+    unit/kernel/buddy_frame_allocator_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
     os_kernel_heap_and_page_layout_unit_tests
     unit/kernel/heap_and_page_layout_test.cpp
     "unit"
@@ -182,6 +187,11 @@ os_add_kernel_memory_test(
     "integration"
 )
 os_add_kernel_memory_test(
+    os_kernel_buddy_frame_allocator_lifecycle_integration_tests
+    integration/boot/buddy_frame_allocator_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_memory_test(
     os_kernel_heap_lifecycle_integration_tests
     integration/boot/kernel_heap_lifecycle_test.cpp
     "integration"
@@ -189,6 +199,11 @@ os_add_kernel_memory_test(
 os_add_kernel_memory_test(
     os_kernel_memory_management_randomized_tests
     randomized/kernel/memory_management_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_memory_test(
+    os_kernel_buddy_frame_allocator_randomized_tests
+    randomized/kernel/buddy_frame_allocator_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_memory_test(

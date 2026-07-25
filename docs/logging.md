@@ -67,6 +67,34 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 高内存地址为零，表示策略检查完成但容量不足以执行 4 GiB 以上读写；64 GiB
 主规格必须报告非零且不低于 `0x0000000100001000` 的地址。
 
+buddy 同样只在启动事务和目标自检都提交后输出一次快照：
+
+```text
+[OS][KERNEL] BUDDY_STORAGE_ADDRESS=0x...
+[OS][KERNEL] BUDDY_STORAGE_BYTES=0x...
+[OS][KERNEL] BUDDY_ALLOCATOR_READY
+[OS][KERNEL] BUDDY_MAX_ORDER=0x...
+[OS][KERNEL] BUDDY_FREE_BLOCKS=0x...
+[OS][KERNEL] BUDDY_ACTIVE_BLOCKS=0x...
+[OS][KERNEL] BUDDY_SUCCESSFUL_ALLOCATIONS=0x...
+[OS][KERNEL] BUDDY_RELEASES=0x...
+[OS][KERNEL] BUDDY_SPLITS=0x...
+[OS][KERNEL] BUDDY_MERGES=0x...
+[OS][KERNEL] BUDDY_LARGEST_FREE_ORDER=0x...
+[OS][KERNEL] BUDDY_SELF_TEST_ADDRESS=0x...
+[OS][KERNEL] BUDDY_SELF_TEST_ORDER=0x0000000000000003
+[OS][KERNEL] BUDDY_SELF_TEST_PASSED
+```
+
+`BUDDY_ACTIVE_BLOCKS` 包括仍被内核页表、heap 后备和固定映射持有的 order 0
+页，正常情况下不是零。`BUDDY_SELF_TEST_PASSED` 的含义是 order 3 自检相对
+进入前的活动块与页统计恢复基线，不是“整个内核不持有物理页”。64 GiB 主规格
+额外要求存储至少 8 MiB、最大阶至少 24、自检地址高于 4 GiB。
+
+这些统计不进入热路径日志。申请、逐阶分裂、释放和逐阶合并只累计计数；
+`ValidateBuddy` 结果由单一自检里程碑表示。这样既能区分“从未发生拆分”和
+“生命周期闭合”，又不会让页表建立或进程退出刷屏。
+
 ## v0.11 验收（历史基线）
 
 以下日志记录 v0.11 完成时的正常启动边界，保留用于历史回归。v1.0 的当前
@@ -199,7 +227,8 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 内存日志采用“一个阶段边界 + 少量汇总值”，不逐页打印：
 
 - `MEMORY_MAP_VALID` 后只打印条目数、描述字节、可用字节和本阶段管理字节。
-- `FRAME_ALLOCATOR_READY` 后只打印 free、allocated、reserved 三类总数。
+- `FRAME_ALLOCATOR_READY` 后打印 free、allocated、reserved 三类页总数；
+  `BUDDY_ALLOCATOR_READY` 后只追加一次块级快照和自检结果，不逐次记录操作。
 - `PAGING_READY` 只附带一个根物理地址，页级权限由
   `MEMORY_PERMISSIONS_VALID` 汇总。
 - `HEAP_READY` 后只打印容量、自检结束活动数、峰值和最大连续空闲负载；

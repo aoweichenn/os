@@ -27,6 +27,18 @@ struct KernelMemoryStatistics final {
     uint64_t five_level_paging_supported;
     uint64_t frame_state_storage_physical_address;
     uint64_t frame_state_storage_size_bytes;
+    uint64_t buddy_storage_physical_address;
+    uint64_t buddy_storage_size_bytes;
+    uint64_t buddy_maximum_order;
+    uint64_t buddy_free_block_count;
+    uint64_t buddy_active_block_count;
+    uint64_t buddy_successful_allocation_count;
+    uint64_t buddy_release_count;
+    uint64_t buddy_split_count;
+    uint64_t buddy_merge_count;
+    uint64_t buddy_largest_free_order;
+    uint64_t buddy_self_test_physical_address;
+    uint64_t buddy_self_test_order;
     uint64_t direct_map_mapped_bytes;
     uint64_t direct_map_large_page_count;
     uint64_t direct_map_small_page_count;
@@ -52,6 +64,8 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     FrameStateStorageUnavailable,
     FrameAllocatorConfigurationFailed,
     FrameAllocatorInitializationFailed,
+    BuddyAllocatorConfigurationFailed,
+    BuddyAllocatorInitializationFailed,
     ReservationFailed,
     PageTableInitializationFailed,
     IdentityMappingFailed,
@@ -65,6 +79,7 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     HeapInitializationFailed,
     HeapSelfTestFailed,
     HighMemorySelfTestFailed,
+    BuddySelfTestFailed,
     LocalApicMappingFailed,
 };
 

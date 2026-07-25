@@ -50,6 +50,28 @@ constexpr char OS_KERNEL_MAIN_FRAME_STATE_STORAGE_ADDRESS_PREFIX[] =
     "[OS][KERNEL] FRAME_STATE_STORAGE_ADDRESS=";
 constexpr char OS_KERNEL_MAIN_FRAME_STATE_STORAGE_SIZE_PREFIX[] =
     "[OS][KERNEL] FRAME_STATE_STORAGE_BYTES=";
+constexpr char OS_KERNEL_MAIN_BUDDY_STORAGE_ADDRESS_PREFIX[] =
+    "[OS][KERNEL] BUDDY_STORAGE_ADDRESS=";
+constexpr char OS_KERNEL_MAIN_BUDDY_STORAGE_SIZE_PREFIX[] = "[OS][KERNEL] BUDDY_STORAGE_BYTES=";
+constexpr char OS_KERNEL_MAIN_BUDDY_ALLOCATOR_READY_MESSAGE[] =
+    "[OS][KERNEL] BUDDY_ALLOCATOR_READY\r\n";
+constexpr char OS_KERNEL_MAIN_BUDDY_MAXIMUM_ORDER_PREFIX[] = "[OS][KERNEL] BUDDY_MAX_ORDER=";
+constexpr char OS_KERNEL_MAIN_BUDDY_FREE_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] BUDDY_FREE_BLOCKS=";
+constexpr char OS_KERNEL_MAIN_BUDDY_ACTIVE_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] BUDDY_ACTIVE_BLOCKS=";
+constexpr char OS_KERNEL_MAIN_BUDDY_SUCCESSFUL_ALLOCATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] BUDDY_SUCCESSFUL_ALLOCATIONS=";
+constexpr char OS_KERNEL_MAIN_BUDDY_RELEASE_COUNT_PREFIX[] = "[OS][KERNEL] BUDDY_RELEASES=";
+constexpr char OS_KERNEL_MAIN_BUDDY_SPLIT_COUNT_PREFIX[] = "[OS][KERNEL] BUDDY_SPLITS=";
+constexpr char OS_KERNEL_MAIN_BUDDY_MERGE_COUNT_PREFIX[] = "[OS][KERNEL] BUDDY_MERGES=";
+constexpr char OS_KERNEL_MAIN_BUDDY_LARGEST_FREE_ORDER_PREFIX[] =
+    "[OS][KERNEL] BUDDY_LARGEST_FREE_ORDER=";
+constexpr char OS_KERNEL_MAIN_BUDDY_SELF_TEST_ADDRESS_PREFIX[] =
+    "[OS][KERNEL] BUDDY_SELF_TEST_ADDRESS=";
+constexpr char OS_KERNEL_MAIN_BUDDY_SELF_TEST_ORDER_PREFIX[] =
+    "[OS][KERNEL] BUDDY_SELF_TEST_ORDER=";
+constexpr char OS_KERNEL_MAIN_BUDDY_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] BUDDY_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE[] =
     "[OS][KERNEL] FRAME_ALLOCATOR_READY\r\n";
 constexpr char OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX[] = "[OS][KERNEL] FREE_FRAMES=";
@@ -335,6 +357,10 @@ void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
                          statistics.frame_state_storage_physical_address);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_SIZE_PREFIX,
                          statistics.frame_state_storage_size_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_STORAGE_ADDRESS_PREFIX,
+                         statistics.buddy_storage_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_STORAGE_SIZE_PREFIX,
+                         statistics.buddy_storage_size_bytes);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX,
                          statistics.free_frame_count);
@@ -342,6 +368,28 @@ void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
                          statistics.allocated_frame_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX,
                          statistics.reserved_frame_count);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BUDDY_ALLOCATOR_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_MAXIMUM_ORDER_PREFIX,
+                         statistics.buddy_maximum_order);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_FREE_BLOCK_COUNT_PREFIX,
+                         statistics.buddy_free_block_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_ACTIVE_BLOCK_COUNT_PREFIX,
+                         statistics.buddy_active_block_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
+                         statistics.buddy_successful_allocation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_RELEASE_COUNT_PREFIX,
+                         statistics.buddy_release_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SPLIT_COUNT_PREFIX,
+                         statistics.buddy_split_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_MERGE_COUNT_PREFIX,
+                         statistics.buddy_merge_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_LARGEST_FREE_ORDER_PREFIX,
+                         statistics.buddy_largest_free_order);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SELF_TEST_ADDRESS_PREFIX,
+                         statistics.buddy_self_test_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SELF_TEST_ORDER_PREFIX,
+                         statistics.buddy_self_test_order);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BUDDY_SELF_TEST_PASSED_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
                          statistics.page_table_root_physical_address);

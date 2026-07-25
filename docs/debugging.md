@@ -338,6 +338,38 @@ PANIC
 确实为 1，以及上级和叶级 RW 位是否错误开放。只读取软件页表项不能替代这条
 处理器执行测试。
 
+### Buddy 初始化或连续块自检失败
+
+若没有 `BUDDY_ALLOCATOR_READY`，先读取
+`MEMORY_INITIALIZATION_FAILED=0x...` 并对照
+`KernelMemoryInitializationStatus`：
+
+1. `BuddyAllocatorConfigurationFailed` 表示合并元数据区虽然完成选址，但 buddy
+   子区指针或长度没有被分配器接受；
+2. `BuddyAllocatorInitializationFailed` 常见原因是双位图小于按最高 PFN 计算的
+   精确尺寸，或在冻结启动保留前已经产生 legacy allocated 页；
+3. 若 `FRAME_STATE_STORAGE_BYTES` 正常而 `BUDDY_STORAGE_BYTES` 明显小于两倍
+   各阶位图和，检查页对齐、尺寸加法溢出和元数据区间切分；
+4. 初始化前最后一个允许修改所有权的动作必须是整体
+   `ReserveFrameAllocatorMetadata`，初始化后 `ReserveRange` 应明确返回冻结状态。
+
+若已有 `BUDDY_ALLOCATOR_READY` 但没有 `BUDDY_SELF_TEST_PASSED`：
+
+1. 检查 `BUDDY_SELF_TEST_ORDER` 是否为 3，地址是否按 32 KiB 对齐；
+2. 64 GiB 配置的地址必须高于 4 GiB；64 MiB 配置允许位于普通低端 RAM；
+3. 在 direct-map 的首页和末页观察模式 `0x4255444459464952` 与
+   `0x42554444594C4153`，区分“找到连续 PFN”与“映射可真实写入”；
+4. 若写回成功但释放失败，检查 allocated 位图是否在原 order 和原块首置位，
+   不要把块内第二页当成 order 0 页释放；
+5. 若 `ValidateBuddy` 返回 `CorruptedState`，依次检查同块 free/allocated
+   双重置位、祖先/子块重叠、未合并同阶伙伴、块内 2-bit 页状态和加权计数。
+
+`BUDDY_ACTIVE_BLOCKS` 在日志中非零是正常现象，它包含内核仍持有的页表和 heap
+后备页。判断泄漏应比较某段生命周期前后的活动块与页数，而不是要求全局为零。
+64 GiB 下完整校验会扫描最高 PFN 覆盖的位图和页状态，因此
+`[QEMU][T+......ms]` 可显示这一阶段比 64 MiB 明显更长；这不应通过删除校验
+或降低管理容量来掩盖。
+
 ### Guard page 与早期堆
 
 初始栈 guard 位于 `kernel_stack_top - 64 KiB`，每个 IST 存储块的第一页也是

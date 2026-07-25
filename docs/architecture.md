@@ -385,13 +385,16 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 页帧状态用 2 bit 编码：不可用、空闲、已分配、已保留。相较一位位图，它多
 占 4 KiB 状态存储，却能区分“永不可分配”“启动所有权”“动态所有权”，从而
 让重复释放、释放保留页和跨已分配页保留都具有明确失败语义。v0.6 当时只管理
-低 64 MiB；该限制已在 v1.1 的动态物理内存增量中解除。
+低 64 MiB；该限制已在 v1.1 的动态物理内存增量中解除。v1.1 buddy 增量
+继续保留这套逐页所有权，同时用每阶 free/allocated 双位图记录连续块身份；
+旧单页接口统一解释为 order 0，不存在可绕过 buddy 的第二个分配器。
 
-高半区堆是单调早期分配器：支持二的幂对齐和显式失败，不支持释放。该选择用于
-启动期对象，而不是声称已经完成通用内核堆。页表管理器同样暂不回收空的中间
-页表；v0.7 设备初始化可以使用当前堆，通用释放和页表生命周期将在进程地址
-空间出现前补充。设计决策见
-[ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)。
+高半区堆已经从 v0.6 单调模型升级为边界标记、best-fit、双向合并的可回收
+分配器。页表管理器仍暂不回收单次 `UnmapPage` 后出现的空中间页表；该生命
+周期与 KVA、动态内核栈仍属于 v1.1 后续闭环。历史取舍见
+[ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)，当前实现见
+[ADR 0020](adr/0020-reclaimable-kernel-heap.md) 和
+[ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)。
 
 ## v0.7 传统中断与设备闭环
 
@@ -716,6 +719,47 @@ direct-map 使用 32768 个 2 MiB 页，并在 `0x0000000100001000` 或更高地
 完成两组 64 位模式的写入、读回和页帧回收。64 MiB 配置保留为最小兼容回归，
 用于证明高内存自检可以有条件跳过，而通用初始化不会退回固定容量。设计与
 取舍见 [ADR 0017](adr/0017-linux-style-physical-memory-and-direct-map.md)。
+
+## v1.1 双位图 buddy 页帧分配器
+
+direct-map 解决“物理页如何被 C++ 访问”，2-bit 状态解决“每页当前归谁”，
+buddy 解决“连续的 \(2^k\) 页以哪个块身份存在”。三者是相邻但不能混为一层
+的契约。
+
+```text
+E820 + 启动保留
+       ↓
+2-bit / PFN：unavailable | free | allocated | reserved
+       ↓ InitializeBuddy（此后冻结 ReserveRange）
+order 0 free bitmap       allocated bitmap
+order 1 free bitmap       allocated bitmap
+  ...                           ...
+order K free bitmap       allocated bitmap
+       ↓
+Allocate/Release = order 0
+AllocateBlock/ReleaseBlock = order k
+```
+
+order \(k\) 表示 \(2^k\) 个 4 KiB 页，首 PFN 必须按 \(2^k\) 对齐。同阶
+伙伴的块索引是 `index XOR 1`。申请先找能够完整容纳目标的最低源阶，再把
+未选择的一半逐阶放回 free 位图；释放只有在 allocated 位图中存在完全匹配的
+地址和 order 才能提交，然后递归合并仍空闲的唯一伙伴。错阶、错位、重复释放、
+reserved 页和范围溢出分别失败，普通失败不改变输出或统计。
+
+每阶同时保存 free 与 allocated 位图，后者用于拒绝“拿 order 3 返回值按
+order 2 释放”这类部分所有权破坏。对于 \(N\) 个 PFN，两族位图总计小于约
+\(4N\) bit。64 GiB 可用页规模的精确 buddy 数据为 8388612 字节，按页选址
+为 8392704 字节；加逐页 2-bit 状态后，物理分配元数据约 12 MiB。
+
+页状态区和 buddy 区先合并为一个启动元数据事务，在低 64 MiB 可用 RAM 中
+一次性选址和整体保留，然后才初始化页表。正式内核不存在“先由线性分配器拿几页，
+再猜测这些活动页属于几阶”的过渡。完整校验逐阶核对位图尾部、祖先重叠、未合并
+伙伴、块内页状态和加权统计，不申请临时内存。
+
+64 MiB 与 64 GiB QEMU 均申请 order 3 连续块，经 direct-map 在首尾页写回
+模式后释放；主规格还要求块位于 4 GiB 以上、最大 order 至少 24。串口只输出
+一次元数据、块计数、累计分裂/合并和自检结果，不记录每次页操作。详细决策见
+[ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)。
 
 ## v1.1 可回收内核堆
 

@@ -148,6 +148,23 @@ Stage 1 的低 64 MiB 身份映射中搜索连续可用区，跳过低 1 MiB、�
 任意 allocated 帧就整体失败，避免只保留前半段。`AllocateInRange` 允许
 启动期页表限制在身份映射内，也允许高内存自检明确要求 4 GiB 以上页帧。
 
+完成全部启动保留后，同一个 `PhysicalFrameAllocator` 初始化双位图 buddy。
+每一阶分别保存 free 块和 allocated 块首：前者驱动查找、分裂与合并，后者
+记录本次交付的精确 order，因此大块内部页、错误 order 和重复释放不会被误当
+成合法块。原 `Allocate`、`AllocateInRange`、`Release` 统一映射到 order 0，
+页表、heap、用户页和进程地址空间没有旁路状态机。
+
+页状态与 buddy 精确存储先按页对齐，再合并为一个低端启动元数据区整体选址和
+reserved。64 GiB 可用页规模的 buddy 双位图精确需要 8388612 字节；QEMU
+含 3--4 GiB 洞时按实际最高 PFN 计算并略大于该值。buddy 启用后
+`ReserveRange` 冻结，防止只修改 2-bit 状态。`ValidateBuddy` 逐阶检查尾部
+置位、父子重叠、可合并伙伴、块内页状态和计数守恒。
+
+目标自检申请 order 3 的 8 页连续块，经 direct-map 在首尾页分别写入并读回
+64 位模式，释放后核对进入前后的页统计与活动块数，并执行完整校验。64 GiB
+配置要求该块位于 4 GiB 以上；64 MiB 配置使用普通可用区。实现与取舍见
+[ADR 0022](../adr/0022-bitmap-buddy-frame-allocator.md)。
+
 ### 页表与权限
 
 `PageTableManager` 从分配器取得页表帧并清零，按虚拟地址的
@@ -363,6 +380,20 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] FREE_FRAMES=0x...
 [OS][KERNEL] ALLOCATED_FRAMES=0x...
 [OS][KERNEL] RESERVED_FRAMES=0x...
+[OS][KERNEL] BUDDY_STORAGE_ADDRESS=0x...
+[OS][KERNEL] BUDDY_STORAGE_BYTES=0x...
+[OS][KERNEL] BUDDY_ALLOCATOR_READY
+[OS][KERNEL] BUDDY_MAX_ORDER=0x...
+[OS][KERNEL] BUDDY_FREE_BLOCKS=0x...
+[OS][KERNEL] BUDDY_ACTIVE_BLOCKS=0x...
+[OS][KERNEL] BUDDY_SUCCESSFUL_ALLOCATIONS=0x...
+[OS][KERNEL] BUDDY_RELEASES=0x...
+[OS][KERNEL] BUDDY_SPLITS=0x...
+[OS][KERNEL] BUDDY_MERGES=0x...
+[OS][KERNEL] BUDDY_LARGEST_FREE_ORDER=0x...
+[OS][KERNEL] BUDDY_SELF_TEST_ADDRESS=0x...
+[OS][KERNEL] BUDDY_SELF_TEST_ORDER=0x0000000000000003
+[OS][KERNEL] BUDDY_SELF_TEST_PASSED
 [OS][KERNEL] PAGING_READY
 [OS][KERNEL] PAGING_ROOT=0x...
 [OS][KERNEL] MEMORY_PERMISSIONS_VALID
@@ -440,8 +471,9 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
   timer/IPI、I/O APIC、MSI/MSI-X 与 SMP 路由尚未实现。
 - 键盘只保存一个待处理语义事件，ATA 仍是禁用设备 IRQ 的同步单扇区 PIO；
   环形队列、IRQ14、DMA 与通用块请求尚未实现。
-- 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态仍按最高
-  RAM PFN 线性编码，极端稀疏物理地址空间、NUMA 和分段 `vmemmap` 以后扩展。
+- 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态和 buddy
+  位图仍按最高 RAM PFN 线性编码，极端稀疏物理地址空间、NUMA、zone、
+  per-CPU page list 和分段 `vmemmap` 以后扩展。
 - 内核堆已支持释放与合并，但后备区仍固定为 64 KiB，尚无 type cache、
   KVA 按需增长和内存压力回收；页表取消映射也不回收空中间表。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
