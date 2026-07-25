@@ -1,6 +1,7 @@
 #include "os/kernel/kernel_main.hpp"
 
 #include "os/kernel/descriptor_tables.hpp"
+#include "os/kernel/interrupt_runtime.hpp"
 #include "os/kernel/memory_manager.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
@@ -47,6 +48,32 @@ constexpr char OS_KERNEL_MAIN_HEAP_READY_MESSAGE[] = "[OS][KERNEL] HEAP_READY\r\
 constexpr char OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX[] = "[OS][KERNEL] HEAP_CAPACITY_BYTES=";
 constexpr char OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] HEAP_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX[] =
+    "[OS][KERNEL] DEVICE_INITIALIZATION_FAILED=";
+constexpr char OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE[] =
+    "[OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PIC_READY_MESSAGE[] = "[OS][KERNEL] PIC_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PIC_MASK_PREFIX[] = "[OS][KERNEL] PIC_MASK=";
+constexpr char OS_KERNEL_MAIN_PIT_READY_MESSAGE[] = "[OS][KERNEL] PIT_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PIT_DIVISOR_PREFIX[] = "[OS][KERNEL] PIT_DIVISOR=";
+constexpr char OS_KERNEL_MAIN_PIT_FREQUENCY_PREFIX[] = "[OS][KERNEL] PIT_FREQUENCY_HZ=";
+constexpr char OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE[] = "[OS][KERNEL] PS2_KEYBOARD_READY\r\n";
+constexpr char OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE[] = "[OS][KERNEL] ATA_PIO_READY\r\n";
+constexpr char OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE[] =
+    "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE[] = "[OS][KERNEL] INTERRUPTS_ENABLED\r\n";
+constexpr char OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] TIMER_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_TIMER_TICK_COUNT_PREFIX[] = "[OS][KERNEL] TIMER_TICKS=";
+constexpr char OS_KERNEL_MAIN_MONOTONIC_MILLISECONDS_PREFIX[] =
+    "[OS][KERNEL] MONOTONIC_MILLISECONDS=";
+constexpr char OS_KERNEL_MAIN_KEYBOARD_SCAN_CODE_PREFIX[] = "[OS][KERNEL] KEYBOARD_SCANCODE=";
+constexpr char OS_KERNEL_MAIN_KEYBOARD_A_PRESSED_MESSAGE[] =
+    "[OS][KERNEL] KEYBOARD_EVENT=A_PRESSED\r\n";
+constexpr char OS_KERNEL_MAIN_KEYBOARD_SUPPORTED_EVENT_MESSAGE[] =
+    "[OS][KERNEL] KEYBOARD_EVENT=SUPPORTED\r\n";
 constexpr char OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE[] =
     "[OS][KERNEL] FAULT_INJECTION=INVALID_OPCODE\r\n";
 constexpr char OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE[] =
@@ -56,6 +83,8 @@ constexpr char OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE[] =
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
+constexpr uint64_t OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT = 16ULL;
+constexpr uint64_t OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT = 1ULL;
 
 // 非零初值不能用于证明加载器执行了 p_memsz 对应的 BSS 清零。
 uint64_t kernelMainBssProbe;
@@ -147,6 +176,68 @@ void initializeKernelMemorySubsystem(const SerialPort &serialPort,
     writeRequiredMessage(serialPort, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
 }
 
+void initializeKernelDevices(const SerialPort &serialPort) noexcept {
+    const InterruptRuntimeStatus status = initializeInterruptRuntime();
+    if (status != InterruptRuntimeStatus::Succeeded) {
+        writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
+                             static_cast<uint64_t>(status));
+        haltProcessor();
+    }
+
+    InterruptRuntimeStatistics statistics = interruptRuntimeStatistics();
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_PIC_READY_MESSAGE);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIC_MASK_PREFIX, statistics.picMask);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_PIT_READY_MESSAGE);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIT_DIVISOR_PREFIX, statistics.pitDivisor);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_PIT_FREQUENCY_PREFIX,
+                         statistics.pitActualFrequencyHz);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE);
+
+    triggerLegacyPicSpuriousInterrupt();
+    statistics = interruptRuntimeStatistics();
+    if (statistics.spuriousInterruptCount != OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT) {
+        writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
+                             statistics.spuriousInterruptCount);
+        haltProcessor();
+    }
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE);
+
+    enableInterrupts();
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE);
+    do {
+        waitForInterrupt();
+        statistics = interruptRuntimeStatistics();
+    } while (statistics.timerTickCount < OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT);
+
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_TIMER_TICK_COUNT_PREFIX,
+                         statistics.timerTickCount);
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_MONOTONIC_MILLISECONDS_PREFIX,
+                         statistics.monotonicMilliseconds);
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
+}
+
+void writeKeyboardEvent(const SerialPort &serialPort, const KeyboardEvent &event) noexcept {
+    writeRequiredHexLine(serialPort, OS_KERNEL_MAIN_KEYBOARD_SCAN_CODE_PREFIX, event.scanCode);
+    if (event.key == KeyboardKey::A && event.pressed) {
+        writeRequiredMessage(serialPort, OS_KERNEL_MAIN_KEYBOARD_A_PRESSED_MESSAGE);
+        return;
+    }
+    writeRequiredMessage(serialPort, OS_KERNEL_MAIN_KEYBOARD_SUPPORTED_EVENT_MESSAGE);
+}
+
+[[noreturn]] void runKernelEventLoop(const SerialPort &serialPort) noexcept {
+    while (true) {
+        waitForInterrupt();
+        KeyboardEvent event{};
+        if (tryTakeKeyboardEvent(event)) {
+            writeKeyboardEvent(serialPort, event);
+        }
+    }
+}
+
 [[noreturn]] void executeFaultInjection(const SerialPort &serialPort,
                                         const KernelFaultInjection faultInjection) noexcept {
     if (faultInjection == KernelFaultInjection::InvalidOpcode) {
@@ -177,6 +268,8 @@ void initializeKernelMemorySubsystem(const SerialPort &serialPort,
         executeFaultInjection(serialPort, faultInjection);
     }
 
+    initializeKernelDevices(serialPort);
+
     if (!serialPort.tryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
                                     bootInfo->kernelFileSizeBytes) ||
         !serialPort.tryWriteHexLine(OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX,
@@ -184,7 +277,7 @@ void initializeKernelMemorySubsystem(const SerialPort &serialPort,
         haltProcessor();
     }
     writeRequiredMessage(serialPort, OS_KERNEL_MAIN_READY_MESSAGE);
-    haltProcessor();
+    runKernelEventLoop(serialPort);
 }
 
 }

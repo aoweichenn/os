@@ -144,8 +144,8 @@ INT3 → 统一异常帧 → C++20 分发器 → IRETQ
 
 GDT 当前选择子为代码段 `0x08`、数据段 `0x10`、TSS `0x18`。TSS 描述符占用
 GDT 的两个连续 8 字节槽，因为 64 位 TSS 基址无法放进传统单槽描述符。
-IDT 每槽 16 字节，完整表为 4096 字节；未进入 v0.7 的外部中断向量保持
-not-present，防止没有分发策略时误接收设备中断。
+IDT 每槽 16 字节，完整表为 4096 字节；v0.5 时外部中断向量保持
+not-present，直到 v0.7 建立控制器确认协议后才开放 32..47。
 
 异常入口分成硬件、汇编和 C++ 三层：
 
@@ -222,6 +222,52 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 空间出现前补充。设计决策见
 [ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)。
 
+## v0.7 传统中断与设备闭环
+
+QEMU `pc` 同时包含 8259A、I/O APIC 和本地 APIC。没有外部 BIOS 时，内核
+不能假定复位后的 APIC 已替 8259A 建立虚拟线模式。设备启动先清除并回读
+`IA32_APIC_BASE[11]`，让传统 INTR 路径成为显式契约，再初始化两片 PIC：
+
+```text
+LAPIC global enable = 0
+       ↓
+8259A master 0x20/0x21 ──IRQ2 级联── slave 0xA0/0xA1
+       ↓ 重映射
+IRQ0..7 → IDT 32..39，IRQ8..15 → IDT 40..47
+       ↓
+每向量 NASM 桩 → 硬件 IRQ 公共入口 → C++ InterruptRuntime
+       ↓
+设备最小处理 → PIC ISR/EOI → IRETQ
+```
+
+异常与 IRQ 使用相同的 160 字节寄存器帧形状，但公共入口和 C++ 分发器分开：
+异常决定恢复或 panic，IRQ 决定设备处理与 EOI。这样不会把同步异常错误码和
+异步控制器确认混为一套策略。
+
+设备初始化保持“先配置、后开放”的单向状态：
+
+```text
+PIC 全屏蔽
+  ├─ PIT channel 0：mode 2，divisor 0x04A9，约 1000 Hz
+  ├─ i8042：关闭端口、清输出、更新配置、开放第一端口、F4/FA
+  └─ ATA primary master：nIEN + LBA28 PIO 重读 LBA 0
+       ↓ 全部成功
+PIC mask = 0xFFFC（仅 IRQ0、IRQ1）
+       ↓ 软件 INT 0x27 验证虚假 IRQ7
+STI → HLT → IRQ0/IRQ1
+```
+
+IRQ0 只递增 64 位 tick，按 PIT 实际除数换算单调毫秒。IRQ1 从数据端口读取
+一个字节，集合 1 解码器处理 make、break 与 `E0` 前缀，语义事件留到中断
+返回后的事件循环记录。ATA 暂不开放 IRQ14，保持同步 PIO；它的目标是证明
+内核独立拥有设备协议，不是提前宣称完成异步块层。
+
+QEMU 系统测试启动同一生产镜像，等待 `READY` 后通过 QMP 向虚拟键盘前端
+发送 `A` 键。QEMU 只产生硬件输入；i8042、PIC、IDT、汇编桩、解码和日志均
+由来宾代码完成。设计理由见
+[ADR 0010](adr/0010-legacy-interrupt-routing-and-device-bootstrap.md)，模块
+契约见 [Interrupt 与 Devices 模块](modules/devices.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -277,39 +323,53 @@ source/kernel/
 ├── CMakeLists.txt
 ├── include/os/kernel/
 │   ├── boot_info.hpp
+│   ├── ata_pio.hpp
+│   ├── device_model.hpp
 │   ├── descriptor_layout.hpp
 │   ├── descriptor_tables.hpp
 │   ├── entry.hpp
 │   ├── exception_frame.hpp
 │   ├── exceptions.hpp
+│   ├── interrupt_runtime.hpp
 │   ├── kernel_heap.hpp
 │   ├── kernel_main.hpp
 │   ├── memory_manager.hpp
+│   ├── legacy_pic.hpp
 │   ├── page_table.hpp
 │   ├── panic.hpp
 │   ├── physical_frame_allocator.hpp
 │   ├── physical_memory_map.hpp
+│   ├── port_io.hpp
 │   ├── processor.hpp
+│   ├── programmable_interval_timer.hpp
+│   ├── ps2_keyboard.hpp
 │   └── serial_port.hpp
 ├── linker/
 │   └── kernel.ld.in
 └── src/
     ├── architecture.asm
+    ├── ata_pio.cpp
     ├── boot_info.cpp
     ├── descriptor_layout.cpp
     ├── descriptor_tables.cpp
+    ├── device_model.cpp
     ├── entry.cpp
     ├── exception_frame.cpp
     ├── exceptions.cpp
     ├── kernel_heap.cpp
     ├── kernel_main.cpp
+    ├── interrupt_runtime.cpp
+    ├── legacy_pic.cpp
     ├── memory_manager.cpp
     ├── page_table.cpp
     ├── page_table_layout.cpp
     ├── panic.cpp
     ├── physical_frame_allocator.cpp
     ├── physical_memory_map.cpp
+    ├── port_io.cpp
     ├── processor.cpp
+    ├── programmable_interval_timer.cpp
+    ├── ps2_keyboard.cpp
     └── serial_port.cpp
 ```
 

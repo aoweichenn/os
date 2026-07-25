@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v0.6 ELF64 内核，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v0.7 ELF64 内核，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试。
@@ -106,6 +106,9 @@ tests/os_kernel_physical_frame_allocator_unit_tests
 tests/os_kernel_heap_and_page_layout_unit_tests
 tests/os_kernel_memory_bootstrap_integration_tests
 tests/os_kernel_memory_management_randomized_tests
+tests/os_kernel_device_model_unit_tests
+tests/os_kernel_device_bootstrap_integration_tests
+tests/os_kernel_interrupt_device_randomized_tests
 ```
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。

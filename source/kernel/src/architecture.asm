@@ -11,8 +11,10 @@ global osKernelReadCodeSegment
 global osKernelReadStackSegment
 global osKernelReadTaskRegister
 global osKernelExceptionDispatch
+global osKernelHardwareInterruptDispatch
 
 extern osKernelDispatchException
+extern osKernelDispatchHardwareInterrupt
 
 osKernelLoadGdtAndTss:
     lgdt [rdi]
@@ -152,6 +154,76 @@ OS_KERNEL_EXCEPTION_WITH_ERROR_CODE 29
 OS_KERNEL_EXCEPTION_WITH_ERROR_CODE 30
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 31
 
+; 8259A 已重映射到向量 32..47。硬件 IRQ 不压入错误码，因此所有入口都补零，
+; 并使用与异常相同的寄存器帧布局，但交给独立的硬件中断分发器。
+osKernelHardwareInterruptDispatch:
+    cld
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov rdi, rsp
+    and rsp, -16
+    sub rsp, 16
+    mov [rsp], rdi
+    call osKernelDispatchHardwareInterrupt
+    mov rsp, [rsp]
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16
+    iretq
+
+%macro OS_KERNEL_HARDWARE_INTERRUPT 1
+global os_kernel_hardware_interrupt_vector_%1
+os_kernel_hardware_interrupt_vector_%1:
+    push qword 0
+    push qword %1
+    jmp osKernelHardwareInterruptDispatch
+%endmacro
+
+OS_KERNEL_HARDWARE_INTERRUPT 32
+OS_KERNEL_HARDWARE_INTERRUPT 33
+OS_KERNEL_HARDWARE_INTERRUPT 34
+OS_KERNEL_HARDWARE_INTERRUPT 35
+OS_KERNEL_HARDWARE_INTERRUPT 36
+OS_KERNEL_HARDWARE_INTERRUPT 37
+OS_KERNEL_HARDWARE_INTERRUPT 38
+OS_KERNEL_HARDWARE_INTERRUPT 39
+OS_KERNEL_HARDWARE_INTERRUPT 40
+OS_KERNEL_HARDWARE_INTERRUPT 41
+OS_KERNEL_HARDWARE_INTERRUPT 42
+OS_KERNEL_HARDWARE_INTERRUPT 43
+OS_KERNEL_HARDWARE_INTERRUPT 44
+OS_KERNEL_HARDWARE_INTERRUPT 45
+OS_KERNEL_HARDWARE_INTERRUPT 46
+OS_KERNEL_HARDWARE_INTERRUPT 47
+
 section .rodata
 align 16
 
@@ -161,6 +233,15 @@ osKernelExceptionStubTable:
 %rep 32
     dq os_kernel_exception_vector_%+OS_KERNEL_EXCEPTION_TABLE_VECTOR
 %assign OS_KERNEL_EXCEPTION_TABLE_VECTOR OS_KERNEL_EXCEPTION_TABLE_VECTOR + 1
+%endrep
+
+global osKernelHardwareInterruptStubTable
+osKernelHardwareInterruptStubTable:
+%assign OS_KERNEL_HARDWARE_INTERRUPT_TABLE_VECTOR 32
+%rep 16
+    dq os_kernel_hardware_interrupt_vector_%+OS_KERNEL_HARDWARE_INTERRUPT_TABLE_VECTOR
+%assign OS_KERNEL_HARDWARE_INTERRUPT_TABLE_VECTOR \
+    OS_KERNEL_HARDWARE_INTERRUPT_TABLE_VECTOR + 1
 %endrep
 
 section .note.GNU-stack noalloc noexec nowrite progbits

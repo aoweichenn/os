@@ -1,6 +1,7 @@
 schema: x86-64-os-lab.hardware-register-map.v1
 description: >-
-  当前启动链直接使用的 CPU 架构状态、16550A UART 和 ATA/IDE 主通道寄存器。
+  当前启动链直接使用的 CPU 架构状态、8259A、8254、i8042、16550A
+  UART、ATA/IDE 主通道与 QEMU fw_cfg 寄存器。
   数值均为目标硬件协议值；软件模型不得把它们替换为宿主平台类型。
 chips:
   cpu_x86_64:
@@ -48,6 +49,15 @@ chips:
           8: LME
           10: LMA
           11: NXE
+      - name: IA32_APIC_BASE
+        width_bits: 64
+        kind: msr
+        address: 0x0000001B
+        bits:
+          8: BSP
+          10: X2APIC_ENABLE
+          11: APIC_GLOBAL_ENABLE
+        current_policy: "clear bit 11 and read back before legacy PIC routing"
     page_translation:
       page_size_bytes: 4096
       table_entry_width_bits: 64
@@ -121,7 +131,9 @@ chips:
     interrupt_descriptor_table:
       gate_size_bytes: 16
       gate_count: 256
-      present_vectors: 0..31
+      present_vectors:
+        exceptions: 0..31
+        legacy_hardware_interrupts: 32..47
       gate_type: interrupt-gate
       kernel_code_selector: 0x0008
       ring3_callable_vectors:
@@ -152,6 +164,36 @@ chips:
         5: PROTECTION_KEY
         6: SHADOW_STACK
         15: SGX
+  pic_8259a:
+    role: legacy-interrupt-routing
+    master:
+      command_port: 0x0020
+      data_port: 0x0021
+      vector_base: 0x20
+    slave:
+      command_port: 0x00A0
+      data_port: 0x00A1
+      vector_base: 0x28
+      cascade_identity: 2
+    initialization:
+      icw1: 0x11
+      master_icw3: 0x04
+      slave_icw3: 0x02
+      icw4: 0x01
+    operation:
+      nonspecific_eoi: 0x20
+      read_isr_ocw3: 0x0B
+      initial_mask: 0xFFFF
+      enabled_mask: 0xFFFC
+      spurious_irqs:
+        - 7
+        - 15
+    irq_vectors:
+      irq0_timer: 0x20
+      irq1_keyboard: 0x21
+      irq2_cascade: 0x22
+      irq7_spurious_test: 0x27
+      irq15_spurious: 0x2F
   ns16550a_com1:
     role: serial-observability
     io_base: 0x03F8
@@ -262,6 +304,9 @@ chips:
         width_bits: 8
         access: read-or-write
         meaning: "read: status without clearing pending interrupt; write: device control"
+        bits:
+          1: NIEN
+          2: SOFTWARE_RESET
     error_register_bits:
       0: AMNF
       1: TK0NF
@@ -285,8 +330,51 @@ chips:
         access: read-write
         meaning: 16-bit divisor and latched counter
     divisor:
+      input_frequency_hz: 1193182
       value: 0x04A9
       target_frequency_hz: 1000
+      access_mode: low-byte-then-high-byte
+      operating_mode: 2
+      output_irq: 0
+  i8042_ps2_controller:
+    role: keyboard-input
+    ports:
+      - name: DATA
+        address: 0x0060
+        width_bits: 8
+        access: read-write
+        meaning: "read controller/device output; write first PS/2 device command"
+      - name: STATUS_COMMAND
+        address: 0x0064
+        width_bits: 8
+        access: read-or-write
+        meaning: "read status; write controller command"
+        status_bits:
+          0: OUTPUT_BUFFER_FULL
+          1: INPUT_BUFFER_FULL
+          5: AUXILIARY_DEVICE_DATA
+          6: TIMEOUT_ERROR
+          7: PARITY_ERROR
+    controller_commands:
+      read_configuration: 0x20
+      write_configuration: 0x60
+      disable_first_port: 0xAD
+      enable_first_port: 0xAE
+      disable_second_port: 0xA7
+    configuration_bits:
+      0: FIRST_PORT_INTERRUPT
+      1: SECOND_PORT_INTERRUPT
+      4: FIRST_PORT_CLOCK_DISABLED
+      5: SECOND_PORT_CLOCK_DISABLED
+      6: FIRST_PORT_TRANSLATION
+    keyboard_commands:
+      enable_scanning: 0xF4
+      acknowledge: 0xFA
+    scan_code_set_1:
+      extended_prefix: 0xE0
+      release_bit: 0x80
+      a_make: 0x1E
+      a_break: 0x9E
   system_control_port_a:
     role: a20-gate-and-fast-reset
     ports:

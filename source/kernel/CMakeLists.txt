@@ -3,36 +3,50 @@ set(
     include/os/kernel/boot_info.hpp
     include/os/kernel/descriptor_layout.hpp
     include/os/kernel/descriptor_tables.hpp
+    include/os/kernel/device_model.hpp
     include/os/kernel/entry.hpp
     include/os/kernel/exception_frame.hpp
     include/os/kernel/exceptions.hpp
     include/os/kernel/kernel_main.hpp
     include/os/kernel/kernel_heap.hpp
+    include/os/kernel/interrupt_runtime.hpp
+    include/os/kernel/legacy_pic.hpp
     include/os/kernel/memory_manager.hpp
     include/os/kernel/page_table.hpp
     include/os/kernel/panic.hpp
     include/os/kernel/physical_frame_allocator.hpp
     include/os/kernel/physical_memory_map.hpp
+    include/os/kernel/port_io.hpp
     include/os/kernel/processor.hpp
+    include/os/kernel/programmable_interval_timer.hpp
+    include/os/kernel/ps2_keyboard.hpp
     include/os/kernel/serial_port.hpp
+    include/os/kernel/ata_pio.hpp
 )
 
 set(
     OS_KERNEL_SHARED_SOURCES
+    src/ata_pio.cpp
     src/boot_info.cpp
+    src/device_model.cpp
     src/descriptor_layout.cpp
     src/descriptor_tables.cpp
     src/exception_frame.cpp
     src/exceptions.cpp
     src/kernel_main.cpp
     src/kernel_heap.cpp
+    src/interrupt_runtime.cpp
+    src/legacy_pic.cpp
     src/memory_manager.cpp
     src/page_table.cpp
     src/page_table_layout.cpp
     src/panic.cpp
     src/physical_frame_allocator.cpp
     src/physical_memory_map.cpp
+    src/port_io.cpp
     src/processor.cpp
+    src/programmable_interval_timer.cpp
+    src/ps2_keyboard.cpp
     src/serial_port.cpp
 )
 
@@ -91,6 +105,23 @@ target_include_directories(
 )
 target_compile_options(
     os_kernel_memory_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
+add_library(
+    os_kernel_device_model_host
+    STATIC
+        src/device_model.cpp
+        include/os/kernel/device_model.hpp
+)
+target_include_directories(
+    os_kernel_device_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_device_model_host
     PRIVATE
         ${OS_COMMON_WARNING_FLAGS}
 )
@@ -156,7 +187,7 @@ add_custom_command(
         "${OS_KERNEL_ARCHITECTURE_OBJECT}"
         "${OS_KERNEL_ARCHITECTURE_SOURCE}"
     DEPENDS "${OS_KERNEL_ARCHITECTURE_SOURCE}"
-    COMMENT "汇编 x86-64 描述符装载与异常入口"
+    COMMENT "汇编 x86-64 描述符、异常与硬件中断入口"
     VERBATIM
 )
 add_custom_target(

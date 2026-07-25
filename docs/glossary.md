@@ -47,6 +47,17 @@
 | TR | Task Register，保存当前 TSS 选择子及隐藏描述符状态，由 `LTR`/`STR` 访问 |
 | IST | Interrupt Stack Table，允许指定异常门无条件切到 TSS 中的专用栈 |
 | interrupt gate | IDT 门类型；进入处理程序时硬件清 IF，返回时由 `IRETQ` 恢复 |
+| IRQ | Interrupt Request，设备向中断控制器提出的异步服务请求编号 |
+| PIC / 8259A | 传统 PC 可编程中断控制器；双片级联把 IRQ0..15 映射为 IDT 向量 |
+| IMR / IRR / ISR | PIC 的屏蔽、待处理和在服务寄存器，分别回答“允许、已请求、正在处理” |
+| EOI | End Of Interrupt，处理完成后通知中断控制器释放当前在服务优先级 |
+| spurious IRQ | 请求在确认前撤销形成的虚假 IRQ7/IRQ15，必须按 ISR 选择 EOI |
+| PIT / 8254 | 使用固定输入时钟和 16 位除数周期产生 IRQ0 的计时器 |
+| LAPIC | 每 CPU 的 Local APIC，负责局部中断、优先级、定时器与 EOI |
+| virtual wire mode | 把传统 PIC 输出经 LAPIC ExtINT 交付的 APIC 兼容路由 |
+| i8042 | PC 键盘/鼠标控制器，通过 `0x60/0x64` 连接 PS/2 设备与 IRQ1/IRQ12 |
+| scan code | 键盘报告物理键按下/释放的编码序列，不等同于字符或 Unicode |
+| QMP | QEMU Machine Protocol；测试用它产生可重复虚拟键盘输入和管理模拟器 |
 | exception vector | CPU 为异常选择的 0..31 编号，例如 3=#BP、6=#UD、14=#PF |
 | exception error code | 部分异常由 CPU 压栈的原因字段；无错误码异常由项目桩规范化为零 |
 | `IRETQ` | 64 位中断返回指令，恢复 RIP、CS、RFLAGS 以及可选旧 RSP/SS |

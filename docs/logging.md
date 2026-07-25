@@ -18,18 +18,17 @@
 
 ## 时间戳方案
 
-日志时间采用从复位开始计算的单调相对时间，不打印宿主机时间，也不在尚未初始化时
-读取 RTC。下一阶段由自研 PIT 维护启动滴答，并把日志格式扩展为：
+来宾时间采用启动后建立的单调相对时间，不打印宿主机墙钟，也不在尚未初始化时
+读取 RTC。v0.7 由自研 PIT/IRQ0 维护 64 位滴答，并在时钟自检边界输出：
 
 ```text
-[OS][FIRMWARE][T+000012ms] SERIAL_READY
+[OS][KERNEL] TIMER_TICKS=0x0000000000000010
+[OS][KERNEL] MONOTONIC_MILLISECONDS=0x000000000000000F
 ```
 
-在时间戳正式接入前，固件会先输出无时间戳的 `CLOCK_READY`，表示 PIT 已按固定分频值
-初始化；它不是耗时数据，不能被解释为时间戳。
-
-时间戳只用于观测阶段耗时，事件名仍是测试匹配的稳定主键。PIT 尚未初始化前不得输出
-虚假的 `T+...` 数值；过渡期间保留无时间戳格式，待时钟初始化完成后一次性切换。
+固件的 `CLOCK_READY` 只表示早期 PIT 配置动作完成，不是耗时数据。内核会
+重新编程 PIT，并且只有真实接收至少 16 个 IRQ0 后才输出单调毫秒。因为复位到
+内核接管之间没有连续软件溢出计数，不能把内核 tick 伪装成“从复位开始”的时间。
 
 QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格式为
 `[QEMU][T+000123ms]`。该字段由逐行读取线程在收到换行时生成，只描述测试进程
@@ -44,7 +43,7 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 - 若未来启用 `TRACE`，必须有编译期或启动期开关，并设置最大事件数；达到预算后只打印一次 `TRACE_LIMIT_REACHED`。
 - 日志文本不得依赖本地化、时间戳或不稳定地址，保证测试和文档可复现。
 
-## v0.6 验收
+## v0.7 验收
 
 正常启动日志应按阶段边界递进：
 
@@ -93,9 +92,25 @@ QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
+[OS][KERNEL] PIC_READY
+[OS][KERNEL] PIC_MASK=0x000000000000FFFC
+[OS][KERNEL] PIT_READY
+[OS][KERNEL] PIT_DIVISOR=0x00000000000004A9
+[OS][KERNEL] PIT_FREQUENCY_HZ=0x00000000000003E8
+[OS][KERNEL] PS2_KEYBOARD_READY
+[OS][KERNEL] ATA_PIO_READY
+[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID
+[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED
+[OS][KERNEL] INTERRUPTS_ENABLED
+[OS][KERNEL] TIMER_TICKS=0x...
+[OS][KERNEL] MONOTONIC_MILLISECONDS=0x...
+[OS][KERNEL] TIMER_SELF_TEST_PASSED
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x0000000000000003
 [OS][KERNEL] READY
+[OS][KERNEL] KEYBOARD_SCANCODE=0x000000000000001E
+[OS][KERNEL] KEYBOARD_EVENT=A_PRESSED
 ```
 
 文件长度和加载段数使用固定 16 个十六进制数字的宽度，便于人工对照 ELF，也避免
@@ -136,3 +151,13 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 写保护故障镜像使用 `FAULT_INJECTION=WRITE_PROTECTION`，随后必须报告向量
 14、错误码 `0x3` 和 CR2=`0xFFFF800000100000`。正常日志禁止出现任何
 `FAULT_INJECTION`、`EXCEPTION` 或 `PANIC`。
+
+设备日志遵循“初始化一次、热路径计数、消费时记录”的规则：
+
+- IRQ0 不写串口，只在启动自检结束时汇总 tick 与毫秒。
+- IRQ1 不在汇编入口格式化日志；C++ 事件循环消费首个完整事件后记录。
+- ATA PIO 不逐字、逐扇区输出，只记录驱动可用与启动描述符校验结果。
+- PIC 只记录最终 mask 和一次虚假 IRQ 自检，不逐次记录 EOI。
+
+这样 1000 Hz 时钟不会淹没键盘、异常与失败标记，也避免串口轮询延长中断
+服务时间。

@@ -351,3 +351,50 @@ guard。它们应由 `queryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 
 3. 检查 16 字节与 4 KiB 对齐计算是否发生溢出或越过 64 KiB 容量。
 4. 在两个分配地址观察写入模式 `0x13579BDF2468ACE0` 与
    `0xC001D00DC0FFEE11`，避免把页表成功误判为堆对象可写。
+
+## v0.7：PIC、PIT、PS/2 与 ATA
+
+### IF=1、HLT=1 但没有时钟
+
+先抓取 QEMU monitor 的 `info registers`、`info pic` 和 `info irq`。若
+RFLAGS.IF=1、CPU HLT=1、PIC IRR 的 bit0=1，但没有向量 32 入口，问题在
+PIC 到 CPU 的路由，不在 PIT。自研固件没有传统 BIOS 替本地 APIC配置虚拟线；
+内核必须在 PIC 初始化前清除并回读 `IA32_APIC_BASE[11]`。正常串口应先出现
+`LEGACY_INTERRUPT_ROUTING_READY`。
+
+若 PIC IRR 没有 bit0，检查：
+
+1. `0x43` 是否写入 `0x34`（通道 0、低高字节、模式 2）。
+2. `0x40` 是否按低字节、高字节顺序写入 `0x04A9`。
+3. master IMR 是否为 `0xFC`，而不是仍为 `0xFF`。
+4. IDT 向量 32 是否 present、selector 是否为 `0x08`。
+
+`info irq` 证明设备产生过边沿，`info pic` 的 IRR/ISR/IMR 证明控制器状态，
+串口 `TIMER_TICKS` 才证明来宾处理并确认了 IRQ。三类证据不能互相替代。
+
+### IRQ 后 triple fault
+
+用 `-d int,cpu_reset -D qemu.log` 观察最后一次向量。优先核对 IRQ 桩是否先压
+零错误码、再压向量，公共入口是否保存/恢复 15 个寄存器并在 `IRETQ` 前丢弃
+两个槽。异常和 IRQ 帧形状相同，但分发函数必须不同；若把 IRQ 送入 panic
+分发器，会把正常外部事件误判为异常。
+
+### 键盘初始化或注入失败
+
+`PS2_KEYBOARD_READY` 缺失时按顺序检查 i8042：
+
+- 写控制器命令前 status bit1 必须清零。
+- 读配置或 ACK 前 status bit0 必须置一。
+- 配置 byte 应打开 IRQ1/translation、关闭 IRQ12。
+- `0xF4` 必须收到 `0xFA`，其他字节不能当作成功。
+
+QEMU 系统测试在 `READY` 后才用 QMP `sendkey a`，以免把初始化 ACK 与扫描码
+混在同一输出缓冲。看到 IRQ1 计数却没有 `A_PRESSED` 时，检查收到的是集合 1
+`0x1E/0x9E`，还是翻译未开启导致的其他集合编码。
+
+### ATA 自检失败
+
+内核写 `nIEN` 后使用 alternate status 轮询，不接收 IRQ14。`BSY` 超预算、
+`ERR/DF`、`DRQ` 缺失是不同状态；不要把所有失败折叠成“磁盘不可用”。若读取
+成功但 magic 错误，检查目标是否为 primary master LBA 0，以及 256 个 16 位
+DATA 字是否按小端拆成 512 字节。

@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.6 完成后的知识验收}
+\section*{v0.7 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -50,6 +50,18 @@
   \item 错误码 3 与 CR2=\code{0xFFFF800000100000} 为什么证明写保护执行；
   \item 高半区 64 KiB 单调堆的对齐、溢出、容量和无释放边界；
   \item 单元、集成、固定种子模型对照和 QEMU 执行各自证明什么。
+  \item PIC、I/O APIC、本地 APIC 和 RFLAGS.IF 分别处于哪一层；
+  \item 为什么没有 BIOS 时必须显式处理 \code{IA32\_APIC\_BASE[11]}；
+  \item 8259A ICW1--ICW4、主从级联、IMR、ISR 与 EOI 的完整状态机；
+  \item IRQ7 与 IRQ15 的虚假中断为什么采用不同 EOI 规则；
+  \item 向量 32--47 的硬件桩怎样复用 160 字节帧而不复用异常策略；
+  \item PIT 模式 2、1193182 Hz 输入、16 位除数和单调毫秒的量化关系；
+  \item i8042 输入/输出缓冲、配置 byte、\code{F4}/\code{FA} 握手；
+  \item 扫描码集合 1 的 make、break、\code{E0} 前缀为何不是 ASCII；
+  \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
+  \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
+  \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
+  \item 46 项 CTest 如何分别覆盖模型、组合、ELF ABI 与整机异步事件。
 \end{itemize}
 
 \section*{进入下一阶段前}
@@ -73,5 +85,11 @@
   \item 能解释为什么 breakpoint 可以返回，而当前页故障必须 panic；
   \item 能运行非法指令、not-present 页和写保护页故障镜像，并确认 panic 后
         不出现 \code{READY}；
+  \item 能从 PIC 的 IRR/ISR/IMR、CPU IF/HLT 和 QEMU IRQ 统计区分设备、
+        控制器、路由与入口四层故障；
+  \item 能解释 \code{0xFFFC} 掩码、\code{0x04A9} PIT 除数与
+        \code{0x1E}/\code{0x9E} 键盘扫描码；
+  \item 能从 \code{READY} 后的 QMP 输入走读到
+        \code{KEYBOARD\_EVENT=A\_PRESSED}；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

@@ -41,6 +41,11 @@ OS_KERNEL_ELF_POWER_OF_TWO_DECREMENT = 1
 OS_KERNEL_ELF_EMPTY_SEGMENT_SIZE_BYTES = 0
 OS_KERNEL_ELF_ARCHITECTED_EXCEPTION_VECTOR_COUNT = 32
 OS_KERNEL_ELF_EXCEPTION_VECTOR_SYMBOL_PREFIX = "os_kernel_exception_vector_"
+OS_KERNEL_ELF_LEGACY_INTERRUPT_FIRST_VECTOR = 32
+OS_KERNEL_ELF_LEGACY_INTERRUPT_VECTOR_COUNT = 16
+OS_KERNEL_ELF_HARDWARE_INTERRUPT_VECTOR_SYMBOL_PREFIX = (
+    "os_kernel_hardware_interrupt_vector_"
+)
 OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
     (
         "osKernelEntry",
@@ -49,6 +54,9 @@ OS_KERNEL_ELF_REQUIRED_ARCHITECTURE_SYMBOLS = frozenset(
         "osKernelExceptionDispatch",
         "osKernelDispatchException",
         "osKernelExceptionStubTable",
+        "osKernelHardwareInterruptDispatch",
+        "osKernelDispatchHardwareInterrupt",
+        "osKernelHardwareInterruptStubTable",
         "osKernelImageStart",
         "osKernelImageEnd",
         "osKernelTextStart",
@@ -308,10 +316,18 @@ def validateKernelArchitectureSymbols(definedSymbols: set[str]) -> None:
             OS_KERNEL_ELF_ARCHITECTED_EXCEPTION_VECTOR_COUNT
         )
     )
+    requiredSymbols.update(
+        f"{OS_KERNEL_ELF_HARDWARE_INTERRUPT_VECTOR_SYMBOL_PREFIX}{vector}"
+        for vector in range(
+            OS_KERNEL_ELF_LEGACY_INTERRUPT_FIRST_VECTOR,
+            OS_KERNEL_ELF_LEGACY_INTERRUPT_FIRST_VECTOR
+            + OS_KERNEL_ELF_LEGACY_INTERRUPT_VECTOR_COUNT,
+        )
+    )
     missingSymbols = sorted(requiredSymbols - definedSymbols)
     if missingSymbols:
         raise OsToolError(
-            "内核 ELF 缺少描述符或异常入口符号："
+            "内核 ELF 缺少描述符、异常或硬件中断入口符号："
             + ", ".join(missingSymbols)
         )
 

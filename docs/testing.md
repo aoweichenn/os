@@ -112,6 +112,24 @@
   错误码 `0x3` 和 CR2=`0xFFFF800000100000`。后者是 `CR0.WP` 的执行证据，
   不能用软件查询页表项替代。
 
+`v0.7` 把异步硬件事件与设备状态机纳入同一证据链：
+
+- 设备模型单元测试覆盖 PIC 的 IRQ/向量双向映射、掩码失败原子性，PIT
+  频率范围、除数舍入与时间溢出，扫描码 make/break/`E0` 序列，以及 ATA
+  LBA28、缓冲区长度和启动描述符 magic。
+- 启动集成测试按生产顺序开放 IRQ0、IRQ1，核对最终掩码 `0xFFFC`，并组合
+  PIT 配置、键盘 `A` 键解码和 LBA 0 描述符校验。
+- 固定种子 `0x1A7E22D3C4B5A697` 执行 4096 轮 IRQ 往返、PIT 有效参数和
+  键盘按下/释放性质；每轮同时验证输出只在成功后改变。
+- ELF 审计新增硬件 IRQ 公共入口、C++ 分发器、桩表和
+  `os_kernel_hardware_interrupt_vector_32..47` 全部符号。
+- 正常 QEMU 路径必须证明传统路由已接管、PIC/PIT/PS2/ATA 已初始化，等待
+  至少 16 个真实 IRQ0 并输出单调毫秒，然后才到达 `READY`。
+- `READY` 后宿主通过 QMP 键盘前端注入 `A`。测试必须观察目标机 IRQ1 输出
+  扫描码 `0x1E` 与 `A_PRESSED`；宿主不写端口、不写来宾内存，也不调用内核。
+- 成功路径禁止 `DEVICE_INITIALIZATION_FAILED`、异常与 panic。IRQ 热路径
+  不逐 tick 输出；宿主为每条串口行附加单调到达时间，便于判断停滞边界。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -158,6 +176,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | QEMU 内存图、启动保留范围与首个空闲帧 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 8192 组表项和 4096 步分配器模型对照 |
+| `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
+| `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
+| `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
@@ -190,8 +211,10 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 43 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
+当前共 46 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU 超时通过
 `subprocess` 生命周期管理判断，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
+正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
+产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模
 不需要 fixture 或宏注册；避免 `TEST`、`EXPECT_*` 等宏也与项目的宏约束一致。

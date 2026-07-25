@@ -40,6 +40,9 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
     "osKernelExceptionDispatch",
     "osKernelDispatchException",
     "osKernelExceptionStubTable",
+    "osKernelHardwareInterruptDispatch",
+    "osKernelDispatchHardwareInterrupt",
+    "osKernelHardwareInterruptStubTable",
     "osKernelImageStart",
     "osKernelImageEnd",
     "osKernelTextStart",
@@ -49,6 +52,10 @@ OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS = {
     "osKernelWritableDataStart",
     "osKernelWritableDataEnd",
     *(f"os_kernel_exception_vector_{vector}" for vector in range(32)),
+    *(
+        f"os_kernel_hardware_interrupt_vector_{vector}"
+        for vector in range(32, 48)
+    ),
 }
 
 
@@ -205,6 +212,13 @@ class KernelElfToolTests(unittest.TestCase):
     def testRejectsMissingExceptionVectorSymbol(self) -> None:
         incompleteSymbols = set(OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS)
         incompleteSymbols.remove("os_kernel_exception_vector_31")
+
+        with self.assertRaises(OsToolError):
+            validateKernelArchitectureSymbols(incompleteSymbols)
+
+    def testRejectsMissingHardwareInterruptVectorSymbol(self) -> None:
+        incompleteSymbols = set(OS_TEST_KERNEL_ELF_REQUIRED_SYMBOLS)
+        incompleteSymbols.remove("os_kernel_hardware_interrupt_vector_47")
 
         with self.assertRaises(OsToolError):
             validateKernelArchitectureSymbols(incompleteSymbols)

@@ -55,6 +55,20 @@ class QemuRunnerToolTests(unittest.TestCase):
         )
         self.assertNotIn("-kernel", command)
 
+    def testCreatesQmpSocketForKeyboardInjection(self) -> None:
+        qmpSocketPath = Path("/tmp/os-qemu-test.sock")
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            qmpSocketPath,
+        )
+
+        self.assertIn("-qmp", command)
+        self.assertIn(
+            f"unix:{qmpSocketPath},server=on,wait=off",
+            command,
+        )
+
     def testAcceptsRequiredAndAbsentForbiddenMarkers(self) -> None:
         validateSerialProtocol(
             "[OS][FIRMWARE] RESET\r\n",
@@ -125,6 +139,23 @@ class QemuRunnerToolTests(unittest.TestCase):
         ]
         self.assertEqual(len(timestamps), 2)
         self.assertLess(timestamps[0], timestamps[1])
+
+    def testNotifiesObserverForEachSerialLine(self) -> None:
+        observedLines: list[str] = []
+
+        serialOutput, _timedOutput, timedOut, returnCode = (
+            runQemuWithTimedSerial(
+                [sys.executable, "-c", "print('READY', flush=True)"],
+                Path.cwd(),
+                1.0,
+                observedLines.append,
+            )
+        )
+
+        self.assertEqual(serialOutput, "READY\n")
+        self.assertEqual(observedLines, ["READY\n"])
+        self.assertFalse(timedOut)
+        self.assertEqual(returnCode, 0)
 
 
 if __name__ == "__main__":

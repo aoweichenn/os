@@ -13,6 +13,9 @@ x86-64 CPU
 ├── 描述符状态：CS、SS、GDTR、IDTR、TR、TSS
 ├── 端口 I/O 总线
 │   ├── 16550A 兼容 UART / COM1：0x3F8..0x3FF
+│   ├── 8259A 主从中断控制器：0x20/0x21、0xA0/0xA1
+│   ├── 8254 PIT：0x40..0x43
+│   ├── i8042 / PS/2 键盘：0x60、0x64
 │   ├── PATA primary master：0x1F0..0x1F7、控制端口 0x3F6
 │   └── QEMU fw_cfg：selector 0x510、data 0x511
 └── RAM
@@ -28,7 +31,7 @@ x86-64 CPU
 ```
 
 QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态位和错误处理都由项目
-自己的汇编固件实现。
+自己的固件、汇编入口和 C++20 驱动实现。
 
 ## 2. CPU 架构状态与标志位
 
@@ -62,6 +65,7 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | EFER | 8 | LME | 请求长模式 | 通过 `RDMSR/WRMSR` 访问 |
 | EFER | 10 | LMA | 长模式已激活 | 只读结果，不能直接写 |
 | EFER | 11 | NXE | 启用 NX 位 | v0.6 先用 CPUID 检查，再启用并回读 |
+| IA32_APIC_BASE | 11 | APIC global enable | 本地 APIC 全局开关 | v0.7 清零并回读，显式恢复传统 INTR 路由 |
 
 模式切换是状态机，不是把几个 bit 任意置一。v0.3 已把每次写入和读回值加入
 串口证据与 QEMU 检查；v0.4 的内核还会读回 CR3，与 BootInfo 中的页表根比较。
@@ -202,9 +206,72 @@ present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
 项目中间表保持 writable，使叶项决定内核页写权限；用户映射请求出现时才向
 父项传播 US。修改叶项后执行 `INVLPG`，加载新 CR3 时刷新当前地址空间翻译。
 
-## 3. 16550A UART / COM1
+### 2.9 异常、硬件 IRQ 与 IDT 向量
 
-### 3.1 寄存器窗口
+v0.7 把 IDT present 范围扩展为：
+
+| 向量 | 来源 | 汇编入口 | C++ 策略 |
+| ---: | --- | --- | --- |
+| `0x00..0x1F` | CPU 架构异常 | exception stubs | 恢复 breakpoint 或 panic |
+| `0x20..0x27` | 8259A master IRQ0..7 | hardware IRQ stubs | 设备处理、主片 EOI |
+| `0x28..0x2F` | 8259A slave IRQ8..15 | hardware IRQ stubs | 设备处理、从片后主片 EOI |
+| `0x30..0xFF` | 未分配 | not-present | 禁止误入 |
+
+本地 APIC、I/O APIC 和 PIC 是三种不同状态。只设置 RFLAGS.IF 不能建立它们
+之间的路由；当前单核阶段先关闭本地 APIC全局启用位，再使用传统 8259A。
+
+## 3. 8259A 可编程中断控制器
+
+两片 8259A 通过主片 IRQ2 级联。初始化序列不可交换：
+
+| 次序 | 主片数据 | 从片数据 | 语义 |
+| ---: | ---: | ---: | --- |
+| ICW1 | command=`0x11` | command=`0x11` | 开始初始化，需要 ICW4 |
+| ICW2 | `0x20` | `0x28` | 向量基址 |
+| ICW3 | `0x04` | `0x02` | 主片 IRQ2 有从片；从片级联 ID=2 |
+| ICW4 | `0x01` | `0x01` | 8086/88 模式 |
+
+初始化后 IMR=`0xFFFF`，设备全部就绪才改为 `0xFFFC`，仅允许 IRQ0/IRQ1。
+OCW3=`0x0B` 让 command 端口读取 ISR；非特定 EOI 为 `0x20`。
+
+IRQ7 若 ISR bit7=0，是主片虚假中断，不发送 EOI。IRQ15 若从片 ISR bit7=0，
+不向从片 EOI，但要向主片确认级联 IRQ2。真实从片 IRQ 总是先确认从片，再确认
+主片，否则主片可能持续认为级联仍在服务。
+
+## 4. 8254 PIT 与单调 tick
+
+PIT 输入频率为 1193182 Hz。端口 `0x43` 写 `0x34` 表示通道 0、低/高字节、
+模式 2、二进制计数；端口 `0x40` 先写除数低字节、再写高字节。当前除数
+`0x04A9` 产生约 1000 Hz IRQ0。
+
+计数器只有 16 位且会重复装载，不能直接作为长期时间。内核 IRQ0 维护 64 位
+tick，再用实际除数计算：
+
+```text
+milliseconds = ticks × divisor × 1000 / 1193182
+```
+
+乘法前检查上界。整数结果向下取整，所以第 16 个 tick 可显示 15 ms；这不是
+丢中断，而是硬件除数与整数时间单位的正常量化。
+
+## 5. i8042 与 PS/2 键盘
+
+| 端口 | 读 | 写 |
+| ---: | --- | --- |
+| `0x60` | 控制器/设备输出数据 | 第一 PS/2 设备命令或配置 byte |
+| `0x64` | status | 控制器命令 |
+
+status bit0=1 才能读 `0x60`，bit1=0 才能写命令或数据。初始化使用
+`AD/A7` 关闭两端口、`20` 读取配置、`60` 写配置、`AE` 开第一端口；配置
+打开 bit0 IRQ1 与 bit6 translation，清 bit1 IRQ12 和 bit4 第一端口时钟禁用。
+键盘命令 `F4` 开扫描，必须收到 `FA` ACK。
+
+集合 1 的 `A` 按下为 `0x1E`，释放为 `0x9E`；`0xE0` 是扩展前缀，下一字节
+才构成完整方向键事件。前缀本身不能被错误报告为按键。
+
+## 6. 16550A UART / COM1
+
+### 6.1 寄存器窗口
 
 COM1 基址为 `0x3F8`，每个寄存器宽 8 位。偏移 0 和 1 会被 `LCR.DLAB` 复用，
 所以初始化顺序是：关闭中断、置 DLAB、写除数、清 DLAB、写 8N1、配置 FIFO 与
@@ -219,7 +286,7 @@ modem control。
 | 4 | MCR modem control | MCR modem control | 不复用 |
 | 5 | LSR 线路状态 | 保留 | 不复用 |
 
-### 3.2 LCR 与 LSR 位
+### 6.2 LCR 与 LSR 位
 
 | 寄存器 | 位 | 名称 | 含义 |
 | --- | ---: | --- | --- |
@@ -239,9 +306,9 @@ modem control。
 当前固件只把 `THRE` 作为发送所有权条件；它不把 `TEMT` 误当成“可以写入”的
 唯一条件，也不启用中断。每次等待最多 `0xFFFF` 次，超时后输出明确失败标记。
 
-## 4. PATA IDE 主通道与 ATA 状态
+## 7. PATA IDE 主通道与 ATA 状态
 
-### 4.1 命令块寄存器
+### 7.1 命令块寄存器
 
 | 端口 | 宽度 | 名称 | 访问语义 |
 | ---: | ---: | --- | --- |
@@ -255,7 +322,7 @@ modem control。
 | `0x1F7` | 8 | STATUS/COMMAND | 读状态、写命令 |
 | `0x3F6` | 8 | ALTERNATE STATUS/DEVICE CONTROL | 读状态不清中断、写控制 |
 
-### 4.2 STATUS 位
+### 7.2 STATUS 位
 
 | 位 | 名称 | 1 的含义 | 固件决策 |
 | ---: | --- | --- | --- |
@@ -275,7 +342,7 @@ BSY=0 且 DRQ=0     -> 继续有界等待
 BSY=0 且 DRQ=1     -> 读取 DATA 的 256 个 16 位字
 ```
 
-### 4.3 ERROR 位
+### 7.3 ERROR 位
 
 | 位 | 名称 | 典型含义 |
 | ---: | --- | --- |
@@ -292,23 +359,9 @@ BSY=0 且 DRQ=1     -> 读取 DATA 的 256 个 16 位字
 `KERNEL_ATA_ERROR`。两条路径都把 ERROR 寄存器作为诊断来源，后续设备驱动
 阶段会保留原始 status/error 字节，形成更细的错误类型。
 
-## 5. 结构化描述与代码的对应关系
+## 8. 结构化描述与代码的对应关系
 
-### 5.1 8253/8254 PIT（当前阶段）
-
-固件使用 PIT 通道 0 建立单调时钟的硬件基础：命令端口为 `0x43`，通道 0 数据端口
-为 `0x40`，模式为 2（率发生器），分频值为 `0x04A9`，目标频率约为 1000 Hz。
-本阶段只初始化计数器并输出 `CLOCK_READY`。进入保护模式并建立 IDT 后，IRQ0 才会
-累加软件滴答，再用整数换算为毫秒并处理溢出。
-
-| 寄存器 | 地址 | 本项目用途 |
-| --- | ---: | --- |
-| PIT 命令 | `0x43` | 选择通道 0、低/高字节、模式 2 |
-| 通道 0 | `0x40` | 写入 16 位分频值；后续读取当前计数 |
-
-当前计数不能直接当作时间戳，因为它会周期性回卷；必须由 IRQ0 软件滴答补足。
-
-### 5.2 System Control Port A 与 A20
+### 8.1 System Control Port A 与 A20
 
 Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位 0 为零，
 避免触发快速复位。写入后并不直接相信控制位，而是暂存物理地址 `0x000000` 与
@@ -319,7 +372,7 @@ Stage 1 通过 I/O 端口 `0x92` 的位 1 打开 Fast A20 Gate，同时强制位
 | 0 | Fast Reset | 始终写零，禁止复位 |
 | 1 | A20 Gate | 写一后执行地址别名验证 |
 
-### 5.3 QEMU fw_cfg 与 `etc/e820`
+### 8.2 QEMU fw_cfg 与 `etc/e820`
 
 当前 PC 机器模型提供传统端口形式的 `fw_cfg`：
 
@@ -351,6 +404,11 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/boot/stage1/src/kernel_loader.asm`：长模式 ATA、CRC32、ELF 和 BootInfo。
 - `source/boot/stage1/src/memory_map.asm`：`fw_cfg`、E820 转换与排序。
 - `source/kernel/src/architecture.asm`：LGDT/LIDT/LTR、异常桩和统一寄存器保存。
+- `source/kernel/src/interrupt_runtime.cpp`：IRQ 分发、同步快照和设备启动组合。
+- `source/kernel/src/legacy_pic.cpp`：PIC 初始化、屏蔽、ISR 与 EOI。
+- `source/kernel/src/programmable_interval_timer.cpp`：PIT 模式和除数写入。
+- `source/kernel/src/ps2_keyboard.cpp`：i8042 与键盘 ACK 握手。
+- `source/kernel/src/ata_pio.cpp`：内核 LBA28 单扇区读取。
 - `source/kernel/src/descriptor_tables.cpp`：GDT、TSS、IDT 构造与硬件回读验证。
 - `source/kernel/src/memory_manager.cpp`：页帧、四级页表、权限、guard 与堆。
 - `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
@@ -358,5 +416,5 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。
 - `docs/testing.md`：状态边界对应的 QEMU 失败注入。
 
-以后新增 PIC、PIT、PS/2、PCI 或 LAPIC 时，先在这份结构化规格中定义寄存器和
+以后新增 PCI、LAPIC、I/O APIC 或 MSI 时，先在这份结构化规格中定义寄存器和
 标志，再实现驱动访问层；策略代码不能直接散落端口号。

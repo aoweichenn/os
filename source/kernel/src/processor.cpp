@@ -10,9 +10,12 @@ constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF = 0x80000000U
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF = 0x80000001U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_NO_EXECUTE_BIT = 0x00100000U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_EFER_MSR = 0xC0000080U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR = 0x0000001BU;
 constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT = 0x0000000000000800ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT = 0x0000000000000800ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT = 0x0000000000010000ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS = 32ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_RFLAGS_INTERRUPT_ENABLE_BIT = 0x0000000000000200ULL;
 
 struct CpuIdResult final {
     uint32_t accumulator;
@@ -64,6 +67,22 @@ void writeControlRegister0(const uint64_t value) noexcept {
     }
 }
 
+bool disableInterrupts() noexcept {
+    uint64_t flags = 0ULL;
+    asm volatile("pushfq; pop %0; cli" : "=r"(flags) : : "memory");
+    return (flags & OS_KERNEL_PROCESSOR_RFLAGS_INTERRUPT_ENABLE_BIT) != 0ULL;
+}
+
+void restoreInterrupts(const bool interruptsWereEnabled) noexcept {
+    if (interruptsWereEnabled) {
+        asm volatile("sti" : : : "memory");
+    }
+}
+
+void enableInterrupts() noexcept { asm volatile("sti" : : : "memory"); }
+
+void waitForInterrupt() noexcept { asm volatile("hlt" : : : "memory"); }
+
 uint64_t readPageTableRoot() noexcept {
     uint64_t pageTableRoot = 0ULL;
     asm volatile("mov %0, cr3" : "=r"(pageTableRoot));
@@ -103,6 +122,15 @@ bool kernelMemoryProtectionEnabled() noexcept {
            (readControlRegister0() & OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT) != 0ULL;
 }
 
+bool configureLegacyInterruptRouting() noexcept {
+    const uint64_t localApicBase =
+        readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
+    writeModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR,
+                               localApicBase & ~OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT);
+    return (readModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
+            OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL;
+}
+
 void activatePageTable(const uint64_t rootPhysicalAddress) noexcept {
     asm volatile("mov cr3, %0" : : "r"(rootPhysicalAddress) : "memory");
 }
@@ -112,6 +140,8 @@ void invalidatePage(const uint64_t virtualAddress) noexcept {
 }
 
 void triggerBreakpoint() noexcept { asm volatile("int3"); }
+
+void triggerLegacyPicSpuriousInterrupt() noexcept { asm volatile("int 0x27"); }
 
 [[noreturn]] void triggerInvalidOpcode() noexcept {
     asm volatile("ud2");

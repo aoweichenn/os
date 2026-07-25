@@ -2,8 +2,8 @@
 
 ## 职责
 
-`kernel` 是 Stage 1 最终交接的 freestanding C++20 ELF64 可执行文件。v0.6
-已经在真实交接之上建立内核自己的处理器与内存基础：
+`kernel` 是 Stage 1 最终交接的 freestanding C++20 ELF64 可执行文件。v0.7
+已经在真实交接之上建立内核自己的处理器、内存、中断与设备基础：
 
 - 由 Clang 以 `x86_64-unknown-none-elf` 目标编译。
 - 由 LLD 的 `elf_x86_64` 模式直接链接，不经过 ARM64 宿主 GCC。
@@ -17,7 +17,9 @@
 - 验证 BootInfo v2 的物理内存图，初始化 2-bit 页帧分配器。
 - 建立并激活内核自己的四级 4 KiB 页表，执行 W^X、NX、WP 和 guard page。
 - 映射并自检 64 KiB 高半区单调早期堆。
-- 验收完成后进入明确的 `HLT` 循环，不返回 Stage 1。
+- 关闭未配置虚拟线模式的本地 APIC，接管 8259A、8254、i8042 和 ATA PIO。
+- 向量 32..47 使用独立硬件 IRQ 汇编入口，设备处理后严格执行 PIC EOI。
+- 验收完成后进入 IF 开启的 `HLT` 事件循环，不返回 Stage 1。
 
 ## 文件布局
 
@@ -37,8 +39,9 @@
 - 段缺少读取权限、包含未知权限位，或同时可写与可执行。
 - 入口不是 `0x00100000`，或不在可执行加载段中。
 - 存在未解析运行时符号。
-- 缺少描述符装载入口、公共异常入口、C++ 分发器、异常桩表、链接器权限边界
-  或任意 `os_kernel_exception_vector_0..31` 符号。
+- 缺少描述符装载入口、异常/硬件 IRQ 公共入口、对应 C++ 分发器、桩表、
+  链接器权限边界、任意 `os_kernel_exception_vector_0..31` 或
+  `os_kernel_hardware_interrupt_vector_32..47` 符号。
 
 宿主 ELF 审计和 Stage 1 目标机加载器各自实现这些不变量，避免构建工具通过
 就被误认为目标代码也正确处理了不可信磁盘数据。
@@ -91,8 +94,9 @@ guard page，其余 RSP/IST 保持零。
 
 ### IDT
 
-IDT 分配 256 个 16 字节门。向量 0..31 为 present interrupt gate，32..255
-保持 not-present。双重故障、NMI、机器检查分别选择 IST1、IST2、IST3。
+IDT 分配 256 个 16 字节门。向量 0..31 是架构异常，32..47 是传统 PIC
+硬件 IRQ，均为 present interrupt gate；48..255 保持 not-present。双重
+故障、NMI、机器检查分别选择 IST1、IST2、IST3。
 breakpoint 和 overflow 的门 DPL 为 3，为未来用户态合法软件触发保留架构
 语义；其余门 DPL 为 0。
 
@@ -199,6 +203,32 @@ Ring 0 异常稳定拥有的字段。公共入口在调用 C++ 前向下对齐 R
 panic 不使用动态分配、格式化库、锁、异常、RTTI 或可失败的构造链。当前只输出
 最小充分证据，不在未知栈健康状态下尝试回溯。
 
+## v0.7 硬件 IRQ 与设备契约
+
+`InterruptRuntime` 在 IF 关闭时完成全部设备配置。它先清除并回读
+`IA32_APIC_BASE` 的全局启用位，避免依赖不存在的 BIOS 虚拟线路由；随后
+重映射 8259A，初始屏蔽所有 IRQ。只有 PIT、PS/2 和 ATA 自检全部成功后，
+才把掩码改为 `0xFFFC` 并开放 IRQ0/IRQ1。
+
+硬件 IRQ 桩统一压入零错误码和向量号，保存集合与异常 ABI 相同。分发器把
+向量 32..47 还原为 IRQ0..15：
+
+- IRQ0：增加 64 位 tick，不执行串口 I/O。
+- IRQ1：读取 i8042 数据端口，推进扫描码集合 1 解码器，保留一个待消费事件。
+- IRQ7/IRQ15：读取 PIC ISR 判定是否虚假，并遵守各自 EOI 规则。
+- 其余 IRQ：当前保持屏蔽；若错误进入仍会完成合法 PIC 确认，但没有设备动作。
+
+PIT 单调毫秒按 `tick × divisor × 1000 / 1193182` 计算，并在乘法前检查
+64 位溢出。统计快照和事件交接保存原 IF、执行 `CLI`、复制状态后按原值恢复，
+不把“函数返回时总是 STI”误作同步策略。
+
+PS/2 初始化关闭两个端口、清空有界输出、读取控制器配置，打开 IRQ1 与翻译、
+关闭 IRQ12，再启用第一端口并向键盘发送扫描使能 `0xF4`；只有收到
+`0xFA` ACK 才成功。ATA 自检向 device control 写 `nIEN`，以 LBA28 读取
+512 字节的 LBA 0，并检查前八字节 `OSSTAGE1`。
+
+详细端口、位和测试边界见 [设备模块](devices.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -229,9 +259,25 @@ panic 不使用动态分配、格式化库、锁、异常、RTTI 或可失败的
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
+[OS][KERNEL] PIC_READY
+[OS][KERNEL] PIC_MASK=0x...FFFC
+[OS][KERNEL] PIT_READY
+[OS][KERNEL] PIT_DIVISOR=0x...04A9
+[OS][KERNEL] PIT_FREQUENCY_HZ=0x...03E8
+[OS][KERNEL] PS2_KEYBOARD_READY
+[OS][KERNEL] ATA_PIO_READY
+[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID
+[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED
+[OS][KERNEL] INTERRUPTS_ENABLED
+[OS][KERNEL] TIMER_TICKS=0x...
+[OS][KERNEL] MONOTONIC_MILLISECONDS=0x...
+[OS][KERNEL] TIMER_SELF_TEST_PASSED
 [OS][KERNEL] FILE_SIZE=0x...
 [OS][KERNEL] LOAD_SEGMENTS=0x...
 [OS][KERNEL] READY
+[OS][KERNEL] KEYBOARD_SCANCODE=0x...001E
+[OS][KERNEL] KEYBOARD_EVENT=A_PRESSED
 ```
 
 未初始化的全局 64 位探针位于 BSS。只有加载器按 `p_memsz - p_filesz` 清零，
@@ -246,7 +292,10 @@ panic 不使用动态分配、格式化库、锁、异常、RTTI 或可失败的
 
 ## 已知边界
 
-- 当前只处理同步异常，不开放 IF，不发送 PIC EOI；设备中断属于 v0.7。
+- 当前仅使用单核传统 PIC；本地 APIC、I/O APIC、MSI/MSI-X 与 SMP 路由
+  尚未实现。
+- 键盘只保存一个待处理语义事件，ATA 仍是禁用设备 IRQ 的同步单扇区 PIO；
+  环形队列、IRQ14、DMA 与通用块请求尚未实现。
 - 页帧分配器当前只管理低 64 MiB；高端 RAM、NUMA 和稀疏物理内存以后扩展。
 - 早期堆不释放，页表取消映射也不回收空中间表；通用生命周期尚未实现。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。

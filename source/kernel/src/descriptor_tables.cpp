@@ -1,6 +1,7 @@
 #include "os/kernel/descriptor_tables.hpp"
 
 #include "os/kernel/descriptor_layout.hpp"
+#include "os/kernel/device_model.hpp"
 #include "os/kernel/exception_frame.hpp"
 
 namespace os::kernel {
@@ -64,6 +65,7 @@ alignas(OS_KERNEL_DESCRIPTOR_GUARD_PAGE_SIZE_BYTES) uint8_t
     kernelMachineCheckStack[OS_KERNEL_DESCRIPTOR_STACK_STORAGE_SIZE_BYTES];
 
 extern "C" const uint64_t osKernelExceptionStubTable[OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT];
+extern "C" const uint64_t osKernelHardwareInterruptStubTable[OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT];
 
 extern "C" void osKernelLoadGdtAndTss(const DescriptorTablePointer *descriptorTable,
                                       uint64_t codeSelector, uint64_t dataSelector,
@@ -155,6 +157,17 @@ void initializeInterruptDescriptorTable() noexcept {
     for (uint64_t vector = OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT;
          vector < OS_KERNEL_DESCRIPTOR_INTERRUPT_GATE_COUNT; ++vector) {
         kernelInterruptDescriptorTable[vector] = notPresentGate;
+    }
+    for (uint64_t interruptRequest = 0ULL; interruptRequest < OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT;
+         ++interruptRequest) {
+        uint64_t vector = 0ULL;
+        if (calculateLegacyPicVector(interruptRequest, vector) != LegacyPicModelStatus::Succeeded) {
+            continue;
+        }
+        kernelInterruptDescriptorTable[vector] = createInterruptGateDescriptor(
+            osKernelHardwareInterruptStubTable[interruptRequest],
+            OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR, OS_KERNEL_DESCRIPTOR_NO_IST,
+            OS_KERNEL_DESCRIPTOR_RING0_INTERRUPT_GATE);
     }
 
     const DescriptorTablePointer interruptDescriptorTablePointer{

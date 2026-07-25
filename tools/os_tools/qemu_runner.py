@@ -1,6 +1,10 @@
+from collections.abc import Callable
+import json
 from pathlib import Path
 import shlex
+import socket
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -10,6 +14,9 @@ from .process import runCommand
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
+OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
+OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
+OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
 OS_QEMU_GUEST_MEMORY_MEBIBYTES = 64
 OS_QEMU_FIRMWARE_RESET_MARKER = "[OS][FIRMWARE] RESET"
 OS_QEMU_FIRMWARE_SERIAL_READY_MARKER = "[OS][FIRMWARE] SERIAL_READY"
@@ -131,6 +138,41 @@ OS_QEMU_KERNEL_HEAP_CAPACITY_MARKER = "[OS][KERNEL] HEAP_CAPACITY_BYTES=0x"
 OS_QEMU_KERNEL_HEAP_SELF_TEST_PASSED_MARKER = (
     "[OS][KERNEL] HEAP_SELF_TEST_PASSED"
 )
+OS_QEMU_KERNEL_LEGACY_INTERRUPT_ROUTING_READY_MARKER = (
+    "[OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY"
+)
+OS_QEMU_KERNEL_PIC_READY_MARKER = "[OS][KERNEL] PIC_READY"
+OS_QEMU_KERNEL_PIC_MASK_MARKER = "[OS][KERNEL] PIC_MASK=0x"
+OS_QEMU_KERNEL_PIT_READY_MARKER = "[OS][KERNEL] PIT_READY"
+OS_QEMU_KERNEL_PIT_DIVISOR_MARKER = "[OS][KERNEL] PIT_DIVISOR=0x"
+OS_QEMU_KERNEL_PIT_FREQUENCY_MARKER = "[OS][KERNEL] PIT_FREQUENCY_HZ=0x"
+OS_QEMU_KERNEL_PS2_KEYBOARD_READY_MARKER = (
+    "[OS][KERNEL] PS2_KEYBOARD_READY"
+)
+OS_QEMU_KERNEL_ATA_PIO_READY_MARKER = "[OS][KERNEL] ATA_PIO_READY"
+OS_QEMU_KERNEL_ATA_BOOT_DESCRIPTOR_VALID_MARKER = (
+    "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID"
+)
+OS_QEMU_KERNEL_PIC_SPURIOUS_SELF_TEST_PASSED_MARKER = (
+    "[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED"
+)
+OS_QEMU_KERNEL_INTERRUPTS_ENABLED_MARKER = "[OS][KERNEL] INTERRUPTS_ENABLED"
+OS_QEMU_KERNEL_TIMER_TICKS_MARKER = "[OS][KERNEL] TIMER_TICKS=0x"
+OS_QEMU_KERNEL_MONOTONIC_MILLISECONDS_MARKER = (
+    "[OS][KERNEL] MONOTONIC_MILLISECONDS=0x"
+)
+OS_QEMU_KERNEL_TIMER_SELF_TEST_PASSED_MARKER = (
+    "[OS][KERNEL] TIMER_SELF_TEST_PASSED"
+)
+OS_QEMU_KERNEL_KEYBOARD_SCANCODE_MARKER = (
+    "[OS][KERNEL] KEYBOARD_SCANCODE=0x000000000000001E"
+)
+OS_QEMU_KERNEL_KEYBOARD_A_PRESSED_MARKER = (
+    "[OS][KERNEL] KEYBOARD_EVENT=A_PRESSED"
+)
+OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER = (
+    "[OS][KERNEL] DEVICE_INITIALIZATION_FAILED="
+)
 OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER = (
     "[OS][KERNEL] FAULT_INJECTION=INVALID_OPCODE"
 )
@@ -241,8 +283,9 @@ def runQemuHardwareSmoke(
 def createQemuFirmwareCommand(
     firmwareImagePath: Path,
     diskImagePath: Path,
+    qmpSocketPath: Path | None = None,
 ) -> list[str]:
-    return [
+    command = [
         "qemu-system-x86_64",
         "-machine",
         "pc,accel=tcg",
@@ -264,6 +307,14 @@ def createQemuFirmwareCommand(
         "-drive",
         f"file={diskImagePath},format=raw,if=ide,snapshot=on",
     ]
+    if qmpSocketPath is not None:
+        command.extend(
+            (
+                "-qmp",
+                f"unix:{qmpSocketPath},server=on,wait=off",
+            )
+        )
+    return command
 
 
 def normalizeCapturedOutput(output: str | bytes | None) -> str:
@@ -278,6 +329,7 @@ def runQemuWithTimedSerial(
     command: list[str],
     projectRoot: Path,
     timeoutSeconds: float,
+    lineObserver: Callable[[str], None] | None = None,
 ) -> tuple[str, str, bool, int]:
     """逐行捕获串口，并用宿主单调时钟记录每行抵达时间。"""
     normalizedCommand = [str(argument) for argument in command]
@@ -307,6 +359,8 @@ def runQemuWithTimedSerial(
                 f"[QEMU][T+{elapsedMilliseconds:06d}ms] "
                 f"{line.rstrip('\r\n')}\n"
             )
+            if lineObserver is not None:
+                lineObserver(line)
 
     captureThread = threading.Thread(
         target=captureSerialLines,
@@ -345,6 +399,80 @@ def runQemuWithTimedSerial(
     )
 
 
+def waitForQmpResponse(
+    qmpStream: socket.SocketIO,
+) -> dict[str, object]:
+    for _ in range(OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT):
+        responseLine = qmpStream.readline()
+        if not responseLine:
+            raise OsToolError("QMP 在返回命令结果前关闭连接。")
+        response = json.loads(responseLine.decode("utf-8"))
+        if "return" in response or "error" in response:
+            return response
+    raise OsToolError("QMP 返回事件过多，未找到命令结果。")
+
+
+def sendQmpCommand(
+    qmpStream: socket.SocketIO,
+    command: dict[str, object],
+) -> None:
+    qmpStream.write(
+        json.dumps(command, separators=(",", ":")).encode("utf-8")
+        + b"\r\n"
+    )
+    qmpStream.flush()
+    response = waitForQmpResponse(qmpStream)
+    if "error" in response:
+        raise OsToolError(f"QMP 命令执行失败：{response['error']!r}")
+
+
+def injectQemuKey(
+    qmpSocketPath: Path,
+    keyName: str,
+    readyEvent: threading.Event,
+    finishedEvent: threading.Event,
+    failureMessages: list[str],
+) -> None:
+    if not readyEvent.wait(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS):
+        return
+
+    connectionDeadline = (
+        time.monotonic() + OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS
+    )
+    while (
+        not qmpSocketPath.exists()
+        and not finishedEvent.is_set()
+        and time.monotonic() < connectionDeadline
+    ):
+        time.sleep(OS_QEMU_QMP_RETRY_INTERVAL_SECONDS)
+    if finishedEvent.is_set():
+        return
+
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as qmpSocket:
+            qmpSocket.settimeout(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS)
+            qmpSocket.connect(str(qmpSocketPath))
+            with qmpSocket.makefile("rwb", buffering=0) as qmpStream:
+                greetingLine = qmpStream.readline()
+                if not greetingLine:
+                    raise OsToolError("QMP 未返回握手信息。")
+                greeting = json.loads(greetingLine.decode("utf-8"))
+                if "QMP" not in greeting:
+                    raise OsToolError("QMP 握手缺少版本对象。")
+                sendQmpCommand(qmpStream, {"execute": "qmp_capabilities"})
+                sendQmpCommand(
+                    qmpStream,
+                    {
+                        "execute": "human-monitor-command",
+                        "arguments": {
+                            "command-line": f"sendkey {keyName}",
+                        },
+                    },
+                )
+    except (OSError, ValueError, OsToolError) as error:
+        failureMessages.append(str(error))
+
+
 def validateSerialProtocol(
     serialOutput: str,
     requiredMarkers: tuple[str, ...],
@@ -378,6 +506,7 @@ def runQemuFirmwareBoot(
     expectedDiskSizeBytes: int,
     requiredMarkers: tuple[str, ...],
     forbiddenMarkers: tuple[str, ...],
+    keyboardInputKey: str | None = None,
 ) -> None:
     validateImageSize(
         firmwareImagePath,
@@ -390,23 +519,67 @@ def runQemuFirmwareBoot(
         "启动磁盘镜像",
     )
 
-    command = createQemuFirmwareCommand(
-        firmwareImagePath,
-        diskImagePath,
-    )
-    serialOutput, timedSerialOutput, timedOut, returnCode = (
-        runQemuWithTimedSerial(
-            command,
-            projectRoot,
-            OS_QEMU_SMOKE_TIMEOUT_SECONDS,
+    with tempfile.TemporaryDirectory(prefix="os-qemu-") as temporaryDirectory:
+        qmpSocketPath = Path(temporaryDirectory) / "qmp.sock"
+        keyboardReadyEvent = threading.Event()
+        qemuFinishedEvent = threading.Event()
+        qmpFailureMessages: list[str] = []
+
+        def observeSerialLine(line: str) -> None:
+            if OS_QEMU_KERNEL_READY_MARKER in line:
+                keyboardReadyEvent.set()
+
+        qmpThread: threading.Thread | None = None
+        if keyboardInputKey is not None:
+            qmpThread = threading.Thread(
+                target=injectQemuKey,
+                args=(
+                    qmpSocketPath,
+                    keyboardInputKey,
+                    keyboardReadyEvent,
+                    qemuFinishedEvent,
+                    qmpFailureMessages,
+                ),
+                name="os-qemu-keyboard-injection",
+                daemon=True,
+            )
+            qmpThread.start()
+
+        command = createQemuFirmwareCommand(
+            firmwareImagePath,
+            diskImagePath,
+            qmpSocketPath if keyboardInputKey is not None else None,
         )
-    )
+        try:
+            serialOutput, timedSerialOutput, timedOut, returnCode = (
+                runQemuWithTimedSerial(
+                    command,
+                    projectRoot,
+                    OS_QEMU_SMOKE_TIMEOUT_SECONDS,
+                    observeSerialLine if keyboardInputKey is not None else None,
+                )
+            )
+        finally:
+            qemuFinishedEvent.set()
+            keyboardReadyEvent.set()
+            if qmpThread is not None:
+                qmpThread.join()
+
+    if qmpFailureMessages:
+        print(timedSerialOutput, end="")
+        raise OsToolError(
+            "QEMU 键盘注入失败：" + "; ".join(qmpFailureMessages)
+        )
     if timedOut:
-        validateSerialProtocol(
-            serialOutput,
-            requiredMarkers,
-            forbiddenMarkers,
-        )
+        try:
+            validateSerialProtocol(
+                serialOutput,
+                requiredMarkers,
+                forbiddenMarkers,
+            )
+        except OsToolError:
+            print(timedSerialOutput, end="")
+            raise
         print(timedSerialOutput, end="")
         print("QEMU 固件串口协议验收通过。")
         return

@@ -22,6 +22,90 @@ CPU 与向量，处理器在指令边界接受中断，再通过 IDT 进入内�
 若驱动先发 EOI 再清设备条件，电平触发中断可能立即重新进入；若只清设备而漏
 EOI，控制器可能不再交付同优先级 IRQ。顺序来自控制器触发模式和设备规范。
 
+\section{兼容历史把一条中断线变成三层路由}
+
+最早的 PC 由 8259A 汇聚设备 IRQ，再用处理器的 INTR 引脚交付。双片级联后，
+主片 IRQ2 承担从片输出，所以十六个编号里只有十五条可供外设独立使用。后来
+多处理器系统加入本地 APIC 和 I/O APIC：I/O APIC 选择目标处理器与向量，
+本地 APIC 管理每个 CPU 的优先级、局部定时器和 EOI。
+
+为了让旧 PIC 与新 APIC 共存，PC 固件通常建立 virtual wire mode，把 PIC
+输出作为本地 APIC 的 ExtINT 输入。这里的关键词是“固件通常”：它不是
+x86 指令集自动完成的复位承诺。本项目没有 SeaBIOS/OVMF，自研 ROM 尚未配置
+LAPIC LVT，因此 v0.7 选择清除 \code{IA32\_APIC\_BASE} 的 bit 11，让
+单核处理器直接接收传统 INTR。写后必须 \code{RDMSR} 回读，不能把执行过
+\code{WRMSR} 当作状态已经建立。
+
+\begin{pdfdiagram}
+  \node[os hardware] (pit) {PIT\\IRQ0 边沿};
+  \node[os state,right=of pit] (pic) {8259A\\IRR/IMR/ISR};
+  \node[os state,right=of pic] (route) {兼容路由\\INTR 或 ExtINT};
+  \node[os block,right=of route] (cpu) {CPU\\IF 与优先级};
+  \node[os state,below=of cpu] (idt) {IDT[32]\\present gate};
+  \node[os block,left=of idt] (stub) {IRQ 桩\\统一帧};
+  \draw[os arrow] (pit) -- (pic);
+  \draw[os arrow] (pic) -- (route);
+  \draw[os arrow] (route) -- (cpu);
+  \draw[os arrow] (cpu) -- (idt);
+  \draw[os arrow] (idt) -- (stub);
+\end{pdfdiagram}
+\diagramnote{设备产生、PIC 接收、控制器间路由、CPU 接受和 IDT 入口是五个可分别失败的边界。}
+
+这条差异在真实 QEMU 中形成过一个很有价值的失败：PIT 的 IRQ 统计持续增长，
+PIC 的 IRR bit 0 为一、IMR bit 0 为零，CPU 的 IF 为一且处于 HLT，
+IDT[32] 也存在，但入口计数始终为零。延长等待、重写 PIT 除数或重复 STI
+都不能修复“连接不存在”。关闭未配置的本地 APIC 后，下一次 IRQ0 立即沿
+INTR 进入。这说明跨芯片拓扑和单芯片寄存器同样属于软件契约。
+
+\section{代码按纯模型、端口驱动、运行时和入口分层}
+
+设备代码没有堆在一个“驱动文件”里。当前依赖关系为：
+
+\begin{pdfdiagram}
+  \node[os state] (model) {device\_model\\纯计算与状态机};
+  \node[os hardware,below left=of model] (io) {port\_io\\8/16 位 IN/OUT};
+  \node[os block,below=of model] (drivers) {PIC/PIT/PS2/ATA\\寄存器所有权};
+  \node[os state,below=of drivers] (runtime) {interrupt\_runtime\\组合与共享状态};
+  \node[os block,right=of runtime] (assembly) {architecture.asm\\IRQ 帧 ABI};
+  \node[os state,below=of runtime] (main) {kernel\_main\\有界日志与验收};
+  \draw[os arrow] (model) -- (drivers);
+  \draw[os arrow] (io) -- (drivers);
+  \draw[os arrow] (drivers) -- (runtime);
+  \draw[os arrow] (assembly) -- (runtime);
+  \draw[os arrow] (runtime) -- (main);
+\end{pdfdiagram}
+\diagramnote{纯模型可在宿主测试；端口时序必须由 QEMU 目标执行；汇编只定义入口 ABI，不拥有设备策略。}
+
+\filepath{device\_model.cpp} 计算 IRQ/向量、PIC mask、PIT 除数与毫秒，维护
+扫描码前缀，并验证 ATA 请求。函数采用“候选输出只在成功时提交”的约定，
+非法 IRQ 或频率不会部分修改调用者对象。\filepath{legacy\_pic.cpp} 等驱动
+只接触各自命名端口；\filepath{interrupt\_runtime.cpp} 决定启动顺序、开放
+哪些 IRQ、怎样同步快照；\filepath{architecture.asm} 完全不知道 IRQ0 是
+时钟还是 IRQ1 是键盘。
+
+这种边界直接决定测试层。纯模型由单元与固定种子性质测试覆盖；启动组合由宿主
+集成测试覆盖；端口访问、PIC 交付、\code{IRETQ} 和键盘事件只能由 QEMU
+整机测试证明。任何一层单独通过都不能替代下一层。
+
+\section{硬件 IRQ 帧与异常同形但不同策略}
+
+8259A 不会像某些 CPU 异常那样压入错误码。向量 32--47 的每个 NASM 桩先
+\code{push qword 0}，再压入向量号，公共入口随后清 DF 并保存
+RAX、RBX、RCX、RDX、RBP、RSI、RDI、R8--R15。它形成与异常相同的
+160 字节帧，所以 C++ 可以复用经过静态断言的结构偏移。
+
+“同形”不表示“同一处理函数”。异常分发器决定 breakpoint 返回或 panic；
+硬件分发器先把向量减去 32 得到 IRQ，执行最小设备动作，再按控制器规则 EOI。
+若把二者合并，普通 IRQ 可能被当作异常终止，异常又可能错误发送 EOI。入口
+最后逆序恢复寄存器，丢弃 vector/error 两槽并执行 \code{IRETQ}，由硬件
+恢复 RIP、CS 和 RFLAGS.IF。
+
+\begin{contractbox}
+IRQ 处理函数不能假定普通 C++ ABI 已保存调用者现场，也不能用
+\code{ret} 返回。汇编帧布局、C++ 字段顺序、IDT gate 与 EOI 顺序共同组成
+一条不可拆分的 ABI。
+\end{contractbox}
+
 \section{8259A 初始化命令字形成严格序列}
 
 主从 PIC 上电后的向量与 x86 异常重叠。初始化先保存屏蔽，向 command 端口
@@ -41,6 +125,29 @@ IRQ7 和 IRQ15 可能在处理器确认前撤销，形成虚假中断。驱动�
 PIC 是学习兼容 PC 中断的起点。APIC 把确认、优先级和路由扩展到多核，但仍
 遵循“识别来源、处理条件、确认控制器”的基本模型。
 
+\section{屏蔽策略把未实现设备排除在状态空间外}
+
+PIC 初始化后先把主从 IMR 都写成 \code{0xFF}。PIT、键盘与 ATA 自检全部
+成功以后，内核只清 master bit 0 和 bit 1，最终 16 位 mask 为
+\code{0xFFFC}。IRQ2 只在以后开放从片设备时随之打开；当前 ATA 明确写
+\code{nIEN} 并保持轮询，因此不开放 IRQ14。
+
+这不是保守的临时习惯，而是可证明的状态空间管理。若先开放全部 IRQ，再逐个
+初始化驱动，软盘、RTC、IDE 或浮动线路都可能进入没有确认协议的向量。中断门
+存在只证明 CPU 能跳转，不证明软件知道怎样消除设备条件。先配置、后开放让
+每个可达 IRQ 都有已安装入口、来源处理和 EOI。
+
+\section{软件虚假 IRQ 自检覆盖最难自然复现的分支}
+
+IRQ7/IRQ15 的虚假条件来自请求在 CPU 确认前撤销，自动化测试很难稳定控制这个
+模拟时序。v0.7 在 IF 开放前执行 \code{INT 0x27}：软件中断进入同一 IDT
+gate 和硬件公共桩，但 PIC ISR bit 7 并未置位，所以分发器稳定走虚假 IRQ7
+分支并且不发 EOI。统计必须恰好增加一次。
+
+这条自检不能证明 PIT 的真实电气边沿，后者仍由 IRQ0 系统测试负责；它只把
+“ISR 判定与不发 EOI”这个稀有控制器分支变成可重复证据。测试设计应明确每条
+注入到底绕过了哪一层，而不是笼统称为“测试中断”。
+
 \section{PIT 除数把硬件频率转换为系统 tick}
 
 PIT 通道 0 输入频率约 1.193182 MHz。模式 2 周期发生器的输出频率为：
@@ -53,6 +160,31 @@ PIT 通道 0 输入频率约 1.193182 MHz。模式 2 周期发生器的输出频
 
 中断处理器递增 64 位单调 tick，唤醒到期定时器并减少当前线程预算。墙钟时间、
 时区和日历属于更高层，不能直接由 PIT tick 代替。
+
+当前实现选择 1000 Hz，四舍五入得到除数 \code{0x04A9}=1193。由于硬件
+输入并不是 1193000 Hz，实际频率约为 1000 Hz 而非数学意义上的精确千赫兹。
+毫秒按下式计算：
+\[
+  t_{\mathrm{ms}} =
+  \left\lfloor
+  \frac{\mathrm{ticks}\times \mathrm{divisor}\times1000}{1\,193\,182}
+  \right\rfloor .
+\]
+所以 16 tick 输出 15 ms 是量化结果，不表示少处理了一次中断。乘法前用
+\code{UINT64\_MAX} 推导最大安全 tick，超过后饱和为最大值；不能让长期运行
+从大时间突然回绕为小时间。
+
+\section{共享统计用保存 IF 的短临界区取得快照}
+
+IRQ 会在普通事件循环的任意指令边界更新 tick、键盘计数和待处理事件。当前
+是单核，不需要跨 CPU 原子协议，但编译器仍必须每次实际读取这些字段；实现用
+volatile 表达中断可见存储，并用“读取 RFLAGS、CLI、复制、按原 IF 恢复”
+形成一致快照。
+
+恢复函数不能无条件 STI。调用者可能本来就在 IF=0 的初始化或中断上下文，
+无条件开启会扩大可重入区域。v0.7 的 \code{disableInterrupts} 返回旧 IF，
+\code{restoreInterrupts} 只在旧状态为一时 STI。进入多核后，这只保护本地
+IRQ，不保护另一颗 CPU；届时还需锁或原子顺序。
 
 \section{中断延迟由关闭窗口和处理时间共同决定}
 
@@ -72,6 +204,83 @@ PIT 通道 0 输入频率约 1.193182 MHz。模式 2 周期发生器的输出频
 扫描码集合定义按下、释放和扩展前缀。解析器维护前缀与修饰键状态，输出
 \code{KeyEvent}；布局层再把物理键位映射为 Unicode 或控制动作。IRQ 只把
 原始字节放入环形队列，避免在中断上下文执行复杂文本逻辑。
+
+当前最小实现尚未引入环形队列，只保留一个待消费语义事件。初始化依次关闭
+第一、第二端口，最多读取 32 个残留输出，读取 controller configuration
+byte，打开 IRQ1 与 translation、关闭 IRQ12，再开放第一端口。向键盘发送
+\code{0xF4} 以后，只有 \code{0xFA} ACK 才算成功。写之前等待 status
+bit 1 清零，读之前等待 bit 0 置位，所有循环上限为命名常量。
+
+集合 1 中 A 的 make 是 \code{0x1E}，break 是 \code{0x9E}；bit 7 表示
+释放。\code{0xE0} 只把解码器推进到“等待扩展码”，不会自己产生事件。当前
+支持 Escape、Backspace、Enter、Space、A 与方向键，未知码返回强状态而不
+伪造 Unknown 按键。后续加入修饰键和布局时，硬件位置事件仍保持稳定。
+
+\section{内核 ATA 自检建立设备所有权而不伪装异步块层}
+
+固件和 Stage 1 已有 ATA PIO，但内核不能调用它们的私有例程或依赖遗留寄存器
+状态。v0.7 的 C++ 驱动独立选择 primary master LBA28，向 device control
+写 \code{nIEN}，等待 BSY 清除，选择设备后读取 alternate status 四次满足
+约 400 ns 延时，再写 sector count、LBA 三字节和 \code{READ SECTORS=0x20}。
+
+状态循环按以下优先级推进：
+\[
+\begin{aligned}
+\mathrm{BSY}=1 &\Rightarrow \text{继续有界等待},\\
+\mathrm{BSY}=0\land(\mathrm{ERR}\lor\mathrm{DF}) &\Rightarrow \text{设备错误},\\
+\mathrm{BSY}=0\land\mathrm{DRQ}=1 &\Rightarrow \text{读取 256 个 16 位字}.
+\end{aligned}
+\]
+每个 word 按小端拆成两个字节。启动读取 LBA 0 后检查前八字节
+\code{OSSTAGE1}，证明内核的端口、命令、数据宽度和磁盘目标都正确。
+\code{nIEN} 与 PIC 屏蔽 IRQ14 表明当前完成语义仍是轮询；没有 IRQ14 请求
+队列、DMA 和写路径，就不能把这一步称为完整块驱动。
+
+\section{QMP 只产生输入，来宾仍完成全部硬件协议}
+
+图形窗口中的人工按键不可稳定回归。宿主 QEMU runner 为成功路径创建 QMP
+Unix socket，等串口出现 \code{READY} 后协商 capabilities，并执行
+\code{sendkey a}。这个动作只把 A 键送给 QEMU 的虚拟键盘前端，随后仍必须
+经过 PS/2 设备、i8042 输出缓冲、IRQ1、PIC、CPU、IDT、汇编桩和 C++ 解码。
+
+系统测试按顺序要求 \code{KEYBOARD\_SCANCODE=...001E} 与
+\code{KEYBOARD\_EVENT=A\_PRESSED}。若宿主直接写来宾内存或调用解码函数，
+这些中间状态都不会被证明。QMP 与真人按键的差异只在可重复性，不在来宾
+硬件边界。
+
+\section{时间与日志必须区分来宾语义和宿主观察}
+
+IRQ0 以 1000 Hz 到达，若每次都经 115200 波特串口打印，日志本身会占据超过
+一个 tick 的时间并形成新的延迟。当前 ISR 只计数；启动收到至少 16 次后输出
+一次 \code{TIMER\_TICKS}、\code{MONOTONIC\_MILLISECONDS} 和通过标记。
+键盘也在中断返回后的事件循环记录，而不是在 IRQ 热路径格式化。
+
+宿主捕获线程在每个换行到达时附加
+\code{[QEMU][T+000123ms]}。这是测试进程的单调观察时间，包含 TCG 调度和
+管道延迟；来宾毫秒来自 PIT 除数与 IRQ 计数。二者起点与用途不同，不能让
+宿主时间冒充操作系统时钟，也不能用来宾启动后 tick 追溯尚未计数的复位阶段。
+
+\section{四层证据把异步偶然性变成可回归契约}
+
+\begin{longtable}{L{0.18\textwidth}L{0.28\textwidth}L{0.42\textwidth}}
+\toprule
+层次 & 代表检查 & 排除的错误\\
+\midrule
+单元 & PIC/PIT/扫描码/ATA 纯模型 &
+边界、舍入、前缀、失败后输出被部分修改\\
+集成 & \code{0xFFFC}、PIT 参数、A 键与 LBA0 组合 &
+模块顺序和启动契约不一致\\
+ELF 审计 & 公共 IRQ 入口、桩表、向量 32--47 &
+汇编文件存在但符号没有进入最终镜像\\
+QEMU 系统 & 真实 IRQ0、QMP 键盘、串口有序标记 &
+端口、控制器路由、IDT、IRETQ、EOI 和设备模型错误\\
+\bottomrule
+\end{longtable}
+
+固定种子随机测试另外执行 4096 轮 IRQ 往返、PIT 有效频率和键盘 make/break
+组合。完整集合为 46 项 CTest，并继续运行之前的 ROM、ATA、长模式、ELF、
+异常、内存和 19 条失败路径。阶段完成的含义不是“新增测试绿了”，而是新增
+异步状态没有破坏旧的确定性证据。
 
 \section{环形缓冲需要明确满与空的表示}
 
