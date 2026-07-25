@@ -186,6 +186,23 @@ QEMU 自行异常退出仍视为失败。
 - 用户日志的生产者/消费者先后顺序不固定；各自内部里程碑顺序、出现次数和
   目标内统计才是稳定协议，避免把合法并发交错写死为测试。
 
+`v0.11` 把磁盘格式、语义一致性与真实持久化分层验证：
+
+- 格式单元测试直接对 512 字节缓冲执行 superblock、inode 和目录项
+  编解码，逐类破坏受保护字段，证明 CRC32 与布局验证都实际生效。
+- 生命周期集成测试在 4096 扇区内存块设备上执行首次格式化、嵌套目录、
+  1300 字节跨块文件、关闭、同步、新实例重挂载和截断；随后分别制造孤儿
+  inode、非法 `DEL` 名称和超级块 CRC 错误并要求拒绝。
+- 固定种子随机测试执行 128 轮随机长度、随机内容的 truncate/rewrite，
+  每轮销毁 `FileSystem` 与缓存对象、重新挂载，再与宿主参考数组逐字节比较。
+- 正常 QEMU 既检查生产者/消费者文件里程碑，也解析每进程文件读写字节和
+  superblock 代次；目标内还需完成同步、全盘一致性与独立载荷读回。
+- 专用持久化测试复制一份真实启动盘并关闭 snapshot：第一次启动格式化和写入，
+  第二次启动必须先报告 `FILE_SYSTEM_MOUNTED` 与旧载荷恢复，再允许重写。
+- 第二次启动后，宿主只翻转文件系统超级块中的一个受 CRC 保护字节。第三次
+  必须报告 `FILE_SYSTEM_CORRUPT`，禁止进入 Ring 3、自动格式化或到达
+  `READY`。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -244,6 +261,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_pipe_unit_tests` | 单元 | 管道读写、回绕、关闭、EOF、broken pipe 与统计 |
 | `os_kernel_pipe_randomized_tests` | 随机 | 32,768 步管道状态与独立字节队列模型对照 |
 | `os_kernel_synchronization_integration_tests` | 集成 | 四线程、200,000 次受锁更新的互斥与可见性 |
+| `os_kernel_file_system_format_unit_tests` | 单元 | superblock、inode、目录项显式编码、布局与 CRC32 |
+| `os_kernel_file_system_lifecycle_integration_tests` | 集成 | 格式化、目录、跨块文件、重挂载、截断与语义损坏拒绝 |
+| `os_kernel_file_system_randomized_tests` | 随机 | 128 轮随机 rewrite、重挂载与参考模型逐字节对照 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限与符号 |
 | `os_user_smoke_elf_layout` | 集成 | 正常用户 ELF 的 AMD64、段权限与入口 |
@@ -262,6 +282,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_disk_rejects_invalid_elf` | 集成/失败路径 | CRC 正确但 ELF 语义非法仍必须被拒绝 |
 | `os_stage1_rejects_invalid_header` | 集成/失败路径 | 损坏描述符必须被宿主审计拒绝 |
 | `os_qemu_stage1_load_success` | 系统 | 真实 ATA PIO 加载、校验、远跳转和 Stage 1 入口 |
+| `os_qemu_file_system_persistence` | 系统/失败路径 | 同盘双启动持久化与损坏 superblock 拒绝挂载 |
 | `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
 | `os_qemu_firmware_ide_busy_timeout_failure` | 系统/失败路径 | BSY 永久置位必须有界失败 |
 | `os_qemu_firmware_ide_error_failure` | 系统/失败路径 | ATA ERR 必须进入设备错误分支 |
@@ -285,18 +306,19 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 64 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
+当前共 68 项 CTest。QEMU、ELF 审计和镜像工具由 Python 标准库实现。QEMU
 捕获器同时拥有“最终里程碑到达”和“五秒总截止”两个终止条件，并通过
 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 
-成功 QEMU 用例不只检查标记“至少出现一次”。v0.10 对四次 ELF/栈创建、
+成功 QEMU 用例不只检查标记“至少出现一次”。v0.11 对四次 ELF/栈创建、
 生产者/消费者里程碑、两个 worker 的进度与地址隔离、四份终止结果和单次资源
 回收执行精确计数；同时解析固定 16 位十六进制统计，要求创建/终止为 4、
 PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、管道写入/读取均为 256。内核
-也独立验证同一组进程、管道和页帧不变量，形成目标内自检与宿主协议检查两层
-证据。
+也独立验证同一组进程、管道、文件系统和页帧不变量，形成目标内自检与宿主
+协议检查两层证据。持久化测试另用同一临时磁盘的两次全新 QEMU 进程，避免
+把缓存内读回误当作跨启动持久化。
 
 宿主 C++ 测试使用项目内显式 `TestContext`，不引入 GoogleTest。当前测试规模
 不需要 fixture 或宏注册；避免 `TEST`、`EXPECT_*` 等宏也与项目的宏约束一致。

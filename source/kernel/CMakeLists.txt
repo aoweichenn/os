@@ -1,12 +1,15 @@
 set(
     OS_KERNEL_PUBLIC_HEADERS
     include/os/kernel/boot_info.hpp
+    include/os/kernel/block_cache.hpp
     include/os/kernel/descriptor_layout.hpp
     include/os/kernel/descriptor_tables.hpp
     include/os/kernel/device_model.hpp
     include/os/kernel/entry.hpp
     include/os/kernel/exception_frame.hpp
     include/os/kernel/exceptions.hpp
+    include/os/kernel/file_system.hpp
+    include/os/kernel/file_system_format.hpp
     include/os/kernel/freestanding_memory.hpp
     include/os/kernel/kernel_main.hpp
     include/os/kernel/kernel_heap.hpp
@@ -37,12 +40,15 @@ set(
 set(
     OS_KERNEL_SHARED_SOURCES
     src/ata_pio.cpp
+    src/block_cache.cpp
     src/boot_info.cpp
     src/device_model.cpp
     src/descriptor_layout.cpp
     src/descriptor_tables.cpp
     src/exception_frame.cpp
     src/exceptions.cpp
+    src/file_system.cpp
+    src/file_system_format.cpp
     src/freestanding_memory.cpp
     src/kernel_main.cpp
     src/kernel_heap.cpp
@@ -169,6 +175,29 @@ add_library(
         src/spin_lock.cpp
         include/os/kernel/pipe.hpp
         include/os/kernel/spin_lock.hpp
+)
+
+add_library(
+    os_kernel_file_system_model_host
+    STATIC
+        src/block_cache.cpp
+        src/file_system.cpp
+        src/file_system_format.cpp
+        src/spin_lock.cpp
+        include/os/kernel/block_cache.hpp
+        include/os/kernel/file_system.hpp
+        include/os/kernel/file_system_format.hpp
+        include/os/kernel/spin_lock.hpp
+)
+target_include_directories(
+    os_kernel_file_system_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_file_system_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
 )
 target_include_directories(
     os_kernel_ipc_model_host

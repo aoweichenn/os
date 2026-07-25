@@ -19,11 +19,13 @@ struct ProcessControlBlock final {
     UserAddressSpace addressSpace;
     ExceptionFrame *savedFrame;
     ProcessExecutionResult result;
+    FileSystemHandle fileDescriptors[OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT];
 };
 
 ProcessScheduler processScheduler;
 Pipe processPipe;
 ProcessControlBlock processControlBlocks[OS_KERNEL_PROCESS_CAPACITY];
+FileSystem *processFileSystem;
 PhysicalFrameAllocatorStatistics framesBeforeProcesses;
 PhysicalFrameAllocatorStatistics framesAfterProcesses;
 uint64_t pipeReaderBlockCount;
@@ -128,6 +130,21 @@ void CloseProcessPipeEndpoints(const UserProgramSelection selection) noexcept {
     }
 }
 
+void CloseProcessFileDescriptors(ProcessControlBlock &process) noexcept {
+    if (processFileSystem == nullptr) {
+        HaltProcessor();
+    }
+    for (uint64_t descriptorIndex = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         descriptorIndex < OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT;
+         ++descriptorIndex) {
+        FileSystemHandle &handle = process.fileDescriptors[descriptorIndex];
+        if (handle.open &&
+            processFileSystem->Close(handle) != FileSystemStatus::Succeeded) {
+            HaltProcessor();
+        }
+    }
+}
+
 [[nodiscard]] ExceptionFrame *
 CompleteCurrentProcess(ExceptionFrame &frame, const ProcessTerminationReason terminationReason,
                        const int64_t exitCode, const uint64_t pageFaultAddress) noexcept {
@@ -147,6 +164,7 @@ CompleteCurrentProcess(ExceptionFrame &frame, const ProcessTerminationReason ter
         process.result.pageFaultAddress = pageFaultAddress;
     }
     CloseProcessPipeEndpoints(process.result.selection);
+    CloseProcessFileDescriptors(process);
 
     ProcessSchedulingDecision decision{};
     if (processScheduler.TerminateCurrentProcess(decision) != ProcessSchedulerStatus::Succeeded) {
@@ -190,7 +208,19 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     pipeWriterBlockCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipeEndOfFileObservationCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipeBrokenObservationCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    processFileSystem = nullptr;
     processRuntimeInitialized = true;
+    return ProcessRuntimeStatus::Succeeded;
+}
+
+ProcessRuntimeStatus AttachProcessFileSystem(FileSystem &fileSystem) noexcept {
+    if (!processRuntimeInitialized) {
+        return ProcessRuntimeStatus::NotInitialized;
+    }
+    if (processSchedulingActive) {
+        return ProcessRuntimeStatus::AlreadyActive;
+    }
+    processFileSystem = &fileSystem;
     return ProcessRuntimeStatus::Succeeded;
 }
 
@@ -256,7 +286,10 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
                 .dispatchCount = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
                 .pipeBytesRead = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
                 .pipeBytesWritten = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                .fileSystemBytesRead = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                .fileSystemBytesWritten = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
             },
+        .fileDescriptors = {},
     };
     creationResult = ProcessCreationResult{
         .processId = processId,
@@ -415,6 +448,110 @@ PipeStatus CloseCurrentProcessPipeWriter() noexcept {
         WakeRequiredProcesses(ProcessWaitReason::PipeReadable);
     }
     return status;
+}
+
+FileSystemStatus OpenCurrentProcessFile(
+    const uint8_t *path, const uint64_t pathLengthBytes,
+    const FileSystemOpenOptions &options, uint64_t &fileDescriptor) noexcept {
+    fileDescriptor = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    uint64_t availableDescriptor =
+        OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT;
+    for (uint64_t descriptorIndex = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         descriptorIndex < OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT;
+         ++descriptorIndex) {
+        if (!process.fileDescriptors[descriptorIndex].open) {
+            availableDescriptor = descriptorIndex;
+            break;
+        }
+    }
+    if (availableDescriptor ==
+        OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+        return FileSystemStatus::DataCapacityExhausted;
+    }
+    FileSystemHandle handle{};
+    const FileSystemStatus status =
+        processFileSystem->Open(path, pathLengthBytes, options, handle);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    process.fileDescriptors[availableDescriptor] = handle;
+    fileDescriptor = availableDescriptor;
+    return FileSystemStatus::Succeeded;
+}
+
+FileSystemStatus ReadCurrentProcessFile(
+    const uint64_t fileDescriptor, uint8_t *destination,
+    const uint64_t capacityBytes, uint64_t &readBytes) noexcept {
+    readBytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    if (fileDescriptor >= OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    const FileSystemStatus status = processFileSystem->Read(
+        process.fileDescriptors[fileDescriptor], destination, capacityBytes,
+        readBytes);
+    if (status == FileSystemStatus::Succeeded) {
+        process.result.fileSystemBytesRead += readBytes;
+    }
+    return status;
+}
+
+FileSystemStatus WriteCurrentProcessFile(
+    const uint64_t fileDescriptor, const uint8_t *source,
+    const uint64_t lengthBytes, uint64_t &writtenBytes) noexcept {
+    writtenBytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    if (fileDescriptor >= OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    const FileSystemStatus status = processFileSystem->Write(
+        process.fileDescriptors[fileDescriptor], source, lengthBytes,
+        writtenBytes);
+    if (status == FileSystemStatus::Succeeded) {
+        process.result.fileSystemBytesWritten += writtenBytes;
+    }
+    return status;
+}
+
+FileSystemStatus
+CloseCurrentProcessFile(const uint64_t fileDescriptor) noexcept {
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    if (fileDescriptor >= OS_KERNEL_FILE_SYSTEM_PROCESS_DESCRIPTOR_COUNT) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    ProcessControlBlock &process =
+        processControlBlocks[processScheduler.CurrentProcessIndex()];
+    return processFileSystem->Close(process.fileDescriptors[fileDescriptor]);
+}
+
+FileSystemStatus CreateCurrentProcessDirectory(
+    const uint8_t *path, const uint64_t pathLengthBytes) noexcept {
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    return processFileSystem->CreateDirectory(path, pathLengthBytes);
+}
+
+FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
+    if (!IsProcessSchedulingActive() || processFileSystem == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    return processFileSystem->Sync();
 }
 
 bool ProcessPipeReadCanProgress() noexcept { return processPipe.ReadCanProgress(); }

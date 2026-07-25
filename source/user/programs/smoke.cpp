@@ -40,6 +40,7 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
 
     const int64_t unknownSystemCallResult = os::user::InvokeSystemCall(
         OS_USER_SMOKE_UNKNOWN_SYSTEM_CALL_NUMBER, OS_USER_SMOKE_UNUSED_SYSTEM_CALL_ARGUMENT,
+        OS_USER_SMOKE_UNUSED_SYSTEM_CALL_ARGUMENT,
         OS_USER_SMOKE_UNUSED_SYSTEM_CALL_ARGUMENT);
     if (unknownSystemCallResult != os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER ||
         WriteMessage(OS_USER_SMOKE_UNKNOWN_SYSTEM_CALL_REJECTED_MESSAGE) <=

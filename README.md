@@ -2,7 +2,7 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v0.10 同步与 IPC` 已完成，下一阶段为 `v0.11 文件系统`。自研
+当前状态：`v0.11 文件系统` 已完成，下一阶段为 `v1.0 用户环境`。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
@@ -19,7 +19,13 @@ guard page、64 KiB 高半区早期堆，并真实切换 CR3。在此基础上�
 扩展为可解释的 `Blocked` 状态，以具名等待原因完成阻塞与定向唤醒；内核
 实现带 acquire/release 语义的自旋锁和 64 字节有界管道。Ring 3 生产者向
 消费者传输并逐字节验证 256 字节确定性数据，覆盖满/空阻塞、部分传输、
-EOF、broken pipe、端点权限、重复关闭和异常退出自动关闭。
+EOF、broken pipe、端点权限、重复关闭和异常退出自动关闭。v0.11 又在
+2 MiB 原始 IDE 磁盘的独立 1 MiB 区域实现固定布局文件系统：显式小端
+superblock/inode/目录项、CRC32、bitmap、十个直接块、八项 LRU 写回缓存、
+Dirty/Clean 提交协议与 ATA PIO 写入/FLUSH CACHE。每个 PCB 拥有四个文件
+描述符；生产者把 256 字节载荷持久化为 `/shared/payload.bin`，消费者从
+文件和管道分别验证。系统测试使用同一磁盘连续启动两次证明跨实例持久化，
+再破坏超级块证明损坏不会被自动格式化掩盖。
 
 ## 最短构建与测试路径
 
@@ -86,6 +92,8 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] PIPE_READY
+[OS][KERNEL] FILE_SYSTEM_FORMATTED
+[OS][KERNEL] FILE_SYSTEM_CONSISTENT
 [OS][KERNEL] USER_ELF_VALID
 [OS][KERNEL] USER_ENTRY=0x0000000040000000
 [OS][KERNEL] USER_STACK_READY
@@ -95,11 +103,13 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] SCHEDULER_STARTED
 [OS][USER][PIPE] PRODUCER_STARTED
 [OS][USER][PIPE] CONSUMER_STARTED
+[OS][USER][FS] FILE_WRITTEN
 [OS][USER] UNKNOWN_SYSCALL_REJECTED
 [OS][USER] HELLO_FROM_RING3
 [OS][USER][PIPE] PRODUCER_COMPLETED
 [OS][USER][PIPE] PAYLOAD_VERIFIED
 [OS][USER][PIPE] EOF_OBSERVED
+[OS][USER][FS] FILE_VERIFIED
 [OS][USER][PID3] WORKER_STEP_1
 [OS][USER] ADDRESS_SPACE_ISOLATED
 [OS][KERNEL] SCHEDULER_CREATED_PROCESSES=0x0000000000000004
@@ -114,6 +124,9 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
 [OS][KERNEL] PIPE_TRANSFER_VALID
 [OS][KERNEL] PIPE_ENDPOINTS_CLOSED
+[OS][KERNEL] FILE_SYSTEM_SYNCED
+[OS][KERNEL] FILE_SYSTEM_PAYLOAD_VALID
+[OS][KERNEL] FILE_SYSTEM_CONSISTENT
 [OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
 [OS][KERNEL] SCHEDULER_COMPLETE
 [OS][KERNEL] USER_RETURNED_TO_KERNEL

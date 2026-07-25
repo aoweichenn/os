@@ -95,6 +95,11 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_HEAP_SELF_TEST_PASSED_MARKER,
     OS_QEMU_KERNEL_ATA_BOOT_DESCRIPTOR_VALID_MARKER,
     OS_QEMU_KERNEL_ATA_PIO_READY_MARKER,
+    OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER,
+    OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,
+    OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER,
+    OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
+    OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
     OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
     OS_QEMU_KERNEL_INTERRUPTS_ENABLED_MARKER,
     OS_QEMU_KERNEL_KEYBOARD_A_PRESSED_MARKER,
@@ -113,6 +118,8 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_PIT_READY_MARKER,
     OS_QEMU_KERNEL_PROCESS_CR3_MARKER,
     OS_QEMU_KERNEL_PROCESS_DISPATCH_COUNT_MARKER,
+    OS_QEMU_KERNEL_PROCESS_FILE_READ_BYTES_MARKER,
+    OS_QEMU_KERNEL_PROCESS_FILE_WRITTEN_BYTES_MARKER,
     OS_QEMU_KERNEL_PROCESS_PIPE_READ_BYTES_MARKER,
     OS_QEMU_KERNEL_PROCESS_PIPE_WRITTEN_BYTES_MARKER,
     OS_QEMU_KERNEL_PROCESS_ID_MARKER,
@@ -169,6 +176,8 @@ from os_tools.qemu_runner import (
     OS_QEMU_USER_PIPE_CONSUMER_STARTED_MARKER,
     OS_QEMU_USER_PIPE_PAYLOAD_VERIFIED_MARKER,
     OS_QEMU_USER_PIPE_END_OF_FILE_MARKER,
+    OS_QEMU_USER_FILE_VERIFIED_MARKER,
+    OS_QEMU_USER_FILE_WRITTEN_MARKER,
     OS_QEMU_USER_WORKER_PROCESS_2_STEP_1_MARKER,
     OS_QEMU_USER_WORKER_PROCESS_2_STEP_2_MARKER,
     OS_QEMU_USER_WORKER_PROCESS_2_STEP_3_MARKER,
@@ -181,6 +190,7 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_WRITE_PROTECTION_ADDRESS_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_ERROR_CODE_MARKER,
     OS_QEMU_KERNEL_WRITE_PROTECTION_INJECTION_MARKER,
+    runQemuFileSystemPersistence,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
 )
@@ -350,6 +360,10 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_MONOTONIC_MILLISECONDS_MARKER,
         OS_QEMU_KERNEL_TIMER_SELF_TEST_PASSED_MARKER,
     )
+    completedKernelFileSystemInitializationMarkers = (
+        OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER,
+        OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER,
+    )
     completedKernelUserSmokeMarkers = (
         OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
         OS_QEMU_KERNEL_SCHEDULER_STARTED_MARKER,
@@ -374,6 +388,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_PROCESS_DISPATCH_COUNT_MARKER,
         OS_QEMU_KERNEL_PROCESS_PIPE_READ_BYTES_MARKER,
         OS_QEMU_KERNEL_PROCESS_PIPE_WRITTEN_BYTES_MARKER,
+        OS_QEMU_KERNEL_PROCESS_FILE_READ_BYTES_MARKER,
+        OS_QEMU_KERNEL_PROCESS_FILE_WRITTEN_BYTES_MARKER,
         OS_QEMU_KERNEL_USER_TERMINATED_MARKER,
         OS_QEMU_KERNEL_PIPE_TRANSFER_VALID_MARKER,
         OS_QEMU_KERNEL_PIPE_ENDPOINTS_CLOSED_MARKER,
@@ -381,11 +397,18 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER,
         OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER,
     )
+    completedKernelFileSystemCompletionMarkers = (
+        OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
+        OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
+        OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER,
+    )
     completedKernelEntryMarkers = (
         *completedKernelFoundationMarkers,
         *completedKernelUserPreparationMarkers,
         *completedKernelDeviceMarkers,
+        *completedKernelFileSystemInitializationMarkers,
         *completedKernelUserSmokeMarkers,
+        *completedKernelFileSystemCompletionMarkers,
         OS_QEMU_KERNEL_FILE_SIZE_MARKER,
         OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
         OS_QEMU_KERNEL_READY_MARKER,
@@ -431,6 +454,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_KERNEL_EXCEPTION_MARKER,
             OS_QEMU_KERNEL_PANIC_MARKER,
             OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
+            OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,
         )
         expectedMarkerCounts = (
             (OS_QEMU_KERNEL_PROCESS_RUNTIME_READY_MARKER, 1),
@@ -454,6 +478,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_USER_PIPE_CONSUMER_STARTED_MARKER, 1),
             (OS_QEMU_USER_PIPE_PAYLOAD_VERIFIED_MARKER, 1),
             (OS_QEMU_USER_PIPE_END_OF_FILE_MARKER, 1),
+            (OS_QEMU_USER_FILE_WRITTEN_MARKER, 1),
+            (OS_QEMU_USER_FILE_VERIFIED_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_CREATED_PROCESSES_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_TERMINATED_PROCESSES_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_TIMER_TICKS_MARKER, 1),
@@ -472,11 +498,17 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_PROCESS_DISPATCH_COUNT_MARKER, 4),
             (OS_QEMU_KERNEL_PROCESS_PIPE_READ_BYTES_MARKER, 4),
             (OS_QEMU_KERNEL_PROCESS_PIPE_WRITTEN_BYTES_MARKER, 4),
+            (OS_QEMU_KERNEL_PROCESS_FILE_READ_BYTES_MARKER, 4),
+            (OS_QEMU_KERNEL_PROCESS_FILE_WRITTEN_BYTES_MARKER, 4),
             (OS_QEMU_KERNEL_USER_TERMINATED_MARKER, 4),
             (OS_QEMU_KERNEL_PIPE_TRANSFER_VALID_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_ENDPOINTS_CLOSED_MARKER, 1),
             (OS_QEMU_KERNEL_PROCESS_RESOURCES_RECLAIMED_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER, 1),
+            (OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER, 1),
+            (OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER, 1),
+            (OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER, 1),
+            (OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER, 2),
         )
         minimumHexMarkerValues = (
             (OS_QEMU_KERNEL_SCHEDULER_CREATED_PROCESSES_MARKER, 4),
@@ -787,6 +819,18 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     )
 
 
+def handleQemuFileSystemPersistence(
+    arguments: argparse.Namespace,
+) -> None:
+    runQemuFileSystemPersistence(
+        OS_TOOL_PROJECT_ROOT,
+        arguments.firmwareImagePath,
+        arguments.diskImagePath,
+        arguments.expectedFirmwareSizeBytes,
+        arguments.expectedDiskSizeBytes,
+    )
+
+
 def handleSourceMetrics(arguments: argparse.Namespace) -> None:
     reportSourceMetrics(
         OS_TOOL_PROJECT_ROOT,
@@ -961,6 +1005,19 @@ def createArgumentParser() -> argparse.ArgumentParser:
         required=True,
         dest="expectedOutcome",
     )
+
+    qemuPersistenceParser = addCommand(
+        subparsers,
+        "qemu-file-system-persistence",
+        "在同一可写 QEMU 磁盘上验收重启持久化和损坏拒绝",
+        handleQemuFileSystemPersistence,
+    )
+    qemuPersistenceParser.add_argument("firmwareImagePath", type=Path)
+    qemuPersistenceParser.add_argument("diskImagePath", type=Path)
+    qemuPersistenceParser.add_argument(
+        "expectedFirmwareSizeBytes", type=int
+    )
+    qemuPersistenceParser.add_argument("expectedDiskSizeBytes", type=int)
 
     sourceMetricsParser = addCommand(
         subparsers,

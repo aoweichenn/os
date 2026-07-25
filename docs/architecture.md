@@ -408,12 +408,53 @@ Running → Blocked(wait reason) → 派发另一个 Ready
 - 任一读操作释放空间后唤醒写等待者，任一写操作提交数据后唤醒读等待者；
 - 关闭端点也必须唤醒对侧，因为 EOF 或 broken pipe 已让条件发生变化。
 
-本阶段只有一个启动期管道对象、一个生产者和一个消费者，没有文件描述符表。
+本阶段只有一个启动期管道对象、一个生产者和一个消费者，管道尚未进入通用
+文件描述符表。
 PID1 只持写端，PID2 只持读端；PID3/PID4 继续承担抢占和地址空间隔离验收。
 生产者生成 256 字节确定性序列，消费者用 31 字节用户缓冲分批读取并逐字节
 验证，保证环形回绕、部分读写、满/空阻塞和 EOF 均实际发生。异常终止路径会
 自动关闭当前进程持有的端点并唤醒对侧，避免永久睡眠。详细取舍见
 [ADR 0013](adr/0013-blocking-wakeup-and-bounded-pipe.md)。
+
+## v0.11 固定布局文件系统与持久化边界
+
+启动磁盘扩为 2 MiB，并把所有者边界写成半开 LBA 区间：
+
+```text
+[0, 2048)       启动描述符、Stage 1、Kernel 描述符与 Kernel ELF
+[2048, 3072)    1024 个文件系统逻辑块
+[3072, 4096)    保留
+```
+
+镜像打包器在宿主侧证明 Kernel 文件不会越过 LBA 2048；内核文件系统只允许
+访问自己的 1024 个块。这样启动链增长不会静默覆盖 superblock，文件系统分配
+也不能侵入启动负载。块层依赖保持单向：
+
+```text
+每进程 fd 表
+  → FileSystem：路径、inode、目录、事务与一致性
+    → BlockCache：八项 LRU、dirty 写回与统计
+      → FileSystemBlockDevice：512 字节 read/write/flush 契约
+        → AtaPioDevice：LBA28、WRITE SECTORS、FLUSH CACHE
+```
+
+磁盘格式不使用 packed C++ 结构体。superblock、inode 与目录项全部按固定
+偏移显式小端编码，superblock 和每个已分配 inode 独立计算 CRC32。bitmap
+描述局部所有权；挂载时再从根目录执行最多 32 inode 的有界广度优先遍历，
+联合证明所有 inode 可达、所有数据块唯一且没有孤儿、环或重复引用。
+
+修改操作采用 Dirty/Clean 最小提交协议。预检成功后先把 Dirty superblock
+写入并 flush，再写回数据与元数据，最后写 Clean superblock 并再次 flush。
+这是一种“故障可检测”协议，不是可重放日志：下次挂载看到 Dirty 必须拒绝。
+只有 superblock 整扇区全零才允许首次格式化，任何非零未知内容或 CRC 错误
+都保留证据并停止。
+
+系统调用层为每个 PCB 保存四个普通文件句柄槽，fd 只在当前进程内有效。用户
+路径和文件数据先经过有界用户页验证与内核缓冲，不把用户地址传入文件系统锁
+内。管道暂时仍使用专用 ABI；把管道、文件与设备统一成 open-file-description
+留给 v1.0。格式、事务与测试取舍见
+[ADR 0014](adr/0014-transactional-educational-file-system.md)，详细实现见
+[File System 模块](modules/file-system.md)。
 
 ## 模块边界
 

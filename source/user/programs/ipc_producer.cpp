@@ -13,6 +13,10 @@ constexpr char OS_USER_IPC_PRODUCER_INVALID_POINTER_REJECTED_MESSAGE[] =
 constexpr char OS_USER_IPC_PRODUCER_UNKNOWN_SYSTEM_CALL_REJECTED_MESSAGE[] =
     "[OS][USER] UNKNOWN_SYSCALL_REJECTED\r\n";
 constexpr char OS_USER_IPC_PRODUCER_RING3_MESSAGE[] = "[OS][USER] HELLO_FROM_RING3\r\n";
+constexpr char OS_USER_IPC_PRODUCER_FILE_WRITTEN_MESSAGE[] =
+    "[OS][USER][FS] FILE_WRITTEN\r\n";
+constexpr char OS_USER_IPC_PRODUCER_DIRECTORY_PATH[] = "/shared";
+constexpr char OS_USER_IPC_PRODUCER_FILE_PATH[] = "/shared/payload.bin";
 constexpr uint64_t OS_USER_IPC_PRODUCER_PROCESS_ID = 1ULL;
 constexpr uint64_t OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_USER_IPC_PRODUCER_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
@@ -29,6 +33,10 @@ constexpr int64_t OS_USER_IPC_PRODUCER_SUCCESS_EXIT_CODE = 0LL;
 constexpr int64_t OS_USER_IPC_PRODUCER_FAILURE_EXIT_CODE = 1LL;
 constexpr int64_t OS_USER_IPC_PRODUCER_FIRST_ERROR_RESULT = -1LL;
 constexpr int64_t OS_USER_IPC_PRODUCER_SUCCESS_RESULT = 0LL;
+constexpr uint64_t OS_USER_IPC_PRODUCER_FILE_OPEN_FLAGS =
+    os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG |
+    os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
+    os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
 
 uint8_t producerPayload[OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES];
 
@@ -69,6 +77,7 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
     const int64_t unknownSystemCallResult =
         os::user::InvokeSystemCall(OS_USER_IPC_PRODUCER_UNKNOWN_SYSTEM_CALL_NUMBER,
                                    OS_USER_IPC_PRODUCER_UNUSED_SYSTEM_CALL_ARGUMENT,
+                                   OS_USER_IPC_PRODUCER_UNUSED_SYSTEM_CALL_ARGUMENT,
                                    OS_USER_IPC_PRODUCER_UNUSED_SYSTEM_CALL_ARGUMENT);
     if (unknownSystemCallResult != os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER ||
         !WriteMessage(OS_USER_IPC_PRODUCER_INVALID_POINTER_REJECTED_MESSAGE) ||
@@ -79,7 +88,30 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
     }
 
     FillPayload();
-    if (os::user::WritePipe(producerPayload, OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
+    const int64_t createDirectoryResult = os::user::CreateDirectory(
+        OS_USER_IPC_PRODUCER_DIRECTORY_PATH,
+        sizeof(OS_USER_IPC_PRODUCER_DIRECTORY_PATH) -
+            OS_USER_IPC_PRODUCER_STRING_TERMINATOR_SIZE_BYTES);
+    if (createDirectoryResult != OS_USER_IPC_PRODUCER_SUCCESS_RESULT &&
+        createDirectoryResult !=
+            os::abi::OS_ABI_SYSTEM_CALL_RESULT_FILE_ALREADY_EXISTS) {
+        os::user::ExitProcess(OS_USER_IPC_PRODUCER_FAILURE_EXIT_CODE);
+    }
+    const int64_t fileDescriptor = os::user::OpenFile(
+        OS_USER_IPC_PRODUCER_FILE_PATH,
+        sizeof(OS_USER_IPC_PRODUCER_FILE_PATH) -
+            OS_USER_IPC_PRODUCER_STRING_TERMINATOR_SIZE_BYTES,
+        OS_USER_IPC_PRODUCER_FILE_OPEN_FLAGS);
+    if (fileDescriptor < OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
+        os::user::WriteFile(static_cast<uint64_t>(fileDescriptor),
+                            producerPayload,
+                            OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
+            static_cast<int64_t>(OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) ||
+        os::user::CloseFile(static_cast<uint64_t>(fileDescriptor)) !=
+            OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
+        os::user::SyncFileSystem() != OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
+        !WriteMessage(OS_USER_IPC_PRODUCER_FILE_WRITTEN_MESSAGE) ||
+        os::user::WritePipe(producerPayload, OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) !=
             static_cast<int64_t>(OS_USER_IPC_PRODUCER_PAYLOAD_SIZE_BYTES) ||
         os::user::ClosePipeWriter() != OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
         os::user::ClosePipeWriter() != os::abi::OS_ABI_SYSTEM_CALL_RESULT_ENDPOINT_CLOSED ||

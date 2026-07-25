@@ -8,11 +8,13 @@ from tools.os_tools.kernel_image import (
     OS_KERNEL_IMAGE_DESCRIPTOR_LBA,
     OS_KERNEL_IMAGE_HEADER_CHECKSUM_OFFSET,
     OS_KERNEL_IMAGE_HEADER_SIZE_BYTES,
+    OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA,
     OS_KERNEL_IMAGE_MAGIC_OFFSET,
     OS_KERNEL_IMAGE_UINT32_FORMAT,
     calculateCrc32,
     createKernelDiskImageBytes,
     parseAndValidateKernelDiskImage,
+    validateKernelImageLayout,
 )
 from tools.os_tools.stage1_image import (
     OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES,
@@ -152,6 +154,28 @@ class KernelImageToolTests(unittest.TestCase):
             createKernelDiskImageBytes(
                 overlappingStage1Image,
                 createValidKernelElf(),
+            )
+
+    def testRejectsKernelPayloadOverlappingFileSystem(self) -> None:
+        overlappingSectorCount = (
+            OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA -
+            OS_KERNEL_IMAGE_DEFAULT_PAYLOAD_LBA + 1
+        )
+        fileSizeBytes = (
+            overlappingSectorCount *
+            OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+        )
+        diskSizeBytes = (
+            (OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA + 1) *
+            OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+        )
+
+        with self.assertRaises(OsToolError):
+            validateKernelImageLayout(
+                diskSizeBytes,
+                fileSizeBytes,
+                overlappingSectorCount,
+                OS_KERNEL_IMAGE_DEFAULT_PAYLOAD_LBA,
             )
 
     def testRejectsNonzeroReservedDescriptorBytes(self) -> None:

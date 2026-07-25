@@ -327,6 +327,43 @@ os_add_kernel_ipc_test(
     "randomized"
 )
 
+function(os_add_kernel_file_system_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_file_system_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_file_system_test(
+    os_kernel_file_system_format_unit_tests
+    unit/kernel/file_system_format_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_file_system_lifecycle_integration_tests
+    integration/boot/kernel_file_system_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_file_system_randomized_tests
+    randomized/kernel/file_system_randomized_test.cpp
+    "randomized"
+)
+
 find_package(Threads REQUIRED)
 os_add_kernel_ipc_test(
     os_kernel_synchronization_integration_tests
@@ -564,6 +601,24 @@ set_tests_properties(
     PROPERTIES
         LABELS "system"
         TIMEOUT 10
+)
+
+add_test(
+    NAME os_qemu_file_system_persistence
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-file-system-persistence
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+)
+set_tests_properties(
+    os_qemu_file_system_persistence
+    PROPERTIES
+        LABELS "system"
+        TIMEOUT 20
 )
 
 add_test(

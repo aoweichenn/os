@@ -1,7 +1,7 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
-\section*{v0.8 完成后的知识验收}
+\section*{v0.11 完成后的知识验收}
 
 \begin{itemize}
   \item CPU 从物理地址 \code{0xFFFFFFF0} 取第一条指令的复位状态；
@@ -61,14 +61,14 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 64 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度/IPC 性质与整机异步事件；
+  \item 68 项 CTest 如何分别覆盖模型、组合、ELF ABI、调度/IPC/文件系统性质与整机异步事件；
   \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
   \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；
   \item 严格用户 ELF 对标识、范围、对齐、W\^X、重叠、页数和入口的检查；
   \item 五项 \code{IRETQ} 帧如何装载用户 SS、RSP、RFLAGS、CS 与 RIP；
   \item TSS.RSP0 为什么不能复用等待用户结果的原内核栈；
   \item \code{INT 0x80} 与 \code{SYSCALL/SYSRET} 的历史、状态和阶段权衡；
-  \item RAX/RDI/RSI 系统调用 ABI 与固定宽度有符号错误结果；
+  \item RAX/RDI/RSI/RDX 系统调用 ABI 与固定宽度有符号错误结果；
   \item 用户指针半开区间、溢出、跨页 U/S 验证和固定内核缓冲复制；
   \item Ring 3 页故障错误码 \code{0x4} 与 Ring 0 写保护
         \code{0x3} 的逐位差异；
@@ -109,5 +109,11 @@
   \item 能说明 v0.9 为何需要每进程地址空间、每线程内核栈和资源回收；
   \item 能说明 v0.10 的 Blocked/Ready 转换、丢失唤醒、acquire/release、
   管道背压、EOF 与 broken pipe；
+  \item 能从 2 MiB 磁盘解释启动链、文件系统与保留区三个 LBA 所有者边界；
+  \item 能逐字段解释 superblock、inode、目录项、bitmap 与各自 CRC/语义校验；
+  \item 能说明八项 LRU 写回缓存和 Dirty/Clean/flush 的状态与故障边界；
+  \item 能说明为什么从根 BFS、块唯一性和 bitmap 对照必须同时成立；
+  \item 能走读 Ring 3 文件 ABI、每进程 fd、用户复制、路径解析与 ATA 写入链路；
+  \item 能运行同盘双启动持久化和超级块损坏拒绝测试，并区分它们的证据；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

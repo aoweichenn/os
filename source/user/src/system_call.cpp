@@ -12,34 +12,40 @@ constexpr int64_t OS_USER_SYSTEM_CALL_EMPTY_TRANSFER_RESULT = 0LL;
 constexpr int64_t OS_USER_SYSTEM_CALL_FIRST_ERROR_RESULT = -1LL;
 
 extern "C" [[nodiscard]] int64_t
-osUserInvokeSystemCall(uint64_t systemCallNumber, uint64_t argument0, uint64_t argument1) noexcept;
+osUserInvokeSystemCall(uint64_t systemCallNumber, uint64_t argument0,
+                       uint64_t argument1, uint64_t argument2) noexcept;
 
 }
 
 int64_t InvokeSystemCall(const uint64_t systemCallNumber, const uint64_t argument0,
-                         const uint64_t argument1) noexcept {
-    return osUserInvokeSystemCall(systemCallNumber, argument0, argument1);
+                         const uint64_t argument1, const uint64_t argument2) noexcept {
+    return osUserInvokeSystemCall(systemCallNumber, argument0, argument1, argument2);
 }
 
 int64_t WriteLog(const char *message, const uint64_t messageSizeBytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WriteLog),
-                            reinterpret_cast<uint64_t>(message), messageSizeBytes);
+                            reinterpret_cast<uint64_t>(message), messageSizeBytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 uint64_t GetProcessId() noexcept {
     return static_cast<uint64_t>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId),
-                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
 }
 
 int64_t TryReadPipe(uint8_t *destination, const uint64_t capacityBytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::TryReadPipe),
-                            reinterpret_cast<uint64_t>(destination), capacityBytes);
+                            reinterpret_cast<uint64_t>(destination), capacityBytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t TryWritePipe(const uint8_t *source, const uint64_t lengthBytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::TryWritePipe),
-                            reinterpret_cast<uint64_t>(source), lengthBytes);
+                            reinterpret_cast<uint64_t>(source), lengthBytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t ReadPipe(uint8_t *destination, const uint64_t capacityBytes) noexcept {
@@ -53,7 +59,8 @@ int64_t ReadPipe(uint8_t *destination, const uint64_t capacityBytes) noexcept {
         }
         const int64_t waitResult = InvokeSystemCall(
             static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPipeReadable),
-            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
         if (waitResult <= OS_USER_SYSTEM_CALL_FIRST_ERROR_RESULT) {
             return waitResult;
         }
@@ -78,7 +85,8 @@ int64_t WritePipe(const uint8_t *source, const uint64_t lengthBytes) noexcept {
         }
         const int64_t waitResult = InvokeSystemCall(
             static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPipeWritable),
-            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
         if (waitResult <= OS_USER_SYSTEM_CALL_FIRST_ERROR_RESULT) {
             return waitResult;
         }
@@ -89,19 +97,66 @@ int64_t WritePipe(const uint8_t *source, const uint64_t lengthBytes) noexcept {
 int64_t ClosePipeReader() noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ClosePipeReader),
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t ClosePipeWriter() noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ClosePipeWriter),
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t OpenFile(const char *path, const uint64_t pathLengthBytes,
+                 const uint64_t openFlags) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::OpenFile),
+        reinterpret_cast<uint64_t>(path), pathLengthBytes, openFlags);
+}
+
+int64_t ReadFile(const uint64_t fileDescriptor, uint8_t *destination,
+                 const uint64_t capacityBytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::ReadFile),
+        fileDescriptor, reinterpret_cast<uint64_t>(destination), capacityBytes);
+}
+
+int64_t WriteFile(const uint64_t fileDescriptor, const uint8_t *source,
+                  const uint64_t lengthBytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::WriteFile),
+        fileDescriptor, reinterpret_cast<uint64_t>(source), lengthBytes);
+}
+
+int64_t CloseFile(const uint64_t fileDescriptor) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::CloseFile),
+        fileDescriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t CreateDirectory(const char *path,
+                        const uint64_t pathLengthBytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::CreateDirectory),
+        reinterpret_cast<uint64_t>(path), pathLengthBytes,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SyncFileSystem() noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 [[noreturn]] void ExitProcess(const int64_t exitCode) noexcept {
     static_cast<void>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess),
-                         static_cast<uint64_t>(exitCode), OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+                         static_cast<uint64_t>(exitCode),
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
     while (true) {
         asm volatile("ud2");
     }

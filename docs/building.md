@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v0.10 ELF64 内核、六个用户 ELF，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v0.11 ELF64 内核、六个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试。
@@ -115,7 +115,7 @@ tests/os_kernel_interrupt_device_randomized_tests
 `kernel.elf` 必须是入口为 `0x00100000` 的 x86-64 `ET_EXEC`，入口位于可执行
 `PT_LOAD` 段，且不能包含未解析符号。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
-全部启动磁盘镜像必须是精确 1048576 字节。
+全部启动磁盘镜像必须是精确 2097152 字节。
 `build/` 不进入 Git。
 
 ## 固件生成链

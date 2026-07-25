@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import re
 import shlex
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -23,6 +24,10 @@ OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
 OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
 OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
 OS_QEMU_GUEST_MEMORY_MEBIBYTES = 64
+OS_QEMU_FILE_SYSTEM_START_LBA = 2048
+OS_QEMU_FILE_SYSTEM_SECTOR_SIZE_BYTES = 512
+OS_QEMU_FILE_SYSTEM_CORRUPTION_OFFSET_BYTES = 64
+OS_QEMU_FILE_SYSTEM_CORRUPTION_MASK = 0x80
 OS_QEMU_FIRMWARE_RESET_MARKER = "[OS][FIRMWARE] RESET"
 OS_QEMU_FIRMWARE_SERIAL_READY_MARKER = "[OS][FIRMWARE] SERIAL_READY"
 OS_QEMU_FIRMWARE_CLOCK_READY_MARKER = "[OS][FIRMWARE] CLOCK_READY"
@@ -158,6 +163,27 @@ OS_QEMU_KERNEL_ATA_PIO_READY_MARKER = "[OS][KERNEL] ATA_PIO_READY"
 OS_QEMU_KERNEL_ATA_BOOT_DESCRIPTOR_VALID_MARKER = (
     "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID"
 )
+OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_FORMATTED"
+)
+OS_QEMU_KERNEL_FILE_SYSTEM_MOUNTED_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_MOUNTED"
+)
+OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_CORRUPT"
+)
+OS_QEMU_KERNEL_FILE_SYSTEM_PERSISTENCE_RESTORED_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_PERSISTENCE_RESTORED"
+)
+OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_CONSISTENT"
+)
+OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_PAYLOAD_VALID"
+)
+OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER = (
+    "[OS][KERNEL] FILE_SYSTEM_SYNCED"
+)
 OS_QEMU_KERNEL_PIC_SPURIOUS_SELF_TEST_PASSED_MARKER = (
     "[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED"
 )
@@ -239,6 +265,12 @@ OS_QEMU_KERNEL_PROCESS_PIPE_READ_BYTES_MARKER = (
 )
 OS_QEMU_KERNEL_PROCESS_PIPE_WRITTEN_BYTES_MARKER = (
     "[OS][KERNEL] PROCESS_PIPE_WRITTEN_BYTES=0x"
+)
+OS_QEMU_KERNEL_PROCESS_FILE_READ_BYTES_MARKER = (
+    "[OS][KERNEL] PROCESS_FILE_READ_BYTES=0x"
+)
+OS_QEMU_KERNEL_PROCESS_FILE_WRITTEN_BYTES_MARKER = (
+    "[OS][KERNEL] PROCESS_FILE_WRITTEN_BYTES=0x"
 )
 OS_QEMU_KERNEL_SCHEDULER_STARTED_MARKER = "[OS][KERNEL] SCHEDULER_STARTED"
 OS_QEMU_KERNEL_SCHEDULER_CREATED_PROCESSES_MARKER = (
@@ -332,6 +364,8 @@ OS_QEMU_USER_PIPE_PAYLOAD_VERIFIED_MARKER = (
 OS_QEMU_USER_PIPE_END_OF_FILE_MARKER = (
     "[OS][USER][PIPE] EOF_OBSERVED"
 )
+OS_QEMU_USER_FILE_WRITTEN_MARKER = "[OS][USER][FS] FILE_WRITTEN"
+OS_QEMU_USER_FILE_VERIFIED_MARKER = "[OS][USER][FS] FILE_VERIFIED"
 OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER = (
     "[OS][KERNEL] USER_RESULT_INVALID"
 )
@@ -455,7 +489,9 @@ def createQemuFirmwareCommand(
     firmwareImagePath: Path,
     diskImagePath: Path,
     qmpSocketPath: Path | None = None,
+    persistentDiskWrites: bool = False,
 ) -> list[str]:
+    snapshotMode = "off" if persistentDiskWrites else "on"
     command = [
         "qemu-system-x86_64",
         "-machine",
@@ -476,7 +512,7 @@ def createQemuFirmwareCommand(
         "-bios",
         str(firmwareImagePath),
         "-drive",
-        f"file={diskImagePath},format=raw,if=ide,snapshot=on",
+        f"file={diskImagePath},format=raw,if=ide,snapshot={snapshotMode}",
     ]
     if qmpSocketPath is not None:
         command.extend(
@@ -725,6 +761,7 @@ def runQemuFirmwareBoot(
     keyboardInputKey: str | None = None,
     expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
+    persistentDiskWrites: bool = False,
 ) -> None:
     validateImageSize(
         firmwareImagePath,
@@ -771,6 +808,7 @@ def runQemuFirmwareBoot(
             firmwareImagePath,
             diskImagePath,
             qmpSocketPath if keyboardInputKey is not None else None,
+            persistentDiskWrites,
         )
         try:
             (
@@ -816,3 +854,104 @@ def runQemuFirmwareBoot(
     raise OsToolError(
         f"QEMU 固件测试异常提前退出：{returnCode}"
     )
+
+
+def runQemuFileSystemPersistence(
+    projectRoot: Path,
+    firmwareImagePath: Path,
+    diskImagePath: Path,
+    expectedFirmwareSizeBytes: int,
+    expectedDiskSizeBytes: int,
+) -> None:
+    """在同一可写磁盘上连续启动两次，并对第三次启动注入超级块损坏。"""
+    validateImageSize(
+        firmwareImagePath,
+        expectedFirmwareSizeBytes,
+        "固件 ROM",
+    )
+    validateImageSize(
+        diskImagePath,
+        expectedDiskSizeBytes,
+        "启动磁盘镜像",
+    )
+    forbiddenRuntimeFailureMarkers = (
+        OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,
+        OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
+        OS_QEMU_KERNEL_EXCEPTION_MARKER,
+        OS_QEMU_KERNEL_PANIC_MARKER,
+    )
+    with tempfile.TemporaryDirectory(
+        prefix="os-qemu-file-system-"
+    ) as temporaryDirectory:
+        writableDiskPath = Path(temporaryDirectory) / "persistent_disk.img"
+        shutil.copyfile(diskImagePath, writableDiskPath)
+
+        runQemuFirmwareBoot(
+            projectRoot,
+            firmwareImagePath,
+            writableDiskPath,
+            expectedFirmwareSizeBytes,
+            expectedDiskSizeBytes,
+            (
+                OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER,
+                OS_QEMU_USER_FILE_WRITTEN_MARKER,
+                OS_QEMU_USER_FILE_VERIFIED_MARKER,
+                OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
+                OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
+                OS_QEMU_KERNEL_READY_MARKER,
+            ),
+            forbiddenRuntimeFailureMarkers,
+            persistentDiskWrites=True,
+        )
+        runQemuFirmwareBoot(
+            projectRoot,
+            firmwareImagePath,
+            writableDiskPath,
+            expectedFirmwareSizeBytes,
+            expectedDiskSizeBytes,
+            (
+                OS_QEMU_KERNEL_FILE_SYSTEM_MOUNTED_MARKER,
+                OS_QEMU_KERNEL_FILE_SYSTEM_PERSISTENCE_RESTORED_MARKER,
+                OS_QEMU_USER_FILE_WRITTEN_MARKER,
+                OS_QEMU_USER_FILE_VERIFIED_MARKER,
+                OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
+                OS_QEMU_KERNEL_READY_MARKER,
+            ),
+            forbiddenRuntimeFailureMarkers,
+            persistentDiskWrites=True,
+        )
+
+        superblockByteOffset = (
+            OS_QEMU_FILE_SYSTEM_START_LBA *
+            OS_QEMU_FILE_SYSTEM_SECTOR_SIZE_BYTES +
+            OS_QEMU_FILE_SYSTEM_CORRUPTION_OFFSET_BYTES
+        )
+        with writableDiskPath.open("r+b") as writableDisk:
+            writableDisk.seek(superblockByteOffset)
+            originalByte = writableDisk.read(1)
+            if len(originalByte) != 1:
+                raise OsToolError("无法读取文件系统超级块故障注入字节。")
+            writableDisk.seek(superblockByteOffset)
+            writableDisk.write(
+                bytes(
+                    (
+                        originalByte[0] ^
+                        OS_QEMU_FILE_SYSTEM_CORRUPTION_MASK,
+                    )
+                )
+            )
+
+        runQemuFirmwareBoot(
+            projectRoot,
+            firmwareImagePath,
+            writableDiskPath,
+            expectedFirmwareSizeBytes,
+            expectedDiskSizeBytes,
+            (OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,),
+            (
+                OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+                OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
+                OS_QEMU_KERNEL_READY_MARKER,
+            ),
+            persistentDiskWrites=True,
+        )

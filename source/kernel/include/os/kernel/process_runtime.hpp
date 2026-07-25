@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/kernel/exception_frame.hpp"
+#include "os/kernel/file_system.hpp"
 #include "os/kernel/physical_frame_allocator.hpp"
 #include "os/kernel/pipe.hpp"
 #include "os/kernel/process_scheduler.hpp"
@@ -54,6 +55,8 @@ struct ProcessExecutionResult final {
     uint64_t dispatchCount;
     uint64_t pipeBytesRead;
     uint64_t pipeBytesWritten;
+    uint64_t fileSystemBytesRead;
+    uint64_t fileSystemBytesWritten;
 };
 
 struct ProcessIpcStatistics final {
@@ -74,6 +77,8 @@ struct ProcessRuntimeStatistics final {
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
 [[nodiscard]] ProcessRuntimeStatus
+AttachProcessFileSystem(FileSystem &fileSystem) noexcept;
+[[nodiscard]] ProcessRuntimeStatus
 CreateProcess(UserProgramSelection selection, ProcessCreationResult &creationResult,
               UserElfValidationStatus &elfValidationStatus,
               UserAddressSpaceStatus &addressSpaceStatus) noexcept;
@@ -91,6 +96,20 @@ void RecordCurrentProcessSystemCall() noexcept;
                                                     uint64_t &writtenBytes) noexcept;
 [[nodiscard]] PipeStatus CloseCurrentProcessPipeReader() noexcept;
 [[nodiscard]] PipeStatus CloseCurrentProcessPipeWriter() noexcept;
+[[nodiscard]] FileSystemStatus OpenCurrentProcessFile(
+    const uint8_t *path, uint64_t pathLengthBytes,
+    const FileSystemOpenOptions &options, uint64_t &fileDescriptor) noexcept;
+[[nodiscard]] FileSystemStatus ReadCurrentProcessFile(
+    uint64_t fileDescriptor, uint8_t *destination, uint64_t capacityBytes,
+    uint64_t &readBytes) noexcept;
+[[nodiscard]] FileSystemStatus WriteCurrentProcessFile(
+    uint64_t fileDescriptor, const uint8_t *source, uint64_t lengthBytes,
+    uint64_t &writtenBytes) noexcept;
+[[nodiscard]] FileSystemStatus
+CloseCurrentProcessFile(uint64_t fileDescriptor) noexcept;
+[[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(
+    const uint8_t *path, uint64_t pathLengthBytes) noexcept;
+[[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
 [[nodiscard]] bool ProcessPipeReadCanProgress() noexcept;
 [[nodiscard]] bool ProcessPipeWriteCanProgress() noexcept;
 [[nodiscard]] ProcessRuntimeStatus BlockCurrentProcess(ExceptionFrame &frame,

@@ -10,6 +10,9 @@ constexpr char OS_USER_IPC_CONSUMER_STARTED_MESSAGE[] = "[OS][USER][PIPE] CONSUM
 constexpr char OS_USER_IPC_CONSUMER_PAYLOAD_VERIFIED_MESSAGE[] =
     "[OS][USER][PIPE] PAYLOAD_VERIFIED\r\n";
 constexpr char OS_USER_IPC_CONSUMER_END_OF_FILE_MESSAGE[] = "[OS][USER][PIPE] EOF_OBSERVED\r\n";
+constexpr char OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE[] =
+    "[OS][USER][FS] FILE_VERIFIED\r\n";
+constexpr char OS_USER_IPC_CONSUMER_FILE_PATH[] = "/shared/payload.bin";
 constexpr uint64_t OS_USER_IPC_CONSUMER_PROCESS_ID = 2ULL;
 constexpr uint64_t OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES = 31ULL;
@@ -29,6 +32,7 @@ constexpr int64_t OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT = 0LL;
 constexpr int64_t OS_USER_IPC_CONSUMER_SUCCESS_RESULT = 0LL;
 
 uint8_t consumerBuffer[OS_USER_IPC_CONSUMER_READ_BUFFER_SIZE_BYTES];
+uint8_t fileBuffer[OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES];
 
 template <uint64_t MessageSizeBytes>
 [[nodiscard]] bool WriteMessage(const char (&message)[MessageSizeBytes]) noexcept {
@@ -85,6 +89,32 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void osUserEntry() 
         !WriteMessage(OS_USER_IPC_CONSUMER_END_OF_FILE_MESSAGE) ||
         os::user::ClosePipeReader() != OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
         os::user::ClosePipeReader() != os::abi::OS_ABI_SYSTEM_CALL_RESULT_ENDPOINT_CLOSED) {
+        os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
+    }
+
+    const int64_t fileDescriptor = os::user::OpenFile(
+        OS_USER_IPC_CONSUMER_FILE_PATH,
+        sizeof(OS_USER_IPC_CONSUMER_FILE_PATH) -
+            OS_USER_IPC_CONSUMER_STRING_TERMINATOR_SIZE_BYTES,
+        os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
+    if (fileDescriptor < OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
+        os::user::ReadFile(static_cast<uint64_t>(fileDescriptor), fileBuffer,
+                           OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES) !=
+            static_cast<int64_t>(OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES)) {
+        os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
+    }
+    for (uint64_t byteIndex = OS_USER_IPC_CONSUMER_FIRST_BYTE_INDEX;
+         byteIndex < OS_USER_IPC_CONSUMER_PAYLOAD_SIZE_BYTES; ++byteIndex) {
+        if (fileBuffer[byteIndex] != ExpectedPayloadByte(byteIndex)) {
+            os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
+        }
+    }
+    if (os::user::ReadFile(static_cast<uint64_t>(fileDescriptor), fileBuffer,
+                           OS_USER_IPC_CONSUMER_POINTER_PROBE_SIZE_BYTES) !=
+            OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT ||
+        os::user::CloseFile(static_cast<uint64_t>(fileDescriptor)) !=
+            OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
+        !WriteMessage(OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
     }
     os::user::ExitProcess(OS_USER_IPC_CONSUMER_SUCCESS_EXIT_CODE);

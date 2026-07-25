@@ -71,7 +71,7 @@ magic & 8 字节 & 精确匹配 \code{OSSTAGE1}\\
 version/header size & 各 16 位 & 当前等于 1 和 28\\
 sector count/flags & 各 16 位 & 1--64 个扇区，标志为零\\
 load segment/entry & 各 16 位 & 形成合法实模式地址和入口\\
-payload LBA & 32 位 & LBA28 且负载不越过 1 MiB 镜像\\
+payload LBA & 32 位 & LBA28 且负载不越过 2 MiB 镜像\\
 payload checksum & 16 位 & 覆盖补零后的全部负载字\\
 header checksum & 16 位 & 使 512 字节描述符字和为零\\
 \bottomrule

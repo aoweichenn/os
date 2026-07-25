@@ -22,6 +22,7 @@ OS_KERNEL_IMAGE_FLAGS_NONE = 0
 OS_KERNEL_IMAGE_HEADER_STRUCT_FORMAT = "<8sHHIQQQII"
 OS_KERNEL_IMAGE_UINT32_FORMAT = "<I"
 OS_KERNEL_IMAGE_CORRUPTION_BIT = 0x01
+OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA = 2048
 
 OS_KERNEL_IMAGE_MAGIC_OFFSET = 0
 OS_KERNEL_IMAGE_VERSION_OFFSET = 8
@@ -80,6 +81,8 @@ def validateKernelImageLayout(
     payloadEndLba = payloadLba + payloadSectorCount
     if payloadEndLba > diskSectorCount:
         raise OsToolError("Kernel ELF 负载超出磁盘镜像。")
+    if payloadEndLba > OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA:
+        raise OsToolError("Kernel ELF 负载与文件系统固定区域重叠。")
     expectedPayloadLba = (
         OS_KERNEL_IMAGE_DESCRIPTOR_LBA
         + OS_KERNEL_IMAGE_DESCRIPTOR_SECTOR_COUNT

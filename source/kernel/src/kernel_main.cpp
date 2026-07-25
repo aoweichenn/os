@@ -1,6 +1,8 @@
 #include "os/kernel/kernel_main.hpp"
 
+#include "os/kernel/ata_pio.hpp"
 #include "os/kernel/descriptor_tables.hpp"
+#include "os/kernel/file_system.hpp"
 #include "os/kernel/interrupt_runtime.hpp"
 #include "os/kernel/memory_manager.hpp"
 #include "os/kernel/process_memory_layout.hpp"
@@ -63,6 +65,28 @@ constexpr char OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE[] = "[OS][KERNEL] PS2_K
 constexpr char OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE[] = "[OS][KERNEL] ATA_PIO_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE[] =
     "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_FORMATTED_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_FORMATTED\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_MOUNTED_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_MOUNTED\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_CORRUPT\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_PERSISTENCE_RESTORED\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_CONSISTENT\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_PAYLOAD_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE[] =
+    "[OS][KERNEL] FILE_SYSTEM_SYNCED\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX[] =
+    "[OS][KERNEL] FILE_SYSTEM_STATUS=";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_GENERATION_PREFIX[] =
+    "[OS][KERNEL] FILE_SYSTEM_GENERATION=";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_SYSTEM_ALLOCATED_INODES=";
+constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_SYSTEM_ALLOCATED_DATA_BLOCKS=";
 constexpr char OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE[] = "[OS][KERNEL] INTERRUPTS_ENABLED\r\n";
@@ -119,6 +143,10 @@ constexpr char OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX[] =
     "[OS][KERNEL] PROCESS_PIPE_READ_BYTES=";
 constexpr char OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX[] =
     "[OS][KERNEL] PROCESS_PIPE_WRITTEN_BYTES=";
+constexpr char OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX[] =
+    "[OS][KERNEL] PROCESS_FILE_READ_BYTES=";
+constexpr char OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX[] =
+    "[OS][KERNEL] PROCESS_FILE_WRITTEN_BYTES=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE[] = "[OS][KERNEL] SCHEDULER_STARTED\r\n";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX[] =
     "[OS][KERNEL] SCHEDULER_CREATED_PROCESSES=";
@@ -167,6 +195,21 @@ constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_END_OF_FILE_OBSERVATION_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_BROKEN_PIPE_OBSERVATION_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_SECOND_PROCESS_INDEX = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT = 11ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK = 0xFFULL;
+constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE = 0U;
+constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
+    static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
+    static_cast<uint8_t>('a'), static_cast<uint8_t>('r'), static_cast<uint8_t>('e'),
+    static_cast<uint8_t>('d'), static_cast<uint8_t>('/'), static_cast<uint8_t>('p'),
+    static_cast<uint8_t>('a'), static_cast<uint8_t>('y'), static_cast<uint8_t>('l'),
+    static_cast<uint8_t>('o'), static_cast<uint8_t>('a'), static_cast<uint8_t>('d'),
+    static_cast<uint8_t>('.'), static_cast<uint8_t>('b'), static_cast<uint8_t>('i'),
+    static_cast<uint8_t>('n'),
+};
 
 // 非零初值不能用于证明加载器执行了 p_memsz 对应的 BSS 清零。
 uint64_t kernelMainBssProbe;
@@ -301,6 +344,134 @@ void InitializeKernelDevices(const SerialPort &serialPort) noexcept {
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
 }
 
+[[nodiscard]] uint8_t ExpectedFileSystemPayloadByte(
+    const uint64_t byteIndex) noexcept {
+    return static_cast<uint8_t>(
+        (byteIndex * OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER +
+         OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT) &
+        OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK);
+}
+
+[[nodiscard]] bool ValidateFileSystemPayload(
+    FileSystem &fileSystem) noexcept {
+    const FileSystemOpenOptions options{
+        .readable = true,
+        .writable = false,
+        .create = false,
+        .truncate = false,
+    };
+    FileSystemHandle handle{};
+    if (fileSystem.Open(OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH,
+                        sizeof(OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH), options,
+                        handle) != FileSystemStatus::Succeeded) {
+        return false;
+    }
+    uint8_t payload[OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES]{};
+    uint64_t readBytes = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
+    bool valid =
+        fileSystem.Read(handle, payload,
+                        OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES,
+                        readBytes) == FileSystemStatus::Succeeded &&
+        readBytes == OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
+    for (uint64_t byteIndex = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
+         byteIndex < OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
+         ++byteIndex) {
+        valid = valid &&
+                payload[byteIndex] ==
+                    ExpectedFileSystemPayloadByte(byteIndex);
+    }
+    uint8_t endOfFileProbe = OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE;
+    readBytes = OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
+    valid =
+        valid &&
+        fileSystem.Read(handle, &endOfFileProbe, sizeof(endOfFileProbe),
+                        readBytes) == FileSystemStatus::Succeeded &&
+        readBytes == OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE &&
+        fileSystem.Close(handle) == FileSystemStatus::Succeeded;
+    return valid;
+}
+
+void WriteFileSystemStatistics(const SerialPort &serialPort,
+                               const FileSystem &fileSystem) noexcept {
+    const FileSystemStatistics statistics = fileSystem.Statistics();
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_FILE_SYSTEM_GENERATION_PREFIX,
+                         statistics.transactionGeneration);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX,
+                         statistics.allocatedInodeCount);
+    WriteRequiredHexLine(
+        serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX,
+        statistics.allocatedDataBlockCount);
+}
+
+void InitializeKernelFileSystem(const SerialPort &serialPort,
+                                FileSystem &fileSystem,
+                                AtaPioDevice &device) noexcept {
+    bool formatted = false;
+    const FileSystemStatus mountStatus =
+        fileSystem.MountOrFormat(device, formatted);
+    if (mountStatus != FileSystemStatus::Succeeded) {
+        if (mountStatus == FileSystemStatus::Corrupt ||
+            mountStatus == FileSystemStatus::IncompleteTransaction) {
+            WriteRequiredMessage(serialPort,
+                                 OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+        }
+        WriteRequiredHexLine(serialPort,
+                             OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
+                             static_cast<uint64_t>(mountStatus));
+        HaltProcessor();
+    }
+    if (formatted) {
+        WriteRequiredMessage(serialPort,
+                             OS_KERNEL_MAIN_FILE_SYSTEM_FORMATTED_MESSAGE);
+    } else {
+        WriteRequiredMessage(serialPort,
+                             OS_KERNEL_MAIN_FILE_SYSTEM_MOUNTED_MESSAGE);
+        if (!ValidateFileSystemPayload(fileSystem)) {
+            WriteRequiredMessage(serialPort,
+                                 OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+            HaltProcessor();
+        }
+        WriteRequiredMessage(
+            serialPort,
+            OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE);
+    }
+    if (fileSystem.CheckConsistency() != FileSystemStatus::Succeeded) {
+        WriteRequiredMessage(serialPort,
+                             OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+        HaltProcessor();
+    }
+    WriteRequiredMessage(serialPort,
+                         OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteFileSystemStatistics(serialPort, fileSystem);
+}
+
+void FinalizeKernelFileSystem(const SerialPort &serialPort,
+                              FileSystem &fileSystem,
+                              const bool requirePayload) noexcept {
+    if (fileSystem.Sync() != FileSystemStatus::Succeeded) {
+        WriteRequiredHexLine(
+            serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
+            static_cast<uint64_t>(FileSystemStatus::DeviceFailure));
+        HaltProcessor();
+    }
+    WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE);
+    if (fileSystem.CheckConsistency() != FileSystemStatus::Succeeded ||
+        (requirePayload && !ValidateFileSystemPayload(fileSystem))) {
+        WriteRequiredMessage(serialPort,
+                             OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+        HaltProcessor();
+    }
+    if (requirePayload) {
+        WriteRequiredMessage(serialPort,
+                             OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE);
+    }
+    WriteRequiredMessage(serialPort,
+                         OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteFileSystemStatistics(serialPort, fileSystem);
+}
+
 void CreateRequiredProcess(const SerialPort &serialPort,
                            const UserProgramSelection selection) noexcept {
     ProcessCreationResult creationResult{};
@@ -344,7 +515,8 @@ void PrepareRequiredProcesses(const SerialPort &serialPort,
     const uint64_t processCount = selection == UserProgramSelection::Smoke
                                       ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
                                       : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
-    for (uint64_t processIndex = 0ULL; processIndex < processCount; ++processIndex) {
+    for (uint64_t processIndex = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX;
+         processIndex < processCount; ++processIndex) {
         UserProgramSelection processSelection = selection;
         if (selection == UserProgramSelection::Smoke) {
             if (processIndex == OS_KERNEL_MAIN_FIRST_PROCESS_INDEX) {
@@ -365,18 +537,30 @@ void PrepareRequiredProcesses(const SerialPort &serialPort,
     if (result.selection == UserProgramSelection::IpcProducer) {
         return exitedSuccessfully &&
                result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES;
+               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
+               result.fileSystemBytesRead ==
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.fileSystemBytesWritten ==
+                   OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
     }
     if (result.selection == UserProgramSelection::IpcConsumer) {
         return exitedSuccessfully &&
                result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.fileSystemBytesRead ==
+                   OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES &&
+               result.fileSystemBytesWritten ==
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
     }
     if (result.selection == UserProgramSelection::Smoke ||
         result.selection == UserProgramSelection::SchedulerWorker) {
         return exitedSuccessfully &&
                result.pipeBytesRead == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
+               result.pipeBytesWritten == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.fileSystemBytesRead ==
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
+               result.fileSystemBytesWritten ==
+                   OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT;
     }
     if (result.selection == UserProgramSelection::InvalidOpcode) {
         return result.terminationReason == ProcessTerminationReason::Exception &&
@@ -418,6 +602,11 @@ void WriteProcessExecutionResult(const SerialPort &serialPort,
                          result.pipeBytesRead);
     WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX,
                          result.pipeBytesWritten);
+    WriteRequiredHexLine(serialPort, OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX,
+                         result.fileSystemBytesRead);
+    WriteRequiredHexLine(serialPort,
+                         OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX,
+                         result.fileSystemBytesWritten);
     WriteRequiredMessage(serialPort, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
 
     if (!IsExpectedProcessExecutionResult(result)) {
@@ -500,7 +689,8 @@ void ExecuteRequiredProcesses(const SerialPort &serialPort,
         HaltProcessor();
     }
 
-    for (uint64_t processIndex = 0ULL; processIndex < expectedProcessCount; ++processIndex) {
+    for (uint64_t processIndex = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX;
+         processIndex < expectedProcessCount; ++processIndex) {
         WriteProcessExecutionResult(serialPort, statistics.processes[processIndex]);
     }
     if (selection == UserProgramSelection::Smoke) {
@@ -563,7 +753,20 @@ void WriteKeyboardEvent(const SerialPort &serialPort, const KeyboardEvent &event
 
     PrepareRequiredProcesses(serialPort, userProgramSelection);
     InitializeKernelDevices(serialPort);
+    AtaPioDevice fileSystemDevice{};
+    FileSystem fileSystem{};
+    InitializeKernelFileSystem(serialPort, fileSystem, fileSystemDevice);
+    if (AttachProcessFileSystem(fileSystem) !=
+        ProcessRuntimeStatus::Succeeded) {
+        WriteRequiredHexLine(
+            serialPort, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+            static_cast<uint64_t>(ProcessRuntimeStatus::NotInitialized));
+        HaltProcessor();
+    }
     ExecuteRequiredProcesses(serialPort, userProgramSelection);
+    FinalizeKernelFileSystem(
+        serialPort, fileSystem,
+        userProgramSelection == UserProgramSelection::Smoke);
 
     if (!serialPort.TryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
                                     bootInfo->kernelFileSizeBytes) ||
