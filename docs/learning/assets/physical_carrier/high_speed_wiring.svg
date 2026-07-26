@@ -53,7 +53,7 @@
   <rect x="59" y="189" width="310" height="468" rx="10" class="module"/>
   <rect x="851" y="189" width="310" height="468" rx="10" class="connector"/>
   <text x="214" y="213" class="component-title" text-anchor="middle">LattePanda Mu / board rails</text>
-  <text x="1006" y="213" class="component-title" text-anchor="middle">J6 HDMI Type-A</text>
+  <text x="1006" y="213" class="component-title" text-anchor="middle">J3 HDMI Type-A</text>
   <circle cx="369" cy="237" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 217" data-net="DDI_B_TX0_P"/>
   <circle cx="851" cy="237" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 1 TMDS D2+" data-net="DDI_B_TX0_P"/>
   <path d="M 369 237 L 851 237" class="schematic-wire" data-net="DDI_B_TX0_P" data-kind="differential"/>
@@ -345,72 +345,72 @@
   <rect x="59" y="1983" width="310" height="348" rx="10" class="module"/>
   <rect x="851" y="1983" width="310" height="348" rx="10" class="connector"/>
   <text x="214" y="2007" class="component-title" text-anchor="middle">U6 RTL8111H</text>
-  <text x="1006" y="2007" class="component-title" text-anchor="middle">J7 integrated-magnetics RJ45</text>
+  <text x="1006" y="2007" class="component-title" text-anchor="middle">J6 integrated-magnetics RJ45</text>
   <circle cx="369" cy="2031" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI0+ pin 1" data-net="MDI0_P"/>
-  <circle cx="851" cy="2031" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C1 through magnetics" data-net="MDI0_P"/>
+  <circle cx="851" cy="2031" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C1 through magnetics" data-net="MDI0_P"/>
   <path d="M 369 2031 L 851 2031" class="schematic-wire" data-net="MDI0_P" data-kind="differential"/>
   <text x="357" y="2036" class="pin-label" text-anchor="end">U6 MDI0+ pin 1</text>
-  <text x="863" y="2036" class="pin-label" text-anchor="start">J7 C1 through magnetics</text>
+  <text x="863" y="2036" class="pin-label" text-anchor="start">J6 C1 through magnetics</text>
   <text x="610" y="2025" class="net-label" text-anchor="middle">MDI0_P</text>
   <circle cx="369" cy="2061" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI0- pin 2" data-net="MDI0_N"/>
-  <circle cx="851" cy="2061" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C2 through magnetics" data-net="MDI0_N"/>
+  <circle cx="851" cy="2061" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C2 through magnetics" data-net="MDI0_N"/>
   <path d="M 369 2061 L 851 2061" class="schematic-wire" data-net="MDI0_N" data-kind="differential"/>
   <text x="357" y="2066" class="pin-label" text-anchor="end">U6 MDI0- pin 2</text>
-  <text x="863" y="2066" class="pin-label" text-anchor="start">J7 C2 through magnetics</text>
+  <text x="863" y="2066" class="pin-label" text-anchor="start">J6 C2 through magnetics</text>
   <text x="610" y="2055" class="net-label" text-anchor="middle">MDI0_N</text>
   <circle cx="369" cy="2091" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI1+ pin 4" data-net="MDI1_P"/>
-  <circle cx="851" cy="2091" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C3 through magnetics" data-net="MDI1_P"/>
+  <circle cx="851" cy="2091" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C3 through magnetics" data-net="MDI1_P"/>
   <path d="M 369 2091 L 851 2091" class="schematic-wire" data-net="MDI1_P" data-kind="differential"/>
   <text x="357" y="2096" class="pin-label" text-anchor="end">U6 MDI1+ pin 4</text>
-  <text x="863" y="2096" class="pin-label" text-anchor="start">J7 C3 through magnetics</text>
+  <text x="863" y="2096" class="pin-label" text-anchor="start">J6 C3 through magnetics</text>
   <text x="610" y="2085" class="net-label" text-anchor="middle">MDI1_P</text>
   <circle cx="369" cy="2121" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI1- pin 5" data-net="MDI1_N"/>
-  <circle cx="851" cy="2121" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C6 through magnetics" data-net="MDI1_N"/>
+  <circle cx="851" cy="2121" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C6 through magnetics" data-net="MDI1_N"/>
   <path d="M 369 2121 L 851 2121" class="schematic-wire" data-net="MDI1_N" data-kind="differential"/>
   <text x="357" y="2126" class="pin-label" text-anchor="end">U6 MDI1- pin 5</text>
-  <text x="863" y="2126" class="pin-label" text-anchor="start">J7 C6 through magnetics</text>
+  <text x="863" y="2126" class="pin-label" text-anchor="start">J6 C6 through magnetics</text>
   <text x="610" y="2115" class="net-label" text-anchor="middle">MDI1_N</text>
   <circle cx="369" cy="2151" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI2+ pin 6" data-net="MDI2_P"/>
-  <circle cx="851" cy="2151" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C4 through magnetics" data-net="MDI2_P"/>
+  <circle cx="851" cy="2151" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C4 through magnetics" data-net="MDI2_P"/>
   <path d="M 369 2151 L 851 2151" class="schematic-wire" data-net="MDI2_P" data-kind="differential"/>
   <text x="357" y="2156" class="pin-label" text-anchor="end">U6 MDI2+ pin 6</text>
-  <text x="863" y="2156" class="pin-label" text-anchor="start">J7 C4 through magnetics</text>
+  <text x="863" y="2156" class="pin-label" text-anchor="start">J6 C4 through magnetics</text>
   <text x="610" y="2145" class="net-label" text-anchor="middle">MDI2_P</text>
   <circle cx="369" cy="2181" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI2- pin 7" data-net="MDI2_N"/>
-  <circle cx="851" cy="2181" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C5 through magnetics" data-net="MDI2_N"/>
+  <circle cx="851" cy="2181" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C5 through magnetics" data-net="MDI2_N"/>
   <path d="M 369 2181 L 851 2181" class="schematic-wire" data-net="MDI2_N" data-kind="differential"/>
   <text x="357" y="2186" class="pin-label" text-anchor="end">U6 MDI2- pin 7</text>
-  <text x="863" y="2186" class="pin-label" text-anchor="start">J7 C5 through magnetics</text>
+  <text x="863" y="2186" class="pin-label" text-anchor="start">J6 C5 through magnetics</text>
   <text x="610" y="2175" class="net-label" text-anchor="middle">MDI2_N</text>
   <circle cx="369" cy="2211" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI3+ pin 9" data-net="MDI3_P"/>
-  <circle cx="851" cy="2211" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C7 through magnetics" data-net="MDI3_P"/>
+  <circle cx="851" cy="2211" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C7 through magnetics" data-net="MDI3_P"/>
   <path d="M 369 2211 L 851 2211" class="schematic-wire" data-net="MDI3_P" data-kind="differential"/>
   <text x="357" y="2216" class="pin-label" text-anchor="end">U6 MDI3+ pin 9</text>
-  <text x="863" y="2216" class="pin-label" text-anchor="start">J7 C7 through magnetics</text>
+  <text x="863" y="2216" class="pin-label" text-anchor="start">J6 C7 through magnetics</text>
   <text x="610" y="2205" class="net-label" text-anchor="middle">MDI3_P</text>
   <circle cx="369" cy="2241" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI3- pin 10" data-net="MDI3_N"/>
-  <circle cx="851" cy="2241" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C8 through magnetics" data-net="MDI3_N"/>
+  <circle cx="851" cy="2241" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 C8 through magnetics" data-net="MDI3_N"/>
   <path d="M 369 2241 L 851 2241" class="schematic-wire" data-net="MDI3_N" data-kind="differential"/>
   <text x="357" y="2246" class="pin-label" text-anchor="end">U6 MDI3- pin 10</text>
-  <text x="863" y="2246" class="pin-label" text-anchor="start">J7 C8 through magnetics</text>
+  <text x="863" y="2246" class="pin-label" text-anchor="start">J6 C8 through magnetics</text>
   <text x="610" y="2235" class="net-label" text-anchor="middle">MDI3_N</text>
   <circle cx="369" cy="2271" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 LED0 pin 27" data-net="GBE_LED0"/>
-  <circle cx="851" cy="2271" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 LED1 cathode" data-net="GBE_LED0"/>
+  <circle cx="851" cy="2271" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 LED1 cathode" data-net="GBE_LED0"/>
   <path d="M 369 2271 L 851 2271" class="schematic-wire" data-net="GBE_LED0" data-kind="control"/>
   <text x="357" y="2276" class="pin-label" text-anchor="end">U6 LED0 pin 27</text>
-  <text x="863" y="2276" class="pin-label" text-anchor="start">J7 LED1 cathode</text>
+  <text x="863" y="2276" class="pin-label" text-anchor="start">J6 LED1 cathode</text>
   <text x="610" y="2265" class="net-label" text-anchor="middle">GBE_LED0</text>
   <circle cx="369" cy="2301" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 LED1 pin 26" data-net="GBE_LED1"/>
-  <circle cx="851" cy="2301" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 LED2 cathode" data-net="GBE_LED1"/>
+  <circle cx="851" cy="2301" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 LED2 cathode" data-net="GBE_LED1"/>
   <path d="M 369 2301 L 851 2301" class="schematic-wire" data-net="GBE_LED1" data-kind="control"/>
   <text x="357" y="2306" class="pin-label" text-anchor="end">U6 LED1 pin 26</text>
-  <text x="863" y="2306" class="pin-label" text-anchor="start">J7 LED2 cathode</text>
+  <text x="863" y="2306" class="pin-label" text-anchor="start">J6 LED2 cathode</text>
   <text x="610" y="2295" class="net-label" text-anchor="middle">GBE_LED1</text>
   <circle cx="369" cy="2331" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:GND plane" data-net="GND_RJ45"/>
-  <circle cx="851" cy="2331" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 shield via chassis net" data-net="GND_RJ45"/>
+  <circle cx="851" cy="2331" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J6 shield via chassis net" data-net="GND_RJ45"/>
   <path d="M 369 2331 L 851 2331" class="schematic-wire" data-net="GND_RJ45" data-kind="ground"/>
   <text x="357" y="2336" class="pin-label" text-anchor="end">GND plane</text>
-  <text x="863" y="2336" class="pin-label" text-anchor="start">J7 shield via chassis net</text>
+  <text x="863" y="2336" class="pin-label" text-anchor="start">J6 shield via chassis net</text>
   <text x="610" y="2325" class="net-label" text-anchor="middle">GND_RJ45</text>
   <rect x="1215" y="115" width="1150" height="800" rx="16" class="panel"/>
   <text x="1239" y="150" class="panel-title" text-anchor="start">PCIe 3.0 x4 插槽</text>

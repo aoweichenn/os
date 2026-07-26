@@ -9,12 +9,12 @@
 \definecolor{BookRule}{HTML}{CCD1D1}
 
 \defaultfontfeatures{Ligatures=TeX}
-\setmainfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
-\setsansfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
-\setmonofont{Maple Mono NL NF CN}[Ligatures=NoCommon]
-\setCJKmainfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-\setCJKsansfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-\setCJKmonofont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+\setmainfont{Maple Mono NF CN}[Ligatures=NoCommon]
+\setsansfont{Maple Mono NF CN}[Ligatures=NoCommon]
+\setmonofont{Maple Mono NF CN}[Ligatures=NoCommon]
+\setCJKmainfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+\setCJKsansfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+\setCJKmonofont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
 
 \linespread{1.08}
 \setlength{\parindent}{2em}
@@ -23,6 +23,12 @@
 \raggedbottom
 \sloppy
 \emergencystretch=2em
+
+% Maple Mono 的三位页码比 LaTeX 默认目录页码盒略宽；扩大盒子，避免页码
+% 与点线或纸张边界发生挤压。
+\makeatletter
+\renewcommand{\@pnumwidth}{2.1em}
+\makeatother
 
 \ctexset{
   chapter={

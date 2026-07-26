@@ -19,8 +19,9 @@
 \part{从物理机器到处理器复位}
 \begin{partbridge}
 操作系统开始执行之前，电源、时钟、复位、地址译码和指令存储已经组成一条
-不可省略的硬件通路。本部分从整机放行条件进入处理器可见状态，沿 8086 到
-x86-64 的兼容历史建立寄存器、分段、地址和 I/O 的共同模型。
+不可省略的硬件通路。本部分先从 bit、CPU、ROM、RAM、电压、引脚和总线建立
+零基础词汇，再沿 8086 到 x86-64 的兼容历史建立寄存器、分段、地址和 I/O
+模型；最后用 LattePanda Mu 四层载板把抽象事务落到真实电源与逐根铜线。
 \end{partbridge}
 \input{chapters/ch01-machine-and-operating-system}
 \input{chapters/ch02-reset-platform-and-io}
@@ -60,6 +61,8 @@ QEMU 整机证据。
 \input{chapters/ch10-roadmap-metrics-and-practice}
 
 \backmatter
+\input{backmatter/learning-integration-map}
+\input{backmatter/beginner-glossary}
 \input{backmatter/checklist}
 \input{backmatter/references}
 

@@ -1,0 +1,165 @@
+\section{Port I/O 全图：同一地址空间里的六种不同协议}
+
+\begin{keyidea}
+端口号只回答“把事务送到哪组设备寄存器”，不能回答“接下来按什么顺序读写”。
+COM1、PIC、PIT、i8042、ATA 和 \code{fw\_cfg} 都位于 x86 Port I/O 空间，
+但它们的访问宽度、状态位、副作用和完成条件完全不同。
+\end{keyidea}
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \includegraphics[width=0.96\textheight,height=0.82\textwidth,keepaspectratio]
+    {figures/system_wiring/port_io_topology.pdf}
+  \caption{x86 Port I/O 总线与本项目使用的六组设备寄存器。图中的蓝色虚线
+  表示 \code{IN/OUT} 架构事务，不表示设备之间互相收发数据，也不表示 PCB
+  上存在一根按图形分叉的实体导线。}
+  \label{fig:port-io-topology}
+\end{sidewaysfigure}
+\clearpage
+
+\subsection{一、Port I/O 到底是什么}
+
+x86 把设备访问分为两个主要空间：
+
+\begin{itemize}[leftmargin=2em]
+  \item \term{内存地址空间}{memory address space}由普通 load/store 类指令
+        访问，分页开启后还要经过虚拟地址翻译；RAM、ROM 和 MMIO 都可占范围；
+  \item \term{端口地址空间}{I/O port space}用 \code{IN}/\code{OUT} 指令
+        访问，端口号是独立的 16 位编号，不经过普通页表。
+\end{itemize}
+
+因此“物理地址 \code{0x3F8}”与“端口 \code{0x3F8}”不是同一位置。前者进入
+平台的内存/MMIO 地址译码，后者带有 I/O 周期语义并由端口译码选择 COM1。
+只有同时说明空间、编号、方向和宽度，一个地址描述才完整。
+
+\topic{端口号怎样进入指令}%
+\code{IN}/\code{OUT} 可以把一个 8 位立即数直接编码在指令中，适合
+\code{0x00}--\code{0xFF}；也可以把完整 16 位端口号放进 \code{DX}。
+数据通过 \code{AL}、\code{AX} 或 \code{EAX} 传输，对应 8、16 或 32 位。
+ISA 支持这些宽度，并不表示任意设备寄存器都接受它们；本图中的设备实际使用
+8 位控制寄存器和 ATA 16 位数据口。
+
+\begin{longtable}{L{0.19\linewidth}L{0.22\linewidth}L{0.24\linewidth}L{0.25\linewidth}}
+\toprule
+指令形态 & 端口来源 & 数据宽度 & 典型用途 \\
+\midrule
+\code{in al,dx} / \code{out dx,al} & \code{DX} 的低 16 位 & 8 位 & UART、PIC、PIT、i8042、ATA 状态 \\
+\code{in ax,dx} / \code{out dx,ax} & \code{DX} 的低 16 位 & 16 位 & ATA data port 一次传一个 word \\
+\code{in eax,dx} / \code{out dx,eax} & \code{DX} 的低 16 位 & 32 位 & 仅用于明确支持 32 位端口事务的设备 \\
+立即数端口形式 & 指令中的 8 位端口 & 由 AL/AX/EAX 决定 & 编号不超过 \code{0xFF} 的固定端口 \\
+\bottomrule
+\end{longtable}
+
+访问过宽可能把相邻寄存器当成一次组合事务，访问过窄可能只提交字段的一部分；
+对带副作用寄存器重复读取，还可能清除或推进状态。故而“CPU 是 64 位”与
+“设备寄存器要用 64 位读写”之间没有因果关系。
+
+\subsection{二、COM1：八个端口里还会因 DLAB 改变含义}
+
+16550A UART 的 COM1 基址为 \code{0x3F8}，范围到 \code{0x3FF}。基址加偏移
+选择寄存器，但偏移 0/1 的意义受 LCR 中 DLAB 位控制：
+
+\begin{longtable}{L{0.13\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.30\linewidth}}
+\toprule
+偏移 & DLAB=0 & DLAB=1 & 关键副作用或用途 \\
+\midrule
+0 & 接收/发送数据 & 除数低字节 DLL & 写数据启动发送；读数据消费接收字节 \\
+1 & 中断使能 IER & 除数高字节 DLM & 设置波特率前后必须正确切换 DLAB \\
+3 & LCR & LCR & 选择数据位、停止位、校验和 DLAB \\
+5 & LSR & LSR & THRE 表示发送保持寄存器可接受新字节 \\
+\bottomrule
+\end{longtable}
+
+本项目配置 115200 8N1：每帧 8 个数据位、无校验、1 个停止位。发送函数先有界
+轮询 \code{LSR.THRE}，再向 \code{0x3F8} 写一个字节。若该位永远不就绪，
+函数必须超时并给调用者失败，不能让最早固件永久卡死。
+
+\subsection{三、PIC：配置端口和 IRQ 输出是两条不同路径}
+
+主 8259A 使用 \code{0x20}/\code{0x21}，从片使用
+\code{0xA0}/\code{0xA1}。命令端口和数据端口在初始化命令字 ICW、操作命令字
+OCW、屏蔽寄存器 IMR、请求寄存器 IRR 与服务中寄存器 ISR 之间复用。
+
+初始化把 IRQ0--IRQ15 重映射到不会与 CPU 架构异常重叠的向量范围。本项目只
+放行 PIT 的 IRQ0 和键盘的 IRQ1。设备触发的是另一条红色硬件通知路径；CPU
+经 IDT 处理完成后，软件再通过蓝色 Port I/O 向 PIC 发送 EOI。若忘记 EOI，
+对应优先级会继续处于 in-service 状态，后续请求可能不再推进。
+
+\subsection{四、PIT：写入的是分频协议，不是“当前时间”}
+
+8254 PIT 的 channel 0 数据端口是 \code{0x40}，命令端口是
+\code{0x43}。软件先写命令选择通道、访问格式和 mode，再按低字节、随后高字节
+的顺序提交 16 位计数值。PIT 用输入时钟除以该计数，周期产生 IRQ0。
+
+\[
+f_{\mathrm{tick}}\approx
+\frac{f_{\mathrm{PIT\ input}}}{\mathrm{divisor}}.
+\]
+
+这只形成一个近似固定频率的 tick，不自动等于墙上时间，也不自动调用调度器。
+IRQ handler 增加单调计数并按策略请求调度，才把硬件脉冲转成内核时间与抢占
+机会。
+
+\subsection{五、i8042：状态端口和数据端口不能按固定延时猜}
+
+i8042 的 data port 为 \code{0x60}，status/command port 为
+\code{0x64}。写命令之前要确认 input buffer 为空；读数据之前要确认 output
+buffer 有数据。设备送来扫描码以后，控制器把它放进 output buffer，并通过
+IRQ1 通知 CPU 读取。
+
+\term{扫描码}{scan code}不是 ASCII。按下和松开会产生 make/break 序列，
+Shift、Caps Lock 和扩展前缀还会改变解码状态。IRQ handler 只应取走有界数据
+并推进解码器，不在中断上下文里运行整套 Shell 行编辑。
+
+\subsection{六、ATA：控制寄存器是 8 位，数据寄存器却是 16 位}
+
+primary ATA 命令块占 \code{0x1F0}--\code{0x1F7}，alternate
+status/device control 位于 \code{0x3F6}。大多数任务文件寄存器按 8 位访问，
+只有 data port \code{0x1F0} 在本项目 PIO 路径按 16 位传输。
+
+一次 512 B 扇区恰好是
+\[
+512\ \mathrm{B}=256\times16\ \mathrm{bit}.
+\]
+软件选择设备、写 LBA28 与扇区数、提交命令，等待 BSY 清除和 DRQ 建立，再
+执行 256 次 16 位输入或输出。ERR/DF 在等待与传输边界都必须检查。写入缓存
+以后还要执行 FLUSH 并等待完成，才可以讨论跨重启持久性。
+
+\subsection{七、fw\_cfg：同一端口对可以发布许多命名条目}
+
+QEMU \code{fw\_cfg} 用 selector port \code{0x510} 选择条目，用 data port
+\code{0x511} 顺序读取字节流。selector 是协议规定的 16 位值，字段字节序也
+必须按规范解释；数据端口不是“某个固定结构体的地址”。
+
+Stage 1 先验证 \code{QEMU} 签名，再读取目录、查找命名条目，最后解析本项目
+需要的 E820 数据。这样 QEMU 只是通过一个文档化设备接口发布平台信息，没有
+替目标固件直接调用宿主函数。
+
+\subsection{八、为什么 Local APIC 不在这张图里}
+
+Local APIC 通常位于物理地址 \code{0xFEE00000} 的 MMIO 窗口，使用内存事务
+而非 \code{IN}/\code{OUT}。把它强行画进 Port I/O 图，会掩盖两个地址空间的
+区别。PIC 的蓝线用于端口配置，Local APIC 的绿色线用于 MMIO 配置，两者之间
+另有红色 ExtINT 中断路由；完整关系在中断专题图展开。
+
+\subsection{九、一次端口访问实际经历哪些检查}
+
+以 \code{out dx,al} 为例，处理器和平台依次承担：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item CPU 检查当前特权与 I/O 权限，确定该指令能否执行；
+  \item 从 DX 取得端口号，从 AL 取得 8 位数据；
+  \item 平台或 QEMU 端口译码选择唯一设备模型；
+  \item 设备按当前内部状态解释写入，可能更新寄存器、启动动作或拒绝推进；
+  \item 后续状态读取、IRQ 或超时证明动作完成或失败。
+\end{enumerate}
+
+端口写指令退休只证明事务已提交给设备，不证明串口字符已经离开引脚、磁盘数据
+已经稳定落盘或键盘命令已被设备接受。每个设备协议都需要自己的完成判据。
+
+\begin{failurebox}
+若端口号错，可能访问空洞或另一设备；若宽度错，可能破坏相邻状态；若顺序错，
+设备可能保持忙；若轮询无上界，硬件故障会变成系统永久挂起；若忘记 EOI 或
+FLUSH，表面成功会在下一次事件或重启时暴露。调试时应同时记录最后端口、访问
+宽度、期望位、实读状态和剩余预算，而不是只写“设备不工作”。
+\end{failurebox}

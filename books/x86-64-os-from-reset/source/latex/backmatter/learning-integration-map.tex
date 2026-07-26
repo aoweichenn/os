@@ -1,0 +1,221 @@
+\chapter*{Learning 与硬件资料融合索引}
+\addcontentsline{toc}{chapter}{Learning 与硬件资料融合索引}
+
+\begin{keyidea}
+本索引不是把仓库文件名列成附件清单，而是证明每一组 learning 材料在成书中
+承担了什么知识职责。书稿按因果依赖重组内容，不逐文件机械粘贴；读者既可以
+顺序读书，也可以从原学习分册或硬件图反查对应章节。
+\end{keyidea}
+
+\newcommand{\learningpathii}[2]{%
+  \shortstack[l]{\scriptsize\filepath{#1}\\[-0.15em]\scriptsize\filepath{#2}}}
+\newcommand{\learningpathiii}[3]{%
+  \shortstack[l]{\scriptsize\filepath{#1}\\[-0.15em]\scriptsize\filepath{#2}\\[-0.15em]
+  \scriptsize\filepath{#3}}}
+
+\section*{一、融合时采用的五条规则}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v1.4 在容量、数据结构
+        或路径上不同，正文先解释历史基线，再明确当前增量，不把旧数字冒充现状。
+  \item \textbf{背景知识前置。}第一次使用 ROM、RAM、地址、寄存器、端口、
+        中断、页表、进程、fd 等概念时先解释“是什么和为什么”，再进入项目细节。
+  \item \textbf{同一因果链合并。}例如键盘硬件、IRQ、FIFO、阻塞、fd 0 和 Shell
+        来自多个分册，在书中合并成一条端到端路径，避免读者自行拼接。
+  \item \textbf{QEMU 与实体板分栏。}QEMU 图证明架构/设备事务，实体原理图证明
+        电源和铜线；共同概念相互对照，平台专属假设明确标注。
+  \item \textbf{图与文字互相校验。}图中每个主要节点在正文都有输入、输出、
+        初始化者、完成条件和失败现象；正文声称的完整路径也必须能在图上追踪。
+\end{enumerate}
+
+\section*{二、总览、前置与背景分册怎样进入正文}
+
+\begin{longtable}{L{0.25\linewidth}L{0.33\linewidth}L{0.32\linewidth}}
+\toprule
+Learning 来源 & 核心知识链 & 成书中的主要落点 \\
+\midrule
+\endfirsthead
+\toprule
+Learning 来源 & 核心知识链 & 成书中的主要落点 \\
+\midrule
+\endhead
+\filepath{docs/learning/README.md} &
+项目边界、学习顺序、四遍阅读法、构建运行、生产源码覆盖与完成判定 &
+前言；第 1 章工程方法和路线图；第 10 章指标、实践与验收 \\
+\learningpathii{00-prerequisites-}{and-hardware.md} &
+复位、四类地址、数据表示、x86 模式、寄存器、描述符、中断、分页、设备、
+磁盘/内存、ELF、freestanding、QEMU/GDB &
+第 1--8 章的基础主题；零基础机器章；初学者术语表 \\
+\filepath{background/README.md} &
+背景专题地图、统一符号、反事实阅读方法和通过标准 &
+前言中的阅读方法；第 1 章七问法；书末验收清单 \\
+\learningpathiii{background/01-computer-}{pc-and-x86-}{history.md} &
+计算机角色、取指循环、ISA/微架构/平台、电源复位、8086--AMD64、PC 设备史 &
+第 1 章机器部件与 x86 四十多年兼容史；第 2 章平台；第 6 章模式切换 \\
+\learningpathiii{background/02-data-}{address-assembly-}{and-abi.md} &
+bit、整数、溢出、字节序、对齐、地址、汇编、栈、函数/系统调用 ABI &
+第 1 章零基础；第 3 章数据与汇编；第 4、6、8 章 ABI 边界 \\
+\learningpathiii{background/03-toolchain-}{elf-and-freestanding-}{cpp.md} &
+host/target、预处理到链接、ELF、ROM/raw image、freestanding C++、产物审计 &
+第 4 章完整工具链；第 6 章 ELF loader；第 10 章可复现证据 \\
+\learningpathiii{background/04-memory-}{paging-protection-}{and-exceptions.md} &
+RAM/cache、E820、frame、四级分页、权限、TLB、GDT/TSS/IDT、异常、用户指针 &
+第 7 章内存/异常主线；第 8 章用户边界；术语表 \\
+\learningpathiii{background/05-interrupts-}{time-and-pc-}{devices.md} &
+Port I/O/MMIO、polling/timeout、PIC/LAPIC、PIT、UART、i8042、ATA、QMP &
+第 2 章 Port I/O 全图；第 5 章 UART 与测试；第 8 章中断/键盘全图 \\
+\learningpathiii{background/06-processes-}{syscalls-files-}{and-shell.md} &
+Kernel/User、进程/线程、调度、系统调用、阻塞、锁、pipe、fd、文件系统、Shell &
+第 8 章特权边界；第 9 章进程到 Shell；第 10 章 v2 演进 \\
+\learningpathiii{background/07-testing-}{debugging-and-}{evidence.md} &
+oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持久性、调试 &
+第 5 章观测与测试；各章失败框；第 10 章实践；书末验收清单 \\
+\bottomrule
+\end{longtable}
+
+\section*{三、v0.0--v1.0 阶段分册怎样进入十章}
+
+\begin{longtable}{L{0.25\linewidth}L{0.34\linewidth}L{0.31\linewidth}}
+\toprule
+阶段分册 & 被保留的完整机制 & 成书落点 \\
+\midrule
+\endfirsthead
+\toprule
+阶段分册 & 被保留的完整机制 & 成书落点 \\
+\midrule
+\endhead
+\learningpathii{01-v0.0-engineering-}{baseline.md} &
+CMake/Preset、host/target、AddressRange、测试分层、失败语义、源码顺序 &
+第 1 章工程闭环；第 4 章工具链；第 5/10 章证据与实践 \\
+\learningpathii{02-v0.1-reset-}{and-serial.md} &
+复位状态、段/栈、COM1、PIT、ROM 布局、串口协议、故障注入 &
+第 2 章复位；第 4 章 ROM；第 5 章 UART；第 6 章启动全图 \\
+\learningpathii{03-v0.2-firmware-}{stage1-loader.md} &
+Stage 1 磁盘描述符、RAM 窗口、ATA PIO、校验、远转移、镜像生成 &
+第 6 章 loader 主线与启动/内存全图 \\
+\learningpathii{04-v0.3-}{long-mode.md} &
+A20、GDT、保护模式、临时页表、PAE/LME/PG、64 位入口与故障标记 &
+第 1 章历史依赖；第 6 章模式转换及失败定位 \\
+\learningpathii{05-v0.4-kernel-elf-}{and-boot-info.md} &
+Kernel 容器、CRC32、ELF64、严格 PT\_LOAD、两遍装载、BSS、BootInfo、C++ &
+第 4 章 ELF/freestanding；第 6 章装载与交接 \\
+\learningpathiii{06-v0.5-descriptor-}{tables-and-}{exceptions.md} &
+GDT/TSS/IST/IDT、异常 frame、汇编 adapter、panic、自检和三重故障 &
+第 7 章描述符、异常与内核接管 \\
+\learningpathii{07-v0.6-memory-}{management.md} &
+E820、物理 frame、正式页表、NX/WP、guard、堆及当前可回收内存演进 &
+第 7 章内存管理与 v1.1 资源深化 \\
+\learningpathii{08-v0.7-interrupts-}{and-devices.md} &
+PIC/LAPIC、PIT、PS/2、Kernel ATA、初始化顺序、中断安全和设备测试 &
+第 8 章中断/设备主线及两张整页矢量图 \\
+\learningpathii{09-v0.8-ring3-}{and-system-calls.md} &
+用户 ELF、四道 Ring 3 门、IRETQ、INT 0x80、用户复制与异常隔离 &
+第 8 章用户边界；第 9 章系统调用消费者 \\
+\learningpathii{10-v0.9-processes-}{and-scheduling.md} &
+PCB、独立 CR3/Ring 0 栈、176 B frame、PIT 抢占、退出和资源守恒 &
+第 9 章进程/调度；第 7 章动态栈与页表回收 \\
+\learningpathii{11-v0.10-synchronization-}{and-ipc.md} &
+SpinLock、Blocked/Ready、定向唤醒、64 B 管道、丢失唤醒与用户复制 &
+第 9 章同步/IPC；键盘到 Shell 的阻塞链 \\
+\learningpathii{12-v0.11-}{file-system.md} &
+磁盘所有权、superblock、inode、bitmap、目录、LRU cache、事务和跨启动 &
+第 9 章文件系统及持久化整页图 \\
+\learningpathii{13-v1.0-user-}{environment.md} &
+i8042、Console FIFO、统一 fd、Try/Wait、idle、Ring 3 Shell 和自动输入 &
+第 8 章按键全链；第 9 章用户环境；第 10 章闭环验收 \\
+\bottomrule
+\end{longtable}
+
+\section*{四、硬件图册与实体资料逐项落点}
+
+\begin{longtable}{L{0.29\linewidth}L{0.27\linewidth}L{0.34\linewidth}}
+\toprule
+来源 & 图/资料回答的问题 & 成书呈现 \\
+\midrule
+\endfirsthead
+\toprule
+来源 & 图/资料回答的问题 & 成书呈现 \\
+\midrule
+\endhead
+\learningpathii{hardware-assembly-}{and-wiring.md} &
+十三阶段怎样装配；整机、启动/内存、Port I/O、中断、按键和持久化路径 &
+第 1、2、6、8、9 章共七张横置整页矢量图及逐图讲解 \\
+\filepath{assets/hardware_stage_roadmap.svg} &
+v0.0--v1.0 十三个能力增量及 v1.1--v1.4 延伸 &
+图~\ref{fig:hardware-stage-roadmap} 与四阶段依赖表 \\
+\filepath{assets/x86\_64\_os\_hardware\_wiring.svg} &
+Host、ROM、RAM、CPU、Port I/O、PIC/LAPIC 与设备的全局关系 &
+图~\ref{fig:system-wiring-overview} 与四种线/五块硬件解释 \\
+\filepath{assets/boot\_and\_memory\_wiring.svg} &
+五次控制权交接、三种 CPU 模式和关键物理区间 &
+图~\ref{fig:boot-memory-wiring} 与所有权/故障定位 \\
+\filepath{assets/port\_io\_topology.svg} &
+六组端口、访问宽度、状态协议及 MMIO 边界 &
+图~\ref{fig:port-io-topology} 与逐设备寄存器解释 \\
+\filepath{assets/interrupt\_routing.svg} &
+IRQ0/1、PIC、LAPIC、IDT、handler、EOI 和 IRETQ &
+图~\ref{fig:interrupt-routing-full} 与硬件/软件泳道 \\
+\filepath{assets/keyboard\_to\_shell.svg} &
+QMP 到 PS/2、IRQ、FIFO、fd 0、Shell 的十四步链 &
+图~\ref{fig:keyboard-to-shell-full} 与逐步失败矩阵 \\
+\filepath{assets/storage\_persistence.svg} &
+Ring 3 写入、文件对象、cache、ATA、raw disk 与新启动验证 &
+图~\ref{fig:storage-persistence-full} 与持久性证据层级 \\
+\learningpathii{physical-carrier-}{circuit-guide.md} &
+Mu/DFR1142 电源、高速、低速、260-pin、PCB 与实机适配 &
+第 2 章“实体 x86-64 载板全链路案例” \\
+三张 \learningpathii{assets/physical\_}{carrier/*.svg} &
+电源、高速和控制接口逐引脚/逐网络简化图 &
+第 2 章三张矢量学习图；377 个显式引脚与 210 段导线门禁 \\
+DFR1142 十页上游原理图 PDF/KiCad &
+全部器件位号、数值、网络、NC/DNP 与 PCB 事实 &
+第 2 章按功能嵌入十页原始矢量原理图并逐页解释 \\
+Mu pinout 与 260-pin 表 &
+模块正反方向、辅助连接器、奇偶触点和每个信号定义 &
+纯 TikZ 矢量方向图、关键 pin 表与 HSIO 分配表 \\
+\learningpathii{hardware/.../}{provenance.md} &
+上游提交、许可、哈希与事实边界 &
+实体案例来源段、图片 README 与规范/延伸阅读 \\
+\learningpathii{hardware/.../}{manufacturing\_checklist.md} &
+ERC/DRC、BOM、叠层、阻抗、热、机械和上电前检查 &
+实体案例 bring-up 段与书末硬件验收清单 \\
+\bottomrule
+\end{longtable}
+
+\section*{五、为什么不把同一段文字复制两遍}
+
+Learning 分册保留按版本实验的阅读顺序，书稿则保留按机制依赖的长篇叙事。
+例如 \code{TSS.RSP0} 同时出现在 v0.5 异常、v0.8 Ring 3、v0.9 进程和 v1.3
+SYSCALL 分册中；书中先在处理器契约处解释 TSS，再分别说明异常换栈、每进程
+Ring 0 栈和 SYSCALL 可信换栈，不把四段近似文字连续粘贴。
+
+同样，ROM/RAM 的零基础定义、QEMU 128 KiB ROM、实体 SPI Flash 和模块 UEFI
+是同一个词在四个边界上的用法。书中先给一般概念，再在每条具体链上收窄：
+
+\[
+\begin{aligned}
+\text{非易失启动存储的一般概念}
+&\rightarrow \text{QEMU 自研 ROM}\\
+&\rightarrow \text{载板可选 SPI Flash}\\
+&\rightarrow \text{实体模块 UEFI 平台契约}.
+\end{aligned}
+\]
+
+这种融合方式既保留全部知识责任，又避免相互矛盾的重复段落。若从原分册反查，
+上面的表给出主落点；若从书顺序学习，正文已经把前置概念放在第一次需要它之前。
+
+\section*{六、读者怎样验证“已经融合”}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 在本索引找原 learning 文件，定位对应章节；
+  \item 在章节先找术语定义，再找状态表、图、失败框和验收证据；
+  \item 对图中任一箭头回答源、目的、载荷、初始化者、完成条件和失败所有权；
+  \item 对实体网络回到十页原理图和 KiCad，不把学习图当制造数据；
+  \item 对实现数字回到当前源码/CTest，不把历史阶段值当当前版本；
+  \item 在书末术语表回查跨层同名概念，再用验收清单确认能够独立复述完整链。
+\end{enumerate}
+
+书稿输入检查会递归验证全部章节和图片存在，图形几何检查会验证七张整机图的
+卡片净距以及三张实体电路图的显式引脚/导线连通；最终 XeLaTeX 构建和抽页渲染
+再检查横置页、图注、字体和边界。自动化证明的是资源与几何底线，概念正确性
+仍以源码、处理器/设备规范和固定上游硬件资料交叉审查。

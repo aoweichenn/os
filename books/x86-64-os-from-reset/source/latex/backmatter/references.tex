@@ -35,6 +35,41 @@
   \item Jeff Bonwick and Jonathan Adams, \emph{Magazines and Vmem:
   Extending the Slab Allocator to Many CPUs and Arbitrary Resources},
   USENIX 2001，多处理器本地缓存、分层资源分配与未来扩展方向。
+  \item UEFI Forum, \emph{Unified Extensible Firmware Interface
+  Specification}，PE/COFF 启动入口、Boot Services、Memory Map、
+  ExitBootServices 与操作系统交接。
+  \item UEFI Forum, \emph{Advanced Configuration and Power Interface
+  Specification}，RSDP、MADT、MCFG、平台设备、电源状态与操作系统发现。
+  \item PCI-SIG, \emph{PCI Express Base Specification} 与
+  \emph{Card Electromechanical Specification}，lane、链路训练、参考时钟、
+  配置空间、BAR、插槽电源和控制信号。
+  \item USB-IF, \emph{Universal Serial Bus Specification}、
+  \emph{USB Type-C Cable and Connector Specification} 与
+  \emph{USB Power Delivery Specification}，D+/D-、SuperSpeed、
+  枚举、Type-C CC 和 PD 协商。
+  \item NXP Semiconductors, \emph{UM10204 I2C-bus specification and
+  user manual}，开漏、上拉、起始/停止、寻址、应答和时序。
+  \item LattePandaTeam, \emph{LattePanda Mu Hardware Design Files}，
+  DFR1142 Lite Carrier V2 的 KiCad 9 十页原理图与四层 PCB。本书固定到
+  上游提交 \code{f954bf0275fa0aec4c1e9eb168f09644563b28a4}，MIT 许可；
+  本地归档位于
+  \filepath{hardware/lattepanda_mu_learning_carrier/upstream_dfr1142_v2/}。
+  \item LattePandaTeam, \emph{LattePanda Mu Edge Connector Pinout}，
+  260-pin 电源、HSIO、USB、DDI、I2C、UART、SPI、风扇和控制信号；
+  本地表格与引脚图位于
+  \filepath{hardware/lattepanda_mu_learning_carrier/module_pinout/}。
+  \item KiCad Project, \emph{KiCad 9 Documentation}，层次原理图、网络、
+  footprint 映射、PCB 叠层、网络类别、ERC 与 DRC。自动检查是设计门禁，
+  不替代器件、电源、信号完整性、热与制造审查。
+  \item 本项目的
+  \filepath{hardware/lattepanda_mu_learning_carrier/provenance.md} 与
+  \filepath{hardware/lattepanda_mu_learning_carrier/manufacturing_checklist.md}，
+  记录实体案例来源、哈希、许可、当前工具限制和投板前必须重新确认的事项。
+  \item 本项目的
+  \filepath{docs/learning/physical-carrier-circuit-guide.md}、
+  \filepath{tools/generate_physical_carrier_diagrams.py} 与
+  \filepath{tools/check_learning_diagrams.py}，用于重复生成三张学习图并
+  验证可见引脚、网络、导线连通分量、NC 与安全区。
   \item 配套仓库的 \filepath{docs/adr/}、\filepath{docs/architecture.md}
   和 \filepath{docs/releases/}，用于追踪实现决策与阶段证据。
 \end{enumerate}

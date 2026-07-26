@@ -369,7 +369,7 @@ def GenerateHighSpeedDiagram(output_path: Path) -> None:
         panel_width,
         "HDMI 2.0",
         "LattePanda Mu / board rails",
-        "J6 HDMI Type-A",
+        "J3 HDMI Type-A",
         hdmi_connections,
     ) + 28.0
 
@@ -436,17 +436,17 @@ def GenerateHighSpeedDiagram(output_path: Path) -> None:
     ) + 28.0
 
     ethernet_phy_connections = (
-        ("MDI0_P", "U6 MDI0+ pin 1", "J7 C1 through magnetics", "differential"),
-        ("MDI0_N", "U6 MDI0- pin 2", "J7 C2 through magnetics", "differential"),
-        ("MDI1_P", "U6 MDI1+ pin 4", "J7 C3 through magnetics", "differential"),
-        ("MDI1_N", "U6 MDI1- pin 5", "J7 C6 through magnetics", "differential"),
-        ("MDI2_P", "U6 MDI2+ pin 6", "J7 C4 through magnetics", "differential"),
-        ("MDI2_N", "U6 MDI2- pin 7", "J7 C5 through magnetics", "differential"),
-        ("MDI3_P", "U6 MDI3+ pin 9", "J7 C7 through magnetics", "differential"),
-        ("MDI3_N", "U6 MDI3- pin 10", "J7 C8 through magnetics", "differential"),
-        ("GBE_LED0", "U6 LED0 pin 27", "J7 LED1 cathode", "control"),
-        ("GBE_LED1", "U6 LED1 pin 26", "J7 LED2 cathode", "control"),
-        ("GND_RJ45", "GND plane", "J7 shield via chassis net", "ground"),
+        ("MDI0_P", "U6 MDI0+ pin 1", "J6 C1 through magnetics", "differential"),
+        ("MDI0_N", "U6 MDI0- pin 2", "J6 C2 through magnetics", "differential"),
+        ("MDI1_P", "U6 MDI1+ pin 4", "J6 C3 through magnetics", "differential"),
+        ("MDI1_N", "U6 MDI1- pin 5", "J6 C6 through magnetics", "differential"),
+        ("MDI2_P", "U6 MDI2+ pin 6", "J6 C4 through magnetics", "differential"),
+        ("MDI2_N", "U6 MDI2- pin 7", "J6 C5 through magnetics", "differential"),
+        ("MDI3_P", "U6 MDI3+ pin 9", "J6 C7 through magnetics", "differential"),
+        ("MDI3_N", "U6 MDI3- pin 10", "J6 C8 through magnetics", "differential"),
+        ("GBE_LED0", "U6 LED0 pin 27", "J6 LED1 cathode", "control"),
+        ("GBE_LED1", "U6 LED1 pin 26", "J6 LED2 cathode", "control"),
+        ("GND_RJ45", "GND plane", "J6 shield via chassis net", "ground"),
     )
     AddConnectionPanel(
         document,
@@ -455,7 +455,7 @@ def GenerateHighSpeedDiagram(output_path: Path) -> None:
         panel_width,
         "千兆网：PHY 与磁性 RJ45",
         "U6 RTL8111H",
-        "J7 integrated-magnetics RJ45",
+        "J6 integrated-magnetics RJ45",
         ethernet_phy_connections,
     )
 

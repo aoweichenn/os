@@ -1,6 +1,95 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
 
+\section*{零基础机器概念与实体载板验收}
+
+\begin{itemize}
+  \item 能解释 bit、byte、KiB、MiB、十六进制分别表示什么，并说明地址数值
+        与地址中保存的内容为什么不是一回事；
+  \item 能用“取指、译码、执行、提交”描述 CPU 的基本职责，并区分寄存器、
+        RAM、缓存和磁盘；
+  \item 能解释 RAM 名称中“随机存取”并非内容随机，DRAM 为什么需要刷新、
+        训练且断电丢失，SRAM 为什么仍不是非易失存储；
+  \item 能从掩模 ROM、PROM、EPROM、EEPROM 到 SPI NOR Flash 说明
+        “ROM”一词的历史变化，以及现代 Flash 为什么可更新却仍承担 ROM 角色；
+  \item 能解释为什么复位后必须先有非易失指令来源，为什么普通运行又必须有
+        可写 RAM，为什么磁盘中的内核还需要控制器和引导器装入；
+  \item 能完整复述“输入电源、时钟、复位、Flash 取指、DRAM 初始化、引导器、
+        内核、用户程序”之间不可交换的依赖顺序；
+  \item 能区分电压、电流、电阻和功率，写出 \(V=IR\)、\(P=VI\)，并说明
+        GND 是共同参考与返回网络而不是电流消失点；
+  \item 能区分器件引脚、原理图导线、同名网络、PCB 走线、连接器和总线协议；
+  \item 能说明原理图符号、PCB footprint 和实物封装各回答什么问题，以及
+        pin-to-pad 映射错误为什么能让正确原理图变成错误成品；
+  \item 能从 J/U/Q/D/F/L/R/C/SW/TP 位号前缀辨认连接器、IC、MOSFET、
+        二极管、保险丝、电感、电阻、电容、开关与测试点；
+  \item 能解释 NC 与 DNP 的区别，确认未使用接口是明确配置而不是被学习图
+        省略；
+  \item 能说明 CPU/SoC、计算模块、载板、主板和扩展设备的层级，并准确界定
+        “Mu 模块加载板”案例在哪个产品边界上完整；
+  \item 能复述 DFR1142 V2 的 10 个原理图页、305 个 footprint、407 个 net、
+        3961 段走线、1307 个过孔、\(146\mathrm{mm}\times102\mathrm{mm}\)
+        板框与约 1.6062 mm 四层叠层分别证明什么；
+  \item 能从 J17 经 F6、D29、D15--D17 追到 VDC，并区分保险丝、TVS 和
+        肖特基二极管各自处理的故障；
+  \item 能从 J18 CC1/CC2、U14 CH224K、R43、15 V VBUS、D18--D20 追到
+        VDC，并解释“PD 协商”和“降压转换”为什么不是同一动作；
+  \item 能从 J19 的 +VBAT、D30--D32、USB2 Port 8、UPS 状态和控制脚说明
+        Smart UPS 接口为什么不只是两根供电线；
+  \item 能解释三路 diode-OR 怎样减少输入反灌，以及 \(I V_f\) 损耗、并联
+        不均流与温升为什么仍需验证；
+  \item 能从 VDC 分别追到 Mu VIN、Q7 \code{+12VA}、U15 \code{+5V}、
+        U16 \code{+3V3} 和 U17 \code{+3V3\_ROM}；
+  \item 能说明 SY8253 降压中的开关、电感、输出电容、反馈与 EN 如何形成能量
+        回路和控制回路，为什么 SW 与 FB 的 PCB 布局很重要；
+  \item 能解释 Mu pins 250--260 为什么并联 11 个 VIN 触点，为什么多个 GND
+        同时降低功率阻抗并为高速对提供返回；
+  \item 能逐项给出 HSIO0/1/2/3/6/8--11 在本载板上的 USB、M.2、GbE 和
+        PCIe 分配，并说明 BIOS 改复用时 PCB 铜线不会自动改变；
+  \item 能解释单端与差分传输、P/N、共模噪声、特性阻抗、参考平面、对内长度、
+        换层回流和 AC 耦合的基本关系；
+  \item 能说明一条 PCIe lane 含一对 TX 和一对 RX，因此 x4 有 16 根高速
+        单端铜线，且还需要 REFCLK、PERST、WAKE、电源和 GND；
+  \item 能把 PCIe 链路训练、配置空间枚举、BAR、IRQ/DMA 和设备驱动接成
+        从铜线到内核服务的完整链；
+  \item 能从 Mu DDI\_B 四对 TMDS、DDC SCL/SDA、HPD、5 V、GND 追到 HDMI
+        Type-A，并说明显示像素前为什么先发现显示器和读取 EDID；
+  \item 能说明 USB 3.x Type-A 为什么同时有 D+/D-、SuperSpeed TX/RX、
+        VBUS、GND 和 shield，以及高速失败时为什么可能只降为 USB 2.0；
+  \item 能区分 M.2 M Key 的 PCIe x1/无 SATA 与 E Key 的 PCIe x1+USB2，
+        并解释组合无线卡中 Wi-Fi 与蓝牙可能走不同接口；
+  \item 能从 HSIO6/REFCLK4/PLT\_RST/CLKREQ4 追到 RTL8111H，再从四对 MDI
+        追到集成磁性 RJ45，并解释隔离磁性器件不能省略；
+  \item 能解释 I2C 开漏、上拉、起始、地址、应答和停止；确认 I2C 地址不是
+        CPU 物理地址，且不能不计算就并联大量上拉；
+  \item 能解释 UART 的起始/数据/停止位、TX/RX 方向和共同地，说明 3.3 V
+        UART 为什么不能直接接使用正负电压的 RS-232；
+  \item 能解释 SPI CLK/CS/IO0--IO3 与 \code{BIOS\_SEL} 的作用，并说明
+        可选 U18 不等于当前 QEMU 128 KiB ROM 的直接实体目标；
+  \item 能区分风扇 5 V 能量、PWM 控制、TACH 反馈和 NTC 温度输入，说明方向
+        与电平为什么都要核对；
+  \item 能说明四层板、连续 GND 平面、阻抗、回流过孔、去耦位置和连接器侧
+        ESD 之间的关系，避免把“DRC 无报错”等同于“高速一定工作”；
+  \item 能区分原理图、PCB 文件、ERC/DRC、制造资料和成品测量各自能证明与
+        不能证明的边界；
+  \item 能对照说明 QEMU 自研 ROM/ATA PIO/COM1/PIC/PIT/i8042 与实体
+        UEFI/NVMe或eMMC/GOP/APIC/USB HID 的平台差异；
+  \item 能列出实体适配需要的 UEFI 入口、Memory Map、ACPI、PCIe 枚举、
+        控制台、存储和输入驱动，且不声称当前 STUOS 已经能在 Mu 上裸机启动；
+  \item 能沿全机总览、阶段路线、Port I/O、启动与内存、中断、键盘到 Shell、
+        存储持久化七张图，分别把电气连接、硬件事务、控制转移和数据所有权
+        讲到最终消费者，而不是只复述框名；
+  \item 能根据图例区分 PCB 实线、虚拟平台连接、软件控制流和数据/所有权流，
+        确认一条线两端都有明确生产者与消费者，跨层连接没有被箭头装饰替代；
+  \item 能核对模块正反面方向、pin 1/2/259/260、缺口和 260 个触点，并说明
+        纯矢量方向图为何只表达可验证边界、不虚构模块内部未公开电路；
+  \item 能在最终 PDF 中逐图放大检查：文字和框不重叠、连线不压标签、边框和
+        标题不裁切、图注不侵入图面；所有外部插图均为矢量 PDF，不直接嵌入
+        PNG/JPG 位图；
+  \item 能按“目检、断电阻值、限流输入、PD、各电源轨、装模块、最小输出、
+        单接口枚举、负载与热”说明 bring-up 顺序和每一步新增的证据。
+\end{itemize}
+
 \section*{v1.0 完成后的知识验收}
 
 \begin{itemize}
@@ -86,7 +175,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 106 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+  \item 107 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
         调度/IPC/文件系统/Shell、资源快照、双系统调用入口与
         256 MiB/64 GiB 整机事件；
   \item Process 与 Thread 为什么是两个寿命不同的对象，Exited 与 Zombie
@@ -117,7 +206,7 @@
   \item 最后强引用释放为何先摘除活动对象，再在全局锁外执行 finalizer；
   \item 23--28 号系统调用如何复用 v1.3 的 RAX/RDI/RSI/RDX 与双入口；
   \item PID 4 的 8 字节写、9 字节读如何同时证明共享偏移与独立打开；
-  \item 106 项回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
+  \item 107 项回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
         分别排除哪类描述符错误。
 \end{itemize}
 

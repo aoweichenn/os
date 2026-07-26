@@ -459,11 +459,11 @@ USB：PCIe 可承载 Wi-Fi，USB 可承载蓝牙，所以只接 PCIe 并不一�
 第二段是 RTL8111H 到集成磁性 RJ45：
 
 ```text
-U6 MDI0 P/N → J7 pair 0 magnetics
-U6 MDI1 P/N → J7 pair 1 magnetics
-U6 MDI2 P/N → J7 pair 2 magnetics
-U6 MDI3 P/N → J7 pair 3 magnetics
-U6 LED0/LED1 → J7 link/activity LEDs
+U6 MDI0 P/N → J6 pair 0 magnetics
+U6 MDI1 P/N → J6 pair 1 magnetics
+U6 MDI2 P/N → J6 pair 2 magnetics
+U6 MDI3 P/N → J6 pair 3 magnetics
+U6 LED0/LED1 → J6 link/activity LEDs
 ```
 
 以太网侧不能绕过隔离磁性器件直接接网线。RJ45 shield/机壳地和数字 GND 的

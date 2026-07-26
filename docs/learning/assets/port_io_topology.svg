@@ -7,10 +7,6 @@
     六张设备卡片分别给出端口、访问宽度、协议和当前用途。
   </desc>
   <defs>
-    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
-      <feDropShadow dx="0" dy="4" stdDeviation="6"
-                    flood-color="#0f172a" flood-opacity="0.08"/>
-    </filter>
     <marker id="arrow-blue" markerWidth="12" markerHeight="12"
             refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
       <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
@@ -40,14 +36,13 @@
 
   <!-- CPU -->
   <rect x="560" y="125" width="480" height="125" rx="18"
-        fill="#dcecff" stroke="#2563eb" stroke-width="2.2"
-        filter="url(#shadow)"/>
+        fill="#dcecff" stroke="#2563eb" stroke-width="2.2"/>
   <text x="600" y="165" class="card-title">x86-64 CPU</text>
   <text x="600" y="198" class="body">
     DX / immediate 提供 16-bit port number
   </text>
   <text x="600" y="226" class="body">
-    IN / OUT 的 8-bit、16-bit 宽度必须匹配设备契约
+    IN / OUT 支持 8/16/32-bit；本图设备使用 8/16-bit
   </text>
 
   <!-- Vertical bus -->
@@ -59,8 +54,7 @@
 
   <!-- Left cards -->
   <rect x="55" y="300" width="570" height="160" rx="17"
-        fill="#eef8ff" stroke="#4f86b5" stroke-width="1.6"
-        filter="url(#shadow)"/>
+        fill="#eef8ff" stroke="#4f86b5" stroke-width="1.6"/>
   <text x="82" y="335" class="card-title">16550A UART / COM1</text>
   <text x="82" y="366" class="port mono">0x3F8..0x3FF · 8-bit registers</text>
   <text x="82" y="397" class="body">115200 · 8N1；轮询 THRE 后发送字节</text>
@@ -68,8 +62,7 @@
   <path d="M 637 380 H 738" class="io-left"/>
 
   <rect x="55" y="500" width="570" height="160" rx="17"
-        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"
-        filter="url(#shadow)"/>
+        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"/>
   <text x="82" y="535" class="card-title">8259A Master + Slave PIC</text>
   <text x="82" y="566" class="port mono">0x20/0x21 · 0xA0/0xA1 · 8-bit</text>
   <text x="82" y="597" class="body">ICW 初始化、IMR mask、IRR/ISR 观察、OCW2 EOI</text>
@@ -77,8 +70,7 @@
   <path d="M 637 580 H 738" class="io-left"/>
 
   <rect x="55" y="700" width="570" height="160" rx="17"
-        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"
-        filter="url(#shadow)"/>
+        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"/>
   <text x="82" y="735" class="card-title">8254 PIT · channel 0</text>
   <text x="82" y="766" class="port mono">data 0x40 · command 0x43 · 8-bit</text>
   <text x="82" y="797" class="body">mode 2；先写低计数，再写高计数；约 1000 Hz</text>
@@ -87,8 +79,7 @@
 
   <!-- Right cards -->
   <rect x="975" y="300" width="570" height="160" rx="17"
-        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"
-        filter="url(#shadow)"/>
+        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"/>
   <text x="1002" y="335" class="card-title">i8042 / PS/2 Keyboard</text>
   <text x="1002" y="366" class="port mono">data 0x60 · status/command 0x64 · 8-bit</text>
   <text x="1002" y="397" class="body">等待缓冲区状态；配置第一端口；读取 scan code</text>
@@ -96,8 +87,7 @@
   <path d="M 862 380 H 963" class="io-right"/>
 
   <rect x="975" y="500" width="570" height="160" rx="17"
-        fill="#fff7d6" stroke="#c88712" stroke-width="1.6"
-        filter="url(#shadow)"/>
+        fill="#fff7d6" stroke="#c88712" stroke-width="1.6"/>
   <text x="1002" y="535" class="card-title">IDE / ATA primary master</text>
   <text x="1002" y="566" class="port mono">0x1F0..0x1F7 · control 0x3F6</text>
   <text x="1002" y="597" class="body">data port 16-bit：每扇区精确传输 256 words</text>
@@ -105,8 +95,7 @@
   <path d="M 862 580 H 963" class="io-right"/>
 
   <rect x="975" y="700" width="570" height="160" rx="17"
-        fill="#eef8ff" stroke="#4f86b5" stroke-width="1.6"
-        filter="url(#shadow)"/>
+        fill="#eef8ff" stroke="#4f86b5" stroke-width="1.6"/>
   <text x="1002" y="735" class="card-title">QEMU fw_cfg</text>
   <text x="1002" y="766" class="port mono">selector 0x510 · data 0x511</text>
   <text x="1002" y="797" class="body">16-bit selector 选择条目；data port 按 8-bit 流读取</text>

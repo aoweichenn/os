@@ -115,7 +115,8 @@ IA32\_STAR & \code{0xC0000081} & kernel selector base 与 SYSRET selector base\\
 IA32\_LSTAR & \code{0xC0000082} & 64 位入口 \code{OsKernelNativeSystemCallEntry}\\
 IA32\_FMASK & \code{0xC0000084} & 进入时清 TF、IF、DF、NT、AC\\
 IA32\_GS\_BASE & \code{0xC0000101} & 当前用户 GS base 为 0\\
-IA32\_KERNEL\_GS\_BASE & \code{0xC0000102} & \code{CpuLocal} 地址\\
+\shortstack[l]{IA32\_KERNEL\_\\GS\_BASE} &
+\code{0xC0000102} & \code{CpuLocal} 地址\\
 \bottomrule
 \end{longtable}
 
@@ -493,7 +494,8 @@ worker 执行：
 单元 & CPUID 叶、UserContext 边界 & profile、canonical、段、RFLAGS 和返回选择\\
 集成 & CpuLocal 与六 MSR 纯布局 & 深度/统计/清理、STAR 算术与回读比较\\
 随机 & 100000 个确定性现场 & 400000 项规范性、合法性、选择和拒绝性质\\
-QEMU & 真实 SYSCALL/SYSRET/IRQ/MSR & 可信换栈、双入口、IRQ 打断、调度与失败停止\\
+QEMU & 真实 SYSCALL、SYSRET、IRQ 与 MSR &
+可信换栈、双入口、IRQ 打断、调度与失败停止\\
 \bottomrule
 \end{longtable}
 

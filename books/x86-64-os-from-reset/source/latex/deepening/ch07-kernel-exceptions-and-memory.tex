@@ -1578,8 +1578,8 @@ on any failure:
     kva.release(exact range)
 \end{verbatim}
 
-回滚本身也可能失败，因此接口区分原始
-\code{FrameAllocationFailed}/\code{PageMappingFailed} 与
+回滚本身也可能失败，因此接口区分原始的
+\code{FrameAllocationFailed} 或 \code{PageMappingFailed}，以及回滚时的
 \code{RollbackFailed}。后一种状态说明资源集合已经无法证明，调用方不能把
 它当成普通“内存不足”继续运行。失败输出不发布半有效 \code{KernelStack}，
 目标槽仍保持全零。

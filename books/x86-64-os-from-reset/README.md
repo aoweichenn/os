@@ -2,7 +2,10 @@
 
 本目录是 x86-64 OS Lab 的正式 LaTeX 教材工程。书稿不是项目文档的汇编，
 而是沿“硬件契约 → 二进制布局 → 启动链 → 内核机制 → 用户环境”的学习顺序，
-解释为什么这样设计、代码如何落地、证据如何形成。
+解释为什么这样设计、代码如何落地、证据如何形成。读者不需要预先学习硬件史
+或数字电路；第一章从 bit、byte、电压、电流、地址、CPU、寄存器、ROM、RAM
+和磁盘开始，每个重要概念都沿“是什么、为什么出现、怎样工作、由谁初始化、
+失败怎样观察”的链条展开。
 
 ## 目录
 
@@ -12,9 +15,10 @@
 - `source/latex/deepening/`：机制级深入内容，记录状态转换、数据结构、失败路径
   和验证方法。
 - `source/latex/frontmatter/`：书名页与前言。
-- `source/latex/backmatter/`：验收清单与参考资料。
+- `source/latex/backmatter/`：详细术语表、验收清单与参考资料。
+- `source/latex/figures/`：全机链路、实体载板连线和原始参考原理图的矢量 PDF。
 - `source/latex/preamble/`：排版、颜色和教材环境。
-- `source/latex/scripts/check_inputs.py`：书稿输入图检查。
+- `source/latex/scripts/check_inputs.py`：书稿输入、章节数量和图片资源检查。
 
 ## 构建
 
@@ -24,8 +28,10 @@ make pdf
 make phone-export
 ```
 
-`make check` 更新生产目标代码统计，并检查所有 `\input` 文件、章节数量、
-XeLaTeX 和 latexmk；`make pdf` 生成 `source/latex/main.pdf`。
+`make check` 更新生产目标代码统计，并检查所有 `\input` 文件、图片资源、
+章节数量、XeLaTeX 和 latexmk；检查脚本会拒绝书稿直接引用 PNG/JPG 位图，
+并拒绝生成的学习图 PDF 内嵌栅格 image XObject。
+`make pdf` 生成 `source/latex/main.pdf`。
 `make phone-export` 重新构建 PDF，并导出到手机书库的独立目录
 `按卷类型/原理卷/从复位向量到自研x8664操作系统/`。
 
@@ -33,12 +39,36 @@ XeLaTeX 和 latexmk；`make pdf` 生成 `source/latex/main.pdf`。
 `.hpp` 中的非空、非纯注释行。汇编 include、测试、宿主工具、书稿、网站、构建
 描述和链接脚本均不计入该数字。
 
-当前书稿为 5 部 10 个完整主题章、225 页。当前生产目标包含 134 个核心
+当前书稿为 5 部 10 个完整主题章、314 页。当前生产目标包含 134 个核心
 `.asm`、`.cpp`、`.hpp` 文件，共 25,681 行有效代码；该口径严格排除测试、
 宿主工具、书稿和网站。每章遵循同一解释深度：先建立历史
 背景和前置状态，再展开寄存器、位布局、数据结构或控制流，随后说明失败模式、
 调试方法与可重复验收证据。小主题不会独立占用一章，而是作为主题材料进入一条
-连续的因果链。当前实现内容与 v1.4 对齐：中断/设备/用户边界章包含用户 ELF、
+连续的因果链。
+
+全书已把 `docs/learning` 的总路线、全机连线、启动与内存、Port I/O、
+中断路由、键盘到 Shell、存储持久化 7 张系统图逐张纳入相应章节；附录再把
+00--13 阶段、B1--B7 背景、硬件装配文档和每张图映射到正文落点，避免资料
+只是复制进书却没有进入解释链。7 张宽图均使用独立横向整页，正文逐线说明
+实物电气连接、虚拟平台边界、控制流与数据/所有权流。
+
+前两章另加入一个完整实体硬件学习案例：LattePanda Mu N100/N305 计算模块与
+DFR1142 Lite Carrier V2。正文直接嵌入 10 页真实 KiCad 参考原理图、1 页
+纯 TikZ 模块正反面与 260 触点方向图，以及 3 张简化但不省连接的矢量图，
+逐根解释三路电源输入、VDC 汇流、
+12 V/5 V/3.3 V 电源树、260-pin 模块接口、HDMI、USB、PCIe x4、M.2、
+RTL8111H 千兆网、I2C、UART、SPI、RTC、风扇和四层 PCB。章节同时明确
+QEMU 自研复位 ROM 与实体 UEFI 平台的边界，并列出 ACPI、PCIe 枚举、NVMe、
+GOP/xHCI 等实机适配缺口，不声称当前内核已经能在该板裸机启动。
+
+以上合计 21 页系统/硬件图面：7 页系统链路、10 页参考原理图、3 页实体连线
+和 1 页模块方向图。外部插图统一为矢量 PDF，模块方向图由 TikZ 直接绘制；
+因此 PDF 放大时线条与文字不会按位图像素变糊。宽图同时限制最大宽高并保持
+纵横比，最终构建还要逐页检查文字、框、连线、图注和纸张边界没有重叠或裁切。
+十页上游 KiCad PDF 原样保留其小型标题标识图像，但原理图符号、文字、网络和
+导线本身均为矢量；其余十张外部学习图经对象扫描确认不含 image XObject。
+
+当前实现内容与 v1.4 对齐：中断/设备/用户边界章包含用户 ELF、
 四级 U/S 权限、TSS.RSP0、五项 IRETQ 帧、INT 0x80 ABI、用户指针复制和
 异常隔离；进程章进一步完整展开 PCB、独立 CR3、每进程 Ring 0 栈、176
 字节保存现场、round-robin 抢占、退出回收和多进程整机证据，并深入解释
@@ -73,7 +103,7 @@ IRET 安全回退、系统调用期间 IRQ 与返回前延迟调度，并保留 
 差分基准。v1.4 继续完整展开带 generation 的类型化 KernelObject、不可复制
 临时 Reference、长期 Handle、共享 FileDescription、64 槽动态 FileTable、
 descriptor/file status flags 分层、soft/hard limit、两阶段安装、最后引用
-析构和 PID 4 的真实 Ring 3 证明。完整回归现为 106 项 CTest；动态栈、页表
+析构和 PID 4 的真实 Ring 3 证明。完整回归现为 107 项 CTest；动态栈、页表
 回收、资源快照、Thread 调度、双系统调用入口、文件表十万步模型、256 MiB
 functional、64 GiB capacity、缺失 SSE2 与缺失 SYSCALL 的 QEMU 路径共同
 证明容量、隔离、失败边界与最终回收。
