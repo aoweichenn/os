@@ -1418,6 +1418,20 @@ set_tests_properties(
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
 
+add_test(
+    NAME os_learning_diagram_geometry_check
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/check_learning_diagrams.py"
+        --self-test
+)
+set_tests_properties(
+    os_learning_diagram_geometry_check
+    PROPERTIES
+        LABELS "unit"
+        WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
+)
+
 find_program(
     OS_RUN_CLANG_TIDY_EXECUTABLE
     NAMES run-clang-tidy

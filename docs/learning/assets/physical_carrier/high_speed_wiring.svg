@@ -1,0 +1,743 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="2400" height="3060" viewBox="0 0 2400 3060"
+     role="img" aria-labelledby="title description">
+  <title id="title">LattePanda Mu 载板高速接口完整连线学习图</title>
+  <desc id="description">逐根展示 HDMI、USB、PCIe、M.2 和千兆网的差分线、时钟、复位、唤醒、电源和明确未接脚。</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+              fill: #172033; }
+      .title { font-size: 34px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .panel-title { font-size: 22px; font-weight: 740; }
+      .component-title { font-size: 17px; font-weight: 720; }
+      .pin-label { font-size: 13px; fill: #334155; }
+      .net-label { font-family: "JetBrains Mono", "Noto Sans Mono", monospace;
+                    font-size: 12px; fill: #1e40af; }
+      .note { font-size: 13px; fill: #526079; }
+      .component { fill: #ffffff; stroke: #64748b; stroke-width: 1.6; }
+      .module { fill: #e8f1ff; stroke: #2563eb; stroke-width: 1.8; }
+      .connector { fill: #fff7d6; stroke: #b7791f; stroke-width: 1.8; }
+      .power-block { fill: #fff1f2; stroke: #be123c; stroke-width: 1.8; }
+      .protection { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.6; }
+      .schematic-wire { fill: none; stroke: #15803d; stroke-width: 2.2; }
+      .schematic-wire[data-kind="differential"] {
+          stroke: #2563eb; stroke-width: 2.1;
+      }
+      .schematic-wire[data-kind="power"] {
+          stroke: #dc2626; stroke-width: 3.2;
+      }
+      .schematic-wire[data-kind="ground"] {
+          stroke: #334155; stroke-width: 2.8;
+      }
+      .schematic-wire[data-kind="control"] {
+          stroke: #7c3aed; stroke-width: 2.1;
+      }
+      .pin { fill: #ffffff; stroke: #0f766e; stroke-width: 1.8; }
+      .junction { fill: #15803d; stroke: none; }
+      .no-connect { fill: #ffffff; stroke: #dc2626; stroke-width: 1.8; }
+      .nc-mark { stroke: #dc2626; stroke-width: 2; }
+      .panel { fill: #ffffff; stroke: #c3cfdd; stroke-width: 1.4; }
+      .legend { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+  </defs>
+  <rect width="2400" height="3060" fill="#f4f7fb"/>
+  <text x="45" y="52" class="title" text-anchor="start">实体载板学习图 2/3：高速接口逐根连线</text>
+  <text x="45" y="82" class="subtitle" text-anchor="start">每一对 P/N 都单独画出；成组电源脚只合并图形，不合并网络含义</text>
+  <rect x="35" y="115" width="1150" height="560" rx="16" class="panel"/>
+  <text x="59" y="150" class="panel-title" text-anchor="start">HDMI 2.0</text>
+  <rect x="59" y="189" width="310" height="468" rx="10" class="module"/>
+  <rect x="851" y="189" width="310" height="468" rx="10" class="connector"/>
+  <text x="214" y="213" class="component-title" text-anchor="middle">LattePanda Mu / board rails</text>
+  <text x="1006" y="213" class="component-title" text-anchor="middle">J6 HDMI Type-A</text>
+  <circle cx="369" cy="237" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 217" data-net="DDI_B_TX0_P"/>
+  <circle cx="851" cy="237" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 1 TMDS D2+" data-net="DDI_B_TX0_P"/>
+  <path d="M 369 237 L 851 237" class="schematic-wire" data-net="DDI_B_TX0_P" data-kind="differential"/>
+  <text x="357" y="242" class="pin-label" text-anchor="end">Mu pin 217</text>
+  <text x="863" y="242" class="pin-label" text-anchor="start">HDMI pin 1 TMDS D2+</text>
+  <text x="610" y="231" class="net-label" text-anchor="middle">DDI_B_TX0_P</text>
+  <circle cx="369" cy="267" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 215" data-net="DDI_B_TX0_N"/>
+  <circle cx="851" cy="267" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 3 TMDS D2-" data-net="DDI_B_TX0_N"/>
+  <path d="M 369 267 L 851 267" class="schematic-wire" data-net="DDI_B_TX0_N" data-kind="differential"/>
+  <text x="357" y="272" class="pin-label" text-anchor="end">Mu pin 215</text>
+  <text x="863" y="272" class="pin-label" text-anchor="start">HDMI pin 3 TMDS D2-</text>
+  <text x="610" y="261" class="net-label" text-anchor="middle">DDI_B_TX0_N</text>
+  <circle cx="369" cy="297" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 211" data-net="DDI_B_TX1_P"/>
+  <circle cx="851" cy="297" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 4 TMDS D1+" data-net="DDI_B_TX1_P"/>
+  <path d="M 369 297 L 851 297" class="schematic-wire" data-net="DDI_B_TX1_P" data-kind="differential"/>
+  <text x="357" y="302" class="pin-label" text-anchor="end">Mu pin 211</text>
+  <text x="863" y="302" class="pin-label" text-anchor="start">HDMI pin 4 TMDS D1+</text>
+  <text x="610" y="291" class="net-label" text-anchor="middle">DDI_B_TX1_P</text>
+  <circle cx="369" cy="327" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 209" data-net="DDI_B_TX1_N"/>
+  <circle cx="851" cy="327" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 6 TMDS D1-" data-net="DDI_B_TX1_N"/>
+  <path d="M 369 327 L 851 327" class="schematic-wire" data-net="DDI_B_TX1_N" data-kind="differential"/>
+  <text x="357" y="332" class="pin-label" text-anchor="end">Mu pin 209</text>
+  <text x="863" y="332" class="pin-label" text-anchor="start">HDMI pin 6 TMDS D1-</text>
+  <text x="610" y="321" class="net-label" text-anchor="middle">DDI_B_TX1_N</text>
+  <circle cx="369" cy="357" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 205" data-net="DDI_B_TX2_P"/>
+  <circle cx="851" cy="357" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 7 TMDS D0+" data-net="DDI_B_TX2_P"/>
+  <path d="M 369 357 L 851 357" class="schematic-wire" data-net="DDI_B_TX2_P" data-kind="differential"/>
+  <text x="357" y="362" class="pin-label" text-anchor="end">Mu pin 205</text>
+  <text x="863" y="362" class="pin-label" text-anchor="start">HDMI pin 7 TMDS D0+</text>
+  <text x="610" y="351" class="net-label" text-anchor="middle">DDI_B_TX2_P</text>
+  <circle cx="369" cy="387" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 203" data-net="DDI_B_TX2_N"/>
+  <circle cx="851" cy="387" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 9 TMDS D0-" data-net="DDI_B_TX2_N"/>
+  <path d="M 369 387 L 851 387" class="schematic-wire" data-net="DDI_B_TX2_N" data-kind="differential"/>
+  <text x="357" y="392" class="pin-label" text-anchor="end">Mu pin 203</text>
+  <text x="863" y="392" class="pin-label" text-anchor="start">HDMI pin 9 TMDS D0-</text>
+  <text x="610" y="381" class="net-label" text-anchor="middle">DDI_B_TX2_N</text>
+  <circle cx="369" cy="417" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 199" data-net="DDI_B_TX3_P"/>
+  <circle cx="851" cy="417" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 10 TMDS CLK+" data-net="DDI_B_TX3_P"/>
+  <path d="M 369 417 L 851 417" class="schematic-wire" data-net="DDI_B_TX3_P" data-kind="differential"/>
+  <text x="357" y="422" class="pin-label" text-anchor="end">Mu pin 199</text>
+  <text x="863" y="422" class="pin-label" text-anchor="start">HDMI pin 10 TMDS CLK+</text>
+  <text x="610" y="411" class="net-label" text-anchor="middle">DDI_B_TX3_P</text>
+  <circle cx="369" cy="447" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 197" data-net="DDI_B_TX3_N"/>
+  <circle cx="851" cy="447" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 12 TMDS CLK-" data-net="DDI_B_TX3_N"/>
+  <path d="M 369 447 L 851 447" class="schematic-wire" data-net="DDI_B_TX3_N" data-kind="differential"/>
+  <text x="357" y="452" class="pin-label" text-anchor="end">Mu pin 197</text>
+  <text x="863" y="452" class="pin-label" text-anchor="start">HDMI pin 12 TMDS CLK-</text>
+  <text x="610" y="441" class="net-label" text-anchor="middle">DDI_B_TX3_N</text>
+  <circle cx="369" cy="477" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 171" data-net="DDI_B_DDC_SCL"/>
+  <circle cx="851" cy="477" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 15 SCL" data-net="DDI_B_DDC_SCL"/>
+  <path d="M 369 477 L 851 477" class="schematic-wire" data-net="DDI_B_DDC_SCL" data-kind="control"/>
+  <text x="357" y="482" class="pin-label" text-anchor="end">Mu pin 171</text>
+  <text x="863" y="482" class="pin-label" text-anchor="start">HDMI pin 15 SCL</text>
+  <text x="610" y="471" class="net-label" text-anchor="middle">DDI_B_DDC_SCL</text>
+  <circle cx="369" cy="507" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 169" data-net="DDI_B_DDC_SDA"/>
+  <circle cx="851" cy="507" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 16 SDA" data-net="DDI_B_DDC_SDA"/>
+  <path d="M 369 507 L 851 507" class="schematic-wire" data-net="DDI_B_DDC_SDA" data-kind="control"/>
+  <text x="357" y="512" class="pin-label" text-anchor="end">Mu pin 169</text>
+  <text x="863" y="512" class="pin-label" text-anchor="start">HDMI pin 16 SDA</text>
+  <text x="610" y="501" class="net-label" text-anchor="middle">DDI_B_DDC_SDA</text>
+  <circle cx="369" cy="537" r="4.5" class="pin" data-pin="HDMI 2.0:Mu pin 183" data-net="DDI_B_HPD"/>
+  <circle cx="851" cy="537" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 19 HPD" data-net="DDI_B_HPD"/>
+  <path d="M 369 537 L 851 537" class="schematic-wire" data-net="DDI_B_HPD" data-kind="control"/>
+  <text x="357" y="542" class="pin-label" text-anchor="end">Mu pin 183</text>
+  <text x="863" y="542" class="pin-label" text-anchor="start">HDMI pin 19 HPD</text>
+  <text x="610" y="531" class="net-label" text-anchor="middle">DDI_B_HPD</text>
+  <circle cx="369" cy="567" r="4.5" class="pin" data-pin="HDMI 2.0:+5V through load switch" data-net="HDMI_5V"/>
+  <circle cx="851" cy="567" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pin 18 +5V" data-net="HDMI_5V"/>
+  <path d="M 369 567 L 851 567" class="schematic-wire" data-net="HDMI_5V" data-kind="power"/>
+  <text x="357" y="572" class="pin-label" text-anchor="end">+5V through load switch</text>
+  <text x="863" y="572" class="pin-label" text-anchor="start">HDMI pin 18 +5V</text>
+  <text x="610" y="561" class="net-label" text-anchor="middle">HDMI_5V</text>
+  <circle cx="369" cy="597" r="4.5" class="pin" data-pin="HDMI 2.0:GND plane" data-net="GND_HDMI"/>
+  <circle cx="851" cy="597" r="4.5" class="pin" data-pin="HDMI 2.0:HDMI pins 2,5,8,11,17,shell" data-net="GND_HDMI"/>
+  <path d="M 369 597 L 851 597" class="schematic-wire" data-net="GND_HDMI" data-kind="ground"/>
+  <text x="357" y="602" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="863" y="602" class="pin-label" text-anchor="start">HDMI pins 2,5,8,11,17,shell</text>
+  <text x="610" y="591" class="net-label" text-anchor="middle">GND_HDMI</text>
+  <circle cx="851" cy="627" r="4.5" class="no-connect" data-pin="HDMI 2.0:HDMI pin 13 CEC" data-net="NC"/>
+  <path d="M 845 621 L 857 633 M 845 633 L 857 621" class="nc-mark"/>
+  <text x="357" y="632" class="pin-label" text-anchor="end">explicitly not routed</text>
+  <text x="863" y="632" class="pin-label" text-anchor="start">HDMI pin 13 CEC</text>
+  <text x="610" y="632" class="net-label" text-anchor="middle">NC</text>
+  <circle cx="851" cy="657" r="4.5" class="no-connect" data-pin="HDMI 2.0:HDMI pin 14 HEAC" data-net="NC"/>
+  <path d="M 845 651 L 857 663 M 845 663 L 857 651" class="nc-mark"/>
+  <text x="357" y="662" class="pin-label" text-anchor="end">explicitly not routed</text>
+  <text x="863" y="662" class="pin-label" text-anchor="start">HDMI pin 14 HEAC</text>
+  <text x="610" y="662" class="net-label" text-anchor="middle">NC</text>
+  <rect x="35" y="703" width="1150" height="740" rx="16" class="panel"/>
+  <text x="59" y="738" class="panel-title" text-anchor="start">四个外部 USB 端口</text>
+  <rect x="59" y="777" width="310" height="648" rx="10" class="module"/>
+  <rect x="851" y="777" width="310" height="648" rx="10" class="connector"/>
+  <text x="214" y="801" class="component-title" text-anchor="middle">LattePanda Mu / +5V rail</text>
+  <text x="1006" y="801" class="component-title" text-anchor="middle">J4 dual USB3 + J5 dual USB2</text>
+  <circle cx="369" cy="825" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO0 TX pin 13" data-net="USB3_SSTX_P"/>
+  <circle cx="851" cy="825" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A SSTX1+ via C27" data-net="USB3_SSTX_P"/>
+  <path d="M 369 825 L 851 825" class="schematic-wire" data-net="USB3_SSTX_P" data-kind="differential"/>
+  <text x="357" y="830" class="pin-label" text-anchor="end">Mu HSIO0 TX pin 13</text>
+  <text x="863" y="830" class="pin-label" text-anchor="start">J4A SSTX1+ via C27</text>
+  <text x="610" y="819" class="net-label" text-anchor="middle">USB3_SSTX_P</text>
+  <circle cx="369" cy="855" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO0 TX pin 15" data-net="USB3_SSTX_N"/>
+  <circle cx="851" cy="855" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A SSTX1- via C26" data-net="USB3_SSTX_N"/>
+  <path d="M 369 855 L 851 855" class="schematic-wire" data-net="USB3_SSTX_N" data-kind="differential"/>
+  <text x="357" y="860" class="pin-label" text-anchor="end">Mu HSIO0 TX pin 15</text>
+  <text x="863" y="860" class="pin-label" text-anchor="start">J4A SSTX1- via C26</text>
+  <text x="610" y="849" class="net-label" text-anchor="middle">USB3_SSTX_N</text>
+  <circle cx="369" cy="885" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO0 RX pin 16" data-net="USB3_SSRX_P"/>
+  <circle cx="851" cy="885" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A SSRX1+" data-net="USB3_SSRX_P"/>
+  <path d="M 369 885 L 851 885" class="schematic-wire" data-net="USB3_SSRX_P" data-kind="differential"/>
+  <text x="357" y="890" class="pin-label" text-anchor="end">Mu HSIO0 RX pin 16</text>
+  <text x="863" y="890" class="pin-label" text-anchor="start">J4A SSRX1+</text>
+  <text x="610" y="879" class="net-label" text-anchor="middle">USB3_SSRX_P</text>
+  <circle cx="369" cy="915" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO0 RX pin 18" data-net="USB3_SSRX_N"/>
+  <circle cx="851" cy="915" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A SSRX1-" data-net="USB3_SSRX_N"/>
+  <path d="M 369 915 L 851 915" class="schematic-wire" data-net="USB3_SSRX_N" data-kind="differential"/>
+  <text x="357" y="920" class="pin-label" text-anchor="end">Mu HSIO0 RX pin 18</text>
+  <text x="863" y="920" class="pin-label" text-anchor="start">J4A SSRX1-</text>
+  <text x="610" y="909" class="net-label" text-anchor="middle">USB3_SSRX_N</text>
+  <circle cx="369" cy="945" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 75" data-net="USB2_P2_P"/>
+  <circle cx="851" cy="945" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A D1+" data-net="USB2_P2_P"/>
+  <path d="M 369 945 L 851 945" class="schematic-wire" data-net="USB2_P2_P" data-kind="differential"/>
+  <text x="357" y="950" class="pin-label" text-anchor="end">Mu pin 75</text>
+  <text x="863" y="950" class="pin-label" text-anchor="start">J4A D1+</text>
+  <text x="610" y="939" class="net-label" text-anchor="middle">USB2_P2_P</text>
+  <circle cx="369" cy="975" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 73" data-net="USB2_P2_N"/>
+  <circle cx="851" cy="975" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A D1-" data-net="USB2_P2_N"/>
+  <path d="M 369 975 L 851 975" class="schematic-wire" data-net="USB2_P2_N" data-kind="differential"/>
+  <text x="357" y="980" class="pin-label" text-anchor="end">Mu pin 73</text>
+  <text x="863" y="980" class="pin-label" text-anchor="start">J4A D1-</text>
+  <text x="610" y="969" class="net-label" text-anchor="middle">USB2_P2_N</text>
+  <circle cx="369" cy="1005" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO1 TX pin 19" data-net="USB4_SSTX_P"/>
+  <circle cx="851" cy="1005" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B SSTX2+ via C29" data-net="USB4_SSTX_P"/>
+  <path d="M 369 1005 L 851 1005" class="schematic-wire" data-net="USB4_SSTX_P" data-kind="differential"/>
+  <text x="357" y="1010" class="pin-label" text-anchor="end">Mu HSIO1 TX pin 19</text>
+  <text x="863" y="1010" class="pin-label" text-anchor="start">J4B SSTX2+ via C29</text>
+  <text x="610" y="999" class="net-label" text-anchor="middle">USB4_SSTX_P</text>
+  <circle cx="369" cy="1035" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO1 TX pin 21" data-net="USB4_SSTX_N"/>
+  <circle cx="851" cy="1035" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B SSTX2- via C28" data-net="USB4_SSTX_N"/>
+  <path d="M 369 1035 L 851 1035" class="schematic-wire" data-net="USB4_SSTX_N" data-kind="differential"/>
+  <text x="357" y="1040" class="pin-label" text-anchor="end">Mu HSIO1 TX pin 21</text>
+  <text x="863" y="1040" class="pin-label" text-anchor="start">J4B SSTX2- via C28</text>
+  <text x="610" y="1029" class="net-label" text-anchor="middle">USB4_SSTX_N</text>
+  <circle cx="369" cy="1065" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO1 RX pin 22" data-net="USB4_SSRX_P"/>
+  <circle cx="851" cy="1065" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B SSRX2+" data-net="USB4_SSRX_P"/>
+  <path d="M 369 1065 L 851 1065" class="schematic-wire" data-net="USB4_SSRX_P" data-kind="differential"/>
+  <text x="357" y="1070" class="pin-label" text-anchor="end">Mu HSIO1 RX pin 22</text>
+  <text x="863" y="1070" class="pin-label" text-anchor="start">J4B SSRX2+</text>
+  <text x="610" y="1059" class="net-label" text-anchor="middle">USB4_SSRX_P</text>
+  <circle cx="369" cy="1095" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu HSIO1 RX pin 24" data-net="USB4_SSRX_N"/>
+  <circle cx="851" cy="1095" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B SSRX2-" data-net="USB4_SSRX_N"/>
+  <path d="M 369 1095 L 851 1095" class="schematic-wire" data-net="USB4_SSRX_N" data-kind="differential"/>
+  <text x="357" y="1100" class="pin-label" text-anchor="end">Mu HSIO1 RX pin 24</text>
+  <text x="863" y="1100" class="pin-label" text-anchor="start">J4B SSRX2-</text>
+  <text x="610" y="1089" class="net-label" text-anchor="middle">USB4_SSRX_N</text>
+  <circle cx="369" cy="1125" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 69" data-net="USB2_P1_P"/>
+  <circle cx="851" cy="1125" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B D2+" data-net="USB2_P1_P"/>
+  <path d="M 369 1125 L 851 1125" class="schematic-wire" data-net="USB2_P1_P" data-kind="differential"/>
+  <text x="357" y="1130" class="pin-label" text-anchor="end">Mu pin 69</text>
+  <text x="863" y="1130" class="pin-label" text-anchor="start">J4B D2+</text>
+  <text x="610" y="1119" class="net-label" text-anchor="middle">USB2_P1_P</text>
+  <circle cx="369" cy="1155" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 67" data-net="USB2_P1_N"/>
+  <circle cx="851" cy="1155" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B D2-" data-net="USB2_P1_N"/>
+  <path d="M 369 1155 L 851 1155" class="schematic-wire" data-net="USB2_P1_N" data-kind="differential"/>
+  <text x="357" y="1160" class="pin-label" text-anchor="end">Mu pin 67</text>
+  <text x="863" y="1160" class="pin-label" text-anchor="start">J4B D2-</text>
+  <text x="610" y="1149" class="net-label" text-anchor="middle">USB2_P1_N</text>
+  <circle cx="369" cy="1185" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 81" data-net="USB2_P3_P"/>
+  <circle cx="851" cy="1185" r="4.5" class="pin" data-pin="四个外部 USB 端口:J5 upper D+" data-net="USB2_P3_P"/>
+  <path d="M 369 1185 L 851 1185" class="schematic-wire" data-net="USB2_P3_P" data-kind="differential"/>
+  <text x="357" y="1190" class="pin-label" text-anchor="end">Mu pin 81</text>
+  <text x="863" y="1190" class="pin-label" text-anchor="start">J5 upper D+</text>
+  <text x="610" y="1179" class="net-label" text-anchor="middle">USB2_P3_P</text>
+  <circle cx="369" cy="1215" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 79" data-net="USB2_P3_N"/>
+  <circle cx="851" cy="1215" r="4.5" class="pin" data-pin="四个外部 USB 端口:J5 upper D-" data-net="USB2_P3_N"/>
+  <path d="M 369 1215 L 851 1215" class="schematic-wire" data-net="USB2_P3_N" data-kind="differential"/>
+  <text x="357" y="1220" class="pin-label" text-anchor="end">Mu pin 79</text>
+  <text x="863" y="1220" class="pin-label" text-anchor="start">J5 upper D-</text>
+  <text x="610" y="1209" class="net-label" text-anchor="middle">USB2_P3_N</text>
+  <circle cx="369" cy="1245" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 111" data-net="USB2_P5_P"/>
+  <circle cx="851" cy="1245" r="4.5" class="pin" data-pin="四个外部 USB 端口:J5 lower D+" data-net="USB2_P5_P"/>
+  <path d="M 369 1245 L 851 1245" class="schematic-wire" data-net="USB2_P5_P" data-kind="differential"/>
+  <text x="357" y="1250" class="pin-label" text-anchor="end">Mu pin 111</text>
+  <text x="863" y="1250" class="pin-label" text-anchor="start">J5 lower D+</text>
+  <text x="610" y="1239" class="net-label" text-anchor="middle">USB2_P5_P</text>
+  <circle cx="369" cy="1275" r="4.5" class="pin" data-pin="四个外部 USB 端口:Mu pin 109" data-net="USB2_P5_N"/>
+  <circle cx="851" cy="1275" r="4.5" class="pin" data-pin="四个外部 USB 端口:J5 lower D-" data-net="USB2_P5_N"/>
+  <path d="M 369 1275 L 851 1275" class="schematic-wire" data-net="USB2_P5_N" data-kind="differential"/>
+  <text x="357" y="1280" class="pin-label" text-anchor="end">Mu pin 109</text>
+  <text x="863" y="1280" class="pin-label" text-anchor="start">J5 lower D-</text>
+  <text x="610" y="1269" class="net-label" text-anchor="middle">USB2_P5_N</text>
+  <circle cx="369" cy="1305" r="4.5" class="pin" data-pin="四个外部 USB 端口:+5V through F4 6V/2A" data-net="USB_VBUS_1"/>
+  <circle cx="851" cy="1305" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4A VBUS1" data-net="USB_VBUS_1"/>
+  <path d="M 369 1305 L 851 1305" class="schematic-wire" data-net="USB_VBUS_1" data-kind="power"/>
+  <text x="357" y="1310" class="pin-label" text-anchor="end">+5V through F4 6V/2A</text>
+  <text x="863" y="1310" class="pin-label" text-anchor="start">J4A VBUS1</text>
+  <text x="610" y="1299" class="net-label" text-anchor="middle">USB_VBUS_1</text>
+  <circle cx="369" cy="1335" r="4.5" class="pin" data-pin="四个外部 USB 端口:+5V through F5 6V/2A" data-net="USB_VBUS_2"/>
+  <circle cx="851" cy="1335" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4B VBUS2" data-net="USB_VBUS_2"/>
+  <path d="M 369 1335 L 851 1335" class="schematic-wire" data-net="USB_VBUS_2" data-kind="power"/>
+  <text x="357" y="1340" class="pin-label" text-anchor="end">+5V through F5 6V/2A</text>
+  <text x="863" y="1340" class="pin-label" text-anchor="start">J4B VBUS2</text>
+  <text x="610" y="1329" class="net-label" text-anchor="middle">USB_VBUS_2</text>
+  <circle cx="369" cy="1365" r="4.5" class="pin" data-pin="四个外部 USB 端口:+5V through F2 6V/1A" data-net="USB_VBUS_3"/>
+  <circle cx="851" cy="1365" r="4.5" class="pin" data-pin="四个外部 USB 端口:J5 VBUS1" data-net="USB_VBUS_3"/>
+  <path d="M 369 1365 L 851 1365" class="schematic-wire" data-net="USB_VBUS_3" data-kind="power"/>
+  <text x="357" y="1370" class="pin-label" text-anchor="end">+5V through F2 6V/1A</text>
+  <text x="863" y="1370" class="pin-label" text-anchor="start">J5 VBUS1</text>
+  <text x="610" y="1359" class="net-label" text-anchor="middle">USB_VBUS_3</text>
+  <circle cx="369" cy="1395" r="4.5" class="pin" data-pin="四个外部 USB 端口:+5V through F3 6V/1A" data-net="USB_VBUS_4"/>
+  <circle cx="851" cy="1395" r="4.5" class="pin" data-pin="四个外部 USB 端口:J5 VBUS2" data-net="USB_VBUS_4"/>
+  <path d="M 369 1395 L 851 1395" class="schematic-wire" data-net="USB_VBUS_4" data-kind="power"/>
+  <text x="357" y="1400" class="pin-label" text-anchor="end">+5V through F3 6V/1A</text>
+  <text x="863" y="1400" class="pin-label" text-anchor="start">J5 VBUS2</text>
+  <text x="610" y="1389" class="net-label" text-anchor="middle">USB_VBUS_4</text>
+  <circle cx="369" cy="1425" r="4.5" class="pin" data-pin="四个外部 USB 端口:GND plane" data-net="GND_USB"/>
+  <circle cx="851" cy="1425" r="4.5" class="pin" data-pin="四个外部 USB 端口:J4/J5 GND and shields" data-net="GND_USB"/>
+  <path d="M 369 1425 L 851 1425" class="schematic-wire" data-net="GND_USB" data-kind="ground"/>
+  <text x="357" y="1430" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="863" y="1430" class="pin-label" text-anchor="start">J4/J5 GND and shields</text>
+  <text x="610" y="1419" class="net-label" text-anchor="middle">GND_USB</text>
+  <rect x="35" y="1471" width="1150" height="410" rx="16" class="panel"/>
+  <text x="59" y="1506" class="panel-title" text-anchor="start">千兆网：PCIe 侧</text>
+  <rect x="59" y="1545" width="310" height="318" rx="10" class="module"/>
+  <rect x="851" y="1545" width="310" height="318" rx="10" class="connector"/>
+  <text x="214" y="1569" class="component-title" text-anchor="middle">LattePanda Mu / rails</text>
+  <text x="1006" y="1569" class="component-title" text-anchor="middle">U6 RTL8111H</text>
+  <circle cx="369" cy="1593" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu HSIO6 TX pin 61" data-net="GBE_PCIE_TX_P"/>
+  <circle cx="851" cy="1593" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 HSIP pin 14" data-net="GBE_PCIE_TX_P"/>
+  <path d="M 369 1593 L 851 1593" class="schematic-wire" data-net="GBE_PCIE_TX_P" data-kind="differential"/>
+  <text x="357" y="1598" class="pin-label" text-anchor="end">Mu HSIO6 TX pin 61</text>
+  <text x="863" y="1598" class="pin-label" text-anchor="start">U6 HSIP pin 14</text>
+  <text x="610" y="1587" class="net-label" text-anchor="middle">GBE_PCIE_TX_P</text>
+  <circle cx="369" cy="1623" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu HSIO6 TX pin 63" data-net="GBE_PCIE_TX_N"/>
+  <circle cx="851" cy="1623" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 HSIN pin 13" data-net="GBE_PCIE_TX_N"/>
+  <path d="M 369 1623 L 851 1623" class="schematic-wire" data-net="GBE_PCIE_TX_N" data-kind="differential"/>
+  <text x="357" y="1628" class="pin-label" text-anchor="end">Mu HSIO6 TX pin 63</text>
+  <text x="863" y="1628" class="pin-label" text-anchor="start">U6 HSIN pin 13</text>
+  <text x="610" y="1617" class="net-label" text-anchor="middle">GBE_PCIE_TX_N</text>
+  <circle cx="369" cy="1653" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu HSIO6 RX pin 64" data-net="GBE_PCIE_RX_P"/>
+  <circle cx="851" cy="1653" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 HSOP pin 16" data-net="GBE_PCIE_RX_P"/>
+  <path d="M 369 1653 L 851 1653" class="schematic-wire" data-net="GBE_PCIE_RX_P" data-kind="differential"/>
+  <text x="357" y="1658" class="pin-label" text-anchor="end">Mu HSIO6 RX pin 64</text>
+  <text x="863" y="1658" class="pin-label" text-anchor="start">U6 HSOP pin 16</text>
+  <text x="610" y="1647" class="net-label" text-anchor="middle">GBE_PCIE_RX_P</text>
+  <circle cx="369" cy="1683" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu HSIO6 RX pin 66" data-net="GBE_PCIE_RX_N"/>
+  <circle cx="851" cy="1683" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 HSON pin 15" data-net="GBE_PCIE_RX_N"/>
+  <path d="M 369 1683 L 851 1683" class="schematic-wire" data-net="GBE_PCIE_RX_N" data-kind="differential"/>
+  <text x="357" y="1688" class="pin-label" text-anchor="end">Mu HSIO6 RX pin 66</text>
+  <text x="863" y="1688" class="pin-label" text-anchor="start">U6 HSON pin 15</text>
+  <text x="610" y="1677" class="net-label" text-anchor="middle">GBE_PCIE_RX_N</text>
+  <circle cx="369" cy="1713" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu REFCLK4 pin 94" data-net="GBE_REFCLK_P"/>
+  <circle cx="851" cy="1713" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 REFCLK_P pin 18" data-net="GBE_REFCLK_P"/>
+  <path d="M 369 1713 L 851 1713" class="schematic-wire" data-net="GBE_REFCLK_P" data-kind="differential"/>
+  <text x="357" y="1718" class="pin-label" text-anchor="end">Mu REFCLK4 pin 94</text>
+  <text x="863" y="1718" class="pin-label" text-anchor="start">U6 REFCLK_P pin 18</text>
+  <text x="610" y="1707" class="net-label" text-anchor="middle">GBE_REFCLK_P</text>
+  <circle cx="369" cy="1743" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu REFCLK4 pin 96" data-net="GBE_REFCLK_N"/>
+  <circle cx="851" cy="1743" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 REFCLK_N pin 17" data-net="GBE_REFCLK_N"/>
+  <path d="M 369 1743 L 851 1743" class="schematic-wire" data-net="GBE_REFCLK_N" data-kind="differential"/>
+  <text x="357" y="1748" class="pin-label" text-anchor="end">Mu REFCLK4 pin 96</text>
+  <text x="863" y="1748" class="pin-label" text-anchor="start">U6 REFCLK_N pin 17</text>
+  <text x="610" y="1737" class="net-label" text-anchor="middle">GBE_REFCLK_N</text>
+  <circle cx="369" cy="1773" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu PLT_RST# pin 105" data-net="PLT_RST_N_GBE"/>
+  <circle cx="851" cy="1773" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 PERSTB pin 19" data-net="PLT_RST_N_GBE"/>
+  <path d="M 369 1773 L 851 1773" class="schematic-wire" data-net="PLT_RST_N_GBE" data-kind="control"/>
+  <text x="357" y="1778" class="pin-label" text-anchor="end">Mu PLT_RST# pin 105</text>
+  <text x="863" y="1778" class="pin-label" text-anchor="start">U6 PERSTB pin 19</text>
+  <text x="610" y="1767" class="net-label" text-anchor="middle">PLT_RST_N_GBE</text>
+  <circle cx="369" cy="1803" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:Mu CLKREQ4# pin 102" data-net="CLKREQ4_N"/>
+  <circle cx="851" cy="1803" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 CLKREQB pin 12" data-net="CLKREQ4_N"/>
+  <path d="M 369 1803 L 851 1803" class="schematic-wire" data-net="CLKREQ4_N" data-kind="control"/>
+  <text x="357" y="1808" class="pin-label" text-anchor="end">Mu CLKREQ4# pin 102</text>
+  <text x="863" y="1808" class="pin-label" text-anchor="start">U6 CLKREQB pin 12</text>
+  <text x="610" y="1797" class="net-label" text-anchor="middle">CLKREQ4_N</text>
+  <circle cx="369" cy="1833" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:+3V3 rail" data-net="GBE_3V3"/>
+  <circle cx="851" cy="1833" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 AVDD33/DVDDREG" data-net="GBE_3V3"/>
+  <path d="M 369 1833 L 851 1833" class="schematic-wire" data-net="GBE_3V3" data-kind="power"/>
+  <text x="357" y="1838" class="pin-label" text-anchor="end">+3V3 rail</text>
+  <text x="863" y="1838" class="pin-label" text-anchor="start">U6 AVDD33/DVDDREG</text>
+  <text x="610" y="1827" class="net-label" text-anchor="middle">GBE_3V3</text>
+  <circle cx="369" cy="1863" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:GND plane" data-net="GND_GBE"/>
+  <circle cx="851" cy="1863" r="4.5" class="pin" data-pin="千兆网：PCIe 侧:U6 GND/exposed pad" data-net="GND_GBE"/>
+  <path d="M 369 1863 L 851 1863" class="schematic-wire" data-net="GND_GBE" data-kind="ground"/>
+  <text x="357" y="1868" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="863" y="1868" class="pin-label" text-anchor="start">U6 GND/exposed pad</text>
+  <text x="610" y="1857" class="net-label" text-anchor="middle">GND_GBE</text>
+  <rect x="35" y="1909" width="1150" height="440" rx="16" class="panel"/>
+  <text x="59" y="1944" class="panel-title" text-anchor="start">千兆网：PHY 与磁性 RJ45</text>
+  <rect x="59" y="1983" width="310" height="348" rx="10" class="module"/>
+  <rect x="851" y="1983" width="310" height="348" rx="10" class="connector"/>
+  <text x="214" y="2007" class="component-title" text-anchor="middle">U6 RTL8111H</text>
+  <text x="1006" y="2007" class="component-title" text-anchor="middle">J7 integrated-magnetics RJ45</text>
+  <circle cx="369" cy="2031" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI0+ pin 1" data-net="MDI0_P"/>
+  <circle cx="851" cy="2031" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C1 through magnetics" data-net="MDI0_P"/>
+  <path d="M 369 2031 L 851 2031" class="schematic-wire" data-net="MDI0_P" data-kind="differential"/>
+  <text x="357" y="2036" class="pin-label" text-anchor="end">U6 MDI0+ pin 1</text>
+  <text x="863" y="2036" class="pin-label" text-anchor="start">J7 C1 through magnetics</text>
+  <text x="610" y="2025" class="net-label" text-anchor="middle">MDI0_P</text>
+  <circle cx="369" cy="2061" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI0- pin 2" data-net="MDI0_N"/>
+  <circle cx="851" cy="2061" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C2 through magnetics" data-net="MDI0_N"/>
+  <path d="M 369 2061 L 851 2061" class="schematic-wire" data-net="MDI0_N" data-kind="differential"/>
+  <text x="357" y="2066" class="pin-label" text-anchor="end">U6 MDI0- pin 2</text>
+  <text x="863" y="2066" class="pin-label" text-anchor="start">J7 C2 through magnetics</text>
+  <text x="610" y="2055" class="net-label" text-anchor="middle">MDI0_N</text>
+  <circle cx="369" cy="2091" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI1+ pin 4" data-net="MDI1_P"/>
+  <circle cx="851" cy="2091" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C3 through magnetics" data-net="MDI1_P"/>
+  <path d="M 369 2091 L 851 2091" class="schematic-wire" data-net="MDI1_P" data-kind="differential"/>
+  <text x="357" y="2096" class="pin-label" text-anchor="end">U6 MDI1+ pin 4</text>
+  <text x="863" y="2096" class="pin-label" text-anchor="start">J7 C3 through magnetics</text>
+  <text x="610" y="2085" class="net-label" text-anchor="middle">MDI1_P</text>
+  <circle cx="369" cy="2121" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI1- pin 5" data-net="MDI1_N"/>
+  <circle cx="851" cy="2121" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C6 through magnetics" data-net="MDI1_N"/>
+  <path d="M 369 2121 L 851 2121" class="schematic-wire" data-net="MDI1_N" data-kind="differential"/>
+  <text x="357" y="2126" class="pin-label" text-anchor="end">U6 MDI1- pin 5</text>
+  <text x="863" y="2126" class="pin-label" text-anchor="start">J7 C6 through magnetics</text>
+  <text x="610" y="2115" class="net-label" text-anchor="middle">MDI1_N</text>
+  <circle cx="369" cy="2151" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI2+ pin 6" data-net="MDI2_P"/>
+  <circle cx="851" cy="2151" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C4 through magnetics" data-net="MDI2_P"/>
+  <path d="M 369 2151 L 851 2151" class="schematic-wire" data-net="MDI2_P" data-kind="differential"/>
+  <text x="357" y="2156" class="pin-label" text-anchor="end">U6 MDI2+ pin 6</text>
+  <text x="863" y="2156" class="pin-label" text-anchor="start">J7 C4 through magnetics</text>
+  <text x="610" y="2145" class="net-label" text-anchor="middle">MDI2_P</text>
+  <circle cx="369" cy="2181" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI2- pin 7" data-net="MDI2_N"/>
+  <circle cx="851" cy="2181" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C5 through magnetics" data-net="MDI2_N"/>
+  <path d="M 369 2181 L 851 2181" class="schematic-wire" data-net="MDI2_N" data-kind="differential"/>
+  <text x="357" y="2186" class="pin-label" text-anchor="end">U6 MDI2- pin 7</text>
+  <text x="863" y="2186" class="pin-label" text-anchor="start">J7 C5 through magnetics</text>
+  <text x="610" y="2175" class="net-label" text-anchor="middle">MDI2_N</text>
+  <circle cx="369" cy="2211" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI3+ pin 9" data-net="MDI3_P"/>
+  <circle cx="851" cy="2211" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C7 through magnetics" data-net="MDI3_P"/>
+  <path d="M 369 2211 L 851 2211" class="schematic-wire" data-net="MDI3_P" data-kind="differential"/>
+  <text x="357" y="2216" class="pin-label" text-anchor="end">U6 MDI3+ pin 9</text>
+  <text x="863" y="2216" class="pin-label" text-anchor="start">J7 C7 through magnetics</text>
+  <text x="610" y="2205" class="net-label" text-anchor="middle">MDI3_P</text>
+  <circle cx="369" cy="2241" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 MDI3- pin 10" data-net="MDI3_N"/>
+  <circle cx="851" cy="2241" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 C8 through magnetics" data-net="MDI3_N"/>
+  <path d="M 369 2241 L 851 2241" class="schematic-wire" data-net="MDI3_N" data-kind="differential"/>
+  <text x="357" y="2246" class="pin-label" text-anchor="end">U6 MDI3- pin 10</text>
+  <text x="863" y="2246" class="pin-label" text-anchor="start">J7 C8 through magnetics</text>
+  <text x="610" y="2235" class="net-label" text-anchor="middle">MDI3_N</text>
+  <circle cx="369" cy="2271" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 LED0 pin 27" data-net="GBE_LED0"/>
+  <circle cx="851" cy="2271" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 LED1 cathode" data-net="GBE_LED0"/>
+  <path d="M 369 2271 L 851 2271" class="schematic-wire" data-net="GBE_LED0" data-kind="control"/>
+  <text x="357" y="2276" class="pin-label" text-anchor="end">U6 LED0 pin 27</text>
+  <text x="863" y="2276" class="pin-label" text-anchor="start">J7 LED1 cathode</text>
+  <text x="610" y="2265" class="net-label" text-anchor="middle">GBE_LED0</text>
+  <circle cx="369" cy="2301" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:U6 LED1 pin 26" data-net="GBE_LED1"/>
+  <circle cx="851" cy="2301" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 LED2 cathode" data-net="GBE_LED1"/>
+  <path d="M 369 2301 L 851 2301" class="schematic-wire" data-net="GBE_LED1" data-kind="control"/>
+  <text x="357" y="2306" class="pin-label" text-anchor="end">U6 LED1 pin 26</text>
+  <text x="863" y="2306" class="pin-label" text-anchor="start">J7 LED2 cathode</text>
+  <text x="610" y="2295" class="net-label" text-anchor="middle">GBE_LED1</text>
+  <circle cx="369" cy="2331" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:GND plane" data-net="GND_RJ45"/>
+  <circle cx="851" cy="2331" r="4.5" class="pin" data-pin="千兆网：PHY 与磁性 RJ45:J7 shield via chassis net" data-net="GND_RJ45"/>
+  <path d="M 369 2331 L 851 2331" class="schematic-wire" data-net="GND_RJ45" data-kind="ground"/>
+  <text x="357" y="2336" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="863" y="2336" class="pin-label" text-anchor="start">J7 shield via chassis net</text>
+  <text x="610" y="2325" class="net-label" text-anchor="middle">GND_RJ45</text>
+  <rect x="1215" y="115" width="1150" height="800" rx="16" class="panel"/>
+  <text x="1239" y="150" class="panel-title" text-anchor="start">PCIe 3.0 x4 插槽</text>
+  <rect x="1239" y="189" width="310" height="708" rx="10" class="module"/>
+  <rect x="2031" y="189" width="310" height="708" rx="10" class="connector"/>
+  <text x="1394" y="213" class="component-title" text-anchor="middle">LattePanda Mu / board rails</text>
+  <text x="2186" y="213" class="component-title" text-anchor="middle">J2 PCIe x4 edge connector</text>
+  <circle cx="1549" cy="237" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO8 TX pin 37" data-net="PCIE_X4_TX0_P"/>
+  <circle cx="2031" cy="237" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETp0" data-net="PCIE_X4_TX0_P"/>
+  <path d="M 1549 237 L 2031 237" class="schematic-wire" data-net="PCIE_X4_TX0_P" data-kind="differential"/>
+  <text x="1537" y="242" class="pin-label" text-anchor="end">Mu HSIO8 TX pin 37</text>
+  <text x="2043" y="242" class="pin-label" text-anchor="start">J2 PETp0</text>
+  <text x="1790" y="231" class="net-label" text-anchor="middle">PCIE_X4_TX0_P</text>
+  <circle cx="1549" cy="267" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO8 TX pin 39" data-net="PCIE_X4_TX0_N"/>
+  <circle cx="2031" cy="267" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETn0" data-net="PCIE_X4_TX0_N"/>
+  <path d="M 1549 267 L 2031 267" class="schematic-wire" data-net="PCIE_X4_TX0_N" data-kind="differential"/>
+  <text x="1537" y="272" class="pin-label" text-anchor="end">Mu HSIO8 TX pin 39</text>
+  <text x="2043" y="272" class="pin-label" text-anchor="start">J2 PETn0</text>
+  <text x="1790" y="261" class="net-label" text-anchor="middle">PCIE_X4_TX0_N</text>
+  <circle cx="1549" cy="297" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO8 RX pin 40" data-net="PCIE_X4_RX0_P"/>
+  <circle cx="2031" cy="297" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERp0" data-net="PCIE_X4_RX0_P"/>
+  <path d="M 1549 297 L 2031 297" class="schematic-wire" data-net="PCIE_X4_RX0_P" data-kind="differential"/>
+  <text x="1537" y="302" class="pin-label" text-anchor="end">Mu HSIO8 RX pin 40</text>
+  <text x="2043" y="302" class="pin-label" text-anchor="start">J2 PERp0</text>
+  <text x="1790" y="291" class="net-label" text-anchor="middle">PCIE_X4_RX0_P</text>
+  <circle cx="1549" cy="327" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO8 RX pin 42" data-net="PCIE_X4_RX0_N"/>
+  <circle cx="2031" cy="327" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERn0" data-net="PCIE_X4_RX0_N"/>
+  <path d="M 1549 327 L 2031 327" class="schematic-wire" data-net="PCIE_X4_RX0_N" data-kind="differential"/>
+  <text x="1537" y="332" class="pin-label" text-anchor="end">Mu HSIO8 RX pin 42</text>
+  <text x="2043" y="332" class="pin-label" text-anchor="start">J2 PERn0</text>
+  <text x="1790" y="321" class="net-label" text-anchor="middle">PCIE_X4_RX0_N</text>
+  <circle cx="1549" cy="357" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO9 TX pin 43" data-net="PCIE_X4_TX1_P"/>
+  <circle cx="2031" cy="357" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETp1" data-net="PCIE_X4_TX1_P"/>
+  <path d="M 1549 357 L 2031 357" class="schematic-wire" data-net="PCIE_X4_TX1_P" data-kind="differential"/>
+  <text x="1537" y="362" class="pin-label" text-anchor="end">Mu HSIO9 TX pin 43</text>
+  <text x="2043" y="362" class="pin-label" text-anchor="start">J2 PETp1</text>
+  <text x="1790" y="351" class="net-label" text-anchor="middle">PCIE_X4_TX1_P</text>
+  <circle cx="1549" cy="387" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO9 TX pin 45" data-net="PCIE_X4_TX1_N"/>
+  <circle cx="2031" cy="387" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETn1" data-net="PCIE_X4_TX1_N"/>
+  <path d="M 1549 387 L 2031 387" class="schematic-wire" data-net="PCIE_X4_TX1_N" data-kind="differential"/>
+  <text x="1537" y="392" class="pin-label" text-anchor="end">Mu HSIO9 TX pin 45</text>
+  <text x="2043" y="392" class="pin-label" text-anchor="start">J2 PETn1</text>
+  <text x="1790" y="381" class="net-label" text-anchor="middle">PCIE_X4_TX1_N</text>
+  <circle cx="1549" cy="417" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO9 RX pin 46" data-net="PCIE_X4_RX1_P"/>
+  <circle cx="2031" cy="417" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERp1" data-net="PCIE_X4_RX1_P"/>
+  <path d="M 1549 417 L 2031 417" class="schematic-wire" data-net="PCIE_X4_RX1_P" data-kind="differential"/>
+  <text x="1537" y="422" class="pin-label" text-anchor="end">Mu HSIO9 RX pin 46</text>
+  <text x="2043" y="422" class="pin-label" text-anchor="start">J2 PERp1</text>
+  <text x="1790" y="411" class="net-label" text-anchor="middle">PCIE_X4_RX1_P</text>
+  <circle cx="1549" cy="447" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO9 RX pin 48" data-net="PCIE_X4_RX1_N"/>
+  <circle cx="2031" cy="447" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERn1" data-net="PCIE_X4_RX1_N"/>
+  <path d="M 1549 447 L 2031 447" class="schematic-wire" data-net="PCIE_X4_RX1_N" data-kind="differential"/>
+  <text x="1537" y="452" class="pin-label" text-anchor="end">Mu HSIO9 RX pin 48</text>
+  <text x="2043" y="452" class="pin-label" text-anchor="start">J2 PERn1</text>
+  <text x="1790" y="441" class="net-label" text-anchor="middle">PCIE_X4_RX1_N</text>
+  <circle cx="1549" cy="477" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO10 TX pin 49" data-net="PCIE_X4_TX2_P"/>
+  <circle cx="2031" cy="477" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETp2" data-net="PCIE_X4_TX2_P"/>
+  <path d="M 1549 477 L 2031 477" class="schematic-wire" data-net="PCIE_X4_TX2_P" data-kind="differential"/>
+  <text x="1537" y="482" class="pin-label" text-anchor="end">Mu HSIO10 TX pin 49</text>
+  <text x="2043" y="482" class="pin-label" text-anchor="start">J2 PETp2</text>
+  <text x="1790" y="471" class="net-label" text-anchor="middle">PCIE_X4_TX2_P</text>
+  <circle cx="1549" cy="507" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO10 TX pin 51" data-net="PCIE_X4_TX2_N"/>
+  <circle cx="2031" cy="507" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETn2" data-net="PCIE_X4_TX2_N"/>
+  <path d="M 1549 507 L 2031 507" class="schematic-wire" data-net="PCIE_X4_TX2_N" data-kind="differential"/>
+  <text x="1537" y="512" class="pin-label" text-anchor="end">Mu HSIO10 TX pin 51</text>
+  <text x="2043" y="512" class="pin-label" text-anchor="start">J2 PETn2</text>
+  <text x="1790" y="501" class="net-label" text-anchor="middle">PCIE_X4_TX2_N</text>
+  <circle cx="1549" cy="537" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO10 RX pin 52" data-net="PCIE_X4_RX2_P"/>
+  <circle cx="2031" cy="537" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERp2" data-net="PCIE_X4_RX2_P"/>
+  <path d="M 1549 537 L 2031 537" class="schematic-wire" data-net="PCIE_X4_RX2_P" data-kind="differential"/>
+  <text x="1537" y="542" class="pin-label" text-anchor="end">Mu HSIO10 RX pin 52</text>
+  <text x="2043" y="542" class="pin-label" text-anchor="start">J2 PERp2</text>
+  <text x="1790" y="531" class="net-label" text-anchor="middle">PCIE_X4_RX2_P</text>
+  <circle cx="1549" cy="567" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO10 RX pin 54" data-net="PCIE_X4_RX2_N"/>
+  <circle cx="2031" cy="567" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERn2" data-net="PCIE_X4_RX2_N"/>
+  <path d="M 1549 567 L 2031 567" class="schematic-wire" data-net="PCIE_X4_RX2_N" data-kind="differential"/>
+  <text x="1537" y="572" class="pin-label" text-anchor="end">Mu HSIO10 RX pin 54</text>
+  <text x="2043" y="572" class="pin-label" text-anchor="start">J2 PERn2</text>
+  <text x="1790" y="561" class="net-label" text-anchor="middle">PCIE_X4_RX2_N</text>
+  <circle cx="1549" cy="597" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO11 TX pin 55" data-net="PCIE_X4_TX3_P"/>
+  <circle cx="2031" cy="597" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETp3" data-net="PCIE_X4_TX3_P"/>
+  <path d="M 1549 597 L 2031 597" class="schematic-wire" data-net="PCIE_X4_TX3_P" data-kind="differential"/>
+  <text x="1537" y="602" class="pin-label" text-anchor="end">Mu HSIO11 TX pin 55</text>
+  <text x="2043" y="602" class="pin-label" text-anchor="start">J2 PETp3</text>
+  <text x="1790" y="591" class="net-label" text-anchor="middle">PCIE_X4_TX3_P</text>
+  <circle cx="1549" cy="627" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO11 TX pin 57" data-net="PCIE_X4_TX3_N"/>
+  <circle cx="2031" cy="627" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PETn3" data-net="PCIE_X4_TX3_N"/>
+  <path d="M 1549 627 L 2031 627" class="schematic-wire" data-net="PCIE_X4_TX3_N" data-kind="differential"/>
+  <text x="1537" y="632" class="pin-label" text-anchor="end">Mu HSIO11 TX pin 57</text>
+  <text x="2043" y="632" class="pin-label" text-anchor="start">J2 PETn3</text>
+  <text x="1790" y="621" class="net-label" text-anchor="middle">PCIE_X4_TX3_N</text>
+  <circle cx="1549" cy="657" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO11 RX pin 58" data-net="PCIE_X4_RX3_P"/>
+  <circle cx="2031" cy="657" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERp3" data-net="PCIE_X4_RX3_P"/>
+  <path d="M 1549 657 L 2031 657" class="schematic-wire" data-net="PCIE_X4_RX3_P" data-kind="differential"/>
+  <text x="1537" y="662" class="pin-label" text-anchor="end">Mu HSIO11 RX pin 58</text>
+  <text x="2043" y="662" class="pin-label" text-anchor="start">J2 PERp3</text>
+  <text x="1790" y="651" class="net-label" text-anchor="middle">PCIE_X4_RX3_P</text>
+  <circle cx="1549" cy="687" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu HSIO11 RX pin 60" data-net="PCIE_X4_RX3_N"/>
+  <circle cx="2031" cy="687" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERn3" data-net="PCIE_X4_RX3_N"/>
+  <path d="M 1549 687 L 2031 687" class="schematic-wire" data-net="PCIE_X4_RX3_N" data-kind="differential"/>
+  <text x="1537" y="692" class="pin-label" text-anchor="end">Mu HSIO11 RX pin 60</text>
+  <text x="2043" y="692" class="pin-label" text-anchor="start">J2 PERn3</text>
+  <text x="1790" y="681" class="net-label" text-anchor="middle">PCIE_X4_RX3_N</text>
+  <circle cx="1549" cy="717" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu REFCLK2 pin 97" data-net="PCIE_X4_REFCLK_P"/>
+  <circle cx="2031" cy="717" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 REFCLK+ A13" data-net="PCIE_X4_REFCLK_P"/>
+  <path d="M 1549 717 L 2031 717" class="schematic-wire" data-net="PCIE_X4_REFCLK_P" data-kind="differential"/>
+  <text x="1537" y="722" class="pin-label" text-anchor="end">Mu REFCLK2 pin 97</text>
+  <text x="2043" y="722" class="pin-label" text-anchor="start">J2 REFCLK+ A13</text>
+  <text x="1790" y="711" class="net-label" text-anchor="middle">PCIE_X4_REFCLK_P</text>
+  <circle cx="1549" cy="747" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu REFCLK2 pin 99" data-net="PCIE_X4_REFCLK_N"/>
+  <circle cx="2031" cy="747" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 REFCLK- A14" data-net="PCIE_X4_REFCLK_N"/>
+  <path d="M 1549 747 L 2031 747" class="schematic-wire" data-net="PCIE_X4_REFCLK_N" data-kind="differential"/>
+  <text x="1537" y="752" class="pin-label" text-anchor="end">Mu REFCLK2 pin 99</text>
+  <text x="2043" y="752" class="pin-label" text-anchor="start">J2 REFCLK- A14</text>
+  <text x="1790" y="741" class="net-label" text-anchor="middle">PCIE_X4_REFCLK_N</text>
+  <circle cx="1549" cy="777" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu PLT_RST# pin 105" data-net="PLT_RST_N_X4"/>
+  <circle cx="2031" cy="777" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 PERST# A11" data-net="PLT_RST_N_X4"/>
+  <path d="M 1549 777 L 2031 777" class="schematic-wire" data-net="PLT_RST_N_X4" data-kind="control"/>
+  <text x="1537" y="782" class="pin-label" text-anchor="end">Mu PLT_RST# pin 105</text>
+  <text x="2043" y="782" class="pin-label" text-anchor="start">J2 PERST# A11</text>
+  <text x="1790" y="771" class="net-label" text-anchor="middle">PLT_RST_N_X4</text>
+  <circle cx="1549" cy="807" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:Mu PEWAKE# pin 103" data-net="PCIE_WAKE_N"/>
+  <circle cx="2031" cy="807" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 WAKE# B11" data-net="PCIE_WAKE_N"/>
+  <path d="M 1549 807 L 2031 807" class="schematic-wire" data-net="PCIE_WAKE_N" data-kind="control"/>
+  <text x="1537" y="812" class="pin-label" text-anchor="end">Mu PEWAKE# pin 103</text>
+  <text x="2043" y="812" class="pin-label" text-anchor="start">J2 WAKE# B11</text>
+  <text x="1790" y="801" class="net-label" text-anchor="middle">PCIE_WAKE_N</text>
+  <circle cx="1549" cy="837" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:+12VA after Q7" data-net="PCIE_12VA"/>
+  <circle cx="2031" cy="837" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 +12V B1/B2/B3" data-net="PCIE_12VA"/>
+  <path d="M 1549 837 L 2031 837" class="schematic-wire" data-net="PCIE_12VA" data-kind="power"/>
+  <text x="1537" y="842" class="pin-label" text-anchor="end">+12VA after Q7</text>
+  <text x="2043" y="842" class="pin-label" text-anchor="start">J2 +12V B1/B2/B3</text>
+  <text x="1790" y="831" class="net-label" text-anchor="middle">PCIE_12VA</text>
+  <circle cx="1549" cy="867" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:+3V3 rail" data-net="PCIE_3V3"/>
+  <circle cx="2031" cy="867" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 +3V3 and 3V3aux" data-net="PCIE_3V3"/>
+  <path d="M 1549 867 L 2031 867" class="schematic-wire" data-net="PCIE_3V3" data-kind="power"/>
+  <text x="1537" y="872" class="pin-label" text-anchor="end">+3V3 rail</text>
+  <text x="2043" y="872" class="pin-label" text-anchor="start">J2 +3V3 and 3V3aux</text>
+  <text x="1790" y="861" class="net-label" text-anchor="middle">PCIE_3V3</text>
+  <circle cx="1549" cy="897" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:GND plane" data-net="GND_PCIE"/>
+  <circle cx="2031" cy="897" r="4.5" class="pin" data-pin="PCIe 3.0 x4 插槽:J2 all GND contacts" data-net="GND_PCIE"/>
+  <path d="M 1549 897 L 2031 897" class="schematic-wire" data-net="GND_PCIE" data-kind="ground"/>
+  <text x="1537" y="902" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="2043" y="902" class="pin-label" text-anchor="start">J2 all GND contacts</text>
+  <text x="1790" y="891" class="net-label" text-anchor="middle">GND_PCIE</text>
+  <rect x="1215" y="943" width="1150" height="500" rx="16" class="panel"/>
+  <text x="1239" y="978" class="panel-title" text-anchor="start">M.2 M Key 2230：PCIe x1</text>
+  <rect x="1239" y="1017" width="310" height="408" rx="10" class="module"/>
+  <rect x="2031" y="1017" width="310" height="408" rx="10" class="connector"/>
+  <text x="1394" y="1041" class="component-title" text-anchor="middle">LattePanda Mu / board rails</text>
+  <text x="2186" y="1041" class="component-title" text-anchor="middle">J15 M.2 Socket M</text>
+  <circle cx="1549" cy="1065" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu HSIO2 TX pin 25" data-net="MKEY_TX_P"/>
+  <circle cx="2031" cy="1065" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 PETp0 via C49" data-net="MKEY_TX_P"/>
+  <path d="M 1549 1065 L 2031 1065" class="schematic-wire" data-net="MKEY_TX_P" data-kind="differential"/>
+  <text x="1537" y="1070" class="pin-label" text-anchor="end">Mu HSIO2 TX pin 25</text>
+  <text x="2043" y="1070" class="pin-label" text-anchor="start">J15 PETp0 via C49</text>
+  <text x="1790" y="1059" class="net-label" text-anchor="middle">MKEY_TX_P</text>
+  <circle cx="1549" cy="1095" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu HSIO2 TX pin 27" data-net="MKEY_TX_N"/>
+  <circle cx="2031" cy="1095" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 PETn0 via C50" data-net="MKEY_TX_N"/>
+  <path d="M 1549 1095 L 2031 1095" class="schematic-wire" data-net="MKEY_TX_N" data-kind="differential"/>
+  <text x="1537" y="1100" class="pin-label" text-anchor="end">Mu HSIO2 TX pin 27</text>
+  <text x="2043" y="1100" class="pin-label" text-anchor="start">J15 PETn0 via C50</text>
+  <text x="1790" y="1089" class="net-label" text-anchor="middle">MKEY_TX_N</text>
+  <circle cx="1549" cy="1125" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu HSIO2 RX pin 28" data-net="MKEY_RX_P"/>
+  <circle cx="2031" cy="1125" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 PERp0" data-net="MKEY_RX_P"/>
+  <path d="M 1549 1125 L 2031 1125" class="schematic-wire" data-net="MKEY_RX_P" data-kind="differential"/>
+  <text x="1537" y="1130" class="pin-label" text-anchor="end">Mu HSIO2 RX pin 28</text>
+  <text x="2043" y="1130" class="pin-label" text-anchor="start">J15 PERp0</text>
+  <text x="1790" y="1119" class="net-label" text-anchor="middle">MKEY_RX_P</text>
+  <circle cx="1549" cy="1155" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu HSIO2 RX pin 30" data-net="MKEY_RX_N"/>
+  <circle cx="2031" cy="1155" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 PERn0" data-net="MKEY_RX_N"/>
+  <path d="M 1549 1155 L 2031 1155" class="schematic-wire" data-net="MKEY_RX_N" data-kind="differential"/>
+  <text x="1537" y="1160" class="pin-label" text-anchor="end">Mu HSIO2 RX pin 30</text>
+  <text x="2043" y="1160" class="pin-label" text-anchor="start">J15 PERn0</text>
+  <text x="1790" y="1149" class="net-label" text-anchor="middle">MKEY_RX_N</text>
+  <circle cx="1549" cy="1185" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu REFCLK0- pin 87" data-net="MKEY_REFCLK_P"/>
+  <circle cx="2031" cy="1185" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 REFCLKp" data-net="MKEY_REFCLK_P"/>
+  <path d="M 1549 1185 L 2031 1185" class="schematic-wire" data-net="MKEY_REFCLK_P" data-kind="differential"/>
+  <text x="1537" y="1190" class="pin-label" text-anchor="end">Mu REFCLK0- pin 87</text>
+  <text x="2043" y="1190" class="pin-label" text-anchor="start">J15 REFCLKp</text>
+  <text x="1790" y="1179" class="net-label" text-anchor="middle">MKEY_REFCLK_P</text>
+  <circle cx="1549" cy="1215" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu REFCLK0+ pin 85" data-net="MKEY_REFCLK_N"/>
+  <circle cx="2031" cy="1215" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 REFCLKn" data-net="MKEY_REFCLK_N"/>
+  <path d="M 1549 1215 L 2031 1215" class="schematic-wire" data-net="MKEY_REFCLK_N" data-kind="differential"/>
+  <text x="1537" y="1220" class="pin-label" text-anchor="end">Mu REFCLK0+ pin 85</text>
+  <text x="2043" y="1220" class="pin-label" text-anchor="start">J15 REFCLKn</text>
+  <text x="1790" y="1209" class="net-label" text-anchor="middle">MKEY_REFCLK_N</text>
+  <circle cx="1549" cy="1245" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu PLT_RST# pin 105" data-net="PLT_RST_N_M"/>
+  <circle cx="2031" cy="1245" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 PERST#" data-net="PLT_RST_N_M"/>
+  <path d="M 1549 1245 L 2031 1245" class="schematic-wire" data-net="PLT_RST_N_M" data-kind="control"/>
+  <text x="1537" y="1250" class="pin-label" text-anchor="end">Mu PLT_RST# pin 105</text>
+  <text x="2043" y="1250" class="pin-label" text-anchor="start">J15 PERST#</text>
+  <text x="1790" y="1239" class="net-label" text-anchor="middle">PLT_RST_N_M</text>
+  <circle cx="1549" cy="1275" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu PEWAKE# pin 103" data-net="MKEY_WAKE_N"/>
+  <circle cx="2031" cy="1275" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 PEWAKE#" data-net="MKEY_WAKE_N"/>
+  <path d="M 1549 1275 L 2031 1275" class="schematic-wire" data-net="MKEY_WAKE_N" data-kind="control"/>
+  <text x="1537" y="1280" class="pin-label" text-anchor="end">Mu PEWAKE# pin 103</text>
+  <text x="2043" y="1280" class="pin-label" text-anchor="start">J15 PEWAKE#</text>
+  <text x="1790" y="1269" class="net-label" text-anchor="middle">MKEY_WAKE_N</text>
+  <circle cx="1549" cy="1305" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:Mu SUSCLK pin 131" data-net="SUSCLK_M"/>
+  <circle cx="2031" cy="1305" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 SUSCLK pin 68" data-net="SUSCLK_M"/>
+  <path d="M 1549 1305 L 2031 1305" class="schematic-wire" data-net="SUSCLK_M" data-kind="control"/>
+  <text x="1537" y="1310" class="pin-label" text-anchor="end">Mu SUSCLK pin 131</text>
+  <text x="2043" y="1310" class="pin-label" text-anchor="start">J15 SUSCLK pin 68</text>
+  <text x="1790" y="1299" class="net-label" text-anchor="middle">SUSCLK_M</text>
+  <circle cx="1549" cy="1335" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:+3V3 rail" data-net="MKEY_3V3"/>
+  <circle cx="2031" cy="1335" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 3.3V contacts" data-net="MKEY_3V3"/>
+  <path d="M 1549 1335 L 2031 1335" class="schematic-wire" data-net="MKEY_3V3" data-kind="power"/>
+  <text x="1537" y="1340" class="pin-label" text-anchor="end">+3V3 rail</text>
+  <text x="2043" y="1340" class="pin-label" text-anchor="start">J15 3.3V contacts</text>
+  <text x="1790" y="1329" class="net-label" text-anchor="middle">MKEY_3V3</text>
+  <circle cx="1549" cy="1365" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:GND plane" data-net="GND_MKEY"/>
+  <circle cx="2031" cy="1365" r="4.5" class="pin" data-pin="M.2 M Key 2230：PCIe x1:J15 GND contacts" data-net="GND_MKEY"/>
+  <path d="M 1549 1365 L 2031 1365" class="schematic-wire" data-net="GND_MKEY" data-kind="ground"/>
+  <text x="1537" y="1370" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="2043" y="1370" class="pin-label" text-anchor="start">J15 GND contacts</text>
+  <text x="1790" y="1359" class="net-label" text-anchor="middle">GND_MKEY</text>
+  <circle cx="2031" cy="1395" r="4.5" class="no-connect" data-pin="M.2 M Key 2230：PCIe x1:J15 CLKREQ#" data-net="NC"/>
+  <path d="M 2025 1389 L 2037 1401 M 2025 1401 L 2037 1389" class="nc-mark"/>
+  <text x="1537" y="1400" class="pin-label" text-anchor="end">explicitly not routed</text>
+  <text x="2043" y="1400" class="pin-label" text-anchor="start">J15 CLKREQ#</text>
+  <text x="1790" y="1400" class="net-label" text-anchor="middle">NC</text>
+  <circle cx="2031" cy="1425" r="4.5" class="no-connect" data-pin="M.2 M Key 2230：PCIe x1:J15 SATA pins" data-net="NC"/>
+  <path d="M 2025 1419 L 2037 1431 M 2025 1431 L 2037 1419" class="nc-mark"/>
+  <text x="1537" y="1430" class="pin-label" text-anchor="end">explicitly not routed</text>
+  <text x="2043" y="1430" class="pin-label" text-anchor="start">J15 SATA pins</text>
+  <text x="1790" y="1430" class="net-label" text-anchor="middle">NC</text>
+  <rect x="1215" y="1471" width="1150" height="590" rx="16" class="panel"/>
+  <text x="1239" y="1506" class="panel-title" text-anchor="start">M.2 E Key 2230：PCIe x1 + USB 2.0</text>
+  <rect x="1239" y="1545" width="310" height="498" rx="10" class="module"/>
+  <rect x="2031" y="1545" width="310" height="498" rx="10" class="connector"/>
+  <text x="1394" y="1569" class="component-title" text-anchor="middle">LattePanda Mu / board rails</text>
+  <text x="2186" y="1569" class="component-title" text-anchor="middle">J16 M.2 Socket E</text>
+  <circle cx="1549" cy="1593" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu HSIO3 TX pin 31" data-net="EKEY_TX_P"/>
+  <circle cx="2031" cy="1593" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 PETp0 via C55" data-net="EKEY_TX_P"/>
+  <path d="M 1549 1593 L 2031 1593" class="schematic-wire" data-net="EKEY_TX_P" data-kind="differential"/>
+  <text x="1537" y="1598" class="pin-label" text-anchor="end">Mu HSIO3 TX pin 31</text>
+  <text x="2043" y="1598" class="pin-label" text-anchor="start">J16 PETp0 via C55</text>
+  <text x="1790" y="1587" class="net-label" text-anchor="middle">EKEY_TX_P</text>
+  <circle cx="1549" cy="1623" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu HSIO3 TX pin 33" data-net="EKEY_TX_N"/>
+  <circle cx="2031" cy="1623" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 PETn0 via C56" data-net="EKEY_TX_N"/>
+  <path d="M 1549 1623 L 2031 1623" class="schematic-wire" data-net="EKEY_TX_N" data-kind="differential"/>
+  <text x="1537" y="1628" class="pin-label" text-anchor="end">Mu HSIO3 TX pin 33</text>
+  <text x="2043" y="1628" class="pin-label" text-anchor="start">J16 PETn0 via C56</text>
+  <text x="1790" y="1617" class="net-label" text-anchor="middle">EKEY_TX_N</text>
+  <circle cx="1549" cy="1653" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu HSIO3 RX pin 34" data-net="EKEY_RX_P"/>
+  <circle cx="2031" cy="1653" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 PERp0" data-net="EKEY_RX_P"/>
+  <path d="M 1549 1653 L 2031 1653" class="schematic-wire" data-net="EKEY_RX_P" data-kind="differential"/>
+  <text x="1537" y="1658" class="pin-label" text-anchor="end">Mu HSIO3 RX pin 34</text>
+  <text x="2043" y="1658" class="pin-label" text-anchor="start">J16 PERp0</text>
+  <text x="1790" y="1647" class="net-label" text-anchor="middle">EKEY_RX_P</text>
+  <circle cx="1549" cy="1683" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu HSIO3 RX pin 36" data-net="EKEY_RX_N"/>
+  <circle cx="2031" cy="1683" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 PERn0" data-net="EKEY_RX_N"/>
+  <path d="M 1549 1683 L 2031 1683" class="schematic-wire" data-net="EKEY_RX_N" data-kind="differential"/>
+  <text x="1537" y="1688" class="pin-label" text-anchor="end">Mu HSIO3 RX pin 36</text>
+  <text x="2043" y="1688" class="pin-label" text-anchor="start">J16 PERn0</text>
+  <text x="1790" y="1677" class="net-label" text-anchor="middle">EKEY_RX_N</text>
+  <circle cx="1549" cy="1713" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu REFCLK3 pin 88" data-net="EKEY_REFCLK_P"/>
+  <circle cx="2031" cy="1713" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 REFCLKp" data-net="EKEY_REFCLK_P"/>
+  <path d="M 1549 1713 L 2031 1713" class="schematic-wire" data-net="EKEY_REFCLK_P" data-kind="differential"/>
+  <text x="1537" y="1718" class="pin-label" text-anchor="end">Mu REFCLK3 pin 88</text>
+  <text x="2043" y="1718" class="pin-label" text-anchor="start">J16 REFCLKp</text>
+  <text x="1790" y="1707" class="net-label" text-anchor="middle">EKEY_REFCLK_P</text>
+  <circle cx="1549" cy="1743" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu REFCLK3 pin 90" data-net="EKEY_REFCLK_N"/>
+  <circle cx="2031" cy="1743" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 REFCLKn" data-net="EKEY_REFCLK_N"/>
+  <path d="M 1549 1743 L 2031 1743" class="schematic-wire" data-net="EKEY_REFCLK_N" data-kind="differential"/>
+  <text x="1537" y="1748" class="pin-label" text-anchor="end">Mu REFCLK3 pin 90</text>
+  <text x="2043" y="1748" class="pin-label" text-anchor="start">J16 REFCLKn</text>
+  <text x="1790" y="1737" class="net-label" text-anchor="middle">EKEY_REFCLK_N</text>
+  <circle cx="1549" cy="1773" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu pin 76" data-net="USB2_P7_P"/>
+  <circle cx="2031" cy="1773" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 USB_D+" data-net="USB2_P7_P"/>
+  <path d="M 1549 1773 L 2031 1773" class="schematic-wire" data-net="USB2_P7_P" data-kind="differential"/>
+  <text x="1537" y="1778" class="pin-label" text-anchor="end">Mu pin 76</text>
+  <text x="2043" y="1778" class="pin-label" text-anchor="start">J16 USB_D+</text>
+  <text x="1790" y="1767" class="net-label" text-anchor="middle">USB2_P7_P</text>
+  <circle cx="1549" cy="1803" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu pin 78" data-net="USB2_P7_N"/>
+  <circle cx="2031" cy="1803" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 USB_D-" data-net="USB2_P7_N"/>
+  <path d="M 1549 1803 L 2031 1803" class="schematic-wire" data-net="USB2_P7_N" data-kind="differential"/>
+  <text x="1537" y="1808" class="pin-label" text-anchor="end">Mu pin 78</text>
+  <text x="2043" y="1808" class="pin-label" text-anchor="start">J16 USB_D-</text>
+  <text x="1790" y="1797" class="net-label" text-anchor="middle">USB2_P7_N</text>
+  <circle cx="1549" cy="1833" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu PLT_RST# pin 105" data-net="PLT_RST_N_E"/>
+  <circle cx="2031" cy="1833" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 PERST#" data-net="PLT_RST_N_E"/>
+  <path d="M 1549 1833 L 2031 1833" class="schematic-wire" data-net="PLT_RST_N_E" data-kind="control"/>
+  <text x="1537" y="1838" class="pin-label" text-anchor="end">Mu PLT_RST# pin 105</text>
+  <text x="2043" y="1838" class="pin-label" text-anchor="start">J16 PERST#</text>
+  <text x="1790" y="1827" class="net-label" text-anchor="middle">PLT_RST_N_E</text>
+  <circle cx="1549" cy="1863" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu CLKREQ3# pin 100" data-net="CLKREQ3_N"/>
+  <circle cx="2031" cy="1863" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 CLKREQ#" data-net="CLKREQ3_N"/>
+  <path d="M 1549 1863 L 2031 1863" class="schematic-wire" data-net="CLKREQ3_N" data-kind="control"/>
+  <text x="1537" y="1868" class="pin-label" text-anchor="end">Mu CLKREQ3# pin 100</text>
+  <text x="2043" y="1868" class="pin-label" text-anchor="start">J16 CLKREQ#</text>
+  <text x="1790" y="1857" class="net-label" text-anchor="middle">CLKREQ3_N</text>
+  <circle cx="1549" cy="1893" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu PEWAKE# pin 103" data-net="EKEY_WAKE_N"/>
+  <circle cx="2031" cy="1893" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 PEWAKE#" data-net="EKEY_WAKE_N"/>
+  <path d="M 1549 1893 L 2031 1893" class="schematic-wire" data-net="EKEY_WAKE_N" data-kind="control"/>
+  <text x="1537" y="1898" class="pin-label" text-anchor="end">Mu PEWAKE# pin 103</text>
+  <text x="2043" y="1898" class="pin-label" text-anchor="start">J16 PEWAKE#</text>
+  <text x="1790" y="1887" class="net-label" text-anchor="middle">EKEY_WAKE_N</text>
+  <circle cx="1549" cy="1923" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:Mu SUSCLK pin 131" data-net="SUSCLK_E"/>
+  <circle cx="2031" cy="1923" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 SUSCLK" data-net="SUSCLK_E"/>
+  <path d="M 1549 1923 L 2031 1923" class="schematic-wire" data-net="SUSCLK_E" data-kind="control"/>
+  <text x="1537" y="1928" class="pin-label" text-anchor="end">Mu SUSCLK pin 131</text>
+  <text x="2043" y="1928" class="pin-label" text-anchor="start">J16 SUSCLK</text>
+  <text x="1790" y="1917" class="net-label" text-anchor="middle">SUSCLK_E</text>
+  <circle cx="1549" cy="1953" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:+3V3 rail" data-net="EKEY_3V3"/>
+  <circle cx="2031" cy="1953" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 3.3V contacts" data-net="EKEY_3V3"/>
+  <path d="M 1549 1953 L 2031 1953" class="schematic-wire" data-net="EKEY_3V3" data-kind="power"/>
+  <text x="1537" y="1958" class="pin-label" text-anchor="end">+3V3 rail</text>
+  <text x="2043" y="1958" class="pin-label" text-anchor="start">J16 3.3V contacts</text>
+  <text x="1790" y="1947" class="net-label" text-anchor="middle">EKEY_3V3</text>
+  <circle cx="1549" cy="1983" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:GND plane" data-net="GND_EKEY"/>
+  <circle cx="2031" cy="1983" r="4.5" class="pin" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 GND contacts" data-net="GND_EKEY"/>
+  <path d="M 1549 1983 L 2031 1983" class="schematic-wire" data-net="GND_EKEY" data-kind="ground"/>
+  <text x="1537" y="1988" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="2043" y="1988" class="pin-label" text-anchor="start">J16 GND contacts</text>
+  <text x="1790" y="1977" class="net-label" text-anchor="middle">GND_EKEY</text>
+  <circle cx="2031" cy="2013" r="4.5" class="no-connect" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 SDIO pins" data-net="NC"/>
+  <path d="M 2025 2007 L 2037 2019 M 2025 2019 L 2037 2007" class="nc-mark"/>
+  <text x="1537" y="2018" class="pin-label" text-anchor="end">explicitly not routed</text>
+  <text x="2043" y="2018" class="pin-label" text-anchor="start">J16 SDIO pins</text>
+  <text x="1790" y="2018" class="net-label" text-anchor="middle">NC</text>
+  <circle cx="2031" cy="2043" r="4.5" class="no-connect" data-pin="M.2 E Key 2230：PCIe x1 + USB 2.0:J16 UART pins" data-net="NC"/>
+  <path d="M 2025 2037 L 2037 2049 M 2025 2049 L 2037 2037" class="nc-mark"/>
+  <text x="1537" y="2048" class="pin-label" text-anchor="end">explicitly not routed</text>
+  <text x="2043" y="2048" class="pin-label" text-anchor="start">J16 UART pins</text>
+  <text x="1790" y="2048" class="net-label" text-anchor="middle">NC</text>
+  <rect x="35" y="2990" width="2330" height="42" rx="10" class="legend"/>
+  <text x="55" y="3017" class="note" text-anchor="start">蓝色：差分/高速；紫色：复位与控制；红色：电源；深灰：地。图中没有使用总线省略号，NC 以红叉明确标出。</text>
+</svg>

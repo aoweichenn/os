@@ -1,0 +1,171 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1050"
+     viewBox="0 0 1800 1050" role="img"
+     aria-labelledby="title description">
+  <title id="title">从 Ring 3 文件写入到 ATA 磁盘并跨启动验证</title>
+  <desc id="description">
+    用户、内核、硬件三条泳道展示 Shell 缓冲区经过 INT 0x80、文件描述符、
+    文件系统、块缓存、ATA PIO 和 FLUSH 写入 raw disk，再由新 QEMU 进程
+    重新挂载读回。
+  </desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-orange" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#d97706"/>
+    </marker>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7c3aed"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+             fill: #172033; }
+      .title { font-size: 35px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .lane { font-size: 19px; font-weight: 760; }
+      .card-title { font-size: 19px; font-weight: 740; }
+      .body { font-size: 15px; fill: #43516a; }
+      .small { font-size: 13px; fill: #5d6b82; }
+      .mono { font-family: "JetBrains Mono", "Noto Sans Mono", monospace; }
+      .user-flow { fill: none; stroke: #16a34a; stroke-width: 3.5;
+                   marker-end: url(#arrow-green); }
+      .kernel-flow { fill: none; stroke: #2563eb; stroke-width: 3.5;
+                     marker-end: url(#arrow-blue); }
+      .disk-flow { fill: none; stroke: #d97706; stroke-width: 3.5;
+                   marker-end: url(#arrow-orange); }
+      .verify-flow { fill: none; stroke: #7c3aed; stroke-width: 3.5;
+                     stroke-dasharray: 8 7; marker-end: url(#arrow-purple); }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1050" fill="#f4f7fb"/>
+  <text x="60" y="60" class="title">图 7 · 一次持久写：Ring 3 → raw disk → 新启动读回</text>
+  <text x="60" y="91" class="subtitle">
+    “同次启动能读回”只证明缓存；只有 FLUSH 完成并由新的 QEMU 进程重新 mount 才证明持久化
+  </text>
+
+  <!-- Lanes -->
+  <rect x="55" y="125" width="1690" height="145" rx="18"
+        fill="#f2fcf5" stroke="none"/>
+  <text x="82" y="158" class="lane">USER / RING 3</text>
+
+  <rect x="55" y="295" width="1690" height="280" rx="18"
+        fill="#f4f8ff" stroke="none"/>
+  <text x="82" y="328" class="lane">KERNEL / RING 0</text>
+
+  <rect x="55" y="600" width="1690" height="260" rx="18"
+        fill="#fff9eb" stroke="none"/>
+  <text x="82" y="633" class="lane">ATA / DISK / HOST VERIFICATION</text>
+
+  <!-- User row -->
+  <rect x="190" y="170" width="320" height="70" rx="13"
+        fill="#ffffff" stroke="#16a34a" filter="url(#shadow)"/>
+  <text x="215" y="198" class="card-title">1 · Shell / user buffer</text>
+  <text x="215" y="225" class="body">文件名、offset、bytes 位于用户虚拟内存</text>
+
+  <rect x="660" y="170" width="320" height="70" rx="13"
+        fill="#ffffff" stroke="#16a34a" filter="url(#shadow)"/>
+  <text x="685" y="198" class="card-title">2 · INT 0x80</text>
+  <text x="685" y="225" class="body">CPU 使用 TSS.RSP0 进入 Kernel 栈</text>
+  <path d="M 522 205 H 648" class="user-flow"/>
+
+  <!-- Kernel row -->
+  <rect x="190" y="365" width="270" height="145" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="215" y="399" class="card-title">3 · Syscall</text>
+  <text x="215" y="429" class="body">校验用户指针与长度</text>
+  <text x="215" y="457" class="body">复制或有界访问用户数据</text>
+  <text x="215" y="484" class="small">失败只返回错误，不越权访问</text>
+
+  <rect x="520" y="365" width="270" height="145" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="545" y="399" class="card-title">4 · File descriptor</text>
+  <text x="545" y="429" class="body">解析当前进程 fd</text>
+  <text x="545" y="457" class="body">检查类型、权限与 offset</text>
+  <text x="545" y="484" class="small">用户态从不直接得到 ATA 所有权</text>
+
+  <rect x="850" y="365" width="270" height="145" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="875" y="399" class="card-title">5 · File system</text>
+  <text x="875" y="429" class="body">inode / bitmap / block mapping</text>
+  <text x="875" y="457" class="body">相对 block → disk LBA</text>
+  <text x="875" y="484" class="small">拒绝越界和损坏元数据</text>
+
+  <rect x="1180" y="365" width="310" height="145" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="1205" y="399" class="card-title">6 · Block cache</text>
+  <text x="1205" y="429" class="body">修改缓存块并标记 dirty</text>
+  <text x="1205" y="457" class="body">按顺序写回数据与元数据</text>
+  <text x="1205" y="484" class="small">FLUSH 成功后才能转为 clean</text>
+
+  <path d="M 820 252 V 285 H 325 V 353" class="kernel-flow"/>
+  <path d="M 472 438 H 508" class="kernel-flow"/>
+  <path d="M 802 438 H 838" class="kernel-flow"/>
+  <path d="M 1132 438 H 1168" class="kernel-flow"/>
+
+  <!-- Hardware row: right-to-left -->
+  <rect x="1230" y="665" width="310" height="140" rx="15"
+        fill="#ffffff" stroke="#d97706" filter="url(#shadow)"/>
+  <text x="1255" y="699" class="card-title">7 · ATA PIO driver</text>
+  <text x="1255" y="729" class="body mono">0x1F0..0x1F7 / 0x3F6</text>
+  <text x="1255" y="757" class="body">BSY → DRQ；WRITE；FLUSH</text>
+  <text x="1255" y="783" class="small">同步轮询；IRQ14 关闭</text>
+
+  <rect x="880" y="665" width="290" height="140" rx="15"
+        fill="#ffffff" stroke="#d97706" filter="url(#shadow)"/>
+  <text x="905" y="699" class="card-title">8 · Sector transfer</text>
+  <text x="905" y="729" class="body">LBA28 · 512 B sector</text>
+  <text x="905" y="757" class="body">256 × 16-bit words</text>
+  <text x="905" y="783" class="small">ERR / DF 立即进入失败路径</text>
+
+  <rect x="530" y="665" width="290" height="140" rx="15"
+        fill="#ffffff" stroke="#d97706" filter="url(#shadow)"/>
+  <text x="555" y="699" class="card-title">9 · 2 MiB raw disk</text>
+  <text x="555" y="729" class="body mono">filesystem LBA 2048..3071</text>
+  <text x="555" y="757" class="body">QEMU 把扇区写入 image</text>
+  <text x="555" y="783" class="small">完成不等于当前缓存可见</text>
+
+  <rect x="140" y="665" width="330" height="140" rx="15"
+        fill="#ffffff" stroke="#8b5cf6" filter="url(#shadow)"/>
+  <text x="165" y="699" class="card-title">10 · 跨启动验证</text>
+  <text x="165" y="729" class="body">终止旧 QEMU，启动新进程</text>
+  <text x="165" y="757" class="body">mount → lookup → read</text>
+  <text x="165" y="783" class="small">读到相同 bytes 才证明持久性</text>
+
+  <path d="M 1335 522 V 653" class="disk-flow"/>
+  <path d="M 1218 735 H 1182" class="disk-flow"/>
+  <path d="M 868 735 H 832" class="disk-flow"/>
+  <path d="M 518 735 H 482" class="verify-flow"/>
+
+  <!-- Disk ownership bar -->
+  <text x="150" y="902" class="card-title">磁盘所有权（4096 × 512 B）</text>
+  <rect x="150" y="925" width="750" height="60" rx="10"
+        fill="#fed7aa" stroke="#d97706"/>
+  <text x="360" y="950" class="body mono">LBA [0, 2048) · boot · 1 MiB</text>
+  <text x="382" y="973" class="small">Stage 1 / Kernel ELF</text>
+
+  <rect x="900" y="925" width="375" height="60"
+        fill="#bbf7d0" stroke="#16a34a"/>
+  <text x="945" y="950" class="body mono">[2048, 3072) · FS</text>
+  <text x="995" y="973" class="small">1024 blocks</text>
+
+  <rect x="1275" y="925" width="375" height="60" rx="10"
+        fill="#e2e8f0" stroke="#94a3b8"/>
+  <text x="1313" y="950" class="body mono">[3072, 4096) · reserved</text>
+  <text x="1384" y="973" class="small">512 KiB</text>
+
+  <text x="1310" y="1025" class="small">
+    image builder 同样必须拒绝 Kernel 越过 LBA 2048
+  </text>
+</svg>

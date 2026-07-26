@@ -1,0 +1,230 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="2200" height="1320" viewBox="0 0 2200 1320"
+     role="img" aria-labelledby="title description">
+  <title id="title">LattePanda Mu 载板电源完整连线学习图</title>
+  <desc id="description">展示 DC、USB-PD 和 UPS 三路输入如何经保护和肖特基汇流到 VDC，再生成模组 VIN、PCIe 12V、5V、3.3V 和 3.3V ROM。</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+              fill: #172033; }
+      .title { font-size: 34px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .panel-title { font-size: 22px; font-weight: 740; }
+      .component-title { font-size: 17px; font-weight: 720; }
+      .pin-label { font-size: 13px; fill: #334155; }
+      .net-label { font-family: "JetBrains Mono", "Noto Sans Mono", monospace;
+                    font-size: 12px; fill: #1e40af; }
+      .note { font-size: 13px; fill: #526079; }
+      .component { fill: #ffffff; stroke: #64748b; stroke-width: 1.6; }
+      .module { fill: #e8f1ff; stroke: #2563eb; stroke-width: 1.8; }
+      .connector { fill: #fff7d6; stroke: #b7791f; stroke-width: 1.8; }
+      .power-block { fill: #fff1f2; stroke: #be123c; stroke-width: 1.8; }
+      .protection { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.6; }
+      .schematic-wire { fill: none; stroke: #15803d; stroke-width: 2.2; }
+      .schematic-wire[data-kind="differential"] {
+          stroke: #2563eb; stroke-width: 2.1;
+      }
+      .schematic-wire[data-kind="power"] {
+          stroke: #dc2626; stroke-width: 3.2;
+      }
+      .schematic-wire[data-kind="ground"] {
+          stroke: #334155; stroke-width: 2.8;
+      }
+      .schematic-wire[data-kind="control"] {
+          stroke: #7c3aed; stroke-width: 2.1;
+      }
+      .pin { fill: #ffffff; stroke: #0f766e; stroke-width: 1.8; }
+      .junction { fill: #15803d; stroke: none; }
+      .no-connect { fill: #ffffff; stroke: #dc2626; stroke-width: 1.8; }
+      .nc-mark { stroke: #dc2626; stroke-width: 2; }
+      .panel { fill: #ffffff; stroke: #c3cfdd; stroke-width: 1.4; }
+      .legend { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+  </defs>
+  <rect width="2200" height="1320" fill="#f4f7fb"/>
+  <text x="45" y="52" class="title" text-anchor="start">实体载板学习图 1/3：输入保护、汇流和电源树</text>
+  <text x="45" y="82" class="subtitle" text-anchor="start">并联肖特基与电容阵列合并成器件组，但每个网络节点和控制线都保留</text>
+  <path d="M 60 1190 L 2140 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <text x="70" y="1178" class="net-label" text-anchor="start">GND PLANE</text>
+  <path d="M 850 180 L 850 900" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <text x="862" y="202" class="net-label" text-anchor="start">VDC common rail</text>
+  <rect x="65" y="190" width="170" height="90" rx="10" class="connector"/>
+  <text x="150" y="218" class="component-title" text-anchor="middle">J17 DC Jack</text>
+  <text x="150" y="241" class="note" text-anchor="middle">12V, 6A–10A</text>
+  <rect x="300" y="202" width="130" height="66" rx="10" class="protection"/>
+  <text x="365" y="230" class="component-title" text-anchor="middle">F6</text>
+  <text x="365" y="253" class="note" text-anchor="middle">BSMD1206C-2100T</text>
+  <rect x="500" y="190" width="210" height="90" rx="10" class="protection"/>
+  <text x="605" y="218" class="component-title" text-anchor="middle">D15,D16,D17</text>
+  <text x="605" y="241" class="note" text-anchor="middle">SS54 in parallel</text>
+  <circle cx="235" cy="235" r="4.5" class="pin" data-pin="J17.1" data-net="DC_RAW"/>
+  <circle cx="300" cy="235" r="4.5" class="pin" data-pin="F6.1" data-net="DC_RAW"/>
+  <path d="M 235 235 L 300 235" class="schematic-wire" data-net="DC_RAW" data-kind="power"/>
+  <circle cx="430" cy="235" r="4.5" class="pin" data-pin="F6.2" data-net="DC_FUSED"/>
+  <circle cx="500" cy="235" r="4.5" class="pin" data-pin="D15-D17.A" data-net="DC_FUSED"/>
+  <path d="M 430 235 L 500 235" class="schematic-wire" data-net="DC_FUSED" data-kind="power"/>
+  <circle cx="710" cy="235" r="4.5" class="pin" data-pin="D15-D17.K" data-net="VDC"/>
+  <path d="M 710 235 L 850 235" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="150" cy="280" r="4.5" class="pin" data-pin="J17.GND" data-net="GND"/>
+  <path d="M 150 280 L 150 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="320" y="305" width="150" height="66" rx="10" class="protection"/>
+  <text x="395" y="333" class="component-title" text-anchor="middle">D29</text>
+  <text x="395" y="356" class="note" text-anchor="middle">SMAJ26CA TVS</text>
+  <circle cx="395" cy="305" r="4.5" class="pin" data-pin="D29.K" data-net="DC_FUSED"/>
+  <path d="M 395 305 L 465 305 L 465 235" class="schematic-wire" data-net="DC_FUSED" data-kind="power"/>
+  <circle cx="395" cy="371" r="4.5" class="pin" data-pin="D29.A" data-net="GND"/>
+  <path d="M 395 371 L 395 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="65" y="430" width="170" height="120" rx="10" class="connector"/>
+  <text x="150" y="458" class="component-title" text-anchor="middle">J18 USB-C</text>
+  <text x="150" y="481" class="note" text-anchor="middle">VBUS, CC1, CC2</text>
+  <rect x="300" y="470" width="210" height="105" rx="10" class="power-block"/>
+  <text x="405" y="498" class="component-title" text-anchor="middle">U14 CH224K</text>
+  <text x="405" y="521" class="note" text-anchor="middle">R43 selects 15V</text>
+  <rect x="560" y="430" width="150" height="90" rx="10" class="protection"/>
+  <text x="635" y="458" class="component-title" text-anchor="middle">D18,D19,D20</text>
+  <text x="635" y="481" class="note" text-anchor="middle">SS54 in parallel</text>
+  <circle cx="235" cy="460" r="4.5" class="pin" data-pin="J18.VBUS" data-net="USB_PD_15V"/>
+  <circle cx="560" cy="460" r="4.5" class="pin" data-pin="D18-D20.A" data-net="USB_PD_15V"/>
+  <path d="M 235 460 L 560 460" class="schematic-wire" data-net="USB_PD_15V" data-kind="power"/>
+  <circle cx="710" cy="460" r="4.5" class="pin" data-pin="D18-D20.K" data-net="VDC"/>
+  <path d="M 710 460 L 850 460" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="235" cy="500" r="4.5" class="pin" data-pin="J18.CC1" data-net="USB_CC1"/>
+  <circle cx="300" cy="500" r="4.5" class="pin" data-pin="U14.CC1" data-net="USB_CC1"/>
+  <path d="M 235 500 L 300 500" class="schematic-wire" data-net="USB_CC1" data-kind="control"/>
+  <circle cx="235" cy="530" r="4.5" class="pin" data-pin="J18.CC2" data-net="USB_CC2"/>
+  <circle cx="300" cy="530" r="4.5" class="pin" data-pin="U14.CC2" data-net="USB_CC2"/>
+  <path d="M 235 530 L 300 530" class="schematic-wire" data-net="USB_CC2" data-kind="control"/>
+  <circle cx="405" cy="575" r="4.5" class="pin" data-pin="U14.GND" data-net="GND"/>
+  <path d="M 405 575 L 405 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <circle cx="150" cy="550" r="4.5" class="pin" data-pin="J18.GND" data-net="GND"/>
+  <path d="M 150 550 L 150 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="65" y="690" width="170" height="130" rx="10" class="connector"/>
+  <text x="150" y="718" class="component-title" text-anchor="middle">J19 Smart UPS</text>
+  <text x="150" y="741" class="note" text-anchor="middle">+VBAT, D+, D-, CTRL</text>
+  <rect x="300" y="700" width="180" height="90" rx="10" class="protection"/>
+  <text x="390" y="728" class="component-title" text-anchor="middle">U19 ULC0524P</text>
+  <text x="390" y="751" class="note" text-anchor="middle">USB ESD array</text>
+  <rect x="560" y="680" width="150" height="90" rx="10" class="protection"/>
+  <text x="635" y="708" class="component-title" text-anchor="middle">D30,D31,D32</text>
+  <text x="635" y="731" class="note" text-anchor="middle">SS54 in parallel</text>
+  <circle cx="235" cy="720" r="4.5" class="pin" data-pin="J19.1-2" data-net="UPS_VBAT"/>
+  <circle cx="560" cy="720" r="4.5" class="pin" data-pin="D30-D32.A" data-net="UPS_VBAT"/>
+  <path d="M 235 720 L 560 720" class="schematic-wire" data-net="UPS_VBAT" data-kind="power"/>
+  <circle cx="710" cy="720" r="4.5" class="pin" data-pin="D30-D32.K" data-net="VDC"/>
+  <path d="M 710 720 L 850 720" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="235" cy="755" r="4.5" class="pin" data-pin="J19.7" data-net="UPS_USB_DP"/>
+  <circle cx="300" cy="755" r="4.5" class="pin" data-pin="U19.DP_IN" data-net="UPS_USB_DP"/>
+  <path d="M 235 755 L 300 755" class="schematic-wire" data-net="UPS_USB_DP" data-kind="differential"/>
+  <circle cx="235" cy="785" r="4.5" class="pin" data-pin="J19.6" data-net="UPS_USB_DN"/>
+  <circle cx="300" cy="785" r="4.5" class="pin" data-pin="U19.DN_IN" data-net="UPS_USB_DN"/>
+  <path d="M 235 785 L 300 785" class="schematic-wire" data-net="UPS_USB_DN" data-kind="differential"/>
+  <circle cx="480" cy="740" r="4.5" class="pin" data-pin="U19.DP_OUT" data-net="MU_USB2_P8_P"/>
+  <circle cx="480" cy="770" r="4.5" class="pin" data-pin="U19.DN_OUT" data-net="MU_USB2_P8_N"/>
+  <rect x="520" y="815" width="220" height="72" rx="10" class="module"/>
+  <text x="630" y="843" class="component-title" text-anchor="middle">Mu USB2 Port 8</text>
+  <text x="630" y="866" class="note" text-anchor="middle">pins 82 P / 84 N</text>
+  <circle cx="630" cy="815" r="4.5" class="pin" data-pin="Mu.82" data-net="MU_USB2_P8_P"/>
+  <path d="M 480 740 L 520 740 L 520 815 L 630 815" class="schematic-wire" data-net="MU_USB2_P8_P" data-kind="differential"/>
+  <circle cx="670" cy="815" r="4.5" class="pin" data-pin="Mu.84" data-net="MU_USB2_P8_N"/>
+  <path d="M 480 770 L 500 770 L 500 835 L 670 835 L 670 815" class="schematic-wire" data-net="MU_USB2_P8_N" data-kind="differential"/>
+  <circle cx="390" cy="790" r="4.5" class="pin" data-pin="U19.GND" data-net="GND"/>
+  <path d="M 390 790 L 390 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <circle cx="150" cy="820" r="4.5" class="pin" data-pin="J19.GND" data-net="GND"/>
+  <path d="M 150 820 L 150 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="960" y="145" width="260" height="100" rx="10" class="module"/>
+  <text x="1090" y="173" class="component-title" text-anchor="middle">LattePanda Mu</text>
+  <text x="1090" y="196" class="note" text-anchor="middle">VIN pins 250–260</text>
+  <circle cx="960" cy="195" r="4.5" class="pin" data-pin="Mu.VIN.250-260" data-net="VDC"/>
+  <path d="M 850 195 L 960 195" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="1090" cy="245" r="4.5" class="pin" data-pin="Mu.GND" data-net="GND"/>
+  <path d="M 1090 245 L 1090 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="960" y="300" width="220" height="90" rx="10" class="power-block"/>
+  <text x="1070" y="328" class="component-title" text-anchor="middle">Q7 NCE30P28Q</text>
+  <text x="1070" y="351" class="note" text-anchor="middle">PCIe 12V load gate</text>
+  <rect x="1280" y="300" width="220" height="90" rx="10" class="connector"/>
+  <text x="1390" y="328" class="component-title" text-anchor="middle">J2 PCIe x4</text>
+  <text x="1390" y="351" class="note" text-anchor="middle">+12VA contacts</text>
+  <circle cx="960" cy="345" r="4.5" class="pin" data-pin="Q7.S" data-net="VDC"/>
+  <path d="M 850 345 L 960 345" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="1180" cy="345" r="4.5" class="pin" data-pin="Q7.D" data-net="PCIE_12VA"/>
+  <circle cx="1280" cy="345" r="4.5" class="pin" data-pin="J2.12V" data-net="PCIE_12VA"/>
+  <path d="M 1180 345 L 1280 345" class="schematic-wire" data-net="PCIE_12VA" data-kind="power"/>
+  <circle cx="1070" cy="390" r="4.5" class="pin" data-pin="Q7.GATE_CTRL" data-net="PCIE_12V_EN"/>
+  <rect x="960" y="425" width="220" height="80" rx="10" class="protection"/>
+  <text x="1070" y="453" class="component-title" text-anchor="middle">Q5,Q6,U13</text>
+  <text x="1070" y="476" class="note" text-anchor="middle">PSON + TL431 gate</text>
+  <circle cx="1070" cy="425" r="4.5" class="pin" data-pin="Q5-Q6.OUT" data-net="PCIE_12V_EN"/>
+  <path d="M 1070 425 L 1070 390" class="schematic-wire" data-net="PCIE_12V_EN" data-kind="control"/>
+  <circle cx="1070" cy="505" r="4.5" class="pin" data-pin="Q5-Q6.GND" data-net="GND"/>
+  <path d="M 1070 505 L 1070 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <circle cx="1390" cy="390" r="4.5" class="pin" data-pin="J2.GND" data-net="GND"/>
+  <path d="M 1390 390 L 1390 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="960" y="570" width="220" height="100" rx="10" class="power-block"/>
+  <text x="1070" y="598" class="component-title" text-anchor="middle">U15 SY8253ADC</text>
+  <text x="1070" y="621" class="note" text-anchor="middle">VDC → +5V</text>
+  <rect x="1280" y="570" width="250" height="100" rx="10" class="connector"/>
+  <text x="1405" y="598" class="component-title" text-anchor="middle">+5V consumers</text>
+  <text x="1405" y="621" class="note" text-anchor="middle">USB, HDMI, fan</text>
+  <circle cx="960" cy="610" r="4.5" class="pin" data-pin="U15.VIN" data-net="VDC"/>
+  <path d="M 850 610 L 960 610" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="1180" cy="610" r="4.5" class="pin" data-pin="U15.VOUT" data-net="RAIL_5V"/>
+  <circle cx="1280" cy="610" r="4.5" class="pin" data-pin="5V_LOADS" data-net="RAIL_5V"/>
+  <path d="M 1180 610 L 1280 610" class="schematic-wire" data-net="RAIL_5V" data-kind="power"/>
+  <circle cx="1070" cy="670" r="4.5" class="pin" data-pin="U15.GND" data-net="GND"/>
+  <path d="M 1070 670 L 1070 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <circle cx="960" cy="630" r="4.5" class="pin" data-pin="U15.EN" data-net="PWR_EN"/>
+  <circle cx="1405" cy="670" r="4.5" class="pin" data-pin="5V_LOADS.GND" data-net="GND"/>
+  <path d="M 1405 670 L 1405 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="960" y="750" width="220" height="100" rx="10" class="power-block"/>
+  <text x="1070" y="778" class="component-title" text-anchor="middle">U16 SY8253ADC</text>
+  <text x="1070" y="801" class="note" text-anchor="middle">VDC → +3V3</text>
+  <rect x="1280" y="750" width="250" height="100" rx="10" class="connector"/>
+  <text x="1405" y="778" class="component-title" text-anchor="middle">+3V3 consumers</text>
+  <text x="1405" y="801" class="note" text-anchor="middle">M.2, GbE, GPIO</text>
+  <circle cx="960" cy="790" r="4.5" class="pin" data-pin="U16.VIN" data-net="VDC"/>
+  <path d="M 850 790 L 960 790" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="1180" cy="790" r="4.5" class="pin" data-pin="U16.VOUT" data-net="RAIL_3V3"/>
+  <circle cx="1280" cy="790" r="4.5" class="pin" data-pin="3V3_LOADS" data-net="RAIL_3V3"/>
+  <path d="M 1180 790 L 1280 790" class="schematic-wire" data-net="RAIL_3V3" data-kind="power"/>
+  <circle cx="1070" cy="850" r="4.5" class="pin" data-pin="U16.GND" data-net="GND"/>
+  <path d="M 1070 850 L 1070 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <circle cx="960" cy="810" r="4.5" class="pin" data-pin="U16.EN" data-net="PWR_EN"/>
+  <circle cx="1405" cy="850" r="4.5" class="pin" data-pin="3V3_LOADS.GND" data-net="GND"/>
+  <path d="M 1405 850 L 1405 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="1640" y="570" width="210" height="100" rx="10" class="power-block"/>
+  <text x="1745" y="598" class="component-title" text-anchor="middle">U17 HM7533HBPR</text>
+  <text x="1745" y="621" class="note" text-anchor="middle">VDC → +3V3_ROM</text>
+  <rect x="1910" y="570" width="220" height="100" rx="10" class="connector"/>
+  <text x="2020" y="598" class="component-title" text-anchor="middle">U18 BIOS pad</text>
+  <text x="2020" y="621" class="note" text-anchor="middle">optional population</text>
+  <circle cx="1640" cy="610" r="4.5" class="pin" data-pin="U17.VIN" data-net="VDC"/>
+  <path d="M 850 880 L 1580 880 L 1580 610 L 1640 610" class="schematic-wire" data-net="VDC" data-kind="power"/>
+  <circle cx="1850" cy="610" r="4.5" class="pin" data-pin="U17.VOUT" data-net="RAIL_3V3_ROM"/>
+  <circle cx="1910" cy="610" r="4.5" class="pin" data-pin="U18.VCC" data-net="RAIL_3V3_ROM"/>
+  <path d="M 1850 610 L 1910 610" class="schematic-wire" data-net="RAIL_3V3_ROM" data-kind="power"/>
+  <circle cx="1745" cy="670" r="4.5" class="pin" data-pin="U17.GND" data-net="GND"/>
+  <path d="M 1745 670 L 1745 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <circle cx="2020" cy="670" r="4.5" class="pin" data-pin="U18.GND" data-net="GND"/>
+  <path d="M 2020 670 L 2020 1190" class="schematic-wire" data-net="GND" data-kind="ground"/>
+  <rect x="960" y="970" width="260" height="92" rx="10" class="protection"/>
+  <text x="1090" y="998" class="component-title" text-anchor="middle">JP1 + R46</text>
+  <text x="1090" y="1021" class="note" text-anchor="middle">PSON or SLP_S4 → PWR_EN</text>
+  <rect x="1280" y="970" width="280" height="92" rx="10" class="module"/>
+  <text x="1420" y="998" class="component-title" text-anchor="middle">Mu status outputs</text>
+  <text x="1420" y="1021" class="note" text-anchor="middle">pin 5 PSON, pin 7 SLP_S4</text>
+  <circle cx="1280" cy="1002" r="4.5" class="pin" data-pin="Mu.5" data-net="PSON"/>
+  <circle cx="1220" cy="1002" r="4.5" class="pin" data-pin="JP1.PSON" data-net="PSON"/>
+  <path d="M 1220 1002 L 1280 1002" class="schematic-wire" data-net="PSON" data-kind="control"/>
+  <circle cx="1280" cy="1035" r="4.5" class="pin" data-pin="Mu.7" data-net="SLP_S4"/>
+  <circle cx="1220" cy="1035" r="4.5" class="pin" data-pin="JP1.SLP_S4" data-net="SLP_S4"/>
+  <path d="M 1220 1035 L 1280 1035" class="schematic-wire" data-net="SLP_S4" data-kind="control"/>
+  <circle cx="960" cy="1018" r="4.5" class="pin" data-pin="JP1.OUT" data-net="PWR_EN"/>
+  <path d="M 960 1018 L 910 1018 L 910 630 L 960 630" class="schematic-wire" data-net="PWR_EN" data-kind="control"/>
+  <path d="M 910 810 L 960 810" class="schematic-wire" data-net="PWR_EN" data-kind="control"/>
+  <rect x="60" y="1240" width="2080" height="45" rx="10" class="legend"/>
+  <text x="80" y="1268" class="note" text-anchor="start">红色：功率路径；紫色：控制；蓝色：USB 差分；深灰：公共地。D15–D20、D30–D32 是逐颗并联器件组，不表示一颗等效二极管。</text>
+</svg>

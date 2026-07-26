@@ -1,0 +1,179 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1050"
+     viewBox="0 0 1800 1050" role="img"
+     aria-labelledby="title description">
+  <title id="title">一个按键从宿主 QMP 到 Ring 3 Shell 的完整路径</title>
+  <desc id="description">
+    四条泳道依次展示宿主按键注入、PS2 硬件与 IRQ、Kernel 中断处理和 Console
+    FIFO、以及 Ring 3 Shell 从 fd 0 获得字符。
+  </desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow-purple" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7c3aed"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#dc2626"/>
+    </marker>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+             fill: #172033; }
+      .title { font-size: 35px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .lane { font-size: 19px; font-weight: 760; }
+      .card-title { font-size: 19px; font-weight: 740; }
+      .body { font-size: 15px; fill: #43516a; }
+      .small { font-size: 13px; fill: #5d6b82; }
+      .mono { font-family: "JetBrains Mono", "Noto Sans Mono", monospace; }
+      .host-flow { fill: none; stroke: #7c3aed; stroke-width: 3.5;
+                   stroke-dasharray: 8 7; marker-end: url(#arrow-purple); }
+      .irq { fill: none; stroke: #dc2626; stroke-width: 4;
+             marker-end: url(#arrow-red); }
+      .kernel-flow { fill: none; stroke: #2563eb; stroke-width: 3.5;
+                     marker-end: url(#arrow-blue); }
+      .user-flow { fill: none; stroke: #16a34a; stroke-width: 3.5;
+                   marker-end: url(#arrow-green); }
+    </style>
+  </defs>
+
+  <rect width="1800" height="1050" fill="#f4f7fb"/>
+  <text x="60" y="60" class="title">图 6 · 一个按键怎样到达 Ring 3 Shell</text>
+  <text x="60" y="91" class="subtitle">
+    按泳道阅读：宿主注入 → 硬件产生 scan code 与 IRQ → Kernel 入队并唤醒 → Shell 从 fd 0 读取
+  </text>
+
+  <!-- Lane backgrounds -->
+  <rect x="55" y="125" width="1690" height="130" rx="18"
+        fill="#f5f1ff" stroke="none"/>
+  <text x="82" y="158" class="lane">HOST</text>
+
+  <rect x="55" y="280" width="1690" height="220" rx="18"
+        fill="#fff7f7" stroke="none"/>
+  <text x="82" y="313" class="lane">HARDWARE</text>
+
+  <rect x="55" y="525" width="1690" height="235" rx="18"
+        fill="#f4f8ff" stroke="none"/>
+  <text x="82" y="558" class="lane">KERNEL / RING 0</text>
+
+  <rect x="55" y="785" width="1690" height="205" rx="18"
+        fill="#f2fcf5" stroke="none"/>
+  <text x="82" y="818" class="lane">USER / RING 3</text>
+
+  <!-- Host cards -->
+  <rect x="220" y="160" width="310" height="68" rx="13"
+        fill="#ffffff" stroke="#8b5cf6" filter="url(#shadow)"/>
+  <text x="245" y="188" class="card-title">1 · QMP sendkey</text>
+  <text x="245" y="214" class="body">测试或用户从宿主注入按键</text>
+
+  <rect x="660" y="160" width="360" height="68" rx="13"
+        fill="#ffffff" stroke="#8b5cf6" filter="url(#shadow)"/>
+  <text x="685" y="188" class="card-title">2 · QEMU 设备模型</text>
+  <text x="685" y="214" class="body">转换为虚拟 PS/2 键盘事件</text>
+  <path d="M 542 194 H 648" class="host-flow"/>
+
+  <!-- Hardware cards -->
+  <rect x="220" y="345" width="270" height="110" rx="15"
+        fill="#ffffff" stroke="#dc2626" filter="url(#shadow)"/>
+  <text x="245" y="378" class="card-title">3 · PS/2 Keyboard</text>
+  <text x="245" y="407" class="body">产生 Set 1 make / break</text>
+  <text x="245" y="433" class="small">这不是“字符存储后门”</text>
+
+  <rect x="570" y="345" width="270" height="110" rx="15"
+        fill="#ffffff" stroke="#dc2626" filter="url(#shadow)"/>
+  <text x="595" y="378" class="card-title">4 · i8042</text>
+  <text x="595" y="407" class="body mono">data 0x60 · status 0x64</text>
+  <text x="595" y="433" class="small">output buffer 保存 scan code</text>
+
+  <rect x="920" y="345" width="270" height="110" rx="15"
+        fill="#ffffff" stroke="#dc2626" filter="url(#shadow)"/>
+  <text x="945" y="378" class="card-title">5 · PIC → LAPIC</text>
+  <text x="945" y="407" class="body">IRQ1 → vector 0x21</text>
+  <text x="945" y="433" class="small">LINT0 ExtINT 桥接给 CPU</text>
+
+  <rect x="1270" y="345" width="300" height="110" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="1295" y="378" class="card-title">6 · CPU / IDT</text>
+  <text x="1295" y="407" class="body">压入中断现场并进入 IRQ entry</text>
+  <text x="1295" y="433" class="small">当前执行的用户进程被暂时打断</text>
+
+  <path d="M 840 240 V 270 H 355 V 333" class="host-flow"/>
+  <path d="M 502 400 H 558" class="kernel-flow"/>
+  <path d="M 852 400 H 908" class="irq"/>
+  <path d="M 1202 400 H 1258" class="irq"/>
+
+  <!-- Kernel cards, deliberately right-to-left -->
+  <rect x="1270" y="590" width="300" height="120" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="1295" y="624" class="card-title">7 · IRQ handler</text>
+  <text x="1295" y="653" class="body mono">ReadPort8(0x60)</text>
+  <text x="1295" y="680" class="small">读取有界数据，最后发送 PIC EOI</text>
+
+  <rect x="920" y="590" width="270" height="120" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="945" y="624" class="card-title">8 · Scan decoder</text>
+  <text x="945" y="653" class="body">make / break、Shift、Caps</text>
+  <text x="945" y="680" class="small">得到 ASCII 或控制动作</text>
+
+  <rect x="570" y="590" width="270" height="120" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="595" y="624" class="card-title">9 · Console FIFO</text>
+  <text x="595" y="653" class="body">字符入队；维护有界容量</text>
+  <text x="595" y="680" class="small">生产者是 IRQ，消费者是 fd 0</text>
+
+  <rect x="220" y="590" width="270" height="120" rx="15"
+        fill="#ffffff" stroke="#2563eb" filter="url(#shadow)"/>
+  <text x="245" y="624" class="card-title">10 · Wake / read</text>
+  <text x="245" y="653" class="body">满足等待条件，唤醒 Shell</text>
+  <text x="245" y="680" class="small">避免 lost wakeup；read 得到字节</text>
+
+  <path d="M 1420 467 V 578" class="kernel-flow"/>
+  <path d="M 1258 650 H 1202" class="kernel-flow"/>
+  <path d="M 908 650 H 852" class="kernel-flow"/>
+  <path d="M 558 650 H 502" class="kernel-flow"/>
+
+  <!-- User cards -->
+  <rect x="220" y="840" width="270" height="110" rx="15"
+        fill="#ffffff" stroke="#16a34a" filter="url(#shadow)"/>
+  <text x="245" y="874" class="card-title">11 · Shell read(fd 0)</text>
+  <text x="245" y="903" class="body">阻塞结束，系统调用返回字符</text>
+  <text x="245" y="929" class="small">Ring 3 不直接访问 0x60</text>
+
+  <rect x="570" y="840" width="270" height="110" rx="15"
+        fill="#ffffff" stroke="#16a34a" filter="url(#shadow)"/>
+  <text x="595" y="874" class="card-title">12 · Line editor</text>
+  <text x="595" y="903" class="body">回显、退格、累积命令行</text>
+  <text x="595" y="929" class="small">只处理用户态字符串</text>
+
+  <rect x="920" y="840" width="270" height="110" rx="15"
+        fill="#ffffff" stroke="#16a34a" filter="url(#shadow)"/>
+  <text x="945" y="874" class="card-title">13 · Parser / command</text>
+  <text x="945" y="903" class="body">解析 built-in、files、dirs</text>
+  <text x="945" y="929" class="small">需要输出时写 fd 1 / 2</text>
+
+  <rect x="1270" y="840" width="300" height="110" rx="15"
+        fill="#ffffff" stroke="#16a34a" filter="url(#shadow)"/>
+  <text x="1295" y="874" class="card-title">14 · write(fd 1 / 2)</text>
+  <text x="1295" y="903" class="body">系统调用 → Kernel 串口驱动</text>
+  <text x="1295" y="929" class="small">最终回到宿主 serial capture</text>
+
+  <path d="M 355 722 V 828" class="user-flow"/>
+  <path d="M 502 895 H 558" class="user-flow"/>
+  <path d="M 852 895 H 908" class="user-flow"/>
+  <path d="M 1202 895 H 1258" class="user-flow"/>
+
+  <text x="1315" y="1022" class="small">
+    蓝线读取数据，红线通知“有数据”，两者缺一不可
+  </text>
+</svg>

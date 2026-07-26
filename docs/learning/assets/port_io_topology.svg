@@ -1,0 +1,122 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000"
+     viewBox="0 0 1600 1000" role="img"
+     aria-labelledby="title description">
+  <title id="title">x86 Port I/O 总线与六组设备寄存器</title>
+  <desc id="description">
+    CPU 通过独立的 16 位端口空间连接 COM1、PIC、PIT、PS2、ATA 和 fw_cfg。
+    六张设备卡片分别给出端口、访问宽度、协议和当前用途。
+  </desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <marker id="arrow-blue" markerWidth="12" markerHeight="12"
+            refX="10" refY="5" orient="auto" markerUnits="userSpaceOnUse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+             fill: #172033; }
+      .title { font-size: 35px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .section { font-size: 21px; font-weight: 740; }
+      .card-title { font-size: 22px; font-weight: 750; }
+      .port { font-size: 17px; font-weight: 700; fill: #1d4ed8; }
+      .body { font-size: 16px; fill: #42516a; }
+      .small { font-size: 14px; fill: #5d6b82; }
+      .mono { font-family: "JetBrains Mono", "Noto Sans Mono", monospace; }
+      .card { fill: #ffffff; stroke: #8da0b9; stroke-width: 1.5; }
+      .io-left, .io-right { fill: none; stroke: #2563eb; stroke-width: 3.5;
+                            stroke-dasharray: 10 8; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="1000" fill="#f4f7fb"/>
+  <text x="55" y="58" class="title">图 4 · x86 Port I/O 总线与设备寄存器</text>
+  <text x="55" y="89" class="subtitle">
+    端口号不是物理地址，不经过页表；访问宽度、状态位和读写顺序共同构成硬件协议
+  </text>
+
+  <!-- CPU -->
+  <rect x="560" y="125" width="480" height="125" rx="18"
+        fill="#dcecff" stroke="#2563eb" stroke-width="2.2"
+        filter="url(#shadow)"/>
+  <text x="600" y="165" class="card-title">x86-64 CPU</text>
+  <text x="600" y="198" class="body">
+    DX / immediate 提供 16-bit port number
+  </text>
+  <text x="600" y="226" class="body">
+    IN / OUT 的 8-bit、16-bit 宽度必须匹配设备契约
+  </text>
+
+  <!-- Vertical bus -->
+  <rect x="750" y="285" width="100" height="580" rx="18"
+        fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
+  <text x="793" y="575" class="section"
+        transform="rotate(-90 793 575)">16-bit Port I/O Space</text>
+  <path d="M 800 262 V 273" class="io-right"/>
+
+  <!-- Left cards -->
+  <rect x="55" y="300" width="570" height="160" rx="17"
+        fill="#eef8ff" stroke="#4f86b5" stroke-width="1.6"
+        filter="url(#shadow)"/>
+  <text x="82" y="335" class="card-title">16550A UART / COM1</text>
+  <text x="82" y="366" class="port mono">0x3F8..0x3FF · 8-bit registers</text>
+  <text x="82" y="397" class="body">115200 · 8N1；轮询 THRE 后发送字节</text>
+  <text x="82" y="427" class="small">最早日志；Kernel stdout / stderr 最终也到这里</text>
+  <path d="M 637 380 H 738" class="io-left"/>
+
+  <rect x="55" y="500" width="570" height="160" rx="17"
+        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"
+        filter="url(#shadow)"/>
+  <text x="82" y="535" class="card-title">8259A Master + Slave PIC</text>
+  <text x="82" y="566" class="port mono">0x20/0x21 · 0xA0/0xA1 · 8-bit</text>
+  <text x="82" y="597" class="body">ICW 初始化、IMR mask、IRR/ISR 观察、OCW2 EOI</text>
+  <text x="82" y="627" class="small">端口线用于配置；IRQ 输出另见“中断路由”图</text>
+  <path d="M 637 580 H 738" class="io-left"/>
+
+  <rect x="55" y="700" width="570" height="160" rx="17"
+        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"
+        filter="url(#shadow)"/>
+  <text x="82" y="735" class="card-title">8254 PIT · channel 0</text>
+  <text x="82" y="766" class="port mono">data 0x40 · command 0x43 · 8-bit</text>
+  <text x="82" y="797" class="body">mode 2；先写低计数，再写高计数；约 1000 Hz</text>
+  <text x="82" y="827" class="small">端口线负责配置计数器；输出脉冲走 IRQ0</text>
+  <path d="M 637 780 H 738" class="io-left"/>
+
+  <!-- Right cards -->
+  <rect x="975" y="300" width="570" height="160" rx="17"
+        fill="#fff0f0" stroke="#dc2626" stroke-width="1.6"
+        filter="url(#shadow)"/>
+  <text x="1002" y="335" class="card-title">i8042 / PS/2 Keyboard</text>
+  <text x="1002" y="366" class="port mono">data 0x60 · status/command 0x64 · 8-bit</text>
+  <text x="1002" y="397" class="body">等待缓冲区状态；配置第一端口；读取 scan code</text>
+  <text x="1002" y="427" class="small">蓝线取得数据；设备有字符时通过 IRQ1 通知 CPU</text>
+  <path d="M 862 380 H 963" class="io-right"/>
+
+  <rect x="975" y="500" width="570" height="160" rx="17"
+        fill="#fff7d6" stroke="#c88712" stroke-width="1.6"
+        filter="url(#shadow)"/>
+  <text x="1002" y="535" class="card-title">IDE / ATA primary master</text>
+  <text x="1002" y="566" class="port mono">0x1F0..0x1F7 · control 0x3F6</text>
+  <text x="1002" y="597" class="body">data port 16-bit：每扇区精确传输 256 words</text>
+  <text x="1002" y="627" class="small">LBA28；按序检查 BSY / DRQ / ERR / DF；IRQ14 关闭</text>
+  <path d="M 862 580 H 963" class="io-right"/>
+
+  <rect x="975" y="700" width="570" height="160" rx="17"
+        fill="#eef8ff" stroke="#4f86b5" stroke-width="1.6"
+        filter="url(#shadow)"/>
+  <text x="1002" y="735" class="card-title">QEMU fw_cfg</text>
+  <text x="1002" y="766" class="port mono">selector 0x510 · data 0x511</text>
+  <text x="1002" y="797" class="body">16-bit selector 选择条目；data port 按 8-bit 流读取</text>
+  <text x="1002" y="827" class="small">Stage 1 验证 “QEMU” 签名并解析、排序 etc/e820</text>
+  <path d="M 862 780 H 963" class="io-right"/>
+
+  <rect x="55" y="905" width="1490" height="55" rx="13"
+        fill="#ffffff" stroke="#c7d1df"/>
+  <text x="82" y="939" class="body">
+    同一条总线 ≠ 同一种协议：COM1 等 THRE，PS/2 等缓冲区，ATA 等 BSY/DRQ，PIC 还要求 EOI
+  </text>
+  <text x="1220" y="939" class="small">MMIO Local APIC 不在本图</text>
+</svg>

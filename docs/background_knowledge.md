@@ -1,6 +1,12 @@
 # 背景知识：从宿主机到 x86-64 复位向量
 
-本文建立阅读和开发本项目所需的共同知识基础。它不假定宿主机是 x86-64，也不假定读者已经写过引导程序或内核。
+本文建立阅读和开发本项目所需的共同知识基础。它不假定宿主机是 x86-64，也不
+假定读者已经写过引导程序或内核。
+
+本文适合连续建立全貌；若需要逐主题深入推导，请进入
+[七册背景知识专题](learning/background/README.md)。专题把机器/x86 历史、
+位与 ABI、工具链/ELF、内存/异常、设备/中断、进程/文件/Shell、测试/调试
+分别展开，并从每个 v0.x/v1.x 阶段回链。
 
 ## 1. 我们究竟在构建什么
 
@@ -21,7 +27,7 @@ CPU 复位
   ↓
 自研 ROM 固件
   ↓
-自研 Stage 1 / Stage 2
+自研 Stage 1（模式切换与 ELF loader）
   ↓
 ELF64 内核
   ↓
@@ -1497,17 +1503,19 @@ v1.3 先选择最小可证明策略：NMI 使用 TSS.IST2 的独立栈，只写�
 
 1. `docs/requirements.md`：明确目标和禁止事项。
 2. 本文：建立宿主机、目标机、复位与 freestanding 心智模型。
-3. `docs/architecture.md`：理解模块边界和依赖方向。
-4. `docs/building.md`：亲手完成一次构建。
-5. `docs/testing.md`：理解每项测试究竟证明什么。
-6. `docs/modules/foundation.md`：阅读第一个基础模块。
-7. `docs/modules/firmware.md`：走读 ROM、复位向量和串口契约。
-8. `docs/releases/`：按阶段查看实施证据，尤其是 v0.4 的目标机装载链和
+3. `docs/learning/background/`：按专题补齐 x86、ABI、工具链、内存、设备、
+   用户抽象和测试推导。
+4. `docs/architecture.md`：理解模块边界和依赖方向。
+5. `docs/building.md`：亲手完成一次构建。
+6. `docs/testing.md`：理解每项测试究竟证明什么。
+7. `docs/modules/foundation.md`：阅读第一个基础模块。
+8. `docs/modules/firmware.md`：走读 ROM、复位向量和串口契约。
+9. `docs/releases/`：按阶段查看实施证据，尤其是 v0.4 的目标机装载链和
    v0.5 的异常控制流、v0.6 的内存所有权/页表权限、v0.7 的硬件 IRQ
    与设备闭环、v0.8 的用户特权边界、v0.9 的进程地址空间与抢占调度，
    v0.10 的同步、阻塞/唤醒和管道 IPC，v1.1 的通用资源生命周期，以及
    v1.2 的 Process/Thread、WaitQueue 与完整扩展现场，v1.3 的 CpuLocal、
    原生系统调用和安全返回，以及 v1.4 的 KernelObject、共享
    FileDescription 与动态 FileTable。
-9. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
-10. `docs/roadmap.md`：了解后续知识如何逐层展开。
+10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
+11. `docs/roadmap.md`：了解后续知识如何逐层展开。

@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900"
+     viewBox="0 0 1600 900" role="img"
+     aria-labelledby="title description">
+  <title id="title">从 v0.0 到 v1.0 的硬件与系统能力装配路线</title>
+  <desc id="description">
+    四个阶段面板展示工程与启动、内核接管硬件、用户与进程、持久化与交互环境
+    共十三个版本增量。
+  </desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.08"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+             fill: #172033; }
+      .title { font-size: 34px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .phase { font-size: 23px; font-weight: 750; }
+      .phase-sub { font-size: 14px; fill: #607089; }
+      .version { font-size: 18px; font-weight: 780; fill: #ffffff; }
+      .card-title { font-size: 18px; font-weight: 720; }
+      .body { font-size: 14px; fill: #526079; }
+      .footer { font-size: 15px; fill: #526079; }
+      .phase-panel { fill: #ffffff; stroke: #b5c0d1; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <rect width="1600" height="900" fill="#f4f7fb"/>
+  <text x="55" y="58" class="title">图 2 · 从 v0.0 到 v1.0：分阶段装配路线</text>
+  <text x="55" y="88" class="subtitle">
+    前五步让机器启动；中间三步让 Kernel 接管硬件；后五步在同一硬件上建立受保护的软件系统
+  </text>
+
+  <!-- Phase panels -->
+  <rect x="45" y="145" width="360" height="660" rx="20"
+        class="phase-panel" filter="url(#shadow)"/>
+  <rect x="425" y="145" width="360" height="660" rx="20"
+        class="phase-panel" filter="url(#shadow)"/>
+  <rect x="805" y="145" width="360" height="660" rx="20"
+        class="phase-panel" filter="url(#shadow)"/>
+  <rect x="1185" y="145" width="370" height="660" rx="20"
+        class="phase-panel" filter="url(#shadow)"/>
+
+  <!-- Headers -->
+  <rect x="45" y="145" width="360" height="88" rx="20" fill="#fff1e8"/>
+  <text x="70" y="181" class="phase">A · 工程与自举</text>
+  <text x="70" y="208" class="phase-sub">Host → ROM → Stage 1 → 64-bit Kernel</text>
+
+  <rect x="425" y="145" width="360" height="88" rx="20" fill="#eaf2ff"/>
+  <text x="450" y="181" class="phase">B · Kernel 接管机器</text>
+  <text x="450" y="208" class="phase-sub">架构状态 → 内存 → 中断与设备</text>
+
+  <rect x="805" y="145" width="360" height="88" rx="20" fill="#eafaf0"/>
+  <text x="830" y="181" class="phase">C · 受保护的并发系统</text>
+  <text x="830" y="208" class="phase-sub">Ring 3 → Process → IPC</text>
+
+  <rect x="1185" y="145" width="370" height="88" rx="20" fill="#e8faf7"/>
+  <text x="1210" y="181" class="phase">D · 持久化与用户环境</text>
+  <text x="1210" y="208" class="phase-sub">Filesystem → fd / Console / Shell</text>
+
+  <!-- Phase A cards -->
+  <g>
+    <rect x="65" y="255" width="320" height="88" rx="13"
+          fill="#fffaf6" stroke="#fdba74"/>
+    <rect x="65" y="255" width="72" height="88" rx="13" fill="#7c3aed"/>
+    <text x="82" y="307" class="version">v0.0</text>
+    <text x="154" y="285" class="card-title">工程与测试底座</text>
+    <text x="154" y="313" class="body">工具链、镜像审计、QEMU 证据</text>
+
+    <rect x="65" y="356" width="320" height="88" rx="13"
+          fill="#fffaf6" stroke="#fdba74"/>
+    <rect x="65" y="356" width="72" height="88" rx="13" fill="#ea580c"/>
+    <text x="82" y="408" class="version">v0.1</text>
+    <text x="154" y="386" class="card-title">复位与 COM1</text>
+    <text x="154" y="414" class="body">reset vector → ROM → 串口</text>
+
+    <rect x="65" y="457" width="320" height="88" rx="13"
+          fill="#fffaf6" stroke="#fdba74"/>
+    <rect x="65" y="457" width="72" height="88" rx="13" fill="#ea580c"/>
+    <text x="82" y="509" class="version">v0.2</text>
+    <text x="154" y="487" class="card-title">Firmware 加载 Stage 1</text>
+    <text x="154" y="515" class="body">ATA PIO → RAM 0x8000</text>
+
+    <rect x="65" y="558" width="320" height="88" rx="13"
+          fill="#fffaf6" stroke="#fdba74"/>
+    <rect x="65" y="558" width="72" height="88" rx="13" fill="#ea580c"/>
+    <text x="82" y="610" class="version">v0.3</text>
+    <text x="154" y="588" class="card-title">进入 Long Mode</text>
+    <text x="154" y="616" class="body">A20、GDT、CR3、EFER</text>
+
+    <rect x="65" y="659" width="320" height="88" rx="13"
+          fill="#fffaf6" stroke="#fdba74"/>
+    <rect x="65" y="659" width="72" height="88" rx="13" fill="#ea580c"/>
+    <text x="82" y="711" class="version">v0.4</text>
+    <text x="154" y="689" class="card-title">ELF64 与 BootInfo</text>
+    <text x="154" y="717" class="body">PT_LOAD → C++ Kernel</text>
+  </g>
+
+  <!-- Phase B cards -->
+  <g>
+    <rect x="445" y="270" width="320" height="115" rx="14"
+          fill="#f7faff" stroke="#93b4ea"/>
+    <rect x="445" y="270" width="76" height="115" rx="14" fill="#2563eb"/>
+    <text x="462" y="334" class="version">v0.5</text>
+    <text x="540" y="307" class="card-title">架构接管</text>
+    <text x="540" y="337" class="body">GDT / TSS / IDT / IST</text>
+    <text x="540" y="361" class="body">异常现场与 panic</text>
+
+    <rect x="445" y="410" width="320" height="115" rx="14"
+          fill="#f7faff" stroke="#93b4ea"/>
+    <rect x="445" y="410" width="76" height="115" rx="14" fill="#2563eb"/>
+    <text x="462" y="474" class="version">v0.6</text>
+    <text x="540" y="447" class="card-title">正式内存管理</text>
+    <text x="540" y="477" class="body">E820、frames、page tables</text>
+    <text x="540" y="501" class="body">NX / WP / heap / guard</text>
+
+    <rect x="445" y="550" width="320" height="115" rx="14"
+          fill="#f7faff" stroke="#93b4ea"/>
+    <rect x="445" y="550" width="76" height="115" rx="14" fill="#2563eb"/>
+    <text x="462" y="614" class="version">v0.7</text>
+    <text x="540" y="587" class="card-title">异步中断与设备</text>
+    <text x="540" y="617" class="body">PIT / PS2 → PIC → LAPIC</text>
+    <text x="540" y="641" class="body">ATA、HLT、EOI</text>
+  </g>
+
+  <!-- Phase C cards -->
+  <g>
+    <rect x="825" y="270" width="320" height="115" rx="14"
+          fill="#f5fcf7" stroke="#86d5a2"/>
+    <rect x="825" y="270" width="76" height="115" rx="14" fill="#16a34a"/>
+    <text x="842" y="334" class="version">v0.8</text>
+    <text x="920" y="307" class="card-title">Ring 3 与系统调用</text>
+    <text x="920" y="337" class="body">U/S pages、TSS.RSP0</text>
+    <text x="920" y="361" class="body">INT 0x80 / IRETQ</text>
+
+    <rect x="825" y="410" width="320" height="115" rx="14"
+          fill="#f5fcf7" stroke="#86d5a2"/>
+    <rect x="825" y="410" width="76" height="115" rx="14" fill="#16a34a"/>
+    <text x="842" y="474" class="version">v0.9</text>
+    <text x="920" y="447" class="card-title">进程与抢占</text>
+    <text x="920" y="477" class="body">独立 CR3、Ring 0 stack</text>
+    <text x="920" y="501" class="body">PIT tick → scheduler</text>
+
+    <rect x="825" y="550" width="320" height="115" rx="14"
+          fill="#f5fcf7" stroke="#86d5a2"/>
+    <rect x="825" y="550" width="76" height="115" rx="14" fill="#16a34a"/>
+    <text x="835" y="614" class="version">v0.10</text>
+    <text x="920" y="587" class="card-title">同步、阻塞与管道</text>
+    <text x="920" y="617" class="body">spinlock / wake condition</text>
+    <text x="920" y="641" class="body">backpressure / EOF</text>
+  </g>
+
+  <!-- Phase D cards -->
+  <g>
+    <rect x="1205" y="280" width="330" height="135" rx="14"
+          fill="#f3fcfa" stroke="#69c9b8"/>
+    <rect x="1205" y="280" width="80" height="135" rx="14" fill="#0f9f83"/>
+    <text x="1215" y="353" class="version">v0.11</text>
+    <text x="1305" y="320" class="card-title">文件系统与持久性</text>
+    <text x="1305" y="352" class="body">inode / bitmap / cache</text>
+    <text x="1305" y="378" class="body">ATA WRITE + FLUSH</text>
+
+    <rect x="1205" y="445" width="330" height="135" rx="14"
+          fill="#f3fcfa" stroke="#69c9b8"/>
+    <rect x="1205" y="445" width="80" height="135" rx="14" fill="#07836e"/>
+    <text x="1223" y="518" class="version">v1.0</text>
+    <text x="1305" y="485" class="card-title">统一 fd 与 Shell</text>
+    <text x="1305" y="517" class="body">Console FIFO → fd 0</text>
+    <text x="1305" y="543" class="body">Ring 3 interactive shell</text>
+
+    <rect x="1205" y="615" width="330" height="105" rx="14"
+          fill="#ecfdf5" stroke="#10b981" stroke-width="1.5"/>
+    <text x="1230" y="653" class="card-title">v1.0 第一周期闭环</text>
+    <text x="1230" y="683" class="body">输入、进程、IPC、文件与持久化</text>
+  </g>
+
+  <rect x="45" y="832" width="1510" height="45" rx="12"
+        fill="#ffffff" stroke="#c7d1df"/>
+  <text x="70" y="860" class="footer">
+    颜色含义：橙 = 启动链　蓝 = Kernel / 硬件接管　绿 = 用户与并发　青 = 持久化与交互
+  </text>
+  <text x="1190" y="860" class="footer">当前 v1.4：v1.1 资源回收 → v1.2 Thread → v1.3 SYSCALL → v1.4 动态 fd</text>
+</svg>

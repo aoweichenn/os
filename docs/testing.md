@@ -609,13 +609,14 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_qemu_native_system_call_unsupported` | 系统/失败路径 | 禁用 SYSCALL 后必须输出缺失能力位图且不进入后续架构初始化 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计、Kernel 对称功能目录和手机教材导出工具 |
+| `os_learning_diagram_geometry_check` | 单元 | 七张系统 SVG 的 marker/8px 安全区，以及三张实体电路 SVG 的显式 pin、net、NC 和导线连通性 |
 | `os_cpp_identifier_naming_check` | 集成 | 全部 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 106 项 CTest。v1.4 删除旧固定描述符测试并新增 FileTable 单元、
+当前共 107 项 CTest。v1.4 删除旧固定描述符测试并新增 FileTable 单元、
 FileDescription 生命周期集成、4096 fd 容量集成和十万步随机模型四项；
 v1.3 的处理器 profile、UserContext、CpuLocal/MSR 布局与十万现场随机测试，
 以及主动 SYSCALL 缺失路径继续保留；
@@ -625,7 +626,8 @@ v1.2 的 Process/Thread 单元、集成和十万步随机测试及
 `os_python_tooling_unit_tests` 内的 Kernel 布局测试还会扫描真实源码树，
 要求 include/src 拥有相同的十二组模块、根目录没有实现文件、每个公开头文件
 具有同模块实现，并通过临时错误树证明扁平文件和缺失实现会被拒绝。它复用现有
-Python 测试集合，因此加强结构证据而不虚增顶层 CTest 数量。
+Python 测试集合，因此加强结构证据而不虚增顶层 CTest 数量。学习图册另有
+独立顶层 CTest，逐个检查系统图几何安全区与实体电路的显式引脚/网络连通性。
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像

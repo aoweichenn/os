@@ -62,7 +62,7 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
 sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
 完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；v1.4 完整回归共
-106 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
+107 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
 函数和命名空间。
 
 第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
@@ -354,7 +354,7 @@ source/          操作系统与 freestanding 基础模块
   kernel/        x86-64 Kernel；include/src 均按功能目录对称组织
 tests/           单元、集成、随机和 QEMU 系统测试
 tools/           Python 构建、检查、镜像和 QEMU 调度工具
-docs/            需求、架构、模块、测试、调试和发布记录
+docs/            需求、架构、分阶段学习、测试、调试和发布记录
 books/           可独立构建的 LaTeX 系统教材
 ```
 
@@ -366,6 +366,15 @@ books/           可独立构建的 LaTeX 系统教材
 禁止重新把文件堆到根目录。详细规则见
 [Kernel 源码布局](source/kernel/README.md)，模块契约见
 [docs/modules/kernel.md](docs/modules/kernel.md)。
+
+从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
+对照当前 v1.1–v1.4 第二周期实现的路线见
+[docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
+十四个第一周期阶段和一份 v1.1–v1.4 迁移地图；ROM、CPU、RAM、端口 I/O、
+IRQ、ATA 磁盘与软件所有权的整体关系可先看
+[整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
+现实 N100 计算模组载板的十页原理图、三张逐引脚学习电路和 QEMU/实机边界见
+[实体 x86-64 载板电路详解](docs/learning/physical-carrier-circuit-guide.md)。
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。

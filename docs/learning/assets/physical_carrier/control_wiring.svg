@@ -1,0 +1,407 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="2400" height="2200" viewBox="0 0 2400 2200"
+     role="img" aria-labelledby="title description">
+  <title id="title">LattePanda Mu 载板低速控制完整连线学习图</title>
+  <desc id="description">逐根展示电源按键、复位、状态、RTC、风扇、UART、I2C 和 UPS 控制线。</desc>
+  <defs>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6"
+                    flood-color="#0f172a" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      text { font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+              fill: #172033; }
+      .title { font-size: 34px; font-weight: 760; }
+      .subtitle { font-size: 17px; fill: #526079; }
+      .panel-title { font-size: 22px; font-weight: 740; }
+      .component-title { font-size: 17px; font-weight: 720; }
+      .pin-label { font-size: 13px; fill: #334155; }
+      .net-label { font-family: "JetBrains Mono", "Noto Sans Mono", monospace;
+                    font-size: 12px; fill: #1e40af; }
+      .note { font-size: 13px; fill: #526079; }
+      .component { fill: #ffffff; stroke: #64748b; stroke-width: 1.6; }
+      .module { fill: #e8f1ff; stroke: #2563eb; stroke-width: 1.8; }
+      .connector { fill: #fff7d6; stroke: #b7791f; stroke-width: 1.8; }
+      .power-block { fill: #fff1f2; stroke: #be123c; stroke-width: 1.8; }
+      .protection { fill: #f5f3ff; stroke: #7c3aed; stroke-width: 1.6; }
+      .schematic-wire { fill: none; stroke: #15803d; stroke-width: 2.2; }
+      .schematic-wire[data-kind="differential"] {
+          stroke: #2563eb; stroke-width: 2.1;
+      }
+      .schematic-wire[data-kind="power"] {
+          stroke: #dc2626; stroke-width: 3.2;
+      }
+      .schematic-wire[data-kind="ground"] {
+          stroke: #334155; stroke-width: 2.8;
+      }
+      .schematic-wire[data-kind="control"] {
+          stroke: #7c3aed; stroke-width: 2.1;
+      }
+      .pin { fill: #ffffff; stroke: #0f766e; stroke-width: 1.8; }
+      .junction { fill: #15803d; stroke: none; }
+      .no-connect { fill: #ffffff; stroke: #dc2626; stroke-width: 1.8; }
+      .nc-mark { stroke: #dc2626; stroke-width: 2; }
+      .panel { fill: #ffffff; stroke: #c3cfdd; stroke-width: 1.4; }
+      .legend { fill: #f8fafc; stroke: #cbd5e1; stroke-width: 1.2; }
+    </style>
+  </defs>
+  <rect width="2400" height="2200" fill="#f4f7fb"/>
+  <text x="45" y="52" class="title" text-anchor="start">实体载板学习图 3/3：低速控制、调试与状态线</text>
+  <text x="45" y="82" class="subtitle" text-anchor="start">所有外露信号均为 3.3V 逻辑；每个连接器的电源和地也单独列出</text>
+  <rect x="35" y="115" width="1150" height="350" rx="16" class="panel"/>
+  <text x="59" y="150" class="panel-title" text-anchor="start">开机、复位和状态</text>
+  <rect x="59" y="189" width="310" height="258" rx="10" class="module"/>
+  <rect x="851" y="189" width="310" height="258" rx="10" class="connector"/>
+  <text x="214" y="213" class="component-title" text-anchor="middle">LattePanda Mu / PSU logic</text>
+  <text x="1006" y="213" class="component-title" text-anchor="middle">SW1, SW2 and JP4</text>
+  <circle cx="369" cy="237" r="4.5" class="pin" data-pin="开机、复位和状态:Mu pin 1, internal 10k PU" data-net="PWR_SW_N"/>
+  <circle cx="851" cy="237" r="4.5" class="pin" data-pin="开机、复位和状态:SW1 → GND" data-net="PWR_SW_N"/>
+  <path d="M 369 237 L 851 237" class="schematic-wire" data-net="PWR_SW_N" data-kind="control"/>
+  <text x="357" y="242" class="pin-label" text-anchor="end">Mu pin 1, internal 10k PU</text>
+  <text x="863" y="242" class="pin-label" text-anchor="start">SW1 → GND</text>
+  <text x="610" y="231" class="net-label" text-anchor="middle">PWR_SW_N</text>
+  <circle cx="369" cy="267" r="4.5" class="pin" data-pin="开机、复位和状态:Mu pin 3, internal 10k PU" data-net="RST_SW_N"/>
+  <circle cx="851" cy="267" r="4.5" class="pin" data-pin="开机、复位和状态:SW2 → GND" data-net="RST_SW_N"/>
+  <path d="M 369 267 L 851 267" class="schematic-wire" data-net="RST_SW_N" data-kind="control"/>
+  <text x="357" y="272" class="pin-label" text-anchor="end">Mu pin 3, internal 10k PU</text>
+  <text x="863" y="272" class="pin-label" text-anchor="start">SW2 → GND</text>
+  <text x="610" y="261" class="net-label" text-anchor="middle">RST_SW_N</text>
+  <circle cx="369" cy="297" r="4.5" class="pin" data-pin="开机、复位和状态:Mu pin 5" data-net="PSON"/>
+  <circle cx="851" cy="297" r="4.5" class="pin" data-pin="开机、复位和状态:JP1 / PWR_EN / status LED" data-net="PSON"/>
+  <path d="M 369 297 L 851 297" class="schematic-wire" data-net="PSON" data-kind="control"/>
+  <text x="357" y="302" class="pin-label" text-anchor="end">Mu pin 5</text>
+  <text x="863" y="302" class="pin-label" text-anchor="start">JP1 / PWR_EN / status LED</text>
+  <text x="610" y="291" class="net-label" text-anchor="middle">PSON</text>
+  <circle cx="369" cy="327" r="4.5" class="pin" data-pin="开机、复位和状态:Mu pin 7" data-net="SLP_S4"/>
+  <circle cx="851" cy="327" r="4.5" class="pin" data-pin="开机、复位和状态:JP1 / sleep LED" data-net="SLP_S4"/>
+  <path d="M 369 327 L 851 327" class="schematic-wire" data-net="SLP_S4" data-kind="control"/>
+  <text x="357" y="332" class="pin-label" text-anchor="end">Mu pin 7</text>
+  <text x="863" y="332" class="pin-label" text-anchor="start">JP1 / sleep LED</text>
+  <text x="610" y="321" class="net-label" text-anchor="middle">SLP_S4</text>
+  <circle cx="369" cy="357" r="4.5" class="pin" data-pin="开机、复位和状态:+3V3 through 200R" data-net="POWER_SW_HDR"/>
+  <circle cx="851" cy="357" r="4.5" class="pin" data-pin="开机、复位和状态:JP4 POWER_SW" data-net="POWER_SW_HDR"/>
+  <path d="M 369 357 L 851 357" class="schematic-wire" data-net="POWER_SW_HDR" data-kind="power"/>
+  <text x="357" y="362" class="pin-label" text-anchor="end">+3V3 through 200R</text>
+  <text x="863" y="362" class="pin-label" text-anchor="start">JP4 POWER_SW</text>
+  <text x="610" y="351" class="net-label" text-anchor="middle">POWER_SW_HDR</text>
+  <circle cx="369" cy="387" r="4.5" class="pin" data-pin="开机、复位和状态:GND reference" data-net="RESET_SW_HDR"/>
+  <circle cx="851" cy="387" r="4.5" class="pin" data-pin="开机、复位和状态:JP4 RESET_SW" data-net="RESET_SW_HDR"/>
+  <path d="M 369 387 L 851 387" class="schematic-wire" data-net="RESET_SW_HDR" data-kind="ground"/>
+  <text x="357" y="392" class="pin-label" text-anchor="end">GND reference</text>
+  <text x="863" y="392" class="pin-label" text-anchor="start">JP4 RESET_SW</text>
+  <text x="610" y="381" class="net-label" text-anchor="middle">RESET_SW_HDR</text>
+  <circle cx="369" cy="417" r="4.5" class="pin" data-pin="开机、复位和状态:PSON transistor output" data-net="PWR_LED_HDR"/>
+  <circle cx="851" cy="417" r="4.5" class="pin" data-pin="开机、复位和状态:JP4 PWR_LED" data-net="PWR_LED_HDR"/>
+  <path d="M 369 417 L 851 417" class="schematic-wire" data-net="PWR_LED_HDR" data-kind="control"/>
+  <text x="357" y="422" class="pin-label" text-anchor="end">PSON transistor output</text>
+  <text x="863" y="422" class="pin-label" text-anchor="start">JP4 PWR_LED</text>
+  <text x="610" y="411" class="net-label" text-anchor="middle">PWR_LED_HDR</text>
+  <circle cx="369" cy="447" r="4.5" class="pin" data-pin="开机、复位和状态:GND plane" data-net="GND_BUTTONS"/>
+  <circle cx="851" cy="447" r="4.5" class="pin" data-pin="开机、复位和状态:SW1/SW2/JP4 return" data-net="GND_BUTTONS"/>
+  <path d="M 369 447 L 851 447" class="schematic-wire" data-net="GND_BUTTONS" data-kind="ground"/>
+  <text x="357" y="452" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="863" y="452" class="pin-label" text-anchor="start">SW1/SW2/JP4 return</text>
+  <text x="610" y="441" class="net-label" text-anchor="middle">GND_BUTTONS</text>
+  <rect x="35" y="493" width="1150" height="380" rx="16" class="panel"/>
+  <text x="59" y="528" class="panel-title" text-anchor="start">风扇和温度输入</text>
+  <rect x="59" y="567" width="310" height="288" rx="10" class="module"/>
+  <rect x="851" y="567" width="310" height="288" rx="10" class="connector"/>
+  <text x="214" y="591" class="component-title" text-anchor="middle">LattePanda Mu / rails</text>
+  <text x="1006" y="591" class="component-title" text-anchor="middle">M1 CPU fan, M2 option, JP2</text>
+  <circle cx="369" cy="615" r="4.5" class="pin" data-pin="风扇和温度输入:Mu pin 2 FAN2_CTL" data-net="CPU_FAN_PWM"/>
+  <circle cx="851" cy="615" r="4.5" class="pin" data-pin="风扇和温度输入:M1 PWM through R69" data-net="CPU_FAN_PWM"/>
+  <path d="M 369 615 L 851 615" class="schematic-wire" data-net="CPU_FAN_PWM" data-kind="control"/>
+  <text x="357" y="620" class="pin-label" text-anchor="end">Mu pin 2 FAN2_CTL</text>
+  <text x="863" y="620" class="pin-label" text-anchor="start">M1 PWM through R69</text>
+  <text x="610" y="609" class="net-label" text-anchor="middle">CPU_FAN_PWM</text>
+  <circle cx="369" cy="645" r="4.5" class="pin" data-pin="风扇和温度输入:Mu pin 4 FAN2_TAC" data-net="CPU_FAN_TACH"/>
+  <circle cx="851" cy="645" r="4.5" class="pin" data-pin="风扇和温度输入:M1 TACH through R68" data-net="CPU_FAN_TACH"/>
+  <path d="M 369 645 L 851 645" class="schematic-wire" data-net="CPU_FAN_TACH" data-kind="control"/>
+  <text x="357" y="650" class="pin-label" text-anchor="end">Mu pin 4 FAN2_TAC</text>
+  <text x="863" y="650" class="pin-label" text-anchor="start">M1 TACH through R68</text>
+  <text x="610" y="639" class="net-label" text-anchor="middle">CPU_FAN_TACH</text>
+  <circle cx="369" cy="675" r="4.5" class="pin" data-pin="风扇和温度输入:+5V_FAN rail" data-net="CPU_FAN_5V"/>
+  <circle cx="851" cy="675" r="4.5" class="pin" data-pin="风扇和温度输入:M1 power" data-net="CPU_FAN_5V"/>
+  <path d="M 369 675 L 851 675" class="schematic-wire" data-net="CPU_FAN_5V" data-kind="power"/>
+  <text x="357" y="680" class="pin-label" text-anchor="end">+5V_FAN rail</text>
+  <text x="863" y="680" class="pin-label" text-anchor="start">M1 power</text>
+  <text x="610" y="669" class="net-label" text-anchor="middle">CPU_FAN_5V</text>
+  <circle cx="369" cy="705" r="4.5" class="pin" data-pin="风扇和温度输入:GND plane CPU branch" data-net="GND_CPU_FAN"/>
+  <circle cx="851" cy="705" r="4.5" class="pin" data-pin="风扇和温度输入:M1 return" data-net="GND_CPU_FAN"/>
+  <path d="M 369 705 L 851 705" class="schematic-wire" data-net="GND_CPU_FAN" data-kind="ground"/>
+  <text x="357" y="710" class="pin-label" text-anchor="end">GND plane CPU branch</text>
+  <text x="863" y="710" class="pin-label" text-anchor="start">M1 return</text>
+  <text x="610" y="699" class="net-label" text-anchor="middle">GND_CPU_FAN</text>
+  <circle cx="369" cy="735" r="4.5" class="pin" data-pin="风扇和温度输入:Mu pin 6 FAN3_CTL" data-net="SYS_FAN_PWM"/>
+  <circle cx="851" cy="735" r="4.5" class="pin" data-pin="风扇和温度输入:M2 option PWM" data-net="SYS_FAN_PWM"/>
+  <path d="M 369 735 L 851 735" class="schematic-wire" data-net="SYS_FAN_PWM" data-kind="control"/>
+  <text x="357" y="740" class="pin-label" text-anchor="end">Mu pin 6 FAN3_CTL</text>
+  <text x="863" y="740" class="pin-label" text-anchor="start">M2 option PWM</text>
+  <text x="610" y="729" class="net-label" text-anchor="middle">SYS_FAN_PWM</text>
+  <circle cx="369" cy="765" r="4.5" class="pin" data-pin="风扇和温度输入:Mu pin 8 FAN3_TAC" data-net="SYS_FAN_TACH"/>
+  <circle cx="851" cy="765" r="4.5" class="pin" data-pin="风扇和温度输入:M2 option TACH" data-net="SYS_FAN_TACH"/>
+  <path d="M 369 765 L 851 765" class="schematic-wire" data-net="SYS_FAN_TACH" data-kind="control"/>
+  <text x="357" y="770" class="pin-label" text-anchor="end">Mu pin 8 FAN3_TAC</text>
+  <text x="863" y="770" class="pin-label" text-anchor="start">M2 option TACH</text>
+  <text x="610" y="759" class="net-label" text-anchor="middle">SYS_FAN_TACH</text>
+  <circle cx="369" cy="795" r="4.5" class="pin" data-pin="风扇和温度输入:+12V option rail" data-net="SYS_FAN_12V"/>
+  <circle cx="851" cy="795" r="4.5" class="pin" data-pin="风扇和温度输入:M2 option power" data-net="SYS_FAN_12V"/>
+  <path d="M 369 795 L 851 795" class="schematic-wire" data-net="SYS_FAN_12V" data-kind="power"/>
+  <text x="357" y="800" class="pin-label" text-anchor="end">+12V option rail</text>
+  <text x="863" y="800" class="pin-label" text-anchor="start">M2 option power</text>
+  <text x="610" y="789" class="net-label" text-anchor="middle">SYS_FAN_12V</text>
+  <circle cx="369" cy="825" r="4.5" class="pin" data-pin="风扇和温度输入:GND plane SYS branch" data-net="GND_SYS_FAN"/>
+  <circle cx="851" cy="825" r="4.5" class="pin" data-pin="风扇和温度输入:M2 option return" data-net="GND_SYS_FAN"/>
+  <path d="M 369 825 L 851 825" class="schematic-wire" data-net="GND_SYS_FAN" data-kind="ground"/>
+  <text x="357" y="830" class="pin-label" text-anchor="end">GND plane SYS branch</text>
+  <text x="863" y="830" class="pin-label" text-anchor="start">M2 option return</text>
+  <text x="610" y="819" class="net-label" text-anchor="middle">GND_SYS_FAN</text>
+  <circle cx="369" cy="855" r="4.5" class="pin" data-pin="风扇和温度输入:Mu pin 9 TSENSE" data-net="TEMP_SENSE"/>
+  <circle cx="851" cy="855" r="4.5" class="pin" data-pin="风扇和温度输入:JP2 / optional NTC" data-net="TEMP_SENSE"/>
+  <path d="M 369 855 L 851 855" class="schematic-wire" data-net="TEMP_SENSE" data-kind="control"/>
+  <text x="357" y="860" class="pin-label" text-anchor="end">Mu pin 9 TSENSE</text>
+  <text x="863" y="860" class="pin-label" text-anchor="start">JP2 / optional NTC</text>
+  <text x="610" y="849" class="net-label" text-anchor="middle">TEMP_SENSE</text>
+  <rect x="35" y="901" width="1150" height="170" rx="16" class="panel"/>
+  <text x="59" y="936" class="panel-title" text-anchor="start">RTC 后备电池</text>
+  <rect x="59" y="975" width="310" height="78" rx="10" class="module"/>
+  <rect x="851" y="975" width="310" height="78" rx="10" class="connector"/>
+  <text x="214" y="999" class="component-title" text-anchor="middle">BT1 battery holder</text>
+  <text x="1006" y="999" class="component-title" text-anchor="middle">LattePanda Mu</text>
+  <circle cx="369" cy="1023" r="4.5" class="pin" data-pin="RTC 后备电池:BT1 CR1220 positive" data-net="VBAT_RTC"/>
+  <circle cx="851" cy="1023" r="4.5" class="pin" data-pin="RTC 后备电池:Mu pin 115 VBAT" data-net="VBAT_RTC"/>
+  <path d="M 369 1023 L 851 1023" class="schematic-wire" data-net="VBAT_RTC" data-kind="power"/>
+  <text x="357" y="1028" class="pin-label" text-anchor="end">BT1 CR1220 positive</text>
+  <text x="863" y="1028" class="pin-label" text-anchor="start">Mu pin 115 VBAT</text>
+  <text x="610" y="1017" class="net-label" text-anchor="middle">VBAT_RTC</text>
+  <circle cx="369" cy="1053" r="4.5" class="pin" data-pin="RTC 后备电池:BT1 CR1220 negative" data-net="GND_RTC"/>
+  <circle cx="851" cy="1053" r="4.5" class="pin" data-pin="RTC 后备电池:GND plane" data-net="GND_RTC"/>
+  <path d="M 369 1053 L 851 1053" class="schematic-wire" data-net="GND_RTC" data-kind="ground"/>
+  <text x="357" y="1058" class="pin-label" text-anchor="end">BT1 CR1220 negative</text>
+  <text x="863" y="1058" class="pin-label" text-anchor="start">GND plane</text>
+  <text x="610" y="1047" class="net-label" text-anchor="middle">GND_RTC</text>
+  <rect x="35" y="1099" width="1150" height="290" rx="16" class="panel"/>
+  <text x="59" y="1134" class="panel-title" text-anchor="start">Smart UPS 扩展控制与 USB</text>
+  <rect x="59" y="1173" width="310" height="198" rx="10" class="module"/>
+  <rect x="851" y="1173" width="310" height="198" rx="10" class="connector"/>
+  <text x="214" y="1197" class="component-title" text-anchor="middle">J19 DFR1247 header</text>
+  <text x="1006" y="1197" class="component-title" text-anchor="middle">Mu / PSU nets</text>
+  <circle cx="369" cy="1221" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:J19 pin 7 through U19 ESD" data-net="UPS_USB_DP"/>
+  <circle cx="851" cy="1221" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:Mu USB2 P8+ pin 82" data-net="UPS_USB_DP"/>
+  <path d="M 369 1221 L 851 1221" class="schematic-wire" data-net="UPS_USB_DP" data-kind="differential"/>
+  <text x="357" y="1226" class="pin-label" text-anchor="end">J19 pin 7 through U19 ESD</text>
+  <text x="863" y="1226" class="pin-label" text-anchor="start">Mu USB2 P8+ pin 82</text>
+  <text x="610" y="1215" class="net-label" text-anchor="middle">UPS_USB_DP</text>
+  <circle cx="369" cy="1251" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:J19 pin 6 through U19 ESD" data-net="UPS_USB_DN"/>
+  <circle cx="851" cy="1251" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:Mu USB2 P8- pin 84" data-net="UPS_USB_DN"/>
+  <path d="M 369 1251 L 851 1251" class="schematic-wire" data-net="UPS_USB_DN" data-kind="differential"/>
+  <text x="357" y="1256" class="pin-label" text-anchor="end">J19 pin 6 through U19 ESD</text>
+  <text x="863" y="1256" class="pin-label" text-anchor="start">Mu USB2 P8- pin 84</text>
+  <text x="610" y="1245" class="net-label" text-anchor="middle">UPS_USB_DN</text>
+  <circle cx="369" cy="1281" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:J19 pin 4" data-net="UPS_STATE_LP"/>
+  <circle cx="851" cy="1281" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:status input/test TP14" data-net="UPS_STATE_LP"/>
+  <path d="M 369 1281 L 851 1281" class="schematic-wire" data-net="UPS_STATE_LP" data-kind="control"/>
+  <text x="357" y="1286" class="pin-label" text-anchor="end">J19 pin 4</text>
+  <text x="863" y="1286" class="pin-label" text-anchor="start">status input/test TP14</text>
+  <text x="610" y="1275" class="net-label" text-anchor="middle">UPS_STATE_LP</text>
+  <circle cx="369" cy="1311" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:J19 pin 5" data-net="UPS_SW_LP"/>
+  <circle cx="851" cy="1311" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:power control through R92" data-net="UPS_SW_LP"/>
+  <path d="M 369 1311 L 851 1311" class="schematic-wire" data-net="UPS_SW_LP" data-kind="control"/>
+  <text x="357" y="1316" class="pin-label" text-anchor="end">J19 pin 5</text>
+  <text x="863" y="1316" class="pin-label" text-anchor="start">power control through R92</text>
+  <text x="610" y="1305" class="net-label" text-anchor="middle">UPS_SW_LP</text>
+  <circle cx="369" cy="1341" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:J19 pins 1/2" data-net="UPS_VBAT"/>
+  <circle cx="851" cy="1341" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:D30-D32 → VDC" data-net="UPS_VBAT"/>
+  <path d="M 369 1341 L 851 1341" class="schematic-wire" data-net="UPS_VBAT" data-kind="power"/>
+  <text x="357" y="1346" class="pin-label" text-anchor="end">J19 pins 1/2</text>
+  <text x="863" y="1346" class="pin-label" text-anchor="start">D30-D32 → VDC</text>
+  <text x="610" y="1335" class="net-label" text-anchor="middle">UPS_VBAT</text>
+  <circle cx="369" cy="1371" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:J19 pins 3/8/9/10" data-net="GND_UPS"/>
+  <circle cx="851" cy="1371" r="4.5" class="pin" data-pin="Smart UPS 扩展控制与 USB:GND plane" data-net="GND_UPS"/>
+  <path d="M 369 1371 L 851 1371" class="schematic-wire" data-net="GND_UPS" data-kind="ground"/>
+  <text x="357" y="1376" class="pin-label" text-anchor="end">J19 pins 3/8/9/10</text>
+  <text x="863" y="1376" class="pin-label" text-anchor="start">GND plane</text>
+  <text x="610" y="1365" class="net-label" text-anchor="middle">GND_UPS</text>
+  <rect x="1215" y="115" width="1150" height="410" rx="16" class="panel"/>
+  <text x="1239" y="150" class="panel-title" text-anchor="start">四组 I2C：数据、时钟、电源和地</text>
+  <rect x="1239" y="189" width="310" height="318" rx="10" class="module"/>
+  <rect x="2031" y="189" width="310" height="318" rx="10" class="connector"/>
+  <text x="1394" y="213" class="component-title" text-anchor="middle">LattePanda Mu through ESD arrays</text>
+  <text x="2186" y="213" class="component-title" text-anchor="middle">J7, J9, J12 and J13</text>
+  <circle cx="1549" cy="237" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 156 through U9" data-net="I2C2_SDA"/>
+  <circle cx="2031" cy="237" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J7 pin 1" data-net="I2C2_SDA"/>
+  <path d="M 1549 237 L 2031 237" class="schematic-wire" data-net="I2C2_SDA" data-kind="control"/>
+  <text x="1537" y="242" class="pin-label" text-anchor="end">Mu pin 156 through U9</text>
+  <text x="2043" y="242" class="pin-label" text-anchor="start">J7 pin 1</text>
+  <text x="1790" y="231" class="net-label" text-anchor="middle">I2C2_SDA</text>
+  <circle cx="1549" cy="267" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 152 through U9" data-net="I2C3_SDA"/>
+  <circle cx="2031" cy="267" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J7 pin 2" data-net="I2C3_SDA"/>
+  <path d="M 1549 267 L 2031 267" class="schematic-wire" data-net="I2C3_SDA" data-kind="control"/>
+  <text x="1537" y="272" class="pin-label" text-anchor="end">Mu pin 152 through U9</text>
+  <text x="2043" y="272" class="pin-label" text-anchor="start">J7 pin 2</text>
+  <text x="1790" y="261" class="net-label" text-anchor="middle">I2C3_SDA</text>
+  <circle cx="1549" cy="297" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 148 through U9" data-net="I2C4_SDA"/>
+  <circle cx="2031" cy="297" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J7 pin 3" data-net="I2C4_SDA"/>
+  <path d="M 1549 297 L 2031 297" class="schematic-wire" data-net="I2C4_SDA" data-kind="control"/>
+  <text x="1537" y="302" class="pin-label" text-anchor="end">Mu pin 148 through U9</text>
+  <text x="2043" y="302" class="pin-label" text-anchor="start">J7 pin 3</text>
+  <text x="1790" y="291" class="net-label" text-anchor="middle">I2C4_SDA</text>
+  <circle cx="1549" cy="327" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 144 through U9" data-net="I2C5_SDA"/>
+  <circle cx="2031" cy="327" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J7 pin 4" data-net="I2C5_SDA"/>
+  <path d="M 1549 327 L 2031 327" class="schematic-wire" data-net="I2C5_SDA" data-kind="control"/>
+  <text x="1537" y="332" class="pin-label" text-anchor="end">Mu pin 144 through U9</text>
+  <text x="2043" y="332" class="pin-label" text-anchor="start">J7 pin 4</text>
+  <text x="1790" y="321" class="net-label" text-anchor="middle">I2C5_SDA</text>
+  <circle cx="1549" cy="357" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 154 through U11" data-net="I2C2_SCL"/>
+  <circle cx="2031" cy="357" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J9 pin 1" data-net="I2C2_SCL"/>
+  <path d="M 1549 357 L 2031 357" class="schematic-wire" data-net="I2C2_SCL" data-kind="control"/>
+  <text x="1537" y="362" class="pin-label" text-anchor="end">Mu pin 154 through U11</text>
+  <text x="2043" y="362" class="pin-label" text-anchor="start">J9 pin 1</text>
+  <text x="1790" y="351" class="net-label" text-anchor="middle">I2C2_SCL</text>
+  <circle cx="1549" cy="387" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 150 through U11" data-net="I2C3_SCL"/>
+  <circle cx="2031" cy="387" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J9 pin 2" data-net="I2C3_SCL"/>
+  <path d="M 1549 387 L 2031 387" class="schematic-wire" data-net="I2C3_SCL" data-kind="control"/>
+  <text x="1537" y="392" class="pin-label" text-anchor="end">Mu pin 150 through U11</text>
+  <text x="2043" y="392" class="pin-label" text-anchor="start">J9 pin 2</text>
+  <text x="1790" y="381" class="net-label" text-anchor="middle">I2C3_SCL</text>
+  <circle cx="1549" cy="417" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 146 through U11" data-net="I2C4_SCL"/>
+  <circle cx="2031" cy="417" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J9 pin 3" data-net="I2C4_SCL"/>
+  <path d="M 1549 417 L 2031 417" class="schematic-wire" data-net="I2C4_SCL" data-kind="control"/>
+  <text x="1537" y="422" class="pin-label" text-anchor="end">Mu pin 146 through U11</text>
+  <text x="2043" y="422" class="pin-label" text-anchor="start">J9 pin 3</text>
+  <text x="1790" y="411" class="net-label" text-anchor="middle">I2C4_SCL</text>
+  <circle cx="1549" cy="447" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:Mu pin 142 through U11" data-net="I2C5_SCL"/>
+  <circle cx="2031" cy="447" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J9 pin 4" data-net="I2C5_SCL"/>
+  <path d="M 1549 447 L 2031 447" class="schematic-wire" data-net="I2C5_SCL" data-kind="control"/>
+  <text x="1537" y="452" class="pin-label" text-anchor="end">Mu pin 142 through U11</text>
+  <text x="2043" y="452" class="pin-label" text-anchor="start">J9 pin 4</text>
+  <text x="1790" y="441" class="net-label" text-anchor="middle">I2C5_SCL</text>
+  <circle cx="1549" cy="477" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:+3V3 rail" data-net="I2C_3V3"/>
+  <circle cx="2031" cy="477" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J13 pins 1-4" data-net="I2C_3V3"/>
+  <path d="M 1549 477 L 2031 477" class="schematic-wire" data-net="I2C_3V3" data-kind="power"/>
+  <text x="1537" y="482" class="pin-label" text-anchor="end">+3V3 rail</text>
+  <text x="2043" y="482" class="pin-label" text-anchor="start">J13 pins 1-4</text>
+  <text x="1790" y="471" class="net-label" text-anchor="middle">I2C_3V3</text>
+  <circle cx="1549" cy="507" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:GND plane" data-net="GND_I2C"/>
+  <circle cx="2031" cy="507" r="4.5" class="pin" data-pin="四组 I2C：数据、时钟、电源和地:J12 pins 1-4" data-net="GND_I2C"/>
+  <path d="M 1549 507 L 2031 507" class="schematic-wire" data-net="GND_I2C" data-kind="ground"/>
+  <text x="1537" y="512" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="2043" y="512" class="pin-label" text-anchor="start">J12 pins 1-4</text>
+  <text x="1790" y="501" class="net-label" text-anchor="middle">GND_I2C</text>
+  <rect x="1215" y="553" width="1150" height="350" rx="16" class="panel"/>
+  <text x="1239" y="588" class="panel-title" text-anchor="start">三组 SoC UART：RX、TX、电源和地</text>
+  <rect x="1239" y="627" width="310" height="258" rx="10" class="module"/>
+  <rect x="2031" y="627" width="310" height="258" rx="10" class="connector"/>
+  <text x="1394" y="651" class="component-title" text-anchor="middle">LattePanda Mu through ESD arrays</text>
+  <text x="2186" y="651" class="component-title" text-anchor="middle">J8, J10, J11 and J14</text>
+  <circle cx="1549" cy="675" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:Mu pin 137 through U10" data-net="UART0_RX"/>
+  <circle cx="2031" cy="675" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J8 pin 1" data-net="UART0_RX"/>
+  <path d="M 1549 675 L 2031 675" class="schematic-wire" data-net="UART0_RX" data-kind="control"/>
+  <text x="1537" y="680" class="pin-label" text-anchor="end">Mu pin 137 through U10</text>
+  <text x="2043" y="680" class="pin-label" text-anchor="start">J8 pin 1</text>
+  <text x="1790" y="669" class="net-label" text-anchor="middle">UART0_RX</text>
+  <circle cx="1549" cy="705" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:Mu pin 141 through U10" data-net="UART1_RX"/>
+  <circle cx="2031" cy="705" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J8 pin 2" data-net="UART1_RX"/>
+  <path d="M 1549 705 L 2031 705" class="schematic-wire" data-net="UART1_RX" data-kind="control"/>
+  <text x="1537" y="710" class="pin-label" text-anchor="end">Mu pin 141 through U10</text>
+  <text x="2043" y="710" class="pin-label" text-anchor="start">J8 pin 2</text>
+  <text x="1790" y="699" class="net-label" text-anchor="middle">UART1_RX</text>
+  <circle cx="1549" cy="735" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:Mu pin 140 through U10" data-net="UART2_RX"/>
+  <circle cx="2031" cy="735" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J8 pin 3" data-net="UART2_RX"/>
+  <path d="M 1549 735 L 2031 735" class="schematic-wire" data-net="UART2_RX" data-kind="control"/>
+  <text x="1537" y="740" class="pin-label" text-anchor="end">Mu pin 140 through U10</text>
+  <text x="2043" y="740" class="pin-label" text-anchor="start">J8 pin 3</text>
+  <text x="1790" y="729" class="net-label" text-anchor="middle">UART2_RX</text>
+  <circle cx="1549" cy="765" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:Mu pin 139 through U12" data-net="UART0_TX"/>
+  <circle cx="2031" cy="765" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J10 pin 1" data-net="UART0_TX"/>
+  <path d="M 1549 765 L 2031 765" class="schematic-wire" data-net="UART0_TX" data-kind="control"/>
+  <text x="1537" y="770" class="pin-label" text-anchor="end">Mu pin 139 through U12</text>
+  <text x="2043" y="770" class="pin-label" text-anchor="start">J10 pin 1</text>
+  <text x="1790" y="759" class="net-label" text-anchor="middle">UART0_TX</text>
+  <circle cx="1549" cy="795" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:Mu pin 143 through U12" data-net="UART1_TX"/>
+  <circle cx="2031" cy="795" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J10 pin 2" data-net="UART1_TX"/>
+  <path d="M 1549 795 L 2031 795" class="schematic-wire" data-net="UART1_TX" data-kind="control"/>
+  <text x="1537" y="800" class="pin-label" text-anchor="end">Mu pin 143 through U12</text>
+  <text x="2043" y="800" class="pin-label" text-anchor="start">J10 pin 2</text>
+  <text x="1790" y="789" class="net-label" text-anchor="middle">UART1_TX</text>
+  <circle cx="1549" cy="825" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:Mu pin 138 through U12" data-net="UART2_TX"/>
+  <circle cx="2031" cy="825" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J10 pin 3" data-net="UART2_TX"/>
+  <path d="M 1549 825 L 2031 825" class="schematic-wire" data-net="UART2_TX" data-kind="control"/>
+  <text x="1537" y="830" class="pin-label" text-anchor="end">Mu pin 138 through U12</text>
+  <text x="2043" y="830" class="pin-label" text-anchor="start">J10 pin 3</text>
+  <text x="1790" y="819" class="net-label" text-anchor="middle">UART2_TX</text>
+  <circle cx="1549" cy="855" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:+3V3 rail" data-net="UART_3V3"/>
+  <circle cx="2031" cy="855" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J14 pins 1-3" data-net="UART_3V3"/>
+  <path d="M 1549 855 L 2031 855" class="schematic-wire" data-net="UART_3V3" data-kind="power"/>
+  <text x="1537" y="860" class="pin-label" text-anchor="end">+3V3 rail</text>
+  <text x="2043" y="860" class="pin-label" text-anchor="start">J14 pins 1-3</text>
+  <text x="1790" y="849" class="net-label" text-anchor="middle">UART_3V3</text>
+  <circle cx="1549" cy="885" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:GND plane" data-net="GND_UART"/>
+  <circle cx="2031" cy="885" r="4.5" class="pin" data-pin="三组 SoC UART：RX、TX、电源和地:J11 pins 1-3" data-net="GND_UART"/>
+  <path d="M 1549 885 L 2031 885" class="schematic-wire" data-net="GND_UART" data-kind="ground"/>
+  <text x="1537" y="890" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="2043" y="890" class="pin-label" text-anchor="start">J11 pins 1-3</text>
+  <text x="1790" y="879" class="net-label" text-anchor="middle">GND_UART</text>
+  <rect x="1215" y="931" width="1150" height="380" rx="16" class="panel"/>
+  <text x="1239" y="966" class="panel-title" text-anchor="start">可选载板 BIOS SPI 焊盘</text>
+  <rect x="1239" y="1005" width="310" height="288" rx="10" class="module"/>
+  <rect x="2031" y="1005" width="310" height="288" rx="10" class="connector"/>
+  <text x="1394" y="1029" class="component-title" text-anchor="middle">LattePanda Mu / +3V3_ROM</text>
+  <text x="2186" y="1029" class="component-title" text-anchor="middle">U18 unpopulated footprint</text>
+  <circle cx="1549" cy="1053" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 153" data-net="SPI_IO3"/>
+  <circle cx="2031" cy="1053" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 carrier BIOS pad IO3" data-net="SPI_IO3"/>
+  <path d="M 1549 1053 L 2031 1053" class="schematic-wire" data-net="SPI_IO3" data-kind="control"/>
+  <text x="1537" y="1058" class="pin-label" text-anchor="end">Mu pin 153</text>
+  <text x="2043" y="1058" class="pin-label" text-anchor="start">U18 carrier BIOS pad IO3</text>
+  <text x="1790" y="1047" class="net-label" text-anchor="middle">SPI_IO3</text>
+  <circle cx="1549" cy="1083" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 155" data-net="SPI_CLK"/>
+  <circle cx="2031" cy="1083" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 carrier BIOS pad CLK" data-net="SPI_CLK"/>
+  <path d="M 1549 1083 L 2031 1083" class="schematic-wire" data-net="SPI_CLK" data-kind="control"/>
+  <text x="1537" y="1088" class="pin-label" text-anchor="end">Mu pin 155</text>
+  <text x="2043" y="1088" class="pin-label" text-anchor="start">U18 carrier BIOS pad CLK</text>
+  <text x="1790" y="1077" class="net-label" text-anchor="middle">SPI_CLK</text>
+  <circle cx="1549" cy="1113" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 159" data-net="SPI_MOSI_IO0"/>
+  <circle cx="2031" cy="1113" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 carrier BIOS pad IO0" data-net="SPI_MOSI_IO0"/>
+  <path d="M 1549 1113 L 2031 1113" class="schematic-wire" data-net="SPI_MOSI_IO0" data-kind="control"/>
+  <text x="1537" y="1118" class="pin-label" text-anchor="end">Mu pin 159</text>
+  <text x="2043" y="1118" class="pin-label" text-anchor="start">U18 carrier BIOS pad IO0</text>
+  <text x="1790" y="1107" class="net-label" text-anchor="middle">SPI_MOSI_IO0</text>
+  <circle cx="1549" cy="1143" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 161" data-net="SPI_IO2"/>
+  <circle cx="2031" cy="1143" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 carrier BIOS pad IO2" data-net="SPI_IO2"/>
+  <path d="M 1549 1143 L 2031 1143" class="schematic-wire" data-net="SPI_IO2" data-kind="control"/>
+  <text x="1537" y="1148" class="pin-label" text-anchor="end">Mu pin 161</text>
+  <text x="2043" y="1148" class="pin-label" text-anchor="start">U18 carrier BIOS pad IO2</text>
+  <text x="1790" y="1137" class="net-label" text-anchor="middle">SPI_IO2</text>
+  <circle cx="1549" cy="1173" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 163" data-net="SPI_MISO_IO1"/>
+  <circle cx="2031" cy="1173" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 carrier BIOS pad IO1" data-net="SPI_MISO_IO1"/>
+  <path d="M 1549 1173 L 2031 1173" class="schematic-wire" data-net="SPI_MISO_IO1" data-kind="control"/>
+  <text x="1537" y="1178" class="pin-label" text-anchor="end">Mu pin 163</text>
+  <text x="2043" y="1178" class="pin-label" text-anchor="start">U18 carrier BIOS pad IO1</text>
+  <text x="1790" y="1167" class="net-label" text-anchor="middle">SPI_MISO_IO1</text>
+  <circle cx="1549" cy="1203" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 165" data-net="SPI_CS_N"/>
+  <circle cx="2031" cy="1203" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 carrier BIOS pad CS#" data-net="SPI_CS_N"/>
+  <path d="M 1549 1203 L 2031 1203" class="schematic-wire" data-net="SPI_CS_N" data-kind="control"/>
+  <text x="1537" y="1208" class="pin-label" text-anchor="end">Mu pin 165</text>
+  <text x="2043" y="1208" class="pin-label" text-anchor="start">U18 carrier BIOS pad CS#</text>
+  <text x="1790" y="1197" class="net-label" text-anchor="middle">SPI_CS_N</text>
+  <circle cx="1549" cy="1233" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:Mu pin 133" data-net="BIOS_SEL"/>
+  <circle cx="2031" cy="1233" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:JP BIOS source select" data-net="BIOS_SEL"/>
+  <path d="M 1549 1233 L 2031 1233" class="schematic-wire" data-net="BIOS_SEL" data-kind="control"/>
+  <text x="1537" y="1238" class="pin-label" text-anchor="end">Mu pin 133</text>
+  <text x="2043" y="1238" class="pin-label" text-anchor="start">JP BIOS source select</text>
+  <text x="1790" y="1227" class="net-label" text-anchor="middle">BIOS_SEL</text>
+  <circle cx="1549" cy="1263" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:+3V3_ROM from U17" data-net="BIOS_3V3_ROM"/>
+  <circle cx="2031" cy="1263" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 VCC" data-net="BIOS_3V3_ROM"/>
+  <path d="M 1549 1263 L 2031 1263" class="schematic-wire" data-net="BIOS_3V3_ROM" data-kind="power"/>
+  <text x="1537" y="1268" class="pin-label" text-anchor="end">+3V3_ROM from U17</text>
+  <text x="2043" y="1268" class="pin-label" text-anchor="start">U18 VCC</text>
+  <text x="1790" y="1257" class="net-label" text-anchor="middle">BIOS_3V3_ROM</text>
+  <circle cx="1549" cy="1293" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:GND plane" data-net="GND_BIOS"/>
+  <circle cx="2031" cy="1293" r="4.5" class="pin" data-pin="可选载板 BIOS SPI 焊盘:U18 GND" data-net="GND_BIOS"/>
+  <path d="M 1549 1293 L 2031 1293" class="schematic-wire" data-net="GND_BIOS" data-kind="ground"/>
+  <text x="1537" y="1298" class="pin-label" text-anchor="end">GND plane</text>
+  <text x="2043" y="1298" class="pin-label" text-anchor="start">U18 GND</text>
+  <text x="1790" y="1287" class="net-label" text-anchor="middle">GND_BIOS</text>
+  <rect x="35" y="2130" width="2330" height="42" rx="10" class="legend"/>
+  <text x="55" y="2157" class="note" text-anchor="start">紫色：3.3V 控制；蓝色：USB 差分；红色：电源；深灰：地。GPIO 页的 ESD 阵列 U9-U12 保留在每条路径中。</text>
+</svg>

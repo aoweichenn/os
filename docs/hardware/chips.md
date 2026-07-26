@@ -7,6 +7,11 @@
 
 ## 1. 当前硬件拓扑
 
+分阶段、可缩放的 QEMU Guest 整机图见
+[从 v0.0 到 v1.0：整机硬件组装与连线图册](../learning/hardware-assembly-and-wiring.md)；
+现实载板铜线与器件级电路另见
+[N100 载板电路详解](../learning/physical-carrier-circuit-guide.md)。
+
 ```text
 x86-64 CPU
 ├── 架构寄存器：RIP、RFLAGS、CR0、CR2、CR3、CR4、FS/GS base
@@ -29,7 +34,7 @@ x86-64 CPU
     ├── Kernel 描述符与 BootInfo v2：0x13000..0x14067
     ├── 内存图元数据、fw_cfg 暂存与内存图：0x16000..0x18BFF
     ├── Kernel ELF 暂存：0x03E00000..0x03EFFFFF
-    ├── Kernel PT_LOAD：0x100000..0x3EFFFFF
+    ├── Kernel PT_LOAD：0x100000..0x3DFFFFF
     └── Kernel 初始栈：0x3FEF000..0x3FFEFFF
 ```
 
