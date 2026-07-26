@@ -100,8 +100,8 @@ constexpr uint8_t OS_TEST_VFS_ROOT_PATH[] = {'/'};
 
 int main() {
     os::test::TestContext test_context{OS_TEST_VFS_SUITE_NAME};
-    alignas(OS_TEST_VFS_HEAP_ALIGNMENT_BYTES) static uint8_t
-        heap_buffer[OS_TEST_VFS_HEAP_SIZE_BYTES]{};
+    alignas(
+        OS_TEST_VFS_HEAP_ALIGNMENT_BYTES) static uint8_t heap_buffer[OS_TEST_VFS_HEAP_SIZE_BYTES]{};
     os::kernel::KernelHeap heap{};
     os::kernel::fs::Memfs root_memfs{};
     os::kernel::fs::Memfs child_memfs{};
@@ -352,10 +352,13 @@ int main() {
             root_memfs.GetSuperblock().backend_context) == os::kernel::fs::Status::Succeeded &&
         child_memfs.GetSuperblock().operations->validate(
             child_memfs.GetSuperblock().backend_context) == os::kernel::fs::Status::Succeeded;
-    const bool resources_released = child_memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
-                                    root_memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
-                                    heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
-                                    heap.Statistics().allocation_count == OS_TEST_VFS_EMPTY_VALUE;
+    const bool resources_released =
+        capacity_vfs.ReleaseContext(capacity_context) == os::kernel::fs::Status::Succeeded &&
+        vfs.ReleaseContext(context) == os::kernel::fs::Status::Succeeded &&
+        child_memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
+        root_memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
+        heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
+        heap.Statistics().allocation_count == OS_TEST_VFS_EMPTY_VALUE;
     test_context.Expect(validation_succeeded && resources_released, OS_TEST_VFS_VALIDATION);
     return test_context.ExitCode();
 }

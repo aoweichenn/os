@@ -69,7 +69,7 @@ python3 tools/check_learning_diagrams.py --self-test
 - CPU 通过页表把虚拟地址翻译成物理地址。
 - CPU 执行 `IN`、`OUT` 指令访问独立的 16 位端口 I/O 空间。
 - 设备通过 IRQ、PIC 和 Local APIC 请求 CPU 执行中断入口。
-- ATA 控制器把 512 字节扇区请求传递给 2 MiB raw IDE disk。
+- ATA 控制器把 512 字节扇区请求传递给逻辑 1 GiB 的稀疏 raw IDE disk。
 - 宿主机只负责构建、启动、注入按键和采集观测证据，不进入 Guest 镜像替代
   固件、引导器或驱动。
 
@@ -166,7 +166,7 @@ Stage 1 的临时页表只解决“能进入 64 位并装载 Kernel”。v0.6 Ke
 E820 重建物理页所有权和正式页表，只映射可用 RAM，保留洞，设置 `RW`、`U/S`
 与 `NX`，并在高半区建立
 `VA = 0xFFFF888000000000 + PA` 的 direct map。v1.1 又把 heap、buddy、
-KVA 和动态双 guard 内核栈接在这套所有权模型之上，当前 v1.5 继续在其上
+KVA 和动态双 guard 内核栈接在这套所有权模型之上，当前 v1.6 继续在其上
 建立 Process/Thread、CpuLocal、KernelObject 和动态 FileTable，但没有增加
 新的 QEMU 硬件。
 
@@ -234,7 +234,9 @@ CPU IN/OUT
   → 宿主上的 boot_disk.img
 ```
 
-2 MiB 磁盘共有 4096 个 512 字节扇区，所有权固定分区：
+v0.11 的历史 2 MiB 磁盘共有 4096 个 512 字节扇区；v1.6 当前盘扩为逻辑
+1 GiB，并在 LBA 2048 起固定分配 256 MiB rootfs。第一周期图中的所有权
+分区用于解释旧格式演进：
 
 | LBA 半开区间 | 大小 | 所有者 |
 | --- | ---: | --- |

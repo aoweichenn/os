@@ -375,14 +375,17 @@ cache，因为缓存会新增失效、引用和并发状态，却不改变核心
 
 \paragraph{v1.6：rootfs v2 只改变持久布局}
 
-新格式加入版本化 superblock、inode/数据位图、目录项和直接/间接块。由于
+本版本已经完成。新格式加入版本化 superblock、inode/数据位图、目录项和
+direct/single/double/triple 块。由于
 VFS 已稳定，Shell 和用户 ABI 不知道磁盘格式已经更换。独立 mkfs 负责构造，
 只读 fsck 负责从根遍历、核对位图与引用；Kernel 不得用自动格式化掩盖未知
 非零磁盘。
 
-本阶段建立完整 rename/unlink/truncate 和 ENOSPC 原子失败，但尚不引入
-journal。先证明正常写集合与 flush 后的一致性，才能知道后续 journal 应该
-保护哪些元数据。
+逻辑 1 GiB 稀疏盘中的 256 MiB rootfs 支持 64 MiB 文件、hole、短写、
+完整 rename/unlink/rmdir/truncate/stat 和真实 ENOSPC。Dirty/Data/Clean
+先证明正常写集合与 flush 后的一致性；它只检测未完成事务，不冒充 journal。
+格式、集成、真实容量、同种子双后端十万步、QEMU 双启动和损坏拒绝已经形成
+阶段证据。
 
 \paragraph{v1.7：PID1 终结内嵌程序脚手架}
 

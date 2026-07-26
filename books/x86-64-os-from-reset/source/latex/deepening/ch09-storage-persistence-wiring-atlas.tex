@@ -117,7 +117,7 @@ NVMe 也有自己的 namespace 与 logical block 规格。
 \subsection{七、步骤 9：raw disk 是镜像容器，不等于文件系统}
 
 \term{raw disk image}{原始磁盘镜像}按扇区保存整块虚拟磁盘，没有宿主文件系统
-替 Guest 自动解释内容。本项目的 2 MiB 镜像共有
+替 Guest 自动解释内容。v0.11 的历史 2 MiB 镜像共有
 \[
 4096\times512\ \mathrm{B}=2\ \mathrm{MiB}.
 \]
@@ -135,6 +135,10 @@ LBA 半开区间 & 大小 & 所有者 & 内容 \\
 半开区间让长度等于 end-start，相邻区域可以无歧义拼接。镜像构建器和 Kernel
 都必须拒绝越过边界；否则一次大文件写入可能覆盖下一次启动所需的 Kernel，
 表面文件系统成功却让机器再也不能启动。
+
+v1.6 当前镜像已扩为逻辑 1 GiB 稀疏文件，并从 LBA 2048 起分配固定
+256 MiB rootfs；本表保留为第一版持久格式的历史基线，详细新布局见本章
+后续 rootfs v2 节。
 
 \subsection{八、步骤 10：为什么必须终止旧 QEMU}
 

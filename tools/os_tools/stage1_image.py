@@ -3,6 +3,7 @@ from pathlib import Path
 import struct
 
 from .errors import OsToolError
+from .sparse_image import readImagePrefix
 
 
 OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES = 512
@@ -32,6 +33,11 @@ OS_STAGE1_IMAGE_FLAGS_OFFSET = 18
 OS_STAGE1_IMAGE_PAYLOAD_LBA_OFFSET = 20
 OS_STAGE1_IMAGE_PAYLOAD_CHECKSUM_OFFSET = 24
 OS_STAGE1_IMAGE_HEADER_CHECKSUM_OFFSET = 26
+OS_STAGE1_IMAGE_AUDIT_PREFIX_SIZE_BYTES = (
+    (OS_STAGE1_IMAGE_DEFAULT_PAYLOAD_LBA +
+     OS_STAGE1_IMAGE_MAXIMUM_PAYLOAD_SECTORS)
+    * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+)
 
 @dataclass(frozen=True)
 class Stage1Descriptor:
@@ -253,7 +259,11 @@ def parseAndValidateStage1DiskImage(
 
 def auditStage1DiskImage(diskImagePath: Path) -> None:
     descriptor = parseAndValidateStage1DiskImage(
-        diskImagePath.read_bytes()
+        readImagePrefix(
+            diskImagePath,
+            OS_STAGE1_IMAGE_AUDIT_PREFIX_SIZE_BYTES,
+            OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES,
+        )
     )
     print(
         "Stage 1 磁盘审计通过："

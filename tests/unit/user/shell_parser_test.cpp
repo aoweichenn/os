@@ -10,6 +10,8 @@ constexpr std::string_view OS_TEST_SHELL_PARSER_SIMPLE = "简单命令必须切�
 constexpr std::string_view OS_TEST_SHELL_PARSER_QUOTES = "引号和转义必须生成单个去引号参数";
 constexpr std::string_view OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY =
     "cd 命令必须解析为独立的目录切换动作";
+constexpr std::string_view OS_TEST_SHELL_PARSER_NAMESPACE_MUTATIONS =
+    "rm、rmdir、mv、truncate 和 stat 必须解析为各自的命名空间动作";
 constexpr std::string_view OS_TEST_SHELL_PARSER_EMPTY = "空白输入必须返回 Empty";
 constexpr std::string_view OS_TEST_SHELL_PARSER_FAILURES =
     "未闭合引号、悬空转义和参数过多必须稳定拒绝且不留下半命令";
@@ -19,6 +21,11 @@ constexpr char OS_TEST_SHELL_PARSER_SIMPLE_LINE[] = "write /demo/message hello";
 constexpr char OS_TEST_SHELL_PARSER_QUOTED_LINE[] =
     "echo \"hello world\" 'from shell' escaped\\ value";
 constexpr char OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY_LINE[] = "cd ../tmp";
+constexpr char OS_TEST_SHELL_PARSER_REMOVE_FILE_LINE[] = "rm /demo/file";
+constexpr char OS_TEST_SHELL_PARSER_REMOVE_DIRECTORY_LINE[] = "rmdir /demo";
+constexpr char OS_TEST_SHELL_PARSER_MOVE_PATH_LINE[] = "mv /old /new";
+constexpr char OS_TEST_SHELL_PARSER_TRUNCATE_FILE_LINE[] = "truncate /demo/file 64";
+constexpr char OS_TEST_SHELL_PARSER_STAT_PATH_LINE[] = "stat /demo/file";
 constexpr char OS_TEST_SHELL_PARSER_EMPTY_LINE[] = " \t ";
 constexpr char OS_TEST_SHELL_PARSER_UNTERMINATED_LINE[] = "echo \"unfinished";
 constexpr char OS_TEST_SHELL_PARSER_DANGLING_ESCAPE_LINE[] = "echo unfinished\\";
@@ -62,6 +69,14 @@ constexpr char OS_TEST_SHELL_PARSER_STRING_TERMINATOR = '\0';
         }
     }
     return true;
+}
+
+[[nodiscard]] bool ResolvesTo(const char *const line, const uint64_t line_length_bytes,
+                              const os::user::ShellCommand expected) noexcept {
+    os::user::ShellCommandLine command_line{};
+    return os::user::ParseShellCommandLine(line, line_length_bytes, command_line) ==
+               os::user::ShellParseStatus::Succeeded &&
+           os::user::ResolveShellCommand(command_line) == expected;
 }
 }
 
@@ -108,15 +123,35 @@ int main() {
         OS_TEST_SHELL_PARSER_QUOTES);
 
     test_context.Expect(
-        os::user::ParseShellCommandLine(
-            OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY_LINE,
-            sizeof(OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY_LINE) -
-                OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
-            command_line) == os::user::ShellParseStatus::Succeeded &&
+        os::user::ParseShellCommandLine(OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY_LINE,
+                                        sizeof(OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY_LINE) -
+                                            OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
+                                        command_line) == os::user::ShellParseStatus::Succeeded &&
             command_line.argument_count == OS_TEST_SHELL_PARSER_SECOND_ARGUMENT_INDEX &&
-            os::user::ResolveShellCommand(command_line) ==
-                os::user::ShellCommand::ChangeDirectory,
+            os::user::ResolveShellCommand(command_line) == os::user::ShellCommand::ChangeDirectory,
         OS_TEST_SHELL_PARSER_CHANGE_DIRECTORY);
+
+    test_context.Expect(ResolvesTo(OS_TEST_SHELL_PARSER_REMOVE_FILE_LINE,
+                                   sizeof(OS_TEST_SHELL_PARSER_REMOVE_FILE_LINE) -
+                                       OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
+                                   os::user::ShellCommand::RemoveFile) &&
+                            ResolvesTo(OS_TEST_SHELL_PARSER_REMOVE_DIRECTORY_LINE,
+                                       sizeof(OS_TEST_SHELL_PARSER_REMOVE_DIRECTORY_LINE) -
+                                           OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
+                                       os::user::ShellCommand::RemoveDirectory) &&
+                            ResolvesTo(OS_TEST_SHELL_PARSER_MOVE_PATH_LINE,
+                                       sizeof(OS_TEST_SHELL_PARSER_MOVE_PATH_LINE) -
+                                           OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
+                                       os::user::ShellCommand::MovePath) &&
+                            ResolvesTo(OS_TEST_SHELL_PARSER_TRUNCATE_FILE_LINE,
+                                       sizeof(OS_TEST_SHELL_PARSER_TRUNCATE_FILE_LINE) -
+                                           OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
+                                       os::user::ShellCommand::TruncateFile) &&
+                            ResolvesTo(OS_TEST_SHELL_PARSER_STAT_PATH_LINE,
+                                       sizeof(OS_TEST_SHELL_PARSER_STAT_PATH_LINE) -
+                                           OS_TEST_SHELL_PARSER_STRING_TERMINATOR_SIZE_BYTES,
+                                       os::user::ShellCommand::StatPath),
+                        OS_TEST_SHELL_PARSER_NAMESPACE_MUTATIONS);
 
     test_context.Expect(
         os::user::ParseShellCommandLine(OS_TEST_SHELL_PARSER_EMPTY_LINE,

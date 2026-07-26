@@ -10,6 +10,7 @@ from .stage1_image import (
     OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES,
     parseAndValidateStage1DiskImage,
 )
+from .sparse_image import readImagePrefix
 
 
 OS_KERNEL_IMAGE_DESCRIPTOR_LBA = 65
@@ -23,6 +24,10 @@ OS_KERNEL_IMAGE_HEADER_STRUCT_FORMAT = "<8sHHIQQQII"
 OS_KERNEL_IMAGE_UINT32_FORMAT = "<I"
 OS_KERNEL_IMAGE_CORRUPTION_BIT = 0x01
 OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA = 2048
+OS_KERNEL_IMAGE_AUDIT_PREFIX_SIZE_BYTES = (
+    OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA
+    * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES
+)
 
 OS_KERNEL_IMAGE_MAGIC_OFFSET = 0
 OS_KERNEL_IMAGE_VERSION_OFFSET = 8
@@ -265,7 +270,11 @@ def parseAndValidateKernelDiskImage(
 
 def auditKernelDiskImage(diskImagePath: Path) -> None:
     descriptor, _kernelElf = parseAndValidateKernelDiskImage(
-        diskImagePath.read_bytes()
+        readImagePrefix(
+            diskImagePath,
+            OS_KERNEL_IMAGE_AUDIT_PREFIX_SIZE_BYTES,
+            OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES,
+        )
     )
     print(
         "Kernel 磁盘审计通过："

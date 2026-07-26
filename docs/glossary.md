@@ -129,6 +129,18 @@
 | mount namespace | 从根挂载出发、按挂载边组合多个后端后形成的统一路径视图；v1.5 每个 Process 的 `FsContext` 共享同一启动期拓扑 |
 | `FsContext` | Process 持有的文件系统上下文，当前保存 root 与 cwd vnode，供绝对和相对路径解析使用 |
 | memfs | 由 KernelHeap 支撑、断电即失的内存文件系统；v1.5 挂载于 `/tmp`，名称内联于节点，并精确统计节点与数据容量 |
+| rootfs v2 | v1.6 生产根格式；固定 256 MiB 区域，含版本化小端 superblock、bitmap、inode、目录项和三级间接块 |
+| inode | 文件系统内部对象身份；保存类型、逻辑大小、generation、父关系和数据块索引，名字由目录项另行保存 |
+| inode generation | inode number 回收复用时递增的身份代次；目录项与 vnode 必须同时匹配编号和代次 |
+| direct block | inode 直接保存的数据块指针，小文件无需额外索引块 |
+| indirect block | 保存其他数据块或下级指针块号的元数据块；single/double/triple 表示一、二、三级索引 |
+| logical block | 由文件字节 offset 换算出的块序号，先映射到盘面相对块，再转换为设备 LBA |
+| sparse file | 逻辑大小中包含未分配 hole 的文件；读 hole 返回零，实际分配大小可小于逻辑大小 |
+| short write | 写请求只提交连续前缀并返回实际字节数；调用方不得假设请求长度全部落盘 |
+| ENOSPC | 文件系统没有足够可分配空间；本项目内部对应 `CapacityExhausted`，零字节写入时返回明确失败 |
+| fsck | 独立读取盘面、遍历可达对象并重建 bitmap 的一致性检查器；v1.6 工具只读，不自动修复 |
+| Dirty/Clean transaction | 修改前持久化 Dirty、全部数据/元数据 flush 后再写 Clean 的检测协议；能拒绝未完成事务，但不是 journal |
+| orphan inode | 目录 link 已为零但仍因打开引用存活的 inode；v1.6 尚未实现，因此相关 unlink/replace 返回 Busy |
 | path normalization | 在不改变最终对象语义的前提下处理重复斜杠、`.`、`..`、根边界与尾斜杠目录约束的状态机 |
 | open-file description | 保存打开状态、共享文件偏移和 vnode 引用的系统级对象；一个或多个 fd 可以引用它 |
 | cwd | Current Working Directory，进程解析相对路径时使用的目录引用 |

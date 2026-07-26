@@ -177,9 +177,9 @@
     颜色：橙=启动　蓝=硬件接管　绿=用户/并发　青=持久化/交互
   </text>
   <text x="1190" y="851" class="footer" text-anchor="middle">
-    当前 v1.5：v1.1 资源 → v1.2 Thread → v1.3 SYSCALL
+    当前 v1.6：v1.1 资源 → v1.2 Thread → v1.3 SYSCALL
   </text>
   <text x="1190" y="870" class="footer" text-anchor="middle">
-    → v1.4 动态 fd → v1.5 VFS/memfs
+    → v1.4 动态 fd → v1.5 VFS → v1.6 rootfs v2
   </text>
 </svg>

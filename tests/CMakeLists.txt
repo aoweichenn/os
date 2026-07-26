@@ -739,6 +739,11 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_root_file_system_format_unit_tests
+    unit/kernel/root_file_system_format_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
     os_kernel_vfs_unit_tests
     unit/kernel/vfs_test.cpp
     "unit"
@@ -754,6 +759,26 @@ os_add_kernel_file_system_test(
     "integration"
 )
 os_add_kernel_file_system_test(
+    os_kernel_root_file_system_integration_tests
+    integration/boot/root_file_system_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_file_system_capacity_integration_tests
+    integration/boot/root_file_system_capacity_test.cpp
+    "integration"
+)
+target_sources(
+    os_kernel_root_file_system_capacity_integration_tests
+    PRIVATE
+        support/cpp/root_file_system_capacity_test_support.cpp
+)
+set_tests_properties(
+    os_kernel_root_file_system_capacity_integration_tests
+    PROPERTIES
+        TIMEOUT 180
+)
+os_add_kernel_file_system_test(
     os_kernel_file_system_randomized_tests
     randomized/kernel/file_system_randomized_test.cpp
     "randomized"
@@ -762,6 +787,11 @@ os_add_kernel_file_system_test(
     os_kernel_vfs_namespace_randomized_tests
     randomized/kernel/vfs_namespace_randomized_test.cpp
     "randomized"
+)
+set_tests_properties(
+    os_kernel_vfs_namespace_randomized_tests
+    PROPERTIES
+        TIMEOUT 120
 )
 
 find_package(Threads REQUIRED)

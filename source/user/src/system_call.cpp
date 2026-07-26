@@ -287,12 +287,43 @@ int64_t ChangeDirectory(const char *const path, const uint64_t path_length_bytes
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
-int64_t GetWorkingDirectory(char *const destination,
-                            const uint64_t capacity_bytes) noexcept {
-    return InvokeSystemCall(
-        static_cast<uint64_t>(os::abi::SystemCallNumber::GetWorkingDirectory),
-        reinterpret_cast<uint64_t>(destination), capacity_bytes,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+int64_t GetWorkingDirectory(char *const destination, const uint64_t capacity_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetWorkingDirectory),
+                            reinterpret_cast<uint64_t>(destination), capacity_bytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t UnlinkFile(const char *const path, const uint64_t path_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::UnlinkFile),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t RemoveDirectory(const char *const path, const uint64_t path_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::RemoveDirectory),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t Rename(const char *const source_path, const uint64_t source_length_bytes,
+               const char *const destination_path,
+               const uint64_t destination_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::Rename),
+                            reinterpret_cast<uint64_t>(source_path), source_length_bytes,
+                            reinterpret_cast<uint64_t>(destination_path), destination_length_bytes);
+}
+
+int64_t TruncateFile(const char *const path, const uint64_t path_length_bytes,
+                     const uint64_t size_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::TruncateFile),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes, size_bytes);
+}
+
+int64_t StatFile(const char *const path, const uint64_t path_length_bytes,
+                 os::abi::FileInformation &information) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::StatFile),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes,
+                            reinterpret_cast<uint64_t>(&information), sizeof(information));
 }
 
 [[noreturn]] void ExitProcess(const int64_t exit_code) noexcept {

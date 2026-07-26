@@ -190,7 +190,7 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_ATA_PIO_READY_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,
-    OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER,
+    OS_QEMU_KERNEL_ROOTFS_V2_MOUNTED_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
     OS_QEMU_KERNEL_MEMFS_MOUNTED_MARKER,
@@ -348,6 +348,11 @@ from os_tools.qemu_runner import (
     OS_QEMU_USER_SHELL_MKDIR_MARKER,
     OS_QEMU_USER_SHELL_WRITE_MARKER,
     OS_QEMU_USER_SHELL_CAT_MARKER,
+    OS_QEMU_USER_SHELL_RM_MARKER,
+    OS_QEMU_USER_SHELL_RMDIR_MARKER,
+    OS_QEMU_USER_SHELL_MV_MARKER,
+    OS_QEMU_USER_SHELL_TRUNCATE_MARKER,
+    OS_QEMU_USER_SHELL_STAT_MARKER,
     OS_QEMU_USER_SHELL_CD_MARKER,
     OS_QEMU_USER_SHELL_LS_MARKER,
     OS_QEMU_USER_SHELL_SYNC_MARKER,
@@ -373,6 +378,14 @@ from os_tools.qemu_runner import (
     runQemuFileSystemPersistence,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
+)
+from os_tools.rootfs_v2 import (
+    OS_ROOTFS_V2_CAPACITY_IMAGE_SIZE_BYTES,
+    OS_ROOTFS_V2_CORRUPTION_KINDS,
+    corruptRootfsV2,
+    formatRootfsV2,
+    inspectRootfsV2,
+    inspectionAsJson,
 )
 from os_tools.source_metrics import reportSourceMetrics
 from os_tools.stage1_image import auditStage1DiskImage
@@ -501,6 +514,43 @@ def handleAuditStage1(arguments: argparse.Namespace) -> None:
 
 def handleAuditKernelImage(arguments: argparse.Namespace) -> None:
     auditKernelDiskImage(arguments.diskImagePath)
+
+
+def handleMkfsRootfs(arguments: argparse.Namespace) -> None:
+    formatRootfsV2(
+        arguments.imagePath,
+        imageSizeBytes=arguments.imageSizeBytes,
+        createImage=arguments.createImage,
+        force=arguments.force,
+    )
+    print(
+        "rootfs v2 格式化完成："
+        f"{arguments.imagePath}，"
+        "固定区域 256 MiB，单文件上限 64 MiB。"
+    )
+
+
+def handleInspectRootfs(arguments: argparse.Namespace) -> None:
+    print(inspectionAsJson(inspectRootfsV2(arguments.imagePath)))
+
+
+def handleFsckRootfs(arguments: argparse.Namespace) -> None:
+    inspection = inspectRootfsV2(arguments.imagePath)
+    print(
+        "rootfs v2 只读一致性检查通过："
+        f"inode={inspection.reachableInodeCount}，"
+        f"目录={inspection.directoryCount}，"
+        f"文件={inspection.regularFileCount}，"
+        f"事务代际={inspection.transactionGeneration}。"
+    )
+
+
+def handleCorruptRootfs(arguments: argparse.Namespace) -> None:
+    corruptRootfsV2(arguments.imagePath, arguments.corruptionKind)
+    print(
+        "rootfs v2 损坏注入完成："
+        f"{arguments.corruptionKind} -> {arguments.imagePath}"
+    )
 
 
 def handleQemuSmoke(arguments: argparse.Namespace) -> None:
@@ -752,7 +802,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_TIMER_SELF_TEST_PASSED_MARKER,
     )
     completedKernelFileSystemInitializationMarkers = (
-        OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER,
+        OS_QEMU_KERNEL_ROOTFS_V2_MOUNTED_MARKER,
         OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER,
         OS_QEMU_KERNEL_VFS_READY_MARKER,
         OS_QEMU_KERNEL_MEMFS_MOUNTED_MARKER,
@@ -770,6 +820,11 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_USER_SHELL_WRITE_MARKER,
         OS_QEMU_USER_SHELL_CAT_MARKER,
         OS_QEMU_USER_SHELL_LS_MARKER,
+        OS_QEMU_USER_SHELL_STAT_MARKER,
+        OS_QEMU_USER_SHELL_MV_MARKER,
+        OS_QEMU_USER_SHELL_TRUNCATE_MARKER,
+        OS_QEMU_USER_SHELL_RM_MARKER,
+        OS_QEMU_USER_SHELL_RMDIR_MARKER,
         OS_QEMU_USER_SHELL_SYNC_MARKER,
         OS_QEMU_USER_SHELL_UNKNOWN_MARKER,
         OS_QEMU_USER_SHELL_EXIT_COMMAND_MARKER,
@@ -1159,7 +1214,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                 1,
             ),
             (OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER, 1),
-            (OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER, 1),
+            (OS_QEMU_KERNEL_ROOTFS_V2_MOUNTED_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER, 2),
@@ -1849,6 +1904,60 @@ def createArgumentParser() -> argparse.ArgumentParser:
         handleAuditKernelImage,
     )
     kernelImageAuditParser.add_argument("diskImagePath", type=Path)
+
+    mkfsRootfsParser = addCommand(
+        subparsers,
+        "mkfs-rootfs",
+        "创建或格式化版本化 rootfs v2 稀疏镜像",
+        handleMkfsRootfs,
+    )
+    mkfsRootfsParser.add_argument("imagePath", type=Path)
+    mkfsRootfsParser.add_argument(
+        "--create",
+        action="store_true",
+        dest="createImage",
+        help="先创建稀疏磁盘镜像",
+    )
+    mkfsRootfsParser.add_argument(
+        "--size-bytes",
+        type=int,
+        default=OS_ROOTFS_V2_CAPACITY_IMAGE_SIZE_BYTES,
+        dest="imageSizeBytes",
+        help="配合 --create 指定逻辑镜像容量，默认 1 GiB",
+    )
+    mkfsRootfsParser.add_argument(
+        "--force",
+        action="store_true",
+        help="允许覆盖已有 rootfs v2 元数据",
+    )
+
+    inspectRootfsParser = addCommand(
+        subparsers,
+        "inspect-rootfs",
+        "以 JSON 输出 rootfs v2 布局和占用摘要",
+        handleInspectRootfs,
+    )
+    inspectRootfsParser.add_argument("imagePath", type=Path)
+
+    fsckRootfsParser = addCommand(
+        subparsers,
+        "fsck-rootfs",
+        "执行独立只读 rootfs v2 全盘一致性检查",
+        handleFsckRootfs,
+    )
+    fsckRootfsParser.add_argument("imagePath", type=Path)
+
+    corruptRootfsParser = addCommand(
+        subparsers,
+        "corrupt-rootfs",
+        "向 rootfs v2 注入可重复的元数据损坏",
+        handleCorruptRootfs,
+    )
+    corruptRootfsParser.add_argument("imagePath", type=Path)
+    corruptRootfsParser.add_argument(
+        "corruptionKind",
+        choices=OS_ROOTFS_V2_CORRUPTION_KINDS,
+    )
 
     qemuParser = addCommand(
         subparsers,

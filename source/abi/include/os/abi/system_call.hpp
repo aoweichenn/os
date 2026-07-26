@@ -35,6 +35,11 @@ enum class SystemCallNumber : uint64_t {
     GetDescriptorHardLimit = 28ULL,
     ChangeDirectory = 29ULL,
     GetWorkingDirectory = 30ULL,
+    UnlinkFile = 31ULL,
+    RemoveDirectory = 32ULL,
+    Rename = 33ULL,
+    TruncateFile = 34ULL,
+    StatFile = 35ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -88,6 +93,10 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG = -26LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NAME_TOO_LONG = -27LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PATH_LOOP = -28LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_READ_ONLY_FILE_SYSTEM = -29LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DIRECTORY_NOT_EMPTY = -30LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_CROSS_DEVICE = -31LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_BUSY = -32LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_OPERATION_UNSUPPORTED = -33LL;
 
 enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,
@@ -103,5 +112,20 @@ struct DirectoryEntry final {
 };
 
 static_assert(sizeof(DirectoryEntry) == OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES);
+
+inline constexpr uint64_t OS_ABI_FILE_INFORMATION_SIZE_BYTES = 64ULL;
+
+struct FileInformation final {
+    uint64_t mount_identifier;
+    uint64_t superblock_identifier;
+    uint64_t inode_number;
+    uint64_t generation;
+    DirectoryEntryType type;
+    uint64_t size_bytes;
+    uint64_t allocated_size_bytes;
+    uint64_t link_count;
+};
+
+static_assert(sizeof(FileInformation) == OS_ABI_FILE_INFORMATION_SIZE_BYTES);
 
 }

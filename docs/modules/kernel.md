@@ -851,6 +851,7 @@ FileDescription 保存 `Vfs* + OpenFile`。FileTable 与 KernelObject 生命周�
   SMP 原子引用或 RCU 延迟销毁。
 - FileTable 已动态分块并支持 4096 hard limit，但仍使用有序单链；百万 fd
   位图/基数树、fork 共享和磁盘 exec 留给后续阶段。
-- VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs 和 legacy 后端，
-  但 mount 拓扑仅在启动期建立；动态 unmount、dentry cache、rename/unlink
-  和 rootfs v2 留给 v1.6 及以后阶段。
+- VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs、legacy 回归后端与
+  生产 rootfs v2；unlink/rmdir/rename/truncate/stat、稀疏文件和三级间接树
+  已完成。mount 拓扑仍仅在启动期建立；动态 unmount、dentry cache、
+  orphan inode、权限和 journal 留给以后阶段。

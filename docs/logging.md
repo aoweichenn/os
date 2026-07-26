@@ -444,8 +444,12 @@ IPC 同样遵循“热路径零日志、冷路径可核对”的规则：
 
 文件系统日志也只记录冷路径状态转换和汇总：
 
-- 首次全零超级块只输出一次 `FILE_SYSTEM_FORMATTED`；后续启动输出
-  `FILE_SYSTEM_MOUNTED`。二者互斥，不能用重复格式化掩盖持久化失败。
+- 每次成功启动只输出一次 `ROOTFS_V2_MOUNTED`。生产 Kernel 没有自动
+  format 分支；缺失、Dirty 或损坏 rootfs 必须失败，不能用重复格式化掩盖
+  镜像构建或持久化错误。
+- 挂载后输出一次 `ROOTFS_V2_REGION_BYTES=0x10000000` 与
+  `ROOTFS_V2_MAX_FILE_BYTES=0x04000000`，冻结 256 MiB 区域和 64 MiB
+  单文件规格。
 - 第二次启动读到上一实例留下的正确载荷后输出
   `FILE_SYSTEM_PERSISTENCE_RESTORED`。该标记必须早于本轮 Ring 3 执行。
 - 格式、CRC、Dirty 状态或全盘语义一致性失败只输出一次
@@ -459,7 +463,7 @@ IPC 同样遵循“热路径零日志、冷路径可核对”的规则：
   `FILE_WRITTEN`、`FILE_VERIFIED`，系统调用本身仍不逐次打印。
 
 持久化 QEMU 用例中，每行仍带 `[QEMU][T+......ms]`，因此能直接比较第一次
-格式化、第二次挂载恢复与第三次损坏拒绝的宿主到达时间；这个前缀不改变来宾
+严格挂载写入、第二次挂载恢复与第三次损坏拒绝的宿主到达时间；这个前缀不改变来宾
 日志的稳定文本，也不冒充磁盘中的文件时间戳。
 
 ## v1.0 交互与控制台日志基线
@@ -745,6 +749,20 @@ Shell 为每条已识别命令保留一个一次性 marker。v1.5 新增：
 functional 输入要求该标记精确出现两次，`PWD` 精确出现三次；mkdir、write、
 cat、ls 各出现两次，分别覆盖 memfs 与 legacy-fs。提示符中的 cwd 是用户
 可见文本，不作为解析器 oracle；真正验收同时检查命令结果和后续路径操作。
+
+v1.6 新增命名空间命令 marker：
+
+```text
+[OS][USER][SHELL] COMMAND=RM
+[OS][USER][SHELL] COMMAND=RMDIR
+[OS][USER][SHELL] COMMAND=MV
+[OS][USER][SHELL] COMMAND=TRUNCATE
+[OS][USER][SHELL] COMMAND=STAT
+```
+
+每条命令只在解析成功并进入对应系统调用路径时打印一次。块分配、pointer
+索引、bitmap bit、短写循环和 fsck 遍历仍禁止逐项打印；RootFileSystem
+只在初始化与最终同步输出事务代次、已分配 inode、数据/元数据块和空闲块。
 
 不得在以下热路径逐项打印：
 

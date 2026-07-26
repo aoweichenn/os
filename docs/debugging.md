@@ -171,7 +171,7 @@ llvm-nm --undefined-only build/developer/source/kernel/kernel.elf
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
-  131072 2097152 --expected-outcome success
+  131072 1073741824 --expected-outcome success
 ```
 
 当前成功产物为 28,168 字节、56 个扇区，包含 3 个 `PT_LOAD`；这些数字会随
@@ -225,12 +225,12 @@ x/32gx &kernel_interrupt_descriptor_table
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/kernel_invalid_opcode/boot_disk.img \
-  131072 2097152 --expected-outcome kernel-invalid-opcode
+  131072 1073741824 --expected-outcome kernel-invalid-opcode
 
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/kernel_page_fault/boot_disk.img \
-  131072 2097152 --expected-outcome kernel-page-fault
+  131072 1073741824 --expected-outcome kernel-page-fault
 ```
 
 非法指令的向量必须为 6。页故障必须同时满足：
@@ -320,7 +320,7 @@ IDT、页表页本身和串口端口访问所需地址是否在新表中，而�
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/kernel_write_protection/boot_disk.img \
-  131072 2097152 --expected-outcome kernel-write-protection
+  131072 1073741824 --expected-outcome kernel-write-protection
 ```
 
 预期关键现场：

@@ -13,6 +13,14 @@ from .kernel_image import (
     calculateCrc32,
     createKernelDiskImageBytes,
 )
+from .rootfs_v2 import (
+    OS_ROOTFS_V2_BLOCK_SIZE_BYTES,
+    OS_ROOTFS_V2_MINIMUM_DISK_SIZE_BYTES,
+    OS_ROOTFS_V2_START_LBA,
+    formatRootfsV2,
+)
+from .errors import OsToolError
+from .sparse_image import writeSparseImage
 from .stage1_image import (
     OS_STAGE1_IMAGE_CORRUPTION_BIT,
     OS_STAGE1_IMAGE_DEFAULT_PAYLOAD_LBA,
@@ -39,6 +47,18 @@ OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME = (
     "kernel_invalid_elf_disk.img"
 )
 OS_BOOT_IMAGE_INVALID_KERNEL_ELF_CLASS = 0
+OS_BOOT_IMAGE_CONSTRUCTION_SIZE_BYTES = (
+    OS_ROOTFS_V2_START_LBA * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+)
+
+
+def writeBootImage(
+    imagePath: Path,
+    imagePrefix: bytes | bytearray,
+    diskSizeBytes: int,
+) -> None:
+    writeSparseImage(imagePath, imagePrefix, diskSizeBytes)
+    formatRootfsV2(imagePath)
 
 
 def createInvalidKernelElfDiskImage(
@@ -97,26 +117,36 @@ def writeBootDiskImages(
     outputDirectory: Path,
     diskSizeBytes: int,
 ) -> None:
+    if diskSizeBytes < OS_ROOTFS_V2_MINIMUM_DISK_SIZE_BYTES:
+        raise OsToolError(
+            "启动磁盘不足以容纳固定 256 MiB rootfs v2 区域。"
+        )
     auditKernelElf(kernelElfPath.parent, kernelElfPath)
     stage1DiskImage = createStage1DiskImageBytes(
         stage1BinaryPath.read_bytes(),
-        diskSizeBytes,
+        OS_BOOT_IMAGE_CONSTRUCTION_SIZE_BYTES,
     )
     validImage = createKernelDiskImageBytes(
         stage1DiskImage,
         kernelElfPath.read_bytes(),
     )
     outputDirectory.mkdir(parents=True, exist_ok=True)
-    (outputDirectory / OS_BOOT_IMAGE_VALID_FILE_NAME).write_bytes(validImage)
+    writeBootImage(
+        outputDirectory / OS_BOOT_IMAGE_VALID_FILE_NAME,
+        validImage,
+        diskSizeBytes,
+    )
 
     invalidStage1HeaderImage = bytearray(validImage)
     invalidStage1HeaderImage[
         OS_STAGE1_IMAGE_MAGIC_OFFSET
     ] ^= OS_STAGE1_IMAGE_CORRUPTION_BIT
-    (
-        outputDirectory
-        / OS_BOOT_IMAGE_INVALID_STAGE1_HEADER_FILE_NAME
-    ).write_bytes(invalidStage1HeaderImage)
+    writeBootImage(
+        outputDirectory /
+        OS_BOOT_IMAGE_INVALID_STAGE1_HEADER_FILE_NAME,
+        invalidStage1HeaderImage,
+        diskSizeBytes,
+    )
 
     invalidStage1ChecksumImage = bytearray(validImage)
     stage1PayloadOffset = (
@@ -126,10 +156,12 @@ def writeBootDiskImages(
     invalidStage1ChecksumImage[
         stage1PayloadOffset
     ] ^= OS_STAGE1_IMAGE_CORRUPTION_BIT
-    (
-        outputDirectory
-        / OS_BOOT_IMAGE_INVALID_STAGE1_CHECKSUM_FILE_NAME
-    ).write_bytes(invalidStage1ChecksumImage)
+    writeBootImage(
+        outputDirectory /
+        OS_BOOT_IMAGE_INVALID_STAGE1_CHECKSUM_FILE_NAME,
+        invalidStage1ChecksumImage,
+        diskSizeBytes,
+    )
 
     invalidKernelHeaderImage = bytearray(validImage)
     kernelDescriptorOffset = (
@@ -139,10 +171,12 @@ def writeBootDiskImages(
     invalidKernelHeaderImage[
         kernelDescriptorOffset + OS_KERNEL_IMAGE_MAGIC_OFFSET
     ] ^= OS_KERNEL_IMAGE_CORRUPTION_BIT
-    (
-        outputDirectory
-        / OS_BOOT_IMAGE_INVALID_KERNEL_HEADER_FILE_NAME
-    ).write_bytes(invalidKernelHeaderImage)
+    writeBootImage(
+        outputDirectory /
+        OS_BOOT_IMAGE_INVALID_KERNEL_HEADER_FILE_NAME,
+        invalidKernelHeaderImage,
+        diskSizeBytes,
+    )
 
     invalidKernelChecksumImage = bytearray(validImage)
     kernelPayloadOffset = (
@@ -152,16 +186,20 @@ def writeBootDiskImages(
     invalidKernelChecksumImage[
         kernelPayloadOffset
     ] ^= OS_KERNEL_IMAGE_CORRUPTION_BIT
-    (
-        outputDirectory
-        / OS_BOOT_IMAGE_INVALID_KERNEL_CHECKSUM_FILE_NAME
-    ).write_bytes(invalidKernelChecksumImage)
+    writeBootImage(
+        outputDirectory /
+        OS_BOOT_IMAGE_INVALID_KERNEL_CHECKSUM_FILE_NAME,
+        invalidKernelChecksumImage,
+        diskSizeBytes,
+    )
 
     invalidKernelElfImage = createInvalidKernelElfDiskImage(
         validImage,
         kernelElfPath.stat().st_size,
     )
-    (
-        outputDirectory
-        / OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME
-    ).write_bytes(invalidKernelElfImage)
+    writeBootImage(
+        outputDirectory /
+        OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME,
+        invalidKernelElfImage,
+        diskSizeBytes,
+    )

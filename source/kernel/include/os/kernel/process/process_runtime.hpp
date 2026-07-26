@@ -167,9 +167,23 @@ void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] FileSystemStatus CloseCurrentProcessFile(uint64_t file_descriptor) noexcept;
 [[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus RemoveCurrentProcessFile(const uint8_t *path,
+                                                        uint64_t path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus RemoveCurrentProcessDirectory(const uint8_t *path,
+                                                             uint64_t path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus
+RenameCurrentProcessPath(const uint8_t *source_path, uint64_t source_path_length_bytes,
+                         const uint8_t *destination_path,
+                         uint64_t destination_path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path,
+                                                          uint64_t path_length_bytes,
+                                                          uint64_t size_bytes) noexcept;
+[[nodiscard]] FileSystemStatus StatCurrentProcessPath(const uint8_t *path,
+                                                      uint64_t path_length_bytes,
+                                                      fs::NodeInformation &information) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
 [[nodiscard]] FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
-                                                              uint64_t path_length_bytes) noexcept;
+                                                             uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus
 GetCurrentProcessWorkingDirectory(uint8_t *destination, uint64_t capacity_bytes,
                                   uint64_t &path_length_bytes) noexcept;

@@ -3,7 +3,6 @@ import json
 from pathlib import Path
 import re
 import shlex
-import shutil
 import socket
 import subprocess
 import tempfile
@@ -12,6 +11,7 @@ import time
 
 from .errors import OsToolError
 from .process import runCommand
+from .sparse_image import copySparseImage
 
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
@@ -433,11 +433,8 @@ OS_QEMU_KERNEL_ATA_PIO_READY_MARKER = "[OS][KERNEL] ATA_PIO_READY"
 OS_QEMU_KERNEL_ATA_BOOT_DESCRIPTOR_VALID_MARKER = (
     "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID"
 )
-OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER = (
-    "[OS][KERNEL] FILE_SYSTEM_FORMATTED"
-)
-OS_QEMU_KERNEL_FILE_SYSTEM_MOUNTED_MARKER = (
-    "[OS][KERNEL] FILE_SYSTEM_MOUNTED"
+OS_QEMU_KERNEL_ROOTFS_V2_MOUNTED_MARKER = (
+    "[OS][KERNEL] ROOTFS_V2_MOUNTED"
 )
 OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER = (
     "[OS][KERNEL] FILE_SYSTEM_CORRUPT"
@@ -803,6 +800,13 @@ OS_QEMU_USER_SHELL_CD_MARKER = "[OS][USER][SHELL] COMMAND=CD"
 OS_QEMU_USER_SHELL_MKDIR_MARKER = "[OS][USER][SHELL] COMMAND=MKDIR"
 OS_QEMU_USER_SHELL_WRITE_MARKER = "[OS][USER][SHELL] COMMAND=WRITE"
 OS_QEMU_USER_SHELL_CAT_MARKER = "[OS][USER][SHELL] COMMAND=CAT"
+OS_QEMU_USER_SHELL_RM_MARKER = "[OS][USER][SHELL] COMMAND=RM"
+OS_QEMU_USER_SHELL_RMDIR_MARKER = "[OS][USER][SHELL] COMMAND=RMDIR"
+OS_QEMU_USER_SHELL_MV_MARKER = "[OS][USER][SHELL] COMMAND=MV"
+OS_QEMU_USER_SHELL_TRUNCATE_MARKER = (
+    "[OS][USER][SHELL] COMMAND=TRUNCATE"
+)
+OS_QEMU_USER_SHELL_STAT_MARKER = "[OS][USER][SHELL] COMMAND=STAT"
 OS_QEMU_USER_SHELL_LS_MARKER = "[OS][USER][SHELL] COMMAND=LS"
 OS_QEMU_USER_SHELL_SYNC_MARKER = "[OS][USER][SHELL] COMMAND=SYNC"
 OS_QEMU_USER_SHELL_UNKNOWN_MARKER = (
@@ -826,8 +830,13 @@ OS_QEMU_USER_SHELL_TEST_INPUT = (
     "pwd\n"
     "mkdir /demo\n"
     "write /demo/message hello\n"
-    "cat /demo/message\n"
+    "stat /demo/message\n"
+    "mv /demo/message /demo/moved\n"
+    "truncate /demo/moved 5\n"
+    "cat /demo/moved\n"
     "ls /demo\n"
+    "rm /demo/moved\n"
+    "rmdir /demo\n"
     "sync\n"
     "unknown\n"
     "exit\n"
@@ -1080,6 +1089,8 @@ def runQemuWithTimedSerial(
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         bufsize=1,
     )
 
@@ -1453,7 +1464,7 @@ def runQemuFileSystemPersistence(
         prefix="os-qemu-file-system-"
     ) as temporaryDirectory:
         writableDiskPath = Path(temporaryDirectory) / "persistent_disk.img"
-        shutil.copyfile(diskImagePath, writableDiskPath)
+        copySparseImage(diskImagePath, writableDiskPath)
 
         runQemuFirmwareBoot(
             projectRoot,
@@ -1462,14 +1473,15 @@ def runQemuFileSystemPersistence(
             expectedFirmwareSizeBytes,
             expectedDiskSizeBytes,
             (
-                OS_QEMU_KERNEL_FILE_SYSTEM_FORMATTED_MARKER,
+                OS_QEMU_KERNEL_ROOTFS_V2_MOUNTED_MARKER,
                 OS_QEMU_USER_FILE_WRITTEN_MARKER,
                 OS_QEMU_USER_FILE_VERIFIED_MARKER,
                 OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
                 OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
                 OS_QEMU_KERNEL_READY_MARKER,
             ),
-            forbiddenRuntimeFailureMarkers,
+            forbiddenRuntimeFailureMarkers +
+            (OS_QEMU_KERNEL_FILE_SYSTEM_PERSISTENCE_RESTORED_MARKER,),
             keyboardInputText=OS_QEMU_USER_SHELL_TEST_INPUT,
             keyboardReadyMarker=OS_QEMU_USER_SHELL_READY_MARKER,
             persistentDiskWrites=True,
@@ -1481,7 +1493,7 @@ def runQemuFileSystemPersistence(
             expectedFirmwareSizeBytes,
             expectedDiskSizeBytes,
             (
-                OS_QEMU_KERNEL_FILE_SYSTEM_MOUNTED_MARKER,
+                OS_QEMU_KERNEL_ROOTFS_V2_MOUNTED_MARKER,
                 OS_QEMU_KERNEL_FILE_SYSTEM_PERSISTENCE_RESTORED_MARKER,
                 OS_QEMU_USER_FILE_WRITTEN_MARKER,
                 OS_QEMU_USER_FILE_VERIFIED_MARKER,

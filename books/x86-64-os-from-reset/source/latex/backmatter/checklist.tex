@@ -175,7 +175,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 110 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+  \item 当前完整 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
         调度/IPC/文件系统/Shell、资源快照、双系统调用入口与
         256 MiB/64 GiB 整机事件；
   \item Process 与 Thread 为什么是两个寿命不同的对象，Exited 与 Zombie
@@ -206,7 +206,7 @@
   \item 最后强引用释放为何先摘除活动对象，再在全局锁外执行 finalizer；
   \item 23--28 号系统调用如何复用 v1.3 的 RAX/RDI/RSI/RDX 与双入口；
   \item PID 4 的 8 字节写、9 字节读如何同时证明共享偏移与独立打开；
-  \item 110 项回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
+  \item 完整回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
         分别排除哪类描述符错误。
   \item Vnode、Path、Superblock、Mount、FsContext 与 OpenFile 分别保存
         哪一层身份和状态；
@@ -218,6 +218,18 @@
         统计怎样保持事务一致；
   \item legacy 适配器怎样提供 lookup/parent/read/write/readdir 而不改变
         旧磁盘格式和损坏拒绝规则；
+  \item 1 GiB sparse disk、LBA 2048 与 256 MiB rootfs 的地址域如何换算；
+  \item superblock、256 字节 inode、320 字节目录项和 pointer block 为何
+        逐字段 little-endian 编码而不能直接写 C++ struct；
+  \item 八个 direct 与每层 63 指针的 single/double/triple 索引如何手算；
+  \item sparse hole、logical size 与 allocated size 为什么必须分开；
+  \item truncate 缩小时怎样清零尾块并从叶到根释放空 pointer block；
+  \item unlink/rmdir/rename 的 Busy、非空目录、跨设备和祖先环边界；
+  \item 系统调用 31--35、固定 64 字节 stat ABI 与第四参数 R10；
+  \item 短写和零字节 ENOSPC 为什么是两种可观察结果；
+  \item Dirty/Data/Clean 能检测什么，以及为何还不是 journal；
+  \item Kernel Validate 与独立 Python fsck 为什么不能共享同一实现；
+  \item 真实 256 MiB 近满格式、双后端十万步和 QEMU 三次启动各自证明什么；
   \item 29/30 号系统调用、4096/255 字节上限和 280 字节显式目录项 ABI；
   \item 固定种子十万步独立目录树模型与 memfs/legacy 双后端契约分别排除
         哪类自我验证；

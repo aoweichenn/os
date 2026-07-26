@@ -723,10 +723,10 @@ memfs 线性节点链和 legacy parent 全盘扫描都是可审计基线，不�
 64 位固定宽度类型，后续提高规格无需改变用户 ABI，但仍必须重新验证内存预算
 和算法复杂度。
 
-v1.6 将在 VFS 不变的前提下引入版本化 rootfs v2、完整 create/mkdir/
-unlink/rename/truncate/stat、稀疏大文件、独立 mkfs/inspector/fsck 和
-崩溃边界。若 v1.6 需要改变本章的 Path、Mount 或 FileDescription 基本语义，
-应先解释为什么 v1.5 双后端与十万步模型不足，而不能悄悄绕开接口。
+下一节将验证 v1.6 已经在 VFS 不变的前提下引入版本化 rootfs v2、完整
+create/mkdir/unlink/rename/truncate/stat、稀疏大文件、独立
+mkfs/inspector/fsck 和崩溃边界；Path、Mount 与 FileDescription 的基本
+语义仍保持本节冻结的形状。
 
 \begin{keyidea}
 v1.5 的完成不是“Shell 多了 cd”，也不是“增加一个内存目录”。真正结果是：

@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.5。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.6。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -97,12 +97,16 @@ CPUID 能力与地址宽度规格门禁、CpuLocal、原生 SYSCALL/SYSRET、SWA
 延迟调度。v1.4 又加入带 generation 的类型化 KernelObject、共享
 FileDescription 与每 Process 的 64 槽延迟分块 FileTable，把功能硬限额
 提高到 256、容量规格提高到 4096，并以复制共享偏移、独立打开、fd flags、
-soft/hard limit、最低编号复用和最终析构收口描述符生命周期。当前 107 项
-CTest 的历史集合继续保留；v1.5 又建立 Vnode、Path、Mount、Superblock、
+soft/hard limit、最低编号复用和最终析构收口描述符生命周期。v1.4 的历史
+回归集合继续保留；v1.5 又建立 Vnode、Path、Mount、Superblock、
 每 Process FsContext 与 OpenFile，把旧磁盘接成 legacy 后端，并把完整
 memfs 挂在 \filepath{/tmp}。绝对/相对路径、点组件、根钳制、挂载穿越、
 4096/255 字节边界和 getcwd 由同一状态机处理；两个后端通过同一契约，
-命名空间另有十万步独立模型。当前完整集合为 110 项 CTest；页表、资源
-生命周期、调度现场、双系统调用入口、动态文件表和 VFS 各有单元、集成、
-随机模型和真实 QEMU 证明。
+命名空间另有十万步独立模型。v1.6 进一步把生产根切到严格挂载的
+256 MiB rootfs v2：版本化小端盘面、8192 个 inode、八个 direct 加
+single/double/triple 块、64 MiB 稀疏文件、unlink/rmdir/rename/truncate/stat、
+真实短写与 ENOSPC 都已落地。独立 Python mkfs/inspector/fsck 与 Kernel
+互相校验，QEMU 同盘两次启动后再损坏第三次拒绝；完整回归数量由构建图自动
+产生，不在正文冻结。页表、资源生命周期、调度现场、双系统调用入口、动态
+文件表、VFS 和 rootfs 各有单元、集成、随机模型和真实 QEMU 证明。
 Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。

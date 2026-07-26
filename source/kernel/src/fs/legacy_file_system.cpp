@@ -46,25 +46,22 @@ constexpr uint8_t OS_KERNEL_LEGACY_FILE_SYSTEM_DELETE_CONTROL_CHARACTER = 0x7FU;
             return false;
         }
     }
-    const bool dot =
-        name_length_bytes == OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION &&
-        name[OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE] ==
-            OS_KERNEL_LEGACY_FILE_SYSTEM_DOT_CHARACTER;
-    const bool dot_dot =
-        name_length_bytes ==
-            OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION +
-                OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION &&
-        name[OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE] ==
-            OS_KERNEL_LEGACY_FILE_SYSTEM_DOT_CHARACTER &&
-        name[OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION] ==
-            OS_KERNEL_LEGACY_FILE_SYSTEM_DOT_CHARACTER;
+    const bool dot = name_length_bytes == OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION &&
+                     name[OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE] ==
+                         OS_KERNEL_LEGACY_FILE_SYSTEM_DOT_CHARACTER;
+    const bool dot_dot = name_length_bytes == OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION +
+                                                  OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION &&
+                         name[OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE] ==
+                             OS_KERNEL_LEGACY_FILE_SYSTEM_DOT_CHARACTER &&
+                         name[OS_KERNEL_LEGACY_FILE_SYSTEM_INITIAL_GENERATION] ==
+                             OS_KERNEL_LEGACY_FILE_SYSTEM_DOT_CHARACTER;
     return !dot && !dot_dot;
 }
 
 void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                const uint64_t length_bytes) noexcept {
-    for (uint64_t byte_index = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE;
-         byte_index < length_bytes; ++byte_index) {
+    for (uint64_t byte_index = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE; byte_index < length_bytes;
+         ++byte_index) {
         destination[byte_index] = source[byte_index];
     }
 }
@@ -115,9 +112,8 @@ Status ToVfsStatus(const FileSystemStatus status) noexcept {
         status == FileSystemStatus::DataCapacityExhausted ||
         status == FileSystemStatus::DirectoryCapacityExhausted ||
         status == FileSystemStatus::MountCapacityExhausted) {
-        return status == FileSystemStatus::MountCapacityExhausted
-                   ? Status::MountCapacityExhausted
-                   : Status::CapacityExhausted;
+        return status == FileSystemStatus::MountCapacityExhausted ? Status::MountCapacityExhausted
+                                                                  : Status::CapacityExhausted;
     }
     if (status == FileSystemStatus::FileTooLarge) {
         return Status::FileTooLarge;
@@ -136,6 +132,15 @@ Status ToVfsStatus(const FileSystemStatus status) noexcept {
     }
     if (status == FileSystemStatus::LoopDetected) {
         return Status::LoopDetected;
+    }
+    if (status == FileSystemStatus::DirectoryNotEmpty) {
+        return Status::DirectoryNotEmpty;
+    }
+    if (status == FileSystemStatus::CrossDevice) {
+        return Status::CrossDevice;
+    }
+    if (status == FileSystemStatus::Busy) {
+        return Status::Busy;
     }
     return Status::Unsupported;
 }
@@ -201,6 +206,15 @@ FileSystemStatus ToFileSystemStatus(const Status status) noexcept {
     if (status == Status::LoopDetected) {
         return FileSystemStatus::LoopDetected;
     }
+    if (status == Status::DirectoryNotEmpty) {
+        return FileSystemStatus::DirectoryNotEmpty;
+    }
+    if (status == Status::CrossDevice) {
+        return FileSystemStatus::CrossDevice;
+    }
+    if (status == Status::Busy) {
+        return FileSystemStatus::Busy;
+    }
     if (status == Status::Unsupported) {
         return FileSystemStatus::Unsupported;
     }
@@ -210,19 +224,23 @@ FileSystemStatus ToFileSystemStatus(const Status status) noexcept {
 const BackendOperations LegacyFileSystem::operations{
     .lookup = LegacyFileSystem::LookupOperation,
     .create = LegacyFileSystem::CreateOperation,
+    .open = LegacyFileSystem::OpenOperation,
+    .close = LegacyFileSystem::CloseOperation,
+    .remove = LegacyFileSystem::RemoveOperation,
+    .rename = LegacyFileSystem::RenameOperation,
     .parent = LegacyFileSystem::ParentOperation,
     .read = LegacyFileSystem::ReadOperation,
     .write = LegacyFileSystem::WriteOperation,
     .truncate = LegacyFileSystem::TruncateOperation,
     .read_directory = LegacyFileSystem::ReadDirectoryOperation,
     .get_name = LegacyFileSystem::GetNameOperation,
+    .stat = LegacyFileSystem::StatOperation,
     .sync = LegacyFileSystem::SyncOperation,
     .validate = LegacyFileSystem::ValidateOperation,
     .read_resource_usage = LegacyFileSystem::ReadResourceUsageOperation,
 };
 
-Status LegacyFileSystem::Initialize(FileSystem &file_system,
-                                    const uint64_t superblock_identifier,
+Status LegacyFileSystem::Initialize(FileSystem &file_system, const uint64_t superblock_identifier,
                                     const bool read_only) noexcept {
     if (this->initialized_) {
         return Status::AlreadyInitialized;
@@ -254,14 +272,11 @@ Status LegacyFileSystem::Initialize(FileSystem &file_system,
 
 Superblock &LegacyFileSystem::GetSuperblock() noexcept { return this->superblock_; }
 
-const Superblock &LegacyFileSystem::GetSuperblock() const noexcept {
-    return this->superblock_;
-}
+const Superblock &LegacyFileSystem::GetSuperblock() const noexcept { return this->superblock_; }
 
 Status LegacyFileSystem::LookupOperation(void *const context, const Vnode &directory,
                                          const uint8_t *const name,
-                                         const uint64_t name_length_bytes,
-                                         Vnode &vnode) noexcept {
+                                         const uint64_t name_length_bytes, Vnode &vnode) noexcept {
     vnode = Vnode{};
     if (context == nullptr || !NameIsValid(name, name_length_bytes)) {
         return name_length_bytes > OS_KERNEL_FILE_SYSTEM_MAXIMUM_NAME_LENGTH_BYTES
@@ -341,6 +356,46 @@ Status LegacyFileSystem::CreateOperation(void *const context, const Vnode &direc
     return Status::Succeeded;
 }
 
+Status LegacyFileSystem::OpenOperation(void *const context, const Vnode &vnode) noexcept {
+    if (context == nullptr) {
+        return Status::InvalidArgument;
+    }
+    const LegacyFileSystem &adapter = *static_cast<const LegacyFileSystem *>(context);
+    return adapter.VnodeIsValid(vnode) ? Status::Succeeded : Status::InvalidHandle;
+}
+
+Status LegacyFileSystem::CloseOperation(void *const context, const Vnode &vnode) noexcept {
+    return LegacyFileSystem::OpenOperation(context, vnode);
+}
+
+Status LegacyFileSystem::RemoveOperation(void *const context, const Vnode &directory,
+                                         const uint8_t *const name,
+                                         const uint64_t name_length_bytes,
+                                         const NodeType expected_type) noexcept {
+    static_cast<void>(directory);
+    static_cast<void>(name);
+    static_cast<void>(name_length_bytes);
+    static_cast<void>(expected_type);
+    return context == nullptr ? Status::InvalidArgument : Status::Unsupported;
+}
+
+Status LegacyFileSystem::RenameOperation(void *const context, const Vnode &source_directory,
+                                         const uint8_t *const source_name,
+                                         const uint64_t source_name_length_bytes,
+                                         const Vnode &destination_directory,
+                                         const uint8_t *const destination_name,
+                                         const uint64_t destination_name_length_bytes,
+                                         const bool replace) noexcept {
+    static_cast<void>(source_directory);
+    static_cast<void>(source_name);
+    static_cast<void>(source_name_length_bytes);
+    static_cast<void>(destination_directory);
+    static_cast<void>(destination_name);
+    static_cast<void>(destination_name_length_bytes);
+    static_cast<void>(replace);
+    return context == nullptr ? Status::InvalidArgument : Status::Unsupported;
+}
+
 Status LegacyFileSystem::ParentOperation(void *const context, const Vnode &vnode,
                                          Vnode &parent) noexcept {
     parent = Vnode{};
@@ -388,8 +443,7 @@ Status LegacyFileSystem::ReadOperation(void *const context, const Vnode &vnode,
         .writable = false,
         .open = true,
     };
-    return ToVfsStatus(
-        adapter.file_system_->Read(handle, destination, capacity_bytes, read_bytes));
+    return ToVfsStatus(adapter.file_system_->Read(handle, destination, capacity_bytes, read_bytes));
 }
 
 Status LegacyFileSystem::WriteOperation(void *const context, const Vnode &vnode,
@@ -509,8 +563,7 @@ Status LegacyFileSystem::ReadDirectoryOperation(void *const context, const Vnode
 }
 
 Status LegacyFileSystem::GetNameOperation(void *const context, const Vnode &vnode,
-                                          uint8_t *const name,
-                                          const uint64_t name_capacity_bytes,
+                                          uint8_t *const name, const uint64_t name_capacity_bytes,
                                           uint64_t &name_length_bytes) noexcept {
     name_length_bytes = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE;
     if (context == nullptr || name == nullptr) {
@@ -541,6 +594,35 @@ Status LegacyFileSystem::GetNameOperation(void *const context, const Vnode &vnod
     return Status::Succeeded;
 }
 
+Status LegacyFileSystem::StatOperation(void *const context, const Vnode &vnode,
+                                       BackendNodeInformation &information) noexcept {
+    information = BackendNodeInformation{};
+    if (context == nullptr) {
+        return Status::InvalidArgument;
+    }
+    LegacyFileSystem &adapter = *static_cast<LegacyFileSystem *>(context);
+    if (!adapter.VnodeIsValid(vnode)) {
+        return Status::InvalidHandle;
+    }
+    FileSystem &file_system = *adapter.file_system_;
+    SpinLockGuard guard{file_system.lock_};
+    FileSystemInode inode{};
+    const FileSystemStatus status = file_system.ReadInode(vnode.identifier, inode);
+    if (status != FileSystemStatus::Succeeded) {
+        return ToVfsStatus(status);
+    }
+    if (ToVfsNodeType(inode.type) != vnode.type) {
+        return Status::Corrupt;
+    }
+    information = BackendNodeInformation{
+        .size_bytes = inode.size_bytes,
+        .allocated_size_bytes =
+            inode.allocated_block_count * OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES,
+        .link_count = inode.link_count,
+    };
+    return Status::Succeeded;
+}
+
 Status LegacyFileSystem::SyncOperation(void *const context) noexcept {
     if (context == nullptr) {
         return Status::InvalidArgument;
@@ -565,7 +647,7 @@ Status LegacyFileSystem::ReadResourceUsageOperation(void *const context,
     }
     const LegacyFileSystem &adapter = *static_cast<const LegacyFileSystem *>(context);
     return adapter.initialized_ && adapter.file_system_ != nullptr ? Status::Succeeded
-                                                                  : Status::NotInitialized;
+                                                                   : Status::NotInitialized;
 }
 
 Vnode LegacyFileSystem::MakeVnode(const uint64_t inode_number,

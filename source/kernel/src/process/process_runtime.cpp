@@ -221,8 +221,8 @@ SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
     };
 }
 
-[[nodiscard]] bool DiscountPersistentVfsResources(
-    ResourceSnapshot &snapshot, const fs::ResourceUsage &usage) noexcept {
+[[nodiscard]] bool DiscountPersistentVfsResources(ResourceSnapshot &snapshot,
+                                                  const fs::ResourceUsage &usage) noexcept {
     if (snapshot.heap_consumed_bytes < usage.heap_consumed_bytes ||
         snapshot.heap_active_requested_bytes < usage.heap_active_requested_bytes ||
         snapshot.heap_allocation_count < usage.heap_allocation_count ||
@@ -785,6 +785,10 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
         process.result.page_fault_address = page_fault_address;
     }
     CloseProcessIoDescriptors(process);
+    if (process_vfs != nullptr && process.file_system_context.initialized &&
+        process_vfs->ReleaseContext(process.file_system_context) != fs::Status::Succeeded) {
+        HaltProcessor();
+    }
 
     ThreadSchedulingDecision decision{};
     const bool interrupts_were_enabled = scheduler_lock.Lock();
@@ -911,6 +915,15 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept {
         ProcessRuntimeProcess &process = runtime_processes[process_index];
         if (process.active &&
             vfs.InitializeContext(process.file_system_context) != fs::Status::Succeeded) {
+            for (uint64_t rollback_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+                 rollback_index < process_index; ++rollback_index) {
+                ProcessRuntimeProcess &rollback_process = runtime_processes[rollback_index];
+                if (rollback_process.active && rollback_process.file_system_context.initialized &&
+                    vfs.ReleaseContext(rollback_process.file_system_context) !=
+                        fs::Status::Succeeded) {
+                    HaltProcessor();
+                }
+            }
             return ProcessRuntimeStatus::FileSystemFailure;
         }
     }
@@ -1049,9 +1062,8 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
     };
     runtime_process.file_system_context = fs::FsContext{};
     const bool file_system_context_initialized =
-        process_vfs == nullptr ||
-        process_vfs->InitializeContext(runtime_process.file_system_context) ==
-            fs::Status::Succeeded;
+        process_vfs == nullptr || process_vfs->InitializeContext(
+                                      runtime_process.file_system_context) == fs::Status::Succeeded;
     if (!file_system_context_initialized ||
         !InitializeProcessFileTable(runtime_process, selection)) {
         interrupts_were_enabled = scheduler_lock.Lock();
@@ -1065,6 +1077,11 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
             DestroyUserAddressSpace(address_space) != UserAddressSpaceStatus::Succeeded ||
             discard_thread_status != ThreadSchedulerStatus::Succeeded ||
             discard_process_status != ThreadSchedulerStatus::Succeeded) {
+            HaltProcessor();
+        }
+        if (file_system_context_initialized && process_vfs != nullptr &&
+            process_vfs->ReleaseContext(runtime_process.file_system_context) !=
+                fs::Status::Succeeded) {
             HaltProcessor();
         }
         runtime_process.address_space = UserAddressSpace{};
@@ -1164,8 +1181,7 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
     if (thread_scheduler.Validate() != ThreadSchedulerStatus::Succeeded ||
         GetKernelResourceSnapshot(supplemental_counts, resource_snapshot_after_processes) !=
             ResourceSnapshotStatus::Succeeded ||
-        !DiscountPersistentVfsResources(resource_snapshot_after_processes,
-                                        vfs_resource_usage) ||
+        !DiscountPersistentVfsResources(resource_snapshot_after_processes, vfs_resource_usage) ||
         CompareResourceSnapshots(resource_snapshot_before_processes,
                                  resource_snapshot_after_processes, resource_snapshot_difference) !=
             ResourceSnapshotStatus::Succeeded ||
@@ -1348,9 +1364,9 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         }
         return FileSystemStatus::DataCapacityExhausted;
     }
-    const FileTableStatus install_status = process.file_table.Install(
-        reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
-        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, file_descriptor);
+    const FileTableStatus install_status =
+        process.file_table.Install(reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
+                                   OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, file_descriptor);
     return install_status == FileTableStatus::Succeeded ? FileSystemStatus::Succeeded
                                                         : FileSystemStatus::DataCapacityExhausted;
 }
@@ -1438,8 +1454,62 @@ FileSystemStatus CreateCurrentProcessDirectory(const uint8_t *path,
         return FileSystemStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
-    return fs::ToFileSystemStatus(process_vfs->CreateDirectory(
-        process.file_system_context, path, path_length_bytes));
+    return fs::ToFileSystemStatus(
+        process_vfs->CreateDirectory(process.file_system_context, path, path_length_bytes));
+}
+
+FileSystemStatus RemoveCurrentProcessFile(const uint8_t *path,
+                                          const uint64_t path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->RemoveFile(process.file_system_context, path, path_length_bytes));
+}
+
+FileSystemStatus RemoveCurrentProcessDirectory(const uint8_t *path,
+                                               const uint64_t path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->RemoveDirectory(process.file_system_context, path, path_length_bytes));
+}
+
+FileSystemStatus RenameCurrentProcessPath(const uint8_t *source_path,
+                                          const uint64_t source_path_length_bytes,
+                                          const uint8_t *destination_path,
+                                          const uint64_t destination_path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(process_vfs->Rename(process.file_system_context, source_path,
+                                                      source_path_length_bytes, destination_path,
+                                                      destination_path_length_bytes, true));
+}
+
+FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path, const uint64_t path_length_bytes,
+                                            const uint64_t size_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->Truncate(process.file_system_context, path, path_length_bytes, size_bytes));
+}
+
+FileSystemStatus StatCurrentProcessPath(const uint8_t *path, const uint64_t path_length_bytes,
+                                        fs::NodeInformation &information) noexcept {
+    information = fs::NodeInformation{};
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->Stat(process.file_system_context, path, path_length_bytes, information));
 }
 
 FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
@@ -1455,8 +1525,8 @@ FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
         return FileSystemStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
-    return fs::ToFileSystemStatus(process_vfs->ChangeDirectory(
-        process.file_system_context, path, path_length_bytes));
+    return fs::ToFileSystemStatus(
+        process_vfs->ChangeDirectory(process.file_system_context, path, path_length_bytes));
 }
 
 FileSystemStatus GetCurrentProcessWorkingDirectory(uint8_t *const destination,
@@ -1629,8 +1699,8 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     fs::OpenFile open_file{};
-    const fs::Status status = process_vfs->OpenDirectory(
-        process.file_system_context, path, path_length_bytes, open_file);
+    const fs::Status status =
+        process_vfs->OpenDirectory(process.file_system_context, path, path_length_bytes, open_file);
     if (status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(status);
     }
@@ -1651,9 +1721,9 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
         }
         return FileSystemStatus::DataCapacityExhausted;
     }
-    return process.file_table.Install(
-               reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
-               OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, file_descriptor) == FileTableStatus::Succeeded
+    return process.file_table.Install(reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
+                                      OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                                      file_descriptor) == FileTableStatus::Succeeded
                ? FileSystemStatus::Succeeded
                : FileSystemStatus::DataCapacityExhausted;
 }

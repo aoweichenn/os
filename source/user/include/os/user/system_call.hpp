@@ -56,5 +56,14 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t ReadDirectory(uint64_t descriptor, os::abi::DirectoryEntry &entry) noexcept;
 [[nodiscard]] int64_t ChangeDirectory(const char *path, uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t GetWorkingDirectory(char *destination, uint64_t capacity_bytes) noexcept;
+[[nodiscard]] int64_t UnlinkFile(const char *path, uint64_t path_length_bytes) noexcept;
+[[nodiscard]] int64_t RemoveDirectory(const char *path, uint64_t path_length_bytes) noexcept;
+[[nodiscard]] int64_t Rename(const char *source_path, uint64_t source_length_bytes,
+                             const char *destination_path,
+                             uint64_t destination_length_bytes) noexcept;
+[[nodiscard]] int64_t TruncateFile(const char *path, uint64_t path_length_bytes,
+                                   uint64_t size_bytes) noexcept;
+[[nodiscard]] int64_t StatFile(const char *path, uint64_t path_length_bytes,
+                               os::abi::FileInformation &information) noexcept;
 [[noreturn]] void ExitProcess(int64_t exit_code) noexcept;
 }

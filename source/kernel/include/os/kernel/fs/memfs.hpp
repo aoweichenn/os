@@ -29,8 +29,7 @@ class Memfs final {
     Memfs &operator=(const Memfs &) = delete;
 
     [[nodiscard]] Status Initialize(KernelHeap &heap, uint64_t superblock_identifier,
-                                    uint64_t node_limit,
-                                    uint64_t maximum_file_size_bytes) noexcept;
+                                    uint64_t node_limit, uint64_t maximum_file_size_bytes) noexcept;
     [[nodiscard]] Status Destroy() noexcept;
     [[nodiscard]] Superblock &GetSuperblock() noexcept;
     [[nodiscard]] const Superblock &GetSuperblock() const noexcept;
@@ -40,13 +39,21 @@ class Memfs final {
     struct Node;
 
     [[nodiscard]] static Status LookupOperation(void *context, const Vnode &directory,
-                                                const uint8_t *name,
-                                                uint64_t name_length_bytes,
+                                                const uint8_t *name, uint64_t name_length_bytes,
                                                 Vnode &vnode) noexcept;
     [[nodiscard]] static Status CreateOperation(void *context, const Vnode &directory,
-                                                const uint8_t *name,
-                                                uint64_t name_length_bytes, NodeType type,
-                                                Vnode &vnode) noexcept;
+                                                const uint8_t *name, uint64_t name_length_bytes,
+                                                NodeType type, Vnode &vnode) noexcept;
+    [[nodiscard]] static Status OpenOperation(void *context, const Vnode &vnode) noexcept;
+    [[nodiscard]] static Status CloseOperation(void *context, const Vnode &vnode) noexcept;
+    [[nodiscard]] static Status RemoveOperation(void *context, const Vnode &directory,
+                                                const uint8_t *name, uint64_t name_length_bytes,
+                                                NodeType expected_type) noexcept;
+    [[nodiscard]] static Status
+    RenameOperation(void *context, const Vnode &source_directory, const uint8_t *source_name,
+                    uint64_t source_name_length_bytes, const Vnode &destination_directory,
+                    const uint8_t *destination_name, uint64_t destination_name_length_bytes,
+                    bool replace) noexcept;
     [[nodiscard]] static Status ParentOperation(void *context, const Vnode &vnode,
                                                 Vnode &parent) noexcept;
     [[nodiscard]] static Status ReadOperation(void *context, const Vnode &vnode,
@@ -59,13 +66,14 @@ class Memfs final {
                                                uint64_t &written_bytes) noexcept;
     [[nodiscard]] static Status TruncateOperation(void *context, const Vnode &vnode,
                                                   uint64_t size_bytes) noexcept;
-    [[nodiscard]] static Status ReadDirectoryOperation(
-        void *context, const Vnode &directory, uint64_t &cursor, DirectoryEntry &entry,
-        bool &end_of_directory) noexcept;
-    [[nodiscard]] static Status GetNameOperation(void *context, const Vnode &vnode,
-                                                 uint8_t *name,
+    [[nodiscard]] static Status ReadDirectoryOperation(void *context, const Vnode &directory,
+                                                       uint64_t &cursor, DirectoryEntry &entry,
+                                                       bool &end_of_directory) noexcept;
+    [[nodiscard]] static Status GetNameOperation(void *context, const Vnode &vnode, uint8_t *name,
                                                  uint64_t name_capacity_bytes,
                                                  uint64_t &name_length_bytes) noexcept;
+    [[nodiscard]] static Status StatOperation(void *context, const Vnode &vnode,
+                                              BackendNodeInformation &information) noexcept;
     [[nodiscard]] static Status SyncOperation(void *context) noexcept;
     [[nodiscard]] static Status ValidateOperation(void *context) noexcept;
     [[nodiscard]] static Status ReadResourceUsageOperation(void *context,

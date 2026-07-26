@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.5。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.6。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -1329,7 +1329,7 @@ offset。close 先从表中移除 handle，再在表锁外 release；若不是�
 [ADR 0031](adr/0031-typed-kernel-object-dynamic-file-table.md)，整机证据见
 [v1.4 发布记录](releases/v1.4.md)。
 
-## v1.5 当前命名架构：VFS、Mount、Vnode 与每 Process FsContext
+## v1.5 命名架构基线：VFS、Mount、Vnode 与每 Process FsContext
 
 v1.4 稳定了“fd 只是进程局部引用”，但打开文件仍直接携带 legacy
 `FileSystemHandle`。v1.5 把描述符之下的命名和后端边界拆成以下对象图：
@@ -1406,15 +1406,15 @@ cwd 保存 Path 而不是字符串。`GetWorkingDirectory` 从 cwd 向 Process r
 `get_name` 返回；若当前 vnode 是挂载根，则名字来自父后端的 mount point。
 到达 Process root 后停止，最后把连续结果前移到缓冲区起点。
 
-这个算法避免 cwd 字符串与对象关系分叉。当前尚无 rename，因此无需处理
-rename 并发；v1.6 加入 rename 时必须以 vnode/mount 关系继续作为事实来源。
+这个算法避免 cwd 字符串与对象关系分叉。v1.6 的 rename 仍以
+vnode/mount/父目录关系作为事实来源；cwd 没有缓存可失真的完整路径。
 
 ### 启动期不可变挂载拓扑
 
 当前启动顺序为：
 
 ```text
-legacy disk mount-or-format
+strict rootfs v2 mount
   -> ensure /tmp mount point
   -> initialize legacy adapter
   -> initialize memfs
@@ -1425,6 +1425,7 @@ legacy disk mount-or-format
   -> enable user scheduling
 ```
 
+rootfs 不提供自动格式化分支；构建系统必须先用独立 mkfs 生成有效介质。
 调度开始后没有 `MountAt` 调用，也没有 unmount。路径读侧因此可以把 mount
 数组视为不可变；VFS 锁只保护启动发布与统计。若以后允许动态拓扑，必须同时
 增加 mount 引用、读侧稳定性和失效协议。
@@ -1446,6 +1447,108 @@ memfs 节点是挂载生命周期资源，不随某个 Process 退出。后端�
 详细决策与完成证据见
 [ADR 0032](adr/0032-vfs-mount-namespace-and-memfs.md) 和
 [v1.5 发布记录](releases/v1.5.md)。
+
+## v1.6 rootfs v2、完整命名空间与持久失败边界
+
+### 当前存储链
+
+```text
+Shell / user wrapper
+  -> syscall 31..35 或既有 fd 系统调用
+  -> Process FsContext / FileDescription
+  -> VFS
+      ├-> /tmp: Memfs
+      └-> /: RootFileSystem
+            -> BlockCache
+            -> ATA PIO block device
+            -> QEMU IDE disk
+```
+
+生产根目录不再经过 legacy 适配器。`LegacyFileSystem` 与旧 `FileSystem`
+仍编译并运行回归测试，用于证明 VFS 契约没有被新格式反向污染；正常 Kernel
+只初始化 `RootFileSystem`。
+
+### 容量与盘面边界
+
+启动盘逻辑长度为 1 GiB，并以稀疏宿主文件保存；boot chain 仍占用低 LBA，
+rootfs 从 LBA 2048 开始固定占用 524288 个 512 字节块，即 256 MiB。盘面
+布局如下：
+
+```text
+relative block 0       superblock
+relative block 1..2    inode bitmap
+relative block 3..4098 inode table: 8192 × 256 B
+relative block 4099..4226 data bitmap
+relative block 4227..524287 data and pointer blocks
+```
+
+inode 保存八个直接块以及单、双、三级间接根。每个 512 字节指针块保存
+63 个 64 位相对块号，末尾四字节是 CRC32；剩余保留字节必须为零。
+64 MiB 是公开单文件上限，即使指针树的理论覆盖略大也不会对外暴露。
+目录项固定 320 字节，包含 inode number、generation、类型、精确名称长度
+与 256 字节名称存储；空槽全零，尾部必须规范化为零。
+
+### 命名空间修改
+
+VFS 把完整路径拆成父路径与末组件，再调用后端的单组件 `remove` 或
+`rename`。所有后端统一执行以下规则：
+
+- 根、挂载点和挂载根不可删除或替换；
+- unlink 只接受普通文件，rmdir 只接受空目录；
+- rename 可以同目录或跨目录，但只能在同一 Superblock 中完成；
+- 目标存在时必须显式选择 replace，目录与普通文件类型不能互换；
+- 目录不能移动到自己的后代，父链始终最终到根；
+- 打开引用非零的被删除/被替换对象返回 Busy；
+- 失败前完成全部类型、容量、父链和空间预检，不能发布半个目录项。
+
+`stat` 返回 64 字节固定 ABI，包含 mount、superblock、inode、generation、
+类型、逻辑大小、已分配大小和 link count。所有字段都是明确宽度的
+`uint64_t`；ABI 不依赖宿主 `long` 或 `size_t`。
+
+### 稀疏文件、短写与 truncate
+
+逻辑块号按 direct、single、double、triple 四段映射。未分配的叶指针表示
+空洞；读取时直接生成零，不为读分配块。越过文件尾写入只为实际写入范围分配
+数据与必需的间接元数据块，中间空洞保持未分配。
+
+truncate 扩展只改变逻辑大小，新增范围读为零；缩小会清零最后一个保留块中
+文件尾后的字节、释放完整后缀数据块，并由叶到根释放已经全零的间接块。
+范围释放按树覆盖区间剪枝，不会为了缩小 64 MiB 文件而扫描不存在的全部叶。
+
+写入先计算下一个逻辑块需要的数据/元数据块。若剩余空间不足：
+
+- 已完成至少一个前缀时，提交该前缀并返回成功及实际字节数；
+- 一个字节也未写入时，返回 `CapacityExhausted`；
+- offset、inode size、allocated counts 与 bitmap 只反映已提交前缀。
+
+### 提交与损坏模型
+
+每个修改事务的持久顺序是：
+
+```text
+write superblock Dirty + flush
+  -> update cached data, pointer blocks, inode, directory and bitmaps
+  -> flush every dirty cache entry + device flush
+  -> write superblock Clean with next generation + flush
+```
+
+任何设备读写或 flush 失败都会把实例标记为 failed；该实例不再接受后续
+请求。掉电点落在 Clean 之前时，下次挂载看到 Dirty 并返回
+`IncompleteTransaction`。这不是恢复协议，也不是 journal：v1.6 选择“检测并
+拒绝”，把 silent corruption 与自动重格式化完全排除；ordered metadata
+journal 留给后续独立版本。
+
+### 独立工具与双重验证
+
+Python `mkfs-rootfs` 负责创建全新格式，`inspect-rootfs` 输出冻结布局和统计，
+`fsck-rootfs` 只读遍历 inode/目录/指针树并重新计算两张 bitmap，
+`corrupt-rootfs` 只用于可重复故障注入。工具与 Kernel 各自实现解析和
+可达性检查，因此同一个逻辑错误不会因为共享一份实现而自证正确。
+
+更完整的语义、选择理由和证据见
+[ADR 0033](adr/0033-rootfs-v2-namespace-mutations.md)、
+[v1.6 发布记录](releases/v1.6.md) 与
+[文件系统模块](modules/file-system.md)。
 
 ## 模块边界
 

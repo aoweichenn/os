@@ -103,14 +103,15 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.5 完成基线
+## v1.6 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
 v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界；v1.4 又完成
 类型化 KernelObject、共享 FileDescription 和动态 FileTable；v1.5 已完成
-VFS、每 Process FsContext、memfs 与 legacy 文件系统适配，下一阶段为
-v1.6 rootfs v2。Stage 1 在自研长模式
+VFS、每 Process FsContext、memfs 与 legacy 文件系统适配；v1.6 已完成
+rootfs v2、完整命名空间修改、稀疏大文件、独立 mkfs/fsck 和损坏拒绝。
+下一阶段为 v1.7 PID1、进程树与磁盘 exec/wait。Stage 1 在自研长模式
 环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并
@@ -199,9 +200,10 @@ FIFO。Ring 3 Shell 在 fd 0 为空时阻塞；如果此时没有 Ready 进程�
 命令预置到内核。
 
 Shell 是独立 freestanding C++20 ELF，使用固定容量解析器实现 help、echo、
-pwd、cd、ls、mkdir、write、cat、sync 和 exit。v1.0 收口时完整回归为 97 项
-CTest；v1.5 当前为 110 项，继续覆盖单元、集成、固定种子随机、最终产物
-审计、真实交互、双启动持久化与历史失败路径。v1.0 是第一周期 `13 / 13`
+pwd、cd、ls、mkdir、write、cat、rm、rmdir、mv、truncate、stat、sync 和
+exit。v1.0 收口时完整回归为 97 项；当前回归继续覆盖单元、集成、固定种子
+随机、最终产物审计、真实交互、双启动持久化与历史失败路径。测试项数由
+构建图自动产生，不在需求中冻结。v1.0 是第一周期 `13 / 13`
 的完成基线。v1.1 已经完成动态物理
 内存元数据、64 TiB direct-map、64 GiB 管理、4 GiB 以上页帧读写回收，
 可释放、可合并并经过十万步模型验证的通用内核堆，以及支持连续块、错阶拒绝

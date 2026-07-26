@@ -45,7 +45,8 @@
 扩展现场以及 v1.3 原生入口收口完成后，完整集合为 103 项。
 v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习图门禁随后把完整
 集合推进到 107 项；v1.5 再加入 VFS 单元、双后端契约和十万步命名空间模型，
-当前完整集合为 110 项。
+形成 110 项历史集合。v1.6 再加入 rootfs 格式、集成、真实容量证据，并扩展
+随机、工具与 QEMU 持久化；当前数量由构建图自动生成，不在路线中冻结。
 
 ## 第二周期最终目标
 
@@ -408,8 +409,8 @@ ELF 拒绝继续通过。memfs 长期资源由 VFS 精确登记，不会被误�
 泄漏，未登记的 frame、KVA、heap、对象或 fd 泄漏仍会使资源快照失败。
 
 发布证据见 [v1.5 发布记录](releases/v1.5.md) 与
-[ADR 0032](adr/0032-vfs-mount-namespace-and-memfs.md)。下一实施阶段为
-v1.6 rootfs v2 与完整命名空间。
+[ADR 0032](adr/0032-vfs-mount-namespace-and-memfs.md)。该版本作为
+rootfs v2 的差分基线继续保留。
 
 ### v1.6 rootfs v2 与完整命名空间
 
@@ -432,6 +433,31 @@ v1.6 rootfs v2 与完整命名空间。
 - 100000 步命名空间模型与 memfs/rootfs v2 一致；
 - 冷启动写入、flush、重启与独立 fsck 得出相同可达性；
 - 损坏元数据只读拒绝，禁止静默重格式化。
+
+以上退出条件已经闭环。生产根文件系统现由 `RootFileSystem` 严格挂载，
+legacy 后端只保留格式兼容与回归用途。逻辑 1 GiB 稀疏启动盘中的固定
+256 MiB rootfs v2 使用小端、版本化且带 CRC32 的 superblock、inode、
+320 字节目录项和间接指针块；八个直接块与单/双/三级间接树共同覆盖
+64 MiB 文件规格。inode/data bitmap、可达性、generation、目录父链和
+数据/元数据块所有权均能由内核与独立 Python fsck 重新计算。
+
+VFS 与 memfs/rootfs 后端现共同支持 unlink、rmdir、同目录及跨目录 rename、
+替换、非空目录/祖先环/挂载点保护、truncate 扩缩与 stat。普通文件允许
+稀疏空洞，读取空洞返回零；空间不足时已经写入的完整前缀形成明确短写，
+若一个字节也不能提交则返回容量耗尽，文件大小与 bitmap 仍保持一致。
+打开引用与目录链接生命周期分开，删除或替换打开对象返回 Busy，避免本阶段
+引入尚未实现的 orphan inode 回收协议。
+
+所有 rootfs 修改都执行 `Dirty → 数据及元数据 flush → Clean`。设备失败会
+永久关闭当前实例，Dirty 或任何校验不一致的介质在下次挂载时只会被拒绝，
+内核没有格式化入口。宿主提供 `mkfs-rootfs`、`inspect-rootfs`、
+`fsck-rootfs` 与 `corrupt-rootfs`；构建系统预先格式化启动盘。
+
+验收包括格式单元测试、真实 256 MiB 近满镜像短写/ENOSPC、64 MiB 文件三级
+间接树与 truncate、设备写失败 Dirty 拒绝、memfs/rootfs 同种子 100000 步
+模型、QEMU 同盘两次启动、独立 fsck 以及损坏后的第三次拒绝。详细证据见
+[v1.6 发布记录](releases/v1.6.md) 与
+[ADR 0033](adr/0033-rootfs-v2-namespace-mutations.md)。
 
 ### v1.7 PID1、进程树与磁盘 exec/wait
 

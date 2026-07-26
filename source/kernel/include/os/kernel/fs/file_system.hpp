@@ -52,6 +52,9 @@ enum class FileSystemStatus : uint64_t {
     ReadOnly,
     MountCapacityExhausted,
     LoopDetected,
+    DirectoryNotEmpty,
+    CrossDevice,
+    Busy,
     Unsupported,
 };
 
@@ -144,16 +147,18 @@ class FileSystem final {
     [[nodiscard]] FileSystemStatus
     AppendDirectoryEntry(uint64_t directory_inode_number, FileSystemInode &directory,
                          const FileSystemDirectoryEntry &entry) noexcept;
-    [[nodiscard]] FileSystemStatus
-    ReadDirectoryEntryAt(const FileSystemInode &directory, uint64_t entry_index,
-                         FileSystemDirectoryEntry &entry) noexcept;
-    [[nodiscard]] FileSystemStatus
-    FindParentNode(uint64_t child_inode_number, uint64_t &parent_inode_number,
-                   FileSystemInode &parent_inode, PathComponent &child_name) noexcept;
-    [[nodiscard]] FileSystemStatus
-    CreateChildNode(uint64_t parent_inode_number, FileSystemInode &parent_inode,
-                    const PathComponent &name, FileSystemNodeType type,
-                    uint64_t &inode_number) noexcept;
+    [[nodiscard]] FileSystemStatus ReadDirectoryEntryAt(const FileSystemInode &directory,
+                                                        uint64_t entry_index,
+                                                        FileSystemDirectoryEntry &entry) noexcept;
+    [[nodiscard]] FileSystemStatus FindParentNode(uint64_t child_inode_number,
+                                                  uint64_t &parent_inode_number,
+                                                  FileSystemInode &parent_inode,
+                                                  PathComponent &child_name) noexcept;
+    [[nodiscard]] FileSystemStatus CreateChildNode(uint64_t parent_inode_number,
+                                                   FileSystemInode &parent_inode,
+                                                   const PathComponent &name,
+                                                   FileSystemNodeType type,
+                                                   uint64_t &inode_number) noexcept;
     [[nodiscard]] FileSystemStatus CreateNode(const PathComponent *components,
                                               uint64_t component_count, FileSystemNodeType type,
                                               uint64_t &inode_number) noexcept;

@@ -35,6 +35,9 @@ enum class Status : uint64_t {
     MountCapacityExhausted,
     AlreadyMounted,
     LoopDetected,
+    DirectoryNotEmpty,
+    CrossDevice,
+    Busy,
     Unsupported,
 };
 
@@ -48,6 +51,7 @@ enum class BackendKind : uint64_t {
     None,
     Legacy,
     Memory,
+    Root,
 };
 
 struct Superblock;
@@ -87,6 +91,23 @@ struct OpenFile final {
     bool open;
 };
 
+struct BackendNodeInformation final {
+    uint64_t size_bytes;
+    uint64_t allocated_size_bytes;
+    uint64_t link_count;
+};
+
+struct NodeInformation final {
+    uint64_t mount_identifier;
+    uint64_t superblock_identifier;
+    uint64_t node_identifier;
+    uint64_t generation;
+    NodeType type;
+    uint64_t size_bytes;
+    uint64_t allocated_size_bytes;
+    uint64_t link_count;
+};
+
 struct FsContext final {
     Path root;
     Path current_working_directory;
@@ -98,18 +119,25 @@ struct BackendOperations final {
                      uint64_t name_length_bytes, Vnode &vnode) noexcept;
     Status (*create)(void *context, const Vnode &directory, const uint8_t *name,
                      uint64_t name_length_bytes, NodeType type, Vnode &vnode) noexcept;
+    Status (*open)(void *context, const Vnode &vnode) noexcept;
+    Status (*close)(void *context, const Vnode &vnode) noexcept;
+    Status (*remove)(void *context, const Vnode &directory, const uint8_t *name,
+                     uint64_t name_length_bytes, NodeType expected_type) noexcept;
+    Status (*rename)(void *context, const Vnode &source_directory, const uint8_t *source_name,
+                     uint64_t source_name_length_bytes, const Vnode &destination_directory,
+                     const uint8_t *destination_name, uint64_t destination_name_length_bytes,
+                     bool replace) noexcept;
     Status (*parent)(void *context, const Vnode &vnode, Vnode &parent) noexcept;
-    Status (*read)(void *context, const Vnode &vnode, uint64_t offset_bytes,
-                   uint8_t *destination, uint64_t capacity_bytes,
-                   uint64_t &read_bytes) noexcept;
-    Status (*write)(void *context, const Vnode &vnode, uint64_t offset_bytes,
-                    const uint8_t *source, uint64_t length_bytes,
-                    uint64_t &written_bytes) noexcept;
+    Status (*read)(void *context, const Vnode &vnode, uint64_t offset_bytes, uint8_t *destination,
+                   uint64_t capacity_bytes, uint64_t &read_bytes) noexcept;
+    Status (*write)(void *context, const Vnode &vnode, uint64_t offset_bytes, const uint8_t *source,
+                    uint64_t length_bytes, uint64_t &written_bytes) noexcept;
     Status (*truncate)(void *context, const Vnode &vnode, uint64_t size_bytes) noexcept;
     Status (*read_directory)(void *context, const Vnode &directory, uint64_t &cursor,
                              DirectoryEntry &entry, bool &end_of_directory) noexcept;
     Status (*get_name)(void *context, const Vnode &vnode, uint8_t *name,
                        uint64_t name_capacity_bytes, uint64_t &name_length_bytes) noexcept;
+    Status (*stat)(void *context, const Vnode &vnode, BackendNodeInformation &information) noexcept;
     Status (*sync)(void *context) noexcept;
     Status (*validate)(void *context) noexcept;
     Status (*read_resource_usage)(void *context, ResourceUsage &usage) noexcept;
@@ -163,23 +191,33 @@ class Vfs final {
     [[nodiscard]] Status Initialize(Mount *mount_storage, uint64_t mount_capacity,
                                     Superblock &root_superblock) noexcept;
     [[nodiscard]] Status InitializeContext(FsContext &context) const noexcept;
+    [[nodiscard]] Status ReleaseContext(FsContext &context) const noexcept;
     [[nodiscard]] Status MountAt(const FsContext &context, const uint8_t *path,
-                                 uint64_t path_length_bytes,
-                                 Superblock &superblock) noexcept;
+                                 uint64_t path_length_bytes, Superblock &superblock) noexcept;
     [[nodiscard]] Status Resolve(const FsContext &context, const uint8_t *path,
                                  uint64_t path_length_bytes, Path &resolved_path) noexcept;
     [[nodiscard]] Status CreateDirectory(const FsContext &context, const uint8_t *path,
                                          uint64_t path_length_bytes) noexcept;
+    [[nodiscard]] Status RemoveFile(const FsContext &context, const uint8_t *path,
+                                    uint64_t path_length_bytes) noexcept;
+    [[nodiscard]] Status RemoveDirectory(const FsContext &context, const uint8_t *path,
+                                         uint64_t path_length_bytes) noexcept;
+    [[nodiscard]] Status Rename(const FsContext &context, const uint8_t *source_path,
+                                uint64_t source_path_length_bytes, const uint8_t *destination_path,
+                                uint64_t destination_path_length_bytes, bool replace) noexcept;
+    [[nodiscard]] Status Truncate(const FsContext &context, const uint8_t *path,
+                                  uint64_t path_length_bytes, uint64_t size_bytes) noexcept;
+    [[nodiscard]] Status Stat(const FsContext &context, const uint8_t *path,
+                              uint64_t path_length_bytes, NodeInformation &information) noexcept;
     [[nodiscard]] Status Open(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, const OpenOptions &options,
                               OpenFile &open_file) noexcept;
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
-                                       uint64_t path_length_bytes,
-                                       OpenFile &open_file) noexcept;
-    [[nodiscard]] Status Read(OpenFile &open_file, uint8_t *destination,
-                              uint64_t capacity_bytes, uint64_t &read_bytes) noexcept;
-    [[nodiscard]] Status Write(OpenFile &open_file, const uint8_t *source,
-                               uint64_t length_bytes, uint64_t &written_bytes) noexcept;
+                                       uint64_t path_length_bytes, OpenFile &open_file) noexcept;
+    [[nodiscard]] Status Read(OpenFile &open_file, uint8_t *destination, uint64_t capacity_bytes,
+                              uint64_t &read_bytes) noexcept;
+    [[nodiscard]] Status Write(OpenFile &open_file, const uint8_t *source, uint64_t length_bytes,
+                               uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status ReadDirectory(OpenFile &open_file, DirectoryEntry &entry,
                                        bool &end_of_directory) noexcept;
     [[nodiscard]] Status Close(OpenFile &open_file) noexcept;
@@ -212,10 +250,11 @@ class Vfs final {
     [[nodiscard]] Status ResolveParent(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes,
                                        ParentResolution &resolution) noexcept;
-    [[nodiscard]] Status ReadPathName(const Path &path, uint8_t *name,
-                                      uint64_t name_capacity_bytes,
+    [[nodiscard]] Status ReadPathName(const Path &path, uint8_t *name, uint64_t name_capacity_bytes,
                                       uint64_t &name_length_bytes) noexcept;
     [[nodiscard]] Status ValidateSuperblock(const Superblock &superblock) const noexcept;
+    [[nodiscard]] Status Remove(const FsContext &context, const uint8_t *path,
+                                uint64_t path_length_bytes, NodeType expected_type) noexcept;
     void RecordResolution(Status status) noexcept;
 
     Mount *mounts_{nullptr};

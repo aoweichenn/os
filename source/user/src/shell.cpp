@@ -17,17 +17,23 @@ constexpr uint64_t OS_USER_SHELL_CD_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_SYNC_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_EXIT_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_PATH_COMMAND_ARGUMENT_COUNT = 2ULL;
+constexpr uint64_t OS_USER_SHELL_TWO_PATH_COMMAND_ARGUMENT_COUNT = 3ULL;
+constexpr uint64_t OS_USER_SHELL_TRUNCATE_ARGUMENT_COUNT = 3ULL;
 constexpr uint64_t OS_USER_SHELL_WRITE_MINIMUM_ARGUMENT_COUNT = 3ULL;
 constexpr uint64_t OS_USER_SHELL_LIST_MAXIMUM_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_SINGLE_CHARACTER_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_SHELL_FILE_TRANSFER_SIZE_BYTES = 128ULL;
 constexpr uint64_t OS_USER_SHELL_WRITE_BUFFER_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
+constexpr uint64_t OS_USER_SHELL_DECIMAL_RADIX = 10ULL;
+constexpr uint64_t OS_USER_SHELL_UINT64_DECIMAL_CAPACITY_BYTES = 20ULL;
 constexpr uint8_t OS_USER_SHELL_NEWLINE_CHARACTER = static_cast<uint8_t>('\n');
 constexpr uint8_t OS_USER_SHELL_BACKSPACE_CHARACTER = static_cast<uint8_t>('\b');
 constexpr uint8_t OS_USER_SHELL_TAB_CHARACTER = static_cast<uint8_t>('\t');
 constexpr uint8_t OS_USER_SHELL_SPACE_CHARACTER = static_cast<uint8_t>(' ');
 constexpr uint8_t OS_USER_SHELL_STRING_TERMINATOR_CHARACTER = static_cast<uint8_t>('\0');
+constexpr char OS_USER_SHELL_FIRST_DECIMAL_CHARACTER = '0';
+constexpr char OS_USER_SHELL_LAST_DECIMAL_CHARACTER = '9';
 constexpr uint8_t OS_USER_SHELL_FIRST_PRINTABLE_CHARACTER = 0x20U;
 constexpr uint8_t OS_USER_SHELL_LAST_PRINTABLE_CHARACTER = 0x7EU;
 constexpr int64_t OS_USER_SHELL_SUCCESS_EXIT_CODE = 0LL;
@@ -37,7 +43,7 @@ constexpr int64_t OS_USER_SHELL_DIRECTORY_ENTRY_RESULT = 1LL;
 constexpr uint64_t OS_USER_SHELL_WRITE_OPEN_FLAGS = os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG |
                                                     os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
                                                     os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
-constexpr char OS_USER_SHELL_BANNER[] = "\r\nx86-64 OS Lab v1.5\r\n"
+constexpr char OS_USER_SHELL_BANNER[] = "\r\nx86-64 OS Lab v1.6\r\n"
                                         "输入 help 查看可用命令。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
@@ -55,12 +61,18 @@ constexpr char OS_USER_SHELL_HELP_TEXT[] = "help                 显示命令帮
                                            "mkdir <path>         创建目录\r\n"
                                            "write <path> <text>  创建或覆盖文件\r\n"
                                            "cat <path>           输出文件\r\n"
+                                           "rm <path>            删除普通文件\r\n"
+                                           "rmdir <path>         删除空目录\r\n"
+                                           "mv <src> <dst>       移动或替换路径\r\n"
+                                           "truncate <path> <n>  设置文件字节长度\r\n"
+                                           "stat <path>          显示 inode 与空间信息\r\n"
                                            "sync                 持久化文件系统\r\n"
                                            "exit                 退出 Shell\r\n";
 constexpr char OS_USER_SHELL_USAGE_ERROR[] = "error: 参数数量不正确\r\n";
 constexpr char OS_USER_SHELL_PARSE_ERROR[] = "error: 无法解析命令行\r\n";
 constexpr char OS_USER_SHELL_LINE_TOO_LONG_ERROR[] = "error: 命令行超过 128 字节\r\n";
 constexpr char OS_USER_SHELL_OPERATION_ERROR[] = "error: 操作失败\r\n";
+constexpr char OS_USER_SHELL_INVALID_SIZE_ERROR[] = "error: 文件长度不是有效 uint64\r\n";
 constexpr char OS_USER_SHELL_UNKNOWN_ERROR[] = "error: 未知命令\r\n";
 constexpr char OS_USER_SHELL_DIRECTORY_EXISTS[] = "目录已经存在\r\n";
 constexpr char OS_USER_SHELL_OPERATION_SUCCEEDED[] = "ok\r\n";
@@ -72,11 +84,24 @@ constexpr char OS_USER_SHELL_COMMAND_LS_MARKER[] = "[OS][USER][SHELL] COMMAND=LS
 constexpr char OS_USER_SHELL_COMMAND_MKDIR_MARKER[] = "[OS][USER][SHELL] COMMAND=MKDIR\r\n";
 constexpr char OS_USER_SHELL_COMMAND_WRITE_MARKER[] = "[OS][USER][SHELL] COMMAND=WRITE\r\n";
 constexpr char OS_USER_SHELL_COMMAND_CAT_MARKER[] = "[OS][USER][SHELL] COMMAND=CAT\r\n";
+constexpr char OS_USER_SHELL_COMMAND_RM_MARKER[] = "[OS][USER][SHELL] COMMAND=RM\r\n";
+constexpr char OS_USER_SHELL_COMMAND_RMDIR_MARKER[] = "[OS][USER][SHELL] COMMAND=RMDIR\r\n";
+constexpr char OS_USER_SHELL_COMMAND_MV_MARKER[] = "[OS][USER][SHELL] COMMAND=MV\r\n";
+constexpr char OS_USER_SHELL_COMMAND_TRUNCATE_MARKER[] = "[OS][USER][SHELL] COMMAND=TRUNCATE\r\n";
+constexpr char OS_USER_SHELL_COMMAND_STAT_MARKER[] = "[OS][USER][SHELL] COMMAND=STAT\r\n";
 constexpr char OS_USER_SHELL_COMMAND_SYNC_MARKER[] = "[OS][USER][SHELL] COMMAND=SYNC\r\n";
 constexpr char OS_USER_SHELL_COMMAND_EXIT_MARKER[] = "[OS][USER][SHELL] COMMAND=EXIT\r\n";
 constexpr char OS_USER_SHELL_UNKNOWN_COMMAND_MARKER[] =
     "[OS][USER][SHELL] UNKNOWN_COMMAND_REJECTED\r\n";
 constexpr char OS_USER_SHELL_EXIT_MARKER[] = "[OS][USER][SHELL] EXIT\r\n";
+constexpr char OS_USER_SHELL_STAT_INODE_PREFIX[] = "inode=";
+constexpr char OS_USER_SHELL_STAT_GENERATION_PREFIX[] = " generation=";
+constexpr char OS_USER_SHELL_STAT_TYPE_PREFIX[] = " type=";
+constexpr char OS_USER_SHELL_STAT_SIZE_PREFIX[] = " size=";
+constexpr char OS_USER_SHELL_STAT_ALLOCATED_PREFIX[] = " allocated=";
+constexpr char OS_USER_SHELL_STAT_LINKS_PREFIX[] = " links=";
+constexpr char OS_USER_SHELL_STAT_FILE_TYPE[] = "file";
+constexpr char OS_USER_SHELL_STAT_DIRECTORY_TYPE[] = "directory";
 
 enum class ShellReadLineStatus : uint64_t {
     Succeeded,
@@ -104,6 +129,49 @@ template <uint64_t MessageSizeBytes>
                            length_bytes) == static_cast<int64_t>(length_bytes);
 }
 
+[[nodiscard]] bool WriteUnsignedDecimal(const uint64_t value) noexcept {
+    char digits[OS_USER_SHELL_UINT64_DECIMAL_CAPACITY_BYTES]{};
+    uint64_t write_index = OS_USER_SHELL_UINT64_DECIMAL_CAPACITY_BYTES;
+    uint64_t remaining_value = value;
+    do {
+        const uint64_t digit = remaining_value % OS_USER_SHELL_DECIMAL_RADIX;
+        --write_index;
+        digits[write_index] =
+            static_cast<char>(OS_USER_SHELL_FIRST_DECIMAL_CHARACTER + static_cast<char>(digit));
+        remaining_value /= OS_USER_SHELL_DECIMAL_RADIX;
+    } while (remaining_value != OS_USER_SHELL_EMPTY_VALUE);
+    return WriteBytes(digits + write_index,
+                      OS_USER_SHELL_UINT64_DECIMAL_CAPACITY_BYTES - write_index);
+}
+
+[[nodiscard]] bool ParseUnsignedDecimal(const ShellCommandLine &command_line,
+                                        const uint64_t argument_index, uint64_t &value) noexcept {
+    value = OS_USER_SHELL_EMPTY_VALUE;
+    if (argument_index >= command_line.argument_count ||
+        command_line.arguments[argument_index].length_bytes == OS_USER_SHELL_EMPTY_VALUE) {
+        return false;
+    }
+    const char *const bytes = ShellArgumentBytes(command_line, argument_index);
+    if (bytes == nullptr) {
+        return false;
+    }
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE;
+         byte_index < command_line.arguments[argument_index].length_bytes; ++byte_index) {
+        const char character = bytes[byte_index];
+        if (character < OS_USER_SHELL_FIRST_DECIMAL_CHARACTER ||
+            character > OS_USER_SHELL_LAST_DECIMAL_CHARACTER) {
+            return false;
+        }
+        const uint64_t digit =
+            static_cast<uint64_t>(character - OS_USER_SHELL_FIRST_DECIMAL_CHARACTER);
+        if (value > (UINT64_MAX - digit) / OS_USER_SHELL_DECIMAL_RADIX) {
+            return false;
+        }
+        value = value * OS_USER_SHELL_DECIMAL_RADIX + digit;
+    }
+    return true;
+}
+
 [[nodiscard]] bool WriteArgument(const ShellCommandLine &command_line,
                                  const uint64_t argument_index) noexcept {
     const char *const bytes = ShellArgumentBytes(command_line, argument_index);
@@ -118,8 +186,7 @@ template <uint64_t MessageSizeBytes>
 
 [[nodiscard]] bool WritePrompt() noexcept {
     char current_path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
-    const int64_t path_length_bytes =
-        GetWorkingDirectory(current_path, sizeof(current_path));
+    const int64_t path_length_bytes = GetWorkingDirectory(current_path, sizeof(current_path));
     return path_length_bytes > OS_USER_SHELL_SUCCESS_RESULT &&
            WriteLiteral(OS_USER_SHELL_PROMPT_PREFIX) &&
            WriteBytes(current_path, static_cast<uint64_t>(path_length_bytes)) &&
@@ -211,13 +278,11 @@ template <uint64_t MessageSizeBytes>
                                                        : ShellExecutionAction::Fatal;
     }
     char current_path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
-    const int64_t path_length_bytes =
-        GetWorkingDirectory(current_path, sizeof(current_path));
-    const bool succeeded =
-        path_length_bytes > OS_USER_SHELL_SUCCESS_RESULT &&
-        WriteLiteral(OS_USER_SHELL_COMMAND_PWD_MARKER) &&
-        WriteBytes(current_path, static_cast<uint64_t>(path_length_bytes)) &&
-        WriteLiteral(OS_USER_SHELL_NEWLINE);
+    const int64_t path_length_bytes = GetWorkingDirectory(current_path, sizeof(current_path));
+    const bool succeeded = path_length_bytes > OS_USER_SHELL_SUCCESS_RESULT &&
+                           WriteLiteral(OS_USER_SHELL_COMMAND_PWD_MARKER) &&
+                           WriteBytes(current_path, static_cast<uint64_t>(path_length_bytes)) &&
+                           WriteLiteral(OS_USER_SHELL_NEWLINE);
     if (succeeded) {
         return ShellExecutionAction::Continue;
     }
@@ -361,6 +426,113 @@ template <uint64_t MessageSizeBytes>
     return ShellExecutionAction::Continue;
 }
 
+[[nodiscard]] ShellExecutionAction
+ExecuteRemoveFile(const ShellCommandLine &command_line) noexcept {
+    if (command_line.argument_count != OS_USER_SHELL_PATH_COMMAND_ARGUMENT_COUNT) {
+        return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+    }
+    if (!WriteLiteral(OS_USER_SHELL_COMMAND_RM_MARKER)) {
+        return ShellExecutionAction::Fatal;
+    }
+    const int64_t result =
+        UnlinkFile(ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX),
+                   command_line.arguments[OS_USER_SHELL_FIRST_PARAMETER_INDEX].length_bytes);
+    return WriteOperationResult(result == OS_USER_SHELL_SUCCESS_RESULT)
+               ? ShellExecutionAction::Continue
+               : ShellExecutionAction::Fatal;
+}
+
+[[nodiscard]] ShellExecutionAction
+ExecuteRemoveDirectory(const ShellCommandLine &command_line) noexcept {
+    if (command_line.argument_count != OS_USER_SHELL_PATH_COMMAND_ARGUMENT_COUNT) {
+        return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+    }
+    if (!WriteLiteral(OS_USER_SHELL_COMMAND_RMDIR_MARKER)) {
+        return ShellExecutionAction::Fatal;
+    }
+    const int64_t result =
+        RemoveDirectory(ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX),
+                        command_line.arguments[OS_USER_SHELL_FIRST_PARAMETER_INDEX].length_bytes);
+    return WriteOperationResult(result == OS_USER_SHELL_SUCCESS_RESULT)
+               ? ShellExecutionAction::Continue
+               : ShellExecutionAction::Fatal;
+}
+
+[[nodiscard]] ShellExecutionAction ExecuteMove(const ShellCommandLine &command_line) noexcept {
+    if (command_line.argument_count != OS_USER_SHELL_TWO_PATH_COMMAND_ARGUMENT_COUNT) {
+        return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+    }
+    if (!WriteLiteral(OS_USER_SHELL_COMMAND_MV_MARKER)) {
+        return ShellExecutionAction::Fatal;
+    }
+    const int64_t result =
+        Rename(ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX),
+               command_line.arguments[OS_USER_SHELL_FIRST_PARAMETER_INDEX].length_bytes,
+               ShellArgumentBytes(command_line, OS_USER_SHELL_SECOND_PARAMETER_INDEX),
+               command_line.arguments[OS_USER_SHELL_SECOND_PARAMETER_INDEX].length_bytes);
+    return WriteOperationResult(result == OS_USER_SHELL_SUCCESS_RESULT)
+               ? ShellExecutionAction::Continue
+               : ShellExecutionAction::Fatal;
+}
+
+[[nodiscard]] ShellExecutionAction ExecuteTruncate(const ShellCommandLine &command_line) noexcept {
+    if (command_line.argument_count != OS_USER_SHELL_TRUNCATE_ARGUMENT_COUNT) {
+        return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+    }
+    if (!WriteLiteral(OS_USER_SHELL_COMMAND_TRUNCATE_MARKER)) {
+        return ShellExecutionAction::Fatal;
+    }
+    uint64_t size_bytes = OS_USER_SHELL_EMPTY_VALUE;
+    if (!ParseUnsignedDecimal(command_line, OS_USER_SHELL_SECOND_PARAMETER_INDEX, size_bytes)) {
+        return WriteLiteral(OS_USER_SHELL_INVALID_SIZE_ERROR) ? ShellExecutionAction::Continue
+                                                              : ShellExecutionAction::Fatal;
+    }
+    const int64_t result = TruncateFile(
+        ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX),
+        command_line.arguments[OS_USER_SHELL_FIRST_PARAMETER_INDEX].length_bytes, size_bytes);
+    return WriteOperationResult(result == OS_USER_SHELL_SUCCESS_RESULT)
+               ? ShellExecutionAction::Continue
+               : ShellExecutionAction::Fatal;
+}
+
+[[nodiscard]] ShellExecutionAction ExecuteStat(const ShellCommandLine &command_line) noexcept {
+    if (command_line.argument_count != OS_USER_SHELL_PATH_COMMAND_ARGUMENT_COUNT) {
+        return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+    }
+    if (!WriteLiteral(OS_USER_SHELL_COMMAND_STAT_MARKER)) {
+        return ShellExecutionAction::Fatal;
+    }
+    os::abi::FileInformation information{};
+    const int64_t result = StatFile(
+        ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX),
+        command_line.arguments[OS_USER_SHELL_FIRST_PARAMETER_INDEX].length_bytes, information);
+    if (result != OS_USER_SHELL_SUCCESS_RESULT) {
+        return WriteLiteral(OS_USER_SHELL_OPERATION_ERROR) ? ShellExecutionAction::Continue
+                                                           : ShellExecutionAction::Fatal;
+    }
+    const bool directory = information.type == os::abi::DirectoryEntryType::Directory;
+    const bool succeeded = WriteLiteral(OS_USER_SHELL_STAT_INODE_PREFIX) &&
+                           WriteUnsignedDecimal(information.inode_number) &&
+                           WriteLiteral(OS_USER_SHELL_STAT_GENERATION_PREFIX) &&
+                           WriteUnsignedDecimal(information.generation) &&
+                           WriteLiteral(OS_USER_SHELL_STAT_TYPE_PREFIX) &&
+                           (directory ? WriteLiteral(OS_USER_SHELL_STAT_DIRECTORY_TYPE)
+                                      : WriteLiteral(OS_USER_SHELL_STAT_FILE_TYPE)) &&
+                           WriteLiteral(OS_USER_SHELL_STAT_SIZE_PREFIX) &&
+                           WriteUnsignedDecimal(information.size_bytes) &&
+                           WriteLiteral(OS_USER_SHELL_STAT_ALLOCATED_PREFIX) &&
+                           WriteUnsignedDecimal(information.allocated_size_bytes) &&
+                           WriteLiteral(OS_USER_SHELL_STAT_LINKS_PREFIX) &&
+                           WriteUnsignedDecimal(information.link_count) &&
+                           WriteLiteral(OS_USER_SHELL_NEWLINE);
+    return succeeded ? ShellExecutionAction::Continue : ShellExecutionAction::Fatal;
+}
+
 [[nodiscard]] ShellExecutionAction ExecuteList(const ShellCommandLine &command_line) noexcept {
     if (command_line.argument_count > OS_USER_SHELL_LIST_MAXIMUM_ARGUMENT_COUNT) {
         return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
@@ -440,6 +612,16 @@ template <uint64_t MessageSizeBytes>
         return ExecuteWrite(command_line);
     case ShellCommand::ConcatenateFile:
         return ExecuteCat(command_line);
+    case ShellCommand::RemoveFile:
+        return ExecuteRemoveFile(command_line);
+    case ShellCommand::RemoveDirectory:
+        return ExecuteRemoveDirectory(command_line);
+    case ShellCommand::MovePath:
+        return ExecuteMove(command_line);
+    case ShellCommand::TruncateFile:
+        return ExecuteTruncate(command_line);
+    case ShellCommand::StatPath:
+        return ExecuteStat(command_line);
     case ShellCommand::Synchronize:
         return ExecuteSync(command_line);
     case ShellCommand::Exit:

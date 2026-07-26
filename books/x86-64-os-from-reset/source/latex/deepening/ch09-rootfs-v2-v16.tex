@@ -1,0 +1,679 @@
+\section{v1.6：从 ATA 扇区到 rootfs v2 完整命名空间}
+
+\begin{keyidea}
+文件系统不是“把一个 C++ 对象写进文件”。它要把断电后仍有意义的名字、
+对象身份、逻辑长度、块所有权和提交状态编码到扇区中，再让另一个全新启动
+实例能够独立证明这些事实。v1.6 用 256 MiB rootfs、三级间接树、稀疏文件、
+完整命名空间修改和只读 fsck，把这条链从 Ring 3 一直闭合到 ATA LBA。
+\end{keyidea}
+
+\subsection{为什么 v1.5 的 VFS 之后才能替换根格式}
+
+v1.5 已经把路径遍历、挂载、每 Process 的 root/cwd、一次打开和底层后端
+分开。如果跳过这一步直接扩展旧文件系统，任意失败都可能同时来自三类原因：
+
+\begin{itemize}
+  \item 路径字符串切分、\code{.}/\code{..} 或挂载穿越错误；
+  \item inode、目录项和 bitmap 盘面布局错误；
+  \item fd、共享 offset 与打开生命周期错误。
+\end{itemize}
+
+现在 \code{RootFileSystem} 只需实现已有 \code{BackendOperations}。
+\code{Vfs::Resolve} 不知道 direct block 是什么，RootFileSystem 也不解析含
+斜杠的完整路径。memfs 继续作为易检查的语义参考，legacy 文件系统继续作为
+旧格式回归输入；生产根则可以在不改 VFS 对象关系的条件下切换到新格式。
+
+旧格式的能力上限是明确的：2 MiB 启动盘中只有 512 KiB 文件系统区域，
+inode 只有十个直接块，单文件最多 5120 字节，名称最多 40 字节，并且没有
+unlink、rename、非零 truncate 或 stat。这个闭环适合第一次理解持久化，
+却不足以保存后续 \filepath{/sbin/init}、\filepath{/bin/sh} 和多个用户
+ELF。v1.6 因此创建新 magic 和新版本，绝不让同一个 magic 在新旧内核中
+具有两种含义。
+
+\subsection{历史因果链：从连续分配到 inode 块树}
+
+若文件永远不增长，保存“起始扇区 + 长度”就够了。现实文件会增长、缩小和
+删除；连续区域后面可能已被占用，整文件搬迁会越来越昂贵。链式分配让每一块
+指向下一块，解决连续空间问题，却让随机访问第 \(n\) 块必须从头走 \(n\)
+步，任一断链也会丢掉整个后缀。
+
+索引分配把“下一块”集中到索引块中。早期 Unix 又把名字与对象分离：目录项
+保存“名字 \(\rightarrow\) inode”，inode 保存类型、长度和数据索引。这个
+分离带来三个长期影响：
+
+\begin{enumerate}
+  \item rename 可以改变目录边而不搬动文件数据；
+  \item 同一个 inode 理论上可以由多个目录项引用，形成硬链接；
+  \item 打开文件可以继续引用 inode，不必保存原路径文本。
+\end{enumerate}
+
+经典 Unix inode 把少量指针直接放在 inode 中，再提供 single、double、
+triple indirect。小文件只付直接项成本，大文件按需增加索引层。ext2 等格式
+沿用过这套模型；现代 ext4、XFS 常用 extent 描述连续范围。v1.6 选择块树，
+不是声称它比 extent 更新，而是因为每个逻辑块、每个元数据块和每次回收都能
+画成一棵确定所有权树，适合作为 extent 与 page cache 之前的学习基础。
+
+\subsection{四种“块”不要混为一个词}
+
+\begin{longtable}{L{0.22\textwidth}L{0.24\textwidth}L{0.43\textwidth}}
+\toprule
+名称 & 当前粒度 & 职责\\
+\midrule
+ATA sector & 512 字节 & IDE 设备一次 PIO 命令传输的硬件单位\\
+rootfs block & 512 字节 & 文件系统分配、缓存、CRC 和相对寻址单位\\
+file logical block & 512 字节 & 文件 offset 除以块大小后的文件内部索引\\
+host sparse extent & 宿主决定 & raw image 实际占用宿主存储的非空范围\\
+\bottomrule
+\end{longtable}
+
+四者当前可能具有相同或相关的大小，却不属于同一地址域。给定文件字节偏移
+\(o\)：
+
+\[
+  L=\left\lfloor\frac{o}{512}\right\rfloor,\qquad
+  q=o\bmod512.
+\]
+
+\(L\) 是文件逻辑块，\(q\) 是块内偏移。inode 块树把 \(L\) 映射为
+rootfs 相对块 \(r\)，最后设备 LBA 才是
+
+\[
+  \mathrm{LBA}=2048+r.
+\]
+
+名字带 \code{offset\_bytes}、\code{logical\_block}、
+\code{relative\_block} 与 \code{lba}，不是风格装饰，而是在类型系统还
+不能自动区分这些整数时保留地址域证据。
+
+\subsection{逻辑 1 GiB 为什么不等于每次构建写 1 GiB}
+
+启动盘的来宾可见长度固定为 1073741824 字节。宿主镜像使用 sparse file：
+文件的逻辑尾部存在，未写范围由宿主文件系统记作 hole，读取仍返回零。
+QEMU IDE 控制器向来宾提供完整 LBA 空间；来宾看不见宿主是否为 hole。
+
+这与 rootfs 内部的 sparse file 是两层独立稀疏性：
+
+\begin{itemize}
+  \item 宿主稀疏镜像减少构建产物实际占用；
+  \item 来宾稀疏文件减少 rootfs data block 占用。
+\end{itemize}
+
+派生故障镜像和持久化临时盘不能用一个只复制已知前缀的旧工具。v1.6 的稀疏
+复制先建立精确逻辑长度，再复制非零 extent，并测试靠近 1 GiB 尾部的
+非零内容；\code{pwrite} 还要循环处理短写。否则“看起来很快的复制”可能
+悄悄截掉未来分区或把全部 hole 物化。
+
+\subsection{256 MiB rootfs 的精确所有权图}
+
+rootfs 从 LBA 2048 开始，固定包含 524288 个 512 字节块，即
+\(2^{28}\) 字节。区域如下：
+
+\begin{longtable}{L{0.20\textwidth}L{0.13\textwidth}L{0.24\textwidth}L{0.31\textwidth}}
+\toprule
+相对块 & 数量 & 字节容量 & 内容\\
+\midrule
+0 & 1 & 512 B & superblock、事务、布局、feature 与 CRC\\
+1--2 & 2 & 1 KiB & 8192 位 inode bitmap\\
+3--4098 & 4096 & 2 MiB & 8192 个 256 B inode\\
+4099--4226 & 128 & 64 KiB & data bitmap\\
+4227--524287 & 520061 & 约 254 MiB & 文件数据与 pointer block\\
+\bottomrule
+\end{longtable}
+
+\begin{pdfdiagram}[node distance=7mm and 8mm]
+  \node[os hardware] (boot) {LBA 0..2047\\启动链};
+  \node[os block,right=of boot] (super) {0\\super};
+  \node[os state,right=of super] (ibm) {1..2\\inode bitmap};
+  \node[os block,below=of ibm] (itab) {3..4098\\inode table};
+  \node[os state,left=of itab] (dbm) {4099..4226\\data bitmap};
+  \node[os block,left=of dbm] (data) {4227..524287\\data / pointer};
+  \draw[os arrow] (boot) -- (super);
+  \draw[os arrow] (super) -- (ibm);
+  \draw[os arrow] (ibm) -- (itab);
+  \draw[os arrow] (itab) -- (dbm);
+  \draw[os arrow] (dbm) -- (data);
+\end{pdfdiagram}
+\diagramnote{图中块号从 rootfs 起点重新计数；真正 ATA LBA 还要统一加 2048。}
+
+superblock 会把每段位置和数量写盘，但 Kernel 仍要求它们精确等于冻结布局。
+“自描述”让 inspector 能解释镜像、迁移器能识别版本；“严格匹配”则防止一项
+损坏字段把 inode table 指向启动链、data 区或盘外。
+
+\subsection{为什么所有盘面整数都显式 little-endian}
+
+x86 读取多字节整数使用 little-endian，但盘面 ABI 不能写成“当前 CPU 恰好
+如此”。Rootfs encoder 对每个 \code{uint64\_t}/\code{uint32\_t} 使用明确
+offset；Python inspector 在任意宿主上按同一规则解码。
+
+不能直接执行：
+
+\begin{lstlisting}[caption={禁止把内存对象布局冒充盘面格式}]
+device.WriteBlock(reinterpret_cast<const uint8_t*>(&inode));
+\end{lstlisting}
+
+原因包括字段 padding、尾部 padding、enum 底层宽度、编译器 ABI 和未来字段
+变化。正确编码流程是：
+
+\begin{enumerate}
+  \item 清零完整 512、320 或 256 字节输出；
+  \item 逐字段按冻结 offset 写小端整数；
+  \item 名称只复制精确长度，其余存储保持零；
+  \item 对规定前缀计算 CRC32；
+  \item 最后写 checksum 字段。
+\end{enumerate}
+
+解码反向执行，并要求所有保留字节为零。保留区不是“随便忽略”，而是未来
+版本识别与随机损坏检测的一部分。
+
+\subsection{四类盘面对象分别保存什么}
+
+\paragraph{Superblock}
+
+magic 为 \code{OSRFV002}，版本为 2。它保存块大小、区域边界、inode 数、
+根 inode、64 MiB 文件上限、required feature、事务状态、事务 generation
+和下一 inode generation。前 508 字节由 CRC32 保护。
+
+\paragraph{Inode}
+
+inode 0 永不分配，inode 1 是根。每个 256 字节 inode 保存：
+
+\begin{itemize}
+  \item type、flags、逻辑 size 和 identity generation；
+  \item link count；
+  \item allocated data/metadata block count；
+  \item parent inode number；
+  \item 八个 direct pointer；
+  \item single、double、triple indirect root；
+  \item 规范零保留区与 CRC32。
+\end{itemize}
+
+generation 解决编号复用：旧 inode 7 被删除后，新文件可以再次取得编号 7，
+但 generation 必须不同。目录项与 Vnode 都检查二者，旧引用不能仅凭数字
+相同命中新对象。
+
+\paragraph{Directory entry}
+
+目录项固定 320 字节，包含 inode number、inode generation、type、
+name length、256 字节名称槽、CRC 和保留区。活动名称最长 255 字节；空槽
+整项为零。目录本身仍是普通块树文件，所以大目录不需要第二套分配器。
+
+\paragraph{Pointer block}
+
+一个 512 字节 pointer block 保存 63 个 64 位相对块号。若使用全部 64 个
+槽，就没有位置保存 checksum 和规范保留区，所以指针数不是熟悉的 64。
+零指针表示未分配；非零值必须位于 data 区，不能指向 superblock、bitmap、
+inode table 或盘外。
+
+\subsection{direct/single/double/triple 的完整索引算术}
+
+令 direct 数 \(D=8\)，每个 pointer block 的指针数 \(P=63\)。逻辑块号
+\(L\) 的区间为：
+
+\begin{longtable}{L{0.23\textwidth}L{0.23\textwidth}L{0.42\textwidth}}
+\toprule
+层级 & 逻辑块数量 & 索引\\
+\midrule
+direct & \(D\) & inode 的 \(L\) 项\\
+single & \(P\) & 一个索引 \(i=L-D\)\\
+double & \(P^2\) & \(i=\lfloor x/P\rfloor,\ j=x\bmod P\)\\
+triple & \(P^3\) &
+\(i=\lfloor x/P^2\rfloor,\ j=\lfloor x/P\rfloor\bmod P,\ k=x\bmod P\)\\
+\bottomrule
+\end{longtable}
+
+其中 double 的 \(x=L-D-P\)，triple 的
+\(x=L-D-P-P^2\)。总理论叶数为：
+
+\[
+  8+63+63^2+63^3=254087.
+\]
+
+乘以 512 后大于 64 MiB；公开上限仍冻结为
+\(67108864=2^{26}\) 字节。内部结构的理论余量不自动成为稳定规格，所有
+\code{offset + length}、乘法与索引换算都先检查 64 位溢出和公开上限。
+
+\begin{pdfdiagram}
+  \node[os block] (inode) {inode};
+  \node[os state,above right=of inode] (direct) {direct\\data};
+  \node[os state,right=of inode] (single) {single\\pointer};
+  \node[os state,below right=of inode] (double) {double\\pointer};
+  \node[os state,below=of inode] (triple) {triple\\pointer};
+  \node[os hardware,right=of single] (leaves) {data blocks};
+  \draw[os arrow] (inode) -- (direct);
+  \draw[os arrow] (direct) -- (leaves);
+  \draw[os arrow] (inode) -- (single);
+  \draw[os arrow] (single) -- (leaves);
+  \draw[os arrow] (inode) -- (double);
+  \draw[os arrow] (double) -- node[below,sloped]{再索引一层} (leaves);
+  \draw[os arrow] (inode) -- (triple);
+  \draw[os arrow] (triple) -- node[below,sloped]{再索引两层} (leaves);
+\end{pdfdiagram}
+\diagramnote{direct 直接到数据；每增加一级 indirect，就增加一个由 bitmap 拥有且带 CRC 的元数据块。}
+
+\subsection{按需建立间接路径必须先知道需要几块}
+
+在 triple 区写一个此前不存在的逻辑块，最坏需要一个数据块和三个 pointer
+block。如果只分配数据块后才发现没有空间建立上层路径，就会产生不可达块。
+
+\code{RequiredBlocksForLogicalBlock} 先沿当前树读取已有层级，计算缺失
+pointer block 数和叶数据块数。分配器只有在当前 free count 足够时才进入
+该逻辑块的写入。每次分配和每个父指针发布仍在同一 Dirty 事务内。
+
+bitmap 搜索保存可回绕 hint。顺序构造大文件时，下一次从上次命中后开始，
+避免每次都从 bit 0 扫到当前尾部。hint 不写盘，也不决定所有权；丢掉 hint
+最多影响性能，bitmap 才是事实来源。
+
+\subsection{稀疏文件不是压缩文件}
+
+零叶指针表示 hole。读取 hole 时 Kernel 直接把目标范围清零，不读设备，也
+不分配块。越过文件尾写入时，中间距离保持 hole，只为实际触及的数据和指针
+路径分配。
+
+稀疏不是扫描“内容是不是全零”后的压缩。用户真的写入一个全零块，它仍可能
+占有真实块；未分配映射才是 hole。二者区分让随机写保持常数层级定位，不需要
+维护压缩流。
+
+\code{stat} 同时返回 logical size 与 allocated size。一个逻辑 64 MiB、
+只写最后一个字节的文件可以只拥有一个数据块和少量 pointer block；这种差异
+是正确结果，不是块泄漏。
+
+\begin{failurebox}
+hole 读取不能直接复用“未初始化局部缓冲”。刚释放的数据块可能含有另一个
+文件的旧字节。只有明确清零目标范围，才能保证稀疏语义和信息隔离。
+\end{failurebox}
+
+\subsection{truncate 缩小为何需要一棵反向算法}
+
+扩展只增加逻辑 size，新区间自然是 hole。缩小要完成四件事：
+
+\begin{enumerate}
+  \item 若新文件尾落在一个已分配块中，把尾后字节写零；
+  \item 释放完全位于新尾之后的数据块；
+  \item 从叶向根释放已经全零的 pointer block；
+  \item 更新 inode 中两类 allocated count 和 size。
+\end{enumerate}
+
+不能为每次缩小扫描三级树的全部理论叶。实现为每棵子树计算覆盖区间：
+不相交则立即跳过，完全落入释放范围则只遍历实际存在的分支，部分相交才进入
+相关子节点。未分配根指针以常数时间结束。
+
+尾块清零防止“缩小后再扩展”暴露旧数据。例如文件从 700 字节缩到 513，
+第二块仍保留，但 offset 513..1023 必须清零；未来扩到 700 时这些字节应为
+零，而不是上一次内容。
+
+\subsection{bitmap 与全盘所有权守恒}
+
+inode bitmap 回答“哪个 inode 槽被分配”，data bitmap 回答“哪个 data 区
+块被某个文件数据或 pointer block 拥有”。单看 bitmap 不能知道所有者，
+所以 Validate 从根重新推导事实。
+
+核心守恒条件是：
+
+\[
+  B_{\mathrm{inode,disk}}=B_{\mathrm{inode,reachable}},
+  \qquad
+  B_{\mathrm{data,disk}}=B_{\mathrm{data,owned}}.
+\]
+
+从根有界遍历时还检查：
+
+\begin{itemize}
+  \item 每个目录项的 inode number、generation 与 type 一致；
+  \item 根以外每个 inode 恰有一个目录父边，parent 字段匹配；
+  \item 父链无环并最终到根；
+  \item data/pointer block 在范围内且只被拥有一次；
+  \item inode 的 data/metadata count 与实际树相等；
+  \item 目录 size 是 320 的整数倍，空槽和保留区规范为零；
+  \item superblock 为 Clean，版本、feature、布局与 CRC 都匹配。
+\end{itemize}
+
+早期写法每发现一个引用块就复制整张 64 KiB data bitmap，再比较一位；在
+十万步模型中会放大为巨大成本。当前算法只在内存 validation bitmap 标记
+所有权，遍历结束后一次性逐位比较。优化改变复杂度，不放宽任何不变量。
+
+\subsection{create 先预检，避免不可达 inode}
+
+创建文件至少可能修改 inode bitmap、inode、父目录数据和 data bitmap。
+若先分配 inode，最后才发现父目录没有槽或没有数据块，就会留下 orphan。
+
+因此 create/mkdir 的顺序是：
+
+\begin{enumerate}
+  \item 验证父对象是目录，名称合法且不存在；
+  \item 查找空目录槽，必要时计算增长需要的块；
+  \item 确认有可用 inode 和足够 data/metadata block；
+  \item 持久化 Dirty；
+  \item 初始化带新 generation 的 inode；
+  \item 写入目录项；
+  \item flush 全部变化并持久化 Clean。
+\end{enumerate}
+
+失败输出参数保持未发布，bitmap、目录大小和 inode table 仍代表旧状态。
+
+\subsection{unlink、rmdir 与打开引用的历史冲突}
+
+完整 Unix 允许打开后 unlink：
+
+\begin{lstlisting}[caption={成熟 Unix 中名字和打开生命周期分离}]
+fd = open("/log")
+unlink("/log")       // directory edge disappears
+write(fd, bytes)     // inode still alive
+close(fd)            // last open reference may reclaim inode
+\end{lstlisting}
+
+这要求 link count 为零但仍打开的 inode 进入 orphan 状态。若此时掉电，启动
+恢复还必须找到并回收 orphan；日志文件系统通常为此维护持久 orphan 机制。
+
+v1.6 尚无 journal 和 orphan list，所以不冒充完整语义。RootFileSystem 为
+每个 inode 保存运行期 open count；unlink、rmdir 或 rename replace 若会
+释放一个 open count 非零的对象，明确返回 \code{Busy}。未来放宽规则时必须
+同时增加盘面状态、最后关闭回收和每个掉电点测试。
+
+普通 unlink 只接受 RegularFile；rmdir 只接受空 Directory。根、挂载点和
+挂载根由 VFS 先拒绝。删除成功后，目录边、数据树、inode 和两张 bitmap
+共同变化，任何一项不能单独提前成为 Clean。
+
+\subsection{rename 为什么是最复杂的短系统调用之一}
+
+rename 的输入只有两个路径，背后却组合了以下状态：
+
+\begin{itemize}
+  \item source 与 destination 可能相同、不同名或不同父目录；
+  \item destination 可能不存在，也可能需要 replace；
+  \item 文件不能替换目录，目录不能替换文件；
+  \item 被替换目录必须为空，被替换对象不能处于打开状态；
+  \item source 目录不能移动到自己的后代；
+  \item 两条路径可以穿过不同 Mount；
+  \item 目标父目录可能需要新数据块才能容纳目录项。
+\end{itemize}
+
+VFS 分别解析 source/destination 的父 Path 与末组件，拒绝根、mount point
+和不同 Superblock。跨设备返回 \code{CrossDevice}，不能暗中执行
+copy+unlink；后者在失败或并发观察时并不具有 rename 的单事务语义。
+
+移动目录前，从 destination parent 沿 parent inode 一直走到根。若途中遇到
+source inode，移动会把目录接到自己的子树中，必须返回 \code{LoopDetected}。
+成功移动后同步更新 source inode 的 parent。cwd 保存 Vnode identity，而非
+缓存的路径字符串；后续 getcwd 从新父链重建名字。
+
+\subsection{truncate、stat 与系统调用 31--35}
+
+v1.6 在共享 ABI 中追加五个编号，不重排已有系统调用：
+
+\begin{longtable}{L{0.09\textwidth}L{0.22\textwidth}L{0.56\textwidth}}
+\toprule
+编号 & 名称 & 语义\\
+\midrule
+31 & \code{UnlinkFile} & 删除普通文件\\
+32 & \code{RemoveDirectory} & 删除空目录\\
+33 & \code{Rename} & source、destination 与 replace 边界\\
+34 & \code{TruncateFile} & 设置 64 位逻辑 size\\
+35 & \code{StatFile} & 返回固定 64 字节 \code{FileInformation}\\
+\bottomrule
+\end{longtable}
+
+\code{FileInformation} 的八个字段全为 \code{uint64\_t}：mount、
+superblock、inode、generation、type、logical size、allocated size 和
+link count。它不使用依赖平台宽度的 \code{long} 或 \code{size\_t}。
+
+原生 \code{SYSCALL} 会把用户返回 RIP 保存到 RCX，把用户 RFLAGS 保存到
+R11。因此 x86-64 系统调用不能像普通 System V 函数那样把第四参数留在 RCX；
+rename 的第四项通过 R10 进入统一 \code{UserContext}。兼容
+\code{INT 0x80} 入口最终也转换到同一 C++ dispatcher，使两类特权转换只有
+一份路径、用户指针和 VFS 语义。
+
+\subsection{从 Shell 的 mv 到 ATA 的完整走读}
+
+\begin{lstlisting}[caption={mv /a /dir/b 的端到端控制流}]
+Ring 3 shell parser
+  -> Rename(source bytes, destination bytes)
+  -> system_call.cpp places number/arguments in registers
+  -> NASM SYSCALL instruction
+  -> CPU loads IA32_LSTAR, saves RIP/RFLAGS
+  -> architecture.asm: SWAPGS, trusted RSP, UserContext
+  -> system_calls.cpp validates two user ranges
+  -> current Process::FsContext
+  -> Vfs::Rename resolves two parents
+  -> RootFileSystem::RenameOperation
+  -> persist Dirty superblock
+  -> update directory entries and optional parent inode
+  -> BlockCache::Sync
+  -> AtaPioDevice writes sectors and FLUSH CACHE
+  -> persist Clean superblock
+  -> result returns through UserContext to Ring 3
+\end{lstlisting}
+
+QEMU 在其中模拟 CPU、MSR、内存、I/O 端口与 IDE 设备。它不认识
+\filepath{/dir/b}，不调用宿主 rename，也不替项目提交事务。若把 rootfs
+换成宿主 9p/virtiofs，这条最重要的学习链会在 VFS 后断开，因此本阶段坚持
+raw IDE disk 与自研格式。
+
+\subsection{ATA PIO 写入与时间顺序}
+
+块缓存最终通过已有 \code{AtaPioDevice} 访问 primary master。Intel 语法
+中的关键方向是目的操作数在前：
+
+\begin{lstlisting}[language={[x86masm]Assembler},caption={概念化的 ATA 命令提交，实际常量均使用具名定义}]
+mov dx, ATA_COMMAND_PORT
+mov al, ATA_WRITE_SECTORS_COMMAND
+out dx, al
+\end{lstlisting}
+
+控制器置 BSY，准备好数据阶段后置 DRQ；CPU 通过 DATA 端口传输 256 个
+16 位 word。命令完成只表示设备接受了请求，事务屏障仍要发送
+\code{FLUSH CACHE}。每个 BSY/DRQ 轮询都具有固定预算并检查 ERR/DF，
+设备永久忙不能把 QEMU 测试变成永久后台进程。
+
+\begin{longtable}{L{0.17\textwidth}L{0.29\textwidth}L{0.41\textwidth}}
+\toprule
+阶段 & 硬件事实 & 文件系统可承诺的事实\\
+\midrule
+写 command & ATA 接受命令 & 尚不能声称扇区已持久化\\
+DRQ data & 控制器接收 512 B & 仅完成数据传输阶段\\
+BSY 清零 & 当前命令结束 & 设备 cache 可能仍未落盘\\
+FLUSH 完成 & 之前写入越过设备屏障 & 可以进入下一持久顺序阶段\\
+\bottomrule
+\end{longtable}
+
+\subsection{Dirty/Data/Clean 能检测什么}
+
+每个修改事务具有一条不可交换的时间线：
+
+\begin{enumerate}
+  \item 把 superblock 写为 Dirty，并立即 flush；
+  \item 修改数据、pointer block、inode、目录项和 bitmap；
+  \item sync 全部脏 cache entry，并执行设备 flush；
+  \item transaction generation 加一，把 superblock 写为 Clean，再 flush。
+\end{enumerate}
+
+\begin{pdfdiagram}
+  \node[os state] (clean0) {Clean N};
+  \node[os hardware,right=of clean0] (dirty) {Dirty N\\flush};
+  \node[os block,right=of dirty] (data) {data + metadata\\flush};
+  \node[os state,right=of data] (clean1) {Clean N+1\\flush};
+  \draw[os arrow] (clean0) -- (dirty);
+  \draw[os arrow] (dirty) -- (data);
+  \draw[os arrow] (data) -- (clean1);
+\end{pdfdiagram}
+\diagramnote{任何箭头前的设备失败都会使当前实例 failed；只有最后一个 Clean 完成后调用才成功。}
+
+若设备在 Dirty 之后失败，当前实例永久进入 failed，不再尝试后续操作。下次
+挂载看到 Dirty，返回 \code{IncompleteTransaction}。CRC、重复块、父链或
+bitmap 不一致则返回 \code{Corrupt}。两者都只记录状态并停机，Kernel 不
+格式化。
+
+\begin{failurebox}
+Dirty/Clean 没有保存旧元数据，也没有一份可重放的新元数据。它只能证明
+“不能安全继续”，不能自动选择事务前或事务后状态。因此它不是 journal。
+\end{failurebox}
+
+真正的 ordered metadata journal 还需要 transaction credit、日志块、
+commit record、数据先行屏障、checkpoint、幂等 replay 和逐断电点矩阵。
+在块所有权与 namespace mutation 尚未稳定前提前加入这些机制，只会让一次
+错误同时具有更多解释。
+
+\subsection{CRC 为什么不能替代 fsck}
+
+CRC32 能发现随机 bit flip、截断和错位写入，但两个 inode 可以各自 CRC
+正确却引用同一数据块；一个目录项也可以 CRC 正确却指向错误 generation。
+CRC 不提供密码学认证，攻击者还可以修改数据后重新计算校验。
+
+因此挂载验证分三层：
+
+\begin{enumerate}
+  \item 字节层：magic、version、little-endian offset、CRC、保留区；
+  \item 局部层：type、size、块范围、目录项名称与 count；
+  \item 全局层：根可达性、父链、唯一块所有权和 bitmap 等价。
+\end{enumerate}
+
+任何一层失败都不能自动“修好再继续”。在线修复需要明确冲突选择、备份和
+恢复策略，不是把坏位清零那么简单。
+
+\subsection{独立 Python mkfs 与 fsck 为什么不能调用 Kernel}
+
+宿主提供四个具名入口：
+
+\begin{lstlisting}[caption={rootfs v2 独立工具}]
+python3 tools/os.py mkfs-rootfs disk.img --create
+python3 tools/os.py inspect-rootfs disk.img
+python3 tools/os.py fsck-rootfs disk.img
+python3 tools/os.py corrupt-rootfs disk.img superblock-checksum
+\end{lstlisting}
+
+mkfs 是正常格式化的唯一入口；Kernel 只 strict mount。inspect 输出布局和
+占用摘要；fsck 只读遍历并重建 bitmap；corrupt 注入 superblock/inode CRC、
+bitmap 或 Dirty 状态。
+
+工具按同一规范值解释格式，却不链接 C++ RootFileSystem。如果 fsck 调用
+Kernel 的 \code{Validate}，一个共同的错误可能让写入和检查同时得出
+“一致”。两份独立解析器和遍历器面对同一个盘面，才形成第二个 oracle。
+
+\subsection{真实 ENOSPC 为什么不能靠缩小测试常量}
+
+把 data block 数在测试编译中改为 16，可以快速触发满盘，却不能证明真实
+128 块 data bitmap、三级 pointer tree 和 256 MiB布局。容量测试因此构造
+完整格式：
+
+\begin{itemize}
+  \item 四个 reservoir 文件拥有大量 direct/indirect 树；
+  \item data bitmap 只留下约八个可用块；
+  \item target 文件请求跨十六块写入；
+  \item 第一次只提交连续前缀，形成真实 short write；
+  \item 第二次一个块也无法建立，返回零字节 ENOSPC；
+  \item 文件 size、free count、short-write count 和 Validate 继续一致。
+\end{itemize}
+
+宿主 \code{SparseMemoryBlockDevice} 只为真正写入的块保存存储，不建立连续
+256 MiB 数组。测试的是生产布局和生产算法，不是另一个缩小文件系统。
+
+\subsection{短写的可观察契约}
+
+写请求可能跨多个逻辑块。每个块开始前，RootFileSystem 已知道建立该块需要
+多少 data/metadata block：
+
+\begin{itemize}
+  \item 空间足够：完成当前块范围；
+  \item 空间不足且已有前缀：提交前缀，返回实际字节数；
+  \item 空间不足且尚无前缀：返回 \code{CapacityExhausted}；
+  \item fd offset 只推进实际写入数；
+  \item inode size 和 bitmap 只反映已提交前缀。
+\end{itemize}
+
+“返回错误但偷偷写了一部分”会让调用方无法重试；“承诺全部成功但只写一部分”
+会丢数据。短写必须由字节计数明确表达，用户包装和 Shell 再循环或报告。
+
+\subsection{十万步双后端模型如何发现语义分叉}
+
+同一个固定种子分别驱动 memfs 和 RootFileSystem 执行 100000 步。操作集合
+包含 create、mkdir、read/write、truncate、unlink、rmdir、rename、stat、
+目录枚举和预期失败。每一步比较状态、目录树、文件字节和返回结果。
+
+两个后端的内部机制完全不同：
+
+\begin{itemize}
+  \item memfs 使用 KernelHeap 节点和几何增长缓冲；
+  \item rootfs 使用 inode、bitmap、块树、CRC 和事务；
+\end{itemize}
+
+若两者仍给出相同可观察结果，VFS 与 namespace 语义才有比单实现自测更强的
+证据。早期测试曾因每个事务都使整个 cache 失效以及每个引用都复制 bitmap
+而运行过慢；allocation hint、热 cache 保留和最终一次 bitmap 比较把
+100000 步恢复到有界时间，同时不改变模型结果。
+
+\subsection{设备失败注入与重挂载拒绝}
+
+\code{SparseMemoryBlockDevice} 可以指定某一次写入失败。集成测试在
+RootFileSystem 已经持久化 Dirty 后注入失败，并验证：
+
+\begin{enumerate}
+  \item 当前操作返回 DeviceFailure；
+  \item 当前实例拒绝继续服务；
+  \item 新 RootFileSystem 实例看到 Dirty；
+  \item 挂载返回 IncompleteTransaction；
+  \item 没有任何 format 分支清掉证据。
+\end{enumerate}
+
+这条路径与 CRC 损坏不同。CRC 损坏表示字节不再符合格式；Dirty 表示格式
+明确记录“事务未完成”。错误码分开，日志仍只在冷路径输出一次状态。
+
+\subsection{QEMU 双启动和第三次损坏拒绝}
+
+系统测试稀疏复制真实构建盘并关闭 snapshot：
+
+\begin{enumerate}
+  \item 第一个全新 QEMU 严格挂载 rootfs，Ring 3 写入并 sync；
+  \item 第二个全新 QEMU 先报告 \code{ROOTFS\_V2\_MOUNTED}，再恢复旧载荷；
+  \item 宿主只读 fsck 检查同一磁盘；
+  \item 宿主翻转受保护元数据；
+  \item 第三个 QEMU 必须报告 \code{FILE\_SYSTEM\_CORRUPT}，不得进入 Ring 3。
+\end{enumerate}
+
+“第二次”必须是新 QEMU 进程，才能排除来宾 cache 内读回；“第三次”必须禁止
+自动格式化，才能证明损坏没有被成功日志掩盖。
+
+\subsection{日志为何汇总而不逐块输出}
+
+rootfs 启动只输出一次：
+
+\begin{lstlisting}[caption={v1.6 稳定文件系统里程碑}]
+[OS][KERNEL] ROOTFS_V2_MOUNTED
+[OS][KERNEL] ROOTFS_V2_REGION_BYTES=0x0000000010000000
+[OS][KERNEL] ROOTFS_V2_MAX_FILE_BYTES=0x0000000004000000
+[OS][KERNEL] FILE_SYSTEM_CONSISTENT
+\end{lstlisting}
+
+最终阶段再汇总 transaction generation、inode、data block、metadata block
+和 free block。每次 lookup、bitmap bit、pointer 索引或 cache 命中都不打印；
+串口输出本身很慢，会改变 TCG 下系统调用被 PIT 中断的时序，也可能让十万步
+模型产生海量无用文本。
+
+来宾 PIT 提供 \code{MONOTONIC\_MILLISECONDS}，宿主 runner 为每条串口行
+加 \code{[QEMU][T+...ms]}。前者是 Guest 时间，后者是当前 QEMU 进程的墙钟
+到达时间。所有 QEMU 用例还有阶段 deadline 和 CTest 外层 timeout，卡住不是
+成功状态。
+
+\subsection{源码与证据的推荐走读顺序}
+
+\begin{enumerate}
+  \item \filepath{root\_file\_system\_format.hpp/.cpp}：先冻结盘面；
+  \item \filepath{tools/os\_tools/rootfs\_v2.py}：对照独立编码与 fsck；
+  \item \filepath{root\_file\_system.hpp/.cpp}：再看分配、块树和事务；
+  \item \filepath{vfs.hpp/.cpp}：看跨 mount 的 remove/rename 边界；
+  \item \filepath{abi/system\_call.hpp}：核对编号、宽度和结果码；
+  \item \filepath{kernel/user/system\_calls.cpp}：看用户复制与 R10；
+  \item \filepath{user/src/shell.cpp}：看 Ring 3 命令如何组合 ABI；
+  \item rootfs 格式、集成和 capacity 测试；
+  \item 十万步 namespace randomized test；
+  \item QEMU persistence 与独立 fsck。
+\end{enumerate}
+
+每进入一个函数，都记录五件事：当前锁、当前持久状态、尚未发布的临时状态、
+失败后的可观察结果，以及下一次全新挂载会看到什么。文件系统正确性不是某个
+函数局部返回 true，而是跨对象、跨 flush、跨重启仍满足同一组守恒关系。
+
+\begin{contractbox}
+v1.6 的完成边界是：1 GiB 稀疏盘、256 MiB rootfs、64 MiB 文件、完整
+namespace mutation、真实 ENOSPC、十万步双后端模型、双启动、独立 fsck 和
+损坏拒绝同时成立。journal、orphan inode、权限、符号链接、dentry/page
+cache 与异步块层仍是后续独立阶段，不能借本阶段名称提前宣称。
+\end{contractbox}

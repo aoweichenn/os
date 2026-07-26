@@ -111,11 +111,42 @@ Status Vfs::InitializeContext(FsContext &context) const noexcept {
         .mount_identifier = OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER,
         .vnode = this->mounts_[OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER].superblock->root,
     };
+    Superblock *const superblock = root.vnode.superblock;
+    Status status = superblock->operations->open(superblock->backend_context, root.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    status = superblock->operations->open(superblock->backend_context, root.vnode);
+    if (status != Status::Succeeded) {
+        static_cast<void>(superblock->operations->close(superblock->backend_context, root.vnode));
+        return status;
+    }
     context = FsContext{
         .root = root,
         .current_working_directory = root,
         .initialized = true,
     };
+    return Status::Succeeded;
+}
+
+Status Vfs::ReleaseContext(FsContext &context) const noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!context.initialized || !this->PathIsValid(context.root) ||
+        !this->PathIsValid(context.current_working_directory)) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const working_superblock = context.current_working_directory.vnode.superblock;
+    const Status working_status = working_superblock->operations->close(
+        working_superblock->backend_context, context.current_working_directory.vnode);
+    Superblock *const root_superblock = context.root.vnode.superblock;
+    const Status root_status =
+        root_superblock->operations->close(root_superblock->backend_context, context.root.vnode);
+    if (working_status != Status::Succeeded || root_status != Status::Succeeded) {
+        return working_status != Status::Succeeded ? working_status : root_status;
+    }
+    context = FsContext{};
     return Status::Succeeded;
 }
 
@@ -302,6 +333,125 @@ Status Vfs::CreateDirectory(const FsContext &context, const uint8_t *const path,
                                           NodeType::Directory, created);
 }
 
+Status Vfs::RemoveFile(const FsContext &context, const uint8_t *const path,
+                       const uint64_t path_length_bytes) noexcept {
+    return this->Remove(context, path, path_length_bytes, NodeType::RegularFile);
+}
+
+Status Vfs::RemoveDirectory(const FsContext &context, const uint8_t *const path,
+                            const uint64_t path_length_bytes) noexcept {
+    return this->Remove(context, path, path_length_bytes, NodeType::Directory);
+}
+
+Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
+                   const uint64_t source_path_length_bytes, const uint8_t *const destination_path,
+                   const uint64_t destination_path_length_bytes, const bool replace) noexcept {
+    Path source{};
+    const Status source_status =
+        this->Resolve(context, source_path, source_path_length_bytes, source);
+    if (source_status != Status::Succeeded) {
+        return source_status;
+    }
+    if (this->PathsAreEqual(source, context.root) ||
+        (source.vnode.type == NodeType::Directory &&
+         this->PathsAreEqual(source, context.current_working_directory)) ||
+        this->FindChildMount(source) != nullptr) {
+        return Status::Busy;
+    }
+
+    ParentResolution source_parent{};
+    Status status =
+        this->ResolveParent(context, source_path, source_path_length_bytes, source_parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    ParentResolution destination_parent{};
+    status = this->ResolveParent(context, destination_path, destination_path_length_bytes,
+                                 destination_parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (source.mount_identifier != source_parent.parent.mount_identifier) {
+        return Status::MountPointBusy;
+    }
+    if (source_parent.parent.vnode.superblock != destination_parent.parent.vnode.superblock) {
+        return Status::CrossDevice;
+    }
+    Superblock *const superblock = source_parent.parent.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+
+    Path destination{};
+    const Status destination_status =
+        this->Resolve(context, destination_path, destination_path_length_bytes, destination);
+    if (destination_status == Status::Succeeded) {
+        if (destination.mount_identifier != destination_parent.parent.mount_identifier) {
+            return Status::MountPointBusy;
+        }
+        if (this->PathsAreEqual(destination, context.root) ||
+            (destination.vnode.type == NodeType::Directory &&
+             this->PathsAreEqual(destination, context.current_working_directory)) ||
+            this->FindChildMount(destination) != nullptr) {
+            return Status::Busy;
+        }
+    } else if (destination_status != Status::NotFound) {
+        return destination_status;
+    }
+    return superblock->operations->rename(superblock->backend_context, source_parent.parent.vnode,
+                                          source_parent.name, source_parent.name_length_bytes,
+                                          destination_parent.parent.vnode, destination_parent.name,
+                                          destination_parent.name_length_bytes, replace);
+}
+
+Status Vfs::Truncate(const FsContext &context, const uint8_t *const path,
+                     const uint64_t path_length_bytes, const uint64_t size_bytes) noexcept {
+    Path resolved{};
+    const Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (resolved.vnode.type == NodeType::Directory) {
+        return Status::IsDirectory;
+    }
+    if (resolved.vnode.type != NodeType::RegularFile) {
+        return Status::Corrupt;
+    }
+    Superblock *const superblock = resolved.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    return superblock->operations->truncate(superblock->backend_context, resolved.vnode,
+                                            size_bytes);
+}
+
+Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
+                 const uint64_t path_length_bytes, NodeInformation &information) noexcept {
+    information = NodeInformation{};
+    Path resolved{};
+    const Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    BackendNodeInformation backend_information{};
+    const Status stat_status = resolved.vnode.superblock->operations->stat(
+        resolved.vnode.superblock->backend_context, resolved.vnode, backend_information);
+    if (stat_status != Status::Succeeded) {
+        return stat_status;
+    }
+    information = NodeInformation{
+        .mount_identifier = resolved.mount_identifier,
+        .superblock_identifier = resolved.vnode.superblock->identifier,
+        .node_identifier = resolved.vnode.identifier,
+        .generation = resolved.vnode.generation,
+        .type = resolved.vnode.type,
+        .size_bytes = backend_information.size_bytes,
+        .allocated_size_bytes = backend_information.allocated_size_bytes,
+        .link_count = backend_information.link_count,
+    };
+    return Status::Succeeded;
+}
+
 Status Vfs::Open(const FsContext &context, const uint8_t *const path,
                  const uint64_t path_length_bytes, const OpenOptions &options,
                  OpenFile &open_file) noexcept {
@@ -359,6 +509,10 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
             return status;
         }
     }
+    status = superblock->operations->open(superblock->backend_context, resolved.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
     open_file = OpenFile{
         .path = resolved,
         .offset_bytes = OS_KERNEL_VFS_EMPTY_VALUE,
@@ -383,6 +537,12 @@ Status Vfs::OpenDirectory(const FsContext &context, const uint8_t *const path,
     }
     if (resolved.vnode.type != NodeType::Directory) {
         return Status::NotDirectory;
+    }
+    Superblock *const superblock = resolved.vnode.superblock;
+    const Status open_status =
+        superblock->operations->open(superblock->backend_context, resolved.vnode);
+    if (open_status != Status::Succeeded) {
+        return open_status;
     }
     open_file = OpenFile{
         .path = resolved,
@@ -486,6 +646,12 @@ Status Vfs::Close(OpenFile &open_file) noexcept {
     if (!open_file.open || !this->PathIsValid(open_file.path)) {
         return Status::InvalidHandle;
     }
+    Superblock *const superblock = open_file.path.vnode.superblock;
+    const Status status =
+        superblock->operations->close(superblock->backend_context, open_file.path.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
     open_file = OpenFile{};
     return Status::Succeeded;
 }
@@ -499,6 +665,20 @@ Status Vfs::ChangeDirectory(FsContext &context, const uint8_t *const path,
     }
     if (resolved.vnode.type != NodeType::Directory) {
         return Status::NotDirectory;
+    }
+    Superblock *const new_superblock = resolved.vnode.superblock;
+    Status reference_status =
+        new_superblock->operations->open(new_superblock->backend_context, resolved.vnode);
+    if (reference_status != Status::Succeeded) {
+        return reference_status;
+    }
+    Superblock *const old_superblock = context.current_working_directory.vnode.superblock;
+    reference_status = old_superblock->operations->close(old_superblock->backend_context,
+                                                         context.current_working_directory.vnode);
+    if (reference_status != Status::Succeeded) {
+        static_cast<void>(
+            new_superblock->operations->close(new_superblock->backend_context, resolved.vnode));
+        return reference_status;
     }
     context.current_working_directory = resolved;
     return Status::Succeeded;
@@ -855,6 +1035,42 @@ Status Vfs::ResolveParent(const FsContext &context, const uint8_t *const path,
     return Status::Succeeded;
 }
 
+Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
+                   const uint64_t path_length_bytes, const NodeType expected_type) noexcept {
+    if (expected_type != NodeType::RegularFile && expected_type != NodeType::Directory) {
+        return Status::InvalidArgument;
+    }
+    Path resolved{};
+    const Status resolution_status = this->Resolve(context, path, path_length_bytes, resolved);
+    if (resolution_status != Status::Succeeded) {
+        return resolution_status;
+    }
+    if (resolved.vnode.type != expected_type) {
+        return expected_type == NodeType::Directory ? Status::NotDirectory : Status::IsDirectory;
+    }
+    if (this->PathsAreEqual(resolved, context.root) ||
+        (expected_type == NodeType::Directory &&
+         this->PathsAreEqual(resolved, context.current_working_directory))) {
+        return Status::Busy;
+    }
+    ParentResolution parent{};
+    const Status parent_status = this->ResolveParent(context, path, path_length_bytes, parent);
+    if (parent_status != Status::Succeeded) {
+        return parent_status;
+    }
+    // 解析最终组件时若进入了子挂载，不能删除被挂载覆盖的底层目录项。
+    if (resolved.mount_identifier != parent.parent.mount_identifier ||
+        this->FindChildMount(resolved) != nullptr) {
+        return Status::MountPointBusy;
+    }
+    Superblock *const superblock = parent.parent.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    return superblock->operations->remove(superblock->backend_context, parent.parent.vnode,
+                                          parent.name, parent.name_length_bytes, expected_type);
+}
+
 Status Vfs::ReadPathName(const Path &path, uint8_t *const name, const uint64_t name_capacity_bytes,
                          uint64_t &name_length_bytes) noexcept {
     name_length_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
@@ -888,11 +1104,13 @@ Status Vfs::ValidateSuperblock(const Superblock &superblock) const noexcept {
     }
     const BackendOperations &operations = *superblock.operations;
     return operations.lookup != nullptr && operations.create != nullptr &&
+                   operations.open != nullptr && operations.close != nullptr &&
+                   operations.remove != nullptr && operations.rename != nullptr &&
                    operations.parent != nullptr && operations.read != nullptr &&
                    operations.write != nullptr && operations.truncate != nullptr &&
                    operations.read_directory != nullptr && operations.get_name != nullptr &&
-                   operations.sync != nullptr && operations.validate != nullptr &&
-                   operations.read_resource_usage != nullptr
+                   operations.stat != nullptr && operations.sync != nullptr &&
+                   operations.validate != nullptr && operations.read_resource_usage != nullptr
                ? Status::Succeeded
                : Status::InvalidArgument;
 }

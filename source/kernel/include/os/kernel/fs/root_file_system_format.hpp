@@ -1,0 +1,161 @@
+#pragma once
+
+#include <stdint.h>
+
+namespace os::kernel::fs {
+
+inline constexpr uint64_t OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES = 512ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_START_LBA = 2048ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT = 524288ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_REGION_SIZE_BYTES =
+    OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT * OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK = 0ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_BITMAP_START_RELATIVE_BLOCK = 1ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT = 2ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK = 3ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_TABLE_BLOCK_COUNT = 4096ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_DATA_BITMAP_START_RELATIVE_BLOCK = 4099ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT = 128ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK = 4227ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT =
+    OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT - OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_COUNT = 8192ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER = 1ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_SIZE_BYTES = 256ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_INODES_PER_BLOCK = 2ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES = 320ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_MAXIMUM_NAME_LENGTH_BYTES = 255ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_NAME_STORAGE_SIZE_BYTES = 256ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT = 8ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK = 63ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_BITMAP_BITS_PER_BYTE = 8ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL * 1024ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_VERSION = 2ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_SPARSE_FILES = 1ULL << 0ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_CHECKSUMMED_POINTER_BLOCKS = 1ULL << 1ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_REQUIRED_FEATURES =
+    OS_KERNEL_ROOTFS_FEATURE_SPARSE_FILES | OS_KERNEL_ROOTFS_FEATURE_CHECKSUMMED_POINTER_BLOCKS;
+
+static_assert(OS_KERNEL_ROOTFS_INODE_BITMAP_START_RELATIVE_BLOCK +
+                  OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT ==
+              OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK);
+static_assert(OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK +
+                  OS_KERNEL_ROOTFS_INODE_TABLE_BLOCK_COUNT ==
+              OS_KERNEL_ROOTFS_DATA_BITMAP_START_RELATIVE_BLOCK);
+static_assert(OS_KERNEL_ROOTFS_DATA_BITMAP_START_RELATIVE_BLOCK +
+                  OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT ==
+              OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK);
+static_assert(OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK + OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT ==
+              OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT);
+static_assert(OS_KERNEL_ROOTFS_INODE_COUNT * OS_KERNEL_ROOTFS_INODE_SIZE_BYTES ==
+              OS_KERNEL_ROOTFS_INODE_TABLE_BLOCK_COUNT * OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
+static_assert(OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT <= OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT *
+                                                       OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES *
+                                                       OS_KERNEL_ROOTFS_BITMAP_BITS_PER_BYTE);
+static_assert(
+    (OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT + OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK +
+     OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK * OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK +
+     OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK * OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK *
+         OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK) *
+        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES >=
+    OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES);
+
+enum class RootNodeType : uint64_t {
+    Unused,
+    RegularFile,
+    Directory,
+};
+
+enum class RootTransactionState : uint64_t {
+    Clean = 1ULL,
+    Dirty = 2ULL,
+};
+
+enum class RootFormatStatus : uint64_t {
+    Succeeded,
+    NullBuffer,
+    InvalidBufferSize,
+    InvalidMagic,
+    InvalidVersion,
+    InvalidLayout,
+    InvalidTransactionState,
+    InvalidChecksum,
+    InvalidNodeType,
+    InvalidInode,
+    InvalidDirectoryEntry,
+    InvalidPointerBlock,
+    NonZeroReservedBytes,
+};
+
+struct RootSuperblock final {
+    uint64_t version;
+    uint64_t block_size_bytes;
+    uint64_t total_block_count;
+    uint64_t inode_bitmap_start_relative_block;
+    uint64_t inode_bitmap_block_count;
+    uint64_t inode_table_start_relative_block;
+    uint64_t inode_table_block_count;
+    uint64_t data_bitmap_start_relative_block;
+    uint64_t data_bitmap_block_count;
+    uint64_t data_start_relative_block;
+    uint64_t data_block_count;
+    uint64_t inode_count;
+    uint64_t root_inode_number;
+    uint64_t maximum_file_size_bytes;
+    RootTransactionState transaction_state;
+    uint64_t transaction_generation;
+    uint64_t next_inode_generation;
+    uint64_t feature_flags;
+};
+
+struct RootInode final {
+    RootNodeType type;
+    uint64_t flags;
+    uint64_t size_bytes;
+    uint64_t generation;
+    uint64_t link_count;
+    uint64_t allocated_data_block_count;
+    uint64_t allocated_metadata_block_count;
+    uint64_t parent_inode_number;
+    uint64_t direct_blocks[OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT];
+    uint64_t single_indirect_block;
+    uint64_t double_indirect_block;
+    uint64_t triple_indirect_block;
+};
+
+struct RootDirectoryEntry final {
+    uint64_t inode_number;
+    uint64_t inode_generation;
+    RootNodeType type;
+    uint64_t name_length_bytes;
+    uint8_t name[OS_KERNEL_ROOTFS_NAME_STORAGE_SIZE_BYTES];
+};
+
+struct RootPointerBlock final {
+    uint64_t pointers[OS_KERNEL_ROOTFS_POINTERS_PER_INDIRECT_BLOCK];
+};
+
+[[nodiscard]] uint32_t CalculateRootCrc32(const uint8_t *bytes, uint64_t length_bytes) noexcept;
+[[nodiscard]] RootFormatStatus DecodeRootSuperblock(const uint8_t *block, uint64_t block_size_bytes,
+                                                    RootSuperblock &superblock) noexcept;
+[[nodiscard]] RootFormatStatus EncodeRootSuperblock(const RootSuperblock &superblock,
+                                                    uint8_t *block,
+                                                    uint64_t block_size_bytes) noexcept;
+[[nodiscard]] RootFormatStatus DecodeRootInode(const uint8_t *bytes, uint64_t byte_count,
+                                               RootInode &inode) noexcept;
+[[nodiscard]] RootFormatStatus EncodeRootInode(const RootInode &inode, uint8_t *bytes,
+                                               uint64_t byte_count) noexcept;
+[[nodiscard]] RootFormatStatus DecodeRootDirectoryEntry(const uint8_t *bytes, uint64_t byte_count,
+                                                        RootDirectoryEntry &entry) noexcept;
+[[nodiscard]] RootFormatStatus EncodeRootDirectoryEntry(const RootDirectoryEntry &entry,
+                                                        uint8_t *bytes,
+                                                        uint64_t byte_count) noexcept;
+[[nodiscard]] RootFormatStatus DecodeRootPointerBlock(const uint8_t *block,
+                                                      uint64_t block_size_bytes,
+                                                      RootPointerBlock &pointer_block) noexcept;
+[[nodiscard]] RootFormatStatus EncodeRootPointerBlock(const RootPointerBlock &pointer_block,
+                                                      uint8_t *block,
+                                                      uint64_t block_size_bytes) noexcept;
+[[nodiscard]] bool RootBlockIsZero(const uint8_t *block, uint64_t block_size_bytes) noexcept;
+
+}

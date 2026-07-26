@@ -1,6 +1,9 @@
 #include "os/kernel/fs/memfs.hpp"
+#include "os/kernel/fs/root_file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/memory/kernel_heap.hpp"
+#include "root_file_system_test_support.hpp"
+#include "sparse_memory_block_device.hpp"
 #include "test_context.hpp"
 
 #include <algorithm>
@@ -14,8 +17,12 @@ namespace {
 constexpr std::string_view OS_TEST_VFS_RANDOM_SUITE_NAME = "kernel/vfs/namespace/randomized";
 constexpr std::string_view OS_TEST_VFS_RANDOM_REFERENCE_MODEL =
     "十万步目录树操作必须与独立参考模型保持逐步一致";
+constexpr std::string_view OS_TEST_VFS_RANDOM_ROOT_REFERENCE_MODEL =
+    "rootfs v2 的十万步目录树操作必须与同一独立参考模型保持逐步一致";
 constexpr std::string_view OS_TEST_VFS_RANDOM_FINAL_STATE =
     "随机序列结束后命名空间、统计和堆资源必须完整收敛";
+constexpr std::string_view OS_TEST_VFS_RANDOM_BACKEND_PARITY =
+    "memfs 与 rootfs v2 必须在同一种子十万步后收敛到相同节点规模";
 
 constexpr os::test::RandomSeed OS_TEST_VFS_RANDOM_SEED = 0x5646532026001500ULL;
 constexpr os::test::TestCount OS_TEST_VFS_RANDOM_STEP_COUNT = 100000ULL;
@@ -23,6 +30,7 @@ constexpr uint64_t OS_TEST_VFS_RANDOM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_ROOT_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_SUPERBLOCK_IDENTIFIER = 1ULL;
+constexpr uint64_t OS_TEST_VFS_RANDOM_ROOT_SUPERBLOCK_IDENTIFIER = 2ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_HEAP_ALIGNMENT_BYTES = 64ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_HEAP_SIZE_BYTES = 16ULL * 1024ULL * 1024ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_NODE_LIMIT = 384ULL;
@@ -370,31 +378,15 @@ struct ObservedDirectoryEntry final {
                        resolved) == os::kernel::fs::Status::NotFound;
 }
 
-}
+struct RandomSequenceResult final {
+    bool valid;
+    uint64_t node_count;
+};
 
-int main() {
-    os::test::TestContext test_context{OS_TEST_VFS_RANDOM_SUITE_NAME};
-    alignas(OS_TEST_VFS_RANDOM_HEAP_ALIGNMENT_BYTES) static uint8_t
-        heap_buffer[OS_TEST_VFS_RANDOM_HEAP_SIZE_BYTES]{};
-    os::kernel::KernelHeap heap{};
-    os::kernel::fs::Memfs memfs{};
-    os::kernel::fs::Mount mounts[OS_TEST_VFS_RANDOM_MOUNT_CAPACITY]{};
-    os::kernel::fs::Vfs vfs{};
-    os::kernel::fs::FsContext context{};
-    const bool initialized =
-        heap.Initialize(reinterpret_cast<uint64_t>(heap_buffer), sizeof(heap_buffer)) ==
-            os::kernel::KernelHeapStatus::Succeeded &&
-        memfs.Initialize(
-            heap, OS_TEST_VFS_RANDOM_SUPERBLOCK_IDENTIFIER, OS_TEST_VFS_RANDOM_NODE_LIMIT,
-            OS_TEST_VFS_RANDOM_MAXIMUM_FILE_SIZE_BYTES) == os::kernel::fs::Status::Succeeded &&
-        vfs.Initialize(mounts, OS_TEST_VFS_RANDOM_MOUNT_CAPACITY, memfs.GetSuperblock()) ==
-            os::kernel::fs::Status::Succeeded &&
-        vfs.InitializeContext(context) == os::kernel::fs::Status::Succeeded;
-    if (!initialized) {
-        test_context.Expect(false, OS_TEST_VFS_RANDOM_FINAL_STATE);
-        return test_context.ExitCode();
-    }
-
+[[nodiscard]] RandomSequenceResult RunRandomSequence(os::test::TestContext &test_context,
+                                                     os::kernel::fs::Vfs &vfs,
+                                                     os::kernel::fs::FsContext &context,
+                                                     const std::string_view assertion_message) {
     std::vector<ModelNode> nodes{};
     nodes.push_back(ModelNode{
         .identifier = OS_TEST_VFS_RANDOM_ROOT_IDENTIFIER,
@@ -410,6 +402,7 @@ int main() {
     };
     uint64_t next_name_identifier = OS_TEST_VFS_RANDOM_ROOT_IDENTIFIER;
     uint64_t working_directory_identifier = OS_TEST_VFS_RANDOM_ROOT_IDENTIFIER;
+    bool sequence_valid = true;
 
     for (os::test::TestCount step = OS_TEST_VFS_RANDOM_EMPTY_VALUE;
          step < OS_TEST_VFS_RANDOM_STEP_COUNT; ++step) {
@@ -436,18 +429,82 @@ int main() {
                       OS_TEST_VFS_RANDOM_VALIDATION_INTERVAL) == OS_TEST_VFS_RANDOM_EMPTY_VALUE) {
             valid = vfs.Validate() == os::kernel::fs::Status::Succeeded;
         }
-        test_context.ExpectRandom(valid, OS_TEST_VFS_RANDOM_REFERENCE_MODEL,
-                                  OS_TEST_VFS_RANDOM_SEED, step);
+        sequence_valid = sequence_valid && valid;
+        test_context.ExpectRandom(valid, assertion_message, OS_TEST_VFS_RANDOM_SEED, step);
     }
 
     const os::kernel::fs::Statistics statistics = vfs.ReadStatistics();
-    const bool final_state_valid =
+    os::kernel::fs::ResourceUsage usage{};
+    const bool final_valid =
         vfs.Validate() == os::kernel::fs::Status::Succeeded &&
-        memfs.ReadStatistics().active_node_count == static_cast<uint64_t>(nodes.size()) &&
-        statistics.path_resolution_count >= OS_TEST_VFS_RANDOM_MINIMUM_RESOLUTION_COUNT &&
+        vfs.ReadResourceUsage(usage) == os::kernel::fs::Status::Succeeded &&
+        usage.vnode_count == static_cast<uint64_t>(nodes.size()) &&
+        statistics.path_resolution_count >= OS_TEST_VFS_RANDOM_MINIMUM_RESOLUTION_COUNT;
+    return RandomSequenceResult{
+        .valid = sequence_valid && final_valid,
+        .node_count = static_cast<uint64_t>(nodes.size()),
+    };
+}
+
+}
+
+int main() {
+    os::test::TestContext test_context{OS_TEST_VFS_RANDOM_SUITE_NAME};
+    alignas(OS_TEST_VFS_RANDOM_HEAP_ALIGNMENT_BYTES) static uint8_t
+        heap_buffer[OS_TEST_VFS_RANDOM_HEAP_SIZE_BYTES]{};
+    os::kernel::KernelHeap heap{};
+    os::kernel::fs::Memfs memfs{};
+    os::kernel::fs::Mount mounts[OS_TEST_VFS_RANDOM_MOUNT_CAPACITY]{};
+    os::kernel::fs::Vfs vfs{};
+    os::kernel::fs::FsContext context{};
+    const bool initialized =
+        heap.Initialize(reinterpret_cast<uint64_t>(heap_buffer), sizeof(heap_buffer)) ==
+            os::kernel::KernelHeapStatus::Succeeded &&
+        memfs.Initialize(
+            heap, OS_TEST_VFS_RANDOM_SUPERBLOCK_IDENTIFIER, OS_TEST_VFS_RANDOM_NODE_LIMIT,
+            OS_TEST_VFS_RANDOM_MAXIMUM_FILE_SIZE_BYTES) == os::kernel::fs::Status::Succeeded &&
+        vfs.Initialize(mounts, OS_TEST_VFS_RANDOM_MOUNT_CAPACITY, memfs.GetSuperblock()) ==
+            os::kernel::fs::Status::Succeeded &&
+        vfs.InitializeContext(context) == os::kernel::fs::Status::Succeeded;
+    if (!initialized) {
+        test_context.Expect(false, OS_TEST_VFS_RANDOM_FINAL_STATE);
+        return test_context.ExitCode();
+    }
+
+    const RandomSequenceResult memfs_result =
+        RunRandomSequence(test_context, vfs, context, OS_TEST_VFS_RANDOM_REFERENCE_MODEL);
+    const bool memfs_released =
+        memfs.ReadStatistics().active_node_count == memfs_result.node_count &&
+        vfs.ReleaseContext(context) == os::kernel::fs::Status::Succeeded &&
         memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
         heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
         heap.Statistics().allocation_count == OS_TEST_VFS_RANDOM_EMPTY_VALUE;
-    test_context.Expect(final_state_valid, OS_TEST_VFS_RANDOM_FINAL_STATE);
+
+    static os::test::SparseMemoryBlockDevice root_device{};
+    static os::kernel::fs::RootFileSystem root_file_system{};
+    os::kernel::fs::Mount root_mounts[OS_TEST_VFS_RANDOM_MOUNT_CAPACITY]{};
+    os::kernel::fs::Vfs root_vfs{};
+    os::kernel::fs::FsContext root_context{};
+    const bool root_initialized =
+        os::test::FormatRootFileSystem(root_device) &&
+        root_file_system.Initialize(root_device, OS_TEST_VFS_RANDOM_ROOT_SUPERBLOCK_IDENTIFIER) ==
+            os::kernel::fs::Status::Succeeded &&
+        root_vfs.Initialize(root_mounts, OS_TEST_VFS_RANDOM_MOUNT_CAPACITY,
+                            root_file_system.GetSuperblock()) ==
+            os::kernel::fs::Status::Succeeded &&
+        root_vfs.InitializeContext(root_context) == os::kernel::fs::Status::Succeeded;
+    RandomSequenceResult root_result{};
+    if (root_initialized) {
+        root_result = RunRandomSequence(test_context, root_vfs, root_context,
+                                        OS_TEST_VFS_RANDOM_ROOT_REFERENCE_MODEL);
+    }
+    const bool root_released =
+        root_initialized && root_vfs.Sync() == os::kernel::fs::Status::Succeeded &&
+        root_vfs.ReleaseContext(root_context) == os::kernel::fs::Status::Succeeded &&
+        root_file_system.ReadStatistics().allocated_inode_count == root_result.node_count;
+    test_context.Expect(memfs_result.valid && memfs_released && root_result.valid && root_released,
+                        OS_TEST_VFS_RANDOM_FINAL_STATE);
+    test_context.Expect(memfs_result.node_count == root_result.node_count,
+                        OS_TEST_VFS_RANDOM_BACKEND_PARITY);
     return test_context.ExitCode();
 }

@@ -21,6 +21,11 @@ constexpr char OS_USER_SHELL_LS_COMMAND[] = "ls";
 constexpr char OS_USER_SHELL_MKDIR_COMMAND[] = "mkdir";
 constexpr char OS_USER_SHELL_WRITE_COMMAND[] = "write";
 constexpr char OS_USER_SHELL_CAT_COMMAND[] = "cat";
+constexpr char OS_USER_SHELL_RM_COMMAND[] = "rm";
+constexpr char OS_USER_SHELL_RMDIR_COMMAND[] = "rmdir";
+constexpr char OS_USER_SHELL_MV_COMMAND[] = "mv";
+constexpr char OS_USER_SHELL_TRUNCATE_COMMAND[] = "truncate";
+constexpr char OS_USER_SHELL_STAT_COMMAND[] = "stat";
 constexpr char OS_USER_SHELL_SYNC_COMMAND[] = "sync";
 constexpr char OS_USER_SHELL_EXIT_COMMAND[] = "exit";
 
@@ -198,6 +203,31 @@ ShellCommand ResolveShellCommand(const ShellCommandLine &command_line) noexcept 
                             OS_USER_SHELL_CAT_COMMAND,
                             sizeof(OS_USER_SHELL_CAT_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
         return ShellCommand::ConcatenateFile;
+    }
+    if (ShellArgumentEquals(command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX,
+                            OS_USER_SHELL_RM_COMMAND,
+                            sizeof(OS_USER_SHELL_RM_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
+        return ShellCommand::RemoveFile;
+    }
+    if (ShellArgumentEquals(
+            command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX, OS_USER_SHELL_RMDIR_COMMAND,
+            sizeof(OS_USER_SHELL_RMDIR_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
+        return ShellCommand::RemoveDirectory;
+    }
+    if (ShellArgumentEquals(command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX,
+                            OS_USER_SHELL_MV_COMMAND,
+                            sizeof(OS_USER_SHELL_MV_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
+        return ShellCommand::MovePath;
+    }
+    if (ShellArgumentEquals(
+            command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX, OS_USER_SHELL_TRUNCATE_COMMAND,
+            sizeof(OS_USER_SHELL_TRUNCATE_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
+        return ShellCommand::TruncateFile;
+    }
+    if (ShellArgumentEquals(command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX,
+                            OS_USER_SHELL_STAT_COMMAND,
+                            sizeof(OS_USER_SHELL_STAT_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
+        return ShellCommand::StatPath;
     }
     if (ShellArgumentEquals(command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX,
                             OS_USER_SHELL_SYNC_COMMAND,

@@ -95,3 +95,19 @@ process/process_runtime.*      每 Process FileTable 和目标机等待/唤醒�
 
 `object/` 不依赖某一种文件系统、管道或设备；具体 payload 和 finalizer 由
 `io/` 提供。FileTable 只持有私有 handle，不能包含 FileDescription 裸指针。
+
+v1.5/v1.6 的文件系统文件固定归属如下：
+
+```text
+fs/vfs.*                       路径、Mount、FsContext 与 namespace mutation
+fs/memfs.*                     /tmp 内存后端和差分模型
+fs/legacy_file_system.*        旧盘面 VFS 适配，仅保留兼容回归
+fs/file_system.*               v0.11 旧格式实现
+fs/root_file_system_format.*   rootfs v2 冻结小端盘面编码
+fs/root_file_system.*          生产根、三级块树、事务和全盘校验
+fs/block_cache.*               固定容量写回缓存
+```
+
+`root_file_system_format` 只负责字节布局，不访问设备、VFS 或全局 Kernel
+状态，因此宿主单元测试可直接链接；`root_file_system` 组合块设备、缓存和
+VFS 操作表。Python mkfs/fsck 是独立工具实现，不进入 Kernel 目标。

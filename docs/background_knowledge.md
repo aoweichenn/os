@@ -1043,7 +1043,7 @@ Committed                 RolledBack
 否则调用者可能根据一半更新的 `is_last` 销毁仍被引用的对象。
 
 引用计数只证明拥有者数量，不证明对象内部状态、关联页表或等待队列正确，也
-不能自动解决环引用。当前 v1.5 仍是单 BSP 基线，计数存储使用普通
+不能自动解决环引用。当前 v1.6 仍是单 BSP 基线，计数存储使用普通
 `uint64_t`，但对象查找与 acquire/release 已在同一管理器锁内提交；最后引用
 先把对象从活动集合摘除，再在锁外执行 finalizer。这样冻结了当前并发边界，
 却没有伪称已具备 weak reference、无锁升级、SMP 原子引用或循环回收。
@@ -1691,7 +1691,189 @@ QEMU 最后证明这些 C++ 逻辑确实经过真实 Ring 3 系统调用、SYSCA
 Process FsContext、FileTable/FileDescription、VFS 和两个后端。宿主只通过
 QMP 逐字输入，不替来宾解析命令或访问文件。
 
-## 25. 建议阅读顺序
+## 25. 从磁盘块到 rootfs v2：历史、硬件与崩溃边界
+
+### 文件系统为什么从“连续字节”演化成 inode
+
+最早的存储可以把一个文件视为连续扇区：起点加长度就足够。它简单，但文件
+增长时后面可能已经被别的文件占用；移动整个文件成本高，删除又会制造碎片。
+链式分配允许每块指向下一块，却让随机访问必须从头走链，任何断链都可能丢失
+后缀。
+
+Unix 的 inode 思路把“目录中的名字”与“文件内容的身份和块索引”分开。
+目录项只做名字到 inode 的映射；inode 保存类型、长度、所有权信息和数据块
+索引。这样 rename 通常只改变目录边，文件身份不变；多个名字也可以理论上
+引用同一个 inode，形成硬链接。
+
+早期 Unix 文件系统使用 direct、single indirect、double indirect，后来又有
+triple indirect。直接项让常见小文件无需额外读索引块；多级间接让大文件按需
+扩展。ext2 等经典格式沿用了这种容易解释的块树，现代文件系统则常用 extent
+描述连续范围。v1.6 选择传统块树，是为了先把逻辑块索引、元数据所有权、
+truncate 与 fsck 的因果链完整建立，不代表 extent 不先进。
+
+### 扇区、文件系统块和逻辑块不是一个概念
+
+- ATA sector 是设备传输单位，当前为 512 字节；
+- rootfs block 是分配与校验单位，当前也为 512 字节；
+- file logical block 是文件 offset 除以 512 后的索引；
+- host sparse extent 是宿主文件系统实际保存的一段，不进入来宾 ABI。
+
+它们在当前配置中有相同的 512 字节数值，但职责不同。文件 offset
+`offset_bytes` 先分解为：
+
+```text
+logical_block = offset_bytes / 512
+offset_in_block = offset_bytes % 512
+```
+
+RootFileSystem 再把 logical block 解析到 inode 块树中的相对块号，最后加
+rootfs 起始 LBA 2048，ATA 驱动才得到设备 LBA。任何一层混用“字节偏移”和
+“块编号”都可能把写入送到启动链或盘外，因此各层 API 和常量明确带
+`_bytes`、`_block`、`_lba` 语义。
+
+### CPU 到磁盘的真实指令路径
+
+用户态不能执行 ATA `in`/`out`，也不能直接访问 Kernel 地址。以写文件为例：
+
+```text
+Ring 3 C++ wrapper
+  -> SYSCALL
+  -> NASM Intel entry: SWAPGS, trusted stack, UserContext
+  -> C++ dispatcher copies user bytes
+  -> FileDescription / VFS / RootFileSystem
+  -> BlockCache
+  -> AtaPioDevice
+  -> x86 OUT writes LBA/command, REP OUTSW or looped OUT transfers words
+  -> FLUSH CACHE
+```
+
+系统调用的第四个参数不能沿用普通 System V 函数调用的 `rcx`，因为
+`SYSCALL` 会把返回 RIP 写入 RCX。Linux x86-64 ABI 也选择 `r10` 承载第四
+参数；本项目的 rename 因此明确从统一 UserContext 的 `r10` 取得第四项，
+再与 `INT 0x80` 路径做等价验证。
+
+Intel 语法中目的操作数在前，例如：
+
+```nasm
+mov dx, ATA_COMMAND_PORT
+mov al, ATA_WRITE_SECTORS_COMMAND
+out dx, al
+```
+
+这几条指令只向控制器提交硬件命令。目录查找、inode 分配、CRC 或事务状态都
+由 C++20 Kernel 实现，QEMU 不替软件理解。
+
+### 为什么盘面一律显式 little-endian
+
+x86 本身以 little-endian 读写多字节整数，但“当前 CPU 恰好如此”不足以定义
+长期格式。盘面明确写 little-endian，Python inspector、未来迁移工具和任何
+其他架构宿主都可以按同一规则解码。
+
+直接保存 C++ struct 还会遇到 padding：编译器为了对齐可能在字段之间或结构
+尾部加入未命名字节；enum 的底层宽度也可能变化。rootfs 的编码器先把整个
+512/320/256 字节对象清零，再按具名 offset 写固定宽度字段，保留区必须为零。
+这让“新字段尚未定义”和“磁盘被随机改写”可以区分。
+
+### bitmap 为什么适合固定区域
+
+bitmap 用一位表示一个 inode 或 data block 的分配状态。它的优点是空间固定、
+可全盘比较、找空位算法直接；缺点是大规模顺序分配若每次从第 0 位扫描，会
+退化为二次成本。
+
+v1.6 保存可回绕 allocation hint：下一次从上次命中之后开始，但 hint 不是
+持久事实。即使丢失 hint，扫描 bitmap 仍能得到正确结果。性能状态与正确性
+状态分开，是可恢复系统的重要设计习惯。
+
+fsck 不相信 bitmap 本身。它从根目录遍历所有 inode 和块树，重建一张“应该
+分配”的 bitmap，再逐位与盘面比较。多一位表示泄漏块，少一位表示两个层次对
+同一块所有权理解不同；两者都必须拒绝。
+
+### sparse file 的历史动机
+
+程序常需要一个很大的地址范围，但其中只有少量区域真正有数据，例如数据库
+预留区、虚拟磁盘、core 文件或 ELF BSS 映像。若逻辑扩展到 64 MiB 就立即
+写 64 MiB 零，不仅慢，也浪费容量。
+
+稀疏文件用“缺少块映射”表示全零 hole。hole 不保存压缩流，随机读仍可直接
+定位；写 hole 中的一小段时只分配对应块。安全要求是读 hole 必须主动产生零，
+不能把刚从其他文件释放的旧扇区内容暴露给用户。
+
+### unlink 为什么不等于立即释放
+
+成熟 Unix 语义允许：
+
+```text
+open("/log")
+unlink("/log")
+continue writing through the open fd
+close(fd) -> finally reclaim inode
+```
+
+目录边消失时 inode 的 link count 变为零，但 open-file description 仍拥有
+引用。若此时掉电，文件系统还必须知道哪个零链接 inode 需要回收；ext 系列
+使用 orphan 机制，journal 也参与保证恢复。
+
+v1.6 尚未建立 orphan list 和 replay，所以打开对象的 unlink/replace 返回
+Busy。这是显式阶段边界，不是无意遗漏。直接释放会让现有 fd 指向已复用 inode，
+比返回 Busy 更危险。
+
+### rename 为什么是文件系统最难的“小操作”之一
+
+rename 必须同时考虑两个父目录、已有目标、类型、空目录、mount 和祖先环。
+若移动目录 `/a` 到 `/a/b/c`，成功后 `/a` 会成为自己的祖先，任何 `..` 或
+getcwd 都可能无限循环。实现必须在修改前从 destination parent 沿 parent
+链走到根并拒绝 source。
+
+跨文件系统 rename 无法只改两个目录项，因为 inode 和数据块属于不同
+Superblock。copy+unlink 又会在中途暴露两个文件或零文件，不等价于原子
+rename，所以返回 CrossDevice。
+
+### Dirty/Clean 与 journal 的历史分界
+
+早期 fsck 型文件系统依靠全盘扫描恢复：掉电后检查 bitmap、inode 和目录，
+成本随磁盘变大。日志文件系统先把元数据变更写入顺序日志，再写 commit；
+启动时只重放有限日志。ordered mode 还要求相关文件数据先落盘，避免新 inode
+指向未初始化旧数据。
+
+v1.6 只有 Dirty/Clean：
+
+```text
+Clean N -> persist Dirty N -> write/flush changes -> persist Clean N+1
+```
+
+它能检测“上次事务没有完整结束”，却没有保存旧值或可重放的新值，因此只能
+拒绝挂载。把它称为 journal 会让恢复承诺失真。未来 ordered metadata
+journal 必须增加 credit 预留、日志块、commit record、checkpoint、replay
+幂等性和逐断电点测试。
+
+### CRC 能做什么，不能做什么
+
+CRC32 擅长发现随机 bit flip、截断和错位写入，计算便宜，适合教学格式。
+它不能抵抗故意攻击者：攻击者可修改内容后重新计算 CRC。当前威胁模型是
+设备/软件错误检测，不是磁盘加密、签名或防篡改启动。
+
+CRC 也不能替代语义校验。一个校验正确的 inode 仍可能指向另一个 inode 已经
+拥有的块；一个校验正确的目录项仍可能制造父链环。因此 Validate/fsck 还要
+重建全盘所有权与可达性。
+
+### 测试层为何不能合并
+
+- 格式单元测试证明每个字节偏移和拒绝分支；
+- 集成测试证明块树、事务与 VFS 组合；
+- 真实容量测试证明 256 MiB bitmap 和 ENOSPC；
+- 固定种子随机测试证明长操作序列与两个后端一致；
+- QEMU 证明 Ring 3、汇编入口、ATA PIO 和跨进程重启；
+- 独立 fsck 证明目标实现之外仍能解释同一介质。
+
+仅在内存设备上通过不能证明 ATA flush；仅在 QEMU 启动成功不能穷举 rename
+环或 CRC 偏移；只让 Kernel Validate 自己写出的盘则可能共同带错。多层证据
+是不同 oracle 的组合，不是为了堆测试数量。
+
+更完整的实现走读见
+[v1.6 学习章](learning/14-v1.6-rootfs-v2.md)，盘面和失败决策见
+[ADR 0033](adr/0033-rootfs-v2-namespace-mutations.md)。
+
+## 26. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -1710,6 +1892,7 @@ QMP 逐字输入，不替来宾解析命令或访问文件。
    v0.10 的同步、阻塞/唤醒和管道 IPC，v1.1 的通用资源生命周期，以及
    v1.2 的 Process/Thread、WaitQueue 与完整扩展现场，v1.3 的 CpuLocal、
    原生系统调用和安全返回，v1.4 的 KernelObject、共享 FileDescription 与
-   动态 FileTable，以及 v1.5 的 VFS、Mount、memfs 与 legacy 适配。
+   动态 FileTable，v1.5 的 VFS、Mount、memfs 与 legacy 适配，以及
+   v1.6 的 rootfs v2、完整命名空间与独立 fsck。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

@@ -27,7 +27,7 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.5 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+当前 v1.6 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
 实现；v1.2 已实测 Process/Thread 容量，fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
@@ -290,6 +290,20 @@ QEMU 自行异常退出仍视为失败。
 - 用户非法指令、用户页故障和非法 ELF 三项隔离/拒绝路径继续运行，证明 VFS
   初始化没有改变故障发生顺序或资源清理边界。
 
+`v1.6` 为生产 rootfs、完整命名空间和磁盘满增加五层直接证据：
+
+- 格式单元测试逐字段覆盖 little-endian superblock、inode、目录项与
+  pointer block 的 round-trip、CRC、保留字节、类型和边界拒绝；
+- rootfs 集成测试覆盖稀疏 hole、direct/single/double/triple 寻址、
+  64 MiB truncate、unlink/rmdir、rename 替换/跨目录/环拒绝、stat、重挂载
+  和定点设备写失败；
+- 容量测试使用真实 256 MiB 布局和稀疏宿主存储构造近满块树，先观察非零
+  短写，再观察零字节 ENOSPC，并重新执行完整 Validate；
+- 命名空间随机测试用同一种子分别驱动 memfs 和 rootfs 100000 步，覆盖
+  create/mkdir/read/write/truncate/unlink/rmdir/rename/stat/枚举与预期失败；
+- QEMU 持久化使用逻辑 1 GiB 稀疏盘：第一次写入并 flush，第二次严格挂载并
+  恢复，宿主独立 fsck 成功，再损坏元数据，第三次必须拒绝且不能进入用户态。
+
 `v0.10` 把共享状态、条件等待和 IPC 生命周期分层验证：
 
 - 管道单元测试逐项覆盖未初始化、非法参数、空/满、部分读写、环形回绕、
@@ -318,8 +332,9 @@ QEMU 自行异常退出仍视为失败。
   每轮销毁 `FileSystem` 与缓存对象、重新挂载，再与宿主参考数组逐字节比较。
 - 正常 QEMU 既检查生产者/消费者文件里程碑，也解析每进程文件读写字节和
   superblock 代次；目标内还需完成同步、全盘一致性与独立载荷读回。
-- 专用持久化测试复制一份真实启动盘并关闭 snapshot：第一次启动格式化和写入，
-  第二次启动必须先报告 `FILE_SYSTEM_MOUNTED` 与旧载荷恢复，再允许重写。
+- 专用持久化测试稀疏复制一份已由构建系统格式化的真实启动盘并关闭 snapshot：
+  第一次启动严格报告 `ROOTFS_V2_MOUNTED` 并写入，第二次启动必须先报告同一
+  挂载标记与旧载荷恢复，再允许重写。
 - 第二次启动后，宿主只翻转文件系统超级块中的一个受 CRC 保护字节。第三次
   必须报告 `FILE_SYSTEM_CORRUPT`，禁止进入 Ring 3、自动格式化或到达
   `READY`。
@@ -610,6 +625,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_disk_rejects_invalid_checksum` | 集成/失败路径 | 损坏 Kernel ELF 文件必须被拒绝 |
 | `os_kernel_disk_rejects_invalid_elf` | 集成/失败路径 | CRC 正确但 ELF 语义非法仍必须被拒绝 |
 | `os_stage1_rejects_invalid_header` | 集成/失败路径 | 损坏描述符必须被宿主审计拒绝 |
+| `os_kernel_root_file_system_format_unit_tests` | 单元 | rootfs v2 四类盘面结构、CRC、保留区和边界 |
+| `os_kernel_root_file_system_integration_tests` | 集成 | 稀疏、三级间接、完整命名空间、重挂载和设备失败 |
+| `os_kernel_root_file_system_capacity_integration_tests` | 容量/集成 | 真实 256 MiB 近满镜像、短写、ENOSPC 与一致性 |
 | `os_qemu_functional_smoke` | 系统 | 256 MiB 完整 Shell、IPC、文件系统、用户隔离和资源快照路径 |
 | `os_qemu_stage1_load_success` | 系统 | 64 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
 | `os_qemu_file_system_persistence` | 系统/失败路径 | 同盘双启动持久化与损坏 superblock 拒绝挂载 |
@@ -637,9 +655,11 @@ python3 tools/os.py test --layer failure-path
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
-| `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
+| `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和主题章教材结构 |
 
-当前共 110 项 CTest。v1.5 新增 VFS 单元、memfs/legacy 双后端契约集成和
+顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.6 新增
+rootfs 格式、集成和真实容量三项直接测试，并扩展 VFS、随机、Python 工具与
+QEMU 持久化；v1.5 新增 VFS 单元、memfs/legacy 双后端契约集成和
 十万步命名空间随机模型三项；v1.4 删除旧固定描述符测试并新增 FileTable
 单元、FileDescription 生命周期集成、4096 fd 容量集成和十万步随机模型四项；
 v1.3 的处理器 profile、UserContext、CpuLocal/MSR 布局与十万现场随机测试，

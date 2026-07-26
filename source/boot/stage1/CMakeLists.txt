@@ -141,6 +141,8 @@ function(
             "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/rootfs_v2.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/sparse_image.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
         COMMENT "生成 Stage 1 Kernel ATA 失败路径磁盘镜像"
         VERBATIM
@@ -188,6 +190,8 @@ function(
             "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/rootfs_v2.py"
+            "${PROJECT_SOURCE_DIR}/tools/os_tools/sparse_image.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
         COMMENT "${OS_KERNEL_FAULT_COMMENT}"
         VERBATIM
@@ -248,6 +252,8 @@ add_custom_command(
         "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/rootfs_v2.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/sparse_image.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
     COMMENT "生成包含 Stage 1 与 Kernel ELF 的正常和损坏磁盘镜像"
     VERBATIM

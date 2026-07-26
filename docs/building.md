@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.5 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v1.6 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
@@ -74,7 +74,7 @@ python3 tools/os.py phone-book-export
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
-  131072 2097152 \
+  131072 1073741824 \
   --memory-mebibytes 65536 \
   --expected-outcome success
 ```
@@ -100,7 +100,7 @@ ctest --test-dir build/developer \
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
-  131072 2097152 \
+  131072 1073741824 \
   --memory-mebibytes 64 \
   --cpu-model 'qemu64,-syscall' \
   --expected-outcome processor-feature-unsupported
@@ -177,7 +177,9 @@ tests/os_kernel_interrupt_device_randomized_tests
 `kernel.elf` 仍做符号、段权限与 GDB 调试输入，但不拿非加载调试段长度冒充
 Stage 1 载荷长度。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
-全部启动磁盘镜像必须是精确 2097152 字节。
+全部启动磁盘镜像必须具有精确 1073741824 字节逻辑长度。镜像使用稀疏文件
+保存，不能把“逻辑容量”误当作“宿主实际占用”；派生镜像必须保留尾部 extent
+与逻辑长度。
 `build/` 不进入 Git。
 
 ## 固件生成链
@@ -207,6 +209,24 @@ source/boot/stage1/src/memory_map.asm
 编码与审计；目标机上的 Stage 1 描述符解析、ATA PIO 和跳转全部由自研固件
 执行。进入长模式后，`kernel_loader.asm` 用另一条自研 ATA PIO 路径读取
 Kernel。
+
+rootfs v2 由构建图在 Kernel 启动前显式格式化，Kernel 没有自动格式化入口：
+
+```bash
+python3 tools/os.py inspect-rootfs build/developer/images/boot_disk.img
+python3 tools/os.py fsck-rootfs build/developer/images/boot_disk.img
+```
+
+创建独立实验镜像时使用：
+
+```bash
+python3 tools/os.py mkfs-rootfs /tmp/rootfs-lab.img \
+  --create --size-bytes 1073741824
+python3 tools/os.py corrupt-rootfs /tmp/rootfs-lab.img superblock-checksum
+```
+
+`inspect-rootfs` 输出 JSON 摘要；`fsck-rootfs` 只读重建可达 inode/data
+bitmap；`corrupt-rootfs` 只用于具名故障注入。
 
 ## Kernel ELF64 生成链
 
