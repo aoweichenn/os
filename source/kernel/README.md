@@ -18,7 +18,7 @@ src/memory/page_table.cpp
 
 | 目录 | 职责 |
 | --- | --- |
-| `arch/` | x86-64 描述符表、异常/IRQ 入口、处理器状态、FXSAVE 和 panic |
+| `arch/` | x86-64 描述符表、异常/IRQ、CpuLocal、SYSCALL、处理器现场和 panic |
 | `boot/` | BootInfo 校验与 C ABI 内核入口 |
 | `core/` | Kernel 主流程和 freestanding 内存运行时 |
 | `device/` | 端口 I/O、串口、PIC、PIT、PS/2 与 ATA |
@@ -65,3 +65,20 @@ sync/mutex.*                   基于 WaitQueue 的可睡眠直接交接互斥
 宿主单元测试可以验证 CPUID 位和结构布局；`extended_state.cpp` 只进入
 freestanding Kernel 目标。新增执行机制时应保持这条“纯策略—目标机落实”
 边界。
+
+v1.3 的架构入口文件固定归属如下：
+
+```text
+arch/processor_features.*          CPUID 能力 profile 的纯解码与验证
+arch/cpu_local.*                   每 CPU 当前 Thread、可信入口栈与深度/统计
+arch/user_context.*                统一用户现场、返回校验和 SYSRET/IRET 选择
+arch/native_system_call_layout.*   六个 MSR 的纯布局与回读比较
+arch/native_system_call.*          目标机 MSR 初始化
+arch/architecture.asm              SWAPGS、两类入口、统一返回和 NMI 最小桩
+user/system_calls.*                共同 C++ dispatcher 与用户返回准备
+```
+
+`processor_features`、`user_context` 与 `native_system_call_layout` 必须保持
+可由宿主测试直接链接；RDMSR/WRMSR 和汇编入口只能出现在目标机层。CpuLocal
+虽然当前是单元素，也必须继续位于 `arch/`，不能塞入 ProcessRuntime 的私有
+全局状态。

@@ -103,11 +103,12 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.2 完成基线
+## v1.3 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
-下一阶段为 v1.3 CpuLocal 和原生系统调用入口。Stage 1 在自研长模式
+v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界，下一阶段为
+v1.4 类型化对象与动态描述符。Stage 1 在自研长模式
 环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并
@@ -197,7 +198,7 @@ FIFO。Ring 3 Shell 在 fd 0 为空时阻塞；如果此时没有 Ready 进程�
 
 Shell 是独立 freestanding C++20 ELF，使用固定容量解析器实现 help、echo、
 pwd、ls、mkdir、write、cat、sync 和 exit。v1.0 收口时完整回归为 97 项
-CTest；v1.2 当前为 99 项，继续覆盖单元、集成、固定种子随机、最终产物
+CTest；v1.3 当前为 103 项，继续覆盖单元、集成、固定种子随机、最终产物
 审计、真实交互、双启动持久化与历史失败路径。v1.0 是第一周期 `13 / 13`
 的完成基线。v1.1 已经完成动态物理
 内存元数据、64 TiB direct-map、64 GiB 管理、4 GiB 以上页帧读写回收，
@@ -237,3 +238,19 @@ v1.1 最后以三个互相组合的原语收口：`ScopeRollback` 由调用方�
 迁移到新的 Process 资源容器和 Thread 调度实体。v2 路线按
 [ADR 0019](adr/0019-v2-executable-program-baseline.md) 划分为 v1.1 至
 v1.18，v2.0 只承担集成发布。
+
+v1.3 将硬件入口要求提升为可测试需求：CPU 必须同时具备 long mode、NX、
+FXSR、SSE、SSE2 和 `SYSCALL/SYSRET`，物理地址宽度必须在 36..52 位，
+虚拟地址宽度冻结为 48 位。缺少能力时，内核必须输出缺失位图并在初始化 GDT
+和用户态之前停止。每个 CPU 的本地状态必须保存当前 Thread、可信入口 RSP、
+IRQ/抢占深度、`need_reschedule`、入口类型和有界累计证据；当前单 BSP 使用
+一个 64 字节对齐实例，但接口不得把“只有一个 CPU”编码进用户现场。
+
+默认用户系统调用入口必须使用 `SYSCALL`，兼容 `INT 0x80` 仍保留并与原生
+入口进入同一分发器。`SYSCALL` 不自动换栈，因此入口必须先 `SWAPGS`，只从
+内核写入的 `CpuLocal` 读取当前 Thread 的动态 Ring 0 栈，绝不能在用户 RSP
+上压入内核数据。两条入口都必须形成同一个 176 字节 `UserContext`。返回
+Ring 3 前必须同时验证现场属于当前 Thread、RIP/RSP 位于 48 位低半规范区、
+代码与栈映射权限、CS/SS 和 RFLAGS。只有原生入口且标志位属于快速白名单时
+允许 `SYSRETQ`；其余合法现场必须 `IRETQ`，非法现场不得触发带攻击者地址的
+Ring 0 `#GP`，而要终止相应用户进程。

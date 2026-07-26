@@ -21,7 +21,7 @@ freestanding C++20。构建和测试脚本运行在宿主机，可以使用 Pyth
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.0：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.3。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -57,7 +57,10 @@ Shell。没有 Ready 进程时，内核在永久地址空间执行 \code{sti; hl
 \code{ScopeRollback}、\code{ReferenceCounter} 和 26 字段
 \code{ResourceSnapshot} 收口跨层所有权；256 MiB functional 与 64 GiB
 capacity 运行同一完整路径。v1.2 又分离 Process/Thread，以 WaitQueue
-统一完成竞争，并用每 Thread FXSAVE64 隔离 x87/SSE2。当前 99 项 CTest
-同时保留所有历史成功与失败证据；页表、资源生命周期和调度现场各有单元、
-集成、十万步模型和真实 QEMU 证明。
+统一完成竞争，并用每 Thread FXSAVE64 隔离 x87/SSE2。v1.3 进一步建立
+CPUID 能力与地址宽度规格门禁、CpuLocal、原生 SYSCALL/SYSRET、SWAPGS
+可信换栈、统一 UserContext、IRET 安全回退，以及系统调用期间 IRQ 与返回前
+延迟调度。当前 103 项 CTest 同时保留所有历史成功与失败证据；页表、资源
+生命周期、调度现场和双系统调用入口各有单元、集成、十万步模型和真实 QEMU
+证明。
 Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。

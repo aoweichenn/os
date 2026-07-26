@@ -1,7 +1,10 @@
 #include "os/kernel/process/process_runtime.hpp"
 
+#include "os/kernel/arch/cpu_local.hpp"
 #include "os/kernel/arch/descriptor_tables.hpp"
+#include "os/kernel/arch/native_system_call.hpp"
 #include "os/kernel/arch/processor.hpp"
+#include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/sync/spin_lock.hpp"
@@ -11,6 +14,9 @@ namespace os::kernel {
 namespace {
 
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE = 1ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INVALID_RETURN_VECTOR = 13ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_NORMALIZED_ERROR_CODE = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS = 0x202ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT = 1ULL;
@@ -111,7 +117,8 @@ uint64_t capacity_process_roots[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 bool capacity_stack_active[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 
 extern "C" void OsKernelEnterScheduledProcess(ExceptionFrame *frame) noexcept;
-extern "C" [[noreturn]] void OsKernelReturnFromUserMode() noexcept;
+extern "C" [[noreturn]] void
+OsKernelReturnFromUserMode(uint64_t swap_gs_required) noexcept;
 
 [[nodiscard]] ProcessRuntimeLimits
 SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
@@ -169,25 +176,27 @@ void ResetRuntimeStorage() noexcept {
         return false;
     }
     const uint64_t stack_top_address = KernelStackTopAddress(stack);
-    if (stack_top_address < OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES) {
+    if (stack_top_address < OS_KERNEL_USER_CONTEXT_SIZE_BYTES) {
         return false;
     }
-    const uint64_t frame_address = stack_top_address - OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES;
+    const uint64_t frame_address =
+        stack_top_address - OS_KERNEL_USER_CONTEXT_SIZE_BYTES;
     if (!GetKernelStackManager().Contains(kernel_stack_slot_index, frame_address,
-                                          OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES)) {
+                                          OS_KERNEL_USER_CONTEXT_SIZE_BYTES)) {
         return false;
     }
 
-    UserPrivilegeFrame *const frame = reinterpret_cast<UserPrivilegeFrame *>(frame_address);
-    *frame = UserPrivilegeFrame{};
+    UserContext *const frame = reinterpret_cast<UserContext *>(frame_address);
+    *frame = UserContext{};
     frame->common.register_rdi = process_id.value;
     frame->common.vector = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     frame->common.error_code = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     frame->common.instruction_pointer = address_space.entry_virtual_address;
     frame->common.code_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR);
     frame->common.flags = OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS;
-    frame->user_stack_pointer = address_space.stack_top_virtual_address;
-    frame->user_stack_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR);
+    frame->stack_pointer = address_space.stack_top_virtual_address;
+    frame->stack_segment =
+        static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR);
     saved_frame = &frame->common;
     return true;
 }
@@ -202,11 +211,13 @@ void ResetRuntimeStorage() noexcept {
         !FrameOriginatedFromUser(frame) ||
         !GetKernelStackManager().Contains(
             thread.kernel_stack_slot_index, reinterpret_cast<uint64_t>(&frame),
-            OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES)) {
+            OS_KERNEL_USER_CONTEXT_SIZE_BYTES)) {
         return false;
     }
     const ProcessRuntimeProcess &process = runtime_processes[thread.process_index];
-    return process.address_space.root_physical_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+    return GetCpuLocal().Statistics().current_thread_index == thread_index &&
+           process.address_space.root_physical_address !=
+               OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
            ReadPageTableRoot() == process.address_space.root_physical_address;
 }
 
@@ -218,6 +229,10 @@ void ResetRuntimeStorage() noexcept {
         thread.process_index >= process_runtime_limits.process_capacity) {
         return false;
     }
+    CpuPreemptionGuard preemption_guard{};
+    if (!preemption_guard.Succeeded()) {
+        return false;
+    }
     ProcessRuntimeProcess &process = runtime_processes[thread.process_index];
     ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
     KernelStack stack{};
@@ -227,11 +242,17 @@ void ResetRuntimeStorage() noexcept {
         !GetKernelStackManager().Contains(
             thread.kernel_stack_slot_index,
             reinterpret_cast<uint64_t>(runtime_thread.saved_frame),
-            OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES) ||
+            OS_KERNEL_USER_CONTEXT_SIZE_BYTES) ||
         !ActivateUserPageTable(process.address_space.root_physical_address)) {
         return false;
     }
-    if (!SetPrivilegeStackPointer0(KernelStackTopAddress(stack))) {
+    const uint64_t kernel_stack_top = KernelStackTopAddress(stack);
+    if (!SetPrivilegeStackPointer0(kernel_stack_top)) {
+        ActivateKernelPageTable();
+        return false;
+    }
+    if (GetCpuLocal().SetCurrentThread(thread_index, kernel_stack_top) !=
+        CpuLocalStatus::Succeeded) {
         ActivateKernelPageTable();
         return false;
     }
@@ -680,13 +701,22 @@ CompleteCurrentThread(ExceptionFrame &frame,
     }
 
     if (decision.completed || !decision.switched) {
+        const uint64_t swap_gs_required =
+            GetCpuLocal().NativeSystemCallActive()
+                ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+                : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
         if (decision.completed) {
             process_scheduling_active = false;
         }
         if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
             HaltProcessor();
         }
-        OsKernelReturnFromUserMode();
+        if (GetCpuLocal().ClearCurrentThread(
+                DefaultPrivilegeStackPointer0()) !=
+            CpuLocalStatus::Succeeded) {
+            HaltProcessor();
+        }
+        OsKernelReturnFromUserMode(swap_gs_required);
     }
     if (!ActivateThread(decision.current_thread_index)) {
         HaltProcessor();
@@ -701,6 +731,12 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     }
     if (!GetExtendedStateConfiguration().initialized) {
         return ProcessRuntimeStatus::ExtendedStateFailure;
+    }
+    if (GetCpuLocal().Validate() != CpuLocalStatus::Succeeded) {
+        return ProcessRuntimeStatus::CpuLocalFailure;
+    }
+    if (!GetNativeSystemCallConfiguration().initialized) {
+        return ProcessRuntimeStatus::NativeSystemCallFailure;
     }
     process_runtime_limits = SelectProcessRuntimeLimits(
         GetKernelMemoryStatistics().managed_usable_memory_bytes);
@@ -1580,11 +1616,20 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame,
         ++pipe_writer_block_count;
     }
     if (!decision.switched) {
+        const uint64_t swap_gs_required =
+            GetCpuLocal().NativeSystemCallActive()
+                ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+                : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
         ActivateKernelPageTable();
         if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
             HaltProcessor();
         }
-        OsKernelReturnFromUserMode();
+        if (GetCpuLocal().ClearCurrentThread(
+                DefaultPrivilegeStackPointer0()) !=
+            CpuLocalStatus::Succeeded) {
+            HaltProcessor();
+        }
+        OsKernelReturnFromUserMode(swap_gs_required);
     }
     if (!ActivateThread(decision.current_thread_index)) {
         return ProcessRuntimeStatus::SchedulerFailure;
@@ -1644,6 +1689,17 @@ ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept {
     return runtime_threads[decision.current_thread_index].saved_frame;
 }
 
+ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept {
+    return HandleProcessTimerInterrupt(frame);
+}
+
+bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept {
+    if (!process_scheduling_active) {
+        return false;
+    }
+    return CurrentFrameIsValid(thread_scheduler.CurrentThreadIndex(), frame);
+}
+
 ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
                                                 const int64_t exit_code) noexcept {
     return CompleteCurrentThread(frame, ProcessTerminationReason::Exited,
@@ -1656,5 +1712,17 @@ ExceptionFrame *TerminateCurrentProcessFromException(ExceptionFrame &frame,
     return CompleteCurrentThread(
         frame, ProcessTerminationReason::Exception,
         OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE, page_fault_address);
+}
+
+ExceptionFrame *
+TerminateCurrentProcessFromInvalidReturn(ExceptionFrame &frame) noexcept {
+    frame.vector = OS_KERNEL_PROCESS_RUNTIME_INVALID_RETURN_VECTOR;
+    frame.error_code = OS_KERNEL_PROCESS_RUNTIME_NORMALIZED_ERROR_CODE;
+    frame.code_segment =
+        static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR);
+    return CompleteCurrentThread(
+        frame, ProcessTerminationReason::Exception,
+        OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE,
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
 }
 }

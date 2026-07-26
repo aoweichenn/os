@@ -2,6 +2,7 @@
 
 #include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/exception_frame.hpp"
+#include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/fs/file_system.hpp"
 #include "os/kernel/io/console_input.hpp"
 #include "os/kernel/io/io_descriptor.hpp"
@@ -41,6 +42,8 @@ enum class ProcessRuntimeStatus : uint64_t {
     ExtendedStateFailure,
     CapacitySelfTestFailure,
     LockFailure,
+    CpuLocalFailure,
+    NativeSystemCallFailure,
 };
 
 enum class ProcessIoStatus : uint64_t {
@@ -186,8 +189,13 @@ BlockCurrentThread(ExceptionFrame &frame, WaitCondition wait_condition,
 WakeThreads(WaitCondition wait_condition, WakeReason wake_reason,
             uint64_t maximum_wake_count, uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
+[[nodiscard]] ExceptionFrame *
+RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
+[[nodiscard]] bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
                                                               int64_t exit_code) noexcept;
 [[nodiscard]] ExceptionFrame *
 TerminateCurrentProcessFromException(ExceptionFrame &frame, uint64_t page_fault_address) noexcept;
+[[nodiscard]] ExceptionFrame *
+TerminateCurrentProcessFromInvalidReturn(ExceptionFrame &frame) noexcept;
 }

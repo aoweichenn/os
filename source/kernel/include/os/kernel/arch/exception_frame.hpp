@@ -5,7 +5,6 @@
 namespace os::kernel {
 
 inline constexpr uint64_t OS_KERNEL_EXCEPTION_FRAME_SIZE_BYTES = 160ULL;
-inline constexpr uint64_t OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES = 176ULL;
 inline constexpr uint64_t OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT = 32ULL;
 
 struct ExceptionFrame final {
@@ -31,18 +30,10 @@ struct ExceptionFrame final {
     uint64_t flags;
 };
 
-struct UserPrivilegeFrame final {
-    ExceptionFrame common;
-    uint64_t user_stack_pointer;
-    uint64_t user_stack_segment;
-};
-
 [[nodiscard]] bool ExceptionPushesHardwareErrorCode(uint64_t vector) noexcept;
 [[nodiscard]] bool IsResumableKernelException(uint64_t vector) noexcept;
 [[nodiscard]] bool FrameOriginatedFromUser(const ExceptionFrame &frame) noexcept;
-[[nodiscard]] const UserPrivilegeFrame &AsUserPrivilegeFrame(const ExceptionFrame &frame) noexcept;
 
 static_assert(sizeof(ExceptionFrame) == OS_KERNEL_EXCEPTION_FRAME_SIZE_BYTES);
-static_assert(sizeof(UserPrivilegeFrame) == OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES);
 
 }

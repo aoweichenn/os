@@ -1,5 +1,6 @@
 #include "os/abi/system_call.hpp"
 #include "os/kernel/arch/exception_frame.hpp"
+#include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/user/user_elf.hpp"
 #include "os/kernel/user/user_memory.hpp"
@@ -34,11 +35,11 @@ int main() {
     os::test::TestContext test_context{OS_TEST_USER_BOUNDARY_SUITE_NAME};
     os::kernel::ExceptionFrame kernel_frame{};
     kernel_frame.code_segment = OS_TEST_USER_BOUNDARY_KERNEL_CODE_SELECTOR;
-    os::kernel::UserPrivilegeFrame user_frame{};
+    os::kernel::UserContext user_frame{};
     user_frame.common.code_segment = OS_TEST_USER_BOUNDARY_USER_CODE_SELECTOR;
     test_context.Expect(!os::kernel::FrameOriginatedFromUser(kernel_frame) &&
                             os::kernel::FrameOriginatedFromUser(user_frame.common) &&
-                            &os::kernel::AsUserPrivilegeFrame(user_frame.common) == &user_frame,
+                            &os::kernel::AsUserContext(user_frame.common) == &user_frame,
                         OS_TEST_USER_BOUNDARY_FRAME_MESSAGE);
 
     test_context.Expect(os::kernel::OS_KERNEL_USER_STACK_PAGE_COUNT ==

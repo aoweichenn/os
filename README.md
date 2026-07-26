@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.2 Process/Thread、等待与完整现场` 已完整完成，
-下一阶段是 v1.3 CpuLocal 与 `SYSCALL/SYSRET`。v1.1 已落地动态物理内存、
+当前状态：第二周期 `v1.3 CpuLocal 与 x86-64 原生系统调用` 已完整完成，
+下一阶段是 v1.4 类型化内核对象与动态描述符。v1.1 已落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
@@ -38,8 +38,9 @@ PD，只稳定保留一张共享 PDPT。在此基础上，内核严格
 所有权，从 buddy 取得四个独立物理页，并在上下各保留一页 not-present
 guard。8254 PIT
 每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0、176 字节
-通用/IRET 现场和每 Thread 512 字节 FXSAVE 现场。`INT 0x80` 提供日志、
-退出和 PID/TID 查询；进程退出或用户
+通用用户现场和每 Thread 512 字节 FXSAVE 现场。默认用户 ABI 已使用
+`SYSCALL`，`INT 0x80` 作为兼容与等价性验证入口；两者提供日志、退出和
+PID/TID 查询。进程退出或用户
 异常会释放其用户页与页表，汇编回到永久启动栈后再清零并释放 Ring 0 栈的
 映射、物理页和 KVA，Ring 0 故障仍进入 panic。v0.10 又把 PCB
 扩展为可解释的 `Blocked` 状态，以具名等待原因完成阻塞与定向唤醒；内核
@@ -60,8 +61,8 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
 freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
 sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
-完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；v1.2 完整回归共
-99 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；v1.3 完整回归共
+103 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
 函数和命名空间。
 
 第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
@@ -86,7 +87,18 @@ FXSAVE 区，再退出、reap 并用 ResourceSnapshot 验证零差异。四个 R
 阻塞、唤醒和退出边界反复校验。宿主固定种子模型执行 100000 步状态迁移，
 QEMU 另有 `-sse2` 故障配置证明缺少必需 CPUID 能力时会在架构初始化前停止。
 
-v1.3 将独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
+v1.3 已建立单元素 `CpuLocal`，统一保存 current Thread、可信入口栈、
+IRQ/抢占深度和延迟调度请求。启动期将 long mode、NX、FXSR、SSE、SSE2、
+`SYSCALL` 与 40/48 位地址宽度冻结为显式处理器规格，并配置、回读
+`EFER/STAR/LSTAR/FMASK/GS_BASE/KERNEL_GS_BASE`。原生入口先 `SWAPGS`，
+再从 `CpuLocal` 取得可信 Ring 0 栈；原生与兼容入口都规范化为 176 字节
+`UserContext`。返回路径联合验证现场所有权、用户映射、规范 RIP/RSP、段和
+RFLAGS；满足快速集合时执行 `SYSRETQ`，带 DF/RF 等合法但不安全的状态改走
+`IRETQ`，非法状态则终止对应用户进程。QEMU 已实际记录系统调用被 IRQ 打断、
+返回前 reschedule、双入口等价、SYSRET 与 IRET 回退；`qemu64,-syscall`
+必须在用户态之前明确失败。
+
+v1.4 将建立类型化对象与动态描述符。VFS、rootfs v2、
 PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
 也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
@@ -138,6 +150,11 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] BOOT_INFO_VALID
 [OS][KERNEL] BSS_ZEROED
 [OS][KERNEL] CR3_VALID
+[OS][KERNEL] PROCESSOR_FEATURES_READY
+[OS][KERNEL] PROCESSOR_REQUIRED_FEATURES=0x000000000000003F
+[OS][KERNEL] PROCESSOR_AVAILABLE_FEATURES=0x000000000000003F
+[OS][KERNEL] PROCESSOR_PROFILE_PHYSICAL_ADDRESS_BITS=0x0000000000000028
+[OS][KERNEL] PROCESSOR_PROFILE_VIRTUAL_ADDRESS_BITS=0x0000000000000030
 [OS][KERNEL] EXTENDED_STATE_READY
 [OS][KERNEL] EXTENDED_STATE_CR0=0x...
 [OS][KERNEL] EXTENDED_STATE_CR4=0x...
@@ -146,6 +163,13 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] TSS_READY
 [OS][KERNEL] IDT_READY
 [OS][KERNEL] DESCRIPTOR_TABLES_VALID
+[OS][KERNEL] CPU_LOCAL_READY
+[OS][KERNEL] CPU_LOCAL_ADDRESS=0x...
+[OS][KERNEL] NATIVE_SYSCALL_READY
+[OS][KERNEL] NATIVE_SYSCALL_STAR=0x0010000800000000
+[OS][KERNEL] NATIVE_SYSCALL_LSTAR=0x...
+[OS][KERNEL] NATIVE_SYSCALL_FMASK=0x0000000000044700
+[OS][KERNEL] NATIVE_SYSCALL_EFER=0x0000000000000501
 [OS][KERNEL] BREAKPOINT_HANDLED
 [OS][KERNEL] EXCEPTION_SELF_TEST_READY
 [OS][KERNEL] MEMORY_MAP_VALID
@@ -211,6 +235,9 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][USER][PIPE] PRODUCER_STARTED
 [OS][USER][PIPE] CONSUMER_STARTED
 [OS][USER][FS] FILE_WRITTEN
+[OS][USER] DUAL_SYSCALL_ENTRY_EQUIVALENT
+[OS][USER] SYSRET_RETURNED
+[OS][USER] SYSCALL_IRET_FALLBACK_RETURNED
 [OS][USER] UNKNOWN_SYSCALL_REJECTED
 [OS][USER] HELLO_FROM_RING3
 [OS][USER][PIPE] PRODUCER_COMPLETED
@@ -235,6 +262,16 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] SCHEDULER_PREEMPTIONS=0x...
 [OS][KERNEL] SCHEDULER_BLOCKS=0x...
 [OS][KERNEL] SCHEDULER_WAKEUPS=0x...
+[OS][KERNEL] CPU_LOCAL_MAX_IRQ_DEPTH=0x...
+[OS][KERNEL] CPU_LOCAL_MAX_PREEMPT_DEPTH=0x...
+[OS][KERNEL] LEGACY_SYSCALL_ENTRIES=0x...
+[OS][KERNEL] NATIVE_SYSCALL_ENTRIES=0x...
+[OS][KERNEL] SYSCALL_IRQ_INTERRUPTS=0x...
+[OS][KERNEL] SYSCALL_RETURN_RESCHEDULES=0x...
+[OS][KERNEL] SYSRET_RETURNS=0x...
+[OS][KERNEL] IRET_RETURNS=0x...
+[OS][KERNEL] SYSCALL_IRET_FALLBACKS=0x...
+[OS][KERNEL] REJECTED_USER_RETURNS=0x0000000000000000
 [OS][KERNEL] PIPE_CAPACITY_BYTES=0x0000000000000040
 [OS][KERNEL] PIPE_WRITTEN_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100
@@ -260,8 +297,11 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 日志规范见 [docs/logging.md](docs/logging.md)：启动日志只记录阶段里程碑和故障原因，
 不在轮询或逐字节路径中刷屏。
 
-`build/developer/source/kernel/kernel.elf` 由 LLD 直接链接，入口固定为
-`0x00100000`。当前产物包含严格分权的 `R E`、`R`、`RW/BSS` 三个
+`build/developer/source/kernel/kernel.elf` 由 LLD 直接链接并保留完整
+DWARF 调试信息；固定启动分区写入由 `llvm-objcopy --strip-debug` 生成的
+`kernel.payload.elf`。这样 GDB 仍能使用完整符号，而启动载荷不会因调试段增长
+覆盖 LBA 2048 开始的文件系统区域。两者入口都固定为 `0x00100000`，加载段
+内容相同。当前产物包含严格分权的 `R E`、`R`、`RW/BSS` 三个
 `PT_LOAD`；Stage 1 在目标机上以两遍算法先验证全部段，再复制文件内容并清零
 BSS。成功交接后内核重新初始化 COM1，验证 104 字节 BootInfo v2、BSS 和
 Stage 1 的 CR3，再加载自己的 GDTR、IDTR 和 TR。正常镜像执行一次可恢复
@@ -307,8 +347,8 @@ books/           可独立构建的 LaTeX 系统教材
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.2 统计为 120 个目标代码文件、24227 个物理行、21968 个非空非纯
-注释代码行，其中 C++ 19661 行、NASM Intel 汇编 2307 行；测试、工具、书籍、
+当前 v1.3 统计为 130 个目标代码文件、26090 个物理行、23655 个非空非纯
+注释代码行，其中 C++ 21222 行、NASM Intel 汇编 2433 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

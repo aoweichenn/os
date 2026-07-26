@@ -172,7 +172,27 @@ ABI 结构；名称按显式长度输出，不假定 NUL 终止。所有动态 f
 程序非零退出都失败。
 
 该测试不声称用户态已经开放任意浮点 ABI。它只证明 x87/SSE2 是 Thread 私有
-现场，并冻结当前 FXSAVE 边界；AVX/XSAVE 仍由 CR4 配置明确禁用。
+ 现场，并冻结当前 FXSAVE 边界；AVX/XSAVE 仍由 CR4 配置明确禁用。
+
+## v1.3 双系统调用入口与返回走读
+
+普通 C++ 包装继续使用项目 ABI：RAX 是系统调用号，RDI、RSI、RDX、R10 是
+前四个参数，RAX 返回结果。变化只发生在最小 NASM 边界：
+
+- `OsUserInvokeSystemCall` 默认执行 `SYSCALL`；
+- `OsUserInvokeLegacySystemCall` 只为兼容与等价性测试执行 `INT 0x80`；
+- `OsUserInvokeSystemCallWithDirectionFlag` 在原生入口前设置 DF，用来验证合法
+  非快速现场由 IRET 恢复，返回后立即 `CLD` 维护 System V C++ ABI。
+
+worker 对同一个无副作用 PID 查询分别走两条入口，要求返回值相同；随后用默认
+入口验证一条普通 SYSRET 和一条 DF→IRET 回退，并输出三个一次性标记。其他
+Shell、管道、文件和退出包装全部走原生入口，因此 QEMU 中数百次
+`NATIVE_SYSCALL_ENTRIES` 来自真实用户工作负载，不是内核伪造计数。
+
+用户模块不配置 STAR/LSTAR，不读取 CpuLocal，也不选择返回指令。所有用户
+RIP/RSP、段、RFLAGS 和映射验证都属于 Kernel 安全边界；用户包装器只遵守
+ABI。详细入口流程见
+[ADR 0030](../adr/0030-cpu-local-native-system-call.md)。
 
 ## 依赖与命名
 

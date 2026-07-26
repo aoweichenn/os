@@ -27,7 +27,7 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.2 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+当前 v1.3 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
 实现；v1.2 已实测 Process/Thread 容量，fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
@@ -235,6 +235,23 @@ QEMU 自行异常退出仍视为失败。
   合取；正常 QEMU 要求四个不同用户模式全部隔离且 save/restore 非零；
 - `qemu64,-sse2` 失败用例要求同一镜像在 GDT、用户态和 READY 前明确停在
   `EXTENDED_STATE_UNSUPPORTED`。
+
+上述两项是 v1.2 发布时的历史证据。v1.3 将能力检查统一为完整
+`ProcessorFeatureProfile`，当前主动失败用例改为 `qemu64,-syscall`，并验证
+`PROCESSOR_FEATURES_UNSUPPORTED` 与非零 missing mask。
+
+`v1.3` 为架构入口增加四层证据：
+
+- 处理器 profile 单元测试覆盖六项必需能力、36..52 位物理宽度和固定 48 位
+  虚拟宽度；
+- UserContext 单元测试覆盖初始、IRQ、`INT 0x80`、`SYSCALL` 四类来源，
+  低/高规范地址边界、段、RFLAGS 和 SYSRET/IRET 选择；
+- CpuLocal/MSR 布局集成测试覆盖初始化、Thread/可信栈同步、IRQ/抢占深度、
+  延迟调度、非局部清理、STAR 选择子算术与回读差异；
+- 固定种子 `0x5A17C011BADC0FFE` 对 100000 个现场执行 400000 项性质检查；
+- 256 MiB QEMU 必须同时观察双入口等价、SYSRET、原生 IRET 回退、IRQ 打断
+  系统调用和返回前 reschedule，且结束时深度/need-resched/拒绝返回为零；
+- `qemu64,-syscall` 必须在扩展现场、GDT 和用户态前输出缺失能力位图并停止。
 
 `v0.10` 把共享状态、条件等待和 IPC 生命周期分层验证：
 
@@ -484,6 +501,10 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_descriptor_layout_unit_tests` | 单元 | TSS、IDT gate、异常错误码和恢复分类 |
 | `os_kernel_descriptor_layout_randomized_tests` | 随机 | 4096 组 64 位 TSS/IDT 地址编码往返 |
 | `os_kernel_extended_state_layout_unit_tests` | 单元 | FXSAVE 512/16 布局、CPUID FXSR/SSE/SSE2 解码与必需能力合取 |
+| `os_kernel_processor_features_unit_tests` | 单元 | 完整 CPUID profile、必需能力位图与物理/虚拟地址宽度 |
+| `os_kernel_user_context_unit_tests` | 单元 | 四类用户现场、规范地址、段、RFLAGS 与返回选择 |
+| `os_kernel_native_system_call_integration_tests` | 集成 | CpuLocal 生命周期、深度/统计与原生系统调用 MSR 布局 |
+| `os_kernel_user_context_randomized_tests` | 随机 | 固定种子 100000 个用户现场与 400000 项性质 |
 | `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、最高可用地址、元数据区搜索与溢出 |
 | `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、64 GiB 容量、高地址范围分配与回收 |
 | `os_kernel_buddy_frame_allocator_unit_tests` | 单元 | 双位图尺寸、初始化、分裂合并、失败原子性与非法释放 |
@@ -566,7 +587,7 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_invalid_opcode_isolation` | 系统/失败路径 | Ring 3 #UD 只终止用户并恢复内核 |
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
-| `os_qemu_extended_state_unsupported` | 系统/失败路径 | 禁用 SSE2 后必须在架构初始化早期明确拒绝且不进入用户态 |
+| `os_qemu_native_system_call_unsupported` | 系统/失败路径 | 禁用 SYSCALL 后必须输出缺失能力位图且不进入后续架构初始化 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计、Kernel 对称功能目录和手机教材导出工具 |
 | `os_cpp_identifier_naming_check` | 集成 | 全部 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
@@ -574,8 +595,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 99 项 CTest。v1.2 新增扩展现场布局单元测试与 SSE2 缺失系统失败
-路径，并用 Process/Thread 单元、集成和十万步随机测试替换旧 PCB 调度测试；
+当前共 103 项 CTest。v1.3 新增处理器 profile、UserContext、CpuLocal/MSR
+布局与十万现场随机测试，并把主动 CPU 失败配置更新为 SYSCALL 缺失；
+v1.2 的 Process/Thread 单元、集成和十万步随机测试及
 全部历史成功、故障注入、持久化和产物审计用例继续保留。命名门禁使用编译
 数据库和 Clang AST 区分标识符种类；
 `os_python_tooling_unit_tests` 内的 Kernel 布局测试还会扫描真实源码树，

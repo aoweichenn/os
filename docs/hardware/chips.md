@@ -9,7 +9,8 @@
 
 ```text
 x86-64 CPU
-├── 架构寄存器：RIP、RFLAGS、CR0、CR2、CR3、CR4、IA32_EFER
+├── 架构寄存器：RIP、RFLAGS、CR0、CR2、CR3、CR4、FS/GS base
+├── 系统调用 MSR：IA32_EFER、STAR、LSTAR、FMASK、GS_BASE、KERNEL_GS_BASE
 ├── 描述符状态：CS、SS、GDTR、IDTR、TR、TSS
 ├── MMIO
 │   └── Local APIC：IA32_APIC_BASE 指定的 4 KiB 页，当前为 0xFEE00000
@@ -50,6 +51,10 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | 9 | IF | 可屏蔽中断开关 | 初始化期间关闭；用户初始帧设为 1 |
 | 10 | DF | 字符串方向 | 入口由 `CLD` 清零，保证 `lodsb`/`lodsw` 向高地址推进 |
 | 11 | OF | 有符号溢出 | 当前不用于硬件协议判断 |
+| 14 | NT | 遗留嵌套任务 | 系统调用入口 FMASK 清除；用户返回拒绝置位 |
+| 16 | RF | 抑制下一条调试 fault | 合法用户现场可保存，但 SYSRET 快速路径回退 IRET |
+| 18 | AC | 对齐检查/SMAP 相关状态 | 当前用户返回拒绝，入口 FMASK 清除 |
+| 21 | ID | 用户可修改 CPUID 标志 | 当前用户返回不开放 |
 
 标志位不是普通变量：一条 `cmp` 或 `test` 会覆盖一组标志。因此汇编代码在
 产生条件码后必须立即消费，不能在中间插入会改变 RFLAGS 的指令。`CF`、`ZF` 和
@@ -71,6 +76,7 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | CR4 | 9 | OSFXSR | OS 管理 FXSAVE/FXRSTOR | v1.2 置一并回读 |
 | CR4 | 10 | OSXMMEXCPT | SIMD 异常使用 #XM | v1.2 置一并回读 |
 | CR4 | 18 | OSXSAVE | OS 管理 XSAVE/XCR0 | v1.2 明确清零，AVX 禁用 |
+| EFER | 0 | SCE | 开启 SYSCALL/SYSRET | v1.3 在配置 LSTAR 等 MSR 后置一并回读 |
 | EFER | 8 | LME | 请求长模式 | 通过 `RDMSR/WRMSR` 访问 |
 | EFER | 10 | LMA | 长模式已激活 | 只读结果，不能直接写 |
 | EFER | 11 | NXE | 启用 NX 位 | v0.6 先用 CPUID 检查，再启用并回读 |
@@ -96,15 +102,22 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 `CPUID.(EAX=7,ECX=0):ECX[16]` 表示 LA57 能力，当前只记录该能力，不设置
 `CR4.LA57`。
 
-#### CPUID 与 x87/SSE2 扩展现场
+#### CPUID 与 v1.3 完整处理器规格
 
-v1.2 读取标准特性叶 `CPUID.(EAX=1):EDX`，三位必须同时存在：
+v1.3 在使用任何相关能力前统一读取标准与扩展特性叶：
 
-| EDX 位 | 名称 | 缺失后的处理 |
-| ---: | --- | --- |
-| 24 | FXSR | 不得执行 FXSAVE/FXRSTOR，输出 `EXTENDED_STATE_UNSUPPORTED` |
-| 25 | SSE | 不得开放 XMM/MXCSR 用户状态 |
-| 26 | SSE2 | 不满足当前 x86-64 用户执行基线 |
+| 叶 | EDX 位 | 名称 | 项目 feature mask |
+| --- | ---: | --- | ---: |
+| `0x00000001` | 24 | FXSR | bit 2 |
+| `0x00000001` | 25 | SSE | bit 3 |
+| `0x00000001` | 26 | SSE2 | bit 4 |
+| `0x80000001` | 11 | SYSCALL/SYSRET | bit 5 |
+| `0x80000001` | 20 | NX | bit 1 |
+| `0x80000001` | 29 | long mode | bit 0 |
+
+required mask 固定为 `0x3F`。任何位缺失都会输出
+`PROCESSOR_FEATURES_UNSUPPORTED` 与 missing mask，并在扩展现场/GDT 前停止。
+`CPUID.80000008H` 还必须报告 36..52 位物理地址和精确 48 位虚拟地址。
 
 能力检查通过后，内核按上表配置 CR0/CR4，并用 `FNINIT`、
 `LDMXCSR [0x1F80]`、`FXSAVE64` 建立初始模板。每个 Thread 的保存区固定
@@ -188,7 +201,36 @@ IRQ0 到来时 CPU 已自动使用“旧”RSP0 压帧。C++ 可以在该栈上�
 页或 PCID，所以每次抢占都支付完整地址空间切换成本。这是明确、可验证的初始
 语义；以后优化必须同时定义 PCID 分配、复用和失效规则。
 
-### 2.5 IDT gate 位字段
+### 2.6 v1.3 原生系统调用 MSR 与 CpuLocal
+
+| MSR | 地址 | 当前内容 |
+| --- | ---: | --- |
+| IA32_EFER | `0xC0000080` | 保留 LME/LMA/NXE 并设置 SCE |
+| IA32_STAR | `0xC0000081` | `0x0010000800000000` |
+| IA32_LSTAR | `0xC0000082` | `OsKernelNativeSystemCallEntry` 规范地址 |
+| IA32_FMASK | `0xC0000084` | `0x0000000000044700`，清 TF/IF/DF/NT/AC |
+| IA32_GS_BASE | `0xC0000101` | 用户 GS base，当前为 0 |
+| IA32_KERNEL_GS_BASE | `0xC0000102` | 64 字节对齐 CpuLocal 地址 |
+
+STAR[47:32]=`0x08` 供 SYSCALL 选择内核代码段，内核 SS 隐式为 `0x10`。
+STAR[63:48]=`0x10` 是 SYSRET 基值，不是最终用户 CS；处理器由它得到
+SS=`0x1B`、CS=`0x23`。
+
+`SWAPGS` 交换两个 GS base MSR 的活动角色。原生入口先交换，再按以下稳定
+ABI 访问 CpuLocal：
+
+| 偏移 | 宽度 | 字段 | 入口用途 |
+| ---: | ---: | --- | --- |
+| 0 | 64 | self address | C++ 完整性验证 |
+| 8 | 64 | current Thread slot | 调度所有权与诊断 |
+| 16 | 64 | trusted kernel entry RSP | `SYSCALL` 立即换栈 |
+| 24 | 64 | transient user RSP | 换栈前暂存，随后与 UserContext 交叉验证 |
+
+TSS.RSP0 与偏移 16 必须在激活 Thread 时写入同一个动态栈顶；前者供 IDT
+interrupt gate，后者供 SYSCALL。UserContext 总长 176 字节，SYSRET 只用于
+已验证的 48 位低半规范 RIP/RSP 和安全 RFLAGS；其他合法现场使用 IRETQ。
+
+### 2.7 IDT gate 位字段
 
 一个长模式 IDT gate 为 16 字节：
 
@@ -209,13 +251,13 @@ IRQ0 到来时 CPU 已自动使用“旧”RSP0 压帧。C++ 可以在该栈上�
 - IST 为 0 使用当前/特权栈；1..7 选择 TSS 的对应专用栈。
 - selector 固定引用当前 Ring 0 代码段 `0x08`。
 
-### 2.6 架构异常与错误码
+### 2.8 架构异常与错误码
 
 | 向量 | 缩写 | 类别 | CPU 错误码 | 当前 IST / 策略 |
 | ---: | --- | --- | --- | --- |
 | 0 | #DE | fault | 无 | panic |
 | 1 | #DB | fault/trap | 无 | panic |
-| 2 | NMI | interrupt | 无 | IST2 / panic |
+| 2 | NMI | interrupt | 无 | IST2 / 最小 fail-stop，不进入普通 panic |
 | 3 | #BP | trap | 无 | 受控自检可返回 |
 | 4 | #OF | trap | 无 | panic |
 | 5 | #BR | fault | 无 | panic |
@@ -241,7 +283,7 @@ IRQ0 到来时 CPU 已自动使用“旧”RSP0 压帧。C++ 可以在该栈上�
 | 30 | #SX | fault | 有 | panic |
 | 31 | 保留 | — | 无 | panic |
 
-### 2.7 页故障错误码
+### 2.9 页故障错误码
 
 | 位 | 名称 | 0 | 1 |
 | ---: | --- | --- | --- |
@@ -261,7 +303,7 @@ present 但只读的 `0xFFFF800000100000`，证明 CR0.WP 生效。
 v0.8 用户程序读取未映射 `0x30000000` 得到错误码 4：P=0、W/R=0、
 U/S=1，证明访问确实来自 CPL3，而不是内核替用户触发故障。
 
-### 2.8 四级页表项
+### 2.10 四级页表项
 
 48 位 canonical 虚拟地址按以下位段拆分：
 
@@ -290,7 +332,7 @@ U/S=1，证明访问确实来自 CPL3，而不是内核替用户触发故障。
 映射请求出现时才向父项传播 US。修改活动叶项后执行 `INVLPG`，加载新 CR3
 时刷新当前地址空间翻译。
 
-### 2.9 异常、硬件 IRQ 与 IDT 向量
+### 2.11 异常、硬件 IRQ 与 IDT 向量
 
 v0.8 的 IDT present 范围为：
 
@@ -306,7 +348,7 @@ v0.8 的 IDT present 范围为：
 之间的路由；当前单核阶段保持本地 APIC 启用，把 SVR 与 LVT LINT0 配成
 virtual-wire，再使用传统 8259A。
 
-### 2.10 Local APIC virtual-wire 寄存器
+### 2.12 Local APIC virtual-wire 寄存器
 
 LAPIC 基址来自当前 xAPIC 实现使用的 `IA32_APIC_BASE[35:12]`，内核将对应页
 做 supervisor RW/NX/PCD 身份映射。当前只使用两个 32 位 MMIO 寄存器：
@@ -320,7 +362,7 @@ LAPIC 基址来自当前 xAPIC 实现使用的 `IA32_APIC_BASE[35:12]`，内核�
 写 LINT0 并逐字段回读。LAPIC 此时只把 8259A 输出桥接到处理器；中断向量仍由
 PIC 的 INTA 周期提供，处理完成也仍向 PIC 发送 EOI，不写 LAPIC EOI。
 
-### 2.11 特权转换时的硬件栈帧
+### 2.13 特权转换时的硬件栈帧
 
 从 CPL3 通过 interrupt gate 进入 CPL0 时，CPU 先从当前 TSS 读取 RSP0，
 再在新内核栈上保存：

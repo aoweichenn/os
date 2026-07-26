@@ -23,6 +23,10 @@ chips:
           9: IF
           10: DF
           11: OF
+          14: NT
+          16: RF
+          18: AC
+          21: ID
       - name: CR0
         width_bits: 64
         kind: control-register
@@ -60,9 +64,48 @@ chips:
         kind: msr
         address: 0xC0000080
         bits:
+          0: SCE
           8: LME
           10: LMA
           11: NXE
+        current_policy: >-
+          preserve long-mode and NX state, set SCE only after STAR, LSTAR,
+          FMASK, and both GS bases have been prepared
+      - name: IA32_STAR
+        width_bits: 64
+        kind: msr
+        address: 0xC0000081
+        current_value: 0x0010000800000000
+        fields:
+          47..32: SYSCALL_KERNEL_CODE_SELECTOR_BASE
+          63..48: SYSRET_USER_SELECTOR_BASE
+      - name: IA32_LSTAR
+        width_bits: 64
+        kind: msr
+        address: 0xC0000082
+        current_policy: "canonical address of OsKernelNativeSystemCallEntry"
+      - name: IA32_FMASK
+        width_bits: 64
+        kind: msr
+        address: 0xC0000084
+        current_value: 0x0000000000044700
+        cleared_rflags:
+          - TF
+          - IF
+          - DF
+          - NT
+          - AC
+      - name: IA32_GS_BASE
+        width_bits: 64
+        kind: msr
+        address: 0xC0000101
+        current_value: 0
+        current_policy: "reserved user GS or TLS base; currently zero"
+      - name: IA32_KERNEL_GS_BASE
+        width_bits: 64
+        kind: msr
+        address: 0xC0000102
+        current_policy: "64-byte-aligned CpuLocal address used after SWAPGS"
       - name: IA32_APIC_BASE
         width_bits: 64
         kind: msr
@@ -80,8 +123,17 @@ chips:
           edx_25: SSE_SUPPORTED
           edx_26: SSE2_SUPPORTED
         current_policy: >-
-          all three features are mandatory; otherwise stop with
-          EXTENDED_STATE_UNSUPPORTED before GDT and user-mode initialization
+          all three features are part of the mandatory processor profile
+      - leaf: 0x80000001
+        subleaf: 0
+        fields:
+          edx_11: SYSCALL_SYSRET_SUPPORTED
+          edx_20: NO_EXECUTE_SUPPORTED
+          edx_29: LONG_MODE_SUPPORTED
+        current_policy: >-
+          all three extended features are mandatory; combine them with
+          FXSR, SSE, and SSE2 into required mask 0x3F and stop before
+          extended-state or GDT initialization when any bit is absent
       - leaf: 0x80000008
         subleaf: 0
         fields:
@@ -90,6 +142,8 @@ chips:
         current_qemu64_values:
           physical_address_bits: 40
           linear_address_bits: 48
+        current_policy: >-
+          require 36 through 52 physical bits and exactly 48 linear bits
       - leaf: 0x00000007
         subleaf: 0
         fields:
@@ -200,6 +254,44 @@ chips:
         stack_guards: not-present
         user_text: user-read-execute
         user_data_and_stack: user-read-write-no-execute
+    cpu_local:
+      alignment_bytes: 64
+      topology: single-bsp-instance
+      assembly_abi:
+        - offset: 0
+          width_bits: 64
+          name: SELF_ADDRESS
+        - offset: 8
+          width_bits: 64
+          name: CURRENT_THREAD_INDEX
+        - offset: 16
+          width_bits: 64
+          name: TRUSTED_KERNEL_ENTRY_STACK_POINTER
+        - offset: 24
+          width_bits: 64
+          name: TRANSIENT_SYSTEM_CALL_USER_STACK_POINTER
+      state:
+        - INTERRUPT_DEPTH_AND_MAXIMUM
+        - PREEMPTION_DISABLE_DEPTH_AND_MAXIMUM
+        - NEED_RESCHEDULE
+        - ACTIVE_SYSTEM_CALL_ENTRY_METHOD
+        - BOUNDED_COLD_PATH_STATISTICS
+      invariant: >-
+        trusted entry stack is synchronized with TSS.RSP0 whenever a Thread
+        becomes current; user RSP is never used as a kernel entry stack
+    user_context:
+      size_bytes: 176
+      virtual_address_bits: 48
+      entry_vectors:
+        initial: 0
+        hardware_interrupts: 32..47
+        legacy_int80: 0x80
+        native_syscall: 0x81
+      return_policy: >-
+        validate current-Thread stack ownership, lower canonical RIP/RSP,
+        user page permissions, CS 0x23, SS 0x1B, and RFLAGS before choosing
+        SYSRETQ; all other valid contexts use IRETQ and invalid contexts are
+        rejected before an architectural return instruction
     descriptor_state:
       gdtr:
         base_width_bits: 64

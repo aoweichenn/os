@@ -55,7 +55,7 @@
 | stack reaper | 在汇编回到永久启动栈后，验证当前 RSP 不属于目标栈并回收终止栈映射、物理页与 KVA 的运行时步骤 |
 | safe point | 已知当前执行栈、CR3 和生命周期状态满足销毁前置条件的位置；逻辑终止不自动等于到达安全点 |
 | strong reference | 保证对象在引用存续期间不能进入销毁的所有权；最后一个强引用释放才触发销毁资格 |
-| reference counter | 记录强所有者数量的状态机；当前 v1.2 原语拒绝零后复活和整数上溢，原子并发语义留给 v1.4 |
+| reference counter | 记录强所有者数量的状态机；当前 v1.3 原语拒绝零后复活和整数上溢，原子并发语义留给 v1.4 |
 | scope rollback | 用外部固定动作数组记录已完成步骤，并在未提交事务退出时严格逆序执行补偿动作的失败展开机制 |
 | resource snapshot | 聚合多个管理器稳定当前量、验证内部守恒式并以差异位掩码比较生命周期前后的诊断值 |
 | failure atomicity | 操作失败时，既有对象、输出参数和资源所有权保持调用前状态的性质 |
@@ -138,6 +138,14 @@
 | ordered mode | 先持久化相关文件数据、再允许元数据 commit 落盘的 journal 顺序约束 |
 | BlockRequest | 表示一次可等待设备 I/O 的独立对象，具有提交、完成、错误和超时状态 |
 | `SYSCALL` / `SYSRET` | x86-64 快速特权转换指令；需要 MSR、内核栈、RFLAGS 掩码和 canonical 返回地址共同保证安全 |
+| CpuLocal | 每 CPU 的内核本地状态；当前单 BSP 实例保存 current Thread、可信入口栈、IRQ/抢占深度和重调度请求 |
+| UserContext | 统一保存初始进入、IRQ、INT 0x80 与 SYSCALL 用户现场的 176 字节结构 |
+| `SWAPGS` | 交换当前 GS base 与 IA32_KERNEL_GS_BASE，使特权入口无需先占用通用寄存器即可取得 CpuLocal |
+| STAR / LSTAR | SYSCALL/SYSRET 的段选择子 MSR 与 64 位入口 RIP MSR |
+| FMASK | SYSCALL 进入 Ring 0 时从活动 RFLAGS 清除指定标志的 MSR；不改写已复制到 R11 的用户原值 |
+| canonical address | x86-64 要求高位为已实现最高地址位符号扩展的虚拟地址；当前项目冻结四级 48 位规则 |
+| return whitelist | 在执行 SYSRET 前对 frame 所有权、RIP/RSP、映射、段和 RFLAGS 的联合许可集合 |
+| need-resched | IRQ 只提交、由返回用户态边界消费的延迟调度请求，避免任意 Ring 0 调用链非局部换栈 |
 | exception vector | CPU 为异常选择的 0..31 编号，例如 3=#BP、6=#UD、14=#PF |
 | exception error code | 部分异常由 CPU 压栈的原因字段；无错误码异常由项目桩规范化为零 |
 | `IRETQ` | 64 位中断返回指令，恢复 RIP、CS、RFLAGS 以及可选旧 RSP/SS |

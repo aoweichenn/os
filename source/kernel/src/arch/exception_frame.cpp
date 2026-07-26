@@ -47,8 +47,4 @@ bool FrameOriginatedFromUser(const ExceptionFrame &frame) noexcept {
            OS_KERNEL_EXCEPTION_USER_PRIVILEGE_LEVEL;
 }
 
-const UserPrivilegeFrame &AsUserPrivilegeFrame(const ExceptionFrame &frame) noexcept {
-    return *reinterpret_cast<const UserPrivilegeFrame *>(&frame);
-}
-
 }

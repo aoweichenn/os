@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向，不代表当前 v1.2 已经具备这些模块。每个箭头
+本节描述第二周期的目标依赖方向，不代表当前 v1.3 已经具备这些模块。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -1105,8 +1105,9 @@ Thread create ──复制模板──> alignas(16) FxSaveArea
 
 选择 eager save/restore 是有意的。历史上的惰性 FPU 切换依赖
 `CR0.TS/#NM`，会新增异常状态机和敏感数据清理边界；当前教学内核优先采用
-每次边界均可直接观察的确定语义。`qemu64,-sse2` 使用同一镜像验证能力缺失
-时只输出 `EXTENDED_STATE_UNSUPPORTED`，不得静默降级。
+每次边界均可直接观察的确定语义。v1.2 发布时用 `qemu64,-sse2` 单独验证
+扩展现场能力失败；v1.3 已把 FXSR/SSE/SSE2 与 long mode、NX、SYSCALL
+合并为更早的完整处理器 profile 门禁。
 
 四个 Ring 3 程序分别安装不同 XMM0、XMM15、MXCSR、x87 control word 和
 ST0 模式。Shell 经键盘等待，producer/consumer 经管道等待，worker 经 PIT
@@ -1132,6 +1133,89 @@ KVA 描述符容量为 1024，内核栈槽容量为 512，保证容量档不是�
 实现细节与取舍见
 [ADR 0029](adr/0029-process-thread-waitqueue-fxsave.md)，整阶段证据见
 [v1.2 发布记录](releases/v1.2.md)。
+
+## v1.3 当前架构入口：CpuLocal、SYSCALL 与统一用户返回
+
+### 能力门禁先于能力使用
+
+架构初始化先把 CPUID 分散的字段解码为一个 `ProcessorFeatureProfile`。它要求
+long mode、NX、FXSR、SSE、SSE2 与 SYSCALL/SYSRET 同时存在，物理地址宽度
+处于 36..52 位，虚拟地址宽度精确为 48 位。验证成功后才初始化扩展现场、
+GDT/IDT、CpuLocal 和 MSR。这样“支持哪些指令”是启动契约，不是第一次执行
+指令时才出现的 #UD。
+
+```text
+CPUID leaves
+   │
+   ├─ available / missing feature mask
+   ├─ physical width
+   └─ virtual width
+           │
+           ├─ invalid -> explicit log -> halt
+           └─ valid   -> CR0/CR4 -> GDT/IDT -> CpuLocal -> syscall MSR
+```
+
+### CpuLocal 是入口、调度与 IRQ 的汇合点
+
+当前单 BSP 只有一个 64 字节对齐实例。前四个字段的字节偏移由 C++ 静态断言
+和 NASM 常量共同冻结：self=0、current Thread=8、entry RSP=16、user RSP
+scratch=24。调度器激活 Thread 时同时写 TSS.RSP0 和 entry RSP；前者服务
+interrupt gate，后者服务不自动换栈的 `SYSCALL`。
+
+IRQ 进入/离开维护深度。若定时器 IRQ 打断 Ring 0 系统调用，只设置
+`need_reschedule`；系统调用分发返回后，在统一用户返回准备点消费并调用
+Thread 调度器。这个边界保持“IRQ 可进入、Ring 0 不可任意抢占”的 v2.0
+契约。
+
+### 原生入口不信任用户 RSP
+
+```text
+Ring 3: RAX=number, RDI/RSI/RDX/R10=arguments
+   │
+   └─ SYSCALL
+        RCX=user RIP, R11=user RFLAGS, RSP仍是user RSP
+           │
+           ├─ SWAPGS
+           ├─ [GS:24] <- user RSP
+           ├─ RSP <- [GS:16] trusted Thread stack
+           ├─ construct UserContext
+           ├─ STI + common C++ dispatcher
+           └─ CLI + return preparation
+```
+
+IA32_STAR、LSTAR、FMASK、EFER、GS_BASE 与 KERNEL_GS_BASE 由纯布局函数构造，
+目标函数写入并逐项回读。STAR 的 selector 算术受当前 GDT 顺序约束；FMASK
+只决定 Ring 0 入口时清哪些活动标志，RCX/R11 保存的用户现场仍用于返回校验。
+
+### UserContext 统一四种来源
+
+旧 `UserPrivilegeFrame` 已删除。初始 `IRETQ`、IRQ、`INT 0x80` 和
+`SYSCALL` 都使用 176 字节 `UserContext`：160 字节通用 `ExceptionFrame`
+之后固定跟随用户 RSP 和 SS。vector 只记录来源，不改变分发器看到的布局。
+
+返回验证按“所有权 → 结构 → 映射 → 指令”的顺序执行：
+
+```text
+frame 属于 CpuLocal.current Thread 的活动动态栈
+  → RIP/RSP 是 48 位低半规范地址
+  → RIP 用户 RX、stack 用户 RW/NX
+  → CS=0x23、SS=0x1B、RFLAGS 合法
+       ├─ native + fast-flags -> SYSRETQ
+       ├─ other legal         -> IRETQ
+       └─ invalid             -> terminate user, select next, validate again
+```
+
+DF 和 RF 可以出现在合法用户现场中，但不属于当前 SYSRET 快速集合，所以走
+IRETQ。非规范 RCX/RSP、危险 RFLAGS 或伪造段永远不会直接交给 SYSRET。
+非局部退出还必须单独携带“GS 是否已交换”的状态，在恢复永久内核栈前补做
+SWAPGS，不能从最终被调度 frame 的 vector 猜测。
+
+NMI 是例外：向量 2 通过 IST2 进入最小 fail-stop 桩，只写固定观察位并停机，
+不访问可能处于交换窗口中的普通 GS/CpuLocal 状态。
+
+设计理由见
+[ADR 0030](adr/0030-cpu-local-native-system-call.md)，整阶段证据见
+[v1.3 发布记录](releases/v1.3.md)。
 
 ## 模块边界
 

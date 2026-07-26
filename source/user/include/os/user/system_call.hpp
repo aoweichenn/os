@@ -12,6 +12,15 @@ inline constexpr uint64_t OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT = 0ULL;
 InvokeSystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
                  uint64_t argument2,
                  uint64_t argument3 = OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
+[[nodiscard]] int64_t
+InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0,
+                       uint64_t argument1, uint64_t argument2,
+                       uint64_t argument3 =
+                           OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
+[[nodiscard]] int64_t InvokeSystemCallWithDirectionFlag(
+    uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
+    uint64_t argument2,
+    uint64_t argument3 = OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
 [[nodiscard]] int64_t WriteLog(const char *message, uint64_t message_size_bytes) noexcept;
 [[nodiscard]] uint64_t GetProcessId() noexcept;
 [[nodiscard]] int64_t TryReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;

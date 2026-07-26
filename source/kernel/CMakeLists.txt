@@ -2,13 +2,18 @@ set(
     OS_KERNEL_ARCH_HEADERS
     include/os/kernel/arch/descriptor_layout.hpp
     include/os/kernel/arch/descriptor_tables.hpp
+    include/os/kernel/arch/cpu_local.hpp
     include/os/kernel/arch/extended_state.hpp
     include/os/kernel/arch/extended_state_layout.hpp
     include/os/kernel/arch/exception_frame.hpp
     include/os/kernel/arch/exceptions.hpp
     include/os/kernel/arch/interrupt_runtime.hpp
+    include/os/kernel/arch/native_system_call.hpp
+    include/os/kernel/arch/native_system_call_layout.hpp
     include/os/kernel/arch/panic.hpp
     include/os/kernel/arch/processor.hpp
+    include/os/kernel/arch/processor_features.hpp
+    include/os/kernel/arch/user_context.hpp
 )
 set(
     OS_KERNEL_BOOT_HEADERS
@@ -96,13 +101,18 @@ set(
     OS_KERNEL_ARCH_SOURCES
     src/arch/descriptor_layout.cpp
     src/arch/descriptor_tables.cpp
+    src/arch/cpu_local.cpp
     src/arch/extended_state.cpp
     src/arch/extended_state_layout.cpp
     src/arch/exception_frame.cpp
     src/arch/exceptions.cpp
     src/arch/interrupt_runtime.cpp
+    src/arch/native_system_call.cpp
+    src/arch/native_system_call_layout.cpp
     src/arch/panic.cpp
     src/arch/processor.cpp
+    src/arch/processor_features.cpp
+    src/arch/user_context.cpp
 )
 set(
     OS_KERNEL_BOOT_SOURCES
@@ -206,11 +216,19 @@ add_library(
     os_kernel_architecture_model_host
     STATIC
         src/arch/descriptor_layout.cpp
+        src/arch/cpu_local.cpp
         src/arch/extended_state_layout.cpp
         src/arch/exception_frame.cpp
+        src/arch/native_system_call_layout.cpp
+        src/arch/processor_features.cpp
+        src/arch/user_context.cpp
+        include/os/kernel/arch/cpu_local.hpp
         include/os/kernel/arch/descriptor_layout.hpp
         include/os/kernel/arch/extended_state_layout.hpp
         include/os/kernel/arch/exception_frame.hpp
+        include/os/kernel/arch/native_system_call_layout.hpp
+        include/os/kernel/arch/processor_features.hpp
+        include/os/kernel/arch/user_context.hpp
 )
 target_include_directories(
     os_kernel_architecture_model_host
@@ -386,6 +404,7 @@ set(
 
 find_program(OS_KERNEL_LLD_EXECUTABLE NAMES ld.lld REQUIRED)
 find_program(OS_KERNEL_NASM_EXECUTABLE NAMES nasm REQUIRED)
+find_program(OS_KERNEL_OBJCOPY_EXECUTABLE NAMES llvm-objcopy REQUIRED)
 
 set(OS_KERNEL_LINK_ADDRESS 0x00100000)
 set(OS_KERNEL_PAGE_SIZE_BYTES 0x00001000)
@@ -640,6 +659,48 @@ set(
     CACHE INTERNAL
     "Ring 3 非法 ELF 拒绝测试 ELF64 内核路径"
 )
+set(
+    OS_KERNEL_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的自研 ELF64 内核启动载荷路径"
+)
+set(
+    OS_KERNEL_INVALID_OPCODE_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_invalid_opcode.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的非法指令异常注入 ELF64 内核载荷路径"
+)
+set(
+    OS_KERNEL_PAGE_FAULT_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_page_fault.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的页故障注入 ELF64 内核载荷路径"
+)
+set(
+    OS_KERNEL_WRITE_PROTECTION_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_write_protection.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的内核写保护故障注入 ELF64 内核载荷路径"
+)
+set(
+    OS_KERNEL_USER_INVALID_OPCODE_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_invalid_opcode.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的 Ring 3 非法指令隔离 ELF64 内核载荷路径"
+)
+set(
+    OS_KERNEL_USER_PAGE_FAULT_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_page_fault.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的 Ring 3 页故障隔离 ELF64 内核载荷路径"
+)
+set(
+    OS_KERNEL_USER_INVALID_ELF_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_invalid_elf.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的 Ring 3 非法 ELF 拒绝测试内核载荷路径"
+)
 
 function(
     os_add_kernel_elf_target
@@ -678,6 +739,34 @@ function(
     )
     add_custom_target(
         ${OS_KERNEL_ELF_TARGET}
+        ALL
+        DEPENDS "${OS_KERNEL_OUTPUT_PATH}"
+    )
+endfunction()
+
+function(
+    os_add_kernel_payload_elf_target
+    OS_KERNEL_PAYLOAD_TARGET
+    OS_KERNEL_ELF_TARGET
+    OS_KERNEL_INPUT_PATH
+    OS_KERNEL_OUTPUT_PATH
+    OS_KERNEL_PAYLOAD_COMMENT
+)
+    add_custom_command(
+        OUTPUT "${OS_KERNEL_OUTPUT_PATH}"
+        COMMAND
+            "${OS_KERNEL_OBJCOPY_EXECUTABLE}"
+            --strip-debug
+            "${OS_KERNEL_INPUT_PATH}"
+            "${OS_KERNEL_OUTPUT_PATH}"
+        DEPENDS
+            ${OS_KERNEL_ELF_TARGET}
+            "${OS_KERNEL_INPUT_PATH}"
+        COMMENT "${OS_KERNEL_PAYLOAD_COMMENT}"
+        VERBATIM
+    )
+    add_custom_target(
+        ${OS_KERNEL_PAYLOAD_TARGET}
         ALL
         DEPENDS "${OS_KERNEL_OUTPUT_PATH}"
     )
@@ -724,4 +813,54 @@ os_add_kernel_elf_target(
     os_kernel_user_invalid_elf_objects
     "${OS_KERNEL_USER_INVALID_ELF_PATH}"
     "链接 Ring 3 非法 ELF 拒绝测试 ELF64 内核"
+)
+
+os_add_kernel_payload_elf_target(
+    os_kernel_payload_elf
+    os_kernel_elf
+    "${OS_KERNEL_ELF_PATH}"
+    "${OS_KERNEL_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的自研 ELF64 内核启动载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_invalid_opcode_payload_elf
+    os_kernel_invalid_opcode_elf
+    "${OS_KERNEL_INVALID_OPCODE_ELF_PATH}"
+    "${OS_KERNEL_INVALID_OPCODE_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的非法指令异常注入内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_page_fault_payload_elf
+    os_kernel_page_fault_elf
+    "${OS_KERNEL_PAGE_FAULT_ELF_PATH}"
+    "${OS_KERNEL_PAGE_FAULT_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的页故障注入内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_write_protection_payload_elf
+    os_kernel_write_protection_elf
+    "${OS_KERNEL_WRITE_PROTECTION_ELF_PATH}"
+    "${OS_KERNEL_WRITE_PROTECTION_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的内核写保护故障注入内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_user_invalid_opcode_payload_elf
+    os_kernel_user_invalid_opcode_elf
+    "${OS_KERNEL_USER_INVALID_OPCODE_ELF_PATH}"
+    "${OS_KERNEL_USER_INVALID_OPCODE_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的 Ring 3 非法指令隔离内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_user_page_fault_payload_elf
+    os_kernel_user_page_fault_elf
+    "${OS_KERNEL_USER_PAGE_FAULT_ELF_PATH}"
+    "${OS_KERNEL_USER_PAGE_FAULT_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的 Ring 3 页故障隔离内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_user_invalid_elf_payload_elf
+    os_kernel_user_invalid_elf
+    "${OS_KERNEL_USER_INVALID_ELF_PATH}"
+    "${OS_KERNEL_USER_INVALID_ELF_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的 Ring 3 非法 ELF 拒绝测试内核载荷"
 )

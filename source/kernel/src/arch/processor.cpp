@@ -18,7 +18,6 @@ constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_FIVE_LEVEL_PAGING_BIT = 0x00010000U
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_PHYSICAL_ADDRESS_WIDTH_MASK = 0x000000FFU;
 constexpr uint32_t OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_MASK = 0x0000FF00U;
 constexpr uint64_t OS_KERNEL_PROCESSOR_CPUID_VIRTUAL_ADDRESS_WIDTH_SHIFT = 8ULL;
-constexpr uint64_t OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS = 36ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_MAXIMUM_PAGE_TABLE_ADDRESS_WIDTH_BITS = 52ULL;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_EFER_MSR = 0xC0000080U;
 constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR = 0x0000001BU;
@@ -54,7 +53,8 @@ struct CpuIdResult final {
     return result;
 }
 
-[[nodiscard]] uint64_t ReadModelSpecificRegister(const uint32_t register_index) noexcept {
+[[nodiscard]] uint64_t
+ReadModelSpecificRegisterValue(const uint32_t register_index) noexcept {
     uint32_t low_value = 0U;
     uint32_t high_value = 0U;
     asm volatile("rdmsr" : "=a"(low_value), "=d"(high_value) : "c"(register_index));
@@ -62,7 +62,8 @@ struct CpuIdResult final {
            (static_cast<uint64_t>(high_value) << OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
 }
 
-void WriteModelSpecificRegister(const uint32_t register_index, const uint64_t value) noexcept {
+void WriteModelSpecificRegisterValue(const uint32_t register_index,
+                                     const uint64_t value) noexcept {
     const uint32_t low_value = static_cast<uint32_t>(value);
     const uint32_t high_value =
         static_cast<uint32_t>(value >> OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS);
@@ -124,6 +125,44 @@ uint32_t ProcessorStandardFeatureBits() noexcept {
     return ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF).data;
 }
 
+ProcessorFeatureProfile ReadProcessorFeatureProfile() noexcept {
+    const CpuIdResult standard_maximum =
+        ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_MAXIMUM_LEAF);
+    const CpuIdResult extended_maximum =
+        ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
+    const CpuIdResult standard_features =
+        standard_maximum.accumulator >=
+                OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF
+            ? ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF)
+            : CpuIdResult{};
+    const CpuIdResult extended_features =
+        extended_maximum.accumulator >=
+                OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF
+            ? ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_FEATURES_LEAF)
+            : CpuIdResult{};
+    const CpuIdResult address_widths =
+        extended_maximum.accumulator >=
+                OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF
+            ? ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF)
+            : CpuIdResult{};
+    return DecodeProcessorFeatureProfile(ProcessorFeatureLeaves{
+        .standard_maximum_leaf = standard_maximum.accumulator,
+        .standard_feature_data = standard_features.data,
+        .extended_maximum_leaf = extended_maximum.accumulator,
+        .extended_feature_data = extended_features.data,
+        .address_widths_accumulator = address_widths.accumulator,
+    });
+}
+
+uint64_t ReadModelSpecificRegister(const uint32_t register_index) noexcept {
+    return ReadModelSpecificRegisterValue(register_index);
+}
+
+void WriteModelSpecificRegister(const uint32_t register_index,
+                                const uint64_t value) noexcept {
+    WriteModelSpecificRegisterValue(register_index, value);
+}
+
 uint64_t ReadControlRegister0() noexcept {
     uint64_t value = 0ULL;
     asm volatile("mov %0, cr0" : "=r"(value));
@@ -152,7 +191,8 @@ uint64_t ProcessorPhysicalAddressWidthBits() noexcept {
     const CpuIdResult address_widths = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF);
     const uint64_t physical_address_width_bits =
         address_widths.accumulator & OS_KERNEL_PROCESSOR_CPUID_PHYSICAL_ADDRESS_WIDTH_MASK;
-    if (physical_address_width_bits < OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS ||
+    if (physical_address_width_bits <
+            OS_KERNEL_PROCESSOR_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS ||
         physical_address_width_bits > OS_KERNEL_PROCESSOR_MAXIMUM_PAGE_TABLE_ADDRESS_WIDTH_BITS) {
         return 0ULL;
     }
@@ -202,7 +242,7 @@ bool ProcessorSupportsFiveLevelPaging() noexcept {
 }
 
 uint64_t LocalApicPhysicalAddress() noexcept {
-    return ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
+    return ReadModelSpecificRegisterValue(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
            OS_KERNEL_PROCESSOR_IA32_APIC_BASE_ADDRESS_MASK;
 }
 
@@ -211,15 +251,16 @@ bool EnableKernelMemoryProtection() noexcept {
         return false;
     }
     const uint64_t extended_feature_register =
-        ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) |
+        ReadModelSpecificRegisterValue(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) |
         OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT;
-    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR, extended_feature_register);
+    WriteModelSpecificRegisterValue(OS_KERNEL_PROCESSOR_IA32_EFER_MSR,
+                                    extended_feature_register);
     WriteControlRegister0(ReadControlRegister0() | OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT);
     return KernelMemoryProtectionEnabled();
 }
 
 bool KernelMemoryProtectionEnabled() noexcept {
-    return (ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) &
+    return (ReadModelSpecificRegisterValue(OS_KERNEL_PROCESSOR_IA32_EFER_MSR) &
             OS_KERNEL_PROCESSOR_IA32_EFER_NO_EXECUTE_ENABLE_BIT) != 0ULL &&
            (ReadControlRegister0() & OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT) != 0ULL;
 }
@@ -229,7 +270,7 @@ bool ConfigureLegacyInterruptRouting() noexcept {
         return true;
     }
     const uint64_t local_apic_base =
-        ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
+        ReadModelSpecificRegisterValue(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR);
     if ((local_apic_base & OS_KERNEL_PROCESSOR_IA32_APIC_GLOBAL_ENABLE_BIT) == 0ULL ||
         (local_apic_base & OS_KERNEL_PROCESSOR_IA32_APIC_X2_ENABLE_BIT) != 0ULL) {
         return false;

@@ -1,5 +1,6 @@
 #include "os/kernel/arch/interrupt_runtime.hpp"
 
+#include "os/kernel/arch/cpu_local.hpp"
 #include "os/kernel/device/ata_pio.hpp"
 #include "os/kernel/device/legacy_pic.hpp"
 #include "os/kernel/process/process_runtime.hpp"
@@ -177,7 +178,8 @@ bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
 }
 
 extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept {
-    if (frame == nullptr) {
+    if (frame == nullptr ||
+        GetCpuLocal().EnterInterrupt() != CpuLocalStatus::Succeeded) {
         HaltProcessor();
     }
     kernel_interrupt_runtime.Dispatch(frame->vector);
@@ -186,10 +188,18 @@ extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *fra
         LegacyPicModelStatus::Succeeded) {
         HaltProcessor();
     }
+    ExceptionFrame *resume_frame = frame;
     if (interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
-        return HandleProcessTimerInterrupt(*frame);
+        if (FrameOriginatedFromUser(*frame)) {
+            resume_frame = HandleProcessTimerInterrupt(*frame);
+        } else if (IsProcessSchedulingActive()) {
+            GetCpuLocal().RequestReschedule();
+        }
     }
-    return frame;
+    if (GetCpuLocal().LeaveInterrupt() != CpuLocalStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return resume_frame;
 }
 
 }

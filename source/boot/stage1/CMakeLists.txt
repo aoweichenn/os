@@ -131,12 +131,12 @@ function(
             "${PROJECT_SOURCE_DIR}/tools/os.py"
             create-boot-images
             "${OS_STAGE1_FAILURE_BINARY}"
-            "${OS_KERNEL_ELF_PATH}"
+            "${OS_KERNEL_PAYLOAD_ELF_PATH}"
             "${OS_STAGE1_FAILURE_OUTPUT_DIRECTORY}"
             "${OS_DISK_IMAGE_SIZE_BYTES}"
         DEPENDS
             "${OS_STAGE1_FAILURE_BINARY}"
-            "${OS_KERNEL_ELF_PATH}"
+            "${OS_KERNEL_PAYLOAD_ELF_PATH}"
             "${PROJECT_SOURCE_DIR}/tools/os.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
             "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
@@ -196,32 +196,32 @@ endfunction()
 
 os_add_kernel_fault_disk(
     "${OS_KERNEL_INVALID_OPCODE_DISK_IMAGE}"
-    "${OS_KERNEL_INVALID_OPCODE_ELF_PATH}"
+    "${OS_KERNEL_INVALID_OPCODE_PAYLOAD_ELF_PATH}"
     "生成非法指令异常注入磁盘镜像"
 )
 os_add_kernel_fault_disk(
     "${OS_KERNEL_PAGE_FAULT_DISK_IMAGE}"
-    "${OS_KERNEL_PAGE_FAULT_ELF_PATH}"
+    "${OS_KERNEL_PAGE_FAULT_PAYLOAD_ELF_PATH}"
     "生成页故障异常注入磁盘镜像"
 )
 os_add_kernel_fault_disk(
     "${OS_KERNEL_WRITE_PROTECTION_DISK_IMAGE}"
-    "${OS_KERNEL_WRITE_PROTECTION_ELF_PATH}"
+    "${OS_KERNEL_WRITE_PROTECTION_PAYLOAD_ELF_PATH}"
     "生成内核写保护故障注入磁盘镜像"
 )
 os_add_kernel_fault_disk(
     "${OS_KERNEL_USER_INVALID_OPCODE_DISK_IMAGE}"
-    "${OS_KERNEL_USER_INVALID_OPCODE_ELF_PATH}"
+    "${OS_KERNEL_USER_INVALID_OPCODE_PAYLOAD_ELF_PATH}"
     "生成 Ring 3 非法指令隔离磁盘镜像"
 )
 os_add_kernel_fault_disk(
     "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
-    "${OS_KERNEL_USER_PAGE_FAULT_ELF_PATH}"
+    "${OS_KERNEL_USER_PAGE_FAULT_PAYLOAD_ELF_PATH}"
     "生成 Ring 3 页故障隔离磁盘镜像"
 )
 os_add_kernel_fault_disk(
     "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
-    "${OS_KERNEL_USER_INVALID_ELF_PATH}"
+    "${OS_KERNEL_USER_INVALID_ELF_PAYLOAD_ELF_PATH}"
     "生成 Ring 3 非法 ELF 拒绝磁盘镜像"
 )
 
@@ -238,12 +238,12 @@ add_custom_command(
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         create-boot-images
         "${OS_STAGE1_BINARY}"
-        "${OS_KERNEL_ELF_PATH}"
+        "${OS_KERNEL_PAYLOAD_ELF_PATH}"
         "${OS_IMAGE_OUTPUT_DIRECTORY}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
     DEPENDS
         "${OS_STAGE1_BINARY}"
-        "${OS_KERNEL_ELF_PATH}"
+        "${OS_KERNEL_PAYLOAD_ELF_PATH}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
@@ -278,11 +278,11 @@ add_custom_target(
 # 再进入磁盘打包规则，避免出现 “No rule to make target kernel.elf”。
 add_dependencies(
     os_stage1_images
-    os_kernel_elf
-    os_kernel_invalid_opcode_elf
-    os_kernel_page_fault_elf
-    os_kernel_write_protection_elf
-    os_kernel_user_invalid_opcode_elf
-    os_kernel_user_page_fault_elf
-    os_kernel_user_invalid_elf
+    os_kernel_payload_elf
+    os_kernel_invalid_opcode_payload_elf
+    os_kernel_page_fault_payload_elf
+    os_kernel_write_protection_payload_elf
+    os_kernel_user_invalid_opcode_payload_elf
+    os_kernel_user_page_fault_payload_elf
+    os_kernel_user_invalid_elf_payload_elf
 )

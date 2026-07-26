@@ -1,5 +1,5 @@
 #include "kernel_stack_test_environment.hpp"
-#include "os/kernel/arch/exception_frame.hpp"
+#include "os/kernel/arch/user_context.hpp"
 #include "test_context.hpp"
 
 #include <string_view>
@@ -124,26 +124,26 @@ int main() {
          ++process_index) {
         const uint64_t context_frame_virtual_address =
             os::kernel::KernelStackTopAddress(stacks[process_index]) -
-            os::kernel::OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES;
+            os::kernel::OS_KERNEL_USER_CONTEXT_SIZE_BYTES;
         context_frames_valid =
             environment.StackManager().Contains(
                 process_index, context_frame_virtual_address,
-                os::kernel::OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES) &&
+                os::kernel::OS_KERNEL_USER_CONTEXT_SIZE_BYTES) &&
             context_frame_virtual_address / os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ==
                 (os::kernel::KernelStackTopAddress(stacks[process_index]) -
                  OS_TEST_KERNEL_STACK_LIFECYCLE_SINGLE_UNIT) /
                     os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
         const uint64_t context_frame_page_offset =
             os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES -
-            os::kernel::OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES;
+            os::kernel::OS_KERNEL_USER_CONTEXT_SIZE_BYTES;
         const uint64_t last_frame_index = os::kernel::OS_KERNEL_STACK_MAPPED_PAGE_COUNT -
                                           OS_TEST_KERNEL_STACK_LIFECYCLE_SINGLE_UNIT;
-        os::kernel::UserPrivilegeFrame *const context_frame =
-            reinterpret_cast<os::kernel::UserPrivilegeFrame *>(
+        os::kernel::UserContext *const context_frame =
+            reinterpret_cast<os::kernel::UserContext *>(
                 environment.PhysicalMemory() +
                 stacks[process_index].physical_frames[last_frame_index].physical_address +
                 context_frame_page_offset);
-        *context_frame = os::kernel::UserPrivilegeFrame{};
+        *context_frame = os::kernel::UserContext{};
         context_frame->common.register_rdi =
             OS_TEST_KERNEL_STACK_LIFECYCLE_FIRST_PATTERN + process_index;
         context_frame->common.instruction_pointer =

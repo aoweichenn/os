@@ -549,6 +549,45 @@ Thread、页表根和动态栈，中间快照核对活动数量，退出/reap �
 资源快照零差异。完整接口与状态图见
 [ADR 0029](../adr/0029-process-thread-waitqueue-fxsave.md)。
 
+## v1.3 CpuLocal 与原生系统调用模块
+
+架构目录把可在宿主验证的纯策略与只能在目标机执行的特权操作分开：
+
+| 文件 | 职责 |
+| --- | --- |
+| `processor_features.*` | CPUID 叶解码、required/available/missing mask 与地址宽度验证 |
+| `cpu_local.*` | current Thread、可信入口栈、深度、重调度请求和冷路径统计 |
+| `user_context.*` | 176 字节统一现场、规范地址/段/RFLAGS 验证与返回选择 |
+| `native_system_call_layout.*` | EFER/STAR/LSTAR/FMASK/GS 六寄存器纯布局与回读比较 |
+| `native_system_call.*` | 目标机 RDMSR/WRMSR 初始化和配置快照 |
+| `architecture.asm` | SWAPGS、可信换栈、统一压帧、SYSRET/IRET 与最小 NMI 桩 |
+
+`processor_features`、`user_context` 和 `native_system_call_layout` 进入 host
+模型库；它们不得执行 CPUID/MSR 或访问全局目标状态。`processor.cpp` 只提供
+精确位宽的 CPUID/RDMSR/WRMSR 边界，`native_system_call.cpp` 负责把纯布局
+落实到真实 CPU。
+
+`ProcessRuntime::ActivateThread()` 是 TSS.RSP0 与
+`CpuLocal.kernel_entry_stack_pointer` 的唯一同步点。系统调用层不自行寻找
+栈，也不持有 Thread 内部指针，只验证传入 frame 属于当前 Thread。Ring 0
+定时器 IRQ 只能 `RequestReschedule()`；`OsKernelPrepareUserReturn()` 才能
+消费请求并换 frame。
+
+系统调用分发与返回故意拆成三个 C ABI 边界：
+
+```text
+OsKernelDispatchSystemCall(frame)
+  → 验证入口所有权并处理 ABI
+OsKernelPrepareUserReturn(frame)
+  → 消费 need-reschedule，循环剔除非法用户现场
+OsKernelSelectUserReturn(frame)
+  → 记录 SYSRET/IRET 选择并结束活动系统调用
+```
+
+这样汇编只负责架构状态恢复，C++ 只负责可测试的策略。兼容和原生入口共享上述
+三段函数，不允许再增加第二套 syscall switch。完整安全理由见
+[ADR 0030](../adr/0030-cpu-local-native-system-call.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -558,6 +597,9 @@ Thread、页表根和动态栈，中间快照核对活动数量，退出/reap �
 [OS][KERNEL] BOOT_INFO_VALID
 [OS][KERNEL] BSS_ZEROED
 [OS][KERNEL] CR3_VALID
+[OS][KERNEL] PROCESSOR_FEATURES_READY
+[OS][KERNEL] PROCESSOR_REQUIRED_FEATURES=0x000000000000003F
+[OS][KERNEL] PROCESSOR_AVAILABLE_FEATURES=0x000000000000003F
 [OS][KERNEL] EXTENDED_STATE_READY
 [OS][KERNEL] EXTENDED_STATE_CR0=0x...
 [OS][KERNEL] EXTENDED_STATE_CR4=0x...
@@ -566,6 +608,10 @@ Thread、页表根和动态栈，中间快照核对活动数量，退出/reap �
 [OS][KERNEL] TSS_READY
 [OS][KERNEL] IDT_READY
 [OS][KERNEL] DESCRIPTOR_TABLES_VALID
+[OS][KERNEL] CPU_LOCAL_READY
+[OS][KERNEL] NATIVE_SYSCALL_READY
+[OS][KERNEL] NATIVE_SYSCALL_STAR=0x0010000800000000
+[OS][KERNEL] NATIVE_SYSCALL_FMASK=0x0000000000044700
 [OS][KERNEL] BREAKPOINT_HANDLED
 [OS][KERNEL] EXCEPTION_SELF_TEST_READY
 [OS][KERNEL] MEMORY_MAP_VALID
@@ -666,6 +712,9 @@ Thread、页表根和动态栈，中间快照核对活动数量，退出/reap �
 [OS][KERNEL] SCHEDULER_STARTED
 [OS][USER][PIPE] PRODUCER_STARTED
 [OS][USER][PIPE] CONSUMER_STARTED
+[OS][USER] DUAL_SYSCALL_ENTRY_EQUIVALENT
+[OS][USER] SYSRET_RETURNED
+[OS][USER] SYSCALL_IRET_FALLBACK_RETURNED
 [OS][USER] UNKNOWN_SYSCALL_REJECTED
 [OS][USER] HELLO_FROM_RING3
 [OS][USER][PIPE] PRODUCER_COMPLETED
@@ -676,6 +725,11 @@ Thread、页表根和动态栈，中间快照核对活动数量，退出/reap �
 [OS][KERNEL] SCHEDULER_WAKEUPS=0x...
 [OS][KERNEL] EXTENDED_STATE_SAVES=0x...
 [OS][KERNEL] EXTENDED_STATE_RESTORES=0x...
+[OS][KERNEL] SYSCALL_IRQ_INTERRUPTS=0x...
+[OS][KERNEL] SYSCALL_RETURN_RESCHEDULES=0x...
+[OS][KERNEL] SYSRET_RETURNS=0x...
+[OS][KERNEL] IRET_RETURNS=0x...
+[OS][KERNEL] REJECTED_USER_RETURNS=0x0000000000000000
 [OS][KERNEL] PIPE_CAPACITY_BYTES=0x0000000000000040
 [OS][KERNEL] PIPE_WRITTEN_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100

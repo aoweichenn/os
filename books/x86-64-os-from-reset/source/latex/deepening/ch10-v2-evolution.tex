@@ -341,9 +341,11 @@ Blocked、Exited 集合互斥，区分 Thread Exited 与 Process Zombie。
 
 \paragraph{v1.3：CpuLocal 与原生入口单独验收}
 
-本版本配置 STAR、LSTAR、FMASK 与 EFER，建立 SWAPGS、可信入口栈、统一
+本版本已经配置 STAR、LSTAR、FMASK 与 EFER，建立 SWAPGS、可信入口栈、统一
 UserContext、canonical 检查及 IRET fallback。INT 0x80 继续存在，双入口对
-同一调用必须产生相同副作用。这样架构入口错误不会与对象迁移错误混在一起。
+同一调用必须产生相同副作用。系统调用期间真实 PIT IRQ、返回前延迟调度、
+用户 DF 保留和非法 SYSRET 状态回退均已进入整机证据；完整回归为
+103 项 CTest。这样架构入口错误不会与对象迁移错误混在一起。
 
 \paragraph{v1.4：fd 只是局部引用}
 

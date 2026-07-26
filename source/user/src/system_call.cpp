@@ -14,12 +14,34 @@ extern "C" [[nodiscard]] int64_t OsUserInvokeSystemCall(uint64_t system_call_num
                                                         uint64_t argument0, uint64_t argument1,
                                                         uint64_t argument2,
                                                         uint64_t argument3) noexcept;
+extern "C" [[nodiscard]] int64_t OsUserInvokeLegacySystemCall(
+    uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
+    uint64_t argument2, uint64_t argument3) noexcept;
+extern "C" [[nodiscard]] int64_t OsUserInvokeSystemCallWithDirectionFlag(
+    uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
+    uint64_t argument2, uint64_t argument3) noexcept;
 }
 
 int64_t InvokeSystemCall(const uint64_t system_call_number, const uint64_t argument0,
                          const uint64_t argument1, const uint64_t argument2,
                          const uint64_t argument3) noexcept {
     return OsUserInvokeSystemCall(system_call_number, argument0, argument1, argument2, argument3);
+}
+
+int64_t InvokeLegacySystemCall(
+    const uint64_t system_call_number, const uint64_t argument0,
+    const uint64_t argument1, const uint64_t argument2,
+    const uint64_t argument3) noexcept {
+    return OsUserInvokeLegacySystemCall(
+        system_call_number, argument0, argument1, argument2, argument3);
+}
+
+int64_t InvokeSystemCallWithDirectionFlag(
+    const uint64_t system_call_number, const uint64_t argument0,
+    const uint64_t argument1, const uint64_t argument2,
+    const uint64_t argument3) noexcept {
+    return OsUserInvokeSystemCallWithDirectionFlag(
+        system_call_number, argument0, argument1, argument2, argument3);
 }
 
 int64_t WriteLog(const char *message, const uint64_t message_size_bytes) noexcept {

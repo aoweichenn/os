@@ -33,12 +33,12 @@ XeLaTeX 和 latexmk；`make pdf` 生成 `source/latex/main.pdf`。
 `.hpp` 中的非空、非纯注释行。汇编 include、测试、宿主工具、书稿、网站、构建
 描述和链接脚本均不计入该数字。
 
-当前书稿为 5 部 10 个完整主题章、204 页。当前生产目标包含 120 个核心
-`.asm`、`.cpp`、`.hpp` 文件，共 21,968 行有效代码；该口径严格排除测试、
+当前书稿为 5 部 10 个完整主题章、214 页。当前生产目标包含 130 个核心
+`.asm`、`.cpp`、`.hpp` 文件，共 23,655 行有效代码；该口径严格排除测试、
 宿主工具、书稿和网站。每章遵循同一解释深度：先建立历史
 背景和前置状态，再展开寄存器、位布局、数据结构或控制流，随后说明失败模式、
 调试方法与可重复验收证据。小主题不会独立占用一章，而是作为主题材料进入一条
-连续的因果链。当前实现内容与 v1.2 对齐：中断/设备/用户边界章包含用户 ELF、
+连续的因果链。当前实现内容与 v1.3 对齐：中断/设备/用户边界章包含用户 ELF、
 四级 U/S 权限、TSS.RSP0、五项 IRETQ 帧、INT 0x80 ABI、用户指针复制和
 异常隔离；进程章进一步完整展开 PCB、独立 CR3、每进程 Ring 0 栈、176
 字节保存现场、round-robin 抢占、退出回收和多进程整机证据，并深入解释
@@ -66,7 +66,11 @@ TSS.RSP0 的历史与硬件职责、六页双 guard 布局、虚拟连续与物�
 资源快照和所有权守恒方程。v1.2 进一步把 Process 收束为资源容器、Thread
 确立为唯一调度实体，完整展开独立 PID/TID、侵入式运行/等待队列、WaitQueue
 单赢家唤醒、SpinLock/IrqSaveSpinLock/Mutex 的分层职责，以及每 Thread
-512 字节、16 字节对齐的 FXSAVE64/FXRSTOR64 x87/SSE2 现场。完整回归现为
-99 项 CTest；动态栈、页表回收、资源快照与 Thread 调度的单元、循环集成、
-十万步随机模型、256 MiB functional、64 GiB capacity 和缺失 SSE2 的 QEMU
-路径共同证明容量、隔离、失败边界与最终回收。
+512 字节、16 字节对齐的 FXSAVE64/FXRSTOR64 x87/SSE2 现场。v1.3 新增
+CPUID 处理器规格门禁、CpuLocal、STAR/LSTAR/FMASK/GS MSR 配置、
+SWAPGS 可信换栈、统一 176 字节 UserContext、原生 SYSCALL/SYSRET、
+IRET 安全回退、系统调用期间 IRQ 与返回前延迟调度，并保留 INT 0x80 作为
+差分基准。完整回归现为 103 项 CTest；动态栈、页表回收、资源快照、
+Thread 调度、双系统调用入口、十万步返回策略随机模型、256 MiB functional、
+64 GiB capacity、缺失 SSE2 与缺失 SYSCALL 的 QEMU 路径共同证明容量、
+隔离、失败边界与最终回收。

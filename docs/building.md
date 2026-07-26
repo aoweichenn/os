@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.2 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v1.3 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
@@ -94,7 +94,7 @@ ctest --test-dir build/developer \
 故障隔离和 26 字段资源快照。64 MiB、256 MiB 与 64 GiB 只改变 QEMU RAM
 规格，不切换实现。
 
-只验证扩展现场能力失败边界：
+只验证原生系统调用能力失败边界：
 
 ```bash
 python3 tools/os.py qemu-firmware \
@@ -102,13 +102,14 @@ python3 tools/os.py qemu-firmware \
   build/developer/images/boot_disk.img \
   131072 2097152 \
   --memory-mebibytes 64 \
-  --cpu-model 'qemu64,-sse2' \
-  --expected-outcome extended-state-unsupported
+  --cpu-model 'qemu64,-syscall' \
+  --expected-outcome processor-feature-unsupported
 ```
 
 `--cpu-model` 只改变 QEMU 模拟 CPU 暴露的 CPUID 特性，不替换固件、Stage 1
-或 Kernel。该命令必须到达 `EXTENDED_STATE_UNSUPPORTED`，并在 GDT 与
-Ring 3 之前有界结束。默认 CPU 型号固定为 `qemu64`。
+或 Kernel。该命令必须到达 `PROCESSOR_FEATURES_UNSUPPORTED` 和非零
+`PROCESSOR_MISSING_FEATURES`，并在扩展现场、GDT 与 Ring 3 之前有界结束。
+默认 CPU 型号固定为 `qemu64`。
 
 ## 构建产物
 
@@ -124,9 +125,13 @@ source/firmware/generated/os_firmware_ide_error_failure.elf
 source/boot/stage1/generated/stage1.bin
 source/boot/stage1/generated/stage1_memory_map_invalid.bin
 source/kernel/kernel.elf
+source/kernel/kernel.payload.elf
 source/kernel/kernel_invalid_opcode.elf
+source/kernel/kernel_invalid_opcode.payload.elf
 source/kernel/kernel_page_fault.elf
+source/kernel/kernel_page_fault.payload.elf
 source/kernel/kernel_write_protection.elf
+source/kernel/kernel_write_protection.payload.elf
 images/firmware.bin
 images/firmware_serial_failure.bin
 images/firmware_ide_busy_failure.bin
@@ -164,7 +169,10 @@ tests/os_kernel_interrupt_device_randomized_tests
 
 `libos_foundation_x86_64.a` 必须是 x86-64 ELF，且不能包含未解析的外部运行时符号。
 `kernel.elf` 必须是入口为 `0x00100000` 的 x86-64 `ET_EXEC`，入口位于可执行
-`PT_LOAD` 段，且不能包含未解析符号。
+`PT_LOAD` 段，且不能包含未解析符号。它保留 DWARF；同名
+`*.payload.elf` 由 `llvm-objcopy --strip-debug` 生成，三个运行时
+`PT_LOAD` 与入口不变，并作为实际写盘载荷。所有故障内核和用户隔离内核变体
+都遵循同一规则，避免 Debug 非加载段增长后覆盖 LBA 2048 的文件系统区域。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
 全部启动磁盘镜像必须是精确 2097152 字节。
 `build/` 不进入 Git。
@@ -299,6 +307,8 @@ x86-64 目标使用 freestanding C++20，并关闭：
 这些限制由 CMake 目标 `os_foundation_x86_64` 集中管理，后续固件与内核
 目标必须复用同一策略。v1.2 的 FXSAVE/FXRSTOR 和用户态模式验收只存在于
 显式 NASM Intel 汇编边界；普通 C++ 不会隐式占用被测试的 XMM/x87 状态。
+v1.3 的 SYSCALL/SYSRET、SWAPGS 与 MSR 操作也只存在于最小架构边界；
+UserContext 校验和 MSR 布局策略保持为可由宿主测试的普通 C++20。
 
 ## 构建职责
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/kernel/arch/processor_features.hpp"
+
 #include <stdint.h>
 
 namespace os::kernel {
@@ -16,6 +18,9 @@ void EnableInterruptsWaitAndDisable() noexcept;
 [[nodiscard]] uint64_t ReadPageFaultLinearAddress() noexcept;
 [[nodiscard]] uint64_t ReadStackPointer() noexcept;
 [[nodiscard]] uint32_t ProcessorStandardFeatureBits() noexcept;
+[[nodiscard]] ProcessorFeatureProfile ReadProcessorFeatureProfile() noexcept;
+[[nodiscard]] uint64_t ReadModelSpecificRegister(uint32_t register_index) noexcept;
+void WriteModelSpecificRegister(uint32_t register_index, uint64_t value) noexcept;
 [[nodiscard]] uint64_t ReadControlRegister0() noexcept;
 void WriteControlRegister0(uint64_t value) noexcept;
 [[nodiscard]] uint64_t ReadControlRegister4() noexcept;

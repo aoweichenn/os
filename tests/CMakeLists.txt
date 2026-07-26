@@ -172,6 +172,53 @@ set_tests_properties(
         LABELS "unit"
 )
 
+function(
+    os_add_kernel_architecture_test
+    OS_TEST_TARGET
+    OS_TEST_SOURCE
+    OS_TEST_LABEL
+)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_architecture_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_architecture_test(
+    os_kernel_processor_features_unit_tests
+    unit/kernel/processor_features_test.cpp
+    "unit"
+)
+os_add_kernel_architecture_test(
+    os_kernel_user_context_unit_tests
+    unit/kernel/user_context_test.cpp
+    "unit"
+)
+os_add_kernel_architecture_test(
+    os_kernel_native_system_call_integration_tests
+    integration/boot/kernel_native_system_call_test.cpp
+    "integration"
+)
+os_add_kernel_architecture_test(
+    os_kernel_user_context_randomized_tests
+    randomized/kernel/user_context_randomized_test.cpp
+    "randomized"
+)
+
 function(os_add_kernel_memory_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
     target_link_libraries(
@@ -910,7 +957,7 @@ set_tests_properties(
 )
 
 add_test(
-    NAME os_qemu_extended_state_unsupported
+    NAME os_qemu_native_system_call_unsupported
     COMMAND
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
@@ -920,12 +967,12 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --cpu-model
-        "qemu64,-sse2"
+        "qemu64,-syscall"
         --expected-outcome
-        extended-state-unsupported
+        processor-feature-unsupported
 )
 set_tests_properties(
-    os_qemu_extended_state_unsupported
+    os_qemu_native_system_call_unsupported
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10

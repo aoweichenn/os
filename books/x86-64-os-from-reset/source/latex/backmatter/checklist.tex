@@ -86,8 +86,9 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 99 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
-        调度/IPC/文件系统/Shell、资源快照与 256 MiB/64 GiB 整机事件；
+  \item 103 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+        调度/IPC/文件系统/Shell、资源快照、双系统调用入口与
+        256 MiB/64 GiB 整机事件；
   \item Process 与 Thread 为什么是两个寿命不同的对象，Exited 与 Zombie
         为什么不能合并；
   \item WaitQueue 的单赢家 WakeReason 如何防止重复 Ready 与丢失唤醒；

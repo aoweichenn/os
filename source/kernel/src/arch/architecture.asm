@@ -14,6 +14,7 @@ global OsKernelExceptionDispatch
 global OsKernelHardwareInterruptDispatch
 global OsKernelSystemCallEntry
 global OsKernelSystemCallDispatch
+global OsKernelNativeSystemCallEntry
 global OsKernelEnterScheduledProcess
 global OsKernelReturnFromUserMode
 global OsKernelInitializeFxState
@@ -23,9 +24,21 @@ global OsKernelRestoreFxState
 extern OsKernelDispatchException
 extern OsKernelDispatchHardwareInterrupt
 extern OsKernelDispatchSystemCall
+extern OsKernelPrepareUserReturn
+extern OsKernelSelectUserReturn
 
+OS_KERNEL_ARCHITECTURE_KERNEL_CODE_SELECTOR equ 0x08
 OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR equ 0x10
 OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR equ 0x1B
+OS_KERNEL_ARCHITECTURE_USER_CODE_SELECTOR equ 0x23
+OS_KERNEL_ARCHITECTURE_LEGACY_SYSTEM_CALL_VECTOR equ 0x80
+OS_KERNEL_ARCHITECTURE_NATIVE_SYSTEM_CALL_VECTOR equ 0x81
+OS_KERNEL_ARCHITECTURE_CPU_LOCAL_ENTRY_STACK_OFFSET equ 16
+OS_KERNEL_ARCHITECTURE_CPU_LOCAL_USER_STACK_OFFSET equ 24
+OS_KERNEL_ARCHITECTURE_GS_NOT_SWAPPED equ 0
+OS_KERNEL_ARCHITECTURE_GS_SWAPPED equ 1
+OS_KERNEL_ARCHITECTURE_INTERRUPT_RETURN equ 1
+OS_KERNEL_ARCHITECTURE_SYSTEM_RETURN equ 2
 
 OsKernelLoadGdtAndTss:
     lgdt [rdi]
@@ -132,7 +145,13 @@ os_kernel_exception_vector_%1:
 
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 0
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 1
-OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 2
+global os_kernel_exception_vector_2
+os_kernel_exception_vector_2:
+    cli
+    mov qword [rel os_kernel_nmi_observed], 1
+.halt:
+    hlt
+    jmp .halt
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 3
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 4
 OS_KERNEL_EXCEPTION_WITHOUT_ERROR_CODE 5
@@ -231,11 +250,11 @@ OS_KERNEL_HARDWARE_INTERRUPT 45
 OS_KERNEL_HARDWARE_INTERRUPT 46
 OS_KERNEL_HARDWARE_INTERRUPT 47
 
-; INT 0x80 不携带硬件错误码，因此先补齐统一的 vector/error_code 布局。
-; 独立分发器复用异常帧结构，但只允许系统调用处理器修改返回值寄存器。
+; INT 0x80 由硬件切换到 TSS.RSP0；SYSCALL 则先 SWAPGS，再从 CpuLocal
+; 取得同一 Thread 的可信栈。两条路径最终都构造完全相同的 UserContext。
 OsKernelSystemCallEntry:
     push qword 0
-    push qword 0x80
+    push qword OS_KERNEL_ARCHITECTURE_LEGACY_SYSTEM_CALL_VECTOR
     jmp OsKernelSystemCallDispatch
 
 OsKernelSystemCallDispatch:
@@ -256,10 +275,75 @@ OsKernelSystemCallDispatch:
     push r14
     push r15
 
+    mov r12, OS_KERNEL_ARCHITECTURE_GS_NOT_SWAPPED
+    jmp os_kernel_system_call_dispatch_context
+
+OsKernelNativeSystemCallEntry:
+    swapgs
+    mov [gs:OS_KERNEL_ARCHITECTURE_CPU_LOCAL_USER_STACK_OFFSET], rsp
+    mov rsp, [gs:OS_KERNEL_ARCHITECTURE_CPU_LOCAL_ENTRY_STACK_OFFSET]
+
+    push qword OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
+    push qword [gs:OS_KERNEL_ARCHITECTURE_CPU_LOCAL_USER_STACK_OFFSET]
+    push r11
+    push qword OS_KERNEL_ARCHITECTURE_USER_CODE_SELECTOR
+    push rcx
+    push qword 0
+    push qword OS_KERNEL_ARCHITECTURE_NATIVE_SYSTEM_CALL_VECTOR
+
+    cld
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rbp
+    push rsi
+    push rdi
+    push r8
+    push r9
+    push r10
+    push r11
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov r12, OS_KERNEL_ARCHITECTURE_GS_SWAPPED
+
+os_kernel_system_call_dispatch_context:
     mov rdi, rsp
+    mov ax, OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
     and rsp, -16
+    sti
     call OsKernelDispatchSystemCall
-    mov rsp, rax
+    cli
+
+    mov rbx, rax
+    mov rdi, rbx
+    call OsKernelPrepareUserReturn
+    mov rbx, rax
+    mov rdi, rbx
+    call OsKernelSelectUserReturn
+    mov r13, rax
+
+    mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    cmp r12, OS_KERNEL_ARCHITECTURE_GS_SWAPPED
+    jne os_kernel_system_call_gs_base_ready
+    swapgs
+
+os_kernel_system_call_gs_base_ready:
+    cmp r13, OS_KERNEL_ARCHITECTURE_SYSTEM_RETURN
+    je os_kernel_system_call_system_return
+    cmp r13, OS_KERNEL_ARCHITECTURE_INTERRUPT_RETURN
+    jne os_kernel_system_call_invalid_return
+
+    mov rsp, rbx
 
     pop r15
     pop r14
@@ -278,6 +362,33 @@ OsKernelSystemCallDispatch:
     pop rax
     add rsp, 16
     iretq
+
+os_kernel_system_call_system_return:
+    mov rsp, rbx
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop r11
+    pop r10
+    pop r9
+    pop r8
+    pop rdi
+    pop rsi
+    pop rbp
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    add rsp, 16
+    mov rcx, [rsp]
+    mov r11, [rsp + 16]
+    mov rsp, [rsp + 24]
+    o64 sysret
+
+os_kernel_system_call_invalid_return:
+    ud2
 
 ; 调度启动前保存内核调用链，再直接恢复首个 Thread 预构造的 176 字节用户现场。
 ; 最后一个 Thread 结束后，退出路径恢复这里的栈并返回 ExecuteProcesses。
@@ -319,6 +430,11 @@ OsKernelEnterScheduledProcess:
 
 OsKernelReturnFromUserMode:
     cli
+    test rdi, rdi
+    jz .gs_base_ready
+    swapgs
+
+.gs_base_ready:
     mov rsp, [rel os_kernel_saved_user_mode_kernel_stack]
     mov qword [rel os_kernel_saved_user_mode_kernel_stack], 0
 
@@ -379,6 +495,10 @@ os_kernel_hardware_interrupt_stub_table:
 
 section .bss
 align 8
+
+global os_kernel_nmi_observed
+os_kernel_nmi_observed:
+    resq 1
 
 os_kernel_saved_user_mode_kernel_stack:
     resq 1

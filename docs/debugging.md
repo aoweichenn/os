@@ -903,30 +903,67 @@ ELF。文件路径出现在自定义命令参数中，不代表 CMake 一定能�
 Ninja/Make 会先完成生产目标，再运行打包命令。不要用重复执行构建或在 Python
 脚本里等待文件出现来绕过依赖图；生产者—消费者关系属于 CMake 构建图。
 
-## v1.2：Process/Thread、WaitQueue 与 FXSAVE
+## v1.2–v1.3：Process/Thread、FXSAVE 与原生系统调用
 
-### 停在 `EXTENDED_STATE_UNSUPPORTED`
+### 停在处理器能力门禁
 
 先确认测试是否有意使用：
 
 ```bash
---cpu-model 'qemu64,-sse2'
+--cpu-model 'qemu64,-syscall'
 ```
 
-正常 `qemu64` 应在 `CR3_VALID` 后依次输出
-`EXTENDED_STATE_READY/CR0/CR4/AVX_DISABLED`。若普通配置也报告 unsupported，
-在 `InitializeExtendedState()` 处检查 `CPUID.(EAX=1):EDX`：
+正常 `qemu64` 应在 `CR3_VALID` 后先输出
+`PROCESSOR_FEATURES_READY/REQUIRED/AVAILABLE/PROFILE_*`，再输出
+`EXTENDED_STATE_READY/CR0/CR4/AVX_DISABLED`。若普通配置报告
+`PROCESSOR_FEATURES_UNSUPPORTED`，在 `ReadProcessorFeatureProfile()` 同时
+检查：
 
 ```text
 bit 24 FXSR = 1
 bit 25 SSE  = 1
 bit 26 SSE2 = 1
+CPUID.80000001H:EDX bit 11 SYSCALL = 1
+CPUID.80000001H:EDX bit 20 NX      = 1
+CPUID.80000001H:EDX bit 29 LM      = 1
+CPUID.80000008H:EAX physical=36..52, virtual=48
 ```
 
 不要跳过检查或把失败改成警告；后续用户汇编会真实执行 XMM/x87 指令。若三位
 都存在但初始化失败，检查回读是否满足 CR0.MP/NE=1、EM/TS=0，
 CR4.OSFXSR/OSXMMEXCPT=1、OSXSAVE=0，并检查初始 `FxSaveArea` 地址低四位
 是否为零。
+
+### `NATIVE_SYSCALL_READY` 缺失
+
+先区分 `CPU_LOCAL_INITIALIZATION_FAILED` 与
+`NATIVE_SYSCALL_INITIALIZATION_FAILED`。前者检查永久栈是否非零、16 字节
+对齐，以及 self/深度/入口状态是否一致。后者在
+`BuildNativeSystemCallRegisterValues()` 检查 STAR 的选择子顺序，再比较
+RDMSR 回读：
+
+```text
+STAR  = 0x0010000800000000
+FMASK = 0x0000000000044700
+EFER.SCE = 1
+LSTAR = OsKernelNativeSystemCallEntry
+GS_BASE = 0
+KERNEL_GS_BASE = CpuLocal address
+```
+
+不要把回读失败改写成 CPUID unsupported；两类故障的根因不同。
+
+### 原生入口后 #GP、三重故障或无日志
+
+在 `OsKernelNativeSystemCallEntry` 的第一段逐条检查：必须先 `SWAPGS`，只把
+用户 RSP 写到 `[gs:24]`，再从 `[gs:16]` 取得可信栈；在完整 UserContext
+形成前不得 `STI` 或调用 C++。如果故障只发生在最后一个 Thread 阻塞/退出后，
+检查 `OsKernelReturnFromUserMode` 是否根据捕获的原生入口状态补做 SWAPGS，
+而不是在 `ClearCurrentThread()` 后重新查询已经清空的状态。
+
+若 `USER_RETURN_REJECTED` 出现，随后几行会给出 ownership、status、mapping、
+entry、vector、RIP、RSP 和 RFLAGS。先按 status 定位，不要直接放宽 SYSRET
+条件。合法 DF/RF 应选择 IRET，不应被拒绝。
 
 ### 第一次抢占或阻塞后 `EXTENDED_STATE_ISOLATED` 缺失
 
