@@ -732,8 +732,9 @@ Thread、页表根和动态栈，中间快照核对活动数量，退出/reap �
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。
-- 当前是单核、固定四进程、单线程模型；已有具名阻塞/唤醒，但没有优先级、
-  父子关系、zombie/wait、FPU/SSE 状态保存或 SMP 负载均衡。
+- 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
+  Zombie/reap、WaitQueue 和完整 x87/SSE2 现场，但用户 ABI 尚未开放
+  CreateThread、ThreadExit、父子关系与 waitpid，也尚无 SMP 负载均衡。
 - 用户地址空间、通用内核堆与固定尺寸缓存均可回收；v1.1 已提供单 BSP
   `ReferenceCounter` 原语，但动态 KernelObject 的类型层、原子引用语义和
   并发销毁协议仍等待 v1.4 对象模型。
