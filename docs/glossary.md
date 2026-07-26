@@ -55,7 +55,7 @@
 | stack reaper | 在汇编回到永久启动栈后，验证当前 RSP 不属于目标栈并回收终止栈映射、物理页与 KVA 的运行时步骤 |
 | safe point | 已知当前执行栈、CR3 和生命周期状态满足销毁前置条件的位置；逻辑终止不自动等于到达安全点 |
 | strong reference | 保证对象在引用存续期间不能进入销毁的所有权；最后一个强引用释放才触发销毁资格 |
-| reference counter | 记录强所有者数量的状态机；当前原语拒绝零后复活和整数上溢，v1.4 对象管理器在同一把锁内提交查找与计数变化 |
+| reference counter | 记录强所有者数量的状态机；当前原语拒绝零后复活和整数上溢，v1.5 对象管理器在同一把锁内提交查找与计数变化 |
 | KernelObject | 由 type、variant、全局单调 generation、强引用和 finalizer 定义生命周期的动态内核对象 |
 | FileDescription | fd 背后的共享打开实例，保存种类、file status flags 和文件偏移；duplicate 共享，独立 open 不共享 |
 | FileTable | Process 持有的分块 fd 名字空间；表项保存对象 handle 与独立 fd flags，soft/hard limit 是运行时策略 |
@@ -124,6 +124,12 @@
 | reparent | 父进程先退出时，把仍存活或 Zombie 子进程的回收责任转交 PID1 |
 | VFS | Virtual File System，用 vnode、挂载和统一操作隔离路径语义与具体磁盘格式 |
 | vnode | VFS 中表示一个命名对象身份和操作集合的内存对象，不等同于磁盘 inode 字节布局 |
+| superblock | 一个已实例化文件系统后端及其根 vnode、操作表和后端状态的 VFS 对象 |
+| mount | 把一个 superblock 的根 vnode 接到现有目录 vnode 上形成的命名空间边 |
+| mount namespace | 从根挂载出发、按挂载边组合多个后端后形成的统一路径视图；v1.5 每个 Process 的 `FsContext` 共享同一启动期拓扑 |
+| `FsContext` | Process 持有的文件系统上下文，当前保存 root 与 cwd vnode，供绝对和相对路径解析使用 |
+| memfs | 由 KernelHeap 支撑、断电即失的内存文件系统；v1.5 挂载于 `/tmp`，名称内联于节点，并精确统计节点与数据容量 |
+| path normalization | 在不改变最终对象语义的前提下处理重复斜杠、`.`、`..`、根边界与尾斜杠目录约束的状态机 |
 | open-file description | 保存打开状态、共享文件偏移和 vnode 引用的系统级对象；一个或多个 fd 可以引用它 |
 | cwd | Current Working Directory，进程解析相对路径时使用的目录引用 |
 | COW | Copy-on-Write，父子暂时共享只读物理页，在首次写故障时再创建私有副本 |

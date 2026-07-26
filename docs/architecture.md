@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向，不代表当前 v1.4 已经具备这些模块。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.5。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -1217,7 +1217,7 @@ NMI 是例外：向量 2 通过 IST2 进入最小 fail-stop 桩，只写固定�
 [ADR 0030](adr/0030-cpu-local-native-system-call.md)，整阶段证据见
 [v1.3 发布记录](releases/v1.3.md)。
 
-## v1.4 当前对象与描述符架构
+## v1.4 奠定、v1.5 延续的对象与描述符架构
 
 ### 三种身份不能再混为一个整数
 
@@ -1328,6 +1328,124 @@ offset。close 先从表中移除 handle，再在表锁外 release；若不是�
 完整决策见
 [ADR 0031](adr/0031-typed-kernel-object-dynamic-file-table.md)，整机证据见
 [v1.4 发布记录](releases/v1.4.md)。
+
+## v1.5 当前命名架构：VFS、Mount、Vnode 与每 Process FsContext
+
+v1.4 稳定了“fd 只是进程局部引用”，但打开文件仍直接携带 legacy
+`FileSystemHandle`。v1.5 把描述符之下的命名和后端边界拆成以下对象图：
+
+```text
+Process
+├── FileTable[fd]
+│    └── KernelObject<FileDescription>
+│         └── OpenFile { Path, offset, readable, writable }
+└── FsContext
+     ├── root : Path
+     └── cwd  : Path
+
+Path { mount_identifier, Vnode }
+  └── Mount
+       ├── parent_mount_identifier
+       ├── mount_point : Path in parent
+       └── Superblock
+            ├── root : Vnode
+            ├── BackendOperations
+            └── backend_context -> memfs / legacy-fs
+```
+
+`Vnode` 不是目录项名字，也不是打开实例。它只表示“某个 Superblock 内的一代
+对象”，由 Superblock 指针、64 位 identifier、generation 和 NodeType 共同
+识别。两个后端都可以有 identifier 1；只有再加上 Superblock 才能区分。
+
+`Path` 再加入 mount identity。同一个 vnode 通过不同挂载路径可具有不同
+命名空间位置，因此 `..` 和 getcwd 不能只看 vnode。当前没有 bind mount，
+但从第一版就保存这一层，避免 v1.6 再改变 FileDescription 形状。
+
+### 依赖方向
+
+```text
+user shell / system calls
+  -> ProcessRuntime FsContext
+  -> FileTable
+  -> FileDescription
+  -> VFS
+       -> BackendOperations
+            -> Memfs -> KernelHeap
+            -> LegacyFileSystem -> FileSystem -> BlockCache -> ATA
+```
+
+VFS 只切分与验证路径，不读取 memfs Node 或 legacy inode。后端只处理单组件
+名称和已验证 vnode，不重新解析完整路径。Shell 只能调用用户 ABI；它看不到
+Mount、Superblock、inode 或 ATA。
+
+### 路径状态机
+
+每次解析从 Process root 或 cwd 得到初始 Path，然后逐组件推进：
+
+```text
+separator run -> skip
+"."           -> keep current
+".."          -> root clamp / leave mount / backend parent
+ordinary name -> require directory
+              -> backend lookup
+              -> follow child mount(s)
+```
+
+路径最多 4096 字节，组件最多 255 字节。legacy Superblock 将自己的组件上限
+收窄为 40，memfs 使用完整 255。尾部 `/` 是类型约束：最终 vnode 必须为
+Directory。所有循环和计数使用 64 位显式上限，解析过程不进行动态分配。
+
+从子挂载根处理 `..` 时，VFS 不能调用子后端的 parent 后留在子根。它先找到
+Mount 中保存的父挂载点，再对该挂载点调用父后端 parent，最终得到挂载点所在
+目录。这也是 `/tmp/..` 返回 `/` 的原因。
+
+### getcwd 与挂载点
+
+cwd 保存 Path 而不是字符串。`GetWorkingDirectory` 从 cwd 向 Process root
+反向遍历，并从目标缓冲区尾部向前写组件。普通 vnode 的名字由所在后端
+`get_name` 返回；若当前 vnode 是挂载根，则名字来自父后端的 mount point。
+到达 Process root 后停止，最后把连续结果前移到缓冲区起点。
+
+这个算法避免 cwd 字符串与对象关系分叉。当前尚无 rename，因此无需处理
+rename 并发；v1.6 加入 rename 时必须以 vnode/mount 关系继续作为事实来源。
+
+### 启动期不可变挂载拓扑
+
+当前启动顺序为：
+
+```text
+legacy disk mount-or-format
+  -> ensure /tmp mount point
+  -> initialize legacy adapter
+  -> initialize memfs
+  -> initialize root Mount
+  -> mount memfs at /tmp
+  -> VFS Validate
+  -> initialize every Process FsContext
+  -> enable user scheduling
+```
+
+调度开始后没有 `MountAt` 调用，也没有 unmount。路径读侧因此可以把 mount
+数组视为不可变；VFS 锁只保护启动发布与统计。若以后允许动态拓扑，必须同时
+增加 mount 引用、读侧稳定性和失效协议。
+
+### 后端一致性与资源归属
+
+memfs 的锁保护节点链、父关系、文件数据和统计；需要增长数据时锁顺序为
+`memfs -> KernelHeap`。legacy 适配器进入旧 `FileSystem` 全局锁，再由
+BlockCache/ATA 完成持久 I/O。VFS 不在调用后端时持有统计锁。
+
+`FileDescription` 的对象操作锁位于 VFS 之上。FileTable 查找先取得临时
+KernelObject 引用并释放表/对象管理器全局锁，随后才进入对象操作锁与 VFS。
+最后引用析构同样在表锁和对象管理器锁外关闭 OpenFile。
+
+memfs 节点是挂载生命周期资源，不随某个 Process 退出。后端报告精确
+`ResourceUsage`，Process 最终快照将其列为已登记的持久所有权后再检查其余
+资源零差异。memfs 自身的一致性和归还由后端 Validate/Destroy 测试负责。
+
+详细决策与完成证据见
+[ADR 0032](adr/0032-vfs-mount-namespace-and-memfs.md) 和
+[v1.5 发布记录](releases/v1.5.md)。
 
 ## 模块边界
 

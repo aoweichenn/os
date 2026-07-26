@@ -621,6 +621,30 @@ fd flags。安装成功会把传入 reference 的强引用所有权转给表；l
 阻止新安装，不关闭已有 fd。完整设计与失败语义见
 [ADR 0031](../adr/0031-typed-kernel-object-dynamic-file-table.md)。
 
+## v1.5 VFS、FsContext 与文件后端运行时
+
+Kernel 的 `fs` 模块现分为三部分：
+
+- `vfs.hpp/.cpp`：Vnode、Path、Superblock、Mount、FsContext、OpenFile 和
+  统一路径状态机；
+- `memfs.hpp/.cpp`：KernelHeap 支持的目录/文件节点与数据；
+- `legacy_file_system.hpp/.cpp`：把原固定磁盘格式接入 VFS 操作表。
+
+`ProcessRuntimeProcess` 保存每 Process FsContext；所有普通文件和目录
+FileDescription 保存 `Vfs* + OpenFile`。FileTable 与 KernelObject 生命周期
+不因后端改变：duplicate 继续共享 OpenFile offset，独立 open 继续隔离。
+
+内核启动必须先准备用户 ELF 和 Process，再初始化设备、挂载旧磁盘、建立
+`/tmp`、挂载 memfs、校验 VFS，随后为所有活动 Process 初始化 FsContext，
+最后才执行调度。这个次序保留非法 ELF 在中断开放前拒绝的历史失败边界。
+
+进程结束资源校验从 VFS 读取 memfs 的精确 heap/vnode 所有权，把它作为
+长期 Mount 资源与 Process 临时资源分账；任何未登记对象、frame、KVA、
+页表、fd 或 heap 分配仍会产生非零差异。
+
+路径、挂载、后端和锁协议见
+[ADR 0032](../adr/0032-vfs-mount-namespace-and-memfs.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -826,4 +850,7 @@ fd flags。安装成功会把传入 reference 的强引用所有权转给表；l
   当前对象引用在管理器锁内串行提交，尚未提供 weak reference、循环回收、
   SMP 原子引用或 RCU 延迟销毁。
 - FileTable 已动态分块并支持 4096 hard limit，但仍使用有序单链；百万 fd
-  位图/基数树、fork 共享、磁盘 exec 和 VFS Vnode 留给后续阶段。
+  位图/基数树、fork 共享和磁盘 exec 留给后续阶段。
+- VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs 和 legacy 后端，
+  但 mount 拓扑仅在启动期建立；动态 unmount、dentry cache、rename/unlink
+  和 rootfs v2 留给 v1.6 及以后阶段。

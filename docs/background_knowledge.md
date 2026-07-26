@@ -1043,7 +1043,7 @@ Committed                 RolledBack
 否则调用者可能根据一半更新的 `is_last` 销毁仍被引用的对象。
 
 引用计数只证明拥有者数量，不证明对象内部状态、关联页表或等待队列正确，也
-不能自动解决环引用。当前 v1.4 仍是单 BSP 基线，计数存储使用普通
+不能自动解决环引用。当前 v1.5 仍是单 BSP 基线，计数存储使用普通
 `uint64_t`，但对象查找与 acquire/release 已在同一管理器锁内提交；最后引用
 先把对象从活动集合摘除，再在锁外执行 finalizer。这样冻结了当前并发边界，
 却没有伪称已具备 weak reference、无锁升级、SMP 原子引用或循环回收。
@@ -1497,7 +1497,201 @@ v1.3 先选择最小可证明策略：NMI 使用 TSS.IST2 的独立栈，只写�
 位，并在任何用户代码前停止。这样宿主模型、真实指令路径和失败门禁三层证据
 共同闭合。
 
-## 24. 建议阅读顺序
+## 24. 为什么 VFS 必须把名字、对象、挂载和打开实例分开
+
+### 从磁盘块到路径，中间缺了哪些概念
+
+磁盘只提供按编号读写的扇区。旧文件系统进一步建立 superblock、bitmap、
+inode 和目录项，但用户写下的 `/tmp/session/message` 仍不是一个 inode
+number。内核必须回答一串不同问题：
+
+1. 这个路径从哪个根或当前目录开始？
+2. 每个 `/` 之间的名字应在哪个目录中查找？
+3. `.`、`..` 和重复 `/` 怎样改变遍历？
+4. 某个目录上是否挂载了另一个文件系统？
+5. 找到对象后，一次 open 的偏移和读写模式保存在哪里？
+6. 两个 fd 是共享这次 open，还是各自重新打开？
+
+把这些问题都塞进 `FileSystem::Open(full_path)`，在只有一个根文件系统时似乎
+可行；一旦加入 memfs、设备文件系统或新磁盘格式，完整路径就必须被每个后端
+重复解析，且不同后端很容易对 `..`、尾斜杠和错误码给出不同答案。
+
+VFS 的本质不是“多写一层抽象类”，而是把命名空间算法从存储格式中拿出来。
+后端只回答“在这个目录 vnode 中是否有这个单组件名字”，VFS 决定从哪里开始、
+怎样处理特殊组件以及何时跨越挂载点。
+
+### 历史上为什么出现 inode、vnode 与 open file description
+
+Unix 早期文件系统以 inode 表示不含名字的文件元数据；目录项把名字映射到
+inode number。名字属于父目录，inode 属于文件系统。于是同一个 inode 可以
+有多个名字，重命名目录项也不必搬动文件数据。
+
+当系统需要同时挂载不同文件系统实现时，只写“inode”已经不够，因为 inode
+number 1 在每个文件系统中都可以存在。VFS 层因此使用 vnode 一类的通用对象，
+把具体文件系统实例与其内部 identifier 组合起来。本项目当前的 vnode 身份
+是：
+
+```text
+(Superblock address, identifier, generation, NodeType)
+```
+
+generation 用来防止将来节点槽位复用后旧引用误认新对象。v1.5 尚无 unlink，
+但从第一版就保留代次，避免后续修改所有打开对象形状。
+
+路径找到 vnode 后仍不能把 vnode 直接当 fd。一次打开还具有偏移、读写模式
+和状态标志；duplicate 应共享这些状态，两次独立 open 则不共享。这正是 v1.4
+已建立的 FileDescription/open file description。v1.5 只把它的底层载荷从
+legacy handle 换成 `OpenFile(Path, offset)`。
+
+### 目录项、vnode、Path 和 Mount 分别是什么
+
+四个名字容易混淆：
+
+| 概念 | 保存什么 | 不保存什么 |
+| --- | --- | --- |
+| 目录项 | 父目录中的名字到子对象映射 | 打开偏移 |
+| Vnode | 某后端中的对象身份与类型 | 该对象经哪条挂载路径可见 |
+| Path | mount identity 与 vnode | 用户输入的原始字符串 |
+| Mount | 父挂载点到子 Superblock 根的连接 | 某个进程的 cwd |
+
+为什么 Path 还要保存 mount？设想同一个文件系统以后被挂到两个位置。vnode
+完全相同，但从其中一个位置执行 `..` 应回到该位置的父目录，而不是随机选择
+另一个挂载点。即使 v1.5 尚无 bind mount，把 mount identity 放进 Path
+仍能冻结正确边界。
+
+### 路径解析是一台有界状态机
+
+路径不是先“规范化成字符串”再一次查表，而是逐组件改变当前 Path：
+
+```text
+current = path is absolute ? process.root : process.cwd
+for each component:
+    empty from repeated "/" -> skip
+    "."                    -> keep current
+    ".."                   -> MoveToParent(current)
+    ordinary name          -> backend.lookup(current, name)
+    after lookup           -> FollowMounts(current)
+```
+
+这台状态机必须有长度和步数上限。否则攻击者可以让内核在固定内核栈上建立
+任意大数组，或让损坏的 mount/parent 链无限循环。本项目使用 4096 字节路径、
+255 字节公共组件和 4096 次遍历上限；所有计数是 `uint64_t`，达到边界返回
+明确状态。
+
+路径接口同时传地址与长度，不依赖 `'\0'`。这是因为用户缓冲区可能没有终止
+符，也可能在终止符前包含内核不愿接受的字节。内核先验证整个用户范围可读，
+复制到 4096 字节有界缓冲，再在 Ring 0 中解析。
+
+### `.`、`..` 与根钳制为何不能交给后端字符串处理
+
+`.` 不需要查目录；它只表示当前对象。`..` 却与挂载和 Process root 共同
+有关。
+
+普通目录中的 `..` 调用后端 parent。到达某个子 Mount 根时，子后端看到的
+parent 通常仍是自身根；真正的命名空间父级在 Mount 对象中。VFS 必须退出
+子挂载，找到父文件系统中的 mount point，再取得 mount point 的父目录。
+
+Process root 又可能不是全局 root。安全语义要求在 root 上继续 `..` 仍停在
+root，这叫 root clamp。否则将来 chroot 或容器式命名空间会被 `../../..`
+逃逸。v1.5 所有 Process 的 root 暂时相同，但 FsContext 已按进程保存，
+算法也从第一版执行 clamp。
+
+### 尾斜杠为什么是语义而不是装饰
+
+`/directory/` 的最后一个 `/` 表明最终对象应能作为目录继续遍历。
+`/regular-file/` 因此必须返回 NotDirectory。若简单删除所有尾斜杠，
+`open("/file/")` 会错误打开普通文件；更危险的是
+`open("/missing/", create)` 可能先查找失败，再创建一个普通文件，违背调用者
+表达的目录约束。
+
+v1.5 在 Resolve 成功出口检查最终类型；create 分支也在发布节点前单独拒绝
+尾斜杠普通文件创建。单元测试同时覆盖已有文件和缺失目标，防止只修成功路径。
+
+### cwd 为什么保存对象而不是字符串
+
+保存字符串看似简单：`chdir("/a/b")` 后把 `/a/b` 复制进 Process。问题是
+将来 `/a` 可被重命名，或同一 vnode 可从不同 Mount 到达，缓存字符串就不再
+是事实。
+
+FsContext 因而保存 cwd Path。`getcwd` 需要显示时再反向遍历：
+
+1. 从 cwd 调用后端 get-name；
+2. 把名字从目标缓冲区尾部向前写；
+3. 移动到父 Path；
+4. 遇到挂载根时改用父文件系统中的 mount point 名；
+5. 到 Process root 后补 `/` 并把结果前移。
+
+反向写能在一个固定缓冲区内完成，不需要递归、动态数组或先知道组件数量。
+容量不足时返回 PathTooLong，不返回一条看似合法但被截断的路径。
+
+### memfs 为什么适合先于新磁盘格式出现
+
+如果第一版 VFS 只接一个 legacy 后端，测试通过也可能只是 VFS 恰好顺着旧
+接口形状工作。memfs 提供第二个性质不同的后端：
+
+- 没有 ATA、块缓存或磁盘事务；
+- 名称可使用完整 255 字节；
+- 节点与文件数据来自可回收 KernelHeap；
+- sync 是无持久介质的成功边界；
+- Destroy 可以直接证明所有内存归还。
+
+同一测试在两个后端运行，才能证明公共契约真正独立于磁盘布局。v1.6 再接入
+rootfs v2 时，也可以继续把 memfs 作为语义参考。
+
+memfs 仍不是“无限内存”。每个实例有节点上限和单文件上限；数据从 64 字节
+开始二倍增长，并检查乘法与最大值。若实例最大文件只有 17 字节，第一次容量
+必须直接取 17，不能因默认初值 64 而越界。集成测试特意使用小于默认增长块的
+上限验证这个边界。
+
+### 为什么当前不加入 dentry cache
+
+逐组件 lookup 可能较慢，成熟内核会缓存“父目录 + 名字”的正项和负项。但
+缓存会立即引入：
+
+- rename/unlink 后失效；
+- negative entry 的过期；
+- vnode 与 dentry 引用生命周期；
+- mount/unmount 对缓存可见性的影响；
+- 并发查找、回收与 RCU；
+- 内存压力下 shrink。
+
+v1.5 还没有 rename、unlink 和动态 unmount。此时加入缓存无法完整验证失效
+协议，只会让路径错误多一个来源。因此当前明确不缓存；先让两个后端与十万步
+参考模型冻结语义，再在有真实修改操作的阶段评估缓存。
+
+### 持久资源为什么不能算作 Process 泄漏
+
+用户在 `/tmp` 写入文件后退出，memfs 文件仍应存在，因为它属于挂载，不属于
+某个 Process。若最终快照简单要求 KernelHeap 回到 VFS 建立前的字节数，就会
+把正确的持久文件误报为泄漏。
+
+反过来，完全忽略 heap 又会掩盖 FileDescription 或进程栈泄漏。当前做法是
+让每个后端报告精确 ResourceUsage：
+
+```text
+global resource snapshot
+  - registered persistent VFS heap/vnodes
+  = process-owned comparison snapshot
+```
+
+memfs 自己再通过 Validate 和 Destroy 测试证明登记值真实。分账的关键是
+“明确所有者”，不是为了让快照变绿而放宽比较。
+
+### 怎样证明路径实现不是自我验证
+
+单元测试适合精确边界和人为破坏 mount 父链；双后端集成测试适合证明同一
+契约；随机测试还需要一个独立模型。
+
+v1.5 的参考模型用宿主 `std::vector<ModelNode>` 保存 identifier、parent、
+type、name 和 file bytes。它不调用 memfs 的 parent 或 lookup 来计算预期，
+而是自己构造路径、选择节点、枚举子节点并保存文件内容。固定种子执行
+100000 步，每一步比较真实 VFS 的状态和模型；失败报告可复现的 step 与 seed。
+
+QEMU 最后证明这些 C++ 逻辑确实经过真实 Ring 3 系统调用、SYSCALL 汇编入口、
+Process FsContext、FileTable/FileDescription、VFS 和两个后端。宿主只通过
+QMP 逐字输入，不替来宾解析命令或访问文件。
+
+## 25. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -1515,7 +1709,7 @@ v1.3 先选择最小可证明策略：NMI 使用 TSS.IST2 的独立栈，只写�
    与设备闭环、v0.8 的用户特权边界、v0.9 的进程地址空间与抢占调度，
    v0.10 的同步、阻塞/唤醒和管道 IPC，v1.1 的通用资源生命周期，以及
    v1.2 的 Process/Thread、WaitQueue 与完整扩展现场，v1.3 的 CpuLocal、
-   原生系统调用和安全返回，以及 v1.4 的 KernelObject、共享
-   FileDescription 与动态 FileTable。
+   原生系统调用和安全返回，v1.4 的 KernelObject、共享 FileDescription 与
+   动态 FileTable，以及 v1.5 的 VFS、Mount、memfs 与 legacy 适配。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

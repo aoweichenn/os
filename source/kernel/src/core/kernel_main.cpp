@@ -10,6 +10,9 @@
 #include "os/kernel/device/ata_pio.hpp"
 #include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/fs/file_system.hpp"
+#include "os/kernel/fs/legacy_file_system.hpp"
+#include "os/kernel/fs/memfs.hpp"
+#include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/process/process_runtime.hpp"
 
@@ -253,6 +256,25 @@ constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_SYSTEM_ALLOCATED_INODES=";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_SYSTEM_ALLOCATED_DATA_BLOCKS=";
+constexpr char OS_KERNEL_MAIN_VFS_READY_MESSAGE[] = "[OS][KERNEL] VFS_READY\r\n";
+constexpr char OS_KERNEL_MAIN_VFS_VALID_MESSAGE[] = "[OS][KERNEL] VFS_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE[] = "[OS][KERNEL] MEMFS_MOUNTED=/tmp\r\n";
+constexpr char OS_KERNEL_MAIN_VFS_STATUS_PREFIX[] = "[OS][KERNEL] VFS_STATUS=";
+constexpr char OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX[] = "[OS][KERNEL] VFS_MOUNTS=";
+constexpr char OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX[] =
+    "[OS][KERNEL] VFS_PATH_RESOLUTIONS=";
+constexpr char OS_KERNEL_MAIN_VFS_FAILED_PATH_RESOLUTION_COUNT_PREFIX[] =
+    "[OS][KERNEL] VFS_FAILED_PATH_RESOLUTIONS=";
+constexpr char OS_KERNEL_MAIN_VFS_MOUNT_TRANSITION_COUNT_PREFIX[] =
+    "[OS][KERNEL] VFS_MOUNT_TRANSITIONS=";
+constexpr char OS_KERNEL_MAIN_VFS_MAXIMUM_PATH_LENGTH_PREFIX[] =
+    "[OS][KERNEL] VFS_MAX_PATH_BYTES=";
+constexpr char OS_KERNEL_MAIN_VFS_MAXIMUM_NAME_LENGTH_PREFIX[] =
+    "[OS][KERNEL] VFS_MAX_NAME_BYTES=";
+constexpr char OS_KERNEL_MAIN_MEMFS_ACTIVE_NODE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMFS_ACTIVE_NODES=";
+constexpr char OS_KERNEL_MAIN_MEMFS_DATA_CAPACITY_PREFIX[] =
+    "[OS][KERNEL] MEMFS_DATA_CAPACITY_BYTES=";
 constexpr char OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] PIC_SPURIOUS_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE[] = "[OS][KERNEL] INTERRUPTS_ENABLED\r\n";
@@ -486,7 +508,18 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT = 11ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK = 0xFFULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_LEGACY_SUPERBLOCK_IDENTIFIER = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER = 2ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY = 64ULL;
+constexpr uint64_t OS_KERNEL_MAIN_MEMFS_NODE_LIMIT = 128ULL;
+constexpr uint64_t OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE = 0U;
+constexpr uint8_t OS_KERNEL_MAIN_MEMFS_MOUNT_PATH[] = {
+    static_cast<uint8_t>('/'),
+    static_cast<uint8_t>('t'),
+    static_cast<uint8_t>('m'),
+    static_cast<uint8_t>('p'),
+};
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
     static_cast<uint8_t>('a'), static_cast<uint8_t>('r'), static_cast<uint8_t>('e'),
@@ -912,15 +945,85 @@ void InitializeKernelFileSystem(const SerialPort &serial_port, FileSystem &file_
     WriteFileSystemStatistics(serial_port, file_system);
 }
 
-void FinalizeKernelFileSystem(const SerialPort &serial_port, FileSystem &file_system,
-                              const bool require_payload) noexcept {
-    if (file_system.Sync() != FileSystemStatus::Succeeded) {
+void WriteVfsStatistics(const SerialPort &serial_port, const fs::Vfs &vfs,
+                        const fs::Memfs &memfs) noexcept {
+    const fs::Statistics vfs_statistics = vfs.ReadStatistics();
+    const fs::MemfsStatistics memfs_statistics = memfs.ReadStatistics();
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX,
+                         vfs_statistics.mount_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX,
+                         vfs_statistics.path_resolution_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_FAILED_PATH_RESOLUTION_COUNT_PREFIX,
+                         vfs_statistics.failed_path_resolution_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MOUNT_TRANSITION_COUNT_PREFIX,
+                         vfs_statistics.mount_transition_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMFS_ACTIVE_NODE_COUNT_PREFIX,
+                         memfs_statistics.active_node_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMFS_DATA_CAPACITY_PREFIX,
+                         memfs_statistics.active_data_capacity_bytes);
+}
+
+void InitializeKernelVfs(const SerialPort &serial_port, FileSystem &file_system,
+                         fs::LegacyFileSystem &legacy_adapter, fs::Memfs &memfs,
+                         fs::Vfs &vfs, fs::Mount *const mounts,
+                         const uint64_t mount_capacity) noexcept {
+    const FileSystemStatus mount_point_status = file_system.CreateDirectory(
+        OS_KERNEL_MAIN_MEMFS_MOUNT_PATH, sizeof(OS_KERNEL_MAIN_MEMFS_MOUNT_PATH));
+    if (mount_point_status != FileSystemStatus::Succeeded &&
+        mount_point_status != FileSystemStatus::AlreadyExists) {
         WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
-                             static_cast<uint64_t>(FileSystemStatus::DeviceFailure));
+                             static_cast<uint64_t>(mount_point_status));
+        HaltProcessor();
+    }
+    fs::Status status = legacy_adapter.Initialize(
+        file_system, OS_KERNEL_MAIN_VFS_LEGACY_SUPERBLOCK_IDENTIFIER);
+    if (status == fs::Status::Succeeded) {
+        status = memfs.Initialize(GetKernelHeap(), OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER,
+                                  OS_KERNEL_MAIN_MEMFS_NODE_LIMIT,
+                                  OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES);
+    }
+    if (status == fs::Status::Succeeded) {
+        status = vfs.Initialize(mounts, mount_capacity, legacy_adapter.GetSuperblock());
+    }
+    fs::FsContext bootstrap_context{};
+    if (status == fs::Status::Succeeded) {
+        status = vfs.InitializeContext(bootstrap_context);
+    }
+    if (status == fs::Status::Succeeded) {
+        status = vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_MEMFS_MOUNT_PATH,
+                             sizeof(OS_KERNEL_MAIN_MEMFS_MOUNT_PATH),
+                             memfs.GetSuperblock());
+    }
+    if (status == fs::Status::Succeeded) {
+        status = vfs.Validate();
+    }
+    if (status != fs::Status::Succeeded) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
+                             static_cast<uint64_t>(status));
+        HaltProcessor();
+    }
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_PATH_LENGTH_PREFIX,
+                         fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_NAME_LENGTH_PREFIX,
+                         fs::OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_VALID_MESSAGE);
+    WriteVfsStatistics(serial_port, vfs, memfs);
+}
+
+void FinalizeKernelFileSystem(const SerialPort &serial_port, FileSystem &file_system,
+                              fs::Vfs &vfs, const fs::Memfs &memfs,
+                              const bool require_payload) noexcept {
+    const fs::Status sync_status = vfs.Sync();
+    if (sync_status != fs::Status::Succeeded) {
+        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
+                             static_cast<uint64_t>(sync_status));
         HaltProcessor();
     }
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE);
-    if (file_system.CheckConsistency() != FileSystemStatus::Succeeded ||
+    if (vfs.Validate() != fs::Status::Succeeded ||
+        file_system.CheckConsistency() != FileSystemStatus::Succeeded ||
         (require_payload && !ValidateFileSystemPayload(file_system))) {
         WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         HaltProcessor();
@@ -929,7 +1032,9 @@ void FinalizeKernelFileSystem(const SerialPort &serial_port, FileSystem &file_sy
         WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE);
     }
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_VALID_MESSAGE);
     WriteFileSystemStatistics(serial_port, file_system);
+    WriteVfsStatistics(serial_port, vfs, memfs);
 }
 
 void CreateRequiredProcess(const SerialPort &serial_port,
@@ -1463,14 +1568,20 @@ void WriteKeyboardEvent(const SerialPort &serial_port, const KeyboardEvent &even
     InitializeKernelDevices(serial_port);
     AtaPioDevice file_system_device{};
     FileSystem file_system{};
+    fs::LegacyFileSystem legacy_file_system{};
+    fs::Memfs memfs{};
+    fs::Vfs vfs{};
+    fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
     InitializeKernelFileSystem(serial_port, file_system, file_system_device);
-    if (AttachProcessFileSystem(file_system) != ProcessRuntimeStatus::Succeeded) {
+    InitializeKernelVfs(serial_port, file_system, legacy_file_system, memfs, vfs, mounts,
+                        OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
+    if (AttachProcessVfs(vfs) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
-                             static_cast<uint64_t>(ProcessRuntimeStatus::NotInitialized));
+                             static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
         HaltProcessor();
     }
     ExecuteRequiredProcesses(serial_port, user_program_selection);
-    FinalizeKernelFileSystem(serial_port, file_system,
+    FinalizeKernelFileSystem(serial_port, file_system, vfs, memfs,
                              user_program_selection == UserProgramSelection::Smoke);
 
     if (!serial_port.TryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,

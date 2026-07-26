@@ -64,8 +64,8 @@ int main() {
         .device_write_operation = DiscardWrite,
         .device_write_context = nullptr,
         .pipe = nullptr,
-        .file_system = nullptr,
-        .file_system_handle = {},
+        .vfs = nullptr,
+        .open_file = {},
     };
     os::kernel::KernelObjectReference root_reference{};
     bool filled = initialized &&

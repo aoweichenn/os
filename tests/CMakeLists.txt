@@ -739,13 +739,28 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_vfs_unit_tests
+    unit/kernel/vfs_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
     os_kernel_file_system_lifecycle_integration_tests
     integration/boot/kernel_file_system_lifecycle_test.cpp
     "integration"
 )
 os_add_kernel_file_system_test(
+    os_kernel_vfs_backend_contract_integration_tests
+    integration/boot/vfs_backend_contract_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
     os_kernel_file_system_randomized_tests
     randomized/kernel/file_system_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
+    os_kernel_vfs_namespace_randomized_tests
+    randomized/kernel/vfs_namespace_randomized_test.cpp
     "randomized"
 )
 

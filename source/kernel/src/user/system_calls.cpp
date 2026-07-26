@@ -24,6 +24,7 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_THREAD_COUNT = OS_KERNEL_THREAD_CAPACITY_LIMIT;
+constexpr uint8_t OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESERVED_VALUE = 0U;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT = 0LL;
@@ -121,6 +122,21 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     }
     if (status == FileSystemStatus::DeviceFailure) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
+    }
+    if (status == FileSystemStatus::PathTooLong) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
+    }
+    if (status == FileSystemStatus::NameTooLong) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_NAME_TOO_LONG;
+    }
+    if (status == FileSystemStatus::LoopDetected) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_LOOP;
+    }
+    if (status == FileSystemStatus::ReadOnly) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_READ_ONLY_FILE_SYSTEM;
+    }
+    if (status == FileSystemStatus::MountCapacityExhausted) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_FILE_SYSTEM_CAPACITY_EXHAUSTED;
     }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
@@ -394,11 +410,14 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
 [[nodiscard]] int64_t DispatchOpenFile(const uint64_t user_path_address,
                                        const uint64_t path_length_bytes,
                                        const uint64_t open_flags) noexcept {
-    if (path_length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
-        path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES ||
+    if (user_path_address == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
+        path_length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
         (open_flags & ~os::abi::OS_ABI_FILE_OPEN_VALID_FLAG_MASK) !=
             OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
     }
     uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
     if (CopyFromUser(user_path_address, path_length_bytes, path,
@@ -406,7 +425,7 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         UserMemoryCopyStatus::Succeeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
-    const FileSystemOpenOptions options{
+    const fs::OpenOptions options{
         .readable = (open_flags & os::abi::OS_ABI_FILE_OPEN_READ_FLAG) !=
                     OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
         .writable = (open_flags & os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG) !=
@@ -472,8 +491,11 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
 [[nodiscard]] int64_t DispatchCreateDirectory(const uint64_t user_path_address,
                                               const uint64_t path_length_bytes) noexcept {
     if (path_length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
-        path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        user_path_address == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
     }
     uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
     if (CopyFromUser(user_path_address, path_length_bytes, path,
@@ -628,8 +650,11 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
 [[nodiscard]] int64_t DispatchOpenDirectory(const uint64_t user_path_address,
                                             const uint64_t path_length_bytes) noexcept {
     if (path_length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
-        path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        user_path_address == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
     }
     uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
     if (CopyFromUser(user_path_address, path_length_bytes, path,
@@ -652,7 +677,7 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         UserMemoryCopyStatus::Succeeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
-    FileSystemDirectoryEntry file_system_entry{};
+    fs::DirectoryEntry file_system_entry{};
     bool end_of_directory = false;
     const FileSystemStatus status =
         ReadCurrentProcessDirectory(descriptor, file_system_entry, end_of_directory);
@@ -664,12 +689,13 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
     }
     os::abi::DirectoryEntry entry{
-        .inode_number = file_system_entry.inode_number,
-        .type = file_system_entry.type == FileSystemNodeType::Directory
+        .inode_number = file_system_entry.node_identifier,
+        .type = file_system_entry.type == fs::NodeType::Directory
                     ? os::abi::DirectoryEntryType::Directory
                     : os::abi::DirectoryEntryType::RegularFile,
         .name_length_bytes = file_system_entry.name_length_bytes,
         .name = {},
+        .reserved = OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESERVED_VALUE,
     };
     for (uint64_t byte_index = OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX;
          byte_index < file_system_entry.name_length_bytes; ++byte_index) {
@@ -680,6 +706,55 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         HaltProcessor();
     }
     return OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESULT;
+}
+
+[[nodiscard]] int64_t DispatchChangeDirectory(const uint64_t user_path_address,
+                                              const uint64_t path_length_bytes) noexcept {
+    if (user_path_address == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
+        path_length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
+    }
+    uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    if (CopyFromUser(user_path_address, path_length_bytes, path,
+                     os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    return MapFileSystemStatus(
+        ChangeCurrentProcessDirectory(path, path_length_bytes),
+        static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
+}
+
+[[nodiscard]] int64_t DispatchGetWorkingDirectory(const uint64_t user_destination_address,
+                                                  const uint64_t capacity_bytes) noexcept {
+    if (user_destination_address == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
+        capacity_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    const uint64_t effective_capacity_bytes =
+        capacity_bytes < os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES
+            ? capacity_bytes
+            : os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES;
+    if (ValidateUserWritableMemory(user_destination_address,
+                                   effective_capacity_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    uint64_t path_length_bytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const FileSystemStatus status =
+        GetCurrentProcessWorkingDirectory(path, effective_capacity_bytes,
+                                          path_length_bytes);
+    if (status == FileSystemStatus::Succeeded &&
+        CopyToUser(user_destination_address, path_length_bytes, path,
+                   effective_capacity_bytes) !=
+            UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return MapFileSystemStatus(status, path_length_bytes);
 }
 }
 
@@ -826,6 +901,17 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     if (system_call_number ==
         static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorHardLimit)) {
         frame->register_rax = static_cast<uint64_t>(DispatchGetDescriptorLimit(false));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeDirectory)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchChangeDirectory(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetWorkingDirectory)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchGetWorkingDirectory(frame->register_rdi, frame->register_rsi));
         return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

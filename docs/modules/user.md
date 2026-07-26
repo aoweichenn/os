@@ -245,6 +245,46 @@ read(fd 4, 3)       -> ABC
 minimum；表的精确最低编号性质由宿主模型逐槽验证。详细所有权见
 [ADR 0031](../adr/0031-typed-kernel-object-dynamic-file-table.md)。
 
+## v1.5 cwd、路径与双后端用户态走读
+
+用户态新增两个固定宽度包装：
+
+```text
+ChangeDirectory(path, path_length_bytes)
+GetWorkingDirectory(destination, capacity_bytes)
+```
+
+它们分别使用系统调用号 29 和 30，并继续经过默认 `SYSCALL` 汇编入口。
+用户代码只传路径字节，不看 Vnode、Mount、Superblock 或 legacy inode。
+
+Shell 新增 `cd <path>` 内建命令。`cd` 必须由 Shell 自身执行，因为 cwd
+属于当前 Process 的 FsContext；若由将来的外部子进程执行，只会改变子进程。
+`pwd` 调用真实 getcwd，提示符每轮显示 `[os:<cwd>]$`，无参数 `ls` 默认使用
+相对路径 `.`。
+
+functional QEMU 先执行：
+
+```text
+cd /tmp
+mkdir session
+write session/message temporary
+cat ./session/../session/message
+ls .
+```
+
+这组命令进入 memfs 并同时证明 cwd、相对路径、`.`、`..` 和挂载遍历。随后
+`cd ..` 回到 legacy 根目录，再执行 `/demo` 的创建、读写、枚举与 sync，
+证明同一用户 ABI 没有后端特例。
+
+公共路径容量为 4096 字节，目录项名称容量为 255 字节。ABI
+`DirectoryEntry` 固定为 280 字节，并显式保存一个清零 reserved byte；
+用户态不能依赖编译器隐式 padding。新增错误 `-26..-29` 分别表示路径过长、
+名称过长、路径循环和只读文件系统。
+
+详细路径语义见
+[ADR 0032](../adr/0032-vfs-mount-namespace-and-memfs.md) 与
+[v1.5 发布记录](../releases/v1.5.md)。
+
 ## 依赖与命名
 
 - 公开头位于 `source/user/include/os/user/` 和

@@ -33,13 +33,15 @@ enum class SystemCallNumber : uint64_t {
     SetDescriptorSoftLimit = 26ULL,
     GetDescriptorSoftLimit = 27ULL,
     GetDescriptorHardLimit = 28ULL,
+    ChangeDirectory = 29ULL,
+    GetWorkingDirectory = 30ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_WRITE_SIZE_BYTES = 160ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_PIPE_TRANSFER_SIZE_BYTES = 64ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_FILE_TRANSFER_SIZE_BYTES = 256ULL;
-inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES = 128ULL;
+inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES = 4096ULL;
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES = 256ULL;
 inline constexpr uint64_t OS_ABI_STANDARD_INPUT_DESCRIPTOR = 0ULL;
 inline constexpr uint64_t OS_ABI_STANDARD_OUTPUT_DESCRIPTOR = 1ULL;
@@ -48,8 +50,8 @@ inline constexpr uint64_t OS_ABI_FIRST_DYNAMIC_DESCRIPTOR = 3ULL;
 inline constexpr uint64_t OS_ABI_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_ABI_FILE_DESCRIPTOR_VALID_FLAG_MASK =
     OS_ABI_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG;
-inline constexpr uint64_t OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES = 40ULL;
-inline constexpr uint64_t OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES = 64ULL;
+inline constexpr uint64_t OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES = 255ULL;
+inline constexpr uint64_t OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_READ_FLAG = 0x01ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_WRITE_FLAG = 0x02ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_CREATE_FLAG = 0x04ULL;
@@ -82,6 +84,10 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED 
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_TRANSFER_TOO_LARGE = -23LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_LIMIT_EXCEEDED = -24LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE = -25LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG = -26LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NAME_TOO_LONG = -27LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PATH_LOOP = -28LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_READ_ONLY_FILE_SYSTEM = -29LL;
 
 enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,
@@ -93,6 +99,7 @@ struct DirectoryEntry final {
     DirectoryEntryType type;
     uint64_t name_length_bytes;
     uint8_t name[OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES];
+    uint8_t reserved;
 };
 
 static_assert(sizeof(DirectoryEntry) == OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES);

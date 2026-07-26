@@ -175,7 +175,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 107 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+  \item 110 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
         调度/IPC/文件系统/Shell、资源快照、双系统调用入口与
         256 MiB/64 GiB 整机事件；
   \item Process 与 Thread 为什么是两个寿命不同的对象，Exited 与 Zombie
@@ -206,8 +206,23 @@
   \item 最后强引用释放为何先摘除活动对象，再在全局锁外执行 finalizer；
   \item 23--28 号系统调用如何复用 v1.3 的 RAX/RDI/RSI/RDX 与双入口；
   \item PID 4 的 8 字节写、9 字节读如何同时证明共享偏移与独立打开；
-  \item 107 项回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
+  \item 110 项回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
         分别排除哪类描述符错误。
+  \item Vnode、Path、Superblock、Mount、FsContext 与 OpenFile 分别保存
+        哪一层身份和状态；
+  \item 绝对/相对路径、点组件、尾斜杠、root clamp 和挂载根
+        \code{..} 为什么必须由 VFS 统一解释；
+  \item getcwd 为什么从 vnode 父链反向重建，遇到挂载根时为何使用父后端
+        mount point 名称；
+  \item memfs 的 Node、文件数据几何增长、空洞清零、目录游标和 heap 资源
+        统计怎样保持事务一致；
+  \item legacy 适配器怎样提供 lookup/parent/read/write/readdir 而不改变
+        旧磁盘格式和损坏拒绝规则；
+  \item 29/30 号系统调用、4096/255 字节上限和 280 字节显式目录项 ABI；
+  \item 固定种子十万步独立目录树模型与 memfs/legacy 双后端契约分别排除
+        哪类自我验证；
+  \item 持久 memfs heap/vnode 为什么从 Process 快照分账，又为何不能掩盖
+        未登记资源泄漏。
 \end{itemize}
 
 \section*{进入下一阶段前}

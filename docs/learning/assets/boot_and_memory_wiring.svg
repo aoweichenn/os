@@ -135,7 +135,7 @@
   <text x="1125" y="724" class="card-title">早期 Kernel 栈</text>
   <text x="1125" y="755" class="body mono">0x03FEF000..0x03FFEFFF</text>
   <text x="1125" y="783" class="body">v1.0 固定布局</text>
-  <text x="1125" y="812" class="small">v1.1 起动态双 guard 栈；v1.4 保留</text>
+  <text x="1125" y="812" class="small">v1.1 起动态双 guard 栈；v1.5 保留</text>
 
   <rect x="1400" y="690" width="300" height="150" rx="15"
         fill="#fff6cf" stroke="#c58b13"/>

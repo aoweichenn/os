@@ -1,5 +1,7 @@
 #include "memory_block_device.hpp"
 #include "os/kernel/fs/file_system.hpp"
+#include "os/kernel/fs/legacy_file_system.hpp"
+#include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/io/file_description.hpp"
 #include "os/kernel/io/file_table.hpp"
 #include "os/kernel/ipc/pipe.hpp"
@@ -19,10 +21,14 @@ constexpr std::string_view OS_TEST_FILE_DESCRIPTION_PIPE_LIFETIME =
     "管道端点只能在最后一个文件描述引用释放时关闭";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_FINALIZATION =
     "文件表销毁后文件、管道、对象和堆资源必须全部归零";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_INVALID_DIRECTORY_CONFIGURATION =
+    "目录描述必须拒绝与公开 flags 不一致的内部 OpenFile 能力";
 
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_HEAP_SIZE_BYTES = 512ULL * 1024ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_TABLE_LIMIT = 256ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_SUPERBLOCK_IDENTIFIER = 1ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_MOUNT_CAPACITY = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_FILE_DESCRIPTOR = 3ULL;
@@ -65,15 +71,14 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD[] = {
 }
 
 [[nodiscard]] os::kernel::FileDescriptionStatus
-CreateFileDescription(os::kernel::FileDescriptionManager &manager,
-                      os::kernel::FileSystem &file_system,
-                      const os::kernel::FileSystemHandle &handle,
+CreateFileDescription(os::kernel::FileDescriptionManager &manager, os::kernel::fs::Vfs &vfs,
+                      const os::kernel::fs::OpenFile &open_file,
                       os::kernel::KernelObjectReference &reference) noexcept {
     uint64_t file_status_flags = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
-    if (handle.readable) {
+    if (open_file.readable) {
         file_status_flags |= os::kernel::OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG;
     }
-    if (handle.writable) {
+    if (open_file.writable) {
         file_status_flags |= os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG;
     }
     const os::kernel::FileDescriptionCreateRequest request{
@@ -83,8 +88,8 @@ CreateFileDescription(os::kernel::FileDescriptionManager &manager,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
-        .file_system = &file_system,
-        .file_system_handle = handle,
+        .vfs = &vfs,
+        .open_file = open_file,
     };
     return manager.Create(request, reference);
 }
@@ -102,8 +107,8 @@ CreatePipeDescription(os::kernel::FileDescriptionManager &manager, os::kernel::P
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = &pipe,
-        .file_system = nullptr,
-        .file_system_handle = {},
+        .vfs = nullptr,
+        .open_file = {},
     };
     return manager.Create(request, reference);
 }
@@ -136,9 +141,13 @@ int main() {
         written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD) &&
         file_system.Close(write_handle) == os::kernel::FileSystemStatus::Succeeded;
 
-    os::kernel::FileSystemHandle shared_handle{};
-    os::kernel::FileSystemHandle independent_handle{};
-    const os::kernel::FileSystemOpenOptions read_options{
+    os::kernel::fs::LegacyFileSystem legacy_adapter{};
+    os::kernel::fs::Vfs vfs{};
+    os::kernel::fs::Mount mounts[OS_TEST_FILE_DESCRIPTION_MOUNT_CAPACITY]{};
+    os::kernel::fs::FsContext file_system_context{};
+    os::kernel::fs::OpenFile shared_open_file{};
+    os::kernel::fs::OpenFile independent_open_file{};
+    const os::kernel::fs::OpenOptions read_options{
         .readable = true,
         .writable = false,
         .create = false,
@@ -146,12 +155,17 @@ int main() {
     };
     const bool handles_opened =
         file_prepared &&
-        file_system.Open(OS_TEST_FILE_DESCRIPTION_FILE_PATH,
-                         sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), read_options,
-                         shared_handle) == os::kernel::FileSystemStatus::Succeeded &&
-        file_system.Open(OS_TEST_FILE_DESCRIPTION_FILE_PATH,
-                         sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), read_options,
-                         independent_handle) == os::kernel::FileSystemStatus::Succeeded;
+        legacy_adapter.Initialize(file_system, OS_TEST_FILE_DESCRIPTION_SUPERBLOCK_IDENTIFIER) ==
+            os::kernel::fs::Status::Succeeded &&
+        vfs.Initialize(mounts, OS_TEST_FILE_DESCRIPTION_MOUNT_CAPACITY,
+                       legacy_adapter.GetSuperblock()) == os::kernel::fs::Status::Succeeded &&
+        vfs.InitializeContext(file_system_context) == os::kernel::fs::Status::Succeeded &&
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), read_options,
+                 shared_open_file) == os::kernel::fs::Status::Succeeded &&
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), read_options,
+                 independent_open_file) == os::kernel::fs::Status::Succeeded;
 
     os::kernel::KernelHeap heap{};
     os::kernel::KernelObjectManager object_manager{};
@@ -168,17 +182,40 @@ int main() {
         table.Initialize(heap, object_manager, OS_TEST_FILE_DESCRIPTION_TABLE_LIMIT,
                          OS_TEST_FILE_DESCRIPTION_TABLE_LIMIT) ==
             os::kernel::FileTableStatus::Succeeded;
+    const os::kernel::FileDescriptionCreateRequest invalid_directory_request{
+        .kind = os::kernel::FileDescriptionKind::Directory,
+        .file_status_flags = os::kernel::OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG,
+        .console_input = nullptr,
+        .device_write_operation = nullptr,
+        .device_write_context = nullptr,
+        .pipe = nullptr,
+        .vfs = &vfs,
+        .open_file =
+            os::kernel::fs::OpenFile{
+                .path = file_system_context.root,
+                .offset_bytes = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+                .readable = false,
+                .writable = false,
+                .open = true,
+            },
+    };
+    os::kernel::KernelObjectReference invalid_directory_reference{};
+    test_context.Expect(
+        object_model_initialized &&
+            description_manager.Create(invalid_directory_request, invalid_directory_reference) ==
+                os::kernel::FileDescriptionStatus::InvalidConfiguration,
+        OS_TEST_FILE_DESCRIPTION_INVALID_DIRECTORY_CONFIGURATION);
 
     os::kernel::KernelObjectReference shared_reference{};
     os::kernel::KernelObjectReference independent_reference{};
     const bool descriptions_installed =
         object_model_initialized &&
-        CreateFileDescription(description_manager, file_system, shared_handle, shared_reference) ==
+        CreateFileDescription(description_manager, vfs, shared_open_file, shared_reference) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
         table.InstallExact(shared_reference, OS_TEST_FILE_DESCRIPTION_FILE_DESCRIPTOR,
                            OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE) ==
             os::kernel::FileTableStatus::Succeeded &&
-        CreateFileDescription(description_manager, file_system, independent_handle,
+        CreateFileDescription(description_manager, vfs, independent_open_file,
                               independent_reference) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
         table.InstallExact(
@@ -305,7 +342,8 @@ int main() {
             OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
         heap.Statistics().allocation_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
-        file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded;
+        file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded &&
+        vfs.Validate() == os::kernel::fs::Status::Succeeded;
     test_context.Expect(finalized, OS_TEST_FILE_DESCRIPTION_FINALIZATION);
     return test_context.ExitCode();
 }

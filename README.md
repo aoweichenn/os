@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.4 类型化内核对象与动态描述符` 已完整完成，
-下一阶段是 v1.5 VFS、memfs 与 legacy 文件系统适配。v1.1 已落地动态物理内存、
+当前状态：第二周期 `v1.5 VFS、挂载命名空间与 memfs` 已完整完成，
+下一阶段是 v1.6 rootfs v2 与完整命名空间。v1.1 已落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
@@ -59,10 +59,10 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 字符并提交到 256 字节 FIFO，Ring 3 Shell 通过通用 Try/Wait 系统调用阻塞
 读取。没有 Ready 但仍有 Blocked 时，内核切回永久地址空间执行
 同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
-freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
-sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
-完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；v1.4 完整回归共
-107 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
+freestanding C++20 解析器提供 help、echo、pwd、cd、ls、mkdir、write、cat、
+sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生完整命令序列，来宾自行
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；v1.5 完整回归共
+110 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
 函数和命名空间。
 
 第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
@@ -110,8 +110,19 @@ duplicate、CLOEXEC、共享/独立偏移、soft-limit 失败和最低编号复�
 256 MiB/64 GiB 档使用 minimum 64，hard limit 仅为 64 的兼容档使用
 minimum 8。退出后对象、引用、finalizer 和分块统计全部守恒。
 
-v1.5 将建立 VFS、memfs 与 legacy 文件系统适配。rootfs v2、
-PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
+v1.5 已建立 `Vnode`、`Path`、`Superblock`、`Mount` 和每 Process
+`FsContext`，把 `FileDescription` 的底层载荷迁移为 `Vfs + OpenFile`。
+根文件系统继续由 legacy 适配器读取旧磁盘，`/tmp` 挂载完整 memfs；绝对/
+相对路径、`.`、`..`、根钳制、尾斜杠、挂载进入/退出和真实 `getcwd` 由同一
+逐组件算法处理。路径与名称规格分别为 4096/255 字节；同一契约已在 memfs
+和 legacy-fs 上通过，固定种子目录树模型完成 100000 步逐步对照。Shell
+现在具有真实 `cd`、动态 cwd 提示符，并在一次 functional QEMU 会话中同时
+操作 `/tmp` 和持久根目录。详细证据见
+[v1.5 发布记录](docs/releases/v1.5.md) 与
+[ADR 0032](docs/adr/0032-vfs-mount-namespace-and-memfs.md)。
+
+下一阶段 rootfs v2、PID1/磁盘 exec 继续分版本完成；匿名 VMA、文件页缓存、
+fork/COW 与 Unix I/O
 也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
@@ -368,9 +379,9 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.4 第二周期实现的路线见
+对照当前 v1.1–v1.5 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
-十四个第一周期阶段和一份 v1.1–v1.4 迁移地图；ROM、CPU、RAM、端口 I/O、
+十四个第一周期阶段和一份 v1.1–v1.5 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
 现实 N100 计算模组载板的十页原理图、三张逐引脚学习电路和 QEMU/实机边界见
@@ -382,8 +393,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.4 统计为 134 个目标代码文件、28301 个物理行、25681 个非空非纯
-注释代码行，其中 C++ 23235 行、NASM Intel 汇编 2433 行；测试、工具、书籍、
+当前 v1.5 统计为 140 个目标代码文件、31514 个物理行、28706 个非空非纯
+注释代码行，其中 C++ 26273 行、NASM Intel 汇编 2433 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

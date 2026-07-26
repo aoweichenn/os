@@ -27,7 +27,7 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.4 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+当前 v1.5 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
 实现；v1.2 已实测 Process/Thread 容量，fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
@@ -269,6 +269,26 @@ QEMU 自行异常退出仍视为失败。
   读取 9 字节、写入 8 字节；
 - 256 MiB/64 GiB QEMU 分别要求 hard limit 精确为 256/4096，退出后 active
   对象/引用为零、finalizer 无失败、分块申请/释放相等及三层 validation 为一。
+
+`v1.5` 为路径、挂载和双后端增加四层证据：
+
+- VFS 单元测试覆盖绝对/相对路径、重复分隔符、`.`、`..`、root clamp、
+  尾斜杠、4096/255 精确边界、独立打开偏移、目录枚举、getcwd、挂载进入/
+  退出、挂载表耗尽和人为父链环；
+- 双后端集成测试把同一创建、切换 cwd、文件读写、目录枚举、同步和校验契约
+  分别运行在 memfs 与 legacy-fs 上；legacy 写入后由全新适配器重新挂载读取，
+  memfs Destroy 后 KernelHeap 活动分配必须归零；
+- 固定种子 `0x5646532026001500` 执行 100000 步创建、解析、chdir、父目录、
+  文件 I/O、目录枚举和缺失路径，与独立目录树/字节模型逐步比较；结束时再
+  检查 VFS、memfs 和 heap，形成 100001 项断言；
+- 256 MiB functional QEMU 由真实 Shell 先进入 `/tmp` memfs，以相对路径和
+  `./session/../session/message` 完成操作，再返回 legacy 根目录创建持久文件；
+  VFS READY、mount、两次 validate、Shell `cd/pwd` 次数和资源快照均由宿主
+  协议检查；
+- 文件系统持久化仍使用同一可写磁盘的两个全新 QEMU 进程，并继续破坏
+  superblock 验证非零损坏介质不被自动格式化；
+- 用户非法指令、用户页故障和非法 ELF 三项隔离/拒绝路径继续运行，证明 VFS
+  初始化没有改变故障发生顺序或资源清理边界。
 
 `v0.10` 把共享状态、条件等待和 IPC 生命周期分层验证：
 
@@ -564,6 +584,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_file_description_lifecycle_integration_tests` | 集成 | 真实文件共享/独立偏移、管道最后引用与 finalizer 守恒 |
 | `os_kernel_file_table_capacity_integration_tests` | 集成 | 实际填满 4096 fd/64 分块、耗尽失败原子与完整回收 |
 | `os_kernel_file_table_randomized_tests` | 随机 | 固定种子十万步 open/duplicate/close/limit 参考模型 |
+| `os_kernel_vfs_unit_tests` | 单元 | 路径边界、尾斜杠、mount、getcwd、I/O、容量与循环 |
+| `os_kernel_vfs_backend_contract_integration_tests` | 集成 | memfs/legacy 同契约、旧格式重挂载与 memfs 堆归还 |
+| `os_kernel_vfs_namespace_randomized_tests` | 随机 | 固定种子十万步独立目录树与文件内容模型 |
 | `os_kernel_file_system_format_unit_tests` | 单元 | superblock、inode、目录项显式编码、布局与 CRC32 |
 | `os_kernel_file_system_lifecycle_integration_tests` | 集成 | 格式化、目录、跨块文件、重挂载、截断与语义损坏拒绝 |
 | `os_kernel_file_system_randomized_tests` | 随机 | 128 轮随机 rewrite、重挂载与参考模型逐字节对照 |
@@ -616,8 +639,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 107 项 CTest。v1.4 删除旧固定描述符测试并新增 FileTable 单元、
-FileDescription 生命周期集成、4096 fd 容量集成和十万步随机模型四项；
+当前共 110 项 CTest。v1.5 新增 VFS 单元、memfs/legacy 双后端契约集成和
+十万步命名空间随机模型三项；v1.4 删除旧固定描述符测试并新增 FileTable
+单元、FileDescription 生命周期集成、4096 fd 容量集成和十万步随机模型四项；
 v1.3 的处理器 profile、UserContext、CpuLocal/MSR 布局与十万现场随机测试，
 以及主动 SYSCALL 缺失路径继续保留；
 v1.2 的 Process/Thread 单元、集成和十万步随机测试及
@@ -640,10 +664,10 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 
 成功 QEMU 用例不只检查标记“至少出现一次”。当前路径对 Shell、生产者、消费者
-和一个 worker 的四次 ELF/进程栈身份，十条命令、管道里程碑、地址隔离、四份
+和一个 worker 的四次 ELF/进程栈身份，18 条命令、管道里程碑、地址隔离、四份
 终止结果和单次资源回收执行精确计数；同时解析固定 16 位十六进制统计，要求
 创建/终止为 4、PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、管道写入/读取
-均为 256，控制台提交/读取均为 109 且无丢弃；动态栈 lower/top/upper 各
+均为 256，控制台提交/读取均为 215 且无丢弃；动态栈 lower/top/upper 各
 出现四次，连同启动期资源事务后累计创建/销毁各五次、峰值至少四栈和十六
 映射页、最终活动数为零。资源快照还要求跟踪字段精确为 26、差异掩码与变化
 字段数均为零。

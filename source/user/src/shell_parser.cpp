@@ -16,6 +16,7 @@ constexpr char OS_USER_SHELL_ESCAPE = '\\';
 constexpr char OS_USER_SHELL_HELP_COMMAND[] = "help";
 constexpr char OS_USER_SHELL_ECHO_COMMAND[] = "echo";
 constexpr char OS_USER_SHELL_PWD_COMMAND[] = "pwd";
+constexpr char OS_USER_SHELL_CD_COMMAND[] = "cd";
 constexpr char OS_USER_SHELL_LS_COMMAND[] = "ls";
 constexpr char OS_USER_SHELL_MKDIR_COMMAND[] = "mkdir";
 constexpr char OS_USER_SHELL_WRITE_COMMAND[] = "write";
@@ -172,6 +173,11 @@ ShellCommand ResolveShellCommand(const ShellCommandLine &command_line) noexcept 
                             OS_USER_SHELL_PWD_COMMAND,
                             sizeof(OS_USER_SHELL_PWD_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
         return ShellCommand::PrintWorkingDirectory;
+    }
+    if (ShellArgumentEquals(command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX,
+                            OS_USER_SHELL_CD_COMMAND,
+                            sizeof(OS_USER_SHELL_CD_COMMAND) - OS_USER_SHELL_COUNTER_INCREMENT)) {
+        return ShellCommand::ChangeDirectory;
     }
     if (ShellArgumentEquals(command_line, OS_USER_SHELL_COMMAND_ARGUMENT_INDEX,
                             OS_USER_SHELL_LS_COMMAND,

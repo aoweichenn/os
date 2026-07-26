@@ -392,9 +392,13 @@ limit、type 和 IDT offset、selector、IST、attributes 逐字段解码。固�
 \code{0xD35C71A05EED6405} 再生成 4096 个完整 64 位地址，分别经过 TSS
 descriptor 和 IDT gate 编码解码，共执行 8192 条往返性质断言。
 
-集成审计读取真实 ELF，要求 \code{OsKernelLoadGdtAndTss}、
-\code{OsKernelExceptionDispatch}、\code{OsKernelDispatchException}、
-桩表和向量 0..31 的全部符号存在，同时拒绝任何未解析运行时符号。
+集成审计读取真实 ELF，逐项要求以下入口存在，同时拒绝任何未解析运行时符号：
+\begin{itemize}
+  \item \code{OsKernelLoadGdtAndTss}；
+  \item \code{OsKernelExceptionDispatch}；
+  \item \code{OsKernelDispatchException}；
+  \item 异常桩表以及向量 0..31 的全部符号。
+\end{itemize}
 
 QEMU 则验证纯逻辑无法证明的事实：处理器接受 GDT/TSS/IDT，TR 真正装载，
 INT3 能返回，UD2 和页故障进入正确向量，panic 后不会继续成功路径。v0.5

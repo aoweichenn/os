@@ -43,7 +43,9 @@
 第二周期必须持续保持的历史回归基线；当前动态内存、可回收堆、buddy 与类型
 缓存、KVA、动态内核栈、页表空分支回收、Process/Thread、WaitQueue 和
 扩展现场以及 v1.3 原生入口收口完成后，完整集合为 103 项。
-v1.4 删除旧固定描述符表并新增四层对象/fd 证据后，当前完整集合为 106 项。
+v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习图门禁随后把完整
+集合推进到 107 项；v1.5 再加入 VFS 单元、双后端契约和十万步命名空间模型，
+当前完整集合为 110 项。
 
 ## 第二周期最终目标
 
@@ -361,12 +363,14 @@ limit 参考模型；文件系统/管道集成测试、4096 fd 容量测试和 P
 共享偏移证明共同通过。四 Process 退出后活动对象、FileDescription 和强引用
 均为零，创建等于销毁、finalizer 无失败、分块申请等于释放，ResourceSnapshot
 保持零差异。发布证据见 [v1.4 发布记录](releases/v1.4.md) 与
-[ADR 0031](adr/0031-typed-kernel-object-dynamic-file-table.md)。下一实施
-阶段为 v1.5。
+[ADR 0031](adr/0031-typed-kernel-object-dynamic-file-table.md)。该对象边界
+现已由 v1.5 的 `Vfs + OpenFile` 后端替换完成。
 
 ## 波次 B：命名与程序
 
 ### v1.5 VFS、memfs 与旧格式基础适配
+
+**状态：完成**
 
 **目标**
 
@@ -388,6 +392,24 @@ limit 参考模型；文件系统/管道集成测试、4096 fd 容量测试和 P
 - 同一 VFS 测试在 memfs 与 legacy-fs 基础子集上通过；
 - Shell 不再直接访问具体 inode 或 ATA；
 - 旧磁盘可读取，未知非零磁盘不会被自动格式化。
+
+以上退出条件均已闭环。`Vnode`、`Path`、`Superblock`、`Mount` 和
+`FsContext` 已建立独立于后端的对象边界；每个 Process 保存自己的 root/cwd，
+`FileDescription` 保存 `Vfs + OpenFile`，Shell 不再直接访问旧 inode。
+绝对/相对路径、重复分隔符、`.`、`..`、root clamp、尾部分隔符和挂载进入/
+退出均由同一逐组件算法处理，公共上限为 4096 字节路径和 255 字节名称。
+
+根文件系统继续通过 legacy 适配器读取旧磁盘，`/tmp` 挂载完整 memfs。
+同一基础契约已分别在两个后端通过；固定种子
+`0x5646532026001500` 的独立目录树模型执行 100000 步并逐步一致。functional
+QEMU 由真实 Shell 在 `/tmp` 完成相对路径、cwd、文件和目录操作，再回到
+legacy 根目录完成持久写入；跨实例持久化、损坏拒绝、用户异常隔离和非法
+ELF 拒绝继续通过。memfs 长期资源由 VFS 精确登记，不会被误判为 Process
+泄漏，未登记的 frame、KVA、heap、对象或 fd 泄漏仍会使资源快照失败。
+
+发布证据见 [v1.5 发布记录](releases/v1.5.md) 与
+[ADR 0032](adr/0032-vfs-mount-namespace-and-memfs.md)。下一实施阶段为
+v1.6 rootfs v2 与完整命名空间。
 
 ### v1.6 rootfs v2 与完整命名空间
 

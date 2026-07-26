@@ -639,28 +639,120 @@ FileSystemStatus FileSystem::AppendDirectoryEntry(const uint64_t directory_inode
     return this->WriteInode(directory_inode_number, directory);
 }
 
-FileSystemStatus FileSystem::CreateNode(const PathComponent *components,
-                                        const uint64_t component_count,
-                                        const FileSystemNodeType type,
-                                        uint64_t &inode_number) noexcept {
-    if (components == nullptr || component_count == OS_KERNEL_FILE_SYSTEM_ROOT_COMPONENT_COUNT ||
-        (type != FileSystemNodeType::RegularFile && type != FileSystemNodeType::Directory)) {
-        return FileSystemStatus::InvalidArgument;
+FileSystemStatus FileSystem::ReadDirectoryEntryAt(const FileSystemInode &directory,
+                                                  const uint64_t entry_index,
+                                                  FileSystemDirectoryEntry &entry) noexcept {
+    entry = FileSystemDirectoryEntry{};
+    if (directory.type != FileSystemNodeType::Directory) {
+        return FileSystemStatus::NotDirectory;
     }
-    uint64_t parent_inode_number = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE;
-    FileSystemInode parent_inode{};
-    FileSystemStatus status =
-        this->ResolveParent(components, component_count, parent_inode_number, parent_inode);
+    if ((directory.size_bytes % OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES) !=
+        OS_KERNEL_FILE_SYSTEM_ZERO_VALUE) {
+        return FileSystemStatus::Corrupt;
+    }
+    const uint64_t entry_count =
+        directory.size_bytes / OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES;
+    if (entry_index >= entry_count) {
+        return FileSystemStatus::NotFound;
+    }
+    const uint64_t block_index = entry_index / OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRIES_PER_BLOCK;
+    if (block_index >= directory.allocated_block_count) {
+        return FileSystemStatus::Corrupt;
+    }
+    uint8_t block[OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES]{};
+    FileSystemStatus status = this->ReadRelativeBlock(directory.direct_blocks[block_index], block);
     if (status != FileSystemStatus::Succeeded) {
         return status;
+    }
+    const uint64_t entry_offset =
+        (entry_index % OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRIES_PER_BLOCK) *
+        OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES;
+    return FileSystemFormatSucceeded(DecodeFileSystemDirectoryEntry(
+               block + entry_offset, OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES, entry))
+               ? FileSystemStatus::Succeeded
+               : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus FileSystem::FindParentNode(const uint64_t child_inode_number,
+                                            uint64_t &parent_inode_number,
+                                            FileSystemInode &parent_inode,
+                                            PathComponent &child_name) noexcept {
+    parent_inode_number = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE;
+    parent_inode = FileSystemInode{};
+    child_name = PathComponent{};
+    if (child_inode_number == OS_KERNEL_FILE_SYSTEM_ROOT_INODE_NUMBER) {
+        parent_inode_number = OS_KERNEL_FILE_SYSTEM_ROOT_INODE_NUMBER;
+        return this->ReadInode(parent_inode_number, parent_inode);
+    }
+    if (child_inode_number >= OS_KERNEL_FILE_SYSTEM_INODE_COUNT) {
+        return FileSystemStatus::InvalidArgument;
+    }
+
+    uint8_t inode_bitmap[OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES]{};
+    FileSystemStatus status = this->ReadBitmap(true, inode_bitmap);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    if (!this->BitmapBitIsSet(inode_bitmap, child_inode_number)) {
+        return FileSystemStatus::NotFound;
+    }
+
+    for (uint64_t candidate_inode_number = OS_KERNEL_FILE_SYSTEM_ROOT_INODE_NUMBER;
+         candidate_inode_number < OS_KERNEL_FILE_SYSTEM_INODE_COUNT; ++candidate_inode_number) {
+        if (!this->BitmapBitIsSet(inode_bitmap, candidate_inode_number)) {
+            continue;
+        }
+        FileSystemInode candidate_inode{};
+        status = this->ReadInode(candidate_inode_number, candidate_inode);
+        if (status != FileSystemStatus::Succeeded) {
+            return status;
+        }
+        if (candidate_inode.type != FileSystemNodeType::Directory) {
+            continue;
+        }
+        if ((candidate_inode.size_bytes % OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES) !=
+            OS_KERNEL_FILE_SYSTEM_ZERO_VALUE) {
+            return FileSystemStatus::Corrupt;
+        }
+        const uint64_t entry_count =
+            candidate_inode.size_bytes / OS_KERNEL_FILE_SYSTEM_DIRECTORY_ENTRY_SIZE_BYTES;
+        for (uint64_t entry_index = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE; entry_index < entry_count;
+             ++entry_index) {
+            FileSystemDirectoryEntry entry{};
+            status = this->ReadDirectoryEntryAt(candidate_inode, entry_index, entry);
+            if (status != FileSystemStatus::Succeeded) {
+                return status;
+            }
+            if (entry.inode_number != child_inode_number) {
+                continue;
+            }
+            parent_inode_number = candidate_inode_number;
+            parent_inode = candidate_inode;
+            child_name.length_bytes = entry.name_length_bytes;
+            CopyBytes(child_name.bytes, entry.name, entry.name_length_bytes);
+            return FileSystemStatus::Succeeded;
+        }
+    }
+    return FileSystemStatus::NotFound;
+}
+
+FileSystemStatus FileSystem::CreateChildNode(const uint64_t parent_inode_number,
+                                             FileSystemInode &parent_inode,
+                                             const PathComponent &name,
+                                             const FileSystemNodeType type,
+                                             uint64_t &inode_number) noexcept {
+    inode_number = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE;
+    if (parent_inode_number >= OS_KERNEL_FILE_SYSTEM_INODE_COUNT ||
+        name.length_bytes == OS_KERNEL_FILE_SYSTEM_ZERO_VALUE ||
+        name.length_bytes > OS_KERNEL_FILE_SYSTEM_MAXIMUM_NAME_LENGTH_BYTES ||
+        (type != FileSystemNodeType::RegularFile && type != FileSystemNodeType::Directory)) {
+        return FileSystemStatus::InvalidArgument;
     }
     if (parent_inode.type != FileSystemNodeType::Directory) {
         return FileSystemStatus::NotDirectory;
     }
     DirectoryEntryLocation existing{};
-    status = this->FindDirectoryEntry(
-        parent_inode, components[component_count - OS_KERNEL_FILE_SYSTEM_COUNTER_INCREMENT],
-        existing);
+    FileSystemStatus status = this->FindDirectoryEntry(parent_inode, name, existing);
     if (status == FileSystemStatus::Succeeded) {
         return FileSystemStatus::AlreadyExists;
     }
@@ -733,8 +825,6 @@ FileSystemStatus FileSystem::CreateNode(const PathComponent *components,
         return status;
     }
 
-    const PathComponent &name =
-        components[component_count - OS_KERNEL_FILE_SYSTEM_COUNTER_INCREMENT];
     FileSystemDirectoryEntry entry{
         .inode_number = inode_number,
         .type = type,
@@ -747,6 +837,26 @@ FileSystemStatus FileSystem::CreateNode(const PathComponent *components,
         return status;
     }
     return this->CommitTransaction();
+}
+
+FileSystemStatus FileSystem::CreateNode(const PathComponent *components,
+                                        const uint64_t component_count,
+                                        const FileSystemNodeType type,
+                                        uint64_t &inode_number) noexcept {
+    if (components == nullptr || component_count == OS_KERNEL_FILE_SYSTEM_ROOT_COMPONENT_COUNT ||
+        (type != FileSystemNodeType::RegularFile && type != FileSystemNodeType::Directory)) {
+        return FileSystemStatus::InvalidArgument;
+    }
+    uint64_t parent_inode_number = OS_KERNEL_FILE_SYSTEM_ZERO_VALUE;
+    FileSystemInode parent_inode{};
+    FileSystemStatus status =
+        this->ResolveParent(components, component_count, parent_inode_number, parent_inode);
+    if (status != FileSystemStatus::Succeeded) {
+        return status;
+    }
+    const PathComponent &name =
+        components[component_count - OS_KERNEL_FILE_SYSTEM_COUNTER_INCREMENT];
+    return this->CreateChildNode(parent_inode_number, parent_inode, name, type, inode_number);
 }
 
 FileSystemStatus FileSystem::CreateDirectory(const uint8_t *path,

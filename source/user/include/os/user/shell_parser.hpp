@@ -24,6 +24,7 @@ enum class ShellCommand : uint64_t {
     Help,
     Echo,
     PrintWorkingDirectory,
+    ChangeDirectory,
     ListDirectory,
     CreateDirectory,
     WriteFile,

@@ -1103,3 +1103,110 @@ capacity 测试会实际填满 4096 项。失败返回后，destination 必须�
 对应宿主测试；若宿主通过而 QEMU 停在某一日志，检查是否在持 FileTable、
 KernelObject 或 FileDescription operation lock 时调用串口、阻塞或 finalizer。
 高频 acquire/release 禁止逐项打印，避免日志本身制造超时。
+
+## v1.5：VFS、挂载命名空间与 memfs
+
+### `VFS_STATUS` 或 `VFS_VALID` 缺失
+
+内核启动时先建立旧磁盘根文件系统，再把 memfs 挂载到 `/tmp`。串口中应看到
+带时间戳的 VFS 初始化、根后端、`/tmp` 挂载和验证摘要；不会逐路径、逐字节
+打印高频日志。若缺少完成标记，按以下顺序定位：
+
+1. 检查旧磁盘后端是否成功打开并验证根目录；
+2. 检查 `/tmp` 挂载点是否已经存在且类型为目录；
+3. 检查 memfs 根 vnode、父引用和资源计数；
+4. 检查挂载表中 root、mount point 与 mounted root 的三元关系；
+5. 最后检查 `Vfs::Validate` 报告的首个失败状态。
+
+启动阶段不会在旧磁盘元数据损坏时自动格式化。自动格式化会把“读坏盘失败”
+变成破坏性写入，并掩盖持久化回归；测试应显式制作新镜像或注入预期故障。
+
+### `/file/` 被当成普通文件打开
+
+路径尾部斜杠是一项类型约束，不是可随意删除的字符：
+
+```text
+/directory/   允许，最终 vnode 必须是目录
+/file/        NotDirectory
+/missing/     即使带 create，也不能创建普通文件
+```
+
+若 `/file/` 成功，检查规范化阶段是否在记录“请求目录”之前吞掉了尾部斜杠；
+若 `/missing/` 创建了文件，检查 `Open` 是否在创建候选节点前验证了该约束。
+回归命令：
+
+```bash
+ctest --test-dir build/developer \
+  -R 'os_kernel_vfs_(unit|backend_contract|namespace_randomized)' \
+  --output-on-failure
+```
+
+### `..` 在挂载根无法离开后端
+
+挂载根的父目录不是 memfs 内部根节点的普通父引用。解析
+`/tmp/..` 时，VFS 必须先识别“当前 vnode 是 mounted root”，跳回宿主挂载点，
+再对宿主挂载点执行一次 parent：
+
+```text
+legacy-root/tmp -> mount transition -> memfs-root
+memfs-root/..   -> leave mount       -> legacy-root
+```
+
+若结果仍在 `/tmp`，检查挂载表反向查找；若越过 `/`，检查 root clamp。当前
+v1.5 在启动完成后冻结挂载拓扑，因此解析过程不需要处理并发卸载；不要把这个
+边界误写成已经支持动态 `mount`/`umount`。
+
+### 相对路径落到错误进程的目录
+
+cwd 属于 Process 的 `FsContext`，不是 VFS 全局变量，也不是 Shell 本地字符串。
+先比较两个 Process 的 cwd vnode，再检查：
+
+- 系统调用是否从当前 Process 取得 `FsContext`；
+- `chdir` 是否只在最终 vnode 为目录后提交新 cwd；
+- 失败的 `chdir` 是否保持原 cwd；
+- Shell 提示符是否来自 `getcwd`，而不是自行拼接用户输入；
+- Process 销毁时是否释放其 cwd 引用。
+
+`getcwd` 通过 vnode 的 parent/name 关系逆向重建路径；输出缓冲不足应返回
+`Range`，且不得写出半条路径或泄漏未初始化 padding。
+
+### memfs 写失败后内容或资源发生变化
+
+扩容写是一个小事务：先计算新长度与几何容量，再分配候选缓冲并复制旧内容，
+最后一次性替换 vnode 的 data/capacity。分配失败前不得修改 offset、size、
+旧缓冲或资源计数。重点检查：
+
+```text
+旧 data + 旧 capacity + 旧 size
+  -> 分配候选
+  -> 复制旧内容并填零间隙
+  -> 提交 vnode 字段
+  -> 释放旧缓冲并更新 ResourceUsage
+```
+
+长度小于 64 字节时仍必须保证容量可以增长，不能因为整数除法或对齐把候选容量
+算成零。使用后端契约测试验证失败原子性，再用 100000 步随机命名空间模型检查
+创建、截断、读写和目录遍历组合。
+
+### Process 退出后报告 KernelHeap 泄漏
+
+挂载的 memfs 是内核全局持久资源，不随某个 Process 退出。生命周期快照比较
+时，应从 KernelHeap 总量中精确扣除 `memfs::ResourceUsage` 所拥有的节点、
+名称和数据缓冲，而不是放宽所有堆泄漏检查。若仍有差异：
+
+1. 先运行 `Vfs::Validate` 与 memfs 后端验证；
+2. 比较 memfs 节点数（含内联名称）、目录数、文件数和数据容量；
+3. 再检查 FileDescription、KernelObject 和 FileTable 是否归零；
+4. 确认失败 open/create 没有遗留候选节点；
+5. 确认关闭文件不会错误销毁仍由命名空间拥有的 vnode。
+
+禁止用固定常量“减掉一块内存”；资源折扣必须来自后端当前精确统计，否则真实
+泄漏会随文件数量变化而被掩盖。
+
+### 100000 步 VFS 随机测试像是卡住
+
+随机模型具有固定种子、固定 100000 步和 CTest 外层超时，正常应在秒级完成。
+先单独执行 `os_kernel_vfs_namespace_randomized`；若宿主测试超时，记录最后一步
+操作和规范化路径，检查父链或挂载反向遍历是否成环。若只有 QEMU 超时，检查
+是否新增了逐 lookup、逐目录项或逐字节串口日志。工具层必须在超时后终止并
+回收 QEMU，不允许留下后台模拟器长期占用 CPU。

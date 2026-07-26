@@ -6,6 +6,7 @@
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/device/serial_port.hpp"
+#include "os/kernel/fs/legacy_file_system.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/sync/spin_lock.hpp"
 
@@ -140,6 +141,7 @@ struct ProcessRuntimeProcess final {
     UserAddressSpace address_space;
     ProcessExecutionResult result;
     FileTable file_table;
+    fs::FsContext file_system_context;
     bool active;
 };
 
@@ -163,7 +165,7 @@ WaitQueue pipe_writable_wait_queue;
 WaitQueue descriptor_readable_wait_queue;
 WaitQueue descriptor_writable_wait_queue;
 constinit IrqSaveSpinLock scheduler_lock{DisableInterrupts, RestoreInterrupts};
-FileSystem *process_file_system;
+fs::Vfs *process_vfs;
 ProcessRuntimeLimits process_runtime_limits;
 PhysicalFrameAllocatorStatistics frames_before_processes;
 PhysicalFrameAllocatorStatistics frames_after_processes;
@@ -219,11 +221,27 @@ SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
     };
 }
 
+[[nodiscard]] bool DiscountPersistentVfsResources(
+    ResourceSnapshot &snapshot, const fs::ResourceUsage &usage) noexcept {
+    if (snapshot.heap_consumed_bytes < usage.heap_consumed_bytes ||
+        snapshot.heap_active_requested_bytes < usage.heap_active_requested_bytes ||
+        snapshot.heap_allocation_count < usage.heap_allocation_count ||
+        snapshot.vnode_count < usage.vnode_count) {
+        return false;
+    }
+    snapshot.heap_consumed_bytes -= usage.heap_consumed_bytes;
+    snapshot.heap_active_requested_bytes -= usage.heap_active_requested_bytes;
+    snapshot.heap_allocation_count -= usage.heap_allocation_count;
+    snapshot.vnode_count -= usage.vnode_count;
+    return ValidateResourceSnapshot(snapshot) == ResourceSnapshotStatus::Succeeded;
+}
+
 void ResetRuntimeStorage() noexcept {
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          process_index < OS_KERNEL_PROCESS_CAPACITY_LIMIT; ++process_index) {
         runtime_processes[process_index].address_space = UserAddressSpace{};
         runtime_processes[process_index].result = ProcessExecutionResult{};
+        runtime_processes[process_index].file_system_context = fs::FsContext{};
         runtime_processes[process_index].active = false;
     }
     for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -404,8 +422,8 @@ void WakeRequiredThreads(const WaitCondition wait_condition,
         .device_write_operation = console_output ? WriteConsoleDevice : nullptr,
         .device_write_context = nullptr,
         .pipe = pipe_endpoint ? &process_pipe : nullptr,
-        .file_system = nullptr,
-        .file_system_handle = {},
+        .vfs = nullptr,
+        .open_file = {},
     };
     KernelObjectReference reference{};
     return file_description_manager.Create(request, reference) ==
@@ -873,19 +891,30 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     pipe_writer_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_end_of_file_observation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_broken_observation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    process_file_system = nullptr;
+    process_vfs = nullptr;
     process_runtime_initialized = true;
     return ProcessRuntimeStatus::Succeeded;
 }
 
-ProcessRuntimeStatus AttachProcessFileSystem(FileSystem &file_system) noexcept {
+ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept {
     if (!process_runtime_initialized) {
         return ProcessRuntimeStatus::NotInitialized;
     }
     if (process_scheduling_active) {
         return ProcessRuntimeStatus::AlreadyActive;
     }
-    process_file_system = &file_system;
+    if (vfs.Validate() != fs::Status::Succeeded) {
+        return ProcessRuntimeStatus::FileSystemFailure;
+    }
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < process_runtime_limits.process_capacity; ++process_index) {
+        ProcessRuntimeProcess &process = runtime_processes[process_index];
+        if (process.active &&
+            vfs.InitializeContext(process.file_system_context) != fs::Status::Succeeded) {
+            return ProcessRuntimeStatus::FileSystemFailure;
+        }
+    }
+    process_vfs = &vfs;
     return ProcessRuntimeStatus::Succeeded;
 }
 
@@ -1018,7 +1047,13 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
         .console_bytes_read = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
         .console_bytes_written = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
     };
-    if (!InitializeProcessFileTable(runtime_process, selection)) {
+    runtime_process.file_system_context = fs::FsContext{};
+    const bool file_system_context_initialized =
+        process_vfs == nullptr ||
+        process_vfs->InitializeContext(runtime_process.file_system_context) ==
+            fs::Status::Succeeded;
+    if (!file_system_context_initialized ||
+        !InitializeProcessFileTable(runtime_process, selection)) {
         interrupts_were_enabled = scheduler_lock.Lock();
         const ThreadSchedulerStatus discard_thread_status =
             thread_scheduler.DiscardReadyThread(thread_index);
@@ -1034,7 +1069,9 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
         }
         runtime_process.address_space = UserAddressSpace{};
         runtime_process.result = ProcessExecutionResult{};
-        return ProcessRuntimeStatus::DescriptorTableFailure;
+        runtime_process.file_system_context = fs::FsContext{};
+        return file_system_context_initialized ? ProcessRuntimeStatus::DescriptorTableFailure
+                                               : ProcessRuntimeStatus::FileSystemFailure;
     }
     runtime_process.active = true;
     runtime_threads[thread_index].saved_frame = saved_frame;
@@ -1110,17 +1147,25 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         return ProcessRuntimeStatus::KernelStackFailure;
     }
     const ThreadSchedulerStatistics final_scheduler_statistics = thread_scheduler.Statistics();
+    fs::ResourceUsage vfs_resource_usage{};
+    if (process_vfs == nullptr ||
+        process_vfs->ReadResourceUsage(vfs_resource_usage) != fs::Status::Succeeded) {
+        RestoreInterrupts(interrupts_were_enabled);
+        return ProcessRuntimeStatus::FileSystemFailure;
+    }
     const ResourceSnapshotSupplementalCounts supplemental_counts{
         .process_count = final_scheduler_statistics.owned_process_count,
         .thread_count = final_scheduler_statistics.owned_thread_count,
         .file_description_count = kernel_object_manager.Statistics().active_file_description_count,
-        .vnode_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .vnode_count = vfs_resource_usage.vnode_count,
         .cache_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
         .block_request_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
     };
     if (thread_scheduler.Validate() != ThreadSchedulerStatus::Succeeded ||
         GetKernelResourceSnapshot(supplemental_counts, resource_snapshot_after_processes) !=
             ResourceSnapshotStatus::Succeeded ||
+        !DiscountPersistentVfsResources(resource_snapshot_after_processes,
+                                        vfs_resource_usage) ||
         CompareResourceSnapshots(resource_snapshot_before_processes,
                                  resource_snapshot_after_processes, resource_snapshot_difference) !=
             ResourceSnapshotStatus::Succeeded ||
@@ -1268,17 +1313,18 @@ PipeStatus CloseCurrentProcessPipeWriter() noexcept {
 }
 
 FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path_length_bytes,
-                                        const FileSystemOpenOptions &options,
+                                        const fs::OpenOptions &options,
                                         uint64_t &file_descriptor) noexcept {
     file_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    FileSystemHandle handle{};
-    const FileSystemStatus status =
-        process_file_system->Open(path, path_length_bytes, options, handle);
-    if (status != FileSystemStatus::Succeeded) {
-        return status;
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    fs::OpenFile open_file{};
+    const fs::Status status =
+        process_vfs->Open(process.file_system_context, path, path_length_bytes, options, open_file);
+    if (status != fs::Status::Succeeded) {
+        return fs::ToFileSystemStatus(status);
     }
     const uint64_t file_status_flags =
         (options.readable ? OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG
@@ -1292,17 +1338,17 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
-        .file_system = process_file_system,
-        .file_system_handle = handle,
+        .vfs = process_vfs,
+        .open_file = open_file,
     };
     KernelObjectReference reference{};
     if (file_description_manager.Create(request, reference) != FileDescriptionStatus::Succeeded) {
-        if (process_file_system->Close(handle) != FileSystemStatus::Succeeded) {
+        if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
             HaltProcessor();
         }
         return FileSystemStatus::DataCapacityExhausted;
     }
-    const FileTableStatus install_status = CurrentRuntimeProcess().file_table.Install(
+    const FileTableStatus install_status = process.file_table.Install(
         reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
         OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, file_descriptor);
     return install_status == FileTableStatus::Succeeded ? FileSystemStatus::Succeeded
@@ -1313,7 +1359,7 @@ FileSystemStatus ReadCurrentProcessFile(const uint64_t file_descriptor, uint8_t 
                                         const uint64_t capacity_bytes,
                                         uint64_t &read_bytes) noexcept {
     read_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
     KernelObjectReference reference{};
@@ -1341,7 +1387,7 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
                                          const uint64_t length_bytes,
                                          uint64_t &written_bytes) noexcept {
     written_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
     KernelObjectReference reference{};
@@ -1366,7 +1412,7 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
 }
 
 FileSystemStatus CloseCurrentProcessFile(const uint64_t file_descriptor) noexcept {
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
@@ -1388,17 +1434,41 @@ FileSystemStatus CloseCurrentProcessFile(const uint64_t file_descriptor) noexcep
 
 FileSystemStatus CreateCurrentProcessDirectory(const uint8_t *path,
                                                const uint64_t path_length_bytes) noexcept {
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    return process_file_system->CreateDirectory(path, path_length_bytes);
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(process_vfs->CreateDirectory(
+        process.file_system_context, path, path_length_bytes));
 }
 
 FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    return process_file_system->Sync();
+    return fs::ToFileSystemStatus(process_vfs->Sync());
+}
+
+FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
+                                               const uint64_t path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(process_vfs->ChangeDirectory(
+        process.file_system_context, path, path_length_bytes));
+}
+
+FileSystemStatus GetCurrentProcessWorkingDirectory(uint8_t *const destination,
+                                                   const uint64_t capacity_bytes,
+                                                   uint64_t &path_length_bytes) noexcept {
+    path_length_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(process_vfs->GetWorkingDirectory(
+        process.file_system_context, destination, capacity_bytes, path_length_bytes));
 }
 
 ProcessIoStatus TryReadCurrentProcessDescriptor(const uint64_t descriptor,
@@ -1554,14 +1624,15 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
                                              const uint64_t path_length_bytes,
                                              uint64_t &file_descriptor) noexcept {
     file_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    FileSystemHandle handle{};
-    const FileSystemStatus status =
-        process_file_system->OpenDirectory(path, path_length_bytes, handle);
-    if (status != FileSystemStatus::Succeeded) {
-        return status;
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    fs::OpenFile open_file{};
+    const fs::Status status = process_vfs->OpenDirectory(
+        process.file_system_context, path, path_length_bytes, open_file);
+    if (status != fs::Status::Succeeded) {
+        return fs::ToFileSystemStatus(status);
     }
     const FileDescriptionCreateRequest request{
         .kind = FileDescriptionKind::Directory,
@@ -1570,17 +1641,17 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
-        .file_system = process_file_system,
-        .file_system_handle = handle,
+        .vfs = process_vfs,
+        .open_file = open_file,
     };
     KernelObjectReference reference{};
     if (file_description_manager.Create(request, reference) != FileDescriptionStatus::Succeeded) {
-        if (process_file_system->Close(handle) != FileSystemStatus::Succeeded) {
+        if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
             HaltProcessor();
         }
         return FileSystemStatus::DataCapacityExhausted;
     }
-    return CurrentRuntimeProcess().file_table.Install(
+    return process.file_table.Install(
                reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, file_descriptor) == FileTableStatus::Succeeded
                ? FileSystemStatus::Succeeded
@@ -1588,11 +1659,11 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
 }
 
 FileSystemStatus ReadCurrentProcessDirectory(const uint64_t file_descriptor,
-                                             FileSystemDirectoryEntry &entry,
+                                             fs::DirectoryEntry &entry,
                                              bool &end_of_directory) noexcept {
-    entry = FileSystemDirectoryEntry{};
+    entry = fs::DirectoryEntry{};
     end_of_directory = false;
-    if (!IsProcessSchedulingActive() || process_file_system == nullptr) {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::InvalidHandle;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();

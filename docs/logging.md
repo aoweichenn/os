@@ -702,3 +702,70 @@ installation 和 close 是有意义的容量/工作量证据，但不要求在�
 QEMU 验收器按日志顺序检查这些标记，并根据内存配置要求 hard limit 精确为
 64、256 或 4096。宿主到达时间仍由 runner 添加 `[QEMU][T+...ms]`，来宾
 计时仍以 PIT `MONOTONIC_MILLISECONDS` 为准；对象统计不伪装成时间戳。
+
+## v1.5 VFS、挂载与 memfs 日志
+
+VFS 初始化在用户调度前只输出一次阶段事实：
+
+```text
+[OS][KERNEL] VFS_READY
+[OS][KERNEL] MEMFS_MOUNTED=/tmp
+[OS][KERNEL] VFS_MAX_PATH_BYTES=0x0000000000001000
+[OS][KERNEL] VFS_MAX_NAME_BYTES=0x00000000000000FF
+[OS][KERNEL] VFS_VALID
+```
+
+其中 `VFS_READY` 表示 legacy root、VFS 根 Mount 和后端操作表已经初始化；
+`MEMFS_MOUNTED` 表示 `/tmp` 已经真实解析为挂载点并接入子 Superblock；
+`VFS_VALID` 只有在 mount 父链、Superblock 与两个后端一致性检查全部通过后
+输出。任一步失败只输出 `VFS_STATUS=<enum>` 后停机，不能继续进入用户态。
+
+初始化完成和全部 Process 退出后各输出一次汇总：
+
+```text
+[OS][KERNEL] VFS_MOUNTS=0x...
+[OS][KERNEL] VFS_PATH_RESOLUTIONS=0x...
+[OS][KERNEL] VFS_FAILED_PATH_RESOLUTIONS=0x...
+[OS][KERNEL] VFS_MOUNT_TRANSITIONS=0x...
+[OS][KERNEL] MEMFS_ACTIVE_NODES=0x...
+[OS][KERNEL] MEMFS_DATA_CAPACITY_BYTES=0x...
+```
+
+path resolutions 和 failed resolutions 是累计工作量与失败分支证据，不要求
+不同调度时序下具有相同常数；mount count、最大规格和成功阶段 marker 则按
+协议精确检查。结束阶段在 `Vfs::Sync` 和第二次 `Vfs::Validate` 之后才输出
+最终 `VFS_VALID`。
+
+Shell 为每条已识别命令保留一个一次性 marker。v1.5 新增：
+
+```text
+[OS][USER][SHELL] COMMAND=CD
+```
+
+functional 输入要求该标记精确出现两次，`PWD` 精确出现三次；mkdir、write、
+cat、ls 各出现两次，分别覆盖 memfs 与 legacy-fs。提示符中的 cwd 是用户
+可见文本，不作为解析器 oracle；真正验收同时检查命令结果和后续路径操作。
+
+不得在以下热路径逐项打印：
+
+- 每个路径组件；
+- 每次 vnode lookup 或 parent；
+- 每次 mount 数组扫描；
+- 每个 memfs 节点分配；
+- 每次 OpenFile offset 推进。
+
+这些次数由聚合统计和宿主模型覆盖。逐组件串口日志会显著改变系统调用被 PIT
+打断的时序，也可能让 4096 字节路径制造数千行输出。需要调试某个失败时，应
+在宿主单元测试中缩小种子/步骤，或临时启用有界诊断后再移除，不能把无界
+trace 留在默认镜像。
+
+时间仍采用双坐标：
+
+- 来宾 `TIMER_TICKS` 与 `MONOTONIC_MILLISECONDS` 表示 PIT 驱动的目标时间；
+- 宿主 QEMU 捕获器为每条串口行加 `[QEMU][T+...ms]`，表示从当前 QEMU
+  进程启动开始的墙钟相对时间。
+
+两者不能混为一谈。TCG 宿主负载会改变墙钟耗时，来宾 tick 又会受中断开放
+窗口影响；日志保留两个来源才能区分“来宾没有推进”和“模拟器推进较慢”。
+每个 QEMU 用例同时具有内部里程碑截止与外层 CTest 截止，超时后由 Python
+回收进程和临时 socket，不允许留下永久后台终端。

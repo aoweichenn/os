@@ -6,6 +6,10 @@
 
 #include <stdint.h>
 
+namespace os::kernel::fs {
+class LegacyFileSystem;
+}
+
 namespace os::kernel {
 
 struct FileSystemOpenOptions final {
@@ -45,6 +49,10 @@ enum class FileSystemStatus : uint64_t {
     Corrupt,
     IncompleteTransaction,
     DeviceFailure,
+    ReadOnly,
+    MountCapacityExhausted,
+    LoopDetected,
+    Unsupported,
 };
 
 struct FileSystemStatistics final {
@@ -85,6 +93,8 @@ class FileSystem final {
     [[nodiscard]] FileSystemStatistics Statistics() const noexcept;
 
   private:
+    friend class fs::LegacyFileSystem;
+
     struct PathComponent final {
         uint8_t bytes[OS_KERNEL_FILE_SYSTEM_MAXIMUM_NAME_LENGTH_BYTES];
         uint64_t length_bytes;
@@ -134,6 +144,16 @@ class FileSystem final {
     [[nodiscard]] FileSystemStatus
     AppendDirectoryEntry(uint64_t directory_inode_number, FileSystemInode &directory,
                          const FileSystemDirectoryEntry &entry) noexcept;
+    [[nodiscard]] FileSystemStatus
+    ReadDirectoryEntryAt(const FileSystemInode &directory, uint64_t entry_index,
+                         FileSystemDirectoryEntry &entry) noexcept;
+    [[nodiscard]] FileSystemStatus
+    FindParentNode(uint64_t child_inode_number, uint64_t &parent_inode_number,
+                   FileSystemInode &parent_inode, PathComponent &child_name) noexcept;
+    [[nodiscard]] FileSystemStatus
+    CreateChildNode(uint64_t parent_inode_number, FileSystemInode &parent_inode,
+                    const PathComponent &name, FileSystemNodeType type,
+                    uint64_t &inode_number) noexcept;
     [[nodiscard]] FileSystemStatus CreateNode(const PathComponent *components,
                                               uint64_t component_count, FileSystemNodeType type,
                                               uint64_t &inode_number) noexcept;

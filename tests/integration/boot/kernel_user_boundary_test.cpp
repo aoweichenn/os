@@ -27,6 +27,11 @@ constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR = 0x80ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER = 1ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER = 2ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER = 3ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_CHANGE_DIRECTORY_NUMBER = 29ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_GET_WORKING_DIRECTORY_NUMBER = 30ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES = 4096ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES = 255ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 
 }
@@ -85,7 +90,19 @@ int main() {
                             static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess) ==
                                 OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER &&
                             static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER,
+                                OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER &&
+                            static_cast<uint64_t>(
+                                os::abi::SystemCallNumber::ChangeDirectory) ==
+                                OS_TEST_USER_BOUNDARY_EXPECTED_CHANGE_DIRECTORY_NUMBER &&
+                            static_cast<uint64_t>(
+                                os::abi::SystemCallNumber::GetWorkingDirectory) ==
+                                OS_TEST_USER_BOUNDARY_EXPECTED_GET_WORKING_DIRECTORY_NUMBER &&
+                            os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES ==
+                                OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES &&
+                            os::abi::OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES ==
+                                OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES &&
+                            sizeof(os::abi::DirectoryEntry) ==
+                                OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES,
                         OS_TEST_USER_BOUNDARY_ABI_MESSAGE);
     return test_context.ExitCode();
 }

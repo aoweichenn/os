@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/kernel/fs/file_system.hpp"
+#include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/io/console_input.hpp"
 #include "os/kernel/ipc/pipe.hpp"
 #include "os/kernel/object/kernel_object.hpp"
@@ -54,8 +55,8 @@ struct FileDescriptionCreateRequest final {
     FileDescriptionDeviceWriteOperation device_write_operation;
     void *device_write_context;
     Pipe *pipe;
-    FileSystem *file_system;
-    FileSystemHandle file_system_handle;
+    fs::Vfs *vfs;
+    fs::OpenFile open_file;
 };
 
 struct FileDescriptionSnapshot final {
@@ -100,7 +101,7 @@ class FileDescriptionManager final {
                                                  FileSystemStatus &file_system_status,
                                                  PipeStatus &pipe_status) noexcept;
     [[nodiscard]] FileDescriptionStatus
-    ReadDirectory(const KernelObjectReference &reference, FileSystemDirectoryEntry &entry,
+    ReadDirectory(const KernelObjectReference &reference, fs::DirectoryEntry &entry,
                   bool &end_of_directory, FileSystemStatus &file_system_status) noexcept;
     [[nodiscard]] FileDescriptionStatus ReadCanProgress(const KernelObjectReference &reference,
                                                         bool &can_progress) noexcept;

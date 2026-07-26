@@ -9,12 +9,33 @@
 \definecolor{BookRule}{HTML}{CCD1D1}
 
 \defaultfontfeatures{Ligatures=TeX}
-\setmainfont{Maple Mono NF CN}[Ligatures=NoCommon]
-\setsansfont{Maple Mono NF CN}[Ligatures=NoCommon]
-\setmonofont{Maple Mono NF CN}[Ligatures=NoCommon]
-\setCJKmainfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-\setCJKsansfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-\setCJKmonofont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+% Maple Mono 新旧版本使用过不同的字体族名称。优先使用当前版本，
+% 同时兼容已有构建机上的 NL 版本；最末级使用 TeX Live 自带字体，
+% 避免仅因可选字体未安装而中断整本书的可复现构建。
+\IfFontExistsTF{Maple Mono NF CN}{
+  \setmainfont{Maple Mono NF CN}[Ligatures=NoCommon]
+  \setsansfont{Maple Mono NF CN}[Ligatures=NoCommon]
+  \setmonofont{Maple Mono NF CN}[Ligatures=NoCommon]
+  \setCJKmainfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+  \setCJKsansfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+  \setCJKmonofont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+}{
+  \IfFontExistsTF{Maple Mono NL NF CN}{
+    \setmainfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+    \setsansfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+    \setmonofont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+    \setCJKmainfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+    \setCJKsansfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+    \setCJKmonofont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+  }{
+    \setmainfont{Latin Modern Roman}
+    \setsansfont{Latin Modern Sans}
+    \setmonofont{Latin Modern Mono}[Ligatures=NoCommon]
+    \setCJKmainfont{FandolSong}[AutoFakeBold=2]
+    \setCJKsansfont{FandolHei}[AutoFakeBold=2]
+    \setCJKmonofont{FandolFang}[AutoFakeBold=2]
+  }
+}
 
 \linespread{1.08}
 \setlength{\parindent}{2em}

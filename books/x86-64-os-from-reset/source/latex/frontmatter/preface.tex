@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.4。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.5。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -86,8 +86,8 @@ write/flush。同一临时磁盘上的两个全新 QEMU 实例证明旧载荷可
 每进程八槽描述符表；真实 PS/2 字符进入 256 字节 FIFO，唤醒等待 fd 0 的
 Shell。没有 Ready 进程时，内核在永久地址空间执行 \code{sti; hlt; cli}，由
 中断恢复调度。独立 freestanding C++20 Shell 使用固定容量解析器执行帮助、
-回显、目录、文件、同步和退出命令。QEMU 在 \code{READY} 后逐字产生十条
-命令，109 个字符必须零丢弃地经过完整硬件与 Ring 3 路径。v1.1 又以
+回显、切换目录、文件、同步和退出命令。QEMU 在 \code{READY} 后逐字产生
+18 条命令，215 个字符必须零丢弃地经过完整硬件与 Ring 3 路径。v1.1 又以
 \code{ScopeRollback}、\code{ReferenceCounter} 和 26 字段
 \code{ResourceSnapshot} 收口跨层所有权；256 MiB functional 与 64 GiB
 capacity 运行同一完整路径。v1.2 又分离 Process/Thread，以 WaitQueue
@@ -98,6 +98,11 @@ CPUID 能力与地址宽度规格门禁、CpuLocal、原生 SYSCALL/SYSRET、SWA
 FileDescription 与每 Process 的 64 槽延迟分块 FileTable，把功能硬限额
 提高到 256、容量规格提高到 4096，并以复制共享偏移、独立打开、fd flags、
 soft/hard limit、最低编号复用和最终析构收口描述符生命周期。当前 107 项
-CTest 同时保留所有历史成功与失败证据；页表、资源生命周期、调度现场、双
-系统调用入口和动态文件表各有单元、集成、十万步模型和真实 QEMU 证明。
+CTest 的历史集合继续保留；v1.5 又建立 Vnode、Path、Mount、Superblock、
+每 Process FsContext 与 OpenFile，把旧磁盘接成 legacy 后端，并把完整
+memfs 挂在 \filepath{/tmp}。绝对/相对路径、点组件、根钳制、挂载穿越、
+4096/255 字节边界和 getcwd 由同一状态机处理；两个后端通过同一契约，
+命名空间另有十万步独立模型。当前完整集合为 110 项 CTest；页表、资源
+生命周期、调度现场、双系统调用入口、动态文件表和 VFS 各有单元、集成、
+随机模型和真实 QEMU 证明。
 Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。

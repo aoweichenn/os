@@ -40,6 +40,9 @@ set(
     include/os/kernel/fs/block_cache.hpp
     include/os/kernel/fs/file_system.hpp
     include/os/kernel/fs/file_system_format.hpp
+    include/os/kernel/fs/legacy_file_system.hpp
+    include/os/kernel/fs/memfs.hpp
+    include/os/kernel/fs/vfs.hpp
 )
 set(
     OS_KERNEL_IO_HEADERS
@@ -144,6 +147,9 @@ set(
     src/fs/block_cache.cpp
     src/fs/file_system.cpp
     src/fs/file_system_format.cpp
+    src/fs/legacy_file_system.cpp
+    src/fs/memfs.cpp
+    src/fs/vfs.cpp
 )
 set(
     OS_KERNEL_IO_SOURCES
@@ -350,6 +356,9 @@ add_library(
         src/fs/block_cache.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
+        src/fs/legacy_file_system.cpp
+        src/fs/memfs.cpp
+        src/fs/vfs.cpp
         src/io/console_input.cpp
         src/io/file_description.cpp
         src/io/file_table.cpp
@@ -360,6 +369,9 @@ add_library(
         include/os/kernel/fs/block_cache.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
+        include/os/kernel/fs/legacy_file_system.hpp
+        include/os/kernel/fs/memfs.hpp
+        include/os/kernel/fs/vfs.hpp
         include/os/kernel/io/console_input.hpp
         include/os/kernel/io/file_description.hpp
         include/os/kernel/io/file_table.hpp
@@ -400,10 +412,18 @@ add_library(
         src/fs/block_cache.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
+        src/fs/legacy_file_system.cpp
+        src/fs/memfs.cpp
+        src/fs/vfs.cpp
+        src/memory/kernel_heap.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/fs/block_cache.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
+        include/os/kernel/fs/legacy_file_system.hpp
+        include/os/kernel/fs/memfs.hpp
+        include/os/kernel/fs/vfs.hpp
+        include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/sync/spin_lock.hpp
 )
 target_include_directories(

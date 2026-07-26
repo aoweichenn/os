@@ -13,6 +13,7 @@ constexpr uint64_t OS_USER_SHELL_FIRST_PARAMETER_INDEX = 1ULL;
 constexpr uint64_t OS_USER_SHELL_SECOND_PARAMETER_INDEX = 2ULL;
 constexpr uint64_t OS_USER_SHELL_HELP_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_PWD_ARGUMENT_COUNT = 1ULL;
+constexpr uint64_t OS_USER_SHELL_CD_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_SYNC_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_EXIT_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_PATH_COMMAND_ARGUMENT_COUNT = 2ULL;
@@ -36,18 +37,20 @@ constexpr int64_t OS_USER_SHELL_DIRECTORY_ENTRY_RESULT = 1LL;
 constexpr uint64_t OS_USER_SHELL_WRITE_OPEN_FLAGS = os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG |
                                                     os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
                                                     os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
-constexpr char OS_USER_SHELL_BANNER[] = "\r\nx86-64 OS Lab v1.4\r\n"
+constexpr char OS_USER_SHELL_BANNER[] = "\r\nx86-64 OS Lab v1.5\r\n"
                                         "输入 help 查看可用命令。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
-constexpr char OS_USER_SHELL_PROMPT[] = "[os:/]$ ";
+constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
+constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";
 constexpr char OS_USER_SHELL_NEWLINE[] = "\r\n";
 constexpr char OS_USER_SHELL_BACKSPACE_SEQUENCE[] = "\b \b";
 constexpr char OS_USER_SHELL_SPACE[] = " ";
 constexpr char OS_USER_SHELL_DIRECTORY_SUFFIX[] = "/";
-constexpr char OS_USER_SHELL_ROOT_PATH[] = "/";
+constexpr char OS_USER_SHELL_CURRENT_PATH[] = ".";
 constexpr char OS_USER_SHELL_HELP_TEXT[] = "help                 显示命令帮助\r\n"
                                            "echo [text...]       输出文本\r\n"
                                            "pwd                  显示当前目录\r\n"
+                                           "cd <path>            切换当前目录\r\n"
                                            "ls [path]            列出目录\r\n"
                                            "mkdir <path>         创建目录\r\n"
                                            "write <path> <text>  创建或覆盖文件\r\n"
@@ -64,6 +67,7 @@ constexpr char OS_USER_SHELL_OPERATION_SUCCEEDED[] = "ok\r\n";
 constexpr char OS_USER_SHELL_COMMAND_HELP_MARKER[] = "[OS][USER][SHELL] COMMAND=HELP\r\n";
 constexpr char OS_USER_SHELL_COMMAND_ECHO_MARKER[] = "[OS][USER][SHELL] COMMAND=ECHO\r\n";
 constexpr char OS_USER_SHELL_COMMAND_PWD_MARKER[] = "[OS][USER][SHELL] COMMAND=PWD\r\n";
+constexpr char OS_USER_SHELL_COMMAND_CD_MARKER[] = "[OS][USER][SHELL] COMMAND=CD\r\n";
 constexpr char OS_USER_SHELL_COMMAND_LS_MARKER[] = "[OS][USER][SHELL] COMMAND=LS\r\n";
 constexpr char OS_USER_SHELL_COMMAND_MKDIR_MARKER[] = "[OS][USER][SHELL] COMMAND=MKDIR\r\n";
 constexpr char OS_USER_SHELL_COMMAND_WRITE_MARKER[] = "[OS][USER][SHELL] COMMAND=WRITE\r\n";
@@ -110,6 +114,16 @@ template <uint64_t MessageSizeBytes>
 [[nodiscard]] bool WriteOperationResult(const bool succeeded) noexcept {
     return succeeded ? WriteLiteral(OS_USER_SHELL_OPERATION_SUCCEEDED)
                      : WriteLiteral(OS_USER_SHELL_OPERATION_ERROR);
+}
+
+[[nodiscard]] bool WritePrompt() noexcept {
+    char current_path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    const int64_t path_length_bytes =
+        GetWorkingDirectory(current_path, sizeof(current_path));
+    return path_length_bytes > OS_USER_SHELL_SUCCESS_RESULT &&
+           WriteLiteral(OS_USER_SHELL_PROMPT_PREFIX) &&
+           WriteBytes(current_path, static_cast<uint64_t>(path_length_bytes)) &&
+           WriteLiteral(OS_USER_SHELL_PROMPT_SUFFIX);
 }
 
 [[nodiscard]] ShellReadLineStatus ReadShellLine(char *const line,
@@ -196,8 +210,33 @@ template <uint64_t MessageSizeBytes>
         return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
                                                        : ShellExecutionAction::Fatal;
     }
-    return WriteLiteral(OS_USER_SHELL_COMMAND_PWD_MARKER) &&
-                   WriteLiteral(OS_USER_SHELL_ROOT_PATH) && WriteLiteral(OS_USER_SHELL_NEWLINE)
+    char current_path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    const int64_t path_length_bytes =
+        GetWorkingDirectory(current_path, sizeof(current_path));
+    const bool succeeded =
+        path_length_bytes > OS_USER_SHELL_SUCCESS_RESULT &&
+        WriteLiteral(OS_USER_SHELL_COMMAND_PWD_MARKER) &&
+        WriteBytes(current_path, static_cast<uint64_t>(path_length_bytes)) &&
+        WriteLiteral(OS_USER_SHELL_NEWLINE);
+    if (succeeded) {
+        return ShellExecutionAction::Continue;
+    }
+    return WriteLiteral(OS_USER_SHELL_OPERATION_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+}
+
+[[nodiscard]] ShellExecutionAction ExecuteCd(const ShellCommandLine &command_line) noexcept {
+    if (command_line.argument_count != OS_USER_SHELL_CD_ARGUMENT_COUNT) {
+        return WriteLiteral(OS_USER_SHELL_USAGE_ERROR) ? ShellExecutionAction::Continue
+                                                       : ShellExecutionAction::Fatal;
+    }
+    if (!WriteLiteral(OS_USER_SHELL_COMMAND_CD_MARKER)) {
+        return ShellExecutionAction::Fatal;
+    }
+    const int64_t result =
+        ChangeDirectory(ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX),
+                        command_line.arguments[OS_USER_SHELL_FIRST_PARAMETER_INDEX].length_bytes);
+    return WriteOperationResult(result == OS_USER_SHELL_SUCCESS_RESULT)
                ? ShellExecutionAction::Continue
                : ShellExecutionAction::Fatal;
 }
@@ -330,9 +369,9 @@ template <uint64_t MessageSizeBytes>
     if (!WriteLiteral(OS_USER_SHELL_COMMAND_LS_MARKER)) {
         return ShellExecutionAction::Fatal;
     }
-    const char *path = OS_USER_SHELL_ROOT_PATH;
+    const char *path = OS_USER_SHELL_CURRENT_PATH;
     uint64_t path_length_bytes =
-        sizeof(OS_USER_SHELL_ROOT_PATH) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
+        sizeof(OS_USER_SHELL_CURRENT_PATH) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
     if (command_line.argument_count == OS_USER_SHELL_LIST_MAXIMUM_ARGUMENT_COUNT) {
         path = ShellArgumentBytes(command_line, OS_USER_SHELL_FIRST_PARAMETER_INDEX);
         path_length_bytes =
@@ -391,6 +430,8 @@ template <uint64_t MessageSizeBytes>
         return ExecuteEcho(command_line);
     case ShellCommand::PrintWorkingDirectory:
         return ExecutePwd(command_line);
+    case ShellCommand::ChangeDirectory:
+        return ExecuteCd(command_line);
     case ShellCommand::ListDirectory:
         return ExecuteList(command_line);
     case ShellCommand::CreateDirectory:
@@ -425,7 +466,7 @@ int64_t RunShell() noexcept {
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
     while (true) {
-        if (!WriteLiteral(OS_USER_SHELL_PROMPT)) {
+        if (!WritePrompt()) {
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         char line[OS_USER_SHELL_MAXIMUM_LINE_SIZE_BYTES +

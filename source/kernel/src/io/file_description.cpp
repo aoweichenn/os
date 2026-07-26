@@ -1,5 +1,7 @@
 #include "os/kernel/io/file_description.hpp"
 
+#include "os/kernel/fs/legacy_file_system.hpp"
+
 namespace os::kernel {
 
 namespace {
@@ -13,8 +15,8 @@ struct FileDescriptionStorage final {
     FileDescriptionDeviceWriteOperation device_write_operation;
     void *device_write_context;
     Pipe *pipe;
-    FileSystem *file_system;
-    FileSystemHandle file_system_handle;
+    fs::Vfs *vfs;
+    fs::OpenFile open_file;
 };
 
 [[nodiscard]] FileDescriptionStatus MapObjectStatus(const KernelObjectStatus status) noexcept {
@@ -107,8 +109,8 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         .device_write_operation = request.device_write_operation,
         .device_write_context = request.device_write_context,
         .pipe = request.pipe,
-        .file_system = request.file_system,
-        .file_system_handle = request.file_system_handle,
+        .vfs = request.vfs,
+        .open_file = request.open_file,
     };
     return FileDescriptionStatus::Succeeded;
 }
@@ -139,7 +141,7 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
         .file_status_flags = storage.file_status_flags,
         .offset_bytes = storage.kind == FileDescriptionKind::RegularFile ||
                                 storage.kind == FileDescriptionKind::Directory
-                            ? storage.file_system_handle.offset_bytes
+                            ? storage.open_file.offset_bytes
                             : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .generation = identity.generation,
         .strong_reference_count = identity.strong_reference_count,
@@ -186,8 +188,8 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
                      ? FileDescriptionStatus::WouldBlock
                      : FileDescriptionStatus::InvalidArgument;
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
-        file_system_status = storage.file_system->Read(storage.file_system_handle, destination,
-                                                       capacity_bytes, read_bytes);
+        file_system_status = fs::ToFileSystemStatus(
+            storage.vfs->Read(storage.open_file, destination, capacity_bytes, read_bytes));
         status = file_system_status == FileSystemStatus::Succeeded
                      ? FileDescriptionStatus::Succeeded
                      : FileDescriptionStatus::FileSystemFailure;
@@ -243,8 +245,8 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
                      ? FileDescriptionStatus::Succeeded
                      : FileDescriptionStatus::DeviceFailure;
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
-        file_system_status = storage.file_system->Write(storage.file_system_handle, source,
-                                                        length_bytes, written_bytes);
+        file_system_status = fs::ToFileSystemStatus(
+            storage.vfs->Write(storage.open_file, source, length_bytes, written_bytes));
         status = file_system_status == FileSystemStatus::Succeeded
                      ? FileDescriptionStatus::Succeeded
                      : FileDescriptionStatus::FileSystemFailure;
@@ -264,9 +266,9 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
 
 FileDescriptionStatus
 FileDescriptionManager::ReadDirectory(const KernelObjectReference &reference,
-                                      FileSystemDirectoryEntry &entry, bool &end_of_directory,
+                                      fs::DirectoryEntry &entry, bool &end_of_directory,
                                       FileSystemStatus &file_system_status) noexcept {
-    entry = FileSystemDirectoryEntry{};
+    entry = fs::DirectoryEntry{};
     end_of_directory = false;
     file_system_status = FileSystemStatus::Succeeded;
     if (!this->initialized_ || this->object_manager_ == nullptr) {
@@ -287,8 +289,8 @@ FileDescriptionManager::ReadDirectory(const KernelObjectReference &reference,
             OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
         return FileDescriptionStatus::PermissionDenied;
     }
-    file_system_status =
-        storage.file_system->ReadDirectory(storage.file_system_handle, entry, end_of_directory);
+    file_system_status = fs::ToFileSystemStatus(
+        storage.vfs->ReadDirectory(storage.open_file, entry, end_of_directory));
     if (file_system_status != FileSystemStatus::Succeeded) {
         return FileDescriptionStatus::FileSystemFailure;
     }
@@ -386,9 +388,8 @@ bool FileDescriptionManager::Finalize(void *const payload) noexcept {
     bool finalized = true;
     if (storage.kind == FileDescriptionKind::RegularFile ||
         storage.kind == FileDescriptionKind::Directory) {
-        finalized =
-            storage.file_system != nullptr &&
-            storage.file_system->Close(storage.file_system_handle) == FileSystemStatus::Succeeded;
+        finalized = storage.vfs != nullptr &&
+                    storage.vfs->Close(storage.open_file) == fs::Status::Succeeded;
     } else if (storage.kind == FileDescriptionKind::PipeReader) {
         const PipeStatus status =
             storage.pipe == nullptr ? PipeStatus::InvalidArgument : storage.pipe->CloseReader();
@@ -437,15 +438,14 @@ bool FileDescriptionManager::IsRequestValid(
         return !readable && writable && request.pipe != nullptr;
     }
     if (request.kind == FileDescriptionKind::Directory) {
-        return readable && !writable && request.file_system != nullptr &&
-               request.file_system_handle.open &&
-               request.file_system_handle.node_type == FileSystemNodeType::Directory;
+        return readable && !writable && request.vfs != nullptr && request.open_file.open &&
+               request.open_file.path.vnode.type == fs::NodeType::Directory &&
+               request.open_file.readable && !request.open_file.writable;
     }
     return request.kind == FileDescriptionKind::RegularFile && (readable || writable) &&
-           request.file_system != nullptr && request.file_system_handle.open &&
-           request.file_system_handle.node_type == FileSystemNodeType::RegularFile &&
-           request.file_system_handle.readable == readable &&
-           request.file_system_handle.writable == writable;
+           request.vfs != nullptr && request.open_file.open &&
+           request.open_file.path.vnode.type == fs::NodeType::RegularFile &&
+           request.open_file.readable == readable && request.open_file.writable == writable;
 }
 
 }

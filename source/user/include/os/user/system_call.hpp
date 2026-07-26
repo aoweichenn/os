@@ -54,5 +54,7 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t GetDescriptorHardLimit() noexcept;
 [[nodiscard]] int64_t OpenDirectory(const char *path, uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t ReadDirectory(uint64_t descriptor, os::abi::DirectoryEntry &entry) noexcept;
+[[nodiscard]] int64_t ChangeDirectory(const char *path, uint64_t path_length_bytes) noexcept;
+[[nodiscard]] int64_t GetWorkingDirectory(char *destination, uint64_t capacity_bytes) noexcept;
 [[noreturn]] void ExitProcess(int64_t exit_code) noexcept;
 }

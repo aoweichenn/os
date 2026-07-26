@@ -4,6 +4,7 @@
 #include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/fs/file_system.hpp"
+#include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/io/console_input.hpp"
 #include "os/kernel/io/file_description.hpp"
 #include "os/kernel/io/file_table.hpp"
@@ -46,6 +47,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     CpuLocalFailure,
     NativeSystemCallFailure,
     DescriptorTableFailure,
+    FileSystemFailure,
 };
 
 enum class ProcessIoStatus : uint64_t {
@@ -132,7 +134,7 @@ struct ProcessRuntimeStatistics final {
 };
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
-[[nodiscard]] ProcessRuntimeStatus AttachProcessFileSystem(FileSystem &file_system) noexcept;
+[[nodiscard]] ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept;
 [[nodiscard]] ProcessRuntimeStatus
 CreateProcess(UserProgramSelection selection, ProcessCreationResult &creation_result,
               UserElfValidationStatus &elf_validation_status,
@@ -154,7 +156,7 @@ void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] PipeStatus CloseCurrentProcessPipeWriter() noexcept;
 [[nodiscard]] FileSystemStatus OpenCurrentProcessFile(const uint8_t *path,
                                                       uint64_t path_length_bytes,
-                                                      const FileSystemOpenOptions &options,
+                                                      const fs::OpenOptions &options,
                                                       uint64_t &file_descriptor) noexcept;
 [[nodiscard]] FileSystemStatus ReadCurrentProcessFile(uint64_t file_descriptor,
                                                       uint8_t *destination, uint64_t capacity_bytes,
@@ -166,6 +168,11 @@ void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
+[[nodiscard]] FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
+                                                              uint64_t path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus
+GetCurrentProcessWorkingDirectory(uint8_t *destination, uint64_t capacity_bytes,
+                                  uint64_t &path_length_bytes) noexcept;
 [[nodiscard]] ProcessIoStatus
 TryReadCurrentProcessDescriptor(uint64_t descriptor, uint8_t *destination, uint64_t capacity_bytes,
                                 uint64_t &read_bytes,
@@ -191,7 +198,7 @@ DuplicateCurrentProcessDescriptor(uint64_t source_descriptor, uint64_t minimum_d
                                                            uint64_t path_length_bytes,
                                                            uint64_t &file_descriptor) noexcept;
 [[nodiscard]] FileSystemStatus ReadCurrentProcessDirectory(uint64_t file_descriptor,
-                                                           FileSystemDirectoryEntry &entry,
+                                                           fs::DirectoryEntry &entry,
                                                            bool &end_of_directory) noexcept;
 [[nodiscard]] ProcessIoStatus CurrentProcessDescriptorReadCanProgress(uint64_t descriptor,
                                                                       bool &can_progress) noexcept;

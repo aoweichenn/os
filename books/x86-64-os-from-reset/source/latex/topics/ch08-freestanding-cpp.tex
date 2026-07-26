@@ -87,7 +87,11 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 \[
   \mathrm{maximum_size}=UINT64\_MAX-begin.
 \]
-只有 \code{size <= maximum_size} 时才执行加法。失败通过强枚举
+实现只在下列判定条件成立时执行加法：
+\begin{center}
+  \code{size <= maximum_size}.
+\end{center}
+失败通过强枚举
 \code{AddressRangeCreationStatus} 返回，不依赖异常、全局错误码或宿主
 运行库。
 

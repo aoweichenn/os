@@ -1,0 +1,737 @@
+\section{v1.5：从单一磁盘路径到 VFS 挂载命名空间}
+
+\begin{keyidea}
+路径不是文件，目录项不是 Vnode，Vnode 不是一次打开，文件描述符也不是这些
+对象的地址。v1.5 把“进程从哪里开始找”“名字怎样逐项解析”“对象属于哪个
+文件系统”“挂载点怎样跨越”和“一次打开怎样保存偏移”分成独立层次，再用
+memfs 与旧磁盘格式两个后端证明这条边界不依赖某一种存储布局。
+\end{keyidea}
+
+\subsection{上一阶段留下的精确缺口}
+
+v1.4 已经完成四层对象关系中的前三层：
+
+\begin{enumerate}
+  \item Process 中的小整数 fd；
+  \item 动态 FileTable 中的强引用 handle；
+  \item 共享 \code{FileDescription}，保存一次打开的偏移和状态。
+\end{enumerate}
+
+但 FileDescription 的最底层仍是
+\code{FileSystem* + FileSystemHandle}。旧 FileSystem 同时负责完整路径
+切分、inode 查找、目录格式、块分配、缓存和 ATA 事务。这在只有一个根磁盘
+时可以形成垂直闭环，却产生四个继续演进的障碍：
+
+\begin{itemize}
+  \item Process 没有自己的当前目录，相对路径没有事实来源；
+  \item \code{.}、\code{..}、重复分隔符和尾斜杠只能由具体磁盘实现解释；
+  \item 另一个文件系统若想挂到 \filepath{/tmp}，必须复制整套路径算法；
+  \item 若此时直接升级磁盘格式，路径错误与落盘错误会同时暴露。
+\end{itemize}
+
+因此 v1.5 不修改 rootfs 盘面格式，而是先把命名层独立出来。旧格式成为一个
+后端，新的 memfs 成为第二个后端；两者共同通过以后，v1.6 才有资格在 VFS
+接口不变的条件下替换根磁盘格式。
+
+\subsection{历史来源：为什么名字不属于 inode}
+
+早期 Unix 文件系统把文件元数据放进 inode，把名字放进目录项。目录本身也是
+一种文件，其内容近似保存：
+
+\begin{lstlisting}[caption={目录项表达的是父目录中的名字映射}]
+"alpha" -> inode 17
+"beta"  -> inode 42
+\end{lstlisting}
+
+inode 17 并不必然知道自己叫 alpha；名字属于父目录。这个分离使重命名只需
+修改目录关系，不必搬动文件数据，也为以后一个 inode 具有多个硬链接留下
+位置。
+
+当系统只能挂载一种文件系统时，inode number 足以在该实例内部定位对象。
+一旦同时存在磁盘文件系统、内存文件系统和设备文件系统，数字 17 可以在每个
+实例中重复。通用层必须把“哪个文件系统”与“内部编号 17”组合起来，这就是
+Vnode 一类对象出现的根本原因。
+
+挂载又增加一层位置。同一个文件系统以后可能经不同挂载点可见；同一个 Vnode
+从不同位置执行 \code{..}，命名空间父级可能不同。因此当前 \code{Path}
+同时保存 Mount identity 与 Vnode，即使 v1.5 尚未实现 bind mount，也不把
+未来需要的位置语义丢掉。
+
+\subsection{从 Ring 3 字符串到 ATA 扇区的完整控制链}
+
+以 Shell 在 \filepath{/demo/message} 上执行 \code{cat} 为例，真实路径跨越
+用户 C++、Intel 语法汇编、CPU 特权转换、内核对象与 ATA：
+
+\begin{lstlisting}[caption={v1.5 文件读取的端到端路径}]
+Ring 3 shell.cpp
+  -> OpenFile("/demo/message", read)
+  -> system_call.cpp prepares RAX/RDI/RSI/RDX
+  -> system_call.asm executes SYSCALL
+  -> CPU loads RIP from IA32_LSTAR, masks RFLAGS
+  -> architecture.asm: SWAPGS, trusted RSP, UserContext
+  -> system_calls.cpp validates and copies 13 path bytes
+  -> ProcessRuntime selects current Process::FsContext
+  -> Vfs::Open -> Vfs::Resolve
+  -> legacy BackendOperations::lookup, component by component
+  -> FileDescription(OpenFile(Path, offset=0))
+  -> FileTable returns fd
+  -> read(fd) follows the same object reference
+  -> legacy FileSystem -> BlockCache -> AtaPioDevice
+  -> IN/OUT instructions transfer one or more 512-byte sectors
+\end{lstlisting}
+
+QEMU 在这条链中只模拟 CPU、内存、IDE 控制器和线路时序。它没有替项目解析
+路径、建立 Vnode、读取宿主目录或代做系统调用。Shell 输入由宿主 QMP 产生
+按键事件；来宾仍经过 i8042、IRQ1、用户 FIFO 和真正的 Ring 3 解析器。
+
+如果目标位于 \filepath{/tmp/session/message}，前半条链完全相同；VFS 在
+解析到 \filepath{/tmp} 后进入 memfs Mount，后半条链改为 memfs 节点与
+KernelHeap 数据，不经过 ATA。两条路径共用用户 ABI、Process FsContext、
+FileTable、FileDescription 和 VFS name walk。
+
+\subsection{五个对象各自保存什么}
+
+\begin{longtable}{L{0.20\textwidth}L{0.32\textwidth}L{0.36\textwidth}}
+\toprule
+对象 & 保存内容 & 明确不负责\\
+\midrule
+\code{Vnode} &
+Superblock 指针、64 位 identifier、generation、NodeType &
+用户输入字符串、打开偏移、挂载父级\\
+\code{Path} &
+64 位 mount identifier 与一个 Vnode &
+原始路径文本、文件数据\\
+\code{Superblock} &
+后端种类、根 Vnode、操作表、名称上限、只读状态、后端上下文 &
+某个 Process 的 cwd\\
+\code{Mount} &
+自身 id、父 Mount id、父后端中的 mount point、子 Superblock &
+文件读写偏移\\
+\code{FsContext} &
+某个 Process 的 root Path 与 cwd Path &
+全局挂载数组和磁盘元数据\\
+\code{OpenFile} &
+Path、64 位 offset、readable/writable/open &
+fd 数值和 descriptor flags\\
+\bottomrule
+\end{longtable}
+
+Vnode identity 的等价关系是：
+
+\[
+  V_a = V_b \iff
+  S_a=S_b \land id_a=id_b \land gen_a=gen_b \land type_a=type_b.
+\]
+
+Path 还要求 mount identifier 相同。identifier 和 generation 的零值都不
+表示活动对象；全部宽度由 \code{uint64\_t} 明确给出，不依赖宿主
+\code{long} 或 \code{size\_t}。
+
+\subsection{Superblock 的操作表为什么比继承层次更合适}
+
+freestanding 内核可以使用 C++20，但当前后端边界选择一个常量函数指针表：
+
+\begin{lstlisting}[caption={BackendOperations 的逻辑接口}]
+lookup(directory, name) -> vnode
+create(directory, name, type) -> vnode
+parent(vnode) -> parent vnode
+read(vnode, offset, destination) -> bytes
+write(vnode, offset, source) -> bytes
+truncate(vnode, size)
+read_directory(directory, cursor) -> entry/end
+get_name(vnode) -> component
+sync()
+validate()
+read_resource_usage()
+\end{lstlisting}
+
+这里没有依赖宏注册、RTTI 或异常。Superblock 初始化时验证每个函数非空，
+后续通过明确 context 调用。操作表不意味着 C 风格代码可以放弃类型边界：
+公开类型仍是 C++20 强枚举与结构，后端类仍隔离私有节点，函数指针只承担
+跨实现分派。
+
+如果改用一棵复杂虚类继承树，还要同时决定虚析构、动态对象布局、分配失败和
+运行时类型识别。当前两个后端不需要这些状态；常量表更容易放入 freestanding
+目标，也能让宿主测试注入同一生产实现。未来若对象关系真正需要多态所有权，
+应由新的 ADR 重新评估，而不是为了“现代 C++”预先增加结构。
+
+\subsection{4096 与 255：规格边界怎样进入代码}
+
+VFS 公共规格固定为：
+
+\begin{longtable}{L{0.33\textwidth}L{0.20\textwidth}L{0.35\textwidth}}
+\toprule
+量 & 上限 & 越界结果\\
+\midrule
+完整路径 & 4096 字节 & \code{PathTooLong}\\
+公共组件 & 255 字节 & \code{NameTooLong}\\
+默认 Mount 数 & 64 & \code{MountCapacityExhausted}\\
+单次遍历步数 & 4096 & \code{LoopDetected}\\
+\bottomrule
+\end{longtable}
+
+这些是当前接口能力，不表示旧磁盘突然支持 255 字节目录名。legacy
+Superblock 将自己的 \code{maximum\_name\_length\_bytes} 设为 40；
+memfs 设为 255。VFS 先检查公共上限，再检查当前后端上限，因此旧格式限制
+不会污染其他后端。
+
+路径参数不是 C 字符串，而是“用户地址 + 精确长度”。内核先验证整个用户
+区间可读，再复制到固定 4096 字节 Ring 0 缓冲。解析拒绝 C0 控制字符、
+\code{DEL} 和组件中的分隔符。路径可以占满 4096 字节，不需要为
+\code{'\textbackslash 0'} 额外保留一字节。
+
+\begin{contractbox}
+长度上限必须区分“恰好达到”和“超过一字节”。单元测试构造完整 4096 字节
+路径和 255 字节名称要求成功，再分别构造 4097 与 256 字节输入要求独立错误。
+只测试常见短路径不能证明数组边界没有 off-by-one。
+\end{contractbox}
+
+\subsection{逐组件 name walk}
+
+绝对路径从 \code{FsContext.root} 开始，相对路径从 cwd 开始。算法不先申请
+一个组件数组，而是在原始有界字节序列上移动索引：
+
+\begin{enumerate}
+  \item 跳过开头或组件间连续的 \code{/}；
+  \item 把下一个组件复制到 255 字节局部数组，同时验证每个字节；
+  \item 组件为 \code{.} 时保持当前 Path；
+  \item 组件为 \code{..} 时进入统一 \code{MoveToParent}；
+  \item 普通组件先要求当前 Vnode 是 Directory；
+  \item 调用当前 Superblock 的 lookup；
+  \item 取得子 Vnode 后立即执行 \code{FollowMounts}；
+  \item 到达输入末尾后检查尾斜杠类型约束。
+\end{enumerate}
+
+解析期间没有 heap 申请，因此无内存回滚路径；所有局部存储上界由规格直接
+决定。每个失败出口先把输出 Path 保持为空，再记录一次 failed resolution。
+
+\subsection{四类特殊路径的精确语义}
+
+\paragraph{重复分隔符}
+
+\code{//alpha///beta/} 与 \code{/alpha/beta/} 在组件序列上等价。末尾
+分隔符仍保留“beta 必须是目录”的约束，不是简单删除所有斜杠。
+
+\paragraph{点组件}
+
+\code{.} 不调用后端 lookup，因为它不是父目录中的普通名字。若后端允许真的
+创建名为点的节点，路径状态机会出现两种解释，因此 memfs 和 legacy create
+都明确拒绝 \code{.} 与 \code{..}。
+
+\paragraph{父组件}
+
+普通 Vnode 的父级由后端 parent 返回；到达 Process root 时保持原位并增加
+root-clamp 统计。这样 \code{../../..} 不能越过当前 Process root。
+
+\paragraph{尾斜杠}
+
+\code{/file/} 必须返回 \code{NotDirectory}。更隐蔽的输入是
+\code{open("/missing/", create)}：第一次 lookup 会返回 NotFound，若 create
+分支只解析父目录，就可能误建普通文件。实现因此在普通文件创建提交前再次
+检查尾斜杠，测试随后确认目标仍然不存在。
+
+\subsection{挂载进入与退出不是后端 parent}
+
+启动时 legacy 根文件系统包含一个普通目录 \filepath{/tmp}，随后 VFS 在
+这个目录上连接 memfs Superblock：
+
+\begin{lstlisting}[caption={当前两层挂载树}]
+Mount 0, legacy root
+/
++-- demo
++-- tmp  [mount point in legacy]
+    |
+    +-- Mount 1, memfs root
+        +-- session
+            +-- message
+\end{lstlisting}
+
+向下解析时，legacy lookup 首先得到 tmp 目录 Vnode。VFS 随即在 Mount 数组
+中寻找：
+
+\[
+  parent\_mount = current.mount
+  \land mount\_point.vnode = current.vnode.
+\]
+
+若找到，就把 Path 改为子 Mount id 与子 Superblock root。这个检查会重复，
+但最多执行 mount count 次；损坏父链不能无限循环。
+
+从 memfs 根执行 \code{..} 时，调用 memfs parent 只会得到 memfs 根自身。
+正确命名空间父级必须由 Mount 提供：
+
+\begin{enumerate}
+  \item 识别当前 Vnode 等于 Mount 的 Superblock root；
+  \item 找到 parent Mount；
+  \item 取出 parent 后端中的 mount point Vnode；
+  \item 对 mount point 调用父后端 parent；
+  \item 返回该父目录 Path。
+\end{enumerate}
+
+因此 \filepath{/tmp/..} 得到 legacy 根，而不是永远困在 memfs 根，也不是
+得到被覆盖的 tmp 目录本身。
+
+\subsection{为什么当前拒绝替换根和堆叠挂载}
+
+\code{MountAt} 明确拒绝：
+
+\begin{itemize}
+  \item 在 Process root 上替换根；
+  \item 把同一 Superblock 重复挂载；
+  \item 在已有 mount point 再挂一个后端；
+  \item 在现有子 Mount 根上堆叠另一层；
+  \item 超过 64 项容量；
+  \item 父 Mount 链形成环。
+\end{itemize}
+
+这些限制不是 VFS 理论上做不到，而是 v1.5 尚未定义动态拓扑下已有 Path、
+cwd 和 OpenFile 的生命周期。如果调度开始后允许 unmount，还必须回答：
+正在 lookup 的线程怎样持有 Mount、打开文件是否阻止卸载、cwd 落在子树中
+怎么办、缓存怎样失效。当前挂载只在用户调度前建立，运行期拓扑只读，因而
+读侧不需要未实现的 RCU 或 mount reference。
+
+\subsection{getcwd 为什么从尾部向前写}
+
+FsContext 保存 cwd Path，不保存路径字符串。显示 cwd 时从对象关系重建：
+
+\begin{lstlisting}[caption={从 /tmp/session 反向取得路径}]
+current = memfs vnode "session"
+write "session" backward
+parent = memfs root
+current is mount root -> read legacy mount point name "tmp"
+write "/tmp" backward
+move to legacy root -> stop
+shift contiguous result to destination[0]
+\end{lstlisting}
+
+如果从前向后写，必须先递归到根或暂存全部组件；内核栈深度和组件数量就成为
+新的风险。反向写只需要一个 255 字节名称缓冲和一个 4096 字节调用方缓冲。
+每次写入前检查剩余容量，不进行部分成功或静默截断。
+
+挂载根没有普通子后端名称。此时 \code{ReadPathName} 改为对父后端的 mount
+point 调用 get-name，所以 memfs 根显示为 \code{tmp}，而不是空字符串。
+
+\subsection{memfs 节点布局与线性结构}
+
+当前 memfs Node 的逻辑内容为：
+
+\begin{longtable}{L{0.30\textwidth}L{0.18\textwidth}L{0.40\textwidth}}
+\toprule
+字段 & 宽度/容量 & 作用\\
+\midrule
+\code{next} & 目标指针 & 全局侵入节点链\\
+\code{identifier/generation} & 各 64 位 & 稳定身份与代次\\
+\code{parent\_identifier} & 64 位 & 父目录关系，根指向自身\\
+\code{type} & 64 位枚举 & Directory 或 RegularFile\\
+\code{name\_length\_bytes} & 64 位 & 名称有效长度\\
+\code{name} & 255 字节 & 不依赖终止符的组件\\
+\code{data} & 目标指针 & 规则文件数据，目录必须为空\\
+\code{size/capacity} & 各 64 位 & 逻辑长度和已申请容量\\
+\bottomrule
+\end{longtable}
+
+节点链采用线性查找，不是为了假装高性能。v1.5 的目标是让所有节点、父关系和
+资源可直接遍历校验；节点上限在实例初始化时明确给出。未来如果改用哈希目录
+或树，VFS 操作表和路径语义不变，新的后端结构必须用同一契约测试比较。
+
+根节点 identifier 与 generation 都为 1，父 identifier 指向自身，名称长度
+为零，类型是 Directory。每个新节点先从 KernelHeap 申请、完整构造并复制
+名称，最后才链接到活动链并推进计数。
+
+\subsection{文件数据增长是一项事务}
+
+初始文件没有数据缓冲。第一次非空写入选择：
+
+\[
+  C_0 = \min(64,\ maximum\_file\_size).
+\]
+
+只要 \(C < required\)，容量按二倍增长；下一次翻倍可能超过最大值时直接取
+最大值。最终仍小于 required 就返回 \code{FileTooLarge}。这个写法专门处理
+最大文件小于 64 字节的实例，避免默认容量先越界。
+
+增长顺序为：
+
+\begin{enumerate}
+  \item 检查 \code{offset + length} 不溢出且不超过最大文件；
+  \item 从 KernelHeap 申请新容量；
+  \item 把整个新缓冲清零；
+  \item 复制旧 \code{size} 字节；
+  \item 释放旧缓冲；
+  \item 更新数据地址、capacity 与统计；
+  \item 最后执行用户数据复制并发布新 size。
+\end{enumerate}
+
+写入 offset 高于旧 size 时，中间空洞保持零。truncate 扩展也补零；缩小时
+清除被截断区域，虽然当前没有安全要求必须清除不可见字节，这能让重新扩展和
+宿主测试得到确定结果。
+
+\begin{failurebox}
+新缓冲申请失败时，Node 的 data、size、capacity 和统计完全不变。旧缓冲
+释放失败表示 KernelHeap 或所有权统计已损坏，操作返回 Corrupt；实现不能在
+这种状态下假装增长成功。
+\end{failurebox}
+
+\subsection{目录枚举为什么使用 identifier 游标}
+
+节点插入活动链头部，链表顺序与创建顺序相反。目录枚举不把链表地址或数组
+下标暴露给 OpenFile，而是把上一次返回的 node identifier 保存为 64 位
+cursor；每次寻找当前目录下大于 cursor 的最小 identifier。
+
+这样枚举顺序由单调身份决定，与链表插入位置无关。v1.5 没有删除，因此游标
+不会遇到中途消失的项；v1.6 引入 unlink 后必须重新定义并发修改语义，不能
+直接把当前性质外推。
+
+\subsection{memfs Validate 重新计算什么}
+
+一致性检查不只比较几个布尔值，而是从活动节点重新推导：
+
+\begin{itemize}
+  \item 节点数、目录数、文件数和数据容量；
+  \item 根节点唯一性与父指向自身；
+  \item 非根名称合法性；
+  \item 父节点存在且为目录；
+  \item 同一父目录下 identifier 和名称不重复；
+  \item 每条祖先链在 node limit 步内到根；
+  \item 目录不持有 data/size/capacity；
+  \item 文件满足 \(size\le capacity\le maximum\)；
+  \item data 是否为空与 capacity 是否为零完全一致；
+  \item 实际 Node 大小与 data capacity 之和等于 heap requested；
+  \item Node 数加 data 缓冲数等于活动 heap allocation count。
+\end{itemize}
+
+KernelHeap 的 consumed bytes 包含分配器头部和对齐成本，因此只要求 memfs
+记录的 consumed 不小于 requested，且不超过全局 heap 当前 consumed。
+requested 与 allocation count 则可以精确重算。
+
+\subsection{legacy 适配器如何保留旧磁盘}
+
+legacy 后端不把旧 FileSystem 整体复制一份。它在持有原 FileSystem 锁时调用
+已有 inode、目录、事务和块缓存函数：
+
+\begin{longtable}{L{0.28\textwidth}L{0.60\textwidth}}
+\toprule
+VFS 操作 & legacy 映射\\
+\midrule
+lookup & 读取目录 inode，查单个 40 字节以内组件，再读子 inode\\
+create & 在已解析父 inode 下执行原有事务创建\\
+parent/get-name & 扫描已分配目录，寻找引用当前 inode 的目录项\\
+read/write & 构造临时旧 handle，用 OpenFile offset 调用既有 I/O\\
+truncate & 当前只支持归零并释放直接块\\
+readdir & 复用旧目录项解码与 handle offset\\
+sync/validate & 复用缓存 flush 与完整可达性检查\\
+\bottomrule
+\end{longtable}
+
+parent 扫描在 inode 上限内是有界的，但不是最终高性能实现。它的价值在于
+不改变盘面格式就能提供 \code{..} 和 getcwd 语义；v1.6 新格式可以直接保存
+或高效查找父关系。
+
+旧 MountOrFormat 规则保持不变：全零未初始化介质允许建立格式；magic、CRC、
+布局或 Dirty 状态损坏的非零介质必须拒绝。VFS 初始化失败不能把旧盘清零。
+持久化测试在同一个可写临时镜像中启动两次全新 QEMU，再主动破坏 superblock
+启动第三次验证拒绝。
+
+\subsection{FileDescription 迁移为什么没有破坏 dup}
+
+v1.4 的共享关系是：
+
+\begin{lstlisting}
+fd A --+
+      +--> FileDescription(FileSystemHandle, shared offset)
+fd B --+
+\end{lstlisting}
+
+v1.5 改为：
+
+\begin{lstlisting}
+fd A --+
+      +--> FileDescription(OpenFile(Path, shared offset))
+fd B --+
+\end{lstlisting}
+
+FileTable 和 KernelObject 引用图没有变化，只有 FileDescription payload 的
+后端类型改变。duplicate 仍只增加同一对象的强引用，所以 offset 继续共享；
+独立 open 仍创建新 FileDescription，所以 offset 从零开始。最后引用释放时
+调用 \code{Vfs::Close}，把 OpenFile 清零；当前后端没有额外 per-open 分配。
+
+这种迁移次序正是分阶段软件工程的价值。若 v1.4 与 v1.5 同时修改 FileTable、
+对象引用、路径和磁盘，很难判断共享偏移失败属于哪一层。
+
+\subsection{每 Process FsContext 与系统调用 29、30}
+
+\code{ProcessRuntimeProcess} 现在包含 FsContext。VFS 挂载完成后，启动期已
+准备的四个 Process 都把 root/cwd 初始化为根 Path；以后创建 Process 时也
+走相同初始化。当前没有 fork，因此尚未定义父子 FsContext 复制，但 cwd
+已经不是全局 Shell 字符串。
+
+两个新调用沿用 v1.3 的寄存器 ABI：
+
+\begin{longtable}{L{0.10\textwidth}L{0.29\textwidth}L{0.37\textwidth}L{0.12\textwidth}}
+\toprule
+编号 & 名称 & 参数 & 成功结果\\
+\midrule
+29 & ChangeDirectory & RDI=路径地址，RSI=字节数 & 0\\
+30 & GetWorkingDirectory & RDI=目标地址，RSI=容量 & 路径字节数\\
+\bottomrule
+\end{longtable}
+
+GetWorkingDirectory 的用户容量可以大于 4096。内核只承诺最多写 4096，
+因此有效容量取两者最小值，并只验证该范围可写；“给出更大缓冲”不是错误。
+容量太小则由 VFS 返回 PathTooLong，目标不包含被截断路径。
+
+Shell 的提示符每轮调用 getcwd，显示
+\code{[os:<current-path>]\$}。内建 \code{cd} 必须在 Shell 自身 Process
+执行，因为让一个外部子进程改变 cwd 不会修改父 Shell 的 FsContext。这也是
+成熟 Shell 把 cd 保留为 builtin 的历史原因。
+
+\subsection{目录项 ABI 为什么显式增加 reserved 字节}
+
+VFS 名称容量是 255。用户目录项逻辑字段为三个 64 位量和 255 字节名称：
+
+\[
+  8+8+8+255=279.
+\]
+
+C++ 结构按 8 字节对齐时，编译器通常把总大小补到 280。若最后一字节只是
+隐式 padding，聚合初始化不保证它具有面向 ABI 的定义值；把整个结构复制到
+Ring 3 可能泄露内核栈残留。
+
+因此 ABI 明确声明一个 \code{uint8\_t reserved}，内核把它写零，并用
+\code{static\_assert(sizeof(DirectoryEntry)==280)} 冻结大小。这个例子说明
+固定宽度字段仍不足以自动得到稳定 ABI；字段顺序、对齐、总大小和每个传出
+字节都必须显式定义。
+
+\subsection{锁顺序与不可抢占内核}
+
+当前是单 BSP、Ring 0 不可抢占，但 IRQ 可以进入。锁顺序仍必须明确：
+
+\begin{lstlisting}[caption={文件路径的主要锁顺序}]
+FileTable lock
+  -> KernelObjectManager lock (acquire temporary reference)
+release both
+  -> FileDescription operation lock
+  -> VFS read-only mount topology
+  -> backend lock
+       -> memfs -> KernelHeap
+       -> legacy FileSystem -> BlockCache -> ATA
+\end{lstlisting}
+
+VFS 统计锁只包围计数更新，不包围后端调用。否则路径解析可能形成
+\code{VFS lock -> backend lock}，而校验/统计路径又形成反向顺序。
+
+MountAt 只在调度开始前执行。运行期没有路径遍历与拓扑写入竞争；这是当前
+接口契约，不是由“只有一个 CPU”默默保证。未来动态 mount/unmount 需要新的
+引用和读侧稳定性设计。
+
+\subsection{持久 memfs 资源怎样进入 ResourceSnapshot}
+
+用户在 \filepath{/tmp} 创建文件后退出，节点应继续存在，因为所有者是
+Mount，而不是 Process。若进程结束时要求全局 KernelHeap 回到 VFS 初始化前，
+正确持久状态会被误报为泄漏。
+
+VFS 因此询问每个后端的 ResourceUsage，并汇总：
+
+\begin{itemize}
+  \item heap consumed bytes；
+  \item heap active requested bytes；
+  \item heap allocation count；
+  \item vnode count。
+\end{itemize}
+
+最终资源快照先包含这些量，再从 Process 比较视图中精确扣除。扣除前每个字段
+都检查下溢，扣除后再次验证快照内部关系。FileDescription、FileTable 分块、
+页表、frame、KVA 或未登记 heap 块仍会形成非零差异。
+
+memfs 自身不能靠“已登记”逃过验证：宿主单元/集成测试调用 Destroy，逐项
+释放数据和 Node，要求 KernelHeap allocation count 回到零。目标内核则在
+两次阶段边界调用 VFS Validate。
+
+\subsection{日志为什么汇总而不逐组件打印}
+
+路径 lookup、对象引用和 offset 推进都可能高频发生。COM1 当前为 115200
+波特，逐组件打印 4096 字节路径不仅刷屏，还会改变 PIT IRQ 打断系统调用的
+概率，使日志本身改变被测调度。
+
+v1.5 只在初始化和全部 Process 结束时输出：
+
+\begin{lstlisting}[caption={VFS 的有界阶段日志}]
+[OS][KERNEL] VFS_READY
+[OS][KERNEL] MEMFS_MOUNTED=/tmp
+[OS][KERNEL] VFS_MAX_PATH_BYTES=0x0000000000001000
+[OS][KERNEL] VFS_MAX_NAME_BYTES=0x00000000000000FF
+[OS][KERNEL] VFS_VALID
+[OS][KERNEL] VFS_MOUNTS=...
+[OS][KERNEL] VFS_PATH_RESOLUTIONS=...
+[OS][KERNEL] VFS_FAILED_PATH_RESOLUTIONS=...
+[OS][KERNEL] VFS_MOUNT_TRANSITIONS=...
+[OS][KERNEL] MEMFS_ACTIVE_NODES=...
+[OS][KERNEL] MEMFS_DATA_CAPACITY_BYTES=...
+\end{lstlisting}
+
+来宾继续打印 PIT 的 tick 与单调毫秒；宿主捕获器给每条串口行添加
+\code{[QEMU][T+...ms]}。前者是目标机时间，后者是 TCG 墙钟时间。两种坐标
+不能互相替代，但联合起来能区分来宾停滞与宿主模拟较慢。每个 QEMU 用例还有
+内部阶段截止和外层 CTest 截止，超时后由 Python 回收进程，不留下永久后台
+终端。
+
+\subsection{三层宿主测试与整机证据}
+
+\paragraph{VFS 单元测试}
+
+单个测试实例同时建立 root memfs 和 child memfs，覆盖：
+
+\begin{itemize}
+  \item 绝对、相对、重复分隔符、点组件和 root clamp；
+  \item 4096/4097 路径、255/256 名称；
+  \item 已有/缺失普通文件的尾斜杠；
+  \item 独立打开偏移、读写与目录枚举；
+  \item Mount 进入、从子根返回和跨 Mount getcwd；
+  \item 根替换拒绝、重复挂载、容量耗尽；
+  \item 人为篡改父 Mount 形成环；
+  \item 两个 memfs 的资源汇总和最终 Destroy。
+\end{itemize}
+
+\paragraph{双后端契约集成}
+
+同一函数分别接收以 memfs 和 legacy-fs 为根的 VFS，执行目录创建、chdir、
+文件创建/写入/读取、目录枚举、sync 和 validate。legacy 写入完成后，新建
+FileSystem、适配器、VFS 和 FsContext，从同一 MemoryBlockDevice 重新挂载
+读取。这样测试不是在旧缓存里读回自己刚写的数据。
+
+该测试还把 memfs 单文件最大值设为 17 字节，小于默认 64 字节初始容量，
+专门验证增长边界；结束时 Destroy 并核对 heap。
+
+\paragraph{十万步独立模型}
+
+固定种子 \code{0x5646532026001500} 驱动 100000 步操作。宿主模型只用
+\code{std::vector<ModelNode>} 保存 id、parent、type、name 和 data，不调用
+生产后端来计算预期。每一步随机选择：
+
+\begin{enumerate}
+  \item 创建目录或文件；
+  \item 解析一个现有绝对路径；
+  \item 切换 cwd 并比较 getcwd；
+  \item 执行 \code{..}；
+  \item 随机写入并重新读取文件；
+  \item 枚举目录并比较全部子项；
+  \item 查询确定不存在的路径。
+\end{enumerate}
+
+每一步输出一个 TestContext 断言，结束后再验证 VFS、memfs 与资源归还，
+因此结果为 100001 项断言。固定种子让失败可以由准确 step 重放，独立模型
+避免“实现调用自己再证明自己”。
+
+\paragraph{QEMU functional 与故障回归}
+
+真实 Shell 输入包含：
+
+\begin{lstlisting}
+pwd
+cd /tmp
+pwd
+mkdir session
+write session/message temporary
+cat ./session/../session/message
+ls .
+cd ..
+pwd
+mkdir /demo
+write /demo/message hello
+cat /demo/message
+ls /demo
+sync
+\end{lstlisting}
+
+前半证明 memfs、cwd、相对路径、点组件和 Mount；后半证明 legacy 创建、
+读取与持久同步。宿主要求 CD 精确两次、PWD 精确三次，并检查两个后端对应的
+mkdir/write/cat/ls 次数。
+
+用户 \code{\#UD}、用户页故障和非法 ELF 拒绝三个独立 QEMU 用例继续通过。
+这很重要：VFS 初始化顺序若提前打开中断，非法 ELF 可能不再在预期边界失败；
+若持久 memfs 被误算作 Process 泄漏，用户异常测试会以错误运行时状态结束。
+
+\subsection{按目录走读 v1.5}
+
+\begin{longtable}{L{0.44\textwidth}L{0.44\textwidth}}
+\toprule
+文件 & 阅读时要回答的问题\\
+\midrule
+\filepath{kernel/fs/vfs.hpp/.cpp} &
+Path 怎样组合 Mount 与 Vnode，逐组件解析和挂载退出的提交点在哪里？\\
+\filepath{kernel/fs/memfs.hpp/.cpp} &
+Node、数据增长、目录游标和 heap 资源统计怎样保持一致？\\
+\filepath{kernel/fs/legacy\_file\_system.hpp/.cpp} &
+旧 inode/事务怎样变成单组件后端，而不改变盘面格式？\\
+\filepath{kernel/fs/file\_system.hpp/.cpp} &
+新增的 parent 与 child helper 怎样复用旧锁和事务？\\
+\filepath{kernel/io/file\_description.hpp/.cpp} &
+legacy handle 怎样替换为 OpenFile，duplicate 和 finalizer 为何不变？\\
+\filepath{kernel/process/process\_runtime.hpp/.cpp} &
+FsContext 何时初始化，持久 VFS 资源怎样与 Process 快照分账？\\
+\filepath{kernel/user/system\_calls.cpp} &
+4096 字节用户复制、29/30 号调用和 280 字节目录项怎样校验？\\
+\filepath{user/src/shell.cpp} &
+cd、pwd、动态提示符和默认 \code{ls .} 怎样只经用户 ABI 工作？\\
+\filepath{tests/unit/kernel/vfs\_test.cpp} &
+边界、尾斜杠、Mount 环和资源归还如何构造？\\
+\filepath{tests/integration/boot/vfs\_backend\_contract\_test.cpp} &
+哪一组契约在两个后端完全相同？\\
+\filepath{tests/randomized/kernel/vfs\_namespace\_randomized\_test.cpp} &
+独立模型保存哪些事实，为什么不复用生产解析器？\\
+\filepath{tools/os\_tools/qemu\_runner.py} &
+Shell 输入、marker 精确次数、相对时间与超时回收怎样组合？\\
+\bottomrule
+\end{longtable}
+
+推荐先从 VFS unit test 推导公开语义，再读 \code{Resolve}、
+\code{MoveToParent} 和 \code{GetWorkingDirectory}；随后分别进入 memfs 与
+legacy 适配器。最后沿 FileDescription、ProcessRuntime、系统调用和 Shell
+向上走一遍，确认没有后端旁路。
+
+\subsection{失败矩阵}
+
+\begin{longtable}{L{0.27\textwidth}L{0.28\textwidth}L{0.33\textwidth}}
+\toprule
+输入或状态 & 结果 & 必须保持不变的状态\\
+\midrule
+空路径 & {\small\code{InvalidPath}} & cwd、Mount、节点\\
+4097 字节路径 & {\small\code{PathTooLong}} & 输出 Path 为空\\
+256 字节组件 & {\small\code{NameTooLong}} & 父目录和统计无半创建\\
+普通文件后继续组件 & {\small\code{NotDirectory}} & offset 与后端状态\\
+普通文件尾斜杠 & {\small\code{NotDirectory}} & 文件仍可由无斜杠路径访问\\
+缺失文件尾斜杠 create & {\small\code{NotDirectory}} & 不建立同名普通文件\\
+memfs 节点耗尽 & {\small\code{CapacityExhausted}} & 链、计数和输出 vnode\\
+memfs 文件越界 & {\small\code{FileTooLarge}} & data、size、capacity\\
+Mount 表已满 & {\small\code{MountCapacityExhausted}} & mount count 与旧项\\
+Mount 父链环 & {\small\code{LoopDetected}} & 不无限遍历\\
+legacy 损坏非零盘 & {\small\code{Corrupt / Incomplete}} & 不格式化、不进入用户态\\
+用户目标不可写 & {\small\code{InvalidUserMemory}} & 不调用 getcwd 写回\\
+\bottomrule
+\end{longtable}
+
+\subsection{本阶段明确没有做什么}
+
+v1.5 没有 rootfs v2、间接块、64 MiB 单文件、unlink、rename、非零
+truncate、stat 或符号链接。没有正/负 dentry cache，没有动态 unmount、
+bind mount 或每 Process mount namespace 复制。没有 uid/gid、权限位、
+时间戳和设备节点。
+
+memfs 线性节点链和 legacy parent 全盘扫描都是可审计基线，不是现代性能
+声明。Mount 数 64、memfs 节点 128 和单文件 64 KiB 是当前配置，不是由
+类型宽度造成的永久上限。所有 identifier、offset、capacity 和统计已经使用
+64 位固定宽度类型，后续提高规格无需改变用户 ABI，但仍必须重新验证内存预算
+和算法复杂度。
+
+v1.6 将在 VFS 不变的前提下引入版本化 rootfs v2、完整 create/mkdir/
+unlink/rename/truncate/stat、稀疏大文件、独立 mkfs/inspector/fsck 和
+崩溃边界。若 v1.6 需要改变本章的 Path、Mount 或 FileDescription 基本语义，
+应先解释为什么 v1.5 双后端与十万步模型不足，而不能悄悄绕开接口。
+
+\begin{keyidea}
+v1.5 的完成不是“Shell 多了 cd”，也不是“增加一个内存目录”。真正结果是：
+路径从 Process root/cwd 开始，逐组件经过有界状态机；Mount 与 Vnode 共同
+确定对象位置；FileDescription 继续保存一次打开；memfs 和旧磁盘后端通过
+同一契约；持久挂载资源与 Process 所有权可以分别守恒；宿主模型、真实
+SYSCALL 汇编入口、QEMU 硬件路径和跨启动磁盘共同证明这套边界。
+\end{keyidea}

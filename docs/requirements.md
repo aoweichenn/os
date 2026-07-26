@@ -103,13 +103,14 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.4 完成基线
+## v1.5 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
 v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界；v1.4 又完成
-类型化 KernelObject、共享 FileDescription 和动态 FileTable，下一阶段为
-v1.5 VFS、memfs 与 legacy 文件系统适配。Stage 1 在自研长模式
+类型化 KernelObject、共享 FileDescription 和动态 FileTable；v1.5 已完成
+VFS、每 Process FsContext、memfs 与 legacy 文件系统适配，下一阶段为
+v1.6 rootfs v2。Stage 1 在自研长模式
 环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并
@@ -198,8 +199,8 @@ FIFO。Ring 3 Shell 在 fd 0 为空时阻塞；如果此时没有 Ready 进程�
 命令预置到内核。
 
 Shell 是独立 freestanding C++20 ELF，使用固定容量解析器实现 help、echo、
-pwd、ls、mkdir、write、cat、sync 和 exit。v1.0 收口时完整回归为 97 项
-CTest；v1.4 当前为 106 项，继续覆盖单元、集成、固定种子随机、最终产物
+pwd、cd、ls、mkdir、write、cat、sync 和 exit。v1.0 收口时完整回归为 97 项
+CTest；v1.5 当前为 110 项，继续覆盖单元、集成、固定种子随机、最终产物
 审计、真实交互、双启动持久化与历史失败路径。v1.0 是第一周期 `13 / 13`
 的完成基线。v1.1 已经完成动态物理
 内存元数据、64 TiB direct-map、64 GiB 管理、4 GiB 以上页帧读写回收，
@@ -269,3 +270,25 @@ FileTable 必须以 64 项分块按需增长，functional/capacity hard limit �
 保持旧槽与传入引用不变。进程退出后活动对象、强引用和分块全部归零，创建/
 销毁、finalizer 和分块申请/释放分别守恒。宿主 4096 fd 容量测试、十万步
 固定种子模型和真实 Ring 3 共享偏移证明必须同时通过。
+
+v1.5 要求路径语义与磁盘格式彻底分层。Vnode 必须由 Superblock、非零
+identifier、generation 和类型共同识别；Path 必须同时保存 mount identity，
+不能把跨文件系统相同 inode number 当作同一对象。每个 Process 必须持有
+独立 root/cwd FsContext，FileDescription 必须保存 `Vfs + OpenFile`，Shell
+和系统调用不得直接读取 legacy inode 或 ATA。
+
+公共路径与组件上限分别为 4096 和 255 字节；绝对/相对路径、重复分隔符、
+`.`、`..`、root clamp、尾部分隔符、挂载进入/退出和 getcwd 必须由统一算法
+处理。达到长度、遍历或挂载容量时必须返回独立错误，不允许截断、回绕或误建
+文件。目录项 ABI 必须完整初始化后再复制到用户态，不得泄露结构填充。
+
+memfs 必须实现完整基础后端，并从 KernelHeap 动态拥有节点与文件数据；
+增长、truncate、空洞清零、目录枚举、校验与 Destroy 必须有明确资源守恒。
+legacy 适配器必须保留旧磁盘格式、基础创建、读取、同步与一致性检查；未知
+非零损坏介质继续拒绝，禁止自动格式化。两个后端必须通过同一契约测试，路径
+命名空间必须通过固定种子 100000 步独立参考模型。
+
+挂载拓扑只允许在用户调度前建立，v1.5 不提供动态 unmount。锁顺序必须让
+FileTable/KernelObject 锁在进入 FileDescription、VFS 和后端前释放。memfs
+等持久挂载资源必须由 VFS 精确登记，并与 Process 最终资源快照分账；扣除
+持久资源后任何 frame、KVA、heap、fd 或对象残留仍必须使整机验收失败。

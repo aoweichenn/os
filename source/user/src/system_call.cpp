@@ -281,6 +281,20 @@ int64_t ReadDirectory(const uint64_t descriptor, os::abi::DirectoryEntry &entry)
                             sizeof(os::abi::DirectoryEntry));
 }
 
+int64_t ChangeDirectory(const char *const path, const uint64_t path_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeDirectory),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetWorkingDirectory(char *const destination,
+                            const uint64_t capacity_bytes) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetWorkingDirectory),
+        reinterpret_cast<uint64_t>(destination), capacity_bytes,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 [[noreturn]] void ExitProcess(const int64_t exit_code) noexcept {
     static_cast<void>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess),
