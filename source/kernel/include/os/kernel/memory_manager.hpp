@@ -2,6 +2,7 @@
 
 #include "os/kernel/boot_info.hpp"
 #include "os/kernel/kernel_heap.hpp"
+#include "os/kernel/kernel_type_cache.hpp"
 #include "os/kernel/page_table.hpp"
 
 #include <stdint.h>
@@ -54,6 +55,16 @@ struct KernelMemoryStatistics final {
     uint64_t heap_release_count;
     uint64_t heap_peak_consumed_bytes;
     uint64_t heap_largest_free_allocation_bytes;
+    uint64_t type_cache_object_size_bytes;
+    uint64_t type_cache_object_alignment_bytes;
+    uint64_t type_cache_slot_stride_bytes;
+    uint64_t type_cache_capacity;
+    uint64_t type_cache_backing_storage_size_bytes;
+    uint64_t type_cache_active_object_count;
+    uint64_t type_cache_free_object_count;
+    uint64_t type_cache_successful_allocation_count;
+    uint64_t type_cache_release_count;
+    uint64_t type_cache_peak_active_object_count;
 };
 
 enum class KernelMemoryInitializationStatus : uint64_t {
@@ -78,6 +89,7 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     PermissionValidationFailed,
     HeapInitializationFailed,
     HeapSelfTestFailed,
+    TypeCacheSelfTestFailed,
     HighMemorySelfTestFailed,
     BuddySelfTestFailed,
     LocalApicMappingFailed,

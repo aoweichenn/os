@@ -182,6 +182,11 @@ os_add_kernel_memory_test(
     "unit"
 )
 os_add_kernel_memory_test(
+    os_kernel_type_cache_unit_tests
+    unit/kernel/kernel_type_cache_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
     os_kernel_memory_bootstrap_integration_tests
     integration/boot/kernel_memory_bootstrap_test.cpp
     "integration"
@@ -197,6 +202,11 @@ os_add_kernel_memory_test(
     "integration"
 )
 os_add_kernel_memory_test(
+    os_kernel_type_cache_lifecycle_integration_tests
+    integration/boot/kernel_type_cache_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_memory_test(
     os_kernel_memory_management_randomized_tests
     randomized/kernel/memory_management_randomized_test.cpp
     "randomized"
@@ -209,6 +219,11 @@ os_add_kernel_memory_test(
 os_add_kernel_memory_test(
     os_kernel_heap_randomized_tests
     randomized/kernel/kernel_heap_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_memory_test(
+    os_kernel_type_cache_randomized_tests
+    randomized/kernel/kernel_type_cache_randomized_test.cpp
     "randomized"
 )
 

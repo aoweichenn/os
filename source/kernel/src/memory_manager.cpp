@@ -32,6 +32,19 @@ constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_PAGE_ALIGNMENT_BYTES =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_FIRST_PATTERN = 0x13579BDF2468ACE0ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SELF_TEST_SECOND_PATTERN = 0xC001D00DC0FFEE11ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY = 32ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALIGNMENT_BYTES = 64ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_VALUE_COUNT = 8ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_VALUE_INDEX =
+    OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_VALUE_INDEX =
+    OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_VALUE_COUNT -
+    OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALTERNATING_STEP = 2ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_PATTERN = 0x5459504543414348ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_PATTERN = 0x53454C4654455354ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_PATTERN = 0x484947484652414DULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_PATTERN = 0x4449524543544D50ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_VALUE_INDEX = 0ULL;
@@ -55,6 +68,11 @@ struct DirectMapStatistics final {
     uint64_t mapped_bytes;
     uint64_t large_page_count;
     uint64_t small_page_count;
+};
+
+struct alignas(OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALIGNMENT_BYTES)
+    TypeCacheSelfTestObject final {
+    uint64_t values[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_VALUE_COUNT];
 };
 
 extern "C" uint8_t os_kernel_image_start[];
@@ -520,6 +538,113 @@ ValidateKernelMappings(const BootInfo &boot_info,
            statistics.peak_consumed_bytes > 0ULL && statistics.largest_free_allocation_bytes > 0ULL;
 }
 
+[[nodiscard]] bool RunTypeCacheSelfTest(KernelTypeCacheStatistics &type_cache_statistics) noexcept {
+    KernelHeap &heap = GetKernelHeap();
+    const KernelHeapStatistics heap_before_test = heap.Statistics();
+    KernelTypeCache<TypeCacheSelfTestObject> cache{};
+    if (cache.Initialize(heap, OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY) !=
+        KernelTypeCacheStatus::Succeeded) {
+        return false;
+    }
+
+    TypeCacheSelfTestObject *objects[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY]{};
+    for (uint64_t object_index = OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE;
+         object_index < OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY; ++object_index) {
+        if (cache.TryAcquire(objects[object_index]) != KernelTypeCacheStatus::Succeeded ||
+            (reinterpret_cast<uint64_t>(objects[object_index]) &
+             (OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALIGNMENT_BYTES -
+              OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT)) !=
+                OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE) {
+            return false;
+        }
+        objects[object_index]->values[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_VALUE_INDEX] =
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_PATTERN + object_index;
+        objects[object_index]->values[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_VALUE_INDEX] =
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_PATTERN - object_index;
+    }
+
+    TypeCacheSelfTestObject *exhausted_output =
+        objects[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_VALUE_INDEX];
+    if (cache.TryAcquire(exhausted_output) != KernelTypeCacheStatus::OutOfObjects ||
+        exhausted_output != objects[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_VALUE_INDEX]) {
+        return false;
+    }
+    for (uint64_t object_index = OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE;
+         object_index < OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY; ++object_index) {
+        if (objects[object_index]
+                    ->values[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_VALUE_INDEX] !=
+                OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_PATTERN + object_index ||
+            objects[object_index]->values[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_VALUE_INDEX] !=
+                OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_PATTERN - object_index) {
+            return false;
+        }
+    }
+
+    for (uint64_t object_index = OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE;
+         object_index < OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY;
+         object_index += OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALTERNATING_STEP) {
+        if (cache.TryRelease(objects[object_index]) != KernelTypeCacheStatus::Succeeded) {
+            return false;
+        }
+    }
+    if (cache.TryRelease(objects[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_VALUE_INDEX]) !=
+        KernelTypeCacheStatus::ObjectNotActive) {
+        return false;
+    }
+    for (uint64_t object_index = OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT;
+         object_index < OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY;
+         object_index += OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALTERNATING_STEP) {
+        if (cache.TryRelease(objects[object_index]) != KernelTypeCacheStatus::Succeeded) {
+            return false;
+        }
+    }
+
+    TypeCacheSelfTestObject *reused_object = nullptr;
+    if (cache.TryAcquire(reused_object) != KernelTypeCacheStatus::Succeeded ||
+        reused_object != objects[OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY -
+                                 OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT] ||
+        cache.TryRelease(reused_object) != KernelTypeCacheStatus::Succeeded ||
+        cache.Validate() != KernelTypeCacheStatus::Succeeded) {
+        return false;
+    }
+    type_cache_statistics = cache.Statistics();
+    const bool statistics_valid =
+        type_cache_statistics.object_size_bytes == sizeof(TypeCacheSelfTestObject) &&
+        type_cache_statistics.object_alignment_bytes ==
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALIGNMENT_BYTES &&
+        type_cache_statistics.slot_stride_bytes == sizeof(TypeCacheSelfTestObject) &&
+        type_cache_statistics.capacity == OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY &&
+        type_cache_statistics.active_object_count ==
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE &&
+        type_cache_statistics.free_object_count == OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY &&
+        type_cache_statistics.successful_allocation_count ==
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY +
+                OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT &&
+        type_cache_statistics.release_count == type_cache_statistics.successful_allocation_count &&
+        type_cache_statistics.peak_active_object_count ==
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_CAPACITY &&
+        type_cache_statistics.backing_storage_size_bytes >
+            OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_EMPTY_VALUE;
+    if (!statistics_valid || cache.Destroy() != KernelTypeCacheStatus::Succeeded) {
+        return false;
+    }
+
+    const KernelHeapStatistics heap_after_test = heap.Statistics();
+    return heap.Validate() == KernelHeapStatus::Succeeded &&
+           heap_after_test.capacity_bytes == heap_before_test.capacity_bytes &&
+           heap_after_test.consumed_bytes == heap_before_test.consumed_bytes &&
+           heap_after_test.allocation_count == heap_before_test.allocation_count &&
+           heap_after_test.active_requested_bytes == heap_before_test.active_requested_bytes &&
+           heap_after_test.successful_allocation_count ==
+               heap_before_test.successful_allocation_count +
+                   OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT &&
+           heap_after_test.release_count ==
+               heap_before_test.release_count +
+                   OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_COUNTER_INCREMENT &&
+           heap_after_test.largest_free_allocation_bytes ==
+               heap_before_test.largest_free_allocation_bytes;
+}
+
 [[nodiscard]] bool RunHighMemorySelfTest(uint64_t &test_physical_address) noexcept {
     test_physical_address = 0ULL;
     if (current_managed_physical_address_limit <= OS_KERNEL_MEMORY_HIGH_FRAME_MINIMUM_ADDRESS) {
@@ -759,6 +884,10 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
     if (!RunHeapSelfTest()) {
         return KernelMemoryInitializationStatus::HeapSelfTestFailed;
     }
+    KernelTypeCacheStatistics type_cache_statistics{};
+    if (!RunTypeCacheSelfTest(type_cache_statistics)) {
+        return KernelMemoryInitializationStatus::TypeCacheSelfTestFailed;
+    }
     uint64_t high_memory_test_physical_address = 0ULL;
     if (!RunHighMemorySelfTest(high_memory_test_physical_address)) {
         return KernelMemoryInitializationStatus::HighMemorySelfTestFailed;
@@ -813,6 +942,16 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         .heap_release_count = heap_statistics.release_count,
         .heap_peak_consumed_bytes = heap_statistics.peak_consumed_bytes,
         .heap_largest_free_allocation_bytes = heap_statistics.largest_free_allocation_bytes,
+        .type_cache_object_size_bytes = type_cache_statistics.object_size_bytes,
+        .type_cache_object_alignment_bytes = type_cache_statistics.object_alignment_bytes,
+        .type_cache_slot_stride_bytes = type_cache_statistics.slot_stride_bytes,
+        .type_cache_capacity = type_cache_statistics.capacity,
+        .type_cache_backing_storage_size_bytes = type_cache_statistics.backing_storage_size_bytes,
+        .type_cache_active_object_count = type_cache_statistics.active_object_count,
+        .type_cache_free_object_count = type_cache_statistics.free_object_count,
+        .type_cache_successful_allocation_count = type_cache_statistics.successful_allocation_count,
+        .type_cache_release_count = type_cache_statistics.release_count,
+        .type_cache_peak_active_object_count = type_cache_statistics.peak_active_object_count,
     };
     return KernelMemoryInitializationStatus::Succeeded;
 }

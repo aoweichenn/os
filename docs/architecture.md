@@ -390,11 +390,13 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 旧单页接口统一解释为 order 0，不存在可绕过 buddy 的第二个分配器。
 
 高半区堆已经从 v0.6 单调模型升级为边界标记、best-fit、双向合并的可回收
-分配器。页表管理器仍暂不回收单次 `UnmapPage` 后出现的空中间页表；该生命
-周期与 KVA、动态内核栈仍属于 v1.1 后续闭环。历史取舍见
+分配器；固定尺寸类型缓存又在其上建立单后备块、活动位图与槽内空闲链。
+页表管理器仍暂不回收单次 `UnmapPage` 后出现的空中间页表；该生命周期与
+KVA、动态内核栈仍属于 v1.1 后续闭环。历史取舍见
 [ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)，当前实现见
 [ADR 0020](adr/0020-reclaimable-kernel-heap.md) 和
-[ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)。
+[ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)，类型缓存见
+[ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md)。
 
 ## v0.7 传统中断与设备闭环
 
@@ -790,6 +792,39 @@ order 2 释放”这类部分所有权破坏。对于 \(N\) 个 PFN，两族位�
 布局、状态和取舍见
 [ADR 0020](adr/0020-reclaimable-kernel-heap.md)。
 
+## v1.1 固定尺寸类型缓存
+
+通用堆必须处理任意尺寸和对齐，因此申请需要搜索与分裂；固定尺寸缓存把同一
+类型的存储预先排列成等步长槽，只在初始化和销毁时调用一次通用堆。
+
+```text
+一个 KernelHeap 后备申请
+┌───────────────┬─────────┬────────┬────────┬─────┬────────┐
+│ active bitmap │ padding │ slot 0 │ slot 1 │ ... │ slot N-1 │
+└───────────────┴─────────┴────────┴────────┴─────┴────────┘
+                         空闲槽首 uint64_t = next free index
+
+TryAcquire: free head → 弹出 → 位图置 1 → 交给调用者
+TryRelease: 精确校验 → 位图清 0 → 压回 free head
+```
+
+位图字节数为 \(\lceil N/8\rceil\)。槽至少能容纳 8 字节空闲索引，并按对象
+对齐向上取整；对象区在位图后再次对齐。配置的全部乘加在申请前检查溢出。
+活动槽内容完全属于调用者，空闲槽才保存链索引，因此位图既保护对象数据，
+又提供重复释放检测和独立活动集合。
+
+申请、释放是 \(O(1)\) 的 LIFO 操作。耗尽、无效指针和计数溢出都在提交前
+失败；销毁只在活动数为零且完整校验通过后归还后备块。校验器重新计算布局，
+核对位图尾位、计数守恒和空闲链遍历，容量上界同时捕获链环。模板包装只管理
+类型化存储，不隐式执行构造或析构。
+
+启动自检使用 32 个 64 字节、64 字节对齐对象，完成耗尽、模式写回、偶/奇
+交错释放、重复释放拒绝与 LIFO 复用。最终统计必须为 33 次申请、33 次释放、
+峰值 32、活动 0、空闲 32；缓存销毁后通用堆当前状态恢复进入前基线。热路径
+只更新有界统计，串口在整个自检提交后输出一次摘要。并发仍由调用者串行化，
+不承诺 IRQ/NMI/panic 安全。完整决策见
+[ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -858,6 +893,8 @@ source/kernel/
 │   ├── interrupt_runtime.hpp
 │   ├── io_descriptor.hpp
 │   ├── kernel_heap.hpp
+│   ├── kernel_type_cache.hpp
+│   ├── kernel_type_cache.tpp
 │   ├── kernel_main.hpp
 │   ├── memory_manager.hpp
 │   ├── legacy_pic.hpp
@@ -888,6 +925,7 @@ source/kernel/
     ├── exception_frame.cpp
     ├── exceptions.cpp
     ├── kernel_heap.cpp
+    ├── kernel_type_cache.cpp
     ├── kernel_main.cpp
     ├── interrupt_runtime.cpp
     ├── io_descriptor.cpp

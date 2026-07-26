@@ -317,6 +317,25 @@ QEMU 自行异常退出仍视为失败。
   错误要求为零；`BUDDY_SELF_TEST_PASSED` 证明自检相对进入前活动块数恢复
   基线。热路径不逐次写串口。
 
+`v1.1` 固定尺寸类型缓存增量进一步分离每种对象的容量与生命周期：
+
+- 单元测试覆盖未初始化、无效尺寸/对齐/容量、布局溢出、后备堆不足、重复
+  初始化、耗尽输出保持、空/内部/外部指针、活动对象销毁、重复释放、LIFO
+  复用和最终归还；1 字节对象与 9 槽配置额外验证 8 字节最小步长和非整
+  字节位图；
+- 集成测试让 8、64、256 字节对齐的三个缓存共享目标同规格 64 KiB 堆，
+  交错申请/释放、保持其他缓存活动数据、拒绝提前销毁，最后乱序销毁并要求
+  堆恢复单一连续空闲区；
+- 固定种子 `0x5459504543414348` 执行 100000 步随机申请/释放，以独立记录
+  核对活动指针唯一性、首尾数据模式、活动/空闲/累计统计；每 257 步运行
+  位图与空闲链完整校验，并周期性尝试重复释放；
+- 目标自检耗尽 32 个 64 字节对齐槽，验证第 33 次申请不改输出、全部模式
+  可读回、偶/奇交错释放、重复释放拒绝和 LIFO 复用。QEMU 要求最终活动数
+  精确为零、空闲数 32、成功申请/释放 33、峰值 32，再接受
+  `TYPE_CACHE_SELF_TEST_PASSED`；
+- 缓存销毁后比较通用堆进入前后的当前占用、活动申请和最大空闲块，证明唯一
+  后备申请已经归还；申请/释放热路径不逐次打印串口。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -363,12 +382,15 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_buddy_frame_allocator_unit_tests` | 单元 | 双位图尺寸、初始化、分裂合并、失败原子性与非法释放 |
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
 | `os_kernel_heap_unit_tests` | 单元 | 可回收堆的对齐、原子失败、非法释放、合并、复用与统计 |
+| `os_kernel_type_cache_unit_tests` | 单元 | 固定尺寸缓存布局、耗尽、精确释放、LIFO、最小槽和销毁 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
 | `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 目标堆的混合对象、数据保持、耗尽与完整恢复 |
+| `os_kernel_type_cache_lifecycle_integration_tests` | 集成 | 三种对齐缓存共享堆、交错释放与乱序销毁恢复 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
 | `os_kernel_buddy_frame_allocator_randomized_tests` | 随机 | 固定种子 100000 步 buddy 与逐页参考模型 |
 | `os_kernel_heap_randomized_tests` | 随机 | 固定种子 100000 步分配/释放与独立活动对象模型 |
+| `os_kernel_type_cache_randomized_tests` | 随机 | 固定种子 100000 步槽申请/释放与独立活动记录 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
@@ -426,13 +448,13 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
-| `os_cpp_identifier_naming_check` | 集成 | 139 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
+| `os_cpp_identifier_naming_check` | 集成 | 145 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 80 项 CTest。新增三项分别覆盖 buddy 的单元失败语义、E820 洞组合
+当前共 83 项 CTest。最新三项分别覆盖类型缓存的单元失败语义、三种对齐组合
 生命周期和 100000 步固定种子模型。命名门禁使用编译数据库和 Clang AST
 区分标识符种类；
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前

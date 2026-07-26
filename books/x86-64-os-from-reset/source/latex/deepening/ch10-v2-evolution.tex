@@ -286,12 +286,14 @@ E：持久与冻结 & v1.16--v1.18 & 异步块层、ordered journal、ABI 与发
 对象如何释放”和“内核虚拟区间如何安排”。v1.1 增加 buddy、可释放 kernel
 heap/type cache、KVA allocator、动态 guard stack 与中间页表回收。
 
-已经闭环的前三个增量分别是动态 RAM/direct-map、64 KiB 可回收 kernel heap
-和双位图 buddy。heap 以边界标记、best-fit、双向合并和 100000 步模型证明
+已经闭环的四个增量分别是动态 RAM/direct-map、64 KiB 可回收 kernel heap、
+双位图 buddy 和固定尺寸 type cache。heap 以边界标记、best-fit、双向合并
+和 100000 步模型证明
 字节块生命周期；buddy 在同一页状态机上提供 order 0 兼容路径、连续块、
 错阶拒绝、递归分裂/合并与另一组 100000 步模型。64 MiB/64 GiB QEMU 都
-写回并回收八页连续块。二者仍不冒充 KVA 或 type cache，剩余资源层继续分别
-验收。
+写回并回收八页连续块。type cache 用一个 heap 后备块、活动位图与槽内空闲链
+完成另一组 100000 步模型，QEMU 耗尽、复用并销毁 32 槽后恢复 heap 基线。
+三者仍不冒充 KVA，剩余资源层继续分别验收。
 
 KVA allocator 只管理虚拟区间，不隐式拥有物理页。这样动态内核栈可以先取得
 连续虚拟区，再把不连续页映射进去，并在底部留下 not-present guard。销毁顺序

@@ -29,6 +29,12 @@
   \item Linux Kernel Documentation, \emph{Memory Map on x86-64}，
   四级/五级虚拟地址布局、direct-map 区间与实现边界。项目只借鉴分层方向，
   不宣称 Linux ABI 或内部实现兼容。
+  \item Jeff Bonwick, \emph{The Slab Allocator: An Object-Caching Kernel
+  Memory Allocator}, USENIX Summer 1994，固定大小内核对象缓存、对象复用、
+  着色和调试能力的历史来源。
+  \item Jeff Bonwick and Jonathan Adams, \emph{Magazines and Vmem:
+  Extending the Slab Allocator to Many CPUs and Arbitrary Resources},
+  USENIX 2001，多处理器本地缓存、分层资源分配与未来扩展方向。
   \item 配套仓库的 \filepath{docs/adr/}、\filepath{docs/architecture.md}
   和 \filepath{docs/releases/}，用于追踪实现决策与阶段证据。
 \end{enumerate}

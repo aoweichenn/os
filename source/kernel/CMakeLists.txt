@@ -14,6 +14,8 @@ set(
     include/os/kernel/freestanding_memory.hpp
     include/os/kernel/kernel_main.hpp
     include/os/kernel/kernel_heap.hpp
+    include/os/kernel/kernel_type_cache.hpp
+    include/os/kernel/kernel_type_cache.tpp
     include/os/kernel/interrupt_runtime.hpp
     include/os/kernel/io_descriptor.hpp
     include/os/kernel/legacy_pic.hpp
@@ -55,6 +57,7 @@ set(
     src/freestanding_memory.cpp
     src/kernel_main.cpp
     src/kernel_heap.cpp
+    src/kernel_type_cache.cpp
     src/interrupt_runtime.cpp
     src/io_descriptor.cpp
     src/legacy_pic.cpp
@@ -120,10 +123,13 @@ add_library(
     os_kernel_memory_model_host
     STATIC
         src/kernel_heap.cpp
+        src/kernel_type_cache.cpp
         src/page_table_layout.cpp
         src/physical_frame_allocator.cpp
         src/physical_memory_map.cpp
         include/os/kernel/kernel_heap.hpp
+        include/os/kernel/kernel_type_cache.hpp
+        include/os/kernel/kernel_type_cache.tpp
         include/os/kernel/page_table.hpp
         include/os/kernel/physical_frame_allocator.hpp
         include/os/kernel/physical_memory_map.hpp

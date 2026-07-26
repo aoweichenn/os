@@ -102,6 +102,28 @@ constexpr char OS_KERNEL_MAIN_HEAP_LARGEST_FREE_ALLOCATION_BYTES_PREFIX[] =
     "[OS][KERNEL] HEAP_LARGEST_FREE_ALLOCATION_BYTES=";
 constexpr char OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] HEAP_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_READY_MESSAGE[] = "[OS][KERNEL] TYPE_CACHE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_SIZE_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_OBJECT_SIZE_BYTES=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_ALIGNMENT_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_OBJECT_ALIGNMENT_BYTES=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_SLOT_STRIDE_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_SLOT_STRIDE_BYTES=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_CAPACITY_PREFIX[] = "[OS][KERNEL] TYPE_CACHE_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_BACKING_STORAGE_SIZE_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_BACKING_STORAGE_BYTES=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_ACTIVE_OBJECT_COUNT_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_ACTIVE_OBJECTS=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_FREE_OBJECT_COUNT_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_FREE_OBJECTS=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_SUCCESSFUL_ALLOCATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_SUCCESSFUL_ALLOCATIONS=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_RELEASE_COUNT_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_RELEASES=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX[] =
+    "[OS][KERNEL] TYPE_CACHE_PEAK_ACTIVE_OBJECTS=";
+constexpr char OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX[] =
     "[OS][KERNEL] DEVICE_INITIALIZATION_FAILED=";
 constexpr char OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE[] =
@@ -415,6 +437,28 @@ void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_LARGEST_FREE_ALLOCATION_BYTES_PREFIX,
                          statistics.heap_largest_free_allocation_bytes);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_SIZE_PREFIX,
+                         statistics.type_cache_object_size_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_ALIGNMENT_PREFIX,
+                         statistics.type_cache_object_alignment_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SLOT_STRIDE_PREFIX,
+                         statistics.type_cache_slot_stride_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_CAPACITY_PREFIX,
+                         statistics.type_cache_capacity);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_BACKING_STORAGE_SIZE_PREFIX,
+                         statistics.type_cache_backing_storage_size_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_ACTIVE_OBJECT_COUNT_PREFIX,
+                         statistics.type_cache_active_object_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_FREE_OBJECT_COUNT_PREFIX,
+                         statistics.type_cache_free_object_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
+                         statistics.type_cache_successful_allocation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_RELEASE_COUNT_PREFIX,
+                         statistics.type_cache_release_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX,
+                         statistics.type_cache_peak_active_object_count);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE);
 }
 
 void InitializeKernelDevices(const SerialPort &serial_port) noexcept {
