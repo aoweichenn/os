@@ -321,21 +321,23 @@ KVA、动态栈与六个未来对象字段，共 26 项当前量。启动期真�
 capacity 运行同一 Shell、IPC、文件系统和回收路径。新增五项门禁后完整集合
 为 97 项 CTest。
 
-本版本刻意保留四 PCB 和静态用户演示通路，但栈资源本身已先完成动态迁移。
+v1.1 刻意保留四 PCB 和静态用户演示通路，但栈资源本身已先完成动态迁移。
 若在 Process/Thread 尚不存在时删除 PCB，主分支会落入既没有旧对象也没有
-新对象的真空。v1.2 对等验收通过后再迁移调度对象所有者；届时必须把
-Process/Thread 当前量接入 v1.1 已冻结的资源快照，并继续复用同一作用域回滚，
-不能另造旁路计数。
+新对象的真空。v1.2 已在对等验收通过后迁移调度对象所有者，把
+Process/Thread 当前量接入 v1.1 已冻结的资源快照，并继续复用同一作用域
+回滚，没有另造旁路计数。
 
 \paragraph{v1.2：调度 Thread，并补全扩展现场}
 
-v1.2 建立 Process/Thread、动态 run queue、WaitQueue/WakeReason 和三类锁。
-调度随机模型必须在每一步验证 Ready、Running、Blocked、Exited 集合互斥，
-并区分 Thread Exited 与 Process Zombie。
+v1.2 已建立 Process/Thread、动态 run queue、WaitQueue/WakeReason 和
+三类锁。固定种子调度模型执行 100000 步，并在每一步验证 Ready、Running、
+Blocked、Exited 集合互斥，区分 Thread Exited 与 Process Zombie。
 
 上下文不只有通用寄存器。x87 控制字、SSE 寄存器和 MXCSR 若不按 Thread
-保存，一个线程的浮点计算会污染另一个线程。\code{FXSAVE} 区域需要 16 字节
-对齐；创建时用确定初值初始化，切换时与通用现场一起归属于 Thread。
+保存，一个线程的浮点计算会污染另一个线程。当前 512 字节
+\code{FXSAVE64} 区域按 16 字节对齐，创建时复制确定初始模板，在抢占、
+阻塞、退出与激活边界保存/恢复。三档目标事务已实际建立并回收
+4/4、64/128、256/512 个 Process/Thread；完整回归为 99 项 CTest。
 
 \paragraph{v1.3：CpuLocal 与原生入口单独验收}
 

@@ -22,6 +22,7 @@ from os_tools.images import createEmptyImages
 from os_tools.kernel_elf import auditKernelElf
 from os_tools.kernel_image import auditKernelDiskImage
 from os_tools.qemu_runner import (
+    OS_QEMU_DEFAULT_CPU_MODEL,
     OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
     OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
     OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
@@ -79,6 +80,13 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
     OS_QEMU_KERNEL_CR3_INVALID_MARKER,
     OS_QEMU_KERNEL_CR3_VALID_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_AVX_DISABLED_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_CR0_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_CR4_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_READY_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_RESTORE_COUNT_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_SAVE_COUNT_MARKER,
+    OS_QEMU_KERNEL_EXTENDED_STATE_UNSUPPORTED_MARKER,
     OS_QEMU_KERNEL_BREAKPOINT_HANDLED_MARKER,
     OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
     OS_QEMU_KERNEL_DESCRIPTOR_TABLES_VALID_MARKER,
@@ -194,6 +202,11 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_PROCESS_PIPE_READ_BYTES_MARKER,
     OS_QEMU_KERNEL_PROCESS_PIPE_WRITTEN_BYTES_MARKER,
     OS_QEMU_KERNEL_PROCESS_ID_MARKER,
+    OS_QEMU_KERNEL_PROCESS_CAPACITY_MARKER,
+    OS_QEMU_KERNEL_CAPACITY_SELF_TEST_PROCESSES_MARKER,
+    OS_QEMU_KERNEL_CAPACITY_SELF_TEST_THREADS_MARKER,
+    OS_QEMU_KERNEL_CAPACITY_SELF_TEST_THREADS_PER_PROCESS_MARKER,
+    OS_QEMU_KERNEL_PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED_MARKER,
     OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_LOWER_GUARD_MARKER,
     OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_TOP_MARKER,
     OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_UPPER_GUARD_MARKER,
@@ -201,6 +214,9 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED_MARKER,
     OS_QEMU_KERNEL_PROCESS_RUN_TICKS_MARKER,
     OS_QEMU_KERNEL_PROCESS_RUNTIME_READY_MARKER,
+    OS_QEMU_KERNEL_THREAD_CAPACITY_MARKER,
+    OS_QEMU_KERNEL_THREAD_ID_MARKER,
+    OS_QEMU_KERNEL_THREADS_PER_PROCESS_MARKER,
     OS_QEMU_KERNEL_STACK_ACTIVE_COUNT_MARKER,
     OS_QEMU_KERNEL_STACK_DESTRUCTION_COUNT_MARKER,
     OS_QEMU_KERNEL_STACK_GUARD_PAGE_COUNT_MARKER,
@@ -258,6 +274,7 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_USER_ZERO_SYSTEM_CALL_COUNT_MARKER,
     OS_QEMU_USER_HELLO_FROM_RING3_MARKER,
     OS_QEMU_USER_ADDRESS_SPACE_ISOLATED_MARKER,
+    OS_QEMU_USER_EXTENDED_STATE_ISOLATED_MARKER,
     OS_QEMU_USER_INVALID_POINTER_REJECTED_MARKER,
     OS_QEMU_USER_UNKNOWN_SYSTEM_CALL_REJECTED_MARKER,
     OS_QEMU_USER_PIPE_PRODUCER_STARTED_MARKER,
@@ -340,6 +357,16 @@ OS_TOOL_QEMU_KERNEL_STACK_PEAK_MAPPED_PAGE_COUNT = (
     OS_TOOL_QEMU_KERNEL_STACK_PROCESS_COUNT *
     OS_TOOL_QEMU_KERNEL_STACK_MAPPED_PAGE_COUNT
 )
+OS_TOOL_QEMU_BOOTSTRAP_PROCESS_CAPACITY = 4
+OS_TOOL_QEMU_BOOTSTRAP_THREAD_CAPACITY = 4
+OS_TOOL_QEMU_BOOTSTRAP_THREADS_PER_PROCESS = 1
+OS_TOOL_QEMU_FUNCTIONAL_PROCESS_CAPACITY = 64
+OS_TOOL_QEMU_FUNCTIONAL_THREAD_CAPACITY = 128
+OS_TOOL_QEMU_FUNCTIONAL_THREADS_PER_PROCESS = 32
+OS_TOOL_QEMU_PRIMARY_PROCESS_CAPACITY = 256
+OS_TOOL_QEMU_PRIMARY_THREAD_CAPACITY = 512
+OS_TOOL_QEMU_PRIMARY_THREADS_PER_PROCESS = 64
+OS_TOOL_QEMU_HEX_VALUE_WIDTH = 16
 
 
 class SubparserCollection(Protocol):
@@ -426,6 +453,54 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
 
 
 def handleQemuFirmware(arguments: argparse.Namespace) -> None:
+    if (
+        arguments.memoryMebibytes >=
+        OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES
+    ):
+        expectedProcessCapacity = OS_TOOL_QEMU_PRIMARY_PROCESS_CAPACITY
+        expectedThreadCapacity = OS_TOOL_QEMU_PRIMARY_THREAD_CAPACITY
+        expectedThreadsPerProcess = (
+            OS_TOOL_QEMU_PRIMARY_THREADS_PER_PROCESS
+        )
+    elif (
+        arguments.memoryMebibytes >=
+        OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES
+    ):
+        expectedProcessCapacity = OS_TOOL_QEMU_FUNCTIONAL_PROCESS_CAPACITY
+        expectedThreadCapacity = OS_TOOL_QEMU_FUNCTIONAL_THREAD_CAPACITY
+        expectedThreadsPerProcess = (
+            OS_TOOL_QEMU_FUNCTIONAL_THREADS_PER_PROCESS
+        )
+    else:
+        expectedProcessCapacity = OS_TOOL_QEMU_BOOTSTRAP_PROCESS_CAPACITY
+        expectedThreadCapacity = OS_TOOL_QEMU_BOOTSTRAP_THREAD_CAPACITY
+        expectedThreadsPerProcess = (
+            OS_TOOL_QEMU_BOOTSTRAP_THREADS_PER_PROCESS
+        )
+    exactProcessCapacityMarker = (
+        OS_QEMU_KERNEL_PROCESS_CAPACITY_MARKER +
+        f"{expectedProcessCapacity:0{OS_TOOL_QEMU_HEX_VALUE_WIDTH}X}"
+    )
+    exactThreadCapacityMarker = (
+        OS_QEMU_KERNEL_THREAD_CAPACITY_MARKER +
+        f"{expectedThreadCapacity:0{OS_TOOL_QEMU_HEX_VALUE_WIDTH}X}"
+    )
+    exactThreadsPerProcessMarker = (
+        OS_QEMU_KERNEL_THREADS_PER_PROCESS_MARKER +
+        f"{expectedThreadsPerProcess:0{OS_TOOL_QEMU_HEX_VALUE_WIDTH}X}"
+    )
+    exactCapacitySelfTestProcessesMarker = (
+        OS_QEMU_KERNEL_CAPACITY_SELF_TEST_PROCESSES_MARKER +
+        f"{expectedProcessCapacity:0{OS_TOOL_QEMU_HEX_VALUE_WIDTH}X}"
+    )
+    exactCapacitySelfTestThreadsMarker = (
+        OS_QEMU_KERNEL_CAPACITY_SELF_TEST_THREADS_MARKER +
+        f"{expectedThreadCapacity:0{OS_TOOL_QEMU_HEX_VALUE_WIDTH}X}"
+    )
+    exactCapacitySelfTestThreadsPerProcessMarker = (
+        OS_QEMU_KERNEL_CAPACITY_SELF_TEST_THREADS_PER_PROCESS_MARKER +
+        f"{expectedThreadsPerProcess:0{OS_TOOL_QEMU_HEX_VALUE_WIDTH}X}"
+    )
     completedLongModeMarkers = (
         OS_QEMU_FIRMWARE_STAGE1_LOADED_MARKER,
         OS_QEMU_STAGE1_A20_READY_MARKER,
@@ -452,6 +527,10 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_BOOT_INFO_VALID_MARKER,
         OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
         OS_QEMU_KERNEL_CR3_VALID_MARKER,
+        OS_QEMU_KERNEL_EXTENDED_STATE_READY_MARKER,
+        OS_QEMU_KERNEL_EXTENDED_STATE_CR0_MARKER,
+        OS_QEMU_KERNEL_EXTENDED_STATE_CR4_MARKER,
+        OS_QEMU_KERNEL_EXTENDED_STATE_AVX_DISABLED_MARKER,
         OS_QEMU_KERNEL_GDT_READY_MARKER,
         OS_QEMU_KERNEL_TSS_READY_MARKER,
         OS_QEMU_KERNEL_IDT_READY_MARKER,
@@ -545,6 +624,13 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     )
     completedKernelUserPreparationMarkers = (
         OS_QEMU_KERNEL_PROCESS_RUNTIME_READY_MARKER,
+        exactProcessCapacityMarker,
+        exactThreadCapacityMarker,
+        exactThreadsPerProcessMarker,
+        exactCapacitySelfTestProcessesMarker,
+        exactCapacitySelfTestThreadsMarker,
+        exactCapacitySelfTestThreadsPerProcessMarker,
+        OS_QEMU_KERNEL_PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED_MARKER,
         OS_QEMU_KERNEL_STACK_MANAGER_READY_MARKER,
         OS_QEMU_KERNEL_STACK_SLOT_CAPACITY_MARKER,
         OS_QEMU_KERNEL_STACK_MAPPED_PAGE_COUNT_MARKER,
@@ -605,6 +691,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_SCHEDULER_DISPATCHES_MARKER,
         OS_QEMU_KERNEL_SCHEDULER_BLOCKS_MARKER,
         OS_QEMU_KERNEL_SCHEDULER_WAKEUPS_MARKER,
+        OS_QEMU_KERNEL_EXTENDED_STATE_SAVE_COUNT_MARKER,
+        OS_QEMU_KERNEL_EXTENDED_STATE_RESTORE_COUNT_MARKER,
         OS_QEMU_KERNEL_PIPE_CAPACITY_MARKER,
         OS_QEMU_KERNEL_PIPE_WRITTEN_BYTES_MARKER,
         OS_QEMU_KERNEL_PIPE_READ_BYTES_MARKER,
@@ -686,12 +774,17 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_KERNEL_CR3_INVALID_MARKER,
             OS_QEMU_KERNEL_DESCRIPTOR_TABLES_INVALID_MARKER,
             OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
+            OS_QEMU_KERNEL_EXTENDED_STATE_UNSUPPORTED_MARKER,
             OS_QEMU_KERNEL_EXCEPTION_MARKER,
             OS_QEMU_KERNEL_PANIC_MARKER,
             OS_QEMU_KERNEL_USER_RESULT_INVALID_MARKER,
             OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,
         )
         expectedMarkerCounts = (
+            (OS_QEMU_KERNEL_EXTENDED_STATE_READY_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_CR0_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_CR4_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_AVX_DISABLED_MARKER, 1),
             (OS_QEMU_KERNEL_TYPE_CACHE_READY_MARKER, 1),
             (OS_QEMU_KERNEL_TYPE_CACHE_OBJECT_SIZE_MARKER, 1),
             (OS_QEMU_KERNEL_TYPE_CACHE_OBJECT_ALIGNMENT_MARKER, 1),
@@ -734,6 +827,25 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_SCOPE_ROLLBACK_SELF_TEST_PASSED_MARKER, 1),
             (OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_SELF_TEST_PASSED_MARKER, 1),
             (OS_QEMU_KERNEL_PROCESS_RUNTIME_READY_MARKER, 1),
+            (OS_QEMU_KERNEL_PROCESS_CAPACITY_MARKER, 1),
+            (OS_QEMU_KERNEL_THREAD_CAPACITY_MARKER, 1),
+            (OS_QEMU_KERNEL_THREADS_PER_PROCESS_MARKER, 1),
+            (
+                OS_QEMU_KERNEL_CAPACITY_SELF_TEST_PROCESSES_MARKER,
+                1,
+            ),
+            (
+                OS_QEMU_KERNEL_CAPACITY_SELF_TEST_THREADS_MARKER,
+                1,
+            ),
+            (
+                OS_QEMU_KERNEL_CAPACITY_SELF_TEST_THREADS_PER_PROCESS_MARKER,
+                1,
+            ),
+            (
+                OS_QEMU_KERNEL_PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED_MARKER,
+                1,
+            ),
             (OS_QEMU_KERNEL_STACK_MANAGER_READY_MARKER, 1),
             (OS_QEMU_KERNEL_STACK_SLOT_CAPACITY_MARKER, 1),
             (OS_QEMU_KERNEL_STACK_MAPPED_PAGE_COUNT_MARKER, 1),
@@ -744,6 +856,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_USER_MAPPED_PAGES_MARKER, 4),
             (OS_QEMU_KERNEL_USER_STACK_READY_MARKER, 4),
             (OS_QEMU_KERNEL_PROCESS_ID_MARKER, 8),
+            (OS_QEMU_KERNEL_THREAD_ID_MARKER, 4),
             (OS_QEMU_KERNEL_PROCESS_CR3_MARKER, 4),
             (OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_LOWER_GUARD_MARKER, 4),
             (OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_TOP_MARKER, 4),
@@ -753,6 +866,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_USER_WORKER_PROCESS_4_STEP_2_MARKER, 1),
             (OS_QEMU_USER_WORKER_PROCESS_4_STEP_3_MARKER, 1),
             (OS_QEMU_USER_ADDRESS_SPACE_ISOLATED_MARKER, 1),
+            (OS_QEMU_USER_EXTENDED_STATE_ISOLATED_MARKER, 4),
             (OS_QEMU_USER_SHELL_READY_MARKER, 1),
             (OS_QEMU_USER_SHELL_HELP_MARKER, 1),
             (OS_QEMU_USER_SHELL_ECHO_MARKER, 1),
@@ -782,6 +896,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_SCHEDULER_DISPATCHES_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_BLOCKS_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_WAKEUPS_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_SAVE_COUNT_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_RESTORE_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_CAPACITY_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_WRITTEN_BYTES_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_READ_BYTES_MARKER, 1),
@@ -893,6 +1009,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_SCHEDULER_DISPATCHES_MARKER, 4),
             (OS_QEMU_KERNEL_SCHEDULER_BLOCKS_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_WAKEUPS_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_SAVE_COUNT_MARKER, 1),
+            (OS_QEMU_KERNEL_EXTENDED_STATE_RESTORE_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_WRITER_BLOCKS_MARKER, 1),
             (OS_QEMU_KERNEL_CONSOLE_SUBMITTED_BYTES_MARKER, 1),
             (OS_QEMU_KERNEL_CONSOLE_READ_BYTES_MARKER, 1),
@@ -953,6 +1071,29 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                     OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS,
                 ),
             )
+    elif arguments.expectedOutcome == "extended-state-unsupported":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            OS_QEMU_KERNEL_ENTERED_MARKER,
+            OS_QEMU_KERNEL_BOOT_INFO_VALID_MARKER,
+            OS_QEMU_KERNEL_BSS_ZEROED_MARKER,
+            OS_QEMU_KERNEL_CR3_VALID_MARKER,
+            OS_QEMU_KERNEL_EXTENDED_STATE_UNSUPPORTED_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_EXTENDED_STATE_READY_MARKER,
+            OS_QEMU_KERNEL_GDT_READY_MARKER,
+            OS_QEMU_KERNEL_PROCESS_RUNTIME_READY_MARKER,
+            OS_QEMU_KERNEL_USER_RING3_ENTER_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
     elif arguments.expectedOutcome == "serial-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
         forbiddenMarkers = (
@@ -1265,6 +1406,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         expectedMarkerCounts=expectedMarkerCounts,
         minimumHexMarkerValues=minimumHexMarkerValues,
         memoryMebibytes=arguments.memoryMebibytes,
+        cpuModel=arguments.cpuModel,
     )
 
 
@@ -1444,9 +1586,19 @@ def createArgumentParser() -> argparse.ArgumentParser:
         ),
     )
     qemuFirmwareParser.add_argument(
+        "--cpu-model",
+        default=OS_QEMU_DEFAULT_CPU_MODEL,
+        dest="cpuModel",
+        help=(
+            "QEMU TCG CPU 型号及特性字符串；默认使用 "
+            f"{OS_QEMU_DEFAULT_CPU_MODEL}"
+        ),
+    )
+    qemuFirmwareParser.add_argument(
         "--expected-outcome",
         choices=(
             "success",
+            "extended-state-unsupported",
             "serial-failure",
             "ide-timeout",
             "ide-error",

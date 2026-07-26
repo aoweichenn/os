@@ -75,8 +75,9 @@ v1.0 再定义 `-22` 描述符能力拒绝与 `-23` 描述符单次传输过长�
 4. CPU 根据 IDT gate 的 DPL 允许 CPL3 触发该向量，根据 TSS.RSP0 离开
    用户栈，再压入特权帧。
 5. 内核汇编公共入口保存寄存器，C++ 分发器验证完整来源和地址。
-6. 普通调用通过 `IRETQ` 回 Ring 3；`ExitProcess` 和用户异常终止当前 PCB，
-   返回调度器选择的下一进程帧。
+6. 普通调用通过 `IRETQ` 回 Ring 3；`ExitProcess` 和用户异常退出当前
+   Thread，返回调度器选择的下一 Thread 帧；最后一个 Thread 退出时 Process
+   才进入 Zombie。
 
 ## v0.9 调度验收程序
 
@@ -141,6 +142,37 @@ ABI 结构；名称按显式长度输出，不假定 NUL 终止。所有动态 f
 还是用户异常都会由进程运行时关闭。完整数据流和空闲唤醒见
 [用户环境模块](user-environment.md)，架构理由见
 [ADR 0015](../adr/0015-unified-descriptors-interactive-shell-and-idle.md)。
+
+## v1.2 扩展现场隔离走读
+
+用户目标继续以 `-mno-sse -mno-sse2` 编译普通 C++，避免编译器在测试代码
+不知情时把 XMM 寄存器用于复制或临时值。扩展现场的安装和检查集中在
+`src/extended_state.asm`，采用 NASM Intel 语法；`src/extended_state.cpp`
+只提供类型化包装和稳定日志。
+
+每个 PID 从只读表取得一组不同模式：
+
+| 状态 | 验收内容 |
+| --- | --- |
+| XMM0 | 两个独立 64 位分量 |
+| XMM15 | 另一组两个 64 位分量，覆盖 x86-64 FXSAVE 高 XMM 区 |
+| MXCSR | 四组有效控制位组合 |
+| x87 control word | 四组不同舍入控制 |
+| ST0 | 精确可表示的 1.0、2.0、3.0、4.0 |
+
+`InitializeExtendedStateIsolationTest()` 先安装再立即校验，排除表索引或汇编
+本身错误。Shell 随后跨越键盘 Blocked/Ready，producer/consumer 跨越管道
+满空等待，worker 跨越真实 PIT 抢占；各程序在关键操作之间调用
+`ValidateExtendedStateIsolationTest()`，退出前调用
+`CompleteExtendedStateIsolationTest()`。
+
+完成函数先校验，输出一次 `[OS][USER] EXTENDED_STATE_ISOLATED`，再校验一次。
+第二次校验能发现日志系统调用自身错误破坏扩展现场。QEMU 必须精确观察四行，
+并同时看到 Kernel 的 FXSAVE/FXRSTOR 非零累计量；少一行、重复一行或任一
+程序非零退出都失败。
+
+该测试不声称用户态已经开放任意浮点 ABI。它只证明 x87/SSE2 是 Thread 私有
+现场，并冻结当前 FXSAVE 边界；AVX/XSAVE 仍由 CR4 配置明确禁用。
 
 ## 依赖与命名
 

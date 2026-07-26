@@ -1,14 +1,15 @@
 #pragma once
 
-#include "os/kernel/io/console_input.hpp"
+#include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/exception_frame.hpp"
 #include "os/kernel/fs/file_system.hpp"
+#include "os/kernel/io/console_input.hpp"
 #include "os/kernel/io/io_descriptor.hpp"
+#include "os/kernel/ipc/pipe.hpp"
 #include "os/kernel/memory/kernel_stack_manager.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
-#include "os/kernel/ipc/pipe.hpp"
-#include "os/kernel/process/process_scheduler.hpp"
 #include "os/kernel/memory/resource_snapshot.hpp"
+#include "os/kernel/process/thread_scheduler.hpp"
 #include "os/kernel/user/user_elf.hpp"
 #include "os/kernel/user/user_memory.hpp"
 #include "os/kernel/user/user_program_images.hpp"
@@ -16,6 +17,8 @@
 #include <stdint.h>
 
 namespace os::kernel {
+
+inline constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY = 4ULL;
 
 enum class ProcessTerminationReason : uint64_t {
     None,
@@ -33,8 +36,11 @@ enum class ProcessRuntimeStatus : uint64_t {
     KernelStackFailure,
     ContextFrameFailure,
     PageTableActivationFailure,
-    NoReadyProcess,
+    NoReadyThread,
     ResourceLeakDetected,
+    ExtendedStateFailure,
+    CapacitySelfTestFailure,
+    LockFailure,
 };
 
 enum class ProcessIoStatus : uint64_t {
@@ -52,6 +58,8 @@ enum class ProcessIoStatus : uint64_t {
 struct ProcessCreationResult final {
     uint64_t process_id;
     uint64_t process_index;
+    uint64_t thread_id;
+    uint64_t thread_index;
     uint64_t root_physical_address;
     uint64_t entry_virtual_address;
     uint64_t mapped_page_count;
@@ -91,7 +99,14 @@ struct ProcessIpcStatistics final {
 };
 
 struct ProcessRuntimeStatistics final {
-    ProcessSchedulerStatistics scheduler;
+    ThreadSchedulerStatistics scheduler;
+    ExtendedStateConfiguration extended_state;
+    uint64_t configured_process_capacity;
+    uint64_t configured_thread_capacity;
+    uint64_t configured_threads_per_process;
+    uint64_t capacity_self_test_process_count;
+    uint64_t capacity_self_test_thread_count;
+    uint64_t capacity_self_test_threads_per_process;
     PhysicalFrameAllocatorStatistics frames_before_processes;
     PhysicalFrameAllocatorStatistics frames_after_processes;
     KernelVirtualAddressAllocatorStatistics virtual_addresses_before_processes;
@@ -103,7 +118,7 @@ struct ProcessRuntimeStatistics final {
     ResourceSnapshotDifference resource_snapshot_difference;
     ProcessIpcStatistics ipc;
     ConsoleInputStatistics console_input;
-    ProcessExecutionResult processes[OS_KERNEL_PROCESS_CAPACITY];
+    ProcessExecutionResult processes[OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY];
 };
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
@@ -116,6 +131,7 @@ CreateProcess(UserProgramSelection selection, ProcessCreationResult &creation_re
 [[nodiscard]] ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept;
 [[nodiscard]] bool IsProcessSchedulingActive() noexcept;
 [[nodiscard]] uint64_t CurrentProcessId() noexcept;
+[[nodiscard]] uint64_t CurrentThreadId() noexcept;
 [[nodiscard]] UserProgramSelection CurrentProcessSelection() noexcept;
 void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] bool CurrentProcessCanReadPipe() noexcept;
@@ -163,12 +179,12 @@ CloseCurrentProcessDescriptor(uint64_t descriptor, FileSystemStatus &file_system
 void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] bool ProcessPipeReadCanProgress() noexcept;
 [[nodiscard]] bool ProcessPipeWriteCanProgress() noexcept;
-[[nodiscard]] ProcessRuntimeStatus BlockCurrentProcess(ExceptionFrame &frame,
-                                                       ProcessWaitReason wait_reason,
-                                                       ExceptionFrame *&resume_frame) noexcept;
-[[nodiscard]] ProcessRuntimeStatus WakeProcesses(ProcessWaitReason wait_reason,
-                                                 uint64_t maximum_wake_count,
-                                                 uint64_t &woken_process_count) noexcept;
+[[nodiscard]] ProcessRuntimeStatus
+BlockCurrentThread(ExceptionFrame &frame, WaitCondition wait_condition,
+                   ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] ProcessRuntimeStatus
+WakeThreads(WaitCondition wait_condition, WakeReason wake_reason,
+            uint64_t maximum_wake_count, uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
                                                               int64_t exit_code) noexcept;

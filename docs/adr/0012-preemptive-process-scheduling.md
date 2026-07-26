@@ -7,7 +7,9 @@
 > 后续状态：第 3 条记录的是 v0.9 当时的静态单 guard 实现。v1.1 已按
 > [ADR 0025](0025-kva-backed-dynamic-kernel-stacks.md) 迁移为 KVA
 > 六页区间、上下双 guard、四个独立物理后备和安全点回收；本 ADR 保留原始
-> 决策以解释调度模型的历史起点。
+> 决策以解释调度模型的历史起点。v1.2 又按
+> [ADR 0029](0029-process-thread-waitqueue-fxsave.md) 删除旧 PCB 调度器，
+> 由 Process/Thread 两级对象与完整 FXSAVE 现场取代。
 
 ## 背景
 

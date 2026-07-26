@@ -51,6 +51,30 @@ set(
     OS_USER_SYSTEM_CALL_ASSEMBLY_OBJECT
     "${CMAKE_CURRENT_BINARY_DIR}/generated/system_call.o"
 )
+
+set(
+    OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/extended_state.o"
+)
+add_custom_command(
+    OUTPUT "${OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT}"
+    COMMAND
+        "${CMAKE_COMMAND}"
+        -E
+        make_directory
+        "${CMAKE_CURRENT_BINARY_DIR}/generated"
+    COMMAND
+        "${OS_USER_NASM_EXECUTABLE}"
+        -f
+        elf64
+        -o
+        "${OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/extended_state.asm"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/extended_state.asm"
+    COMMENT "汇编 Ring 3 x87/SSE2 线程现场验收辅助代码"
+    VERBATIM
+)
 add_custom_command(
     OUTPUT "${OS_USER_SYSTEM_CALL_ASSEMBLY_OBJECT}"
     COMMAND
@@ -105,6 +129,7 @@ function(
     add_library(
         ${OS_USER_OBJECT_TARGET}
         OBJECT
+            src/extended_state.cpp
             src/freestanding_memory.cpp
             src/system_call.cpp
             "${OS_USER_PROGRAM_SOURCE}"
@@ -137,10 +162,12 @@ function(
             "${OS_USER_OUTPUT_PATH}"
             $<TARGET_OBJECTS:${OS_USER_OBJECT_TARGET}>
             "${OS_USER_SYSTEM_CALL_ASSEMBLY_OBJECT}"
+            "${OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT}"
         DEPENDS
             ${OS_USER_OBJECT_TARGET}
             $<TARGET_OBJECTS:${OS_USER_OBJECT_TARGET}>
             "${OS_USER_SYSTEM_CALL_ASSEMBLY_OBJECT}"
+            "${OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT}"
             "${OS_USER_LINKER_SCRIPT}"
         COMMENT "${OS_USER_LINK_COMMENT}"
         COMMAND_EXPAND_LISTS

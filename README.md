@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.1 可回收资源基础` 已完整完成，下一阶段是 v1.2
-Process/Thread、WaitQueue 与完整 FXSAVE 现场。v1.1 已落地动态物理内存、
+当前状态：第二周期 `v1.2 Process/Thread、等待与完整现场` 已完整完成，
+下一阶段是 v1.3 CpuLocal 与 `SYSCALL/SYSRET`。v1.1 已落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
@@ -25,7 +25,7 @@ QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo
 重复释放、内部指针和活动对象销毁都会明确失败。目标自检把 32 个 64 字节
 对齐对象完整耗尽、写回、交错释放并复用，最终 33 次申请与释放守恒，缓存
 销毁后堆恢复进入前基线。KVA 又把 `0xFFFFC90000000000` 开始的 32 TiB
-高半区窗口建模为有序软件所有权区间，当前 256 个描述符只消耗 6 KiB，不按
+高半区窗口建模为有序软件所有权区间，当前 1024 个描述符按有序区间管理，不按
 数十亿潜在页建立位图。QEMU 自检申请六页区间、保持首尾 guard not-present，
 把中间四页映射到 buddy order 2 物理块并真实写回，随后按映射、物理页、虚拟
 区间的逆序回收，最终只保留窗口首个永久保护页。页表层现在按
@@ -37,8 +37,9 @@ PD，只稳定保留一张共享 PDPT。在此基础上，内核严格
 同址用户代码/数据和四页用户栈；每个 16 KiB Ring 0 栈现从 KVA 取得六页
 所有权，从 buddy 取得四个独立物理页，并在上下各保留一页 not-present
 guard。8254 PIT
-每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0 和完整
-176 字节用户现场。`INT 0x80` 提供日志、退出和 PID 查询；进程退出或用户
+每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0、176 字节
+通用/IRET 现场和每 Thread 512 字节 FXSAVE 现场。`INT 0x80` 提供日志、
+退出和 PID/TID 查询；进程退出或用户
 异常会释放其用户页与页表，汇编回到永久启动栈后再清零并释放 Ring 0 栈的
 映射、物理页和 KVA，Ring 0 故障仍进入 panic。v0.10 又把 PCB
 扩展为可解释的 `Blocked` 状态，以具名等待原因完成阻塞与定向唤醒；内核
@@ -59,9 +60,9 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
 freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
 sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
-完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 97 项
-CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、函数和
-命名空间。
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；v1.2 完整回归共
+99 项 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、
+函数和命名空间。
 
 第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
 buddy、kernel heap/type cache、KVA、动态内核栈和页表回收，并保留当前
@@ -72,8 +73,20 @@ type cache、32 TiB KVA、动态双 guard 内核栈与页表空分支回收均�
 核对 frame、buddy、heap、KVA 与栈的当前所有权。目标启动和四进程退出各做
 一次零差异验证；具名 256 MiB functional smoke 与 64 GiB 主规格共同通过，
 因此 v1.1 已闭环。
-v1.2 再迁移到 Process/Thread、统一 WaitQueue/WakeReason 和完整 FXSAVE
-现场，v1.3 独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
+v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符和文件系统
+上下文的共享资源容器，把 Thread 固定为唯一调度实体。独立单调 PID/TID
+不再等于槽位；Thread 拥有动态双 guard 内核栈、用户栈、TLS/signal-mask
+位置、run queue/WaitQueue 关系以及 x87/SSE2 现场。统一 WaitQueue 对
+condition、timeout、signal、close、cancel 使用单赢家 WakeReason；SpinLock、
+IrqSaveSpinLock 和可睡眠 Mutex 的调用边界由测试冻结。运行时规格随同一镜像
+按 RAM 选择：64 MiB 为 4/4/1，256 MiB 为 64 Process/128 Thread/单进程
+32 Thread，64 GiB 为 256/512/64；启动容量自检建立真实页表根、动态栈和
+FXSAVE 区，再退出、reap 并用 ResourceSnapshot 验证零差异。四个 Ring 3
+程序分别写入不同 XMM0、XMM15、MXCSR、x87 控制字和 ST0 模式，在抢占、
+阻塞、唤醒和退出边界反复校验。宿主固定种子模型执行 100000 步状态迁移，
+QEMU 另有 `-sse2` 故障配置证明缺少必需 CPUID 能力时会在架构初始化前停止。
+
+v1.3 将独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
 PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
 也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
@@ -125,6 +138,10 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] BOOT_INFO_VALID
 [OS][KERNEL] BSS_ZEROED
 [OS][KERNEL] CR3_VALID
+[OS][KERNEL] EXTENDED_STATE_READY
+[OS][KERNEL] EXTENDED_STATE_CR0=0x...
+[OS][KERNEL] EXTENDED_STATE_CR4=0x...
+[OS][KERNEL] EXTENDED_STATE_AVX_DISABLED=0x0000000000000001
 [OS][KERNEL] GDT_READY
 [OS][KERNEL] TSS_READY
 [OS][KERNEL] IDT_READY
@@ -290,8 +307,8 @@ books/           可独立构建的 LaTeX 系统教材
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.1 统计为 109 个目标代码文件、21586 个物理行、19549 个非空非纯
-注释代码行，其中 C++ 17383 行、NASM Intel 汇编 2166 行；测试、工具、书籍、
+当前 v1.2 统计为 120 个目标代码文件、24227 个物理行、21968 个非空非纯
+注释代码行，其中 C++ 19661 行、NASM Intel 汇编 2307 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

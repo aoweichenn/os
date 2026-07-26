@@ -147,6 +147,31 @@ set_tests_properties(
         LABELS "randomized"
 )
 
+add_executable(
+    os_kernel_extended_state_layout_unit_tests
+    unit/kernel/extended_state_layout_test.cpp
+)
+target_link_libraries(
+    os_kernel_extended_state_layout_unit_tests
+    PRIVATE
+        os_kernel_architecture_model_host
+        os_test_support
+)
+target_compile_options(
+    os_kernel_extended_state_layout_unit_tests
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+add_test(
+    NAME os_kernel_extended_state_layout_unit_tests
+    COMMAND os_kernel_extended_state_layout_unit_tests
+)
+set_tests_properties(
+    os_kernel_extended_state_layout_unit_tests
+    PROPERTIES
+        LABELS "unit"
+)
+
 function(os_add_kernel_memory_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
     target_link_libraries(
@@ -478,18 +503,18 @@ function(os_add_kernel_process_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
 endfunction()
 
 os_add_kernel_process_test(
-    os_kernel_process_scheduler_unit_tests
-    unit/kernel/process_scheduler_test.cpp
+    os_kernel_thread_scheduler_unit_tests
+    unit/kernel/thread_scheduler_test.cpp
     "unit"
 )
 os_add_kernel_process_test(
-    os_kernel_process_scheduling_integration_tests
-    integration/boot/kernel_process_scheduling_test.cpp
+    os_kernel_thread_scheduling_integration_tests
+    integration/boot/kernel_thread_scheduling_test.cpp
     "integration"
 )
 os_add_kernel_process_test(
-    os_kernel_process_scheduler_randomized_tests
-    randomized/kernel/process_scheduler_randomized_test.cpp
+    os_kernel_thread_scheduler_randomized_tests
+    randomized/kernel/thread_scheduler_randomized_test.cpp
     "randomized"
 )
 
@@ -882,6 +907,28 @@ set_tests_properties(
     PROPERTIES
         LABELS "system;functional-smoke"
         TIMEOUT 25
+)
+
+add_test(
+    NAME os_qemu_extended_state_unsupported
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --cpu-model
+        "qemu64,-sse2"
+        --expected-outcome
+        extended-state-unsupported
+)
+set_tests_properties(
+    os_qemu_extended_state_unsupported
+    PROPERTIES
+        LABELS "system;failure-path"
+        TIMEOUT 10
 )
 
 add_test(

@@ -8,6 +8,7 @@ import unittest
 
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
+    OS_QEMU_DEFAULT_CPU_MODEL,
     OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
@@ -56,7 +57,7 @@ class QemuRunnerToolTests(unittest.TestCase):
         )
 
         self.assertIn("pc,accel=tcg", command)
-        self.assertIn("qemu64", command)
+        self.assertIn(OS_QEMU_DEFAULT_CPU_MODEL, command)
         memoryOptionIndex = command.index("-m")
         self.assertEqual(
             command[memoryOptionIndex + 1],
@@ -68,6 +69,17 @@ class QemuRunnerToolTests(unittest.TestCase):
             command,
         )
         self.assertNotIn("-kernel", command)
+
+    def testCreatesExplicitCpuFeatureFailureCommand(self) -> None:
+        cpuModel = "qemu64,-sse2"
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            cpuModel=cpuModel,
+        )
+
+        cpuOptionIndex = command.index("-cpu")
+        self.assertEqual(command[cpuOptionIndex + 1], cpuModel)
 
     def testCreatesPrimary64GibMemoryCommand(self) -> None:
         command = createQemuFirmwareCommand(

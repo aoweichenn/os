@@ -1,3 +1,4 @@
+#include "os/user/extended_state.hpp"
 #include "os/user/system_call.hpp"
 
 #include <stdint.h>
@@ -80,13 +81,19 @@ template <uint64_t MessageSizeBytes>
 
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void OsUserEntry() noexcept {
     const uint64_t process_id = os::user::GetProcessId();
+    if (!os::user::InitializeExtendedStateIsolationTest(process_id)) {
+        os::user::ExitProcess(OS_USER_SCHEDULER_FAILURE_EXIT_CODE);
+    }
     for (uint64_t round = OS_USER_SCHEDULER_FIRST_ROUND; round <= OS_USER_SCHEDULER_ROUND_COUNT;
          ++round) {
-        if (!RunWorkRound(round) || !WriteProgressMessage(process_id, round)) {
+        if (!RunWorkRound(round) ||
+            !os::user::ValidateExtendedStateIsolationTest(process_id) ||
+            !WriteProgressMessage(process_id, round)) {
             os::user::ExitProcess(OS_USER_SCHEDULER_FAILURE_EXIT_CODE);
         }
     }
-    if (!WriteMessage(OS_USER_SCHEDULER_ADDRESS_SPACE_ISOLATED_MESSAGE)) {
+    if (!WriteMessage(OS_USER_SCHEDULER_ADDRESS_SPACE_ISOLATED_MESSAGE) ||
+        !os::user::CompleteExtendedStateIsolationTest(process_id)) {
         os::user::ExitProcess(OS_USER_SCHEDULER_FAILURE_EXIT_CODE);
     }
     os::user::ExitProcess(OS_USER_SCHEDULER_SUCCESS_EXIT_CODE);

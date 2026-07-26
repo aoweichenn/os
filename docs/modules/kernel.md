@@ -41,8 +41,8 @@ src/<module>/<name>.cpp
 | `io` | 控制台和统一描述符 |
 | `ipc` | 管道 |
 | `memory` | 页帧、buddy、页表、heap、KVA、动态栈、资源快照 |
-| `process` | 进程运行时与调度 |
-| `sync` | 通用同步原语 |
+| `process` | Process/Thread 状态机、run queue、WaitQueue 与目标机运行时 |
+| `sync` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
 | `user` | 用户 ELF、用户内存、系统调用和内嵌镜像 |
 
 例如 `memory/page_table.hpp` 与 `memory/page_table.cpp` 是一组对称接口和
@@ -291,7 +291,7 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 `KernelVirtualAddressAllocator` 只记录软件对 4 KiB 虚拟页区间的所有权，不
 分配物理页，也不调用 `MapPage`。当前窗口为
 `0xFFFFC90000000000..0xFFFFE90000000000`，容量 32 TiB；首个页永久保留。
-调用方提供 256 项描述符数组，活动前缀按起始地址递增，空闲区间由相邻描述符
+调用方提供 1024 项描述符数组，活动前缀按起始地址递增，空闲区间由相邻描述符
 之间的缝隙隐式表示。
 
 `TryAllocate` 按绝对虚拟页号满足二次幂页对齐，从全部可用缝隙中选择最小者；
@@ -324,14 +324,15 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 时从最后登记的动作开始严格逆序执行，单项失败不阻止其余清理。销毁也先完整
 预检，再逆序 unmap、清零释放帧、释放精确 KVA，避免错误所有权进入部分清理。
 
-进程运行时先创建栈再装载用户地址空间，初始 176 字节特权帧放在栈顶最后
-一页。调度读取活动栈对象设置 TSS.RSP0，不再按 PCB 索引推导地址。终止处理
-仍运行在该栈上，所以只发布 `Terminated`；`OsKernelEnterScheduledProcess`
-恢复永久启动栈后，安全点确认当前 RSP 不属于目标栈才允许销毁。
+运行时把动态栈所有权交给 Thread，初始 176 字节特权帧放在栈顶最后一页。
+调度读取 Thread 的活动栈对象设置 TSS.RSP0，不从 Process 或槽位公式推导
+地址。终止处理仍运行在该栈上，所以先发布 `Exited`；
+`OsKernelEnterScheduledProcess` 恢复永久启动栈后，安全点确认当前 RSP
+不属于目标栈才允许销毁。
 
-当前管理器提供 256 个槽；正常四进程路径峰值为 4 个栈、16 个映射页和
-8 个 guard 页，结束后活动数归零。加上启动期资源自检的一次真实栈事务，
-累计创建/销毁各五次。完整设计、故障模型和测试证据见
+当前管理器提供 512 个槽；64 GiB 容量事务峰值为 512 个栈、2048 个映射页
+和 1024 个 guard 页。事务回收后活动数归零，随后正常四 Thread 路径峰值
+重新回到 4 个栈、16 个映射页和 8 个 guard 页。完整设计、故障模型和测试证据见
 [ADR 0025](../adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
 ### 通用资源生命周期基础
@@ -354,7 +355,7 @@ v1.1 用两个不依赖宿主运行时的 foundation 原语和一个 Kernel 聚�
 一个栈事务结束后，`successful_creations` 合理增加，但活动栈、映射页、
 KVA 页和物理页必须恢复；把累计量放进泄漏快照会把正常历史误判成当前泄漏。
 
-内存初始化的目标自检在槽 255 创建真实双 guard 动态栈，由外层回滚事务销毁，
+内存初始化的目标自检在保留的末端槽创建真实双 guard 动态栈，由外层回滚事务销毁，
 再要求 26 字段零差异。进程运行时又在创建四个进程前拍摄快照，在汇编切回
 永久内核栈、销毁全部用户地址空间和终止栈后再次比较。第二道检查失败会返回
 `ResourceLeakDetected`，不会只凭“进程数归零”宣布资源已回收。完整决策见
@@ -441,13 +442,13 @@ CR3 中的用户虚拟地址复制。v0.9 仍是单核且 `INT 0x80` interrupt g
 ### 进入、系统调用与返回
 
 `OsKernelEnterScheduledProcess` 保存调度启动前的内核 RSP、RFLAGS 和
-非易失寄存器，再从首个 PCB 的完整现场执行 `IRETQ`。`INT 0x80` 让 CPU 自动从
+非易失寄存器，再从首个 Thread 的完整现场执行 `IRETQ`。`INT 0x80` 让 CPU 自动从
 TSS.RSP0 取安全内核栈，系统调用公共入口复用统一寄存器帧。
 
 分发前必须满足当前存在活跃进程、帧来自 CPL3、向量为 `0x80`、
 CS=`0x23`、SS=`0x1B`、RIP 所在叶页为 user RX、RSP 位于四页用户栈，
 而且栈叶页是 user RW/NX。普通系统调用按原帧 `IRETQ`；exit 和用户异常
-终止当前 PCB 并交接到下一个 Ready 进程，只有最后一个进程结束时才用
+退出当前 Thread 并交接到下一个 Ready Thread，只有最后一个 Thread 结束时才用
 `OsKernelReturnFromUserMode` 恢复调度启动前的内核调用链。
 
 `WriteLog` 最多复制 160 字节到固定内核缓冲后再访问串口。用户日志带
@@ -505,6 +506,49 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 `ProcessRuntime` 自动关闭仍归其所有的端点并唤醒对侧，随后才回收地址空间。
 冷路径最终核对 256 字节写入/读取、空缓冲、端点关闭、阻塞/唤醒守恒与 EOF。
 
+## v1.2 Process/Thread 与统一等待运行时
+
+`ThreadScheduler` 是不接触 CR3、TSS、串口和动态分配的纯状态模型。
+`ProcessRuntime` 把其决定落实到页表、动态内核栈、系统调用和 x87/SSE2
+硬件现场。二者的职责不能反向渗透：
+
+- `ProcessEntry` 只保存 PID、Alive/Zombie、地址空间根和 Thread 所有权链；
+- `ThreadEntry` 是唯一调度实体，保存 TID、Ready/Running/Blocked/Exited、
+  三类侵入式队列链接、动态栈槽及执行统计；
+- `ProcessRuntimeProcess` 关联用户地址空间、描述符、文件句柄和终止结果；
+- `ProcessRuntimeThread` 关联 176 字节保存帧和 16 字节对齐的 512 字节
+  `FxSaveArea`。
+
+创建按“用户地址空间 → Process → 动态栈 → Thread → 初始帧/FXSAVE 模板”
+逐层发布。任一步失败都只撤销已经取得的资源，输出身份和调度状态不出现半提交
+对象。终止反向执行：保存 FXSAVE、发布 Thread Exited、切永久 CR3、释放
+地址空间、恢复永久启动栈、销毁动态栈、reap Thread、最后 reap Zombie
+Process。
+
+run queue 是 Thread 内的双向 FIFO；Process Thread 链和 WaitQueue 是单向
+侵入式链。`UINT64_MAX` 只表示“无槽索引”，零只表示“无 PID/TID”，两种
+哨兵不会混用。`Validate()` 扫描完整存储，证明每个活动 Thread 恰属于一个
+Process，Ready 链无环、最多一个 Running，以及累计 create/discard/reap
+与当前拥有量守恒。
+
+当前四个阻塞对象分别拥有 pipe-readable、pipe-writable、
+descriptor-readable、descriptor-writable WaitQueue。阻塞一次性写入
+WaitCondition、队列归属和 Blocked；唤醒只有第一个
+`WakeReason != None` 的提交者能移除 waiter 并加入 Ready。关闭队列用
+ObjectClosed FIFO 唤醒全部等待者。Mutex 复用同一队列并采用直接所有权
+handoff；IRQ 上下文和持有 spinlock 的路径不能调用 Mutex。
+
+架构初始化在 GDT 之前要求 CPUID FXSR/SSE/SSE2，设置 CR0 与 CR4 的
+FXSAVE 相关位并明确清 OSXSAVE。每次抢占、阻塞、退出保存当前 Thread，
+每次激活恢复目标 Thread。C++ 用户代码保持 `-mno-sse -mno-sse2`；单独的
+NASM 验收桩安装和校验 XMM0、XMM15、MXCSR、x87 control word、ST0。
+
+运行时限制按受管 RAM 选择，不改变实现：64 MiB 为 4/4/1，256 MiB 为
+64/128/32，64 GiB 为 256/512/64。启动容量事务会同时占有该档全部 Process、
+Thread、页表根和动态栈，中间快照核对活动数量，退出/reap 后再要求 26 字段
+资源快照零差异。完整接口与状态图见
+[ADR 0029](../adr/0029-process-thread-waitqueue-fxsave.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -514,6 +558,10 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] BOOT_INFO_VALID
 [OS][KERNEL] BSS_ZEROED
 [OS][KERNEL] CR3_VALID
+[OS][KERNEL] EXTENDED_STATE_READY
+[OS][KERNEL] EXTENDED_STATE_CR0=0x...
+[OS][KERNEL] EXTENDED_STATE_CR4=0x...
+[OS][KERNEL] EXTENDED_STATE_AVX_DISABLED=0x0000000000000001
 [OS][KERNEL] GDT_READY
 [OS][KERNEL] TSS_READY
 [OS][KERNEL] IDT_READY
@@ -577,8 +625,15 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] SCOPE_ROLLBACK_SELF_TEST_PASSED
 [OS][KERNEL] RESOURCE_SNAPSHOT_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
+[OS][KERNEL] PROCESS_CAPACITY=0x...
+[OS][KERNEL] THREAD_CAPACITY=0x...
+[OS][KERNEL] THREADS_PER_PROCESS=0x...
+[OS][KERNEL] CAPACITY_SELF_TEST_PROCESSES=0x...
+[OS][KERNEL] CAPACITY_SELF_TEST_THREADS=0x...
+[OS][KERNEL] CAPACITY_SELF_TEST_THREADS_PER_PROCESS=0x...
+[OS][KERNEL] PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED
 [OS][KERNEL] KERNEL_STACK_MANAGER_READY
-[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000100
+[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000200
 [OS][KERNEL] KERNEL_STACK_MAPPED_PAGES=0x0000000000000004
 [OS][KERNEL] KERNEL_STACK_GUARD_PAGES=0x0000000000000002
 [OS][KERNEL] KERNEL_STACK_SIZE_BYTES=0x0000000000004000
@@ -588,6 +643,7 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] USER_MAPPED_PAGES=0x...
 [OS][KERNEL] USER_STACK_READY
 [OS][KERNEL] PROCESS_ID=0x...
+[OS][KERNEL] THREAD_ID=0x...
 [OS][KERNEL] PROCESS_CR3=0x...
 [OS][KERNEL] PROCESS_KERNEL_STACK_LOWER_GUARD=0x...
 [OS][KERNEL] PROCESS_KERNEL_STACK_TOP=0x...
@@ -615,17 +671,20 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][USER][PIPE] PRODUCER_COMPLETED
 [OS][USER][PIPE] PAYLOAD_VERIFIED
 [OS][USER][PIPE] EOF_OBSERVED
+[OS][USER] EXTENDED_STATE_ISOLATED
 [OS][KERNEL] SCHEDULER_BLOCKS=0x...
 [OS][KERNEL] SCHEDULER_WAKEUPS=0x...
+[OS][KERNEL] EXTENDED_STATE_SAVES=0x...
+[OS][KERNEL] EXTENDED_STATE_RESTORES=0x...
 [OS][KERNEL] PIPE_CAPACITY_BYTES=0x0000000000000040
 [OS][KERNEL] PIPE_WRITTEN_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x0000000000000001
 [OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
-[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000005
-[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000005
-[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
-[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x...
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x...
+[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x...
+[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x...
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
 [OS][KERNEL] USER_SYSCALL_COUNT=0x0000000000000006
 [OS][KERNEL] USER_TERMINATED
@@ -664,12 +723,12 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
   per-CPU page list 和分段 `vmemmap` 以后扩展。
 - 内核堆已支持释放与合并，type cache 已支持固定容量单后备块，KVA 已管理
   32 TiB 独立窗口；堆后备区仍固定为 64 KiB，缓存尚不能跨多 slab 增长，
-  KVA 描述符存储固定为 256 项且尚无并发索引或内存压力回收。页表已按根
+  KVA 描述符存储固定为 1024 项且尚无并发索引或内存压力回收。页表已按根
   所有权回收空分支，但单 BSP 阶段尚无 PCID、远端 TLB shootdown、RCU
   页表读取者或并发拆表。
-- 当前进程内核栈已动态化并支持双 guard 与安全点回收，但仍固定为 16 KiB，
-  管理器由单 BSP 串行调用，尚无高水位统计、per-CPU 缓存或远端 TLB
-  shootdown。
+- 当前 Thread 内核栈已动态化并支持双 guard、安全点回收与高水位统计，
+  但仍固定为 16 KiB；管理器由单 BSP 串行调用，尚无 per-CPU 缓存或远端
+  TLB shootdown。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。

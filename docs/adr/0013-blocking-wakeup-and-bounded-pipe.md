@@ -4,6 +4,10 @@
 - 关联阶段：v0.10 同步与 IPC
 - 日期：2026-07-25
 
+> 后续状态：本文记录 v0.10 的 PCB 等待原因模型。v1.2 已按
+> [ADR 0029](0029-process-thread-waitqueue-fxsave.md) 迁移为 Thread、
+> 对象化 WaitQueue 和单赢家 WakeReason；管道语义保留，旧调度接口已删除。
+
 ## 背景
 
 v0.9 只有 `Unused/Ready/Running/Terminated`。进程要么可运行，要么已经

@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向，不代表当前 v1.1 已经具备这些模块。每个箭头
+本节描述第二周期的目标依赖方向，不代表当前 v1.2 已经具备这些模块。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -478,11 +478,11 @@ OsKernelEnterScheduledProcess → 恢复通用寄存器与五项特权帧 → IR
         ↓ CPU 从 TSS 取 RSP0，压用户 SS/RSP/FLAGS/CS/RIP
 系统调用汇编入口 → ValidateUserSystemCallFrame → C++ 分发
         ├─ 普通返回：恢复帧 → IRETQ → CPL3
-        └─ exit/异常：回收当前地址空间 → 切换下一个进程或恢复内核调用者
+        └─ exit/异常：退出当前 Thread → 切换下一个 Thread 或恢复内核调用者
 ```
 
 v0.8 首次打通该边界时使用单次进入函数 `OsKernelEnterUserMode`；v0.9 已将
-它替换为可从每进程内核栈恢复完整现场的
+它替换为可从独立内核栈恢复完整现场的
 `OsKernelEnterScheduledProcess`。因此当前实现不存在“全局保存一个用户调用
 者栈”的隐式单进程前提。
 
@@ -497,12 +497,12 @@ v0.8 首次打通该边界时使用单次进入函数 `OsKernelEnterUserMode`；
 | `0x00007FFFFFFF0000` | 栈顶，不映射为叶页 | 初始用户 RSP |
 
 GDT 中 CPL3 数据/代码选择子分别为 `0x1B`、`0x23`，TSS 选择子为
-`0x28`。TSS.RSP0 不再指向当前启动调用栈，而指向专用 16 KiB 转换栈，
-避免系统调用压栈覆盖“等待用户程序返回”的内核帧。
+`0x28`。TSS.RSP0 不再指向当前启动调用栈，而指向当前 Thread 的动态
+16 KiB Ring 0 栈，避免系统调用压栈覆盖其他 Thread 挂起的用户帧。
 
 用户系统调用帧比 Ring 0 异常帧多旧 RSP 与 SS，公共前 160 字节保持兼容，
 完整 `UserPrivilegeFrame` 为 176 字节。异常分发先查看保存 CS 的 RPL：
-CPL0 故障沿用 panic；CPL3 故障写入有界的 `UserExecutionResult` 并恢复内核。
+CPL0 故障沿用 panic；CPL3 故障写入有界的 `ProcessExecutionResult` 并恢复内核。
 设计权衡见
 [ADR 0011](adr/0011-user-mode-elf-and-int80-boundary.md)，代码边界见
 [User 与 ABI 模块](modules/user.md)。
@@ -858,7 +858,7 @@ TryRelease: 精确校验 → 位图清 0 → 压回 free head
 空闲区间：窗口边界和相邻描述符之间的缝隙，不保存第二份节点
 ```
 
-当前调用方在 BSS 提供 256 个 24 字节描述符，共 6144 字节。描述符容量限制
+当前调用方在 BSS 提供 1024 个 24 字节描述符，共 24576 字节。描述符容量限制
 同时活动的区间数量，不限制窗口页数；若按 8589934592 个潜在页建立一位位图，
 仅一种状态就需要 1 GiB。申请扫描全部空闲缝隙，以绝对虚拟页号满足二次幂
 页对齐，再选择可容纳请求的最小缝隙；同大小时保留低地址。插入和删除移动
@@ -993,6 +993,145 @@ frame / buddy / heap / KVA / kernel stack → ResourceSnapshot
 改写输出。启动期真实创建并回滚一次动态栈，前后 26 字段必须完全相等；当前
 四进程创建前和全部地址空间/栈回收后再次执行同一比较。完整边界见
 [ADR 0027](adr/0027-v1.1-resource-lifecycle-foundation.md)。
+
+## v1.2 当前执行模型：Process、Thread、WaitQueue 与扩展现场
+
+v1.2 删除旧四槽 PCB 调度器。当前实现只允许 `ThreadEntry` 进入 run queue；
+`ProcessEntry` 是地址空间和进程级资源的所有者。正常演示仍创建四个 Process，
+每个 Process 先有一个初始 Thread，但调度模型、容量事务和宿主集成测试已经
+真实支持一 Process 多 Thread。
+
+```text
+ProcessEntry
+├─ ProcessId（64 位单调身份，不等于槽位）
+├─ Alive | Zombie
+├─ address_space_root_physical_address
+└─ first_thread_index → Thread 所有权链
+
+ThreadEntry
+├─ ThreadId（独立 64 位单调身份）
+├─ Ready | Running | Blocked | Exited
+├─ kernel_stack_slot / user_stack / TLS / signal mask
+├─ 176 B 通用/IRET 帧 + 512 B FXSAVE 区
+├─ Process 链 / 双向 run queue / WaitQueue 链
+└─ tick / dispatch / block / wake 统计
+```
+
+状态计数必须始终满足：
+
+```text
+owned_thread = ready + running + blocked + exited
+process.thread_count = process.live_thread_count + process.exited_thread_count
+owned_process = alive + zombie
+running_thread_count <= 1
+```
+
+PID、TID 与槽位刻意分离。槽位在 reap 后可以重用，身份计数器不会回退；
+因此陈旧身份不能因为数组位置重新分配而指向新对象。固定 256/512 数组只是
+当前无分配存储后端，不是公开身份。
+
+### 调度、阻塞与两级回收
+
+run queue 是 `ThreadEntry` 内的侵入式双向 FIFO，不在 IRQ 或调度热路径申请
+内存。时间片耗尽和显式 yield 把当前 Thread 放到队尾；显式阻塞、退出和
+返回用户态前是当前单 BSP 的合法调度点。IRQ0 仍能从 CPL3 触发抢占，但内核
+普通调用链不可在任意位置被抢占。
+
+```text
+Ready ──dispatch──> Running ──quantum/yield──> Ready
+                         ├──wait──> Blocked ──single wake winner──> Ready
+                         └──exit──> Exited ──safe-point reap──> Unused
+
+最后一个 live Thread 退出
+            ↓
+Process Alive ──> Zombie ──全部 Exited Thread 已 reap──> Unused
+```
+
+退出时先保存 Thread 现场并关闭其进程级 I/O，再把 Thread 发布为 Exited。
+地址空间属于 Process；当前正常路径每个 Process 只有一个 Thread，所以最后
+一个 Thread 退出时即可切回永久 CR3 并释放地址空间。动态内核栈仍不能在自身
+上销毁：汇编先恢复 `ExecuteProcesses` 的永久调用栈，安全点再销毁 Thread
+的四个映射页、四个物理帧和六页 KVA 所有权，随后 reap Thread，最后 reap
+Zombie Process。
+
+### WaitQueue 的单赢家协议
+
+所有睡眠关系都由对象拥有的 `WaitQueue` 表达。阻塞和唤醒都在
+`IrqSaveSpinLock` 保护的调度提交区中完成；Thread 同时只能属于一个
+WaitQueue。条件满足、超时、信号、对象关闭和取消竞争同一个 `WakeReason`：
+
+```text
+Blocked + WakeReason::None + queue ownership
+                    │
+                    ├─ ConditionSatisfied
+                    ├─ Timeout
+                    ├─ Signal
+                    ├─ ObjectClosed
+                    └─ Cancelled
+                    ↓
+     第一个提交者移除 waiter 并令其 Ready
+     其余提交者得到 WakeAlreadyResolved
+```
+
+关闭队列先冻结 `closed`，再按 FIFO 以 `ObjectClosed` 唤醒全部 waiter；
+关闭后的新阻塞和重复关闭都明确失败。当前管道读写和控制台读统一使用具名
+WaitQueue；v1.3 以后的 deadline、signal 和 futex 复用同一完成协议。
+
+锁的边界同样冻结：`SpinLock` 只保护短 Thread 上下文提交区；
+`IrqSaveSpinLock` 保存进入前 IF、关中断、取得锁并在释放后恢复原值；
+`Mutex` 只能在 Thread 上下文睡眠，解锁时直接把所有权交给 FIFO 队首，
+避免新竞争者插队。`CurrentSpinLockDepth` 在单 BSP 下阻止持有 spinlock
+的调用链进入 Mutex 阻塞。
+
+### x87/SSE2 是 Thread 现场，不是 CPU 的临时细节
+
+通用中断帧不包含 x87、MMX、XMM0..XMM15 或 MXCSR。v1.2 在 GDT/IDT 初始化
+前读取 `CPUID.01H:EDX`，要求 FXSR、SSE、SSE2 三位同时存在；随后设置
+`CR0.MP/NE`、清 `CR0.EM/TS`，设置 `CR4.OSFXSR/OSXMMEXCPT` 并清
+`CR4.OSXSAVE`。AVX/XSAVE 因此明确不可用，不能产生内核没有保存的 YMM
+上半部状态。
+
+```text
+首次 Thread
+  FNINIT + MXCSR=0x1F80
+       ↓ FXSAVE64，形成 512 B 初始模板
+Thread create ──复制模板──> alignas(16) FxSaveArea
+
+抢占 / 阻塞 / 退出：FXSAVE64(current)
+激活目标 Thread：切 CR3 → 写 TSS.RSP0 → FXRSTOR64(next)
+                                              ↓
+                                           IRETQ
+```
+
+选择 eager save/restore 是有意的。历史上的惰性 FPU 切换依赖
+`CR0.TS/#NM`，会新增异常状态机和敏感数据清理边界；当前教学内核优先采用
+每次边界均可直接观察的确定语义。`qemu64,-sse2` 使用同一镜像验证能力缺失
+时只输出 `EXTENDED_STATE_UNSUPPORTED`，不得静默降级。
+
+四个 Ring 3 程序分别安装不同 XMM0、XMM15、MXCSR、x87 control word 和
+ST0 模式。Shell 经键盘等待，producer/consumer 经管道等待，worker 经 PIT
+抢占；每个程序在这些边界后重新校验，并只输出一次
+`EXTENDED_STATE_ISOLATED`。这证明保存的是实际硬件现场，而不是宿主模型
+中的附加字段。
+
+### 三档容量使用同一实现
+
+| 档位 | QEMU RAM | Process | Thread | 单 Process Thread |
+| --- | ---: | ---: | ---: | ---: |
+| bootstrap | 64 MiB | 4 | 4 | 1 |
+| functional | 256 MiB | 64 | 128 | 32 |
+| capacity | 64 GiB | 256 | 512 | 64 |
+
+启动容量事务为每个 Process 创建真实用户页表根，为每个 Thread 创建真实双
+guard 动态内核栈与 FXSAVE 区；中间快照必须观察到该档位的 Process、Thread
+和活动栈数量。全部 Thread 经调度进入 Exited，全部 Process 进入 Zombie，
+再按栈、Thread、页表、Process 的顺序回收。前后 26 字段快照必须零差异。
+KVA 描述符容量为 1024，内核栈槽容量为 512，保证容量档不是被次级元数据
+上限提前截断。
+
+实现细节与取舍见
+[ADR 0029](adr/0029-process-thread-waitqueue-fxsave.md)，整阶段证据见
+[v1.2 发布记录](releases/v1.2.md)。
 
 ## 模块边界
 

@@ -18,7 +18,7 @@ src/memory/page_table.cpp
 
 | 目录 | 职责 |
 | --- | --- |
-| `arch/` | x86-64 描述符表、异常/IRQ 入口、处理器状态和 panic |
+| `arch/` | x86-64 描述符表、异常/IRQ 入口、处理器状态、FXSAVE 和 panic |
 | `boot/` | BootInfo 校验与 C ABI 内核入口 |
 | `core/` | Kernel 主流程和 freestanding 内存运行时 |
 | `device/` | 端口 I/O、串口、PIC、PIT、PS/2 与 ATA |
@@ -26,8 +26,8 @@ src/memory/page_table.cpp
 | `io/` | 控制台输入与统一 I/O 描述符 |
 | `ipc/` | 有界管道和端点生命周期 |
 | `memory/` | 物理页、buddy、页表、heap、KVA、动态栈与资源快照 |
-| `process/` | 进程状态机、调度和目标机生命周期 |
-| `sync/` | 不依赖具体资源的同步原语 |
+| `process/` | Process/Thread 状态机、run queue、WaitQueue 和目标机生命周期 |
+| `sync/` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
 | `user/` | 用户 ELF、用户内存、系统调用和内嵌程序镜像边界 |
 
 目录表达“谁负责维护这个文件”，不额外制造冗长 C++ 命名空间。当前公开类型
@@ -47,3 +47,21 @@ src/memory/page_table.cpp
 
 模块之间可以通过公开头文件组合，但 `core/kernel_main.cpp` 只负责编排，不承载
 可独立测试的算法；算法应下沉到所属模块，使 host 模型目标仍能独立构建。
+
+v1.2 的执行模型文件固定归属如下：
+
+```text
+arch/extended_state.*          CPUID、CR0/CR4 与目标机 FXSAVE/FXRSTOR
+arch/extended_state_layout.*   可在宿主测试的 512/16 布局和能力解码
+process/thread_scheduler.*     Process/Thread 状态与侵入式队列
+process/wait_queue.*           等待对象的身份、计数与关闭状态
+process/process_runtime.*      CR3、TSS.RSP0、动态栈、用户帧和现场组合
+sync/spin_lock.*               acquire/release 与 irq-save 短临界区
+sync/mutex.*                   基于 WaitQueue 的可睡眠直接交接互斥
+```
+
+`ThreadScheduler` 不允许依赖 `memory/`、`device/` 或串口；硬件切换只存在于
+`process_runtime.cpp`。`extended_state_layout.cpp` 不执行特权指令，因此
+宿主单元测试可以验证 CPUID 位和结构布局；`extended_state.cpp` 只进入
+freestanding Kernel 目标。新增执行机制时应保持这条“纯策略—目标机落实”
+边界。

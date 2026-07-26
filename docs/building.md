@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.1 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v1.2 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
@@ -93,6 +93,22 @@ ctest --test-dir build/developer \
 该用例不是精简启动：它执行完整四进程、Shell 命令、IPC、文件系统、用户
 故障隔离和 26 字段资源快照。64 MiB、256 MiB 与 64 GiB 只改变 QEMU RAM
 规格，不切换实现。
+
+只验证扩展现场能力失败边界：
+
+```bash
+python3 tools/os.py qemu-firmware \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk.img \
+  131072 2097152 \
+  --memory-mebibytes 64 \
+  --cpu-model 'qemu64,-sse2' \
+  --expected-outcome extended-state-unsupported
+```
+
+`--cpu-model` 只改变 QEMU 模拟 CPU 暴露的 CPUID 特性，不替换固件、Stage 1
+或 Kernel。该命令必须到达 `EXTENDED_STATE_UNSUPPORTED`，并在 GDT 与
+Ring 3 之前有界结束。默认 CPU 型号固定为 `qemu64`。
 
 ## 构建产物
 
@@ -277,10 +293,12 @@ x86-64 目标使用 freestanding C++20，并关闭：
 - 栈保护
 - 线程安全局部静态初始化
 - `__cxa_atexit`
-- x86-64 红区、MMX 和 SSE
+- x86-64 红区、编译器生成的 MMX 和 SSE
 - 宿主 C++ 标准库头文件
 
-这些限制由 CMake 目标 `os_foundation_x86_64` 集中管理，后续固件与内核目标必须复用同一策略。
+这些限制由 CMake 目标 `os_foundation_x86_64` 集中管理，后续固件与内核
+目标必须复用同一策略。v1.2 的 FXSAVE/FXRSTOR 和用户态模式验收只存在于
+显式 NASM Intel 汇编边界；普通 C++ 不会隐式占用被测试的 XMM/x87 状态。
 
 ## 构建职责
 

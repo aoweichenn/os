@@ -2,6 +2,8 @@ set(
     OS_KERNEL_ARCH_HEADERS
     include/os/kernel/arch/descriptor_layout.hpp
     include/os/kernel/arch/descriptor_tables.hpp
+    include/os/kernel/arch/extended_state.hpp
+    include/os/kernel/arch/extended_state_layout.hpp
     include/os/kernel/arch/exception_frame.hpp
     include/os/kernel/arch/exceptions.hpp
     include/os/kernel/arch/interrupt_runtime.hpp
@@ -59,10 +61,12 @@ set(
 set(
     OS_KERNEL_PROCESS_HEADERS
     include/os/kernel/process/process_runtime.hpp
-    include/os/kernel/process/process_scheduler.hpp
+    include/os/kernel/process/thread_scheduler.hpp
+    include/os/kernel/process/wait_queue.hpp
 )
 set(
     OS_KERNEL_SYNCHRONIZATION_HEADERS
+    include/os/kernel/sync/mutex.hpp
     include/os/kernel/sync/spin_lock.hpp
 )
 set(
@@ -92,6 +96,8 @@ set(
     OS_KERNEL_ARCH_SOURCES
     src/arch/descriptor_layout.cpp
     src/arch/descriptor_tables.cpp
+    src/arch/extended_state.cpp
+    src/arch/extended_state_layout.cpp
     src/arch/exception_frame.cpp
     src/arch/exceptions.cpp
     src/arch/interrupt_runtime.cpp
@@ -148,10 +154,12 @@ set(
 set(
     OS_KERNEL_PROCESS_SOURCES
     src/process/process_runtime.cpp
-    src/process/process_scheduler.cpp
+    src/process/thread_scheduler.cpp
+    src/process/wait_queue.cpp
 )
 set(
     OS_KERNEL_SYNCHRONIZATION_SOURCES
+    src/sync/mutex.cpp
     src/sync/spin_lock.cpp
 )
 set(
@@ -198,8 +206,10 @@ add_library(
     os_kernel_architecture_model_host
     STATIC
         src/arch/descriptor_layout.cpp
+        src/arch/extended_state_layout.cpp
         src/arch/exception_frame.cpp
         include/os/kernel/arch/descriptor_layout.hpp
+        include/os/kernel/arch/extended_state_layout.hpp
         include/os/kernel/arch/exception_frame.hpp
 )
 target_include_directories(
@@ -278,8 +288,14 @@ add_library(
 add_library(
     os_kernel_process_model_host
     STATIC
-        src/process/process_scheduler.cpp
-        include/os/kernel/process/process_scheduler.hpp
+        src/process/thread_scheduler.cpp
+        src/process/wait_queue.cpp
+        src/sync/mutex.cpp
+        src/sync/spin_lock.cpp
+        include/os/kernel/process/thread_scheduler.hpp
+        include/os/kernel/process/wait_queue.hpp
+        include/os/kernel/sync/mutex.hpp
+        include/os/kernel/sync/spin_lock.hpp
 )
 
 add_library(

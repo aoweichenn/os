@@ -147,7 +147,7 @@ KVA 同样采用一次提交后的有界快照，不记录每次区间扫描和�
 [OS][KERNEL] KVA_ALLOCATOR_READY
 [OS][KERNEL] KVA_WINDOW_BASE=0xFFFFC90000000000
 [OS][KERNEL] KVA_WINDOW_SIZE_BYTES=0x0000200000000000
-[OS][KERNEL] KVA_DESCRIPTOR_CAPACITY=0x0000000000000100
+[OS][KERNEL] KVA_DESCRIPTOR_CAPACITY=0x0000000000000400
 [OS][KERNEL] KVA_ACTIVE_DESCRIPTORS=0x0000000000000001
 [OS][KERNEL] KVA_FREE_PAGES=0x00000001FFFFFFFF
 [OS][KERNEL] KVA_ALLOCATED_PAGES=0x0000000000000000
@@ -205,7 +205,7 @@ buddy、heap、KVA、动态内核栈和已经为后续对象预留的六个计�
 
 ```text
 [OS][KERNEL] KERNEL_STACK_MANAGER_READY
-[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000100
+[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000200
 [OS][KERNEL] KERNEL_STACK_MAPPED_PAGES=0x0000000000000004
 [OS][KERNEL] KERNEL_STACK_GUARD_PAGES=0x0000000000000002
 [OS][KERNEL] KERNEL_STACK_SIZE_BYTES=0x0000000000004000
@@ -215,10 +215,10 @@ buddy、heap、KVA、动态内核栈和已经为后续对象预留的六个计�
 [OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=0x...
 
 [OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
-[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000005
-[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000005
-[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
-[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x...
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x...
+[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x...
+[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x...
 [OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
 ```
 
@@ -228,11 +228,12 @@ buddy、heap、KVA、动态内核栈和已经为后续对象预留的六个计�
 清零、逐页 map/unmap、扫描槽位和安全点遍历均不打印，避免调度与退出路径
 刷屏。
 
-运行结束汇总在汇编回到永久启动栈、全部终止栈安全回收之后生成。正常路径
-包含启动期资源事务的一次创建/销毁和四个进程栈，因此累计必须是五次创建、
-五次销毁；启动期栈已经在进程阶段前回收，所以峰值仍为四栈/十六映射页，
-最终活动数为零。用户 `#UD` 与 `#PF` 隔离镜像使用同一字段，但只执行各自
-路径所需的栈生命周期。只有 frame、KVA 和管理器三组
+运行结束汇总在汇编回到永久启动栈、全部 Exited Thread 的栈安全回收之后
+生成。累计值包含资源事务、当前内存档位的 Process/Thread 容量事务和正常
+用户 Thread，因此由 64 MiB、256 MiB、64 GiB 配置分别决定；协议要求创建
+等于销毁、峰值至少等于该档 Thread 容量、最终活动数为零，而不硬编码单一
+累计值。用户 `#UD` 与 `#PF` 隔离镜像使用同一字段，但只执行各自路径所需
+的栈生命周期。只有 frame、KVA 和管理器三组
 运行前后不变量同时成立，才输出 `KERNEL_STACK_RESOURCES_RECLAIMED`。QEMU
 协议对正常路径的配置/汇总次数和每进程地址次数做精确计数，并对三个地址和
 峰值做十六进制下界检查。
@@ -413,8 +414,8 @@ QEMU 捕获器继续给包括 Ring 3 文本在内的每一行加
 
 调度日志遵循“热路径零日志、冷路径批量汇总”：
 
-- IRQ0 中只更新 tick、预算和 PCB 帧指针，不打印每次切换。
-- `PROCESS_ID/CR3/KERNEL_STACK_TOP` 只在创建成功后各打印一次。
+- IRQ0 中只更新 tick、预算和 Thread 帧指针，不打印每次切换或 FXSAVE。
+- `PROCESS_ID/THREAD_ID/CR3/KERNEL_STACK_TOP` 只在创建成功后各打印一次。
 - worker 的九条进度文本用于证明三个实例都运行，不代表内核可信状态。
 - 全部进程结束后才打印五个调度总量和四份进程结果；系统测试检查精确次数，
   防止重复日志掩盖遗漏。
@@ -434,7 +435,7 @@ IPC 同样遵循“热路径零日志、冷路径可核对”的规则：
   读写阻塞数和 EOF 次数。
 - 只有目标内核验证写入=读取=256、缓冲为空、端点均关闭、EOF=1 后，才能
   输出 `PIPE_TRANSFER_VALID` 与 `PIPE_ENDPOINTS_CLOSED`。
-- 每份 PCB 结果额外打印自己的 pipe read/write 字节；生产者只能写 256，
+- 每份 Process 结果额外打印自己的 pipe read/write 字节；生产者只能写 256，
   消费者只能读 256，两个 worker 两项都必须为零。
 
 这里故意不把每次唤醒的 PID 顺序写进日志协议。唤醒意味着条件可能推进，
@@ -461,7 +462,7 @@ IPC 同样遵循“热路径零日志、冷路径可核对”的规则：
 格式化、第二次挂载恢复与第三次损坏拒绝的宿主到达时间；这个前缀不改变来宾
 日志的稳定文本，也不冒充磁盘中的文件时间戳。
 
-## v1.0 当前交互与控制台日志协议
+## v1.0 交互与控制台日志基线
 
 v1.0 保留上述冷路径原则，但把“首个 A 键”扩展为完整 Shell 会话。稳定协议
 只记录命令的语义边界，不记录每个扫描码、字符、系统调用重试或提示符：
@@ -497,7 +498,7 @@ worker 文本交错；Shell 自身的十条命令顺序、每条精确一次才�
 
 其中 `0x6D` 是当前自动化脚本的 109 个输入字节，不是通用容量常量。验收要求
 submitted=read、dropped=0、buffered=0；若以后更改脚本，应同时更新期望值，
-而不是在内核里伪造固定统计。每个 PCB 只在终止汇总中记录控制台读写字节，
+而不是在内核里伪造固定统计。每个 Process 只在终止汇总中记录控制台读写字节，
 Shell 读取全部输入，后台三个程序均不读取控制台。
 
 没有 Ready 进程时，内核不会周期性打印 `IDLE`。它在永久地址空间和默认
@@ -509,3 +510,57 @@ RSP0 上执行同一汇编块中的 `sti; hlt; cli`；IRQ0 可能只推进时间
 worker。创建、终止、描述符关闭、管道字节、文件系统一致性与控制台统计都在
 冷路径汇总；任何 `PANIC`、`EXCEPTION`、`USER_EXECUTION_FAILED`、
 `DEVICE_INITIALIZATION_FAILED` 或控制台丢弃都使成功路径失败。
+
+## v1.2 Process/Thread 与扩展现场日志
+
+v1.2 在架构初始化、容量事务和最终调度汇总各增加一组冷路径日志。CPU 能力
+与控制寄存器只在配置回读成功后输出一次：
+
+```text
+[OS][KERNEL] EXTENDED_STATE_READY
+[OS][KERNEL] EXTENDED_STATE_CR0=0x...
+[OS][KERNEL] EXTENDED_STATE_CR4=0x...
+[OS][KERNEL] EXTENDED_STATE_AVX_DISABLED=0x0000000000000001
+```
+
+缺少 FXSR、SSE 或 SSE2 时只输出
+`[OS][KERNEL] EXTENDED_STATE_UNSUPPORTED` 并停止。该失败路径禁止出现
+`EXTENDED_STATE_READY`、GDT、用户态和 `READY`，避免半初始化继续运行。
+CR0/CR4 数值由 QEMU CPU 型号决定，测试验证必需位而不把无关位硬编码。
+
+容量事务完成并回到资源基线后输出：
+
+```text
+[OS][KERNEL] PROCESS_CAPACITY=0x...
+[OS][KERNEL] THREAD_CAPACITY=0x...
+[OS][KERNEL] THREADS_PER_PROCESS=0x...
+[OS][KERNEL] CAPACITY_SELF_TEST_PROCESSES=0x...
+[OS][KERNEL] CAPACITY_SELF_TEST_THREADS=0x...
+[OS][KERNEL] CAPACITY_SELF_TEST_THREADS_PER_PROCESS=0x...
+[OS][KERNEL] PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED
+```
+
+前三项是运行时选择的策略上限，后三项是本次真实创建并回收的数量；两组三项
+必须精确相等。QEMU 工具按 RAM 计算期望值：64 MiB 为 4/4/1，256 MiB 为
+64/128/32，64 GiB 为 256/512/64。不能只搜索字段前缀，也不能用 64 GiB
+QEMU 参数代替来宾容量证据。
+
+正常四程序创建成功时各输出一次 `THREAD_ID`。PID 与 TID 当前都从一开始，
+但测试分别计数，不以数值相同推断两种身份相同。四个用户程序在真实抢占或
+阻塞路径后各输出一次：
+
+```text
+[OS][USER] EXTENDED_STATE_ISOLATED
+```
+
+最终只汇总累计次数：
+
+```text
+[OS][KERNEL] EXTENDED_STATE_SAVES=0x...
+[OS][KERNEL] EXTENDED_STATE_RESTORES=0x...
+```
+
+二者必须非零；每次 FXSAVE/FXRSTOR 不打印。逐切换日志会显著增加串口耗时，
+使测试改变调度时序，也会把真正的状态失败淹没。最终 `SCHEDULER_COMPLETE`
+还要求 Process/Thread owned count 为零、create/reap 守恒和 26 字段资源
+快照零差异。

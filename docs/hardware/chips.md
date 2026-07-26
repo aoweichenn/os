@@ -40,7 +40,7 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 ### 2.1 RFLAGS
 
 | 位 | 名称 | 语义 | 当前启动链用途 |
-| ---: | --- | --- | --- |
+| --- | ---: | --- | --- | --- |
 | 0 | CF | 无符号进位/借位 | 检查地址或 LBA 加法是否溢出时观察 | 
 | 2 | PF | 低字节偶校验 | 算术指令副作用，当前不作为协议条件 |
 | 4 | AF | 半字节进位 | BCD 兼容状态，当前不使用 |
@@ -60,10 +60,17 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 | 寄存器 | 位 | 名称 | 作用 | 前置/后置条件 |
 | --- | ---: | --- | --- | --- |
 | CR0 | 0 | PE | 进入保护模式 | GDT 已准备，随后必须远跳转刷新 CS |
+| CR0 | 1 | MP | WAIT/FWAIT 与 TS 协同 | v1.2 扩展现场初始化置一 |
+| CR0 | 2 | EM | x87 软件仿真 | v1.2 清零，要求真实硬件执行 |
+| CR0 | 3 | TS | 首次 FPU 使用触发 #NM | v1.2 eager 切换清零 |
+| CR0 | 5 | NE | x87 错误使用原生异常 | v1.2 置一，不走旧式 IRQ13 |
 | CR0 | 16 | WP | supervisor 写也遵守只读页 | v0.6 在切换内核 CR3 前启用并回读 |
 | CR0 | 31 | PG | 开启分页 | CR3、CR4.PAE、EFER.LME 和页表先有效 |
 | CR3 | 全宽地址字段 | PML4 | 当前页表根物理地址 | 必须满足页对齐和物理范围 |
 | CR4 | 5 | PAE | 启用物理地址扩展 | 设置后才能按长模式页表解释 |
+| CR4 | 9 | OSFXSR | OS 管理 FXSAVE/FXRSTOR | v1.2 置一并回读 |
+| CR4 | 10 | OSXMMEXCPT | SIMD 异常使用 #XM | v1.2 置一并回读 |
+| CR4 | 18 | OSXSAVE | OS 管理 XSAVE/XCR0 | v1.2 明确清零，AVX 禁用 |
 | EFER | 8 | LME | 请求长模式 | 通过 `RDMSR/WRMSR` 访问 |
 | EFER | 10 | LMA | 长模式已激活 | 只读结果，不能直接写 |
 | EFER | 11 | NXE | 启用 NX 位 | v0.6 先用 CPUID 检查，再启用并回读 |
@@ -88,6 +95,35 @@ QEMU 只提供这些设备的行为模型。端口顺序、访问宽度、状态
 最高 type 1 RAM 页和 direct-map 容量的较小值。标准叶
 `CPUID.(EAX=7,ECX=0):ECX[16]` 表示 LA57 能力，当前只记录该能力，不设置
 `CR4.LA57`。
+
+#### CPUID 与 x87/SSE2 扩展现场
+
+v1.2 读取标准特性叶 `CPUID.(EAX=1):EDX`，三位必须同时存在：
+
+| EDX 位 | 名称 | 缺失后的处理 |
+| ---: | --- | --- |
+| 24 | FXSR | 不得执行 FXSAVE/FXRSTOR，输出 `EXTENDED_STATE_UNSUPPORTED` |
+| 25 | SSE | 不得开放 XMM/MXCSR 用户状态 |
+| 26 | SSE2 | 不满足当前 x86-64 用户执行基线 |
+
+能力检查通过后，内核按上表配置 CR0/CR4，并用 `FNINIT`、
+`LDMXCSR [0x1F80]`、`FXSAVE64` 建立初始模板。每个 Thread 的保存区固定
+512 字节并按 16 字节对齐：
+
+```text
+offset 0x000  FCW/FSW/FTW/FOP                8 B
+offset 0x008  FIP/FDP                        16 B
+offset 0x018  MXCSR/MXCSR_MASK                8 B
+offset 0x020  ST0..ST7/MMX（每槽 16 B）     128 B
+offset 0x0A0  XMM0..XMM15（每槽 16 B）      256 B
+offset 0x1A0  reserved/software               96 B
+total                                         512 B
+```
+
+`FXSAVE64` 的 64 位格式与普通中断帧相互独立；`IRETQ` 不会恢复这块状态。
+调度边界必须显式 `FXSAVE64 current` 和 `FXRSTOR64 next`。本阶段清
+OSXSAVE，所以 YMM 上半部不可用，不会出现“能执行 AVX 但内核只保存 XMM”
+的部分支持。
 
 ### 2.3 长模式描述符寄存器
 
@@ -122,7 +158,7 @@ TSS 内存布局：
 
 | 偏移 | 宽度 | 字段 | 当前用途 |
 | ---: | ---: | --- | --- |
-| `0x04` | 64 | RSP0 | 当前进程动态 16 KiB Ring 0 栈顶；上下各有一页 guard |
+| `0x04` | 64 | RSP0 | 当前 Thread 动态 16 KiB Ring 0 栈顶；上下各有一页 guard |
 | `0x0C` / `0x14` | 64 | RSP1 / RSP2 | 保留为零 |
 | `0x24` | 64 | IST1 | 双重故障栈 |
 | `0x2C` | 64 | IST2 | NMI 栈 |
@@ -130,21 +166,22 @@ TSS 内存布局：
 | `0x3C..0x5C` | 64 | IST4..IST7 | 保留为零 |
 | `0x66` | 16 | I/O bitmap offset | 104，位于 TSS limit 之后 |
 
-### 2.5 v0.9 调度切换的 CPU 状态
+### 2.5 v1.2 调度切换的 CPU 状态
 
 round-robin 的一次切换跨越三个硬件状态集合：
 
-| 状态 | 旧进程保存位置 | 新进程恢复动作 | 不变量 |
+| 状态 | 旧 Thread 保存位置 | 新 Thread 恢复动作 | 不变量 |
 | --- | --- | --- | --- |
-| 通用寄存器 | 动态 Ring 0 栈上的 15 个 64 位槽 | 汇编逆序 `POP` | 帧地址属于对应 PCB 活动栈 |
+| 通用寄存器 | 动态 Ring 0 栈上的 15 个 64 位槽 | 汇编逆序 `POP` | 帧地址属于对应 Thread 活动栈 |
 | RIP/CS/RFLAGS/RSP/SS | CPU 特权帧 | `IRETQ` | CS.RPL=3、SS.RPL=3、IF=1 |
-| CR3 | PCB 地址空间根 | `MOV CR3` | 4 KiB 对齐且不是永久内核根 |
-| TSS.RSP0 | TSS 内存字段 | 普通 64 位写并读回 | 指向新 PCB 动态栈顶且 16 字节对齐 |
+| x87/MMX/XMM/MXCSR | Thread 的 512 B FXSAVE 区 | `FXRSTOR64` | 区域 16 字节对齐且属于目标 Thread |
+| CR3 | Process 地址空间根 | `MOV CR3` | 4 KiB 对齐且不是永久内核根 |
+| TSS.RSP0 | TSS 内存字段 | 普通 64 位写并读回 | 指向新 Thread 动态栈顶且 16 字节对齐 |
 
 IRQ0 到来时 CPU 已自动使用“旧”RSP0 压帧。C++ 可以在该栈上切换 CR3，
 因为所有进程页表都共享 supervisor 内核代码以及 KVA 高半内核栈页表子树。
 四个数据页为 RW/NX，lower/upper guard 始终 not-present。
-但在执行新进程 `IRETQ` 前必须写入“新”RSP0；否则下一次系统调用会在旧栈
+但在执行新 Thread `IRETQ` 前必须写入“新”RSP0；否则下一次系统调用会在旧栈
 压帧并破坏被挂起现场。
 
 写 CR3 会刷新当前处理器的大多数非 global TLB 项。本阶段没有设置 global
@@ -501,9 +538,12 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/kernel/src/user/user_elf.cpp`：严格 ELF64 用户文件解析。
 - `source/kernel/src/user/user_memory.cpp`：用户页装载、栈与指针逐页检查。
 - `source/kernel/src/user/system_calls.cpp`：`INT 0x80` 帧验证与系统调用分发。
-- `source/kernel/src/process/process_scheduler.cpp`：与硬件无关的进程状态和量子决策。
+- `source/kernel/src/process/thread_scheduler.cpp`：与硬件无关的
+  Process/Thread 状态、run queue、WaitQueue 和量子决策。
+- `source/kernel/src/arch/extended_state.cpp`：CPUID、CR0/CR4 与每 Thread
+  FXSAVE/FXRSTOR 现场协议。
 - `source/kernel/src/process/process_runtime.cpp`：CR3、TSS.RSP0、保存帧与资源生命周期。
-- `source/kernel/src/memory/kernel_stack_manager.cpp`：KVA 支持的每进程 Ring 0 动态栈、
+- `source/kernel/src/memory/kernel_stack_manager.cpp`：KVA 支持的每 Thread Ring 0 动态栈、
   双 guard、精确所有权验证和安全点回收。
 - `source/user/src/system_call.asm`：Ring 3 系统调用指令入口。
 - `source/kernel/src/arch/panic.cpp`：异常现场和 CR2 的有界串口诊断。

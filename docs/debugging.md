@@ -419,7 +419,7 @@ KVA 日志也遵循事务边界：只有虚拟区间分配器初始化、预留�
 
 先用 `KernelMemoryInitializationStatus` 区分两个边界：
 
-1. `KvaInitializationFailed` 表示 32 TiB 窗口、256 项描述符存储或永久预留
+1. `KvaInitializationFailed` 表示 32 TiB 窗口、1024 项描述符存储或永久预留
    首页没有形成合法初态；优先检查基址 `0xFFFFC90000000000`、容量
    `0x0000200000000000`、页对齐、canonical 上界和 BSS 描述符是否清零；
 2. `KvaSelfTestFailed` 表示分配器已经建立，但“虚拟区间 → buddy 物理块 →
@@ -453,8 +453,9 @@ KVA 日志也遵循事务边界：只有虚拟区间分配器初始化、预留�
    基线的成功申请/释放差额是 3 次，即 order-2 数据块加一张 PT 和一张 PD。
 
 若 `KernelVirtualAddressAllocator::Validate` 返回损坏，先从活动描述符前缀
-重新计算 allocated、reserved、free 和 largest gap，再与统计比较。前缀之后
-的 256 项存储必须全零；相邻区间可以紧贴，但不能倒序或重叠。释放只接受
+重新计算 allocated、reserved、free 和 largest gap，再与统计比较。1024 项
+容量中位于活动前缀之后的所有未用槽必须全零；相邻区间可以紧贴，但不能倒序
+或重叠。释放只接受
 原申请的精确起始地址与页数，内部地址、错误长度和 reservation 都必须在任何
 状态修改前失败。
 
@@ -901,3 +902,101 @@ ELF。文件路径出现在自定义命令参数中，不代表 CMake 一定能�
 `os_kernel_user_images_object` 必须显式依赖全部 User ELF 目标。这样
 Ninja/Make 会先完成生产目标，再运行打包命令。不要用重复执行构建或在 Python
 脚本里等待文件出现来绕过依赖图；生产者—消费者关系属于 CMake 构建图。
+
+## v1.2：Process/Thread、WaitQueue 与 FXSAVE
+
+### 停在 `EXTENDED_STATE_UNSUPPORTED`
+
+先确认测试是否有意使用：
+
+```bash
+--cpu-model 'qemu64,-sse2'
+```
+
+正常 `qemu64` 应在 `CR3_VALID` 后依次输出
+`EXTENDED_STATE_READY/CR0/CR4/AVX_DISABLED`。若普通配置也报告 unsupported，
+在 `InitializeExtendedState()` 处检查 `CPUID.(EAX=1):EDX`：
+
+```text
+bit 24 FXSR = 1
+bit 25 SSE  = 1
+bit 26 SSE2 = 1
+```
+
+不要跳过检查或把失败改成警告；后续用户汇编会真实执行 XMM/x87 指令。若三位
+都存在但初始化失败，检查回读是否满足 CR0.MP/NE=1、EM/TS=0，
+CR4.OSFXSR/OSXMMEXCPT=1、OSXSAVE=0，并检查初始 `FxSaveArea` 地址低四位
+是否为零。
+
+### 第一次抢占或阻塞后 `EXTENDED_STATE_ISOLATED` 缺失
+
+按保存链定位：
+
+1. 当前 Thread 的 `runtime_thread.saved_frame` 与 `extended_state` 是否属于
+   同一 `thread_index`；
+2. 抢占、Block 和退出是否在修改 scheduler 当前项前执行 `SaveFxState`；
+3. `ActivateThread` 是否先验证 Process/Thread/stack，再切 CR3、写 TSS.RSP0
+   并 `RestoreFxState`；
+4. 用户 C++ 是否仍带 `-mno-sse -mno-sse2`，模式操作是否只在
+   `extended_state.asm`；
+5. XMM15 偏移是否落在 FXSAVE 的 64 位高 XMM 区，保存区是否恰为 512 字节。
+
+若 save/restore 累计为零，说明执行边界未接线；若累计非零但只有某个 PID
+失败，优先检查 Thread 索引与 Process 索引是否被混用。不要只移除用户校验
+日志来让系统继续，因为这通常是跨 Thread 信息泄漏。
+
+### `PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED` 缺失
+
+容量事务按当前 RAM 档一次占有全部目标对象。先看最后出现的日志，再用 GDB
+检查三组数量：
+
+```text
+64 MiB  : process=4,   thread=4,   per-process=1
+256 MiB : process=64,  thread=128, per-process=32
+64 GiB  : process=256, thread=512, per-process=64
+```
+
+常见次级上限是 KVA 描述符或内核栈槽；当前必须分别为 1024 和 512。创建
+页表根后必须立即登记到 `capacity_process_roots`，创建栈后必须立即设置
+`capacity_stack_active`。正常销毁则先清对应回滚标志，再 reap scheduler
+对象；顺序颠倒会分别造成泄漏或二次销毁。
+
+在全部 Thread 创建后，中间 `ResourceSnapshot` 必须观察到档位对应的
+Process、Thread 和活动栈数量。最终快照失败时查看
+`changed_fields_mask`，不要把 supplemental count 固定成零来掩盖对象泄漏。
+
+### WaitQueue 中的 Thread 永远不再 Ready
+
+读取 Thread 的四个字段：`state`、`wait_condition`、`wake_reason` 和
+`wait_queue`。合法阻塞项必须是：
+
+```text
+Blocked + condition!=None + wake_reason=None + wait_queue!=nullptr
+```
+
+合法唤醒后必须是：
+
+```text
+Ready + condition=None + concrete wake_reason + wait_queue=nullptr
+```
+
+再检查队列 `enqueue_count - wake_count == waiting_thread_count`，从 head
+沿 `next_wait_thread_index` 应恰好走到 tail 且无环。对象关闭必须先置
+closed，再以 ObjectClosed 唤醒全部 waiter。重复完成返回
+`WakeAlreadyResolved` 是正确结果，不应再次把 Thread 插入 Ready。
+
+### 64 GiB 容量测试像“卡住”
+
+本阶段新增 256 个真实页表根和 512 个六页动态栈，Debug/TCG 下会放大启动
+成本。QEMU 捕获器仍使用 75 秒总截止、CTest 使用 85 秒外层保险；禁止失败
+标记到达时会立即终止，不会等待截止。先确认后台没有旧 QEMU：
+
+```bash
+pgrep -af qemu-system-x86_64
+```
+
+若进程仍在推进，不要把来宾热路径加逐对象日志；它会通过 115200 波特串口
+进一步改变时序。应在 GDB 观察容量循环索引，或单独运行
+`os_kernel_thread_scheduler_*` 宿主测试缩小问题。超过有界截止后工具会
+终止并回收 QEMU；持续存在的后台进程属于捕获器缺陷，不能靠手工长期清理
+作为正常流程。

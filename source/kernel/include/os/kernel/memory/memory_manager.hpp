@@ -22,8 +22,8 @@ inline constexpr uint64_t OS_KERNEL_MEMORY_DIRECT_MAP_CAPACITY_BYTES =
 inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_VIRTUAL_BASE = 0xFFFFC90000000000ULL;
 inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_CAPACITY_BYTES =
     32ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
-inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_DESCRIPTOR_CAPACITY = 256ULL;
-inline constexpr uint64_t OS_KERNEL_MEMORY_KERNEL_STACK_SLOT_CAPACITY = 256ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_DESCRIPTOR_CAPACITY = 1024ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_KERNEL_STACK_SLOT_CAPACITY = 512ULL;
 
 struct KernelMemoryStatistics final {
     uint64_t memory_map_entry_count;
@@ -162,6 +162,10 @@ InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] KernelStackManager &GetKernelStackManager() noexcept;
 [[nodiscard]] ResourceSnapshotStatus
 GetKernelResourceSnapshot(ResourceSnapshot &snapshot) noexcept;
+[[nodiscard]] ResourceSnapshotStatus
+GetKernelResourceSnapshot(
+    const ResourceSnapshotSupplementalCounts &supplemental_counts,
+    ResourceSnapshot &snapshot) noexcept;
 [[nodiscard]] KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus DestroyUserPageTable(uint64_t root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t root_physical_address,

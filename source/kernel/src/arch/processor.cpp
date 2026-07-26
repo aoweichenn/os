@@ -69,16 +69,6 @@ void WriteModelSpecificRegister(const uint32_t register_index, const uint64_t va
     asm volatile("wrmsr" : : "c"(register_index), "a"(low_value), "d"(high_value));
 }
 
-[[nodiscard]] uint64_t ReadControlRegister0() noexcept {
-    uint64_t value = 0ULL;
-    asm volatile("mov %0, cr0" : "=r"(value));
-    return value;
-}
-
-void WriteControlRegister0(const uint64_t value) noexcept {
-    asm volatile("mov cr0, %0" : : "r"(value) : "memory");
-}
-
 [[nodiscard]] volatile uint32_t *LocalApicRegister(const uint64_t register_offset) noexcept {
     return reinterpret_cast<volatile uint32_t *>(LocalApicPhysicalAddress() + register_offset);
 }
@@ -128,6 +118,30 @@ uint64_t ReadStackPointer() noexcept {
     uint64_t stack_pointer = 0ULL;
     asm volatile("mov %0, rsp" : "=r"(stack_pointer));
     return stack_pointer;
+}
+
+uint32_t ProcessorStandardFeatureBits() noexcept {
+    return ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_STANDARD_FEATURES_LEAF).data;
+}
+
+uint64_t ReadControlRegister0() noexcept {
+    uint64_t value = 0ULL;
+    asm volatile("mov %0, cr0" : "=r"(value));
+    return value;
+}
+
+void WriteControlRegister0(const uint64_t value) noexcept {
+    asm volatile("mov cr0, %0" : : "r"(value) : "memory");
+}
+
+uint64_t ReadControlRegister4() noexcept {
+    uint64_t value = 0ULL;
+    asm volatile("mov %0, cr4" : "=r"(value));
+    return value;
+}
+
+void WriteControlRegister4(const uint64_t value) noexcept {
+    asm volatile("mov cr4, %0" : : "r"(value) : "memory");
 }
 
 uint64_t ProcessorPhysicalAddressWidthBits() noexcept {

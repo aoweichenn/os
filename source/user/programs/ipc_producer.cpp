@@ -1,3 +1,4 @@
+#include "os/user/extended_state.hpp"
 #include "os/user/system_call.hpp"
 
 #include "os/abi/system_call.hpp"
@@ -62,8 +63,10 @@ void FillPayload() noexcept {
 }
 
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void OsUserEntry() noexcept {
+    const uint64_t process_id = os::user::GetProcessId();
     uint8_t permission_probe = OS_USER_IPC_PRODUCER_ZERO_BYTE;
-    if (os::user::GetProcessId() != OS_USER_IPC_PRODUCER_PROCESS_ID ||
+    if (process_id != OS_USER_IPC_PRODUCER_PROCESS_ID ||
+        !os::user::InitializeExtendedStateIsolationTest(process_id) ||
         os::user::TryReadDescriptor(OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR, &permission_probe,
                                     OS_USER_IPC_PRODUCER_POINTER_PROBE_SIZE_BYTES) !=
             os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED ||
@@ -114,7 +117,8 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void OsUserEntry() 
             OS_USER_IPC_PRODUCER_SUCCESS_RESULT ||
         os::user::CloseDescriptor(OS_USER_IPC_PRODUCER_PIPE_DESCRIPTOR) !=
             os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_FILE_DESCRIPTOR ||
-        !WriteMessage(OS_USER_IPC_PRODUCER_COMPLETED_MESSAGE)) {
+        !WriteMessage(OS_USER_IPC_PRODUCER_COMPLETED_MESSAGE) ||
+        !os::user::CompleteExtendedStateIsolationTest(process_id)) {
         os::user::ExitProcess(OS_USER_IPC_PRODUCER_FAILURE_EXIT_CODE);
     }
     os::user::ExitProcess(OS_USER_IPC_PRODUCER_SUCCESS_EXIT_CODE);

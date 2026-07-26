@@ -1,3 +1,4 @@
+#include "os/user/extended_state.hpp"
 #include "os/user/system_call.hpp"
 
 #include "os/abi/system_call.hpp"
@@ -49,8 +50,10 @@ template <uint64_t MessageSizeBytes>
 }
 
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void OsUserEntry() noexcept {
+    const uint64_t process_id = os::user::GetProcessId();
     uint8_t permission_probe = OS_USER_IPC_CONSUMER_ZERO_BYTE;
-    if (os::user::GetProcessId() != OS_USER_IPC_CONSUMER_PROCESS_ID ||
+    if (process_id != OS_USER_IPC_CONSUMER_PROCESS_ID ||
+        !os::user::InitializeExtendedStateIsolationTest(process_id) ||
         os::user::TryWriteDescriptor(OS_USER_IPC_CONSUMER_PIPE_DESCRIPTOR, &permission_probe,
                                      OS_USER_IPC_CONSUMER_POINTER_PROBE_SIZE_BYTES) !=
             os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED ||
@@ -118,7 +121,8 @@ extern "C" [[noreturn, gnu::section(".text.os_user_entry")]] void OsUserEntry() 
             OS_USER_IPC_CONSUMER_END_OF_FILE_RESULT ||
         os::user::CloseDescriptor(static_cast<uint64_t>(file_descriptor)) !=
             OS_USER_IPC_CONSUMER_SUCCESS_RESULT ||
-        !WriteMessage(OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE)) {
+        !WriteMessage(OS_USER_IPC_CONSUMER_FILE_VERIFIED_MESSAGE) ||
+        !os::user::CompleteExtendedStateIsolationTest(process_id)) {
         os::user::ExitProcess(OS_USER_IPC_CONSUMER_FAILURE_EXIT_CODE);
     }
     os::user::ExitProcess(OS_USER_IPC_CONSUMER_SUCCESS_EXIT_CODE);

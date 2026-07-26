@@ -1529,12 +1529,18 @@ KernelStackManager &GetKernelStackManager() noexcept {
 
 ResourceSnapshotStatus
 GetKernelResourceSnapshot(ResourceSnapshot &snapshot) noexcept {
+    return GetKernelResourceSnapshot(ResourceSnapshotSupplementalCounts{},
+                                     snapshot);
+}
+
+ResourceSnapshotStatus GetKernelResourceSnapshot(
+    const ResourceSnapshotSupplementalCounts &supplemental_counts,
+    ResourceSnapshot &snapshot) noexcept {
     return CreateResourceSnapshot(
         FrameAllocator().Statistics(), FrameAllocator().BuddyStatistics(),
         GetKernelHeap().Statistics(),
         GetKernelVirtualAddressAllocator().Statistics(),
-        GetKernelStackManager().Statistics(),
-        ResourceSnapshotSupplementalCounts{}, snapshot);
+        GetKernelStackManager().Statistics(), supplemental_counts, snapshot);
 }
 
 KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept {

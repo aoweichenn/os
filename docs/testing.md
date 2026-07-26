@@ -27,15 +27,14 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.1 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
-64 GiB 高内存系统路径；下表是第二周期逐阶段扩展的正式配置矩阵。v1.1 的
-256 MiB 用例已经执行现有 Shell、IPC、文件系统、用户故障隔离与资源快照
-全路径。尚未实现的 Process/Thread、fd 与 pipe 目标容量属于后续阶段，
-不得在测试中伪造为已完成。
+当前 v1.2 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
+实现；v1.2 已实测 Process/Thread 容量，fd 与 pipe 的未来目标容量仍不得
+伪造为已完成。
 
 | 配置 | QEMU RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 测试职责 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| bootstrap | 64 MiB | 不规定 | 不规定 | 不规定 | 不规定 | 不规定 | 启动链、异常、基础内存、全部历史故障镜像 |
+| bootstrap | 64 MiB | 4 | 4 | 1 | 不规定 | 不规定 | 启动链、异常、基础内存、全部历史故障镜像 |
 | functional | 256 MiB | 64 | 128 | 32 | 256 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
 | capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
 
@@ -218,6 +217,24 @@ QEMU 自行异常退出仍视为失败。
   和十六进制下界验证。两层都通过才接受 `SCHEDULER_COMPLETE`。
 - 既有 Ring 3 `#UD/#PF` 用例改走单进程调度生命周期，证明新增调度器没有
   把用户异常重新退化成内核 panic。
+
+`v1.2` 在保留上述历史回归的同时，用新对象模型替换旧调度器证据：
+
+- `ThreadScheduler` 单元测试覆盖 256 Process/512 Thread、单 Process
+  64 Thread、无效内核栈槽、独立单调 PID/TID、两级退出/reap 和状态守恒；
+- WaitQueue 测试让五种 WakeReason 按 FIFO 各自获胜，再对同一 Thread
+  发起重复唤醒，必须得到 `WakeAlreadyResolved`；
+- Mutex 测试覆盖竞争阻塞、直接 handoff、新 owner 确认、无 waiter 解锁，
+  并证明持 spinlock 时阻塞被拒绝；
+- 集成模型让三个 Process 的六个 Thread 执行 48 tick，每个恰得 8 tick，
+  再完成阻塞、唤醒、全部退出和 Process/Thread 两级回收；
+- 固定种子 `0x5448524541445632` 执行 100000 步 create、schedule、
+  block、wake、exit、reap 与槽位复用，每一步验证三个 WaitQueue、当前
+  Thread、状态集合和累计计数；
+- FXSAVE 布局单元测试锁定 512 字节/16 字节对齐和 CPUID FXSR/SSE/SSE2
+  合取；正常 QEMU 要求四个不同用户模式全部隔离且 save/restore 非零；
+- `qemu64,-sse2` 失败用例要求同一镜像在 GDT、用户态和 READY 前明确停在
+  `EXTENDED_STATE_UNSUPPORTED`。
 
 `v0.10` 把共享状态、条件等待和 IPC 生命周期分层验证：
 
@@ -466,6 +483,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_boot_info_unit_tests` | 单元 | BootInfo 全字段、上下界和失败状态 |
 | `os_kernel_descriptor_layout_unit_tests` | 单元 | TSS、IDT gate、异常错误码和恢复分类 |
 | `os_kernel_descriptor_layout_randomized_tests` | 随机 | 4096 组 64 位 TSS/IDT 地址编码往返 |
+| `os_kernel_extended_state_layout_unit_tests` | 单元 | FXSAVE 512/16 布局、CPUID FXSR/SSE/SSE2 解码与必需能力合取 |
 | `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、最高可用地址、元数据区搜索与溢出 |
 | `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、64 GiB 容量、高地址范围分配与回收 |
 | `os_kernel_buddy_frame_allocator_unit_tests` | 单元 | 双位图尺寸、初始化、分裂合并、失败原子性与非法释放 |
@@ -497,9 +515,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
 | `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、用户栈、地址窗口与系统调用 ABI |
 | `os_kernel_user_elf_randomized_tests` | 随机 | 16,384 条用户地址范围与溢出性质 |
-| `os_kernel_process_scheduler_unit_tests` | 单元 | PID、容量、创建回滚、时间片、阻塞/唤醒与终止状态机 |
-| `os_kernel_process_scheduling_integration_tests` | 集成 | 多进程公平 tick、轮转次序、终止交接与统计守恒 |
-| `os_kernel_process_scheduler_randomized_tests` | 随机 | 4096 组量子/进程/tick 组合的单 Running 与计数守恒 |
+| `os_kernel_thread_scheduler_unit_tests` | 单元 | Process/Thread 容量、PID/TID、两级回收、WaitQueue、Mutex 与锁边界 |
+| `os_kernel_thread_scheduling_integration_tests` | 集成 | 三 Process/六 Thread 公平 tick、阻塞唤醒、退出与两级回收 |
+| `os_kernel_thread_scheduler_randomized_tests` | 随机 | 固定种子 100000 步状态、三 WaitQueue、身份与统计参考模型 |
 | `os_kernel_pipe_unit_tests` | 单元 | 管道读写、回绕、关闭、EOF、broken pipe 与统计 |
 | `os_kernel_pipe_randomized_tests` | 随机 | 32,768 步管道状态与独立字节队列模型对照 |
 | `os_kernel_synchronization_integration_tests` | 集成 | 四线程、200,000 次受锁更新的互斥与可见性 |
@@ -548,17 +566,18 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_invalid_opcode_isolation` | 系统/失败路径 | Ring 3 #UD 只终止用户并恢复内核 |
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
+| `os_qemu_extended_state_unsupported` | 系统/失败路径 | 禁用 SSE2 后必须在架构初始化早期明确拒绝且不进入用户态 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计、Kernel 对称功能目录和手机教材导出工具 |
-| `os_cpp_identifier_naming_check` | 集成 | 159 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
+| `os_cpp_identifier_naming_check` | 集成 | 全部 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 97 项 CTest。最新五项分别覆盖引用计数/作用域回滚单元测试、十万事务
-随机模型、26 字段资源快照单元测试、真实内存管理组合生命周期，以及具名
-256 MiB QEMU functional smoke。命名门禁使用编译数据库和 Clang AST
-区分标识符种类；
+当前共 99 项 CTest。v1.2 新增扩展现场布局单元测试与 SSE2 缺失系统失败
+路径，并用 Process/Thread 单元、集成和十万步随机测试替换旧 PCB 调度测试；
+全部历史成功、故障注入、持久化和产物审计用例继续保留。命名门禁使用编译
+数据库和 Clang AST 区分标识符种类；
 `os_python_tooling_unit_tests` 内的 Kernel 布局测试还会扫描真实源码树，
 要求 include/src 拥有相同的十一组模块、根目录没有实现文件、每个公开头文件
 具有同模块实现，并通过临时错误树证明扁平文件和缺失实现会被拒绝。它复用现有

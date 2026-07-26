@@ -16,6 +16,9 @@ global OsKernelSystemCallEntry
 global OsKernelSystemCallDispatch
 global OsKernelEnterScheduledProcess
 global OsKernelReturnFromUserMode
+global OsKernelInitializeFxState
+global OsKernelSaveFxState
+global OsKernelRestoreFxState
 
 extern OsKernelDispatchException
 extern OsKernelDispatchHardwareInterrupt
@@ -276,8 +279,8 @@ OsKernelSystemCallDispatch:
     add rsp, 16
     iretq
 
-; 调度启动前保存内核调用链，再直接恢复 PCB 中预构造的 176 字节用户现场。
-; 最后一个进程结束后，退出路径恢复这里的栈并返回 ExecuteProcesses。
+; 调度启动前保存内核调用链，再直接恢复首个 Thread 预构造的 176 字节用户现场。
+; 最后一个 Thread 结束后，退出路径恢复这里的栈并返回 ExecuteProcesses。
 OsKernelEnterScheduledProcess:
     pushfq
     cli
@@ -335,8 +338,27 @@ OsKernelReturnFromUserMode:
     popfq
     ret
 
+; FXSAVE64/FXRSTOR64 的内存操作数必须按 16 字节对齐。C++ 的 FxSaveArea
+; 固定这一布局；初始模板明确复位 x87 并采用体系结构默认 MXCSR。
+OsKernelInitializeFxState:
+    fninit
+    ldmxcsr [rel os_kernel_default_mxcsr]
+    fxsave64 [rdi]
+    ret
+
+OsKernelSaveFxState:
+    fxsave64 [rdi]
+    ret
+
+OsKernelRestoreFxState:
+    fxrstor64 [rdi]
+    ret
+
 section .rodata
 align 16
+
+os_kernel_default_mxcsr:
+    dd 0x00001F80
 
 global os_kernel_exception_stub_table
 os_kernel_exception_stub_table:

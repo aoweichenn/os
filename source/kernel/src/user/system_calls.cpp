@@ -18,7 +18,8 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WAKE_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
-constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_PROCESS_COUNT = OS_KERNEL_PROCESS_CAPACITY;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_THREAD_COUNT =
+    OS_KERNEL_THREAD_CAPACITY_LIMIT;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT = 0LL;
@@ -170,10 +171,11 @@ constexpr int64_t OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESULT = 1LL;
     return static_cast<int64_t>(length_bytes);
 }
 
-void WakePipeWaiters(const ProcessWaitReason wait_reason) noexcept {
-    uint64_t woken_process_count = OS_KERNEL_SYSTEM_CALL_EMPTY_WAKE_COUNT;
-    if (WakeProcesses(wait_reason, OS_KERNEL_SYSTEM_CALL_WAKE_ALL_PROCESS_COUNT,
-                      woken_process_count) != ProcessRuntimeStatus::Succeeded) {
+void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
+    uint64_t woken_thread_count = OS_KERNEL_SYSTEM_CALL_EMPTY_WAKE_COUNT;
+    if (WakeThreads(wait_condition, WakeReason::ConditionSatisfied,
+                    OS_KERNEL_SYSTEM_CALL_WAKE_ALL_THREAD_COUNT,
+                    woken_thread_count) != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
     }
 }
@@ -202,7 +204,7 @@ void WakePipeWaiters(const ProcessWaitReason wait_reason) noexcept {
             UserMemoryCopyStatus::Succeeded) {
             HaltProcessor();
         }
-        WakePipeWaiters(ProcessWaitReason::PipeWritable);
+        WakePipeWaiters(WaitCondition::PipeWritable);
     }
     return MapPipeStatus(status, read_bytes);
 }
@@ -228,14 +230,14 @@ void WakePipeWaiters(const ProcessWaitReason wait_reason) noexcept {
     uint64_t written_bytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
     const PipeStatus status = TryWriteCurrentProcessPipe(buffer, length_bytes, written_bytes);
     if (status == PipeStatus::Succeeded) {
-        WakePipeWaiters(ProcessWaitReason::PipeReadable);
+        WakePipeWaiters(WaitCondition::PipeReadable);
     }
     return MapPipeStatus(status, written_bytes);
 }
 
 [[nodiscard]] ExceptionFrame *DispatchWaitPipe(ExceptionFrame &frame,
-                                               const ProcessWaitReason wait_reason) noexcept {
-    const bool can_progress = wait_reason == ProcessWaitReason::PipeReadable
+                                               const WaitCondition wait_condition) noexcept {
+    const bool can_progress = wait_condition == WaitCondition::PipeReadable
                                   ? ProcessPipeReadCanProgress()
                                   : ProcessPipeWriteCanProgress();
     if (can_progress) {
@@ -245,8 +247,9 @@ void WakePipeWaiters(const ProcessWaitReason wait_reason) noexcept {
 
     frame.register_rax = static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT);
     ExceptionFrame *resume_frame = &frame;
-    const ProcessRuntimeStatus status = BlockCurrentProcess(frame, wait_reason, resume_frame);
-    if (status == ProcessRuntimeStatus::NoReadyProcess) {
+    const ProcessRuntimeStatus status =
+        BlockCurrentThread(frame, wait_condition, resume_frame);
+    if (status == ProcessRuntimeStatus::NoReadyThread) {
         frame.register_rax =
             static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_NO_READY_PROCESS);
         return &frame;
@@ -442,13 +445,13 @@ void WakePipeWaiters(const ProcessWaitReason wait_reason) noexcept {
     }
     ExceptionFrame *resume_frame = &frame;
     const ProcessRuntimeStatus block_status =
-        BlockCurrentProcess(frame,
-                            wait_for_read ? ProcessWaitReason::DescriptorReadable
-                                          : ProcessWaitReason::DescriptorWritable,
-                            resume_frame);
+        BlockCurrentThread(frame,
+                           wait_for_read ? WaitCondition::DescriptorReadable
+                                         : WaitCondition::DescriptorWritable,
+                           resume_frame);
     if (block_status != ProcessRuntimeStatus::Succeeded) {
         frame.register_rax =
-            static_cast<uint64_t>(block_status == ProcessRuntimeStatus::NoReadyProcess
+            static_cast<uint64_t>(block_status == ProcessRuntimeStatus::NoReadyThread
                                       ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_NO_READY_PROCESS
                                       : os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
         return &frame;
@@ -557,7 +560,7 @@ extern "C" ExceptionFrame *OsKernelDispatchSystemCall(ExceptionFrame *frame) noe
                 static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_PIPE_PERMISSION_DENIED);
             return frame;
         }
-        return DispatchWaitPipe(*frame, ProcessWaitReason::PipeReadable);
+        return DispatchWaitPipe(*frame, WaitCondition::PipeReadable);
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPipeWritable)) {
         if (!CurrentProcessCanWritePipe()) {
@@ -565,7 +568,7 @@ extern "C" ExceptionFrame *OsKernelDispatchSystemCall(ExceptionFrame *frame) noe
                 static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_PIPE_PERMISSION_DENIED);
             return frame;
         }
-        return DispatchWaitPipe(*frame, ProcessWaitReason::PipeWritable);
+        return DispatchWaitPipe(*frame, WaitCondition::PipeWritable);
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ClosePipeReader)) {
         frame->register_rax = static_cast<uint64_t>(DispatchClosePipeReader());

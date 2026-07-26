@@ -28,8 +28,15 @@ chips:
         kind: control-register
         bits:
           0: PE
+          1: MP
+          2: EM
+          3: TS
+          5: NE
           16: WP
           31: PG
+        current_extended_state_policy: >-
+          set MP and NE; clear EM and TS; use eager FXSAVE switching without
+          #NM lazy ownership
       - name: CR3
         width_bits: 64
         kind: page-table-root
@@ -41,8 +48,13 @@ chips:
         kind: control-register
         bits:
           5: PAE
+          9: OSFXSR
+          10: OSXMMEXCPT
           12: LA57
-        current_policy: "PAE set; LA57 remains clear because the active layout uses four levels"
+          18: OSXSAVE
+        current_policy: >-
+          PAE, OSFXSR, and OSXMMEXCPT set; LA57 and OSXSAVE clear because the
+          active layout uses four levels and FXSAVE without AVX
       - name: IA32_EFER
         width_bits: 64
         kind: msr
@@ -61,6 +73,15 @@ chips:
           11: APIC_GLOBAL_ENABLE
         current_policy: "keep bit 11 set, require bit 10 clear, and map the xAPIC MMIO base"
     cpuid:
+      - leaf: 0x00000001
+        subleaf: 0
+        fields:
+          edx_24: FXSR_SUPPORTED
+          edx_25: SSE_SUPPORTED
+          edx_26: SSE2_SUPPORTED
+        current_policy: >-
+          all three features are mandatory; otherwise stop with
+          EXTENDED_STATE_UNSUPPORTED before GDT and user-mode initialization
       - leaf: 0x80000008
         subleaf: 0
         fields:
@@ -74,6 +95,35 @@ chips:
         fields:
           ecx_16: LA57_SUPPORTED
         current_policy: "record capability without enabling five-level paging"
+    extended_state:
+      implementation: FXSAVE64_FXRSTOR64
+      switching_policy: eager-per-thread
+      area_size_bytes: 512
+      area_alignment_bytes: 16
+      avx_xsave_enabled: false
+      initialization:
+        - FNINIT
+        - "LDMXCSR value 0x00001F80"
+        - FXSAVE64_INITIAL_TEMPLATE
+      layout:
+        - offset: 0x000
+          size_bytes: 8
+          fields: "FCW, FSW, abridged FTW, FOP"
+        - offset: 0x008
+          size_bytes: 16
+          fields: "64-bit FIP and FDP"
+        - offset: 0x018
+          size_bytes: 8
+          fields: "MXCSR and MXCSR_MASK"
+        - offset: 0x020
+          size_bytes: 128
+          fields: "ST0..ST7 or MMX, 16-byte slots"
+        - offset: 0x0A0
+          size_bytes: 256
+          fields: "XMM0..XMM15, 16-byte slots"
+        - offset: 0x1A0
+          size_bytes: 96
+          fields: "reserved or software-available tail"
     local_apic:
       role: legacy-pic-virtual-wire-bridge
       base_source: "IA32_APIC_BASE bits 35..12 in the current xAPIC implementation"
@@ -130,8 +180,10 @@ chips:
       kernel_virtual_address_window:
         virtual_base: 0xFFFFC90000000000
         capacity_bytes: 0x0000200000000000
+        descriptor_capacity: 1024
         permanent_guard_page_count: 1
         dynamic_kernel_stack:
+          slot_capacity: 512
           range_page_count: 6
           mapped_page_count: 4
           mapped_size_bytes: 16384

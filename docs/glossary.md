@@ -55,7 +55,7 @@
 | stack reaper | 在汇编回到永久启动栈后，验证当前 RSP 不属于目标栈并回收终止栈映射、物理页与 KVA 的运行时步骤 |
 | safe point | 已知当前执行栈、CR3 和生命周期状态满足销毁前置条件的位置；逻辑终止不自动等于到达安全点 |
 | strong reference | 保证对象在引用存续期间不能进入销毁的所有权；最后一个强引用释放才触发销毁资格 |
-| reference counter | 记录强所有者数量的状态机；当前 v1.1 原语拒绝零后复活和整数上溢，原子并发语义留给 v1.4 |
+| reference counter | 记录强所有者数量的状态机；当前 v1.2 原语拒绝零后复活和整数上溢，原子并发语义留给 v1.4 |
 | scope rollback | 用外部固定动作数组记录已完成步骤，并在未提交事务退出时严格逆序执行补偿动作的失败展开机制 |
 | resource snapshot | 聚合多个管理器稳定当前量、验证内部守恒式并以差异位掩码比较生命周期前后的诊断值 |
 | failure atomicity | 操作失败时，既有对象、输出参数和资源所有权保持调用前状态的性质 |
@@ -64,14 +64,18 @@
 | PCB | v0.9–v1.1 把 Process、调度现场与固定槽合并的过渡控制块；v1.2 后由 Process/Thread 取代 |
 | Process | 共享 AddressSpace、FileTable、FsContext 和 signal disposition 的资源容器，不直接作为调度实体 |
 | Thread | 调度器选择的执行实体，拥有 TID、CPU/FXSAVE 现场、内核栈、用户栈、TLS 和 signal mask |
-| PID | Process Identifier；本项目 v0.9 使用从 1 开始单调分配的 64 位标识符 |
+| PID | Process Identifier；从 1 开始单调分配、与对象槽位无关的 64 位 Process 身份 |
 | TID | Thread Identifier；与 PID、对象地址和容器槽位相互独立的 64 位身份 |
 | CpuLocal | 当前 BSP 的本地内核状态，保存 current Thread、入口栈、IRQ/抢占深度和重调度标记 |
 | UserContext | 把 INT 0x80、SYSCALL、异常和信号返回规范化后的统一用户寄存器现场 |
 | FXSAVE / FXRSTOR | 保存和恢复 x87、MMX、SSE/SSE2 扩展现场的 x86 指令 |
+| FxSaveArea | 每 Thread 独占、512 字节且 16 字节对齐的 FXSAVE64 内存区域 |
+| x87 | 源自 8087 的八槽浮点寄存器栈及其 control/status/tag 等架构状态 |
+| XMM | SSE/SSE2 的 128 位寄存器；x86-64 FXSAVE 区保存 XMM0..XMM15 |
+| MXCSR | 控制 SIMD 浮点舍入、异常屏蔽和状态标志的 32 位寄存器 |
 | context switch | 保存当前执行现场并恢复另一个执行现场，同时切换相关地址空间与内核栈状态 |
 | round-robin | 就绪实体按循环次序取得固定时间片的调度策略 |
-| time quantum | 一个进程在被抢占前可消费的调度 tick 预算；v0.9 固定为 4 tick |
+| time quantum | 一个 Thread 在被抢占前可消费的调度 tick 预算；当前固定为 4 tick |
 | preemption | 进程未主动退出时，由时钟中断和调度策略收回 CPU 并切换到其他进程 |
 | dispatch | 调度器选择一个进程成为 Running 并恢复其现场的一次动作 |
 | blocked | 进程因具名条件暂时不能推进、不参与 Ready 调度，但保留现场等待唤醒的状态 |

@@ -56,6 +56,8 @@ Shell。没有 Ready 进程时，内核在永久地址空间执行 \code{sti; hl
 命令，109 个字符必须零丢弃地经过完整硬件与 Ring 3 路径。v1.1 又以
 \code{ScopeRollback}、\code{ReferenceCounter} 和 26 字段
 \code{ResourceSnapshot} 收口跨层所有权；256 MiB functional 与 64 GiB
-capacity 运行同一完整路径。当前 97 项 CTest 同时保留所有历史成功与失败
-证据；页表与资源生命周期各有单元、集成、十万步模型和真实 QEMU 证明。
+capacity 运行同一完整路径。v1.2 又分离 Process/Thread，以 WaitQueue
+统一完成竞争，并用每 Thread FXSAVE64 隔离 x87/SSE2。当前 99 项 CTest
+同时保留所有历史成功与失败证据；页表、资源生命周期和调度现场各有单元、
+集成、十万步模型和真实 QEMU 证明。
 Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。
