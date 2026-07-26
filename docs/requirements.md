@@ -191,7 +191,7 @@ FIFO。Ring 3 Shell 在 fd 0 为空时阻塞；如果此时没有 Ready 进程�
 命令预置到内核。
 
 Shell 是独立 freestanding C++20 ELF，使用固定容量解析器实现 help、echo、
-pwd、ls、mkdir、write、cat、sync 和 exit。当前完整回归为 83 项 CTest，
+pwd、ls、mkdir、write、cat、sync 和 exit。当前完整回归为 86 项 CTest，
 覆盖单元、集成、固定种子随机、最终产物审计、真实交互、双启动持久化与历史
 失败路径。v1.0 是第一周期 `13 / 13` 的完成基线。v1.1 已经完成动态物理
 内存元数据、64 TiB direct-map、64 GiB 管理、4 GiB 以上页帧读写回收，
@@ -200,8 +200,11 @@ pwd、ls、mkdir、write、cat、sync 和 exit。当前完整回归为 83 项 CT
 一个后备块同时保存活动位图和对齐槽，空闲槽组成 LIFO 索引链；缓存必须拒绝
 空指针、内部/外部指针、重复释放、活动对象销毁和计数溢出，耗尽时保持输出
 不变，销毁后把后备块完整归还通用堆。单元、三缓存集成、十万步固定种子随机
-和 64 MiB QEMU 真实写回共同验收该契约。KVA、动态内核栈和页表回收仍是
-本版本的剩余工作。v1.1 明确保留当前四 PCB
+和 64 MiB QEMU 真实写回共同验收该契约。KVA 进一步以 256 个有序区间描述符
+管理 32 TiB 高半区窗口，必须区分保留、分配、元数据耗尽和连续地址耗尽；
+单元、页帧/页表集成、十万步逐页模型以及 QEMU 双 guard 四页真实映射共同
+验收申请与逆序回收。动态内核栈和页表回收仍是本版本的剩余工作。v1.1 明确
+保留当前四 PCB
 用户路径，直到 v1.2 的 Process/Thread 模型
 通过对等测试后再迁移删除。v2 路线按
 [ADR 0019](adr/0019-v2-executable-program-baseline.md) 划分为 v1.1 至

@@ -409,6 +409,54 @@ guard。它们应由 `QueryPage` 返回 `NotMapped`；IST 顶仍指向随后 16 
 bit 索引或尾位，后者错误通常来自槽内 next 索引、断链或环。校验遍历以容量
 为硬上界，不能通过移除上界来“修复”循环。
 
+### KVA 初始化、保护页或回收失败
+
+KVA 日志也遵循事务边界：只有虚拟区间分配器初始化、预留、自检和最终一致性
+校验全部通过，`RunKernel` 才统一输出 `KVA_ALLOCATOR_READY`、统计与
+`KVA_SELF_TEST_PASSED`。中途失败只会出现
+`MEMORY_INITIALIZATION_FAILED=0x...`，不会留下一个可能被误读为已提交的
+`KVA_ALLOCATOR_READY`。
+
+先用 `KernelMemoryInitializationStatus` 区分两个边界：
+
+1. `KvaInitializationFailed` 表示 32 TiB 窗口、256 项描述符存储或永久预留
+   首页没有形成合法初态；优先检查基址 `0xFFFFC90000000000`、容量
+   `0x0000200000000000`、页对齐、canonical 上界和 BSS 描述符是否清零；
+2. `KvaSelfTestFailed` 表示分配器已经建立，但“虚拟区间 → buddy 物理块 →
+   页表映射 → 真实访存 → 逆序回收”的某一步没有闭环。此时在
+   `KernelVirtualAddressAllocator::TryAllocate`、`MapPage`、`QueryPage`、
+   `UnmapPage` 和 `TryReleaseBlock` 设置断点，比先扩大容量更有效。
+
+整机自检有意先做一次单页预热。预热地址是 KVA 窗口第二页，它会建立当前
+实现尚不能回收的三级中间页表；预热页本身、order-0 物理帧和 KVA 区间均会
+立即归还。随后主事务申请 6 页、按 8 页对齐，因此地址必须为
+`0xFFFFC90000008000`。相对页 0 与 5 始终是 not-present guard，中间 4 页
+映射到一个 buddy order-2 连续块，权限必须为 supervisor、RW、NX。
+
+按以下顺序缩小故障范围：
+
+1. `TryAllocate` 失败时，检查活动描述符是否严格按地址递增、区间是否互不
+   相交、best-fit 间隙和“虚拟页号”绝对对齐是否正确。对齐不能只计算相对
+   窗口偏移；
+2. guard 被 `QueryPage` 查为 present 时，检查映射循环是否错误地覆盖 6 页，
+   或把“已分配 KVA”误解为“已经存在 PTE”。KVA 所有权本身绝不能设置页表项；
+3. 中间页查询失败时，逐级检查 PML4E/PDPTE/PDE/PTE 的 present、RW、US 与
+   NX；四个叶项物理地址必须连续且从同一 order-2 块首开始；
+4. 数据写回失败时，先确认访问的是 direct-map 可达的物理后备和当前 CR3，
+   再检查叶权限；不要用软件查询成功替代处理器真实 load/store；
+5. 回收必须按“撤销四个叶映射 → 归还整个 order-2 块 → 释放六页 KVA”逆序
+   执行。`UnmapPage` 后必须使本 CPU 对应 TLB 项失效，物理页不能在旧翻译
+   仍可使用时提前交给 buddy；
+6. 主事务结束时，buddy 活动块/页和 KVA 活动分配/页必须回到预热后的基线。
+   页表活动页相对进入整个 KVA 自检前增加 3 是当前已知边界：它们是预热建立
+   的非空上级结构，不是主事务泄漏。后续中间页表回收会消除这个基线成本。
+
+若 `KernelVirtualAddressAllocator::Validate` 返回损坏，先从活动描述符前缀
+重新计算 allocated、reserved、free 和 largest gap，再与统计比较。前缀之后
+的 256 项存储必须全零；相邻区间可以紧贴，但不能倒序或重叠。释放只接受
+原申请的精确起始地址与页数，内部地址、错误长度和 reservation 都必须在任何
+状态修改前失败。
+
 ## v0.7：PIC、PIT、PS/2 与 ATA
 
 ### IF=1、HLT=1 但没有时钟
@@ -478,7 +526,9 @@ DATA 字是否按小端拆成 512 字节。
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
-2. 未到达时以五秒为总失败上界；QMP 等待 `READY` 使用同一预算。
+2. 未到达时，普通配置以 15 秒、64 GiB 主规格以 40 秒为总失败上界；后者要在
+   Debug 构建中扫描 16777216 个页状态。QMP 等待 `READY` 使用与当前内存规格
+   相同的预算，外层 CTest 对主规格另设 50 秒硬上界。
 
 协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计既移除
 “所有宿主都同速”的假设，也让稳定停顿成为可重复诊断证据；不会把缺失 IRQ、

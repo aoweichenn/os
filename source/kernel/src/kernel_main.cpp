@@ -124,6 +124,35 @@ constexpr char OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX[] =
     "[OS][KERNEL] TYPE_CACHE_PEAK_ACTIVE_OBJECTS=";
 constexpr char OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE[] =
+    "[OS][KERNEL] KVA_ALLOCATOR_READY\r\n";
+constexpr char OS_KERNEL_MAIN_KVA_WINDOW_BASE_PREFIX[] = "[OS][KERNEL] KVA_WINDOW_BASE=";
+constexpr char OS_KERNEL_MAIN_KVA_WINDOW_SIZE_PREFIX[] = "[OS][KERNEL] KVA_WINDOW_SIZE_BYTES=";
+constexpr char OS_KERNEL_MAIN_KVA_DESCRIPTOR_CAPACITY_PREFIX[] =
+    "[OS][KERNEL] KVA_DESCRIPTOR_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_KVA_ACTIVE_DESCRIPTOR_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_ACTIVE_DESCRIPTORS=";
+constexpr char OS_KERNEL_MAIN_KVA_FREE_PAGE_COUNT_PREFIX[] = "[OS][KERNEL] KVA_FREE_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_ALLOCATED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_ALLOCATED_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_RESERVED_PAGE_COUNT_PREFIX[] = "[OS][KERNEL] KVA_RESERVED_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_SUCCESSFUL_ALLOCATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=";
+constexpr char OS_KERNEL_MAIN_KVA_RELEASE_COUNT_PREFIX[] = "[OS][KERNEL] KVA_RELEASES=";
+constexpr char OS_KERNEL_MAIN_KVA_PEAK_ALLOCATED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_PEAK_ALLOCATED_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_LARGEST_FREE_RANGE_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_LARGEST_FREE_RANGE_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_SELF_TEST_VIRTUAL_ADDRESS_PREFIX[] =
+    "[OS][KERNEL] KVA_SELF_TEST_VIRTUAL_ADDRESS=";
+constexpr char OS_KERNEL_MAIN_KVA_SELF_TEST_PHYSICAL_ADDRESS_PREFIX[] =
+    "[OS][KERNEL] KVA_SELF_TEST_PHYSICAL_ADDRESS=";
+constexpr char OS_KERNEL_MAIN_KVA_SELF_TEST_MAPPED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_SELF_TEST_MAPPED_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_SELF_TEST_GUARD_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=";
+constexpr char OS_KERNEL_MAIN_KVA_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] KVA_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX[] =
     "[OS][KERNEL] DEVICE_INITIALIZATION_FAILED=";
 constexpr char OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE[] =
@@ -459,6 +488,38 @@ void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX,
                          statistics.type_cache_peak_active_object_count);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_WINDOW_BASE_PREFIX,
+                         statistics.kva_window_begin_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_WINDOW_SIZE_PREFIX,
+                         statistics.kva_window_size_bytes);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_DESCRIPTOR_CAPACITY_PREFIX,
+                         statistics.kva_descriptor_capacity);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_ACTIVE_DESCRIPTOR_COUNT_PREFIX,
+                         statistics.kva_active_descriptor_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_FREE_PAGE_COUNT_PREFIX,
+                         statistics.kva_free_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_ALLOCATED_PAGE_COUNT_PREFIX,
+                         statistics.kva_allocated_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_RESERVED_PAGE_COUNT_PREFIX,
+                         statistics.kva_reserved_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
+                         statistics.kva_successful_allocation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_RELEASE_COUNT_PREFIX,
+                         statistics.kva_release_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_PEAK_ALLOCATED_PAGE_COUNT_PREFIX,
+                         statistics.kva_peak_allocated_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_LARGEST_FREE_RANGE_PAGE_COUNT_PREFIX,
+                         statistics.kva_largest_free_range_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_VIRTUAL_ADDRESS_PREFIX,
+                         statistics.kva_self_test_virtual_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_PHYSICAL_ADDRESS_PREFIX,
+                         statistics.kva_self_test_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_MAPPED_PAGE_COUNT_PREFIX,
+                         statistics.kva_self_test_mapped_page_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_GUARD_PAGE_COUNT_PREFIX,
+                         statistics.kva_self_test_guard_page_count);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_PASSED_MESSAGE);
 }
 
 void InitializeKernelDevices(const SerialPort &serial_port) noexcept {

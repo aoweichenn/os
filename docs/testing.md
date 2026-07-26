@@ -336,6 +336,25 @@ QEMU 自行异常退出仍视为失败。
 - 缓存销毁后比较通用堆进入前后的当前占用、活动申请和最大空闲块，证明唯一
   后备申请已经归还；申请/释放热路径不逐次打印串口。
 
+### KVA 分配与映射生命周期
+
+- 单元测试使用 64 页窗口和外部描述符数组，覆盖未初始化、空元数据、跨
+  canonical 空洞、保留重叠、best-fit、绝对页对齐、输出失败原子性、错误
+  页数、内部地址、重复释放、空洞复用、描述符耗尽、地址耗尽和元数据损坏；
+- 集成测试把 `KernelVirtualAddressAllocator`、`PhysicalFrameAllocator` 与
+  `PageTableManager` 串成真实六页生命周期：首尾两页保持 not-present，中间
+  四页核对物理身份和 supervisor RW/NX 权限，撤销后数据帧与 KVA 回到基线；
+- 固定种子 `0x4B564152414E444F` 在 512 页独立逐页模型上执行 100000 步。
+  模型独立重算每个空闲段、绝对对齐和 best-fit 结果；每 257 步比较活动页、
+  保留页、描述符、累计计数和最大空洞并运行 `Validate`；
+- 目标自检在 32 TiB 窗口申请六页、八页对齐区间，从 buddy 取得 order 2
+  后备，只映射中间四页并真实写回。清理顺序固定为 unmap、释放物理块、释放
+  KVA；最终活动页为零、保留页为一、两次申请与两次释放守恒，才接受
+  `KVA_SELF_TEST_PASSED`；
+- 当前 `UnmapPage` 不回收空中间页表。目标自检先用一页暖机并把留下的三页
+  计入基础设施基线，再证明主事务没有泄漏数据页；页表回收仍由后续增量独立
+  验收，不能用放宽页帧基线掩盖。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -383,14 +402,17 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
 | `os_kernel_heap_unit_tests` | 单元 | 可回收堆的对齐、原子失败、非法释放、合并、复用与统计 |
 | `os_kernel_type_cache_unit_tests` | 单元 | 固定尺寸缓存布局、耗尽、精确释放、LIFO、最小槽和销毁 |
+| `os_kernel_virtual_address_allocator_unit_tests` | 单元 | KVA 保留、best-fit、绝对对齐、精确释放、两类耗尽与损坏检测 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
 | `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 目标堆的混合对象、数据保持、耗尽与完整恢复 |
 | `os_kernel_type_cache_lifecycle_integration_tests` | 集成 | 三种对齐缓存共享堆、交错释放与乱序销毁恢复 |
+| `os_kernel_virtual_address_mapping_lifecycle_integration_tests` | 集成 | KVA、物理帧、页表、双 guard 与逆序回收 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
 | `os_kernel_buddy_frame_allocator_randomized_tests` | 随机 | 固定种子 100000 步 buddy 与逐页参考模型 |
 | `os_kernel_heap_randomized_tests` | 随机 | 固定种子 100000 步分配/释放与独立活动对象模型 |
 | `os_kernel_type_cache_randomized_tests` | 随机 | 固定种子 100000 步槽申请/释放与独立活动记录 |
+| `os_kernel_virtual_address_allocator_randomized_tests` | 随机 | 固定种子 100000 步 KVA 与独立逐页 best-fit 模型 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
@@ -448,21 +470,23 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
-| `os_cpp_identifier_naming_check` | 集成 | 145 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
+| `os_cpp_identifier_naming_check` | 集成 | 150 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 83 项 CTest。最新三项分别覆盖类型缓存的单元失败语义、三种对齐组合
-生命周期和 100000 步固定种子模型。命名门禁使用编译数据库和 Clang AST
+当前共 86 项 CTest。最新三项分别覆盖 KVA 单元失败语义、物理页/页表组合
+生命周期和 100000 步固定种子逐页模型。命名门禁使用编译数据库和 Clang AST
 区分标识符种类；
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
-工具由 Python 标准库实现。QEMU
-捕获器同时拥有“最终里程碑到达”和“十五秒总截止”两个终止条件，并通过
-`subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的 `timeout` 或特殊退出码。
+工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
+规格选择的有界总截止：普通配置为 15 秒，64 GiB 主规格因 Debug 构建需要
+扫描 16777216 个页状态而使用 40 秒；外层 CTest 再以 50 秒作为独立保险。
+捕获器通过 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的
+`timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 

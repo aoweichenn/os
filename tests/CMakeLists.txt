@@ -187,6 +187,11 @@ os_add_kernel_memory_test(
     "unit"
 )
 os_add_kernel_memory_test(
+    os_kernel_virtual_address_allocator_unit_tests
+    unit/kernel/kernel_virtual_address_allocator_test.cpp
+    "unit"
+)
+os_add_kernel_memory_test(
     os_kernel_memory_bootstrap_integration_tests
     integration/boot/kernel_memory_bootstrap_test.cpp
     "integration"
@@ -207,6 +212,11 @@ os_add_kernel_memory_test(
     "integration"
 )
 os_add_kernel_memory_test(
+    os_kernel_virtual_address_mapping_lifecycle_integration_tests
+    integration/boot/kernel_virtual_address_mapping_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_memory_test(
     os_kernel_memory_management_randomized_tests
     randomized/kernel/memory_management_randomized_test.cpp
     "randomized"
@@ -224,6 +234,11 @@ os_add_kernel_memory_test(
 os_add_kernel_memory_test(
     os_kernel_type_cache_randomized_tests
     randomized/kernel/kernel_type_cache_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_memory_test(
+    os_kernel_virtual_address_allocator_randomized_tests
+    randomized/kernel/kernel_virtual_address_allocator_randomized_test.cpp
     "randomized"
 )
 
@@ -725,7 +740,7 @@ set_tests_properties(
     os_qemu_stage1_load_success
     PROPERTIES
         LABELS "system"
-        TIMEOUT 30
+        TIMEOUT 50
 )
 
 add_test(

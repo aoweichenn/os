@@ -16,6 +16,7 @@ set(
     include/os/kernel/kernel_heap.hpp
     include/os/kernel/kernel_type_cache.hpp
     include/os/kernel/kernel_type_cache.tpp
+    include/os/kernel/kernel_virtual_address_allocator.hpp
     include/os/kernel/interrupt_runtime.hpp
     include/os/kernel/io_descriptor.hpp
     include/os/kernel/legacy_pic.hpp
@@ -58,6 +59,7 @@ set(
     src/kernel_main.cpp
     src/kernel_heap.cpp
     src/kernel_type_cache.cpp
+    src/kernel_virtual_address_allocator.cpp
     src/interrupt_runtime.cpp
     src/io_descriptor.cpp
     src/legacy_pic.cpp
@@ -124,12 +126,15 @@ add_library(
     STATIC
         src/kernel_heap.cpp
         src/kernel_type_cache.cpp
+        src/kernel_virtual_address_allocator.cpp
+        src/page_table.cpp
         src/page_table_layout.cpp
         src/physical_frame_allocator.cpp
         src/physical_memory_map.cpp
         include/os/kernel/kernel_heap.hpp
         include/os/kernel/kernel_type_cache.hpp
         include/os/kernel/kernel_type_cache.tpp
+        include/os/kernel/kernel_virtual_address_allocator.hpp
         include/os/kernel/page_table.hpp
         include/os/kernel/physical_frame_allocator.hpp
         include/os/kernel/physical_memory_map.hpp

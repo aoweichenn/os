@@ -7,10 +7,13 @@ import unittest
 
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
+    OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
+    OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
     createQemuFirmwareCommand,
     normalizeCapturedOutput,
+    qemuFirmwareTimeoutSeconds,
     qemuKeyNameForCharacter,
     runQemuWithTimedSerial,
     validateImageSize,
@@ -75,6 +78,30 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(
             command[memoryOptionIndex + 1],
             str(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES),
+        )
+
+    def testSelectsBoundedTimeoutByMemoryProfile(self) -> None:
+        self.assertEqual(
+            qemuFirmwareTimeoutSeconds(
+                OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES
+            ),
+            OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            qemuFirmwareTimeoutSeconds(
+                OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES - 1
+            ),
+            OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            qemuFirmwareTimeoutSeconds(
+                OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES
+            ),
+            OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
+        )
+        self.assertGreater(
+            OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
+            OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
         )
 
     def testRejectsMemoryBelowBootstrapMinimum(self) -> None:

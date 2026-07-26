@@ -46,7 +46,7 @@
 | slab | 为一类固定尺寸对象提供后备存储的一组页或连续区域；完整 slab 分配器通常还管理空/部分/满列表与回收 |
 | in-slot free list | 只在槽空闲时借用槽首保存下一空闲索引，不增加每个活动对象的旁路链节点 |
 | buddy allocator | 以二次幂阶拆分与合并连续页块、能够回收物理页的分配器 |
-| KVA allocator | Kernel Virtual Address allocator；只分配内核虚拟区间，物理页和映射由调用者另行提交 |
+| KVA allocator | Kernel Virtual Address allocator；当前用有序有主区间和隐式空闲缝隙分配 32 TiB 内核虚拟窗口，物理页和映射由调用者另行提交 |
 | identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |
 | address space | 一个页表根定义的虚拟地址到物理页及权限的映射集合 |
 | PCB | v0.9–v1.1 把 Process、调度现场与固定槽合并的过渡控制块；v1.2 后由 Process/Thread 取代 |

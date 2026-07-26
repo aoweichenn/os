@@ -22,15 +22,18 @@ v0.8 为用户数据/代码段扩为七槽 GDT，把 TSS 移到 \code{0x28}，�
 
 \subsection{物理页与虚拟地址空间}
 
-物理页分配器管理“哪些页可用”；页表管理“虚拟地址怎样映射、具有什么权限”；
-内核堆管理“小对象怎样复用页面”。三者不能混成一个分配器。
+物理页分配器管理“哪些页可用”；KVA 分配器管理“哪些内核虚拟区间已经有
+软件所有者”；页表管理“虚拟地址怎样映射、具有什么权限”；内核堆管理
+“小对象怎样复用页面”。四者不能混成一个分配器。
 
 \begin{center}
 \begin{tikzpicture}[os diagram]
   \node[os block] (heap) {内核堆\\对象分配};
-  \node[os state,below=of heap] (vmm) {虚拟内存\\页表与权限};
+  \node[os state,below=of heap] (kva) {KVA\\虚拟区间所有权};
+  \node[os state,below=of kva] (vmm) {页表\\翻译与权限};
   \node[os hardware,below=of vmm] (pmm) {物理页\\所有权位图};
-  \draw[os arrow] (heap) -- (vmm);
+  \draw[os arrow] (heap) -- (kva);
+  \draw[os arrow] (kva) -- (vmm);
   \draw[os arrow] (vmm) -- (pmm);
 \end{tikzpicture}
 \end{center}
@@ -88,6 +91,23 @@ W\^X 因而不只是 ELF 意图，而是处理器执行权限。
 \code{invlpg}，大范围或地址空间切换通过 CR3 与相应策略刷新。多核阶段还要
 向其他处理器发送 TLB shootdown，在所有相关 CPU 确认前不能复用旧物理页。
 
+\subsection{KVA 记录页表无法表达的软件许诺}
+
+页表中的 not-present 只表示处理器当前不能翻译该页，不表示这个地址无人持有。
+动态内核栈两端的 guard page 就是“已有所有者、故意不映射”；尚未完成物理页
+准备的事务也会暂时处于同一状态。若只扫描页表找空洞，两个调用者可能在首个
+PTE 提交前选中同一地址。
+
+当前 KVA 窗口从 \code{0xFFFFC90000000000} 开始，大小 32 TiB，首个 4 KiB
+页永久保留。256 项有序描述符只记录 allocation 与 reservation，空闲区间由
+相邻描述符的缝隙隐式推导。申请使用 best-fit 和绝对虚拟页号对齐，释放要求
+精确匹配原起点与页数；\code{Validate} 重新证明有序、无重叠、尾部清零和
+统计守恒。它只分配地址，不申请物理页，也不修改页表。
+
+整机自检申请一个 6 页、8 页对齐的区间，以 buddy order-2 块映射中间 4 页，
+保留首尾 guard，真实写回后按“撤销映射、归还物理块、释放 KVA”逆序回收。
+64 MiB 与 64 GiB 使用同一条协议，热路径不逐次打印日志。
+
 \subsection{内核堆位于页管理之上}
 
 物理页分配器以页为单位，通用对象往往只有几十字节。当前堆从
@@ -102,4 +122,5 @@ W\^X 因而不只是 ELF 意图，而是处理器执行权限。
 调用者决定回收、拒绝请求或 panic。中断上下文不得调用可能睡眠或递归获取锁的
 分配路径。当前 heap 仍固定为 64 KiB 且由串行启动路径调用。固定尺寸
 type cache 已用单后备块、活动位图与槽内 LIFO 链建立独立容量和生命周期；
-KVA 增长、多 slab 后备与并发锁属于后续边界。
+KVA 区间层已经完成；把 heap/type cache 改为按页增长、多 slab 后备，以及
+加入并发锁，仍属于后续边界。

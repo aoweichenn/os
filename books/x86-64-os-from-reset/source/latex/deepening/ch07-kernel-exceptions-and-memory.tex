@@ -63,8 +63,9 @@ ELF 符号表。两边都区分大小写，\code{OsKernelEntry} 与
 
 文本正则无法判断一个单词究竟是类型、函数还是变量。本次迁移用 Clang AST 扫描
 136 个 C++ 头文件和源文件；初始 7018 条编译单元诊断包含公共头文件的重复报告，
-迁移后诊断为零。加入 buddy 与类型缓存测试后，当前门禁扫描 145 个文件，并在每次
-完整回归中重新执行同一检查，使命名规范从说明文字变成可失败的工程契约。
+迁移后诊断为零。加入 buddy、类型缓存与 KVA 测试后，当前门禁扫描 150 个
+文件，并在每次完整回归中重新执行同一检查，使命名规范从说明文字变成可失败
+的工程契约。
 
 \section{BSS 让大表和专用栈不膨胀磁盘文件}
 
@@ -913,6 +914,291 @@ U/S、RSVD 和 I/D 都为零。P=1 把它与“忘记映射测试页”的错误
 W/R=1 把它与普通读取区分；CR2 必须精确等于高半区测试地址。只有随后进入同一
 panic 并禁止 \code{READY}，才能说明权限执行、异常入口和停止边界全部连通。
 
+\section{v1.1 用独立 KVA 层记录内核虚拟区间所有权}
+
+\subsection{not-present 从来不等于 free}
+
+早期内核的 heap、初始栈、IST、LAPIC 和写保护测试页都有固定地址。只要每种
+资源恰好存在一份，链接脚本和常量表就能避免冲突；动态 Thread、可增长 slab、
+临时设备缓冲和模块映射出现后，地址本身也成为必须申请、持有和归还的资源。
+
+页表不能承担这份软件所有权。PTE 的 present 位只回答处理器现在能否把线性
+地址翻译成物理地址。以下三种状态在硬件看来都可能是 present=0，软件含义却
+完全不同：
+
+\begin{longtable}{L{0.24\textwidth}L{0.22\textwidth}L{0.40\textwidth}}
+\toprule
+\textbf{软件状态} & \textbf{叶 PTE} & \textbf{能否交给新调用者}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{软件状态} & \textbf{叶 PTE} & \textbf{能否交给新调用者}\\
+\midrule
+\endhead
+空闲地址 & not-present & 可以，由 KVA 分配器提交所有权\\
+事务准备中 & not-present & 不可以，调用者正在取得物理后备或构造页表\\
+guard page & 永久 not-present & 不可以，它属于栈区间并负责捕获越界\\
+\bottomrule
+\end{longtable}
+
+若通过遍历 PTE 寻找 not-present 空洞，两个并发或交错事务都可能在首个映射
+提交前得到同一地址；guard 也会被错误复用。KVA（kernel virtual address）
+分配器因此只回答一个问题：“哪段虚拟页区间已经许诺给谁？”它不申请物理页、
+不设置 present，也不选择 RW/NX 权限。
+
+这种分层不是本项目发明的偶然术语。早期 UNIX 内核主要依赖静态映射；随着
+内核模块、网络缓冲和动态对象增加，内核需要把不连续物理页组织成连续虚拟
+区间。现代系统常把这类能力归入 vmalloc 一族，并加入树索引、延迟 TLB 刷新、
+调试 guard 与并发回收。本项目先冻结串行、有界、可完整证明的区间状态机，
+不复制尚无调用场景的性能层。
+
+\subsection{32 TiB 窗口怎样落在四级页表中}
+
+四级分页使用 48 位 canonical 线性地址：bit 63..48 必须全部复制 bit 47。
+高半区因此从 \code{0xFFFF800000000000} 延伸到
+\code{0xFFFFFFFFFFFFFFFF}。当前内核把 direct-map 与 KVA 排列为：
+
+\begin{longtable}{L{0.20\textwidth}L{0.24\textwidth}L{0.24\textwidth}L{0.18\textwidth}}
+\toprule
+\textbf{区域} & \textbf{起点} & \textbf{末端（不含）} & \textbf{PML4 槽}\\
+\midrule
+\endfirsthead
+\toprule
+\textbf{区域} & \textbf{起点} & \textbf{末端（不含）} & \textbf{PML4 槽}\\
+\midrule
+\endhead
+direct-map &
+\code{FFFF888000000000} &
+\code{FFFFC88000000000} &
+273--400\\
+KVA &
+\code{FFFFC90000000000} &
+\code{FFFFE90000000000} &
+402--465\\
+\bottomrule
+\end{longtable}
+
+一个 PML4 槽覆盖 512 GiB，64 个槽正好覆盖 32 TiB。KVA 起点的四级索引是
+\((402,0,0,0)\)，exclusive 末端是 \((466,0,0,0)\)。起点、长度和末端都在
+提交前按 64 位无符号数验证：页数乘 4096 不得溢出，末端加法不得回绕，末页
+仍必须满足 48 位 canonical 规则。未来若启用五级分页 LA57，需要新的布局
+迁移，不能让同一个 ABI 常量在两种符号扩展规则下静默改变含义。
+
+窗口包含
+\[
+ \frac{32\ \mathrm{TiB}}{4\ \mathrm{KiB}}
+ =8589934592=2^{33}
+\]
+个虚拟页。首个 4 KiB 页永久标记为 reservation。它不占物理页，也没有叶
+映射；它只让窗口零偏移误用具有稳定的软件诊断，而不是直接成为第一个正常
+对象。
+
+\subsection{为什么 32 TiB 没有配一张逐页位图}
+
+若每个虚拟页只用一位表示“占用”，元数据也需要
+\[
+ \frac{2^{33}}{8}=2^{30}\ \mathrm{bytes}=1\ \mathrm{GiB}.
+\]
+要区分 reservation 与 allocation 至少还要增加状态位。启动阶段实际同时
+存在的 KVA 对象远少于数十亿页，为稀疏可能空间支付 GiB 常驻元数据没有比例
+意义。
+
+当前实现由调用者提供 256 项
+\code{KernelVirtualAddressRangeDescriptor} BSS 数组。每项恰有三个 64 位
+字段：
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+字段 & 含义 & 有效约束\\
+\midrule
+\code{begin\_address} & 区间首虚拟地址 & 4 KiB 对齐、位于窗口内\\
+\code{page\_count} & 区间页数 & 非零、换算字节不溢出\\
+\code{kind} & Unused/Allocation/Reservation & 活动前缀不能为 Unused\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+总大小为 \(256\times24=6144\) 字节。数组前部是按起始地址严格递增的活动
+描述符，后部必须保持零地址、零页数和 Unused。256 限制的是“同时存在多少
+区间”，不限制单个区间能有多少页。描述符耗尽返回
+\code{MetadataExhausted}；窗口没有足够连续页返回
+\code{OutOfVirtualAddressSpace}。区分这两种失败，才能判断应扩元数据还是
+回收地址。
+
+空闲区间不保存节点，而由窗口边界和相邻有主区间的缝隙推导：
+
+\begin{center}
+\begin{tikzpicture}[os diagram,node distance=0mm]
+  \node[os state,minimum width=2.2cm] (r) {reservation};
+  \node[os block,right=of r,minimum width=2.5cm] (f1) {free gap};
+  \node[os state,right=of f1,minimum width=2.2cm] (a) {allocation};
+  \node[os block,right=of a,minimum width=2.5cm] (f2) {free gap};
+\end{tikzpicture}
+\end{center}
+
+删除一个 allocation 描述符后，两侧 gap 在模型上立即连成一个空闲区间，
+不存在另一条空闲链需要合并。代价是申请要扫描至多 256 项，插入和删除要移动
+尾部，复杂度为 \(O(N)\)。当前串行规模下，完整可检查的不变量比尚未被测量
+需要的红黑树更重要。
+
+\subsection{best-fit 必须对齐绝对虚拟页号}
+
+请求页数 \(n\)、对齐页数 \(a\) 时，\(a\) 必须是二的幂。对一个字节起点为
+\(g\) 的 free gap，先得到绝对虚拟页号
+\[
+ p=\frac{g}{4096},
+ \qquad
+ p_{\mathrm{aligned}}=(p+a-1)\mathbin{\&}\sim(a-1),
+\]
+再把它安全乘回字节地址。这里不能对
+\((g-\mathrm{window\_begin})/4096\) 做相对对齐；“8 页对齐”的契约是返回
+地址本身能被 32 KiB 整除，不是它与窗口起点的距离恰好整除。
+
+每个 gap 都先检查对齐前缀、剩余页数和溢出。所有可容纳候选中选择原始 gap
+页数最小者；同样大小时保留扫描得到的低地址。这是 best-fit：优先消耗最小
+可用洞，减少把大洞用于小请求的概率。它不是消除碎片的数学保证，但对固定
+上限提供确定、可由独立模型复现的结果。
+
+候选地址、插入位置和计数增量全部验证后，实现才移动描述符并填写调用者输出。
+任何失败都保持数组、统计和输出 range 原值。这样上层跨资源事务可以根据
+明确状态执行回滚，不会拿到“返回失败但部分有效”的地址。
+
+\subsection{reservation 与精确释放阻止所有权猜测}
+
+\code{ReserveRange} 用来表达固定软件占用。它与普通申请共享页对齐、窗口、
+canonical、溢出和重叠检查，但不能由 \code{TryRelease} 释放。重叠检查先于
+元数据容量检查，因此即使 256 项已满，重复保留已有地址也仍报告
+\code{RangeOverlap}，而不是被较表面的容量错误遮蔽。
+
+释放必须同时匹配原描述符的起始地址、页数和 Allocation 类型。区间内部地址
+返回 \code{AllocationNotFound}，正确起点但错误页数返回
+\code{AllocationSizeMismatch}，reservation 返回 \code{ReservedRange}，
+已经删除的地址再次释放仍返回 \code{AllocationNotFound}。实现不会向前寻找
+“看起来像块头”的数据，也不会猜测调用者希望释放整个包含区间。
+
+成功删除后，数组尾部向前压紧，最后一项恢复全零。累计统计始终满足
+\[
+ \mathrm{successful\ allocations}
+ -
+ \mathrm{releases}
+ =
+ \mathrm{active\ allocations}.
+\]
+当前分配页与保留页之和不得超过 \(2^{33}\)，当前值不得超过各自峰值。
+
+\subsection{Validate 从唯一有主集合重建全部事实}
+
+\code{Validate} 不申请临时内存。它先验证窗口本身，再沿活动前缀逐项证明：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 类型只能是 Allocation 或 Reservation，页数非零，区间完整位于窗口；
+  \item 当前起点不小于前一区间末端，因此允许紧贴但禁止倒序和重叠；
+  \item 重新累计分配页、保留页、活动申请和 reservation 数；
+  \item 活动前缀之后每个描述符都严格为 Unused、零地址、零页数；
+  \item 从窗口首尾与相邻描述符重新计算 free page 和最大连续 gap；
+  \item 把重建结果与缓存统计、累计申请/释放和峰值逐一比较。
+\end{enumerate}
+
+空闲 gap 没有第二份持久索引，所以不会出现“活动树正确、空闲链漏了一块”的
+双结构漂移。若未来为性能加入平衡树或分段索引，它必须被视为可重建的派生
+结构，完整验证仍应回到唯一所有权集合。
+
+\subsection{跨三层创建必须正向提交、逆向撤销}
+
+取得 KVA 只是跨层事务的第一步。一个带 guard 的动态对象遵循：
+
+\begin{verbatim}
+allocate KVA range
+  -> allocate physical block or pages
+  -> map data pages with explicit permissions
+  -> publish object
+\end{verbatim}
+
+任何中间失败都要从已提交的最后一步开始撤销。正常销毁同样固定为：
+
+\begin{verbatim}
+unpublish object
+  -> clear leaf PTEs and invalidate TLB entries
+  -> return physical pages to buddy
+  -> release exact KVA range
+\end{verbatim}
+
+顺序不能交换。若先归还物理页，旧 TLB 翻译仍可能写入已经交给新对象的页；
+若先释放 KVA，另一个调用者可以在旧映射尚存时取得同一虚拟地址。guard page
+从申请到释放始终没有叶映射，却与数据页一起属于同一个 KVA 区间，这正是
+“not-present 不等于 free”的执行例子。
+
+当前 \code{UnmapPage} 清除叶项并执行 \code{INVLPG}，尚不回收变空的 PT、
+PD 和 PDPT。KVA 自检先用一个虚拟页和一个 order-0 物理页预热首条页表路径，
+撤销叶映射并归还两种可回收资源；三页中间表作为已知基础设施基线保留。主事务
+随后复用这条路径，因而能够严格要求自身前后的物理页、buddy 和 KVA 统计完全
+相等，而不会把已知页表生命周期边界误报成数据页泄漏。
+
+\subsection{六页整机事务把 guard、权限和回收连成一条证据链}
+
+预热后，QEMU 中的正式 KVA 自检执行：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 申请 6 页、8 页对齐区间，得到
+        \code{0xFFFFC90000008000}；
+  \item 从 buddy 申请 order 2，即 4 个连续物理页；
+  \item 相对页 0 和 5 保持 not-present，作为两个 guard；
+  \item 把相对页 1--4 映射为 supervisor、RW、NX；
+  \item 用 \code{QueryPage} 核对四个物理地址连续、页粒度和权限精确；
+  \item 经首尾数据虚拟页写入两个 64 位模式并读回；
+  \item 逆序撤销四个映射，归还整个 order-2 块，再精确释放六页 KVA；
+  \item 比较三层基线，并运行 buddy 与 KVA 的完整校验。
+\end{enumerate}
+
+只有事务全部提交，冷路径才输出一次稳定快照：
+
+\begin{verbatim}
+[OS][KERNEL] KVA_ALLOCATOR_READY
+[OS][KERNEL] KVA_WINDOW_BASE=0xFFFFC90000000000
+[OS][KERNEL] KVA_WINDOW_SIZE_BYTES=0x0000200000000000
+[OS][KERNEL] KVA_DESCRIPTOR_CAPACITY=0x0000000000000100
+[OS][KERNEL] KVA_ACTIVE_DESCRIPTORS=0x0000000000000001
+[OS][KERNEL] KVA_ALLOCATED_PAGES=0x0000000000000000
+[OS][KERNEL] KVA_RESERVED_PAGES=0x0000000000000001
+[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=0x0000000000000002
+[OS][KERNEL] KVA_RELEASES=0x0000000000000002
+[OS][KERNEL] KVA_PEAK_ALLOCATED_PAGES=0x0000000000000006
+[OS][KERNEL] KVA_SELF_TEST_MAPPED_PAGES=0x0000000000000004
+[OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=0x0000000000000002
+[OS][KERNEL] KVA_SELF_TEST_PASSED
+\end{verbatim}
+
+申请、描述符移动、映射和释放热路径不逐步打串口。日志只证明最终事务和守恒，
+不会让 115200 波特 I/O 改变分配器时序。
+
+\subsection{三类宿主模型与真实处理器路径各自证明什么}
+
+单元测试覆盖未初始化、无存储、零容量、canonical 空洞、保留重叠、best-fit、
+绝对对齐、输出失败原子性、描述符与地址分别耗尽、精确释放错误和人为破坏
+元数据。它证明边界和每个状态码，但不宣称页表真正执行。
+
+集成测试串联真实 \code{PhysicalFrameAllocator}、
+\code{KernelVirtualAddressAllocator} 与 \code{PageTableManager}，在宿主
+模拟物理内存上执行同一六页生命周期。它核对 guard、四个物理身份、RW/NX、
+写入模式和最终三层统计，证明模块组合没有遗漏回滚。
+
+固定种子 \code{0x4B564152414E444F} 在 512 页独立逐页模型上执行 100000 步
+申请与释放。参考模型自己扫描 gap、计算 best-fit 与对齐，不调用被测分配器；
+每 257 步比较活动集合、累计统计、最大空洞并运行完整校验，结束时再随机顺序
+排空所有申请。
+
+QEMU 最后让真实 x86-64 MMU、TLB 和 load/store 执行同一契约。64 MiB 证明
+低资源兼容路径，64 GiB 证明现代规格没有改变地址层语义。三类宿主测试加一条
+处理器执行路径不是重复劳动：它们分别定位算法、组合、长序列不变量和硬件
+效果。
+
+当前边界仍然明确：最多 256 个有主区间、操作为 \(O(N)\)、没有内部锁、
+中间页表尚不回收、旧四进程栈尚未迁移。下一闭环让动态内核栈取得
+“guard + data pages”区间并在失败时跨三层回滚；随后补齐空中间页表回收。
+性能树、per-CPU KVA cache 和延迟 shootdown 必须等并发契约与测量证据出现后
+再加入。
+
 \section{v0.6 高半区早期堆用最小策略验证对象分配}
 
 heap 虚拟基址为 \code{0xFFFF800000000000}，容量 64 KiB。页表管理器为
@@ -1072,10 +1358,10 @@ QEMU 自检仍完成 64 字节/16 字节对齐和 4096 字节/4096 字节对齐�
 写串口，避免诊断改变时序。
 
 当前实现仍有清晰边界：后备区固定为 64 KiB，没有内部并发锁，也不能在 IRQ、
-NMI 或 panic 中调用。buddy 已由前文的独立页层承担；KVA、动态 guard stack、
-空中间页表回收仍是 v1.1 后续闭环，而不是 heap 接口暗中承担的能力。固定
-尺寸 type cache 已经作为下一层独立机制建立，下面沿其历史、布局和状态机
-继续展开。
+NMI 或 panic 中调用。buddy 与 KVA 已由前文的独立页层和虚拟区间层承担；
+动态 guard stack、按页增长 heap 和空中间页表回收仍是后续闭环，而不是 heap
+接口暗中承担的能力。固定尺寸 type cache 已经作为下一层独立机制建立，下面
+沿其历史、布局和状态机继续展开。
 
 \section{v1.1 用固定尺寸类型缓存分离对象容量}
 
@@ -1110,10 +1396,11 @@ type cache & 同尺寸对象槽 & 某一类型还有多少可交付对象\\
 \end{tabular}
 \end{center}
 
-本项目不能因为最终方向类似 SLUB，就一次复制其全部复杂度。当前 v1.1 尚未
-完成 KVA，也尚未冻结 Thread/IRQ 锁语义；若现在引入多 slab 增长和 per-CPU
-缓存，页后备、地址空间、并发与对象析构的错误会混在一起。本增量因此选择
-一个固定容量、一个 heap 后备块、可以整体销毁的最小闭环。
+本项目不能因为最终方向类似 SLUB，就一次复制其全部复杂度。type cache 增量
+落地时 KVA 与 Thread/IRQ 锁语义都尚未冻结，因此没有同时引入多 slab 增长和
+per-CPU 缓存，避免把页后备、地址空间、并发与对象析构错误混在一起。KVA 现已
+由前文的独立闭环完成；缓存仍保持一个固定容量、一个 heap 后备块、可以整体
+销毁的既有协议，等待按页 slab 作为单独增量接入。
 
 \subsection{原始核心与模板包装为什么分成两层}
 
@@ -1474,10 +1761,10 @@ panic 明确不得调用。
 后备页；后备仍受 64 KiB heap 总容量约束。这足以验证 v1.2 动态对象所需的
 基本槽所有权，却不是大规模内核的最终分配策略。
 
-v1.1 后续先实现 KVA：从高半区分配虚拟区间，再由 buddy 提供物理页并建立
-映射。届时一个类型缓存可以拥有多个页后备 slab；空 slab 能撤销映射、归还
-物理页和 KVA。动态内核栈使用同一 KVA/页后备事务，但额外保留 not-present
-guard。页表回收再保证撤销映射不会永久泄漏中间表。
+KVA 已经能够从高半区分配虚拟区间，并与 buddy、页表组成经过整机验证的跨层
+事务。下一步让类型缓存拥有多个按页后备 slab；空 slab 才能撤销映射、归还
+物理页和 KVA。动态内核栈使用同一 KVA/页后备事务，但额外长期保留
+not-present guard。页表回收再保证撤销映射不会永久泄漏中间表。
 
 v1.2 的 Process/Thread 对等路径通过后，固定 PCB 才迁入动态缓存；v1.4
 进一步把引用计数 KernelObject 和动态 FileDescription 建立在类型缓存之上。
@@ -1497,8 +1784,8 @@ v1.2 的 Process/Thread 对等路径通过后，固定 PCB 才迁入动态缓存
         可用 RAM，核对 16777216 个 free frame 和 4 GiB 以上分配/回收；
   \item 固定种子 \code{0x6D656D6F72793634} 完成 8192 组叶表项往返，
         执行 4096 步随机 allocate/release，再执行 1024 轮随机高地址窗口
-        分配并立即回收；独立 heap 与 type cache 种子分别再执行 100000 步
-        字节块和固定槽申请/释放；
+        分配并立即回收；独立 heap、type cache 与 KVA 种子分别再执行
+        100000 步字节块、固定槽和虚拟区间申请/释放；
   \item QEMU 主路径固定使用 64 GiB RAM，真实加载 CR3、访问 heap，并要求
         direct-map 精确覆盖 64 GiB、使用 32768 个 2 MiB 页，在
         \code{0x0000000100001000} 或更高帧写入读回两个 64 位模式；失败路径

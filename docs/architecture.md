@@ -378,6 +378,10 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 高半区 0xFFFF800000000000
   ├─ 64 KiB heap: RW + NX
   └─ 0xFFFF800000100000: R + NX 写保护测试页
+高半区 0xFFFF888000000000
+  └─ 64 TiB direct-map 容量：只映射 E820 普通 RAM
+高半区 0xFFFFC90000000000
+  └─ 32 TiB KVA 软件所有权窗口：首个 4 KiB 页永久保留
        ↓ 设置 EFER.NXE 与 CR0.WP
 内核 CR3 = 新 PML4 物理地址
 ```
@@ -391,12 +395,14 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 
 高半区堆已经从 v0.6 单调模型升级为边界标记、best-fit、双向合并的可回收
 分配器；固定尺寸类型缓存又在其上建立单后备块、活动位图与槽内空闲链。
-页表管理器仍暂不回收单次 `UnmapPage` 后出现的空中间页表；该生命周期与
-KVA、动态内核栈仍属于 v1.1 后续闭环。历史取舍见
+KVA 现已用有序有主区间管理独立的 32 TiB 高半区窗口，使 not-present 页与
+“尚无软件所有者”不再混淆。页表管理器仍暂不回收单次 `UnmapPage` 后出现的
+空中间页表；该生命周期与动态内核栈属于 v1.1 后续闭环。历史取舍见
 [ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)，当前实现见
 [ADR 0020](adr/0020-reclaimable-kernel-heap.md) 和
-[ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)，类型缓存见
-[ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md)。
+[ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)，类型缓存与 KVA 分别见
+[ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md) 和
+[ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
 
 ## v0.7 传统中断与设备闭环
 
@@ -825,6 +831,42 @@ TryRelease: 精确校验 → 位图清 0 → 压回 free head
 不承诺 IRQ/NMI/panic 安全。完整决策见
 [ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md)。
 
+## v1.1 内核虚拟地址分配器
+
+页表中的 not-present 只说明处理器不能翻译该页，不说明软件是否已经把地址
+许诺给 guard、动态栈或待提交映射。KVA 因此位于页帧和页表之外，只维护
+`[begin_address, page_count)` 所有权：
+
+```text
+0xFFFFC90000000000                                      0xFFFFE90000000000
+┌──── guard ────┬────────────── 32 TiB KVA window ─────────────────────┐
+│ reservation 0 │ free gap │ allocation │ free gap │ reservation │ ... │
+└───────────────┴───────────────────────────────────────────────────────┘
+
+有主描述符：按 begin_address 排序
+空闲区间：窗口边界和相邻描述符之间的缝隙，不保存第二份节点
+```
+
+当前调用方在 BSS 提供 256 个 24 字节描述符，共 6144 字节。描述符容量限制
+同时活动的区间数量，不限制窗口页数；若按 8589934592 个潜在页建立一位位图，
+仅一种状态就需要 1 GiB。申请扫描全部空闲缝隙，以绝对虚拟页号满足二次幂
+页对齐，再选择可容纳请求的最小缝隙；同大小时保留低地址。插入和删除移动
+紧凑数组，释放后两侧空闲缝隙自动成为一个连续区间。
+
+`ReserveRange` 与普通分配共享对齐、canonical、溢出、窗口和重叠检查，但
+保留区不能释放。普通释放必须精确匹配起始地址、页数和活动类型；内部地址、
+错页数、保留区与重复释放均有独立状态。描述符耗尽和连续地址耗尽也分开报告。
+`Validate` 重算有序性、无重叠、尾部清零、页数、活动数、累计守恒、峰值和
+最大空洞。
+
+真实启动先用一页暖机建立 KVA 的三级中间页表；当前 `UnmapPage` 尚不回收这
+三页，因此暖机后才记录物理页基线。主事务申请六页、八页对齐区间，从 buddy
+取得 order 2 物理块，只映射中间四页为 supervisor RW/NX，保持首尾 guard
+not-present。查询、真实写回通过后，按撤销映射、释放物理块、释放 KVA 的
+顺序清理。最终活动 KVA 页为零、保留页为一、两次申请与两次释放守恒，才输出
+`KVA_SELF_TEST_PASSED`。完整决策见
+[ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
@@ -895,6 +937,7 @@ source/kernel/
 │   ├── kernel_heap.hpp
 │   ├── kernel_type_cache.hpp
 │   ├── kernel_type_cache.tpp
+│   ├── kernel_virtual_address_allocator.hpp
 │   ├── kernel_main.hpp
 │   ├── memory_manager.hpp
 │   ├── legacy_pic.hpp
@@ -926,6 +969,7 @@ source/kernel/
     ├── exceptions.cpp
     ├── kernel_heap.cpp
     ├── kernel_type_cache.cpp
+    ├── kernel_virtual_address_allocator.cpp
     ├── kernel_main.cpp
     ├── interrupt_runtime.cpp
     ├── io_descriptor.cpp

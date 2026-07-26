@@ -3,6 +3,7 @@
 #include "os/kernel/boot_info.hpp"
 #include "os/kernel/kernel_heap.hpp"
 #include "os/kernel/kernel_type_cache.hpp"
+#include "os/kernel/kernel_virtual_address_allocator.hpp"
 #include "os/kernel/page_table.hpp"
 
 #include <stdint.h>
@@ -16,6 +17,10 @@ inline constexpr uint64_t OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS
 inline constexpr uint64_t OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE = 0xFFFF888000000000ULL;
 inline constexpr uint64_t OS_KERNEL_MEMORY_DIRECT_MAP_CAPACITY_BYTES =
     64ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_VIRTUAL_BASE = 0xFFFFC90000000000ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_CAPACITY_BYTES =
+    32ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_DESCRIPTOR_CAPACITY = 256ULL;
 
 struct KernelMemoryStatistics final {
     uint64_t memory_map_entry_count;
@@ -65,6 +70,21 @@ struct KernelMemoryStatistics final {
     uint64_t type_cache_successful_allocation_count;
     uint64_t type_cache_release_count;
     uint64_t type_cache_peak_active_object_count;
+    uint64_t kva_window_begin_address;
+    uint64_t kva_window_size_bytes;
+    uint64_t kva_descriptor_capacity;
+    uint64_t kva_active_descriptor_count;
+    uint64_t kva_free_page_count;
+    uint64_t kva_allocated_page_count;
+    uint64_t kva_reserved_page_count;
+    uint64_t kva_successful_allocation_count;
+    uint64_t kva_release_count;
+    uint64_t kva_peak_allocated_page_count;
+    uint64_t kva_largest_free_range_page_count;
+    uint64_t kva_self_test_virtual_address;
+    uint64_t kva_self_test_physical_address;
+    uint64_t kva_self_test_mapped_page_count;
+    uint64_t kva_self_test_guard_page_count;
 };
 
 enum class KernelMemoryInitializationStatus : uint64_t {
@@ -90,6 +110,8 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     HeapInitializationFailed,
     HeapSelfTestFailed,
     TypeCacheSelfTestFailed,
+    KvaInitializationFailed,
+    KvaSelfTestFailed,
     HighMemorySelfTestFailed,
     BuddySelfTestFailed,
     LocalApicMappingFailed,
@@ -116,6 +138,7 @@ InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept;
 [[nodiscard]] uint64_t PhysicalMemoryDirectMapAddress(uint64_t physical_address) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
+[[nodiscard]] KernelVirtualAddressAllocator &GetKernelVirtualAddressAllocator() noexcept;
 [[nodiscard]] KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus DestroyUserPageTable(uint64_t root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t root_physical_address,

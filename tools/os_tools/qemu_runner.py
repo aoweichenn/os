@@ -16,9 +16,9 @@ from .process import runCommand
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
 OS_QEMU_FIRMWARE_TIMEOUT_SECONDS = 15.0
+OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS = 40.0
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
-OS_QEMU_QMP_READY_TIMEOUT_SECONDS = OS_QEMU_FIRMWARE_TIMEOUT_SECONDS
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
 OS_QEMU_KEY_INJECTION_INTERVAL_SECONDS = 0.003
 OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
@@ -267,6 +267,57 @@ OS_QEMU_KERNEL_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_MARKER = (
 )
 OS_QEMU_KERNEL_TYPE_CACHE_SELF_TEST_PASSED_MARKER = (
     "[OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED"
+)
+OS_QEMU_KERNEL_KVA_ALLOCATOR_READY_MARKER = (
+    "[OS][KERNEL] KVA_ALLOCATOR_READY"
+)
+OS_QEMU_KERNEL_KVA_WINDOW_BASE_MARKER = (
+    "[OS][KERNEL] KVA_WINDOW_BASE=0xFFFFC90000000000"
+)
+OS_QEMU_KERNEL_KVA_WINDOW_SIZE_MARKER = (
+    "[OS][KERNEL] KVA_WINDOW_SIZE_BYTES=0x0000200000000000"
+)
+OS_QEMU_KERNEL_KVA_DESCRIPTOR_CAPACITY_MARKER = (
+    "[OS][KERNEL] KVA_DESCRIPTOR_CAPACITY=0x0000000000000100"
+)
+OS_QEMU_KERNEL_KVA_ACTIVE_DESCRIPTOR_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_ACTIVE_DESCRIPTORS=0x0000000000000001"
+)
+OS_QEMU_KERNEL_KVA_FREE_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_FREE_PAGES=0x00000001FFFFFFFF"
+)
+OS_QEMU_KERNEL_KVA_ALLOCATED_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_ALLOCATED_PAGES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_KVA_RESERVED_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_RESERVED_PAGES=0x0000000000000001"
+)
+OS_QEMU_KERNEL_KVA_SUCCESSFUL_ALLOCATION_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=0x0000000000000002"
+)
+OS_QEMU_KERNEL_KVA_RELEASE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_RELEASES=0x0000000000000002"
+)
+OS_QEMU_KERNEL_KVA_PEAK_ALLOCATED_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_PEAK_ALLOCATED_PAGES=0x0000000000000006"
+)
+OS_QEMU_KERNEL_KVA_LARGEST_FREE_RANGE_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_LARGEST_FREE_RANGE_PAGES=0x00000001FFFFFFFF"
+)
+OS_QEMU_KERNEL_KVA_SELF_TEST_VIRTUAL_ADDRESS_MARKER = (
+    "[OS][KERNEL] KVA_SELF_TEST_VIRTUAL_ADDRESS=0xFFFFC90000008000"
+)
+OS_QEMU_KERNEL_KVA_SELF_TEST_PHYSICAL_ADDRESS_MARKER = (
+    "[OS][KERNEL] KVA_SELF_TEST_PHYSICAL_ADDRESS=0x"
+)
+OS_QEMU_KERNEL_KVA_SELF_TEST_MAPPED_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_SELF_TEST_MAPPED_PAGES=0x0000000000000004"
+)
+OS_QEMU_KERNEL_KVA_SELF_TEST_GUARD_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=0x0000000000000002"
+)
+OS_QEMU_KERNEL_KVA_SELF_TEST_PASSED_MARKER = (
+    "[OS][KERNEL] KVA_SELF_TEST_PASSED"
 )
 OS_QEMU_KERNEL_LEGACY_INTERRUPT_ROUTING_READY_MARKER = (
     "[OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY"
@@ -696,6 +747,13 @@ def createQemuFirmwareCommand(
     return command
 
 
+def qemuFirmwareTimeoutSeconds(memoryMebibytes: int) -> float:
+    """按受管内存规模选择仍然有界的整机墙钟预算。"""
+    if memoryMebibytes >= OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES:
+        return OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS
+    return OS_QEMU_FIRMWARE_TIMEOUT_SECONDS
+
+
 def normalizeCapturedOutput(output: str | bytes | None) -> str:
     if output is None:
         return ""
@@ -850,11 +908,12 @@ def qemuKeyNameForCharacter(character: str) -> str:
 def injectQemuText(
     qmpSocketPath: Path,
     inputText: str,
+    readyTimeoutSeconds: float,
     readyEvent: threading.Event,
     finishedEvent: threading.Event,
     failureMessages: list[str],
 ) -> None:
-    if not readyEvent.wait(OS_QEMU_QMP_READY_TIMEOUT_SECONDS):
+    if not readyEvent.wait(readyTimeoutSeconds):
         return
 
     connectionDeadline = (
@@ -981,6 +1040,7 @@ def runQemuFirmwareBoot(
         qemuFinishedEvent = threading.Event()
         qmpFailureMessages: list[str] = []
         finalRequiredMarker = requiredMarkers[-1]
+        firmwareTimeoutSeconds = qemuFirmwareTimeoutSeconds(memoryMebibytes)
 
         def observeSerialLine(line: str) -> None:
             if keyboardReadyMarker in line:
@@ -995,6 +1055,7 @@ def runQemuFirmwareBoot(
                 args=(
                     qmpSocketPath,
                     keyboardInputText,
+                    firmwareTimeoutSeconds,
                     keyboardReadyEvent,
                     qemuFinishedEvent,
                     qmpFailureMessages,
@@ -1021,7 +1082,7 @@ def runQemuFirmwareBoot(
             ) = runQemuWithTimedSerial(
                 command,
                 projectRoot,
-                OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+                firmwareTimeoutSeconds,
                 observeSerialLine,
                 protocolCompleteEvent,
             )

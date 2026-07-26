@@ -231,6 +231,26 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 操作中打印。实现与阶段边界见
 [ADR 0023](../adr/0023-heap-backed-fixed-size-type-cache.md)。
 
+### 内核虚拟地址分配器
+
+`KernelVirtualAddressAllocator` 只记录软件对 4 KiB 虚拟页区间的所有权，不
+分配物理页，也不调用 `MapPage`。当前窗口为
+`0xFFFFC90000000000..0xFFFFE90000000000`，容量 32 TiB；首个页永久保留。
+调用方提供 256 项描述符数组，活动前缀按起始地址递增，空闲区间由相邻描述符
+之间的缝隙隐式表示。
+
+`TryAllocate` 按绝对虚拟页号满足二次幂页对齐，从全部可用缝隙中选择最小者；
+输出只在描述符插入和统计提交后修改。`ReserveRange` 拒绝重叠，且保留区不能
+释放。`TryRelease` 必须精确匹配起始地址、页数与活动类型；内部地址、错页数、
+重复释放分别诊断。描述符满返回 `MetadataExhausted`，连续地址不足返回
+`OutOfVirtualAddressSpace`。
+
+完整校验重新遍历有序描述符，核对窗口 canonical 边界、无重叠、尾部清零、
+活动/保留/累计/峰值守恒和最大空洞。目标自检建立双 guard 六页区间，只映射
+中间四页并真实写回；清理必须按 unmap、buddy block、KVA 顺序完成。实现、
+页表暖机边界和后续迁移见
+[ADR 0024](../adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+
 ## 异常 ABI
 
 处理器对向量 8、10、11、12、13、14、17、21、29、30 自动压入错误码；
@@ -422,6 +442,18 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] HEAP_PEAK_CONSUMED_BYTES=0x...
 [OS][KERNEL] HEAP_LARGEST_FREE_ALLOCATION_BYTES=0x...
 [OS][KERNEL] HEAP_SELF_TEST_PASSED
+[OS][KERNEL] TYPE_CACHE_READY
+[OS][KERNEL] TYPE_CACHE_ACTIVE_OBJECTS=0x0000000000000000
+[OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED
+[OS][KERNEL] KVA_ALLOCATOR_READY
+[OS][KERNEL] KVA_WINDOW_BASE=0xFFFFC90000000000
+[OS][KERNEL] KVA_WINDOW_SIZE_BYTES=0x0000200000000000
+[OS][KERNEL] KVA_ACTIVE_DESCRIPTORS=0x0000000000000001
+[OS][KERNEL] KVA_ALLOCATED_PAGES=0x0000000000000000
+[OS][KERNEL] KVA_RESERVED_PAGES=0x0000000000000001
+[OS][KERNEL] KVA_SELF_TEST_MAPPED_PAGES=0x0000000000000004
+[OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=0x0000000000000002
+[OS][KERNEL] KVA_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] PIPE_READY
 [OS][KERNEL] USER_ELF_VALID
@@ -493,9 +525,10 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 - 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态和 buddy
   位图仍按最高 RAM PFN 线性编码，极端稀疏物理地址空间、NUMA、zone、
   per-CPU page list 和分段 `vmemmap` 以后扩展。
-- 内核堆已支持释放与合并，type cache 已支持固定容量单后备块；堆后备区仍
-  固定为 64 KiB，缓存尚不能跨多 slab 增长，KVA 按需增长和内存压力回收
-  尚未实现；页表取消映射也不回收空中间表。
+- 内核堆已支持释放与合并，type cache 已支持固定容量单后备块，KVA 已管理
+  32 TiB 独立窗口；堆后备区仍固定为 64 KiB，缓存尚不能跨多 slab 增长，
+  KVA 描述符存储固定为 256 项且尚无并发索引或内存压力回收；页表取消映射
+  也不回收空中间表。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。
