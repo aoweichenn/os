@@ -13,7 +13,7 @@
 namespace os::kernel {
 
 inline constexpr uint64_t OS_KERNEL_MEMORY_HEAP_VIRTUAL_BASE = 0xFFFF800000000000ULL;
-inline constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SIZE_BYTES = 64ULL * 1024ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_HEAP_SIZE_BYTES = 512ULL * 1024ULL;
 inline constexpr uint64_t OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS =
     0xFFFF800000100000ULL;
 inline constexpr uint64_t OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE = 0xFFFF888000000000ULL;
@@ -160,12 +160,10 @@ InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
 [[nodiscard]] KernelVirtualAddressAllocator &GetKernelVirtualAddressAllocator() noexcept;
 [[nodiscard]] KernelStackManager &GetKernelStackManager() noexcept;
+[[nodiscard]] ResourceSnapshotStatus GetKernelResourceSnapshot(ResourceSnapshot &snapshot) noexcept;
 [[nodiscard]] ResourceSnapshotStatus
-GetKernelResourceSnapshot(ResourceSnapshot &snapshot) noexcept;
-[[nodiscard]] ResourceSnapshotStatus
-GetKernelResourceSnapshot(
-    const ResourceSnapshotSupplementalCounts &supplemental_counts,
-    ResourceSnapshot &snapshot) noexcept;
+GetKernelResourceSnapshot(const ResourceSnapshotSupplementalCounts &supplemental_counts,
+                          ResourceSnapshot &snapshot) noexcept;
 [[nodiscard]] KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus DestroyUserPageTable(uint64_t root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t root_physical_address,

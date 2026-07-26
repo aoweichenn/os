@@ -1,11 +1,12 @@
 #pragma once
 
-#include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/exception_frame.hpp"
+#include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/fs/file_system.hpp"
 #include "os/kernel/io/console_input.hpp"
-#include "os/kernel/io/io_descriptor.hpp"
+#include "os/kernel/io/file_description.hpp"
+#include "os/kernel/io/file_table.hpp"
 #include "os/kernel/ipc/pipe.hpp"
 #include "os/kernel/memory/kernel_stack_manager.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
@@ -44,6 +45,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     LockFailure,
     CpuLocalFailure,
     NativeSystemCallFailure,
+    DescriptorTableFailure,
 };
 
 enum class ProcessIoStatus : uint64_t {
@@ -55,6 +57,8 @@ enum class ProcessIoStatus : uint64_t {
     PermissionDenied,
     DeviceFailure,
     FileSystemFailure,
+    DescriptorLimitExceeded,
+    ObjectFailure,
     InvalidArgument,
 };
 
@@ -121,6 +125,9 @@ struct ProcessRuntimeStatistics final {
     ResourceSnapshotDifference resource_snapshot_difference;
     ProcessIpcStatistics ipc;
     ConsoleInputStatistics console_input;
+    KernelObjectManagerStatistics object_manager;
+    FileDescriptionManagerStatistics file_descriptions;
+    FileTableStatistics file_tables[OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY];
     ProcessExecutionResult processes[OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY];
 };
 
@@ -169,6 +176,17 @@ TryWriteCurrentProcessDescriptor(uint64_t descriptor, const uint8_t *source, uin
                                  FileSystemStatus &file_system_status) noexcept;
 [[nodiscard]] ProcessIoStatus
 CloseCurrentProcessDescriptor(uint64_t descriptor, FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+DuplicateCurrentProcessDescriptor(uint64_t source_descriptor, uint64_t minimum_descriptor,
+                                  uint64_t descriptor_flags,
+                                  uint64_t &destination_descriptor) noexcept;
+[[nodiscard]] ProcessIoStatus GetCurrentProcessDescriptorFlags(uint64_t descriptor,
+                                                               uint64_t &descriptor_flags) noexcept;
+[[nodiscard]] ProcessIoStatus SetCurrentProcessDescriptorFlags(uint64_t descriptor,
+                                                               uint64_t descriptor_flags) noexcept;
+[[nodiscard]] ProcessIoStatus SetCurrentProcessDescriptorSoftLimit(uint64_t soft_limit) noexcept;
+[[nodiscard]] ProcessIoStatus GetCurrentProcessDescriptorLimits(uint64_t &soft_limit,
+                                                                uint64_t &hard_limit) noexcept;
 [[nodiscard]] FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *path,
                                                            uint64_t path_length_bytes,
                                                            uint64_t &file_descriptor) noexcept;
@@ -182,15 +200,14 @@ CloseCurrentProcessDescriptor(uint64_t descriptor, FileSystemStatus &file_system
 void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] bool ProcessPipeReadCanProgress() noexcept;
 [[nodiscard]] bool ProcessPipeWriteCanProgress() noexcept;
-[[nodiscard]] ProcessRuntimeStatus
-BlockCurrentThread(ExceptionFrame &frame, WaitCondition wait_condition,
-                   ExceptionFrame *&resume_frame) noexcept;
-[[nodiscard]] ProcessRuntimeStatus
-WakeThreads(WaitCondition wait_condition, WakeReason wake_reason,
-            uint64_t maximum_wake_count, uint64_t &woken_thread_count) noexcept;
+[[nodiscard]] ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame,
+                                                      WaitCondition wait_condition,
+                                                      ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] ProcessRuntimeStatus WakeThreads(WaitCondition wait_condition, WakeReason wake_reason,
+                                               uint64_t maximum_wake_count,
+                                               uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
-[[nodiscard]] ExceptionFrame *
-RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
+[[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
 [[nodiscard]] bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
                                                               int64_t exit_code) noexcept;

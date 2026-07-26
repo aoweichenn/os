@@ -43,6 +43,7 @@
 第二周期必须持续保持的历史回归基线；当前动态内存、可回收堆、buddy 与类型
 缓存、KVA、动态内核栈、页表空分支回收、Process/Thread、WaitQueue 和
 扩展现场以及 v1.3 原生入口收口完成后，完整集合为 103 项。
+v1.4 删除旧固定描述符表并新增四层对象/fd 证据后，当前完整集合为 106 项。
 
 ## 第二周期最终目标
 
@@ -277,8 +278,8 @@ v1.1 resource foundation
 ResourceSnapshot 零差异。四个 Ring 3 程序的独立 x87/SSE2 模式经过抢占、
 阻塞、唤醒和退出验证；`qemu64,-sse2` 失败配置在任何用户执行前被拒绝。
 发布证据见 [v1.2 发布记录](releases/v1.2.md) 与
-[ADR 0029](adr/0029-process-thread-waitqueue-fxsave.md)。下一实施阶段为
-v1.3。
+[ADR 0029](adr/0029-process-thread-waitqueue-fxsave.md)。其后的 v1.3 与
+v1.4 也已经按独立验收阶段完成。
 
 ### v1.3 CpuLocal 与 x86-64 原生系统调用
 
@@ -318,6 +319,8 @@ QEMU functional 路径实际记录 2 次兼容入口、数百次原生入口、�
 
 ### v1.4 类型化对象与动态描述符
 
+**状态：完成**
+
 **目标**
 
 用动态 KernelObject、FileTable 与 FileDescription 取代“fd 就是固定资源槽”。
@@ -338,6 +341,28 @@ QEMU functional 路径实际记录 2 次兼容入口、数百次原生入口、�
 - fd 关闭后可复用，但陈旧引用不能访问新对象；
 - 100000 步 open/duplicate/close/limit 随机模型最终计数归零；
 - 内存或 fd 耗尽不产生半安装、重复关闭或引用泄漏。
+
+以上退出条件均已闭环。`KernelObjectManager` 现以 type、variant、全局单调
+generation 和不可复活强引用管理动态对象；`KernelObjectReference` 提供
+RAII 临时所有权，私有 handle 只由 `FileTable` 长期持有。首个类型
+`FileDescription` 统一承载控制台、管道、普通文件和目录，duplicate 共享
+同一 `FileSystemHandle` 与 offset，独立 open 建立独立 offset；管道和文件
+只在最后引用释放时关闭。
+
+每 Process 的 FileTable 以 64 项分块按需增长，soft/hard limit 与表形状
+分离。64 MiB、256 MiB、64 GiB 分别选择 64、256、4096 hard limit；4096
+容量测试实际建立 64 个分块并填满全部 fd。分块申请使用锁外准备、锁内复验
+和竞争回滚；安装失败保持传入引用活动。fd flags 独立保存并支持
+close-on-exec，用户 ABI 可 duplicate、读取/设置 flags 和调整/查询 soft/hard
+limit。
+
+固定种子 `0x46445441424C4531` 已完成 100000 步 open、duplicate、close 与
+limit 参考模型；文件系统/管道集成测试、4096 fd 容量测试和 PID4 Ring 3
+共享偏移证明共同通过。四 Process 退出后活动对象、FileDescription 和强引用
+均为零，创建等于销毁、finalizer 无失败、分块申请等于释放，ResourceSnapshot
+保持零差异。发布证据见 [v1.4 发布记录](releases/v1.4.md) 与
+[ADR 0031](adr/0031-typed-kernel-object-dynamic-file-table.md)。下一实施
+阶段为 v1.5。
 
 ## 波次 B：命名与程序
 

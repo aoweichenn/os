@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.3 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v1.4 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
@@ -173,6 +173,9 @@ tests/os_kernel_interrupt_device_randomized_tests
 `*.payload.elf` 由 `llvm-objcopy --strip-debug` 生成，三个运行时
 `PT_LOAD` 与入口不变，并作为实际写盘载荷。所有故障内核和用户隔离内核变体
 都遵循同一规则，避免 Debug 非加载段增长后覆盖 LBA 2048 的文件系统区域。
+启动暂存区和磁盘边界审计作用于实际写盘的 payload；带 DWARF 的
+`kernel.elf` 仍做符号、段权限与 GDB 调试输入，但不拿非加载调试段长度冒充
+Stage 1 载荷长度。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
 全部启动磁盘镜像必须是精确 2097152 字节。
 `build/` 不进入 Git。
@@ -243,9 +246,15 @@ python3 tools/os.py audit-user-elf build/developer/source/user/scheduler_worker.
 ```text
 stage1.bin ────────────────┐
                            ├─ boot_disk.img
-kernel.elf ─ ELF64 审计 ───┘    ├─ Stage 1 描述符与负载
-                                └─ Kernel 描述符、CRC32 与 ELF 文件
+kernel.elf ─ strip-debug ─ kernel.payload.elf ─ 审计 ─┘
+                                  ├─ Stage 1 描述符与负载
+                                  └─ Kernel 描述符、CRC32 与 ELF 文件
 ```
+
+`kernel.elf` 的链接命令直接依赖生成的 `architecture.o` 与
+`user_images.o`，而不只依赖 phony 目标。这样任一用户 ELF 改变都会依次触发
+重新嵌入、重新链接、strip、审计和重打磁盘；增量构建不会让 QEMU 误跑旧用户
+程序。
 
 可分别审计同一磁盘中的两个阶段：
 

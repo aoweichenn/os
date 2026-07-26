@@ -349,13 +349,16 @@ UserContext、canonical 检查及 IRET fallback。INT 0x80 继续存在，双入
 
 \paragraph{v1.4：fd 只是局部引用}
 
-FileTable 分块增长；fd 只是在某个 Process 中寻找引用的非负整数。
-FileDescription 保存共享偏移和 file status flags，Vnode 表示底层命名对象。
-duplicate 得到新 fd 但共享 FileDescription，独立 open 得到新
-FileDescription。close-on-exec 是 fd flag，不能错误放入共享对象。
+本版本已经完成。FileTable 以 64 槽分块延迟增长；fd 只是在某个 Process
+中寻找引用的非负整数。FileDescription 保存共享偏移和 file status flags；
+duplicate 得到新 fd 但共享同一 generation，独立 open 得到新的
+FileDescription。close-on-exec 是 fd flag，不会污染共享对象。
 
-安装新 fd 采用两阶段提交：先获得对象引用与表容量，再在锁内发布槽位。任一
-准备步骤失败都不能让半初始化 fd 对用户可见。
+安装新 fd 采用两阶段提交：先准备候选分块与对象引用，再在锁内发布槽位。
+地址加 generation 拒绝堆同址复用造成的 ABA；最后强引用释放在全局锁外调用
+类型 finalizer。功能 hard limit 为 256，64 GiB 容量规格为 4096。单元、
+跨文件系统/管道集成、4096 fd 容量、100000 步模型与 Ring 3/QEMU 共同把
+完整回归推进到 106 项 CTest。Vnode 留给 v1.5，不在本阶段伪造。
 
 \subsection{波次 B：命名空间先于磁盘格式}
 

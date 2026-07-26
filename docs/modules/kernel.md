@@ -16,7 +16,7 @@
 - 可恢复 breakpoint 经 `IRETQ` 返回，其他异常输出固定现场并 panic。
 - 验证 BootInfo v2 的物理内存图，初始化 2-bit 页帧分配器。
 - 建立并激活内核自己的四级 4 KiB 页表，执行 W^X、NX、WP 和 guard page。
-- 映射并自检 64 KiB 高半区可回收内核堆。
+- 映射并自检 512 KiB 高半区可回收内核堆。
 - 映射 LAPIC MMIO 并建立 LINT0 ExtINT virtual-wire，接管 8259A、8254、
   i8042 和 ATA PIO。
 - 向量 32..47 使用独立硬件 IRQ 汇编入口，设备处理后严格执行 PIC EOI。
@@ -24,7 +24,7 @@
 
 ## 文件布局
 
-Kernel 源码按功能所有权分成十一组，公开头文件与实现保持相同相对路径：
+Kernel 源码按功能所有权分成十二组，公开头文件与实现保持相同相对路径：
 
 ```text
 include/os/kernel/<module>/<name>.hpp
@@ -38,9 +38,10 @@ src/<module>/<name>.cpp
 | `core` | 主流程和 freestanding 内存运行时 |
 | `device` | 端口、串口、PIC、PIT、PS/2、ATA |
 | `fs` | 磁盘格式、块缓存、文件系统 |
-| `io` | 控制台和统一描述符 |
+| `io` | 控制台、FileDescription 和动态 FileTable |
 | `ipc` | 管道 |
 | `memory` | 页帧、buddy、页表、heap、KVA、动态栈、资源快照 |
+| `object` | 类型化 KernelObject、generation 与强引用生命周期 |
 | `process` | Process/Thread 状态机、run queue、WaitQueue 与目标机运行时 |
 | `sync` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
 | `user` | 用户 ELF、用户内存、系统调用和内嵌镜像 |
@@ -217,7 +218,7 @@ present、writable、user 和物理地址；叶项另外编码 NX。映射拒绝
 | Kernel `.rodata` | R/NX | 常量不可写、不可执行 |
 | Kernel `.data/.bss` | RW/NX | 状态和栈不可执行 |
 | 初始栈、三个 IST 栈及特权转换栈底页 | not-present | 溢出 guard |
-| `0xFFFF800000000000..+64KiB` | RW/NX | 高半区早期堆 |
+| `0xFFFF800000000000..+512KiB` | RW/NX | 高半区可回收内核堆 |
 | `0xFFFF800000100000` | R/NX | Ring 0 写保护故障验收页 |
 | `0xFFFF888000000000 + P` | RW/NX | E820 type 1 RAM 的 64 TiB direct-map |
 
@@ -252,10 +253,11 @@ order-0 frame ownership、无祖先环，并要求待回收表除目标项外的
 
 ### 可回收内核堆
 
-v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.1 保留同一
-`0xFFFF800000000000..+64KiB` RW/NX 区间，把实现升级为边界标记与地址
-有序空闲链表。每块包含自身长度、前块长度、请求长度、状态签名和双向空闲
-链接；分配使用 best-fit，对齐前缀和剩余后缀只有达到最小块尺寸才独立拆分。
+v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.1 在原 64 KiB
+RW/NX 区间把实现升级为边界标记与地址有序空闲链表；v1.4 为类型化对象和
+动态 FileTable 把同一基址的固定后备扩为 512 KiB。每块包含自身长度、前块
+长度、请求长度、状态签名和双向空闲链接；分配使用 best-fit，对齐前缀和
+剩余后缀只有达到最小块尺寸才独立拆分。
 
 `TryRelease` 只接受活动负载的精确首地址，预检前后块后执行双向合并。空指针、
 区间外/内部指针、重复释放和损坏元数据拥有独立状态。`Validate` 同时核对
@@ -588,6 +590,37 @@ OsKernelSelectUserReturn(frame)
 三段函数，不允许再增加第二套 syscall switch。完整安全理由见
 [ADR 0030](../adr/0030-cpu-local-native-system-call.md)。
 
+## v1.4 KernelObject、FileDescription 与 FileTable
+
+对象层由 `object/kernel_object.*` 独立维护。公开 API 不暴露 payload 类型：
+
+| 类型 | 所有权 |
+| --- | --- |
+| `KernelObjectReference` | 操作期间的 RAII 强引用，不可复制 |
+| `KernelObjectHandle` | FileTable 私有长期引用，地址与 generation 联合校验 |
+| `KernelObjectManager` | 堆存储、活动链、acquire/release、finalizer 与统计 |
+
+`KernelObjectManager::Validate()` 会重新遍历活动双向链，求和当前强引用并与
+统计比较。最后引用释放时，管理器先在锁内把对象转为 Finalizing、摘除活动
+链，再在锁外调用模块 finalizer 和释放堆后备。业务 finalizer 不允许在对象
+管理器锁内调用文件系统或管道。
+
+`io/file_description.*` 是第一个对象类型。共享 payload 保存 kind、
+file status flags 和具体依赖；RegularFile/Directory 的
+`FileSystemHandle::offset_bytes` 位于 payload 内。因此 duplicate 只增加
+引用就能共享偏移，再次 open 则因新建对象而获得独立偏移。Console 输出通过
+设备回调注入，通用 host 模型不依赖串口。
+
+`io/file_table.*` 每 64 个 fd 申请一个有序分块。表项只保存对象 handle 和
+fd flags。安装成功会把传入 reference 的强引用所有权转给表；lookup 在持表
+锁时取得临时 reference；close 在锁内摘除表项后于锁外 release。缺少分块时
+执行“锁内发现 → 锁外申请 → 锁内复验 → 提交或释放候选”的两阶段事务。
+
+运行时按 RAM 为每 Process 选择 64、256 或 4096 hard limit，soft limit
+初始相同。系统调用可以降低/恢复 soft limit，不能越过 hard limit。下降只
+阻止新安装，不关闭已有 fd。完整设计与失败语义见
+[ADR 0031](../adr/0031-typed-kernel-object-dynamic-file-table.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -776,7 +809,7 @@ OsKernelSelectUserReturn(frame)
   位图仍按最高 RAM PFN 线性编码，极端稀疏物理地址空间、NUMA、zone、
   per-CPU page list 和分段 `vmemmap` 以后扩展。
 - 内核堆已支持释放与合并，type cache 已支持固定容量单后备块，KVA 已管理
-  32 TiB 独立窗口；堆后备区仍固定为 64 KiB，缓存尚不能跨多 slab 增长，
+  32 TiB 独立窗口；堆后备区仍固定为 512 KiB，缓存尚不能跨多 slab 增长，
   KVA 描述符存储固定为 1024 项且尚无并发索引或内存压力回收。页表已按根
   所有权回收空分支，但单 BSP 阶段尚无 PCID、远端 TLB shootdown、RCU
   页表读取者或并发拆表。
@@ -789,6 +822,8 @@ OsKernelSelectUserReturn(frame)
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
   Zombie/reap、WaitQueue 和完整 x87/SSE2 现场，但用户 ABI 尚未开放
   CreateThread、ThreadExit、父子关系与 waitpid，也尚无 SMP 负载均衡。
-- 用户地址空间、通用内核堆与固定尺寸缓存均可回收；v1.1 已提供单 BSP
-  `ReferenceCounter` 原语，但动态 KernelObject 的类型层、原子引用语义和
-  并发销毁协议仍等待 v1.4 对象模型。
+- 用户地址空间、通用内核堆、固定尺寸缓存与 v1.4 KernelObject 均可回收；
+  当前对象引用在管理器锁内串行提交，尚未提供 weak reference、循环回收、
+  SMP 原子引用或 RCU 延迟销毁。
+- FileTable 已动态分块并支持 4096 hard limit，但仍使用有序单链；百万 fd
+  位图/基数树、fork 共享、磁盘 exec 和 VFS Vnode 留给后续阶段。

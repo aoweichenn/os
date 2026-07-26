@@ -586,10 +586,10 @@ RFLAGS、调度、页表、栈和 GS 六种状态，容易把结果当成原因�
 继续固定四级 48 位，LA57 未启用。NMI 采用 fail-stop，不提供可恢复诊断。
 \code{INT 0x80} 继续作为兼容入口，移除时间留给 ABI 冻结阶段。
 
-系统调用背后的描述符仍是 v1.0 固定槽。v1.4 将建立类型化 KernelObject、
-动态 FileTable 和共享 FileDescription，但不得改写本章已经冻结的架构入口、
-UserContext 和返回验证。分层的意义就在这里：对象层可以演进，特权边界不需要
-跟着重新冒险。
+本章完成时，系统调用背后的描述符仍是 v1.0 固定槽；紧随其后的 v1.4 已经
+建立类型化 KernelObject、动态 FileTable 和共享 FileDescription，而且没有
+改写本章冻结的架构入口、UserContext 和返回验证。这个后续结果反向证明了
+分层的意义：对象层可以演进，特权边界不需要跟着重新冒险。
 
 \begin{keyidea}
 v1.3 的完成不是“用户程序执行了一次 \code{syscall}”。完整结论是：能力在

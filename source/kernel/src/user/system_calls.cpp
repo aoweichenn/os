@@ -5,11 +5,11 @@
 #include "os/kernel/arch/descriptor_tables.hpp"
 #include "os/kernel/arch/interrupt_runtime.hpp"
 #include "os/kernel/arch/native_system_call.hpp"
+#include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/user_context.hpp"
+#include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/process/process_runtime.hpp"
-#include "os/kernel/arch/processor.hpp"
-#include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/user/user_elf.hpp"
 #include "os/kernel/user/user_memory.hpp"
 
@@ -23,8 +23,7 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WAKE_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES = 1ULL;
-constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_THREAD_COUNT =
-    OS_KERNEL_THREAD_CAPACITY_LIMIT;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_THREAD_COUNT = OS_KERNEL_THREAD_CAPACITY_LIMIT;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT = 0LL;
@@ -42,25 +41,21 @@ constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_ENTRY_METHOD=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_VECTOR=";
-constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX[] =
-    "[OS][KERNEL] USER_RETURN_RIP=";
-constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX[] =
-    "[OS][KERNEL] USER_RETURN_RSP=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX[] = "[OS][KERNEL] USER_RETURN_RIP=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX[] = "[OS][KERNEL] USER_RETURN_RSP=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_RFLAGS=";
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE = 1ULL;
 
 bool system_call_interrupt_self_test_completed;
 
-void WriteRequiredSystemCallMessage(const SerialPort &serial_port,
-                                    const char *message) noexcept {
+void WriteRequiredSystemCallMessage(const SerialPort &serial_port, const char *message) noexcept {
     if (!serial_port.TryWriteString(message)) {
         HaltProcessor();
     }
 }
 
-void WriteRequiredSystemCallValue(const SerialPort &serial_port,
-                                  const char *prefix,
+void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *prefix,
                                   const uint64_t value) noexcept {
     if (!serial_port.TryWriteHexLine(prefix, value)) {
         HaltProcessor();
@@ -157,64 +152,52 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port,
     if (status == ProcessIoStatus::FileSystemFailure) {
         return MapFileSystemStatus(file_system_status, transferred_bytes);
     }
+    if (status == ProcessIoStatus::DescriptorLimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_LIMIT_EXCEEDED;
+    }
+    if (status == ProcessIoStatus::ObjectFailure) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE;
+    }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
 
-[[nodiscard]] UserContextRequirements
-CurrentUserContextRequirements() noexcept {
+[[nodiscard]] UserContextRequirements CurrentUserContextRequirements() noexcept {
     return UserContextRequirements{
-        .virtual_address_width_bits =
-            GetNativeSystemCallConfiguration().virtual_address_width_bits,
-        .user_code_segment =
-            static_cast<uint64_t>(
-                OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR),
-        .user_stack_segment =
-            static_cast<uint64_t>(
-                OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR),
+        .virtual_address_width_bits = GetNativeSystemCallConfiguration().virtual_address_width_bits,
+        .user_code_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR),
+        .user_stack_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR),
     };
 }
 
-[[nodiscard]] bool
-ValidateUserContextMemory(const UserContext &context) noexcept {
-    if (!IsUserProgramVirtualAddressRange(
-            context.common.instruction_pointer,
-            OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES) ||
-        context.stack_pointer <=
-            OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
-        context.stack_pointer >
-            OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
+[[nodiscard]] bool ValidateUserContextMemory(const UserContext &context) noexcept {
+    if (!IsUserProgramVirtualAddressRange(context.common.instruction_pointer,
+                                          OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES) ||
+        context.stack_pointer <= OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
+        context.stack_pointer > OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
         return false;
     }
     const uint64_t stack_probe_address =
-        context.stack_pointer ==
-                OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS
-            ? context.stack_pointer -
-                  OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES
+        context.stack_pointer == OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS
+            ? context.stack_pointer - OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES
             : context.stack_pointer;
     PageMapping instruction_mapping{};
     PageMapping stack_mapping{};
-    return QueryActivePage(context.common.instruction_pointer,
-                           instruction_mapping) ==
+    return QueryActivePage(context.common.instruction_pointer, instruction_mapping) ==
                PageTableStatus::Succeeded &&
            instruction_mapping.permissions.user_accessible &&
            instruction_mapping.permissions.executable &&
            !instruction_mapping.permissions.writable &&
-           QueryActivePage(stack_probe_address, stack_mapping) ==
-               PageTableStatus::Succeeded &&
-           stack_mapping.permissions.user_accessible &&
-           stack_mapping.permissions.writable &&
+           QueryActivePage(stack_probe_address, stack_mapping) == PageTableStatus::Succeeded &&
+           stack_mapping.permissions.user_accessible && stack_mapping.permissions.writable &&
            !stack_mapping.permissions.executable;
 }
 
-[[nodiscard]] bool
-ValidateUserSystemCallFrame(const ExceptionFrame &frame) noexcept {
-    if (!IsProcessSchedulingActive() ||
-        !CurrentThreadOwnsUserContext(frame)) {
+[[nodiscard]] bool ValidateUserSystemCallFrame(const ExceptionFrame &frame) noexcept {
+    if (!IsProcessSchedulingActive() || !CurrentThreadOwnsUserContext(frame)) {
         return false;
     }
     const UserContext &context = AsUserContext(frame);
-    const UserContextEntryMethod entry_method =
-        DecodeUserContextEntryMethod(context);
+    const UserContextEntryMethod entry_method = DecodeUserContextEntryMethod(context);
     if ((entry_method != UserContextEntryMethod::LegacyInterrupt &&
          entry_method != UserContextEntryMethod::NativeSystemCall) ||
         ValidateUserContext(context, CurrentUserContextRequirements()) !=
@@ -223,18 +206,14 @@ ValidateUserSystemCallFrame(const ExceptionFrame &frame) noexcept {
         return false;
     }
     if (entry_method == UserContextEntryMethod::NativeSystemCall &&
-        GetCpuLocal().SystemCallUserStackPointer() !=
-            context.stack_pointer) {
+        GetCpuLocal().SystemCallUserStackPointer() != context.stack_pointer) {
         return false;
     }
-    return GetCpuLocal().RecordTrustedStackValidation() ==
-           CpuLocalStatus::Succeeded;
+    return GetCpuLocal().RecordTrustedStackValidation() == CpuLocalStatus::Succeeded;
 }
 
-[[nodiscard]] bool
-ValidateUserReturnFrame(const ExceptionFrame &frame) noexcept {
-    if (!IsProcessSchedulingActive() ||
-        !CurrentThreadOwnsUserContext(frame)) {
+[[nodiscard]] bool ValidateUserReturnFrame(const ExceptionFrame &frame) noexcept {
+    if (!IsProcessSchedulingActive() || !CurrentThreadOwnsUserContext(frame)) {
         return false;
     }
     const UserContext &context = AsUserContext(frame);
@@ -250,45 +229,34 @@ void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
     const UserContextStatus context_status =
         ValidateUserContext(context, CurrentUserContextRequirements());
     const bool memory_valid = ValidateUserContextMemory(context);
-    WriteRequiredSystemCallMessage(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MESSAGE);
-    WriteRequiredSystemCallValue(
-        serial_port,
-        OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_OWNERSHIP_PREFIX,
-        owned ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
-              : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STATUS_PREFIX,
-        static_cast<uint64_t>(context_status));
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MEMORY_PREFIX,
-        memory_valid ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
-                     : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX,
-        static_cast<uint64_t>(DecodeUserContextEntryMethod(context)));
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX,
-        context.common.vector);
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX,
-        context.common.instruction_pointer);
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX,
-        context.stack_pointer);
-    WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX,
-        context.common.flags);
+    WriteRequiredSystemCallMessage(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MESSAGE);
+    WriteRequiredSystemCallValue(serial_port,
+                                 OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_OWNERSHIP_PREFIX,
+                                 owned ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
+                                       : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STATUS_PREFIX,
+                                 static_cast<uint64_t>(context_status));
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MEMORY_PREFIX,
+                                 memory_valid ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
+                                              : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX,
+                                 static_cast<uint64_t>(DecodeUserContextEntryMethod(context)));
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX,
+                                 context.common.vector);
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX,
+                                 context.common.instruction_pointer);
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX,
+                                 context.stack_pointer);
+    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX,
+                                 context.common.flags);
 }
 
 void CompleteSystemCallInterruptSelfTest() noexcept {
     if (system_call_interrupt_self_test_completed) {
         return;
     }
-    const uint64_t initial_timer_tick_count =
-        GetInterruptRuntimeStatistics().timer_tick_count;
-    while (GetInterruptRuntimeStatistics().timer_tick_count ==
-           initial_timer_tick_count) {
+    const uint64_t initial_timer_tick_count = GetInterruptRuntimeStatistics().timer_tick_count;
+    while (GetInterruptRuntimeStatistics().timer_tick_count == initial_timer_tick_count) {
         WaitForInterrupt();
     }
     system_call_interrupt_self_test_completed = true;
@@ -395,8 +363,7 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
 
     frame.register_rax = static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT);
     ExceptionFrame *resume_frame = &frame;
-    const ProcessRuntimeStatus status =
-        BlockCurrentThread(frame, wait_condition, resume_frame);
+    const ProcessRuntimeStatus status = BlockCurrentThread(frame, wait_condition, resume_frame);
     if (status == ProcessRuntimeStatus::NoReadyThread) {
         frame.register_rax =
             static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_NO_READY_PROCESS);
@@ -592,11 +559,10 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         return &frame;
     }
     ExceptionFrame *resume_frame = &frame;
-    const ProcessRuntimeStatus block_status =
-        BlockCurrentThread(frame,
-                           wait_for_read ? WaitCondition::DescriptorReadable
-                                         : WaitCondition::DescriptorWritable,
-                           resume_frame);
+    const ProcessRuntimeStatus block_status = BlockCurrentThread(
+        frame,
+        wait_for_read ? WaitCondition::DescriptorReadable : WaitCondition::DescriptorWritable,
+        resume_frame);
     if (block_status != ProcessRuntimeStatus::Succeeded) {
         frame.register_rax =
             static_cast<uint64_t>(block_status == ProcessRuntimeStatus::NoReadyThread
@@ -613,6 +579,50 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     return MapProcessIoStatus(
         status, static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT),
         file_system_status);
+}
+
+[[nodiscard]] int64_t DispatchDuplicateDescriptor(const uint64_t source_descriptor,
+                                                  const uint64_t minimum_descriptor,
+                                                  const uint64_t descriptor_flags) noexcept {
+    if ((descriptor_flags & ~os::abi::OS_ABI_FILE_DESCRIPTOR_VALID_FLAG_MASK) !=
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    uint64_t destination_descriptor = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessIoStatus status = DuplicateCurrentProcessDescriptor(
+        source_descriptor, minimum_descriptor, descriptor_flags, destination_descriptor);
+    return MapProcessIoStatus(status, destination_descriptor, FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchGetDescriptorFlags(const uint64_t descriptor) noexcept {
+    uint64_t descriptor_flags = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessIoStatus status = GetCurrentProcessDescriptorFlags(descriptor, descriptor_flags);
+    return MapProcessIoStatus(status, descriptor_flags, FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchSetDescriptorFlags(const uint64_t descriptor,
+                                                 const uint64_t descriptor_flags) noexcept {
+    if ((descriptor_flags & ~os::abi::OS_ABI_FILE_DESCRIPTOR_VALID_FLAG_MASK) !=
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    return MapProcessIoStatus(SetCurrentProcessDescriptorFlags(descriptor, descriptor_flags),
+                              OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                              FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchSetDescriptorSoftLimit(const uint64_t soft_limit) noexcept {
+    return MapProcessIoStatus(SetCurrentProcessDescriptorSoftLimit(soft_limit),
+                              OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                              FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchGetDescriptorLimit(const bool read_soft_limit) noexcept {
+    uint64_t soft_limit = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    uint64_t hard_limit = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessIoStatus status = GetCurrentProcessDescriptorLimits(soft_limit, hard_limit);
+    return MapProcessIoStatus(status, read_soft_limit ? soft_limit : hard_limit,
+                              FileSystemStatus::Succeeded);
 }
 
 [[nodiscard]] int64_t DispatchOpenDirectory(const uint64_t user_path_address,
@@ -673,8 +683,7 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
 }
 }
 
-[[nodiscard]] ExceptionFrame *
-DispatchValidatedSystemCall(ExceptionFrame *frame) noexcept {
+[[nodiscard]] ExceptionFrame *DispatchValidatedSystemCall(ExceptionFrame *frame) noexcept {
     RecordCurrentProcessSystemCall();
 
     const uint64_t system_call_number = frame->register_rax;
@@ -785,33 +794,62 @@ DispatchValidatedSystemCall(ExceptionFrame *frame) noexcept {
             DispatchReadDirectory(frame->register_rdi, frame->register_rsi, frame->register_rdx));
         return frame;
     }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptor)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchDuplicateDescriptor(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorFlags)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchGetDescriptorFlags(frame->register_rdi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetDescriptorFlags)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSetDescriptorFlags(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetDescriptorSoftLimit)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchSetDescriptorSoftLimit(frame->register_rdi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorSoftLimit)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchGetDescriptorLimit(true));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorHardLimit)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchGetDescriptorLimit(false));
+        return frame;
+    }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;
 }
 
-extern "C" ExceptionFrame *
-OsKernelDispatchSystemCall(ExceptionFrame *frame) noexcept {
+extern "C" ExceptionFrame *OsKernelDispatchSystemCall(ExceptionFrame *frame) noexcept {
     if (frame == nullptr || !ValidateUserSystemCallFrame(*frame)) {
         HaltProcessor();
     }
-    const UserContextEntryMethod entry_method =
-        DecodeUserContextEntryMethod(AsUserContext(*frame));
-    if (GetCpuLocal().BeginSystemCall(entry_method) !=
-        CpuLocalStatus::Succeeded) {
+    const UserContextEntryMethod entry_method = DecodeUserContextEntryMethod(AsUserContext(*frame));
+    if (GetCpuLocal().BeginSystemCall(entry_method) != CpuLocalStatus::Succeeded) {
         HaltProcessor();
     }
     return DispatchValidatedSystemCall(frame);
 }
 
-extern "C" ExceptionFrame *
-OsKernelPrepareUserReturn(ExceptionFrame *frame) noexcept {
+extern "C" ExceptionFrame *OsKernelPrepareUserReturn(ExceptionFrame *frame) noexcept {
     if (frame == nullptr) {
         HaltProcessor();
     }
     ExceptionFrame *resume_frame = frame;
     if (GetCpuLocal().ConsumeRescheduleRequest()) {
-        if (GetCpuLocal().RecordReturnReschedule() !=
-            CpuLocalStatus::Succeeded) {
+        if (GetCpuLocal().RecordReturnReschedule() != CpuLocalStatus::Succeeded) {
             HaltProcessor();
         }
         resume_frame = RescheduleBeforeUserReturn(*resume_frame);
@@ -819,32 +857,26 @@ OsKernelPrepareUserReturn(ExceptionFrame *frame) noexcept {
     while (!ValidateUserReturnFrame(*resume_frame)) {
         LogRejectedUserReturn(*resume_frame);
         const UserContextEntryMethod entry_method =
-            DecodeUserContextEntryMethod(
-                AsUserContext(*resume_frame));
-        if (GetCpuLocal().RecordUserReturn(
-                entry_method, UserReturnMethod::Rejected) !=
+            DecodeUserContextEntryMethod(AsUserContext(*resume_frame));
+        if (GetCpuLocal().RecordUserReturn(entry_method, UserReturnMethod::Rejected) !=
             CpuLocalStatus::Succeeded) {
             HaltProcessor();
         }
-        resume_frame =
-            TerminateCurrentProcessFromInvalidReturn(*resume_frame);
+        resume_frame = TerminateCurrentProcessFromInvalidReturn(*resume_frame);
     }
     return resume_frame;
 }
 
-extern "C" uint64_t
-OsKernelSelectUserReturn(const ExceptionFrame *frame) noexcept {
+extern "C" uint64_t OsKernelSelectUserReturn(const ExceptionFrame *frame) noexcept {
     if (frame == nullptr || !ValidateUserReturnFrame(*frame)) {
         HaltProcessor();
     }
     const UserContext &context = AsUserContext(*frame);
-    const UserContextEntryMethod entry_method =
-        DecodeUserContextEntryMethod(context);
+    const UserContextEntryMethod entry_method = DecodeUserContextEntryMethod(context);
     const UserReturnMethod return_method =
         SelectUserReturnMethod(context, CurrentUserContextRequirements());
     if (return_method == UserReturnMethod::Rejected ||
-        GetCpuLocal().RecordUserReturn(entry_method, return_method) !=
-            CpuLocalStatus::Succeeded) {
+        GetCpuLocal().RecordUserReturn(entry_method, return_method) != CpuLocalStatus::Succeeded) {
         HaltProcessor();
     }
     if (GetCpuLocal().EndSystemCall() != CpuLocalStatus::Succeeded) {

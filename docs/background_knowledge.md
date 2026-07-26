@@ -1037,10 +1037,64 @@ Committed                 RolledBack
 否则调用者可能根据一半更新的 `is_last` 销毁仍被引用的对象。
 
 引用计数只证明拥有者数量，不证明对象内部状态、关联页表或等待队列正确，也
-不能自动解决环引用。当前 v1.3 仍是单 BSP 基线，因此原语使用普通
-`uint64_t`；若现在随意加一个 atomic，只会隐藏尚未确定的 acquire/release、
-最后释放、弱引用升级和并发析构协议。v1.4 对象模型建立时，才把这套语义与
-锁和原子内存序一起冻结。
+不能自动解决环引用。当前 v1.4 仍是单 BSP 基线，计数存储使用普通
+`uint64_t`，但对象查找与 acquire/release 已在同一管理器锁内提交；最后引用
+先把对象从活动集合摘除，再在锁外执行 finalizer。这样冻结了当前并发边界，
+却没有伪称已具备 weak reference、无锁升级、SMP 原子引用或循环回收。
+
+### 为什么 Unix 需要“fd”和“打开实例”两层
+
+用户程序看到的 fd 只是当前 Process 内的小整数。早期 Unix 之所以在进程
+描述符表之外再维护系统打开文件状态，是因为“名字”和“正在进行的一次打开”
+具有不同生命周期：
+
+- `close(3)` 后，整数 3 可以立刻分给另一个文件；
+- `dup(3)` 得到另一个整数名字，但两者应共享当前文件偏移；
+- 再次 `open(path)` 是新的打开实例，偏移应从头开始；
+- `close-on-exec` 只决定某一个整数名字是否跨 exec 保留；
+- 读写模式、append 状态和当前偏移属于共享打开实例；
+- 管道只有最后一个写引用关闭后，读端才应观察 EOF。
+
+因此关系不是 `fd = file`，而是：
+
+```text
+Process FileTable[fd]
+    → fd flags
+    → strong reference
+        → FileDescription
+            → file status flags
+            → offset
+            → underlying file / pipe / console
+```
+
+如果 duplicate 时复制 offset，两条路径会各自从旧位置继续，行为等同两个
+独立 open；如果 offset 留在 fd 槽内，就无法表达共享。如果把 close-on-exec
+放进 FileDescription，又会让修改一个副本意外影响所有引用。这就是 v1.4
+必须把两组 flags 放在不同层的原因。
+
+fd 数值复用还产生 ABA 风险：旧 fd 3 关闭后，新对象也可能安装到 fd 3，
+甚至 KernelHeap 可能复用同一地址。当前对象 handle 同时记录全局单调
+generation；地址相同而 generation 不同仍是另一个对象。generation 不替代
+强引用：它负责识别，强引用负责保证对象在操作期间存活。
+
+### 为什么动态 fd 分块不是简单扩大数组
+
+把每 Process 固定数组从 8 扩到 4096 可以通过容量样例，却让所有进程无条件
+支付完整空间，并继续把策略限制编码成 C++ 对象形状。分块表每 64 个 fd
+申请一次后备：
+
+\[
+  \text{allocated bytes}\propto
+  \left\lceil\frac{\text{highest touched fd}+1}{64}\right\rceil,
+\]
+
+而 hard limit 只是运行时上界。functional 与 capacity 因而可以共享实现，只
+选择 256 或 4096。soft limit 可以下降而不销毁已有 fd；它约束新安装策略，
+不是对象合法性。
+
+申请分块时不能长期持有 FileTable 锁等待 KernelHeap。实现先记录缺少的 base，
+锁外准备候选分块，再锁内复验。若另一路已经提交相同分块，就释放候选；这类
+两阶段提交把低内存和未来竞争失败都变成可重复测试的回滚，而不是半插入链表。
 
 ### 快照为什么只比较“当前量”
 
@@ -1452,7 +1506,8 @@ v1.3 先选择最小可证明策略：NMI 使用 TSS.IST2 的独立栈，只写�
    v0.5 的异常控制流、v0.6 的内存所有权/页表权限、v0.7 的硬件 IRQ
    与设备闭环、v0.8 的用户特权边界、v0.9 的进程地址空间与抢占调度，
    v0.10 的同步、阻塞/唤醒和管道 IPC，v1.1 的通用资源生命周期，以及
-   v1.2 的 Process/Thread、WaitQueue 与完整扩展现场，以及 v1.3 的
-   CpuLocal、原生系统调用和安全返回。
+   v1.2 的 Process/Thread、WaitQueue 与完整扩展现场，v1.3 的 CpuLocal、
+   原生系统调用和安全返回，以及 v1.4 的 KernelObject、共享
+   FileDescription 与动态 FileTable。
 9. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 10. `docs/roadmap.md`：了解后续知识如何逐层展开。

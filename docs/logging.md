@@ -286,7 +286,7 @@ Shell 与控制台协议见文末。
 [OS][KERNEL] PAGING_ROOT=0x...
 [OS][KERNEL] MEMORY_PERMISSIONS_VALID
 [OS][KERNEL] HEAP_READY
-[OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000010000
+[OS][KERNEL] HEAP_CAPACITY_BYTES=0x0000000000080000
 [OS][KERNEL] HEAP_ACTIVE_ALLOCATIONS=0x0000000000000000
 [OS][KERNEL] HEAP_PEAK_CONSUMED_BYTES=0x...
 [OS][KERNEL] HEAP_LARGEST_FREE_ALLOCATION_BYTES=0x...
@@ -643,3 +643,62 @@ need-resched 与拒绝数则必须精确为零。可信栈验证次数必须覆�
 entry、vector、RIP、RSP、RFLAGS 八项诊断。正常路径把该标记列为禁止项。
 这种低频展开日志能定位返回攻击面，又不会让高频系统调用冲刷 115200 波特
 串口或反向改变调度时序。
+
+## v1.4 对象与动态描述符日志
+
+用户态只在完整证明通过后输出一次：
+
+```text
+[OS][USER][PID4] FILE_DESCRIPTION_MODEL_OK
+```
+
+open、lookup、duplicate、每次读写、引用 acquire/release 和普通 close 都
+不打印。它们是高频路径，逐项串口输出会延长持锁或系统调用时间，改变 PIT
+抢占与管道阻塞时序。失败由系统调用返回值和测试断言定位，不靠无界日志。
+
+四个 Process 全部退出、FileTable 已销毁后，Kernel 在冷路径输出一次有界
+摘要：
+
+```text
+[OS][KERNEL] OBJECT_ACTIVE_COUNT=0x0000000000000000
+[OS][KERNEL] OBJECT_ACTIVE_REFERENCES=0x0000000000000000
+[OS][KERNEL] OBJECT_CREATIONS=0x...
+[OS][KERNEL] OBJECT_DESTRUCTIONS=0x...
+[OS][KERNEL] OBJECT_PEAK_REFERENCES=0x...
+[OS][KERNEL] FILE_DESCRIPTION_ACTIVE_COUNT=0x0000000000000000
+[OS][KERNEL] FILE_DESCRIPTION_FINALIZATIONS=0x...
+[OS][KERNEL] FILE_DESCRIPTION_FAILED_FINALIZATIONS=0x0000000000000000
+[OS][KERNEL] FILE_TABLE_HARD_LIMIT=0x...
+[OS][KERNEL] FILE_TABLE_PEAK_DESCRIPTORS=0x...
+[OS][KERNEL] FILE_TABLE_CHUNK_ALLOCATIONS=0x...
+[OS][KERNEL] FILE_TABLE_CHUNK_RELEASES=0x...
+[OS][KERNEL] FILE_TABLE_INSTALLATIONS=0x...
+[OS][KERNEL] FILE_TABLE_CLOSES=0x...
+```
+
+active 和 failed 字段必须精确为零；creation/destruction、finalization/
+destruction、chunk allocation/release 必须由内核不变量比较相等。peak、
+installation 和 close 是有意义的容量/工作量证据，但不要求在不同宿主时序下
+伪造精确常数。
+
+接着输出三层布尔 oracle：
+
+```text
+[OS][KERNEL] RUNTIME_STATE_VALIDATION=0x0000000000000001
+[OS][KERNEL] SMOKE_STATE_VALIDATION=0x0000000000000001
+[OS][KERNEL] PROCESS_RESOURCE_VALIDATION=0x0000000000000001
+```
+
+它们分别覆盖对象/调度/CpuLocal 内部状态、functional Shell/IPC/控制台行为，
+以及 frame/KVA/heap/stack/FileDescription 的跨层资源快照。三项全部为一且
+每 Process 结果符合预期后，才允许输出：
+
+```text
+[OS][KERNEL] FILE_DESCRIPTION_MODEL_VALID
+[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] SCHEDULER_COMPLETE
+```
+
+QEMU 验收器按日志顺序检查这些标记，并根据内存配置要求 hard limit 精确为
+64、256 或 4096。宿主到达时间仍由 runner 添加 `[QEMU][T+...ms]`，来宾
+计时仍以 PIT `MONOTONIC_MILLISECONDS` 为准；对象统计不伪装成时间戳。

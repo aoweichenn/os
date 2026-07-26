@@ -9,11 +9,12 @@ inode、目录项和普通文件，并向内核系统调用层提供有界文件
 
 ```text
 用户包装器
-  → 系统调用与每进程 fd 表
-    → FileSystem
-      → BlockCache
-        → FileSystemBlockDevice
-          → AtaPioDevice
+  → 系统调用与每进程 FileTable
+    → 共享 FileDescription
+      → FileSystem
+        → BlockCache
+          → FileSystemBlockDevice
+            → AtaPioDevice
 ```
 
 宿主测试以 `MemoryBlockDevice` 替换最底层设备，但复用完整
@@ -75,6 +76,23 @@ inode 0 永不分配；inode 1 是根目录。inode 使用十个 64 位直接块
 CreateDirectory、Open(Create/Truncate) 和 Write 都进入显式事务。superblock
 先持久化为 Dirty；缓存中的数据和元数据全部写回后，superblock 才重新标记
 Clean。任何设备错误都会使挂载状态转为失败，调用方不得继续假设磁盘一致。
+
+## v1.4 FileDescription 适配边界
+
+`FileSystemHandle` 不再位于按 fd 编号排列的 Process 平行数组，而是成为
+RegularFile/Directory `FileDescription` 的共享 payload。它仍由本模块定义，
+并继续保存 inode、offset、读写能力和 open 状态；对象层只负责引用生命周期，
+不解释磁盘格式。
+
+每次 `Open` 成功后，进程运行时先创建 FileDescription，再事务安装到动态
+FileTable。若对象创建或 fd 安装失败，RAII 最后引用会调用
+`FileSystem::Close`，不能泄漏已打开 handle。duplicate 不调用本模块的 Open，
+只增加同一 FileDescription 的强引用，所以 offset 共享；独立 Open 才取得
+新的 handle 和 offset。最后一个引用消失时 finalizer 恰调用一次 Close。
+
+这个适配是 v1.5 VFS 的迁移缝：FileTable 和用户 fd ABI 保持不变，
+FileDescription 的底层依赖将从 legacy handle 逐步换成 Vnode/OpenFile
+契约。
 
 ## 当前限制
 

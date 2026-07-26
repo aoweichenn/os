@@ -628,10 +628,51 @@ os_add_kernel_user_environment_test(
     unit/kernel/console_input_test.cpp
     "unit"
 )
-os_add_kernel_user_environment_test(
-    os_kernel_io_descriptor_unit_tests
-    unit/kernel/io_descriptor_test.cpp
+function(
+    os_add_kernel_object_model_test
+    OS_TEST_TARGET
+    OS_TEST_SOURCE
+    OS_TEST_LABEL
+)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_object_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_object_model_test(
+    os_kernel_file_table_unit_tests
+    unit/kernel/file_table_test.cpp
     "unit"
+)
+os_add_kernel_object_model_test(
+    os_kernel_file_description_lifecycle_integration_tests
+    integration/boot/file_description_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_object_model_test(
+    os_kernel_file_table_capacity_integration_tests
+    integration/boot/file_table_capacity_test.cpp
+    "integration"
+)
+os_add_kernel_object_model_test(
+    os_kernel_file_table_randomized_tests
+    randomized/kernel/file_table_randomized_test.cpp
+    "randomized"
 )
 
 function(
@@ -740,7 +781,7 @@ add_test(
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         audit-kernel-elf
-        "${OS_KERNEL_ELF_PATH}"
+        "${OS_KERNEL_PAYLOAD_ELF_PATH}"
 )
 set_tests_properties(
     os_kernel_elf_layout

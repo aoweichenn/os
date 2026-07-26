@@ -1,6 +1,6 @@
 # Kernel 源码布局
 
-Kernel 按功能所有权分为十一组。公开头文件与实现使用完全对称的相对路径：
+Kernel 按功能所有权分为十二组。公开头文件与实现使用完全对称的相对路径：
 
 ```text
 include/os/kernel/<module>/<name>.hpp
@@ -23,9 +23,10 @@ src/memory/page_table.cpp
 | `core/` | Kernel 主流程和 freestanding 内存运行时 |
 | `device/` | 端口 I/O、串口、PIC、PIT、PS/2 与 ATA |
 | `fs/` | 磁盘格式、块缓存和文件系统 |
-| `io/` | 控制台输入与统一 I/O 描述符 |
+| `io/` | 控制台输入、共享 FileDescription 与动态 FileTable |
 | `ipc/` | 有界管道和端点生命周期 |
 | `memory/` | 物理页、buddy、页表、heap、KVA、动态栈与资源快照 |
+| `object/` | 类型化 KernelObject、generation 与强引用生命周期 |
 | `process/` | Process/Thread 状态机、run queue、WaitQueue 和目标机生命周期 |
 | `sync/` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
 | `user/` | 用户 ELF、用户内存、系统调用和内嵌程序镜像边界 |
@@ -82,3 +83,15 @@ user/system_calls.*                共同 C++ dispatcher 与用户返回准备
 可由宿主测试直接链接；RDMSR/WRMSR 和汇编入口只能出现在目标机层。CpuLocal
 虽然当前是单元素，也必须继续位于 `arch/`，不能塞入 ProcessRuntime 的私有
 全局状态。
+
+v1.4 的对象与描述符文件固定归属如下：
+
+```text
+object/kernel_object.*         类型、代次、强引用、活动链与最后引用 finalizer
+io/file_description.*         共享偏移、file status flags 和统一资源操作
+io/file_table.*               分块 fd 表、fd flags、limit 与两阶段安装
+process/process_runtime.*      每 Process FileTable 和目标机等待/唤醒组合
+```
+
+`object/` 不依赖某一种文件系统、管道或设备；具体 payload 和 finalizer 由
+`io/` 提供。FileTable 只持有私有 handle，不能包含 FileDescription 裸指针。

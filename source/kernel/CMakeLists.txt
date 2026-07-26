@@ -44,7 +44,8 @@ set(
 set(
     OS_KERNEL_IO_HEADERS
     include/os/kernel/io/console_input.hpp
-    include/os/kernel/io/io_descriptor.hpp
+    include/os/kernel/io/file_description.hpp
+    include/os/kernel/io/file_table.hpp
 )
 set(
     OS_KERNEL_IPC_HEADERS
@@ -62,6 +63,10 @@ set(
     include/os/kernel/memory/physical_frame_allocator.hpp
     include/os/kernel/memory/physical_memory_map.hpp
     include/os/kernel/memory/resource_snapshot.hpp
+)
+set(
+    OS_KERNEL_OBJECT_HEADERS
+    include/os/kernel/object/kernel_object.hpp
 )
 set(
     OS_KERNEL_PROCESS_HEADERS
@@ -92,6 +97,7 @@ set(
     ${OS_KERNEL_IO_HEADERS}
     ${OS_KERNEL_IPC_HEADERS}
     ${OS_KERNEL_MEMORY_HEADERS}
+    ${OS_KERNEL_OBJECT_HEADERS}
     ${OS_KERNEL_PROCESS_HEADERS}
     ${OS_KERNEL_SYNCHRONIZATION_HEADERS}
     ${OS_KERNEL_USER_HEADERS}
@@ -142,7 +148,8 @@ set(
 set(
     OS_KERNEL_IO_SOURCES
     src/io/console_input.cpp
-    src/io/io_descriptor.cpp
+    src/io/file_description.cpp
+    src/io/file_table.cpp
 )
 set(
     OS_KERNEL_IPC_SOURCES
@@ -160,6 +167,10 @@ set(
     src/memory/physical_frame_allocator.cpp
     src/memory/physical_memory_map.cpp
     src/memory/resource_snapshot.cpp
+)
+set(
+    OS_KERNEL_OBJECT_SOURCES
+    src/object/kernel_object.cpp
 )
 set(
     OS_KERNEL_PROCESS_SOURCES
@@ -190,6 +201,7 @@ set(
     ${OS_KERNEL_IO_SOURCES}
     ${OS_KERNEL_IPC_SOURCES}
     ${OS_KERNEL_MEMORY_SOURCES}
+    ${OS_KERNEL_OBJECT_SOURCES}
     ${OS_KERNEL_PROCESS_SOURCES}
     ${OS_KERNEL_SYNCHRONIZATION_SOURCES}
     ${OS_KERNEL_USER_SOURCES}
@@ -329,9 +341,47 @@ add_library(
     os_kernel_user_environment_model_host
     STATIC
         src/io/console_input.cpp
-        src/io/io_descriptor.cpp
         include/os/kernel/io/console_input.hpp
-        include/os/kernel/io/io_descriptor.hpp
+)
+
+add_library(
+    os_kernel_object_model_host
+    STATIC
+        src/fs/block_cache.cpp
+        src/fs/file_system.cpp
+        src/fs/file_system_format.cpp
+        src/io/console_input.cpp
+        src/io/file_description.cpp
+        src/io/file_table.cpp
+        src/ipc/pipe.cpp
+        src/memory/kernel_heap.cpp
+        src/object/kernel_object.cpp
+        src/sync/spin_lock.cpp
+        include/os/kernel/fs/block_cache.hpp
+        include/os/kernel/fs/file_system.hpp
+        include/os/kernel/fs/file_system_format.hpp
+        include/os/kernel/io/console_input.hpp
+        include/os/kernel/io/file_description.hpp
+        include/os/kernel/io/file_table.hpp
+        include/os/kernel/ipc/pipe.hpp
+        include/os/kernel/memory/kernel_heap.hpp
+        include/os/kernel/object/kernel_object.hpp
+        include/os/kernel/sync/spin_lock.hpp
+)
+target_include_directories(
+    os_kernel_object_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(
+    os_kernel_object_model_host
+    PUBLIC
+        os_foundation_host
+)
+target_compile_options(
+    os_kernel_object_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
 )
 target_include_directories(
     os_kernel_user_environment_model_host
@@ -730,7 +780,9 @@ function(
             ${OS_KERNEL_OBJECT_TARGET}
             $<TARGET_OBJECTS:${OS_KERNEL_OBJECT_TARGET}>
             os_kernel_architecture_object
+            "${OS_KERNEL_ARCHITECTURE_OBJECT}"
             os_kernel_user_images_object
+            "${OS_KERNEL_USER_IMAGES_OBJECT}"
             os_foundation_x86_64
             "${OS_KERNEL_LINKER_SCRIPT}"
         COMMENT "${OS_KERNEL_LINK_COMMENT}"

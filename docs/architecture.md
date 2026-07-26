@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向，不代表当前 v1.3 已经具备这些模块。每个箭头
+本节描述第二周期的目标依赖方向，不代表当前 v1.4 已经具备这些模块。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -376,7 +376,7 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
   ├─ 三个 IST 栈底 guard: not-present
   └─ TSS.RSP0 特权转换栈底 guard: not-present
 高半区 0xFFFF800000000000
-  ├─ 64 KiB heap: RW + NX
+  ├─ 512 KiB heap: RW + NX
   └─ 0xFFFF800000100000: R + NX 写保护测试页
 高半区 0xFFFF888000000000
   └─ 64 TiB direct-map 容量：只映射 E820 普通 RAM
@@ -725,7 +725,7 @@ etc/e820 type 1 RAM ─────────> 最高可用完整页
 | --- | --- | --- |
 | `0xFFFF888000000000 + P` | E820 type 1 物理地址 `P` | supervisor RW/NX，普通缓存 |
 | `0xFFFF888000000000..+64TiB` | 保留窗口 | 未声明 RAM 的洞保持 not-present |
-| `0xFFFF800000000000..+64KiB` | 离散页帧 | 可回收内核堆，RW/NX |
+| `0xFFFF800000000000..+512KiB` | 离散页帧 | 可回收内核堆，RW/NX |
 
 每个对齐且完整的 RAM 内部区间优先用 2 MiB PDE 大页映射；E820 边界与尾部用
 4 KiB PTE。LAPIC 等 MMIO 不进入普通 RAM 直映，继续由显式 PCD 映射负责。
@@ -1217,6 +1217,118 @@ NMI 是例外：向量 2 通过 IST2 进入最小 fail-stop 桩，只写固定�
 [ADR 0030](adr/0030-cpu-local-native-system-call.md)，整阶段证据见
 [v1.3 发布记录](releases/v1.3.md)。
 
+## v1.4 当前对象与描述符架构
+
+### 三种身份不能再混为一个整数
+
+v1.0 的 fd 同时扮演数组下标、资源类别入口和打开文件身份。v1.4 把它拆成
+三个层次：
+
+```text
+fd 3                         Process 局部、可关闭复用
+  │ FileTableEntry
+  ├─ descriptor flags        只属于 fd，例如 close-on-exec
+  └─ KernelObjectHandle
+        │ address + generation
+        ▼
+     FileDescription         系统级共享打开实例
+        ├─ kind
+        ├─ file status flags
+        ├─ offset
+        └─ File / Pipe / Console dependency
+```
+
+fd 关闭后允许复用数值 3，但新 FileDescription 的 generation 必须不同。
+因此整数复用不等于对象身份复用。KernelObjectHandle 是私有长期所有权，
+业务操作只能通过 `Lookup` 取得 RAII 临时强引用。
+
+### duplicate 与 open 的结构差异
+
+duplicate 不复制 payload，只给同一对象增加一个强引用：
+
+```text
+fd 3 ─┐
+      ├──> FileDescription(generation 17, offset 6)
+fd 64 ┘
+```
+
+从 fd 3 读取三字节后，fd 64 的读取从相同 offset 继续。再次 open 则创建
+另一个 KernelObject：
+
+```text
+fd 3  ──> FileDescription(generation 17, offset 6)
+fd 4  ──> FileDescription(generation 18, offset 0)
+```
+
+这也是为什么 offset 必须位于 FileDescription，而不能位于 FileTableEntry。
+相反，close-on-exec 位于 FileTableEntry：为 fd 64 设置它时，fd 3 必须保持
+不变。
+
+### 动态分块表与运行时限额
+
+FileTable 用按 base fd 排序的 64 项分块表示稀疏编号空间。第一次安装 fd 0
+申请 base 0 分块；minimum 64 的 duplicate 才申请 base 64 分块。查找不
+分配，关闭不立即回收空分块，Process 销毁时统一释放，避免普通 close 把
+分块生命周期和并发 lookup 复杂化。
+
+```text
+FileTable
+  → chunk(base 0):  fd 0..63
+  → chunk(base 64): fd 64..127
+  → ...
+```
+
+soft limit 是新安装策略，hard limit 是表允许的绝对边界。已有 fd 可以位于
+下降后的 soft limit 以上；它们仍可 lookup、读写和 close。三档配置只改变
+limit：
+
+| RAM 配置 | hard limit | 最多分块 |
+| --- | ---: | ---: |
+| 64 MiB | 64 | 1 |
+| 256 MiB | 256 | 4 |
+| 64 GiB | 4096 | 64 |
+
+上面的 fd 64 对象图对应 256 MiB/64 GiB 验收。64 MiB 档的 hard limit
+本身就是 64，因此同一 Ring 3 事务选择 minimum 8；共享 offset、独立 flags、
+限额失败和最低编号语义完全相同，只是不越过该兼容档的绝对上限。
+
+### 两阶段分块提交
+
+KernelHeap 申请发生在表锁外。候选分块准备完成后重新验证表状态与目标 base：
+
+```text
+lock: 发现缺块
+unlock
+heap: 申请并清零 candidate
+lock: 重新验证
+  ├─ 表已销毁       → unlock + release candidate
+  ├─ 同 base 已存在 → rollback count++ + release candidate
+  └─ 仍缺少         → 插入有序链并提交统计
+```
+
+对象安装只有在分块存在、槽为空、limit 仍允许时才把 reference 转成 handle。
+所以分块耗尽、fd 耗尽、竞争回滚和精确槽冲突都不会留下半安装对象。
+
+### 最后引用与模块 finalizer
+
+FileTable 的 lookup 在 `FileTable → KernelObjectManager` 锁顺序中取得临时
+引用，随后释放表锁。业务 I/O 使用对象自己的 operation lock 串行化共享
+offset。close 先从表中移除 handle，再在表锁外 release；若不是最后引用，
+底层资源保持打开。
+
+最后引用从 1 变为 0 后，对象先离开活动链，再在 KernelObjectManager 锁外
+执行 FileDescription finalizer：
+
+- RegularFile/Directory 关闭 legacy `FileSystemHandle`；
+- PipeReader/PipeWriter 关闭对应端点；
+- Console 不拥有硬件设备，不执行设备关闭；
+- finalizer 完成后对象后备归还 KernelHeap。
+
+这条路径同时服务显式 close、close-on-exec 和 Process FileTable 销毁。
+完整决策见
+[ADR 0031](adr/0031-typed-kernel-object-dynamic-file-table.md)，整机证据见
+[v1.4 发布记录](releases/v1.4.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址区间、引用计数和作用域回滚等不依赖运行时的基础
@@ -1287,6 +1399,7 @@ source/kernel/
 │   ├── io/
 │   ├── ipc/
 │   ├── memory/
+│   ├── object/
 │   ├── process/
 │   ├── sync/
 │   └── user/
@@ -1301,6 +1414,7 @@ source/kernel/
     ├── io/
     ├── ipc/
     ├── memory/
+    ├── object/
     ├── process/
     ├── sync/
     └── user/
@@ -1339,7 +1453,7 @@ source/user/
 模块私有头文件。CMake 将公开目录标记为 `PUBLIC`、私有目录标记为 `PRIVATE`，
 消费者不能通过传递依赖获得私有包含路径。
 
-Kernel 内部规模更大，因此在公开树和实现树中继续使用完全相同的十一组功能
+Kernel 内部规模更大，因此在公开树和实现树中继续使用完全相同的十二组功能
 目录。目录表达文件所有权，当前 C++ API 仍保持简短的 `os::kernel` 命名空间；
 不会为了复制物理路径而制造没有接口收益的命名空间层。每个 `.hpp` 必须在同一
 模块下拥有对应 `.cpp`，模板 `.tpp` 与头文件同目录，三个生成/汇编例外单独

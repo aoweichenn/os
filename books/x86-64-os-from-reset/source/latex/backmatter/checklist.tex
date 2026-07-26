@@ -86,7 +86,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 103 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+  \item 106 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
         调度/IPC/文件系统/Shell、资源快照、双系统调用入口与
         256 MiB/64 GiB 整机事件；
   \item Process 与 Thread 为什么是两个寿命不同的对象，Exited 与 Zombie
@@ -107,6 +107,18 @@
   \item Ring 3 页故障错误码 \code{0x4} 与 Ring 0 写保护
         \code{0x3} 的逐位差异；
   \item 正常、用户 \#UD、用户 \#PF、截断 ELF 四条 QEMU 路径分别证明什么。
+  \item fd、FileTable entry、FileDescription 与底层文件对象为何必须分层；
+  \item duplicate 为什么共享 FileDescription 偏移，却保持独立 descriptor flags；
+  \item 地址加 generation 如何拒绝 kernel heap 同址复用造成的 ABA；
+  \item Reference 与 Handle 分别适合临时操作和长期容器的原因；
+  \item 64 槽延迟分块、最低可用 fd 与两阶段安装怎样共同保持失败原子性；
+  \item soft limit 为什么只限制新安装，hard limit 为什么按 64/256/4096
+        三档进入验收；
+  \item 最后强引用释放为何先摘除活动对象，再在全局锁外执行 finalizer；
+  \item 23--28 号系统调用如何复用 v1.3 的 RAX/RDI/RSI/RDX 与双入口；
+  \item PID 4 的 8 字节写、9 字节读如何同时证明共享偏移与独立打开；
+  \item 106 项回归中的单元、集成、4096 fd 容量、十万步随机与 QEMU
+        分别排除哪类描述符错误。
 \end{itemize}
 
 \section*{进入下一阶段前}

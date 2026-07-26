@@ -14,12 +14,13 @@ extern "C" [[nodiscard]] int64_t OsUserInvokeSystemCall(uint64_t system_call_num
                                                         uint64_t argument0, uint64_t argument1,
                                                         uint64_t argument2,
                                                         uint64_t argument3) noexcept;
-extern "C" [[nodiscard]] int64_t OsUserInvokeLegacySystemCall(
-    uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
-    uint64_t argument2, uint64_t argument3) noexcept;
-extern "C" [[nodiscard]] int64_t OsUserInvokeSystemCallWithDirectionFlag(
-    uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
-    uint64_t argument2, uint64_t argument3) noexcept;
+extern "C" [[nodiscard]] int64_t
+OsUserInvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
+                             uint64_t argument2, uint64_t argument3) noexcept;
+extern "C" [[nodiscard]] int64_t
+OsUserInvokeSystemCallWithDirectionFlag(uint64_t system_call_number, uint64_t argument0,
+                                        uint64_t argument1, uint64_t argument2,
+                                        uint64_t argument3) noexcept;
 }
 
 int64_t InvokeSystemCall(const uint64_t system_call_number, const uint64_t argument0,
@@ -28,20 +29,19 @@ int64_t InvokeSystemCall(const uint64_t system_call_number, const uint64_t argum
     return OsUserInvokeSystemCall(system_call_number, argument0, argument1, argument2, argument3);
 }
 
-int64_t InvokeLegacySystemCall(
-    const uint64_t system_call_number, const uint64_t argument0,
-    const uint64_t argument1, const uint64_t argument2,
-    const uint64_t argument3) noexcept {
-    return OsUserInvokeLegacySystemCall(
-        system_call_number, argument0, argument1, argument2, argument3);
+int64_t InvokeLegacySystemCall(const uint64_t system_call_number, const uint64_t argument0,
+                               const uint64_t argument1, const uint64_t argument2,
+                               const uint64_t argument3) noexcept {
+    return OsUserInvokeLegacySystemCall(system_call_number, argument0, argument1, argument2,
+                                        argument3);
 }
 
-int64_t InvokeSystemCallWithDirectionFlag(
-    const uint64_t system_call_number, const uint64_t argument0,
-    const uint64_t argument1, const uint64_t argument2,
-    const uint64_t argument3) noexcept {
-    return OsUserInvokeSystemCallWithDirectionFlag(
-        system_call_number, argument0, argument1, argument2, argument3);
+int64_t InvokeSystemCallWithDirectionFlag(const uint64_t system_call_number,
+                                          const uint64_t argument0, const uint64_t argument1,
+                                          const uint64_t argument2,
+                                          const uint64_t argument3) noexcept {
+    return OsUserInvokeSystemCallWithDirectionFlag(system_call_number, argument0, argument1,
+                                                   argument2, argument3);
 }
 
 int64_t WriteLog(const char *message, const uint64_t message_size_bytes) noexcept {
@@ -230,6 +230,43 @@ int64_t CloseDescriptor(const uint64_t descriptor) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CloseDescriptor),
                             descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t DuplicateDescriptor(const uint64_t source_descriptor, const uint64_t minimum_descriptor,
+                            const uint64_t descriptor_flags) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptor),
+                            source_descriptor, minimum_descriptor, descriptor_flags);
+}
+
+int64_t GetDescriptorFlags(const uint64_t descriptor) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorFlags),
+                            descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetDescriptorFlags(const uint64_t descriptor, const uint64_t descriptor_flags) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetDescriptorFlags),
+                            descriptor, descriptor_flags, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetDescriptorSoftLimit(const uint64_t soft_limit) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetDescriptorSoftLimit), soft_limit,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetDescriptorSoftLimit() noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorSoftLimit),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetDescriptorHardLimit() noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetDescriptorHardLimit),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t OpenDirectory(const char *const path, const uint64_t path_length_bytes) noexcept {

@@ -27,7 +27,7 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.3 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+当前 v1.4 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
 实现；v1.2 已实测 Process/Thread 容量，fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
@@ -115,8 +115,9 @@ QEMU 自行异常退出仍视为失败。
   段数、页表根、映射大小和栈顶。
 - 固定种子随机测试破坏 256 组 ELF 标识、256 组加载地址、256 组负载字节和
   128 组扇区补零，并完成 128 组不同文件长度往返。
-- 集成测试审计真实 `kernel.elf`、组合磁盘和 Stage 1/页表/暂存区/加载窗口/
-  内核栈之间的物理布局，且通过 `llvm-nm` 保证没有未解析运行时符号。
+- 集成测试审计真实写盘的 `kernel.payload.elf`、组合磁盘和 Stage 1/页表/
+  暂存区/加载窗口/内核栈之间的物理布局，且通过 `llvm-nm` 保证没有未解析
+  运行时符号；保留 DWARF 的 `kernel.elf` 不受启动暂存区文件长度约束。
 - QEMU 成功路径必须从复位依次到达 Kernel 的 `BOOT_INFO_VALID`、
   `BSS_ZEROED`、`CR3_VALID` 和 `READY`。
 - QEMU 失败路径分别注入 Kernel ATA 永久忙、ATA ERR、描述符损坏、负载
@@ -252,6 +253,22 @@ QEMU 自行异常退出仍视为失败。
 - 256 MiB QEMU 必须同时观察双入口等价、SYSRET、原生 IRET 回退、IRQ 打断
   系统调用和返回前 reschedule，且结束时深度/need-resched/拒绝返回为零；
 - `qemu64,-syscall` 必须在扩展现场、GDT 和用户态前输出缺失能力位图并停止。
+
+`v1.4` 为对象与动态描述符增加四层证据：
+
+- FileTable 单元测试覆盖依赖和限额、精确/最低安装、所有权转移、临时 lookup、
+  duplicate 共享 generation、独立 fd flags、编号复用、close-on-exec 和销毁；
+- FileDescription 集成测试把真实 legacy FileSystem、Pipe 和 KernelHeap
+  组合起来，验证共享/独立 offset、端点最后引用和 finalizer 守恒；
+- capacity 集成测试实际安装 4096 个 fd 和 64 个分块，填满后再 duplicate
+  必须原子返回 limit，随后关闭全部 fd 并回收对象和堆；
+- 固定种子 `0x46445441424C4531` 执行 100000 步 open、duplicate、close、
+  soft-limit 修改，与独立 4096 项参考表逐步比较；
+- PID4 Ring 3 真实读写文件、duplicate、CLOEXEC、限额失败和最低编号复用；
+  256 MiB/64 GiB 使用 minimum 64，64 MiB 兼容档使用 minimum 8，内核核对
+  读取 9 字节、写入 8 字节；
+- 256 MiB/64 GiB QEMU 分别要求 hard limit 精确为 256/4096，退出后 active
+  对象/引用为零、finalizer 无失败、分块申请/释放相等及三层 validation 为一。
 
 `v0.10` 把共享状态、条件等待和 IPC 生命周期分层验证：
 
@@ -517,7 +534,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_page_table_reclamation_unit_tests` | 单元 | 三种根所有权、精确空表、级联回收、借用拒绝、失败回滚与损坏检测 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
-| `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 目标堆的混合对象、数据保持、耗尽与完整恢复 |
+| `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 回归堆的混合对象、数据保持、耗尽与完整恢复 |
 | `os_kernel_type_cache_lifecycle_integration_tests` | 集成 | 三种对齐缓存共享堆、交错释放与乱序销毁恢复 |
 | `os_kernel_virtual_address_mapping_lifecycle_integration_tests` | 集成 | KVA、物理帧、页表、双 guard 与逆序回收 |
 | `os_kernel_stack_lifecycle_integration_tests` | 集成 | 四栈、用户特权帧、独立进程 CR3 共享高半映射与安全点式逆序回收 |
@@ -543,7 +560,10 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_pipe_randomized_tests` | 随机 | 32,768 步管道状态与独立字节队列模型对照 |
 | `os_kernel_synchronization_integration_tests` | 集成 | 四线程、200,000 次受锁更新的互斥与可见性 |
 | `os_kernel_console_input_unit_tests` | 单元 | 控制台 FIFO 顺序、容量、丢弃策略与统计守恒 |
-| `os_kernel_io_descriptor_unit_tests` | 单元 | 标准/动态描述符、端点权限、分配、关闭与槽位复用 |
+| `os_kernel_file_table_unit_tests` | 单元 | 对象所有权、分块安装、duplicate、fd flags、limit、复用与 close-on-exec |
+| `os_kernel_file_description_lifecycle_integration_tests` | 集成 | 真实文件共享/独立偏移、管道最后引用与 finalizer 守恒 |
+| `os_kernel_file_table_capacity_integration_tests` | 集成 | 实际填满 4096 fd/64 分块、耗尽失败原子与完整回收 |
+| `os_kernel_file_table_randomized_tests` | 随机 | 固定种子十万步 open/duplicate/close/limit 参考模型 |
 | `os_kernel_file_system_format_unit_tests` | 单元 | superblock、inode、目录项显式编码、布局与 CRC32 |
 | `os_kernel_file_system_lifecycle_integration_tests` | 集成 | 格式化、目录、跨块文件、重挂载、截断与语义损坏拒绝 |
 | `os_kernel_file_system_randomized_tests` | 随机 | 128 轮随机 rewrite、重挂载与参考模型逐字节对照 |
@@ -595,13 +615,15 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 103 项 CTest。v1.3 新增处理器 profile、UserContext、CpuLocal/MSR
-布局与十万现场随机测试，并把主动 CPU 失败配置更新为 SYSCALL 缺失；
+当前共 106 项 CTest。v1.4 删除旧固定描述符测试并新增 FileTable 单元、
+FileDescription 生命周期集成、4096 fd 容量集成和十万步随机模型四项；
+v1.3 的处理器 profile、UserContext、CpuLocal/MSR 布局与十万现场随机测试，
+以及主动 SYSCALL 缺失路径继续保留；
 v1.2 的 Process/Thread 单元、集成和十万步随机测试及
 全部历史成功、故障注入、持久化和产物审计用例继续保留。命名门禁使用编译
 数据库和 Clang AST 区分标识符种类；
 `os_python_tooling_unit_tests` 内的 Kernel 布局测试还会扫描真实源码树，
-要求 include/src 拥有相同的十一组模块、根目录没有实现文件、每个公开头文件
+要求 include/src 拥有相同的十二组模块、根目录没有实现文件、每个公开头文件
 具有同模块实现，并通过临时错误树证明扁平文件和缺失实现会被拒绝。它复用现有
 Python 测试集合，因此加强结构证据而不虚增顶层 CTest 数量。
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前

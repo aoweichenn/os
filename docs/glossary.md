@@ -55,7 +55,10 @@
 | stack reaper | 在汇编回到永久启动栈后，验证当前 RSP 不属于目标栈并回收终止栈映射、物理页与 KVA 的运行时步骤 |
 | safe point | 已知当前执行栈、CR3 和生命周期状态满足销毁前置条件的位置；逻辑终止不自动等于到达安全点 |
 | strong reference | 保证对象在引用存续期间不能进入销毁的所有权；最后一个强引用释放才触发销毁资格 |
-| reference counter | 记录强所有者数量的状态机；当前 v1.3 原语拒绝零后复活和整数上溢，原子并发语义留给 v1.4 |
+| reference counter | 记录强所有者数量的状态机；当前原语拒绝零后复活和整数上溢，v1.4 对象管理器在同一把锁内提交查找与计数变化 |
+| KernelObject | 由 type、variant、全局单调 generation、强引用和 finalizer 定义生命周期的动态内核对象 |
+| FileDescription | fd 背后的共享打开实例，保存种类、file status flags 和文件偏移；duplicate 共享，独立 open 不共享 |
+| FileTable | Process 持有的分块 fd 名字空间；表项保存对象 handle 与独立 fd flags，soft/hard limit 是运行时策略 |
 | scope rollback | 用外部固定动作数组记录已完成步骤，并在未提交事务退出时严格逆序执行补偿动作的失败展开机制 |
 | resource snapshot | 聚合多个管理器稳定当前量、验证内部守恒式并以差异位掩码比较生命周期前后的诊断值 |
 | failure atomicity | 操作失败时，既有对象、输出参数和资源所有权保持调用前状态的性质 |

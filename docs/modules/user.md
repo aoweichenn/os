@@ -194,6 +194,57 @@ RIP/RSP、段、RFLAGS 和映射验证都属于 Kernel 安全边界；用户包�
 ABI。详细入口流程见
 [ADR 0030](../adr/0030-cpu-local-native-system-call.md)。
 
+## v1.4 动态描述符用户态走读
+
+用户 ABI 继续把 fd 表实现封装在 Kernel 内。`system_call.hpp/.cpp` 只新增
+六个固定宽度包装：
+
+```text
+DuplicateDescriptor(source_fd, minimum_fd, fd_flags)
+GetDescriptorFlags(fd)
+SetDescriptorFlags(fd, fd_flags)
+SetDescriptorSoftLimit(limit)
+GetDescriptorSoftLimit()
+GetDescriptorHardLimit()
+```
+
+`DuplicateDescriptor` 更接近 Unix `F_DUPFD_CLOEXEC` 的最小教学接口：它从
+minimum 起选择最低可用 fd，并允许只为新 fd 设置 close-on-exec。用户态看
+不到 `KernelObjectHandle`、generation 或 FileDescription payload。
+
+PID4 的 `ValidateFileDescriptionModel()` 是当前端到端证明。它只在第四个
+scheduler worker 中运行，其他 worker 继续承担相同地址空间和扩展现场验证：
+
+```text
+write /fdv14.bin = ABCDEFGH
+open -> fd 3
+duplicate(fd 3, minimum selected, CLOEXEC) -> fd >= minimum selected
+independent open -> fd 4
+
+read(fd 3, 3)       -> ABC
+read(duplicate, 3)  -> DEF
+read(fd 4, 3)       -> ABC
+```
+
+前两次读取连续推进同一个共享 offset，独立 open 则从零开始。随后程序检查
+源 fd flags 为零、副本为 close-on-exec，再只修改源 fd flags，证明 flags
+属于 fd 而不属于共享 FileDescription。
+
+`minimum selected` 在 256 MiB/64 GiB 档为 64，在 hard limit 仅为 64 的
+兼容档为 8。把 soft limit 降为同一个 minimum 后，再从该 minimum duplicate
+必须得到
+`OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_LIMIT_EXCEEDED`；已有高编号副本仍能
+关闭。恢复 hard limit、关闭 fd 4 后，再次 open 必须得到 fd 4，证明最低
+可用编号复用。只有读取内容、限额错误、flags 和全部 close 都正确，才输出：
+
+```text
+[OS][USER][PID4] FILE_DESCRIPTION_MODEL_OK
+```
+
+用户程序不把某个 fd 硬编码为复制结果，只要求结果不小于查询规格后选定的
+minimum；表的精确最低编号性质由宿主模型逐槽验证。详细所有权见
+[ADR 0031](../adr/0031-typed-kernel-object-dynamic-file-table.md)。
+
 ## 依赖与命名
 
 - 公开头位于 `source/user/include/os/user/` 和

@@ -1,0 +1,622 @@
+\section{v1.4：从整数槽位到类型化内核对象}
+
+\begin{keyidea}
+文件描述符不是文件，也不是内核对象的地址。它只是某个进程文件表中的局部
+整数索引；表项持有强引用，强引用指向 \code{FileDescription}，后者才保存
+一次打开实例的共享偏移、状态标志与底层 I/O 端点。把这四层分开以后，复制、
+关闭、执行时关闭、限额和最终析构才有各自明确的位置。
+\end{keyidea}
+
+\subsection{历史问题：为什么 Unix 没有把路径直接交给每次读写}
+
+早期文件接口必须同时解决三个彼此不同的问题。第一，目录中的名字可能被
+重命名，进程却仍要继续访问已经打开的对象；第二，两次独立打开同一路径应有
+独立读写位置；第三，父子进程或复制操作又需要有意共享一次打开的读写位置。
+如果每次 \code{read} 都重新解析路径，这三种语义无法同时成立，路径查找成本
+也会落入每次 I/O 的热路径。
+
+Unix 系接口因此逐渐形成三层模型：
+
+\begin{enumerate}
+  \item 进程中的 descriptor table 把小整数映射为引用；
+  \item system-wide open file description 表示一次打开实例，保存偏移和
+        file status flags；
+  \item inode 或 vnode 表示命名空间与文件系统中的底层对象。
+\end{enumerate}
+
+v1.0 的八槽 \code{IoDescriptor} 已经让控制台、管道和文件使用同一组系统
+调用，却把“进程索引”“打开实例”和“设备载荷”压在一个固定数组元素里。
+这种表示能证明接口形状，不能正确表达以下演进：
+
+\begin{itemize}
+  \item \code{dup} 必须增加表项，但不能复制文件偏移；
+  \item 两次 \code{open} 必须得到两个打开实例，即使路径相同；
+  \item \code{close-on-exec} 属于某一个 fd，不能污染共享打开实例；
+  \item 表容量不应由八个编译期槽位决定；
+  \item 最后一个引用离开时，文件、管道端点或设备载荷必须恰好析构一次。
+\end{itemize}
+
+因此 v1.4 没有只把数组从 8 改成 4096。那只会扩大旧表示，同时掩盖所有权
+仍未分层的事实。本阶段先建立通用 \code{KernelObject} 生命周期，再用
+\code{FileDescription} 适配已有 I/O，最后让每个 Process 持有动态
+\code{FileTable}。
+
+\subsection{四层对象图与所有权方向}
+
+\begin{lstlisting}[caption={Process、FileTable 与共享 FileDescription 的所有权图}]
+Process
+  |
+  +-- FileTable
+        |
+        +-- fd 0  -- handle --+
+        +-- fd 1  -- handle   |
+        +-- fd 64 -- handle --+--> KernelObject<FileDescription>
+                                      |
+                                      +-- shared offset/status flags
+                                      +-- console / pipe / legacy-fs payload
+\end{lstlisting}
+
+图中是 256 MiB/64 GiB 档的例子，fd 0 与 fd 64 可以指向同一代对象。
+数字 64 只在这个 Process 内有效；
+另一个 Process 的 fd 64 可以为空，也可以指向完全不同的对象。
+\code{KernelObjectHandle} 由所有权容器持有，\code{KernelObjectReference}
+则是一次内核操作期间的临时强引用。二者都不向用户态暴露地址。
+
+当前 \code{FileDescription} 直接保存 legacy 文件系统的
+\code{FileSystemHandle}，还没有独立 Vnode。这个边界是有意的：v1.4 先冻结
+打开实例与 fd 的语义，v1.5 再在它下面接入 Path、Mount 与 Vnode。若同一阶段
+同时替换描述符表、命名空间和磁盘格式，失败时将无法判断错误属于哪层。
+
+\subsection{KernelObject 的内存布局}
+
+每个动态对象由一个 64 字节对齐的私有头和紧随其后的类型载荷组成：
+
+\begin{longtable}{L{0.29\textwidth}L{0.17\textwidth}L{0.42\textwidth}}
+\toprule
+字段 & 宽度 & 作用\\
+\midrule
+\code{previous/next} & 各 64 位 & 活动对象侵入链，不另行分配节点\\
+\code{type/state} & 各 64 位 & 类型门禁与 Active/Finalizing 状态机\\
+\code{variant} & 64 位 & 记录 FileDescription 的具体种类\\
+\code{generation} & 64 位 & 区分同址堆内存的不同生命代次\\
+\code{strong_reference_count} & 64 位 & 当前强引用总数\\
+\code{allocation_size_bytes} & 64 位 & 精确归还整个堆块\\
+\code{payload_size_bytes} & 64 位 & 检查载荷边界\\
+\code{finalize_operation/context} & 各 64 位 & 最后释放时的类型析构回调\\
+\code{operation_lock} & 实现定义 & 串行化该对象的可变语义状态\\
+\bottomrule
+\end{longtable}
+
+所有位数都由 \code{uint64\_t} 等固定宽度类型表达。代码不把宿主平台的
+\code{long}、\code{size\_t} 或指针宽度当成磁盘、ABI 或统计规格。对象地址
+本身只存在于 x86-64 内核内部；一旦越过用户 ABI，用户只看到 64 位无符号
+描述符参数和 64 位有符号结果。
+
+创建采用“先准备、后发布”：
+
+\begin{enumerate}
+  \item 检查管理器、对象类型、载荷大小与溢出；
+  \item 从 512 KiB 可回收 kernel heap 取得头加载荷的连续块；
+  \item 把载荷逐字节清零，构造头部，但状态仍为 Inactive；
+  \item 在管理器锁内取得单调 generation，启动计数 1；
+  \item 改为 Active，插入活动链并一次性更新统计；
+  \item 最后才把 \code{KernelObjectReference} 交给调用者。
+\end{enumerate}
+
+在第 4 步之前发生的任何错误只需释放未发布堆块。对象没有进入活动链，
+统计也没有宣称它存在。这个顺序把失败原子性落实成可检查的状态，而不是依靠
+调用者猜测“失败到哪一步”。
+
+\subsection{地址加 generation：处理内存复用造成的 ABA}
+
+堆释放一个对象后，下一次 best-fit 分配完全可能返回同一虚拟地址。若 handle
+只保存地址，旧 handle 会把新对象误认成原对象，这就是一种 ABA：
+
+\begin{lstlisting}[caption={地址复用时由 generation 拒绝旧 handle}]
+address P: Object A, generation 41
+close last reference -> P is freed
+address P: Object B, generation 42
+stale handle {P}      -> would incorrectly reach B
+safe handle {P, 41}   -> rejected because current generation is 42
+\end{lstlisting}
+
+因此 handle 保存 \code{storage\_} 与 \code{generation\_}。取得引用、
+读取身份、分离所有权和释放都同时验证：
+
+\[
+\begin{aligned}
+  &\text{manager matches}\\
+  {}\land{}&\text{address is on active list}\\
+  {}\land{}&\text{state = Active}\\
+  {}\land{}&\text{stored generation = handle generation}.
+\end{aligned}
+\]
+
+generation 从 1 单调增长，0 永远表示空。到达
+\code{UINT64\_MAX} 时创建被明确拒绝，不发生回绕。64 位空间在实验规模下
+几乎不会耗尽，但“很难发生”不能替代状态定义；拒绝回绕也使随机模型不必为
+代次碰撞留出隐藏例外。
+
+\subsection{强引用状态机与最后释放}
+
+\code{ReferenceCounter} 在 v1.1 已冻结三条性质：非零启动、零后禁止复活、
+上溢拒绝。v1.4 把它改为可用于原始 \code{uint64\_t} 状态的基础操作，
+原有类封装继续委托给同一实现，因此动态对象没有复制另一套计数规则。
+
+一次查找的状态变化为：
+
+\[
+  R \xrightarrow{\text{AcquireHandle}} R+1
+    \xrightarrow{\text{operation}}
+  R \xrightarrow{\text{Reference destructor}} R-1.
+\]
+
+关闭一个非最后 fd 只把 \(R\) 减一。最后释放则执行更严格的序列：
+
+\begin{enumerate}
+  \item 在对象管理器锁内重新验证地址、代次和 Active 状态；
+  \item 先检查全局活动引用统计可安全递减，再操作对象计数；
+  \item 当结果不是零时，只更新引用统计并返回；
+  \item 当结果为零时，将对象改为 Finalizing 并从活动链摘除；
+  \item 离开管理器锁，在对象的语义边界执行 finalizer；
+  \item 无论类型析构成功与否，都记录结果并归还对象堆块。
+\end{enumerate}
+
+finalizer 不能在管理器全局锁内调用。文件系统关闭或管道端点关闭可能进入
+其他模块；若全局锁仍被持有，就会把对象图的任意下游锁塞进管理器锁序，
+以后极易形成死锁。先从活动集合摘除又保证 finalizer 期间不能取得新引用。
+
+析构失败不会让已经到零的对象复活。它会增加
+\code{failed\_finalization\_count}，让调用路径返回明确失败，同时仍释放无主
+存储。这样既不制造悬空“僵尸对象”，也不把设备或文件系统错误从证据中抹掉。
+
+\subsection{Reference 与 Handle 为什么是两种类型}
+
+\code{KernelObjectReference} 不可复制、可以移动，析构时自动释放。它适合
+\code{read}、\code{write} 或状态读取这样的有界调用。若函数提前返回，
+RAII 仍会归还临时引用。
+
+\code{KernelObjectHandle} 则只能由 \code{FileTable} 和对象管理器操作。
+安装时 \code{DetachReference} 把一份活跃引用无损转换为 handle：计数不变，
+只是所有权从局部 RAII 变量转给长期容器。查找时
+\code{AcquireHandle} 新增临时引用。关闭时 \code{ReleaseHandle} 消耗表中
+那份长期引用。
+
+这个区分排除了两个常见错误：
+
+\begin{itemize}
+  \item 安装后局部 reference 析构，意外把表中对象提前释放；
+  \item 表项直接保存可自动析构的 C++ 对象，分块清零、移动或销毁时发生
+        隐式复制与双重释放。
+\end{itemize}
+
+\subsection{FileDescription：一次打开，而不是一个文件名}
+
+\code{FileDescriptionStorage} 的逻辑内容如下：
+
+\begin{longtable}{L{0.31\textwidth}L{0.57\textwidth}}
+\toprule
+字段 & 语义\\
+\midrule
+\code{kind} & ConsoleInput、ConsoleOutput、ConsoleError、RegularFile、
+Directory、PipeReader 或 PipeWriter\\
+\code{file_status_flags} & 可读、可写等共享打开状态\\
+\code{console_input} & 指向 PS/2 字符进入的有界控制台 FIFO\\
+\code{device_write_operation/context} & 注入串口或控制台写操作，不把设备
+实现硬编码进对象层\\
+\code{pipe} & 指向现有 64 字节有界 Pipe 及相应端点\\
+\code{file_system} & 指向已挂载的 legacy 文件系统实例\\
+\code{file_system_handle} & inode、类型与当前共享偏移\\
+\bottomrule
+\end{longtable}
+
+创建请求必须与 kind 匹配。例如 ConsoleInput 必须提供输入对象且具有可读
+状态，ConsoleOutput 必须有写回调且具有可写状态，RegularFile 与 Directory
+必须提供文件系统，PipeReader 与 PipeWriter 必须提供相应方向。非法组合在
+对象发布前被拒绝。
+
+每个对象自带 \code{operation\_lock}。文件读写、目录枚举和快照都在这个锁
+下观察或推进共享偏移。由此可得：
+
+\[
+\begin{aligned}
+\operatorname{dup}(fd_a) &= fd_b,\\
+D(fd_a) &= D(fd_b),\\
+\operatorname{read}(fd_a,n) &: offset \leftarrow offset+n,\\
+\operatorname{read}(fd_b,m) &: \text{从更新后的 offset 继续}.
+\end{aligned}
+\]
+
+两次独立 \code{open} 则创建两个 generation 不同的 FileDescription，
+两份 \code{FileSystemHandle.offset\_bytes} 都从零开始。路径相同不意味着
+打开实例相同。
+
+\subsection{共享状态标志与局部描述符标志}
+
+两组名字相似的 flags 必须分开：
+
+\begin{longtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.34\textwidth}}
+\toprule
+类别 & 存储位置 & 复制后的关系\\
+\midrule
+file status flags & FileDescription & 共享；描述一次打开的读写能力\\
+descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\
+\bottomrule
+\end{longtable}
+
+若把 close-on-exec 放入 FileDescription，那么给复制出来的 fd 设置该位会
+连带修改源 fd；下一次 exec 将同时关闭两者。这与 fd 局部语义冲突。v1.4 的
+\code{Duplicate} 接受目标 descriptor flags，源表项完全不变。
+
+当前系统还没有完整 \code{execve}，但 \code{CloseOnExec} 已经实现并通过
+宿主单元测试。提前冻结位置和批量关闭语义，能让 v1.7 接入真正 exec 时不再
+重塑对象所有权。
+
+\subsection{FileTable 的分块表示}
+
+每个 Process 持有独立 FileTable。表不预分配 4096 个表项，而是按 64 个
+descriptor 一块延迟增长：
+
+\[
+  base(fd) = fd - (fd \bmod 64),\qquad index(fd)=fd\bmod 64.
+\]
+
+分块按 \code{base\_descriptor} 升序链接。每个表项含一个 16 字节
+handle 和一个 64 位 descriptor flags，64 个表项连同块头并考虑 64 字节
+对齐约占 1.6 KiB。只使用 fd 0、1、2、3 的进程因此只需要一个分块；复制到
+fd 64 才创建第二块。关闭表项不会立即释放中间空块，Process 销毁时统一
+释放，使热路径更简单且统计可预测。
+
+三档 hard limit 对应不同验收目标：
+
+\begin{longtable}{L{0.24\textwidth}L{0.20\textwidth}L{0.44\textwidth}}
+\toprule
+配置 & hard limit & 用途\\
+\midrule
+最小调度事务 & 64 & 验证小容量拒绝与失败原子性\\
+functional QEMU & 256 & 完整 Shell、文件、管道与 v1.4 用户证明\\
+capacity QEMU & 4096 & 在 64 GiB 主规格上证明表结构不被教学小值锁死\\
+\bottomrule
+\end{longtable}
+
+4096 是当前冻结的 v1.x 能力上限，不是假装已经复制 Linux 的任意动态上限。
+数据结构、计数、参数和系统调用均使用 64 位固定宽度类型，未来提高上限无需
+改变 ABI；真正提高前仍要重新评估 heap、每进程内存预算与遍历成本。
+
+\subsection{soft limit 与 hard limit 的不同职责}
+
+hard limit 在 FileTable 初始化时冻结，且不能超过 4096。soft limit 可由
+当前进程调整，但必须满足：
+
+\[
+  1 \le soft \le hard \le 4096.
+\]
+
+soft limit 限制新安装可取得的 fd 数值范围，不会因为降低限额而强制关闭已经
+存在的高编号 fd。这样限额调整不会产生隐式 I/O 副作用。查找和关闭已有 fd
+按 hard limit 验证，安装与复制按当前 soft limit 搜索。
+
+若最小目标 descriptor 已经不小于 soft limit，操作返回
+\code{SoftLimitExceeded}。用户 ABI 将其映射为 \code{-24}。底层对象引用、
+原表项、分块集合与计数都保持原值。
+
+\subsection{为什么分配必须返回最低可用 fd}
+
+用户程序长期依赖“从给定下界开始的最低可用描述符”语义。它不只是方便打印：
+标准输入、输出和错误固定为 0、1、2；关闭 fd 4 后再次打开，若没有更小空位，
+就应稳定复用 4。确定性也使整机证据能够检查确切数字。
+
+\code{FindLowestAvailableDescriptor} 从调用方下界开始逐块扫描。遇到未分配
+块时，它同时返回该块的 base，调用方先建立块，再重新搜索。它不能把“缺块”
+直接视为 64 个永久空槽后立刻发布，因为分配新块需要 heap，而表锁内不应嵌套
+执行复杂分配。
+
+\subsection{安装的两阶段提交}
+
+\code{Install} 的关键循环可以写成以下事务：
+
+\begin{lstlisting}[caption={FileTable 安装的两阶段提交}]
+lock table
+  validate soft limit
+  find lowest slot
+  if its chunk is missing:
+      unlock table
+      allocate and zero candidate chunk
+      lock table, publish chunk if still absent, unlock
+      retry search
+  verify slot still empty
+  detach Reference -> Handle
+  publish handle + fd flags
+  update counts
+unlock table
+\end{lstlisting}
+
+\code{EnsureChunk} 也采用候选块。若另一个执行流已发布相同 base，候选块会被
+释放，现有块继续使用。当前 BSP 还没有多核并发，但把竞争语义写进接口能防止
+以后通过加 AP 才发现安装路径天生不可线性化。
+
+最重要的提交点是 \code{DetachReference}。在它之前，失败时调用者仍拥有
+reference；在它之后，handle 与统计在同一表锁临界区内发布。用户永远看不到
+只有 flags 没有对象，或只有对象却未计数的半表项。
+
+\subsection{查找、复制、关闭和销毁的完整路径}
+
+\paragraph{Lookup}
+
+表锁保护 chunk 与 entry 的稳定性。在锁内验证 fd、找到非空 handle，再调用
+\code{AcquireHandle}。取得临时强引用后才释放表锁，因此并发 close 只能
+释放表的那份引用，正在进行的 I/O 仍拥有自己的引用。
+
+\paragraph{Duplicate}
+
+先 Lookup 源 fd，得到同一 generation 的临时引用；再按目标下界 Install。
+成功时临时引用被转移为新表项，因此对象计数净增 1。安装失败时 RAII 析构
+临时引用，计数恢复，源 fd 不变。
+
+\paragraph{Close}
+
+先在表锁内清空 entry 并递减 active descriptor，再在锁外释放 handle。
+最后引用可能触发文件系统或管道 finalizer，所以不能在表锁内执行。表项一旦
+清空，新 Lookup 就会失败；已经取得的临时引用仍可安全完成。
+
+\paragraph{Destroy}
+
+Process 回收时逐项释放所有非空 handle，再释放全部 chunk，最后检查活动
+descriptor 与 chunk 归零。若任一 finalizer 失败，销毁返回失败并记录证据，
+但不会故意保留已失去所有者的表内存。
+
+\subsection{锁顺序与目前的并发边界}
+
+v1.4 的主要锁层次为：
+
+\[
+  \text{FileTable lock}
+  \rightarrow \text{KernelObjectManager lock}
+  \rightarrow \text{temporary reference acquired}.
+\]
+
+实际 I/O 在离开 FileTable 锁后，通过对象的 operation lock 进入控制台、
+Pipe 或 FileSystem。最后析构也在对象管理器和表锁之外进入下游模块。统计有
+独立短临界区，不在每个读写字节打印日志。
+
+当前内核仍是单 BSP，但 PIT IRQ 可在系统调用期间到达，调度也可在返回前
+切换 Thread。锁因此不是装饰：它们冻结抢占边界下的对象状态，并为 v2 多核
+路线写下可审计的顺序。另一方面，本阶段没有宣称实现跨核 RCU、无锁 fd 查找
+或远端 close；这些需要 AP、IPI 与内存回收协议共同验收。
+
+\subsection{既有 I/O 如何无旁路迁移}
+
+迁移后的通用路径统一为：
+
+\[
+\begin{aligned}
+\text{fd}
+&\rightarrow \text{FileTable::Lookup}
+\rightarrow \text{KernelObjectReference}\\
+&\rightarrow \text{FileDescriptionManager}
+\rightarrow \text{backend}.
+\end{aligned}
+\]
+
+\begin{longtable}{L{0.29\textwidth}L{0.29\textwidth}L{0.30\textwidth}}
+\toprule
+端点 & 读路径 & 写路径\\
+\midrule
+ConsoleInput & 读取 256 字节 FIFO，可返回 WouldBlock & 拒绝\\
+ConsoleOutput/Error & 拒绝 & 调用注入的设备写函数\\
+RegularFile & legacy-fs Read 并推进共享 offset & Write 并推进共享 offset\\
+Directory & ReadDirectory 并推进目录位置 & 拒绝\\
+PipeReader & Pipe TryRead、EOF 与唤醒语义 & 拒绝\\
+PipeWriter & 拒绝 & Pipe TryWrite、背压与 broken pipe\\
+\bottomrule
+\end{longtable}
+
+原先专用的文件、管道和控制台系统调用仍保留 ABI 兼容，但它们最终汇入同一
+对象路径。没有旧 \code{IoDescriptor} 旁路，也没有为 PID 4 的证明写特殊
+内核读取函数。这样历史 QEMU 路径与新能力同时检验迁移是否完整。
+
+\subsection{系统调用 23 到 28 的 ABI}
+
+v1.3 已冻结原生 \code{SYSCALL} 与 \code{INT 0x80} 共用的
+\code{UserContext}，v1.4 只在分发层增加操作：
+
+\begin{longtable}{L{0.10\textwidth}L{0.31\textwidth}L{0.35\textwidth}L{0.12\textwidth}}
+\toprule
+编号 & 名称 & 参数 & 成功结果\\
+\midrule
+23 & DuplicateDescriptor & RDI=源 fd，RSI=最低目标，RDX=目标 flags & 新 fd\\
+24 & GetDescriptorFlags & RDI=fd & flags\\
+25 & SetDescriptorFlags & RDI=fd，RSI=flags & 0\\
+26 & SetDescriptorSoftLimit & RDI=新 soft limit & 0\\
+27 & GetDescriptorSoftLimit & 无 & soft limit\\
+28 & GetDescriptorHardLimit & 无 & hard limit\\
+\bottomrule
+\end{longtable}
+
+RAX 在进入前保存系统调用号，返回时保存 64 位结果。负数沿既有 ABI 表示错误：
+\code{-12} 是非法 fd，\code{-24} 是限额拒绝，\code{-25} 是内核对象失败。
+用户包装不读取平台相关的 \code{errno}，也不依赖宿主 C 库。
+
+\subsection{汇编边界为什么不需要为 v1.4 重写}
+
+本阶段仍然真实经过 Intel 语法汇编，而不是绕过汇编。以
+\code{DuplicateDescriptor} 为例，控制流是：
+
+\begin{enumerate}
+  \item freestanding C++ 包装把 23 放入 RAX，把源 fd、下界和 flags 分别放入
+        RDI、RSI、RDX；
+  \item \filepath{source/user/src/system\_call.asm} 执行 \code{syscall}；
+  \item CPU 按 STAR/LSTAR/FMASK 与 EFER 配置进入 Ring 0，把用户 RIP 放入
+        RCX、RFLAGS 放入 R11；
+  \item \filepath{arch/architecture.asm} 执行 \code{swapgs}，从 CpuLocal
+        取得可信栈，构造统一 176 字节 UserContext；
+  \item C++ dispatcher 读取 RAX/RDI/RSI/RDX，调用当前 Process 的 FileTable；
+  \item 结果写回现场 RAX，经合法性检查选择 \code{sysretq} 或
+        \code{iretq} 返回。
+\end{enumerate}
+
+没有增加新的寄存器，也没有改变汇编帧偏移。这不是“没有汇编工作”，而是
+v1.3 分层成功的证据：硬件特权转换与对象语义在 UserContext 边界解耦。
+若新增一个 fd 操作就必须修改 SWAPGS 或返回帧，说明 ABI 层次没有真正稳定。
+
+\subsection{PID 4 的整机语义证明}
+
+调度 worker 在真实 Ring 3 中执行以下序列：
+
+\begin{enumerate}
+  \item 创建并写入 \filepath{/fdv14.bin}，关闭写 fd；
+  \item 以读模式打开为 fd 3，查询 hard limit 后选择复制下界 \(m\)，并设置
+        close-on-exec；
+  \item 再次独立打开同一路径，最低空位应为 fd 4；
+  \item 从 fd 3 读取前三字节，再从复制 fd 读取后续三字节；
+  \item 从独立 fd 4 读取前三字节，证明它没有共享前两次读取推进的偏移；
+  \item 比较源与复制项的 descriptor flags，修改源 flags 后再次读取；
+  \item 把 soft limit 降为 \(m\)，要求从最低 \(m\) 复制明确得到 \code{-24}；
+  \item 恢复到查询所得 hard limit，关闭 fd 4，再次打开并要求最低空位复用 4；
+  \item 关闭全部描述符，打印一次有界成功标记。
+\end{enumerate}
+
+\(m\) 在 256 MiB 与 64 GiB 档为 64，在 hard limit 本身只有 64 的兼容档
+为 8。后者不能使用 minimum 64，因为合法候选区间
+\([64,64)\) 为空。选择 8 不是跳过语义：它仍在连续低编号之外制造空洞，
+并验证最低编号选择、共享 offset、独立 flags、限额拒绝与失败原子性。
+
+载荷是 8 字节；整个 PID 4 文件描述模型累计读取 9 字节、写入 8 字节。
+历史 Shell、管道和文件系统仍执行自己的路径，因此最终管理器统计会包含更多
+对象与字节，验收不把某次局部事务误当成全系统总量。
+
+\subsection{统计为何在阶段结束时集中打印}
+
+fd 查找、字符读写和引用增减都是热路径。逐次串口输出会改变 PIT 调度时序，
+淹没真正异常，还可能让 QEMU 超时。v1.4 只在阶段边界打印汇总：
+
+\begin{lstlisting}[caption={v1.4 functional 运行的代表性对象证据}]
+[OS][KERNEL] OBJECT_ACTIVE_COUNT=0x0000000000000000
+[OS][KERNEL] OBJECT_ACTIVE_REFERENCES=0x0000000000000000
+[OS][KERNEL] OBJECT_CREATIONS=0x0000000000000017
+[OS][KERNEL] OBJECT_DESTRUCTIONS=0x0000000000000017
+[OS][KERNEL] FILE_DESCRIPTION_FINALIZATIONS=0x0000000000000017
+[OS][KERNEL] FILE_DESCRIPTION_FAILED_FINALIZATIONS=0x0000000000000000
+[OS][KERNEL] FILE_TABLE_HARD_LIMIT=0x0000000000000100
+[OS][KERNEL] FILE_TABLE_CHUNK_ALLOCATIONS=0x0000000000000005
+[OS][KERNEL] FILE_TABLE_CHUNK_RELEASES=0x0000000000000005
+[OS][KERNEL] PROCESS_RESOURCE_VALIDATION=0x0000000000000001
+[OS][KERNEL] RUNTIME_STATE_VALIDATION=0x0000000000000001
+[OS][KERNEL] SMOKE_STATE_VALIDATION=0x0000000000000001
+\end{lstlisting}
+
+同一 QEMU 日志还打印 \code{TIMER\_TICKS}、
+\code{MONOTONIC\_MILLISECONDS} 与调度 tick，给来宾内部时间提供可比较
+坐标；宿主运行器另记录整体阶段耗时和有界超时。创建等于析构、分块申请等于
+释放、活动对象与强引用为零、finalization failure 为零，四者联合证明生命
+周期闭环；只检查 \code{READY} 无法排除泄漏。
+
+\subsection{四层测试怎样互补}
+
+\begin{longtable}{L{0.25\textwidth}L{0.28\textwidth}L{0.35\textwidth}}
+\toprule
+层次 & 代表测试 & 主要排除的问题\\
+\midrule
+单元 & \filepath{file\_table\_test.cpp} & 引用转移、共享 generation、独立
+fd flags、最低复用、close-on-exec 与销毁\\
+集成 & \filepath{file\_description\_lifecycle\_test.cpp} & legacy-fs、
+管道和对象 finalizer 的跨模块生命周期\\
+容量 & \filepath{file\_table\_capacity\_test.cpp} & 4096 fd、64 个分块、
+耗尽失败原子性与完全释放\\
+随机 & \filepath{file\_table\_randomized\_test.cpp} & 固定种子 100000 步
+模型对照，每一步核对占用、generation、flags、引用与统计\\
+整机 & functional/capacity QEMU & Ring 3 ABI、真实汇编入口、调度、
+文件系统、heap 与最终全局守恒\\
+\bottomrule
+\end{longtable}
+
+随机模型不把实现本身当预言机。宿主侧以独立数组记录每个 fd 是否占用、
+对应 generation 与 flags，再把 Install、Duplicate、Lookup、Close 和限额
+操作同时作用于模型和真实实现。每一步都比较整个可见状态，结束时要求所有
+对象与堆分配归零。
+
+完整回归现在是 106 项 CTest。新增四个测试目标并不替代原有 102 个证据；
+历史固定槽实现的专用测试被移除，因为生产类型也已经删除。保留针对已不存在
+结构的测试只会制造虚假安全感。
+
+\subsection{增量构建为什么必须依赖生成文件}
+
+用户 worker 不是由 QEMU 从宿主目录直接读取，而是先链接成 User ELF，再由
+\filepath{user\_images.o} 嵌入 Kernel，随后依次生成
+\filepath{kernel.elf}、\filepath{kernel.payload.elf} 和磁盘镜像：
+
+\begin{lstlisting}[caption={用户程序进入启动磁盘的真实依赖链}]
+scheduler_worker.cpp
+  -> user_scheduler_worker.elf
+  -> user_images.o
+  -> kernel.elf
+  -> kernel.payload.elf
+  -> boot_disk.img
+\end{lstlisting}
+
+CMake 的自定义 target 是 phony 节点。它适合声明“生产者必须先运行”的顺序，
+却不能单独把生成文件的时间戳传播给下游自定义命令。若 Kernel 链接只依赖
+\code{os\_kernel\_user\_images\_object} target，User ELF 改变后
+\filepath{user\_images.o} 可以更新，而旧 \filepath{kernel.elf} 仍被认为
+最新，最终表现为源码已经修改但 QEMU 仍运行旧 worker。
+
+因此 Kernel 链接同时依赖 target 和
+\filepath{architecture.o}/\filepath{user\_images.o} 两个真实输出。前者保证
+跨目录构建顺序，后者保证时间戳使链接失效。磁盘边界审计则只检查实际写盘的
+\filepath{kernel.payload.elf}；完整 \filepath{kernel.elf} 保留 DWARF 供
+GDB 使用，其非加载调试段不属于 Stage 1 暂存载荷。这个区分同时修复了
+“旧镜像假失败”和“把调试文件长度当启动载荷长度”两类工程错误。
+
+\subsection{按目录走读 v1.4}
+
+\begin{longtable}{L{0.43\textwidth}L{0.45\textwidth}}
+\toprule
+文件 & 阅读时要回答的问题\\
+\midrule
+\filepath{foundation/reference\_counter.hpp/.cpp} &
+原始计数操作怎样与旧类封装共享零后不可复活语义？\\
+\filepath{kernel/object/kernel\_object.hpp/.cpp} &
+创建、handle/reference 转换、generation 检查与最后析构的提交点在哪里？\\
+\filepath{kernel/io/file\_description.hpp/.cpp} &
+哪些状态属于共享打开实例，控制台、文件、目录和管道如何统一？\\
+\filepath{kernel/io/file\_table.hpp/.cpp} &
+64 槽分块、最低 fd、软硬限额和两阶段安装怎样保持失败原子性？\\
+\filepath{kernel/process/process\_runtime.hpp/.cpp} &
+每个 Process 怎样创建标准 fd、接入 Pipe，并在退出时销毁 FileTable？\\
+\filepath{kernel/user/system\_calls.cpp} &
+23--28 号调用怎样验证参数、映射 \code{-24/-25} 并复用双入口？\\
+\filepath{user/src/system\_call.cpp} &
+freestanding 包装怎样保持 RAX/RDI/RSI/RDX ABI？\\
+\filepath{user/programs/scheduler\_worker.cpp} &
+共享偏移、独立打开、fd flags、限额和最低复用怎样由 Ring 3 证明？\\
+\filepath{tests/randomized/kernel/file\_table\_randomized\_test.cpp} &
+独立模型在十万步中保存哪些状态，何时检查引用守恒？\\
+\filepath{tools/os\_tools/qemu\_runner.py} &
+哪些串口 marker 被精确解析，超时怎样终止而不永久卡住？\\
+\bottomrule
+\end{longtable}
+
+推荐先从 unit test 推导公开语义，再读 FileTable；随后向下进入
+KernelObject，向上进入 ProcessRuntime 与系统调用。最后阅读 PID 4 与 QEMU
+解析器，检查模型承诺是否真的穿过硬件入口到达整机证据。
+
+\subsection{本阶段明确没有做什么}
+
+v1.4 没有 Vnode、Path、Mount、memfs 或新磁盘格式；legacy-fs handle 仍直接
+存在于 FileDescription。没有 fork，因此还没有跨 Process 继承表；没有完整
+exec，因此 close-on-exec 只在对象层验收。没有 seek、append、非阻塞 flag
+或 advisory lock。对象类型当前只有 FileDescription，通用 manager 的目的
+是冻结生命周期协议，不是提前制造庞大类层次。
+
+FileTable 的空 chunk 只在 Destroy 时释放；4096 hard limit 是 v1.x 规格，
+不是 Linux 兼容声明。KernelObject finalizer 仍是同步调用，也没有弱引用、
+循环引用检测、RCU 延迟释放或多核缓存。把这些边界明确写出，才能让 v1.5
+聚焦 VFS，而不是把尚未实现的能力藏在“类似 Linux”的模糊表述中。
+
+\begin{keyidea}
+v1.4 的完成不是“fd 从 8 个增加到 4096 个”。完整结论是：进程局部名字与
+共享打开实例已经分离；地址复用由 generation 防护；强引用从创建、安装、
+查找、复制、关闭到最终析构具有单一所有权链；descriptor flags 与 file
+status flags 位于正确层次；容量、随机、双系统调用入口和 QEMU 最终统计都能
+重复证明失败原子性与零泄漏。
+\end{keyidea}

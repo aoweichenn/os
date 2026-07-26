@@ -103,12 +103,13 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.3 完成基线
+## v1.4 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
-v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界，下一阶段为
-v1.4 类型化对象与动态描述符。Stage 1 在自研长模式
+v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界；v1.4 又完成
+类型化 KernelObject、共享 FileDescription 和动态 FileTable，下一阶段为
+v1.5 VFS、memfs 与 legacy 文件系统适配。Stage 1 在自研长模式
 环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并
@@ -198,7 +199,7 @@ FIFO。Ring 3 Shell 在 fd 0 为空时阻塞；如果此时没有 Ready 进程�
 
 Shell 是独立 freestanding C++20 ELF，使用固定容量解析器实现 help、echo、
 pwd、ls、mkdir、write、cat、sync 和 exit。v1.0 收口时完整回归为 97 项
-CTest；v1.3 当前为 103 项，继续覆盖单元、集成、固定种子随机、最终产物
+CTest；v1.4 当前为 106 项，继续覆盖单元、集成、固定种子随机、最终产物
 审计、真实交互、双启动持久化与历史失败路径。v1.0 是第一周期 `13 / 13`
 的完成基线。v1.1 已经完成动态物理
 内存元数据、64 TiB direct-map、64 GiB 管理、4 GiB 以上页帧读写回收，
@@ -254,3 +255,17 @@ Ring 3 前必须同时验证现场属于当前 Thread、RIP/RSP 位于 48 位低
 代码与栈映射权限、CS/SS 和 RFLAGS。只有原生入口且标志位属于快速白名单时
 允许 `SYSRETQ`；其余合法现场必须 `IRETQ`，非法现场不得触发带攻击者地址的
 Ring 0 `#GP`，而要终止相应用户进程。
+
+v1.4 要求 fd 与对象身份严格分离。KernelObject 必须具有类型、全局单调
+generation、强引用和最后引用 finalizer；跨模块业务路径只能持有 RAII
+reference，不能保存 payload 裸指针。FileDescription 必须拥有打开实例的
+offset 和 file status flags；duplicate 必须共享它们，独立 open 必须隔离。
+fd flags 只保存在 FileTableEntry，close-on-exec 不得反向修改共享对象或源
+描述符。
+
+FileTable 必须以 64 项分块按需增长，functional/capacity hard limit 分别为
+256/4096。soft limit 只限制新安装，达到限制必须返回明确错误；关闭后的最低
+编号必须可复用。分块堆申请使用两阶段提交，任何申请、复验或安装失败都必须
+保持旧槽与传入引用不变。进程退出后活动对象、强引用和分块全部归零，创建/
+销毁、finalizer 和分块申请/释放分别守恒。宿主 4096 fd 容量测试、十万步
+固定种子模型和真实 Ring 3 共享偏移证明必须同时通过。

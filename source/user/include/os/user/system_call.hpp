@@ -13,13 +13,11 @@ InvokeSystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t argum
                  uint64_t argument2,
                  uint64_t argument3 = OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
 [[nodiscard]] int64_t
-InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0,
-                       uint64_t argument1, uint64_t argument2,
-                       uint64_t argument3 =
-                           OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
+InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
+                       uint64_t argument2,
+                       uint64_t argument3 = OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
 [[nodiscard]] int64_t InvokeSystemCallWithDirectionFlag(
-    uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
-    uint64_t argument2,
+    uint64_t system_call_number, uint64_t argument0, uint64_t argument1, uint64_t argument2,
     uint64_t argument3 = OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
 [[nodiscard]] int64_t WriteLog(const char *message, uint64_t message_size_bytes) noexcept;
 [[nodiscard]] uint64_t GetProcessId() noexcept;
@@ -47,6 +45,13 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0,
 [[nodiscard]] int64_t WriteDescriptor(uint64_t descriptor, const uint8_t *source,
                                       uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t CloseDescriptor(uint64_t descriptor) noexcept;
+[[nodiscard]] int64_t DuplicateDescriptor(uint64_t source_descriptor, uint64_t minimum_descriptor,
+                                          uint64_t descriptor_flags) noexcept;
+[[nodiscard]] int64_t GetDescriptorFlags(uint64_t descriptor) noexcept;
+[[nodiscard]] int64_t SetDescriptorFlags(uint64_t descriptor, uint64_t descriptor_flags) noexcept;
+[[nodiscard]] int64_t SetDescriptorSoftLimit(uint64_t soft_limit) noexcept;
+[[nodiscard]] int64_t GetDescriptorSoftLimit() noexcept;
+[[nodiscard]] int64_t GetDescriptorHardLimit() noexcept;
 [[nodiscard]] int64_t OpenDirectory(const char *path, uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t ReadDirectory(uint64_t descriptor, os::abi::DirectoryEntry &entry) noexcept;
 [[noreturn]] void ExitProcess(int64_t exit_code) noexcept;

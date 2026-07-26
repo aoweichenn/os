@@ -899,9 +899,12 @@ ELF。文件路径出现在自定义命令参数中，不代表 CMake 一定能�
 构建顺序；增量构建恰好已有文件时问题会被掩盖，干净构建或不同生成器才暴露。
 
 `os_stage1_images` 必须显式依赖全部 Kernel ELF 目标，
-`os_kernel_user_images_object` 必须显式依赖全部 User ELF 目标。这样
-Ninja/Make 会先完成生产目标，再运行打包命令。不要用重复执行构建或在 Python
-脚本里等待文件出现来绕过依赖图；生产者—消费者关系属于 CMake 构建图。
+`os_kernel_user_images_object` 必须显式依赖全部 User ELF 目标；Kernel
+链接命令还必须直接依赖生成的 `architecture.o` 和 `user_images.o` 文件。
+目标依赖保证跨目录生产顺序，真实文件依赖负责把时间戳变化传播给重新链接和
+重打包。只依赖 phony 自定义目标时，生成对象可以更新而旧 Kernel 仍被判定
+为最新。不要用重复执行构建或在 Python 脚本里等待文件出现来绕过依赖图；
+生产者—消费者关系属于 CMake 构建图。
 
 ## v1.2–v1.3：Process/Thread、FXSAVE 与原生系统调用
 
@@ -1037,3 +1040,66 @@ pgrep -af qemu-system-x86_64
 `os_kernel_thread_scheduler_*` 宿主测试缩小问题。超过有界截止后工具会
 终止并回收 QEMU；持续存在的后台进程属于捕获器缺陷，不能靠手工长期清理
 作为正常流程。
+
+## v1.4：KernelObject 与动态 FileTable
+
+### `FILE_DESCRIPTION_MODEL_OK` 缺失
+
+先看 PID4 是否非零退出，再按验证顺序检查：
+
+1. `/fdv14.bin` 的首次 write 是否返回 8；
+2. 首次 read open 是否得到最低动态 fd 3；
+3. hard limit 大于 64 时 minimum 64 的 duplicate 是否得到不小于 64 的 fd；
+   hard limit 等于 64 时，是否改用 minimum 8 并得到不小于 8 的 fd；
+4. 独立 open 是否得到 fd 4；
+5. 三次 read 是否分别得到 `ABC`、`DEF`、`ABC`；
+6. close-on-exec 是否只存在于 duplicate，源 fd 初始 flags 是否为零；
+7. soft limit 降至选定 minimum 后，新 duplicate 是否精确返回 `-24`；
+8. 关闭 fd 4 后的新 open 是否复用 4。
+
+若前两次读取都得到 `ABC`，offset 被错误放进 FileTableEntry 或 duplicate
+复制了 `FileSystemHandle`。若独立 open 得到 `DEF`，则两个 open 错误共享
+同一 FileDescription。不要修改用户期望来匹配错误偏移。
+
+### 活动对象或强引用没有归零
+
+按所有权层逐级检查：
+
+```text
+FileTable active descriptors
+  → KernelObject active strong references
+    → active FileDescription count
+      → KernelHeap active allocations
+```
+
+`OBJECT_CREATIONS != OBJECT_DESTRUCTIONS` 表示对象未走最后引用；
+`FILE_DESCRIPTION_FINALIZATIONS < OBJECT_DESTRUCTIONS` 表示 finalizer 路径未
+登记；`FILE_DESCRIPTION_FAILED_FINALIZATIONS != 0` 则表示底层文件或管道
+关闭失败。`FILE_TABLE_CHUNK_ALLOCATIONS != FILE_TABLE_CHUNK_RELEASES`
+通常表示 Process 退出未调用 `FileTable::Destroy`。
+
+lookup 返回的 `KernelObjectReference` 是 RAII 临时引用。提前 `DetachReference`
+或让引用跨越 Process reap 都会延长生命周期；业务函数中不要缓存 payload
+裸指针。close 应先摘除 table handle，再在表锁外 release。
+
+### fd 耗尽后状态改变
+
+运行：
+
+```bash
+ctest --test-dir build/developer \
+  -R 'os_kernel_file_table_(capacity|randomized)' --output-on-failure
+```
+
+capacity 测试会实际填满 4096 项。失败返回后，destination 必须仍为
+`UINT64_MAX`，源强引用数和活动 fd 数必须不变。若只多出一个空分块，检查
+`EnsureChunk` 的锁外候选是否在复验失败时归还；若传入 reference 消失，检查
+安装是否在确认槽为空和 limit 允许之前调用了 `DetachReference`。
+
+### 对象测试看似停住
+
+随机模型只有 100000 步，正常在秒级完成；QEMU functional 正常在几秒内完成。
+所有正式命令均有捕获器总截止与 CTest 外层截止，不应产生无限等待。先单独运行
+对应宿主测试；若宿主通过而 QEMU 停在某一日志，检查是否在持 FileTable、
+KernelObject 或 FileDescription operation lock 时调用串口、阻塞或 finalizer。
+高频 acquire/release 禁止逐项打印，避免日志本身制造超时。

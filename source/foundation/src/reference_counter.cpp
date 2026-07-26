@@ -9,47 +9,62 @@ constexpr uint64_t OS_FOUNDATION_REFERENCE_COUNTER_SINGLE_REFERENCE = 1ULL;
 
 }
 
-ReferenceCounter::ReferenceCounter() noexcept
-    : reference_count_{OS_FOUNDATION_REFERENCE_COUNTER_EMPTY_COUNT} {}
-
-ReferenceCounterStatus
-ReferenceCounter::Start(const uint64_t initial_reference_count) noexcept {
+ReferenceCounterStatus StartReferenceCount(uint64_t &reference_count,
+                                           const uint64_t initial_reference_count) noexcept {
     if (initial_reference_count == OS_FOUNDATION_REFERENCE_COUNTER_EMPTY_COUNT) {
         return ReferenceCounterStatus::EmptyInitialReferenceCount;
     }
-    if (this->IsActive()) {
+    if (IsReferenceCountActive(reference_count)) {
         return ReferenceCounterStatus::ActiveReferencesRemain;
     }
-    this->reference_count_ = initial_reference_count;
+    reference_count = initial_reference_count;
     return ReferenceCounterStatus::Succeeded;
+}
+
+ReferenceCounterStatus TryAcquireReference(uint64_t &reference_count) noexcept {
+    if (!IsReferenceCountActive(reference_count)) {
+        return ReferenceCounterStatus::ReferenceUnavailable;
+    }
+    if (reference_count == UINT64_MAX) {
+        return ReferenceCounterStatus::CounterOverflow;
+    }
+    ++reference_count;
+    return ReferenceCounterStatus::Succeeded;
+}
+
+ReferenceCounterStatus TryReleaseReference(uint64_t &reference_count,
+                                           bool &released_last_reference) noexcept {
+    if (!IsReferenceCountActive(reference_count)) {
+        return ReferenceCounterStatus::ReferenceUnavailable;
+    }
+    --reference_count;
+    released_last_reference = reference_count == OS_FOUNDATION_REFERENCE_COUNTER_EMPTY_COUNT;
+    return ReferenceCounterStatus::Succeeded;
+}
+
+bool IsReferenceCountActive(const uint64_t reference_count) noexcept {
+    return reference_count >= OS_FOUNDATION_REFERENCE_COUNTER_SINGLE_REFERENCE;
+}
+
+ReferenceCounter::ReferenceCounter() noexcept
+    : reference_count_{OS_FOUNDATION_REFERENCE_COUNTER_EMPTY_COUNT} {}
+
+ReferenceCounterStatus ReferenceCounter::Start(const uint64_t initial_reference_count) noexcept {
+    return StartReferenceCount(this->reference_count_, initial_reference_count);
 }
 
 ReferenceCounterStatus ReferenceCounter::TryAcquire() noexcept {
-    if (!this->IsActive()) {
-        return ReferenceCounterStatus::ReferenceUnavailable;
-    }
-    if (this->reference_count_ == UINT64_MAX) {
-        return ReferenceCounterStatus::CounterOverflow;
-    }
-    ++this->reference_count_;
-    return ReferenceCounterStatus::Succeeded;
+    return TryAcquireReference(this->reference_count_);
 }
 
-ReferenceCounterStatus
-ReferenceCounter::TryRelease(bool &released_last_reference) noexcept {
-    if (!this->IsActive()) {
-        return ReferenceCounterStatus::ReferenceUnavailable;
-    }
-    --this->reference_count_;
-    released_last_reference =
-        this->reference_count_ == OS_FOUNDATION_REFERENCE_COUNTER_EMPTY_COUNT;
-    return ReferenceCounterStatus::Succeeded;
+ReferenceCounterStatus ReferenceCounter::TryRelease(bool &released_last_reference) noexcept {
+    return TryReleaseReference(this->reference_count_, released_last_reference);
 }
 
 uint64_t ReferenceCounter::Count() const noexcept { return this->reference_count_; }
 
 bool ReferenceCounter::IsActive() const noexcept {
-    return this->reference_count_ >= OS_FOUNDATION_REFERENCE_COUNTER_SINGLE_REFERENCE;
+    return IsReferenceCountActive(this->reference_count_);
 }
 
 }
