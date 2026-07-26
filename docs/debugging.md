@@ -427,9 +427,10 @@ KVA 日志也遵循事务边界：只有虚拟区间分配器初始化、预留�
    `KernelVirtualAddressAllocator::TryAllocate`、`MapPage`、`QueryPage`、
    `UnmapPage` 和 `TryReleaseBlock` 设置断点，比先扩大容量更有效。
 
-整机自检有意先做一次单页预热。预热地址是 KVA 窗口第二页，它会建立当前
-实现尚不能回收的三级中间页表；预热页本身、order-0 物理帧和 KVA 区间均会
-立即归还。随后主事务申请 6 页、按 8 页对齐，因此地址必须为
+整机自检有意先做一次单页暖机，但它现在不是泄漏规避。暖机地址是 KVA 窗口
+第二页：映射会新建共享 PDPT、PD 和 PT，撤销必须回收 PT 与 PD，只保留仍
+可能被进程 PML4 引用的共享 PDPT。预热数据帧和 KVA 区间也立即归还。随后
+主事务申请 6 页、按 8 页对齐，因此地址必须为
 `0xFFFFC90000008000`。相对页 0 与 5 始终是 not-present guard，中间 4 页
 映射到一个 buddy order-2 连续块，权限必须为 supervisor、RW、NX。
 
@@ -447,15 +448,63 @@ KVA 日志也遵循事务边界：只有虚拟区间分配器初始化、预留�
 5. 回收必须按“撤销四个叶映射 → 归还整个 order-2 块 → 释放六页 KVA”逆序
    执行。`UnmapPage` 后必须使本 CPU 对应 TLB 项失效，物理页不能在旧翻译
    仍可使用时提前交给 buddy；
-6. 主事务结束时，buddy 活动块/页和 KVA 活动分配/页必须回到预热后的基线。
-   页表活动页相对进入整个 KVA 自检前增加 3 是当前已知边界：它们是预热建立
-   的非空上级结构，不是主事务泄漏。后续中间页表回收会消除这个基线成本。
+6. 主事务结束时，buddy 活动块/页和 KVA 活动分配/页必须回到暖机后的基线。
+   页表摘要必须是 PT=2、PD=2、PDPT=0、保留共享 PDPT=1；主事务相对 buddy
+   基线的成功申请/释放差额是 3 次，即 order-2 数据块加一张 PT 和一张 PD。
 
 若 `KernelVirtualAddressAllocator::Validate` 返回损坏，先从活动描述符前缀
 重新计算 allocated、reserved、free 和 largest gap，再与统计比较。前缀之后
 的 256 项存储必须全零；相邻区间可以紧贴，但不能倒序或重叠。释放只接受
 原申请的精确起始地址与页数，内部地址、错误长度和 reservation 都必须在任何
 状态修改前失败。
+
+### 页表空分支回收或映射回滚失败
+
+先确认管理器根类型与调用场景匹配。正式内核根必须是 `KernelShared`，临时
+完全独占测试根使用 `Exclusive`，进程根只能是 `Process`。根类型错误不是
+性能问题：把共享根误标为独占会释放仍被进程 PML4 项引用的 PDPT；把独占根
+误标为共享则会留下本可回收的表帧。
+
+`PageTableStatus` 将结构故障分开报告：
+
+- `SharedBranchMutationDenied`：进程根试图修改复制来的内核或其他借用分支；
+- `InvalidTableFrame`：表地址越界、未对齐、自引用或形成祖先环；
+- `TableFrameNotOwned`：父项指向的帧不是分配器记录的精确 order-0 allocation；
+- `FrameReleaseFailed`：预检通过后，分配器拒绝释放待回收表帧；
+- `RollbackFailed`：映射失败后的父项恢复或新表释放没有完整闭环。
+
+撤销采用“先只读预检、后提交”。若失败后 PTE 或页帧统计已经改变，故障在
+预检和提交边界；若成功却没有回收，逐级检查目标叶之外的 511 个原始 64 位
+表项是否全部为零。不能只查 Present 位，因为非 Present 项中的软件位或地址
+仍然属于表状态。相邻叶共享 PT 时，只有撤销最后一个叶才应回收该 PT。
+
+用 GDB 检查某个 4 KiB 映射时，按 `CalculatePageTableIndices` 得到
+PML4/PDPT/PD/PT 四个索引，从 CR3 根逐级读取父项：
+
+```text
+parent entry address = table virtual address + index * 8
+child physical       = entry & 0x000FFFFFFFFFF000
+```
+
+每深入一级都同时核对物理地址范围、4 KiB 对齐和 frame allocator 中的
+order-0 ownership；不要只因为内存可读就认定它是页表。回收成功后，先确认
+父项已经清零，再确认子表帧变回 free。TLB 只对目标叶执行一次 `INVLPG`，
+中间表没有独立线性地址翻译可供失效。
+
+映射故障注入若留下空表，检查 `TableMutation` 的记录顺序：父项原值必须在
+修改之前保存，新表按创建反序释放，因 user 页而提升的既有父项 U/S 位必须
+恢复。最终整机只在全部事务提交后输出：
+
+```text
+PAGE_TABLE_RECLAIMED_LEVEL1_TABLES=0x0000000000000002
+PAGE_TABLE_RECLAIMED_LEVEL2_TABLES=0x0000000000000002
+PAGE_TABLE_RECLAIMED_LEVEL3_TABLES=0x0000000000000000
+PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES=0x0000000000000001
+PAGE_TABLE_RECLAIM_SELF_TEST_PASSED
+```
+
+缺失通过标记时先找 `MEMORY_INITIALIZATION_FAILED`，不要通过延长 QEMU
+超时掩盖已经确定返回的页表状态。
 
 ### 动态内核栈创建、切换或安全点回收失败
 

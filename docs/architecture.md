@@ -399,14 +399,16 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 分配器；固定尺寸类型缓存又在其上建立单后备块、活动位图与槽内空闲链。
 KVA 现已用有序有主区间管理独立的 32 TiB 高半区窗口，使 not-present 页与
 “尚无软件所有者”不再混淆。当前四个进程内核栈已经迁移到该窗口，并在汇编
-返回永久启动栈后的安全点回收；页表管理器仍暂不回收单次 `UnmapPage` 后
-出现的空中间页表。历史取舍见
+返回永久启动栈后的安全点回收。页表管理器进一步按根所有权回收空分支：
+独占根可回收 PT、PD 与 PDPT，内核共享根只回收 PT 与 PD，进程根只允许
+修改自身用户程序和用户栈分支。历史取舍见
 [ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)，当前实现见
 [ADR 0020](adr/0020-reclaimable-kernel-heap.md) 和
 [ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)，类型缓存与 KVA 分别见
 [ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md)、
 [ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md) 和
-[ADR 0025](adr/0025-kva-backed-dynamic-kernel-stacks.md)。
+[ADR 0025](adr/0025-kva-backed-dynamic-kernel-stacks.md)，页表分支所有权见
+[ADR 0026](adr/0026-owned-page-table-branch-reclamation.md)。
 
 ## v0.7 传统中断与设备闭环
 
@@ -868,13 +870,51 @@ TryRelease: 精确校验 → 位图清 0 → 压回 free head
 `Validate` 重算有序性、无重叠、尾部清零、页数、活动数、累计守恒、峰值和
 最大空洞。
 
-真实启动先用一页暖机建立 KVA 的三级中间页表；当前 `UnmapPage` 尚不回收这
-三页，因此暖机后才记录物理页基线。主事务申请六页、八页对齐区间，从 buddy
-取得 order 2 物理块，只映射中间四页为 supervisor RW/NX，保持首尾 guard
-not-present。查询、真实写回通过后，按撤销映射、释放物理块、释放 KVA 的
-顺序清理。最终活动 KVA 页为零、保留页为一、两次申请与两次释放守恒，才输出
-`KVA_SELF_TEST_PASSED`。完整决策见
+真实启动先用一页暖机验证共享边界：撤销该页时回收新建的 PT 与 PD，但保留
+可能已被进程 PML4 引用的共享 PDPT。随后记录物理页基线。主事务申请六页、
+八页对齐区间，从 buddy 取得 order 2 物理块，只映射中间四页为 supervisor
+RW/NX，保持首尾 guard not-present。查询、真实写回通过后，按撤销映射、
+释放物理块、释放 KVA 的顺序清理；四个相邻叶页只在最后一次撤销时再次回收
+PT 与 PD。最终活动 KVA 页为零、保留页为一、两次申请与两次释放守恒，
+两段事务合计回收两张 PT 和两张 PD，只保留一张共享 PDPT，才输出
+`KVA_SELF_TEST_PASSED` 与页表回收摘要。完整决策见
 [ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+
+## v1.1 按根所有权回收页表空分支
+
+x86-64 的硬件页表项只记录地址、权限和状态位，不记录“谁拥有这张子表”。
+而本项目会把内核高半区 PML4 项复制到每个进程根；如果内核根仅凭“子表为空”
+就释放 PDPT，进程根里仍然存在的 PML4 项会立刻成为悬空物理地址。因此
+`PageTableManager` 初始化时必须声明根类型，不能从地址猜测所有权：
+
+```text
+Exclusive   根和所有后代均独占，可回收 PT → PD → PDPT
+KernelShared 内核根拥有分支，但 PDPT 可能被进程 PML4 借用，只回收 PT → PD
+Process     低半用户程序与高端用户栈分支可修改；复制的其余分支拒绝修改
+```
+
+撤销映射分成只读预检和提交两段。预检先确认四级路径地址有效、每张表帧确实
+由页帧分配器以精确 order 0 持有、没有祖先环，并判断除目标项外的所有 64 位
+表项是否全零。这里不能只看 Present 位：一个非 Present 但仍携带软件位或
+物理地址的项同样意味着该表不为空。任何检查失败都保持叶项、父项、TLB 和
+分配器状态不变。
+
+提交先清叶项并执行一次 `INVLPG`，再按 PT、PD、PDPT 从子到父解除父项并
+归还页帧。结果对象分别累计三级回收数量，调用方无需解析日志猜测行为。
+相邻叶页共享 PT 时，前几次撤销只清叶，最后一页才触发级联；内核共享根的
+级联在 PDPT 边界停止。
+
+映射方向也采用事务语义。每次新建子表都记录父项原值和新表帧；后续申请
+失败时，按相反顺序恢复原父项（包括因用户映射而提升的 U/S 位），再归还
+新表。查询路径执行同样的地址范围、order-0 所有权和环检查，并返回包含
+4 KiB 页内偏移的物理地址。进程地址空间的最终递归销毁仍是兜底，它只遍历
+进程拥有的用户分支，不追入借用的内核分支；递归过程携带完整祖先地址链，
+下级项一旦回指根或祖先便在释放前拒绝，损坏修复后可安全重试。
+
+该边界由单元测试、128 次共享根生命周期、64 次进程根生命周期和 100000 步
+固定种子随机模型共同验证；QEMU 启动只在事务结束时输出有界摘要，热路径
+不会逐映射刷串口。完整状态、失败语义和拒绝方案见
+[ADR 0026](adr/0026-owned-page-table-branch-reclamation.md)。
 
 ## v1.1 动态内核栈与安全点回收
 

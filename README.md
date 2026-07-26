@@ -3,7 +3,8 @@
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
 当前状态：`v1.0 用户环境` 已完成，第二周期 `v1.1` 已落地动态物理内存、
-可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA 和动态内核栈六个
+可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈和
+页表空分支回收七个
 增量。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
@@ -27,7 +28,11 @@ QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo
 高半区窗口建模为有序软件所有权区间，当前 256 个描述符只消耗 6 KiB，不按
 数十亿潜在页建立位图。QEMU 自检申请六页区间、保持首尾 guard not-present，
 把中间四页映射到 buddy order 2 物理块并真实写回，随后按映射、物理页、虚拟
-区间的逆序回收，最终只保留窗口首个永久保护页。在此基础上，内核严格
+区间的逆序回收，最终只保留窗口首个永久保护页。页表层现在按
+`Exclusive`、`KernelShared`、`Process` 三种根所有权回收空 PT/PD/PDPT：
+内核共享根释放低两级但保留可能被进程 PML4 引用的 PDPT，映射途中分配失败
+则恢复父项和 U/S 位并逆序释放新表。两段 QEMU 自检合计回收两张 PT 和两张
+PD，只稳定保留一张共享 PDPT。在此基础上，内核严格
 验证并装入自研 `ET_EXEC` 用户 ELF64。内核为四个进程分别建立 PML4、
 同址用户代码/数据和四页用户栈；每个 16 KiB Ring 0 栈现从 KVA 取得六页
 所有权，从 buddy 取得四个独立物理页，并在上下各保留一页 not-present
@@ -54,16 +59,16 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
 freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
 sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
-完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 89 项
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 92 项
 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、函数和
 命名空间。
 
 第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
 buddy、kernel heap/type cache、KVA、动态内核栈和页表回收，并保留当前
 四进程通路；其中动态物理内存、通用可回收 kernel heap 和双位图 buddy 已
-完成，固定尺寸 type cache、32 TiB KVA 与动态双 guard 内核栈也已分别通过
-十万步随机模型和 QEMU 真实生命周期验收；页表中间层回收、通用作用域回滚
-与资源快照继续按独立闭环推进；
+完成，固定尺寸 type cache、32 TiB KVA、动态双 guard 内核栈与页表空分支
+回收也已分别通过十万步随机模型和 QEMU 真实生命周期验收；页表映射失败回滚
+已经闭环，通用作用域回滚、引用计数与资源快照继续按独立闭环推进；
 v1.2 再迁移到 Process/Thread、统一 WaitQueue/WakeReason 和完整 FXSAVE
 现场，v1.3 独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
 PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
@@ -140,6 +145,12 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] RESERVED_FRAMES=0x...
 [OS][KERNEL] PAGING_READY
 [OS][KERNEL] PAGING_ROOT=0x...
+[OS][KERNEL] PAGE_TABLE_RECLAIM_READY
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL1_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL2_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL3_TABLES=0x0000000000000000
+[OS][KERNEL] PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES=0x0000000000000001
+[OS][KERNEL] PAGE_TABLE_RECLAIM_SELF_TEST_PASSED
 [OS][KERNEL] DIRECT_MAP_BASE=0xFFFF888000000000
 [OS][KERNEL] DIRECT_MAP_MAPPED_BYTES=0x...
 [OS][KERNEL] DIRECT_MAP_2M_PAGES=0x...

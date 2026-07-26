@@ -153,7 +153,8 @@ v1.2 冻结 `SpinLock`、`IrqSaveSpinLock` 和 Thread 执行模型后，具体�
 本 ADR 落地时加入三项宿主测试，完整 CTest 集合由 80 项增至 83 项；随后
 [ADR 0024](0024-reclaimable-kernel-virtual-address-allocator.md) 再加入
 KVA 的三项测试，当时集合为 86 项；[ADR 0025](0025-kva-backed-dynamic-kernel-stacks.md)
-再加入动态内核栈三项测试，当前集合为 89 项。
+再加入动态内核栈三项测试后当时集合为 89 项；页表回收增量完成后当前为
+92 项。
 
 ## 结果
 

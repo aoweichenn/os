@@ -178,6 +178,49 @@ target_compile_options(
         ${OS_COMMON_WARNING_FLAGS}
 )
 
+add_library(
+    os_page_table_test_support
+    STATIC
+        support/cpp/page_table_test_environment.cpp
+        support/cpp/page_table_test_environment.hpp
+)
+target_include_directories(
+    os_page_table_test_support
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/support/cpp"
+)
+target_link_libraries(
+    os_page_table_test_support
+    PUBLIC
+        os_kernel_memory_model_host
+)
+target_compile_options(
+    os_page_table_test_support
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
+function(os_add_page_table_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_page_table_test_support
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
 function(os_add_kernel_stack_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
     target_link_libraries(
@@ -234,6 +277,11 @@ os_add_kernel_memory_test(
     unit/kernel/kernel_virtual_address_allocator_test.cpp
     "unit"
 )
+os_add_page_table_test(
+    os_kernel_page_table_reclamation_unit_tests
+    unit/kernel/page_table_reclamation_test.cpp
+    "unit"
+)
 os_add_kernel_memory_test(
     os_kernel_memory_bootstrap_integration_tests
     integration/boot/kernel_memory_bootstrap_test.cpp
@@ -259,6 +307,11 @@ os_add_kernel_memory_test(
     integration/boot/kernel_virtual_address_mapping_lifecycle_test.cpp
     "integration"
 )
+os_add_page_table_test(
+    os_kernel_page_table_reclamation_lifecycle_integration_tests
+    integration/boot/page_table_reclamation_lifecycle_test.cpp
+    "integration"
+)
 os_add_kernel_memory_test(
     os_kernel_memory_management_randomized_tests
     randomized/kernel/memory_management_randomized_test.cpp
@@ -282,6 +335,11 @@ os_add_kernel_memory_test(
 os_add_kernel_memory_test(
     os_kernel_virtual_address_allocator_randomized_tests
     randomized/kernel/kernel_virtual_address_allocator_randomized_test.cpp
+    "randomized"
+)
+os_add_page_table_test(
+    os_kernel_page_table_reclamation_randomized_tests
+    randomized/kernel/page_table_reclamation_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_stack_test(

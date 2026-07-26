@@ -91,6 +91,7 @@ int main() {
     os::kernel::PageTableManager dummy_page_table_manager{
         dummy_frame_allocator,
         os::kernel::PageTableMemoryAccess{},
+        os::kernel::PageTableRootKind::Exclusive,
     };
     os::kernel::KernelStackManager uninitialized_manager{
         dummy_frame_allocator,

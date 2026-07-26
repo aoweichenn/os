@@ -95,6 +95,28 @@ buddy 同样只在启动事务和目标自检都提交后输出一次快照：
 `ValidateBuddy` 结果由单一自检里程碑表示。这样既能区分“从未发生拆分”和
 “生命周期闭合”，又不会让页表建立或进程退出刷屏。
 
+页表空分支回收同样只在两段 KVA 事务和分配器校验全部完成后输出一次：
+
+```text
+[OS][KERNEL] PAGE_TABLE_RECLAIM_READY
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL1_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL2_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL3_TABLES=0x0000000000000000
+[OS][KERNEL] PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES=0x0000000000000001
+[OS][KERNEL] PAGE_TABLE_RECLAIM_SELF_TEST_PASSED
+```
+
+第一段单页暖机回收一张 PT 和一张 PD；第二段四叶事务在最后一个叶撤销时
+再回收一张 PT 和一张 PD。三级计数为零不是遗漏，而是
+`KernelShared` 根必须保留仍可能被进程 PML4 项引用的 PDPT。保留计数精确
+为一，把安全共享边界与无法回收的泄漏区分开。
+
+`MapPage`、`QueryPage`、`UnmapPage`、逐项空表扫描和失败回滚均不打印。
+这些路径会被动态栈、进程退出和十万步随机模型高频调用；逐次日志既改变时序，
+也会淹没真正的事务边界。失败由上层单个
+`MEMORY_INITIALIZATION_FAILED=0x...` 状态承载，细分原因通过
+`PageTableStatus`、单元故障注入和 GDB 检查获得。
+
 固定尺寸类型缓存也只在启动自检完整提交后输出一次快照：
 
 ```text
@@ -143,7 +165,8 @@ KVA 同样采用一次提交后的有界快照，不记录每次区间扫描和�
 
 窗口包含 8589934592 个 4 KiB 页，首个页是永久软件保留区，因此最终 free 和
 最大连续空闲均为 8589934591。两次成功申请分别是页表暖机和六页主事务，两次
-均已释放；峰值六页包含两个故意不映射的 guard。物理地址由本次 QEMU 内存图
+均已释放；暖机现在用于验证共享 PDPT 边界，而不是建立永久泄漏的 PT/PD。
+峰值六页包含两个故意不映射的 guard。物理地址由本次 QEMU 内存图
 与 buddy 状态决定，协议只要求非零、页对齐并存在字段，不硬编码具体页帧。
 `KVA_SELF_TEST_PASSED` 同时表示四个数据页的 RW/NX 映射、真实写回、逆序
 unmap/物理页/KVA 回收和统计校验通过。

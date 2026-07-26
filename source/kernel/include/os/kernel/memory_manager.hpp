@@ -55,6 +55,10 @@ struct KernelMemoryStatistics final {
     uint64_t allocated_frame_count;
     uint64_t reserved_frame_count;
     uint64_t page_table_root_physical_address;
+    uint64_t page_table_reclaimed_level1_table_count;
+    uint64_t page_table_reclaimed_level2_table_count;
+    uint64_t page_table_reclaimed_level3_table_count;
+    uint64_t page_table_retained_shared_level3_table_count;
     uint64_t heap_capacity_bytes;
     uint64_t heap_consumed_bytes;
     uint64_t heap_active_allocation_count;

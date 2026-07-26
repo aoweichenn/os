@@ -4,7 +4,9 @@
 
 已接受，作为 v1.1 可回收资源基础的第五个完整实现增量。此前四个增量依次建立
 动态物理内存与 direct-map、可回收内核堆、双位图 buddy 页帧分配器和固定
-尺寸 type cache。
+尺寸 type cache。本 ADR 落地时记录的“页表暖机后保留三级空表”是历史过渡
+状态，已由 [ADR 0026](0026-owned-page-table-branch-reclamation.md) 的
+按根所有权回收取代。
 
 ## 背景
 
@@ -165,10 +167,10 @@ Thread 与 `IrqSaveSpinLock` 语义后，拥有某个 KVA 域的上层对象负�
 
 真实内核在 CR3、direct-map、buddy 和内存保护均生效后运行两段事务。
 
-第一段申请一个虚拟页和一个 order 0 物理页，建立并撤销 KVA 页表路径。这会
-一次性留下当前 `UnmapPage` 尚不能回收的三个空中间页表，随后把它们视为本次
-增量的页表基础设施基线。先做暖机的原因是：主生命周期必须证明数据页和 KVA
-区间恢复，而不能把已知的“中间页表暂不回收”混成数据页泄漏。
+第一段申请一个虚拟页和一个 order 0 物理页，建立并撤销 KVA 页表路径。
+最初实现把留下的三级空表视为页表基础设施基线；ADR 0026 落地后，同一暖机
+事务必须回收 PT 与 PD，只保留仍可能被进程 PML4 引用的共享 PDPT。暖机因此
+从“隔离已知泄漏”变为“验证共享所有权边界”。
 
 第二段执行：
 
@@ -179,7 +181,8 @@ Thread 与 `IrqSaveSpinLock` 语义后，拥有某个 KVA 域的上层对象负�
 5. 查询每个叶项的物理地址、4 KiB 粒度和权限；
 6. 经 KVA 首尾数据页写入并读回两个 64 位模式；
 7. 逆序撤销 4 个映射，归还物理块，再归还 KVA 区间；
-8. 比较暖机后的页帧、buddy 与 KVA 统计基线并运行两套完整校验。
+8. 比较暖机后的页帧、buddy 与 KVA 统计基线并运行两套完整校验；
+9. 核对两段事务累计回收两张 PT、两张 PD、零张 PDPT，并保留一张共享 PDPT。
 
 成功日志中的稳定结果为：
 
@@ -213,8 +216,8 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
   和最大空洞，并每 257 步运行完整校验；
 - 64 MiB QEMU 已完成真实页表、TLB 失效、双 guard、写回与回收；64 GiB 主规格
   使用同一代码路径并继续验证高端物理内存能力；
-- 本 ADR 三项测试加入后完整 CTest 集合当时为 86 项；动态栈增量完成后当前
-  为 89 项。Kernel ELF 审计继续要求没有异常、
+- 本 ADR 三项测试加入后完整 CTest 集合当时为 86 项；动态栈与页表回收
+  增量完成后当前为 92 项。Kernel ELF 审计继续要求没有异常、
   RTTI、隐藏宿主分配或未解析运行时符号。
 
 ## 结果
@@ -233,7 +236,9 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
 - 申请、插入和删除为 \(O(N)\)，尚无平衡树或分片索引；
 - 没有锁、per-CPU KVA cache、延迟 TLB 批处理或并发读者；
 - KVA 只管理地址，不自动分配页、映射、清零或回滚跨层事务；
-- `UnmapPage` 尚不回收空中间页表，暖机留下的三页暂作为长期页表基础设施；
+- 本 ADR 落地时 `UnmapPage` 尚不回收空中间页表；该历史限制已由
+  [ADR 0026](0026-owned-page-table-branch-reclamation.md) 消除，当前共享
+  根只按所有权有意保留一张 PDPT；
 - 本 ADR 落地时动态内核栈尚未迁移；该历史限制已由
   [ADR 0025](0025-kva-backed-dynamic-kernel-stacks.md) 消除。
 
@@ -270,7 +275,8 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
 - 动态内核栈从 KVA 取得“guard + data pages”区间、从 buddy 取得后备页并
   跨三层回滚的增量已经由 [ADR 0025](0025-kva-backed-dynamic-kernel-stacks.md)
   完成；
-- 随后为中间页表建立引用或空表判断，在 `UnmapPage` 后回收不再使用的页表页；
+- 中间页表的根所有权、精确空表判断与 `UnmapPage` 逆序回收已经由
+  [ADR 0026](0026-owned-page-table-branch-reclamation.md) 完成；
 - 引入通用作用域回滚与 `ResourceSnapshot`，把手写清理序列升级为统一事务；
 - v1.2 的 Thread 使用动态内核栈，通过对等测试后删除固定 PCB 栈；
 - 多 slab type cache 可以用 KVA 与非连续物理页扩展后备。
@@ -281,6 +287,7 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
 - [ADR 0022：双位图 buddy 页帧分配器](0022-bitmap-buddy-frame-allocator.md)
 - [ADR 0023：固定尺寸类型缓存](0023-heap-backed-fixed-size-type-cache.md)
 - [ADR 0025：动态内核栈与安全点回收](0025-kva-backed-dynamic-kernel-stacks.md)
+- [ADR 0026：按根所有权回收页表空分支](0026-owned-page-table-branch-reclamation.md)
 - [架构说明](../architecture.md)
 - [内核模块](../modules/kernel.md)
 - [测试策略](../testing.md)

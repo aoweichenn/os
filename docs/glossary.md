@@ -30,6 +30,10 @@
 | physical frame | 按 4 KiB 页粒度管理的物理内存所有权单位 |
 | PFN | Page Frame Number，物理地址除以页大小得到的页帧编号 |
 | PML4 / PDPT / PD / PT | x86-64 四级页表的四层结构 |
+| page-table root kind | 页表管理器显式声明的 `Exclusive`、`KernelShared` 或 `Process` 所有权边界，决定哪些分支允许修改和回收 |
+| borrowed page-table branch | 由另一个根拥有、当前根只通过复制父项引用的页表子树；进程根中的共享内核高半分支属于此类 |
+| empty-branch reclamation | 撤销最后一张叶映射后，按 PT、PD、PDPT 从子到父解除并归还独占空表的过程 |
+| table-frame ownership | 页表物理地址必须仍是页帧分配器记录的精确 order-0 allocation；地址可读或 Present 不等于拥有 |
 | direct-map | 用固定高半区基址加物理地址访问普通 RAM 的线性映射窗口 |
 | large page | 跳过最低级 PT 的 2 MiB PDE 叶映射；本项目用于物理直映内部区间 |
 | canonical address | x86-64 要求高位为有效地址位符号扩展的线性地址 |

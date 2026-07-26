@@ -1129,11 +1129,12 @@ unpublish object
 从申请到释放始终没有叶映射，却与数据页一起属于同一个 KVA 区间，这正是
 “not-present 不等于 free”的执行例子。
 
-当前 \code{UnmapPage} 清除叶项并执行 \code{INVLPG}，尚不回收变空的 PT、
-PD 和 PDPT。KVA 自检先用一个虚拟页和一个 order-0 物理页预热首条页表路径，
-撤销叶映射并归还两种可回收资源；三页中间表作为已知基础设施基线保留。主事务
-随后复用这条路径，因而能够严格要求自身前后的物理页、buddy 和 KVA 统计完全
-相等，而不会把已知页表生命周期边界误报成数据页泄漏。
+当前 \code{UnmapPage} 不只清除叶项。它先证明整条路径有效且属于当前页表根，
+再按 PT、PD、PDPT 从子到父回收已经变空的独占分支。KVA 自检先用一个虚拟页
+和一个 order-0 物理页暖机首条页表路径：撤销时回收 PT 与 PD，却保留可能仍
+被进程 PML4 项引用的共享 PDPT。主事务随后复用该共享入口，重新创建并在最后
+一张叶撤销时回收 PT 与 PD。因此物理页、buddy、KVA 与页表自身都进入可解释
+的所有权基线；唯一保留的 PDPT 是共享协议，不是被忽略的泄漏。
 
 \subsection{六页整机事务把 guard、权限和回收连成一条证据链}
 
@@ -1148,7 +1149,8 @@ PD 和 PDPT。KVA 自检先用一个虚拟页和一个 order-0 物理页预热�
   \item 用 \code{QueryPage} 核对四个物理地址连续、页粒度和权限精确；
   \item 经首尾数据虚拟页写入两个 64 位模式并读回；
   \item 逆序撤销四个映射，归还整个 order-2 块，再精确释放六页 KVA；
-  \item 比较三层基线，并运行 buddy 与 KVA 的完整校验。
+  \item 比较三层基线，运行 buddy 与 KVA 的完整校验，并核对两段事务累计
+        回收两张 PT、两张 PD、零张 PDPT，精确保留一张共享 PDPT。
 \end{enumerate}
 
 只有事务全部提交，冷路径才输出一次稳定快照：
@@ -1167,6 +1169,11 @@ PD 和 PDPT。KVA 自检先用一个虚拟页和一个 order-0 物理页预热�
 [OS][KERNEL] KVA_SELF_TEST_MAPPED_PAGES=0x0000000000000004
 [OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=0x0000000000000002
 [OS][KERNEL] KVA_SELF_TEST_PASSED
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL1_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL2_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL3_TABLES=0x0000000000000000
+[OS][KERNEL] PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES=0x0000000000000001
+[OS][KERNEL] PAGE_TABLE_RECLAIM_SELF_TEST_PASSED
 \end{verbatim}
 
 申请、描述符移动、映射和释放热路径不逐步打串口。日志只证明最终事务和守恒，
@@ -1193,11 +1200,243 @@ QEMU 最后让真实 x86-64 MMU、TLB 和 load/store 执行同一契约。64 MiB
 处理器执行路径不是重复劳动：它们分别定位算法、组合、长序列不变量和硬件
 效果。
 
-当前边界仍然明确：最多 256 个有主区间、操作为 \(O(N)\)、没有内部锁，
-中间页表尚不回收。动态内核栈已经成为第一个长期持有 KVA、物理帧和叶映射的
-真实调度资源；下一资源闭环是释放随最后一个叶映射消失而变空的 PT、PD 和
-PDPT。性能树、per-CPU KVA cache 和延迟 shootdown 必须等并发契约与测量
-证据出现后再加入。
+当前 KVA 边界仍然明确：最多 256 个有主区间、操作为 \(O(N)\)、没有内部锁。
+空中间页表回收已经由独立的页表所有权协议闭环；动态内核栈则成为第一个长期
+持有 KVA、物理帧和叶映射的真实调度资源。性能树、per-CPU KVA cache 和延迟
+shootdown 必须等并发契约与测量证据出现后再加入。
+
+\section{v1.1 页表空分支回收：硬件树之上的软件所有权}
+
+\subsection{四级结构来自地址空间扩张，不来自对象生命周期}
+
+80386 的 32 位分页已经采用目录加页表的层次结构，避免为整个线性地址空间
+预先保存逐页表项。PAE 把表项扩为 64 位并增加层级，x86-64 又让常见四级
+模式用四组 9 位索引覆盖 48 位 canonical 线性地址。这个历史方向始终在解决
+“怎样让硬件快速找到翻译”，没有替操作系统回答“最后一个映射消失后谁可以
+释放中间表”。
+
+在四级 4 KiB 模式中，每张表恰有 512 个 8 字节项，所以正好占一个 4096
+字节物理页。各层覆盖范围为：
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+层 & 一个表项覆盖 & 一张完整表覆盖\\
+\midrule
+PT / level 1 & \(4\ \mathrm{KiB}\) & \(2\ \mathrm{MiB}\)\\
+PD / level 2 & \(2\ \mathrm{MiB}\) & \(1\ \mathrm{GiB}\)\\
+PDPT / level 3 & \(1\ \mathrm{GiB}\) & \(512\ \mathrm{GiB}\)\\
+PML4 / level 4 & \(512\ \mathrm{GiB}\) & \(256\ \mathrm{TiB}\) canonical envelope\\
+\bottomrule
+\end{longtable}
+
+CR3 给出根表物理地址。处理器从虚拟地址取出 \(47{:}39\)、\(38{:}30\)、
+\(29{:}21\)、\(20{:}12\) 四组索引，最后把 \(11{:}0\) 当页内偏移。每个
+非叶项主要告诉硬件下一张表的物理页和 P/RW/U/S 等遍历权限；叶项再决定
+最终页的 NX、缓存、脏位和访问位等属性。这里没有父指针、引用计数、
+\code{owner} 或“这张表由哪个地址空间申请”的字段。
+
+这一缺失不是 x86 设计漏洞。硬件只需要在每次 load/store 时完成确定遍历；
+对象生命周期属于操作系统策略。代价是软件不能从某个非叶项孤立地推出子表
+是否独占。
+
+\subsection{复制 PML4 项共享的是子树，不是子树副本}
+
+当前进程地址空间为了共享内核映射，会把内核根中的高半 PML4 项按值复制到
+新的进程 PML4。复制的 64 位值仍包含同一 PDPT 物理地址：
+
+\begin{verbatim}
+kernel PML4E ----+
+                 +----> shared PDPT ---> PD ---> PT
+process A PML4E -+
+process B PML4E -+
+\end{verbatim}
+
+因此“内核根里这条分支已经没有叶映射”和“没有任何根引用该 PDPT”是两个
+不同命题。若内核只清自己的 PML4E 并归还 PDPT，进程 A/B 的 PML4E 仍指向
+原物理帧。buddy 可以马上把该帧交给堆或文件缓存；下一次在 A 中发生硬件
+page walk 时，处理器会把新对象字节解释为页表项。这是页表帧
+use-after-free，通常比普通悬空指针更难定位，因为损坏在另一个 CR3 被调度后
+才显现。
+
+相反，PDPT 内某个 PDPTE 位于真正共享的物理页中。清除它会被所有引用该
+PDPT 的根共同观察到，所以它指向的空 PD 以及更低的 PT 可以安全释放。这个
+差异给出本阶段的核心原则：
+
+\begin{quote}
+空只说明没有有效内容；回收还必须证明当前管理器拥有最后一个硬件引用。
+\end{quote}
+
+\subsection{三种根类型把隐含关系变成构造契约}
+
+\code{PageTableManager} 构造时必须显式接收
+\code{PageTableRootKind}，不能从虚拟地址、当前 CR3 或调用栈猜测：
+
+\begin{longtable}{@{}p{0.18\textwidth}p{0.42\textwidth}p{0.30\textwidth}@{}}
+\toprule
+根类型 & 允许修改的分支 & 最深回收边界\\
+\midrule
+\code{Exclusive}
+& 整棵树都只属于该管理器
+& PT、PD、PDPT\\
+\code{KernelShared}
+& 内核根中的映射；下级父项变化对所有借用者可见
+& PT、PD；PDPT 保持稳定\\
+\code{Process}
+& PML4[0] 下的用户程序分支和 PML4[255] 下的用户栈分支
+& 程序低端克隆 PDPT 留到进程销毁；用户栈可回收到 PDPT\\
+\bottomrule
+\end{longtable}
+
+进程低地址还有一个细节。PML4[0] 指向克隆的 PDPT，其中只有约定的
+PDPT[1] 用户程序分支归进程修改；其余低端内容可能来自启动兼容映射。用户栈
+放在 PML4[255] 的独占分支。对复制来的内核高半分支或其他借用分支调用
+\code{MapPage}/\code{UnmapPage}，必须在申请帧和写表项之前返回
+\code{SharedBranchMutationDenied}。
+
+把根类型设为构造必选参数还有工程价值：新增调用点若没有回答所有权问题就
+无法编译。相比默认成“最宽松”或根据地址猜测，这会把架构判断前移到代码
+评审和单元测试。
+
+\subsection{“空”必须表示其余 511 个原始项逐字为零}
+
+一个表是否可回收，不能只数 Present 位。现代操作系统经常在 non-present
+PTE 中保存 swap 类型、文件页状态或诊断标记；处理器不继续遍历，不代表软件
+没有保存事实。当前项目尚未实现 swap，也仍采用更强定义：排除马上要解除的
+父子边后，其余每个 64 位项必须等于零。
+
+对普通 4 KiB 叶，判定链为：
+
+\begin{verbatim}
+PT except target PTE is all-zero
+  -> PD except target PDE is all-zero
+    -> root policy permits PDPT reclamation
+      and PDPT except target PDPTE is all-zero
+\end{verbatim}
+
+一旦某层不空，更高层必然仍有有效子树，检查即可停止。2 MiB 页把 PDE 本身
+作为叶并设置 PS；其数据后备通常对应 order 9 连续页。当前
+\code{UnmapPage} 有意拒绝这种情况并返回
+\code{UnexpectedLargePage}，不把不同粒度的数据所有权偷偷塞进 4 KiB
+接口。
+
+\subsection{撤销先完整预检，再一次性断开}
+
+直接“边走边清”会产生难以回滚的半状态。假设已经清掉 PTE，走到 PD 时才
+发现父项指向未拥有或越界物理帧；调用方既失去映射，又无法证明中间树安全。
+当前撤销因此分为两阶段。
+
+只读预检逐层完成：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 检查虚拟地址 canonical 且按 4 KiB 对齐；
+  \item 检查每个子表物理地址按页对齐，完整落在允许访问范围；
+  \item 拒绝子表等于根或任一祖先的明显环；
+  \item 用 buddy 的精确查询证明每张子表仍是活动 order-0 allocation；
+  \item 保存四级父项地址和三个子表物理身份；
+  \item 按原始 64 位值计算 PT、PD、PDPT 是否会在本次撤销后变空；
+  \item 在修改任何表项前，再次预检所有计划释放的帧。
+\end{enumerate}
+
+预检失败返回 \code{InvalidTableFrame} 或
+\code{TableFrameNotOwned}，叶项、调用方结果对象、TLB 与分配器统计全部
+保持原样。预检成功后的提交顺序是：
+
+\begin{verbatim}
+clear PTE
+clear PDE/PDPTE/PML4E that lead only to reclaimable empty tables
+INVLPG target virtual address exactly once
+zero and release PT, then PD, then permitted PDPT
+\end{verbatim}
+
+父项先断开，确保新的硬件遍历无法进入即将归还的子表；页帧再从子到父释放，
+与创建依赖顺序相反。一次目标叶修改只需一次
+\code{INVLPG}，为每个已释放中间表重复失效同一线性地址没有额外语义。
+当前是单 BSP，所以还没有向其他 CPU 发送 TLB shootdown。
+
+\code{PageTableUnmapResult} 分别返回 level 1、level 2、level 3 和总回收
+表帧数。数据页由上层对象拥有，不由撤销接口释放，也不计入结果。这使调用者
+可以精确区分“PTE 已清但共享表仍存在”和“本次真正回收了页表帧”。
+
+\subsection{映射也必须能撤销父项权限与新表}
+
+映射一张原先不存在的叶页，可能依次成功创建 PDPT、PD，却在申请 PT 时耗尽。
+旧式实现若立即链接每张新表，只返回
+\code{FrameAllocationFailed}，就会永久留下两个空页。另一个更隐蔽的例子是
+用户映射：走过既有父项时需要把 U/S 提升为 1；若最后发现叶已经映射，临时
+提升也不能残留。
+
+当前每次非叶穿越记录一个 \code{TableMutation}：
+
+\begin{verbatim}
+entry                   address of the parent entry
+original_entry          complete 64-bit value before mutation
+table_physical_address  child table frame
+table_created           whether this transaction allocated it
+\end{verbatim}
+
+只有叶项写入成功才提交事务。此前遇到帧耗尽、大页冲突、重复映射、损坏地址
+或所有权错误时，先反序恢复每个父项完整原值，再反序清零并释放本事务创建的
+表帧。保存完整值而非只保存 U/S 位，是为了不假设未来不会加入新的软件位。
+若回滚自身遇到帧所有权或释放故障，返回
+\code{RollbackFailed}，不能继续用最初错误掩盖已经不可证明的树状态。
+
+这种局部日志与数据库 write-ahead log 的目的相似：事务先保存足以恢复的
+旧事实，再改变共享结构。区别是它使用固定长度栈上记录，不分配内存，也没有
+持久化恢复需求。
+
+\subsection{查询和进程整体销毁也必须服从同一边界}
+
+\code{QueryPage} 是只读接口，却不能无条件解引用页表地址。损坏或已释放的
+父项同样会让宿主测试越界、让目标内核读取任意 direct-map 内容。因此查询在
+每一级复用范围、对齐、环和精确 order-0 所有权验证。命中 4 KiB 页时返回
+\[
+  \mathrm{physical\ page\ base} + (\mathrm{virtual\ address}\bmod4096),
+\]
+不能像旧实现那样遗漏页内偏移；2 MiB 叶使用对应的大页偏移。
+
+逐页撤销是正常细粒度路径，\code{ReleaseProcessRoot} 仍作为地址空间最终
+销毁的兜底。它只遍历用户程序与用户栈的自有树，不进入借用的内核高半子树；
+已被逐页撤销清空的分支自然跳过，尚存的用户叶和表由递归路径归还。每释放
+一张子表都立即清父项，避免部分失败留下指向已归还帧的硬件指针。递归下降
+同时携带从根到当前表的完整祖先物理地址链；若下级项回指根或任一祖先，
+必须在释放任何相关表帧前返回 \code{InvalidTableFrame}。测试随后恢复原项并
+重试销毁，用同一个对象证明拒绝路径没有偷改所有权状态。
+
+\subsection{从单叶到十万步模型的证据梯度}
+
+页表回收新增三类宿主测试。单元测试分别建立三种根，覆盖重复初始化、单叶
+完整级联、同 PT 相邻叶、共享 PDPT 保留、进程借用拒绝、程序与栈分支差异、
+申请耗尽回滚、所有权破坏与原址修复、越界表地址、查询祖先环、递归销毁
+祖先回指和失败输出保持。
+
+集成测试不在每轮重建世界，而是在同一分配器上连续执行 128 次共享根生命周期
+和 64 次进程根创建、映射、逐页撤销与销毁。这样一个每轮泄漏一页的错误无法
+被 fixture 清零隐藏；最后还让进程递归销毁一棵未逐叶排空的树。
+
+固定种子 \code{0x5047545245434C4D} 在 1024 个虚拟页上执行 100000 步。
+地址集合跨 4 个 PML4 项、每项 2 个 PDPT 项、多个 PD 与 PT；独立模型只保存
+活动叶集合，并由层级索引重算应存在的 PT/PD/PDPT 数，不调用被测回收逻辑。
+每 257 步逐页查询、比较表数和 buddy 统计，结束时排空全部映射。
+
+QEMU 最后用真实 CR3、page walk、TLB 和访存验证暖机与四叶 KVA 事务。稳定
+摘要为：
+
+\begin{verbatim}
+PAGE_TABLE_RECLAIMED_LEVEL1_TABLES = 2
+PAGE_TABLE_RECLAIMED_LEVEL2_TABLES = 2
+PAGE_TABLE_RECLAIMED_LEVEL3_TABLES = 0
+PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES = 1
+\end{verbatim}
+
+PT 与 PD 各两张来自暖机和主事务；PDPT 为零并精确保留一张，是共享根策略的
+正面证据。映射、查询、撤销、空表扫描和随机测试都不逐项写串口，只在完整
+初始化提交后输出一次摘要。至此 KVA 与动态栈不再靠暖机泄漏建立基线。
+
+当前边界也必须写清：回收仅支持普通 4 KiB 叶；页帧元数据只证明精确
+order-0 allocation，还没有 PageTable 类型标签；\code{KernelShared}
+保守保留全部 PDPT，没有通用引用计数；没有 PCID、批量 unmap、远端
+shootdown、页表锁或 RCU 读者。这些属于 Process/Thread 与并发地址空间模型
+之后的独立问题，不应削弱本阶段已经闭合的单核所有权契约。
 
 \section{v1.1 动态内核栈把地址许诺变成可回收调度资源}
 
@@ -1469,7 +1708,8 @@ RSP，并用 \code{Contains} 检查一个 64 位探针范围；只要当前 RSP 
 集成测试创建四个栈，逐一在最高 data 页构造 176 字节现场，并建立新的进程
 页表根。它从该根再次查询所有 guard 与 data 映射，证明高半区共享不是单一
 永久 CR3 下的偶然现象。逆序销毁后，四个物理帧全部清零，buddy 空闲数和
-KVA 页数恢复暖机基线；创建、销毁均为 4，峰值活动栈为 4，峰值映射页为 16。
+KVA 页数恢复空闲基线；共享页表根只保留一张仍可能被进程 PML4 引用的 PDPT，
+临时 PT/PD 均已回收。创建、销毁均为 4，峰值活动栈为 4，峰值映射页为 16。
 
 固定种子 \code{0x4B535441434B524E} 在 64 个槽和 4096 页独立所有权模型上
 执行 100000 次随机创建/销毁。操作类型取随机数高位，槽索引使用下一次独立
@@ -1505,8 +1745,9 @@ QEMU 正常路径、用户 \#UD 隔离路径和用户 \#PF 隔离路径都必须
 动态栈已经消除了编译期四份 20 KiB 进程栈存储，四个 PCB 只保留管理器槽索引
 与保存帧引用。容量仍由 256 槽固定存储限定，管理器仍是单 BSP、无内部锁；
 栈大小固定 16 KiB，不支持按需增长，也没有每 CPU emergency stack 或
-stack canary。下一个资源闭环不是立刻增加这些策略，而是回收空 PT、PD 和
-PDPT，并用页表帧统计证明动态栈反复创建/销毁不会永久增长中间表基础设施。
+stack canary。空 PT/PD 与独占 PDPT 回收已经完成，并由页表帧统计证明动态
+栈反复创建/销毁不会永久增长中间表基础设施。后续资源闭环转向通用引用计数、
+可组合的作用域回滚与资源快照，而不是在栈管理器中重复实现这些策略。
 
 \section{v0.6 高半区早期堆用最小策略验证对象分配}
 
@@ -1668,9 +1909,9 @@ QEMU 自检仍完成 64 字节/16 字节对齐和 4096 字节/4096 字节对齐�
 
 当前实现仍有清晰边界：后备区固定为 64 KiB，没有内部并发锁，也不能在 IRQ、
 NMI 或 panic 中调用。buddy 与 KVA 已由前文的独立页层和虚拟区间层承担；
-动态 guard stack、按页增长 heap 和空中间页表回收仍是后续闭环，而不是 heap
-接口暗中承担的能力。固定尺寸 type cache 已经作为下一层独立机制建立，下面
-沿其历史、布局和状态机继续展开。
+动态 guard stack 与空中间页表回收均已由独立模块闭环，按页增长 heap 仍是
+后续能力，而不是 heap 接口暗中承担的职责。固定尺寸 type cache 已经作为
+下一层独立机制建立，下面沿其历史、布局和状态机继续展开。
 
 \section{v1.1 用固定尺寸类型缓存分离对象容量}
 
@@ -2073,7 +2314,8 @@ panic 明确不得调用。
 KVA 已经能够从高半区分配虚拟区间，并与 buddy、页表组成经过整机验证的跨层
 事务。下一步让类型缓存拥有多个按页后备 slab；空 slab 才能撤销映射、归还
 物理页和 KVA。动态内核栈使用同一 KVA/页后备事务，但额外长期保留
-not-present guard。页表回收再保证撤销映射不会永久泄漏中间表。
+not-present guard。已经落地的页表回收保证撤销映射不会永久泄漏独占
+中间表。
 
 v1.2 的 Process/Thread 对等路径通过后，固定 PCB 才迁入动态缓存；v1.4
 进一步把引用计数 KernelObject 和动态 FileDescription 建立在类型缓存之上。

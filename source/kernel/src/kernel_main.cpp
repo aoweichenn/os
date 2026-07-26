@@ -78,6 +78,18 @@ constexpr char OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX[] = "[OS][KERNEL] ALL
 constexpr char OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX[] = "[OS][KERNEL] RESERVED_FRAMES=";
 constexpr char OS_KERNEL_MAIN_PAGING_READY_MESSAGE[] = "[OS][KERNEL] PAGING_READY\r\n";
 constexpr char OS_KERNEL_MAIN_PAGING_ROOT_PREFIX[] = "[OS][KERNEL] PAGING_ROOT=";
+constexpr char OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_READY_MESSAGE[] =
+    "[OS][KERNEL] PAGE_TABLE_RECLAIM_READY\r\n";
+constexpr char OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL1_TABLE_COUNT_PREFIX[] =
+    "[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL1_TABLES=";
+constexpr char OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL2_TABLE_COUNT_PREFIX[] =
+    "[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL2_TABLES=";
+constexpr char OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL3_TABLE_COUNT_PREFIX[] =
+    "[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL3_TABLES=";
+constexpr char OS_KERNEL_MAIN_PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLE_COUNT_PREFIX[] =
+    "[OS][KERNEL] PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES=";
+constexpr char OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] PAGE_TABLE_RECLAIM_SELF_TEST_PASSED\r\n";
 constexpr char OS_KERNEL_MAIN_DIRECT_MAP_BASE_PREFIX[] = "[OS][KERNEL] DIRECT_MAP_BASE=";
 constexpr char OS_KERNEL_MAIN_DIRECT_MAP_MAPPED_BYTES_PREFIX[] =
     "[OS][KERNEL] DIRECT_MAP_MAPPED_BYTES=";
@@ -469,6 +481,17 @@ void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
                          statistics.page_table_root_physical_address);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL1_TABLE_COUNT_PREFIX,
+                         statistics.page_table_reclaimed_level1_table_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL2_TABLE_COUNT_PREFIX,
+                         statistics.page_table_reclaimed_level2_table_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL3_TABLE_COUNT_PREFIX,
+                         statistics.page_table_reclaimed_level3_table_count);
+    WriteRequiredHexLine(serial_port,
+                         OS_KERNEL_MAIN_PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLE_COUNT_PREFIX,
+                         statistics.page_table_retained_shared_level3_table_count);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_SELF_TEST_PASSED_MESSAGE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_BASE_PREFIX,
                          OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_MAPPED_BYTES_PREFIX,

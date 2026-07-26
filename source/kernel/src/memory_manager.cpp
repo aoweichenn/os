@@ -78,6 +78,22 @@ constexpr uint64_t OS_KERNEL_MEMORY_KVA_SELF_TEST_LAST_GUARD_PAGE_OFFSET =
     OS_KERNEL_MEMORY_KVA_SELF_TEST_RANGE_PAGE_COUNT - OS_KERNEL_MEMORY_KVA_SINGLE_UNIT;
 constexpr uint64_t OS_KERNEL_MEMORY_KVA_SELF_TEST_FIRST_PATTERN = 0x4B564153454C4631ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_KVA_SELF_TEST_LAST_PATTERN = 0x4B564153454C4634ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_PHASE_COUNT = 2ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL1_TABLE_COUNT =
+    OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_PHASE_COUNT;
+constexpr uint64_t OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL2_TABLE_COUNT =
+    OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_PHASE_COUNT;
+constexpr uint64_t OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL3_TABLE_COUNT =
+    OS_KERNEL_MEMORY_KVA_EMPTY_VALUE;
+constexpr uint64_t
+    OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_RETAINED_LEVEL3_TABLE_COUNT =
+        OS_KERNEL_MEMORY_KVA_SINGLE_UNIT;
+constexpr uint64_t OS_KERNEL_MEMORY_KVA_SELF_TEST_EXPECTED_BUDDY_OPERATION_COUNT =
+    OS_KERNEL_MEMORY_KVA_SINGLE_UNIT +
+    OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL1_TABLE_COUNT /
+        OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_PHASE_COUNT +
+    OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL2_TABLE_COUNT /
+        OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_PHASE_COUNT;
 constexpr uint64_t OS_KERNEL_MEMORY_MINIMUM_PAGE_TABLE_PHYSICAL_LIMIT =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 
@@ -108,6 +124,13 @@ struct KernelVirtualAddressSelfTestStatistics final {
     uint64_t physical_address;
     uint64_t mapped_page_count;
     uint64_t guard_page_count;
+};
+
+struct PageTableReclamationSelfTestStatistics final {
+    uint64_t reclaimed_level1_table_count;
+    uint64_t reclaimed_level2_table_count;
+    uint64_t reclaimed_level3_table_count;
+    uint64_t retained_shared_level3_table_count;
 };
 
 extern "C" uint8_t os_kernel_image_start[];
@@ -151,6 +174,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
                 OS_KERNEL_MEMORY_MINIMUM_PAGE_TABLE_PHYSICAL_LIMIT,
             .invalidate_active_mappings = false,
         },
+        PageTableRootKind::KernelShared,
     };
     return manager;
 }
@@ -672,8 +696,11 @@ ValidateKernelMappings(const BootInfo &boot_info,
     return range.begin_address + page_offset * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 }
 
-[[nodiscard]] bool WarmUpKernelVirtualAddressPageTables() noexcept {
+[[nodiscard]] bool WarmUpKernelVirtualAddressPageTables(
+    PageTableReclamationSelfTestStatistics &page_table_statistics) noexcept {
+    page_table_statistics = PageTableReclamationSelfTestStatistics{};
     KernelVirtualAddressAllocator &virtual_address_allocator = GetKernelVirtualAddressAllocator();
+    const PhysicalFrameAllocatorStatistics frames_before_warmup = FrameAllocator().Statistics();
     KernelVirtualAddressRange warmup_range{};
     if (virtual_address_allocator.TryAllocate(OS_KERNEL_MEMORY_KVA_WARMUP_PAGE_COUNT,
                                               OS_KERNEL_MEMORY_KVA_WARMUP_ALIGNMENT_PAGE_COUNT,
@@ -710,20 +737,50 @@ ValidateKernelMappings(const BootInfo &boot_info,
                         !mapping.permissions.user_accessible;
     }
 
+    PageTableUnmapResult unmap_result{};
     const bool mapping_released =
         mapping_created &&
-        GetPageTableManager().UnmapPage(warmup_range.begin_address) == PageTableStatus::Succeeded;
+        GetPageTableManager().UnmapPage(warmup_range.begin_address, unmap_result) ==
+            PageTableStatus::Succeeded;
     const bool frame_released =
         FrameAllocator().Release(warmup_frame) == PhysicalFrameAllocatorStatus::Succeeded;
     const bool range_released = virtual_address_allocator.TryRelease(warmup_range) ==
                                 KernelVirtualAddressAllocatorStatus::Succeeded;
-    return mapping_valid && mapping_released && frame_released && range_released;
+    PageMapping ignored_mapping{};
+    const bool mapping_absent =
+        GetPageTableManager().QueryPage(warmup_range.begin_address, ignored_mapping) ==
+        PageTableStatus::NotMapped;
+    const PhysicalFrameAllocatorStatistics frames_after_warmup = FrameAllocator().Statistics();
+    const PageTableReclamationSelfTestStatistics candidate_statistics{
+        .reclaimed_level1_table_count = unmap_result.reclaimed_level1_table_count,
+        .reclaimed_level2_table_count = unmap_result.reclaimed_level2_table_count,
+        .reclaimed_level3_table_count = unmap_result.reclaimed_level3_table_count,
+        .retained_shared_level3_table_count =
+            frames_after_warmup.allocated_frame_count - frames_before_warmup.allocated_frame_count,
+    };
+    const bool statistics_valid =
+        candidate_statistics.reclaimed_level1_table_count == OS_KERNEL_MEMORY_KVA_SINGLE_UNIT &&
+        candidate_statistics.reclaimed_level2_table_count == OS_KERNEL_MEMORY_KVA_SINGLE_UNIT &&
+        candidate_statistics.reclaimed_level3_table_count == OS_KERNEL_MEMORY_KVA_EMPTY_VALUE &&
+        candidate_statistics.retained_shared_level3_table_count ==
+            OS_KERNEL_MEMORY_KVA_SINGLE_UNIT &&
+        frames_after_warmup.free_frame_count + OS_KERNEL_MEMORY_KVA_SINGLE_UNIT ==
+            frames_before_warmup.free_frame_count &&
+        frames_after_warmup.reserved_frame_count == frames_before_warmup.reserved_frame_count;
+    if (mapping_valid && mapping_released && frame_released && range_released && mapping_absent &&
+        statistics_valid) {
+        page_table_statistics = candidate_statistics;
+        return true;
+    }
+    return false;
 }
 
 [[nodiscard]] bool RunKernelVirtualAddressSelfTest(
-    KernelVirtualAddressSelfTestStatistics &self_test_statistics) noexcept {
+    KernelVirtualAddressSelfTestStatistics &self_test_statistics,
+    PageTableReclamationSelfTestStatistics &page_table_statistics) noexcept {
     self_test_statistics = KernelVirtualAddressSelfTestStatistics{};
-    if (!WarmUpKernelVirtualAddressPageTables()) {
+    page_table_statistics = PageTableReclamationSelfTestStatistics{};
+    if (!WarmUpKernelVirtualAddressPageTables(page_table_statistics)) {
         return false;
     }
 
@@ -819,10 +876,19 @@ ValidateKernelMappings(const BootInfo &boot_info,
          remaining_mapping_count > OS_KERNEL_MEMORY_KVA_EMPTY_VALUE; --remaining_mapping_count) {
         const uint64_t mapped_page_index =
             remaining_mapping_count - OS_KERNEL_MEMORY_KVA_SINGLE_UNIT;
+        PageTableUnmapResult unmap_result{};
         const bool mapping_released =
-            GetPageTableManager().UnmapPage(KernelVirtualPageAddress(
-                virtual_range, OS_KERNEL_MEMORY_KVA_SELF_TEST_FIRST_MAPPED_PAGE_OFFSET +
-                                   mapped_page_index)) == PageTableStatus::Succeeded;
+            GetPageTableManager().UnmapPage(
+                KernelVirtualPageAddress(virtual_range,
+                                         OS_KERNEL_MEMORY_KVA_SELF_TEST_FIRST_MAPPED_PAGE_OFFSET +
+                                             mapped_page_index),
+                unmap_result) == PageTableStatus::Succeeded;
+        page_table_statistics.reclaimed_level1_table_count +=
+            unmap_result.reclaimed_level1_table_count;
+        page_table_statistics.reclaimed_level2_table_count +=
+            unmap_result.reclaimed_level2_table_count;
+        page_table_statistics.reclaimed_level3_table_count +=
+            unmap_result.reclaimed_level3_table_count;
         cleanup_valid = mapping_released && cleanup_valid;
     }
     const bool physical_block_released =
@@ -847,9 +913,19 @@ ValidateKernelMappings(const BootInfo &boot_info,
            frames_after_test.reserved_frame_count == frames_before_test.reserved_frame_count &&
            buddy_after_test.active_block_count == buddy_before_test.active_block_count &&
            buddy_after_test.successful_allocation_count ==
-               buddy_before_test.successful_allocation_count + OS_KERNEL_MEMORY_KVA_SINGLE_UNIT &&
+               buddy_before_test.successful_allocation_count +
+                   OS_KERNEL_MEMORY_KVA_SELF_TEST_EXPECTED_BUDDY_OPERATION_COUNT &&
            buddy_after_test.release_count ==
-               buddy_before_test.release_count + OS_KERNEL_MEMORY_KVA_SINGLE_UNIT &&
+               buddy_before_test.release_count +
+                   OS_KERNEL_MEMORY_KVA_SELF_TEST_EXPECTED_BUDDY_OPERATION_COUNT &&
+           page_table_statistics.reclaimed_level1_table_count ==
+               OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL1_TABLE_COUNT &&
+           page_table_statistics.reclaimed_level2_table_count ==
+               OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL2_TABLE_COUNT &&
+           page_table_statistics.reclaimed_level3_table_count ==
+               OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_LEVEL3_TABLE_COUNT &&
+           page_table_statistics.retained_shared_level3_table_count ==
+               OS_KERNEL_MEMORY_PAGE_TABLE_RECLAIM_SELF_TEST_EXPECTED_RETAINED_LEVEL3_TABLE_COUNT &&
            virtual_addresses_after_test.allocated_page_count == OS_KERNEL_MEMORY_KVA_EMPTY_VALUE &&
            virtual_addresses_after_test.reserved_page_count ==
                OS_KERNEL_MEMORY_KVA_PERMANENT_GUARD_PAGE_COUNT &&
@@ -1127,7 +1203,9 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         return KernelMemoryInitializationStatus::KvaInitializationFailed;
     }
     KernelVirtualAddressSelfTestStatistics kva_self_test_statistics{};
-    if (!RunKernelVirtualAddressSelfTest(kva_self_test_statistics)) {
+    PageTableReclamationSelfTestStatistics page_table_self_test_statistics{};
+    if (!RunKernelVirtualAddressSelfTest(kva_self_test_statistics,
+                                         page_table_self_test_statistics)) {
         return KernelMemoryInitializationStatus::KvaSelfTestFailed;
     }
     if (GetKernelStackManager().Initialize(kernel_stack_storage,
@@ -1176,6 +1254,14 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         .allocated_frame_count = frame_statistics.allocated_frame_count,
         .reserved_frame_count = frame_statistics.reserved_frame_count,
         .page_table_root_physical_address = GetPageTableManager().RootPhysicalAddress(),
+        .page_table_reclaimed_level1_table_count =
+            page_table_self_test_statistics.reclaimed_level1_table_count,
+        .page_table_reclaimed_level2_table_count =
+            page_table_self_test_statistics.reclaimed_level2_table_count,
+        .page_table_reclaimed_level3_table_count =
+            page_table_self_test_statistics.reclaimed_level3_table_count,
+        .page_table_retained_shared_level3_table_count =
+            page_table_self_test_statistics.retained_shared_level3_table_count,
         .heap_capacity_bytes = heap_statistics.capacity_bytes,
         .heap_consumed_bytes = heap_statistics.consumed_bytes,
         .heap_active_allocation_count = heap_statistics.allocation_count,
@@ -1252,7 +1338,8 @@ KernelStackManager &GetKernelStackManager() noexcept {
 }
 
 KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept {
-    PageTableManager process_page_table{FrameAllocator(), ActivePageTableMemoryAccess()};
+    PageTableManager process_page_table{FrameAllocator(), ActivePageTableMemoryAccess(),
+                                        PageTableRootKind::Process};
     if (process_page_table.InitializeProcessRoot(GetPageTableManager().RootPhysicalAddress()) !=
         PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageTableCreationFailed;
@@ -1269,7 +1356,7 @@ KernelUserPageStatus DestroyUserPageTable(const uint64_t root_physical_address) 
         return KernelUserPageStatus::InvalidPageTableRoot;
     }
     PageTableManager process_page_table{FrameAllocator(), root_physical_address,
-                                        ActivePageTableMemoryAccess()};
+                                        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
     return process_page_table.ReleaseProcessRoot() == PageTableStatus::Succeeded
                ? KernelUserPageStatus::Succeeded
                : KernelUserPageStatus::PageTableDestructionFailed;
@@ -1301,7 +1388,7 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t root_physical_address
         .cache_disabled = false,
     };
     PageTableManager process_page_table{FrameAllocator(), root_physical_address,
-                                        ActivePageTableMemoryAccess()};
+                                        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
     if (process_page_table.MapPage(virtual_address, frame.physical_address, permissions) !=
         PageTableStatus::Succeeded) {
         static_cast<void>(FrameAllocator().Release(frame));
@@ -1322,7 +1409,7 @@ KernelUserPageStatus ReleaseUserPage(const uint64_t root_physical_address,
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
     PageTableManager process_page_table{FrameAllocator(), root_physical_address,
-                                        ActivePageTableMemoryAccess()};
+                                        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
     PageMapping mapping{};
     if (process_page_table.QueryPage(virtual_address, mapping) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageNotMapped;
@@ -1347,8 +1434,12 @@ PageTableStatus QueryAddressSpacePage(const uint64_t root_physical_address,
         (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return PageTableStatus::NotInitialized;
     }
+    const PageTableRootKind root_kind =
+        root_physical_address == GetPageTableManager().RootPhysicalAddress()
+            ? PageTableRootKind::KernelShared
+            : PageTableRootKind::Process;
     PageTableManager page_table{FrameAllocator(), root_physical_address,
-                                ActivePageTableMemoryAccess()};
+                                ActivePageTableMemoryAccess(), root_kind};
     return page_table.QueryPage(virtual_address, mapping);
 }
 

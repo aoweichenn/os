@@ -288,8 +288,9 @@ E：持久与冻结 & v1.16--v1.18 & 异步块层、ordered journal、ABI 与发
 对象如何释放”和“内核虚拟区间如何安排”。v1.1 增加 buddy、可释放 kernel
 heap/type cache、KVA allocator、动态 guard stack 与中间页表回收。
 
-已经闭环的六个增量分别是动态 RAM/direct-map、64 KiB 可回收 kernel heap、
-双位图 buddy、固定尺寸 type cache、KVA allocator 和动态内核栈。heap
+已经闭环的七个增量分别是动态 RAM/direct-map、64 KiB 可回收 kernel heap、
+双位图 buddy、固定尺寸 type cache、KVA allocator、动态内核栈和按根所有权
+回收页表空分支。heap
 以边界标记、best-fit、双向合并
 和 100000 步模型证明
 字节块生命周期；buddy 在同一页状态机上提供 order 0 兼容路径、连续块、
@@ -304,10 +305,17 @@ not-present guard。终止后先回到永久启动栈安全点，销毁顺序固
 失效 TLB、清零并释放物理页、归还 KVA。单元、集成、100000 步随机模型和
 正常/\#UD/\#PF 三条 QEMU 路径都要求累计创建等于销毁、活动栈归零。
 
+页表管理器进一步区分 \code{Exclusive}、\code{KernelShared} 与
+\code{Process} 根。最后一张 4 KiB 叶撤销后，独占根可以回收 PT、PD 和
+PDPT；共享内核根回收低两级但保留仍可能被进程 PML4 引用的 PDPT；进程根
+拒绝修改借用分支。映射途中帧耗尽会恢复父项完整原值和 U/S 位，并逆序释放
+新表。新增三项测试使完整集合达到 92 项，QEMU 两段事务稳定回收两张 PT、
+两张 PD，并有意保留一张共享 PDPT。
+
 本版本刻意保留四 PCB 和静态用户演示通路，但栈资源本身已先完成动态迁移。
 若在 Process/Thread 尚不存在时删除 PCB，主分支会落入既没有旧对象也没有
 新对象的真空。v1.2 对等验收通过后再迁移调度对象所有者；v1.1 尚余的资源
-闭环是空 PT、PD 和 PDPT 回收。
+闭环是通用引用计数、可组合的作用域回滚与资源快照。
 
 \paragraph{v1.2：调度 Thread，并补全扩展现场}
 

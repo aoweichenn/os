@@ -26,6 +26,7 @@ KernelStackTestEnvironment::KernelStackTestEnvironment() noexcept
                   OS_TEST_KERNEL_STACK_ENVIRONMENT_PHYSICAL_MEMORY_SIZE_BYTES,
               .invalidate_active_mappings = false,
           },
+          kernel::PageTableRootKind::KernelShared,
       },
       stack_manager_{
           this->frame_allocator_,

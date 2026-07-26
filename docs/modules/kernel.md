@@ -197,6 +197,28 @@ present、writable、user 和物理地址；叶项另外编码 NX。映射拒绝
 `INVLPG`；切换 CR3 刷新当前地址空间的普通 TLB 项。当前单核启动阶段不需要
 TLB shootdown。
 
+页表项本身没有所有权字段，而进程根会复制内核高半 PML4 项，因此管理器不能
+只根据“表为空”决定释放。构造时必须显式选择：
+
+| 根类型 | 可修改范围 | 空分支回收边界 |
+| --- | --- | --- |
+| `Exclusive` | 全地址空间 | PT、PD、PDPT 均可回收 |
+| `KernelShared` | 内核根拥有的映射 | 回收 PT、PD；保留可能被进程根借用的 PDPT |
+| `Process` | 用户程序与用户栈分支 | 只回收进程拥有分支；借用分支拒绝修改 |
+
+`UnmapPage` 先只读走完整路径，验证子表物理地址范围、4 KiB 对齐、精确
+order-0 frame ownership、无祖先环，并要求待回收表除目标项外的全部原始
+64 位表项为零。预检失败不修改 PTE、TLB 或分配器；提交后只对目标叶执行
+一次 `INVLPG`，再按 PT、PD、PDPT 从子到父解除父项并释放表帧。
+`PageTableUnmapResult` 分层返回本次实际回收数量。
+
+`MapPage` 与 `MapLargePage` 也记录每次父项修改和新表帧。任一级申请失败时
+恢复父项原值（包括因 user 映射提升的 U/S 位），并逆序归还本事务创建的表，
+不会留下半建立空分支。`QueryPage` 使用同一结构校验并正确叠加 4 KiB 或
+2 MiB 页内偏移。进程根最终递归销毁只遍历进程拥有的用户分支，不追入复制
+来的共享内核子树。完整决策见
+[ADR 0026](../adr/0026-owned-page-table-branch-reclamation.md)。
+
 ### 可回收内核堆
 
 v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.1 保留同一
@@ -252,8 +274,10 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 让上层对象同时证明地址区间仍由活动 allocation 持有。目标自检建立双 guard
 六页区间，只映射
 中间四页并真实写回；清理必须按 unmap、buddy block、KVA 顺序完成。实现、
-页表暖机边界和后续迁移见
-[ADR 0024](../adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+虚拟区间取舍见
+[ADR 0024](../adr/0024-reclaimable-kernel-virtual-address-allocator.md)，
+共享页表回收边界见
+[ADR 0026](../adr/0026-owned-page-table-branch-reclamation.md)。
 
 ### 动态内核栈管理器
 
@@ -463,6 +487,12 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] BUDDY_SELF_TEST_PASSED
 [OS][KERNEL] PAGING_READY
 [OS][KERNEL] PAGING_ROOT=0x...
+[OS][KERNEL] PAGE_TABLE_RECLAIM_READY
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL1_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL2_TABLES=0x0000000000000002
+[OS][KERNEL] PAGE_TABLE_RECLAIMED_LEVEL3_TABLES=0x0000000000000000
+[OS][KERNEL] PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLES=0x0000000000000001
+[OS][KERNEL] PAGE_TABLE_RECLAIM_SELF_TEST_PASSED
 [OS][KERNEL] MEMORY_PERMISSIONS_VALID
 [OS][KERNEL] HEAP_READY
 [OS][KERNEL] HEAP_CAPACITY_BYTES=0x...
@@ -569,8 +599,9 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
   per-CPU page list 和分段 `vmemmap` 以后扩展。
 - 内核堆已支持释放与合并，type cache 已支持固定容量单后备块，KVA 已管理
   32 TiB 独立窗口；堆后备区仍固定为 64 KiB，缓存尚不能跨多 slab 增长，
-  KVA 描述符存储固定为 256 项且尚无并发索引或内存压力回收；页表取消映射
-  也不回收空中间表。
+  KVA 描述符存储固定为 256 项且尚无并发索引或内存压力回收。页表已按根
+  所有权回收空分支，但单 BSP 阶段尚无 PCID、远端 TLB shootdown、RCU
+  页表读取者或并发拆表。
 - 当前进程内核栈已动态化并支持双 guard 与安全点回收，但仍固定为 16 KiB，
   管理器由单 BSP 串行调用，尚无高水位统计、per-CPU 缓存或远端 TLB
   shootdown。

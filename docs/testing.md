@@ -352,9 +352,27 @@ QEMU 自行异常退出仍视为失败。
   后备，只映射中间四页并真实写回。清理顺序固定为 unmap、释放物理块、释放
   KVA；最终活动页为零、保留页为一、两次申请与两次释放守恒，才接受
   `KVA_SELF_TEST_PASSED`；
-- 当前 `UnmapPage` 不回收空中间页表。目标自检先用一页暖机并把留下的三页
-  计入基础设施基线，再证明主事务没有泄漏数据页；页表回收仍由后续增量独立
-  验收，不能用放宽页帧基线掩盖。
+- 目标自检先用一页暖机验证共享边界：撤销时回收 PT 与 PD，保留可能仍由
+  进程根引用的共享 PDPT；主事务最后一页撤销时再次回收 PT 与 PD。两段事务
+  合计必须回收两张 PT、两张 PD、零张 PDPT，并精确保留一张共享 PDPT。
+
+### 页表空分支所有权与回滚
+
+- 单元测试分别建立 `Exclusive`、`KernelShared` 与 `Process` 根，覆盖重复
+  初始化、单叶完整级联、相邻叶共享表、共享 PDPT 保留、进程程序/栈分支、
+  借用分支拒绝、无效物理地址、查询祖先环、递归销毁祖先回指和 order-0
+  所有权损坏；销毁拒绝后修复原项必须能够在同一环境中成功重试；
+- 映射耗尽故障注入必须证明输出和既有父项不变，新建表帧全部逆序释放，
+  因用户叶映射提升的祖先 U/S 位也恢复原值；
+- 集成测试连续执行 128 次共享根生命周期与 64 次进程根生命周期；每轮都
+  核对回收层级、表帧统计、共享边界和最终递归销毁，不允许用重建测试环境
+  隐藏累积泄漏；
+- 固定种子 `0x5047545245434C4D` 在 1024 个虚拟页上执行 100000 步随机
+  映射/撤销，覆盖四个 PML4 分支、每分支两个 PDPT 和多个 PD/PT。独立模型
+  从叶集合推导应存在的表数，每 257 步比较查询结果、回收层级、页帧统计和
+  管理器完整性，最后排空；
+- QEMU 协议精确解析四个回收计数和一个通过标记。映射/查询/撤销热路径不
+  逐项打印日志，避免十万步模型和进程退出路径冲刷真正的阶段边界。
 
 ### 动态内核栈生命周期
 
@@ -366,7 +384,8 @@ QEMU 自行异常退出仍视为失败。
   损坏；
 - 集成测试创建四个栈，把真实 176 字节用户特权帧放在每个栈顶，再从克隆的
   独立进程 CR3 查询共享高半映射，证明 guard 缺席、数据页身份和 supervisor
-  权限不只在内核根中成立；逆序销毁后 frame 与 KVA 恢复暖机基线；
+  权限不只在内核根中成立；逆序销毁后 frame 与 KVA 恢复空闲基线，共享
+  根只保留一张仍可被进程 PML4 引用的 PDPT；
 - 固定种子 `0x4B535441434B524E` 在 4096 页独立 best-fit 所有权模型上执行
   100000 步创建/销毁，使用 64 个槽位；每 257 步比较活动、累计、峰值、
   映射页、guard 页、KVA 页和物理帧统计并运行完整校验，最后排空；
@@ -424,18 +443,21 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_type_cache_unit_tests` | 单元 | 固定尺寸缓存布局、耗尽、精确释放、LIFO、最小槽和销毁 |
 | `os_kernel_virtual_address_allocator_unit_tests` | 单元 | KVA 保留、best-fit、绝对对齐、精确所有权查询、释放、两类耗尽与损坏检测 |
 | `os_kernel_stack_manager_unit_tests` | 单元 | 动态栈双 guard、清零、权限、回滚、耗尽，以及物理/KVA/PTE 所有权破坏、修复和安全销毁 |
+| `os_kernel_page_table_reclamation_unit_tests` | 单元 | 三种根所有权、精确空表、级联回收、借用拒绝、失败回滚与损坏检测 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
 | `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 目标堆的混合对象、数据保持、耗尽与完整恢复 |
 | `os_kernel_type_cache_lifecycle_integration_tests` | 集成 | 三种对齐缓存共享堆、交错释放与乱序销毁恢复 |
 | `os_kernel_virtual_address_mapping_lifecycle_integration_tests` | 集成 | KVA、物理帧、页表、双 guard 与逆序回收 |
 | `os_kernel_stack_lifecycle_integration_tests` | 集成 | 四栈、用户特权帧、独立进程 CR3 共享高半映射与安全点式逆序回收 |
+| `os_kernel_page_table_reclamation_lifecycle_integration_tests` | 集成 | 128 次共享根、64 次进程根循环与递归销毁后的表帧守恒 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
 | `os_kernel_buddy_frame_allocator_randomized_tests` | 随机 | 固定种子 100000 步 buddy 与逐页参考模型 |
 | `os_kernel_heap_randomized_tests` | 随机 | 固定种子 100000 步分配/释放与独立活动对象模型 |
 | `os_kernel_type_cache_randomized_tests` | 随机 | 固定种子 100000 步槽申请/释放与独立活动记录 |
 | `os_kernel_virtual_address_allocator_randomized_tests` | 随机 | 固定种子 100000 步 KVA 与独立逐页 best-fit 模型 |
 | `os_kernel_stack_manager_randomized_tests` | 随机 | 固定种子 100000 步动态栈创建/销毁与 4096 页独立所有权模型 |
+| `os_kernel_page_table_reclamation_randomized_tests` | 随机 | 固定种子 100000 步映射/撤销与独立层级表数量模型 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
@@ -493,14 +515,14 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
-| `os_cpp_identifier_naming_check` | 集成 | 155 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
+| `os_cpp_identifier_naming_check` | 集成 | 159 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 89 项 CTest。最新三项分别覆盖动态内核栈单元失败语义、独立进程 CR3
-组合生命周期和 100000 步固定种子逐页所有权模型。命名门禁使用编译数据库和 Clang AST
+当前共 92 项 CTest。最新三项分别覆盖页表根所有权与失败语义、跨共享/进程根
+组合生命周期和 100000 步固定种子层级表模型。命名门禁使用编译数据库和 Clang AST
 区分标识符种类；
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护

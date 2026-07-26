@@ -28,7 +28,8 @@ constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_MULTIPLIER = 6364136223846793005U
 constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_INCREMENT = 1442695040888963407ULL;
 constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_CREATE_MASK = 0x8000000000000000ULL;
 constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_RESERVED_PAGE_INDEX = 0ULL;
-constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_EXPECTED_INFRASTRUCTURE_FRAME_COUNT = 4ULL;
+constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_IDLE_INFRASTRUCTURE_FRAME_COUNT = 2ULL;
+constexpr uint64_t OS_TEST_KERNEL_STACK_RANDOM_ACTIVE_INFRASTRUCTURE_FRAME_COUNT = 4ULL;
 
 struct ModelStack final {
     uint64_t begin_page_index;
@@ -82,6 +83,10 @@ void SetModelRange(bool *owned_pages, const uint64_t begin_page_index, const boo
         environment.VirtualAddressAllocator().Statistics();
     const os::kernel::PhysicalFrameAllocatorStatistics frame_statistics =
         environment.FrameAllocator().Statistics();
+    const uint64_t expected_infrastructure_frame_count =
+        active_stack_count == OS_TEST_KERNEL_STACK_RANDOM_EMPTY_VALUE
+            ? OS_TEST_KERNEL_STACK_RANDOM_IDLE_INFRASTRUCTURE_FRAME_COUNT
+            : OS_TEST_KERNEL_STACK_RANDOM_ACTIVE_INFRASTRUCTURE_FRAME_COUNT;
     return stack_statistics.active_stack_count == active_stack_count &&
            stack_statistics.active_mapped_page_count ==
                active_stack_count * os::kernel::OS_KERNEL_STACK_MAPPED_PAGE_COUNT &&
@@ -97,7 +102,7 @@ void SetModelRange(bool *owned_pages, const uint64_t begin_page_index, const boo
            virtual_address_statistics.reserved_page_count ==
                OS_TEST_KERNEL_STACK_RANDOM_SINGLE_UNIT &&
            frame_statistics.allocated_frame_count ==
-               OS_TEST_KERNEL_STACK_RANDOM_EXPECTED_INFRASTRUCTURE_FRAME_COUNT +
+               expected_infrastructure_frame_count +
                    active_stack_count * os::kernel::OS_KERNEL_STACK_MAPPED_PAGE_COUNT &&
            environment.StackManager().Validate() == os::kernel::KernelStackManagerStatus::Succeeded;
 }

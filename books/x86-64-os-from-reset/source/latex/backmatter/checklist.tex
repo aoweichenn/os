@@ -59,6 +59,14 @@
         如何组成六页布局，为什么虚拟连续不要求物理帧连续；
   \item 终止代码为什么不能销毁当前正在使用的栈，永久启动栈安全点如何用
         真实 RSP 证明可以回收；
+  \item PML4 项按值复制后为什么会共享同一 PDPT，以及“空”和“独占”为何
+        是两个不同的页表回收条件；
+  \item \code{Exclusive}、\code{KernelShared}、\code{Process} 三种根
+        如何限定可修改分支与 PT/PD/PDPT 回收边界；
+  \item 为什么空表必须检查其余 511 个完整 64 位项，撤销为何先预检再从
+        子到父断开和释放；
+  \item 映射途中耗尽时，\code{TableMutation} 如何恢复父项原值、U/S 位和
+        新建表帧；
   \item 单元、集成、固定种子模型对照和 QEMU 执行各自证明什么；
   \item PIC、I/O APIC、本地 APIC 和 RFLAGS.IF 分别处于哪一层；
   \item 为什么没有 BIOS 时必须显式处理 \code{IA32\_APIC\_BASE[11]}；
@@ -71,7 +79,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 89 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+  \item 92 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
         调度/IPC/文件系统/Shell 性质与整机异步事件；
   \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
   \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；

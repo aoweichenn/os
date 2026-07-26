@@ -41,7 +41,8 @@ constexpr uint64_t OS_TEST_KVA_MAPPING_FIRST_DATA_PAGE_OFFSET = 1ULL;
 constexpr uint64_t OS_TEST_KVA_MAPPING_DATA_PAGE_COUNT = 4ULL;
 constexpr uint64_t OS_TEST_KVA_MAPPING_LAST_GUARD_PAGE_OFFSET =
     OS_TEST_KVA_MAPPING_RANGE_PAGE_COUNT - OS_TEST_KVA_MAPPING_SINGLE_UNIT;
-constexpr uint64_t OS_TEST_KVA_MAPPING_EXPECTED_PAGE_TABLE_FRAME_COUNT = 4ULL;
+constexpr uint64_t OS_TEST_KVA_MAPPING_EXPECTED_PAGE_TABLE_FRAME_COUNT = 2ULL;
+constexpr uint64_t OS_TEST_KVA_MAPPING_EXPECTED_RECLAIMED_TABLE_FRAME_COUNT = 2ULL;
 constexpr uint64_t OS_TEST_KVA_MAPPING_FIRST_PATTERN = 0x4B56414D41504631ULL;
 constexpr uint64_t OS_TEST_KVA_MAPPING_LAST_PATTERN = 0x4B56414D41504C34ULL;
 
@@ -92,6 +93,7 @@ int main() {
                 OS_TEST_KVA_MAPPING_PHYSICAL_MEMORY_SIZE_BYTES,
             .invalidate_active_mappings = false,
         },
+        os::kernel::PageTableRootKind::KernelShared,
     };
     const bool page_table_initialized =
         frame_allocator_initialized &&
@@ -191,13 +193,15 @@ int main() {
     test_context.Expect(mappings_valid, OS_TEST_KVA_MAPPING_QUERY);
 
     bool cleanup_valid = true;
+    os::kernel::PageTableUnmapResult cleanup_result{};
     for (uint64_t mapped_page_count = mapped_data_page_count;
          mapped_page_count > OS_TEST_KVA_MAPPING_EMPTY_VALUE; --mapped_page_count) {
         const uint64_t data_page_index = mapped_page_count - OS_TEST_KVA_MAPPING_SINGLE_UNIT;
         cleanup_valid =
-            page_table_manager.UnmapPage(VirtualPageAddress(
-                virtual_range, OS_TEST_KVA_MAPPING_FIRST_DATA_PAGE_OFFSET + data_page_index)) ==
-                os::kernel::PageTableStatus::Succeeded &&
+            page_table_manager.UnmapPage(
+                VirtualPageAddress(virtual_range,
+                                   OS_TEST_KVA_MAPPING_FIRST_DATA_PAGE_OFFSET + data_page_index),
+                cleanup_result) == os::kernel::PageTableStatus::Succeeded &&
             cleanup_valid;
     }
     for (uint64_t allocated_page_count = allocated_data_page_count;
@@ -216,6 +220,8 @@ int main() {
     const os::kernel::KernelVirtualAddressAllocatorStatistics virtual_addresses_after_lifecycle =
         virtual_address_allocator.Statistics();
     test_context.Expect(cleanup_valid &&
+                            cleanup_result.reclaimed_table_frame_count ==
+                                OS_TEST_KVA_MAPPING_EXPECTED_RECLAIMED_TABLE_FRAME_COUNT &&
                             frames_after_lifecycle.allocated_frame_count ==
                                 OS_TEST_KVA_MAPPING_EXPECTED_PAGE_TABLE_FRAME_COUNT &&
                             frames_after_lifecycle.free_frame_count +

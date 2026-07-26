@@ -167,6 +167,7 @@ int main() {
                 os::test::OS_TEST_KERNEL_STACK_ENVIRONMENT_PHYSICAL_MEMORY_SIZE_BYTES,
             .invalidate_active_mappings = false,
         },
+        os::kernel::PageTableRootKind::Process,
     };
     bool process_root_valid = process_page_table.InitializeProcessRoot(
                                   environment.PageTableManager().RootPhysicalAddress()) ==
