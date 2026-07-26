@@ -55,6 +55,10 @@
   \item 固定尺寸 type cache 的位图、槽内 LIFO 链、布局公式与销毁边界；
   \item KVA 为什么把 not-present 与 free 分开，以及 32 TiB 窗口、绝对
         页对齐、有序描述符和跨三层逆向回滚如何形成所有权协议；
+  \item 动态内核栈的 lower guard、四个 data 页、upper guard 和 TSS.RSP0
+        如何组成六页布局，为什么虚拟连续不要求物理帧连续；
+  \item 终止代码为什么不能销毁当前正在使用的栈，永久启动栈安全点如何用
+        真实 RSP 证明可以回收；
   \item 单元、集成、固定种子模型对照和 QEMU 执行各自证明什么；
   \item PIC、I/O APIC、本地 APIC 和 RFLAGS.IF 分别处于哪一层；
   \item 为什么没有 BIOS 时必须显式处理 \code{IA32\_APIC\_BASE[11]}；
@@ -67,7 +71,7 @@
   \item 内核 ATA PIO 自检为什么保持 \code{nIEN}，又证明了什么所有权；
   \item 为什么 IRQ0 不逐 tick 打日志，宿主时间与来宾时间有何不同；
   \item QMP \code{sendkey} 为什么是硬件输入而不是来宾驱动替代；
-  \item 86 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
+  \item 89 项 CTest 如何分别覆盖模型、组合、ELF ABI、标识符 AST/词法门禁、
         调度/IPC/文件系统/Shell 性质与整机异步事件；
   \item CPL、DPL、RPL 如何共同决定 Ring 3 代码段是否合法；
   \item 用户代码 RX、数据/栈 RW/NX 与四级 U/S 传播为何必须同时成立；

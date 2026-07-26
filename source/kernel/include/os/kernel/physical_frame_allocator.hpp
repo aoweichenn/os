@@ -98,6 +98,7 @@ class PhysicalFrameAllocator final {
                          uint64_t maximum_address_exclusive, PhysicalFrameBlock &block) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus Release(PhysicalFrame frame) noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus ReleaseBlock(PhysicalFrameBlock block) noexcept;
+    [[nodiscard]] bool OwnsAllocation(PhysicalFrame frame) const noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatistics Statistics() const noexcept;
     [[nodiscard]] PhysicalFrameBuddyStatistics BuddyStatistics() const noexcept;
     [[nodiscard]] PhysicalFrameAllocatorStatus ValidateBuddy() const noexcept;

@@ -11,6 +11,8 @@ constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_INITIALIZE = "有效内存图
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_RESERVE = "保留区必须从空闲帧中扣除";
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_ORDER = "首次分配必须返回首个未保留页";
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_RELEASE = "释放后的页必须可以再次分配";
+constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_OWNERSHIP =
+    "精确所有权查询必须只在单页活动分配期间成立";
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_DOUBLE_RELEASE = "重复释放必须被拒绝";
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_EXHAUSTION = "耗尽全部空闲页后必须返回失败";
 constexpr std::string_view OS_TEST_FRAME_ALLOCATOR_RESERVED_RELEASE = "保留页不能通过释放接口回收";
@@ -95,9 +97,12 @@ int main() {
         allocator.Allocate(first_frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
             first_frame.physical_address == OS_TEST_FRAME_ALLOCATOR_EXPECTED_FIRST_ADDRESS,
         OS_TEST_FRAME_ALLOCATOR_ORDER);
-    test_context.Expect(allocator.Release(first_frame) ==
-                            os::kernel::PhysicalFrameAllocatorStatus::Succeeded,
-                        OS_TEST_FRAME_ALLOCATOR_RELEASE);
+    const bool first_frame_owned = allocator.OwnsAllocation(first_frame);
+    const bool first_frame_released =
+        allocator.Release(first_frame) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
+    test_context.Expect(first_frame_owned && first_frame_released &&
+                            !allocator.OwnsAllocation(first_frame),
+                        OS_TEST_FRAME_ALLOCATOR_OWNERSHIP);
     os::kernel::PhysicalFrame recycled_frame{};
     test_context.Expect(allocator.Allocate(recycled_frame) ==
                                 os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&

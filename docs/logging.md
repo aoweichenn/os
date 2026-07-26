@@ -148,6 +148,40 @@ KVA 同样采用一次提交后的有界快照，不记录每次区间扫描和�
 `KVA_SELF_TEST_PASSED` 同时表示四个数据页的 RW/NX 映射、真实写回、逆序
 unmap/物理页/KVA 回收和统计校验通过。
 
+动态内核栈日志分为“配置提交、每进程稳定身份、运行结束汇总”三段：
+
+```text
+[OS][KERNEL] KERNEL_STACK_MANAGER_READY
+[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000100
+[OS][KERNEL] KERNEL_STACK_MAPPED_PAGES=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_GUARD_PAGES=0x0000000000000002
+[OS][KERNEL] KERNEL_STACK_SIZE_BYTES=0x0000000000004000
+
+[OS][KERNEL] PROCESS_KERNEL_STACK_LOWER_GUARD=0x...
+[OS][KERNEL] PROCESS_KERNEL_STACK_TOP=0x...
+[OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=0x...
+
+[OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
+[OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
+```
+
+配置只在管理器初始化和完整校验通过后打印一次。每进程三行只在 KVA、四个
+物理页、页表映射、用户地址空间和初始保存帧全部提交后打印；`TOP` 与
+`UPPER_GUARD` 数值相同，但分别表达初始 RSP 边界和上保护页起点。申请帧、
+清零、逐页 map/unmap、扫描槽位和安全点遍历均不打印，避免调度与退出路径
+刷屏。
+
+运行结束汇总在汇编回到永久启动栈、全部终止栈安全回收之后生成。正常路径
+必须是四次创建、四次销毁、峰值四栈/十六映射页且活动数为零；用户 `#UD`
+与 `#PF` 隔离镜像使用同一字段但数值为一。只有 frame、KVA 和管理器三组
+运行前后不变量同时成立，才输出 `KERNEL_STACK_RESOURCES_RECLAIMED`。QEMU
+协议对正常路径的配置/汇总次数和每进程地址次数做精确计数，并对三个地址和
+峰值做十六进制下界检查。
+
 ## v0.11 验收（历史基线）
 
 以下日志记录 v0.11 完成时的正常启动边界，保留用于历史回归。v1.0 的当前
@@ -290,6 +324,9 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 - `TYPE_CACHE_READY` 与 `KVA_ALLOCATOR_READY` 分别打印一次配置、最终状态和
   峰值；前者不逐对象打印，后者不逐区间、逐页表项或逐 TLB 失效打印。只有
   跨层回收全部提交后才输出对应 `SELF_TEST_PASSED`。
+- `KERNEL_STACK_MANAGER_READY` 只打印布局；进程提交后各打印一组三地址，
+  安全点回收完成后只打印一次累计/峰值与资源回收标记，不在上下文切换或
+  定时器 IRQ 中记录栈事件。
 
 写保护故障镜像使用 `FAULT_INJECTION=WRITE_PROTECTION`，随后必须报告向量
 14、错误码 `0x3` 和 CR2=`0xFFFF800000100000`。正常日志禁止出现任何

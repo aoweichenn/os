@@ -4,6 +4,7 @@
 #include "os/kernel/exception_frame.hpp"
 #include "os/kernel/file_system.hpp"
 #include "os/kernel/io_descriptor.hpp"
+#include "os/kernel/kernel_stack_manager.hpp"
 #include "os/kernel/physical_frame_allocator.hpp"
 #include "os/kernel/pipe.hpp"
 #include "os/kernel/process_scheduler.hpp"
@@ -28,6 +29,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     InvalidElf,
     AddressSpaceFailure,
     SchedulerFailure,
+    KernelStackFailure,
     ContextFrameFailure,
     PageTableActivationFailure,
     NoReadyProcess,
@@ -51,6 +53,9 @@ struct ProcessCreationResult final {
     uint64_t root_physical_address;
     uint64_t entry_virtual_address;
     uint64_t mapped_page_count;
+    uint64_t kernel_stack_lower_guard_address;
+    uint64_t kernel_stack_top_address;
+    uint64_t kernel_stack_upper_guard_address;
 };
 
 struct ProcessExecutionResult final {
@@ -87,6 +92,10 @@ struct ProcessRuntimeStatistics final {
     ProcessSchedulerStatistics scheduler;
     PhysicalFrameAllocatorStatistics frames_before_processes;
     PhysicalFrameAllocatorStatistics frames_after_processes;
+    KernelVirtualAddressAllocatorStatistics virtual_addresses_before_processes;
+    KernelVirtualAddressAllocatorStatistics virtual_addresses_after_processes;
+    KernelStackManagerStatistics kernel_stacks_before_processes;
+    KernelStackManagerStatistics kernel_stacks_after_processes;
     ProcessIpcStatistics ipc;
     ConsoleInputStatistics console_input;
     ProcessExecutionResult processes[OS_KERNEL_PROCESS_CAPACITY];

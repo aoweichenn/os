@@ -127,6 +127,17 @@ chips:
         internal_page_size_bytes: 2097152
         boundary_page_size_bytes: 4096
         excluded_regions: reserved-unknown-and-mmio
+      kernel_virtual_address_window:
+        virtual_base: 0xFFFFC90000000000
+        capacity_bytes: 0x0000200000000000
+        permanent_guard_page_count: 1
+        dynamic_kernel_stack:
+          range_page_count: 6
+          mapped_page_count: 4
+          mapped_size_bytes: 16384
+          lower_guard_page_count: 1
+          upper_guard_page_count: 1
+          permissions: supervisor-read-write-no-execute
       kernel_root_policy:
         null_page: not-present
         kernel_text: read-execute
@@ -187,7 +198,7 @@ chips:
       size_bytes: 104
       io_permission_bitmap_offset: 104
       stacks:
-        rsp0: privilege-transition-16-kib
+        rsp0: current-process-dynamic-16-kib-kva-stack
         ist1: double-fault-16-kib
         ist2: non-maskable-interrupt-16-kib
         ist3: machine-check-16-kib

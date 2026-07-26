@@ -156,6 +156,49 @@ function(os_add_kernel_memory_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     )
 endfunction()
 
+add_library(
+    os_kernel_stack_test_support
+    STATIC
+        support/cpp/kernel_stack_test_environment.cpp
+        support/cpp/kernel_stack_test_environment.hpp
+)
+target_include_directories(
+    os_kernel_stack_test_support
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/support/cpp"
+)
+target_link_libraries(
+    os_kernel_stack_test_support
+    PUBLIC
+        os_kernel_memory_model_host
+)
+target_compile_options(
+    os_kernel_stack_test_support
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
+function(os_add_kernel_stack_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_stack_test_support
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
 os_add_kernel_memory_test(
     os_kernel_physical_memory_map_unit_tests
     unit/kernel/physical_memory_map_test.cpp
@@ -239,6 +282,21 @@ os_add_kernel_memory_test(
 os_add_kernel_memory_test(
     os_kernel_virtual_address_allocator_randomized_tests
     randomized/kernel/kernel_virtual_address_allocator_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_stack_test(
+    os_kernel_stack_manager_unit_tests
+    unit/kernel/kernel_stack_manager_test.cpp
+    "unit"
+)
+os_add_kernel_stack_test(
+    os_kernel_stack_lifecycle_integration_tests
+    integration/boot/kernel_stack_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_stack_test(
+    os_kernel_stack_manager_randomized_tests
+    randomized/kernel/kernel_stack_manager_randomized_test.cpp
     "randomized"
 )
 

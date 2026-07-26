@@ -381,7 +381,9 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 高半区 0xFFFF888000000000
   └─ 64 TiB direct-map 容量：只映射 E820 普通 RAM
 高半区 0xFFFFC90000000000
-  └─ 32 TiB KVA 软件所有权窗口：首个 4 KiB 页永久保留
+  └─ 32 TiB KVA 软件所有权窗口
+       ├─ 首个 4 KiB 页永久保留
+       └─ 动态内核栈：lower guard + 4×RW/NX + upper guard
        ↓ 设置 EFER.NXE 与 CR0.WP
 内核 CR3 = 新 PML4 物理地址
 ```
@@ -396,13 +398,15 @@ Stage 1 CR3 = 0x10000（2 MiB 大页，低 64 MiB）
 高半区堆已经从 v0.6 单调模型升级为边界标记、best-fit、双向合并的可回收
 分配器；固定尺寸类型缓存又在其上建立单后备块、活动位图与槽内空闲链。
 KVA 现已用有序有主区间管理独立的 32 TiB 高半区窗口，使 not-present 页与
-“尚无软件所有者”不再混淆。页表管理器仍暂不回收单次 `UnmapPage` 后出现的
-空中间页表；该生命周期与动态内核栈属于 v1.1 后续闭环。历史取舍见
+“尚无软件所有者”不再混淆。当前四个进程内核栈已经迁移到该窗口，并在汇编
+返回永久启动栈后的安全点回收；页表管理器仍暂不回收单次 `UnmapPage` 后
+出现的空中间页表。历史取舍见
 [ADR 0009](adr/0009-fw-cfg-memory-map-and-kernel-page-tables.md)，当前实现见
 [ADR 0020](adr/0020-reclaimable-kernel-heap.md) 和
 [ADR 0022](adr/0022-bitmap-buddy-frame-allocator.md)，类型缓存与 KVA 分别见
-[ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md) 和
-[ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+[ADR 0023](adr/0023-heap-backed-fixed-size-type-cache.md)、
+[ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md) 和
+[ADR 0025](adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
 ## v0.7 传统中断与设备闭环
 
@@ -540,16 +544,21 @@ process PML4
 └─ [255] owned user stack subtree
 ```
 
-四个 PCB 使用固定数组，避免在调度热路径依赖尚不能释放的早期堆。每个 PCB
-关联独立 16 KiB Ring 0 栈，底部一页不映射。用户态 IRQ 到来时 CPU 从当前
-TSS.RSP0 选取该进程的栈；切换前若不更新 RSP0，下一个进程的系统调用会覆盖
-旧进程保存的现场。
+四个 PCB 仍使用固定数组，避免在 v1.2 对象模型完成前提前改写调度身份；
+其 Ring 0 栈已经不再是固定数组。每个活动 PCB 从 KVA 取得六页区间，使用
+四个独立物理页形成 16 KiB 栈，并在上下各保留一页 not-present guard。
+用户态 IRQ 到来时 CPU 从当前 TSS.RSP0 选取该进程的动态栈；切换前若不更新
+RSP0，下一个进程的系统调用会覆盖旧进程保存的现场。
 
 退出和异常采用同一资源顺序：记录终止原因，选择后继，切回内核 CR3，释放
-用户叶页和独占页表，再激活后继。最后一个进程结束时，汇编恢复
-`ExecuteProcesses` 启动前保存的内核调用链。正常 QEMU 路径比较进程创建前后
-页帧统计，避免把“状态变成 Terminated”误当作资源已回收。详细决策见
-[ADR 0012](adr/0012-preemptive-process-scheduling.md)。
+用户叶页和独占页表，再激活后继。当前 CPU 仍在终止栈上时只发布
+`Terminated`，绝不撤销该栈映射。最后一个进程结束或系统进入无 Ready 的
+等待状态时，汇编恢复 `ExecuteProcesses` 启动前保存的永久内核调用链；
+运行时确认当前 RSP 位于所有待回收栈之外，才逆序撤销叶映射、清零并释放
+物理页、归还 KVA。正常 QEMU 路径同时比较页帧、KVA 和栈管理器统计，避免
+把“状态变成 Terminated”误当作资源已回收。历史调度决策见
+[ADR 0012](adr/0012-preemptive-process-scheduling.md)，当前栈生命周期见
+[ADR 0025](adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
 ## v0.10 同步、阻塞/唤醒与有界管道
 
@@ -866,6 +875,41 @@ not-present。查询、真实写回通过后，按撤销映射、释放物理块
 顺序清理。最终活动 KVA 页为零、保留页为一、两次申请与两次释放守恒，才输出
 `KVA_SELF_TEST_PASSED`。完整决策见
 [ADR 0024](adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+
+## v1.1 动态内核栈与安全点回收
+
+动态内核栈是 KVA、buddy、页表、TSS 和调度器第一次长期组合成同一个运行时
+资源。一个栈的地址结构固定，所有权动态：
+
+```text
+六页连续 KVA 区间
+┌─────────────┬───────────────────────────────┬─────────────┐
+│ lower guard │ 4 个独立物理页，supervisor RW/NX │ upper guard │
+│ not-present │             16 KiB            │ not-present │
+└─────────────┴───────────────────────────────┴─────────────┘
+              ↑ mapped begin                  ↑ RSP0 / top
+```
+
+创建先申请六页 KVA，再逐页申请、清零和映射四个 order-0 帧。候选对象只有在
+双 guard、四个物理身份和权限全部通过后才写入槽；失败按叶映射、物理页、KVA
+的逆序回滚。四个物理页不要求连续，因为栈只需要虚拟连续，强制 order 2 会在
+碎片化内存中引入没有硬件依据的失败。
+
+进程 PML4 共享内核高半入口，所以 KVA 栈叶项对所有进程 CR3 可见，但四级
+U/S 链保持 supervisor。调度前从活动栈对象取得 top 写入 TSS.RSP0，保存的
+176 字节用户帧必须完整落在最后一个数据页中。栈地址不再由 PCB 索引计算。
+
+销毁不能发生在当前 RSP 所在栈上。退出路径先切回内核 CR3 并销毁用户地址
+空间，把调度项标记为 `Terminated`；汇编恢复永久启动栈后，C++ 安全点读取
+当前 RSP，再清理全部终止栈。完整校验同时证明精确 KVA allocation、双 guard
+缺席、四个精确 order-0 物理 allocation、四个叶映射、帧唯一性以及
+创建/销毁计数守恒。即使 PTE 仍指向原物理地址，只要 buddy 已经把该帧归还，
+校验也会在任何破坏性销毁动作之前拒绝。
+
+正常四进程路径的峰值是 4 个活动栈、16 个映射页和 8 个 guard 页；结束时
+三者归零，KVA 申请/释放与物理帧前后基线一致。用户 `#UD` 和 `#PF` 隔离
+镜像也必须走同一安全点回收。完整事务、失败语义和受控限制见
+[ADR 0025](adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
 ## 模块边界
 

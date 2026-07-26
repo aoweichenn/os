@@ -122,7 +122,7 @@ TSS 内存布局：
 
 | 偏移 | 宽度 | 字段 | 当前用途 |
 | ---: | ---: | --- | --- |
-| `0x04` | 64 | RSP0 | 当前进程 Ring 3→Ring 0 的 16 KiB 内核栈顶 |
+| `0x04` | 64 | RSP0 | 当前进程动态 16 KiB Ring 0 栈顶；上下各有一页 guard |
 | `0x0C` / `0x14` | 64 | RSP1 / RSP2 | 保留为零 |
 | `0x24` | 64 | IST1 | 双重故障栈 |
 | `0x2C` | 64 | IST2 | NMI 栈 |
@@ -136,13 +136,14 @@ round-robin 的一次切换跨越三个硬件状态集合：
 
 | 状态 | 旧进程保存位置 | 新进程恢复动作 | 不变量 |
 | --- | --- | --- | --- |
-| 通用寄存器 | Ring 0 栈上的 15 个 64 位槽 | 汇编逆序 `POP` | 帧地址属于对应 PCB 栈 |
+| 通用寄存器 | 动态 Ring 0 栈上的 15 个 64 位槽 | 汇编逆序 `POP` | 帧地址属于对应 PCB 活动栈 |
 | RIP/CS/RFLAGS/RSP/SS | CPU 特权帧 | `IRETQ` | CS.RPL=3、SS.RPL=3、IF=1 |
 | CR3 | PCB 地址空间根 | `MOV CR3` | 4 KiB 对齐且不是永久内核根 |
-| TSS.RSP0 | TSS 内存字段 | 普通 64 位写并读回 | 指向新 PCB 栈顶且 16 字节对齐 |
+| TSS.RSP0 | TSS 内存字段 | 普通 64 位写并读回 | 指向新 PCB 动态栈顶且 16 字节对齐 |
 
 IRQ0 到来时 CPU 已自动使用“旧”RSP0 压帧。C++ 可以在该栈上切换 CR3，
-因为所有进程页表都共享 supervisor 内核代码和所有四块 Ring 0 栈映射。
+因为所有进程页表都共享 supervisor 内核代码以及 KVA 高半内核栈页表子树。
+四个数据页为 RW/NX，lower/upper guard 始终 not-present。
 但在执行新进程 `IRETQ` 前必须写入“新”RSP0；否则下一次系统调用会在旧栈
 压帧并破坏被挂起现场。
 
@@ -298,7 +299,8 @@ PIC 的 INTA 周期提供，处理完成也仍向 PIC 发送 EOI，不写 LAPIC 
 随后汇编入口补入错误码/向量并保存 15 个通用寄存器。公共
 `ExceptionFrame` 占 160 字节，特权来源额外带 RSP/SS，总计 176 字节。
 返回 Ring 3 的 `IRETQ` 消费全部五个硬件字段；exit 与用户异常不再消费该帧，
-而是丢弃转换栈并恢复进入用户态前单独保存的内核 RSP。
+而是恢复进入调度前单独保存的永久内核 RSP。终止栈只有在该恢复完成、当前
+RSP 已位于栈外的安全点才撤销映射并回收物理后备。
 
 首次从 Ring 0 降到 Ring 3 也使用同一种五字段形状，但由软件主动压入
 SS=`0x1B`、用户栈顶、RFLAGS=`0x202`、CS=`0x23` 和 ELF 入口。RFLAGS
@@ -501,7 +503,8 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/kernel/src/system_calls.cpp`：`INT 0x80` 帧验证与系统调用分发。
 - `source/kernel/src/process_scheduler.cpp`：与硬件无关的进程状态和量子决策。
 - `source/kernel/src/process_runtime.cpp`：CR3、TSS.RSP0、保存帧与资源生命周期。
-- `source/kernel/src/process_memory_layout.cpp`：每进程 Ring 0 栈和 guard 布局。
+- `source/kernel/src/kernel_stack_manager.cpp`：KVA 支持的每进程 Ring 0 动态栈、
+  双 guard、精确所有权验证和安全点回收。
 - `source/user/src/system_call.asm`：Ring 3 系统调用指令入口。
 - `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
 - `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。

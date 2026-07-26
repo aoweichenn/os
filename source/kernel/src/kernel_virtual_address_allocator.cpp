@@ -279,6 +279,23 @@ KernelVirtualAddressAllocator::TryRelease(const KernelVirtualAddressRange range)
     return KernelVirtualAddressAllocatorStatus::Succeeded;
 }
 
+bool KernelVirtualAddressAllocator::OwnsAllocation(
+    const KernelVirtualAddressRange range) const noexcept {
+    if (!this->IsInitialized() || range.page_count == OS_KERNEL_KVA_EMPTY_VALUE ||
+        !CanConvertPagesToBytes(range.page_count) || !IsPageAligned(range.begin_address) ||
+        !this->IsRangeInsideWindow(range.begin_address, range.page_count)) {
+        return false;
+    }
+    const uint64_t descriptor_index = this->FindInsertionIndex(range.begin_address);
+    if (descriptor_index == this->active_descriptor_count_) {
+        return false;
+    }
+    const KernelVirtualAddressRangeDescriptor &descriptor = this->descriptors_[descriptor_index];
+    return descriptor.begin_address == range.begin_address &&
+           descriptor.page_count == range.page_count &&
+           descriptor.kind == KernelVirtualAddressRangeKind::Allocation;
+}
+
 KernelVirtualAddressAllocatorStatus KernelVirtualAddressAllocator::Validate() const noexcept {
     if (!this->IsInitialized()) {
         return KernelVirtualAddressAllocatorStatus::NotInitialized;

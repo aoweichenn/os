@@ -1193,11 +1193,320 @@ QEMU 最后让真实 x86-64 MMU、TLB 和 load/store 执行同一契约。64 MiB
 处理器执行路径不是重复劳动：它们分别定位算法、组合、长序列不变量和硬件
 效果。
 
-当前边界仍然明确：最多 256 个有主区间、操作为 \(O(N)\)、没有内部锁、
-中间页表尚不回收、旧四进程栈尚未迁移。下一闭环让动态内核栈取得
-“guard + data pages”区间并在失败时跨三层回滚；随后补齐空中间页表回收。
-性能树、per-CPU KVA cache 和延迟 shootdown 必须等并发契约与测量证据出现后
-再加入。
+当前边界仍然明确：最多 256 个有主区间、操作为 \(O(N)\)、没有内部锁，
+中间页表尚不回收。动态内核栈已经成为第一个长期持有 KVA、物理帧和叶映射的
+真实调度资源；下一资源闭环是释放随最后一个叶映射消失而变空的 PT、PD 和
+PDPT。性能树、per-CPU KVA cache 和延迟 shootdown 必须等并发契约与测量
+证据出现后再加入。
+
+\section{v1.1 动态内核栈把地址许诺变成可回收调度资源}
+
+\subsection{特权切换为什么需要一块不能自我销毁的栈}
+
+x86 的任务状态段诞生于硬件任务切换时代。现代 64 位内核通常不使用 TSS
+保存整份任务现场，但处理器从低特权级进入高特权级时，仍需要一个不受用户
+RSP 控制的可信落脚点。当前系统在 CPL3 收到中断、异常或
+\code{INT 0x80} 时，处理器从本 CPU 的 TSS.RSP0 取 Ring 0 栈顶，再压入
+旧 SS、RSP、RFLAGS、CS 和 RIP。汇编入口继续在同一栈上保存通用寄存器。
+
+这形成一个重要的生命周期悖论：进程终止代码正在使用的资源，恰好也是该进程
+应当释放的资源。若退出处理函数直接清除当前栈的 PTE，下一条函数返回、局部
+变量访问或寄存器恢复就会触发内核页故障；若先把物理页归还 buddy，旧 TLB
+翻译还可能写入已经交给其他对象的帧。正确答案不是“销毁函数更小”，而是把
+终止分成逻辑终止和物理回收两个时刻。
+
+v0.9 为了先证明抢占调度，给四个 PCB 各编译进一块固定 20 KiB 存储，并在
+低端留下一个 guard。这个实现没有地址申请、没有物理帧所有权，也没有真正的
+销毁状态；容量和 PCB 槽位在链接时绑定。v1.1 保留四进程教学负载，却把栈
+本身迁移成跨 KVA、buddy 和页表三层的动态对象。这样 v1.2 把 PCB 拆为
+Process/Thread 时，可以迁移所有者，而不必再次发明栈资源协议。
+
+\subsection{六页布局同时表达容量和两侧故障边界}
+
+一个动态内核栈取得 6 个连续虚拟页，但只有中间 4 页存在叶映射：
+
+\begin{center}
+\begin{tikzpicture}[os diagram,node distance=0mm]
+  \node[os hardware,minimum width=1.9cm] (lower) {lower guard\\4 KiB};
+  \node[os state,right=of lower,minimum width=2.1cm] (d0) {data 0\\4 KiB};
+  \node[os state,right=of d0,minimum width=2.1cm] (d1) {data 1\\4 KiB};
+  \node[os state,right=of d1,minimum width=2.1cm] (d2) {data 2\\4 KiB};
+  \node[os state,right=of d2,minimum width=2.1cm] (d3) {data 3\\4 KiB};
+  \node[os hardware,right=of d3,minimum width=1.9cm] (upper) {upper guard\\4 KiB};
+\end{tikzpicture}
+\end{center}
+
+设 KVA 返回的区间起点为 \(b\)，页大小 \(P=4096\)，则：
+\[
+\begin{aligned}
+  \mathrm{lower\ guard} &= b,\\
+  \mathrm{mapped\ begin} &= b+P,\\
+  \mathrm{stack\ top} &= b+5P,\\
+  \mathrm{upper\ guard} &= b+5P,\\
+  \mathrm{range\ end} &= b+6P.
+\end{aligned}
+\]
+可用容量为 \(4P=16384\) 字节，完整虚拟区间为 \(6P=24576\) 字节。x86-64
+栈向低地址增长，所以 TSS.RSP0 指向 \(\mathrm{stack\ top}\)，处理器第一次
+压栈落入 data 3。继续向下越过 data 0 会命中 lower guard。upper guard
+不负责捕获正常的向下溢出；它负责隔开相邻对象，并让错误的正偏移、范围计算
+或把“栈顶”误作可写首地址时立即得到 not-present 故障。
+
+两个 guard 从申请到释放都属于同一 KVA 描述符，却始终没有 PTE。这正是
+“not-present 不等于 free”的长期实例。若只保留 lower guard 而让下一对象
+紧贴栈顶，错误的向上访问可能静默写进另一个内核对象；双 guard 用额外 4 KiB
+虚拟地址换取对称且稳定的故障边界，并不消耗额外物理 RAM。
+
+\subsection{虚拟连续不要求四个物理帧连续}
+
+\code{KernelStack} 保存一个六页
+\code{KernelVirtualAddressRange}、四个 \code{PhysicalFrame}、已映射
+页数和 active 状态。管理器对四个 data 页分别调用 order-0 物理分配：
+\[
+  V_{b+P+iP}\longmapsto F_i,\qquad i\in\{0,1,2,3\}.
+\]
+\(F_i\) 可以位于任意四个可用 PFN；页表把它们组织成连续的 16 KiB 虚拟栈。
+若为每个小栈申请 order 2 连续块，长期运行后即使总空闲页很多，也可能因外部
+碎片找不到四页连续物理区。order 0 更符合栈只要求虚拟连续的真实契约。
+
+每帧在映射前通过 direct-map 清零。清零既避免新进程观察到旧内核栈残留，也
+让首次构造现场以确定状态开始。销毁时再次清零后才归还 buddy，使后续所有者
+不会继承寄存器、地址或用户参数。叶权限固定为 supervisor、RW、NX、
+cache enabled；任何 user、executable 或 cache-disabled 偏差都由完整校验
+拒绝。
+
+管理器有 256 个长期槽，容量与 KVA 描述符容量显式分开。槽索引当前等于 PCB
+索引只是调用方策略；栈管理器不理解 PID、调度状态或用户地址空间。统计记录：
+
+\begin{longtable}{L{0.31\textwidth}L{0.53\textwidth}}
+\toprule
+\textbf{字段} & \textbf{必须成立的含义}\\
+\midrule
+\code{active\_stack\_count} & 当前 active 槽数量\\
+\code{active\_mapped\_page\_count} & active 数量乘 4\\
+\code{active\_guard\_page\_count} & active 数量乘 2，由前两者派生\\
+\code{successful\_creation\_count} & 从初始化以来完整发布的栈数量\\
+\code{destruction\_count} & 完整撤销并清空槽的数量\\
+\code{peak\_active\_stack\_count} & 历史同时活动栈峰值\\
+\code{peak\_active\_mapped\_page\_count} & 历史物理后备页峰值\\
+\bottomrule
+\end{longtable}
+
+累计计数必须满足：
+\[
+  \mathrm{creations}-\mathrm{destructions}
+  =\mathrm{active\ stacks},
+\]
+\[
+  \mathrm{active\ mapped\ pages}=4\times\mathrm{active\ stacks}.
+\]
+峰值只增不减，当前值不得超过峰值。64 位计数在提交前检查溢出，不能让一次
+成功操作把守恒式绕回零。
+
+\subsection{创建是一笔直到发布前都可完整撤销的事务}
+
+\code{TryCreate(slot)} 先验证管理器、槽位、依赖分配器和统计，再执行：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 向 KVA 申请 6 页、1 页对齐的完整区间；
+  \item 查询 6 个虚拟页，证明没有任何遗留叶映射；
+  \item 逐页申请四个 order-0 物理帧并验证 direct-map 可访问；
+  \item 清零当前帧，以 supervisor、RW、NX 权限映射对应 data 页；
+  \item 核对两个 guard 仍 not-present、四个叶映射的物理身份和权限；
+  \item 把候选对象复制到目标槽，最后设置 active 并更新统计。
+\end{enumerate}
+
+候选对象在最后一步之前不对调度器可见。第 \(j\) 个物理帧申请或映射失败时，
+\code{RollbackCreation} 按相反顺序清除已经建立的叶项、清零并归还已经取得
+的帧，最后精确释放六页 KVA。伪代码为：
+
+\begin{verbatim}
+range = kva.allocate(6)
+for each data page:
+    frame = buddy.allocate(order0)
+    zero(frame)
+    map(data_va, frame, supervisor | rw | nx)
+validate(candidate)
+publish(slot, candidate)
+
+on any failure:
+    unmap(mapped pages in reverse order)
+    zero and release acquired frames in reverse order
+    kva.release(exact range)
+\end{verbatim}
+
+回滚本身也可能失败，因此接口区分原始
+\code{FrameAllocationFailed}/\code{PageMappingFailed} 与
+\code{RollbackFailed}。后一种状态说明资源集合已经无法证明，调用方不能把
+它当成普通“内存不足”继续运行。失败输出不发布半有效 \code{KernelStack}，
+目标槽仍保持全零。
+
+\subsection{精确 KVA 所有权阻止部分销毁}
+
+仅验证六页都在 KVA 窗口内还不够。若其他错误代码提前释放了栈的 KVA
+描述符，PTE 和物理帧可能仍然存在；此时销毁函数若先撤映射、归还物理帧，
+最后才发现 KVA 不再归自己，就会留下无法重试的半销毁对象。
+
+\code{KernelVirtualAddressAllocator::OwnsAllocation} 因而要求起点、页数和
+Allocation 类型与活动描述符精确匹配。物理分配器的同名只读查询只接受精确
+order-0 活动块；大块内部首帧或已释放帧都不满足。\code{ValidateStack} 在
+任何破坏性步骤前同时验证两层所有权、两个 guard、四个叶映射、权限和四个
+物理地址互异。只有预检完整通过，销毁才逆序：
+
+\begin{verbatim}
+unmap data pages from high to low
+zero and release frames from high to low
+release the exact six-page KVA allocation
+clear the slot and commit statistics
+\end{verbatim}
+
+当前单 BSP、关中断提交边界让预检与撤销之间没有另一个管理器调用者。SMP
+版本必须把“验证后执行”放入同一个锁或代际协议，否则预检成功不能阻止另一个
+CPU 在提交前改变页表或 KVA 所有权。
+
+\subsection{高半区共享让所有进程在同一虚拟地址看见栈}
+
+动态栈位于 KVA 窗口，对应 PML4 槽 402--465。创建进程根时，页表管理器复制
+永久内核 PML4 的高半区项目；因此每个进程 CR3 都通过共享的内核页表子树看到
+相同栈映射。栈不是用户地址空间中的私有叶页，也不需要为四个进程重复建立四份
+映射。
+
+共享带来两条严格顺序：
+
+\begin{itemize}
+  \item 创建栈必须发生在克隆进程根之前，使新根取得已经存在的高半区路径；
+  \item 销毁用户地址空间只能释放低半区独占子树，不能递归释放 KVA 的共享
+        高半区表。
+\end{itemize}
+
+当前高半区页表项本身由所有进程共享，所以在永久内核 CR3 下增加或清除叶项，
+其他进程根会观察同一结构。单核路径通过 CR3 切换和 \code{INVLPG} 处理当前
+TLB；SMP 后必须跟踪哪些 CPU 运行过相关根，并在物理帧复用前完成 shootdown。
+
+\subsection{176 字节首次现场必须完全落在最后一个 data 页}
+
+\code{UserPrivilegeFrame} 长 176 字节。创建进程时，运行时读取管理器发布的
+栈顶 \(t\)，按 16 字节 ABI 对齐后在其下方构造首次现场：
+\[
+  f=\operatorname{alignDown}(t-176,16).
+\]
+管理器的 \code{Contains(slot,f,176)} 证明半开区间
+\([f,f+176)\) 完整落在四个 data 页中。当前布局使它落在最高 data 页，写入
+物理内存时需使用该页对应的独立 frame 和页内偏移，不能假设四个 PFN 连续。
+
+首次派发前，\code{ActivateProcess} 同时验证保存帧仍属于该槽、切换到进程
+CR3，并把 TSS.RSP0 设置为该动态栈顶。抢占切换时返回的另一个帧地址和新的
+RSP0 属于同一个目标进程；若只换 CR3 不换 RSP0，下次用户态陷入会把现场压到
+旧进程的栈上。
+
+\subsection{安全点回收把逻辑死亡和物理释放分开}
+
+用户 exit 或用户异常发生时，C++ 处理函数正在终止进程的动态栈上运行。
+\code{CompleteCurrentProcess} 只完成以下工作：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 保存终止现场并把调度状态改为 Terminated；
+  \item 关闭描述符并选择后继；
+  \item 切换到永久内核 CR3，销毁进程独占的用户页和页表；
+  \item 有后继时切换其 CR3/RSP0 并返回其保存帧；无后继时恢复默认 RSP0；
+  \item 由汇编恢复路径最终返回永久启动栈。
+\end{enumerate}
+
+此时终止栈仍映射且仍由管理器持有。只有
+\code{OsKernelEnterScheduledProcess} 返回到永久启动栈之后，
+\code{ReapTerminatedKernelStacks} 才扫描 Terminated 槽。回收器先读取真实
+RSP，并用 \code{Contains} 检查一个 64 位探针范围；只要当前 RSP 仍在目标
+栈内，就拒绝销毁。通过检查后才调用 \code{TryDestroy}，成功后把 PCB 中的
+保存帧指针清为 null。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (user) {Ring 3\\运行};
+  \node[os block,right=of user] (exit) {exit/\#UD/\#PF\\逻辑终止};
+  \node[os state,right=of exit] (switch) {永久 CR3\\用户空间回收};
+  \node[os block,below=of switch] (boot) {汇编返回\\永久启动栈};
+  \node[os state,left=of boot] (reap) {RSP 安全检查\\动态栈销毁};
+  \draw[os arrow] (user) -- (exit);
+  \draw[os arrow] (exit) -- (switch);
+  \draw[os arrow] (switch) -- (boot);
+  \draw[os arrow] (boot) -- (reap);
+\end{tikzpicture}
+\end{center}
+
+“当前 CR3 已经不是进程根”不能替代 RSP 检查，因为动态栈属于共享高半区，在
+永久根里同样存在。“进程状态已经 Terminated”也不能替代检查，因为状态是
+调度事实，不是 CPU 当前栈指针的物理事实。安全点必须由真实处理器状态证明。
+
+\subsection{完整校验从槽集合重建跨层事实}
+
+\code{KernelStackManager::Validate} 不只比较计数。它遍历全部 256 槽并
+重新证明：
+
+\begin{enumerate}[label=\arabic*.]
+  \item inactive 槽的 range、frame、页数和 active 位全部为零；
+  \item active range 为 6 页、页对齐、无加法溢出且首尾均 canonical；
+  \item KVA 分配器精确拥有这一个 allocation；
+  \item lower/upper guard 的查询结果都是 NotMapped；
+  \item 四个 data 页各自映射到记录的物理帧，页粒度为 4 KiB；
+  \item 权限精确为 supervisor、RW、NX、普通缓存；
+  \item 四帧均由 buddy 以 order 0 持有、direct-map 可访问且彼此不同；
+  \item 重建的活动数、映射页数、累计差和峰值与缓存统计一致；
+  \item 最后再运行 KVA 与 buddy 自身的完整不变量检查。
+\end{enumerate}
+
+跨层校验让一种资源的“局部合法”不能掩盖另一层漂移。例如一个 PTE 仍 present
+但 KVA 描述符已丢失，在页表看来可以访问，在 buddy 看来帧也已分配，只有联合
+所有权协议能判为损坏。
+
+\subsection{三层测试和三条整机路径怎样分工}
+
+单元测试覆盖初始化失败、非法槽、重复创建/销毁、地址窗口耗尽、物理帧耗尽、
+页表冲突、创建回滚、读出、范围包含、双 guard、权限、非连续物理帧、统计和
+人为破坏。测试先外部释放一个物理帧，证明 PTE 仍在也不能冒充所有权；原址
+重新申请后再外部释放 KVA，二者都要求 \code{Validate} 与销毁在破坏性操作
+前拒绝。最后修复 KVA、篡改并恢复 PTE，只有三层重新一致后才允许安全销毁。
+
+集成测试创建四个栈，逐一在最高 data 页构造 176 字节现场，并建立新的进程
+页表根。它从该根再次查询所有 guard 与 data 映射，证明高半区共享不是单一
+永久 CR3 下的偶然现象。逆序销毁后，四个物理帧全部清零，buddy 空闲数和
+KVA 页数恢复暖机基线；创建、销毁均为 4，峰值活动栈为 4，峰值映射页为 16。
+
+固定种子 \code{0x4B535441434B524E} 在 64 个槽和 4096 页独立所有权模型上
+执行 100000 次随机创建/销毁。操作类型取随机数高位，槽索引使用下一次独立
+随机值，避免线性同余发生器低位相关性伪造覆盖。参考模型自己寻找六页
+best-fit 空洞；每 257 步比较映射、统计和三层不变量，最后随机状态全部排空。
+
+QEMU 正常路径、用户 \#UD 隔离路径和用户 \#PF 隔离路径都必须经过同一动态栈
+创建与回收协议。正常四进程路径要求每个 lower guard、栈顶和 upper guard
+地址各出现一次；故障路径要求异常进程也回到安全点并释放栈。整机冷路径输出：
+
+\begin{verbatim}
+[OS][KERNEL] KERNEL_STACK_MANAGER_READY
+[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000100
+[OS][KERNEL] KERNEL_STACK_MAPPED_PAGES=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_GUARD_PAGES=0x0000000000000002
+[OS][KERNEL] KERNEL_STACK_SIZE_BYTES=0x0000000000004000
+...
+[OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
+[OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
+\end{verbatim}
+
+这些日志在准备阶段、每进程创建结果和最终聚合点输出，不在页申请、映射、
+时钟中断或回收循环中逐步输出。宿主 QEMU runner 继续给每行添加单调时间；
+来宾使用 PIT 单调 tick 表达自己的时间域。丰富日志在这里意味着关键状态可
+关联、计数可守恒，而不是把高频事件冲进 115200 波特串口。
+
+\subsection{当前完成边界与下一资源问题}
+
+动态栈已经消除了编译期四份 20 KiB 进程栈存储，四个 PCB 只保留管理器槽索引
+与保存帧引用。容量仍由 256 槽固定存储限定，管理器仍是单 BSP、无内部锁；
+栈大小固定 16 KiB，不支持按需增长，也没有每 CPU emergency stack 或
+stack canary。下一个资源闭环不是立刻增加这些策略，而是回收空 PT、PD 和
+PDPT，并用页表帧统计证明动态栈反复创建/销毁不会永久增长中间表基础设施。
 
 \section{v0.6 高半区早期堆用最小策略验证对象分配}
 

@@ -133,7 +133,7 @@ Stage 1 为目标读取和格式验证保留五条互斥失败边界：
 
 | 日志 | 优先检查 |
 | --- | --- |
-| `KERNEL_ATA_TIMEOUT` | `0x1F7` 的 BSY/DRQ 与轮询预算 |
+| `KERNEL_ATA_TIMEOUT` | `0x1F7` 的 BSY/DRQ 与 `0x000FFFFF` 次轮询预算 |
 | `KERNEL_ATA_ERROR` | `0x1F7` 的 ERR/DF 和 `0x1F1` 错误寄存器 |
 | `KERNEL_HEADER_INVALID` | `0x13000` 的字段、保留区和描述符 CRC |
 | `KERNEL_CHECKSUM_INVALID` | `0x03E00000` 起精确文件 CRC 与最后扇区补零 |
@@ -456,6 +456,71 @@ KVA 日志也遵循事务边界：只有虚拟区间分配器初始化、预留�
 的 256 项存储必须全零；相邻区间可以紧贴，但不能倒序或重叠。释放只接受
 原申请的精确起始地址与页数，内部地址、错误长度和 reservation 都必须在任何
 状态修改前失败。
+
+### 动态内核栈创建、切换或安全点回收失败
+
+动态栈管理器在 KVA 自检之后初始化，但只在进程运行时开始申请栈。若
+`PROCESS_RUNTIME_READY` 之后没有 `KERNEL_STACK_MANAGER_READY`，先检查
+`InitializeProcessRuntime` 是否因管理器完整校验或非零活动栈失败；若已出现
+管理器配置而首个 `USER_ELF_VALID` 缺失，检查 `CreateProcess` 返回的
+`KernelStackFailure`。
+
+一个正常栈必须同时满足：
+
+```text
+lower guard              QueryPage == NotMapped
+四个 data page           4 KiB / supervisor / writable / NX
+upper guard == stack top QueryPage == NotMapped
+KVA range                精确六页活动 Allocation
+physical frames          四个非零、页对齐、互不重复的 order-0 帧
+```
+
+建议按以下顺序定位创建问题：
+
+1. 在 `KernelStackManager::TryCreate` 观察六页候选 KVA。窗口首页永久保留，
+   第一栈 lower guard 通常从窗口第二页开始；地址必须 canonical 且页对齐；
+2. 若返回 `VirtualRangeNotClear`，逐页查询候选范围。KVA 已空闲但 PTE 仍
+   present 表示上一个所有者违反了“先 unmap、后释放 KVA”的顺序，不能通过
+   跳过预检继续复用；
+3. 若返回 `FrameAllocationFailed`，确认失败前已取得的帧按逆序清零并释放，
+   目标槽保持全零，KVA 活动页恢复原值；
+4. 若返回 `PageMappingFailed` 或 `MappingValidationFailed`，逐级检查共享
+   高半 PML4/PDPT/PD/PT 的 present、RW、US 和 NX。所有上级必须允许写，
+   但 U/S 必须为零；
+5. `OwnsAllocation` 为假而 PTE 正常，说明 KVA 所有权被外部提前释放。这是
+   跨层损坏，`TryDestroy` 必须拒绝，不能先撤销映射再试图修补描述符；
+6. 创建提交后统计应增加一栈、四映射页和两 guard 页；累计创建只在最终
+   提交时增加，回滚失败不得伪装成成功。
+
+能创建但第一次进入 Ring 3 即故障时，核对 `PROCESS_KERNEL_STACK_*` 三个
+地址、TSS.RSP0 和保存帧：
+
+- `stack_top` 与 `upper_guard` 数值相同；
+- 176 字节 `UserPrivilegeFrame` 必须完整位于最后一个数据页；
+- 当前进程 CR3 查询四个数据页必须得到与内核 CR3 相同的物理身份；
+- 切换进程时 CR3 与 TSS.RSP0 必须作为同一次派发提交，不能只更新其一；
+- 用户 RSP 永远不能作为 Ring 0 入口栈。
+
+终止后出现 Ring 0 `#PF` 时，优先怀疑在当前栈上提前销毁。正确顺序是：
+
+```text
+标记 Terminated
+  → 切回内核 CR3 / 销毁用户地址空间
+  → 调度另一进程，或汇编恢复永久启动栈
+  → C++ 安全点读取当前 RSP
+  → 销毁所有不包含当前 RSP 的终止栈
+```
+
+在 `ReapTerminatedKernelStacks` 断点检查当前 RSP。它若仍落在目标四页映射区，
+函数必须失败而非 unmap。`OsKernelEnterScheduledProcess` 返回后 CR3 必须是
+永久内核根；否则即使当前 RSP 安全，也可能在进程独占页表已释放后继续访问。
+
+正常四进程结束摘要应为 active=0、creations=4、destructions=4、
+peak-active=4、peak-mapped=16，并出现
+`KERNEL_STACK_RESOURCES_RECLAIMED`。若创建/销毁相等但页帧或 KVA 基线不同，
+分别检查数据页清理和区间精确释放；若活动栈不为零，检查无 Ready 的 idle
+返回和最终完成路径是否都调用了安全点。用户 `#UD`、用户 `#PF` 镜像各有
+一栈，也必须出现同一回收标记。
 
 ## v0.7：PIC、PIT、PS/2 与 ATA
 

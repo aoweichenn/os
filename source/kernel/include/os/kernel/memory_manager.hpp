@@ -2,6 +2,7 @@
 
 #include "os/kernel/boot_info.hpp"
 #include "os/kernel/kernel_heap.hpp"
+#include "os/kernel/kernel_stack_manager.hpp"
 #include "os/kernel/kernel_type_cache.hpp"
 #include "os/kernel/kernel_virtual_address_allocator.hpp"
 #include "os/kernel/page_table.hpp"
@@ -21,6 +22,7 @@ inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_VIRTUAL_BASE = 0xFFFFC90000000000
 inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_CAPACITY_BYTES =
     32ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 inline constexpr uint64_t OS_KERNEL_MEMORY_KVA_DESCRIPTOR_CAPACITY = 256ULL;
+inline constexpr uint64_t OS_KERNEL_MEMORY_KERNEL_STACK_SLOT_CAPACITY = 256ULL;
 
 struct KernelMemoryStatistics final {
     uint64_t memory_map_entry_count;
@@ -112,6 +114,7 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     TypeCacheSelfTestFailed,
     KvaInitializationFailed,
     KvaSelfTestFailed,
+    KernelStackManagerInitializationFailed,
     HighMemorySelfTestFailed,
     BuddySelfTestFailed,
     LocalApicMappingFailed,
@@ -139,6 +142,7 @@ InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] uint64_t PhysicalMemoryDirectMapAddress(uint64_t physical_address) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
 [[nodiscard]] KernelVirtualAddressAllocator &GetKernelVirtualAddressAllocator() noexcept;
+[[nodiscard]] KernelStackManager &GetKernelStackManager() noexcept;
 [[nodiscard]] KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus DestroyUserPageTable(uint64_t root_physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus AllocateAndMapUserPage(uint64_t root_physical_address,

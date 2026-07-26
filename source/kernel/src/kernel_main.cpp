@@ -5,7 +5,6 @@
 #include "os/kernel/file_system.hpp"
 #include "os/kernel/interrupt_runtime.hpp"
 #include "os/kernel/memory_manager.hpp"
-#include "os/kernel/process_memory_layout.hpp"
 #include "os/kernel/process_runtime.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
@@ -231,10 +230,35 @@ constexpr char OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE[] =
     "[OS][KERNEL] USER_RESULT_INVALID\r\n";
 constexpr char OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE[] =
     "[OS][KERNEL] PROCESS_RUNTIME_READY\r\n";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_MANAGER_READY_MESSAGE[] =
+    "[OS][KERNEL] KERNEL_STACK_MANAGER_READY\r\n";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_SLOT_CAPACITY_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_MAPPED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_MAPPED_PAGES=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_GUARD_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_GUARD_PAGES=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_SIZE_PREFIX[] = "[OS][KERNEL] KERNEL_STACK_SIZE_BYTES=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_DESTRUCTION_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_PEAK_ACTIVE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_PEAK_MAPPED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=";
+constexpr char OS_KERNEL_MAIN_KERNEL_STACK_RESOURCES_RECLAIMED_MESSAGE[] =
+    "[OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED\r\n";
 constexpr char OS_KERNEL_MAIN_PROCESS_ID_PREFIX[] = "[OS][KERNEL] PROCESS_ID=";
 constexpr char OS_KERNEL_MAIN_PROCESS_CR3_PREFIX[] = "[OS][KERNEL] PROCESS_CR3=";
+constexpr char OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_LOWER_GUARD_PREFIX[] =
+    "[OS][KERNEL] PROCESS_KERNEL_STACK_LOWER_GUARD=";
 constexpr char OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX[] =
     "[OS][KERNEL] PROCESS_KERNEL_STACK_TOP=";
+constexpr char OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_UPPER_GUARD_PREFIX[] =
+    "[OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=";
 constexpr char OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX[] = "[OS][KERNEL] PROCESS_RUN_TICKS=";
 constexpr char OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX[] =
     "[OS][KERNEL] PROCESS_DISPATCH_COUNT=";
@@ -297,6 +321,7 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x000000000000000
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_PREEMPTION_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_EXPECTED_PIPE_TRANSFER_SIZE_BYTES = 256ULL;
@@ -692,8 +717,12 @@ void CreateRequiredProcess(const SerialPort &serial_port,
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, creation_result.process_id);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CR3_PREFIX,
                          creation_result.root_physical_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_LOWER_GUARD_PREFIX,
+                         creation_result.kernel_stack_lower_guard_address);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX,
-                         ProcessKernelStackTopAddress(creation_result.process_index));
+                         creation_result.kernel_stack_top_address);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_UPPER_GUARD_PREFIX,
+                         creation_result.kernel_stack_upper_guard_address);
 }
 
 void PrepareRequiredProcesses(const SerialPort &serial_port,
@@ -704,6 +733,17 @@ void PrepareRequiredProcesses(const SerialPort &serial_port,
         HaltProcessor();
     }
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
+    const KernelStackManagerStatistics kernel_stack_statistics =
+        GetKernelStackManager().Statistics();
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_MANAGER_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SLOT_CAPACITY_PREFIX,
+                         kernel_stack_statistics.slot_capacity);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_MAPPED_PAGE_COUNT_PREFIX,
+                         OS_KERNEL_STACK_MAPPED_PAGE_COUNT);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_GUARD_PAGE_COUNT_PREFIX,
+                         OS_KERNEL_STACK_GUARD_PAGE_COUNT);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SIZE_PREFIX,
+                         OS_KERNEL_STACK_SIZE_BYTES);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_READY_MESSAGE);
 
     const uint64_t process_count = selection == UserProgramSelection::Smoke
@@ -817,8 +857,8 @@ void WriteProcessExecutionResult(const SerialPort &serial_port,
     }
 }
 
-[[nodiscard]] bool
-ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics) noexcept {
+[[nodiscard]] bool ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
+                                                 const uint64_t expected_process_count) noexcept {
     return statistics.frames_before_processes.managed_frame_count ==
                statistics.frames_after_processes.managed_frame_count &&
            statistics.frames_before_processes.free_frame_count ==
@@ -826,7 +866,41 @@ ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics) noexce
            statistics.frames_before_processes.allocated_frame_count ==
                statistics.frames_after_processes.allocated_frame_count &&
            statistics.frames_before_processes.reserved_frame_count ==
-               statistics.frames_after_processes.reserved_frame_count;
+               statistics.frames_after_processes.reserved_frame_count &&
+           statistics.virtual_addresses_before_processes.free_page_count ==
+               statistics.virtual_addresses_after_processes.free_page_count &&
+           statistics.virtual_addresses_before_processes.allocated_page_count ==
+               statistics.virtual_addresses_after_processes.allocated_page_count &&
+           statistics.virtual_addresses_before_processes.reserved_page_count ==
+               statistics.virtual_addresses_after_processes.reserved_page_count &&
+           statistics.virtual_addresses_before_processes.active_descriptor_count ==
+               statistics.virtual_addresses_after_processes.active_descriptor_count &&
+           statistics.virtual_addresses_after_processes.successful_allocation_count ==
+               statistics.virtual_addresses_before_processes.successful_allocation_count +
+                   expected_process_count &&
+           statistics.virtual_addresses_after_processes.release_count ==
+               statistics.virtual_addresses_before_processes.release_count +
+                   expected_process_count &&
+           statistics.kernel_stacks_before_processes.slot_capacity ==
+               statistics.kernel_stacks_after_processes.slot_capacity &&
+           statistics.kernel_stacks_before_processes.active_stack_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.kernel_stacks_after_processes.active_stack_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.kernel_stacks_after_processes.active_mapped_page_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.kernel_stacks_after_processes.active_guard_page_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.kernel_stacks_after_processes.successful_creation_count ==
+               statistics.kernel_stacks_before_processes.successful_creation_count +
+                   expected_process_count &&
+           statistics.kernel_stacks_after_processes.destruction_count ==
+               statistics.kernel_stacks_before_processes.destruction_count +
+                   expected_process_count &&
+           statistics.kernel_stacks_after_processes.peak_active_stack_count >=
+               expected_process_count &&
+           statistics.kernel_stacks_after_processes.peak_active_mapped_page_count >=
+               expected_process_count * OS_KERNEL_STACK_MAPPED_PAGE_COUNT;
 }
 
 void ExecuteRequiredProcesses(const SerialPort &serial_port,
@@ -875,6 +949,16 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.console_input.dropped_byte_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
                          statistics.console_input.buffered_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
+                         statistics.kernel_stacks_after_processes.active_stack_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,
+                         statistics.kernel_stacks_after_processes.successful_creation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_DESTRUCTION_COUNT_PREFIX,
+                         statistics.kernel_stacks_after_processes.destruction_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_PEAK_ACTIVE_COUNT_PREFIX,
+                         statistics.kernel_stacks_after_processes.peak_active_stack_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_PEAK_MAPPED_PAGE_COUNT_PREFIX,
+                         statistics.kernel_stacks_after_processes.peak_active_mapped_page_count);
 
     const uint64_t expected_process_count = selection == UserProgramSelection::Smoke
                                                 ? OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT
@@ -903,7 +987,7 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
               OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT ||
           statistics.console_input.buffered_byte_count !=
               OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT)) ||
-        !ProcessResourcesWereReclaimed(statistics)) {
+        !ProcessResourcesWereReclaimed(statistics, expected_process_count)) {
         WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
     }
@@ -916,6 +1000,7 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
         WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_TRANSFER_VALID_MESSAGE);
         WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_ENDPOINTS_CLOSED_MESSAGE);
     }
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_RESOURCES_RECLAIMED_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);

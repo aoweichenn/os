@@ -143,6 +143,16 @@ int main() {
                               third_allocation) ==
             os::kernel::KernelVirtualAddressAllocatorStatus::Succeeded &&
         third_allocation.begin_address == PageAddress(OS_TEST_KVA_THIRD_ALLOCATION_PAGE_INDEX) &&
+        allocator.OwnsAllocation(first_allocation) && allocator.OwnsAllocation(second_allocation) &&
+        allocator.OwnsAllocation(third_allocation) &&
+        !allocator.OwnsAllocation(os::kernel::KernelVirtualAddressRange{
+            .begin_address = first_reservation_address,
+            .page_count = OS_TEST_KVA_FIRST_RESERVATION_PAGE_COUNT,
+        }) &&
+        !allocator.OwnsAllocation(os::kernel::KernelVirtualAddressRange{
+            .begin_address = first_allocation.begin_address,
+            .page_count = first_allocation.page_count - OS_TEST_KVA_SINGLE_UNIT,
+        }) &&
         allocator.TryAllocate(OS_TEST_KVA_FIRST_ALLOCATION_PAGE_COUNT,
                               OS_TEST_KVA_INVALID_ALIGNMENT_PAGE_COUNT, unchanged_range) ==
             os::kernel::KernelVirtualAddressAllocatorStatus::InvalidAlignment &&
@@ -176,6 +186,7 @@ int main() {
         }) == os::kernel::KernelVirtualAddressAllocatorStatus::AllocationNotFound &&
         allocator.TryRelease(second_allocation) ==
             os::kernel::KernelVirtualAddressAllocatorStatus::Succeeded &&
+        !allocator.OwnsAllocation(second_allocation) &&
         allocator.TryRelease(second_allocation) ==
             os::kernel::KernelVirtualAddressAllocatorStatus::AllocationNotFound;
     test_context.Expect(release_diagnostics_valid, OS_TEST_KVA_RELEASE_DIAGNOSTICS);

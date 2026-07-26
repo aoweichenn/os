@@ -602,6 +602,23 @@ PhysicalFrameAllocator::ReleaseBlock(const PhysicalFrameBlock block) noexcept {
     return PhysicalFrameAllocatorStatus::Succeeded;
 }
 
+bool PhysicalFrameAllocator::OwnsAllocation(const PhysicalFrame frame) const noexcept {
+    if (!this->IsInitialized() ||
+        (frame.physical_address & OS_KERNEL_FRAME_ALLOCATOR_PAGE_MASK) !=
+            OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE ||
+        frame.physical_address >= this->ManagedLimitAddress()) {
+        return false;
+    }
+    const uint64_t frame_index = frame.physical_address / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    if (!this->IsBuddyInitialized()) {
+        return this->GetFrameState(frame_index) == FrameState::Allocated;
+    }
+    return this->GetBlockBit(BlockBitmap::Allocated, OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE,
+                             frame_index) &&
+           this->IsBlockState(frame_index, OS_KERNEL_FRAME_ALLOCATOR_EMPTY_VALUE,
+                              FrameState::Allocated);
+}
+
 PhysicalFrameAllocatorStatistics PhysicalFrameAllocator::Statistics() const noexcept {
     return PhysicalFrameAllocatorStatistics{
         .managed_frame_count = this->managed_frame_count_,

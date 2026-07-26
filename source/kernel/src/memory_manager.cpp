@@ -4,7 +4,6 @@
 #include "os/kernel/page_table.hpp"
 #include "os/kernel/physical_frame_allocator.hpp"
 #include "os/kernel/physical_memory_map.hpp"
-#include "os/kernel/process_memory_layout.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/user_elf.hpp"
 
@@ -91,6 +90,7 @@ uint64_t current_page_table_physical_address_limit = 0ULL;
 bool direct_map_active = false;
 KernelVirtualAddressRangeDescriptor
     kernel_virtual_address_descriptors[OS_KERNEL_MEMORY_KVA_DESCRIPTOR_CAPACITY]{};
+KernelStack kernel_stack_storage[OS_KERNEL_MEMORY_KERNEL_STACK_SLOT_CAPACITY]{};
 
 struct DirectMapStatistics final {
     uint64_t mapped_bytes;
@@ -174,12 +174,6 @@ extern "C" uint8_t os_kernel_writable_data_end[];
          guard_page_index < OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT;
          ++guard_page_index) {
         if (page_address == InterruptStackGuardPageAddress(guard_page_index)) {
-            return true;
-        }
-    }
-    for (uint64_t process_index = 0ULL; process_index < OS_KERNEL_PROCESS_CAPACITY;
-         ++process_index) {
-        if (page_address == ProcessKernelStackGuardPageAddress(process_index)) {
             return true;
         }
     }
@@ -525,13 +519,6 @@ ValidateKernelMappings(const BootInfo &boot_info,
          guard_page_index < OS_KERNEL_DESCRIPTOR_INTERRUPT_STACK_GUARD_PAGE_COUNT;
          ++guard_page_index) {
         if (GetPageTableManager().QueryPage(InterruptStackGuardPageAddress(guard_page_index),
-                                            ignored_mapping) != PageTableStatus::NotMapped) {
-            return false;
-        }
-    }
-    for (uint64_t process_index = 0ULL; process_index < OS_KERNEL_PROCESS_CAPACITY;
-         ++process_index) {
-        if (GetPageTableManager().QueryPage(ProcessKernelStackGuardPageAddress(process_index),
                                             ignored_mapping) != PageTableStatus::NotMapped) {
             return false;
         }
@@ -1143,6 +1130,11 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
     if (!RunKernelVirtualAddressSelfTest(kva_self_test_statistics)) {
         return KernelMemoryInitializationStatus::KvaSelfTestFailed;
     }
+    if (GetKernelStackManager().Initialize(kernel_stack_storage,
+                                           OS_KERNEL_MEMORY_KERNEL_STACK_SLOT_CAPACITY) !=
+        KernelStackManagerStatus::Succeeded) {
+        return KernelMemoryInitializationStatus::KernelStackManagerInitializationFailed;
+    }
 
     const PhysicalFrameAllocatorStatistics frame_statistics = FrameAllocator().Statistics();
     const PhysicalFrameBuddyStatistics buddy_statistics = FrameAllocator().BuddyStatistics();
@@ -1244,6 +1236,19 @@ KernelHeap &GetKernelHeap() noexcept {
 KernelVirtualAddressAllocator &GetKernelVirtualAddressAllocator() noexcept {
     static KernelVirtualAddressAllocator allocator{};
     return allocator;
+}
+
+KernelStackManager &GetKernelStackManager() noexcept {
+    static KernelStackManager manager{
+        FrameAllocator(),
+        GetKernelVirtualAddressAllocator(),
+        GetPageTableManager(),
+        KernelStackMemoryAccess{
+            .physical_memory_virtual_base = OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE,
+            .maximum_physical_address_exclusive = current_managed_physical_address_limit,
+        },
+    };
+    return manager;
 }
 
 KernelUserPageStatus CreateUserPageTable(uint64_t &root_physical_address) noexcept {

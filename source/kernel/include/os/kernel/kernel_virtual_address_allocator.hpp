@@ -81,6 +81,7 @@ class KernelVirtualAddressAllocator final {
                 KernelVirtualAddressRange &range) noexcept;
     [[nodiscard]] KernelVirtualAddressAllocatorStatus
     TryRelease(KernelVirtualAddressRange range) noexcept;
+    [[nodiscard]] bool OwnsAllocation(KernelVirtualAddressRange range) const noexcept;
     [[nodiscard]] KernelVirtualAddressAllocatorStatus Validate() const noexcept;
     [[nodiscard]] KernelVirtualAddressAllocatorStatistics Statistics() const noexcept;
 

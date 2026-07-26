@@ -93,7 +93,7 @@ Stage 1 输出 `KERNEL_RETURNED` 并停机。
 | 标记 | 含义 |
 | --- | --- |
 | `MEMORY_MAP_INVALID` | `fw_cfg` 签名、目录或 `etc/e820` 结构不满足边界 |
-| `KERNEL_ATA_TIMEOUT` | BSY/DRQ 轮询超过固定预算 |
+| `KERNEL_ATA_TIMEOUT` | BSY/DRQ 轮询超过 `0x000FFFFF` 次固定预算 |
 | `KERNEL_ATA_ERROR` | 设备返回 ERR 或 DF |
 | `KERNEL_HEADER_INVALID` | 描述符字段、范围、保留区或描述符 CRC 错误 |
 | `KERNEL_CHECKSUM_INVALID` | 精确 ELF CRC 或扇区补零错误 |

@@ -152,7 +152,9 @@ Stage 1 的低 64 MiB 身份映射中搜索连续可用区，跳过低 1 MiB、�
 每一阶分别保存 free 块和 allocated 块首：前者驱动查找、分裂与合并，后者
 记录本次交付的精确 order，因此大块内部页、错误 order 和重复释放不会被误当
 成合法块。原 `Allocate`、`AllocateInRange`、`Release` 统一映射到 order 0，
-页表、heap、用户页和进程地址空间没有旁路状态机。
+页表、heap、用户页和进程地址空间没有旁路状态机。只读
+`OwnsAllocation(PhysicalFrame)` 只有在给定地址仍是精确 order-0 活动块时
+返回 true；大块内部首帧、已释放帧和保留帧都不能冒充单页所有权。
 
 页状态与 buddy 精确存储先按页对齐，再合并为一个低端启动元数据区整体选址和
 reserved。64 GiB 可用页规模的 buddy 双位图精确需要 8388612 字节；QEMU
@@ -246,10 +248,35 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 `OutOfVirtualAddressSpace`。
 
 完整校验重新遍历有序描述符，核对窗口 canonical 边界、无重叠、尾部清零、
-活动/保留/累计/峰值守恒和最大空洞。目标自检建立双 guard 六页区间，只映射
+活动/保留/累计/峰值守恒和最大空洞。`OwnsAllocation` 还提供精确只读查询，
+让上层对象同时证明地址区间仍由活动 allocation 持有。目标自检建立双 guard
+六页区间，只映射
 中间四页并真实写回；清理必须按 unmap、buddy block、KVA 顺序完成。实现、
 页表暖机边界和后续迁移见
 [ADR 0024](../adr/0024-reclaimable-kernel-virtual-address-allocator.md)。
+
+### 动态内核栈管理器
+
+`KernelStackManager` 把六页 KVA allocation 解释为一页 lower guard、四页
+16 KiB 可用栈和一页 upper guard。guard 从创建到销毁始终没有叶项；每个
+数据页独立申请 order-0 物理帧，完整清零后映射为 supervisor RW/NX。物理页
+不要求连续，虚拟连续性由页表提供。
+
+创建先在局部候选对象中取得 KVA、物理页和映射，验证精确 KVA allocation、
+四个精确 order-0 物理 allocation、双 guard、叶权限、物理身份及栈内/栈间
+帧唯一性，最后才提交槽位与统计。失败按映射、物理页、KVA 逆序回滚。销毁也
+先完整预检，再逆序 unmap、清零释放帧、释放精确 KVA，避免错误所有权进入
+部分清理。
+
+进程运行时先创建栈再装载用户地址空间，初始 176 字节特权帧放在栈顶最后
+一页。调度读取活动栈对象设置 TSS.RSP0，不再按 PCB 索引推导地址。终止处理
+仍运行在该栈上，所以只发布 `Terminated`；`OsKernelEnterScheduledProcess`
+恢复永久启动栈后，安全点确认当前 RSP 不属于目标栈才允许销毁。
+
+当前管理器提供 256 个槽；正常四进程路径峰值为 4 个栈、16 个映射页和
+8 个 guard 页，结束后活动数归零，创建/销毁各四次。完整设计、故障模型和
+测试证据见
+[ADR 0025](../adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
 ## 异常 ABI
 
@@ -349,7 +376,7 @@ CS=`0x23`、SS=`0x1B`、RIP 所在叶页为 user RX、RSP 位于四页用户栈�
 
 `ProcessScheduler` 是可在宿主执行的纯模型，只保存状态、PID、tick、派发和
 抢占统计。`ProcessRuntime` 拥有固定四槽 PCB，把每个槽位关联到独立
-`UserAddressSpace`、保存帧、终止结果和 Ring 0 栈。IRQ、系统调用和异常
+`UserAddressSpace`、保存帧、终止结果和动态 Ring 0 栈所有权。IRQ、系统调用和异常
 分发器都返回“下一份要恢复的帧地址”，汇编不内置调度策略。
 
 地址空间根以当前内核 PML4 为模板。创建时克隆低端 PDPT，清空用户程序所在
@@ -357,10 +384,11 @@ PDPT[1]，并让用户栈从空的 PML4[255] 开始建立。销毁时只递归�
 独占子树，绝不释放共享内核页表。`DestroyUserPageTable` 拒绝销毁当前 CR3
 或内核根，迫使终止路径先切回安全根。
 
-进程栈存储按“4 KiB guard + 16 KiB 可用栈”连续排列。内存管理器构建低端
-身份映射时跳过每块 guard；PCB 只接受落在自己可用范围内的 176 字节帧。
-每次进程切换同时更新 CR3 和 TSS.RSP0，两者任一失败都停止系统，不能带着
-不一致的页表/栈所有权继续执行。
+进程栈从 32 TiB KVA 窗口取得“4 KiB lower guard + 16 KiB 可用栈 +
+4 KiB upper guard”，中间四页由独立物理帧后备。PCB 只接受落在自己映射
+范围内的 176 字节帧。每次进程切换同时更新 CR3 和 TSS.RSP0，两者任一失败
+都停止系统，不能带着不一致的页表/栈所有权继续执行。终止后必须先由汇编回到
+永久启动栈，再清零并释放叶映射、物理页和 KVA。
 
 IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预算。中断热路径
 不分配、不释放、不写串口；用户页和页表只在进程退出/异常路径切回内核 CR3 后
@@ -455,6 +483,11 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=0x0000000000000002
 [OS][KERNEL] KVA_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
+[OS][KERNEL] KERNEL_STACK_MANAGER_READY
+[OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000100
+[OS][KERNEL] KERNEL_STACK_MAPPED_PAGES=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_GUARD_PAGES=0x0000000000000002
+[OS][KERNEL] KERNEL_STACK_SIZE_BYTES=0x0000000000004000
 [OS][KERNEL] PIPE_READY
 [OS][KERNEL] USER_ELF_VALID
 [OS][KERNEL] USER_ENTRY=0x0000000040000000
@@ -462,6 +495,9 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] USER_STACK_READY
 [OS][KERNEL] PROCESS_ID=0x...
 [OS][KERNEL] PROCESS_CR3=0x...
+[OS][KERNEL] PROCESS_KERNEL_STACK_LOWER_GUARD=0x...
+[OS][KERNEL] PROCESS_KERNEL_STACK_TOP=0x...
+[OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=0x...
 [OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
 [OS][KERNEL] PIC_READY
 [OS][KERNEL] PIC_MASK=0x...FFFC
@@ -491,11 +527,17 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] PIPE_WRITTEN_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x0000000000000001
+[OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
 [OS][KERNEL] USER_SYSCALL_COUNT=0x0000000000000006
 [OS][KERNEL] USER_TERMINATED
 [OS][KERNEL] PIPE_TRANSFER_VALID
 [OS][KERNEL] PIPE_ENDPOINTS_CLOSED
+[OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
 [OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
 [OS][KERNEL] SCHEDULER_COMPLETE
 [OS][KERNEL] USER_RETURNED_TO_KERNEL
@@ -529,10 +571,13 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
   32 TiB 独立窗口；堆后备区仍固定为 64 KiB，缓存尚不能跨多 slab 增长，
   KVA 描述符存储固定为 256 项且尚无并发索引或内存压力回收；页表取消映射
   也不回收空中间表。
+- 当前进程内核栈已动态化并支持双 guard 与安全点回收，但仍固定为 16 KiB，
+  管理器由单 BSP 串行调用，尚无高水位统计、per-CPU 缓存或远端 TLB
+  shootdown。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。
-- 当前是单核、固定四进程、单线程模型；没有阻塞、唤醒、优先级、父子关系、
-  zombie/wait、FPU/SSE 状态保存或 SMP 负载均衡。
+- 当前是单核、固定四进程、单线程模型；已有具名阻塞/唤醒，但没有优先级、
+  父子关系、zombie/wait、FPU/SSE 状态保存或 SMP 负载均衡。
 - 用户地址空间、通用内核堆与固定尺寸缓存均可回收；动态 KernelObject 和
   引用计数仍等待 v1.4 对象模型。

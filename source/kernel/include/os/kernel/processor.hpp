@@ -14,6 +14,7 @@ void WaitForInterrupt() noexcept;
 void EnableInterruptsWaitAndDisable() noexcept;
 [[nodiscard]] uint64_t ReadPageTableRoot() noexcept;
 [[nodiscard]] uint64_t ReadPageFaultLinearAddress() noexcept;
+[[nodiscard]] uint64_t ReadStackPointer() noexcept;
 [[nodiscard]] uint64_t ProcessorPhysicalAddressWidthBits() noexcept;
 [[nodiscard]] uint64_t ProcessorVirtualAddressWidthBits() noexcept;
 [[nodiscard]] uint64_t ProcessorMaximumPhysicalAddressExclusive() noexcept;

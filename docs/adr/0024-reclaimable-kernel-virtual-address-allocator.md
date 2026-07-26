@@ -213,7 +213,8 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
   和最大空洞，并每 257 步运行完整校验；
 - 64 MiB QEMU 已完成真实页表、TLB 失效、双 guard、写回与回收；64 GiB 主规格
   使用同一代码路径并继续验证高端物理内存能力；
-- 三项测试加入后完整 CTest 集合为 86 项，Kernel ELF 审计继续要求没有异常、
+- 本 ADR 三项测试加入后完整 CTest 集合当时为 86 项；动态栈增量完成后当前
+  为 89 项。Kernel ELF 审计继续要求没有异常、
   RTTI、隐藏宿主分配或未解析运行时符号。
 
 ## 结果
@@ -233,7 +234,8 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
 - 没有锁、per-CPU KVA cache、延迟 TLB 批处理或并发读者；
 - KVA 只管理地址，不自动分配页、映射、清零或回滚跨层事务；
 - `UnmapPage` 尚不回收空中间页表，暖机留下的三页暂作为长期页表基础设施；
-- 动态内核栈尚未迁移，当前四进程静态栈继续保留。
+- 本 ADR 落地时动态内核栈尚未迁移；该历史限制已由
+  [ADR 0025](0025-kva-backed-dynamic-kernel-stacks.md) 消除。
 
 ## 被否决方案
 
@@ -265,8 +267,9 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
 
 ## 后续
 
-- 下一增量让动态内核栈从 KVA 取得“guard + data pages”区间，从 buddy 取得
-  后备页，并在创建失败时跨三层回滚；
+- 动态内核栈从 KVA 取得“guard + data pages”区间、从 buddy 取得后备页并
+  跨三层回滚的增量已经由 [ADR 0025](0025-kva-backed-dynamic-kernel-stacks.md)
+  完成；
 - 随后为中间页表建立引用或空表判断，在 `UnmapPage` 后回收不再使用的页表页；
 - 引入通用作用域回滚与 `ResourceSnapshot`，把手写清理序列升级为统一事务；
 - v1.2 的 Thread 使用动态内核栈，通过对等测试后删除固定 PCB 栈；
@@ -277,6 +280,7 @@ KVA_SELF_TEST_GUARD_PAGES       = 2
 - [ADR 0017：Linux 风格物理内存规模与高半区直映](0017-linux-style-physical-memory-and-direct-map.md)
 - [ADR 0022：双位图 buddy 页帧分配器](0022-bitmap-buddy-frame-allocator.md)
 - [ADR 0023：固定尺寸类型缓存](0023-heap-backed-fixed-size-type-cache.md)
+- [ADR 0025：动态内核栈与安全点回收](0025-kva-backed-dynamic-kernel-stacks.md)
 - [架构说明](../architecture.md)
 - [内核模块](../modules/kernel.md)
 - [测试策略](../testing.md)

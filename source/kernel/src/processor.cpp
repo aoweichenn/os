@@ -124,6 +124,12 @@ uint64_t ReadPageFaultLinearAddress() noexcept {
     return page_fault_linear_address;
 }
 
+uint64_t ReadStackPointer() noexcept {
+    uint64_t stack_pointer = 0ULL;
+    asm volatile("mov %0, rsp" : "=r"(stack_pointer));
+    return stack_pointer;
+}
+
 uint64_t ProcessorPhysicalAddressWidthBits() noexcept {
     const CpuIdResult maximum_leaf = ReadCpuId(OS_KERNEL_PROCESSOR_CPUID_EXTENDED_MAXIMUM_LEAF);
     if (maximum_leaf.accumulator < OS_KERNEL_PROCESSOR_CPUID_ADDRESS_WIDTHS_LEAF) {

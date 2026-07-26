@@ -205,8 +205,8 @@ QEMU 自行异常退出仍视为失败。
 `v0.9` 把调度策略、硬件切换和资源生命周期分层验证：
 
 - 纯 `ProcessScheduler` 单元测试覆盖未初始化、零量子、容量、创建回滚、
-  PID 单调、量子边界、终止和越界读取；内核栈布局同时验证对齐、guard 与
-  相邻槽位不重叠。
+  PID 单调、量子边界、终止和越界读取。v0.9 当时同文件中的静态栈布局检查
+  已在动态栈迁移后删除，栈所有权改由独立的单元/集成/随机三层测试承担。
 - 集成模型让三个进程执行 24 tick，断言每个恰得 8 tick，并核对抢占、
   终止交接和派发统计。
 - 固定种子随机测试生成 4096 组 1..4 进程、1..8 tick 量子和 1..64 tick
@@ -303,7 +303,8 @@ QEMU 自行异常退出仍视为失败。
 
 - 单元测试精确核对 64 页需要 36 字节双位图，覆盖缺失/过小元数据、已有活动
   页拒绝初始化、最大对齐分解、分裂合并、无效阶、范围失败原子性、错阶、
-  错位、reserved 页、重复释放和初始化后保留冻结；
+  错位、reserved 页、重复释放、初始化后保留冻结，以及精确 order-0
+  所有权查询不会接受大块内部页或已释放页；
 - 集成测试构造 1024 页、256 页 E820 洞和 32 页启动保留，要求 order 5
   连续块完整落入指定高地址半开区间；order 0/3/5/6 混合乱序释放后页与块
   统计必须回到基线；
@@ -355,6 +356,25 @@ QEMU 自行异常退出仍视为失败。
   计入基础设施基线，再证明主事务没有泄漏数据页；页表回收仍由后续增量独立
   验收，不能用放宽页帧基线掩盖。
 
+### 动态内核栈生命周期
+
+- 单元测试覆盖管理器初始化、槽位边界、重复创建/销毁、六页布局、双 guard、
+  四页清零、supervisor RW/NX、物理帧唯一性、精确地址包含、KVA/物理页
+  耗尽和失败输出不变；
+- 破坏测试分别制造“空闲 KVA 上残留 PTE”“活动栈丢失 KVA allocation”和
+  “数据叶项被外部撤销”，要求管理器拒绝复用或销毁，并由完整校验明确报告
+  损坏；
+- 集成测试创建四个栈，把真实 176 字节用户特权帧放在每个栈顶，再从克隆的
+  独立进程 CR3 查询共享高半映射，证明 guard 缺席、数据页身份和 supervisor
+  权限不只在内核根中成立；逆序销毁后 frame 与 KVA 恢复暖机基线；
+- 固定种子 `0x4B535441434B524E` 在 4096 页独立 best-fit 所有权模型上执行
+  100000 步创建/销毁，使用 64 个槽位；每 257 步比较活动、累计、峰值、
+  映射页、guard 页、KVA 页和物理帧统计并运行完整校验，最后排空；
+- QEMU 正常路径要求四组 lower/top/upper 地址、创建/销毁各四次、峰值四栈/
+  十六映射页、最终活动数零和 `KERNEL_STACK_RESOURCES_RECLAIMED`。用户
+  `#UD` 与 `#PF` 隔离镜像也必须创建并安全点回收单栈，证明异常路径不会
+  留下资源。
+
 ## 验收证据
 
 - 固定构建命令与工具链版本。
@@ -402,24 +422,27 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
 | `os_kernel_heap_unit_tests` | 单元 | 可回收堆的对齐、原子失败、非法释放、合并、复用与统计 |
 | `os_kernel_type_cache_unit_tests` | 单元 | 固定尺寸缓存布局、耗尽、精确释放、LIFO、最小槽和销毁 |
-| `os_kernel_virtual_address_allocator_unit_tests` | 单元 | KVA 保留、best-fit、绝对对齐、精确释放、两类耗尽与损坏检测 |
+| `os_kernel_virtual_address_allocator_unit_tests` | 单元 | KVA 保留、best-fit、绝对对齐、精确所有权查询、释放、两类耗尽与损坏检测 |
+| `os_kernel_stack_manager_unit_tests` | 单元 | 动态栈双 guard、清零、权限、回滚、耗尽，以及物理/KVA/PTE 所有权破坏、修复和安全销毁 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
 | `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 目标堆的混合对象、数据保持、耗尽与完整恢复 |
 | `os_kernel_type_cache_lifecycle_integration_tests` | 集成 | 三种对齐缓存共享堆、交错释放与乱序销毁恢复 |
 | `os_kernel_virtual_address_mapping_lifecycle_integration_tests` | 集成 | KVA、物理帧、页表、双 guard 与逆序回收 |
+| `os_kernel_stack_lifecycle_integration_tests` | 集成 | 四栈、用户特权帧、独立进程 CR3 共享高半映射与安全点式逆序回收 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
 | `os_kernel_buddy_frame_allocator_randomized_tests` | 随机 | 固定种子 100000 步 buddy 与逐页参考模型 |
 | `os_kernel_heap_randomized_tests` | 随机 | 固定种子 100000 步分配/释放与独立活动对象模型 |
 | `os_kernel_type_cache_randomized_tests` | 随机 | 固定种子 100000 步槽申请/释放与独立活动记录 |
 | `os_kernel_virtual_address_allocator_randomized_tests` | 随机 | 固定种子 100000 步 KVA 与独立逐页 best-fit 模型 |
+| `os_kernel_stack_manager_randomized_tests` | 随机 | 固定种子 100000 步动态栈创建/销毁与 4096 页独立所有权模型 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
 | `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
 | `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、用户栈、地址窗口与系统调用 ABI |
 | `os_kernel_user_elf_randomized_tests` | 随机 | 16,384 条用户地址范围与溢出性质 |
-| `os_kernel_process_scheduler_unit_tests` | 单元 | PID、容量、创建回滚、时间片、终止与 Ring 0 栈 guard |
+| `os_kernel_process_scheduler_unit_tests` | 单元 | PID、容量、创建回滚、时间片、阻塞/唤醒与终止状态机 |
 | `os_kernel_process_scheduling_integration_tests` | 集成 | 多进程公平 tick、轮转次序、终止交接与统计守恒 |
 | `os_kernel_process_scheduler_randomized_tests` | 随机 | 4096 组量子/进程/tick 组合的单 Running 与计数守恒 |
 | `os_kernel_pipe_unit_tests` | 单元 | 管道读写、回绕、关闭、EOF、broken pipe 与统计 |
@@ -461,7 +484,7 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_kernel_header_failure` | 系统/失败路径 | Stage 1 必须拒绝损坏 Kernel 描述符 |
 | `os_qemu_kernel_checksum_failure` | 系统/失败路径 | Stage 1 必须拒绝损坏 Kernel 文件 |
 | `os_qemu_kernel_elf_failure` | 系统/失败路径 | Stage 1 必须拒绝 CRC 正确的非法 ELF |
-| `os_qemu_kernel_ata_timeout_failure` | 系统/失败路径 | Kernel 读取的 ATA 轮询必须有界超时 |
+| `os_qemu_kernel_ata_timeout_failure` | 系统/失败路径 | Kernel 读取采用可容忍 TCG 调度抖动的 `0x000FFFFF` 次预算，并对永久忙设备有界超时 |
 | `os_qemu_kernel_ata_error_failure` | 系统/失败路径 | Kernel 读取必须识别 ATA ERR/DF |
 | `os_qemu_kernel_invalid_opcode_panic` | 系统/失败路径 | UD2、向量 6、统一帧与 panic |
 | `os_qemu_kernel_page_fault_panic` | 系统/失败路径 | 向量 14、错误码、CR2 与 panic |
@@ -470,14 +493,14 @@ python3 tools/os.py test --layer failure-path
 | `os_qemu_user_page_fault_isolation` | 系统/失败路径 | Ring 3 #PF、错误码 4、CR2 与内核存活 |
 | `os_qemu_user_invalid_elf_rejection` | 系统/失败路径 | 截断用户 ELF 必须在降权前被拒绝 |
 | `os_python_tooling_unit_tests` | 单元 | 镜像、ELF、ROM、串口协议、代码统计和手机教材导出工具 |
-| `os_cpp_identifier_naming_check` | 集成 | 150 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
+| `os_cpp_identifier_naming_check` | 集成 | 155 个 C++ 头/源文件的变量蛇形、函数大驼峰和单词级小写命名空间 |
 | `os_firmware_randomized_tests` | 随机 | 256 组错误复位目标必须被拒绝 |
 | `os_stage1_randomized_tests` | 随机 | 256 组有效镜像和 256 组越界 LBA 性质 |
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和 10 个主题章教材结构 |
 
-当前共 86 项 CTest。最新三项分别覆盖 KVA 单元失败语义、物理页/页表组合
-生命周期和 100000 步固定种子逐页模型。命名门禁使用编译数据库和 Clang AST
+当前共 89 项 CTest。最新三项分别覆盖动态内核栈单元失败语义、独立进程 CR3
+组合生命周期和 100000 步固定种子逐页所有权模型。命名门禁使用编译数据库和 Clang AST
 区分标识符种类；
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
@@ -490,12 +513,14 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 
-成功 QEMU 用例不只检查标记“至少出现一次”。v1.0 对 Shell、生产者、消费者
+成功 QEMU 用例不只检查标记“至少出现一次”。当前路径对 Shell、生产者、消费者
 和一个 worker 的四次 ELF/栈创建，十条命令、管道里程碑、地址隔离、四份
 终止结果和单次资源回收执行精确计数；同时解析固定 16 位十六进制统计，要求
 创建/终止为 4、PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、管道写入/读取
-均为 256，控制台提交/读取均为 109 且无丢弃。内核也独立验证同一组进程、
-描述符、管道、文件系统和页帧不变量，形成目标内自检与宿主协议检查两层证据。
+均为 256，控制台提交/读取均为 109 且无丢弃；动态栈 lower/top/upper 各
+出现四次，创建/销毁各四次、峰值至少四栈和十六映射页、最终活动数为零。
+内核也独立验证同一组进程、描述符、管道、文件系统、页帧、KVA 和栈管理器
+不变量，形成目标内自检与宿主协议检查两层证据。
 持久化测试另用同一临时磁盘的两次全新 QEMU 进程，避免把缓存内读回误当作
 跨启动持久化。
 

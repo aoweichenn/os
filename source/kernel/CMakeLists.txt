@@ -14,6 +14,7 @@ set(
     include/os/kernel/freestanding_memory.hpp
     include/os/kernel/kernel_main.hpp
     include/os/kernel/kernel_heap.hpp
+    include/os/kernel/kernel_stack_manager.hpp
     include/os/kernel/kernel_type_cache.hpp
     include/os/kernel/kernel_type_cache.tpp
     include/os/kernel/kernel_virtual_address_allocator.hpp
@@ -27,7 +28,6 @@ set(
     include/os/kernel/physical_frame_allocator.hpp
     include/os/kernel/physical_memory_map.hpp
     include/os/kernel/port_io.hpp
-    include/os/kernel/process_memory_layout.hpp
     include/os/kernel/process_runtime.hpp
     include/os/kernel/process_scheduler.hpp
     include/os/kernel/processor.hpp
@@ -58,6 +58,7 @@ set(
     src/freestanding_memory.cpp
     src/kernel_main.cpp
     src/kernel_heap.cpp
+    src/kernel_stack_manager.cpp
     src/kernel_type_cache.cpp
     src/kernel_virtual_address_allocator.cpp
     src/interrupt_runtime.cpp
@@ -71,7 +72,6 @@ set(
     src/physical_frame_allocator.cpp
     src/physical_memory_map.cpp
     src/port_io.cpp
-    src/process_memory_layout.cpp
     src/process_runtime.cpp
     src/process_scheduler.cpp
     src/processor.cpp
@@ -125,6 +125,7 @@ add_library(
     os_kernel_memory_model_host
     STATIC
         src/kernel_heap.cpp
+        src/kernel_stack_manager.cpp
         src/kernel_type_cache.cpp
         src/kernel_virtual_address_allocator.cpp
         src/page_table.cpp
@@ -132,6 +133,7 @@ add_library(
         src/physical_frame_allocator.cpp
         src/physical_memory_map.cpp
         include/os/kernel/kernel_heap.hpp
+        include/os/kernel/kernel_stack_manager.hpp
         include/os/kernel/kernel_type_cache.hpp
         include/os/kernel/kernel_type_cache.tpp
         include/os/kernel/kernel_virtual_address_allocator.hpp
@@ -177,9 +179,7 @@ add_library(
 add_library(
     os_kernel_process_model_host
     STATIC
-        src/process_memory_layout.cpp
         src/process_scheduler.cpp
-        include/os/kernel/process_memory_layout.hpp
         include/os/kernel/process_scheduler.hpp
 )
 

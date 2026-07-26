@@ -2,7 +2,6 @@
 
 #include "os/kernel/descriptor_tables.hpp"
 #include "os/kernel/memory_manager.hpp"
-#include "os/kernel/process_memory_layout.hpp"
 #include "os/kernel/processor.hpp"
 #include "os/kernel/serial_port.hpp"
 
@@ -14,6 +13,7 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS = 0x202ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_WAKE_ALL_COUNT = OS_KERNEL_PROCESS_CAPACITY;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_STACK_POINTER_PROBE_SIZE_BYTES = sizeof(uint64_t);
 constexpr int64_t OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE = 0LL;
 
 [[nodiscard]] ProcessIoStatus MapPipeIoStatus(const PipeStatus status) noexcept {
@@ -50,6 +50,10 @@ ProcessControlBlock process_control_blocks[OS_KERNEL_PROCESS_CAPACITY];
 FileSystem *process_file_system;
 PhysicalFrameAllocatorStatistics frames_before_processes;
 PhysicalFrameAllocatorStatistics frames_after_processes;
+KernelVirtualAddressAllocatorStatistics virtual_addresses_before_processes;
+KernelVirtualAddressAllocatorStatistics virtual_addresses_after_processes;
+KernelStackManagerStatistics kernel_stacks_before_processes;
+KernelStackManagerStatistics kernel_stacks_after_processes;
 uint64_t pipe_reader_block_count;
 uint64_t pipe_writer_block_count;
 uint64_t pipe_end_of_file_observation_count;
@@ -67,16 +71,26 @@ void ResetProcessControlBlocks() noexcept {
     }
 }
 
+[[nodiscard]] bool ReadProcessKernelStack(const uint64_t process_index,
+                                          KernelStack &stack) noexcept {
+    return GetKernelStackManager().Read(process_index, stack) ==
+           KernelStackManagerStatus::Succeeded;
+}
+
 [[nodiscard]] bool BuildInitialContextFrame(const uint64_t process_index, const uint64_t process_id,
                                             const UserAddressSpace &address_space,
                                             ExceptionFrame *&saved_frame) noexcept {
-    const uint64_t stack_top_address = ProcessKernelStackTopAddress(process_index);
+    KernelStack stack{};
+    if (!ReadProcessKernelStack(process_index, stack)) {
+        return false;
+    }
+    const uint64_t stack_top_address = KernelStackTopAddress(stack);
     if (stack_top_address < OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES) {
         return false;
     }
     const uint64_t frame_address = stack_top_address - OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES;
-    if (!ProcessKernelStackContains(process_index, frame_address,
-                                    OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES)) {
+    if (!GetKernelStackManager().Contains(process_index, frame_address,
+                                          OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES)) {
         return false;
     }
 
@@ -97,8 +111,8 @@ void ResetProcessControlBlocks() noexcept {
 [[nodiscard]] bool CurrentFrameIsValid(const uint64_t process_index,
                                        const ExceptionFrame &frame) noexcept {
     if (process_index >= OS_KERNEL_PROCESS_CAPACITY || !FrameOriginatedFromUser(frame) ||
-        !ProcessKernelStackContains(process_index, reinterpret_cast<uint64_t>(&frame),
-                                    OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES)) {
+        !GetKernelStackManager().Contains(process_index, reinterpret_cast<uint64_t>(&frame),
+                                          OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES)) {
         return false;
     }
     const ProcessControlBlock &process = process_control_blocks[process_index];
@@ -111,13 +125,15 @@ void ResetProcessControlBlocks() noexcept {
         return false;
     }
     ProcessControlBlock &process = process_control_blocks[process_index];
-    if (process.saved_frame == nullptr ||
-        !ProcessKernelStackContains(process_index, reinterpret_cast<uint64_t>(process.saved_frame),
-                                    OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES) ||
+    KernelStack stack{};
+    if (process.saved_frame == nullptr || !ReadProcessKernelStack(process_index, stack) ||
+        !GetKernelStackManager().Contains(process_index,
+                                          reinterpret_cast<uint64_t>(process.saved_frame),
+                                          OS_KERNEL_USER_PRIVILEGE_FRAME_SIZE_BYTES) ||
         !ActivateUserPageTable(process.address_space.root_physical_address)) {
         return false;
     }
-    if (!SetPrivilegeStackPointer0(ProcessKernelStackTopAddress(process_index))) {
+    if (!SetPrivilegeStackPointer0(KernelStackTopAddress(stack))) {
         ActivateKernelPageTable();
         return false;
     }
@@ -174,6 +190,35 @@ void CloseProcessIoDescriptors(ProcessControlBlock &process) noexcept {
     }
 }
 
+[[nodiscard]] bool ReapTerminatedKernelStacks() noexcept {
+    const uint64_t current_stack_pointer = ReadStackPointer();
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < OS_KERNEL_PROCESS_CAPACITY; ++process_index) {
+        ProcessSchedulerEntry scheduler_entry{};
+        if (process_scheduler.ReadEntry(process_index, scheduler_entry) !=
+                ProcessSchedulerStatus::Succeeded ||
+            scheduler_entry.state != ProcessState::Terminated) {
+            continue;
+        }
+        KernelStack stack{};
+        const KernelStackManagerStatus read_status =
+            GetKernelStackManager().Read(process_index, stack);
+        if (read_status == KernelStackManagerStatus::SlotNotActive) {
+            continue;
+        }
+        if (read_status != KernelStackManagerStatus::Succeeded ||
+            GetKernelStackManager().Contains(
+                process_index, current_stack_pointer,
+                OS_KERNEL_PROCESS_RUNTIME_STACK_POINTER_PROBE_SIZE_BYTES) ||
+            GetKernelStackManager().TryDestroy(process_index) !=
+                KernelStackManagerStatus::Succeeded) {
+            return false;
+        }
+        process_control_blocks[process_index].saved_frame = nullptr;
+    }
+    return true;
+}
+
 [[nodiscard]] ExceptionFrame *
 CompleteCurrentProcess(ExceptionFrame &frame, const ProcessTerminationReason termination_reason,
                        const int64_t exit_code, const uint64_t page_fault_address) noexcept {
@@ -206,7 +251,6 @@ CompleteCurrentProcess(ExceptionFrame &frame, const ProcessTerminationReason ter
 
     if (decision.completed) {
         process_scheduling_active = false;
-        frames_after_processes = GetPhysicalFrameAllocatorStatistics();
         if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
             HaltProcessor();
         }
@@ -236,6 +280,15 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     ResetProcessControlBlocks();
     frames_before_processes = GetPhysicalFrameAllocatorStatistics();
     frames_after_processes = PhysicalFrameAllocatorStatistics{};
+    virtual_addresses_before_processes = GetKernelVirtualAddressAllocator().Statistics();
+    virtual_addresses_after_processes = KernelVirtualAddressAllocatorStatistics{};
+    kernel_stacks_before_processes = GetKernelStackManager().Statistics();
+    kernel_stacks_after_processes = KernelStackManagerStatistics{};
+    if (GetKernelStackManager().Validate() != KernelStackManagerStatus::Succeeded ||
+        kernel_stacks_before_processes.active_stack_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return ProcessRuntimeStatus::KernelStackFailure;
+    }
     process_pipe.Initialize();
     process_console_input.Initialize();
     pipe_reader_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -275,14 +328,23 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
         ProcessSchedulerStatus::Succeeded) {
         return ProcessRuntimeStatus::SchedulerFailure;
     }
+    if (GetKernelStackManager().TryCreate(process_index) != KernelStackManagerStatus::Succeeded) {
+        if (process_scheduler.DiscardReadyProcess(process_index) !=
+            ProcessSchedulerStatus::Succeeded) {
+            HaltProcessor();
+        }
+        return ProcessRuntimeStatus::KernelStackFailure;
+    }
 
     const UserProgramImage image = SelectUserProgramImage(selection);
     UserAddressSpace address_space{};
     address_space_status = LoadUserAddressSpace(image.image, image.image_size_bytes, address_space,
                                                 elf_validation_status);
     if (address_space_status != UserAddressSpaceStatus::Succeeded) {
-        if (process_scheduler.DiscardReadyProcess(process_index) !=
-            ProcessSchedulerStatus::Succeeded) {
+        if (GetKernelStackManager().TryDestroy(process_index) !=
+                KernelStackManagerStatus::Succeeded ||
+            process_scheduler.DiscardReadyProcess(process_index) !=
+                ProcessSchedulerStatus::Succeeded) {
             HaltProcessor();
         }
         return address_space_status == UserAddressSpaceStatus::InvalidElf
@@ -293,6 +355,8 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
     ExceptionFrame *saved_frame = nullptr;
     if (!BuildInitialContextFrame(process_index, process_id, address_space, saved_frame)) {
         if (DestroyUserAddressSpace(address_space) != UserAddressSpaceStatus::Succeeded ||
+            GetKernelStackManager().TryDestroy(process_index) !=
+                KernelStackManagerStatus::Succeeded ||
             process_scheduler.DiscardReadyProcess(process_index) !=
                 ProcessSchedulerStatus::Succeeded) {
             HaltProcessor();
@@ -331,12 +395,19 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
     process_control_blocks[process_index].descriptors.Initialize(
         selection == UserProgramSelection::IpcConsumer,
         selection == UserProgramSelection::IpcProducer);
+    KernelStack kernel_stack{};
+    if (!ReadProcessKernelStack(process_index, kernel_stack)) {
+        HaltProcessor();
+    }
     creation_result = ProcessCreationResult{
         .process_id = process_id,
         .process_index = process_index,
         .root_physical_address = address_space.root_physical_address,
         .entry_virtual_address = address_space.entry_virtual_address,
         .mapped_page_count = address_space.mapped_page_count,
+        .kernel_stack_lower_guard_address = KernelStackLowerGuardAddress(kernel_stack),
+        .kernel_stack_top_address = KernelStackTopAddress(kernel_stack),
+        .kernel_stack_upper_guard_address = KernelStackUpperGuardAddress(kernel_stack),
     };
     return ProcessRuntimeStatus::Succeeded;
 }
@@ -373,6 +444,19 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         if (ReadPageTableRoot() != GetKernelPageTableRoot()) {
             HaltProcessor();
         }
+        if (!ReapTerminatedKernelStacks()) {
+            process_scheduling_active = false;
+            RestoreInterrupts(interrupts_were_enabled);
+            return ProcessRuntimeStatus::KernelStackFailure;
+        }
+    }
+    frames_after_processes = GetPhysicalFrameAllocatorStatistics();
+    virtual_addresses_after_processes = GetKernelVirtualAddressAllocator().Statistics();
+    kernel_stacks_after_processes = GetKernelStackManager().Statistics();
+    if (GetKernelStackManager().Validate() != KernelStackManagerStatus::Succeeded ||
+        kernel_stacks_after_processes.active_stack_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        RestoreInterrupts(interrupts_were_enabled);
+        return ProcessRuntimeStatus::KernelStackFailure;
     }
     RestoreInterrupts(interrupts_were_enabled);
     return ProcessRuntimeStatus::Succeeded;
@@ -383,6 +467,10 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .scheduler = process_scheduler.Statistics(),
         .frames_before_processes = frames_before_processes,
         .frames_after_processes = frames_after_processes,
+        .virtual_addresses_before_processes = virtual_addresses_before_processes,
+        .virtual_addresses_after_processes = virtual_addresses_after_processes,
+        .kernel_stacks_before_processes = kernel_stacks_before_processes,
+        .kernel_stacks_after_processes = kernel_stacks_after_processes,
         .ipc =
             ProcessIpcStatistics{
                 .pipe = process_pipe.Statistics(),

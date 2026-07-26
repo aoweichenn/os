@@ -12,6 +12,8 @@ constexpr std::string_view OS_TEST_BUDDY_UNIT_INITIALIZATION =
     "初始化必须把不连续空闲区分解为最大对齐块";
 constexpr std::string_view OS_TEST_BUDDY_UNIT_SPLIT_AND_MERGE =
     "小块申请释放必须产生可逆的递归分裂与合并";
+constexpr std::string_view OS_TEST_BUDDY_UNIT_EXACT_OWNERSHIP =
+    "所有权查询必须只接受精确 order-0 活动块并在释放后失效";
 constexpr std::string_view OS_TEST_BUDDY_UNIT_FAILURE_ATOMICITY =
     "耗尽与非法范围失败不得修改输出和统计";
 constexpr std::string_view OS_TEST_BUDDY_UNIT_RELEASE_VALIDATION =
@@ -174,12 +176,23 @@ int main() {
     const bool small_block_allocated =
         allocator.AllocateBlock(OS_TEST_BUDDY_UNIT_SMALL_BLOCK_ORDER, small_block) ==
         os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
+    const os::kernel::PhysicalFrame small_frame{
+        .physical_address = small_block.physical_address,
+    };
+    const os::kernel::PhysicalFrame large_block_first_frame{
+        .physical_address = large_block.physical_address,
+    };
+    const bool exact_ownership_detected = large_block_allocated && small_block_allocated &&
+                                          allocator.OwnsAllocation(small_frame) &&
+                                          !allocator.OwnsAllocation(large_block_first_frame);
     const bool blocks_released =
         small_block_allocated &&
         allocator.ReleaseBlock(small_block) ==
             os::kernel::PhysicalFrameAllocatorStatus::Succeeded &&
         large_block_allocated &&
         allocator.ReleaseBlock(large_block) == os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
+    test_context.Expect(exact_ownership_detected && !allocator.OwnsAllocation(small_frame),
+                        OS_TEST_BUDDY_UNIT_EXACT_OWNERSHIP);
     const os::kernel::PhysicalFrameBuddyStatistics round_trip_buddy_statistics =
         allocator.BuddyStatistics();
     test_context.Expect(

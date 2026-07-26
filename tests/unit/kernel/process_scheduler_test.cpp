@@ -1,4 +1,3 @@
-#include "os/kernel/process_memory_layout.hpp"
 #include "os/kernel/process_scheduler.hpp"
 #include "test_context.hpp"
 
@@ -25,8 +24,6 @@ constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_ENTERS_IDLE =
     "最后一个运行进程阻塞后必须进入无当前进程的可唤醒 idle 状态";
 constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_REJECTS_INVALID_INDEX =
     "读取越界 PCB 索引必须返回明确错误";
-constexpr std::string_view OS_TEST_PROCESS_SCHEDULER_KERNEL_STACK_LAYOUT =
-    "每个进程必须拥有对齐、互不重叠且带保护页的 Ring 0 栈";
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_QUANTUM_TICKS = 4ULL;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_FIRST_PROCESS_ID = 1ULL;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_SECOND_PROCESS_ID = 2ULL;
@@ -36,7 +33,6 @@ constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_PREEMPTION_TICK_COUNT =
     OS_TEST_PROCESS_SCHEDULER_QUANTUM_TICKS;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_FIRST_INDEX = 0ULL;
-constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_EXPECTED_PREEMPTION_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_BLOCKING_PROCESS_COUNT = 3ULL;
 constexpr uint64_t OS_TEST_PROCESS_SCHEDULER_SINGLE_WAKE_COUNT = 1ULL;
@@ -233,33 +229,5 @@ int main() {
             os::kernel::ProcessSchedulerStatus::InvalidProcessIndex,
         OS_TEST_PROCESS_SCHEDULER_REJECTS_INVALID_INDEX);
 
-    bool kernel_stack_layout_valid = true;
-    uint64_t previous_stack_top_address = OS_TEST_PROCESS_SCHEDULER_EMPTY_VALUE;
-    for (uint64_t process_index = OS_TEST_PROCESS_SCHEDULER_FIRST_INDEX;
-         process_index < os::kernel::OS_KERNEL_PROCESS_CAPACITY; ++process_index) {
-        const uint64_t guard_page_address =
-            os::kernel::ProcessKernelStackGuardPageAddress(process_index);
-        const uint64_t stack_top_address = os::kernel::ProcessKernelStackTopAddress(process_index);
-        kernel_stack_layout_valid =
-            kernel_stack_layout_valid &&
-            guard_page_address % os::kernel::OS_KERNEL_PROCESS_KERNEL_STACK_GUARD_SIZE_BYTES ==
-                OS_TEST_PROCESS_SCHEDULER_EMPTY_VALUE &&
-            stack_top_address - guard_page_address ==
-                os::kernel::OS_KERNEL_PROCESS_KERNEL_STACK_STORAGE_SIZE_BYTES &&
-            !os::kernel::ProcessKernelStackContains(
-                process_index, guard_page_address,
-                OS_TEST_PROCESS_SCHEDULER_ADDRESS_PROBE_SIZE_BYTES) &&
-            os::kernel::ProcessKernelStackContains(
-                process_index,
-                guard_page_address + os::kernel::OS_KERNEL_PROCESS_KERNEL_STACK_GUARD_SIZE_BYTES,
-                os::kernel::OS_KERNEL_PROCESS_KERNEL_STACK_SIZE_BYTES) &&
-            !os::kernel::ProcessKernelStackContains(
-                process_index, stack_top_address,
-                OS_TEST_PROCESS_SCHEDULER_ADDRESS_PROBE_SIZE_BYTES) &&
-            (process_index == OS_TEST_PROCESS_SCHEDULER_FIRST_INDEX ||
-             guard_page_address == previous_stack_top_address);
-        previous_stack_top_address = stack_top_address;
-    }
-    test_context.Expect(kernel_stack_layout_valid, OS_TEST_PROCESS_SCHEDULER_KERNEL_STACK_LAYOUT);
     return test_context.ExitCode();
 }
