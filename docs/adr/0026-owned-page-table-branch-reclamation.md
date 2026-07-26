@@ -224,8 +224,10 @@ PAGE_TABLE_RECLAIM_SELF_TEST_PASSED
   所有权；
 - 页帧分配器只证明精确 order-0 allocation，尚未给帧附加 PageTable 类型；
 - 没有 PCID、全局页优化、批量 unmap 或延迟 TLB 回收；
-- 跨多个资源管理器的通用作用域回滚与 `ResourceSnapshot` 仍是 v1.1 后续
-  产出，本 ADR 只把页表自身事务闭环。
+- 本 ADR 接受时，跨多个资源管理器的通用作用域回滚与 `ResourceSnapshot`
+  仍是 v1.1 后续产出；该历史限制现已由
+  [ADR 0027](0027-v1.1-resource-lifecycle-foundation.md) 闭合。本 ADR
+  自身仍只定义页表事务和根所有权边界。
 
 ## 被否决方案
 

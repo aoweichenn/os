@@ -1,4 +1,4 @@
-#include "os/kernel/boot_info.hpp"
+#include "os/kernel/boot/boot_info.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

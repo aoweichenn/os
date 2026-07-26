@@ -16,7 +16,7 @@ from .process import runCommand
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
 OS_QEMU_FIRMWARE_TIMEOUT_SECONDS = 15.0
-OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS = 40.0
+OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS = 75.0
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
@@ -25,6 +25,7 @@ OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
 OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
 OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
 OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES = 64
+OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES = 256
 OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES = 64 * 1024
 OS_QEMU_FILE_SYSTEM_START_LBA = 2048
 OS_QEMU_FILE_SYSTEM_SECTOR_SIZE_BYTES = 512
@@ -311,10 +312,10 @@ OS_QEMU_KERNEL_KVA_RESERVED_PAGE_COUNT_MARKER = (
     "[OS][KERNEL] KVA_RESERVED_PAGES=0x0000000000000001"
 )
 OS_QEMU_KERNEL_KVA_SUCCESSFUL_ALLOCATION_COUNT_MARKER = (
-    "[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=0x0000000000000002"
+    "[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=0x0000000000000003"
 )
 OS_QEMU_KERNEL_KVA_RELEASE_COUNT_MARKER = (
-    "[OS][KERNEL] KVA_RELEASES=0x0000000000000002"
+    "[OS][KERNEL] KVA_RELEASES=0x0000000000000003"
 )
 OS_QEMU_KERNEL_KVA_PEAK_ALLOCATED_PAGE_COUNT_MARKER = (
     "[OS][KERNEL] KVA_PEAK_ALLOCATED_PAGES=0x0000000000000006"
@@ -336,6 +337,24 @@ OS_QEMU_KERNEL_KVA_SELF_TEST_GUARD_PAGE_COUNT_MARKER = (
 )
 OS_QEMU_KERNEL_KVA_SELF_TEST_PASSED_MARKER = (
     "[OS][KERNEL] KVA_SELF_TEST_PASSED"
+)
+OS_QEMU_KERNEL_RESOURCE_LIFECYCLE_READY_MARKER = (
+    "[OS][KERNEL] RESOURCE_LIFECYCLE_READY"
+)
+OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_TRACKED_FIELDS_MARKER = (
+    "[OS][KERNEL] RESOURCE_SNAPSHOT_TRACKED_FIELDS=0x000000000000001A"
+)
+OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_CHANGED_FIELDS_MARKER = (
+    "[OS][KERNEL] RESOURCE_SNAPSHOT_CHANGED_FIELDS=0x0000000000000000"
+)
+OS_QEMU_KERNEL_REFERENCE_COUNTER_SELF_TEST_PASSED_MARKER = (
+    "[OS][KERNEL] REFERENCE_COUNTER_SELF_TEST_PASSED"
+)
+OS_QEMU_KERNEL_SCOPE_ROLLBACK_SELF_TEST_PASSED_MARKER = (
+    "[OS][KERNEL] SCOPE_ROLLBACK_SELF_TEST_PASSED"
+)
+OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_SELF_TEST_PASSED_MARKER = (
+    "[OS][KERNEL] RESOURCE_SNAPSHOT_SELF_TEST_PASSED"
 )
 OS_QEMU_KERNEL_LEGACY_INTERRUPT_ROUTING_READY_MARKER = (
     "[OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY"
@@ -563,6 +582,9 @@ OS_QEMU_KERNEL_PIPE_ENDPOINTS_CLOSED_MARKER = (
 )
 OS_QEMU_KERNEL_PROCESS_RESOURCES_RECLAIMED_MARKER = (
     "[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED"
+)
+OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED_MARKER = (
+    "[OS][KERNEL] RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED"
 )
 OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER = "[OS][KERNEL] SCHEDULER_COMPLETE"
 OS_QEMU_USER_WORKER_PROCESS_2_STEP_1_MARKER = (
@@ -1022,6 +1044,12 @@ def validateSerialProtocol(
     expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
 ) -> None:
+    for forbiddenMarker in forbiddenMarkers:
+        if forbiddenMarker in serialOutput:
+            raise OsToolError(
+                f"串口输出包含禁止标记：{forbiddenMarker!r}"
+            )
+
     previousMarkerPosition = 0
     for requiredMarker in requiredMarkers:
         markerPosition = serialOutput.find(
@@ -1034,12 +1062,6 @@ def validateSerialProtocol(
                 f"{requiredMarker!r}"
             )
         previousMarkerPosition = markerPosition + len(requiredMarker)
-
-    for forbiddenMarker in forbiddenMarkers:
-        if forbiddenMarker in serialOutput:
-            raise OsToolError(
-                f"串口输出包含禁止标记：{forbiddenMarker!r}"
-            )
 
     for marker, expectedCount in expectedMarkerCounts:
         actualCount = serialOutput.count(marker)
@@ -1102,6 +1124,8 @@ def runQemuFirmwareBoot(
         def observeSerialLine(line: str) -> None:
             if keyboardReadyMarker in line:
                 keyboardReadyEvent.set()
+            if any(forbiddenMarker in line for forbiddenMarker in forbiddenMarkers):
+                protocolCompleteEvent.set()
             if finalRequiredMarker in line:
                 protocolCompleteEvent.set()
 
@@ -1163,8 +1187,13 @@ def runQemuFirmwareBoot(
                 expectedMarkerCounts,
                 minimumHexMarkerValues,
             )
-        except OsToolError:
+        except OsToolError as protocolError:
             print(timedSerialOutput, end="")
+            if timedOut:
+                raise OsToolError(
+                    "QEMU 固件测试超过有界墙钟预算 "
+                    f"{firmwareTimeoutSeconds:.1f} 秒：{protocolError}"
+                ) from protocolError
             raise
         print(timedSerialOutput, end="")
         print("QEMU 固件串口协议验收通过。")

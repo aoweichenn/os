@@ -2,10 +2,10 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v1.0 用户环境` 已完成，第二周期 `v1.1` 已落地动态物理内存、
-可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈和
-页表空分支回收七个
-增量。自研
+当前状态：第二周期 `v1.1 可回收资源基础` 已完整完成，下一阶段是 v1.2
+Process/Thread、WaitQueue 与完整 FXSAVE 现场。v1.1 已落地动态物理内存、
+可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
+页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
@@ -59,16 +59,19 @@ fd 0/1/2 是标准输入、输出和错误。PS/2 IRQ1 把 Set 1 make code 解�
 同一汇编块内的 `sti; hlt; cli`，由真实键盘中断唤醒后恢复用户帧。Shell 使用固定容量
 freestanding C++20 解析器提供 help、echo、pwd、ls、mkdir、write、cat、
 sync 和 exit。QEMU 系统测试在 Shell READY 后逐字产生十条命令，来宾自行
-完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 92 项
+完成 i8042、IRQ、解码、排队、唤醒、文件操作与退出；完整回归共 97 项
 CTest，其中 Clang AST 与 Python 词法门禁会拒绝不符合约定的变量、函数和
 命名空间。
 
 第二周期已经按可独立验收的依赖闭环优化为 v1.1–v1.18。v1.1 的完整范围是
 buddy、kernel heap/type cache、KVA、动态内核栈和页表回收，并保留当前
-四进程通路；其中动态物理内存、通用可回收 kernel heap 和双位图 buddy 已
-完成，固定尺寸 type cache、32 TiB KVA、动态双 guard 内核栈与页表空分支
-回收也已分别通过十万步随机模型和 QEMU 真实生命周期验收；页表映射失败回滚
-已经闭环，通用作用域回滚、引用计数与资源快照继续按独立闭环推进；
+四进程通路；动态物理内存、通用可回收 kernel heap、双位图 buddy、固定尺寸
+type cache、32 TiB KVA、动态双 guard 内核栈与页表空分支回收均已通过十万步
+随机模型和 QEMU 真实生命周期验收。通用 `ScopeRollback` 已接管动态栈创建
+失败路径，`ReferenceCounter` 冻结强引用生命周期，`ResourceSnapshot` 同时
+核对 frame、buddy、heap、KVA 与栈的当前所有权。目标启动和四进程退出各做
+一次零差异验证；具名 256 MiB functional smoke 与 64 GiB 主规格共同通过，
+因此 v1.1 已闭环。
 v1.2 再迁移到 Process/Thread、统一 WaitQueue/WakeReason 和完整 FXSAVE
 现场，v1.3 独立建立 CpuLocal 与 `SYSCALL/SYSRET`。VFS、rootfs v2、
 PID1/磁盘 exec 分三个版本完成；匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
@@ -265,6 +268,7 @@ Ring 3 `#UD`、Ring 3 `#PF` 和截断 ELF 三条隔离/拒绝路径；用户错�
 
 ```text
 source/          操作系统与 freestanding 基础模块
+  kernel/        x86-64 Kernel；include/src 均按功能目录对称组织
 tests/           单元、集成、随机和 QEMU 系统测试
 tools/           Python 构建、检查、镜像和 QEMU 调度工具
 docs/            需求、架构、模块、测试、调试和发布记录
@@ -272,8 +276,13 @@ books/           可独立构建的 LaTeX 系统教材
 ```
 
 `source/abi` 保存用户态与内核共享的固定宽度 ABI，`source/user` 保存独立
-用户 ELF 和系统调用包装；详细边界见
-[docs/modules/user.md](docs/modules/user.md)。
+用户 ELF 和系统调用包装。Kernel 的公开头文件位于
+`source/kernel/include/os/kernel/<module>/`，实现位于
+`source/kernel/src/<module>/`；两侧使用
+`arch/boot/core/device/fs/io/ipc/memory/process/sync/user` 十一组对称目录，
+禁止重新把文件堆到根目录。详细规则见
+[Kernel 源码布局](source/kernel/README.md)，模块契约见
+[docs/modules/kernel.md](docs/modules/kernel.md)。
 
 完整教材入口见
 [books/x86-64-os-from-reset/README.md](books/x86-64-os-from-reset/README.md)。
@@ -281,5 +290,8 @@ books/           可独立构建的 LaTeX 系统教材
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
+当前 v1.1 统计为 109 个目标代码文件、21586 个物理行、19549 个非空非纯
+注释代码行，其中 C++ 17383 行、NASM Intel 汇编 2166 行；测试、工具、书籍、
+构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

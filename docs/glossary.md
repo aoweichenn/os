@@ -54,6 +54,11 @@
 | dynamic kernel stack | 当前由六页 KVA 区间表示的 Ring 0 栈对象：上下双 guard，中间四页使用独立物理后备和 supervisor RW/NX 映射 |
 | stack reaper | 在汇编回到永久启动栈后，验证当前 RSP 不属于目标栈并回收终止栈映射、物理页与 KVA 的运行时步骤 |
 | safe point | 已知当前执行栈、CR3 和生命周期状态满足销毁前置条件的位置；逻辑终止不自动等于到达安全点 |
+| strong reference | 保证对象在引用存续期间不能进入销毁的所有权；最后一个强引用释放才触发销毁资格 |
+| reference counter | 记录强所有者数量的状态机；当前 v1.1 原语拒绝零后复活和整数上溢，原子并发语义留给 v1.4 |
+| scope rollback | 用外部固定动作数组记录已完成步骤，并在未提交事务退出时严格逆序执行补偿动作的失败展开机制 |
+| resource snapshot | 聚合多个管理器稳定当前量、验证内部守恒式并以差异位掩码比较生命周期前后的诊断值 |
+| failure atomicity | 操作失败时，既有对象、输出参数和资源所有权保持调用前状态的性质 |
 | identity mapping | 虚拟地址与物理地址相同的分页映射，初期用于降低交接复杂度 |
 | address space | 一个页表根定义的虚拟地址到物理页及权限的映射集合 |
 | PCB | v0.9–v1.1 把 Process、调度现场与固定槽合并的过渡控制块；v1.2 后由 Process/Thread 取代 |

@@ -931,9 +931,10 @@ Process     低半用户程序与高端用户栈分支可修改；复制的其�
 ```
 
 创建先申请六页 KVA，再逐页申请、清零和映射四个 order-0 帧。候选对象只有在
-双 guard、四个物理身份和权限全部通过后才写入槽；失败按叶映射、物理页、KVA
-的逆序回滚。四个物理页不要求连续，因为栈只需要虚拟连续，强制 order 2 会在
-碎片化内存中引入没有硬件依据的失败。
+双 guard、四个物理身份和权限全部通过后才写入槽；九项 `ScopeRollback`
+动作按取得顺序登记，失败时按叶映射、物理页、KVA 的严格逆序执行，单项清理
+失败不会阻止其余动作。四个物理页不要求连续，因为栈只需要虚拟连续，强制
+order 2 会在碎片化内存中引入没有硬件依据的失败。
 
 进程 PML4 共享内核高半入口，所以 KVA 栈叶项对所有进程 CR3 可见，但四级
 U/S 链保持 supervisor。调度前从活动栈对象取得 top 写入 TSS.RSP0，保存的
@@ -951,9 +952,52 @@ U/S 链保持 supervisor。调度前从活动栈对象取得 top 写入 TSS.RSP0
 镜像也必须走同一安全点回收。完整事务、失败语义和受控限制见
 [ADR 0025](adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
+## v1.1 通用资源生命周期与跨层快照
+
+局部管理器的 `Validate` 回答“我的内部结构是否自洽”，不能单独回答“一次
+跨层操作结束后，所有资源是否回到原所有者”。v1.1 因此在依赖图中加入两个
+foundation 原语和一个 Kernel 诊断层：
+
+```text
+foundation::ReferenceCounter       foundation::ScopeRollback
+          │                                   │
+          │                          KernelStackManager::TryCreate
+          │                                   │
+          └────────── future objects          │
+                                              ↓
+frame / buddy / heap / KVA / kernel stack → ResourceSnapshot
+                                              │
+                    boot self-test / process lifecycle
+```
+
+`ReferenceCounter` 是非原子、无分配的 64 位强引用状态机。归零表示本次对象
+生命周期结束，普通 acquire 不能复活；v1.2/v1.4 必须在对象锁协议中组合它，
+不能把单字段递增误当成完整并发安全。
+
+`ScopeRollback` 绑定调用方持有的固定动作数组。事务仍为 `Armed` 时，析构
+提供防漏回滚；需要诊断清理失败的路径显式调用 `TryRollback`。回滚先清动作
+槽再调用回调，并继续执行全部剩余动作，最终以状态和失败计数报告结果。成功
+发布资源前调用 `Commit`，随后析构不再触碰已经转移的所有权。
+
+`ResourceSnapshot` 当前用 26 个唯一差异位描述：
+
+- 页帧的 managed/free/allocated/reserved 与 buddy 活动块；
+- 堆容量、当前实际占用、活动请求字节和活动分配数；
+- KVA 容量、三类页数、活动描述符/分配/保留数；
+- 内核栈槽容量、活动栈、映射页和 guard 页；
+- 为 Process、Thread、FileDescription、Vnode、CachePage、BlockRequest
+  预留的六个活动计数。
+
+快照只保存当前所有权，不保存成功申请、释放、分裂、合并或峰值等累计事件。
+比较前先验证 frame、KVA 和栈的守恒等式，再返回变化位掩码；无效输入不得
+改写输出。启动期真实创建并回滚一次动态栈，前后 26 字段必须完全相等；当前
+四进程创建前和全部地址空间/栈回收后再次执行同一比较。完整边界见
+[ADR 0027](adr/0027-v1.1-resource-lifecycle-foundation.md)。
+
 ## 模块边界
 
-- `foundation` 提供地址、字节数和地址区间等不依赖运行时的基础类型。
+- `foundation` 提供地址区间、引用计数和作用域回滚等不依赖运行时的基础
+  类型与生命周期原语。
 - `firmware` 负责复位入口、最小串口初始化和 Stage 1 磁盘加载。
 - 引导阶段负责模式切换、内存探测与 ELF64 内核加载。
 - 内核负责异常、中断、内存、调度、设备和系统调用。
@@ -984,9 +1028,13 @@ kernel ──────────────→ abi
 source/foundation/
 ├── CMakeLists.txt
 ├── include/os/foundation/
-│   └── address_range.hpp
+│   ├── address_range.hpp
+│   ├── reference_counter.hpp
+│   └── scope_rollback.hpp
 └── src/
-    └── address_range.cpp
+    ├── address_range.cpp
+    ├── reference_counter.cpp
+    └── scope_rollback.cpp
 
 source/firmware/
 ├── CMakeLists.txt
@@ -1006,73 +1054,33 @@ source/boot/stage1/
 
 source/kernel/
 ├── CMakeLists.txt
+├── README.md
 ├── include/os/kernel/
-│   ├── boot_info.hpp
-│   ├── ata_pio.hpp
-│   ├── console_input.hpp
-│   ├── device_model.hpp
-│   ├── descriptor_layout.hpp
-│   ├── descriptor_tables.hpp
-│   ├── entry.hpp
-│   ├── exception_frame.hpp
-│   ├── exceptions.hpp
-│   ├── interrupt_runtime.hpp
-│   ├── io_descriptor.hpp
-│   ├── kernel_heap.hpp
-│   ├── kernel_type_cache.hpp
-│   ├── kernel_type_cache.tpp
-│   ├── kernel_virtual_address_allocator.hpp
-│   ├── kernel_main.hpp
-│   ├── memory_manager.hpp
-│   ├── legacy_pic.hpp
-│   ├── page_table.hpp
-│   ├── pipe.hpp
-│   ├── panic.hpp
-│   ├── physical_frame_allocator.hpp
-│   ├── physical_memory_map.hpp
-│   ├── port_io.hpp
-│   ├── processor.hpp
-│   ├── process_runtime.hpp
-│   ├── process_scheduler.hpp
-│   ├── programmable_interval_timer.hpp
-│   ├── ps2_keyboard.hpp
-│   ├── serial_port.hpp
-│   └── spin_lock.hpp
+│   ├── arch/
+│   ├── boot/
+│   ├── core/
+│   ├── device/
+│   ├── fs/
+│   ├── io/
+│   ├── ipc/
+│   ├── memory/
+│   ├── process/
+│   ├── sync/
+│   └── user/
 ├── linker/
 │   └── kernel.ld.in
 └── src/
-    ├── architecture.asm
-    ├── ata_pio.cpp
-    ├── console_input.cpp
-    ├── boot_info.cpp
-    ├── descriptor_layout.cpp
-    ├── descriptor_tables.cpp
-    ├── device_model.cpp
-    ├── entry.cpp
-    ├── exception_frame.cpp
-    ├── exceptions.cpp
-    ├── kernel_heap.cpp
-    ├── kernel_type_cache.cpp
-    ├── kernel_virtual_address_allocator.cpp
-    ├── kernel_main.cpp
-    ├── interrupt_runtime.cpp
-    ├── io_descriptor.cpp
-    ├── legacy_pic.cpp
-    ├── memory_manager.cpp
-    ├── page_table.cpp
-    ├── page_table_layout.cpp
-    ├── pipe.cpp
-    ├── panic.cpp
-    ├── physical_frame_allocator.cpp
-    ├── physical_memory_map.cpp
-    ├── port_io.cpp
-    ├── processor.cpp
-    ├── process_runtime.cpp
-    ├── process_scheduler.cpp
-    ├── programmable_interval_timer.cpp
-    ├── ps2_keyboard.cpp
-    ├── serial_port.cpp
-    └── spin_lock.cpp
+    ├── arch/
+    ├── boot/
+    ├── core/
+    ├── device/
+    ├── fs/
+    ├── io/
+    ├── ipc/
+    ├── memory/
+    ├── process/
+    ├── sync/
+    └── user/
 
 source/abi/
 ├── CMakeLists.txt
@@ -1107,6 +1115,14 @@ source/user/
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和
 模块私有头文件。CMake 将公开目录标记为 `PUBLIC`、私有目录标记为 `PRIVATE`，
 消费者不能通过传递依赖获得私有包含路径。
+
+Kernel 内部规模更大，因此在公开树和实现树中继续使用完全相同的十一组功能
+目录。目录表达文件所有权，当前 C++ API 仍保持简短的 `os::kernel` 命名空间；
+不会为了复制物理路径而制造没有接口收益的命名空间层。每个 `.hpp` 必须在同一
+模块下拥有对应 `.cpp`，模板 `.tpp` 与头文件同目录，三个生成/汇编例外单独
+记录。`tests/tooling/test_kernel_layout.py` 自动拒绝根目录实现、模块集合
+漂移和头源失配；设计理由见
+[ADR 0028](adr/0028-kernel-functional-directory-layout.md)。
 
 每个源码模块拥有独立 `CMakeLists.txt` 和 CMake target。根构建文件只负责
 公共策略、模块组合、镜像产物和测试入口，不保存具体模块的源文件清单。

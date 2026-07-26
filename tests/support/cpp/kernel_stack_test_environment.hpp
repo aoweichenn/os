@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/kernel/kernel_stack_manager.hpp"
+#include "os/kernel/memory/kernel_stack_manager.hpp"
 
 #include <stdint.h>
 

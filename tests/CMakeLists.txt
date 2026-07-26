@@ -43,6 +43,12 @@ os_add_foundation_test(
 )
 
 os_add_foundation_test(
+    os_foundation_resource_lifecycle_primitives_unit_tests
+    unit/foundation/resource_lifecycle_primitives_test.cpp
+    "unit"
+)
+
+os_add_foundation_test(
     os_foundation_integration_tests
     integration/boot/boot_memory_layout_test.cpp
     "integration"
@@ -57,6 +63,12 @@ os_add_foundation_test(
 os_add_foundation_test(
     os_foundation_randomized_tests
     randomized/foundation/address_range_randomized_test.cpp
+    "randomized"
+)
+
+os_add_foundation_test(
+    os_foundation_resource_lifecycle_primitives_randomized_tests
+    randomized/foundation/resource_lifecycle_primitives_randomized_test.cpp
     "randomized"
 )
 
@@ -277,6 +289,11 @@ os_add_kernel_memory_test(
     unit/kernel/kernel_virtual_address_allocator_test.cpp
     "unit"
 )
+os_add_kernel_memory_test(
+    os_kernel_resource_snapshot_unit_tests
+    unit/kernel/resource_snapshot_test.cpp
+    "unit"
+)
 os_add_page_table_test(
     os_kernel_page_table_reclamation_unit_tests
     unit/kernel/page_table_reclamation_test.cpp
@@ -350,6 +367,11 @@ os_add_kernel_stack_test(
 os_add_kernel_stack_test(
     os_kernel_stack_lifecycle_integration_tests
     integration/boot/kernel_stack_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_stack_test(
+    os_kernel_resource_snapshot_lifecycle_integration_tests
+    integration/boot/resource_snapshot_lifecycle_test.cpp
     "integration"
 )
 os_add_kernel_stack_test(
@@ -837,6 +859,31 @@ set_tests_properties(
         WILL_FAIL TRUE
 )
 
+set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
+set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 65536)
+
+add_test(
+    NAME os_qemu_functional_smoke
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        "${OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES}"
+        --expected-outcome
+        success
+)
+set_tests_properties(
+    os_qemu_functional_smoke
+    PROPERTIES
+        LABELS "system;functional-smoke"
+        TIMEOUT 25
+)
+
 add_test(
     NAME os_qemu_stage1_load_success
     COMMAND
@@ -848,7 +895,7 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --memory-mebibytes
-        65536
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
         --expected-outcome
         success
 )
@@ -856,7 +903,7 @@ set_tests_properties(
     os_qemu_stage1_load_success
     PROPERTIES
         LABELS "system"
-        TIMEOUT 50
+        TIMEOUT 85
 )
 
 add_test(

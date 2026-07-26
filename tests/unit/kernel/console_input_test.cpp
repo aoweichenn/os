@@ -1,4 +1,4 @@
-#include "os/kernel/console_input.hpp"
+#include "os/kernel/io/console_input.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

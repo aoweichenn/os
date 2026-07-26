@@ -1,8 +1,8 @@
 #include "os/abi/system_call.hpp"
-#include "os/kernel/exception_frame.hpp"
-#include "os/kernel/physical_frame_allocator.hpp"
-#include "os/kernel/user_elf.hpp"
-#include "os/kernel/user_memory.hpp"
+#include "os/kernel/arch/exception_frame.hpp"
+#include "os/kernel/memory/physical_frame_allocator.hpp"
+#include "os/kernel/user/user_elf.hpp"
+#include "os/kernel/user/user_memory.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/kernel/block_cache.hpp"
+#include "os/kernel/fs/block_cache.hpp"
 
 #include <stdint.h>
 

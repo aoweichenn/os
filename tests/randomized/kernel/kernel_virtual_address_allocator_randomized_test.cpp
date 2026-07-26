@@ -1,4 +1,4 @@
-#include "os/kernel/kernel_virtual_address_allocator.hpp"
+#include "os/kernel/memory/kernel_virtual_address_allocator.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

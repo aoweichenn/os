@@ -1,4 +1,4 @@
-#include "os/kernel/user_elf.hpp"
+#include "os/kernel/user/user_elf.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

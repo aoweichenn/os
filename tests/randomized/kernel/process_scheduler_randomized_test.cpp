@@ -1,4 +1,4 @@
-#include "os/kernel/process_scheduler.hpp"
+#include "os/kernel/process/process_scheduler.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

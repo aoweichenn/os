@@ -24,6 +24,37 @@
 
 ## 文件布局
 
+Kernel 源码按功能所有权分成十一组，公开头文件与实现保持相同相对路径：
+
+```text
+include/os/kernel/<module>/<name>.hpp
+src/<module>/<name>.cpp
+```
+
+| 模块 | 主要内容 |
+| --- | --- |
+| `arch` | GDT/TSS/IDT、异常/IRQ 汇编边界、处理器状态与 panic |
+| `boot` | BootInfo 与 C ABI 入口 |
+| `core` | 主流程和 freestanding 内存运行时 |
+| `device` | 端口、串口、PIC、PIT、PS/2、ATA |
+| `fs` | 磁盘格式、块缓存、文件系统 |
+| `io` | 控制台和统一描述符 |
+| `ipc` | 管道 |
+| `memory` | 页帧、buddy、页表、heap、KVA、动态栈、资源快照 |
+| `process` | 进程运行时与调度 |
+| `sync` | 通用同步原语 |
+| `user` | 用户 ELF、用户内存、系统调用和内嵌镜像 |
+
+例如 `memory/page_table.hpp` 与 `memory/page_table.cpp` 是一组对称接口和
+实现。Kernel 的 include/src 根目录禁止继续堆放实现文件；模板实现与头文件
+同目录。目录只表达维护所有权，不机械增加 C++ 命名空间层，当前公开类型仍在
+`os::kernel`。
+
+`source/kernel/CMakeLists.txt` 按同一模块集合维护头文件和源文件分组，
+`tests/tooling/test_kernel_layout.py` 自动检查目录集合、根目录清洁、头源
+配对和三个明确的生成/汇编例外。短规则见 `source/kernel/README.md`，完整
+取舍见 [ADR 0028](../adr/0028-kernel-functional-directory-layout.md)。
+
 链接脚本使用独立的 `PT_LOAD` 权限设计：代码为 `R E`，只读数据为 `R`，
 可写数据与 BSS 为 `RW`。空输出节不会产生多余加载段。各加载节以 4 KiB
 边界对齐，入口必须位于可执行加载段。
@@ -288,9 +319,10 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 
 创建先在局部候选对象中取得 KVA、物理页和映射，验证精确 KVA allocation、
 四个精确 order-0 物理 allocation、双 guard、叶权限、物理身份及栈内/栈间
-帧唯一性，最后才提交槽位与统计。失败按映射、物理页、KVA 逆序回滚。销毁也
-先完整预检，再逆序 unmap、清零释放帧、释放精确 KVA，避免错误所有权进入
-部分清理。
+帧唯一性，最后才提交槽位与统计。九项 `foundation::ScopeRollback` 动作
+分别对应一次 KVA 释放，以及每个数据页的一次帧归还和一次叶映射撤销；失败
+时从最后登记的动作开始严格逆序执行，单项失败不阻止其余清理。销毁也先完整
+预检，再逆序 unmap、清零释放帧、释放精确 KVA，避免错误所有权进入部分清理。
 
 进程运行时先创建栈再装载用户地址空间，初始 176 字节特权帧放在栈顶最后
 一页。调度读取活动栈对象设置 TSS.RSP0，不再按 PCB 索引推导地址。终止处理
@@ -298,9 +330,35 @@ v0.6 最初用单调分配器证明高半区映射之上能够放置对象。v1.
 恢复永久启动栈后，安全点确认当前 RSP 不属于目标栈才允许销毁。
 
 当前管理器提供 256 个槽；正常四进程路径峰值为 4 个栈、16 个映射页和
-8 个 guard 页，结束后活动数归零，创建/销毁各四次。完整设计、故障模型和
-测试证据见
+8 个 guard 页，结束后活动数归零。加上启动期资源自检的一次真实栈事务，
+累计创建/销毁各五次。完整设计、故障模型和测试证据见
 [ADR 0025](../adr/0025-kva-backed-dynamic-kernel-stacks.md)。
+
+### 通用资源生命周期基础
+
+v1.1 用两个不依赖宿主运行时的 foundation 原语和一个 Kernel 聚合快照收口
+跨层资源所有权：
+
+- `ReferenceCounter` 用显式 `uint64_t` 保存强引用数。对象必须先
+  `Start()`，`TryAcquire()` 拒绝从零复活并拒绝上溢，`TryRelease()` 只在
+  本次释放最后一个引用时通过输出参数报告。失败不修改计数或输出；
+- `ScopeRollback` 使用调用方提供的固定动作数组，不分配内存、不抛异常。
+  未提交事务在析构时自动回滚；显式回滚从后向前执行全部动作，即使某一项
+  返回失败也继续清理，并把整体结果报告给上层；
+- `ResourceSnapshot` 读取 frame、buddy、heap、KVA 和动态栈的稳定当前量，
+  另为 Process、Thread、FileDescription、Vnode、CachePage 和 BlockRequest
+  预留字段，共 26 项。它先验证各管理器内部守恒式，再比较前后快照并返回
+  `uint64_t` 差异位掩码和变化字段数。
+
+快照只比较当前所有权，不比较成功申请、释放、分裂、合并等历史累计量。例如
+一个栈事务结束后，`successful_creations` 合理增加，但活动栈、映射页、
+KVA 页和物理页必须恢复；把累计量放进泄漏快照会把正常历史误判成当前泄漏。
+
+内存初始化的目标自检在槽 255 创建真实双 guard 动态栈，由外层回滚事务销毁，
+再要求 26 字段零差异。进程运行时又在创建四个进程前拍摄快照，在汇编切回
+永久内核栈、销毁全部用户地址空间和终止栈后再次比较。第二道检查失败会返回
+`ResourceLeakDetected`，不会只凭“进程数归零”宣布资源已回收。完整决策见
+[ADR 0027](../adr/0027-v1.1-resource-lifecycle-foundation.md)。
 
 ## 异常 ABI
 
@@ -512,6 +570,12 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] KVA_SELF_TEST_MAPPED_PAGES=0x0000000000000004
 [OS][KERNEL] KVA_SELF_TEST_GUARD_PAGES=0x0000000000000002
 [OS][KERNEL] KVA_SELF_TEST_PASSED
+[OS][KERNEL] RESOURCE_LIFECYCLE_READY
+[OS][KERNEL] RESOURCE_SNAPSHOT_TRACKED_FIELDS=0x000000000000001A
+[OS][KERNEL] RESOURCE_SNAPSHOT_CHANGED_FIELDS=0x0000000000000000
+[OS][KERNEL] REFERENCE_COUNTER_SELF_TEST_PASSED
+[OS][KERNEL] SCOPE_ROLLBACK_SELF_TEST_PASSED
+[OS][KERNEL] RESOURCE_SNAPSHOT_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] KERNEL_STACK_MANAGER_READY
 [OS][KERNEL] KERNEL_STACK_SLOT_CAPACITY=0x0000000000000100
@@ -558,8 +622,8 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] PIPE_READ_BYTES=0x0000000000000100
 [OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x0000000000000001
 [OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
-[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000004
-[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000005
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000005
 [OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
 [OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
 [OS][KERNEL] USER_EXIT_CODE=0x0000000000000000
@@ -569,6 +633,7 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 [OS][KERNEL] PIPE_ENDPOINTS_CLOSED
 [OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
 [OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED
 [OS][KERNEL] SCHEDULER_COMPLETE
 [OS][KERNEL] USER_RETURNED_TO_KERNEL
 [OS][KERNEL] FILE_SIZE=0x...
@@ -610,5 +675,6 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
   写时复制要等进程地址空间拥有完整生命周期后再实现。
 - 当前是单核、固定四进程、单线程模型；已有具名阻塞/唤醒，但没有优先级、
   父子关系、zombie/wait、FPU/SSE 状态保存或 SMP 负载均衡。
-- 用户地址空间、通用内核堆与固定尺寸缓存均可回收；动态 KernelObject 和
-  引用计数仍等待 v1.4 对象模型。
+- 用户地址空间、通用内核堆与固定尺寸缓存均可回收；v1.1 已提供单 BSP
+  `ReferenceCounter` 原语，但动态 KernelObject 的类型层、原子引用语义和
+  并发销毁协议仍等待 v1.4 对象模型。

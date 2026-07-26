@@ -1,11 +1,15 @@
 set(
     OS_FOUNDATION_PUBLIC_HEADERS
     include/os/foundation/address_range.hpp
+    include/os/foundation/reference_counter.hpp
+    include/os/foundation/scope_rollback.hpp
 )
 
 set(
     OS_FOUNDATION_PRIVATE_SOURCES
     src/address_range.cpp
+    src/reference_counter.cpp
+    src/scope_rollback.cpp
 )
 
 function(os_configure_foundation_target OS_FOUNDATION_TARGET)

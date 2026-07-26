@@ -285,12 +285,13 @@ E：持久与冻结 & v1.16--v1.18 & 异步块层、ordered journal、ABI 与发
 \paragraph{v1.1：资源地基不提前拆除现有进程}
 
 已有 64 GiB direct-map 解决的是“物理页可以被访问”，还没有解决“不同尺寸
-对象如何释放”和“内核虚拟区间如何安排”。v1.1 增加 buddy、可释放 kernel
-heap/type cache、KVA allocator、动态 guard stack 与中间页表回收。
+对象如何释放”和“内核虚拟区间如何安排”。v1.1 已完整增加 buddy、可释放
+kernel heap/type cache、KVA allocator、动态 guard stack、中间页表回收，
+并用通用回滚、引用计数和资源快照收口跨层生命周期。
 
-已经闭环的七个增量分别是动态 RAM/direct-map、64 KiB 可回收 kernel heap、
+已经闭环的八个增量分别是动态 RAM/direct-map、64 KiB 可回收 kernel heap、
 双位图 buddy、固定尺寸 type cache、KVA allocator、动态内核栈和按根所有权
-回收页表空分支。heap
+回收页表空分支，以及通用资源生命周期基础。heap
 以边界标记、best-fit、双向合并
 和 100000 步模型证明
 字节块生命周期；buddy 在同一页状态机上提供 order 0 兼容路径、连续块、
@@ -309,13 +310,22 @@ not-present guard。终止后先回到永久启动栈安全点，销毁顺序固
 \code{Process} 根。最后一张 4 KiB 叶撤销后，独占根可以回收 PT、PD 和
 PDPT；共享内核根回收低两级但保留仍可能被进程 PML4 引用的 PDPT；进程根
 拒绝修改借用分支。映射途中帧耗尽会恢复父项完整原值和 U/S 位，并逆序释放
-新表。新增三项测试使完整集合达到 92 项，QEMU 两段事务稳定回收两张 PT、
-两张 PD，并有意保留一张共享 PDPT。
+新表。页表增量中的三项测试证明 QEMU 两段事务稳定回收两张 PT、两张 PD，
+并有意保留一张共享 PDPT。
+
+\code{ScopeRollback} 使用调用方固定动作数组，已经接管动态栈创建的九项
+逆序补偿；\code{ReferenceCounter} 冻结强引用非零启动、零后禁止复活、
+最后释放和上溢拒绝语义。\code{ResourceSnapshot} 比较 frame、buddy、heap、
+KVA、动态栈与六个未来对象字段，共 26 项当前量。启动期真实栈事务和四进程
+完整运行各执行一次零差异比较；具名 256 MiB functional smoke 与 64 GiB
+capacity 运行同一 Shell、IPC、文件系统和回收路径。新增五项门禁后完整集合
+为 97 项 CTest。
 
 本版本刻意保留四 PCB 和静态用户演示通路，但栈资源本身已先完成动态迁移。
 若在 Process/Thread 尚不存在时删除 PCB，主分支会落入既没有旧对象也没有
-新对象的真空。v1.2 对等验收通过后再迁移调度对象所有者；v1.1 尚余的资源
-闭环是通用引用计数、可组合的作用域回滚与资源快照。
+新对象的真空。v1.2 对等验收通过后再迁移调度对象所有者；届时必须把
+Process/Thread 当前量接入 v1.1 已冻结的资源快照，并继续复用同一作用域回滚，
+不能另造旁路计数。
 
 \paragraph{v1.2：调度 Thread，并补全扩展现场}
 

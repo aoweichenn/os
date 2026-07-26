@@ -1,5 +1,5 @@
 #include "memory_block_device.hpp"
-#include "os/kernel/file_system.hpp"
+#include "os/kernel/fs/file_system.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

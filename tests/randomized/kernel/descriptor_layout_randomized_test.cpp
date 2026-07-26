@@ -1,4 +1,4 @@
-#include "os/kernel/descriptor_layout.hpp"
+#include "os/kernel/arch/descriptor_layout.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

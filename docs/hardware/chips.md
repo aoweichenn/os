@@ -490,24 +490,24 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/boot/stage1/src/entry.asm`：模式切换、页表和 Stage 1 串口路径。
 - `source/boot/stage1/src/kernel_loader.asm`：长模式 ATA、CRC32、ELF 和 BootInfo。
 - `source/boot/stage1/src/memory_map.asm`：`fw_cfg`、E820 转换与排序。
-- `source/kernel/src/architecture.asm`：LGDT/LIDT/LTR、异常桩和统一寄存器保存。
-- `source/kernel/src/interrupt_runtime.cpp`：IRQ 分发、同步快照和设备启动组合。
-- `source/kernel/src/legacy_pic.cpp`：PIC 初始化、屏蔽、ISR 与 EOI。
-- `source/kernel/src/programmable_interval_timer.cpp`：PIT 模式和除数写入。
-- `source/kernel/src/ps2_keyboard.cpp`：i8042 与键盘 ACK 握手。
-- `source/kernel/src/ata_pio.cpp`：内核 LBA28 单扇区读取。
-- `source/kernel/src/descriptor_tables.cpp`：GDT、TSS、IDT 构造与硬件回读验证。
-- `source/kernel/src/memory_manager.cpp`：页帧、四级页表、权限、guard 与堆。
-- `source/kernel/src/user_elf.cpp`：严格 ELF64 用户文件解析。
-- `source/kernel/src/user_memory.cpp`：用户页装载、栈与指针逐页检查。
-- `source/kernel/src/system_calls.cpp`：`INT 0x80` 帧验证与系统调用分发。
-- `source/kernel/src/process_scheduler.cpp`：与硬件无关的进程状态和量子决策。
-- `source/kernel/src/process_runtime.cpp`：CR3、TSS.RSP0、保存帧与资源生命周期。
-- `source/kernel/src/kernel_stack_manager.cpp`：KVA 支持的每进程 Ring 0 动态栈、
+- `source/kernel/src/arch/architecture.asm`：LGDT/LIDT/LTR、异常桩和统一寄存器保存。
+- `source/kernel/src/arch/interrupt_runtime.cpp`：IRQ 分发、同步快照和设备启动组合。
+- `source/kernel/src/device/legacy_pic.cpp`：PIC 初始化、屏蔽、ISR 与 EOI。
+- `source/kernel/src/device/programmable_interval_timer.cpp`：PIT 模式和除数写入。
+- `source/kernel/src/device/ps2_keyboard.cpp`：i8042 与键盘 ACK 握手。
+- `source/kernel/src/device/ata_pio.cpp`：内核 LBA28 单扇区读取。
+- `source/kernel/src/arch/descriptor_tables.cpp`：GDT、TSS、IDT 构造与硬件回读验证。
+- `source/kernel/src/memory/memory_manager.cpp`：页帧、四级页表、权限、guard 与堆。
+- `source/kernel/src/user/user_elf.cpp`：严格 ELF64 用户文件解析。
+- `source/kernel/src/user/user_memory.cpp`：用户页装载、栈与指针逐页检查。
+- `source/kernel/src/user/system_calls.cpp`：`INT 0x80` 帧验证与系统调用分发。
+- `source/kernel/src/process/process_scheduler.cpp`：与硬件无关的进程状态和量子决策。
+- `source/kernel/src/process/process_runtime.cpp`：CR3、TSS.RSP0、保存帧与资源生命周期。
+- `source/kernel/src/memory/kernel_stack_manager.cpp`：KVA 支持的每进程 Ring 0 动态栈、
   双 guard、精确所有权验证和安全点回收。
 - `source/user/src/system_call.asm`：Ring 3 系统调用指令入口。
-- `source/kernel/src/panic.cpp`：异常现场和 CR2 的有界串口诊断。
-- `source/kernel/src/serial_port.cpp`：内核独立的 COM1 访问层。
+- `source/kernel/src/arch/panic.cpp`：异常现场和 CR2 的有界串口诊断。
+- `source/kernel/src/device/serial_port.cpp`：内核独立的 COM1 访问层。
 - `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。
 - `docs/testing.md`：状态边界对应的 QEMU 失败注入。
 

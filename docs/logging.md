@@ -152,8 +152,8 @@ KVA 同样采用一次提交后的有界快照，不记录每次区间扫描和�
 [OS][KERNEL] KVA_FREE_PAGES=0x00000001FFFFFFFF
 [OS][KERNEL] KVA_ALLOCATED_PAGES=0x0000000000000000
 [OS][KERNEL] KVA_RESERVED_PAGES=0x0000000000000001
-[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=0x0000000000000002
-[OS][KERNEL] KVA_RELEASES=0x0000000000000002
+[OS][KERNEL] KVA_SUCCESSFUL_ALLOCATIONS=0x0000000000000003
+[OS][KERNEL] KVA_RELEASES=0x0000000000000003
 [OS][KERNEL] KVA_PEAK_ALLOCATED_PAGES=0x0000000000000006
 [OS][KERNEL] KVA_LARGEST_FREE_RANGE_PAGES=0x00000001FFFFFFFF
 [OS][KERNEL] KVA_SELF_TEST_VIRTUAL_ADDRESS=0xFFFFC90000008000
@@ -164,12 +164,42 @@ KVA 同样采用一次提交后的有界快照，不记录每次区间扫描和�
 ```
 
 窗口包含 8589934592 个 4 KiB 页，首个页是永久软件保留区，因此最终 free 和
-最大连续空闲均为 8589934591。两次成功申请分别是页表暖机和六页主事务，两次
-均已释放；暖机现在用于验证共享 PDPT 边界，而不是建立永久泄漏的 PT/PD。
+最大连续空闲均为 8589934591。前三次成功申请分别是页表暖机、六页 KVA
+主事务和资源生命周期自检中的六页真实动态栈，三次均已释放；暖机现在用于
+验证共享 PDPT 边界，而不是建立永久泄漏的 PT/PD。
 峰值六页包含两个故意不映射的 guard。物理地址由本次 QEMU 内存图
 与 buddy 状态决定，协议只要求非零、页对齐并存在字段，不硬编码具体页帧。
 `KVA_SELF_TEST_PASSED` 同时表示四个数据页的 RW/NX 映射、真实写回、逆序
 unmap/物理页/KVA 回收和统计校验通过。
+
+资源生命周期协议只在一次完整事务结束后打印六行，不为引用的每次增减或
+每个补偿动作打印热路径日志：
+
+```text
+[OS][KERNEL] RESOURCE_LIFECYCLE_READY
+[OS][KERNEL] RESOURCE_SNAPSHOT_TRACKED_FIELDS=0x000000000000001A
+[OS][KERNEL] RESOURCE_SNAPSHOT_CHANGED_FIELDS=0x0000000000000000
+[OS][KERNEL] REFERENCE_COUNTER_SELF_TEST_PASSED
+[OS][KERNEL] SCOPE_ROLLBACK_SELF_TEST_PASSED
+[OS][KERNEL] RESOURCE_SNAPSHOT_SELF_TEST_PASSED
+```
+
+`TRACKED_FIELDS=0x1A` 表示当前协议比较 26 个稳定状态字段；它们覆盖 frame、
+buddy、heap、KVA、动态内核栈和已经为后续对象预留的六个计数位置。累计
+申请/释放量不进入差异判断，否则一个已经完整回收的事务仍会被误报为泄漏。
+自检会创建并销毁一个真实动态内核栈，再验证引用计数状态机、作用域回滚动作
+和跨层快照。只有守恒式有效、变化掩码为零且三个子检查全部通过，才一次性
+输出这些标记。
+
+四进程执行结束还有一条独立的长期边界：
+
+```text
+[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED
+```
+
+第二行不是第一行的别名：它比较进程创建前和所有安全点回收完成后的完整
+26 字段快照。任意字段变化都会返回资源泄漏状态，禁止输出通过标记。
 
 动态内核栈日志分为“配置提交、每进程稳定身份、运行结束汇总”三段：
 
@@ -185,8 +215,8 @@ unmap/物理页/KVA 回收和统计校验通过。
 [OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=0x...
 
 [OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
-[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000004
-[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000005
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000005
 [OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
 [OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
 [OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
@@ -199,8 +229,10 @@ unmap/物理页/KVA 回收和统计校验通过。
 刷屏。
 
 运行结束汇总在汇编回到永久启动栈、全部终止栈安全回收之后生成。正常路径
-必须是四次创建、四次销毁、峰值四栈/十六映射页且活动数为零；用户 `#UD`
-与 `#PF` 隔离镜像使用同一字段但数值为一。只有 frame、KVA 和管理器三组
+包含启动期资源事务的一次创建/销毁和四个进程栈，因此累计必须是五次创建、
+五次销毁；启动期栈已经在进程阶段前回收，所以峰值仍为四栈/十六映射页，
+最终活动数为零。用户 `#UD` 与 `#PF` 隔离镜像使用同一字段，但只执行各自
+路径所需的栈生命周期。只有 frame、KVA 和管理器三组
 运行前后不变量同时成立，才输出 `KERNEL_STACK_RESOURCES_RECLAIMED`。QEMU
 协议对正常路径的配置/汇总次数和每进程地址次数做精确计数，并对三个地址和
 峰值做十六进制下界检查。

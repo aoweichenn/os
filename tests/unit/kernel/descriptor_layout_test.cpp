@@ -1,5 +1,5 @@
-#include "os/kernel/descriptor_layout.hpp"
-#include "os/kernel/exception_frame.hpp"
+#include "os/kernel/arch/descriptor_layout.hpp"
+#include "os/kernel/arch/exception_frame.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

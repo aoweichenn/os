@@ -1,4 +1,4 @@
-#include "os/kernel/physical_memory_map.hpp"
+#include "os/kernel/memory/physical_memory_map.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

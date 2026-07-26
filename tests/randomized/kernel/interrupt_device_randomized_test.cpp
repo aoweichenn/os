@@ -1,4 +1,4 @@
-#include "os/kernel/device_model.hpp"
+#include "os/kernel/device/device_model.hpp"
 #include "test_context.hpp"
 
 #include <cstdint>

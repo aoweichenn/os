@@ -53,7 +53,9 @@ write/flush。同一临时磁盘上的两个全新 QEMU 实例证明旧载荷可
 Shell。没有 Ready 进程时，内核在永久地址空间执行 \code{sti; hlt; cli}，由
 中断恢复调度。独立 freestanding C++20 Shell 使用固定容量解析器执行帮助、
 回显、目录、文件、同步和退出命令。QEMU 在 \code{READY} 后逐字产生十条
-命令，109 个字符必须零丢弃地经过完整硬件与 Ring 3 路径。当前 92 项 CTest
-同时保留所有历史成功与失败证据；新增页表单元、集成与十万步模型证明空分支
-按根所有权回收和映射失败完整回滚。Clang AST 锁定标识符语义，Python
-词法门禁锁定命名空间的单词层级。
+命令，109 个字符必须零丢弃地经过完整硬件与 Ring 3 路径。v1.1 又以
+\code{ScopeRollback}、\code{ReferenceCounter} 和 26 字段
+\code{ResourceSnapshot} 收口跨层所有权；256 MiB functional 与 64 GiB
+capacity 运行同一完整路径。当前 97 项 CTest 同时保留所有历史成功与失败
+证据；页表与资源生命周期各有单元、集成、十万步模型和真实 QEMU 证明。
+Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。

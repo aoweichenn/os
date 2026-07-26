@@ -43,14 +43,16 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.0 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v1.1 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
    回归基线。
-5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁和
-   命名空间单词门禁。
+5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
+   命名空间单词门禁、256 MiB functional 和 64 GiB capacity 系统用例。
 
-正常 QEMU 系统用例显式使用 `-m 65536`，即 64 GiB 主规格；故障注入和
-最小兼容路径保留 64 MiB，以免重复为不相关失败分支建立大容量模型。QEMU
+正常 QEMU 系统用例包含显式 `-m 256` 的 functional 门禁和 `-m 65536`
+的 64 GiB capacity 主规格；两者运行同一份 Shell、IPC、文件系统、用户隔离
+和资源生命周期实现。故障注入和最小兼容路径保留 64 MiB，以免重复为不相关
+失败分支建立大容量模型。QEMU
 默认按需提交来宾 RAM，宿主不要求实际装有 64 GiB 空闲内存，但必须允许创建
 相应大小的虚拟地址映射。若容器或 `ulimit` 限制虚拟内存，测试会在启动前
 明确失败。
@@ -79,6 +81,18 @@ python3 tools/os.py qemu-firmware \
 
 `--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 64 GiB
 容量、高地址直映和回收验收。
+
+只运行 256 MiB 日常 functional 验收：
+
+```bash
+ctest --test-dir build/developer \
+  --output-on-failure \
+  -R '^os_qemu_functional_smoke$'
+```
+
+该用例不是精简启动：它执行完整四进程、Shell 命令、IPC、文件系统、用户
+故障隔离和 26 字段资源快照。64 MiB、256 MiB 与 64 GiB 只改变 QEMU RAM
+规格，不切换实现。
 
 ## 构建产物
 
@@ -171,7 +185,7 @@ Kernel。
 
 ```text
 source/kernel/src/*.cpp ─ Clang x86_64-unknown-none-elf ─┐
-source/kernel/src/architecture.asm ─ NASM elf64 ─────────┤
+source/kernel/src/arch/architecture.asm ─ NASM elf64 ─────────┤
                                                         └─ LLD elf_x86_64
                                                            + kernel.ld
                                                            → kernel.elf

@@ -3,11 +3,13 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import unittest
 
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+    OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
@@ -78,6 +80,19 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(
             command[memoryOptionIndex + 1],
             str(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES),
+        )
+
+    def testCreatesFunctional256MibMemoryCommand(self) -> None:
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
+        )
+
+        memoryOptionIndex = command.index("-m")
+        self.assertEqual(
+            command[memoryOptionIndex + 1],
+            str(OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES),
         )
 
     def testSelectsBoundedTimeoutByMemoryProfile(self) -> None:
@@ -160,6 +175,14 @@ class QemuRunnerToolTests(unittest.TestCase):
                 "[OS][FIRMWARE] SERIAL_READY",
                 (),
                 ("[OS][FIRMWARE] SERIAL_READY",),
+            )
+
+    def testReportsForbiddenMarkerBeforeMissingCompletion(self) -> None:
+        with self.assertRaisesRegex(OsToolError, "禁止标记"):
+            validateSerialProtocol(
+                "[OS][KERNEL] MEMORY_INITIALIZATION_FAILED",
+                ("[OS][KERNEL] READY",),
+                ("[OS][KERNEL] MEMORY_INITIALIZATION_FAILED",),
             )
 
     def testRejectsRequiredMarkersInWrongOrder(self) -> None:
@@ -285,6 +308,26 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(serialOutput, "READY\n")
         self.assertFalse(timedOut)
         self.assertTrue(completedByObserver)
+
+    def testStopsProcessAfterBoundedTimeout(self) -> None:
+        startTime = time.monotonic()
+
+        _serialOutput, _timedOutput, timedOut, completedByObserver, _returnCode = (
+            runQemuWithTimedSerial(
+                [
+                    sys.executable,
+                    "-c",
+                    "import time; time.sleep(10.0)",
+                ],
+                Path.cwd(),
+                0.05,
+            )
+        )
+        elapsedSeconds = time.monotonic() - startTime
+
+        self.assertTrue(timedOut)
+        self.assertFalse(completedByObserver)
+        self.assertLess(elapsedSeconds, 1.0)
 
 
 if __name__ == "__main__":

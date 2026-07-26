@@ -1,5 +1,5 @@
-#include "os/kernel/entry.hpp"
-#include "os/kernel/kernel_main.hpp"
+#include "os/kernel/boot/entry.hpp"
+#include "os/kernel/core/kernel_main.hpp"
 
 namespace os::kernel {
 

@@ -1,95 +1,187 @@
 set(
+    OS_KERNEL_ARCH_HEADERS
+    include/os/kernel/arch/descriptor_layout.hpp
+    include/os/kernel/arch/descriptor_tables.hpp
+    include/os/kernel/arch/exception_frame.hpp
+    include/os/kernel/arch/exceptions.hpp
+    include/os/kernel/arch/interrupt_runtime.hpp
+    include/os/kernel/arch/panic.hpp
+    include/os/kernel/arch/processor.hpp
+)
+set(
+    OS_KERNEL_BOOT_HEADERS
+    include/os/kernel/boot/boot_info.hpp
+    include/os/kernel/boot/entry.hpp
+)
+set(
+    OS_KERNEL_CORE_HEADERS
+    include/os/kernel/core/freestanding_memory.hpp
+    include/os/kernel/core/kernel_main.hpp
+)
+set(
+    OS_KERNEL_DEVICE_HEADERS
+    include/os/kernel/device/ata_pio.hpp
+    include/os/kernel/device/device_model.hpp
+    include/os/kernel/device/legacy_pic.hpp
+    include/os/kernel/device/port_io.hpp
+    include/os/kernel/device/programmable_interval_timer.hpp
+    include/os/kernel/device/ps2_keyboard.hpp
+    include/os/kernel/device/serial_port.hpp
+)
+set(
+    OS_KERNEL_FILE_SYSTEM_HEADERS
+    include/os/kernel/fs/block_cache.hpp
+    include/os/kernel/fs/file_system.hpp
+    include/os/kernel/fs/file_system_format.hpp
+)
+set(
+    OS_KERNEL_IO_HEADERS
+    include/os/kernel/io/console_input.hpp
+    include/os/kernel/io/io_descriptor.hpp
+)
+set(
+    OS_KERNEL_IPC_HEADERS
+    include/os/kernel/ipc/pipe.hpp
+)
+set(
+    OS_KERNEL_MEMORY_HEADERS
+    include/os/kernel/memory/kernel_heap.hpp
+    include/os/kernel/memory/kernel_stack_manager.hpp
+    include/os/kernel/memory/kernel_type_cache.hpp
+    include/os/kernel/memory/kernel_type_cache.tpp
+    include/os/kernel/memory/kernel_virtual_address_allocator.hpp
+    include/os/kernel/memory/memory_manager.hpp
+    include/os/kernel/memory/page_table.hpp
+    include/os/kernel/memory/physical_frame_allocator.hpp
+    include/os/kernel/memory/physical_memory_map.hpp
+    include/os/kernel/memory/resource_snapshot.hpp
+)
+set(
+    OS_KERNEL_PROCESS_HEADERS
+    include/os/kernel/process/process_runtime.hpp
+    include/os/kernel/process/process_scheduler.hpp
+)
+set(
+    OS_KERNEL_SYNCHRONIZATION_HEADERS
+    include/os/kernel/sync/spin_lock.hpp
+)
+set(
+    OS_KERNEL_USER_HEADERS
+    include/os/kernel/user/system_calls.hpp
+    include/os/kernel/user/user_elf.hpp
+    include/os/kernel/user/user_memory.hpp
+    include/os/kernel/user/user_program_images.hpp
+)
+
+set(
     OS_KERNEL_PUBLIC_HEADERS
-    include/os/kernel/boot_info.hpp
-    include/os/kernel/block_cache.hpp
-    include/os/kernel/console_input.hpp
-    include/os/kernel/descriptor_layout.hpp
-    include/os/kernel/descriptor_tables.hpp
-    include/os/kernel/device_model.hpp
-    include/os/kernel/entry.hpp
-    include/os/kernel/exception_frame.hpp
-    include/os/kernel/exceptions.hpp
-    include/os/kernel/file_system.hpp
-    include/os/kernel/file_system_format.hpp
-    include/os/kernel/freestanding_memory.hpp
-    include/os/kernel/kernel_main.hpp
-    include/os/kernel/kernel_heap.hpp
-    include/os/kernel/kernel_stack_manager.hpp
-    include/os/kernel/kernel_type_cache.hpp
-    include/os/kernel/kernel_type_cache.tpp
-    include/os/kernel/kernel_virtual_address_allocator.hpp
-    include/os/kernel/interrupt_runtime.hpp
-    include/os/kernel/io_descriptor.hpp
-    include/os/kernel/legacy_pic.hpp
-    include/os/kernel/memory_manager.hpp
-    include/os/kernel/page_table.hpp
-    include/os/kernel/panic.hpp
-    include/os/kernel/pipe.hpp
-    include/os/kernel/physical_frame_allocator.hpp
-    include/os/kernel/physical_memory_map.hpp
-    include/os/kernel/port_io.hpp
-    include/os/kernel/process_runtime.hpp
-    include/os/kernel/process_scheduler.hpp
-    include/os/kernel/processor.hpp
-    include/os/kernel/programmable_interval_timer.hpp
-    include/os/kernel/ps2_keyboard.hpp
-    include/os/kernel/serial_port.hpp
-    include/os/kernel/spin_lock.hpp
-    include/os/kernel/system_calls.hpp
-    include/os/kernel/ata_pio.hpp
-    include/os/kernel/user_elf.hpp
-    include/os/kernel/user_memory.hpp
-    include/os/kernel/user_program_images.hpp
+    ${OS_KERNEL_ARCH_HEADERS}
+    ${OS_KERNEL_BOOT_HEADERS}
+    ${OS_KERNEL_CORE_HEADERS}
+    ${OS_KERNEL_DEVICE_HEADERS}
+    ${OS_KERNEL_FILE_SYSTEM_HEADERS}
+    ${OS_KERNEL_IO_HEADERS}
+    ${OS_KERNEL_IPC_HEADERS}
+    ${OS_KERNEL_MEMORY_HEADERS}
+    ${OS_KERNEL_PROCESS_HEADERS}
+    ${OS_KERNEL_SYNCHRONIZATION_HEADERS}
+    ${OS_KERNEL_USER_HEADERS}
+)
+
+set(
+    OS_KERNEL_ARCH_SOURCES
+    src/arch/descriptor_layout.cpp
+    src/arch/descriptor_tables.cpp
+    src/arch/exception_frame.cpp
+    src/arch/exceptions.cpp
+    src/arch/interrupt_runtime.cpp
+    src/arch/panic.cpp
+    src/arch/processor.cpp
+)
+set(
+    OS_KERNEL_BOOT_SOURCES
+    src/boot/boot_info.cpp
+)
+set(
+    OS_KERNEL_CORE_SOURCES
+    src/core/freestanding_memory.cpp
+    src/core/kernel_main.cpp
+)
+set(
+    OS_KERNEL_DEVICE_SOURCES
+    src/device/ata_pio.cpp
+    src/device/device_model.cpp
+    src/device/legacy_pic.cpp
+    src/device/port_io.cpp
+    src/device/programmable_interval_timer.cpp
+    src/device/ps2_keyboard.cpp
+    src/device/serial_port.cpp
+)
+set(
+    OS_KERNEL_FILE_SYSTEM_SOURCES
+    src/fs/block_cache.cpp
+    src/fs/file_system.cpp
+    src/fs/file_system_format.cpp
+)
+set(
+    OS_KERNEL_IO_SOURCES
+    src/io/console_input.cpp
+    src/io/io_descriptor.cpp
+)
+set(
+    OS_KERNEL_IPC_SOURCES
+    src/ipc/pipe.cpp
+)
+set(
+    OS_KERNEL_MEMORY_SOURCES
+    src/memory/kernel_heap.cpp
+    src/memory/kernel_stack_manager.cpp
+    src/memory/kernel_type_cache.cpp
+    src/memory/kernel_virtual_address_allocator.cpp
+    src/memory/memory_manager.cpp
+    src/memory/page_table.cpp
+    src/memory/page_table_layout.cpp
+    src/memory/physical_frame_allocator.cpp
+    src/memory/physical_memory_map.cpp
+    src/memory/resource_snapshot.cpp
+)
+set(
+    OS_KERNEL_PROCESS_SOURCES
+    src/process/process_runtime.cpp
+    src/process/process_scheduler.cpp
+)
+set(
+    OS_KERNEL_SYNCHRONIZATION_SOURCES
+    src/sync/spin_lock.cpp
+)
+set(
+    OS_KERNEL_USER_SOURCES
+    src/user/system_calls.cpp
+    src/user/user_elf.cpp
+    src/user/user_memory.cpp
+    src/user/user_program_images.cpp
 )
 
 set(
     OS_KERNEL_SHARED_SOURCES
-    src/ata_pio.cpp
-    src/block_cache.cpp
-    src/boot_info.cpp
-    src/console_input.cpp
-    src/device_model.cpp
-    src/descriptor_layout.cpp
-    src/descriptor_tables.cpp
-    src/exception_frame.cpp
-    src/exceptions.cpp
-    src/file_system.cpp
-    src/file_system_format.cpp
-    src/freestanding_memory.cpp
-    src/kernel_main.cpp
-    src/kernel_heap.cpp
-    src/kernel_stack_manager.cpp
-    src/kernel_type_cache.cpp
-    src/kernel_virtual_address_allocator.cpp
-    src/interrupt_runtime.cpp
-    src/io_descriptor.cpp
-    src/legacy_pic.cpp
-    src/memory_manager.cpp
-    src/page_table.cpp
-    src/page_table_layout.cpp
-    src/panic.cpp
-    src/pipe.cpp
-    src/physical_frame_allocator.cpp
-    src/physical_memory_map.cpp
-    src/port_io.cpp
-    src/process_runtime.cpp
-    src/process_scheduler.cpp
-    src/processor.cpp
-    src/programmable_interval_timer.cpp
-    src/ps2_keyboard.cpp
-    src/serial_port.cpp
-    src/spin_lock.cpp
-    src/system_calls.cpp
-    src/user_elf.cpp
-    src/user_memory.cpp
-    src/user_program_images.cpp
+    ${OS_KERNEL_ARCH_SOURCES}
+    ${OS_KERNEL_BOOT_SOURCES}
+    ${OS_KERNEL_CORE_SOURCES}
+    ${OS_KERNEL_DEVICE_SOURCES}
+    ${OS_KERNEL_FILE_SYSTEM_SOURCES}
+    ${OS_KERNEL_IO_SOURCES}
+    ${OS_KERNEL_IPC_SOURCES}
+    ${OS_KERNEL_MEMORY_SOURCES}
+    ${OS_KERNEL_PROCESS_SOURCES}
+    ${OS_KERNEL_SYNCHRONIZATION_SOURCES}
+    ${OS_KERNEL_USER_SOURCES}
 )
 
 add_library(
     os_kernel_boot_protocol_host
     STATIC
-        src/boot_info.cpp
-        include/os/kernel/boot_info.hpp
+        src/boot/boot_info.cpp
+        include/os/kernel/boot/boot_info.hpp
 )
 target_include_directories(
     os_kernel_boot_protocol_host
@@ -105,10 +197,10 @@ target_compile_options(
 add_library(
     os_kernel_architecture_model_host
     STATIC
-        src/descriptor_layout.cpp
-        src/exception_frame.cpp
-        include/os/kernel/descriptor_layout.hpp
-        include/os/kernel/exception_frame.hpp
+        src/arch/descriptor_layout.cpp
+        src/arch/exception_frame.cpp
+        include/os/kernel/arch/descriptor_layout.hpp
+        include/os/kernel/arch/exception_frame.hpp
 )
 target_include_directories(
     os_kernel_architecture_model_host
@@ -124,22 +216,24 @@ target_compile_options(
 add_library(
     os_kernel_memory_model_host
     STATIC
-        src/kernel_heap.cpp
-        src/kernel_stack_manager.cpp
-        src/kernel_type_cache.cpp
-        src/kernel_virtual_address_allocator.cpp
-        src/page_table.cpp
-        src/page_table_layout.cpp
-        src/physical_frame_allocator.cpp
-        src/physical_memory_map.cpp
-        include/os/kernel/kernel_heap.hpp
-        include/os/kernel/kernel_stack_manager.hpp
-        include/os/kernel/kernel_type_cache.hpp
-        include/os/kernel/kernel_type_cache.tpp
-        include/os/kernel/kernel_virtual_address_allocator.hpp
-        include/os/kernel/page_table.hpp
-        include/os/kernel/physical_frame_allocator.hpp
-        include/os/kernel/physical_memory_map.hpp
+        src/memory/kernel_heap.cpp
+        src/memory/kernel_stack_manager.cpp
+        src/memory/kernel_type_cache.cpp
+        src/memory/kernel_virtual_address_allocator.cpp
+        src/memory/page_table.cpp
+        src/memory/page_table_layout.cpp
+        src/memory/physical_frame_allocator.cpp
+        src/memory/physical_memory_map.cpp
+        src/memory/resource_snapshot.cpp
+        include/os/kernel/memory/kernel_heap.hpp
+        include/os/kernel/memory/kernel_stack_manager.hpp
+        include/os/kernel/memory/kernel_type_cache.hpp
+        include/os/kernel/memory/kernel_type_cache.tpp
+        include/os/kernel/memory/kernel_virtual_address_allocator.hpp
+        include/os/kernel/memory/page_table.hpp
+        include/os/kernel/memory/physical_frame_allocator.hpp
+        include/os/kernel/memory/physical_memory_map.hpp
+        include/os/kernel/memory/resource_snapshot.hpp
 )
 target_include_directories(
     os_kernel_memory_model_host
@@ -150,13 +244,18 @@ target_compile_options(
     os_kernel_memory_model_host
     PRIVATE
         ${OS_COMMON_WARNING_FLAGS}
+)
+target_link_libraries(
+    os_kernel_memory_model_host
+    PRIVATE
+        os_foundation_host
 )
 
 add_library(
     os_kernel_device_model_host
     STATIC
-        src/device_model.cpp
-        include/os/kernel/device_model.hpp
+        src/device/device_model.cpp
+        include/os/kernel/device/device_model.hpp
 )
 target_include_directories(
     os_kernel_device_model_host
@@ -172,33 +271,33 @@ target_compile_options(
 add_library(
     os_kernel_user_model_host
     STATIC
-        src/user_elf.cpp
-        include/os/kernel/user_elf.hpp
+        src/user/user_elf.cpp
+        include/os/kernel/user/user_elf.hpp
 )
 
 add_library(
     os_kernel_process_model_host
     STATIC
-        src/process_scheduler.cpp
-        include/os/kernel/process_scheduler.hpp
+        src/process/process_scheduler.cpp
+        include/os/kernel/process/process_scheduler.hpp
 )
 
 add_library(
     os_kernel_ipc_model_host
     STATIC
-        src/pipe.cpp
-        src/spin_lock.cpp
-        include/os/kernel/pipe.hpp
-        include/os/kernel/spin_lock.hpp
+        src/ipc/pipe.cpp
+        src/sync/spin_lock.cpp
+        include/os/kernel/ipc/pipe.hpp
+        include/os/kernel/sync/spin_lock.hpp
 )
 
 add_library(
     os_kernel_user_environment_model_host
     STATIC
-        src/console_input.cpp
-        src/io_descriptor.cpp
-        include/os/kernel/console_input.hpp
-        include/os/kernel/io_descriptor.hpp
+        src/io/console_input.cpp
+        src/io/io_descriptor.cpp
+        include/os/kernel/io/console_input.hpp
+        include/os/kernel/io/io_descriptor.hpp
 )
 target_include_directories(
     os_kernel_user_environment_model_host
@@ -214,14 +313,14 @@ target_compile_options(
 add_library(
     os_kernel_file_system_model_host
     STATIC
-        src/block_cache.cpp
-        src/file_system.cpp
-        src/file_system_format.cpp
-        src/spin_lock.cpp
-        include/os/kernel/block_cache.hpp
-        include/os/kernel/file_system.hpp
-        include/os/kernel/file_system_format.hpp
-        include/os/kernel/spin_lock.hpp
+        src/fs/block_cache.cpp
+        src/fs/file_system.cpp
+        src/fs/file_system_format.cpp
+        src/sync/spin_lock.cpp
+        include/os/kernel/fs/block_cache.hpp
+        include/os/kernel/fs/file_system.hpp
+        include/os/kernel/fs/file_system_format.hpp
+        include/os/kernel/sync/spin_lock.hpp
 )
 target_include_directories(
     os_kernel_file_system_model_host
@@ -304,7 +403,7 @@ configure_file(
 
 set(
     OS_KERNEL_ARCHITECTURE_SOURCE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/architecture.asm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/arch/architecture.asm"
 )
 set(
     OS_KERNEL_ARCHITECTURE_OBJECT
@@ -338,7 +437,7 @@ set(
     "${CMAKE_CURRENT_BINARY_DIR}/generated/user_images.asm"
 )
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/user_images.asm.in"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/user/user_images.asm.in"
     "${OS_KERNEL_USER_IMAGES_ASSEMBLY_SOURCE}"
     @ONLY
 )
@@ -375,6 +474,20 @@ add_custom_command(
 add_custom_target(
     os_kernel_user_images_object
     DEPENDS "${OS_KERNEL_USER_IMAGES_OBJECT}"
+)
+
+# 这些 ELF 由 source/user 子目录中的自定义目标生成。仅列出文件路径时，
+# Unix Makefiles 无法跨目录发现对应规则；目标级依赖保证全新构建和局部清理
+# 后都会先生成七个用户程序，再由 NASM 将它们嵌入 Kernel。
+add_dependencies(
+    os_kernel_user_images_object
+    os_user_smoke_elf
+    os_user_invalid_opcode_elf
+    os_user_page_fault_elf
+    os_user_scheduler_worker_elf
+    os_user_ipc_producer_elf
+    os_user_ipc_consumer_elf
+    os_user_shell_elf
 )
 
 set(
@@ -417,7 +530,12 @@ function(
         PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/include"
     )
-    target_link_libraries(${OS_KERNEL_OBJECT_TARGET} PRIVATE os_system_abi)
+    target_link_libraries(
+        ${OS_KERNEL_OBJECT_TARGET}
+        PRIVATE
+            os_foundation_x86_64
+            os_system_abi
+    )
     target_compile_options(
         ${OS_KERNEL_OBJECT_TARGET}
         PRIVATE
@@ -427,7 +545,7 @@ endfunction()
 
 os_add_kernel_object_target(
     os_kernel_objects
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/entry.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/boot/entry.cpp"
 )
 target_sources(
     os_kernel_objects
@@ -530,11 +648,13 @@ function(
             $<TARGET_OBJECTS:${OS_KERNEL_OBJECT_TARGET}>
             "${OS_KERNEL_ARCHITECTURE_OBJECT}"
             "${OS_KERNEL_USER_IMAGES_OBJECT}"
+            $<TARGET_FILE:os_foundation_x86_64>
         DEPENDS
             ${OS_KERNEL_OBJECT_TARGET}
             $<TARGET_OBJECTS:${OS_KERNEL_OBJECT_TARGET}>
             os_kernel_architecture_object
             os_kernel_user_images_object
+            os_foundation_x86_64
             "${OS_KERNEL_LINKER_SCRIPT}"
         COMMENT "${OS_KERNEL_LINK_COMMENT}"
         COMMAND_EXPAND_LISTS

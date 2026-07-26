@@ -261,7 +261,7 @@ Unix socket，等串口出现 \code{READY} 后协商 capabilities，并执行
 远端 QEMU 曾在 \code{INTERRUPTS\_ENABLED} 后结束进程。把上界增至五秒后
 停顿位置完全不变，这反证了“只是 runner 较慢”的假设，并把问题收窄到 PIC
 与 CPU 之间的路由。当前捕获器观察每个用例最后一个必需里程碑：到达后短暂
-收尾并主动回收 QEMU；未到达才等待按内存规格选择的 15 秒或 40 秒总截止。
+收尾并主动回收 QEMU；未到达才等待按内存规格选择的 15 秒或 75 秒总截止。
 QMP 线程等待 \code{READY}
 也使用同一上界。里程碑机制用于准确分类失败，结束后仍完整检查所有必需标记
 的顺序和禁止标记，不能用延长宿主时间替代来宾正确性。
@@ -580,13 +580,13 @@ RAX 保存调用号与返回值，RDI/RSI 保存前两个参数。所有协议�
         不分配页面；
   \item \filepath{source/kernel/src/user\_memory.cpp} 映射段、清零 BSS、
         建栈并负责失败回滚；
-  \item \filepath{source/kernel/src/architecture.asm} 保存原内核调用链，
+  \item \filepath{source/kernel/src/arch/architecture.asm} 保存原内核调用链，
         执行降权和终止恢复；
   \item \filepath{source/user/src/system\_call.asm} 执行
         \code{INT 0x80}；
   \item \filepath{source/kernel/src/system\_calls.cpp} 校验帧、复制用户数据
         并分发调用；
-  \item \filepath{source/kernel/src/exceptions.cpp} 按 CPL 选择用户终止或
+  \item \filepath{source/kernel/src/arch/exceptions.cpp} 按 CPL 选择用户终止或
         内核 panic；
   \item \filepath{source/kernel/src/user\_runtime.cpp} 把上述路径收敛为
         一个结构化执行结果。

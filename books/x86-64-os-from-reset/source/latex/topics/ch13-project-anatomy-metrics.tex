@@ -27,9 +27,9 @@ CMakeLists 和链接脚本属于构建与布局描述。链接脚本对 ROM 地�
 \subsection{二、当前真实代码量}
 
 本书构建时调用 \code{python3} \code{tools/os.py} \code{source-metrics} 自动扫描
-\filepath{source/}。只接受 \code{.asm}、\code{.cpp}、\code{.hpp}、
-\code{.inc} 和 \code{.tpp}；空行与纯注释行不计入代码行，行尾注释所在的
-指令或语句仍计入。
+\filepath{source/}。只接受 \code{.asm}、\code{.cpp} 和 \code{.hpp}；
+\code{.inc}、\code{.tpp}、空行与纯注释行不计入，行尾注释所在的指令或
+语句仍计入。网站首页使用完全相同的三类核心扩展名和注释口径。
 
 \begin{longtable}{L{0.32\linewidth}L{0.22\linewidth}L{0.36\linewidth}}
 \toprule
@@ -49,7 +49,62 @@ C++ 交接；v0.5 已把 GDT/TSS/IDT 构造、异常策略和 panic 放入 C++20
 汇编只保留描述符指令、异常桩、上下文切换和必要硬件边界。这个变化反映系统
 层次演进，不是追求某种语言比例。
 
-\subsection{三、代码行不是完成度}
+\subsection{三、目录应当描述变化原因}
+
+早期 Kernel 文件很少，把所有头文件放进 \filepath{include/os/kernel/}、
+所有实现放进 \filepath{src/}，能够迅速找到完整代码。但 v1.1 已经同时包含
+处理器、启动、设备、文件、I/O、IPC、内存、进程、同步和用户边界。此时扁平
+目录只回答“它属于 Kernel”，不能回答“哪一组机制拥有它、哪些文件应当一起
+变化”。
+
+本项目因此让公开树和实现树使用完全相同的十一组功能目录：
+
+\begin{longtable}{L{0.18\linewidth}L{0.69\linewidth}}
+\toprule
+目录 & 所有权边界 \\
+\midrule
+\code{arch} & x86-64 描述符、异常/IRQ 入口、处理器状态与 panic \\
+\code{boot} / \code{core} & 交接 ABI、Kernel 入口、主流程和最小 freestanding 运行时 \\
+\code{device} & 端口 I/O、串口、PIC、PIT、PS/2 与 ATA \\
+\code{fs} / \code{io} / \code{ipc} & 持久文件、描述符/控制台和管道 \\
+\code{memory} & 页帧、buddy、页表、heap、KVA、动态栈和资源快照 \\
+\code{process} / \code{sync} & 执行生命周期、调度和通用同步原语 \\
+\code{user} & 用户 ELF、用户地址访问、系统调用和内嵌程序边界 \\
+\bottomrule
+\end{longtable}
+
+一组接口和实现具有可机械推导的路径：
+
+\begin{center}
+\code{include/os/kernel/memory/page\_table.hpp}\\
+\(\updownarrow\)\\
+\code{src/memory/page\_table.cpp}
+\end{center}
+
+这不是把“头文件”和“源文件”重新集中成两个大桶。第一层仍隔离公开契约与
+实现，第二层按变化原因把同一子系统放在相同相对位置。读者从 include 进入
+接口后，只需替换根前缀就能找到实现；评审者看到 \code{memory/} 变化，也能
+立刻判断它是否意外牵动 \code{device/} 或 \code{process/}。
+
+目录也不等于 C++ 命名空间。当前公开类型继续位于简短的
+\code{os::kernel}；没有同名冲突或独立 API 时，机械增加
+\code{os::kernel::memory} 只会扩大调用点，不会自动阻止错误依赖。物理所有权、
+语言作用域和链接 target 是三种边界，应分别在产生实际收益时演进。
+
+\subsection{四、结构必须像行为一样接受测试}
+
+仅靠一次移动无法保证半年后仍保持结构。布局检查读取真实源码树，要求 include
+与 src 拥有完全相同的模块集合、根目录没有实现文件、每个公开
+\code{.hpp} 在同模块中存在 \code{.cpp}，模板 \code{.tpp} 与头文件相邻。
+汇编入口、页表链接布局和用户镜像模板不适合一一配对，因此作为三项具名例外，
+而不是使用“任意文件都可例外”的宽松规则。
+
+测试还在临时目录构造扁平头文件和缺少实现的头文件，证明检查器真的会失败。
+这与测试页表重复释放的思想相同：只在正确仓库上返回成功，不能证明门禁能够
+拦住回归。布局检查复用 Python tooling 的既有 CTest，所以增加了结构证据，
+没有用拆分测试名称制造测试数量。
+
+\subsection{五、代码行不是完成度}
 
 \OsProductionCodeLineCount 行有效目标代码已经完成真实复位、串口、ATA PIO、
 64 MiB 页表、长模式、两遍 ELF64 装载、BootInfo、C++ 内核入口，以及内核
@@ -67,7 +122,7 @@ C++ 交接；v0.5 已把 GDT/TSS/IDT 构造、异常策略和 panic 放入 C++20
 \bottomrule
 \end{longtable}
 
-\subsection{四、自动统计的可重复性}
+\subsection{六、自动统计的可重复性}
 
 统计实现位于宿主工具，不进入目标镜像。书籍 Makefile 在检查和 PDF 构建前
 重新生成 LaTeX 宏；源代码增加后，表格数字随构建更新。工具本身由单元测试
@@ -76,13 +131,13 @@ C++ 交接；v0.5 已把 GDT/TSS/IDT 构造、异常策略和 panic 放入 C++20
 统计值必须与提交绑定。发布记录保存当时阶段、提交和口径；未来改变统计规则时
 先更新规则说明，再重新生成数字，不能把不同口径的曲线直接比较。
 
-\subsection{五、从 v0.2 到 v1.0 的规模增长来源}
+\subsection{七、从 v0.2 到 v1.0 的规模增长来源}
 
 后续真实代码增长主要来自异常入口、页分配、更细粒度页表、驱动、调度、同步、
 文件系统和用户程序。每个模块都先建立类型与失败语义，再添加正常路径。测试和
 教材会同步增长，但继续从真实代码量中排除。
 
-\subsection{六、阅读工程的稳定顺序}
+\subsection{八、阅读工程的稳定顺序}
 
 阅读一个阶段先看发布记录和 ADR，确定范围与决策；再看链接脚本和公开头文件，
 建立地址与接口；随后走读实现和最终字节；最后看测试如何证伪错误输入。这个

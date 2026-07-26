@@ -1728,8 +1728,8 @@ QEMU 正常路径、用户 \#UD 隔离路径和用户 \#PF 隔离路径都必须
 [OS][KERNEL] KERNEL_STACK_SIZE_BYTES=0x0000000000004000
 ...
 [OS][KERNEL] KERNEL_STACK_ACTIVE_STACKS=0x0000000000000000
-[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000004
-[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000004
+[OS][KERNEL] KERNEL_STACK_SUCCESSFUL_CREATIONS=0x0000000000000005
+[OS][KERNEL] KERNEL_STACK_DESTRUCTIONS=0x0000000000000005
 [OS][KERNEL] KERNEL_STACK_PEAK_ACTIVE_STACKS=0x0000000000000004
 [OS][KERNEL] KERNEL_STACK_PEAK_MAPPED_PAGES=0x0000000000000010
 [OS][KERNEL] KERNEL_STACK_RESOURCES_RECLAIMED
@@ -1746,8 +1746,314 @@ QEMU 正常路径、用户 \#UD 隔离路径和用户 \#PF 隔离路径都必须
 与保存帧引用。容量仍由 256 槽固定存储限定，管理器仍是单 BSP、无内部锁；
 栈大小固定 16 KiB，不支持按需增长，也没有每 CPU emergency stack 或
 stack canary。空 PT/PD 与独占 PDPT 回收已经完成，并由页表帧统计证明动态
-栈反复创建/销毁不会永久增长中间表基础设施。后续资源闭环转向通用引用计数、
-可组合的作用域回滚与资源快照，而不是在栈管理器中重复实现这些策略。
+栈反复创建/销毁不会永久增长中间表基础设施。v1.1 的最后一步进一步把这些
+局部结论收束为通用引用计数、可组合的作用域回滚与跨层资源快照。
+
+\section{v1.1 通用资源生命周期把“已经释放”变成可验证结论}
+
+\subsection{资源管理的历史困难不是缺少一个 free 函数}
+
+一个内核对象很少只拥有一块同质内存。动态内核栈同时占有 KVA 区间、四个
+物理页、四张叶映射和管理器槽；用户进程还会占有页表根、用户代码页、用户栈、
+描述符和调度现场。创建函数执行到一半失败时，只能释放已经取得的部分，而且
+必须按依赖关系的反方向撤销：
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (kva) {六页 KVA\\软件所有权};
+  \node[os state,right=of kva] (frames) {四个 frame\\物理所有权};
+  \node[os state,right=of frames] (pte) {四个 PTE\\地址翻译};
+  \node[os state,below=of frames] (slot) {KernelStack 槽\\对外发布};
+  \draw[os arrow] (kva) -- (frames);
+  \draw[os arrow] (frames) -- (pte);
+  \draw[os arrow] (pte) -- (slot);
+  \draw[os arrow,dashed] (slot) -- node[right]{失败时反向} (pte);
+  \draw[os arrow,dashed] (pte) -- (frames);
+  \draw[os arrow,dashed] (frames) -- (kva);
+\end{tikzpicture}
+\end{center}
+
+若先归还 frame 而 PTE 仍 present，原虚拟地址会指向后来取得该 frame 的
+新对象；若先释放 KVA，另一个调用者可能取得同一虚拟区间，而旧 PTE 尚未
+撤销。四个步骤都调用过某种 release 仍不够，顺序本身就是安全属性。
+
+早期 C 系统常用逐层 \code{goto fail\_map}/\code{fail\_frame} 标签表达
+展开。它没有语言运行时依赖，也能精确工作，但创建步骤增加时必须同步修改多个
+标签；漏掉一条清理或把标签跳错一级，通常只在稀有故障注入中出现。普通 hosted
+C++ 通过 RAII、标准容器和异常展开减轻这类重复；freestanding Kernel 没有
+理由引入异常运行时，更不能把页表、锁和设备请求都误当成普通堆内存。
+
+因此本阶段不是寻找一个“自动释放所有东西”的黑箱，而是建立三种互补机制：
+
+\begin{enumerate}[label=\arabic*.]
+  \item \code{ScopeRollback} 记录当前事务已经完成的可逆步骤；
+  \item \code{ReferenceCounter} 决定共享对象何时取得最后释放资格；
+  \item \code{ResourceSnapshot} 在较长生命周期两端证明跨管理器当前量恢复。
+\end{enumerate}
+
+前者负责单次调用内的失败展开，中者负责多个所有者之间的销毁时机，后者负责
+发现局部检查互相抵消或遗漏的泄漏。三者不能相互替代。
+
+\subsection{ScopeRollback 是无分配的显式小事务}
+
+\code{ScopeRollback} 不持有动态容器。调用者提供固定
+\code{ScopeRollbackAction} 数组，每项只保存一个
+\code{bool (*)(void*) noexcept} 操作和一个上下文指针。它的状态机为：
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (u) {Uninitialized};
+  \node[os state,right=of u] (a) {Armed};
+  \node[os state,above right=of a] (c) {Committed};
+  \node[os state,below right=of a] (r) {RolledBack};
+  \draw[os arrow] (u) -- node[above]{Initialize} (a);
+  \draw[os arrow] (a) edge[loop above] node{TryPush} (a);
+  \draw[os arrow] (a) -- node[above left]{Commit} (c);
+  \draw[os arrow] (a) -- node[below left]{TryRollback / 析构} (r);
+\end{tikzpicture}
+\end{center}
+
+外部存储有两个重要原因。第一，低内存失败路径不能为了登记“稍后释放内存”
+再次申请内存，否则诊断机制会重入原故障。第二，动作容量成为调用点可审计的
+上界；当创建过程新增一步时，测试和代码审查能直接看到容量是否同步改变。
+
+典型控制流可以抽象为：
+
+\begin{verbatim}
+ScopeRollbackAction actions[capacity];
+ScopeRollback rollback;
+rollback.Initialize(actions, capacity);
+
+acquire A;
+rollback.TryPush(ReleaseA, context_a);
+
+acquire B;
+rollback.TryPush(ReleaseB, context_b);
+
+publish candidate;
+rollback.Commit();
+\end{verbatim}
+
+未执行 \code{Commit} 时离开作用域，析构从最后一个动作向第一个动作执行。
+显式 \code{TryRollback} 用于调用者需要检查清理结果的失败分支；析构是防止
+遗漏的最后安全网。回滚动作之一返回 false 时，实现仍继续执行更早动作，
+最后报告 \code{ActionFailed}。这是有意选择：一张 PTE 撤销失败不意味着应
+故意保留所有其他可独立归还的 frame 和 KVA。上层收到失败后仍不能把候选对象
+当作干净状态继续使用。
+
+\subsection{九项动态栈补偿动作如何推导}
+
+动态栈创建取得一次 KVA 和四组“物理页加叶映射”。在取得顺序中，每个数据页
+先申请并清零 frame，再建立映射；对应的最大补偿动作数是：
+\[
+  1_{\mathrm{KVA}}+
+  4\times
+  \left(1_{\mathrm{frame}}+1_{\mathrm{PTE}}\right)=9.
+\]
+
+\begin{center}
+\begin{tabular}{cll}
+\toprule
+登记次序 & 正向步骤 & 回滚时的动作\\
+\midrule
+0 & 取得六页 KVA & 精确释放 KVA allocation\\
+1,3,5,7 & 取得一个 order-0 frame & 清零并释放该 frame\\
+2,4,6,8 & 建立一个数据叶映射 & 撤销对应 PTE\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+动作数组按正向取得顺序登记，执行时从 8 走到 0，所以每个已映射页先 unmap，
+再归还其 frame，最终才释放 KVA。若第三个 frame 申请失败，数组中只存在
+KVA、前两个 frame 和前两个 PTE 的动作；未取得资源没有虚构的补偿项。候选
+\code{KernelStack} 仍是局部值，目标槽只有完整验证后才覆盖，因此回滚期间
+其他代码看不到半对象。
+
+销毁既有活动栈没有直接复用同一事务，因为它必须先证明所有权仍一致，再执行
+不可回退的正式销毁。创建失败展开和已发布对象销毁是不同状态转换；把二者
+强行塞进一个通用函数会模糊“候选从未可见”和“活动对象正在消失”的边界。
+
+\subsection{ReferenceCounter 冻结强引用的最小语义}
+
+共享对象需要回答“还有多少所有者保证其存活”。本阶段以明确的 64 位状态机
+定义强引用：
+
+\[
+R\in[0,2^{64}-1],\qquad
+\operatorname{Acquire}(R)=R+1\ \text{only if}\ 0<R<2^{64}-1.
+\]
+
+释放语义为：
+\[
+\operatorname{Release}(R)=
+\begin{cases}
+(R-1,\mathrm{false}), & R>1,\\
+(0,\mathrm{true}), & R=1,\\
+\mathrm{failure}, & R=0.
+\end{cases}
+\]
+
+\code{Start(initial)} 只允许在未启动状态设置非零初值。\code{TryAcquire}
+拒绝从零复活，因为最后释放者一旦观察到零，就可能已经开始销毁相关页和锁；
+此后把计数加回一不能恢复对象内容。\code{TryAcquire} 也拒绝最大值上溢，
+否则无符号回绕会把最多所有者误写成零。
+
+\code{TryRelease(bool\& is\_last)} 只有成功时才修改输出。这个看似细小的
+失败原子性十分关键：若计数已经为零而函数先把 \code{is\_last} 写成 true，
+调用者可能在失败处理里再次销毁对象。计数和输出必须作为一个逻辑结果提交。
+
+当前实现有意不是 atomic。v1.1 仍是单 BSP，基础原语先冻结可测试的所有权
+语义。多 CPU 下不能只把字段替换成 \code{atomic<uint64\_t>} 就宣告正确：
+最后释放前的对象写入需要怎样发布，零后获取如何与销毁互斥，弱引用如何升级，
+析构与 RCU 或锁如何配合，都必须一起定义。v1.4 的动态 KernelObject 模型
+会在这些问题确定后选择内存序。
+
+\subsection{ResourceSnapshot 为什么排除历史累计量}
+
+一次资源事务成功创建再销毁后，当前活动量应恢复，但历史计数合理增加。若把
+\code{successful\_allocations} 或峰值放入泄漏比较，每一个正确完成的事务
+都会被误报。因此快照只保存稳定当前所有权，字段分成六组：
+
+\small
+\noindent\begin{tabularx}{\textwidth}{L{0.14\textwidth}L{0.12\textwidth}X}
+\toprule
+组 & 字段数量 & 当前量\\
+\midrule
+frame & 4 & managed、free、allocated、reserved（unavailable 由差值推导）\\
+buddy & 1 & active blocks\\
+heap & 4 & capacity、consumed、active requested bytes、allocation count\\
+KVA & 7 & capacity/free/allocated/reserved page、活动描述符/申请/保留\\
+kernel stack & 4 & slot capacity、active stack、mapped page、guard page\\
+未来对象 & 6 & Process、Thread、FileDescription、Vnode、CachePage、BlockRequest\\
+\midrule
+合计 & 26 & 使用低 26 位差异掩码\\
+\bottomrule
+\end{tabularx}
+\normalsize
+
+未来六项在 v1.1 为零，但字段位置现在就固定，使后续阶段能接入同一个比较器，
+不必另造一条“进程计数看起来归零”的旁路验收。快照不是永久用户 ABI；字段
+语义改变仍需 ADR 和测试同步更新。
+
+\subsection{内部守恒先于前后比较}
+
+两个同样损坏的快照可能逐字段相等。若只比较 before 和 after，进入事务前
+已经存在的错误会被当作“没有变化”。因此构造和比较都先检查每个管理器的
+内部方程：
+
+\[
+\begin{aligned}
+F_{\mathrm{accounted}}
+  &=F_{\mathrm{free}}+F_{\mathrm{allocated}}
+    +F_{\mathrm{reserved}}
+    \le F_{\mathrm{managed}},\\
+F_{\mathrm{unavailable}}
+  &=F_{\mathrm{managed}}-F_{\mathrm{accounted}},\\
+K_{\mathrm{capacity}}
+  &=K_{\mathrm{free}}+K_{\mathrm{allocated}}+K_{\mathrm{reserved}},\\
+H_{\mathrm{consumed}} &\le H_{\mathrm{capacity}},\\
+S_{\mathrm{mapped}} &=4S_{\mathrm{active}},\\
+S_{\mathrm{guard}} &=2S_{\mathrm{active}},\\
+S_{\mathrm{KVA}} &=6S_{\mathrm{active}}.
+\end{aligned}
+\]
+
+这里的 managed 是从零到最高受管物理地址的页跨度，不等于全部可分配 RAM。
+E820 保留洞、MMIO 窗口与不足整页的边界都保持 unavailable。快照用
+managed 与三类当前所有权的差值推导 unavailable，既不浪费差异位，也仍能
+检测任何跨状态误转移。这个区别在 64 GiB QEMU 的 3--4 GiB PCI 洞上会直接
+影响验收；把不等式误写成等式会错误拒绝合法容量布局。
+
+buddy 活动页和活动块不能超过 frame allocated；KVA 活动对象数不能超过
+描述符容量。所有加法、乘法和类型转换先做 64 位溢出检查。快照构造先写局部
+候选，完整验证成功后才覆盖调用者输出；比较也先产生局部差异，失败不交付
+半份掩码。
+
+差异位 \(i\) 对应字段 \(i\)：
+\[
+  D=\bigvee_{i=0}^{25}
+  \left([B_i\ne A_i]\ll i\right),\qquad
+  C=\operatorname{popcount}(D).
+\]
+当前不依赖标准库 \code{popcount}，而是显式遍历 26 个字段；字段总数由
+\code{static\_assert} 保证小于 64，避免未来新增字段后左移越界。零差异必须
+同时满足 \(D=0\) 和 \(C=0\)。
+
+\subsection{目标机有两道不同的生命周期边界}
+
+第一道位于内存初始化尾部。管理器在保留的最后一个槽创建真实六页动态栈，
+外层 \code{ScopeRollback} 登记销毁动作；随后验证栈布局、引用计数状态机和
+回滚状态，显式执行回滚，再拍摄 after 快照。只有 26 字段恢复才输出：
+
+\begin{verbatim}
+[OS][KERNEL] RESOURCE_LIFECYCLE_READY
+[OS][KERNEL] RESOURCE_SNAPSHOT_TRACKED_FIELDS=0x000000000000001A
+[OS][KERNEL] RESOURCE_SNAPSHOT_CHANGED_FIELDS=0x0000000000000000
+[OS][KERNEL] REFERENCE_COUNTER_SELF_TEST_PASSED
+[OS][KERNEL] SCOPE_ROLLBACK_SELF_TEST_PASSED
+[OS][KERNEL] RESOURCE_SNAPSHOT_SELF_TEST_PASSED
+\end{verbatim}
+
+第二道跨越真实四进程运行。创建第一个进程前拍摄 before；Shell、管道、
+文件系统、抢占和用户异常隔离全部完成，汇编返回永久启动栈并回收所有终止栈
+之后拍摄 after。任一字段变化使 \code{ProcessRuntime} 返回
+\code{ResourceLeakDetected}，禁止输出：
+
+\begin{verbatim}
+[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED
+\end{verbatim}
+
+启动期自检增加一次栈创建和销毁，四进程再增加四次，所以正常整机累计值为
+五次创建、五次销毁；自检栈在进程阶段前已经释放，峰值仍是四个活动栈和
+十六个映射页。区分“累计五次”和“峰值四个”正是当前量与历史量分离的实例。
+
+\subsection{四层测试怎样避免同源自证}
+
+\noindent\begin{tabularx}{\textwidth}{L{0.16\textwidth}L{0.18\textwidth}X}
+\toprule
+层级 & 输入规模 & 主要证明\\
+\midrule
+原语单元 & 边界与故障枚举 & 状态、输出原子性、逆序和幂等拒绝\\
+固定种子随机 & 100000 个事务 & 与独立动作/资源模型逐步一致\\
+组合集成 & 四个真实动态栈 & frame/buddy/KVA/PTE/stack 同时变化并恢复\\
+QEMU 系统 & 256 MiB 与 64 GiB & 真实 CPU、页表、Shell、IPC、文件系统与回收\\
+\bottomrule
+\end{tabularx}
+
+固定种子 \code{0x5245534F55524345} 不是随机演示。参考模型独立保存每个
+资源是否活动、动作登记顺序和预期终态；被测实现只暴露公共接口。每轮随机选择
+登记、提交、显式回滚、容量耗尽或动作失败，并比较调用次数、顺序、状态与
+资源归零。失败会报告种子和精确迭代，可以稳定重现并沉淀为单元样例。
+
+组合测试不伪造统计。它初始化真实 2-bit frame state、buddy、四级页表、
+32 TiB KVA 描述符和栈管理器，创建四个双 guard 栈。活动快照必须观测
+4 个栈、16 个物理数据页、24 个 KVA 页、16 个 present 数据页和 8 个
+not-present guard；逆序销毁后差异掩码必须为零。
+
+具名 256 MiB functional smoke 运行完整 Shell、IPC、文件系统、用户故障隔离
+和资源快照，不是只看 \code{READY} 的简化镜像。64 GiB capacity 使用同一
+代码，另要求在 4 GiB 以上真实申请、写回和回收页帧。64 MiB bootstrap 保留
+启动与历史故障路径。三种 RAM 规格只改变 QEMU 参数，不通过条件编译切回固定
+资源表。
+
+\subsection{可观测性与阶段完成边界}
+
+引用获取、补偿动作、逐页 map/unmap 都是热路径，不逐次输出串口。日志只在
+整个事务提交或完整回收后输出稳定标记；QEMU runner 对 tracked field、
+changed mask 和通过标记做精确次数检查，并继续给每行附加宿主单调相对时间。
+来宾时间仍来自 PIT，两种时间域不会混在一个字段中。
+
+v1.1 完成时共有 97 项 CTest。新增五项分别是原语单元测试、十万事务随机
+测试、快照单元测试、真实跨层生命周期集成测试和 256 MiB QEMU functional
+smoke。全部历史复位、长模式、异常、持久化和故障镜像继续保留，因此“新功能
+通过”不能掩盖旧边界回归。
+
+当前原语的受控边界也必须明确：引用计数尚未接入动态 KernelObject，未来六个
+快照字段仍为零，\code{ScopeRollback} 的动作是同步函数且没有锁。v1.2
+分离 Process/Thread 时要把两类当前量接入既有快照；v1.4 才冻结并发引用、
+弱引用和最后释放。先建立可证明的单核语义，再扩展并发，不用一个未经定义的
+atomic 字段制造“已经线程安全”的错觉。
 
 \section{v0.6 高半区早期堆用最小策略验证对象分配}
 

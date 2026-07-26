@@ -272,3 +272,17 @@ add_custom_target(
         "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
         "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
 )
+
+# Makefile 生成器不会把其他二进制目录中的文件级自定义命令自动提升为目标依赖。
+# 显式声明 ELF 目标可保证全新构建或清理产物后，始终先链接所有 Kernel ELF，
+# 再进入磁盘打包规则，避免出现 “No rule to make target kernel.elf”。
+add_dependencies(
+    os_stage1_images
+    os_kernel_elf
+    os_kernel_invalid_opcode_elf
+    os_kernel_page_fault_elf
+    os_kernel_write_protection_elf
+    os_kernel_user_invalid_opcode_elf
+    os_kernel_user_page_fault_elf
+    os_kernel_user_invalid_elf
+)

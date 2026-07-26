@@ -140,4 +140,6 @@ supervisor、RW、NX 栈。虚拟连续允许四个物理帧彼此不连续，�
 type cache 已用单后备块、活动位图与槽内 LIFO 链建立独立容量和生命周期；
 KVA 区间层、动态内核栈和按根所有权的空中间页表回收已经完成；把
 heap/type cache 改为按页增长和多 slab 后备，以及加入并发锁，仍属于后续
-边界。
+边界。v1.1 的 \code{ScopeRollback} 已把动态栈九项失败清理写成固定存储
+逆序事务，\code{ResourceSnapshot} 又以 26 个当前字段证明启动自检和四进程
+运行前后 frame、buddy、heap、KVA 与栈恢复，而不把累计申请误作泄漏。

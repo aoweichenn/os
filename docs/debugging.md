@@ -640,9 +640,9 @@ DATA 字是否按小端拆成 512 字节。
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
-2. 未到达时，普通配置以 15 秒、64 GiB 主规格以 40 秒为总失败上界；后者要在
+2. 未到达时，普通配置以 15 秒、64 GiB 主规格以 75 秒为总失败上界；后者要在
    Debug 构建中扫描 16777216 个页状态。QMP 等待 `READY` 使用与当前内存规格
-   相同的预算，外层 CTest 对主规格另设 50 秒硬上界。
+   相同的预算，外层 CTest 对主规格另设 85 秒硬上界。
 
 协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计既移除
 “所有宿主都同速”的假设，也让稳定停顿成为可重复诊断证据；不会把缺失 IRQ、
@@ -862,3 +862,42 @@ dropped = buffered = 0
 `dropped > 0` 表示宿主输入速度超过 256 字节 FIFO 的消费能力；
 `buffered > 0` 表示结束条件过早。调试时可以降低 QMP 逐键发送速度，但不能
 扩大 FIFO 来掩盖错误，也不能逐字符写串口，因为那会改变生产/消费速度。
+
+## v1.1：资源快照与跨目录镜像依赖
+
+### 256 MiB 通过，但 64 GiB 报资源快照账本错误
+
+先区分 `managed_frame_count` 与可用 RAM 页数。前者由最高受管物理地址除以
+4 KiB 得到，包含 E820 保留洞、MMIO 和 PCI 窗口；后者只包含能进入 free、
+allocated 或 reserved 三态的页。正确关系是：
+
+```text
+accounted = free + allocated + reserved
+accounted <= managed
+unavailable = managed - accounted
+```
+
+64 GiB QEMU 在 3–4 GiB 附近存在明显 PCI 洞，因此错误地检查
+`accounted == managed` 会只在容量档稳定失败。修复不能通过忽略快照错误或
+修改 QEMU 内存图完成；应保留 2-bit `Unavailable` 状态，把差值作为不可用页
+推导出来，同时继续比较 managed/free/allocated/reserved 四个稳定字段。
+单元样例必须显式包含不可用间隙，256 MiB functional 与 64 GiB capacity
+必须共同进入门禁。QEMU 捕获器在看到禁止失败标记时会立即结束实例并报告该
+标记，不再等待 64 GiB 档的 75 秒总截止时间。
+
+40 秒旧预算曾在共享宿主负载约 16 时于 `EXCEPTION_SELF_TEST_READY` 后耗尽，
+来宾尚在执行 64 GiB 页状态、buddy、direct-map 与跨层自检，串口因提交后才
+输出统计而没有中间行。这不是放宽来宾轮询：普通配置仍为 15 秒，禁止失败标记
+仍会立即收尾；容量档只把宿主外部保险调整为有明确上界的 75/85 秒，并由工具
+单元测试证明一个睡眠子进程会在短预算后被终止而不是遗留后台进程。
+
+### 全量构建偶发报告 Kernel 或 User ELF 不存在
+
+Stage 1 镜像命令读取七个 Kernel ELF，Kernel 的用户镜像对象又读取七个 User
+ELF。文件路径出现在自定义命令参数中，不代表 CMake 一定能跨目录推导目标级
+构建顺序；增量构建恰好已有文件时问题会被掩盖，干净构建或不同生成器才暴露。
+
+`os_stage1_images` 必须显式依赖全部 Kernel ELF 目标，
+`os_kernel_user_images_object` 必须显式依赖全部 User ELF 目标。这样
+Ninja/Make 会先完成生产目标，再运行打包命令。不要用重复执行构建或在 Python
+脚本里等待文件出现来绕过依赖图；生产者—消费者关系属于 CMake 构建图。

@@ -1,4 +1,4 @@
-#include "os/kernel/pipe.hpp"
+#include "os/kernel/ipc/pipe.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

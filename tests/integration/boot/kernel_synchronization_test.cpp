@@ -1,4 +1,4 @@
-#include "os/kernel/spin_lock.hpp"
+#include "os/kernel/sync/spin_lock.hpp"
 #include "test_context.hpp"
 
 #include <string_view>

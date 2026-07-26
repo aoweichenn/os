@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/kernel/page_table.hpp"
+#include "os/kernel/memory/page_table.hpp"
 
 #include <stdint.h>
 

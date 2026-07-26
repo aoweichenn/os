@@ -1,5 +1,5 @@
-#include "os/kernel/kernel_heap.hpp"
-#include "os/kernel/page_table.hpp"
+#include "os/kernel/memory/kernel_heap.hpp"
+#include "os/kernel/memory/page_table.hpp"
 #include "test_context.hpp"
 
 #include <string_view>
