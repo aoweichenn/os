@@ -2,8 +2,8 @@
 
 ## 职责
 
-`kernel` 是 Stage 1 最终交接的 freestanding C++20 ELF64 可执行文件。v0.7
-已经在真实交接之上建立内核自己的处理器、内存、中断与设备基础：
+`kernel` 是 Stage 1 最终交接的 freestanding C++20 ELF64 可执行文件。当前
+v1.7 在真实交接之上建立处理器、内存、中断、设备、文件系统与进程基础：
 
 - 由 Clang 以 `x86_64-unknown-none-elf` 目标编译。
 - 由 LLD 的 `elf_x86_64` 模式直接链接，不经过 ARM64 宿主 GCC。
@@ -20,6 +20,8 @@
 - 映射 LAPIC MMIO 并建立 LINT0 ExtINT virtual-wire，接管 8259A、8254、
   i8042 和 ATA PIO。
 - 向量 32..47 使用独立硬件 IRQ 汇编入口，设备处理后严格执行 PIC EOI。
+- 从生产 rootfs 按需读取 `/sbin/init` ELF，建立 PID1、父子进程树和
+  spawn/exec/wait 生命周期。
 - 验收完成后进入 IF 开启的 `HLT` 事件循环，不返回 Stage 1。
 
 ## 文件布局
@@ -333,8 +335,9 @@ RW/NX 区间把实现升级为边界标记与地址有序空闲链表；v1.4 为
 不属于目标栈才允许销毁。
 
 当前管理器提供 512 个槽；64 GiB 容量事务峰值为 512 个栈、2048 个映射页
-和 1024 个 guard 页。事务回收后活动数归零，随后正常四 Thread 路径峰值
-重新回到 4 个栈、16 个映射页和 8 个 guard 页。完整设计、故障模型和测试证据见
+和 1024 个 guard 页。事务回收后活动数归零，随后正常 v1.7 八 Process/
+八 Thread 路径峰值至少为 8 个栈、32 个映射页和 16 个 guard 页。完整设计、
+故障模型和测试证据见
 [ADR 0025](../adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
 ### 通用资源生命周期基础
@@ -358,7 +361,7 @@ v1.1 用两个不依赖宿主运行时的 foundation 原语和一个 Kernel 聚�
 KVA 页和物理页必须恢复；把累计量放进泄漏快照会把正常历史误判成当前泄漏。
 
 内存初始化的目标自检在保留的末端槽创建真实双 guard 动态栈，由外层回滚事务销毁，
-再要求 26 字段零差异。进程运行时又在创建四个进程前拍摄快照，在汇编切回
+再要求 26 字段零差异。进程运行时又在创建 v1.7 八个进程前拍摄快照，在汇编切回
 永久内核栈、销毁全部用户地址空间和终止栈后再次比较。第二道检查失败会返回
 `ResourceLeakDetected`，不会只凭“进程数归零”宣布资源已回收。完整决策见
 [ADR 0027](../adr/0027-v1.1-resource-lifecycle-foundation.md)。
@@ -645,6 +648,60 @@ FileDescription 保存 `Vfs* + OpenFile`。FileTable 与 KernelObject 生命周�
 路径、挂载、后端和锁协议见
 [ADR 0032](../adr/0032-vfs-mount-namespace-and-memfs.md)。
 
+## v1.7 PID1、进程树与映像事务
+
+`process/process_tree.*` 保存与调度槽位分离的父子关系。PID 1 必须先注册且
+没有父进程；普通 Process 必须指向一个 Alive 父 Process。状态只允许：
+
+```text
+Unused --Register--> Alive --MarkExited--> Zombie --Wait/Collect--> Unused
+```
+
+ThreadScheduler 管理可运行实体和安全回收，ProcessTree 管理“谁有权观察并
+收集谁”。两者不能合并：父进程 wait 成功时先从树中收集退出状态，再要求
+调度器目标已经是无 Thread 的 Zombie 并完成 Process 槽回收；任一不一致都
+是 Kernel 内部不变量破坏，不映射为普通用户错误。
+
+普通父进程退出时，树会在同一有界扫描中把所有直接孩子重设父进程到 PID 1。
+孩子无论 Alive 还是 Zombie 都必须保留；提前丢弃 Zombie 会丢失退出状态，
+继续保留已经不存在的父索引又会损坏树。PID 1 只有在没有任何孩子且自身已
+Zombie 时由 Kernel 最终收集。
+
+`process/program_arguments.*` 是不接触页表的纯布局规划器；它只记录长度并
+用 64 位检查加法计算 64 页用户栈中的字符串、两个指针向量、终止空指针、
+argc 和最终 16 字节对齐 RSP。`process_runtime.cpp` 才负责从用户页复制输入、
+向候选用户页写入字符串/指针，并把 `argc/argv/envp` 写入初始寄存器。
+
+磁盘装载复用 `user/user_elf.*` 的 reader 接口。第一遍只读 ELF 头和程序头，
+验证 AMD64、ET_EXEC、4 KiB 对齐、用户范围、W^X、段不重叠与入口；第二遍
+创建独立 Process 页表并逐段读取、清零 BSS、建立 64 页用户栈。底层短读和
+设备失败保持 `ReadFailed`，格式错误保持 `InvalidElf`，两者不会被合并成
+模糊的“启动失败”。
+
+spawn 的发布顺序为：
+
+```text
+复制并规划请求
+  -> VFS 打开并验证 ELF
+  -> 候选 AddressSpace + 参数栈
+  -> 可撤销的 Process/Ready Thread + 动态内核栈
+  -> FileTable/FsContext
+  -> ProcessTree 父子边
+  -> Runtime active 与创建结果发布
+```
+
+失败展开与发布顺序相反。exec 不创建 PID 或父子边，而是先构造旁路候选
+AddressSpace，试激活候选 CR3 后切回旧 CR3，最后在调度器锁下提交新根和
+用户 RSP；随后才关闭 close-on-exec 描述符、销毁旧地址空间并把当前
+`UserContext` 改写为新 RIP/argc/argv/envp。成功 `exec` 不返回旧代码；
+失败 `exec` 的 CR3、RIP、RSP、fd 与父子身份保持不变。
+
+正常启动由内核临时根上下文读取 `/sbin/init`，将第一个 Process 注册为
+PID 1，再启动调度。普通 Shell、文件探针与生命周期探针都来自 rootfs；
+Kernel 只嵌入启动模式需要直接选择的最小 smoke/异常夹具。模块接口、锁顺序、
+错误映射和统计见 [进程模块](process.md) 与
+[ADR 0034](../adr/0034-pid1-process-tree-disk-exec-wait.md)。
+
 ## 入口验收序列
 
 成功启动必须依次输出：
@@ -844,13 +901,14 @@ FileDescription 保存 `Vfs* + OpenFile`。FileTable 与 KernelObject 生命周�
 - Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
   写时复制要等进程地址空间拥有完整生命周期后再实现。
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
-  Zombie/reap、WaitQueue 和完整 x87/SSE2 现场，但用户 ABI 尚未开放
-  CreateThread、ThreadExit、父子关系与 waitpid，也尚无 SMP 负载均衡。
+  PID1、父子关系、Zombie/reap、spawn/exec/wait、WaitQueue 和完整
+  x87/SSE2 现场，但用户 ABI 尚未开放 CreateThread、ThreadExit、fork、
+  wait option、进程组或 SMP 负载均衡。
 - 用户地址空间、通用内核堆、固定尺寸缓存与 v1.4 KernelObject 均可回收；
   当前对象引用在管理器锁内串行提交，尚未提供 weak reference、循环回收、
   SMP 原子引用或 RCU 延迟销毁。
 - FileTable 已动态分块并支持 4096 hard limit，但仍使用有序单链；百万 fd
-  位图/基数树、fork 共享和磁盘 exec 留给后续阶段。
+  位图/基数树、fork 共享和多 Thread exec 留给后续阶段。
 - VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs、legacy 回归后端与
   生产 rootfs v2；unlink/rmdir/rename/truncate/stat、稀疏文件和三级间接树
   已完成。mount 拓扑仍仅在启动期建立；动态 unmount、dentry cache、

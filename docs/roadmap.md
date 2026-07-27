@@ -46,7 +46,9 @@
 v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习图门禁随后把完整
 集合推进到 107 项；v1.5 再加入 VFS 单元、双后端契约和十万步命名空间模型，
 形成 110 项历史集合。v1.6 再加入 rootfs 格式、集成、真实容量证据，并扩展
-随机、工具与 QEMU 持久化；当前数量由构建图自动生成，不在路线中冻结。
+随机、工具与 QEMU 持久化；v1.7 又加入进程树、参数布局、4096 轮生命周期
+集成、固定种子随机模型、rootfs ELF 安装和 PID1 整机证据。当前数量由构建图
+自动生成，不在路线中冻结。
 
 ## 第二周期最终目标
 
@@ -480,6 +482,22 @@ VFS 与 memfs/rootfs 后端现共同支持 unlink、rmdir、同目录及跨目�
 - ELF 截断、权限、参数过大、内存不足均保持旧映像可运行；
 - 4096 次 spawn/exec/wait 后 Process、Thread、页、fd 和 vnode 回到基线；
 - PID1 对孤儿 reparent/reap，无不可达 Zombie。
+
+以上退出条件已经闭环。普通用户 ELF 由构建工具离线安装到 rootfs，正常
+Kernel 只读取 `/sbin/init` 并创建 PID1；Shell、worker、producer 和 consumer
+不再进入正常 Kernel 映像。`UserElfReader` 先分块验证全部程序头，再按页
+读取段；截断、W+X、范围和短读由 ELF/reader 测试覆盖，真实 QEMU 又证明
+截断与 E2BIG exec 失败后旧映像继续运行。
+
+`ProcessTree` 独立保存 PID/父关系/Alive/Zombie/退出结果，非 PID1 父进程
+退出时把 Alive 和 Zombie 子项重新托管给 PID1。wait 使用统一 WaitQueue，
+结果地址先验证再回收。参数与环境合计精确支持 128 KiB，以 256 字节缓冲
+搬运到 256 KiB 用户栈。4096 轮宿主集成模型负责放大槽位复用和状态机，
+64/256 MiB 真实 QEMU 负责证明页表、Thread、KernelStack、fd、FsContext、
+Vnode 和对象资源回到基线；两层证据共同满足生命周期退出条件。
+
+详细证据见 [v1.7 发布记录](releases/v1.7.md) 与
+[ADR 0034](adr/0034-pid1-process-tree-disk-exec-wait.md)。
 
 ## 波次 C：虚拟内存与用户组合
 

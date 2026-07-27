@@ -47,9 +47,13 @@ constexpr uint64_t OS_KERNEL_USER_ELF_PROGRAM_PHYSICAL_ADDRESS_OFFSET = 24ULL;
 constexpr uint64_t OS_KERNEL_USER_ELF_PROGRAM_FILE_SIZE_OFFSET = 32ULL;
 constexpr uint64_t OS_KERNEL_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET = 40ULL;
 constexpr uint64_t OS_KERNEL_USER_ELF_PROGRAM_ALIGNMENT_OFFSET = 48ULL;
-constexpr uint64_t OS_KERNEL_USER_ELF_PAGE_MASK = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - 1ULL;
-constexpr uint64_t OS_KERNEL_USER_ELF_PAGE_ROUNDING = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - 1ULL;
 constexpr uint64_t OS_KERNEL_USER_ELF_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_KERNEL_USER_ELF_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_USER_ELF_PAGE_MASK =
+    OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_USER_ELF_COUNTER_INCREMENT;
+constexpr uint64_t OS_KERNEL_USER_ELF_PAGE_ROUNDING =
+    OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_USER_ELF_COUNTER_INCREMENT;
+constexpr uint32_t OS_KERNEL_USER_ELF_EMPTY_FLAGS = 0U;
 constexpr uint64_t OS_KERNEL_USER_ELF_BYTE0_OFFSET = 0ULL;
 constexpr uint64_t OS_KERNEL_USER_ELF_BYTE1_OFFSET = 1ULL;
 constexpr uint64_t OS_KERNEL_USER_ELF_BYTE2_OFFSET = 2ULL;
@@ -59,6 +63,11 @@ constexpr uint32_t OS_KERNEL_USER_ELF_BYTE1_SHIFT_BITS = 8U;
 constexpr uint32_t OS_KERNEL_USER_ELF_BYTE2_SHIFT_BITS = 16U;
 constexpr uint32_t OS_KERNEL_USER_ELF_BYTE3_SHIFT_BITS = 24U;
 constexpr uint64_t OS_KERNEL_USER_ELF_HIGH_WORD_SHIFT_BITS = 32ULL;
+
+struct MemoryReaderContext final {
+    const uint8_t *image;
+    uint64_t image_size_bytes;
+};
 
 [[nodiscard]] uint16_t ReadLittleEndian16(const uint8_t *bytes) noexcept {
     return static_cast<uint16_t>(bytes[OS_KERNEL_USER_ELF_BYTE0_OFFSET]) |
@@ -101,8 +110,8 @@ constexpr uint64_t OS_KERNEL_USER_ELF_HIGH_WORD_SHIFT_BITS = 32ULL;
 
 [[nodiscard]] bool EntryBelongsToExecutableSegment(const uint64_t entry_virtual_address,
                                                    const UserElfLayout &layout) noexcept {
-    for (uint64_t segment_index = 0ULL; segment_index < layout.load_segment_count;
-         ++segment_index) {
+    for (uint64_t segment_index = OS_KERNEL_USER_ELF_EMPTY_VALUE;
+         segment_index < layout.load_segment_count; ++segment_index) {
         const UserElfLoadSegment &segment = layout.load_segments[segment_index];
         if (segment.executable && entry_virtual_address >= segment.virtual_address &&
             entry_virtual_address < segment.virtual_address + segment.memory_size_bytes) {
@@ -111,6 +120,34 @@ constexpr uint64_t OS_KERNEL_USER_ELF_HIGH_WORD_SHIFT_BITS = 32ULL;
     }
     return false;
 }
+
+[[nodiscard]] bool ReadMemoryImage(void *const context, const uint64_t offset_bytes,
+                                   uint8_t *const destination,
+                                   const uint64_t length_bytes) noexcept {
+    if (context == nullptr || destination == nullptr) {
+        return false;
+    }
+    const MemoryReaderContext &reader_context = *static_cast<const MemoryReaderContext *>(context);
+    uint64_t end_offset = OS_KERNEL_USER_ELF_EMPTY_VALUE;
+    if (!CheckedRangeEnd(offset_bytes, length_bytes, end_offset) ||
+        end_offset > reader_context.image_size_bytes) {
+        return false;
+    }
+    for (uint64_t byte_index = OS_KERNEL_USER_ELF_EMPTY_VALUE; byte_index < length_bytes;
+         ++byte_index) {
+        destination[byte_index] = reader_context.image[offset_bytes + byte_index];
+    }
+    return true;
+}
+
+[[nodiscard]] bool ReadExact(const UserElfReader &reader, const uint64_t offset_bytes,
+                             uint8_t *const destination, const uint64_t length_bytes) noexcept {
+    uint64_t end_offset = OS_KERNEL_USER_ELF_EMPTY_VALUE;
+    return reader.read != nullptr && destination != nullptr &&
+           CheckedRangeEnd(offset_bytes, length_bytes, end_offset) &&
+           end_offset <= reader.image_size_bytes &&
+           reader.read(reader.context, offset_bytes, destination, length_bytes);
+}
 }
 
 bool IsUserVirtualAddressRange(const uint64_t begin_address, const uint64_t length_bytes) noexcept {
@@ -118,7 +155,7 @@ bool IsUserVirtualAddressRange(const uint64_t begin_address, const uint64_t leng
         begin_address < OS_KERNEL_USER_MINIMUM_VIRTUAL_ADDRESS) {
         return false;
     }
-    uint64_t end_address = 0ULL;
+    uint64_t end_address = OS_KERNEL_USER_ELF_EMPTY_VALUE;
     return CheckedRangeEnd(begin_address, length_bytes, end_address) &&
            end_address <= OS_KERNEL_USER_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE;
 }
@@ -129,7 +166,7 @@ bool IsUserProgramVirtualAddressRange(const uint64_t begin_address,
         begin_address < OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS) {
         return false;
     }
-    uint64_t end_address = 0ULL;
+    uint64_t end_address = OS_KERNEL_USER_ELF_EMPTY_VALUE;
     return CheckedRangeEnd(begin_address, length_bytes, end_address) &&
            end_address <= OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE;
 }
@@ -139,80 +176,108 @@ UserElfValidationStatus ValidateUserElf(const uint8_t *image, const uint64_t ima
     if (image == nullptr) {
         return UserElfValidationStatus::NullImage;
     }
-    if (image_size_bytes < OS_KERNEL_USER_ELF_HEADER_SIZE_BYTES) {
+    MemoryReaderContext context{
+        .image = image,
+        .image_size_bytes = image_size_bytes,
+    };
+    return ValidateUserElf(
+        UserElfReader{
+            .context = &context,
+            .image_size_bytes = image_size_bytes,
+            .read = ReadMemoryImage,
+        },
+        layout);
+}
+
+UserElfValidationStatus ValidateUserElf(const UserElfReader &reader,
+                                        UserElfLayout &layout) noexcept {
+    if (reader.read == nullptr) {
+        return UserElfValidationStatus::NullReader;
+    }
+    if (reader.image_size_bytes < OS_KERNEL_USER_ELF_HEADER_SIZE_BYTES) {
         return UserElfValidationStatus::HeaderTruncated;
     }
-    if (image[OS_KERNEL_USER_ELF_MAGIC0_OFFSET] != OS_KERNEL_USER_ELF_MAGIC0 ||
-        image[OS_KERNEL_USER_ELF_MAGIC1_OFFSET] != OS_KERNEL_USER_ELF_MAGIC1 ||
-        image[OS_KERNEL_USER_ELF_MAGIC2_OFFSET] != OS_KERNEL_USER_ELF_MAGIC2 ||
-        image[OS_KERNEL_USER_ELF_MAGIC3_OFFSET] != OS_KERNEL_USER_ELF_MAGIC3 ||
-        image[OS_KERNEL_USER_ELF_IDENTIFICATION_CLASS_OFFSET] != OS_KERNEL_USER_ELF_CLASS_64 ||
-        image[OS_KERNEL_USER_ELF_IDENTIFICATION_ENDIAN_OFFSET] !=
+    uint8_t elf_header[OS_KERNEL_USER_ELF_HEADER_SIZE_BYTES]{};
+    if (!ReadExact(reader, OS_KERNEL_USER_ELF_EMPTY_VALUE, elf_header,
+                   OS_KERNEL_USER_ELF_HEADER_SIZE_BYTES)) {
+        return UserElfValidationStatus::ReadFailed;
+    }
+    if (elf_header[OS_KERNEL_USER_ELF_MAGIC0_OFFSET] != OS_KERNEL_USER_ELF_MAGIC0 ||
+        elf_header[OS_KERNEL_USER_ELF_MAGIC1_OFFSET] != OS_KERNEL_USER_ELF_MAGIC1 ||
+        elf_header[OS_KERNEL_USER_ELF_MAGIC2_OFFSET] != OS_KERNEL_USER_ELF_MAGIC2 ||
+        elf_header[OS_KERNEL_USER_ELF_MAGIC3_OFFSET] != OS_KERNEL_USER_ELF_MAGIC3 ||
+        elf_header[OS_KERNEL_USER_ELF_IDENTIFICATION_CLASS_OFFSET] != OS_KERNEL_USER_ELF_CLASS_64 ||
+        elf_header[OS_KERNEL_USER_ELF_IDENTIFICATION_ENDIAN_OFFSET] !=
             OS_KERNEL_USER_ELF_LITTLE_ENDIAN ||
-        image[OS_KERNEL_USER_ELF_IDENTIFICATION_VERSION_OFFSET] !=
+        elf_header[OS_KERNEL_USER_ELF_IDENTIFICATION_VERSION_OFFSET] !=
             OS_KERNEL_USER_ELF_IDENTIFICATION_VERSION) {
         return UserElfValidationStatus::InvalidIdentification;
     }
-    if (ReadLittleEndian16(image + OS_KERNEL_USER_ELF_TYPE_OFFSET) !=
+    if (ReadLittleEndian16(elf_header + OS_KERNEL_USER_ELF_TYPE_OFFSET) !=
         OS_KERNEL_USER_ELF_EXECUTABLE_TYPE) {
         return UserElfValidationStatus::InvalidExecutableType;
     }
-    if (ReadLittleEndian16(image + OS_KERNEL_USER_ELF_MACHINE_OFFSET) !=
+    if (ReadLittleEndian16(elf_header + OS_KERNEL_USER_ELF_MACHINE_OFFSET) !=
         OS_KERNEL_USER_ELF_X86_64_MACHINE) {
         return UserElfValidationStatus::InvalidMachine;
     }
-    if (ReadLittleEndian32(image + OS_KERNEL_USER_ELF_VERSION_OFFSET) !=
+    if (ReadLittleEndian32(elf_header + OS_KERNEL_USER_ELF_VERSION_OFFSET) !=
         OS_KERNEL_USER_ELF_CURRENT_VERSION) {
         return UserElfValidationStatus::InvalidVersion;
     }
-    if (ReadLittleEndian16(image + OS_KERNEL_USER_ELF_HEADER_SIZE_OFFSET) !=
+    if (ReadLittleEndian16(elf_header + OS_KERNEL_USER_ELF_HEADER_SIZE_OFFSET) !=
         OS_KERNEL_USER_ELF_HEADER_SIZE_BYTES) {
         return UserElfValidationStatus::InvalidHeaderSize;
     }
-    if (ReadLittleEndian16(image + OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_OFFSET) !=
+    if (ReadLittleEndian16(elf_header + OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_OFFSET) !=
         OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES) {
         return UserElfValidationStatus::InvalidProgramHeaderSize;
     }
 
     const uint64_t program_header_count =
-        ReadLittleEndian16(image + OS_KERNEL_USER_ELF_PROGRAM_HEADER_COUNT_OFFSET);
+        ReadLittleEndian16(elf_header + OS_KERNEL_USER_ELF_PROGRAM_HEADER_COUNT_OFFSET);
     if (program_header_count == OS_KERNEL_USER_ELF_EMPTY_VALUE ||
         program_header_count > OS_KERNEL_USER_ELF_MAXIMUM_LOAD_SEGMENT_COUNT) {
         return UserElfValidationStatus::InvalidProgramHeaderCount;
     }
     const uint64_t program_header_offset =
-        ReadLittleEndian64(image + OS_KERNEL_USER_ELF_PROGRAM_HEADER_OFFSET_OFFSET);
+        ReadLittleEndian64(elf_header + OS_KERNEL_USER_ELF_PROGRAM_HEADER_OFFSET_OFFSET);
     if (program_header_count > UINT64_MAX / OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES) {
         return UserElfValidationStatus::ProgramHeaderTableOutOfRange;
     }
     const uint64_t program_header_table_size_bytes =
         program_header_count * OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES;
-    uint64_t program_header_table_end = 0ULL;
+    uint64_t program_header_table_end = OS_KERNEL_USER_ELF_EMPTY_VALUE;
     if (!CheckedRangeEnd(program_header_offset, program_header_table_size_bytes,
                          program_header_table_end) ||
         program_header_offset < OS_KERNEL_USER_ELF_HEADER_SIZE_BYTES ||
-        program_header_table_end > image_size_bytes) {
+        program_header_table_end > reader.image_size_bytes) {
         return UserElfValidationStatus::ProgramHeaderTableOutOfRange;
     }
 
     UserElfLayout candidate_layout{};
     candidate_layout.entry_virtual_address =
-        ReadLittleEndian64(image + OS_KERNEL_USER_ELF_ENTRY_OFFSET);
-    uint64_t mapped_page_count = 0ULL;
-    for (uint64_t program_index = 0ULL; program_index < program_header_count; ++program_index) {
-        const uint8_t *const program_header =
-            image + program_header_offset +
-            program_index * OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES;
+        ReadLittleEndian64(elf_header + OS_KERNEL_USER_ELF_ENTRY_OFFSET);
+    uint64_t mapped_page_count = OS_KERNEL_USER_ELF_EMPTY_VALUE;
+    for (uint64_t program_index = OS_KERNEL_USER_ELF_EMPTY_VALUE;
+         program_index < program_header_count; ++program_index) {
+        uint8_t program_header[OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES]{};
+        const uint64_t current_program_header_offset =
+            program_header_offset + program_index * OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES;
+        if (!ReadExact(reader, current_program_header_offset, program_header,
+                       OS_KERNEL_USER_ELF_PROGRAM_HEADER_SIZE_BYTES)) {
+            return UserElfValidationStatus::ReadFailed;
+        }
         if (ReadLittleEndian32(program_header + OS_KERNEL_USER_ELF_PROGRAM_TYPE_OFFSET) !=
             OS_KERNEL_USER_ELF_LOAD_PROGRAM_TYPE) {
             return UserElfValidationStatus::UnsupportedProgramHeader;
         }
         const uint32_t flags =
             ReadLittleEndian32(program_header + OS_KERNEL_USER_ELF_PROGRAM_FLAGS_OFFSET);
-        if ((flags & ~OS_KERNEL_USER_ELF_KNOWN_FLAG_MASK) != 0U ||
-            (flags & OS_KERNEL_USER_ELF_READ_FLAG) == 0U ||
-            ((flags & OS_KERNEL_USER_ELF_WRITE_FLAG) != 0U &&
-             (flags & OS_KERNEL_USER_ELF_EXECUTE_FLAG) != 0U)) {
+        if ((flags & ~OS_KERNEL_USER_ELF_KNOWN_FLAG_MASK) != OS_KERNEL_USER_ELF_EMPTY_FLAGS ||
+            (flags & OS_KERNEL_USER_ELF_READ_FLAG) == OS_KERNEL_USER_ELF_EMPTY_FLAGS ||
+            ((flags & OS_KERNEL_USER_ELF_WRITE_FLAG) != OS_KERNEL_USER_ELF_EMPTY_FLAGS &&
+             (flags & OS_KERNEL_USER_ELF_EXECUTE_FLAG) != OS_KERNEL_USER_ELF_EMPTY_FLAGS)) {
             return UserElfValidationStatus::InvalidSegmentFlags;
         }
 
@@ -225,16 +290,19 @@ UserElfValidationStatus ValidateUserElf(const uint8_t *image, const uint64_t ima
                 ReadLittleEndian64(program_header + OS_KERNEL_USER_ELF_PROGRAM_FILE_SIZE_OFFSET),
             .memory_size_bytes =
                 ReadLittleEndian64(program_header + OS_KERNEL_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET),
-            .writable = (flags & OS_KERNEL_USER_ELF_WRITE_FLAG) != 0U,
-            .executable = (flags & OS_KERNEL_USER_ELF_EXECUTE_FLAG) != 0U,
+            .writable = (flags & OS_KERNEL_USER_ELF_WRITE_FLAG) != OS_KERNEL_USER_ELF_EMPTY_FLAGS,
+            .executable =
+                (flags & OS_KERNEL_USER_ELF_EXECUTE_FLAG) != OS_KERNEL_USER_ELF_EMPTY_FLAGS,
         };
         const uint64_t physical_address =
             ReadLittleEndian64(program_header + OS_KERNEL_USER_ELF_PROGRAM_PHYSICAL_ADDRESS_OFFSET);
         const uint64_t alignment =
             ReadLittleEndian64(program_header + OS_KERNEL_USER_ELF_PROGRAM_ALIGNMENT_OFFSET);
         if (alignment != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
-            (segment.file_offset & OS_KERNEL_USER_ELF_PAGE_MASK) != 0ULL ||
-            (segment.virtual_address & OS_KERNEL_USER_ELF_PAGE_MASK) != 0ULL ||
+            (segment.file_offset & OS_KERNEL_USER_ELF_PAGE_MASK) !=
+                OS_KERNEL_USER_ELF_EMPTY_VALUE ||
+            (segment.virtual_address & OS_KERNEL_USER_ELF_PAGE_MASK) !=
+                OS_KERNEL_USER_ELF_EMPTY_VALUE ||
             physical_address != segment.virtual_address) {
             return UserElfValidationStatus::InvalidSegmentAlignment;
         }
@@ -242,16 +310,16 @@ UserElfValidationStatus ValidateUserElf(const uint8_t *image, const uint64_t ima
             segment.file_size_bytes > segment.memory_size_bytes) {
             return UserElfValidationStatus::InvalidSegmentMemoryRange;
         }
-        uint64_t file_end = 0ULL;
+        uint64_t file_end = OS_KERNEL_USER_ELF_EMPTY_VALUE;
         if (!CheckedRangeEnd(segment.file_offset, segment.file_size_bytes, file_end) ||
-            file_end > image_size_bytes) {
+            file_end > reader.image_size_bytes) {
             return UserElfValidationStatus::InvalidSegmentFileRange;
         }
         if (!IsUserProgramVirtualAddressRange(segment.virtual_address, segment.memory_size_bytes)) {
             return UserElfValidationStatus::InvalidSegmentMemoryRange;
         }
-        for (uint64_t existing_index = 0ULL; existing_index < candidate_layout.load_segment_count;
-             ++existing_index) {
+        for (uint64_t existing_index = OS_KERNEL_USER_ELF_EMPTY_VALUE;
+             existing_index < candidate_layout.load_segment_count; ++existing_index) {
             if (SegmentRangesOverlap(segment, candidate_layout.load_segments[existing_index])) {
                 return UserElfValidationStatus::OverlappingSegments;
             }

@@ -267,7 +267,15 @@
         fd 0、阻塞唤醒、命令解析与资源回收；
   \item 能从 \code{USER\_RING3\_ENTER} 走读到 \code{INT 0x80}、
         TSS.RSP0、系统调用分发、exit 与 \code{USER\_RETURNED\_TO\_KERNEL}；
-  \item 能运行七个用户 ELF 审计和三条用户失败/隔离 QEMU 路径；
+  \item 能运行十四个合法用户 ELF 的逐文件审计、一个截断 ELF 拒绝用例和
+        三条用户失败/隔离 QEMU 路径；
+  \item 能从 rootfs 走读 \filepath{/sbin/init} 到磁盘 ELF 两遍装载，
+        并说明普通用户程序为什么不再内嵌到正常 Kernel；
+  \item 能解释 PID1、父子关系、Zombie、孤儿重归属和 wait 唯一回收；
+  \item 能手算 256 KiB 用户栈上的 \code{argc/argv/envp} 布局、对齐和
+        128 KiB 参数环境上限；
+  \item 能说明失败 \code{exec} 为什么保留旧 CR3/RIP/RSP/文件上下文，
+        成功提交后又按什么顺序回收旧映像；
   \item 能说明 v0.9 为何需要每进程地址空间、每线程内核栈和资源回收；
   \item 能说明 v0.10 的 Blocked/Ready 转换、丢失唤醒、acquire/release、
   管道背压、EOF 与 broken pipe；

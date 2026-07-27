@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import binascii
 import json
 from pathlib import Path
@@ -115,6 +115,25 @@ class RootfsV2Inspection:
     allocatedMetadataBlockCount: int
     logicalFileBytes: int
     transactionGeneration: int
+
+
+@dataclass(frozen=True)
+class RootfsV2InstallFile:
+    imagePath: str
+    sourcePath: Path
+
+
+@dataclass
+class _RootfsV2BuildNode:
+    name: bytes
+    nodeType: int
+    content: bytes = b""
+    parent: "_RootfsV2BuildNode | None" = None
+    children: dict[bytes, "_RootfsV2BuildNode"] = field(
+        default_factory=dict
+    )
+    inodeNumber: int = 0
+    generation: int = 0
 
 
 def calculateRootfsV2Crc32(content: bytes | bytearray) -> int:
@@ -415,6 +434,87 @@ def decodeRootfsV2PointerBlock(block: bytes) -> tuple[int, ...]:
     )
 
 
+def encodeRootfsV2PointerBlock(pointers: tuple[int, ...]) -> bytes:
+    if len(pointers) != OS_ROOTFS_V2_POINTERS_PER_INDIRECT_BLOCK:
+        raise OsToolError("rootfs v2 间接块指针数量无效。")
+    block = bytearray(OS_ROOTFS_V2_BLOCK_SIZE_BYTES)
+    for pointerIndex, relativeBlock in enumerate(pointers):
+        if (
+            relativeBlock != 0
+            and not (
+                OS_ROOTFS_V2_DATA_START_RELATIVE_BLOCK
+                <= relativeBlock
+                < OS_ROOTFS_V2_TOTAL_BLOCK_COUNT
+            )
+        ):
+            raise OsToolError("rootfs v2 间接块包含越界指针。")
+        struct.pack_into(
+            "<Q",
+            block,
+            pointerIndex * OS_ROOTFS_V2_UINT64_SIZE_BYTES,
+            relativeBlock,
+        )
+    checksum = calculateRootfsV2Crc32(
+        block[:OS_ROOTFS_V2_POINTER_BLOCK_CHECKSUM_OFFSET_BYTES]
+    )
+    struct.pack_into(
+        "<I",
+        block,
+        OS_ROOTFS_V2_POINTER_BLOCK_CHECKSUM_OFFSET_BYTES,
+        checksum,
+    )
+    return bytes(block)
+
+
+def encodeRootfsV2DirectoryEntry(
+    entry: RootfsV2DirectoryEntry,
+) -> bytes:
+    if (
+        not 1 <= entry.inodeNumber <= OS_ROOTFS_V2_INODE_COUNT
+        or entry.inodeGeneration <= 0
+        or entry.nodeType not in (
+            OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE,
+            OS_ROOTFS_V2_NODE_TYPE_DIRECTORY,
+        )
+        or not 1 <= len(entry.name)
+        <= OS_ROOTFS_V2_MAXIMUM_NAME_LENGTH_BYTES
+        or entry.name in (b".", b"..")
+        or b"/" in entry.name
+        or any(
+            character <= 0x1F or character == 0x7F
+            for character in entry.name
+        )
+    ):
+        raise OsToolError("rootfs v2 目录项字段无效。")
+    encoded = bytearray(OS_ROOTFS_V2_DIRECTORY_ENTRY_SIZE_BYTES)
+    scalarFields = (
+        entry.inodeNumber,
+        entry.inodeGeneration,
+        entry.nodeType,
+        len(entry.name),
+    )
+    for fieldIndex, value in enumerate(scalarFields):
+        struct.pack_into(
+            "<Q",
+            encoded,
+            fieldIndex * OS_ROOTFS_V2_UINT64_SIZE_BYTES,
+            value,
+        )
+    encoded[
+        32:32 + len(entry.name)
+    ] = entry.name
+    checksum = calculateRootfsV2Crc32(
+        encoded[:OS_ROOTFS_V2_DIRECTORY_ENTRY_CHECKSUM_OFFSET_BYTES]
+    )
+    struct.pack_into(
+        "<I",
+        encoded,
+        OS_ROOTFS_V2_DIRECTORY_ENTRY_CHECKSUM_OFFSET_BYTES,
+        checksum,
+    )
+    return bytes(encoded)
+
+
 def decodeRootfsV2DirectoryEntry(
     encoded: bytes,
 ) -> RootfsV2DirectoryEntry | None:
@@ -576,6 +676,377 @@ def formatRootfsV2(
             encodeRootfsV2Superblock(),
         )
         imageFile.flush()
+
+
+class _RootfsV2ImageBuilder:
+    def __init__(self, imageFile) -> None:
+        self.imageFile = imageFile
+        self.nextDataBlock = OS_ROOTFS_V2_DATA_START_RELATIVE_BLOCK
+        self.allocatedDataBlocks: list[int] = []
+        self.inodes: dict[int, RootfsV2Inode] = {}
+
+    def allocateBlock(self, content: bytes) -> int:
+        if len(content) > OS_ROOTFS_V2_BLOCK_SIZE_BYTES:
+            raise OsToolError("rootfs v2 单块写入内容过长。")
+        if self.nextDataBlock >= OS_ROOTFS_V2_TOTAL_BLOCK_COUNT:
+            raise OsToolError("rootfs v2 数据块容量耗尽。")
+        relativeBlock = self.nextDataBlock
+        self.nextDataBlock += 1
+        block = bytearray(OS_ROOTFS_V2_BLOCK_SIZE_BYTES)
+        block[:len(content)] = content
+        writeRootfsV2Block(self.imageFile, relativeBlock, bytes(block))
+        self.allocatedDataBlocks.append(relativeBlock)
+        return relativeBlock
+
+    def buildPointerTree(
+        self,
+        level: int,
+        dataBlocks: tuple[int, ...],
+    ) -> tuple[int, int]:
+        if not dataBlocks:
+            return 0, 0
+        capacity = OS_ROOTFS_V2_POINTERS_PER_INDIRECT_BLOCK**level
+        if len(dataBlocks) > capacity:
+            raise OsToolError("rootfs v2 间接树输入超过层级容量。")
+        pointers: list[int] = []
+        metadataBlockCount = 0
+        if level == 1:
+            pointers.extend(dataBlocks)
+        else:
+            childCapacity = (
+                OS_ROOTFS_V2_POINTERS_PER_INDIRECT_BLOCK
+                ** (level - 1)
+            )
+            for childOffset in range(0, len(dataBlocks), childCapacity):
+                childRoot, childMetadataCount = self.buildPointerTree(
+                    level - 1,
+                    dataBlocks[childOffset:childOffset + childCapacity],
+                )
+                pointers.append(childRoot)
+                metadataBlockCount += childMetadataCount
+        paddedPointers = tuple(
+            pointers
+            + [0] * (
+                OS_ROOTFS_V2_POINTERS_PER_INDIRECT_BLOCK
+                - len(pointers)
+            )
+        )
+        rootBlock = self.allocateBlock(
+            encodeRootfsV2PointerBlock(paddedPointers)
+        )
+        return rootBlock, metadataBlockCount + 1
+
+    def writeFileContent(
+        self,
+        node: _RootfsV2BuildNode,
+    ) -> RootfsV2Inode:
+        if len(node.content) > OS_ROOTFS_V2_MAXIMUM_FILE_SIZE_BYTES:
+            raise OsToolError(
+                f"rootfs v2 文件超过 64 MiB：{node.name!r}。"
+            )
+        dataBlocks: list[int] = []
+        for contentOffset in range(
+            0,
+            len(node.content),
+            OS_ROOTFS_V2_BLOCK_SIZE_BYTES,
+        ):
+            dataBlocks.append(
+                self.allocateBlock(
+                    node.content[
+                        contentOffset:
+                        contentOffset + OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+                    ]
+                )
+            )
+
+        directCount = min(
+            len(dataBlocks),
+            OS_ROOTFS_V2_DIRECT_BLOCK_COUNT,
+        )
+        directBlocks = tuple(
+            dataBlocks[:directCount]
+            + [0] * (OS_ROOTFS_V2_DIRECT_BLOCK_COUNT - directCount)
+        )
+        nextDataIndex = directCount
+        metadataBlockCount = 0
+        indirectRoots: list[int] = []
+        for level in (1, 2, 3):
+            levelCapacity = (
+                OS_ROOTFS_V2_POINTERS_PER_INDIRECT_BLOCK**level
+            )
+            levelBlocks = tuple(
+                dataBlocks[
+                    nextDataIndex:
+                    nextDataIndex + levelCapacity
+                ]
+            )
+            rootBlock, levelMetadataCount = self.buildPointerTree(
+                level,
+                levelBlocks,
+            )
+            indirectRoots.append(rootBlock)
+            metadataBlockCount += levelMetadataCount
+            nextDataIndex += len(levelBlocks)
+        if nextDataIndex != len(dataBlocks):
+            raise OsToolError("rootfs v2 三级间接树容量不足。")
+        if node.parent is None:
+            parentInodeNumber = node.inodeNumber
+        else:
+            parentInodeNumber = node.parent.inodeNumber
+        return RootfsV2Inode(
+            nodeType=node.nodeType,
+            sizeBytes=len(node.content),
+            generation=node.generation,
+            linkCount=1,
+            allocatedDataBlockCount=len(dataBlocks),
+            allocatedMetadataBlockCount=metadataBlockCount,
+            parentInodeNumber=parentInodeNumber,
+            directBlocks=directBlocks,
+            singleIndirectBlock=indirectRoots[0],
+            doubleIndirectBlock=indirectRoots[1],
+            tripleIndirectBlock=indirectRoots[2],
+        )
+
+    def writeInode(self, inodeNumber: int, inode: RootfsV2Inode) -> None:
+        inodeOffset = (
+            inodeNumber - 1
+        ) * OS_ROOTFS_V2_INODE_SIZE_BYTES
+        relativeBlock = (
+            OS_ROOTFS_V2_INODE_TABLE_START_RELATIVE_BLOCK
+            + inodeOffset // OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+        )
+        byteOffset = inodeOffset % OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+        block = bytearray(readRootfsV2Block(self.imageFile, relativeBlock))
+        block[
+            byteOffset:byteOffset + OS_ROOTFS_V2_INODE_SIZE_BYTES
+        ] = encodeRootfsV2Inode(inode)
+        writeRootfsV2Block(self.imageFile, relativeBlock, bytes(block))
+        self.inodes[inodeNumber] = inode
+
+    def writeBitmaps(self, inodeCount: int) -> None:
+        inodeBitmap = bytearray(
+            OS_ROOTFS_V2_INODE_BITMAP_BLOCK_COUNT
+            * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+        )
+        for inodeIndex in range(inodeCount):
+            inodeBitmap[inodeIndex // 8] |= 1 << (inodeIndex % 8)
+        for blockIndex in range(
+            OS_ROOTFS_V2_INODE_BITMAP_BLOCK_COUNT
+        ):
+            blockOffset = (
+                blockIndex * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+            )
+            writeRootfsV2Block(
+                self.imageFile,
+                OS_ROOTFS_V2_INODE_BITMAP_START_RELATIVE_BLOCK
+                + blockIndex,
+                bytes(
+                    inodeBitmap[
+                        blockOffset:
+                        blockOffset + OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+                    ]
+                ),
+            )
+
+        dataBitmap = bytearray(
+            OS_ROOTFS_V2_DATA_BITMAP_BLOCK_COUNT
+            * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+        )
+        for relativeBlock in self.allocatedDataBlocks:
+            blockIndex = (
+                relativeBlock - OS_ROOTFS_V2_DATA_START_RELATIVE_BLOCK
+            )
+            dataBitmap[blockIndex // 8] |= 1 << (blockIndex % 8)
+        for bitmapBlockIndex in range(
+            OS_ROOTFS_V2_DATA_BITMAP_BLOCK_COUNT
+        ):
+            blockOffset = (
+                bitmapBlockIndex * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+            )
+            writeRootfsV2Block(
+                self.imageFile,
+                OS_ROOTFS_V2_DATA_BITMAP_START_RELATIVE_BLOCK
+                + bitmapBlockIndex,
+                bytes(
+                    dataBitmap[
+                        blockOffset:
+                        blockOffset + OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+                    ]
+                ),
+            )
+
+
+def _validateRootfsV2InstallPath(imagePath: str) -> tuple[bytes, ...]:
+    if (
+        not imagePath.startswith("/")
+        or imagePath == "/"
+        or imagePath.endswith("/")
+        or "//" in imagePath
+    ):
+        raise OsToolError(
+            f"rootfs v2 安装路径必须是规范绝对文件路径：{imagePath}"
+        )
+    try:
+        components = tuple(
+            component.encode("utf-8")
+            for component in imagePath[1:].split("/")
+        )
+    except UnicodeEncodeError as error:
+        raise OsToolError(
+            f"rootfs v2 安装路径不是 UTF-8：{imagePath}"
+        ) from error
+    for component in components:
+        if (
+            not component
+            or component in (b".", b"..")
+            or len(component)
+            > OS_ROOTFS_V2_MAXIMUM_NAME_LENGTH_BYTES
+            or any(
+                character <= 0x1F or character == 0x7F
+                for character in component
+            )
+        ):
+            raise OsToolError(
+                f"rootfs v2 安装路径包含非法组件：{imagePath}"
+            )
+    return components
+
+
+def installRootfsV2Files(
+    imagePath: Path,
+    files: tuple[RootfsV2InstallFile, ...],
+) -> None:
+    """把构建产物离线安装到刚格式化的 rootfs v2。"""
+    if not files:
+        return
+    inspection = inspectRootfsV2(imagePath)
+    if (
+        inspection.reachableInodeCount != 1
+        or inspection.directoryCount != 1
+        or inspection.regularFileCount != 0
+    ):
+        raise OsToolError(
+            "rootfs v2 离线安装只接受刚格式化的空文件系统。"
+        )
+
+    root = _RootfsV2BuildNode(
+        name=b"",
+        nodeType=OS_ROOTFS_V2_NODE_TYPE_DIRECTORY,
+    )
+    seenPaths: set[str] = set()
+    for installFile in files:
+        if installFile.imagePath in seenPaths:
+            raise OsToolError(
+                f"rootfs v2 安装路径重复：{installFile.imagePath}"
+            )
+        seenPaths.add(installFile.imagePath)
+        if not installFile.sourcePath.is_file():
+            raise OsToolError(
+                f"rootfs v2 安装源文件不存在：{installFile.sourcePath}"
+            )
+        components = _validateRootfsV2InstallPath(
+            installFile.imagePath
+        )
+        parent = root
+        for component in components[:-1]:
+            child = parent.children.get(component)
+            if child is None:
+                child = _RootfsV2BuildNode(
+                    name=component,
+                    nodeType=OS_ROOTFS_V2_NODE_TYPE_DIRECTORY,
+                    parent=parent,
+                )
+                parent.children[component] = child
+            elif (
+                child.nodeType
+                != OS_ROOTFS_V2_NODE_TYPE_DIRECTORY
+            ):
+                raise OsToolError(
+                    "rootfs v2 安装路径的父组件已是普通文件。"
+                )
+            parent = child
+        fileName = components[-1]
+        if fileName in parent.children:
+            raise OsToolError(
+                f"rootfs v2 安装目标已存在：{installFile.imagePath}"
+            )
+        content = installFile.sourcePath.read_bytes()
+        if len(content) > OS_ROOTFS_V2_MAXIMUM_FILE_SIZE_BYTES:
+            raise OsToolError(
+                f"rootfs v2 安装文件超过 64 MiB：{installFile.sourcePath}"
+            )
+        parent.children[fileName] = _RootfsV2BuildNode(
+            name=fileName,
+            nodeType=OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE,
+            content=content,
+            parent=parent,
+        )
+
+    orderedNodes: list[_RootfsV2BuildNode] = []
+
+    def appendNodes(node: _RootfsV2BuildNode) -> None:
+        orderedNodes.append(node)
+        for childName in sorted(node.children):
+            appendNodes(node.children[childName])
+
+    appendNodes(root)
+    if len(orderedNodes) > OS_ROOTFS_V2_INODE_COUNT:
+        raise OsToolError("rootfs v2 安装内容耗尽 inode 容量。")
+    for inodeIndex, node in enumerate(orderedNodes):
+        node.inodeNumber = inodeIndex + 1
+        node.generation = inodeIndex + 1
+    for node in orderedNodes:
+        if node.nodeType != OS_ROOTFS_V2_NODE_TYPE_DIRECTORY:
+            continue
+        directoryEntries = bytearray()
+        for childName in sorted(node.children):
+            child = node.children[childName]
+            directoryEntries.extend(
+                encodeRootfsV2DirectoryEntry(
+                    RootfsV2DirectoryEntry(
+                        inodeNumber=child.inodeNumber,
+                        inodeGeneration=child.generation,
+                        nodeType=child.nodeType,
+                        name=child.name,
+                    )
+                )
+            )
+        node.content = bytes(directoryEntries)
+
+    with imagePath.open("r+b") as imageFile:
+        superblock = decodeRootfsV2Superblock(
+            readRootfsV2Block(
+                imageFile,
+                OS_ROOTFS_V2_SUPERBLOCK_RELATIVE_BLOCK,
+            )
+        )
+        dirtyGeneration = superblock.transactionGeneration + 1
+        nextInodeGeneration = len(orderedNodes) + 1
+        writeRootfsV2Block(
+            imageFile,
+            OS_ROOTFS_V2_SUPERBLOCK_RELATIVE_BLOCK,
+            encodeRootfsV2Superblock(
+                transactionState=OS_ROOTFS_V2_TRANSACTION_STATE_DIRTY,
+                transactionGeneration=dirtyGeneration,
+                nextInodeGeneration=nextInodeGeneration,
+            ),
+        )
+        builder = _RootfsV2ImageBuilder(imageFile)
+        for node in orderedNodes:
+            inode = builder.writeFileContent(node)
+            builder.writeInode(node.inodeNumber, inode)
+        builder.writeBitmaps(len(orderedNodes))
+        writeRootfsV2Block(
+            imageFile,
+            OS_ROOTFS_V2_SUPERBLOCK_RELATIVE_BLOCK,
+            encodeRootfsV2Superblock(
+                transactionState=OS_ROOTFS_V2_TRANSACTION_STATE_CLEAN,
+                transactionGeneration=dirtyGeneration,
+                nextInodeGeneration=nextInodeGeneration,
+            ),
+        )
+        imageFile.flush()
+    inspectRootfsV2(imagePath)
 
 
 class RootfsV2Reader:
@@ -820,6 +1291,66 @@ class RootfsV2Reader:
                 ]
             copiedBytes += chunkBytes
         return bytes(result)
+
+
+def readRootfsV2File(imagePath: Path, filePath: str) -> bytes:
+    components = _validateRootfsV2InstallPath(filePath)
+    reader = RootfsV2Reader(imagePath)
+    try:
+        allocatedBlocks: set[int] = set()
+        inode = reader.readInode(OS_ROOTFS_V2_ROOT_INODE_NUMBER)
+        for componentIndex, component in enumerate(components):
+            if inode.nodeType != OS_ROOTFS_V2_NODE_TYPE_DIRECTORY:
+                raise OsToolError(
+                    f"rootfs v2 路径父组件不是目录：{filePath}"
+                )
+            blockMap = reader.buildFileBlockMap(
+                inode,
+                allocatedBlocks,
+            )
+            matchingEntry: RootfsV2DirectoryEntry | None = None
+            for entryOffset in range(
+                0,
+                inode.sizeBytes,
+                OS_ROOTFS_V2_DIRECTORY_ENTRY_SIZE_BYTES,
+            ):
+                entry = decodeRootfsV2DirectoryEntry(
+                    reader.readFileBytes(
+                        inode,
+                        blockMap,
+                        entryOffset,
+                        OS_ROOTFS_V2_DIRECTORY_ENTRY_SIZE_BYTES,
+                    )
+                )
+                if entry is not None and entry.name == component:
+                    matchingEntry = entry
+                    break
+            if matchingEntry is None:
+                raise OsToolError(
+                    f"rootfs v2 文件不存在：{filePath}"
+                )
+            inode = reader.readInode(matchingEntry.inodeNumber)
+            if componentIndex + 1 == len(components):
+                if (
+                    inode.nodeType
+                    != OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE
+                ):
+                    raise OsToolError(
+                        f"rootfs v2 路径不是普通文件：{filePath}"
+                    )
+                fileBlockMap = reader.buildFileBlockMap(
+                    inode,
+                    allocatedBlocks,
+                )
+                return reader.readFileBytes(
+                    inode,
+                    fileBlockMap,
+                    0,
+                    inode.sizeBytes,
+                )
+        raise OsToolError(f"rootfs v2 文件路径无效：{filePath}")
+    finally:
+        reader.close()
 
 
 def inspectRootfsV2(imagePath: Path) -> RootfsV2Inspection:

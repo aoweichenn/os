@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.6。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.7。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -109,4 +109,13 @@ single/double/triple 块、64 MiB 稀疏文件、unlink/rmdir/rename/truncate/st
 互相校验，QEMU 同盘两次启动后再损坏第三次拒绝；完整回归数量由构建图自动
 产生，不在正文冻结。页表、资源生命周期、调度现场、双系统调用入口、动态
 文件表、VFS 和 rootfs 各有单元、集成、随机模型和真实 QEMU 证明。
+v1.7 又把生产启动路径从 Kernel 内嵌普通用户镜像改为从 rootfs 按路径读取
+\filepath{/sbin/init}。PID1 通过 \code{spawn/exec/wait} 建立真实父子树，
+孤儿会重新归属 PID1，退出结果以 Zombie 状态保留到唯一一次回收。ELF
+装载改为按偏移读取的两遍事务；失败的 \code{exec} 不发布半成品地址空间，
+成功提交时才切换 CR3、用户 RIP/RSP、FsContext 与 close-on-exec 文件。
+256 KiB 用户栈按 SysV AMD64 规则构造 \code{argc/argv/envp}，真实 QEMU
+验证 128 KiB 参数环境边界、失败后旧映像可继续运行、磁盘用户程序执行和
+八个进程的创建、退出、等待、重归属与资源守恒。普通用户 ELF 由离线
+rootfs 安装器写入磁盘；Kernel 只保留故障隔离所需的专用内嵌测试镜像。
 Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。

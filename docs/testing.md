@@ -27,14 +27,15 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.6 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+当前 v1.7 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.2 已实测 Process/Thread 容量，fd 与 pipe 的未来目标容量仍不得
+实现；v1.7 的正常启动链会实际创建 PID 1 和七个后续 Process，v1.2 的独立
+容量测试继续覆盖完整 Process/Thread 上限。fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
 
 | 配置 | QEMU RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 测试职责 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| bootstrap | 64 MiB | 4 | 4 | 1 | 不规定 | 不规定 | 启动链、异常、基础内存、全部历史故障镜像 |
+| bootstrap | 64 MiB | 8 | 8 | 1 | 不规定 | 不规定 | 启动链、磁盘 PID1、异常、基础内存、全部历史故障镜像 |
 | functional | 256 MiB | 64 | 128 | 32 | 256 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
 | capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
 
@@ -476,9 +477,9 @@ QEMU 自行异常退出仍视为失败。
 - 固定种子 `0x4B535441434B524E` 在 4096 页独立 best-fit 所有权模型上执行
   100000 步创建/销毁，使用 64 个槽位；每 257 步比较活动、累计、峰值、
   映射页、guard 页、KVA 页和物理帧统计并运行完整校验，最后排空；
-- QEMU 正常路径要求四组进程 lower/top/upper 地址、峰值四栈/十六映射页；
-  加上内存启动期资源事务中的一次真实栈创建与回滚，整机累计
-  创建/销毁各五次。最终活动数必须为零并输出
+- QEMU 正常路径要求 PID1 的 lower/top/upper 地址可观察，并由运行时聚合
+  统计证明峰值至少八栈/三十二映射页；进程阶段前后的累计创建与销毁都必须
+  精确增加八次。最终活动数必须为零并输出
   `KERNEL_STACK_RESOURCES_RECLAIMED`。用户
   `#UD` 与 `#PF` 隔离镜像也必须创建并安全点回收单栈，证明异常路径不会
   留下资源。
@@ -501,13 +502,69 @@ QEMU 自行异常退出仍视为失败。
   双 guard 栈。活动快照必须同时反映 4 个栈、16 个物理页、24 个 KVA 页和
   16 个映射页；逆序销毁后 26 字段差异掩码与变化字段数必须都为零；
 - 目标内存初始化在最后一个保留槽创建一个真实动态栈，再由外层
-  `ScopeRollback` 销毁并比较前后快照。四进程退出后的独立快照再次证明
+  `ScopeRollback` 销毁并比较前后快照。八进程退出后的独立快照再次证明
   frame、buddy、heap、KVA 与栈全部恢复。只有两层检查都通过，才允许输出
   `RESOURCE_LIFECYCLE_SELF_TEST_PASSED` 和
   `PROCESS_RESOURCE_SNAPSHOT_MATCHED`；
 - `os_qemu_functional_smoke` 明确使用 256 MiB RAM，执行与 64 GiB 主路径
-  相同的四进程、Shell、IPC、文件系统、用户故障隔离和资源快照协议。它不是
+  相同的磁盘 PID1、八进程树、Shell、exec、文件系统、用户隔离和资源快照
+  协议。它不是
   只验证启动标记的缩减镜像，也不通过条件编译切换资源实现。
+
+### v1.7 PID1、进程树与磁盘程序映像
+
+v1.7 把“内核预先嵌入普通程序并直接创建固定进程”替换为磁盘
+`/sbin/init` 启动链。测试必须分别证明纯状态机、跨模块事务和真实目标机
+行为，不能只看到一行 PID1 日志就宣布完成。
+
+- `ProcessTree` 单元测试覆盖 PID 1 唯一性、父子注册、指定 PID/任意子进程
+  wait、Alive→Zombie→Unused、退出状态、孤儿重设父进程、Init 最后回收、
+  统计守恒和损坏检测；
+- `ProgramArgumentPlan` 单元测试覆盖 16 字节 RSP 对齐、`argc/argv/envp` 指针
+  排列、字符串 NUL、空向量、每类 256 项、128 KiB 总字符串边界、算术溢出、
+  栈容量不足和失败不发布布局；
+- reader 形式的 ELF 单元测试以短读、截断头、越界程序头、W+X、重叠段和
+  底层读取失败构造输入，要求解析器区分 `ReadFailed` 与语义非法 ELF；
+- 十四个合法用户 ELF 各自执行离线结构审计；审计器的 512 页上限由 Python
+  单元测试与 Kernel 公开头文件交叉核对，避免宿主工具停留在旧 32 页规格；
+- `ThreadScheduler::CommitProcessImage` 单元测试要求只有当前 Process 的唯一
+  Running Thread 可以原子替换调度器记录的 CR3 与用户 RSP，非法状态不能
+  改变旧值；RIP 和完整用户现场由目标运行时在提交后重建；
+- 生命周期集成测试连续执行 4096 轮父进程、子进程、孤儿收养、退出与 wait，
+  共完成 8192 个子 Process 生命周期；每轮都恢复空树与同一统计关系；
+- 固定种子随机测试让 8192 个子进程按随机顺序退出和回收，并生成 4096 组
+  参数/环境布局，与独立 64 位参考计算逐项比较；
+- rootfs 工具测试把 ELF 安装到嵌套目录，重新打开真实镜像并逐字节回读，证明
+  构建图不是只生成了宿主文件，而是把程序写入生产 rootfs。
+
+正常 QEMU 路径必须从磁盘读取 `/sbin/init` 并把它注册为 PID 1。Init 再创建
+六个直接子进程；其中 orphan parent 创建第七个后退出，使 orphan child 被
+重设父进程到 PID 1。验收器要求观察并按数量检查：
+
+```text
+[OS][KERNEL][PROC] SPAWN_PID=0x0000000000000001
+[OS][USER][INIT] STARTED
+[OS][USER][INIT] ARGUMENTS_VALID
+[OS][USER][PROC] ARG_ENV_128K_VERIFIED
+[OS][USER][PROC] EXEC_FAILURE_PRESERVED_IMAGE
+[OS][USER][PROC] EXEC_E2BIG_PRESERVED_IMAGE
+[OS][USER][PROC] EXEC_COMMITTED
+[OS][USER][INIT] ORPHAN_REAPED
+[OS][USER][INIT] ALL_CHILDREN_REAPED
+[OS][USER][INIT] NO_ZOMBIES
+[OS][KERNEL] PROCESS_TREE_VALID
+```
+
+参数探针必须真实接收恰好 128 KiB 的字符串区；`exec` 探针必须先后证明截断
+ELF 与超限参数失败后仍能在旧 RIP/CR3 映像继续执行，随后成功提交
+`/bin/exec_target`。成功提交后旧地址空间、用户栈和 close-on-exec 描述符才
+允许释放；提交前任一步失败都必须销毁候选映像并保持旧 Process 可运行。
+
+结束汇总要求 registered/exited/collected 均为 8，reparented 为 1，
+zombie 与 active 均为 0；wait success 为 7，并至少出现一次真实阻塞和一次
+no-child。目标内 `ProcessTree::Validate`、调度器状态、26 字段资源快照与宿主
+日志协议必须同时通过。4096 轮宿主模型用于放大状态组合，QEMU 用于证明真实
+CR3、RSP、ELF、rootfs、系统调用与安全点回收；两者互补，不能互相冒充。
 
 ## 验收证据
 
@@ -586,11 +643,15 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
 | `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
-| `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、用户栈、地址窗口与系统调用 ABI |
+| `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、64 页/256 KiB 用户栈、guard、地址窗口与系统调用 ABI |
 | `os_kernel_user_elf_randomized_tests` | 随机 | 16,384 条用户地址范围与溢出性质 |
 | `os_kernel_thread_scheduler_unit_tests` | 单元 | Process/Thread 容量、PID/TID、两级回收、WaitQueue、Mutex 与锁边界 |
+| `os_kernel_process_tree_unit_tests` | 单元 | PID1、父子关系、Zombie、wait、孤儿收养、Init 回收与统计守恒 |
+| `os_kernel_program_arguments_unit_tests` | 单元 | argc/argv/envp、16 字节栈对齐、256 项与 128 KiB 边界及失败原子性 |
 | `os_kernel_thread_scheduling_integration_tests` | 集成 | 三 Process/六 Thread 公平 tick、阻塞唤醒、退出与两级回收 |
+| `os_kernel_process_lifecycle_integration_tests` | 集成 | 4096 轮父子/孤儿退出、8192 个子进程生命周期与 wait 后空树 |
 | `os_kernel_thread_scheduler_randomized_tests` | 随机 | 固定种子 100000 步状态、三 WaitQueue、身份与统计参考模型 |
+| `os_kernel_process_models_randomized_tests` | 随机 | 8192 子进程随机回收与 4096 组参数/环境布局参考模型 |
 | `os_kernel_pipe_unit_tests` | 单元 | 管道读写、回绕、关闭、EOF、broken pipe 与统计 |
 | `os_kernel_pipe_randomized_tests` | 随机 | 32,768 步管道状态与独立字节队列模型对照 |
 | `os_kernel_synchronization_integration_tests` | 集成 | 四线程、200,000 次受锁更新的互斥与可见性 |
@@ -610,6 +671,13 @@ python3 tools/os.py test --layer failure-path
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限、符号与相邻空闲指令 |
 | `os_user_smoke_elf_layout` | 集成 | 正常用户 ELF 的 AMD64、段权限与入口 |
+| `os_user_init_elf_layout` | 集成 | 磁盘 PID1 ELF 的结构、权限、入口与无宿主运行时依赖 |
+| `os_user_orphan_parent_elf_layout` | 集成 | 创建孤儿的父进程 ELF 布局 |
+| `os_user_orphan_child_elf_layout` | 集成 | 被 PID1 收养的子进程 ELF 布局 |
+| `os_user_argument_probe_elf_layout` | 集成 | 128 KiB argv/envp 边界探针 ELF 布局 |
+| `os_user_exec_probe_elf_layout` | 集成 | exec 失败回滚与成功提交探针 ELF 布局 |
+| `os_user_exec_target_elf_layout` | 集成 | exec 新映像目标 ELF 布局 |
+| `os_user_fs_probe_elf_layout` | 集成 | 磁盘程序文件系统读写探针 ELF 布局 |
 | `os_user_invalid_opcode_elf_layout` | 集成 | 用户 `UD2` 测试 ELF 的结构与权限 |
 | `os_user_page_fault_elf_layout` | 集成 | 用户越权访问测试 ELF 的结构与权限 |
 | `os_user_scheduler_worker_elf_layout` | 集成 | 同址多进程 worker ELF 的结构、权限与入口 |
@@ -657,7 +725,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和主题章教材结构 |
 
-顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.6 新增
+顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.7 新增
+进程树、程序参数、4096 轮生命周期和固定种子进程模型四项直接测试，并把
+reader ELF、rootfs 离线安装与真实 QEMU PID1 协议纳入既有测试；v1.6 新增
 rootfs 格式、集成和真实容量三项直接测试，并扩展 VFS、随机、Python 工具与
 QEMU 持久化；v1.5 新增 VFS 单元、memfs/legacy 双后端契约集成和
 十万步命名空间随机模型三项；v1.4 删除旧固定描述符测试并新增 FileTable
@@ -678,19 +748,22 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
 规格选择的有界总截止：普通配置为 15 秒，64 GiB 主规格因 Debug 构建需要
 扫描 16777216 个页状态而使用 75 秒；外层 CTest 再以 85 秒作为独立保险。
+三次启动的持久化用例仍对每次 QEMU 使用 15 秒内部截止，CTest 总预算为
+60 秒；十万步 VFS 命名空间模型的硬上限为 180 秒，给正常约两分钟运行保留
+宿主调度余量。两者都保持有限上界，不把扩大预算变成无限等待。
 捕获器通过 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的
 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
 产生键盘前端事件；QMP 仅是测试输入通道，来宾仍完整执行 i8042 和 IRQ1 协议。
 
-成功 QEMU 用例不只检查标记“至少出现一次”。当前路径对 Shell、生产者、消费者
-和一个 worker 的四次 ELF/进程栈身份，18 条命令、管道里程碑、地址隔离、四份
-终止结果和单次资源回收执行精确计数；同时解析固定 16 位十六进制统计，要求
-创建/终止为 4、PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、管道写入/读取
-均为 256，控制台提交/读取均为 215 且无丢弃；动态栈 lower/top/upper 各
-出现四次，连同启动期资源事务后累计创建/销毁各五次、峰值至少四栈和十六
-映射页、最终活动数为零。资源快照还要求跟踪字段精确为 26、差异掩码与变化
-字段数均为零。
+成功 QEMU 用例不只检查标记“至少出现一次”。当前路径对 PID1、六个直接
+孩子和一个收养孤儿的八次 ELF/进程栈身份，Shell 命令、128 KiB 参数、
+两次 exec 回滚、一次 exec 提交、文件探针和单次资源回收执行精确计数；
+同时解析固定 16 位十六进制统计，要求创建/回收 Process 与 Thread 均为 8、
+PIT 抢占至少为 1、阻塞/唤醒相等且均不为零、控制台提交/读取相等且无丢弃。
+PID1 的动态栈 lower/top/upper 各出现一次；进程阶段使累计创建/销毁各增加
+八次，聚合峰值至少八栈和三十二映射页，最终活动数为零。资源快照还要求
+跟踪字段精确为 26、差异掩码与变化字段数均为零。
 内核也独立验证同一组进程、描述符、管道、文件系统、页帧、KVA 和栈管理器
 不变量，形成目标内自检与宿主协议检查两层证据。
 持久化测试另用同一临时磁盘的两次全新 QEMU 进程，避免把缓存内读回误当作

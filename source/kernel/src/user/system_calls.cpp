@@ -189,6 +189,28 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
 
+[[nodiscard]] int64_t MapProcessRuntimeStatus(const ProcessRuntimeStatus status) noexcept {
+    if (status == ProcessRuntimeStatus::Succeeded) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == ProcessRuntimeStatus::InvalidArguments) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (status == ProcessRuntimeStatus::ArgumentListTooLarge) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_ARGUMENT_LIST_TOO_LARGE;
+    }
+    if (status == ProcessRuntimeStatus::InvalidElf) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_EXECUTABLE;
+    }
+    if (status == ProcessRuntimeStatus::ExecutableReadFailure) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_FILE_NOT_FOUND;
+    }
+    if (status == ProcessRuntimeStatus::ProcessLimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_LIMIT_EXCEEDED;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
+}
+
 [[nodiscard]] UserContextRequirements CurrentUserContextRequirements() noexcept {
     return UserContextRequirements{
         .virtual_address_width_bits = GetNativeSystemCallConfiguration().virtual_address_width_bits,
@@ -883,6 +905,102 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     }
     return OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT;
 }
+
+[[nodiscard]] bool CopyProcessLaunchRequest(const uint64_t user_request_address,
+                                            os::abi::ProcessLaunchRequest &request) noexcept {
+    request = os::abi::ProcessLaunchRequest{};
+    return CopyFromUser(user_request_address, sizeof(request),
+                        reinterpret_cast<uint8_t *>(&request),
+                        sizeof(request)) == UserMemoryCopyStatus::Succeeded;
+}
+
+[[nodiscard]] int64_t DispatchSpawnProcess(const uint64_t user_request_address,
+                                           const uint64_t request_size_bytes) noexcept {
+    if (request_size_bytes != sizeof(os::abi::ProcessLaunchRequest)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    os::abi::ProcessLaunchRequest request{};
+    if (!CopyProcessLaunchRequest(user_request_address, request)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint64_t process_id = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessRuntimeStatus status = SpawnCurrentProcess(request, process_id);
+    return status == ProcessRuntimeStatus::Succeeded ? static_cast<int64_t>(process_id)
+                                                     : MapProcessRuntimeStatus(status);
+}
+
+[[nodiscard]] ExceptionFrame *DispatchExecProcess(ExceptionFrame &frame,
+                                                  const uint64_t user_request_address,
+                                                  const uint64_t request_size_bytes) noexcept {
+    if (request_size_bytes != sizeof(os::abi::ProcessLaunchRequest)) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    os::abi::ProcessLaunchRequest request{};
+    if (!CopyProcessLaunchRequest(user_request_address, request)) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY);
+        return &frame;
+    }
+    const ProcessRuntimeStatus status = ExecCurrentProcess(frame, request);
+    if (status != ProcessRuntimeStatus::Succeeded) {
+        frame.register_rax = static_cast<uint64_t>(MapProcessRuntimeStatus(status));
+    }
+    return &frame;
+}
+
+[[nodiscard]] ExceptionFrame *DispatchWaitProcess(ExceptionFrame &frame,
+                                                  const uint64_t requested_process_id,
+                                                  const uint64_t user_result_address,
+                                                  const uint64_t result_size_bytes) noexcept {
+    if (result_size_bytes != sizeof(os::abi::ProcessWaitResult)) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    if (ValidateUserWritableMemory(user_result_address, result_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY);
+        return &frame;
+    }
+    os::abi::ProcessWaitResult wait_result{};
+    const ProcessWaitStatus wait_status = TryWaitCurrentProcess(requested_process_id, wait_result);
+    if (wait_status == ProcessWaitStatus::Succeeded) {
+        if (CopyToUser(user_result_address, sizeof(wait_result),
+                       reinterpret_cast<const uint8_t *>(&wait_result),
+                       sizeof(wait_result)) != UserMemoryCopyStatus::Succeeded) {
+            HaltProcessor();
+        }
+        frame.register_rax = wait_result.process_id;
+        return &frame;
+    }
+    if (wait_status == ProcessWaitStatus::NoChild) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_NO_CHILD_PROCESS);
+        return &frame;
+    }
+    if (wait_status == ProcessWaitStatus::InvalidArgument) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    if (wait_status != ProcessWaitStatus::WouldBlock) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE);
+        return &frame;
+    }
+
+    frame.register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK);
+    ExceptionFrame *resume_frame = &frame;
+    const ProcessRuntimeStatus block_status =
+        BlockCurrentThread(frame, WaitCondition::ChildProcess, resume_frame);
+    if (block_status != ProcessRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return resume_frame;
+}
 }
 
 [[nodiscard]] ExceptionFrame *DispatchValidatedSystemCall(ExceptionFrame *frame) noexcept {
@@ -1065,6 +1183,18 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         frame->register_rax = static_cast<uint64_t>(DispatchStatFile(
             frame->register_rdi, frame->register_rsi, frame->register_rdx, frame->register_r10));
         return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SpawnProcess)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchSpawnProcess(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ExecProcess)) {
+        return DispatchExecProcess(*frame, frame->register_rdi, frame->register_rsi);
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcess)) {
+        return DispatchWaitProcess(*frame, frame->register_rdi, frame->register_rsi,
+                                   frame->register_rdx);
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;

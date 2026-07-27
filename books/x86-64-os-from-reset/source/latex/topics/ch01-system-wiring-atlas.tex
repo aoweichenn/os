@@ -129,7 +129,8 @@ CPU 寄存器只保存入口、根地址或当前选择状态。
     {figures/system_wiring/hardware_stage_roadmap.pdf}
   \caption{从 v0.0 到 v1.0 的十三个可验收增量。每张卡片表示新建立的一组
   前置条件；箭头方向是能力依赖，不表示后续版本删除旧机制。图下方同时标明
-  当前 v1.1--v1.6 的资源、Thread、SYSCALL、动态文件表、VFS 与 rootfs v2 增量。}
+  当前 v1.1--v1.7 的资源、Thread、SYSCALL、动态文件表、VFS、rootfs v2
+  与 PID1 进程树增量。}
   \label{fig:hardware-stage-roadmap}
 \end{sidewaysfigure}
 \clearpage
@@ -153,11 +154,12 @@ v1.0 的 Shell 打印一个字符，仍要依赖 v0.1 建立的 UART；读取文
 v0.2 开始使用的 ATA；进入 Ring 3 仍要依赖 v0.3 的模式转换和 v0.5 的
 描述符表。版本号表达的是第一次建立某项能力，不是该能力只在那个版本存在。
 
-\topic{v1.1--v1.6 为什么画在第一周期之后}%
+\topic{v1.1--v1.7 为什么画在第一周期之后}%
 v1.1 收口可回收内核资源，v1.2 把 Process 与 Thread 分离，v1.3 加入原生
 SYSCALL/SYSRET 与 CPU-local，v1.4 建立类型化 KernelObject、共享
 FileDescription 和动态 FileTable，v1.5 再建立 VFS、挂载与 memfs，v1.6
-则让 rootfs v2 承担可扩展持久化与完整命名空间修改。它们在
+则让 rootfs v2 承担可扩展持久化与完整命名空间修改，v1.7 再让 PID1
+从磁盘启动，并以 \code{spawn/exec/wait} 建立可回收的父子树。它们在
 v1.0 已闭合的启动、用户、文件和
 测试链上继续强化生命周期与接口，不改写“先有机器状态，后有软件抽象”的依赖
 方向。

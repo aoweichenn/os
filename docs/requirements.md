@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.6 完成基线
+## v1.7 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -111,7 +111,9 @@ v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界
 类型化 KernelObject、共享 FileDescription 和动态 FileTable；v1.5 已完成
 VFS、每 Process FsContext、memfs 与 legacy 文件系统适配；v1.6 已完成
 rootfs v2、完整命名空间修改、稀疏大文件、独立 mkfs/fsck 和损坏拒绝。
-下一阶段为 v1.7 PID1、进程树与磁盘 exec/wait。Stage 1 在自研长模式
+v1.7 又完成 PID1、父子进程树、Zombie/reparent、磁盘 ELF spawn/exec/wait、
+128 KiB `argv/envp` 和候选映像原子提交。下一阶段为 v1.8 匿名 VMA、
+用户栈增长和自研用户 heap。Stage 1 在自研长模式
 环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

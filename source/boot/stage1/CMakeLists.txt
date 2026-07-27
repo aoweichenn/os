@@ -229,6 +229,30 @@ os_add_kernel_fault_disk(
     "生成 Ring 3 非法 ELF 拒绝磁盘镜像"
 )
 
+set(
+    OS_STAGE1_ROOTFS_INSTALL_ARGUMENTS
+    --rootfs-file
+    "/sbin/init=${OS_USER_INIT_ELF_PATH}"
+    --rootfs-file
+    "/bin/sh=${OS_USER_SHELL_ELF_PATH}"
+    --rootfs-file
+    "/bin/smoke=${OS_USER_SMOKE_ELF_PATH}"
+    --rootfs-file
+    "/bin/orphan_parent=${OS_USER_ORPHAN_PARENT_ELF_PATH}"
+    --rootfs-file
+    "/bin/orphan_child=${OS_USER_ORPHAN_CHILD_ELF_PATH}"
+    --rootfs-file
+    "/bin/argument_probe=${OS_USER_ARGUMENT_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/exec_probe=${OS_USER_EXEC_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/exec_target=${OS_USER_EXEC_TARGET_ELF_PATH}"
+    --rootfs-file
+    "/bin/fs_probe=${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/truncated.elf=${OS_USER_TRUNCATED_ELF_PATH}"
+)
+
 add_custom_command(
     OUTPUT
         "${OS_BOOT_DISK_IMAGE}"
@@ -245,9 +269,20 @@ add_custom_command(
         "${OS_KERNEL_PAYLOAD_ELF_PATH}"
         "${OS_IMAGE_OUTPUT_DIRECTORY}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
+        ${OS_STAGE1_ROOTFS_INSTALL_ARGUMENTS}
     DEPENDS
         "${OS_STAGE1_BINARY}"
         "${OS_KERNEL_PAYLOAD_ELF_PATH}"
+        "${OS_USER_INIT_ELF_PATH}"
+        "${OS_USER_SHELL_ELF_PATH}"
+        "${OS_USER_SMOKE_ELF_PATH}"
+        "${OS_USER_ORPHAN_PARENT_ELF_PATH}"
+        "${OS_USER_ORPHAN_CHILD_ELF_PATH}"
+        "${OS_USER_ARGUMENT_PROBE_ELF_PATH}"
+        "${OS_USER_EXEC_PROBE_ELF_PATH}"
+        "${OS_USER_EXEC_TARGET_ELF_PATH}"
+        "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
+        "${OS_USER_TRUNCATED_ELF_PATH}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
@@ -291,4 +326,14 @@ add_dependencies(
     os_kernel_user_invalid_opcode_payload_elf
     os_kernel_user_page_fault_payload_elf
     os_kernel_user_invalid_elf_payload_elf
+    os_user_init_elf
+    os_user_shell_elf
+    os_user_smoke_elf
+    os_user_orphan_parent_elf
+    os_user_orphan_child_elf
+    os_user_argument_probe_elf
+    os_user_exec_probe_elf
+    os_user_exec_target_elf
+    os_user_file_system_probe_elf
+    os_user_truncated_elf
 )

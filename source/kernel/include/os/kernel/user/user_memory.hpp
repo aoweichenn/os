@@ -8,7 +8,7 @@
 namespace os::kernel {
 
 inline constexpr uint64_t OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS = 0x00007FFFFFFF0000ULL;
-inline constexpr uint64_t OS_KERNEL_USER_STACK_PAGE_COUNT = 4ULL;
+inline constexpr uint64_t OS_KERNEL_USER_STACK_PAGE_COUNT = 64ULL;
 inline constexpr uint64_t OS_KERNEL_USER_STACK_SIZE_BYTES =
     OS_KERNEL_USER_STACK_PAGE_COUNT * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 inline constexpr uint64_t OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS =
@@ -30,6 +30,7 @@ enum class UserAddressSpaceStatus : uint64_t {
     PageTableCreationFailed,
     PageAllocationFailed,
     PageMappingFailed,
+    ImageReadFailed,
     RollbackFailed,
 };
 
@@ -50,7 +51,13 @@ LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
                      UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
+LoadUserAddressSpace(const UserElfReader &reader, UserAddressSpace &address_space,
+                     UserElfValidationStatus &elf_validation_status) noexcept;
+[[nodiscard]] UserAddressSpaceStatus
 DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
+[[nodiscard]] UserMemoryCopyStatus
+CopyToUserAddressSpace(uint64_t root_physical_address, uint64_t user_address, uint64_t length_bytes,
+                       const uint8_t *source, uint64_t source_size_bytes) noexcept;
 [[nodiscard]] UserMemoryCopyStatus CopyFromUser(uint64_t user_address, uint64_t length_bytes,
                                                 uint8_t *destination,
                                                 uint64_t destination_capacity_bytes) noexcept;

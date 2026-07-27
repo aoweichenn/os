@@ -326,6 +326,29 @@ int64_t StatFile(const char *const path, const uint64_t path_length_bytes,
                             reinterpret_cast<uint64_t>(&information), sizeof(information));
 }
 
+int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SpawnProcess),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t ExecProcess(const os::abi::ProcessLaunchRequest &request) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExecProcess),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t WaitProcess(const uint64_t process_id, os::abi::ProcessWaitResult &result) noexcept {
+    while (true) {
+        const int64_t wait_result =
+            InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcess),
+                             process_id, reinterpret_cast<uint64_t>(&result), sizeof(result));
+        if (wait_result != os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+            return wait_result;
+        }
+    }
+}
+
 [[noreturn]] void ExitProcess(const int64_t exit_code) noexcept {
     static_cast<void>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess),

@@ -16,6 +16,7 @@ enum class WaitCondition : uint64_t {
     PipeWritable,
     DescriptorReadable,
     DescriptorWritable,
+    ChildProcess,
     MutexAvailable,
     TestCondition,
 };

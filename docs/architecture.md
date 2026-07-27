@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.6。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.7。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -182,7 +182,7 @@ descriptor、metadata、flush、commit、checkpoint 与 replay 前进。任意
   → 初始化可回收页/对象分配器
   → 建立 VFS，挂载 rootfs v2、devfs、procfs
   → 从 /sbin/init 读取并严格验证 ELF
-  → 创建唯一初始 Process/Thread 并 exec /sbin/init（PID1）
+  → 以该候选映像创建唯一初始 Process/Thread（PID1）
   → PID1 启动 /bin/sh，并持续 wait/reap 孤儿
   → Shell fork/exec 外部命令，使用描述符组合 I/O
   → 无 Ready 进程时进入 STI/HLT/CLI idle
@@ -1550,6 +1550,123 @@ Python `mkfs-rootfs` 负责创建全新格式，`inspect-rootfs` 输出冻结布
 [v1.6 发布记录](releases/v1.6.md) 与
 [文件系统模块](modules/file-system.md)。
 
+## v1.7 PID1、进程树与磁盘程序架构
+
+### 正常启动数据流
+
+```text
+RootFileSystem inode/block tree
+  -> VFS::Open/Read("/sbin/init")
+  -> UserElfReader
+  -> UserElfLayout
+  -> Process-owned page table + 256 KiB user stack
+  -> ProcessTree::RegisterInit(PID 1)
+  -> ThreadScheduler
+  -> /sbin/init(argc, argv, envp)
+  -> syscall Spawn/Exec/Wait
+  -> /bin/* from the same rootfs
+```
+
+正常 Kernel 只建立 PID1。普通用户 ELF 不再由 NASM `incbin` 到 Kernel；
+内嵌用户镜像只保留明确选择的 smoke、非法指令和页故障夹具。构建期 rootfs
+安装器创建 `/sbin`、`/bin` 和规范 inode/间接树，运行期 Kernel 只严格挂载
+并读取。
+
+### 进程身份与父子状态
+
+ThreadScheduler 继续拥有 Process/Thread 槽位与 PID/TID 分配；ProcessTree
+独立拥有父子关系和退出可见性：
+
+```text
+ThreadScheduler
+  ProcessEntry: CR3, threads, Alive/Zombie
+  ThreadEntry: UserContext, KernelStack, run/wait state
+
+ProcessTree
+  ProcessTreeEntry: PID, parent slot, Alive/Zombie, exit status
+```
+
+两边状态在 ProcessRuntime 中按同一资源事务推进。ProcessTree 不依赖页表、
+FileTable 或 VFS，因此可以在 hosted 单元/随机测试中独立重建不变量。
+
+退出顺序为：
+
+```text
+save result and extended state
+  -> close FileTable / release FsContext
+  -> ProcessTree Alive -> Zombie + reparent children to PID1
+  -> wake ChildProcess waiters
+  -> Scheduler Thread -> Exited, Process -> Zombie
+  -> activate kernel CR3
+  -> destroy user address space
+  -> parent wait reaps Exited Thread/KernelStack
+  -> collect ProcessTree Zombie
+  -> reap Scheduler Process slot
+```
+
+PID1 仍有子项时不能退出；最后由 Kernel 专用 `CollectInit` 回收 PID1，不
+制造虚构用户父进程。
+
+### ELF reader 与候选地址空间
+
+`UserElfReader` 把 ELF 语义与来源分开：
+
+```text
+Read(context, file_offset, destination, exact_length)
+```
+
+第一遍只读取 ELF 头和程序头，完整验证 `ET_EXEC`、x86-64、范围、对齐、
+W^X、重叠、页数和入口；第二遍创建 Process 页表，按页读取 `PT_LOAD`，
+清零 BSS，再映射 RW/NX 用户栈。VFS 短读和 I/O 错误与 ELF 语义错误分别
+传播，失败会销毁整个候选页表。
+
+同一校验器也接受内存 reader，因此故障注入和磁盘程序不会分叉安全规则。
+
+### 参数布局
+
+`ProgramArgumentPlan` 只保存最多 256 个参数长度和 256 个环境长度，先计算：
+
+```text
+stack top
+  <- strings and NUL, total <= 128 KiB
+  <- argv/envp pointers and terminators
+  <- argc
+  <- align down to 16-byte RSP
+```
+
+ProcessRuntime 用固定 256 字节缓冲从当前用户地址空间分块复制字符串到候选
+页表，不在 16 KiB KernelStack 上保存大型参数。入口寄存器为
+`RDI=argc`、`RSI=argv`、`RDX=envp`。
+
+### exec 单一提交点
+
+```text
+old CR3 remains authoritative
+  -> build candidate CR3, ELF pages and argument stack
+  -> activate candidate CR3 as hardware probe
+  -> restore old CR3
+  -> ThreadScheduler::CommitProcessImage(new CR3, new RSP)
+  -> transfer runtime ownership
+  -> close CLOEXEC fd
+  -> destroy old CR3
+  -> install clean UserContext and activate candidate
+```
+
+提交前任何路径、I/O、ELF、参数、frame、页表或激活失败都只释放候选资源。
+成功 exec 保留 PID、父子关系、FsContext 与非 CLOEXEC fd。当前只允许单
+Thread Process 提交；多线程汇合留给后续阶段。
+
+### wait 阻塞关系
+
+`WaitCondition::ChildProcess` 使用统一 WaitQueue。`TryWait` 找到 Alive 子项
+时返回 WouldBlock，dispatcher 把当前 Thread 阻塞；子进程退出唤醒等待者。
+结果用户范围在进程树收集前验证，坏地址不会消耗 Zombie。全局 child queue
+允许无关唤醒，用户 wrapper 在恢复后重新检查条件。
+
+详细接口和不变量见 [进程模块](modules/process.md)，设计理由见
+[ADR 0034](adr/0034-pid1-process-tree-disk-exec-wait.md)，逐步走读见
+[v1.7 学习章](learning/15-v1.7-pid1-process-tree-exec.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址区间、引用计数和作用域回滚等不依赖运行时的基础
@@ -1661,6 +1778,13 @@ source/user/
 │   ├── scheduler_worker.cpp
 │   ├── ipc_producer.cpp
 │   ├── ipc_consumer.cpp
+│   ├── init.cpp
+│   ├── orphan_parent.cpp
+│   ├── orphan_child.cpp
+│   ├── argument_probe.cpp
+│   ├── exec_probe.cpp
+│   ├── exec_target.cpp
+│   ├── fs_probe.cpp
 │   └── shell_entry.cpp
 └── src/
     ├── freestanding_memory.cpp

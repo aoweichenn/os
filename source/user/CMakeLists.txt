@@ -218,6 +218,55 @@ set(
     CACHE INTERNAL
     "Ring 3 交互式 Shell 用户环境"
 )
+set(
+    OS_USER_INIT_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_init.elf"
+    CACHE INTERNAL
+    "磁盘加载的 PID 1 用户程序"
+)
+set(
+    OS_USER_ORPHAN_PARENT_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_orphan_parent.elf"
+    CACHE INTERNAL
+    "孤儿进程重设父进程验收程序"
+)
+set(
+    OS_USER_ORPHAN_CHILD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_orphan_child.elf"
+    CACHE INTERNAL
+    "孤儿进程收养验收程序"
+)
+set(
+    OS_USER_ARGUMENT_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_argument_probe.elf"
+    CACHE INTERNAL
+    "128 KiB 参数与环境验收程序"
+)
+set(
+    OS_USER_EXEC_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_exec_probe.elf"
+    CACHE INTERNAL
+    "原子 exec 失败与成功路径验收程序"
+)
+set(
+    OS_USER_EXEC_TARGET_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_exec_target.elf"
+    CACHE INTERNAL
+    "原子 exec 成功目标程序"
+)
+set(
+    OS_USER_FILE_SYSTEM_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_file_system_probe.elf"
+    CACHE INTERNAL
+    "rootfs 持久化验收程序"
+)
+set(
+    OS_USER_TRUNCATED_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_truncated.elf"
+    CACHE INTERNAL
+    "截断到 ELF64 头之前的拒绝验收镜像"
+)
+set(OS_USER_TRUNCATED_ELF_SIZE_BYTES 63)
 
 os_add_user_program(
     os_user_smoke_elf
@@ -263,3 +312,68 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_parser.cpp"
 )
+os_add_user_program(
+    os_user_init_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/init.cpp"
+    "${OS_USER_INIT_ELF_PATH}"
+    "链接磁盘加载的 PID 1 ELF64 程序"
+)
+os_add_user_program(
+    os_user_orphan_parent_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/orphan_parent.cpp"
+    "${OS_USER_ORPHAN_PARENT_ELF_PATH}"
+    "链接孤儿进程重设父进程验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_orphan_child_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/orphan_child.cpp"
+    "${OS_USER_ORPHAN_CHILD_ELF_PATH}"
+    "链接孤儿进程收养验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_argument_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/argument_probe.cpp"
+    "${OS_USER_ARGUMENT_PROBE_ELF_PATH}"
+    "链接 128 KiB 参数与环境验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_exec_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/exec_probe.cpp"
+    "${OS_USER_EXEC_PROBE_ELF_PATH}"
+    "链接原子 exec 验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_exec_target_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/exec_target.cpp"
+    "${OS_USER_EXEC_TARGET_ELF_PATH}"
+    "链接原子 exec 目标 ELF64 程序"
+)
+os_add_user_program(
+    os_user_file_system_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/fs_probe.cpp"
+    "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
+    "链接 rootfs 持久化验收 ELF64 程序"
+)
+
+add_custom_command(
+    OUTPUT "${OS_USER_TRUNCATED_ELF_PATH}"
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        copy-file-prefix
+        "${OS_USER_EXEC_TARGET_ELF_PATH}"
+        "${OS_USER_TRUNCATED_ELF_PATH}"
+        "${OS_USER_TRUNCATED_ELF_SIZE_BYTES}"
+    DEPENDS
+        os_user_exec_target_elf
+        "${OS_USER_EXEC_TARGET_ELF_PATH}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+    COMMENT "生成精确截断的 ELF64 拒绝验收镜像"
+    VERBATIM
+)
+add_custom_target(
+    os_user_truncated_elf
+    ALL
+    DEPENDS "${OS_USER_TRUNCATED_ELF_PATH}"
+)
+add_dependencies(os_user_truncated_elf os_user_exec_target_elf)

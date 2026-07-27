@@ -555,13 +555,33 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_process_tree_unit_tests
+    unit/kernel/process_tree_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
+    os_kernel_program_arguments_unit_tests
+    unit/kernel/program_arguments_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_thread_scheduling_integration_tests
     integration/boot/kernel_thread_scheduling_test.cpp
     "integration"
 )
 os_add_kernel_process_test(
+    os_kernel_process_lifecycle_integration_tests
+    integration/boot/kernel_process_lifecycle_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
     os_kernel_thread_scheduler_randomized_tests
     randomized/kernel/thread_scheduler_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_process_models_randomized_tests
+    randomized/kernel/process_models_randomized_test.cpp
     "randomized"
 )
 
@@ -788,10 +808,11 @@ os_add_kernel_file_system_test(
     randomized/kernel/vfs_namespace_randomized_test.cpp
     "randomized"
 )
+set(OS_TEST_VFS_NAMESPACE_RANDOMIZED_TIMEOUT_SECONDS 180)
 set_tests_properties(
     os_kernel_vfs_namespace_randomized_tests
     PROPERTIES
-        TIMEOUT 120
+        TIMEOUT "${OS_TEST_VFS_NAMESPACE_RANDOMIZED_TIMEOUT_SECONDS}"
 )
 
 find_package(Threads REQUIRED)
@@ -877,6 +898,34 @@ os_add_user_elf_audit_test(
 os_add_user_elf_audit_test(
     os_user_shell_elf_layout
     "${OS_USER_SHELL_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_init_elf_layout
+    "${OS_USER_INIT_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_orphan_parent_elf_layout
+    "${OS_USER_ORPHAN_PARENT_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_orphan_child_elf_layout
+    "${OS_USER_ORPHAN_CHILD_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_argument_probe_elf_layout
+    "${OS_USER_ARGUMENT_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_exec_probe_elf_layout
+    "${OS_USER_EXEC_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_exec_target_elf_layout
+    "${OS_USER_EXEC_TARGET_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_fs_probe_elf_layout
+    "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
 )
 
 add_test(
@@ -1019,6 +1068,7 @@ set_tests_properties(
 
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 65536)
+set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 60)
 
 add_test(
     NAME os_qemu_functional_smoke
@@ -1101,7 +1151,7 @@ set_tests_properties(
     os_qemu_file_system_persistence
     PROPERTIES
         LABELS "system"
-        TIMEOUT 20
+        TIMEOUT "${OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS}"
 )
 
 add_test(

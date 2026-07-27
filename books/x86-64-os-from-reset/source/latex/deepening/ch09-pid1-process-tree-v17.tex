@@ -1,0 +1,791 @@
+\section{v1.7：从磁盘 PID1 到进程树与原子 exec}
+
+\begin{keyidea}
+一个内核能够同时调度多个 Ring 3 地址空间，还不等于它已经拥有用户空间。
+只有当普通程序来自文件系统、用户进程能够创建和等待孩子、程序映像能够在
+失败时保留旧状态并在成功时一次替换，调度器、虚拟内存、VFS 和系统调用才
+真正闭合为一个操作系统。v1.7 用磁盘 \filepath{/sbin/init}、独立
+ProcessTree、reader 驱动 ELF、\code{argc/argv/envp} 和
+\code{spawn/exec/wait} 建立这条闭环。
+\end{keyidea}
+
+\subsection{上一阶段留下的最后一条“编译期脐带”}
+
+v1.6 已经可以严格挂载 256 MiB rootfs v2。名字可以经过 VFS 找到 inode，
+inode 可以经过 direct、single、double、triple 指针树找到 ATA 扇区，文件
+可以在新 QEMU 实例中重新读回。然而正常用户程序仍由 Kernel 链接时决定：
+Shell、worker、producer 和 consumer 的 ELF 字节被 \code{incbin} 到
+Kernel，启动代码再直接为它们建立固定 Process。
+
+这条做法不是早期阶段的错误。它有三个重要教学用途：
+
+\begin{enumerate}
+  \item rootfs 尚不存在时，仍能独立验证 Ring 3、TSS.RSP0 和用户页权限；
+  \item 调度器尚无父子关系时，仍能构造多个独立 CR3 验证抢占；
+  \item 磁盘驱动出错时，用户异常夹具仍能把问题限制在特权边界。
+\end{enumerate}
+
+但它也形成一条必须切断的编译期脐带。若增加一个普通程序必须重新链接
+Kernel，那么“程序”还不是命名空间中的普通文件；若 Kernel 自己决定全部
+用户进程，那么用户空间不能组织服务、Shell 也不能运行外部命令；若 Process
+退出后只由 Kernel 全局扫尾，父进程就无法取得退出状态。
+
+v1.7 不删除内嵌机制本身，而是缩小它的责任。正常路径只从 rootfs 加载
+\filepath{/sbin/init}；内嵌区只保留最小 smoke、用户 \code{\#UD} 和用户
+\code{\#PF} 夹具，用于明确选择的启动/故障模式。这样“根文件系统尚未可信”
+和“正常用户空间”成为两条可解释路径，而不是两套彼此漂移的 ELF 规则。
+
+\subsection{历史背景：为什么 Unix 把 fork、exec 与 wait 分开}
+
+早期批处理系统由监督程序依次装入作业。交互式分时系统出现后，一个正在运行
+的用户程序需要创建另一个执行上下文，同时保留自身继续接收输入或等待结果。
+Unix 用三个相互正交的动作表达这件事：
+
+\begin{description}
+  \item[\code{fork}] 复制 Process 身份之下的执行环境，产生父子两个返回点；
+  \item[\code{exec}] 不创建新 PID，只把当前 Process 的程序映像替换为另一个；
+  \item[\code{wait}] 让父进程取得孩子的终止状态，并释放最后的进程记录。
+\end{description}
+
+这种分离让 Shell 可以先 fork，在孩子中调整 fd、cwd、管道和信号，再 exec
+目标程序；父 Shell 则保留自己的地址空间并决定是否 wait。早期机器真正复制
+内存，后来 Unix 内核普遍使用 copy-on-write，把 fork 的大部分页复制推迟到
+首次写故障。
+
+本项目此时还没有 VMA 和 COW。直接实现一个名为 fork、实际却创建空白地址
+空间的接口，会让名称掩盖语义。因此 v1.7 先提供 \term{spawn}{直接从文件
+建立全新孩子}，并单独实现真实的 exec 与 wait：
+
+\begin{itemize}
+  \item spawn 不复制父进程地址空间；
+  \item spawn 不复制父 FileTable 或 cwd；
+  \item exec 保持 PID、父子关系、FsContext 和非 CLOEXEC fd；
+  \item wait 只消费直接孩子的退出记录；
+  \item fork/COW 留到地址空间已经由 VMA 描述之后。
+\end{itemize}
+
+这不是绕过 Unix 模型，而是把每一项机制放到其依赖已经存在的阶段。
+
+\subsection{PID1 为什么不是“恰好编号为一的普通程序”}
+
+进程树必须有根。Kernel 创建的第一个用户 Process 没有普通用户父进程；
+传统 Unix 把它称为 init，并赋予 PID 1。现实 Linux 的 PID1 还负责服务
+管理、关机编排和特殊信号策略，本项目不复制这些上层功能，只保留最小而必要
+的生命周期职责：
+
+\begin{enumerate}
+  \item PID1 是唯一无父用户 Process；
+  \item PID1 创建正常验收程序；
+  \item 普通父进程先退出时，其孩子改挂到 PID1；
+  \item PID1 对直接孩子和收养的孤儿执行 wait；
+  \item 仍有孩子时 PID1 不得退出；
+  \item 全部孩子回收后，Kernel 在最终边界收集 PID1 自身。
+\end{enumerate}
+
+这里的“收养”只转移退出记录的所有权。它不改变孩子的 CR3、调度状态、fd、
+cwd 或优先级。若直接删除孤儿，仍运行的 Thread 与地址空间会失去生命周期
+所有者；若保留已经释放的父槽位，槽位复用后 wait 可能错误命中新 Process。
+
+\subsection{四种身份必须分开}
+
+v1.7 同时使用四种容易混淆的量：
+
+\begin{longtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.48\textwidth}}
+\toprule
+概念 & 生命周期 & 责任\\
+\midrule
+Process & 程序资源容器 & AddressSpace、FileTable、FsContext、父子身份和退出记录\\
+Thread & 可调度执行流 & UserContext、KernelStack、FXSAVE、run/wait queue 关系\\
+PID & 单调 64 位公开身份 & 系统调用、日志和父进程保存的稳定名字\\
+process index & 可复用内部槽位 & 有界数组定位；回收后可用于另一 PID\\
+\bottomrule
+\end{longtable}
+
+假设槽位 3 曾属于 PID 7，回收后又属于 PID 12：
+
+\begin{lstlisting}[caption={槽位复用不能等同于身份复用}]
+process slot 3: PID 7  -> Zombie -> reaped
+process slot 3: PID 12 -> Alive
+\end{lstlisting}
+
+父进程若保存的是槽位 3，就可能把旧孩子与新进程混为一谈；用户 ABI 因此只
+暴露 PID。Kernel 内部 ProcessTree 可以保存经过验证的父槽位，因为它还会在
+每次读取时核对条目状态和 PID 唯一性。
+
+\subsection{从 ATA 扇区到用户第一条指令}
+
+正常启动第一次把此前分散的硬件与软件机制连成一条不可跳过的链：
+
+\begin{pdfdiagram}[node distance=7mm and 9mm]
+  \node[os hardware] (ata) {IDE/ATA\\512 B sector};
+  \node[os block,right=of ata] (rootfs) {rootfs v2\\inode + block tree};
+  \node[os block,right=of rootfs] (vfs) {VFS\\Open/Read};
+  \node[os state,below=of vfs] (reader) {UserElfReader\\offset + length};
+  \node[os state,left=of reader] (layout) {ELF pass 1\\validated layout};
+  \node[os block,left=of layout] (pages) {ELF pass 2\\frames + PTE};
+  \node[os state,below=of pages] (stack) {256 KiB user stack\\argc/argv/envp};
+  \node[os block,right=of stack] (tree) {ProcessTree\\RegisterInit};
+  \node[os hardware,right=of tree] (cpu) {CPU\\CR3/RIP/RSP/CPL3};
+  \draw[os arrow] (ata) -- (rootfs);
+  \draw[os arrow] (rootfs) -- (vfs);
+  \draw[os arrow] (vfs) -- (reader);
+  \draw[os arrow] (reader) -- (layout);
+  \draw[os arrow] (layout) -- (pages);
+  \draw[os arrow] (pages) -- (stack);
+  \draw[os arrow] (stack) -- (tree);
+  \draw[os arrow] (tree) -- (cpu);
+\end{pdfdiagram}
+\diagramnote{QEMU 只模拟最左侧 IDE 事务和最右侧 x86 CPU 行为；中间的
+rootfs、VFS、ELF、页表、栈与进程树全部由项目代码实现。}
+
+完整控制流为：
+
+\begin{enumerate}
+  \item 自研 ROM 与 Stage 1 装载 Kernel；
+  \item Kernel 初始化内存、页表、中断和 ATA；
+  \item Kernel 严格挂载 rootfs v2，不自动格式化；
+  \item 临时根 FsContext 查找 \filepath{/sbin/init}；
+  \item VFS-backed reader 验证并装入 ELF；
+  \item Kernel 建立用户参数栈、Process、Thread 和动态 Ring 0 栈；
+  \item ProcessTree 把第一个 PID 1 注册为 init；
+  \item 调度器装入 CR3、TSS.RSP0、FXSAVE 和 UserContext；
+  \item \code{IRETQ} 或统一用户返回边界进入 CPL3 的 init 入口。
+\end{enumerate}
+
+只有第 9 步完成，磁盘上的普通文件才真正成为 CPU 正在执行的用户程序。
+
+\subsection{ProcessTree 是调度器之外的第二个状态机}
+
+ThreadScheduler 回答“哪个 Thread 可以运行”；ProcessTree 回答“哪个父
+Process 有权取得哪个孩子的退出状态”。把父指针塞进 ready queue 会让两种
+变化原因纠缠：一个 Thread Blocked 不表示它失去父进程，一个 Process
+Zombie 也不应继续占用 run queue。
+
+ProcessTree 条目只保存：
+
+\begin{lstlisting}[caption={进程树的最小持久状态}]
+struct ProcessTreeEntry final {
+    uint64_t process_id;
+    uint64_t parent_process_index;
+    ProcessTreeState state;
+    ProcessTreeExitStatus exit_status;
+};
+\end{lstlisting}
+
+状态转换为：
+
+\begin{pdfdiagram}[node distance=10mm and 18mm]
+  \node[os state] (unused) {Unused\\无身份};
+  \node[os block,right=of unused] (alive) {Alive\\可拥有 Thread};
+  \node[os hardware,right=of alive] (zombie) {Zombie\\只保留退出记录};
+  \draw[os arrow] (unused) -- node[above]{Register} (alive);
+  \draw[os arrow] (alive) -- node[above]{MarkExited} (zombie);
+  \draw[os arrow] (zombie) to[bend left=25]
+      node[below]{Wait / CollectInit} (unused);
+\end{pdfdiagram}
+\diagramnote{调度器还有 Ready、Running、Blocked、Exited 等 Thread 状态；
+它们与这张 Process 身份图在 ProcessRuntime 中同步，但不合并存储。}
+
+每次 \code{Validate} 都从条目事实重新计算 active、alive 与 zombie，并
+验证：
+
+\begin{itemize}
+  \item PID1 至多一个，PID 必须精确为 1；
+  \item 活动 PID 非零、非 wait-any 哨兵且互不重复；
+  \item 普通孩子的父项存在，且注册时父项必须 Alive；
+  \item Alive 没有退出原因，Zombie 必须保存退出原因；
+  \item \(\mathrm{registered}=\mathrm{active}+\mathrm{collected}\)；
+  \item \(\mathrm{exited}=\mathrm{zombie}+\mathrm{collected}\)；
+  \item 结束时 active、alive、zombie 全部为零。
+\end{itemize}
+
+从事实重建统计比“相信每条路径都正确加减”更强。某个错误分支漏减一次时，
+条目和累计量会在最近的验证点产生直接矛盾。
+
+\subsection{Zombie 保留什么，释放什么}
+
+孩子最后一个 Thread 结束后，父进程可能尚未调用 wait。若立即删除全部记录，
+父进程无法得知正常退出、异常向量或退出码；若保留地址空间、KernelStack 和
+FileTable，又会让不能运行的 Process 长期占用昂贵资源。
+
+Zombie 只保留：
+
+\begin{itemize}
+  \item PID 与父 Process 身份；
+  \item \code{Exited} 或 \code{Exception}；
+  \item 64 位有符号退出码；
+  \item 异常向量。
+\end{itemize}
+
+可以在安全点释放：
+
+\begin{itemize}
+  \item 用户叶页、页表和 CR3 根；
+  \item Thread 的动态双 guard KernelStack；
+  \item FXSAVE 与运行队列关系；
+  \item FileTable、FileDescription 引用和 FsContext；
+  \item 用户栈与程序段。
+\end{itemize}
+
+因此“Process 已 Zombie”和“执行资源已经释放”并不矛盾。Zombie 是一条尚未
+被父进程消费的小型消息，而不是仍在执行的尸体。
+
+\subsection{退出、孤儿收养与 wait 的精确顺序}
+
+普通 Process 退出的跨模块顺序为：
+
+\begin{lstlisting}[caption={退出路径的所有权顺序}]
+save termination result
+close FileTable and release FsContext
+ProcessTree: Alive -> Zombie
+reparent every direct child to PID1
+wake ChildProcess waiters
+ThreadScheduler: Thread -> Exited, Process -> Zombie
+switch to permanent kernel CR3/stack safe point
+destroy user AddressSpace and exited KernelStack
+\end{lstlisting}
+
+父进程的 wait 则执行：
+
+\begin{lstlisting}[caption={wait 不能先消费再验证用户指针}]
+validate 40-byte user result range
+reap exited Thread and KernelStack at safe point
+find a direct Zombie in ProcessTree
+collect its exit record
+reap the scheduler Process slot
+copy ProcessWaitResult to user memory
+return the collected PID in RAX
+\end{lstlisting}
+
+坏用户结果地址必须在收集之前被拒绝。否则树项已经删除，\code{CopyToUser}
+又失败，父进程将永远失去孩子的退出记录。当前 dispatcher 先验证完整 40
+字节范围；后续复制在同一不可抢占系统调用路径中完成，若已验证页发生内部
+矛盾，则视为 Kernel 缺陷而不是普通用户错误。
+
+若匹配孩子仍 Alive，wait 返回内部 \code{WouldBlock}，当前 Thread 登记到
+\code{WaitCondition::ChildProcess}。孩子退出后唤醒等待者。唤醒只意味着
+“条件可能改变”，用户包装必须重新尝试；全局 child queue 可能同时唤醒一个
+无关父进程，不能把 wakeup 当作已经获得某个 Zombie。
+
+\subsection{为什么 ELF reader 是随机访问接口}
+
+ELF 程序头与段内容不必按消费顺序排列。校验器需要先读取文件头，再按
+\code{e\_phoff} 定位程序头，随后按每个 \code{p\_offset} 读取加载段。因此
+接口不是“给我下一块”，而是：
+
+\begin{lstlisting}[caption={来源无关的 ELF 精确读取契约}]
+bool Read(
+    void* context,
+    uint64_t offset_bytes,
+    uint8_t* destination,
+    uint64_t length_bytes) noexcept;
+\end{lstlisting}
+
+reader 还携带稳定的 64 位文件长度。每次调用必须完整读取请求区间；短读不是
+EOF 成功，而是 \code{ReadFailed}。内存夹具 reader 直接复制字节，VFS
+reader 调整 \code{OpenFile.offset\_bytes} 并循环读取。ELF 层不认识 inode、
+间接块或 ATA status，来源层也不解释 ELF flags。
+
+这种边界同时避免两个常见错误：
+
+\begin{enumerate}
+  \item 不需要把最大 64 MiB 文件先塞进只有 512 KiB 的 Kernel heap；
+  \item 内嵌夹具和磁盘程序不会形成两套逐渐不同的安全校验器。
+\end{enumerate}
+
+\subsection{第一遍 ELF：分配之前拒绝不可信元数据}
+
+第一遍只形成 \code{UserElfLayout}，不创建用户页。它验证：
+
+\begin{itemize}
+  \item ELF magic、64 位类别、little-endian、版本、AMD64 与 \code{ET\_EXEC}；
+  \item 64 字节 ELF 头、56 字节程序头和程序头表文件范围；
+  \item 当前只接受 \code{PT\_LOAD}；
+  \item 每段必须可读，未知 flag 与 W+X 被拒绝；
+  \item \code{p\_filesz <= p\_memsz}，加法不溢出；
+  \item 文件 offset、虚拟地址和物理地址满足 4 KiB 对齐契约；
+  \item 段落在用户程序窗口、彼此不重叠，且不侵入用户栈保留区；
+  \item 总程序映射页不超过 512；
+  \item 入口必须落在可执行段。
+\end{itemize}
+
+若边读取程序头边立即映射，最后一个程序头才暴露重叠或 W+X 时，前面已经
+分配了大量资源。两遍算法仍需要处理第二遍的 I/O 与内存失败，但第一遍先把
+全部纯格式错误排除，回滚对象变成单一候选 AddressSpace。
+
+\subsection{第二遍 ELF：物理页、BSS 与 PTE 权限}
+
+第二遍建立 Process 页表根，并为每个段逐页执行：
+
+\begin{enumerate}
+  \item 从 frame allocator 取得一个 order-0 物理页；
+  \item 在候选根中建立 user-accessible PTE；
+  \item 完整清零物理页；
+  \item reader 把本页的文件前缀复制到 direct-map 地址；
+  \item 未被文件覆盖的尾部保持零，形成 BSS；
+  \item PTE 的 Writable/Executable 来自已验证程序头。
+\end{enumerate}
+
+清零必须先于文件覆盖。这样 \code{p\_memsz-p\_filesz}、最后一页文件尾空隙
+和新分配 frame 的旧内容都不会暴露给 Ring 3。任何页分配、页表建立或 reader
+失败都会递归销毁整个候选根；空 PT/PD 继续遵守 v1.1 的所有权回收规则。
+
+\subsection{256 KiB 用户栈的精确几何}
+
+参数和环境分别最多 256 项，全部字符串连同每项 NUL 最多 128 KiB。用户栈
+固定为 64 个 4 KiB 页：
+
+\[
+64\times4096=262144\ \mathrm{bytes}=256\ \mathrm{KiB}.
+\]
+
+设参数数为 \(a\)，环境数为 \(e\)，字符串含 NUL 的总量为 \(S\)。元数据
+指针数为：
+
+\[
+P=a+e+3.
+\]
+
+三个固定槽分别是 argc 数值、argv 终止空指针和 envp 终止空指针。未经对齐
+的低地址为：
+
+\[
+R_{\mathrm{raw}}=T-S-8P,
+\]
+
+其中 \(T\) 是固定栈顶。最终：
+
+\[
+RSP=R_{\mathrm{raw}}\mathbin{\&}\sim15.
+\]
+
+\begin{pdfdiagram}[node distance=4mm]
+  \node[os hardware] (top) {固定 stack top};
+  \node[os block,below=of top] (strings) {argv/envp 字符串\\总计不超过 128 KiB};
+  \node[os state,below=of strings] (padding) {0..15 B 对齐空隙};
+  \node[os block,below=of padding] (env) {envp 指针 + null};
+  \node[os block,below=of env] (argv) {argv 指针 + null};
+  \node[os hardware,below=of argv] (argc) {argc\\初始 RSP};
+  \draw[os arrow] (top) -- (strings);
+  \draw[os arrow] (strings) -- (padding);
+  \draw[os arrow] (padding) -- (env);
+  \draw[os arrow] (env) -- (argv);
+  \draw[os arrow] (argv) -- (argc);
+\end{pdfdiagram}
+\diagramnote{图从高地址向低地址排列；每个指针都指向同一候选地址空间内的
+字符串，不能保留 Kernel 指针或旧 Process 的用户指针。}
+
+128 KiB 不是整个栈上限。指针数组最多需要 515 个 64 位槽，对齐还会消耗
+最多 15 字节；新程序开始调用函数后也需要普通调用栈。256 KiB 在保持固定
+成本的同时为这些元数据和初始执行留出空间。栈底下方页仍 not-present；
+按需增长属于下一阶段 VMA。
+
+\subsection{为什么参数采用“先计划、后复制”}
+
+Kernel 不能信任用户提供的计数、长度或指针，也不能在 16 KiB Ring 0 栈上
+建立 128 KiB 数组。\code{ProgramArgumentPlan} 因此只保存固定数量的
+\code{uint64\_t} 长度：
+
+\begin{enumerate}
+  \item 检查 argument/environment count；
+  \item 逐项读取 16 字节 \code{ProcessString}；
+  \item 对 \code{length+1} 和累计总量执行 64 位溢出检查；
+  \item 在不写用户页的条件下计算全部地址；
+  \item Finalize 后冻结计划；
+  \item 用 256 字节临时缓冲分块复制字符串；
+  \item 最后写 argc、argv、envp 和 null。
+\end{enumerate}
+
+计划失败时没有半个布局可见；复制失败时只销毁候选地址空间。全局计划工作区
+依赖当前“单 BSP、Kernel 不可抢占、每 Process 单 Thread”的执行模型。
+引入 SMP、Kernel preemption 或并发多 Thread exec 前，必须改为每次调用
+所有权或显式同步，不能沿用这项隐含前提。
+
+\subsection{spawn 是一项多资源发布事务}
+
+spawn 正向取得的资源为：
+
+\begin{lstlisting}[caption={spawn 的正向所有权链}]
+copy bounded path and ProcessString descriptors
+plan argument/environment layout
+open executable through parent's FsContext
+build candidate AddressSpace and user stack
+create scheduler Process slot and monotonic PID
+create dynamic double-guard KernelStack
+create the only Thread and initial UserContext
+initialize FXSAVE state
+initialize a fresh FsContext
+initialize FileTable and standard descriptors
+register ProcessTree child edge
+publish RuntimeProcess active and return PID
+\end{lstlisting}
+
+任何一步失败都要按相反顺序释放已经取得的资源。调度器 Process/Thread 在
+最终 runtime active 之前属于可撤销候选；若 ProcessTree 注册失败，必须
+撤销 ready Thread、Process 槽、KernelStack、FileTable、FsContext 和
+AddressSpace，不能让一个没有父关系的 Thread 获得执行机会。
+
+spawn 使用父 FsContext 解析路径，所以相对程序名服从调用者当前目录；新
+Process 随后获得新初始化的根 FsContext 和标准 fd。这个区别必须明确：
+“用谁的命名空间找程序”和“孩子启动后拥有什么命名空间”不是同一个问题。
+
+\subsection{exec 的唯一提交点}
+
+exec 最危险的错误是先销毁旧地址空间。路径不存在、ATA 错误、程序头截断、
+W+X、frame 耗尽、参数过大或 CR3 无效都会让当前 Process 无处返回。正确
+做法是让旧映像持续权威，旁路构造候选：
+
+\begin{pdfdiagram}[node distance=7mm and 8mm]
+  \node[os state] (old) {旧 CR3\\仍可返回};
+  \node[os block,right=of old] (candidate) {候选 ELF + 页表\\候选参数栈};
+  \node[os hardware,right=of candidate] (probe) {CPU 写 CR3\\激活探针};
+  \node[os state,below=of probe] (restore) {恢复旧 CR3};
+  \node[os hardware,left=of restore] (commit) {CommitProcessImage\\新 CR3 + RSP};
+  \node[os block,left=of commit] (new) {关闭 CLOEXEC\\销毁旧根\\新 UserContext};
+  \draw[os arrow] (old) -- (candidate);
+  \draw[os arrow] (candidate) -- (probe);
+  \draw[os arrow] (probe) -- (restore);
+  \draw[os arrow] (restore) -- (commit);
+  \draw[os arrow] (commit) -- (new);
+  \draw[BookRed,thick,dashed]
+      ([xshift=-8mm,yshift=-3mm]restore.south west)
+      -- node[below,font=\scriptsize]{提交点：左侧失败可返回旧映像}
+      ([xshift=8mm,yshift=-3mm]restore.south east);
+\end{pdfdiagram}
+\diagramnote{候选 CR3 探针不执行用户代码，只证明 CPU 接受页表根且共享
+Kernel 高半映射仍可访问。}
+
+\code{ThreadScheduler::CommitProcessImage} 只接受：
+
+\begin{itemize}
+  \item Alive Process；
+  \item 恰好一个 live Thread、没有 exited sibling；
+  \item 该 Thread 正是当前 Running Thread；
+  \item 新 CR3 非零；
+  \item 新用户 RSP 来自已经完成的候选布局。
+\end{itemize}
+
+提交前错误返回普通 ABI 结果并销毁候选；提交后若旧页表销毁或 CLOEXEC
+内部状态违反不变量，已经无法安全恢复两套映像，Kernel 必须停机暴露缺陷。
+“尽量继续”会产生半旧半新的 Process，比明确停止更危险。
+
+\subsection{x86-64 在 exec 成功时真正改变什么}
+
+exec 不只是修改一个 C++ 对象。下一次返回 Ring 3 前，至少有五组架构状态
+发生变化：
+
+\begin{longtable}{L{0.19\textwidth}L{0.31\textwidth}L{0.39\textwidth}}
+\toprule
+状态 & 新值来源 & 意义\\
+\midrule
+CR3 & 候选 AddressSpace 根物理地址 & 改变用户虚拟地址翻译；Kernel 高半分支保持共享\\
+RIP & ELF \code{e\_entry} & 新程序第一条指令，旧 syscall 后继不再执行\\
+RSP & ProgramArgumentPlan & 指向 16 字节对齐的新用户栈\\
+RDI/RSI/RDX & argc/argv/envp 布局 & freestanding 入口直接取得参数\\
+CS/SS/RFLAGS & 安全用户初始常量 & 恢复 CPL3 段和允许的标志集合\\
+\bottomrule
+\end{longtable}
+
+176 字节 UserContext 先整体清零，再写上述必要字段。旧程序留下的通用寄存器、
+DF、RF 或临时地址不能泄漏到新程序。当前 Thread 的 FXSAVE 区继续属于同一
+Thread；用户程序不得依赖 exec 前的 x87/SSE2 值。以后冻结更完整 POSIX
+语义时，可以在提交处显式恢复默认浮点环境。
+
+\subsection{close-on-exec 为什么属于 fd 表项}
+
+两个 fd 可以 duplicate 到同一个 FileDescription。它们共享 file status
+flags 与 offset，却各自拥有 descriptor flags。CLOEXEC 描述的是“这个
+编号是否跨程序映像保留”，所以必须位于 fd entry：
+
+\begin{lstlisting}[caption={共享打开实例与独立 CLOEXEC}]
+fd 4 --CLOEXEC=0--\
+                    > KernelObject -> FileDescription(offset)
+fd 9 --CLOEXEC=1--/
+\end{lstlisting}
+
+成功 exec 关闭 fd 9，fd 4 仍保持同一打开实例；只有最后一个强引用释放时
+才执行 FileDescription finalizer。失败 exec 完全不调用
+\code{CloseOnExec}。v1.4 建立的模型能力由此第一次进入真实程序替换路径。
+
+\subsection{系统调用 ABI 如何保持固定宽度}
+
+v1.7 在既有编号之后追加 36--38，不重排历史接口：
+
+\begin{longtable}{L{0.11\textwidth}L{0.20\textwidth}L{0.31\textwidth}L{0.27\textwidth}}
+\toprule
+编号 & 接口 & 输入 & 成功结果\\
+\midrule
+36 & SpawnProcess & 48 B launch request & 新 64 位 PID\\
+37 & ExecProcess & 48 B launch request & 不回旧入口\\
+38 & WaitProcess & PID/ANY + 40 B result & 被回收 PID\\
+\bottomrule
+\end{longtable}
+
+\code{ProcessLaunchRequest} 是六个 \code{uint64\_t}；每个
+\code{ProcessString} 是地址与长度两个 \code{uint64\_t}；
+\code{ProcessWaitResult} 是五个 64 位字段。ABI 不使用 \code{long}、
+\code{size\_t} 或默认 enum 宽度。请求结构尺寸错误返回
+\code{InvalidArgument}，请求页不可读返回 \code{InvalidUserMemory}，
+两种错误不会被合并。
+
+wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表示 any。
+参数或环境超过边界返回 \code{ArgumentListTooLarge}，没有匹配孩子返回
+\code{NoChildProcess}。用户包装在 WouldBlock 唤醒后重试，不把内部等待
+状态暴露成忙循环。
+
+\subsection{PID1 的验收树不冻结调度时序}
+
+\filepath{/sbin/init} 创建六个直接孩子：
+
+\begin{itemize}
+  \item orphan parent：再创建一个孩子后以 23 退出；
+  \item argument probe：逐字节验证精确 128 KiB 参数与环境；
+  \item exec probe：验证截断 ELF、E2BIG 回滚和成功 exec；
+  \item fs probe：写入、sync 并重读 rootfs 普通文件；
+  \item smoke：保留双系统调用入口和用户边界回归；
+  \item Shell：执行完整 PS/2、控制台与 VFS 命令序列。
+\end{itemize}
+
+\begin{pdfdiagram}[node distance=7mm and 8mm]
+  \node[os hardware] (init) {PID1\\\filepath{/sbin/init}};
+  \node[os block,below left=of init] (orphan) {orphan parent};
+  \node[os state,below=of orphan] (child) {orphan child\\reparent to PID1};
+  \node[os block,below=of init] (args) {argument / exec\\probes};
+  \node[os block,below right=of init] (services) {fs / smoke / sh};
+  \draw[os arrow] (init) -- (orphan);
+  \draw[os arrow] (orphan) -- (child);
+  \draw[os arrow,dashed] (child) to[bend left=34]
+      node[right,font=\scriptsize]{父退出后收养} (init);
+  \draw[os arrow] (init) -- (args);
+  \draw[os arrow] (init) -- (services);
+\end{pdfdiagram}
+\diagramnote{只有 PID1 的编号固定。普通孩子的具体 PID 取决于合法抢占顺序，
+验收只冻结父子关系、退出码和最终计数，不冻结偶然时序。}
+
+正常峰值为八个 Process：PID1、六个直接孩子和一个孙进程。64 MiB bootstrap
+规格因此由 4/4/1 提升为 8 Process、8 Thread、每 Process 1 Thread；
+256 MiB 和 64 GiB 的 64/128/32 与 256/512/64 规格不变。提高 bootstrap
+容量不是用小配置冒充压力测试，而是保证最小兼容配置也运行同一完整功能链。
+
+\subsection{构建期离线安装为什么不是启动后门}
+
+构建工具先格式化空 rootfs，再把十个文件一次性安装到
+\filepath{/sbin} 与 \filepath{/bin}。它执行与盘面格式一致的 inode、
+目录项、bitmap 和间接块编码，并在完成后用独立解析器重新读取。
+
+这与 initrd、9p 或宿主目录共享不同：
+
+\begin{itemize}
+  \item QEMU 只看到普通 IDE raw disk；
+  \item Kernel 不调用宿主文件系统；
+  \item 启动时所有路径、inode、块树和 ATA 读取都由自研代码执行；
+  \item Kernel 没有自动格式化或把内嵌 ELF 写入 rootfs 的入口；
+  \item 构建产物可在运行前由 inspector/fsck 独立审计。
+\end{itemize}
+
+安装器只接受刚格式化的空 rootfs，并对全部文件形成一个确定性目录树。
+重复目标、非法组件、源文件缺失、inode/块耗尽和 64 MiB 单文件超限都会
+明确失败。\filepath{/bin/truncated.elf} 是唯一故意非法的程序文件，用于
+证明 exec 失败仍保留旧映像。
+
+\subsection{锁、IRQ 与发布边界}
+
+当前执行模型是单 BSP、IRQ 可进入、Kernel 不可抢占。它仍然需要锁：
+PIT/设备 IRQ 可以在系统调用期间进入，调度器锁必须保护 Process/Thread
+状态；CpuLocal 的 system-call depth 又保证 reschedule 在安全返回边界消费。
+
+关键规则为：
+
+\begin{itemize}
+  \item scheduler irq-save lock 只保护短状态提交，不包围 VFS 或页分配；
+  \item VFS/OpenFile 操作不在 ProcessTree 纯状态机锁内执行；
+  \item wait 登记与条件复查遵守 WaitQueue 协议，避免 lost wakeup；
+  \item exec 的大部分准备不持有 scheduler lock，只有 CR3/RSP 提交持锁；
+  \item 用户复制不在文件系统内部锁持有期间进行；
+  \item 参数全局工作区的安全来自不可抢占 Kernel 边界，不假装已经支持 SMP。
+\end{itemize}
+
+未来开放 Kernel preemption 或多核时，最后一条不再成立；那时必须把参数计划
+放入每次调用拥有的对象，或以能够睡眠/取消的同步策略保护，不能只把普通
+SpinLock 套在可能触发 VFS 和页分配的长事务外面。
+
+\subsection{失败矩阵：哪一层失败，什么必须保持}
+
+\begin{longtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.35\textwidth}}
+\toprule
+失败位置 & 对外结果 & 必须保持\\
+\midrule
+请求尺寸错误 & InvalidArgument & 不读取未知布局，不改变 Process\\
+请求/字符串页错误 & InvalidUserMemory & 旧映像、fd、树和候选资源不变\\
+项目数或 128 KiB 越界 & ArgumentListTooLarge & 旧 RIP/CR3/RSP 可继续执行\\
+路径/文件读取失败 & executable read error & VFS 临时打开引用关闭\\
+ELF 截断/W+X/重叠 & InvalidExecutable & 不提交任何候选页\\
+frame/页表不足 & image/address-space failure & 候选根递归销毁，旧根权威\\
+候选 CR3 激活失败 & page-table activation failure & 恢复旧 CR3，销毁候选\\
+Process 容量耗尽 & ProcessLimitExceeded & 父 Process 与现有孩子不变\\
+wait 结果页错误 & InvalidUserMemory & Zombie 尚未被消费\\
+wait 无直接孩子 & NoChildProcess & 树与调度器不变\\
+提交后内部不变量失败 & Kernel 停机 & 不伪装为可恢复用户错误\\
+\bottomrule
+\end{longtable}
+
+\begin{failurebox}
+exec 的“原子性”不是 CPU 提供的一条原子指令，而是软件定义的发布边界。
+提交前所有新对象都可丢弃，提交后只有新映像权威。若某项资源既在提交前修改
+旧对象、又无法回滚，就说明它放错了事务位置。
+\end{failurebox}
+
+\subsection{五层测试分别证明什么}
+
+\paragraph{单元层}
+
+\code{ProcessTree} 测试覆盖 PID1 唯一性、指定/任意 wait、Alive/Zombie、
+异常退出、孤儿收养、Init 最终回收与统计损坏。\code{ProgramArgumentPlan}
+覆盖空向量、256 项、精确 128 KiB、下一字节、16 字节对齐、算术溢出和栈
+不足。reader ELF 测试在头或程序头 offset 注入读取失败，并保证失败不发布
+半个 layout。调度器测试冻结单 Thread exec 提交前置条件和失败不修改旧值。
+
+\paragraph{集成层}
+
+生命周期模型连续执行 4096 轮。每轮创建父与孩子、制造孤儿、改变退出顺序、
+执行 wait 并恢复空树，共覆盖 8192 个子 Process 生命周期。这里反复复用
+同一有限存储，能发现只在计数累计、槽位清空或父索引复用后出现的错误。
+
+\paragraph{固定种子随机层}
+
+随机模型让 8192 个孩子以不同顺序退出和回收，并生成 4096 组参数/环境长度。
+布局结果与独立 64 位公式逐项比较；失败输出固定 seed 和迭代号。随机不是
+“碰运气”，而是用可重放的大输入空间检查一般性质。
+
+\paragraph{工具与产物层}
+
+每个合法用户 ELF 单独执行 AMD64、\code{ET\_EXEC}、W\^X、入口、段范围和
+未解析符号审计。rootfs 工具把程序安装到嵌套目录，重新解析 inode/间接树并
+逐字节读回。截断夹具故意不能通过合法 ELF 审计，它只进入明确失败测试。
+
+\paragraph{QEMU 整机层}
+
+真实 64 MiB 与 256 MiB 路径从复位向量运行到磁盘 PID1，再完成八进程树、
+128 KiB 参数、两次 exec 回滚、一次成功提交、孤儿收养、Shell/文件 I/O 和
+最终资源快照。64 GiB 路径继续验证 4 GiB 以上物理页和容量实现。QEMU 能
+证明 CR3、RSP、CPL、ATA 与 IRQ；它不能替代 4096 轮状态搜索。
+
+\subsection{日志为何记录边界而不记录字节}
+
+Kernel 对低频生命周期输出：
+
+\begin{lstlisting}[caption={v1.7 进程生命周期日志}]
+[OS][KERNEL][PROC] SPAWN_PID=0x...
+[OS][KERNEL][PROC] EXEC_PID=0x...
+[OS][KERNEL][PROC] EXIT_PID=0x...
+[OS][KERNEL][PROC] REPARENTED_CHILDREN=0x...
+[OS][KERNEL][PROC] WAIT_REAPED_PID=0x...
+\end{lstlisting}
+
+它不打印每个 ELF chunk、页表项、参数字节或 wait 扫描。128 KiB 参数由目标
+程序逐字节验证，页表与 ELF 由测试模型验证；把它们全部写串口会显著改变 PIT
+抢占时序，也会让真正的事务边界消失在大量文本中。
+
+结束时一次输出：
+
+\begin{lstlisting}[caption={正常八进程树的精确摘要}]
+PROCESS_TREE_REGISTERED=0x0000000000000008
+PROCESS_TREE_EXITED=0x0000000000000008
+PROCESS_TREE_COLLECTED=0x0000000000000008
+PROCESS_TREE_REPARENTED=0x0000000000000001
+PROCESS_TREE_ZOMBIES=0x0000000000000000
+PROCESS_TREE_WAIT_SUCCESSES=0x0000000000000007
+PROCESS_TREE_WAIT_BLOCKS=0x...
+PROCESS_TREE_WAIT_NO_CHILD=0x0000000000000001
+PROCESS_TREE_VALID
+\end{lstlisting}
+
+wait block 次数受合法调度交错影响，只要求至少一次；其余字段由当前工作负载
+精确决定。来宾继续用 PIT 输出单调 tick/millisecond，宿主 runner 给每行加
+\code{[QEMU][T+...ms]} 到达时间。阶段 deadline 与 CTest 外层 timeout
+共同保证丢失唤醒不会变成无限后台 QEMU。
+
+\subsection{源码走读顺序}
+
+推荐按“纯模型先于跨层组合”阅读：
+
+\begin{enumerate}
+  \item \filepath{source/abi/include/os/abi/system\_call.hpp}：先冻结 36--38
+        号、结构宽度、上限与错误值；
+  \item \filepath{process/process\_tree.hpp/.cpp}：只看父子状态与守恒；
+  \item \filepath{process/program\_arguments.hpp/.cpp}：手算一个栈布局；
+  \item \filepath{user/user\_elf.hpp/.cpp}：区分 reader、layout 与错误；
+  \item \filepath{user/user\_memory.cpp}：追踪页分配、BSS 与回滚；
+  \item \filepath{process/thread\_scheduler.cpp}：阅读
+        \code{CommitProcessImage} 的最小提交；
+  \item \filepath{process/process\_runtime.cpp}：再组合 spawn、exec、wait；
+  \item \filepath{user/system\_calls.cpp}：核对用户页验证和 frame 改写；
+  \item \filepath{source/user/programs/init.cpp} 与各 probe：理解目标 oracle；
+  \item \filepath{tools/os\_tools/rootfs\_v2.py} 和
+        \filepath{boot\_image.py}：确认构建期文件如何进入 raw disk；
+  \item 对应 unit/integration/randomized 测试；
+  \item 最后对照 QEMU runner 的顺序、计数与超时协议。
+\end{enumerate}
+
+阅读 \code{process\_runtime.cpp} 时，为每条失败分支写下四项：
+“当前权威 CR3”“候选已取得的资源”“本分支释放什么”“用户还能观察什么”。
+如果其中任一项答不出来，就还没有真正理解 exec 事务。
+
+\subsection{用 GDB 观察提交前后的 CPU}
+
+以 QEMU \code{-S -s} 启动后，可在以下符号断点：
+
+\begin{lstlisting}[caption={exec 的硬件状态观察点}]
+break os::kernel::ExecCurrentProcess
+break os::kernel::ThreadScheduler::CommitProcessImage
+break OsKernelDispatchSystemCall
+continue
+\end{lstlisting}
+
+在提交前记录旧 \code{CR3/RIP/RSP}，单步越过候选激活探针后确认旧 CR3
+恢复；命中提交点时检查 Process 只有一个 live Thread。返回汇编前，frame
+中的 RIP 应等于 \filepath{/bin/exec\_target} 的 ELF entry，RSP 位于固定
+64 页用户栈，RDI/RSI/RDX 指向候选地址空间。
+
+GDB 的符号名显示可能受 C++ mangling 和版本影响，实际地址以
+\code{llvm-nm -C} 与带 DWARF 的 \filepath{kernel.elf} 为准。不要在
+\filepath{kernel.payload.elf} 上期待完整调试信息；写盘 payload 已 strip
+debug，但三个 \code{PT\_LOAD} 与入口保持一致。
+
+\subsection{当前完成边界与下一步}
+
+v1.7 已经完成：
+
+\begin{itemize}
+  \item 正常用户空间来自自研 rootfs 和 ATA；
+  \item 唯一 PID1、父子树、Zombie、孤儿收养与 wait；
+  \item reader 两遍 ELF 与 64 页用户栈；
+  \item 128 KiB \code{argc/argv/envp}；
+  \item spawn 新 Process 与单 Thread 原子 exec；
+  \item CLOEXEC 真正进入成功 exec；
+  \item 八进程 QEMU 和多千轮宿主模型的资源守恒。
+\end{itemize}
+
+它仍没有：
+
+\begin{itemize}
+  \item fork、COW、父 FileTable/FsContext 继承；
+  \item VMA、匿名 page fault、按需 ELF、用户 heap 或栈增长；
+  \item 多 Thread exec convergence；
+  \item 外部 Shell 命令、重定向、管道语法和作业控制；
+  \item 信号、进程组、session 和 TTY；
+  \item page cache、异步块请求与 journal replay。
+\end{itemize}
+
+下一阶段先用 VMA 把“地址空间意图”和“当前已有 PTE”分开。只有匿名页、
+guarded stack growth 与用户 heap 稳定后，fork/COW 才能共享有明确来源和
+权限的页；只有 fork/exec/fd 继承都稳定后，Shell 才能把内建命令迁移为普通
+外部程序。
+
+\begin{contractbox}
+v1.7 的完成判定不是“屏幕出现 init”。必须同时证明：程序字节来自 rootfs，
+PID1 收养并回收孤儿，精确 128 KiB 参数到达新用户栈，失败 exec 保留旧
+CR3/RIP/fd，成功 exec 不返回旧入口，八个 Process/Thread 与全部页、栈、
+fd、FsContext 最终恢复基线，宿主模型与真实 QEMU 对同一不变量给出一致
+结论。
+\end{contractbox}

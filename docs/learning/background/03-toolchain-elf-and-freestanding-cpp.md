@@ -385,7 +385,7 @@ loader 必须把尾部：
 ### 16.3 ET_DYN
 
 常用于 shared object 或 PIE，需要加载基址选择和 relocation/dynamic linker
-语义。v1.0 基线和当前 v1.6 都不支持，遇到不认识的类型应拒绝。
+语义。v1.0 基线和当前 v1.7 都不支持，遇到不认识的类型应拒绝。
 
 ## 17. Raw binary
 

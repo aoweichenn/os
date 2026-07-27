@@ -68,6 +68,18 @@
 | Process | 共享 AddressSpace、FileTable、FsContext 和 signal disposition 的资源容器，不直接作为调度实体 |
 | Thread | 调度器选择的执行实体，拥有 TID、CPU/FXSAVE 现场、内核栈、用户栈、TLS 和 signal mask |
 | PID | Process Identifier；从 1 开始单调分配、与对象槽位无关的 64 位 Process 身份 |
+| PID1 / init | 进程树唯一根用户进程；当前从 `/sbin/init` 加载，负责创建验收进程、收养孤儿并回收全部子 Zombie |
+| process tree | 与调度队列分离的父子身份状态机，决定哪个父 Process 有权 wait 哪个孩子 |
+| child process | 由另一个 Alive Process 创建并记录其父身份的 Process；当前 spawn 创建全新而非复制父地址空间 |
+| orphan process | 父 Process 已退出但自身尚未被回收的孩子；当前统一重设父进程到 PID1 |
+| Zombie | 已停止执行并释放普通运行资源，但退出记录仍等待父进程 wait 的 Process 状态 |
+| reap / collect | 父进程消费 Zombie 退出记录后，清除进程树项与调度器槽的最后生命周期步骤 |
+| spawn | 从文件路径、argv 和 envp 构造全新孩子的接口；当前语义不复制父地址空间或 FileTable |
+| exec | 保持 PID、父子关系与 Process 身份，用候选事务替换当前程序 AddressSpace 和用户现场 |
+| wait | 取得指定或任意直接子进程退出记录；孩子仍 Alive 时阻塞，没有孩子时返回明确错误 |
+| candidate image | exec 提交前独立构造的地址空间、ELF 段、用户栈和初始现场；失败时可完整丢弃 |
+| `argc` / `argv` / `envp` | 用户程序入口的参数数量、参数字符串指针向量和环境字符串指针向量 |
+| ELF reader | 只暴露精确 `(offset, length)` 读取的解析输入边界，使同一验证器可读取内存镜像或 VFS 文件 |
 | TID | Thread Identifier；与 PID、对象地址和容器槽位相互独立的 64 位身份 |
 | CpuLocal | 当前 BSP 的本地内核状态，保存 current Thread、入口栈、IRQ/抢占深度和重调度标记 |
 | UserContext | 把 INT 0x80、SYSCALL、异常和信号返回规范化后的统一用户寄存器现场 |

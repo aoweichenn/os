@@ -17,7 +17,9 @@ from .rootfs_v2 import (
     OS_ROOTFS_V2_BLOCK_SIZE_BYTES,
     OS_ROOTFS_V2_MINIMUM_DISK_SIZE_BYTES,
     OS_ROOTFS_V2_START_LBA,
+    RootfsV2InstallFile,
     formatRootfsV2,
+    installRootfsV2Files,
 )
 from .errors import OsToolError
 from .sparse_image import writeSparseImage
@@ -56,9 +58,11 @@ def writeBootImage(
     imagePath: Path,
     imagePrefix: bytes | bytearray,
     diskSizeBytes: int,
+    rootfsFiles: tuple[RootfsV2InstallFile, ...] = (),
 ) -> None:
     writeSparseImage(imagePath, imagePrefix, diskSizeBytes)
     formatRootfsV2(imagePath)
+    installRootfsV2Files(imagePath, rootfsFiles)
 
 
 def createInvalidKernelElfDiskImage(
@@ -116,6 +120,7 @@ def writeBootDiskImages(
     kernelElfPath: Path,
     outputDirectory: Path,
     diskSizeBytes: int,
+    rootfsFiles: tuple[RootfsV2InstallFile, ...] = (),
 ) -> None:
     if diskSizeBytes < OS_ROOTFS_V2_MINIMUM_DISK_SIZE_BYTES:
         raise OsToolError(
@@ -135,6 +140,7 @@ def writeBootDiskImages(
         outputDirectory / OS_BOOT_IMAGE_VALID_FILE_NAME,
         validImage,
         diskSizeBytes,
+        rootfsFiles,
     )
 
     invalidStage1HeaderImage = bytearray(validImage)
@@ -146,6 +152,7 @@ def writeBootDiskImages(
         OS_BOOT_IMAGE_INVALID_STAGE1_HEADER_FILE_NAME,
         invalidStage1HeaderImage,
         diskSizeBytes,
+        rootfsFiles,
     )
 
     invalidStage1ChecksumImage = bytearray(validImage)
@@ -161,6 +168,7 @@ def writeBootDiskImages(
         OS_BOOT_IMAGE_INVALID_STAGE1_CHECKSUM_FILE_NAME,
         invalidStage1ChecksumImage,
         diskSizeBytes,
+        rootfsFiles,
     )
 
     invalidKernelHeaderImage = bytearray(validImage)
@@ -176,6 +184,7 @@ def writeBootDiskImages(
         OS_BOOT_IMAGE_INVALID_KERNEL_HEADER_FILE_NAME,
         invalidKernelHeaderImage,
         diskSizeBytes,
+        rootfsFiles,
     )
 
     invalidKernelChecksumImage = bytearray(validImage)
@@ -191,6 +200,7 @@ def writeBootDiskImages(
         OS_BOOT_IMAGE_INVALID_KERNEL_CHECKSUM_FILE_NAME,
         invalidKernelChecksumImage,
         diskSizeBytes,
+        rootfsFiles,
     )
 
     invalidKernelElfImage = createInvalidKernelElfDiskImage(
@@ -202,4 +212,5 @@ def writeBootDiskImages(
         OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME,
         invalidKernelElfImage,
         diskSizeBytes,
+        rootfsFiles,
     )

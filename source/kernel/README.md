@@ -56,6 +56,8 @@ arch/extended_state.*          CPUID、CR0/CR4 与目标机 FXSAVE/FXRSTOR
 arch/extended_state_layout.*   可在宿主测试的 512/16 布局和能力解码
 process/thread_scheduler.*     Process/Thread 状态与侵入式队列
 process/wait_queue.*           等待对象的身份、计数与关闭状态
+process/process_tree.*         PID1、父子身份、Zombie、wait 与孤儿收养
+process/program_arguments.*    argc/argv/envp 的纯 64 位用户栈布局
 process/process_runtime.*      CR3、TSS.RSP0、动态栈、用户帧和现场组合
 sync/spin_lock.*               acquire/release 与 irq-save 短临界区
 sync/mutex.*                   基于 WaitQueue 的可睡眠直接交接互斥
@@ -111,3 +113,20 @@ fs/block_cache.*               固定容量写回缓存
 `root_file_system_format` 只负责字节布局，不访问设备、VFS 或全局 Kernel
 状态，因此宿主单元测试可直接链接；`root_file_system` 组合块设备、缓存和
 VFS 操作表。Python mkfs/fsck 是独立工具实现，不进入 Kernel 目标。
+
+v1.7 的磁盘程序与进程树继续归属已有 `process/` 和 `user/` 边界：
+
+```text
+process/process_tree.*         与调度槽分离的父子关系、退出状态与 wait
+process/program_arguments.*    不访问页表的参数/环境布局规划
+process/process_runtime.*      VFS ELF reader、spawn/exec/wait 与失败展开
+user/user_elf.*                内存/文件共用的 reader 两遍 ELF 验证
+user/user_memory.*             候选 AddressSpace、64 页用户栈与段复制
+user/system_calls.*            36/37/38 号 ABI 的用户复制和结果映射
+```
+
+`process_tree` 与 `program_arguments` 必须保持宿主可链接，不得反向依赖
+VFS、页表或设备。磁盘读取和真实资源提交只进入 `process_runtime`；
+ELF parser 只通过 `UserElfReader` 观察 `(offset, length)`，不认识 inode。
+普通用户程序属于 rootfs，不得重新加入 `user_program_images`；后者只保留
+启动模式必须直接选择的最小 smoke/异常夹具。

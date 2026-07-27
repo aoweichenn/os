@@ -14,7 +14,7 @@ constexpr std::string_view OS_TEST_USER_BOUNDARY_SUITE_NAME = "kernel/user_bound
 constexpr std::string_view OS_TEST_USER_BOUNDARY_FRAME_MESSAGE =
     "异常帧必须按 CS.RPL 区分 Ring 0 与 Ring 3";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_STACK_MESSAGE =
-    "用户栈必须包含四个数据页和一个未映射保护页";
+    "用户栈必须包含 64 个数据页、256 KiB 容量和一个未映射保护页";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_ADDRESS_MESSAGE =
     "用户地址边界必须排除低地址和非规范高半区";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE =
@@ -22,7 +22,8 @@ constexpr std::string_view OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE =
 constexpr std::string_view OS_TEST_USER_BOUNDARY_ABI_MESSAGE = "系统调用 ABI 编号和向量必须稳定";
 constexpr uint64_t OS_TEST_USER_BOUNDARY_KERNEL_CODE_SELECTOR = 0x0008ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_USER_CODE_SELECTOR = 0x0023ULL;
-constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT = 4ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT = 64ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_SIZE_BYTES = 256ULL * 1024ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR = 0x80ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER = 1ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER = 2ULL;
@@ -55,10 +56,11 @@ int main() {
 
     test_context.Expect(os::kernel::OS_KERNEL_USER_STACK_PAGE_COUNT ==
                                 OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT &&
+                            os::kernel::OS_KERNEL_USER_STACK_SIZE_BYTES ==
+                                OS_TEST_USER_BOUNDARY_EXPECTED_STACK_SIZE_BYTES &&
                             os::kernel::OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS -
                                     os::kernel::OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT *
-                                    os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES &&
+                                OS_TEST_USER_BOUNDARY_EXPECTED_STACK_SIZE_BYTES &&
                             os::kernel::OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS -
                                     os::kernel::OS_KERNEL_USER_STACK_GUARD_VIRTUAL_ADDRESS ==
                                 os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,

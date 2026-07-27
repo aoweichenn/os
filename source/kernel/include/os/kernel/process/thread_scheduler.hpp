@@ -6,8 +6,8 @@
 
 namespace os::kernel {
 
-inline constexpr uint64_t OS_KERNEL_PROCESS_BOOTSTRAP_CAPACITY = 4ULL;
-inline constexpr uint64_t OS_KERNEL_THREAD_BOOTSTRAP_CAPACITY = 4ULL;
+inline constexpr uint64_t OS_KERNEL_PROCESS_BOOTSTRAP_CAPACITY = 8ULL;
+inline constexpr uint64_t OS_KERNEL_THREAD_BOOTSTRAP_CAPACITY = 8ULL;
 inline constexpr uint64_t OS_KERNEL_BOOTSTRAP_THREADS_PER_PROCESS = 1ULL;
 inline constexpr uint64_t OS_KERNEL_PROCESS_FUNCTIONAL_CAPACITY = 64ULL;
 inline constexpr uint64_t OS_KERNEL_THREAD_FUNCTIONAL_CAPACITY = 128ULL;
@@ -148,9 +148,9 @@ class ThreadScheduler final {
     Initialize(ProcessEntry *process_storage, uint64_t process_capacity,
                ThreadEntry *thread_storage, uint64_t thread_capacity,
                uint64_t maximum_threads_per_process, uint64_t quantum_ticks) noexcept;
-    [[nodiscard]] ThreadSchedulerStatus
-    CreateProcess(uint64_t address_space_root_physical_address, uint64_t &process_index,
-                  ProcessId &process_id) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus CreateProcess(uint64_t address_space_root_physical_address,
+                                                      uint64_t &process_index,
+                                                      ProcessId &process_id) noexcept;
     [[nodiscard]] ThreadSchedulerStatus DiscardProcess(uint64_t process_index) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
     CreateThread(uint64_t process_index, uint64_t kernel_stack_slot_index,
@@ -165,21 +165,24 @@ class ThreadScheduler final {
     [[nodiscard]] ThreadSchedulerStatus
     BlockCurrentThread(WaitQueue &wait_queue, WaitCondition wait_condition,
                        ThreadSchedulingDecision &decision) noexcept;
-    [[nodiscard]] ThreadSchedulerStatus
-    WakeOne(WaitQueue &wait_queue, WakeReason wake_reason, uint64_t &woken_thread_index,
-            bool &wake_won) noexcept;
-    [[nodiscard]] ThreadSchedulerStatus
-    WakeThread(WaitQueue &wait_queue, uint64_t thread_index, WakeReason wake_reason,
-               bool &wake_won) noexcept;
-    [[nodiscard]] ThreadSchedulerStatus
-    WakeMany(WaitQueue &wait_queue, WakeReason wake_reason, uint64_t maximum_wake_count,
-             uint64_t &woken_thread_count) noexcept;
-    [[nodiscard]] ThreadSchedulerStatus
-    CloseWaitQueue(WaitQueue &wait_queue, uint64_t &woken_thread_count) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus WakeOne(WaitQueue &wait_queue, WakeReason wake_reason,
+                                                uint64_t &woken_thread_index,
+                                                bool &wake_won) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus WakeThread(WaitQueue &wait_queue, uint64_t thread_index,
+                                                   WakeReason wake_reason, bool &wake_won) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus WakeMany(WaitQueue &wait_queue, WakeReason wake_reason,
+                                                 uint64_t maximum_wake_count,
+                                                 uint64_t &woken_thread_count) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus CloseWaitQueue(WaitQueue &wait_queue,
+                                                       uint64_t &woken_thread_count) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
     TerminateCurrentThread(ThreadSchedulingDecision &decision) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReapExitedThread(uint64_t thread_index) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReapZombieProcess(uint64_t process_index) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    CommitProcessImage(uint64_t process_index, uint64_t thread_index,
+                       uint64_t address_space_root_physical_address,
+                       uint64_t user_stack_pointer) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReadProcess(uint64_t process_index,
                                                     ProcessEntry &entry) const noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReadThread(uint64_t thread_index,

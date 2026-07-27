@@ -76,6 +76,8 @@ set(
 set(
     OS_KERNEL_PROCESS_HEADERS
     include/os/kernel/process/process_runtime.hpp
+    include/os/kernel/process/process_tree.hpp
+    include/os/kernel/process/program_arguments.hpp
     include/os/kernel/process/thread_scheduler.hpp
     include/os/kernel/process/wait_queue.hpp
 )
@@ -185,6 +187,8 @@ set(
 set(
     OS_KERNEL_PROCESS_SOURCES
     src/process/process_runtime.cpp
+    src/process/process_tree.cpp
+    src/process/program_arguments.cpp
     src/process/thread_scheduler.cpp
     src/process/wait_queue.cpp
 )
@@ -328,11 +332,15 @@ add_library(
 add_library(
     os_kernel_process_model_host
     STATIC
+        src/process/process_tree.cpp
+        src/process/program_arguments.cpp
         src/process/thread_scheduler.cpp
         src/process/wait_queue.cpp
         src/sync/mutex.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/process/thread_scheduler.hpp
+        include/os/kernel/process/process_tree.hpp
+        include/os/kernel/process/program_arguments.hpp
         include/os/kernel/process/wait_queue.hpp
         include/os/kernel/sync/mutex.hpp
         include/os/kernel/sync/spin_lock.hpp
@@ -581,11 +589,7 @@ add_custom_command(
         "${OS_USER_SMOKE_ELF_PATH}"
         "${OS_USER_INVALID_OPCODE_ELF_PATH}"
         "${OS_USER_PAGE_FAULT_ELF_PATH}"
-        "${OS_USER_SCHEDULER_WORKER_ELF_PATH}"
-        "${OS_USER_IPC_PRODUCER_ELF_PATH}"
-        "${OS_USER_IPC_CONSUMER_ELF_PATH}"
-        "${OS_USER_SHELL_ELF_PATH}"
-    COMMENT "嵌入七个自研 Ring 3 ELF64 程序"
+    COMMENT "仅嵌入故障注入所需的三个 Ring 3 ELF64 程序"
     VERBATIM
 )
 add_custom_target(
@@ -595,16 +599,12 @@ add_custom_target(
 
 # 这些 ELF 由 source/user 子目录中的自定义目标生成。仅列出文件路径时，
 # Unix Makefiles 无法跨目录发现对应规则；目标级依赖保证全新构建和局部清理
-# 后都会先生成七个用户程序，再由 NASM 将它们嵌入 Kernel。
+# 后都会先生成三个故障注入程序，再由 NASM 将它们嵌入 Kernel。
 add_dependencies(
     os_kernel_user_images_object
     os_user_smoke_elf
     os_user_invalid_opcode_elf
     os_user_page_fault_elf
-    os_user_scheduler_worker_elf
-    os_user_ipc_producer_elf
-    os_user_ipc_consumer_elf
-    os_user_shell_elf
 )
 
 set(

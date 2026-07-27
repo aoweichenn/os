@@ -65,5 +65,8 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                    uint64_t size_bytes) noexcept;
 [[nodiscard]] int64_t StatFile(const char *path, uint64_t path_length_bytes,
                                os::abi::FileInformation &information) noexcept;
+[[nodiscard]] int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
+[[nodiscard]] int64_t ExecProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
+[[nodiscard]] int64_t WaitProcess(uint64_t process_id, os::abi::ProcessWaitResult &result) noexcept;
 [[noreturn]] void ExitProcess(int64_t exit_code) noexcept;
 }

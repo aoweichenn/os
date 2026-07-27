@@ -13,6 +13,7 @@ enum class UserProgramSelection : uint64_t {
     IpcProducer,
     IpcConsumer,
     TruncatedSmoke,
+    DiskExecutable,
 };
 
 struct UserProgramImage final {

@@ -389,12 +389,15 @@ VFS 已稳定，Shell 和用户 ABI 不知道磁盘格式已经更换。独立 m
 
 \paragraph{v1.7：PID1 终结内嵌程序脚手架}
 
+本版本已经完成。
 正常 Kernel 从 VFS 读取 \code{/sbin/init}，由 PID1 启动 Shell 并回收孤儿。
 ELF 仍执行两遍验证：先验证所有结构和范围，再创建候选 AddressSpace。exec
 失败不能破坏调用进程；成功提交才替换映像。
 
-第一周期内嵌的 Shell、producer、consumer 和 worker 可以保留为根文件系统
-不可信时的故障载荷，却不能再成为生产启动依赖。
+普通用户程序由离线工具安装到 rootfs，不再进入正常 Kernel；内嵌区只保留
+smoke、非法指令和页故障等专用夹具，用于独立证明 Ring 3 与异常隔离。真实
+QEMU 已从磁盘 PID1 完成八进程父子树、128 KiB 参数环境、失败 exec 回滚、
+成功 exec 提交、孤儿重归属、wait 唯一回收和最终资源守恒。
 
 \subsection{波次 C：地址意图、文件驻留与复制依次建立}
 

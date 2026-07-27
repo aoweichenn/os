@@ -13,6 +13,11 @@ constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_MASK =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
 constexpr uint8_t OS_KERNEL_USER_MEMORY_ZERO_BYTE = 0U;
 
+struct MemoryImageReaderContext final {
+    const uint8_t *image;
+    uint64_t image_size_bytes;
+};
+
 [[nodiscard]] uint64_t Minimum(const uint64_t left, const uint64_t right) noexcept {
     return left < right ? left : right;
 }
@@ -41,6 +46,22 @@ void CopyBytes(uint8_t *destination, const uint8_t *source, const uint64_t lengt
          ++byte_index) {
         destination[byte_index] = source[byte_index];
     }
+}
+
+[[nodiscard]] bool ReadMemoryImage(void *const context, const uint64_t offset_bytes,
+                                   uint8_t *const destination,
+                                   const uint64_t length_bytes) noexcept {
+    if (context == nullptr || destination == nullptr) {
+        return false;
+    }
+    const MemoryImageReaderContext &reader_context =
+        *static_cast<const MemoryImageReaderContext *>(context);
+    if (offset_bytes > reader_context.image_size_bytes ||
+        length_bytes > reader_context.image_size_bytes - offset_bytes) {
+        return false;
+    }
+    CopyBytes(destination, reader_context.image + offset_bytes, length_bytes);
+    return true;
 }
 
 [[nodiscard]] UserMemoryCopyStatus ValidateUserMemory(const uint64_t user_address,
@@ -73,7 +94,7 @@ void CopyBytes(uint8_t *destination, const uint8_t *source, const uint64_t lengt
     return UserMemoryCopyStatus::Succeeded;
 }
 
-[[nodiscard]] UserAddressSpaceStatus MapElfSegment(const uint8_t *image,
+[[nodiscard]] UserAddressSpaceStatus MapElfSegment(const UserElfReader &reader,
                                                    const UserElfLoadSegment &segment,
                                                    const uint64_t root_physical_address,
                                                    uint64_t &mapped_page_count) noexcept {
@@ -105,9 +126,12 @@ void CopyBytes(uint8_t *destination, const uint8_t *source, const uint64_t lengt
         const uint64_t page_file_size_bytes =
             Minimum(remaining_file_size_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
         if (page_file_size_bytes > OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
-            CopyBytes(page,
-                      image + segment.file_offset + page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
-                      page_file_size_bytes);
+            const uint64_t page_file_offset =
+                segment.file_offset + page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+            if (reader.read == nullptr ||
+                !reader.read(reader.context, page_file_offset, page, page_file_size_bytes)) {
+                return UserAddressSpaceStatus::ImageReadFailed;
+            }
             remaining_file_size_bytes -= page_file_size_bytes;
         }
     }
@@ -156,8 +180,29 @@ UserAddressSpaceStatus
 LoadUserAddressSpace(const uint8_t *image, const uint64_t image_size_bytes,
                      UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept {
+    if (image == nullptr) {
+        elf_validation_status = UserElfValidationStatus::NullImage;
+        return UserAddressSpaceStatus::InvalidElf;
+    }
+    MemoryImageReaderContext context{
+        .image = image,
+        .image_size_bytes = image_size_bytes,
+    };
+    return LoadUserAddressSpace(
+        UserElfReader{
+            .context = &context,
+            .image_size_bytes = image_size_bytes,
+            .read = ReadMemoryImage,
+        },
+        address_space, elf_validation_status);
+}
+
+UserAddressSpaceStatus
+LoadUserAddressSpace(const UserElfReader &reader, UserAddressSpace &address_space,
+                     UserElfValidationStatus &elf_validation_status) noexcept {
+    address_space = UserAddressSpace{};
     UserElfLayout layout{};
-    elf_validation_status = ValidateUserElf(image, image_size_bytes, layout);
+    elf_validation_status = ValidateUserElf(reader, layout);
     if (elf_validation_status != UserElfValidationStatus::Succeeded) {
         return UserAddressSpaceStatus::InvalidElf;
     }
@@ -173,7 +218,7 @@ LoadUserAddressSpace(const uint8_t *image, const uint64_t image_size_bytes,
     for (uint64_t segment_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
          segment_index < layout.load_segment_count; ++segment_index) {
         const UserAddressSpaceStatus segment_status = MapElfSegment(
-            image, layout.load_segments[segment_index], root_physical_address, mapped_page_count);
+            reader, layout.load_segments[segment_index], root_physical_address, mapped_page_count);
         if (segment_status != UserAddressSpaceStatus::Succeeded) {
             if (DestroyUserPageTable(root_physical_address) != KernelUserPageStatus::Succeeded) {
                 return UserAddressSpaceStatus::RollbackFailed;
@@ -206,6 +251,53 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
     }
     address_space = UserAddressSpace{};
     return UserAddressSpaceStatus::Succeeded;
+}
+
+UserMemoryCopyStatus CopyToUserAddressSpace(const uint64_t root_physical_address,
+                                            const uint64_t user_address,
+                                            const uint64_t length_bytes,
+                                            const uint8_t *const source,
+                                            const uint64_t source_size_bytes) noexcept {
+    if (source == nullptr) {
+        return UserMemoryCopyStatus::NullSource;
+    }
+    if (length_bytes > source_size_bytes) {
+        return UserMemoryCopyStatus::SourceTooSmall;
+    }
+    if (length_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return UserMemoryCopyStatus::Succeeded;
+    }
+    if (!IsUserVirtualAddressRange(user_address, length_bytes)) {
+        return UserMemoryCopyStatus::InvalidUserRange;
+    }
+
+    uint64_t copied_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    while (copied_bytes < length_bytes) {
+        const uint64_t current_user_address = user_address + copied_bytes;
+        const uint64_t page_virtual_address =
+            current_user_address & ~OS_KERNEL_USER_MEMORY_PAGE_MASK;
+        const uint64_t page_offset = current_user_address & OS_KERNEL_USER_MEMORY_PAGE_MASK;
+        const uint64_t chunk_bytes =
+            Minimum(length_bytes - copied_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - page_offset);
+        PageMapping mapping{};
+        if (QueryAddressSpacePage(root_physical_address, page_virtual_address, mapping) !=
+            PageTableStatus::Succeeded) {
+            return UserMemoryCopyStatus::PageNotMapped;
+        }
+        if (!mapping.permissions.user_accessible) {
+            return UserMemoryCopyStatus::PageNotUserAccessible;
+        }
+        if (!mapping.permissions.writable) {
+            return UserMemoryCopyStatus::PageNotWritable;
+        }
+        uint8_t *const page = PhysicalPagePointer(mapping.physical_address);
+        if (page == nullptr) {
+            return UserMemoryCopyStatus::PageNotMapped;
+        }
+        CopyBytes(page + page_offset, source + copied_bytes, chunk_bytes);
+        copied_bytes += chunk_bytes;
+    }
+    return UserMemoryCopyStatus::Succeeded;
 }
 
 UserMemoryCopyStatus CopyFromUser(const uint64_t user_address, const uint64_t length_bytes,

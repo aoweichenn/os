@@ -40,6 +40,9 @@ enum class SystemCallNumber : uint64_t {
     Rename = 33ULL,
     TruncateFile = 34ULL,
     StatFile = 35ULL,
+    SpawnProcess = 36ULL,
+    ExecProcess = 37ULL,
+    WaitProcess = 38ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -57,6 +60,10 @@ inline constexpr uint64_t OS_ABI_FILE_DESCRIPTOR_VALID_FLAG_MASK =
     OS_ABI_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG;
 inline constexpr uint64_t OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES = 255ULL;
 inline constexpr uint64_t OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
+inline constexpr uint64_t OS_ABI_PROCESS_MAXIMUM_ARGUMENT_COUNT = 256ULL;
+inline constexpr uint64_t OS_ABI_PROCESS_MAXIMUM_ENVIRONMENT_COUNT = 256ULL;
+inline constexpr uint64_t OS_ABI_PROCESS_MAXIMUM_ARGUMENT_ENVIRONMENT_BYTES = 128ULL * 1024ULL;
+inline constexpr uint64_t OS_ABI_PROCESS_WAIT_ANY_PROCESS_ID = UINT64_MAX;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_READ_FLAG = 0x01ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_WRITE_FLAG = 0x02ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_CREATE_FLAG = 0x04ULL;
@@ -97,6 +104,11 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DIRECTORY_NOT_EMPTY = -30LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_CROSS_DEVICE = -31LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_BUSY = -32LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_OPERATION_UNSUPPORTED = -33LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PROCESS_LIMIT_EXCEEDED = -34LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_EXECUTABLE = -35LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_ARGUMENT_LIST_TOO_LARGE = -36LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NO_CHILD_PROCESS = -37LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE = -38LL;
 
 enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,
@@ -127,5 +139,44 @@ struct FileInformation final {
 };
 
 static_assert(sizeof(FileInformation) == OS_ABI_FILE_INFORMATION_SIZE_BYTES);
+
+inline constexpr uint64_t OS_ABI_PROCESS_STRING_SIZE_BYTES = 16ULL;
+
+struct ProcessString final {
+    uint64_t address;
+    uint64_t length_bytes;
+};
+
+static_assert(sizeof(ProcessString) == OS_ABI_PROCESS_STRING_SIZE_BYTES);
+
+inline constexpr uint64_t OS_ABI_PROCESS_LAUNCH_REQUEST_SIZE_BYTES = 48ULL;
+
+struct ProcessLaunchRequest final {
+    uint64_t path_address;
+    uint64_t path_length_bytes;
+    uint64_t argument_vector_address;
+    uint64_t argument_count;
+    uint64_t environment_vector_address;
+    uint64_t environment_count;
+};
+
+static_assert(sizeof(ProcessLaunchRequest) == OS_ABI_PROCESS_LAUNCH_REQUEST_SIZE_BYTES);
+
+enum class ProcessTerminationReason : uint64_t {
+    Exited = 1ULL,
+    Exception = 2ULL,
+};
+
+inline constexpr uint64_t OS_ABI_PROCESS_WAIT_RESULT_SIZE_BYTES = 40ULL;
+
+struct ProcessWaitResult final {
+    uint64_t process_id;
+    uint64_t parent_process_id;
+    ProcessTerminationReason termination_reason;
+    int64_t exit_code;
+    uint64_t exception_vector;
+};
+
+static_assert(sizeof(ProcessWaitResult) == OS_ABI_PROCESS_WAIT_RESULT_SIZE_BYTES);
 
 }

@@ -3,7 +3,7 @@
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.6：
+实现。当前 `main` 已推进到 v1.7：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -15,12 +15,15 @@
   文件系统适配；
 - v1.6 增加 256 MiB rootfs v2、三级间接树、完整命名空间修改、独立
   mkfs/fsck 与严格损坏拒绝。
+- v1.7 把普通用户程序移入 rootfs，从磁盘启动 PID1，并加入父子进程树、
+  spawn/exec/wait、argc/argv/envp、孤儿收养和 Zombie 回收。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.6 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v1.7 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
-[v1.5](../releases/v1.5.md) 和 [v1.6](../releases/v1.6.md) 发布记录。
+[v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md) 和
+[v1.7](../releases/v1.7.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -43,6 +46,7 @@
   → v1.4 KernelObject、共享打开实例与动态 FileTable
   → v1.5 VFS、Mount、每 Process cwd 与双文件系统后端
   → v1.6 rootfs v2、完整命名空间与独立 fsck
+  → v1.7 磁盘 PID1、进程树、spawn/exec/wait 与参数环境
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -134,8 +138,9 @@
 | 12 | [v0.11：文件系统](12-v0.11-file-system.md) | 磁盘格式、inode、位图、块缓存、事务状态和跨启动持久性 |
 | 13 | [v1.0：用户环境与 Shell](13-v1.0-user-environment.md) | 统一描述符、控制台 FIFO、idle、交互式 Ring 3 Shell 和最终闭环 |
 | 14 | [v1.6：rootfs v2](14-v1.6-rootfs-v2.md) | 256 MiB 盘面、三级间接树、稀疏文件、rename/unlink、事务与 fsck |
+| 15 | [v1.7：PID1、进程树与磁盘 exec](15-v1.7-pid1-process-tree-exec.md) | 磁盘程序、argc/argv/envp、父子关系、孤儿收养、Zombie、spawn/exec/wait 与回滚 |
 
-### 5.1 从第一周期过渡到当前 v1.6
+### 5.1 从第一周期过渡到当前 v1.7
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -147,8 +152,9 @@
 | [v1.4](../releases/v1.4.md) | 固定 8 槽 IoDescriptorTable → KernelObject、FileDescription、动态 FileTable | Kernel `object/*`、`io/file_description.*`、`io/file_table.*` |
 | [v1.5](../releases/v1.5.md) | legacy 完整路径/handle → Vnode、Path、Mount、FsContext、memfs/legacy 双后端 | Kernel `fs/vfs.*`、`fs/memfs.*`、`fs/legacy_file_system.*` |
 | [v1.6](../releases/v1.6.md) | legacy 生产根 → 严格 rootfs v2、三级间接树、完整 namespace mutation 与独立 fsck | Kernel `fs/root_file_system*`、`tools/os_tools/rootfs_v2.py` |
+| [v1.7](../releases/v1.7.md) | 内嵌固定程序 → 磁盘 PID1、父子进程树、spawn/exec/wait 与参数环境 | Kernel `process/process_tree.*`、`program_arguments.*`、`process_runtime.*` |
 
-六个阶段的架构结论已合并到
+七个阶段的架构结论已合并到
 [architecture.md](../architecture.md)，当前 Kernel 的十二组对称目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。
@@ -257,6 +263,8 @@ Kernel
          ├─ 文件系统 mount/format
          ├─ INT 0x80 和 SYSCALL 两条 Ring 3 入口
          ├─ KernelObject/FileDescription/FileTable
+         ├─ 从 rootfs 读取 /sbin/init，注册 PID1
+         ├─ spawn/exec/wait、进程树与孤儿收养
          ├─ Ring 3 抢占执行与安全返回
          ├─ 文件持久性与资源守恒检查
          └─ READY + HLT event loop
@@ -265,9 +273,10 @@ Ring 3
   source/user/programs/*.cpp
     ├─ INT 0x80 兼容入口与原生 SYSCALL
     ├─ fd 0/1/2 与动态 FileTable
-    ├─ pipe producer/consumer
-    ├─ filesystem
-    └─ interactive shell
+    ├─ PID1 组织父子生命周期并回收 Zombie
+    ├─ argc/argv/envp 与磁盘 ELF exec
+    ├─ filesystem probes
+    └─ interactive shell（当前命令仍为内建）
 ```
 
 ## 9. 生产源码覆盖地图
@@ -310,6 +319,8 @@ Ring 3
 | `arch/cpu_local.*`、`native_system_call.*`、`processor_features.*` | v1.3 | CPU 本地状态、处理器契约与原生系统调用 |
 | `object/kernel_object.*`、`io/file_description.*`、`io/file_table.*` | v1.4 | 类型化对象、共享打开实例与动态 fd 表 |
 | `fs/vfs.*`、`fs/memfs.*`、`fs/legacy_file_system.*` | v1.5 | 路径、挂载、cwd、内存文件系统与旧格式适配 |
+| `fs/root_file_system*`、`tools/os_tools/rootfs_v2.py` | v1.6 | 生产根格式、三级间接树、完整命名空间与独立 fsck |
+| `process/process_tree.*`、`program_arguments.*`、`programs/init.cpp` 与 exec/orphan probes | v1.7 | PID1、父子/Zombie、参数栈、磁盘 spawn/exec/wait 与失败回滚 |
 
 测试源码按同样领域命名分布在 `tests/unit/`、`tests/integration/`、
 `tests/randomized/`、`tests/system/` 和 `tests/tooling/`。阅读生产实现后，应紧接
@@ -328,6 +339,6 @@ Ring 3
 - 为一个正常路径和一个失败路径添加可重复测试。
 - 在不使用 BIOS、第三方 bootloader、libc 或 QEMU `-kernel` 的条件下复现整机。
 
-达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.6，再沿
-[roadmap.md](../roadmap.md) 继续 PID1/磁盘 exec、VMA、
-fork/COW、外部 Shell、用户线程、信号和日志文件系统。
+达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.7，再沿
+[roadmap.md](../roadmap.md) 继续 VMA、fork/COW、外部 Shell、用户线程、
+信号和日志文件系统。

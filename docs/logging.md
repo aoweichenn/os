@@ -191,7 +191,7 @@ buddy、heap、KVA、动态内核栈和已经为后续对象预留的六个计�
 和跨层快照。只有守恒式有效、变化掩码为零且三个子检查全部通过，才一次性
 输出这些标记。
 
-四进程执行结束还有一条独立的长期边界：
+全部进程执行结束还有一条独立的长期边界：
 
 ```text
 [OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
@@ -787,3 +787,68 @@ trace 留在默认镜像。
 窗口影响；日志保留两个来源才能区分“来宾没有推进”和“模拟器推进较慢”。
 每个 QEMU 用例同时具有内部里程碑截止与外层 CTest 截止，超时后由 Python
 回收进程和临时 socket，不允许留下永久后台终端。
+
+## v1.7 PID1、进程映像与父子生命周期日志
+
+进程创建、成功 exec 和成功 wait 都是低频生命周期边界，Kernel 各输出一行
+带 64 位身份的事件：
+
+```text
+[OS][KERNEL][PROC] SPAWN_PID=0x0000000000000001
+[OS][KERNEL][PROC] SPAWN_PID=0x...
+[OS][KERNEL][PROC] EXEC_PID=0x...
+[OS][KERNEL][PROC] WAIT_REAPED_PID=0x...
+```
+
+`SPAWN_PID=1` 与随后 `/sbin/init` 的参数验证共同证明初始 Process；普通失败
+尝试不打印伪成功 PID。`EXEC_PID` 只在候选 CR3、用户栈与调度器映像已经提交
+后出现；截断 ELF 与 E2BIG 失败不输出该事件。`WAIT_REAPED_PID` 只在 Kernel
+已形成退出结果并且树项/调度槽完成回收后出现，随后 dispatcher 才把固定结构
+复制到已预先验证的用户缓冲；它不为每次 would-block 重试打印。
+
+用户探针只输出一次阶段事实：
+
+```text
+[OS][USER][INIT] STARTED
+[OS][USER][INIT] ARGUMENTS_VALID
+[OS][USER][INIT] CHILDREN_STARTED
+[OS][USER][PROC] ORPHAN_CHILD_SPAWNED
+[OS][USER][PROC] ORPHAN_CHILD_RUNNING
+[OS][USER][PROC] ARG_ENV_128K_VERIFIED
+[OS][USER][PROC] EXEC_FAILURE_PRESERVED_IMAGE
+[OS][USER][PROC] EXEC_E2BIG_PRESERVED_IMAGE
+[OS][USER][PROC] EXEC_COMMITTED
+[OS][USER][INIT] ORPHAN_REAPED
+[OS][USER][INIT] ALL_CHILDREN_REAPED
+[OS][USER][INIT] NO_ZOMBIES
+```
+
+这些行描述语义边界，不逐字打印 128 KiB 参数、不打印每个 ELF chunk、每张
+用户页、每个 argv 指针或每次 wait 扫描。参数内容由目标程序逐字节校验，ELF
+字节由 reader 单元/集成测试覆盖；把这些热路径写入串口会改变调度时序并淹没
+真正失败位置。
+
+全部 Process 安全点回收后，Kernel 一次性输出进程树摘要：
+
+```text
+[OS][KERNEL] PROCESS_TREE_REGISTERED=0x0000000000000008
+[OS][KERNEL] PROCESS_TREE_EXITED=0x0000000000000008
+[OS][KERNEL] PROCESS_TREE_COLLECTED=0x0000000000000008
+[OS][KERNEL] PROCESS_TREE_REPARENTED=0x0000000000000001
+[OS][KERNEL] PROCESS_TREE_ZOMBIES=0x0000000000000000
+[OS][KERNEL] PROCESS_TREE_WAIT_SUCCESSES=0x0000000000000007
+[OS][KERNEL] PROCESS_TREE_WAIT_BLOCKS=0x...
+[OS][KERNEL] PROCESS_TREE_WAIT_NO_CHILD=0x0000000000000001
+[OS][KERNEL] PROCESS_TREE_VALID
+```
+
+wait block 次数受合法调度交错影响，只要求至少一次；注册、退出、收集、收养、
+成功 wait、no-child 与最终 Zombie 数则是当前正常工作负载的精确协议。
+`PROCESS_TREE_VALID` 还要求 active/alive 均为零，并与 ThreadScheduler 的八次
+Process/Thread 创建回收、动态栈活动数零和资源快照零差异同时成立。
+
+时间仍使用两套来源。上述每条串口行会由宿主补上 `[QEMU][T+...ms]`；来宾
+在设备初始化后仍输出 PIT 的 `TIMER_TICKS` 与
+`MONOTONIC_MILLISECONDS`。进程日志不自行读取 RTC，也不为每次系统调用打印
+时间。若卡在某个生命周期事件，runner 的阶段 deadline 会终止并回收 QEMU；
+不能通过增加无界 TRACE 来掩盖死锁或丢失唤醒。

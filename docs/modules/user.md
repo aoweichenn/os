@@ -22,7 +22,7 @@ user 包装与程序    kernel 分发与校验
 | `RDI` | 参数 0 |
 | `RSI` | 参数 1 |
 | `RDX` | 参数 2 |
-| `R10` | 参数 3；当前保留给后续扩展 |
+| `R10` | 参数 3；由四参数调用实际使用 |
 | `INT 0x80` | 进入内核的指令与门向量 |
 
 | 编号 | 接口 | 参数 | 结果 |
@@ -49,6 +49,22 @@ user 包装与程序    kernel 分发与校验
 | 20 | `CloseDescriptor` | `RDI=fd` | 成功 0 或错误 |
 | 21 | `OpenDirectory` | `RDI=路径`，`RSI=长度` | fd 或错误 |
 | 22 | `ReadDirectory` | `RDI=fd`，`RSI=目录项地址`，`RDX=64` | 一项为 1，末尾为 0，失败为负值 |
+| 23 | `DuplicateDescriptor` | `RDI=源 fd`，`RSI=最低新 fd`，`RDX=新 fd flags` | 新 fd 或错误 |
+| 24 | `GetDescriptorFlags` | `RDI=fd` | 当前 fd flags 或错误 |
+| 25 | `SetDescriptorFlags` | `RDI=fd`，`RSI=fd flags` | 成功 0 或错误 |
+| 26 | `SetDescriptorSoftLimit` | `RDI=新 soft limit` | 成功 0 或错误 |
+| 27 | `GetDescriptorSoftLimit` | 无 | 当前 soft limit |
+| 28 | `GetDescriptorHardLimit` | 无 | 当前 hard limit |
+| 29 | `ChangeDirectory` | `RDI=路径`，`RSI=长度` | 成功 0 或错误 |
+| 30 | `GetWorkingDirectory` | `RDI=缓冲地址`，`RSI=容量` | 路径字节数或错误 |
+| 31 | `UnlinkFile` | `RDI=路径`，`RSI=长度` | 成功 0 或错误 |
+| 32 | `RemoveDirectory` | `RDI=路径`，`RSI=长度` | 成功 0 或错误 |
+| 33 | `Rename` | `RDI/RSI=源路径`，`RDX/R10=目标路径` | 成功 0 或错误 |
+| 34 | `TruncateFile` | `RDI=路径`，`RSI=长度`，`RDX=新长度` | 成功 0 或错误 |
+| 35 | `StatFile` | `RDI/RSI=路径`，`RDX=结果地址`，`R10=结构大小` | 成功 0 或错误 |
+| 36 | `SpawnProcess` | `RDI=ProcessLaunchRequest 地址`，`RSI=48` | 新 PID 或错误 |
+| 37 | `ExecProcess` | `RDI=ProcessLaunchRequest 地址`，`RSI=48` | 失败返回；成功进入新映像 |
+| 38 | `WaitProcess` | `RDI=PID/ANY`，`RSI=结果地址`，`RDX=40` | 已回收 PID、would block 或错误 |
 
 错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 串口失败。
 v0.10 又定义 `-5` would block、`-6` broken pipe、`-7` 端点权限、
@@ -63,8 +79,13 @@ v0.11 再定义 `-12..-21`，分别表示非法 fd、文件不存在、文件已
 
 v1.0 再定义 `-22` 描述符能力拒绝与 `-23` 描述符单次传输过长。通用描述符
 单次最多传输 256 字节，fd 0/1/2 固定为标准输入/输出/错误，动态 fd 从 3
-开始。目录项固定 64 字节，ABI 通过 `static_assert` 和独立 ELF/系统调用
+开始。目录项固定 280 字节，ABI 通过 `static_assert` 和独立 ELF/系统调用
 测试锁定布局。
+
+v1.4–v1.6 追加 `-24..-33`，覆盖描述符限额、KernelObject、路径、目录、
+跨设备、busy 与暂不支持。v1.7 再追加 `-34..-38`，分别表示 Process 容量、
+非法可执行文件、参数环境过大、没有子进程和候选映像构造失败。已有编号和
+错误值永不重排。
 
 ## 代码走读
 
@@ -284,6 +305,53 @@ ls .
 详细路径语义见
 [ADR 0032](../adr/0032-vfs-mount-namespace-and-memfs.md) 与
 [v1.5 发布记录](../releases/v1.5.md)。
+
+## v1.7 PID1、spawn/exec/wait 与参数栈
+
+正常镜像不再把 Shell、IPC 和普通功能程序链接进 Kernel。构建系统把
+`/sbin/init`、`/bin/sh`、`/bin/smoke` 和各验收程序作为彼此独立的
+freestanding ELF64 文件安装到 rootfs；Kernel 中只保留必须在不同启动模式
+直接选取的 smoke、用户 `#UD` 和用户 `#PF` 故障夹具。
+
+`ProcessLaunchRequest` 是 48 字节固定宽度结构，保存路径、`ProcessString`
+向量和各自计数。每个 `ProcessString` 只携带用户地址与精确字节长度，不依赖
+宿主 `size_t`，Kernel 会先复制并验证整份描述，再通过 VFS 读取 ELF。参数和
+环境分别最多 256 项，所有字符串连同 NUL 的总量最多 128 KiB。
+
+新用户栈固定为 64 个 4 KiB 页。字符串从栈顶以下连续放置，随后放置
+`envp[]`、终止空指针、`argv[]`、终止空指针和 `argc`；最终 RSP 向下对齐到
+16 字节。用户入口仍是普通 C ABI 包装，但现在接收：
+
+```text
+RDI = argc
+RSI = argv
+RDX = envp
+RSP = 16 字节对齐后的用户栈指针
+```
+
+`spawn` 解析路径、参数和 ELF，构造全新的 AddressSpace、用户栈、
+FileTable/FsContext、Process、唯一 Thread 和进程树边，然后一次性发布；
+任一步失败都按逆序释放候选资源，父进程仍可继续。它不是 `fork`：不会复制
+调用者内存，也不共享调用者打开描述符。
+
+`exec` 保留当前 PID、父子关系、FsContext 与非 close-on-exec 描述符，只替换
+当前 Process 的程序 AddressSpace、入口和唯一 Thread 的用户现场。实现先在
+旁路候选映像中完成文件读取、ELF 验证、段映射、参数栈和新现场；只有
+`CommitProcessImage` 成功后才关闭 close-on-exec 描述符并回收旧 CR3。
+因此截断 ELF、W+X、读失败或 `E2BIG` 都会返回旧映像，不能留下“半个 exec”。
+
+`wait` 支持指定直接子 PID 和 `UINT64_MAX` 表示任意直接子进程。Alive 子进程
+使调用 Thread 进入具名 WaitQueue；Zombie 子进程返回 40 字节
+`ProcessWaitResult` 并完成调度器安全回收；没有匹配子进程返回 `-37`。
+父进程先退出时，所有仍存活或 Zombie 的孩子都改挂到 PID 1。PID 1 必须把
+七个直接/收养孩子全部回收后才允许自身退出。
+
+用户态验收由 `/sbin/init` 组织：它验证自身 PID/argv/envp，创建六个直接
+子进程；orphan parent 再创建一个孩子，形成总计八个 Process 的完整树。
+argument probe 验证恰好 128 KiB 边界；exec probe 先验证截断 ELF 和 E2BIG
+回滚，再提交 `/bin/exec_target`；fs probe 和 Shell 继续覆盖磁盘与交互链。
+详细状态机见 [进程模块](process.md)、[ADR 0034](../adr/0034-pid1-process-tree-disk-exec-wait.md)
+和 [v1.7 发布记录](../releases/v1.7.md)。
 
 ## 依赖与命名
 

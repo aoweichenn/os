@@ -565,8 +565,9 @@ physical frames          四个非零、页对齐、互不重复的 order-0 帧
 函数必须失败而非 unmap。`OsKernelEnterScheduledProcess` 返回后 CR3 必须是
 永久内核根；否则即使当前 RSP 安全，也可能在进程独占页表已释放后继续访问。
 
-正常四进程结束摘要应为 active=0、creations=4、destructions=4、
-peak-active=4、peak-mapped=16，并出现
+正常 v1.7 八进程结束摘要应为 active=0；相对进程启动前的
+creations/destructions 增量均为 8，peak-active 至少为 8、
+peak-mapped 至少为 32，并出现
 `KERNEL_STACK_RESOURCES_RECLAIMED`。若创建/销毁相等但页帧或 KVA 基线不同，
 分别检查数据页清理和区间精确释放；若活动栈不为零，检查无 Ready 的 idle
 返回和最终完成路径是否都调用了安全点。用户 `#UD`、用户 `#PF` 镜像各有
@@ -1210,3 +1211,138 @@ cwd 属于 Process 的 `FsContext`，不是 VFS 全局变量，也不是 Shell �
 操作和规范化路径，检查父链或挂载反向遍历是否成环。若只有 QEMU 超时，检查
 是否新增了逐 lookup、逐目录项或逐字节串口日志。工具层必须在超时后终止并
 回收 QEMU，不允许留下后台模拟器长期占用 CPU。
+
+## v1.7：磁盘 PID1、exec 与 wait
+
+### Kernel 完成 rootfs 挂载后没有 PID1 日志
+
+先区分“文件不存在”“文件读取失败”“ELF 语义非法”和“Process 注册失败”：
+
+```bash
+python3 tools/os.py inspect-rootfs build/developer/images/boot_disk.img
+python3 tools/os.py fsck-rootfs build/developer/images/boot_disk.img
+python3 tools/os.py audit-user-elf build/developer/source/user/user_init.elf
+```
+
+rootfs 中必须存在 `/sbin/init`，文件大小与构建产物一致。若宿主审计通过而
+目标机失败，在 `LoadExecutableFromPath` 检查：
+
+1. 临时根 `FsContext` 是否已在 rootfs mount 后初始化；
+2. `Stat` 得到的节点是否为普通文件且长度非零；
+3. VFS reader 是否对每次短读循环到精确长度；
+4. `ValidateUserElf(reader)` 返回 `ReadFailed` 还是格式状态；
+5. 候选 AddressSpace 失败后是否保持根地址为零或被完整销毁；
+6. `RegisterInit` 是否收到 PID 1 和无父索引。
+
+正常第一条进程事件为
+`[OS][KERNEL][PROC] SPAWN_PID=0x0000000000000001`，随后才是
+`[OS][USER][INIT] STARTED`。前者存在而后者缺失时，问题已经越过磁盘读取，
+优先检查初始 RIP、RSP、argc/argv/envp 和用户页权限。
+
+### PID1 一进入用户态就 #PF 或参数校验失败
+
+用户栈范围固定为 64 页；`UserAddressSpace::stack_top_virtual_address` 表示
+几何栈顶，不能被改写成当前 RSP。实际入口值来自
+`ProgramArgumentPlan::Layout().stack_pointer`。检查以下布局：
+
+```text
+RDI = argc
+RSI = argv vector
+RDX = envp vector
+RSP % 16 = 0
+argv[argc] = nullptr
+envp[envc] = nullptr
+所有字符串地址位于用户栈且以 NUL 结束
+```
+
+若小参数通过而 128 KiB 探针失败，核对上限计算是否把每个 NUL 计入总量，
+以及 metadata 指针区是否另外占用栈容量。不要通过放宽上限绕过：
+
+```bash
+ctest --test-dir build/developer \
+  -R 'os_kernel_program_arguments_unit_tests|os_kernel_process_models_randomized_tests' \
+  --output-on-failure
+```
+
+### 失败 exec 之后旧程序无法继续
+
+截断 `/bin/truncated.elf` 必须返回 `INVALID_EXECUTABLE`，超出 128 KiB 的参数
+必须返回 `ARGUMENT_LIST_TOO_LARGE`；两次之后 exec probe 分别输出：
+
+```text
+[OS][USER][PROC] EXEC_FAILURE_PRESERVED_IMAGE
+[OS][USER][PROC] EXEC_E2BIG_PRESERVED_IMAGE
+```
+
+缺失时按提交点向前检查。旧 AddressSpace 在以下全部步骤完成前不得销毁：
+
+- 请求结构和所有用户字符串可读；
+- VFS 文件可读且 ELF 第一遍验证完成；
+- 候选段、BSS、64 页栈和参数元数据完成；
+- 候选 CR3 可试激活并能切回旧 CR3；
+- `CommitProcessImage` 接受当前唯一 Running Thread。
+
+失败路径应重新激活旧 CR3、销毁候选 AddressSpace 并原样返回旧 frame。
+close-on-exec 也只能在成功提交后执行。若失败日志出现但资源快照最终不一致，
+比较 candidate 的 mapped page、页表 frame 和用户栈 frame 回收计数。
+
+### 成功 exec 又返回了旧调用点
+
+成功 `ExecProcess` 不返回。dispatcher 返回的 frame 必须已经被重建为新
+UserContext：新 ELF RIP、新用户 RSP、`RDI=argc`、`RSI=argv`、
+`RDX=envp`，段选择子和 RFLAGS 恢复到允许的用户值。若 Kernel 打印
+`EXEC_PID` 后 exec probe 的失败出口仍执行，检查：
+
+- `DispatchExecProcess` 是否返回被修改的同一个 frame；
+- 汇编出口是否错误地恢复了调用前 RIP；
+- `runtime_threads[thread_index].saved_frame` 是否仍指向当前 frame；
+- CR3 是否在返回前切到 candidate root；
+- `exec_target` ELF 入口是否位于可执行用户映射。
+
+### `NO_ZOMBIES` 缺失或进程树统计不守恒
+
+先看结束摘要的第一个不一致字段：
+
+```text
+registered = exited = collected = 8
+reparented = 1
+wait successes = 7
+wait blocks >= 1
+wait no-child = 1
+active = alive = zombies = 0
+```
+
+`exited > collected` 通常表示父进程没有 wait；`reparented=0` 表示 orphan
+parent 退出时没有迁移孩子；`zombies>0` 表示 PID1 提前退出；调度器
+reaped=8 但 tree collected<8 表示两个状态机提交顺序损坏。运行：
+
+```bash
+ctest --test-dir build/developer \
+  -R 'os_kernel_(process_tree_unit|process_lifecycle_integration|process_models_randomized)' \
+  --output-on-failure
+```
+
+不要在孩子退出时直接删除树项。退出只产生 Zombie；wait 才消费退出记录并
+回收。普通父进程退出时要迁移 Alive 和 Zombie 两类孩子，不能只处理仍运行者。
+
+### wait 看似永久卡住
+
+先判断是真阻塞还是日志拖慢。默认路径不会逐次打印 wait 扫描；runner 会为
+每行加宿主到达时间并使用阶段 deadline。若 PID1 已输出
+`CHILDREN_STARTED`，但没有 `WAIT_REAPED_PID`：
+
+1. 检查至少一个孩子是否仍能得到 Ready 时间片；
+2. 检查孩子最后一个 Thread 退出是否调用 `MarkExited`；
+3. 检查 wait queue 登记是否发生在条件复查之前，避免 lost wakeup；
+4. 检查退出路径是否用正确父索引定向唤醒；
+5. 检查系统无 Ready Thread 时是否进入 `sti; hlt; cli`，而非关闭中断忙等。
+
+所有 QEMU 命令必须由 `tools/os.py`/runner 管理；阶段超时和 CTest 外层超时
+都会 terminate、wait 并清理 QMP socket。调试时也不要启动无期限后台 QEMU；
+若手工运行，使用 `timeout` 包裹并在结束后确认：
+
+```bash
+pgrep -a qemu-system-x86_64
+```
+
+正常完成后不应留下本项目 QEMU 进程。

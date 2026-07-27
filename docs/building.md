@@ -43,8 +43,9 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.6 ELF64 内核、七个用户 ELF，以及格式损坏、目标 ATA、
-   内存图失败、非法指令、页故障和写保护注入镜像，同时保留 v0.0 空镜像
+4. 生成自研 ROM、Stage 1、v1.7 ELF64 内核、十四个用户 ELF、一个截断
+   ELF 夹具，把十个普通程序安装进 rootfs；同时生成格式损坏、目标 ATA、
+   内存图失败、非法指令、页故障和写保护注入镜像，并保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
    命名空间单词门禁、256 MiB functional 和 64 GiB capacity 系统用例。
@@ -90,8 +91,9 @@ ctest --test-dir build/developer \
   -R '^os_qemu_functional_smoke$'
 ```
 
-该用例不是精简启动：它执行完整四进程、Shell 命令、IPC、文件系统、用户
-故障隔离和 26 字段资源快照。64 MiB、256 MiB 与 64 GiB 只改变 QEMU RAM
+该用例不是精简启动：它从磁盘启动 PID1，执行完整八进程树、spawn/exec/wait、
+Shell 命令、文件系统、用户隔离和 26 字段资源快照。64 MiB、256 MiB 与
+64 GiB 只改变 QEMU RAM
 规格，不切换实现。
 
 只验证原生系统调用能力失败边界：
@@ -132,6 +134,14 @@ source/kernel/kernel_page_fault.elf
 source/kernel/kernel_page_fault.payload.elf
 source/kernel/kernel_write_protection.elf
 source/kernel/kernel_write_protection.payload.elf
+source/user/user_init.elf
+source/user/user_orphan_parent.elf
+source/user/user_orphan_child.elf
+source/user/user_argument_probe.elf
+source/user/user_exec_probe.elf
+source/user/user_exec_target.elf
+source/user/user_file_system_probe.elf
+source/user/user_truncated.elf
 images/firmware.bin
 images/firmware_serial_failure.bin
 images/firmware_ide_busy_failure.bin
@@ -246,20 +256,20 @@ source/kernel/src/arch/architecture.asm ─ NASM elf64 ────────�
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
-四个 Ring 3 程序是独立 ELF64 产物，可分别审计：
+所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.7 的正常磁盘启动程序
+例如：
 
 ```bash
-python3 tools/os.py audit-user-elf build/developer/source/user/user_smoke.elf
-python3 tools/os.py audit-user-elf build/developer/source/user/user_invalid_opcode.elf
-python3 tools/os.py audit-user-elf build/developer/source/user/user_page_fault.elf
-python3 tools/os.py audit-user-elf build/developer/source/user/scheduler_worker.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_init.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_shell.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_exec_target.elf
 ```
 
 审计器要求 AMD64 `ET_EXEC`、入口位于可执行 `PT_LOAD`、段 4 KiB 对齐、
 用户地址范围、W^X、无重叠和零未解析符号。它不替代内核解析器：宿主审计
 证明“构建产生了预期文件”，QEMU 路径证明“目标内核自己拒绝或装入文件”。
-正常镜像会从同一个 `scheduler_worker.elf` 创建三个进程；三者共享虚拟地址
-布局但拥有不同 CR3，用 BSS 私有计数器证明地址空间隔离。
+截断夹具故意不是合法 ELF，不能使用成功审计命令；它由 exec 失败回滚路径
+验证。历史调度 worker、IPC 和用户异常 ELF 继续作为回归或具名故障输入。
 
 ## Boot Disk 组合链
 
@@ -269,12 +279,26 @@ stage1.bin ────────────────┐
 kernel.elf ─ strip-debug ─ kernel.payload.elf ─ 审计 ─┘
                                   ├─ Stage 1 描述符与负载
                                   └─ Kernel 描述符、CRC32 与 ELF 文件
+user_*.elf ─ audit ─ mkfs/install ─ rootfs v2 (/sbin + /bin) ─┘
 ```
 
-`kernel.elf` 的链接命令直接依赖生成的 `architecture.o` 与
-`user_images.o`，而不只依赖 phony 目标。这样任一用户 ELF 改变都会依次触发
-重新嵌入、重新链接、strip、审计和重打磁盘；增量构建不会让 QEMU 误跑旧用户
-程序。
+`kernel.elf` 的链接命令直接依赖生成的 `architecture.o` 与最小
+`user_images.o`，而不只依赖 phony 目标。正常 Shell、PID1 和功能探针不再
+嵌入 Kernel：任一普通用户 ELF 改变会触发 ELF 审计、rootfs 重新安装和启动盘
+重组；三个启动模式夹具改变才触发 Kernel 重新嵌入、链接与 strip。两条依赖链
+都由真实输出文件连接，增量构建不会让 QEMU 误跑旧程序。
+
+离线安装可单独用于实验镜像：
+
+```bash
+python3 tools/os.py copy-file-prefix \
+  build/developer/source/user/user_init.elf \
+  /tmp/init.prefix 4096
+```
+
+生产构建不会只复制 ELF 前缀；`copy-file-prefix` 在这里用于制造截断失败夹具。
+完整程序由 rootfs 工具按精确文件长度写入嵌套目录，并在工具测试中重新解析
+inode/块树、逐字节回读。
 
 可分别审计同一磁盘中的两个阶段：
 

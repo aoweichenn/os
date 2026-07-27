@@ -6,9 +6,8 @@ section .text
 global OsUserInstallExtendedStatePattern
 global OsUserValidateExtendedStatePattern
 
-OS_USER_EXTENDED_STATE_FIRST_PROCESS_ID equ 1
-OS_USER_EXTENDED_STATE_LAST_PROCESS_ID equ 4
-OS_USER_EXTENDED_STATE_XMM_PATTERN_SIZE_BYTES equ 16
+OS_USER_EXTENDED_STATE_INVALID_PROCESS_ID equ 0
+OS_USER_EXTENDED_STATE_PATTERN_INDEX_MASK equ 3
 OS_USER_EXTENDED_STATE_MXCSR_SIZE_BYTES equ 4
 OS_USER_EXTENDED_STATE_X87_CONTROL_SIZE_BYTES equ 2
 OS_USER_EXTENDED_STATE_X87_VALUE_SIZE_BYTES equ 8
@@ -19,23 +18,39 @@ OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET equ 8
 OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET equ 16
 OS_USER_EXTENDED_STATE_X87_CONTROL_STORAGE_OFFSET equ 4
 OS_USER_EXTENDED_STATE_X87_VALUE_STORAGE_OFFSET equ 8
+OS_USER_EXTENDED_STATE_XMM0_LOW_BASE equ 0x1111111111111111
+OS_USER_EXTENDED_STATE_XMM0_HIGH_BASE equ 0x2222222222222222
+OS_USER_EXTENDED_STATE_XMM15_LOW_BASE equ 0x5151515151515151
+OS_USER_EXTENDED_STATE_XMM15_HIGH_BASE equ 0x6262626262626262
 
 ; 每个进程获得不同的 XMM、MXCSR、x87 控制字和 x87 ST0 模式。
 ; 这些状态不会被 -mno-sse2 的 C++ 代码隐式改写，因而可以精确观察调度保存。
 OsUserInstallExtendedStatePattern:
-    mov rax, rdi
-    sub rax, OS_USER_EXTENDED_STATE_FIRST_PROCESS_ID
-    cmp rax, OS_USER_EXTENDED_STATE_LAST_PROCESS_ID - \
-             OS_USER_EXTENDED_STATE_FIRST_PROCESS_ID
-    ja .invalid
+    cmp rdi, OS_USER_EXTENDED_STATE_INVALID_PROCESS_ID
+    je .invalid
 
-    mov rcx, rax
-    imul rax, OS_USER_EXTENDED_STATE_XMM_PATTERN_SIZE_BYTES
-    lea rdx, [rel os_user_extended_state_xmm0_patterns]
-    movdqu xmm0, [rdx + rax]
-    lea rdx, [rel os_user_extended_state_xmm15_patterns]
-    movdqu xmm15, [rdx + rax]
+    ; XMM 模式直接由完整 PID 推导，因此不会受早期四进程验收上限约束。
+    sub rsp, OS_USER_EXTENDED_STATE_VERIFY_STORAGE_SIZE_BYTES
+    mov rax, OS_USER_EXTENDED_STATE_XMM0_LOW_BASE
+    xor rax, rdi
+    mov [rsp], rax
+    mov rax, OS_USER_EXTENDED_STATE_XMM0_HIGH_BASE
+    add rax, rdi
+    mov [rsp + OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET], rax
+    mov rax, OS_USER_EXTENDED_STATE_XMM15_LOW_BASE
+    xor rax, rdi
+    mov [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET], rax
+    mov rax, OS_USER_EXTENDED_STATE_XMM15_HIGH_BASE
+    add rax, rdi
+    mov [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET + \
+        OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET], rax
+    movdqu xmm0, [rsp]
+    movdqu xmm15, [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET]
+    add rsp, OS_USER_EXTENDED_STATE_VERIFY_STORAGE_SIZE_BYTES
 
+    mov rcx, rdi
+    dec rcx
+    and rcx, OS_USER_EXTENDED_STATE_PATTERN_INDEX_MASK
     mov rax, rcx
     imul rax, OS_USER_EXTENDED_STATE_MXCSR_SIZE_BYTES
     lea rdx, [rel os_user_extended_state_mxcsr_patterns]
@@ -60,52 +75,53 @@ OsUserInstallExtendedStatePattern:
 
 ; 校验只把寄存器内容复制到调用者栈，不改变被观察的 XMM、MXCSR 或 x87 栈。
 OsUserValidateExtendedStatePattern:
-    mov rax, rdi
-    sub rax, OS_USER_EXTENDED_STATE_FIRST_PROCESS_ID
-    cmp rax, OS_USER_EXTENDED_STATE_LAST_PROCESS_ID - \
-             OS_USER_EXTENDED_STATE_FIRST_PROCESS_ID
-    ja .invalid
+    cmp rdi, OS_USER_EXTENDED_STATE_INVALID_PROCESS_ID
+    je .invalid
 
-    mov r8, rax
+    mov r8, rdi
     sub rsp, OS_USER_EXTENDED_STATE_VERIFY_STORAGE_SIZE_BYTES
     movdqu [rsp], xmm0
     movdqu [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET], xmm15
 
-    imul rax, OS_USER_EXTENDED_STATE_XMM_PATTERN_SIZE_BYTES
-    lea rdx, [rel os_user_extended_state_xmm0_patterns]
-    mov rcx, [rdx + rax]
-    cmp [rsp], rcx
+    mov rax, OS_USER_EXTENDED_STATE_XMM0_LOW_BASE
+    xor rax, r8
+    cmp [rsp], rax
     jne .mismatch
-    mov rcx, [rdx + rax + OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET]
-    cmp [rsp + OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET], rcx
+    mov rax, OS_USER_EXTENDED_STATE_XMM0_HIGH_BASE
+    add rax, r8
+    cmp [rsp + OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET], rax
     jne .mismatch
-    lea rdx, [rel os_user_extended_state_xmm15_patterns]
-    mov rcx, [rdx + rax]
-    cmp [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET], rcx
+    mov rax, OS_USER_EXTENDED_STATE_XMM15_LOW_BASE
+    xor rax, r8
+    cmp [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET], rax
     jne .mismatch
-    mov rcx, [rdx + rax + OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET]
+    mov rax, OS_USER_EXTENDED_STATE_XMM15_HIGH_BASE
+    add rax, r8
     cmp [rsp + OS_USER_EXTENDED_STATE_SECOND_XMM_OFFSET + \
-        OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET], rcx
+        OS_USER_EXTENDED_STATE_SECOND_QWORD_OFFSET], rax
     jne .mismatch
 
     stmxcsr [rsp]
-    mov rax, r8
+    mov rcx, r8
+    dec rcx
+    and rcx, OS_USER_EXTENDED_STATE_PATTERN_INDEX_MASK
+    mov rax, rcx
     imul rax, OS_USER_EXTENDED_STATE_MXCSR_SIZE_BYTES
     lea rdx, [rel os_user_extended_state_mxcsr_patterns]
-    mov ecx, [rdx + rax]
-    cmp [rsp], ecx
+    mov edi, [rdx + rax]
+    cmp [rsp], edi
     jne .mismatch
 
     fnstcw [rsp + OS_USER_EXTENDED_STATE_X87_CONTROL_STORAGE_OFFSET]
-    mov rax, r8
+    mov rax, rcx
     imul rax, OS_USER_EXTENDED_STATE_X87_CONTROL_SIZE_BYTES
     lea rdx, [rel os_user_extended_state_x87_control_patterns]
-    mov cx, [rdx + rax]
-    cmp [rsp + OS_USER_EXTENDED_STATE_X87_CONTROL_STORAGE_OFFSET], cx
+    mov di, [rdx + rax]
+    cmp [rsp + OS_USER_EXTENDED_STATE_X87_CONTROL_STORAGE_OFFSET], di
     jne .mismatch
 
     fst qword [rsp + OS_USER_EXTENDED_STATE_X87_VALUE_STORAGE_OFFSET]
-    mov rax, r8
+    mov rax, rcx
     imul rax, OS_USER_EXTENDED_STATE_X87_VALUE_SIZE_BYTES
     lea rdx, [rel os_user_extended_state_x87_value_patterns]
     mov rcx, [rdx + rax]
@@ -124,18 +140,6 @@ OsUserValidateExtendedStatePattern:
 
 section .rodata
 align 16
-
-os_user_extended_state_xmm0_patterns:
-    dq 0x1111111111111111, 0x1212121212121212
-    dq 0x2121212121212121, 0x2222222222222222
-    dq 0x3131313131313131, 0x3232323232323232
-    dq 0x4141414141414141, 0x4242424242424242
-
-os_user_extended_state_xmm15_patterns:
-    dq 0x5151515151515151, 0x5252525252525252
-    dq 0x6161616161616161, 0x6262626262626262
-    dq 0x7171717171717171, 0x7272727272727272
-    dq 0x8181818181818181, 0x8282828282828282
 
 os_user_extended_state_mxcsr_patterns:
     dd 0x00001F80, 0x00003F80, 0x00005F80, 0x00007F80

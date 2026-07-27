@@ -1,5 +1,6 @@
 #pragma once
 
+#include "os/abi/system_call.hpp"
 #include "os/kernel/arch/exception_frame.hpp"
 #include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/user_context.hpp"
@@ -12,6 +13,7 @@
 #include "os/kernel/memory/kernel_stack_manager.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/resource_snapshot.hpp"
+#include "os/kernel/process/process_tree.hpp"
 #include "os/kernel/process/thread_scheduler.hpp"
 #include "os/kernel/user/user_elf.hpp"
 #include "os/kernel/user/user_memory.hpp"
@@ -21,7 +23,7 @@
 
 namespace os::kernel {
 
-inline constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY = 4ULL;
+inline constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY = 16ULL;
 
 enum class ProcessTerminationReason : uint64_t {
     None,
@@ -48,6 +50,24 @@ enum class ProcessRuntimeStatus : uint64_t {
     NativeSystemCallFailure,
     DescriptorTableFailure,
     FileSystemFailure,
+    ProcessTreeFailure,
+    InvalidArguments,
+    ArgumentListTooLarge,
+    ExecutableReadFailure,
+    ProcessLimitExceeded,
+};
+
+enum class ProcessWaitStatus : uint64_t {
+    Succeeded,
+    WouldBlock,
+    NoChild,
+    InvalidArgument,
+    RuntimeFailure,
+};
+
+struct KernelProgramString final {
+    const uint8_t *data;
+    uint64_t length_bytes;
 };
 
 enum class ProcessIoStatus : uint64_t {
@@ -126,6 +146,7 @@ struct ProcessRuntimeStatistics final {
     ResourceSnapshot resource_snapshot_after_processes;
     ResourceSnapshotDifference resource_snapshot_difference;
     ProcessIpcStatistics ipc;
+    ProcessTreeStatistics process_tree;
     ConsoleInputStatistics console_input;
     KernelObjectManagerStatistics object_manager;
     FileDescriptionManagerStatistics file_descriptions;
@@ -139,6 +160,18 @@ struct ProcessRuntimeStatistics final {
 CreateProcess(UserProgramSelection selection, ProcessCreationResult &creation_result,
               UserElfValidationStatus &elf_validation_status,
               UserAddressSpaceStatus &address_space_status) noexcept;
+[[nodiscard]] ProcessRuntimeStatus CreateInitialProcessFromPath(
+    const uint8_t *path, uint64_t path_length_bytes, const KernelProgramString *arguments,
+    uint64_t argument_count, const KernelProgramString *environment, uint64_t environment_count,
+    ProcessCreationResult &creation_result, UserElfValidationStatus &elf_validation_status,
+    UserAddressSpaceStatus &address_space_status) noexcept;
+[[nodiscard]] ProcessRuntimeStatus SpawnCurrentProcess(const os::abi::ProcessLaunchRequest &request,
+                                                       uint64_t &process_id) noexcept;
+[[nodiscard]] ProcessRuntimeStatus
+ExecCurrentProcess(ExceptionFrame &frame, const os::abi::ProcessLaunchRequest &request) noexcept;
+[[nodiscard]] ProcessWaitStatus
+TryWaitCurrentProcess(uint64_t requested_process_id,
+                      os::abi::ProcessWaitResult &wait_result) noexcept;
 [[nodiscard]] ProcessRuntimeStatus ExecuteProcesses() noexcept;
 [[nodiscard]] ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept;
 [[nodiscard]] bool IsProcessSchedulingActive() noexcept;

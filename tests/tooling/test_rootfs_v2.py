@@ -6,18 +6,27 @@ from tools.os_tools.errors import OsToolError
 from tools.os_tools.rootfs_v2 import (
     OS_ROOTFS_V2_CAPACITY_IMAGE_SIZE_BYTES,
     OS_ROOTFS_V2_CORRUPTION_KINDS,
+    OS_ROOTFS_V2_BLOCK_SIZE_BYTES,
+    OS_ROOTFS_V2_DIRECT_BLOCK_COUNT,
     OS_ROOTFS_V2_MAXIMUM_FILE_SIZE_BYTES,
     OS_ROOTFS_V2_REGION_SIZE_BYTES,
+    RootfsV2InstallFile,
     corruptRootfsV2,
     formatRootfsV2,
+    installRootfsV2Files,
     inspectRootfsV2,
     inspectionAsJson,
+    readRootfsV2File,
 )
 from tools.os_tools.sparse_image import copySparseImage
 
 
 OS_TEST_ROOTFS_MAXIMUM_ALLOCATED_IMAGE_BYTES = 16 * 1024 * 1024
 OS_TEST_ROOTFS_SPARSE_TAIL = b"TAIL"
+OS_TEST_ROOTFS_INSTALL_PATH = "/sbin/init"
+OS_TEST_ROOTFS_INSTALL_SECOND_PATH = "/bin/probe"
+OS_TEST_ROOTFS_INSTALL_PATTERN_MODULUS = 251
+OS_TEST_ROOTFS_INSTALL_INDIRECT_EXTRA_BYTES = 37
 
 
 class RootfsV2ToolTests(unittest.TestCase):
@@ -64,6 +73,68 @@ class RootfsV2ToolTests(unittest.TestCase):
                 inspectRootfsV2(imagePath).reachableInodeCount,
                 1,
             )
+
+    def testInstallsNestedFilesAndReadsIndirectBlocks(self) -> None:
+        with tempfile.TemporaryDirectory() as temporaryDirectory:
+            temporaryPath = Path(temporaryDirectory)
+            imagePath = temporaryPath / "rootfs.img"
+            initPath = temporaryPath / "init.elf"
+            probePath = temporaryPath / "probe.elf"
+            payloadSizeBytes = (
+                OS_ROOTFS_V2_DIRECT_BLOCK_COUNT
+                * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+                + OS_TEST_ROOTFS_INSTALL_INDIRECT_EXTRA_BYTES
+            )
+            initPayload = bytes(
+                byteIndex % OS_TEST_ROOTFS_INSTALL_PATTERN_MODULUS
+                for byteIndex in range(payloadSizeBytes)
+            )
+            probePayload = b"probe"
+            initPath.write_bytes(initPayload)
+            probePath.write_bytes(probePayload)
+            formatRootfsV2(imagePath, createImage=True)
+
+            installRootfsV2Files(
+                imagePath,
+                (
+                    RootfsV2InstallFile(
+                        imagePath=OS_TEST_ROOTFS_INSTALL_PATH,
+                        sourcePath=initPath,
+                    ),
+                    RootfsV2InstallFile(
+                        imagePath=OS_TEST_ROOTFS_INSTALL_SECOND_PATH,
+                        sourcePath=probePath,
+                    ),
+                ),
+            )
+
+            inspection = inspectRootfsV2(imagePath)
+            self.assertEqual(
+                readRootfsV2File(
+                    imagePath,
+                    OS_TEST_ROOTFS_INSTALL_PATH,
+                ),
+                initPayload,
+            )
+            self.assertEqual(
+                readRootfsV2File(
+                    imagePath,
+                    OS_TEST_ROOTFS_INSTALL_SECOND_PATH,
+                ),
+                probePayload,
+            )
+            self.assertEqual(inspection.directoryCount, 3)
+            self.assertEqual(inspection.regularFileCount, 2)
+            with self.assertRaises(OsToolError):
+                installRootfsV2Files(
+                    imagePath,
+                    (
+                        RootfsV2InstallFile(
+                            imagePath=OS_TEST_ROOTFS_INSTALL_PATH,
+                            sourcePath=initPath,
+                        ),
+                    ),
+                )
 
     def testEverySupportedCorruptionIsRejected(self) -> None:
         with tempfile.TemporaryDirectory() as temporaryDirectory:

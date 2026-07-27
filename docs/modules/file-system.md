@@ -312,6 +312,47 @@ mkfs 只创建新格式；inspect 输出版本、布局、事务、容量和使�
 受保护字节。镜像复制保留逻辑长度和非零稀疏 extent，不会把 1 GiB 空洞物化
 为真实宿主存储。
 
+## v1.7 rootfs 可执行文件与按需读取
+
+rootfs v2 从 v1.6 起已经能够保存普通文件，v1.7 首次让这些字节成为正常启动
+所依赖的程序映像。构建图在格式化生产镜像后显式创建 `/sbin` 与 `/bin`，
+并安装：
+
+```text
+/sbin/init
+/bin/sh
+/bin/smoke
+/bin/orphan_parent
+/bin/orphan_child
+/bin/argument_probe
+/bin/exec_probe
+/bin/exec_target
+/bin/fs_probe
+/bin/truncated.elf
+```
+
+最后一项是具名失败夹具；其余文件都经过宿主 ELF64 审计。离线安装命令按
+精确前缀复制源文件，并由 Python rootfs 解析器重新查找 inode、遍历块树和
+逐字节回读。构建依赖任何一个用户 ELF；程序变化会重新安装 rootfs、重组
+启动盘并触发 QEMU，而不会让旧 ELF 留在磁盘。
+
+Kernel 不把整份 ELF 先复制到固定大缓冲。VFS-backed `UserElfReader`
+以 `(offset, length)` 从当前 `OpenFile` 读取，reader 形式的两遍 ELF
+解析器先验证头、程序头、范围、重叠、W^X 与入口，再创建映射并逐段读取。
+短读、设备错误和文件在读取期间不满足精确长度都返回 executable read
+failure；语义错误单独返回 invalid executable，便于区分介质/I/O 故障和
+不可信文件格式。
+
+初始 `/sbin/init` 使用内核临时根 `FsContext` 解析；调度开始后的 spawn/exec
+使用当前 Process 的 `FsContext`，所以相对路径遵守调用者 cwd 和 root。
+reader 生命周期结束后一定关闭 OpenFile，不能把 loader 的临时打开引用泄漏
+到新 Process。新 Process 自身取得独立 FsContext；spawn 不是 fork，不复制
+父进程打开文件。
+
+这一阶段没有增加磁盘格式、inode 或单文件上限：启动盘仍为逻辑 1 GiB，
+rootfs 仍为 256 MiB，单文件仍最多 64 MiB。变化发生在“谁消费普通文件”与
+构建依赖链，而不是引入 executable 专用 inode 类型。
+
 ## 当前限制
 
 - rootfs v2 没有 journal、replay、在线修复或自动格式化，只检测并拒绝；

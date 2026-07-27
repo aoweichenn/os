@@ -1,3 +1,5 @@
+from pathlib import Path
+import re
 import struct
 import unittest
 
@@ -32,6 +34,13 @@ OS_TEST_USER_ELF_IDENTIFICATION_SIZE_BYTES = 16
 OS_TEST_USER_ELF_ENTRY_ADDRESS = 0x4000_0000
 OS_TEST_USER_ELF_PAYLOAD_SIZE_BYTES = 1
 OS_TEST_USER_ELF_PROGRAM_HEADER_COUNT = 1
+OS_TEST_USER_ELF_KERNEL_HEADER_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "source/kernel/include/os/kernel/user/user_elf.hpp"
+)
+OS_TEST_USER_ELF_KERNEL_MAPPED_PAGE_LIMIT_PATTERN = re.compile(
+    r"OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT\s*=\s*(\d+)ULL;"
+)
 
 
 def createValidUserElf(
@@ -94,6 +103,23 @@ def createValidUserElf(
 
 
 class UserElfToolTests(unittest.TestCase):
+    def testMappedPageLimitMatchesKernelContract(self) -> None:
+        kernelHeader = OS_TEST_USER_ELF_KERNEL_HEADER_PATH.read_text(
+            encoding="utf-8"
+        )
+        mappedPageLimitMatch = (
+            OS_TEST_USER_ELF_KERNEL_MAPPED_PAGE_LIMIT_PATTERN.search(
+                kernelHeader
+            )
+        )
+
+        self.assertIsNotNone(mappedPageLimitMatch)
+        assert mappedPageLimitMatch is not None
+        self.assertEqual(
+            int(mappedPageLimitMatch.group(1)),
+            OS_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT,
+        )
+
     def testAcceptsValidUserElf(self) -> None:
         entryAddress, loadSegments = parseUserLoadSegments(
             createValidUserElf()

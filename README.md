@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.6 rootfs v2 与完整命名空间` 已完整完成，
-下一阶段是 v1.7 PID1、进程树与磁盘 exec/wait。v1.1 已落地动态物理内存、
+当前状态：第二周期 `v1.7 PID1、进程树与磁盘 exec/wait` 已完整完成，
+下一阶段是 v1.8 匿名 VMA、用户栈增长与自研用户 heap。v1.1 已落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
 128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
@@ -33,8 +33,9 @@ QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo
 内核共享根释放低两级但保留可能被进程 PML4 引用的 PDPT，映射途中分配失败
 则恢复父项和 U/S 位并逆序释放新表。两段 QEMU 自检合计回收两张 PT 和两张
 PD，只稳定保留一张共享 PDPT。在此基础上，内核严格
-验证并装入自研 `ET_EXEC` 用户 ELF64。内核为四个进程分别建立 PML4、
-同址用户代码/数据和四页用户栈；每个 16 KiB Ring 0 栈现从 KVA 取得六页
+验证并装入自研 `ET_EXEC` 用户 ELF64。正常启动由 Kernel 从 rootfs 读取
+`/sbin/init`，再由 PID1 建立八进程验收树；每个地址空间拥有独立 PML4、
+同址用户代码/数据和 64 页用户栈。每个 16 KiB Ring 0 栈从 KVA 取得六页
 所有权，从 buddy 取得四个独立物理页，并在上下各保留一页 not-present
 guard。8254 PIT
 每四个 tick 触发一次单核 round-robin 决策，切换 CR3、TSS.RSP0、176 字节
@@ -80,7 +81,7 @@ v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符�
 位置、run queue/WaitQueue 关系以及 x87/SSE2 现场。统一 WaitQueue 对
 condition、timeout、signal、close、cancel 使用单赢家 WakeReason；SpinLock、
 IrqSaveSpinLock 和可睡眠 Mutex 的调用边界由测试冻结。运行时规格随同一镜像
-按 RAM 选择：64 MiB 为 4/4/1，256 MiB 为 64 Process/128 Thread/单进程
+按 RAM 选择：v1.7 的 64 MiB 兼容档为 8/8/1，256 MiB 为 64 Process/128 Thread/单进程
 32 Thread，64 GiB 为 256/512/64；启动容量自检建立真实页表根、动态栈和
 FXSAVE 区，再退出、reap 并用 ResourceSnapshot 验证零差异。四个 Ring 3
 程序分别写入不同 XMM0、XMM15、MXCSR、x87 控制字和 ST0 模式，在抢占、
@@ -135,8 +136,19 @@ CRC32 和八个直接块加单/双/三级间接树；单文件规格为 64 MiB�
 详细证据见 [v1.6 发布记录](docs/releases/v1.6.md) 与
 [ADR 0033](docs/adr/0033-rootfs-v2-namespace-mutations.md)。
 
-下一阶段 PID1/磁盘 exec 继续分版本完成；匿名 VMA、文件页缓存、
-fork/COW 与 Unix I/O
+v1.7 已把普通用户程序离线安装到 rootfs，正常 Kernel 不再内嵌 Shell、
+worker、producer 或 consumer。Kernel 只从 `/sbin/init` 建立 PID1，随后
+由 PID1 通过系统调用 36..38 执行磁盘 ELF spawn/exec/wait。独立进程树
+保存父子、Alive/Zombie、退出结果和 reparent；PID1 回收六个直接子进程与
+一个被收养孤儿。ELF 采用 reader 驱动的两遍校验/加载，exec 在候选页表、
+256 KiB 用户栈和 `argc/argv/envp` 完整后才提交，失败保持旧映像。参数和
+环境合计精确支持 128 KiB，并以 256 字节缓冲分批搬运，不增加 16 KiB
+KernelStack。64 MiB QEMU 兼容档也完整运行八进程树，最终 ProcessTree、
+Thread、页表、KVA、fd、VFS context 和对象统计全部守恒。详细证据见
+[v1.7 发布记录](docs/releases/v1.7.md) 与
+[ADR 0034](docs/adr/0034-pid1-process-tree-disk-exec-wait.md)。
+
+下一阶段匿名 VMA、文件页缓存、fork/COW 与 Unix I/O
 也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
@@ -398,9 +410,10 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.6 第二周期实现的路线见
+对照当前 v1.1–v1.7 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
-十四个第一周期阶段、v1.6 rootfs 深入章和一份 v1.1–v1.6 迁移地图；ROM、CPU、RAM、端口 I/O、
+十四个第一周期阶段、v1.6 rootfs 与 v1.7 进程深入章，以及一份 v1.1–v1.7
+迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
 现实 N100 计算模组载板的十页原理图、三张逐引脚学习电路和 QEMU/实机边界见
@@ -412,8 +425,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.6 统计为 144 个目标代码文件、36135 个物理行、33131 个非空非纯
-注释代码行，其中 C++ 30698 行、NASM Intel 汇编 2433 行；测试、工具、书籍、
+当前 v1.7 统计为 155 个目标代码文件、38748 个物理行、35567 个非空非纯
+注释代码行，其中 C++ 33129 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

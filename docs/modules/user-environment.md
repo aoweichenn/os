@@ -64,24 +64,25 @@ Ring 3 地址。
 C++ System V AMD64 调用 `OsUserInvokeSystemCall(number, arg0..arg3)` 时，第
 五个函数参数位于 R8。NASM 桩把 number 从 RDI 移到 RAX，把 arg0..arg2
 依次移到 RDI、RSI、RDX，并把 arg3 从 R8 移到 R10。当前目录读取包装把
-64 字节结构大小作为第三个系统调用参数传给内核；R10 为以后扩展保留稳定
-位置。
+280 字节结构大小作为第三个系统调用参数传给内核；rename/stat 已实际使用
+R10 传递第四个参数。
 
 ## 目录 ABI
 
-`DirectoryEntry` 精确为 64 字节：
+`DirectoryEntry` 精确为 280 字节：
 
 | 偏移 | 长度 | 字段 |
 | ---: | ---: | --- |
 | 0 | 8 | inode_number |
 | 8 | 8 | DirectoryEntryType |
 | 16 | 8 | name_length_bytes |
-| 24 | 40 | name |
+| 24 | 255 | name |
+| 279 | 1 | reserved，必须为零 |
 
 OpenDirectory 只接受现存目录。ReadDirectory 每次按句柄偏移读取一个磁盘目录
 项并转换为 ABI 类型；结果 1 表示有效项，0 表示末尾。名称不是 C 字符串，
 Shell 必须使用显式长度输出。CloseDescriptor 同时关闭底层
-FileSystemHandle。
+VFS OpenFile。
 
 ## 控制台输入与空闲唤醒
 
@@ -106,26 +107,33 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
    不保存悬空指针，也不分配内存。
 5. `ResolveShellCommand()` 返回强类型命令；未知文本只产生一次拒绝标记并回到
    prompt。
-6. help/echo/pwd 只访问标准输出；mkdir/write/cat/ls/sync 通过公开文件 ABI；
-   exit 返回零，由普通进程退出路径统一关闭资源。
+6. help/echo/pwd 只访问标准输出；cd/ls/mkdir/write/cat/rm/rmdir/mv/truncate/
+   stat/sync 通过公开 VFS ABI；exit 返回零，由普通进程退出路径统一关闭资源。
 
 ## 命令与当前范围
 
 | 命令 | 语义 |
 | --- | --- |
-| `help` | 显示九条命令及参数 |
+| `help` | 显示十五条命令及参数 |
 | `echo [text...]` | 以空格连接参数并换行 |
-| `pwd` | 输出当前固定 cwd `/` |
+| `pwd` | 通过 getcwd 输出当前 Process 的 cwd |
+| `cd <path>` | 修改当前 Shell Process 的 cwd |
 | `ls [path]` | 用目录句柄列出名称，目录追加 `/` |
-| `mkdir <path>` | 创建绝对目录，已存在时明确提示 |
+| `mkdir <path>` | 创建目录，已存在时明确提示 |
 | `write <path> <text...>` | 创建或截断文件并写入最多 256 字节 |
 | `cat <path>` | 循环读取文件到 EOF |
+| `rm <path>` | 删除未打开的普通文件 |
+| `rmdir <path>` | 删除未打开的空目录 |
+| `mv <src> <dst>` | 同一 Superblock 内移动或替换路径 |
+| `truncate <path> <n>` | 设置文件逻辑长度 |
+| `stat <path>` | 显示 inode、generation、长度与分配空间 |
 | `sync` | 刷新文件系统事务与 ATA 缓存 |
 | `exit` | 正常退出 Shell |
 
-本阶段没有 fork/exec，所以 Shell 直接实现内建命令；这不是最终 POSIX Shell
-模型。加入子进程前，命令仍然是用户态代码而不是内核文本解释器，后续可以逐条
-迁移为独立程序。
+v1.7 已有磁盘 `spawn/exec/wait`，但 Shell 的十五条命令仍全部是内建命令。
+这是刻意保留的阶段边界：本阶段先验证 PID1、程序映像与父子生命周期，下一
+阶段再把命令查找、外部程序、管道连接与前后台作业引入 Shell。命令始终位于
+用户态；“内建”不等于由 Kernel 解释文本。
 
 ## 失败语义
 
@@ -134,8 +142,18 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 - 对 stdin 写、对 stdout 读、关闭标准 fd：`DESCRIPTOR_PERMISSION_DENIED`；
 - 单次描述符传输超过 256 字节：`DESCRIPTOR_TRANSFER_TOO_LARGE`；
 - 控制台空或管道暂不可推进：`WOULD_BLOCK`；
-- 目录结构大小不是 64 字节：`INVALID_ARGUMENT`；
+- 目录结构大小不是 280 字节：`INVALID_ARGUMENT`；
 - 文件系统错误继续映射为 v0.11 的稳定错误值。
+
+进程接口另外保证：
+
+- `ProcessLaunchRequest` 或 `ProcessWaitResult` 大小不匹配：
+  `INVALID_ARGUMENT`；
+- 可执行文件不存在、截断或违反 ELF/W^X：对应 file error 或
+  `INVALID_EXECUTABLE`；
+- argv/envp 超过 256 项或 128 KiB：`ARGUMENT_LIST_TOO_LARGE`；
+- wait 没有匹配的直接子进程：`NO_CHILD_PROCESS`；
+- wait 的匹配子进程仍 Alive：内部阻塞并在唤醒后由用户包装重试。
 
 ## 可观测性
 
@@ -147,5 +165,6 @@ Shell 只为 READY、成功识别的命令、未知命令拒绝和 EXIT 输出�
 - 描述符路径下的 pipe 与 file read/write；
 - block、wakeup、dispatch、preemption 和系统调用次数。
 
-正常 QEMU 验收要求输入提交数等于读取数、丢弃与残留都为零。宿主捕获器仍为
-每一串口行添加 `[QEMU][T+......ms]`，但这只是宿主单调到达时间。
+正常 QEMU 验收要求输入提交数等于读取数、丢弃与残留都为零；Shell 退出后由
+PID1 执行 wait 并确认没有 Zombie。宿主捕获器仍为每一串口行添加
+`[QEMU][T+......ms]`，但这只是宿主单调到达时间。
