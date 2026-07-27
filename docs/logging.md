@@ -954,3 +954,41 @@ capacity 与 active 是精确协议；peak/acquire/release 必须非零，并由
 
 正常运行禁止任何 `[OS][KERNEL][FATAL]`。这些诊断曾定位到“地址空间已销毁、
 结果槽仍存活”的 Zombie 失效扫描错误；修复后不会进入成功日志。
+
+## v1.10 fork/COW 日志
+
+fork/COW 的 page fault、单页复制和引用增减属于热路径，不逐事件输出。用户
+探针只在一个完整语义提交后打印：
+
+```text
+[OS][USER][FORK] COW_ISOLATION_VERIFIED
+[OS][USER][FORK] FD_OFFSET_AND_CWD_VERIFIED
+[OS][USER][FORK] FORK_EXEC_WAIT_32_VERIFIED
+[OS][USER][FORK] COMPLETED
+[OS][USER][INIT] FORK_PROBE_REAPED
+```
+
+child/parent 验证失败使用 `CHILD_STATE_FAILURE`、
+`CHILD_STATISTICS_FAILURE`、`CHILD_DESCRIPTOR_FAILURE` 或
+`PARENT_STATE_FAILURE`。Kernel fork 事务失败时打印一次
+`FORK_FAILURE_STAGE` 与 `FORK_FAILURE_STATUS`；正常 QEMU 禁止这些标记。
+
+全部 Process 回收后，Kernel 冷路径打印稀疏页引用摘要：
+
+```text
+[OS][KERNEL] USER_PAGE_REFERENCE_ACTIVE_ENTRIES=0x...
+[OS][KERNEL] USER_PAGE_REFERENCE_ACTIVE_REFERENCES=0x...
+[OS][KERNEL] USER_PAGE_REFERENCE_PEAK_ENTRIES=0x...
+[OS][KERNEL] USER_PAGE_REFERENCE_FIRST_SHARES=0x...
+[OS][KERNEL] USER_PAGE_REFERENCE_RETAINS=0x...
+[OS][KERNEL] USER_PAGE_REFERENCE_RELEASES=0x...
+[OS][KERNEL] USER_PAGE_REFERENCE_EXCLUSIVE_RESTORES=0x...
+```
+
+active 两项必须精确为零；peak、first share 和 release 必须非零。retain
+可以为零，因为当前探针主要创建两方共享，第一次共享直接把隐含 1 变为 2；
+以后形成三方以上共享时才必然增长。
+
+时间策略不变：来宾使用 PIT 单调毫秒，宿主捕获器为每行附加
+`[QEMU][T+...ms]`。日志只描述已提交状态，不在页表锁、引用锁或回滚中间
+打印，避免串口吞吐改变 fault 与调度顺序。

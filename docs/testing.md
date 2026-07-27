@@ -27,10 +27,10 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.9 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.10 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.9 的正常启动链会累计注册 PID 1 和十个后续 Process，峰值并发仍为
-八个，v1.2 的独立
+实现；v1.10 的正常启动链会累计注册 45 个 Process，连续 fork/exec/wait
+仍保持峰值并发不超过八个，v1.2 的独立
 容量测试继续覆盖完整 Process/Thread 上限。fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
 
@@ -866,3 +866,36 @@ exception 和 invalid user result 全部列为禁止标记。
 启动布局另有跨语言契约测试，要求 NASM staging、C++ BootInfo、Python Kernel
 image 和 rootfs LBA 一致。完整阶段在 64 MiB、256 MiB、64 GiB 运行同一
 PID1 workload；64 GiB 还要求 512 个内核栈与 2048 个映射页容量事务回收。
+
+## v1.10 fork 与 COW 测试
+
+v1.10 新增三个顶层 CTest，构建图共 140 项：
+
+- `UserPageReferenceManager` 单元测试覆盖首次共享、后续 retain、release、
+  最后 frame 释放、独占恢复、容量、对齐与非法状态；
+- 页表生命周期集成测试建立父子两张页表，验证同 frame COW 映射、软件位
+  编解码、`ReplacePage`、一方私有化与另一方恢复；
+- 100000 步固定种子引用模型随机执行 fork、退出、再次 fork 与独占恢复，
+  每步比较所有 frame 的引用数和全局统计，最后排空。
+
+既有测试同步扩展：
+
+- FileTable 单元测试要求 clone 保留精确 fd 编号、fd flags 与共享
+  FileDescription；
+- VFS 单元测试要求 FsContext 初值相同、后续 cwd 修改独立；
+- FileBacking 单元测试要求 clone 后释放 parent 不破坏 child；
+- QEMU runner 增加 fork 成功标记、具名失败禁令、33 次 exec 提交、
+  45 个 Process/KernelStack 生命周期和 44 次 wait；
+- 用户页引用结束摘要要求 active entry/reference 精确为零，peak、first
+  share 和 release 非零。
+
+Ring 3 `/bin/fork_probe` 同时覆盖四种不能由纯宿主模型证明的事实：
+
+1. CPL3 写 read-only COW PTE 真实进入 vector 14 并重试成功；
+2. Kernel 把 200 字节 VM 统计写进 COW 页不会修改 parent sentinel；
+3. anonymous、writable private file 和真正 readonly file 不混淆；
+4. cwd、共享 fd offset 与连续 32 次 fork/exec/wait 语义闭合。
+
+64 MiB bootstrap、256 MiB functional 与 64 GiB capacity 继续运行同一
+用户语义。每个来宾阶段有内部 deadline，CTest 还有外层 timeout；任何
+fork 循环停滞都会被有界终止，不留下后台 QEMU。

@@ -65,6 +65,7 @@ class FileTable final {
     // 表只保存强引用句柄；成功安装会把传入引用的所有权转移给表。
     [[nodiscard]] FileTableStatus Initialize(KernelHeap &heap, KernelObjectManager &object_manager,
                                              uint64_t soft_limit, uint64_t hard_limit) noexcept;
+    [[nodiscard]] FileTableStatus CloneFrom(FileTable &source) noexcept;
     [[nodiscard]] FileTableStatus Install(KernelObjectReference &reference,
                                           uint64_t minimum_descriptor, uint64_t descriptor_flags,
                                           uint64_t &descriptor) noexcept;

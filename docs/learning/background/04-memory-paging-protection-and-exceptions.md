@@ -161,7 +161,7 @@ metadata size ∝ maximum managed PFN
 
 不能为了管理 64 GiB，把 metadata 固定塞进一个只按 64 MiB 计算的数组。
 
-当前 v1.9 主线使用每 frame 2 bit，按实际最高 usable PFN 计算 metadata，
+当前 v1.10 主线使用每 frame 2 bit，按实际最高 usable PFN 计算 metadata，
 再从启动可达 RAM 中动态放置。v1.0 精确基线则只管理低 64 MiB；两者在
 [v0.6 文档](../07-v0.6-memory-management.md) 中分开讲解。
 
@@ -620,10 +620,11 @@ v1.0 基线没有：
 - PCID。
 - SMP TLB shootdown。
 
-当前 v1.9 已有动态物理内存、高半 direct-map、buddy、KVA、动态双 guard
+当前 v1.10 已有动态物理内存、高半 direct-map、buddy、KVA、动态双 guard
 内核栈、按根所有权回收页表空分支，以及匿名/ProgramBreak/UserStack VMA、
-匿名按需零页、`mmap/munmap/brk` 和受控栈增长。它仍没有 file-backed VMA、
-swap、共享映射、COW、PCID 或 SMP TLB shootdown。可回收“已经明确拥有的
+匿名按需零页、`mmap/munmap/brk`、受控栈增长、file-backed VMA、clean
+cache 和 private COW。它仍没有 swap、writable shared mapping、PCID 或
+SMP TLB shootdown。可回收“已经明确拥有的
 映射对象”、按缺页创建匿名页和按文件身份共享缓存页仍是三个不同阶段。
 
 ## 35. 常见误解

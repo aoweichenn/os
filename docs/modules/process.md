@@ -182,3 +182,32 @@ Kernel preemption 或同一 Process 多 Thread exec 前必须改变其所有权�
 [v1.8 学习章](../learning/16-v1.8-anonymous-vma-demand-paging.md)。设计取舍见
 [ADR 0034](../adr/0034-pid1-process-tree-disk-exec-wait.md) 与
 [ADR 0035](../adr/0035-anonymous-vma-demand-paging-user-heap.md)。
+
+## v1.10 fork 事务
+
+`ForkCurrentProcess` 把 Process 共享资源与调用 Thread 现场组合成一个候选
+child。子现场复制通用寄存器和 FXSAVE，并把返回寄存器改为 0；父现场只在
+成功发布后获得子 PID。其他 Thread 不进入 child。
+
+资源顺序为：
+
+```text
+Process/Thread slot
+  → AddressSpace + VMA/FileBacking/cache refs
+  → FileTable exact clone
+  → FsContext clone
+  → KernelStack + FXSAVE/UserContext
+  → parent COW commit
+  → ProcessTree/run queue publish
+```
+
+父 PTE 只在候选 child 已完整以后修改。提交失败先销毁 child，让共享 frame
+引用回落，再恢复 parent writable PTE 和独占元数据；随后逆序释放其余对象。
+成功 child 可立即 exec，exec 仍通过既有候选映像原子替换路径，COW 页由旧
+地址空间销毁过程释放。
+
+FileTable clone 保留精确 fd 与 fd flags，但表项强引用同一个
+FileDescription，所以 offset 共享。FsContext 初值相同、后续修改独立。
+详细控制流见
+[v1.10 学习章](../learning/18-v1.10-fork-copy-on-write.md) 和
+[ADR 0037](../adr/0037-fork-copy-on-write.md)。

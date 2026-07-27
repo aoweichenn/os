@@ -22,6 +22,8 @@ constexpr std::string_view OS_TEST_FILE_TABLE_REUSE =
 constexpr std::string_view OS_TEST_FILE_TABLE_LIMIT = "软限额必须只限制新安装并保持失败原子性";
 constexpr std::string_view OS_TEST_FILE_TABLE_CLOSE_ON_EXEC =
     "执行时关闭只能回收设置了 close-on-exec 的描述符";
+constexpr std::string_view OS_TEST_FILE_TABLE_CLONE =
+    "fork 克隆必须保留描述符编号和标志并共享同一文件描述对象";
 constexpr std::string_view OS_TEST_FILE_TABLE_DRAIN =
     "销毁文件表必须释放全部分块、描述符和内核对象";
 
@@ -220,6 +222,39 @@ int main() {
             os::kernel::FileTableStatus::Succeeded &&
         limited_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
     test_context.Expect(limit_atomic, OS_TEST_FILE_TABLE_LIMIT);
+
+    os::kernel::FileTable child_table{};
+    os::kernel::KernelObjectReference child_reference{};
+    os::kernel::KernelObjectIdentity child_identity{};
+    uint64_t child_flags = OS_TEST_FILE_TABLE_EMPTY_VALUE;
+    const bool cloned =
+        child_table.CloneFrom(table) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        child_table.Lookup(duplicate_descriptor,
+                           child_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        child_reference.ReadIdentity(child_identity) ==
+            os::kernel::KernelObjectStatus::Succeeded &&
+        child_identity.type == duplicate_identity.type &&
+        child_identity.variant == duplicate_identity.variant &&
+        child_identity.generation ==
+            duplicate_identity.generation &&
+        child_table.GetDescriptorFlags(
+            duplicate_descriptor, child_flags) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        child_flags ==
+            os::kernel::
+                OS_KERNEL_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG &&
+        child_reference.Reset() ==
+            os::kernel::KernelObjectStatus::Succeeded &&
+        child_table.Destroy() ==
+            os::kernel::FileTableStatus::Succeeded &&
+        table.Lookup(duplicate_descriptor,
+                     duplicate_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        duplicate_reference.Reset() ==
+            os::kernel::KernelObjectStatus::Succeeded;
+    test_context.Expect(cloned, OS_TEST_FILE_TABLE_CLONE);
 
     uint64_t closed_descriptor_count = OS_TEST_FILE_TABLE_EMPTY_VALUE;
     const bool closed_on_exec =

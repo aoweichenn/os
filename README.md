@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.9 文件页故障、按需 ELF 与有界 clean page cache`
-已完整完成，下一阶段是 v1.10 fork 与写时复制。v1.1 已
+当前状态：第二周期 `v1.10 fork 与写时复制`
+已完整完成，下一阶段是 v1.11 Unix I/O、外部 Shell 与核心工具。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -178,8 +178,19 @@ shared 与 `msync` 明确不支持。write/truncate 会撤销相关只读映射�
 [v1.9 发布记录](docs/releases/v1.9.md) 与
 [ADR 0036](docs/adr/0036-file-backed-vma-lazy-elf-clean-page-cache.md)。
 
-下一阶段 fork/COW 与 Unix I/O
-也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
+v1.10 新增系统调用 44 `ForkProcess`。fork 只复制调用 Thread 的用户现场，
+子进程从返回值 0 继续执行；父子继承 VMA、FsContext 和精确 fd 编号/标志，
+共享的 FileDescription 因而继续共享文件偏移。匿名页与可写 private 文件页
+在父子 PTE 中同时降为只读并标记软件 COW 位；真实用户写页故障与
+`CopyToUser` 进入同一私有化路径。引用数为 1 时只恢复原页可写，为 2 以上
+时分配、复制并替换单页。fork 采用候选子地址空间和父 PTE 提交两阶段事务，
+任意失败都会逆序销毁子对象并恢复父页权限。Ring 3 已验证匿名页、文件 private
+页、只读页、内核复制、cwd、共享 fd 偏移以及连续 32 次
+fork/exec/wait 完整回收。详细证据见
+[v1.10 发布记录](docs/releases/v1.10.md) 与
+[ADR 0037](docs/adr/0037-fork-copy-on-write.md)。
+
+后续 Unix I/O 会单独验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
@@ -440,10 +451,10 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.9 第二周期实现的路线见
+对照当前 v1.1–v1.10 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
-文件页缓存深入章，以及一份 v1.1–v1.9
+文件页缓存、v1.10 fork/COW 深入章，以及一份 v1.1–v1.10
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -456,8 +467,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.9 统计为 167 个目标代码文件、44228 个物理行、40712 个非空非纯
-注释代码行，其中 C++ 38274 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
+当前 v1.10 统计为 170 个目标代码文件、46275 个物理行、42684 个非空非纯
+注释代码行，其中 C++ 40246 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

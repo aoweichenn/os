@@ -50,6 +50,7 @@ enum class SystemCallNumber : uint64_t {
     SetProgramBreak = 41ULL,
     GetVirtualMemoryStatistics = 42ULL,
     MapFileMemory = 43ULL,
+    ForkProcess = 44ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;

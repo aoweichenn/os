@@ -55,6 +55,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     ArgumentListTooLarge,
     ExecutableReadFailure,
     ProcessLimitExceeded,
+    ForkFailure,
 };
 
 enum class ProcessWaitStatus : uint64_t {
@@ -144,6 +145,8 @@ struct ProcessRuntimeStatistics final {
     KernelStackManagerStatistics kernel_stacks_after_processes;
     VirtualMemoryAreaPoolStatistics virtual_memory_areas_before_processes;
     VirtualMemoryAreaPoolStatistics virtual_memory_areas_after_processes;
+    UserPageReferenceStatistics user_page_references_before_processes;
+    UserPageReferenceStatistics user_page_references_after_processes;
     ResourceSnapshot resource_snapshot_before_processes;
     ResourceSnapshot resource_snapshot_after_processes;
     ResourceSnapshotDifference resource_snapshot_difference;
@@ -169,6 +172,8 @@ CreateProcess(UserProgramSelection selection, ProcessCreationResult &creation_re
     UserAddressSpaceStatus &address_space_status) noexcept;
 [[nodiscard]] ProcessRuntimeStatus SpawnCurrentProcess(const os::abi::ProcessLaunchRequest &request,
                                                        uint64_t &process_id) noexcept;
+[[nodiscard]] ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
+                                                      uint64_t &process_id) noexcept;
 [[nodiscard]] ProcessRuntimeStatus
 ExecCurrentProcess(ExceptionFrame &frame, const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] ProcessWaitStatus

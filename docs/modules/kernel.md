@@ -3,7 +3,7 @@
 ## 职责
 
 `kernel` 是 Stage 1 最终交接的 freestanding C++20 ELF64 可执行文件。当前
-v1.9 在真实交接之上建立处理器、内存、中断、设备、文件系统与进程基础：
+v1.10 在真实交接之上建立处理器、内存、中断、设备、文件系统与进程基础：
 
 - 由 Clang 以 `x86_64-unknown-none-elf` 目标编译。
 - 由 LLD 的 `elf_x86_64` 模式直接链接，不经过 ARM64 宿主 GCC。
@@ -942,7 +942,8 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
 - Ring 0 页故障仍全部 panic；Ring 3 的合法匿名、program-break 与连续栈
   not-present fault 已按需解析，guard、权限与越界只终止当前用户执行。
-  file-backed fault、按需 ELF、page cache 与写时复制尚未实现。
+  file-backed fault、按需 ELF、page cache 与写时复制已经实现；shared
+  anonymous、huge-page COW、swap 与多核 shootdown 尚未实现。
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
   PID1、父子关系、Zombie/reap、spawn/exec/wait、WaitQueue 和完整
   x87/SSE2 现场，但用户 ABI 尚未开放 CreateThread、ThreadExit、fork、
@@ -951,8 +952,24 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
   当前对象引用在管理器锁内串行提交，尚未提供 weak reference、循环回收、
   SMP 原子引用或 RCU 延迟销毁。
 - FileTable 已动态分块并支持 4096 hard limit，但仍使用有序单链；百万 fd
-  位图/基数树、fork 共享和多 Thread exec 留给后续阶段。
+  位图/基数树和多 Thread exec 留给后续阶段；v1.10 已完成 fork 精确 clone
+  与共享 FileDescription offset。
 - VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs、legacy 回归后端与
   生产 rootfs v2；unlink/rmdir/rename/truncate/stat、稀疏文件和三级间接树
   已完成。mount 拓扑仍仅在启动期建立；动态 unmount、dentry cache、
   orphan inode、权限和 journal 留给以后阶段。
+
+## v1.10 COW 内核边界
+
+用户 private 页由 `memory/user_page_reference.*` 保存稀疏共享引用，
+`memory/page_table.*` 编码软件 COW 位并替换 leaf，`user/user_memory.*`
+联合 VMA、PTE 和引用状态执行 clone/private break/回滚。页故障入口仍只负责
+解析 x86 error code 和当前 Thread 归属，不保存 COW 业务状态。
+
+用户写 `#PF` 与 Kernel `CopyToUser` 共用同一 private break。引用为 1 时
+原地恢复 writable；引用大于 1 时复制 4096 字节并替换当前 leaf。当前仍是
+单 BSP，只执行本地 `INVLPG`；多核 TLB shootdown 不在 v1.10 范围。
+
+结束时 Kernel 打印用户页引用 peak/retain/release 摘要，并要求 active entry
+与 active reference 都为零。设计与失败事务见
+[ADR 0037](../adr/0037-fork-copy-on-write.md)。

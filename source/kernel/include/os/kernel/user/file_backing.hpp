@@ -59,6 +59,10 @@ class UserFileBackingManager final {
                    const fs::OpenFile &open_file, uint64_t &descriptor_index,
                    uint64_t &generation) noexcept;
     [[nodiscard]] UserFileBackingStatus
+    Clone(uint64_t owner_identifier, uint64_t source_descriptor_index,
+          uint64_t source_generation, uint64_t &descriptor_index,
+          uint64_t &generation) noexcept;
+    [[nodiscard]] UserFileBackingStatus
     Release(uint64_t owner_identifier, uint64_t descriptor_index,
             uint64_t generation) noexcept;
     [[nodiscard]] UserFileBackingStatus

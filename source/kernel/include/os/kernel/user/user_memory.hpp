@@ -4,6 +4,7 @@
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/memory/file_page_cache.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
+#include "os/kernel/memory/user_page_reference.hpp"
 #include "os/kernel/memory/virtual_memory_area.hpp"
 #include "os/kernel/user/user_elf.hpp"
 
@@ -25,6 +26,7 @@ inline constexpr uint64_t OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY = 8192ULL;
 inline constexpr uint64_t OS_KERNEL_USER_VMA_PER_PROCESS_HARD_LIMIT = 4096ULL;
 inline constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_CAPACITY = 1024ULL;
 inline constexpr uint64_t OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY = 4096ULL;
+inline constexpr uint64_t OS_KERNEL_USER_PAGE_REFERENCE_CAPACITY = 32768ULL;
 
 struct UserAddressSpace final {
     uint64_t root_physical_address;
@@ -44,6 +46,11 @@ struct UserAddressSpace final {
     uint64_t page_cache_hit_count;
     uint64_t private_file_resident_page_count;
     uint64_t shared_file_resident_page_count;
+    uint64_t copy_on_write_page_count;
+    uint64_t copy_on_write_fault_count;
+    uint64_t copy_on_write_copy_count;
+    uint64_t copy_on_write_exclusive_restore_count;
+    uint64_t fork_clone_count;
     VirtualMemoryMap virtual_memory_map;
 };
 
@@ -59,6 +66,8 @@ enum class UserAddressSpaceStatus : uint64_t {
     VirtualMemoryAreaFailure,
     ProgramBreakCollision,
     StackPreparationFailed,
+    ForkReferenceExhausted,
+    ForkBackingFailure,
     RollbackFailed,
 };
 
@@ -77,6 +86,7 @@ enum class UserVirtualMemoryStatus : uint64_t {
     PageReleaseFailed,
     FileReadFailed,
     PageCacheExhausted,
+    CopyOnWriteFailure,
     Corrupt,
 };
 
@@ -93,6 +103,7 @@ enum class UserPageFaultStatus : uint64_t {
     PageMappingFailed,
     FileReadFailed,
     PageCacheExhausted,
+    CopyOnWriteFailure,
     Corrupt,
 };
 
@@ -112,6 +123,7 @@ enum class UserMemoryCopyStatus : uint64_t {
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
 [[nodiscard]] VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept;
 [[nodiscard]] FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept;
+[[nodiscard]] UserPageReferenceStatistics GetUserPageReferenceStatistics() noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
                      UserAddressSpace &address_space,
@@ -120,6 +132,12 @@ LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
 LoadUserAddressSpace(fs::Vfs &vfs, const fs::OpenFile &open_file,
                      UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept;
+[[nodiscard]] UserAddressSpaceStatus
+CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
+                             UserAddressSpace &child_address_space) noexcept;
+[[nodiscard]] UserAddressSpaceStatus
+RestoreUserAddressSpaceAfterFailedFork(
+    UserAddressSpace &parent_address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus PrepareUserStack(UserAddressSpace &address_space,

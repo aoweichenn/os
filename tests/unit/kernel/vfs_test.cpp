@@ -18,6 +18,8 @@ constexpr std::string_view OS_TEST_VFS_FILE_IO =
     "打开状态必须维护独立偏移并通过 VFS 完成读写和目录枚举";
 constexpr std::string_view OS_TEST_VFS_RETAINED_FILE =
     "保留的文件引用必须独立于原句柄，并支持不改变偏移的定位读取";
+constexpr std::string_view OS_TEST_VFS_CONTEXT_CLONE =
+    "fork 文件系统上下文必须继承根与工作目录且后续切换互不影响";
 constexpr std::string_view OS_TEST_VFS_CYCLE_AND_CAPACITY =
     "挂载环与挂载表溢出必须返回独立错误而不能静默截断";
 constexpr std::string_view OS_TEST_VFS_VALIDATION =
@@ -156,6 +158,43 @@ int main() {
         resolved_path.mount_identifier == context.root.mount_identifier &&
         resolved_path.vnode.identifier == context.root.vnode.identifier;
     test_context.Expect(working_directory_valid, OS_TEST_VFS_PATH_SEMANTICS);
+
+    os::kernel::fs::FsContext cloned_context{};
+    uint8_t cloned_working_directory
+        [os::kernel::fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
+    uint64_t cloned_working_directory_length_bytes =
+        OS_TEST_VFS_EMPTY_VALUE;
+    const bool context_clone_valid =
+        working_directory_valid &&
+        vfs.CloneContext(context, cloned_context) ==
+            os::kernel::fs::Status::Succeeded &&
+        vfs.GetWorkingDirectory(
+            cloned_context, cloned_working_directory,
+            sizeof(cloned_working_directory),
+            cloned_working_directory_length_bytes) ==
+            os::kernel::fs::Status::Succeeded &&
+        cloned_working_directory_length_bytes ==
+            OS_TEST_VFS_EXPECTED_ALPHA_BETA_LENGTH_BYTES &&
+        BytesEqual(
+            cloned_working_directory,
+            OS_TEST_VFS_EXPECTED_ALPHA_BETA,
+            cloned_working_directory_length_bytes) &&
+        vfs.ChangeDirectory(
+            cloned_context, OS_TEST_VFS_COMPLEX_ROOT_PATH,
+            sizeof(OS_TEST_VFS_COMPLEX_ROOT_PATH)) ==
+            os::kernel::fs::Status::Succeeded &&
+        vfs.GetWorkingDirectory(
+            context, working_directory,
+            sizeof(working_directory),
+            working_directory_length_bytes) ==
+            os::kernel::fs::Status::Succeeded &&
+        working_directory_length_bytes ==
+            OS_TEST_VFS_EXPECTED_ALPHA_BETA_LENGTH_BYTES &&
+        BytesEqual(
+            working_directory, OS_TEST_VFS_EXPECTED_ALPHA_BETA,
+            working_directory_length_bytes);
+    test_context.Expect(context_clone_valid,
+                        OS_TEST_VFS_CONTEXT_CLONE);
 
     uint8_t maximum_path[os::kernel::fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     maximum_path[OS_TEST_VFS_EMPTY_VALUE] = static_cast<uint8_t>('/');
@@ -386,6 +425,7 @@ int main() {
             child_memfs.GetSuperblock().backend_context) == os::kernel::fs::Status::Succeeded;
     const bool resources_released =
         capacity_vfs.ReleaseContext(capacity_context) == os::kernel::fs::Status::Succeeded &&
+        vfs.ReleaseContext(cloned_context) == os::kernel::fs::Status::Succeeded &&
         vfs.ReleaseContext(context) == os::kernel::fs::Status::Succeeded &&
         child_memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
         root_memfs.Destroy() == os::kernel::fs::Status::Succeeded &&

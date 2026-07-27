@@ -382,6 +382,14 @@ int64_t GetVirtualMemoryStatistics(os::abi::VirtualMemoryStatistics &statistics)
         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t ForkProcess() noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::ForkProcess),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 [[noreturn]] void ExitProcess(const int64_t exit_code) noexcept {
     static_cast<void>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess),

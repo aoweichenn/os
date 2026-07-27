@@ -264,6 +264,18 @@ os_add_kernel_memory_test(
     "randomized"
 )
 
+os_add_kernel_memory_test(
+    os_kernel_user_page_reference_unit_tests
+    unit/kernel/user_page_reference_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_user_page_reference_randomized_tests
+    randomized/kernel/user_page_reference_randomized_test.cpp
+    "randomized"
+)
+
 add_library(
     os_kernel_stack_test_support
     STATIC
@@ -433,6 +445,11 @@ os_add_page_table_test(
 os_add_page_table_test(
     os_kernel_shared_user_page_lifecycle_integration_tests
     integration/boot/shared_user_page_lifecycle_test.cpp
+    "integration"
+)
+os_add_page_table_test(
+    os_kernel_copy_on_write_page_table_lifecycle_integration_tests
+    integration/boot/copy_on_write_page_table_lifecycle_test.cpp
     "integration"
 )
 os_add_kernel_memory_test(

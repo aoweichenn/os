@@ -170,6 +170,69 @@ UserFileBackingStatus UserFileBackingManager::AcquireVfsFile(
     return UserFileBackingStatus::Succeeded;
 }
 
+UserFileBackingStatus UserFileBackingManager::Clone(
+    const uint64_t owner_identifier,
+    const uint64_t source_descriptor_index,
+    const uint64_t source_generation, uint64_t &descriptor_index,
+    uint64_t &generation) noexcept {
+    descriptor_index = UINT64_MAX;
+    generation = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+    if (!this->initialized_) {
+        return UserFileBackingStatus::NotInitialized;
+    }
+    if (owner_identifier == OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE) {
+        return UserFileBackingStatus::InvalidSource;
+    }
+    SpinLockGuard guard{this->lock_};
+    if (!this->IsIndexValid(source_descriptor_index)) {
+        return UserFileBackingStatus::InvalidDescriptor;
+    }
+    const UserFileBackingDescriptor &source =
+        this->descriptors_[source_descriptor_index];
+    if (!source.active || source.generation != source_generation ||
+        source.kind == UserFileBackingKind::None) {
+        return UserFileBackingStatus::InvalidDescriptor;
+    }
+    uint64_t candidate_index = UINT64_MAX;
+    for (uint64_t observed_index =
+             OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+         observed_index < this->capacity_; ++observed_index) {
+        if (!this->descriptors_[observed_index].active) {
+            candidate_index = observed_index;
+            break;
+        }
+    }
+    if (candidate_index == UINT64_MAX) {
+        return UserFileBackingStatus::CapacityExhausted;
+    }
+    fs::OpenFile retained_file{};
+    if (source.kind == UserFileBackingKind::VfsFile &&
+        (source.vfs == nullptr ||
+         source.vfs->RetainOpenFile(source.open_file, retained_file) !=
+             fs::Status::Succeeded)) {
+        return UserFileBackingStatus::InvalidSource;
+    }
+    const uint64_t candidate_generation = this->NextGeneration();
+    this->descriptors_[candidate_index] = UserFileBackingDescriptor{
+        .kind = source.kind,
+        .generation = candidate_generation,
+        .owner_identifier = owner_identifier,
+        .identity = source.identity,
+        .size_bytes = source.size_bytes,
+        .memory_image = source.memory_image,
+        .vfs = source.vfs,
+        .open_file =
+            source.kind == UserFileBackingKind::VfsFile
+                ? retained_file
+                : source.open_file,
+        .active = true,
+    };
+    ++this->active_descriptor_count_;
+    descriptor_index = candidate_index;
+    generation = candidate_generation;
+    return UserFileBackingStatus::Succeeded;
+}
+
 UserFileBackingStatus UserFileBackingManager::Release(
     const uint64_t owner_identifier, const uint64_t descriptor_index,
     const uint64_t generation) noexcept {

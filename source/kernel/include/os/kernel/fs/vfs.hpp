@@ -192,6 +192,8 @@ class Vfs final {
     [[nodiscard]] Status Initialize(Mount *mount_storage, uint64_t mount_capacity,
                                     Superblock &root_superblock) noexcept;
     [[nodiscard]] Status InitializeContext(FsContext &context) const noexcept;
+    [[nodiscard]] Status CloneContext(const FsContext &source,
+                                      FsContext &context) const noexcept;
     [[nodiscard]] Status ReleaseContext(FsContext &context) const noexcept;
     [[nodiscard]] Status MountAt(const FsContext &context, const uint8_t *path,
                                  uint64_t path_length_bytes, Superblock &superblock) noexcept;

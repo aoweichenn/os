@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     x86_64_os_lab
-    VERSION 1.9.0
+    VERSION 1.10.0
     DESCRIPTION "从复位向量开始实现的 x86-64 教学操作系统"
     LANGUAGES CXX
 )

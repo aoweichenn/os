@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.9。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.10。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -168,6 +168,13 @@ VMA policy
 v2.0 不支持 writable `MAP_SHARED` 或 `msync`。write/truncate 必须使受影响
 clean cache 失效并撤销现有文件映射，不能继续暴露陈旧页面。clean 页可由
 LRU 丢弃后重读；dirty/writeback 页必须等写入完成或报告明确错误。
+
+v1.10 已在这条层次中加入 private COW：VMA 保存“本来允许写”，PTE 通过
+软件位 9 保存“当前因共享而暂时只读”。独占 private 页隐含单引用，只有经历
+fork 的 frame 进入 32768 项稀疏引用表。用户写页故障与 Kernel
+`CopyToUser` 共用私有化路径；引用为 1 时原地恢复权限，引用大于 1 时复制
+单页。fork 先完成候选子地址空间与资源 clone，再提交父 PTE，失败会恢复父
+权限和引用。当前单 BSP 只需本地 `INVLPG`，SMP shootdown 仍不在范围内。
 
 journal 只记录元数据，并使用 ordered mode：相关文件数据先写到稳定介质，
 元数据 commit 才允许持久化。每个事务在修改前预留 credits，经

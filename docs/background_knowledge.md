@@ -1043,7 +1043,7 @@ Committed                 RolledBack
 否则调用者可能根据一半更新的 `is_last` 销毁仍被引用的对象。
 
 引用计数只证明拥有者数量，不证明对象内部状态、关联页表或等待队列正确，也
-不能自动解决环引用。当前 v1.9 仍是单 BSP 基线，计数存储使用普通
+不能自动解决环引用。当前 v1.10 仍是单 BSP 基线，计数存储使用普通
 `uint64_t`，但对象查找与 acquire/release 已在同一管理器锁内提交；最后引用
 先把对象从活动集合摘除，再在锁外执行 finalizer。这样冻结了当前并发边界，
 却没有伪称已具备 weak reference、无锁升级、SMP 原子引用或循环回收。
@@ -1936,7 +1936,8 @@ wait：期间可能有另一个条件或孩子变化，不能把 wakeup 当作�
 它也形成 Shell 熟悉的控制流：父 Shell fork，孩子设置 fd/管道后 exec，
 父 Shell wait。
 
-当前 v1.9 已有匿名/文件 VMA 但尚无 COW 和多 Thread fork，因此先提供：
+当前 v1.10 已有匿名/文件 VMA 和只复制调用 Thread 的 COW fork，但尚无
+用户多 Thread fork 停世协调，因此先提供：
 
 - spawn：从程序路径直接构造一个全新孩子；
 - exec：保持当前 PID 与父子身份，替换当前程序映像；
@@ -1945,7 +1946,7 @@ wait：期间可能有另一个条件或孩子变化，不能把 wakeup 当作�
 这里的 spawn 不冒充 fork。它不复制父地址空间，也不继承父 FileTable；
 新进程取得独立 FsContext 和标准描述符。这样的阶段划分先把磁盘 ELF、参数
 栈、父子树、失败回滚与等待闭合；v1.8 先补齐匿名 VMA 和统一缺页策略，
-v1.9 再补齐文件页故障与只读共享缓存，后续在其上实现 COW 和描述符继承。
+v1.9 补齐文件页故障与只读共享缓存，v1.10 已在其上实现 COW 和描述符继承。
 
 ### exec 为什么必须是候选映像事务
 
@@ -2003,8 +2004,8 @@ freestanding 入口无需 libc 启动文件也能读取参数。RSP 保持 16 �
 - 固定种子随机测试改变 8192 个孩子的退出顺序，并用独立布局公式比较；
 - rootfs 工具测试证明 ELF 字节真的写进嵌套目录并可重新读取；
 - QEMU 从自研 ROM 进入真实 Kernel，再经 ATA/VFS 读取 `/sbin/init`，
-  真实切换 CR3/RSP、执行 spawn/exec/wait；当前 v1.9 再顺序执行三个 VM
-  probe，最终证明十一个 Process 生命周期全部回收。
+  真实切换 CR3/RSP、执行 spawn/exec/fork/wait；当前 v1.10 再顺序执行
+  VM 与 fork probe，最终证明四十五个 Process 生命周期全部回收。
 
 宿主模型不能证明 x86 页表和系统调用入口；一次 QEMU 成功也不能穷举上千种
 退出顺序。只有两者结论一致，才能把“看起来启动了”提升为可回归的生命周期
@@ -2071,6 +2072,7 @@ frame，不能产生虚构释放。
    动态 FileTable，v1.5 的 VFS、Mount、memfs 与 legacy 适配，以及
    v1.6 的 rootfs v2、完整命名空间与独立 fsck，以及 v1.7 的磁盘 PID1、
    进程树、spawn/exec/wait 与参数环境，v1.8 的 VMA、匿名缺页、受控栈增长
-   和用户 heap，以及 v1.9 的文件 VMA、按需 ELF 与 clean page cache。
+   和用户 heap、v1.9 的文件 VMA、按需 ELF 与 clean page cache，以及
+   v1.10 的 fork/COW。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

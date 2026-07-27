@@ -175,7 +175,13 @@ GetKernelResourceSnapshot(const ResourceSnapshotSupplementalCounts &supplemental
 [[nodiscard]] KernelUserPageStatus MapExistingUserPage(uint64_t root_physical_address,
                                                        uint64_t virtual_address,
                                                        uint64_t physical_address, bool writable,
-                                                       bool executable) noexcept;
+                                                       bool executable,
+                                                       bool copy_on_write = false) noexcept;
+[[nodiscard]] KernelUserPageStatus ReplaceUserPage(uint64_t root_physical_address,
+                                                   uint64_t virtual_address,
+                                                   uint64_t physical_address, bool writable,
+                                                   bool executable,
+                                                   bool copy_on_write) noexcept;
 [[nodiscard]] KernelUserPageStatus UnmapUserPage(uint64_t root_physical_address,
                                                  uint64_t virtual_address,
                                                  uint64_t &physical_address,

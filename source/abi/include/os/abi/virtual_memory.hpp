@@ -51,7 +51,7 @@ struct FileMemoryMapRequest final {
 static_assert(sizeof(FileMemoryMapRequest) ==
               OS_ABI_FILE_MEMORY_MAP_REQUEST_SIZE_BYTES);
 
-inline constexpr uint64_t OS_ABI_VIRTUAL_MEMORY_STATISTICS_SIZE_BYTES = 160ULL;
+inline constexpr uint64_t OS_ABI_VIRTUAL_MEMORY_STATISTICS_SIZE_BYTES = 200ULL;
 
 struct VirtualMemoryStatistics final {
     uint64_t area_count;
@@ -74,6 +74,11 @@ struct VirtualMemoryStatistics final {
     uint64_t page_cache_hit_count;
     uint64_t private_file_resident_page_count;
     uint64_t shared_file_resident_page_count;
+    uint64_t copy_on_write_page_count;
+    uint64_t copy_on_write_fault_count;
+    uint64_t copy_on_write_copy_count;
+    uint64_t copy_on_write_exclusive_restore_count;
+    uint64_t fork_clone_count;
 };
 
 static_assert(sizeof(VirtualMemoryStatistics) == OS_ABI_VIRTUAL_MEMORY_STATISTICS_SIZE_BYTES);

@@ -245,6 +245,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
             .executable = true,
             .user_accessible = false,
             .cache_disabled = false,
+            .copy_on_write = false,
         };
     }
     const uint64_t read_only_begin = AddressOf(os_kernel_read_only_data_start);
@@ -255,6 +256,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
             .executable = false,
             .user_accessible = false,
             .cache_disabled = false,
+            .copy_on_write = false,
         };
     }
     return PagePermissions{
@@ -262,6 +264,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
         .executable = false,
         .user_accessible = false,
         .cache_disabled = false,
+        .copy_on_write = false,
     };
 }
 
@@ -1582,7 +1585,7 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t root_physical_address
 KernelUserPageStatus MapExistingUserPage(
     const uint64_t root_physical_address, const uint64_t virtual_address,
     const uint64_t physical_address, const bool writable,
-    const bool executable) noexcept {
+    const bool executable, const bool copy_on_write) noexcept {
     if (root_physical_address == 0ULL ||
         (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return KernelUserPageStatus::InvalidPageTableRoot;
@@ -1592,7 +1595,7 @@ KernelUserPageStatus MapExistingUserPage(
                                    OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
-    if (writable && executable) {
+    if ((writable && executable) || (writable && copy_on_write)) {
         return KernelUserPageStatus::InvalidPermissions;
     }
     if ((physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
@@ -1605,12 +1608,51 @@ KernelUserPageStatus MapExistingUserPage(
         .executable = executable,
         .user_accessible = true,
         .cache_disabled = false,
+        .copy_on_write = copy_on_write,
     };
     PageTableManager process_page_table{
         FrameAllocator(), root_physical_address,
         ActivePageTableMemoryAccess(), PageTableRootKind::Process};
     return process_page_table.MapPage(virtual_address, physical_address,
                                       permissions) ==
+                   PageTableStatus::Succeeded
+               ? KernelUserPageStatus::Succeeded
+               : KernelUserPageStatus::PageMappingFailed;
+}
+
+KernelUserPageStatus ReplaceUserPage(
+    const uint64_t root_physical_address, const uint64_t virtual_address,
+    const uint64_t physical_address, const bool writable,
+    const bool executable, const bool copy_on_write) noexcept {
+    if (root_physical_address == 0ULL ||
+        (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
+        return KernelUserPageStatus::InvalidPageTableRoot;
+    }
+    if ((virtual_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        !IsUserVirtualAddressRange(virtual_address,
+                                   OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        return KernelUserPageStatus::InvalidVirtualAddress;
+    }
+    if ((writable && executable) || (writable && copy_on_write)) {
+        return KernelUserPageStatus::InvalidPermissions;
+    }
+    if ((physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        !FrameAllocator().OwnsAllocation(
+            PhysicalFrame{.physical_address = physical_address})) {
+        return KernelUserPageStatus::FrameNotOwned;
+    }
+    const PagePermissions permissions{
+        .writable = writable,
+        .executable = executable,
+        .user_accessible = true,
+        .cache_disabled = false,
+        .copy_on_write = copy_on_write,
+    };
+    PageTableManager process_page_table{
+        FrameAllocator(), root_physical_address,
+        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
+    return process_page_table.ReplacePage(virtual_address, physical_address,
+                                          permissions) ==
                    PageTableStatus::Succeeded
                ? KernelUserPageStatus::Succeeded
                : KernelUserPageStatus::PageMappingFailed;

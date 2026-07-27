@@ -69,6 +69,7 @@ set(
     include/os/kernel/memory/physical_frame_allocator.hpp
     include/os/kernel/memory/physical_memory_map.hpp
     include/os/kernel/memory/resource_snapshot.hpp
+    include/os/kernel/memory/user_page_reference.hpp
     include/os/kernel/memory/virtual_memory_area.hpp
 )
 set(
@@ -183,6 +184,7 @@ set(
     src/memory/physical_frame_allocator.cpp
     src/memory/physical_memory_map.cpp
     src/memory/resource_snapshot.cpp
+    src/memory/user_page_reference.cpp
     src/memory/virtual_memory_area.cpp
 )
 set(
@@ -286,6 +288,7 @@ add_library(
         src/memory/physical_frame_allocator.cpp
         src/memory/physical_memory_map.cpp
         src/memory/resource_snapshot.cpp
+        src/memory/user_page_reference.cpp
         src/memory/virtual_memory_area.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/memory/file_page_cache.hpp
@@ -298,6 +301,7 @@ add_library(
         include/os/kernel/memory/physical_frame_allocator.hpp
         include/os/kernel/memory/physical_memory_map.hpp
         include/os/kernel/memory/resource_snapshot.hpp
+        include/os/kernel/memory/user_page_reference.hpp
         include/os/kernel/memory/virtual_memory_area.hpp
         include/os/kernel/sync/spin_lock.hpp
 )

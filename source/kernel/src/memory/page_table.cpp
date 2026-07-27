@@ -477,6 +477,53 @@ PageTableStatus PageTableManager::QueryPage(const uint64_t virtual_address,
     return PageTableStatus::Succeeded;
 }
 
+PageTableStatus
+PageTableManager::ReplacePage(const uint64_t virtual_address,
+                              const uint64_t physical_address,
+                              const PagePermissions permissions) noexcept {
+    if (this->root_physical_address_ == OS_KERNEL_PAGE_TABLE_EMPTY_ENTRY) {
+        return PageTableStatus::NotInitialized;
+    }
+    if (!IsCanonicalVirtualAddress(virtual_address)) {
+        return PageTableStatus::InvalidVirtualAddress;
+    }
+    if ((virtual_address & OS_KERNEL_PAGE_TABLE_PAGE_MASK) !=
+            OS_KERNEL_PAGE_TABLE_EMPTY_ENTRY ||
+        !this->IsPhysicalAddressValid(physical_address,
+                                      OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        return PageTableStatus::InvalidAlignment;
+    }
+    if (this->root_kind_ != PageTableRootKind::Process ||
+        !IsPageTableMemoryAccessValid(this->memory_access_)) {
+        return PageTableStatus::InvalidRootKind;
+    }
+    if (permissions.writable && permissions.copy_on_write) {
+        return PageTableStatus::InvalidMemoryAccess;
+    }
+    if (!this->frame_allocator_->OwnsAllocation(
+            PhysicalFrame{.physical_address = physical_address})) {
+        return PageTableStatus::TableFrameNotOwned;
+    }
+    const PageTableIndices indices = CalculatePageTableIndices(virtual_address);
+    if (!this->CanMutateAddress(indices)) {
+        return PageTableStatus::SharedBranchMutationDenied;
+    }
+    PageTableWalkPath path{};
+    const PageTableStatus walk_status = this->WalkToLeaf(virtual_address, path);
+    if (walk_status != PageTableStatus::Succeeded) {
+        return walk_status;
+    }
+    if ((*path.level1_entry & OS_KERNEL_PAGE_TABLE_PRESENT_BIT) ==
+        OS_KERNEL_PAGE_TABLE_EMPTY_ENTRY) {
+        return PageTableStatus::NotMapped;
+    }
+    *path.level1_entry = EncodePageTableLeafEntry(physical_address, permissions);
+    if (this->memory_access_.invalidate_active_mappings) {
+        InvalidatePage(virtual_address);
+    }
+    return PageTableStatus::Succeeded;
+}
+
 uint64_t PageTableManager::RootPhysicalAddress() const noexcept {
     return this->root_physical_address_;
 }
@@ -616,6 +663,9 @@ PageTableStatus PageTableManager::MapLeaf(const uint64_t virtual_address,
         return PageTableStatus::InvalidRootKind;
     }
     if (!IsPageTableMemoryAccessValid(this->memory_access_)) {
+        return PageTableStatus::InvalidMemoryAccess;
+    }
+    if (permissions.writable && permissions.copy_on_write) {
         return PageTableStatus::InvalidMemoryAccess;
     }
     if (!IsCanonicalVirtualAddress(virtual_address)) {

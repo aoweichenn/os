@@ -284,6 +284,12 @@ set(
     "匿名 VMA、按需分页、栈增长和用户堆验收程序"
 )
 set(
+    OS_USER_FORK_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_fork_probe.elf"
+    CACHE INTERNAL
+    "fork、COW、继承与 exec/wait 生命周期验收程序"
+)
+set(
     OS_USER_MEMORY_GUARD_PROBE_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_memory_guard_probe.elf"
     CACHE INTERNAL
@@ -395,6 +401,12 @@ os_add_user_program(
     "${OS_USER_MEMORY_PROBE_ELF_PATH}"
     "链接匿名 VMA、按需分页、栈增长和用户堆验收 ELF64 程序"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/user_heap.cpp"
+)
+os_add_user_program(
+    os_user_fork_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/fork_probe.cpp"
+    "${OS_USER_FORK_PROBE_ELF_PATH}"
+    "链接 fork 与写时复制验收 ELF64 程序"
 )
 os_add_user_program(
     os_user_memory_guard_probe_elf

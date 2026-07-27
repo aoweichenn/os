@@ -17,8 +17,10 @@ constexpr char OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] MEMORY_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_VM_FAULT_POLICIES_MESSAGE[] =
     "[OS][USER][INIT] VM_FAULT_POLICIES_VERIFIED\r\n";
+constexpr char OS_USER_INIT_FORK_PROBE_REAPED_MESSAGE[] =
+    "[OS][USER][INIT] FORK_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.9";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.10";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";
@@ -26,6 +28,7 @@ constexpr char OS_USER_INIT_FILE_SYSTEM_PROBE_PATH[] = "/bin/fs_probe";
 constexpr char OS_USER_INIT_SMOKE_PATH[] = "/bin/smoke";
 constexpr char OS_USER_INIT_SHELL_PATH[] = "/bin/sh";
 constexpr char OS_USER_INIT_MEMORY_PROBE_PATH[] = "/bin/memory_probe";
+constexpr char OS_USER_INIT_FORK_PROBE_PATH[] = "/bin/fork_probe";
 constexpr char OS_USER_INIT_MEMORY_GUARD_PROBE_PATH[] = "/bin/memory_guard_probe";
 constexpr char OS_USER_INIT_MEMORY_PROTECTION_PROBE_PATH[] = "/bin/memory_protection_probe";
 constexpr uint64_t OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
@@ -243,6 +246,15 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
                             os::abi::ProcessTerminationReason::Exited,
                             OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_FIRST_INDEX) ||
         !WriteMessage(OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE)) {
+        os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
+    }
+    if (!RunExpectedProcess(OS_USER_INIT_FORK_PROBE_PATH,
+                            sizeof(OS_USER_INIT_FORK_PROBE_PATH) -
+                                OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES,
+                            os::abi::ProcessTerminationReason::Exited,
+                            OS_USER_INIT_SUCCESS_EXIT_CODE,
+                            OS_USER_INIT_FIRST_INDEX) ||
+        !WriteMessage(OS_USER_INIT_FORK_PROBE_REAPED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
     }
     if (!RunExpectedProcess(OS_USER_INIT_MEMORY_GUARD_PROBE_PATH,

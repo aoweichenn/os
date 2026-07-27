@@ -21,6 +21,7 @@ struct PagePermissions final {
     bool executable;
     bool user_accessible;
     bool cache_disabled;
+    bool copy_on_write{};
 };
 
 struct PageMapping final {
@@ -103,6 +104,9 @@ class PageTableManager final {
                                             PageTableUnmapResult &result) noexcept;
     [[nodiscard]] PageTableStatus QueryPage(uint64_t virtual_address,
                                             PageMapping &mapping) const noexcept;
+    [[nodiscard]] PageTableStatus
+    ReplacePage(uint64_t virtual_address, uint64_t physical_address,
+                PagePermissions permissions) noexcept;
     [[nodiscard]] uint64_t RootPhysicalAddress() const noexcept;
     [[nodiscard]] PageTableRootKind RootKind() const noexcept;
     [[nodiscard]] PageTableStatus SetMemoryAccess(PageTableMemoryAccess memory_access) noexcept;

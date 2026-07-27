@@ -72,6 +72,45 @@ FileTableStatus FileTable::Initialize(KernelHeap &heap, KernelObjectManager &obj
     return FileTableStatus::Succeeded;
 }
 
+FileTableStatus FileTable::CloneFrom(FileTable &source) noexcept {
+    if (this->initialized_) {
+        return FileTableStatus::AlreadyInitialized;
+    }
+    if (!source.initialized_ || source.heap_ == nullptr ||
+        source.object_manager_ == nullptr) {
+        return FileTableStatus::InvalidDependency;
+    }
+    const FileTableStatistics source_statistics = source.Statistics();
+    const FileTableStatus initialize_status =
+        this->Initialize(*source.heap_, *source.object_manager_,
+                         source_statistics.soft_limit,
+                         source_statistics.hard_limit);
+    if (initialize_status != FileTableStatus::Succeeded) {
+        return initialize_status;
+    }
+    for (uint64_t descriptor = OS_KERNEL_FILE_TABLE_EMPTY_VALUE;
+         descriptor < source_statistics.hard_limit; ++descriptor) {
+        uint64_t descriptor_flags = OS_KERNEL_FILE_TABLE_EMPTY_VALUE;
+        const FileTableStatus flags_status =
+            source.GetDescriptorFlags(descriptor, descriptor_flags);
+        if (flags_status == FileTableStatus::InvalidDescriptor) {
+            continue;
+        }
+        KernelObjectReference reference{};
+        if (flags_status != FileTableStatus::Succeeded ||
+            source.Lookup(descriptor, reference) !=
+                FileTableStatus::Succeeded ||
+            this->InstallExact(reference, descriptor, descriptor_flags) !=
+                FileTableStatus::Succeeded) {
+            const FileTableStatus destroy_status = this->Destroy();
+            return destroy_status == FileTableStatus::Succeeded
+                       ? FileTableStatus::ObjectFailure
+                       : FileTableStatus::ReleaseFailed;
+        }
+    }
+    return FileTableStatus::Succeeded;
+}
+
 FileTableStatus FileTable::Install(KernelObjectReference &reference,
                                    const uint64_t minimum_descriptor,
                                    const uint64_t descriptor_flags, uint64_t &descriptor) noexcept {

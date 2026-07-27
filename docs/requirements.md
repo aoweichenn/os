@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.9 完成基线
+## v1.10 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -117,7 +117,10 @@ v1.7 又完成 PID1、父子进程树、Zombie/reparent、磁盘 ELF spawn/exec/
 自研用户 heap，以及 unmap/exec/exit 后的数据页、空页表分支与 VMA
 描述符回收。v1.9 已进一步完成文件后备 VMA、按需 ELF、有界 clean page
 cache、只读 shared、可写 private、文件修改失效和跨 fd-close 生命周期。
-下一阶段为 v1.10 fork 与写时复制。
+v1.10 又完成只复制调用 Thread 的 fork、匿名/private 页 COW、统一用户
+`#PF`/Kernel `CopyToUser` 私有化、fd/FileDescription/FsContext/FileBacking
+继承，以及失败时父状态完整恢复。下一阶段为 v1.11 Unix I/O、外部 Shell
+与核心工具。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -135,6 +138,26 @@ cache、只读 shared、可写 private、文件修改失效和跨 fd-close 生�
 - write/truncate 必须撤销旧只读文件 PTE 并失效 cache；private 修改不得
   回写文件。
 - 64 MiB、256 MiB、64 GiB 必须运行相同文件映射探针并最终资源守恒。
+
+## v1.10 fork/COW 冻结要求
+
+- fork 子 Process 只包含调用 Thread；父返回子 PID，子返回 0，失败保持父
+  Process 可观察状态不变。
+- AddressSpace、VMA、FileBacking、FileTable、FsContext、用户现场、FXSAVE
+  和 KernelStack 都必须有显式 clone/所有权/回滚路径。
+- FileTable clone 必须保留精确 fd 与 fd flags；父子共享 FileDescription
+  offset，但关闭 fd 和后续表结构修改相互独立。
+- 只有原本可写的 private 驻留页可以标 COW；真正只读页必须继续产生保护
+  fault，Writable+COW PTE 属于非法状态。
+- 用户 present+write `#PF` 与 Kernel `CopyToUser` 必须复用同一 COW break；
+  内核不得经 direct-map 绕过私有化修改共享 frame。
+- 引用数为 1 时恢复原 frame 可写；引用数大于 1 时准备新 frame、复制完整页、
+  替换 PTE 后再释放旧引用。
+- fork 必须先完成候选 child，再提交父 PTE；任意中途失败必须销毁 child、
+  恢复父权限并清除仅剩单引用的 COW 元数据。
+- 100000 步引用模型、连续 32 次 fork/exec/wait 与 64 MiB、256 MiB、
+  64 GiB QEMU 都必须结束于零活动 COW 引用、零 Zombie 和跨层资源守恒；
+  64 MiB 兼容档不要求同时保留 32 个活跃 Process。
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

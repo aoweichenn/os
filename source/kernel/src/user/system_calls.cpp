@@ -208,6 +208,9 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     if (status == ProcessRuntimeStatus::ProcessLimitExceeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_LIMIT_EXCEEDED;
     }
+    if (status == ProcessRuntimeStatus::ForkFailure) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY;
+    }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
 }
 
@@ -975,6 +978,19 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
                                                      : MapProcessRuntimeStatus(status);
 }
 
+[[nodiscard]] ExceptionFrame *
+DispatchForkProcess(ExceptionFrame &frame) noexcept {
+    uint64_t process_id =
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessRuntimeStatus status =
+        ForkCurrentProcess(frame, process_id);
+    frame.register_rax = static_cast<uint64_t>(
+        status == ProcessRuntimeStatus::Succeeded
+            ? static_cast<int64_t>(process_id)
+            : MapProcessRuntimeStatus(status));
+    return &frame;
+}
+
 [[nodiscard]] ExceptionFrame *DispatchExecProcess(ExceptionFrame &frame,
                                                   const uint64_t user_request_address,
                                                   const uint64_t request_size_bytes) noexcept {
@@ -1338,6 +1354,11 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
             DispatchMapFileMemory(frame->register_rdi,
                                   frame->register_rsi));
         return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::ForkProcess)) {
+        return DispatchForkProcess(*frame);
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;

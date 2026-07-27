@@ -11,6 +11,8 @@ constexpr std::string_view OS_TEST_FILE_BACKING_MEMORY =
     "内存 ELF 后端必须持久读取并生成稳定文件身份";
 constexpr std::string_view OS_TEST_FILE_BACKING_OWNERSHIP =
     "后端代次与所有者必须阻止陈旧引用和越权释放";
+constexpr std::string_view OS_TEST_FILE_BACKING_CLONE =
+    "fork 克隆必须生成子进程自有描述符且在父描述符释放后继续读取同一镜像";
 constexpr std::string_view OS_TEST_FILE_BACKING_DRAIN =
     "全部后端释放后固定描述符池必须回到空闲基线";
 
@@ -19,6 +21,7 @@ constexpr uint64_t OS_TEST_FILE_BACKING_SINGLE_UNIT = 1ULL;
 constexpr uint64_t OS_TEST_FILE_BACKING_CAPACITY = 2ULL;
 constexpr uint64_t OS_TEST_FILE_BACKING_OWNER_IDENTIFIER = 23ULL;
 constexpr uint64_t OS_TEST_FILE_BACKING_FOREIGN_OWNER_IDENTIFIER = 29ULL;
+constexpr uint64_t OS_TEST_FILE_BACKING_CHILD_OWNER_IDENTIFIER = 31ULL;
 constexpr uint64_t OS_TEST_FILE_BACKING_IMAGE_SIZE_BYTES =
     os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 constexpr uint64_t OS_TEST_FILE_BACKING_READ_OFFSET_BYTES = 37ULL;
@@ -86,19 +89,56 @@ int main() {
         manager.Release(
             OS_TEST_FILE_BACKING_FOREIGN_OWNER_IDENTIFIER,
             descriptor_index, generation) ==
-            os::kernel::UserFileBackingStatus::OwnershipMismatch &&
+            os::kernel::UserFileBackingStatus::OwnershipMismatch;
+    test_context.Expect(ownership_valid,
+                        OS_TEST_FILE_BACKING_OWNERSHIP);
+
+    uint64_t child_descriptor_index = UINT64_MAX;
+    uint64_t child_generation =
+        OS_TEST_FILE_BACKING_EMPTY_VALUE;
+    os::kernel::UserFileBackingDescriptor child_descriptor{};
+    const bool clone_valid =
+        ownership_valid &&
+        manager.Clone(
+            OS_TEST_FILE_BACKING_CHILD_OWNER_IDENTIFIER,
+            descriptor_index, generation,
+            child_descriptor_index, child_generation) ==
+            os::kernel::UserFileBackingStatus::Succeeded &&
+        child_descriptor_index != descriptor_index &&
+        child_generation != generation &&
+        manager.ReadDescriptor(
+            child_descriptor_index, child_generation,
+            child_descriptor) ==
+            os::kernel::UserFileBackingStatus::Succeeded &&
+        child_descriptor.identity.superblock_identifier ==
+            descriptor.identity.superblock_identifier &&
         manager.Release(OS_TEST_FILE_BACKING_OWNER_IDENTIFIER,
                         descriptor_index, generation) ==
             os::kernel::UserFileBackingStatus::Succeeded &&
         manager.Read(descriptor_index, generation,
-                     OS_TEST_FILE_BACKING_EMPTY_VALUE, output,
-                     sizeof(output)) ==
+            OS_TEST_FILE_BACKING_EMPTY_VALUE, output,
+            sizeof(output)) ==
             os::kernel::UserFileBackingStatus::InvalidDescriptor &&
+        manager.Read(
+            child_descriptor_index, child_generation,
+            OS_TEST_FILE_BACKING_READ_OFFSET_BYTES, output,
+            sizeof(output)) ==
+            os::kernel::UserFileBackingStatus::Succeeded &&
+        output[OS_TEST_FILE_BACKING_EMPTY_VALUE] ==
+            image[OS_TEST_FILE_BACKING_READ_OFFSET_BYTES] &&
+        manager.Release(OS_TEST_FILE_BACKING_OWNER_IDENTIFIER,
+                        child_descriptor_index,
+                        child_generation) ==
+            os::kernel::UserFileBackingStatus::OwnershipMismatch &&
+        manager.Release(
+            OS_TEST_FILE_BACKING_CHILD_OWNER_IDENTIFIER,
+            child_descriptor_index, child_generation) ==
+            os::kernel::UserFileBackingStatus::Succeeded &&
         manager.Release(OS_TEST_FILE_BACKING_OWNER_IDENTIFIER,
                         descriptor_index, generation) ==
             os::kernel::UserFileBackingStatus::InvalidDescriptor;
-    test_context.Expect(ownership_valid,
-                        OS_TEST_FILE_BACKING_OWNERSHIP);
+    test_context.Expect(clone_valid,
+                        OS_TEST_FILE_BACKING_CLONE);
 
     const bool drain_valid =
         manager.ActiveDescriptorCount() ==

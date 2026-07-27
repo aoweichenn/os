@@ -167,8 +167,8 @@ E820 重建物理页所有权和正式页表，只映射可用 RAM，保留洞�
 与 `NX`，并在高半区建立
 `VA = 0xFFFF888000000000 + PA` 的 direct map。v1.1 又把 heap、buddy、
 KVA 和动态双 guard 内核栈接在这套所有权模型之上，v1.8 继续在其上建立
-Process/Thread、CpuLocal、KernelObject 和动态 FileTable；当前 v1.9
-又增加文件 VMA 与 clean page cache，但没有增加新的 QEMU 硬件。
+Process/Thread、CpuLocal、KernelObject 和动态 FileTable；当前 v1.10
+又增加文件 VMA、clean page cache 与 fork/COW，但没有增加新的 QEMU 硬件。
 
 ### 4.3 Port I/O 总线上的设备
 

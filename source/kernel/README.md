@@ -153,3 +153,20 @@ v1.9 继续复用同一模块边界：
 - `process/process_runtime.*` 只负责 fd/进程生命周期与系统调用编排。
 
 文件系统代码不直接建立 PTE，页缓存也不解析 fd；跨模块依赖保持单向。
+
+v1.10 的 fork/COW 继续保持相同所有权边界：
+
+```text
+memory/user_page_reference.*  共享 private frame 的稀疏引用状态机
+memory/page_table.*           COW 软件位编码、leaf 查询与 ReplacePage
+user/user_memory.*            AddressSpace clone、COW break、失败恢复
+io/file_table.*               精确 fd/flags clone，共享 FileDescription 引用
+fs/vfs.*                      FsContext clone
+user/file_backing.*           文件后备 clone
+process/process_runtime.*      Process/Thread 候选事务、发布与回收
+```
+
+引用表不认识 VMA、Process 或文件；页表不决定某页是否允许 COW；只有
+`user_memory` 联合 VMA、PTE 与引用状态。`process_runtime` 负责跨资源事务，
+不重新实现页复制。设计理由见
+[ADR 0037](../../docs/adr/0037-fork-copy-on-write.md)。

@@ -129,6 +129,40 @@ Status Vfs::InitializeContext(FsContext &context) const noexcept {
     return Status::Succeeded;
 }
 
+Status Vfs::CloneContext(const FsContext &source,
+                         FsContext &context) const noexcept {
+    context = FsContext{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!source.initialized || !this->PathIsValid(source.root) ||
+        !this->PathIsValid(source.current_working_directory)) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const root_superblock = source.root.vnode.superblock;
+    Status status = root_superblock->operations->open(
+        root_superblock->backend_context, source.root.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    Superblock *const working_superblock =
+        source.current_working_directory.vnode.superblock;
+    status = working_superblock->operations->open(
+        working_superblock->backend_context,
+        source.current_working_directory.vnode);
+    if (status != Status::Succeeded) {
+        static_cast<void>(root_superblock->operations->close(
+            root_superblock->backend_context, source.root.vnode));
+        return status;
+    }
+    context = FsContext{
+        .root = source.root,
+        .current_working_directory = source.current_working_directory,
+        .initialized = true,
+    };
+    return Status::Succeeded;
+}
+
 Status Vfs::ReleaseContext(FsContext &context) const noexcept {
     if (!this->IsInitialized()) {
         return Status::NotInitialized;

@@ -51,7 +51,8 @@ v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习�
 随机、工具与 QEMU 持久化；v1.7 又加入进程树、参数布局、4096 轮生命周期
 集成、固定种子随机模型、rootfs ELF 安装和 PID1 整机证据。v1.8 再加入
 VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 3 VM probe
-和具名 64 MiB bootstrap。当前数量由构建图自动生成，不在路线中冻结。
+和具名 64 MiB bootstrap；v1.9 再加入文件页缓存；v1.10 新增 COW 引用
+单元、页表集成和十万步引用随机模型。当前数量由构建图自动生成，不在路线中冻结。
 
 ## 第二周期最终目标
 
@@ -602,6 +603,8 @@ VMA 与 heap 各自通过 100000 步固定种子参考模型；128 轮组合测�
 
 在统一 VMA/page-fault 模型上实现延迟复制和多线程 Process 的明确 fork 语义。
 
+**状态：已完成。**
+
 **产出**
 
 - fork 只在子 Process 创建调用 Thread；
@@ -616,7 +619,23 @@ VMA 与 heap 各自通过 100000 步固定种子参考模型；128 轮组合测�
 - 只读文件页、私有文件页、匿名 COW 和非法写故障不混淆；
 - Kernel 向用户 COW 页复制不会修改另一 Process；
 - fork 中途内存不足不留下子对象或降低父页权限；
-- 深度 32 的 fork/exec/wait 树和 100000 步引用模型完整回收。
+- 连续 32 次 fork/exec/wait 和 100000 步引用模型完整回收；64 MiB 兼容档
+  不承担超过八个 Process 的并发压力。
+
+**已冻结证据**
+
+- 系统调用 44 只复制调用 Thread；父返回子 PID，子从同一现场以 0 返回；
+- PTE 软件位 9 表示 COW，Writable+COW 被拒绝，真正只读页不混入 COW；
+- 普通 private 页隐含独占，32768 项稀疏表只追踪已经共享的 frame；
+- 用户 present+write `#PF` 与 Kernel `CopyToUser` 共用 COW break；
+- 候选 child 先完整准备，父 PTE 后提交；中途失败恢复父权限和所有引用；
+- FileTable 保留精确 fd/flags 并共享 FileDescription offset，FsContext 与
+  FileBacking 具有独立继承引用；
+- 单元、页表集成、100000 步引用模型和 64 MiB/256 MiB/64 GiB QEMU
+  全部闭环；连续 32 次 fork/exec/wait 后活动引用与 Zombie 均为零。
+
+详细证据见 [v1.10 发布记录](releases/v1.10.md) 与
+[ADR 0037](adr/0037-fork-copy-on-write.md)。
 
 ### v1.11 Unix I/O、外部 Shell 与核心工具
 

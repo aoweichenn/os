@@ -565,7 +565,7 @@ physical frames          四个非零、页对齐、互不重复的 order-0 帧
 函数必须失败而非 unmap。`OsKernelEnterScheduledProcess` 返回后 CR3 必须是
 永久内核根；否则即使当前 RSP 安全，也可能在进程独占页表已释放后继续访问。
 
-正常 v1.9 十一个进程生命周期结束摘要应为 active=0；相对进程启动前的
+正常 v1.10 四十五个进程生命周期结束摘要应为 active=0；相对进程启动前的
 creations/destructions 增量均为 11；并发峰值由内存档位的 Process 容量
 约束，peak-mapped 必须与每个活动栈四页的几何一致，并出现
 `KERNEL_STACK_RESOURCES_RECLAIMED`。若创建/销毁相等但页帧或 KVA 基线不同，

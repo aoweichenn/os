@@ -124,6 +124,6 @@ v1.8 又把地址空间从“只有已安装 PTE”提升为 VMA 意图与 PTE �
 \#PF 后才取得并清零物理页；8 MiB 用户栈只连续向下提交，永久 guard 和
 只读写入由 vector 14 隔离。Ring 3 \code{UserHeap} 用 boundary tag、
 first-fit、split 与双向 coalesce 管理最多 8 MiB 的 break 空间。十万步
-VMA/heap 模型、128 轮真实页表生命周期、三个用户 probe、十一个 Process
+VMA/heap/COW 引用模型、128 轮真实页表生命周期、用户 VM/fork probe、四十五个 Process
 资源守恒以及 64 MiB、256 MiB、64 GiB 三档整机运行共同证明 reservation、
 首次触页、权限拒绝、页表回收和描述符池归零。

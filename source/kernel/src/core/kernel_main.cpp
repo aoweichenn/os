@@ -467,6 +467,20 @@ constexpr char OS_KERNEL_MAIN_VMA_PEAK_DESCRIPTOR_COUNT_PREFIX[] =
     "[OS][KERNEL] VMA_PEAK_DESCRIPTORS=";
 constexpr char OS_KERNEL_MAIN_VMA_ACQUIRE_COUNT_PREFIX[] = "[OS][KERNEL] VMA_ACQUIRES=";
 constexpr char OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX[] = "[OS][KERNEL] VMA_RELEASES=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_ENTRY_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_ACTIVE_ENTRIES=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_ACTIVE_REFERENCES=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_PEAK_ENTRY_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_PEAK_ENTRIES=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_FIRST_SHARE_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_FIRST_SHARES=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RETAIN_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_RETAINS=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_RELEASES=";
+constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX[] =
+    "[OS][KERNEL] USER_PAGE_REFERENCE_EXCLUSIVE_RESTORES=";
 constexpr char OS_KERNEL_MAIN_FILE_DESCRIPTION_FAILED_FINALIZATION_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_DESCRIPTION_FAILED_FINALIZATIONS=";
 constexpr char OS_KERNEL_MAIN_PROCESS_RESOURCE_VALIDATION_PREFIX[] =
@@ -507,12 +521,12 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR = 6ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
-constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 11ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 45ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 11ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 45ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_SUCCESS_COUNT = 10ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_SUCCESS_COUNT = 44ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_NO_CHILD_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT = 1ULL;
@@ -525,7 +539,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.9";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.10";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -1372,7 +1386,15 @@ ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
            statistics.virtual_memory_areas_after_processes.successful_acquire_count -
                    statistics.virtual_memory_areas_before_processes.successful_acquire_count ==
                statistics.virtual_memory_areas_after_processes.release_count -
-                   statistics.virtual_memory_areas_before_processes.release_count;
+                   statistics.virtual_memory_areas_before_processes.release_count &&
+           statistics.user_page_references_before_processes.active_entry_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.user_page_references_before_processes.active_reference_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.user_page_references_after_processes.active_entry_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.user_page_references_after_processes.active_reference_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
 }
 
 void ExecuteRequiredProcesses(const SerialPort &serial_port,
@@ -1398,8 +1420,13 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
     uint64_t file_table_chunk_release_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     uint64_t file_table_installation_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     uint64_t file_table_close_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
+    const uint64_t process_statistics_count =
+        expected_process_count <
+                OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY
+            ? expected_process_count
+            : OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY;
     for (uint64_t process_index = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX;
-         process_index < expected_process_count; ++process_index) {
+         process_index < process_statistics_count; ++process_index) {
         const FileTableStatistics &file_table = statistics.file_tables[process_index];
         if (file_table.peak_active_descriptor_count > file_table_peak_descriptor_count) {
             file_table_peak_descriptor_count = file_table.peak_active_descriptor_count;
@@ -1518,6 +1545,36 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.virtual_memory_areas_after_processes.successful_acquire_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX,
                          statistics.virtual_memory_areas_after_processes.release_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_ENTRY_COUNT_PREFIX,
+        statistics.user_page_references_after_processes.active_entry_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_COUNT_PREFIX,
+        statistics.user_page_references_after_processes.active_reference_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_PEAK_ENTRY_COUNT_PREFIX,
+        statistics.user_page_references_after_processes
+            .peak_active_entry_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_FIRST_SHARE_COUNT_PREFIX,
+        statistics.user_page_references_after_processes.first_share_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RETAIN_COUNT_PREFIX,
+        statistics.user_page_references_after_processes.retain_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX,
+        statistics.user_page_references_after_processes.release_count);
+    WriteRequiredHexLine(
+        serial_port,
+        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX,
+        statistics.user_page_references_after_processes
+            .exclusive_restore_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.active_stack_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,

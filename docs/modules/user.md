@@ -412,3 +412,22 @@ size class、尾部自动缩 break 或 libc 兼容承诺。详细背景与源码
 - `OsUserEntry` 与 `OsUserInvokeSystemCall` 是 C/汇编 ABI 符号，因链接契约
   保留既定前缀，不作为普通函数命名的例外扩散到业务代码。
 - 所有协议数字和字符串均使用“项目 + 模块 + 功能”的全大写命名常量。
+
+## v1.10 fork 与 COW 用户接口
+
+共享 ABI 新增系统调用 44，用户包装为：
+
+```text
+ForkProcess() -> child PID in parent, 0 in child, negative status on failure
+```
+
+`VirtualMemoryStatistics` 扩为 200 字节，增加 COW resident、fault、copy、
+exclusive restore 与 fork clone 五个 64 位计数。Kernel 写该结构前会主动
+私有化 COW 目标页，不能经 direct-map 修改父子共享 frame。
+
+`programs/fork_probe.cpp` 是本阶段端到端消费者：它验证 anonymous/private
+file/readonly 三类页、Kernel `CopyToUser`、cwd、共享 fd offset，并顺序执行
+32 次 fork/exec/wait。普通程序通过 rootfs 安装，不重新内嵌进 Kernel。
+
+详细背景和代码走读见
+[v1.10 学习章](../learning/18-v1.10-fork-copy-on-write.md)。

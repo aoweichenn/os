@@ -1,0 +1,323 @@
+\section{v1.10：fork、写时复制与可回滚的进程复制}
+
+\begin{keyidea}
+\code{fork} 的本质不是复制一块连续内存，而是复制一个 Process 的可观察资源
+关系。COW 则把“现在复制全部字节”改成“先共享所有权，真正写入哪一页才复制
+哪一页”。硬件只负责报告写保护异常；页面分类、引用、回滚和内核代写都必须
+由操作系统解释。
+\end{keyidea}
+
+\subsection{从早期 Unix 的进程复制说起}
+
+Unix 选择 \code{fork}，是因为 Shell 需要一个可组合的控制点：父进程先得到
+几乎相同的 child，child 可以关闭、复制或重定向描述符，再用 \code{exec}
+替换程序；父进程则保留自己的执行环境并 \code{wait}。如果“创建进程”和
+“装入程序”被绑定成一个调用，Shell 就很难在两者之间修改 child 的资源图。
+
+早期实现会复制整个地址空间。随着程序变大，fork 后立即 exec 的常见路径却
+会把刚复制的代码、数据和 heap 全部丢弃。分页硬件提供了另一种办法：让父子
+页表先指向相同 frame，把原可写 leaf 临时改成只读；真正执行 store 的一方
+触发页故障，Kernel 到那时才复制单页。这种延迟策略后来称为
+\term{写时复制}{copy-on-write, COW}。
+
+这里没有一条 ``COW 指令''。x86-64 只认识 PTE 的 Present、Read/Write、
+User/Supervisor 和 Execute Disable。COW 是 Kernel 对“一个本来允许写、
+现在因共享而暂时只读的 leaf”的软件解释。
+
+\subsection{fork 返回两次，但只进入内核一次}
+
+父 Thread 执行系统调用 44 后，Kernel 复制它的 \code{UserContext}。父现场
+的返回寄存器接收 child PID，child 现场的 RAX 被写成零。调度器日后分别恢复
+这两个现场，于是同一个用户调用看起来返回了两次：
+
+\begin{longtable}{L{0.24\textwidth}L{0.28\textwidth}L{0.32\textwidth}}
+\toprule
+\textbf{执行者} & \textbf{返回值} & \textbf{后续语义}\\
+\midrule
+parent Thread & child PID & 可继续工作或 wait\\
+child Thread & 0 & 可修改继承资源或 exec\\
+失败的 parent & 负状态 & 原 Process 保持可观察不变\\
+\bottomrule
+\end{longtable}
+
+Process 是 AddressSpace、FileTable、FsContext 与父子关系的容器；Thread
+才拥有通用寄存器、内核栈和 FXSAVE 现场。v1.10 因此冻结：child Process
+只创建调用 fork 的 Thread。将来用户多线程开放后，其他 Thread 也不会被
+连同“正运行到一半的内核栈”复制过去。
+
+\begin{pdfdiagram}
+  \node[os state] (parentp) {parent Process\\AddressSpace/FileTable/FsContext};
+  \node[os block,below=of parentp] (parentt) {calling Thread\\UserContext + FXSAVE};
+  \node[os state,right=30mm of parentp] (childp) {child Process\\cloned resources};
+  \node[os block,below=of childp] (childt) {one child Thread\\RAX=0};
+  \draw[os arrow] (parentp) -- node[above,font=\scriptsize]{clone ownership} (childp);
+  \draw[os arrow] (parentt) -- node[below,font=\scriptsize]{clone context} (childt);
+\end{pdfdiagram}
+\diagramnote{子 Process 不是父 Process 的第二个调度槽；它拥有独立 PID、CR3
+和资源容器，只在明确允许处共享底层对象。}
+
+\subsection{x86 页故障错误码是硬件事实，不是 COW 判决}
+
+vector 14 把故障线性地址写入 CR2，并给出 error code：
+
+\begin{longtable}{L{0.11\textwidth}L{0.16\textwidth}L{0.54\textwidth}}
+\toprule
+\textbf{位} & \textbf{名称} & \textbf{为 1 时的硬件事实}\\
+\midrule
+0 & P & 页存在，但访问违反保护；为 0 是 not-present\\
+1 & W/R & 这次访问是写\\
+2 & U/S & 访问发生于 CPL3\\
+3 & RSVD & 页表保留位编码非法\\
+4 & I/D & NX 开启时，这是取指访问\\
+\bottomrule
+\end{longtable}
+
+典型 COW fault 为 P=1、W/R=1、U/S=1。但写只读 ELF text、写只读文件映射
+也会产生相同三位。Kernel 还必须联合检查：
+
+\begin{center}
+\code{writable private VMA + present user leaf + RW=0 + COW=1 + valid reference}
+\end{center}
+
+RSVD 表示页表自身损坏，不能通过分配新页掩盖；I/D 表示取指保护，不能进入
+写时复制；真正只读 VMA 即使 leaf 也是只读，也必须终止出错的用户 Process。
+
+\subsection{软件位 9 把三种只读状态分开}
+
+项目使用 4 KiB leaf PTE 的软件位 9 表示 COW：
+
+\begin{longtable}{L{0.29\textwidth}L{0.12\textwidth}L{0.12\textwidth}L{0.28\textwidth}}
+\toprule
+\textbf{状态} & \textbf{RW} & \textbf{COW} & \textbf{写入结果}\\
+\midrule
+普通可写 private & 1 & 0 & CPU 直接写\\
+fork 后共享 private & 0 & 1 & \#PF 后 private break\\
+真正只读 & 0 & 0 & protection fault\\
+非法组合 & 1 & 1 & 页表 API 拒绝建立\\
+\bottomrule
+\end{longtable}
+
+VMA 仍保存“政策上允许写”，PTE 保存“当前驻留页暂时不能直接写”。两者看似
+矛盾，正是 COW 捕获首次 store 的条件。
+
+CPU 可能已经在 TLB 缓存旧 writable 翻译。parent leaf 降权或当前 leaf
+替换 frame 后必须执行 \code{INVLPG}。child 尚未运行，不持有旧 TLB 翻译。
+当前只有一个 BSP，所以没有跨核 shootdown；这不能外推成 SMP 已经安全。
+
+\subsection{稀疏引用：独占隐含为一}
+
+若为 64 GiB 中每个 4 KiB frame 永久保存一个 64 位引用，仅计数就需要
+128 MiB，而且 KernelStack、页表、cache 页与 private 用户页并不共享同一
+生命周期。v1.10 只登记“经历 fork 后尚未恢复独占”的 private 用户页：
+
+\begin{center}
+\begin{tabular}{ll}
+无表项 & 隐含一个映射独占 frame\\
+第一次 fork & 建表项，reference count 从隐含 1 变为 2\\
+后续 fork & retain，计数递增\\
+退出或 private copy & release，计数递减\\
+只剩一个映射 & 可删除表项并恢复独占\\
+最后映射销毁 & 计数归零，释放 frame\\
+\end{tabular}
+\end{center}
+
+\code{UserPageReferenceManager} 使用调用方提供的 32768 项固定存储和
+SpinLock。固定上界使 fork 可以明确报告容量耗尽；fault 热路径不会为了引用
+元数据递归进入无界动态分配。
+
+\begin{pdfdiagram}
+  \node[os state] (one) {implicit exclusive\\no entry};
+  \node[os block,right=of one] (many) {tracked shared\\refs $\geq 2$};
+  \node[os state,right=of many] (last) {tracked last\\refs = 1};
+  \draw[os arrow] (one) -- node[above,font=\scriptsize]{first fork: 2} (many);
+  \draw[os arrow] (many) to[loop above] node[above,font=\scriptsize]{retain/release} (many);
+  \draw[os arrow] (many) -- node[above,font=\scriptsize]{other owner exits} (last);
+  \draw[os arrow] (last) -- node[above,font=\scriptsize]{restore exclusive} (one);
+\end{pdfdiagram}
+\diagramnote{表中 refs=1 是一个暂态：最后持有者尚未写，或 fork 回滚正在恢复
+parent。它不意味着还有第二个可访问映射。}
+
+\subsection{COW break 的两条路径}
+
+故障页对齐后，Kernel 先查 VMA 与 PTE，再读物理页引用。
+
+\paragraph{引用大于一：真正复制。}
+Kernel 申请新 frame，经高半 direct-map 复制完整 4096 字节，把当前
+AddressSpace 的 leaf 替换到新 frame，并清除 COW、设置 writable。PTE 提交
+后才 release 旧 frame 的一个引用。准备新 frame 失败时，旧映射完全不变。
+
+\paragraph{引用等于一：恢复独占。}
+另一个 Process 已经退出或先完成 private copy，当前映射是最后持有者。再复制
+自己的唯一页没有意义。Kernel 删除稀疏元数据，在原 leaf 上清除 COW、恢复
+writable，并失效 TLB。
+
+\begin{contractbox}
+COW fault 成功后不推进 RIP。异常返回到原 store，CPU 重新执行；这次 leaf
+已经 writable。手动跳过指令会让程序看似继续，却丢失本应发生的写入。
+\end{contractbox}
+
+\subsection{CopyToUser 不能依赖用户页故障}
+
+系统调用经常把结果结构写到用户缓冲，例如 200 字节
+\code{VirtualMemoryStatistics}。Kernel 用 direct-map 访问目标物理 frame
+时，并没有通过那个用户 PTE 执行 store，因此硬件不会替它产生 CPL3 COW
+fault。若直接复制，父子会同时观察到被改写的共享页。
+
+因此 \code{ValidateUserWritableMemory} 与 \code{CopyToUserAddressSpace}
+会逐页识别合法 COW，并主动调用同一个 private break：
+
+\begin{lstlisting}
+validate user range and writable VMA
+  -> inspect current leaf
+  -> if COW: break the page
+  -> require final writable leaf
+  -> copy kernel bytes to private frame
+\end{lstlisting}
+
+用户指令写与 Kernel 代写共享状态转换，避免两套引用/回滚代码产生不同语义。
+fork probe 把统计 sentinel 放入 COW 页，再让 Kernel 写结果；parent 必须仍
+看到原 sentinel。
+
+\subsection{文件页不能全部用同一种引用}
+
+fork 时按 VMA 与当前 leaf 分类：
+
+\begin{longtable}{L{0.32\textwidth}L{0.43\textwidth}}
+\toprule
+\textbf{页来源} & \textbf{child 行为}\\
+\midrule
+anonymous writable & 同 frame，父子 COW\\
+writable file private / ELF data & 同 private frame，父子 COW\\
+完整 readonly file/ELF & 继续共享 clean cache，不标 COW\\
+readonly private tail & 继续只读并复制后备生命周期\\
+not-present VMA & 只 clone VMA/FileBacking，以后各自 fault\\
+\bottomrule
+\end{longtable}
+
+clean cache frame 可以从文件重读，使用 cache mapping reference 与 LRU；
+private frame 的最后引用负责归还 buddy。把两者塞进同一引用表会让“淘汰 clean
+内容”和“释放匿名所有权”互相污染。
+
+\subsection{FileTable、打开实例与 cwd 的继承}
+
+fd 是 Process 局部编号，FileDescription 才保存共享文件 offset。fork 后两张
+FileTable 独立，但同号表项强引用同一个 FileDescription：
+
+\begin{pdfdiagram}
+  \node[os state] (pfd) {parent fd 3\\private table entry};
+  \node[os state,below=of pfd] (cfd) {child fd 3\\private table entry};
+  \node[os block,right=24mm of pfd,yshift=-8mm] (description)
+      {shared FileDescription\\offset + status flags};
+  \draw[os arrow] (pfd) -- (description);
+  \draw[os arrow] (cfd) -- (description);
+\end{pdfdiagram}
+\diagramnote{close 只删除调用者表项；read 推进共享 offset。fd flags 仍属于
+各自 FileTable entry。}
+
+\code{FileTable::CloneFrom} 保留精确 fd 与 fd flags，不能用普通“安装到
+最低空槽”循环重建，否则表中空洞会改变用户可见编号。
+
+FsContext 值复制 root/cwd/mount 视图。父子 fork 时都位于 \code{/bin}，
+child 后续 chdir 不改变 parent。FileBacking 也取得独立 VFS 打开实例引用，
+因此 mmap 生命周期不重新依赖原 fd。
+
+\subsection{父 PTE 最晚提交：fork 是跨资源事务}
+
+若先把 parent 全部 leaf 降为只读，再尝试创建 child，任何中途失败都会让
+parent 无故停留在 COW 状态。v1.10 先准备不可运行的候选 child：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 预留 Process、Thread 与 ProcessTree 身份；
+  \item 建立独立页表根和 VMA 图；
+  \item clone FileBacking 与 clean cache mapping reference；
+  \item 在 child 安装共享 leaf；
+  \item clone 精确 FileTable 与 FsContext；
+  \item 建立双 guard KernelStack、UserContext 与 FXSAVE；
+  \item 最后才逐页提交 parent COW；
+  \item 全部成功后发布 child 到 ready queue。
+\end{enumerate}
+
+\begin{failurebox}
+parent COW 提交到第 $N$ 页时仍可能因引用表耗尽失败。回滚先销毁 child，让
+每个共享引用递减；再扫描已经提交的 parent leaf。只剩 parent 时删除 refs=1
+元数据、恢复 writable 并 INVLPG；最后逆序释放 FsContext、FileTable、
+Thread、KernelStack 和 ProcessTree 预留。失败 child 从未可调度。
+\end{failurebox}
+
+回滚不能只检查“没有返回 child PID”。frame、PTE 权限、VMA、后备、对象
+强引用、KVA、KernelStack、ProcessTree 和 Zombie 都必须恢复到 fork 前快照。
+
+\subsection{从用户探针沿代码向内阅读}
+
+推荐阅读顺序保持“外部契约先于内部机制”：
+
+\begin{enumerate}[label=\arabic*.]
+  \item \filepath{source/user/programs/fork\_probe.cpp}：父子实际观察什么；
+  \item 用户 system call wrapper 与 ABI 44；
+  \item Kernel \filepath{user/system\_calls.cpp}：当前 Thread 分发；
+  \item \filepath{process/process\_runtime.cpp}：跨资源候选和发布；
+  \item \filepath{user/user\_memory.cpp}：地址空间 clone、COW break、回滚；
+  \item \filepath{memory/user\_page\_reference.cpp}：引用状态机；
+  \item \filepath{memory/page\_table.cpp}：软件位与 leaf 替换；
+  \item FileTable、VFS 和 FileBacking 的 clone。
+\end{enumerate}
+
+阅读每一层时都记录：当前 CR3 是谁的；当前对象是否已发布；哪一步首次改变
+parent；发生失败由谁逆序释放；最后一个物理页引用由谁归还 buddy。
+
+\subsection{测试为何必须跨四层}
+
+单元测试能把引用状态机的错误定位到一次 retain/release；页表集成测试能证明
+位 9 编解码、父子共享与 leaf 替换；100000 步固定种子模型能逐步比较所有
+frame 的引用，并在末尾排空；这些都不能证明 CPU 真的产生了预期 error code
+或 TLB 已失效。
+
+Ring 3 \code{/bin/fork\_probe} 因而在真实 CPL3：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 预先触及 anonymous、writable private file 和 readonly file 页；
+  \item fork 后由 child 修改前两类并读取只读页；
+  \item 让 Kernel 把统计写入另一张 COW 页；
+  \item 验证 cwd 与共享 fd offset；
+  \item parent wait 后检查内容和 sentinel 未被 child 改变；
+  \item 顺序执行 32 次 fork，child exec，parent wait；
+  \item 最后 unmap、close、exit，由 PID1 reap。
+\end{enumerate}
+
+成功日志只输出 COW 隔离、fd/cwd、32 次生命周期和完成四个语义标记。高频
+fault 不刷串口；所有 Process 回收后 Kernel 一次输出页引用 peak、first
+share、retain、release、exclusive restore，并要求 active entry/reference
+精确为零。宿主给每条来宾日志附加相对 QEMU 启动毫秒，来宾 PIT 保留独立
+单调时间。
+
+\subsection{真实调试中暴露的三个边界}
+
+\begin{itemize}
+  \item 初版 parent 提交把 readonly leaf 也标成 COW。硬件位看似可用，却让
+        真正只读写入被错误私有化；最终只处理 VMA 本来 writable 的 leaf。
+  \item 初版用户 writable validation 在 private break 之前看到 RW=0 就拒绝，
+        使 Kernel 写 VM statistics 失败；最终验证层主动进入统一 COW break。
+  \item Process 数从 11 增至 45 后，Kernel 汇总结果仍使用旧容量，产生越界
+        风险；整机验收必须同时更新数据结构上界与预期计数。
+\end{itemize}
+
+这些问题说明：纯引用模型、页表模型和 QEMU 不是互相替代，而是分别约束
+状态机、硬件编码与跨模块组合。
+
+\subsection{阶段边界与后续演化}
+
+v1.10 不支持用户多 Thread 的 fork 停世、\code{vfork}、Linux
+\code{clone}、shared anonymous、huge-page COW、swap、overcommit 或 OOM
+killer。系统仍是单 BSP，不实现跨核 TLB shootdown。writable
+\code{MAP\_SHARED}、dirty/writeback 与 \code{msync} 也没有因 fork 自动出现。
+
+下一阶段 v1.11 将复用本阶段已经正确继承的 FileTable，在 fork 与 exec 之间
+加入 pipe、dup、重定向和外部 Shell。它不应重新定义 private 页所有权；阶段
+边界的价值正是让 I/O 组合建立在已经冻结的 COW 事务上。
+
+\begin{contractbox}
+完成本节后，读者应能从一条 CPL3 store 出发，逐项写出 CR2/error code、
+VMA/PTE 判断、引用分支、frame 复制、INVLPG、指令重试和最终回收；也应能
+解释为什么 Kernel CopyToUser、共享 FileDescription offset 和 fork 回滚
+都是同一进程复制语义不可缺少的部分。
+\end{contractbox}
