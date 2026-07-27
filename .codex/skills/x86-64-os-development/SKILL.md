@@ -1,6 +1,6 @@
 ---
 name: x86-64-os-development
-description: Enforce this repository's architecture, learning, documentation, naming, implementation, testing, and delivery rules whenever planning, designing, coding, reviewing, testing, or documenting the custom x86-64 educational operating system.
+description: Enforce this repository's architecture, learning, documentation, naming, implementation, testing, website synchronization, and release rules whenever planning, designing, coding, reviewing, testing, documenting, or publishing the custom x86-64 educational operating system.
 ---
 
 # x86-64 教学操作系统开发
@@ -45,6 +45,7 @@ docs/building.md
 docs/testing.md
 docs/debugging.md
 docs/glossary.md
+docs/releasing.md
 docs/adr/
 docs/modules/
 docs/releases/
@@ -60,11 +61,34 @@ docs/releases/
 - `testing.md`：测试分层、运行方式和结果判定。
 - `debugging.md`：GDB、QEMU 日志、故障定位和常见问题。
 - `glossary.md`：统一项目术语。
+- `releasing.md`：主仓、教材、独立网站与 Sites 生产部署的不可拆分发布闭环。
 - `adr/`：记录重要架构决策及其原因。
 - `modules/`：记录模块职责、接口、不变量和失败语义。
 - `releases/`：保存各里程碑的实现范围、证据和已知限制。
 
 不得让文档长期描述已经失效的实现。改变接口、流程、架构、构建方式或验收行为时同步更新对应文档。
+
+## 执行不可拆分的阶段发布闭环
+
+把每个小版本视为“主工程 + 教材 + 网站 + 生产部署”的同一交付，不得先宣布
+阶段完成，再把网站同步留给以后。`web/` 是被主仓忽略的独立 Git 仓库；不得
+把网站源码、生成目录或部署包加入操作系统主仓，网站代码目录也不得公开
+`web/` 自身实现。
+
+严格按以下顺序完成阶段：
+
+1. 完成实现、失败路径、全量测试、发布记录、模块文档和教材，并导出手机教材。
+2. 提交并推送操作系统主仓；后续网站快照必须来自这个精确、已推送且干净的主仓 SHA。
+3. 在 `web/` 独立仓库重新生成代码目录和发布清单、同步教材 PDF，并更新首页、
+   路线、架构、文档目录与代码走读；不得只改版本标签。
+4. 运行网站同步门禁、测试和生产构建，提交并推送精确网站源码状态。
+5. 从已推送的网站 commit 构建 Sites 压缩包，保存托管版本并按当前授权规则
+   部署生产；非终态必须持续检查，直至成功或得到明确失败。
+6. 从公网验证首页、当前发布文档、新增代码路径、教材和 sitemap，检查 Worker
+   错误日志，并报告主仓 SHA、web SHA、Sites 版本、生产 URL 与 PDF SHA-256。
+
+如果 Sites 授权、外部服务或生产验证阻塞，明确报告阶段“实现已完成、公开发布
+未完成”，不得把它缩写为“阶段已完成”。下一阶段开始前必须先补齐这个发布闭环。
 
 ## 统一命名
 
@@ -118,3 +142,7 @@ docs/releases/
 - 代码无需依赖解释表面行为的注释即可读懂。
 - 需求、架构、模块、测试和调试文档已同步更新。
 - `main` 分支仍可构建、启动并运行既有回归测试。
+- 教材已重建、版式检查通过并同步导出到手机目录。
+- 独立网站已从精确主仓 commit 重新生成，网站仓库测试与生产构建通过。
+- 主仓和网站仓均已推送且工作树干净，Sites 已部署同版本生产内容。
+- 公网关键路由、当前发布文档、新增代码、教材下载和 Worker 日志均已验证。
