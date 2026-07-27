@@ -96,6 +96,12 @@
 | deadline queue | ThreadScheduler 拥有的 512 槽有序等待结构，按 `(deadline, sequence)` 解析到期 Thread |
 | timed wait | 同时登记 WaitQueue 和 deadline、由普通通知或 Timeout 中唯一一方完成的阻塞等待 |
 | saturation | 算术结果超出固定宽度时保持最大可表示值而不回绕；单调时钟和相对时长换算都采用该语义 |
+| signal | 发送到 Process 或进程组、在某个合格 Thread 的用户返回边界同步兑现的异步软件事件 |
+| disposition | Process 级的信号处理规则：默认动作、忽略或用户 handler；fork 继承，exec 重置 handler |
+| signal mask | 每 Thread 独立的 64 位屏蔽字；屏蔽只推迟普通信号交付，不删除 pending 状态 |
+| pending signal | 已发送但尚未提交默认动作、忽略或 handler 交付的信号；普通信号按编号合并为一个 bit |
+| signal frame | Kernel 在用户栈上构造的固定 ABI 记录，保存原 UserContext、旧 mask、信号号和一次性 cookie |
+| `sigreturn` | 用户 restorer 请求 Kernel 从精确 signal frame 恢复现场的系统调用；必须重新验证所有返回权限 |
 | CpuLocal | 当前 BSP 的本地内核状态，保存 current Thread、入口栈、IRQ/抢占深度和重调度标记 |
 | UserContext | 把 INT 0x80、SYSCALL、异常和信号返回规范化后的统一用户寄存器现场 |
 | FXSAVE / FXRSTOR | 保存和恢复 x87、MMX、SSE/SSE2 扩展现场的 x86 指令 |

@@ -268,3 +268,44 @@ AddressSpace 的等待关系。
 
 完整不变量与统计见 [Time 模块](time.md) 和
 [v1.13 学习章](../learning/21-v1.13-monotonic-clock-deadline-timed-wait.md)。
+
+## v1.14 信号状态与阻塞重启事务
+
+`SignalManager` 与 ThreadScheduler 使用相同 Process/Thread 槽索引，但公开
+PID/TID 仍由查找解析，不把可复用槽暴露为身份。Process 状态拥有 group、
+pending 和 63 项 disposition；Thread 状态拥有 mask、pending 与活动 frame
+五元组。普通信号在所有 pending 集合中最多存在一次，无法选择未屏蔽 Thread
+时继续留在 Process。
+
+Blocked Thread 被选中后必须通过现有 WaitQueue：
+
+```text
+Send signal
+  → select exactly one Thread
+  → WakeThread(reason=Signal)
+  → cancel deadline + remove WaitQueue
+  → save Interrupted or restart context
+  → user-return boundary builds SignalFrame
+```
+
+可重启调用在阻塞前保存系统调用号与 restartable 属性。Signal 获胜时默认把
+保存 RAX 写为 `INTERRUPTED`；action 含 restart flag 且策略允许时，信号帧中
+恢复原 RAX 并把 RIP 回退到 `SYSCALL`。descriptor/pipe wait、wait process
+与 join 可重启，sleep/futex 不可重启。已有部分 I/O 始终直接返回部分结果。
+
+fork 复制 Process action/group 和调用 Thread mask，不复制 pending 或活动帧。
+exec 保留 Ignore、重置 Handler、清空 pending 并删除兄弟信号状态。ThreadExit
+先把未处理 pending 归还 Process，再重新选择；ProcessExit 删除全部 Thread
+状态后才能删除 Process 状态。`ExecuteProcesses` 最终验证两类 active count
+为零并调用 `SignalManager::Validate()`。
+
+模块测试新增：
+
+- `os_kernel_signal_manager_unit_tests`；
+- `os_kernel_signal_wait_integration_tests`；
+- `os_kernel_signal_manager_randomized_tests`；
+- `/bin/signal_probe` 三档 QEMU 整机路径。
+
+完整状态机见
+[v1.14 学习章](../learning/22-v1.14-process-signals-sigreturn.md) 与
+[ADR 0041](../adr/0041-process-signals-user-frame-and-sigreturn.md)。

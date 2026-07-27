@@ -72,6 +72,27 @@ user 包装与程序    kernel 分发与校验
 | 40 | `UnmapMemory` | `RDI=页对齐地址`，`RSI=长度` | 成功 0 或错误 |
 | 41 | `SetProgramBreak` | `RDI=0 查询或新 break` | 当前 break 或错误 |
 | 42 | `GetVirtualMemoryStatistics` | `RDI=结果地址`，`RSI=112` | 成功 0 或错误 |
+| 43 | `MapFileMemory` | `RDI=fd`，`RSI=长度`，`RDX=权限`，`R10=flags` | 映射起点或错误 |
+| 44 | `ForkProcess` | 无 | 父返回子 PID，子返回 0，失败为错误 |
+| 45 | `CreatePipe` | `RDI=PipeDescriptorPair 地址` | 成功 0 或错误 |
+| 46 | `DuplicateDescriptorTo` | `RDI=源 fd`，`RSI=目标 fd`，`RDX=flags` | 目标 fd 或错误 |
+| 47 | `CreateThread` | `RDI=请求地址`，`RSI=48` | 新 TID 或错误 |
+| 48 | `ExitThread` | `RDI=64 位退出值` | 不返回当前 Thread |
+| 49 | `JoinThread` | `RDI=TID`，`RSI=结果地址`，`RDX=16` | TID、would block 或错误 |
+| 50 | `SetThreadLocalStorage` | `RDI=FS-base` | 成功 0 或错误 |
+| 51 | `GetThreadId` | 无 | 当前 TID |
+| 52 | `WaitPrivateFutex` | `RDI=word`，`RSI=expected` | 成功、值变化或错误 |
+| 53 | `WakePrivateFutex` | `RDI=word`，`RSI=最大数量` | 唤醒数量或错误 |
+| 54 | `GetMonotonicTime` | 无 | 当前单调纳秒 |
+| 55 | `SleepUntil` | `RDI=绝对纳秒` | 成功、被中断或错误 |
+| 56 | `WaitPrivateFutexUntil` | `RDI=word`，`RSI=expected`，`RDX=deadline` | 成功、超时或错误 |
+| 57 | `SetSignalAction` | `RDI=信号`，`RSI=action`，`RDX=old action`，`R10=40` | 成功 0 或错误 |
+| 58 | `SetSignalMask` | `RDI=新 mask`，`RSI=old mask` | 成功 0 或错误 |
+| 59 | `SendProcessSignal` | `RDI=PID`，`RSI=信号` | 成功 0 或错误 |
+| 60 | `SendProcessGroupSignal` | `RDI=组号`，`RSI=信号` | 目标 Process 数或错误 |
+| 61 | `SignalReturn` | `RDI=SignalFrame 地址` | 成功直接恢复旧现场 |
+| 62 | `GetProcessGroup` | 无 | 当前进程组号或错误 |
+| 63 | `SetProcessGroup` | `RDI=组号；0 表示自身 PID` | 成功 0 或错误 |
 
 错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 串口失败。
 v0.10 又定义 `-5` would block、`-6` broken pipe、`-7` 端点权限、
@@ -95,6 +116,9 @@ v1.4–v1.6 追加 `-24..-33`，覆盖描述符限额、KernelObject、路径、
 错误值永不重排。v1.8 追加 `-39..-42`，分别表示物理/地址空间容量耗尽、
 地址已占用、非法内存范围和 VMA 元数据耗尽；v1.9 追加系统调用 43
 `MapFileMemory`，不重排已有编号。
+v1.10--v1.13 继续追加 44--56 与错误 `-43..-51`；v1.14 追加系统调用
+57--63 和 `INTERRUPTED=-52`、`PROCESS_NOT_FOUND=-53`、
+`SIGNAL_STATE_INVALID=-54`。所有历史编号继续冻结。
 
 ## 代码走读
 
@@ -252,6 +276,23 @@ futex，返回后先重新取得 Mutex，再返回
 `ConditionSatisfied`、`TimedOut` 或 `Failed`。调用者仍在 Mutex 保护下循环
 检查真实谓词；通知 marker 不能替代谓词。代码与竞争走读见
 [v1.13 学习章](../learning/21-v1.13-monotonic-clock-deadline-timed-wait.md)。
+
+## v1.14 信号运行库与 Intel NASM restorer
+
+`SetSignalAction` 和 `SetSignalMask` 以固定宽度结构进入 Kernel；
+`InstallSignalHandler` 自动填入用户 handler 与
+`OsUserSignalReturnRestorer` 地址。发送包装区分 PID 和进程组，不把进程树
+当作组成员关系。
+
+Kernel 进入 handler 时遵循 System V AMD64 ABI：RDI 是信号号，RSI 是
+`SignalFrame*`，合成栈顶保存 restorer 返回地址。handler 正常 `ret` 后，
+Intel NASM restorer 令 `RDI=RSP`、`RAX=61` 并执行 `SYSCALL`。成功 sigreturn
+直接恢复被中断现场；其后的 `ud2` 只保护不应发生的普通返回。
+
+用户运行库无权验证或放宽返回现场。frame address、cookie、canonical 地址、
+selector、RFLAGS、Thread 栈范围与页权限全部由 Kernel 重新检查。代码走读见
+[v1.14 学习章](../learning/22-v1.14-process-signals-sigreturn.md) 与
+[ADR 0041](../adr/0041-process-signals-user-frame-and-sigreturn.md)。
 
 用户模块不配置 STAR/LSTAR，不读取 CpuLocal，也不选择返回指令。所有用户
 RIP/RSP、段、RFLAGS 和映射验证都属于 Kernel 安全边界；用户包装器只遵守

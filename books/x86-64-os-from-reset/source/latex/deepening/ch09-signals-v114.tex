@@ -1,0 +1,394 @@
+\section{v1.14：从异步事件到受控用户 handler}
+
+\begin{keyidea}
+信号不是“内核替用户调用函数”。它先把异步事实记入 Process/Thread 状态，
+再在安全的用户返回边界构造可验证的 Ring 3 控制流，并让条件、timeout 与
+signal 竞争同一个 Blocked 到 Ready 提交点。
+\end{keyidea}
+
+\subsection{为什么 Unix 需要一种非轮询通知}
+
+同步系统调用假定发起者知道自己在等待什么：读文件、等孩子或睡眠都由当前
+执行流主动进入 Kernel。然而终端中断、非法指令、断开的管道、子进程退出和
+管理员终止不会等待目标下一次查询。早期 Unix 为这些事件分配小整数编号，
+并允许程序选择默认动作、忽略或用户处理函数，由此形成 signal。
+
+signal 与硬件中断都能打破顺序控制流，但两者的特权边界不同。硬件 IRQ 由
+CPU 根据 IDT 进入 CPL0，入口 frame 由 x86-64 架构定义；用户 signal 已经处于
+Kernel 软件状态中，只在某个安全边界把即将恢复的 CPL3 RIP 改为 handler。
+handler 从未在 PIC、PIT 或任意中断上下文中直接运行，也不会因“处理信号”
+获得 Ring 0 权限。
+
+\begin{pdfdiagram}[node distance=10mm and 13mm]
+  \node[os hardware] (source) {发送者/异常/未来 TTY\\异步事件源};
+  \node[os state,right=of source] (pending) {SignalManager\\pending 与处置};
+  \node[os state,right=of pending] (thread) {选中一个 Thread\\或保留 Process pending};
+  \node[os state,below=of thread] (boundary) {SYSCALL/IRQ\\用户返回边界};
+  \node[os state,left=of boundary] (frame) {用户 SignalFrame\\原现场与 cookie};
+  \node[os state,left=of frame] (handler) {Ring 3 handler\\restorer/sigreturn};
+  \draw[os arrow] (source) -- (pending);
+  \draw[os arrow] (pending) -- (thread);
+  \draw[os arrow] (thread) -- (boundary);
+  \draw[os arrow] (boundary) -- (frame);
+  \draw[os arrow] (frame) -- (handler);
+\end{pdfdiagram}
+\diagramnote{异步事实先成为内核状态；真正改变用户 RIP 发生在统一返回边界。}
+
+传统普通信号也不是消息队列。同一编号尚为 pending 时再次到达，只保证
+“至少发生过一次”，并不积累次数。POSIX 后续增加实时信号队列以保存顺序和值；
+本阶段实现普通合并语义，避免用一个无界计数伪装成尚未实现的实时信号。
+
+\subsection{处置、屏蔽和 pending 为什么属于不同所有者}
+
+Process 是共享地址空间、文件和程序映像的资源容器；Thread 是独立寄存器、
+栈和调度状态的执行实体。signal 横跨两层，不能把全部字段塞进一份“进程信号”
+结构：
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+状态 & 所有者 & 不变量与设计原因\\
+\midrule
+disposition & Process & 同一程序映像共享 Default/Ignore/Handler 决策\\
+process group & Process & 广播目标身份，不等同于父子进程树\\
+Process pending & Process & 尚无合格 Thread 时仍保存已经发生的事实\\
+mask & Thread & 一个执行流的临界区不应屏蔽全部兄弟\\
+Thread pending & Thread & 普通信号已经完成唯一接收者选择\\
+active frame & Thread & sigreturn 只能恢复本 Thread 的寄存器与栈\\
+\bottomrule
+\end{tabularx}
+\caption{v1.14 信号状态的所有权分层}
+\end{table}
+
+若 action 存在 Thread 中，新建 Thread 可能看到不同程序行为；若 mask 存在
+Process 中，一个 Thread 暂时屏蔽就会意外推迟全部兄弟；若 active frame 只
+存在 Process 中，兄弟 Thread 可能提交不属于自己的返回请求。
+\code{SignalManager} 因而以固定容量 Process/Thread 表保存状态，再通过
+scheduler 槽关联。公开 PID/TID 仍是单调身份，绝不能被数组槽号替代。
+
+\subsection{普通 pending 是位集合，不是次数}
+
+当前有效信号号为 \(1\ldots63\)，编号 \(s\) 对应：
+
+\[
+  \operatorname{bit}(s)=1\ll(s-1)
+\]
+
+发送前同时查看目标 Process pending 与它全部 Thread pending。只要同一 bit
+已经存在，本次发送增加 coalesced 统计但不产生第二个所有者。否则从 Process
+保存的轮转游标扫描活动 Thread：
+
+\begin{lstlisting}
+thread.active
+&& thread.process_index == target
+&& (thread.mask & SignalBit(signal)) == 0
+\end{lstlisting}
+
+找到第一个合格者后只写它的 pending；没有合格者时写 Process pending。Thread
+注册、修改 mask 或完成 handler 后重新分配 Process pending。轮转游标只消除
+持续偏向最低槽位，不承诺实时优先级或公平期限。
+
+\code{Kill} 是不可屏蔽、不可忽略、不可安装 handler 的信号。Kernel 在设置
+mask 时强制清除对应 bit，并在 action 校验时拒绝非 Default；用户运行库的
+检查只能改善错误报告，不能成为安全边界。
+
+\subsection{Default、Ignore 和 Handler 是三种提交}
+
+\code{SignalAction} 固定为 40 字节，保存 disposition、handler、restorer、
+additional mask 与 flags：
+
+\begin{itemize}
+  \item \textbf{Default}：Child 当前默认忽略；其他已冻结信号终止 Process，
+        退出原因记录为 Signal 并保存信号号；
+  \item \textbf{Ignore}：消费 pending，不触碰用户栈，也不唤醒无关 Thread；
+  \item \textbf{Handler}：构造用户 frame，把当前信号和 additional mask
+        临时加入 Thread mask，再进入用户 handler。
+\end{itemize}
+
+handler 运行期间同一普通信号再次发送会保持 pending，因为本信号已自动
+屏蔽。sigreturn 恢复旧 mask 后，下一次用户返回边界才可再投递。这阻止同一
+信号无限递归堆叠；未来若支持 \code{nodefer}，必须新增冻结的 action flag，
+不能偷偷改变现有行为。
+
+\subsection{进程组不是进程树的另一种写法}
+
+父子树回答谁 wait、谁收养 Zombie；进程组回答一次发送选择哪些 Process。
+组是平坦成员集合，不包含“所有后代”的隐式递归。fork 继承父进程组，Process
+可把自己移入以自身 PID 为组号的新组，按组发送再为每个活动成员独立执行一次
+普通 Process signal。
+
+整机 probe 必须先调用 \code{SetProcessGroup(0)} 建立独立组，再把 User2
+设为 Ignore 并执行组发送。若 probe 留在 PID1 继承组，init 同样收到 User2
+默认动作而终止；这不是随机投递故障，而是测试没有隔离广播身份。后续 TTY
+将用前台进程组产生 Ctrl-C，但 v1.14 只有身份和组发送，还没有 session、
+控制终端或前后台作业。
+
+\subsection{signal 怎样加入单赢家唤醒}
+
+v1.13 已让 Blocked Thread 同时关联业务 WaitQueue 与 deadline。v1.14 不建立
+绕过调度器的“信号就绪链”，而把 Signal 加入同一个完成竞争：
+
+\begin{pdfdiagram}[node distance=12mm and 18mm]
+  \node[os state] (thread) {Thread\\Blocked};
+  \node[os state,below left=of thread] (condition) {condition/close\\普通通知};
+  \node[os state,below=of thread] (timeout) {deadline\\Timeout};
+  \node[os state,below right=of thread] (signal) {pending\\Signal};
+  \node[os state,below=28mm of thread] (ready) {WakeThread\\Ready 一次};
+  \draw[os arrow] (condition) -- (ready);
+  \draw[os arrow] (timeout) -- (ready);
+  \draw[os arrow] (signal) -- (ready);
+  \draw[os arrow] (thread) -- node[right,font=\scriptsize]{同一 irq-save lock} (ready);
+\end{pdfdiagram}
+\diagramnote{三个原因都只能赢得一次 Blocked 到 Ready；失败者不覆盖 WakeReason。}
+
+Signal 发送路径找到选中 Thread 后调用
+\code{WakeThread(..., WakeReason::Signal)}。胜者在 scheduler irq-save lock
+内确认仍为 Blocked、从 WaitQueue 摘除、取消 deadline、写入唯一 wake reason
+并接入一次 Ready queue。condition 或 timeout 已先赢时，Signal 仍保持
+pending，但不再次 Ready；Signal 先赢时，稍后的 deadline 已被计为 cancellation。
+
+这条统一路径同时给出两个可审计不变量：
+
+\[
+  \text{一个阻塞周期只产生一个 WakeReason}
+\]
+\[
+  active\ deadlines=schedules-expirations-cancellations
+\]
+
+\subsection{Interrupted 与 restart 必须按调用语义区分}
+
+信号唤醒一个阻塞系统调用时，Kernel 先把保存现场的 RAX 设置为固定错误
+\code{-52}。是否在 handler 返回后重启，则同时取决于 action restart flag
+和系统调用策略：
+
+\begin{itemize}
+  \item descriptor/pipe 读写、wait process 与 join 可重新检查条件；
+  \item sleep 和带 deadline 的 futex 不重启；
+  \item 已经提交部分字节的 I/O 必须返回部分结果，不能回退副作用。
+\end{itemize}
+
+对于允许重启且尚无部分提交的原生系统调用，signal frame 保存：
+
+\[
+  RIP_{\mathrm{saved}}=RIP_{\mathrm{after\ syscall}}-2
+\]
+\[
+  RAX_{\mathrm{saved}}=\text{original syscall number}
+\]
+
+x86-64 \code{SYSCALL} 编码固定为两个字节；RDI、RSI、RDX、R10 等参数寄存器
+仍在原 UserContext 中。sigreturn 恢复后，处理器重新执行同一条指令。sleep
+若按相对时长盲目重启会把 handler 时间再次加入等待，futex 若重新比较错误
+条件也会掩盖值变化，因此“可重启”不是一个全局布尔默认值。
+
+\subsection{用户 handler 的栈看起来像一次真正的 call}
+
+C++ handler 遵守 System V AMD64 ABI。普通函数入口期待
+\(RSP\bmod16=8\)，栈顶保存返回地址；被中断代码却没有执行过 \code{call}。
+Kernel 因而在目标用户栈合成：
+
+\begin{lstlisting}
+high address
+  old RSP
+  +-----------------------------+
+  | SignalFrame, 240 bytes      | <- RSI
+  +-----------------------------+  16-byte aligned
+  | restorer return address     | <- handler RSP
+low address
+\end{lstlisting}
+
+进入 handler 时 RDI 为信号号，RSI 为 frame 地址，RIP 为 action handler。
+handler 执行 \code{ret} 后转入 Intel NASM restorer：
+
+\begin{lstlisting}[language={[x86masm]Assembler}]
+OsUserSignalReturnRestorer:
+    mov rdi, rsp
+    mov rax, 61
+    syscall
+    ud2
+\end{lstlisting}
+
+\code{ret} 已弹出 restorer 地址，此时 RSP 恰好指向 SignalFrame。成功
+\code{SignalReturn} 直接恢复旧现场，不会普通返回；若 Kernel 意外返回，
+\code{ud2} 把错误转成明确用户异常，避免沿未知栈继续执行。
+
+\subsection{SignalFrame 与 x86-64 标志位}
+
+固定 240 字节 SignalFrame 包含 176 字节 UserContext、旧 mask、信号号、
+magic/version/size、restorer 和 cookie。UserContext 中的 RFLAGS 不是任意
+64 位用户数据。返回验证保留用户可用算术/控制状态，同时拒绝改变特权执行的位：
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+位/字段 & 处理 & 原因\\
+\midrule
+CF/PF/AF/ZF/SF/OF & 恢复 & 普通整数运算结果属于用户现场\\
+DF & 按统一白名单恢复 & 影响字符串指令方向，必须与通用返回契约一致\\
+IF & 要求用户许可形态 & 不能让伪造 frame 破坏 Kernel 中断策略\\
+IOPL/NT/VM & 拒绝危险值 & 不能通过 sigreturn 获得端口或旧任务/虚拟 8086 语义\\
+RF/TF & 按项目白名单处理 & 调试与异常控制必须显式受控\\
+CS/SS & 固定用户 selector & 返回只能进入 CPL3 代码/数据段\\
+\bottomrule
+\end{tabularx}
+\caption{signal 返回复用统一 UserContext 的 RFLAGS 与段验证}
+\end{table}
+
+具体 bit mask 不在 signal 子系统另抄一份，而由统一
+\code{ValidateUserContext} 契约判断。这样 SYSCALL 安全返回、异常返回和
+sigreturn 不会各自演化出不同的 RFLAGS 漏洞。
+
+\subsection{主栈按需扩展与用户 Thread 栈边界}
+
+主用户栈保留 8 MiB VMA，启动只提交参数真正占用的高端页面。SignalFrame 位于
+当前 RSP 下方，可能跨入紧邻未提交页。v1.14 的
+\code{PrepareUserStackRange} 验证 frame 与当前 RSP 均在冻结主栈窗口，然后
+只逐页提交紧邻 committed bottom 的页面，并复用用户写 not-present fault 的
+VMA、权限和 64 KiB 邻近约束。
+
+用户创建 Thread 的栈则是有 guard 的独立匿名 VMA。它不借用主栈增长几何；
+Kernel 要求整个 frame 位于该 Thread 登记的 base/size 内，并确认页面用户可写。
+fork 后若页面为 private COW，写入 frame 前仍经
+\code{ResolveUserReturnMemory} 完成私有化。异步投递不能绕过 W\^X、guard
+或 COW 所有权。
+
+\subsection{为什么 magic 之外还需要一次性 cookie}
+
+用户能读写自己的栈，所以 magic、版本和大小只能发现随机损坏，不能证明这正是
+Kernel 当前允许恢复的 frame。每次开始 handler 交付时，Kernel 在 Thread
+状态登记精确五元组：
+
+\begin{lstlisting}
+frame_address
+cookie
+signal_number
+restorer_address
+previous_mask
+\end{lstlisting}
+
+frame 全部写入后才提交 active 登记。sigreturn 要求用户参数和五项逐一匹配，
+成功后立即清空，所以旧 frame 不能重放，兄弟 Thread 也不能代为返回。cookie
+是从非零开始的 64 位单调值，回绕遇零时跳过；它不是密码学秘密，但与精确
+地址、Thread 所有权和一次消费共同构成能力凭据。
+
+\subsection{sigreturn 是特权返回验证器}
+
+用户可以修改 frame 中的 RIP、RSP、RFLAGS 和段选择子。Kernel 若只
+\code{CopyFromUser} 后直接 IRETQ，攻击者就能尝试返回 Kernel 高半地址、
+不可执行页、错误段或危险 flags。v1.14 依次验证：
+
+\begin{enumerate}
+  \item 当前 Thread 存在活动 frame；
+  \item 参数地址与登记地址完全一致、16 字节对齐并完整位于本 Thread 栈；
+  \item magic、version、size 与 reserved 字段正确；
+  \item cookie、信号号、restorer 和 previous mask 与 Kernel 登记一致；
+  \item 恢复 mask 不含不可屏蔽 Kill；
+  \item RIP/RSP 满足四级页表 48 位 canonical 与用户低半范围；
+  \item CS/SS 是固定用户 selector，RFLAGS 通过统一白名单；
+  \item RIP 页为用户 R-X，RSP 页为用户 RW-NX。
+\end{enumerate}
+
+任何一步失败都复用非法用户返回隔离路径，只把目标 Process 记为
+Exception/vector 13 并交给父进程 wait；Kernel 与旁系 Process 继续运行。
+整机 probe 的孩子故意清零 magic，父进程必须观察隔离结果。这证明安全检查
+穿过真实 ELF、页表和系统调用，而不是仅存在于宿主单元模型。
+
+\subsection{fork、exec 与退出怎样迁移信号状态}
+
+\paragraph{fork}
+孩子复制 Process disposition 和进程组，唯一新 Thread 复制调用 Thread 的
+mask；pending 与 active frame 不复制。否则父进程尚未处理的事件会在父子各
+兑现一次，或孩子获得指向父用户栈的活动 frame。
+
+\paragraph{exec}
+新程序不知道旧 handler 地址，所以 Handler 重置为 Default，Ignore 保留。
+pending、活动 frame 和被删除兄弟 Thread 的状态清空，survivor mask 保留。
+PID、父子关系与进程组没有变化，因为 exec 替换程序映像而非 Process 身份。
+
+\paragraph{exit}
+ThreadExit 移除对应信号状态；仍可交付的 Process pending 重新选择其他 Thread。
+最后一个 Thread 或默认信号动作终止 Process 时，先终止 scheduler Thread，
+再删除全部 ThreadSignalState，最后删除 ProcessSignalState。最终资源门禁要求
+两类 active count 都为零。
+
+\subsection{固定 ABI、错误和值宽}
+
+v1.14 在 0--56 号调用后增加：
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l c X}
+\toprule
+调用 & 编号 & 语义\\
+\midrule
+\code{SetSignalAction} & 57 & 安装/读取 Process 处置\\
+\code{SetSignalMask} & 58 & 替换当前 Thread mask 并返回旧值\\
+\code{SendProcessSignal} & 59 & 向指定 PID 或自身发送普通信号\\
+\code{SendProcessGroupSignal} & 60 & 向平坦进程组成员逐个发送\\
+\code{SignalReturn} & 61 & 从精确活动 frame 恢复用户现场\\
+\code{GetProcessGroup} & 62 & 读取 Process 组号\\
+\code{SetProcessGroup} & 63 & 设置本 Process 组号\\
+\bottomrule
+\end{tabularx}
+\caption{v1.14 固定宽度系统调用增量}
+\end{table}
+
+\code{Interrupted=-52}、\code{ProcessNotFound=-53} 与
+\code{SignalStateInvalid=-54} 使用显式固定宽度枚举；action、context 与
+frame 大小分别冻结为 40、176 与 240 字节。ABI 不包含平台相关的
+\code{long}、\code{size\_t} 或 Kernel 指针。
+
+\subsection{四层测试与真实机器证据}
+
+\paragraph{单元测试}
+直接驱动 SignalManager，验证两个 Thread mask 下唯一选择、普通信号合并、
+active frame 五元组、fork 继承和 exec 重置。
+
+\paragraph{集成测试}
+组合 SignalManager、ThreadScheduler、WaitQueue 与 DeadlineQueue。Signal
+先赢后，condition 再 wake、deadline 再 expire 都不能产生第二次 Ready，
+deadline cancellation 统计必须守恒。
+
+\paragraph{固定种子随机测试}
+参考模型执行 100000 步发送、mask、投递和生命周期操作；每步比较 pending
+并集，并要求同一 Process 的同一普通信号至多归属一个 Thread。种子与失败
+步骤固定，可逐步重放。
+
+\paragraph{QEMU 整机测试}
+\filepath{/bin/signal\_probe} 穿过自研 ROM、Stage 1、rootfs ELF、原生
+SYSCALL、用户页表、Intel NASM restorer、fork/COW 和 PID1 wait，依次证明：
+
+\begin{itemize}
+  \item descriptor wait 被 User1 打断并按 restart flag 重启；
+  \item 屏蔽期间两次 User1 合并，解屏蔽后 handler 只执行一次；
+  \item 独立进程组的 User2 组发送与 Ignore；
+  \item fork 孩子继承 handler，COW 不污染父计数；
+  \item 篡改 frame 只隔离提交它的孩子；
+  \item Term 默认动作以 Signal 原因和信号号被父进程观察。
+\end{itemize}
+
+\subsection{日志、故障定位与阶段边界}
+
+发送和等待是热路径，Kernel 只在 action 安装、处置提交、失败以及累计计数
+达到二次幂时输出局部日志，最终再打印 queued、coalesced、ignored、handler、
+default termination、group send、interrupted/restarted wait 与 rejected
+frame 汇总。用户 probe 只在一个语义事务完整提交后输出 marker；宿主为每行
+添加 \code{[QEMU][T+...ms]} 到达时间，以识别静默卡死而不伪装成来宾时钟。
+
+handler 未执行时先比较 action 和 delivery disposition，再检查 mask/pending
+所有权与返回边界；handler 返回 vector 13 时检查 restorer 的 RSP、frame
+cookie、用户 RIP 的 R-X 页和用户栈的 RW-NX 页；按组发送误伤 init 时先检查
+是否仍继承 PID1 进程组。不能放宽 \code{ValidateUserContext} 或扩大 QEMU
+timeout 来掩盖状态错误。
+
+v1.14 已完成普通信号、进程组、用户 handler、严格 sigreturn 和可中断/可重启
+阻塞。TTY、session、前台组、Ctrl-C、stop/continue、alternate stack、实时
+信号队列和 \code{siginfo\_t} 均留给后续阶段。下一阶段应让 i8042 输入先经过
+TTY line discipline，再由 TTY 向前台进程组发送信号；键盘 IRQ 不应直接选择
+某个 PID。

@@ -1,12 +1,12 @@
 #include "os/kernel/arch/interrupt_runtime.hpp"
 
 #include "os/kernel/arch/cpu_local.hpp"
+#include "os/kernel/arch/processor.hpp"
 #include "os/kernel/device/ata_pio.hpp"
 #include "os/kernel/device/legacy_pic.hpp"
-#include "os/kernel/process/process_runtime.hpp"
-#include "os/kernel/arch/processor.hpp"
 #include "os/kernel/device/programmable_interval_timer.hpp"
 #include "os/kernel/device/ps2_keyboard.hpp"
+#include "os/kernel/process/process_runtime.hpp"
 #include "os/kernel/time/monotonic_clock.hpp"
 
 #include "os/abi/time.hpp"
@@ -65,9 +65,8 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
                                 this->pit_configuration_) != PitConfigurationStatus::Succeeded) {
         return InterruptRuntimeStatus::InvalidPitConfiguration;
     }
-    if (this->monotonic_clock_.Initialize(
-            OS_KERNEL_DEVICE_PIT_INPUT_FREQUENCY_HZ,
-            this->pit_configuration_.divisor) !=
+    if (this->monotonic_clock_.Initialize(OS_KERNEL_DEVICE_PIT_INPUT_FREQUENCY_HZ,
+                                          this->pit_configuration_.divisor) !=
         MonotonicClockStatus::Succeeded) {
         return InterruptRuntimeStatus::InvalidPitConfiguration;
     }
@@ -109,8 +108,7 @@ void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
 
     if (interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
         this->timer_tick_count_ = this->timer_tick_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
-        if (this->monotonic_clock_.Advance(
-                OS_KERNEL_INTERRUPT_COUNTER_INCREMENT) !=
+        if (this->monotonic_clock_.Advance(OS_KERNEL_INTERRUPT_COUNTER_INCREMENT) !=
             MonotonicClockStatus::Succeeded) {
             HaltProcessor();
         }
@@ -131,15 +129,13 @@ InterruptRuntimeStatistics InterruptRuntime::Statistics() const noexcept {
     // 当前单核由 IRQ 修改计数；保存并关闭原 IF 后复制，避免交付跨中断的快照。
     const bool interrupts_were_enabled = DisableInterrupts();
     const uint64_t timer_tick_count = this->timer_tick_count_;
-    const MonotonicClockSnapshot monotonic_snapshot =
-        this->monotonic_clock_.Read();
+    const MonotonicClockSnapshot monotonic_snapshot = this->monotonic_clock_.Read();
     const InterruptRuntimeStatistics statistics{
         .timer_tick_count = timer_tick_count,
         .monotonic_nanoseconds = monotonic_snapshot.nanoseconds,
-        .monotonic_milliseconds = monotonic_snapshot.nanoseconds /
-                                  os::abi::OS_ABI_TIME_NANOSECONDS_PER_MILLISECOND,
-        .monotonic_fractional_numerator =
-            monotonic_snapshot.fractional_numerator,
+        .monotonic_milliseconds =
+            monotonic_snapshot.nanoseconds / os::abi::OS_ABI_TIME_NANOSECONDS_PER_MILLISECOND,
+        .monotonic_fractional_numerator = monotonic_snapshot.fractional_numerator,
         .keyboard_interrupt_count = this->keyboard_interrupt_count_,
         .supported_keyboard_event_count = this->supported_keyboard_event_count_,
         .spurious_interrupt_count = this->spurious_interrupt_count_,
@@ -211,10 +207,10 @@ bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
 }
 
 extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept {
-    if (frame == nullptr ||
-        GetCpuLocal().EnterInterrupt() != CpuLocalStatus::Succeeded) {
+    if (frame == nullptr || GetCpuLocal().EnterInterrupt() != CpuLocalStatus::Succeeded) {
         HaltProcessor();
     }
+    const bool returning_to_user = FrameOriginatedFromUser(*frame);
     kernel_interrupt_runtime.Dispatch(frame->vector);
     uint64_t interrupt_request = 0ULL;
     if (CalculateLegacyPicInterruptRequest(frame->vector, interrupt_request) !=
@@ -224,8 +220,7 @@ extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *fra
     ExceptionFrame *resume_frame = frame;
     if (interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
         const uint64_t expired_deadline_count =
-            HandleProcessDeadlineInterrupt(
-                kernel_interrupt_runtime.MonotonicNanoseconds());
+            HandleProcessDeadlineInterrupt(kernel_interrupt_runtime.MonotonicNanoseconds());
         if (expired_deadline_count != OS_KERNEL_INTERRUPT_EMPTY_COUNTER) {
             GetCpuLocal().RequestReschedule();
         }
@@ -237,6 +232,9 @@ extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *fra
     }
     if (GetCpuLocal().LeaveInterrupt() != CpuLocalStatus::Succeeded) {
         HaltProcessor();
+    }
+    if (returning_to_user && IsProcessSchedulingActive()) {
+        resume_frame = PrepareCurrentThreadSignalDelivery(*resume_frame);
     }
     return resume_frame;
 }

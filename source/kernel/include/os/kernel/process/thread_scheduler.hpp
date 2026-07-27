@@ -178,10 +178,11 @@ class ThreadScheduler final {
     BlockCurrentThreadUntil(WaitQueue &wait_queue, WaitCondition wait_condition,
                             uint64_t now_nanoseconds, uint64_t deadline_nanoseconds,
                             ThreadSchedulingDecision &decision) noexcept;
-    [[nodiscard]] ThreadSchedulerStatus
-    ExpireNextDeadline(uint64_t now_nanoseconds, uint64_t &woken_thread_index,
-                       WaitCondition &wait_condition, WaitQueue *&wait_queue,
-                       bool &expired) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus ExpireNextDeadline(uint64_t now_nanoseconds,
+                                                           uint64_t &woken_thread_index,
+                                                           WaitCondition &wait_condition,
+                                                           WaitQueue *&wait_queue,
+                                                           bool &expired) noexcept;
     [[nodiscard]] ThreadSchedulerStatus WakeOne(WaitQueue &wait_queue, WakeReason wake_reason,
                                                 uint64_t &woken_thread_index,
                                                 bool &wake_won) noexcept;
@@ -222,6 +223,9 @@ class ThreadScheduler final {
                                                           ThreadEntry &entry) const noexcept;
     [[nodiscard]] ThreadSchedulerStatus
     SetCurrentThreadLocalStorageBase(uint64_t thread_local_storage_base) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus SetCurrentThreadSignalMask(uint64_t signal_mask) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    ConsumeCurrentThreadWakeReason(WakeReason &wake_reason) noexcept;
     [[nodiscard]] bool IsActive() const noexcept;
     [[nodiscard]] bool IsInitialized() const noexcept;
 

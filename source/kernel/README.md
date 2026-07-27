@@ -205,3 +205,18 @@ user/system_calls.*           47..56 Thread/futex/time ABI 分发
 硬件周期只由 `arch/interrupt_runtime` 推进；等待对象和唯一 WakeReason 仍由
 ThreadScheduler 拥有。设计理由见
 [ADR 0040](../../docs/adr/0040-monotonic-clock-deadline-timed-wait.md)。
+
+v1.14 继续在同一执行边界上加入异步用户通知：
+
+```text
+process/signal_manager.*     Process action/group/pending 与 Thread mask/frame
+process/thread_scheduler.*   Signal/condition/timeout 的唯一 WakeReason
+process/process_runtime.*    用户栈帧、阻塞重启、生命周期与 sigreturn
+user/user_memory.*           主栈信号帧的受控相邻页扩展
+user/system_calls.*          57..63 信号与进程组 ABI 分发
+```
+
+SignalManager 不直接接入 Ready 队列；ProcessRuntime 只通过 ThreadScheduler
+唤醒。用户 frame 的 cookie、现场和页权限也只在当前 Thread 返回边界验证。
+设计理由见
+[ADR 0041](../../docs/adr/0041-process-signals-user-frame-and-sigreturn.md)。

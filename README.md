@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.13 单调时间、deadline 与 timed wait`
-已完整完成，下一阶段是 v1.14 signal、进程组与中断语义。v1.1 已
+当前状态：第二周期 `v1.14 signal、进程组与安全 sigreturn`
+已完整完成，下一阶段是 v1.15 TTY、session 与作业控制。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -221,7 +221,18 @@ v1.13 新增系统调用 54--56，把 8254 PIT 的输入频率与实际除数换
 归零。详细证据见 [v1.13 发布记录](docs/releases/v1.13.md) 与
 [ADR 0040](docs/adr/0040-monotonic-clock-deadline-timed-wait.md)。
 
-信号和 TTY 不再塞进同一阶段，异步块层与 ordered
+v1.14 新增系统调用 57--63，把 Process disposition、Thread mask、普通
+pending 合并、进程组和用户 handler 接入现有 Process/Thread 状态机。
+Signal 通过统一 `WakeReason` 与 condition、deadline 和 close 竞争；可重启
+阻塞调用在信号帧中恢复原 syscall 号并把 RIP 回退到两字节 `SYSCALL`。
+Kernel 在用户栈构造 240 字节固定帧和 restorer 返回槽，Intel NASM
+trampoline 进入严格 sigreturn；帧身份、cookie、canonical 地址、段、RFLAGS、
+栈边界和页权限任一异常只隔离目标 Process。fork 复制 action/mask/group，
+exec 重置 Handler，退出后信号状态归零。详细证据见
+[v1.14 发布记录](docs/releases/v1.14.md) 与
+[ADR 0041](docs/adr/0041-process-signals-user-frame-and-sigreturn.md)。
+
+信号和 TTY 已按两个阶段拆分，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
@@ -482,11 +493,11 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.13 第二周期实现的路线见
+对照当前 v1.1–v1.14 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
-文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程和 v1.13 时间
-等待深入章，以及一份 v1.1–v1.13
+文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程、v1.13 时间
+等待和 v1.14 信号深入章，以及一份 v1.1–v1.14
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -499,8 +510,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.13 统计为 189 个目标代码文件、51289 个物理行、47330 个非空非纯
-注释代码行，其中 C++ 44896 行、NASM Intel 汇编 2434 行；测试、工具、书籍、
+当前 v1.14 统计为 193 个目标代码文件、53503 个物理行、49418 个非空非纯
+注释代码行，其中 C++ 46977 行、NASM Intel 汇编 2441 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

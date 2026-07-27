@@ -1629,3 +1629,41 @@ ctest --test-dir build/developer \
 有界预算，CTest 外层预算略大。若日志在同一 guest 状态停住，应修复等待或
 资源问题；只有日志持续前进但被宿主负载截断时才调整有界预算。任何退出路径
 都必须 terminate、wait，发布前不得残留后台 QEMU。
+
+## v1.14：进程信号、可中断等待与 sigreturn
+
+### 信号已经 pending，但用户 handler 始终不执行
+
+先分清 Process pending、Thread pending 和 Thread mask。普通 Process 信号只
+应交给一个未屏蔽该信号的 Thread；所有 Thread 都屏蔽时仍保留 pending，不能
+提前丢弃，也不能广播给所有 Thread。检查用户返回边界是否同时覆盖系统调用和
+硬件中断，并确认选中 Thread 在安装 signal frame 后才提交 pending 消费。
+
+局部状态机可用下面三层证据复现：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^(os_kernel_signal_manager_unit_tests|os_kernel_signal_wait_integration_tests|os_kernel_signal_manager_randomized_tests)$' \
+  --output-on-failure
+```
+
+### descriptor wait 收到信号后返回位置错误
+
+可重启等待必须保存原系统调用号，并在 handler frame 中把恢复 RIP 精确回退
+到两字节 `syscall` 指令；不可重启等待只返回 `Interrupted`。不能对 sleep、
+futex timeout 等带时间语义的调用盲目重启，否则相对等待会被延长。若 handler
+返回后陷入非法系统调用，检查 `RAX` 恢复、RIP 回退和阻塞 wake reason 是否
+由同一个提交者一次性决定。
+
+### 伪造 signal frame 能恢复任意 RIP/RSP
+
+`SignalReturn` 不能只相信用户栈上的 magic。它还必须匹配 Kernel 保存的精确
+frame 地址、一次性 cookie、信号号和 restorer，并重新验证 canonical 地址、
+RFLAGS 白名单、用户段、RIP 的 R-X 映射和 RSP 的 RW-NX 映射。失败时只终止
+提交坏 frame 的 Process；若整机 panic 或旁系 Process 消失，应检查错误是否
+错误穿透到 Ring 0 异常路径。
+
+整机探针必须依次出现 `RESTART_WAIT_VERIFIED`、`MASK_COALESCE_VERIFIED`、
+`PROCESS_GROUP_VERIFIED`、`FORK_INHERITANCE_VERIFIED`、
+`BAD_FRAME_ISOLATED` 与 `DEFAULT_TERMINATION_VERIFIED`。缺少哪一项，就沿该
+项前最后一条带宿主到达时间的 QEMU 日志定位，不能只延长超时。

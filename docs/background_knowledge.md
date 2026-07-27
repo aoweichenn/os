@@ -2120,7 +2120,41 @@ joiner 消费前仍有明确所有者；两个 joiner 同时等待同一目标�
 [v1.12 学习章](learning/20-v1.12-user-threads-tls-private-futex.md) 和
 [ADR 0039](adr/0039-user-threads-fs-tls-private-futex.md)。
 
-## 30. 建议阅读顺序
+## 30. 为什么信号是一次受内核约束的用户控制流改写
+
+早期 Unix 需要一种比“父进程轮询孩子状态”更直接的异步通知：终端中断、非法
+指令、管道断开和管理员终止都必须让正在运行或阻塞的进程及时反应。信号因此
+不是普通函数调用，也不是硬件中断本身；它是 Kernel 记录的软件事件，并在某个
+安全的用户返回边界把异步事实转换为默认动作、忽略或用户 handler。
+
+三类状态不能合并。处置属于 Process，因为同一程序的所有 Thread 应共享
+“这个信号怎么处理”；mask 属于 Thread，因为临界区只需要推迟当前执行流的
+handler；pending 同时存在 Process 与 Thread 层，用于表达“发给整个程序”和
+“精确发给某个执行流”的不同目标。普通信号用 bit 合并源于传统 Unix ABI：
+同一编号在兑现前重复到达只保证“至少发生过一次”，不能假装成有界消息队列。
+若应用需要逐事件计数，应使用后续实时信号或其他 IPC。
+
+handler 运行看似只是修改 RIP，实际必须构造一份跨特权级 ABI。Kernel 在用户
+栈写入原 UserContext、旧 mask、信号号、restorer 和一次性 cookie，再令用户
+RIP 指向 handler。handler 的普通 `ret` 进入自研汇编 restorer，由它调用
+`SignalReturn`。返回时不能相信用户可写内存：Kernel 重新匹配精确 frame 身份，
+验证 canonical RIP/RSP、RFLAGS、段选择子、R-X 代码页与 RW-NX 栈页，成功后
+才恢复现场。这样“用户可以编辑自己的 signal frame”不会变成“用户可以要求
+Kernel 恢复任意特权状态”。
+
+异步事件还会撞上阻塞等待。调度器必须让条件满足、timeout 和 signal 竞争同一
+Blocked→Ready 提交点，赢家决定唯一 WakeReason。读写、wait、join 等可重新
+求值的调用可以在 handler 返回后重启；带相对时间含义的 sleep/futex timeout
+若直接重启会延长截止期，因此明确返回 `Interrupted`。这一边界来自语义而非
+“实现方便”，也是信号与 v1.13 deadline 必须联合设计的原因。
+
+进程组提供“一次选择多个 Process”的身份边界，是后续终端前台组和 Ctrl-C 的
+前置机制，但它本身还不是 TTY 作业控制。完整状态机、frame 布局、汇编返回链
+和故障隔离见
+[v1.14 学习章](learning/22-v1.14-process-signals-sigreturn.md) 与
+[ADR 0041](adr/0041-process-signals-user-frame-and-sigreturn.md)。
+
+## 31. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -2144,7 +2178,8 @@ joiner 消费前仍有明确所有者；两个 joiner 同时等待同一目标�
    进程树、spawn/exec/wait 与参数环境，v1.8 的 VMA、匿名缺页、受控栈增长
    和用户 heap、v1.9 的文件 VMA、按需 ELF 与 clean page cache，以及
    v1.10 的 fork/COW，v1.11 的动态管道、pipe/dup2、外部 Shell 与
-   核心工具，以及 v1.12 的用户 Thread、FS-base TLS、private futex 与
-   同步原语。
+   核心工具，v1.12 的用户 Thread、FS-base TLS、private futex 与同步原语，
+   v1.13 的单调时间、deadline 与 timed wait，以及 v1.14 的信号、进程组、
+   可中断等待和 `sigreturn`。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

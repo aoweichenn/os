@@ -143,6 +143,9 @@ RestoreUserAddressSpaceAfterFailedFork(UserAddressSpace &parent_address_space) n
 DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus PrepareUserStack(UserAddressSpace &address_space,
                                                       uint64_t lowest_required_address) noexcept;
+[[nodiscard]] UserAddressSpaceStatus PrepareUserStackRange(UserAddressSpace &address_space,
+                                                           uint64_t lowest_required_address,
+                                                           uint64_t current_stack_pointer) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 MapAnonymousMemory(UserAddressSpace &address_space, uint64_t requested_address,
                    uint64_t length_bytes, uint64_t protection_flags, uint64_t map_flags,

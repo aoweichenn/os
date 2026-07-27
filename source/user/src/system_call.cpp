@@ -21,6 +21,7 @@ extern "C" [[nodiscard]] int64_t
 OsUserInvokeSystemCallWithDirectionFlag(uint64_t system_call_number, uint64_t argument0,
                                         uint64_t argument1, uint64_t argument2,
                                         uint64_t argument3) noexcept;
+extern "C" [[noreturn]] void OsUserSignalReturnRestorer() noexcept;
 }
 
 int64_t InvokeSystemCall(const uint64_t system_call_number, const uint64_t argument0,
@@ -102,14 +103,11 @@ int64_t WaitPrivateFutex(const uint32_t *const word, const uint32_t expected_val
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
-int64_t WaitPrivateFutexUntil(const uint32_t *const word,
-                              const uint32_t expected_value,
+int64_t WaitPrivateFutexUntil(const uint32_t *const word, const uint32_t expected_value,
                               const uint64_t deadline_nanoseconds) noexcept {
-    return InvokeSystemCall(
-        static_cast<uint64_t>(
-            os::abi::SystemCallNumber::WaitPrivateFutexUntil),
-        reinterpret_cast<uint64_t>(word),
-        static_cast<uint64_t>(expected_value), deadline_nanoseconds);
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPrivateFutexUntil),
+                            reinterpret_cast<uint64_t>(word), static_cast<uint64_t>(expected_value),
+                            deadline_nanoseconds);
 }
 
 int64_t WakePrivateFutex(const uint32_t *const word, const uint64_t maximum_wake_count) noexcept {
@@ -119,28 +117,78 @@ int64_t WakePrivateFutex(const uint32_t *const word, const uint64_t maximum_wake
 }
 
 uint64_t GetMonotonicTime() noexcept {
-    return static_cast<uint64_t>(InvokeSystemCall(
-        static_cast<uint64_t>(
-            os::abi::SystemCallNumber::GetMonotonicTime),
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+    return static_cast<uint64_t>(
+        InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetMonotonicTime),
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
 }
 
 int64_t SleepUntil(const uint64_t deadline_nanoseconds) noexcept {
-    return InvokeSystemCall(
-        static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil),
-        deadline_nanoseconds, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil),
+                            deadline_nanoseconds, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t SleepFor(const uint64_t duration_nanoseconds) noexcept {
     const uint64_t now_nanoseconds = GetMonotonicTime();
-    const uint64_t deadline_nanoseconds =
-        duration_nanoseconds > UINT64_MAX - now_nanoseconds
-            ? UINT64_MAX
-            : now_nanoseconds + duration_nanoseconds;
+    const uint64_t deadline_nanoseconds = duration_nanoseconds > UINT64_MAX - now_nanoseconds
+                                              ? UINT64_MAX
+                                              : now_nanoseconds + duration_nanoseconds;
     return SleepUntil(deadline_nanoseconds);
+}
+
+int64_t SetSignalAction(const uint64_t signal_number, const os::abi::SignalAction &action,
+                        os::abi::SignalAction *const previous_action) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetSignalAction),
+                            signal_number, reinterpret_cast<uint64_t>(&action),
+                            reinterpret_cast<uint64_t>(previous_action), sizeof(action));
+}
+
+int64_t InstallSignalHandler(const uint64_t signal_number, const SignalHandler handler,
+                             const uint64_t additional_mask, const uint64_t flags,
+                             os::abi::SignalAction *const previous_action) noexcept {
+    if (handler == nullptr) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    const os::abi::SignalAction action{
+        .disposition = os::abi::SignalDisposition::Handler,
+        .handler_address = reinterpret_cast<uint64_t>(handler),
+        .restorer_address = reinterpret_cast<uint64_t>(&OsUserSignalReturnRestorer),
+        .additional_mask = additional_mask,
+        .flags = flags,
+    };
+    return SetSignalAction(signal_number, action, previous_action);
+}
+
+int64_t SetSignalMask(const uint64_t signal_mask, uint64_t *const previous_signal_mask) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetSignalMask),
+                            signal_mask, reinterpret_cast<uint64_t>(previous_signal_mask),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SendProcessSignal(const uint64_t process_id, const uint64_t signal_number) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SendProcessSignal),
+                            process_id, signal_number, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SendProcessGroupSignal(const uint64_t process_group_id,
+                               const uint64_t signal_number) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SendProcessGroupSignal), process_group_id,
+        signal_number, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetProcessGroup() noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessGroup),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetProcessGroup(const uint64_t process_group_id) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetProcessGroup),
+                            process_group_id, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t TryReadPipe(uint8_t *destination, const uint64_t capacity_bytes) noexcept {

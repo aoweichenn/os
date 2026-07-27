@@ -1089,3 +1089,41 @@ PIT IRQ0、deadline 队首检查和逐 waiter 解析均为热路径，不输出�
 正常终态 active 为零且 schedule=expiration+cancellation。数值使用来宾
 单调时钟和内核账本；宿主添加的 `[QEMU][T+...ms]` 只描述串口到达时间。
 二者起点和调度环境不同，不比较绝对值。
+
+## v1.14 进程信号与用户返回日志
+
+信号发送、等待唤醒和用户返回都可能成为热路径。Kernel 对累计量只在从零变为
+非零或达到二次幂时输出局部进度，整机回收完成后再打印唯一权威汇总：
+
+```text
+[OS][KERNEL][SIGNAL] QUEUED_SIGNALS=0x...
+[OS][KERNEL][SIGNAL] COALESCED_SIGNALS=0x...
+[OS][KERNEL][SIGNAL] IGNORED_SIGNALS=0x...
+[OS][KERNEL][SIGNAL] HANDLER_DELIVERIES=0x...
+[OS][KERNEL][SIGNAL] DEFAULT_TERMINATIONS=0x...
+[OS][KERNEL][SIGNAL] GROUP_SENDS=0x...
+[OS][KERNEL][SIGNAL] INTERRUPTED_WAITS=0x...
+[OS][KERNEL][SIGNAL] RESTARTED_WAITS=0x...
+[OS][KERNEL][SIGNAL] REJECTED_FRAMES=0x...
+```
+
+重复发送同一普通信号只增加 `COALESCED_SIGNALS`，不重复输出相同 queued
+进度。处置安装、首次 handler 交付、默认终止与 frame 拒绝属于低频语义边界，
+分别携带信号号、处置类型或失败阶段；不得输出逐寄存器成功路径转储。
+
+用户探针在完整事务提交后输出：
+
+```text
+[OS][USER][SIGNAL] STARTED
+[OS][USER][SIGNAL] RESTART_WAIT_VERIFIED
+[OS][USER][SIGNAL] MASK_COALESCE_VERIFIED
+[OS][USER][SIGNAL] PROCESS_GROUP_VERIFIED
+[OS][USER][SIGNAL] FORK_INHERITANCE_VERIFIED
+[OS][USER][SIGNAL] BAD_FRAME_ISOLATED
+[OS][USER][SIGNAL] DEFAULT_TERMINATION_VERIFIED
+[OS][USER][SIGNAL] COMPLETED
+```
+
+这些来宾行继续由宿主捕获器添加 `[QEMU][T+......ms]` 到达时间。时间戳用于
+判断“仍在推进”还是“静默卡死”，不是 signal ABI 的一部分，也不能代替
+Kernel 的 pending、delivery 和 rejected-frame 账本。

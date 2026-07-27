@@ -7,6 +7,7 @@
 namespace os::user {
 
 inline constexpr uint64_t OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT = 0ULL;
+using SignalHandler = void (*)(uint64_t signal_number, os::abi::SignalFrame *signal_frame) noexcept;
 
 [[nodiscard]] int64_t
 InvokeSystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t argument1,
@@ -33,6 +34,17 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] uint64_t GetMonotonicTime() noexcept;
 [[nodiscard]] int64_t SleepUntil(uint64_t deadline_nanoseconds) noexcept;
 [[nodiscard]] int64_t SleepFor(uint64_t duration_nanoseconds) noexcept;
+[[nodiscard]] int64_t SetSignalAction(uint64_t signal_number, const os::abi::SignalAction &action,
+                                      os::abi::SignalAction *previous_action) noexcept;
+[[nodiscard]] int64_t InstallSignalHandler(uint64_t signal_number, SignalHandler handler,
+                                           uint64_t additional_mask, uint64_t flags,
+                                           os::abi::SignalAction *previous_action) noexcept;
+[[nodiscard]] int64_t SetSignalMask(uint64_t signal_mask, uint64_t *previous_signal_mask) noexcept;
+[[nodiscard]] int64_t SendProcessSignal(uint64_t process_id, uint64_t signal_number) noexcept;
+[[nodiscard]] int64_t SendProcessGroupSignal(uint64_t process_group_id,
+                                             uint64_t signal_number) noexcept;
+[[nodiscard]] int64_t GetProcessGroup() noexcept;
+[[nodiscard]] int64_t SetProcessGroup(uint64_t process_group_id) noexcept;
 [[nodiscard]] int64_t TryReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t TryWritePipe(const uint8_t *source, uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t ReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;

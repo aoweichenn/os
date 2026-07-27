@@ -1327,6 +1327,36 @@ UserAddressSpaceStatus PrepareUserStack(UserAddressSpace &address_space,
     return UserAddressSpaceStatus::Succeeded;
 }
 
+UserAddressSpaceStatus PrepareUserStackRange(UserAddressSpace &address_space,
+                                             const uint64_t lowest_required_address,
+                                             const uint64_t current_stack_pointer) noexcept {
+    if (lowest_required_address < OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
+        lowest_required_address >= OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS ||
+        current_stack_pointer <= lowest_required_address ||
+        current_stack_pointer > OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
+        return UserAddressSpaceStatus::StackPreparationFailed;
+    }
+    if (address_space.stack_committed_bottom_virtual_address ==
+        OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
+        return PrepareUserStack(address_space, lowest_required_address);
+    }
+    while (lowest_required_address < address_space.stack_committed_bottom_virtual_address) {
+        if (address_space.stack_committed_bottom_virtual_address <
+            OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+            return UserAddressSpaceStatus::StackPreparationFailed;
+        }
+        const uint64_t next_page_address =
+            address_space.stack_committed_bottom_virtual_address - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        const uint64_t synthetic_write_fault =
+            OS_KERNEL_USER_MEMORY_PAGE_FAULT_WRITE_BIT | OS_KERNEL_USER_MEMORY_PAGE_FAULT_USER_BIT;
+        if (HandleUserPageFault(address_space, next_page_address, synthetic_write_fault,
+                                current_stack_pointer) != UserPageFaultStatus::Handled) {
+            return UserAddressSpaceStatus::StackPreparationFailed;
+        }
+    }
+    return UserAddressSpaceStatus::Succeeded;
+}
+
 UserVirtualMemoryStatus
 MapAnonymousMemory(UserAddressSpace &address_space, const uint64_t requested_address,
                    const uint64_t length_bytes, const uint64_t protection_flags,

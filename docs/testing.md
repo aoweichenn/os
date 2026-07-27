@@ -27,12 +27,12 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.13 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.14 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
-动态栈和页表实现；v1.13 的 bootstrap 正常链累计注册 67 个 Process、完成
-66 次 wait，functional/capacity 因额外 time probe 累计 90 个 Process、
-完成 89 次 wait。线程探针分别证明 1/32/64 单 Process Thread 上限，时间
-探针在三档都走同一单调纳秒与 timed-wait ABI。
+SignalManager、动态栈和页表实现；v1.14 的 bootstrap 正常链累计注册
+72 个 Process、完成 71 次 wait，functional/capacity 因完整 Shell 验收累计
+95 个 Process、完成 94 次 wait。线程探针分别证明 1/32/64 单 Process Thread
+上限，时间与信号探针在三档都走同一 ABI。
 functional 的 512 fd hard limit 和 128 Pipe、
 capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
 
@@ -998,3 +998,37 @@ runner 解析十六进制数并验证 start/wake 前进、统计非零和一次�
 整机墙钟仍严格有界：64 MiB、256 MiB、64 GiB 分别按真实工作量选择预算，
 CTest 外层预算略大于 runner 内层预算。超时必须报告最后里程碑并回收 QEMU，
 不能用无界等待掩盖 idle、WaitQueue 或文件系统停滞。
+
+## v1.14 进程信号、进程组与 sigreturn 测试
+
+v1.14 新增三个顶层 CTest，构建图共 154 项，并扩展 ABI、用户 ELF 与三档
+QEMU 协议：
+
+- SignalManager 单元测试覆盖未屏蔽 Thread 选择、普通信号合并、handler frame
+  五元组、fork disposition/mask/group 继承和 exec reset；
+- SignalWait 集成测试让同一 Thread 同时进入 WaitQueue 与 deadline queue，
+  再让 Signal 获胜；condition 与 timeout 随后都不得发布第二次 Ready；
+- 固定种子随机模型执行 100000 步 send/mask/deliver/complete，并逐步验证
+  Process pending 与全部 Thread pending 的并集没有重复普通信号所有者；
+- Kernel/User ABI 集成测试冻结 SetAction=57 到 SetProcessGroup=63，以及
+  `SignalAction=40`、`SignalUserContext=176`、`SignalFrame=240`；
+- `/bin/signal_probe` 经真实 fork/COW、用户栈、Intel NASM restorer 和
+  `SYSCALL` 验证 descriptor wait restart、mask coalescing、独立进程组 Ignore、
+  fork handler 继承、畸形 frame 隔离和默认 signal termination。
+
+QEMU 要求下列用户 marker 每项恰好一次：
+
+```text
+[OS][USER][SIGNAL] RESTART_WAIT_VERIFIED
+[OS][USER][SIGNAL] MASK_COALESCE_VERIFIED
+[OS][USER][SIGNAL] PROCESS_GROUP_VERIFIED
+[OS][USER][SIGNAL] FORK_INHERITANCE_VERIFIED
+[OS][USER][SIGNAL] BAD_FRAME_ISOLATED
+[OS][USER][SIGNAL] DEFAULT_TERMINATION_VERIFIED
+[OS][USER][SIGNAL] COMPLETED
+```
+
+终态解析 queued、coalesced、ignored、handler delivery、default termination、
+group send、interrupted/restarted wait 与 rejected frame。除
+`INTERRUPTED_WAITS` 可因全部受测调用选择重启而为零外，语义探针覆盖的累计项
+必须非零；活动信号 Process/Thread 由 ProcessRuntime 最终校验为零。

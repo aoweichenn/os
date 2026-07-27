@@ -17,6 +17,7 @@ enum class ProcessTreeTerminationReason : uint64_t {
     None,
     Exited,
     Exception,
+    Signal,
 };
 
 enum class ProcessTreeStatus : uint64_t {

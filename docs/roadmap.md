@@ -54,7 +54,8 @@ VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 
 和具名 64 MiB bootstrap；v1.9 再加入文件页缓存；v1.10 新增 COW 引用
 单元、页表集成和十万步引用随机模型；v1.11 再加入动态 Pipe、Shell 执行
 计划、dup2、QEMU 重定向与 16 级管线证据；v1.12 加入用户 Thread/TLS/futex，
-v1.13 再加入单调时钟、deadline queue 与 timed wait，当前构建图为 151 项。
+v1.13 再加入单调时钟、deadline queue 与 timed wait；v1.14 又加入普通信号、
+进程组、用户 handler 和安全 sigreturn，当前构建图为 154 项。
 数量仍由构建图自动生成，不作为未来版本的固定常量。
 
 ## 第二周期最终目标
@@ -768,6 +769,18 @@ sleep、256 MiB 与 64 GiB notifier-before-deadline 均由真实 PIT IRQ 证明�
 - 多 Thread Process 只选择一个符合 mask 的 Thread 交付同一普通信号；
 - 畸形 frame 只终止目标 Process，不 panic Kernel；
 - fork/exec/exit 和阻塞 I/O 的信号语义与契约一致。
+
+**完成状态**
+
+v1.14 已完成。系统调用 57--63、Process disposition/group、Thread
+mask/pending、普通信号合并和唯一 Thread 选择均已落地；Signal 复用 scheduler
+单赢家 WakeReason 并取消 deadline。Kernel 在用户栈构造 240 字节固定 frame，
+Intel NASM restorer 进入严格 sigreturn；cookie、canonical 地址、RFLAGS、段、
+栈边界和页权限全部验证，畸形 frame 只隔离目标 Process。fork/exec/exit 和
+阻塞描述符重启由宿主四层测试及 64 MiB、256 MiB、64 GiB QEMU 闭环。详细证据
+见 [v1.14 发布记录](releases/v1.14.md)、
+[学习章](learning/22-v1.14-process-signals-sigreturn.md) 与
+[ADR 0041](adr/0041-process-signals-user-frame-and-sigreturn.md)。
 
 ### v1.15 TTY、session 与作业控制
 

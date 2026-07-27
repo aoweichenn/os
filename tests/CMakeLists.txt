@@ -653,6 +653,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_signal_manager_unit_tests
+    unit/kernel/signal_manager_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_program_arguments_unit_tests
     unit/kernel/program_arguments_test.cpp
     "unit"
@@ -665,6 +670,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_deadline_scheduling_integration_tests
     integration/boot/deadline_scheduling_integration_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
+    os_kernel_signal_wait_integration_tests
+    integration/boot/signal_wait_integration_test.cpp
     "integration"
 )
 os_add_kernel_process_test(
@@ -685,6 +695,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_process_models_randomized_tests
     randomized/kernel/process_models_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_signal_manager_randomized_tests
+    randomized/kernel/signal_manager_randomized_test.cpp
     "randomized"
 )
 

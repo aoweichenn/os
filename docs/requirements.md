@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.13 完成基线
+## v1.14 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -127,7 +127,9 @@ private futex、用户 Mutex/ConditionVariable/Once、32/64 Thread 三档整机
 验收以及 `munmap`/`exec`/ProcessExit 取消。v1.13 已把 PIT 实际除数提升为
 精确余数累计的 64 位单调纳秒，建立 512 槽 deadline queue，并完成非忙等
 sleep、timed futex、timed condition、通知/超时单赢家与三档 QEMU 验收。
-下一阶段为 v1.14 signal、进程组与系统调用中断语义。
+v1.14 又完成 Process disposition、Thread mask、普通 pending 合并、
+进程组、用户 handler、安全 sigreturn，以及阻塞系统调用的 Signal 单赢家与
+显式重启策略。下一阶段为 v1.15 TTY、session 与作业控制。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -251,6 +253,35 @@ sleep、timed futex、timed condition、通知/超时单赢家与三档 QEMU 验
   稳定顺序、通知/超时单赢家与 100000 步队列模型。三档 QEMU 结束时
   active deadline 为零，且 schedules 等于 expirations、cancellations 与
   active 三者之和。
+
+## v1.14 信号与 sigreturn 冻结要求
+
+- disposition 与进程组属于 Process；mask、Thread pending 和活动 handler
+  frame 属于 Thread；未选择普通信号属于 Process pending。
+- 普通信号采用合并位语义。同一信号在 Process 或任一 Thread pending 时重复
+  发送不得新建第二个所有者；多 Thread Process 只能选择一个未屏蔽 Thread。
+- Kill 不可屏蔽、不可忽略且不可安装 Handler；Kernel 必须独立验证用户 action，
+  不能依赖运行库过滤。
+- condition、timeout、signal、close 与 cancel 必须通过同一个
+  `ThreadScheduler::WakeThread` 单赢家完成，deadline 和 WaitQueue 所有权同步
+  解除，Thread 最多进入一次 Ready。
+- 阻塞调用必须显式声明 restartable。无部分进度时可返回 `INTERRUPTED`；
+  只有 action restart flag 和策略表同时允许时才恢复原系统调用号并回退到
+  `SYSCALL`，已有部分进度不得撤销。
+- `SignalAction`、`SignalUserContext` 与 `SignalFrame` 固定为 40、176 和
+  240 字节；系统调用 57--63 不得重编号。
+- Kernel 必须在目标 Thread 用户栈构造 handler frame；主栈扩展只允许紧邻
+  committed bottom 并复用 VMA/页故障权限与增长间距，用户 Thread 栈不得越界。
+- sigreturn 必须匹配 Kernel 登记的 frame address、cookie、signal、restorer
+  和 previous mask，并验证 magic/version/size、canonical RIP/RSP、selector、
+  RFLAGS、Thread 栈边界和 R-X/RW-NX 页权限。
+- 畸形 frame 只终止目标 Process，不 panic Kernel；父进程必须能以
+  Exception/vector 13 回收该子进程。
+- fork 复制 disposition/group 与调用 Thread mask，不复制 pending/active frame；
+  exec 保留 Ignore、重置 Handler 并清理兄弟状态；exit 后活动信号 Process/
+  Thread 计数必须为零。
+- 单元、集成和 100000 步固定种子随机测试必须覆盖选择、合并、帧身份、生命周期
+  和 Signal/condition/timeout 单赢家；三档 QEMU 必须运行同一 signal probe。
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

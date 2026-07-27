@@ -391,6 +391,23 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_DEADLINE_CANCELLATION_COUNT_PREFIX[] =
     "[OS][KERNEL][TIME] DEADLINE_CANCELLATIONS=";
 constexpr char OS_KERNEL_MAIN_FUTEX_TIMEOUT_OPERATION_COUNT_PREFIX[] =
     "[OS][KERNEL][TIME] FUTEX_TIMEOUT_OPERATIONS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_QUEUED_COUNT_PREFIX[] = "[OS][KERNEL][SIGNAL] QUEUED_SIGNALS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_COALESCED_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] COALESCED_SIGNALS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_IGNORED_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] IGNORED_SIGNALS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_HANDLER_DELIVERY_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] HANDLER_DELIVERIES=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_DEFAULT_TERMINATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] DEFAULT_TERMINATIONS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_GROUP_SEND_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] GROUP_SENDS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_INTERRUPTED_WAIT_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] INTERRUPTED_WAITS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_RESTARTED_WAIT_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] RESTARTED_WAITS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_REJECTED_FRAME_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] REJECTED_FRAMES=";
 constexpr char OS_KERNEL_MAIN_PROCESS_CAPACITY_PREFIX[] = "[OS][KERNEL] PROCESS_CAPACITY=";
 constexpr char OS_KERNEL_MAIN_THREAD_CAPACITY_PREFIX[] = "[OS][KERNEL] THREAD_CAPACITY=";
 constexpr char OS_KERNEL_MAIN_THREADS_PER_PROCESS_PREFIX[] = "[OS][KERNEL] THREADS_PER_PROCESS=";
@@ -545,7 +562,7 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR = 6ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
-constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 67ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 72ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 23ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
@@ -556,8 +573,7 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
-    OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT +
-    OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT;
+    OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT + OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT =
     OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT + OS_KERNEL_FUNCTIONAL_THREADS_PER_PROCESS +
     OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT;
@@ -574,7 +590,7 @@ constexpr uint64_t OS_KERNEL_MAIN_CAPACITY_NORMAL_THREAD_COUNT =
     OS_KERNEL_MAIN_USER_THREAD_MAIN_COUNT + OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 66ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 71ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT +
     OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
@@ -590,7 +606,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.13";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.14";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -1526,26 +1542,36 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.scheduler.block_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
                          statistics.scheduler.wake_count);
-    WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_SCHEDULER_ACTIVE_DEADLINE_COUNT_PREFIX,
-        statistics.scheduler.active_deadline_count);
-    WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_SCHEDULER_PEAK_DEADLINE_COUNT_PREFIX,
-        statistics.scheduler.peak_deadline_count);
-    WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_SCHEDULE_COUNT_PREFIX,
-        statistics.scheduler.deadline_schedule_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_SCHEDULER_DEADLINE_EXPIRATION_COUNT_PREFIX,
-        statistics.scheduler.deadline_expiration_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_SCHEDULER_DEADLINE_CANCELLATION_COUNT_PREFIX,
-        statistics.scheduler.deadline_cancellation_count);
-    WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_FUTEX_TIMEOUT_OPERATION_COUNT_PREFIX,
-        statistics.private_futexes.timeout_operation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_ACTIVE_DEADLINE_COUNT_PREFIX,
+                         statistics.scheduler.active_deadline_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PEAK_DEADLINE_COUNT_PREFIX,
+                         statistics.scheduler.peak_deadline_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_SCHEDULE_COUNT_PREFIX,
+                         statistics.scheduler.deadline_schedule_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_EXPIRATION_COUNT_PREFIX,
+                         statistics.scheduler.deadline_expiration_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_CANCELLATION_COUNT_PREFIX,
+                         statistics.scheduler.deadline_cancellation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FUTEX_TIMEOUT_OPERATION_COUNT_PREFIX,
+                         statistics.private_futexes.timeout_operation_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_QUEUED_COUNT_PREFIX,
+                         statistics.signals.queued_signal_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_COALESCED_COUNT_PREFIX,
+                         statistics.signals.coalesced_signal_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_IGNORED_COUNT_PREFIX,
+                         statistics.signals.ignored_signal_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_HANDLER_DELIVERY_COUNT_PREFIX,
+                         statistics.signals.handler_delivery_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_TERMINATION_COUNT_PREFIX,
+                         statistics.signals.default_termination_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_GROUP_SEND_COUNT_PREFIX,
+                         statistics.signals.process_group_send_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_INTERRUPTED_WAIT_COUNT_PREFIX,
+                         statistics.signals.interrupted_wait_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_RESTARTED_WAIT_COUNT_PREFIX,
+                         statistics.signals.restarted_wait_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_REJECTED_FRAME_COUNT_PREFIX,
+                         statistics.signals.rejected_frame_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_SAVE_COUNT_PREFIX,
                          statistics.extended_state.save_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_RESTORE_COUNT_PREFIX,
@@ -1729,16 +1755,14 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
         statistics.scheduler.reaped_thread_count == expected_thread_count &&
         statistics.scheduler.owned_process_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.scheduler.owned_thread_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
-        statistics.scheduler.active_deadline_count ==
-            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.scheduler.active_deadline_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.scheduler.deadline_schedule_count ==
             statistics.scheduler.deadline_expiration_count +
                 statistics.scheduler.deadline_cancellation_count &&
-        (!normal_execution ||
-         (statistics.scheduler.deadline_expiration_count >=
-              OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT &&
-          statistics.private_futexes.timeout_operation_count >=
-              OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT)) &&
+        (!normal_execution || (statistics.scheduler.deadline_expiration_count >=
+                                   OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT &&
+                               statistics.private_futexes.timeout_operation_count >=
+                                   OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT)) &&
         statistics.object_manager.active_object_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.object_manager.active_file_description_count ==
             OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&

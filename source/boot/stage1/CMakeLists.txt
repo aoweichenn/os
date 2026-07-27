@@ -298,6 +298,8 @@ set(
     --rootfs-file
     "/bin/time_probe=${OS_USER_TIME_PROBE_ELF_PATH}"
     --rootfs-file
+    "/bin/signal_probe=${OS_USER_SIGNAL_PROBE_ELF_PATH}"
+    --rootfs-file
     "/bin/memory_guard_probe=${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
     --rootfs-file
     "/bin/memory_protection_probe=${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
@@ -339,6 +341,7 @@ add_custom_command(
         "${OS_USER_FORK_PROBE_ELF_PATH}"
         "${OS_USER_THREAD_PROBE_ELF_PATH}"
         "${OS_USER_TIME_PROBE_ELF_PATH}"
+        "${OS_USER_SIGNAL_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
         "${OS_USER_TRUNCATED_ELF_PATH}"
@@ -398,6 +401,9 @@ add_dependencies(
     os_user_file_system_probe_elf
     os_user_memory_probe_elf
     os_user_fork_probe_elf
+    os_user_thread_probe_elf
+    os_user_time_probe_elf
+    os_user_signal_probe_elf
     os_user_memory_guard_probe_elf
     os_user_memory_protection_probe_elf
     os_user_truncated_elf

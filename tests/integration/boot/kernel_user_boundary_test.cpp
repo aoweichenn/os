@@ -1,3 +1,4 @@
+#include "os/abi/signal.hpp"
 #include "os/abi/system_call.hpp"
 #include "os/kernel/arch/exception_frame.hpp"
 #include "os/kernel/arch/user_context.hpp"
@@ -50,6 +51,16 @@ constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WAKE_FUTEX_NUMBER = 53ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_MONOTONIC_TIME_NUMBER = 54ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SLEEP_UNTIL_NUMBER = 55ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_TIMED_FUTEX_NUMBER = 56ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SET_SIGNAL_ACTION_NUMBER = 57ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SET_SIGNAL_MASK_NUMBER = 58ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SEND_PROCESS_SIGNAL_NUMBER = 59ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SEND_GROUP_SIGNAL_NUMBER = 60ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_RETURN_NUMBER = 61ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_GROUP_NUMBER = 62ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SET_PROCESS_GROUP_NUMBER = 63ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_ACTION_SIZE_BYTES = 40ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_CONTEXT_SIZE_BYTES = 176ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_FRAME_SIZE_BYTES = 240ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES = 255ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
@@ -154,13 +165,31 @@ int main() {
                 OS_TEST_USER_BOUNDARY_EXPECTED_MONOTONIC_TIME_NUMBER &&
             static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil) ==
                 OS_TEST_USER_BOUNDARY_EXPECTED_SLEEP_UNTIL_NUMBER &&
-            static_cast<uint64_t>(
-                os::abi::SystemCallNumber::WaitPrivateFutexUntil) ==
+            static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPrivateFutexUntil) ==
                 OS_TEST_USER_BOUNDARY_EXPECTED_TIMED_FUTEX_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SetSignalAction) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SET_SIGNAL_ACTION_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SetSignalMask) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SET_SIGNAL_MASK_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SendProcessSignal) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SEND_PROCESS_SIGNAL_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SendProcessGroupSignal) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SEND_GROUP_SIGNAL_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SignalReturn) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_RETURN_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessGroup) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_GROUP_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SetProcessGroup) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SET_PROCESS_GROUP_NUMBER &&
+            sizeof(os::abi::SignalAction) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_ACTION_SIZE_BYTES &&
+            sizeof(os::abi::SignalUserContext) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_CONTEXT_SIZE_BYTES &&
+            sizeof(os::abi::SignalFrame) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SIGNAL_FRAME_SIZE_BYTES &&
             sizeof(os::abi::ThreadCreateRequest) ==
                 os::abi::OS_ABI_THREAD_CREATE_REQUEST_SIZE_BYTES &&
-            sizeof(os::abi::ThreadJoinResult) ==
-                os::abi::OS_ABI_THREAD_JOIN_RESULT_SIZE_BYTES &&
+            sizeof(os::abi::ThreadJoinResult) == os::abi::OS_ABI_THREAD_JOIN_RESULT_SIZE_BYTES &&
             os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES ==
                 OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES &&
             os::abi::OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES ==

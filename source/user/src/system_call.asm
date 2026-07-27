@@ -8,6 +8,7 @@ OS_USER_SYSTEM_CALL_VECTOR equ 0x80
 global OsUserInvokeSystemCall
 global OsUserInvokeLegacySystemCall
 global OsUserInvokeSystemCallWithDirectionFlag
+global OsUserSignalReturnRestorer
 
 ; C++ 包装器按 System V ABI 传入 number、argument0..argument3。
 ; 这里把它们变换为项目系统调用 ABI 的 RAX、RDI、RSI、RDX、R10。
@@ -42,5 +43,15 @@ OsUserInvokeSystemCallWithDirectionFlag:
     syscall
     cld
     ret
+
+OS_USER_SIGNAL_RETURN_SYSTEM_CALL_NUMBER equ 61
+
+; handler 通过 RET 到达这里时，RSP 正好指向内核构造的 SignalFrame。
+; SignalReturn 成功后直接恢复被中断现场，因此这条路径绝不会正常返回。
+OsUserSignalReturnRestorer:
+    mov rdi, rsp
+    mov rax, OS_USER_SIGNAL_RETURN_SYSTEM_CALL_NUMBER
+    syscall
+    ud2
 
 section .note.GNU-stack noalloc noexec nowrite progbits

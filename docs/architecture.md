@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.13。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.14。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -2084,3 +2084,41 @@ IRQ0 在 idle 来源下也解析 deadline。没有 Ready Thread 时内核仍执�
 用户 frame。完整换算、竞争和 ABI 见
 [Time 模块](modules/time.md)、[ADR 0040](adr/0040-monotonic-clock-deadline-timed-wait.md)
 与 [v1.13 学习章](learning/21-v1.13-monotonic-clock-deadline-timed-wait.md)。
+
+## v1.14 当前信号、进程组与用户返回架构
+
+信号状态按所有权拆为两层，Process pending 在选择成功后单向迁移为一个
+Thread pending：
+
+```text
+Process
+  ├─ process_group_id
+  ├─ dispositions[1..63]
+  └─ process_pending
+          │ mask/round-robin selection
+          ▼
+Thread
+  ├─ signal_mask / thread_pending
+  └─ active handler frame identity
+```
+
+发送到 Blocked Thread 时，SignalManager 不操作 run queue，而由
+ProcessRuntime 调用 `WakeThread(..., WakeReason::Signal)`。同一个 scheduler
+irq-save 临界区解除 WaitQueue 与 deadline ownership，因而 signal、condition
+和 timeout 只允许一次 `Blocked → Ready`。
+
+用户返回边界同时覆盖系统调用和硬件 IRQ。若 pending disposition 为 Handler，
+Kernel 在该 Thread 用户栈准备 16 字节对齐的 240 字节 SignalFrame，并在其
+下方放置 Intel NASM restorer 返回地址；随后设置 `RDI=signal`、`RSI=frame`
+和 handler RIP。主栈跨页时只按 VMA 栈增长规则提交紧邻页，用户 Thread
+匿名栈则继续受其登记 base/size 限制。
+
+sigreturn 不是普通 copy-back。Kernel 将用户帧与活动 Thread 登记的 address、
+cookie、signal、restorer 和 previous mask 精确匹配，再复用 UserContext
+canonical、selector、RFLAGS 和 R-X/RW-NX 映射校验。失败只通过非法用户返回
+路径终止目标 Process。fork 复制 disposition/group/mask，exec 保留 Ignore
+并重置 Handler，退出后两层状态必须归零。
+
+完整 ABI 与失败取舍见
+[ADR 0041](adr/0041-process-signals-user-frame-and-sigreturn.md)，代码走读见
+[v1.14 学习章](learning/22-v1.14-process-signals-sigreturn.md)。

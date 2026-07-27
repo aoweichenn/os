@@ -1,5 +1,6 @@
 #pragma once
 
+#include "os/abi/signal.hpp"
 #include "os/abi/thread.hpp"
 #include "os/abi/time.hpp"
 #include "os/abi/virtual_memory.hpp"
@@ -65,6 +66,13 @@ enum class SystemCallNumber : uint64_t {
     GetMonotonicTime = 54ULL,
     SleepUntil = 55ULL,
     WaitPrivateFutexUntil = 56ULL,
+    SetSignalAction = 57ULL,
+    SetSignalMask = 58ULL,
+    SendProcessSignal = 59ULL,
+    SendProcessGroupSignal = 60ULL,
+    SignalReturn = 61ULL,
+    GetProcessGroup = 62ULL,
+    SetProcessGroup = 63ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -144,6 +152,9 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_THREAD_ALREADY_JOINED = -48LL
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DEADLOCK = -49LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_FUTEX_LIMIT_EXCEEDED = -50LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT = -51LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INTERRUPTED = -52LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PROCESS_NOT_FOUND = -53LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SIGNAL_STATE_INVALID = -54LL;
 
 inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
 
@@ -209,6 +220,7 @@ static_assert(sizeof(ProcessLaunchRequest) == OS_ABI_PROCESS_LAUNCH_REQUEST_SIZE
 enum class ProcessTerminationReason : uint64_t {
     Exited = 1ULL,
     Exception = 2ULL,
+    Signal = 3ULL,
 };
 
 inline constexpr uint64_t OS_ABI_PROCESS_WAIT_RESULT_SIZE_BYTES = 40ULL;

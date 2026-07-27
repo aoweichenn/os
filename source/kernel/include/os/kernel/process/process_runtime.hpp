@@ -15,6 +15,7 @@
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/resource_snapshot.hpp"
 #include "os/kernel/process/process_tree.hpp"
+#include "os/kernel/process/signal_manager.hpp"
 #include "os/kernel/process/thread_scheduler.hpp"
 #include "os/kernel/sync/private_futex.hpp"
 #include "os/kernel/user/user_elf.hpp"
@@ -31,6 +32,7 @@ enum class ProcessTerminationReason : uint64_t {
     None,
     Exited,
     Exception,
+    Signal,
 };
 
 enum class ProcessRuntimeStatus : uint64_t {
@@ -61,6 +63,16 @@ enum class ProcessRuntimeStatus : uint64_t {
     PipeFailure,
     ThreadFailure,
     FutexFailure,
+    SignalFailure,
+};
+
+enum class UserSignalStatus : uint64_t {
+    Succeeded,
+    InvalidArgument,
+    InvalidMemory,
+    ProcessNotFound,
+    InvalidState,
+    RuntimeFailure,
 };
 
 enum class ProcessWaitStatus : uint64_t {
@@ -199,6 +211,7 @@ struct ProcessRuntimeStatistics final {
     UserThreadRuntimeStatistics user_threads;
     PrivateFutexStatistics private_futexes;
     ProcessTreeStatistics process_tree;
+    SignalManagerStatistics signals;
     ConsoleInputStatistics console_input;
     KernelObjectManagerStatistics object_manager;
     FileDescriptionManagerStatistics file_descriptions;
@@ -236,14 +249,27 @@ TryJoinCurrentProcessThread(uint64_t requested_thread_id,
                             os::abi::ThreadJoinResult &join_result) noexcept;
 [[nodiscard]] UserThreadStatus
 SetCurrentThreadLocalStorage(uint64_t thread_local_storage_base) noexcept;
-[[nodiscard]] PrivateFutexWaitStatus
-WaitCurrentProcessPrivateFutex(ExceptionFrame &frame, uint64_t user_address,
-                               uint32_t expected_value, bool deadline_enabled,
-                               uint64_t deadline_nanoseconds,
-                               ExceptionFrame *&resume_frame) noexcept;
-[[nodiscard]] TimedWaitStatus
-SleepCurrentThreadUntil(ExceptionFrame &frame, uint64_t deadline_nanoseconds,
-                        ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] UserSignalStatus
+SetCurrentProcessSignalAction(uint64_t signal_number, const os::abi::SignalAction &action,
+                              os::abi::SignalAction &previous_action) noexcept;
+[[nodiscard]] UserSignalStatus SetCurrentThreadSignalMask(uint64_t signal_mask,
+                                                          uint64_t &previous_signal_mask) noexcept;
+[[nodiscard]] UserSignalStatus SendSignalToProcess(uint64_t process_id,
+                                                   uint64_t signal_number) noexcept;
+[[nodiscard]] UserSignalStatus SendSignalToProcessGroup(uint64_t process_group_id,
+                                                        uint64_t signal_number,
+                                                        uint64_t &target_process_count) noexcept;
+[[nodiscard]] UserSignalStatus GetCurrentProcessGroup(uint64_t &process_group_id) noexcept;
+[[nodiscard]] UserSignalStatus SetCurrentProcessGroup(uint64_t process_group_id) noexcept;
+[[nodiscard]] ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexcept;
+[[nodiscard]] ExceptionFrame *ReturnFromCurrentThreadSignal(ExceptionFrame &frame,
+                                                            uint64_t user_frame_address) noexcept;
+[[nodiscard]] PrivateFutexWaitStatus WaitCurrentProcessPrivateFutex(
+    ExceptionFrame &frame, uint64_t user_address, uint32_t expected_value, bool deadline_enabled,
+    uint64_t deadline_nanoseconds, ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] TimedWaitStatus SleepCurrentThreadUntil(ExceptionFrame &frame,
+                                                      uint64_t deadline_nanoseconds,
+                                                      ExceptionFrame *&resume_frame) noexcept;
 [[nodiscard]] PrivateFutexWaitStatus
 WakeCurrentProcessPrivateFutex(uint64_t user_address, uint64_t maximum_wake_count,
                                uint64_t &woken_thread_count) noexcept;
@@ -348,13 +374,14 @@ void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] bool ProcessPipeWriteCanProgress() noexcept;
 [[nodiscard]] ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame,
                                                       WaitCondition wait_condition,
+                                                      uint64_t blocked_system_call_number,
+                                                      bool restartable,
                                                       ExceptionFrame *&resume_frame) noexcept;
 [[nodiscard]] ProcessRuntimeStatus WakeThreads(WaitCondition wait_condition, WakeReason wake_reason,
                                                uint64_t maximum_wake_count,
                                                uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
-[[nodiscard]] uint64_t
-HandleProcessDeadlineInterrupt(uint64_t now_nanoseconds) noexcept;
+[[nodiscard]] uint64_t HandleProcessDeadlineInterrupt(uint64_t now_nanoseconds) noexcept;
 [[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
 [[nodiscard]] bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
@@ -368,4 +395,6 @@ ResolveCurrentProcessUserReturnMemory(uint64_t instruction_pointer,
 TerminateCurrentProcessFromException(ExceptionFrame &frame, uint64_t page_fault_address) noexcept;
 [[nodiscard]] ExceptionFrame *
 TerminateCurrentProcessFromInvalidReturn(ExceptionFrame &frame) noexcept;
+[[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromSignal(ExceptionFrame &frame,
+                                                                uint64_t signal_number) noexcept;
 }

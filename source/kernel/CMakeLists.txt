@@ -80,6 +80,7 @@ set(
 set(
     OS_KERNEL_PROCESS_HEADERS
     include/os/kernel/process/process_runtime.hpp
+    include/os/kernel/process/signal_manager.hpp
     include/os/kernel/process/process_tree.hpp
     include/os/kernel/process/program_arguments.hpp
     include/os/kernel/process/thread_scheduler.hpp
@@ -203,6 +204,7 @@ set(
 set(
     OS_KERNEL_PROCESS_SOURCES
     src/process/process_runtime.cpp
+    src/process/signal_manager.cpp
     src/process/process_tree.cpp
     src/process/program_arguments.cpp
     src/process/thread_scheduler.cpp
@@ -389,6 +391,7 @@ add_library(
     os_kernel_process_model_host
     STATIC
         src/process/process_tree.cpp
+        src/process/signal_manager.cpp
         src/process/program_arguments.cpp
         src/process/thread_scheduler.cpp
         src/process/wait_queue.cpp
@@ -397,6 +400,7 @@ add_library(
         src/sync/spin_lock.cpp
         include/os/kernel/process/thread_scheduler.hpp
         include/os/kernel/process/process_tree.hpp
+        include/os/kernel/process/signal_manager.hpp
         include/os/kernel/process/program_arguments.hpp
         include/os/kernel/process/wait_queue.hpp
         include/os/kernel/sync/mutex.hpp
