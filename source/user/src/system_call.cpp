@@ -232,10 +232,25 @@ int64_t CloseDescriptor(const uint64_t descriptor) noexcept {
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t CreatePipe(os::abi::PipeDescriptorPair &descriptor_pair) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreatePipe),
+                            reinterpret_cast<uint64_t>(&descriptor_pair),
+                            os::abi::OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t DuplicateDescriptor(const uint64_t source_descriptor, const uint64_t minimum_descriptor,
                             const uint64_t descriptor_flags) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptor),
                             source_descriptor, minimum_descriptor, descriptor_flags);
+}
+
+int64_t DuplicateDescriptorTo(const uint64_t source_descriptor,
+                              const uint64_t destination_descriptor,
+                              const uint64_t descriptor_flags) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptorTo),
+        source_descriptor, destination_descriptor, descriptor_flags);
 }
 
 int64_t GetDescriptorFlags(const uint64_t descriptor) noexcept {

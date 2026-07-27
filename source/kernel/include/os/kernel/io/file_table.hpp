@@ -13,7 +13,7 @@ inline constexpr uint64_t OS_KERNEL_FILE_TABLE_STANDARD_OUTPUT_DESCRIPTOR = 1ULL
 inline constexpr uint64_t OS_KERNEL_FILE_TABLE_STANDARD_ERROR_DESCRIPTOR = 2ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR = 3ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_TABLE_CHUNK_DESCRIPTOR_COUNT = 64ULL;
-inline constexpr uint64_t OS_KERNEL_FILE_TABLE_FUNCTIONAL_HARD_LIMIT = 256ULL;
+inline constexpr uint64_t OS_KERNEL_FILE_TABLE_FUNCTIONAL_HARD_LIMIT = 512ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_TABLE_MAXIMUM_HARD_LIMIT = 4096ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTOR_VALID_FLAG_MASK =
@@ -45,6 +45,8 @@ struct FileTableStatistics final {
     uint64_t successful_installation_count;
     uint64_t successful_lookup_count;
     uint64_t successful_duplicate_count;
+    uint64_t successful_duplicate_to_count;
+    uint64_t replacement_count;
     uint64_t successful_close_count;
     uint64_t close_on_exec_count;
     uint64_t chunk_allocation_count;
@@ -77,6 +79,10 @@ class FileTable final {
     [[nodiscard]] FileTableStatus Duplicate(uint64_t source_descriptor, uint64_t minimum_descriptor,
                                             uint64_t descriptor_flags,
                                             uint64_t &destination_descriptor) noexcept;
+    [[nodiscard]] FileTableStatus
+    DuplicateTo(uint64_t source_descriptor, uint64_t destination_descriptor,
+                uint64_t descriptor_flags,
+                KernelObjectReleaseResult &replaced_release_result) noexcept;
     [[nodiscard]] FileTableStatus Close(uint64_t descriptor,
                                         KernelObjectReleaseResult &release_result) noexcept;
     [[nodiscard]] FileTableStatus GetDescriptorFlags(uint64_t descriptor,

@@ -27,17 +27,17 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.10 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.11 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.10 的正常启动链会累计注册 45 个 Process，连续 fork/exec/wait
-仍保持峰值并发不超过八个，v1.2 的独立
-容量测试继续覆盖完整 Process/Thread 上限。fd 与 pipe 的未来目标容量仍不得
-伪造为已完成。
+实现；v1.11 的 bootstrap 正常链累计注册 65 个 Process，functional 因扩展
+外部工具与 16 级流水线累计 88 个，v1.2 的独立容量测试继续覆盖完整
+Process/Thread 上限。functional 的 512 fd hard limit 和 128 Pipe、
+capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
 
 | 配置 | QEMU RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 测试职责 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | bootstrap | 64 MiB | 8 | 8 | 1 | 不规定 | 不规定 | 启动链、磁盘 PID1、异常、基础内存、全部历史故障镜像 |
-| functional | 256 MiB | 64 | 128 | 32 | 256 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
+| functional | 256 MiB | 64 | 128 | 32 | 512 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
 | capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
 
 三种配置必须走同一启动链、相同动态对象实现和相同 ABI。测试配置只改变内存
@@ -816,11 +816,13 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
 工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
-规格选择的有界总截止：普通配置为 15 秒，64 GiB 主规格因 Debug 构建需要
-扫描 16777216 个页状态而使用 75 秒；外层 CTest 再以 85 秒作为独立保险。
-三次启动的持久化用例仍对每次 QEMU 使用 15 秒内部截止，CTest 总预算为
-60 秒；十万步 VFS 命名空间模型的硬上限为 180 秒，给正常约两分钟运行保留
-宿主调度余量。两者都保持有限上界，不把扩大预算变成无限等待。
+规格选择的有界总截止：64 MiB 启动档为 15 秒；256 MiB 功能档需要完成
+88 个进程与 16 级管道验收，使用 30 秒；64 GiB 主规格因 Debug 构建需要
+扫描 16777216 个页状态而使用 75 秒。外层 CTest 分别使用 25、40 和 85 秒
+作为独立保险。三次启动的持久化用例对每次 QEMU 使用 30 秒内部截止，
+CTest 总预算为 100 秒；十万步 VFS 命名空间模型的硬上限为 180 秒，给正常
+约两分钟运行保留宿主调度余量。所有路径都保持有限上界，不把扩大预算变成
+无限等待。
 捕获器通过 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的
 `timeout` 或特殊退出码。
 正常设备路径额外使用 QMP 的 Unix socket 与 `human-monitor-command/sendkey`
@@ -899,3 +901,30 @@ Ring 3 `/bin/fork_probe` 同时覆盖四种不能由纯宿主模型证明的事�
 64 MiB bootstrap、256 MiB functional 与 64 GiB capacity 继续运行同一
 用户语义。每个来宾阶段有内部 deadline，CTest 还有外层 timeout；任何
 fork 循环停滞都会被有界终止，不留下后台 QEMU。
+
+## v1.11 动态管道与外部 Shell 测试
+
+v1.11 新增五个顶层 CTest，并扩展既有 FileTable、QEMU runner 和产物审计，
+构建图共 145 项：
+
+- 动态 Pipe 单元测试覆盖 64 KiB 逻辑容量、4 KiB lazy page、跨页读写、
+  回绕、EOF、broken pipe、分配失败回滚和最后端点释放；
+- PipeManager 集成测试精确占满 1024 个槽，验证下一次创建拒绝、逐槽关闭、
+  页释放和槽复用；functional 自检精确占满 128 个槽；
+- 100000 步固定种子动态 Pipe 模型逐操作比较字节队列、端点、页拥有量和
+  统计，并在失败时输出种子与步骤；
+- ShellExecution 单元测试覆盖空命令、引号、转义、输入/输出重定向、16 个
+  stage、8 个参数、语法错误及所有超限的无副作用拒绝；
+- 4096 条固定种子任意 Shell 输入验证解析器总能有界完成，成功计划满足
+  offset/长度/终止符和 stage 图不变量，失败计划保持清零。
+
+FileTable 测试另外覆盖 `dup2` 式精确替换、相同 fd、关闭目标、引用失败和
+表不变量。QEMU bootstrap 真实键入基础外部工具；functional 再键入文件
+重定向与 16 级 `echo|cat...|tee|head|wc`，并要求
+`REDIRECTION_VERIFIED`、`PIPELINE_16_VERIFIED` 精确出现。
+
+当前整机协议要求 bootstrap 创建/回收 65 个 Process、完成 64 次 wait；
+functional 因额外工具和 16 级流水线创建/回收 88 个 Process、完成 87 次
+wait。functional 动态管道摘要必须是 capacity=128、active=0、peak=128、
+creations=releases=143、rejections 至少 1；数值同时证明启动容量事务与
+运行时 15 根流水线管道均被回收。

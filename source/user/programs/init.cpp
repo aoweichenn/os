@@ -20,7 +20,7 @@ constexpr char OS_USER_INIT_VM_FAULT_POLICIES_MESSAGE[] =
 constexpr char OS_USER_INIT_FORK_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] FORK_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.10";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.11";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";

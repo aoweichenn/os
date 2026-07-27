@@ -81,7 +81,7 @@ v2.0 的目标不是成为完整 POSIX 或现代桌面系统，而是形成一�
 | 配置 | RAM | Process | Thread | 每 Process Thread | fd hard | Pipe |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | bootstrap | 64 MiB | 不规定 | 不规定 | 不规定 | 不规定 | 不规定 |
-| functional | 256 MiB | 64 | 128 | 32 | 256 | 128 |
+| functional | 256 MiB | 64 | 128 | 32 | 512 | 128 |
 | capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 |
 
 capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.10 完成基线
+## v1.11 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -119,8 +119,10 @@ v1.7 又完成 PID1、父子进程树、Zombie/reparent、磁盘 ELF spawn/exec/
 cache、只读 shared、可写 private、文件修改失效和跨 fd-close 生命周期。
 v1.10 又完成只复制调用 Thread 的 fork、匿名/private 页 COW、统一用户
 `#PF`/Kernel `CopyToUser` 私有化、fd/FileDescription/FsContext/FileBacking
-继承，以及失败时父状态完整恢复。下一阶段为 v1.11 Unix I/O、外部 Shell
-与核心工具。
+继承，以及失败时父状态完整恢复。v1.11 进一步完成 64 KiB 按需分配动态
+管道、分档 PipeManager、`pipe/dup2` ABI、外部命令 Shell、16 级流水线、
+输入输出重定向与 `/bin` 核心工具，并在成功、拒绝、退出和异常路径上闭合
+描述符、端点和物理页生命周期。下一阶段为 v1.12 环境、作业控制与终端基础。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -158,6 +160,36 @@ v1.10 又完成只复制调用 Thread 的 fork、匿名/private 页 COW、统一
 - 100000 步引用模型、连续 32 次 fork/exec/wait 与 64 MiB、256 MiB、
   64 GiB QEMU 都必须结束于零活动 COW 引用、零 Zombie 和跨层资源守恒；
   64 MiB 兼容档不要求同时保留 32 个活跃 Process。
+
+## v1.11 Unix I/O 冻结要求
+
+- 历史 64 字节启动管道继续服务早期兼容探针；普通用户管道必须使用 64 KiB
+  逻辑容量和 4 KiB 按需物理页，未触及区间不得提前占用页帧。
+- PipeManager 在 bootstrap、functional、capacity 三档分别提供 8、128、
+  1024 个槽；创建失败不得遗留半安装端点，最后一个读端和写端关闭后必须
+  释放全部后备页并回收槽。
+- FileTable 在 functional 档 hard limit 为 512；`dup2(oldfd, newfd)` 必须
+  精确替换目标 fd、保持共享 FileDescription 语义，并对相同 fd、非法 fd、
+  引用获取失败保持 destination 不变。替换一旦提交便不得回滚；旧 destination
+  的 finalizer 在表锁外失败时返回显式 release failure，并把它提升为内核
+  资源账本错误，不能把已经公开的新 fd 伪装成未提交。
+- 系统调用 ABI 固定新增 `CreatePipe=45` 与 `DuplicateDescriptorTo=46`；
+  用户包装不得把内核地址、宿主句柄或实现对象泄露到 Ring 3。
+- Shell 只把 `cd` 和 `exit` 保留为内建命令；help、文件与目录操作、文本
+  处理和状态工具必须作为 rootfs 中的外部 ELF 从 `/bin` 执行。
+- 解析与执行必须分离。解析器支持单引号、双引号、反斜杠、`<`、`>` 和
+  最多 16 级流水线；语法错误、参数超限、阶段超限和行长超限均不得产生
+  Process、fd 或管道副作用。
+- 执行器必须先准备管道和重定向，再逐个 spawn；任一中途失败都要关闭父端、
+  回收已创建子进程，并等待所有已提交子进程，不能泄漏 Zombie。
+- 关闭读端后的写入必须报告 broken pipe；关闭写端且缓冲耗尽后的读取必须
+  返回 EOF；阻塞等待必须通过 WaitQueue，不得轮询刷日志。
+- 单元测试必须覆盖跨页、回绕、EOF、broken pipe、`dup2` 替换和 16 级解析；
+  固定种子随机测试至少覆盖 100000 次动态管道操作和 4096 条任意 Shell
+  输入；bootstrap 与 functional QEMU 必须真实键入重定向和 16 级流水线。
+- functional QEMU 结束时动态管道 active 为 0、peak 为 128、创建数等于
+  释放数且至少出现一次容量拒绝；所有 fd、FileDescription、Process、
+  Zombie 和物理页统计必须回到阶段基线。
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

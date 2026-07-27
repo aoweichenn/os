@@ -238,6 +238,44 @@ set(
     --rootfs-file
     "/bin/sh=${OS_USER_SHELL_ELF_PATH}"
     --rootfs-file
+    "/bin/help=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/echo=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/cat=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/wc=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/head=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/tee=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/true=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/false=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/pwd=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/ls=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/stat=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/mkdir=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/write=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/touch=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/rm=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/rmdir=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/mv=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/truncate=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
+    "/bin/sync=${OS_USER_CORE_TOOL_ELF_PATH}"
+    --rootfs-file
     "/bin/smoke=${OS_USER_SMOKE_ELF_PATH}"
     --rootfs-file
     "/bin/orphan_parent=${OS_USER_ORPHAN_PARENT_ELF_PATH}"
@@ -285,6 +323,7 @@ add_custom_command(
         "${OS_KERNEL_PAYLOAD_ELF_PATH}"
         "${OS_USER_INIT_ELF_PATH}"
         "${OS_USER_SHELL_ELF_PATH}"
+        "${OS_USER_CORE_TOOL_ELF_PATH}"
         "${OS_USER_SMOKE_ELF_PATH}"
         "${OS_USER_ORPHAN_PARENT_ELF_PATH}"
         "${OS_USER_ORPHAN_CHILD_ELF_PATH}"
@@ -343,6 +382,7 @@ add_dependencies(
     os_kernel_user_invalid_elf_payload_elf
     os_user_init_elf
     os_user_shell_elf
+    os_user_core_tool_elf
     os_user_smoke_elf
     os_user_orphan_parent_elf
     os_user_orphan_child_elf

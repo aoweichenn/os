@@ -4,6 +4,9 @@
 
 namespace os::user {
 
-[[nodiscard]] int64_t RunShell() noexcept;
+[[nodiscard]] int64_t RunShell(uint64_t argument_count,
+                               const char *const *arguments) noexcept;
+[[nodiscard]] int64_t RunShellCommand(const char *command,
+                                      uint64_t command_length_bytes) noexcept;
 
 }

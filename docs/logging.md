@@ -992,3 +992,32 @@ active 两项必须精确为零；peak、first share 和 release 必须非零。
 时间策略不变：来宾使用 PIT 单调毫秒，宿主捕获器为每行附加
 `[QEMU][T+...ms]`。日志只描述已提交状态，不在页表锁、引用锁或回滚中间
 打印，避免串口吞吐改变 fault 与调度顺序。
+
+## v1.11 动态管道与外部 Shell 日志
+
+Pipe 分配、每页首次写、每次短读和每个 fd close 都是热路径，不允许逐事件
+打印。所有 Process 回收后只输出一次冷路径摘要：
+
+```text
+[OS][KERNEL] DYNAMIC_PIPE_CAPACITY=0x...
+[OS][KERNEL] DYNAMIC_PIPE_ACTIVE=0x0000000000000000
+[OS][KERNEL] DYNAMIC_PIPE_PEAK_ACTIVE=0x...
+[OS][KERNEL] DYNAMIC_PIPE_CREATIONS=0x...
+[OS][KERNEL] DYNAMIC_PIPE_RELEASES=0x...
+[OS][KERNEL] DYNAMIC_PIPE_CAPACITY_REJECTIONS=0x...
+```
+
+functional 的 peak 必须等于 128，creation 必须等于 release，rejection
+至少为 1。这个摘要同时覆盖启动容量事务和用户流水线，不通过逐管道 marker
+人为增加成功证据。
+
+Shell 只在完整命令事务成功后输出：
+
+```text
+[OS][USER][SHELL] REDIRECTION_VERIFIED
+[OS][USER][SHELL] PIPELINE_16_VERIFIED
+```
+
+functional 中前者精确两次、后者精确一次。解析失败、child 接线失败或任一
+stage 非零退出都不能输出这些 marker。来宾与宿主时间策略继续沿用本章统一
+规则，不在管道热路径读 RTC 或打印 tick。

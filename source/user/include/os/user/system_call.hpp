@@ -45,8 +45,12 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t WriteDescriptor(uint64_t descriptor, const uint8_t *source,
                                       uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t CloseDescriptor(uint64_t descriptor) noexcept;
+[[nodiscard]] int64_t CreatePipe(os::abi::PipeDescriptorPair &descriptor_pair) noexcept;
 [[nodiscard]] int64_t DuplicateDescriptor(uint64_t source_descriptor, uint64_t minimum_descriptor,
                                           uint64_t descriptor_flags) noexcept;
+[[nodiscard]] int64_t DuplicateDescriptorTo(uint64_t source_descriptor,
+                                            uint64_t destination_descriptor,
+                                            uint64_t descriptor_flags) noexcept;
 [[nodiscard]] int64_t GetDescriptorFlags(uint64_t descriptor) noexcept;
 [[nodiscard]] int64_t SetDescriptorFlags(uint64_t descriptor, uint64_t descriptor_flags) noexcept;
 [[nodiscard]] int64_t SetDescriptorSoftLimit(uint64_t soft_limit) noexcept;

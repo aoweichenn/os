@@ -16,7 +16,7 @@
 \section*{一、融合时采用的五条规则}
 
 \begin{enumerate}[leftmargin=2.2em]
-  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v1.10 在容量、数据结构
+  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v1.11 在容量、数据结构
         或路径上不同，正文先解释历史基线，再明确当前增量，不把旧数字冒充现状。
   \item \textbf{背景知识前置。}第一次使用 ROM、RAM、地址、寄存器、端口、
         中断、页表、进程、fd 等概念时先解释“是什么和为什么”，再进入项目细节。
@@ -73,7 +73,7 @@ oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持�
 \bottomrule
 \end{longtable}
 
-\section*{三、v0.0--v1.8 阶段分册怎样进入十章}
+\section*{三、v0.0--v1.11 阶段分册怎样进入十章}
 
 \begin{longtable}{L{0.25\linewidth}L{0.34\linewidth}L{0.31\linewidth}}
 \toprule
@@ -132,6 +132,15 @@ PID1、父子树、Zombie/孤儿、磁盘 ELF、参数栈、spawn/exec/wait 与�
 \learningpathii{16-v1.8-anonymous-vma-}{demand-paging.md} &
 VMA/PTE 分层、匿名 reservation、按需缺页、连续栈、brk、用户堆与资源守恒 &
 第 9 章匿名 VMA 与用户堆深入节；第 10 章 v2 虚拟内存演进 \\
+\learningpathiii{17-v1.9-file-backed-}{vma-lazy-elf-}{page-cache.md} &
+稳定文件身份、FileBacking、按需 ELF、clean cache、shared/private 与失效 &
+第 9 章文件后备 VMA 深入节；第 10 章 v2 页缓存演进 \\
+\learningpathii{18-v1.10-fork-copy-}{on-write.md} &
+fork 返回、private COW、CopyToUser、fd/cwd/后备继承和两阶段失败回滚 &
+第 9 章 fork/COW 深入节；第 10 章多线程 fork/exec 边界 \\
+\learningpathiii{19-v1.11-unix-io-}{external-}{shell.md} &
+动态 Pipe、pipe/dup2、外部工具、重定向、16 级流水线与跨层资源守恒 &
+第 9 章 Unix I/O 深入节；第 10 章环境、作业控制与 TTY 演进 \\
 \bottomrule
 \end{longtable}
 

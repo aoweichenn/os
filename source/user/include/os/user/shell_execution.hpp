@@ -1,0 +1,62 @@
+#pragma once
+
+#include "os/user/shell_parser.hpp"
+
+#include <stdint.h>
+
+namespace os::user {
+
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES = 512ULL;
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT = 16ULL;
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE = 8ULL;
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENT_COUNT =
+    OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT *
+    OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE;
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_STORAGE_TERMINATOR_SIZE_BYTES = 1ULL;
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES =
+    OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES +
+    OS_USER_SHELL_EXECUTION_STORAGE_TERMINATOR_SIZE_BYTES;
+inline constexpr uint64_t OS_USER_SHELL_EXECUTION_STACK_FRAME_LIMIT_BYTES = 4096ULL;
+
+enum class ShellExecutionParseStatus : uint64_t {
+    Succeeded,
+    Empty,
+    LineTooLong,
+    TooManyStages,
+    TooManyArguments,
+    EmptyPipelineStage,
+    MissingRedirectionPath,
+    DuplicateRedirection,
+    UnterminatedQuote,
+    DanglingEscape,
+    InvalidArgument,
+};
+
+struct ShellExecutionStage final {
+    uint64_t first_argument_index;
+    uint64_t argument_count;
+    bool has_input_redirection;
+    ShellArgument input_path;
+    bool has_output_redirection;
+    ShellArgument output_path;
+};
+
+struct ShellExecutionPlan final {
+    char storage[OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES];
+    ShellArgument arguments[OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENT_COUNT];
+    ShellExecutionStage stages[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT];
+    uint64_t argument_count;
+    uint64_t stage_count;
+};
+
+// 解析器会在用户栈上构造临时计划；单个栈帧必须小于一页，避免跨越按需增长边界。
+static_assert(sizeof(ShellExecutionPlan) <=
+              OS_USER_SHELL_EXECUTION_STACK_FRAME_LIMIT_BYTES);
+
+[[nodiscard]] ShellExecutionParseStatus
+ParseShellExecutionPlan(const char *line, uint64_t line_length_bytes,
+                        ShellExecutionPlan &execution_plan) noexcept;
+[[nodiscard]] const char *ShellExecutionArgumentBytes(const ShellExecutionPlan &execution_plan,
+                                                      uint64_t argument_index) noexcept;
+
+}

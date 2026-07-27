@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.10。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.11。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -1981,3 +1981,34 @@ Python 只运行在宿主机，负责工具链检查、CMake/CTest 调度、镜�
 与 ROM 审计和 QEMU 生命周期管理。Python 不进入操作系统镜像，也不解析或
 替代 CMake 构建图。所有外部程序均以参数列表直接启动，不经过 Shell 字符串
 求值。
+
+## v1.11 当前 Unix I/O 架构
+
+v1.11 把第一周期“一个预接线启动管道、Shell 自己完成所有操作”的历史模型
+拆成四层：
+
+```text
+ShellExecutionPlan
+  → CreatePipe / OpenFile / DuplicateDescriptorTo
+  → ForkProcess → child fd 接线 → ExecProcess(/bin/*)
+  → FileDescription → PipeManager 或 VFS
+  → WaitProcess + parent-side close + reverse-order rollback
+```
+
+`PipeManager` 按内存档选择 8、128、1024 个槽。每个动态 Pipe 保留 64 KiB
+逻辑环形空间，但以 4 KiB 页为后备，第一次写到某页才调用物理页分配器；
+读写端最后引用消失后释放全部页。历史 64 字节 Pipe 仍只服务兼容探针，不再
+承担普通 Shell 流水线。
+
+`FileTable::DuplicateTo` 在精确目标 fd 上替换引用，多个 fd 因而共享同一个
+FileDescription 和文件偏移。Shell 解析器只产生最多 16 个 stage 的静态计划，
+不创建进程或 fd；执行器才按照“准备 I/O、fork、子进程接线并 exec、父进程
+关闭端点、wait”的顺序提交。
+语法拒绝没有副作用，执行中途失败则逆序关闭所有已取得资源并回收已发布孩子。
+
+`/bin/help`、`echo`、`cat`、`wc`、`head`、`tee`、`true`、`false`、`pwd`、
+`ls`、`stat`、`mkdir`、`write`、`touch`、`rm`、`rmdir`、`mv`、`truncate`
+和 `sync` 由同一个 multi-call ELF 根据 `argv[0]` 分派；共享实现减少教学
+系统的重复运行时体积，但 rootfs 名称、spawn/exec 边界和每个进程的 fd
+语义都是真实独立的。只有 `cd` 与 `exit` 因必须改变 Shell 自身状态而保留
+为内建命令。

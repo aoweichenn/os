@@ -17,6 +17,8 @@ constexpr std::string_view OS_TEST_FILE_TABLE_FOREIGN_REFERENCE =
     "文件表必须拒绝其他对象管理器的引用且不能留下候选分块";
 constexpr std::string_view OS_TEST_FILE_TABLE_DUPLICATE =
     "复制描述符必须共享同一文件描述且保持独立描述符标志";
+constexpr std::string_view OS_TEST_FILE_TABLE_DUPLICATE_TO =
+    "定点复制必须原子替换目标、释放旧对象并正确处理同号复制";
 constexpr std::string_view OS_TEST_FILE_TABLE_REUSE =
     "关闭后的最小描述符必须复用且对象代次不能混淆";
 constexpr std::string_view OS_TEST_FILE_TABLE_LIMIT = "软限额必须只限制新安装并保持失败原子性";
@@ -28,11 +30,14 @@ constexpr std::string_view OS_TEST_FILE_TABLE_DRAIN =
     "销毁文件表必须释放全部分块、描述符和内核对象";
 
 constexpr uint64_t OS_TEST_FILE_TABLE_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_TEST_FILE_TABLE_FIRST_VALUE = 1ULL;
+constexpr uint64_t OS_TEST_FILE_TABLE_EXPECTED_DUPLICATE_TO_COUNT = 2ULL;
 constexpr uint64_t OS_TEST_FILE_TABLE_HEAP_SIZE_BYTES = 256ULL * 1024ULL;
 constexpr uint64_t OS_TEST_FILE_TABLE_SOFT_LIMIT = 130ULL;
 constexpr uint64_t OS_TEST_FILE_TABLE_HARD_LIMIT =
     os::kernel::OS_KERNEL_FILE_TABLE_FUNCTIONAL_HARD_LIMIT;
 constexpr uint64_t OS_TEST_FILE_TABLE_DUPLICATE_MINIMUM = 64ULL;
+constexpr uint64_t OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET = 65ULL;
 constexpr uint64_t OS_TEST_FILE_TABLE_RESTRICTED_SOFT_LIMIT = 64ULL;
 constexpr uint64_t OS_TEST_FILE_TABLE_FOREIGN_REFERENCE_MINIMUM = 128ULL;
 constexpr uint64_t OS_TEST_FILE_TABLE_INVALID_FLAGS = 1ULL << 7ULL;
@@ -61,6 +66,7 @@ CreateOutputDescription(os::kernel::FileDescriptionManager &manager,
         .device_write_operation = DiscardWrite,
         .device_write_context = nullptr,
         .pipe = nullptr,
+        .pipe_manager = nullptr,
         .vfs = nullptr,
         .open_file = {},
     };
@@ -171,6 +177,43 @@ int main() {
         duplicate_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
     test_context.Expect(duplicated && duplicate_shared, OS_TEST_FILE_TABLE_DUPLICATE);
 
+    os::kernel::KernelObjectReference duplicate_to_replacement_reference{};
+    os::kernel::KernelObjectIdentity duplicate_to_identity{};
+    os::kernel::KernelObjectReleaseResult duplicate_to_release_result{};
+    uint64_t duplicate_to_flags = OS_TEST_FILE_TABLE_EMPTY_VALUE;
+    const bool duplicate_to_replaced =
+        CreateOutputDescription(description_manager, duplicate_to_replacement_reference) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        duplicate_to_replacement_reference.ReadIdentity(duplicate_to_identity) ==
+            os::kernel::KernelObjectStatus::Succeeded &&
+        table.InstallExact(duplicate_to_replacement_reference,
+                           OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET,
+                           OS_TEST_FILE_TABLE_EMPTY_VALUE) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        table.DuplicateTo(os::kernel::OS_KERNEL_FILE_TABLE_STANDARD_INPUT_DESCRIPTOR,
+                          OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET,
+                          os::kernel::OS_KERNEL_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG,
+                          duplicate_to_release_result) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        duplicate_to_release_result.released_last_reference &&
+        table.GetDescriptorFlags(OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET,
+                                 duplicate_to_flags) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        duplicate_to_flags == os::kernel::OS_KERNEL_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG &&
+        table.DuplicateTo(OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET,
+                          OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET,
+                          OS_TEST_FILE_TABLE_EMPTY_VALUE,
+                          duplicate_to_release_result) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        table.GetDescriptorFlags(OS_TEST_FILE_TABLE_DUPLICATE_TO_TARGET,
+                                 duplicate_to_flags) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        duplicate_to_flags == os::kernel::OS_KERNEL_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG &&
+        table.Statistics().successful_duplicate_to_count ==
+            OS_TEST_FILE_TABLE_EXPECTED_DUPLICATE_TO_COUNT &&
+        table.Statistics().replacement_count == OS_TEST_FILE_TABLE_FIRST_VALUE;
+    test_context.Expect(duplicate_to_replaced, OS_TEST_FILE_TABLE_DUPLICATE_TO);
+
     os::kernel::KernelObjectReference occupied_reference{};
     const bool occupied_install_atomic =
         CreateOutputDescription(description_manager, occupied_reference) ==
@@ -259,7 +302,8 @@ int main() {
     uint64_t closed_descriptor_count = OS_TEST_FILE_TABLE_EMPTY_VALUE;
     const bool closed_on_exec =
         table.CloseOnExec(closed_descriptor_count) == os::kernel::FileTableStatus::Succeeded &&
-        closed_descriptor_count == OS_TEST_FILE_TABLE_EXPECTED_CLOSE_ON_EXEC_COUNT &&
+        closed_descriptor_count ==
+            OS_TEST_FILE_TABLE_EXPECTED_CLOSE_ON_EXEC_COUNT + OS_TEST_FILE_TABLE_FIRST_VALUE &&
         table.Lookup(duplicate_descriptor, duplicate_reference) ==
             os::kernel::FileTableStatus::InvalidDescriptor &&
         table.Validate() == os::kernel::FileTableStatus::Succeeded;

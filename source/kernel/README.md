@@ -170,3 +170,20 @@ process/process_runtime.*      Process/Thread 候选事务、发布与回收
 `user_memory` 联合 VMA、PTE 与引用状态。`process_runtime` 负责跨资源事务，
 不重新实现页复制。设计理由见
 [ADR 0037](../../docs/adr/0037-fork-copy-on-write.md)。
+
+v1.11 在这些所有权边界上补齐 Unix I/O 组合：
+
+```text
+ipc/pipe.*                   64 KiB 环形流、4 KiB 按需页与端点状态
+ipc/pipe_manager.*           8/128/1024 分档 slot、创建和最终回收
+io/file_description.*        把 Pipe 端点纳入共享打开文件语义
+io/file_table.*              512 functional hard limit 与定点 DuplicateTo
+user/system_calls.*          CreatePipe/DuplicateDescriptorTo ABI 分发
+process/process_runtime.*    当前进程 pipe/dup2 编排和页分配回调
+```
+
+Pipe 不认识 fd，FileTable 不解析 Shell，ProcessRuntime 只组合对象和当前
+Process。`DuplicateTo` 在表锁内提交新强引用，在锁外释放旧对象；提交前失败
+保持目标不变，提交后的 finalizer 失败显式升级为资源账本错误。外部 Shell 和
+十九个 `/bin` 路径属于 `source/user/`，Kernel 不内嵌命令实现。设计理由见
+[ADR 0038](../../docs/adr/0038-dynamic-pipe-dup2-external-shell.md)。

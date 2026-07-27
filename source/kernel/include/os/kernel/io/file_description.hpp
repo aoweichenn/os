@@ -4,6 +4,7 @@
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/io/console_input.hpp"
 #include "os/kernel/ipc/pipe.hpp"
+#include "os/kernel/ipc/pipe_manager.hpp"
 #include "os/kernel/object/kernel_object.hpp"
 
 #include <stdint.h>
@@ -55,6 +56,7 @@ struct FileDescriptionCreateRequest final {
     FileDescriptionDeviceWriteOperation device_write_operation;
     void *device_write_context;
     Pipe *pipe;
+    PipeManager *pipe_manager;
     fs::Vfs *vfs;
     fs::OpenFile open_file;
 };

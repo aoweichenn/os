@@ -642,9 +642,10 @@ DATA 字是否按小端拆成 512 字节。
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
-2. 未到达时，普通配置以 15 秒、64 GiB 主规格以 75 秒为总失败上界；后者要在
+2. 未到达时，64 MiB 启动档以 15 秒、承担 88 个进程和 16 级管道验收的
+   256 MiB 功能档以 30 秒、64 GiB 主规格以 75 秒为总失败上界；主规格要在
    Debug 构建中扫描 16777216 个页状态。QMP 等待 `READY` 使用与当前内存规格
-   相同的预算，外层 CTest 对主规格另设 85 秒硬上界。
+   相同的预算，外层 CTest 分别保留额外回收余量。
 
 协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计既移除
 “所有宿主都同速”的假设，也让稳定停顿成为可重复诊断证据；不会把缺失 IRQ、
@@ -889,7 +890,8 @@ unavailable = managed - accounted
 
 40 秒旧预算曾在共享宿主负载约 16 时于 `EXCEPTION_SELF_TEST_READY` 后耗尽，
 来宾尚在执行 64 GiB 页状态、buddy、direct-map 与跨层自检，串口因提交后才
-输出统计而没有中间行。这不是放宽来宾轮询：普通配置仍为 15 秒，禁止失败标记
+输出统计而没有中间行。这不是放宽来宾轮询：64 MiB 启动档仍为 15 秒，
+256 MiB 功能档因 v1.11 的 88 个进程与 16 级管道使用 30 秒，禁止失败标记
 仍会立即收尾；容量档只把宿主外部保险调整为有明确上界的 75/85 秒，并由工具
 单元测试证明一个睡眠子进程会在短预算后被终止而不是遗留后台进程。
 
@@ -1499,3 +1501,36 @@ ctest --test-dir build/developer -R '^os_qemu_stage1_load_success$' --output-on-
 
 失败后确认 `pgrep -a qemu-system-x86_64` 没有残留。工具应在总截止或静默截止
 到达后 terminate 并 wait，不能通过无限延长 timeout 隐藏页故障循环。
+
+## v1.11：外部命令、重定向与动态管道
+
+### Shell READY 后外部命令立即失败
+
+先区分 parser、rootfs lookup、spawn 和 wait 四层。确认解析计划中的 program
+是绝对 `/bin/...` 路径；再用 `ls /bin` 和 `stat /bin/<name>` 验证 rootfs
+安装。若出现 exec 拒绝，审计 `user_core_tool.elf` 的 PT_LOAD、入口和 W^X；
+若 spawn 成功但结果异常，检查 multi-call 分派使用的 `argv[0]` 是否保留
+basename。
+
+### 流水线一直不返回
+
+最常见原因不是调度器超时，而是某个进程仍持有不需要的写端，导致末端永远
+看不到 EOF。按 stage 检查：
+
+1. 子进程 stdin/stdout 是否经 `DuplicateDescriptorTo` 安装到 0/1；
+2. 替换后是否关闭原始 pipe fd；
+3. 父 Shell 是否在 spawn 后立刻关闭已经转交的端点；
+4. 失败路径是否仍关闭全部未消费端点并 wait 已发布孩子；
+5. Pipe 的 writers 是否最终为零，buffered 为零后 reader 才收到 EOF。
+
+单独运行 `os_user_shell_execution_unit_tests` 排除解析图错误，再运行
+`os_qemu_functional_smoke`。两层都有截止时间；不要通过扩大 timeout 掩盖
+端点泄漏。
+
+### functional 动态管道统计不守恒
+
+正常摘要应满足 capacity=128、active=0、peak=128、create=release，且容量
+自检至少产生一次 rejection。若 active 非零，沿 FileTable →
+FileDescription finalizer → PipeManager close 查最后引用；若物理页未恢复，
+检查跨页写失败回滚和最后端点释放。`ReleaseDynamicPages` 只有成功归还页面
+后才能清除地址，否则会把“仍拥有页面”伪装成已释放。

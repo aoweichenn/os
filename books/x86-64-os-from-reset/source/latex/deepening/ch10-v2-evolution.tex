@@ -110,7 +110,7 @@ v2.0 使用 \code{FXSAVE/FXRSTOR} 保存 x87、MMX、SSE 与 SSE2 现场；AVX
 \textbf{配置} & \textbf{RAM} & \textbf{容量下限} & \textbf{提供的证据}\\
 \midrule
 bootstrap & 64 MiB & 不规定对象规模 & 复位、启动链、异常、基础分页和历史失败镜像\\
-functional & 256 MiB & 64 Process、128 Thread、256 fd、128 pipe & PID1、VM、线程、信号、TTY 和持久化完整功能\\
+functional & 256 MiB & 64 Process、128 Thread、512 fd、128 pipe & PID1、VM、线程、信号、TTY 和持久化完整功能\\
 capacity & 64 GiB & 256 Process、512 Thread、4096 fd、1024 pipe & 全 RAM、4 GiB 以上访问、规模压力与 soak\\
 \bottomrule
 \end{longtable}
@@ -356,7 +356,8 @@ FileDescription。close-on-exec 是 fd flag，不会污染共享对象。
 
 安装新 fd 采用两阶段提交：先准备候选分块与对象引用，再在锁内发布槽位。
 地址加 generation 拒绝堆同址复用造成的 ABA；最后强引用释放在全局锁外调用
-类型 finalizer。功能 hard limit 为 256，64 GiB 容量规格为 4096。单元、
+类型 finalizer。v1.4 功能 hard limit 为 256，v1.11 因 128 条动态 Pipe
+端点将其提高到 512；64 GiB 容量规格为 4096。单元、
 跨文件系统/管道集成、4096 fd 容量、100000 步模型与 Ring 3/QEMU 共同把
 v1.4 功能回归推进到 106 项；实体学习图连通性门禁随后形成 107 项历史
 集合。Vnode 留给 v1.5，不在本阶段伪造。

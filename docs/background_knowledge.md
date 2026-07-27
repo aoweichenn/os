@@ -1043,7 +1043,7 @@ Committed                 RolledBack
 否则调用者可能根据一半更新的 `is_last` 销毁仍被引用的对象。
 
 引用计数只证明拥有者数量，不证明对象内部状态、关联页表或等待队列正确，也
-不能自动解决环引用。当前 v1.10 仍是单 BSP 基线，计数存储使用普通
+不能自动解决环引用。当前 v1.11 仍是单 BSP 基线，计数存储使用普通
 `uint64_t`，但对象查找与 acquire/release 已在同一管理器锁内提交；最后引用
 先把对象从活动集合摘除，再在锁外执行 finalizer。这样冻结了当前并发边界，
 却没有伪称已具备 weak reference、无锁升级、SMP 原子引用或循环回收。
@@ -1936,7 +1936,8 @@ wait：期间可能有另一个条件或孩子变化，不能把 wakeup 当作�
 它也形成 Shell 熟悉的控制流：父 Shell fork，孩子设置 fd/管道后 exec，
 父 Shell wait。
 
-当前 v1.10 已有匿名/文件 VMA 和只复制调用 Thread 的 COW fork，但尚无
+当前 v1.11 已有匿名/文件 VMA、只复制调用 Thread 的 COW fork 和外部 Shell
+流水线，但尚无
 用户多 Thread fork 停世协调，因此先提供：
 
 - spawn：从程序路径直接构造一个全新孩子；
@@ -2004,8 +2005,9 @@ freestanding 入口无需 libc 启动文件也能读取参数。RSP 保持 16 �
 - 固定种子随机测试改变 8192 个孩子的退出顺序，并用独立布局公式比较；
 - rootfs 工具测试证明 ELF 字节真的写进嵌套目录并可重新读取；
 - QEMU 从自研 ROM 进入真实 Kernel，再经 ATA/VFS 读取 `/sbin/init`，
-  真实切换 CR3/RSP、执行 spawn/exec/fork/wait；当前 v1.10 再顺序执行
-  VM 与 fork probe，最终证明四十五个 Process 生命周期全部回收。
+  真实切换 CR3/RSP、执行 spawn/exec/fork/wait；当前 v1.11 再顺序执行
+  VM、fork probe、外部 Shell、重定向和 16 级流水线，并按配置证明 65 或
+  88 个 Process 生命周期全部回收。
 
 宿主模型不能证明 x86 页表和系统调用入口；一次 QEMU 成功也不能穷举上千种
 退出顺序。只有两者结论一致，才能把“看起来启动了”提升为可回归的生命周期
@@ -2050,7 +2052,30 @@ frame，不能产生虚构释放。
 [v1.8 学习章](learning/16-v1.8-anonymous-vma-demand-paging.md)，设计决策见
 [ADR 0035](adr/0035-anonymous-vma-demand-paging-user-heap.md)。
 
-## 28. 建议阅读顺序
+## 28. 为什么 Shell 流水线首先是所有权问题
+
+`a | b | c` 表面是一行文本，内核看到的却是三个 Process、两条字节流和多组
+fd 强引用。Unix 让 fd 0/1 成为约定接口，因此 Shell 无需理解 a、b、c 的
+内部算法，只需在 fork 与 exec 之间重写孩子的 fd 图。
+
+EOF 来自“所有 writer 引用都已关闭”，不是缓冲区中的特殊字符。只要父 Shell
+或无关 child 遗留一个 writer fd，末端 reader 就会永久等待。因此正确顺序是
+先创建 Pipe，fork 全部 stage，在 child 中 dup2/close/exec，在 parent 中
+关闭全部临时端点，最后 wait 全部孩子。逐 stage 创建后立即 wait 会让大输出
+填满 Pipe，而消费者尚未启动，形成必然死锁。
+
+64 KiB Pipe 也不等于创建时占用 64 KiB 物理内存。v1.11 把逻辑环拆成 16 个
+4 KiB 槽，首次写入才分配对应页。容量限制约束并发流对象，lazy page 约束真实
+内存成本；两者共同存在才能让 64 MiB bootstrap 与 64 GiB capacity 复用同一
+实现。
+
+`dup2` 的关键不是“复制整数”，而是让目标 fd 引用同一 FileDescription。
+FileTable entry 属于 Process，FileDescription 保存共享状态，Pipe 保存字节与
+端点状态。把三层合并会导致关闭一个 fd 就过早 EOF，或多个 fd 错误拥有独立
+offset。完整模型和代码走读见
+[v1.11 学习章](learning/19-v1.11-unix-io-external-shell.md)。
+
+## 29. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -2073,6 +2098,7 @@ frame，不能产生虚构释放。
    v1.6 的 rootfs v2、完整命名空间与独立 fsck，以及 v1.7 的磁盘 PID1、
    进程树、spawn/exec/wait 与参数环境，v1.8 的 VMA、匿名缺页、受控栈增长
    和用户 heap、v1.9 的文件 VMA、按需 ELF 与 clean page cache，以及
-   v1.10 的 fork/COW。
+   v1.10 的 fork/COW，以及 v1.11 的动态管道、pipe/dup2、外部 Shell 与
+   核心工具。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

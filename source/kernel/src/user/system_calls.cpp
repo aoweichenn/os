@@ -183,6 +183,9 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     if (status == ProcessIoStatus::DescriptorLimitExceeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_LIMIT_EXCEEDED;
     }
+    if (status == ProcessIoStatus::PipeLimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PIPE_LIMIT_EXCEEDED;
+    }
     if (status == ProcessIoStatus::ObjectFailure) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE;
     }
@@ -697,6 +700,45 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     const ProcessIoStatus status = DuplicateCurrentProcessDescriptor(
         source_descriptor, minimum_descriptor, descriptor_flags, destination_descriptor);
     return MapProcessIoStatus(status, destination_descriptor, FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchDuplicateDescriptorTo(
+    const uint64_t source_descriptor, const uint64_t destination_descriptor,
+    const uint64_t descriptor_flags) noexcept {
+    if ((descriptor_flags & ~os::abi::OS_ABI_FILE_DESCRIPTOR_VALID_FLAG_MASK) !=
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    const ProcessIoStatus status = DuplicateCurrentProcessDescriptorTo(
+        source_descriptor, destination_descriptor, descriptor_flags);
+    return MapProcessIoStatus(status, destination_descriptor, FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchCreatePipe(const uint64_t user_pair_address,
+                                         const uint64_t pair_size_bytes) noexcept {
+    if (pair_size_bytes != os::abi::OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(user_pair_address, pair_size_bytes) !=
+            UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+
+    os::abi::PipeDescriptorPair descriptor_pair{};
+    const ProcessIoStatus status = CreateCurrentProcessPipe(
+        descriptor_pair.reader_descriptor, descriptor_pair.writer_descriptor);
+    if (status != ProcessIoStatus::Succeeded) {
+        return MapProcessIoStatus(
+            status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+            FileSystemStatus::Succeeded);
+    }
+    if (CopyToUser(user_pair_address, pair_size_bytes,
+                   reinterpret_cast<const uint8_t *>(&descriptor_pair),
+                   os::abi::OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES) !=
+        UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
 }
 
 [[nodiscard]] int64_t DispatchGetDescriptorFlags(const uint64_t descriptor) noexcept {
@@ -1359,6 +1401,17 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
         static_cast<uint64_t>(
             os::abi::SystemCallNumber::ForkProcess)) {
         return DispatchForkProcess(*frame);
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::CreatePipe)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchCreatePipe(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptorTo)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchDuplicateDescriptorTo(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx));
+        return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;

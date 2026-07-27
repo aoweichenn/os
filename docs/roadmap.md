@@ -52,7 +52,9 @@ v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习�
 集成、固定种子随机模型、rootfs ELF 安装和 PID1 整机证据。v1.8 再加入
 VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 3 VM probe
 和具名 64 MiB bootstrap；v1.9 再加入文件页缓存；v1.10 新增 COW 引用
-单元、页表集成和十万步引用随机模型。当前数量由构建图自动生成，不在路线中冻结。
+单元、页表集成和十万步引用随机模型；v1.11 再加入动态 Pipe、Shell 执行
+计划、dup2、QEMU 重定向与 16 级管线证据，当前构建图为 145 项。数量仍由
+构建图自动生成，不作为未来版本的固定常量。
 
 ## 第二周期最终目标
 
@@ -103,7 +105,7 @@ v2.0 是中断可进入、内核不可抢占的单 BSP 内核：
 | 配置 | RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 职责 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | bootstrap | 64 MiB | 不规定 | 不规定 | 不规定 | 不规定 | 不规定 | 启动链、异常、基础内存和历史故障镜像 |
-| functional | 256 MiB | 64 | 128 | 32 | 256 | 128 | PID1、Shell、VM、线程、信号、TTY、持久化 |
+| functional | 256 MiB | 64 | 128 | 32 | 512 | 128 | PID1、Shell、VM、线程、信号、TTY、持久化 |
 | capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、长时间压力 |
 
 64 GiB 是主容量规格而不是实现上限。实际受管上界取 E820、CPUID 物理地址
@@ -364,6 +366,10 @@ RAII 临时所有权，私有 handle 只由 `FileTable` 长期持有。首个类
 和竞争回滚；安装失败保持传入引用活动。fd flags 独立保存并支持
 close-on-exec，用户 ABI 可 duplicate、读取/设置 flags 和调整/查询 soft/hard
 limit。
+
+v1.11 为了允许 functional 档 128 条 Pipe 的 256 个端点与标准/文件描述符
+同时存在，已把该档 hard limit 从 v1.4 的 256 提升到 512；bootstrap 64 与
+capacity 4096 不变。v1.4 的上述数值保留为当时验收历史。
 
 固定种子 `0x46445441424C4531` 已完成 100000 步 open、duplicate、close 与
 limit 参考模型；文件系统/管道集成测试、4096 fd 容量测试和 PID4 Ring 3
@@ -658,6 +664,17 @@ VMA 与 heap 各自通过 100000 步固定种子参考模型；128 轮组合测�
 - fd 偏移共享、EOF、broken-pipe、继承和 close-on-exec 语义正确；
 - Shell 任一中间 fork/pipe/dup/exec 失败后关闭全部临时资源；
 - 代表性工具全部从 rootfs ELF 执行，不内嵌进 Kernel。
+
+**完成证据**
+
+v1.11 已完成。functional 的 128 条 Pipe 与 capacity 的 1024 条 Pipe 均真实
+耗尽并回收；动态 64 KiB 流使用 4 KiB 按需页，固定种子模型执行 100000 步。
+系统调用 45/46 提供 Pipe pair 与精确 dup2，外部 Shell 只保留 cd/exit，
+十九个工具全部从 rootfs 多调用 ELF 执行。256 MiB QEMU 真实建立 15 条 Pipe
+和 16 个并发 stage，并验证 `<`、`>`、EOF、fd 关闭和最终零 Zombie/零活跃
+Pipe。详细证据见 [v1.11 发布记录](releases/v1.11.md)、
+[学习章](learning/19-v1.11-unix-io-external-shell.md) 与
+[ADR 0038](adr/0038-dynamic-pipe-dup2-external-shell.md)。
 
 ## 波次 D：并发与交互
 

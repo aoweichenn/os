@@ -431,3 +431,20 @@ file/readonly 三类页、Kernel `CopyToUser`、cwd、共享 fd offset，并顺�
 
 详细背景和代码走读见
 [v1.10 学习章](../learning/18-v1.10-fork-copy-on-write.md)。
+
+## v1.11 pipe/dup2 与外部工具接口
+
+共享 ABI 新增系统调用 45 `CreatePipe` 和 46
+`DuplicateDescriptorTo`。前者把两个 `uint64_t` fd 写入 16 字节
+`PipeDescriptorPair`；后者提供 `dup2(old_fd, new_fd)` 语义。用户包装只传递
+固定宽度整数和用户地址，不暴露 Pipe、FileDescription 或 FileTable 指针。
+
+Shell 使用 `shell_execution.*` 构造最多 16 个 stage 的计划，使用上述接口
+把相邻 stage 的 stdout/stdin 接到动态 Pipe，再从 rootfs 执行 `/bin/*`。
+`programs/core_tool.cpp` 是 multi-call ELF，根据 `argv[0]` 提供 19 个核心
+工具。只有 `cd` 和 `exit` 留在 Shell 进程内；外部 `false` 的非零退出状态
+通过 wait 原样可见，不被误判为 spawn 失败。
+
+详细背景、控制流和失败事务见
+[v1.11 学习章](../learning/19-v1.11-unix-io-external-shell.md) 与
+[ADR 0038](../adr/0038-dynamic-pipe-dup2-external-shell.md)。

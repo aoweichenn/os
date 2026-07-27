@@ -201,7 +201,7 @@
   \item 地址加 generation 如何拒绝 kernel heap 同址复用造成的 ABA；
   \item Reference 与 Handle 分别适合临时操作和长期容器的原因；
   \item 64 槽延迟分块、最低可用 fd 与两阶段安装怎样共同保持失败原子性；
-  \item soft limit 为什么只限制新安装，hard limit 为什么按 64/256/4096
+  \item soft limit 为什么只限制新安装，hard limit 为什么按 64/512/4096
         三档进入验收；
   \item 最后强引用释放为何先摘除活动对象，再在全局锁外执行 finalizer；
   \item 23--28 号系统调用如何复用 v1.3 的 RAX/RDI/RSI/RDX 与双入口；

@@ -55,6 +55,7 @@ set(
 set(
     OS_KERNEL_IPC_HEADERS
     include/os/kernel/ipc/pipe.hpp
+    include/os/kernel/ipc/pipe_manager.hpp
 )
 set(
     OS_KERNEL_MEMORY_HEADERS
@@ -170,6 +171,7 @@ set(
 set(
     OS_KERNEL_IPC_SOURCES
     src/ipc/pipe.cpp
+    src/ipc/pipe_manager.cpp
 )
 set(
     OS_KERNEL_MEMORY_SOURCES
@@ -366,8 +368,10 @@ add_library(
     os_kernel_ipc_model_host
     STATIC
         src/ipc/pipe.cpp
+        src/ipc/pipe_manager.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/ipc/pipe.hpp
+        include/os/kernel/ipc/pipe_manager.hpp
         include/os/kernel/sync/spin_lock.hpp
 )
 
@@ -393,6 +397,7 @@ add_library(
         src/io/file_description.cpp
         src/io/file_table.cpp
         src/ipc/pipe.cpp
+        src/ipc/pipe_manager.cpp
         src/memory/kernel_heap.cpp
         src/object/kernel_object.cpp
         src/sync/spin_lock.cpp
@@ -409,6 +414,7 @@ add_library(
         include/os/kernel/io/file_description.hpp
         include/os/kernel/io/file_table.hpp
         include/os/kernel/ipc/pipe.hpp
+        include/os/kernel/ipc/pipe_manager.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/object/kernel_object.hpp
         include/os/kernel/sync/spin_lock.hpp

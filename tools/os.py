@@ -269,6 +269,12 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_PIPE_READ_BYTES_MARKER,
     OS_QEMU_KERNEL_PIPE_WRITER_BLOCKS_MARKER,
     OS_QEMU_KERNEL_PIPE_END_OF_FILE_MARKER,
+    OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_MARKER,
+    OS_QEMU_KERNEL_DYNAMIC_PIPE_ACTIVE_MARKER,
+    OS_QEMU_KERNEL_DYNAMIC_PIPE_PEAK_ACTIVE_MARKER,
+    OS_QEMU_KERNEL_DYNAMIC_PIPE_CREATIONS_MARKER,
+    OS_QEMU_KERNEL_DYNAMIC_PIPE_RELEASES_MARKER,
+    OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_REJECTIONS_MARKER,
     OS_QEMU_KERNEL_CONSOLE_SUBMITTED_BYTES_MARKER,
     OS_QEMU_KERNEL_CONSOLE_READ_BYTES_MARKER,
     OS_QEMU_KERNEL_CONSOLE_DROPPED_BYTES_MARKER,
@@ -420,6 +426,9 @@ from os_tools.qemu_runner import (
     OS_QEMU_USER_SHELL_UNKNOWN_MARKER,
     OS_QEMU_USER_SHELL_EXIT_COMMAND_MARKER,
     OS_QEMU_USER_SHELL_EXIT_MARKER,
+    OS_QEMU_USER_SHELL_PIPELINE_16_VERIFIED_MARKER,
+    OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER,
+    OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT,
     OS_QEMU_USER_SHELL_TEST_INPUT,
     OS_QEMU_USER_WORKER_PROCESS_2_STEP_1_MARKER,
     OS_QEMU_USER_WORKER_PROCESS_2_STEP_2_MARKER,
@@ -493,17 +502,36 @@ OS_TOOL_QEMU_KERNEL_STACK_PEAK_MAPPED_PAGE_COUNT = (
 OS_TOOL_QEMU_BOOTSTRAP_PROCESS_CAPACITY = 8
 OS_TOOL_QEMU_BOOTSTRAP_THREAD_CAPACITY = 8
 OS_TOOL_QEMU_BOOTSTRAP_THREADS_PER_PROCESS = 1
-OS_TOOL_QEMU_NORMAL_PROCESS_LIFECYCLE_COUNT = 45
-OS_TOOL_QEMU_NORMAL_WAIT_SUCCESS_COUNT = 44
+OS_TOOL_QEMU_BOOTSTRAP_NORMAL_PROCESS_LIFECYCLE_COUNT = 65
+OS_TOOL_QEMU_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 64
+OS_TOOL_QEMU_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 23
+OS_TOOL_QEMU_FUNCTIONAL_NORMAL_PROCESS_LIFECYCLE_COUNT = (
+    OS_TOOL_QEMU_BOOTSTRAP_NORMAL_PROCESS_LIFECYCLE_COUNT +
+    OS_TOOL_QEMU_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT
+)
+OS_TOOL_QEMU_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT = (
+    OS_TOOL_QEMU_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT +
+    OS_TOOL_QEMU_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT
+)
+OS_TOOL_QEMU_BOOTSTRAP_EXEC_COMMITTED_COUNT = 33
+OS_TOOL_QEMU_BOOTSTRAP_SHELL_ECHO_MARKER_COUNT = 1
+OS_TOOL_QEMU_BOOTSTRAP_SHELL_CAT_MARKER_COUNT = 2
+OS_TOOL_QEMU_BOOTSTRAP_SHELL_REMOVE_MARKER_COUNT = 2
+OS_TOOL_QEMU_FUNCTIONAL_ADDITIONAL_ECHO_MARKER_COUNT = 2
+OS_TOOL_QEMU_FUNCTIONAL_ADDITIONAL_CAT_MARKER_COUNT = 1
+OS_TOOL_QEMU_FUNCTIONAL_ADDITIONAL_REMOVE_MARKER_COUNT = 2
 OS_TOOL_QEMU_BOOTSTRAP_FILE_DESCRIPTOR_HARD_LIMIT = 64
+OS_TOOL_QEMU_BOOTSTRAP_PIPE_CAPACITY = 8
 OS_TOOL_QEMU_FUNCTIONAL_PROCESS_CAPACITY = 64
 OS_TOOL_QEMU_FUNCTIONAL_THREAD_CAPACITY = 128
 OS_TOOL_QEMU_FUNCTIONAL_THREADS_PER_PROCESS = 32
-OS_TOOL_QEMU_FUNCTIONAL_FILE_DESCRIPTOR_HARD_LIMIT = 256
+OS_TOOL_QEMU_FUNCTIONAL_FILE_DESCRIPTOR_HARD_LIMIT = 512
+OS_TOOL_QEMU_FUNCTIONAL_PIPE_CAPACITY = 128
 OS_TOOL_QEMU_PRIMARY_PROCESS_CAPACITY = 256
 OS_TOOL_QEMU_PRIMARY_THREAD_CAPACITY = 512
 OS_TOOL_QEMU_PRIMARY_THREADS_PER_PROCESS = 64
 OS_TOOL_QEMU_PRIMARY_FILE_DESCRIPTOR_HARD_LIMIT = 4096
+OS_TOOL_QEMU_PRIMARY_PIPE_CAPACITY = 1024
 OS_TOOL_QEMU_VMA_DESCRIPTOR_CAPACITY = 8192
 OS_TOOL_QEMU_HEX_VALUE_WIDTH = 16
 
@@ -671,6 +699,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         expectedFileDescriptorHardLimit = (
             OS_TOOL_QEMU_PRIMARY_FILE_DESCRIPTOR_HARD_LIMIT
         )
+        expectedPipeCapacity = OS_TOOL_QEMU_PRIMARY_PIPE_CAPACITY
     elif (
         arguments.memoryMebibytes >=
         OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES
@@ -683,6 +712,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         expectedFileDescriptorHardLimit = (
             OS_TOOL_QEMU_FUNCTIONAL_FILE_DESCRIPTOR_HARD_LIMIT
         )
+        expectedPipeCapacity = OS_TOOL_QEMU_FUNCTIONAL_PIPE_CAPACITY
     else:
         expectedProcessCapacity = OS_TOOL_QEMU_BOOTSTRAP_PROCESS_CAPACITY
         expectedThreadCapacity = OS_TOOL_QEMU_BOOTSTRAP_THREAD_CAPACITY
@@ -691,6 +721,63 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         )
         expectedFileDescriptorHardLimit = (
             OS_TOOL_QEMU_BOOTSTRAP_FILE_DESCRIPTOR_HARD_LIMIT
+        )
+        expectedPipeCapacity = OS_TOOL_QEMU_BOOTSTRAP_PIPE_CAPACITY
+    functionalShellAcceptance = (
+        expectedProcessCapacity >= OS_TOOL_QEMU_FUNCTIONAL_PROCESS_CAPACITY
+    )
+    if functionalShellAcceptance:
+        expectedNormalProcessLifecycleCount = (
+            OS_TOOL_QEMU_FUNCTIONAL_NORMAL_PROCESS_LIFECYCLE_COUNT
+        )
+        expectedNormalWaitSuccessCount = (
+            OS_TOOL_QEMU_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT
+        )
+        shellTestInput = OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT
+        functionalShellMarkers = (
+            OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER,
+            OS_QEMU_USER_SHELL_PIPELINE_16_VERIFIED_MARKER,
+        )
+        functionalShellMarkerCounts = (
+            (OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER, 2),
+            (OS_QEMU_USER_SHELL_PIPELINE_16_VERIFIED_MARKER, 1),
+        )
+        expectedExecCommittedCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_EXEC_COMMITTED_COUNT
+        )
+        expectedShellEchoMarkerCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_SHELL_ECHO_MARKER_COUNT +
+            OS_TOOL_QEMU_FUNCTIONAL_ADDITIONAL_ECHO_MARKER_COUNT
+        )
+        expectedShellCatMarkerCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_SHELL_CAT_MARKER_COUNT +
+            OS_TOOL_QEMU_FUNCTIONAL_ADDITIONAL_CAT_MARKER_COUNT
+        )
+        expectedShellRemoveMarkerCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_SHELL_REMOVE_MARKER_COUNT +
+            OS_TOOL_QEMU_FUNCTIONAL_ADDITIONAL_REMOVE_MARKER_COUNT
+        )
+    else:
+        expectedNormalProcessLifecycleCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_NORMAL_PROCESS_LIFECYCLE_COUNT
+        )
+        expectedNormalWaitSuccessCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT
+        )
+        shellTestInput = OS_QEMU_USER_SHELL_TEST_INPUT
+        functionalShellMarkers = ()
+        functionalShellMarkerCounts = ()
+        expectedExecCommittedCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_EXEC_COMMITTED_COUNT
+        )
+        expectedShellEchoMarkerCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_SHELL_ECHO_MARKER_COUNT
+        )
+        expectedShellCatMarkerCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_SHELL_CAT_MARKER_COUNT
+        )
+        expectedShellRemoveMarkerCount = (
+            OS_TOOL_QEMU_BOOTSTRAP_SHELL_REMOVE_MARKER_COUNT
         )
     exactProcessCapacityMarker = (
         OS_QEMU_KERNEL_PROCESS_CAPACITY_MARKER +
@@ -932,6 +1019,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_USER_SHELL_RM_MARKER,
         OS_QEMU_USER_SHELL_RMDIR_MARKER,
         OS_QEMU_USER_SHELL_SYNC_MARKER,
+        *functionalShellMarkers,
         OS_QEMU_USER_SHELL_UNKNOWN_MARKER,
         OS_QEMU_USER_SHELL_EXIT_COMMAND_MARKER,
         OS_QEMU_USER_SHELL_EXIT_MARKER,
@@ -982,6 +1070,12 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_PIPE_READ_BYTES_MARKER,
         OS_QEMU_KERNEL_PIPE_WRITER_BLOCKS_MARKER,
         OS_QEMU_KERNEL_PIPE_END_OF_FILE_MARKER,
+        OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_MARKER,
+        OS_QEMU_KERNEL_DYNAMIC_PIPE_ACTIVE_MARKER,
+        OS_QEMU_KERNEL_DYNAMIC_PIPE_PEAK_ACTIVE_MARKER,
+        OS_QEMU_KERNEL_DYNAMIC_PIPE_CREATIONS_MARKER,
+        OS_QEMU_KERNEL_DYNAMIC_PIPE_RELEASES_MARKER,
+        OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_REJECTIONS_MARKER,
         OS_QEMU_KERNEL_CONSOLE_SUBMITTED_BYTES_MARKER,
         OS_QEMU_KERNEL_CONSOLE_READ_BYTES_MARKER,
         OS_QEMU_KERNEL_CONSOLE_DROPPED_BYTES_MARKER,
@@ -1223,24 +1317,28 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_USER_ARGUMENT_ENVIRONMENT_128K_VERIFIED_MARKER, 1),
             (OS_QEMU_USER_EXEC_FAILURE_PRESERVED_IMAGE_MARKER, 1),
             (OS_QEMU_USER_EXEC_E2BIG_PRESERVED_IMAGE_MARKER, 1),
-            (OS_QEMU_USER_EXEC_COMMITTED_MARKER, 33),
+            (OS_QEMU_USER_EXEC_COMMITTED_MARKER, expectedExecCommittedCount),
             (OS_QEMU_USER_EXTENDED_STATE_ISOLATED_MARKER, 1),
             (OS_QEMU_USER_SHELL_READY_MARKER, 1),
             (OS_QEMU_USER_SHELL_HELP_MARKER, 1),
-            (OS_QEMU_USER_SHELL_ECHO_MARKER, 1),
+            (OS_QEMU_USER_SHELL_ECHO_MARKER, expectedShellEchoMarkerCount),
             (OS_QEMU_USER_SHELL_PWD_MARKER, 3),
             (OS_QEMU_USER_SHELL_CD_MARKER, 2),
             (OS_QEMU_USER_SHELL_MKDIR_MARKER, 2),
             (OS_QEMU_USER_SHELL_WRITE_MARKER, 2),
-            (OS_QEMU_USER_SHELL_CAT_MARKER, 2),
+            (OS_QEMU_USER_SHELL_CAT_MARKER, expectedShellCatMarkerCount),
             (OS_QEMU_USER_SHELL_LS_MARKER, 2),
             (OS_QEMU_USER_SHELL_STAT_MARKER, 1),
             (OS_QEMU_USER_SHELL_MV_MARKER, 1),
             (OS_QEMU_USER_SHELL_TRUNCATE_MARKER, 1),
             # RMDIR marker 含有 COMMAND=RM 前缀，因此这里同时计入两条命令。
-            (OS_QEMU_USER_SHELL_RM_MARKER, 2),
+            (
+                OS_QEMU_USER_SHELL_RM_MARKER,
+                expectedShellRemoveMarkerCount,
+            ),
             (OS_QEMU_USER_SHELL_RMDIR_MARKER, 1),
             (OS_QEMU_USER_SHELL_SYNC_MARKER, 1),
+            *functionalShellMarkerCounts,
             (OS_QEMU_USER_SHELL_UNKNOWN_MARKER, 1),
             (OS_QEMU_USER_SHELL_EXIT_COMMAND_MARKER, 1),
             (OS_QEMU_USER_SHELL_EXIT_MARKER, 1),
@@ -1306,6 +1404,15 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_PIPE_READ_BYTES_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_WRITER_BLOCKS_MARKER, 1),
             (OS_QEMU_KERNEL_PIPE_END_OF_FILE_MARKER, 1),
+            (OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_MARKER, 1),
+            (OS_QEMU_KERNEL_DYNAMIC_PIPE_ACTIVE_MARKER, 1),
+            (OS_QEMU_KERNEL_DYNAMIC_PIPE_PEAK_ACTIVE_MARKER, 1),
+            (OS_QEMU_KERNEL_DYNAMIC_PIPE_CREATIONS_MARKER, 1),
+            (OS_QEMU_KERNEL_DYNAMIC_PIPE_RELEASES_MARKER, 1),
+            (
+                OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_REJECTIONS_MARKER,
+                1,
+            ),
             (OS_QEMU_KERNEL_CONSOLE_SUBMITTED_BYTES_MARKER, 1),
             (OS_QEMU_KERNEL_CONSOLE_READ_BYTES_MARKER, 1),
             (OS_QEMU_KERNEL_CONSOLE_DROPPED_BYTES_MARKER, 1),
@@ -1454,6 +1561,26 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                 OS_QEMU_KERNEL_TRUSTED_SYSTEM_CALL_STACK_VALIDATION_COUNT_MARKER,
                 1,
             ),
+            (
+                OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_MARKER,
+                expectedPipeCapacity,
+            ),
+            (
+                OS_QEMU_KERNEL_DYNAMIC_PIPE_PEAK_ACTIVE_MARKER,
+                expectedPipeCapacity,
+            ),
+            (
+                OS_QEMU_KERNEL_DYNAMIC_PIPE_CREATIONS_MARKER,
+                expectedPipeCapacity,
+            ),
+            (
+                OS_QEMU_KERNEL_DYNAMIC_PIPE_RELEASES_MARKER,
+                expectedPipeCapacity,
+            ),
+            (
+                OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_REJECTIONS_MARKER,
+                1,
+            ),
             (OS_QEMU_KERNEL_BUDDY_ACTIVE_BLOCK_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_BUDDY_SUCCESSFUL_ALLOCATION_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_BUDDY_RELEASE_COUNT_MARKER, 1),
@@ -1520,11 +1647,11 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_PROCESS_KERNEL_STACK_UPPER_GUARD_MARKER, 1),
             (
                 OS_QEMU_KERNEL_SCHEDULER_CREATED_PROCESSES_MARKER,
-                OS_TOOL_QEMU_NORMAL_PROCESS_LIFECYCLE_COUNT,
+                expectedNormalProcessLifecycleCount,
             ),
             (
                 OS_QEMU_KERNEL_SCHEDULER_TERMINATED_PROCESSES_MARKER,
-                OS_TOOL_QEMU_NORMAL_PROCESS_LIFECYCLE_COUNT,
+                expectedNormalProcessLifecycleCount,
             ),
             (OS_QEMU_KERNEL_SCHEDULER_TIMER_TICKS_MARKER, 1),
             (OS_QEMU_KERNEL_SCHEDULER_PREEMPTIONS_MARKER, 1),
@@ -1589,20 +1716,20 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             ),
             (
                 OS_QEMU_KERNEL_PROCESS_TREE_REGISTERED_MARKER,
-                OS_TOOL_QEMU_NORMAL_PROCESS_LIFECYCLE_COUNT,
+                expectedNormalProcessLifecycleCount,
             ),
             (
                 OS_QEMU_KERNEL_PROCESS_TREE_EXITED_MARKER,
-                OS_TOOL_QEMU_NORMAL_PROCESS_LIFECYCLE_COUNT,
+                expectedNormalProcessLifecycleCount,
             ),
             (
                 OS_QEMU_KERNEL_PROCESS_TREE_COLLECTED_MARKER,
-                OS_TOOL_QEMU_NORMAL_PROCESS_LIFECYCLE_COUNT,
+                expectedNormalProcessLifecycleCount,
             ),
             (OS_QEMU_KERNEL_PROCESS_TREE_REPARENTED_MARKER, 1),
             (
                 OS_QEMU_KERNEL_PROCESS_TREE_WAIT_SUCCESSES_MARKER,
-                OS_TOOL_QEMU_NORMAL_WAIT_SUCCESS_COUNT,
+                expectedNormalWaitSuccessCount,
             ),
             (OS_QEMU_KERNEL_PROCESS_TREE_WAIT_BLOCKS_MARKER, 1),
             (OS_QEMU_KERNEL_PROCESS_TREE_WAIT_NO_CHILD_MARKER, 1),
@@ -1993,7 +2120,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         requiredMarkers,
         forbiddenMarkers,
         keyboardInputText=(
-            OS_QEMU_USER_SHELL_TEST_INPUT
+            shellTestInput
             if arguments.expectedOutcome == "success"
             else None
         ),

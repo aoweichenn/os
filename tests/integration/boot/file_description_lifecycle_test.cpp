@@ -88,6 +88,7 @@ CreateFileDescription(os::kernel::FileDescriptionManager &manager, os::kernel::f
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
+        .pipe_manager = nullptr,
         .vfs = &vfs,
         .open_file = open_file,
     };
@@ -107,6 +108,7 @@ CreatePipeDescription(os::kernel::FileDescriptionManager &manager, os::kernel::P
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = &pipe,
+        .pipe_manager = nullptr,
         .vfs = nullptr,
         .open_file = {},
     };
@@ -189,6 +191,7 @@ int main() {
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
+        .pipe_manager = nullptr,
         .vfs = &vfs,
         .open_file =
             os::kernel::fs::OpenFile{

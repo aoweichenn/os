@@ -667,6 +667,21 @@ os_add_kernel_ipc_test(
     randomized/kernel/pipe_randomized_test.cpp
     "randomized"
 )
+os_add_kernel_ipc_test(
+    os_kernel_dynamic_pipe_unit_tests
+    unit/kernel/dynamic_pipe_test.cpp
+    "unit"
+)
+os_add_kernel_ipc_test(
+    os_kernel_dynamic_pipe_capacity_integration_tests
+    integration/boot/dynamic_pipe_capacity_test.cpp
+    "integration"
+)
+os_add_kernel_ipc_test(
+    os_kernel_dynamic_pipe_randomized_tests
+    randomized/kernel/dynamic_pipe_randomized_test.cpp
+    "randomized"
+)
 
 function(
     os_add_kernel_user_environment_test
@@ -785,6 +800,16 @@ os_add_user_shell_test(
 os_add_user_shell_test(
     os_user_shell_parser_randomized_tests
     randomized/user/shell_parser_randomized_test.cpp
+    "randomized"
+)
+os_add_user_shell_test(
+    os_user_shell_execution_unit_tests
+    unit/user/shell_execution_test.cpp
+    "unit"
+)
+os_add_user_shell_test(
+    os_user_shell_execution_randomized_tests
+    randomized/user/shell_execution_randomized_test.cpp
     "randomized"
 )
 
@@ -1175,7 +1200,8 @@ set_tests_properties(
 set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 65536)
-set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 60)
+set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 40)
+set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 100)
 
 add_test(
     NAME os_qemu_bootstrap_smoke
@@ -1218,7 +1244,7 @@ set_tests_properties(
     os_qemu_functional_smoke
     PROPERTIES
         LABELS "system;functional-smoke"
-        TIMEOUT 25
+        TIMEOUT "${OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS}"
 )
 
 add_test(

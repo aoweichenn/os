@@ -17,6 +17,7 @@ from .sparse_image import copySparseImage
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
 OS_QEMU_FIRMWARE_TIMEOUT_SECONDS = 15.0
+OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS = 30.0
 OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS = 75.0
 OS_QEMU_DEFAULT_CPU_MODEL = "qemu64"
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
@@ -661,6 +662,24 @@ OS_QEMU_KERNEL_PIPE_WRITER_BLOCKS_MARKER = (
 OS_QEMU_KERNEL_PIPE_END_OF_FILE_MARKER = (
     "[OS][KERNEL] PIPE_EOF_OBSERVATIONS=0x"
 )
+OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_MARKER = (
+    "[OS][KERNEL] DYNAMIC_PIPE_CAPACITY=0x"
+)
+OS_QEMU_KERNEL_DYNAMIC_PIPE_ACTIVE_MARKER = (
+    "[OS][KERNEL] DYNAMIC_PIPE_ACTIVE=0x0000000000000000"
+)
+OS_QEMU_KERNEL_DYNAMIC_PIPE_PEAK_ACTIVE_MARKER = (
+    "[OS][KERNEL] DYNAMIC_PIPE_PEAK_ACTIVE=0x"
+)
+OS_QEMU_KERNEL_DYNAMIC_PIPE_CREATIONS_MARKER = (
+    "[OS][KERNEL] DYNAMIC_PIPE_CREATIONS=0x"
+)
+OS_QEMU_KERNEL_DYNAMIC_PIPE_RELEASES_MARKER = (
+    "[OS][KERNEL] DYNAMIC_PIPE_RELEASES=0x"
+)
+OS_QEMU_KERNEL_DYNAMIC_PIPE_CAPACITY_REJECTIONS_MARKER = (
+    "[OS][KERNEL] DYNAMIC_PIPE_CAPACITY_REJECTIONS=0x"
+)
 OS_QEMU_KERNEL_CONSOLE_SUBMITTED_BYTES_MARKER = (
     "[OS][KERNEL] CONSOLE_SUBMITTED_BYTES=0x"
 )
@@ -983,7 +1002,13 @@ OS_QEMU_USER_SHELL_EXIT_COMMAND_MARKER = (
     "[OS][USER][SHELL] COMMAND=EXIT"
 )
 OS_QEMU_USER_SHELL_EXIT_MARKER = "[OS][USER][SHELL] EXIT"
-OS_QEMU_USER_SHELL_TEST_INPUT = (
+OS_QEMU_USER_SHELL_PIPELINE_16_VERIFIED_MARKER = (
+    "[OS][USER][SHELL] PIPELINE_16_VERIFIED"
+)
+OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER = (
+    "[OS][USER][SHELL] REDIRECTION_VERIFIED"
+)
+OS_QEMU_USER_SHELL_COMMON_TEST_INPUT = (
     "help\n"
     "echo hello world\n"
     "pwd\n"
@@ -1005,6 +1030,22 @@ OS_QEMU_USER_SHELL_TEST_INPUT = (
     "rm /demo/moved\n"
     "rmdir /demo\n"
     "sync\n"
+)
+OS_QEMU_USER_SHELL_TEST_INPUT = (
+    OS_QEMU_USER_SHELL_COMMON_TEST_INPUT +
+    "unknown\n"
+    "exit\n"
+)
+OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
+    OS_QEMU_USER_SHELL_COMMON_TEST_INPUT +
+    "echo redirected > /tmp/redirected\n"
+    "cat < /tmp/redirected\n"
+    "touch /tmp/touched\n"
+    "true\n"
+    "false\n"
+    "rm /tmp/touched\n"
+    "echo pipeline|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|tee /tmp/pipeline|head|wc\n"
+    "rm /tmp/redirected\n"
     "unknown\n"
     "exit\n"
 )
@@ -1225,6 +1266,8 @@ def qemuFirmwareTimeoutSeconds(memoryMebibytes: int) -> float:
     """按受管内存规模选择仍然有界的整机墙钟预算。"""
     if memoryMebibytes >= OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES:
         return OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS
+    if memoryMebibytes >= OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES:
+        return OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS
     return OS_QEMU_FIRMWARE_TIMEOUT_SECONDS
 
 
@@ -1373,6 +1416,9 @@ def qemuKeyNameForCharacter(character: str) -> str:
         "-": "minus",
         "=": "equal",
         ",": "comma",
+        "<": "shift-comma",
+        ">": "shift-dot",
+        "|": "shift-backslash",
     }
     if character not in keyNames:
         raise OsToolError(
@@ -1651,7 +1697,7 @@ def runQemuFileSystemPersistence(
             ),
             forbiddenRuntimeFailureMarkers +
             (OS_QEMU_KERNEL_FILE_SYSTEM_PERSISTENCE_RESTORED_MARKER,),
-            keyboardInputText=OS_QEMU_USER_SHELL_TEST_INPUT,
+            keyboardInputText=OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT,
             keyboardReadyMarker=(
                 OS_QEMU_KERNEL_IO_FIRST_DESCRIPTOR_READ_BLOCK_MARKER
             ),
@@ -1673,7 +1719,7 @@ def runQemuFileSystemPersistence(
                 OS_QEMU_KERNEL_READY_MARKER,
             ),
             forbiddenRuntimeFailureMarkers,
-            keyboardInputText=OS_QEMU_USER_SHELL_TEST_INPUT,
+            keyboardInputText=OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT,
             keyboardReadyMarker=(
                 OS_QEMU_KERNEL_IO_FIRST_DESCRIPTOR_READ_BLOCK_MARKER
             ),

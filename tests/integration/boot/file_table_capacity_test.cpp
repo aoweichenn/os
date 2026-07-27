@@ -64,6 +64,7 @@ int main() {
         .device_write_operation = DiscardWrite,
         .device_write_context = nullptr,
         .pipe = nullptr,
+        .pipe_manager = nullptr,
         .vfs = nullptr,
         .open_file = {},
     };

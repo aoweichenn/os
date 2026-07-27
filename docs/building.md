@@ -43,8 +43,9 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.10 ELF64 内核、十八个用户 ELF、一个截断
-   ELF 夹具，把十一个普通程序安装进 rootfs；同时生成格式损坏、目标 ATA、
+4. 生成自研 ROM、Stage 1、v1.11 ELF64 内核、十九个用户 ELF、一个截断
+   ELF 夹具，把 init、Shell、multi-call 核心工具及功能探针安装进 rootfs；
+   同时生成格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，并保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
@@ -101,8 +102,8 @@ ctest --test-dir build/developer \
   -R '^os_qemu_bootstrap_smoke$'
 ```
 
-该用例不是精简启动：它从磁盘启动 PID1，执行完整八进程树、spawn/exec/wait、
-Shell 命令、文件系统、用户隔离和 26 字段资源快照。64 MiB、256 MiB 与
+该用例不是精简启动：它从磁盘启动 PID1，执行完整进程树、spawn/exec/wait、
+外部 Shell 命令、文件系统、用户隔离和 26 字段资源快照。64 MiB、256 MiB 与
 64 GiB 只改变 QEMU RAM
 规格，不切换实现。
 
@@ -266,7 +267,7 @@ source/kernel/src/arch/architecture.asm ─ NASM elf64 ────────�
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
-所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.10 的正常磁盘启动程序
+所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.11 的正常磁盘启动程序
 例如：
 
 ```bash
@@ -274,6 +275,7 @@ python3 tools/os.py audit-user-elf build/developer/source/user/user_init.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_shell.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_exec_target.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_fork_probe.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_core_tool.elf
 ```
 
 审计器要求 AMD64 `ET_EXEC`、入口位于可执行 `PT_LOAD`、段 4 KiB 对齐、

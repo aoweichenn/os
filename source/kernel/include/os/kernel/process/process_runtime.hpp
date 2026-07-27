@@ -10,6 +10,7 @@
 #include "os/kernel/io/file_description.hpp"
 #include "os/kernel/io/file_table.hpp"
 #include "os/kernel/ipc/pipe.hpp"
+#include "os/kernel/ipc/pipe_manager.hpp"
 #include "os/kernel/memory/kernel_stack_manager.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/resource_snapshot.hpp"
@@ -56,6 +57,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     ExecutableReadFailure,
     ProcessLimitExceeded,
     ForkFailure,
+    PipeFailure,
 };
 
 enum class ProcessWaitStatus : uint64_t {
@@ -81,6 +83,7 @@ enum class ProcessIoStatus : uint64_t {
     DeviceFailure,
     FileSystemFailure,
     DescriptorLimitExceeded,
+    PipeLimitExceeded,
     ObjectFailure,
     InvalidArgument,
 };
@@ -122,6 +125,7 @@ struct ProcessExecutionResult final {
 
 struct ProcessIpcStatistics final {
     PipeStatistics pipe;
+    PipeManagerStatistics dynamic_pipes;
     uint64_t reader_block_count;
     uint64_t writer_block_count;
     uint64_t end_of_file_observation_count;
@@ -254,6 +258,11 @@ CloseCurrentProcessDescriptor(uint64_t descriptor, FileSystemStatus &file_system
 DuplicateCurrentProcessDescriptor(uint64_t source_descriptor, uint64_t minimum_descriptor,
                                   uint64_t descriptor_flags,
                                   uint64_t &destination_descriptor) noexcept;
+[[nodiscard]] ProcessIoStatus
+DuplicateCurrentProcessDescriptorTo(uint64_t source_descriptor, uint64_t destination_descriptor,
+                                    uint64_t descriptor_flags) noexcept;
+[[nodiscard]] ProcessIoStatus CreateCurrentProcessPipe(uint64_t &reader_descriptor,
+                                                       uint64_t &writer_descriptor) noexcept;
 [[nodiscard]] ProcessIoStatus GetCurrentProcessDescriptorFlags(uint64_t descriptor,
                                                                uint64_t &descriptor_flags) noexcept;
 [[nodiscard]] ProcessIoStatus SetCurrentProcessDescriptorFlags(uint64_t descriptor,

@@ -6,7 +6,9 @@ add_library(
     os_user_shell_model_host
     STATIC
         src/shell_parser.cpp
+        src/shell_execution.cpp
         include/os/user/shell_parser.hpp
+        include/os/user/shell_execution.hpp
 )
 
 add_library(
@@ -236,6 +238,12 @@ set(
     "Ring 3 交互式 Shell 用户环境"
 )
 set(
+    OS_USER_CORE_TOOL_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_core_tool.elf"
+    CACHE INTERNAL
+    "Ring 3 外置核心工具多调用程序"
+)
+set(
     OS_USER_INIT_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_init.elf"
     CACHE INTERNAL
@@ -352,6 +360,13 @@ os_add_user_program(
     "链接 Ring 3 交互式 Shell ELF64 程序"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_parser.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_execution.cpp"
+)
+os_add_user_program(
+    os_user_core_tool_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/core_tool.cpp"
+    "${OS_USER_CORE_TOOL_ELF_PATH}"
+    "链接 Ring 3 外置核心工具多调用 ELF64 程序"
 )
 os_add_user_program(
     os_user_init_elf

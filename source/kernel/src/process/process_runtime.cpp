@@ -182,6 +182,7 @@ struct ProcessRuntimeLimits final {
     uint64_t thread_capacity;
     uint64_t maximum_threads_per_process;
     uint64_t file_descriptor_hard_limit;
+    uint64_t pipe_capacity;
 };
 
 struct ProcessRuntimeProcess final {
@@ -202,6 +203,7 @@ ThreadScheduler thread_scheduler;
 ProcessEntry process_entries[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 ThreadEntry thread_entries[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 Pipe process_pipe;
+PipeManager dynamic_pipe_manager;
 ConsoleInput process_console_input;
 KernelObjectManager kernel_object_manager;
 FileDescriptionManager file_description_manager;
@@ -248,6 +250,75 @@ ThreadEntry capacity_thread_entries[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 FxSaveArea capacity_thread_extended_states[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 uint64_t capacity_process_roots[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 bool capacity_stack_active[OS_KERNEL_THREAD_CAPACITY_LIMIT];
+Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
+
+[[nodiscard]] bool AllocatePipePage(void *, uint64_t &physical_address,
+                                    uint8_t *&virtual_address) noexcept {
+    physical_address = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    virtual_address = nullptr;
+    PhysicalFrame frame{};
+    if (GetKernelPhysicalFrameAllocator().Allocate(frame) !=
+        PhysicalFrameAllocatorStatus::Succeeded) {
+        return false;
+    }
+    physical_address = frame.physical_address;
+    virtual_address = reinterpret_cast<uint8_t *>(
+        PhysicalMemoryDirectMapAddress(frame.physical_address));
+    if (virtual_address != nullptr) {
+        return true;
+    }
+    static_cast<void>(GetKernelPhysicalFrameAllocator().Release(frame));
+    physical_address = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    return false;
+}
+
+[[nodiscard]] bool ReleasePipePage(void *, const uint64_t physical_address,
+                                   uint8_t *const virtual_address) noexcept {
+    if (physical_address == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        virtual_address == nullptr) {
+        return false;
+    }
+    return GetKernelPhysicalFrameAllocator().Release(
+               PhysicalFrame{.physical_address = physical_address}) ==
+           PhysicalFrameAllocatorStatus::Succeeded;
+}
+
+[[nodiscard]] bool RunPipeCapacitySelfTest(const uint64_t capacity) noexcept {
+    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+         pipe_index < OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY; ++pipe_index) {
+        capacity_pipe_entries[pipe_index] = nullptr;
+    }
+    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+         pipe_index < capacity; ++pipe_index) {
+        if (dynamic_pipe_manager.Create(capacity_pipe_entries[pipe_index]) !=
+                PipeManagerStatus::Succeeded ||
+            capacity_pipe_entries[pipe_index] == nullptr) {
+            return false;
+        }
+    }
+    Pipe *overflow_pipe = nullptr;
+    if (dynamic_pipe_manager.Create(overflow_pipe) != PipeManagerStatus::CapacityExhausted ||
+        overflow_pipe != nullptr) {
+        return false;
+    }
+    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+         pipe_index < capacity; ++pipe_index) {
+        Pipe *const pipe = capacity_pipe_entries[pipe_index];
+        if (pipe == nullptr ||
+            dynamic_pipe_manager.CloseReader(*pipe) != PipeManagerStatus::Succeeded ||
+            dynamic_pipe_manager.CloseWriter(*pipe) != PipeManagerStatus::Succeeded) {
+            return false;
+        }
+        capacity_pipe_entries[pipe_index] = nullptr;
+    }
+    const PipeManagerStatistics statistics = dynamic_pipe_manager.Statistics();
+    return dynamic_pipe_manager.Validate() == PipeManagerStatus::Succeeded &&
+           statistics.capacity == capacity &&
+           statistics.active_pipe_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+           statistics.peak_active_pipe_count == capacity &&
+           statistics.creation_count == capacity &&
+           statistics.release_count == capacity;
+}
 
 [[nodiscard]] FileIdentity FileIdentityFromSnapshot(
     const FileDescriptionSnapshot &snapshot) noexcept {
@@ -332,6 +403,7 @@ SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
             .thread_capacity = OS_KERNEL_THREAD_CAPACITY_LIMIT,
             .maximum_threads_per_process = OS_KERNEL_CAPACITY_THREADS_PER_PROCESS,
             .file_descriptor_hard_limit = OS_KERNEL_FILE_TABLE_MAXIMUM_HARD_LIMIT,
+            .pipe_capacity = OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY,
         };
     }
     if (managed_memory_bytes >= OS_KERNEL_PROCESS_RUNTIME_FUNCTIONAL_MEMORY_BYTES) {
@@ -340,6 +412,7 @@ SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
             .thread_capacity = OS_KERNEL_THREAD_FUNCTIONAL_CAPACITY,
             .maximum_threads_per_process = OS_KERNEL_FUNCTIONAL_THREADS_PER_PROCESS,
             .file_descriptor_hard_limit = OS_KERNEL_FILE_TABLE_FUNCTIONAL_HARD_LIMIT,
+            .pipe_capacity = OS_KERNEL_PIPE_MANAGER_FUNCTIONAL_CAPACITY,
         };
     }
     return ProcessRuntimeLimits{
@@ -347,6 +420,7 @@ SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
         .thread_capacity = OS_KERNEL_THREAD_BOOTSTRAP_CAPACITY,
         .maximum_threads_per_process = OS_KERNEL_BOOTSTRAP_THREADS_PER_PROCESS,
         .file_descriptor_hard_limit = OS_KERNEL_PROCESS_RUNTIME_BOOTSTRAP_FILE_DESCRIPTOR_LIMIT,
+        .pipe_capacity = OS_KERNEL_PIPE_MANAGER_BOOTSTRAP_CAPACITY,
     };
 }
 
@@ -593,6 +667,7 @@ void WakeRequiredThreads(const WaitCondition wait_condition,
         .device_write_operation = console_output ? WriteConsoleDevice : nullptr,
         .device_write_context = nullptr,
         .pipe = pipe_endpoint ? &process_pipe : nullptr,
+        .pipe_manager = nullptr,
         .vfs = nullptr,
         .open_file = {},
     };
@@ -1619,6 +1694,17 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     }
     process_runtime_limits =
         SelectProcessRuntimeLimits(GetKernelMemoryStatistics().managed_usable_memory_bytes);
+    const PipePageAllocator pipe_page_allocator{
+        .allocate_page = AllocatePipePage,
+        .release_page = ReleasePipePage,
+        .context = nullptr,
+    };
+    if (dynamic_pipe_manager.Initialize(pipe_page_allocator,
+                                        process_runtime_limits.pipe_capacity) !=
+            PipeManagerStatus::Succeeded ||
+        !RunPipeCapacitySelfTest(process_runtime_limits.pipe_capacity)) {
+        return ProcessRuntimeStatus::PipeFailure;
+    }
     if (!RunProcessThreadCapacitySelfTest(process_runtime_limits)) {
         return ProcessRuntimeStatus::CapacitySelfTestFailure;
     }
@@ -2397,6 +2483,7 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .ipc =
             ProcessIpcStatistics{
                 .pipe = process_pipe.Statistics(),
+                .dynamic_pipes = dynamic_pipe_manager.Statistics(),
                 .reader_block_count = pipe_reader_block_count,
                 .writer_block_count = pipe_writer_block_count,
                 .end_of_file_observation_count = pipe_end_of_file_observation_count,
@@ -2644,6 +2731,7 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
+        .pipe_manager = nullptr,
         .vfs = process_vfs,
         .open_file = open_file,
     };
@@ -2975,6 +3063,105 @@ ProcessIoStatus DuplicateCurrentProcessDescriptor(const uint64_t source_descript
         source_descriptor, minimum_descriptor, descriptor_flags, destination_descriptor));
 }
 
+ProcessIoStatus DuplicateCurrentProcessDescriptorTo(
+    const uint64_t source_descriptor, const uint64_t destination_descriptor,
+    const uint64_t descriptor_flags) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    KernelObjectReleaseResult replaced_release_result{};
+    const FileTableStatus status =
+        CurrentRuntimeProcess().file_table.DuplicateTo(
+            source_descriptor, destination_descriptor, descriptor_flags,
+            replaced_release_result);
+    if (status == FileTableStatus::Succeeded) {
+        WakeAfterDescriptionRelease(replaced_release_result);
+    }
+    return MapFileTableStatus(status);
+}
+
+ProcessIoStatus CreateCurrentProcessPipe(uint64_t &reader_descriptor,
+                                         uint64_t &writer_descriptor) noexcept {
+    reader_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
+    writer_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    Pipe *pipe = nullptr;
+    const PipeManagerStatus create_pipe_status = dynamic_pipe_manager.Create(pipe);
+    if (create_pipe_status == PipeManagerStatus::CapacityExhausted) {
+        return ProcessIoStatus::PipeLimitExceeded;
+    }
+    if (create_pipe_status != PipeManagerStatus::Succeeded || pipe == nullptr) {
+        return ProcessIoStatus::ObjectFailure;
+    }
+
+    const FileDescriptionCreateRequest reader_request{
+        .kind = FileDescriptionKind::PipeReader,
+        .file_status_flags = OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG,
+        .console_input = nullptr,
+        .device_write_operation = nullptr,
+        .device_write_context = nullptr,
+        .pipe = pipe,
+        .pipe_manager = &dynamic_pipe_manager,
+        .vfs = nullptr,
+        .open_file = {},
+    };
+    const FileDescriptionCreateRequest writer_request{
+        .kind = FileDescriptionKind::PipeWriter,
+        .file_status_flags = OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG,
+        .console_input = nullptr,
+        .device_write_operation = nullptr,
+        .device_write_context = nullptr,
+        .pipe = pipe,
+        .pipe_manager = &dynamic_pipe_manager,
+        .vfs = nullptr,
+        .open_file = {},
+    };
+    KernelObjectReference reader_reference{};
+    if (file_description_manager.Create(reader_request, reader_reference) !=
+        FileDescriptionStatus::Succeeded) {
+        static_cast<void>(dynamic_pipe_manager.CloseReader(*pipe));
+        static_cast<void>(dynamic_pipe_manager.CloseWriter(*pipe));
+        return ProcessIoStatus::ObjectFailure;
+    }
+    KernelObjectReference writer_reference{};
+    if (file_description_manager.Create(writer_request, writer_reference) !=
+        FileDescriptionStatus::Succeeded) {
+        static_cast<void>(reader_reference.Reset());
+        static_cast<void>(dynamic_pipe_manager.CloseWriter(*pipe));
+        return ProcessIoStatus::ObjectFailure;
+    }
+
+    FileTable &file_table = CurrentRuntimeProcess().file_table;
+    const FileTableStatus reader_install_status = file_table.Install(
+        reader_reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, reader_descriptor);
+    if (reader_install_status != FileTableStatus::Succeeded) {
+        static_cast<void>(reader_reference.Reset());
+        static_cast<void>(writer_reference.Reset());
+        reader_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
+        return MapFileTableStatus(reader_install_status);
+    }
+    const FileTableStatus writer_install_status = file_table.Install(
+        writer_reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, writer_descriptor);
+    if (writer_install_status == FileTableStatus::Succeeded) {
+        return ProcessIoStatus::Succeeded;
+    }
+
+    KernelObjectReleaseResult release_result{};
+    if (file_table.Close(reader_descriptor, release_result) !=
+        FileTableStatus::Succeeded) {
+        HaltProcessor();
+    }
+    WakeAfterDescriptionRelease(release_result);
+    static_cast<void>(writer_reference.Reset());
+    reader_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
+    writer_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
+    return MapFileTableStatus(writer_install_status);
+}
+
 ProcessIoStatus GetCurrentProcessDescriptorFlags(const uint64_t descriptor,
                                                  uint64_t &descriptor_flags) noexcept {
     descriptor_flags = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -3035,6 +3222,7 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
+        .pipe_manager = nullptr,
         .vfs = process_vfs,
         .open_file = open_file,
     };

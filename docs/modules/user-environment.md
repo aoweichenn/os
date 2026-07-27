@@ -1,16 +1,17 @@
-# 用户环境、控制台与统一描述符
+# 用户环境、控制台、动态管道与外部 Shell
 
 ## 模块职责
 
-v1.0 用户环境由四条边界组成：
+v1.11 用户环境沿用 v1.0 控制台边界，并加入执行计划与 Unix I/O 组合层：
 
 ```text
 QEMU PC 键盘前端
   → i8042 数据端口 → IRQ1 → Set 1 解码
   → ConsoleInput 固定 FIFO
   → fd 0 / TryReadDescriptor / WaitDescriptorReadable
-  → Ring 3 Shell 解析器与命令
-  → fd 1、普通文件、目录句柄和 Sync
+  → Ring 3 ShellExecutionPlan
+  → fork / pipe / dup2 / redirection / exec / wait
+  → fd 1、动态 Pipe、普通文件、目录句柄和 Sync
 ```
 
 QEMU 只产生硬件输入。`source/kernel` 负责扫描码、输入排队、对象分发和调度；
@@ -24,12 +25,13 @@ QEMU 只产生硬件输入。`source/kernel` 负责扫描码、输入排队、�
 | 0 | ConsoleInput | 读；空时可等待 |
 | 1 | ConsoleOutput | 写到 COM1 |
 | 2 | ConsoleError | 写到 COM1 |
-| 3..7 | Closed | 文件、目录或启动期管道端点 |
+| 3..hard limit-1 | Closed | 文件、目录或动态管道端点 |
 
-生产者的 fd 3 是 PipeWriter，消费者的 fd 3 是 PipeReader。OpenFile 与
-OpenDirectory 从首个 Closed 动态槽开始分配。普通文件、目录和管道只能关闭
-动态槽；关闭 0..2 返回描述符权限错误。进程退出会遍历全部动态槽，先释放底层
-对象并唤醒可能受关闭影响的等待者，再把槽标为 Closed。
+FileTable 使用按需 chunk；bootstrap、functional 与 capacity 的 hard limit
+分别为 64、512、4096。OpenFile、OpenDirectory 与 CreatePipe 从首个 Closed
+动态槽开始分配。普通文件、目录和管道只能关闭动态槽；关闭 0..2 返回描述符
+权限错误。进程退出会遍历全部动态槽，释放 FileDescription 强引用；最后引用
+触发文件或管道 finalizer。
 
 ## 通用 I/O 的 Try/Wait 契约
 
@@ -101,20 +103,20 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 
 1. `programs/shell_entry.cpp` 只调用 `RunShell()`，再用 `ExitProcess()` 结束。
 2. `src/shell.cpp` 输出 banner 与 READY，随后在 fd 0 上逐字符阻塞读取并回显。
-3. 行缓冲只接受可打印 ASCII、Tab、Backspace 和 Enter；超出 128 字节后
+3. 行缓冲只接受可打印 ASCII、Backspace 和 Enter；超出 512 字节后
    丢弃到本行 Enter，并报告稳定错误。
-4. `src/shell_parser.cpp` 把输入复制到固定存储，参数只保存 offset 与 length，
-   不保存悬空指针，也不分配内存。
-5. `ResolveShellCommand()` 返回强类型命令；未知文本只产生一次拒绝标记并回到
-   prompt。
-6. help/echo/pwd 只访问标准输出；cd/ls/mkdir/write/cat/rm/rmdir/mv/truncate/
-   stat/sync 通过公开 VFS ABI；exit 返回零，由普通进程退出路径统一关闭资源。
+4. `src/shell_execution.cpp` 把输入复制到固定存储，参数只保存 offset 与
+   length；解析引号、转义、`|`、`<`、`>`，产生最多 16 个 stage。
+5. `src/shell.cpp` 只在解析完全成功后创建 N-1 根 Pipe，再 fork N 个 child；
+   child 用 dup2 接线并 exec，parent 关闭端点并 wait 全部 child。
+6. `cd` 和 `exit` 改变 Shell 自身状态，因此留作 builtin；其他命令从
+   `/bin` 执行 `core_tool` multi-call ELF。
 
 ## 命令与当前范围
 
 | 命令 | 语义 |
 | --- | --- |
-| `help` | 显示十五条命令及参数 |
+| `help` | 显示外部工具及参数 |
 | `echo [text...]` | 以空格连接参数并换行 |
 | `pwd` | 通过 getcwd 输出当前 Process 的 cwd |
 | `cd <path>` | 修改当前 Shell Process 的 cwd |
@@ -128,15 +130,16 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | `truncate <path> <n>` | 设置文件逻辑长度 |
 | `stat <path>` | 显示 inode、generation、长度与分配空间 |
 | `sync` | 刷新文件系统事务与 ATA 缓存 |
+| `wc` | 从 stdin 统计字节、单词和行 |
+| `head` | 从 stdin 输出首行 |
+| `tee [path]` | 同时复制 stdin 到 stdout 和文件 |
+| `touch <path>` | 创建文件或保持现有文件 |
+| `true` / `false` | 返回成功 / 失败状态 |
 | `exit` | 正常退出 Shell |
 
-v1.10 已有磁盘 `spawn/exec/fork/wait`、匿名/文件映射、按需 ELF、
-program break、
-按需栈与
-Ring 3 用户堆，但 Shell 的十五条命令仍全部是内建命令。这是刻意保留的阶段
-边界：v1.10 已验证 fork/COW 和资源继承；命令查找、外部程序、管道连接与前后台
-作业留到后续 Unix I/O/终端阶段。命令始终位于用户态；“内建”不等于由
-Kernel 解释文本。
+v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线。当前
+仍不支持 `>>`、stderr 重定向、环境展开、通配符、前后台作业、进程组和
+Ctrl-C；这些属于 v1.12 及后续终端阶段。所有命令解释始终位于用户态。
 
 ## 失败语义
 
@@ -157,17 +160,27 @@ Kernel 解释文本。
 - argv/envp 超过 256 项或 128 KiB：`ARGUMENT_LIST_TOO_LARGE`；
 - wait 没有匹配的直接子进程：`NO_CHILD_PROCESS`；
 - wait 的匹配子进程仍 Alive：内部阻塞并在唤醒后由用户包装重试。
+- pipe manager 容量耗尽：`PIPE_LIMIT_EXCEEDED`；
+- 流水线空 stage、重复重定向、未闭合引号或悬空转义：Shell 解析失败且
+  不创建任何资源；
+- child 接线失败：以 126 退出；exec/命令查找失败：以 127 退出。
 
 ## 可观测性
 
-Shell 只为 READY、成功识别的命令、未知命令拒绝和 EXIT 输出稳定用户标记；
+Shell 只为 READY、成功解析的命令、未知命令拒绝、重定向、16 级流水线和
+EXIT 输出稳定用户标记；
 每次 Try、每个扫描码和每个输入字符不另写日志。全部进程结束后，内核汇总：
 
 - 控制台 submitted、read、dropped、buffered；
 - 每进程 console read/write；
 - 描述符路径下的 pipe 与 file read/write；
+- 动态 Pipe capacity/active/peak/create/release/rejection；
 - block、wakeup、dispatch、preemption 和系统调用次数。
 
 正常 QEMU 验收要求输入提交数等于读取数、丢弃与残留都为零；Shell 退出后由
 PID1 执行 wait 并确认没有 Zombie。宿主捕获器仍为每一串口行添加
 `[QEMU][T+......ms]`，但这只是宿主单调到达时间。
+
+详细代码走读见
+[v1.11 学习章](../learning/19-v1.11-unix-io-external-shell.md)，事务边界见
+[ADR 0038](../adr/0038-dynamic-pipe-dup2-external-shell.md)。

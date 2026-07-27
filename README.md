@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.10 fork 与写时复制`
-已完整完成，下一阶段是 v1.11 Unix I/O、外部 Shell 与核心工具。v1.1 已
+当前状态：第二周期 `v1.11 Unix I/O、外部 Shell 与核心工具`
+已完整完成，下一阶段是 v1.12 用户 Thread、FS-base TLS 与 private futex。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -107,7 +107,7 @@ handle 同时保存地址与全局单调 generation，操作期间使用 RAII �
 引用在对象管理器锁外执行文件、管道或控制台 finalizer。FileDescription
 保存种类、file status flags 和文件偏移，因此 duplicate 共享偏移、独立 open
 不共享；close-on-exec 等 fd flags 则独立保存在表项。FileTable 每 64 项按需
-增长，64 MiB、256 MiB、64 GiB 配置分别使用 64、256、4096 hard limit，
+增长，64 MiB、256 MiB、64 GiB 配置分别使用 64、512、4096 hard limit，
 分块申请采用锁外准备和锁内复验的两阶段提交。PID4 已在真实 Ring 3 中验证
 duplicate、CLOEXEC、共享/独立偏移、soft-limit 失败和最低编号复用；
 256 MiB/64 GiB 档使用 minimum 64，hard limit 仅为 64 的兼容档使用
@@ -190,7 +190,18 @@ fork/exec/wait 完整回收。详细证据见
 [v1.10 发布记录](docs/releases/v1.10.md) 与
 [ADR 0037](docs/adr/0037-fork-copy-on-write.md)。
 
-后续 Unix I/O 会单独验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
+v1.11 新增系统调用 45/46 `CreatePipe` 与 `DuplicateDescriptorTo`。
+动态 Pipe 的逻辑容量为 64 KiB，4 KiB 数据页按首次写入申请；同一镜像按
+64 MiB、256 MiB、64 GiB 选择 8、128、1024 条 Pipe 容量。reader/writer
+通过 FileDescription 最后引用关闭，EOF、broken pipe、短读/短写和创建失败
+回滚均有独立语义。Shell 只保留 `cd`/`exit`，其他十九个工具均作为 rootfs
+多调用 ELF 经 fork/dup2/exec/wait 执行；解析器支持引号、转义、`<`、`>` 和
+最多 16 级管线。functional QEMU 真实执行重定向和 16 个并发 child，最终
+143 次 Pipe 创建/释放守恒且 Zombie 为零。详细证据见
+[v1.11 发布记录](docs/releases/v1.11.md) 与
+[ADR 0038](docs/adr/0038-dynamic-pipe-dup2-external-shell.md)。
+
+用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
@@ -451,10 +462,10 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.10 第二周期实现的路线见
+对照当前 v1.1–v1.11 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
-文件页缓存、v1.10 fork/COW 深入章，以及一份 v1.1–v1.10
+文件页缓存、v1.10 fork/COW、v1.11 Unix I/O 深入章，以及一份 v1.1–v1.11
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -467,8 +478,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.10 统计为 170 个目标代码文件、46275 个物理行、42684 个非空非纯
-注释代码行，其中 C++ 40246 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
+当前 v1.11 统计为 175 个目标代码文件、48118 个物理行、44412 个非空非纯
+注释代码行，其中 C++ 41974 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

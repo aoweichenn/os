@@ -61,6 +61,8 @@ FileTableStatus FileTable::Initialize(KernelHeap &heap, KernelObjectManager &obj
         .successful_installation_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
         .successful_lookup_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
         .successful_duplicate_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
+        .successful_duplicate_to_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
+        .replacement_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
         .successful_close_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
         .close_on_exec_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
         .chunk_allocation_count = OS_KERNEL_FILE_TABLE_EMPTY_VALUE,
@@ -294,6 +296,107 @@ FileTableStatus FileTable::Duplicate(const uint64_t source_descriptor,
     ++this->statistics_.successful_duplicate_count;
     this->lock_.Unlock();
     return FileTableStatus::Succeeded;
+}
+
+FileTableStatus FileTable::DuplicateTo(
+    const uint64_t source_descriptor, const uint64_t destination_descriptor,
+    const uint64_t descriptor_flags,
+    KernelObjectReleaseResult &replaced_release_result) noexcept {
+    replaced_release_result = KernelObjectReleaseResult{};
+    if (!this->initialized_) {
+        return FileTableStatus::NotInitialized;
+    }
+    if (!this->AreDescriptorFlagsValid(descriptor_flags)) {
+        return FileTableStatus::InvalidFlags;
+    }
+    this->lock_.Lock();
+    if (source_descriptor >= this->statistics_.hard_limit) {
+        this->lock_.Unlock();
+        return FileTableStatus::InvalidDescriptor;
+    }
+    if (destination_descriptor >= this->statistics_.soft_limit) {
+        ++this->statistics_.limit_rejection_count;
+        this->lock_.Unlock();
+        return FileTableStatus::SoftLimitExceeded;
+    }
+    FileTableChunk *const source_chunk =
+        this->FindChunk(ChunkBaseForDescriptor(source_descriptor));
+    if (source_chunk == nullptr ||
+        source_chunk->entries[ChunkEntryIndex(source_descriptor)].handle.IsEmpty()) {
+        this->lock_.Unlock();
+        return FileTableStatus::InvalidDescriptor;
+    }
+    if (source_descriptor == destination_descriptor) {
+        ++this->statistics_.successful_duplicate_to_count;
+        this->lock_.Unlock();
+        return FileTableStatus::Succeeded;
+    }
+    this->lock_.Unlock();
+
+    const uint64_t destination_chunk_base = ChunkBaseForDescriptor(destination_descriptor);
+    const FileTableStatus chunk_status = this->EnsureChunk(destination_chunk_base);
+    if (chunk_status != FileTableStatus::Succeeded) {
+        return chunk_status;
+    }
+
+    this->lock_.Lock();
+    if (source_descriptor >= this->statistics_.hard_limit ||
+        destination_descriptor >= this->statistics_.soft_limit) {
+        this->lock_.Unlock();
+        return FileTableStatus::InvalidDescriptor;
+    }
+    FileTableChunk *const committed_source_chunk =
+        this->FindChunk(ChunkBaseForDescriptor(source_descriptor));
+    FileTableChunk *const destination_chunk = this->FindChunk(destination_chunk_base);
+    if (committed_source_chunk == nullptr || destination_chunk == nullptr) {
+        this->lock_.Unlock();
+        return FileTableStatus::CorruptedState;
+    }
+    const FileTableEntry &source_entry =
+        committed_source_chunk->entries[ChunkEntryIndex(source_descriptor)];
+    if (source_entry.handle.IsEmpty()) {
+        this->lock_.Unlock();
+        return FileTableStatus::InvalidDescriptor;
+    }
+
+    KernelObjectReference retained_reference{};
+    if (this->object_manager_->AcquireHandle(source_entry.handle, retained_reference) !=
+        KernelObjectStatus::Succeeded) {
+        this->lock_.Unlock();
+        return FileTableStatus::ObjectFailure;
+    }
+    KernelObjectHandle replacement_handle{};
+    if (this->object_manager_->DetachReference(retained_reference, replacement_handle) !=
+        KernelObjectStatus::Succeeded) {
+        this->lock_.Unlock();
+        return FileTableStatus::ObjectFailure;
+    }
+
+    FileTableEntry &destination_entry =
+        destination_chunk->entries[ChunkEntryIndex(destination_descriptor)];
+    KernelObjectHandle replaced_handle = destination_entry.handle;
+    const bool replaced_existing_description = !replaced_handle.IsEmpty();
+    destination_entry.handle = replacement_handle;
+    destination_entry.descriptor_flags = descriptor_flags;
+    if (replaced_existing_description) {
+        ++this->statistics_.replacement_count;
+    } else {
+        ++this->statistics_.active_descriptor_count;
+        ++this->statistics_.successful_installation_count;
+        this->statistics_.peak_active_descriptor_count =
+            Maximum(this->statistics_.peak_active_descriptor_count,
+                    this->statistics_.active_descriptor_count);
+    }
+    ++this->statistics_.successful_duplicate_to_count;
+    this->lock_.Unlock();
+
+    if (!replaced_existing_description) {
+        return FileTableStatus::Succeeded;
+    }
+    return this->object_manager_->ReleaseHandle(replaced_handle, replaced_release_result) ==
+                   KernelObjectStatus::Succeeded
+               ? FileTableStatus::Succeeded
+               : FileTableStatus::ReleaseFailed;
 }
 
 FileTableStatus FileTable::Close(const uint64_t descriptor,

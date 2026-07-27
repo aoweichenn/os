@@ -10,6 +10,7 @@ from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
     OS_QEMU_DEFAULT_CPU_MODEL,
     OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+    OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
@@ -116,9 +117,21 @@ class QemuRunnerToolTests(unittest.TestCase):
         )
         self.assertEqual(
             qemuFirmwareTimeoutSeconds(
-                OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES - 1
+                OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES - 1
             ),
             OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            qemuFirmwareTimeoutSeconds(
+                OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES
+            ),
+            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            qemuFirmwareTimeoutSeconds(
+                OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES - 1
+            ),
+            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
         )
         self.assertEqual(
             qemuFirmwareTimeoutSeconds(
@@ -128,6 +141,10 @@ class QemuRunnerToolTests(unittest.TestCase):
         )
         self.assertGreater(
             OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
+            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
+        )
+        self.assertGreater(
+            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
             OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
         )
 
@@ -160,6 +177,9 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(qemuKeyNameForCharacter("7"), "7")
         self.assertEqual(qemuKeyNameForCharacter(" "), "spc")
         self.assertEqual(qemuKeyNameForCharacter("/"), "slash")
+        self.assertEqual(qemuKeyNameForCharacter("<"), "shift-comma")
+        self.assertEqual(qemuKeyNameForCharacter(">"), "shift-dot")
+        self.assertEqual(qemuKeyNameForCharacter("|"), "shift-backslash")
         self.assertEqual(qemuKeyNameForCharacter("\n"), "ret")
 
     def testRejectsUnsupportedQemuKeyCharacter(self) -> None:

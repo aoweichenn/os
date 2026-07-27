@@ -946,7 +946,7 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
   anonymous、huge-page COW、swap 与多核 shootdown 尚未实现。
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
   PID1、父子关系、Zombie/reap、spawn/exec/wait、WaitQueue 和完整
-  x87/SSE2 现场，但用户 ABI 尚未开放 CreateThread、ThreadExit、fork、
+  x87/SSE2 现场与 fork，但用户 ABI 尚未开放 CreateThread、ThreadExit、
   wait option、进程组或 SMP 负载均衡。
 - 用户地址空间、通用内核堆、固定尺寸缓存与 v1.4 KernelObject 均可回收；
   当前对象引用在管理器锁内串行提交，尚未提供 weak reference、循环回收、
@@ -973,3 +973,20 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
 结束时 Kernel 打印用户页引用 peak/retain/release 摘要，并要求 active entry
 与 active reference 都为零。设计与失败事务见
 [ADR 0037](../adr/0037-fork-copy-on-write.md)。
+
+## v1.11 动态 PipeManager 与描述符边界
+
+`ipc/pipe.*` 保留历史固定缓冲路径，并为普通用户管道增加 64 KiB 逻辑环、
+16 个 4 KiB lazy page 槽和显式页分配/释放回调。写入在持有 Pipe 锁时只提交
+已经准备好的页；分配失败不推进 write position。最后读端与写端关闭后，
+所有后备页均返回物理分配器。
+
+`ipc/pipe_manager.*` 拥有动态 Pipe 槽，按 RAM 档选择 8/128/1024 容量；
+`io/file_description.*` 的 Pipe finalizer 把最后端点关闭交回 manager，
+而不是只修改一个裸 Pipe 指针。`io/file_table.*` 的 functional hard limit
+提高到 512，并以 `DuplicateTo` 提供精确目标 fd 的强引用替换。
+
+`process/process_runtime.*` 是跨层编排点：系统调用 45 创建 manager 槽和两个
+FileDescription，再原子安装两个 fd；系统调用 46 执行精确复制。任何对象、
+表项或用户结果复制失败都逆序撤销。阶段末要求 PipeManager active=0、
+动态页为零且 create/release 守恒。

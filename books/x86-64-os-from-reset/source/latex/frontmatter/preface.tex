@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.8。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.11。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -127,3 +127,11 @@ first-fit、split 与双向 coalesce 管理最多 8 MiB 的 break 空间。十�
 VMA/heap/COW 引用模型、128 轮真实页表生命周期、用户 VM/fork probe、四十五个 Process
 资源守恒以及 64 MiB、256 MiB、64 GiB 三档整机运行共同证明 reservation、
 首次触页、权限拒绝、页表回收和描述符池归零。
+v1.9 又加入稳定 FileIdentity、FileBacking、按需 ELF、文件 VMA 和有界 clean
+page cache；v1.10 在 anonymous/private 页上加入稀疏引用与 COW，让用户
+write fault 和 Kernel CopyToUser 共用私有化路径，并以 32 次
+fork/exec/wait 验证地址、fd、cwd 和后备继承。v1.11 再把 Shell 普通命令
+移入 rootfs 外部 ELF，新增 64 KiB 按需动态 Pipe、分档 PipeManager、
+pipe/dup2 ABI、输入输出重定向和 16 级流水线。当前 145 项 CTest 与两档
+交互 QEMU 要求 65/88 个 Process、全部 Pipe 页、FileDescription 和 Zombie
+最终共同回到基线。

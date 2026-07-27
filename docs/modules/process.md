@@ -211,3 +211,16 @@ FileDescription，所以 offset 共享。FsContext 初值相同、后续修改�
 详细控制流见
 [v1.10 学习章](../learning/18-v1.10-fork-copy-on-write.md) 和
 [ADR 0037](../adr/0037-fork-copy-on-write.md)。
+
+## v1.11 流水线 Process 事务
+
+Shell 的一个 N 级流水线最多创建 N 个 Process 和 N-1 根动态 Pipe。执行器
+不会先发布全部孩子再补接 fd，而是为当前 stage 准备 stdin/stdout，使用
+`DuplicateDescriptorTo` 精确安装到 0/1，再 exec rootfs ELF。父 Shell
+立即关闭已经不再需要的端点，保证 EOF 只取决于真实 writer 生命周期。
+
+任一步失败时，尚未发布的资源逆序关闭，已发布孩子仍被逐个 wait；成功路径
+也等待所有 stage，而不是只等待最后一个。因而 ProcessTree 的 Zombie 数、
+FileTable 强引用、PipeManager active slot 和动态 Pipe 物理页在命令返回
+prompt 前共同回到基线。16 级整机用例验证 16 次 spawn、15 根 Pipe 和 16 次
+wait 的组合边界。

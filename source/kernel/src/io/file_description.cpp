@@ -15,6 +15,7 @@ struct FileDescriptionStorage final {
     FileDescriptionDeviceWriteOperation device_write_operation;
     void *device_write_context;
     Pipe *pipe;
+    PipeManager *pipe_manager;
     fs::Vfs *vfs;
     fs::OpenFile open_file;
 };
@@ -43,6 +44,9 @@ struct FileDescriptionStorage final {
     if (status == PipeStatus::EndOfFile) {
         return FileDescriptionStatus::EndOfFile;
     }
+    if (status == PipeStatus::OutOfMemory) {
+        return FileDescriptionStatus::ObjectFailure;
+    }
     return status == PipeStatus::BrokenPipe ? FileDescriptionStatus::BrokenPipe
                                             : FileDescriptionStatus::InvalidArgument;
 }
@@ -56,6 +60,9 @@ struct FileDescriptionStorage final {
     }
     if (status == PipeStatus::BrokenPipe) {
         return FileDescriptionStatus::BrokenPipe;
+    }
+    if (status == PipeStatus::OutOfMemory) {
+        return FileDescriptionStatus::ObjectFailure;
     }
     return FileDescriptionStatus::InvalidArgument;
 }
@@ -109,6 +116,7 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         .device_write_operation = request.device_write_operation,
         .device_write_context = request.device_write_context,
         .pipe = request.pipe,
+        .pipe_manager = request.pipe_manager,
         .vfs = request.vfs,
         .open_file = request.open_file,
     };
@@ -465,13 +473,25 @@ bool FileDescriptionManager::Finalize(void *const payload) noexcept {
         finalized = storage.vfs != nullptr &&
                     storage.vfs->Close(storage.open_file) == fs::Status::Succeeded;
     } else if (storage.kind == FileDescriptionKind::PipeReader) {
-        const PipeStatus status =
-            storage.pipe == nullptr ? PipeStatus::InvalidArgument : storage.pipe->CloseReader();
-        finalized = status == PipeStatus::Succeeded || status == PipeStatus::AlreadyClosed;
+        if (storage.pipe == nullptr) {
+            finalized = false;
+        } else if (storage.pipe_manager != nullptr) {
+            finalized =
+                storage.pipe_manager->CloseReader(*storage.pipe) == PipeManagerStatus::Succeeded;
+        } else {
+            const PipeStatus status = storage.pipe->CloseReader();
+            finalized = status == PipeStatus::Succeeded || status == PipeStatus::AlreadyClosed;
+        }
     } else if (storage.kind == FileDescriptionKind::PipeWriter) {
-        const PipeStatus status =
-            storage.pipe == nullptr ? PipeStatus::InvalidArgument : storage.pipe->CloseWriter();
-        finalized = status == PipeStatus::Succeeded || status == PipeStatus::AlreadyClosed;
+        if (storage.pipe == nullptr) {
+            finalized = false;
+        } else if (storage.pipe_manager != nullptr) {
+            finalized =
+                storage.pipe_manager->CloseWriter(*storage.pipe) == PipeManagerStatus::Succeeded;
+        } else {
+            const PipeStatus status = storage.pipe->CloseWriter();
+            finalized = status == PipeStatus::Succeeded || status == PipeStatus::AlreadyClosed;
+        }
     } else if (storage.kind == FileDescriptionKind::None) {
         finalized = false;
     }

@@ -51,6 +51,8 @@ enum class SystemCallNumber : uint64_t {
     GetVirtualMemoryStatistics = 42ULL,
     MapFileMemory = 43ULL,
     ForkProcess = 44ULL,
+    CreatePipe = 45ULL,
+    DuplicateDescriptorTo = 46ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -121,6 +123,16 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY = -39LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_ADDRESS_IN_USE = -40LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_MEMORY_RANGE = -41LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_MEMORY_METADATA_EXHAUSTED = -42LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PIPE_LIMIT_EXCEEDED = -43LL;
+
+inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
+
+struct PipeDescriptorPair final {
+    uint64_t reader_descriptor;
+    uint64_t writer_descriptor;
+};
+
+static_assert(sizeof(PipeDescriptorPair) == OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES);
 
 enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,
