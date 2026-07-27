@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.8 完成基线
+## v1.9 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -115,7 +115,26 @@ v1.7 又完成 PID1、父子进程树、Zombie/reparent、磁盘 ELF spawn/exec/
 128 KiB `argv/envp` 和候选映像原子提交。v1.8 已完成非重叠 VMA、
 匿名 `mmap/munmap`、按需零页、program break、8 MiB 受控用户栈、
 自研用户 heap，以及 unmap/exec/exit 后的数据页、空页表分支与 VMA
-描述符回收。下一阶段为 v1.9 文件页故障与有界 clean page cache。
+描述符回收。v1.9 已进一步完成文件后备 VMA、按需 ELF、有界 clean page
+cache、只读 shared、可写 private、文件修改失效和跨 fd-close 生命周期。
+下一阶段为 v1.10 fork 与写时复制。
+
+## v1.9 文件虚拟内存冻结要求
+
+- 文件映射身份必须包含 superblock/inode 的 identifier 与 generation，
+  不得用 fd 或可复用对象地址作为 cache key。
+- VMA 必须保存后备 generation、文件 offset 和有效数据长度；split/merge
+  必须同步维护文件区间。
+- ELF 结构在提交前完整校验，物理页允许延迟到用户访问；返回用户态前必须按
+  executable VMA 解析入口页。
+- clean page cache 必须有固定硬容量、共享映射引用和零引用 LRU；无候选时
+  明确失败，不能无界等待或回收被 PTE 引用的页。
+- 文件尾与 ELF BSS 未覆盖字节必须为零；不能读入相邻文件内容。
+- 支持只读 `MAP_SHARED` 与可写 `MAP_PRIVATE`；writable shared 明确不支持。
+- fd 关闭后映射继续有效；unmap、exec 和 exit 释放最后后备引用。
+- write/truncate 必须撤销旧只读文件 PTE 并失效 cache；private 修改不得
+  回写文件。
+- 64 MiB、256 MiB、64 GiB 必须运行相同文件映射探针并最终资源守恒。
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

@@ -16,6 +16,8 @@ constexpr std::string_view OS_TEST_VMA_KIND_GUARD = "解除映射跨越不同类
 constexpr std::string_view OS_TEST_VMA_GAP = "首个空洞查找必须同时满足窗口、长度和对齐约束";
 constexpr std::string_view OS_TEST_VMA_FAILURE_ATOMIC =
     "切分需要的新描述符不可用时必须保持映射完全不变";
+constexpr std::string_view OS_TEST_VMA_FILE_BACKING =
+    "文件 VMA 必须校验后端身份并在切分时精确重定位文件区间";
 constexpr std::string_view OS_TEST_VMA_DESTROY = "销毁地址空间必须把全部共享池描述符归还到基线";
 
 constexpr uint64_t OS_TEST_VMA_EMPTY_VALUE = 0ULL;
@@ -41,6 +43,10 @@ constexpr uint64_t OS_TEST_VMA_GAP_LENGTH_PAGE_COUNT = 2ULL;
 constexpr uint64_t OS_TEST_VMA_GAP_ALIGNMENT_PAGE_COUNT = 4ULL;
 constexpr uint64_t OS_TEST_VMA_EXPECTED_GAP_PAGE_INDEX = OS_TEST_VMA_EMPTY_VALUE;
 constexpr uint64_t OS_TEST_VMA_TINY_POOL_CAPACITY = 1ULL;
+constexpr uint64_t OS_TEST_VMA_FILE_POOL_CAPACITY = 4ULL;
+constexpr uint64_t OS_TEST_VMA_FILE_DESCRIPTOR_INDEX = 7ULL;
+constexpr uint64_t OS_TEST_VMA_FILE_BACKING_GENERATION = 11ULL;
+constexpr uint64_t OS_TEST_VMA_FILE_OFFSET_PAGE_INDEX = 19ULL;
 
 [[nodiscard]] uint64_t PageAddress(const uint64_t page_index) noexcept {
     return OS_TEST_VMA_WINDOW_BEGIN_ADDRESS + page_index * OS_TEST_VMA_PAGE_SIZE_BYTES;
@@ -50,12 +56,21 @@ constexpr uint64_t OS_TEST_VMA_TINY_POOL_CAPACITY = 1ULL;
 MakeArea(const uint64_t begin_page_index, const uint64_t end_page_index,
          const os::kernel::VirtualMemoryAreaKind kind,
          const os::kernel::VirtualMemoryAreaPermissions permissions) noexcept {
-    return os::kernel::VirtualMemoryArea{
+    os::kernel::VirtualMemoryArea area{
         .begin_address = PageAddress(begin_page_index),
         .end_address = PageAddress(end_page_index),
         .permissions = permissions,
         .kind = kind,
     };
+    if (os::kernel::IsFileBackedVirtualMemoryAreaKind(kind)) {
+        area.backing_descriptor_index = OS_TEST_VMA_FILE_DESCRIPTOR_INDEX;
+        area.backing_generation = OS_TEST_VMA_FILE_BACKING_GENERATION;
+        area.backing_file_offset_bytes =
+            OS_TEST_VMA_FILE_OFFSET_PAGE_INDEX * OS_TEST_VMA_PAGE_SIZE_BYTES;
+        area.backing_data_length_bytes =
+            area.end_address - area.begin_address;
+    }
+    return area;
 }
 
 [[nodiscard]] bool AreasEqual(const os::kernel::VirtualMemoryArea &left,
@@ -63,7 +78,11 @@ MakeArea(const uint64_t begin_page_index, const uint64_t end_page_index,
     return left.begin_address == right.begin_address && left.end_address == right.end_address &&
            left.permissions.readable == right.permissions.readable &&
            left.permissions.writable == right.permissions.writable &&
-           left.permissions.executable == right.permissions.executable && left.kind == right.kind;
+           left.permissions.executable == right.permissions.executable && left.kind == right.kind &&
+           left.backing_descriptor_index == right.backing_descriptor_index &&
+           left.backing_generation == right.backing_generation &&
+           left.backing_file_offset_bytes == right.backing_file_offset_bytes &&
+           left.backing_data_length_bytes == right.backing_data_length_bytes;
 }
 
 }
@@ -215,14 +234,74 @@ int main() {
         tiny_map.Validate() == os::kernel::VirtualMemoryAreaStatus::Succeeded;
     test_context.Expect(failure_atomic_valid, OS_TEST_VMA_FAILURE_ATOMIC);
 
+    os::kernel::VirtualMemoryAreaDescriptor
+        file_descriptors[OS_TEST_VMA_FILE_POOL_CAPACITY]{};
+    os::kernel::VirtualMemoryAreaPool file_pool{};
+    os::kernel::VirtualMemoryMap file_map{};
+    os::kernel::VirtualMemoryArea invalid_file_area =
+        MakeArea(OS_TEST_VMA_FIRST_BEGIN_PAGE_INDEX,
+                 OS_TEST_VMA_SECOND_END_PAGE_INDEX,
+                 os::kernel::VirtualMemoryAreaKind::FilePrivate,
+                 read_only_permissions);
+    invalid_file_area.backing_generation = OS_TEST_VMA_EMPTY_VALUE;
+    const os::kernel::VirtualMemoryArea whole_file_area =
+        MakeArea(OS_TEST_VMA_FIRST_BEGIN_PAGE_INDEX,
+                 OS_TEST_VMA_SECOND_END_PAGE_INDEX,
+                 os::kernel::VirtualMemoryAreaKind::FilePrivate,
+                 read_only_permissions);
+    os::kernel::VirtualMemoryArea left_file_area{};
+    os::kernel::VirtualMemoryArea right_file_area{};
+    const bool file_backing_valid =
+        file_pool.Initialize(file_descriptors,
+                             OS_TEST_VMA_FILE_POOL_CAPACITY) ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_map.Initialize(file_pool, OS_TEST_VMA_PAGE_SIZE_BYTES,
+                            OS_TEST_VMA_FILE_POOL_CAPACITY) ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_map.Insert(invalid_file_area) ==
+            os::kernel::VirtualMemoryAreaStatus::InvalidBacking &&
+        file_map.Insert(whole_file_area) ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_map.Remove(PageAddress(OS_TEST_VMA_SPLIT_BEGIN_PAGE_INDEX),
+                        PageAddress(OS_TEST_VMA_SPLIT_END_PAGE_INDEX),
+                        os::kernel::VirtualMemoryAreaKind::FilePrivate) ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_map.ReadAt(OS_TEST_VMA_EMPTY_VALUE, left_file_area) ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_map.ReadAt(OS_TEST_VMA_SINGLE_UNIT, right_file_area) ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        left_file_area.backing_file_offset_bytes ==
+            whole_file_area.backing_file_offset_bytes &&
+        left_file_area.backing_data_length_bytes ==
+            (OS_TEST_VMA_SPLIT_BEGIN_PAGE_INDEX -
+             OS_TEST_VMA_FIRST_BEGIN_PAGE_INDEX) *
+                OS_TEST_VMA_PAGE_SIZE_BYTES &&
+        right_file_area.backing_file_offset_bytes ==
+            whole_file_area.backing_file_offset_bytes +
+                (OS_TEST_VMA_SPLIT_END_PAGE_INDEX -
+                 OS_TEST_VMA_FIRST_BEGIN_PAGE_INDEX) *
+                    OS_TEST_VMA_PAGE_SIZE_BYTES &&
+        right_file_area.backing_data_length_bytes ==
+            (OS_TEST_VMA_SECOND_END_PAGE_INDEX -
+             OS_TEST_VMA_SPLIT_END_PAGE_INDEX) *
+                OS_TEST_VMA_PAGE_SIZE_BYTES &&
+        file_map.Validate() ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded;
+    test_context.Expect(file_backing_valid, OS_TEST_VMA_FILE_BACKING);
+
     const bool destroy_valid =
         tiny_map.Destroy() == os::kernel::VirtualMemoryAreaStatus::Succeeded &&
         map.Destroy() == os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_map.Destroy() == os::kernel::VirtualMemoryAreaStatus::Succeeded &&
         pool.Statistics().active_descriptor_count == OS_TEST_VMA_EMPTY_VALUE &&
         pool.Statistics().free_descriptor_count == OS_TEST_VMA_POOL_CAPACITY &&
         pool.Validate() == os::kernel::VirtualMemoryAreaStatus::Succeeded &&
         tiny_pool.Statistics().active_descriptor_count == OS_TEST_VMA_EMPTY_VALUE &&
-        tiny_pool.Validate() == os::kernel::VirtualMemoryAreaStatus::Succeeded;
+        tiny_pool.Validate() == os::kernel::VirtualMemoryAreaStatus::Succeeded &&
+        file_pool.Statistics().active_descriptor_count ==
+            OS_TEST_VMA_EMPTY_VALUE &&
+        file_pool.Validate() ==
+            os::kernel::VirtualMemoryAreaStatus::Succeeded;
     test_context.Expect(destroy_valid, OS_TEST_VMA_DESTROY);
 
     return test_context.ExitCode();

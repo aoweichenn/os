@@ -39,7 +39,10 @@ OS_TEST_USER_ELF_KERNEL_HEADER_PATH = (
     / "source/kernel/include/os/kernel/user/user_elf.hpp"
 )
 OS_TEST_USER_ELF_KERNEL_MAPPED_PAGE_LIMIT_PATTERN = re.compile(
-    r"OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT\s*=\s*(\d+)ULL;"
+    r"OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT\s*=\s*"
+    r"\(OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE\s*-\s*"
+    r"OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS\)\s*/\s*"
+    r"OS_KERNEL_MEMORY_PAGE_SIZE_BYTES\s*-\s*1ULL;"
 )
 
 
@@ -114,10 +117,14 @@ class UserElfToolTests(unittest.TestCase):
         )
 
         self.assertIsNotNone(mappedPageLimitMatch)
-        assert mappedPageLimitMatch is not None
         self.assertEqual(
-            int(mappedPageLimitMatch.group(1)),
             OS_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT,
+            (
+                OS_USER_ELF_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE
+                - OS_USER_ELF_MINIMUM_VIRTUAL_ADDRESS
+            )
+            // OS_USER_ELF_PAGE_SIZE_BYTES
+            - 1,
         )
 
     def testAcceptsValidUserElf(self) -> None:

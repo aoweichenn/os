@@ -3,7 +3,7 @@
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.8：
+实现。当前 `main` 已推进到 v1.9：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -19,13 +19,16 @@
   spawn/exec/wait、argc/argv/envp、孤儿收养和 Zombie 回收。
 - v1.8 增加有序 VMA、匿名按需分页、`mmap/munmap/brk`、8 MiB 受控栈增长
   与自研 Ring 3 用户 heap。
+- v1.9 增加文件后备 VMA、按需 ELF、有界 clean page cache、只读 shared、
+  可写 private 与 write/truncate 失效。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.8 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v1.9 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
 [v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md)、
-[v1.7](../releases/v1.7.md) 和 [v1.8](../releases/v1.8.md) 发布记录。
+[v1.7](../releases/v1.7.md)、[v1.8](../releases/v1.8.md) 和
+[v1.9](../releases/v1.9.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -50,6 +53,7 @@
   → v1.6 rootfs v2、完整命名空间与独立 fsck
   → v1.7 磁盘 PID1、进程树、spawn/exec/wait 与参数环境
   → v1.8 匿名 VMA、按需分页、栈增长与用户 heap
+  → v1.9 文件 VMA、按需 ELF 与 clean page cache
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -143,8 +147,9 @@
 | 14 | [v1.6：rootfs v2](14-v1.6-rootfs-v2.md) | 256 MiB 盘面、三级间接树、稀疏文件、rename/unlink、事务与 fsck |
 | 15 | [v1.7：PID1、进程树与磁盘 exec](15-v1.7-pid1-process-tree-exec.md) | 磁盘程序、argc/argv/envp、父子关系、孤儿收养、Zombie、spawn/exec/wait 与回滚 |
 | 16 | [v1.8：匿名 VMA 与按需分页](16-v1.8-anonymous-vma-demand-paging.md) | VMA/PTE 分工、x86-64 `#PF`、匿名页、`brk`、受控栈、用户 heap 与资源回收 |
+| 17 | [v1.9：文件页与按需 ELF](17-v1.9-file-backed-vma-lazy-elf-page-cache.md) | 稳定文件身份、FileBacking、clean cache、shared/private、尾零、失效与回收 |
 
-### 5.1 从第一周期过渡到当前 v1.8
+### 5.1 从第一周期过渡到当前 v1.9
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -158,8 +163,9 @@
 | [v1.6](../releases/v1.6.md) | legacy 生产根 → 严格 rootfs v2、三级间接树、完整 namespace mutation 与独立 fsck | Kernel `fs/root_file_system*`、`tools/os_tools/rootfs_v2.py` |
 | [v1.7](../releases/v1.7.md) | 内嵌固定程序 → 磁盘 PID1、父子进程树、spawn/exec/wait 与参数环境 | Kernel `process/process_tree.*`、`program_arguments.*`、`process_runtime.*` |
 | [v1.8](../releases/v1.8.md) | PTE 即全部地址语义 → VMA 意图、匿名按需页、受控栈与用户 heap | Kernel `memory/virtual_memory_area.*`、`user/user_memory.*`，User `user_heap.*` |
+| [v1.9](../releases/v1.9.md) | eager ELF/独占文件页 → FileBacking、按需 ELF 与共享 clean cache | Kernel `user/file_backing.*`、`memory/file_page_cache.*`、`user/user_memory.*` |
 
-八个阶段的架构结论已合并到
+九个阶段的架构结论已合并到
 [architecture.md](../architecture.md)，当前 Kernel 的十二组对称目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。

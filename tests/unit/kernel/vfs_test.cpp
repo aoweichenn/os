@@ -16,6 +16,8 @@ constexpr std::string_view OS_TEST_VFS_MOUNT_TRAVERSAL =
     "挂载点进入、挂载根返回父目录和工作目录重建必须保持命名空间连续";
 constexpr std::string_view OS_TEST_VFS_FILE_IO =
     "打开状态必须维护独立偏移并通过 VFS 完成读写和目录枚举";
+constexpr std::string_view OS_TEST_VFS_RETAINED_FILE =
+    "保留的文件引用必须独立于原句柄，并支持不改变偏移的定位读取";
 constexpr std::string_view OS_TEST_VFS_CYCLE_AND_CAPACITY =
     "挂载环与挂载表溢出必须返回独立错误而不能静默截断";
 constexpr std::string_view OS_TEST_VFS_VALIDATION =
@@ -240,8 +242,12 @@ int main() {
         .truncate = false,
     };
     os::kernel::fs::OpenFile read_file{};
+    os::kernel::fs::OpenFile retained_file{};
     uint8_t payload[sizeof(OS_TEST_VFS_PAYLOAD)]{};
+    uint8_t retained_payload[sizeof(OS_TEST_VFS_PAYLOAD)]{};
     uint64_t read_bytes = OS_TEST_VFS_EMPTY_VALUE;
+    uint64_t retained_read_bytes = OS_TEST_VFS_EMPTY_VALUE;
+    os::kernel::fs::NodeInformation retained_information{};
     const bool file_read =
         file_written &&
         vfs.Open(context, OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH,
@@ -250,8 +256,34 @@ int main() {
         vfs.Read(read_file, payload, sizeof(payload), read_bytes) ==
             os::kernel::fs::Status::Succeeded &&
         read_bytes == sizeof(payload) &&
-        BytesEqual(payload, OS_TEST_VFS_PAYLOAD, sizeof(payload)) &&
+        BytesEqual(payload, OS_TEST_VFS_PAYLOAD, sizeof(payload));
+    const bool retained_file_valid =
+        file_read &&
+        vfs.RetainOpenFile(read_file, retained_file) ==
+            os::kernel::fs::Status::Succeeded &&
+        retained_file.offset_bytes == OS_TEST_VFS_EMPTY_VALUE &&
+        vfs.StatOpenFile(retained_file, retained_information) ==
+            os::kernel::fs::Status::Succeeded &&
+        retained_information.superblock_identifier ==
+            read_file.path.vnode.superblock->identifier &&
+        retained_information.node_identifier ==
+            read_file.path.vnode.identifier &&
+        retained_information.generation ==
+            read_file.path.vnode.generation &&
+        retained_information.size_bytes == sizeof(OS_TEST_VFS_PAYLOAD) &&
         vfs.Close(read_file) == os::kernel::fs::Status::Succeeded &&
+        vfs.ReadAt(retained_file, OS_TEST_VFS_EMPTY_VALUE,
+                   retained_payload, sizeof(retained_payload),
+                   retained_read_bytes) ==
+            os::kernel::fs::Status::Succeeded &&
+        retained_read_bytes == sizeof(retained_payload) &&
+        retained_file.offset_bytes == OS_TEST_VFS_EMPTY_VALUE &&
+        BytesEqual(retained_payload, OS_TEST_VFS_PAYLOAD,
+                   sizeof(retained_payload)) &&
+        vfs.Close(retained_file) == os::kernel::fs::Status::Succeeded;
+    test_context.Expect(retained_file_valid, OS_TEST_VFS_RETAINED_FILE);
+    const bool path_failure_valid =
+        retained_file_valid &&
         vfs.Open(context, OS_TEST_VFS_MESSAGE_TRAILING_SEPARATOR_PATH,
                  sizeof(OS_TEST_VFS_MESSAGE_TRAILING_SEPARATOR_PATH), read_options,
                  read_file) == os::kernel::fs::Status::NotDirectory &&
@@ -265,7 +297,7 @@ int main() {
     os::kernel::fs::DirectoryEntry entry{};
     bool end_of_directory = false;
     const bool directory_read =
-        file_read &&
+        path_failure_valid &&
         vfs.OpenDirectory(context, OS_TEST_VFS_ALPHA_BETA_PATH, sizeof(OS_TEST_VFS_ALPHA_BETA_PATH),
                           directory) == os::kernel::fs::Status::Succeeded &&
         vfs.ReadDirectory(directory, entry, end_of_directory) ==

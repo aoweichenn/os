@@ -58,6 +58,7 @@ set(
 )
 set(
     OS_KERNEL_MEMORY_HEADERS
+    include/os/kernel/memory/file_page_cache.hpp
     include/os/kernel/memory/kernel_heap.hpp
     include/os/kernel/memory/kernel_stack_manager.hpp
     include/os/kernel/memory/kernel_type_cache.hpp
@@ -89,6 +90,7 @@ set(
 )
 set(
     OS_KERNEL_USER_HEADERS
+    include/os/kernel/user/file_backing.hpp
     include/os/kernel/user/system_calls.hpp
     include/os/kernel/user/user_elf.hpp
     include/os/kernel/user/user_memory.hpp
@@ -170,6 +172,7 @@ set(
 )
 set(
     OS_KERNEL_MEMORY_SOURCES
+    src/memory/file_page_cache.cpp
     src/memory/kernel_heap.cpp
     src/memory/kernel_stack_manager.cpp
     src/memory/kernel_type_cache.cpp
@@ -201,6 +204,7 @@ set(
 )
 set(
     OS_KERNEL_USER_SOURCES
+    src/user/file_backing.cpp
     src/user/system_calls.cpp
     src/user/user_elf.cpp
     src/user/user_memory.cpp
@@ -272,6 +276,7 @@ target_compile_options(
 add_library(
     os_kernel_memory_model_host
     STATIC
+        src/memory/file_page_cache.cpp
         src/memory/kernel_heap.cpp
         src/memory/kernel_stack_manager.cpp
         src/memory/kernel_type_cache.cpp
@@ -282,6 +287,8 @@ add_library(
         src/memory/physical_memory_map.cpp
         src/memory/resource_snapshot.cpp
         src/memory/virtual_memory_area.cpp
+        src/sync/spin_lock.cpp
+        include/os/kernel/memory/file_page_cache.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/memory/kernel_stack_manager.hpp
         include/os/kernel/memory/kernel_type_cache.hpp
@@ -292,6 +299,7 @@ add_library(
         include/os/kernel/memory/physical_memory_map.hpp
         include/os/kernel/memory/resource_snapshot.hpp
         include/os/kernel/memory/virtual_memory_area.hpp
+        include/os/kernel/sync/spin_lock.hpp
 )
 target_include_directories(
     os_kernel_memory_model_host
@@ -384,6 +392,7 @@ add_library(
         src/memory/kernel_heap.cpp
         src/object/kernel_object.cpp
         src/sync/spin_lock.cpp
+        src/user/file_backing.cpp
         include/os/kernel/fs/block_cache.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
@@ -399,6 +408,7 @@ add_library(
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/object/kernel_object.hpp
         include/os/kernel/sync/spin_lock.hpp
+        include/os/kernel/user/file_backing.hpp
 )
 target_include_directories(
     os_kernel_object_model_host

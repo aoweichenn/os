@@ -185,7 +185,11 @@ MapCurrentProcessAnonymousMemory(uint64_t requested_address, uint64_t length_byt
                                  uint64_t protection_flags, uint64_t map_flags,
                                  uint64_t &mapped_address) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
-UnmapCurrentProcessAnonymousMemory(uint64_t address, uint64_t length_bytes) noexcept;
+MapCurrentProcessFileMemory(const os::abi::FileMemoryMapRequest &request,
+                            uint64_t &mapped_address) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+UnmapCurrentProcessMemory(uint64_t address,
+                          uint64_t length_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 SetCurrentProcessProgramBreak(uint64_t requested_address, uint64_t &program_break_address) noexcept;
 [[nodiscard]] os::abi::VirtualMemoryStatistics GetCurrentProcessVirtualMemoryStatistics() noexcept;
@@ -274,6 +278,9 @@ void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
 [[nodiscard]] bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+ResolveCurrentProcessUserReturnMemory(uint64_t instruction_pointer,
+                                      uint64_t stack_pointer) noexcept;
 [[nodiscard]] bool HandleCurrentProcessPageFault(ExceptionFrame &frame,
                                                  uint64_t fault_address) noexcept;
 [[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,

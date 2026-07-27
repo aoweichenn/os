@@ -67,13 +67,13 @@ constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_BEGIN =
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MEMORY_MAP_SIZE =
     os::foundation::AddressValue{0x00000C00};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STAGING_BEGIN =
-    os::foundation::AddressValue{0x03E00000};
+    os::foundation::AddressValue{0x03600000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STAGING_SIZE =
-    os::foundation::AddressValue{0x00100000};
+    os::foundation::AddressValue{0x00800000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_BEGIN =
     os::foundation::AddressValue{0x00100000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_SIZE =
-    os::foundation::AddressValue{0x03D00000};
+    os::foundation::AddressValue{0x03500000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STACK_BEGIN =
     os::foundation::AddressValue{0x03FEF000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STACK_SIZE =
@@ -83,9 +83,9 @@ constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MAP_BEGIN =
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_MAP_SIZE =
     os::foundation::AddressValue{0x04000000};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STAGING_LAST_ADDRESS =
-    os::foundation::AddressValue{0x03EFFFFF};
-constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_LAST_ADDRESS =
     os::foundation::AddressValue{0x03DFFFFF};
+constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_KERNEL_LAST_ADDRESS =
+    os::foundation::AddressValue{0x035FFFFF};
 constexpr os::foundation::AddressValue OS_TEST_HANDOFF_LAYOUT_STACK_LAST_ADDRESS =
     os::foundation::AddressValue{0x03FFEFFF};
 

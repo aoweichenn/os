@@ -1,6 +1,8 @@
 #pragma once
 
 #include "os/abi/virtual_memory.hpp"
+#include "os/kernel/fs/vfs.hpp"
+#include "os/kernel/memory/file_page_cache.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/virtual_memory_area.hpp"
 #include "os/kernel/user/user_elf.hpp"
@@ -21,6 +23,8 @@ inline constexpr uint64_t OS_KERNEL_USER_STACK_GUARD_VIRTUAL_ADDRESS =
     os::abi::OS_ABI_USER_STACK_GUARD_ADDRESS;
 inline constexpr uint64_t OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY = 8192ULL;
 inline constexpr uint64_t OS_KERNEL_USER_VMA_PER_PROCESS_HARD_LIMIT = 4096ULL;
+inline constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_CAPACITY = 1024ULL;
+inline constexpr uint64_t OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY = 4096ULL;
 
 struct UserAddressSpace final {
     uint64_t root_physical_address;
@@ -36,6 +40,10 @@ struct UserAddressSpace final {
     uint64_t stack_growth_page_fault_count;
     uint64_t unmap_released_page_count;
     uint64_t page_table_reclaimed_frame_count;
+    uint64_t file_page_fault_count;
+    uint64_t page_cache_hit_count;
+    uint64_t private_file_resident_page_count;
+    uint64_t shared_file_resident_page_count;
     VirtualMemoryMap virtual_memory_map;
 };
 
@@ -59,12 +67,16 @@ enum class UserVirtualMemoryStatus : uint64_t {
     NotInitialized,
     InvalidRange,
     InvalidProtection,
+    InvalidFile,
+    UnsupportedMapping,
     AddressInUse,
     AddressSpaceExhausted,
     MetadataExhausted,
     PageAllocationFailed,
     PageMappingFailed,
     PageReleaseFailed,
+    FileReadFailed,
+    PageCacheExhausted,
     Corrupt,
 };
 
@@ -79,6 +91,8 @@ enum class UserPageFaultStatus : uint64_t {
     InvalidStackGrowth,
     PageAllocationFailed,
     PageMappingFailed,
+    FileReadFailed,
+    PageCacheExhausted,
     Corrupt,
 };
 
@@ -97,12 +111,14 @@ enum class UserMemoryCopyStatus : uint64_t {
 
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
 [[nodiscard]] VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept;
+[[nodiscard]] FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
                      UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
-LoadUserAddressSpace(const UserElfReader &reader, UserAddressSpace &address_space,
+LoadUserAddressSpace(fs::Vfs &vfs, const fs::OpenFile &open_file,
+                     UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
@@ -112,9 +128,25 @@ DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
 MapAnonymousMemory(UserAddressSpace &address_space, uint64_t requested_address,
                    uint64_t length_bytes, uint64_t protection_flags, uint64_t map_flags,
                    uint64_t &mapped_address) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+MapFileMemory(UserAddressSpace &address_space, fs::Vfs &vfs,
+              const fs::OpenFile &open_file, uint64_t requested_address,
+              uint64_t length_bytes, uint64_t protection_flags,
+              uint64_t map_flags, uint64_t file_offset_bytes,
+              uint64_t &mapped_address) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus UnmapAnonymousMemory(UserAddressSpace &address_space,
                                                            uint64_t address,
                                                            uint64_t length_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+UnmapFileMemory(UserAddressSpace &address_space, uint64_t address,
+                uint64_t length_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+RevokeUserFileMappings(UserAddressSpace &address_space,
+                       const FileIdentity &identity) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+InvalidateUserFilePageCache(const FileIdentity &identity,
+                            uint64_t current_file_size_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus TrimUserFilePageCache() noexcept;
 [[nodiscard]] UserVirtualMemoryStatus SetProgramBreak(UserAddressSpace &address_space,
                                                       uint64_t requested_address,
                                                       uint64_t &program_break_address) noexcept;
@@ -123,6 +155,10 @@ GetUserVirtualMemoryStatistics(const UserAddressSpace &address_space) noexcept;
 [[nodiscard]] UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
                                                       uint64_t fault_address, uint64_t error_code,
                                                       uint64_t user_stack_pointer) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+ResolveUserReturnMemory(UserAddressSpace &address_space,
+                        uint64_t instruction_pointer,
+                        uint64_t stack_pointer) noexcept;
 void SetActiveUserAddressSpace(UserAddressSpace *address_space) noexcept;
 [[nodiscard]] UserMemoryCopyStatus CopyToUserAddressSpace(UserAddressSpace &address_space,
                                                           uint64_t user_address,

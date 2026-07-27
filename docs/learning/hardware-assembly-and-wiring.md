@@ -157,8 +157,8 @@ virtual address
 | `[0x00010000, 0x00013000)` | Stage 1 | 临时 PML4、PDPT、PD |
 | `[0x00013000, 0x00014000)` | Stage 1 | Kernel 描述符 |
 | `0x00014000` 起 | Stage 1 → Kernel | BootInfo v2 与启动交接数据 |
-| `[0x00100000, 0x03E00000)` | Kernel ELF `PT_LOAD` | Kernel 代码、只读数据、数据和 BSS |
-| `[0x03E00000, 0x03F00000)` | Stage 1 | Kernel ELF 暂存区 |
+| `[0x00100000, 0x03600000)` | Kernel ELF `PT_LOAD` | Kernel 代码、只读数据、数据和 BSS |
+| `[0x03600000, 0x03E00000)` | Stage 1 | Kernel ELF 暂存区，最大 8 MiB |
 | `[0x03FEF000, 0x03FFF000)` | 早期 Kernel | v1.0 固定初始栈及其 guard 布局 |
 | `[0xFFFE0000, 0x100000000)` | Firmware | 128 KiB ROM |
 
@@ -166,9 +166,9 @@ Stage 1 的临时页表只解决“能进入 64 位并装载 Kernel”。v0.6 Ke
 E820 重建物理页所有权和正式页表，只映射可用 RAM，保留洞，设置 `RW`、`U/S`
 与 `NX`，并在高半区建立
 `VA = 0xFFFF888000000000 + PA` 的 direct map。v1.1 又把 heap、buddy、
-KVA 和动态双 guard 内核栈接在这套所有权模型之上，当前 v1.8 继续在其上
-建立 Process/Thread、CpuLocal、KernelObject 和动态 FileTable，但没有增加
-新的 QEMU 硬件。
+KVA 和动态双 guard 内核栈接在这套所有权模型之上，v1.8 继续在其上建立
+Process/Thread、CpuLocal、KernelObject 和动态 FileTable；当前 v1.9
+又增加文件 VMA 与 clean page cache，但没有增加新的 QEMU 硬件。
 
 ### 4.3 Port I/O 总线上的设备
 
@@ -235,7 +235,7 @@ CPU IN/OUT
 ```
 
 v0.11 的历史 2 MiB 磁盘共有 4096 个 512 字节扇区；自 v1.6 起盘扩为逻辑
-1 GiB，并在 LBA 2048 起固定分配 256 MiB rootfs。第一周期图中的所有权
+1 GiB，并在 LBA 32768 起固定分配 256 MiB rootfs。第一周期图中的所有权
 分区用于解释旧格式演进：
 
 | LBA 半开区间 | 大小 | 所有者 |
@@ -244,8 +244,9 @@ v0.11 的历史 2 MiB 磁盘共有 4096 个 512 字节扇区；自 v1.6 起盘�
 | `[2048, 3072)` | 512 KiB | 文件系统的 1024 个逻辑块 |
 | `[3072, 4096)` | 512 KiB | 后续扩展保留 |
 
-镜像生成器必须证明 Kernel 不会越过 LBA 2048；文件系统必须把相对块号加上
-2048 后才得到磁盘 LBA。持久化路径还要执行 ATA `FLUSH`，否则“内存缓存里
+当前镜像生成器必须证明 Kernel 不会越过 LBA 32768；rootfs 必须把相对块号
+加上 32768 后才得到磁盘 LBA。第一周期 legacy 格式仍使用 LBA 2048，
+二者不可混用。持久化路径还要执行 ATA `FLUSH`，否则“内存缓存里
 看见新内容”不能证明新 QEMU 进程能够重新读到它。
 
 ## 5. 三条端到端路径
@@ -258,7 +259,7 @@ reset vector
   → ATA PIO 读取并校验 Stage 1 到 RAM 0x8000
   → A20 + GDT + 临时 CR3，进入 Long Mode
   → fw_cfg 读取 E820
-  → ATA PIO 读取 Kernel ELF 到 0x03E00000
+  → ATA PIO 读取 Kernel ELF 到 0x03600000
   → 验证 ELF/PT_LOAD，复制到 0x00100000 起并清零 BSS
   → RDI=BootInfo，CALL Kernel entry
   → Kernel 接管 GDT/TSS/IDT、内存、IRQ、设备、进程和文件系统

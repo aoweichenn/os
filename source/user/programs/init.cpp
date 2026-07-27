@@ -18,7 +18,7 @@ constexpr char OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE[] =
 constexpr char OS_USER_INIT_VM_FAULT_POLICIES_MESSAGE[] =
     "[OS][USER][INIT] VM_FAULT_POLICIES_VERIFIED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.8";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.9";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";

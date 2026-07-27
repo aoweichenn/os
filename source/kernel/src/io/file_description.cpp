@@ -136,6 +136,14 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
     }
     SpinLockGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    fs::NodeInformation information{};
+    if ((storage.kind == FileDescriptionKind::RegularFile ||
+         storage.kind == FileDescriptionKind::Directory) &&
+        (storage.vfs == nullptr ||
+         storage.vfs->StatOpenFile(storage.open_file, information) !=
+             fs::Status::Succeeded)) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
     snapshot = FileDescriptionSnapshot{
         .kind = storage.kind,
         .file_status_flags = storage.file_status_flags,
@@ -145,6 +153,72 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
                             : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .generation = identity.generation,
         .strong_reference_count = identity.strong_reference_count,
+        .superblock_identifier =
+            storage.kind == FileDescriptionKind::RegularFile ||
+                    storage.kind == FileDescriptionKind::Directory
+                ? storage.open_file.path.vnode.superblock->identifier
+                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .superblock_generation =
+            storage.kind == FileDescriptionKind::RegularFile ||
+                    storage.kind == FileDescriptionKind::Directory
+                ? storage.open_file.path.vnode.superblock->generation
+                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .node_identifier =
+            storage.kind == FileDescriptionKind::RegularFile ||
+                    storage.kind == FileDescriptionKind::Directory
+                ? storage.open_file.path.vnode.identifier
+                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .node_generation =
+            storage.kind == FileDescriptionKind::RegularFile ||
+                    storage.kind == FileDescriptionKind::Directory
+                ? storage.open_file.path.vnode.generation
+                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .size_bytes =
+            storage.kind == FileDescriptionKind::RegularFile ||
+                    storage.kind == FileDescriptionKind::Directory
+                ? information.size_bytes
+                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+    };
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::RetainRegularFile(
+    const KernelObjectReference &reference,
+    RetainedRegularFile &retained_file) noexcept {
+    retained_file = RetainedRegularFile{};
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    SpinLock *operation_lock = nullptr;
+    const KernelObjectStatus payload_status =
+        this->object_manager_->TryGetPayload(
+            reference, KernelObjectType::FileDescription, payload,
+            operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded ||
+        payload == nullptr || operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    SpinLockGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage =
+        *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile ||
+        storage.vfs == nullptr ||
+        (storage.file_status_flags &
+         OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
+            OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return FileDescriptionStatus::PermissionDenied;
+    }
+    fs::OpenFile retained_open_file{};
+    if (storage.vfs->RetainOpenFile(storage.open_file,
+                                    retained_open_file) !=
+        fs::Status::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    retained_file = RetainedRegularFile{
+        .vfs = storage.vfs,
+        .open_file = retained_open_file,
+        .file_status_flags = storage.file_status_flags,
     };
     return FileDescriptionStatus::Succeeded;
 }

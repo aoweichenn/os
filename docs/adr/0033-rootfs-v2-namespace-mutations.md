@@ -40,7 +40,9 @@ v1.6 新增 `RootFileSystem`，通过既有 `BackendOperations` 接入 VFS。
 ### 固定 1 GiB 稀疏盘与 256 MiB rootfs
 
 启动盘逻辑长度固定为 1 GiB；低地址继续容纳 ROM/Stage 1/Kernel 布局，
-rootfs 从 LBA 2048 开始占用 256 MiB。宿主文件必须是 sparse：容量规格是
+v1.6 首次实现时 rootfs 从 LBA 2048 开始占用 256 MiB；v1.9 因启动载荷
+增长迁移到 LBA 32768，盘内相对布局不变，并由启动布局契约统一。宿主文件
+必须是 sparse：容量规格是
 来宾可见地址范围，不应强迫每个构建产物实际占用 1 GiB。
 
 rootfs 固定布局为一块 superblock、两块 inode bitmap、4096 块 inode

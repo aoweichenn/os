@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.8 匿名 VMA、按需分页、受控栈增长与用户 heap`
-已完整完成，下一阶段是 v1.9 文件页故障与有界 clean page cache。v1.1 已
+当前状态：第二周期 `v1.9 文件页故障、按需 ELF 与有界 clean page cache`
+已完整完成，下一阶段是 v1.10 fork 与写时复制。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -83,7 +83,7 @@ v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符�
 位置、run queue/WaitQueue 关系以及 x87/SSE2 现场。统一 WaitQueue 对
 condition、timeout、signal、close、cancel 使用单赢家 WakeReason；SpinLock、
 IrqSaveSpinLock 和可睡眠 Mutex 的调用边界由测试冻结。运行时规格随同一镜像
-按 RAM 选择：v1.8 的 64 MiB 兼容档为 8/8/1，256 MiB 为 64 Process/128 Thread/单进程
+按 RAM 选择：64 MiB 兼容档为 8/8/1，256 MiB 为 64 Process/128 Thread/单进程
 32 Thread，64 GiB 为 256/512/64；启动容量自检建立真实页表根、动态栈和
 FXSAVE 区，再退出、reap 并用 ResourceSnapshot 验证零差异。四个 Ring 3
 程序分别写入不同 XMM0、XMM15、MXCSR、x87 控制字和 ST0 模式，在抢占、
@@ -165,7 +165,20 @@ split、前后 coalesce 与完整结构校验。VMA 和 heap 各通过 100000 �
 详细证据见 [v1.8 发布记录](docs/releases/v1.8.md) 与
 [ADR 0035](docs/adr/0035-anonymous-vma-demand-paging-user-heap.md)。
 
-下一阶段文件页缓存、fork/COW 与 Unix I/O
+v1.9 已把 ELF `PT_LOAD` 和普通文件映射都改为 VMA 先登记、首次访问再装
+页。`FileBackingManager` 持有稳定的 VFS 打开实例或内存镜像，
+`FilePageCache` 用 `(superblock id/generation, inode id/generation,
+page index)` 唯一标识 clean 页，并以固定容量、引用计数和 LRU 回收限制
+资源。完整只读文件页可被多个映射共享；可写 `MAP_PRIVATE` 和文件尾部部分
+页使用私有帧，写入不会回写。只读 `MAP_SHARED` 可共享 clean 页，writable
+shared 与 `msync` 明确不支持。write/truncate 会撤销相关只读映射并失效缓存，
+关闭 fd 后映射仍由后备对象保持有效。Ring 3 已验证文件尾零填充、缓存命中、
+写后重新 fault、private 隔离和完整回收。大 ELF 上限与 1 GiB 程序窗口对齐，
+不再受旧 512 页工具限制。详细证据见
+[v1.9 发布记录](docs/releases/v1.9.md) 与
+[ADR 0036](docs/adr/0036-file-backed-vma-lazy-elf-clean-page-cache.md)。
+
+下一阶段 fork/COW 与 Unix I/O
 也分别验收。用户线程、时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
@@ -385,7 +398,7 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 `build/developer/source/kernel/kernel.elf` 由 LLD 直接链接并保留完整
 DWARF 调试信息；固定启动分区写入由 `llvm-objcopy --strip-debug` 生成的
 `kernel.payload.elf`。这样 GDB 仍能使用完整符号，而启动载荷不会因调试段增长
-覆盖 LBA 2048 开始的文件系统区域。两者入口都固定为 `0x00100000`，加载段
+覆盖 LBA 32768 开始的 rootfs 区域。两者入口都固定为 `0x00100000`，加载段
 内容相同。当前产物包含严格分权的 `R E`、`R`、`RW/BSS` 三个
 `PT_LOAD`；Stage 1 在目标机上以两遍算法先验证全部段，再复制文件内容并清零
 BSS。成功交接后内核重新初始化 COM1，验证 104 字节 BootInfo v2、BSS 和
@@ -427,10 +440,10 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.8 第二周期实现的路线见
+对照当前 v1.1–v1.9 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
-十四个第一周期阶段、v1.6 rootfs、v1.7 进程与 v1.8 虚拟内存深入章，以及
-一份 v1.1–v1.8
+十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
+文件页缓存深入章，以及一份 v1.1–v1.9
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -443,8 +456,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.8 统计为 163 个目标代码文件、41515 个物理行、38128 个非空非纯
-注释代码行，其中 C++ 35690 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
+当前 v1.9 统计为 167 个目标代码文件、44228 个物理行、40712 个非空非纯
+注释代码行，其中 C++ 38274 行、NASM Intel 汇编 2438 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

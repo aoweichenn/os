@@ -13,6 +13,35 @@ constexpr uint64_t OS_KERNEL_VMA_FIRST_OWNER_IDENTIFIER = 1ULL;
            (value & (value - OS_KERNEL_VMA_SINGLE_UNIT)) == OS_KERNEL_VMA_EMPTY_VALUE;
 }
 
+void RestrictAreaToRange(VirtualMemoryArea &area,
+                         const uint64_t new_begin_address,
+                         const uint64_t new_end_address) noexcept {
+    const uint64_t old_begin_address = area.begin_address;
+    const uint64_t begin_delta_bytes =
+        new_begin_address - old_begin_address;
+    const uint64_t new_length_bytes =
+        new_end_address - new_begin_address;
+    if (IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+        area.backing_file_offset_bytes += begin_delta_bytes;
+        area.backing_data_length_bytes =
+            area.backing_data_length_bytes > begin_delta_bytes
+                ? area.backing_data_length_bytes - begin_delta_bytes
+                : OS_KERNEL_VMA_EMPTY_VALUE;
+        if (area.backing_data_length_bytes > new_length_bytes) {
+            area.backing_data_length_bytes = new_length_bytes;
+        }
+    }
+    area.begin_address = new_begin_address;
+    area.end_address = new_end_address;
+}
+
+}
+
+bool IsFileBackedVirtualMemoryAreaKind(
+    const VirtualMemoryAreaKind kind) noexcept {
+    return kind == VirtualMemoryAreaKind::ExecutableImage ||
+           kind == VirtualMemoryAreaKind::FilePrivate ||
+           kind == VirtualMemoryAreaKind::FileShared;
 }
 
 VirtualMemoryAreaPool::VirtualMemoryAreaPool() noexcept
@@ -231,6 +260,9 @@ VirtualMemoryAreaStatus VirtualMemoryMap::Insert(const VirtualMemoryArea &area) 
     if (!this->IsRangeValid(area.begin_address, area.end_address)) {
         return VirtualMemoryAreaStatus::InvalidRange;
     }
+    if (!this->IsBackingValid(area)) {
+        return VirtualMemoryAreaStatus::InvalidBacking;
+    }
 
     uint64_t previous_descriptor_index = OS_KERNEL_VMA_INVALID_DESCRIPTOR_INDEX;
     uint64_t next_descriptor_index = this->head_descriptor_index_;
@@ -363,15 +395,21 @@ VirtualMemoryMap::Remove(const uint64_t begin_address, const uint64_t end_addres
             }
             --this->area_count_;
         } else if (begin_address <= descriptor.area.begin_address) {
-            descriptor.area.begin_address = end_address;
+            RestrictAreaToRange(descriptor.area, end_address,
+                                descriptor.area.end_address);
         } else if (descriptor.area.end_address <= end_address) {
-            descriptor.area.end_address = begin_address;
+            RestrictAreaToRange(descriptor.area,
+                                descriptor.area.begin_address,
+                                begin_address);
         } else {
             VirtualMemoryAreaDescriptor &split_descriptor =
                 this->pool_->descriptors_[split_descriptor_index];
             split_descriptor.area = descriptor.area;
-            split_descriptor.area.begin_address = end_address;
-            descriptor.area.end_address = begin_address;
+            RestrictAreaToRange(split_descriptor.area, end_address,
+                                descriptor.area.end_address);
+            RestrictAreaToRange(descriptor.area,
+                                descriptor.area.begin_address,
+                                begin_address);
             this->LinkBetween(split_descriptor_index, descriptor_index,
                               descriptor.next_descriptor_index);
             ++this->area_count_;
@@ -537,6 +575,7 @@ VirtualMemoryAreaStatus VirtualMemoryMap::Validate() const noexcept {
         if (!descriptor.active || descriptor.owner_identifier != this->owner_identifier_ ||
             descriptor.previous_descriptor_index != previous_descriptor_index ||
             !this->IsRangeValid(descriptor.area.begin_address, descriptor.area.end_address) ||
+            !this->IsBackingValid(descriptor.area) ||
             (observed_area_count != OS_KERNEL_VMA_EMPTY_VALUE &&
              descriptor.area.begin_address < previous_end_address)) {
             return VirtualMemoryAreaStatus::Corrupt;
@@ -591,9 +630,35 @@ bool VirtualMemoryMap::IsRangeValid(const uint64_t begin_address,
 
 bool VirtualMemoryMap::AreAttributesEqual(const VirtualMemoryArea &left,
                                           const VirtualMemoryArea &right) const noexcept {
+    if (IsFileBackedVirtualMemoryAreaKind(left.kind) ||
+        IsFileBackedVirtualMemoryAreaKind(right.kind)) {
+        return false;
+    }
     return left.permissions.readable == right.permissions.readable &&
            left.permissions.writable == right.permissions.writable &&
            left.permissions.executable == right.permissions.executable && left.kind == right.kind;
+}
+
+bool VirtualMemoryMap::IsBackingValid(
+    const VirtualMemoryArea &area) const noexcept {
+    const bool file_backed =
+        IsFileBackedVirtualMemoryAreaKind(area.kind);
+    if (!file_backed) {
+        return area.backing_descriptor_index ==
+                   OS_KERNEL_VMA_INVALID_DESCRIPTOR_INDEX &&
+               area.backing_generation == OS_KERNEL_VMA_EMPTY_VALUE &&
+               area.backing_file_offset_bytes ==
+                   OS_KERNEL_VMA_EMPTY_VALUE &&
+               area.backing_data_length_bytes ==
+                   OS_KERNEL_VMA_EMPTY_VALUE;
+    }
+    return area.backing_descriptor_index !=
+               OS_KERNEL_VMA_INVALID_DESCRIPTOR_INDEX &&
+           area.backing_generation != OS_KERNEL_VMA_EMPTY_VALUE &&
+           area.backing_file_offset_bytes % this->page_size_bytes_ ==
+               OS_KERNEL_VMA_EMPTY_VALUE &&
+           area.backing_data_length_bytes <=
+               area.end_address - area.begin_address;
 }
 
 uint64_t VirtualMemoryMap::AlignUp(const uint64_t value, const uint64_t alignment) const noexcept {

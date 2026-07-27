@@ -27,9 +27,9 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.8 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.9 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.8 的正常启动链会累计注册 PID 1 和十个后续 Process，峰值并发仍为
+实现；v1.9 的正常启动链会累计注册 PID 1 和十个后续 Process，峰值并发仍为
 八个，v1.2 的独立
 容量测试继续覆盖完整 Process/Thread 上限。fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
@@ -790,7 +790,10 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和主题章教材结构 |
 
-顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.8 新增
+顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.9 新增
+FilePageCache/FileBacking 单元、共享页生命周期集成、十万步缓存随机模型和
+跨 NASM/C++/Python 的启动布局契约，并扩展 file VMA、VFS random access、
+ELF 大窗口、Ring 3 文件映射与三档 QEMU 验收；v1.8 新增
 VMA 单元/随机、UserHeap 单元/随机、用户 VM 生命周期、三个 ELF 审计和
 64 MiB bootstrap smoke，并扩展用户边界、QEMU 串口协议与资源快照；v1.7 新增
 进程树、程序参数、4096 轮生命周期和固定种子进程模型四项直接测试，并把
@@ -840,3 +843,26 @@ PID1 的动态栈 lower/top/upper 各出现一次；进程阶段使累计创建/
 不需要 fixture 或宏注册；避免 `TEST`、`EXPECT_*` 等宏也与项目的宏约束一致。
 如果以后出现大量共享 fixture、参数化组合或外部报告格式需求，再通过 ADR
 重新评估，不提前增加依赖。
+
+## v1.9 文件页、按需 ELF 与缓存测试
+
+v1.9 新增四个顶层 CTest，构建图共 137 项：
+
+- `FilePageCache` 单元测试覆盖唯一 key、引用、LRU、容量与 busy invalidation；
+- 100000 步固定种子缓存模型逐步比较 resident、refs、eviction 与统计；
+- `FileBackingManager` 单元测试覆盖 VFS retain、内存来源、owner/generation；
+- 共享用户页生命周期集成测试让两个地址空间引用同一 frame，再依次 unmap。
+
+既有 VMA 单元/十万步随机模型扩展 file offset rebase、data length、generation
+与 file kind merge；ELF 单元/随机和 Python 审计扩展到由 1 GiB 程序窗口计算
+的 262143 页。VFS 测试验证 stable identity、`ReadAt` 不改变共享 offset，
+FileDescription 生命周期测试验证 fd 关闭后后备仍有效。
+
+Ring 3 memory probe 覆盖 3000 字节尾零、两个 shared 映射 cache hit、fd-close
+lifetime、write invalidation、writable shared 拒绝、private write 不回写及
+全部 unmap。正常 QEMU 将 `[OS][USER][VM][FAIL]`、Kernel fatal、panic、
+exception 和 invalid user result 全部列为禁止标记。
+
+启动布局另有跨语言契约测试，要求 NASM staging、C++ BootInfo、Python Kernel
+image 和 rootfs LBA 一致。完整阶段在 64 MiB、256 MiB、64 GiB 运行同一
+PID1 workload；64 GiB 还要求 512 个内核栈与 2048 个映射页容量事务回收。

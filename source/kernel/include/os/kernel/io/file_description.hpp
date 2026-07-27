@@ -65,6 +65,17 @@ struct FileDescriptionSnapshot final {
     uint64_t offset_bytes;
     uint64_t generation;
     uint64_t strong_reference_count;
+    uint64_t superblock_identifier;
+    uint64_t superblock_generation;
+    uint64_t node_identifier;
+    uint64_t node_generation;
+    uint64_t size_bytes;
+};
+
+struct RetainedRegularFile final {
+    fs::Vfs *vfs;
+    fs::OpenFile open_file;
+    uint64_t file_status_flags;
 };
 
 struct FileDescriptionManagerStatistics final {
@@ -90,6 +101,9 @@ class FileDescriptionManager final {
                                                KernelObjectReference &reference) noexcept;
     [[nodiscard]] FileDescriptionStatus ReadSnapshot(const KernelObjectReference &reference,
                                                      FileDescriptionSnapshot &snapshot) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    RetainRegularFile(const KernelObjectReference &reference,
+                      RetainedRegularFile &retained_file) noexcept;
     [[nodiscard]] FileDescriptionStatus TryRead(const KernelObjectReference &reference,
                                                 uint8_t *destination, uint64_t capacity_bytes,
                                                 uint64_t &read_bytes,

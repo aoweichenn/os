@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/kernel/fs/block_cache.hpp"
+#include "os/kernel/fs/root_file_system_format.hpp"
 
 #include <array>
 #include <stdint.h>
@@ -9,7 +10,9 @@
 namespace os::test {
 
 inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_BLOCK_SIZE_BYTES = 512ULL;
-inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_BLOCK_COUNT = 526336ULL;
+inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_BLOCK_COUNT =
+    os::kernel::fs::OS_KERNEL_ROOTFS_START_LBA +
+    os::kernel::fs::OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT;
 inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_EMPTY_VALUE = 0ULL;
 inline constexpr uint8_t OS_TEST_SPARSE_BLOCK_DEVICE_ZERO_BYTE = 0U;
 

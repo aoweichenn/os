@@ -8,6 +8,8 @@ inline constexpr uint64_t OS_KERNEL_VMA_INVALID_DESCRIPTOR_INDEX = UINT64_MAX;
 
 enum class VirtualMemoryAreaKind : uint64_t {
     ExecutableImage,
+    FilePrivate,
+    FileShared,
     Anonymous,
     ProgramBreak,
     UserStack,
@@ -24,6 +26,10 @@ struct VirtualMemoryArea final {
     uint64_t end_address;
     VirtualMemoryAreaPermissions permissions;
     VirtualMemoryAreaKind kind;
+    uint64_t backing_descriptor_index{OS_KERNEL_VMA_INVALID_DESCRIPTOR_INDEX};
+    uint64_t backing_generation{};
+    uint64_t backing_file_offset_bytes{};
+    uint64_t backing_data_length_bytes{};
 };
 
 struct VirtualMemoryAreaDescriptor final {
@@ -60,6 +66,7 @@ enum class VirtualMemoryAreaStatus : uint64_t {
     InvalidHardLimit,
     InvalidRange,
     InvalidAlignment,
+    InvalidBacking,
     AddressOverflow,
     Overlap,
     MetadataExhausted,
@@ -68,6 +75,9 @@ enum class VirtualMemoryAreaStatus : uint64_t {
     NotMapped,
     Corrupt,
 };
+
+[[nodiscard]] bool
+IsFileBackedVirtualMemoryAreaKind(VirtualMemoryAreaKind kind) noexcept;
 
 class VirtualMemoryMap;
 
@@ -132,6 +142,7 @@ class VirtualMemoryMap final {
     [[nodiscard]] bool IsRangeValid(uint64_t begin_address, uint64_t end_address) const noexcept;
     [[nodiscard]] bool AreAttributesEqual(const VirtualMemoryArea &left,
                                           const VirtualMemoryArea &right) const noexcept;
+    [[nodiscard]] bool IsBackingValid(const VirtualMemoryArea &area) const noexcept;
     [[nodiscard]] uint64_t AlignUp(uint64_t value, uint64_t alignment) const noexcept;
     void LinkBetween(uint64_t descriptor_index, uint64_t previous_descriptor_index,
                      uint64_t next_descriptor_index) noexcept;

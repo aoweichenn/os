@@ -144,6 +144,7 @@ enum class KernelUserPageStatus : uint64_t {
     InvalidPageTableRoot,
     PageTableCreationFailed,
     FrameAllocationFailed,
+    FrameNotOwned,
     PageMappingFailed,
     PageNotMapped,
     NotUserAccessible,
@@ -155,6 +156,7 @@ enum class KernelUserPageStatus : uint64_t {
 [[nodiscard]] KernelMemoryInitializationStatus
 InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept;
+[[nodiscard]] PhysicalFrameAllocator &GetKernelPhysicalFrameAllocator() noexcept;
 [[nodiscard]] PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept;
 [[nodiscard]] uint64_t PhysicalMemoryDirectMapAddress(uint64_t physical_address) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
@@ -170,6 +172,14 @@ GetKernelResourceSnapshot(const ResourceSnapshotSupplementalCounts &supplemental
                                                           uint64_t virtual_address, bool writable,
                                                           bool executable,
                                                           uint64_t &physical_address) noexcept;
+[[nodiscard]] KernelUserPageStatus MapExistingUserPage(uint64_t root_physical_address,
+                                                       uint64_t virtual_address,
+                                                       uint64_t physical_address, bool writable,
+                                                       bool executable) noexcept;
+[[nodiscard]] KernelUserPageStatus UnmapUserPage(uint64_t root_physical_address,
+                                                 uint64_t virtual_address,
+                                                 uint64_t &physical_address,
+                                                 uint64_t &reclaimed_table_frame_count) noexcept;
 [[nodiscard]] KernelUserPageStatus ReleaseUserPage(uint64_t root_physical_address,
                                                    uint64_t virtual_address,
                                                    uint64_t &reclaimed_table_frame_count) noexcept;

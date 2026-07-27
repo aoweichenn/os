@@ -24,6 +24,8 @@ constexpr std::string_view OS_TEST_USER_ELF_FILE_RANGE_MESSAGE = "越界文件�
 constexpr std::string_view OS_TEST_USER_ELF_MEMORY_RANGE_MESSAGE = "非法内存段必须被拒绝";
 constexpr std::string_view OS_TEST_USER_ELF_OVERLAP_MESSAGE = "重叠加载段必须被拒绝";
 constexpr std::string_view OS_TEST_USER_ELF_PAGE_LIMIT_MESSAGE = "超出页数上限必须被拒绝";
+constexpr std::string_view OS_TEST_USER_ELF_LARGE_LAZY_IMAGE_MESSAGE =
+    "大内存段必须通过元数据验证而不能受旧的预分配页数限制";
 constexpr std::string_view OS_TEST_USER_ELF_ENTRY_MESSAGE = "不在可执行段内的入口必须被拒绝";
 constexpr std::string_view OS_TEST_USER_ELF_ATOMIC_OUTPUT_MESSAGE = "验证失败不得覆盖调用方布局";
 constexpr std::string_view OS_TEST_USER_ELF_READER_MESSAGE =
@@ -60,6 +62,7 @@ constexpr uint64_t OS_TEST_USER_ELF_INVALID_TABLE_OFFSET = 16360ULL;
 constexpr uint64_t OS_TEST_USER_ELF_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_TEST_USER_ELF_TOO_MANY_PAGE_COUNT =
     os::kernel::OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT + OS_TEST_USER_ELF_COUNTER_INCREMENT;
+constexpr uint64_t OS_TEST_USER_ELF_LARGE_LAZY_PAGE_COUNT = 4096ULL;
 constexpr uint64_t OS_TEST_USER_ELF_NON_EXECUTABLE_ENTRY = 0x0000000040010000ULL;
 constexpr uint64_t OS_TEST_USER_ELF_SENTINEL_ENTRY = 0xA5A5A5A5A5A5A5A5ULL;
 constexpr uint16_t OS_TEST_USER_ELF_EXECUTABLE_TYPE = 2U;
@@ -372,6 +375,22 @@ int main() {
         os::kernel::ValidateUserElf(image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
             os::kernel::UserElfValidationStatus::OverlappingSegments,
         OS_TEST_USER_ELF_OVERLAP_MESSAGE);
+    image = CreateValidUserElf();
+    WriteLittleEndian64(
+        image.bytes,
+        OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET +
+            OS_TEST_USER_ELF_PROGRAM_MEMORY_SIZE_OFFSET,
+        OS_TEST_USER_ELF_LARGE_LAZY_PAGE_COUNT *
+            OS_TEST_USER_ELF_PAGE_SIZE_BYTES);
+    test_context.Expect(
+        os::kernel::ValidateUserElf(
+            image.bytes, OS_TEST_USER_ELF_IMAGE_SIZE_BYTES, layout) ==
+                os::kernel::UserElfValidationStatus::Succeeded &&
+            layout.load_segments[OS_TEST_USER_ELF_EMPTY_VALUE]
+                    .memory_size_bytes ==
+                OS_TEST_USER_ELF_LARGE_LAZY_PAGE_COUNT *
+                    OS_TEST_USER_ELF_PAGE_SIZE_BYTES,
+        OS_TEST_USER_ELF_LARGE_LAZY_IMAGE_MESSAGE);
     image = CreateValidUserElf();
     WriteLittleEndian64(image.bytes,
                         OS_TEST_USER_ELF_PROGRAM_HEADER_OFFSET +

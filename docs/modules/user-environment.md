@@ -130,9 +130,10 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | `sync` | 刷新文件系统事务与 ATA 缓存 |
 | `exit` | 正常退出 Shell |
 
-v1.8 已有磁盘 `spawn/exec/wait`、匿名映射、program break、按需栈与
+v1.9 已有磁盘 `spawn/exec/wait`、匿名/文件映射、按需 ELF、program break、
+按需栈与
 Ring 3 用户堆，但 Shell 的十五条命令仍全部是内建命令。这是刻意保留的阶段
-边界：v1.8 先验证虚拟内存生命周期；命令查找、外部程序、管道连接与前后台
+边界：v1.9 先验证虚拟内存和文件后备生命周期；命令查找、外部程序、管道连接与前后台
 作业留到后续 Unix I/O/终端阶段。命令始终位于用户态；“内建”不等于由
 Kernel 解释文本。
 

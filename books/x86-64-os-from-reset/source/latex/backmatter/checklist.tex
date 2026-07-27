@@ -218,7 +218,7 @@
         统计怎样保持事务一致；
   \item legacy 适配器怎样提供 lookup/parent/read/write/readdir 而不改变
         旧磁盘格式和损坏拒绝规则；
-  \item 1 GiB sparse disk、LBA 2048 与 256 MiB rootfs 的地址域如何换算；
+  \item 1 GiB sparse disk、LBA 32768 与 256 MiB rootfs 的地址域如何换算；
   \item superblock、256 字节 inode、320 字节目录项和 pointer block 为何
         逐字段 little-endian 编码而不能直接写 C++ struct；
   \item 八个 direct 与每层 63 指针的 single/double/triple 索引如何手算；
@@ -248,7 +248,7 @@
   \item 能说明 A20、GDT、页表和长模式控制位的依赖顺序；
   \item 能逐项走读当前 ELF 第一遍验证和第二遍复制/BSS 清零；
   \item 能用 GDB 检查 \code{0x13000} 描述符、\code{0x14000} BootInfo、
-  \code{0x18000} 内存图、\code{0x03E00000} ELF 暂存区与
+  \code{0x18000} 内存图、\code{0x03600000} ELF 暂存区与
   \code{0x100000} 内核入口；
   \item 能说明 \code{BOOT\_INFO\_VALID}、\code{BSS\_ZEROED} 和
   \code{CR3\_VALID} 各自排除了哪类错误；

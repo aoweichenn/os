@@ -100,6 +100,7 @@ struct BackendNodeInformation final {
 struct NodeInformation final {
     uint64_t mount_identifier;
     uint64_t superblock_identifier;
+    uint64_t superblock_generation;
     uint64_t node_identifier;
     uint64_t generation;
     NodeType type;
@@ -214,6 +215,13 @@ class Vfs final {
                               OpenFile &open_file) noexcept;
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
+    [[nodiscard]] Status RetainOpenFile(const OpenFile &source,
+                                        OpenFile &retained_file) noexcept;
+    [[nodiscard]] Status StatOpenFile(const OpenFile &open_file,
+                                      NodeInformation &information) noexcept;
+    [[nodiscard]] Status ReadAt(const OpenFile &open_file, uint64_t offset_bytes,
+                                uint8_t *destination, uint64_t capacity_bytes,
+                                uint64_t &read_bytes) noexcept;
     [[nodiscard]] Status Read(OpenFile &open_file, uint8_t *destination, uint64_t capacity_bytes,
                               uint64_t &read_bytes) noexcept;
     [[nodiscard]] Status Write(OpenFile &open_file, const uint8_t *source, uint64_t length_bytes,

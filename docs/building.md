@@ -43,7 +43,7 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.8 ELF64 内核、十七个用户 ELF、一个截断
+4. 生成自研 ROM、Stage 1、v1.9 ELF64 内核、十七个用户 ELF、一个截断
    ELF 夹具，把十个普通程序安装进 rootfs；同时生成格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，并保留 v0.0 空镜像
    回归基线。
@@ -192,7 +192,7 @@ tests/os_kernel_interrupt_device_randomized_tests
 `PT_LOAD` 段，且不能包含未解析符号。它保留 DWARF；同名
 `*.payload.elf` 由 `llvm-objcopy --strip-debug` 生成，三个运行时
 `PT_LOAD` 与入口不变，并作为实际写盘载荷。所有故障内核和用户隔离内核变体
-都遵循同一规则，避免 Debug 非加载段增长后覆盖 LBA 2048 的文件系统区域。
+都遵循同一规则，避免 Debug 非加载段增长后覆盖 LBA 32768 的 rootfs 区域。
 启动暂存区和磁盘边界审计作用于实际写盘的 payload；带 DWARF 的
 `kernel.elf` 仍做符号、段权限与 GDB 调试输入，但不拿非加载调试段长度冒充
 Stage 1 载荷长度。
@@ -266,7 +266,7 @@ source/kernel/src/arch/architecture.asm ─ NASM elf64 ────────�
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
-所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.8 的正常磁盘启动程序
+所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.9 的正常磁盘启动程序
 例如：
 
 ```bash

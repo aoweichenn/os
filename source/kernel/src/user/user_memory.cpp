@@ -2,6 +2,7 @@
 
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
+#include "os/kernel/user/file_backing.hpp"
 
 namespace os::kernel {
 
@@ -12,6 +13,8 @@ constexpr uint64_t OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_MASK =
     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_STACK_GROWTH_GAP_BYTES = 64ULL * 1024ULL;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_FILE_CACHE_FRAME_DIVISOR = 16ULL;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_FILE_CACHE_MINIMUM_CAPACITY = 256ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_PRESENT_BIT = 1ULL << 0ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_WRITE_BIT = 1ULL << 1ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_USER_BIT = 1ULL << 2ULL;
@@ -24,9 +27,21 @@ struct MemoryImageReaderContext final {
     uint64_t image_size_bytes;
 };
 
+struct VfsImageReaderContext final {
+    fs::Vfs *vfs;
+    fs::OpenFile open_file;
+};
+
 VirtualMemoryAreaDescriptor
     user_virtual_memory_descriptors[OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY]{};
 VirtualMemoryAreaPool user_virtual_memory_pool{};
+UserFileBackingDescriptor
+    user_file_backing_descriptors[OS_KERNEL_USER_FILE_BACKING_CAPACITY]{};
+UserFileBackingManager user_file_backing_manager{};
+FilePageCacheEntry
+    user_file_page_cache_entries
+        [OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY]{};
+FilePageCache user_file_page_cache{};
 UserAddressSpace *active_user_address_space;
 bool user_virtual_memory_initialized;
 
@@ -89,6 +104,206 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
     return true;
 }
 
+[[nodiscard]] bool ReadVfsImage(void *const context,
+                                const uint64_t offset_bytes,
+                                uint8_t *const destination,
+                                const uint64_t length_bytes) noexcept {
+    if (context == nullptr || destination == nullptr) {
+        return false;
+    }
+    VfsImageReaderContext &reader_context =
+        *static_cast<VfsImageReaderContext *>(context);
+    uint64_t read_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    return reader_context.vfs != nullptr &&
+           reader_context.vfs->ReadAt(
+               reader_context.open_file, offset_bytes, destination,
+               length_bytes, read_bytes) == fs::Status::Succeeded &&
+           read_bytes == length_bytes;
+}
+
+[[nodiscard]] uint8_t *AccessPhysicalPage(
+    void *const context, const uint64_t physical_address) noexcept {
+    static_cast<void>(context);
+    return PhysicalPagePointer(physical_address);
+}
+
+[[nodiscard]] bool FileIdentitiesEqual(
+    const FileIdentity &left, const FileIdentity &right) noexcept {
+    return left.superblock_identifier == right.superblock_identifier &&
+           left.superblock_generation == right.superblock_generation &&
+           left.node_identifier == right.node_identifier &&
+           left.node_generation == right.node_generation;
+}
+
+[[nodiscard]] bool ReadBackingDescriptor(
+    const VirtualMemoryArea &area,
+    UserFileBackingDescriptor &descriptor) noexcept {
+    return IsFileBackedVirtualMemoryAreaKind(area.kind) &&
+           user_file_backing_manager.ReadDescriptor(
+               area.backing_descriptor_index, area.backing_generation,
+               descriptor) == UserFileBackingStatus::Succeeded;
+}
+
+[[nodiscard]] bool PageUsesFileCache(
+    const VirtualMemoryArea &area, const uint64_t page_virtual_address,
+    const UserFileBackingDescriptor &descriptor,
+    FilePageIdentity &page_identity) noexcept {
+    if (!IsFileBackedVirtualMemoryAreaKind(area.kind) ||
+        area.permissions.writable ||
+        page_virtual_address < area.begin_address) {
+        return false;
+    }
+    const uint64_t area_offset_bytes =
+        page_virtual_address - area.begin_address;
+    if (area_offset_bytes >= area.backing_data_length_bytes ||
+        area.backing_data_length_bytes - area_offset_bytes <
+            OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+        area.backing_file_offset_bytes >
+            UINT64_MAX - area_offset_bytes) {
+        return false;
+    }
+    const uint64_t file_offset_bytes =
+        area.backing_file_offset_bytes + area_offset_bytes;
+    if ((file_offset_bytes & OS_KERNEL_USER_MEMORY_PAGE_MASK) !=
+            OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        file_offset_bytes > descriptor.size_bytes ||
+        OS_KERNEL_MEMORY_PAGE_SIZE_BYTES >
+            descriptor.size_bytes - file_offset_bytes) {
+        return false;
+    }
+    page_identity = FilePageIdentity{
+        .file = descriptor.identity,
+        .page_index =
+            file_offset_bytes / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+    };
+    return true;
+}
+
+void RecordMappedPage(UserAddressSpace &address_space,
+                      const VirtualMemoryArea &area,
+                      const bool cache_backed,
+                      const bool cache_hit) noexcept {
+    ++address_space.mapped_page_count;
+    if (address_space.mapped_page_count >
+        address_space.peak_mapped_page_count) {
+        address_space.peak_mapped_page_count =
+            address_space.mapped_page_count;
+    }
+    if (!IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+        return;
+    }
+    ++address_space.file_page_fault_count;
+    if (cache_hit) {
+        ++address_space.page_cache_hit_count;
+    }
+    if (cache_backed) {
+        ++address_space.shared_file_resident_page_count;
+    } else {
+        ++address_space.private_file_resident_page_count;
+    }
+}
+
+[[nodiscard]] UserVirtualMemoryStatus MapFileDemandPage(
+    UserAddressSpace &address_space,
+    const uint64_t page_virtual_address,
+    const VirtualMemoryArea &area) noexcept {
+    UserFileBackingDescriptor descriptor{};
+    if (!ReadBackingDescriptor(area, descriptor)) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
+    const uint64_t area_offset_bytes =
+        page_virtual_address - area.begin_address;
+    const uint64_t remaining_data_bytes =
+        area_offset_bytes < area.backing_data_length_bytes
+            ? area.backing_data_length_bytes - area_offset_bytes
+            : OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    uint64_t read_length_bytes =
+        Minimum(remaining_data_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
+    if (area.backing_file_offset_bytes >
+        UINT64_MAX - area_offset_bytes) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
+    const uint64_t file_offset_bytes =
+        area.backing_file_offset_bytes + area_offset_bytes;
+    if (read_length_bytes != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        if (file_offset_bytes >= descriptor.size_bytes) {
+            return UserVirtualMemoryStatus::FileReadFailed;
+        }
+        read_length_bytes =
+            Minimum(read_length_bytes,
+                    descriptor.size_bytes - file_offset_bytes);
+    }
+
+    FilePageIdentity page_identity{};
+    if (PageUsesFileCache(area, page_virtual_address, descriptor,
+                          page_identity)) {
+        uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+        bool cache_hit = false;
+        const FilePageCacheStatus cache_status =
+            user_file_page_cache.Acquire(
+                page_identity, &descriptor, ReadUserFileBackingPage,
+                physical_address, cache_hit);
+        if (cache_status == FilePageCacheStatus::CapacityExhausted) {
+            return UserVirtualMemoryStatus::PageCacheExhausted;
+        }
+        if (cache_status != FilePageCacheStatus::Succeeded) {
+            return cache_status == FilePageCacheStatus::SourceReadFailed
+                       ? UserVirtualMemoryStatus::FileReadFailed
+                       : UserVirtualMemoryStatus::PageMappingFailed;
+        }
+        if (MapExistingUserPage(
+                address_space.root_physical_address,
+                page_virtual_address, physical_address,
+                area.permissions.writable,
+                area.permissions.executable) !=
+            KernelUserPageStatus::Succeeded) {
+            static_cast<void>(
+                user_file_page_cache.Release(page_identity,
+                                             physical_address));
+            return UserVirtualMemoryStatus::PageMappingFailed;
+        }
+        RecordMappedPage(address_space, area, true, cache_hit);
+        return UserVirtualMemoryStatus::Succeeded;
+    }
+
+    uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const KernelUserPageStatus page_status = AllocateAndMapUserPage(
+        address_space.root_physical_address, page_virtual_address,
+        area.permissions.writable, area.permissions.executable,
+        physical_address);
+    if (page_status == KernelUserPageStatus::FrameAllocationFailed) {
+        return UserVirtualMemoryStatus::PageAllocationFailed;
+    }
+    if (page_status != KernelUserPageStatus::Succeeded ||
+        !ZeroPhysicalPage(physical_address)) {
+        if (page_status == KernelUserPageStatus::Succeeded) {
+            uint64_t reclaimed_table_frame_count =
+                OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+            static_cast<void>(ReleaseUserPage(
+                address_space.root_physical_address,
+                page_virtual_address, reclaimed_table_frame_count));
+        }
+        return UserVirtualMemoryStatus::PageMappingFailed;
+    }
+    if (read_length_bytes != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        uint8_t *const page = PhysicalPagePointer(physical_address);
+        if (page == nullptr ||
+            user_file_backing_manager.Read(
+                area.backing_descriptor_index, area.backing_generation,
+                file_offset_bytes, page, read_length_bytes) !=
+                UserFileBackingStatus::Succeeded) {
+            uint64_t reclaimed_table_frame_count =
+                OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+            static_cast<void>(ReleaseUserPage(
+                address_space.root_physical_address,
+                page_virtual_address, reclaimed_table_frame_count));
+            return UserVirtualMemoryStatus::FileReadFailed;
+        }
+    }
+    RecordMappedPage(address_space, area, false, false);
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
 [[nodiscard]] bool PermissionsAllow(const VirtualMemoryArea &area, const bool require_writable,
                                     const bool require_executable) noexcept {
     if (!area.permissions.readable) {
@@ -106,6 +321,9 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
 [[nodiscard]] UserVirtualMemoryStatus MapDemandPage(UserAddressSpace &address_space,
                                                     const uint64_t page_virtual_address,
                                                     const VirtualMemoryArea &area) noexcept {
+    if (IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+        return MapFileDemandPage(address_space, page_virtual_address, area);
+    }
     uint64_t page_physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     const KernelUserPageStatus page_status = AllocateAndMapUserPage(
         address_space.root_physical_address, page_virtual_address, area.permissions.writable,
@@ -123,10 +341,7 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                    ? UserVirtualMemoryStatus::PageMappingFailed
                    : UserVirtualMemoryStatus::Corrupt;
     }
-    ++address_space.mapped_page_count;
-    if (address_space.mapped_page_count > address_space.peak_mapped_page_count) {
-        address_space.peak_mapped_page_count = address_space.mapped_page_count;
-    }
+    RecordMappedPage(address_space, area, false, false);
     return UserVirtualMemoryStatus::Succeeded;
 }
 
@@ -147,9 +362,55 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
             return UserVirtualMemoryStatus::Corrupt;
         }
         uint64_t reclaimed_table_frame_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-        if (ReleaseUserPage(address_space.root_physical_address, page_address,
-                            reclaimed_table_frame_count) != KernelUserPageStatus::Succeeded) {
-            return UserVirtualMemoryStatus::PageReleaseFailed;
+        VirtualMemoryArea area{};
+        const VirtualMemoryAreaStatus area_status =
+            address_space.virtual_memory_map.FindContaining(page_address,
+                                                            area);
+        bool cache_mapping = false;
+        FilePageIdentity page_identity{};
+        if (area_status == VirtualMemoryAreaStatus::Succeeded &&
+            IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+            UserFileBackingDescriptor descriptor{};
+            if (!ReadBackingDescriptor(area, descriptor)) {
+                return UserVirtualMemoryStatus::Corrupt;
+            }
+            cache_mapping = PageUsesFileCache(
+                area, page_address, descriptor, page_identity);
+        }
+        if (cache_mapping) {
+            uint64_t unmapped_physical_address =
+                OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+            if (UnmapUserPage(address_space.root_physical_address,
+                              page_address,
+                              unmapped_physical_address,
+                              reclaimed_table_frame_count) !=
+                    KernelUserPageStatus::Succeeded ||
+                unmapped_physical_address != mapping.physical_address ||
+                user_file_page_cache.Release(
+                    page_identity, unmapped_physical_address) !=
+                    FilePageCacheStatus::Succeeded) {
+                return UserVirtualMemoryStatus::PageReleaseFailed;
+            }
+            if (address_space.shared_file_resident_page_count ==
+                OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+                return UserVirtualMemoryStatus::Corrupt;
+            }
+            --address_space.shared_file_resident_page_count;
+        } else {
+            if (ReleaseUserPage(address_space.root_physical_address,
+                                page_address,
+                                reclaimed_table_frame_count) !=
+                KernelUserPageStatus::Succeeded) {
+                return UserVirtualMemoryStatus::PageReleaseFailed;
+            }
+            if (area_status == VirtualMemoryAreaStatus::Succeeded &&
+                IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+                if (address_space.private_file_resident_page_count ==
+                    OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+                    return UserVirtualMemoryStatus::Corrupt;
+                }
+                --address_space.private_file_resident_page_count;
+            }
         }
         --address_space.mapped_page_count;
         address_space.page_table_reclaimed_frame_count += reclaimed_table_frame_count;
@@ -162,7 +423,8 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
 
 [[nodiscard]] UserVirtualMemoryStatus ResolveNonStackPage(UserAddressSpace &address_space,
                                                           const uint64_t page_address,
-                                                          const bool require_writable) noexcept {
+                                                          const bool require_writable,
+                                                          const bool require_executable) noexcept {
     PageMapping mapping{};
     const PageTableStatus query_status =
         QueryAddressSpacePage(address_space.root_physical_address, page_address, mapping);
@@ -171,6 +433,10 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
             return UserVirtualMemoryStatus::Corrupt;
         }
         if (require_writable && !mapping.permissions.writable) {
+            return UserVirtualMemoryStatus::InvalidProtection;
+        }
+        if (require_executable &&
+            !mapping.permissions.executable) {
             return UserVirtualMemoryStatus::InvalidProtection;
         }
         return UserVirtualMemoryStatus::Succeeded;
@@ -185,8 +451,8 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
         return UserVirtualMemoryStatus::InvalidRange;
     }
     if (area.kind == VirtualMemoryAreaKind::UserStack ||
-        area.kind == VirtualMemoryAreaKind::ExecutableImage ||
-        !PermissionsAllow(area, require_writable, false)) {
+        !PermissionsAllow(area, require_writable,
+                          require_executable)) {
         return UserVirtualMemoryStatus::InvalidProtection;
     }
     const UserVirtualMemoryStatus map_status = MapDemandPage(address_space, page_address, area);
@@ -214,7 +480,9 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
         PageMapping mapping{};
         PageTableStatus query_status = QueryActivePage(page_address, mapping);
         if (query_status == PageTableStatus::NotMapped && active_user_address_space != nullptr) {
-            if (ResolveNonStackPage(*active_user_address_space, page_address, require_writable) !=
+            if (ResolveNonStackPage(*active_user_address_space,
+                                    page_address, require_writable,
+                                    false) !=
                 UserVirtualMemoryStatus::Succeeded) {
                 return UserMemoryCopyStatus::PageResolutionFailed;
             }
@@ -235,52 +503,6 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
         page_address += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
     }
     return UserMemoryCopyStatus::Succeeded;
-}
-
-[[nodiscard]] UserAddressSpaceStatus MapElfSegment(const UserElfReader &reader,
-                                                   const UserElfLoadSegment &segment,
-                                                   UserAddressSpace &address_space) noexcept {
-    const uint64_t segment_page_count =
-        (segment.memory_size_bytes + OS_KERNEL_MEMORY_PAGE_SIZE_BYTES -
-         OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT) /
-        OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-    uint64_t remaining_file_size_bytes = segment.file_size_bytes;
-    for (uint64_t page_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE; page_index < segment_page_count;
-         ++page_index) {
-        const uint64_t page_virtual_address =
-            segment.virtual_address + page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-        uint64_t page_physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-        const KernelUserPageStatus page_status =
-            AllocateAndMapUserPage(address_space.root_physical_address, page_virtual_address,
-                                   segment.writable, segment.executable, page_physical_address);
-        if (page_status == KernelUserPageStatus::FrameAllocationFailed) {
-            return UserAddressSpaceStatus::PageAllocationFailed;
-        }
-        if (page_status != KernelUserPageStatus::Succeeded) {
-            return UserAddressSpaceStatus::PageMappingFailed;
-        }
-        ++address_space.mapped_page_count;
-        if (address_space.mapped_page_count > address_space.peak_mapped_page_count) {
-            address_space.peak_mapped_page_count = address_space.mapped_page_count;
-        }
-
-        uint8_t *const page = PhysicalPagePointer(page_physical_address);
-        if (page == nullptr || !ZeroPhysicalPage(page_physical_address)) {
-            return UserAddressSpaceStatus::PageMappingFailed;
-        }
-        const uint64_t page_file_size_bytes =
-            Minimum(remaining_file_size_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
-        if (page_file_size_bytes > OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
-            const uint64_t page_file_offset =
-                segment.file_offset + page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-            if (reader.read == nullptr ||
-                !reader.read(reader.context, page_file_offset, page, page_file_size_bytes)) {
-                return UserAddressSpaceStatus::ImageReadFailed;
-            }
-            remaining_file_size_bytes -= page_file_size_bytes;
-        }
-    }
-    return UserAddressSpaceStatus::Succeeded;
 }
 
 [[nodiscard]] bool ElfOverlapsStackReservation(const UserElfLayout &layout) noexcept {
@@ -311,8 +533,10 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
            program_break_base < os::abi::OS_ABI_USER_PROGRAM_BREAK_LIMIT_ADDRESS;
 }
 
-[[nodiscard]] bool InsertInitialAreas(const UserElfLayout &layout,
-                                      UserAddressSpace &address_space) noexcept {
+[[nodiscard]] bool InsertInitialAreas(
+    const UserElfLayout &layout, const uint64_t backing_descriptor_index,
+    const uint64_t backing_generation,
+    UserAddressSpace &address_space) noexcept {
     for (uint64_t segment_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
          segment_index < layout.load_segment_count; ++segment_index) {
         const UserElfLoadSegment &segment = layout.load_segments[segment_index];
@@ -329,6 +553,12 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                         .executable = segment.executable,
                     },
                 .kind = VirtualMemoryAreaKind::ExecutableImage,
+                .backing_descriptor_index =
+                    backing_descriptor_index,
+                .backing_generation = backing_generation,
+                .backing_file_offset_bytes = segment.file_offset,
+                .backing_data_length_bytes =
+                    segment.file_size_bytes,
             }) != VirtualMemoryAreaStatus::Succeeded) {
             return false;
         }
@@ -414,52 +644,49 @@ DecodeProtectionFlags(const uint64_t protection_flags) noexcept {
     return page_count;
 }
 
-}
-
-UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
-    if (user_virtual_memory_initialized) {
-        return UserAddressSpaceStatus::Succeeded;
+[[nodiscard]] bool BackingIsStillReferenced(
+    const UserAddressSpace &address_space,
+    const uint64_t descriptor_index,
+    const uint64_t generation) noexcept {
+    for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         area_index < address_space.virtual_memory_map.AreaCount();
+         ++area_index) {
+        VirtualMemoryArea area{};
+        if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
+            VirtualMemoryAreaStatus::Succeeded) {
+            return true;
+        }
+        if (IsFileBackedVirtualMemoryAreaKind(area.kind) &&
+            area.backing_descriptor_index == descriptor_index &&
+            area.backing_generation == generation) {
+            return true;
+        }
     }
-    if (user_virtual_memory_pool.Initialize(user_virtual_memory_descriptors,
-                                            OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY) !=
-        VirtualMemoryAreaStatus::Succeeded) {
-        return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+    return false;
+}
+
+[[nodiscard]] UserVirtualMemoryStatus ReleaseBackingIfUnused(
+    UserAddressSpace &address_space, const uint64_t descriptor_index,
+    const uint64_t generation) noexcept {
+    if (BackingIsStillReferenced(address_space, descriptor_index,
+                                 generation)) {
+        return UserVirtualMemoryStatus::Succeeded;
     }
-    active_user_address_space = nullptr;
-    user_virtual_memory_initialized = true;
-    return UserAddressSpaceStatus::Succeeded;
+    return user_file_backing_manager.Release(
+               address_space.root_physical_address, descriptor_index,
+               generation) == UserFileBackingStatus::Succeeded
+               ? UserVirtualMemoryStatus::Succeeded
+               : UserVirtualMemoryStatus::Corrupt;
 }
 
-VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept {
-    return user_virtual_memory_pool.Statistics();
-}
-
-UserAddressSpaceStatus
-LoadUserAddressSpace(const uint8_t *const image, const uint64_t image_size_bytes,
-                     UserAddressSpace &address_space,
-                     UserElfValidationStatus &elf_validation_status) noexcept {
-    if (image == nullptr) {
-        elf_validation_status = UserElfValidationStatus::NullImage;
-        return UserAddressSpaceStatus::InvalidElf;
-    }
-    MemoryImageReaderContext context{
-        .image = image,
-        .image_size_bytes = image_size_bytes,
-    };
-    return LoadUserAddressSpace(
-        UserElfReader{
-            .context = &context,
-            .image_size_bytes = image_size_bytes,
-            .read = ReadMemoryImage,
-        },
-        address_space, elf_validation_status);
-}
-
-UserAddressSpaceStatus
-LoadUserAddressSpace(const UserElfReader &reader, UserAddressSpace &address_space,
-                     UserElfValidationStatus &elf_validation_status) noexcept {
+[[nodiscard]] UserAddressSpaceStatus LoadUserAddressSpaceInternal(
+    const UserElfReader &reader, const uint8_t *const memory_image,
+    fs::Vfs *const vfs, const fs::OpenFile *const open_file,
+    UserAddressSpace &address_space,
+    UserElfValidationStatus &elf_validation_status) noexcept {
     address_space = UserAddressSpace{};
-    if (InitializeUserVirtualMemory() != UserAddressSpaceStatus::Succeeded) {
+    if (InitializeUserVirtualMemory() !=
+        UserAddressSpaceStatus::Succeeded) {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
     }
     UserElfLayout layout{};
@@ -474,64 +701,245 @@ LoadUserAddressSpace(const UserElfReader &reader, UserAddressSpace &address_spac
     if (!CalculateProgramBreakBase(layout, program_break_base)) {
         return UserAddressSpaceStatus::ProgramBreakCollision;
     }
+    if (CreateUserPageTable(address_space.root_physical_address) !=
+        KernelUserPageStatus::Succeeded) {
+        address_space = UserAddressSpace{};
+        return UserAddressSpaceStatus::PageTableCreationFailed;
+    }
+
+    uint64_t backing_descriptor_index = UINT64_MAX;
+    uint64_t backing_generation = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const UserFileBackingStatus backing_status =
+        memory_image != nullptr
+            ? user_file_backing_manager.AcquireMemoryImage(
+                  address_space.root_physical_address, memory_image,
+                  reader.image_size_bytes, backing_descriptor_index,
+                  backing_generation)
+            : vfs != nullptr && open_file != nullptr
+                  ? user_file_backing_manager.AcquireVfsFile(
+                        address_space.root_physical_address, *vfs,
+                        *open_file, backing_descriptor_index,
+                        backing_generation)
+                  : UserFileBackingStatus::InvalidSource;
+    if (backing_status != UserFileBackingStatus::Succeeded) {
+        static_cast<void>(
+            DestroyUserPageTable(address_space.root_physical_address));
+        address_space = UserAddressSpace{};
+        return UserAddressSpaceStatus::VirtualMemoryAreaFailure;
+    }
     if (address_space.virtual_memory_map.Initialize(
             user_virtual_memory_pool, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
-            OS_KERNEL_USER_VMA_PER_PROCESS_HARD_LIMIT) != VirtualMemoryAreaStatus::Succeeded ||
-        !InsertInitialAreas(layout, address_space)) {
-        if (address_space.virtual_memory_map.Validate() == VirtualMemoryAreaStatus::Succeeded) {
-            static_cast<void>(address_space.virtual_memory_map.Destroy());
+            OS_KERNEL_USER_VMA_PER_PROCESS_HARD_LIMIT) !=
+            VirtualMemoryAreaStatus::Succeeded ||
+        !InsertInitialAreas(layout, backing_descriptor_index,
+                            backing_generation, address_space)) {
+        if (address_space.virtual_memory_map.Validate() ==
+            VirtualMemoryAreaStatus::Succeeded) {
+            static_cast<void>(
+                address_space.virtual_memory_map.Destroy());
         }
+        static_cast<void>(user_file_backing_manager.Release(
+            address_space.root_physical_address,
+            backing_descriptor_index, backing_generation));
+        static_cast<void>(
+            DestroyUserPageTable(address_space.root_physical_address));
         address_space = UserAddressSpace{};
         return UserAddressSpaceStatus::VirtualMemoryAreaFailure;
     }
 
-    if (CreateUserPageTable(address_space.root_physical_address) !=
-        KernelUserPageStatus::Succeeded) {
-        static_cast<void>(address_space.virtual_memory_map.Destroy());
-        address_space = UserAddressSpace{};
-        return UserAddressSpaceStatus::PageTableCreationFailed;
-    }
-    address_space.entry_virtual_address = layout.entry_virtual_address;
-    address_space.stack_top_virtual_address = OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS;
-    address_space.stack_committed_bottom_virtual_address = OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS;
+    address_space.entry_virtual_address =
+        layout.entry_virtual_address;
+    address_space.stack_top_virtual_address =
+        OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS;
+    address_space.stack_committed_bottom_virtual_address =
+        OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS;
     address_space.program_break_base_address = program_break_base;
     address_space.program_break_address = program_break_base;
-    address_space.program_break_limit_address = os::abi::OS_ABI_USER_PROGRAM_BREAK_LIMIT_ADDRESS;
-
-    for (uint64_t segment_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-         segment_index < layout.load_segment_count; ++segment_index) {
-        const UserAddressSpaceStatus segment_status =
-            MapElfSegment(reader, layout.load_segments[segment_index], address_space);
-        if (segment_status != UserAddressSpaceStatus::Succeeded) {
-            if (DestroyUserPageTable(address_space.root_physical_address) !=
-                    KernelUserPageStatus::Succeeded ||
-                address_space.virtual_memory_map.Destroy() != VirtualMemoryAreaStatus::Succeeded) {
-                address_space = UserAddressSpace{};
-                return UserAddressSpaceStatus::RollbackFailed;
-            }
-            address_space = UserAddressSpace{};
-            return segment_status;
-        }
-    }
+    address_space.program_break_limit_address =
+        os::abi::OS_ABI_USER_PROGRAM_BREAK_LIMIT_ADDRESS;
     return UserAddressSpaceStatus::Succeeded;
+}
+
+}
+
+UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
+    if (user_virtual_memory_initialized) {
+        return UserAddressSpaceStatus::Succeeded;
+    }
+    if (user_virtual_memory_pool.Initialize(user_virtual_memory_descriptors,
+                                            OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY) !=
+        VirtualMemoryAreaStatus::Succeeded) {
+        return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+    }
+    if (user_file_backing_manager.Initialize(
+            user_file_backing_descriptors,
+            OS_KERNEL_USER_FILE_BACKING_CAPACITY) !=
+        UserFileBackingStatus::Succeeded) {
+        return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+    }
+    const PhysicalFrameAllocatorStatistics frame_statistics =
+        GetPhysicalFrameAllocatorStatistics();
+    uint64_t page_cache_capacity =
+        frame_statistics.managed_frame_count /
+        OS_KERNEL_USER_MEMORY_FILE_CACHE_FRAME_DIVISOR;
+    if (page_cache_capacity <
+        OS_KERNEL_USER_MEMORY_FILE_CACHE_MINIMUM_CAPACITY) {
+        page_cache_capacity =
+            OS_KERNEL_USER_MEMORY_FILE_CACHE_MINIMUM_CAPACITY;
+    }
+    if (page_cache_capacity >
+        OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY) {
+        page_cache_capacity =
+            OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY;
+    }
+    if (user_file_page_cache.Initialize(
+            user_file_page_cache_entries, page_cache_capacity,
+            GetKernelPhysicalFrameAllocator(), nullptr,
+            AccessPhysicalPage) != FilePageCacheStatus::Succeeded) {
+        return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+    }
+    active_user_address_space = nullptr;
+    user_virtual_memory_initialized = true;
+    return UserAddressSpaceStatus::Succeeded;
+}
+
+VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept {
+    return user_virtual_memory_pool.Statistics();
+}
+
+FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept {
+    return user_file_page_cache.Statistics();
+}
+
+UserAddressSpaceStatus
+LoadUserAddressSpace(const uint8_t *const image, const uint64_t image_size_bytes,
+                     UserAddressSpace &address_space,
+                     UserElfValidationStatus &elf_validation_status) noexcept {
+    if (image == nullptr) {
+        elf_validation_status = UserElfValidationStatus::NullImage;
+        return UserAddressSpaceStatus::InvalidElf;
+    }
+    MemoryImageReaderContext context{
+        .image = image,
+        .image_size_bytes = image_size_bytes,
+    };
+    const UserElfReader reader{
+            .context = &context,
+            .image_size_bytes = image_size_bytes,
+            .read = ReadMemoryImage,
+    };
+    return LoadUserAddressSpaceInternal(
+        reader, image, nullptr, nullptr, address_space,
+        elf_validation_status);
+}
+
+UserAddressSpaceStatus
+LoadUserAddressSpace(fs::Vfs &vfs, const fs::OpenFile &open_file,
+                     UserAddressSpace &address_space,
+                     UserElfValidationStatus &elf_validation_status) noexcept {
+    fs::NodeInformation information{};
+    if (!open_file.open || !open_file.readable ||
+        vfs.StatOpenFile(open_file, information) !=
+            fs::Status::Succeeded ||
+        information.type != fs::NodeType::RegularFile) {
+        elf_validation_status = UserElfValidationStatus::NullReader;
+        return UserAddressSpaceStatus::InvalidElf;
+    }
+    VfsImageReaderContext context{
+        .vfs = &vfs,
+        .open_file = open_file,
+    };
+    const UserElfReader reader{
+        .context = &context,
+        .image_size_bytes = information.size_bytes,
+        .read = ReadVfsImage,
+    };
+    return LoadUserAddressSpaceInternal(
+        reader, nullptr, &vfs, &open_file, address_space,
+        elf_validation_status);
 }
 
 UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept {
     if (active_user_address_space == &address_space) {
         active_user_address_space = nullptr;
     }
-    if (address_space.root_physical_address != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
-        DestroyUserPageTable(address_space.root_physical_address) !=
-            KernelUserPageStatus::Succeeded) {
-        return UserAddressSpaceStatus::RollbackFailed;
-    }
     const VirtualMemoryAreaStatus validation_status = address_space.virtual_memory_map.Validate();
-    if (validation_status == VirtualMemoryAreaStatus::Succeeded &&
-        address_space.virtual_memory_map.Destroy() != VirtualMemoryAreaStatus::Succeeded) {
-        return UserAddressSpaceStatus::RollbackFailed;
-    }
     if (validation_status != VirtualMemoryAreaStatus::Succeeded &&
         validation_status != VirtualMemoryAreaStatus::NotInitialized) {
+        return UserAddressSpaceStatus::RollbackFailed;
+    }
+    if (validation_status == VirtualMemoryAreaStatus::Succeeded) {
+        const uint64_t area_count =
+            address_space.virtual_memory_map.AreaCount();
+        for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+             area_index < area_count; ++area_index) {
+            VirtualMemoryArea area{};
+            if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
+                    VirtualMemoryAreaStatus::Succeeded ||
+                ReleaseMappedPages(address_space, area.begin_address,
+                                   area.end_address, false) !=
+                    UserVirtualMemoryStatus::Succeeded) {
+                return UserAddressSpaceStatus::RollbackFailed;
+            }
+        }
+        if (address_space.root_physical_address !=
+                OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
+            DestroyUserPageTable(address_space.root_physical_address) !=
+                KernelUserPageStatus::Succeeded) {
+            return UserAddressSpaceStatus::RollbackFailed;
+        }
+        for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+             area_index < area_count; ++area_index) {
+            VirtualMemoryArea area{};
+            if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
+                VirtualMemoryAreaStatus::Succeeded) {
+                return UserAddressSpaceStatus::RollbackFailed;
+            }
+            if (!IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+                continue;
+            }
+            bool already_released = false;
+            for (uint64_t previous_index =
+                     OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+                 previous_index < area_index; ++previous_index) {
+                VirtualMemoryArea previous_area{};
+                if (address_space.virtual_memory_map.ReadAt(
+                        previous_index, previous_area) !=
+                    VirtualMemoryAreaStatus::Succeeded) {
+                    return UserAddressSpaceStatus::RollbackFailed;
+                }
+                if (previous_area.backing_descriptor_index ==
+                        area.backing_descriptor_index &&
+                    previous_area.backing_generation ==
+                        area.backing_generation) {
+                    already_released = true;
+                    break;
+                }
+            }
+            if (!already_released &&
+                user_file_backing_manager.Release(
+                    address_space.root_physical_address,
+                    area.backing_descriptor_index,
+                    area.backing_generation) !=
+                    UserFileBackingStatus::Succeeded) {
+                return UserAddressSpaceStatus::RollbackFailed;
+            }
+        }
+        if (address_space.virtual_memory_map.Destroy() !=
+            VirtualMemoryAreaStatus::Succeeded) {
+            return UserAddressSpaceStatus::RollbackFailed;
+        }
+    } else if (address_space.root_physical_address !=
+                   OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
+               DestroyUserPageTable(
+                   address_space.root_physical_address) !=
+                   KernelUserPageStatus::Succeeded) {
+        return UserAddressSpaceStatus::RollbackFailed;
+    }
+    const FilePageCacheStatus trim_status =
+        user_file_page_cache.Trim(OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
+    if (trim_status != FilePageCacheStatus::Succeeded &&
+        trim_status != FilePageCacheStatus::EntryBusy) {
         return UserAddressSpaceStatus::RollbackFailed;
     }
     address_space = UserAddressSpace{};
@@ -574,7 +982,8 @@ MapAnonymousMemory(UserAddressSpace &address_space, const uint64_t requested_add
         return UserVirtualMemoryStatus::NotInitialized;
     }
     if (length_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
-        (map_flags & ~os::abi::OS_ABI_MEMORY_MAP_VALID_FLAG_MASK) !=
+        (map_flags &
+         ~os::abi::OS_ABI_ANONYMOUS_MEMORY_MAP_VALID_FLAG_MASK) !=
             OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
         !ProtectionFlagsAreValid(protection_flags)) {
         return length_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE
@@ -630,6 +1039,126 @@ MapAnonymousMemory(UserAddressSpace &address_space, const uint64_t requested_add
     return UserVirtualMemoryStatus::Succeeded;
 }
 
+UserVirtualMemoryStatus MapFileMemory(
+    UserAddressSpace &address_space, fs::Vfs &vfs,
+    const fs::OpenFile &open_file, const uint64_t requested_address,
+    const uint64_t length_bytes, const uint64_t protection_flags,
+    const uint64_t map_flags, const uint64_t file_offset_bytes,
+    uint64_t &mapped_address) noexcept {
+    mapped_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (address_space.virtual_memory_map.Validate() !=
+        VirtualMemoryAreaStatus::Succeeded) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    const bool private_mapping =
+        (map_flags & os::abi::OS_ABI_MEMORY_MAP_PRIVATE) !=
+        OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const bool shared_mapping =
+        (map_flags & os::abi::OS_ABI_MEMORY_MAP_SHARED) !=
+        OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const bool writable =
+        (protection_flags & os::abi::OS_ABI_MEMORY_PROTECTION_WRITE) !=
+        OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (length_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        (file_offset_bytes & OS_KERNEL_USER_MEMORY_PAGE_MASK) !=
+            OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return UserVirtualMemoryStatus::InvalidRange;
+    }
+    if (!ProtectionFlagsAreValid(protection_flags) ||
+        (protection_flags & os::abi::OS_ABI_MEMORY_PROTECTION_READ) ==
+            OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return UserVirtualMemoryStatus::InvalidProtection;
+    }
+    if ((map_flags & ~os::abi::OS_ABI_FILE_MEMORY_MAP_VALID_FLAG_MASK) !=
+            OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        private_mapping == shared_mapping ||
+        (shared_mapping && writable)) {
+        return UserVirtualMemoryStatus::UnsupportedMapping;
+    }
+    fs::NodeInformation information{};
+    if (!open_file.open || !open_file.readable ||
+        vfs.StatOpenFile(open_file, information) !=
+            fs::Status::Succeeded ||
+        information.type != fs::NodeType::RegularFile) {
+        return UserVirtualMemoryStatus::InvalidFile;
+    }
+    if (file_offset_bytes > information.size_bytes ||
+        length_bytes > information.size_bytes - file_offset_bytes) {
+        return UserVirtualMemoryStatus::InvalidRange;
+    }
+
+    uint64_t aligned_length_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (!AlignUpToPage(length_bytes, aligned_length_bytes) ||
+        aligned_length_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        aligned_length_bytes >
+            os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_END_ADDRESS -
+                os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_BEGIN_ADDRESS) {
+        return UserVirtualMemoryStatus::InvalidRange;
+    }
+    const bool fixed_mapping =
+        (map_flags & os::abi::OS_ABI_MEMORY_MAP_FIXED) !=
+        OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    uint64_t area_begin_address = requested_address;
+    if (fixed_mapping) {
+        if (requested_address == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+            (requested_address & OS_KERNEL_USER_MEMORY_PAGE_MASK) !=
+                OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+            requested_address <
+                os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_BEGIN_ADDRESS ||
+            requested_address >
+                os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_END_ADDRESS -
+                    aligned_length_bytes) {
+            return UserVirtualMemoryStatus::InvalidRange;
+        }
+    } else {
+        if (requested_address !=
+            os::abi::OS_ABI_MEMORY_MAP_AUTOMATIC_ADDRESS) {
+            return UserVirtualMemoryStatus::InvalidRange;
+        }
+        const VirtualMemoryAreaStatus gap_status =
+            address_space.virtual_memory_map.FindFirstGap(
+                os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_BEGIN_ADDRESS,
+                os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_END_ADDRESS,
+                aligned_length_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                area_begin_address);
+        if (gap_status != VirtualMemoryAreaStatus::Succeeded) {
+            return gap_status == VirtualMemoryAreaStatus::NotMapped
+                       ? UserVirtualMemoryStatus::AddressSpaceExhausted
+                       : MapVirtualMemoryAreaStatus(gap_status);
+        }
+    }
+
+    uint64_t backing_descriptor_index = UINT64_MAX;
+    uint64_t backing_generation = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (user_file_backing_manager.AcquireVfsFile(
+            address_space.root_physical_address, vfs, open_file,
+            backing_descriptor_index, backing_generation) !=
+        UserFileBackingStatus::Succeeded) {
+        return UserVirtualMemoryStatus::MetadataExhausted;
+    }
+    const VirtualMemoryAreaStatus insert_status =
+        address_space.virtual_memory_map.Insert(VirtualMemoryArea{
+            .begin_address = area_begin_address,
+            .end_address = area_begin_address + aligned_length_bytes,
+            .permissions = DecodeProtectionFlags(protection_flags),
+            .kind = private_mapping
+                        ? VirtualMemoryAreaKind::FilePrivate
+                        : VirtualMemoryAreaKind::FileShared,
+            .backing_descriptor_index = backing_descriptor_index,
+            .backing_generation = backing_generation,
+            .backing_file_offset_bytes = file_offset_bytes,
+            .backing_data_length_bytes = length_bytes,
+        });
+    if (insert_status != VirtualMemoryAreaStatus::Succeeded) {
+        static_cast<void>(user_file_backing_manager.Release(
+            address_space.root_physical_address,
+            backing_descriptor_index, backing_generation));
+        return MapVirtualMemoryAreaStatus(insert_status);
+    }
+    mapped_address = area_begin_address;
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
 UserVirtualMemoryStatus UnmapAnonymousMemory(UserAddressSpace &address_space,
                                              const uint64_t address,
                                              const uint64_t length_bytes) noexcept {
@@ -652,6 +1181,143 @@ UserVirtualMemoryStatus UnmapAnonymousMemory(UserAddressSpace &address_space,
         return MapVirtualMemoryAreaStatus(remove_status);
     }
     return ReleaseMappedPages(address_space, address, end_address, true);
+}
+
+UserVirtualMemoryStatus UnmapFileMemory(
+    UserAddressSpace &address_space, const uint64_t address,
+    const uint64_t length_bytes) noexcept {
+    if (address_space.virtual_memory_map.Validate() !=
+        VirtualMemoryAreaStatus::Succeeded) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    uint64_t aligned_length_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (address == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        (address & OS_KERNEL_USER_MEMORY_PAGE_MASK) !=
+            OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        length_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        !AlignUpToPage(length_bytes, aligned_length_bytes) ||
+        address <
+            os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_BEGIN_ADDRESS ||
+        address >
+            os::abi::OS_ABI_USER_ANONYMOUS_WINDOW_END_ADDRESS -
+                aligned_length_bytes) {
+        return UserVirtualMemoryStatus::InvalidRange;
+    }
+    const uint64_t end_address = address + aligned_length_bytes;
+    uint64_t validation_address = address;
+    while (validation_address < end_address) {
+        VirtualMemoryArea area{};
+        if (address_space.virtual_memory_map.FindContaining(
+                validation_address, area) !=
+                VirtualMemoryAreaStatus::Succeeded ||
+            (area.kind != VirtualMemoryAreaKind::FilePrivate &&
+             area.kind != VirtualMemoryAreaKind::FileShared)) {
+            return UserVirtualMemoryStatus::InvalidRange;
+        }
+        validation_address =
+            Minimum(end_address, area.end_address);
+    }
+
+    uint64_t current_address = address;
+    while (current_address < end_address) {
+        VirtualMemoryArea area{};
+        if (address_space.virtual_memory_map.FindContaining(
+                current_address, area) !=
+            VirtualMemoryAreaStatus::Succeeded) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        const uint64_t current_end_address =
+            Minimum(end_address, area.end_address);
+        const UserVirtualMemoryStatus release_status =
+            ReleaseMappedPages(address_space, current_address,
+                               current_end_address, true);
+        if (release_status != UserVirtualMemoryStatus::Succeeded) {
+            return release_status;
+        }
+        const uint64_t backing_descriptor_index =
+            area.backing_descriptor_index;
+        const uint64_t backing_generation =
+            area.backing_generation;
+        const VirtualMemoryAreaStatus remove_status =
+            address_space.virtual_memory_map.Remove(
+                current_address, current_end_address, area.kind);
+        if (remove_status != VirtualMemoryAreaStatus::Succeeded) {
+            return MapVirtualMemoryAreaStatus(remove_status);
+        }
+        const UserVirtualMemoryStatus backing_status =
+            ReleaseBackingIfUnused(address_space,
+                                   backing_descriptor_index,
+                                   backing_generation);
+        if (backing_status != UserVirtualMemoryStatus::Succeeded) {
+            return backing_status;
+        }
+        current_address = current_end_address;
+    }
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
+UserVirtualMemoryStatus RevokeUserFileMappings(
+    UserAddressSpace &address_space,
+    const FileIdentity &identity) noexcept {
+    if (address_space.virtual_memory_map.Validate() !=
+        VirtualMemoryAreaStatus::Succeeded) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         area_index < address_space.virtual_memory_map.AreaCount();
+         ++area_index) {
+        VirtualMemoryArea area{};
+        if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
+            VirtualMemoryAreaStatus::Succeeded) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (!IsFileBackedVirtualMemoryAreaKind(area.kind) ||
+            area.permissions.writable) {
+            continue;
+        }
+        UserFileBackingDescriptor descriptor{};
+        if (!ReadBackingDescriptor(area, descriptor)) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (!FileIdentitiesEqual(descriptor.identity, identity)) {
+            continue;
+        }
+        const UserVirtualMemoryStatus release_status =
+            ReleaseMappedPages(address_space, area.begin_address,
+                               area.end_address, false);
+        if (release_status != UserVirtualMemoryStatus::Succeeded) {
+            return release_status;
+        }
+    }
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
+UserVirtualMemoryStatus InvalidateUserFilePageCache(
+    const FileIdentity &identity,
+    const uint64_t current_file_size_bytes) noexcept {
+    if (user_file_backing_manager.UpdateFileSize(
+            identity, current_file_size_bytes) !=
+        UserFileBackingStatus::Succeeded) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
+    const FilePageCacheStatus cache_status =
+        user_file_page_cache.Invalidate(identity);
+    if (cache_status == FilePageCacheStatus::Succeeded) {
+        return UserVirtualMemoryStatus::Succeeded;
+    }
+    return cache_status == FilePageCacheStatus::EntryBusy
+               ? UserVirtualMemoryStatus::PageReleaseFailed
+               : UserVirtualMemoryStatus::Corrupt;
+}
+
+UserVirtualMemoryStatus TrimUserFilePageCache() noexcept {
+    const FilePageCacheStatus trim_status =
+        user_file_page_cache.Trim(OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
+    return trim_status == FilePageCacheStatus::Succeeded
+               ? UserVirtualMemoryStatus::Succeeded
+               : trim_status == FilePageCacheStatus::EntryBusy
+                     ? UserVirtualMemoryStatus::PageReleaseFailed
+                     : UserVirtualMemoryStatus::Corrupt;
 }
 
 UserVirtualMemoryStatus SetProgramBreak(UserAddressSpace &address_space,
@@ -731,6 +1397,18 @@ GetUserVirtualMemoryStatistics(const UserAddressSpace &address_space) noexcept {
         .unmap_released_page_count = address_space.unmap_released_page_count,
         .page_table_reclaimed_frame_count = address_space.page_table_reclaimed_frame_count,
         .program_break_address = address_space.program_break_address,
+        .file_private_page_count =
+            CountKindPages(address_space,
+                           VirtualMemoryAreaKind::FilePrivate),
+        .file_shared_page_count =
+            CountKindPages(address_space,
+                           VirtualMemoryAreaKind::FileShared),
+        .file_page_fault_count = address_space.file_page_fault_count,
+        .page_cache_hit_count = address_space.page_cache_hit_count,
+        .private_file_resident_page_count =
+            address_space.private_file_resident_page_count,
+        .shared_file_resident_page_count =
+            address_space.shared_file_resident_page_count,
     };
 }
 
@@ -775,13 +1453,17 @@ UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
              user_stack_pointer - fault_address > OS_KERNEL_USER_MEMORY_STACK_GROWTH_GAP_BYTES)) {
             return UserPageFaultStatus::InvalidStackGrowth;
         }
-    } else if (area.kind == VirtualMemoryAreaKind::ExecutableImage) {
-        return UserPageFaultStatus::Corrupt;
     }
 
     const UserVirtualMemoryStatus map_status = MapDemandPage(address_space, page_address, area);
     if (map_status == UserVirtualMemoryStatus::PageAllocationFailed) {
         return UserPageFaultStatus::PageAllocationFailed;
+    }
+    if (map_status == UserVirtualMemoryStatus::FileReadFailed) {
+        return UserPageFaultStatus::FileReadFailed;
+    }
+    if (map_status == UserVirtualMemoryStatus::PageCacheExhausted) {
+        return UserPageFaultStatus::PageCacheExhausted;
     }
     if (map_status != UserVirtualMemoryStatus::Succeeded) {
         return UserPageFaultStatus::PageMappingFailed;
@@ -792,6 +1474,55 @@ UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
         ++address_space.stack_growth_page_fault_count;
     }
     return UserPageFaultStatus::Handled;
+}
+
+UserVirtualMemoryStatus ResolveUserReturnMemory(
+    UserAddressSpace &address_space,
+    const uint64_t instruction_pointer,
+    const uint64_t stack_pointer) noexcept {
+    if (!IsUserProgramVirtualAddressRange(
+            instruction_pointer,
+            OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT) ||
+        stack_pointer <=
+            OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
+        stack_pointer >
+            OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
+        return UserVirtualMemoryStatus::InvalidRange;
+    }
+    const uint64_t instruction_page =
+        AlignDownToPage(instruction_pointer);
+    const UserVirtualMemoryStatus resolve_status =
+        ResolveNonStackPage(address_space, instruction_page,
+                            false, true);
+    if (resolve_status !=
+        UserVirtualMemoryStatus::Succeeded) {
+        return resolve_status;
+    }
+    const uint64_t stack_probe_address =
+        stack_pointer ==
+                OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS
+            ? stack_pointer -
+                  OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT
+            : stack_pointer;
+    PageMapping instruction_mapping{};
+    PageMapping stack_mapping{};
+    if (QueryAddressSpacePage(
+            address_space.root_physical_address,
+            instruction_pointer, instruction_mapping) !=
+            PageTableStatus::Succeeded ||
+        !instruction_mapping.permissions.user_accessible ||
+        !instruction_mapping.permissions.executable ||
+        instruction_mapping.permissions.writable ||
+        QueryAddressSpacePage(
+            address_space.root_physical_address,
+            stack_probe_address, stack_mapping) !=
+            PageTableStatus::Succeeded ||
+        !stack_mapping.permissions.user_accessible ||
+        !stack_mapping.permissions.writable ||
+        stack_mapping.permissions.executable) {
+        return UserVirtualMemoryStatus::InvalidProtection;
+    }
+    return UserVirtualMemoryStatus::Succeeded;
 }
 
 void SetActiveUserAddressSpace(UserAddressSpace *const address_space) noexcept {

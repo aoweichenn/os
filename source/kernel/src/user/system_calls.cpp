@@ -219,11 +219,18 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
         status == UserVirtualMemoryStatus::InvalidProtection) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_MEMORY_RANGE;
     }
+    if (status == UserVirtualMemoryStatus::InvalidFile) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_FILE_DESCRIPTOR;
+    }
+    if (status == UserVirtualMemoryStatus::UnsupportedMapping) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OPERATION_UNSUPPORTED;
+    }
     if (status == UserVirtualMemoryStatus::AddressInUse) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_ADDRESS_IN_USE;
     }
     if (status == UserVirtualMemoryStatus::AddressSpaceExhausted ||
-        status == UserVirtualMemoryStatus::PageAllocationFailed) {
+        status == UserVirtualMemoryStatus::PageAllocationFailed ||
+        status == UserVirtualMemoryStatus::PageCacheExhausted) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY;
     }
     if (status == UserVirtualMemoryStatus::MetadataExhausted) {
@@ -291,6 +298,24 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     return ValidateUserContext(context, CurrentUserContextRequirements()) ==
                UserContextStatus::Succeeded &&
            ValidateUserContextMemory(context);
+}
+
+[[nodiscard]] bool PrepareUserReturnFrameMemory(
+    const ExceptionFrame &frame) noexcept {
+    if (!IsProcessSchedulingActive() ||
+        !CurrentThreadOwnsUserContext(frame)) {
+        return false;
+    }
+    const UserContext &context = AsUserContext(frame);
+    if (ValidateUserContext(
+            context, CurrentUserContextRequirements()) !=
+        UserContextStatus::Succeeded) {
+        return false;
+    }
+    return ResolveCurrentProcessUserReturnMemory(
+               context.common.instruction_pointer,
+               context.stack_pointer) ==
+           UserVirtualMemoryStatus::Succeeded;
 }
 
 void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
@@ -1036,7 +1061,31 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
 
 [[nodiscard]] int64_t DispatchUnmapMemory(const uint64_t address,
                                           const uint64_t length_bytes) noexcept {
-    return MapVirtualMemoryStatus(UnmapCurrentProcessAnonymousMemory(address, length_bytes));
+    return MapVirtualMemoryStatus(
+        UnmapCurrentProcessMemory(address, length_bytes));
+}
+
+[[nodiscard]] int64_t DispatchMapFileMemory(
+    const uint64_t user_request_address,
+    const uint64_t request_size_bytes) noexcept {
+    if (request_size_bytes !=
+        sizeof(os::abi::FileMemoryMapRequest)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    os::abi::FileMemoryMapRequest request{};
+    if (CopyFromUser(
+            user_request_address, sizeof(request),
+            reinterpret_cast<uint8_t *>(&request),
+            sizeof(request)) != UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint64_t mapped_address =
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const UserVirtualMemoryStatus status =
+        MapCurrentProcessFileMemory(request, mapped_address);
+    return status == UserVirtualMemoryStatus::Succeeded
+               ? static_cast<int64_t>(mapped_address)
+               : MapVirtualMemoryStatus(status);
 }
 
 [[nodiscard]] int64_t DispatchSetProgramBreak(const uint64_t requested_address) noexcept {
@@ -1282,6 +1331,14 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
             DispatchGetVirtualMemoryStatistics(frame->register_rdi, frame->register_rsi));
         return frame;
     }
+    if (system_call_number ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::MapFileMemory)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchMapFileMemory(frame->register_rdi,
+                                  frame->register_rsi));
+        return frame;
+    }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;
 }
@@ -1308,7 +1365,8 @@ extern "C" ExceptionFrame *OsKernelPrepareUserReturn(ExceptionFrame *frame) noex
         }
         resume_frame = RescheduleBeforeUserReturn(*resume_frame);
     }
-    while (!ValidateUserReturnFrame(*resume_frame)) {
+    while (!PrepareUserReturnFrameMemory(*resume_frame) ||
+           !ValidateUserReturnFrame(*resume_frame)) {
         LogRejectedUserReturn(*resume_frame);
         const UserContextEntryMethod entry_method =
             DecodeUserContextEntryMethod(AsUserContext(*resume_frame));

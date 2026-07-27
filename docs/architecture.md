@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.8。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.9。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -280,8 +280,8 @@ LBA 66..N   kernel.elf（精确长度 + 扇区补零）
 | `0x00016000..0x00016FFF` | 物理内存图元数据 |
 | `0x00017000..0x00017FFF` | `fw_cfg` 名称暂存区 |
 | `0x00018000..0x00018BFF` | 最多 128 项的 24 字节物理内存图 |
-| `0x00100000..0x03DFFFFF` | Kernel `PT_LOAD` 目标窗口 |
-| `0x03E00000..0x03EFFFFF` | 最大 1 MiB ELF 暂存 |
+| `0x00100000..0x035FFFFF` | Kernel `PT_LOAD` 目标窗口 |
+| `0x03600000..0x03DFFFFF` | 最大 8 MiB ELF 暂存 |
 | `0x03FEF000..0x03FFEFFF` | 早期内核栈保留区 |
 
 BootInfo magic 为 `OSBOOT64`，版本 2 的 13 个字段全部为 64 位。Stage 1 把其地址放入
@@ -1471,7 +1471,7 @@ Shell / user wrapper
 ### 容量与盘面边界
 
 启动盘逻辑长度为 1 GiB，并以稀疏宿主文件保存；boot chain 仍占用低 LBA，
-rootfs 从 LBA 2048 开始固定占用 524288 个 512 字节块，即 256 MiB。盘面
+rootfs 从 LBA 32768 开始固定占用 524288 个 512 字节块，即 256 MiB。盘面
 布局如下：
 
 ```text
@@ -1766,6 +1766,43 @@ first-fit、split 与双向 coalesce。它通过注入的 break operation 增长
 [ADR 0035](adr/0035-anonymous-vma-demand-paging-user-heap.md)，逐步走读见
 [v1.8 学习章](learning/16-v1.8-anonymous-vma-demand-paging.md)，冻结证据见
 [v1.8 发布记录](releases/v1.8.md)。
+
+## v1.9 文件后备与 clean page cache 架构
+
+v1.9 将文件页数据流冻结为：
+
+```text
+FileTable fd --retain--> FileBacking
+                         |
+                         +--> file-backed VMA
+                                  |
+user #PF --> permission/offset ----+
+                                  |
+                 complete readonly page
+                    |                  |
+                 cache hit          cache miss -> ReadAt -> publish
+                    |                  |
+                    +------ PTE + mapping reference
+```
+
+FileBacking 持有 VFS 打开实例或具名内存镜像，句柄由 owner、descriptor 和
+generation 组成。VMA 保存后备、文件 offset 与有效 data length；PTE 只保存
+当前驻留。FilePageCache 的键为完整 FileIdentity 和 page index，entry 保存
+clean frame、映射引用和 LRU generation。
+
+完整只读 ELF/共享文件页可以跨映射共享 cache frame。可写 private、文件尾和
+BSS 使用独立零填充 frame。write/truncate 撤销仍存在地址空间中的旧只读 PTE
+后失效 cache；已经销毁地址空间的 Zombie 不参与扫描。
+
+cache 由外部固定数组提供，容量按 managed frames 缩放到 256..4096，只有
+引用为零的 clean LRU 可以淘汰。该层没有 dirty、writeback 或 writable
+shared，异步持久化保持为后续独立阶段。
+
+详细控制流见
+[v1.9 学习章](learning/17-v1.9-file-backed-vma-lazy-elf-page-cache.md)，
+设计取舍见
+[ADR 0036](adr/0036-file-backed-vma-lazy-elf-clean-page-cache.md)，冻结证据见
+[v1.9 发布记录](releases/v1.9.md)。
 
 ## 模块边界
 

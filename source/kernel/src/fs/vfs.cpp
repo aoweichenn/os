@@ -442,6 +442,8 @@ Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
     information = NodeInformation{
         .mount_identifier = resolved.mount_identifier,
         .superblock_identifier = resolved.vnode.superblock->identifier,
+        .superblock_generation =
+            resolved.vnode.superblock->generation,
         .node_identifier = resolved.vnode.identifier,
         .generation = resolved.vnode.generation,
         .type = resolved.vnode.type,
@@ -556,6 +558,91 @@ Status Vfs::OpenDirectory(const FsContext &context, const uint8_t *const path,
         ++this->statistics_.opened_directory_count;
     }
     return Status::Succeeded;
+}
+
+Status Vfs::RetainOpenFile(const OpenFile &source,
+                           OpenFile &retained_file) noexcept {
+    retained_file = OpenFile{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!source.open || !this->PathIsValid(source.path) ||
+        (source.path.vnode.type != NodeType::RegularFile &&
+         source.path.vnode.type != NodeType::Directory)) {
+        return Status::InvalidHandle;
+    }
+    Superblock *const superblock = source.path.vnode.superblock;
+    const Status open_status = superblock->operations->open(
+        superblock->backend_context, source.path.vnode);
+    if (open_status != Status::Succeeded) {
+        return open_status;
+    }
+    retained_file = source;
+    retained_file.offset_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    return Status::Succeeded;
+}
+
+Status Vfs::StatOpenFile(const OpenFile &open_file,
+                         NodeInformation &information) noexcept {
+    information = NodeInformation{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !this->PathIsValid(open_file.path)) {
+        return Status::InvalidHandle;
+    }
+    BackendNodeInformation backend_information{};
+    const Status stat_status =
+        open_file.path.vnode.superblock->operations->stat(
+            open_file.path.vnode.superblock->backend_context,
+            open_file.path.vnode, backend_information);
+    if (stat_status != Status::Succeeded) {
+        return stat_status;
+    }
+    information = NodeInformation{
+        .mount_identifier = open_file.path.mount_identifier,
+        .superblock_identifier =
+            open_file.path.vnode.superblock->identifier,
+        .superblock_generation =
+            open_file.path.vnode.superblock->generation,
+        .node_identifier = open_file.path.vnode.identifier,
+        .generation = open_file.path.vnode.generation,
+        .type = open_file.path.vnode.type,
+        .size_bytes = backend_information.size_bytes,
+        .allocated_size_bytes = backend_information.allocated_size_bytes,
+        .link_count = backend_information.link_count,
+    };
+    return Status::Succeeded;
+}
+
+Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
+                   uint8_t *const destination,
+                   const uint64_t capacity_bytes,
+                   uint64_t &read_bytes) noexcept {
+    read_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !this->PathIsValid(open_file.path) ||
+        open_file.path.vnode.type != NodeType::RegularFile) {
+        return Status::InvalidHandle;
+    }
+    if (!open_file.readable) {
+        return Status::PermissionDenied;
+    }
+    if (destination == nullptr &&
+        capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const superblock = open_file.path.vnode.superblock;
+    const Status status = superblock->operations->read(
+        superblock->backend_context, open_file.path.vnode, offset_bytes,
+        destination, capacity_bytes, read_bytes);
+    if (status == Status::Succeeded) {
+        SpinLockGuard guard{this->lock_};
+        this->statistics_.bytes_read += read_bytes;
+    }
+    return status;
 }
 
 Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t capacity_bytes,

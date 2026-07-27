@@ -43,7 +43,7 @@ constexpr int64_t OS_USER_SHELL_DIRECTORY_ENTRY_RESULT = 1LL;
 constexpr uint64_t OS_USER_SHELL_WRITE_OPEN_FLAGS = os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG |
                                                     os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
                                                     os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
-constexpr char OS_USER_SHELL_BANNER[] = "\r\nx86-64 OS Lab v1.8\r\n"
+constexpr char OS_USER_SHELL_BANNER[] = "\r\nx86-64 OS Lab v1.9\r\n"
                                         "输入 help 查看可用命令。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";

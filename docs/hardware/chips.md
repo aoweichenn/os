@@ -33,8 +33,8 @@ x86-64 CPU
     ├── 页表：0x10000..0x12FFF
     ├── Kernel 描述符与 BootInfo v2：0x13000..0x14067
     ├── 内存图元数据、fw_cfg 暂存与内存图：0x16000..0x18BFF
-    ├── Kernel ELF 暂存：0x03E00000..0x03EFFFFF
-    ├── Kernel PT_LOAD：0x100000..0x3DFFFFF
+    ├── Kernel ELF 暂存：0x03600000..0x03DFFFFF
+    ├── Kernel PT_LOAD：0x100000..0x35FFFFF
     └── Kernel 初始栈：0x3FEF000..0x3FFEFFF
 ```
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/kernel/memory/physical_frame_allocator.hpp"
+
 #include <stdint.h>
 
 namespace os::kernel {
@@ -10,7 +12,11 @@ inline constexpr uint64_t OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS = 0x000
 inline constexpr uint64_t OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE =
     0x0000000080000000ULL;
 inline constexpr uint64_t OS_KERNEL_USER_ELF_MAXIMUM_LOAD_SEGMENT_COUNT = 8ULL;
-inline constexpr uint64_t OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT = 512ULL;
+inline constexpr uint64_t OS_KERNEL_USER_ELF_MAXIMUM_MAPPED_PAGE_COUNT =
+    (OS_KERNEL_USER_PROGRAM_MAXIMUM_VIRTUAL_ADDRESS_EXCLUSIVE -
+     OS_KERNEL_USER_PROGRAM_MINIMUM_VIRTUAL_ADDRESS) /
+        OS_KERNEL_MEMORY_PAGE_SIZE_BYTES -
+    1ULL;
 
 using UserElfReadOperation = bool (*)(void *context, uint64_t offset_bytes, uint8_t *destination,
                                       uint64_t length_bytes) noexcept;

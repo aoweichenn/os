@@ -3,6 +3,7 @@ import binascii
 from pathlib import Path
 import struct
 
+from .boot_layout import OS_BOOT_LAYOUT_ROOTFS_START_LBA
 from .errors import OsToolError
 from .kernel_elf import parseKernelLoadSegments, validateKernelEntry
 from .stage1_image import (
@@ -23,7 +24,9 @@ OS_KERNEL_IMAGE_FLAGS_NONE = 0
 OS_KERNEL_IMAGE_HEADER_STRUCT_FORMAT = "<8sHHIQQQII"
 OS_KERNEL_IMAGE_UINT32_FORMAT = "<I"
 OS_KERNEL_IMAGE_CORRUPTION_BIT = 0x01
-OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA = 2048
+OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA = (
+    OS_BOOT_LAYOUT_ROOTFS_START_LBA
+)
 OS_KERNEL_IMAGE_AUDIT_PREFIX_SIZE_BYTES = (
     OS_KERNEL_IMAGE_FILE_SYSTEM_START_LBA
     * OS_STAGE1_IMAGE_SECTOR_SIZE_BYTES

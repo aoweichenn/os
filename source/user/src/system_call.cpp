@@ -355,6 +355,15 @@ int64_t MapAnonymousMemory(const uint64_t requested_address, const uint64_t leng
                             requested_address, length_bytes, protection_flags, map_flags);
 }
 
+int64_t MapFileMemory(
+    const os::abi::FileMemoryMapRequest &request) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::MapFileMemory),
+        reinterpret_cast<uint64_t>(&request), sizeof(request),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t UnmapMemory(const uint64_t address, const uint64_t length_bytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::UnmapMemory), address,
                             length_bytes, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);

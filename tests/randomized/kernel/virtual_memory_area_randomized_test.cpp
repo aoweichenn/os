@@ -31,9 +31,12 @@ constexpr uint64_t OS_TEST_VMA_RANDOM_SHIFT_FIRST = 12ULL;
 constexpr uint64_t OS_TEST_VMA_RANDOM_SHIFT_SECOND = 25ULL;
 constexpr uint64_t OS_TEST_VMA_RANDOM_SHIFT_THIRD = 27ULL;
 constexpr uint64_t OS_TEST_VMA_RANDOM_MULTIPLIER = 0x2545F4914F6CDD1DULL;
-constexpr uint64_t OS_TEST_VMA_RANDOM_KIND_COUNT = 4ULL;
+constexpr uint64_t OS_TEST_VMA_RANDOM_KIND_COUNT = 6ULL;
 constexpr uint64_t OS_TEST_VMA_RANDOM_WRITABLE_PERMISSION_MASK = 1ULL;
 constexpr uint64_t OS_TEST_VMA_RANDOM_EXECUTABLE_PERMISSION_MASK = 2ULL;
+constexpr uint64_t OS_TEST_VMA_RANDOM_BACKING_DESCRIPTOR_COUNT = 31ULL;
+constexpr uint64_t OS_TEST_VMA_RANDOM_FIRST_BACKING_DESCRIPTOR = 1ULL;
+constexpr uint64_t OS_TEST_VMA_RANDOM_BACKING_GENERATION = 3ULL;
 
 [[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
     state ^= state >> OS_TEST_VMA_RANDOM_SHIFT_FIRST;
@@ -50,6 +53,10 @@ constexpr uint64_t OS_TEST_VMA_RANDOM_EXECUTABLE_PERMISSION_MASK = 2ULL;
 
 [[nodiscard]] bool AttributesEqual(const os::kernel::VirtualMemoryArea &left,
                                    const os::kernel::VirtualMemoryArea &right) noexcept {
+    if (os::kernel::IsFileBackedVirtualMemoryAreaKind(left.kind) ||
+        os::kernel::IsFileBackedVirtualMemoryAreaKind(right.kind)) {
+        return false;
+    }
     return left.permissions.readable == right.permissions.readable &&
            left.permissions.writable == right.permissions.writable &&
            left.permissions.executable == right.permissions.executable && left.kind == right.kind;
@@ -58,7 +65,35 @@ constexpr uint64_t OS_TEST_VMA_RANDOM_EXECUTABLE_PERMISSION_MASK = 2ULL;
 [[nodiscard]] bool AreasEqual(const os::kernel::VirtualMemoryArea &left,
                               const os::kernel::VirtualMemoryArea &right) noexcept {
     return left.begin_address == right.begin_address && left.end_address == right.end_address &&
-           AttributesEqual(left, right);
+           left.permissions.readable == right.permissions.readable &&
+           left.permissions.writable == right.permissions.writable &&
+           left.permissions.executable == right.permissions.executable &&
+           left.kind == right.kind &&
+           left.backing_descriptor_index == right.backing_descriptor_index &&
+           left.backing_generation == right.backing_generation &&
+           left.backing_file_offset_bytes == right.backing_file_offset_bytes &&
+           left.backing_data_length_bytes == right.backing_data_length_bytes;
+}
+
+void RestrictModelArea(os::kernel::VirtualMemoryArea &area,
+                       const uint64_t new_begin_address,
+                       const uint64_t new_end_address) noexcept {
+    const uint64_t begin_delta_bytes =
+        new_begin_address - area.begin_address;
+    const uint64_t new_length_bytes =
+        new_end_address - new_begin_address;
+    if (os::kernel::IsFileBackedVirtualMemoryAreaKind(area.kind)) {
+        area.backing_file_offset_bytes += begin_delta_bytes;
+        area.backing_data_length_bytes =
+            area.backing_data_length_bytes > begin_delta_bytes
+                ? area.backing_data_length_bytes - begin_delta_bytes
+                : OS_TEST_VMA_RANDOM_EMPTY_VALUE;
+        if (area.backing_data_length_bytes > new_length_bytes) {
+            area.backing_data_length_bytes = new_length_bytes;
+        }
+    }
+    area.begin_address = new_begin_address;
+    area.end_address = new_end_address;
 }
 
 [[nodiscard]] os::kernel::VirtualMemoryAreaStatus
@@ -127,12 +162,14 @@ RemoveModel(std::vector<os::kernel::VirtualMemoryArea> &areas, const uint64_t be
         }
         if (area.begin_address < begin_address) {
             os::kernel::VirtualMemoryArea left_area = area;
-            left_area.end_address = begin_address;
+            RestrictModelArea(left_area, left_area.begin_address,
+                              begin_address);
             updated_areas.push_back(left_area);
         }
         if (end_address < area.end_address) {
             os::kernel::VirtualMemoryArea right_area = area;
-            right_area.begin_address = end_address;
+            RestrictModelArea(right_area, end_address,
+                              right_area.end_address);
             updated_areas.push_back(right_area);
         }
     }
@@ -189,7 +226,7 @@ int main() {
             static_cast<os::kernel::VirtualMemoryAreaKind>(NextRandom(random_state) %
                                                            OS_TEST_VMA_RANDOM_KIND_COUNT);
         const uint64_t permission_bits = NextRandom(random_state);
-        const os::kernel::VirtualMemoryArea area{
+        os::kernel::VirtualMemoryArea area{
             .begin_address = PageAddress(begin_page_index),
             .end_address = PageAddress(end_page_index),
             .permissions =
@@ -203,6 +240,18 @@ int main() {
                 },
             .kind = kind,
         };
+        if (os::kernel::IsFileBackedVirtualMemoryAreaKind(kind)) {
+            area.backing_descriptor_index =
+                NextRandom(random_state) %
+                    OS_TEST_VMA_RANDOM_BACKING_DESCRIPTOR_COUNT +
+                OS_TEST_VMA_RANDOM_FIRST_BACKING_DESCRIPTOR;
+            area.backing_generation =
+                OS_TEST_VMA_RANDOM_BACKING_GENERATION;
+            area.backing_file_offset_bytes =
+                begin_page_index * OS_TEST_VMA_RANDOM_PAGE_SIZE_BYTES;
+            area.backing_data_length_bytes =
+                length_page_count * OS_TEST_VMA_RANDOM_PAGE_SIZE_BYTES;
+        }
 
         os::kernel::VirtualMemoryAreaStatus expected_status =
             os::kernel::VirtualMemoryAreaStatus::Corrupt;

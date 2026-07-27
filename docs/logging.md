@@ -921,3 +921,36 @@ capacity 与 active 是精确协议；peak/acquire/release 必须非零，并由
 `[QEMU][T+...ms]`。64 MiB bootstrap、256 MiB functional 和 64 GiB capacity
 均有内部阶段截止与外层 CTest 超时；采样日志不能代替超时，也不能因等待某个
 非必然的精确 fault 次数让 QEMU 留在后台。
+
+## v1.9 文件页故障与缓存日志
+
+文件页 fault、cache 命中、失效和阻塞描述符读取同样采用二次幂采样：
+
+```text
+[OS][KERNEL][VM] FILE_FAULT_COUNT=0x...
+[OS][KERNEL][VM] PAGE_CACHE_HIT_COUNT=0x...
+[OS][KERNEL][VM] PAGE_CACHE_INVALIDATION_COUNT=0x...
+[OS][KERNEL][IO] DESCRIPTOR_READ_BLOCK_COUNT=0x...
+```
+
+失效日志必须同时满足“本次调用前后累计值变化”和“新值是二次幂”。用户层
+4096 字节写会被拆成多个 256 字节调用，不能因为累计值仍为 1 而重复打印相同
+行。descriptor block 的第一条标记也是 QMP 输入注入门槛，证明 Shell 已实际
+阻塞在输入描述符上。
+
+文件映射完整语义只打印一次：
+
+```text
+[OS][USER][VM] FILE_MAPPING_CACHE_VERIFIED
+```
+
+探针失败使用 `[OS][USER][VM][FAIL] <stage>`，正常与持久化 QEMU 都禁止出现
+该前缀。无法继续进程退出时的冷路径诊断使用：
+
+```text
+[OS][KERNEL][FATAL] EXIT_PROCESS_ID=0x...
+[OS][KERNEL][FATAL] PROCESS_TREE_STATUS=0x...
+```
+
+正常运行禁止任何 `[OS][KERNEL][FATAL]`。这些诊断曾定位到“地址空间已销毁、
+结果槽仍存活”的 Zombie 失效扫描错误；修复后不会进入成功日志。

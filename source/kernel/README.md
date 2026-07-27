@@ -143,3 +143,13 @@ VMA 容器不访问 CR2、页表或 frame allocator；它保持宿主可链接�
 解析只进入 `user_memory`，异常入口仍归属 `arch/`，当前 Process 与退出/
 exec 生命周期仍归属 `process/`。这种依赖方向防止区间算法、x86 fault 机制
 和 Process 调度重新堆进一个不可测试文件。
+
+v1.9 继续复用同一模块边界：
+
+- `memory/file_page_cache.*` 管理有界 clean 页、引用与 LRU；
+- `user/file_backing.*` 管理 VFS/内存来源和稳定 generation；
+- `memory/virtual_memory_area.*` 保存文件区间意图；
+- `user/user_memory.*` 组合 fault、PTE、cache、失效与回收；
+- `process/process_runtime.*` 只负责 fd/进程生命周期与系统调用编排。
+
+文件系统代码不直接建立 PTE，页缓存也不解析 fd；跨模块依赖保持单向。

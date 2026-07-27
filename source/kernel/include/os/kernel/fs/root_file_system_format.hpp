@@ -5,7 +5,7 @@
 namespace os::kernel::fs {
 
 inline constexpr uint64_t OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES = 512ULL;
-inline constexpr uint64_t OS_KERNEL_ROOTFS_START_LBA = 2048ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_START_LBA = 32768ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT = 524288ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_REGION_SIZE_BYTES =
     OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT * OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;

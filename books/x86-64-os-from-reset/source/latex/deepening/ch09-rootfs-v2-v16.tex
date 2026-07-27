@@ -105,7 +105,7 @@ QEMU IDE 控制器向来宾提供完整 LBA 空间；来宾看不见宿主是否
 
 \subsection{256 MiB rootfs 的精确所有权图}
 
-rootfs 从 LBA 2048 开始，固定包含 524288 个 512 字节块，即
+当前 rootfs 从 LBA 32768 开始，固定包含 524288 个 512 字节块，即
 \(2^{28}\) 字节。区域如下：
 
 \begin{longtable}{L{0.20\textwidth}L{0.13\textwidth}L{0.24\textwidth}L{0.31\textwidth}}
@@ -133,7 +133,7 @@ rootfs 从 LBA 2048 开始，固定包含 524288 个 512 字节块，即
   \draw[os arrow] (itab) -- (dbm);
   \draw[os arrow] (dbm) -- (data);
 \end{pdfdiagram}
-\diagramnote{图中块号从 rootfs 起点重新计数；真正 ATA LBA 还要统一加 2048。}
+\diagramnote{图中块号从 rootfs 起点重新计数；真正 ATA LBA 还要统一加 32768。}
 
 superblock 会把每段位置和数量写盘，但 Kernel 仍要求它们精确等于冻结布局。
 “自描述”让 inspector 能解释镜像、迁移器能识别版本；“严格匹配”则防止一项

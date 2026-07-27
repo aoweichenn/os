@@ -560,6 +560,8 @@ VMA 与 heap 各自通过 100000 步固定种子参考模型；128 轮组合测�
 
 在匿名 VM 稳定后加入文件来源、按需 ELF 与可回收 clean cache。
 
+**状态：已完成。**
+
 **产出**
 
 - file-backed VMA、`MAP_PRIVATE` 和只读 `MAP_SHARED`；
@@ -576,6 +578,23 @@ VMA 与 heap 各自通过 100000 步固定种子参考模型；128 轮组合测�
 - truncate/write 后旧映射不可继续观察陈旧页；
 - `MAP_PRIVATE` 修改不回写文件，只读 `MAP_SHARED` 观察一致 clean 页；
 - writable `MAP_SHARED` 与 `msync` 明确返回不支持。
+
+**已冻结证据**
+
+- VMA、FileBacking、FilePageCache 与 PTE 分别保存地址政策、稳定来源、
+  clean 内容和当前驻留，fd 关闭不破坏映射；
+- ELF reader 仍完整两遍校验，但 `PT_LOAD` 只建立文件 VMA，入口及后续页面
+  由真实用户 fault 装入；
+- cache 以完整文件 generation 身份加 page index 唯一标识，容量按内存缩放
+  为 256..4096 页，零引用 clean LRU 可丢弃；
+- write/truncate 撤销旧只读 PTE 并失效 cache，private 写不回写；
+- 单元、共享页集成、VMA/cache 十万步随机模型和 64 MiB/256 MiB/64 GiB
+  QEMU 全部闭环；
+- 启动 staging 扩为 8 MiB，rootfs 移到 LBA 32768，并由跨语言布局契约阻止
+  再次不同步。
+
+详细证据见 [v1.9 发布记录](releases/v1.9.md) 与
+[ADR 0036](adr/0036-file-backed-vma-lazy-elf-clean-page-cache.md)。
 
 ### v1.10 fork 与写时复制
 
