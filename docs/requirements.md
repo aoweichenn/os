@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.7 完成基线
+## v1.8 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -112,9 +112,11 @@ v1.3 已完成 CpuLocal、处理器能力冻结和原生系统调用安全边界
 VFS、每 Process FsContext、memfs 与 legacy 文件系统适配；v1.6 已完成
 rootfs v2、完整命名空间修改、稀疏大文件、独立 mkfs/fsck 和损坏拒绝。
 v1.7 又完成 PID1、父子进程树、Zombie/reparent、磁盘 ELF spawn/exec/wait、
-128 KiB `argv/envp` 和候选映像原子提交。下一阶段为 v1.8 匿名 VMA、
-用户栈增长和自研用户 heap。Stage 1 在自研长模式
-环境中通过 ATA PIO 读取
+128 KiB `argv/envp` 和候选映像原子提交。v1.8 已完成非重叠 VMA、
+匿名 `mmap/munmap`、按需零页、program break、8 MiB 受控用户栈、
+自研用户 heap，以及 unmap/exec/exit 后的数据页、空页表分支与 VMA
+描述符回收。下一阶段为 v1.9 文件页故障与有界 clean page cache。
+Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并
 清零 BSS。Stage 1 通过 `fw_cfg` 端口发现 QEMU PC 提供的 `etc/e820`，
@@ -296,3 +298,37 @@ legacy 适配器必须保留旧磁盘格式、基础创建、读取、同步与�
 FileTable/KernelObject 锁在进入 FileDescription、VFS 和后端前释放。memfs
 等持久挂载资源必须由 VFS 精确登记，并与 Process 最终资源快照分账；扣除
 持久资源后任何 frame、KVA、heap、fd 或对象残留仍必须使整机验收失败。
+
+## v1.8 虚拟内存冻结要求
+
+- VMA 必须使用页对齐半开区间，按地址严格排序且互不重叠；相同 kind 与权限
+  的相邻区域必须合并。
+- 全局 VMA 描述符容量为 8192，单 Process hard limit 为 4096；池耗尽与
+  单进程上限必须返回可区分错误。
+- 中段 unmap 所需 split 描述符必须在修改前取得；失败时原 VMA 图逐字段不变。
+- 匿名窗口固定为 `[0x60000000, 0x80000000)`；自动映射使用 first-fit，
+  fixed 映射只接受页对齐空洞并不得覆盖现有区域。
+- map 与 break growth 只建立 VMA，不提前分配数据 frame；首次合法读必须
+  得到全零页，首次写后的内容在映射生命周期内保持。
+- protection 只接受 `NONE`、`R`、`R|W`、`R|X`，未知位、缺少 read 的
+  write/execute 和 W+X 必须拒绝。
+- 用户 stack 必须预留 8 MiB、按需连续向低地址提交；只有紧邻 committed
+  bottom 且与保存用户 RSP 邻近的页 fault 才可增长。栈底下一页永久没有
+  VMA。
+- page-fault dispatcher 必须先区分 U/S、RSVD、present、write 与 instruction
+  位，再查询 VMA；权限 fault、guard、空洞和非法栈跳跃不得创建页面。
+- unmap 与 break shrink 必须释放实际驻留 frame，并按页表根所有权回收空
+  PT/PD/私有 PDPT；未触及 reservation 不产生虚构释放。
+- Kernel 用户复制只可按需解析 Anonymous 与 ProgramBreak，不得在没有用户
+  异常现场时伪造 stack growth。
+- 用户 ABI 必须以固定宽度系统调用 39..42 提供 map、unmap、break 与
+  112 字节统计；已有编号和错误值不得重排。
+- `UserHeap` 必须是 freestanding C++20 头源分离组件，支持有界增长、
+  16 字节对齐、first-fit、split、前后 coalesce、重复/外部指针拒绝和完整
+  结构校验，不得调用 libc 或宿主 allocator。
+- VMA 与 UserHeap 纯逻辑必须各有单元和 100000 步固定种子随机参考模型；
+  页表/VMA 必须有重复生命周期集成测试；真实 QEMU 必须分别验证成功 fault、
+  guard fault 与 protection fault。
+- 64 MiB、256 MiB、64 GiB 三档必须运行同一 v1.8 PID1 工作负载；最终 VMA
+  active 为零、free 等于 capacity、acquire/release 增量相同，并与既有
+  frame、buddy、heap、KVA、stack、fd、object 和 VFS 守恒同时成立。

@@ -47,6 +47,10 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_EXIT_PREFIX[] = "[OS][KERNEL][PROC] EXI
 constexpr char OS_KERNEL_PROCESS_RUNTIME_REPARENT_PREFIX[] =
     "[OS][KERNEL][PROC] REPARENTED_CHILDREN=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_WAIT_PREFIX[] = "[OS][KERNEL][PROC] WAIT_REAPED_PID=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_VM_DEMAND_FAULT_PREFIX[] =
+    "[OS][KERNEL][VM] DEMAND_FAULT_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_VM_STACK_GROWTH_PREFIX[] =
+    "[OS][KERNEL][VM] STACK_GROWTH_COUNT=";
 
 [[nodiscard]] ProcessIoStatus
 MapFileDescriptionStatus(const FileDescriptionStatus status) noexcept {
@@ -194,6 +198,8 @@ KernelVirtualAddressAllocatorStatistics virtual_addresses_before_processes;
 KernelVirtualAddressAllocatorStatistics virtual_addresses_after_processes;
 KernelStackManagerStatistics kernel_stacks_before_processes;
 KernelStackManagerStatistics kernel_stacks_after_processes;
+VirtualMemoryAreaPoolStatistics virtual_memory_areas_before_processes;
+VirtualMemoryAreaPoolStatistics virtual_memory_areas_after_processes;
 ResourceSnapshot resource_snapshot_before_processes;
 ResourceSnapshot resource_snapshot_after_processes;
 ResourceSnapshotDifference resource_snapshot_difference;
@@ -390,15 +396,23 @@ void ResetRuntimeStorage() noexcept {
     }
     const uint64_t kernel_stack_top = KernelStackTopAddress(stack);
     if (!SetPrivilegeStackPointer0(kernel_stack_top)) {
+        SetActiveUserAddressSpace(nullptr);
         ActivateKernelPageTable();
         return false;
     }
     if (GetCpuLocal().SetCurrentThread(thread_index, kernel_stack_top) !=
         CpuLocalStatus::Succeeded) {
+        SetActiveUserAddressSpace(nullptr);
         ActivateKernelPageTable();
         return false;
     }
-    return RestoreFxState(runtime_thread.extended_state) == ExtendedStateStatus::Succeeded;
+    if (RestoreFxState(runtime_thread.extended_state) != ExtendedStateStatus::Succeeded) {
+        SetActiveUserAddressSpace(nullptr);
+        ActivateKernelPageTable();
+        return false;
+    }
+    SetActiveUserAddressSpace(&process.address_space);
+    return true;
 }
 
 [[nodiscard]] WaitQueue *SelectWaitQueue(const WaitCondition wait_condition) noexcept {
@@ -631,23 +645,22 @@ PlanUserProgramArguments(const os::abi::ProcessLaunchRequest &request) noexcept 
     return ProcessRuntimeStatus::Succeeded;
 }
 
-[[nodiscard]] bool WriteCandidateBytes(const UserAddressSpace &address_space,
+[[nodiscard]] bool WriteCandidateBytes(UserAddressSpace &address_space,
                                        const uint64_t destination_address,
                                        const uint8_t *const source,
                                        const uint64_t length_bytes) noexcept {
-    return CopyToUserAddressSpace(address_space.root_physical_address, destination_address,
-                                  length_bytes, source,
+    return CopyToUserAddressSpace(address_space, destination_address, length_bytes, source,
                                   length_bytes) == UserMemoryCopyStatus::Succeeded;
 }
 
-[[nodiscard]] bool WriteCandidateValue(const UserAddressSpace &address_space,
+[[nodiscard]] bool WriteCandidateValue(UserAddressSpace &address_space,
                                        const uint64_t destination_address,
                                        const uint64_t value) noexcept {
     return WriteCandidateBytes(address_space, destination_address,
                                reinterpret_cast<const uint8_t *>(&value), sizeof(value));
 }
 
-[[nodiscard]] bool WriteProgramArgumentMetadata(const UserAddressSpace &address_space) noexcept {
+[[nodiscard]] bool WriteProgramArgumentMetadata(UserAddressSpace &address_space) noexcept {
     if (!program_argument_plan.IsFinalized() ||
         program_argument_plan.Validate() != ProgramArgumentStatus::Succeeded) {
         return false;
@@ -690,7 +703,7 @@ PlanUserProgramArguments(const os::abi::ProcessLaunchRequest &request) noexcept 
                                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
 }
 
-[[nodiscard]] bool CopyUserStringToCandidate(const UserAddressSpace &address_space,
+[[nodiscard]] bool CopyUserStringToCandidate(UserAddressSpace &address_space,
                                              const os::abi::ProcessString &string,
                                              const uint64_t destination_address) noexcept {
     uint8_t transfer_buffer[OS_KERNEL_PROCESS_RUNTIME_ARGUMENT_COPY_CHUNK_SIZE_BYTES]{};
@@ -718,7 +731,9 @@ PlanUserProgramArguments(const os::abi::ProcessLaunchRequest &request) noexcept 
                                                 UserAddressSpace &address_space) noexcept {
     if (program_argument_plan.Finalize(OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS,
                                        OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) !=
-        ProgramArgumentStatus::Succeeded) {
+            ProgramArgumentStatus::Succeeded ||
+        PrepareUserStack(address_space, program_argument_plan.Layout().stack_pointer) !=
+            UserAddressSpaceStatus::Succeeded) {
         return false;
     }
     for (uint64_t argument_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -759,7 +774,9 @@ PlanUserProgramArguments(const os::abi::ProcessLaunchRequest &request) noexcept 
                                                   UserAddressSpace &address_space) noexcept {
     if (program_argument_plan.Finalize(OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS,
                                        OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) !=
-        ProgramArgumentStatus::Succeeded) {
+            ProgramArgumentStatus::Succeeded ||
+        PrepareUserStack(address_space, program_argument_plan.Layout().stack_pointer) !=
+            UserAddressSpaceStatus::Succeeded) {
         return false;
     }
     for (uint64_t argument_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -1385,6 +1402,7 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
         HaltProcessor();
     }
 
+    SetActiveUserAddressSpace(nullptr);
     ActivateKernelPageTable();
     if (DestroyUserAddressSpace(process.address_space) != UserAddressSpaceStatus::Succeeded) {
         HaltProcessor();
@@ -1426,6 +1444,9 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     if (!GetNativeSystemCallConfiguration().initialized) {
         return ProcessRuntimeStatus::NativeSystemCallFailure;
     }
+    if (InitializeUserVirtualMemory() != UserAddressSpaceStatus::Succeeded) {
+        return ProcessRuntimeStatus::AddressSpaceFailure;
+    }
     process_runtime_limits =
         SelectProcessRuntimeLimits(GetKernelMemoryStatistics().managed_usable_memory_bytes);
     if (!RunProcessThreadCapacitySelfTest(process_runtime_limits)) {
@@ -1450,12 +1471,18 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     virtual_addresses_after_processes = KernelVirtualAddressAllocatorStatistics{};
     kernel_stacks_before_processes = GetKernelStackManager().Statistics();
     kernel_stacks_after_processes = KernelStackManagerStatistics{};
+    virtual_memory_areas_before_processes = GetUserVirtualMemoryPoolStatistics();
+    virtual_memory_areas_after_processes = VirtualMemoryAreaPoolStatistics{};
     resource_snapshot_before_processes = ResourceSnapshot{};
     resource_snapshot_after_processes = ResourceSnapshot{};
     resource_snapshot_difference = ResourceSnapshotDifference{};
     if (GetKernelStackManager().Validate() != KernelStackManagerStatus::Succeeded ||
         kernel_stacks_before_processes.active_stack_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        virtual_memory_areas_before_processes.active_descriptor_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        virtual_memory_areas_before_processes.free_descriptor_count !=
+            virtual_memory_areas_before_processes.capacity ||
         GetKernelResourceSnapshot(ResourceSnapshotSupplementalCounts{},
                                   resource_snapshot_before_processes) !=
             ResourceSnapshotStatus::Succeeded) {
@@ -1706,12 +1733,14 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
 
     UserAddressSpace previous_address_space = process.address_space;
     const uint64_t previous_entry_vector = frame.vector;
+    SetActiveUserAddressSpace(nullptr);
     ActivateKernelPageTable();
     if (!ActivateUserPageTable(candidate_address_space.root_physical_address)) {
         if (!ActivateUserPageTable(previous_address_space.root_physical_address) ||
             DestroyUserAddressSpace(candidate_address_space) != UserAddressSpaceStatus::Succeeded) {
             HaltProcessor();
         }
+        SetActiveUserAddressSpace(&process.address_space);
         return ProcessRuntimeStatus::PageTableActivationFailure;
     }
     if (!ActivateUserPageTable(previous_address_space.root_physical_address)) {
@@ -1729,19 +1758,22 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
             DestroyUserAddressSpace(candidate_address_space) != UserAddressSpaceStatus::Succeeded) {
             HaltProcessor();
         }
+        SetActiveUserAddressSpace(&process.address_space);
         return ProcessRuntimeStatus::SchedulerFailure;
     }
 
     process.address_space = candidate_address_space;
+    candidate_address_space = UserAddressSpace{};
     process.result.selection = UserProgramSelection::DiskExecutable;
-    process.result.root_physical_address = candidate_address_space.root_physical_address;
-    process.result.mapped_page_count = candidate_address_space.mapped_page_count;
+    process.result.root_physical_address = process.address_space.root_physical_address;
+    process.result.mapped_page_count = process.address_space.mapped_page_count;
     uint64_t closed_descriptor_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     if (process.file_table.CloseOnExec(closed_descriptor_count) != FileTableStatus::Succeeded ||
         DestroyUserAddressSpace(previous_address_space) != UserAddressSpaceStatus::Succeeded ||
-        !ActivateUserPageTable(candidate_address_space.root_physical_address)) {
+        !ActivateUserPageTable(process.address_space.root_physical_address)) {
         HaltProcessor();
     }
+    SetActiveUserAddressSpace(&process.address_space);
 
     UserContext &context = AsUserContext(frame);
     context = UserContext{};
@@ -1750,7 +1782,7 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
     context.common.register_rdx = program_argument_plan.Layout().environment_vector_address;
     context.common.vector = previous_entry_vector;
     context.common.error_code = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    context.common.instruction_pointer = candidate_address_space.entry_virtual_address;
+    context.common.instruction_pointer = process.address_space.entry_virtual_address;
     context.common.code_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR);
     context.common.flags = OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS;
     context.stack_pointer = program_argument_plan.Layout().stack_pointer;
@@ -1857,10 +1889,25 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
     frames_after_processes = GetPhysicalFrameAllocatorStatistics();
     virtual_addresses_after_processes = GetKernelVirtualAddressAllocator().Statistics();
     kernel_stacks_after_processes = GetKernelStackManager().Statistics();
+    virtual_memory_areas_after_processes = GetUserVirtualMemoryPoolStatistics();
     if (GetKernelStackManager().Validate() != KernelStackManagerStatus::Succeeded ||
-        kernel_stacks_after_processes.active_stack_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        kernel_stacks_after_processes.active_stack_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        virtual_memory_areas_after_processes.capacity !=
+            virtual_memory_areas_before_processes.capacity ||
+        virtual_memory_areas_after_processes.active_descriptor_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        virtual_memory_areas_after_processes.free_descriptor_count !=
+            virtual_memory_areas_after_processes.capacity ||
+        virtual_memory_areas_after_processes.successful_acquire_count <
+            virtual_memory_areas_before_processes.successful_acquire_count ||
+        virtual_memory_areas_after_processes.release_count <
+            virtual_memory_areas_before_processes.release_count ||
+        virtual_memory_areas_after_processes.successful_acquire_count -
+                virtual_memory_areas_before_processes.successful_acquire_count !=
+            virtual_memory_areas_after_processes.release_count -
+                virtual_memory_areas_before_processes.release_count) {
         RestoreInterrupts(interrupts_were_enabled);
-        return ProcessRuntimeStatus::KernelStackFailure;
+        return ProcessRuntimeStatus::ResourceLeakDetected;
     }
     const ThreadSchedulerStatistics final_scheduler_statistics = thread_scheduler.Statistics();
     fs::ResourceUsage vfs_resource_usage{};
@@ -1910,6 +1957,8 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .virtual_addresses_after_processes = virtual_addresses_after_processes,
         .kernel_stacks_before_processes = kernel_stacks_before_processes,
         .kernel_stacks_after_processes = kernel_stacks_after_processes,
+        .virtual_memory_areas_before_processes = virtual_memory_areas_before_processes,
+        .virtual_memory_areas_after_processes = virtual_memory_areas_after_processes,
         .resource_snapshot_before_processes = resource_snapshot_before_processes,
         .resource_snapshot_after_processes = resource_snapshot_after_processes,
         .resource_snapshot_difference = resource_snapshot_difference,
@@ -1969,6 +2018,53 @@ UserProgramSelection CurrentProcessSelection() noexcept {
         HaltProcessor();
     }
     return CurrentRuntimeProcess().result.selection;
+}
+
+UserVirtualMemoryStatus MapCurrentProcessAnonymousMemory(const uint64_t requested_address,
+                                                         const uint64_t length_bytes,
+                                                         const uint64_t protection_flags,
+                                                         const uint64_t map_flags,
+                                                         uint64_t &mapped_address) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const UserVirtualMemoryStatus status =
+        MapAnonymousMemory(process.address_space, requested_address, length_bytes, protection_flags,
+                           map_flags, mapped_address);
+    process.result.mapped_page_count = process.address_space.mapped_page_count;
+    return status;
+}
+
+UserVirtualMemoryStatus UnmapCurrentProcessAnonymousMemory(const uint64_t address,
+                                                           const uint64_t length_bytes) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const UserVirtualMemoryStatus status =
+        UnmapAnonymousMemory(process.address_space, address, length_bytes);
+    process.result.mapped_page_count = process.address_space.mapped_page_count;
+    return status;
+}
+
+UserVirtualMemoryStatus SetCurrentProcessProgramBreak(const uint64_t requested_address,
+                                                      uint64_t &program_break_address) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const UserVirtualMemoryStatus status =
+        SetProgramBreak(process.address_space, requested_address, program_break_address);
+    process.result.mapped_page_count = process.address_space.mapped_page_count;
+    return status;
+}
+
+os::abi::VirtualMemoryStatistics GetCurrentProcessVirtualMemoryStatistics() noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return os::abi::VirtualMemoryStatistics{};
+    }
+    return GetUserVirtualMemoryStatistics(CurrentRuntimeProcess().address_space);
 }
 
 void RecordCurrentProcessSystemCall() noexcept {
@@ -2550,6 +2646,7 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame, const WaitConditi
         const uint64_t swap_gs_required = GetCpuLocal().NativeSystemCallActive()
                                               ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
                                               : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        SetActiveUserAddressSpace(nullptr);
         ActivateKernelPageTable();
         if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
             HaltProcessor();
@@ -2622,6 +2719,40 @@ bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept {
         return false;
     }
     return CurrentFrameIsValid(thread_scheduler.CurrentThreadIndex(), frame);
+}
+
+bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_address) noexcept {
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    if (!process_scheduling_active || !CurrentFrameIsValid(thread_index, frame)) {
+        return false;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const uint64_t previous_stack_growth_count =
+        process.address_space.stack_growth_page_fault_count;
+    const UserPageFaultStatus status = HandleUserPageFault(
+        process.address_space, fault_address, frame.error_code, AsUserContext(frame).stack_pointer);
+    if (status != UserPageFaultStatus::Handled) {
+        return false;
+    }
+    process.result.mapped_page_count = process.address_space.mapped_page_count;
+
+    // 只在 1、2、4、8……次故障打印，既保留增长轨迹，也避免大堆触页冲刷串口。
+    const uint64_t demand_fault_count = process.address_space.demand_page_fault_count;
+    if ((demand_fault_count & (demand_fault_count - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT)) ==
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_VM_DEMAND_FAULT_PREFIX,
+                                 demand_fault_count);
+    }
+    if (process.address_space.stack_growth_page_fault_count != previous_stack_growth_count) {
+        const uint64_t stack_growth_count = process.address_space.stack_growth_page_fault_count;
+        if ((stack_growth_count &
+             (stack_growth_count - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT)) ==
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_VM_STACK_GROWTH_PREFIX,
+                                     stack_growth_count);
+        }
+    }
+    return true;
 }
 
 ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,

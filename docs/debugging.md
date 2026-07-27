@@ -565,9 +565,9 @@ physical frames          四个非零、页对齐、互不重复的 order-0 帧
 函数必须失败而非 unmap。`OsKernelEnterScheduledProcess` 返回后 CR3 必须是
 永久内核根；否则即使当前 RSP 安全，也可能在进程独占页表已释放后继续访问。
 
-正常 v1.7 八进程结束摘要应为 active=0；相对进程启动前的
-creations/destructions 增量均为 8，peak-active 至少为 8、
-peak-mapped 至少为 32，并出现
+正常 v1.8 十一个进程生命周期结束摘要应为 active=0；相对进程启动前的
+creations/destructions 增量均为 11；并发峰值由内存档位的 Process 容量
+约束，peak-mapped 必须与每个活动栈四页的几何一致，并出现
 `KERNEL_STACK_RESOURCES_RECLAIMED`。若创建/销毁相等但页帧或 KVA 基线不同，
 分别检查数据页清理和区间精确释放；若活动栈不为零，检查无 Ready 的 idle
 返回和最终完成路径是否都调用了安全点。用户 `#UD`、用户 `#PF` 镜像各有
@@ -1346,3 +1346,156 @@ pgrep -a qemu-system-x86_64
 ```
 
 正常完成后不应留下本项目 QEMU 进程。
+
+## v1.8：VMA、匿名页故障、栈增长与 UserHeap
+
+### `mmap` 成功但第一次触页立刻终止
+
+先读取 ProcessRuntime 记录的 vector、error code 和 CR2。合法匿名首次读的
+关键事实应为：
+
+```text
+vector = 14
+error.P = 0
+error.U/S = 1
+error.W/R = 0
+CR2 page belongs to Anonymous VMA
+```
+
+在 `HandleUserPageFault` 断点依次检查：
+
+1. `FindContaining(AlignDown(CR2))` 是否找到预期 VMA；
+2. VMA kind 是否为 `Anonymous`，权限是否包含 read；
+3. `AllocateAndMapUserPage` 是否取得 frame 和所需页表页；
+4. 新 PTE 是否同时具有 P、U/S 与正确 RW/NX；
+5. `ZeroPhysicalPage` 是否通过 direct-map 得到非零虚拟地址；
+6. 返回前 `mapped_page_count` 与 `demand_page_fault_count` 是否各增加一。
+
+若 error.P=1，不要把它改成 demand fault。它是已有 PTE 的权限问题，应检查
+用户请求权限和 PTE 推导。
+
+### 预留匿名范围后物理页立刻减少很多
+
+`MapAnonymousMemory` 的成功路径只能执行 gap 查找与 VMA `Insert`，不应调用
+frame allocator。比较调用前后的 VM 统计：
+
+```text
+anonymous_page_count increases
+virtual_page_count increases
+resident_page_count unchanged
+```
+
+若 resident 增加，搜索 map 路径中是否错误调用 `MapDemandPage`。若只是全局
+free frame 减少，确认变化不是同时发生的 Process/KernelStack 创建；用
+`os_kernel_user_virtual_memory_lifecycle_integration_tests` 隔离 VMA 与页表。
+
+### 中段 `munmap` 后 VMA 图损坏
+
+从一个区域中间删除需要额外描述符。`VirtualMemoryMap::Remove` 必须先完成
+kind 预检并 Acquire split descriptor，再修改原节点。检查：
+
+- pool active 是否在 split 后净增一；
+- 左区域 end 是否等于 remove begin；
+- 右区域 begin 是否等于 remove end；
+- previous/next 与 owner identifier 是否一致；
+- `Validate()` 是否报告第一个结构错误。
+
+元数据耗尽时旧区域必须完全不变。直接运行：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^os_kernel_virtual_memory_area_unit_tests$' \
+  --output-on-failure
+```
+
+随机模型失败会报告固定种子和迭代；不要通过增加描述符容量掩盖 split 事务
+次序错误。
+
+### unmap 后 resident 恢复但 frame 基线仍不一致
+
+先区分数据 frame 和页表 frame。`ReleaseUserPage` 会返回
+`reclaimed_table_frame_count`；相邻用户页通常共享 PT/PD，删除一页不保证
+立即回收所有中间表。检查：
+
+1. 每个实际 PTE 的数据 frame 是否释放一次；
+2. not-present reservation 是否被错误当成已分配 frame；
+3. 最后一个叶项清除后 PT 是否为空；
+4. 进程私有 PD/PDPT 是否按所有权回收；
+5. 共享 Kernel PDPT 是否被错误释放；
+6. `page_table_reclaimed_frame_count` 是否只累计真实返回值。
+
+128 轮组合用例必须同时恢复 allocator baseline 与 descriptor baseline：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^os_kernel_user_virtual_memory_lifecycle_integration_tests$' \
+  --output-on-failure
+```
+
+### 正常递归却被判为非法栈增长
+
+v1.8 栈不是“VMA 内任意地址都可出现”。检查 fault page：
+
+```text
+fault_page + 4096 == stack_committed_bottom
+fault_page >= stack_bottom
+fault_address <= saved_user_rsp + 4096
+saved_user_rsp <= fault_address + 64 KiB
+```
+
+参数页由 `PrepareUserStack` 在用户入口前预提交；入口后才由 `#PF` 降低
+committed bottom。若一开始 committed bottom 仍等于 stack top，检查参数
+布局最低地址是否传入准备函数。若一次跨过多页，检查编译器生成的栈探测行为
+和测试局部块尺寸；不要放宽为“整个 8 MiB 都合法”。
+
+永久 guard 位于 stack VMA 底部再下一页，必须让 `FindContaining` 返回
+NotMapped。若 guard probe 被恢复，说明栈 VMA begin 错误包含了 guard。
+
+### 只读匿名页写入没有产生 protection fault
+
+第一次读会建立 U/S、R、NX PTE；随后写应得到 error.P=1、W/R=1、U/S=1。
+检查 `DecodeProtectionFlags` 是否把用户 write 请求错误默认打开，以及
+`AllocateAndMapUserPage` 的 writable 参数是否只来自 VMA。
+
+Kernel 不允许为 present fault 再建一张可写页。PID1 只有在 probe 的
+termination reason 是 Exception 且 vector 为 14 时才输出
+`VM_FAULT_POLICIES_VERIFIED`。
+
+### UserHeap 随机测试报告载荷变化
+
+优先检查最近一次 split 或 coalesce：
+
+- split 后新 header 是否覆盖旧 payload；
+- remainder 是否至少包含 64 字节 header 与 16 字节 payload；
+- next physical block 的 `previous_block_offset` 是否更新；
+- 合并前是否从 free list 删除将消失的节点；
+- allocation 的 `requested_size_bytes` 与内部 aligned capacity 是否混用；
+- grow 后最后一个 free block 是否直接扩大而没有重复插链。
+
+固定种子宿主测试可以快速复现：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^(os_user_heap_unit_tests|os_user_heap_randomized_tests)$' \
+  --output-on-failure
+```
+
+若只在 QEMU 失败，再检查 `SetProgramBreak` 返回值是否等于请求地址，以及
+break 页首次写是否进入相同匿名 fault 路径。
+
+### QEMU 已到 READY，但 runner 报 demand 日志次数错误
+
+demand 与 stack 日志按每 Process 的二次幂累计采样，同一整机中可能出现多行。
+它们属于最小数值断言，不属于精确 multiplicity。一次性用户 marker 与最终
+VMA 汇总才使用精确次数。
+
+若修改 runner 后卡住，先单独执行三个有界配置：
+
+```bash
+ctest --test-dir build/developer -R '^os_qemu_bootstrap_smoke$' --output-on-failure
+ctest --test-dir build/developer -R '^os_qemu_functional_smoke$' --output-on-failure
+ctest --test-dir build/developer -R '^os_qemu_stage1_load_success$' --output-on-failure
+```
+
+失败后确认 `pgrep -a qemu-system-x86_64` 没有残留。工具应在总截止或静默截止
+到达后 terminate 并 wait，不能通过无限延长 timeout 隐藏页故障循环。

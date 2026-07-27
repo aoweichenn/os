@@ -36,6 +36,12 @@ SECTIONS
     {
         os_kernel_writable_data_start = .;
         *(.data .data.*)
+        /*
+         * freestanding 启动当前不执行初始化表，但部分显式 Initialize 的全局对象仍会
+         * 生成条目。必须把它放在 NOLOAD BSS 之前；若让链接器作为 orphan section
+         * 放到 BSS 后面，ELF 会为整段 BSS 生成文件填充，打包体积随静态池虚增。
+         */
+        KEEP(*(.init_array .init_array.*))
     } :data
 
     .bss ALIGN(OS_KERNEL_PAGE_SIZE_BYTES) (NOLOAD) :

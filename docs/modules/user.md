@@ -4,14 +4,15 @@
 
 `source/abi` 保存内核与用户态共同依赖的稳定数值契约；它不能依赖 Kernel 或
 User。`source/user` 保存 Ring 3 可执行程序和最小系统调用包装；它是
-freestanding 目标，不拥有标准库、堆、线程局部存储或宿主系统调用。
+freestanding 目标，不拥有标准库、线程局部存储或宿主系统调用。v1.8 开始
+提供建立在自研 `brk` 上的可选 `UserHeap`，但不链接宿主或 libc allocator。
 
 ```text
 abi/system_call.hpp
        ↑           ↑
 user 包装与程序    kernel 分发与校验
        ↓           ↓
- system_call.asm → IDT 0x80 → system_calls.cpp
+ system_call.asm → SYSCALL（INT 0x80 兼容）→ system_calls.cpp
 ```
 
 ## 系统调用 ABI
@@ -23,7 +24,8 @@ user 包装与程序    kernel 分发与校验
 | `RSI` | 参数 1 |
 | `RDX` | 参数 2 |
 | `R10` | 参数 3；由四参数调用实际使用 |
-| `INT 0x80` | 进入内核的指令与门向量 |
+| `SYSCALL` | 默认进入内核的指令；入口由 LSTAR 指定 |
+| `INT 0x80` | 兼容与等价性测试使用的门向量 |
 
 | 编号 | 接口 | 参数 | 结果 |
 | --- | --- | --- | --- |
@@ -65,6 +67,10 @@ user 包装与程序    kernel 分发与校验
 | 36 | `SpawnProcess` | `RDI=ProcessLaunchRequest 地址`，`RSI=48` | 新 PID 或错误 |
 | 37 | `ExecProcess` | `RDI=ProcessLaunchRequest 地址`，`RSI=48` | 失败返回；成功进入新映像 |
 | 38 | `WaitProcess` | `RDI=PID/ANY`，`RSI=结果地址`，`RDX=40` | 已回收 PID、would block 或错误 |
+| 39 | `MapAnonymousMemory` | `RDI=地址`，`RSI=长度`，`RDX=权限`，`R10=flags` | 映射起点或错误 |
+| 40 | `UnmapMemory` | `RDI=页对齐地址`，`RSI=长度` | 成功 0 或错误 |
+| 41 | `SetProgramBreak` | `RDI=0 查询或新 break` | 当前 break 或错误 |
+| 42 | `GetVirtualMemoryStatistics` | `RDI=结果地址`，`RSI=112` | 成功 0 或错误 |
 
 错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 串口失败。
 v0.10 又定义 `-5` would block、`-6` broken pipe、`-7` 端点权限、
@@ -85,7 +91,8 @@ v1.0 再定义 `-22` 描述符能力拒绝与 `-23` 描述符单次传输过长�
 v1.4–v1.6 追加 `-24..-33`，覆盖描述符限额、KernelObject、路径、目录、
 跨设备、busy 与暂不支持。v1.7 再追加 `-34..-38`，分别表示 Process 容量、
 非法可执行文件、参数环境过大、没有子进程和候选映像构造失败。已有编号和
-错误值永不重排。
+错误值永不重排。v1.8 追加 `-39..-42`，分别表示物理/地址空间容量耗尽、
+地址已占用、非法内存范围和 VMA 元数据耗尽。
 
 ## 代码走读
 
@@ -352,6 +359,47 @@ argument probe 验证恰好 128 KiB 边界；exec probe 先验证截断 ELF 和 
 回滚，再提交 `/bin/exec_target`；fs probe 和 Shell 继续覆盖磁盘与交互链。
 详细状态机见 [进程模块](process.md)、[ADR 0034](../adr/0034-pid1-process-tree-disk-exec-wait.md)
 和 [v1.7 发布记录](../releases/v1.7.md)。
+
+## v1.8 匿名内存与 UserHeap 走读
+
+共享头 `abi/virtual_memory.hpp` 冻结页大小、R/W/X、FIXED、匿名窗口、
+8 MiB stack/heap 上限和 112 字节统计结构。所有地址、长度和计数均为
+`uint64_t`，返回值为 `int64_t`；ABI 不使用宿主 `long` 或 `size_t`。
+
+用户包装只负责寄存器 ABI，不在 Ring 3 复制 Kernel VMA 逻辑：
+
+```text
+MapAnonymousMemory(address, length, protection, flags)
+UnmapMemory(address, length)
+SetProgramBreak(address_or_zero)
+GetVirtualMemoryStatistics(statistics)
+```
+
+`programs/memory_probe.cpp` 是成功路径的端到端消费者。它先建立 32 MiB
+匿名 VMA 并证明 resident 不变，再触及两个远隔页验证 demand zero 与写入
+保持；中段 unmap/remap 证明 split 和 fixed 不覆盖，全部撤销后检查 resident
+与页表回收。随后验证 2 MiB break、递归栈增长和 5000 步真实用户 heap。
+
+两个独立 ELF 负责失败语义：
+
+- `memory_guard_probe.cpp` 写永久栈 guard，必须以用户 vector 14 结束；
+- `memory_protection_probe.cpp` 读取只读匿名零页后尝试写入，也必须以
+  vector 14 结束。
+
+把失败路径放入独立 Process 很重要：若在 memory probe 内触发预期异常，
+后续回收与统计代码永远无法执行，PID1 也无法区分“预期保护成立”和“测试程序
+意外崩溃”。PID1 使用 wait result 同时核对 termination reason 与 vector。
+
+`UserHeap` 位于 `include/os/user/user_heap.hpp` 与 `src/user_heap.cpp`。
+调用者注入 program-break 函数、页大小、增长 quantum 和最大容量。分配器
+使用 64 字节 header、16 字节对齐、first-fit、split 和前后 coalesce；
+物理块关系和空闲链均保存显式 offset。`Validate()` 会交叉核对两张图，重复
+释放、外部/内部指针、容量耗尽和 break 失败都有独立状态。
+
+v1.8 不把 `UserHeap` 命名为完整 `malloc/free` ABI：它没有线程安全、arena、
+size class、尾部自动缩 break 或 libc 兼容承诺。详细背景与源码顺序见
+[v1.8 学习章](../learning/16-v1.8-anonymous-vma-demand-paging.md)，设计边界见
+[ADR 0035](../adr/0035-anonymous-vma-demand-paging-user-heap.md)。
 
 ## 依赖与命名
 

@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.7。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.8。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -1667,6 +1667,106 @@ Thread Process 提交；多线程汇合留给后续阶段。
 [ADR 0034](adr/0034-pid1-process-tree-disk-exec-wait.md)，逐步走读见
 [v1.7 学习章](learning/15-v1.7-pid1-process-tree-exec.md)。
 
+## v1.8 用户虚拟内存架构
+
+### 地址意图与驻留事实分层
+
+每个 `UserAddressSpace` 现在同时拥有软件映射图与硬件页表：
+
+```text
+UserAddressSpace
+  ├─ VirtualMemoryMap
+  │    └─ ordered VMA: [begin,end), permissions, kind
+  ├─ CR3 / process PML4
+  │    └─ resident user PTEs only
+  ├─ program-break base/current/limit
+  ├─ stack top/committed bottom
+  └─ resident/fault/unmap/reclaim statistics
+```
+
+VMA 表示该地址将来能否出现以及出现时应采用什么权限和来源；PTE 只表示当前
+已经驻留。匿名 `mmap`、扩大 `brk` 和完整 8 MiB 栈预留只修改 VMA，不立即
+分配与虚拟页数相同的 frame。
+
+`VirtualMemoryAreaPool` 为全系统提供 8192 个描述符。每个 map 使用独立 owner
+identifier，单 Process 最多 4096 个区域。区域以页对齐半开区间排序，相同
+kind/权限的相邻区间自动合并；中段 remove 在修改前预取 split 描述符，容量
+失败保持原图。
+
+### 地址空间布局与 ABI
+
+```text
+ELF PT_LOAD + contiguous program break
+  └─ upper bound 0x0000000060000000
+
+anonymous VMA first-fit window
+  └─ [0x0000000060000000, 0x0000000080000000)
+
+permanent unmapped stack guard
+  └─ 0x00007FFFFF7EF000
+
+reserved user stack, maximum 8 MiB
+  └─ [0x00007FFFFF7F0000, 0x00007FFFFFFF0000)
+```
+
+共享 ABI 追加系统调用 39..42：匿名 map、匿名 unmap、program break 和
+112 字节虚拟内存统计。fixed 匿名 map 只在指定空洞成功，不覆盖现有 VMA；
+保护组合继续执行 W^X。
+
+### 页故障控制流
+
+```text
+Ring 3 load/store/fetch
+  -> x86-64 page walk fails
+  -> CR2 + vector 14 + error code + saved user RIP/RSP
+  -> NASM exception entry
+  -> HandleCurrentProcessPageFault
+  -> HandleUserPageFault
+       reject supervisor / RSVD / present violation
+       FindContaining(CR2 page)
+       check VMA read/write/execute
+       check adjacent stack growth and RSP window when needed
+       allocate frame + map PTE + direct-map zero
+       update statistics
+  -> IRETQ/SYSRET-compatible user frame resumes
+  -> faulting instruction retries
+```
+
+`ExecutableImage` 在 v1.8 仍 eager；若其 PTE 意外缺失视为地址空间损坏。
+`Anonymous` 与 `ProgramBreak` 可以建立零页。`UserStack` 还要求 fault page
+恰好位于 committed bottom 下一页、没有越过底部，并与保存的用户 RSP 位于
+64 KiB 邻近范围。永久 guard 没有 VMA，因此不会被通用缺页策略转成普通页。
+
+Kernel 用户复制路径可以为匿名与 break VMA 解析 not-present 页，使系统调用
+输出缓冲符合相同地址意图；它不替用户增长栈，因为 Kernel copy 没有可信的
+栈推进指令现场。
+
+### 撤销与页表所有权
+
+匿名 unmap 和 break shrink 先验证 VMA kind，再 trim/remove/split 区间；
+随后只释放实际存在的用户 PTE。`ReleaseUserPage` 同时返回因叶页消失而变空的
+PT/PD/进程私有 PDPT 数，更新统计并执行本地地址失效。未触及的 reservation
+没有 frame，不能产生虚构释放。
+
+exec 提交后销毁旧页表与旧 VMA；exit 切回 Kernel CR3 后销毁当前地址空间。
+进程运行前后资源快照额外核对 VMA active/free/acquire/release，和 frame、
+buddy、heap、KVA、KernelStack、FileTable 与 VFS context 共同闭合。
+
+### Ring 3 heap 边界
+
+Kernel 只提供 program-break 页级承诺。`source/user` 中的 `UserHeap` 使用
+64 字节显式 header、16 字节对齐、物理相邻块和空闲双向 offset 链完成
+first-fit、split 与双向 coalesce。它通过注入的 break operation 增长，公开
+上限为 8 MiB；`Validate` 同时检查物理块图与 free list。
+
+这个边界防止 Kernel 理解用户对象尺寸，也防止用户 allocator 直接操作页表。
+后续可更换 size class 或 arena，而 `brk`/VMA/PTE 契约保持稳定。
+
+设计理由见
+[ADR 0035](adr/0035-anonymous-vma-demand-paging-user-heap.md)，逐步走读见
+[v1.8 学习章](learning/16-v1.8-anonymous-vma-demand-paging.md)，冻结证据见
+[v1.8 发布记录](releases/v1.8.md)。
+
 ## 模块边界
 
 - `foundation` 提供地址区间、引用计数和作用域回滚等不依赖运行时的基础
@@ -1760,7 +1860,8 @@ source/kernel/
 source/abi/
 ├── CMakeLists.txt
 └── include/os/abi/
-    └── system_call.hpp
+    ├── system_call.hpp
+    └── virtual_memory.hpp
 
 source/user/
 ├── CMakeLists.txt
@@ -1768,7 +1869,8 @@ source/user/
 │   ├── freestanding_memory.hpp
 │   ├── shell.hpp
 │   ├── shell_parser.hpp
-│   └── system_call.hpp
+│   ├── system_call.hpp
+│   └── user_heap.hpp
 ├── linker/
 │   └── user.ld.in
 ├── programs/
@@ -1785,13 +1887,17 @@ source/user/
 │   ├── exec_probe.cpp
 │   ├── exec_target.cpp
 │   ├── fs_probe.cpp
+│   ├── memory_guard_probe.cpp
+│   ├── memory_probe.cpp
+│   ├── memory_protection_probe.cpp
 │   └── shell_entry.cpp
 └── src/
     ├── freestanding_memory.cpp
     ├── shell.cpp
     ├── shell_parser.cpp
     ├── system_call.asm
-    └── system_call.cpp
+    ├── system_call.cpp
+    └── user_heap.cpp
 ```
 
 `include/os/<模块>/` 只保存其他模块可以依赖的公开契约；`src/` 保存实现和

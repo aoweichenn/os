@@ -459,6 +459,14 @@ constexpr char OS_KERNEL_MAIN_FILE_TABLE_CHUNK_RELEASE_COUNT_PREFIX[] =
 constexpr char OS_KERNEL_MAIN_FILE_TABLE_INSTALLATION_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_TABLE_INSTALLATIONS=";
 constexpr char OS_KERNEL_MAIN_FILE_TABLE_CLOSE_COUNT_PREFIX[] = "[OS][KERNEL] FILE_TABLE_CLOSES=";
+constexpr char OS_KERNEL_MAIN_VMA_DESCRIPTOR_CAPACITY_PREFIX[] =
+    "[OS][KERNEL] VMA_DESCRIPTOR_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_VMA_ACTIVE_DESCRIPTOR_COUNT_PREFIX[] =
+    "[OS][KERNEL] VMA_ACTIVE_DESCRIPTORS=";
+constexpr char OS_KERNEL_MAIN_VMA_PEAK_DESCRIPTOR_COUNT_PREFIX[] =
+    "[OS][KERNEL] VMA_PEAK_DESCRIPTORS=";
+constexpr char OS_KERNEL_MAIN_VMA_ACQUIRE_COUNT_PREFIX[] = "[OS][KERNEL] VMA_ACQUIRES=";
+constexpr char OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX[] = "[OS][KERNEL] VMA_RELEASES=";
 constexpr char OS_KERNEL_MAIN_FILE_DESCRIPTION_FAILED_FINALIZATION_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_DESCRIPTION_FAILED_FINALIZATIONS=";
 constexpr char OS_KERNEL_MAIN_PROCESS_RESOURCE_VALIDATION_PREFIX[] =
@@ -499,12 +507,12 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR = 6ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
-constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 8ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_PROCESS_COUNT = 11ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 8ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 11ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_SUCCESS_COUNT = 7ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_SUCCESS_COUNT = 10ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_NO_CHILD_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT = 1ULL;
@@ -517,7 +525,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.7";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.8";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -1297,6 +1305,10 @@ void WriteProcessExecutionResult(const SerialPort &serial_port,
 ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
                               const uint64_t expected_process_count,
                               const uint64_t expected_virtual_address_lifecycle_count) noexcept {
+    const uint64_t minimum_expected_peak_stack_count =
+        expected_process_count < statistics.configured_process_capacity
+            ? expected_process_count
+            : statistics.configured_process_capacity;
     return ResourceSnapshotsMatch(statistics.resource_snapshot_before_processes,
                                   statistics.resource_snapshot_after_processes) &&
            statistics.resource_snapshot_difference.changed_fields_mask ==
@@ -1342,9 +1354,25 @@ ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
                statistics.kernel_stacks_before_processes.destruction_count +
                    expected_process_count &&
            statistics.kernel_stacks_after_processes.peak_active_stack_count >=
-               expected_process_count &&
+               minimum_expected_peak_stack_count &&
            statistics.kernel_stacks_after_processes.peak_active_mapped_page_count >=
-               expected_process_count * OS_KERNEL_STACK_MAPPED_PAGE_COUNT;
+               minimum_expected_peak_stack_count * OS_KERNEL_STACK_MAPPED_PAGE_COUNT &&
+           statistics.virtual_memory_areas_before_processes.capacity ==
+               statistics.virtual_memory_areas_after_processes.capacity &&
+           statistics.virtual_memory_areas_before_processes.active_descriptor_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.virtual_memory_areas_after_processes.active_descriptor_count ==
+               OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+           statistics.virtual_memory_areas_after_processes.free_descriptor_count ==
+               statistics.virtual_memory_areas_after_processes.capacity &&
+           statistics.virtual_memory_areas_after_processes.successful_acquire_count >=
+               statistics.virtual_memory_areas_before_processes.successful_acquire_count &&
+           statistics.virtual_memory_areas_after_processes.release_count >=
+               statistics.virtual_memory_areas_before_processes.release_count &&
+           statistics.virtual_memory_areas_after_processes.successful_acquire_count -
+                   statistics.virtual_memory_areas_before_processes.successful_acquire_count ==
+               statistics.virtual_memory_areas_after_processes.release_count -
+                   statistics.virtual_memory_areas_before_processes.release_count;
 }
 
 void ExecuteRequiredProcesses(const SerialPort &serial_port,
@@ -1479,6 +1507,17 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          file_table_installation_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_CLOSE_COUNT_PREFIX,
                          file_table_close_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_DESCRIPTOR_CAPACITY_PREFIX,
+                         statistics.virtual_memory_areas_after_processes.capacity);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_ACTIVE_DESCRIPTOR_COUNT_PREFIX,
+                         statistics.virtual_memory_areas_after_processes.active_descriptor_count);
+    WriteRequiredHexLine(
+        serial_port, OS_KERNEL_MAIN_VMA_PEAK_DESCRIPTOR_COUNT_PREFIX,
+        statistics.virtual_memory_areas_after_processes.peak_active_descriptor_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_ACQUIRE_COUNT_PREFIX,
+                         statistics.virtual_memory_areas_after_processes.successful_acquire_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX,
+                         statistics.virtual_memory_areas_after_processes.release_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.active_stack_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,

@@ -8,6 +8,23 @@ add_library(
         src/shell_parser.cpp
         include/os/user/shell_parser.hpp
 )
+
+add_library(
+    os_user_heap_model_host
+    STATIC
+        src/user_heap.cpp
+        include/os/user/user_heap.hpp
+)
+target_include_directories(
+    os_user_heap_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_user_heap_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
 target_include_directories(
     os_user_shell_model_host
     PUBLIC
@@ -261,6 +278,24 @@ set(
     "rootfs 持久化验收程序"
 )
 set(
+    OS_USER_MEMORY_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_memory_probe.elf"
+    CACHE INTERNAL
+    "匿名 VMA、按需分页、栈增长和用户堆验收程序"
+)
+set(
+    OS_USER_MEMORY_GUARD_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_memory_guard_probe.elf"
+    CACHE INTERNAL
+    "用户栈 guard page 隔离验收程序"
+)
+set(
+    OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_memory_protection_probe.elf"
+    CACHE INTERNAL
+    "匿名 VMA 写保护隔离验收程序"
+)
+set(
     OS_USER_TRUNCATED_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_truncated.elf"
     CACHE INTERNAL
@@ -353,6 +388,25 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/fs_probe.cpp"
     "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
     "链接 rootfs 持久化验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_memory_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/memory_probe.cpp"
+    "${OS_USER_MEMORY_PROBE_ELF_PATH}"
+    "链接匿名 VMA、按需分页、栈增长和用户堆验收 ELF64 程序"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/user_heap.cpp"
+)
+os_add_user_program(
+    os_user_memory_guard_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/memory_guard_probe.cpp"
+    "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
+    "链接用户栈 guard page 隔离 ELF64 程序"
+)
+os_add_user_program(
+    os_user_memory_protection_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/memory_protection_probe.cpp"
+    "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+    "链接匿名 VMA 写保护隔离 ELF64 程序"
 )
 
 add_custom_command(

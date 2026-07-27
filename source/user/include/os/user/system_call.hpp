@@ -68,5 +68,11 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t ExecProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t WaitProcess(uint64_t process_id, os::abi::ProcessWaitResult &result) noexcept;
+[[nodiscard]] int64_t MapAnonymousMemory(uint64_t requested_address, uint64_t length_bytes,
+                                         uint64_t protection_flags, uint64_t map_flags) noexcept;
+[[nodiscard]] int64_t UnmapMemory(uint64_t address, uint64_t length_bytes) noexcept;
+[[nodiscard]] int64_t SetProgramBreak(uint64_t requested_address) noexcept;
+[[nodiscard]] int64_t
+GetVirtualMemoryStatistics(os::abi::VirtualMemoryStatistics &statistics) noexcept;
 [[noreturn]] void ExitProcess(int64_t exit_code) noexcept;
 }

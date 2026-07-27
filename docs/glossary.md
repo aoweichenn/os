@@ -159,6 +159,11 @@
 | COW | Copy-on-Write，父子暂时共享只读物理页，在首次写故障时再创建私有副本 |
 | VMA | Virtual Memory Area，描述用户虚拟区间、来源、权限和映射策略，不表示物理页已经存在 |
 | demand paging | 先登记 VMA，在首次访问页故障时才分配或读取实际页面的策略 |
+| reservation | 已由 VMA 占有但尚未安装 PTE 或消耗数据页的虚拟地址区间 |
+| resident page | 已有有效 PTE 和物理 frame、处理器当前能够实际访问的虚拟页 |
+| committed stack bottom | 用户栈已经连续驻留部分的最低页地址；合法增长只允许提交紧邻其下的一页 |
+| program break | 传统连续数据区的字节级逻辑末端；v1.8 用页级 VMA 表达其覆盖区，并在首次访问时提交物理页 |
+| zero-fill-on-demand | 匿名页第一次合法访问时分配完整清零 frame，再返回重试原指令的策略 |
 | page cache | 以 vnode 与页索引为身份缓存文件内容的内存页；clean、dirty、writeback 是不同状态 |
 | `MAP_PRIVATE` | 写入时产生私有 COW 页面、不把修改回写到底层文件的文件映射 |
 | `MAP_SHARED` | 多个映射观察同一文件页的策略；v2.0 仅支持只读形式 |

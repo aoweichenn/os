@@ -403,13 +403,16 @@ QEMU 已从磁盘 PID1 完成八进程父子树、128 KiB 参数环境、失败 
 
 \paragraph{v1.8：匿名 VMA 是页故障的策略来源}
 
+本版本已经完成。
 VMA 记录半开区间、权限、来源和映射策略。匿名 \code{mmap}、\code{brk} 与
 guarded stack 先只登记意图；首次访问才分配 zero-fill 页面。PTE 只记录当前
 是否驻留和硬件权限，不能取代 VMA。
 
 split、merge 与 unmap 的随机模型必须保证区间永不重叠，失败时原树不变。
 用户 heap 在该层之上用 freestanding C++20 构建，耗尽时返回明确错误而不是
-依赖宿主运行时。
+依赖宿主运行时。真实 Ring 3 已验证 32 MiB 稀疏匿名区、2 MiB break、
+8 MiB 预留栈、永久 guard、只读写保护和 5000 步 heap；VMA/heap 各有
+十万步固定种子模型，64 MiB、256 MiB 与 64 GiB QEMU 使用同一条实现路径。
 
 \paragraph{v1.9：文件页先保持 clean}
 

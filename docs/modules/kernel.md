@@ -3,7 +3,7 @@
 ## 职责
 
 `kernel` 是 Stage 1 最终交接的 freestanding C++20 ELF64 可执行文件。当前
-v1.7 在真实交接之上建立处理器、内存、中断、设备、文件系统与进程基础：
+v1.8 在真实交接之上建立处理器、内存、中断、设备、文件系统与进程基础：
 
 - 由 Clang 以 `x86_64-unknown-none-elf` 目标编译。
 - 由 LLD 的 `elf_x86_64` 模式直接链接，不经过 ARM64 宿主 GCC。
@@ -22,6 +22,8 @@ v1.7 在真实交接之上建立处理器、内存、中断、设备、文件系
 - 向量 32..47 使用独立硬件 IRQ 汇编入口，设备处理后严格执行 PIC EOI。
 - 从生产 rootfs 按需读取 `/sbin/init` ELF，建立 PID1、父子进程树和
   spawn/exec/wait 生命周期。
+- 为每个用户地址空间维护 VMA，以用户 `#PF` 提交匿名、program-break 和
+  受控增长栈页，并在 unmap/exec/exit 回收数据页、空页表分支与描述符。
 - 验收完成后进入 IF 开启的 `HLT` 事件循环，不返回 Stage 1。
 
 ## 文件布局
@@ -42,7 +44,7 @@ src/<module>/<name>.cpp
 | `fs` | 磁盘格式、块缓存、文件系统 |
 | `io` | 控制台、FileDescription 和动态 FileTable |
 | `ipc` | 管道 |
-| `memory` | 页帧、buddy、页表、heap、KVA、动态栈、资源快照 |
+| `memory` | 页帧、buddy、页表、heap、KVA、动态栈、VMA、资源快照 |
 | `object` | 类型化 KernelObject、generation 与强引用生命周期 |
 | `process` | Process/Thread 状态机、run queue、WaitQueue 与目标机运行时 |
 | `sync` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
@@ -335,8 +337,8 @@ RW/NX 区间把实现升级为边界标记与地址有序空闲链表；v1.4 为
 不属于目标栈才允许销毁。
 
 当前管理器提供 512 个槽；64 GiB 容量事务峰值为 512 个栈、2048 个映射页
-和 1024 个 guard 页。事务回收后活动数归零，随后正常 v1.7 八 Process/
-八 Thread 路径峰值至少为 8 个栈、32 个映射页和 16 个 guard 页。完整设计、
+和 1024 个 guard 页。事务回收后活动数归零，随后正常 v1.8 十一个 Process/
+Thread 生命周期也必须在各档并发容量内达到相应峰值并最终归零。完整设计、
 故障模型和测试证据见
 [ADR 0025](../adr/0025-kva-backed-dynamic-kernel-stacks.md)。
 
@@ -361,7 +363,7 @@ v1.1 用两个不依赖宿主运行时的 foundation 原语和一个 Kernel 聚�
 KVA 页和物理页必须恢复；把累计量放进泄漏快照会把正常历史误判成当前泄漏。
 
 内存初始化的目标自检在保留的末端槽创建真实双 guard 动态栈，由外层回滚事务销毁，
-再要求 26 字段零差异。进程运行时又在创建 v1.7 八个进程前拍摄快照，在汇编切回
+再要求 26 字段零差异。进程运行时又在创建 v1.8 十一个进程前拍摄快照，在汇编切回
 永久内核栈、销毁全部用户地址空间和终止栈后再次比较。第二道检查失败会返回
 `ResourceLeakDetected`，不会只凭“进程数归零”宣布资源已回收。完整决策见
 [ADR 0027](../adr/0027-v1.1-resource-lifecycle-foundation.md)。
@@ -880,6 +882,44 @@ Kernel 只嵌入启动模式需要直接选择的最小 smoke/异常夹具。模
 `0x3` 和同值 CR2，逐位表示 present 页上的 supervisor write 权限违反。
 三者必须输出一次 `PANIC`，且禁止出现文件统计和 `READY`。
 
+## v1.8 VMA 与用户页故障职责
+
+Kernel 内的 VM 边界分为三层：
+
+```text
+memory/virtual_memory_area.*
+  ordered interval ownership, split/merge/gap, descriptor pool
+
+user/user_memory.*
+  per-process address layout, VMA policy, demand page, stack/brk/unmap
+
+user/system_calls.*
+  fixed-width ABI validation and current-process dispatch
+```
+
+`VirtualMemoryMap` 不分配物理页，也不读取 CR2；它只维护非重叠页对齐区间。
+`user_memory` 把 VMA kind 与页表机制连接起来；`system_calls` 不直接修改 map，
+而是把 ABI 参数交给当前 Process 的类型化入口。
+
+vector 14 仍先经过统一 NASM 异常现场。ProcessRuntime 只有在当前 Thread
+属于用户 Process 且 `HandleUserPageFault` 返回 `Handled` 时恢复同一用户
+指令；guard、权限、越界与非法栈增长转成该 Process 的异常退出。Ring 0 fault、
+RSVD 页表损坏与无法解释的内部状态仍不能被 demand paging 掩盖。
+
+全局描述符池容量为 8192，单地址空间 hard limit 为 4096。池在 ProcessRuntime
+初始化前建立，初始 active 为零。正常工作负载前后快照要求：
+
+```text
+final active == 0
+final free == capacity
+acquire delta == release delta
+pool Validate == Succeeded
+```
+
+QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚合一次打印
+容量、峰值、申请与释放，避免串口吞吐改变调度和 fault 时序。详细算法见
+[ADR 0035](../adr/0035-anonymous-vma-demand-paging-user-heap.md)。
+
 ## 已知边界
 
 - 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
@@ -898,8 +938,9 @@ Kernel 只嵌入启动模式需要直接选择的最小 smoke/异常夹具。模
   但仍固定为 16 KiB；管理器由单 BSP 串行调用，尚无 per-CPU 缓存或远端
   TLB shootdown。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
-- Ring 0 页故障仍全部 panic；Ring 3 页故障只终止当前用户执行。按需映射和
-  写时复制要等进程地址空间拥有完整生命周期后再实现。
+- Ring 0 页故障仍全部 panic；Ring 3 的合法匿名、program-break 与连续栈
+  not-present fault 已按需解析，guard、权限与越界只终止当前用户执行。
+  file-backed fault、按需 ELF、page cache 与写时复制尚未实现。
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
   PID1、父子关系、Zombie/reap、spawn/exec/wait、WaitQueue 和完整
   x87/SSE2 现场，但用户 ABI 尚未开放 CreateThread、ThreadExit、fork、

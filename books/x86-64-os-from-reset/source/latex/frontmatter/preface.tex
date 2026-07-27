@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.7。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.8。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -119,3 +119,11 @@ v1.7 又把生产启动路径从 Kernel 内嵌普通用户镜像改为从 rootfs
 八个进程的创建、退出、等待、重归属与资源守恒。普通用户 ELF 由离线
 rootfs 安装器写入磁盘；Kernel 只保留故障隔离所需的专用内嵌测试镜像。
 Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。
+v1.8 又把地址空间从“只有已安装 PTE”提升为 VMA 意图与 PTE 驻留两层：
+匿名 \code{mmap} 和 program break 先保留区间，真实用户 load/store 引发
+\#PF 后才取得并清零物理页；8 MiB 用户栈只连续向下提交，永久 guard 和
+只读写入由 vector 14 隔离。Ring 3 \code{UserHeap} 用 boundary tag、
+first-fit、split 与双向 coalesce 管理最多 8 MiB 的 break 空间。十万步
+VMA/heap 模型、128 轮真实页表生命周期、三个用户 probe、十一个 Process
+资源守恒以及 64 MiB、256 MiB、64 GiB 三档整机运行共同证明 reservation、
+首次触页、权限拒绝、页表回收和描述符池归零。

@@ -161,7 +161,7 @@ metadata size ∝ maximum managed PFN
 
 不能为了管理 64 GiB，把 metadata 固定塞进一个只按 64 MiB 计算的数组。
 
-当前 v1.7 主线使用每 frame 2 bit，按实际最高 usable PFN 计算 metadata，
+当前 v1.8 主线使用每 frame 2 bit，按实际最高 usable PFN 计算 metadata，
 再从启动可达 RAM 中动态放置。v1.0 精确基线则只管理低 64 MiB；两者在
 [v0.6 文档](../07-v0.6-memory-management.md) 中分开讲解。
 
@@ -620,10 +620,11 @@ v1.0 基线没有：
 - PCID。
 - SMP TLB shootdown。
 
-当前 v1.7 已有动态物理内存、高半 direct-map、buddy、KVA、动态双 guard
-内核栈和按根所有权回收页表空分支，但这不等于上述 VMA、demand paging 或
-COW 已经存在。可回收“已经明确拥有的映射对象”与“按缺页创建用户映射意图”
-是两个阶段。
+当前 v1.8 已有动态物理内存、高半 direct-map、buddy、KVA、动态双 guard
+内核栈、按根所有权回收页表空分支，以及匿名/ProgramBreak/UserStack VMA、
+匿名按需零页、`mmap/munmap/brk` 和受控栈增长。它仍没有 file-backed VMA、
+swap、共享映射、COW、PCID 或 SMP TLB shootdown。可回收“已经明确拥有的
+映射对象”、按缺页创建匿名页和按文件身份共享缓存页仍是三个不同阶段。
 
 ## 35. 常见误解
 
@@ -656,11 +657,14 @@ allocator 返回 PA ownership；必须经已存在 mapping 得到 VA 才能解�
 4. [内存管理器](../../../source/kernel/src/memory/memory_manager.cpp)
 5. [KVA allocator](../../../source/kernel/src/memory/kernel_virtual_address_allocator.cpp)
 6. [动态 Kernel stack](../../../source/kernel/src/memory/kernel_stack_manager.cpp)
-7. [进程运行时](../../../source/kernel/src/process/process_runtime.cpp)
-8. [异常帧](../../../source/kernel/src/arch/exception_frame.cpp)
-9. [异常策略](../../../source/kernel/src/arch/exceptions.cpp)
-10. [panic](../../../source/kernel/src/arch/panic.cpp)
-11. [v0.6 学习阶段](../07-v0.6-memory-management.md)
+7. [VMA](../../../source/kernel/src/memory/virtual_memory_area.cpp)
+8. [用户地址空间与按需页](../../../source/kernel/src/user/user_memory.cpp)
+9. [进程运行时](../../../source/kernel/src/process/process_runtime.cpp)
+10. [异常帧](../../../source/kernel/src/arch/exception_frame.cpp)
+11. [异常策略](../../../source/kernel/src/arch/exceptions.cpp)
+12. [panic](../../../source/kernel/src/arch/panic.cpp)
+13. [v0.6 学习阶段](../07-v0.6-memory-management.md)
+14. [v1.8 学习阶段](../16-v1.8-anonymous-vma-demand-paging.md)
 
 ## 37. 练习
 
@@ -707,7 +711,8 @@ frame 时的释放顺序。指出在切回 Kernel CR3 前哪些对象不能释�
 - 画出异常硬件帧与汇编规范化层。
 - 用 CR2/error code 分析 #PF。
 - 说明 CR0.WP、NX、guard page 和 user pointer validation 的边界。
-- 说明当前系统为何不能把所有 not-present fault 当作 demand paging。
+- 说明当前系统为何只能把命中合法 VMA 且通过权限/kind 策略的 not-present
+  fault 当作 demand paging。
 
 下一册进入
 [中断、时间与 PC 设备](05-interrupts-time-and-pc-devices.md)。

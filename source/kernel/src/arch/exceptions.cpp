@@ -1,9 +1,9 @@
 #include "os/kernel/arch/exceptions.hpp"
 
 #include "os/kernel/arch/panic.hpp"
-#include "os/kernel/process/process_runtime.hpp"
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/device/serial_port.hpp"
+#include "os/kernel/process/process_runtime.hpp"
 
 namespace os::kernel {
 
@@ -32,6 +32,10 @@ extern "C" ExceptionFrame *OsKernelDispatchException(ExceptionFrame *frame) noex
         const uint64_t page_fault_address = frame->vector == OS_KERNEL_EXCEPTION_PAGE_FAULT_VECTOR
                                                 ? ReadPageFaultLinearAddress()
                                                 : OS_KERNEL_EXCEPTION_NON_PAGE_FAULT_ADDRESS;
+        if (frame->vector == OS_KERNEL_EXCEPTION_PAGE_FAULT_VECTOR &&
+            HandleCurrentProcessPageFault(*frame, page_fault_address)) {
+            return frame;
+        }
         return TerminateCurrentProcessFromException(*frame, page_fault_address);
     }
     if (IsResumableKernelException(frame->vector) &&

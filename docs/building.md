@@ -43,14 +43,16 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.7 ELF64 内核、十四个用户 ELF、一个截断
+4. 生成自研 ROM、Stage 1、v1.8 ELF64 内核、十七个用户 ELF、一个截断
    ELF 夹具，把十个普通程序安装进 rootfs；同时生成格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，并保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
-   命名空间单词门禁、256 MiB functional 和 64 GiB capacity 系统用例。
+   命名空间单词门禁、64 MiB bootstrap、256 MiB functional 和 64 GiB
+   capacity 系统用例。
 
-正常 QEMU 系统用例包含显式 `-m 256` 的 functional 门禁和 `-m 65536`
+正常 QEMU 系统用例包含显式 `-m 64` 的 bootstrap、`-m 256` 的 functional
+门禁和 `-m 65536`
 的 64 GiB capacity 主规格；两者运行同一份 Shell、IPC、文件系统、用户隔离
 和资源生命周期实现。故障注入和最小兼容路径保留 64 MiB，以免重复为不相关
 失败分支建立大容量模型。QEMU
@@ -89,6 +91,14 @@ python3 tools/os.py qemu-firmware \
 ctest --test-dir build/developer \
   --output-on-failure \
   -R '^os_qemu_functional_smoke$'
+```
+
+只运行 64 MiB 最小完整启动验收：
+
+```bash
+ctest --test-dir build/developer \
+  --output-on-failure \
+  -R '^os_qemu_bootstrap_smoke$'
 ```
 
 该用例不是精简启动：它从磁盘启动 PID1，执行完整八进程树、spawn/exec/wait、
@@ -256,7 +266,7 @@ source/kernel/src/arch/architecture.asm ─ NASM elf64 ────────�
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
-所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.7 的正常磁盘启动程序
+所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.8 的正常磁盘启动程序
 例如：
 
 ```bash

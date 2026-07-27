@@ -211,6 +211,27 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
 }
 
+[[nodiscard]] int64_t MapVirtualMemoryStatus(const UserVirtualMemoryStatus status) noexcept {
+    if (status == UserVirtualMemoryStatus::Succeeded) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == UserVirtualMemoryStatus::InvalidRange ||
+        status == UserVirtualMemoryStatus::InvalidProtection) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_MEMORY_RANGE;
+    }
+    if (status == UserVirtualMemoryStatus::AddressInUse) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_ADDRESS_IN_USE;
+    }
+    if (status == UserVirtualMemoryStatus::AddressSpaceExhausted ||
+        status == UserVirtualMemoryStatus::PageAllocationFailed) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY;
+    }
+    if (status == UserVirtualMemoryStatus::MetadataExhausted) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_MEMORY_METADATA_EXHAUSTED;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
+}
+
 [[nodiscard]] UserContextRequirements CurrentUserContextRequirements() noexcept {
     return UserContextRequirements{
         .virtual_address_width_bits = GetNativeSystemCallConfiguration().virtual_address_width_bits,
@@ -1001,6 +1022,50 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     }
     return resume_frame;
 }
+
+[[nodiscard]] int64_t DispatchMapAnonymousMemory(const uint64_t requested_address,
+                                                 const uint64_t length_bytes,
+                                                 const uint64_t protection_flags,
+                                                 const uint64_t map_flags) noexcept {
+    uint64_t mapped_address = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const UserVirtualMemoryStatus status = MapCurrentProcessAnonymousMemory(
+        requested_address, length_bytes, protection_flags, map_flags, mapped_address);
+    return status == UserVirtualMemoryStatus::Succeeded ? static_cast<int64_t>(mapped_address)
+                                                        : MapVirtualMemoryStatus(status);
+}
+
+[[nodiscard]] int64_t DispatchUnmapMemory(const uint64_t address,
+                                          const uint64_t length_bytes) noexcept {
+    return MapVirtualMemoryStatus(UnmapCurrentProcessAnonymousMemory(address, length_bytes));
+}
+
+[[nodiscard]] int64_t DispatchSetProgramBreak(const uint64_t requested_address) noexcept {
+    uint64_t program_break_address = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const UserVirtualMemoryStatus status =
+        SetCurrentProcessProgramBreak(requested_address, program_break_address);
+    return status == UserVirtualMemoryStatus::Succeeded
+               ? static_cast<int64_t>(program_break_address)
+               : MapVirtualMemoryStatus(status);
+}
+
+[[nodiscard]] int64_t
+DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
+                                   const uint64_t statistics_size_bytes) noexcept {
+    if (statistics_size_bytes != sizeof(os::abi::VirtualMemoryStatistics)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(user_statistics_address, statistics_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    const os::abi::VirtualMemoryStatistics statistics = GetCurrentProcessVirtualMemoryStatistics();
+    if (CopyToUser(user_statistics_address, sizeof(statistics),
+                   reinterpret_cast<const uint8_t *>(&statistics),
+                   sizeof(statistics)) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+}
 }
 
 [[nodiscard]] ExceptionFrame *DispatchValidatedSystemCall(ExceptionFrame *frame) noexcept {
@@ -1195,6 +1260,27 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcess)) {
         return DispatchWaitProcess(*frame, frame->register_rdi, frame->register_rsi,
                                    frame->register_rdx);
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::MapAnonymousMemory)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchMapAnonymousMemory(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx, frame->register_r10));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::UnmapMemory)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchUnmapMemory(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SetProgramBreak)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchSetProgramBreak(frame->register_rdi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetVirtualMemoryStatistics)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchGetVirtualMemoryStatistics(frame->register_rdi, frame->register_rsi));
+        return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;

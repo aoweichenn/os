@@ -27,9 +27,10 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.7 已具备 64 MiB 启动回归、具名 256 MiB functional smoke 和
+当前 v1.8 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.7 的正常启动链会实际创建 PID 1 和七个后续 Process，v1.2 的独立
+实现；v1.8 的正常启动链会累计注册 PID 1 和十个后续 Process，峰值并发仍为
+八个，v1.2 的独立
 容量测试继续覆盖完整 Process/Thread 上限。fd 与 pipe 的未来目标容量仍不得
 伪造为已完成。
 
@@ -479,7 +480,7 @@ QEMU 自行异常退出仍视为失败。
   映射页、guard 页、KVA 页和物理帧统计并运行完整校验，最后排空；
 - QEMU 正常路径要求 PID1 的 lower/top/upper 地址可观察，并由运行时聚合
   统计证明峰值至少八栈/三十二映射页；进程阶段前后的累计创建与销毁都必须
-  精确增加八次。最终活动数必须为零并输出
+  精确增加十一次。最终活动数必须为零并输出
   `KERNEL_STACK_RESOURCES_RECLAIMED`。用户
   `#UD` 与 `#PF` 隔离镜像也必须创建并安全点回收单栈，证明异常路径不会
   留下资源。
@@ -507,7 +508,8 @@ QEMU 自行异常退出仍视为失败。
   `RESOURCE_LIFECYCLE_SELF_TEST_PASSED` 和
   `PROCESS_RESOURCE_SNAPSHOT_MATCHED`；
 - `os_qemu_functional_smoke` 明确使用 256 MiB RAM，执行与 64 GiB 主路径
-  相同的磁盘 PID1、八进程树、Shell、exec、文件系统、用户隔离和资源快照
+  相同的磁盘 PID1、十一进程生命周期、Shell、exec、虚拟内存、文件系统、
+  用户隔离和资源快照
   协议。它不是
   只验证启动标记的缩减镜像，也不通过条件编译切换资源实现。
 
@@ -565,6 +567,53 @@ zombie 与 active 均为 0；wait success 为 7，并至少出现一次真实阻
 no-child。目标内 `ProcessTree::Validate`、调度器状态、26 字段资源快照与宿主
 日志协议必须同时通过。4096 轮宿主模型用于放大状态组合，QEMU 用于证明真实
 CR3、RSP、ELF、rootfs、系统调用与安全点回收；两者互补，不能互相冒充。
+
+### v1.8 匿名 VMA、用户页故障与 heap
+
+v1.8 的测试必须分别证明“地址已经承诺”和“物理页已经驻留”，不能只比较
+系统调用返回地址。
+
+- VMA 单元测试覆盖池初始化、严格排序、重叠拒绝、前后/双向合并、中段
+  split、kind mismatch、first-gap、单进程 hard limit、元数据耗尽失败
+  原子性和 destroy 后池守恒；
+- 固定种子 VMA 参考模型执行 100000 步 map/unmap/split/merge。每一步逐项
+  对照全部区间、area/page 统计、池 active/free 与结构 `Validate`；
+- UserHeap 单元测试覆盖 program-break 增长、16 字节对齐、first-fit、
+  split、释放复用、前后 coalesce、耗尽、错误 break、外部/内部指针、重复
+  释放和失败时旧 allocation 保持；
+- 固定种子 heap 模型执行 100000 步申请/释放，对每个活动 allocation 保存
+  独立尺寸和字节模式，并在操作间逐字节复验；
+- 页表/VMA 集成测试重复 128 个 Process 地址空间：四页 reservation 不得
+  改变 frame 数，首次触页才建立 U/S RW/NX PTE，中段撤销必须形成两个 VMA
+  并回收两级空页表，销毁后 frame 与 descriptor 回到精确基线；
+- 用户边界集成测试冻结 2048 页/8 MiB stack reservation、永久 guard、
+  匿名窗口和系统调用 39..42，防止工具或旧 64 页假设漂移；
+- 三个新增用户 ELF 分别通过 AMD64、入口、W^X 和未解析符号审计。
+
+真实 QEMU 的 memory probe 必须观察以下一次性标记：
+
+```text
+[OS][USER][VM] DEMAND_ZERO_VERIFIED
+[OS][USER][VM] ANONYMOUS_UNMAP_RECLAIMED
+[OS][USER][VM] PROGRAM_BREAK_VERIFIED
+[OS][USER][VM] STACK_GROWTH_VERIFIED
+[OS][USER][VM] USER_HEAP_RANDOMIZED_VERIFIED
+[OS][USER][VM] COMPLETED
+[OS][USER][INIT] MEMORY_PROBE_REAPED
+[OS][USER][INIT] VM_FAULT_POLICIES_VERIFIED
+```
+
+guard 与 protection probe 必须各产生一个由 PID1 wait 观察到的用户 vector
+14 退出，Kernel 不得 panic。demand/stack 内核日志按累计二次幂采样，因此
+runner 只要求它们至少出现且数值非零，不错误冻结为恰好一行。
+
+工作负载结束后 VMA capacity 必须为 8192，active 为 0，peak/acquire/release
+非零且 acquire 等于 release。ProcessTree registered/exited/collected 为
+11，wait success 为 10，Zombie 为 0；这些新字段与既有资源快照共同通过。
+
+`os_qemu_bootstrap_smoke` 把 64 MiB 完整链固化为独立 CTest，而不是发布时
+手工传参。256 MiB functional 与 64 GiB capacity 运行同一 VM probe；三档
+只改变资源规格，不切换实现。
 
 ## 验收证据
 
@@ -631,6 +680,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_resource_snapshot_unit_tests` | 单元 | 26 字段快照、守恒式、逐位差异与失败原子性 |
 | `os_kernel_stack_manager_unit_tests` | 单元 | 动态栈双 guard、清零、权限、回滚、耗尽，以及物理/KVA/PTE 所有权破坏、修复和安全销毁 |
 | `os_kernel_page_table_reclamation_unit_tests` | 单元 | 三种根所有权、精确空表、级联回收、借用拒绝、失败回滚与损坏检测 |
+| `os_kernel_virtual_memory_area_unit_tests` | 单元 | VMA 排序、合并、拆分、kind guard、first-gap、耗尽事务与池守恒 |
 | `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
 | `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 回归堆的混合对象、数据保持、耗尽与完整恢复 |
@@ -639,6 +689,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_stack_lifecycle_integration_tests` | 集成 | 四栈、用户特权帧、独立进程 CR3 共享高半映射与安全点式逆序回收 |
 | `os_kernel_resource_snapshot_lifecycle_integration_tests` | 集成 | 四个真实动态栈的跨 frame/buddy/KVA/PTE/stack 活动与零差异恢复 |
 | `os_kernel_page_table_reclamation_lifecycle_integration_tests` | 集成 | 128 次共享根、64 次进程根循环与递归销毁后的表帧守恒 |
+| `os_kernel_user_virtual_memory_lifecycle_integration_tests` | 集成 | 128 轮 VMA 预留、首次触页、中段撤销、空页表与 frame/descriptor 基线 |
 | `os_kernel_memory_management_randomized_tests` | 随机 | 表项、分配器模型和 1024 轮高地址窗口 |
 | `os_kernel_buddy_frame_allocator_randomized_tests` | 随机 | 固定种子 100000 步 buddy 与逐页参考模型 |
 | `os_kernel_heap_randomized_tests` | 随机 | 固定种子 100000 步分配/释放与独立活动对象模型 |
@@ -646,11 +697,12 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_virtual_address_allocator_randomized_tests` | 随机 | 固定种子 100000 步 KVA 与独立逐页 best-fit 模型 |
 | `os_kernel_stack_manager_randomized_tests` | 随机 | 固定种子 100000 步动态栈创建/销毁与 4096 页独立所有权模型 |
 | `os_kernel_page_table_reclamation_randomized_tests` | 随机 | 固定种子 100000 步映射/撤销与独立层级表数量模型 |
+| `os_kernel_virtual_memory_area_randomized_tests` | 随机 | 固定种子 100000 步 VMA 与独立有序区间参考模型 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
 | `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
-| `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、64 页/256 KiB 用户栈、guard、地址窗口与系统调用 ABI |
+| `os_kernel_user_boundary_integration_tests` | 集成 | Ring 3 帧、2048 页/8 MiB 用户栈、guard、匿名窗口与系统调用 ABI |
 | `os_kernel_user_elf_randomized_tests` | 随机 | 16,384 条用户地址范围与溢出性质 |
 | `os_kernel_thread_scheduler_unit_tests` | 单元 | Process/Thread 容量、PID/TID、两级回收、WaitQueue、Mutex 与锁边界 |
 | `os_kernel_process_tree_unit_tests` | 单元 | PID1、父子关系、Zombie、wait、孤儿收养、Init 回收与统计守恒 |
@@ -675,6 +727,8 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_file_system_randomized_tests` | 随机 | 128 轮随机 rewrite、重挂载与参考模型逐字节对照 |
 | `os_user_shell_parser_unit_tests` | 单元 | Shell 空白、引号、转义、参数/行长上限与错误原子性 |
 | `os_user_shell_parser_randomized_tests` | 随机 | 4096 轮随机字节输入的边界、切片归属与可重复性 |
+| `os_user_heap_unit_tests` | 单元 | UserHeap 增长、对齐、split、复用、双向合并、耗尽与非法释放 |
+| `os_user_heap_randomized_tests` | 随机 | 固定种子 100000 步 heap 与活动 allocation 字节模型 |
 | `os_freestanding_symbol_audit` | 集成 | x86-64 ELF 与零未解析运行时符号 |
 | `os_kernel_elf_layout` | 集成 | 真实内核的 ELF64 头、加载段、入口、权限、符号与相邻空闲指令 |
 | `os_user_smoke_elf_layout` | 集成 | 正常用户 ELF 的 AMD64、段权限与入口 |
@@ -685,6 +739,9 @@ python3 tools/os.py test --layer failure-path
 | `os_user_exec_probe_elf_layout` | 集成 | exec 失败回滚与成功提交探针 ELF 布局 |
 | `os_user_exec_target_elf_layout` | 集成 | exec 新映像目标 ELF 布局 |
 | `os_user_fs_probe_elf_layout` | 集成 | 磁盘程序文件系统读写探针 ELF 布局 |
+| `os_user_memory_probe_elf_layout` | 集成 | 匿名页、break、栈与 heap 成功路径探针 ELF 布局 |
+| `os_user_memory_guard_probe_elf_layout` | 集成 | 永久 stack guard 用户故障探针 ELF 布局 |
+| `os_user_memory_protection_probe_elf_layout` | 集成 | 只读匿名页写保护故障探针 ELF 布局 |
 | `os_user_invalid_opcode_elf_layout` | 集成 | 用户 `UD2` 测试 ELF 的结构与权限 |
 | `os_user_page_fault_elf_layout` | 集成 | 用户越权访问测试 ELF 的结构与权限 |
 | `os_user_scheduler_worker_elf_layout` | 集成 | 同址多进程 worker ELF 的结构、权限与入口 |
@@ -703,6 +760,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_root_file_system_format_unit_tests` | 单元 | rootfs v2 四类盘面结构、CRC、保留区和边界 |
 | `os_kernel_root_file_system_integration_tests` | 集成 | 稀疏、三级间接、完整命名空间、重挂载和设备失败 |
 | `os_kernel_root_file_system_capacity_integration_tests` | 容量/集成 | 真实 256 MiB 近满镜像、短写、ENOSPC 与一致性 |
+| `os_qemu_bootstrap_smoke` | 系统 | 64 MiB 完整 PID1、VM probe、故障策略与资源守恒 |
 | `os_qemu_functional_smoke` | 系统 | 256 MiB 完整 Shell、IPC、文件系统、用户隔离和资源快照路径 |
 | `os_qemu_stage1_load_success` | 系统 | 64 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
 | `os_qemu_file_system_persistence` | 系统/失败路径 | 同盘双启动持久化与损坏 superblock 拒绝挂载 |
@@ -732,7 +790,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_randomized_tests` | 随机 | ELF 标识/地址破坏、长度往返、负载与补零破坏 |
 | `os_book_source_check` | 集成 | 真实代码统计生成、LaTeX 输入图和主题章教材结构 |
 
-顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.7 新增
+顶层 CTest 数量由当前构建图自动生成，不在文档中冻结为长期常数。v1.8 新增
+VMA 单元/随机、UserHeap 单元/随机、用户 VM 生命周期、三个 ELF 审计和
+64 MiB bootstrap smoke，并扩展用户边界、QEMU 串口协议与资源快照；v1.7 新增
 进程树、程序参数、4096 轮生命周期和固定种子进程模型四项直接测试，并把
 reader ELF、rootfs 离线安装与真实 QEMU PID1 协议纳入既有测试；v1.6 新增
 rootfs 格式、集成和真实容量三项直接测试，并扩展 VFS、随机、Python 工具与

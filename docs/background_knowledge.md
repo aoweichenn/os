@@ -1043,7 +1043,7 @@ Committed                 RolledBack
 否则调用者可能根据一半更新的 `is_last` 销毁仍被引用的对象。
 
 引用计数只证明拥有者数量，不证明对象内部状态、关联页表或等待队列正确，也
-不能自动解决环引用。当前 v1.7 仍是单 BSP 基线，计数存储使用普通
+不能自动解决环引用。当前 v1.8 仍是单 BSP 基线，计数存储使用普通
 `uint64_t`，但对象查找与 acquire/release 已在同一管理器锁内提交；最后引用
 先把对象从活动集合摘除，再在锁外执行 finalizer。这样冻结了当前并发边界，
 却没有伪称已具备 weak reference、无锁升级、SMP 原子引用或循环回收。
@@ -1936,7 +1936,7 @@ wait：期间可能有另一个条件或孩子变化，不能把 wakeup 当作�
 它也形成 Shell 熟悉的控制流：父 Shell fork，孩子设置 fd/管道后 exec，
 父 Shell wait。
 
-当前 v1.7 尚无 COW 和多 Thread fork，因此先提供：
+当前 v1.8 已有 VMA 但尚无 COW 和多 Thread fork，因此先提供：
 
 - spawn：从程序路径直接构造一个全新孩子；
 - exec：保持当前 PID 与父子身份，替换当前程序映像；
@@ -1944,8 +1944,8 @@ wait：期间可能有另一个条件或孩子变化，不能把 wakeup 当作�
 
 这里的 spawn 不冒充 fork。它不复制父地址空间，也不继承父 FileTable；
 新进程取得独立 FsContext 和标准描述符。这样的阶段划分先把磁盘 ELF、参数
-栈、父子树、失败回滚与等待闭合，下一阶段再引入 VMA/COW 以后实现 fork
-共享页和描述符继承。
+栈、父子树、失败回滚与等待闭合；v1.8 先补齐匿名 VMA 和统一缺页策略，
+后续再在其上实现 COW、共享页和描述符继承。
 
 ### exec 为什么必须是候选映像事务
 
@@ -1991,8 +1991,9 @@ C++ 的 `char** argv` 最终仍是一组用户虚拟地址。Kernel 不能把自
 freestanding 入口无需 libc 启动文件也能读取参数。RSP 保持 16 字节对齐，
 既满足 AMD64 ABI 的可预期边界，也为以后普通函数调用保留正确栈模型。
 
-参数项与环境项各最多 256 个，字符串连同 NUL 总量最多 128 KiB；用户栈为
-64 个 4 KiB 页。所有计数、地址和加法使用 `uint64_t` 并先检查溢出。限制
+参数项与环境项各最多 256 个，字符串连同 NUL 总量最多 128 KiB；当前用户栈
+预留 8 MiB，只预提交参数实际覆盖的顶部页。所有计数、地址和加法使用
+`uint64_t` 并先检查溢出。限制
 不仅防止内存耗尽，也让 Kernel 可以在固定存储中先完成计划，再写候选页。
 
 ### 本阶段的证据为什么必须分层
@@ -2002,7 +2003,8 @@ freestanding 入口无需 libc 启动文件也能读取参数。RSP 保持 16 �
 - 固定种子随机测试改变 8192 个孩子的退出顺序，并用独立布局公式比较；
 - rootfs 工具测试证明 ELF 字节真的写进嵌套目录并可重新读取；
 - QEMU 从自研 ROM 进入真实 Kernel，再经 ATA/VFS 读取 `/sbin/init`，
-  真实切换 CR3/RSP、执行 spawn/exec/wait，最终证明八个 Process 全部回收。
+  真实切换 CR3/RSP、执行 spawn/exec/wait；当前 v1.8 再顺序执行三个 VM
+  probe，最终证明十一个 Process 生命周期全部回收。
 
 宿主模型不能证明 x86 页表和系统调用入口；一次 QEMU 成功也不能穷举上千种
 退出顺序。只有两者结论一致，才能把“看起来启动了”提升为可回归的生命周期
@@ -2010,7 +2012,44 @@ freestanding 入口无需 libc 启动文件也能读取参数。RSP 保持 16 �
 [v1.7 学习章](learning/15-v1.7-pid1-process-tree-exec.md)，设计决策见
 [ADR 0034](adr/0034-pid1-process-tree-disk-exec-wait.md)。
 
-## 27. 建议阅读顺序
+## 27. 为什么按需分页必须先有 VMA
+
+页表只告诉处理器“此刻如何翻译”。一个 not-present PTE 不包含缺席原因：
+它可能属于尚未触及的匿名区、未来文件页、栈下一页，也可能是 guard 或越界。
+如果 Kernel 对任何用户 not-present fault 都分配零页，地址空间隔离会退化为
+“访问哪里都能得到内存”。
+
+VMA 增加软件策略层：
+
+```text
+VMA = [begin,end) + kind + readable/writable/executable
+PTE = present physical frame + current hardware permissions
+```
+
+用户 `mmap` 或 `brk` 先建立 VMA。处理器真正访问时把地址写入 CR2，并通过
+error code 告诉 Kernel present、write、user、reserved 与 instruction
+事实；Kernel 再结合 VMA 决定分配零页、增长栈或终止。成功建立 PTE 后从
+异常返回，原指令自动重试。
+
+用户栈还需要保存的 RSP 作为证据。当前只允许 fault page 紧邻 committed
+bottom，并与 RSP 位于 64 KiB 邻近范围；永久 guard 完全没有 VMA。这样
+“最大栈范围”不是任意写入许可。
+
+撤销时同样要区分 VMA 与 PTE。先 trim/remove/split VMA，再只释放实际驻留
+页；最后一个叶项消失时才回收共享的空页表分支。未触及 reservation 没有
+frame，不能产生虚构释放。
+
+历史 Unix `brk` 管理连续数据段，`mmap` 后来提供独立区间；用户 allocator
+在二者之上管理对象大小。本项目的 `UserHeap` 用 program break 获得页级
+容量，再用 boundary header、first-fit、split 与 coalesce 管理 16 字节
+对齐块。Kernel 不需要理解用户对象，用户 allocator 也不能越过系统调用直接
+修改页表。
+
+完整硬件位、算法和源码顺序见
+[v1.8 学习章](learning/16-v1.8-anonymous-vma-demand-paging.md)，设计决策见
+[ADR 0035](adr/0035-anonymous-vma-demand-paging-user-heap.md)。
+
+## 28. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -2031,6 +2070,7 @@ freestanding 入口无需 libc 启动文件也能读取参数。RSP 保持 16 �
    原生系统调用和安全返回，v1.4 的 KernelObject、共享 FileDescription 与
    动态 FileTable，v1.5 的 VFS、Mount、memfs 与 legacy 适配，以及
    v1.6 的 rootfs v2、完整命名空间与独立 fsck，以及 v1.7 的磁盘 PID1、
-   进程树、spawn/exec/wait 与参数环境。
+   进程树、spawn/exec/wait 与参数环境，以及 v1.8 的 VMA、匿名缺页、
+   受控栈增长和用户 heap。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

@@ -171,7 +171,8 @@ GetKernelResourceSnapshot(const ResourceSnapshotSupplementalCounts &supplemental
                                                           bool executable,
                                                           uint64_t &physical_address) noexcept;
 [[nodiscard]] KernelUserPageStatus ReleaseUserPage(uint64_t root_physical_address,
-                                                   uint64_t virtual_address) noexcept;
+                                                   uint64_t virtual_address,
+                                                   uint64_t &reclaimed_table_frame_count) noexcept;
 [[nodiscard]] PageTableStatus QueryAddressSpacePage(uint64_t root_physical_address,
                                                     uint64_t virtual_address,
                                                     PageMapping &mapping) noexcept;

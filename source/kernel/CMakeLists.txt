@@ -68,6 +68,7 @@ set(
     include/os/kernel/memory/physical_frame_allocator.hpp
     include/os/kernel/memory/physical_memory_map.hpp
     include/os/kernel/memory/resource_snapshot.hpp
+    include/os/kernel/memory/virtual_memory_area.hpp
 )
 set(
     OS_KERNEL_OBJECT_HEADERS
@@ -179,6 +180,7 @@ set(
     src/memory/physical_frame_allocator.cpp
     src/memory/physical_memory_map.cpp
     src/memory/resource_snapshot.cpp
+    src/memory/virtual_memory_area.cpp
 )
 set(
     OS_KERNEL_OBJECT_SOURCES
@@ -279,6 +281,7 @@ add_library(
         src/memory/physical_frame_allocator.cpp
         src/memory/physical_memory_map.cpp
         src/memory/resource_snapshot.cpp
+        src/memory/virtual_memory_area.cpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/memory/kernel_stack_manager.hpp
         include/os/kernel/memory/kernel_type_cache.hpp
@@ -288,6 +291,7 @@ add_library(
         include/os/kernel/memory/physical_frame_allocator.hpp
         include/os/kernel/memory/physical_memory_map.hpp
         include/os/kernel/memory/resource_snapshot.hpp
+        include/os/kernel/memory/virtual_memory_area.hpp
 )
 target_include_directories(
     os_kernel_memory_model_host

@@ -240,6 +240,18 @@ function(os_add_kernel_memory_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     )
 endfunction()
 
+os_add_kernel_memory_test(
+    os_kernel_virtual_memory_area_unit_tests
+    unit/kernel/virtual_memory_area_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_virtual_memory_area_randomized_tests
+    randomized/kernel/virtual_memory_area_randomized_test.cpp
+    "randomized"
+)
+
 add_library(
     os_kernel_stack_test_support
     STATIC
@@ -399,6 +411,11 @@ os_add_kernel_memory_test(
 os_add_page_table_test(
     os_kernel_page_table_reclamation_lifecycle_integration_tests
     integration/boot/page_table_reclamation_lifecycle_test.cpp
+    "integration"
+)
+os_add_page_table_test(
+    os_kernel_user_virtual_memory_lifecycle_integration_tests
+    integration/boot/user_virtual_memory_lifecycle_test.cpp
     "integration"
 )
 os_add_kernel_memory_test(
@@ -732,6 +749,44 @@ os_add_user_shell_test(
     "randomized"
 )
 
+function(
+    os_add_user_heap_test
+    OS_TEST_TARGET
+    OS_TEST_SOURCE
+    OS_TEST_LABEL
+)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_user_heap_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_user_heap_test(
+    os_user_heap_unit_tests
+    unit/user/user_heap_test.cpp
+    "unit"
+)
+
+os_add_user_heap_test(
+    os_user_heap_randomized_tests
+    randomized/user/user_heap_randomized_test.cpp
+    "randomized"
+)
+
 function(os_add_kernel_file_system_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
     target_link_libraries(
@@ -927,6 +982,18 @@ os_add_user_elf_audit_test(
     os_user_fs_probe_elf_layout
     "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
 )
+os_add_user_elf_audit_test(
+    os_user_memory_probe_elf_layout
+    "${OS_USER_MEMORY_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_memory_guard_probe_elf_layout
+    "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_memory_protection_probe_elf_layout
+    "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+)
 
 add_test(
     NAME os_qemu_hardware_smoke
@@ -1066,9 +1133,32 @@ set_tests_properties(
         WILL_FAIL TRUE
 )
 
+set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 65536)
 set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 60)
+
+add_test(
+    NAME os_qemu_bootstrap_smoke
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_BOOT_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
+        --expected-outcome
+        success
+)
+set_tests_properties(
+    os_qemu_bootstrap_smoke
+    PROPERTIES
+        LABELS "system;bootstrap-smoke"
+        TIMEOUT 25
+)
 
 add_test(
     NAME os_qemu_functional_smoke

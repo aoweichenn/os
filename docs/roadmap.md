@@ -49,8 +49,9 @@ v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习�
 集合推进到 107 项；v1.5 再加入 VFS 单元、双后端契约和十万步命名空间模型，
 形成 110 项历史集合。v1.6 再加入 rootfs 格式、集成、真实容量证据，并扩展
 随机、工具与 QEMU 持久化；v1.7 又加入进程树、参数布局、4096 轮生命周期
-集成、固定种子随机模型、rootfs ELF 安装和 PID1 整机证据。当前数量由构建图
-自动生成，不在路线中冻结。
+集成、固定种子随机模型、rootfs ELF 安装和 PID1 整机证据。v1.8 再加入
+VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 3 VM probe
+和具名 64 MiB bootstrap。当前数量由构建图自动生成，不在路线中冻结。
 
 ## 第二周期最终目标
 
@@ -505,6 +506,8 @@ Vnode 和对象资源回到基线；两层证据共同满足生命周期退出�
 
 ### v1.8 匿名 VMA 与用户运行时内存
 
+**状态：完成**
+
 **目标**
 
 让 VMA 表示地址空间意图，让匿名物理页只在首次访问时出现。
@@ -524,6 +527,32 @@ Vnode 和对象资源回到基线；两层证据共同满足生命周期退出�
 - guard、权限、越界、重叠和地址溢出均明确失败；
 - munmap/exec/exit 后 VMA、页表和物理页回到基线；
 - 用户 heap 随机申请/释放、耗尽和失败原子性通过。
+
+以上退出条件已经闭环。每个地址空间现拥有按地址递增的页对齐 VMA 图，
+全局 8192 描述符池以 owner identifier 隔离不同 Process，单 Process
+hard limit 为 4096。Insert 拒绝重叠并合并同属性邻居；Remove 先预检 kind，
+中段拆分在修改前取得额外描述符，元数据耗尽保持旧映射不变。
+
+匿名窗口固定为 `[0x60000000, 0x80000000)`。系统调用 39..42 提供非覆盖
+fixed/first-fit 匿名 map、匿名 unmap、program break 与 112 字节 VM 统计。
+map 与 break growth 只登记 VMA；用户 not-present `#PF` 经 CR2/error code、
+VMA 权限和 kind 检查后才分配并清零一页。完整 8 MiB 栈先预留，只有紧邻
+committed bottom 且与用户 RSP 邻近的 fault 才增长；底部下一页永久没有
+VMA。
+
+撤销只释放实际驻留 frame，并继续使用页表所有权协议回收空 PT/PD/私有
+PDPT。exec 与 exit 销毁整张 VMA 图；最终描述符 active 为零且
+acquire/release 增量守恒。Ring 3 `UserHeap` 在 program break 上用 64 字节
+header、16 字节对齐、first-fit、split 和前后 coalesce 管理最多 8 MiB。
+
+VMA 与 heap 各自通过 100000 步固定种子参考模型；128 轮组合测试证明预留
+不耗 frame、首次触页才映射、中段撤销回收页表并恢复基线。真实 memory probe
+覆盖 32 MiB 稀疏触页、零填充、写保持、split/remap/unmap、2 MiB break、
+栈增长和 5000 步 heap；guard 与只读写 probe 必须分别以用户 vector 14
+结束。64 MiB、256 MiB 和 64 GiB 三档均运行相同完整工作负载。
+
+详细证据见 [v1.8 发布记录](releases/v1.8.md) 与
+[ADR 0035](adr/0035-anonymous-vma-demand-paging-user-heap.md)。
 
 ### v1.9 文件页故障与有界 clean page cache
 

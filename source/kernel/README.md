@@ -25,7 +25,7 @@ src/memory/page_table.cpp
 | `fs/` | 磁盘格式、块缓存和文件系统 |
 | `io/` | 控制台输入、共享 FileDescription 与动态 FileTable |
 | `ipc/` | 有界管道和端点生命周期 |
-| `memory/` | 物理页、buddy、页表、heap、KVA、动态栈与资源快照 |
+| `memory/` | 物理页、buddy、页表、heap、KVA、动态栈、VMA 与资源快照 |
 | `object/` | 类型化 KernelObject、generation 与强引用生命周期 |
 | `process/` | Process/Thread 状态机、run queue、WaitQueue 和目标机生命周期 |
 | `sync/` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
@@ -121,7 +121,7 @@ process/process_tree.*         与调度槽分离的父子关系、退出状态�
 process/program_arguments.*    不访问页表的参数/环境布局规划
 process/process_runtime.*      VFS ELF reader、spawn/exec/wait 与失败展开
 user/user_elf.*                内存/文件共用的 reader 两遍 ELF 验证
-user/user_memory.*             候选 AddressSpace、64 页用户栈与段复制
+user/user_memory.*             候选 AddressSpace、8 MiB 用户栈预留与段复制
 user/system_calls.*            36/37/38 号 ABI 的用户复制和结果映射
 ```
 
@@ -130,3 +130,16 @@ VFS、页表或设备。磁盘读取和真实资源提交只进入 `process_runt
 ELF parser 只通过 `UserElfReader` 观察 `(offset, length)`，不认识 inode。
 普通用户程序属于 rootfs，不得重新加入 `user_program_images`；后者只保留
 启动模式必须直接选择的最小 smoke/异常夹具。
+
+v1.8 在相同目录边界内增加用户虚拟内存策略：
+
+```text
+memory/virtual_memory_area.*   有序 VMA、描述符池、split/merge/gap 与守恒
+user/user_memory.*             匿名 fault、brk、unmap、栈增长与统计
+user/system_calls.*            39..42 号 VM ABI 校验和当前 Process 分发
+```
+
+VMA 容器不访问 CR2、页表或 frame allocator；它保持宿主可链接。实际缺页
+解析只进入 `user_memory`，异常入口仍归属 `arch/`，当前 Process 与退出/
+exec 生命周期仍归属 `process/`。这种依赖方向防止区间算法、x86 fault 机制
+和 Process 调度重新堆进一个不可测试文件。

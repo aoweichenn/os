@@ -142,6 +142,8 @@ struct ProcessRuntimeStatistics final {
     KernelVirtualAddressAllocatorStatistics virtual_addresses_after_processes;
     KernelStackManagerStatistics kernel_stacks_before_processes;
     KernelStackManagerStatistics kernel_stacks_after_processes;
+    VirtualMemoryAreaPoolStatistics virtual_memory_areas_before_processes;
+    VirtualMemoryAreaPoolStatistics virtual_memory_areas_after_processes;
     ResourceSnapshot resource_snapshot_before_processes;
     ResourceSnapshot resource_snapshot_after_processes;
     ResourceSnapshotDifference resource_snapshot_difference;
@@ -178,6 +180,15 @@ TryWaitCurrentProcess(uint64_t requested_process_id,
 [[nodiscard]] uint64_t CurrentProcessId() noexcept;
 [[nodiscard]] uint64_t CurrentThreadId() noexcept;
 [[nodiscard]] UserProgramSelection CurrentProcessSelection() noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+MapCurrentProcessAnonymousMemory(uint64_t requested_address, uint64_t length_bytes,
+                                 uint64_t protection_flags, uint64_t map_flags,
+                                 uint64_t &mapped_address) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+UnmapCurrentProcessAnonymousMemory(uint64_t address, uint64_t length_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+SetCurrentProcessProgramBreak(uint64_t requested_address, uint64_t &program_break_address) noexcept;
+[[nodiscard]] os::abi::VirtualMemoryStatistics GetCurrentProcessVirtualMemoryStatistics() noexcept;
 void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] bool CurrentProcessCanReadPipe() noexcept;
 [[nodiscard]] bool CurrentProcessCanWritePipe() noexcept;
@@ -263,6 +274,8 @@ void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
 [[nodiscard]] bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept;
+[[nodiscard]] bool HandleCurrentProcessPageFault(ExceptionFrame &frame,
+                                                 uint64_t fault_address) noexcept;
 [[nodiscard]] ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
                                                               int64_t exit_code) noexcept;
 [[nodiscard]] ExceptionFrame *

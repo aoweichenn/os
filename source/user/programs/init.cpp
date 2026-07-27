@@ -13,14 +13,21 @@ constexpr char OS_USER_INIT_ORPHAN_REAPED_MESSAGE[] = "[OS][USER][INIT] ORPHAN_R
 constexpr char OS_USER_INIT_ALL_CHILDREN_REAPED_MESSAGE[] =
     "[OS][USER][INIT] ALL_CHILDREN_REAPED\r\n";
 constexpr char OS_USER_INIT_NO_ZOMBIES_MESSAGE[] = "[OS][USER][INIT] NO_ZOMBIES\r\n";
+constexpr char OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE[] =
+    "[OS][USER][INIT] MEMORY_PROBE_REAPED\r\n";
+constexpr char OS_USER_INIT_VM_FAULT_POLICIES_MESSAGE[] =
+    "[OS][USER][INIT] VM_FAULT_POLICIES_VERIFIED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.7";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.8";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";
 constexpr char OS_USER_INIT_FILE_SYSTEM_PROBE_PATH[] = "/bin/fs_probe";
 constexpr char OS_USER_INIT_SMOKE_PATH[] = "/bin/smoke";
 constexpr char OS_USER_INIT_SHELL_PATH[] = "/bin/sh";
+constexpr char OS_USER_INIT_MEMORY_PROBE_PATH[] = "/bin/memory_probe";
+constexpr char OS_USER_INIT_MEMORY_GUARD_PROBE_PATH[] = "/bin/memory_guard_probe";
+constexpr char OS_USER_INIT_MEMORY_PROTECTION_PROBE_PATH[] = "/bin/memory_protection_probe";
 constexpr uint64_t OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_INIT_EXPECTED_PROCESS_ID = 1ULL;
 constexpr uint64_t OS_USER_INIT_INITIAL_CHILD_COUNT = 6ULL;
@@ -46,6 +53,7 @@ constexpr int64_t OS_USER_INIT_FAILURE_EXIT_CODE = 1LL;
 constexpr int64_t OS_USER_INIT_ORPHAN_PARENT_EXIT_CODE = 23LL;
 constexpr int64_t OS_USER_INIT_ORPHAN_CHILD_EXIT_CODE = 42LL;
 constexpr int64_t OS_USER_INIT_FIRST_ERROR_RESULT = -1LL;
+constexpr uint64_t OS_USER_INIT_PAGE_FAULT_VECTOR = 14ULL;
 
 uint8_t large_argument[OS_USER_INIT_LARGE_ARGUMENT_SIZE_BYTES];
 
@@ -131,6 +139,21 @@ template <uint64_t MessageSizeBytes>
     return os::user::SpawnProcess(request);
 }
 
+[[nodiscard]] bool RunExpectedProcess(const char *const path, const uint64_t path_length_bytes,
+                                      const os::abi::ProcessTerminationReason termination_reason,
+                                      const int64_t exit_code,
+                                      const uint64_t exception_vector) noexcept {
+    const int64_t process_id = SpawnSimpleProcess(path, path_length_bytes);
+    if (process_id <= OS_USER_INIT_FIRST_ERROR_RESULT) {
+        return false;
+    }
+    os::abi::ProcessWaitResult wait_result{};
+    return os::user::WaitProcess(static_cast<uint64_t>(process_id), wait_result) == process_id &&
+           wait_result.process_id == static_cast<uint64_t>(process_id) &&
+           wait_result.termination_reason == termination_reason &&
+           wait_result.exit_code == exit_code && wait_result.exception_vector == exception_vector;
+}
+
 }
 
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]]
@@ -213,6 +236,29 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
             os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
         }
     }
+
+    if (!RunExpectedProcess(OS_USER_INIT_MEMORY_PROBE_PATH,
+                            sizeof(OS_USER_INIT_MEMORY_PROBE_PATH) -
+                                OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES,
+                            os::abi::ProcessTerminationReason::Exited,
+                            OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_FIRST_INDEX) ||
+        !WriteMessage(OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE)) {
+        os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
+    }
+    if (!RunExpectedProcess(OS_USER_INIT_MEMORY_GUARD_PROBE_PATH,
+                            sizeof(OS_USER_INIT_MEMORY_GUARD_PROBE_PATH) -
+                                OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES,
+                            os::abi::ProcessTerminationReason::Exception,
+                            OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_PAGE_FAULT_VECTOR) ||
+        !RunExpectedProcess(OS_USER_INIT_MEMORY_PROTECTION_PROBE_PATH,
+                            sizeof(OS_USER_INIT_MEMORY_PROTECTION_PROBE_PATH) -
+                                OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES,
+                            os::abi::ProcessTerminationReason::Exception,
+                            OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_PAGE_FAULT_VECTOR) ||
+        !WriteMessage(OS_USER_INIT_VM_FAULT_POLICIES_MESSAGE)) {
+        os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
+    }
+
     os::abi::ProcessWaitResult no_child_result{};
     if (!adopted_child_reaped ||
         os::user::WaitProcess(os::abi::OS_ABI_PROCESS_WAIT_ANY_PROCESS_ID, no_child_result) !=

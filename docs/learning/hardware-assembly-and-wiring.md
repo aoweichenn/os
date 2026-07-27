@@ -166,7 +166,7 @@ Stage 1 的临时页表只解决“能进入 64 位并装载 Kernel”。v0.6 Ke
 E820 重建物理页所有权和正式页表，只映射可用 RAM，保留洞，设置 `RW`、`U/S`
 与 `NX`，并在高半区建立
 `VA = 0xFFFF888000000000 + PA` 的 direct map。v1.1 又把 heap、buddy、
-KVA 和动态双 guard 内核栈接在这套所有权模型之上，当前 v1.7 继续在其上
+KVA 和动态双 guard 内核栈接在这套所有权模型之上，当前 v1.8 继续在其上
 建立 Process/Thread、CpuLocal、KernelObject 和动态 FileTable，但没有增加
 新的 QEMU 硬件。
 

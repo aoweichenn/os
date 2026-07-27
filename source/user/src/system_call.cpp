@@ -349,6 +349,30 @@ int64_t WaitProcess(const uint64_t process_id, os::abi::ProcessWaitResult &resul
     }
 }
 
+int64_t MapAnonymousMemory(const uint64_t requested_address, const uint64_t length_bytes,
+                           const uint64_t protection_flags, const uint64_t map_flags) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::MapAnonymousMemory),
+                            requested_address, length_bytes, protection_flags, map_flags);
+}
+
+int64_t UnmapMemory(const uint64_t address, const uint64_t length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::UnmapMemory), address,
+                            length_bytes, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetProgramBreak(const uint64_t requested_address) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetProgramBreak),
+                            requested_address, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetVirtualMemoryStatistics(os::abi::VirtualMemoryStatistics &statistics) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetVirtualMemoryStatistics),
+        reinterpret_cast<uint64_t>(&statistics), sizeof(statistics),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 [[noreturn]] void ExitProcess(const int64_t exit_code) noexcept {
     static_cast<void>(
         InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess),

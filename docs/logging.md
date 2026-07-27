@@ -852,3 +852,72 @@ Process/Thread 创建回收、动态栈活动数零和资源快照零差异同�
 `MONOTONIC_MILLISECONDS`。进程日志不自行读取 RTC，也不为每次系统调用打印
 时间。若卡在某个生命周期事件，runner 的阶段 deadline 会终止并回收 QEMU；
 不能通过增加无界 TRACE 来掩盖死锁或丢失唤醒。
+
+## v1.8 按需分页与 VMA 日志
+
+页故障是潜在高频事件。默认镜像不为每页打印 CR2、frame、PTE 或页表层级，
+否则一个 32 MiB 线性触页就能制造 8192 组串口输出，并改变 TCG 下的抢占与
+wait 交错。
+
+Kernel 只在当前 Process 的累计计数达到二次幂时采样：
+
+```text
+[OS][KERNEL][VM] DEMAND_FAULT_COUNT=0x...
+[OS][KERNEL][VM] STACK_GROWTH_COUNT=0x...
+```
+
+每个 Process 从自己的一开始采样，所以整机可能出现多行相同数值。QEMU
+runner 必须把它们解释为“至少出现一次且解析值非零”，不得冻结精确行数。
+RSVD、present、guard 与权限失败仍走统一用户异常结果；只有无法解释的 Ring 0
+状态进入 panic。
+
+成功 memory probe 使用阶段语义标记：
+
+```text
+[OS][USER][VM] STARTED
+[OS][USER][VM] DEMAND_ZERO_VERIFIED
+[OS][USER][VM] ANONYMOUS_UNMAP_RECLAIMED
+[OS][USER][VM] PROGRAM_BREAK_VERIFIED
+[OS][USER][VM] STACK_GROWTH_VERIFIED
+[OS][USER][VM] USER_HEAP_RANDOMIZED_VERIFIED
+[OS][USER][VM] COMPLETED
+[OS][USER][INIT] MEMORY_PROBE_REAPED
+```
+
+每条只在一整组断言通过后打印一次。5000 次 heap 操作、每个块 split/coalesce、
+每次 `brk`、每个 VMA 查找和每个页表回收都不逐项打印。失败通过探针退出码、
+宿主单元/随机测试的种子与迭代位置定位。
+
+两个保护 probe 在执行预期非法访问前各输出一次：
+
+```text
+[OS][USER][VM] GUARD_FAULT_ARMED
+[OS][USER][VM] PROTECTION_FAULT_ARMED
+```
+
+它们之后必须由 ProcessRuntime 记录用户 vector 14，而不是输出“完成”。
+PID1 同时核对 termination reason 和 vector 后才输出：
+
+```text
+[OS][USER][INIT] VM_FAULT_POLICIES_VERIFIED
+```
+
+全部十一 Process 生命周期结束后，Kernel 冷路径输出一次 VMA 池摘要：
+
+```text
+[OS][KERNEL] VMA_DESCRIPTOR_CAPACITY=0x0000000000002000
+[OS][KERNEL] VMA_ACTIVE_DESCRIPTORS=0x0000000000000000
+[OS][KERNEL] VMA_PEAK_DESCRIPTORS=0x...
+[OS][KERNEL] VMA_ACQUIRES=0x...
+[OS][KERNEL] VMA_RELEASES=0x...
+```
+
+capacity 与 active 是精确协议；peak/acquire/release 必须非零，并由目标内
+资源验证要求 acquire 等于 release。v1.8 的进程树精确摘要随新增的三个探针
+变为 registered/exited/collected 各 11、wait successes 10、Zombie 0；
+峰值并发仍为八。
+
+时间策略不变：来宾打印 PIT 单调毫秒，宿主为每行增加
+`[QEMU][T+...ms]`。64 MiB bootstrap、256 MiB functional 和 64 GiB capacity
+均有内部阶段截止与外层 CTest 超时；采样日志不能代替超时，也不能因等待某个
+非必然的精确 fault 次数让 QEMU 留在后台。

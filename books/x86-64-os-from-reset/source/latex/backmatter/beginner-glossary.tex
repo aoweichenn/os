@@ -489,13 +489,31 @@
   页是分页管理的固定大小单位，页表把虚拟页映射到物理页并附带读写、用户、
   执行等权限。CR3 指向当前页表根，TLB 缓存近期翻译。
 
+  \item[VMA / 虚拟内存区域]
+  Virtual Memory Area 是 Kernel 对一段半开虚拟区间的意图记录，保存来源、
+  软件权限和用途。VMA 存在只表示进程有权使用该范围，不表示每页已经有 PTE
+  或物理 frame；这正是 reservation 与 resident 的区别。
+
+  \item[按需分页 Demand Paging]
+  先登记 VMA，等真实访问产生 not-present 页故障时再提交页面的策略。匿名页
+  提交时必须完整清零；Kernel 修复 PTE 并返回后，CPU 重试原用户指令。
+  权限 fault、保留位错误和没有 VMA 的地址不能借此自动变成合法映射。
+
+  \item[Program Break]
+  传统连续数据区的字节级逻辑末端。用户分配器可以请求前移或后退 break，
+  Kernel 以整页 VMA 覆盖它；扩大只建立 reservation，首次访问才产生
+  resident page。它适合连续 heap，但不能代替多个独立匿名映射。
+
   \item[栈 Stack]
   按后进先出习惯保存调用返回地址、局部状态和中断现场的一段 RAM。CPU 复位后
-  不会替裸机固件建立可用栈，早期代码必须先选择并设置 RSP。
+  不会替裸机固件建立可用栈，早期代码必须先选择并设置 RSP。v1.8 用户栈预留
+  8 MiB，但只允许紧邻 committed bottom 的下一页按保存的用户 RSP 连续提交；
+  最低 guard 完全没有 VMA。
 
   \item[堆 Heap]
   供动态分配器管理的内存区域。它不是磁盘，也不是“所有剩余 RAM”；分配器
-  仍需建立范围、对齐、所有权和释放规则。
+  仍需建立范围、对齐、所有权和释放规则。v1.8 Ring 3 UserHeap 在 program
+  break 上用 boundary tag、first-fit、split 与双向 coalesce 管理对象。
 
   \item[文件系统 File System]
   把块设备上的字节组织成超级块、位图、inode、目录和文件等持久结构。缓存、

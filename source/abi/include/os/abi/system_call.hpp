@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/abi/virtual_memory.hpp"
+
 #include <stdint.h>
 
 namespace os::abi {
@@ -43,6 +45,10 @@ enum class SystemCallNumber : uint64_t {
     SpawnProcess = 36ULL,
     ExecProcess = 37ULL,
     WaitProcess = 38ULL,
+    MapAnonymousMemory = 39ULL,
+    UnmapMemory = 40ULL,
+    SetProgramBreak = 41ULL,
+    GetVirtualMemoryStatistics = 42ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -109,6 +115,10 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_EXECUTABLE = -35LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_ARGUMENT_LIST_TOO_LARGE = -36LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NO_CHILD_PROCESS = -37LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE = -38LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY = -39LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_ADDRESS_IN_USE = -40LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_MEMORY_RANGE = -41LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_MEMORY_METADATA_EXHAUSTED = -42LL;
 
 enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,

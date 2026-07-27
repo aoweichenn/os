@@ -14,7 +14,7 @@ constexpr std::string_view OS_TEST_USER_BOUNDARY_SUITE_NAME = "kernel/user_bound
 constexpr std::string_view OS_TEST_USER_BOUNDARY_FRAME_MESSAGE =
     "异常帧必须按 CS.RPL 区分 Ring 0 与 Ring 3";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_STACK_MESSAGE =
-    "用户栈必须包含 64 个数据页、256 KiB 容量和一个未映射保护页";
+    "用户栈必须预留 8 MiB 虚拟窗口并在下方保留一页永久保护区";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_ADDRESS_MESSAGE =
     "用户地址边界必须排除低地址和非规范高半区";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE =
@@ -22,8 +22,8 @@ constexpr std::string_view OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE =
 constexpr std::string_view OS_TEST_USER_BOUNDARY_ABI_MESSAGE = "系统调用 ABI 编号和向量必须稳定";
 constexpr uint64_t OS_TEST_USER_BOUNDARY_KERNEL_CODE_SELECTOR = 0x0008ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_USER_CODE_SELECTOR = 0x0023ULL;
-constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT = 64ULL;
-constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_SIZE_BYTES = 256ULL * 1024ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT = 2048ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_SIZE_BYTES = 8ULL * 1024ULL * 1024ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR = 0x80ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER = 1ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER = 2ULL;
@@ -35,6 +35,10 @@ constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_REMOVE_DIRECTORY_NUMBER = 32UL
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_RENAME_NUMBER = 33ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_TRUNCATE_FILE_NUMBER = 34ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STAT_FILE_NUMBER = 35ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_MAP_MEMORY_NUMBER = 39ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_UNMAP_MEMORY_NUMBER = 40ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PROGRAM_BREAK_NUMBER = 41ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_MEMORY_STATISTICS_NUMBER = 42ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES = 255ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
@@ -91,36 +95,44 @@ int main() {
                 OS_TEST_USER_BOUNDARY_ADDRESS_PROBE_SIZE_BYTES),
         OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE);
 
-    test_context.Expect(os::abi::OS_ABI_SYSTEM_CALL_VECTOR ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::WriteLog) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeDirectory) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_CHANGE_DIRECTORY_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::GetWorkingDirectory) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_GET_WORKING_DIRECTORY_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::UnlinkFile) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_UNLINK_FILE_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::RemoveDirectory) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_REMOVE_DIRECTORY_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::Rename) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_RENAME_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::TruncateFile) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_TRUNCATE_FILE_NUMBER &&
-                            static_cast<uint64_t>(os::abi::SystemCallNumber::StatFile) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_STAT_FILE_NUMBER &&
-                            os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES &&
-                            os::abi::OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES &&
-                            sizeof(os::abi::DirectoryEntry) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES &&
-                            sizeof(os::abi::FileInformation) ==
-                                OS_TEST_USER_BOUNDARY_EXPECTED_FILE_INFORMATION_SIZE_BYTES,
-                        OS_TEST_USER_BOUNDARY_ABI_MESSAGE);
+    test_context.Expect(
+        os::abi::OS_ABI_SYSTEM_CALL_VECTOR == OS_TEST_USER_BOUNDARY_EXPECTED_VECTOR &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::WriteLog) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_WRITE_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::ExitProcess) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetProcessId) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_GET_PROCESS_ID_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeDirectory) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_CHANGE_DIRECTORY_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetWorkingDirectory) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_GET_WORKING_DIRECTORY_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::UnlinkFile) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_UNLINK_FILE_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::RemoveDirectory) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_REMOVE_DIRECTORY_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::Rename) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_RENAME_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::TruncateFile) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_TRUNCATE_FILE_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::StatFile) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_STAT_FILE_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::MapAnonymousMemory) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_MAP_MEMORY_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::UnmapMemory) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_UNMAP_MEMORY_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SetProgramBreak) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_PROGRAM_BREAK_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetVirtualMemoryStatistics) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_MEMORY_STATISTICS_NUMBER &&
+            os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES &&
+            os::abi::OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES &&
+            sizeof(os::abi::DirectoryEntry) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES &&
+            sizeof(os::abi::FileInformation) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_FILE_INFORMATION_SIZE_BYTES,
+        OS_TEST_USER_BOUNDARY_ABI_MESSAGE);
     return test_context.ExitCode();
 }

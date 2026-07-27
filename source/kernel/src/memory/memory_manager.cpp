@@ -3,10 +3,10 @@
 #include "os/foundation/reference_counter.hpp"
 #include "os/foundation/scope_rollback.hpp"
 #include "os/kernel/arch/descriptor_tables.hpp"
+#include "os/kernel/arch/processor.hpp"
 #include "os/kernel/memory/page_table.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/physical_memory_map.hpp"
-#include "os/kernel/arch/processor.hpp"
 #include "os/kernel/user/user_elf.hpp"
 
 namespace os::kernel {
@@ -1081,21 +1081,17 @@ ValidateKernelMappings(const BootInfo &boot_info,
     KernelStackRollbackContext *const context =
         static_cast<KernelStackRollbackContext *>(raw_context);
     return context->manager != nullptr &&
-           context->manager->TryDestroy(context->slot_index) ==
-               KernelStackManagerStatus::Succeeded;
+           context->manager->TryDestroy(context->slot_index) == KernelStackManagerStatus::Succeeded;
 }
 
-[[nodiscard]] ResourceLifecycleSelfTestStatus RunResourceLifecycleSelfTest(
-    ResourceLifecycleSelfTestStatistics &self_test_statistics) noexcept {
+[[nodiscard]] ResourceLifecycleSelfTestStatus
+RunResourceLifecycleSelfTest(ResourceLifecycleSelfTestStatistics &self_test_statistics) noexcept {
     self_test_statistics = ResourceLifecycleSelfTestStatistics{
         .tracked_field_count = OS_KERNEL_RESOURCE_SNAPSHOT_TRACKED_FIELD_COUNT,
         .changed_fields_mask = OS_KERNEL_RESOURCE_SNAPSHOT_ALL_FIELDS_MASK,
-        .reference_counter_passed =
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE,
-        .scope_rollback_passed =
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE,
-        .resource_snapshot_passed =
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE,
+        .reference_counter_passed = OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE,
+        .scope_rollback_passed = OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE,
+        .resource_snapshot_passed = OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE,
     };
 
     ResourceSnapshot before{};
@@ -1106,13 +1102,12 @@ ValidateKernelMappings(const BootInfo &boot_info,
     os::foundation::ScopeRollbackAction
         rollback_actions[OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_ACTION_CAPACITY]{};
     os::foundation::ScopeRollback rollback{};
-    if (rollback.Initialize(
-            rollback_actions, OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_ACTION_CAPACITY) !=
+    if (rollback.Initialize(rollback_actions,
+                            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_ACTION_CAPACITY) !=
         os::foundation::ScopeRollbackStatus::Succeeded) {
         return ResourceLifecycleSelfTestStatus::RollbackInitializationFailed;
     }
-    if (GetKernelStackManager().TryCreate(
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_LAST_STACK_SLOT) !=
+    if (GetKernelStackManager().TryCreate(OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_LAST_STACK_SLOT) !=
         KernelStackManagerStatus::Succeeded) {
         return ResourceLifecycleSelfTestStatus::KernelStackCreationFailed;
     }
@@ -1133,14 +1128,11 @@ ValidateKernelMappings(const BootInfo &boot_info,
     bool unavailable_release_output = false;
     os::foundation::ReferenceCounter overflow_counter{};
     const bool reference_counter_valid =
-        reference_counter.Start(
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_INITIAL_REFERENCE_COUNT) ==
+        reference_counter.Start(OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_INITIAL_REFERENCE_COUNT) ==
             os::foundation::ReferenceCounterStatus::Succeeded &&
-        reference_counter.Start(
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_INITIAL_REFERENCE_COUNT) ==
+        reference_counter.Start(OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_INITIAL_REFERENCE_COUNT) ==
             os::foundation::ReferenceCounterStatus::ActiveReferencesRemain &&
-        reference_counter.TryAcquire() ==
-            os::foundation::ReferenceCounterStatus::Succeeded &&
+        reference_counter.TryAcquire() == os::foundation::ReferenceCounterStatus::Succeeded &&
         reference_counter.TryRelease(released_last_reference) ==
             os::foundation::ReferenceCounterStatus::Succeeded &&
         !released_last_reference &&
@@ -1152,22 +1144,17 @@ ValidateKernelMappings(const BootInfo &boot_info,
         reference_counter.TryRelease(unavailable_release_output) ==
             os::foundation::ReferenceCounterStatus::ReferenceUnavailable &&
         !unavailable_release_output &&
-        overflow_counter.Start(UINT64_MAX) ==
-            os::foundation::ReferenceCounterStatus::Succeeded &&
-        overflow_counter.TryAcquire() ==
-            os::foundation::ReferenceCounterStatus::CounterOverflow;
+        overflow_counter.Start(UINT64_MAX) == os::foundation::ReferenceCounterStatus::Succeeded &&
+        overflow_counter.TryAcquire() == os::foundation::ReferenceCounterStatus::CounterOverflow;
     self_test_statistics.reference_counter_passed =
-        reference_counter_valid
-            ? OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_PASSED_VALUE
-            : OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE;
+        reference_counter_valid ? OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_PASSED_VALUE
+                                : OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE;
 
     const bool scope_rollback_valid =
         rollback.TryRollback() == os::foundation::ScopeRollbackStatus::Succeeded &&
         rollback.State() == os::foundation::ScopeRollbackState::RolledBack &&
-        rollback.FailureCount() ==
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE &&
-        GetKernelStackManager().Validate() ==
-            KernelStackManagerStatus::Succeeded;
+        rollback.FailureCount() == OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE &&
+        GetKernelStackManager().Validate() == KernelStackManagerStatus::Succeeded;
     self_test_statistics.scope_rollback_passed =
         scope_rollback_valid ? OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_PASSED_VALUE
                              : OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE;
@@ -1179,12 +1166,9 @@ ValidateKernelMappings(const BootInfo &boot_info,
     };
     const bool resource_snapshot_valid =
         GetKernelResourceSnapshot(after) == ResourceSnapshotStatus::Succeeded &&
-        CompareResourceSnapshots(before, after, difference) ==
-            ResourceSnapshotStatus::Succeeded &&
-        difference.changed_fields_mask ==
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE &&
-        difference.changed_field_count ==
-            OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE;
+        CompareResourceSnapshots(before, after, difference) == ResourceSnapshotStatus::Succeeded &&
+        difference.changed_fields_mask == OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE &&
+        difference.changed_field_count == OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_EMPTY_VALUE;
     self_test_statistics.changed_fields_mask = difference.changed_fields_mask;
     self_test_statistics.resource_snapshot_passed =
         resource_snapshot_valid ? OS_KERNEL_MEMORY_RESOURCE_SELF_TEST_PASSED_VALUE
@@ -1474,14 +1458,11 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
         .kva_self_test_physical_address = kva_self_test_statistics.physical_address,
         .kva_self_test_mapped_page_count = kva_self_test_statistics.mapped_page_count,
         .kva_self_test_guard_page_count = kva_self_test_statistics.guard_page_count,
-        .resource_snapshot_tracked_field_count =
-            resource_lifecycle_statistics.tracked_field_count,
-        .resource_snapshot_changed_fields_mask =
-            resource_lifecycle_statistics.changed_fields_mask,
+        .resource_snapshot_tracked_field_count = resource_lifecycle_statistics.tracked_field_count,
+        .resource_snapshot_changed_fields_mask = resource_lifecycle_statistics.changed_fields_mask,
         .reference_counter_self_test_passed =
             resource_lifecycle_statistics.reference_counter_passed,
-        .scope_rollback_self_test_passed =
-            resource_lifecycle_statistics.scope_rollback_passed,
+        .scope_rollback_self_test_passed = resource_lifecycle_statistics.scope_rollback_passed,
         .resource_snapshot_self_test_passed =
             resource_lifecycle_statistics.resource_snapshot_passed,
     };
@@ -1527,19 +1508,16 @@ KernelStackManager &GetKernelStackManager() noexcept {
     return manager;
 }
 
-ResourceSnapshotStatus
-GetKernelResourceSnapshot(ResourceSnapshot &snapshot) noexcept {
-    return GetKernelResourceSnapshot(ResourceSnapshotSupplementalCounts{},
-                                     snapshot);
+ResourceSnapshotStatus GetKernelResourceSnapshot(ResourceSnapshot &snapshot) noexcept {
+    return GetKernelResourceSnapshot(ResourceSnapshotSupplementalCounts{}, snapshot);
 }
 
-ResourceSnapshotStatus GetKernelResourceSnapshot(
-    const ResourceSnapshotSupplementalCounts &supplemental_counts,
-    ResourceSnapshot &snapshot) noexcept {
+ResourceSnapshotStatus
+GetKernelResourceSnapshot(const ResourceSnapshotSupplementalCounts &supplemental_counts,
+                          ResourceSnapshot &snapshot) noexcept {
     return CreateResourceSnapshot(
         FrameAllocator().Statistics(), FrameAllocator().BuddyStatistics(),
-        GetKernelHeap().Statistics(),
-        GetKernelVirtualAddressAllocator().Statistics(),
+        GetKernelHeap().Statistics(), GetKernelVirtualAddressAllocator().Statistics(),
         GetKernelStackManager().Statistics(), supplemental_counts, snapshot);
 }
 
@@ -1605,7 +1583,9 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t root_physical_address
 }
 
 KernelUserPageStatus ReleaseUserPage(const uint64_t root_physical_address,
-                                     const uint64_t virtual_address) noexcept {
+                                     const uint64_t virtual_address,
+                                     uint64_t &reclaimed_table_frame_count) noexcept {
+    reclaimed_table_frame_count = 0ULL;
     if (root_physical_address == 0ULL ||
         (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return KernelUserPageStatus::InvalidPageTableRoot;
@@ -1623,13 +1603,15 @@ KernelUserPageStatus ReleaseUserPage(const uint64_t root_physical_address,
     if (!mapping.permissions.user_accessible) {
         return KernelUserPageStatus::NotUserAccessible;
     }
-    if (process_page_table.UnmapPage(virtual_address) != PageTableStatus::Succeeded) {
+    PageTableUnmapResult unmap_result{};
+    if (process_page_table.UnmapPage(virtual_address, unmap_result) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageUnmappingFailed;
     }
     if (FrameAllocator().Release(PhysicalFrame{.physical_address = mapping.physical_address}) !=
         PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelUserPageStatus::FrameReleaseFailed;
     }
+    reclaimed_table_frame_count = unmap_result.reclaimed_table_frame_count;
     return KernelUserPageStatus::Succeeded;
 }
 

@@ -250,6 +250,12 @@ set(
     --rootfs-file
     "/bin/fs_probe=${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
     --rootfs-file
+    "/bin/memory_probe=${OS_USER_MEMORY_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/memory_guard_probe=${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/memory_protection_probe=${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+    --rootfs-file
     "/bin/truncated.elf=${OS_USER_TRUNCATED_ELF_PATH}"
 )
 
@@ -282,6 +288,9 @@ add_custom_command(
         "${OS_USER_EXEC_PROBE_ELF_PATH}"
         "${OS_USER_EXEC_TARGET_ELF_PATH}"
         "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
+        "${OS_USER_MEMORY_PROBE_ELF_PATH}"
+        "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
+        "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
         "${OS_USER_TRUNCATED_ELF_PATH}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
@@ -335,5 +344,8 @@ add_dependencies(
     os_user_exec_probe_elf
     os_user_exec_target_elf
     os_user_file_system_probe_elf
+    os_user_memory_probe_elf
+    os_user_memory_guard_probe_elf
+    os_user_memory_protection_probe_elf
     os_user_truncated_elf
 )

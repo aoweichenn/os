@@ -8,7 +8,7 @@
 - ready queue、WaitQueue 和阻塞/唤醒；
 - 父子进程树、Zombie、reparent 和 wait；
 - 用户程序参数布局；
-- 地址空间、KernelStack、扩展现场、FileTable 与 FsContext 的运行时编排；
+- 地址空间、VMA、KernelStack、扩展现场、FileTable 与 FsContext 的运行时编排；
 - spawn、exec、exit、异常终止和最终资源统计。
 
 模块不负责解析 rootfs 盘面、操作 ATA 端口或解释 Shell 命令。可执行文件内容
@@ -117,7 +117,7 @@ path/argument snapshot
 
 1. RuntimeProcess 接管候选地址空间；
 2. 调用 FileTable close-on-exec；
-3. 销毁旧地址空间；
+3. 销毁旧地址空间的驻留页、私有页表和全部 VMA 描述符；
 4. 重建 UserContext；
 5. 激活候选 CR3。
 
@@ -131,6 +131,15 @@ path/argument snapshot
 
 wait 路径先回收 Exited Thread 的 KernelStack，再收集 ProcessTree Zombie，
 最后回收调度器 Process。PID1 自己由 Kernel 在无子项后调用 `CollectInit`。
+
+v1.8 的地址空间生命周期还必须维护两类相互独立的事实：
+
+- `VirtualMemoryMap` 保存 ELF、匿名区、program break 与用户栈的区间意图；
+- 页表保存已经驻留的 frame 与硬件 R/W/X 权限。
+
+spawn/exec 候选失败要同时释放两者；退出路径必须先在永久 Kernel CR3 上销毁
+用户页表，再归还该地址空间拥有的全部 VMA 节点。阶段末比较描述符池的
+active/free 与 acquire/release 增量，不能只检查 Process 槽位归零。
 
 ## 并发边界
 
@@ -163,10 +172,13 @@ Kernel preemption 或同一 Process 多 Thread exec 前必须改变其所有权�
 - `os_kernel_program_arguments_unit_tests`
 - `os_kernel_thread_scheduling_integration_tests`
 - `os_kernel_process_lifecycle_integration_tests`
+- `os_kernel_user_virtual_memory_lifecycle_integration_tests`
 - `os_kernel_thread_scheduler_randomized_tests`
 - `os_kernel_process_models_randomized_tests`
-- normal、用户异常、非法 ELF 与资源回收 QEMU 系统测试
+- normal、用户 VM/guard/保护异常、非法 ELF 与资源回收 QEMU 系统测试
 
-完整背景与代码走读见
-[v1.7 学习章](../learning/15-v1.7-pid1-process-tree-exec.md)，设计取舍见
-[ADR 0034](../adr/0034-pid1-process-tree-disk-exec-wait.md)。
+进程树背景与代码走读见
+[v1.7 学习章](../learning/15-v1.7-pid1-process-tree-exec.md)；地址空间增量见
+[v1.8 学习章](../learning/16-v1.8-anonymous-vma-demand-paging.md)。设计取舍见
+[ADR 0034](../adr/0034-pid1-process-tree-disk-exec-wait.md) 与
+[ADR 0035](../adr/0035-anonymous-vma-demand-paging-user-heap.md)。
