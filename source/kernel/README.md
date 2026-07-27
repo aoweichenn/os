@@ -1,6 +1,6 @@
 # Kernel 源码布局
 
-Kernel 按功能所有权分为十二组。公开头文件与实现使用完全对称的相对路径：
+Kernel 按功能所有权分为十三组。公开头文件与实现使用完全对称的相对路径：
 
 ```text
 include/os/kernel/<module>/<name>.hpp
@@ -29,6 +29,7 @@ src/memory/page_table.cpp
 | `object/` | 类型化 KernelObject、generation 与强引用生命周期 |
 | `process/` | Process/Thread 状态机、run queue、WaitQueue 和目标机生命周期 |
 | `sync/` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
+| `time/` | 单调时钟、deadline queue 与溢出安全时间换算 |
 | `user/` | 用户 ELF、用户内存、系统调用和内嵌程序镜像边界 |
 
 目录表达“谁负责维护这个文件”，不额外制造冗长 C++ 命名空间。当前公开类型
@@ -187,3 +188,20 @@ Process。`DuplicateTo` 在表锁内提交新强引用，在锁外释放旧对�
 保持目标不变，提交后的 finalizer 失败显式升级为资源账本错误。外部 Shell 和
 十九个 `/bin` 路径属于 `source/user/`，Kernel 不内嵌命令实现。设计理由见
 [ADR 0038](../../docs/adr/0038-dynamic-pipe-dup2-external-shell.md)。
+
+v1.12/v1.13 在既有执行边界上补齐用户同步与统一时间：
+
+```text
+sync/private_futex.*          AddressSpaceId + 用户 VA 的等待 key 与容量
+process/thread_scheduler.*    WaitQueue/deadline 单赢家和 Thread 状态提交
+time/monotonic_clock.*        PIT 实际除数的整纳秒、余数与饱和累计
+time/deadline_queue.*         512 槽稳定绝对 deadline 顺序与统计
+arch/interrupt_runtime.*      IRQ0 推进时钟并触发到期解析
+process/process_runtime.*     sleep/timed futex 与保存用户 frame 的结果
+user/system_calls.*           47..56 Thread/futex/time ABI 分发
+```
+
+`time/` 纯模型不访问端口、IRQ、Process、用户地址或串口，可直接进入宿主测试。
+硬件周期只由 `arch/interrupt_runtime` 推进；等待对象和唯一 WakeReason 仍由
+ThreadScheduler 拥有。设计理由见
+[ADR 0040](../../docs/adr/0040-monotonic-clock-deadline-timed-wait.md)。

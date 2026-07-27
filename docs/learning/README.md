@@ -3,7 +3,7 @@
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.12：
+实现。当前 `main` 已推进到 v1.13：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -27,9 +27,11 @@
   16 级流水线以及 rootfs `/bin` 核心工具。
 - v1.12 增加用户 Thread、FS-base TLS、private futex、用户同步原语与
   32/64 Thread 整机容量验收。
+- v1.13 增加基于 PIT 实际除数的单调纳秒、统一 deadline queue，以及
+  sleep、private futex 和 ConditionVariable 的绝对截止期等待。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.12 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v1.13 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
 [v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md)、
@@ -37,7 +39,8 @@
 [v1.9](../releases/v1.9.md)、
 [v1.10](../releases/v1.10.md) 与
 [v1.11](../releases/v1.11.md) 与
-[v1.12](../releases/v1.12.md) 发布记录。
+[v1.12](../releases/v1.12.md) 与
+[v1.13](../releases/v1.13.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -66,6 +69,7 @@
   → v1.10 fork、private COW 与资源继承
   → v1.11 动态管道、外部命令、重定向与 16 级流水线
   → v1.12 用户 Thread、FS-base TLS 与 private futex
+  → v1.13 单调时间、统一 deadline 与 timed wait
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -163,8 +167,9 @@
 | 18 | [v1.10：fork 与写时复制](18-v1.10-fork-copy-on-write.md) | fork 返回、PTE 软件位、稀疏引用、COW fault、CopyToUser、资源继承与回滚 |
 | 19 | [v1.11：Unix I/O 与外部 Shell](19-v1.11-unix-io-external-shell.md) | 动态管道、pipe/dup2、解析与执行分离、重定向、16 级流水线与完整回收 |
 | 20 | [v1.12：用户 Thread、TLS 与 futex](20-v1.12-user-threads-tls-private-futex.md) | Thread 生命周期、FS-base、AddressSpaceId、compare-and-block、同步原语、取消与 Join |
+| 21 | [v1.13：单调时间、deadline 与 timed wait](21-v1.13-monotonic-clock-deadline-timed-wait.md) | PIT 有理数累计、绝对截止期、稳定队列、单赢家唤醒、sleep/futex/condition 超时与整机证据 |
 
-### 5.1 从第一周期过渡到当前 v1.12
+### 5.1 从第一周期过渡到当前 v1.13
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -182,9 +187,10 @@
 | [v1.10](../releases/v1.10.md) | eager process copy/无 fork → 调用 Thread clone、private COW 与两阶段失败回滚 | Kernel `memory/user_page_reference.*`、`user/user_memory.*`、`process/process_runtime.*` |
 | [v1.11](../releases/v1.11.md) | 固定启动管道/内建 Shell → 动态管道、pipe/dup2、外部 `/bin`、重定向与 16 级流水线 | Kernel `ipc/pipe_manager.*`、`io/file_table.*`、User `shell_execution.*`、`core_tool.cpp` |
 | [v1.12](../releases/v1.12.md) | 每 Process 单用户执行流 → 用户 Thread、FS-base TLS、private futex 与同步原语 | ABI `thread.hpp`、Kernel `sync/private_futex.*`、`process/process_runtime.*`、User `thread.*`、`synchronization.*` |
+| [v1.13](../releases/v1.13.md) | 只有调度 tick → 单调纳秒、统一 deadline 与绝对时间等待 | ABI `time.hpp`、Kernel `time/*`、`process/thread_scheduler.*`、User `system_call.*`、`synchronization.*` |
 
-十二个阶段的架构结论已合并到
-[architecture.md](../architecture.md)，当前 Kernel 的十二组对称目录见
+十三个阶段的架构结论已合并到
+[architecture.md](../architecture.md)，当前 Kernel 的十三组对称目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。
 
@@ -289,6 +295,7 @@ Kernel
          ├─ 物理内存、内核页表、堆与资源快照
          ├─ Process/Thread 运行时与用户 ELF
          ├─ LAPIC/PIC/PIT/PS2/ATA
+         ├─ 单调纳秒、deadline queue 与 timed wait
          ├─ 文件系统 mount/format
          ├─ INT 0x80 和 SYSCALL 两条 Ring 3 入口
          ├─ KernelObject/FileDescription/FileTable
@@ -305,7 +312,8 @@ Ring 3
     ├─ PID1 组织父子生命周期并回收 Zombie
     ├─ argc/argv/envp 与磁盘 ELF exec
     ├─ filesystem probes
-    └─ interactive shell（当前命令仍为内建）
+    ├─ thread/time probes
+    └─ interactive shell 与 rootfs 外部命令
 ```
 
 ## 9. 生产源码覆盖地图
@@ -352,6 +360,7 @@ Ring 3
 | `process/process_tree.*`、`program_arguments.*`、`programs/init.cpp` 与 exec/orphan probes | v1.7 | PID1、父子/Zombie、参数栈、磁盘 spawn/exec/wait 与失败回滚 |
 | `memory/virtual_memory_area.*`、`user/user_memory.*`、User `user_heap.*` 与 memory probes | v1.8 | VMA、匿名 fault、`mmap/munmap/brk`、栈增长、用户堆与页表回收 |
 | `ipc/pipe_manager.*`、`io/file_table.*`、User `shell_execution.*`、`programs/core_tool.cpp` | v1.11 | 动态管道、精确 fd 替换、外部命令、重定向和多级流水线 |
+| `time/monotonic_clock.*`、`time/deadline_queue.*`、User `programs/time_probe.cpp` | v1.13 | PIT 精确换算、绝对 deadline、sleep 与 timed synchronization |
 
 测试源码按同样领域命名分布在 `tests/unit/`、`tests/integration/`、
 `tests/randomized/`、`tests/system/` 和 `tests/tooling/`。阅读生产实现后，应紧接
@@ -370,6 +379,6 @@ Ring 3
 - 为一个正常路径和一个失败路径添加可重复测试。
 - 在不使用 BIOS、第三方 bootloader、libc 或 QEMU `-kernel` 的条件下复现整机。
 
-达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.12，再沿
-[roadmap.md](../roadmap.md) 继续环境、作业控制、用户线程、信号和日志
+达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.13，再沿
+[roadmap.md](../roadmap.md) 继续 signal、进程组、TTY、作业控制和日志
 文件系统。

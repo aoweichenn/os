@@ -27,11 +27,12 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.12 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
-64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.12 的 bootstrap 正常链累计注册 66 个 Process、完成 65 次 wait，
-functional 因扩展外部工具、16 级流水线与线程探针累计 89 个 Process、完成
-88 次 wait。v1.12 整机线程探针分别证明 1/32/64 单 Process Thread 上限。
+当前 v1.13 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
+动态栈和页表实现；v1.13 的 bootstrap 正常链累计注册 67 个 Process、完成
+66 次 wait，functional/capacity 因额外 time probe 累计 90 个 Process、
+完成 89 次 wait。线程探针分别证明 1/32/64 单 Process Thread 上限，时间
+探针在三档都走同一单调纳秒与 timed-wait ABI。
 functional 的 512 fd hard limit 和 128 Pipe、
 capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
 
@@ -809,7 +810,7 @@ v1.2 的 Process/Thread 单元、集成和十万步随机测试及
 全部历史成功、故障注入、持久化和产物审计用例继续保留。命名门禁使用编译
 数据库和 Clang AST 区分标识符种类；
 `os_python_tooling_unit_tests` 内的 Kernel 布局测试还会扫描真实源码树，
-要求 include/src 拥有相同的十二组模块、根目录没有实现文件、每个公开头文件
+要求 include/src 拥有相同的十三组模块、根目录没有实现文件、每个公开头文件
 具有同模块实现，并通过临时错误树证明扁平文件和缺失实现会被拒绝。它复用现有
 Python 测试集合，因此加强结构证据而不虚增顶层 CTest 数量。学习图册另有
 独立顶层 CTest，逐个检查系统图几何安全区与实体电路的显式引脚/网络连通性。
@@ -817,12 +818,12 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
 工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
-规格选择的有界总截止：64 MiB 启动档为 15 秒；256 MiB 功能档需要完成
-88 个进程与 16 级管道验收，使用 30 秒；64 GiB 主规格因 Debug 构建需要
-扫描 16777216 个页状态而使用 75 秒。外层 CTest 分别使用 25、40 和 85 秒
+规格选择的有界总截止：64 MiB 启动档为 30 秒；256 MiB 功能档需要完成
+90 个进程与时间探针验收，使用 120 秒；64 GiB 主规格因 Debug 构建需要
+扫描 16777216 个页状态而使用 240 秒。外层 CTest 分别使用 40、130 和 250 秒
 作为独立保险。三次启动的持久化用例对每次 QEMU 使用 30 秒内部截止，
-CTest 总预算为 100 秒；十万步 VFS 命名空间模型的硬上限为 180 秒，给正常
-约两分钟运行保留宿主调度余量。所有路径都保持有限上界，不把扩大预算变成
+CTest 总预算为 100 秒；十万步 VFS 命名空间模型的硬上限为 300 秒，给 Debug
+构建在共享宿主上的完整双后端运行保留调度余量。所有路径都保持有限上界，不把扩大预算变成
 无限等待。
 捕获器通过 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的
 `timeout` 或特殊退出码。
@@ -960,3 +961,40 @@ functional/capacity 还必须顺序出现 `TLS_ISOLATED`、
 的 `THREAD_PROBE_REAPED`。创建上限后的额外尝试必须失败；整机结束必须
 `RUNTIME_STATE_VALIDATION=1`、`PROCESS_RESOURCE_VALIDATION=1`、futex entry/
 waiter 为零且 KernelStack create/destroy 守恒。
+
+## v1.13 单调时钟、deadline 与 timed wait 测试
+
+v1.13 新增四个顶层 CTest，构建图共 151 项，并扩展 ABI、调度器和 QEMU
+协议：
+
+- MonotonicClock 单元测试按实际 PIT 输入频率与除数验证余数携带、逐 tick/
+  批量推进等价、长跨度、不倒退与 `UINT64_MAX` 饱和；
+- DeadlineQueue 单元测试覆盖相同 deadline 的 sequence 稳定顺序、重复
+  Thread 拒绝、任意取消、批量到期、容量和双向结构一致性；
+- DeadlineScheduler 集成测试把两个 WaitQueue、三个 Thread 与虚拟时钟组合，
+  证明 deadline 前不早醒、Timeout 只发生一次、condition 先赢会取消
+  deadline，败者再次操作无副作用；
+- 固定种子随机模型执行 100000 次 schedule/cancel/advance/expire，并逐步
+  对照参考活动集合、最早项、统计守恒和最终空队列；
+- ABI 集成测试冻结 GetMonotonicTime=54、SleepUntil=55、
+  WaitPrivateFutexUntil=56 与 `TIMED_OUT=-51`；
+- `/bin/time_probe` 真实记录 start/wake 纳秒，验证 20 ms 非忙等 sleep、
+  10 ms futex timeout、condition-before-200 ms 和 10 ms condition timeout。
+
+64 MiB 的 Thread-per-Process 上限为 1，因而 condition 先赢场景记录
+`CONDITION_SINGLE_THREAD_PROFILE`；256 MiB 与 64 GiB 必须建立 notifier
+Thread 并记录 `CONDITION_WON_BEFORE_DEADLINE`。三档均要求：
+
+```text
+[OS][KERNEL][TIME] ACTIVE_DEADLINES=0x0000000000000000
+[OS][KERNEL][TIME] PEAK_DEADLINES=0x...
+[OS][KERNEL][TIME] DEADLINE_SCHEDULES=0x...
+[OS][KERNEL][TIME] DEADLINE_EXPIRATIONS=0x...
+[OS][KERNEL][TIME] DEADLINE_CANCELLATIONS=0x...
+[OS][KERNEL][TIME] FUTEX_TIMEOUT_OPERATIONS=0x...
+```
+
+runner 解析十六进制数并验证 start/wake 前进、统计非零和一次性 marker 次数。
+整机墙钟仍严格有界：64 MiB、256 MiB、64 GiB 分别按真实工作量选择预算，
+CTest 外层预算略大于 runner 内层预算。超时必须报告最后里程碑并回收 QEMU，
+不能用无界等待掩盖 idle、WaitQueue 或文件系统停滞。

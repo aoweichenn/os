@@ -50,7 +50,7 @@ constexpr char OS_USER_SHELL_SYNC_COMMAND[] = "sync";
 constexpr char OS_USER_SHELL_EXIT_COMMAND[] = "exit";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v1.12\r\n"
+    "\r\nx86-64 OS Lab v1.13\r\n"
     "外置工具、重定向与最多 16 级管线已经启用；输入 help 查看帮助。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";

@@ -48,6 +48,7 @@ PrivateFutexStatus PrivateFutexManager::Initialize(PrivateFutexEntry *const entr
         .release_count = OS_KERNEL_PRIVATE_FUTEX_EMPTY_VALUE,
         .wait_prepare_count = OS_KERNEL_PRIVATE_FUTEX_EMPTY_VALUE,
         .wake_operation_count = OS_KERNEL_PRIVATE_FUTEX_EMPTY_VALUE,
+        .timeout_operation_count = OS_KERNEL_PRIVATE_FUTEX_EMPTY_VALUE,
         .cancellation_operation_count = OS_KERNEL_PRIVATE_FUTEX_EMPTY_VALUE,
     };
     this->initialized_ = true;
@@ -172,6 +173,14 @@ PrivateFutexStatus PrivateFutexManager::RecordWakeOperation() noexcept {
         return PrivateFutexStatus::NotInitialized;
     }
     ++this->statistics_.wake_operation_count;
+    return PrivateFutexStatus::Succeeded;
+}
+
+PrivateFutexStatus PrivateFutexManager::RecordTimeoutOperation() noexcept {
+    if (!this->initialized_) {
+        return PrivateFutexStatus::NotInitialized;
+    }
+    ++this->statistics_.timeout_operation_count;
     return PrivateFutexStatus::Succeeded;
 }
 

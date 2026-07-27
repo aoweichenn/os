@@ -251,3 +251,20 @@ unmap cancellation、exec cancellation 与 ProcessExit cancellation 也在该锁
 详细控制流见
 [v1.12 学习章](../learning/20-v1.12-user-threads-tls-private-futex.md) 与
 [ADR 0039](../adr/0039-user-threads-fs-tls-private-futex.md)。
+
+## v1.13 deadline 调度事务
+
+ThreadScheduler 现在直接拥有 DeadlineQueue。`BlockCurrentThreadUntil` 在
+同一 irq-save 临界区把 Running Thread 同时登记到业务 WaitQueue 与绝对
+deadline；若 deadline 已到达则不改变 Thread 状态。普通 wake 会取消
+deadline，到期路径会从原 WaitQueue 摘除 Thread，两者通过同一个 Blocked
+状态提交点决定唯一 WakeReason。
+
+ProcessRuntime 的 timed futex 在锁内完成用户字二次读取、当前时间读取、
+deadline 检查、futex entry 取得和 block。IRQ0 到期时把保存用户 frame 的
+返回寄存器设置为 `TIMED_OUT`，再释放空 entry。Thread terminate、unmap、
+exec 和 ProcessExit 沿既有取消路径同时解析 deadline，不保留指向旧
+AddressSpace 的等待关系。
+
+完整不变量与统计见 [Time 模块](time.md) 和
+[v1.13 学习章](../learning/21-v1.13-monotonic-clock-deadline-timed-wait.md)。

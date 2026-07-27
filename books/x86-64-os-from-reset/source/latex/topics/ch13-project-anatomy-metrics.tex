@@ -57,7 +57,7 @@ C++ 交接；v0.5 已把 GDT/TSS/IDT 构造、异常策略和 panic 放入 C++20
 目录只回答“它属于 Kernel”，不能回答“哪一组机制拥有它、哪些文件应当一起
 变化”。
 
-本项目因此让公开树和实现树使用完全相同的十二组功能目录：
+本项目因此让公开树和实现树使用完全相同的十三组功能目录：
 
 \begin{longtable}{L{0.18\linewidth}L{0.69\linewidth}}
 \toprule
@@ -70,6 +70,7 @@ C++ 交接；v0.5 已把 GDT/TSS/IDT 构造、异常策略和 panic 放入 C++20
 \code{memory} & 页帧、buddy、页表、heap、KVA、动态栈和资源快照 \\
 \code{object} & 类型化内核对象、强引用、generation 与最终析构 \\
 \code{process} / \code{sync} & 执行生命周期、调度和通用同步原语 \\
+\code{time} & PIT 单调纳秒、稳定 deadline queue 与定时等待所有权 \\
 \code{user} & 用户 ELF、用户地址访问、系统调用和内嵌程序边界 \\
 \bottomrule
 \end{longtable}

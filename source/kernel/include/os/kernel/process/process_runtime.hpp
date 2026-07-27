@@ -85,10 +85,18 @@ enum class UserThreadStatus : uint64_t {
 
 enum class PrivateFutexWaitStatus : uint64_t {
     Succeeded,
+    TimedOut,
     ValueChanged,
     InvalidArgument,
     InvalidMemory,
     CapacityExhausted,
+    RuntimeFailure,
+};
+
+enum class TimedWaitStatus : uint64_t {
+    Succeeded,
+    DeadlineReached,
+    InvalidArgument,
     RuntimeFailure,
 };
 
@@ -230,7 +238,12 @@ TryJoinCurrentProcessThread(uint64_t requested_thread_id,
 SetCurrentThreadLocalStorage(uint64_t thread_local_storage_base) noexcept;
 [[nodiscard]] PrivateFutexWaitStatus
 WaitCurrentProcessPrivateFutex(ExceptionFrame &frame, uint64_t user_address,
-                               uint32_t expected_value, ExceptionFrame *&resume_frame) noexcept;
+                               uint32_t expected_value, bool deadline_enabled,
+                               uint64_t deadline_nanoseconds,
+                               ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] TimedWaitStatus
+SleepCurrentThreadUntil(ExceptionFrame &frame, uint64_t deadline_nanoseconds,
+                        ExceptionFrame *&resume_frame) noexcept;
 [[nodiscard]] PrivateFutexWaitStatus
 WakeCurrentProcessPrivateFutex(uint64_t user_address, uint64_t maximum_wake_count,
                                uint64_t &woken_thread_count) noexcept;
@@ -340,6 +353,8 @@ void SubmitConsoleCharacter(uint8_t character) noexcept;
                                                uint64_t maximum_wake_count,
                                                uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
+[[nodiscard]] uint64_t
+HandleProcessDeadlineInterrupt(uint64_t now_nanoseconds) noexcept;
 [[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
 [[nodiscard]] bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus

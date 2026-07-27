@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.12 完成基线
+## v1.13 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -124,8 +124,10 @@ v1.10 又完成只复制调用 Thread 的 fork、匿名/private 页 COW、统一
 输入输出重定向与 `/bin` 核心工具，并在成功、拒绝、退出和异常路径上闭合
 描述符、端点和物理页生命周期。v1.12 又完成用户 Thread、FS-base TLS、
 private futex、用户 Mutex/ConditionVariable/Once、32/64 Thread 三档整机
-验收以及 `munmap`/`exec`/ProcessExit 取消。下一阶段为 v1.13 单调时间、
-deadline 与 timed wait。
+验收以及 `munmap`/`exec`/ProcessExit 取消。v1.13 已把 PIT 实际除数提升为
+精确余数累计的 64 位单调纳秒，建立 512 槽 deadline queue，并完成非忙等
+sleep、timed futex、timed condition、通知/超时单赢家与三档 QEMU 验收。
+下一阶段为 v1.14 signal、进程组与系统调用中断语义。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -221,6 +223,34 @@ deadline 与 timed wait。
 - 单元测试覆盖 key/容量/生命周期，随机测试至少执行 100000 步，QEMU 必须
   完成 64 MiB 单线程降级、256 MiB 32 Thread 和 64 GiB 64 Thread，并在
   结束时满足零 futex waiter、零 KernelStack、零 Zombie 和资源快照守恒。
+
+## v1.13 单调时间与 deadline 冻结要求
+
+- 单调时间 ABI 固定为无符号 64 位纳秒；它只表达经过时间，不允许混入 RTC、
+  日期、时区、闰秒或宿主墙钟。
+- PIT 换算必须使用输入频率和实际编程除数，并保留整数除法余数；禁止把每个
+  tick 硬编码为 1 ms。所有乘加在回绕前检查，边界饱和为 `UINT64_MAX`。
+- 内核所有 timeout 统一转换为绝对 deadline。相对时长只能在接口边界用
+  饱和加法转换一次，重试和虚假唤醒继续使用原 deadline。
+- 每个 Blocked Thread 最多有一个活动 deadline；队列必须按
+  `(deadline, insertion sequence)` 稳定排序，并支持按 Thread 身份直接取消。
+- DeadlineQueue 的 schedule、expire、cancel 与 WaitQueue 状态转换必须位于
+  同一 scheduler irq-save 临界区。condition、timeout、terminate、unmap、
+  exec 和 ProcessExit 最多让 Thread 进入一次 Ready。
+- IRQ0 无论来自 Ring 3、Ring 0 还是 idle 都必须推进时钟并解析到期项。
+  唤醒只设置 Ready/need-resched，不能在任意 IRQ 调用链直接切换 C++ 栈。
+- sleep 必须阻塞；没有 Ready Thread 时由 `sti; hlt; cli` 等待 PIT，禁止
+  轮询时间。deadline 已到达时必须立即返回，不登记短命队列项。
+- timed futex 必须在与 wake 相同的锁内完成最终用户字比较、deadline 检查
+  和 block；到期返回 `TIMED_OUT`，并释放已经为空的 futex key。
+- ConditionVariable 的 timed wait 无论通知、超时还是失败都必须先重新取得
+  Mutex 再返回；通知只表示谓词可能变化，调用者仍需循环检查。
+- 系统调用 ABI 固定新增 GetMonotonicTime=54、SleepUntil=55、
+  WaitPrivateFutexUntil=56，超时错误固定为 `-51`。
+- 单元、集成和固定种子随机测试必须覆盖余数、饱和、不早醒、同 deadline
+  稳定顺序、通知/超时单赢家与 100000 步队列模型。三档 QEMU 结束时
+  active deadline 为零，且 schedules 等于 expirations、cancellations 与
+  active 三者之和。
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

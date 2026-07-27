@@ -77,6 +77,10 @@ ThreadSchedulerStatus ThreadScheduler::Initialize(ProcessEntry *const process_st
     if (quantum_ticks == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE) {
         return ThreadSchedulerStatus::InvalidQuantum;
     }
+    if (this->deadline_queue_.Initialize(thread_capacity) !=
+        DeadlineQueueStatus::Succeeded) {
+        return ThreadSchedulerStatus::DeadlineFailure;
+    }
 
     for (uint64_t process_index = OS_KERNEL_THREAD_SCHEDULER_FIRST_INDEX;
          process_index < process_capacity; ++process_index) {
@@ -366,6 +370,99 @@ ThreadScheduler::BlockCurrentThread(WaitQueue &wait_queue, const WaitCondition w
     return ThreadSchedulerStatus::Succeeded;
 }
 
+ThreadSchedulerStatus ThreadScheduler::BlockCurrentThreadUntil(
+    WaitQueue &wait_queue, const WaitCondition wait_condition,
+    const uint64_t now_nanoseconds, const uint64_t deadline_nanoseconds,
+    ThreadSchedulingDecision &decision) noexcept {
+    this->ResetDecision(decision);
+    if (!this->initialized_) {
+        return ThreadSchedulerStatus::NotInitialized;
+    }
+    if (!wait_queue.initialized_) {
+        return ThreadSchedulerStatus::WaitQueueNotInitialized;
+    }
+    if (wait_queue.closed_) {
+        return ThreadSchedulerStatus::WaitQueueClosed;
+    }
+    if (wait_condition == WaitCondition::None) {
+        return ThreadSchedulerStatus::InvalidWaitCondition;
+    }
+    if (deadline_nanoseconds <= now_nanoseconds) {
+        return ThreadSchedulerStatus::DeadlineAlreadyReached;
+    }
+    if (this->current_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX ||
+        this->threads_[this->current_thread_index_].state !=
+            ThreadState::Running) {
+        return ThreadSchedulerStatus::InvalidCurrentThread;
+    }
+
+    const uint64_t blocked_thread_index = this->current_thread_index_;
+    if (this->deadline_queue_.Schedule(blocked_thread_index,
+                                       deadline_nanoseconds) !=
+        DeadlineQueueStatus::Succeeded) {
+        return ThreadSchedulerStatus::DeadlineFailure;
+    }
+    const ThreadSchedulerStatus block_status =
+        this->BlockCurrentThread(wait_queue, wait_condition, decision);
+    if (block_status != ThreadSchedulerStatus::Succeeded) {
+        if (this->deadline_queue_.Resolve(
+                blocked_thread_index, DeadlineResolution::Cancelled) !=
+            DeadlineQueueStatus::Succeeded) {
+            return ThreadSchedulerStatus::CorruptedState;
+        }
+        return block_status;
+    }
+    return ThreadSchedulerStatus::Succeeded;
+}
+
+ThreadSchedulerStatus ThreadScheduler::ExpireNextDeadline(
+    const uint64_t now_nanoseconds, uint64_t &woken_thread_index,
+    WaitCondition &wait_condition, WaitQueue *&wait_queue,
+    bool &expired) noexcept {
+    woken_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+    wait_condition = WaitCondition::None;
+    wait_queue = nullptr;
+    expired = false;
+    if (!this->initialized_) {
+        return ThreadSchedulerStatus::NotInitialized;
+    }
+
+    uint64_t candidate_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+    bool deadline_expired = false;
+    if (this->deadline_queue_.PeekExpired(
+            now_nanoseconds, candidate_thread_index, deadline_expired) !=
+        DeadlineQueueStatus::Succeeded) {
+        return ThreadSchedulerStatus::DeadlineFailure;
+    }
+    if (!deadline_expired) {
+        return ThreadSchedulerStatus::Succeeded;
+    }
+    if (candidate_thread_index >= this->thread_capacity_) {
+        return ThreadSchedulerStatus::CorruptedState;
+    }
+    ThreadEntry &thread = this->threads_[candidate_thread_index];
+    if (thread.state != ThreadState::Blocked || thread.wait_queue == nullptr ||
+        thread.wait_condition == WaitCondition::None) {
+        return ThreadSchedulerStatus::CorruptedState;
+    }
+    WaitQueue *const candidate_wait_queue = thread.wait_queue;
+    const WaitCondition candidate_wait_condition = thread.wait_condition;
+    bool wake_won = false;
+    const ThreadSchedulerStatus wake_status =
+        this->WakeThread(*candidate_wait_queue, candidate_thread_index,
+                         WakeReason::Timeout, wake_won);
+    if (wake_status != ThreadSchedulerStatus::Succeeded || !wake_won) {
+        return wake_status == ThreadSchedulerStatus::Succeeded
+                   ? ThreadSchedulerStatus::CorruptedState
+                   : wake_status;
+    }
+    woken_thread_index = candidate_thread_index;
+    wait_condition = candidate_wait_condition;
+    wait_queue = candidate_wait_queue;
+    expired = true;
+    return ThreadSchedulerStatus::Succeeded;
+}
+
 ThreadSchedulerStatus ThreadScheduler::WakeOne(WaitQueue &wait_queue, const WakeReason wake_reason,
                                                uint64_t &woken_thread_index,
                                                bool &wake_won) noexcept {
@@ -414,6 +511,19 @@ ThreadSchedulerStatus ThreadScheduler::WakeThread(WaitQueue &wait_queue,
     if (thread.state != ThreadState::Blocked || thread.wait_queue != &wait_queue ||
         thread.wake_reason != WakeReason::None) {
         return ThreadSchedulerStatus::WakeAlreadyResolved;
+    }
+    bool deadline_scheduled = false;
+    if (this->deadline_queue_.Contains(thread_index, deadline_scheduled) !=
+        DeadlineQueueStatus::Succeeded) {
+        return ThreadSchedulerStatus::DeadlineFailure;
+    }
+    if (deadline_scheduled &&
+        this->deadline_queue_.Resolve(
+            thread_index, wake_reason == WakeReason::Timeout
+                              ? DeadlineResolution::Expired
+                              : DeadlineResolution::Cancelled) !=
+            DeadlineQueueStatus::Succeeded) {
+        return ThreadSchedulerStatus::DeadlineFailure;
     }
     this->RemoveWaitingThread(wait_queue, thread_index);
     thread.state = ThreadState::Ready;
@@ -536,6 +646,17 @@ ThreadScheduler::TerminateNonRunningThread(const uint64_t thread_index) noexcept
     } else if (thread.state == ThreadState::Blocked) {
         if (thread.wait_queue == nullptr) {
             return ThreadSchedulerStatus::CorruptedState;
+        }
+        bool deadline_scheduled = false;
+        if (this->deadline_queue_.Contains(thread_index, deadline_scheduled) !=
+            DeadlineQueueStatus::Succeeded) {
+            return ThreadSchedulerStatus::DeadlineFailure;
+        }
+        if (deadline_scheduled &&
+            this->deadline_queue_.Resolve(
+                thread_index, DeadlineResolution::Cancelled) !=
+                DeadlineQueueStatus::Succeeded) {
+            return ThreadSchedulerStatus::DeadlineFailure;
         }
         this->RemoveWaitingThread(*thread.wait_queue, thread_index);
         thread.wait_condition = WaitCondition::None;
@@ -780,6 +901,9 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
     if (!this->initialized_) {
         return ThreadSchedulerStatus::NotInitialized;
     }
+    if (this->deadline_queue_.Validate() != DeadlineQueueStatus::Succeeded) {
+        return ThreadSchedulerStatus::CorruptedState;
+    }
     bool process_thread_seen[OS_KERNEL_THREAD_CAPACITY_LIMIT]{};
     bool ready_thread_seen[OS_KERNEL_THREAD_CAPACITY_LIMIT]{};
     uint64_t observed_process_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
@@ -880,6 +1004,12 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
     for (uint64_t thread_index = OS_KERNEL_THREAD_SCHEDULER_FIRST_INDEX;
          thread_index < this->thread_capacity_; ++thread_index) {
         const ThreadEntry &thread = this->threads_[thread_index];
+        bool deadline_scheduled = false;
+        if (this->deadline_queue_.Contains(thread_index, deadline_scheduled) !=
+                DeadlineQueueStatus::Succeeded ||
+            (deadline_scheduled && thread.state != ThreadState::Blocked)) {
+            return ThreadSchedulerStatus::CorruptedState;
+        }
         if (thread.state == ThreadState::Unused) {
             if (process_thread_seen[thread_index] ||
                 thread.thread_id.value != OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE ||
@@ -999,6 +1129,17 @@ ThreadScheduler::ValidateWaitQueue(const WaitQueue &wait_queue) const noexcept {
 
 ThreadSchedulerStatistics ThreadScheduler::Statistics() const noexcept {
     ThreadSchedulerStatistics statistics = this->cumulative_statistics_;
+    const DeadlineQueueStatistics deadline_statistics =
+        this->deadline_queue_.Statistics();
+    statistics.active_deadline_count =
+        deadline_statistics.active_entry_count;
+    statistics.peak_deadline_count =
+        deadline_statistics.peak_active_entry_count;
+    statistics.deadline_schedule_count = deadline_statistics.schedule_count;
+    statistics.deadline_expiration_count =
+        deadline_statistics.expiration_count;
+    statistics.deadline_cancellation_count =
+        deadline_statistics.cancellation_count;
     for (uint64_t process_index = OS_KERNEL_THREAD_SCHEDULER_FIRST_INDEX;
          process_index < this->process_capacity_; ++process_index) {
         const ProcessState state = this->processes_[process_index].state;

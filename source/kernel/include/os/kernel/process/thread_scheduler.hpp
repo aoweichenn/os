@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/kernel/process/wait_queue.hpp"
+#include "os/kernel/time/deadline_queue.hpp"
 
 #include <stdint.h>
 
@@ -74,6 +75,8 @@ enum class ThreadSchedulerStatus : uint64_t {
     WaitQueueNotInitialized,
     WaitQueueClosed,
     WakeAlreadyResolved,
+    DeadlineAlreadyReached,
+    DeadlineFailure,
     CorruptedState,
 };
 
@@ -140,6 +143,11 @@ struct ThreadSchedulerStatistics final {
     uint64_t dispatch_count;
     uint64_t block_count;
     uint64_t wake_count;
+    uint64_t active_deadline_count;
+    uint64_t peak_deadline_count;
+    uint64_t deadline_schedule_count;
+    uint64_t deadline_expiration_count;
+    uint64_t deadline_cancellation_count;
     uint64_t zombie_transition_count;
 };
 
@@ -166,6 +174,14 @@ class ThreadScheduler final {
     [[nodiscard]] ThreadSchedulerStatus
     BlockCurrentThread(WaitQueue &wait_queue, WaitCondition wait_condition,
                        ThreadSchedulingDecision &decision) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    BlockCurrentThreadUntil(WaitQueue &wait_queue, WaitCondition wait_condition,
+                            uint64_t now_nanoseconds, uint64_t deadline_nanoseconds,
+                            ThreadSchedulingDecision &decision) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    ExpireNextDeadline(uint64_t now_nanoseconds, uint64_t &woken_thread_index,
+                       WaitCondition &wait_condition, WaitQueue *&wait_queue,
+                       bool &expired) noexcept;
     [[nodiscard]] ThreadSchedulerStatus WakeOne(WaitQueue &wait_queue, WakeReason wake_reason,
                                                 uint64_t &woken_thread_index,
                                                 bool &wake_won) noexcept;
@@ -242,6 +258,7 @@ class ThreadScheduler final {
     uint64_t ready_head_thread_index_{OS_KERNEL_THREAD_INVALID_INDEX};
     uint64_t ready_tail_thread_index_{OS_KERNEL_THREAD_INVALID_INDEX};
     uint64_t current_thread_index_{OS_KERNEL_THREAD_INVALID_INDEX};
+    DeadlineQueue deadline_queue_{};
     ThreadSchedulerStatistics cumulative_statistics_{};
     bool initialized_{};
 };

@@ -47,6 +47,9 @@ constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SET_TLS_NUMBER = 50ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_GET_THREAD_ID_NUMBER = 51ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WAIT_FUTEX_NUMBER = 52ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WAKE_FUTEX_NUMBER = 53ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_MONOTONIC_TIME_NUMBER = 54ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SLEEP_UNTIL_NUMBER = 55ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_TIMED_FUTEX_NUMBER = 56ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES = 255ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
@@ -147,6 +150,13 @@ int main() {
                 OS_TEST_USER_BOUNDARY_EXPECTED_WAIT_FUTEX_NUMBER &&
             static_cast<uint64_t>(os::abi::SystemCallNumber::WakePrivateFutex) ==
                 OS_TEST_USER_BOUNDARY_EXPECTED_WAKE_FUTEX_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetMonotonicTime) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_MONOTONIC_TIME_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SLEEP_UNTIL_NUMBER &&
+            static_cast<uint64_t>(
+                os::abi::SystemCallNumber::WaitPrivateFutexUntil) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_TIMED_FUTEX_NUMBER &&
             sizeof(os::abi::ThreadCreateRequest) ==
                 os::abi::OS_ABI_THREAD_CREATE_REQUEST_SIZE_BYTES &&
             sizeof(os::abi::ThreadJoinResult) ==

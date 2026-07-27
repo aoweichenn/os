@@ -2,6 +2,7 @@
 
 #include "os/kernel/arch/cpu_local.hpp"
 #include "os/kernel/arch/descriptor_tables.hpp"
+#include "os/kernel/arch/interrupt_runtime.hpp"
 #include "os/kernel/arch/native_system_call.hpp"
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/user_context.hpp"
@@ -36,6 +37,7 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_DESCRIPTOR_READABLE_QUEUE_ID = 3ULL
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_DESCRIPTOR_WRITABLE_QUEUE_ID = 4ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_CHILD_EXIT_QUEUE_ID = 5ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_QUEUE_ID = 6ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_SLEEP_QUEUE_ID = 7ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_PRIVATE_FUTEX_FIRST_QUEUE_ID = 0x1000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_STACK_ALIGNMENT_BYTES =
     os::abi::OS_ABI_THREAD_STACK_ALIGNMENT_BYTES;
@@ -235,6 +237,7 @@ WaitQueue descriptor_readable_wait_queue;
 WaitQueue descriptor_writable_wait_queue;
 WaitQueue child_exit_wait_queue;
 WaitQueue thread_join_wait_queue;
+WaitQueue sleep_wait_queue;
 PrivateFutexManager private_futex_manager;
 PrivateFutexEntry private_futex_entries[OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT];
 ProcessTree process_tree;
@@ -708,6 +711,9 @@ void ResetRuntimeStorage() noexcept {
     }
     if (wait_condition == WaitCondition::ThreadJoin) {
         return &thread_join_wait_queue;
+    }
+    if (wait_condition == WaitCondition::Sleep) {
+        return &sleep_wait_queue;
     }
     return nullptr;
 }
@@ -2014,6 +2020,9 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
         thread_join_wait_queue.Initialize(
             WaitQueueId{.value = OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_QUEUE_ID}) !=
             WaitQueueStatus::Succeeded ||
+        sleep_wait_queue.Initialize(
+            WaitQueueId{.value = OS_KERNEL_PROCESS_RUNTIME_SLEEP_QUEUE_ID}) !=
+            WaitQueueStatus::Succeeded ||
         private_futex_manager.Initialize(private_futex_entries,
                                          OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT,
                                          OS_KERNEL_PROCESS_RUNTIME_PRIVATE_FUTEX_FIRST_QUEUE_ID) !=
@@ -2846,6 +2855,8 @@ UserThreadStatus SetCurrentThreadLocalStorage(const uint64_t thread_local_storag
 PrivateFutexWaitStatus WaitCurrentProcessPrivateFutex(ExceptionFrame &frame,
                                                       const uint64_t user_address,
                                                       const uint32_t expected_value,
+                                                      const bool deadline_enabled,
+                                                      const uint64_t deadline_nanoseconds,
                                                       ExceptionFrame *&resume_frame) noexcept {
     resume_frame = &frame;
     const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
@@ -2888,6 +2899,11 @@ PrivateFutexWaitStatus WaitCurrentProcessPrivateFutex(ExceptionFrame &frame,
         scheduler_lock.Unlock(interrupts_were_enabled);
         return PrivateFutexWaitStatus::ValueChanged;
     }
+    const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
+    if (deadline_enabled && deadline_nanoseconds <= now_nanoseconds) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return PrivateFutexWaitStatus::TimedOut;
+    }
     uint64_t futex_entry_index = OS_KERNEL_PRIVATE_FUTEX_INVALID_INDEX;
     WaitQueue *wait_queue = nullptr;
     const PrivateFutexStatus acquire_status =
@@ -2899,7 +2915,12 @@ PrivateFutexWaitStatus WaitCurrentProcessPrivateFutex(ExceptionFrame &frame,
                    : PrivateFutexWaitStatus::RuntimeFailure;
     }
     const ThreadSchedulerStatus block_status =
-        thread_scheduler.BlockCurrentThread(*wait_queue, WaitCondition::PrivateFutex, decision);
+        deadline_enabled
+            ? thread_scheduler.BlockCurrentThreadUntil(
+                  *wait_queue, WaitCondition::PrivateFutex, now_nanoseconds,
+                  deadline_nanoseconds, decision)
+            : thread_scheduler.BlockCurrentThread(
+                  *wait_queue, WaitCondition::PrivateFutex, decision);
     if (block_status != ThreadSchedulerStatus::Succeeded) {
         bool released = false;
         const PrivateFutexStatus release_status =
@@ -2940,6 +2961,60 @@ PrivateFutexWaitStatus WaitCurrentProcessPrivateFutex(ExceptionFrame &frame,
     }
     resume_frame = runtime_threads[decision.current_thread_index].saved_frame;
     return PrivateFutexWaitStatus::Succeeded;
+}
+
+TimedWaitStatus SleepCurrentThreadUntil(
+    ExceptionFrame &frame, const uint64_t deadline_nanoseconds,
+    ExceptionFrame *&resume_frame) noexcept {
+    resume_frame = &frame;
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    if (!IsProcessSchedulingActive() ||
+        !CurrentFrameIsValid(thread_index, frame)) {
+        return TimedWaitStatus::InvalidArgument;
+    }
+    ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
+    runtime_thread.saved_frame = &frame;
+    if (SaveFxState(runtime_thread.extended_state) !=
+        ExtendedStateStatus::Succeeded) {
+        return TimedWaitStatus::RuntimeFailure;
+    }
+
+    ThreadSchedulingDecision decision{};
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    // 关中断后重新读取时钟，避免读时钟与入队之间跨过截止时刻。
+    const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
+    const ThreadSchedulerStatus block_status =
+        thread_scheduler.BlockCurrentThreadUntil(
+            sleep_wait_queue, WaitCondition::Sleep, now_nanoseconds,
+            deadline_nanoseconds, decision);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (block_status == ThreadSchedulerStatus::DeadlineAlreadyReached) {
+        return TimedWaitStatus::DeadlineReached;
+    }
+    if (block_status != ThreadSchedulerStatus::Succeeded) {
+        return TimedWaitStatus::RuntimeFailure;
+    }
+    if (!decision.switched) {
+        const uint64_t swap_gs_required =
+            GetCpuLocal().NativeSystemCallActive()
+                ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+                : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        SetActiveUserAddressSpace(nullptr);
+        ActivateKernelPageTable();
+        WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR,
+                                   OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+        if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0()) ||
+            GetCpuLocal().ClearCurrentThread(DefaultPrivilegeStackPointer0()) !=
+                CpuLocalStatus::Succeeded) {
+            HaltProcessor();
+        }
+        OsKernelReturnFromUserMode(swap_gs_required);
+    }
+    if (!ActivateThread(decision.current_thread_index)) {
+        return TimedWaitStatus::RuntimeFailure;
+    }
+    resume_frame = runtime_threads[decision.current_thread_index].saved_frame;
+    return TimedWaitStatus::Succeeded;
 }
 
 PrivateFutexWaitStatus WakeCurrentProcessPrivateFutex(const uint64_t user_address,
@@ -4050,6 +4125,86 @@ ProcessRuntimeStatus WakeThreads(const WaitCondition wait_condition, const WakeR
     scheduler_lock.Unlock(interrupts_were_enabled);
     return status == ThreadSchedulerStatus::Succeeded ? ProcessRuntimeStatus::Succeeded
                                                       : ProcessRuntimeStatus::SchedulerFailure;
+}
+
+uint64_t HandleProcessDeadlineInterrupt(
+    const uint64_t now_nanoseconds) noexcept {
+    if (!process_runtime_initialized || !process_scheduling_active) {
+        return OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    }
+
+    uint64_t expired_deadline_count =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    while (true) {
+        uint64_t woken_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+        WaitCondition wait_condition = WaitCondition::None;
+        WaitQueue *wait_queue = nullptr;
+        bool expired = false;
+        const ThreadSchedulerStatus expire_status =
+            thread_scheduler.ExpireNextDeadline(
+                now_nanoseconds, woken_thread_index, wait_condition,
+                wait_queue, expired);
+        if (expire_status != ThreadSchedulerStatus::Succeeded) {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            HaltProcessor();
+        }
+        if (!expired) {
+            break;
+        }
+        if (woken_thread_index >= process_runtime_limits.thread_capacity ||
+            wait_queue == nullptr ||
+            runtime_threads[woken_thread_index].saved_frame == nullptr) {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            HaltProcessor();
+        }
+        ExceptionFrame &saved_frame =
+            *runtime_threads[woken_thread_index].saved_frame;
+        if (wait_condition == WaitCondition::Sleep) {
+            saved_frame.register_rax =
+                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        } else if (wait_condition == WaitCondition::PrivateFutex) {
+            saved_frame.register_rax = static_cast<uint64_t>(
+                os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT);
+            bool entry_found = false;
+            for (uint64_t entry_index =
+                     OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+                 entry_index < OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT;
+                 ++entry_index) {
+                if (!private_futex_entries[entry_index].active ||
+                    &private_futex_entries[entry_index].wait_queue !=
+                        wait_queue) {
+                    continue;
+                }
+                entry_found = true;
+                if (wait_queue->Statistics().waiting_thread_count ==
+                    OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+                    bool entry_released = false;
+                    if (private_futex_manager.ReleaseIfEmpty(
+                            entry_index, entry_released) !=
+                            PrivateFutexStatus::Succeeded ||
+                        !entry_released) {
+                        scheduler_lock.Unlock(interrupts_were_enabled);
+                        HaltProcessor();
+                    }
+                }
+                break;
+            }
+            if (!entry_found ||
+                private_futex_manager.RecordTimeoutOperation() !=
+                    PrivateFutexStatus::Succeeded) {
+                scheduler_lock.Unlock(interrupts_were_enabled);
+                HaltProcessor();
+            }
+        } else {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            HaltProcessor();
+        }
+        expired_deadline_count +=
+            OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT;
+    }
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    return expired_deadline_count;
 }
 
 ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept {

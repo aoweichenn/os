@@ -92,6 +92,11 @@ set(
     include/os/kernel/sync/spin_lock.hpp
 )
 set(
+    OS_KERNEL_TIME_HEADERS
+    include/os/kernel/time/deadline_queue.hpp
+    include/os/kernel/time/monotonic_clock.hpp
+)
+set(
     OS_KERNEL_USER_HEADERS
     include/os/kernel/user/file_backing.hpp
     include/os/kernel/user/system_calls.hpp
@@ -113,6 +118,7 @@ set(
     ${OS_KERNEL_OBJECT_HEADERS}
     ${OS_KERNEL_PROCESS_HEADERS}
     ${OS_KERNEL_SYNCHRONIZATION_HEADERS}
+    ${OS_KERNEL_TIME_HEADERS}
     ${OS_KERNEL_USER_HEADERS}
 )
 
@@ -209,6 +215,11 @@ set(
     src/sync/spin_lock.cpp
 )
 set(
+    OS_KERNEL_TIME_SOURCES
+    src/time/deadline_queue.cpp
+    src/time/monotonic_clock.cpp
+)
+set(
     OS_KERNEL_USER_SOURCES
     src/user/file_backing.cpp
     src/user/system_calls.cpp
@@ -230,6 +241,7 @@ set(
     ${OS_KERNEL_OBJECT_SOURCES}
     ${OS_KERNEL_PROCESS_SOURCES}
     ${OS_KERNEL_SYNCHRONIZATION_SOURCES}
+    ${OS_KERNEL_TIME_SOURCES}
     ${OS_KERNEL_USER_SOURCES}
 )
 
@@ -330,6 +342,30 @@ add_library(
     STATIC
         src/device/device_model.cpp
         include/os/kernel/device/device_model.hpp
+)
+
+add_library(
+    os_kernel_time_model_host
+    STATIC
+        src/time/deadline_queue.cpp
+        src/time/monotonic_clock.cpp
+        include/os/kernel/time/deadline_queue.hpp
+        include/os/kernel/time/monotonic_clock.hpp
+)
+target_include_directories(
+    os_kernel_time_model_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_time_model_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+target_link_libraries(
+    os_kernel_time_model_host
+    PUBLIC
+        os_system_abi
 )
 target_include_directories(
     os_kernel_device_model_host
@@ -503,6 +539,11 @@ target_compile_options(
     os_kernel_process_model_host
     PRIVATE
         ${OS_COMMON_WARNING_FLAGS}
+)
+target_link_libraries(
+    os_kernel_process_model_host
+    PUBLIC
+        os_kernel_time_model_host
 )
 target_include_directories(
     os_kernel_user_model_host

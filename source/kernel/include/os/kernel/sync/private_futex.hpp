@@ -45,6 +45,7 @@ struct PrivateFutexStatistics final {
     uint64_t release_count;
     uint64_t wait_prepare_count;
     uint64_t wake_operation_count;
+    uint64_t timeout_operation_count;
     uint64_t cancellation_operation_count;
 };
 
@@ -61,6 +62,7 @@ class PrivateFutexManager final {
     [[nodiscard]] PrivateFutexStatus ReleaseIfEmpty(uint64_t entry_index, bool &released) noexcept;
     [[nodiscard]] PrivateFutexStatus RecordWaitPrepared() noexcept;
     [[nodiscard]] PrivateFutexStatus RecordWakeOperation() noexcept;
+    [[nodiscard]] PrivateFutexStatus RecordTimeoutOperation() noexcept;
     [[nodiscard]] PrivateFutexStatus RecordCancellationOperation() noexcept;
     [[nodiscard]] PrivateFutexStatus Validate() const noexcept;
     [[nodiscard]] PrivateFutexStatistics Statistics() const noexcept;

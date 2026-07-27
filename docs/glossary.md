@@ -90,6 +90,12 @@
 | join | 一个 Thread 唯一消费另一个 joinable Thread 的退出值并触发最终回收的协议 |
 | condition variable | 用单调 sequence 表达条件可能变化、由等待者在 Mutex 保护下重新检查谓词的同步原语 |
 | once | 保证初始化函数只成功发布一次，其余 Thread 等待完成状态的三态同步原语 |
+| monotonic clock | 只随经过时间不减的时钟；v1.13 以 PIT 实际除数、整纳秒和余数累计，不表示日期 |
+| clock source | 提供经过时间度量的硬件或软件来源，与负责触发中断的 clock event、表示日期的 wall clock 不同 |
+| deadline | 64 位单调时间域中的绝对截止时刻；相对时长只在接口边界转换一次 |
+| deadline queue | ThreadScheduler 拥有的 512 槽有序等待结构，按 `(deadline, sequence)` 解析到期 Thread |
+| timed wait | 同时登记 WaitQueue 和 deadline、由普通通知或 Timeout 中唯一一方完成的阻塞等待 |
+| saturation | 算术结果超出固定宽度时保持最大可表示值而不回绕；单调时钟和相对时长换算都采用该语义 |
 | CpuLocal | 当前 BSP 的本地内核状态，保存 current Thread、入口栈、IRQ/抢占深度和重调度标记 |
 | UserContext | 把 INT 0x80、SYSCALL、异常和信号返回规范化后的统一用户寄存器现场 |
 | FXSAVE / FXRSTOR | 保存和恢复 x87、MMX、SSE/SSE2 扩展现场的 x86 指令 |

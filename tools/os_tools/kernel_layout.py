@@ -16,6 +16,7 @@ OS_KERNEL_LAYOUT_MODULE_NAMES = frozenset(
         "object",
         "process",
         "sync",
+        "time",
         "user",
     }
 )

@@ -642,8 +642,8 @@ DATA 字是否按小端拆成 512 字节。
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
-2. 未到达时，64 MiB 启动档以 15 秒、承担 88 个进程和 16 级管道验收的
-   256 MiB 功能档以 30 秒、64 GiB 主规格以 75 秒为总失败上界；主规格要在
+2. 未到达时，64 MiB 启动档以 30 秒、承担 90 个进程和时间探针验收的
+   256 MiB 功能档以 120 秒、64 GiB 主规格以 240 秒为总失败上界；主规格要在
    Debug 构建中扫描 16777216 个页状态。QMP 等待 `READY` 使用与当前内存规格
    相同的预算，外层 CTest 分别保留额外回收余量。
 
@@ -886,13 +886,13 @@ unavailable = managed - accounted
 推导出来，同时继续比较 managed/free/allocated/reserved 四个稳定字段。
 单元样例必须显式包含不可用间隙，256 MiB functional 与 64 GiB capacity
 必须共同进入门禁。QEMU 捕获器在看到禁止失败标记时会立即结束实例并报告该
-标记，不再等待 64 GiB 档的 75 秒总截止时间。
+标记，不再等待 64 GiB 档的 240 秒总截止时间。
 
 40 秒旧预算曾在共享宿主负载约 16 时于 `EXCEPTION_SELF_TEST_READY` 后耗尽，
 来宾尚在执行 64 GiB 页状态、buddy、direct-map 与跨层自检，串口因提交后才
-输出统计而没有中间行。这不是放宽来宾轮询：64 MiB 启动档仍为 15 秒，
-256 MiB 功能档因 v1.11 的 88 个进程与 16 级管道使用 30 秒，禁止失败标记
-仍会立即收尾；容量档只把宿主外部保险调整为有明确上界的 75/85 秒，并由工具
+输出统计而没有中间行。这不是放宽来宾轮询：64 MiB 启动档为 30 秒，
+256 MiB 功能档因完整用户工作负载与时间探针使用 120 秒，禁止失败标记
+仍会立即收尾；容量档把宿主外部保险调整为有明确上界的 240/250 秒，并由工具
 单元测试证明一个睡眠子进程会在短预算后被终止而不是遗留后台进程。
 
 ### 全量构建偶发报告 Kernel 或 User ELF 不存在
@@ -1583,3 +1583,49 @@ ctest --test-dir build/developer \
 
 最后运行 `os_qemu_bootstrap_smoke` 和 `os_qemu_functional_smoke`。两个系统用例
 均受总截止与静默截止约束；出现半发布竞态时应修复提交顺序，不能延长超时。
+
+## v1.13：单调时间、deadline 与 timed wait
+
+### sleep 在系统进入 idle 后永远不醒
+
+检查 deadline 解析是否错误依赖 `CurrentThreadIndex` 有效或 IRQ 来源为 Ring 3。
+最后一个 Running Thread 阻塞后 current Thread 可以为空，但 PIT IRQ0 仍必须
+推进 MonotonicClock、解析队首并设置 need-resched。`sti; hlt; cli` 是正确
+空闲路径；用忙等 Thread 掩盖问题会破坏本阶段验收。
+
+### 条件通知和 timeout 让同一 Thread Ready 两次
+
+确认 `WakeThread` 与 `ExpireNextDeadline` 使用同一 scheduler irq-save lock，
+并以 Thread 的 Blocked 状态作为唯一提交点。普通 wake 必须取消 deadline，
+timeout 必须从原 WaitQueue 摘除。失败方看到已经 Ready 的 Thread 后只能返回
+未完成，不能覆盖 wake reason。
+
+快速复现：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^(os_kernel_deadline_queue_unit_tests|os_kernel_deadline_scheduling_integration_tests|os_kernel_deadline_queue_randomized_tests)$' \
+  --output-on-failure
+```
+
+### 单调时间缓慢漂移或突然变小
+
+漂移通常表示每次 tick 的整数余数被丢弃；突然变小通常表示
+`divisor * 1e9`、余数相加或累计纳秒发生 64 位回绕。检查时同时记录输入
+频率、实际除数、余数和饱和位，不要把目标 1000 Hz 当成实际硬件周期。
+
+### QEMU 偶发达到墙钟预算
+
+先查看最后一条来宾里程碑和是否存在遗留调试模拟器：
+
+```bash
+pgrep -a qemu-system-x86_64
+ctest --test-dir build/developer \
+  -R '^os_qemu_(functional_smoke|stage1_load_success)$' \
+  --output-on-failure
+```
+
+64 GiB TCG 初始化和全 RAM 管理天然比 256 MiB 慢，因此 runner 使用分档但
+有界预算，CTest 外层预算略大。若日志在同一 guest 状态停住，应修复等待或
+资源问题；只有日志持续前进但被宿主负载截断时才调整有界预算。任何退出路径
+都必须 terminate、wait，发布前不得残留后台 QEMU。

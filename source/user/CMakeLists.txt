@@ -306,6 +306,12 @@ set(
     "用户 Thread、FS-base TLS 与 private futex 验收程序"
 )
 set(
+    OS_USER_TIME_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_time_probe.elf"
+    CACHE INTERNAL
+    "用户单调时钟、睡眠与超时等待验收程序"
+)
+set(
     OS_USER_MEMORY_GUARD_PROBE_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_memory_guard_probe.elf"
     CACHE INTERNAL
@@ -436,6 +442,12 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/thread_probe.cpp"
     "${OS_USER_THREAD_PROBE_ELF_PATH}"
     "链接用户 Thread、FS-base TLS 与 private futex 验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_time_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/time_probe.cpp"
+    "${OS_USER_TIME_PROBE_ELF_PATH}"
+    "链接用户单调时钟、睡眠与超时等待 ELF64 程序"
 )
 os_add_user_program(
     os_user_memory_guard_probe_elf

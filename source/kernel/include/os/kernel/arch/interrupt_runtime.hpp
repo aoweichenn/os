@@ -24,17 +24,21 @@ enum class InterruptRuntimeStatus : uint64_t {
 
 struct InterruptRuntimeStatistics final {
     uint64_t timer_tick_count;
+    uint64_t monotonic_nanoseconds;
     uint64_t monotonic_milliseconds;
+    uint64_t monotonic_fractional_numerator;
     uint64_t keyboard_interrupt_count;
     uint64_t supported_keyboard_event_count;
     uint64_t spurious_interrupt_count;
     uint16_t pic_mask;
     uint16_t pit_divisor;
     uint64_t pit_actual_frequency_hz;
+    bool monotonic_saturated;
 };
 
 [[nodiscard]] InterruptRuntimeStatus InitializeInterruptRuntime() noexcept;
 [[nodiscard]] InterruptRuntimeStatistics GetInterruptRuntimeStatistics() noexcept;
+[[nodiscard]] uint64_t GetMonotonicNanoseconds() noexcept;
 [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
 
 extern "C" [[nodiscard]] ExceptionFrame *

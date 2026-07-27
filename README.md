@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.12 用户 Thread、FS-base TLS 与 private futex`
-已完整完成，下一阶段是 v1.13 单调时间、deadline 与 timed wait。v1.1 已
+当前状态：第二周期 `v1.13 单调时间、deadline 与 timed wait`
+已完整完成，下一阶段是 v1.14 signal、进程组与中断语义。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -212,7 +212,16 @@ Join、KernelStack 和 Process 资源全部守恒。详细证据见
 [v1.12 发布记录](docs/releases/v1.12.md) 与
 [ADR 0039](docs/adr/0039-user-threads-fs-tls-private-futex.md)。
 
-时间、信号和 TTY 不再塞进同一阶段，异步块层与 ordered
+v1.13 新增系统调用 54--56，把 8254 PIT 的输入频率与实际除数换算成 64 位
+单调纳秒。整数余数跨 tick 保留，边界饱和而不回绕；ThreadScheduler 内嵌
+512 槽 deadline queue，以同一 irq-save 临界区裁决通知、超时、终止和取消。
+用户运行时提供非忙等 Sleep、timed futex 和重新取得 Mutex 后返回强类型结果
+的 timed ConditionVariable。`/bin/time_probe` 在三档 QEMU 中验证 sleep
+不早醒、futex 超时、条件先赢、条件超时与 idle 唤醒，最终 deadline 账本
+归零。详细证据见 [v1.13 发布记录](docs/releases/v1.13.md) 与
+[ADR 0040](docs/adr/0040-monotonic-clock-deadline-timed-wait.md)。
+
+信号和 TTY 不再塞进同一阶段，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
@@ -467,17 +476,17 @@ books/           可独立构建的 LaTeX 系统教材
 用户 ELF 和系统调用包装。Kernel 的公开头文件位于
 `source/kernel/include/os/kernel/<module>/`，实现位于
 `source/kernel/src/<module>/`；两侧使用
-`arch/boot/core/device/fs/io/ipc/memory/object/process/sync/user` 十二组对称目录，
+`arch/boot/core/device/fs/io/ipc/memory/object/process/sync/time/user` 十三组对称目录，
 禁止重新把文件堆到根目录。详细规则见
 [Kernel 源码布局](source/kernel/README.md)，模块契约见
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.12 第二周期实现的路线见
+对照当前 v1.1–v1.13 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
-文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程深入章，以及
-一份 v1.1–v1.12
+文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程和 v1.13 时间
+等待深入章，以及一份 v1.1–v1.13
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -490,8 +499,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.12 统计为 183 个目标代码文件、49884 个物理行、46023 个非空非纯
-注释代码行，其中 C++ 43589 行、NASM Intel 汇编 2434 行；测试、工具、书籍、
+当前 v1.13 统计为 189 个目标代码文件、51289 个物理行、47330 个非空非纯
+注释代码行，其中 C++ 44896 行、NASM Intel 汇编 2434 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

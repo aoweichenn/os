@@ -102,10 +102,45 @@ int64_t WaitPrivateFutex(const uint32_t *const word, const uint32_t expected_val
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t WaitPrivateFutexUntil(const uint32_t *const word,
+                              const uint32_t expected_value,
+                              const uint64_t deadline_nanoseconds) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::WaitPrivateFutexUntil),
+        reinterpret_cast<uint64_t>(word),
+        static_cast<uint64_t>(expected_value), deadline_nanoseconds);
+}
+
 int64_t WakePrivateFutex(const uint32_t *const word, const uint64_t maximum_wake_count) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WakePrivateFutex),
                             reinterpret_cast<uint64_t>(word), maximum_wake_count,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+uint64_t GetMonotonicTime() noexcept {
+    return static_cast<uint64_t>(InvokeSystemCall(
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::GetMonotonicTime),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+}
+
+int64_t SleepUntil(const uint64_t deadline_nanoseconds) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil),
+        deadline_nanoseconds, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SleepFor(const uint64_t duration_nanoseconds) noexcept {
+    const uint64_t now_nanoseconds = GetMonotonicTime();
+    const uint64_t deadline_nanoseconds =
+        duration_nanoseconds > UINT64_MAX - now_nanoseconds
+            ? UINT64_MAX
+            : now_nanoseconds + duration_nanoseconds;
+    return SleepUntil(deadline_nanoseconds);
 }
 
 int64_t TryReadPipe(uint8_t *destination, const uint64_t capacity_bytes) noexcept {

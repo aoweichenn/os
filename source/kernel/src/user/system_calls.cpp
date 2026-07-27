@@ -264,6 +264,9 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     if (status == PrivateFutexWaitStatus::ValueChanged) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_FUTEX_VALUE_CHANGED;
     }
+    if (status == PrivateFutexWaitStatus::TimedOut) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT;
+    }
     if (status == PrivateFutexWaitStatus::InvalidMemory) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
@@ -1314,16 +1317,40 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
 
 [[nodiscard]] ExceptionFrame *DispatchWaitPrivateFutex(ExceptionFrame &frame,
                                                        const uint64_t user_address,
-                                                       const uint32_t expected_value) noexcept {
+                                                       const uint32_t expected_value,
+                                                       const bool deadline_enabled,
+                                                       const uint64_t deadline_nanoseconds) noexcept {
     frame.register_rax = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
     ExceptionFrame *resume_frame = &frame;
     const PrivateFutexWaitStatus status =
-        WaitCurrentProcessPrivateFutex(frame, user_address, expected_value, resume_frame);
+        WaitCurrentProcessPrivateFutex(frame, user_address, expected_value,
+                                       deadline_enabled,
+                                       deadline_nanoseconds, resume_frame);
     if (status != PrivateFutexWaitStatus::Succeeded) {
         frame.register_rax = static_cast<uint64_t>(MapPrivateFutexWaitStatus(status));
         return &frame;
     }
     return resume_frame;
+}
+
+[[nodiscard]] ExceptionFrame *
+DispatchSleepUntil(ExceptionFrame &frame,
+                   const uint64_t deadline_nanoseconds) noexcept {
+    frame.register_rax = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    ExceptionFrame *resume_frame = &frame;
+    const TimedWaitStatus status =
+        SleepCurrentThreadUntil(frame, deadline_nanoseconds, resume_frame);
+    if (status == TimedWaitStatus::Succeeded) {
+        return resume_frame;
+    }
+    if (status == TimedWaitStatus::DeadlineReached) {
+        return &frame;
+    }
+    frame.register_rax = static_cast<uint64_t>(
+        status == TimedWaitStatus::InvalidArgument
+            ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT
+            : os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE);
+    return &frame;
 }
 }
 
@@ -1584,7 +1611,9 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPrivateFutex)) {
         return DispatchWaitPrivateFutex(*frame, frame->register_rdi,
-                                        static_cast<uint32_t>(frame->register_rsi));
+                                        static_cast<uint32_t>(frame->register_rsi),
+                                        false,
+                                        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WakePrivateFutex)) {
         uint64_t woken_thread_count = OS_KERNEL_SYSTEM_CALL_EMPTY_WAKE_COUNT;
@@ -1594,6 +1623,23 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
                                                         ? static_cast<int64_t>(woken_thread_count)
                                                         : MapPrivateFutexWaitStatus(status));
         return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetMonotonicTime)) {
+        frame->register_rax = GetMonotonicNanoseconds();
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil)) {
+        return DispatchSleepUntil(*frame, frame->register_rdi);
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(
+            os::abi::SystemCallNumber::WaitPrivateFutexUntil)) {
+        return DispatchWaitPrivateFutex(
+            *frame, frame->register_rdi,
+            static_cast<uint32_t>(frame->register_rsi), true,
+            frame->register_rdx);
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;

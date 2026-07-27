@@ -1055,3 +1055,37 @@ bootstrap 只输出 `BOOTSTRAP_SINGLE_THREAD_VERIFIED` 与 `COMPLETED`，因为
 栈页查询状态及 W/X/U/COW flags，然后停机。正常测试禁止出现这些诊断。
 所有行继续由宿主捕获器添加 `[QEMU][T+......ms]` 到达时间；来宾内核的 PIT
 单调时间仍按既有里程碑输出，不在 futex 热路径读取或打印时间。
+
+## v1.13 单调时间与 deadline 日志
+
+PIT IRQ0、deadline 队首检查和逐 waiter 解析均为热路径，不输出逐 tick 或
+逐 deadline 日志。`/bin/time_probe` 只在一个完整语义边界提交后输出：
+
+```text
+[OS][USER][TIME] STARTED
+[OS][USER][TIME] MONOTONIC_START_NS=0x...
+[OS][USER][TIME] MONOTONIC_WAKE_NS=0x...
+[OS][USER][TIME] SLEEP_VERIFIED
+[OS][USER][TIME] FUTEX_TIMEOUT_VERIFIED
+[OS][USER][TIME] CONDITION_WON_BEFORE_DEADLINE
+[OS][USER][TIME] CONDITION_TIMEOUT_VERIFIED
+[OS][USER][TIME] COMPLETED
+[OS][USER][INIT] TIME_PROBE_REAPED
+```
+
+64 MiB 配置以 `CONDITION_SINGLE_THREAD_PROFILE` 替代 condition-won marker，
+明确说明资源规格而不伪造并发证据。内核在全部 Process/Thread 回收后一次性
+输出：
+
+```text
+[OS][KERNEL][TIME] ACTIVE_DEADLINES=0x...
+[OS][KERNEL][TIME] PEAK_DEADLINES=0x...
+[OS][KERNEL][TIME] DEADLINE_SCHEDULES=0x...
+[OS][KERNEL][TIME] DEADLINE_EXPIRATIONS=0x...
+[OS][KERNEL][TIME] DEADLINE_CANCELLATIONS=0x...
+[OS][KERNEL][TIME] FUTEX_TIMEOUT_OPERATIONS=0x...
+```
+
+正常终态 active 为零且 schedule=expiration+cancellation。数值使用来宾
+单调时钟和内核账本；宿主添加的 `[QEMU][T+...ms]` 只描述串口到达时间。
+二者起点和调度环境不同，不比较绝对值。

@@ -53,8 +53,9 @@ v1.4 删除旧固定描述符表并新增四层对象/fd 证据，实体学习�
 VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 3 VM probe
 和具名 64 MiB bootstrap；v1.9 再加入文件页缓存；v1.10 新增 COW 引用
 单元、页表集成和十万步引用随机模型；v1.11 再加入动态 Pipe、Shell 执行
-计划、dup2、QEMU 重定向与 16 级管线证据，当前构建图为 145 项。数量仍由
-构建图自动生成，不作为未来版本的固定常量。
+计划、dup2、QEMU 重定向与 16 级管线证据；v1.12 加入用户 Thread/TLS/futex，
+v1.13 再加入单调时钟、deadline queue 与 timed wait，当前构建图为 151 项。
+数量仍由构建图自动生成，不作为未来版本的固定常量。
 
 ## 第二周期最终目标
 
@@ -732,6 +733,19 @@ capacity 创建被明确拒绝，TLS/futex/Join 与全部 KernelStack/Process �
 - 条件与 deadline 同时发生只完成一次等待；
 - 100000 步虚拟时间模型无丢失、重复唤醒或队列残留；
 - QEMU 串口里程碑使用来宾单调时间且热路径不刷日志。
+
+**完成状态**
+
+v1.13 已完成。PIT 输入频率与实际除数进入精确有理数累计器，整数余数跨 tick
+保留，64 位边界饱和而不回绕；512 槽 deadline queue 按
+`(deadline, sequence)` 稳定排序并由 ThreadScheduler 统一拥有。
+GetMonotonicTime/SleepUntil/WaitPrivateFutexUntil 固定为系统调用 54--56，
+用户 ConditionVariable 提供重新加锁后的强类型 timed wait。64 MiB idle
+sleep、256 MiB 与 64 GiB notifier-before-deadline 均由真实 PIT IRQ 证明，
+100000 步随机模型和整机汇总证明无早醒、重复 Ready 或 deadline 残留。
+详细证据见 [v1.13 发布记录](releases/v1.13.md)、
+[学习章](learning/21-v1.13-monotonic-clock-deadline-timed-wait.md) 与
+[ADR 0040](adr/0040-monotonic-clock-deadline-timed-wait.md)。
 
 ### v1.14 signal、进程组与中断语义
 

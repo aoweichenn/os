@@ -4,6 +4,12 @@
 
 namespace os::user {
 
+enum class ConditionWaitResult : uint64_t {
+    ConditionSatisfied,
+    TimedOut,
+    Failed,
+};
+
 class Mutex final {
   public:
     Mutex() noexcept = default;
@@ -25,6 +31,8 @@ class ConditionVariable final {
     ConditionVariable &operator=(const ConditionVariable &) = delete;
 
     [[nodiscard]] bool Wait(Mutex &mutex) noexcept;
+    [[nodiscard]] ConditionWaitResult
+    WaitUntil(Mutex &mutex, uint64_t deadline_nanoseconds) noexcept;
     void NotifyOne() noexcept;
     void NotifyAll() noexcept;
 

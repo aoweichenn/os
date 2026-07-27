@@ -30,7 +30,7 @@ v1.10 在真实交接之上建立处理器、内存、中断、设备、文件�
 
 ## 文件布局
 
-Kernel 源码按功能所有权分成十二组，公开头文件与实现保持相同相对路径：
+Kernel 源码按功能所有权分成十三组，公开头文件与实现保持相同相对路径：
 
 ```text
 include/os/kernel/<module>/<name>.hpp
@@ -50,6 +50,7 @@ src/<module>/<name>.cpp
 | `object` | 类型化 KernelObject、generation 与强引用生命周期 |
 | `process` | Process/Thread 状态机、run queue、WaitQueue 与目标机运行时 |
 | `sync` | SpinLock、IrqSaveSpinLock 与可睡眠 Mutex |
+| `time` | PIT 单调纳秒、稳定 deadline queue 与定时等待所有权 |
 | `user` | 用户 ELF、用户内存、系统调用和内嵌镜像 |
 
 例如 `memory/page_table.hpp` 与 `memory/page_table.cpp` 是一组对称接口和

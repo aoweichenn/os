@@ -55,6 +55,26 @@ bool ConditionVariable::Wait(Mutex &mutex) noexcept {
     return mutex.Lock() && WaitResultAllowsRetry(wait_result);
 }
 
+ConditionWaitResult ConditionVariable::WaitUntil(
+    Mutex &mutex, const uint64_t deadline_nanoseconds) noexcept {
+    // 序列号读取、解锁和内核 compare-and-block 共同封闭通知丢失窗口；
+    // 重新加锁后再暴露结果，保持条件变量调用者持锁返回的契约。
+    const uint32_t observed_sequence =
+        __atomic_load_n(&this->sequence_, __ATOMIC_ACQUIRE);
+    mutex.Unlock();
+    const int64_t wait_result = WaitPrivateFutexUntil(
+        &this->sequence_, observed_sequence, deadline_nanoseconds);
+    if (!mutex.Lock()) {
+        return ConditionWaitResult::Failed;
+    }
+    if (wait_result == os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT) {
+        return ConditionWaitResult::TimedOut;
+    }
+    return WaitResultAllowsRetry(wait_result)
+               ? ConditionWaitResult::ConditionSatisfied
+               : ConditionWaitResult::Failed;
+}
+
 void ConditionVariable::NotifyOne() noexcept {
     static_cast<void>(__atomic_add_fetch(
         &this->sequence_, OS_USER_SYNCHRONIZATION_SEQUENCE_INCREMENT, __ATOMIC_RELEASE));

@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.12。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.13。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -135,7 +135,9 @@ fork/exec/wait 验证地址、fd、cwd 和后备继承。v1.11 再把 Shell 普�
 pipe/dup2 ABI、输入输出重定向和 16 级流水线。v1.12 在同一 Process 内开放
 用户 Thread，建立 64 KiB 用户栈与 guard、FS-base TLS、private futex、
 Mutex、ConditionVariable、Once、ThreadExit/Join，以及多线程 exec/exit
-回收。当前 147 项 CTest 与两档日常 QEMU 要求 66/89 个 Process 创建、
-65/88 次 wait、32 条功能 Thread，并由显式 64 GiB 发布门禁验证 64 条
-Thread；全部 Pipe 页、futex entry、KernelStack、FileDescription、TLS/VMA
-和 Zombie 最终共同回到基线。
+回收。v1.13 再把 PIT 实际除数转换为精确余数累计的 64 位单调纳秒，以
+512 槽 deadline queue 统一 sleep、timed futex 和 timed condition，并由
+同一 scheduler lock 裁决通知、超时与取消。当前 151 项 CTest 与两档日常
+QEMU 要求 67/90 个 Process 创建、66/89 次 wait、32 条功能 Thread，并由
+显式 64 GiB 发布门禁验证 64 条 Thread；全部 deadline、Pipe 页、futex
+entry、KernelStack、FileDescription、TLS/VMA 和 Zombie 最终共同回到基线。

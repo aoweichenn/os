@@ -78,6 +78,7 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
   MSI/MSI-X 或 SMP 路由。
 - ATA 是同步 PIO 单扇区读取，未启用 IRQ14、DMA、队列与写入。
 - PS/2 只解码一组教学键，尚无修饰键、键盘布局、重复键和事件环形缓冲。
-- PIT 是调度时钟基础，不是 RTC 墙钟；尚无睡眠队列和 tickless 模式。
-- 当前调度器只支持单核四进程固定容量和固定四 tick 时间片；设备层尚未提供
-  高精度定时器或按截止时间编程的时钟事件接口。
+- PIT 是调度时钟与 v1.13 单调纳秒的基础，不是 RTC 墙钟；已有 deadline
+  queue 与非忙等 sleep，但尚无 tickless 或高精度 timer。
+- 当前为单 BSP 动态 Process/Thread 调度器，仍使用固定四 tick 时间片；设备层
+  尚未提供按最早 deadline 重新编程的 one-shot 时钟事件接口。

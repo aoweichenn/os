@@ -7,6 +7,9 @@
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/device/programmable_interval_timer.hpp"
 #include "os/kernel/device/ps2_keyboard.hpp"
+#include "os/kernel/time/monotonic_clock.hpp"
+
+#include "os/abi/time.hpp"
 
 namespace os::kernel {
 
@@ -24,6 +27,7 @@ class InterruptRuntime final {
     [[nodiscard]] InterruptRuntimeStatus Initialize() noexcept;
     void Dispatch(uint64_t vector) noexcept;
     [[nodiscard]] InterruptRuntimeStatistics Statistics() const noexcept;
+    [[nodiscard]] uint64_t MonotonicNanoseconds() const noexcept;
     [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
 
   private:
@@ -35,6 +39,7 @@ class InterruptRuntime final {
     AtaPioDevice ata_device_{};
     ScanCodeSet1Decoder scan_code_decoder_{};
     PitConfiguration pit_configuration_{};
+    MonotonicClock monotonic_clock_{};
     volatile uint64_t timer_tick_count_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
     volatile uint64_t keyboard_interrupt_count_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
     volatile uint64_t supported_keyboard_event_count_{OS_KERNEL_INTERRUPT_EMPTY_COUNTER};
@@ -58,6 +63,12 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
 
     if (this->timer_.Initialize(OS_KERNEL_INTERRUPT_TARGET_TIMER_FREQUENCY_HZ,
                                 this->pit_configuration_) != PitConfigurationStatus::Succeeded) {
+        return InterruptRuntimeStatus::InvalidPitConfiguration;
+    }
+    if (this->monotonic_clock_.Initialize(
+            OS_KERNEL_DEVICE_PIT_INPUT_FREQUENCY_HZ,
+            this->pit_configuration_.divisor) !=
+        MonotonicClockStatus::Succeeded) {
         return InterruptRuntimeStatus::InvalidPitConfiguration;
     }
     if (this->keyboard_.Initialize() != Ps2KeyboardStatus::Succeeded) {
@@ -98,6 +109,11 @@ void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
 
     if (interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
         this->timer_tick_count_ = this->timer_tick_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
+        if (this->monotonic_clock_.Advance(
+                OS_KERNEL_INTERRUPT_COUNTER_INCREMENT) !=
+            MonotonicClockStatus::Succeeded) {
+            HaltProcessor();
+        }
     } else if (interrupt_request == OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) {
         this->HandleKeyboardInterrupt();
     }
@@ -115,19 +131,32 @@ InterruptRuntimeStatistics InterruptRuntime::Statistics() const noexcept {
     // 当前单核由 IRQ 修改计数；保存并关闭原 IF 后复制，避免交付跨中断的快照。
     const bool interrupts_were_enabled = DisableInterrupts();
     const uint64_t timer_tick_count = this->timer_tick_count_;
+    const MonotonicClockSnapshot monotonic_snapshot =
+        this->monotonic_clock_.Read();
     const InterruptRuntimeStatistics statistics{
         .timer_tick_count = timer_tick_count,
-        .monotonic_milliseconds =
-            CalculatePitElapsedMilliseconds(timer_tick_count, this->pit_configuration_.divisor),
+        .monotonic_nanoseconds = monotonic_snapshot.nanoseconds,
+        .monotonic_milliseconds = monotonic_snapshot.nanoseconds /
+                                  os::abi::OS_ABI_TIME_NANOSECONDS_PER_MILLISECOND,
+        .monotonic_fractional_numerator =
+            monotonic_snapshot.fractional_numerator,
         .keyboard_interrupt_count = this->keyboard_interrupt_count_,
         .supported_keyboard_event_count = this->supported_keyboard_event_count_,
         .spurious_interrupt_count = this->spurious_interrupt_count_,
         .pic_mask = this->pic_.Mask(),
         .pit_divisor = this->pit_configuration_.divisor,
         .pit_actual_frequency_hz = this->pit_configuration_.actual_frequency_hz,
+        .monotonic_saturated = monotonic_snapshot.saturated,
     };
     RestoreInterrupts(interrupts_were_enabled);
     return statistics;
+}
+
+uint64_t InterruptRuntime::MonotonicNanoseconds() const noexcept {
+    const bool interrupts_were_enabled = DisableInterrupts();
+    const uint64_t nanoseconds = this->monotonic_clock_.Read().nanoseconds;
+    RestoreInterrupts(interrupts_were_enabled);
+    return nanoseconds;
 }
 
 bool InterruptRuntime::TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
@@ -173,6 +202,10 @@ InterruptRuntimeStatistics GetInterruptRuntimeStatistics() noexcept {
     return kernel_interrupt_runtime.Statistics();
 }
 
+uint64_t GetMonotonicNanoseconds() noexcept {
+    return kernel_interrupt_runtime.MonotonicNanoseconds();
+}
+
 bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
     return kernel_interrupt_runtime.TryTakeKeyboardEvent(event);
 }
@@ -190,6 +223,12 @@ extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *fra
     }
     ExceptionFrame *resume_frame = frame;
     if (interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
+        const uint64_t expired_deadline_count =
+            HandleProcessDeadlineInterrupt(
+                kernel_interrupt_runtime.MonotonicNanoseconds());
+        if (expired_deadline_count != OS_KERNEL_INTERRUPT_EMPTY_COUNTER) {
+            GetCpuLocal().RequestReschedule();
+        }
         if (FrameOriginatedFromUser(*frame)) {
             resume_frame = HandleProcessTimerInterrupt(*frame);
         } else if (IsProcessSchedulingActive()) {

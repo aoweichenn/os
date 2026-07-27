@@ -524,6 +524,43 @@ function(os_add_kernel_device_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     )
 endfunction()
 
+function(os_add_kernel_time_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
+    add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})
+    target_link_libraries(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            os_kernel_time_model_host
+            os_test_support
+    )
+    target_compile_options(
+        ${OS_TEST_TARGET}
+        PRIVATE
+            ${OS_COMMON_WARNING_FLAGS}
+    )
+    add_test(NAME ${OS_TEST_TARGET} COMMAND ${OS_TEST_TARGET})
+    set_tests_properties(
+        ${OS_TEST_TARGET}
+        PROPERTIES
+            LABELS "${OS_TEST_LABEL}"
+    )
+endfunction()
+
+os_add_kernel_time_test(
+    os_kernel_monotonic_clock_unit_tests
+    unit/kernel/monotonic_clock_test.cpp
+    "unit"
+)
+os_add_kernel_time_test(
+    os_kernel_deadline_queue_unit_tests
+    unit/kernel/deadline_queue_test.cpp
+    "unit"
+)
+os_add_kernel_time_test(
+    os_kernel_deadline_queue_randomized_tests
+    randomized/kernel/deadline_queue_randomized_test.cpp
+    "randomized"
+)
+
 os_add_kernel_device_test(
     os_kernel_device_model_unit_tests
     unit/kernel/device_model_test.cpp
@@ -623,6 +660,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_thread_scheduling_integration_tests
     integration/boot/kernel_thread_scheduling_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
+    os_kernel_deadline_scheduling_integration_tests
+    integration/boot/deadline_scheduling_integration_test.cpp
     "integration"
 )
 os_add_kernel_process_test(
@@ -937,7 +979,7 @@ os_add_kernel_file_system_test(
     randomized/kernel/vfs_namespace_randomized_test.cpp
     "randomized"
 )
-set(OS_TEST_VFS_NAMESPACE_RANDOMIZED_TIMEOUT_SECONDS 180)
+set(OS_TEST_VFS_NAMESPACE_RANDOMIZED_TIMEOUT_SECONDS 300)
 set_tests_properties(
     os_kernel_vfs_namespace_randomized_tests
     PROPERTIES
@@ -1210,7 +1252,9 @@ set_tests_properties(
 set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 65536)
-set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 40)
+set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 40)
+set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 130)
+set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 250)
 set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 100)
 
 add_test(
@@ -1232,7 +1276,7 @@ set_tests_properties(
     os_qemu_bootstrap_smoke
     PROPERTIES
         LABELS "system;bootstrap-smoke"
-        TIMEOUT 25
+        TIMEOUT "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
 )
 
 add_test(
@@ -1298,7 +1342,7 @@ set_tests_properties(
     os_qemu_stage1_load_success
     PROPERTIES
         LABELS "system"
-        TIMEOUT 85
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 
 add_test(

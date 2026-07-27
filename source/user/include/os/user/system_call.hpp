@@ -27,7 +27,12 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t JoinThread(uint64_t thread_id, os::abi::ThreadJoinResult &result) noexcept;
 [[nodiscard]] int64_t SetThreadLocalStorage(uint64_t thread_local_storage_base) noexcept;
 [[nodiscard]] int64_t WaitPrivateFutex(const uint32_t *word, uint32_t expected_value) noexcept;
+[[nodiscard]] int64_t WaitPrivateFutexUntil(const uint32_t *word, uint32_t expected_value,
+                                            uint64_t deadline_nanoseconds) noexcept;
 [[nodiscard]] int64_t WakePrivateFutex(const uint32_t *word, uint64_t maximum_wake_count) noexcept;
+[[nodiscard]] uint64_t GetMonotonicTime() noexcept;
+[[nodiscard]] int64_t SleepUntil(uint64_t deadline_nanoseconds) noexcept;
+[[nodiscard]] int64_t SleepFor(uint64_t duration_nanoseconds) noexcept;
 [[nodiscard]] int64_t TryReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t TryWritePipe(const uint8_t *source, uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t ReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;

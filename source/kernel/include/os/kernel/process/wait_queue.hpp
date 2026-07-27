@@ -19,6 +19,7 @@ enum class WaitCondition : uint64_t {
     ChildProcess,
     ThreadJoin,
     PrivateFutex,
+    Sleep,
     MutexAvailable,
     TestCondition,
 };

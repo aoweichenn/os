@@ -158,8 +158,8 @@ COW fault 成功后不推进 RIP。异常返回到原 store，CPU 重新执行�
 
 \subsection{CopyToUser 不能依赖用户页故障}
 
-系统调用经常把结果结构写到用户缓冲，例如 200 字节
-\code{VirtualMemoryStatistics}。Kernel 用 direct-map 访问目标物理 frame
+系统调用经常把结果结构写到用户缓冲，例如长度为 200 字节的结果结构；
+本项目对应类型是 \code{VirtualMemoryStatistics}。Kernel 用 direct-map 访问目标物理 frame
 时，并没有通过那个用户 PTE 执行 store，因此硬件不会替它产生 CPL3 COW
 fault。若直接复制，父子会同时观察到被改写的共享页。
 

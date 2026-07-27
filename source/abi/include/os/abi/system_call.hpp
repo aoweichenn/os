@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/abi/thread.hpp"
+#include "os/abi/time.hpp"
 #include "os/abi/virtual_memory.hpp"
 
 #include <stdint.h>
@@ -61,6 +62,9 @@ enum class SystemCallNumber : uint64_t {
     GetThreadId = 51ULL,
     WaitPrivateFutex = 52ULL,
     WakePrivateFutex = 53ULL,
+    GetMonotonicTime = 54ULL,
+    SleepUntil = 55ULL,
+    WaitPrivateFutexUntil = 56ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -139,6 +143,7 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_THREAD_NOT_FOUND = -47LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_THREAD_ALREADY_JOINED = -48LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DEADLOCK = -49LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_FUTEX_LIMIT_EXCEEDED = -50LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT = -51LL;
 
 inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
 

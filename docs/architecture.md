@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.11。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.13。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -1954,7 +1954,7 @@ source/user/
 模块私有头文件。CMake 将公开目录标记为 `PUBLIC`、私有目录标记为 `PRIVATE`，
 消费者不能通过传递依赖获得私有包含路径。
 
-Kernel 内部规模更大，因此在公开树和实现树中继续使用完全相同的十二组功能
+Kernel 内部规模更大，因此在公开树和实现树中继续使用完全相同的十三组功能
 目录。目录表达文件所有权，当前 C++ API 仍保持简短的 `os::kernel` 命名空间；
 不会为了复制物理路径而制造没有接口收益的命名空间层。每个 `.hpp` 必须在同一
 模块下拥有对应 `.cpp`，模板 `.tpp` 与头文件同目录，三个生成/汇编例外单独
@@ -2056,3 +2056,31 @@ FS selector，否则会覆盖 MSR 建立的用户 TLS 基址。完整 ABI、退�
 容量选择见 [ADR 0039](adr/0039-user-threads-fs-tls-private-futex.md)，代码
 走读见
 [v1.12 学习章](learning/20-v1.12-user-threads-tls-private-futex.md)。
+
+## v1.13 当前单调时间与 deadline 架构
+
+v1.13 把设备周期、时间表示和等待策略分为三个所有权层：
+
+```text
+PIT divisor + IRQ0
+  → InterruptRuntime::MonotonicClock
+  → ThreadScheduler::DeadlineQueue
+  → ProcessRuntime sleep / timed futex
+  → User runtime SleepFor / ConditionVariable::WaitUntil
+```
+
+`MonotonicClock` 以 64 位整纳秒和小于 PIT 输入频率的余数保存同一个有理数
+累计器。它不读取 RTC，不使用浮点数，不假设一次 tick 精确等于 1 ms；边界
+饱和到 `UINT64_MAX`，因此时间永不回绕。
+
+DeadlineQueue 嵌入 ThreadScheduler，每个 Thread 最多占一个槽，按绝对
+deadline 与插入 sequence 排序。Thread 的 WaitQueue membership 仍是等待
+对象的唯一权威关系；timer 层不复制用户地址或对象指针。普通 wake 在同一
+irq-save 临界区取消 deadline，IRQ0 到期则消费 deadline 并从 WaitQueue
+摘除 Thread，因此两者最多发布一次 Ready 和一个 WakeReason。
+
+IRQ0 在 idle 来源下也解析 deadline。没有 Ready Thread 时内核仍执行
+`sti; hlt; cli`，PIT 唤醒 CPU 后只提交 need-resched，再由既有安全边界恢复
+用户 frame。完整换算、竞争和 ABI 见
+[Time 模块](modules/time.md)、[ADR 0040](adr/0040-monotonic-clock-deadline-timed-wait.md)
+与 [v1.13 学习章](learning/21-v1.13-monotonic-clock-deadline-timed-wait.md)。

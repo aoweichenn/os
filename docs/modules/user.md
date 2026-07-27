@@ -241,6 +241,18 @@ ProcessExit 负责异常兜底。当前 TLS 是 FS-base 项目运行时布局，
 完整代码走读见
 [v1.12 学习章](../learning/20-v1.12-user-threads-tls-private-futex.md)。
 
+## v1.13 时间与 timed synchronization 运行库
+
+系统调用包装新增 `GetMonotonicTime`、`SleepUntil`、`SleepFor` 和
+`WaitPrivateFutexUntil`。相对 sleep 在用户边界以饱和加法转换为绝对
+deadline；内核始终只处理 64 位单调纳秒。
+
+`ConditionVariable::WaitUntil` 观察 sequence 后释放 Mutex，进入 timed
+futex，返回后先重新取得 Mutex，再返回
+`ConditionSatisfied`、`TimedOut` 或 `Failed`。调用者仍在 Mutex 保护下循环
+检查真实谓词；通知 marker 不能替代谓词。代码与竞争走读见
+[v1.13 学习章](../learning/21-v1.13-monotonic-clock-deadline-timed-wait.md)。
+
 用户模块不配置 STAR/LSTAR，不读取 CpuLocal，也不选择返回指令。所有用户
 RIP/RSP、段、RFLAGS 和映射验证都属于 Kernel 安全边界；用户包装器只遵守
 ABI。详细入口流程见
