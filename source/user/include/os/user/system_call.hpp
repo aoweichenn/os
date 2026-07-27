@@ -21,6 +21,13 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
     uint64_t argument3 = OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) noexcept;
 [[nodiscard]] int64_t WriteLog(const char *message, uint64_t message_size_bytes) noexcept;
 [[nodiscard]] uint64_t GetProcessId() noexcept;
+[[nodiscard]] uint64_t GetThreadId() noexcept;
+[[nodiscard]] int64_t CreateThread(const os::abi::ThreadCreateRequest &request) noexcept;
+[[noreturn]] void ExitThread(uint64_t exit_value) noexcept;
+[[nodiscard]] int64_t JoinThread(uint64_t thread_id, os::abi::ThreadJoinResult &result) noexcept;
+[[nodiscard]] int64_t SetThreadLocalStorage(uint64_t thread_local_storage_base) noexcept;
+[[nodiscard]] int64_t WaitPrivateFutex(const uint32_t *word, uint32_t expected_value) noexcept;
+[[nodiscard]] int64_t WakePrivateFutex(const uint32_t *word, uint64_t maximum_wake_count) noexcept;
 [[nodiscard]] int64_t TryReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t TryWritePipe(const uint8_t *source, uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t ReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
@@ -75,8 +82,7 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t ForkProcess() noexcept;
 [[nodiscard]] int64_t MapAnonymousMemory(uint64_t requested_address, uint64_t length_bytes,
                                          uint64_t protection_flags, uint64_t map_flags) noexcept;
-[[nodiscard]] int64_t
-MapFileMemory(const os::abi::FileMemoryMapRequest &request) noexcept;
+[[nodiscard]] int64_t MapFileMemory(const os::abi::FileMemoryMapRequest &request) noexcept;
 [[nodiscard]] int64_t UnmapMemory(uint64_t address, uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t SetProgramBreak(uint64_t requested_address) noexcept;
 [[nodiscard]] int64_t

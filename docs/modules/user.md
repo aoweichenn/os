@@ -219,6 +219,28 @@ worker 对同一个无副作用 PID 查询分别走两条入口，要求返回�
 Shell、管道、文件和退出包装全部走原生入口，因此 QEMU 中数百次
 `NATIVE_SYSCALL_ENTRIES` 来自真实用户工作负载，不是内核伪造计数。
 
+## v1.12 Thread、TLS 与同步运行库
+
+`include/os/user/thread.hpp` 与 `src/thread.cpp` 提供显式 Join 的最小 Thread
+对象。Create 用匿名 VMA 建立低端 guard、64 KiB stack 和独立 TLS 页，再把
+固定宽度 `ThreadCreateRequest` 交给 Kernel。子入口从 FS:0 取得
+`ThreadRuntimeState`，自行发布 TID，执行用户函数并用 64 位返回值
+`ExitThread`。
+
+`include/os/user/synchronization.hpp` 与 `src/synchronization.cpp` 提供
+Mutex、ConditionVariable 和 Once。三者只使用编译器原子和项目系统调用：
+无竞争路径不进入 Kernel；竞争路径等待 `(AddressSpaceId, aligned VA)`
+private futex。ConditionVariable 的 sequence 在解锁前观察，notify 先递增再
+wake，因此 unlock 与 wait 之间发生的通知会让内核二次比较返回 value
+changed，而不会丢失。
+
+Thread 没有 detach。Join 成功是创建者释放用户栈与 TLS 映射的唯一正常路径；
+ProcessExit 负责异常兜底。当前 TLS 是 FS-base 项目运行时布局，不实现 ELF
+`PT_TLS` 或 pthread ABI。
+
+完整代码走读见
+[v1.12 学习章](../learning/20-v1.12-user-threads-tls-private-futex.md)。
+
 用户模块不配置 STAR/LSTAR，不读取 CpuLocal，也不选择返回指令。所有用户
 RIP/RSP、段、RFLAGS 和映射验证都属于 Kernel 安全边界；用户包装器只遵守
 ABI。详细入口流程见

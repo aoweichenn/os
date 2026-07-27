@@ -81,6 +81,15 @@
 | `argc` / `argv` / `envp` | 用户程序入口的参数数量、参数字符串指针向量和环境字符串指针向量 |
 | ELF reader | 只暴露精确 `(offset, length)` 读取的解析输入边界，使同一验证器可读取内存镜像或 VFS 文件 |
 | TID | Thread Identifier；与 PID、对象地址和容器槽位相互独立的 64 位身份 |
+| TLS | Thread-Local Storage；同一进程内按 Thread 保存独立变量实例的用户区，本项目以 FS-base 定位 |
+| FS-base | x86-64 长模式下 FS 段的 64 位线性地址基准；调度切换时随 Thread 恢复 |
+| `IA32_FS_BASE` | 保存 FS-base 的架构 MSR；本项目用 `WRMSR/RDMSR` 写入并验证当前 Thread TLS 基址 |
+| AddressSpaceId | 与页表根生命周期绑定的 64 位地址空间身份；private futex 用它区分不同进程的同值虚拟地址 |
+| private futex | 以 `(AddressSpaceId, user address)` 为 key、只在同一地址空间内等待和唤醒的 futex |
+| compare-and-block | 在同一调度临界区读取用户字、比较预期值并登记 Blocked，消除检查与睡眠之间的丢失唤醒窗口 |
+| join | 一个 Thread 唯一消费另一个 joinable Thread 的退出值并触发最终回收的协议 |
+| condition variable | 用单调 sequence 表达条件可能变化、由等待者在 Mutex 保护下重新检查谓词的同步原语 |
+| once | 保证初始化函数只成功发布一次，其余 Thread 等待完成状态的三态同步原语 |
 | CpuLocal | 当前 BSP 的本地内核状态，保存 current Thread、入口栈、IRQ/抢占深度和重调度标记 |
 | UserContext | 把 INT 0x80、SYSCALL、异常和信号返回规范化后的统一用户寄存器现场 |
 | FXSAVE / FXRSTOR | 保存和恢复 x87、MMX、SSE/SSE2 扩展现场的 x86 指令 |

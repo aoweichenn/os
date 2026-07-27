@@ -606,6 +606,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_private_futex_unit_tests
+    unit/kernel/private_futex_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_process_tree_unit_tests
     unit/kernel/process_tree_test.cpp
     "unit"
@@ -628,6 +633,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_thread_scheduler_randomized_tests
     randomized/kernel/thread_scheduler_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_private_futex_randomized_tests
+    randomized/kernel/private_futex_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_process_test(

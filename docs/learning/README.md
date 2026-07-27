@@ -3,7 +3,7 @@
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.11：
+实现。当前 `main` 已推进到 v1.12：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -25,16 +25,19 @@
   `#PF`/`CopyToUser` 私有化以及 fd/cwd/后备继承。
 - v1.11 增加 64 KiB 按需动态管道、`pipe/dup2`、外部命令 Shell、重定向、
   16 级流水线以及 rootfs `/bin` 核心工具。
+- v1.12 增加用户 Thread、FS-base TLS、private futex、用户同步原语与
+  32/64 Thread 整机容量验收。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.11 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v1.12 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
 [v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md)、
 [v1.7](../releases/v1.7.md)、[v1.8](../releases/v1.8.md) 和
 [v1.9](../releases/v1.9.md)、
 [v1.10](../releases/v1.10.md) 与
-[v1.11](../releases/v1.11.md) 发布记录。
+[v1.11](../releases/v1.11.md) 与
+[v1.12](../releases/v1.12.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -62,6 +65,7 @@
   → v1.9 文件 VMA、按需 ELF 与 clean page cache
   → v1.10 fork、private COW 与资源继承
   → v1.11 动态管道、外部命令、重定向与 16 级流水线
+  → v1.12 用户 Thread、FS-base TLS 与 private futex
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -158,8 +162,9 @@
 | 17 | [v1.9：文件页与按需 ELF](17-v1.9-file-backed-vma-lazy-elf-page-cache.md) | 稳定文件身份、FileBacking、clean cache、shared/private、尾零、失效与回收 |
 | 18 | [v1.10：fork 与写时复制](18-v1.10-fork-copy-on-write.md) | fork 返回、PTE 软件位、稀疏引用、COW fault、CopyToUser、资源继承与回滚 |
 | 19 | [v1.11：Unix I/O 与外部 Shell](19-v1.11-unix-io-external-shell.md) | 动态管道、pipe/dup2、解析与执行分离、重定向、16 级流水线与完整回收 |
+| 20 | [v1.12：用户 Thread、TLS 与 futex](20-v1.12-user-threads-tls-private-futex.md) | Thread 生命周期、FS-base、AddressSpaceId、compare-and-block、同步原语、取消与 Join |
 
-### 5.1 从第一周期过渡到当前 v1.11
+### 5.1 从第一周期过渡到当前 v1.12
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -176,8 +181,9 @@
 | [v1.9](../releases/v1.9.md) | eager ELF/独占文件页 → FileBacking、按需 ELF 与共享 clean cache | Kernel `user/file_backing.*`、`memory/file_page_cache.*`、`user/user_memory.*` |
 | [v1.10](../releases/v1.10.md) | eager process copy/无 fork → 调用 Thread clone、private COW 与两阶段失败回滚 | Kernel `memory/user_page_reference.*`、`user/user_memory.*`、`process/process_runtime.*` |
 | [v1.11](../releases/v1.11.md) | 固定启动管道/内建 Shell → 动态管道、pipe/dup2、外部 `/bin`、重定向与 16 级流水线 | Kernel `ipc/pipe_manager.*`、`io/file_table.*`、User `shell_execution.*`、`core_tool.cpp` |
+| [v1.12](../releases/v1.12.md) | 每 Process 单用户执行流 → 用户 Thread、FS-base TLS、private futex 与同步原语 | ABI `thread.hpp`、Kernel `sync/private_futex.*`、`process/process_runtime.*`、User `thread.*`、`synchronization.*` |
 
-十一个阶段的架构结论已合并到
+十二个阶段的架构结论已合并到
 [architecture.md](../architecture.md)，当前 Kernel 的十二组对称目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。
@@ -364,6 +370,6 @@ Ring 3
 - 为一个正常路径和一个失败路径添加可重复测试。
 - 在不使用 BIOS、第三方 bootloader、libc 或 QEMU `-kernel` 的条件下复现整机。
 
-达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.11，再沿
+达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.12，再沿
 [roadmap.md](../roadmap.md) 继续环境、作业控制、用户线程、信号和日志
 文件系统。

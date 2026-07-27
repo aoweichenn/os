@@ -294,6 +294,8 @@ set(
     --rootfs-file
     "/bin/fork_probe=${OS_USER_FORK_PROBE_ELF_PATH}"
     --rootfs-file
+    "/bin/thread_probe=${OS_USER_THREAD_PROBE_ELF_PATH}"
+    --rootfs-file
     "/bin/memory_guard_probe=${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
     --rootfs-file
     "/bin/memory_protection_probe=${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
@@ -333,6 +335,7 @@ add_custom_command(
         "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROBE_ELF_PATH}"
         "${OS_USER_FORK_PROBE_ELF_PATH}"
+        "${OS_USER_THREAD_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
         "${OS_USER_TRUNCATED_ELF_PATH}"

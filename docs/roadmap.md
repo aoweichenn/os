@@ -700,6 +700,17 @@ Pipe。详细证据见 [v1.11 发布记录](releases/v1.11.md)、
 - munmap/exec/ProcessExit 取消相关 futex waiter，不保留悬空用户地址；
 - ThreadExit 与 ProcessExit 的资源和 wait 可见性严格区分。
 
+**完成状态**
+
+v1.12 已完成。系统调用 47--53、64 KiB guarded user stack、FS-base TLS、
+`(AddressSpaceId, aligned VA)` private futex、Mutex/ConditionVariable/Once、
+多线程 exec/exit/unmap cancellation 与 Join 回收均已落地。64 MiB 单线程
+降级、256 MiB 32 Thread 和 64 GiB 64 Thread 三档整机均完成，最后一个
+capacity 创建被明确拒绝，TLS/futex/Join 与全部 KernelStack/Process 资源
+守恒。详细证据见 [v1.12 发布记录](releases/v1.12.md)、
+[学习章](learning/20-v1.12-user-threads-tls-private-futex.md) 与
+[ADR 0039](adr/0039-user-threads-fs-tls-private-futex.md)。
+
 ### v1.13 单调时间、deadline 与 timed wait
 
 **目标**

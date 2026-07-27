@@ -315,7 +315,6 @@ os_kernel_system_call_dispatch_context:
     mov ax, OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
     and rsp, -16
     sti
     call OsKernelDispatchSystemCall
@@ -332,7 +331,6 @@ os_kernel_system_call_dispatch_context:
     mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
     cmp r12, OS_KERNEL_ARCHITECTURE_GS_SWAPPED
     jne os_kernel_system_call_gs_base_ready
     swapgs
@@ -407,7 +405,6 @@ OsKernelEnterScheduledProcess:
     mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
     mov gs, ax
 
     pop r15
@@ -441,7 +438,6 @@ OsKernelReturnFromUserMode:
     mov ax, OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR
     mov ds, ax
     mov es, ax
-    mov fs, ax
     mov gs, ax
     mov ss, ax
 

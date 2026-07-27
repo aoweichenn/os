@@ -51,6 +51,7 @@ struct UserAddressSpace final {
     uint64_t copy_on_write_copy_count;
     uint64_t copy_on_write_exclusive_restore_count;
     uint64_t fork_clone_count;
+    uint64_t address_space_identifier;
     VirtualMemoryMap virtual_memory_map;
 };
 
@@ -68,6 +69,7 @@ enum class UserAddressSpaceStatus : uint64_t {
     StackPreparationFailed,
     ForkReferenceExhausted,
     ForkBackingFailure,
+    AddressSpaceIdentifierExhausted,
     RollbackFailed,
 };
 
@@ -87,6 +89,7 @@ enum class UserVirtualMemoryStatus : uint64_t {
     FileReadFailed,
     PageCacheExhausted,
     CopyOnWriteFailure,
+    ThreadMemoryInUse,
     Corrupt,
 };
 
@@ -129,15 +132,13 @@ LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
                      UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
-LoadUserAddressSpace(fs::Vfs &vfs, const fs::OpenFile &open_file,
-                     UserAddressSpace &address_space,
+LoadUserAddressSpace(fs::Vfs &vfs, const fs::OpenFile &open_file, UserAddressSpace &address_space,
                      UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
                              UserAddressSpace &child_address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
-RestoreUserAddressSpaceAfterFailedFork(
-    UserAddressSpace &parent_address_space) noexcept;
+RestoreUserAddressSpaceAfterFailedFork(UserAddressSpace &parent_address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus PrepareUserStack(UserAddressSpace &address_space,
@@ -147,20 +148,16 @@ MapAnonymousMemory(UserAddressSpace &address_space, uint64_t requested_address,
                    uint64_t length_bytes, uint64_t protection_flags, uint64_t map_flags,
                    uint64_t &mapped_address) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
-MapFileMemory(UserAddressSpace &address_space, fs::Vfs &vfs,
-              const fs::OpenFile &open_file, uint64_t requested_address,
-              uint64_t length_bytes, uint64_t protection_flags,
-              uint64_t map_flags, uint64_t file_offset_bytes,
-              uint64_t &mapped_address) noexcept;
+MapFileMemory(UserAddressSpace &address_space, fs::Vfs &vfs, const fs::OpenFile &open_file,
+              uint64_t requested_address, uint64_t length_bytes, uint64_t protection_flags,
+              uint64_t map_flags, uint64_t file_offset_bytes, uint64_t &mapped_address) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus UnmapAnonymousMemory(UserAddressSpace &address_space,
                                                            uint64_t address,
                                                            uint64_t length_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
-UnmapFileMemory(UserAddressSpace &address_space, uint64_t address,
-                uint64_t length_bytes) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus
-RevokeUserFileMappings(UserAddressSpace &address_space,
-                       const FileIdentity &identity) noexcept;
+UnmapFileMemory(UserAddressSpace &address_space, uint64_t address, uint64_t length_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus RevokeUserFileMappings(UserAddressSpace &address_space,
+                                                             const FileIdentity &identity) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 InvalidateUserFilePageCache(const FileIdentity &identity,
                             uint64_t current_file_size_bytes) noexcept;
@@ -173,10 +170,9 @@ GetUserVirtualMemoryStatistics(const UserAddressSpace &address_space) noexcept;
 [[nodiscard]] UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
                                                       uint64_t fault_address, uint64_t error_code,
                                                       uint64_t user_stack_pointer) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus
-ResolveUserReturnMemory(UserAddressSpace &address_space,
-                        uint64_t instruction_pointer,
-                        uint64_t stack_pointer) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus ResolveUserReturnMemory(UserAddressSpace &address_space,
+                                                              uint64_t instruction_pointer,
+                                                              uint64_t stack_pointer) noexcept;
 void SetActiveUserAddressSpace(UserAddressSpace *address_space) noexcept;
 [[nodiscard]] UserMemoryCopyStatus CopyToUserAddressSpace(UserAddressSpace &address_space,
                                                           uint64_t user_address,

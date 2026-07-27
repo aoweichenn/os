@@ -46,7 +46,19 @@ constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX[] = "[OS][KERNEL
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX[] = "[OS][KERNEL] USER_RETURN_RSP=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_RFLAGS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_STATUS_PREFIX[] =
+    "[OS][KERNEL] USER_RETURN_INSTRUCTION_PAGE_STATUS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_FLAGS_PREFIX[] =
+    "[OS][KERNEL] USER_RETURN_INSTRUCTION_PAGE_FLAGS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STACK_PAGE_STATUS_PREFIX[] =
+    "[OS][KERNEL] USER_RETURN_STACK_PAGE_STATUS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STACK_PAGE_FLAGS_PREFIX[] =
+    "[OS][KERNEL] USER_RETURN_STACK_PAGE_FLAGS=";
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE = 1ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_WRITABLE_FLAG = 1ULL << 0ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_EXECUTABLE_FLAG = 1ULL << 1ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_USER_FLAG = 1ULL << 2ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_COPY_ON_WRITE_FLAG = 1ULL << 3ULL;
 
 bool system_call_interrupt_self_test_completed;
 
@@ -217,6 +229,53 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
 }
 
+[[nodiscard]] int64_t MapUserThreadStatus(const UserThreadStatus status) noexcept {
+    if (status == UserThreadStatus::Succeeded) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == UserThreadStatus::WouldBlock) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK;
+    }
+    if (status == UserThreadStatus::InvalidMemory) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    if (status == UserThreadStatus::ThreadLimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_THREAD_LIMIT_EXCEEDED;
+    }
+    if (status == UserThreadStatus::ThreadNotFound) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_THREAD_NOT_FOUND;
+    }
+    if (status == UserThreadStatus::AlreadyJoined) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_THREAD_ALREADY_JOINED;
+    }
+    if (status == UserThreadStatus::Deadlock) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEADLOCK;
+    }
+    if (status == UserThreadStatus::InvalidArgument) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
+}
+
+[[nodiscard]] int64_t MapPrivateFutexWaitStatus(const PrivateFutexWaitStatus status) noexcept {
+    if (status == PrivateFutexWaitStatus::Succeeded) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == PrivateFutexWaitStatus::ValueChanged) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_FUTEX_VALUE_CHANGED;
+    }
+    if (status == PrivateFutexWaitStatus::InvalidMemory) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    if (status == PrivateFutexWaitStatus::CapacityExhausted) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_FUTEX_LIMIT_EXCEEDED;
+    }
+    if (status == PrivateFutexWaitStatus::InvalidArgument) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
+}
+
 [[nodiscard]] int64_t MapVirtualMemoryStatus(const UserVirtualMemoryStatus status) noexcept {
     if (status == UserVirtualMemoryStatus::Succeeded) {
         return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
@@ -242,6 +301,9 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     if (status == UserVirtualMemoryStatus::MetadataExhausted) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_MEMORY_METADATA_EXHAUSTED;
     }
+    if (status == UserVirtualMemoryStatus::ThreadMemoryInUse) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_BUSY;
+    }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
 }
 
@@ -254,16 +316,16 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
 }
 
 [[nodiscard]] bool ValidateUserContextMemory(const UserContext &context) noexcept {
+    const uint64_t stack_probe_address =
+        context.stack_pointer == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES
+            ? OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES
+            : context.stack_pointer - OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES;
     if (!IsUserProgramVirtualAddressRange(context.common.instruction_pointer,
                                           OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES) ||
-        context.stack_pointer <= OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
-        context.stack_pointer > OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
+        !IsUserVirtualAddressRange(stack_probe_address,
+                                   OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES)) {
         return false;
     }
-    const uint64_t stack_probe_address =
-        context.stack_pointer == OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS
-            ? context.stack_pointer - OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES
-            : context.stack_pointer;
     PageMapping instruction_mapping{};
     PageMapping stack_mapping{};
     return QueryActivePage(context.common.instruction_pointer, instruction_mapping) ==
@@ -274,6 +336,23 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
            QueryActivePage(stack_probe_address, stack_mapping) == PageTableStatus::Succeeded &&
            stack_mapping.permissions.user_accessible && stack_mapping.permissions.writable &&
            !stack_mapping.permissions.executable;
+}
+
+[[nodiscard]] uint64_t EncodePagePermissionFlags(const PageMapping &mapping) noexcept {
+    uint64_t flags = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    if (mapping.permissions.writable) {
+        flags |= OS_KERNEL_SYSTEM_CALL_PAGE_WRITABLE_FLAG;
+    }
+    if (mapping.permissions.executable) {
+        flags |= OS_KERNEL_SYSTEM_CALL_PAGE_EXECUTABLE_FLAG;
+    }
+    if (mapping.permissions.user_accessible) {
+        flags |= OS_KERNEL_SYSTEM_CALL_PAGE_USER_FLAG;
+    }
+    if (mapping.permissions.copy_on_write) {
+        flags |= OS_KERNEL_SYSTEM_CALL_PAGE_COPY_ON_WRITE_FLAG;
+    }
+    return flags;
 }
 
 [[nodiscard]] bool ValidateUserSystemCallFrame(const ExceptionFrame &frame) noexcept {
@@ -306,21 +385,17 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
            ValidateUserContextMemory(context);
 }
 
-[[nodiscard]] bool PrepareUserReturnFrameMemory(
-    const ExceptionFrame &frame) noexcept {
-    if (!IsProcessSchedulingActive() ||
-        !CurrentThreadOwnsUserContext(frame)) {
+[[nodiscard]] bool PrepareUserReturnFrameMemory(const ExceptionFrame &frame) noexcept {
+    if (!IsProcessSchedulingActive() || !CurrentThreadOwnsUserContext(frame)) {
         return false;
     }
     const UserContext &context = AsUserContext(frame);
-    if (ValidateUserContext(
-            context, CurrentUserContextRequirements()) !=
+    if (ValidateUserContext(context, CurrentUserContextRequirements()) !=
         UserContextStatus::Succeeded) {
         return false;
     }
-    return ResolveCurrentProcessUserReturnMemory(
-               context.common.instruction_pointer,
-               context.stack_pointer) ==
+    return ResolveCurrentProcessUserReturnMemory(context.common.instruction_pointer,
+                                                 context.stack_pointer) ==
            UserVirtualMemoryStatus::Succeeded;
 }
 
@@ -331,6 +406,15 @@ void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
     const UserContextStatus context_status =
         ValidateUserContext(context, CurrentUserContextRequirements());
     const bool memory_valid = ValidateUserContextMemory(context);
+    const uint64_t stack_probe_address =
+        context.stack_pointer == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES
+            ? OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES
+            : context.stack_pointer - OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES;
+    PageMapping instruction_mapping{};
+    PageMapping stack_mapping{};
+    const PageTableStatus instruction_status =
+        QueryActivePage(context.common.instruction_pointer, instruction_mapping);
+    const PageTableStatus stack_status = QueryActivePage(stack_probe_address, stack_mapping);
     WriteRequiredSystemCallMessage(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MESSAGE);
     WriteRequiredSystemCallValue(serial_port,
                                  OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_OWNERSHIP_PREFIX,
@@ -351,6 +435,18 @@ void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
                                  context.stack_pointer);
     WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX,
                                  context.common.flags);
+    WriteRequiredSystemCallValue(
+        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_STATUS_PREFIX,
+        static_cast<uint64_t>(instruction_status));
+    WriteRequiredSystemCallValue(
+        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_FLAGS_PREFIX,
+        EncodePagePermissionFlags(instruction_mapping));
+    WriteRequiredSystemCallValue(serial_port,
+                                 OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STACK_PAGE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(stack_status));
+    WriteRequiredSystemCallValue(serial_port,
+                                 OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STACK_PAGE_FLAGS_PREFIX,
+                                 EncodePagePermissionFlags(stack_mapping));
 }
 
 void CompleteSystemCallInterruptSelfTest() noexcept {
@@ -702,9 +798,9 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     return MapProcessIoStatus(status, destination_descriptor, FileSystemStatus::Succeeded);
 }
 
-[[nodiscard]] int64_t DispatchDuplicateDescriptorTo(
-    const uint64_t source_descriptor, const uint64_t destination_descriptor,
-    const uint64_t descriptor_flags) noexcept {
+[[nodiscard]] int64_t DispatchDuplicateDescriptorTo(const uint64_t source_descriptor,
+                                                    const uint64_t destination_descriptor,
+                                                    const uint64_t descriptor_flags) noexcept {
     if ((descriptor_flags & ~os::abi::OS_ABI_FILE_DESCRIPTOR_VALID_FLAG_MASK) !=
         OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
@@ -720,22 +816,20 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
     }
     if (ValidateUserWritableMemory(user_pair_address, pair_size_bytes) !=
-            UserMemoryCopyStatus::Succeeded) {
+        UserMemoryCopyStatus::Succeeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
 
     os::abi::PipeDescriptorPair descriptor_pair{};
-    const ProcessIoStatus status = CreateCurrentProcessPipe(
-        descriptor_pair.reader_descriptor, descriptor_pair.writer_descriptor);
+    const ProcessIoStatus status = CreateCurrentProcessPipe(descriptor_pair.reader_descriptor,
+                                                            descriptor_pair.writer_descriptor);
     if (status != ProcessIoStatus::Succeeded) {
-        return MapProcessIoStatus(
-            status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
-            FileSystemStatus::Succeeded);
+        return MapProcessIoStatus(status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                                  FileSystemStatus::Succeeded);
     }
-    if (CopyToUser(user_pair_address, pair_size_bytes,
-                   reinterpret_cast<const uint8_t *>(&descriptor_pair),
-                   os::abi::OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES) !=
-        UserMemoryCopyStatus::Succeeded) {
+    if (CopyToUser(
+            user_pair_address, pair_size_bytes, reinterpret_cast<const uint8_t *>(&descriptor_pair),
+            os::abi::OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES) != UserMemoryCopyStatus::Succeeded) {
         HaltProcessor();
     }
     return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
@@ -1020,16 +1114,12 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
                                                      : MapProcessRuntimeStatus(status);
 }
 
-[[nodiscard]] ExceptionFrame *
-DispatchForkProcess(ExceptionFrame &frame) noexcept {
-    uint64_t process_id =
-        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
-    const ProcessRuntimeStatus status =
-        ForkCurrentProcess(frame, process_id);
-    frame.register_rax = static_cast<uint64_t>(
-        status == ProcessRuntimeStatus::Succeeded
-            ? static_cast<int64_t>(process_id)
-            : MapProcessRuntimeStatus(status));
+[[nodiscard]] ExceptionFrame *DispatchForkProcess(ExceptionFrame &frame) noexcept {
+    uint64_t process_id = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessRuntimeStatus status = ForkCurrentProcess(frame, process_id);
+    frame.register_rax = static_cast<uint64_t>(status == ProcessRuntimeStatus::Succeeded
+                                                   ? static_cast<int64_t>(process_id)
+                                                   : MapProcessRuntimeStatus(status));
     return &frame;
 }
 
@@ -1119,31 +1209,23 @@ DispatchForkProcess(ExceptionFrame &frame) noexcept {
 
 [[nodiscard]] int64_t DispatchUnmapMemory(const uint64_t address,
                                           const uint64_t length_bytes) noexcept {
-    return MapVirtualMemoryStatus(
-        UnmapCurrentProcessMemory(address, length_bytes));
+    return MapVirtualMemoryStatus(UnmapCurrentProcessMemory(address, length_bytes));
 }
 
-[[nodiscard]] int64_t DispatchMapFileMemory(
-    const uint64_t user_request_address,
-    const uint64_t request_size_bytes) noexcept {
-    if (request_size_bytes !=
-        sizeof(os::abi::FileMemoryMapRequest)) {
+[[nodiscard]] int64_t DispatchMapFileMemory(const uint64_t user_request_address,
+                                            const uint64_t request_size_bytes) noexcept {
+    if (request_size_bytes != sizeof(os::abi::FileMemoryMapRequest)) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
     }
     os::abi::FileMemoryMapRequest request{};
-    if (CopyFromUser(
-            user_request_address, sizeof(request),
-            reinterpret_cast<uint8_t *>(&request),
-            sizeof(request)) != UserMemoryCopyStatus::Succeeded) {
+    if (CopyFromUser(user_request_address, sizeof(request), reinterpret_cast<uint8_t *>(&request),
+                     sizeof(request)) != UserMemoryCopyStatus::Succeeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
-    uint64_t mapped_address =
-        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
-    const UserVirtualMemoryStatus status =
-        MapCurrentProcessFileMemory(request, mapped_address);
-    return status == UserVirtualMemoryStatus::Succeeded
-               ? static_cast<int64_t>(mapped_address)
-               : MapVirtualMemoryStatus(status);
+    uint64_t mapped_address = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const UserVirtualMemoryStatus status = MapCurrentProcessFileMemory(request, mapped_address);
+    return status == UserVirtualMemoryStatus::Succeeded ? static_cast<int64_t>(mapped_address)
+                                                        : MapVirtualMemoryStatus(status);
 }
 
 [[nodiscard]] int64_t DispatchSetProgramBreak(const uint64_t requested_address) noexcept {
@@ -1172,6 +1254,76 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
         HaltProcessor();
     }
     return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+}
+
+[[nodiscard]] int64_t DispatchCreateThread(ExceptionFrame &frame,
+                                           const uint64_t user_request_address,
+                                           const uint64_t request_size_bytes) noexcept {
+    if (request_size_bytes != sizeof(os::abi::ThreadCreateRequest)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    os::abi::ThreadCreateRequest request{};
+    if (CopyFromUser(user_request_address, sizeof(request), reinterpret_cast<uint8_t *>(&request),
+                     sizeof(request)) != UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint64_t thread_id = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const UserThreadStatus status = CreateCurrentProcessThread(frame, request, thread_id);
+    return status == UserThreadStatus::Succeeded ? static_cast<int64_t>(thread_id)
+                                                 : MapUserThreadStatus(status);
+}
+
+[[nodiscard]] ExceptionFrame *DispatchJoinThread(ExceptionFrame &frame,
+                                                 const uint64_t requested_thread_id,
+                                                 const uint64_t user_result_address,
+                                                 const uint64_t result_size_bytes) noexcept {
+    if (result_size_bytes != sizeof(os::abi::ThreadJoinResult)) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    if (ValidateUserWritableMemory(user_result_address, result_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY);
+        return &frame;
+    }
+    os::abi::ThreadJoinResult join_result{};
+    const UserThreadStatus status = TryJoinCurrentProcessThread(requested_thread_id, join_result);
+    if (status == UserThreadStatus::Succeeded) {
+        if (CopyToUser(user_result_address, sizeof(join_result),
+                       reinterpret_cast<const uint8_t *>(&join_result),
+                       sizeof(join_result)) != UserMemoryCopyStatus::Succeeded) {
+            HaltProcessor();
+        }
+        frame.register_rax = requested_thread_id;
+        return &frame;
+    }
+    if (status != UserThreadStatus::WouldBlock) {
+        frame.register_rax = static_cast<uint64_t>(MapUserThreadStatus(status));
+        return &frame;
+    }
+    frame.register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK);
+    ExceptionFrame *resume_frame = &frame;
+    if (BlockCurrentThread(frame, WaitCondition::ThreadJoin, resume_frame) !=
+        ProcessRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return resume_frame;
+}
+
+[[nodiscard]] ExceptionFrame *DispatchWaitPrivateFutex(ExceptionFrame &frame,
+                                                       const uint64_t user_address,
+                                                       const uint32_t expected_value) noexcept {
+    frame.register_rax = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    ExceptionFrame *resume_frame = &frame;
+    const PrivateFutexWaitStatus status =
+        WaitCurrentProcessPrivateFutex(frame, user_address, expected_value, resume_frame);
+    if (status != PrivateFutexWaitStatus::Succeeded) {
+        frame.register_rax = static_cast<uint64_t>(MapPrivateFutexWaitStatus(status));
+        return &frame;
+    }
+    return resume_frame;
 }
 }
 
@@ -1389,22 +1541,17 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
             DispatchGetVirtualMemoryStatistics(frame->register_rdi, frame->register_rsi));
         return frame;
     }
-    if (system_call_number ==
-        static_cast<uint64_t>(
-            os::abi::SystemCallNumber::MapFileMemory)) {
-        frame->register_rax = static_cast<uint64_t>(
-            DispatchMapFileMemory(frame->register_rdi,
-                                  frame->register_rsi));
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::MapFileMemory)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchMapFileMemory(frame->register_rdi, frame->register_rsi));
         return frame;
     }
-    if (system_call_number ==
-        static_cast<uint64_t>(
-            os::abi::SystemCallNumber::ForkProcess)) {
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ForkProcess)) {
         return DispatchForkProcess(*frame);
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::CreatePipe)) {
-        frame->register_rax = static_cast<uint64_t>(
-            DispatchCreatePipe(frame->register_rdi, frame->register_rsi));
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchCreatePipe(frame->register_rdi, frame->register_rsi));
         return frame;
     }
     if (system_call_number ==
@@ -1413,12 +1560,50 @@ DispatchGetVirtualMemoryStatistics(const uint64_t user_statistics_address,
             frame->register_rdi, frame->register_rsi, frame->register_rdx));
         return frame;
     }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::CreateThread)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchCreateThread(*frame, frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ExitThread)) {
+        return ExitCurrentUserThread(*frame, frame->register_rdi);
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::JoinThread)) {
+        return DispatchJoinThread(*frame, frame->register_rdi, frame->register_rsi,
+                                  frame->register_rdx);
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetThreadLocalStorage)) {
+        frame->register_rax = static_cast<uint64_t>(
+            MapUserThreadStatus(SetCurrentThreadLocalStorage(frame->register_rdi)));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::GetThreadId)) {
+        frame->register_rax = CurrentThreadId();
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPrivateFutex)) {
+        return DispatchWaitPrivateFutex(*frame, frame->register_rdi,
+                                        static_cast<uint32_t>(frame->register_rsi));
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WakePrivateFutex)) {
+        uint64_t woken_thread_count = OS_KERNEL_SYSTEM_CALL_EMPTY_WAKE_COUNT;
+        const PrivateFutexWaitStatus status = WakeCurrentProcessPrivateFutex(
+            frame->register_rdi, frame->register_rsi, woken_thread_count);
+        frame->register_rax = static_cast<uint64_t>(status == PrivateFutexWaitStatus::Succeeded
+                                                        ? static_cast<int64_t>(woken_thread_count)
+                                                        : MapPrivateFutexWaitStatus(status));
+        return frame;
+    }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;
 }
 
 extern "C" ExceptionFrame *OsKernelDispatchSystemCall(ExceptionFrame *frame) noexcept {
     if (frame == nullptr || !ValidateUserSystemCallFrame(*frame)) {
+        if (frame != nullptr) {
+            LogRejectedUserReturn(*frame);
+        }
         HaltProcessor();
     }
     const UserContextEntryMethod entry_method = DecodeUserContextEntryMethod(AsUserContext(*frame));

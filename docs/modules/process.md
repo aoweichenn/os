@@ -25,6 +25,9 @@
 | `program_arguments.*` | `argc/argv/envp` 长度规划、栈地址计算和精确上限 |
 | `process_runtime.*` | 跨内存、VFS、fd、栈、现场和调度器的资源事务 |
 
+private futex 的 entry/WaitQueue 容器位于 `sync/private_futex.*`，但 key 的
+AddressSpaceId、用户内存复查、阻塞调度和取消由 ProcessRuntime 组合。
+
 公开头文件与实现源文件保持同名、同模块相对路径；纯逻辑的 ProcessTree、
 ProgramArgumentPlan 和 ThreadScheduler 组成 hosted 测试库。
 
@@ -106,7 +109,9 @@ path/argument snapshot
 ## exec 提交协议
 
 提交前旧映像保持权威。候选完成 ELF、页表、用户栈和 CR3 激活探针后，
-`ThreadScheduler::CommitProcessImage` 只允许：
+`ThreadScheduler::CommitProcessImage` 在单线程历史路径只允许当前 Thread。
+v1.12 多线程路径会在候选映像完整后先取消旧 futex waiter、终止并回收
+sibling，再满足以下提交条件：
 
 - Process Alive；
 - 恰有一个 Thread；
@@ -147,8 +152,10 @@ active/free 与 acquire/release 增量，不能只检查 Process 槽位归零。
 irq-save spinlock 保护；阻塞操作不能在持有普通 spinlock 时执行。child
 exit 使用统一 WaitQueue，允许无关唤醒，用户包装器必须重试条件。
 
-参数计划当前为全局工作区，依赖系统调用内核路径不并发重入。引入 SMP、
-Kernel preemption 或同一 Process 多 Thread exec 前必须改变其所有权。
+参数计划当前为全局工作区，依赖同一 BSP 的系统调用内核路径不并发重入。
+v1.12 已允许同一 Process 多 Thread exec：候选构造失败保持 sibling，候选
+成功后由调用 Thread 收敛为新映像唯一 Thread。引入 SMP 或 Kernel
+preemption 前仍必须把全局工作区改为调用级或 Process 级所有权。
 
 ## 失败语义
 
@@ -224,3 +231,23 @@ Shell 的一个 N 级流水线最多创建 N 个 Process 和 N-1 根动态 Pipe�
 FileTable 强引用、PipeManager active slot 和动态 Pipe 物理页在命令返回
 prompt 前共同回到基线。16 级整机用例验证 16 次 spawn、15 根 Pipe 和 16 次
 wait 的组合边界。
+
+## v1.12 用户 Thread 与 private futex 事务
+
+`CreateCurrentProcessThread` 先验证用户 entry/stack/TLS VMA，再创建
+KernelStack。ThreadScheduler 的 Create 与 `UserContext`/FXSAVE/runtime
+metadata 初始化位于同一 irq-save 发布临界区；中断恢复后新 Thread 才能
+被选中。
+
+ThreadExit 只把当前 Thread 变为 Exited 并发布 64 位退出值。第一个 Join
+调用者取得 join ownership；目标退出后先销毁 KernelStack、Reap 调度槽，
+再由用户库释放栈/TLS。ProcessExit 则取消 AddressSpaceId 上全部 futex，
+从 Ready/Blocked 队列撤销 sibling，关闭共享资源并进入 ProcessTree Zombie。
+
+private futex 的最后一次 word 比较和 BlockCurrentThread 共用调度器锁。wake、
+unmap cancellation、exec cancellation 与 ProcessExit cancellation 也在该锁
+内解析 WaitQueue 单赢家，队列清空后归还 512-entry 管理器槽。
+
+详细控制流见
+[v1.12 学习章](../learning/20-v1.12-user-threads-tls-private-futex.md) 与
+[ADR 0039](../adr/0039-user-threads-fs-tls-private-futex.md)。

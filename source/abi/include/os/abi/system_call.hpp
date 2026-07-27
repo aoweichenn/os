@@ -1,5 +1,6 @@
 #pragma once
 
+#include "os/abi/thread.hpp"
 #include "os/abi/virtual_memory.hpp"
 
 #include <stdint.h>
@@ -53,6 +54,13 @@ enum class SystemCallNumber : uint64_t {
     ForkProcess = 44ULL,
     CreatePipe = 45ULL,
     DuplicateDescriptorTo = 46ULL,
+    CreateThread = 47ULL,
+    ExitThread = 48ULL,
+    JoinThread = 49ULL,
+    SetThreadLocalStorage = 50ULL,
+    GetThreadId = 51ULL,
+    WaitPrivateFutex = 52ULL,
+    WakePrivateFutex = 53ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -124,6 +132,13 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_ADDRESS_IN_USE = -40LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_MEMORY_RANGE = -41LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_MEMORY_METADATA_EXHAUSTED = -42LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PIPE_LIMIT_EXCEEDED = -43LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_WAIT_CANCELLED = -44LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_FUTEX_VALUE_CHANGED = -45LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_THREAD_LIMIT_EXCEEDED = -46LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_THREAD_NOT_FOUND = -47LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_THREAD_ALREADY_JOINED = -48LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_DEADLOCK = -49LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_FUTEX_LIMIT_EXCEEDED = -50LL;
 
 inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
 

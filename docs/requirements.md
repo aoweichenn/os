@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.11 完成基线
+## v1.12 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -122,7 +122,10 @@ v1.10 又完成只复制调用 Thread 的 fork、匿名/private 页 COW、统一
 继承，以及失败时父状态完整恢复。v1.11 进一步完成 64 KiB 按需分配动态
 管道、分档 PipeManager、`pipe/dup2` ABI、外部命令 Shell、16 级流水线、
 输入输出重定向与 `/bin` 核心工具，并在成功、拒绝、退出和异常路径上闭合
-描述符、端点和物理页生命周期。下一阶段为 v1.12 环境、作业控制与终端基础。
+描述符、端点和物理页生命周期。v1.12 又完成用户 Thread、FS-base TLS、
+private futex、用户 Mutex/ConditionVariable/Once、32/64 Thread 三档整机
+验收以及 `munmap`/`exec`/ProcessExit 取消。下一阶段为 v1.13 单调时间、
+deadline 与 timed wait。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -190,6 +193,34 @@ v1.10 又完成只复制调用 Thread 的 fork、匿名/private 页 COW、统一
 - functional QEMU 结束时动态管道 active 为 0、peak 为 128、创建数等于
   释放数且至少出现一次容量拒绝；所有 fd、FileDescription、Process、
   Zombie 和物理页统计必须回到阶段基线。
+
+## v1.12 用户 Thread 与 futex 冻结要求
+
+- 系统调用 ABI 固定为 CreateThread=47、ExitThread=48、JoinThread=49、
+  SetThreadLocalStorage=50、GetThreadId=51、WaitPrivateFutex=52、
+  WakePrivateFutex=53；结构尺寸必须由 `static_assert` 冻结。
+- Thread 必须拥有独立 TID、通用/FXSAVE 现场、KernelStack、用户栈、FS-base
+  TLS、signal mask 预留和等待关系；AddressSpace、FileTable 与 FsContext
+  仍属于 Process。
+- Create 必须先验证和准备全部上下文，再把 Ready Thread 暴露给调度器；
+  子 Thread 的 TLS TID 由子入口自行发布，不能依赖父 Thread 返回后的写入。
+- functional 单 Process 支持 32 Thread，capacity 支持 64 Thread；到达上限
+  后下一次创建必须明确失败并完整回滚 KernelStack、调度槽和用户映射。
+- IA32_FS_BASE 必须在 Thread 切换时恢复，并跨 PIT 抢占、Blocked/Ready、
+  SYSCALL/INT 兼容入口与返回保持；系统调用汇编不得装载 FS selector 覆盖 base。
+- private futex key 必须是 `(AddressSpaceId, aligned uint32_t VA)`；不同地址
+  空间的相同 VA 不得共享队列，COW/物理 frame 不得进入 key。
+- wait 必须在 wake 使用的同一 irq-save 临界区内二次读取 word 并入队；
+  值变化返回明确状态，不允许“比较后、入队前”丢失唤醒。
+- `munmap`、成功 exec 提交、ProcessExit 和用户异常必须取消旧地址范围或旧
+  AddressSpaceId 上的 waiter；活动 Thread 的 stack/TLS 不允许被撤销。
+- ThreadExit 只发布 Thread 退出值；唯一 Join 回收 KernelStack/Thread 后，
+  用户运行库释放用户栈/TLS。ProcessExit 才关闭共享资源并终止 sibling。
+- 用户 Mutex、ConditionVariable 与 Once 必须以固定宽度编译器原子实现快
+  路径，只有竞争路径进入 futex；失败不得静默退化成未持锁继续执行。
+- 单元测试覆盖 key/容量/生命周期，随机测试至少执行 100000 步，QEMU 必须
+  完成 64 MiB 单线程降级、256 MiB 32 Thread 和 64 GiB 64 Thread，并在
+  结束时满足零 futex waiter、零 KernelStack、零 Zombie 和资源快照守恒。
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

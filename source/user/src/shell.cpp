@@ -50,7 +50,7 @@ constexpr char OS_USER_SHELL_SYNC_COMMAND[] = "sync";
 constexpr char OS_USER_SHELL_EXIT_COMMAND[] = "exit";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v1.11\r\n"
+    "\r\nx86-64 OS Lab v1.12\r\n"
     "外置工具、重定向与最多 16 级管线已经启用；输入 help 查看帮助。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
@@ -79,8 +79,7 @@ constexpr char OS_USER_SHELL_COMMAND_CAT_MARKER[] = "[OS][USER][SHELL] COMMAND=C
 constexpr char OS_USER_SHELL_COMMAND_RM_MARKER[] = "[OS][USER][SHELL] COMMAND=RM\r\n";
 constexpr char OS_USER_SHELL_COMMAND_RMDIR_MARKER[] = "[OS][USER][SHELL] COMMAND=RMDIR\r\n";
 constexpr char OS_USER_SHELL_COMMAND_MV_MARKER[] = "[OS][USER][SHELL] COMMAND=MV\r\n";
-constexpr char OS_USER_SHELL_COMMAND_TRUNCATE_MARKER[] =
-    "[OS][USER][SHELL] COMMAND=TRUNCATE\r\n";
+constexpr char OS_USER_SHELL_COMMAND_TRUNCATE_MARKER[] = "[OS][USER][SHELL] COMMAND=TRUNCATE\r\n";
 constexpr char OS_USER_SHELL_COMMAND_STAT_MARKER[] = "[OS][USER][SHELL] COMMAND=STAT\r\n";
 constexpr char OS_USER_SHELL_COMMAND_SYNC_MARKER[] = "[OS][USER][SHELL] COMMAND=SYNC\r\n";
 constexpr char OS_USER_SHELL_COMMAND_EXIT_MARKER[] = "[OS][USER][SHELL] COMMAND=EXIT\r\n";
@@ -130,8 +129,7 @@ constexpr ShellCommandMarker OS_USER_SHELL_COMMAND_MARKERS[]{
      OS_USER_SHELL_COMMAND_RM_MARKER,
      sizeof(OS_USER_SHELL_COMMAND_RM_MARKER) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES},
     {OS_USER_SHELL_REMOVE_DIRECTORY_COMMAND,
-     sizeof(OS_USER_SHELL_REMOVE_DIRECTORY_COMMAND) -
-         OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
+     sizeof(OS_USER_SHELL_REMOVE_DIRECTORY_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
      OS_USER_SHELL_COMMAND_RMDIR_MARKER,
      sizeof(OS_USER_SHELL_COMMAND_RMDIR_MARKER) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES},
     {OS_USER_SHELL_MOVE_COMMAND,
@@ -162,8 +160,7 @@ constexpr ShellCommandMarker OS_USER_SHELL_COMMAND_MARKERS[]{
         return OS_USER_SHELL_EMPTY_VALUE;
     }
     uint64_t length_bytes = OS_USER_SHELL_EMPTY_VALUE;
-    while (length_bytes < capacity_bytes &&
-           text[length_bytes] != OS_USER_SHELL_STRING_TERMINATOR) {
+    while (length_bytes < capacity_bytes && text[length_bytes] != OS_USER_SHELL_STRING_TERMINATOR) {
         ++length_bytes;
     }
     return length_bytes;
@@ -185,10 +182,9 @@ constexpr ShellCommandMarker OS_USER_SHELL_COMMAND_MARKERS[]{
 }
 
 [[nodiscard]] bool WriteBytes(const char *const bytes, const uint64_t length_bytes) noexcept {
-    return bytes != nullptr &&
-           WriteDescriptor(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
-                           reinterpret_cast<const uint8_t *>(bytes),
-                           length_bytes) == static_cast<int64_t>(length_bytes);
+    return bytes != nullptr && WriteDescriptor(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                                               reinterpret_cast<const uint8_t *>(bytes),
+                                               length_bytes) == static_cast<int64_t>(length_bytes);
 }
 
 template <uint64_t SizeBytes>
@@ -200,11 +196,9 @@ template <uint64_t SizeBytes>
     const ShellExecutionStage &first_stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
     const uint64_t command_index = first_stage.first_argument_index;
     const char *const command = ShellExecutionArgumentBytes(execution_plan, command_index);
-    const uint64_t command_length_bytes =
-        execution_plan.arguments[command_index].length_bytes;
+    const uint64_t command_length_bytes = execution_plan.arguments[command_index].length_bytes;
     for (const ShellCommandMarker &entry : OS_USER_SHELL_COMMAND_MARKERS) {
-        if (BytesEqual(command, command_length_bytes, entry.command,
-                       entry.command_length_bytes)) {
+        if (BytesEqual(command, command_length_bytes, entry.command, entry.command_length_bytes)) {
             return WriteBytes(entry.marker, entry.marker_length_bytes);
         }
     }
@@ -212,30 +206,31 @@ template <uint64_t SizeBytes>
 }
 
 [[nodiscard]] bool BuildExecutablePath(const char *const command,
-                                       const uint64_t command_length_bytes,
-                                       char *const path,
+                                       const uint64_t command_length_bytes, char *const path,
                                        uint64_t &path_length_bytes) noexcept {
-    if (command == nullptr || path == nullptr || command_length_bytes == OS_USER_SHELL_EMPTY_VALUE) {
+    if (command == nullptr || path == nullptr ||
+        command_length_bytes == OS_USER_SHELL_EMPTY_VALUE) {
         return false;
     }
     bool contains_separator = false;
     for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < command_length_bytes;
          ++byte_index) {
-        contains_separator = contains_separator || command[byte_index] == OS_USER_SHELL_PATH_SEPARATOR;
+        contains_separator =
+            contains_separator || command[byte_index] == OS_USER_SHELL_PATH_SEPARATOR;
     }
     const uint64_t prefix_length_bytes =
         sizeof(OS_USER_SHELL_BINARY_PREFIX) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
     const uint64_t required_length_bytes =
-        command_length_bytes + (contains_separator ? OS_USER_SHELL_EMPTY_VALUE
-                                                   : prefix_length_bytes);
+        command_length_bytes +
+        (contains_separator ? OS_USER_SHELL_EMPTY_VALUE : prefix_length_bytes);
     if (required_length_bytes + OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES >
         OS_USER_SHELL_PATH_CAPACITY_BYTES) {
         return false;
     }
     path_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
     if (!contains_separator) {
-        for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE;
-             byte_index < prefix_length_bytes; ++byte_index) {
+        for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < prefix_length_bytes;
+             ++byte_index) {
             path[path_length_bytes] = OS_USER_SHELL_BINARY_PREFIX[byte_index];
             ++path_length_bytes;
         }
@@ -273,9 +268,10 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
            static_cast<int64_t>(destination_descriptor);
 }
 
-[[noreturn]] void ExecuteChildStage(
-    const ShellExecutionPlan &execution_plan, const uint64_t stage_index,
-    os::abi::PipeDescriptorPair *const pipes, const uint64_t pipe_count) noexcept {
+[[noreturn]] void ExecuteChildStage(const ShellExecutionPlan &execution_plan,
+                                    const uint64_t stage_index,
+                                    os::abi::PipeDescriptorPair *const pipes,
+                                    const uint64_t pipe_count) noexcept {
     const ShellExecutionStage &stage = execution_plan.stages[stage_index];
     if (stage_index != OS_USER_SHELL_EMPTY_VALUE &&
         !DuplicateForChild(pipes[stage_index - OS_USER_SHELL_PIPE_COUNT_OFFSET].reader_descriptor,
@@ -289,9 +285,9 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
     }
 
     if (stage.has_input_redirection) {
-        const int64_t descriptor = OpenFile(
-            execution_plan.storage + stage.input_path.offset_bytes,
-            stage.input_path.length_bytes, os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
+        const int64_t descriptor =
+            OpenFile(execution_plan.storage + stage.input_path.offset_bytes,
+                     stage.input_path.length_bytes, os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
         if (descriptor < OS_USER_SHELL_SUCCESS_RESULT ||
             !DuplicateForChild(static_cast<uint64_t>(descriptor),
                                os::abi::OS_ABI_STANDARD_INPUT_DESCRIPTOR)) {
@@ -303,9 +299,8 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         constexpr uint64_t output_flags = os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG |
                                           os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
                                           os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG;
-        const int64_t descriptor =
-            OpenFile(execution_plan.storage + stage.output_path.offset_bytes,
-                     stage.output_path.length_bytes, output_flags);
+        const int64_t descriptor = OpenFile(execution_plan.storage + stage.output_path.offset_bytes,
+                                            stage.output_path.length_bytes, output_flags);
         if (descriptor < OS_USER_SHELL_SUCCESS_RESULT ||
             !DuplicateForChild(static_cast<uint64_t>(descriptor),
                                os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR)) {
@@ -318,16 +313,15 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
     char executable_path[OS_USER_SHELL_PATH_CAPACITY_BYTES]{};
     uint64_t executable_path_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
     const uint64_t command_index = stage.first_argument_index;
-    if (!BuildExecutablePath(
-            ShellExecutionArgumentBytes(execution_plan, command_index),
-            execution_plan.arguments[command_index].length_bytes, executable_path,
-            executable_path_length_bytes)) {
+    if (!BuildExecutablePath(ShellExecutionArgumentBytes(execution_plan, command_index),
+                             execution_plan.arguments[command_index].length_bytes, executable_path,
+                             executable_path_length_bytes)) {
         ExitProcess(OS_USER_SHELL_COMMAND_NOT_FOUND_RESULT);
     }
 
     os::abi::ProcessString arguments[OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE]{};
-    for (uint64_t argument_index = OS_USER_SHELL_EMPTY_VALUE;
-         argument_index < stage.argument_count; ++argument_index) {
+    for (uint64_t argument_index = OS_USER_SHELL_EMPTY_VALUE; argument_index < stage.argument_count;
+         ++argument_index) {
         const uint64_t plan_argument_index = stage.first_argument_index + argument_index;
         arguments[argument_index] = os::abi::ProcessString{
             .address = reinterpret_cast<uint64_t>(
@@ -356,9 +350,9 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
          ++process_index) {
         os::abi::ProcessWaitResult wait_result{};
         const int64_t result = WaitProcess(process_ids[process_index], wait_result);
-        wait_succeeded =
-            wait_succeeded && result == static_cast<int64_t>(process_ids[process_index]) &&
-            wait_result.process_id == process_ids[process_index];
+        wait_succeeded = wait_succeeded &&
+                         result == static_cast<int64_t>(process_ids[process_index]) &&
+                         wait_result.process_id == process_ids[process_index];
         if (process_index + OS_USER_SHELL_FIRST_VALUE == process_count &&
             result == static_cast<int64_t>(process_ids[process_index]) &&
             wait_result.termination_reason == os::abi::ProcessTerminationReason::Exited) {
@@ -368,12 +362,10 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
     return wait_succeeded ? OS_USER_SHELL_SUCCESS_RESULT : OS_USER_SHELL_FAILURE_EXIT_CODE;
 }
 
-[[nodiscard]] int64_t ExecuteExternalPipeline(
-    const ShellExecutionPlan &execution_plan) noexcept {
-    const uint64_t pipe_count =
-        execution_plan.stage_count - OS_USER_SHELL_PIPE_COUNT_OFFSET;
-    os::abi::PipeDescriptorPair pipes[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT -
-                                      OS_USER_SHELL_PIPE_COUNT_OFFSET]{};
+[[nodiscard]] int64_t ExecuteExternalPipeline(const ShellExecutionPlan &execution_plan) noexcept {
+    const uint64_t pipe_count = execution_plan.stage_count - OS_USER_SHELL_PIPE_COUNT_OFFSET;
+    os::abi::PipeDescriptorPair
+        pipes[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT - OS_USER_SHELL_PIPE_COUNT_OFFSET]{};
     for (uint64_t pipe_index = OS_USER_SHELL_EMPTY_VALUE; pipe_index < pipe_count; ++pipe_index) {
         pipes[pipe_index].reader_descriptor = UINT64_MAX;
         pipes[pipe_index].writer_descriptor = UINT64_MAX;
@@ -385,8 +377,8 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
 
     uint64_t process_ids[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT]{};
     uint64_t process_count = OS_USER_SHELL_EMPTY_VALUE;
-    for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE;
-         stage_index < execution_plan.stage_count; ++stage_index) {
+    for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE; stage_index < execution_plan.stage_count;
+         ++stage_index) {
         const int64_t fork_result = ForkProcess();
         if (fork_result == OS_USER_SHELL_SUCCESS_RESULT) {
             ExecuteChildStage(execution_plan, stage_index, pipes, pipe_count);
@@ -408,12 +400,11 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
     bool has_redirection = false;
-    for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE;
-         stage_index < execution_plan.stage_count; ++stage_index) {
-        has_redirection =
-            has_redirection ||
-            execution_plan.stages[stage_index].has_input_redirection ||
-            execution_plan.stages[stage_index].has_output_redirection;
+    for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE; stage_index < execution_plan.stage_count;
+         ++stage_index) {
+        has_redirection = has_redirection ||
+                          execution_plan.stages[stage_index].has_input_redirection ||
+                          execution_plan.stages[stage_index].has_output_redirection;
     }
     if (has_redirection && last_exit_code == OS_USER_SHELL_SUCCESS_RESULT) {
         static_cast<void>(WriteLiteral(OS_USER_SHELL_REDIRECTION_VERIFIED_MARKER));
@@ -446,9 +437,9 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
 
-    if (IsSingleStageBuiltin(
-            execution_plan, OS_USER_SHELL_CD_COMMAND,
-            sizeof(OS_USER_SHELL_CD_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
+    if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_CD_COMMAND,
+                             sizeof(OS_USER_SHELL_CD_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
         const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
         if (stage.argument_count != OS_USER_SHELL_CD_ARGUMENT_COUNT) {
             static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
@@ -456,13 +447,12 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         }
         const uint64_t path_index =
             stage.first_argument_index + OS_USER_SHELL_BUILTIN_PARAMETER_INDEX;
-        return ChangeDirectory(
-            ShellExecutionArgumentBytes(execution_plan, path_index),
-            execution_plan.arguments[path_index].length_bytes);
+        return ChangeDirectory(ShellExecutionArgumentBytes(execution_plan, path_index),
+                               execution_plan.arguments[path_index].length_bytes);
     }
-    if (IsSingleStageBuiltin(
-            execution_plan, OS_USER_SHELL_EXIT_COMMAND,
-            sizeof(OS_USER_SHELL_EXIT_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
+    if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_EXIT_COMMAND,
+                             sizeof(OS_USER_SHELL_EXIT_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
         const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
         if (stage.argument_count != OS_USER_SHELL_EXIT_ARGUMENT_COUNT) {
             static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
@@ -497,8 +487,7 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
 
 [[nodiscard]] bool WritePrompt() noexcept {
     char path[OS_USER_SHELL_PATH_CAPACITY_BYTES]{};
-    const int64_t path_length_bytes =
-        GetWorkingDirectory(path, OS_USER_SHELL_PATH_CAPACITY_BYTES);
+    const int64_t path_length_bytes = GetWorkingDirectory(path, OS_USER_SHELL_PATH_CAPACITY_BYTES);
     return path_length_bytes > OS_USER_SHELL_SUCCESS_RESULT &&
            WriteLiteral(OS_USER_SHELL_PROMPT_PREFIX) &&
            WriteBytes(path, static_cast<uint64_t>(path_length_bytes)) &&
@@ -520,16 +509,14 @@ int64_t RunShellCommand(const char *const command, const uint64_t command_length
             parse_status == ShellExecutionParseStatus::LineTooLong
                 ? sizeof(OS_USER_SHELL_LINE_TOO_LONG_ERROR) -
                       OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES
-                : sizeof(OS_USER_SHELL_PARSE_ERROR) -
-                      OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
+                : sizeof(OS_USER_SHELL_PARSE_ERROR) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
         static_cast<void>(WriteBytes(message, message_length_bytes));
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
     return command_result;
 }
 
-int64_t RunShell(const uint64_t argument_count,
-                 const char *const *const arguments) noexcept {
+int64_t RunShell(const uint64_t argument_count, const char *const *const arguments) noexcept {
     if (argument_count == OS_USER_SHELL_NONINTERACTIVE_ARGUMENT_COUNT && arguments != nullptr &&
         BytesEqual(arguments[OS_USER_SHELL_NONINTERACTIVE_OPTION_INDEX],
                    StringLength(arguments[OS_USER_SHELL_NONINTERACTIVE_OPTION_INDEX],
@@ -540,7 +527,7 @@ int64_t RunShell(const uint64_t argument_count,
         const char *const command = arguments[OS_USER_SHELL_NONINTERACTIVE_COMMAND_INDEX];
         return RunShellCommand(
             command, StringLength(command, OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES +
-                                       OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES));
+                                               OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES));
     }
 
     if (!WriteLiteral(OS_USER_SHELL_BANNER) || !WriteLiteral(OS_USER_SHELL_READY_MARKER)) {
@@ -555,9 +542,8 @@ int64_t RunShell(const uint64_t argument_count,
         line_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
         while (true) {
             uint8_t character = OS_USER_SHELL_EMPTY_VALUE;
-            const int64_t read_result =
-                ReadDescriptor(os::abi::OS_ABI_STANDARD_INPUT_DESCRIPTOR, &character,
-                               OS_USER_SHELL_FIRST_VALUE);
+            const int64_t read_result = ReadDescriptor(os::abi::OS_ABI_STANDARD_INPUT_DESCRIPTOR,
+                                                       &character, OS_USER_SHELL_FIRST_VALUE);
             if (read_result != static_cast<int64_t>(OS_USER_SHELL_FIRST_VALUE)) {
                 return OS_USER_SHELL_FAILURE_EXIT_CODE;
             }

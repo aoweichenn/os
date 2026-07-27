@@ -1905,6 +1905,7 @@ source/abi/
 ├── CMakeLists.txt
 └── include/os/abi/
     ├── system_call.hpp
+    ├── thread.hpp
     └── virtual_memory.hpp
 
 source/user/
@@ -1913,7 +1914,9 @@ source/user/
 │   ├── freestanding_memory.hpp
 │   ├── shell.hpp
 │   ├── shell_parser.hpp
+│   ├── synchronization.hpp
 │   ├── system_call.hpp
+│   ├── thread.hpp
 │   └── user_heap.hpp
 ├── linker/
 │   └── user.ld.in
@@ -1934,13 +1937,16 @@ source/user/
 │   ├── memory_guard_probe.cpp
 │   ├── memory_probe.cpp
 │   ├── memory_protection_probe.cpp
+│   ├── thread_probe.cpp
 │   └── shell_entry.cpp
 └── src/
     ├── freestanding_memory.cpp
     ├── shell.cpp
     ├── shell_parser.cpp
+    ├── synchronization.cpp
     ├── system_call.asm
     ├── system_call.cpp
+    ├── thread.cpp
     └── user_heap.cpp
 ```
 
@@ -2012,3 +2018,41 @@ FileDescription 和文件偏移。Shell 解析器只产生最多 16 个 stage �
 系统的重复运行时体积，但 rootfs 名称、spawn/exec 边界和每个进程的 fd
 语义都是真实独立的。只有 `cd` 与 `exit` 因必须改变 Shell 自身状态而保留
 为内建命令。
+
+## v1.12 当前用户线程、TLS 与 private futex 架构
+
+v1.12 让 Process 首次拥有多个可独立调度的用户 Thread。Process 继续拥有
+AddressSpace、FileTable 与 FsContext；Thread 独占 TID、通用/扩展现场、
+Ring 0 栈、Ring 3 栈、退出值和 FS-base。创建路径按“取得未发布槽位、建立
+用户栈与 guard、构造初始现场、初始化 FXSAVE/TLS、最后进入 Ready 队列”
+提交，避免调度器看见半初始化 Thread：
+
+```text
+Thread::Create(entry, argument)
+  → MapAnonymousMemory(64 KiB stack + unmapped guard)
+  → CreateThread ABI
+  → KernelStack + UserContext + FXSAVE + TLS metadata
+  → Ready publication
+  → scheduler restores CR3 / TSS.RSP0 / FXSAVE / IA32_FS_BASE
+```
+
+线程结束只释放它独占的执行资源；最后一条 Thread 结束才使 Process 进入
+Zombie。`JoinThread` 为每个目标冻结唯一 join owner，等待目标退出后复制
+64 位退出值、回收 Thread 槽，并由用户运行时撤销目标栈与 TLS 页。进程退出、
+用户异常和成功 exec 会取消或终止同 Process 的其他 Thread；exec 先完整验证
+候选映像，再停止兄弟 Thread，避免失败请求破坏旧映像。
+
+用户同步的 uncontended fast path 只使用 C++ 编译器原子内建。竞争时
+`WaitPrivateFutex(address, expected)` 在 scheduler lock 内完成用户字读取、
+比较和 WaitQueue 登记，`WakePrivateFutex` 再按同一
+`(AddressSpaceId, aligned user address)` 唤醒，因而不同 Process 的相同
+虚拟地址不会串扰。Mutex 用 0/1 表达空闲和占有，每次 release 都执行有界
+wake-one；ConditionVariable 用单调 sequence 防止通知被折叠；Once 用
+未开始/执行中/完成三态发布初始化结果。
+
+FS 在长模式下不承担普通平坦寻址，却仍可由 `IA32_FS_BASE` 提供每 Thread
+地址基准。每次 Thread 激活都写回其 FS-base；系统调用汇编入口不能重新装载
+FS selector，否则会覆盖 MSR 建立的用户 TLS 基址。完整 ABI、退出语义和
+容量选择见 [ADR 0039](adr/0039-user-threads-fs-tls-private-futex.md)，代码
+走读见
+[v1.12 学习章](learning/20-v1.12-user-threads-tls-private-futex.md)。

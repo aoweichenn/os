@@ -2075,7 +2075,52 @@ FileTable entry 属于 Process，FileDescription 保存共享状态，Pipe 保�
 offset。完整模型和代码走读见
 [v1.11 学习章](learning/19-v1.11-unix-io-external-shell.md)。
 
-## 29. 建议阅读顺序
+## 29. 为什么用户线程同时需要调度身份、TLS 与原子等待
+
+进程最初只是“正在运行的程序”，早期 Unix 甚至把地址空间和唯一执行流放在
+同一个抽象里。共享内存服务器、图形界面和并行计算逐渐要求多个执行流共享
+文件与地址空间，线程由此成为调度实体，进程则保留资源容器职责。若仍把 PID
+当作调度身份，两个执行流就无法分别保存 RIP/RSP、浮点现场、阻塞原因和
+退出值；若为每条执行流复制整个地址空间，又失去低成本共享的意义。
+
+每条 Thread 至少需要三类私有状态：
+
+- 处理器状态：通用寄存器、RFLAGS、RIP/RSP 和 x87/SSE 现场；
+- 内核状态：TID、调度状态、内核栈、等待节点和 join 所有权；
+- 用户状态：独立用户栈、线程局部存储基址和退出值。
+
+TLS 解决的是“代码相同但变量实例按 Thread 分开”。x86-64 长模式基本忽略
+CS/DS/ES/SS 的基址，却特意保留 FS/GS base；操作系统可以把
+`IA32_FS_BASE` 写为当前 Thread 的 TLS 区起点，用户代码随后通过
+`fs:[offset]` 访问私有槽。上下文切换若只恢复通用寄存器而漏掉 FS-base，
+下一个 Thread 会读写上一个 Thread 的局部状态；系统调用入口若无意重载 FS，
+也会造成同类破坏。
+
+互斥还需要解决“检查条件”和“进入睡眠”之间的竞态。单纯执行：
+
+```text
+if (value == expected)
+    sleep()
+```
+
+会让唤醒恰好落在条件检查之后、睡眠登记之前，形成永久丢失唤醒。futex 的
+关键不是接口名字，而是内核在同一调度临界区完成
+`copy user word → compare → enqueue → Blocked`。用户态先用原子指令走快速
+路径，只有竞争者进入内核，因此低竞争成本接近普通原子变量。private futex
+还必须把地址空间身份纳入 key：不同 Process 常在相同虚拟地址放置堆和栈，
+仅用虚拟地址会错误互相唤醒。
+
+join 是另一种所有权协议。Thread 退出后执行资源可以逐步回收，但退出值在
+joiner 消费前仍有明确所有者；两个 joiner 同时等待同一目标会产生重复消费。
+因此目标只允许一个 join owner，目标退出触发唤醒，成功 join 才回收可复用
+槽。进程整体退出或 exec 时还必须取消相关 futex wait，避免 WaitQueue 保存
+已经销毁的地址空间。
+
+完整实现与失败语义见
+[v1.12 学习章](learning/20-v1.12-user-threads-tls-private-futex.md) 和
+[ADR 0039](adr/0039-user-threads-fs-tls-private-futex.md)。
+
+## 30. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -2098,7 +2143,8 @@ offset。完整模型和代码走读见
    v1.6 的 rootfs v2、完整命名空间与独立 fsck，以及 v1.7 的磁盘 PID1、
    进程树、spawn/exec/wait 与参数环境，v1.8 的 VMA、匿名缺页、受控栈增长
    和用户 heap、v1.9 的文件 VMA、按需 ELF 与 clean page cache，以及
-   v1.10 的 fork/COW，以及 v1.11 的动态管道、pipe/dup2、外部 Shell 与
-   核心工具。
+   v1.10 的 fork/COW，v1.11 的动态管道、pipe/dup2、外部 Shell 与
+   核心工具，以及 v1.12 的用户 Thread、FS-base TLS、private futex 与
+   同步原语。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

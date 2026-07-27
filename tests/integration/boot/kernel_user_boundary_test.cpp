@@ -19,7 +19,8 @@ constexpr std::string_view OS_TEST_USER_BOUNDARY_ADDRESS_MESSAGE =
     "用户地址边界必须排除低地址和非规范高半区";
 constexpr std::string_view OS_TEST_USER_BOUNDARY_PROGRAM_ADDRESS_MESSAGE =
     "用户 ELF 必须限制在独立的 1 GiB 进程程序窗口";
-constexpr std::string_view OS_TEST_USER_BOUNDARY_ABI_MESSAGE = "系统调用 ABI 编号和向量必须稳定";
+constexpr std::string_view OS_TEST_USER_BOUNDARY_ABI_MESSAGE =
+    "系统调用 ABI 编号、线程边界结构和向量必须稳定";
 constexpr uint64_t OS_TEST_USER_BOUNDARY_KERNEL_CODE_SELECTOR = 0x0008ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_USER_CODE_SELECTOR = 0x0023ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_STACK_PAGE_COUNT = 2048ULL;
@@ -39,6 +40,13 @@ constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_MAP_MEMORY_NUMBER = 39ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_UNMAP_MEMORY_NUMBER = 40ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PROGRAM_BREAK_NUMBER = 41ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_MEMORY_STATISTICS_NUMBER = 42ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_CREATE_THREAD_NUMBER = 47ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_THREAD_NUMBER = 48ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_JOIN_THREAD_NUMBER = 49ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_SET_TLS_NUMBER = 50ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_GET_THREAD_ID_NUMBER = 51ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WAIT_FUTEX_NUMBER = 52ULL;
+constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_WAKE_FUTEX_NUMBER = 53ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_NAME_CAPACITY_BYTES = 255ULL;
 constexpr uint64_t OS_TEST_USER_BOUNDARY_EXPECTED_DIRECTORY_ENTRY_SIZE_BYTES = 280ULL;
@@ -125,6 +133,24 @@ int main() {
                 OS_TEST_USER_BOUNDARY_EXPECTED_PROGRAM_BREAK_NUMBER &&
             static_cast<uint64_t>(os::abi::SystemCallNumber::GetVirtualMemoryStatistics) ==
                 OS_TEST_USER_BOUNDARY_EXPECTED_MEMORY_STATISTICS_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::CreateThread) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_CREATE_THREAD_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::ExitThread) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_EXIT_THREAD_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::JoinThread) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_JOIN_THREAD_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SetThreadLocalStorage) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_SET_TLS_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetThreadId) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_GET_THREAD_ID_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPrivateFutex) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_WAIT_FUTEX_NUMBER &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::WakePrivateFutex) ==
+                OS_TEST_USER_BOUNDARY_EXPECTED_WAKE_FUTEX_NUMBER &&
+            sizeof(os::abi::ThreadCreateRequest) ==
+                os::abi::OS_ABI_THREAD_CREATE_REQUEST_SIZE_BYTES &&
+            sizeof(os::abi::ThreadJoinResult) ==
+                os::abi::OS_ABI_THREAD_JOIN_RESULT_SIZE_BYTES &&
             os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES ==
                 OS_TEST_USER_BOUNDARY_EXPECTED_PATH_CAPACITY_BYTES &&
             os::abi::OS_ABI_DIRECTORY_ENTRY_NAME_CAPACITY_BYTES ==

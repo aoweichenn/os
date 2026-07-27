@@ -43,18 +43,19 @@ Python 入口依次执行：
 1. 检查全部必要工具。
 2. 使用 `developer` CMake preset 配置工程。
 3. 构建宿主测试库和 x86-64 freestanding 库。
-4. 生成自研 ROM、Stage 1、v1.11 ELF64 内核、十九个用户 ELF、一个截断
+4. 生成自研 ROM、Stage 1、v1.12 ELF64 内核、二十个用户 ELF、一个截断
    ELF 夹具，把 init、Shell、multi-call 核心工具及功能探针安装进 rootfs；
    同时生成格式损坏、目标 ATA、
    内存图失败、非法指令、页故障和写保护注入镜像，并保留 v0.0 空镜像
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
-   命名空间单词门禁、64 MiB bootstrap、256 MiB functional 和 64 GiB
-   capacity 系统用例。
+   命名空间单词门禁、64 MiB bootstrap 与 256 MiB functional 系统用例。
+6. 发布前另用下文的有界命令运行 64 GiB capacity 主规格；它不进入日常
+   `verify`，避免每次局部验证都申请 64 GiB 来宾虚拟地址空间。
 
 正常 QEMU 系统用例包含显式 `-m 64` 的 bootstrap、`-m 256` 的 functional
-门禁和 `-m 65536`
-的 64 GiB capacity 主规格；两者运行同一份 Shell、IPC、文件系统、用户隔离
+门禁和发布时显式 `-m 65536`
+的 64 GiB capacity 主规格；三者运行同一份 Shell、IPC、文件系统、用户隔离
 和资源生命周期实现。故障注入和最小兼容路径保留 64 MiB，以免重复为不相关
 失败分支建立大容量模型。QEMU
 默认按需提交来宾 RAM，宿主不要求实际装有 64 GiB 空闲内存，但必须允许创建
@@ -267,7 +268,7 @@ source/kernel/src/arch/architecture.asm ─ NASM elf64 ────────�
 python3 tools/os.py audit-kernel-elf build/developer/source/kernel/kernel.elf
 ```
 
-所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.11 的正常磁盘启动程序
+所有 Ring 3 程序都是独立 ELF64 产物，可分别审计。v1.12 的正常磁盘启动程序
 例如：
 
 ```bash
@@ -275,6 +276,7 @@ python3 tools/os.py audit-user-elf build/developer/source/user/user_init.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_shell.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_exec_target.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_fork_probe.elf
+python3 tools/os.py audit-user-elf build/developer/source/user/user_thread_probe.elf
 python3 tools/os.py audit-user-elf build/developer/source/user/user_core_tool.elf
 ```
 

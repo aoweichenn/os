@@ -35,6 +35,11 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_PIPE_WRITABLE_QUEUE_ID = 2ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_DESCRIPTOR_READABLE_QUEUE_ID = 3ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_DESCRIPTOR_WRITABLE_QUEUE_ID = 4ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_CHILD_EXIT_QUEUE_ID = 5ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_QUEUE_ID = 6ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_PRIVATE_FUTEX_FIRST_QUEUE_ID = 0x1000ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_STACK_ALIGNMENT_BYTES =
+    os::abi::OS_ABI_THREAD_STACK_ALIGNMENT_BYTES;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_LOCAL_STORAGE_PROBE_BYTES = 1ULL;
 constexpr int64_t OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE = 0LL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BOOTSTRAP_FILE_DESCRIPTOR_LIMIT = 64ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR = UINT64_MAX;
@@ -56,6 +61,16 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FORK_CONTEXT_STAGE = 5ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FORK_FILE_SYSTEM_STAGE = 6ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FORK_PROCESS_TREE_STAGE = 7ULL;
 constexpr char OS_KERNEL_PROCESS_RUNTIME_EXIT_PREFIX[] = "[OS][KERNEL][PROC] EXIT_PID=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_THREAD_CREATE_COUNT_PREFIX[] =
+    "[OS][KERNEL][THREAD] CREATE_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_THREAD_EXIT_COUNT_PREFIX[] =
+    "[OS][KERNEL][THREAD] EXIT_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_COUNT_PREFIX[] =
+    "[OS][KERNEL][THREAD] JOIN_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FUTEX_WAIT_COUNT_PREFIX[] =
+    "[OS][KERNEL][FUTEX] WAIT_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FUTEX_WAKE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FUTEX] WAKE_OPERATION_COUNT=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_REPARENT_PREFIX[] =
     "[OS][KERNEL][PROC] REPARENTED_CHILDREN=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_WAIT_PREFIX[] = "[OS][KERNEL][PROC] WAIT_REAPED_PID=";
@@ -76,11 +91,9 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX[] =
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX[] =
     "[OS][KERNEL][FATAL] PROCESS_TREE_STATUS=";
 
-[[nodiscard]] bool IsPowerOfTwoCounter(
-    const uint64_t value) noexcept {
+[[nodiscard]] bool IsPowerOfTwoCounter(const uint64_t value) noexcept {
     return value != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
-           (value &
-            (value - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT)) ==
+           (value & (value - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT)) ==
                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
 }
 
@@ -196,6 +209,13 @@ struct ProcessRuntimeProcess final {
 struct alignas(OS_KERNEL_EXTENDED_STATE_AREA_ALIGNMENT_BYTES) ProcessRuntimeThread final {
     ExceptionFrame *saved_frame;
     FxSaveArea extended_state;
+    uint64_t user_stack_base_address;
+    uint64_t user_stack_size_bytes;
+    uint64_t thread_local_storage_base;
+    uint64_t thread_local_storage_size_bytes;
+    uint64_t exit_value;
+    uint64_t join_owner_thread_id;
+    bool joinable;
     bool active;
 };
 
@@ -214,6 +234,9 @@ WaitQueue pipe_writable_wait_queue;
 WaitQueue descriptor_readable_wait_queue;
 WaitQueue descriptor_writable_wait_queue;
 WaitQueue child_exit_wait_queue;
+WaitQueue thread_join_wait_queue;
+PrivateFutexManager private_futex_manager;
+PrivateFutexEntry private_futex_entries[OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT];
 ProcessTree process_tree;
 ProcessTreeEntry process_tree_entries[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 ProgramArgumentPlan program_argument_plan;
@@ -242,6 +265,7 @@ uint64_t pipe_broken_observation_count;
 uint64_t capacity_self_test_process_count;
 uint64_t capacity_self_test_thread_count;
 uint64_t capacity_self_test_threads_per_process;
+UserThreadRuntimeStatistics user_thread_runtime_statistics;
 bool process_runtime_initialized;
 bool process_scheduling_active;
 
@@ -262,8 +286,8 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
         return false;
     }
     physical_address = frame.physical_address;
-    virtual_address = reinterpret_cast<uint8_t *>(
-        PhysicalMemoryDirectMapAddress(frame.physical_address));
+    virtual_address =
+        reinterpret_cast<uint8_t *>(PhysicalMemoryDirectMapAddress(frame.physical_address));
     if (virtual_address != nullptr) {
         return true;
     }
@@ -274,13 +298,11 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
 
 [[nodiscard]] bool ReleasePipePage(void *, const uint64_t physical_address,
                                    uint8_t *const virtual_address) noexcept {
-    if (physical_address == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
-        virtual_address == nullptr) {
+    if (physical_address == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE || virtual_address == nullptr) {
         return false;
     }
-    return GetKernelPhysicalFrameAllocator().Release(
-               PhysicalFrame{.physical_address = physical_address}) ==
-           PhysicalFrameAllocatorStatus::Succeeded;
+    return GetKernelPhysicalFrameAllocator().Release(PhysicalFrame{
+               .physical_address = physical_address}) == PhysicalFrameAllocatorStatus::Succeeded;
 }
 
 [[nodiscard]] bool RunPipeCapacitySelfTest(const uint64_t capacity) noexcept {
@@ -288,8 +310,8 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
          pipe_index < OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY; ++pipe_index) {
         capacity_pipe_entries[pipe_index] = nullptr;
     }
-    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-         pipe_index < capacity; ++pipe_index) {
+    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE; pipe_index < capacity;
+         ++pipe_index) {
         if (dynamic_pipe_manager.Create(capacity_pipe_entries[pipe_index]) !=
                 PipeManagerStatus::Succeeded ||
             capacity_pipe_entries[pipe_index] == nullptr) {
@@ -301,8 +323,8 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
         overflow_pipe != nullptr) {
         return false;
     }
-    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-         pipe_index < capacity; ++pipe_index) {
+    for (uint64_t pipe_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE; pipe_index < capacity;
+         ++pipe_index) {
         Pipe *const pipe = capacity_pipe_entries[pipe_index];
         if (pipe == nullptr ||
             dynamic_pipe_manager.CloseReader(*pipe) != PipeManagerStatus::Succeeded ||
@@ -315,13 +337,12 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
     return dynamic_pipe_manager.Validate() == PipeManagerStatus::Succeeded &&
            statistics.capacity == capacity &&
            statistics.active_pipe_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
-           statistics.peak_active_pipe_count == capacity &&
-           statistics.creation_count == capacity &&
+           statistics.peak_active_pipe_count == capacity && statistics.creation_count == capacity &&
            statistics.release_count == capacity;
 }
 
-[[nodiscard]] FileIdentity FileIdentityFromSnapshot(
-    const FileDescriptionSnapshot &snapshot) noexcept {
+[[nodiscard]] FileIdentity
+FileIdentityFromSnapshot(const FileDescriptionSnapshot &snapshot) noexcept {
     return FileIdentity{
         .superblock_identifier = snapshot.superblock_identifier,
         .superblock_generation = snapshot.superblock_generation,
@@ -330,8 +351,8 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
     };
 }
 
-[[nodiscard]] FileIdentity FileIdentityFromInformation(
-    const fs::NodeInformation &information) noexcept {
+[[nodiscard]] FileIdentity
+FileIdentityFromInformation(const fs::NodeInformation &information) noexcept {
     return FileIdentity{
         .superblock_identifier = information.superblock_identifier,
         .superblock_generation = information.superblock_generation,
@@ -340,47 +361,37 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
     };
 }
 
-void WriteProcessRuntimeValue(const char *const prefix,
-                              const uint64_t value) noexcept;
+void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) noexcept;
 
-[[nodiscard]] bool RevokeRuntimeFileMappings(
-    const FileIdentity &identity,
-    const uint64_t current_file_size_bytes) noexcept {
+[[nodiscard]] bool RevokeRuntimeFileMappings(const FileIdentity &identity,
+                                             const uint64_t current_file_size_bytes) noexcept {
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
-         process_index < process_runtime_limits.process_capacity;
-         ++process_index) {
-        ProcessRuntimeProcess &runtime_process =
-            runtime_processes[process_index];
+         process_index < process_runtime_limits.process_capacity; ++process_index) {
+        ProcessRuntimeProcess &runtime_process = runtime_processes[process_index];
         // Zombie 仍由父进程持有结果槽，但其地址空间已经销毁。文件写入和
         // truncate 只需要撤销仍然存在的地址空间，不能把合法的 Zombie
         // 生命周期误判为页缓存损坏。
-        if (!runtime_process.active ||
-            runtime_process.address_space.root_physical_address ==
-                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        if (!runtime_process.active || runtime_process.address_space.root_physical_address ==
+                                           OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
             continue;
         }
-        if (RevokeUserFileMappings(
-                runtime_process.address_space,
-                identity) != UserVirtualMemoryStatus::Succeeded) {
+        if (RevokeUserFileMappings(runtime_process.address_space, identity) !=
+            UserVirtualMemoryStatus::Succeeded) {
             return false;
         }
-        runtime_process.result.mapped_page_count =
-            runtime_process.address_space.mapped_page_count;
+        runtime_process.result.mapped_page_count = runtime_process.address_space.mapped_page_count;
     }
     const uint64_t previous_invalidation_count =
         GetUserFilePageCacheStatistics().invalidation_count;
-    if (InvalidateUserFilePageCache(
-            identity, current_file_size_bytes) !=
+    if (InvalidateUserFilePageCache(identity, current_file_size_bytes) !=
         UserVirtualMemoryStatus::Succeeded) {
         return false;
     }
-    const FilePageCacheStatistics statistics =
-        GetUserFilePageCacheStatistics();
+    const FilePageCacheStatistics statistics = GetUserFilePageCacheStatistics();
     if (statistics.invalidation_count != previous_invalidation_count &&
         IsPowerOfTwoCounter(statistics.invalidation_count)) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_INVALIDATION_PREFIX,
-            statistics.invalidation_count);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_INVALIDATION_PREFIX,
+                                 statistics.invalidation_count);
     }
     return true;
 }
@@ -451,6 +462,7 @@ void ResetRuntimeStorage() noexcept {
          thread_index < OS_KERNEL_THREAD_CAPACITY_LIMIT; ++thread_index) {
         runtime_threads[thread_index] = ProcessRuntimeThread{};
     }
+    user_thread_runtime_statistics = UserThreadRuntimeStatistics{};
 }
 
 [[nodiscard]] bool ReadThreadKernelStack(const uint64_t thread_index, KernelStack &stack) noexcept {
@@ -496,10 +508,9 @@ void ResetRuntimeStorage() noexcept {
     return true;
 }
 
-[[nodiscard]] bool BuildForkContextFrame(
-    const uint64_t kernel_stack_slot_index,
-    const ExceptionFrame &parent_frame,
-    ExceptionFrame *&saved_frame) noexcept {
+[[nodiscard]] bool BuildForkContextFrame(const uint64_t kernel_stack_slot_index,
+                                         const ExceptionFrame &parent_frame,
+                                         ExceptionFrame *&saved_frame) noexcept {
     KernelStack stack{};
     if (GetKernelStackManager().Read(kernel_stack_slot_index, stack) !=
         KernelStackManagerStatus::Succeeded) {
@@ -509,20 +520,105 @@ void ResetRuntimeStorage() noexcept {
     if (stack_top_address < OS_KERNEL_USER_CONTEXT_SIZE_BYTES) {
         return false;
     }
-    const uint64_t frame_address =
-        stack_top_address - OS_KERNEL_USER_CONTEXT_SIZE_BYTES;
-    if (!GetKernelStackManager().Contains(
-            kernel_stack_slot_index, frame_address,
-            OS_KERNEL_USER_CONTEXT_SIZE_BYTES)) {
+    const uint64_t frame_address = stack_top_address - OS_KERNEL_USER_CONTEXT_SIZE_BYTES;
+    if (!GetKernelStackManager().Contains(kernel_stack_slot_index, frame_address,
+                                          OS_KERNEL_USER_CONTEXT_SIZE_BYTES)) {
         return false;
     }
-    UserContext *const child_context =
-        reinterpret_cast<UserContext *>(frame_address);
+    UserContext *const child_context = reinterpret_cast<UserContext *>(frame_address);
     *child_context = AsUserContext(parent_frame);
-    child_context->common.register_rax =
-        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    child_context->common.register_rax = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     saved_frame = &child_context->common;
     return true;
+}
+
+[[nodiscard]] bool BuildThreadContextFrame(const uint64_t kernel_stack_slot_index,
+                                           const os::abi::ThreadCreateRequest &request,
+                                           ExceptionFrame *&saved_frame) noexcept {
+    KernelStack stack{};
+    if (GetKernelStackManager().Read(kernel_stack_slot_index, stack) !=
+        KernelStackManagerStatus::Succeeded) {
+        return false;
+    }
+    const uint64_t stack_top_address = KernelStackTopAddress(stack);
+    if (stack_top_address < OS_KERNEL_USER_CONTEXT_SIZE_BYTES) {
+        return false;
+    }
+    const uint64_t frame_address = stack_top_address - OS_KERNEL_USER_CONTEXT_SIZE_BYTES;
+    if (!GetKernelStackManager().Contains(kernel_stack_slot_index, frame_address,
+                                          OS_KERNEL_USER_CONTEXT_SIZE_BYTES)) {
+        return false;
+    }
+    UserContext *const context = reinterpret_cast<UserContext *>(frame_address);
+    *context = UserContext{};
+    context->common.register_rdi = request.argument;
+    context->common.vector = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    context->common.error_code = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    context->common.instruction_pointer = request.entry_address;
+    context->common.code_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_CODE_SELECTOR);
+    context->common.flags = OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS;
+    context->stack_pointer = request.stack_pointer;
+    context->stack_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR);
+    saved_frame = &context->common;
+    return true;
+}
+
+[[nodiscard]] bool UserThreadRequestIsValid(const ProcessRuntimeProcess &process,
+                                            const os::abi::ThreadCreateRequest &request) noexcept {
+    if (request.stack_size_bytes < os::abi::OS_ABI_THREAD_STACK_MINIMUM_SIZE_BYTES ||
+        request.stack_base_address % OS_KERNEL_MEMORY_PAGE_SIZE_BYTES !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        request.stack_size_bytes % OS_KERNEL_MEMORY_PAGE_SIZE_BYTES !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        request.stack_base_address > UINT64_MAX - request.stack_size_bytes) {
+        return false;
+    }
+    const uint64_t stack_end_address = request.stack_base_address + request.stack_size_bytes;
+    if (stack_end_address < os::abi::OS_ABI_THREAD_ENTRY_STACK_REMAINDER_BYTES ||
+        request.stack_pointer !=
+            stack_end_address - os::abi::OS_ABI_THREAD_ENTRY_STACK_REMAINDER_BYTES ||
+        request.stack_pointer % OS_KERNEL_PROCESS_RUNTIME_THREAD_STACK_ALIGNMENT_BYTES !=
+            os::abi::OS_ABI_THREAD_ENTRY_STACK_REMAINDER_BYTES ||
+        request.thread_local_storage_base % os::abi::OS_ABI_THREAD_LOCAL_STORAGE_ALIGNMENT_BYTES !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        !IsUserProgramVirtualAddressRange(request.entry_address,
+                                          OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT) ||
+        !IsUserProgramVirtualAddressRange(request.stack_base_address, request.stack_size_bytes) ||
+        !IsUserProgramVirtualAddressRange(
+            request.thread_local_storage_base,
+            OS_KERNEL_PROCESS_RUNTIME_THREAD_LOCAL_STORAGE_PROBE_BYTES)) {
+        return false;
+    }
+    VirtualMemoryArea entry_area{};
+    VirtualMemoryArea stack_area{};
+    VirtualMemoryArea thread_local_storage_area{};
+    return process.address_space.virtual_memory_map.FindContaining(
+               request.entry_address, entry_area) == VirtualMemoryAreaStatus::Succeeded &&
+           entry_area.permissions.executable && !entry_area.permissions.writable &&
+           process.address_space.virtual_memory_map.FindContaining(
+               request.stack_base_address, stack_area) == VirtualMemoryAreaStatus::Succeeded &&
+           stack_area.kind == VirtualMemoryAreaKind::Anonymous && stack_area.permissions.readable &&
+           stack_area.permissions.writable && !stack_area.permissions.executable &&
+           stack_area.end_address >= stack_end_address &&
+           process.address_space.virtual_memory_map.FindContaining(
+               request.thread_local_storage_base, thread_local_storage_area) ==
+               VirtualMemoryAreaStatus::Succeeded &&
+           thread_local_storage_area.permissions.readable &&
+           thread_local_storage_area.permissions.writable &&
+           !thread_local_storage_area.permissions.executable;
+}
+
+[[nodiscard]] uint64_t FindAvailableKernelStackSlot() noexcept {
+    for (uint64_t candidate_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         candidate_index < process_runtime_limits.thread_capacity; ++candidate_index) {
+        KernelStack candidate_stack{};
+        if (!runtime_threads[candidate_index].active &&
+            GetKernelStackManager().Read(candidate_index, candidate_stack) ==
+                KernelStackManagerStatus::SlotNotActive) {
+            return candidate_index;
+        }
+    }
+    return OS_KERNEL_THREAD_INVALID_INDEX;
 }
 
 [[nodiscard]] bool CurrentFrameIsValid(const uint64_t thread_index,
@@ -582,6 +678,14 @@ void ResetRuntimeStorage() noexcept {
         ActivateKernelPageTable();
         return false;
     }
+    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR,
+                               thread.thread_local_storage_base);
+    if (ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR) !=
+        thread.thread_local_storage_base) {
+        SetActiveUserAddressSpace(nullptr);
+        ActivateKernelPageTable();
+        return false;
+    }
     SetActiveUserAddressSpace(&process.address_space);
     return true;
 }
@@ -601,6 +705,9 @@ void ResetRuntimeStorage() noexcept {
     }
     if (wait_condition == WaitCondition::ChildProcess) {
         return &child_exit_wait_queue;
+    }
+    if (wait_condition == WaitCondition::ThreadJoin) {
+        return &thread_join_wait_queue;
     }
     return nullptr;
 }
@@ -1019,9 +1126,8 @@ LoadExecutableFromPath(fs::FsContext &file_system_context, const uint8_t *const 
     if (open_status != fs::Status::Succeeded) {
         return ProcessRuntimeStatus::ExecutableReadFailure;
     }
-    address_space_status = LoadUserAddressSpace(
-        *process_vfs, open_file, address_space,
-        elf_validation_status);
+    address_space_status =
+        LoadUserAddressSpace(*process_vfs, open_file, address_space, elf_validation_status);
     const fs::Status close_status = process_vfs->Close(open_file);
     if (close_status != fs::Status::Succeeded) {
         if (address_space.root_physical_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
@@ -1192,6 +1298,15 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
 
     runtime_process.active = true;
     runtime_threads[thread_index].saved_frame = saved_frame;
+    runtime_threads[thread_index].user_stack_base_address =
+        OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS;
+    runtime_threads[thread_index].user_stack_size_bytes = OS_KERNEL_USER_STACK_SIZE_BYTES;
+    runtime_threads[thread_index].thread_local_storage_base = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].thread_local_storage_size_bytes =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].exit_value = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].join_owner_thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].joinable = false;
     runtime_threads[thread_index].active = true;
     KernelStack kernel_stack{};
     if (!ReadThreadKernelStack(thread_index, kernel_stack)) {
@@ -1214,71 +1329,54 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
     return ProcessRuntimeStatus::Succeeded;
 }
 
-[[nodiscard]] bool RollbackForkCreation(
-    UserAddressSpace &parent_address_space,
-    UserAddressSpace &child_address_space,
-    const uint64_t process_index, const uint64_t thread_index,
-    const uint64_t kernel_stack_slot_index,
-    const bool file_table_initialized,
-    const bool file_system_context_initialized) noexcept {
+[[nodiscard]] bool RollbackForkCreation(UserAddressSpace &parent_address_space,
+                                        UserAddressSpace &child_address_space,
+                                        const uint64_t process_index, const uint64_t thread_index,
+                                        const uint64_t kernel_stack_slot_index,
+                                        const bool file_table_initialized,
+                                        const bool file_system_context_initialized) noexcept {
     bool rollback_succeeded = true;
     if (process_index < process_runtime_limits.process_capacity) {
-        ProcessRuntimeProcess &process =
-            runtime_processes[process_index];
+        ProcessRuntimeProcess &process = runtime_processes[process_index];
         if (file_table_initialized) {
             rollback_succeeded =
-                process.file_table.Destroy() ==
-                    FileTableStatus::Succeeded &&
-                rollback_succeeded;
+                process.file_table.Destroy() == FileTableStatus::Succeeded && rollback_succeeded;
         }
         if (file_system_context_initialized && process_vfs != nullptr) {
             rollback_succeeded =
-                process_vfs->ReleaseContext(
-                    process.file_system_context) ==
-                    fs::Status::Succeeded &&
+                process_vfs->ReleaseContext(process.file_system_context) == fs::Status::Succeeded &&
                 rollback_succeeded;
         }
     }
     bool interrupts_were_enabled = scheduler_lock.Lock();
     if (thread_index != OS_KERNEL_THREAD_INVALID_INDEX) {
         rollback_succeeded =
-            thread_scheduler.DiscardReadyThread(thread_index) ==
-                ThreadSchedulerStatus::Succeeded &&
+            thread_scheduler.DiscardReadyThread(thread_index) == ThreadSchedulerStatus::Succeeded &&
             rollback_succeeded;
     }
     if (process_index != OS_KERNEL_PROCESS_INVALID_INDEX) {
         rollback_succeeded =
-            thread_scheduler.DiscardProcess(process_index) ==
-                ThreadSchedulerStatus::Succeeded &&
+            thread_scheduler.DiscardProcess(process_index) == ThreadSchedulerStatus::Succeeded &&
             rollback_succeeded;
     }
     scheduler_lock.Unlock(interrupts_were_enabled);
     if (kernel_stack_slot_index != OS_KERNEL_THREAD_INVALID_INDEX) {
+        rollback_succeeded = GetKernelStackManager().TryDestroy(kernel_stack_slot_index) ==
+                                 KernelStackManagerStatus::Succeeded &&
+                             rollback_succeeded;
+    }
+    if (child_address_space.root_physical_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
         rollback_succeeded =
-            GetKernelStackManager().TryDestroy(
-                kernel_stack_slot_index) ==
-                KernelStackManagerStatus::Succeeded &&
+            DestroyUserAddressSpace(child_address_space) == UserAddressSpaceStatus::Succeeded &&
             rollback_succeeded;
     }
-    if (child_address_space.root_physical_address !=
-        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
-        rollback_succeeded =
-            DestroyUserAddressSpace(child_address_space) ==
-                UserAddressSpaceStatus::Succeeded &&
-            rollback_succeeded;
-    }
-    rollback_succeeded =
-        RestoreUserAddressSpaceAfterFailedFork(
-            parent_address_space) ==
-            UserAddressSpaceStatus::Succeeded &&
-        rollback_succeeded;
+    rollback_succeeded = RestoreUserAddressSpaceAfterFailedFork(parent_address_space) ==
+                             UserAddressSpaceStatus::Succeeded &&
+                         rollback_succeeded;
     if (process_index < process_runtime_limits.process_capacity) {
-        runtime_processes[process_index].address_space =
-            UserAddressSpace{};
-        runtime_processes[process_index].result =
-            ProcessExecutionResult{};
-        runtime_processes[process_index].file_system_context =
-            fs::FsContext{};
+        runtime_processes[process_index].address_space = UserAddressSpace{};
+        runtime_processes[process_index].result = ProcessExecutionResult{};
+        runtime_processes[process_index].file_system_context = fs::FsContext{};
         runtime_processes[process_index].active = false;
     }
     if (thread_index < process_runtime_limits.thread_capacity) {
@@ -1317,6 +1415,15 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
             thread.state != ThreadState::Exited) {
             continue;
         }
+        ProcessEntry process_entry{};
+        if (thread.process_index >= process_runtime_limits.process_capacity ||
+            thread_scheduler.ReadProcess(thread.process_index, process_entry) !=
+                ThreadSchedulerStatus::Succeeded) {
+            return false;
+        }
+        if (runtime_threads[thread_index].joinable && process_entry.state == ProcessState::Alive) {
+            continue;
+        }
         KernelStack stack{};
         const KernelStackManagerStatus read_status =
             GetKernelStackManager().Read(thread.kernel_stack_slot_index, stack);
@@ -1329,9 +1436,6 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
                 OS_KERNEL_PROCESS_RUNTIME_STACK_POINTER_PROBE_SIZE_BYTES) ||
             GetKernelStackManager().TryDestroy(thread.kernel_stack_slot_index) !=
                 KernelStackManagerStatus::Succeeded) {
-            return false;
-        }
-        if (thread.process_index >= process_runtime_limits.process_capacity) {
             return false;
         }
         ProcessRuntimeProcess &process = runtime_processes[thread.process_index];
@@ -1578,6 +1682,138 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
     return true;
 }
 
+[[nodiscard]] bool RangesOverlap(const uint64_t left_begin, const uint64_t left_size_bytes,
+                                 const uint64_t right_begin,
+                                 const uint64_t right_size_bytes) noexcept {
+    if (left_size_bytes == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        right_size_bytes == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        left_begin > UINT64_MAX - left_size_bytes || right_begin > UINT64_MAX - right_size_bytes) {
+        return false;
+    }
+    return left_begin < right_begin + right_size_bytes &&
+           right_begin < left_begin + left_size_bytes;
+}
+
+[[nodiscard]] bool CurrentProcessThreadMemoryOverlaps(const uint64_t address,
+                                                      const uint64_t length_bytes) noexcept {
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return true;
+    }
+    for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         thread_index < process_runtime_limits.thread_capacity; ++thread_index) {
+        ThreadEntry thread{};
+        if (!runtime_threads[thread_index].active ||
+            thread_scheduler.ReadThread(thread_index, thread) != ThreadSchedulerStatus::Succeeded ||
+            thread.process_index != current_thread.process_index) {
+            continue;
+        }
+        const ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
+        if (RangesOverlap(address, length_bytes, runtime_thread.user_stack_base_address,
+                          runtime_thread.user_stack_size_bytes) ||
+            (runtime_thread.thread_local_storage_base != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+             RangesOverlap(address, length_bytes, runtime_thread.thread_local_storage_base,
+                           runtime_thread.thread_local_storage_size_bytes))) {
+            return true;
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] bool CancelPrivateFutexRange(const uint64_t address_space_identifier,
+                                           const uint64_t begin_address,
+                                           const uint64_t length_bytes, const bool cancel_all,
+                                           uint64_t &cancelled_thread_count) noexcept {
+    cancelled_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (address_space_identifier == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        (!cancel_all && (length_bytes == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+                         begin_address > UINT64_MAX - length_bytes))) {
+        return false;
+    }
+    const uint64_t end_address =
+        cancel_all ? OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE : begin_address + length_bytes;
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    for (uint64_t entry_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         entry_index < OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT; ++entry_index) {
+        PrivateFutexEntry entry{};
+        const PrivateFutexStatus read_status = private_futex_manager.Read(entry_index, entry);
+        if (read_status == PrivateFutexStatus::EntryNotFound) {
+            continue;
+        }
+        if (read_status != PrivateFutexStatus::Succeeded) {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            return false;
+        }
+        if (entry.key.address_space_identifier != address_space_identifier ||
+            (!cancel_all &&
+             (entry.key.user_address < begin_address || entry.key.user_address >= end_address))) {
+            continue;
+        }
+        uint64_t actual_entry_index = OS_KERNEL_PRIVATE_FUTEX_INVALID_INDEX;
+        WaitQueue *wait_queue = nullptr;
+        if (private_futex_manager.Find(entry.key, actual_entry_index, wait_queue) !=
+                PrivateFutexStatus::Succeeded ||
+            actual_entry_index != entry_index || wait_queue == nullptr) {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            return false;
+        }
+        while (wait_queue->Statistics().waiting_thread_count !=
+               OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+            uint64_t woken_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+            bool wake_won = false;
+            if (thread_scheduler.WakeOne(*wait_queue, WakeReason::Cancelled, woken_thread_index,
+                                         wake_won) != ThreadSchedulerStatus::Succeeded ||
+                !wake_won || woken_thread_index >= process_runtime_limits.thread_capacity ||
+                runtime_threads[woken_thread_index].saved_frame == nullptr) {
+                scheduler_lock.Unlock(interrupts_were_enabled);
+                return false;
+            }
+            runtime_threads[woken_thread_index].saved_frame->register_rax =
+                static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_WAIT_CANCELLED);
+            ++cancelled_thread_count;
+        }
+        bool released = false;
+        if (private_futex_manager.ReleaseIfEmpty(entry_index, released) !=
+                PrivateFutexStatus::Succeeded ||
+            !released) {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            return false;
+        }
+    }
+    const PrivateFutexStatus record_status = private_futex_manager.RecordCancellationOperation();
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    return record_status == PrivateFutexStatus::Succeeded;
+}
+
+[[nodiscard]] bool ReapProcessSiblingsForExec(const uint64_t process_index,
+                                              const uint64_t current_thread_index) noexcept {
+    for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         thread_index < process_runtime_limits.thread_capacity; ++thread_index) {
+        if (thread_index == current_thread_index) {
+            continue;
+        }
+        ThreadEntry thread{};
+        if (thread_scheduler.ReadThread(thread_index, thread) != ThreadSchedulerStatus::Succeeded ||
+            thread.process_index != process_index) {
+            continue;
+        }
+        if (thread.state != ThreadState::Exited ||
+            GetKernelStackManager().TryDestroy(thread.kernel_stack_slot_index) !=
+                KernelStackManagerStatus::Succeeded) {
+            return false;
+        }
+        runtime_threads[thread_index] = ProcessRuntimeThread{};
+        const bool interrupts_were_enabled = scheduler_lock.Lock();
+        const ThreadSchedulerStatus reap_status = thread_scheduler.ReapExitedThread(thread_index);
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        if (reap_status != ThreadSchedulerStatus::Succeeded) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] ExceptionFrame *
 CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason termination_reason,
                       const int64_t exit_code, const uint64_t page_fault_address) noexcept {
@@ -1596,6 +1832,13 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     if (SaveFxState(runtime_thread.extended_state) != ExtendedStateStatus::Succeeded) {
         HaltProcessor();
     }
+    uint64_t cancelled_futex_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!CancelPrivateFutexRange(
+            process.address_space.address_space_identifier, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, true, cancelled_futex_thread_count)) {
+        HaltProcessor();
+    }
+    static_cast<void>(cancelled_futex_thread_count);
     process.result.termination_reason = termination_reason;
     process.result.exit_code = exit_code;
     if (termination_reason == ProcessTerminationReason::Exception) {
@@ -1614,21 +1857,19 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
         termination_reason == ProcessTerminationReason::Exited
             ? ProcessTreeTerminationReason::Exited
             : ProcessTreeTerminationReason::Exception;
-    const ProcessTreeStatus mark_exited_status = process_tree.MarkExited(
-        current_thread.process_index,
-        ProcessTreeExitStatus{
-            .termination_reason = tree_termination_reason,
-            .exit_code = exit_code,
-            .exception_vector = process.result.exception_vector,
-        },
-        reparented_process_count);
+    const ProcessTreeStatus mark_exited_status =
+        process_tree.MarkExited(current_thread.process_index,
+                                ProcessTreeExitStatus{
+                                    .termination_reason = tree_termination_reason,
+                                    .exit_code = exit_code,
+                                    .exception_vector = process.result.exception_vector,
+                                },
+                                reparented_process_count);
     if (mark_exited_status != ProcessTreeStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX,
-            process.result.process_id);
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX,
-            static_cast<uint64_t>(mark_exited_status));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX,
+                                 process.result.process_id);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(mark_exited_status));
         HaltProcessor();
     }
     WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_EXIT_PREFIX, process.result.process_id);
@@ -1640,11 +1881,16 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
 
     ThreadSchedulingDecision decision{};
     const bool interrupts_were_enabled = scheduler_lock.Lock();
-    const ThreadSchedulerStatus scheduler_status =
-        thread_scheduler.TerminateCurrentThread(decision);
+    uint64_t terminated_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const ThreadSchedulerStatus scheduler_status = thread_scheduler.TerminateCurrentProcess(
+        current_thread.process_index, decision, terminated_thread_count);
     scheduler_lock.Unlock(interrupts_were_enabled);
     if (scheduler_status != ThreadSchedulerStatus::Succeeded) {
         HaltProcessor();
+    }
+    if (terminated_thread_count > OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT) {
+        user_thread_runtime_statistics.process_exit_cancelled_thread_count +=
+            terminated_thread_count - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT;
     }
 
     SetActiveUserAddressSpace(nullptr);
@@ -1729,10 +1975,8 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     kernel_stacks_after_processes = KernelStackManagerStatistics{};
     virtual_memory_areas_before_processes = GetUserVirtualMemoryPoolStatistics();
     virtual_memory_areas_after_processes = VirtualMemoryAreaPoolStatistics{};
-    user_page_references_before_processes =
-        GetUserPageReferenceStatistics();
-    user_page_references_after_processes =
-        UserPageReferenceStatistics{};
+    user_page_references_before_processes = GetUserPageReferenceStatistics();
+    user_page_references_after_processes = UserPageReferenceStatistics{};
     resource_snapshot_before_processes = ResourceSnapshot{};
     resource_snapshot_after_processes = ResourceSnapshot{};
     resource_snapshot_difference = ResourceSnapshotDifference{};
@@ -1767,6 +2011,13 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
         child_exit_wait_queue.Initialize(
             WaitQueueId{.value = OS_KERNEL_PROCESS_RUNTIME_CHILD_EXIT_QUEUE_ID}) !=
             WaitQueueStatus::Succeeded ||
+        thread_join_wait_queue.Initialize(
+            WaitQueueId{.value = OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_QUEUE_ID}) !=
+            WaitQueueStatus::Succeeded ||
+        private_futex_manager.Initialize(private_futex_entries,
+                                         OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT,
+                                         OS_KERNEL_PROCESS_RUNTIME_PRIVATE_FUTEX_FIRST_QUEUE_ID) !=
+            PrivateFutexStatus::Succeeded ||
         process_tree.Initialize(process_tree_entries, process_runtime_limits.process_capacity) !=
             ProcessTreeStatus::Succeeded) {
         return ProcessRuntimeStatus::SchedulerFailure;
@@ -1776,8 +2027,7 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     process_console_input.Initialize();
     pipe_reader_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_writer_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    descriptor_reader_block_count =
-        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    descriptor_reader_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_end_of_file_observation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_broken_observation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     process_vfs = nullptr;
@@ -1953,11 +2203,9 @@ ProcessRuntimeStatus SpawnCurrentProcess(const os::abi::ProcessLaunchRequest &re
     return status;
 }
 
-ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
-                                        uint64_t &process_id) noexcept {
+ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process_id) noexcept {
     process_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    const uint64_t parent_thread_index =
-        thread_scheduler.CurrentThreadIndex();
+    const uint64_t parent_thread_index = thread_scheduler.CurrentThreadIndex();
     if (!IsProcessSchedulingActive() || process_vfs == nullptr ||
         !CurrentFrameIsValid(parent_thread_index, frame)) {
         return ProcessRuntimeStatus::NotInitialized;
@@ -1965,28 +2213,20 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
     ThreadEntry parent_thread{};
     ProcessEntry parent_process{};
     if (!ReadCurrentThreadAndProcess(parent_thread, parent_process) ||
-        parent_thread.process_index >=
-            process_runtime_limits.process_capacity) {
+        parent_thread.process_index >= process_runtime_limits.process_capacity) {
         return ProcessRuntimeStatus::SchedulerFailure;
     }
-    ProcessRuntimeProcess &parent_runtime_process =
-        runtime_processes[parent_thread.process_index];
+    ProcessRuntimeProcess &parent_runtime_process = runtime_processes[parent_thread.process_index];
     UserAddressSpace child_address_space{};
     const UserAddressSpaceStatus clone_status =
-        CloneUserAddressSpaceForFork(
-            parent_runtime_process.address_space,
-            child_address_space);
+        CloneUserAddressSpaceForFork(parent_runtime_process.address_space, child_address_space);
     if (clone_status != UserAddressSpaceStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_ADDRESS_SPACE_STAGE);
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
-            static_cast<uint64_t>(clone_status));
-        return clone_status ==
-                       UserAddressSpaceStatus::PageTableCreationFailed ||
-                   clone_status ==
-                       UserAddressSpaceStatus::ForkReferenceExhausted
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_ADDRESS_SPACE_STAGE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(clone_status));
+        return clone_status == UserAddressSpaceStatus::PageTableCreationFailed ||
+                       clone_status == UserAddressSpaceStatus::ForkReferenceExhausted
                    ? ProcessRuntimeStatus::ProcessLimitExceeded
                    : ProcessRuntimeStatus::ForkFailure;
     }
@@ -1994,59 +2234,43 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
     uint64_t child_process_index = OS_KERNEL_PROCESS_INVALID_INDEX;
     ProcessId child_process_id{};
     bool interrupts_were_enabled = scheduler_lock.Lock();
-    const ThreadSchedulerStatus process_status =
-        thread_scheduler.CreateProcess(
-            child_address_space.root_physical_address,
-            child_process_index, child_process_id);
+    const ThreadSchedulerStatus process_status = thread_scheduler.CreateProcess(
+        child_address_space.root_physical_address, child_process_index, child_process_id);
     scheduler_lock.Unlock(interrupts_were_enabled);
     if (process_status != ThreadSchedulerStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_PROCESS_STAGE);
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
-            static_cast<uint64_t>(process_status));
-        if (DestroyUserAddressSpace(child_address_space) !=
-                UserAddressSpaceStatus::Succeeded ||
-            RestoreUserAddressSpaceAfterFailedFork(
-                parent_runtime_process.address_space) !=
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_PROCESS_STAGE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(process_status));
+        if (DestroyUserAddressSpace(child_address_space) != UserAddressSpaceStatus::Succeeded ||
+            RestoreUserAddressSpaceAfterFailedFork(parent_runtime_process.address_space) !=
                 UserAddressSpaceStatus::Succeeded) {
             HaltProcessor();
         }
-        return process_status ==
-                       ThreadSchedulerStatus::ProcessCapacityExhausted
+        return process_status == ThreadSchedulerStatus::ProcessCapacityExhausted
                    ? ProcessRuntimeStatus::ProcessLimitExceeded
                    : ProcessRuntimeStatus::SchedulerFailure;
     }
 
-    uint64_t kernel_stack_slot_index =
-        OS_KERNEL_THREAD_INVALID_INDEX;
-    for (uint64_t candidate_index =
-             OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
-         candidate_index < process_runtime_limits.thread_capacity;
-         ++candidate_index) {
+    uint64_t kernel_stack_slot_index = OS_KERNEL_THREAD_INVALID_INDEX;
+    for (uint64_t candidate_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         candidate_index < process_runtime_limits.thread_capacity; ++candidate_index) {
         KernelStack candidate_stack{};
         if (!runtime_threads[candidate_index].active &&
-            GetKernelStackManager().Read(
-                candidate_index, candidate_stack) ==
+            GetKernelStackManager().Read(candidate_index, candidate_stack) ==
                 KernelStackManagerStatus::SlotNotActive) {
             kernel_stack_slot_index = candidate_index;
             break;
         }
     }
-    if (kernel_stack_slot_index ==
-            OS_KERNEL_THREAD_INVALID_INDEX ||
-        GetKernelStackManager().TryCreate(
-            kernel_stack_slot_index) !=
+    if (kernel_stack_slot_index == OS_KERNEL_THREAD_INVALID_INDEX ||
+        GetKernelStackManager().TryCreate(kernel_stack_slot_index) !=
             KernelStackManagerStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_STACK_STAGE);
-        if (!RollbackForkCreation(
-                parent_runtime_process.address_space,
-                child_address_space, child_process_index,
-                OS_KERNEL_THREAD_INVALID_INDEX,
-                OS_KERNEL_THREAD_INVALID_INDEX, false, false)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_STACK_STAGE);
+        if (!RollbackForkCreation(parent_runtime_process.address_space, child_address_space,
+                                  child_process_index, OS_KERNEL_THREAD_INVALID_INDEX,
+                                  OS_KERNEL_THREAD_INVALID_INDEX, false, false)) {
             HaltProcessor();
         }
         return ProcessRuntimeStatus::KernelStackFailure;
@@ -2056,45 +2280,33 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
     ThreadId child_thread_id{};
     const UserContext &parent_context = AsUserContext(frame);
     interrupts_were_enabled = scheduler_lock.Lock();
-    const ThreadSchedulerStatus thread_status =
-        thread_scheduler.CreateThread(
-            child_process_index, kernel_stack_slot_index,
-            parent_context.stack_pointer,
-            parent_thread.thread_local_storage_base,
-            parent_thread.signal_mask, child_thread_index,
-            child_thread_id);
+    const ThreadSchedulerStatus thread_status = thread_scheduler.CreateThread(
+        child_process_index, kernel_stack_slot_index, parent_context.stack_pointer,
+        parent_thread.thread_local_storage_base, parent_thread.signal_mask, child_thread_index,
+        child_thread_id);
     scheduler_lock.Unlock(interrupts_were_enabled);
     if (thread_status != ThreadSchedulerStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_THREAD_STAGE);
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
-            static_cast<uint64_t>(thread_status));
-        if (!RollbackForkCreation(
-                parent_runtime_process.address_space,
-                child_address_space, child_process_index,
-                OS_KERNEL_THREAD_INVALID_INDEX,
-                kernel_stack_slot_index, false, false)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_THREAD_STAGE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(thread_status));
+        if (!RollbackForkCreation(parent_runtime_process.address_space, child_address_space,
+                                  child_process_index, OS_KERNEL_THREAD_INVALID_INDEX,
+                                  kernel_stack_slot_index, false, false)) {
             HaltProcessor();
         }
         return ProcessRuntimeStatus::SchedulerFailure;
     }
 
     ExceptionFrame *child_saved_frame = nullptr;
-    if (!BuildForkContextFrame(kernel_stack_slot_index, frame,
-                               child_saved_frame) ||
-        SaveFxState(
-            runtime_threads[parent_thread_index].extended_state) !=
+    if (!BuildForkContextFrame(kernel_stack_slot_index, frame, child_saved_frame) ||
+        SaveFxState(runtime_threads[parent_thread_index].extended_state) !=
             ExtendedStateStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_CONTEXT_STAGE);
-        if (!RollbackForkCreation(
-                parent_runtime_process.address_space,
-                child_address_space, child_process_index,
-                child_thread_index, kernel_stack_slot_index, false,
-                false)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_CONTEXT_STAGE);
+        if (!RollbackForkCreation(parent_runtime_process.address_space, child_address_space,
+                                  child_process_index, child_thread_index, kernel_stack_slot_index,
+                                  false, false)) {
             HaltProcessor();
         }
         return ProcessRuntimeStatus::ContextFrameFailure;
@@ -2102,50 +2314,36 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
     runtime_threads[child_thread_index].extended_state =
         runtime_threads[parent_thread_index].extended_state;
 
-    ProcessRuntimeProcess &child_runtime_process =
-        runtime_processes[child_process_index];
+    ProcessRuntimeProcess &child_runtime_process = runtime_processes[child_process_index];
     const bool file_system_context_initialized =
-        process_vfs->CloneContext(
-            parent_runtime_process.file_system_context,
-            child_runtime_process.file_system_context) ==
+        process_vfs->CloneContext(parent_runtime_process.file_system_context,
+                                  child_runtime_process.file_system_context) ==
         fs::Status::Succeeded;
     const bool file_table_initialized =
         file_system_context_initialized &&
-        child_runtime_process.file_table.CloneFrom(
-            parent_runtime_process.file_table) ==
+        child_runtime_process.file_table.CloneFrom(parent_runtime_process.file_table) ==
             FileTableStatus::Succeeded;
     if (!file_table_initialized) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FILE_SYSTEM_STAGE);
-        if (!RollbackForkCreation(
-                parent_runtime_process.address_space,
-                child_address_space, child_process_index,
-                child_thread_index, kernel_stack_slot_index,
-                file_table_initialized,
-                file_system_context_initialized)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_FILE_SYSTEM_STAGE);
+        if (!RollbackForkCreation(parent_runtime_process.address_space, child_address_space,
+                                  child_process_index, child_thread_index, kernel_stack_slot_index,
+                                  file_table_initialized, file_system_context_initialized)) {
             HaltProcessor();
         }
-        return file_system_context_initialized
-                   ? ProcessRuntimeStatus::DescriptorTableFailure
-                   : ProcessRuntimeStatus::FileSystemFailure;
+        return file_system_context_initialized ? ProcessRuntimeStatus::DescriptorTableFailure
+                                               : ProcessRuntimeStatus::FileSystemFailure;
     }
-    const ProcessTreeStatus tree_status =
-        process_tree.RegisterChild(
-            child_process_index, child_process_id.value,
-            parent_thread.process_index);
+    const ProcessTreeStatus tree_status = process_tree.RegisterChild(
+        child_process_index, child_process_id.value, parent_thread.process_index);
     if (tree_status != ProcessTreeStatus::Succeeded) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FORK_PROCESS_TREE_STAGE);
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
-            static_cast<uint64_t>(tree_status));
-        if (!RollbackForkCreation(
-                parent_runtime_process.address_space,
-                child_address_space, child_process_index,
-                child_thread_index, kernel_stack_slot_index, true,
-                true)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_PROCESS_TREE_STAGE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(tree_status));
+        if (!RollbackForkCreation(parent_runtime_process.address_space, child_address_space,
+                                  child_process_index, child_thread_index, kernel_stack_slot_index,
+                                  true, true)) {
             HaltProcessor();
         }
         return ProcessRuntimeStatus::ProcessTreeFailure;
@@ -2159,39 +2357,38 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame,
         .termination_reason = ProcessTerminationReason::None,
         .exit_code = OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE,
         .exception_vector = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .exception_error_code =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .exception_instruction_pointer =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .page_fault_address =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .system_call_count =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .root_physical_address =
-            child_runtime_process.address_space
-                .root_physical_address,
-        .mapped_page_count =
-            child_runtime_process.address_space.mapped_page_count,
+        .exception_error_code = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .exception_instruction_pointer = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .page_fault_address = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .system_call_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .root_physical_address = child_runtime_process.address_space.root_physical_address,
+        .mapped_page_count = child_runtime_process.address_space.mapped_page_count,
         .run_tick_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
         .dispatch_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
         .pipe_bytes_read = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
         .pipe_bytes_written = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .file_system_bytes_read =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .file_system_bytes_written =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .console_bytes_read =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
-        .console_bytes_written =
-            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .file_system_bytes_read = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .file_system_bytes_written = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .console_bytes_read = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+        .console_bytes_written = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
     };
     child_runtime_process.active = true;
-    runtime_threads[child_thread_index].saved_frame =
-        child_saved_frame;
+    runtime_threads[child_thread_index].saved_frame = child_saved_frame;
+    runtime_threads[child_thread_index].user_stack_base_address =
+        runtime_threads[parent_thread_index].user_stack_base_address;
+    runtime_threads[child_thread_index].user_stack_size_bytes =
+        runtime_threads[parent_thread_index].user_stack_size_bytes;
+    runtime_threads[child_thread_index].thread_local_storage_base =
+        parent_thread.thread_local_storage_base;
+    runtime_threads[child_thread_index].thread_local_storage_size_bytes =
+        runtime_threads[parent_thread_index].thread_local_storage_size_bytes;
+    runtime_threads[child_thread_index].exit_value = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[child_thread_index].join_owner_thread_id =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[child_thread_index].joinable = false;
     runtime_threads[child_thread_index].active = true;
     process_id = child_process_id.value;
-    WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_PREFIX,
-                             process_id);
+    WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_PREFIX, process_id);
     return ProcessRuntimeStatus::Succeeded;
 }
 
@@ -2256,7 +2453,30 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
     }
     ActivateKernelPageTable();
 
-    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    uint64_t cancelled_futex_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!CancelPrivateFutexRange(
+            previous_address_space.address_space_identifier, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, true, cancelled_futex_thread_count)) {
+        if (!ActivateUserPageTable(previous_address_space.root_physical_address) ||
+            DestroyUserAddressSpace(candidate_address_space) != UserAddressSpaceStatus::Succeeded) {
+            HaltProcessor();
+        }
+        SetActiveUserAddressSpace(&process.address_space);
+        return ProcessRuntimeStatus::FutexFailure;
+    }
+    bool interrupts_were_enabled = scheduler_lock.Lock();
+    uint64_t terminated_sibling_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const ThreadSchedulerStatus sibling_status = thread_scheduler.TerminateProcessSiblings(
+        thread.process_index, thread_index, terminated_sibling_count);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (sibling_status != ThreadSchedulerStatus::Succeeded ||
+        !ReapProcessSiblingsForExec(thread.process_index, thread_index)) {
+        HaltProcessor();
+    }
+    user_thread_runtime_statistics.exec_cancelled_thread_count += terminated_sibling_count;
+    static_cast<void>(cancelled_futex_thread_count);
+
+    interrupts_were_enabled = scheduler_lock.Lock();
     const ThreadSchedulerStatus commit_status = thread_scheduler.CommitProcessImage(
         thread.process_index, thread_index, candidate_address_space.root_physical_address,
         program_argument_plan.Layout().stack_pointer);
@@ -2296,6 +2516,17 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
     context.stack_pointer = program_argument_plan.Layout().stack_pointer;
     context.stack_segment = static_cast<uint64_t>(OS_KERNEL_DESCRIPTOR_USER_DATA_SELECTOR);
     runtime_threads[thread_index].saved_frame = &frame;
+    runtime_threads[thread_index].user_stack_base_address =
+        OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS;
+    runtime_threads[thread_index].user_stack_size_bytes = OS_KERNEL_USER_STACK_SIZE_BYTES;
+    runtime_threads[thread_index].thread_local_storage_base = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].thread_local_storage_size_bytes =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].exit_value = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].join_owner_thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].joinable = false;
+    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR,
+                               OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
     WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_EXEC_PREFIX, process.result.process_id);
     return ProcessRuntimeStatus::Succeeded;
 }
@@ -2351,6 +2582,434 @@ ProcessWaitStatus TryWaitCurrentProcess(const uint64_t requested_process_id,
     return ProcessWaitStatus::Succeeded;
 }
 
+UserThreadStatus CreateCurrentProcessThread(ExceptionFrame &frame,
+                                            const os::abi::ThreadCreateRequest &request,
+                                            uint64_t &thread_id) noexcept {
+    thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const uint64_t current_thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!IsProcessSchedulingActive() || !CurrentFrameIsValid(current_thread_index, frame) ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    ProcessRuntimeProcess &process = runtime_processes[current_thread.process_index];
+    if (!UserThreadRequestIsValid(process, request) ||
+        ValidateUserWritableMemory(request.stack_pointer,
+                                   os::abi::OS_ABI_THREAD_ENTRY_STACK_REMAINDER_BYTES) !=
+            UserMemoryCopyStatus::Succeeded ||
+        ValidateUserWritableMemory(request.thread_local_storage_base,
+                                   OS_KERNEL_PROCESS_RUNTIME_THREAD_LOCAL_STORAGE_PROBE_BYTES) !=
+            UserMemoryCopyStatus::Succeeded) {
+        return UserThreadStatus::InvalidMemory;
+    }
+    const uint64_t requested_stack_end = request.stack_base_address + request.stack_size_bytes;
+    for (uint64_t candidate_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         candidate_index < process_runtime_limits.thread_capacity; ++candidate_index) {
+        ThreadEntry candidate_thread{};
+        if (!runtime_threads[candidate_index].active ||
+            thread_scheduler.ReadThread(candidate_index, candidate_thread) !=
+                ThreadSchedulerStatus::Succeeded ||
+            candidate_thread.process_index != current_thread.process_index) {
+            continue;
+        }
+        const ProcessRuntimeThread &candidate_runtime = runtime_threads[candidate_index];
+        const uint64_t candidate_stack_end =
+            candidate_runtime.user_stack_base_address + candidate_runtime.user_stack_size_bytes;
+        const bool stack_overlaps = request.stack_base_address < candidate_stack_end &&
+                                    candidate_runtime.user_stack_base_address < requested_stack_end;
+        if (stack_overlaps ||
+            (candidate_runtime.thread_local_storage_base != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+             candidate_runtime.thread_local_storage_base == request.thread_local_storage_base)) {
+            return UserThreadStatus::InvalidMemory;
+        }
+    }
+
+    const uint64_t kernel_stack_slot_index = FindAvailableKernelStackSlot();
+    if (kernel_stack_slot_index == OS_KERNEL_THREAD_INVALID_INDEX ||
+        GetKernelStackManager().TryCreate(kernel_stack_slot_index) !=
+            KernelStackManagerStatus::Succeeded) {
+        return UserThreadStatus::ThreadLimitExceeded;
+    }
+
+    uint64_t created_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+    ThreadId created_thread_id{};
+    bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus create_status = thread_scheduler.CreateThread(
+        current_thread.process_index, kernel_stack_slot_index, request.stack_pointer,
+        request.thread_local_storage_base, current_thread.signal_mask, created_thread_index,
+        created_thread_id);
+    if (create_status != ThreadSchedulerStatus::Succeeded) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        if (GetKernelStackManager().TryDestroy(kernel_stack_slot_index) !=
+            KernelStackManagerStatus::Succeeded) {
+            HaltProcessor();
+        }
+        return create_status == ThreadSchedulerStatus::ThreadCapacityExhausted ||
+                       create_status == ThreadSchedulerStatus::ProcessThreadLimitReached
+                   ? UserThreadStatus::ThreadLimitExceeded
+                   : UserThreadStatus::RuntimeFailure;
+    }
+
+    ExceptionFrame *saved_frame = nullptr;
+    if (!BuildThreadContextFrame(kernel_stack_slot_index, request, saved_frame) ||
+        InitializeFxSaveArea(runtime_threads[created_thread_index].extended_state) !=
+            ExtendedStateStatus::Succeeded) {
+        const ThreadSchedulerStatus discard_status =
+            thread_scheduler.DiscardReadyThread(created_thread_index);
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        if (discard_status != ThreadSchedulerStatus::Succeeded ||
+            GetKernelStackManager().TryDestroy(kernel_stack_slot_index) !=
+                KernelStackManagerStatus::Succeeded) {
+            HaltProcessor();
+        }
+        return UserThreadStatus::RuntimeFailure;
+    }
+
+    ProcessRuntimeThread &runtime_thread = runtime_threads[created_thread_index];
+    runtime_thread.saved_frame = saved_frame;
+    runtime_thread.user_stack_base_address = request.stack_base_address;
+    runtime_thread.user_stack_size_bytes = request.stack_size_bytes;
+    runtime_thread.thread_local_storage_base = request.thread_local_storage_base;
+    runtime_thread.thread_local_storage_size_bytes = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    runtime_thread.exit_value = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_thread.join_owner_thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_thread.joinable = true;
+    runtime_thread.active = true;
+    // Ready Thread 的上下文和运行时元数据必须在恢复中断前一次性发布。
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    ++user_thread_runtime_statistics.create_count;
+    if (IsPowerOfTwoCounter(user_thread_runtime_statistics.create_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_THREAD_CREATE_COUNT_PREFIX,
+                                 user_thread_runtime_statistics.create_count);
+    }
+    thread_id = created_thread_id.value;
+    return UserThreadStatus::Succeeded;
+}
+
+ExceptionFrame *ExitCurrentUserThread(ExceptionFrame &frame, const uint64_t exit_value) noexcept {
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!process_scheduling_active || !CurrentFrameIsValid(thread_index, frame) ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        HaltProcessor();
+    }
+    if (current_process.live_thread_count == OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT) {
+        return CompleteCurrentThread(frame, ProcessTerminationReason::Exited,
+                                     static_cast<int64_t>(exit_value),
+                                     OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+    }
+    ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
+    runtime_thread.saved_frame = &frame;
+    runtime_thread.exit_value = exit_value;
+    if (SaveFxState(runtime_thread.extended_state) != ExtendedStateStatus::Succeeded) {
+        HaltProcessor();
+    }
+
+    ThreadSchedulingDecision decision{};
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus scheduler_status =
+        thread_scheduler.TerminateCurrentThread(decision);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (scheduler_status != ThreadSchedulerStatus::Succeeded) {
+        HaltProcessor();
+    }
+    ++user_thread_runtime_statistics.exit_count;
+    if (IsPowerOfTwoCounter(user_thread_runtime_statistics.exit_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_THREAD_EXIT_COUNT_PREFIX,
+                                 user_thread_runtime_statistics.exit_count);
+    }
+    WakeRequiredThreads(WaitCondition::ThreadJoin, WakeReason::ConditionSatisfied);
+
+    if (!decision.switched) {
+        const uint64_t swap_gs_required = GetCpuLocal().NativeSystemCallActive()
+                                              ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+                                              : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        SetActiveUserAddressSpace(nullptr);
+        ActivateKernelPageTable();
+        WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR,
+                                   OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+        if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0()) ||
+            GetCpuLocal().ClearCurrentThread(DefaultPrivilegeStackPointer0()) !=
+                CpuLocalStatus::Succeeded) {
+            HaltProcessor();
+        }
+        OsKernelReturnFromUserMode(swap_gs_required);
+    }
+    if (!ActivateThread(decision.current_thread_index)) {
+        HaltProcessor();
+    }
+    return runtime_threads[decision.current_thread_index].saved_frame;
+}
+
+UserThreadStatus TryJoinCurrentProcessThread(const uint64_t requested_thread_id,
+                                             os::abi::ThreadJoinResult &join_result) noexcept {
+    join_result = os::abi::ThreadJoinResult{};
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!IsProcessSchedulingActive() ||
+        requested_thread_id == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return UserThreadStatus::InvalidArgument;
+    }
+    if (requested_thread_id == current_thread.thread_id.value) {
+        return UserThreadStatus::Deadlock;
+    }
+    uint64_t target_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+    ThreadEntry target_thread{};
+    const ThreadSchedulerStatus find_status = thread_scheduler.FindProcessThread(
+        current_thread.process_index, ThreadId{.value = requested_thread_id}, target_thread_index,
+        target_thread);
+    if (find_status == ThreadSchedulerStatus::ThreadNotFound) {
+        return UserThreadStatus::ThreadNotFound;
+    }
+    if (find_status != ThreadSchedulerStatus::Succeeded ||
+        target_thread_index >= process_runtime_limits.thread_capacity) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    ProcessRuntimeThread &target_runtime = runtime_threads[target_thread_index];
+    if (!target_runtime.active || !target_runtime.joinable) {
+        return UserThreadStatus::ThreadNotFound;
+    }
+    if (target_runtime.join_owner_thread_id != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+        target_runtime.join_owner_thread_id != current_thread.thread_id.value) {
+        return UserThreadStatus::AlreadyJoined;
+    }
+    target_runtime.join_owner_thread_id = current_thread.thread_id.value;
+    if (target_thread.state != ThreadState::Exited) {
+        return UserThreadStatus::WouldBlock;
+    }
+
+    const uint64_t exit_value = target_runtime.exit_value;
+    if (GetKernelStackManager().TryDestroy(target_thread.kernel_stack_slot_index) !=
+        KernelStackManagerStatus::Succeeded) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus reap_status =
+        thread_scheduler.ReapExitedThread(target_thread_index);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (reap_status != ThreadSchedulerStatus::Succeeded) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    target_runtime = ProcessRuntimeThread{};
+    join_result = os::abi::ThreadJoinResult{
+        .thread_id = requested_thread_id,
+        .exit_value = exit_value,
+    };
+    ++user_thread_runtime_statistics.join_count;
+    if (IsPowerOfTwoCounter(user_thread_runtime_statistics.join_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_COUNT_PREFIX,
+                                 user_thread_runtime_statistics.join_count);
+    }
+    return UserThreadStatus::Succeeded;
+}
+
+UserThreadStatus SetCurrentThreadLocalStorage(const uint64_t thread_local_storage_base) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    if (thread_local_storage_base != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+        (thread_local_storage_base % os::abi::OS_ABI_THREAD_LOCAL_STORAGE_ALIGNMENT_BYTES !=
+             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+         ValidateUserWritableMemory(thread_local_storage_base,
+                                    OS_KERNEL_PROCESS_RUNTIME_THREAD_LOCAL_STORAGE_PROBE_BYTES) !=
+             UserMemoryCopyStatus::Succeeded)) {
+        return UserThreadStatus::InvalidMemory;
+    }
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    if (thread_index >= process_runtime_limits.thread_capacity) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus status =
+        thread_scheduler.SetCurrentThreadLocalStorageBase(thread_local_storage_base);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (status != ThreadSchedulerStatus::Succeeded) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    runtime_threads[thread_index].thread_local_storage_base = thread_local_storage_base;
+    runtime_threads[thread_index].thread_local_storage_size_bytes =
+        thread_local_storage_base == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE
+            ? OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE
+            : OS_KERNEL_PROCESS_RUNTIME_THREAD_LOCAL_STORAGE_PROBE_BYTES;
+    WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR, thread_local_storage_base);
+    if (ReadModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR) !=
+        thread_local_storage_base) {
+        return UserThreadStatus::RuntimeFailure;
+    }
+    ++user_thread_runtime_statistics.thread_local_storage_update_count;
+    return UserThreadStatus::Succeeded;
+}
+
+PrivateFutexWaitStatus WaitCurrentProcessPrivateFutex(ExceptionFrame &frame,
+                                                      const uint64_t user_address,
+                                                      const uint32_t expected_value,
+                                                      ExceptionFrame *&resume_frame) noexcept {
+    resume_frame = &frame;
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    uint32_t observed_value = 0U;
+    if (!IsProcessSchedulingActive() || !CurrentFrameIsValid(thread_index, frame) ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process) ||
+        user_address % os::abi::OS_ABI_PRIVATE_FUTEX_WORD_SIZE_BYTES !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return PrivateFutexWaitStatus::InvalidArgument;
+    }
+    if (CopyFromUser(user_address, sizeof(observed_value),
+                     reinterpret_cast<uint8_t *>(&observed_value),
+                     sizeof(observed_value)) != UserMemoryCopyStatus::Succeeded) {
+        return PrivateFutexWaitStatus::InvalidMemory;
+    }
+    ProcessRuntimeProcess &process = runtime_processes[current_thread.process_index];
+    const PrivateFutexKey key{
+        .address_space_identifier = process.address_space.address_space_identifier,
+        .user_address = user_address,
+    };
+    ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
+    runtime_thread.saved_frame = &frame;
+    if (SaveFxState(runtime_thread.extended_state) != ExtendedStateStatus::Succeeded) {
+        return PrivateFutexWaitStatus::RuntimeFailure;
+    }
+
+    ThreadSchedulingDecision decision{};
+    bool interrupts_were_enabled = scheduler_lock.Lock();
+    // 在同一调度器临界区内复查用户值并入队，保证 wake 无法穿过 compare-and-block。
+    observed_value = 0U;
+    if (CopyFromUser(user_address, sizeof(observed_value),
+                     reinterpret_cast<uint8_t *>(&observed_value),
+                     sizeof(observed_value)) != UserMemoryCopyStatus::Succeeded) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return PrivateFutexWaitStatus::InvalidMemory;
+    }
+    if (observed_value != expected_value) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return PrivateFutexWaitStatus::ValueChanged;
+    }
+    uint64_t futex_entry_index = OS_KERNEL_PRIVATE_FUTEX_INVALID_INDEX;
+    WaitQueue *wait_queue = nullptr;
+    const PrivateFutexStatus acquire_status =
+        private_futex_manager.Acquire(key, futex_entry_index, wait_queue);
+    if (acquire_status != PrivateFutexStatus::Succeeded || wait_queue == nullptr) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return acquire_status == PrivateFutexStatus::EntryCapacityExhausted
+                   ? PrivateFutexWaitStatus::CapacityExhausted
+                   : PrivateFutexWaitStatus::RuntimeFailure;
+    }
+    const ThreadSchedulerStatus block_status =
+        thread_scheduler.BlockCurrentThread(*wait_queue, WaitCondition::PrivateFutex, decision);
+    if (block_status != ThreadSchedulerStatus::Succeeded) {
+        bool released = false;
+        const PrivateFutexStatus release_status =
+            private_futex_manager.ReleaseIfEmpty(futex_entry_index, released);
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        if (release_status != PrivateFutexStatus::Succeeded || !released) {
+            HaltProcessor();
+        }
+        return PrivateFutexWaitStatus::RuntimeFailure;
+    }
+    if (private_futex_manager.RecordWaitPrepared() != PrivateFutexStatus::Succeeded) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        HaltProcessor();
+    }
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    const uint64_t wait_count = private_futex_manager.Statistics().wait_prepare_count;
+    if (IsPowerOfTwoCounter(wait_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FUTEX_WAIT_COUNT_PREFIX, wait_count);
+    }
+
+    if (!decision.switched) {
+        const uint64_t swap_gs_required = GetCpuLocal().NativeSystemCallActive()
+                                              ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+                                              : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        SetActiveUserAddressSpace(nullptr);
+        ActivateKernelPageTable();
+        WriteModelSpecificRegister(OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR,
+                                   OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+        if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0()) ||
+            GetCpuLocal().ClearCurrentThread(DefaultPrivilegeStackPointer0()) !=
+                CpuLocalStatus::Succeeded) {
+            HaltProcessor();
+        }
+        OsKernelReturnFromUserMode(swap_gs_required);
+    }
+    if (!ActivateThread(decision.current_thread_index)) {
+        return PrivateFutexWaitStatus::RuntimeFailure;
+    }
+    resume_frame = runtime_threads[decision.current_thread_index].saved_frame;
+    return PrivateFutexWaitStatus::Succeeded;
+}
+
+PrivateFutexWaitStatus WakeCurrentProcessPrivateFutex(const uint64_t user_address,
+                                                      const uint64_t maximum_wake_count,
+                                                      uint64_t &woken_thread_count) noexcept {
+    woken_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    uint32_t user_value = 0U;
+    if (!IsProcessSchedulingActive() ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process) ||
+        maximum_wake_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        user_address % os::abi::OS_ABI_PRIVATE_FUTEX_WORD_SIZE_BYTES !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return PrivateFutexWaitStatus::InvalidArgument;
+    }
+    if (CopyFromUser(user_address, sizeof(user_value), reinterpret_cast<uint8_t *>(&user_value),
+                     sizeof(user_value)) != UserMemoryCopyStatus::Succeeded) {
+        return PrivateFutexWaitStatus::InvalidMemory;
+    }
+    ProcessRuntimeProcess &process = runtime_processes[current_thread.process_index];
+    const PrivateFutexKey key{
+        .address_space_identifier = process.address_space.address_space_identifier,
+        .user_address = user_address,
+    };
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    uint64_t entry_index = OS_KERNEL_PRIVATE_FUTEX_INVALID_INDEX;
+    WaitQueue *wait_queue = nullptr;
+    const PrivateFutexStatus find_status = private_futex_manager.Find(key, entry_index, wait_queue);
+    if (find_status == PrivateFutexStatus::EntryNotFound) {
+        static_cast<void>(private_futex_manager.RecordWakeOperation());
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return PrivateFutexWaitStatus::Succeeded;
+    }
+    if (find_status != PrivateFutexStatus::Succeeded || wait_queue == nullptr) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return PrivateFutexWaitStatus::RuntimeFailure;
+    }
+    while (woken_thread_count < maximum_wake_count &&
+           wait_queue->Statistics().waiting_thread_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        uint64_t woken_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+        bool wake_won = false;
+        if (thread_scheduler.WakeOne(*wait_queue, WakeReason::ConditionSatisfied,
+                                     woken_thread_index,
+                                     wake_won) != ThreadSchedulerStatus::Succeeded ||
+            !wake_won || woken_thread_index >= process_runtime_limits.thread_capacity ||
+            runtime_threads[woken_thread_index].saved_frame == nullptr) {
+            scheduler_lock.Unlock(interrupts_were_enabled);
+            return PrivateFutexWaitStatus::RuntimeFailure;
+        }
+        runtime_threads[woken_thread_index].saved_frame->register_rax =
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        ++woken_thread_count;
+    }
+    bool released = false;
+    if (private_futex_manager.ReleaseIfEmpty(entry_index, released) !=
+            PrivateFutexStatus::Succeeded ||
+        !released || private_futex_manager.RecordWakeOperation() != PrivateFutexStatus::Succeeded) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return PrivateFutexWaitStatus::RuntimeFailure;
+    }
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    const uint64_t wake_operation_count = private_futex_manager.Statistics().wake_operation_count;
+    if (IsPowerOfTwoCounter(wake_operation_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FUTEX_WAKE_COUNT_PREFIX,
+                                 wake_operation_count);
+    }
+    return PrivateFutexWaitStatus::Succeeded;
+}
+
 ProcessRuntimeStatus ExecuteProcesses() noexcept {
     if (!process_runtime_initialized) {
         return ProcessRuntimeStatus::NotInitialized;
@@ -2398,8 +3057,7 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
     virtual_addresses_after_processes = GetKernelVirtualAddressAllocator().Statistics();
     kernel_stacks_after_processes = GetKernelStackManager().Statistics();
     virtual_memory_areas_after_processes = GetUserVirtualMemoryPoolStatistics();
-    user_page_references_after_processes =
-        GetUserPageReferenceStatistics();
+    user_page_references_after_processes = GetUserPageReferenceStatistics();
     if (GetKernelStackManager().Validate() != KernelStackManagerStatus::Succeeded ||
         kernel_stacks_after_processes.active_stack_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         virtual_memory_areas_after_processes.capacity !=
@@ -2419,6 +3077,11 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         user_page_references_after_processes.active_entry_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         user_page_references_after_processes.active_reference_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        private_futex_manager.Validate() != PrivateFutexStatus::Succeeded ||
+        private_futex_manager.Statistics().active_entry_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        private_futex_manager.Statistics().waiting_thread_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
         RestoreInterrupts(interrupts_were_enabled);
         return ProcessRuntimeStatus::ResourceLeakDetected;
@@ -2473,10 +3136,8 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .kernel_stacks_after_processes = kernel_stacks_after_processes,
         .virtual_memory_areas_before_processes = virtual_memory_areas_before_processes,
         .virtual_memory_areas_after_processes = virtual_memory_areas_after_processes,
-        .user_page_references_before_processes =
-            user_page_references_before_processes,
-        .user_page_references_after_processes =
-            user_page_references_after_processes,
+        .user_page_references_before_processes = user_page_references_before_processes,
+        .user_page_references_after_processes = user_page_references_after_processes,
         .resource_snapshot_before_processes = resource_snapshot_before_processes,
         .resource_snapshot_after_processes = resource_snapshot_after_processes,
         .resource_snapshot_difference = resource_snapshot_difference,
@@ -2489,6 +3150,8 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
                 .end_of_file_observation_count = pipe_end_of_file_observation_count,
                 .broken_pipe_observation_count = pipe_broken_observation_count,
             },
+        .user_threads = user_thread_runtime_statistics,
+        .private_futexes = private_futex_manager.Statistics(),
         .process_tree = process_tree.Statistics(),
         .console_input = process_console_input.Statistics(),
         .object_manager = kernel_object_manager.Statistics(),
@@ -2555,9 +3218,8 @@ UserVirtualMemoryStatus MapCurrentProcessAnonymousMemory(const uint64_t requeste
     return status;
 }
 
-UserVirtualMemoryStatus MapCurrentProcessFileMemory(
-    const os::abi::FileMemoryMapRequest &request,
-    uint64_t &mapped_address) noexcept {
+UserVirtualMemoryStatus MapCurrentProcessFileMemory(const os::abi::FileMemoryMapRequest &request,
+                                                    uint64_t &mapped_address) noexcept {
     mapped_address = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return UserVirtualMemoryStatus::NotInitialized;
@@ -2569,47 +3231,49 @@ UserVirtualMemoryStatus MapCurrentProcessFileMemory(
         return UserVirtualMemoryStatus::InvalidFile;
     }
     RetainedRegularFile retained_file{};
-    if (file_description_manager.RetainRegularFile(
-            reference, retained_file) !=
+    if (file_description_manager.RetainRegularFile(reference, retained_file) !=
         FileDescriptionStatus::Succeeded) {
         return UserVirtualMemoryStatus::InvalidFile;
     }
-    const UserVirtualMemoryStatus status = MapFileMemory(
-        process.address_space, *retained_file.vfs,
-        retained_file.open_file, request.requested_address,
-        request.length_bytes, request.protection_flags,
-        request.map_flags, request.file_offset_bytes,
-        mapped_address);
-    if (retained_file.vfs->Close(retained_file.open_file) !=
-        fs::Status::Succeeded) {
+    const UserVirtualMemoryStatus status =
+        MapFileMemory(process.address_space, *retained_file.vfs, retained_file.open_file,
+                      request.requested_address, request.length_bytes, request.protection_flags,
+                      request.map_flags, request.file_offset_bytes, mapped_address);
+    if (retained_file.vfs->Close(retained_file.open_file) != fs::Status::Succeeded) {
         return UserVirtualMemoryStatus::Corrupt;
     }
-    process.result.mapped_page_count =
-        process.address_space.mapped_page_count;
+    process.result.mapped_page_count = process.address_space.mapped_page_count;
     return status;
 }
 
-UserVirtualMemoryStatus UnmapCurrentProcessMemory(
-    const uint64_t address,
-    const uint64_t length_bytes) noexcept {
+UserVirtualMemoryStatus UnmapCurrentProcessMemory(const uint64_t address,
+                                                  const uint64_t length_bytes) noexcept {
     if (!IsProcessSchedulingActive()) {
         return UserVirtualMemoryStatus::NotInitialized;
     }
+    if (CurrentProcessThreadMemoryOverlaps(address, length_bytes)) {
+        return UserVirtualMemoryStatus::ThreadMemoryInUse;
+    }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     VirtualMemoryArea area{};
-    if (process.address_space.virtual_memory_map.FindContaining(
-            address, area) != VirtualMemoryAreaStatus::Succeeded) {
+    if (process.address_space.virtual_memory_map.FindContaining(address, area) !=
+        VirtualMemoryAreaStatus::Succeeded) {
         return UserVirtualMemoryStatus::InvalidRange;
     }
     const UserVirtualMemoryStatus status =
         area.kind == VirtualMemoryAreaKind::Anonymous
-            ? UnmapAnonymousMemory(process.address_space, address,
-                                   length_bytes)
+            ? UnmapAnonymousMemory(process.address_space, address, length_bytes)
         : area.kind == VirtualMemoryAreaKind::FilePrivate ||
-                  area.kind == VirtualMemoryAreaKind::FileShared
-            ? UnmapFileMemory(process.address_space, address,
-                              length_bytes)
+                area.kind == VirtualMemoryAreaKind::FileShared
+            ? UnmapFileMemory(process.address_space, address, length_bytes)
             : UserVirtualMemoryStatus::InvalidRange;
+    if (status == UserVirtualMemoryStatus::Succeeded) {
+        uint64_t cancelled_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        if (!CancelPrivateFutexRange(process.address_space.address_space_identifier, address,
+                                     length_bytes, false, cancelled_thread_count)) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+    }
     process.result.mapped_page_count = process.address_space.mapped_page_count;
     return status;
 }
@@ -2707,13 +3371,10 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
     }
     if (options.truncate) {
         fs::NodeInformation information{};
-        if (process_vfs->StatOpenFile(open_file, information) !=
-                fs::Status::Succeeded ||
-            !RevokeRuntimeFileMappings(
-                FileIdentityFromInformation(information),
-                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)) {
-            if (process_vfs->Close(open_file) !=
-                fs::Status::Succeeded) {
+        if (process_vfs->StatOpenFile(open_file, information) != fs::Status::Succeeded ||
+            !RevokeRuntimeFileMappings(FileIdentityFromInformation(information),
+                                       OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)) {
+            if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
                 HaltProcessor();
             }
             return FileSystemStatus::Corrupt;
@@ -2801,12 +3462,10 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
         reference, source, length_bytes, written_bytes, file_system_status, pipe_status);
     if (status == FileDescriptionStatus::Succeeded) {
         FileDescriptionSnapshot current_snapshot{};
-        if (file_description_manager.ReadSnapshot(
-                reference, current_snapshot) !=
+        if (file_description_manager.ReadSnapshot(reference, current_snapshot) !=
                 FileDescriptionStatus::Succeeded ||
-            !RevokeRuntimeFileMappings(
-                FileIdentityFromSnapshot(snapshot),
-                current_snapshot.size_bytes)) {
+            !RevokeRuntimeFileMappings(FileIdentityFromSnapshot(snapshot),
+                                       current_snapshot.size_bytes)) {
             return FileSystemStatus::Corrupt;
         }
         process.result.file_system_bytes_written += written_bytes;
@@ -2885,20 +3544,17 @@ FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path, const uint64_t 
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     fs::NodeInformation information{};
-    const fs::Status stat_status = process_vfs->Stat(
-        process.file_system_context, path, path_length_bytes,
-        information);
+    const fs::Status stat_status =
+        process_vfs->Stat(process.file_system_context, path, path_length_bytes, information);
     if (stat_status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(stat_status);
     }
-    const fs::Status truncate_status = process_vfs->Truncate(
-        process.file_system_context, path, path_length_bytes,
-        size_bytes);
+    const fs::Status truncate_status =
+        process_vfs->Truncate(process.file_system_context, path, path_length_bytes, size_bytes);
     if (truncate_status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(truncate_status);
     }
-    return RevokeRuntimeFileMappings(
-               FileIdentityFromInformation(information), size_bytes)
+    return RevokeRuntimeFileMappings(FileIdentityFromInformation(information), size_bytes)
                ? FileSystemStatus::Succeeded
                : FileSystemStatus::Corrupt;
 }
@@ -3014,12 +3670,10 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
             process.result.console_bytes_written += written_bytes;
         } else if (snapshot.kind == FileDescriptionKind::RegularFile) {
             FileDescriptionSnapshot current_snapshot{};
-            if (file_description_manager.ReadSnapshot(
-                    reference, current_snapshot) !=
+            if (file_description_manager.ReadSnapshot(reference, current_snapshot) !=
                     FileDescriptionStatus::Succeeded ||
-                !RevokeRuntimeFileMappings(
-                    FileIdentityFromSnapshot(snapshot),
-                    current_snapshot.size_bytes)) {
+                !RevokeRuntimeFileMappings(FileIdentityFromSnapshot(snapshot),
+                                           current_snapshot.size_bytes)) {
                 file_system_status = FileSystemStatus::Corrupt;
                 return ProcessIoStatus::FileSystemFailure;
             }
@@ -3063,17 +3717,15 @@ ProcessIoStatus DuplicateCurrentProcessDescriptor(const uint64_t source_descript
         source_descriptor, minimum_descriptor, descriptor_flags, destination_descriptor));
 }
 
-ProcessIoStatus DuplicateCurrentProcessDescriptorTo(
-    const uint64_t source_descriptor, const uint64_t destination_descriptor,
-    const uint64_t descriptor_flags) noexcept {
+ProcessIoStatus DuplicateCurrentProcessDescriptorTo(const uint64_t source_descriptor,
+                                                    const uint64_t destination_descriptor,
+                                                    const uint64_t descriptor_flags) noexcept {
     if (!IsProcessSchedulingActive()) {
         return ProcessIoStatus::InvalidArgument;
     }
     KernelObjectReleaseResult replaced_release_result{};
-    const FileTableStatus status =
-        CurrentRuntimeProcess().file_table.DuplicateTo(
-            source_descriptor, destination_descriptor, descriptor_flags,
-            replaced_release_result);
+    const FileTableStatus status = CurrentRuntimeProcess().file_table.DuplicateTo(
+        source_descriptor, destination_descriptor, descriptor_flags, replaced_release_result);
     if (status == FileTableStatus::Succeeded) {
         WakeAfterDescriptionRelease(replaced_release_result);
     }
@@ -3134,25 +3786,24 @@ ProcessIoStatus CreateCurrentProcessPipe(uint64_t &reader_descriptor,
     }
 
     FileTable &file_table = CurrentRuntimeProcess().file_table;
-    const FileTableStatus reader_install_status = file_table.Install(
-        reader_reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
-        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, reader_descriptor);
+    const FileTableStatus reader_install_status =
+        file_table.Install(reader_reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
+                           OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, reader_descriptor);
     if (reader_install_status != FileTableStatus::Succeeded) {
         static_cast<void>(reader_reference.Reset());
         static_cast<void>(writer_reference.Reset());
         reader_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
         return MapFileTableStatus(reader_install_status);
     }
-    const FileTableStatus writer_install_status = file_table.Install(
-        writer_reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
-        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, writer_descriptor);
+    const FileTableStatus writer_install_status =
+        file_table.Install(writer_reference, OS_KERNEL_FILE_TABLE_FIRST_DYNAMIC_DESCRIPTOR,
+                           OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, writer_descriptor);
     if (writer_install_status == FileTableStatus::Succeeded) {
         return ProcessIoStatus::Succeeded;
     }
 
     KernelObjectReleaseResult release_result{};
-    if (file_table.Close(reader_descriptor, release_result) !=
-        FileTableStatus::Succeeded) {
+    if (file_table.Close(reader_descriptor, release_result) != FileTableStatus::Succeeded) {
         HaltProcessor();
     }
     WakeAfterDescriptionRelease(release_result);
@@ -3356,14 +4007,11 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame, const WaitConditi
         ++pipe_reader_block_count;
     } else if (wait_condition == WaitCondition::PipeWritable) {
         ++pipe_writer_block_count;
-    } else if (wait_condition ==
-               WaitCondition::DescriptorReadable) {
+    } else if (wait_condition == WaitCondition::DescriptorReadable) {
         ++descriptor_reader_block_count;
-        if (IsPowerOfTwoCounter(
-                descriptor_reader_block_count)) {
-            WriteProcessRuntimeValue(
-                OS_KERNEL_PROCESS_RUNTIME_IO_DESCRIPTOR_READ_BLOCK_PREFIX,
-                descriptor_reader_block_count);
+        if (IsPowerOfTwoCounter(descriptor_reader_block_count)) {
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_IO_DESCRIPTOR_READ_BLOCK_PREFIX,
+                                     descriptor_reader_block_count);
         }
     }
     if (!decision.switched) {
@@ -3445,15 +4093,14 @@ bool CurrentThreadOwnsUserContext(const ExceptionFrame &frame) noexcept {
     return CurrentFrameIsValid(thread_scheduler.CurrentThreadIndex(), frame);
 }
 
-UserVirtualMemoryStatus ResolveCurrentProcessUserReturnMemory(
-    const uint64_t instruction_pointer,
-    const uint64_t stack_pointer) noexcept {
+UserVirtualMemoryStatus
+ResolveCurrentProcessUserReturnMemory(const uint64_t instruction_pointer,
+                                      const uint64_t stack_pointer) noexcept {
     if (!process_scheduling_active) {
         return UserVirtualMemoryStatus::NotInitialized;
     }
-    return ResolveUserReturnMemory(
-        CurrentRuntimeProcess().address_space,
-        instruction_pointer, stack_pointer);
+    return ResolveUserReturnMemory(CurrentRuntimeProcess().address_space, instruction_pointer,
+                                   stack_pointer);
 }
 
 bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_address) noexcept {
@@ -3464,10 +4111,8 @@ bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_a
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     const uint64_t previous_stack_growth_count =
         process.address_space.stack_growth_page_fault_count;
-    const uint64_t previous_file_fault_count =
-        process.address_space.file_page_fault_count;
-    const uint64_t previous_page_cache_hit_count =
-        process.address_space.page_cache_hit_count;
+    const uint64_t previous_file_fault_count = process.address_space.file_page_fault_count;
+    const uint64_t previous_page_cache_hit_count = process.address_space.page_cache_hit_count;
     const UserPageFaultStatus status = HandleUserPageFault(
         process.address_space, fault_address, frame.error_code, AsUserContext(frame).stack_pointer);
     if (status != UserPageFaultStatus::Handled) {
@@ -3488,21 +4133,15 @@ bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_a
                                      stack_growth_count);
         }
     }
-    if (process.address_space.file_page_fault_count !=
-            previous_file_fault_count &&
-        IsPowerOfTwoCounter(
-            process.address_space.file_page_fault_count)) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_VM_FILE_FAULT_PREFIX,
-            process.address_space.file_page_fault_count);
+    if (process.address_space.file_page_fault_count != previous_file_fault_count &&
+        IsPowerOfTwoCounter(process.address_space.file_page_fault_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_VM_FILE_FAULT_PREFIX,
+                                 process.address_space.file_page_fault_count);
     }
-    if (process.address_space.page_cache_hit_count !=
-            previous_page_cache_hit_count &&
-        IsPowerOfTwoCounter(
-            process.address_space.page_cache_hit_count)) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_HIT_PREFIX,
-            process.address_space.page_cache_hit_count);
+    if (process.address_space.page_cache_hit_count != previous_page_cache_hit_count &&
+        IsPowerOfTwoCounter(process.address_space.page_cache_hit_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_HIT_PREFIX,
+                                 process.address_space.page_cache_hit_count);
     }
     return true;
 }

@@ -16,6 +16,7 @@
 #include "os/kernel/memory/resource_snapshot.hpp"
 #include "os/kernel/process/process_tree.hpp"
 #include "os/kernel/process/thread_scheduler.hpp"
+#include "os/kernel/sync/private_futex.hpp"
 #include "os/kernel/user/user_elf.hpp"
 #include "os/kernel/user/user_memory.hpp"
 #include "os/kernel/user/user_program_images.hpp"
@@ -58,6 +59,8 @@ enum class ProcessRuntimeStatus : uint64_t {
     ProcessLimitExceeded,
     ForkFailure,
     PipeFailure,
+    ThreadFailure,
+    FutexFailure,
 };
 
 enum class ProcessWaitStatus : uint64_t {
@@ -66,6 +69,36 @@ enum class ProcessWaitStatus : uint64_t {
     NoChild,
     InvalidArgument,
     RuntimeFailure,
+};
+
+enum class UserThreadStatus : uint64_t {
+    Succeeded,
+    WouldBlock,
+    InvalidArgument,
+    InvalidMemory,
+    ThreadLimitExceeded,
+    ThreadNotFound,
+    AlreadyJoined,
+    Deadlock,
+    RuntimeFailure,
+};
+
+enum class PrivateFutexWaitStatus : uint64_t {
+    Succeeded,
+    ValueChanged,
+    InvalidArgument,
+    InvalidMemory,
+    CapacityExhausted,
+    RuntimeFailure,
+};
+
+struct UserThreadRuntimeStatistics final {
+    uint64_t create_count;
+    uint64_t exit_count;
+    uint64_t join_count;
+    uint64_t process_exit_cancelled_thread_count;
+    uint64_t exec_cancelled_thread_count;
+    uint64_t thread_local_storage_update_count;
 };
 
 struct KernelProgramString final {
@@ -155,6 +188,8 @@ struct ProcessRuntimeStatistics final {
     ResourceSnapshot resource_snapshot_after_processes;
     ResourceSnapshotDifference resource_snapshot_difference;
     ProcessIpcStatistics ipc;
+    UserThreadRuntimeStatistics user_threads;
+    PrivateFutexStatistics private_futexes;
     ProcessTreeStatistics process_tree;
     ConsoleInputStatistics console_input;
     KernelObjectManagerStatistics object_manager;
@@ -183,6 +218,22 @@ ExecCurrentProcess(ExceptionFrame &frame, const os::abi::ProcessLaunchRequest &r
 [[nodiscard]] ProcessWaitStatus
 TryWaitCurrentProcess(uint64_t requested_process_id,
                       os::abi::ProcessWaitResult &wait_result) noexcept;
+[[nodiscard]] UserThreadStatus
+CreateCurrentProcessThread(ExceptionFrame &frame, const os::abi::ThreadCreateRequest &request,
+                           uint64_t &thread_id) noexcept;
+[[nodiscard]] ExceptionFrame *ExitCurrentUserThread(ExceptionFrame &frame,
+                                                    uint64_t exit_value) noexcept;
+[[nodiscard]] UserThreadStatus
+TryJoinCurrentProcessThread(uint64_t requested_thread_id,
+                            os::abi::ThreadJoinResult &join_result) noexcept;
+[[nodiscard]] UserThreadStatus
+SetCurrentThreadLocalStorage(uint64_t thread_local_storage_base) noexcept;
+[[nodiscard]] PrivateFutexWaitStatus
+WaitCurrentProcessPrivateFutex(ExceptionFrame &frame, uint64_t user_address,
+                               uint32_t expected_value, ExceptionFrame *&resume_frame) noexcept;
+[[nodiscard]] PrivateFutexWaitStatus
+WakeCurrentProcessPrivateFutex(uint64_t user_address, uint64_t maximum_wake_count,
+                               uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ProcessRuntimeStatus ExecuteProcesses() noexcept;
 [[nodiscard]] ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept;
 [[nodiscard]] bool IsProcessSchedulingActive() noexcept;
@@ -196,9 +247,8 @@ MapCurrentProcessAnonymousMemory(uint64_t requested_address, uint64_t length_byt
 [[nodiscard]] UserVirtualMemoryStatus
 MapCurrentProcessFileMemory(const os::abi::FileMemoryMapRequest &request,
                             uint64_t &mapped_address) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus
-UnmapCurrentProcessMemory(uint64_t address,
-                          uint64_t length_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus UnmapCurrentProcessMemory(uint64_t address,
+                                                                uint64_t length_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 SetCurrentProcessProgramBreak(uint64_t requested_address, uint64_t &program_break_address) noexcept;
 [[nodiscard]] os::abi::VirtualMemoryStatistics GetCurrentProcessVirtualMemoryStatistics() noexcept;

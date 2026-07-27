@@ -1021,3 +1021,37 @@ Shell 只在完整命令事务成功后输出：
 functional 中前者精确两次、后者精确一次。解析失败、child 接线失败或任一
 stage 非零退出都不能输出这些 marker。来宾与宿主时间策略继续沿用本章统一
 规则，不在管道热路径读 RTC 或打印 tick。
+
+## v1.12 用户 Thread、TLS 与 private futex 日志
+
+Thread create/exit/join 和 futex wait/wake 都是并发热路径。Kernel 只在累计
+计数为二次幂时输出：
+
+```text
+[OS][KERNEL][THREAD] CREATE_COUNT=0x...
+[OS][KERNEL][THREAD] EXIT_COUNT=0x...
+[OS][KERNEL][THREAD] JOIN_COUNT=0x...
+[OS][KERNEL][FUTEX] WAIT_COUNT=0x...
+[OS][KERNEL][FUTEX] WAKE_OPERATION_COUNT=0x...
+```
+
+因此 64 Thread 工作负载最多产生对数级进度行，不把串口锁和 PIO 延迟引入每
+次 mutex 临界区。用户探针只在完整语义提交后输出：
+
+```text
+[OS][USER][THREAD] FUNCTIONAL_32_READY
+[OS][USER][THREAD] CAPACITY_64_READY
+[OS][USER][THREAD] TLS_ISOLATED
+[OS][USER][THREAD] FUTEX_SYNCHRONIZATION_VERIFIED
+[OS][USER][THREAD] JOIN_RECLAIMED
+[OS][USER][THREAD] COMPLETED
+```
+
+bootstrap 只输出 `BOOTSTRAP_SINGLE_THREAD_VERIFIED` 与 `COMPLETED`，因为
+配置上限 1 本身是兼容档契约。PID1 在成功 wait 后输出
+`THREAD_PROBE_REAPED`；不能用 probe 自己的 marker 替代父进程回收证据。
+
+系统调用返回现场若被拒绝，冷失败路径额外输出 RIP/RSP、上下文状态和指令/
+栈页查询状态及 W/X/U/COW flags，然后停机。正常测试禁止出现这些诊断。
+所有行继续由宿主捕获器添加 `[QEMU][T+......ms]` 到达时间；来宾内核的 PIT
+单调时间仍按既有里程碑输出，不在 futex 热路径读取或打印时间。

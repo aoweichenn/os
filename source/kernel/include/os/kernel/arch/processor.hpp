@@ -7,6 +7,7 @@
 namespace os::kernel {
 
 extern const uint64_t OS_KERNEL_PROCESSOR_UNMAPPED_TEST_ADDRESS;
+inline constexpr uint32_t OS_KERNEL_PROCESSOR_IA32_FS_BASE_MSR = 0xC0000100U;
 
 [[noreturn]] void HaltProcessor() noexcept;
 [[nodiscard]] bool DisableInterrupts() noexcept;

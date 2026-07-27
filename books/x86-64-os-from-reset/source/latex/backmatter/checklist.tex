@@ -267,7 +267,7 @@
         fd 0、阻塞唤醒、命令解析与资源回收；
   \item 能从 \code{USER\_RING3\_ENTER} 走读到 \code{INT 0x80}、
         TSS.RSP0、系统调用分发、exit 与 \code{USER\_RETURNED\_TO\_KERNEL}；
-  \item 能运行十四个合法用户 ELF 的逐文件审计、一个截断 ELF 拒绝用例和
+  \item 能运行二十个合法用户 ELF 的逐文件审计、一个截断 ELF 拒绝用例和
         三条用户失败/隔离 QEMU 路径；
   \item 能从 rootfs 走读 \filepath{/sbin/init} 到磁盘 ELF 两遍装载，
         并说明普通用户程序为什么不再内嵌到正常 Kernel；
@@ -293,5 +293,19 @@
   \item 能走读通用 Try/Wait/Close 描述符 ABI、第四参数 R10 和目录项 64 字节布局；
   \item 能说明 Shell 固定容量解析器的引号、转义、参数上限和失败原子性；
   \item 能解释 QMP 逐键输入为何没有替代 i8042、IRQ1 和来宾驱动；
+  \item 能区分 Process 共享资源与 Thread 私有 RIP/RSP、两级栈、FXSAVE、
+        TID、等待关系和退出值；
+  \item 能手算 64 KiB 用户栈、低端 4 KiB guard、入口 RSP 余数和 TLS 页
+        的地址布局；
+  \item 能解释 \code{IA32\_FS\_BASE} 为什么随 Thread 切换，以及系统调用
+        汇编为什么不能再重载 FS selector；
+  \item 能画出 futex compare-and-block 消除丢失唤醒的两种合法全序，并解释
+        key 为什么同时包含 AddressSpaceId 与对齐 VA；
+  \item 能说明 Mutex 的 acquire/release、ConditionVariable sequence 与
+        Once 三态分别冻结哪一层并发语义；
+  \item 能说明 ThreadExit、Join、ProcessExit 与多线程 exec 各自回收哪些
+        私有/共享对象，失败提交点在哪里；
+  \item 能运行 private futex 单元/十万步随机测试、两档日常 QEMU 和
+        64 GiB/64 Thread 发布门禁，并从统计证明全部资源归零；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

@@ -150,7 +150,9 @@ function(
         OBJECT
             src/extended_state.cpp
             src/freestanding_memory.cpp
+            src/synchronization.cpp
             src/system_call.cpp
+            src/thread.cpp
             "${OS_USER_PROGRAM_SOURCE}"
             ${ARGN}
     )
@@ -298,6 +300,12 @@ set(
     "fork、COW、继承与 exec/wait 生命周期验收程序"
 )
 set(
+    OS_USER_THREAD_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_thread_probe.elf"
+    CACHE INTERNAL
+    "用户 Thread、FS-base TLS 与 private futex 验收程序"
+)
+set(
     OS_USER_MEMORY_GUARD_PROBE_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_memory_guard_probe.elf"
     CACHE INTERNAL
@@ -422,6 +430,12 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/fork_probe.cpp"
     "${OS_USER_FORK_PROBE_ELF_PATH}"
     "链接 fork 与写时复制验收 ELF64 程序"
+)
+os_add_user_program(
+    os_user_thread_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/thread_probe.cpp"
+    "${OS_USER_THREAD_PROBE_ELF_PATH}"
+    "链接用户 Thread、FS-base TLS 与 private futex 验收 ELF64 程序"
 )
 os_add_user_program(
     os_user_memory_guard_probe_elf

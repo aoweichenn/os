@@ -533,19 +533,32 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR = 6ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
-constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 65ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 66ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 23ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
     OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_USER_THREAD_MAIN_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT =
-    OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT;
+    OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
+    OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT =
-    OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT;
+    OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT + OS_KERNEL_FUNCTIONAL_THREADS_PER_PROCESS;
+constexpr uint64_t OS_KERNEL_MAIN_CAPACITY_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT =
+    OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT + OS_KERNEL_CAPACITY_THREADS_PER_PROCESS;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_THREAD_COUNT =
+    OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT;
+constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_THREAD_COUNT =
+    OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT + OS_KERNEL_FUNCTIONAL_THREADS_PER_PROCESS -
+    OS_KERNEL_MAIN_USER_THREAD_MAIN_COUNT;
+constexpr uint64_t OS_KERNEL_MAIN_CAPACITY_NORMAL_THREAD_COUNT =
+    OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT + OS_KERNEL_CAPACITY_THREADS_PER_PROCESS -
+    OS_KERNEL_MAIN_USER_THREAD_MAIN_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 64ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 65ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT +
     OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
@@ -561,7 +574,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.11";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.12";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -1385,10 +1398,10 @@ ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
                OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
            statistics.kernel_stacks_after_processes.successful_creation_count ==
                statistics.kernel_stacks_before_processes.successful_creation_count +
-                   expected_process_count &&
+                   expected_virtual_address_lifecycle_count &&
            statistics.kernel_stacks_after_processes.destruction_count ==
                statistics.kernel_stacks_before_processes.destruction_count +
-                   expected_process_count &&
+                   expected_virtual_address_lifecycle_count &&
            statistics.kernel_stacks_after_processes.peak_active_stack_count >=
                minimum_expected_peak_stack_count &&
            statistics.kernel_stacks_after_processes.peak_active_mapped_page_count >=
@@ -1435,30 +1448,39 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
     const bool functional_shell_acceptance =
         normal_execution &&
         statistics.configured_process_capacity >= OS_KERNEL_PROCESS_FUNCTIONAL_CAPACITY;
+    const bool capacity_thread_acceptance =
+        normal_execution &&
+        statistics.configured_threads_per_process == OS_KERNEL_CAPACITY_THREADS_PER_PROCESS;
     const uint64_t expected_process_count =
         normal_execution
-            ? (functional_shell_acceptance
-                   ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT
-                   : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT)
+            ? (functional_shell_acceptance ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT
+                                           : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT)
             : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
     const uint64_t expected_virtual_address_lifecycle_count =
         normal_execution
-            ? (functional_shell_acceptance
-                   ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT
-                   : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT)
+            ? (capacity_thread_acceptance
+                   ? OS_KERNEL_MAIN_CAPACITY_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT
+                   : (functional_shell_acceptance
+                          ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT
+                          : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT))
             : OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT;
+    const uint64_t expected_thread_count =
+        normal_execution
+            ? (capacity_thread_acceptance
+                   ? OS_KERNEL_MAIN_CAPACITY_NORMAL_THREAD_COUNT
+                   : (functional_shell_acceptance ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_THREAD_COUNT
+                                                  : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_THREAD_COUNT))
+            : OS_KERNEL_MAIN_FAULT_PROCESS_COUNT;
     const uint64_t expected_wait_success_count =
-        functional_shell_acceptance
-            ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT
-            : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT;
+        functional_shell_acceptance ? OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT
+                                    : OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT;
     uint64_t file_table_peak_descriptor_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     uint64_t file_table_chunk_allocation_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     uint64_t file_table_chunk_release_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     uint64_t file_table_installation_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     uint64_t file_table_close_count = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     const uint64_t process_statistics_count =
-        expected_process_count <
-                OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY
+        expected_process_count < OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY
             ? expected_process_count
             : OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY;
     for (uint64_t process_index = OS_KERNEL_MAIN_FIRST_PROCESS_INDEX;
@@ -1543,9 +1565,8 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.ipc.dynamic_pipes.creation_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_RELEASE_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.release_count);
-    WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_REJECTION_COUNT_PREFIX,
-        statistics.ipc.dynamic_pipes.capacity_rejection_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_REJECTION_COUNT_PREFIX,
+                         statistics.ipc.dynamic_pipes.capacity_rejection_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
                          statistics.console_input.submitted_byte_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
@@ -1594,36 +1615,21 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.virtual_memory_areas_after_processes.successful_acquire_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX,
                          statistics.virtual_memory_areas_after_processes.release_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_ENTRY_COUNT_PREFIX,
-        statistics.user_page_references_after_processes.active_entry_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_COUNT_PREFIX,
-        statistics.user_page_references_after_processes.active_reference_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_PEAK_ENTRY_COUNT_PREFIX,
-        statistics.user_page_references_after_processes
-            .peak_active_entry_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_FIRST_SHARE_COUNT_PREFIX,
-        statistics.user_page_references_after_processes.first_share_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RETAIN_COUNT_PREFIX,
-        statistics.user_page_references_after_processes.retain_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX,
-        statistics.user_page_references_after_processes.release_count);
-    WriteRequiredHexLine(
-        serial_port,
-        OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX,
-        statistics.user_page_references_after_processes
-            .exclusive_restore_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_ENTRY_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.active_entry_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.active_reference_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_PEAK_ENTRY_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.peak_active_entry_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_FIRST_SHARE_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.first_share_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RETAIN_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.retain_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.release_count);
+    WriteRequiredHexLine(serial_port,
+                         OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX,
+                         statistics.user_page_references_after_processes.exclusive_restore_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.active_stack_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,
@@ -1663,8 +1669,7 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
         (normal_execution
              ? statistics.process_tree.reparented_process_count ==
                        OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT &&
-                   statistics.process_tree.wait_success_count ==
-                       expected_wait_success_count &&
+                   statistics.process_tree.wait_success_count == expected_wait_success_count &&
                    statistics.process_tree.wait_block_count >= OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT &&
                    statistics.process_tree.wait_no_child_count ==
                        OS_KERNEL_MAIN_NORMAL_WAIT_NO_CHILD_COUNT
@@ -1673,19 +1678,17 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                    statistics.process_tree.wait_attempt_count ==
                        OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT);
     const bool dynamic_pipe_state_valid =
-        statistics.ipc.dynamic_pipes.active_pipe_count ==
-            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.ipc.dynamic_pipes.active_pipe_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.ipc.dynamic_pipes.peak_active_pipe_count ==
             statistics.ipc.dynamic_pipes.capacity &&
-        statistics.ipc.dynamic_pipes.creation_count ==
-            statistics.ipc.dynamic_pipes.release_count &&
+        statistics.ipc.dynamic_pipes.creation_count == statistics.ipc.dynamic_pipes.release_count &&
         statistics.ipc.dynamic_pipes.capacity_rejection_count >=
             OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT;
     const bool runtime_state_valid =
         statistics.scheduler.created_process_count == expected_process_count &&
         statistics.scheduler.reaped_process_count == expected_process_count &&
-        statistics.scheduler.created_thread_count == expected_process_count &&
-        statistics.scheduler.reaped_thread_count == expected_process_count &&
+        statistics.scheduler.created_thread_count == expected_thread_count &&
+        statistics.scheduler.reaped_thread_count == expected_thread_count &&
         statistics.scheduler.owned_process_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.scheduler.owned_thread_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.object_manager.active_object_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
@@ -1700,8 +1703,7 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
         statistics.file_descriptions.successful_finalization_count ==
             statistics.object_manager.destruction_count &&
         file_table_chunk_allocation_count == file_table_chunk_release_count &&
-        dynamic_pipe_state_valid &&
-        process_tree_state_valid &&
+        dynamic_pipe_state_valid && process_tree_state_valid &&
         statistics.extended_state.save_count != OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.extended_state.restore_count != OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         GetCpuLocal().Validate() == CpuLocalStatus::Succeeded &&

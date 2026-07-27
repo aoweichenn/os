@@ -27,11 +27,12 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.11 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.12 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、动态栈和页表
-实现；v1.11 的 bootstrap 正常链累计注册 65 个 Process，functional 因扩展
-外部工具与 16 级流水线累计 88 个，v1.2 的独立容量测试继续覆盖完整
-Process/Thread 上限。functional 的 512 fd hard limit 和 128 Pipe、
+实现；v1.12 的 bootstrap 正常链累计注册 66 个 Process、完成 65 次 wait，
+functional 因扩展外部工具、16 级流水线与线程探针累计 89 个 Process、完成
+88 次 wait。v1.12 整机线程探针分别证明 1/32/64 单 Process Thread 上限。
+functional 的 512 fd hard limit 和 128 Pipe、
 capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
 
 | 配置 | QEMU RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 测试职责 |
@@ -923,8 +924,39 @@ FileTable 测试另外覆盖 `dup2` 式精确替换、相同 fd、关闭目标�
 重定向与 16 级 `echo|cat...|tee|head|wc`，并要求
 `REDIRECTION_VERIFIED`、`PIPELINE_16_VERIFIED` 精确出现。
 
-当前整机协议要求 bootstrap 创建/回收 65 个 Process、完成 64 次 wait；
-functional 因额外工具和 16 级流水线创建/回收 88 个 Process、完成 87 次
+当前整机协议要求 bootstrap 创建/回收 66 个 Process、完成 65 次 wait；
+functional 因额外工具、16 级流水线和线程探针创建/回收 89 个 Process、完成 88 次
 wait。functional 动态管道摘要必须是 capacity=128、active=0、peak=128、
 creations=releases=143、rejections 至少 1；数值同时证明启动容量事务与
 运行时 15 根流水线管道均被回收。
+
+## v1.12 用户 Thread、TLS 与 private futex 测试
+
+v1.12 新增两个顶层 CTest，构建图共 147 项，并扩展调度器、ABI 与 QEMU
+协议：
+
+- private futex 单元测试覆盖同 VA 的 AddressSpaceId 隔离、重复 key 复用、
+  waiter 未空拒绝释放、未对齐/零身份拒绝和容量耗尽；
+- 固定种子随机模型在 64 个 key 上执行 100000 步 Acquire/Release/Validate，
+  最终 active/waiter 为零且 acquire/release 守恒；
+- ThreadScheduler 单元测试建立 Blocked、Running、Ready 三个 sibling，
+  ProcessExit 必须一次终止、清空 WaitQueue、保留 Exited 回收态并最终
+  Reap Process；
+- ABI 集成测试冻结系统调用 47--53、48 字节 Create 请求和 16 字节 Join
+  结果；
+- `/bin/thread_probe` 让全部 worker 经过 condition barrier、mutex、once、
+  private futex、系统调用、PIT 抢占和 Join，并逐 Thread 校验 FS:0/TID。
+
+整机自适应验收：
+
+| 档位 | worker | 必需 profile marker |
+| --- | ---: | --- |
+| 64 MiB bootstrap | 0 | `BOOTSTRAP_SINGLE_THREAD_VERIFIED` |
+| 256 MiB functional | 31 | `FUNCTIONAL_32_READY` |
+| 64 GiB capacity | 63 | `CAPACITY_64_READY` |
+
+functional/capacity 还必须顺序出现 `TLS_ISOLATED`、
+`FUTEX_SYNCHRONIZATION_VERIFIED`、`JOIN_RECLAIMED`、`COMPLETED` 和 PID1
+的 `THREAD_PROBE_REAPED`。创建上限后的额外尝试必须失败；整机结束必须
+`RUNTIME_STATE_VALIDATION=1`、`PROCESS_RESOURCE_VALIDATION=1`、futex entry/
+waiter 为零且 KernelStack create/destroy 守恒。

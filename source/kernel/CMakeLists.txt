@@ -88,6 +88,7 @@ set(
 set(
     OS_KERNEL_SYNCHRONIZATION_HEADERS
     include/os/kernel/sync/mutex.hpp
+    include/os/kernel/sync/private_futex.hpp
     include/os/kernel/sync/spin_lock.hpp
 )
 set(
@@ -204,6 +205,7 @@ set(
 set(
     OS_KERNEL_SYNCHRONIZATION_SOURCES
     src/sync/mutex.cpp
+    src/sync/private_futex.cpp
     src/sync/spin_lock.cpp
 )
 set(
@@ -355,12 +357,14 @@ add_library(
         src/process/thread_scheduler.cpp
         src/process/wait_queue.cpp
         src/sync/mutex.cpp
+        src/sync/private_futex.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/process/thread_scheduler.hpp
         include/os/kernel/process/process_tree.hpp
         include/os/kernel/process/program_arguments.hpp
         include/os/kernel/process/wait_queue.hpp
         include/os/kernel/sync/mutex.hpp
+        include/os/kernel/sync/private_futex.hpp
         include/os/kernel/sync/spin_lock.hpp
 )
 

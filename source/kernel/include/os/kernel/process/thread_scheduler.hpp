@@ -67,6 +67,7 @@ enum class ThreadSchedulerStatus : uint64_t {
     NoReadyThread,
     AlreadyRunning,
     InvalidCurrentThread,
+    ThreadNotFound,
     InvalidWaitCondition,
     InvalidWakeReason,
     InvalidWakeCount,
@@ -177,6 +178,12 @@ class ThreadScheduler final {
                                                        uint64_t &woken_thread_count) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
     TerminateCurrentThread(ThreadSchedulingDecision &decision) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    TerminateCurrentProcess(uint64_t process_index, ThreadSchedulingDecision &decision,
+                            uint64_t &terminated_thread_count) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    TerminateProcessSiblings(uint64_t process_index, uint64_t current_thread_index,
+                             uint64_t &terminated_thread_count) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReapExitedThread(uint64_t thread_index) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReapZombieProcess(uint64_t process_index) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
@@ -193,6 +200,12 @@ class ThreadScheduler final {
     [[nodiscard]] ThreadSchedulerStatistics Statistics() const noexcept;
     [[nodiscard]] uint64_t CurrentThreadIndex() const noexcept;
     [[nodiscard]] ThreadSchedulerStatus CurrentThreadId(ThreadId &thread_id) const noexcept;
+    [[nodiscard]] ThreadSchedulerStatus FindProcessThread(uint64_t process_index,
+                                                          ThreadId thread_id,
+                                                          uint64_t &thread_index,
+                                                          ThreadEntry &entry) const noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    SetCurrentThreadLocalStorageBase(uint64_t thread_local_storage_base) noexcept;
     [[nodiscard]] bool IsActive() const noexcept;
     [[nodiscard]] bool IsInitialized() const noexcept;
 
@@ -215,6 +228,7 @@ class ThreadScheduler final {
     [[nodiscard]] bool HasLiveThread() const noexcept;
     [[nodiscard]] bool ProcessContainsThread(uint64_t process_index,
                                              uint64_t thread_index) const noexcept;
+    [[nodiscard]] ThreadSchedulerStatus TerminateNonRunningThread(uint64_t thread_index) noexcept;
 
     ProcessEntry *processes_{};
     ThreadEntry *threads_{};

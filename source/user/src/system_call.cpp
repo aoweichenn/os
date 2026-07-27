@@ -57,6 +57,57 @@ uint64_t GetProcessId() noexcept {
                          OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
 }
 
+uint64_t GetThreadId() noexcept {
+    return static_cast<uint64_t>(
+        InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetThreadId),
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                         OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+}
+
+int64_t CreateThread(const os::abi::ThreadCreateRequest &request) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreateThread),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+[[noreturn]] void ExitThread(const uint64_t exit_value) noexcept {
+    static_cast<void>(InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ExitThread),
+                                       exit_value, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                                       OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
+    while (true) {
+        asm volatile("ud2");
+    }
+}
+
+int64_t JoinThread(const uint64_t thread_id, os::abi::ThreadJoinResult &result) noexcept {
+    while (true) {
+        const int64_t join_result =
+            InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::JoinThread),
+                             thread_id, reinterpret_cast<uint64_t>(&result), sizeof(result));
+        if (join_result != os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+            return join_result;
+        }
+    }
+}
+
+int64_t SetThreadLocalStorage(const uint64_t thread_local_storage_base) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetThreadLocalStorage),
+                            thread_local_storage_base, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t WaitPrivateFutex(const uint32_t *const word, const uint32_t expected_value) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WaitPrivateFutex),
+                            reinterpret_cast<uint64_t>(word), static_cast<uint64_t>(expected_value),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t WakePrivateFutex(const uint32_t *const word, const uint64_t maximum_wake_count) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WakePrivateFutex),
+                            reinterpret_cast<uint64_t>(word), maximum_wake_count,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t TryReadPipe(uint8_t *destination, const uint64_t capacity_bytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::TryReadPipe),
                             reinterpret_cast<uint64_t>(destination), capacity_bytes,
@@ -248,9 +299,8 @@ int64_t DuplicateDescriptor(const uint64_t source_descriptor, const uint64_t min
 int64_t DuplicateDescriptorTo(const uint64_t source_descriptor,
                               const uint64_t destination_descriptor,
                               const uint64_t descriptor_flags) noexcept {
-    return InvokeSystemCall(
-        static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptorTo),
-        source_descriptor, destination_descriptor, descriptor_flags);
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::DuplicateDescriptorTo),
+                            source_descriptor, destination_descriptor, descriptor_flags);
 }
 
 int64_t GetDescriptorFlags(const uint64_t descriptor) noexcept {
@@ -370,13 +420,10 @@ int64_t MapAnonymousMemory(const uint64_t requested_address, const uint64_t leng
                             requested_address, length_bytes, protection_flags, map_flags);
 }
 
-int64_t MapFileMemory(
-    const os::abi::FileMemoryMapRequest &request) noexcept {
-    return InvokeSystemCall(
-        static_cast<uint64_t>(
-            os::abi::SystemCallNumber::MapFileMemory),
-        reinterpret_cast<uint64_t>(&request), sizeof(request),
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+int64_t MapFileMemory(const os::abi::FileMemoryMapRequest &request) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::MapFileMemory),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t UnmapMemory(const uint64_t address, const uint64_t length_bytes) noexcept {
@@ -398,11 +445,10 @@ int64_t GetVirtualMemoryStatistics(os::abi::VirtualMemoryStatistics &statistics)
 }
 
 int64_t ForkProcess() noexcept {
-    return InvokeSystemCall(
-        static_cast<uint64_t>(os::abi::SystemCallNumber::ForkProcess),
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ForkProcess),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 [[noreturn]] void ExitProcess(const int64_t exit_code) noexcept {

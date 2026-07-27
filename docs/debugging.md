@@ -1534,3 +1534,52 @@ basename。
 FileDescription finalizer → PipeManager close 查最后引用；若物理页未恢复，
 检查跨页写失败回滚和最后端点释放。`ReleaseDynamicPages` 只有成功归还页面
 后才能清除地址，否则会把“仍拥有页面”伪装成已释放。
+
+## v1.12：用户 Thread、TLS 与 private futex
+
+### CreateThread 偶发进入未初始化 RIP 或栈
+
+这是 Ready 发布顺序错误，不是 QEMU 随机故障。创建者必须在 scheduler lock
+保护下完成 Thread 槽、KernelStack、UserContext、FXSAVE、用户栈和运行时
+元数据初始化，最后才把新 Thread 接入 Ready 队列。若先解锁再补
+`saved_frame`，PIT 可以立即选择该槽。检查失败现场的 TID、RIP、RSP、
+`runtime_thread.active` 与 Ready queue 是否出现“已 Ready 但 inactive”。
+
+### 子 Thread 读到零 TID
+
+新 Thread 可能在 `CreateThread` 返回父 Thread 之前运行。不能由父 Thread
+在返回后把 TID 写进共享启动参数；子入口应调用 `GetThreadIdentifier` 自行
+发布身份。任何“父先写、子后读”的假设都必须由同步原语建立，而不能依赖创建
+系统调用的表面顺序。
+
+### TLS 在第一次系统调用后变回零或串到别的 Thread
+
+依次检查：
+
+1. `SetThreadLocalStorage` 是否验证 16 字节对齐与可写用户地址；
+2. ThreadEntry 与运行时元数据是否同时保存同一 FS-base；
+3. 每次 `ActivateThread` 是否写 `IA32_FS_BASE`；
+4. SYSCALL/IRET/调度汇编路径是否错误执行 `mov fs, ...`；
+5. exec、Thread 退出和 Process 终止是否清除或回收正确所有者的 TLS。
+
+长模式下 selector 看似仍为用户数据段也不能证明 FS-base 正确；应直接在切换
+前后读取 MSR，并让两个 Thread 在相同 TLS offset 写入不同哨兵值。
+
+### private futex 偶发永远睡眠
+
+确认比较用户字与登记 WaitQueue 在同一 scheduler lock 内完成。若先比较、
+解锁后再阻塞，wake 可以落入中间窗口。其次确认 key 同时包含
+AddressSpaceId 与四字节对齐地址，waiter 被唤醒、取消、异常终止或 exec
+移除时都释放空表项。调试日志只在二次幂累计点输出；不要在原子快速路径逐次
+打印，否则串口本身会改写调度时序。
+
+快速复现局部状态机：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^(os_kernel_private_futex_unit_tests|os_kernel_private_futex_randomized_tests|os_kernel_thread_scheduler_unit_tests)$' \
+  --output-on-failure
+```
+
+最后运行 `os_qemu_bootstrap_smoke` 和 `os_qemu_functional_smoke`。两个系统用例
+均受总截止与静默截止约束；出现半发布竞态时应修复提交顺序，不能延长超时。
