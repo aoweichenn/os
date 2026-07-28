@@ -39,6 +39,7 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_DESCRIPTOR_WRITABLE_QUEUE_ID = 4ULL
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_CHILD_EXIT_QUEUE_ID = 5ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_JOIN_QUEUE_ID = 6ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_SLEEP_QUEUE_ID = 7ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_QUEUE_ID = 8ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_PRIVATE_FUTEX_FIRST_QUEUE_ID = 0x1000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_THREAD_STACK_ALIGNMENT_BYTES =
     os::abi::OS_ABI_THREAD_STACK_ALIGNMENT_BYTES;
@@ -98,6 +99,24 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_INVALIDATION_PREFIX[] =
     "[OS][KERNEL][VM] PAGE_CACHE_INVALIDATION_COUNT=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_IO_DESCRIPTOR_READ_BLOCK_PREFIX[] =
     "[OS][KERNEL][IO] DESCRIPTOR_READ_BLOCK_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_RESULT_PREFIX[] =
+    "[OS][KERNEL][BLOCK] COMPLETION_RESULT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_TIME_PREFIX[] =
+    "[OS][KERNEL][BLOCK] COMPLETION_TIME_NS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_OTHER_THREAD_PROGRESS_PREFIX[] =
+    "[OS][KERNEL][BLOCK] OTHER_THREAD_PROGRESS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_ABANDONED_REQUEST_PREFIX[] =
+    "[OS][KERNEL][BLOCK] ABANDONED_REQUEST=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_PROCESS_PREFIX[] =
+    "[OS][KERNEL][CACHE] PROTECT_FAILURE_PROCESS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_STATUS_PREFIX[] =
+    "[OS][KERNEL][CACHE] PROTECT_FAILURE_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_WRITEBACK_STATUS_PREFIX[] =
+    "[OS][KERNEL][CACHE] WRITEBACK_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_WRITTEN_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL][CACHE] WRITTEN_PAGE_COUNT=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_SYSTEM_SYNC_STATUS_PREFIX[] =
+    "[OS][KERNEL][FS] SYNC_STATUS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_PROCESS_ID=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX[] =
@@ -260,6 +279,7 @@ struct alignas(OS_KERNEL_EXTENDED_STATE_AREA_ALIGNMENT_BYTES) ProcessRuntimeThre
     uint64_t exit_value;
     uint64_t join_owner_thread_id;
     uint64_t blocked_system_call_number;
+    uint64_t block_io_request_identifier;
     bool blocked_system_call_restartable;
     bool joinable;
     bool active;
@@ -282,6 +302,7 @@ WaitQueue descriptor_writable_wait_queue;
 WaitQueue child_exit_wait_queue;
 WaitQueue thread_join_wait_queue;
 WaitQueue sleep_wait_queue;
+WaitQueue block_io_wait_queue;
 PrivateFutexManager private_futex_manager;
 PrivateFutexEntry private_futex_entries[OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT];
 ProcessTree process_tree;
@@ -449,6 +470,20 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
                                  statistics.invalidation_count);
     }
     return true;
+}
+
+[[nodiscard]] bool FlushOutstandingUserFilePages() noexcept {
+    const FilePageCacheStatistics statistics =
+        GetUserFilePageCacheStatistics();
+    if (statistics.dirty_page_count ==
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+        statistics.writeback_page_count ==
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+        statistics.error_page_count ==
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return true;
+    }
+    return SyncCurrentProcessFileSystem() == FileSystemStatus::Succeeded;
 }
 
 extern "C" void OsKernelEnterScheduledProcess(ExceptionFrame *frame) noexcept;
@@ -766,6 +801,9 @@ void ResetRuntimeStorage() noexcept {
     }
     if (wait_condition == WaitCondition::Sleep) {
         return &sleep_wait_queue;
+    }
+    if (wait_condition == WaitCondition::BlockIo) {
+        return &block_io_wait_queue;
     }
     return nullptr;
 }
@@ -1429,6 +1467,8 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
     runtime_threads[thread_index].join_owner_thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[thread_index].blocked_system_call_number =
         OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].block_io_request_identifier =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[thread_index].blocked_system_call_restartable = false;
     runtime_threads[thread_index].joinable = false;
     runtime_threads[thread_index].active = true;
@@ -1878,6 +1918,10 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
         runtime_threads[thread_index].saved_frame == nullptr) {
         return false;
     }
+    if (thread.wait_condition == WaitCondition::BlockIo) {
+        // 块设备请求仍拥有该线程的系统调用返回槽；信号保留到 I/O 完成后再交付。
+        return true;
+    }
     WaitQueue *const wait_queue = thread.wait_queue;
     const WaitCondition wait_condition = thread.wait_condition;
     const bool interrupts_were_enabled = scheduler_lock.Lock();
@@ -2186,6 +2230,11 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     } else if (termination_reason == ProcessTerminationReason::Signal) {
         process.result.exception_vector = frame.vector;
     }
+    // 最后一个 writable shared 后备引用消失前必须先把脏页移交给 VFS。
+    // Sync 会同时重新写保护其他地址空间中的 alias，避免写回后继续无通知写入。
+    if (!FlushOutstandingUserFilePages()) {
+        HaltProcessor();
+    }
     CloseProcessIoDescriptors(process);
     if (process_vfs != nullptr && process.file_system_context.initialized &&
         process_vfs->ReleaseContext(process.file_system_context) != fs::Status::Succeeded) {
@@ -2369,6 +2418,9 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
             WaitQueueStatus::Succeeded ||
         sleep_wait_queue.Initialize(WaitQueueId{
             .value = OS_KERNEL_PROCESS_RUNTIME_SLEEP_QUEUE_ID}) != WaitQueueStatus::Succeeded ||
+        block_io_wait_queue.Initialize(WaitQueueId{
+            .value = OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_QUEUE_ID}) !=
+            WaitQueueStatus::Succeeded ||
         private_futex_manager.Initialize(private_futex_entries,
                                          OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT,
                                          OS_KERNEL_PROCESS_RUNTIME_PRIVATE_FUTEX_FIRST_QUEUE_ID) !=
@@ -2775,6 +2827,8 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process
         OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[child_thread_index].blocked_system_call_number =
         OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[child_thread_index].block_io_request_identifier =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[child_thread_index].blocked_system_call_restartable = false;
     runtime_threads[child_thread_index].joinable = false;
     runtime_threads[child_thread_index].active = true;
@@ -2864,6 +2918,9 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
         !ReapProcessSiblingsForExec(thread.process_index, thread_index)) {
         HaltProcessor();
     }
+    if (!FlushOutstandingUserFilePages()) {
+        HaltProcessor();
+    }
     if (signal_manager.ExecProcess(thread.process_index, thread_index) !=
         SignalManagerStatus::Succeeded) {
         HaltProcessor();
@@ -2920,6 +2977,8 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
     runtime_threads[thread_index].exit_value = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[thread_index].join_owner_thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[thread_index].blocked_system_call_number =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_threads[thread_index].block_io_request_identifier =
         OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_threads[thread_index].blocked_system_call_restartable = false;
     runtime_threads[thread_index].joinable = false;
@@ -3183,6 +3242,8 @@ UserThreadStatus CreateCurrentProcessThread(ExceptionFrame &frame,
     runtime_thread.exit_value = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_thread.join_owner_thread_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_thread.blocked_system_call_number = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_thread.block_io_request_identifier =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_thread.blocked_system_call_restartable = false;
     runtime_thread.joinable = true;
     runtime_thread.active = true;
@@ -3656,6 +3717,8 @@ ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexce
     const uint64_t blocked_system_call_number = runtime_thread.blocked_system_call_number;
     const bool blocked_system_call_restartable = runtime_thread.blocked_system_call_restartable;
     runtime_thread.blocked_system_call_number = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_thread.block_io_request_identifier =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     runtime_thread.blocked_system_call_restartable = false;
 
     SignalDelivery delivery{};
@@ -4371,7 +4434,10 @@ UserVirtualMemoryStatus UnmapCurrentProcessMemory(const uint64_t address,
             ? UnmapAnonymousMemory(process.address_space, address, length_bytes)
         : area.kind == VirtualMemoryAreaKind::FilePrivate ||
                 area.kind == VirtualMemoryAreaKind::FileShared
-            ? UnmapFileMemory(process.address_space, address, length_bytes)
+            ? (!FlushOutstandingUserFilePages()
+                   ? UserVirtualMemoryStatus::FileWriteFailed
+                   : UnmapFileMemory(process.address_space, address,
+                                     length_bytes))
             : UserVirtualMemoryStatus::InvalidRange;
     if (status == UserVirtualMemoryStatus::Succeeded) {
         uint64_t cancelled_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -4708,7 +4774,45 @@ FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
     if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    return fs::ToFileSystemStatus(process_vfs->Sync());
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < process_runtime_limits.process_capacity;
+         ++process_index) {
+        if (!runtime_processes[process_index].active ||
+            runtime_processes[process_index]
+                    .address_space.root_physical_address ==
+                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+            continue;
+        }
+        const UserVirtualMemoryStatus protect_status =
+            ProtectUserSharedFileMappings(
+                runtime_processes[process_index].address_space);
+        if (protect_status != UserVirtualMemoryStatus::Succeeded) {
+            WriteProcessRuntimeValue(
+                OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_PROCESS_PREFIX,
+                process_index);
+            WriteProcessRuntimeValue(
+                OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_STATUS_PREFIX,
+                static_cast<uint64_t>(protect_status));
+            return FileSystemStatus::Corrupt;
+        }
+    }
+    uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus writeback_status =
+        WritebackUserFilePageCache(UINT64_MAX, written_page_count);
+    WriteProcessRuntimeValue(
+        OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_WRITEBACK_STATUS_PREFIX,
+        static_cast<uint64_t>(writeback_status));
+    WriteProcessRuntimeValue(
+        OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_WRITTEN_PAGE_COUNT_PREFIX,
+        written_page_count);
+    if (writeback_status != UserVirtualMemoryStatus::Succeeded) {
+        return FileSystemStatus::DeviceFailure;
+    }
+    const fs::Status sync_status = process_vfs->Sync();
+    WriteProcessRuntimeValue(
+        OS_KERNEL_PROCESS_RUNTIME_FILE_SYSTEM_SYNC_STATUS_PREFIX,
+        static_cast<uint64_t>(sync_status));
+    return fs::ToFileSystemStatus(sync_status);
 }
 
 FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
@@ -5187,6 +5291,11 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame, const WaitConditi
         return ProcessRuntimeStatus::SchedulerFailure;
     }
     ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
+    if ((wait_condition == WaitCondition::BlockIo) !=
+        (runtime_thread.block_io_request_identifier !=
+         OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)) {
+        return ProcessRuntimeStatus::SchedulerFailure;
+    }
     runtime_thread.saved_frame = &frame;
     runtime_thread.blocked_system_call_number = blocked_system_call_number;
     runtime_thread.blocked_system_call_restartable = restartable;
@@ -5201,6 +5310,10 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame, const WaitConditi
     scheduler_lock.Unlock(interrupts_were_enabled);
     if (status != ThreadSchedulerStatus::Succeeded) {
         runtime_thread.blocked_system_call_number = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        if (wait_condition == WaitCondition::BlockIo) {
+            runtime_thread.block_io_request_identifier =
+                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        }
         runtime_thread.blocked_system_call_restartable = false;
         return ProcessRuntimeStatus::SchedulerFailure;
     }
@@ -5251,6 +5364,92 @@ ProcessRuntimeStatus WakeThreads(const WaitCondition wait_condition, const WakeR
     scheduler_lock.Unlock(interrupts_were_enabled);
     return status == ThreadSchedulerStatus::Succeeded ? ProcessRuntimeStatus::Succeeded
                                                       : ProcessRuntimeStatus::SchedulerFailure;
+}
+
+uint64_t CurrentThreadIndexForBlockIo() noexcept {
+    if (!process_runtime_initialized || !process_scheduling_active) {
+        return OS_KERNEL_THREAD_INVALID_INDEX;
+    }
+    return thread_scheduler.CurrentThreadIndex();
+}
+
+ProcessRuntimeStatus
+RegisterCurrentBlockIoRequest(const uint64_t request_identifier) noexcept {
+    const uint64_t owner_thread_index = CurrentThreadIndexForBlockIo();
+    if (request_identifier == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        owner_thread_index == OS_KERNEL_THREAD_INVALID_INDEX ||
+        owner_thread_index >= process_runtime_limits.thread_capacity ||
+        !runtime_threads[owner_thread_index].active ||
+        runtime_threads[owner_thread_index].block_io_request_identifier !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return ProcessRuntimeStatus::SchedulerFailure;
+    }
+    runtime_threads[owner_thread_index].block_io_request_identifier =
+        request_identifier;
+    return ProcessRuntimeStatus::Succeeded;
+}
+
+ProcessRuntimeStatus
+CompleteBlockIoRequest(const uint64_t owner_thread_index,
+                       const uint64_t request_identifier,
+                       const BlockRequestResult result) noexcept {
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        request_identifier == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        owner_thread_index >= process_runtime_limits.thread_capacity) {
+        return ProcessRuntimeStatus::SchedulerFailure;
+    }
+    if (!runtime_threads[owner_thread_index].active ||
+        runtime_threads[owner_thread_index].saved_frame == nullptr ||
+        runtime_threads[owner_thread_index].block_io_request_identifier !=
+            request_identifier) {
+        WriteProcessRuntimeValue(
+            OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_ABANDONED_REQUEST_PREFIX,
+            request_identifier);
+        return ProcessRuntimeStatus::BlockIoRequestAbandoned;
+    }
+    const int64_t system_call_result =
+        result == BlockRequestResult::Succeeded
+            ? OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE
+            : result == BlockRequestResult::TimedOut
+                  ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT
+                  : os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
+    const WakeReason wake_reason =
+        result == BlockRequestResult::TimedOut ? WakeReason::Timeout
+                                               : WakeReason::ConditionSatisfied;
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const uint64_t completing_thread_index =
+        thread_scheduler.CurrentThreadIndex();
+    const bool other_thread_made_progress =
+        completing_thread_index != OS_KERNEL_THREAD_INVALID_INDEX &&
+        completing_thread_index != owner_thread_index;
+    bool wake_won = false;
+    const ThreadSchedulerStatus wake_status = thread_scheduler.WakeThread(
+        block_io_wait_queue, owner_thread_index, wake_reason, wake_won);
+    if (wake_status != ThreadSchedulerStatus::Succeeded || !wake_won) {
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        return ProcessRuntimeStatus::SchedulerFailure;
+    }
+    ProcessRuntimeThread &runtime_thread = runtime_threads[owner_thread_index];
+    runtime_thread.saved_frame->register_rax =
+        static_cast<uint64_t>(system_call_result);
+    runtime_thread.blocked_system_call_number =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_thread.block_io_request_identifier =
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    runtime_thread.blocked_system_call_restartable = false;
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    WriteProcessRuntimeValue(
+        OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_RESULT_PREFIX,
+        static_cast<uint64_t>(result));
+    WriteProcessRuntimeValue(
+        OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_TIME_PREFIX,
+        GetMonotonicNanoseconds());
+    WriteProcessRuntimeValue(
+        OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_OTHER_THREAD_PROGRESS_PREFIX,
+        other_thread_made_progress
+            ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+            : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+    return ProcessRuntimeStatus::Succeeded;
 }
 
 uint64_t HandleProcessDeadlineInterrupt(const uint64_t now_nanoseconds) noexcept {

@@ -24,6 +24,8 @@ constexpr std::string_view OS_TEST_ROOTFS_INCOMPLETE_TRANSACTION =
     "事务中途设备写失败必须保留 dirty 标记，后续挂载必须明确拒绝";
 constexpr std::string_view OS_TEST_ROOTFS_STATISTICS =
     "rootfs v2 必须记录事务、稀疏读取与命名空间操作统计";
+constexpr std::string_view OS_TEST_ROOTFS_STABLE_MOUNT_GENERATION =
+    "VFS 超级块代际在一次挂载生命周期内必须稳定且不得等同于事务序号";
 
 constexpr uint64_t OS_TEST_ROOTFS_SUPERBLOCK_IDENTIFIER = 41ULL;
 constexpr uint64_t OS_TEST_ROOTFS_REMOUNT_IDENTIFIER = 42ULL;
@@ -176,6 +178,8 @@ int main() {
     if (!mounted) {
         return test_context.ExitCode();
     }
+    const uint64_t mounted_superblock_generation =
+        root_file_system.GetSuperblock().generation;
 
     const bool sparse_created =
         vfs.CreateDirectory(context, OS_TEST_ROOTFS_ALPHA_PATH,
@@ -421,6 +425,12 @@ int main() {
         statistics.allocated_inode_count >= OS_TEST_ROOTFS_MINIMUM_ALLOCATED_INODE_COUNT &&
         statistics.open_reference_count == OS_TEST_ROOTFS_EMPTY_VALUE;
     test_context.Expect(statistics_valid, OS_TEST_ROOTFS_STATISTICS);
+    test_context.Expect(
+        root_file_system.GetSuperblock().generation ==
+                mounted_superblock_generation &&
+            statistics.transaction_generation >
+                mounted_superblock_generation,
+        OS_TEST_ROOTFS_STABLE_MOUNT_GENERATION);
 
     if (persistence_valid) {
         static_cast<void>(remounted_vfs.ReleaseContext(remounted_context));

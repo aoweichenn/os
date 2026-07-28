@@ -8,7 +8,7 @@ namespace {
 constexpr std::string_view OS_TEST_DEVICE_BOOTSTRAP_SUITE_NAME =
     "kernel/device_bootstrap/integration";
 constexpr std::string_view OS_TEST_DEVICE_BOOTSTRAP_PIC_LAYOUT =
-    "PIC 重映射和启用顺序必须形成仅开放时钟与键盘的掩码";
+    "PIC 重映射和启用顺序必须开放时钟、键盘、IRQ14 与从片级联线";
 constexpr std::string_view OS_TEST_DEVICE_BOOTSTRAP_PIT_CLOCK =
     "PIT 配置必须产生可用于启动时钟的单调毫秒";
 constexpr std::string_view OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_STREAM =
@@ -17,9 +17,10 @@ constexpr std::string_view OS_TEST_DEVICE_BOOTSTRAP_DISK_CONTRACT =
     "内核 ATA 自检必须读取完整 LBA0 并识别启动描述符";
 
 constexpr uint16_t OS_TEST_DEVICE_BOOTSTRAP_INITIAL_PIC_MASK = 0xFFFFU;
-constexpr uint16_t OS_TEST_DEVICE_BOOTSTRAP_EXPECTED_PIC_MASK = 0xFFFCU;
+constexpr uint16_t OS_TEST_DEVICE_BOOTSTRAP_EXPECTED_PIC_MASK = 0xBFF8U;
 constexpr uint64_t OS_TEST_DEVICE_BOOTSTRAP_TIMER_IRQ = 0ULL;
 constexpr uint64_t OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ = 1ULL;
+constexpr uint64_t OS_TEST_DEVICE_BOOTSTRAP_ATA_IRQ = 14ULL;
 constexpr uint64_t OS_TEST_DEVICE_BOOTSTRAP_BOOT_DESCRIPTOR_LBA = 0ULL;
 constexpr uint64_t OS_TEST_DEVICE_BOOTSTRAP_PIT_FREQUENCY_HZ = 1000ULL;
 constexpr uint64_t OS_TEST_DEVICE_BOOTSTRAP_SELF_TEST_TICKS = 16ULL;
@@ -41,6 +42,7 @@ int main() {
 
     uint16_t pic_mask_after_timer = 0U;
     uint16_t pic_mask_after_keyboard = 0U;
+    uint16_t pic_mask_after_ata = 0U;
     uint64_t keyboard_vector = 0ULL;
     test_context.Expect(
         os::kernel::EnableLegacyPicInterruptRequest(
@@ -49,10 +51,14 @@ int main() {
             os::kernel::EnableLegacyPicInterruptRequest(
                 pic_mask_after_timer, OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ,
                 pic_mask_after_keyboard) == os::kernel::LegacyPicModelStatus::Succeeded &&
+            os::kernel::EnableLegacyPicInterruptRequest(
+                pic_mask_after_keyboard, OS_TEST_DEVICE_BOOTSTRAP_ATA_IRQ,
+                pic_mask_after_ata) ==
+                os::kernel::LegacyPicModelStatus::Succeeded &&
             os::kernel::CalculateLegacyPicVector(OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ,
                                                  keyboard_vector) ==
                 os::kernel::LegacyPicModelStatus::Succeeded &&
-            pic_mask_after_keyboard == OS_TEST_DEVICE_BOOTSTRAP_EXPECTED_PIC_MASK &&
+            pic_mask_after_ata == OS_TEST_DEVICE_BOOTSTRAP_EXPECTED_PIC_MASK &&
             keyboard_vector == os::kernel::OS_KERNEL_DEVICE_PIC_MASTER_VECTOR_BASE +
                                    OS_TEST_DEVICE_BOOTSTRAP_KEYBOARD_IRQ,
         OS_TEST_DEVICE_BOOTSTRAP_PIC_LAYOUT);

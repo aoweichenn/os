@@ -87,6 +87,7 @@ enum class UserVirtualMemoryStatus : uint64_t {
     PageMappingFailed,
     PageReleaseFailed,
     FileReadFailed,
+    FileWriteFailed,
     PageCacheExhausted,
     CopyOnWriteFailure,
     ThreadMemoryInUse,
@@ -165,6 +166,11 @@ UnmapFileMemory(UserAddressSpace &address_space, uint64_t address, uint64_t leng
 InvalidateUserFilePageCache(const FileIdentity &identity,
                             uint64_t current_file_size_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus TrimUserFilePageCache() noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+WritebackUserFilePageCache(uint64_t maximum_page_count,
+                           uint64_t &written_page_count) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus SetProgramBreak(UserAddressSpace &address_space,
                                                       uint64_t requested_address,
                                                       uint64_t &program_break_address) noexcept;

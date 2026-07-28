@@ -1167,3 +1167,31 @@ Kernel 在全部 Process 收集后输出一次权威账本：
 新的 `COMMAND_COMPLETE` 再发送下一条命令；等待控制键前还要求新的
 `FOREGROUND_JOB_WAITING`。每步超过 20 秒立即失败并终止协议等待，不能继续
 耗尽整机总预算。
+
+## v1.16 IRQ14、块请求与写回日志
+
+ATA status poll、每个 16-bit PIO word、cache hit 和每次 PIT 检查都属于热
+路径，不打印。初始化和单次显式 sync 使用低频语义 marker：
+
+```text
+[OS][KERNEL] ATA_IRQ14_READY
+[OS][KERNEL] ATA_REQUEST_CAPACITY=0x0000000000000040
+[OS][KERNEL][BLOCK] FLUSH_SUBMIT_REQUEST=0x...
+[OS][KERNEL][BLOCK] SUBMIT_TIME_NS=0x...
+[OS][KERNEL][BLOCK] COMPLETION_RESULT=0x...
+[OS][KERNEL][BLOCK] COMPLETION_TIME_NS=0x...
+[OS][KERNEL][BLOCK] OTHER_THREAD_PROGRESS=0x...
+[OS][USER][VM] FILE_SHARED_WRITEBACK_VERIFIED
+```
+
+请求 identifier 用于关联一次提交/完成，不逐轮询递增日志。完成结果、
+DeviceError、TimedOut 只在唯一解析边界记录；迟到 IRQ 进入累计重复解析统计，
+不重复打印同一完成。
+
+来宾时间来自 PIT 单调纳秒，必须满足 completion time 不早于 submit time。
+宿主捕获器继续添加 `[QEMU][T+......ms]`，它只描述串口到达时间，用于看出
+64 GiB TCG 扫描或宿主竞争造成的阶段延迟，不能参与请求 deadline。
+
+页缓存只在 sync 边界记录 writeback 状态/页数/VFS 结果；Dirty/Writeback
+的逐页状态转移由统计与测试观察，不冲串口。写回失败必须保留明确 error
+结果，不能用一条“sync complete”掩盖部分失败。

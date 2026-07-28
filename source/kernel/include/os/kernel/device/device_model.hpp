@@ -9,6 +9,7 @@ inline constexpr uint64_t OS_KERNEL_DEVICE_PIC_MASTER_VECTOR_BASE = 32ULL;
 inline constexpr uint64_t OS_KERNEL_DEVICE_PIC_SLAVE_VECTOR_BASE = 40ULL;
 inline constexpr uint64_t OS_KERNEL_DEVICE_PIT_INPUT_FREQUENCY_HZ = 1193182ULL;
 inline constexpr uint64_t OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES = 512ULL;
+inline constexpr uint64_t OS_KERNEL_DEVICE_ATA_MAXIMUM_LBA28 = 0x0FFFFFFFULL;
 
 enum class LegacyPicModelStatus : uint64_t {
     Succeeded,

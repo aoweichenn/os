@@ -25,13 +25,25 @@ using FilePageReadOperation = bool (*)(void *context,
                                        const FilePageIdentity &identity,
                                        uint8_t *destination,
                                        uint64_t capacity_bytes) noexcept;
+using FilePageWriteOperation = bool (*)(void *context,
+                                        const FilePageIdentity &identity,
+                                        const uint8_t *source,
+                                        uint64_t length_bytes) noexcept;
+
+enum class FilePageCacheEntryState : uint64_t {
+    Empty,
+    Clean,
+    Dirty,
+    Writeback,
+    Error,
+};
 
 struct FilePageCacheEntry final {
     FilePageIdentity identity;
     uint64_t physical_address;
     uint64_t mapping_reference_count;
     uint64_t access_generation;
-    bool active;
+    FilePageCacheEntryState state;
 };
 
 struct FilePageCacheStatistics final {
@@ -48,6 +60,16 @@ struct FilePageCacheStatistics final {
     uint64_t invalidation_count;
     uint64_t successful_acquire_count;
     uint64_t release_count;
+    uint64_t dirty_page_limit;
+    uint64_t dirty_page_count;
+    uint64_t writeback_page_count;
+    uint64_t error_page_count;
+    uint64_t peak_outstanding_writeback_page_count;
+    uint64_t mark_dirty_count;
+    uint64_t dirty_limit_rejection_count;
+    uint64_t writeback_attempt_count;
+    uint64_t successful_writeback_count;
+    uint64_t failed_writeback_count;
 };
 
 enum class FilePageCacheStatus : uint64_t {
@@ -59,10 +81,14 @@ enum class FilePageCacheStatus : uint64_t {
     InvalidDependency,
     InvalidIdentity,
     InvalidReader,
+    InvalidWriter,
     FrameAllocationFailed,
     FrameAccessFailed,
     SourceReadFailed,
+    SourceWriteFailed,
     CapacityExhausted,
+    DirtyLimitReached,
+    DirtyPagesRemain,
     MappingNotFound,
     ReferenceUnderflow,
     EntryBusy,
@@ -78,6 +104,7 @@ class FilePageCache final {
 
     [[nodiscard]] FilePageCacheStatus
     Initialize(FilePageCacheEntry *entries, uint64_t capacity,
+               uint64_t dirty_page_limit,
                PhysicalFrameAllocator &frame_allocator,
                void *page_access_context,
                FilePageAccessOperation page_access_operation) noexcept;
@@ -88,6 +115,13 @@ class FilePageCache final {
     [[nodiscard]] FilePageCacheStatus
     Release(const FilePageIdentity &identity,
             uint64_t physical_address) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    MarkDirty(const FilePageIdentity &identity,
+              uint64_t physical_address) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    Writeback(void *writer_context, FilePageWriteOperation write_operation,
+              uint64_t maximum_page_count,
+              uint64_t &written_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus
     Invalidate(const FileIdentity &identity) noexcept;
     [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count) noexcept;
@@ -111,6 +145,7 @@ class FilePageCache final {
 
     FilePageCacheEntry *entries_{nullptr};
     uint64_t capacity_{};
+    uint64_t dirty_page_limit_{};
     PhysicalFrameAllocator *frame_allocator_{nullptr};
     void *page_access_context_{nullptr};
     FilePageAccessOperation page_access_operation_{nullptr};

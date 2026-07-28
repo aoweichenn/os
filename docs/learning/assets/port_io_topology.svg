@@ -91,7 +91,7 @@
   <text x="1002" y="535" class="card-title">IDE / ATA primary master</text>
   <text x="1002" y="566" class="port mono">0x1F0..0x1F7 · control 0x3F6</text>
   <text x="1002" y="597" class="body">data port 16-bit：每扇区精确传输 256 words</text>
-  <text x="1002" y="627" class="small">LBA28；按序检查 BSY / DRQ / ERR / DF；IRQ14 关闭</text>
+  <text x="1002" y="627" class="small">LBA28；BSY / DRQ / ERR / DF；early poll，runtime IRQ14</text>
   <path d="M 862 580 H 963" class="io-right"/>
 
   <rect x="975" y="700" width="570" height="160" rx="17"

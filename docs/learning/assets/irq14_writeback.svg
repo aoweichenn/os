@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980"
+     role="img" aria-labelledby="title description">
+  <title id="title">v1.16 IRQ14 块请求与文件页写回结构</title>
+  <desc id="description">从用户共享映射写故障，经页缓存、VFS、块请求、ATA 和
+    PIC IRQ14 返回等待线程的完整状态与硬件路径。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#334155"/>
+    </marker>
+    <marker id="irq-arrow" markerWidth="10" markerHeight="10" refX="9" refY="5"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b91c1c"/>
+    </marker>
+    <style>
+      .background { fill: #f8fafc; }
+      .lane { fill: #e2e8f0; stroke: #94a3b8; stroke-width: 1.5; }
+      .user { fill: #ede9fe; stroke: #7c3aed; stroke-width: 2; }
+      .kernel { fill: #dbeafe; stroke: #2563eb; stroke-width: 2; }
+      .state { fill: #dcfce7; stroke: #15803d; stroke-width: 2; }
+      .hardware { fill: #ffedd5; stroke: #c2410c; stroke-width: 2; }
+      .error { fill: #fee2e2; stroke: #b91c1c; stroke-width: 2; }
+      .flow { fill: none; stroke: #334155; stroke-width: 3; marker-end: url(#arrow); }
+      .irq { fill: none; stroke: #b91c1c; stroke-width: 3.5;
+             stroke-dasharray: 10 7; marker-end: url(#irq-arrow); }
+      .title { font: 700 30px sans-serif; fill: #0f172a; }
+      .subtitle { font: 600 18px sans-serif; fill: #334155; }
+      .card-title { font: 700 19px sans-serif; fill: #0f172a; }
+      .body { font: 16px sans-serif; fill: #1e293b; }
+      .small { font: 14px sans-serif; fill: #475569; }
+      .mono { font: 15px monospace; fill: #0f172a; }
+    </style>
+  </defs>
+  <rect class="background" width="1600" height="980"/>
+  <text x="800" y="48" text-anchor="middle" class="title">v1.16 · 写通知、写回与 IRQ14 单赢家完成</text>
+  <text x="800" y="80" text-anchor="middle" class="subtitle">实线：Thread 上下文　红色虚线：硬件中断　绿色：持久性状态</text>
+
+  <rect x="35" y="110" width="1530" height="155" rx="18" class="lane"/>
+  <text x="62" y="142" class="subtitle">USER / ADDRESS SPACE</text>
+  <rect x="75" y="165" width="300" height="70" rx="12" class="user"/>
+  <text x="225" y="194" text-anchor="middle" class="card-title">MAP_SHARED 写指令</text>
+  <text x="225" y="220" text-anchor="middle" class="small">只读 PTE 触发 P=1/W=1/U=1 #PF</text>
+  <rect x="455" y="165" width="300" height="70" rx="12" class="kernel"/>
+  <text x="605" y="194" text-anchor="middle" class="card-title">Write-notify fault</text>
+  <text x="605" y="220" text-anchor="middle" class="small">验证 VMA → MarkDirty → PTE writable</text>
+  <rect x="835" y="165" width="300" height="70" rx="12" class="state"/>
+  <text x="985" y="194" text-anchor="middle" class="card-title">共享物理页</text>
+  <text x="985" y="220" text-anchor="middle" class="small">多个 alias 立即看到同一内容</text>
+  <rect x="1215" y="165" width="300" height="70" rx="12" class="user"/>
+  <text x="1365" y="194" text-anchor="middle" class="card-title">sync 系统调用</text>
+  <text x="1365" y="220" text-anchor="middle" class="small">重新写保护，形成下一轮 dirty 边界</text>
+  <path d="M375 200 H455" class="flow"/>
+  <path d="M755 200 H835" class="flow"/>
+  <path d="M1135 200 H1215" class="flow"/>
+
+  <rect x="35" y="295" width="1530" height="220" rx="18" class="lane"/>
+  <text x="62" y="327" class="subtitle">KERNEL / CACHE / VFS</text>
+  <rect x="75" y="350" width="300" height="120" rx="12" class="state"/>
+  <text x="225" y="380" text-anchor="middle" class="card-title">FilePageCache</text>
+  <text x="225" y="408" text-anchor="middle" class="mono">Clean → Dirty → Writeback</text>
+  <text x="225" y="434" text-anchor="middle" class="mono">success → Clean</text>
+  <text x="225" y="456" text-anchor="middle" class="mono">failure → Error → retry</text>
+  <rect x="455" y="350" width="300" height="120" rx="12" class="kernel"/>
+  <text x="605" y="380" text-anchor="middle" class="card-title">VFS WriteAt</text>
+  <text x="605" y="408" text-anchor="middle" class="body">稳定 file identity + page offset</text>
+  <text x="605" y="434" text-anchor="middle" class="small">不推进用户 OpenFile offset</text>
+  <text x="605" y="456" text-anchor="middle" class="small">错误保留 cache 写回责任</text>
+  <rect x="835" y="350" width="300" height="120" rx="12" class="kernel"/>
+  <text x="985" y="380" text-anchor="middle" class="card-title">rootfs / BlockCache</text>
+  <text x="985" y="408" text-anchor="middle" class="body">数据事务与块缓存写回</text>
+  <text x="985" y="434" text-anchor="middle" class="small">mount generation 保持稳定</text>
+  <text x="985" y="456" text-anchor="middle" class="small">transaction generation 单调增长</text>
+  <rect x="1215" y="350" width="300" height="120" rx="12" class="state"/>
+  <text x="1365" y="380" text-anchor="middle" class="card-title">BlockRequest FIFO</text>
+  <text x="1365" y="408" text-anchor="middle" class="mono">Queued → Issued → Completed</text>
+  <text x="1365" y="434" text-anchor="middle" class="small">64 槽 · 单飞 · 64-bit identifier</text>
+  <text x="1365" y="456" text-anchor="middle" class="small">Succeeded / Error / Timeout</text>
+  <path d="M1365 235 V305 H225 V350" class="flow"/>
+  <path d="M375 410 H455" class="flow"/>
+  <path d="M755 410 H835" class="flow"/>
+  <path d="M1135 410 H1215" class="flow"/>
+
+  <rect x="35" y="545" width="1530" height="205" rx="18" class="lane"/>
+  <text x="62" y="577" class="subtitle">ATA / PIC / CPU HARDWARE PATH</text>
+  <rect x="75" y="605" width="300" height="100" rx="12" class="hardware"/>
+  <text x="225" y="635" text-anchor="middle" class="card-title">ATA primary channel</text>
+  <text x="225" y="663" text-anchor="middle" class="mono">0x1F0..0x1F7 / 0x3F6</text>
+  <text x="225" y="687" text-anchor="middle" class="small">BSY · DRQ · DF · ERR · nIEN · SRST</text>
+  <rect x="455" y="605" width="300" height="100" rx="12" class="hardware"/>
+  <text x="605" y="635" text-anchor="middle" class="card-title">8259A slave</text>
+  <text x="605" y="663" text-anchor="middle" class="body">IR6 = IRQ14</text>
+  <text x="605" y="687" text-anchor="middle" class="small">mask 0xBF · EOI 先 slave</text>
+  <rect x="835" y="605" width="300" height="100" rx="12" class="hardware"/>
+  <text x="985" y="635" text-anchor="middle" class="card-title">8259A master / LAPIC</text>
+  <text x="985" y="663" text-anchor="middle" class="body">IR2 cascade → LINT0 ExtINT</text>
+  <text x="985" y="687" text-anchor="middle" class="small">master mask 0xF8 · EOI 后 master</text>
+  <rect x="1215" y="605" width="300" height="100" rx="12" class="hardware"/>
+  <text x="1365" y="635" text-anchor="middle" class="card-title">CPU vector 0x2E</text>
+  <text x="1365" y="663" text-anchor="middle" class="body">IDT → NASM stub → C++ handler</text>
+  <text x="1365" y="687" text-anchor="middle" class="small">IF 由中断门/IRETQ 管理</text>
+  <path d="M1215 440 H1165 V560 H225 V605" class="flow"/>
+  <path d="M375 655 H455" class="irq"/>
+  <path d="M755 655 H835" class="irq"/>
+  <path d="M1135 655 H1215" class="irq"/>
+
+  <rect x="35" y="780" width="1530" height="150" rx="18" class="lane"/>
+  <text x="62" y="812" class="subtitle">COMPLETION / SCHEDULING</text>
+  <rect x="160" y="835" width="350" height="65" rx="12" class="kernel"/>
+  <text x="335" y="863" text-anchor="middle" class="card-title">IRQ14 有界推进 + EOI</text>
+  <text x="335" y="887" text-anchor="middle" class="small">提交唯一结果，不睡眠、不分配</text>
+  <rect x="625" y="835" width="350" height="65" rx="12" class="state"/>
+  <text x="800" y="863" text-anchor="middle" class="card-title">Wake owner Thread</text>
+  <text x="800" y="887" text-anchor="middle" class="small">Blocked(BlockIo) → Ready</text>
+  <rect x="1090" y="835" width="350" height="65" rx="12" class="kernel"/>
+  <text x="1265" y="863" text-anchor="middle" class="card-title">Read result → Reap</text>
+  <text x="1265" y="887" text-anchor="middle" class="small">槽位归还；下一请求可继续</text>
+  <path d="M1365 705 V760 H335 V835" class="irq"/>
+  <path d="M510 867 H625" class="flow"/>
+  <path d="M975 867 H1090" class="flow"/>
+
+  <text x="800" y="958" text-anchor="middle" class="small">
+    超时竞争：PIT 先完成 TimedOut 并 SRST；迟到 IRQ 不能覆盖已冻结结果
+  </text>
+</svg>

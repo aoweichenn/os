@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.15。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.16。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -451,15 +451,17 @@ PIC 全屏蔽
   ├─ i8042：关闭端口、清输出、更新配置、开放第一端口、F4/FA
   └─ ATA primary master：nIEN + LBA28 PIO 重读 LBA 0
        ↓ 全部成功
-PIC mask = 0xFFFC（仅 IRQ0、IRQ1）
+PIC mask = 0xFFFC（v0.7 历史阶段仅 IRQ0、IRQ1）
        ↓ 软件 INT 0x27 验证虚假 IRQ7
 STI → HLT → IRQ0/IRQ1 → CLI
 ```
 
 IRQ0 只递增 64 位 tick，按 PIT 实际除数换算单调毫秒。IRQ1 从数据端口读取
 一个字节，集合 1 解码器处理 make、break 与 `E0` 前缀，语义事件留到中断
-返回后的事件循环记录。ATA 暂不开放 IRQ14，保持同步 PIO；它的目标是证明
-内核独立拥有设备协议，不是提前宣称完成异步块层。
+返回后的事件循环记录。这里描述的是 v0.7 首次设备闭环：当时 ATA 不开放
+IRQ14，只用同步 PIO 证明 Kernel 独立拥有设备协议。v1.16 的当前运行期路径
+已由本文末尾的 BlockRequest/IRQ14 架构取代；ROM、Stage 1 和 early boot
+仍保留这条有界轮询路径。
 
 QEMU 系统测试启动同一生产镜像，等待 `READY` 后通过 QMP 向虚拟键盘前端
 发送 `A` 键。QEMU 只产生硬件输入；i8042、PIC、IDT、汇编桩、解码和日志均
@@ -2160,3 +2162,43 @@ Shell 为每条外部管线建立一个 PGID，child 恢复默认 SIGINT/SIGTSTP
 后台事务保留 TTY 给 Shell。完整依赖和失败回滚见
 [ADR 0042](adr/0042-tty-session-and-job-control.md)，代码走读见
 [v1.15 学习章](learning/23-v1.15-tty-session-job-control.md)。
+
+## v1.16 当前 IRQ14 块请求与 writeback 架构
+
+运行期存储路径以请求身份而不是调用栈拥有设备：
+
+```text
+Thread / sync
+  → BlockRequestQueue：64 槽 FIFO，单个 Issued
+  → AtaPioDevice：READ / WRITE / FLUSH
+  → primary ATA IRQ14
+  → slave PIC IR6 → master IR2 cascade → LAPIC LINT0 ExtINT
+  → vector 0x2E → InterruptRuntime
+  → Complete 唯一结果 → Wake BlockIo owner → Reap
+```
+
+当前 PIC mask 为 `0xBFF8`：master IRQ0、IRQ1、IRQ2 和 slave IRQ14 开放。
+IRQ14 handler 只推进一个扇区的 PIO 状态、分类 BSY/DRQ/DF/ERR、提交结果和
+EOI；不进入 VFS、不睡眠、不分配。PIT deadline 与设备 IRQ 竞争同一 Issued
+状态，超时获胜后执行 ATA software reset，迟到 IRQ 不能覆盖结果。
+
+文件页路径用 PTE 写保护捕获 dirty：
+
+```text
+FileShared clean frame + read-only PTE
+  → user present/write #PF
+  → MarkDirty（先检查 hard limit）
+  → PTE writable
+  → sync: PTE read-only
+  → Dirty/Error → Writeback → VFS WriteAt
+  → VFS/rootfs sync → async ATA FLUSH
+```
+
+fork 的 FileShared 页不加 COW；FilePrivate 继续走 COW 且不回写。写回失败
+进入 Error 并保留 frame/identity/责任，不能淘汰或伪装 clean。稳定 identity
+要求一次 mount 内 superblock generation 不随普通数据事务变化。
+
+设计取舍见
+[ADR 0043](adr/0043-irq14-block-request-and-writeback-cache.md)，逐寄存器和
+代码控制流见
+[v1.16 学习章](learning/24-v1.16-irq14-block-request-writeback.md)。

@@ -9,7 +9,10 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
 - `legacy_pic` 拥有两片 8259A 的初始化、屏蔽、ISR 查询和 EOI。
 - `programmable_interval_timer` 配置 8254 通道 0。
 - `ps2_keyboard` 拥有 i8042 与键盘命令握手。
-- `ata_pio` 提供 LBA28 单扇区同步读取。
+- `block_request` 提供 64 位请求身份、FIFO、单飞完成与 Reap 生命周期。
+- `ata_pio` 保留有界 LBA28 PIO 轮询适配器，并提供 Read/Write/Flush 的
+  IRQ14 异步请求；当前 rootfs 普通扇区访问仍走同步适配器，显式 sync 的
+  最终 FLUSH 已接入 BlockIo。
 - `interrupt_runtime` 组合设备、处理 IRQ、同步统计与延后日志事件。
 - `architecture.asm` 只负责处理器入口帧，不访问具体设备寄存器。
 
@@ -25,7 +28,8 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
   → PIT 通道 0 编程
   → i8042/键盘握手
   → ATA PIO 重读并校验 LBA 0
-  → 只开放 IRQ0、IRQ1
+  → 初始化 64 槽 BlockRequestQueue
+  → 开放 IRQ0、IRQ1、master IRQ2 cascade 与 slave IRQ14
   → 软件 INT 0x27 验证虚假 IRQ7
   → STI
   → HLT 等待至少 16 个 IRQ0
@@ -43,13 +47,16 @@ PIC 向量固定为 32..47。硬件不压入错误码，因此每个桩先压入
 分发器把向量还原成 IRQ，处理设备后再确认 PIC。未知向量、未初始化分发或
 非法 EOI 状态都属于内核不变量破坏，立即停机。
 
-IRQ0 先增加 timer tick、完成 PIC EOI，再把当前 176 字节保存现场交给进程
+IRQ0 先增加 timer tick、解析 deadline 与 ATA 请求超时、完成 PIC EOI，
+再把当前 176 字节保存现场交给进程
 运行时。只有中断来自 CPL3、当前时间片耗尽且存在另一个 Ready 进程时，
 round-robin 调度器才返回不同的现场地址；汇编公共入口随后直接从该现场恢复。
 这条热路径不写串口。IRQ1 从 `0x60` 取一个扫描码，解码器处理 make、break
 与 `0xE0` 前缀；运行时保存首个待消费事件，串口写入发生在中断返回后的事件
-循环中。IRQ7/IRQ15 会读取 ISR：虚假 IRQ7 不发 EOI，虚假 IRQ15 只向主片
-确认级联。
+循环中。IRQ14 只处理当前单飞 ATA 请求的数据/状态阶段，提交唯一完成结果，
+先确认 slave 再确认 master，定向唤醒 BlockIo Thread 并启动下一请求；它
+不睡眠、不分配也不进入 VFS。IRQ7/IRQ15 会读取 ISR：虚假 IRQ7 不发 EOI，
+虚假 IRQ15 只向主片确认级联。
 
 ## 时间语义
 
@@ -64,7 +71,7 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
 ## 测试证据
 
 - 单元：PIC 向量与掩码失败原子性、PIT 范围/舍入/溢出、扫描码状态机、
-  ATA LBA/缓冲区/magic。
+  ATA LBA/缓冲区/magic，以及 BlockRequest 参数、FIFO、单飞和单赢家。
 - 集成：把 PIC 开放顺序、PIT 参数、键盘解码和 ATA 描述符校验组合为启动
   契约。
 - 随机：固定种子执行 4096 轮 IRQ 往返、PIT 有效频率和键盘 make/break。
@@ -76,7 +83,10 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
 
 - 单核、PIC 经 LAPIC virtual-wire 交付；没有 I/O APIC、LAPIC timer、
   MSI/MSI-X 或 SMP 路由。
-- ATA 是同步 PIO 单扇区读取，未启用 IRQ14、DMA、队列与写入。
+- ATA 运行期已启用 IRQ14 与 64 槽 FIFO，但硬件通道仍是单飞 PIO；没有
+  DMA、tagged queue、AHCI/NVMe 或多控制器。ROM、Stage 1、early Kernel
+  自检及当前 rootfs 普通扇区适配器仍使用有界轮询；异步生产路径当前由
+  显式 sync 的最终 FLUSH 验证。
 - PS/2 已解码左右 Ctrl 的 Set 1 make/break，并将 Ctrl-C/Z 转为 C0 控制码；
   尚无 Shift/Alt/CapsLock 完整布局、重复键和通用键事件环形缓冲。
 - PIT 是调度时钟与 v1.13 单调纳秒的基础，不是 RTC 墙钟；已有 deadline

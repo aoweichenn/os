@@ -686,6 +686,38 @@ Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
     return status;
 }
 
+Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
+                    const uint8_t *const source,
+                    const uint64_t length_bytes,
+                    uint64_t &written_bytes) noexcept {
+    written_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !this->PathIsValid(open_file.path) ||
+        open_file.path.vnode.type != NodeType::RegularFile) {
+        return Status::InvalidHandle;
+    }
+    if (!open_file.writable) {
+        return Status::PermissionDenied;
+    }
+    if (source == nullptr && length_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const superblock = open_file.path.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    const Status status = superblock->operations->write(
+        superblock->backend_context, open_file.path.vnode, offset_bytes,
+        source, length_bytes, written_bytes);
+    if (status == Status::Succeeded) {
+        SpinLockGuard guard{this->lock_};
+        this->statistics_.bytes_written += written_bytes;
+    }
+    return status;
+}
+
 Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t capacity_bytes,
                  uint64_t &read_bytes) noexcept {
     read_bytes = OS_KERNEL_VFS_EMPTY_VALUE;

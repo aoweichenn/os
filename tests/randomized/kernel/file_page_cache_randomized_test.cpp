@@ -8,7 +8,7 @@ namespace {
 constexpr std::string_view OS_TEST_FILE_CACHE_RANDOM_SUITE_NAME =
     "kernel/file_page_cache/randomized";
 constexpr std::string_view OS_TEST_FILE_CACHE_RANDOM_REFERENCE =
-    "十万步随机获取与释放必须保持唯一页权威、引用计数和硬容量一致";
+    "十万步随机获取、释放、脏化与回写必须保持唯一页权威、引用计数和状态统计一致";
 constexpr std::string_view OS_TEST_FILE_CACHE_RANDOM_DRAIN =
     "随机引用排空并裁剪后必须完整归还全部页帧";
 
@@ -29,7 +29,11 @@ constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT = 64ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_REFERENCE_CAPACITY = 4096ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_ITERATION_COUNT = 100000ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_ACQUIRE_PERCENT = 57ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_MARK_DIRTY_PERCENT = 13ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_WRITEBACK_PERCENT = 7ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_PERCENT_SCALE = 100ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_WRITEBACK_MAXIMUM_PAGES = 4ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_WRITE_FAILURE_DIVISOR = 11ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_SEED = 0x46494C4543414348ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_SHIFT_FIRST = 12ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_SHIFT_SECOND = 25ULL;
@@ -48,6 +52,13 @@ struct TestMemory final {
 struct ActiveReference final {
     os::kernel::FilePageIdentity identity;
     uint64_t physical_address;
+};
+
+struct WriteContext final {
+    uint64_t successful_write_count;
+    uint64_t failed_write_count;
+    bool fail_next_write;
+    bool failure_consumed;
 };
 
 [[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
@@ -84,6 +95,28 @@ struct ActiveReference final {
     return true;
 }
 
+[[nodiscard]] bool WritePage(
+    void *const context,
+    const os::kernel::FilePageIdentity &identity,
+    const uint8_t *const source,
+    const uint64_t length_bytes) noexcept {
+    if (context == nullptr || source == nullptr ||
+        length_bytes != os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+        source[OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE] !=
+            static_cast<uint8_t>(identity.page_index)) {
+        return false;
+    }
+    WriteContext &write_context = *static_cast<WriteContext *>(context);
+    if (write_context.fail_next_write) {
+        write_context.fail_next_write = false;
+        write_context.failure_consumed = true;
+        ++write_context.failed_write_count;
+        return false;
+    }
+    ++write_context.successful_write_count;
+    return true;
+}
+
 [[nodiscard]] os::kernel::FilePageIdentity MakeIdentity(
     const uint64_t page_index) noexcept {
     return os::kernel::FilePageIdentity{
@@ -108,13 +141,32 @@ struct ActiveReference final {
     uint64_t resident_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t referenced_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t reference_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+    uint64_t dirty_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+    uint64_t writeback_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+    uint64_t error_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     for (uint64_t entry_index = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
          entry_index < OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY;
          ++entry_index) {
-        if (!entries[entry_index].active) {
+        if (entries[entry_index].state ==
+            os::kernel::FilePageCacheEntryState::Empty) {
             continue;
         }
         ++resident_count;
+        dirty_count +=
+            entries[entry_index].state ==
+                    os::kernel::FilePageCacheEntryState::Dirty
+                ? OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT
+                : OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+        writeback_count +=
+            entries[entry_index].state ==
+                    os::kernel::FilePageCacheEntryState::Writeback
+                ? OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT
+                : OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+        error_count +=
+            entries[entry_index].state ==
+                    os::kernel::FilePageCacheEntryState::Error
+                ? OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT
+                : OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
         reference_count += entries[entry_index].mapping_reference_count;
         if (entries[entry_index].mapping_reference_count !=
             OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE) {
@@ -125,7 +177,8 @@ struct ActiveReference final {
              comparison_index <
              OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY;
              ++comparison_index) {
-            if (entries[comparison_index].active &&
+            if (entries[comparison_index].state !=
+                    os::kernel::FilePageCacheEntryState::Empty &&
                 entries[comparison_index].identity.page_index ==
                     entries[entry_index].identity.page_index) {
                 return false;
@@ -135,7 +188,10 @@ struct ActiveReference final {
     return resident_count == statistics.resident_page_count &&
            referenced_count == statistics.referenced_page_count &&
            reference_count ==
-               statistics.active_mapping_reference_count;
+               statistics.active_mapping_reference_count &&
+           dirty_count == statistics.dirty_page_count &&
+           writeback_count == statistics.writeback_page_count &&
+           error_count == statistics.error_page_count;
 }
 
 }
@@ -171,12 +227,14 @@ int main() {
         allocator_initialized &&
         cache.Initialize(entries,
                          OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY,
+                         OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY,
                          frame_allocator, &memory, AccessPage) ==
             os::kernel::FilePageCacheStatus::Succeeded;
     ActiveReference
         references[OS_TEST_FILE_CACHE_RANDOM_REFERENCE_CAPACITY]{};
     uint64_t reference_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t random_state = OS_TEST_FILE_CACHE_RANDOM_SEED;
+    WriteContext write_context{};
     for (uint64_t iteration = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
          reference_valid &&
          iteration < OS_TEST_FILE_CACHE_RANDOM_ITERATION_COUNT;
@@ -201,13 +259,18 @@ int main() {
                  ++entry_index) {
                 identity_resident =
                     identity_resident ||
-                    (entries[entry_index].active &&
+                    (entries[entry_index].state !=
+                         os::kernel::FilePageCacheEntryState::Empty &&
                      entries[entry_index].identity.page_index ==
                          identity.page_index);
                 load_slot_available =
-                    load_slot_available || !entries[entry_index].active ||
-                    entries[entry_index].mapping_reference_count ==
-                        OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+                    load_slot_available ||
+                    entries[entry_index].state ==
+                        os::kernel::FilePageCacheEntryState::Empty ||
+                    (entries[entry_index].state ==
+                         os::kernel::FilePageCacheEntryState::Clean &&
+                     entries[entry_index].mapping_reference_count ==
+                         OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE);
             }
             uint64_t physical_address =
                 OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
@@ -245,6 +308,51 @@ int main() {
                            OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT];
             --reference_count;
         }
+        if (reference_valid &&
+            reference_count != OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
+            NextRandom(random_state) %
+                    OS_TEST_FILE_CACHE_RANDOM_PERCENT_SCALE <
+                OS_TEST_FILE_CACHE_RANDOM_MARK_DIRTY_PERCENT) {
+            const ActiveReference &reference =
+                references[NextRandom(random_state) % reference_count];
+            const os::kernel::FilePageCacheStatus dirty_status =
+                cache.MarkDirty(reference.identity,
+                                reference.physical_address);
+            reference_valid =
+                dirty_status ==
+                    os::kernel::FilePageCacheStatus::Succeeded ||
+                dirty_status ==
+                    os::kernel::FilePageCacheStatus::DirtyLimitReached;
+        }
+        if (reference_valid &&
+            NextRandom(random_state) %
+                    OS_TEST_FILE_CACHE_RANDOM_PERCENT_SCALE <
+                OS_TEST_FILE_CACHE_RANDOM_WRITEBACK_PERCENT) {
+            write_context.fail_next_write =
+                NextRandom(random_state) %
+                    OS_TEST_FILE_CACHE_RANDOM_WRITE_FAILURE_DIVISOR ==
+                OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+            write_context.failure_consumed = false;
+            const uint64_t maximum_page_count =
+                NextRandom(random_state) %
+                    OS_TEST_FILE_CACHE_RANDOM_WRITEBACK_MAXIMUM_PAGES +
+                OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT;
+            uint64_t written_page_count =
+                OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+            const os::kernel::FilePageCacheStatus writeback_status =
+                cache.Writeback(&write_context, WritePage,
+                                maximum_page_count,
+                                written_page_count);
+            reference_valid =
+                written_page_count <= maximum_page_count &&
+                ((write_context.failure_consumed &&
+                  writeback_status ==
+                      os::kernel::FilePageCacheStatus::SourceWriteFailed) ||
+                 (!write_context.failure_consumed &&
+                  writeback_status ==
+                      os::kernel::FilePageCacheStatus::Succeeded));
+            write_context.fail_next_write = false;
+        }
         reference_valid =
             reference_valid &&
             cache.Validate() ==
@@ -263,12 +371,27 @@ int main() {
                           references[reference_count].physical_address) ==
             os::kernel::FilePageCacheStatus::Succeeded;
     }
+    uint64_t final_written_page_count =
+        OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     drain_valid =
         drain_valid &&
+        cache.Writeback(&write_context, WritePage, UINT64_MAX,
+                        final_written_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
         cache.Trim(OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         cache.Validate() ==
             os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Statistics().mark_dirty_count !=
+            OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
+        cache.Statistics().successful_writeback_count !=
+            OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
+        cache.Statistics().failed_writeback_count !=
+            OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
+        write_context.successful_write_count ==
+            cache.Statistics().successful_writeback_count &&
+        write_context.failed_write_count ==
+            cache.Statistics().failed_writeback_count &&
         cache.Destroy() ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         frame_allocator.Statistics().allocated_frame_count ==

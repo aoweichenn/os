@@ -306,6 +306,42 @@ UserFileBackingStatus UserFileBackingManager::Read(
                : UserFileBackingStatus::ReadFailed;
 }
 
+UserFileBackingStatus UserFileBackingManager::WritePage(
+    const FilePageIdentity &identity, const uint8_t *const source,
+    const uint64_t length_bytes) noexcept {
+    if (!this->initialized_) {
+        return UserFileBackingStatus::NotInitialized;
+    }
+    if (source == nullptr ||
+        length_bytes != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+        identity.page_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+        return UserFileBackingStatus::InvalidSource;
+    }
+    const uint64_t offset_bytes =
+        identity.page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    SpinLockGuard guard{this->lock_};
+    for (uint64_t descriptor_index =
+             OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+         descriptor_index < this->capacity_; ++descriptor_index) {
+        const UserFileBackingDescriptor &descriptor =
+            this->descriptors_[descriptor_index];
+        if (!descriptor.active ||
+            descriptor.kind != UserFileBackingKind::VfsFile ||
+            !descriptor.open_file.writable || descriptor.vfs == nullptr ||
+            !this->IdentitiesEqual(descriptor.identity, identity.file)) {
+            continue;
+        }
+        uint64_t written_bytes = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+        return descriptor.vfs->WriteAt(descriptor.open_file, offset_bytes,
+                                       source, length_bytes,
+                                       written_bytes) == fs::Status::Succeeded &&
+                       written_bytes == length_bytes
+                   ? UserFileBackingStatus::Succeeded
+                   : UserFileBackingStatus::WriteFailed;
+    }
+    return UserFileBackingStatus::WriteFailed;
+}
+
 UserFileBackingStatus UserFileBackingManager::ReadDescriptor(
     const uint64_t descriptor_index, const uint64_t generation,
     UserFileBackingDescriptor &descriptor) const noexcept {
@@ -449,6 +485,18 @@ bool ReadUserFileBackingPage(
                                   destination, read_capacity,
                                   read_bytes) == fs::Status::Succeeded &&
            read_bytes == read_capacity;
+}
+
+bool WriteUserFileBackingPage(
+    void *const context, const FilePageIdentity &identity,
+    const uint8_t *const source, const uint64_t length_bytes) noexcept {
+    if (context == nullptr) {
+        return false;
+    }
+    UserFileBackingManager &manager =
+        *static_cast<UserFileBackingManager *>(context);
+    return manager.WritePage(identity, source, length_bytes) ==
+           UserFileBackingStatus::Succeeded;
 }
 
 }

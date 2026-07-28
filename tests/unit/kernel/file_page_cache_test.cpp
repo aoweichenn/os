@@ -19,6 +19,10 @@ constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_INVALIDATION =
     "失效必须先拒绝活动映射并在引用释放后回收目标文件全部页";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_FAILURE =
     "来源读取失败不得留下缓存项或页帧泄漏";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_WRITEBACK =
+    "脏页必须受上限约束并经过 writeback 才能恢复为 clean";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_WRITEBACK_FAILURE =
+    "写回失败必须保留 Error 页且重试成功前不得淘汰";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_DESTROY =
     "销毁后页帧统计必须恢复初始化基线";
 
@@ -33,6 +37,7 @@ constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MANAGED_SIZE_BYTES =
     os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MEMORY_MAP_ENTRY_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_CAPACITY = 2ULL;
+constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_DIRTY_PAGE_LIMIT = 1ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_FIRST_PAGE_INDEX = 0ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_SECOND_PAGE_INDEX = 1ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX = 2ULL;
@@ -53,6 +58,11 @@ struct TestMemory final {
 struct TestReader final {
     uint64_t failure_page_index;
     uint64_t read_count;
+};
+
+struct TestWriter final {
+    uint64_t remaining_failure_count;
+    uint64_t write_count;
 };
 
 [[nodiscard]] uint8_t *AccessPage(void *const context,
@@ -84,6 +94,24 @@ struct TestReader final {
     destination[capacity_bytes - OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE] =
         static_cast<uint8_t>(OS_TEST_FILE_PAGE_CACHE_LAST_PATTERN -
                              identity.page_index);
+    return true;
+}
+
+[[nodiscard]] bool WritePage(
+    void *const context, const os::kernel::FilePageIdentity &identity,
+    const uint8_t *const source, const uint64_t length_bytes) noexcept {
+    if (context == nullptr || source == nullptr ||
+        length_bytes != os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+        identity.file.node_identifier !=
+            OS_TEST_FILE_PAGE_CACHE_NODE_IDENTIFIER) {
+        return false;
+    }
+    TestWriter &writer = *static_cast<TestWriter *>(context);
+    if (writer.remaining_failure_count != 0ULL) {
+        --writer.remaining_failure_count;
+        return false;
+    }
+    ++writer.write_count;
     return true;
 }
 
@@ -137,6 +165,7 @@ int main() {
     const bool cache_initialized =
         allocator_initialized &&
         cache.Initialize(entries, OS_TEST_FILE_PAGE_CACHE_CAPACITY,
+                         OS_TEST_FILE_PAGE_CACHE_DIRTY_PAGE_LIMIT,
                          frame_allocator, &memory, AccessPage) ==
             os::kernel::FilePageCacheStatus::Succeeded;
     test_context.Expect(cache_initialized,
@@ -269,6 +298,62 @@ int main() {
             frames_before_failure.allocated_frame_count;
     test_context.Expect(failure_atomic,
                         OS_TEST_FILE_PAGE_CACHE_FAILURE);
+
+    bool writeback_first_cache_hit = false;
+    bool writeback_second_cache_hit = false;
+    const bool writeback_pages_loaded =
+        cache.Acquire(first_identity, &reader, ReadPage,
+                      first_physical_address, writeback_first_cache_hit) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Release(first_identity, first_physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Acquire(second_identity, &reader, ReadPage,
+                      second_physical_address, writeback_second_cache_hit) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Release(second_identity, second_physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded;
+    TestWriter writer{
+        .remaining_failure_count = 1ULL,
+        .write_count = 0ULL,
+    };
+    uint64_t written_page_count = 0ULL;
+    const bool writeback_failure_preserved =
+        writeback_pages_loaded &&
+        cache.MarkDirty(first_identity, first_physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.MarkDirty(second_identity, second_physical_address) ==
+            os::kernel::FilePageCacheStatus::DirtyLimitReached &&
+        cache.Invalidate(file_identity) ==
+            os::kernel::FilePageCacheStatus::DirtyPagesRemain &&
+        cache.Writeback(&writer, WritePage, OS_TEST_FILE_PAGE_CACHE_CAPACITY,
+                        written_page_count) ==
+            os::kernel::FilePageCacheStatus::SourceWriteFailed &&
+        written_page_count == 0ULL &&
+        cache.Statistics().error_page_count == 1ULL &&
+        cache.Invalidate(file_identity) ==
+            os::kernel::FilePageCacheStatus::DirtyPagesRemain;
+    test_context.Expect(writeback_failure_preserved,
+                        OS_TEST_FILE_PAGE_CACHE_WRITEBACK_FAILURE);
+
+    const bool writeback_completed =
+        cache.Writeback(&writer, WritePage, OS_TEST_FILE_PAGE_CACHE_CAPACITY,
+                        written_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        written_page_count == 1ULL &&
+        cache.MarkDirty(second_identity, second_physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Writeback(&writer, WritePage, OS_TEST_FILE_PAGE_CACHE_CAPACITY,
+                        written_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        written_page_count == 1ULL &&
+        writer.write_count == 2ULL &&
+        cache.Statistics().dirty_page_count == 0ULL &&
+        cache.Statistics().error_page_count == 0ULL &&
+        cache.Statistics().successful_writeback_count == 2ULL &&
+        cache.Statistics().failed_writeback_count == 1ULL &&
+        cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded;
+    test_context.Expect(writeback_completed,
+                        OS_TEST_FILE_PAGE_CACHE_WRITEBACK);
 
     const bool destroyed =
         cache.Destroy() == os::kernel::FilePageCacheStatus::Succeeded &&

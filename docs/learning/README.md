@@ -3,7 +3,7 @@
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.15：
+实现。当前 `main` 已推进到 v1.16：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -33,9 +33,11 @@
   可中断/可重启阻塞，以及可验证的用户 signal frame 与 `sigreturn`。
 - v1.15 增加 TTY canonical 行规程、session、控制终端、前台进程组、
   stop/continue wait 事件、`/dev/console` 和 Shell 前后台作业控制。
+- v1.16 增加 BlockRequest FIFO、ATA IRQ14 单赢家完成与超时 reset、
+  BlockIo 等待、可写 shared 映射和 dirty/writeback/error 文件页缓存。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.15 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v1.16 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
 [v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md)、
@@ -46,7 +48,8 @@
 [v1.12](../releases/v1.12.md) 与
 [v1.13](../releases/v1.13.md) 与
 [v1.14](../releases/v1.14.md) 与
-[v1.15](../releases/v1.15.md) 发布记录。
+[v1.15](../releases/v1.15.md) 与
+[v1.16](../releases/v1.16.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -78,6 +81,7 @@
   → v1.13 单调时间、统一 deadline 与 timed wait
   → v1.14 信号处置、进程组、可中断等待与 sigreturn
   → v1.15 TTY、session、控制终端与前后台作业
+  → v1.16 IRQ14 块请求、BlockIo 与 shared page writeback
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -178,8 +182,9 @@
 | 21 | [v1.13：单调时间、deadline 与 timed wait](21-v1.13-monotonic-clock-deadline-timed-wait.md) | PIT 有理数累计、绝对截止期、稳定队列、单赢家唤醒、sleep/futex/condition 超时与整机证据 |
 | 22 | [v1.14：进程信号、用户 frame 与 sigreturn](22-v1.14-process-signals-sigreturn.md) | 信号历史、处置/屏蔽/pending 三层状态、进程组、可中断等待、用户 frame、返回验证与隔离 |
 | 23 | [v1.15：TTY、session 与作业控制](23-v1.15-tty-session-job-control.md) | 终端历史、行规、控制字符、SID/PGID、前台所有权、停止/继续事件、`/dev/console` 与 Shell 作业表 |
+| 24 | [v1.16：IRQ14 块请求与共享页写回](24-v1.16-irq14-block-request-writeback.md) | ATA/PIC 标志、单飞请求、IRQ/超时单赢家、BlockIo、write-notify、dirty/writeback/error 与稳定落盘 |
 
-### 5.1 从第一周期过渡到当前 v1.15
+### 5.1 从第一周期过渡到当前 v1.16
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -200,8 +205,9 @@
 | [v1.13](../releases/v1.13.md) | 只有调度 tick → 单调纳秒、统一 deadline 与绝对时间等待 | ABI `time.hpp`、Kernel `time/*`、`process/thread_scheduler.*`、User `system_call.*`、`synchronization.*` |
 | [v1.14](../releases/v1.14.md) | 只能同步等待子进程 → 异步信号、进程组、可中断等待与受控用户返回 | ABI `signal.hpp`、Kernel `process/signal_manager.*`、`process/process_runtime.*`、User `system_call.*`、`signal_probe.cpp` |
 | [v1.15](../releases/v1.15.md) | 只有进程组信号 → TTY 前台所有权、session、停止/继续事件与 Shell 作业控制 | ABI `terminal.hpp`、Kernel `io/terminal.*`、`process/job_control.*`、`fs/console_device_file_system.*`、User `shell_execution.*` |
+| [v1.16](../releases/v1.16.md) | 同步轮询/clean-only cache → IRQ14 BlockRequest、BlockIo 与 dirty/writeback/error shared page | Kernel `device/block_request.*`、`device/ata_pio.*`、`memory/file_page_cache.*`、`user/user_memory.*` |
 
-二十三个阶段的架构结论已合并到
+二十四个阶段的架构结论已合并到
 [architecture.md](../architecture.md)，当前 Kernel 的功能目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。
@@ -392,5 +398,5 @@ Ring 3
 - 为一个正常路径和一个失败路径添加可重复测试。
 - 在不使用 BIOS、第三方 bootloader、libc 或 QEMU `-kernel` 的条件下复现整机。
 
-达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.15，再沿
-[roadmap.md](../roadmap.md) 继续块设备异步化、日志文件系统与 SMP。
+达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.16，再沿
+[roadmap.md](../roadmap.md) 继续 ordered metadata journal 与 ABI 冻结。

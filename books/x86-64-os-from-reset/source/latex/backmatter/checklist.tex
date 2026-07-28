@@ -261,8 +261,8 @@
         不出现 \code{READY}；
   \item 能从 PIC 的 IRR/ISR/IMR、CPU IF/HLT 和 QEMU IRQ 统计区分设备、
         控制器、路由与入口四层故障；
-  \item 能解释 \code{0xFFFC} 掩码、\code{0x04A9} PIT 除数与
-        \code{0x1E}/\code{0x9E} 键盘扫描码；
+  \item 能解释 v0.7 的 \code{0xFFFC}、v1.16 的 \code{0xBFF8} 掩码、
+        \code{0x04A9} PIT 除数与 \code{0x1E}/\code{0x9E} 键盘扫描码；
   \item 能从 Shell \code{READY} 后的 QMP 输入走读到 IRQ1、控制台 FIFO、
         fd 0、阻塞唤醒、命令解析与资源回收；
   \item 能从 \code{USER\_RING3\_ENTER} 走读到 \code{INT 0x80}、
@@ -307,5 +307,21 @@
         私有/共享对象，失败提交点在哪里；
   \item 能运行 private futex 单元/十万步随机测试、两档日常 QEMU 和
         64 GiB/64 Thread 发布门禁，并从统计证明全部资源归零；
+  \item 能画出 ATA IRQ14 经 slave IR6、master IR2、LAPIC LINT0 到
+        vector \code{0x2E} 的连线，并解释两次 EOI 的顺序；
+  \item 能逐位解释 BSY、DRQ、DF、ERR、nIEN 与 SRST，并区分 Read、Write、
+        Flush 的 IRQ 数据/完成阶段；
+  \item 能证明 BlockRequest 的 identifier 为何不能等于可复用槽位，以及
+        IRQ、deadline 和取消为何只允许一个 Completed 结果；
+  \item 能解释 ATA timeout 后只唤醒 Thread 为什么不够，software reset
+        怎样恢复下一请求的协议前置状态；
+  \item 能从页故障 error code 区分 FileShared write-notify、FilePrivate
+        COW、真正只读保护和 not-present 装页；
+  \item 能说明 Clean、Dirty、Writeback、Error 的所有权和淘汰边界，并解释
+        dirty hard limit 为什么必须在开放 PTE.W 前检查；
+  \item 能走读 sync 的 PTE 重新写保护、VFS WriteAt、rootfs sync、异步
+        ATA FLUSH、IRQ14 wake 和 Reap 全链路；
+  \item 能解释 mount generation 与 transaction generation 为何不能混用，
+        并运行两个十万步模型及三档 QEMU 写回证据；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

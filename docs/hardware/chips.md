@@ -402,7 +402,8 @@ SS=`0x1B`、用户栈顶、RFLAGS=`0x202`、CS=`0x23` 和 ELF 入口。RFLAGS
 | ICW3 | `0x04` | `0x02` | 主片 IRQ2 有从片；从片级联 ID=2 |
 | ICW4 | `0x01` | `0x01` | 8086/88 模式 |
 
-初始化后 IMR=`0xFFFF`，设备全部就绪才改为 `0xFFFC`，仅允许 IRQ0/IRQ1。
+初始化后 IMR=`0xFFFF`。v0.7 首次设备闭环改为 `0xFFFC`，仅允许 IRQ0/IRQ1；
+v1.16 运行期改为 `0xBFF8`，同时允许 master IRQ2 cascade 与 slave IRQ14。
 OCW3=`0x0B` 让 command 端口读取 ISR；非特定 EOI 为 `0x20`。
 
 IRQ7 若 ISR bit7=0，是主片虚假中断，不发送 EOI。IRQ15 若从片 ISR bit7=0，
@@ -527,8 +528,14 @@ BSY=0 且 DRQ=1     -> 读取 DATA 的 256 个 16 位字
 | 7 | BBK | 坏块标记 |
 
 固件加载 Stage 1 时统一输出 `IDE_ERROR`；Stage 1 加载 Kernel 时输出
-`KERNEL_ATA_ERROR`。两条路径都把 ERROR 寄存器作为诊断来源，后续设备驱动
-阶段会保留原始 status/error 字节，形成更细的错误类型。
+`KERNEL_ATA_ERROR`。两条路径使用 nIEN 和有界轮询。v1.16 Kernel runtime
+则开放 IRQ14，以 64 槽 FIFO 和单个 Issued 请求拥有通道：Read 在 DRQ IRQ
+搬运数据，Write 在 DRQ IRQ 写入后等待完成 IRQ，Flush 只等待完成；PIT
+deadline 获胜后以 SRST 重置设备，迟到 IRQ 不能覆盖 TimedOut。
+
+运行期中断路由为 ATA IRQ14 → slave IR6 → master IR2 cascade → LAPIC LINT0
+ExtINT → IDT vector `0x2E`。真实 slave IRQ 必须先向 slave 发送 EOI，再向
+master 发送 EOI。
 
 ## 8. 结构化描述与代码的对应关系
 

@@ -408,7 +408,7 @@ panic 不使用动态分配、格式化库、锁、异常、RTTI 或可失败的
 `IA32_APIC_BASE` 指定页映射为 RW/NX/PCD；运行时保持 LAPIC 全局启用，
 启用 SVR，并把 LVT LINT0 配为未屏蔽的 ExtINT，回读后再重映射 8259A。
 PIC 初始屏蔽所有 IRQ，只有 PIT、PS/2 和 ATA 自检全部成功后，才把掩码改为
-`0xFFFC` 并开放 IRQ0/IRQ1。
+`0xBFF8` 并开放 IRQ0/IRQ1、master IRQ2 cascade 与 slave IRQ14。
 
 硬件 IRQ 桩统一压入零错误码和向量号，保存集合与异常 ABI 相同。分发器把
 向量 32..47 还原为 IRQ0..15：
@@ -815,7 +815,7 @@ Kernel 只嵌入启动模式需要直接选择的最小 smoke/异常夹具。模
 [OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=0x...
 [OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
 [OS][KERNEL] PIC_READY
-[OS][KERNEL] PIC_MASK=0x...FFFC
+[OS][KERNEL] PIC_MASK=0x...BFF8
 [OS][KERNEL] PIT_READY
 [OS][KERNEL] PIT_DIVISOR=0x...04A9
 [OS][KERNEL] PIT_FREQUENCY_HZ=0x...03E8
@@ -928,7 +928,8 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
 - 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
   timer/IPI、I/O APIC、MSI/MSI-X 与 SMP 路由尚未实现。
 - 键盘只保存一个待处理语义事件，ATA 仍是禁用设备 IRQ 的同步单扇区 PIO；
-  环形队列、IRQ14、DMA 与通用块请求尚未实现。
+  运行期已经通过 64 槽 BlockRequest FIFO 和 IRQ14 驱动单飞 PIO；
+  DMA、tagged queue、AHCI/NVMe 与多控制器尚未实现。
 - 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态和 buddy
   位图仍按最高 RAM PFN 线性编码，极端稀疏物理地址空间、NUMA、zone、
   per-CPU page list 和分段 `vmemmap` 以后扩展。

@@ -202,11 +202,11 @@ PIC 的 `INTR` 再接到 Local APIC 的 `LINT0=ExtINT`，最后由 CPU 根据 ID
 向量进入汇编入口：
 
 ```text
-PIT channel 0 ── IRQ0 ──┐
-                         ├─ 8259A PIC ─ INTR ─ LAPIC LINT0 ExtINT
-PS/2 keyboard ── IRQ1 ──┘
+PIT channel 0 ── IRQ0 ───┐
+PS/2 keyboard ── IRQ1 ───┼─ 8259A PIC ─ INTR ─ LAPIC LINT0 ExtINT
+ATA primary ── IRQ14 ─────┘
                                       ↓
-                              CPU 查 IDT 0x20 / 0x21
+                           CPU 查 IDT 0x20 / 0x21 / 0x2E
                                       ↓
                          汇编规范化现场 → C++ dispatcher
                                       ↓
@@ -214,9 +214,10 @@ PS/2 keyboard ── IRQ1 ──┘
 ```
 
 PIC 被重映射到 `0x20..0x2F`，因此 IRQ0 对应 IDT vector `0x20`，IRQ1 对应
-`0x21`。当前只解除 IRQ0 和 IRQ1 的屏蔽。ATA IRQ14 保持关闭，磁盘驱动使用
-同步轮询 PIO；图中 ATA 只有蓝色 Port I/O 线，没有红色 IRQ 线，这一点是
-刻意设计，不是漏画。
+`0x21`，IRQ14 对应 `0x2E`。v0.7 历史阶段只解除 IRQ0/IRQ1；v1.16 运行期
+还解除 master IRQ2 cascade 与 slave IRQ14，最终 mask 为 `0xBFF8`。
+ROM、Stage 1 和 early Kernel 仍以 nIEN 做有界轮询；运行期 BlockRequest
+队列才拥有红色 IRQ14 完成路径。
 
 Local APIC 位于 MMIO 物理页 `0xFEE00000`。Kernel 必须确认 xAPIC 已启用、
 x2APIC 未启用，软件使能 SVR，并把 LINT0 配成未屏蔽的 ExtINT。只有随后执行

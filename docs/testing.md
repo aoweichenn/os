@@ -27,7 +27,7 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.15 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.16 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
 SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
 bootstrap 正常链累计注册
@@ -173,7 +173,8 @@ QEMU 自行异常退出仍视为失败。
 - 设备模型单元测试覆盖 PIC 的 IRQ/向量双向映射、掩码失败原子性，PIT
   频率范围、除数舍入与时间溢出，扫描码 make/break/`E0` 序列，以及 ATA
   LBA28、缓冲区长度和启动描述符 magic。
-- 启动集成测试按生产顺序开放 IRQ0、IRQ1，核对最终掩码 `0xFFFC`，并组合
+- 启动集成测试按生产顺序开放 IRQ0、IRQ1、cascade IRQ2 与 IRQ14，核对最终
+  掩码 `0xBFF8`，并组合
   PIT 配置、键盘 `A` 键解码和 LBA 0 描述符校验。
 - 固定种子 `0x1A7E22D3C4B5A697` 执行 4096 轮 IRQ 往返、PIT 有效参数和
   键盘按下/释放性质；每轮同时验证输出只在成功后改变。
@@ -1076,3 +1077,32 @@ STOPPED_PROCESSES = ACTIVE_JOB_PROCESSES = PROCESS_TREE_ZOMBIES = 0
 TTY 输入还必须满足
 `submitted=read+buffered+editing+dropped+consumed`，输出必须满足
 `queued=written+pending` 且最终 pending 为零。
+
+## v1.16 IRQ14 块请求与 writeback 测试
+
+v1.16 构建图共 161 项。新增三项独立测试目标，并扩展既有 FilePageCache、
+rootfs、PIC 与 QEMU 证据：
+
+- `os_kernel_block_request_unit_tests`：参数、FIFO、单飞、容量、取消、完成、
+  超时、重复解析、Reap 和统计；
+- `os_kernel_block_request_completion_integration_tests`：两请求串联下的
+  issue/IRQ completion/next issue，以及 PIT timeout 单赢家；
+- `os_kernel_block_request_randomized_tests`：固定种子 100000 步提交、签发、
+  成功、设备错误、超时、取消和回收，每 32 步执行完整 Validate；
+- FilePageCache 单元与 100000 步随机模型：dirty hard limit、Writeback、
+  Error 保留、失败重试、clean LRU 与最终统计守恒；
+- rootfs 集成：普通写事务前后 mount generation 不变、transaction generation
+  增长；
+- device bootstrap：slave IRQ14 自动开放 master cascade，最终 mask 为
+  `0xBFF8`。
+
+QEMU 三档都要求 `ATA_IRQ14_READY` 与 `ATA_REQUEST_CAPACITY=0x40`。用户
+memory probe 让两个 shared alias 观察同一写入，执行 sync 后从文件接口读回，
+并同时证明 private 修改没有写回。异步 Flush 日志要求提交和完成各一次，
+completion time 不早于 submit time，结果为 Succeeded；完成时还必须观察
+`OTHER_THREAD_PROGRESS=1`。
+
+宿主纯逻辑测试可并行。交互式 functional、跨启动 persistence 与 64 GiB
+capacity 共享大量 TCG CPU 时可能越过逐键 20 秒进度门限，发布门禁因此在
+并行全量后对失败的 QEMU 用例进行低优先级、单任务复验；复验仍保留有限
+deadline，禁止以无限等待掩盖死锁。

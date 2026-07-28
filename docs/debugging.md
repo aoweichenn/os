@@ -633,6 +633,27 @@ QEMU 系统测试在 `READY` 后才用 QMP `sendkey a`，以免把初始化 ACK 
 成功但 magic 错误，检查目标是否为 primary master LBA 0，以及 256 个 16 位
 DATA 字是否按小端拆成 512 字节。
 
+### IRQ14 请求提交后不完成
+
+先区分 early polling 与 runtime IRQ 路径。若 `ATA_IRQ14_READY` 缺失，检查
+请求队列是否在 STI 前初始化，以及 PIC mask 是否为 `0xBFF8`：master bit 2
+和 slave bit 6 缺一都收不到 IRQ14。
+
+若 IRQ14 计数增长但请求不完成，按操作检查状态阶段：
+
+- Read 要求 IRQ 时 DRQ=1，再从 data port 读 256 个 word；
+- Write 第一次 DRQ IRQ 负责写 256 个 word，之后还需完成 IRQ；
+- Flush 没有数据阶段，只等待 BSY 清除且 ERR/DF 均为零。
+
+若 PIT 报 TimedOut，确认 ResolveTimeout 先冻结结果再执行 SRST；不要在设备
+仍 BSY 时直接签发下一请求。迟到 IRQ 返回 RequestAlreadyResolved 属于可诊断
+竞争，不能覆盖 TimedOut。
+
+若 shared alias 可见但 sync 后文件未更新，检查顺序是否为“重新写保护 PTE
+→ Dirty/Error 写回 → VFS sync → ATA FLUSH”。Error 页不得被 Trim 淘汰。
+若同一 inode 出现两个 cache identity，检查 rootfs 是否错误地把 transaction
+generation 写回 VFS mount generation。
+
 ### QEMU 捕获器为什么使用里程碑和总截止
 
 先看带宿主时间戳的最后一行。一次固定墙钟预算耗尽不能单独判定 PIT 或 PIC

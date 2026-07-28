@@ -1,6 +1,7 @@
 #include "os/kernel/user/system_calls.hpp"
 
 #include "os/abi/system_call.hpp"
+#include "os/abi/time.hpp"
 #include "os/kernel/arch/cpu_local.hpp"
 #include "os/kernel/arch/descriptor_tables.hpp"
 #include "os/kernel/arch/interrupt_runtime.hpp"
@@ -24,6 +25,11 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ADDRESS_PROBE_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_STACK_PROBE_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_WAKE_ALL_THREAD_COUNT = OS_KERNEL_THREAD_CAPACITY_LIMIT;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_MILLISECONDS = 500ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS =
+    OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_MILLISECONDS *
+    os::abi::OS_ABI_TIME_NANOSECONDS_PER_MILLISECOND;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_EMPTY_REQUEST_IDENTIFIER = 0ULL;
 constexpr uint8_t OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESERVED_VALUE = 0U;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_EMPTY_WRITE_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_PIPE_SUCCESS_RESULT = 0LL;
@@ -32,6 +38,14 @@ constexpr int64_t OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_KERNEL_SYSTEM_CALL_DIRECTORY_ENTRY_RESULT = 1LL;
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MESSAGE[] =
     "[OS][KERNEL] USER_RETURN_REJECTED\r\n";
+constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_REQUEST_PREFIX[] =
+    "[OS][KERNEL][BLOCK] FLUSH_SUBMIT_REQUEST=";
+constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_TIME_PREFIX[] =
+    "[OS][KERNEL][BLOCK] FLUSH_SUBMIT_TIME_NS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_STATUS_PREFIX[] =
+    "[OS][KERNEL][BLOCK] FLUSH_SUBMIT_STATUS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_IMMEDIATE_RESULT_PREFIX[] =
+    "[OS][KERNEL][BLOCK] FLUSH_IMMEDIATE_RESULT=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_OWNERSHIP_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_OWNED=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STATUS_PREFIX[] =
@@ -729,10 +743,68 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
 }
 
-[[nodiscard]] int64_t DispatchSyncFileSystem() noexcept {
-    return MapFileSystemStatus(
+[[nodiscard]] ExceptionFrame *
+DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
+    const int64_t sync_result = MapFileSystemStatus(
         SyncCurrentProcessFileSystem(),
         static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
+    if (sync_result != OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT) {
+        frame.register_rax = static_cast<uint64_t>(sync_result);
+        return &frame;
+    }
+    const uint64_t owner_thread_index = CurrentThreadIndexForBlockIo();
+    const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
+    const uint64_t deadline_nanoseconds =
+        now_nanoseconds >
+                UINT64_MAX -
+                    OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS
+            ? UINT64_MAX
+            : now_nanoseconds +
+                  OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS;
+    const bool interrupts_were_enabled = DisableInterrupts();
+    uint64_t request_identifier = OS_KERNEL_SYSTEM_CALL_EMPTY_REQUEST_IDENTIFIER;
+    BlockRequestResult immediate_result = BlockRequestResult::None;
+    const AtaPioStatus submit_status = SubmitAsynchronousAtaFlush(
+        owner_thread_index, deadline_nanoseconds, request_identifier,
+        immediate_result);
+    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
+    if (!serial_port.TryWriteHexLine(
+            OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_REQUEST_PREFIX,
+            request_identifier) ||
+        !serial_port.TryWriteHexLine(
+            OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_TIME_PREFIX,
+            now_nanoseconds)) {
+        HaltProcessor();
+    }
+    if (submit_status != AtaPioStatus::Succeeded ||
+        immediate_result != BlockRequestResult::None) {
+        if (!serial_port.TryWriteHexLine(
+                OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_STATUS_PREFIX,
+                static_cast<uint64_t>(submit_status)) ||
+            !serial_port.TryWriteHexLine(
+                OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_IMMEDIATE_RESULT_PREFIX,
+                static_cast<uint64_t>(immediate_result))) {
+            HaltProcessor();
+        }
+        RestoreInterrupts(interrupts_were_enabled);
+        frame.register_rax = static_cast<uint64_t>(
+            immediate_result == BlockRequestResult::TimedOut
+                ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT
+                : os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE);
+        return &frame;
+    }
+    if (RegisterCurrentBlockIoRequest(request_identifier) !=
+        ProcessRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    ExceptionFrame *resume_frame = &frame;
+    if (BlockCurrentThread(
+            frame, WaitCondition::BlockIo,
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem),
+            false, resume_frame) != ProcessRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return resume_frame;
 }
 
 [[nodiscard]] int64_t DispatchTryReadDescriptor(const uint64_t descriptor,
@@ -1604,8 +1676,7 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
         return frame;
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem)) {
-        frame->register_rax = static_cast<uint64_t>(DispatchSyncFileSystem());
-        return frame;
+        return DispatchSyncFileSystem(*frame);
     }
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::TryReadDescriptor)) {
         frame->register_rax = static_cast<uint64_t>(DispatchTryReadDescriptor(

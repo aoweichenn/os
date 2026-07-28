@@ -576,6 +576,21 @@ os_add_kernel_device_test(
     randomized/kernel/interrupt_device_randomized_test.cpp
     "randomized"
 )
+os_add_kernel_device_test(
+    os_kernel_block_request_unit_tests
+    unit/kernel/block_request_test.cpp
+    "unit"
+)
+os_add_kernel_device_test(
+    os_kernel_block_request_completion_integration_tests
+    integration/boot/block_request_completion_test.cpp
+    "integration"
+)
+os_add_kernel_device_test(
+    os_kernel_block_request_randomized_tests
+    randomized/kernel/block_request_randomized_test.cpp
+    "randomized"
+)
 
 function(os_add_kernel_user_test OS_TEST_TARGET OS_TEST_SOURCE OS_TEST_LABEL)
     add_executable(${OS_TEST_TARGET} ${OS_TEST_SOURCE})

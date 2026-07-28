@@ -417,7 +417,8 @@ chips:
       nonspecific_eoi: 0x20
       read_isr_ocw3: 0x0B
       initial_mask: 0xFFFF
-      enabled_mask: 0xFFFC
+      historical_v0_7_enabled_mask: 0xFFFC
+      current_v1_16_enabled_mask: 0xBFF8
       spurious_irqs:
         - 7
         - 15
@@ -425,6 +426,7 @@ chips:
       irq0_timer: 0x20
       irq1_keyboard: 0x21
       irq2_cascade: 0x22
+      irq14_ata_primary: 0x2E
       irq7_spurious_test: 0x27
       irq15_spurious: 0x2F
   ns16550a_com1:
@@ -480,7 +482,7 @@ chips:
           6: TEMT
           7: FIFO_ERROR
   pata_primary_master:
-    role: stage1-disk-transport
+    role: early-boot-polling-and-runtime-irq14-disk-transport
     command_block_base: 0x01F0
     control_base: 0x03F6
     registers:
@@ -524,7 +526,9 @@ chips:
         name: STATUS_COMMAND
         width_bits: 8
         access: read-or-write
-        meaning: "read: status; write: command; current command READ SECTORS=0x20"
+        meaning: >-
+          read: status; write: command; READ SECTORS=0x20,
+          WRITE SECTORS=0x30, FLUSH CACHE=0xE7
         bits:
           0: ERR
           3: DRQ
@@ -549,6 +553,26 @@ chips:
       5: MC
       6: UNC
       7: BBK
+    execution_profiles:
+      early_boot:
+        interrupt_disabled: true
+        completion: bounded-polling
+        owners:
+          - firmware
+          - stage1
+          - kernel-early-self-test
+      runtime_v1_16:
+        irq: 14
+        vector: 0x2E
+        request_capacity: 64
+        maximum_in_flight: 1
+        ordering: FIFO
+        completion_results:
+          - SUCCEEDED
+          - DEVICE_ERROR
+          - TIMED_OUT
+          - CANCELLED
+        timeout_recovery: SOFTWARE_RESET
   pit_8254:
     role: monotonic-clock-foundation
     ports:

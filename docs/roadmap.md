@@ -56,7 +56,8 @@ VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 
 计划、dup2、QEMU 重定向与 16 级管线证据；v1.12 加入用户 Thread/TLS/futex，
 v1.13 再加入单调时钟、deadline queue 与 timed wait；v1.14 又加入普通信号、
 进程组、用户 handler 和安全 sigreturn；v1.15 再加入 TTY、session、
-字符设备控制台和前后台作业控制，当前构建图为 158 项。
+字符设备控制台和前后台作业控制；v1.16 又加入 IRQ14 块请求、I/O 等待、
+writable shared 文件页和 dirty/writeback/error cache，当前构建图为 161 项。
 数量仍由构建图自动生成，不作为未来版本的固定常量。
 
 ## 第二周期最终目标
@@ -821,6 +822,8 @@ Ctrl-Z/Ctrl-C 路径、后台读取拒绝、100000 步组迁移与最终资源�
 
 ### v1.16 IRQ 块层与 writeback page cache
 
+**状态：完成**
+
 **目标**
 
 将 ATA 从同步轮询调用升级为可等待请求，并建立 dirty/writeback 页状态。
@@ -840,6 +843,29 @@ Ctrl-Z/Ctrl-C 路径、后台读取拒绝、100000 步组迁移与最终资源�
 - dirty 页在压力下受限，写回失败不被伪装为 clean；
 - I/O 阻塞期间调度证据显示其他 Thread 前进；
 - 随机请求完成顺序和 cache 状态模型无重复完成或资源泄漏。
+
+**完成状态**
+
+v1.16 已完成。`BlockRequestQueue` 现在以 64 位单调标识、FIFO 排队、单个
+in-flight ATA 命令和显式 Completed/Reap 生命周期管理请求；IRQ14 只读取
+设备状态或搬运一个扇区、确认 PIC、提交唯一结果并定向唤醒等待 Thread。
+PIT deadline 与设备 IRQ 竞争时，由请求状态机保证成功、设备错误、超时和
+取消中只有一个结果获胜；超时路径执行 ATA software reset 后才允许发出下一
+请求。早期 ROM、Stage 1 和启动自检仍使用有界轮询，避免把尚未建立的调度
+依赖倒灌进启动链。
+
+文件页缓存已经具备 Empty/Clean/Dirty/Writeback/Error 状态、脏页硬上限、
+失败保留与显式重试。完整页、可写打开的 `MAP_SHARED` 映射以初始只读 PTE
+捕获第一次写故障，先标脏再开放该映射；`sync` 重新写保护共享映射，按
+VFS identity 回写 dirty/error 页，随后经 rootfs cache 和异步 ATA FLUSH
+建立稳定边界。`MAP_PRIVATE` 仍只进入 COW，不会污染文件。
+
+单元、集成与两个十万步固定种子随机模型覆盖 FIFO、单赢家、容量拒绝、
+回压、写回失败与重试；三档 QEMU 使用同一实现，真实日志证明 IRQ14 完成
+期间另一个 Ready Thread 已前进。完整证据见
+[v1.16 发布记录](releases/v1.16.md)、
+[学习章](learning/24-v1.16-irq14-block-request-writeback.md) 与
+[ADR 0043](adr/0043-irq14-block-request-and-writeback-cache.md)。
 
 ### v1.17 ordered metadata journal 与崩溃恢复
 

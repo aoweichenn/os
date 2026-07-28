@@ -10,6 +10,8 @@ constexpr std::string_view OS_TEST_DEVICE_MODEL_PIC_VECTOR_ROUND_TRIP =
     "PIC 的 IRQ 与重映射向量必须双向一致";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_PIC_INVALID = "非法 PIC 向量必须失败且不修改输出";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_PIC_MASK = "启用 IRQ0 和 IRQ1 只能清除对应屏蔽位";
+constexpr std::string_view OS_TEST_DEVICE_MODEL_PIC_SLAVE_CASCADE =
+    "启用从片 IRQ14 必须同时开放主片 IRQ2 级联线";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_PIT_CONFIGURATION =
     "PIT 目标频率必须转换为可表示的硬件分频值";
 constexpr std::string_view OS_TEST_DEVICE_MODEL_PIT_REJECTS_RANGE =
@@ -32,6 +34,7 @@ constexpr std::string_view OS_TEST_DEVICE_MODEL_ATA_MAGIC =
 
 constexpr uint64_t OS_TEST_DEVICE_MODEL_MASTER_TIMER_IRQ = 0ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_MASTER_KEYBOARD_IRQ = 1ULL;
+constexpr uint64_t OS_TEST_DEVICE_MODEL_SLAVE_ATA_IRQ = 14ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_SLAVE_LAST_IRQ = 15ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_INVALID_IRQ = 16ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_EXPECTED_TIMER_VECTOR = 32ULL;
@@ -39,6 +42,7 @@ constexpr uint64_t OS_TEST_DEVICE_MODEL_EXPECTED_LAST_VECTOR = 47ULL;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_UNCHANGED_VALUE = 0xA5A5A5A5A5A5A5A5ULL;
 constexpr uint16_t OS_TEST_DEVICE_MODEL_INITIAL_PIC_MASK = 0xFFFFU;
 constexpr uint16_t OS_TEST_DEVICE_MODEL_TIMER_KEYBOARD_PIC_MASK = 0xFFFCU;
+constexpr uint16_t OS_TEST_DEVICE_MODEL_ATA_PIC_MASK = 0xBFFBU;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_PIT_TARGET_FREQUENCY_HZ = 1000ULL;
 constexpr uint16_t OS_TEST_DEVICE_MODEL_EXPECTED_PIT_DIVISOR = 1193U;
 constexpr uint64_t OS_TEST_DEVICE_MODEL_EXPECTED_PIT_ACTUAL_FREQUENCY_HZ = 1000ULL;
@@ -117,6 +121,16 @@ int main() {
                 timer_keyboard_enabled_mask) == os::kernel::LegacyPicModelStatus::Succeeded &&
             timer_keyboard_enabled_mask == OS_TEST_DEVICE_MODEL_TIMER_KEYBOARD_PIC_MASK,
         OS_TEST_DEVICE_MODEL_PIC_MASK);
+
+    uint16_t ata_enabled_mask = 0U;
+    test_context.Expect(
+        os::kernel::EnableLegacyPicInterruptRequest(
+            OS_TEST_DEVICE_MODEL_INITIAL_PIC_MASK,
+            OS_TEST_DEVICE_MODEL_SLAVE_ATA_IRQ,
+            ata_enabled_mask) ==
+                os::kernel::LegacyPicModelStatus::Succeeded &&
+            ata_enabled_mask == OS_TEST_DEVICE_MODEL_ATA_PIC_MASK,
+        OS_TEST_DEVICE_MODEL_PIC_SLAVE_CASCADE);
 
     os::kernel::PitConfiguration pit_configuration{};
     test_context.Expect(

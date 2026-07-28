@@ -143,6 +143,6 @@
   <rect x="55" y="947" width="1690" height="38" rx="11"
         fill="#ffffff" stroke="#c7d1df"/>
   <text x="80" y="972" class="small">
-    初始化期间 CLI；GDT/TSS/IDT、PIC、LAPIC 和设备全部就绪后才 STI。ATA IRQ14 保持关闭。
+    初始化期间 CLI；v0.7 图只开放 IRQ0/1。v1.16 另开放 cascade IRQ2 与 ATA IRQ14。
   </text>
 </svg>

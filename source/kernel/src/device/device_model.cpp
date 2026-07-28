@@ -5,6 +5,8 @@ namespace os::kernel {
 namespace {
 
 constexpr uint64_t OS_KERNEL_DEVICE_PIC_MASK_BIT_COUNT = 16ULL;
+constexpr uint64_t OS_KERNEL_DEVICE_PIC_MASTER_INTERRUPT_REQUEST_COUNT = 8ULL;
+constexpr uint64_t OS_KERNEL_DEVICE_PIC_CASCADE_INTERRUPT_REQUEST = 2ULL;
 constexpr uint16_t OS_KERNEL_DEVICE_PIC_SINGLE_MASK_BIT = 0x0001U;
 constexpr uint64_t OS_KERNEL_DEVICE_PIT_MINIMUM_DIVISOR = 1ULL;
 constexpr uint64_t OS_KERNEL_DEVICE_PIT_MAXIMUM_DIVISOR = 0x0000FFFFULL;
@@ -101,6 +103,15 @@ LegacyPicModelStatus EnableLegacyPicInterruptRequest(const uint16_t current_mask
     updated_mask = static_cast<uint16_t>(
         current_mask & static_cast<uint16_t>(~(static_cast<uint16_t>(
                            OS_KERNEL_DEVICE_PIC_SINGLE_MASK_BIT << interrupt_request))));
+    if (interrupt_request >=
+        OS_KERNEL_DEVICE_PIC_MASTER_INTERRUPT_REQUEST_COUNT) {
+        // 从片的中断输出接到主片 IRQ2；只开放从片位而不开放级联位不会抵达 CPU。
+        updated_mask = static_cast<uint16_t>(
+            updated_mask &
+            static_cast<uint16_t>(~(static_cast<uint16_t>(
+                OS_KERNEL_DEVICE_PIC_SINGLE_MASK_BIT
+                << OS_KERNEL_DEVICE_PIC_CASCADE_INTERRUPT_REQUEST))));
+    }
     return LegacyPicModelStatus::Succeeded;
 }
 

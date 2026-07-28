@@ -28,6 +28,7 @@ set(
 set(
     OS_KERNEL_DEVICE_HEADERS
     include/os/kernel/device/ata_pio.hpp
+    include/os/kernel/device/block_request.hpp
     include/os/kernel/device/device_model.hpp
     include/os/kernel/device/legacy_pic.hpp
     include/os/kernel/device/port_io.hpp
@@ -153,6 +154,7 @@ set(
 set(
     OS_KERNEL_DEVICE_SOURCES
     src/device/ata_pio.cpp
+    src/device/block_request.cpp
     src/device/device_model.cpp
     src/device/legacy_pic.cpp
     src/device/port_io.cpp
@@ -345,7 +347,9 @@ target_link_libraries(
 add_library(
     os_kernel_device_model_host
     STATIC
+        src/device/block_request.cpp
         src/device/device_model.cpp
+        include/os/kernel/device/block_request.hpp
         include/os/kernel/device/device_model.hpp
 )
 

@@ -61,8 +61,8 @@ constexpr char OS_USER_SHELL_FOREGROUND_COMMAND[] = "fg";
 constexpr char OS_USER_SHELL_BACKGROUND_COMMAND[] = "bg";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v1.15\r\n"
-    "TTY、前后台作业控制与最多 16 级管线已经启用；输入 help 查看帮助。\r\n";
+    "\r\nx86-64 OS Lab v1.16\r\n"
+    "IRQ14 异步存储、可回写共享映射与作业控制已经启用；输入 help 查看帮助。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";
@@ -114,6 +114,9 @@ constexpr char OS_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER[] =
     "[OS][USER][SHELL] FOREGROUND_JOB_WAITING\r\n";
 constexpr char OS_USER_SHELL_JOB_CONTROL_READY_MARKER[] =
     "[OS][USER][SHELL] JOB_CONTROL_READY\r\n";
+constexpr uint64_t OS_USER_SHELL_JOB_CONTROL_SIGNAL_SET =
+    os::abi::SignalBit(os::abi::OS_ABI_SIGNAL_INTERRUPT_NUMBER) |
+    os::abi::SignalBit(os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER);
 
 void ShellInteractiveSignalHandler(const uint64_t signal_number,
                                    os::abi::SignalFrame *const signal_frame) noexcept {
@@ -598,11 +601,15 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
                                     const uint64_t stage_index,
                                     os::abi::PipeDescriptorPair *const pipes,
                                     const uint64_t pipe_count,
-                                    const uint64_t process_group_id) noexcept {
-    if (SetProcessGroup(process_group_id) != OS_USER_SHELL_SUCCESS_RESULT) {
-        ExitProcess(OS_USER_SHELL_CHILD_SETUP_FAILURE_EXIT_CODE);
-    }
-    if (!RestoreChildSignalPolicy()) {
+                                    const uint64_t process_group_id,
+                                    const uint64_t inherited_signal_mask) noexcept {
+    // 子进程继承 Shell handler，但在父进程发布前台组前同时继承了阻塞 mask。
+    // 必须先恢复默认处置，再加入作业组并解除 mask，避免 Ctrl-C/Z 落入
+    // fork 与 exec 之间时调用 Shell handler。
+    if (!RestoreChildSignalPolicy() ||
+        SetProcessGroup(process_group_id) != OS_USER_SHELL_SUCCESS_RESULT ||
+        SetSignalMask(inherited_signal_mask, nullptr) !=
+            OS_USER_SHELL_SUCCESS_RESULT) {
         ExitProcess(OS_USER_SHELL_CHILD_SETUP_FAILURE_EXIT_CODE);
     }
     const ShellExecutionStage &stage = execution_plan.stages[stage_index];
@@ -706,13 +713,22 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         }
     }
 
+    uint64_t inherited_signal_mask = OS_USER_SHELL_EMPTY_VALUE;
+    if (SetSignalMask(OS_USER_SHELL_JOB_CONTROL_SIGNAL_SET,
+                      &inherited_signal_mask) !=
+        OS_USER_SHELL_SUCCESS_RESULT) {
+        ClosePipelineDescriptors(pipes, pipe_count);
+        ReleaseJob(*job);
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
+
     uint64_t process_group_id = OS_USER_SHELL_EMPTY_VALUE;
     for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE; stage_index < execution_plan.stage_count;
          ++stage_index) {
         const int64_t fork_result = ForkProcess();
         if (fork_result == OS_USER_SHELL_SUCCESS_RESULT) {
             ExecuteChildStage(execution_plan, stage_index, pipes, pipe_count,
-                              process_group_id);
+                              process_group_id, inherited_signal_mask);
         }
         if (fork_result < OS_USER_SHELL_SUCCESS_RESULT) {
             ClosePipelineDescriptors(pipes, pipe_count);
@@ -721,6 +737,7 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
                     process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
                 static_cast<void>(PumpJobEvents(*job, false));
             }
+            static_cast<void>(SetSignalMask(inherited_signal_mask, nullptr));
             ReleaseJob(*job);
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
@@ -738,11 +755,20 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
             static_cast<void>(SendProcessGroupSignal(
                 process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
             static_cast<void>(PumpJobEvents(*job, false));
+            static_cast<void>(SetSignalMask(inherited_signal_mask, nullptr));
             ReleaseJob(*job);
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
     }
     ClosePipelineDescriptors(pipes, pipe_count);
+    if (SetSignalMask(inherited_signal_mask, nullptr) !=
+        OS_USER_SHELL_SUCCESS_RESULT) {
+        static_cast<void>(SendProcessGroupSignal(
+            process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
+        static_cast<void>(PumpJobEvents(*job, false));
+        ReleaseJob(*job);
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
 
     if (execution_plan.background) {
         static_cast<void>(WriteJob(*job));

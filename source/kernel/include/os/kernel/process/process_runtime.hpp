@@ -4,6 +4,7 @@
 #include "os/kernel/arch/exception_frame.hpp"
 #include "os/kernel/arch/extended_state.hpp"
 #include "os/kernel/arch/user_context.hpp"
+#include "os/kernel/device/block_request.hpp"
 #include "os/kernel/fs/file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/io/terminal.hpp"
@@ -65,6 +66,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     ThreadFailure,
     FutexFailure,
     SignalFailure,
+    BlockIoRequestAbandoned,
 };
 
 enum class UserSignalStatus : uint64_t {
@@ -395,6 +397,13 @@ void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] ProcessRuntimeStatus WakeThreads(WaitCondition wait_condition, WakeReason wake_reason,
                                                uint64_t maximum_wake_count,
                                                uint64_t &woken_thread_count) noexcept;
+[[nodiscard]] uint64_t CurrentThreadIndexForBlockIo() noexcept;
+[[nodiscard]] ProcessRuntimeStatus
+RegisterCurrentBlockIoRequest(uint64_t request_identifier) noexcept;
+[[nodiscard]] ProcessRuntimeStatus
+CompleteBlockIoRequest(uint64_t owner_thread_index,
+                       uint64_t request_identifier,
+                       BlockRequestResult result) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
 [[nodiscard]] uint64_t HandleProcessDeadlineInterrupt(uint64_t now_nanoseconds) noexcept;
 [[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;

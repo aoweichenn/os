@@ -468,11 +468,13 @@ LBA 拆到：
 write data 进入设备/QEMU cache 不等于持久介质顺序已完成。文件系统 Sync
 最终需要 FLUSH。
 
-### 17.5 为什么当前关闭 ATA IRQ
+### 17.5 为什么早期阶段关闭 ATA IRQ，v1.16 才开放
 
-当前 block I/O 采用同步 PIO polling，命令完成事件由调用者独占。若同时启用
-IRQ14，又没有异步 request ownership，完成可能被两条路径竞争。异步块层应在
-后续单独建立 request queue、completion 和 wakeup。
+ROM、Stage 1 与 v0.7 的 block I/O 采用同步 PIO polling，命令完成事件由
+调用者独占。若同时启用 IRQ14，又没有异步 request ownership，完成会被两条
+路径竞争。v1.16 已单独建立 BlockRequest FIFO、单个 Issued、completion、
+deadline reset 和 BlockIo wakeup，因而 Kernel runtime 开放 IRQ14；启动链
+仍保持 nIEN 与有界 polling。
 
 ## 18. `fw_cfg`
 

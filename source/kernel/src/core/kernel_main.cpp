@@ -236,6 +236,10 @@ constexpr char OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE[] = "[OS][KERNEL] PS2_K
 constexpr char OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE[] = "[OS][KERNEL] ATA_PIO_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE[] =
     "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID\r\n";
+constexpr char OS_KERNEL_MAIN_ATA_IRQ14_READY_MESSAGE[] =
+    "[OS][KERNEL] ATA_IRQ14_READY\r\n";
+constexpr char OS_KERNEL_MAIN_ATA_REQUEST_CAPACITY_PREFIX[] =
+    "[OS][KERNEL] ATA_REQUEST_CAPACITY=";
 constexpr char OS_KERNEL_MAIN_ROOTFS_V2_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V2_MOUNTED\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE[] =
     "[OS][KERNEL] FILE_SYSTEM_CORRUPT\r\n";
@@ -659,7 +663,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.15";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.16";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -1004,6 +1008,10 @@ void InitializeKernelDevices(const SerialPort &serial_port) noexcept {
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_IRQ14_READY_MESSAGE);
+    WriteRequiredHexLine(serial_port,
+                         OS_KERNEL_MAIN_ATA_REQUEST_CAPACITY_PREFIX,
+                         statistics.ata_request_capacity);
 
     TriggerLegacyPicSpuriousInterrupt();
     statistics = GetInterruptRuntimeStatistics();

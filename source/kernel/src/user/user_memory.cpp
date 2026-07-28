@@ -21,6 +21,7 @@ constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_USER_BIT = 1ULL << 2ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_RESERVED_BIT = 1ULL << 3ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_INSTRUCTION_BIT = 1ULL << 4ULL;
 constexpr uint8_t OS_KERNEL_USER_MEMORY_ZERO_BYTE = 0U;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_DIRTY_PAGE_LIMIT_DIVISOR = 2ULL;
 
 struct MemoryImageReaderContext final {
     const uint8_t *image;
@@ -163,7 +164,9 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                                      const uint64_t page_virtual_address,
                                      const UserFileBackingDescriptor &descriptor,
                                      FilePageIdentity &page_identity) noexcept {
-    if (!IsFileBackedVirtualMemoryAreaKind(area.kind) || area.permissions.writable ||
+    if (!IsFileBackedVirtualMemoryAreaKind(area.kind) ||
+        (area.permissions.writable &&
+         area.kind != VirtualMemoryAreaKind::FileShared) ||
         page_virtual_address < area.begin_address) {
         return false;
     }
@@ -244,8 +247,11 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
                        ? UserVirtualMemoryStatus::FileReadFailed
                        : UserVirtualMemoryStatus::PageMappingFailed;
         }
+        const bool map_writable =
+            area.permissions.writable &&
+            area.kind != VirtualMemoryAreaKind::FileShared;
         if (MapExistingUserPage(address_space.root_physical_address, page_virtual_address,
-                                physical_address, area.permissions.writable,
+                                physical_address, map_writable,
                                 area.permissions.executable) != KernelUserPageStatus::Succeeded) {
             static_cast<void>(user_file_page_cache.Release(page_identity, physical_address));
             return UserVirtualMemoryStatus::PageMappingFailed;
@@ -469,6 +475,43 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
     return UserVirtualMemoryStatus::Succeeded;
 }
 
+[[nodiscard]] UserVirtualMemoryStatus
+MakeSharedFilePageWritable(UserAddressSpace &address_space,
+                           const uint64_t page_address) noexcept {
+    VirtualMemoryArea area{};
+    PageMapping mapping{};
+    if (address_space.virtual_memory_map.FindContaining(page_address, area) !=
+            VirtualMemoryAreaStatus::Succeeded ||
+        area.kind != VirtualMemoryAreaKind::FileShared ||
+        !area.permissions.writable ||
+        QueryAddressSpacePage(address_space.root_physical_address, page_address,
+                              mapping) != PageTableStatus::Succeeded ||
+        !mapping.permissions.user_accessible || mapping.permissions.writable ||
+        mapping.permissions.copy_on_write) {
+        return UserVirtualMemoryStatus::InvalidProtection;
+    }
+    UserFileBackingDescriptor descriptor{};
+    FilePageIdentity page_identity{};
+    if (!ReadBackingDescriptor(area, descriptor) ||
+        !PageUsesFileCache(area, page_address, descriptor, page_identity)) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
+    const FilePageCacheStatus dirty_status =
+        user_file_page_cache.MarkDirty(page_identity,
+                                       mapping.physical_address);
+    if (dirty_status == FilePageCacheStatus::DirtyLimitReached) {
+        return UserVirtualMemoryStatus::PageCacheExhausted;
+    }
+    if (dirty_status != FilePageCacheStatus::Succeeded ||
+        ReplaceUserPage(address_space.root_physical_address, page_address,
+                        mapping.physical_address, true,
+                        mapping.permissions.executable,
+                        false) != KernelUserPageStatus::Succeeded) {
+        return UserVirtualMemoryStatus::PageMappingFailed;
+    }
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
 [[nodiscard]] UserVirtualMemoryStatus ResolveNonStackPage(UserAddressSpace &address_space,
                                                           const uint64_t page_address,
                                                           const bool require_writable,
@@ -481,10 +524,10 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
             return UserVirtualMemoryStatus::Corrupt;
         }
         if (require_writable && !mapping.permissions.writable) {
-            if (!mapping.permissions.copy_on_write) {
-                return UserVirtualMemoryStatus::InvalidProtection;
+            if (mapping.permissions.copy_on_write) {
+                return BreakCopyOnWritePage(address_space, page_address);
             }
-            return BreakCopyOnWritePage(address_space, page_address);
+            return MakeSharedFilePageWritable(address_space, page_address);
         }
         if (require_executable && !mapping.permissions.executable) {
             return UserVirtualMemoryStatus::InvalidProtection;
@@ -822,7 +865,14 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
     if (page_cache_capacity > OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY) {
         page_cache_capacity = OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY;
     }
+    uint64_t dirty_page_limit =
+        page_cache_capacity /
+        OS_KERNEL_USER_MEMORY_DIRTY_PAGE_LIMIT_DIVISOR;
+    if (dirty_page_limit == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        dirty_page_limit = OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
+    }
     if (user_file_page_cache.Initialize(user_file_page_cache_entries, page_cache_capacity,
+                                        dirty_page_limit,
                                         GetKernelPhysicalFrameAllocator(), nullptr,
                                         AccessPhysicalPage) != FilePageCacheStatus::Succeeded) {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
@@ -1110,7 +1160,9 @@ CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
                 }
                 retained_private_page = true;
             }
-            const bool copy_on_write = parent_area.permissions.writable;
+            const bool copy_on_write =
+                parent_area.permissions.writable &&
+                parent_area.kind != VirtualMemoryAreaKind::FileShared;
             if (MapExistingUserPage(child_address_space.root_physical_address, page_address,
                                     mapping.physical_address, false, mapping.permissions.executable,
                                     copy_on_write) != KernelUserPageStatus::Succeeded) {
@@ -1449,11 +1501,15 @@ UserVirtualMemoryStatus MapFileMemory(UserAddressSpace &address_space, fs::Vfs &
     }
     if ((map_flags & ~os::abi::OS_ABI_FILE_MEMORY_MAP_VALID_FLAG_MASK) !=
             OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
-        private_mapping == shared_mapping || (shared_mapping && writable)) {
+        private_mapping == shared_mapping ||
+        (shared_mapping && writable &&
+         (length_bytes & OS_KERNEL_USER_MEMORY_PAGE_MASK) !=
+             OS_KERNEL_USER_MEMORY_EMPTY_VALUE)) {
         return UserVirtualMemoryStatus::UnsupportedMapping;
     }
     fs::NodeInformation information{};
     if (!open_file.open || !open_file.readable ||
+        (shared_mapping && writable && !open_file.writable) ||
         vfs.StatOpenFile(open_file, information) != fs::Status::Succeeded ||
         information.type != fs::NodeType::RegularFile) {
         return UserVirtualMemoryStatus::InvalidFile;
@@ -1662,6 +1718,67 @@ UserVirtualMemoryStatus TrimUserFilePageCache() noexcept {
                : UserVirtualMemoryStatus::Corrupt;
 }
 
+UserVirtualMemoryStatus
+ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept {
+    if (address_space.virtual_memory_map.Validate() !=
+        VirtualMemoryAreaStatus::Succeeded) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    const uint64_t area_count =
+        address_space.virtual_memory_map.AreaCount();
+    for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         area_index < area_count; ++area_index) {
+        VirtualMemoryArea area{};
+        if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
+            VirtualMemoryAreaStatus::Succeeded) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (area.kind != VirtualMemoryAreaKind::FileShared ||
+            !area.permissions.writable) {
+            continue;
+        }
+        for (uint64_t page_address = area.begin_address;
+             page_address < area.end_address;
+             page_address += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+            PageMapping mapping{};
+            const PageTableStatus query_status =
+                QueryAddressSpacePage(address_space.root_physical_address,
+                                      page_address, mapping);
+            if (query_status == PageTableStatus::NotMapped) {
+                continue;
+            }
+            if (query_status != PageTableStatus::Succeeded ||
+                !mapping.permissions.user_accessible ||
+                mapping.permissions.copy_on_write) {
+                return UserVirtualMemoryStatus::Corrupt;
+            }
+            if (mapping.permissions.writable &&
+                ReplaceUserPage(address_space.root_physical_address,
+                                page_address, mapping.physical_address,
+                                false, mapping.permissions.executable,
+                                false) != KernelUserPageStatus::Succeeded) {
+                return UserVirtualMemoryStatus::PageMappingFailed;
+            }
+        }
+    }
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
+UserVirtualMemoryStatus WritebackUserFilePageCache(
+    const uint64_t maximum_page_count,
+    uint64_t &written_page_count) noexcept {
+    const FilePageCacheStatus writeback_status =
+        user_file_page_cache.Writeback(
+            &user_file_backing_manager, WriteUserFileBackingPage,
+            maximum_page_count, written_page_count);
+    if (writeback_status == FilePageCacheStatus::Succeeded) {
+        return UserVirtualMemoryStatus::Succeeded;
+    }
+    return writeback_status == FilePageCacheStatus::SourceWriteFailed
+               ? UserVirtualMemoryStatus::FileWriteFailed
+               : UserVirtualMemoryStatus::Corrupt;
+}
+
 UserVirtualMemoryStatus SetProgramBreak(UserAddressSpace &address_space,
                                         const uint64_t requested_address,
                                         uint64_t &program_break_address) noexcept {
@@ -1777,14 +1894,18 @@ UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
         PageMapping mapping{};
         if (!write_access ||
             QueryAddressSpacePage(address_space.root_physical_address, page_address, mapping) !=
-                PageTableStatus::Succeeded ||
-            !mapping.permissions.copy_on_write) {
+                PageTableStatus::Succeeded) {
             return UserPageFaultStatus::PresentPageViolation;
         }
         const UserVirtualMemoryStatus break_status =
-            BreakCopyOnWritePage(address_space, page_address);
+            mapping.permissions.copy_on_write
+                ? BreakCopyOnWritePage(address_space, page_address)
+                : MakeSharedFilePageWritable(address_space, page_address);
         if (break_status == UserVirtualMemoryStatus::Succeeded) {
             return UserPageFaultStatus::Handled;
+        }
+        if (break_status == UserVirtualMemoryStatus::PageCacheExhausted) {
+            return UserPageFaultStatus::PageCacheExhausted;
         }
         return break_status == UserVirtualMemoryStatus::PageAllocationFailed
                    ? UserPageFaultStatus::PageAllocationFailed

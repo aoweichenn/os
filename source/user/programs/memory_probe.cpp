@@ -18,6 +18,8 @@ constexpr char OS_USER_MEMORY_PROBE_HEAP_MESSAGE[] =
     "[OS][USER][VM] USER_HEAP_RANDOMIZED_VERIFIED\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_MESSAGE[] =
     "[OS][USER][VM] FILE_MAPPING_CACHE_VERIFIED\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_WRITEBACK_MESSAGE[] =
+    "[OS][USER][VM] FILE_SHARED_WRITEBACK_VERIFIED\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_CREATE_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_CREATE_OR_WRITE\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_OPEN_FAILURE_MESSAGE[] =
@@ -36,10 +38,20 @@ constexpr char OS_USER_MEMORY_PROBE_FILE_PRIVATE_MAP_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_PRIVATE_MAP\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_PRIVATE_ACCESS_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_PRIVATE_ACCESS\r\n";
-constexpr char OS_USER_MEMORY_PROBE_FILE_PRIVATE_CLOSE_FAILURE_MESSAGE[] =
-    "[OS][USER][VM][FAIL] FILE_PRIVATE_CLOSE\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_PRIVATE_VERIFY_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_PRIVATE_VERIFY\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_WRITEBACK_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_SHARED_WRITEBACK\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_SHARED_WRITE\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_FIRST_ALIAS_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_SHARED_FIRST_ALIAS\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_SECOND_ALIAS_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_SHARED_SECOND_ALIAS\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_SYNC_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_SHARED_SYNC\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_CLOSE_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_SHARED_CLOSE\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_UNMAP_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_UNMAP\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_STATISTICS_FAILURE_MESSAGE[] =
@@ -78,6 +90,7 @@ constexpr char OS_USER_MEMORY_PROBE_FILE_PATH[] = {
 constexpr uint8_t OS_USER_MEMORY_PROBE_FILE_INITIAL_PATTERN = 0x31U;
 constexpr uint8_t OS_USER_MEMORY_PROBE_FILE_UPDATED_PATTERN = 0x72U;
 constexpr uint8_t OS_USER_MEMORY_PROBE_FILE_PRIVATE_PATTERN = 0xE4U;
+constexpr uint8_t OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN = 0xB6U;
 constexpr int64_t OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE = 0LL;
 constexpr int64_t OS_USER_MEMORY_PROBE_FAILURE_EXIT_CODE = 1LL;
 constexpr int64_t OS_USER_MEMORY_PROBE_FIRST_ERROR_RESULT = -1LL;
@@ -358,7 +371,8 @@ template <uint64_t MessageSizeBytes>
     descriptor = os::user::OpenFile(
         OS_USER_MEMORY_PROBE_FILE_PATH,
         sizeof(OS_USER_MEMORY_PROBE_FILE_PATH),
-        os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
+        os::abi::OS_ABI_FILE_OPEN_READ_FLAG |
+            os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG);
     if (descriptor < OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
         return ReportFailure(
             OS_USER_MEMORY_PROBE_FILE_OPEN_FAILURE_MESSAGE);
@@ -452,7 +466,8 @@ template <uint64_t MessageSizeBytes>
     descriptor = os::user::OpenFile(
         OS_USER_MEMORY_PROBE_FILE_PATH,
         sizeof(OS_USER_MEMORY_PROBE_FILE_PATH),
-        os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
+        os::abi::OS_ABI_FILE_OPEN_READ_FLAG |
+            os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG);
     if (descriptor < OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
         return false;
     }
@@ -465,13 +480,15 @@ template <uint64_t MessageSizeBytes>
         static_cast<uint64_t>(descriptor);
     const int64_t private_result =
         os::user::MapFileMemory(private_request);
-    os::abi::FileMemoryMapRequest invalid_shared_request =
+    os::abi::FileMemoryMapRequest writable_shared_request =
         private_request;
-    invalid_shared_request.map_flags =
+    writable_shared_request.map_flags =
         os::abi::OS_ABI_MEMORY_MAP_SHARED;
+    const int64_t writable_shared_result =
+        os::user::MapFileMemory(writable_shared_request);
     if (private_result <= OS_USER_MEMORY_PROBE_FIRST_ERROR_RESULT ||
-        os::user::MapFileMemory(invalid_shared_request) !=
-            os::abi::OS_ABI_SYSTEM_CALL_RESULT_OPERATION_UNSUPPORTED) {
+        writable_shared_result <=
+            OS_USER_MEMORY_PROBE_FIRST_ERROR_RESULT) {
         return ReportFailure(
             OS_USER_MEMORY_PROBE_FILE_PRIVATE_MAP_FAILURE_MESSAGE);
     }
@@ -485,10 +502,44 @@ template <uint64_t MessageSizeBytes>
     }
     private_mapping[OS_USER_MEMORY_PROBE_EMPTY_VALUE] =
         OS_USER_MEMORY_PROBE_FILE_PRIVATE_PATTERN;
+    volatile uint8_t *const writable_shared_mapping =
+        reinterpret_cast<volatile uint8_t *>(
+            static_cast<uint64_t>(writable_shared_result));
+    if (writable_shared_mapping[OS_USER_MEMORY_PROBE_EMPTY_VALUE] !=
+        OS_USER_MEMORY_PROBE_FILE_UPDATED_PATTERN) {
+        return ReportFailure(
+            OS_USER_MEMORY_PROBE_FILE_SHARED_WRITEBACK_FAILURE_MESSAGE);
+    }
+    writable_shared_mapping[OS_USER_MEMORY_PROBE_EMPTY_VALUE] =
+        OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN;
+    if (writable_shared_mapping[OS_USER_MEMORY_PROBE_EMPTY_VALUE] !=
+        OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN) {
+        return ReportFailure(
+            OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_FAILURE_MESSAGE);
+    }
+    if (first_shared[OS_USER_MEMORY_PROBE_EMPTY_VALUE] !=
+        OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN) {
+        return ReportFailure(
+            OS_USER_MEMORY_PROBE_FILE_SHARED_FIRST_ALIAS_FAILURE_MESSAGE);
+    }
+    if (second_shared[OS_USER_MEMORY_PROBE_EMPTY_VALUE] !=
+        OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN) {
+        return ReportFailure(
+            OS_USER_MEMORY_PROBE_FILE_SHARED_SECOND_ALIAS_FAILURE_MESSAGE);
+    }
+    if (os::user::SyncFileSystem() !=
+        OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
+        return ReportFailure(
+            OS_USER_MEMORY_PROBE_FILE_SHARED_SYNC_FAILURE_MESSAGE);
+    }
     if (os::user::CloseFile(static_cast<uint64_t>(descriptor)) !=
         OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
         return ReportFailure(
-            OS_USER_MEMORY_PROBE_FILE_PRIVATE_CLOSE_FAILURE_MESSAGE);
+            OS_USER_MEMORY_PROBE_FILE_SHARED_CLOSE_FAILURE_MESSAGE);
+    }
+    if (!WriteMessage(
+            OS_USER_MEMORY_PROBE_FILE_SHARED_WRITEBACK_MESSAGE)) {
+        return false;
     }
 
     descriptor = os::user::OpenFile(
@@ -503,7 +554,7 @@ template <uint64_t MessageSizeBytes>
                            sizeof(observed_file_byte)) ==
             static_cast<int64_t>(sizeof(observed_file_byte)) &&
         observed_file_byte ==
-            OS_USER_MEMORY_PROBE_FILE_UPDATED_PATTERN &&
+            OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN &&
         private_mapping[OS_USER_MEMORY_PROBE_EMPTY_VALUE] ==
             OS_USER_MEMORY_PROBE_FILE_PRIVATE_PATTERN &&
         os::user::CloseFile(static_cast<uint64_t>(descriptor)) ==
@@ -519,6 +570,10 @@ template <uint64_t MessageSizeBytes>
             OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
         os::user::UnmapMemory(
             static_cast<uint64_t>(private_result),
+            OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES) !=
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
+        os::user::UnmapMemory(
+            static_cast<uint64_t>(writable_shared_result),
             OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES) !=
             OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
         if (!private_not_written_back) {

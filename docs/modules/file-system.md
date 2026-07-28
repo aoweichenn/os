@@ -358,9 +358,10 @@ rootfs 仍为 256 MiB，单文件仍最多 64 MiB。变化发生在“谁消费�
 - rootfs v2 没有 journal、replay、在线修复或自动格式化，只检测并拒绝；
 - 没有硬链接、符号链接、权限、uid/gid、时间戳、设备节点和扩展属性；
 - 打开文件不能 unlink，尚无 orphan inode 与延迟回收；
-- 没有 dentry/inode/page cache、动态 unmount 或 mount namespace 复制；
+- 没有 dentry/inode cache、动态 unmount 或 mount namespace 复制；
 - rootfs、legacy 和 memfs 都使用单实例锁串行化修改；
-- ATA 仍采用轮询单扇区 PIO 和显式 FLUSH CACHE，没有 IRQ/DMA/异步请求。
+- ATA 运行期使用单飞 IRQ14 PIO 和显式 FLUSH CACHE，没有 DMA 或 tagged
+  queue；early boot 仍采用有界轮询。
 
 ## v1.15 固定控制台字符设备
 
@@ -370,3 +371,33 @@ VFS 新增 `CharacterDevice` 节点类型，并把固定设备后端挂载到 `/
 转发到 TTY。字符设备没有普通文件 offset，truncate 明确不支持。
 
 这是通用 devfs 前的最小路径契约；动态设备注册、权限与热插拔留到 v1.18。
+
+## v1.16 文件页写回与稳定 identity
+
+VFS 新增不推进 `OpenFile` offset 的 `WriteAt`，供文件页缓存按后备 offset
+写回。FilePageCache entry 使用 mount/superblock、inode identifier 与 inode
+generation 作为稳定 key，并沿以下状态转移：
+
+```text
+Empty → Clean → Dirty → Writeback → Clean
+                              └────→ Error → Writeback
+```
+
+Dirty/Error 页承担未落盘责任，不能作为 clean LRU 淘汰候选；达到 dirty hard
+limit 时 MarkDirty 明确回压。Error 保留 frame 和 identity，后续 sync 从
+同一页重试。
+
+完整页、writable open file 的 `MAP_SHARED|PROT_WRITE` 映射以只读 PTE
+开始。第一次写 fault 先 MarkDirty，再开放该共享 PTE；`MAP_PRIVATE` 仍走
+COW。sync 先重新写保护全部 FileShared writable PTE，再通过 WriteAt 写回，
+最后调用 VFS/rootfs sync 和 ATA FLUSH。这样写回快照之后的新写会再次 fault，
+不会在 cache 已标 Clean 时静默发生。
+
+rootfs 数据事务只增加盘面 transaction generation，不改变一次 mount 内的
+VFS superblock generation。后者若随每次写变化，同一 inode 会形成两个
+FilePageCache key，破坏 shared alias。集成测试冻结“mount generation 稳定、
+transaction generation 增长”。
+
+本阶段没有 `msync`、后台 flusher 或区间写回 ABI；显式全局 sync 是唯一正式
+稳定边界。详细状态与失败语义见
+[ADR 0043](../adr/0043-irq14-block-request-and-writeback-cache.md)。

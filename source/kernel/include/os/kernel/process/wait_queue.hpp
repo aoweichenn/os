@@ -20,6 +20,7 @@ enum class WaitCondition : uint64_t {
     ThreadJoin,
     PrivateFutex,
     Sleep,
+    BlockIo,
     MutexAvailable,
     TestCondition,
 };

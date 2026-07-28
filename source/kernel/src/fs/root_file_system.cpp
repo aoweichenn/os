@@ -294,7 +294,6 @@ Status RootFileSystem::CommitTransaction() noexcept {
     const Status status = this->WriteSuperblockDirect();
     if (status == Status::Succeeded) {
         this->statistics_.transaction_generation = this->disk_superblock_.transaction_generation;
-        this->vfs_superblock_.generation = this->disk_superblock_.transaction_generation;
     }
     return status;
 }

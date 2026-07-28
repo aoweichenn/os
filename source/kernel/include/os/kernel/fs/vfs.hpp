@@ -226,6 +226,9 @@ class Vfs final {
     [[nodiscard]] Status ReadAt(const OpenFile &open_file, uint64_t offset_bytes,
                                 uint8_t *destination, uint64_t capacity_bytes,
                                 uint64_t &read_bytes) noexcept;
+    [[nodiscard]] Status WriteAt(const OpenFile &open_file, uint64_t offset_bytes,
+                                 const uint8_t *source, uint64_t length_bytes,
+                                 uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status Read(OpenFile &open_file, uint8_t *destination, uint64_t capacity_bytes,
                               uint64_t &read_bytes) noexcept;
     [[nodiscard]] Status Write(OpenFile &open_file, const uint8_t *source, uint64_t length_bytes,

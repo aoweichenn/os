@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.15 TTY、session 与作业控制`
-已完整完成，下一阶段是 v1.16 IRQ 块层与 writeback page cache。v1.1 已
+当前状态：第二周期 `v1.16 IRQ14 块请求与 writeback page cache`
+已完整完成，下一阶段是 v1.17 ordered metadata journal。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -242,8 +242,18 @@ Thread 恢复；Zombie 的组身份保留到 wait，消除极短命令的 `setpg
 [学习章](docs/learning/23-v1.15-tty-session-job-control.md) 与
 [ADR 0042](docs/adr/0042-tty-session-and-job-control.md)。
 
-信号和 TTY 已按两个阶段闭合，异步块层与 ordered
-metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
+v1.16 新增 64 槽 BlockRequest FIFO、ATA primary IRQ14 完成、PIT deadline
+超时与 software reset，并以 `BlockIo` 等待让 I/O Thread 阻塞期间其他
+Ready Thread 继续前进。文件页缓存新增 Clean/Dirty/Writeback/Error 状态、
+脏页回压和失败重试；完整页 writable `MAP_SHARED` 通过初始只读 PTE 捕获
+第一次写，`sync` 重新写保护、经 VFS `WriteAt` 回写并等待异步 ATA FLUSH。
+共享 alias 可见、落盘读回和 private 不回写均由真实 Ring 3/QEMU 探针验证。
+详细证据见 [v1.16 发布记录](docs/releases/v1.16.md)、
+[学习章](docs/learning/24-v1.16-irq14-block-request-writeback.md) 与
+[ADR 0043](docs/adr/0043-irq14-block-request-and-writeback-cache.md)。
+
+信号、TTY 和异步块层已按独立阶段闭合，ordered metadata journal 保持为
+v1.17，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
 分别承担启动兼容、完整功能和容量压力。详细阶段见
@@ -503,11 +513,12 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.15 第二周期实现的路线见
+对照当前 v1.1–v1.16 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
 文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程、v1.13 时间
-等待、v1.14 信号和 v1.15 TTY/作业控制深入章，以及一份 v1.1–v1.15
+等待、v1.14 信号、v1.15 TTY/作业控制和 v1.16 IRQ14/writeback 深入章，
+以及一份 v1.1–v1.16
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -520,9 +531,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.15 统计为 198 个目标代码文件、56535 个物理行、52290 个非空非纯
-注释代码行，其中 C++ 49849 行、NASM Intel 汇编 2441 行；测试、工具、书籍、
-构建文件和网站均不计入。
+当前 v1.16 的精确统计由本阶段发布门禁生成；测试、工具、书籍、构建文件和
+网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。
 

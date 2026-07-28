@@ -57,7 +57,7 @@ v2.0 的目标不是成为完整 POSIX 或现代桌面系统，而是形成一�
   保持禁用；
 - 物理内存、内核堆、进程栈、页表、描述符和 VFS 对象都具有可回收生命周期；
 - VMA 描述地址空间意图，PTE 只表示当前驻留事实；用户地址空间支持按需
-  ELF、匿名映射、`MAP_PRIVATE`、只读 `MAP_SHARED`、受控栈增长、写时
+  ELF、匿名映射、`MAP_PRIVATE`、可写 `MAP_SHARED`、受控栈增长、写时
   复制和自研用户堆；
 - VFS 统一根文件系统、设备和只读进程信息，根文件系统支持大文件、命名空间
   修改、同步、日志与崩溃重放；
@@ -94,7 +94,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 以下内容不进入 v2.0，以避免进程、内存、文件和用户环境主线被硬件广度稀释：
 
 - SMP、多核调度和跨核 TLB shootdown；
-- writable `MAP_SHARED`、`msync`、swap、overcommit 和 OOM killer；
+- `msync`、swap、overcommit 和 OOM killer；
 - 正/负 dentry cache、数据 journal、快照和在线扩容；
 - AVX/XSAVE；
 - 网络、图形、音频、USB、AHCI、NVMe 和通用 PCI 设备框架；
@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.15 完成基线
+## v1.16 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -131,7 +131,9 @@ v1.14 又完成 Process disposition、Thread mask、普通 pending 合并、
 进程组、用户 handler、安全 sigreturn，以及阻塞系统调用的 Signal 单赢家与
 显式重启策略。v1.15 进一步完成 canonical TTY、SID/PGID、控制终端、
 Stopped/Continued wait 事件、`/dev/console` 和 Shell 前后台作业控制。
-下一阶段为 v1.16 IRQ 块层与 writeback page cache。
+v1.16 已完成 64 槽 BlockRequest 队列、ATA IRQ14 完成与超时恢复、
+BlockIo 等待、可写共享文件映射，以及 clean/dirty/writeback/error 页状态机。
+下一阶段为 v1.17 ordered metadata journal 与崩溃恢复。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -144,7 +146,8 @@ Stopped/Continued wait 事件、`/dev/console` 和 Shell 前后台作业控制�
 - clean page cache 必须有固定硬容量、共享映射引用和零引用 LRU；无候选时
   明确失败，不能无界等待或回收被 PTE 引用的页。
 - 文件尾与 ELF BSS 未覆盖字节必须为零；不能读入相邻文件内容。
-- 支持只读 `MAP_SHARED` 与可写 `MAP_PRIVATE`；writable shared 明确不支持。
+- v1.9 阶段只支持只读 `MAP_SHARED` 与可写 `MAP_PRIVATE`；v1.16 的冻结要求
+  已显式取代“writable shared 不支持”的历史边界。
 - fd 关闭后映射继续有效；unmap、exec 和 exit 释放最后后备引用。
 - write/truncate 必须撤销旧只读文件 PTE 并失效 cache；private 修改不得
   回写文件。
@@ -312,6 +315,45 @@ Stopped/Continued wait 事件、`/dev/console` 和 Shell 前后台作业控制�
   -55..-57 不得重排；所有字段使用明确固定宽度。
 - 单元、集成、100000 步固定种子随机测试和真实 QMP Ctrl-Z/Ctrl-C 系统测试
   必须同时通过；终态无 Stopped、Zombie、活动作业、残留输入编辑或输出字节。
+
+## v1.16 IRQ 块层与 writeback page cache 冻结要求
+
+- `BlockRequest` 必须保存 64 位单调 identifier、操作、LBA、缓冲区、所有者
+  Thread、绝对 deadline、状态和结果；复用槽位不能复用仍可观察的 identifier。
+- ATA primary channel 当前只允许一个 Issued 请求；Queued 必须 FIFO，完成
+  请求必须经 Reap 才释放容量。容量耗尽、identifier 耗尽和非法参数均不得
+  修改已有队列。
+- ATA 适配器可以在复制冻结结果后立即 Reap，但唤醒必须同时匹配 owner
+  Thread 槽与 identifier；Thread 已退出或槽位已复用的完成只能记为
+  abandoned，不能唤醒后来占用该槽的 Thread。
+- 请求只能沿 `Queued→Issued→Completed→Unused`，或
+  `Queued→Completed→Unused` 取消；Succeeded、DeviceError、TimedOut、
+  Cancelled 只允许一个最终结果，迟到 IRQ 不得覆盖超时。
+- IRQ14 handler 不得睡眠、分配内存、遍历无界集合或访问用户地址。它只完成
+  当前 PIO 数据阶段、读取状态、提交结果、EOI、唤醒所有者并尝试发出下一请求。
+- PIT 使用绝对单调 deadline 解析超时。ATA 超时必须执行 software reset，
+  使设备恢复到可接受下一命令的已知状态；不能只唤醒 Thread 后留下半条命令。
+- early boot 的 ROM、Stage 1 和 Kernel 启动自检继续使用有界轮询适配器；
+  调度器和 IDT 就绪后才开放 IRQ14。轮询与异步路径不得同时拥有同一命令。
+- 文件页缓存状态固定为 Empty、Clean、Dirty、Writeback、Error。脏页数量有
+  明确硬上限；Error 页保留原 frame、identity 和 dirty 责任，不能伪装为
+  Clean，也不能作为 LRU 候选被静默淘汰。
+- 只有完整页、以 writable 方式打开的 `MAP_SHARED` 文件区间可以变为可写
+  shared 映射。第一次写通过只读 PTE fault 标记缓存页 Dirty 后再放开 PTE；
+  `MAP_PRIVATE` 写入只走 COW。
+- 显式 `sync` 必须先重新写保护所有可写 shared PTE，再写回 dirty/error 页，
+  然后调用 VFS/rootfs sync 与 ATA FLUSH。失败向调用者传播，并保留可重试
+  状态；本阶段不承诺独立 `msync` ABI 或后台 daemon。
+- unmap、exec 和 exit 在释放可能是最后一个 writable file backing 前必须
+  移交 Dirty/Writeback/Error 页，不能留下失去 VFS writer 的脏缓存页。
+- 文件页 identity 使用稳定的 mount/superblock generation、inode identifier
+  与 inode generation。普通数据事务不得改变 mount generation，否则同一
+  inode 会被错误拆成两个 cache identity。
+- 单元、集成、100000 步请求随机模型、100000 步页状态随机模型和三档 QEMU
+  必须同时通过；QEMU 必须观察 IRQ14、请求提交/完成时间、共享写回读回、
+  private 不回写，以及 I/O 阻塞期间其他 Thread 前进。
+- v1.16 的 BlockIo 生产消费者冻结为显式 sync 的最终 ATA FLUSH；异步
+  Read/Write 状态机必须可用，但不宣称当前 rootfs 普通扇区访问已经迁移。
 
 ## 通用启动与硬件要求
 

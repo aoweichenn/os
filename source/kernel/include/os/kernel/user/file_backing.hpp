@@ -37,6 +37,7 @@ enum class UserFileBackingStatus : uint64_t {
     InvalidDescriptor,
     OwnershipMismatch,
     ReadFailed,
+    WriteFailed,
     CloseFailed,
     Corrupt,
 };
@@ -70,6 +71,9 @@ class UserFileBackingManager final {
          uint64_t offset_bytes, uint8_t *destination,
          uint64_t length_bytes) noexcept;
     [[nodiscard]] UserFileBackingStatus
+    WritePage(const FilePageIdentity &identity, const uint8_t *source,
+              uint64_t length_bytes) noexcept;
+    [[nodiscard]] UserFileBackingStatus
     ReadDescriptor(uint64_t descriptor_index, uint64_t generation,
                    UserFileBackingDescriptor &descriptor) const noexcept;
     [[nodiscard]] UserFileBackingStatus
@@ -95,5 +99,8 @@ class UserFileBackingManager final {
 [[nodiscard]] bool ReadUserFileBackingPage(
     void *context, const FilePageIdentity &identity, uint8_t *destination,
     uint64_t capacity_bytes) noexcept;
+[[nodiscard]] bool WriteUserFileBackingPage(
+    void *context, const FilePageIdentity &identity, const uint8_t *source,
+    uint64_t length_bytes) noexcept;
 
 }

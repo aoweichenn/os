@@ -116,7 +116,7 @@
   <text x="1255" y="699" class="card-title">7 · ATA PIO driver</text>
   <text x="1255" y="729" class="body mono">0x1F0..0x1F7 / 0x3F6</text>
   <text x="1255" y="757" class="body">BSY → DRQ；WRITE；FLUSH</text>
-  <text x="1255" y="783" class="small">同步轮询；IRQ14 关闭</text>
+  <text x="1255" y="783" class="small">early polling；v1.16 runtime IRQ14</text>
 
   <rect x="880" y="665" width="290" height="140" rx="15"
         fill="#ffffff" stroke="#d97706"/>
