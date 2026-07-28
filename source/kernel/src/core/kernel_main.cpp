@@ -9,8 +9,9 @@
 #include "os/kernel/arch/processor_features.hpp"
 #include "os/kernel/device/ata_pio.hpp"
 #include "os/kernel/device/serial_port.hpp"
-#include "os/kernel/fs/console_device_file_system.hpp"
+#include "os/kernel/fs/devfs.hpp"
 #include "os/kernel/fs/memfs.hpp"
+#include "os/kernel/fs/procfs.hpp"
 #include "os/kernel/fs/root_file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
@@ -280,6 +281,12 @@ constexpr char OS_KERNEL_MAIN_VFS_VALID_MESSAGE[] = "[OS][KERNEL] VFS_VALID\r\n"
 constexpr char OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE[] = "[OS][KERNEL] MEMFS_MOUNTED=/tmp\r\n";
 constexpr char OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE[] =
     "[OS][KERNEL] CONSOLE_DEVICE_MOUNTED=/dev/console\r\n";
+constexpr char OS_KERNEL_MAIN_DEVFS_READY_MESSAGE[] =
+    "[OS][KERNEL] DEVFS_READY=/dev\r\n";
+constexpr char OS_KERNEL_MAIN_PROCFS_READY_MESSAGE[] =
+    "[OS][KERNEL] PROCFS_READY=/proc\r\n";
+constexpr char OS_KERNEL_MAIN_ABI_V2_FROZEN_MESSAGE[] =
+    "[OS][KERNEL] ABI_V2_FROZEN\r\n";
 constexpr char OS_KERNEL_MAIN_VFS_STATUS_PREFIX[] = "[OS][KERNEL] VFS_STATUS=";
 constexpr char OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX[] = "[OS][KERNEL] VFS_MOUNTS=";
 constexpr char OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX[] =
@@ -625,8 +632,8 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_INVALID_OPCODE_VECTOR = 6ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
-constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 72ULL;
-constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 27ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 73ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 42ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
     OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
@@ -653,7 +660,7 @@ constexpr uint64_t OS_KERNEL_MAIN_CAPACITY_NORMAL_THREAD_COUNT =
     OS_KERNEL_MAIN_USER_THREAD_MAIN_COUNT + OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 71ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 72ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_JOB_CONTROL_TRANSITION_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT +
@@ -671,15 +678,17 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.16";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.18";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT = 11ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK = 0xFFULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER = 2ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER = 3ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_PROCESS_SUPERBLOCK_IDENTIFIER = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_NODE_LIMIT = 128ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
@@ -695,6 +704,19 @@ constexpr uint8_t OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH[] = {
     static_cast<uint8_t>('d'),
     static_cast<uint8_t>('e'),
     static_cast<uint8_t>('v'),
+};
+constexpr uint8_t OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH[] = {
+    static_cast<uint8_t>('/'),
+    static_cast<uint8_t>('p'),
+    static_cast<uint8_t>('r'),
+    static_cast<uint8_t>('o'),
+    static_cast<uint8_t>('c'),
+};
+constexpr uint8_t OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME[] = {
+    static_cast<uint8_t>('c'), static_cast<uint8_t>('o'),
+    static_cast<uint8_t>('n'), static_cast<uint8_t>('s'),
+    static_cast<uint8_t>('o'), static_cast<uint8_t>('l'),
+    static_cast<uint8_t>('e'),
 };
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
@@ -1149,9 +1171,68 @@ void WriteVfsStatistics(const SerialPort &serial_port, const fs::Vfs &vfs,
                          memfs_statistics.active_data_capacity_bytes);
 }
 
+struct KernelProcfsContext final {
+    fs::Vfs *vfs;
+    fs::RootFileSystem *root_file_system;
+};
+
+[[nodiscard]] bool CaptureKernelProcfsSnapshot(
+    void *const context, fs::ProcfsSnapshot &snapshot) noexcept {
+    snapshot = fs::ProcfsSnapshot{};
+    if (context == nullptr) {
+        return false;
+    }
+    const KernelProcfsContext &procfs_context =
+        *static_cast<const KernelProcfsContext *>(context);
+    if (procfs_context.vfs == nullptr ||
+        procfs_context.root_file_system == nullptr) {
+        return false;
+    }
+    fs::ResourceUsage vfs_usage{};
+    if (procfs_context.vfs->ReadResourceUsage(vfs_usage) !=
+        fs::Status::Succeeded) {
+        return false;
+    }
+    const PhysicalFrameAllocatorStatistics frame_statistics =
+        GetPhysicalFrameAllocatorStatistics();
+    const KernelHeapStatistics heap_statistics = GetKernelHeap().Statistics();
+    const ProcessObservationSnapshot process_snapshot =
+        GetProcessObservationSnapshot();
+    const fs::RootFileSystemStatistics root_statistics =
+        procfs_context.root_file_system->ReadStatistics();
+    snapshot = fs::ProcfsSnapshot{
+        .monotonic_nanoseconds = GetMonotonicNanoseconds(),
+        .managed_memory_bytes =
+            frame_statistics.managed_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .free_memory_bytes =
+            frame_statistics.free_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .allocated_memory_bytes =
+            frame_statistics.allocated_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .active_process_count = process_snapshot.active_process_count,
+        .active_thread_count = process_snapshot.active_thread_count,
+        .process_capacity = process_snapshot.process_capacity,
+        .thread_capacity = process_snapshot.thread_capacity,
+        .current_process_id =
+            IsProcessSchedulingActive()
+                ? CurrentProcessId()
+                : OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER,
+        .heap_consumed_bytes = heap_statistics.consumed_bytes,
+        .active_file_description_count =
+            process_snapshot.active_file_description_count,
+        .active_pipe_count = process_snapshot.active_pipe_count,
+        .mount_count = procfs_context.vfs->ReadStatistics().mount_count,
+        .vnode_count = vfs_usage.vnode_count,
+        .journal_commit_count =
+            root_statistics.journal.transaction_commit_count,
+    };
+    return true;
+}
+
 void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file_system,
-                         fs::Memfs &memfs, fs::ConsoleDeviceFileSystem &console_device_file_system,
-                         fs::Vfs &vfs, fs::Mount *const mounts,
+                         fs::Memfs &memfs, fs::Devfs &devfs, fs::Procfs &procfs,
+                         KernelProcfsContext &procfs_context, fs::Vfs &vfs,
+                         fs::DevfsDevice *const devfs_devices,
+                         const uint64_t devfs_device_capacity, fs::Mount *const mounts,
                          const uint64_t mount_capacity) noexcept {
     fs::Status status = memfs.Initialize(
         GetKernelHeap(), OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER,
@@ -1177,8 +1258,15 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
                              sizeof(OS_KERNEL_MAIN_MEMFS_MOUNT_PATH), memfs.GetSuperblock());
     }
     if (status == fs::Status::Succeeded) {
-        status =
-            console_device_file_system.Initialize(OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER);
+        status = devfs.Initialize(
+            OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER,
+            devfs_devices, devfs_device_capacity);
+    }
+    uint64_t console_node_identifier = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
+    if (status == fs::Status::Succeeded) {
+        status = devfs.RegisterCharacterDevice(
+            OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME,
+            sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME), console_node_identifier);
     }
     if (status == fs::Status::Succeeded) {
         const fs::Status mount_point_status =
@@ -1192,7 +1280,32 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
     if (status == fs::Status::Succeeded) {
         status = vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH,
                              sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH),
-                             console_device_file_system.GetSuperblock());
+                             devfs.GetSuperblock());
+    }
+    if (status == fs::Status::Succeeded) {
+        procfs_context = KernelProcfsContext{
+            .vfs = &vfs,
+            .root_file_system = &file_system,
+        };
+        status = procfs.Initialize(
+            OS_KERNEL_MAIN_VFS_PROCESS_SUPERBLOCK_IDENTIFIER,
+            CaptureKernelProcfsSnapshot, &procfs_context);
+    }
+    if (status == fs::Status::Succeeded) {
+        const fs::Status mount_point_status =
+            vfs.CreateDirectory(
+                bootstrap_context, OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH,
+                sizeof(OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH));
+        if (mount_point_status != fs::Status::Succeeded &&
+            mount_point_status != fs::Status::AlreadyExists) {
+            status = mount_point_status;
+        }
+    }
+    if (status == fs::Status::Succeeded) {
+        status = vfs.MountAt(
+            bootstrap_context, OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH,
+            sizeof(OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH),
+            procfs.GetSuperblock());
     }
     if (status == fs::Status::Succeeded) {
         status = vfs.Validate();
@@ -1226,6 +1339,9 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_READY_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_DEVFS_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCFS_READY_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ABI_V2_FROZEN_MESSAGE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_PATH_LENGTH_PREFIX,
                          fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_NAME_LENGTH_PREFIX,
@@ -2058,12 +2174,18 @@ void WriteKeyboardEvent(const SerialPort &serial_port, const KeyboardEvent &even
     // rootfs 含全盘校验工作区，必须驻留 BSS，不能消耗有界内核栈。
     static fs::RootFileSystem file_system{};
     fs::Memfs memfs{};
-    fs::ConsoleDeviceFileSystem console_device_file_system{};
+    fs::Devfs devfs{};
+    fs::Procfs procfs{};
+    KernelProcfsContext procfs_context{};
     fs::Vfs vfs{};
+    static fs::DevfsDevice
+        devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
     InitializeKernelFileSystem(serial_port, file_system, file_system_device);
-    InitializeKernelVfs(serial_port, file_system, memfs, console_device_file_system, vfs, mounts,
-                        OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
+    InitializeKernelVfs(
+        serial_port, file_system, memfs, devfs, procfs, procfs_context, vfs,
+        devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
+        OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
     if (AttachProcessVfs(vfs) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));

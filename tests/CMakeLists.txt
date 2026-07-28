@@ -73,6 +73,31 @@ os_add_foundation_test(
 )
 
 add_executable(
+    os_abi_v2_contract_unit_tests
+    unit/abi_v2_contract_test.cpp
+)
+target_link_libraries(
+    os_abi_v2_contract_unit_tests
+    PRIVATE
+        os_system_abi
+        os_test_support
+)
+target_compile_options(
+    os_abi_v2_contract_unit_tests
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+add_test(
+    NAME os_abi_v2_contract_unit_tests
+    COMMAND os_abi_v2_contract_unit_tests
+)
+set_tests_properties(
+    os_abi_v2_contract_unit_tests
+    PROPERTIES
+        LABELS "unit"
+)
+
+add_executable(
     os_kernel_boot_info_unit_tests
     unit/kernel/boot_info_test.cpp
 )
@@ -1021,9 +1046,24 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
-    os_kernel_console_device_file_system_unit_tests
-    unit/kernel/console_device_file_system_test.cpp
+    os_kernel_devfs_unit_tests
+    unit/kernel/devfs_test.cpp
     "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_procfs_unit_tests
+    unit/kernel/procfs_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_pseudo_file_system_integration_tests
+    integration/boot/pseudo_file_system_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_procfs_randomized_tests
+    randomized/kernel/procfs_randomized_test.cpp
+    "randomized"
 )
 os_add_kernel_file_system_test(
     os_kernel_file_system_lifecycle_integration_tests
@@ -1195,6 +1235,10 @@ os_add_user_elf_audit_test(
 os_add_user_elf_audit_test(
     os_user_memory_protection_probe_elf_layout
     "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_tool_probe_elf_layout
+    "${OS_USER_TOOL_PROBE_ELF_PATH}"
 )
 
 add_test(
@@ -1787,6 +1831,40 @@ set_tests_properties(
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10
+)
+
+set(OS_TEST_QEMU_RESOURCE_LOCK_NAME os_qemu_system_x86_64)
+set(
+    OS_TEST_QEMU_SERIAL_TEST_NAMES
+    os_qemu_hardware_smoke
+    os_qemu_rejects_invalid_image_size
+    os_qemu_bootstrap_smoke
+    os_qemu_functional_smoke
+    os_qemu_native_system_call_unsupported
+    os_qemu_stage1_load_success
+    os_qemu_file_system_persistence
+    os_qemu_firmware_serial_timeout_failure
+    os_qemu_firmware_ide_busy_timeout_failure
+    os_qemu_firmware_ide_error_failure
+    os_qemu_stage1_header_failure
+    os_qemu_stage1_checksum_failure
+    os_qemu_stage1_memory_map_failure
+    os_qemu_kernel_header_failure
+    os_qemu_kernel_checksum_failure
+    os_qemu_kernel_elf_failure
+    os_qemu_kernel_ata_timeout_failure
+    os_qemu_kernel_ata_error_failure
+    os_qemu_kernel_invalid_opcode_panic
+    os_qemu_kernel_page_fault_panic
+    os_qemu_kernel_write_protection_panic
+    os_qemu_user_invalid_opcode_isolation
+    os_qemu_user_page_fault_isolation
+    os_qemu_user_invalid_elf_rejection
+)
+set_tests_properties(
+    ${OS_TEST_QEMU_SERIAL_TEST_NAMES}
+    PROPERTIES
+        RESOURCE_LOCK "${OS_TEST_QEMU_RESOURCE_LOCK_NAME}"
 )
 
 add_test(

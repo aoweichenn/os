@@ -39,10 +39,12 @@ set(
 set(
     OS_KERNEL_FILE_SYSTEM_HEADERS
     include/os/kernel/fs/block_cache.hpp
+    include/os/kernel/fs/devfs.hpp
     include/os/kernel/fs/file_system.hpp
     include/os/kernel/fs/file_system_format.hpp
     include/os/kernel/fs/legacy_file_system.hpp
     include/os/kernel/fs/memfs.hpp
+    include/os/kernel/fs/procfs.hpp
     include/os/kernel/fs/root_file_system.hpp
     include/os/kernel/fs/root_file_system_format.hpp
     include/os/kernel/fs/root_journal.hpp
@@ -166,11 +168,12 @@ set(
 set(
     OS_KERNEL_FILE_SYSTEM_SOURCES
     src/fs/block_cache.cpp
-    src/fs/console_device_file_system.cpp
+    src/fs/devfs.cpp
     src/fs/file_system.cpp
     src/fs/file_system_format.cpp
     src/fs/legacy_file_system.cpp
     src/fs/memfs.cpp
+    src/fs/procfs.cpp
     src/fs/root_file_system.cpp
     src/fs/root_file_system_format.cpp
     src/fs/root_journal.cpp
@@ -443,11 +446,12 @@ add_library(
     os_kernel_object_model_host
     STATIC
         src/fs/block_cache.cpp
-        src/fs/console_device_file_system.cpp
+        src/fs/devfs.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
         src/fs/legacy_file_system.cpp
         src/fs/memfs.cpp
+        src/fs/procfs.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
         src/fs/root_journal.cpp
@@ -462,11 +466,12 @@ add_library(
         src/sync/spin_lock.cpp
         src/user/file_backing.cpp
         include/os/kernel/fs/block_cache.hpp
-        include/os/kernel/fs/console_device_file_system.hpp
+        include/os/kernel/fs/devfs.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
         include/os/kernel/fs/legacy_file_system.hpp
         include/os/kernel/fs/memfs.hpp
+        include/os/kernel/fs/procfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/root_journal.hpp
@@ -490,6 +495,7 @@ target_link_libraries(
     os_kernel_object_model_host
     PUBLIC
         os_foundation_host
+        os_system_abi
 )
 target_compile_options(
     os_kernel_object_model_host
@@ -511,11 +517,12 @@ add_library(
     os_kernel_file_system_model_host
     STATIC
         src/fs/block_cache.cpp
-        src/fs/console_device_file_system.cpp
+        src/fs/devfs.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
         src/fs/legacy_file_system.cpp
         src/fs/memfs.cpp
+        src/fs/procfs.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
         src/fs/root_journal.cpp
@@ -523,11 +530,12 @@ add_library(
         src/memory/kernel_heap.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/fs/block_cache.hpp
-        include/os/kernel/fs/console_device_file_system.hpp
+        include/os/kernel/fs/devfs.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
         include/os/kernel/fs/legacy_file_system.hpp
         include/os/kernel/fs/memfs.hpp
+        include/os/kernel/fs/procfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/root_journal.hpp
@@ -539,6 +547,11 @@ target_include_directories(
     os_kernel_file_system_model_host
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(
+    os_kernel_file_system_model_host
+    PUBLIC
+        os_system_abi
 )
 target_compile_options(
     os_kernel_file_system_model_host
@@ -574,6 +587,11 @@ target_include_directories(
     os_kernel_user_model_host
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(
+    os_kernel_user_model_host
+    PUBLIC
+        os_system_abi
 )
 target_compile_options(
     os_kernel_user_model_host

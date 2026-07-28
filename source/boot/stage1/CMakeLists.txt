@@ -232,49 +232,62 @@ os_add_kernel_fault_disk(
 )
 
 set(
+    OS_STAGE1_CORE_TOOL_NAMES
+    help
+    echo
+    cat
+    wc
+    head
+    tee
+    true
+    false
+    pwd
+    ls
+    stat
+    mkdir
+    write
+    touch
+    rm
+    rmdir
+    mv
+    truncate
+    sync
+    basename
+    dirname
+    cp
+    seq
+    uptime
+    ps
+    free
+    uname
+    mounts
+    resources
+    sleep
+    kill
+    id
+)
+set(OS_STAGE1_REQUIRED_CORE_TOOL_COUNT 32)
+list(LENGTH OS_STAGE1_CORE_TOOL_NAMES OS_STAGE1_CORE_TOOL_COUNT)
+if(NOT OS_STAGE1_CORE_TOOL_COUNT EQUAL OS_STAGE1_REQUIRED_CORE_TOOL_COUNT)
+    message(FATAL_ERROR "rootfs 核心工具清单必须精确包含 32 个独立路径")
+endif()
+set(OS_STAGE1_CORE_TOOL_INSTALL_ARGUMENTS)
+foreach(OS_STAGE1_CORE_TOOL_NAME IN LISTS OS_STAGE1_CORE_TOOL_NAMES)
+    list(
+        APPEND
+        OS_STAGE1_CORE_TOOL_INSTALL_ARGUMENTS
+        --rootfs-file
+        "/bin/${OS_STAGE1_CORE_TOOL_NAME}=${OS_USER_CORE_TOOL_ELF_PATH}"
+    )
+endforeach()
+
+set(
     OS_STAGE1_ROOTFS_INSTALL_ARGUMENTS
     --rootfs-file
     "/sbin/init=${OS_USER_INIT_ELF_PATH}"
     --rootfs-file
     "/bin/sh=${OS_USER_SHELL_ELF_PATH}"
-    --rootfs-file
-    "/bin/help=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/echo=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/cat=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/wc=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/head=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/tee=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/true=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/false=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/pwd=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/ls=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/stat=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/mkdir=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/write=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/touch=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/rm=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/rmdir=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/mv=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/truncate=${OS_USER_CORE_TOOL_ELF_PATH}"
-    --rootfs-file
-    "/bin/sync=${OS_USER_CORE_TOOL_ELF_PATH}"
+    ${OS_STAGE1_CORE_TOOL_INSTALL_ARGUMENTS}
     --rootfs-file
     "/bin/smoke=${OS_USER_SMOKE_ELF_PATH}"
     --rootfs-file
@@ -303,6 +316,8 @@ set(
     "/bin/memory_guard_probe=${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
     --rootfs-file
     "/bin/memory_protection_probe=${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/tool_probe=${OS_USER_TOOL_PROBE_ELF_PATH}"
     --rootfs-file
     "/bin/truncated.elf=${OS_USER_TRUNCATED_ELF_PATH}"
 )
@@ -344,6 +359,7 @@ add_custom_command(
         "${OS_USER_SIGNAL_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+        "${OS_USER_TOOL_PROBE_ELF_PATH}"
         "${OS_USER_TRUNCATED_ELF_PATH}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_layout.py"
@@ -406,5 +422,6 @@ add_dependencies(
     os_user_signal_probe_elf
     os_user_memory_guard_probe_elf
     os_user_memory_protection_probe_elf
+    os_user_tool_probe_elf
     os_user_truncated_elf
 )

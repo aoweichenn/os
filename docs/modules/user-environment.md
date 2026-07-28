@@ -135,9 +135,26 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | `tee [path]` | 同时复制 stdin 到 stdout 和文件 |
 | `touch <path>` | 创建文件或保持现有文件 |
 | `true` / `false` | 返回成功 / 失败状态 |
+| `basename <path>` | 去除末尾斜杠并输出最后一个路径组件 |
+| `dirname <path>` | 输出最后一个路径组件之前的目录部分 |
+| `cp <src> <dst>` | 通过通用描述符循环复制普通文件 |
+| `seq [first] <last>` | 输出有界十进制序列，最多 100000 项 |
+| `uptime` | 读取 `/proc/uptime` 的来宾单调纳秒 |
+| `ps` | 读取活动 Process/Thread 与容量快照 |
+| `free` | 读取 managed/free/allocated 物理内存字节 |
+| `uname` | 读取 ABI 版本与 `x86_64` 架构 |
+| `mounts` | 读取 VFS mount 数 |
+| `resources` | 读取 heap、fd、pipe、vnode 与 journal 快照 |
+| `sleep <ms>` | 经已有 deadline syscall 非忙等等待 |
+| `kill <pid> <signal>` | 经已有 signal syscall 投递进程信号 |
+| `id` | 输出当前 64 位 PID |
 | `exit` | 正常退出 Shell |
 
-v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线；v1.15
+v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线；v1.18
+已把 rootfs 独立工具路径从 19 个补齐到 32 个，并通过 `/bin/tool_probe`
+验证 32 个不同 inode、regular-file 类型和 ELF magic。256 MiB functional
+QEMU 还会实际运行新增 13 个工具，检查唯一输出、cp 回读、procfs 文本、
+deadline sleep、信号投递和 PID 查询。v1.15
 已经提供 session、前后台 PGID、控制终端、`jobs/fg/bg`、尾部 `&`，以及
 TTY 生成的 Ctrl-C/Ctrl-Z 组信号。当前仍不支持 `>>`、stderr 重定向、环境
 展开、通配符、termios/raw mode、多个终端和完整 POSIX job spec。所有命令

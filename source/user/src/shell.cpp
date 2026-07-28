@@ -61,8 +61,8 @@ constexpr char OS_USER_SHELL_FOREGROUND_COMMAND[] = "fg";
 constexpr char OS_USER_SHELL_BACKGROUND_COMMAND[] = "bg";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v1.16\r\n"
-    "IRQ14 异步存储、可回写共享映射与作业控制已经启用；输入 help 查看帮助。\r\n";
+    "\r\nx86-64 OS Lab v1.18\r\n"
+    "ABI v2、devfs、procfs、journal 与 32 个用户工具已经启用；输入 help 查看帮助。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";

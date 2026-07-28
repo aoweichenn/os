@@ -979,6 +979,12 @@ OS_QEMU_USER_INIT_ALL_CHILDREN_REAPED_MARKER = (
     "[OS][USER][INIT] ALL_CHILDREN_REAPED"
 )
 OS_QEMU_USER_INIT_NO_ZOMBIES_MARKER = "[OS][USER][INIT] NO_ZOMBIES"
+OS_QEMU_USER_TOOL_ELF32_VERIFIED_MARKER = (
+    "[OS][USER][TOOLS] ELF32_VERIFIED"
+)
+OS_QEMU_USER_INIT_TOOL_PROBE_REAPED_MARKER = (
+    "[OS][USER][INIT] TOOL_PROBE_REAPED"
+)
 OS_QEMU_USER_INIT_MEMORY_PROBE_REAPED_MARKER = (
     "[OS][USER][INIT] MEMORY_PROBE_REAPED"
 )
@@ -1219,6 +1225,15 @@ OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER = (
 OS_QEMU_USER_SHELL_BACKGROUND_JOB_STARTED_MARKER = (
     "[OS][USER][SHELL] BACKGROUND_JOB_STARTED"
 )
+OS_QEMU_USER_TOOL_BASENAME_OUTPUT_MARKER = "tool-basename"
+OS_QEMU_USER_TOOL_DIRNAME_OUTPUT_MARKER = "/alpha/beta"
+OS_QEMU_USER_TOOL_SEQUENCE_OUTPUT_MARKER = "700003"
+OS_QEMU_USER_TOOL_UPTIME_OUTPUT_MARKER = "monotonic_nanoseconds "
+OS_QEMU_USER_TOOL_PROCESS_OUTPUT_MARKER = "active_processes "
+OS_QEMU_USER_TOOL_MEMORY_OUTPUT_MARKER = "managed_bytes "
+OS_QEMU_USER_TOOL_VERSION_OUTPUT_MARKER = "architecture x86_64"
+OS_QEMU_USER_TOOL_MOUNTS_OUTPUT_MARKER = "mount_count "
+OS_QEMU_USER_TOOL_RESOURCES_OUTPUT_MARKER = "heap_consumed_bytes "
 OS_QEMU_USER_SHELL_FOREGROUND_JOB_STOPPED_MARKER = (
     "[OS][USER][SHELL] FOREGROUND_JOB_STOPPED"
 )
@@ -1262,6 +1277,21 @@ OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
     "false\n"
     "rm /tmp/touched\n"
     "echo pipeline|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|tee /tmp/pipeline|head|wc\n"
+    "basename /alpha/beta/tool-basename\n"
+    "dirname /alpha//beta/tool\n"
+    "cp /tmp/redirected /tmp/copied\n"
+    "cat /tmp/copied\n"
+    "seq 700001 700003\n"
+    "uptime\n"
+    "ps\n"
+    "free\n"
+    "uname\n"
+    "mounts\n"
+    "resources\n"
+    "sleep 1\n"
+    "kill 1 17\n"
+    "id\n"
+    "rm /tmp/copied\n"
     "rm /tmp/redirected\n"
     "cat\n"
     "\x1a"

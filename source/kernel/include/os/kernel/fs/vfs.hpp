@@ -54,6 +54,7 @@ enum class BackendKind : uint64_t {
     Memory,
     Root,
     Device,
+    Process,
 };
 
 struct Superblock;

@@ -923,6 +923,18 @@ credit。生产路径已经接入 transaction overlay、相关数据先写、pre
 - 32 个工具和 16 级流水线通过；
 - 文档、教材、网站与发布清单相互链接且内容一致。
 
+**完成状态**
+
+v1.18 核心实现已完成并进入发布验收。ABI v2.0.0 统一冻结 syscall
+1--69、错误 -1---57、ELF64/x86-64 身份和关键结构偏移；`/dev` 已由调用者
+固定存储的通用最小 devfs 提供，`/proc` 已挂载 version、uptime、meminfo、
+processes、resources、mounts 六个动态只读快照。rootfs 安装 32 个独立
+工具 inode，来宾 tool probe 检查 ELF，functional Shell 实际执行新增工具。
+CTest 共用 QEMU 资源锁，使宿主测试可并行而 TCG/来宾内存串行。详细契约见
+[ADR 0045](adr/0045-abi-v2-devfs-procfs-release-freeze.md)、
+[学习章](learning/26-v1.18-abi-v2-devfs-procfs-release-freeze.md) 与
+[v1.18 发布记录](releases/v1.18.md)。
+
 ## v2.0 集成发布
 
 v2.0 不实现新机制，只完成版本冻结、回归、教材和公开发布：

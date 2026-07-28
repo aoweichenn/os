@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.17。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.18。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -160,3 +160,11 @@ commit、home checkpoint 与清理 FLUSH。mount 在信任 superblock 前验证�
 幂等 replay；1000 个确定性断电点和十万步随机模型证明 metadata 只能恢复为
 完整旧状态或完整新状态。构建图因此增加到 164 项，三档 QEMU 与跨启动
 persistence 使用同一 production journal 路径。
+v1.18 最后冻结 ABI v2.0.0：69 个系统调用、公共错误边界、跨 Ring 结构
+offset 与目标 ELF 身份都进入共享编译契约。专用 console 文件系统被分解为
+只负责设备命名的 devfs，终端字符行为继续由 FileDescription 与 TTY 拥有；
+只读 procfs 则按每次 read 采集 15 项动态快照，以六个文件向 Ring 3 暴露
+时间、内存、进程、资源和挂载。rootfs 中 32 个独立工具路径同时由
+tool probe 验证 inode/ELF，并在 256 MiB QEMU 中真实运行。构建图达到
+169 项；宿主测试并行，24 项 QEMU 由资源锁串行，64 GiB 主规格继续验证
+4 GiB 以上真实页生命周期。

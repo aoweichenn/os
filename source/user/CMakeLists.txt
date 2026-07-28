@@ -330,6 +330,12 @@ set(
     "匿名 VMA 写保护隔离验收程序"
 )
 set(
+    OS_USER_TOOL_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_tool_probe.elf"
+    CACHE INTERNAL
+    "32 个独立用户工具 ELF 路径与 inode 验收程序"
+)
+set(
     OS_USER_TRUNCATED_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_truncated.elf"
     CACHE INTERNAL
@@ -472,6 +478,12 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/memory_protection_probe.cpp"
     "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
     "链接匿名 VMA 写保护隔离 ELF64 程序"
+)
+os_add_user_program(
+    os_user_tool_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/tool_probe.cpp"
+    "${OS_USER_TOOL_PROBE_ELF_PATH}"
+    "链接 32 个独立用户工具 ELF 路径验收程序"
 )
 
 add_custom_command(

@@ -225,6 +225,15 @@ struct ProcessRuntimeStatistics final {
     ProcessExecutionResult processes[OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY];
 };
 
+struct ProcessObservationSnapshot final {
+    uint64_t active_process_count;
+    uint64_t active_thread_count;
+    uint64_t process_capacity;
+    uint64_t thread_capacity;
+    uint64_t active_file_description_count;
+    uint64_t active_pipe_count;
+};
+
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
 [[nodiscard]] ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept;
 [[nodiscard]] ProcessRuntimeStatus
@@ -292,6 +301,7 @@ WakeCurrentProcessPrivateFutex(uint64_t user_address, uint64_t maximum_wake_coun
                                uint64_t &woken_thread_count) noexcept;
 [[nodiscard]] ProcessRuntimeStatus ExecuteProcesses() noexcept;
 [[nodiscard]] ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept;
+[[nodiscard]] ProcessObservationSnapshot GetProcessObservationSnapshot() noexcept;
 [[nodiscard]] bool IsProcessSchedulingActive() noexcept;
 [[nodiscard]] uint64_t CurrentProcessId() noexcept;
 [[nodiscard]] uint64_t CurrentThreadId() noexcept;

@@ -4462,6 +4462,21 @@ UserVirtualMemoryStatus SetCurrentProcessProgramBreak(const uint64_t requested_a
     return status;
 }
 
+ProcessObservationSnapshot GetProcessObservationSnapshot() noexcept {
+    const ThreadSchedulerStatistics scheduler_statistics =
+        thread_scheduler.Statistics();
+    return ProcessObservationSnapshot{
+        .active_process_count = scheduler_statistics.owned_process_count,
+        .active_thread_count = scheduler_statistics.owned_thread_count,
+        .process_capacity = scheduler_statistics.process_capacity,
+        .thread_capacity = scheduler_statistics.thread_capacity,
+        .active_file_description_count =
+            kernel_object_manager.Statistics().active_file_description_count,
+        .active_pipe_count =
+            dynamic_pipe_manager.Statistics().active_pipe_count,
+    };
+}
+
 os::abi::VirtualMemoryStatistics GetCurrentProcessVirtualMemoryStatistics() noexcept {
     if (!IsProcessSchedulingActive()) {
         return os::abi::VirtualMemoryStatistics{};

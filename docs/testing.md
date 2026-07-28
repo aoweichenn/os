@@ -27,13 +27,13 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.17 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.18 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
 SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
-bootstrap 正常链累计注册
-72 个 Process、完成 71 次 wait，functional/capacity 因完整 Shell 验收累计
-99 个 Process、观察 102 次 wait event。线程探针分别证明 1/32/64 单 Process Thread
-上限，时间与信号探针在三档都走同一 ABI。
+历史链在 v1.18 加入 tool probe 后，bootstrap 正常链累计注册 73 个 Process、
+完成 72 次 wait；functional/capacity 因 42 条完整 Shell 命令与四次作业
+状态转换累计注册 115 个 Process、观察 118 次成功 wait event。线程探针
+分别证明 1/32/64 单 Process Thread 上限，时间与信号探针在三档都走 ABI v2。
 functional 的 512 fd hard limit 和 128 Pipe、
 capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
 
@@ -1135,6 +1135,35 @@ QEMU bootstrap、functional、capacity 和跨启动 persistence 都要求
 commit/replay/discard/checksum 的低频汇总。测试禁止依赖逐块日志，因为串口
 输出会改变 ATA/PIT 时序。
 
-远端发布验证继续使用独立 `/tmp/aoweichen-os-*` 目录、最多四个低优先级
-编译任务和每条命令的有限 timeout；只终止本次验证创建的进程，不接触验证机
-上的其他工作负载。
+## v1.18 ABI、伪文件系统与发布冻结测试
+
+v1.18 在 v1.17 的 164 项基线上新增五个 C++ 目标和一个用户 ELF 产物审计，
+构建图共 169 项：
+
+- `os_abi_v2_contract_unit_tests`：ABI 2.0.0、syscall/error 首尾、关键结构
+  大小/对齐/offset 与 ELF64/x86-64 身份；
+- `os_kernel_devfs_unit_tests`：固定存储初始化、注册、重名、容量、lookup、
+  readdir、stat、open/close、只读拒绝和破坏检测；
+- `os_kernel_procfs_unit_tests`：六文件渲染、动态 provider、短读、EOF、
+  stat、只读拒绝和 callback 失败；
+- `os_kernel_pseudo_file_system_integration_tests`：rootfs/memfs/devfs/procfs
+  四后端同时挂载、进入/退出 mount 和资源汇总；
+- `os_kernel_procfs_randomized_tests`：固定种子 100000 组数值、offset 与
+  capacity，逐字节对照独立文本 oracle；
+- `os_user_tool_probe_elf_layout`：审计实际写入 rootfs 的工具探针 ELF。
+
+真实 bootstrap QEMU 由 `/bin/tool_probe` 验证 32 个路径均为不同 inode 的
+regular ELF 文件。functional QEMU 又从 Shell 执行新增 13 个工具；cp 结果
+必须被 cat 回读，procfs 工具必须出现稳定字段，seq 使用唯一范围，sleep
+经过 deadline，kill 投递默认忽略的 SIGCHLD。进程生命周期从 27 增至 42
+个 functional Shell child，并同步核对 created/exited/collected/wait。
+
+所有 `os_qemu_*` CTest 现在共享 `os_qemu_system_x86_64` 资源锁。调用
+`ctest --parallel 20` 时，145 个宿主测试仍可开满 CPU，24 个 QEMU 测试只会
+串行运行。该规则修复了多个 TCG 实例争抢 CPU 后让 10 秒故障路径产生虚假
+timeout 的问题；不允许靠事后“失败再重跑”掩盖错误调度。
+
+远端发布验证使用唯一 `/tmp/aoweichen-os-*` 目录和每条命令的有限 timeout。
+同步归档必须校验 SHA-256；只检查、终止本次验证创建的进程，不读取、修改或
+停止验证机上的其他工作负载。用户明确允许且远端空闲时，干净构建和宿主测试
+可使用全部在线 CPU；QEMU 仍服从资源锁和来宾内存边界。

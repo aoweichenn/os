@@ -3,7 +3,7 @@
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.17：
+实现。当前 `main` 已推进到 v1.18：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -37,9 +37,11 @@
   BlockIo 等待、可写 shared 映射和 dirty/writeback/error 文件页缓存。
 - v1.17 增加 256 块 ordered metadata journal、124 credits、
   descriptor/payload/commit 校验、checkpoint 与幂等 mount replay。
+- v1.18 冻结 ABI v2，加入通用最小 devfs、六文件只读 procfs、32 个
+  rootfs 工具和发布溯源门禁。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.17 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v1.18 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
 [v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md)、
@@ -52,7 +54,8 @@
 [v1.14](../releases/v1.14.md) 与
 [v1.15](../releases/v1.15.md) 与
 [v1.16](../releases/v1.16.md) 与
-[v1.17](../releases/v1.17.md) 发布记录。
+[v1.17](../releases/v1.17.md) 与
+[v1.18](../releases/v1.18.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -86,6 +89,7 @@
   → v1.15 TTY、session、控制终端与前后台作业
   → v1.16 IRQ14 块请求、BlockIo 与 shared page writeback
   → v1.17 ordered metadata journal、checkpoint 与 crash replay
+  → v1.18 ABI v2、devfs/procfs、32 工具与发布冻结
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -188,8 +192,9 @@
 | 23 | [v1.15：TTY、session 与作业控制](23-v1.15-tty-session-job-control.md) | 终端历史、行规、控制字符、SID/PGID、前台所有权、停止/继续事件、`/dev/console` 与 Shell 作业表 |
 | 24 | [v1.16：IRQ14 块请求与共享页写回](24-v1.16-irq14-block-request-writeback.md) | ATA/PIC 标志、单飞请求、IRQ/超时单赢家、BlockIo、write-notify、dirty/writeback/error 与稳定落盘 |
 | 25 | [v1.17：ordered metadata journal](25-v1.17-ordered-metadata-journal.md) | WAL 历史、credit、盘面记录、FLUSH 顺序、checkpoint、断电矩阵、幂等 replay 与保证边界 |
+| 26 | [v1.18：ABI v2、devfs/procfs 与发布冻结](26-v1.18-abi-v2-devfs-procfs-release-freeze.md) | ABI 布局、设备命名、动态只读快照、32 工具、QEMU 资源锁与发布溯源 |
 
-### 5.1 从第一周期过渡到当前 v1.17
+### 5.1 从第一周期过渡到当前 v1.18
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -212,8 +217,9 @@
 | [v1.15](../releases/v1.15.md) | 只有进程组信号 → TTY 前台所有权、session、停止/继续事件与 Shell 作业控制 | ABI `terminal.hpp`、Kernel `io/terminal.*`、`process/job_control.*`、`fs/console_device_file_system.*`、User `shell_execution.*` |
 | [v1.16](../releases/v1.16.md) | 同步轮询/clean-only cache → IRQ14 BlockRequest、BlockIo 与 dirty/writeback/error shared page | Kernel `device/block_request.*`、`device/ata_pio.*`、`memory/file_page_cache.*`、`user/user_memory.*` |
 | [v1.17](../releases/v1.17.md) | Dirty/Clean 拒绝协议 → ordered metadata journal、checkpoint 与幂等 replay | Kernel `fs/root_journal.*`、`fs/root_file_system.*`、工具 `rootfs_v2.py` |
+| [v1.18](../releases/v1.18.md) | 隐式用户边界/专用 console 后端 → ABI v2、devfs/procfs、32 工具和发布门禁 | ABI `version/elf/layout.hpp`、Kernel `fs/devfs.*`、`fs/procfs.*`、User `tool_probe.cpp` |
 
-二十五个阶段的架构结论已合并到
+二十六个阶段的架构结论已合并到
 [architecture.md](../architecture.md)，当前 Kernel 的功能目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。

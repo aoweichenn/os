@@ -2,8 +2,11 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.17 ordered metadata journal 与崩溃恢复`
-已完整完成，下一阶段是 v1.18 ABI 冻结与系统加固。v1.1 已
+当前状态：第二周期最后一个开发版本 `v1.18 ABI v2 冻结、系统观察面与
+发布加固` 已进入发布验收。ABI 主版本、69 个系统调用、错误区间和关键结构
+偏移已经冻结；`/dev` 使用通用最小 devfs，`/proc` 提供六个只读快照文件，
+rootfs 中 32 个独立工具路径均由真实 ELF、inode 和 QEMU 运行验证。下一步
+只进行 v2.0 集成发布，不再增加核心机制。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -256,8 +259,18 @@ v1.17 又把 rootfs 升级为盘面格式 3：固定 256 块 journal、124 个
 transaction credits、descriptor/payload/commit CRC、ordered data flush、
 checkpoint 与挂载期幂等 replay 已进入生产路径。1000 个确定性断电点、
 10 万步随机状态模型、独立 rootfs 全盘校验和三档 QEMU 共同证明恢复结果
-只能是完整旧状态或完整新状态。最后由 v1.18 冻结 ABI、加固边界并建立
-发布溯源。
+只能是完整旧状态或完整新状态。
+
+v1.18 冻结 ABI v2.0.0：系统调用号 1--69、错误值 -1---57、ELF64/x86-64
+身份和进程、线程、信号、文件、终端、虚拟内存结构布局由编译期断言与产物
+测试共同锁定。只读 procfs 在每次 read 时采集一致的有界快照，公开 version、
+uptime、meminfo、processes、resources 和 mounts；最小 devfs 用调用者提供的
+固定存储注册字符设备，不向 VFS 泄露驱动指针。用户工具从 19 个补到 32 个，
+QEMU 除验证 32 个唯一 inode/ELF 外，还在 functional Shell 中实际运行新增
+工具。CTest 为所有 QEMU 用例设置同一资源锁，宿主模型可并行而虚拟机不会
+争抢 TCG 与来宾内存。详细决策见
+[ADR 0045](docs/adr/0045-abi-v2-devfs-procfs-release-freeze.md)。
+
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
 分别承担启动兼容、完整功能和容量压力。详细阶段见
@@ -517,12 +530,12 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.17 第二周期实现的路线见
+对照当前 v1.1–v1.18 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
 文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程、v1.13 时间
 等待、v1.14 信号、v1.15 TTY/作业控制、v1.16 IRQ14/writeback 和 v1.17
-ordered metadata journal 深入章，以及一份 v1.1–v1.17
+ordered metadata journal、v1.18 ABI/devfs/procfs 深入章，以及一份 v1.1–v1.18
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -535,7 +548,7 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.17 的精确统计由本阶段发布门禁生成；测试、工具、书籍、构建文件和
+当前 v1.18 的精确统计由本阶段发布门禁生成；测试、工具、书籍、构建文件和
 网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

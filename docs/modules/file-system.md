@@ -377,14 +377,35 @@ rootfs 仍为 256 MiB，单文件仍最多 64 MiB。变化发生在“谁消费�
 - ATA 运行期使用单飞 IRQ14 PIO 和显式 FLUSH CACHE，没有 DMA 或 tagged
   queue；early boot 仍采用有界轮询。
 
-## v1.15 固定控制台字符设备
+## v1.18 最小 devfs 与只读 procfs
 
-VFS 新增 `CharacterDevice` 节点类型，并把固定设备后端挂载到 `/dev`。
-当前后端只含根目录和 `console`，命名空间只读；open/stat/readdir/retain/close
-遵守普通 vnode 生命周期，read/write 由 TerminalDevice FileDescription
-转发到 TTY。字符设备没有普通文件 offset，truncate 明确不支持。
+v1.15 的专用控制台后端已经由通用最小 `Devfs` 替代。VFS 仍把它挂载到
+`/dev`，但后端现在从调用者提供的固定 16 槽存储注册具名字符设备；生产实例
+注册 `console`。注册项只保存 node identifier、generation、名称和 active，
+不保存驱动指针。字符 read/write 仍由类型化 TerminalDevice
+FileDescription 转发到 TTY。
 
-这是通用 devfs 前的最小路径契约；动态设备注册、权限与热插拔留到 v1.18。
+devfs 命名空间只读；重名、空名、超长名称和容量耗尽在发布节点前失败。
+lookup/readdir/stat/open/close 使用普通 vnode 契约，Validate 检查节点号、
+槽位、generation、重名和打开统计。v1.18 不提供 unregister、权限、
+major/minor 或热插拔。
+
+`Procfs` 作为第四个后端挂载到 `/proc`，固定提供：
+
+```text
+version  uptime  meminfo  processes  resources  mounts
+```
+
+每次 read/stat 通过 callback 采集 15 个固定宽度数值，在 256 字节局部缓冲中
+有界格式化，再遵守 offset/short-read/EOF。callback 执行时不持 procfs 锁；
+procfs 锁只保护自己的 open/read/failure 统计，防止与 VFS、调度器、内存和
+rootfs 形成锁环。所有节点只读，不支持 create/remove/rename/truncate。
+
+VFS `ReadResourceUsage` 汇总四个后端的 heap/vnode 账本，并以 checked add
+拒绝整数溢出。procfs 的资源回调只返回固定七个 vnode，不递归采集自己的
+文本快照。单元、四后端挂载集成和 100000 步随机短读 oracle 共同冻结该语义。
+详细决策见
+[ADR 0045](../adr/0045-abi-v2-devfs-procfs-release-freeze.md)。
 
 ## v1.16 文件页写回与稳定 identity
 

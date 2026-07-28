@@ -11,6 +11,7 @@ constexpr uint64_t OS_USER_CORE_FIRST_VALUE = 1ULL;
 constexpr uint64_t OS_USER_CORE_COMMAND_INDEX = 0ULL;
 constexpr uint64_t OS_USER_CORE_FIRST_ARGUMENT_INDEX = 1ULL;
 constexpr uint64_t OS_USER_CORE_SECOND_ARGUMENT_INDEX = 2ULL;
+constexpr uint64_t OS_USER_CORE_NO_OPERAND_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_CORE_SINGLE_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_CORE_TWO_ARGUMENT_COUNT = 3ULL;
 constexpr uint64_t OS_USER_CORE_TRANSFER_SIZE_BYTES =
@@ -20,7 +21,10 @@ constexpr uint64_t OS_USER_CORE_PATH_CAPACITY_BYTES =
 constexpr uint64_t OS_USER_CORE_DECIMAL_CAPACITY_BYTES = 20ULL;
 constexpr uint64_t OS_USER_CORE_DECIMAL_RADIX = 10ULL;
 constexpr uint64_t OS_USER_CORE_HEAD_DEFAULT_LINE_COUNT = 10ULL;
+constexpr uint64_t OS_USER_CORE_SEQUENCE_MAXIMUM_VALUE_COUNT = 100000ULL;
+constexpr uint64_t OS_USER_CORE_NANOSECONDS_PER_MILLISECOND = 1'000'000ULL;
 constexpr uint64_t OS_USER_CORE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
+constexpr uint64_t OS_USER_CORE_MAXIMUM_UNSIGNED_VALUE = ~0ULL;
 constexpr int64_t OS_USER_CORE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_USER_CORE_DIRECTORY_ENTRY_RESULT = 1LL;
 constexpr int64_t OS_USER_CORE_SUCCESS_EXIT_CODE = 0LL;
@@ -41,7 +45,8 @@ constexpr char OS_USER_CORE_NEWLINE[] = "\r\n";
 constexpr char OS_USER_CORE_HELP_TEXT[] =
     "内置于 rootfs 的外置工具：\r\n"
     "help echo cat wc head tee true false pwd ls stat mkdir write touch\r\n"
-    "rm rmdir mv truncate sync\r\n"
+    "rm rmdir mv truncate sync basename dirname cp seq uptime ps free\r\n"
+    "uname mounts resources sleep kill id\r\n"
     "Shell 仅保留 cd 与 exit；支持 <、> 与最多 16 级管线。\r\n";
 constexpr char OS_USER_CORE_OPERATION_ERROR[] = "error: 操作失败\r\n";
 constexpr char OS_USER_CORE_UNKNOWN_TOOL_ERROR[] = "error: 未知核心工具\r\n";
@@ -72,6 +77,25 @@ constexpr char OS_USER_CORE_REMOVE_DIRECTORY_COMMAND[] = "rmdir";
 constexpr char OS_USER_CORE_MOVE_COMMAND[] = "mv";
 constexpr char OS_USER_CORE_TRUNCATE_COMMAND[] = "truncate";
 constexpr char OS_USER_CORE_SYNC_COMMAND[] = "sync";
+constexpr char OS_USER_CORE_BASENAME_COMMAND[] = "basename";
+constexpr char OS_USER_CORE_DIRNAME_COMMAND[] = "dirname";
+constexpr char OS_USER_CORE_COPY_COMMAND[] = "cp";
+constexpr char OS_USER_CORE_SEQUENCE_COMMAND[] = "seq";
+constexpr char OS_USER_CORE_UPTIME_COMMAND[] = "uptime";
+constexpr char OS_USER_CORE_PROCESS_COMMAND[] = "ps";
+constexpr char OS_USER_CORE_FREE_COMMAND[] = "free";
+constexpr char OS_USER_CORE_UNAME_COMMAND[] = "uname";
+constexpr char OS_USER_CORE_MOUNTS_COMMAND[] = "mounts";
+constexpr char OS_USER_CORE_RESOURCES_COMMAND[] = "resources";
+constexpr char OS_USER_CORE_SLEEP_COMMAND[] = "sleep";
+constexpr char OS_USER_CORE_KILL_COMMAND[] = "kill";
+constexpr char OS_USER_CORE_ID_COMMAND[] = "id";
+constexpr char OS_USER_CORE_PROC_UPTIME_PATH[] = "/proc/uptime";
+constexpr char OS_USER_CORE_PROC_PROCESSES_PATH[] = "/proc/processes";
+constexpr char OS_USER_CORE_PROC_MEMORY_INFORMATION_PATH[] = "/proc/meminfo";
+constexpr char OS_USER_CORE_PROC_VERSION_PATH[] = "/proc/version";
+constexpr char OS_USER_CORE_PROC_MOUNTS_PATH[] = "/proc/mounts";
+constexpr char OS_USER_CORE_PROC_RESOURCES_PATH[] = "/proc/resources";
 constexpr uint64_t OS_USER_CORE_READ_OPEN_FLAGS = os::abi::OS_ABI_FILE_OPEN_READ_FLAG;
 constexpr uint64_t OS_USER_CORE_WRITE_OPEN_FLAGS =
     os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG | os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
@@ -90,6 +114,29 @@ constexpr uint64_t OS_USER_CORE_TOUCH_OPEN_FLAGS =
         ++length_bytes;
     }
     return length_bytes;
+}
+
+[[nodiscard]] uint64_t NormalizePathSeparators(
+    const char *const path, const uint64_t path_length_bytes,
+    char *const normalized_path) noexcept {
+    if (path == nullptr || normalized_path == nullptr ||
+        path_length_bytes > OS_USER_CORE_PATH_CAPACITY_BYTES) {
+        return OS_USER_CORE_EMPTY_VALUE;
+    }
+    uint64_t normalized_length_bytes = OS_USER_CORE_EMPTY_VALUE;
+    bool previous_was_separator = false;
+    for (uint64_t byte_index = OS_USER_CORE_EMPTY_VALUE;
+         byte_index < path_length_bytes; ++byte_index) {
+        const bool is_separator =
+            path[byte_index] == OS_USER_CORE_PATH_SEPARATOR;
+        if (is_separator && previous_was_separator) {
+            continue;
+        }
+        normalized_path[normalized_length_bytes] = path[byte_index];
+        ++normalized_length_bytes;
+        previous_was_separator = is_separator;
+    }
+    return normalized_length_bytes;
 }
 
 [[nodiscard]] bool BytesEqual(const char *const first, const uint64_t first_length_bytes,
@@ -169,7 +216,8 @@ template <uint64_t SizeBytes>
         }
         const uint64_t digit =
             static_cast<uint64_t>(character - OS_USER_CORE_FIRST_DECIMAL_CHARACTER);
-        if (value > (UINT64_MAX - digit) / OS_USER_CORE_DECIMAL_RADIX) {
+        if (value > (OS_USER_CORE_MAXIMUM_UNSIGNED_VALUE - digit) /
+                        OS_USER_CORE_DECIMAL_RADIX) {
             return false;
         }
         value = value * OS_USER_CORE_DECIMAL_RADIX + digit;
@@ -542,6 +590,289 @@ template <uint64_t SizeBytes>
                : OS_USER_CORE_FAILURE_EXIT_CODE;
 }
 
+[[nodiscard]] int64_t RunFixedFile(
+    const uint64_t argument_count, const char *const path,
+    const uint64_t path_length_bytes) noexcept {
+    if (argument_count != OS_USER_CORE_NO_OPERAND_ARGUMENT_COUNT ||
+        path == nullptr) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const int64_t descriptor =
+        os::user::OpenFile(path, path_length_bytes, OS_USER_CORE_READ_OPEN_FLAGS);
+    if (descriptor < OS_USER_CORE_SUCCESS_RESULT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const int64_t copy_result =
+        CopyDescriptor(static_cast<uint64_t>(descriptor),
+                       os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                       OS_USER_CORE_EMPTY_VALUE, false, OS_USER_CORE_EMPTY_VALUE,
+                       false);
+    const int64_t close_result =
+        os::user::CloseDescriptor(static_cast<uint64_t>(descriptor));
+    return copy_result == OS_USER_CORE_SUCCESS_RESULT &&
+                   close_result == OS_USER_CORE_SUCCESS_RESULT
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+template <uint64_t SizeBytes>
+[[nodiscard]] int64_t RunFixedFile(
+    const uint64_t argument_count,
+    const char (&path)[SizeBytes]) noexcept {
+    return RunFixedFile(
+        argument_count, path,
+        SizeBytes - OS_USER_CORE_STRING_TERMINATOR_SIZE_BYTES);
+}
+
+[[nodiscard]] int64_t RunBaseName(
+    const uint64_t argument_count,
+    const char *const *const arguments) noexcept {
+    if (argument_count != OS_USER_CORE_SINGLE_ARGUMENT_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const char *const path = arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX];
+    uint64_t path_length_bytes = StringLength(path);
+    while (path_length_bytes > OS_USER_CORE_FIRST_VALUE &&
+           path[path_length_bytes - OS_USER_CORE_FIRST_VALUE] ==
+               OS_USER_CORE_PATH_SEPARATOR) {
+        --path_length_bytes;
+    }
+    if (path_length_bytes == OS_USER_CORE_FIRST_VALUE &&
+        path[OS_USER_CORE_EMPTY_VALUE] == OS_USER_CORE_PATH_SEPARATOR) {
+        return WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                            OS_USER_CORE_DIRECTORY_SUFFIX) &&
+                       WriteLiteral(
+                           os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                           OS_USER_CORE_NEWLINE)
+                   ? OS_USER_CORE_SUCCESS_EXIT_CODE
+                   : OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    uint64_t name_offset = OS_USER_CORE_EMPTY_VALUE;
+    for (uint64_t byte_index = OS_USER_CORE_EMPTY_VALUE;
+         byte_index < path_length_bytes; ++byte_index) {
+        if (path[byte_index] == OS_USER_CORE_PATH_SEPARATOR) {
+            name_offset = byte_index + OS_USER_CORE_FIRST_VALUE;
+        }
+    }
+    const uint64_t name_length_bytes = path_length_bytes - name_offset;
+    return WriteText(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     path + name_offset, name_length_bytes) &&
+                   WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                                OS_USER_CORE_NEWLINE)
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunDirectoryName(
+    const uint64_t argument_count,
+    const char *const *const arguments) noexcept {
+    if (argument_count != OS_USER_CORE_SINGLE_ARGUMENT_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const char *const path = arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX];
+    uint64_t path_length_bytes = StringLength(path);
+    while (path_length_bytes > OS_USER_CORE_FIRST_VALUE &&
+           path[path_length_bytes - OS_USER_CORE_FIRST_VALUE] ==
+               OS_USER_CORE_PATH_SEPARATOR) {
+        --path_length_bytes;
+    }
+    uint64_t separator_offset = OS_USER_CORE_EMPTY_VALUE;
+    bool separator_found = false;
+    for (uint64_t byte_index = OS_USER_CORE_EMPTY_VALUE;
+         byte_index < path_length_bytes; ++byte_index) {
+        if (path[byte_index] == OS_USER_CORE_PATH_SEPARATOR) {
+            separator_offset = byte_index;
+            separator_found = true;
+        }
+    }
+    const char *directory = OS_USER_CORE_CURRENT_DIRECTORY;
+    uint64_t directory_length_bytes =
+        sizeof(OS_USER_CORE_CURRENT_DIRECTORY) -
+        OS_USER_CORE_STRING_TERMINATOR_SIZE_BYTES;
+    char normalized_directory[OS_USER_CORE_PATH_CAPACITY_BYTES]{};
+    if (separator_found) {
+        directory_length_bytes =
+            separator_offset == OS_USER_CORE_EMPTY_VALUE
+                ? OS_USER_CORE_FIRST_VALUE
+                : separator_offset;
+        while (directory_length_bytes > OS_USER_CORE_FIRST_VALUE &&
+                   path[directory_length_bytes - OS_USER_CORE_FIRST_VALUE] ==
+                       OS_USER_CORE_PATH_SEPARATOR) {
+            --directory_length_bytes;
+        }
+        directory_length_bytes =
+            NormalizePathSeparators(path, directory_length_bytes,
+                                    normalized_directory);
+        directory = normalized_directory;
+    }
+    return WriteText(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, directory,
+                     directory_length_bytes) &&
+                   WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                                OS_USER_CORE_NEWLINE)
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunCopy(
+    const uint64_t argument_count,
+    const char *const *const arguments) noexcept {
+    if (argument_count != OS_USER_CORE_TWO_ARGUMENT_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const char *const source_path =
+        arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX];
+    const char *const destination_path =
+        arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX];
+    const uint64_t source_path_length_bytes = StringLength(source_path);
+    const uint64_t destination_path_length_bytes =
+        StringLength(destination_path);
+    os::abi::FileInformation source_information{};
+    if (os::user::StatFile(source_path, source_path_length_bytes,
+                           source_information) != OS_USER_CORE_SUCCESS_RESULT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    os::abi::FileInformation destination_information{};
+    if (os::user::StatFile(destination_path,
+                           destination_path_length_bytes,
+                           destination_information) ==
+            OS_USER_CORE_SUCCESS_RESULT &&
+        source_information.mount_identifier ==
+            destination_information.mount_identifier &&
+        source_information.superblock_identifier ==
+            destination_information.superblock_identifier &&
+        source_information.inode_number ==
+            destination_information.inode_number &&
+        source_information.generation == destination_information.generation) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const int64_t source_descriptor = os::user::OpenFile(
+        source_path, source_path_length_bytes, OS_USER_CORE_READ_OPEN_FLAGS);
+    if (source_descriptor < OS_USER_CORE_SUCCESS_RESULT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const int64_t destination_descriptor = os::user::OpenFile(
+        destination_path, destination_path_length_bytes,
+        OS_USER_CORE_WRITE_OPEN_FLAGS);
+    bool succeeded = destination_descriptor >= OS_USER_CORE_SUCCESS_RESULT;
+    if (succeeded) {
+        succeeded =
+            CopyDescriptor(
+                static_cast<uint64_t>(source_descriptor),
+                static_cast<uint64_t>(destination_descriptor),
+                OS_USER_CORE_EMPTY_VALUE, false, OS_USER_CORE_EMPTY_VALUE,
+                false) == OS_USER_CORE_SUCCESS_RESULT;
+        succeeded =
+            os::user::CloseDescriptor(
+                static_cast<uint64_t>(destination_descriptor)) ==
+                OS_USER_CORE_SUCCESS_RESULT &&
+            succeeded;
+    }
+    succeeded =
+        os::user::CloseDescriptor(static_cast<uint64_t>(source_descriptor)) ==
+            OS_USER_CORE_SUCCESS_RESULT &&
+        succeeded;
+    return succeeded ? OS_USER_CORE_SUCCESS_EXIT_CODE
+                     : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunSequence(
+    const uint64_t argument_count,
+    const char *const *const arguments) noexcept {
+    uint64_t first_value = OS_USER_CORE_FIRST_VALUE;
+    uint64_t last_value = OS_USER_CORE_EMPTY_VALUE;
+    if (argument_count == OS_USER_CORE_SINGLE_ARGUMENT_COUNT) {
+        if (!ParseDecimal(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                          StringLength(
+                              arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                          last_value)) {
+            return OS_USER_CORE_FAILURE_EXIT_CODE;
+        }
+    } else if (argument_count == OS_USER_CORE_TWO_ARGUMENT_COUNT) {
+        if (!ParseDecimal(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                          StringLength(
+                              arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                          first_value) ||
+            !ParseDecimal(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX],
+                          StringLength(
+                              arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX]),
+                          last_value)) {
+            return OS_USER_CORE_FAILURE_EXIT_CODE;
+        }
+    } else {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    if (last_value < first_value ||
+        last_value - first_value >=
+            OS_USER_CORE_SEQUENCE_MAXIMUM_VALUE_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    for (uint64_t value = first_value;; ++value) {
+        if (!WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, value) ||
+            !WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                          OS_USER_CORE_NEWLINE)) {
+            return OS_USER_CORE_FAILURE_EXIT_CODE;
+        }
+        if (value == last_value) {
+            break;
+        }
+    }
+    return OS_USER_CORE_SUCCESS_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunSleep(
+    const uint64_t argument_count,
+    const char *const *const arguments) noexcept {
+    uint64_t milliseconds = OS_USER_CORE_EMPTY_VALUE;
+    if (argument_count != OS_USER_CORE_SINGLE_ARGUMENT_COUNT ||
+        !ParseDecimal(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                      StringLength(
+                          arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                      milliseconds) ||
+        milliseconds >
+            OS_USER_CORE_MAXIMUM_UNSIGNED_VALUE /
+                OS_USER_CORE_NANOSECONDS_PER_MILLISECOND) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    return os::user::SleepFor(
+               milliseconds * OS_USER_CORE_NANOSECONDS_PER_MILLISECOND) ==
+                   OS_USER_CORE_SUCCESS_RESULT
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunKill(
+    const uint64_t argument_count,
+    const char *const *const arguments) noexcept {
+    uint64_t process_id = OS_USER_CORE_EMPTY_VALUE;
+    uint64_t signal_number = OS_USER_CORE_EMPTY_VALUE;
+    return argument_count == OS_USER_CORE_TWO_ARGUMENT_COUNT &&
+                   ParseDecimal(
+                       arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                       StringLength(
+                           arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                       process_id) &&
+                   ParseDecimal(
+                       arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX],
+                       StringLength(
+                           arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX]),
+                       signal_number) &&
+                   os::user::SendProcessSignal(process_id, signal_number) ==
+                       OS_USER_CORE_SUCCESS_RESULT
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunIdentity(
+    const uint64_t argument_count) noexcept {
+    return argument_count == OS_USER_CORE_NO_OPERAND_ARGUMENT_COUNT &&
+                   WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                                os::user::GetProcessId()) &&
+                   WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                                OS_USER_CORE_NEWLINE)
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
 [[nodiscard]] int64_t DispatchTool(const char *const tool_name,
                                    const uint64_t tool_name_length_bytes,
                                    const uint64_t argument_count,
@@ -643,6 +974,59 @@ template <uint64_t SizeBytes>
                        os::user::SyncFileSystem() == OS_USER_CORE_SUCCESS_RESULT
                    ? OS_USER_CORE_SUCCESS_EXIT_CODE
                    : OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_BASENAME_COMMAND)) {
+        return RunBaseName(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_DIRNAME_COMMAND)) {
+        return RunDirectoryName(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_COPY_COMMAND)) {
+        return RunCopy(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_SEQUENCE_COMMAND)) {
+        return RunSequence(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_UPTIME_COMMAND)) {
+        return RunFixedFile(argument_count, OS_USER_CORE_PROC_UPTIME_PATH);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_PROCESS_COMMAND)) {
+        return RunFixedFile(argument_count, OS_USER_CORE_PROC_PROCESSES_PATH);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_FREE_COMMAND)) {
+        return RunFixedFile(argument_count,
+                            OS_USER_CORE_PROC_MEMORY_INFORMATION_PATH);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_UNAME_COMMAND)) {
+        return RunFixedFile(argument_count, OS_USER_CORE_PROC_VERSION_PATH);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_MOUNTS_COMMAND)) {
+        return RunFixedFile(argument_count, OS_USER_CORE_PROC_MOUNTS_PATH);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_RESOURCES_COMMAND)) {
+        return RunFixedFile(argument_count, OS_USER_CORE_PROC_RESOURCES_PATH);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_SLEEP_COMMAND)) {
+        return RunSleep(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_KILL_COMMAND)) {
+        return RunKill(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes,
+                      OS_USER_CORE_ID_COMMAND)) {
+        return RunIdentity(argument_count);
     }
     static_cast<void>(WriteLiteral(os::abi::OS_ABI_STANDARD_ERROR_DESCRIPTOR,
                                    OS_USER_CORE_UNKNOWN_TOOL_ERROR));

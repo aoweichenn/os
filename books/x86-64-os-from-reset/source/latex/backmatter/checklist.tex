@@ -323,5 +323,19 @@
         ATA FLUSH、IRQ14 wake 和 Reap 全链路；
   \item 能解释 mount generation 与 transaction generation 为何不能混用，
         并运行两个十万步模型及三档 QEMU 写回证据；
+  \item 能画出 ordered journal 从相关数据 FLUSH、prepared payload、commit、
+        home checkpoint 到清理的稳定顺序，并指出 commit 线性化点；
+  \item 能解释 credit、overlay、幂等 replay 与独立 fsck 各自拒绝哪类崩溃
+        恢复错误，并复现确定性断电矩阵；
+  \item 能说明 ABI 与 API 的差别，逐项核对系统调用号、错误边界、结构
+        offset 和 ELF 目标身份为何都是 ABI v2 的组成部分；
+  \item 能从 \filepath{/dev/console} 走读 VFS、devfs、FileDescription 与
+        TTY，说明设备名称和字符驱动为什么不能互相拥有；
+  \item 能解释 procfs 每次 read 快照、short read/EOF、256 字节有界渲染与
+        “回调时不持 procfs 锁”的因果关系；
+  \item 能说明 tool probe 的 32 个唯一 inode/ELF 证据与 functional QEMU
+        实际执行工具证据为何不能互相替代；
+  \item 能解释宿主测试并行、QEMU 测试共享 CTest 资源锁的原因，并区分资源
+        竞争超时与真实来宾断言失败；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}
