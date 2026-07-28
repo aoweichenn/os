@@ -1,0 +1,306 @@
+\section{v1.17：把多块更新变成可恢复事务}
+
+\begin{keyidea}
+程序顺序只约束 CPU 怎样发出写入，不能自动约束断电后哪些字节仍在介质上。
+ordered metadata journal 用 ``data stable''、``prepared log stable'' 和
+``commit stable'' 三条持久顺序，把一次多块元数据修改收敛成旧状态或完整
+新状态；checkpoint 可以重复执行，因而恢复本身再次断电也不会制造第三种状态。
+\end{keyidea}
+
+\subsection{从事后检查到写前日志}
+
+早期 Unix 文件系统直接覆盖目录、inode 与 free list。异常断电后，\code{fsck}
+只能遍历整棵命名空间，重新推导 ``哪些对象可达、哪些块被重复使用''。这种
+方法能修补结构，却不知道半完成的 rename 原本应该选择旧名字还是新名字；
+介质越大，完整扫描也越慢。
+
+写前日志（write-ahead logging，WAL）改变了证据顺序：在覆盖正常位置
+（home block）前，先把本事务的完整新元数据写到独立区域；只有这些材料已经
+稳定，才写一条 commit record。恢复程序不猜测业务意图，只判断 commit：
+
+\begin{itemize}
+  \item 没有完整 commit：home metadata 的旧状态仍然有效，丢弃 prepared log；
+  \item 有完整 commit：journal payload 是权威新状态，把它复制到 home；
+  \item 记录字段、范围或校验不合法：拒绝 mount，不能把损坏伪装成某个事务。
+\end{itemize}
+
+数据库与文件系统都使用 WAL，但对象不同。数据库日志常记录页修改、逻辑操作
+或 undo/redo；本项目记录 4\,KiB 元数据块的完整新镜像，只需要 redo。
+
+\subsection{为什么选择 ordered metadata，而不是记录全部数据}
+
+常见 journal 策略可分成三类：
+
+\begin{description}
+  \item[data journal] 普通文件数据和元数据都入日志，语义强，写放大和日志
+    容量也最大；
+  \item[ordered metadata] 只把元数据放入日志，但 metadata commit 前必须
+    先稳定与之相关的数据；
+  \item[writeback metadata] 元数据仍有结构原子性，却不保证数据先于引用它
+    的 inode/目录落盘。
+\end{description}
+
+v1.16 已经建立 dirty/writeback/error page、BlockRequest 和 ATA FLUSH
+边界。v1.17 选择 ordered mode，是因为它能直接复用这条 ``相关数据已稳定''
+证据，同时把教学范围限制在元数据事务。它保证目录、inode、位图和指针不会
+形成半事务，不承诺普通数据旧内容可回滚。
+
+例如覆盖一个已经分配的数据块后，在 metadata commit 前断电：旧 inode 仍然
+指向合法块，文件系统结构一致，但块内容可能已经是新字节。这不是 replay
+错误，而是 metadata-only 的明确边界。
+
+\subsection{格式 3 的固定区域}
+
+rootfs 仍使用 256\,MiB 分区和 512\,B 文件系统块。盘面 magic 从格式 2
+升级为 \code{OSRFV003}，并固定保留 256 个 journal block：
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+相对块 & 数量 & 含义\\
+\midrule
+0 & 1 & superblock home\\
+1--4226 & 4226 & 位图与 inode table\\
+4227--4482 & 256 & journal\\
+4483--524287 & 519805 & 目录和普通文件数据\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+固定位置很重要：mount 必须在读取并信任 home superblock 之前恢复，而恢复
+不能反过来依赖一个可能尚未 checkpoint 的 superblock 字段来寻找 journal。
+
+journal 内部布局为：
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+journal 相对块 & 数量 & 内容\\
+\midrule
+0 & 1 & header\\
+1--4 & 4 & descriptor blocks\\
+5--128 & 124 & metadata payload blocks\\
+129 & 1 & commit record\\
+130--255 & 126 & 冻结保留区\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+一个 descriptor entry 是 16 字节：64 位 target relative block、32 位
+payload CRC32 与 32 位保留零。descriptor 最后 4 字节保存自身 CRC，因此
+每块容量是
+\[
+  \left\lfloor\frac{512-4}{16}\right\rfloor=31,
+\]
+四块公开常量给出的总 credit 是
+\[
+  4\times31=124.
+\]
+其余 descriptor 字节必须为零并纳入 CRC。这里的 124 来自冻结格式，而不是
+随手散落在代码中的数字；格式工具、Kernel 和测试读取同一显式常量契约。
+
+\begin{contractbox}
+教材中的容量必须以实现的冻结字段为准。若未来把每个 descriptor 块扩到理论
+最大 entry 数，那是盘面格式升级，不能只改一个循环上限。
+\end{contractbox}
+
+\subsection{header、descriptor、payload 与 commit 怎样互相约束}
+
+header 保存 magic、格式版本、64 位 sequence、entry count、descriptor count
+和 CRC32。descriptor 给每个 payload 指定 home target 与 payload CRC。commit
+再次保存独立 magic、版本、sequence、entry count、header CRC 和自身 CRC。
+
+恢复只有在以下检查全部通过后才能写第一个 home block：
+
+\begin{enumerate}
+  \item header 与 commit 的 magic/version 正确；
+  \item sequence 非零且两处相同；
+  \item entry count 在 1 到 124，且两处相同；
+  \item descriptor count 等于冻结值；
+  \item 每个 descriptor CRC 与 payload CRC 正确；
+  \item target 在 rootfs 内、不落入 journal、同一事务内不重复；
+  \item reserved 字段与未使用区域满足格式约束；
+  \item commit 的 header CRC 与 commit CRC 正确。
+\end{enumerate}
+
+先验证全部记录、再统一 checkpoint，避免恢复前半段后才在后半段发现损坏。
+CRC32 用于检测随机位翻转、截断与错块，不是密码学认证；面对主动构造碰撞的
+攻击者，边界检查仍负责保证只能拒绝，不能越界或 panic。
+
+\subsection{credit 是空间预留，也是失败原子性}
+
+一个操作如果修改到一半才发现 journal 放不下，Kernel 需要撤销所有内存状态，
+且相关普通数据可能已经变化。transaction credit 把容量判断前移：
+
+\begin{itemize}
+  \item Begin 只接受 1--124；
+  \item 首次 stage 一个新 target 消耗一个 credit；
+  \item 再次 stage 相同 target 只替换 overlay，不重复计费；
+  \item 超过 reservation 返回 CreditsExhausted，home metadata 仍未改变。
+\end{itemize}
+
+当前 rootfs 串行一个 mutation，并预留固定上限。Begin 同时保存 superblock、
+统计与 allocation hint 快照。commit 前的逻辑、credit 或设备错误会丢弃
+overlay 并恢复快照。若未来支持多个并发事务，应先冻结锁顺序、reservation
+所有权和 checkpoint 调度，不能简单把固定数组复制到每个 Thread。
+
+\subsection{overlay 让事务读到自己的写}
+
+Create 可能先更新 inode block，随后又因目录插入读取同一块。如果 read 只看
+BlockCache，就会观察旧字节。v1.17 的 metadata read 顺序为：
+
+\begin{center}
+\begin{tikzpicture}[node distance=9mm and 13mm]
+  \node[os state] (read) {metadata read};
+  \node[os block,right=of read] (overlay) {journal overlay};
+  \node[os block,right=of overlay] (cache) {BlockCache/device};
+  \node[os state,below=of overlay] (value) {完整 4\,KiB block};
+  \draw[os arrow] (read) -- (overlay);
+  \draw[os arrow] (overlay) -- node[above]{miss} (cache);
+  \draw[os arrow] (overlay) -- node[left]{hit} (value);
+  \draw[os arrow] (cache) -- (value);
+\end{tikzpicture}
+\end{center}
+\diagramnote{overlay 是固定容量 512\,B 整块镜像，不依赖动态分配，也不保存容易错序的小 patch。}
+
+\subsection{四次 FLUSH 建立的持久 happens-before}
+
+成功事务严格执行：
+
+\begin{enumerate}
+  \item 把相关普通数据写到 home，执行 FLUSH；
+  \item 写 header、descriptor 和 payload，执行 prepared FLUSH；
+  \item 写 commit record，执行 commit FLUSH；
+  \item payload checkpoint 到 metadata home，执行 checkpoint FLUSH；
+  \item 清零 header/commit，执行 clear FLUSH。
+\end{enumerate}
+
+从性能角度看 FLUSH 很贵，但这里的每一个都有语义：
+
+\[
+\text{related data stable}
+\prec
+\text{metadata commit stable}
+\]
+\[
+\text{prepared payload stable}
+\prec
+\text{commit stable}
+\]
+\[
+\text{home checkpoint stable}
+\prec
+\text{journal reusable}
+\]
+
+CPU 按顺序调用 Write 并不能替代这些关系。ATA/QEMU cache 可以让命令完成早于
+掉电持久化；没有 FLUSH 的 ``先写 payload、后写 commit'' 只是提交顺序。
+
+\subsection{把所有断电点归约为两种状态}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{p{0.24\textwidth}XX}
+\toprule
+断电窗口 & mount 看到的证据 & 恢复结果\\
+\midrule
+data 或 prepared 写入前/中 &
+没有有效 commit &
+保留旧 metadata，丢弃完整 prepared 或拒绝损坏格式\\
+prepared FLUSH 后 &
+payload 完整但 commit 缺失 &
+清理 incomplete，保留旧状态\\
+commit 写入中 &
+字段或 CRC 不完整 &
+不能伪造 commit；按严格分类丢弃或拒绝\\
+commit FLUSH 后 &
+header、payload、commit 全部匹配 &
+replay 全部 target，得到完整新状态\\
+checkpoint 中 &
+部分 home 新、commit 仍完整 &
+重新 replay 全部 target，得到完整新状态\\
+checkpoint 后、clear 前 &
+home 已全新，commit 仍完整 &
+再次写同样字节，结果不变\\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+这里的线性化点是 commit FLUSH 成功。它之前恢复选择旧 metadata，它之后恢复
+必须选择新 metadata。
+
+\subsection{幂等 replay 让恢复也可以被中断}
+
+checkpoint 不是不可中断的魔法操作。若恢复写完第 37 个 target 后再次断电，
+下一次 mount 会从第一个 target 重新写。本项目保存完整新块，因此：
+
+\[
+\operatorname{Apply}(\operatorname{Apply}(H,P),P)
+=\operatorname{Apply}(H,P).
+\]
+
+checkpoint 或其 FLUSH 失败时不能清除 commit；当前文件系统实例被冻结，下一
+次 mount 仍有权威恢复材料。只有 home 全部稳定后才能清 journal，并再次
+FLUSH 清理结果。
+
+\subsection{生产源码的责任分界}
+
+\code{fs/root\_journal.*} 只认识固定块设备、盘面记录、overlay、CRC、FLUSH、
+checkpoint 和 replay，不认识路径、inode 语义或 Process。\code{fs/root\_file\_system.*}
+决定哪些写是 metadata、何时先同步数据、如何保存事务快照以及设备失败后何时
+冻结。\code{fs/root\_file\_system\_format.*} 只编码/解析小端字段。
+
+所有盘面整数通过显式 Store/Load 写入字节数组，不能把 C++ struct 直接
+\code{reinterpret\_cast} 到磁盘。后者会把 padding、alignment、宿主端序与
+编译器 ABI 偷偷变成文件格式。
+
+Initialize 的顺序同样是协议：
+
+\begin{enumerate}
+  \item 绑定 block device 与固定 journal 位置；
+  \item Recover journal；
+  \item 读取并验证 home superblock；
+  \item 初始化 cache 与运行期状态；
+  \item 输出 journal ready 与有界恢复摘要。
+\end{enumerate}
+
+\subsection{独立 fsck 为什么仍不可删除}
+
+journal 证明最后一个事务的旧/新选择；fsck 证明最终全局结构。独立 Python
+fsck 从根目录重算可达 inode、data block、link 与 bitmap，不调用 Kernel
+RootJournal parser。两个 oracle 若共享实现，同一个 target 换算错误可能让
+生产代码和测试一起说 ``正确''。
+
+\subsection{1000 个断电点和十万步随机模型}
+
+故障块设备给每一次 Write/Flush 编号，在指定编号完成后模拟断电。集成测试从
+同一 old image 重建 1000 次，恢复后逐 target 验证：
+
+\[
+(\forall i,\ H_i=Old_i)
+\oplus
+(\forall i,\ H_i=New_i).
+\]
+
+不允许部分旧、部分新。恢复后的镜像再执行一次 Recover，必须报告 Clean。
+
+随机模型用固定 seed 执行 100000 步 Begin、Stage、Abort、Commit 和非法
+操作。独立 oracle 跟踪 active、staged 与 durable；durable 只允许在 commit
+后变化，失败操作不能发布状态。固定 seed 使任何失败可复现，而不是用 ``随机
+跑过一次'' 代替证明。
+
+\subsection{日志只记录低频语义边界}
+
+逐 payload、逐 CRC 或逐 ATA word 打印会经串口改变 PIT/IRQ 时序。生产日志
+只输出 journal ready、credit capacity、commit、replay、discard 与 checksum
+failure 汇总，并带来宾单调时间。宿主 QEMU 的到达时间帮助定位停滞，不充当
+来宾事件顺序。
+
+\subsection{本阶段没有偷偷承诺什么}
+
+v1.17 不包含 data journal、后台 checkpoint、并行 transaction、SMP、
+\code{fsync}/\code{fdatasync}/\code{msync}、snapshot、在线扩容、AHCI 或
+NVMe。它也不声称 CRC 能抵抗主动篡改。
+
+这些边界让结论保持精确：现在已经能证明多块 metadata mutation 在覆盖的任意
+断电点后只有旧/新两种结构状态；下一阶段应冻结 ABI、补齐观察面和畸形输入
+审计，而不是继续往 journal 里塞新的文件系统机制。

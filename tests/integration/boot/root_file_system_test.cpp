@@ -21,7 +21,7 @@ constexpr std::string_view OS_TEST_ROOTFS_READ_ONLY = "只读挂载必须允许�
 constexpr std::string_view OS_TEST_ROOTFS_CORRUPTION =
     "损坏的超级块必须被拒绝且绝不能触发隐式格式化";
 constexpr std::string_view OS_TEST_ROOTFS_INCOMPLETE_TRANSACTION =
-    "事务中途设备写失败必须保留 dirty 标记，后续挂载必须明确拒绝";
+    "commit 后 checkpoint 写失败必须由挂载 replay 恢复完整新事务";
 constexpr std::string_view OS_TEST_ROOTFS_STATISTICS =
     "rootfs v2 必须记录事务、稀疏读取与命名空间操作统计";
 constexpr std::string_view OS_TEST_ROOTFS_STABLE_MOUNT_GENERATION =
@@ -178,8 +178,7 @@ int main() {
     if (!mounted) {
         return test_context.ExitCode();
     }
-    const uint64_t mounted_superblock_generation =
-        root_file_system.GetSuperblock().generation;
+    const uint64_t mounted_superblock_generation = root_file_system.GetSuperblock().generation;
 
     const bool sparse_created =
         vfs.CreateDirectory(context, OS_TEST_ROOTFS_ALPHA_PATH,
@@ -406,12 +405,28 @@ int main() {
                                                        sizeof(OS_TEST_ROOTFS_FAILURE_PATH)) ==
                                os::kernel::fs::Status::DeviceFailure;
     failure_device.SetTargetedWriteFailure(inode_bitmap_logical_block_address, false);
-    static os::kernel::fs::RootFileSystem incomplete_root_file_system{};
-    const bool incomplete_transaction_rejected =
-        mutation_failed && incomplete_root_file_system.Initialize(
-                               failure_device, OS_TEST_ROOTFS_INCOMPLETE_IDENTIFIER) ==
-                               os::kernel::fs::Status::IncompleteTransaction;
-    test_context.Expect(incomplete_transaction_rejected, OS_TEST_ROOTFS_INCOMPLETE_TRANSACTION);
+    static os::kernel::fs::RootFileSystem recovered_root_file_system{};
+    os::kernel::fs::Mount recovered_mounts[OS_TEST_ROOTFS_MOUNT_CAPACITY]{};
+    os::kernel::fs::Vfs recovered_vfs{};
+    os::kernel::fs::FsContext recovered_context{};
+    os::kernel::fs::NodeInformation recovered_information{};
+    const bool committed_transaction_replayed =
+        mutation_failed &&
+        recovered_root_file_system.Initialize(failure_device,
+                                              OS_TEST_ROOTFS_INCOMPLETE_IDENTIFIER) ==
+            os::kernel::fs::Status::Succeeded &&
+        recovered_vfs.Initialize(recovered_mounts, OS_TEST_ROOTFS_MOUNT_CAPACITY,
+                                 recovered_root_file_system.GetSuperblock()) ==
+            os::kernel::fs::Status::Succeeded &&
+        recovered_vfs.InitializeContext(recovered_context) == os::kernel::fs::Status::Succeeded &&
+        recovered_vfs.Stat(recovered_context, OS_TEST_ROOTFS_FAILURE_PATH,
+                           sizeof(OS_TEST_ROOTFS_FAILURE_PATH),
+                           recovered_information) == os::kernel::fs::Status::Succeeded &&
+        recovered_information.type == os::kernel::fs::NodeType::Directory &&
+        recovered_root_file_system.ReadStatistics().journal.replay_count ==
+            OS_TEST_ROOTFS_COUNTER_INCREMENT &&
+        recovered_vfs.ReleaseContext(recovered_context) == os::kernel::fs::Status::Succeeded;
+    test_context.Expect(committed_transaction_replayed, OS_TEST_ROOTFS_INCOMPLETE_TRANSACTION);
 
     const os::kernel::fs::RootFileSystemStatistics statistics = root_file_system.ReadStatistics();
     const bool statistics_valid =
@@ -425,12 +440,10 @@ int main() {
         statistics.allocated_inode_count >= OS_TEST_ROOTFS_MINIMUM_ALLOCATED_INODE_COUNT &&
         statistics.open_reference_count == OS_TEST_ROOTFS_EMPTY_VALUE;
     test_context.Expect(statistics_valid, OS_TEST_ROOTFS_STATISTICS);
-    test_context.Expect(
-        root_file_system.GetSuperblock().generation ==
-                mounted_superblock_generation &&
-            statistics.transaction_generation >
-                mounted_superblock_generation,
-        OS_TEST_ROOTFS_STABLE_MOUNT_GENERATION);
+    test_context.Expect(root_file_system.GetSuperblock().generation ==
+                                mounted_superblock_generation &&
+                            statistics.transaction_generation > mounted_superblock_generation,
+                        OS_TEST_ROOTFS_STABLE_MOUNT_GENERATION);
 
     if (persistence_valid) {
         static_cast<void>(remounted_vfs.ReleaseContext(remounted_context));

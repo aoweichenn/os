@@ -138,10 +138,26 @@ Status RootFileSystem::Initialize(FileSystemBlockDevice &device,
         return Status::InvalidArgument;
     }
     this->device_ = &device;
+    if (this->journal_.Initialize(device, OS_KERNEL_ROOTFS_START_LBA) !=
+        RootJournalStatus::Succeeded) {
+        this->device_ = nullptr;
+        return Status::Corrupt;
+    }
+    RootJournalRecoveryResult recovery_result = RootJournalRecoveryResult::Clean;
+    const RootJournalStatus recovery_status = this->journal_.Recover(recovery_result);
+    if (recovery_status != RootJournalStatus::Succeeded) {
+        this->device_ = nullptr;
+        return recovery_status == RootJournalStatus::DeviceReadFailed ||
+                       recovery_status == RootJournalStatus::DeviceWriteFailed ||
+                       recovery_status == RootJournalStatus::DeviceFlushFailed
+                   ? Status::DeviceFailure
+                   : Status::Corrupt;
+    }
     this->cache_.Initialize(device);
     this->lock_ = SpinLock{};
     this->failed_ = false;
     this->statistics_ = RootFileSystemStatistics{};
+    this->transaction_snapshot_valid_ = false;
     this->next_data_allocation_hint_ = OS_KERNEL_ROOTFS_FIRST_INDEX;
     this->next_inode_allocation_hint_ = OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT;
     ClearBytes(reinterpret_cast<uint8_t *>(this->open_counts_), sizeof(this->open_counts_));
@@ -207,6 +223,7 @@ RootFileSystemStatistics RootFileSystem::ReadStatistics() const noexcept {
     SpinLockGuard guard{this->lock_};
     RootFileSystemStatistics statistics = this->statistics_;
     statistics.cache = this->cache_.Statistics();
+    statistics.journal = this->journal_.Statistics();
     return statistics;
 }
 
@@ -217,6 +234,9 @@ Status RootFileSystem::ReadRelativeBlock(const uint64_t relative_block,
     }
     if (block == nullptr || relative_block >= OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT) {
         return Status::InvalidArgument;
+    }
+    if (this->journal_.TryReadStaged(relative_block, block, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES)) {
+        return Status::Succeeded;
     }
     const BlockCacheStatus status = this->cache_.ReadBlock(
         OS_KERNEL_ROOTFS_START_LBA + relative_block, block, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
@@ -236,8 +256,25 @@ Status RootFileSystem::WriteRelativeBlock(const uint64_t relative_block,
     return status == BlockCacheStatus::Succeeded ? Status::Succeeded : this->FailDeviceOperation();
 }
 
-Status RootFileSystem::WriteSuperblockDirect() noexcept {
-    if (this->device_ == nullptr) {
+Status RootFileSystem::WriteMetadataBlock(const uint64_t relative_block,
+                                          const uint8_t *const block) noexcept {
+    if (!this->initialized_ || this->device_ == nullptr) {
+        return Status::NotInitialized;
+    }
+    const RootJournalStatus status =
+        this->journal_.Stage(relative_block, block, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
+    if (status == RootJournalStatus::Succeeded) {
+        return Status::Succeeded;
+    }
+    if (status == RootJournalStatus::CreditsExhausted) {
+        return Status::CapacityExhausted;
+    }
+    return status == RootJournalStatus::InvalidArgument ? Status::InvalidArgument
+                                                        : Status::IncompleteTransaction;
+}
+
+Status RootFileSystem::StageSuperblock() noexcept {
+    if (!this->initialized_ || this->device_ == nullptr) {
         return Status::NotInitialized;
     }
     uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
@@ -245,14 +282,7 @@ Status RootFileSystem::WriteSuperblockDirect() noexcept {
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
-    const uint64_t superblock_logical_block_address =
-        OS_KERNEL_ROOTFS_START_LBA + OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK;
-    if (this->cache_.WriteBlock(superblock_logical_block_address, block, sizeof(block)) !=
-            BlockCacheStatus::Succeeded ||
-        this->cache_.Sync() != BlockCacheStatus::Succeeded) {
-        return this->FailDeviceOperation();
-    }
-    return Status::Succeeded;
+    return this->WriteMetadataBlock(OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK, block);
 }
 
 Status RootFileSystem::BeginTransaction() noexcept {
@@ -266,15 +296,24 @@ Status RootFileSystem::BeginTransaction() noexcept {
         return Status::ReadOnly;
     }
     if (this->disk_superblock_.transaction_state != RootTransactionState::Clean ||
-        this->disk_superblock_.transaction_generation == UINT64_MAX) {
+        this->disk_superblock_.transaction_generation == UINT64_MAX || this->journal_.IsActive()) {
         return Status::IncompleteTransaction;
     }
-    if (this->cache_.Sync() != BlockCacheStatus::Succeeded) {
-        return this->FailDeviceOperation();
+    const uint64_t next_sequence =
+        this->disk_superblock_.transaction_generation + OS_KERNEL_ROOTFS_COUNTER_INCREMENT;
+    this->transaction_superblock_snapshot_ = this->disk_superblock_;
+    this->transaction_statistics_snapshot_ = this->statistics_;
+    this->transaction_data_allocation_hint_snapshot_ = this->next_data_allocation_hint_;
+    this->transaction_inode_allocation_hint_snapshot_ = this->next_inode_allocation_hint_;
+    const RootJournalStatus begin_status =
+        this->journal_.Begin(next_sequence, OS_KERNEL_ROOTFS_JOURNAL_MAXIMUM_CREDIT_COUNT);
+    if (begin_status != RootJournalStatus::Succeeded) {
+        return begin_status == RootJournalStatus::CreditsExhausted ? Status::CapacityExhausted
+                                                                   : Status::IncompleteTransaction;
     }
-    this->disk_superblock_.transaction_state = RootTransactionState::Dirty;
+    this->transaction_snapshot_valid_ = true;
     ++this->disk_superblock_.transaction_generation;
-    return this->WriteSuperblockDirect();
+    return Status::Succeeded;
 }
 
 Status RootFileSystem::CommitTransaction() noexcept {
@@ -284,18 +323,39 @@ Status RootFileSystem::CommitTransaction() noexcept {
     if (this->failed_) {
         return Status::DeviceFailure;
     }
-    if (this->disk_superblock_.transaction_state != RootTransactionState::Dirty) {
+    if (this->disk_superblock_.transaction_state != RootTransactionState::Clean ||
+        !this->journal_.IsActive()) {
         return Status::IncompleteTransaction;
     }
+    Status status = this->StageSuperblock();
+    if (status != Status::Succeeded) {
+        this->AbortTransaction();
+        return status;
+    }
+    // ordered mode 要求普通文件数据先越过设备缓存边界，之后才允许 commit 持久化。
     if (this->cache_.Sync() != BlockCacheStatus::Succeeded) {
         return this->FailDeviceOperation();
     }
-    this->disk_superblock_.transaction_state = RootTransactionState::Clean;
-    const Status status = this->WriteSuperblockDirect();
-    if (status == Status::Succeeded) {
-        this->statistics_.transaction_generation = this->disk_superblock_.transaction_generation;
+    if (this->journal_.Commit() != RootJournalStatus::Succeeded) {
+        return this->FailDeviceOperation();
     }
-    return status;
+    this->cache_.Invalidate();
+    this->statistics_.transaction_generation = this->disk_superblock_.transaction_generation;
+    this->transaction_snapshot_valid_ = false;
+    return Status::Succeeded;
+}
+
+void RootFileSystem::AbortTransaction() noexcept {
+    if (this->journal_.IsActive()) {
+        static_cast<void>(this->journal_.Abort());
+    }
+    if (this->transaction_snapshot_valid_) {
+        this->disk_superblock_ = this->transaction_superblock_snapshot_;
+        this->statistics_ = this->transaction_statistics_snapshot_;
+        this->next_data_allocation_hint_ = this->transaction_data_allocation_hint_snapshot_;
+        this->next_inode_allocation_hint_ = this->transaction_inode_allocation_hint_snapshot_;
+        this->transaction_snapshot_valid_ = false;
+    }
 }
 
 Status RootFileSystem::FailDeviceOperation() noexcept {
@@ -345,7 +405,7 @@ Status RootFileSystem::WriteInode(const uint64_t inode_number, const RootInode &
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
-    status = this->WriteRelativeBlock(relative_block, block);
+    status = this->WriteMetadataBlock(relative_block, block);
     return status;
 }
 
@@ -378,7 +438,7 @@ Status RootFileSystem::WritePointerBlock(const uint64_t relative_block,
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
-    return this->WriteRelativeBlock(relative_block, block);
+    return this->WriteMetadataBlock(relative_block, block);
 }
 
 Status RootFileSystem::ReadBitmapBit(const bool inode_bitmap, const uint64_t bit_index,
@@ -423,7 +483,7 @@ Status RootFileSystem::WriteBitmapBit(const bool inode_bitmap, const uint64_t bi
         return status;
     }
     SetBitmapBit(block, block_bit_index, allocated);
-    status = this->WriteRelativeBlock(relative_block, block);
+    status = this->WriteMetadataBlock(relative_block, block);
     return status;
 }
 
@@ -511,11 +571,6 @@ Status RootFileSystem::ReleaseDataBlock(const uint64_t relative_block) noexcept 
     Status status = this->ReadBitmapBit(false, bit_index, allocated);
     if (status != Status::Succeeded || !allocated) {
         return status == Status::Succeeded ? Status::Corrupt : status;
-    }
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    status = this->WriteRelativeBlock(relative_block, block);
-    if (status != Status::Succeeded) {
-        return status;
     }
     status = this->WriteBitmapBit(false, bit_index, false);
     if (status != Status::Succeeded) {
@@ -1059,10 +1114,11 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
                                                    const uint64_t offset_bytes,
                                                    const uint8_t *const source,
                                                    const uint64_t length_bytes,
+                                                   const bool metadata_content,
                                                    uint64_t &written_bytes) noexcept {
     written_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     if ((source == nullptr && length_bytes != OS_KERNEL_ROOTFS_EMPTY_VALUE) ||
-        this->disk_superblock_.transaction_state != RootTransactionState::Dirty) {
+        !this->journal_.IsActive()) {
         return Status::InvalidArgument;
     }
     if (length_bytes == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
@@ -1103,7 +1159,8 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
             return status;
         }
         CopyBytes(block + block_offset_bytes, source + written_bytes, chunk_bytes);
-        status = this->WriteRelativeBlock(relative_block, block);
+        status = metadata_content ? this->WriteMetadataBlock(relative_block, block)
+                                  : this->WriteRelativeBlock(relative_block, block);
         if (status != Status::Succeeded) {
             return status;
         }
@@ -1123,7 +1180,7 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
 
 Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootInode &inode,
                                              const uint64_t size_bytes) noexcept {
-    if (this->disk_superblock_.transaction_state != RootTransactionState::Dirty) {
+    if (!this->journal_.IsActive()) {
         return Status::InvalidArgument;
     }
     if (inode.type == RootNodeType::Directory &&
@@ -1158,7 +1215,9 @@ Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootIn
             const uint64_t block_offset_bytes = size_bytes % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
             ClearBytes(block + block_offset_bytes,
                        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES - block_offset_bytes);
-            status = this->WriteRelativeBlock(tail_relative_block, block);
+            status = inode.type == RootNodeType::Directory
+                         ? this->WriteMetadataBlock(tail_relative_block, block)
+                         : this->WriteRelativeBlock(tail_relative_block, block);
             if (status != Status::Succeeded) {
                 return status;
             }
@@ -1209,8 +1268,9 @@ Status RootFileSystem::WriteDirectoryEntryAt(const uint64_t directory_inode_numb
         return Status::Corrupt;
     }
     uint64_t written_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
-    const Status status = this->WriteFileBytesInTransaction(
-        directory_inode_number, directory, offset_bytes, encoded, sizeof(encoded), written_bytes);
+    const Status status =
+        this->WriteFileBytesInTransaction(directory_inode_number, directory, offset_bytes, encoded,
+                                          sizeof(encoded), true, written_bytes);
     return status == Status::Succeeded && written_bytes == sizeof(encoded) ? Status::Succeeded
            : status == Status::Succeeded ? Status::CapacityExhausted
                                          : status;
@@ -1497,6 +1557,7 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
     uint64_t inode_number = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     status = file_system.AllocateInodeNumber(inode_number);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     RootInode inode{
@@ -1516,6 +1577,7 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
     ++file_system.disk_superblock_.next_inode_generation;
     status = file_system.WriteInode(inode_number, inode);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     RootDirectoryEntry entry{
@@ -1529,6 +1591,7 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
     status = file_system.WriteDirectoryEntryAt(directory.identifier, directory_inode,
                                                slot_offset_bytes, entry);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     status = file_system.CommitTransaction();
@@ -1642,14 +1705,17 @@ Status RootFileSystem::RemoveOperation(void *const context, const Vnode &directo
     status = file_system.WriteDirectoryEntryAt(directory.identifier, directory_inode,
                                                location.offset_bytes, empty_entry);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     status = file_system.RemoveInodeInTransaction(location.entry.inode_number, child_inode);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     status = file_system.TrimDirectoryTail(directory.identifier, directory_inode);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     status = file_system.CommitTransaction();
@@ -1814,6 +1880,7 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
         status = file_system.RemoveInodeInTransaction(destination_location.entry.inode_number,
                                                       destination_inode);
         if (status != Status::Succeeded) {
+            file_system.AbortTransaction();
             return status;
         }
     }
@@ -1829,6 +1896,7 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
         destination_directory.identifier, *destination_parent_inode,
         destination_location.offset_bytes, destination_entry);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     RootDirectoryEntry empty_entry{};
@@ -1836,23 +1904,27 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
     status = file_system.WriteDirectoryEntryAt(source_directory.identifier, source_parent_inode,
                                                source_location.offset_bytes, empty_entry);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     if (!same_parent) {
         source_inode.parent_inode_number = destination_directory.identifier;
         status = file_system.WriteInode(source_location.entry.inode_number, source_inode);
         if (status != Status::Succeeded) {
+            file_system.AbortTransaction();
             return status;
         }
     }
     status = file_system.TrimDirectoryTail(source_directory.identifier, source_parent_inode);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     if (!same_parent) {
         status = file_system.TrimDirectoryTail(destination_directory.identifier,
                                                *destination_parent_inode);
         if (status != Status::Succeeded) {
+            file_system.AbortTransaction();
             return status;
         }
     }
@@ -1954,8 +2026,9 @@ Status RootFileSystem::WriteOperation(void *const context, const Vnode &vnode,
         return status;
     }
     status = file_system.WriteFileBytesInTransaction(vnode.identifier, inode, offset_bytes, source,
-                                                     length_bytes, written_bytes);
+                                                     length_bytes, false, written_bytes);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     return file_system.CommitTransaction();
@@ -1994,6 +2067,7 @@ Status RootFileSystem::TruncateOperation(void *const context, const Vnode &vnode
     }
     status = file_system.TruncateInTransaction(vnode.identifier, inode, size_bytes);
     if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
         return status;
     }
     status = file_system.CommitTransaction();

@@ -34,15 +34,15 @@ make phone-export
 `make pdf` 生成 `source/latex/main.pdf`。
 `make phone-export` 重新构建 PDF，并导出到手机书库的独立目录
 `按卷类型/原理卷/从复位向量到自研x8664操作系统/`。
-当前 v1.16 PDF 为 412 页、5062909 字节，SHA-256 为
-`604391017a018b3bb868dae543bf3036ffb87b518904dca425bf015f4080776c`。
+当前 v1.17 PDF 为 383 页、4769043 字节，SHA-256 为
+`f556f6577c269260723b39703d7790e61627ff29c58d70be96d1f776be6ddc04`。
 
 生产代码统计只扫描仓库根目录的 `source/`，计入核心 `.asm`、`.cpp`、
 `.hpp` 中的非空、非纯注释行。汇编 include、测试、宿主工具、书稿、网站、构建
 描述和链接脚本均不计入该数字。
 
-当前书稿为 5 部 10 个完整主题章。当前生产目标包含 200 个核心
-`.asm`、`.cpp`、`.hpp` 文件，共 54,128 行有效代码；该口径严格排除测试、
+当前书稿为 5 部 10 个完整主题章。当前生产目标包含 202 个核心
+`.asm`、`.cpp`、`.hpp` 文件，共 54,880 行有效代码；该口径严格排除测试、
 宿主工具、书稿和网站。每章遵循同一解释深度：先建立历史
 背景和前置状态，再展开寄存器、位布局、数据结构或控制流，随后说明失败模式、
 调试方法与可重复验收证据。小主题不会独立占用一章，而是作为主题材料进入一条
@@ -70,7 +70,7 @@ GOP/xHCI 等实机适配缺口，不声称当前内核已经能在该板裸机�
 十页上游 KiCad PDF 原样保留其小型标题标识图像，但原理图符号、文字、网络和
 导线本身均为矢量；其余十张外部学习图经对象扫描确认不含 image XObject。
 
-当前实现内容与 v1.16 对齐：中断/设备/用户边界章包含用户 ELF、
+当前实现内容与 v1.17 对齐：中断/设备/用户边界章包含用户 ELF、
 四级 U/S 权限、TSS.RSP0、五项 IRETQ 帧、INT 0x80 ABI、用户指针复制和
 异常隔离；进程章进一步完整展开 PCB、独立 CR3、每进程 Ring 0 栈、176
 字节保存现场、round-robin 抢占、退出回收和多进程整机证据，并深入解释
@@ -173,6 +173,14 @@ LAPIC ExtINT 与 vector 0x2E；随后建立 64 位 identifier、64 槽 FIFO、
 脏页回压、失败保留、VFS WriteAt、mount generation 稳定、shared alias、
 private COW 隔离与 ATA FLUSH。两个十万步参考模型和三档 QEMU 把请求、
 页状态、调度前进和落盘读回接成同一证据链。
+v1.17 再从早期 Unix `fsck` 与写前日志的历史出发，区分 write、FLUSH、
+commit 与 checkpoint，逐字段展开 `OSRFV003`、固定 128 KiB journal、
+四个 descriptor block、124-credit overlay、CRC32 与 64 位 sequence。
+章节用持久 happens-before 推导 ordered mode 的五段提交顺序，逐项分类
+commit 前后和 checkpoint 中断电窗口，并走读 mount 前恢复、全量验证后 replay、
+失败冻结和幂等清理。1000 个确定性 Write/Flush crash point、十万步固定种子
+模型、独立 fsck 与三档 QEMU 共同证明 metadata 只能恢复为完整旧状态或完整
+新状态，同时明确普通数据旧内容不属于回滚保证。
 正常 Kernel 不再内嵌普通用户程序；二十二个合法用户 ELF 逐个审计后由离线
 安装器写入 rootfs，截断 ELF 只作为明确失败夹具。完整回归由当前构建图自动
 产生；动态栈、VMA、按需分页、页表

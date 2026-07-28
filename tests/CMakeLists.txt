@@ -1001,6 +1001,21 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_root_journal_unit_tests
+    unit/kernel/root_journal_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_crash_recovery_integration_tests
+    integration/boot/root_journal_crash_recovery_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_randomized_tests
+    randomized/kernel/root_journal_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
     os_kernel_vfs_unit_tests
     unit/kernel/vfs_test.cpp
     "unit"

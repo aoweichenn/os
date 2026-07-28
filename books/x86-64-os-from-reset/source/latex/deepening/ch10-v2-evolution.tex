@@ -84,8 +84,9 @@ PIT、i8042、串口和 IDE。Kernel 初始化后从自研 rootfs 执行
 \end{itemize}
 
 SMP、网络、USB、AHCI/NVMe、动态链接和完整 POSIX 不进入 v2.0。虚拟内存
-也主动延后 writable \code{MAP_SHARED}、\code{msync}、swap、overcommit
-和 OOM killer。这个边界使单核系统中的共享对象、阻塞点与故障恢复可以真正
+已经支持完整页 writable \code{MAP_SHARED} 与显式全局 sync，但主动延后
+\code{msync}、swap、overcommit 和 OOM killer。这个边界使单核系统中的
+共享对象、阻塞点与故障恢复可以真正
 完成，而不是留下大批只能成功一次的接口。
 
 \subsection{CPU 特性也是平台契约}
@@ -421,9 +422,10 @@ split、merge 与 unmap 的随机模型必须保证区间永不重叠，失败�
 进程同时 fault 同一页时，只允许一个页面完成安装；其他请求引用它。LRU 可
 直接丢弃 clean 页，因为内容能够从 rootfs 重读。
 
-v2.0 支持 \code{MAP_PRIVATE} 与只读 \code{MAP_SHARED}。文件 write 或
-truncate 必须失效相关 cache page 并撤销映射，不能让已有 PTE 永久指向旧
-内容。本阶段没有 dirty/writeback，从而把“文件页身份”与“异步回写”分开。
+v1.9 首先只支持 \code{MAP_PRIVATE} 与只读 \code{MAP_SHARED}。文件 write
+或 truncate 必须失效相关 cache page 并撤销映射，不能让已有 PTE 永久指向
+旧内容。v1.16 已在这套稳定 identity 上增加完整页 writable shared 与
+dirty/writeback/error；v2.0 冻结该能力，但不承诺 \code{msync}。
 
 \paragraph{v1.10：COW 是三个层次的协作}
 
@@ -495,6 +497,7 @@ backpressure；写回失败不能把页面伪装为 clean。请求完成、超�
 
 \paragraph{v1.17：ordered metadata journal}
 
+journal 已在 v1.17 完成。
 journal 只保护元数据。每个事务在修改前预留 credits，依次写 descriptor、
 元数据与 commit；与元数据相关的文件数据必须先稳定，commit 才允许落盘。
 设备 FLUSH CACHE 是顺序的一部分，不是可选性能提示。
@@ -512,8 +515,9 @@ journal 只保护元数据。每个事务在修改前预留 credits，依次写 
 \end{pdfdiagram}
 \diagramnote{断电恢复只承诺一致的旧事务或完整新事务，不承诺完整数据日志。}
 
-至少 1000 个确定性断电点在 nightly 或候选发布运行。replay 必须幂等，独立
-fsck 从根重新计算可达性和位图，防止 Kernel 与测试共同接受同一个错误。
+1000 个确定性断电点已经在发布验证运行；十万步模型继续冻结状态守恒。
+replay 必须幂等，独立 fsck 从根重新计算可达性和位图，防止 Kernel 与测试
+共同接受同一个错误。
 
 \paragraph{v1.18：冻结是一种工程能力}
 

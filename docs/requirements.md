@@ -133,7 +133,8 @@ v1.14 又完成 Process disposition、Thread mask、普通 pending 合并、
 Stopped/Continued wait 事件、`/dev/console` 和 Shell 前后台作业控制。
 v1.16 已完成 64 槽 BlockRequest 队列、ATA IRQ14 完成与超时恢复、
 BlockIo 等待、可写共享文件映射，以及 clean/dirty/writeback/error 页状态机。
-下一阶段为 v1.17 ordered metadata journal 与崩溃恢复。
+v1.17 ordered metadata journal 与崩溃恢复也已经完成；下一阶段为 v1.18
+ABI v2 冻结、系统加固与发布溯源。
 
 ## v1.9 文件虚拟内存冻结要求
 

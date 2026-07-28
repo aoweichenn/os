@@ -1737,6 +1737,70 @@ submitted = read + buffered + editing + dropped + consumed
 若只比较 submitted/read，控制键测试必然误报；若等式本身不成立，则逐分支
 检查编辑字节被撤销时是否同时计入 consumed。
 
+## v1.17：journal、checkpoint 与 mount replay
+
+### mount 在读取 superblock 前报告 journal Corrupt
+
+这是预期顺序：格式 3 的 home superblock 也可能处在待 replay 状态，不能先
+信任它。先用宿主工具检查固定 journal 区的 header/commit：
+
+1. magic/version 是否分别匹配 journal format 1；
+2. sequence 和 entry count 是否一致且 count 在 1..124；
+3. header、descriptor、payload、commit CRC 是否正确；
+4. target 是否越界、落入 journal 或重复；
+5. descriptor reserved 字段是否仍为零。
+
+不要把 Corrupt 自动当成 incomplete 并清空。只有完整有效 header 且缺少匹配
+commit 的 prepared transaction 才允许 discard；看似存在但字段损坏的记录
+必须拒绝，避免伪造旧/新选择。
+
+### checkpoint 失败后同一个文件系统实例不再接受写入
+
+commit 一旦稳定，新事务已经成为恢复权威。若 checkpoint 或 FLUSH 失败，
+当前实例必须冻结，且不得清除 header/commit。重新创建设备与 rootfs 实例后
+mount 应 replay 并报告 `replay_count=1`；第二次 mount 应为 Clean。
+
+若第一次失败后 journal 被清空，检查错误路径是否错误调用
+`ClearPersistentState`。若当前实例继续 mutation，检查
+`FailDeviceOperation` 是否遗漏 frozen 状态。
+
+### 断电矩阵出现部分旧、部分新 home block
+
+先定位 fail point 位于哪次 Write/Flush：
+
+- commit FLUSH 前出现部分新 home，说明 commit 前错误覆盖了 metadata home；
+- commit FLUSH 后仍部分旧，说明 replay 没有在验证全部 payload 后 checkpoint；
+- 第二次 Recover 再次报告 Replayed，说明 clear 或最后 FLUSH 失败却被吞掉；
+- 相关数据未稳定但 inode 已提交，检查 rootfs cache sync 是否在 prepared
+  journal 之前。
+
+测试必须从同一基线镜像重建每个 fail point，不能把上一个 crash 的残留状态
+继续用于下一个点。
+
+### transaction 报 CreditsExhausted
+
+首先区分 Begin 拒绝和 Stage 中耗尽。Begin 的 reservation 必须为 1..124；
+Stage 对相同 target 的再次写不应新增 credit。若普通小操作耗尽，检查 target
+是否误用绝对 LBA、同一 metadata block 是否因地址换算错误被当成多个 target。
+
+耗尽后 home metadata 必须保持不变，superblock/statistics/allocation hint
+恢复到事务前快照。metadata 结构一致但文件旧数据内容改变不一定是 journal
+错误：ordered metadata 模式不提供 data rollback。
+
+### QEMU 有 journal 日志但跨启动内容丢失
+
+依次检查：
+
+1. `ROOTFS_JOURNAL_READY` 是否两次启动都出现；
+2. 第一次启动 commit count 是否增加；
+3. ATA FLUSH 是否成功而不是只完成 BlockCache copy；
+4. runner 第二次启动是否复用同一个 raw disk，而非重新打包；
+5. 第二次启动 replay/discard/checksum 摘要；
+6. Python fsck 是否从根重算到目标 inode/data。
+
+不要用增加超时掩盖缺失的第二次启动 marker；跨启动 runner 的每个阶段都应有
+有限 deadline 并在失败时保留最后一条宿主到达时间。
+
 局部回归命令：
 
 ```bash

@@ -2,6 +2,7 @@
 
 #include "os/kernel/fs/block_cache.hpp"
 #include "os/kernel/fs/root_file_system_format.hpp"
+#include "os/kernel/fs/root_journal.hpp"
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/sync/spin_lock.hpp"
 
@@ -11,6 +12,7 @@ namespace os::kernel::fs {
 
 struct RootFileSystemStatistics final {
     BlockCacheStatistics cache;
+    RootJournalStatistics journal;
     uint64_t transaction_generation;
     uint64_t allocated_inode_count;
     uint64_t allocated_data_block_count;
@@ -88,9 +90,11 @@ class RootFileSystem final {
 
     [[nodiscard]] Status ReadRelativeBlock(uint64_t relative_block, uint8_t *block) noexcept;
     [[nodiscard]] Status WriteRelativeBlock(uint64_t relative_block, const uint8_t *block) noexcept;
-    [[nodiscard]] Status WriteSuperblockDirect() noexcept;
+    [[nodiscard]] Status WriteMetadataBlock(uint64_t relative_block, const uint8_t *block) noexcept;
+    [[nodiscard]] Status StageSuperblock() noexcept;
     [[nodiscard]] Status BeginTransaction() noexcept;
     [[nodiscard]] Status CommitTransaction() noexcept;
+    void AbortTransaction() noexcept;
     [[nodiscard]] Status FailDeviceOperation() noexcept;
     [[nodiscard]] Status ReadInode(uint64_t inode_number, RootInode &inode) noexcept;
     [[nodiscard]] Status WriteInode(uint64_t inode_number, const RootInode &inode) noexcept;
@@ -132,7 +136,7 @@ class RootFileSystem final {
                                        uint64_t &read_bytes) noexcept;
     [[nodiscard]] Status WriteFileBytesInTransaction(uint64_t inode_number, RootInode &inode,
                                                      uint64_t offset_bytes, const uint8_t *source,
-                                                     uint64_t length_bytes,
+                                                     uint64_t length_bytes, bool metadata_content,
                                                      uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status TruncateInTransaction(uint64_t inode_number, RootInode &inode,
                                                uint64_t size_bytes) noexcept;
@@ -168,7 +172,9 @@ class RootFileSystem final {
 
     FileSystemBlockDevice *device_{nullptr};
     BlockCache cache_{};
+    RootJournal journal_{};
     RootSuperblock disk_superblock_{};
+    RootSuperblock transaction_superblock_snapshot_{};
     Superblock vfs_superblock_{};
     uint64_t open_counts_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     uint8_t validation_inode_bitmap_[OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT *
@@ -177,11 +183,15 @@ class RootFileSystem final {
                                     OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     uint64_t validation_queue_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     RootFileSystemStatistics statistics_{};
+    RootFileSystemStatistics transaction_statistics_snapshot_{};
     uint64_t next_data_allocation_hint_{};
     uint64_t next_inode_allocation_hint_{};
+    uint64_t transaction_data_allocation_hint_snapshot_{};
+    uint64_t transaction_inode_allocation_hint_snapshot_{};
     mutable SpinLock lock_{};
     bool initialized_{};
     bool failed_{};
+    bool transaction_snapshot_valid_{};
 };
 
 }

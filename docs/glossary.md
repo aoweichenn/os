@@ -187,7 +187,7 @@
 | zero-fill-on-demand | 匿名页第一次合法访问时分配完整清零 frame，再返回重试原指令的策略 |
 | page cache | 以 vnode 与页索引为身份缓存文件内容的内存页；clean、dirty、writeback 是不同状态 |
 | `MAP_PRIVATE` | 写入时产生私有 COW 页面、不把修改回写到底层文件的文件映射 |
-| `MAP_SHARED` | 多个映射观察同一文件页的策略；v2.0 仅支持只读形式 |
+| `MAP_SHARED` | 多个映射观察同一文件页的策略；完整页可写映射由首次写保护故障标脏，显式 sync 回写 |
 | futex | 以用户地址上的值作为快速路径、仅在竞争时进入内核 WaitQueue 的同步机制 |
 | process group | 用于信号投递和终端作业控制的一组进程身份 |
 | session | 包含一个或多个进程组并关联控制终端的作业控制边界 |

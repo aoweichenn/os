@@ -889,6 +889,18 @@ VFS identity 回写 dirty/error 页，随后经 rootfs cache 和异步 ATA FLUSH
 - replay 可重复执行，损坏/截断记录不会越界或伪造提交；
 - fsck、重放统计和磁盘镜像哈希形成可复现证据。
 
+**完成状态**
+
+v1.17 已完成。rootfs 盘面格式升级为 `OSRFV003`，在 256 MiB 分区中固定
+保留 256 个 512 B journal 块；四个 descriptor 块提供最多 124 个 metadata
+credit。生产路径已经接入 transaction overlay、相关数据先写、prepared
+记录、两次提交 FLUSH、home checkpoint 与清理，并在 mount 读取 superblock
+前完成恢复。1000 个确定性写入/FLUSH 断电点证明恢复结果只能是完整旧状态或
+完整新状态；100000 步随机模型冻结 credit、abort、commit 和 durable-state
+守恒。详细契约见 [ADR 0044](adr/0044-ordered-metadata-journal.md)、
+[学习章](learning/25-v1.17-ordered-metadata-journal.md) 与
+[v1.17 发布记录](releases/v1.17.md)。
+
 ### v1.18 ABI v2 冻结、系统加固与发布溯源
 
 **目标**
@@ -971,7 +983,7 @@ v2.0 不实现新机制，只完成版本冻结、回归、教材和公开发布
 以下内容明确留给 v2.x/v3.0：
 
 - SMP、AP 启动、跨核调度与 TLB shootdown；
-- writable `MAP_SHARED`、`msync`、swap、overcommit、OOM killer；
+- `msync`、swap、overcommit、OOM killer；
 - 正/负 dentry cache、数据 journal、快照与在线扩容；
 - 网络、图形、音频、USB、AHCI、NVMe、通用 PCI；
 - AVX/XSAVE、动态链接、共享库、自举编译器和完整 POSIX。

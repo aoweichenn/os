@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.16。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.17。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -162,12 +162,15 @@ VMA policy
   ├─ anonymous → zero-fill fault → private PhysicalPage
   └─ file      → (Vnode, page index) clean CachePage
                        ├─ MAP_PRIVATE write → COW private page
-                       └─ read-only MAP_SHARED → shared clean page
+                       └─ MAP_SHARED → shared page → write fault marks dirty
 ```
 
-v2.0 不支持 writable `MAP_SHARED` 或 `msync`。write/truncate 必须使受影响
-clean cache 失效并撤销现有文件映射，不能继续暴露陈旧页面。clean 页可由
-LRU 丢弃后重读；dirty/writeback 页必须等写入完成或报告明确错误。
+v2.0 支持完整页 writable `MAP_SHARED`，但不提供 `msync`；显式全局 sync
+是稳定边界。write/truncate 必须协调受影响 cache 与映射，不能继续暴露陈旧
+页面。clean 页可由 LRU 丢弃后重读；dirty/writeback 页必须等写入完成或
+报告明确错误。v1.17 又把 sync 之后的元数据提交接入 ordered journal：
+相关普通文件数据先 FLUSH，descriptor/metadata/commit 再持久化，最后
+checkpoint home block。
 
 v1.10 已在这条层次中加入 private COW：VMA 保存“本来允许写”，PTE 通过
 软件位 9 保存“当前因共享而暂时只读”。独占 private 页隐含单引用，只有经历

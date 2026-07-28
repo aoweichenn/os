@@ -444,21 +444,24 @@ IPC 同样遵循“热路径零日志、冷路径可核对”的规则：
 
 文件系统日志也只记录冷路径状态转换和汇总：
 
-- 每次成功启动只输出一次 `ROOTFS_V2_MOUNTED`。生产 Kernel 没有自动
-  format 分支；缺失、Dirty 或损坏 rootfs 必须失败，不能用重复格式化掩盖
-  镜像构建或持久化错误。
+- 每次成功启动只输出一次 `ROOTFS_V2_MOUNTED` 和
+  `ROOTFS_JOURNAL_READY`。生产 Kernel 没有自动 format 分支；缺失、损坏
+  或不可验证的 committed journal 必须失败，不能用重复格式化掩盖镜像构建
+  或持久化错误。
 - 挂载后输出一次 `ROOTFS_V2_REGION_BYTES=0x10000000` 与
   `ROOTFS_V2_MAX_FILE_BYTES=0x04000000`，冻结 256 MiB 区域和 64 MiB
   单文件规格。
 - 第二次启动读到上一实例留下的正确载荷后输出
   `FILE_SYSTEM_PERSISTENCE_RESTORED`。该标记必须早于本轮 Ring 3 执行。
-- 格式、CRC、Dirty 状态或全盘语义一致性失败只输出一次
+- 格式、CRC、journal 记录或全盘语义一致性失败只输出一次
   `FILE_SYSTEM_CORRUPT` 和状态码，然后停止；失败路径禁止进入用户态。
 - 正常启动在首次挂载和用户进程结束后各输出一次
   `FILE_SYSTEM_CONSISTENT`。最终同步、内核独立读回通过后分别输出
   `FILE_SYSTEM_SYNCED` 与 `FILE_SYSTEM_PAYLOAD_VALID`。
-- superblock 代次、已分配 inode 和数据块只在最终阶段各汇总一次；缓存不按
-  命中、未命中、逐块读写或逐次 flush 打印。
+- superblock 代次、已分配 inode/data block、journal commit/replay/
+  discard/checksum failure 只在挂载和最终收口汇总；缓存不按命中、未命中、
+  逐块读写或逐次 flush 打印。`ROOTFS_JOURNAL_CREDIT_CAPACITY` 每次启动只
+  输出一次，断电矩阵不会把每个 checkpoint 写放进来宾日志。
 - 用户态仅在完整文件写入/同步和完整文件读回/EOF 后输出
   `FILE_WRITTEN`、`FILE_VERIFIED`，系统调用本身仍不逐次打印。
 

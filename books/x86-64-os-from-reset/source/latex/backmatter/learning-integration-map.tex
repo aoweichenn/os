@@ -16,7 +16,7 @@
 \section*{一、融合时采用的五条规则}
 
 \begin{enumerate}[leftmargin=2.2em]
-  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v1.16 在容量、数据结构
+  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v1.17 在容量、数据结构
         或路径上不同，正文先解释历史基线，再明确当前增量，不把旧数字冒充现状。
   \item \textbf{背景知识前置。}第一次使用 ROM、RAM、地址、寄存器、端口、
         中断、页表、进程、fd 等概念时先解释“是什么和为什么”，再进入项目细节。
@@ -73,7 +73,7 @@ oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持�
 \bottomrule
 \end{longtable}
 
-\section*{三、v0.0--v1.16 阶段分册怎样进入十章}
+\section*{三、v0.0--v1.17 阶段分册怎样进入十章}
 
 \begin{longtable}{L{0.25\linewidth}L{0.34\linewidth}L{0.31\linewidth}}
 \toprule
@@ -156,6 +156,9 @@ PIT 有理数换算、单调纳秒、deadline queue、sleep、timed futex 与单
 \learningpathiii{24-v1.16-irq14-}{block-request-}{writeback.md} &
 ATA/PIC 标志、单飞请求、IRQ/timeout 单赢家、BlockIo、写通知与页状态写回 &
 第 9 章 IRQ14/writeback 深入节；第 10 章 ordered journal 前置边界 \\
+\learningpathiii{25-v1.17-ordered-}{metadata-}{journal.md} &
+WAL 历史、credit、盘面记录、FLUSH 顺序、断电矩阵、checkpoint 与幂等 replay &
+第 9 章 ordered journal 深入节；第 10 章 ABI 冻结前置边界 \\
 \bottomrule
 \end{longtable}
 

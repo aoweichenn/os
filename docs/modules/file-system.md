@@ -182,9 +182,10 @@ LBA 32768 开始，固定占用 524288 个 512 字节块：
 | `1..2` | 2 | 8192 位 inode bitmap |
 | `3..4098` | 4096 | 8192 个 256 字节 inode |
 | `4099..4226` | 128 | data bitmap |
-| `4227..524287` | 520061 | 数据块与间接指针块 |
+| `4227..4482` | 256 | ordered metadata journal |
+| `4483..524287` | 519805 | 数据块与间接指针块 |
 
-superblock magic 为 `OSRFV002`。全部多字节字段使用显式 little-endian
+superblock magic 为 `OSRFV003`。全部多字节字段使用显式 little-endian
 编码，不把 C++ struct 直接写盘；前 508 字节由 CRC32 保护，未知版本、
 未知 required feature、非零保留字节或布局偏移不匹配都会拒绝。superblock
 保存事务状态/代次、下一个 inode generation、完整布局和功能位。
@@ -259,27 +260,38 @@ truncate 扩展只增加逻辑大小，不分配空洞块；缩小依次：
 `CapacityExhausted`。不会出现“返回失败但磁盘偷偷多了一段数据”，也不会
 让 inode 计数与 bitmap 分叉。
 
-### 事务、缓存与失败
+### v1.17 ordered metadata journal
 
 rootfs 使用固定容量 `BlockCache`。分配器保存 inode/data 搜索 hint，使
 顺序构造大文件不必从 bitmap 起点反复扫描；hint 只影响性能，位图仍是唯一
 分配事实。superblock 写入也经过缓存的具名块并立即 sync，避免每个事务把
 所有热缓存项无条件失效。
 
-修改顺序固定为：
+每个事务在修改前预留最多 124 个 metadata credits；相同 home block 多次
+修改只消耗一个 credit。inode、位图、间接指针块、目录内容和 superblock
+进入 redo journal，普通文件数据不进入。修改顺序固定为：
 
 ```text
-superblock = Dirty; flush
-  -> 修改数据、pointer、inode、目录和 bitmap
-  -> cache Sync + ATA FLUSH CACHE
-  -> generation++; superblock = Clean; flush
+reserve credits
+  -> 写相关普通文件数据
+  -> data cache Sync + ATA FLUSH CACHE
+  -> journal header + descriptor + payload; FLUSH
+  -> journal commit; FLUSH
+  -> checkpoint home blocks; FLUSH
+  -> 清除 header/commit; FLUSH
 ```
 
-任何设备错误使实例进入 failed 状态。Dirty 介质下次挂载返回
-`IncompleteTransaction`；CRC、保留字节、可达性、重复所有权或 bitmap
-不一致返回 `Corrupt`。生产 Kernel 对两者都只记录状态并停机，不调用 mkfs。
-该协议保证“已知不可安全使用”，不保证掉电恢复；journal/replay 属于后续
-版本。
+descriptor 保存目标相对块和 payload CRC；每个 descriptor block、header
+和 commit 又有独立 CRC。commit 同时绑定 sequence、entry count 与 header
+checksum。挂载在读取 superblock 前检查 journal：没有有效 commit 的准备态
+被丢弃；有效 commit 按目标块幂等重放并再次 FLUSH；commit 有效而 descriptor、
+payload、目标范围或 CRC 无效时拒绝挂载，绝不越界猜测。
+
+checkpoint 失败后实例进入 failed 状态，但已落盘 commit 保留；下次挂载完成
+重放。credits 不足在发布任何元数据前失败，事务 snapshot 恢复 generation、
+统计与 allocation hint。普通文件数据采用 ordered 而非 data journaling，
+因此保证的是命名空间、分配和 inode 元数据的旧/新二选一，不承诺覆盖写的
+旧数据内容可回滚。
 
 ### 全盘一致性
 
@@ -292,7 +304,8 @@ superblock = Dirty; flush
 - inode 的逻辑大小、数据/元数据计数与实际树一致；
 - 目录大小是 320 字节的整数倍，空槽规范化为全零；
 - 重建 bitmap 与盘面 bitmap 每一位相等；
-- superblock 必须为 Clean，布局和 required feature 完全匹配。
+- superblock 必须为 Clean，布局和 required feature 完全匹配；全盘遍历只在
+  journal replay/丢弃完成后运行。
 
 遍历时先在内存 bitmap 标记所有权，最后一次性比较盘面 bitmap；不会为每个
 引用块重复复制整张 bitmap。队列、bitmap 和打开计数均使用固定上限存储，
@@ -355,7 +368,8 @@ rootfs 仍为 256 MiB，单文件仍最多 64 MiB。变化发生在“谁消费�
 
 ## 当前限制
 
-- rootfs v2 没有 journal、replay、在线修复或自动格式化，只检测并拒绝；
+- rootfs 格式 3 已有 metadata journal 与 replay，但没有 data journal、
+  在线修复或自动格式化；
 - 没有硬链接、符号链接、权限、uid/gid、时间戳、设备节点和扩展属性；
 - 打开文件不能 unlink，尚无 orphan inode 与延迟回收；
 - 没有 dentry/inode cache、动态 unmount 或 mount namespace 复制；

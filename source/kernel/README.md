@@ -107,13 +107,17 @@ fs/memfs.*                     /tmp 内存后端和差分模型
 fs/legacy_file_system.*        旧盘面 VFS 适配，仅保留兼容回归
 fs/file_system.*               v0.11 旧格式实现
 fs/root_file_system_format.*   rootfs v2 冻结小端盘面编码
-fs/root_file_system.*          生产根、三级块树、事务和全盘校验
+fs/root_journal.*              格式 3 ordered metadata journal 与 mount replay
+fs/root_file_system.*          生产根、三级块树、journal 事务和全盘校验
 fs/block_cache.*               固定容量写回缓存
 ```
 
 `root_file_system_format` 只负责字节布局，不访问设备、VFS 或全局 Kernel
-状态，因此宿主单元测试可直接链接；`root_file_system` 组合块设备、缓存和
-VFS 操作表。Python mkfs/fsck 是独立工具实现，不进入 Kernel 目标。
+状态，因此宿主单元测试可直接链接；`root_journal` 只依赖固定块设备接口，
+负责 256 块日志区、124-credit overlay、CRC32、FLUSH、checkpoint 与 replay；
+`root_file_system` 组合块设备、缓存、journal 和 VFS 操作表。Python
+mkfs/fsck 是独立工具实现，不进入 Kernel 目标。模块名
+`rootfs_v2.py` 保留历史入口兼容，实际创建与校验的是格式 3。
 
 v1.7 的磁盘程序与进程树继续归属已有 `process/` 和 `user/` 边界：
 

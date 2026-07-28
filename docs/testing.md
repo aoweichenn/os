@@ -27,7 +27,7 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.16 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.17 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
 SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
 bootstrap 正常链累计注册
@@ -1106,3 +1106,35 @@ completion time 不早于 submit time，结果为 Succeeded；完成时还必须
 capacity 共享大量 TCG CPU 时可能越过逐键 20 秒进度门限，发布门禁因此在
 并行全量后对失败的 QEMU 用例进行低优先级、单任务复验；复验仍保留有限
 deadline，禁止以无限等待掩盖死锁。
+
+## v1.17 ordered metadata journal 与断电恢复测试
+
+v1.17 在 161 项基线上新增三项独立目标，构建图共 164 项：
+
+- `os_kernel_root_journal_unit_tests`：credit 上下界、重复 target 更新、
+  overlay read、abort、成功 commit、prepared 无 commit 丢弃、坏 header 和
+  committed payload CRC 损坏；
+- `os_kernel_root_journal_crash_recovery_integration_tests`：故障设备枚举
+  1000 个确定性 Write/Flush 断电点，恢复后所有 target 必须全旧或全新，并
+  对恢复后的镜像再次执行 Recover 验证幂等；
+- `os_kernel_root_journal_randomized_tests`：固定种子 100000 步 Begin、
+  Stage、Abort、Commit 和非法操作，独立模型冻结 active/staged/durable
+  守恒。
+
+既有 rootfs 集成用例把“Dirty mount 必须拒绝”的历史断言替换为真实
+checkpoint 写失败：commit 保留、当前实例冻结，新实例 mount 自动 replay，
+目标目录存在且 replay count 精确为 1。Python mkfs/fsck/bootstrap 用例使用
+`OSRFV003`、256-block journal 和新的 data start，继续独立验证位图与可达性。
+
+断电设备的 fail point 是确定性序号，不使用 wall-clock race。每个样例从同一
+old image 和同一 new transaction 开始，因此失败可以用 seed + point 精确
+复现。oracle 不调用 `RootJournal` parser，只比较完整 home block 集合。
+
+QEMU bootstrap、functional、capacity 和跨启动 persistence 都要求
+`ROOTFS_JOURNAL_READY`；production Kernel 还输出 credit capacity 与
+commit/replay/discard/checksum 的低频汇总。测试禁止依赖逐块日志，因为串口
+输出会改变 ATA/PIT 时序。
+
+远端发布验证继续使用独立 `/tmp/aoweichen-os-*` 目录、最多四个低优先级
+编译任务和每条命令的有限 timeout；只终止本次验证创建的进程，不接触验证机
+上的其他工作负载。

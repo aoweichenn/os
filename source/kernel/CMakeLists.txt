@@ -45,6 +45,7 @@ set(
     include/os/kernel/fs/memfs.hpp
     include/os/kernel/fs/root_file_system.hpp
     include/os/kernel/fs/root_file_system_format.hpp
+    include/os/kernel/fs/root_journal.hpp
     include/os/kernel/fs/vfs.hpp
 )
 set(
@@ -172,6 +173,7 @@ set(
     src/fs/memfs.cpp
     src/fs/root_file_system.cpp
     src/fs/root_file_system_format.cpp
+    src/fs/root_journal.cpp
     src/fs/vfs.cpp
 )
 set(
@@ -448,6 +450,7 @@ add_library(
         src/fs/memfs.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
+        src/fs/root_journal.cpp
         src/fs/vfs.cpp
         src/io/terminal.cpp
         src/io/file_description.cpp
@@ -466,6 +469,7 @@ add_library(
         include/os/kernel/fs/memfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
+        include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
         include/os/kernel/io/terminal.hpp
         include/os/kernel/io/file_description.hpp
@@ -514,6 +518,7 @@ add_library(
         src/fs/memfs.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
+        src/fs/root_journal.cpp
         src/fs/vfs.cpp
         src/memory/kernel_heap.cpp
         src/sync/spin_lock.cpp
@@ -525,6 +530,7 @@ add_library(
         include/os/kernel/fs/memfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
+        include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/sync/spin_lock.hpp

@@ -4,7 +4,7 @@ namespace os::kernel::fs {
 
 namespace {
 
-constexpr uint8_t OS_KERNEL_ROOTFS_FORMAT_MAGIC[] = {'O', 'S', 'R', 'F', 'V', '0', '0', '2'};
+constexpr uint8_t OS_KERNEL_ROOTFS_FORMAT_MAGIC[] = {'O', 'S', 'R', 'F', 'V', '0', '0', '3'};
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_MAGIC_SIZE_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FIELD_START_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FIELD_COUNT = 18ULL;

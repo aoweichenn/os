@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.16。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.17。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -154,3 +154,9 @@ ATA FLUSH 落盘；private COW 不回写。当前 161 项 CTest 与两档日常 
 并由显式 64 GiB 发布门禁验证 64 条 Thread；全部 TTY 输入输出、作业事件、
 signal 状态、deadline、Pipe 页、futex entry、KernelStack、
 FileDescription、TLS/VMA 和 Zombie 最终共同回到基线。
+v1.17 又把 rootfs 升级为格式 3：在固定 128 KiB journal 中以四个 descriptor
+块提供 124 个 metadata credit，相关数据稳定后依次写 prepared payload、
+commit、home checkpoint 与清理 FLUSH。mount 在信任 superblock 前验证并
+幂等 replay；1000 个确定性断电点和十万步随机模型证明 metadata 只能恢复为
+完整旧状态或完整新状态。构建图因此增加到 164 项，三档 QEMU 与跨启动
+persistence 使用同一 production journal 路径。
