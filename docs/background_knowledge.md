@@ -2154,7 +2154,27 @@ Blocked→Ready 提交点，赢家决定唯一 WakeReason。读写、wait、join
 [v1.14 学习章](learning/22-v1.14-process-signals-sigreturn.md) 与
 [ADR 0041](adr/0041-process-signals-user-frame-and-sigreturn.md)。
 
-## 31. 建议阅读顺序
+## 31. 为什么终端需要 session、进程组和行规程
+
+键盘只产生扫描码，字符设备只传输字节；“这一行尚未完成”“Ctrl-Z 应停止谁”
+和“哪个进程有权读取”都不是硬件事实。TTY 行规程把扫描码翻译后的字符组织为
+canonical 行，把控制字符组织为动作，并把输入所有权绑定到一个前台进程组。
+
+进程树解决 wait 和孤儿收养，进程组把管线成员组织成平坦信号目标，session
+再把多个前后台组包进一次控制终端边界。三者分离源于真实需求：Shell 是前台
+程序的父进程，却不应和孩子位于同一个前台信号目标；一条管线中的兄弟进程又
+必须一起停止。
+
+停止也不同于退出。Stopped Process 保留全部资源和 CPU/FX 现场，只从可运行
+集合中暂时消失；SIGCONT 恢复原 Thread；父 Shell 通过事件式 wait 观察
+Stopped/Continued/Exited。只有最后一种事件允许收集 Zombie。
+
+完整键盘扫描码、C0 控制码、TTY 锁、输入守恒、SID/PGID、字符 vnode、
+Shell 作业表与 QEMU 时序见
+[v1.15 学习章](learning/23-v1.15-tty-session-job-control.md) 和
+[ADR 0042](adr/0042-tty-session-and-job-control.md)。
+
+## 32. 建议阅读顺序
 
 第一次进入项目时，建议按以下顺序阅读：
 
@@ -2180,6 +2200,7 @@ Blocked→Ready 提交点，赢家决定唯一 WakeReason。读写、wait、join
    v1.10 的 fork/COW，v1.11 的动态管道、pipe/dup2、外部 Shell 与
    核心工具，v1.12 的用户 Thread、FS-base TLS、private futex 与同步原语，
    v1.13 的单调时间、deadline 与 timed wait，以及 v1.14 的信号、进程组、
-   可中断等待和 `sigreturn`。
+   可中断等待和 `sigreturn`，以及 v1.15 的 TTY、session、控制终端与
+   前后台作业控制。
 10. `books/x86-64-os-from-reset/`：系统阅读硬件、启动和后续内核路线。
 11. `docs/roadmap.md`：了解后续知识如何逐层展开。

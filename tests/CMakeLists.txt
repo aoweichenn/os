@@ -658,6 +658,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_job_control_unit_tests
+    unit/kernel/job_control_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_program_arguments_unit_tests
     unit/kernel/program_arguments_test.cpp
     "unit"
@@ -700,6 +705,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_signal_manager_randomized_tests
     randomized/kernel/signal_manager_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_job_control_randomized_tests
+    randomized/kernel/job_control_randomized_test.cpp
     "randomized"
 )
 
@@ -777,9 +787,35 @@ function(
 endfunction()
 
 os_add_kernel_user_environment_test(
-    os_kernel_console_input_unit_tests
-    unit/kernel/console_input_test.cpp
+    os_kernel_terminal_unit_tests
+    unit/kernel/terminal_test.cpp
     "unit"
+)
+
+add_executable(
+    os_kernel_terminal_job_control_integration_tests
+    integration/boot/terminal_job_control_integration_test.cpp
+)
+target_link_libraries(
+    os_kernel_terminal_job_control_integration_tests
+    PRIVATE
+        os_kernel_process_model_host
+        os_kernel_user_environment_model_host
+        os_test_support
+)
+target_compile_options(
+    os_kernel_terminal_job_control_integration_tests
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+add_test(
+    NAME os_kernel_terminal_job_control_integration_tests
+    COMMAND os_kernel_terminal_job_control_integration_tests
+)
+set_tests_properties(
+    os_kernel_terminal_job_control_integration_tests
+    PROPERTIES
+        LABELS "integration"
 )
 function(
     os_add_kernel_object_model_test
@@ -952,6 +988,11 @@ os_add_kernel_file_system_test(
 os_add_kernel_file_system_test(
     os_kernel_vfs_unit_tests
     unit/kernel/vfs_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_console_device_file_system_unit_tests
+    unit/kernel/console_device_file_system_test.cpp
     "unit"
 )
 os_add_kernel_file_system_test(

@@ -11,7 +11,7 @@ constexpr std::string_view OS_TEST_SIGNAL_MANAGER_SELECTION_MESSAGE =
 constexpr std::string_view OS_TEST_SIGNAL_MANAGER_FRAME_MESSAGE =
     "handler frame 必须校验身份，活动期间再次发送必须形成一个新 pending";
 constexpr std::string_view OS_TEST_SIGNAL_MANAGER_LIFECYCLE_MESSAGE =
-    "fork 必须复制 disposition/mask/group，exec 必须重置 handler 并清理兄弟";
+    "fork 必须复制 disposition/mask/group，exec 必须重置 handler、保留 pending 并清理兄弟";
 constexpr uint64_t OS_TEST_SIGNAL_MANAGER_PROCESS_CAPACITY = 4ULL;
 constexpr uint64_t OS_TEST_SIGNAL_MANAGER_THREAD_CAPACITY = 8ULL;
 constexpr uint64_t OS_TEST_SIGNAL_MANAGER_PARENT_PROCESS_INDEX = 0ULL;
@@ -43,6 +43,8 @@ int main() {
     os::kernel::SignalThreadState threads[OS_TEST_SIGNAL_MANAGER_THREAD_CAPACITY]{};
     os::kernel::SignalManager manager{};
     const uint64_t user1_bit = os::abi::SignalBit(os::abi::OS_ABI_SIGNAL_USER1_NUMBER);
+    const uint64_t terminal_stop_bit =
+        os::abi::SignalBit(os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER);
     bool valid = manager.Initialize(processes, OS_TEST_SIGNAL_MANAGER_PROCESS_CAPACITY, threads,
                                     OS_TEST_SIGNAL_MANAGER_THREAD_CAPACITY) ==
                      os::kernel::SignalManagerStatus::Succeeded &&
@@ -157,6 +159,16 @@ int main() {
             manager.ReadThread(OS_TEST_SIGNAL_MANAGER_CHILD_THREAD_INDEX, child_thread) ==
                 os::kernel::SignalManagerStatus::Succeeded &&
             child_thread.signal_mask == user1_bit &&
+            manager.SendToProcess(OS_TEST_SIGNAL_MANAGER_CHILD_PROCESS_ID,
+                                  os::abi::OS_ABI_SIGNAL_USER1_NUMBER,
+                                  selected_thread_index) ==
+                os::kernel::SignalManagerStatus::Succeeded &&
+            selected_thread_index == os::kernel::OS_KERNEL_SIGNAL_INVALID_INDEX &&
+            manager.SendToProcess(OS_TEST_SIGNAL_MANAGER_CHILD_PROCESS_ID,
+                                  os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER,
+                                  selected_thread_index) ==
+                os::kernel::SignalManagerStatus::Succeeded &&
+            selected_thread_index == OS_TEST_SIGNAL_MANAGER_CHILD_THREAD_INDEX &&
             manager.ExecProcess(OS_TEST_SIGNAL_MANAGER_CHILD_PROCESS_INDEX,
                                 OS_TEST_SIGNAL_MANAGER_CHILD_THREAD_INDEX) ==
                 os::kernel::SignalManagerStatus::Succeeded &&
@@ -164,6 +176,18 @@ int main() {
                 os::kernel::SignalManagerStatus::Succeeded &&
             child_process.actions[OS_TEST_SIGNAL_MANAGER_USER1_ACTION_INDEX].disposition ==
                 os::abi::SignalDisposition::Default &&
+            child_process.pending_set == user1_bit &&
+            manager.ReadThread(OS_TEST_SIGNAL_MANAGER_CHILD_THREAD_INDEX, child_thread) ==
+                os::kernel::SignalManagerStatus::Succeeded &&
+            child_thread.pending_set == terminal_stop_bit;
+    os::kernel::SignalDelivery post_exec_delivery{};
+    valid = valid &&
+            manager.BeginThreadDelivery(OS_TEST_SIGNAL_MANAGER_CHILD_THREAD_INDEX,
+                                        post_exec_delivery) ==
+                os::kernel::SignalManagerStatus::Succeeded &&
+            post_exec_delivery.kind == os::kernel::SignalDeliveryKind::DefaultStop &&
+            post_exec_delivery.signal_number ==
+                os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER &&
             manager.Validate() == os::kernel::SignalManagerStatus::Succeeded;
     test_context.Expect(valid, OS_TEST_SIGNAL_MANAGER_LIFECYCLE_MESSAGE);
     return test_context.ExitCode();

@@ -8,10 +8,15 @@ namespace {
 
 constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE = 0ULL;
 
+[[nodiscard]] bool IsVfsBackedKind(const FileDescriptionKind kind) noexcept {
+    return kind == FileDescriptionKind::RegularFile || kind == FileDescriptionKind::Directory ||
+           kind == FileDescriptionKind::TerminalDevice;
+}
+
 struct FileDescriptionStorage final {
     FileDescriptionKind kind;
     uint64_t file_status_flags;
-    ConsoleInput *console_input;
+    Terminal *terminal;
     FileDescriptionDeviceWriteOperation device_write_operation;
     void *device_write_context;
     Pipe *pipe;
@@ -112,7 +117,7 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
     *storage = FileDescriptionStorage{
         .kind = request.kind,
         .file_status_flags = request.file_status_flags,
-        .console_input = request.console_input,
+        .terminal = request.terminal,
         .device_write_operation = request.device_write_operation,
         .device_write_context = request.device_write_context,
         .pipe = request.pipe,
@@ -145,8 +150,7 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
     SpinLockGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     fs::NodeInformation information{};
-    if ((storage.kind == FileDescriptionKind::RegularFile ||
-         storage.kind == FileDescriptionKind::Directory) &&
+    if (IsVfsBackedKind(storage.kind) &&
         (storage.vfs == nullptr ||
          storage.vfs->StatOpenFile(storage.open_file, information) !=
              fs::Status::Succeeded)) {
@@ -155,35 +159,29 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
     snapshot = FileDescriptionSnapshot{
         .kind = storage.kind,
         .file_status_flags = storage.file_status_flags,
-        .offset_bytes = storage.kind == FileDescriptionKind::RegularFile ||
-                                storage.kind == FileDescriptionKind::Directory
+        .offset_bytes = IsVfsBackedKind(storage.kind)
                             ? storage.open_file.offset_bytes
                             : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .generation = identity.generation,
         .strong_reference_count = identity.strong_reference_count,
         .superblock_identifier =
-            storage.kind == FileDescriptionKind::RegularFile ||
-                    storage.kind == FileDescriptionKind::Directory
+            IsVfsBackedKind(storage.kind)
                 ? storage.open_file.path.vnode.superblock->identifier
                 : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .superblock_generation =
-            storage.kind == FileDescriptionKind::RegularFile ||
-                    storage.kind == FileDescriptionKind::Directory
+            IsVfsBackedKind(storage.kind)
                 ? storage.open_file.path.vnode.superblock->generation
                 : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .node_identifier =
-            storage.kind == FileDescriptionKind::RegularFile ||
-                    storage.kind == FileDescriptionKind::Directory
+            IsVfsBackedKind(storage.kind)
                 ? storage.open_file.path.vnode.identifier
                 : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .node_generation =
-            storage.kind == FileDescriptionKind::RegularFile ||
-                    storage.kind == FileDescriptionKind::Directory
+            IsVfsBackedKind(storage.kind)
                 ? storage.open_file.path.vnode.generation
                 : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .size_bytes =
-            storage.kind == FileDescriptionKind::RegularFile ||
-                    storage.kind == FileDescriptionKind::Directory
+            IsVfsBackedKind(storage.kind)
                 ? information.size_bytes
                 : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
     };
@@ -262,12 +260,16 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         return FileDescriptionStatus::PermissionDenied;
     }
     FileDescriptionStatus status = FileDescriptionStatus::InvalidArgument;
-    if (storage.kind == FileDescriptionKind::ConsoleInput) {
-        const ConsoleInputStatus console_status =
-            storage.console_input->TryRead(destination, capacity_bytes, read_bytes);
-        status = console_status == ConsoleInputStatus::Succeeded ? FileDescriptionStatus::Succeeded
-                 : console_status == ConsoleInputStatus::Empty
+    if (storage.kind == FileDescriptionKind::TerminalInput ||
+        storage.kind == FileDescriptionKind::TerminalDevice) {
+        const TerminalStatus terminal_status =
+            storage.terminal->TryRead(destination, capacity_bytes, read_bytes);
+        status = terminal_status == TerminalStatus::Succeeded
+                     ? FileDescriptionStatus::Succeeded
+                 : terminal_status == TerminalStatus::Empty
                      ? FileDescriptionStatus::WouldBlock
+                 : terminal_status == TerminalStatus::EndOfFile
+                     ? FileDescriptionStatus::EndOfFile
                      : FileDescriptionStatus::InvalidArgument;
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
         file_system_status = fs::ToFileSystemStatus(
@@ -320,12 +322,23 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
         return FileDescriptionStatus::PermissionDenied;
     }
     FileDescriptionStatus status = FileDescriptionStatus::InvalidArgument;
-    if (storage.kind == FileDescriptionKind::ConsoleOutput ||
-        storage.kind == FileDescriptionKind::ConsoleError) {
-        status = storage.device_write_operation(storage.device_write_context, source, length_bytes,
-                                                written_bytes)
-                     ? FileDescriptionStatus::Succeeded
-                     : FileDescriptionStatus::DeviceFailure;
+    if (storage.kind == FileDescriptionKind::TerminalOutput ||
+        storage.kind == FileDescriptionKind::TerminalError ||
+        storage.kind == FileDescriptionKind::TerminalDevice) {
+        if (storage.terminal == nullptr) {
+            status = storage.device_write_operation != nullptr &&
+                             storage.device_write_operation(storage.device_write_context, source,
+                                                            length_bytes, written_bytes)
+                         ? FileDescriptionStatus::Succeeded
+                         : FileDescriptionStatus::DeviceFailure;
+        } else {
+            const TerminalStatus terminal_status =
+                storage.terminal->TryWrite(source, length_bytes, storage.device_write_operation,
+                                           storage.device_write_context, written_bytes);
+            status = terminal_status == TerminalStatus::Succeeded
+                         ? FileDescriptionStatus::Succeeded
+                         : FileDescriptionStatus::DeviceFailure;
+        }
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
         file_system_status = fs::ToFileSystemStatus(
             storage.vfs->Write(storage.open_file, source, length_bytes, written_bytes));
@@ -402,8 +415,9 @@ FileDescriptionManager::ReadCanProgress(const KernelObjectReference &reference,
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
         return FileDescriptionStatus::PermissionDenied;
     }
-    if (storage.kind == FileDescriptionKind::ConsoleInput) {
-        can_progress = storage.console_input->ReadCanProgress();
+    if (storage.kind == FileDescriptionKind::TerminalInput ||
+        storage.kind == FileDescriptionKind::TerminalDevice) {
+        can_progress = storage.terminal->ReadCanProgress();
     } else if (storage.kind == FileDescriptionKind::RegularFile ||
                storage.kind == FileDescriptionKind::Directory) {
         can_progress = true;
@@ -436,8 +450,9 @@ FileDescriptionManager::WriteCanProgress(const KernelObjectReference &reference,
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
         return FileDescriptionStatus::PermissionDenied;
     }
-    if (storage.kind == FileDescriptionKind::ConsoleOutput ||
-        storage.kind == FileDescriptionKind::ConsoleError ||
+    if (storage.kind == FileDescriptionKind::TerminalOutput ||
+        storage.kind == FileDescriptionKind::TerminalError ||
+        storage.kind == FileDescriptionKind::TerminalDevice ||
         storage.kind == FileDescriptionKind::RegularFile) {
         can_progress = true;
     } else if (storage.kind == FileDescriptionKind::PipeWriter) {
@@ -468,8 +483,7 @@ bool FileDescriptionManager::Finalize(void *const payload) noexcept {
     }
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     bool finalized = true;
-    if (storage.kind == FileDescriptionKind::RegularFile ||
-        storage.kind == FileDescriptionKind::Directory) {
+    if (IsVfsBackedKind(storage.kind)) {
         finalized = storage.vfs != nullptr &&
                     storage.vfs->Close(storage.open_file) == fs::Status::Succeeded;
     } else if (storage.kind == FileDescriptionKind::PipeReader) {
@@ -518,12 +532,19 @@ bool FileDescriptionManager::IsRequestValid(
     const bool writable =
         (request.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) !=
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
-    if (request.kind == FileDescriptionKind::ConsoleInput) {
-        return readable && !writable && request.console_input != nullptr;
+    if (request.kind == FileDescriptionKind::TerminalInput) {
+        return readable && !writable && request.terminal != nullptr;
     }
-    if (request.kind == FileDescriptionKind::ConsoleOutput ||
-        request.kind == FileDescriptionKind::ConsoleError) {
+    if (request.kind == FileDescriptionKind::TerminalOutput ||
+        request.kind == FileDescriptionKind::TerminalError) {
         return !readable && writable && request.device_write_operation != nullptr;
+    }
+    if (request.kind == FileDescriptionKind::TerminalDevice) {
+        return (readable || writable) && request.terminal != nullptr &&
+               (!writable || request.device_write_operation != nullptr) &&
+               request.vfs != nullptr && request.open_file.open &&
+               request.open_file.path.vnode.type == fs::NodeType::CharacterDevice &&
+               request.open_file.readable == readable && request.open_file.writable == writable;
     }
     if (request.kind == FileDescriptionKind::PipeReader) {
         return readable && !writable && request.pipe != nullptr;

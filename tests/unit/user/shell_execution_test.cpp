@@ -13,6 +13,8 @@ constexpr std::string_view OS_TEST_SHELL_EXECUTION_REDIRECTION =
     "无空格重定向、引号和转义必须生成独立路径且不进入 argv";
 constexpr std::string_view OS_TEST_SHELL_EXECUTION_FAILURES =
     "空阶段、重复重定向、缺失路径和第 17 级必须原子拒绝";
+constexpr std::string_view OS_TEST_SHELL_EXECUTION_BACKGROUND =
+    "未引用的末尾 & 必须标记后台管线，非末尾 & 必须原子拒绝";
 constexpr char OS_TEST_SHELL_EXECUTION_PIPELINE_LINE[] =
     "echo payload|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|wc";
 constexpr char OS_TEST_SHELL_EXECUTION_REDIRECTION_LINE[] =
@@ -23,6 +25,8 @@ constexpr char OS_TEST_SHELL_EXECUTION_DUPLICATE_REDIRECTION_LINE[] =
 constexpr char OS_TEST_SHELL_EXECUTION_MISSING_REDIRECTION_LINE[] = "cat >";
 constexpr char OS_TEST_SHELL_EXECUTION_TOO_MANY_STAGES_LINE[] =
     "a|b|c|d|e|f|g|h|i|j|k|l|m|n|o|p|q";
+constexpr char OS_TEST_SHELL_EXECUTION_BACKGROUND_LINE[] = "cat | wc &";
+constexpr char OS_TEST_SHELL_EXECUTION_BACKGROUND_NOT_LAST_LINE[] = "cat & echo";
 constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_INPUT[] = "input file";
 constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_OUTPUT[] = "escaped output";
 constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_TEE_PATH[] = "copy file";
@@ -104,6 +108,22 @@ int main() {
             sizeof(OS_TEST_SHELL_EXECUTION_EXPECTED_TEE_PATH) -
                 OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES);
     test_context.Expect(redirection_valid, OS_TEST_SHELL_EXECUTION_REDIRECTION);
+
+    const bool background_valid =
+        os::user::ParseShellExecutionPlan(
+            OS_TEST_SHELL_EXECUTION_BACKGROUND_LINE,
+            sizeof(OS_TEST_SHELL_EXECUTION_BACKGROUND_LINE) -
+                OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES,
+            plan) == os::user::ShellExecutionParseStatus::Succeeded &&
+        plan.background &&
+        os::user::ParseShellExecutionPlan(
+            OS_TEST_SHELL_EXECUTION_BACKGROUND_NOT_LAST_LINE,
+            sizeof(OS_TEST_SHELL_EXECUTION_BACKGROUND_NOT_LAST_LINE) -
+                OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES,
+            plan) ==
+            os::user::ShellExecutionParseStatus::BackgroundOperatorNotLast &&
+        plan.stage_count == OS_TEST_SHELL_EXECUTION_EMPTY_VALUE;
+    test_context.Expect(background_valid, OS_TEST_SHELL_EXECUTION_BACKGROUND);
 
     const bool failures_atomic =
         os::user::ParseShellExecutionPlan(

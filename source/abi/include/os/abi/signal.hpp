@@ -6,8 +6,12 @@ namespace os::abi {
 
 inline constexpr uint64_t OS_ABI_SIGNAL_MINIMUM_NUMBER = 1ULL;
 inline constexpr uint64_t OS_ABI_SIGNAL_MAXIMUM_NUMBER = 63ULL;
+inline constexpr uint64_t OS_ABI_SIGNAL_INTERRUPT_NUMBER = 2ULL;
 inline constexpr uint64_t OS_ABI_SIGNAL_KILL_NUMBER = 9ULL;
 inline constexpr uint64_t OS_ABI_SIGNAL_CHILD_NUMBER = 17ULL;
+inline constexpr uint64_t OS_ABI_SIGNAL_CONTINUE_NUMBER = 18ULL;
+inline constexpr uint64_t OS_ABI_SIGNAL_STOP_NUMBER = 19ULL;
+inline constexpr uint64_t OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER = 20ULL;
 inline constexpr uint64_t OS_ABI_SIGNAL_TERMINATE_NUMBER = 15ULL;
 inline constexpr uint64_t OS_ABI_SIGNAL_USER1_NUMBER = 10ULL;
 inline constexpr uint64_t OS_ABI_SIGNAL_USER2_NUMBER = 12ULL;
@@ -86,6 +90,7 @@ static_assert(sizeof(SignalFrame) == OS_ABI_SIGNAL_FRAME_SIZE_BYTES);
                : 0ULL;
 }
 
-inline constexpr uint64_t OS_ABI_SIGNAL_UNMASKABLE_SET = SignalBit(OS_ABI_SIGNAL_KILL_NUMBER);
+inline constexpr uint64_t OS_ABI_SIGNAL_UNMASKABLE_SET =
+    SignalBit(OS_ABI_SIGNAL_KILL_NUMBER) | SignalBit(OS_ABI_SIGNAL_STOP_NUMBER);
 
 }

@@ -307,8 +307,11 @@ mask；pending 与 active frame 不复制。否则父进程尚未处理的事件
 
 \paragraph{exec}
 新程序不知道旧 handler 地址，所以 Handler 重置为 Default，Ignore 保留。
-pending、活动 frame 和被删除兄弟 Thread 的状态清空，survivor mask 保留。
-PID、父子关系与进程组没有变化，因为 exec 替换程序映像而非 Process 身份。
+Process pending 与 survivor pending 是已经发生的异步事实，和 survivor mask
+一同保留；活动 frame 和被删除兄弟 Thread 的状态清空。早期实现曾错误清空
+pending，v1.15 的 TTY 整机测试在 Ctrl-Z 落入 fork/exec 窗口时抓到信号丢失，
+由此修正。PID、父子关系与进程组没有变化，因为 exec 替换程序映像而非
+Process 身份。
 
 \paragraph{exit}
 ThreadExit 移除对应信号状态；仍可交付的 Process pending 重新选择其他 Thread。

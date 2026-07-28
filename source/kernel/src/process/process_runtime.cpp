@@ -118,6 +118,16 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_SIGNAL_DELIVERY_DISPOSITION_PREFIX[] =
     "[OS][KERNEL][SIGNAL] DELIVERY_DISPOSITION=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_SIGNAL_DELIVERY_FAILURE_STAGE_PREFIX[] =
     "[OS][KERNEL][SIGNAL] DELIVERY_FAILURE_STAGE=";
+constexpr uint8_t OS_KERNEL_PROCESS_RUNTIME_TERMINAL_NEWLINE_SEQUENCE[]{
+    static_cast<uint8_t>('\r'), static_cast<uint8_t>('\n')};
+constexpr uint8_t OS_KERNEL_PROCESS_RUNTIME_TERMINAL_ERASE_SEQUENCE[]{
+    static_cast<uint8_t>('\b'), static_cast<uint8_t>(' '), static_cast<uint8_t>('\b')};
+constexpr uint8_t OS_KERNEL_PROCESS_RUNTIME_TERMINAL_INTERRUPT_SEQUENCE[]{
+    static_cast<uint8_t>('^'), static_cast<uint8_t>('C'), static_cast<uint8_t>('\r'),
+    static_cast<uint8_t>('\n')};
+constexpr uint8_t OS_KERNEL_PROCESS_RUNTIME_TERMINAL_STOP_SEQUENCE[]{
+    static_cast<uint8_t>('^'), static_cast<uint8_t>('Z'), static_cast<uint8_t>('\r'),
+    static_cast<uint8_t>('\n')};
 
 [[nodiscard]] bool IsPowerOfTwoCounter(const uint64_t value) noexcept {
     return value != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
@@ -211,6 +221,12 @@ MapProcessIoToFileSystemStatus(const ProcessIoStatus status,
     if (status == ProcessIoStatus::DeviceFailure) {
         return FileSystemStatus::DeviceFailure;
     }
+    if (status == ProcessIoStatus::WouldBlock) {
+        return FileSystemStatus::WouldBlock;
+    }
+    if (status == ProcessIoStatus::BackgroundTerminalRead) {
+        return FileSystemStatus::BackgroundTerminalRead;
+    }
     if (status == ProcessIoStatus::DescriptorLimitExceeded ||
         status == ProcessIoStatus::ObjectFailure) {
         return FileSystemStatus::DataCapacityExhausted;
@@ -254,7 +270,7 @@ ProcessEntry process_entries[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 ThreadEntry thread_entries[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 Pipe process_pipe;
 PipeManager dynamic_pipe_manager;
-ConsoleInput process_console_input;
+Terminal process_terminal;
 KernelObjectManager kernel_object_manager;
 FileDescriptionManager file_description_manager;
 ProcessRuntimeProcess runtime_processes[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
@@ -270,6 +286,8 @@ PrivateFutexManager private_futex_manager;
 PrivateFutexEntry private_futex_entries[OS_KERNEL_PRIVATE_FUTEX_CAPACITY_LIMIT];
 ProcessTree process_tree;
 ProcessTreeEntry process_tree_entries[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
+JobControlManager job_control_manager;
+JobControlProcessState job_control_process_states[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 SignalManager signal_manager;
 SignalProcessState signal_process_states[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 SignalThreadState signal_thread_states[OS_KERNEL_THREAD_CAPACITY_LIMIT];
@@ -798,20 +816,30 @@ void WakeRequiredThreads(const WaitCondition wait_condition,
     return true;
 }
 
+void EchoTerminalBytes(const uint8_t *const source, const uint64_t length_bytes) noexcept {
+    uint64_t written_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (process_terminal.TryWrite(source, length_bytes, WriteConsoleDevice, nullptr,
+                                  written_bytes) != TerminalStatus::Succeeded ||
+        written_bytes != length_bytes) {
+        HaltProcessor();
+    }
+}
+
 [[nodiscard]] bool CreateAndInstallInitialDescription(ProcessRuntimeProcess &process,
                                                       const FileDescriptionKind kind,
                                                       const uint64_t file_status_flags,
                                                       const uint64_t descriptor) noexcept {
-    const bool console_output =
-        kind == FileDescriptionKind::ConsoleOutput || kind == FileDescriptionKind::ConsoleError;
+    const bool terminal_output =
+        kind == FileDescriptionKind::TerminalOutput || kind == FileDescriptionKind::TerminalError;
     const bool pipe_endpoint =
         kind == FileDescriptionKind::PipeReader || kind == FileDescriptionKind::PipeWriter;
     const FileDescriptionCreateRequest request{
         .kind = kind,
         .file_status_flags = file_status_flags,
-        .console_input =
-            kind == FileDescriptionKind::ConsoleInput ? &process_console_input : nullptr,
-        .device_write_operation = console_output ? WriteConsoleDevice : nullptr,
+        .terminal = kind == FileDescriptionKind::TerminalInput || terminal_output
+                        ? &process_terminal
+                        : nullptr,
+        .device_write_operation = terminal_output ? WriteConsoleDevice : nullptr,
         .device_write_context = nullptr,
         .pipe = pipe_endpoint ? &process_pipe : nullptr,
         .pipe_manager = nullptr,
@@ -835,13 +863,13 @@ void WakeRequiredThreads(const WaitCondition wait_condition,
         return false;
     }
     const bool standard_descriptions_installed =
-        CreateAndInstallInitialDescription(process, FileDescriptionKind::ConsoleInput,
+        CreateAndInstallInitialDescription(process, FileDescriptionKind::TerminalInput,
                                            OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG,
                                            OS_KERNEL_FILE_TABLE_STANDARD_INPUT_DESCRIPTOR) &&
-        CreateAndInstallInitialDescription(process, FileDescriptionKind::ConsoleOutput,
+        CreateAndInstallInitialDescription(process, FileDescriptionKind::TerminalOutput,
                                            OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG,
                                            OS_KERNEL_FILE_TABLE_STANDARD_OUTPUT_DESCRIPTOR) &&
-        CreateAndInstallInitialDescription(process, FileDescriptionKind::ConsoleError,
+        CreateAndInstallInitialDescription(process, FileDescriptionKind::TerminalError,
                                            OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG,
                                            OS_KERNEL_FILE_TABLE_STANDARD_ERROR_DESCRIPTOR);
     bool pipe_description_installed = true;
@@ -1299,6 +1327,7 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
     const bool file_table_initialized =
         file_system_context_initialized && InitializeProcessFileTable(runtime_process, selection);
     ProcessTreeStatus tree_status = ProcessTreeStatus::InvalidState;
+    JobControlStatus job_control_status = JobControlStatus::InvalidProcessId;
     SignalManagerStatus signal_process_status = SignalManagerStatus::InvalidProcessId;
     SignalManagerStatus signal_thread_status = SignalManagerStatus::InvalidThreadId;
     if (file_table_initialized) {
@@ -1316,6 +1345,22 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
                                               OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
         }
         if (signal_thread_status == SignalManagerStatus::Succeeded) {
+            job_control_status =
+                parent_process_index == OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX
+                    ? job_control_manager.RegisterInit(process_index, process_id.value)
+                    : job_control_manager.ForkProcess(parent_process_index, process_index,
+                                                      process_id.value);
+        }
+        if (job_control_status == JobControlStatus::Succeeded &&
+            parent_process_index == OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX) {
+            job_control_status =
+                process_terminal.AcquireControllingSession(process_id.value, process_id.value,
+                                                           process_id.value) ==
+                        TerminalStatus::Succeeded
+                    ? JobControlStatus::Succeeded
+                    : JobControlStatus::PermissionDenied;
+        }
+        if (job_control_status == JobControlStatus::Succeeded) {
             tree_status = parent_process_index == OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX
                               ? process_tree.RegisterInit(process_index, process_id.value)
                               : process_tree.RegisterChild(process_index, process_id.value,
@@ -1324,7 +1369,13 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
     }
     if (!file_table_initialized || signal_process_status != SignalManagerStatus::Succeeded ||
         signal_thread_status != SignalManagerStatus::Succeeded ||
-        tree_status != ProcessTreeStatus::Succeeded) {
+        tree_status != ProcessTreeStatus::Succeeded ||
+        job_control_status != JobControlStatus::Succeeded) {
+        if (job_control_status == JobControlStatus::Succeeded &&
+            job_control_manager.RemoveProcess(process_index) !=
+                JobControlStatus::Succeeded) {
+            HaltProcessor();
+        }
         if (signal_thread_status == SignalManagerStatus::Succeeded &&
             signal_manager.RemoveThread(thread_index) != SignalManagerStatus::Succeeded) {
             HaltProcessor();
@@ -1422,6 +1473,15 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
             SignalManagerStatus::Succeeded) {
         rollback_succeeded =
             signal_manager.RemoveProcess(process_index) == SignalManagerStatus::Succeeded &&
+            rollback_succeeded;
+    }
+    JobControlProcessState job_state{};
+    if (process_index < process_runtime_limits.process_capacity &&
+        job_control_manager.ReadProcess(process_index, job_state) ==
+            JobControlStatus::Succeeded) {
+        rollback_succeeded =
+            job_control_manager.RemoveProcess(process_index) ==
+                JobControlStatus::Succeeded &&
             rollback_succeeded;
     }
     if (process_index < process_runtime_limits.process_capacity) {
@@ -1556,7 +1616,12 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
     const ThreadSchedulerStatus reap_status =
         thread_scheduler.ReapZombieProcess(wait_result.process_index);
     scheduler_lock.Unlock(interrupts_were_enabled);
-    if (reap_status != ThreadSchedulerStatus::Succeeded) {
+    if (reap_status != ThreadSchedulerStatus::Succeeded ||
+        !RemoveSignalProcessIfPresent(wait_result.process_index)) {
+        return false;
+    }
+    if (job_control_manager.RemoveProcess(wait_result.process_index) !=
+        JobControlStatus::Succeeded) {
         return false;
     }
     runtime_processes[wait_result.process_index].active = false;
@@ -1855,6 +1920,27 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
     return true;
 }
 
+[[nodiscard]] bool ContinueStoppedProcess(const uint64_t process_index) noexcept {
+    ProcessEntry process{};
+    if (thread_scheduler.ReadProcess(process_index, process) !=
+        ThreadSchedulerStatus::Succeeded) {
+        return false;
+    }
+    if (process.state != ProcessState::Stopped) {
+        return process.state == ProcessState::Alive;
+    }
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus continue_status =
+        thread_scheduler.ContinueProcess(process_index);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (continue_status != ThreadSchedulerStatus::Succeeded ||
+        process_tree.MarkContinued(process_index) != ProcessTreeStatus::Succeeded) {
+        return false;
+    }
+    WakeRequiredThreads(WaitCondition::ChildProcess, WakeReason::ConditionSatisfied);
+    return true;
+}
+
 [[nodiscard]] UserSignalStatus MapSignalManagerStatus(const SignalManagerStatus status) noexcept {
     if (status == SignalManagerStatus::Succeeded) {
         return UserSignalStatus::Succeeded;
@@ -1870,6 +1956,29 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
     }
     if (status == SignalManagerStatus::SignalFrameNotActive ||
         status == SignalManagerStatus::SignalFrameMismatch) {
+        return UserSignalStatus::InvalidState;
+    }
+    return UserSignalStatus::RuntimeFailure;
+}
+
+[[nodiscard]] UserSignalStatus MapJobControlStatus(const JobControlStatus status) noexcept {
+    if (status == JobControlStatus::Succeeded) {
+        return UserSignalStatus::Succeeded;
+    }
+    if (status == JobControlStatus::ProcessNotFound) {
+        return UserSignalStatus::ProcessNotFound;
+    }
+    if (status == JobControlStatus::PermissionDenied) {
+        return UserSignalStatus::PermissionDenied;
+    }
+    if (status == JobControlStatus::InvalidProcessId ||
+        status == JobControlStatus::InvalidProcessGroup ||
+        status == JobControlStatus::InvalidProcessIndex) {
+        return UserSignalStatus::InvalidArgument;
+    }
+    if (status == JobControlStatus::SessionLeader ||
+        status == JobControlStatus::ProcessGroupLeader ||
+        status == JobControlStatus::InvalidSession) {
         return UserSignalStatus::InvalidState;
     }
     return UserSignalStatus::RuntimeFailure;
@@ -1996,6 +2105,53 @@ void CloseProcessIoDescriptors(ProcessRuntimeProcess &process) noexcept {
 }
 
 [[nodiscard]] ExceptionFrame *
+StopCurrentProcessFromSignal(ExceptionFrame &frame, const uint64_t signal_number) noexcept {
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry current_thread{};
+    if (!process_scheduling_active || !CurrentFrameIsValid(thread_index, frame) ||
+        thread_scheduler.ReadThread(thread_index, current_thread) !=
+            ThreadSchedulerStatus::Succeeded ||
+        current_thread.process_index >= process_runtime_limits.process_capacity ||
+        signal_number == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        HaltProcessor();
+    }
+    runtime_threads[thread_index].saved_frame = &frame;
+    if (SaveFxState(runtime_threads[thread_index].extended_state) !=
+            ExtendedStateStatus::Succeeded ||
+        process_tree.MarkStopped(current_thread.process_index, signal_number) !=
+            ProcessTreeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    WakeRequiredThreads(WaitCondition::ChildProcess, WakeReason::ConditionSatisfied);
+
+    ThreadSchedulingDecision decision{};
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus stop_status =
+        thread_scheduler.StopCurrentProcess(current_thread.process_index, decision);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (stop_status != ThreadSchedulerStatus::Succeeded) {
+        HaltProcessor();
+    }
+    SetActiveUserAddressSpace(nullptr);
+    ActivateKernelPageTable();
+    if (!decision.switched) {
+        const uint64_t swap_gs_required = GetCpuLocal().NativeSystemCallActive()
+                                              ? OS_KERNEL_PROCESS_RUNTIME_BOOLEAN_TRUE
+                                              : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0()) ||
+            GetCpuLocal().ClearCurrentThread(DefaultPrivilegeStackPointer0()) !=
+                CpuLocalStatus::Succeeded) {
+            HaltProcessor();
+        }
+        OsKernelReturnFromUserMode(swap_gs_required);
+    }
+    if (!ActivateThread(decision.current_thread_index)) {
+        HaltProcessor();
+    }
+    return runtime_threads[decision.current_thread_index].saved_frame;
+}
+
+[[nodiscard]] ExceptionFrame *
 CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason termination_reason,
                       const int64_t exit_code, const uint64_t page_fault_address) noexcept {
     const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
@@ -2083,9 +2239,8 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
             HaltProcessor();
         }
     }
-    if (!RemoveSignalProcessIfPresent(current_thread.process_index)) {
-        HaltProcessor();
-    }
+    // 保留进程级信号与进程组身份直到父进程收集僵尸进程。这样快速退出的
+    // 管线组长仍能作为稳定的 PGID 锚点，父子双方的 setpgid 不会产生竞态。
     if (terminated_thread_count > OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT) {
         user_thread_runtime_statistics.process_exit_cancelled_thread_count +=
             terminated_thread_count - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT;
@@ -2220,6 +2375,9 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
             PrivateFutexStatus::Succeeded ||
         process_tree.Initialize(process_tree_entries, process_runtime_limits.process_capacity) !=
             ProcessTreeStatus::Succeeded ||
+        job_control_manager.Initialize(job_control_process_states,
+                                       process_runtime_limits.process_capacity) !=
+            JobControlStatus::Succeeded ||
         signal_manager.Initialize(signal_process_states, process_runtime_limits.process_capacity,
                                   signal_thread_states, process_runtime_limits.thread_capacity) !=
             SignalManagerStatus::Succeeded) {
@@ -2227,7 +2385,8 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     }
     program_argument_plan.Reset();
     process_pipe.Initialize();
-    process_console_input.Initialize();
+    process_terminal.Initialize(OS_KERNEL_TERMINAL_IDENTIFIER, DisableInterrupts,
+                                RestoreInterrupts);
     pipe_reader_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_writer_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     descriptor_reader_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -2551,6 +2710,18 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process
         }
         return ProcessRuntimeStatus::SignalFailure;
     }
+    if (job_control_manager.ForkProcess(parent_thread.process_index, child_process_index,
+                                        child_process_id.value) !=
+        JobControlStatus::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FORK_PROCESS_TREE_STAGE);
+        if (!RollbackForkCreation(parent_runtime_process.address_space, child_address_space,
+                                  child_process_index, child_thread_index, kernel_stack_slot_index,
+                                  true, true)) {
+            HaltProcessor();
+        }
+        return ProcessRuntimeStatus::ProcessTreeFailure;
+    }
     const ProcessTreeStatus tree_status = process_tree.RegisterChild(
         child_process_index, child_process_id.value, parent_thread.process_index);
     if (tree_status != ProcessTreeStatus::Succeeded) {
@@ -2790,7 +2961,12 @@ ProcessWaitStatus TryWaitCurrentProcess(const uint64_t requested_process_id,
     const ThreadSchedulerStatus reap_status =
         thread_scheduler.ReapZombieProcess(tree_result.process_index);
     scheduler_lock.Unlock(interrupts_were_enabled);
-    if (reap_status != ThreadSchedulerStatus::Succeeded) {
+    if (reap_status != ThreadSchedulerStatus::Succeeded ||
+        !RemoveSignalProcessIfPresent(tree_result.process_index)) {
+        return ProcessWaitStatus::RuntimeFailure;
+    }
+    if (job_control_manager.RemoveProcess(tree_result.process_index) !=
+        JobControlStatus::Succeeded) {
         return ProcessWaitStatus::RuntimeFailure;
     }
     runtime_processes[tree_result.process_index].active = false;
@@ -2808,6 +2984,96 @@ ProcessWaitStatus TryWaitCurrentProcess(const uint64_t requested_process_id,
         .exception_vector = tree_result.exit_status.exception_vector,
     };
     WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_WAIT_PREFIX, tree_result.process_id);
+    return ProcessWaitStatus::Succeeded;
+}
+
+ProcessWaitStatus TryWaitCurrentProcessEvent(
+    const uint64_t requested_process_id, const uint64_t wait_flags,
+    os::abi::ProcessWaitEventResult &wait_result) noexcept {
+    wait_result = os::abi::ProcessWaitEventResult{};
+    const uint64_t observable_flags =
+        wait_flags & (os::abi::OS_ABI_PROCESS_WAIT_EXITED_FLAG |
+                      os::abi::OS_ABI_PROCESS_WAIT_STOPPED_FLAG |
+                      os::abi::OS_ABI_PROCESS_WAIT_CONTINUED_FLAG);
+    if (!IsProcessSchedulingActive() ||
+        requested_process_id == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        observable_flags == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        (wait_flags & ~os::abi::OS_ABI_PROCESS_WAIT_VALID_FLAG_MASK) !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return ProcessWaitStatus::InvalidArgument;
+    }
+    if (!ReapExitedThreads()) {
+        return ProcessWaitStatus::RuntimeFailure;
+    }
+    ThreadEntry parent_thread{};
+    ProcessEntry parent_process{};
+    if (!ReadCurrentThreadAndProcess(parent_thread, parent_process)) {
+        return ProcessWaitStatus::RuntimeFailure;
+    }
+    uint64_t tree_wait_flags = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if ((observable_flags & os::abi::OS_ABI_PROCESS_WAIT_EXITED_FLAG) !=
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        tree_wait_flags |= OS_KERNEL_PROCESS_TREE_WAIT_EXITED_FLAG;
+    }
+    if ((observable_flags & os::abi::OS_ABI_PROCESS_WAIT_STOPPED_FLAG) !=
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        tree_wait_flags |= OS_KERNEL_PROCESS_TREE_WAIT_STOPPED_FLAG;
+    }
+    if ((observable_flags & os::abi::OS_ABI_PROCESS_WAIT_CONTINUED_FLAG) !=
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        tree_wait_flags |= OS_KERNEL_PROCESS_TREE_WAIT_CONTINUED_FLAG;
+    }
+    ProcessTreeWaitEventResult tree_result{};
+    const ProcessTreeStatus tree_status = process_tree.TryWaitEvent(
+        parent_thread.process_index, requested_process_id, tree_wait_flags, tree_result);
+    if (tree_status == ProcessTreeStatus::ChildStillRunning) {
+        return ProcessWaitStatus::WouldBlock;
+    }
+    if (tree_status == ProcessTreeStatus::NoMatchingChild) {
+        return ProcessWaitStatus::NoChild;
+    }
+    if (tree_status != ProcessTreeStatus::Succeeded ||
+        tree_result.process_index >= process_runtime_limits.process_capacity) {
+        return ProcessWaitStatus::RuntimeFailure;
+    }
+
+    os::abi::ProcessTerminationReason termination_reason =
+        os::abi::ProcessTerminationReason::None;
+    if (tree_result.event_type == ProcessTreeEventType::Exited) {
+        const bool interrupts_were_enabled = scheduler_lock.Lock();
+        const ThreadSchedulerStatus reap_status =
+            thread_scheduler.ReapZombieProcess(tree_result.process_index);
+        scheduler_lock.Unlock(interrupts_were_enabled);
+        if (reap_status != ThreadSchedulerStatus::Succeeded ||
+            !RemoveSignalProcessIfPresent(tree_result.process_index) ||
+            job_control_manager.RemoveProcess(tree_result.process_index) !=
+                JobControlStatus::Succeeded) {
+            return ProcessWaitStatus::RuntimeFailure;
+        }
+        runtime_processes[tree_result.process_index].active = false;
+        termination_reason =
+            tree_result.exit_status.termination_reason == ProcessTreeTerminationReason::Exited
+                ? os::abi::ProcessTerminationReason::Exited
+            : tree_result.exit_status.termination_reason ==
+                      ProcessTreeTerminationReason::Signal
+                ? os::abi::ProcessTerminationReason::Signal
+                : os::abi::ProcessTerminationReason::Exception;
+    }
+    const os::abi::ProcessWaitEventType event_type =
+        tree_result.event_type == ProcessTreeEventType::Exited
+            ? os::abi::ProcessWaitEventType::Exited
+        : tree_result.event_type == ProcessTreeEventType::Stopped
+            ? os::abi::ProcessWaitEventType::Stopped
+            : os::abi::ProcessWaitEventType::Continued;
+    wait_result = os::abi::ProcessWaitEventResult{
+        .process_id = tree_result.process_id,
+        .parent_process_id = parent_process.process_id.value,
+        .event_type = event_type,
+        .termination_reason = termination_reason,
+        .exit_code = tree_result.exit_status.exit_code,
+        .exception_vector = tree_result.exit_status.exception_vector,
+        .signal_number = tree_result.signal_number,
+    };
     return ProcessWaitStatus::Succeeded;
 }
 
@@ -3156,6 +3422,15 @@ UserSignalStatus SendSignalToProcess(const uint64_t process_id,
         !WakeThreadForSignal(selected_thread_index)) {
         return UserSignalStatus::RuntimeFailure;
     }
+    if (signal_number == os::abi::OS_ABI_SIGNAL_CONTINUE_NUMBER ||
+        signal_number == os::abi::OS_ABI_SIGNAL_KILL_NUMBER) {
+        uint64_t process_index = OS_KERNEL_SIGNAL_INVALID_INDEX;
+        if (signal_manager.FindProcess(process_id, process_index) !=
+                SignalManagerStatus::Succeeded ||
+            !ContinueStoppedProcess(process_index)) {
+            return UserSignalStatus::RuntimeFailure;
+        }
+    }
     const uint64_t queued_signal_count = signal_manager.Statistics().queued_signal_count;
     if (queued_signal_count != queued_signal_count_before &&
         IsPowerOfTwoCounter(queued_signal_count)) {
@@ -3186,6 +3461,21 @@ UserSignalStatus SendSignalToProcessGroup(const uint64_t process_group_id,
             return UserSignalStatus::RuntimeFailure;
         }
     }
+    if (signal_number == os::abi::OS_ABI_SIGNAL_CONTINUE_NUMBER ||
+        signal_number == os::abi::OS_ABI_SIGNAL_KILL_NUMBER) {
+        for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+             process_index < process_runtime_limits.process_capacity; ++process_index) {
+            JobControlProcessState job_state{};
+            if (job_control_manager.ReadProcess(process_index, job_state) !=
+                    JobControlStatus::Succeeded ||
+                job_state.process_group_id != process_group_id) {
+                continue;
+            }
+            if (!ContinueStoppedProcess(process_index)) {
+                return UserSignalStatus::RuntimeFailure;
+            }
+        }
+    }
     return UserSignalStatus::Succeeded;
 }
 
@@ -3197,8 +3487,13 @@ UserSignalStatus GetCurrentProcessGroup(uint64_t &process_group_id) noexcept {
         !ReadCurrentThreadAndProcess(current_thread, current_process)) {
         return UserSignalStatus::RuntimeFailure;
     }
-    return MapSignalManagerStatus(
-        signal_manager.GetProcessGroup(current_thread.process_index, process_group_id));
+    JobControlProcessState state{};
+    const JobControlStatus status =
+        job_control_manager.ReadProcess(current_thread.process_index, state);
+    if (status == JobControlStatus::Succeeded) {
+        process_group_id = state.process_group_id;
+    }
+    return MapJobControlStatus(status);
 }
 
 UserSignalStatus SetCurrentProcessGroup(const uint64_t process_group_id) noexcept {
@@ -3208,11 +3503,137 @@ UserSignalStatus SetCurrentProcessGroup(const uint64_t process_group_id) noexcep
         !ReadCurrentThreadAndProcess(current_thread, current_process)) {
         return UserSignalStatus::RuntimeFailure;
     }
-    const uint64_t effective_group_id = process_group_id == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE
-                                            ? current_process.process_id.value
-                                            : process_group_id;
-    return MapSignalManagerStatus(
-        signal_manager.SetProcessGroup(current_thread.process_index, effective_group_id));
+    return SetCurrentProcessGroupFor(current_process.process_id.value, process_group_id);
+}
+
+UserSignalStatus SetCurrentProcessGroupFor(const uint64_t process_id,
+                                           const uint64_t process_group_id) noexcept {
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!IsProcessSchedulingActive() ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    const uint64_t effective_process_id =
+        process_id == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ? current_process.process_id.value
+                                                            : process_id;
+    uint64_t target_process_index = OS_KERNEL_JOB_CONTROL_INVALID_INDEX;
+    if (job_control_manager.FindProcess(effective_process_id, target_process_index) !=
+        JobControlStatus::Succeeded) {
+        return UserSignalStatus::ProcessNotFound;
+    }
+    if (target_process_index != current_thread.process_index) {
+        ProcessTreeEntry target_tree_entry{};
+        if (process_tree.Read(target_process_index, target_tree_entry) !=
+                ProcessTreeStatus::Succeeded ||
+            target_tree_entry.parent_process_index != current_thread.process_index ||
+            (target_tree_entry.state != ProcessTreeState::Alive &&
+             target_tree_entry.state != ProcessTreeState::Stopped &&
+             target_tree_entry.state != ProcessTreeState::Zombie)) {
+            return UserSignalStatus::PermissionDenied;
+        }
+    }
+    JobControlProcessState previous_state{};
+    if (job_control_manager.ReadProcess(target_process_index, previous_state) !=
+        JobControlStatus::Succeeded) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    const uint64_t effective_group_id =
+        process_group_id == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ? effective_process_id
+                                                                  : process_group_id;
+    const JobControlStatus job_status = job_control_manager.SetProcessGroup(
+        current_thread.process_index, target_process_index, effective_group_id);
+    if (job_status != JobControlStatus::Succeeded) {
+        return MapJobControlStatus(job_status);
+    }
+    const SignalManagerStatus signal_status =
+        signal_manager.SetProcessGroup(target_process_index, effective_group_id);
+    if (signal_status != SignalManagerStatus::Succeeded) {
+        static_cast<void>(job_control_manager.SetProcessGroup(
+            current_thread.process_index, target_process_index,
+            previous_state.process_group_id));
+        return MapSignalManagerStatus(signal_status);
+    }
+    return UserSignalStatus::Succeeded;
+}
+
+UserSignalStatus CreateCurrentSession(uint64_t &session_id) noexcept {
+    session_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!IsProcessSchedulingActive() ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    const JobControlStatus status =
+        job_control_manager.CreateSession(current_thread.process_index, session_id);
+    if (status != JobControlStatus::Succeeded) {
+        return MapJobControlStatus(status);
+    }
+    if (signal_manager.SetProcessGroup(current_thread.process_index,
+                                       current_process.process_id.value) !=
+        SignalManagerStatus::Succeeded) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    return UserSignalStatus::Succeeded;
+}
+
+UserSignalStatus GetCurrentSession(uint64_t &session_id) noexcept {
+    session_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!IsProcessSchedulingActive() ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    JobControlProcessState state{};
+    const JobControlStatus status =
+        job_control_manager.ReadProcess(current_thread.process_index, state);
+    if (status == JobControlStatus::Succeeded) {
+        session_id = state.session_id;
+    }
+    return MapJobControlStatus(status);
+}
+
+UserSignalStatus
+GetCurrentTerminalInformation(os::abi::TerminalInformation &information) noexcept {
+    information = os::abi::TerminalInformation{};
+    uint64_t session_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserSignalStatus session_status = GetCurrentSession(session_id);
+    if (session_status != UserSignalStatus::Succeeded) {
+        return session_status;
+    }
+    if (session_id != process_terminal.ControllingSessionId()) {
+        return UserSignalStatus::PermissionDenied;
+    }
+    information = os::abi::TerminalInformation{
+        .terminal_id = process_terminal.Identifier(),
+        .controlling_session_id = process_terminal.ControllingSessionId(),
+        .foreground_process_group_id = process_terminal.ForegroundProcessGroupId(),
+    };
+    return UserSignalStatus::Succeeded;
+}
+
+UserSignalStatus
+SetCurrentTerminalForegroundGroup(const uint64_t process_group_id) noexcept {
+    if (process_group_id == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return UserSignalStatus::InvalidArgument;
+    }
+    uint64_t session_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserSignalStatus session_status = GetCurrentSession(session_id);
+    if (session_status != UserSignalStatus::Succeeded) {
+        return session_status;
+    }
+    if (!job_control_manager.GroupBelongsToSession(process_group_id, session_id)) {
+        return UserSignalStatus::PermissionDenied;
+    }
+    const TerminalStatus terminal_status =
+        process_terminal.SetForegroundProcessGroup(session_id, process_group_id);
+    return terminal_status == TerminalStatus::Succeeded
+               ? UserSignalStatus::Succeeded
+           : terminal_status == TerminalStatus::PermissionDenied
+               ? UserSignalStatus::PermissionDenied
+               : UserSignalStatus::InvalidArgument;
 }
 
 ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexcept {
@@ -3249,6 +3670,12 @@ ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexce
                              static_cast<uint64_t>(delivery.action.disposition));
     if (delivery.kind == SignalDeliveryKind::DefaultTerminate) {
         return TerminateCurrentProcessFromSignal(frame, delivery.signal_number);
+    }
+    if (delivery.kind == SignalDeliveryKind::DefaultStop) {
+        return StopCurrentProcessFromSignal(frame, delivery.signal_number);
+    }
+    if (delivery.kind == SignalDeliveryKind::DefaultContinue) {
+        return &frame;
     }
 
     SignalThreadState signal_thread{};
@@ -3773,6 +4200,10 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
     };
     if (thread_scheduler.Validate() != ThreadSchedulerStatus::Succeeded ||
         process_tree.Validate() != ProcessTreeStatus::Succeeded ||
+        job_control_manager.Validate() != JobControlStatus::Succeeded ||
+        job_control_manager.Statistics().active_process_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        process_terminal.Validate() != TerminalStatus::Succeeded ||
         signal_manager.Validate() != SignalManagerStatus::Succeeded ||
         signal_manager.Statistics().active_process_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         signal_manager.Statistics().active_thread_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
@@ -3826,8 +4257,9 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .user_threads = user_thread_runtime_statistics,
         .private_futexes = private_futex_manager.Statistics(),
         .process_tree = process_tree.Statistics(),
+        .job_control = job_control_manager.Statistics(),
         .signals = signal_manager.Statistics(),
-        .console_input = process_console_input.Statistics(),
+        .terminal = process_terminal.Statistics(),
         .object_manager = kernel_object_manager.Statistics(),
         .file_descriptions = file_description_manager.Statistics(),
         .file_tables = {},
@@ -4059,11 +4491,15 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
                           : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) |
         (options.writable ? OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG
                           : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+    const bool terminal_device =
+        open_file.path.vnode.type == fs::NodeType::CharacterDevice;
     const FileDescriptionCreateRequest request{
-        .kind = FileDescriptionKind::RegularFile,
+        .kind = terminal_device ? FileDescriptionKind::TerminalDevice
+                                : FileDescriptionKind::RegularFile,
         .file_status_flags = file_status_flags,
-        .console_input = nullptr,
-        .device_write_operation = nullptr,
+        .terminal = terminal_device ? &process_terminal : nullptr,
+        .device_write_operation =
+            terminal_device && options.writable ? WriteConsoleDevice : nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
         .pipe_manager = nullptr,
@@ -4099,15 +4535,33 @@ FileSystemStatus ReadCurrentProcessFile(const uint64_t file_descriptor, uint8_t 
     FileDescriptionSnapshot snapshot{};
     if (file_description_manager.ReadSnapshot(reference, snapshot) !=
             FileDescriptionStatus::Succeeded ||
-        snapshot.kind != FileDescriptionKind::RegularFile) {
+        (snapshot.kind != FileDescriptionKind::RegularFile &&
+         snapshot.kind != FileDescriptionKind::TerminalDevice)) {
         return FileSystemStatus::InvalidHandle;
+    }
+    if (snapshot.kind == FileDescriptionKind::TerminalDevice) {
+        ThreadEntry current_thread{};
+        ProcessEntry current_process{};
+        JobControlProcessState job_state{};
+        if (!ReadCurrentThreadAndProcess(current_thread, current_process) ||
+            job_control_manager.ReadProcess(current_thread.process_index, job_state) !=
+                JobControlStatus::Succeeded) {
+            return FileSystemStatus::Corrupt;
+        }
+        if (!process_terminal.CanRead(job_state.session_id, job_state.process_group_id)) {
+            return FileSystemStatus::BackgroundTerminalRead;
+        }
     }
     FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
     PipeStatus pipe_status = PipeStatus::Succeeded;
     const FileDescriptionStatus status = file_description_manager.TryRead(
         reference, destination, capacity_bytes, read_bytes, file_system_status, pipe_status);
     if (status == FileDescriptionStatus::Succeeded) {
-        process.result.file_system_bytes_read += read_bytes;
+        if (snapshot.kind == FileDescriptionKind::TerminalDevice) {
+            process.result.console_bytes_read += read_bytes;
+        } else {
+            process.result.file_system_bytes_read += read_bytes;
+        }
     }
     return MapProcessIoToFileSystemStatus(MapFileDescriptionStatus(status), file_system_status);
 }
@@ -4127,7 +4581,8 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
     FileDescriptionSnapshot snapshot{};
     if (file_description_manager.ReadSnapshot(reference, snapshot) !=
             FileDescriptionStatus::Succeeded ||
-        snapshot.kind != FileDescriptionKind::RegularFile) {
+        (snapshot.kind != FileDescriptionKind::RegularFile &&
+         snapshot.kind != FileDescriptionKind::TerminalDevice)) {
         return FileSystemStatus::InvalidHandle;
     }
     FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
@@ -4135,14 +4590,18 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
     const FileDescriptionStatus status = file_description_manager.TryWrite(
         reference, source, length_bytes, written_bytes, file_system_status, pipe_status);
     if (status == FileDescriptionStatus::Succeeded) {
-        FileDescriptionSnapshot current_snapshot{};
-        if (file_description_manager.ReadSnapshot(reference, current_snapshot) !=
-                FileDescriptionStatus::Succeeded ||
-            !RevokeRuntimeFileMappings(FileIdentityFromSnapshot(snapshot),
-                                       current_snapshot.size_bytes)) {
-            return FileSystemStatus::Corrupt;
+        if (snapshot.kind == FileDescriptionKind::TerminalDevice) {
+            process.result.console_bytes_written += written_bytes;
+        } else {
+            FileDescriptionSnapshot current_snapshot{};
+            if (file_description_manager.ReadSnapshot(reference, current_snapshot) !=
+                    FileDescriptionStatus::Succeeded ||
+                !RevokeRuntimeFileMappings(FileIdentityFromSnapshot(snapshot),
+                                           current_snapshot.size_bytes)) {
+                return FileSystemStatus::Corrupt;
+            }
+            process.result.file_system_bytes_written += written_bytes;
         }
-        process.result.file_system_bytes_written += written_bytes;
     }
     return MapProcessIoToFileSystemStatus(MapFileDescriptionStatus(status), file_system_status);
 }
@@ -4159,7 +4618,8 @@ FileSystemStatus CloseCurrentProcessFile(const uint64_t file_descriptor) noexcep
     FileDescriptionSnapshot snapshot{};
     if (file_description_manager.ReadSnapshot(reference, snapshot) !=
             FileDescriptionStatus::Succeeded ||
-        snapshot.kind != FileDescriptionKind::RegularFile ||
+        (snapshot.kind != FileDescriptionKind::RegularFile &&
+         snapshot.kind != FileDescriptionKind::TerminalDevice) ||
         reference.Reset() != KernelObjectStatus::Succeeded) {
         return FileSystemStatus::InvalidHandle;
     }
@@ -4293,12 +4753,27 @@ ProcessIoStatus TryReadCurrentProcessDescriptor(const uint64_t descriptor,
         FileDescriptionStatus::Succeeded) {
         return ProcessIoStatus::ObjectFailure;
     }
+    if (snapshot.kind == FileDescriptionKind::TerminalInput ||
+        snapshot.kind == FileDescriptionKind::TerminalDevice) {
+        ThreadEntry current_thread{};
+        ProcessEntry current_process{};
+        JobControlProcessState job_state{};
+        if (!ReadCurrentThreadAndProcess(current_thread, current_process) ||
+            job_control_manager.ReadProcess(current_thread.process_index, job_state) !=
+                JobControlStatus::Succeeded) {
+            return ProcessIoStatus::ObjectFailure;
+        }
+        if (!process_terminal.CanRead(job_state.session_id, job_state.process_group_id)) {
+            return ProcessIoStatus::BackgroundTerminalRead;
+        }
+    }
     PipeStatus pipe_status = PipeStatus::Succeeded;
     const FileDescriptionStatus description_status = file_description_manager.TryRead(
         reference, destination, capacity_bytes, read_bytes, file_system_status, pipe_status);
     const ProcessIoStatus status = MapFileDescriptionStatus(description_status);
     if (status == ProcessIoStatus::Succeeded) {
-        if (snapshot.kind == FileDescriptionKind::ConsoleInput) {
+        if (snapshot.kind == FileDescriptionKind::TerminalInput ||
+            snapshot.kind == FileDescriptionKind::TerminalDevice) {
             process.result.console_bytes_read += read_bytes;
         } else if (snapshot.kind == FileDescriptionKind::RegularFile) {
             process.result.file_system_bytes_read += read_bytes;
@@ -4339,8 +4814,9 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
         reference, source, length_bytes, written_bytes, file_system_status, pipe_status);
     const ProcessIoStatus status = MapFileDescriptionStatus(description_status);
     if (status == ProcessIoStatus::Succeeded) {
-        if (snapshot.kind == FileDescriptionKind::ConsoleOutput ||
-            snapshot.kind == FileDescriptionKind::ConsoleError) {
+        if (snapshot.kind == FileDescriptionKind::TerminalOutput ||
+            snapshot.kind == FileDescriptionKind::TerminalError ||
+            snapshot.kind == FileDescriptionKind::TerminalDevice) {
             process.result.console_bytes_written += written_bytes;
         } else if (snapshot.kind == FileDescriptionKind::RegularFile) {
             FileDescriptionSnapshot current_snapshot{};
@@ -4425,7 +4901,7 @@ ProcessIoStatus CreateCurrentProcessPipe(uint64_t &reader_descriptor,
     const FileDescriptionCreateRequest reader_request{
         .kind = FileDescriptionKind::PipeReader,
         .file_status_flags = OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = pipe,
@@ -4436,7 +4912,7 @@ ProcessIoStatus CreateCurrentProcessPipe(uint64_t &reader_descriptor,
     const FileDescriptionCreateRequest writer_request{
         .kind = FileDescriptionKind::PipeWriter,
         .file_status_flags = OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = pipe,
@@ -4543,7 +5019,7 @@ FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
     const FileDescriptionCreateRequest request{
         .kind = FileDescriptionKind::Directory,
         .file_status_flags = OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
@@ -4608,6 +5084,20 @@ ProcessIoStatus CurrentProcessDescriptorReadCanProgress(const uint64_t descripto
         FileDescriptionStatus::Succeeded) {
         return ProcessIoStatus::ObjectFailure;
     }
+    if (snapshot.kind == FileDescriptionKind::TerminalInput ||
+        snapshot.kind == FileDescriptionKind::TerminalDevice) {
+        ThreadEntry current_thread{};
+        ProcessEntry current_process{};
+        JobControlProcessState job_state{};
+        if (!ReadCurrentThreadAndProcess(current_thread, current_process) ||
+            job_control_manager.ReadProcess(current_thread.process_index, job_state) !=
+                JobControlStatus::Succeeded) {
+            return ProcessIoStatus::ObjectFailure;
+        }
+        if (!process_terminal.CanRead(job_state.session_id, job_state.process_group_id)) {
+            return ProcessIoStatus::BackgroundTerminalRead;
+        }
+    }
     const FileDescriptionStatus progress_status =
         file_description_manager.ReadCanProgress(reference, can_progress);
     if (progress_status == FileDescriptionStatus::Succeeded &&
@@ -4644,8 +5134,39 @@ ProcessIoStatus CurrentProcessDescriptorWriteCanProgress(const uint64_t descript
 }
 
 void SubmitConsoleCharacter(const uint8_t character) noexcept {
-    const ConsoleInputStatus submit_status = process_console_input.Submit(character);
-    if (submit_status == ConsoleInputStatus::Succeeded && process_scheduling_active) {
+    TerminalInputAction action = TerminalInputAction::None;
+    const TerminalStatus submit_status = process_terminal.SubmitCharacter(character, action);
+    if (submit_status != TerminalStatus::Succeeded) {
+        return;
+    }
+    if (action == TerminalInputAction::Buffered) {
+        EchoTerminalBytes(&character, sizeof(character));
+    } else if (action == TerminalInputAction::Erased) {
+        EchoTerminalBytes(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_ERASE_SEQUENCE,
+                          sizeof(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_ERASE_SEQUENCE));
+    } else if (action == TerminalInputAction::InputReady &&
+               (character == OS_KERNEL_TERMINAL_NEWLINE_CHARACTER ||
+                character == OS_KERNEL_TERMINAL_CARRIAGE_RETURN_CHARACTER)) {
+        EchoTerminalBytes(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_NEWLINE_SEQUENCE,
+                          sizeof(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_NEWLINE_SEQUENCE));
+    } else if (action == TerminalInputAction::InterruptForeground) {
+        EchoTerminalBytes(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_INTERRUPT_SEQUENCE,
+                          sizeof(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_INTERRUPT_SEQUENCE));
+        uint64_t target_process_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        static_cast<void>(SendSignalToProcessGroup(
+            process_terminal.ForegroundProcessGroupId(),
+            os::abi::OS_ABI_SIGNAL_INTERRUPT_NUMBER, target_process_count));
+    } else if (action == TerminalInputAction::StopForeground) {
+        EchoTerminalBytes(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_STOP_SEQUENCE,
+                          sizeof(OS_KERNEL_PROCESS_RUNTIME_TERMINAL_STOP_SEQUENCE));
+        uint64_t target_process_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        static_cast<void>(SendSignalToProcessGroup(
+            process_terminal.ForegroundProcessGroupId(),
+            os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER, target_process_count));
+    }
+    if (process_scheduling_active &&
+        (action == TerminalInputAction::InputReady ||
+         action == TerminalInputAction::EndOfFileReady)) {
         WakeRequiredThreads(WaitCondition::DescriptorReadable, WakeReason::ConditionSatisfied);
     }
 }

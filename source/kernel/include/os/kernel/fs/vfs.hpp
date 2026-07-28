@@ -45,6 +45,7 @@ enum class NodeType : uint64_t {
     None,
     RegularFile,
     Directory,
+    CharacterDevice,
 };
 
 enum class BackendKind : uint64_t {
@@ -52,6 +53,7 @@ enum class BackendKind : uint64_t {
     Legacy,
     Memory,
     Root,
+    Device,
 };
 
 struct Superblock;

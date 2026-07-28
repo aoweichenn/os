@@ -361,3 +361,12 @@ rootfs 仍为 256 MiB，单文件仍最多 64 MiB。变化发生在“谁消费�
 - 没有 dentry/inode/page cache、动态 unmount 或 mount namespace 复制；
 - rootfs、legacy 和 memfs 都使用单实例锁串行化修改；
 - ATA 仍采用轮询单扇区 PIO 和显式 FLUSH CACHE，没有 IRQ/DMA/异步请求。
+
+## v1.15 固定控制台字符设备
+
+VFS 新增 `CharacterDevice` 节点类型，并把固定设备后端挂载到 `/dev`。
+当前后端只含根目录和 `console`，命名空间只读；open/stat/readdir/retain/close
+遵守普通 vnode 生命周期，read/write 由 TerminalDevice FileDescription
+转发到 TTY。字符设备没有普通文件 offset，truncate 明确不支持。
+
+这是通用 devfs 前的最小路径契约；动态设备注册、权限与热插拔留到 v1.18。

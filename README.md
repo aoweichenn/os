@@ -2,8 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：第二周期 `v1.14 signal、进程组与安全 sigreturn`
-已完整完成，下一阶段是 v1.15 TTY、session 与作业控制。v1.1 已
+当前状态：第二周期 `v1.15 TTY、session 与作业控制`
+已完整完成，下一阶段是 v1.16 IRQ 块层与 writeback page cache。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
@@ -232,7 +232,17 @@ exec 重置 Handler，退出后信号状态归零。详细证据见
 [v1.14 发布记录](docs/releases/v1.14.md) 与
 [ADR 0041](docs/adr/0041-process-signals-user-frame-and-sigreturn.md)。
 
-信号和 TTY 已按两个阶段拆分，异步块层与 ordered
+v1.15 新增系统调用 64--69，把单控制终端、canonical 行规程、SID/PGID、
+前台所有权、停止/继续 wait 事件和 `/dev/console` 字符 vnode 接入现有
+Process/Thread/VFS。PS/2 解码器真实跟踪左右 Ctrl，TTY 将 Ctrl-C/Ctrl-Z
+定向为前台进程组信号；Shell 提供 `jobs`、`fg`、`bg` 与尾部 `&`，整条
+16 级管线共享 PGID。停止期间地址空间、fd 和 CPU/FX 现场保持，继续后从原
+Thread 恢复；Zombie 的组身份保留到 wait，消除极短命令的 `setpgid` 竞态。
+详细证据见 [v1.15 发布记录](docs/releases/v1.15.md)、
+[学习章](docs/learning/23-v1.15-tty-session-job-control.md) 与
+[ADR 0042](docs/adr/0042-tty-session-and-job-control.md)。
+
+信号和 TTY 已按两个阶段闭合，异步块层与 ordered
 metadata journal 同样分开，最后由 v1.18 冻结 ABI、加固边界并建立发布溯源。
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
 Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
@@ -493,11 +503,11 @@ books/           可独立构建的 LaTeX 系统教材
 [docs/modules/kernel.md](docs/modules/kernel.md)。
 
 从普通 C++ 与 PC 硬件前置知识开始、沿 v0.0 至 v1.0 第一周期逐阶段阅读，并
-对照当前 v1.1–v1.14 第二周期实现的路线见
+对照当前 v1.1–v1.15 第二周期实现的路线见
 [docs/learning/README.md](docs/learning/README.md)。路线包含七册背景知识、
 十四个第一周期阶段、v1.6 rootfs、v1.7 进程、v1.8 匿名虚拟内存与 v1.9
 文件页缓存、v1.10 fork/COW、v1.11 Unix I/O、v1.12 用户线程、v1.13 时间
-等待和 v1.14 信号深入章，以及一份 v1.1–v1.14
+等待、v1.14 信号和 v1.15 TTY/作业控制深入章，以及一份 v1.1–v1.15
 迁移地图；ROM、CPU、RAM、端口 I/O、
 IRQ、ATA 磁盘与软件所有权的整体关系可先看
 [整机硬件组装与连线图册](docs/learning/hardware-assembly-and-wiring.md)。
@@ -510,8 +520,8 @@ IRQ、ATA 磁盘与软件所有权的整体关系可先看
 状态、实现机制、失败路径、验证证据”的统一深度展开。构建时会自动统计仅进入
 目标系统的 `.cpp`、`.hpp` 和 `.asm` 真实代码量。
 可单独执行 `python3 tools/os.py source-metrics` 查看同一口径。
-当前 v1.14 统计为 193 个目标代码文件、53503 个物理行、49418 个非空非纯
-注释代码行，其中 C++ 46977 行、NASM Intel 汇编 2441 行；测试、工具、书籍、
+当前 v1.15 统计为 198 个目标代码文件、56535 个物理行、52290 个非空非纯
+注释代码行，其中 C++ 49849 行、NASM Intel 汇编 2441 行；测试、工具、书籍、
 构建文件和网站均不计入。
 执行 `make -C books/x86-64-os-from-reset phone-export` 可按硬件教材相同规则
 导出到手机书库的独立目录。

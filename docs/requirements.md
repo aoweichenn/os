@@ -103,7 +103,7 @@ capacity 另行验证 64 KiB pipe、1 GiB 稀疏磁盘、256 MiB rootfs、64 MiB
 这些边界不是永久放弃，而是 v2.x/v3.0 的候选输入。v2.0 仍以 QEMU TCG 的
 单个 x86-64 BSP 和传统 PC 设备为正式验收平台。
 
-## v1.14 完成基线
+## v1.15 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
 生命周期，v1.2 又完成 Process/Thread、WaitQueue、锁模型与完整扩展现场，
@@ -129,7 +129,9 @@ private futex、用户 Mutex/ConditionVariable/Once、32/64 Thread 三档整机
 sleep、timed futex、timed condition、通知/超时单赢家与三档 QEMU 验收。
 v1.14 又完成 Process disposition、Thread mask、普通 pending 合并、
 进程组、用户 handler、安全 sigreturn，以及阻塞系统调用的 Signal 单赢家与
-显式重启策略。下一阶段为 v1.15 TTY、session 与作业控制。
+显式重启策略。v1.15 进一步完成 canonical TTY、SID/PGID、控制终端、
+Stopped/Continued wait 事件、`/dev/console` 和 Shell 前后台作业控制。
+下一阶段为 v1.16 IRQ 块层与 writeback page cache。
 
 ## v1.9 文件虚拟内存冻结要求
 
@@ -278,10 +280,41 @@ v1.14 又完成 Process disposition、Thread mask、普通 pending 合并、
 - 畸形 frame 只终止目标 Process，不 panic Kernel；父进程必须能以
   Exception/vector 13 回收该子进程。
 - fork 复制 disposition/group 与调用 Thread mask，不复制 pending/active frame；
-  exec 保留 Ignore、重置 Handler 并清理兄弟状态；exit 后活动信号 Process/
-  Thread 计数必须为零。
+  exec 保留 Ignore、重置 Handler，保留 Process 与 survivor pending，清理
+  active frame 和兄弟状态；exit 后活动信号 Process/Thread 计数必须为零。
 - 单元、集成和 100000 步固定种子随机测试必须覆盖选择、合并、帧身份、生命周期
   和 Signal/condition/timeout 单赢家；三档 QEMU 必须运行同一 signal probe。
+
+## v1.15 TTY、会话与作业控制冻结要求
+
+- PS/2 层只解码 Set 1 与 Ctrl 修饰状态；canonical 编辑、EOF、退格和控制
+  字符语义必须属于 TTY，不得塞入 IRQ handler 或 Shell。
+- TTY 输入必须满足
+  `submitted=read+buffered+editing+dropped+consumed`；输出必须满足
+  `queued=written+pending`。所有共享索引使用 irq-save 锁，锁内不得睡眠。
+- PID、PGID、SID 和 ProcessTree parent 必须是独立身份。fork 继承 SID/PGID，
+  session leader 满足 PID=PGID=SID，跨 session 组迁移必须拒绝。
+- 控制终端只允许 controlling session 的 foreground PGID 读取；后台读取
+  返回 `-55` 且不能消费输入。
+- Ctrl-C 与 Ctrl-Z 必须由 TTY 定向为发往 foreground PGID 的 SIGINT 与
+  SIGTSTP。SIGSTOP 不可屏蔽；停止不得释放地址空间、fd、VMA 或 Thread 现场。
+- scheduler 必须跳过 Stopped Process 的所有 Thread；SIGCONT 只把仍停止的
+  Thread 恢复为 Ready，stop/continue 次数最终守恒。
+- Stopped、Continued 和 Exited 事件必须分别可观察；只有 Exited 收集 Zombie。
+  快速 stop→continue→exit 不得覆盖前两个 pending 事实。
+- 进程级信号与 PGID 身份保留到 Zombie 被 wait 收集，避免快速 child exit
+  使父 Shell 的 `setpgid` 或后续管线成员失去组锚点。
+- `/dev/console` 必须作为 CharacterDevice vnode 通过 VFS 暴露；普通文件
+  truncate/offset 语义不得错误套到字符设备。
+- Shell 必须为整条管线建立同一 PGID，前台作业停止/退出后恢复自己的 TTY；
+  `jobs`、`fg`、`bg` 与尾部 `&` 使用有界作业表并覆盖资源回滚。
+- 系统调用 64--69、24 字节 TerminalInformation、56 字节 wait event 和错误
+  -55..-57 不得重排；所有字段使用明确固定宽度。
+- 单元、集成、100000 步固定种子随机测试和真实 QMP Ctrl-Z/Ctrl-C 系统测试
+  必须同时通过；终态无 Stopped、Zombie、活动作业、残留输入编辑或输出字节。
+
+## 通用启动与硬件要求
+
 Stage 1 在自研长模式环境中通过 ATA PIO 读取
 Kernel 描述符和 ELF 文件，自行执行 CRC32、扇区补零、ELF64、权限、对齐、
 范围和段重叠检查。所有 `PT_LOAD` 先完整验证，再复制到恒等映射目标地址并

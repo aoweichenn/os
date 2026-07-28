@@ -84,7 +84,7 @@ CreateFileDescription(os::kernel::FileDescriptionManager &manager, os::kernel::f
     const os::kernel::FileDescriptionCreateRequest request{
         .kind = os::kernel::FileDescriptionKind::RegularFile,
         .file_status_flags = file_status_flags,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,
@@ -104,7 +104,7 @@ CreatePipeDescription(os::kernel::FileDescriptionManager &manager, os::kernel::P
         .kind = kind,
         .file_status_flags = reader ? os::kernel::OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG
                                     : os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = &pipe,
@@ -187,7 +187,7 @@ int main() {
     const os::kernel::FileDescriptionCreateRequest invalid_directory_request{
         .kind = os::kernel::FileDescriptionKind::Directory,
         .file_status_flags = os::kernel::OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = nullptr,
         .device_write_context = nullptr,
         .pipe = nullptr,

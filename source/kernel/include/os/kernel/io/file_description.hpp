@@ -2,7 +2,7 @@
 
 #include "os/kernel/fs/file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/io/console_input.hpp"
+#include "os/kernel/io/terminal.hpp"
 #include "os/kernel/ipc/pipe.hpp"
 #include "os/kernel/ipc/pipe_manager.hpp"
 #include "os/kernel/object/kernel_object.hpp"
@@ -11,9 +11,7 @@
 
 namespace os::kernel {
 
-using FileDescriptionDeviceWriteOperation = bool (*)(void *context, const uint8_t *source,
-                                                     uint64_t length_bytes,
-                                                     uint64_t &written_bytes) noexcept;
+using FileDescriptionDeviceWriteOperation = TerminalDeviceWriteOperation;
 
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG = 1ULL << 1ULL;
@@ -23,9 +21,10 @@ inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_VALID_STATUS_FLAG_MASK =
 
 enum class FileDescriptionKind : uint64_t {
     None,
-    ConsoleInput,
-    ConsoleOutput,
-    ConsoleError,
+    TerminalInput,
+    TerminalOutput,
+    TerminalError,
+    TerminalDevice,
     RegularFile,
     Directory,
     PipeReader,
@@ -52,7 +51,7 @@ enum class FileDescriptionStatus : uint64_t {
 struct FileDescriptionCreateRequest final {
     FileDescriptionKind kind;
     uint64_t file_status_flags;
-    ConsoleInput *console_input;
+    Terminal *terminal;
     FileDescriptionDeviceWriteOperation device_write_operation;
     void *device_write_context;
     Pipe *pipe;

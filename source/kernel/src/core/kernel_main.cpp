@@ -9,6 +9,7 @@
 #include "os/kernel/arch/processor_features.hpp"
 #include "os/kernel/device/ata_pio.hpp"
 #include "os/kernel/device/serial_port.hpp"
+#include "os/kernel/fs/console_device_file_system.hpp"
 #include "os/kernel/fs/memfs.hpp"
 #include "os/kernel/fs/root_file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
@@ -263,6 +264,8 @@ constexpr char OS_KERNEL_MAIN_ROOTFS_V2_MAXIMUM_FILE_SIZE_PREFIX[] =
 constexpr char OS_KERNEL_MAIN_VFS_READY_MESSAGE[] = "[OS][KERNEL] VFS_READY\r\n";
 constexpr char OS_KERNEL_MAIN_VFS_VALID_MESSAGE[] = "[OS][KERNEL] VFS_VALID\r\n";
 constexpr char OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE[] = "[OS][KERNEL] MEMFS_MOUNTED=/tmp\r\n";
+constexpr char OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE[] =
+    "[OS][KERNEL] CONSOLE_DEVICE_MOUNTED=/dev/console\r\n";
 constexpr char OS_KERNEL_MAIN_VFS_STATUS_PREFIX[] = "[OS][KERNEL] VFS_STATUS=";
 constexpr char OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX[] = "[OS][KERNEL] VFS_MOUNTS=";
 constexpr char OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX[] =
@@ -379,6 +382,12 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX[] =
     "[OS][KERNEL] SCHEDULER_DISPATCHES=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX[] = "[OS][KERNEL] SCHEDULER_BLOCKS=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX[] = "[OS][KERNEL] SCHEDULER_WAKEUPS=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_STOPPED_PROCESS_COUNT_PREFIX[] =
+    "[OS][KERNEL][SCHED] STOPPED_PROCESSES=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_PROCESS_STOP_COUNT_PREFIX[] =
+    "[OS][KERNEL][SCHED] PROCESS_STOPS=";
+constexpr char OS_KERNEL_MAIN_SCHEDULER_PROCESS_CONTINUE_COUNT_PREFIX[] =
+    "[OS][KERNEL][SCHED] PROCESS_CONTINUES=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_ACTIVE_DEADLINE_COUNT_PREFIX[] =
     "[OS][KERNEL][TIME] ACTIVE_DEADLINES=";
 constexpr char OS_KERNEL_MAIN_SCHEDULER_PEAK_DEADLINE_COUNT_PREFIX[] =
@@ -400,6 +409,10 @@ constexpr char OS_KERNEL_MAIN_SIGNAL_HANDLER_DELIVERY_COUNT_PREFIX[] =
     "[OS][KERNEL][SIGNAL] HANDLER_DELIVERIES=";
 constexpr char OS_KERNEL_MAIN_SIGNAL_DEFAULT_TERMINATION_COUNT_PREFIX[] =
     "[OS][KERNEL][SIGNAL] DEFAULT_TERMINATIONS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_DEFAULT_STOP_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] DEFAULT_STOPS=";
+constexpr char OS_KERNEL_MAIN_SIGNAL_DEFAULT_CONTINUE_COUNT_PREFIX[] =
+    "[OS][KERNEL][SIGNAL] DEFAULT_CONTINUES=";
 constexpr char OS_KERNEL_MAIN_SIGNAL_GROUP_SEND_COUNT_PREFIX[] =
     "[OS][KERNEL][SIGNAL] GROUP_SENDS=";
 constexpr char OS_KERNEL_MAIN_SIGNAL_INTERRUPTED_WAIT_COUNT_PREFIX[] =
@@ -475,8 +488,28 @@ constexpr char OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX[] =
 constexpr char OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX[] = "[OS][KERNEL] CONSOLE_READ_BYTES=";
 constexpr char OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX[] =
     "[OS][KERNEL] CONSOLE_DROPPED_BYTES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_CONSUMED_BYTE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] CONSUMED_BYTES=";
 constexpr char OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX[] =
     "[OS][KERNEL] CONSOLE_BUFFERED_BYTES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_COMMITTED_LINE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] COMMITTED_LINES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_EDITING_BYTE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] EDITING_BYTES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_INTERRUPT_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] INTERRUPTS=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_STOP_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] STOPS=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_OUTPUT_QUEUED_BYTE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] OUTPUT_QUEUED_BYTES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_OUTPUT_WRITTEN_BYTE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] OUTPUT_WRITTEN_BYTES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_OUTPUT_PENDING_BYTE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] OUTPUT_PENDING_BYTES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_FOREGROUND_CHANGE_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] FOREGROUND_CHANGES=";
+constexpr char OS_KERNEL_MAIN_TERMINAL_BACKGROUND_READ_REJECTION_COUNT_PREFIX[] =
+    "[OS][KERNEL][TTY] BACKGROUND_READ_REJECTIONS=";
 constexpr char OS_KERNEL_MAIN_OBJECT_ACTIVE_COUNT_PREFIX[] = "[OS][KERNEL] OBJECT_ACTIVE_COUNT=";
 constexpr char OS_KERNEL_MAIN_OBJECT_ACTIVE_REFERENCE_COUNT_PREFIX[] =
     "[OS][KERNEL] OBJECT_ACTIVE_REFERENCES=";
@@ -546,6 +579,24 @@ constexpr char OS_KERNEL_MAIN_PROCESS_TREE_WAIT_BLOCK_COUNT_PREFIX[] =
     "[OS][KERNEL] PROCESS_TREE_WAIT_BLOCKS=";
 constexpr char OS_KERNEL_MAIN_PROCESS_TREE_WAIT_NO_CHILD_COUNT_PREFIX[] =
     "[OS][KERNEL] PROCESS_TREE_WAIT_NO_CHILD=";
+constexpr char OS_KERNEL_MAIN_PROCESS_TREE_STOPPED_EVENT_COUNT_PREFIX[] =
+    "[OS][KERNEL][PROC] STOPPED_EVENTS=";
+constexpr char OS_KERNEL_MAIN_PROCESS_TREE_CONTINUED_EVENT_COUNT_PREFIX[] =
+    "[OS][KERNEL][PROC] CONTINUED_EVENTS=";
+constexpr char OS_KERNEL_MAIN_PROCESS_TREE_OBSERVED_STOPPED_EVENT_COUNT_PREFIX[] =
+    "[OS][KERNEL][PROC] OBSERVED_STOPPED_EVENTS=";
+constexpr char OS_KERNEL_MAIN_PROCESS_TREE_OBSERVED_CONTINUED_EVENT_COUNT_PREFIX[] =
+    "[OS][KERNEL][PROC] OBSERVED_CONTINUED_EVENTS=";
+constexpr char OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_COUNT_PREFIX[] =
+    "[OS][KERNEL][JOB] ACTIVE_PROCESSES=";
+constexpr char OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_SESSION_COUNT_PREFIX[] =
+    "[OS][KERNEL][JOB] ACTIVE_SESSIONS=";
+constexpr char OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_GROUP_COUNT_PREFIX[] =
+    "[OS][KERNEL][JOB] ACTIVE_PROCESS_GROUPS=";
+constexpr char OS_KERNEL_MAIN_JOB_CONTROL_SESSION_CREATE_COUNT_PREFIX[] =
+    "[OS][KERNEL][JOB] SESSION_CREATIONS=";
+constexpr char OS_KERNEL_MAIN_JOB_CONTROL_PROCESS_GROUP_CHANGE_COUNT_PREFIX[] =
+    "[OS][KERNEL][JOB] PROCESS_GROUP_CHANGES=";
 constexpr char OS_KERNEL_MAIN_PROCESS_TREE_VALID_MESSAGE[] = "[OS][KERNEL] PROCESS_TREE_VALID\r\n";
 constexpr uint64_t OS_KERNEL_MAIN_VALIDATION_PASSED = 1ULL;
 constexpr char OS_KERNEL_MAIN_PIPE_READY_MESSAGE[] = "[OS][KERNEL] PIPE_READY\r\n";
@@ -563,7 +614,7 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 72ULL;
-constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 23ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 27ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
     OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
@@ -591,9 +642,11 @@ constexpr uint64_t OS_KERNEL_MAIN_CAPACITY_NORMAL_THREAD_COUNT =
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_VIRTUAL_ADDRESS_LIFECYCLE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_REPARENTED_PROCESS_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT = 71ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_JOB_CONTROL_TRANSITION_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_WAIT_SUCCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_WAIT_SUCCESS_COUNT +
-    OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
+    OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT +
+    OS_KERNEL_MAIN_FUNCTIONAL_JOB_CONTROL_TRANSITION_COUNT;
 constexpr uint64_t OS_KERNEL_MAIN_NORMAL_WAIT_NO_CHILD_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MINIMUM_BLOCK_COUNT = 1ULL;
@@ -606,7 +659,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.14";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v1.15";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
@@ -614,6 +667,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT = 11ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK = 0xFFULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER = 2ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER = 3ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_NODE_LIMIT = 128ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
@@ -623,6 +677,12 @@ constexpr uint8_t OS_KERNEL_MAIN_MEMFS_MOUNT_PATH[] = {
     static_cast<uint8_t>('t'),
     static_cast<uint8_t>('m'),
     static_cast<uint8_t>('p'),
+};
+constexpr uint8_t OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH[] = {
+    static_cast<uint8_t>('/'),
+    static_cast<uint8_t>('d'),
+    static_cast<uint8_t>('e'),
+    static_cast<uint8_t>('v'),
 };
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('s'), static_cast<uint8_t>('h'),
@@ -1064,7 +1124,9 @@ void WriteVfsStatistics(const SerialPort &serial_port, const fs::Vfs &vfs,
 }
 
 void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file_system,
-                         fs::Memfs &memfs, fs::Vfs &vfs, fs::Mount *const mounts,
+                         fs::Memfs &memfs,
+                         fs::ConsoleDeviceFileSystem &console_device_file_system,
+                         fs::Vfs &vfs, fs::Mount *const mounts,
                          const uint64_t mount_capacity) noexcept {
     fs::Status status = memfs.Initialize(
         GetKernelHeap(), OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER,
@@ -1088,6 +1150,24 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
     if (status == fs::Status::Succeeded) {
         status = vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_MEMFS_MOUNT_PATH,
                              sizeof(OS_KERNEL_MAIN_MEMFS_MOUNT_PATH), memfs.GetSuperblock());
+    }
+    if (status == fs::Status::Succeeded) {
+        status = console_device_file_system.Initialize(
+            OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER);
+    }
+    if (status == fs::Status::Succeeded) {
+        const fs::Status mount_point_status =
+            vfs.CreateDirectory(bootstrap_context, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH,
+                                sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH));
+        if (mount_point_status != fs::Status::Succeeded &&
+            mount_point_status != fs::Status::AlreadyExists) {
+            status = mount_point_status;
+        }
+    }
+    if (status == fs::Status::Succeeded) {
+        status = vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH,
+                             sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH),
+                             console_device_file_system.GetSuperblock());
     }
     if (status == fs::Status::Succeeded) {
         status = vfs.Validate();
@@ -1120,6 +1200,7 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
     }
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_READY_MESSAGE);
     WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE);
+    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_PATH_LENGTH_PREFIX,
                          fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_NAME_LENGTH_PREFIX,
@@ -1542,6 +1623,12 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.scheduler.block_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
                          statistics.scheduler.wake_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_STOPPED_PROCESS_COUNT_PREFIX,
+                         statistics.scheduler.stopped_process_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PROCESS_STOP_COUNT_PREFIX,
+                         statistics.scheduler.process_stop_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PROCESS_CONTINUE_COUNT_PREFIX,
+                         statistics.scheduler.process_continue_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_ACTIVE_DEADLINE_COUNT_PREFIX,
                          statistics.scheduler.active_deadline_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PEAK_DEADLINE_COUNT_PREFIX,
@@ -1564,6 +1651,10 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.signals.handler_delivery_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_TERMINATION_COUNT_PREFIX,
                          statistics.signals.default_termination_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_STOP_COUNT_PREFIX,
+                         statistics.signals.default_stop_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_CONTINUE_COUNT_PREFIX,
+                         statistics.signals.default_continue_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_GROUP_SEND_COUNT_PREFIX,
                          statistics.signals.process_group_send_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_INTERRUPTED_WAIT_COUNT_PREFIX,
@@ -1632,13 +1723,34 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_REJECTION_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.capacity_rejection_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
-                         statistics.console_input.submitted_byte_count);
+                         statistics.terminal.submitted_byte_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
-                         statistics.console_input.read_byte_count);
+                         statistics.terminal.read_byte_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX,
-                         statistics.console_input.dropped_byte_count);
+                         statistics.terminal.dropped_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_CONSUMED_BYTE_COUNT_PREFIX,
+                         statistics.terminal.consumed_byte_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
-                         statistics.console_input.buffered_byte_count);
+                         statistics.terminal.buffered_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_COMMITTED_LINE_COUNT_PREFIX,
+                         statistics.terminal.committed_line_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_EDITING_BYTE_COUNT_PREFIX,
+                         statistics.terminal.editing_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_INTERRUPT_COUNT_PREFIX,
+                         statistics.terminal.interrupt_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_STOP_COUNT_PREFIX,
+                         statistics.terminal.stop_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_OUTPUT_QUEUED_BYTE_COUNT_PREFIX,
+                         statistics.terminal.output_queued_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_OUTPUT_WRITTEN_BYTE_COUNT_PREFIX,
+                         statistics.terminal.output_written_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_OUTPUT_PENDING_BYTE_COUNT_PREFIX,
+                         statistics.terminal.output_pending_byte_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_FOREGROUND_CHANGE_COUNT_PREFIX,
+                         statistics.terminal.foreground_change_count);
+    WriteRequiredHexLine(
+        serial_port, OS_KERNEL_MAIN_TERMINAL_BACKGROUND_READ_REJECTION_COUNT_PREFIX,
+        statistics.terminal.rejected_background_read_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_ACTIVE_COUNT_PREFIX,
                          statistics.object_manager.active_object_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_ACTIVE_REFERENCE_COUNT_PREFIX,
@@ -1720,9 +1832,33 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
                          statistics.process_tree.wait_block_count);
     WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_NO_CHILD_COUNT_PREFIX,
                          statistics.process_tree.wait_no_child_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_STOPPED_EVENT_COUNT_PREFIX,
+                         statistics.process_tree.stopped_event_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_CONTINUED_EVENT_COUNT_PREFIX,
+                         statistics.process_tree.continued_event_count);
+    WriteRequiredHexLine(
+        serial_port, OS_KERNEL_MAIN_PROCESS_TREE_OBSERVED_STOPPED_EVENT_COUNT_PREFIX,
+        statistics.process_tree.observed_stopped_event_count);
+    WriteRequiredHexLine(
+        serial_port, OS_KERNEL_MAIN_PROCESS_TREE_OBSERVED_CONTINUED_EVENT_COUNT_PREFIX,
+        statistics.process_tree.observed_continued_event_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_COUNT_PREFIX,
+                         statistics.job_control.active_process_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_SESSION_COUNT_PREFIX,
+                         statistics.job_control.active_session_count);
+    WriteRequiredHexLine(
+        serial_port, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_GROUP_COUNT_PREFIX,
+        statistics.job_control.active_process_group_count);
+    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_SESSION_CREATE_COUNT_PREFIX,
+                         statistics.job_control.session_create_count);
+    WriteRequiredHexLine(
+        serial_port, OS_KERNEL_MAIN_JOB_CONTROL_PROCESS_GROUP_CHANGE_COUNT_PREFIX,
+        statistics.job_control.process_group_change_count);
     const bool process_tree_state_valid =
         statistics.process_tree.active_process_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.process_tree.alive_process_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.process_tree.stopped_process_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.process_tree.zombie_process_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.process_tree.registered_process_count == expected_process_count &&
         statistics.process_tree.exited_process_count == expected_process_count &&
@@ -1776,6 +1912,22 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
             statistics.object_manager.destruction_count &&
         file_table_chunk_allocation_count == file_table_chunk_release_count &&
         dynamic_pipe_state_valid && process_tree_state_valid &&
+        statistics.scheduler.stopped_process_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.scheduler.process_stop_count ==
+            statistics.scheduler.process_continue_count &&
+        statistics.job_control.active_process_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.job_control.active_session_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.job_control.active_process_group_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.terminal.output_pending_byte_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.terminal.editing_byte_count ==
+            OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
+        statistics.terminal.output_queued_byte_count ==
+            statistics.terminal.output_written_byte_count &&
         statistics.extended_state.save_count != OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.extended_state.restore_count != OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         GetCpuLocal().Validate() == CpuLocalStatus::Succeeded &&
@@ -1798,13 +1950,17 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
              cpu_local_statistics.legacy_system_call_count +
                  cpu_local_statistics.native_system_call_count &&
          statistics.scheduler.wake_count == statistics.scheduler.block_count &&
-         statistics.console_input.submitted_byte_count !=
+         statistics.terminal.submitted_byte_count !=
              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-         statistics.console_input.submitted_byte_count ==
-             statistics.console_input.read_byte_count &&
-         statistics.console_input.dropped_byte_count ==
+         statistics.terminal.submitted_byte_count ==
+             statistics.terminal.read_byte_count +
+                 statistics.terminal.buffered_byte_count +
+                 statistics.terminal.editing_byte_count +
+                 statistics.terminal.dropped_byte_count +
+                 statistics.terminal.consumed_byte_count &&
+         statistics.terminal.dropped_byte_count ==
              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT &&
-         statistics.console_input.buffered_byte_count ==
+         statistics.terminal.buffered_byte_count ==
              OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT);
     const bool process_resources_valid = ProcessResourcesWereReclaimed(
         statistics, expected_process_count, expected_virtual_address_lifecycle_count);
@@ -1890,10 +2046,11 @@ void WriteKeyboardEvent(const SerialPort &serial_port, const KeyboardEvent &even
     // rootfs 含全盘校验工作区，必须驻留 BSS，不能消耗有界内核栈。
     static fs::RootFileSystem file_system{};
     fs::Memfs memfs{};
+    fs::ConsoleDeviceFileSystem console_device_file_system{};
     fs::Vfs vfs{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
     InitializeKernelFileSystem(serial_port, file_system, file_system_device);
-    InitializeKernelVfs(serial_port, file_system, memfs, vfs, mounts,
+    InitializeKernelVfs(serial_port, file_system, memfs, console_device_file_system, vfs, mounts,
                         OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
     if (AttachProcessVfs(vfs) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,

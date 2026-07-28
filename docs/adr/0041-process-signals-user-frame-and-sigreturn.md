@@ -77,10 +77,12 @@ Kernel Thread 并行；会与 IRQ 共享的调度状态仍由现有 irq-save sch
 - Handler：只在返回用户态边界构造一帧并进入用户函数。
 
 `fork` 复制 Process dispositions、进程组与调用 Thread 的 mask，不复制 pending
-或活动 handler frame。`exec` 保留 Ignore，重置 Handler 为 Default，清空
-pending 与活动 frame，并只保留提交 exec 的 Thread。ThreadExit 回收其 pending
-到 Process 后重新选择；ProcessExit 删除全部信号状态。最终资源门禁要求活动
-Process/Thread 信号状态均为零。
+或活动 handler frame。`exec` 保留 Ignore，重置 Handler 为 Default，保留
+Process pending 与存活 Thread pending，清空活动 frame，并只保留提交 exec 的
+Thread。v1.15 的 TTY 竞态审计修正了早期“exec 清空 pending”的错误契约：异步
+事实已经发生，替换映像不能让 fork/exec 窗口中的控制信号消失。ThreadExit
+回收其 pending 到 Process 后重新选择；ProcessExit 删除全部信号状态。最终
+资源门禁要求活动 Process/Thread 信号状态均为零。
 
 ### 与等待的单赢家关系
 

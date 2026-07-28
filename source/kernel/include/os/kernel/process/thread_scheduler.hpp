@@ -31,6 +31,7 @@ struct ThreadId final {
 enum class ProcessState : uint64_t {
     Unused,
     Alive,
+    Stopped,
     Zombie,
 };
 
@@ -125,6 +126,7 @@ struct ThreadSchedulerStatistics final {
     uint64_t maximum_threads_per_process;
     uint64_t owned_process_count;
     uint64_t alive_process_count;
+    uint64_t stopped_process_count;
     uint64_t zombie_process_count;
     uint64_t owned_thread_count;
     uint64_t ready_thread_count;
@@ -148,6 +150,8 @@ struct ThreadSchedulerStatistics final {
     uint64_t deadline_schedule_count;
     uint64_t deadline_expiration_count;
     uint64_t deadline_cancellation_count;
+    uint64_t process_stop_count;
+    uint64_t process_continue_count;
     uint64_t zombie_transition_count;
 };
 
@@ -199,6 +203,9 @@ class ThreadScheduler final {
     TerminateCurrentProcess(uint64_t process_index, ThreadSchedulingDecision &decision,
                             uint64_t &terminated_thread_count) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
+    StopCurrentProcess(uint64_t process_index, ThreadSchedulingDecision &decision) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus ContinueProcess(uint64_t process_index) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
     TerminateProcessSiblings(uint64_t process_index, uint64_t current_thread_index,
                              uint64_t &terminated_thread_count) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ReapExitedThread(uint64_t thread_index) noexcept;
@@ -244,7 +251,7 @@ class ThreadScheduler final {
     void SelectAfterCurrentStops(uint64_t previous_thread_index,
                                  ThreadSchedulingDecision &decision) noexcept;
     void ResetDecision(ThreadSchedulingDecision &decision) const noexcept;
-    [[nodiscard]] bool HasBlockedThread() const noexcept;
+    [[nodiscard]] bool HasSchedulableReadyThread() const noexcept;
     [[nodiscard]] bool HasLiveThread() const noexcept;
     [[nodiscard]] bool ProcessContainsThread(uint64_t process_index,
                                              uint64_t thread_index) const noexcept;

@@ -27,11 +27,12 @@
 
 ## v2 演进测试配置契约
 
-当前 v1.14 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+当前 v1.15 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
 64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
-SignalManager、动态栈和页表实现；v1.14 的 bootstrap 正常链累计注册
+SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
+bootstrap 正常链累计注册
 72 个 Process、完成 71 次 wait，functional/capacity 因完整 Shell 验收累计
-95 个 Process、完成 94 次 wait。线程探针分别证明 1/32/64 单 Process Thread
+99 个 Process、观察 102 次 wait event。线程探针分别证明 1/32/64 单 Process Thread
 上限，时间与信号探针在三档都走同一 ABI。
 functional 的 512 fd hard limit 和 128 Pipe、
 capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
@@ -716,7 +717,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_pipe_unit_tests` | 单元 | 管道读写、回绕、关闭、EOF、broken pipe 与统计 |
 | `os_kernel_pipe_randomized_tests` | 随机 | 32,768 步管道状态与独立字节队列模型对照 |
 | `os_kernel_synchronization_integration_tests` | 集成 | 四线程、200,000 次受锁更新的互斥与可见性 |
-| `os_kernel_console_input_unit_tests` | 单元 | 控制台 FIFO 顺序、容量、丢弃策略与统计守恒 |
+| `os_kernel_terminal_unit_tests` | 单元 | canonical 行、控制字符、前台权限、输入/输出队列与统计守恒 |
 | `os_kernel_file_table_unit_tests` | 单元 | 对象所有权、分块安装、duplicate、fd flags、limit、复用与 close-on-exec |
 | `os_kernel_file_description_lifecycle_integration_tests` | 集成 | 真实文件共享/独立偏移、管道最后引用与 finalizer 守恒 |
 | `os_kernel_file_table_capacity_integration_tests` | 集成 | 实际填满 4096 fd/64 分块、耗尽失败原子与完整回收 |
@@ -1032,3 +1033,46 @@ QEMU 要求下列用户 marker 每项恰好一次：
 group send、interrupted/restarted wait 与 rejected frame。除
 `INTERRUPTED_WAITS` 可因全部受测调用选择重启而为零外，语义探针覆盖的累计项
 必须非零；活动信号 Process/Thread 由 ProcessRuntime 最终校验为零。
+
+## v1.15 TTY、会话与作业控制测试
+
+v1.15 构建图共 158 项。新增测试不是只调用 Shell 字符串解析器，而是分四层
+冻结机制：
+
+- `os_kernel_terminal_unit_tests`：canonical 提交、退格、Ctrl-C/Z/D、
+  前后台读取、输出排空和输入/输出守恒；
+- `os_kernel_job_control_unit_tests`：PID1 session、fork 继承、PGID 建立/
+  加入、session leader 约束和回收；
+- `os_kernel_console_device_file_system_unit_tests`：字符 vnode、VFS open、
+  stat/readdir 和引用守恒；
+- `os_kernel_terminal_job_control_integration_tests`：同一子进程的
+  Stopped→Continued→Exited 事件和 scheduler 状态；
+- `os_kernel_job_control_randomized_tests`：固定种子 100000 步 PGID 迁移，
+  每步执行完整 `Validate`；
+- Shell execution 单元与随机测试：尾部 `&`、非法中间 `&` 和既有
+  重定向/16 级管线回归。
+
+QEMU functional 输入使用命令完成 marker 作为逐条屏障。对前台 `cat`，
+runner 先观察 `FOREGROUND_JOB_WAITING`，再通过 QMP 注入真实 Ctrl-Z；
+Shell 观察停止后执行 jobs/fg，再注入 Ctrl-C。第二个 `cat` 验证 bg，第三个
+`cat &` 验证后台读取拒绝。
+
+每个按键事务有 20 秒进度上限；协议失败会立即设置完成事件，使 runner 不再
+等待整机总预算。finally 仍负责 terminate/wait 和临时 QMP socket 回收。
+
+终态精确检查：
+
+```text
+PROCESS_STOPS = PROCESS_CONTINUES = 2
+DEFAULT_STOPS = DEFAULT_CONTINUES = 2
+TTY_INTERRUPTS = 1
+TTY_STOPS = 2
+STOPPED_EVENTS = OBSERVED_STOPPED_EVENTS = 2
+CONTINUED_EVENTS = OBSERVED_CONTINUED_EVENTS = 2
+BACKGROUND_READ_REJECTIONS >= 1
+STOPPED_PROCESSES = ACTIVE_JOB_PROCESSES = PROCESS_TREE_ZOMBIES = 0
+```
+
+TTY 输入还必须满足
+`submitted=read+buffered+editing+dropped+consumed`，输出必须满足
+`queued=written+pending` 且最终 pending 为零。

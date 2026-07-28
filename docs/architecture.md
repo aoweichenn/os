@@ -41,7 +41,7 @@ LBA 65 保存 Kernel 描述符，LBA 66 开始保存精确的 `kernel.elf`。Ker
 
 ## v2.0 目标架构（演进中）
 
-本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.14。每个箭头
+本节描述第二周期的目标依赖方向；当前主线已经完成到 v1.15。每个箭头
 只能依赖下层公开契约，不允许 Shell、进程或 VFS 绕过边界直接操作 ATA、
 页表或执行实体内部结构。
 
@@ -2122,3 +2122,41 @@ canonical、selector、RFLAGS 和 R-X/RW-NX 映射校验。失败只通过非法
 完整 ABI 与失败取舍见
 [ADR 0041](adr/0041-process-signals-user-frame-and-sigreturn.md)，代码走读见
 [v1.14 学习章](learning/22-v1.14-process-signals-sigreturn.md)。
+
+## v1.15 当前 TTY、会话与作业控制架构
+
+输入和作业控制按职责分成四层：
+
+```text
+PS/2 Set 1 decoder
+  → Terminal（行规程、输入/输出环、foreground PGID）
+  → ProcessRuntime（组信号、后台读保护、wait event）
+  → Shell（job table、终端交接、jobs/fg/bg）
+```
+
+`Terminal` 是唯一会被 IRQ 和系统调用共同访问的状态，因此内部使用
+`IrqSaveSpinLock`。普通字符只进入编辑缓冲；换行/EOF 提交可读数据；
+Ctrl-C/Ctrl-Z 只产生控制动作。输入账本区分 read、buffered、editing、
+dropped 与 consumed，输出账本区分 queued、written 与 pending。
+
+`JobControlManager` 独立保存 PID/PGID/SID，`ProcessTree` 独立保存
+parent 与 Alive/Stopped/Zombie。ThreadScheduler 只调度 Alive Process 的
+Ready Thread。三者共享内部槽索引但不共享语义；公开接口使用 PID。Zombie
+的进程级信号和 PGID 元数据保留到 wait 收集，保证快速命令的进程组不会在
+父 Shell 完成组设置前消失。
+
+```text
+ProcessTree: Alive ──SIGTSTP──> Stopped ──SIGCONT──> Alive ──exit──> Zombie
+Scheduler:   Ready/Running       Stopped              Ready             Reaped
+Wait event:                      Stopped              Continued         Exited
+```
+
+控制终端记录 controlling SID 与 foreground PGID。`/dev/console` 通过固定
+字符设备文件系统挂载到 VFS；FileDescription 在 TerminalDevice kind 上执行
+无普通文件 offset 的 read/write。只有同 SID 的前台组可以读取。
+
+Shell 为每条外部管线建立一个 PGID，child 恢复默认 SIGINT/SIGTSTP 后 exec。
+前台事务先交出 TTY，再等待 Stopped/Continued/Exited，最后恢复 Shell PGID；
+后台事务保留 TTY 给 Shell。完整依赖和失败回滚见
+[ADR 0042](adr/0042-tty-session-and-job-control.md)，代码走读见
+[v1.15 学习章](learning/23-v1.15-tty-session-job-control.md)。

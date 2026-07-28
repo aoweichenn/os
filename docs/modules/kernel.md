@@ -947,8 +947,8 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
   anonymous、huge-page COW、swap 与多核 shootdown 尚未实现。
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
   PID1、父子关系、Zombie/reap、spawn/exec/wait、WaitQueue、完整 x87/SSE2
-  现场、fork、用户 Thread 和进程组信号，但尚未开放 wait option、session、
-  TTY 作业控制或 SMP 负载均衡。
+  现场、fork、用户 Thread、进程组信号、事件式 wait、session 和单 TTY
+  作业控制，但尚未开放完整 POSIX wait option、多个终端或 SMP 负载均衡。
 - 用户地址空间、通用内核堆、固定尺寸缓存与 v1.4 KernelObject 均可回收；
   当前对象引用在管理器锁内串行提交，尚未提供 weak reference、循环回收、
   SMP 原子引用或 RCU 延迟销毁。

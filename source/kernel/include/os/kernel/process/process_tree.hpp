@@ -6,11 +6,25 @@ namespace os::kernel {
 
 inline constexpr uint64_t OS_KERNEL_PROCESS_TREE_INVALID_INDEX = UINT64_MAX;
 inline constexpr uint64_t OS_KERNEL_PROCESS_TREE_WAIT_ANY_PROCESS_ID = UINT64_MAX;
+inline constexpr uint64_t OS_KERNEL_PROCESS_TREE_WAIT_EXITED_FLAG = 1ULL << 0ULL;
+inline constexpr uint64_t OS_KERNEL_PROCESS_TREE_WAIT_STOPPED_FLAG = 1ULL << 1ULL;
+inline constexpr uint64_t OS_KERNEL_PROCESS_TREE_WAIT_CONTINUED_FLAG = 1ULL << 2ULL;
+inline constexpr uint64_t OS_KERNEL_PROCESS_TREE_WAIT_VALID_FLAG_MASK =
+    OS_KERNEL_PROCESS_TREE_WAIT_EXITED_FLAG | OS_KERNEL_PROCESS_TREE_WAIT_STOPPED_FLAG |
+    OS_KERNEL_PROCESS_TREE_WAIT_CONTINUED_FLAG;
 
 enum class ProcessTreeState : uint64_t {
     Unused,
     Alive,
+    Stopped,
     Zombie,
+};
+
+enum class ProcessTreeEventType : uint64_t {
+    None,
+    Exited,
+    Stopped,
+    Continued,
 };
 
 enum class ProcessTreeTerminationReason : uint64_t {
@@ -51,6 +65,9 @@ struct ProcessTreeEntry final {
     uint64_t parent_process_index;
     ProcessTreeState state;
     ProcessTreeExitStatus exit_status;
+    uint64_t stop_signal_number;
+    bool stopped_event_pending;
+    bool continued_event_pending;
 };
 
 struct ProcessTreeWaitResult final {
@@ -60,10 +77,20 @@ struct ProcessTreeWaitResult final {
     ProcessTreeExitStatus exit_status;
 };
 
+struct ProcessTreeWaitEventResult final {
+    uint64_t process_id;
+    uint64_t process_index;
+    uint64_t parent_process_id;
+    ProcessTreeEventType event_type;
+    ProcessTreeExitStatus exit_status;
+    uint64_t signal_number;
+};
+
 struct ProcessTreeStatistics final {
     uint64_t capacity;
     uint64_t active_process_count;
     uint64_t alive_process_count;
+    uint64_t stopped_process_count;
     uint64_t zombie_process_count;
     uint64_t registered_process_count;
     uint64_t exited_process_count;
@@ -73,6 +100,10 @@ struct ProcessTreeStatistics final {
     uint64_t wait_success_count;
     uint64_t wait_block_count;
     uint64_t wait_no_child_count;
+    uint64_t stopped_event_count;
+    uint64_t continued_event_count;
+    uint64_t observed_stopped_event_count;
+    uint64_t observed_continued_event_count;
 };
 
 class ProcessTree final {
@@ -86,9 +117,15 @@ class ProcessTree final {
     [[nodiscard]] ProcessTreeStatus MarkExited(uint64_t process_index,
                                                const ProcessTreeExitStatus &exit_status,
                                                uint64_t &reparented_process_count) noexcept;
+    [[nodiscard]] ProcessTreeStatus MarkStopped(uint64_t process_index,
+                                                uint64_t signal_number) noexcept;
+    [[nodiscard]] ProcessTreeStatus MarkContinued(uint64_t process_index) noexcept;
     [[nodiscard]] ProcessTreeStatus TryWait(uint64_t parent_process_index,
                                             uint64_t requested_process_id,
                                             ProcessTreeWaitResult &wait_result) noexcept;
+    [[nodiscard]] ProcessTreeStatus
+    TryWaitEvent(uint64_t parent_process_index, uint64_t requested_process_id,
+                 uint64_t wait_flags, ProcessTreeWaitEventResult &wait_result) noexcept;
     [[nodiscard]] ProcessTreeStatus CollectInit(ProcessTreeWaitResult &wait_result) noexcept;
     [[nodiscard]] ProcessTreeStatus Read(uint64_t process_index,
                                          ProcessTreeEntry &entry) const noexcept;

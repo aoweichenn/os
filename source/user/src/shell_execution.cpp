@@ -16,6 +16,7 @@ constexpr char OS_USER_SHELL_EXECUTION_ESCAPE = '\\';
 constexpr char OS_USER_SHELL_EXECUTION_PIPE = '|';
 constexpr char OS_USER_SHELL_EXECUTION_INPUT = '<';
 constexpr char OS_USER_SHELL_EXECUTION_OUTPUT = '>';
+constexpr char OS_USER_SHELL_EXECUTION_BACKGROUND = '&';
 
 enum class ShellExecutionQuoteState : uint64_t {
     None,
@@ -37,7 +38,8 @@ enum class ShellExecutionPendingRedirection : uint64_t {
 [[nodiscard]] bool IsOperator(const char character) noexcept {
     return character == OS_USER_SHELL_EXECUTION_PIPE ||
            character == OS_USER_SHELL_EXECUTION_INPUT ||
-           character == OS_USER_SHELL_EXECUTION_OUTPUT;
+           character == OS_USER_SHELL_EXECUTION_OUTPUT ||
+           character == OS_USER_SHELL_EXECUTION_BACKGROUND;
 }
 
 [[nodiscard]] ShellExecutionParseStatus ParseWord(
@@ -159,6 +161,21 @@ ShellExecutionParseStatus ParseShellExecutionPlan(
             parsed_plan.stages[parsed_plan.stage_count -
                                OS_USER_SHELL_EXECUTION_LAST_STAGE_OFFSET];
         const char character = line[read_index];
+        if (character == OS_USER_SHELL_EXECUTION_BACKGROUND) {
+            if (pending_redirection != ShellExecutionPendingRedirection::None ||
+                stage.argument_count == OS_USER_SHELL_EXECUTION_EMPTY_VALUE) {
+                return ShellExecutionParseStatus::InvalidArgument;
+            }
+            ++read_index;
+            while (read_index < line_length_bytes && IsWhitespace(line[read_index])) {
+                ++read_index;
+            }
+            if (read_index != line_length_bytes) {
+                return ShellExecutionParseStatus::BackgroundOperatorNotLast;
+            }
+            parsed_plan.background = true;
+            break;
+        }
         if (character == OS_USER_SHELL_EXECUTION_PIPE) {
             if (pending_redirection != ShellExecutionPendingRedirection::None) {
                 return ShellExecutionParseStatus::MissingRedirectionPath;

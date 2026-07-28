@@ -19,7 +19,9 @@ constexpr char OS_TEST_SHELL_EXECUTION_RANDOM_STRING_TERMINATOR = '\0';
 
 [[nodiscard]] bool PlansEqual(const os::user::ShellExecutionPlan &first,
                               const os::user::ShellExecutionPlan &second) noexcept {
-    if (first.argument_count != second.argument_count || first.stage_count != second.stage_count) {
+    if (first.argument_count != second.argument_count ||
+        first.stage_count != second.stage_count ||
+        first.background != second.background) {
         return false;
     }
     for (uint64_t byte_index = OS_TEST_SHELL_EXECUTION_RANDOM_EMPTY_VALUE;

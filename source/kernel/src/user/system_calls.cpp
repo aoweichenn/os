@@ -162,6 +162,12 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     if (status == FileSystemStatus::Unsupported) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OPERATION_UNSUPPORTED;
     }
+    if (status == FileSystemStatus::WouldBlock) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK;
+    }
+    if (status == FileSystemStatus::BackgroundTerminalRead) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_BACKGROUND_TERMINAL_READ;
+    }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
 
@@ -185,6 +191,9 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     }
     if (status == ProcessIoStatus::PermissionDenied) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_PERMISSION_DENIED;
+    }
+    if (status == ProcessIoStatus::BackgroundTerminalRead) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_BACKGROUND_TERMINAL_READ;
     }
     if (status == ProcessIoStatus::DeviceFailure) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
@@ -291,6 +300,9 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
     }
     if (status == UserSignalStatus::InvalidState) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_SIGNAL_STATE_INVALID;
+    }
+    if (status == UserSignalStatus::PermissionDenied) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED;
     }
     if (status == UserSignalStatus::InvalidArgument) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
@@ -940,6 +952,8 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         .inode_number = file_system_entry.node_identifier,
         .type = file_system_entry.type == fs::NodeType::Directory
                     ? os::abi::DirectoryEntryType::Directory
+                : file_system_entry.type == fs::NodeType::CharacterDevice
+                    ? os::abi::DirectoryEntryType::CharacterDevice
                     : os::abi::DirectoryEntryType::RegularFile,
         .name_length_bytes = file_system_entry.name_length_bytes,
         .name = {},
@@ -1107,6 +1121,8 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         .generation = node_information.generation,
         .type = node_information.type == fs::NodeType::Directory
                     ? os::abi::DirectoryEntryType::Directory
+                : node_information.type == fs::NodeType::CharacterDevice
+                    ? os::abi::DirectoryEntryType::CharacterDevice
                     : os::abi::DirectoryEntryType::RegularFile,
         .size_bytes = node_information.size_bytes,
         .allocated_size_bytes = node_information.allocated_size_bytes,
@@ -1224,6 +1240,89 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         HaltProcessor();
     }
     return resume_frame;
+}
+
+[[nodiscard]] ExceptionFrame *DispatchWaitProcessEvent(
+    ExceptionFrame &frame, const uint64_t requested_process_id, const uint64_t wait_flags,
+    const uint64_t user_result_address, const uint64_t result_size_bytes) noexcept {
+    if (result_size_bytes != sizeof(os::abi::ProcessWaitEventResult) ||
+        (wait_flags & ~os::abi::OS_ABI_PROCESS_WAIT_VALID_FLAG_MASK) !=
+            OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    if (ValidateUserWritableMemory(user_result_address, result_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY);
+        return &frame;
+    }
+    os::abi::ProcessWaitEventResult wait_result{};
+    const ProcessWaitStatus wait_status =
+        TryWaitCurrentProcessEvent(requested_process_id, wait_flags, wait_result);
+    if (wait_status == ProcessWaitStatus::Succeeded) {
+        if (CopyToUser(user_result_address, sizeof(wait_result),
+                       reinterpret_cast<const uint8_t *>(&wait_result),
+                       sizeof(wait_result)) != UserMemoryCopyStatus::Succeeded) {
+            HaltProcessor();
+        }
+        frame.register_rax = wait_result.process_id;
+        return &frame;
+    }
+    if (wait_status == ProcessWaitStatus::NoChild) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_NO_CHILD_PROCESS);
+        return &frame;
+    }
+    if (wait_status == ProcessWaitStatus::InvalidArgument) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT);
+        return &frame;
+    }
+    if (wait_status != ProcessWaitStatus::WouldBlock) {
+        frame.register_rax =
+            static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE);
+        return &frame;
+    }
+    frame.register_rax =
+        static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK);
+    if ((wait_flags & os::abi::OS_ABI_PROCESS_WAIT_NO_HANG_FLAG) !=
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return &frame;
+    }
+    ExceptionFrame *resume_frame = &frame;
+    const ProcessRuntimeStatus block_status = BlockCurrentThread(
+        frame, WaitCondition::ChildProcess,
+        static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent), true,
+        resume_frame);
+    if (block_status != ProcessRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return resume_frame;
+}
+
+[[nodiscard]] int64_t
+DispatchGetTerminalInformation(const uint64_t user_information_address,
+                               const uint64_t information_size_bytes) noexcept {
+    if (information_size_bytes != sizeof(os::abi::TerminalInformation)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(user_information_address, information_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    os::abi::TerminalInformation information{};
+    const UserSignalStatus status = GetCurrentTerminalInformation(information);
+    if (status != UserSignalStatus::Succeeded) {
+        return MapUserSignalStatus(status);
+    }
+    if (CopyToUser(user_information_address, sizeof(information),
+                   reinterpret_cast<const uint8_t *>(&information),
+                   sizeof(information)) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
 }
 
 [[nodiscard]] int64_t DispatchMapAnonymousMemory(const uint64_t requested_address,
@@ -1624,6 +1723,11 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
                                    frame->register_rdx);
     }
     if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent)) {
+        return DispatchWaitProcessEvent(*frame, frame->register_rdi, frame->register_rsi,
+                                        frame->register_rdx, frame->register_r10);
+    }
+    if (system_call_number ==
         static_cast<uint64_t>(os::abi::SystemCallNumber::MapAnonymousMemory)) {
         frame->register_rax = static_cast<uint64_t>(DispatchMapAnonymousMemory(
             frame->register_rdi, frame->register_rsi, frame->register_rdx, frame->register_r10));
@@ -1751,6 +1855,40 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SetProcessGroup)) {
         frame->register_rax =
             static_cast<uint64_t>(MapUserSignalStatus(SetCurrentProcessGroup(frame->register_rdi)));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSession)) {
+        uint64_t session_id = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+        const UserSignalStatus status = CreateCurrentSession(session_id);
+        frame->register_rax = static_cast<uint64_t>(status == UserSignalStatus::Succeeded
+                                                        ? static_cast<int64_t>(session_id)
+                                                        : MapUserSignalStatus(status));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::GetSession)) {
+        uint64_t session_id = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+        const UserSignalStatus status = GetCurrentSession(session_id);
+        frame->register_rax = static_cast<uint64_t>(status == UserSignalStatus::Succeeded
+                                                        ? static_cast<int64_t>(session_id)
+                                                        : MapUserSignalStatus(status));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetProcessGroupFor)) {
+        frame->register_rax = static_cast<uint64_t>(MapUserSignalStatus(
+            SetCurrentProcessGroupFor(frame->register_rdi, frame->register_rsi)));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetTerminalInformation)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchGetTerminalInformation(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalForegroundGroup)) {
+        frame->register_rax = static_cast<uint64_t>(MapUserSignalStatus(
+            SetCurrentTerminalForegroundGroup(frame->register_rdi)));
         return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

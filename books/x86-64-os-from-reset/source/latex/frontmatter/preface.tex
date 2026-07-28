@@ -55,7 +55,7 @@ TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边�
 机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
 三类证据。
 
-当前配套实现已经完成 v1.14。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
+当前配套实现已经完成 v1.15。其基础从 v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
 验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
 freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
 异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
@@ -140,8 +140,13 @@ Mutex、ConditionVariable、Once、ThreadExit/Join，以及多线程 exec/exit
 同一 scheduler lock 裁决通知、超时与取消。v1.14 进一步分离 Process
 disposition、Thread mask 与两级 pending，引入进程组发送、普通信号合并、
 可中断/可重启阻塞和固定用户 SignalFrame；Intel NASM restorer 通过严格
-sigreturn 验证恢复现场，畸形 frame 只隔离目标 Process。当前 154 项 CTest
-与两档日常 QEMU 要求 72/95 个 Process 创建、71/94 次 wait、32 条功能
-Thread，并由显式 64 GiB 发布门禁验证 64 条 Thread；全部 signal 状态、
-deadline、Pipe 页、futex entry、KernelStack、FileDescription、TLS/VMA 和
-Zombie 最终共同回到基线。
+sigreturn 验证恢复现场，畸形 frame 只隔离目标 Process。v1.15 再以
+\code{Terminal} 统一行规、控制字符、前台进程组与有界输入输出；以
+session/PGID、\code{Stopped} 状态、停止/继续 wait event 和
+\filepath{/dev/console} 字符设备支撑 Shell 的后台启动、\code{jobs}、
+\code{fg} 与 \code{bg}。真实 Ctrl-C/Ctrl-Z 不由 Shell 假装解析，而是从
+PS/2 扫描码经过 TTY 投递给前台作业。当前 158 项 CTest 与两档日常 QEMU
+要求 72/99 个 Process 创建、71/102 次 wait event、32 条功能 Thread，
+并由显式 64 GiB 发布门禁验证 64 条 Thread；全部 TTY 输入输出、作业事件、
+signal 状态、deadline、Pipe 页、futex entry、KernelStack、
+FileDescription、TLS/VMA 和 Zombie 最终共同回到基线。

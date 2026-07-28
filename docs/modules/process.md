@@ -294,10 +294,12 @@ Send signal
 与 join 可重启，sleep/futex 不可重启。已有部分 I/O 始终直接返回部分结果。
 
 fork 复制 Process action/group 和调用 Thread mask，不复制 pending 或活动帧。
-exec 保留 Ignore、重置 Handler、清空 pending 并删除兄弟信号状态。ThreadExit
-先把未处理 pending 归还 Process，再重新选择；ProcessExit 删除全部 Thread
-状态后才能删除 Process 状态。`ExecuteProcesses` 最终验证两类 active count
-为零并调用 `SignalManager::Validate()`。
+exec 保留 Ignore、重置 Handler，保留 Process pending 与 survivor pending，
+清空活动帧并删除兄弟信号状态。这样 TTY 在 fork/exec 窗口中已经投递的控制
+信号不会随映像替换丢失。ThreadExit 先把未处理 pending 归还 Process，再重新
+选择；ProcessExit 删除全部 Thread 状态后才能删除 Process 状态。
+`ExecuteProcesses` 最终验证两类 active count 为零并调用
+`SignalManager::Validate()`。
 
 模块测试新增：
 
@@ -309,3 +311,23 @@ exec 保留 Ignore、重置 Handler、清空 pending 并删除兄弟信号状态
 完整状态机见
 [v1.14 学习章](../learning/22-v1.14-process-signals-sigreturn.md) 与
 [ADR 0041](../adr/0041-process-signals-user-frame-and-sigreturn.md)。
+
+## v1.15 Stopped 生命周期、会话与 wait event
+
+ProcessTree 新增 Stopped 状态和 stopped/continued pending event。scheduler
+同步把所属 Thread 排除出可调度集合，SIGCONT 再恢复 Ready；停止期间不释放
+地址空间、fd、VMA、用户栈、KernelStack 或 FXSAVE 现场。
+
+`JobControlManager` 为每个活动槽保存 PID/PGID/SID 与 session-leader 标志。
+fork 继承 SID/PGID，Shell 可移动自己的直接 child；跨 session、移动 session
+leader 和加入不存在组都失败。进程级 signal/PGID 状态保留到 Zombie wait，
+Thread signal 状态仍在退出时删除，最终收集同时释放四层记录。
+
+`TryWaitCurrentProcessEvent` 将 Exited/Stopped/Continued/NoHang ABI flag 映射
+到 ProcessTree 事件。停止与继续只消费事件，Exited 才执行 scheduler reap、
+SignalManager 删除、JobControlManager 删除和 runtime 槽释放。
+
+终态验证要求 stopped Process 为零、stop=continue、事件产生=观察、
+job-control active Process/session/group 为零。完整状态机见
+[v1.15 学习章](../learning/23-v1.15-tty-session-job-control.md) 与
+[ADR 0042](../adr/0042-tty-session-and-job-control.md)。

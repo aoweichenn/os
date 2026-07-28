@@ -48,7 +48,7 @@ set(
 )
 set(
     OS_KERNEL_IO_HEADERS
-    include/os/kernel/io/console_input.hpp
+    include/os/kernel/io/terminal.hpp
     include/os/kernel/io/file_description.hpp
     include/os/kernel/io/file_table.hpp
 )
@@ -80,6 +80,7 @@ set(
 set(
     OS_KERNEL_PROCESS_HEADERS
     include/os/kernel/process/process_runtime.hpp
+    include/os/kernel/process/job_control.hpp
     include/os/kernel/process/signal_manager.hpp
     include/os/kernel/process/process_tree.hpp
     include/os/kernel/process/program_arguments.hpp
@@ -162,6 +163,7 @@ set(
 set(
     OS_KERNEL_FILE_SYSTEM_SOURCES
     src/fs/block_cache.cpp
+    src/fs/console_device_file_system.cpp
     src/fs/file_system.cpp
     src/fs/file_system_format.cpp
     src/fs/legacy_file_system.cpp
@@ -172,7 +174,7 @@ set(
 )
 set(
     OS_KERNEL_IO_SOURCES
-    src/io/console_input.cpp
+    src/io/terminal.cpp
     src/io/file_description.cpp
     src/io/file_table.cpp
 )
@@ -204,6 +206,7 @@ set(
 set(
     OS_KERNEL_PROCESS_SOURCES
     src/process/process_runtime.cpp
+    src/process/job_control.cpp
     src/process/signal_manager.cpp
     src/process/process_tree.cpp
     src/process/program_arguments.cpp
@@ -391,6 +394,7 @@ add_library(
     os_kernel_process_model_host
     STATIC
         src/process/process_tree.cpp
+        src/process/job_control.cpp
         src/process/signal_manager.cpp
         src/process/program_arguments.cpp
         src/process/thread_scheduler.cpp
@@ -399,6 +403,7 @@ add_library(
         src/sync/private_futex.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/process/thread_scheduler.hpp
+        include/os/kernel/process/job_control.hpp
         include/os/kernel/process/process_tree.hpp
         include/os/kernel/process/signal_manager.hpp
         include/os/kernel/process/program_arguments.hpp
@@ -422,14 +427,17 @@ add_library(
 add_library(
     os_kernel_user_environment_model_host
     STATIC
-        src/io/console_input.cpp
-        include/os/kernel/io/console_input.hpp
+        src/io/terminal.cpp
+        src/sync/spin_lock.cpp
+        include/os/kernel/io/terminal.hpp
+        include/os/kernel/sync/spin_lock.hpp
 )
 
 add_library(
     os_kernel_object_model_host
     STATIC
         src/fs/block_cache.cpp
+        src/fs/console_device_file_system.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
         src/fs/legacy_file_system.cpp
@@ -437,7 +445,7 @@ add_library(
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
         src/fs/vfs.cpp
-        src/io/console_input.cpp
+        src/io/terminal.cpp
         src/io/file_description.cpp
         src/io/file_table.cpp
         src/ipc/pipe.cpp
@@ -447,6 +455,7 @@ add_library(
         src/sync/spin_lock.cpp
         src/user/file_backing.cpp
         include/os/kernel/fs/block_cache.hpp
+        include/os/kernel/fs/console_device_file_system.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
         include/os/kernel/fs/legacy_file_system.hpp
@@ -454,7 +463,7 @@ add_library(
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/vfs.hpp
-        include/os/kernel/io/console_input.hpp
+        include/os/kernel/io/terminal.hpp
         include/os/kernel/io/file_description.hpp
         include/os/kernel/io/file_table.hpp
         include/os/kernel/ipc/pipe.hpp
@@ -494,6 +503,7 @@ add_library(
     os_kernel_file_system_model_host
     STATIC
         src/fs/block_cache.cpp
+        src/fs/console_device_file_system.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
         src/fs/legacy_file_system.cpp
@@ -504,6 +514,7 @@ add_library(
         src/memory/kernel_heap.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/fs/block_cache.hpp
+        include/os/kernel/fs/console_device_file_system.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
         include/os/kernel/fs/legacy_file_system.hpp

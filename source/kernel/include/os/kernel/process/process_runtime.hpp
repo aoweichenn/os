@@ -6,7 +6,7 @@
 #include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/fs/file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/io/console_input.hpp"
+#include "os/kernel/io/terminal.hpp"
 #include "os/kernel/io/file_description.hpp"
 #include "os/kernel/io/file_table.hpp"
 #include "os/kernel/ipc/pipe.hpp"
@@ -15,6 +15,7 @@
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/resource_snapshot.hpp"
 #include "os/kernel/process/process_tree.hpp"
+#include "os/kernel/process/job_control.hpp"
 #include "os/kernel/process/signal_manager.hpp"
 #include "os/kernel/process/thread_scheduler.hpp"
 #include "os/kernel/sync/private_futex.hpp"
@@ -72,6 +73,7 @@ enum class UserSignalStatus : uint64_t {
     InvalidMemory,
     ProcessNotFound,
     InvalidState,
+    PermissionDenied,
     RuntimeFailure,
 };
 
@@ -133,6 +135,7 @@ enum class ProcessIoStatus : uint64_t {
     BrokenPipe,
     InvalidDescriptor,
     PermissionDenied,
+    BackgroundTerminalRead,
     DeviceFailure,
     FileSystemFailure,
     DescriptorLimitExceeded,
@@ -211,8 +214,9 @@ struct ProcessRuntimeStatistics final {
     UserThreadRuntimeStatistics user_threads;
     PrivateFutexStatistics private_futexes;
     ProcessTreeStatistics process_tree;
+    JobControlStatistics job_control;
     SignalManagerStatistics signals;
-    ConsoleInputStatistics console_input;
+    TerminalStatistics terminal;
     KernelObjectManagerStatistics object_manager;
     FileDescriptionManagerStatistics file_descriptions;
     FileTableStatistics file_tables[OS_KERNEL_PROCESS_RUNTIME_RESULT_CAPACITY];
@@ -239,6 +243,9 @@ ExecCurrentProcess(ExceptionFrame &frame, const os::abi::ProcessLaunchRequest &r
 [[nodiscard]] ProcessWaitStatus
 TryWaitCurrentProcess(uint64_t requested_process_id,
                       os::abi::ProcessWaitResult &wait_result) noexcept;
+[[nodiscard]] ProcessWaitStatus
+TryWaitCurrentProcessEvent(uint64_t requested_process_id, uint64_t wait_flags,
+                           os::abi::ProcessWaitEventResult &wait_result) noexcept;
 [[nodiscard]] UserThreadStatus
 CreateCurrentProcessThread(ExceptionFrame &frame, const os::abi::ThreadCreateRequest &request,
                            uint64_t &thread_id) noexcept;
@@ -261,6 +268,14 @@ SetCurrentProcessSignalAction(uint64_t signal_number, const os::abi::SignalActio
                                                         uint64_t &target_process_count) noexcept;
 [[nodiscard]] UserSignalStatus GetCurrentProcessGroup(uint64_t &process_group_id) noexcept;
 [[nodiscard]] UserSignalStatus SetCurrentProcessGroup(uint64_t process_group_id) noexcept;
+[[nodiscard]] UserSignalStatus SetCurrentProcessGroupFor(uint64_t process_id,
+                                                         uint64_t process_group_id) noexcept;
+[[nodiscard]] UserSignalStatus CreateCurrentSession(uint64_t &session_id) noexcept;
+[[nodiscard]] UserSignalStatus GetCurrentSession(uint64_t &session_id) noexcept;
+[[nodiscard]] UserSignalStatus
+GetCurrentTerminalInformation(os::abi::TerminalInformation &information) noexcept;
+[[nodiscard]] UserSignalStatus
+SetCurrentTerminalForegroundGroup(uint64_t process_group_id) noexcept;
 [[nodiscard]] ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *ReturnFromCurrentThreadSignal(ExceptionFrame &frame,
                                                             uint64_t user_frame_address) noexcept;

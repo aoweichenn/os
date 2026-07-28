@@ -24,6 +24,7 @@ OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
 OS_QEMU_KEY_INJECTION_INTERVAL_SECONDS = 0.003
+OS_QEMU_KEYBOARD_STEP_TIMEOUT_SECONDS = 20.0
 OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
 OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
 OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
@@ -641,6 +642,15 @@ OS_QEMU_KERNEL_SCHEDULER_BLOCKS_MARKER = (
 OS_QEMU_KERNEL_SCHEDULER_WAKEUPS_MARKER = (
     "[OS][KERNEL] SCHEDULER_WAKEUPS=0x"
 )
+OS_QEMU_KERNEL_SCHEDULER_STOPPED_PROCESSES_MARKER = (
+    "[OS][KERNEL][SCHED] STOPPED_PROCESSES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_SCHEDULER_PROCESS_STOPS_MARKER = (
+    "[OS][KERNEL][SCHED] PROCESS_STOPS=0x"
+)
+OS_QEMU_KERNEL_SCHEDULER_PROCESS_CONTINUES_MARKER = (
+    "[OS][KERNEL][SCHED] PROCESS_CONTINUES=0x"
+)
 OS_QEMU_KERNEL_EXTENDED_STATE_SAVE_COUNT_MARKER = (
     "[OS][KERNEL] EXTENDED_STATE_SAVES=0x"
 )
@@ -691,6 +701,33 @@ OS_QEMU_KERNEL_CONSOLE_DROPPED_BYTES_MARKER = (
 )
 OS_QEMU_KERNEL_CONSOLE_BUFFERED_BYTES_MARKER = (
     "[OS][KERNEL] CONSOLE_BUFFERED_BYTES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_TERMINAL_COMMITTED_LINES_MARKER = (
+    "[OS][KERNEL][TTY] COMMITTED_LINES=0x"
+)
+OS_QEMU_KERNEL_TERMINAL_EDITING_BYTES_MARKER = (
+    "[OS][KERNEL][TTY] EDITING_BYTES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_TERMINAL_INTERRUPTS_MARKER = (
+    "[OS][KERNEL][TTY] INTERRUPTS=0x"
+)
+OS_QEMU_KERNEL_TERMINAL_STOPS_MARKER = (
+    "[OS][KERNEL][TTY] STOPS=0x"
+)
+OS_QEMU_KERNEL_TERMINAL_OUTPUT_QUEUED_BYTES_MARKER = (
+    "[OS][KERNEL][TTY] OUTPUT_QUEUED_BYTES=0x"
+)
+OS_QEMU_KERNEL_TERMINAL_OUTPUT_WRITTEN_BYTES_MARKER = (
+    "[OS][KERNEL][TTY] OUTPUT_WRITTEN_BYTES=0x"
+)
+OS_QEMU_KERNEL_TERMINAL_OUTPUT_PENDING_BYTES_MARKER = (
+    "[OS][KERNEL][TTY] OUTPUT_PENDING_BYTES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_TERMINAL_FOREGROUND_CHANGES_MARKER = (
+    "[OS][KERNEL][TTY] FOREGROUND_CHANGES=0x"
+)
+OS_QEMU_KERNEL_TERMINAL_BACKGROUND_READ_REJECTIONS_MARKER = (
+    "[OS][KERNEL][TTY] BACKGROUND_READ_REJECTIONS=0x"
 )
 OS_QEMU_KERNEL_OBJECT_ACTIVE_COUNT_MARKER = (
     "[OS][KERNEL] OBJECT_ACTIVE_COUNT=0x0000000000000000"
@@ -821,6 +858,33 @@ OS_QEMU_KERNEL_PROCESS_TREE_WAIT_BLOCKS_MARKER = (
 )
 OS_QEMU_KERNEL_PROCESS_TREE_WAIT_NO_CHILD_MARKER = (
     "[OS][KERNEL] PROCESS_TREE_WAIT_NO_CHILD=0x"
+)
+OS_QEMU_KERNEL_PROCESS_TREE_STOPPED_EVENTS_MARKER = (
+    "[OS][KERNEL][PROC] STOPPED_EVENTS=0x"
+)
+OS_QEMU_KERNEL_PROCESS_TREE_CONTINUED_EVENTS_MARKER = (
+    "[OS][KERNEL][PROC] CONTINUED_EVENTS=0x"
+)
+OS_QEMU_KERNEL_PROCESS_TREE_OBSERVED_STOPPED_EVENTS_MARKER = (
+    "[OS][KERNEL][PROC] OBSERVED_STOPPED_EVENTS=0x"
+)
+OS_QEMU_KERNEL_PROCESS_TREE_OBSERVED_CONTINUED_EVENTS_MARKER = (
+    "[OS][KERNEL][PROC] OBSERVED_CONTINUED_EVENTS=0x"
+)
+OS_QEMU_KERNEL_JOB_ACTIVE_PROCESSES_MARKER = (
+    "[OS][KERNEL][JOB] ACTIVE_PROCESSES=0x0000000000000000"
+)
+OS_QEMU_KERNEL_JOB_ACTIVE_SESSIONS_MARKER = (
+    "[OS][KERNEL][JOB] ACTIVE_SESSIONS=0x0000000000000000"
+)
+OS_QEMU_KERNEL_JOB_ACTIVE_PROCESS_GROUPS_MARKER = (
+    "[OS][KERNEL][JOB] ACTIVE_PROCESS_GROUPS=0x0000000000000000"
+)
+OS_QEMU_KERNEL_JOB_SESSION_CREATIONS_MARKER = (
+    "[OS][KERNEL][JOB] SESSION_CREATIONS=0x"
+)
+OS_QEMU_KERNEL_JOB_PROCESS_GROUP_CHANGES_MARKER = (
+    "[OS][KERNEL][JOB] PROCESS_GROUP_CHANGES=0x"
 )
 OS_QEMU_KERNEL_PROCESS_TREE_VALID_MARKER = (
     "[OS][KERNEL] PROCESS_TREE_VALID"
@@ -1069,6 +1133,12 @@ OS_QEMU_KERNEL_SIGNAL_HANDLER_DELIVERIES_MARKER = (
 OS_QEMU_KERNEL_SIGNAL_DEFAULT_TERMINATIONS_MARKER = (
     "[OS][KERNEL][SIGNAL] DEFAULT_TERMINATIONS=0x"
 )
+OS_QEMU_KERNEL_SIGNAL_DEFAULT_STOPS_MARKER = (
+    "[OS][KERNEL][SIGNAL] DEFAULT_STOPS=0x"
+)
+OS_QEMU_KERNEL_SIGNAL_DEFAULT_CONTINUES_MARKER = (
+    "[OS][KERNEL][SIGNAL] DEFAULT_CONTINUES=0x"
+)
 OS_QEMU_KERNEL_SIGNAL_GROUP_SENDS_MARKER = (
     "[OS][KERNEL][SIGNAL] GROUP_SENDS=0x"
 )
@@ -1114,6 +1184,12 @@ OS_QEMU_USER_SHELL_TRUNCATE_MARKER = (
 OS_QEMU_USER_SHELL_STAT_MARKER = "[OS][USER][SHELL] COMMAND=STAT"
 OS_QEMU_USER_SHELL_LS_MARKER = "[OS][USER][SHELL] COMMAND=LS"
 OS_QEMU_USER_SHELL_SYNC_MARKER = "[OS][USER][SHELL] COMMAND=SYNC"
+OS_QEMU_USER_SHELL_JOBS_MARKER = "[OS][USER][SHELL] COMMAND=JOBS"
+OS_QEMU_USER_SHELL_FOREGROUND_MARKER = "[OS][USER][SHELL] COMMAND=FG"
+OS_QEMU_USER_SHELL_BACKGROUND_MARKER = "[OS][USER][SHELL] COMMAND=BG"
+OS_QEMU_USER_SHELL_COMMAND_COMPLETE_MARKER = (
+    "[OS][USER][SHELL] COMMAND_COMPLETE"
+)
 OS_QEMU_USER_SHELL_UNKNOWN_MARKER = (
     "[OS][USER][SHELL] UNKNOWN_COMMAND_REJECTED"
 )
@@ -1126,6 +1202,15 @@ OS_QEMU_USER_SHELL_PIPELINE_16_VERIFIED_MARKER = (
 )
 OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER = (
     "[OS][USER][SHELL] REDIRECTION_VERIFIED"
+)
+OS_QEMU_USER_SHELL_BACKGROUND_JOB_STARTED_MARKER = (
+    "[OS][USER][SHELL] BACKGROUND_JOB_STARTED"
+)
+OS_QEMU_USER_SHELL_FOREGROUND_JOB_STOPPED_MARKER = (
+    "[OS][USER][SHELL] FOREGROUND_JOB_STOPPED"
+)
+OS_QEMU_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER = (
+    "[OS][USER][SHELL] FOREGROUND_JOB_WAITING"
 )
 OS_QEMU_USER_SHELL_COMMON_TEST_INPUT = (
     "help\n"
@@ -1165,6 +1250,18 @@ OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
     "rm /tmp/touched\n"
     "echo pipeline|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|tee /tmp/pipeline|head|wc\n"
     "rm /tmp/redirected\n"
+    "cat\n"
+    "\x1a"
+    "jobs\n"
+    "fg\n"
+    "\x03"
+    "echo terminal survived\n"
+    "cat\n"
+    "\x1a"
+    "bg\n"
+    "jobs\n"
+    "cat &\n"
+    "jobs\n"
     "unknown\n"
     "exit\n"
 )
@@ -1528,6 +1625,8 @@ def qemuKeyNameForCharacter(character: str) -> str:
     if "a" <= character <= "z" or "0" <= character <= "9":
         return character
     keyNames = {
+        "\x03": "ctrl-c",
+        "\x1a": "ctrl-z",
         "\n": "ret",
         " ": "spc",
         "/": "slash",
@@ -1535,6 +1634,7 @@ def qemuKeyNameForCharacter(character: str) -> str:
         "-": "minus",
         "=": "equal",
         ",": "comma",
+        "&": "shift-7",
         "<": "shift-comma",
         ">": "shift-dot",
         "|": "shift-backslash",
@@ -1546,6 +1646,32 @@ def qemuKeyNameForCharacter(character: str) -> str:
     return keyNames[character]
 
 
+def waitForQemuKeyboardProgress(
+    progressCondition: threading.Condition,
+    markerCounts: dict[str, int],
+    marker: str,
+    expectedCount: int,
+    finishedEvent: threading.Event,
+) -> bool:
+    progressDeadline = (
+        time.monotonic() + OS_QEMU_KEYBOARD_STEP_TIMEOUT_SECONDS
+    )
+    with progressCondition:
+        while markerCounts.get(marker, 0) < expectedCount:
+            if finishedEvent.is_set():
+                return False
+            remainingSeconds = progressDeadline - time.monotonic()
+            if remainingSeconds <= 0.0:
+                raise OsToolError(
+                    "QEMU 键盘分步注入等待串口标记超时："
+                    f"{marker!r} 第 {expectedCount} 次"
+                )
+            progressCondition.wait(
+                min(remainingSeconds, OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS)
+            )
+    return True
+
+
 def injectQemuText(
     qmpSocketPath: Path,
     inputText: str,
@@ -1553,6 +1679,9 @@ def injectQemuText(
     readyEvent: threading.Event,
     finishedEvent: threading.Event,
     failureMessages: list[str],
+    progressCondition: threading.Condition,
+    markerCounts: dict[str, int],
+    failureEvent: threading.Event,
 ) -> None:
     if not readyEvent.wait(readyTimeoutSeconds):
         return
@@ -1581,9 +1710,27 @@ def injectQemuText(
                 if "QMP" not in greeting:
                     raise OsToolError("QMP 握手缺少版本对象。")
                 sendQmpCommand(qmpStream, {"execute": "qmp_capabilities"})
-                for character in inputText:
+                expectedCommandCompletionCount = 0
+                for characterIndex, character in enumerate(inputText):
                     if finishedEvent.is_set():
                         return
+                    nextCharacter = (
+                        inputText[characterIndex + 1]
+                        if characterIndex + 1 < len(inputText)
+                        else ""
+                    )
+                    foregroundWaitTarget = 0
+                    if (
+                        character == "\n" and
+                        nextCharacter in ("\x03", "\x1a")
+                    ):
+                        with progressCondition:
+                            foregroundWaitTarget = (
+                                markerCounts.get(
+                                    OS_QEMU_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER,
+                                    0,
+                                ) + 1
+                            )
                     keyName = qemuKeyNameForCharacter(character)
                     sendQmpCommand(
                         qmpStream,
@@ -1595,8 +1742,32 @@ def injectQemuText(
                         },
                     )
                     time.sleep(OS_QEMU_KEY_INJECTION_INTERVAL_SECONDS)
+                    if (
+                        character == "\n" and
+                        nextCharacter in ("\x03", "\x1a")
+                    ):
+                        if not waitForQemuKeyboardProgress(
+                            progressCondition,
+                            markerCounts,
+                            OS_QEMU_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER,
+                            foregroundWaitTarget,
+                            finishedEvent,
+                        ):
+                            return
+                    elif character == "\n" or character in ("\x03", "\x1a"):
+                        expectedCommandCompletionCount += 1
+                        if not waitForQemuKeyboardProgress(
+                            progressCondition,
+                            markerCounts,
+                            OS_QEMU_USER_SHELL_COMMAND_COMPLETE_MARKER,
+                            expectedCommandCompletionCount,
+                            finishedEvent,
+                        ):
+                            return
     except (OSError, ValueError, OsToolError) as error:
         failureMessages.append(str(error))
+        # 注入线程一旦失败就立即结束有界整机运行，避免继续空等总超时预算。
+        failureEvent.set()
 
 
 def validateSerialProtocol(
@@ -1681,12 +1852,21 @@ def runQemuFirmwareBoot(
         protocolCompleteEvent = threading.Event()
         qemuFinishedEvent = threading.Event()
         qmpFailureMessages: list[str] = []
+        keyboardProgressCondition = threading.Condition()
+        keyboardMarkerCounts = {
+            OS_QEMU_USER_SHELL_COMMAND_COMPLETE_MARKER: 0,
+            OS_QEMU_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER: 0,
+        }
         finalRequiredMarker = requiredMarkers[-1]
         firmwareTimeoutSeconds = qemuFirmwareTimeoutSeconds(memoryMebibytes)
 
         def observeSerialLine(line: str) -> None:
             if keyboardReadyMarker in line:
                 keyboardReadyEvent.set()
+            with keyboardProgressCondition:
+                for marker in keyboardMarkerCounts:
+                    keyboardMarkerCounts[marker] += line.count(marker)
+                keyboardProgressCondition.notify_all()
             if any(forbiddenMarker in line for forbiddenMarker in forbiddenMarkers):
                 protocolCompleteEvent.set()
             if finalRequiredMarker in line:
@@ -1703,6 +1883,9 @@ def runQemuFirmwareBoot(
                     keyboardReadyEvent,
                     qemuFinishedEvent,
                     qmpFailureMessages,
+                    keyboardProgressCondition,
+                    keyboardMarkerCounts,
+                    protocolCompleteEvent,
                 ),
                 name="os-qemu-keyboard-injection",
                 daemon=True,

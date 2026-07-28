@@ -155,8 +155,8 @@ SignalManagerStatus SignalManager::ExecProcess(const uint64_t process_index,
             action = os::abi::SignalAction{};
         }
     }
-    process.pending_set = OS_KERNEL_SIGNAL_EMPTY_VALUE;
-    survivor.pending_set = OS_KERNEL_SIGNAL_EMPTY_VALUE;
+    // exec 只替换用户映像，不会撤销已经发生的异步事实。保留 Process pending
+    // 与存活 Thread pending，避免控制终端在 fork/exec 窗口投递的信号丢失。
     survivor.active_frame_address = OS_KERNEL_SIGNAL_EMPTY_VALUE;
     survivor.active_frame_cookie = OS_KERNEL_SIGNAL_EMPTY_VALUE;
     survivor.active_signal_number = OS_KERNEL_SIGNAL_EMPTY_VALUE;
@@ -414,8 +414,19 @@ SignalManagerStatus SignalManager::BeginThreadDelivery(const uint64_t thread_ind
     delivery.signal_number = signal_number;
     delivery.action = action;
     if (action.disposition == os::abi::SignalDisposition::Default) {
-        delivery.kind = SignalDeliveryKind::DefaultTerminate;
-        this->statistics_.default_termination_count += OS_KERNEL_SIGNAL_COUNTER_INCREMENT;
+        if (signal_number == os::abi::OS_ABI_SIGNAL_STOP_NUMBER ||
+            signal_number == os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER) {
+            delivery.kind = SignalDeliveryKind::DefaultStop;
+            this->statistics_.default_stop_count += OS_KERNEL_SIGNAL_COUNTER_INCREMENT;
+        } else if (signal_number == os::abi::OS_ABI_SIGNAL_CONTINUE_NUMBER) {
+            delivery.kind = SignalDeliveryKind::DefaultContinue;
+            this->statistics_.default_continue_count +=
+                OS_KERNEL_SIGNAL_COUNTER_INCREMENT;
+        } else {
+            delivery.kind = SignalDeliveryKind::DefaultTerminate;
+            this->statistics_.default_termination_count +=
+                OS_KERNEL_SIGNAL_COUNTER_INCREMENT;
+        }
         return SignalManagerStatus::Succeeded;
     }
     delivery.kind = SignalDeliveryKind::UserHandler;
@@ -707,7 +718,8 @@ bool SignalManager::ActionIsValid(const uint64_t signal_number,
             OS_KERNEL_SIGNAL_EMPTY_VALUE) {
         return false;
     }
-    if (signal_number == os::abi::OS_ABI_SIGNAL_KILL_NUMBER &&
+    if ((signal_number == os::abi::OS_ABI_SIGNAL_KILL_NUMBER ||
+         signal_number == os::abi::OS_ABI_SIGNAL_STOP_NUMBER) &&
         action.disposition != os::abi::SignalDisposition::Default) {
         return false;
     }

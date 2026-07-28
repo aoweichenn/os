@@ -45,6 +45,13 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                              uint64_t signal_number) noexcept;
 [[nodiscard]] int64_t GetProcessGroup() noexcept;
 [[nodiscard]] int64_t SetProcessGroup(uint64_t process_group_id) noexcept;
+[[nodiscard]] int64_t SetProcessGroupFor(uint64_t process_id,
+                                         uint64_t process_group_id) noexcept;
+[[nodiscard]] int64_t CreateSession() noexcept;
+[[nodiscard]] int64_t GetSession() noexcept;
+[[nodiscard]] int64_t
+GetTerminalInformation(os::abi::TerminalInformation &information) noexcept;
+[[nodiscard]] int64_t SetTerminalForegroundGroup(uint64_t process_group_id) noexcept;
 [[nodiscard]] int64_t TryReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t TryWritePipe(const uint8_t *source, uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t ReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
@@ -96,6 +103,8 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t ExecProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t WaitProcess(uint64_t process_id, os::abi::ProcessWaitResult &result) noexcept;
+[[nodiscard]] int64_t WaitProcessEvent(uint64_t process_id, uint64_t wait_flags,
+                                       os::abi::ProcessWaitEventResult &result) noexcept;
 [[nodiscard]] int64_t ForkProcess() noexcept;
 [[nodiscard]] int64_t MapAnonymousMemory(uint64_t requested_address, uint64_t length_bytes,
                                          uint64_t protection_flags, uint64_t map_flags) noexcept;

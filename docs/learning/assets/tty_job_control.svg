@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1320" height="760" viewBox="0 0 1320 760">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3"
+            orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .title { font: 700 30px sans-serif; fill: #0f172a; }
+      .label { font: 700 19px sans-serif; fill: #0f172a; }
+      .body { font: 16px sans-serif; fill: #334155; }
+      .box { fill: #f8fafc; stroke: #2563eb; stroke-width: 2; rx: 14; }
+      .kernel { fill: #eff6ff; }
+      .user { fill: #f0fdf4; stroke: #16a34a; }
+      .hardware { fill: #fff7ed; stroke: #ea580c; }
+      .flow { fill: none; stroke: #2563eb; stroke-width: 3; marker-end: url(#arrow); }
+      .dash { stroke-dasharray: 8 7; }
+    </style>
+  </defs>
+  <rect width="1320" height="760" fill="#ffffff"/>
+  <text x="660" y="45" text-anchor="middle" class="title">v1.15：从硬件按键到前后台作业</text>
+
+  <rect x="45" y="105" width="190" height="110" class="box hardware"/>
+  <text x="140" y="140" text-anchor="middle" class="label">PS/2 键盘</text>
+  <text x="140" y="170" text-anchor="middle" class="body">Set 1 make/break</text>
+  <text x="140" y="194" text-anchor="middle" class="body">左/右 Ctrl 状态</text>
+
+  <rect x="285" y="105" width="210" height="110" class="box kernel"/>
+  <text x="390" y="140" text-anchor="middle" class="label">i8042 + IRQ1</text>
+  <text x="390" y="170" text-anchor="middle" class="body">扫描码 → C0 字符</text>
+  <text x="390" y="194" text-anchor="middle" class="body">IRQ 只提交动作</text>
+
+  <rect x="545" y="82" width="255" height="156" class="box kernel"/>
+  <text x="672" y="120" text-anchor="middle" class="label">Terminal / TTY</text>
+  <text x="672" y="150" text-anchor="middle" class="body">canonical 编辑 512 B</text>
+  <text x="672" y="174" text-anchor="middle" class="body">输入 1024 B / 输出 2048 B</text>
+  <text x="672" y="198" text-anchor="middle" class="body">controlling SID + foreground PGID</text>
+  <text x="672" y="222" text-anchor="middle" class="body">irq-save 输入/输出守恒</text>
+
+  <rect x="850" y="105" width="205" height="110" class="box kernel"/>
+  <text x="952" y="140" text-anchor="middle" class="label">Signal</text>
+  <text x="952" y="170" text-anchor="middle" class="body">Ctrl-C → SIGINT</text>
+  <text x="952" y="194" text-anchor="middle" class="body">Ctrl-Z → SIGTSTP</text>
+
+  <rect x="1105" y="105" width="170" height="110" class="box kernel"/>
+  <text x="1190" y="140" text-anchor="middle" class="label">Scheduler</text>
+  <text x="1190" y="170" text-anchor="middle" class="body">Stopped / Ready</text>
+  <text x="1190" y="194" text-anchor="middle" class="body">保存 CPU/FX 现场</text>
+
+  <path d="M235 160 H285" class="flow"/>
+  <path d="M495 160 H545" class="flow"/>
+  <path d="M800 160 H850" class="flow"/>
+  <path d="M1055 160 H1105" class="flow"/>
+
+  <rect x="110" y="330" width="300" height="150" class="box user"/>
+  <text x="260" y="370" text-anchor="middle" class="label">Ring 3 Shell</text>
+  <text x="260" y="402" text-anchor="middle" class="body">SID=1，独立 Shell PGID</text>
+  <text x="260" y="428" text-anchor="middle" class="body">jobs / fg / bg / &amp;</text>
+  <text x="260" y="454" text-anchor="middle" class="body">16 项有界作业表</text>
+
+  <rect x="510" y="315" width="300" height="180" class="box kernel"/>
+  <text x="660" y="350" text-anchor="middle" class="label">JobControl + ProcessTree</text>
+  <text x="660" y="382" text-anchor="middle" class="body">PID / PGID / SID 分离</text>
+  <text x="660" y="408" text-anchor="middle" class="body">Stopped → Continued → Exited</text>
+  <text x="660" y="434" text-anchor="middle" class="body">Zombie 保留 PGID 到 wait</text>
+  <text x="660" y="460" text-anchor="middle" class="body">事件产生/观察精确守恒</text>
+
+  <rect x="910" y="330" width="300" height="150" class="box user"/>
+  <text x="1060" y="370" text-anchor="middle" class="label">前台作业 / 管线</text>
+  <text x="1060" y="402" text-anchor="middle" class="body">多个 PID，共同 PGID</text>
+  <text x="1060" y="428" text-anchor="middle" class="body">只在前台读取 /dev/console</text>
+  <text x="1060" y="454" text-anchor="middle" class="body">默认停止、继续或退出</text>
+
+  <path d="M410 405 H510" class="flow"/>
+  <path d="M810 405 H910" class="flow"/>
+  <path d="M672 238 V315" class="flow dash"/>
+  <path d="M1190 215 V280 H1060 V330" class="flow dash"/>
+
+  <rect x="150" y="585" width="1020" height="105" class="box"/>
+  <text x="660" y="620" text-anchor="middle" class="label">终态不变量</text>
+  <text x="660" y="650" text-anchor="middle" class="body">submitted = read + buffered + editing + dropped + consumed　｜　output queued = written + pending</text>
+  <text x="660" y="676" text-anchor="middle" class="body">stops = continues　｜　事件 produced = observed　｜　Stopped / Zombie / active job / pending output = 0</text>
+  <path d="M660 495 V585" class="flow dash"/>
+</svg>

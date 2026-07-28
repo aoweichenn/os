@@ -2,12 +2,12 @@
 
 ## 模块职责
 
-v1.11 用户环境沿用 v1.0 控制台边界，并加入执行计划与 Unix I/O 组合层：
+v1.15 用户环境在 v1.11 Unix I/O 组合层上加入 TTY 与作业控制：
 
 ```text
 QEMU PC 键盘前端
   → i8042 数据端口 → IRQ1 → Set 1 解码
-  → ConsoleInput 固定 FIFO
+  → Terminal canonical 行规程与前台 PGID
   → fd 0 / TryReadDescriptor / WaitDescriptorReadable
   → Ring 3 ShellExecutionPlan
   → fork / pipe / dup2 / redirection / exec / wait
@@ -22,9 +22,9 @@ QEMU 只产生硬件输入。`source/kernel` 负责扫描码、输入排队、�
 
 | fd | 初始对象 | 能力 |
 | ---: | --- | --- |
-| 0 | ConsoleInput | 读；空时可等待 |
-| 1 | ConsoleOutput | 写到 COM1 |
-| 2 | ConsoleError | 写到 COM1 |
+| 0 | TerminalDevice stdin | 仅前台组可读；空时可等待 |
+| 1 | TerminalDevice stdout | 经 TTY 输出环写到 COM1 |
+| 2 | TerminalDevice stderr | 经 TTY 输出环写到 COM1 |
 | 3..hard limit-1 | Closed | 文件、目录或动态管道端点 |
 
 FileTable 使用按需 chunk；bootstrap、functional 与 capacity 的 hard limit
@@ -137,10 +137,15 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | `true` / `false` | 返回成功 / 失败状态 |
 | `exit` | 正常退出 Shell |
 
-v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线；v1.14
-已经提供进程组身份和组信号投递。当前仍不支持 `>>`、stderr 重定向、环境
-展开、通配符、session、前后台作业和 Ctrl-C 终端生成信号；这些属于后续 TTY
-阶段。所有命令解释始终位于用户态。
+v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线；v1.15
+已经提供 session、前后台 PGID、控制终端、`jobs/fg/bg`、尾部 `&`，以及
+TTY 生成的 Ctrl-C/Ctrl-Z 组信号。当前仍不支持 `>>`、stderr 重定向、环境
+展开、通配符、termios/raw mode、多个终端和完整 POSIX job spec。所有命令
+解释始终位于用户态。
+
+Shell 的 16 项作业表按成员事件归约 Running/Stopped/Done。外部管线全部 stage
+使用同一 PGID；前台事务交出并最终收回 TTY，后台事务不改变前台组。child 在
+exec 前恢复 SIGINT/SIGTSTP 默认动作，避免继承 Shell 的保护 handler。
 
 ## 失败语义
 

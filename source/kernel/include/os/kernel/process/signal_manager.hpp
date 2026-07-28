@@ -36,6 +36,8 @@ enum class SignalManagerStatus : uint64_t {
 enum class SignalDeliveryKind : uint64_t {
     None,
     DefaultTerminate,
+    DefaultStop,
+    DefaultContinue,
     UserHandler,
 };
 
@@ -77,6 +79,8 @@ struct SignalManagerStatistics final {
     uint64_t ignored_signal_count;
     uint64_t handler_delivery_count;
     uint64_t default_termination_count;
+    uint64_t default_stop_count;
+    uint64_t default_continue_count;
     uint64_t process_group_send_count;
     uint64_t interrupted_wait_count;
     uint64_t restarted_wait_count;

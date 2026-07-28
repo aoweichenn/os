@@ -8,6 +8,7 @@ target_sources(
         FILES
             include/os/abi/system_call.hpp
             include/os/abi/signal.hpp
+            include/os/abi/terminal.hpp
             include/os/abi/thread.hpp
             include/os/abi/time.hpp
             include/os/abi/virtual_memory.hpp

@@ -177,9 +177,12 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(qemuKeyNameForCharacter("7"), "7")
         self.assertEqual(qemuKeyNameForCharacter(" "), "spc")
         self.assertEqual(qemuKeyNameForCharacter("/"), "slash")
+        self.assertEqual(qemuKeyNameForCharacter("&"), "shift-7")
         self.assertEqual(qemuKeyNameForCharacter("<"), "shift-comma")
         self.assertEqual(qemuKeyNameForCharacter(">"), "shift-dot")
         self.assertEqual(qemuKeyNameForCharacter("|"), "shift-backslash")
+        self.assertEqual(qemuKeyNameForCharacter("\x03"), "ctrl-c")
+        self.assertEqual(qemuKeyNameForCharacter("\x1a"), "ctrl-z")
         self.assertEqual(qemuKeyNameForCharacter("\n"), "ret")
 
     def testRejectsUnsupportedQemuKeyCharacter(self) -> None:

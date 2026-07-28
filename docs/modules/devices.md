@@ -77,7 +77,8 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
 - 单核、PIC 经 LAPIC virtual-wire 交付；没有 I/O APIC、LAPIC timer、
   MSI/MSI-X 或 SMP 路由。
 - ATA 是同步 PIO 单扇区读取，未启用 IRQ14、DMA、队列与写入。
-- PS/2 只解码一组教学键，尚无修饰键、键盘布局、重复键和事件环形缓冲。
+- PS/2 已解码左右 Ctrl 的 Set 1 make/break，并将 Ctrl-C/Z 转为 C0 控制码；
+  尚无 Shift/Alt/CapsLock 完整布局、重复键和通用键事件环形缓冲。
 - PIT 是调度时钟与 v1.13 单调纳秒的基础，不是 RTC 墙钟；已有 deadline
   queue 与非忙等 sleep，但尚无 tickless 或高精度 timer。
 - 当前为单 BSP 动态 Process/Thread 调度器，仍使用固定四 tick 时间片；设备层

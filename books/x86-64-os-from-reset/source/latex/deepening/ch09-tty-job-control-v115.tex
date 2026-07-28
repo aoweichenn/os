@@ -1,0 +1,490 @@
+\section{v1.15：TTY、会话与前后台作业控制}
+
+\begin{keyidea}
+键盘只产生扫描码，字符设备只搬运字节。把 Ctrl-Z 解释为“停止当前前台
+管线”，需要 TTY 行规程、控制终端、session、process group、signal、
+scheduler 和 Shell 作业表共同维护一条所有权链。
+\end{keyidea}
+
+\subsection{从电传打字机到控制终端}
+
+终端这个词早于今天的图形窗口。电传打字机把按键编码为串行字符，同时在纸上
+打印远端返回的字符；后来 CRT 终端仍保留“输入流加输出流”的接口。早期 Unix
+让每个登录 Shell 关联一台终端，程序继承标准输入输出，于是出现一个不可回避
+的问题：同一次登录中既有 Shell，又有 Shell 启动的许多程序，输入在一个时刻
+究竟属于谁？
+
+若只依赖父子关系，答案并不正确。一条
+\code{producer | filter | consumer} 管线的三个进程互为兄弟，却应一起收到
+Ctrl-C；Shell 是它们的父进程，却必须继续存活。Unix 因而把身份分成三层：
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l l X}
+\toprule
+关系 & 公开身份 & 解决的问题\\
+\midrule
+进程树 & PID 与 parent PID & 谁 wait、谁收养 Zombie\\
+进程组 & PGID & 哪些兄弟进程组成一个作业和信号目标\\
+会话 & SID & 哪些进程组共享一台控制终端\\
+\bottomrule
+\end{tabularx}
+\caption{PID、PGID 与 SID 的职责不能互相替代}
+\end{table}
+
+session 通常由登录 Shell 的祖先建立；一个 session 包含多个 process group，
+终端只记录其中一个 foreground process group。Shell 建立作业、切换前台组，
+TTY 把控制字符定向给该组。设备驱动不解析命令，Shell 也不在前台程序运行时
+偷偷读取同一输入。
+
+\subsection{整条控制流跨越哪些硬件和软件层}
+
+\begin{pdfdiagram}[node distance=9mm and 11mm]
+  \node[os hardware] (key) {PS/2 键盘\\Set 1 make/break};
+  \node[os hardware,right=of key] (irq) {i8042\\IRQ1};
+  \node[os state,right=of irq] (decode) {Ctrl 状态\\C0 字符};
+  \node[os state,right=of decode] (tty) {Terminal\\行规程与前台 PGID};
+  \node[os state,below=of tty] (signal) {组 signal\\INT/TSTP/CONT};
+  \node[os state,left=of signal] (sched) {Scheduler\\Stopped/Ready};
+  \node[os state,left=of sched] (wait) {ProcessTree\\wait event};
+  \node[os block,left=of wait] (shell) {Ring 3 Shell\\jobs/fg/bg};
+  \draw[os arrow] (key) -- (irq);
+  \draw[os arrow] (irq) -- (decode);
+  \draw[os arrow] (decode) -- (tty);
+  \draw[os arrow] (tty) -- (signal);
+  \draw[os arrow] (signal) -- (sched);
+  \draw[os arrow] (sched) -- (wait);
+  \draw[os arrow] (wait) -- (shell);
+\end{pdfdiagram}
+\diagramnote{Ctrl-Z 从硬件按键到 Shell 停止通知至少跨过七个可独立验证的边界。}
+
+QEMU 只模拟第一行硬件。QMP \code{send-key ctrl-z} 不会调用 Kernel 函数，也
+不会直接写 ASCII。自研固件、Stage 1、Kernel、i8042、IRQ、TTY、信号和用户
+Shell 仍由目标代码完成。
+
+\subsection{Set 1 扫描码为何需要修饰键状态}
+
+PS/2 键盘发送的是按键位置事件。左 Ctrl 的 make code 是 \code{0x1D}，
+break code 把最高位置一，成为 \code{0x9D}；右 Ctrl 使用扩展前缀
+\code{E0 1D/E0 9D}。字母 Z 的 make code 本身永远不会说明 Ctrl 是否仍按下，
+解码器必须跨中断保存左右修饰状态：
+
+\begin{lstlisting}
+left Ctrl make       -> left_control_pressed = true
+left Ctrl break      -> left_control_pressed = false
+E0 right Ctrl make   -> right_control_pressed = true
+E0 right Ctrl break  -> right_control_pressed = false
+\end{lstlisting}
+
+传统 ASCII 的 C0 区把 Ctrl 与字母的组合编码为低五位：
+
+\[
+  \text{Ctrl-C}=\texttt{'C'}\mathbin{\&}\texttt{0x1F}=\texttt{0x03}
+\]
+\[
+  \text{Ctrl-D}=\texttt{'D'}\mathbin{\&}\texttt{0x1F}=\texttt{0x04},
+  \qquad
+  \text{Ctrl-Z}=\texttt{'Z'}\mathbin{\&}\texttt{0x1F}=\texttt{0x1A}
+\]
+
+这不是项目随意挑选的数字，而是电传终端兼容历史留给字符流接口的约定。
+\filepath{device/device\_model.cpp} 只把扫描码变成字符；它不知道前台进程组，
+也不直接发送信号。
+
+\subsection{行规程为何位于键盘和文件描述符之间}
+
+如果每个可打印键都立即让阻塞 \code{read} 返回，退格会成为用户数据，用户
+程序必须重复实现行编辑。canonical 行规程先把半行保存在 edit buffer，
+换行后才把一整行转移到 input ring：
+
+\begin{lstlisting}
+edit:   h e l x
+              Backspace
+edit:   h e l
+              l o Enter
+input:  h e l l o \n
+\end{lstlisting}
+
+v1.15 的 \code{Terminal} 固定拥有 512 字节编辑区、1024 字节可读输入环与
+2048 字节输出环。固定容量使最坏内存、失败语义和测试边界均可推导；这不是
+宣称现实终端永远只需这些字节。
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l X l}
+\toprule
+输入 & 行规程动作 & 用户是否读取该控制字节\\
+\midrule
+普通字符 & 追加编辑区 & 换行提交后读取\\
+CR/LF & 提交编辑区并统一附加 LF & LF 可见\\
+Backspace/Delete & 删除最后一个编辑字节 & 否\\
+Ctrl-D & 提交当前内容，或登记一次 EOF & 否\\
+Ctrl-C & 清除未提交行，产生 InterruptForeground & 否\\
+Ctrl-Z & 清除未提交行，产生 StopForeground & 否\\
+\bottomrule
+\end{tabularx}
+\caption{canonical 输入不是普通字节 FIFO}
+\end{table}
+
+\code{SubmitCharacter} 返回强类型 \code{TerminalInputAction}。IRQ 上层只按
+Buffered、InputReady、EndOfFileReady、InterruptForeground 或 StopForeground
+分派，不重复认识 \code{0x03}/\code{0x1A}。这把硬件编码与作业策略隔开。
+
+\subsection{输入守恒为何必须增加 consumed}
+
+v1.0 ConsoleInput 可以要求 submitted 等于 read 加 buffered，因为每个接受
+字符最终都交给用户。行规程会故意吞掉控制字符，还会撤销已经进入编辑区的
+数据。一次有效退格消耗两个已提交事实：退格按键本身和被删除字符。
+
+终端使用精确等式：
+
+\[
+S=R+B+E+D+C
+\]
+
+\begin{itemize}
+  \item \(S\)：硬件路径接受的 submitted bytes；
+  \item \(R\)：已经由用户读取的 bytes；
+  \item \(B\)：已提交输入环中尚未读取的 bytes；
+  \item \(E\)：尚未提交的 editing bytes；
+  \item \(D\)：容量边界拒绝的 dropped bytes；
+  \item \(C\)：控制语义消费的 control/erased bytes。
+\end{itemize}
+
+Ctrl-C 或 Ctrl-Z 清空半行时，\code{consumed} 同时增加控制字节和被撤销的
+编辑长度；空编辑区的退格仍消费退格本身。这个账本不仅让整机终态可验证，也
+能定位“控制键后丢了一个普通字符”到底是预期撤销还是环索引损坏。
+
+输出侧满足：
+
+\[
+Q=W+P
+\]
+
+\(Q\) 是 queued，\(W\) 是 written，\(P\) 是 pending。阶段结束要求
+\(P=0\)，所以所有成功接收的目标输出都已经到达串口设备。
+
+\subsection{单核为什么仍需要 irq-save 锁}
+
+单 BSP 只排除了另一个 CPU 并行执行，没有排除同核中断重入。Thread 在系统
+调用中修改输出环时，IRQ1 可以打断它并提交输入；若日志或终端状态共享索引，
+普通自旋锁还会造成“Thread 持锁，被 IRQ 打断，IRQ 等待同一锁”的永久自锁。
+
+\code{IrqSaveSpinLock} 先保存 IF、关闭本地可屏蔽中断，再取得原子锁；释放后
+恢复调用前 IF。目标对象注入真实 \code{DisableInterrupts/RestoreInterrupts}，
+主机逻辑测试注入无操作函数。这样同一 \code{Terminal} 实现可以在 hosted
+测试中运行，却不会把无操作保护带到目标 Kernel。
+
+\begin{contractbox}
+锁内只能执行有界内存操作和立即设备写，不能阻塞、sleep 或等待另一个 Thread。
+未来异步输出必须把请求移交到锁外队列，而不是扩大当前临界区。
+\end{contractbox}
+
+\subsection{JobControlManager 的状态和不变量}
+
+PID1 的初始身份为：
+
+\[
+PID=PGID=SID=1,\qquad session\_leader=true
+\]
+
+fork child 继承 SID/PGID，获得独立 PID，并清除 session leader。目标可建立
+以自身 PID 为 PGID 的新组，或加入同 SID 已存在的组。跨 session 移动、
+移动 session leader 或加入不存在的组都拒绝。
+
+\code{JobControlManager} 与 ProcessTree 使用相同内部 process index，公开
+接口仍查找 PID。槽位可以回收，PID 不可倒退复用。完整校验扫描每个 active
+记录，证明 PID 唯一、PGID 在同 SID 内有成员、session leader 满足三号相等，
+inactive 槽全零且统计数等于实际数。
+
+进程树和 job-control 表分离十分重要：
+
+\begin{itemize}
+  \item ProcessTree 的 parent 决定 wait 权限和孤儿重归属；
+  \item JobControl 的 PGID 决定终端信号广播；
+  \item SID 决定谁有资格修改同一控制终端；
+  \item scheduler state 决定谁当前能获得 CPU。
+\end{itemize}
+
+把这些字段压进一个枚举会使“停止但仍是同一组成员”“Zombie 仍需被父进程
+收集”等合法组合无法表达。
+
+\subsection{控制终端怎样裁决输入所有权}
+
+\code{Terminal} 记录 terminal id、controlling SID、session leader PID 和
+foreground PGID。只有：
+
+\[
+caller.SID=tty.SID\quad\land\quad caller.PGID=tty.foreground.PGID
+\]
+
+的进程可以读取。后台组收到固定错误
+\code{BACKGROUND\_TERMINAL\_READ=-55}，输入环完全不前进。立即返回比盲目
+睡眠更清楚：输入到达不能改变后台身份，只有 Shell 的前台切换才可能满足条件。
+完整 Unix 可发送 SIGTTIN；本阶段先冻结专用错误。
+
+输出目前允许后台写。这符合“后台构建仍可输出日志”的基础需求，但可能与 Shell
+提示符交错。终端显示重绘、SIGTTOU 和 termios \code{TOSTOP} 不在 v1.15。
+
+\subsection{/dev/console 为何进入 VFS}
+
+标准 fd 曾以 ConsoleInput/ConsoleOutput 特殊 kind 直接指向全局对象，用户
+不能通过路径观察设备。v1.15 增加最小只读设备后端：
+
+\begin{lstlisting}
+VFS
+  mount /
+  mount /tmp
+  mount /dev
+    `-- console : CharacterDevice
+\end{lstlisting}
+
+VFS 继续负责逐组件路径、mount identity、vnode 引用、stat 与 readdir；
+\code{FileDescriptionKind::TerminalDevice} 再把 read/write 转给
+\code{Terminal}。字符设备没有普通文件 offset，truncate 返回 Unsupported。
+用户只持有 fd，不获得内核对象地址。
+
+当前后端不是完整 devfs：节点在启动期固定，不能动态注册设备，也没有 uid/gid
+权限或热插拔。保留 VFS 契约后，v1.18 可以替换后端而不重写 Shell I/O。
+
+\subsection{Ctrl-C 和 Ctrl-Z 如何选择目标}
+
+TTY 不保存 PID 列表，只保存 foreground PGID：
+
+\begin{lstlisting}
+Ctrl-C -> SendProcessGroupSignal(foreground_pgid, SIGINT)
+Ctrl-Z -> SendProcessGroupSignal(foreground_pgid, SIGTSTP)
+\end{lstlisting}
+
+SIGTSTP 和 SIGSTOP 的 Default 动作为停止，SIGCONT 的 Default 动作为继续。
+STOP 与 Kill 一样不可屏蔽、不可忽略、不可安装 handler；TSTP 可由交互程序
+选择 handler。Shell 自己安装 INT/TSTP handler，以免提示符时被默认终止；
+fork child 在 exec 前恢复默认动作，所以前台程序仍按普通规则停止或退出。
+
+TTY 不在 IRQ 中遍历全部 Process 并完成上下文切换。IRQ 只产出具名动作，
+ProcessRuntime 在既有安全边界调用 SignalManager、ProcessTree 与 scheduler，
+把复杂生命周期留在可统一验证的位置。
+
+\subsection{Stopped 为什么必须是独立生命周期状态}
+
+停止不是退出，也不是普通 Blocked：
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l X X}
+\toprule
+状态 & 等待什么 & 资源语义\\
+\midrule
+Blocked & I/O、condition、deadline 等具体条件 & 条件满足后自动 Ready\\
+Stopped & SIGCONT 或作业控制动作 & 全部地址空间、fd 与 CPU 现场保留\\
+Zombie & parent wait 收集 & 执行资源已释放，只保留身份和退出事实\\
+\bottomrule
+\end{tabularx}
+\caption{Blocked、Stopped 与 Zombie 不能合并}
+\end{table}
+
+默认停止路径保存 176 字节通用 UserContext 和 512 字节 FXSAVE 现场，把
+Process/Thread 标为 Stopped，并从可调度选择中排除。SIGCONT 重新发布原
+Thread。它不创建新程序入口，继续的是被停止时的旧指令流。
+
+run queue 可能仍含停止进程以前发布的节点，所以 PopReady 必须跳过它们；
+“是否存在可运行 Thread”也必须调用 \code{HasSchedulableReadyThread}，
+不能只检查队列非空。否则全是 stopped 节点时 CPU 会在空调度中忙转。
+
+\subsection{事件式 wait 如何保留三种事实}
+
+传统 \code{wait} 只在孩子退出时返回，并立即收集 Zombie。Shell 还必须知道
+孩子何时停止或继续。公共 56 字节 \code{ProcessWaitEventResult} 保存 PID、
+parent PID、event type、termination reason、exit code、exception vector
+和 signal number；flags 选择 Exited、Stopped、Continued 与 NoHang。
+
+\begin{pdfdiagram}[node distance=12mm and 18mm]
+  \node[os state] (alive1) {Alive};
+  \node[os state,right=of alive1] (stopped) {Stopped};
+  \node[os state,right=of stopped] (alive2) {Alive};
+  \node[os state,right=of alive2] (zombie) {Zombie};
+  \draw[os arrow] (alive1) -- node[above,font=\scriptsize]{TSTP/STOP} (stopped);
+  \draw[os arrow] (stopped) -- node[above,font=\scriptsize]{CONT} (alive2);
+  \draw[os arrow] (alive2) -- node[above,font=\scriptsize]{exit/signal} (zombie);
+  \node[os block,below=of stopped] (events) {parent observes\\Stopped, Continued, Exited};
+  \draw[os arrow] (stopped) -- (events);
+  \draw[os arrow] (alive2) -- (events);
+  \draw[os arrow] (zombie) -- (events);
+\end{pdfdiagram}
+\diagramnote{前两个事件只清 pending；Exited 才回收 Zombie 和槽位。}
+
+孩子可能在父进程重新获得 CPU 前完成 stop、continue 和 exit。ProcessTree
+分别保存 stopped/continued pending，exit 不覆盖前两个事实；父进程按顺序
+消费。统计同时记录 produced 与 observed，终态必须相等。
+
+\subsection{Shell 如何建立一条进程组管线}
+
+对于 \code{echo data | cat | wc}：
+
+\begin{enumerate}
+  \item 在 fork 前取得空闲作业槽并建立两条动态 Pipe；
+  \item 第一个 child PID 成为 PGID，后续 child 加入同组；
+  \item child 接线 stdin/stdout，关闭多余端点，恢复默认信号，再 exec；
+  \item parent 关闭自己的 Pipe 端点并完成每个 child 的 PGID 设置；
+  \item 前台命令把 TTY foreground 切到作业 PGID；
+  \item Shell 用事件式 wait 汇总全部成员；
+  \item 停止或全部退出后，无条件把 TTY foreground 恢复为 Shell PGID。
+\end{enumerate}
+
+父子双方调用 setpgid 是经典竞态收缩：child 先运行也能在 exec 前入组，parent
+先运行也能在交接终端前建立组。但极短 child 仍可能在 parent 调用前退出。
+
+\subsection{控制信号为何必须跨过 exec}
+
+还有一个更短的窗口：parent 已把 TTY 交给新 PGID，而 child 尚未完成 exec。
+此时 Ctrl-Z 已经成为 pending 异步事实。exec 可以把旧 Handler 重置为
+Default、清除活动 handler frame 和被删除兄弟 Thread 的状态，却不能清掉
+Process pending 或 survivor pending；否则替换映像会把用户已经按下的控制键
+抹去。QEMU 分步注入把 Ctrl-Z 放进这一窗口，新映像必须在第一次返回用户态前
+兑现默认停止。这项测试修正了早期“exec 清空全部 pending”的错误契约。
+
+\subsection{为何 Zombie 仍需保留进程组身份}
+
+最初实现在线程退出后立即删除进程级 SignalManager 状态。真实 QEMU 中
+\code{unknown} child 以 127 极快退出，parent 随后设置 PGID 得到不存在，
+Shell 把它误报为普通执行失败，\code{UNKNOWN\_COMMAND\_REJECTED} 偶发丢失。
+
+添加 sleep 只能改变概率。正确生命周期是：
+
+\begin{lstlisting}
+Process exit:
+  remove Thread signal state
+  keep Process signal/group identity
+  mark Zombie
+
+Parent wait Exited:
+  reap scheduler slot
+  remove Process signal identity
+  remove JobControl identity
+  collect ProcessTree entry
+\end{lstlisting}
+
+Zombie 仍不执行 handler，因为已经没有活动 Thread；保留的少量固定元数据只
+作为 PID/PGID 锚点。管线组长即使先退出，后续成员仍能加入相同组。这个修复
+把“进程存在多久”从实现细节提升为作业控制契约。
+
+\subsection{作业表怎样归约成员状态}
+
+Shell 使用 16 项固定表。每项保存 job id、PGID、最多 16 个 PID、成员状态和
+最后 stage 退出码。作业状态按成员归约：
+
+\[
+\begin{aligned}
+  &\text{全部 Exited} &&\Rightarrow Done\\
+  &\text{所有未退出成员均 Stopped} &&\Rightarrow Stopped\\
+  &\text{其他} &&\Rightarrow Running
+\end{aligned}
+\]
+
+\code{command \&} 只允许 \code{\&} 位于整行最后。中间 \code{\&} 返回
+BackgroundOperatorNotLast，且在 fork/pipe 前失败。后台作业建立后立即返回
+提示符；\code{jobs} 以 NoHang 收割事件；\code{bg} 发送 CONT 但不交出 TTY；
+\code{fg} 先交出 TTY，再发送 CONT 并阻塞等待。
+
+\begin{failurebox}
+作业表满、pipe/fork 失败、PGID 失败或终端交接失败时，必须关闭已建 fd、终止
+已建组、收集可见事件并恢复 Shell 的 foreground PGID。只打印错误而不回滚会
+在阶段末留下 Pipe、Zombie 或错误终端所有者。
+\end{failurebox}
+
+\subsection{Ctrl-Z、fg 与 Ctrl-C 的逐步时序}
+
+\begin{lstlisting}
+QMP: ctrl-z
+  i8042 IRQ1 -> decoder 0x1A
+  Terminal -> StopForeground
+  SIGTSTP -> foreground PGID
+  child Running -> Stopped
+  Shell wait observes Stopped
+  TTY foreground -> Shell PGID
+
+Shell: fg
+  TTY foreground -> job PGID
+  SIGCONT -> job PGID
+  child Stopped -> Ready
+  Shell observes Continued
+
+QMP: ctrl-c
+  Terminal -> InterruptForeground
+  SIGINT -> job PGID
+  child -> Zombie
+  Shell observes Exited and reaps
+  TTY foreground -> Shell PGID
+\end{lstlisting}
+
+QEMU runner 不用固定 sleep 猜测 guest 速度。它为每个输入命令等待新的
+\code{COMMAND\_COMPLETE}，控制键前等待新的
+\code{FOREGROUND\_JOB\_WAITING}。单步 20 秒无进展立即失败并设置协议完成
+事件，finally 终止、wait 并删除 QMP socket；不会再静默等满 120 秒。
+
+\subsection{日志为何选择事务 marker 与终态账本}
+
+扫描码、普通字符和 scheduler 扫描都是热路径。逐事件串口日志会改变时序，
+甚至让日志本身成为竞态放大器。低频用户 marker 只描述可作为协议屏障的事务：
+
+\begin{lstlisting}
+JOB_CONTROL_READY
+FOREGROUND_JOB_WAITING
+FOREGROUND_JOB_STOPPED
+BACKGROUND_JOB_STARTED
+COMMAND_COMPLETE
+\end{lstlisting}
+
+全部进程结束后，Kernel 一次输出 TTY、scheduler、signal、ProcessTree 和
+JobControl 账本。重要终态包括：
+
+\[
+stops=continues,\qquad
+stopped\_events=observed\_stopped\_events
+\]
+\[
+continued\_events=observed\_continued\_events,\qquad
+output\_queued=output\_written
+\]
+
+Stopped、Zombie、active job process、active session/group、editing bytes、
+buffered bytes 和 pending output 必须全为零。用户 marker 正确而资源账本
+错误时，整机仍输出 \code{USER\_RESULT\_INVALID}。
+
+\subsection{四层测试怎样冻结机制而非演示}
+
+\begin{table}[htbp]
+\centering
+\small
+\begin{tabularx}{\textwidth}{l X}
+\toprule
+层次 & v1.15 证据\\
+\midrule
+单元 & Terminal 行规程/守恒、JobControl 身份、字符 vnode、Ctrl 扫描码\\
+集成 & 同一 child 的 Stopped→Continued→Exited 与 scheduler 状态\\
+随机 & 64 槽、固定种子 100000 步 PGID 迁移，每步完整 Validate\\
+系统 & QMP 真按键、IRQ1、Ring 3 cat、jobs/fg/bg/\&、终态资源守恒\\
+\bottomrule
+\end{tabularx}
+\caption{四层证据分别隔离局部算法、组合事务、长序列性质和真实硬件路径}
+\end{table}
+
+functional QEMU 精确观察两次 stop、两次 continue、一次 interrupt，且
+Stopped/Continued produced 与 observed 各为两次。后台读取拒绝至少一次。
+64 MiB bootstrap 保持兼容，256 MiB 执行完整功能，64 GiB 继续验证同一 ABI
+在更大容量配置下运行；QEMU 仍只使用自研 ROM 启动。
+
+\subsection{当前边界与 v1.16 的连接}
+
+当前只有一个控制终端和 canonical 基线，没有 termios/raw mode、多个虚拟
+终端或 pty、窗口尺寸、SIGWINCH、SIGHUP、SIGTTIN/SIGTTOU、孤儿进程组规则
+与完整 POSIX job spec。Shell 作业表固定 16 项；这些限制均明确返回或记录，
+不伪装成完整 Linux。
+
+v1.16 将把 ATA 同步轮询升级为 IRQ14 完成的 BlockRequest，并为 page cache
+建立 clean/dirty/writeback/error。TTY 阶段已经验证的 irq-save 临界区、
+WaitQueue 单赢家、deadline、signal 中断、超时进度门禁和终态账本会直接复用：
+设备 IRQ 只提交有界完成，Thread 在安全边界恢复，错误不能伪装成成功。

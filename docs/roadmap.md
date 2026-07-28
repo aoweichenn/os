@@ -55,7 +55,8 @@ VMA/UserHeap 单元与十万步模型、128 轮页表生命周期、三个 Ring 
 单元、页表集成和十万步引用随机模型；v1.11 再加入动态 Pipe、Shell 执行
 计划、dup2、QEMU 重定向与 16 级管线证据；v1.12 加入用户 Thread/TLS/futex，
 v1.13 再加入单调时钟、deadline queue 与 timed wait；v1.14 又加入普通信号、
-进程组、用户 handler 和安全 sigreturn，当前构建图为 154 项。
+进程组、用户 handler 和安全 sigreturn；v1.15 再加入 TTY、session、
+字符设备控制台和前后台作业控制，当前构建图为 158 项。
 数量仍由构建图自动生成，不作为未来版本的固定常量。
 
 ## 第二周期最终目标
@@ -803,6 +804,18 @@ Intel NASM restorer 进入严格 sigreturn；cookie、canonical 地址、RFLAGS�
 - stop/continue/exit 后无遗失 Thread、fd 或 Process Zombie；
 - 真实 QMP 键盘输入经过 i8042/IRQ/TTY/signal 全链路；
 - 输入、tick 和调度热路径不逐事件刷串口。
+
+**完成状态**
+
+v1.15 已完成。TTY 现在具有 canonical 编辑、EOF、退格、受锁输入/输出账本，
+并保存 controlling SID 与 foreground PGID；`/dev/console` 已通过字符
+vnode 挂载。ProcessTree 与 scheduler 支持 Stopped/Continued/Exited，
+Shell 已实现 `jobs`、`fg`、`bg`、尾部 `&` 和整条管线同 PGID。真实 QMP
+Ctrl-Z/Ctrl-C 路径、后台读取拒绝、100000 步组迁移与最终资源归零均通过。
+
+见 [v1.15 发布记录](releases/v1.15.md)、
+[学习章](learning/23-v1.15-tty-session-job-control.md) 与
+[ADR 0042](adr/0042-tty-session-and-job-control.md)。
 
 ## 波次 E：持久化与冻结
 

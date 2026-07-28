@@ -29,6 +29,7 @@ enum class ShellExecutionParseStatus : uint64_t {
     DuplicateRedirection,
     UnterminatedQuote,
     DanglingEscape,
+    BackgroundOperatorNotLast,
     InvalidArgument,
 };
 
@@ -47,6 +48,7 @@ struct ShellExecutionPlan final {
     ShellExecutionStage stages[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT];
     uint64_t argument_count;
     uint64_t stage_count;
+    bool background;
 };
 
 // 解析器会在用户栈上构造临时计划；单个栈帧必须小于一页，避免跨越按需增长边界。

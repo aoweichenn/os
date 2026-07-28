@@ -367,7 +367,7 @@ Kernel 再通过串口驱动访问硬件。这条边界使用户错误可以被�
    [`ps2_keyboard.cpp`](../../source/kernel/src/device/ps2_keyboard.cpp)、
    [`ata_pio.cpp`](../../source/kernel/src/device/ata_pio.cpp)。
 6. 用户输入和持久写入：
-   [`console_input.cpp`](../../source/kernel/src/io/console_input.cpp)、
+   [`terminal.cpp`](../../source/kernel/src/io/terminal.cpp)、
    [`system_calls.cpp`](../../source/kernel/src/user/system_calls.cpp)、
    [`file_system.cpp`](../../source/kernel/src/fs/file_system.cpp)、
    [`block_cache.cpp`](../../source/kernel/src/fs/block_cache.cpp)、

@@ -264,7 +264,7 @@ ThreadSchedulerStatus ThreadScheduler::Start(ThreadSchedulingDecision &decision)
     }
     uint64_t next_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
     if (!this->PopReadyThread(next_thread_index)) {
-        decision.idle = this->HasBlockedThread();
+        decision.idle = this->HasLiveThread();
         decision.completed = !this->HasLiveThread();
         return ThreadSchedulerStatus::NoReadyThread;
     }
@@ -289,7 +289,7 @@ ThreadScheduler::HandleTimerTick(ThreadSchedulingDecision &decision) noexcept {
     this->elapsed_quantum_ticks_ += OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
     decision.current_thread_index = this->current_thread_index_;
     if (this->elapsed_quantum_ticks_ < this->quantum_ticks_ ||
-        this->ready_head_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX) {
+        !this->HasSchedulableReadyThread()) {
         return ThreadSchedulerStatus::Succeeded;
     }
 
@@ -316,7 +316,7 @@ ThreadScheduler::YieldCurrentThread(ThreadSchedulingDecision &decision) noexcept
         this->threads_[this->current_thread_index_].state != ThreadState::Running) {
         return ThreadSchedulerStatus::InvalidCurrentThread;
     }
-    if (this->ready_head_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX) {
+    if (!this->HasSchedulableReadyThread()) {
         return ThreadSchedulerStatus::Succeeded;
     }
 
@@ -735,6 +735,56 @@ ThreadScheduler::TerminateCurrentProcess(const uint64_t process_index,
                : ThreadSchedulerStatus::CorruptedState;
 }
 
+ThreadSchedulerStatus
+ThreadScheduler::StopCurrentProcess(const uint64_t process_index,
+                                    ThreadSchedulingDecision &decision) noexcept {
+    this->ResetDecision(decision);
+    if (!this->initialized_) {
+        return ThreadSchedulerStatus::NotInitialized;
+    }
+    if (process_index >= this->process_capacity_) {
+        return ThreadSchedulerStatus::InvalidProcessIndex;
+    }
+    if (this->current_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX ||
+        this->threads_[this->current_thread_index_].state != ThreadState::Running ||
+        this->threads_[this->current_thread_index_].process_index != process_index) {
+        return ThreadSchedulerStatus::InvalidCurrentThread;
+    }
+    ProcessEntry &process = this->processes_[process_index];
+    if (process.state != ProcessState::Alive) {
+        return ThreadSchedulerStatus::InvalidProcessState;
+    }
+
+    // 停止只改变进程的可调度资格；线程仍留在原有就绪或等待结构中。
+    const uint64_t stopped_thread_index = this->current_thread_index_;
+    this->threads_[stopped_thread_index].state = ThreadState::Ready;
+    this->AppendReadyThread(stopped_thread_index);
+    process.state = ProcessState::Stopped;
+    this->current_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
+    this->elapsed_quantum_ticks_ = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
+    this->cumulative_statistics_.process_stop_count +=
+        OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    this->SelectAfterCurrentStops(stopped_thread_index, decision);
+    return ThreadSchedulerStatus::Succeeded;
+}
+
+ThreadSchedulerStatus ThreadScheduler::ContinueProcess(const uint64_t process_index) noexcept {
+    if (!this->initialized_) {
+        return ThreadSchedulerStatus::NotInitialized;
+    }
+    if (process_index >= this->process_capacity_) {
+        return ThreadSchedulerStatus::InvalidProcessIndex;
+    }
+    ProcessEntry &process = this->processes_[process_index];
+    if (process.state != ProcessState::Stopped) {
+        return ThreadSchedulerStatus::InvalidProcessState;
+    }
+    process.state = ProcessState::Alive;
+    this->cumulative_statistics_.process_continue_count +=
+        OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    return ThreadSchedulerStatus::Succeeded;
+}
+
 ThreadSchedulerStatus ThreadScheduler::ReapExitedThread(const uint64_t thread_index) noexcept {
     if (!this->initialized_) {
         return ThreadSchedulerStatus::NotInitialized;
@@ -957,7 +1007,7 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
              process.first_thread_index == OS_KERNEL_THREAD_INVALID_INDEX)) {
             return ThreadSchedulerStatus::CorruptedState;
         }
-        if ((process.state == ProcessState::Alive &&
+        if (((process.state == ProcessState::Alive || process.state == ProcessState::Stopped) &&
              process.thread_count != OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE &&
              process.live_thread_count == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE) ||
             (process.state == ProcessState::Zombie &&
@@ -1161,6 +1211,9 @@ ThreadSchedulerStatistics ThreadScheduler::Statistics() const noexcept {
         if (state == ProcessState::Alive) {
             ++statistics.owned_process_count;
             ++statistics.alive_process_count;
+        } else if (state == ProcessState::Stopped) {
+            ++statistics.owned_process_count;
+            ++statistics.stopped_process_count;
         } else if (state == ProcessState::Zombie) {
             ++statistics.owned_process_count;
             ++statistics.zombie_process_count;
@@ -1243,21 +1296,31 @@ void ThreadScheduler::AppendReadyThread(const uint64_t thread_index) noexcept {
 }
 
 bool ThreadScheduler::PopReadyThread(uint64_t &thread_index) noexcept {
-    if (this->ready_head_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX) {
-        return false;
+    // 每个就绪条目最多检查一次，避免队列中只有停止进程时形成忙循环。
+    for (uint64_t checked_thread_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
+         checked_thread_count < this->thread_capacity_ &&
+         this->ready_head_thread_index_ != OS_KERNEL_THREAD_INVALID_INDEX;
+         ++checked_thread_count) {
+        const uint64_t candidate_thread_index = this->ready_head_thread_index_;
+        ThreadEntry &candidate_thread = this->threads_[candidate_thread_index];
+        this->ready_head_thread_index_ = candidate_thread.next_run_thread_index;
+        if (this->ready_head_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX) {
+            this->ready_tail_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
+        } else {
+            this->threads_[this->ready_head_thread_index_].previous_run_thread_index =
+                OS_KERNEL_THREAD_INVALID_INDEX;
+        }
+        candidate_thread.previous_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+        candidate_thread.next_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+
+        if (candidate_thread.process_index < this->process_capacity_ &&
+            this->processes_[candidate_thread.process_index].state == ProcessState::Alive) {
+            thread_index = candidate_thread_index;
+            return true;
+        }
+        this->AppendReadyThread(candidate_thread_index);
     }
-    thread_index = this->ready_head_thread_index_;
-    ThreadEntry &thread = this->threads_[thread_index];
-    this->ready_head_thread_index_ = thread.next_run_thread_index;
-    if (this->ready_head_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX) {
-        this->ready_tail_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
-    } else {
-        this->threads_[this->ready_head_thread_index_].previous_run_thread_index =
-            OS_KERNEL_THREAD_INVALID_INDEX;
-    }
-    thread.previous_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
-    thread.next_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
-    return true;
+    return false;
 }
 
 void ThreadScheduler::RemoveReadyThread(const uint64_t thread_index) noexcept {
@@ -1383,7 +1446,7 @@ void ThreadScheduler::SelectAfterCurrentStops(const uint64_t previous_thread_ind
         .current_thread_index = OS_KERNEL_THREAD_INVALID_INDEX,
         .switched = false,
         .completed = !this->HasLiveThread(),
-        .idle = this->HasBlockedThread(),
+        .idle = this->HasLiveThread(),
     };
 }
 
@@ -1397,12 +1460,18 @@ void ThreadScheduler::ResetDecision(ThreadSchedulingDecision &decision) const no
     };
 }
 
-bool ThreadScheduler::HasBlockedThread() const noexcept {
-    for (uint64_t thread_index = OS_KERNEL_THREAD_SCHEDULER_FIRST_INDEX;
-         thread_index < this->thread_capacity_; ++thread_index) {
-        if (this->threads_[thread_index].state == ThreadState::Blocked) {
+bool ThreadScheduler::HasSchedulableReadyThread() const noexcept {
+    uint64_t thread_index = this->ready_head_thread_index_;
+    for (uint64_t checked_thread_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
+         checked_thread_count < this->thread_capacity_ &&
+         thread_index != OS_KERNEL_THREAD_INVALID_INDEX;
+         ++checked_thread_count) {
+        const ThreadEntry &thread = this->threads_[thread_index];
+        if (thread.state == ThreadState::Ready && thread.process_index < this->process_capacity_ &&
+            this->processes_[thread.process_index].state == ProcessState::Alive) {
             return true;
         }
+        thread_index = thread.next_run_thread_index;
     }
     return false;
 }

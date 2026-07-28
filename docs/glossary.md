@@ -192,6 +192,10 @@
 | process group | 用于信号投递和终端作业控制的一组进程身份 |
 | session | 包含一个或多个进程组并关联控制终端的作业控制边界 |
 | line discipline | 位于字符设备和用户读取之间，处理 canonical 输入、退格、EOF 与控制字符的终端状态机 |
+| controlling terminal | 由一个 session 取得并保存其前台进程组的终端 |
+| foreground process group | 当前被控制终端允许读取输入并接收终端控制信号的进程组 |
+| stopped process | 保留地址空间、资源与执行现场但暂不参与调度，等待 SIGCONT 的进程 |
+| job | Shell 维护的一条命令或管线；全部成员共享一个 PGID |
 | journal | 文件系统提交前记录可重放事务的持久区域；v2.0 只记录 ordered metadata |
 | transaction credit | journal 在修改前为事务预留的元数据块额度，防止执行到一半才发现日志空间不足 |
 | ordered mode | 先持久化相关文件数据、再允许元数据 commit 落盘的 journal 顺序约束 |

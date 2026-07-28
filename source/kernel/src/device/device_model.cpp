@@ -16,6 +16,7 @@ constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_MAKE_CODE_MASK = 0x7FU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ESCAPE_MAKE_CODE = 0x01U;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_BACKSPACE_MAKE_CODE = 0x0EU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ENTER_MAKE_CODE = 0x1CU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_CONTROL_MAKE_CODE = 0x1DU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_TAB_MAKE_CODE = 0x0FU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_A_MAKE_CODE = 0x1EU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_SPACE_MAKE_CODE = 0x39U;
@@ -49,6 +50,15 @@ constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ENTER_CHARACTER = static_cast<uint8_
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_BACKSPACE_CHARACTER = static_cast<uint8_t>('\b');
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_TAB_CHARACTER = static_cast<uint8_t>('\t');
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_SPACE_CHARACTER = static_cast<uint8_t>(' ');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_CONTROL_CHARACTER_MASK = 0x1FU;
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_LOWERCASE_FIRST_CHARACTER =
+    static_cast<uint8_t>('a');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_LOWERCASE_LAST_CHARACTER =
+    static_cast<uint8_t>('z');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_UPPERCASE_FIRST_CHARACTER =
+    static_cast<uint8_t>('A');
+constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_UPPERCASE_LAST_CHARACTER =
+    static_cast<uint8_t>('Z');
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ARROW_UP_MAKE_CODE = 0x48U;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ARROW_LEFT_MAKE_CODE = 0x4BU;
 constexpr uint8_t OS_KERNEL_DEVICE_KEYBOARD_ARROW_RIGHT_MAKE_CODE = 0x4DU;
@@ -155,6 +165,12 @@ KeyboardDecodeStatus ScanCodeSet1Decoder::Decode(const uint8_t scan_code,
     if (key == KeyboardKey::RightShift) {
         this->right_shift_pressed_ = pressed;
     }
+    if (key == KeyboardKey::LeftControl) {
+        this->left_control_pressed_ = pressed;
+    }
+    if (key == KeyboardKey::RightControl) {
+        this->right_control_pressed_ = pressed;
+    }
     if (key == KeyboardKey::CapsLock && pressed) {
         this->caps_lock_enabled_ = !this->caps_lock_enabled_;
     }
@@ -170,6 +186,18 @@ KeyboardDecodeStatus ScanCodeSet1Decoder::Decode(const uint8_t scan_code,
             character = OS_KERNEL_DEVICE_KEYBOARD_SPACE_CHARACTER;
         } else if (key == KeyboardKey::A || key == KeyboardKey::Printable) {
             character = this->CharacterForScanCode(make_code);
+            const bool control_pressed =
+                this->left_control_pressed_ || this->right_control_pressed_;
+            const bool alphabetic_character =
+                (character >= OS_KERNEL_DEVICE_KEYBOARD_LOWERCASE_FIRST_CHARACTER &&
+                 character <= OS_KERNEL_DEVICE_KEYBOARD_LOWERCASE_LAST_CHARACTER) ||
+                (character >= OS_KERNEL_DEVICE_KEYBOARD_UPPERCASE_FIRST_CHARACTER &&
+                 character <= OS_KERNEL_DEVICE_KEYBOARD_UPPERCASE_LAST_CHARACTER);
+            if (control_pressed && alphabetic_character) {
+                // ASCII 字母低五位正好编码 C0 控制字符；先确认字母可避免误改标点。
+                character = static_cast<uint8_t>(
+                    character & OS_KERNEL_DEVICE_KEYBOARD_CONTROL_CHARACTER_MASK);
+            }
         }
     }
     event = KeyboardEvent{
@@ -186,6 +214,8 @@ KeyboardKey ScanCodeSet1Decoder::KeyForScanCode(const uint8_t make_code,
                                                 const bool extended) const noexcept {
     if (extended) {
         switch (make_code) {
+        case OS_KERNEL_DEVICE_KEYBOARD_CONTROL_MAKE_CODE:
+            return KeyboardKey::RightControl;
         case OS_KERNEL_DEVICE_KEYBOARD_ARROW_UP_MAKE_CODE:
             return KeyboardKey::ArrowUp;
         case OS_KERNEL_DEVICE_KEYBOARD_ARROW_DOWN_MAKE_CODE:
@@ -212,6 +242,8 @@ KeyboardKey ScanCodeSet1Decoder::KeyForScanCode(const uint8_t make_code,
         return KeyboardKey::Space;
     case OS_KERNEL_DEVICE_KEYBOARD_A_MAKE_CODE:
         return KeyboardKey::A;
+    case OS_KERNEL_DEVICE_KEYBOARD_CONTROL_MAKE_CODE:
+        return KeyboardKey::LeftControl;
     case OS_KERNEL_DEVICE_KEYBOARD_LEFT_SHIFT_MAKE_CODE:
         return KeyboardKey::LeftShift;
     case OS_KERNEL_DEVICE_KEYBOARD_RIGHT_SHIFT_MAKE_CODE:

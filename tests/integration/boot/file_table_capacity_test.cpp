@@ -58,9 +58,9 @@ int main() {
             os::kernel::FileTableStatus::Succeeded;
 
     const os::kernel::FileDescriptionCreateRequest request{
-        .kind = os::kernel::FileDescriptionKind::ConsoleOutput,
+        .kind = os::kernel::FileDescriptionKind::TerminalOutput,
         .file_status_flags = os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG,
-        .console_input = nullptr,
+        .terminal = nullptr,
         .device_write_operation = DiscardWrite,
         .device_write_context = nullptr,
         .pipe = nullptr,

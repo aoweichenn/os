@@ -1,6 +1,7 @@
 #pragma once
 
 #include "os/abi/signal.hpp"
+#include "os/abi/terminal.hpp"
 #include "os/abi/thread.hpp"
 #include "os/abi/time.hpp"
 #include "os/abi/virtual_memory.hpp"
@@ -73,6 +74,12 @@ enum class SystemCallNumber : uint64_t {
     SignalReturn = 61ULL,
     GetProcessGroup = 62ULL,
     SetProcessGroup = 63ULL,
+    CreateSession = 64ULL,
+    GetSession = 65ULL,
+    SetProcessGroupFor = 66ULL,
+    GetTerminalInformation = 67ULL,
+    SetTerminalForegroundGroup = 68ULL,
+    WaitProcessEvent = 69ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -155,6 +162,9 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT = -51LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INTERRUPTED = -52LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_PROCESS_NOT_FOUND = -53LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SIGNAL_STATE_INVALID = -54LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_BACKGROUND_TERMINAL_READ = -55LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NOT_CONTROLLING_TERMINAL = -56LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED = -57LL;
 
 inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
 
@@ -168,6 +178,7 @@ static_assert(sizeof(PipeDescriptorPair) == OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYT
 enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,
     Directory = 2ULL,
+    CharacterDevice = 3ULL,
 };
 
 struct DirectoryEntry final {
@@ -216,12 +227,6 @@ struct ProcessLaunchRequest final {
 };
 
 static_assert(sizeof(ProcessLaunchRequest) == OS_ABI_PROCESS_LAUNCH_REQUEST_SIZE_BYTES);
-
-enum class ProcessTerminationReason : uint64_t {
-    Exited = 1ULL,
-    Exception = 2ULL,
-    Signal = 3ULL,
-};
 
 inline constexpr uint64_t OS_ABI_PROCESS_WAIT_RESULT_SIZE_BYTES = 40ULL;
 

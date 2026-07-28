@@ -93,6 +93,12 @@ user 包装与程序    kernel 分发与校验
 | 61 | `SignalReturn` | `RDI=SignalFrame 地址` | 成功直接恢复旧现场 |
 | 62 | `GetProcessGroup` | 无 | 当前进程组号或错误 |
 | 63 | `SetProcessGroup` | `RDI=组号；0 表示自身 PID` | 成功 0 或错误 |
+| 64 | `CreateSession` | 无 | 新 SID 或错误 |
+| 65 | `GetSession` | 无 | 当前 SID 或错误 |
+| 66 | `SetProcessGroupFor` | `RDI=PID`，`RSI=PGID` | 成功 0 或错误 |
+| 67 | `GetTerminalInformation` | `RDI=结构地址`，`RSI=24` | 成功 0 或错误 |
+| 68 | `SetTerminalForegroundGroup` | `RDI=PGID` | 成功 0 或错误 |
+| 69 | `WaitProcessEvent` | `RDI=PID`，`RSI=flags`，`RDX=结果地址`，`R10=56` | PID、would block 或错误 |
 
 错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 串口失败。
 v0.10 又定义 `-5` would block、`-6` broken pipe、`-7` 端点权限、
@@ -119,6 +125,9 @@ v1.4–v1.6 追加 `-24..-33`，覆盖描述符限额、KernelObject、路径、
 v1.10--v1.13 继续追加 44--56 与错误 `-43..-51`；v1.14 追加系统调用
 57--63 和 `INTERRUPTED=-52`、`PROCESS_NOT_FOUND=-53`、
 `SIGNAL_STATE_INVALID=-54`。所有历史编号继续冻结。
+v1.15 追加系统调用 64--69，以及后台终端读取、非控制终端和 session 权限
+错误 `-55..-57`。`TerminalInformation` 与 `ProcessWaitEventResult` 固定为
+24 和 56 字节。
 
 ## 代码走读
 
@@ -523,3 +532,14 @@ Shell 使用 `shell_execution.*` 构造最多 16 个 stage 的计划，使用上
 详细背景、控制流和失败事务见
 [v1.11 学习章](../learning/19-v1.11-unix-io-external-shell.md) 与
 [ADR 0038](../adr/0038-dynamic-pipe-dup2-external-shell.md)。
+
+## v1.15 终端与事件式 wait 接口
+
+用户运行时提供 SID/PGID 查询和设置、终端信息、前台组切换及事件式 wait。
+Shell 只使用公开 ABI，不读取 Kernel job-control 表。wait flags 可独立选择
+Exited、Stopped、Continued 和 NoHang；只有 Exited 事件触发最终回收。
+
+`/dev/console` 可通过普通 OpenFile 获得字符设备 fd。后台组读取返回 -55，
+不会消费输入。完整 ABI 和作业状态机见
+[v1.15 学习章](../learning/23-v1.15-tty-session-job-control.md) 与
+[ADR 0042](../adr/0042-tty-session-and-job-control.md)。

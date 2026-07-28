@@ -34,13 +34,15 @@ make phone-export
 `make pdf` 生成 `source/latex/main.pdf`。
 `make phone-export` 重新构建 PDF，并导出到手机书库的独立目录
 `按卷类型/原理卷/从复位向量到自研x8664操作系统/`。
+当前 v1.15 PDF 为 407 页、5022250 字节，SHA-256 为
+`d50f5c66282adcfa256298a6a0557d6db8043c621bb03be331e601217dcee0cb`。
 
 生产代码统计只扫描仓库根目录的 `source/`，计入核心 `.asm`、`.cpp`、
 `.hpp` 中的非空、非纯注释行。汇编 include、测试、宿主工具、书稿、网站、构建
 描述和链接脚本均不计入该数字。
 
-当前书稿为 5 部 10 个完整主题章。当前生产目标包含 193 个核心
-`.asm`、`.cpp`、`.hpp` 文件，共 49,418 行有效代码；该口径严格排除测试、
+当前书稿为 5 部 10 个完整主题章。当前生产目标包含 198 个核心
+`.asm`、`.cpp`、`.hpp` 文件，共 52,290 行有效代码；该口径严格排除测试、
 宿主工具、书稿和网站。每章遵循同一解释深度：先建立历史
 背景和前置状态，再展开寄存器、位布局、数据结构或控制流，随后说明失败模式、
 调试方法与可重复验收证据。小主题不会独立占用一章，而是作为主题材料进入一条
@@ -68,7 +70,7 @@ GOP/xHCI 等实机适配缺口，不声称当前内核已经能在该板裸机�
 十页上游 KiCad PDF 原样保留其小型标题标识图像，但原理图符号、文字、网络和
 导线本身均为矢量；其余十张外部学习图经对象扫描确认不含 image XObject。
 
-当前实现内容与 v1.14 对齐：中断/设备/用户边界章包含用户 ELF、
+当前实现内容与 v1.15 对齐：中断/设备/用户边界章包含用户 ELF、
 四级 U/S 权限、TSS.RSP0、五项 IRETQ 帧、INT 0x80 ABI、用户指针复制和
 异常隔离；进程章进一步完整展开 PCB、独立 CR3、每进程 Ring 0 栈、176
 字节保存现场、round-robin 抢占、退出回收和多进程整机证据，并深入解释
@@ -155,6 +157,14 @@ handler 通过受控栈上的 240 字节 SignalFrame 与 Intel NASM restorer 返
 sigreturn 联合验证 cookie、mask、canonical 地址、段、RFLAGS、栈边界和
 RIP/RSP 页面权限，畸形 frame 只隔离目标 Process。单元、集成、十万步随机
 模型与三档 QEMU 共同证明 fork/exec/exit 语义及最终状态归零。
+v1.15 再从电传打字机与早期 Unix 控制终端历史出发，逐层连接 PS/2 Set 1
+Ctrl make/break、C0 控制码、canonical 编辑、irq-save TTY 输入/输出守恒、
+PID/PGID/SID、controlling terminal、Stopped/Continued/Exited 事件、
+`/dev/console` 字符 vnode、Shell 有界作业表与前台终端交接。教材专门复盘
+真实 QEMU 暴露的极短 child exit/setpgid 竞态，说明为何 Zombie 必须保留
+进程级组身份到 wait；也复盘 Ctrl-Z 落入 fork/exec 窗口时为何必须保留
+Process/survivor pending。最后以单元、集成、100000 步随机模型和真实
+Ctrl-Z/fg/Ctrl-C/bg 整机路径冻结状态与资源账本。
 正常 Kernel 不再内嵌普通用户程序；二十二个合法用户 ELF 逐个审计后由离线
 安装器写入 rootfs，截断 ELF 只作为明确失败夹具。完整回归由当前构建图自动
 产生；动态栈、VMA、按需分页、页表

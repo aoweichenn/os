@@ -13,6 +13,14 @@ constexpr uint64_t OS_USER_SHELL_FIRST_VALUE = 1ULL;
 constexpr uint64_t OS_USER_SHELL_BUILTIN_PARAMETER_INDEX = 1ULL;
 constexpr uint64_t OS_USER_SHELL_CD_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_EXIT_ARGUMENT_COUNT = 1ULL;
+constexpr uint64_t OS_USER_SHELL_JOBS_ARGUMENT_COUNT = 1ULL;
+constexpr uint64_t OS_USER_SHELL_JOB_BUILTIN_MINIMUM_ARGUMENT_COUNT = 1ULL;
+constexpr uint64_t OS_USER_SHELL_JOB_BUILTIN_MAXIMUM_ARGUMENT_COUNT = 2ULL;
+constexpr uint64_t OS_USER_SHELL_JOB_CAPACITY = 16ULL;
+constexpr uint64_t OS_USER_SHELL_JOB_MEMBER_CAPACITY =
+    OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT;
+constexpr uint64_t OS_USER_SHELL_DECIMAL_BASE = 10ULL;
+constexpr uint64_t OS_USER_SHELL_DECIMAL_BUFFER_CAPACITY_BYTES = 20ULL;
 constexpr uint64_t OS_USER_SHELL_PIPE_COUNT_OFFSET = 1ULL;
 constexpr uint64_t OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_SHELL_PATH_CAPACITY_BYTES =
@@ -48,18 +56,21 @@ constexpr char OS_USER_SHELL_TRUNCATE_COMMAND[] = "truncate";
 constexpr char OS_USER_SHELL_STAT_COMMAND[] = "stat";
 constexpr char OS_USER_SHELL_SYNC_COMMAND[] = "sync";
 constexpr char OS_USER_SHELL_EXIT_COMMAND[] = "exit";
+constexpr char OS_USER_SHELL_JOBS_COMMAND[] = "jobs";
+constexpr char OS_USER_SHELL_FOREGROUND_COMMAND[] = "fg";
+constexpr char OS_USER_SHELL_BACKGROUND_COMMAND[] = "bg";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v1.14\r\n"
-    "外置工具、重定向与最多 16 级管线已经启用；输入 help 查看帮助。\r\n";
+    "\r\nx86-64 OS Lab v1.15\r\n"
+    "TTY、前后台作业控制与最多 16 级管线已经启用；输入 help 查看帮助。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";
-constexpr char OS_USER_SHELL_NEWLINE[] = "\r\n";
-constexpr char OS_USER_SHELL_BACKSPACE_SEQUENCE[] = "\b \b";
 constexpr char OS_USER_SHELL_PARSE_ERROR[] = "error: 命令行语法错误\r\n";
 constexpr char OS_USER_SHELL_LINE_TOO_LONG_ERROR[] = "error: 命令行超过 512 字节\r\n";
 constexpr char OS_USER_SHELL_OPERATION_ERROR[] = "error: 命令执行失败\r\n";
+constexpr char OS_USER_SHELL_JOB_NOT_FOUND_ERROR[] = "error: 作业不存在\r\n";
+constexpr char OS_USER_SHELL_JOB_TABLE_FULL_ERROR[] = "error: 作业表已满\r\n";
 constexpr char OS_USER_SHELL_USAGE_ERROR[] = "error: 参数数量不正确\r\n";
 constexpr char OS_USER_SHELL_UNKNOWN_COMMAND_MARKER[] =
     "[OS][USER][SHELL] UNKNOWN_COMMAND_REJECTED\r\n";
@@ -82,7 +93,86 @@ constexpr char OS_USER_SHELL_COMMAND_MV_MARKER[] = "[OS][USER][SHELL] COMMAND=MV
 constexpr char OS_USER_SHELL_COMMAND_TRUNCATE_MARKER[] = "[OS][USER][SHELL] COMMAND=TRUNCATE\r\n";
 constexpr char OS_USER_SHELL_COMMAND_STAT_MARKER[] = "[OS][USER][SHELL] COMMAND=STAT\r\n";
 constexpr char OS_USER_SHELL_COMMAND_SYNC_MARKER[] = "[OS][USER][SHELL] COMMAND=SYNC\r\n";
+constexpr char OS_USER_SHELL_COMMAND_JOBS_MARKER[] = "[OS][USER][SHELL] COMMAND=JOBS\r\n";
+constexpr char OS_USER_SHELL_COMMAND_FOREGROUND_MARKER[] =
+    "[OS][USER][SHELL] COMMAND=FG\r\n";
+constexpr char OS_USER_SHELL_COMMAND_BACKGROUND_MARKER[] =
+    "[OS][USER][SHELL] COMMAND=BG\r\n";
 constexpr char OS_USER_SHELL_COMMAND_EXIT_MARKER[] = "[OS][USER][SHELL] COMMAND=EXIT\r\n";
+constexpr char OS_USER_SHELL_COMMAND_COMPLETE_MARKER[] =
+    "[OS][USER][SHELL] COMMAND_COMPLETE\r\n";
+constexpr char OS_USER_SHELL_JOB_PREFIX[] = "[";
+constexpr char OS_USER_SHELL_JOB_RUNNING_TEXT[] = "] Running PGID=";
+constexpr char OS_USER_SHELL_JOB_STOPPED_TEXT[] = "] Stopped PGID=";
+constexpr char OS_USER_SHELL_JOB_DONE_TEXT[] = "] Done PGID=";
+constexpr char OS_USER_SHELL_JOB_SEPARATOR[] = "\r\n";
+constexpr char OS_USER_SHELL_JOB_STARTED_MARKER[] =
+    "[OS][USER][SHELL] BACKGROUND_JOB_STARTED\r\n";
+constexpr char OS_USER_SHELL_JOB_STOPPED_MARKER[] =
+    "[OS][USER][SHELL] FOREGROUND_JOB_STOPPED\r\n";
+constexpr char OS_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER[] =
+    "[OS][USER][SHELL] FOREGROUND_JOB_WAITING\r\n";
+constexpr char OS_USER_SHELL_JOB_CONTROL_READY_MARKER[] =
+    "[OS][USER][SHELL] JOB_CONTROL_READY\r\n";
+
+void ShellInteractiveSignalHandler(const uint64_t signal_number,
+                                   os::abi::SignalFrame *const signal_frame) noexcept {
+    // Shell 只需要让阻塞读取返回 EINTR；信号号与现场由内核完成校验和恢复。
+    static_cast<void>(signal_number);
+    static_cast<void>(signal_frame);
+}
+
+[[nodiscard]] bool InstallShellSignalPolicy() noexcept {
+    return InstallSignalHandler(os::abi::OS_ABI_SIGNAL_INTERRUPT_NUMBER,
+                                &ShellInteractiveSignalHandler, OS_USER_SHELL_EMPTY_VALUE,
+                                OS_USER_SHELL_EMPTY_VALUE, nullptr) ==
+               OS_USER_SHELL_SUCCESS_RESULT &&
+           InstallSignalHandler(os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER,
+                                &ShellInteractiveSignalHandler, OS_USER_SHELL_EMPTY_VALUE,
+                                OS_USER_SHELL_EMPTY_VALUE, nullptr) ==
+               OS_USER_SHELL_SUCCESS_RESULT;
+}
+
+[[nodiscard]] bool RestoreChildSignalPolicy() noexcept {
+    const os::abi::SignalAction default_action{
+        .disposition = os::abi::SignalDisposition::Default,
+        .handler_address = OS_USER_SHELL_EMPTY_VALUE,
+        .restorer_address = OS_USER_SHELL_EMPTY_VALUE,
+        .additional_mask = OS_USER_SHELL_EMPTY_VALUE,
+        .flags = OS_USER_SHELL_EMPTY_VALUE,
+    };
+    return SetSignalAction(os::abi::OS_ABI_SIGNAL_INTERRUPT_NUMBER, default_action, nullptr) ==
+               OS_USER_SHELL_SUCCESS_RESULT &&
+           SetSignalAction(os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER, default_action, nullptr) ==
+               OS_USER_SHELL_SUCCESS_RESULT;
+}
+
+enum class ShellJobState : uint64_t {
+    Free,
+    Running,
+    Stopped,
+    Done,
+};
+
+enum class ShellJobMemberState : uint64_t {
+    Running,
+    Stopped,
+    Exited,
+};
+
+struct ShellJob final {
+    uint64_t job_id;
+    uint64_t process_group_id;
+    uint64_t process_ids[OS_USER_SHELL_JOB_MEMBER_CAPACITY];
+    ShellJobMemberState member_states[OS_USER_SHELL_JOB_MEMBER_CAPACITY];
+    uint64_t process_count;
+    int64_t last_exit_code;
+    ShellJobState state;
+};
+
+ShellJob shell_jobs[OS_USER_SHELL_JOB_CAPACITY];
+uint64_t next_shell_job_id = OS_USER_SHELL_FIRST_VALUE;
+uint64_t shell_process_group_id = OS_USER_SHELL_EMPTY_VALUE;
 
 struct ShellCommandMarker final {
     const char *command;
@@ -148,6 +238,21 @@ constexpr ShellCommandMarker OS_USER_SHELL_COMMAND_MARKERS[]{
      sizeof(OS_USER_SHELL_SYNC_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
      OS_USER_SHELL_COMMAND_SYNC_MARKER,
      sizeof(OS_USER_SHELL_COMMAND_SYNC_MARKER) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES},
+    {OS_USER_SHELL_JOBS_COMMAND,
+     sizeof(OS_USER_SHELL_JOBS_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
+     OS_USER_SHELL_COMMAND_JOBS_MARKER,
+     sizeof(OS_USER_SHELL_COMMAND_JOBS_MARKER) -
+         OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES},
+    {OS_USER_SHELL_FOREGROUND_COMMAND,
+     sizeof(OS_USER_SHELL_FOREGROUND_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
+     OS_USER_SHELL_COMMAND_FOREGROUND_MARKER,
+     sizeof(OS_USER_SHELL_COMMAND_FOREGROUND_MARKER) -
+         OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES},
+    {OS_USER_SHELL_BACKGROUND_COMMAND,
+     sizeof(OS_USER_SHELL_BACKGROUND_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
+     OS_USER_SHELL_COMMAND_BACKGROUND_MARKER,
+     sizeof(OS_USER_SHELL_COMMAND_BACKGROUND_MARKER) -
+         OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES},
     {OS_USER_SHELL_EXIT_COMMAND,
      sizeof(OS_USER_SHELL_EXIT_COMMAND) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES,
      OS_USER_SHELL_COMMAND_EXIT_MARKER,
@@ -190,6 +295,227 @@ constexpr ShellCommandMarker OS_USER_SHELL_COMMAND_MARKERS[]{
 template <uint64_t SizeBytes>
 [[nodiscard]] bool WriteLiteral(const char (&literal)[SizeBytes]) noexcept {
     return WriteBytes(literal, SizeBytes - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES);
+}
+
+[[nodiscard]] bool WriteUnsigned(const uint64_t value) noexcept {
+    char reversed[OS_USER_SHELL_DECIMAL_BUFFER_CAPACITY_BYTES]{};
+    char output[OS_USER_SHELL_DECIMAL_BUFFER_CAPACITY_BYTES]{};
+    uint64_t remaining = value;
+    uint64_t digit_count = OS_USER_SHELL_EMPTY_VALUE;
+    do {
+        reversed[digit_count] =
+            static_cast<char>('0' + remaining % OS_USER_SHELL_DECIMAL_BASE);
+        remaining /= OS_USER_SHELL_DECIMAL_BASE;
+        ++digit_count;
+    } while (remaining != OS_USER_SHELL_EMPTY_VALUE &&
+             digit_count < OS_USER_SHELL_DECIMAL_BUFFER_CAPACITY_BYTES);
+    for (uint64_t digit_index = OS_USER_SHELL_EMPTY_VALUE; digit_index < digit_count;
+         ++digit_index) {
+        output[digit_index] = reversed[digit_count - digit_index - OS_USER_SHELL_FIRST_VALUE];
+    }
+    return WriteBytes(output, digit_count);
+}
+
+void InitializeJobTable() noexcept {
+    for (uint64_t job_index = OS_USER_SHELL_EMPTY_VALUE;
+         job_index < OS_USER_SHELL_JOB_CAPACITY; ++job_index) {
+        shell_jobs[job_index] = ShellJob{};
+    }
+    next_shell_job_id = OS_USER_SHELL_FIRST_VALUE;
+}
+
+[[nodiscard]] ShellJob *FindFreeJob() noexcept {
+    for (uint64_t job_index = OS_USER_SHELL_EMPTY_VALUE;
+         job_index < OS_USER_SHELL_JOB_CAPACITY; ++job_index) {
+        if (shell_jobs[job_index].state == ShellJobState::Free) {
+            return shell_jobs + job_index;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] ShellJob *FindJob(const uint64_t job_id) noexcept {
+    for (uint64_t job_index = OS_USER_SHELL_EMPTY_VALUE;
+         job_index < OS_USER_SHELL_JOB_CAPACITY; ++job_index) {
+        if (shell_jobs[job_index].state != ShellJobState::Free &&
+            shell_jobs[job_index].job_id == job_id) {
+            return shell_jobs + job_index;
+        }
+    }
+    return nullptr;
+}
+
+[[nodiscard]] ShellJob *FindLatestJob() noexcept {
+    ShellJob *latest_job = nullptr;
+    for (uint64_t job_index = OS_USER_SHELL_EMPTY_VALUE;
+         job_index < OS_USER_SHELL_JOB_CAPACITY; ++job_index) {
+        if (shell_jobs[job_index].state != ShellJobState::Free &&
+            (latest_job == nullptr ||
+             shell_jobs[job_index].job_id > latest_job->job_id)) {
+            latest_job = shell_jobs + job_index;
+        }
+    }
+    return latest_job;
+}
+
+void ReleaseJob(ShellJob &job) noexcept { job = ShellJob{}; }
+
+[[nodiscard]] bool WriteJob(const ShellJob &job) noexcept {
+    const char *state_text = OS_USER_SHELL_JOB_RUNNING_TEXT;
+    uint64_t state_text_length =
+        sizeof(OS_USER_SHELL_JOB_RUNNING_TEXT) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
+    if (job.state == ShellJobState::Stopped) {
+        state_text = OS_USER_SHELL_JOB_STOPPED_TEXT;
+        state_text_length =
+            sizeof(OS_USER_SHELL_JOB_STOPPED_TEXT) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
+    } else if (job.state == ShellJobState::Done) {
+        state_text = OS_USER_SHELL_JOB_DONE_TEXT;
+        state_text_length =
+            sizeof(OS_USER_SHELL_JOB_DONE_TEXT) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES;
+    }
+    return WriteLiteral(OS_USER_SHELL_JOB_PREFIX) && WriteUnsigned(job.job_id) &&
+           WriteBytes(state_text, state_text_length) &&
+           WriteUnsigned(job.process_group_id) &&
+           WriteLiteral(OS_USER_SHELL_JOB_SEPARATOR);
+}
+
+void RefreshJobState(ShellJob &job) noexcept {
+    uint64_t live_member_count = OS_USER_SHELL_EMPTY_VALUE;
+    uint64_t stopped_member_count = OS_USER_SHELL_EMPTY_VALUE;
+    for (uint64_t member_index = OS_USER_SHELL_EMPTY_VALUE;
+         member_index < job.process_count; ++member_index) {
+        if (job.member_states[member_index] != ShellJobMemberState::Exited) {
+            ++live_member_count;
+        }
+        if (job.member_states[member_index] == ShellJobMemberState::Stopped) {
+            ++stopped_member_count;
+        }
+    }
+    if (live_member_count == OS_USER_SHELL_EMPTY_VALUE) {
+        job.state = ShellJobState::Done;
+    } else if (stopped_member_count == live_member_count) {
+        job.state = ShellJobState::Stopped;
+    } else {
+        job.state = ShellJobState::Running;
+    }
+}
+
+[[nodiscard]] bool PumpJobEvents(ShellJob &job, const bool no_hang) noexcept {
+    const uint64_t wait_flags =
+        os::abi::OS_ABI_PROCESS_WAIT_EXITED_FLAG |
+        os::abi::OS_ABI_PROCESS_WAIT_STOPPED_FLAG |
+        os::abi::OS_ABI_PROCESS_WAIT_CONTINUED_FLAG |
+        (no_hang ? os::abi::OS_ABI_PROCESS_WAIT_NO_HANG_FLAG
+                 : OS_USER_SHELL_EMPTY_VALUE);
+    for (uint64_t member_index = OS_USER_SHELL_EMPTY_VALUE;
+         member_index < job.process_count; ++member_index) {
+        if (job.member_states[member_index] == ShellJobMemberState::Exited ||
+            (!no_hang &&
+             job.member_states[member_index] == ShellJobMemberState::Stopped)) {
+            continue;
+        }
+        while (true) {
+            os::abi::ProcessWaitEventResult wait_result{};
+            const int64_t result =
+                WaitProcessEvent(job.process_ids[member_index], wait_flags, wait_result);
+            if (no_hang &&
+                result == os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+                break;
+            }
+            if (result != static_cast<int64_t>(job.process_ids[member_index]) ||
+                wait_result.process_id != job.process_ids[member_index]) {
+                return false;
+            }
+            if (wait_result.event_type == os::abi::ProcessWaitEventType::Exited) {
+                job.member_states[member_index] = ShellJobMemberState::Exited;
+                if (member_index + OS_USER_SHELL_FIRST_VALUE == job.process_count &&
+                    wait_result.termination_reason ==
+                        os::abi::ProcessTerminationReason::Exited) {
+                    job.last_exit_code = wait_result.exit_code;
+                }
+                break;
+            }
+            if (wait_result.event_type == os::abi::ProcessWaitEventType::Stopped) {
+                job.member_states[member_index] = ShellJobMemberState::Stopped;
+                break;
+            }
+            job.member_states[member_index] = ShellJobMemberState::Running;
+            if (no_hang) {
+                continue;
+            }
+        }
+    }
+    RefreshJobState(job);
+    return true;
+}
+
+[[nodiscard]] bool ContinueJob(ShellJob &job) noexcept {
+    if (SendProcessGroupSignal(job.process_group_id,
+                               os::abi::OS_ABI_SIGNAL_CONTINUE_NUMBER) <
+        OS_USER_SHELL_SUCCESS_RESULT) {
+        return false;
+    }
+    for (uint64_t member_index = OS_USER_SHELL_EMPTY_VALUE;
+         member_index < job.process_count; ++member_index) {
+        if (job.member_states[member_index] == ShellJobMemberState::Stopped) {
+            job.member_states[member_index] = ShellJobMemberState::Running;
+        }
+    }
+    job.state = ShellJobState::Running;
+    return true;
+}
+
+void ReapBackgroundJobs() noexcept {
+    for (uint64_t job_index = OS_USER_SHELL_EMPTY_VALUE;
+         job_index < OS_USER_SHELL_JOB_CAPACITY; ++job_index) {
+        ShellJob &job = shell_jobs[job_index];
+        if (job.state == ShellJobState::Free ||
+            !PumpJobEvents(job, true)) {
+            continue;
+        }
+        if (job.state == ShellJobState::Done) {
+            static_cast<void>(WriteJob(job));
+            ReleaseJob(job);
+        }
+    }
+}
+
+[[nodiscard]] bool ParseJobId(const ShellExecutionPlan &execution_plan,
+                              uint64_t &job_id) noexcept {
+    job_id = OS_USER_SHELL_EMPTY_VALUE;
+    const ShellExecutionStage &stage =
+        execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+    if (stage.argument_count == OS_USER_SHELL_JOB_BUILTIN_MINIMUM_ARGUMENT_COUNT) {
+        ShellJob *const latest_job = FindLatestJob();
+        if (latest_job == nullptr) {
+            return false;
+        }
+        job_id = latest_job->job_id;
+        return true;
+    }
+    if (stage.argument_count != OS_USER_SHELL_JOB_BUILTIN_MAXIMUM_ARGUMENT_COUNT) {
+        return false;
+    }
+    const uint64_t argument_index =
+        stage.first_argument_index + OS_USER_SHELL_BUILTIN_PARAMETER_INDEX;
+    const char *const bytes =
+        ShellExecutionArgumentBytes(execution_plan, argument_index);
+    const uint64_t length_bytes =
+        execution_plan.arguments[argument_index].length_bytes;
+    if (bytes == nullptr || length_bytes == OS_USER_SHELL_EMPTY_VALUE) {
+        return false;
+    }
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < length_bytes;
+         ++byte_index) {
+        if (bytes[byte_index] < '0' || bytes[byte_index] > '9' ||
+            job_id > (UINT64_MAX - static_cast<uint64_t>(bytes[byte_index] - '0')) /
+                         OS_USER_SHELL_DECIMAL_BASE) {
+            return false;
+        }
+        job_id = job_id * OS_USER_SHELL_DECIMAL_BASE +
+                 static_cast<uint64_t>(bytes[byte_index] - '0');
+    }
+    return job_id != OS_USER_SHELL_EMPTY_VALUE;
 }
 
 [[nodiscard]] bool WriteCommandMarker(const ShellExecutionPlan &execution_plan) noexcept {
@@ -271,7 +597,14 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
 [[noreturn]] void ExecuteChildStage(const ShellExecutionPlan &execution_plan,
                                     const uint64_t stage_index,
                                     os::abi::PipeDescriptorPair *const pipes,
-                                    const uint64_t pipe_count) noexcept {
+                                    const uint64_t pipe_count,
+                                    const uint64_t process_group_id) noexcept {
+    if (SetProcessGroup(process_group_id) != OS_USER_SHELL_SUCCESS_RESULT) {
+        ExitProcess(OS_USER_SHELL_CHILD_SETUP_FAILURE_EXIT_CODE);
+    }
+    if (!RestoreChildSignalPolicy()) {
+        ExitProcess(OS_USER_SHELL_CHILD_SETUP_FAILURE_EXIT_CODE);
+    }
     const ShellExecutionStage &stage = execution_plan.stages[stage_index];
     if (stage_index != OS_USER_SHELL_EMPTY_VALUE &&
         !DuplicateForChild(pipes[stage_index - OS_USER_SHELL_PIPE_COUNT_OFFSET].reader_descriptor,
@@ -341,28 +674,25 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
     ExitProcess(OS_USER_SHELL_COMMAND_NOT_FOUND_RESULT);
 }
 
-[[nodiscard]] int64_t WaitForPipeline(const uint64_t *const process_ids,
-                                      const uint64_t process_count,
-                                      int64_t &last_exit_code) noexcept {
-    bool wait_succeeded = true;
-    last_exit_code = OS_USER_SHELL_FAILURE_EXIT_CODE;
-    for (uint64_t process_index = OS_USER_SHELL_EMPTY_VALUE; process_index < process_count;
-         ++process_index) {
-        os::abi::ProcessWaitResult wait_result{};
-        const int64_t result = WaitProcess(process_ids[process_index], wait_result);
-        wait_succeeded = wait_succeeded &&
-                         result == static_cast<int64_t>(process_ids[process_index]) &&
-                         wait_result.process_id == process_ids[process_index];
-        if (process_index + OS_USER_SHELL_FIRST_VALUE == process_count &&
-            result == static_cast<int64_t>(process_ids[process_index]) &&
-            wait_result.termination_reason == os::abi::ProcessTerminationReason::Exited) {
-            last_exit_code = wait_result.exit_code;
-        }
-    }
-    return wait_succeeded ? OS_USER_SHELL_SUCCESS_RESULT : OS_USER_SHELL_FAILURE_EXIT_CODE;
-}
-
 [[nodiscard]] int64_t ExecuteExternalPipeline(const ShellExecutionPlan &execution_plan) noexcept {
+    ShellJob *const job = FindFreeJob();
+    if (job == nullptr) {
+        static_cast<void>(WriteLiteral(OS_USER_SHELL_JOB_TABLE_FULL_ERROR));
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
+    *job = ShellJob{
+        .job_id = next_shell_job_id,
+        .process_group_id = OS_USER_SHELL_EMPTY_VALUE,
+        .process_ids = {},
+        .member_states = {},
+        .process_count = OS_USER_SHELL_EMPTY_VALUE,
+        .last_exit_code = OS_USER_SHELL_FAILURE_EXIT_CODE,
+        .state = ShellJobState::Running,
+    };
+    next_shell_job_id = next_shell_job_id == UINT64_MAX
+                            ? OS_USER_SHELL_FIRST_VALUE
+                            : next_shell_job_id + OS_USER_SHELL_FIRST_VALUE;
+
     const uint64_t pipe_count = execution_plan.stage_count - OS_USER_SHELL_PIPE_COUNT_OFFSET;
     os::abi::PipeDescriptorPair
         pipes[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT - OS_USER_SHELL_PIPE_COUNT_OFFSET]{};
@@ -371,34 +701,83 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         pipes[pipe_index].writer_descriptor = UINT64_MAX;
         if (CreatePipe(pipes[pipe_index]) != OS_USER_SHELL_SUCCESS_RESULT) {
             ClosePipelineDescriptors(pipes, pipe_count);
+            ReleaseJob(*job);
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
     }
 
-    uint64_t process_ids[OS_USER_SHELL_EXECUTION_MAXIMUM_STAGE_COUNT]{};
-    uint64_t process_count = OS_USER_SHELL_EMPTY_VALUE;
+    uint64_t process_group_id = OS_USER_SHELL_EMPTY_VALUE;
     for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE; stage_index < execution_plan.stage_count;
          ++stage_index) {
         const int64_t fork_result = ForkProcess();
         if (fork_result == OS_USER_SHELL_SUCCESS_RESULT) {
-            ExecuteChildStage(execution_plan, stage_index, pipes, pipe_count);
+            ExecuteChildStage(execution_plan, stage_index, pipes, pipe_count,
+                              process_group_id);
         }
         if (fork_result < OS_USER_SHELL_SUCCESS_RESULT) {
             ClosePipelineDescriptors(pipes, pipe_count);
-            int64_t ignored_exit_code = OS_USER_SHELL_FAILURE_EXIT_CODE;
-            static_cast<void>(WaitForPipeline(process_ids, process_count, ignored_exit_code));
+            if (process_group_id != OS_USER_SHELL_EMPTY_VALUE) {
+                static_cast<void>(SendProcessGroupSignal(
+                    process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
+                static_cast<void>(PumpJobEvents(*job, false));
+            }
+            ReleaseJob(*job);
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
-        process_ids[process_count] = static_cast<uint64_t>(fork_result);
-        ++process_count;
+        const uint64_t child_process_id = static_cast<uint64_t>(fork_result);
+        if (process_group_id == OS_USER_SHELL_EMPTY_VALUE) {
+            process_group_id = child_process_id;
+            job->process_group_id = process_group_id;
+        }
+        job->process_ids[job->process_count] = child_process_id;
+        job->member_states[job->process_count] = ShellJobMemberState::Running;
+        ++job->process_count;
+        if (SetProcessGroupFor(child_process_id, process_group_id) !=
+            OS_USER_SHELL_SUCCESS_RESULT) {
+            ClosePipelineDescriptors(pipes, pipe_count);
+            static_cast<void>(SendProcessGroupSignal(
+                process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
+            static_cast<void>(PumpJobEvents(*job, false));
+            ReleaseJob(*job);
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
     }
     ClosePipelineDescriptors(pipes, pipe_count);
 
-    int64_t last_exit_code = OS_USER_SHELL_FAILURE_EXIT_CODE;
-    if (WaitForPipeline(process_ids, process_count, last_exit_code) !=
-        OS_USER_SHELL_SUCCESS_RESULT) {
+    if (execution_plan.background) {
+        static_cast<void>(WriteJob(*job));
+        static_cast<void>(WriteLiteral(OS_USER_SHELL_JOB_STARTED_MARKER));
+        return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+    if (SetTerminalForegroundGroup(process_group_id) != OS_USER_SHELL_SUCCESS_RESULT) {
+        static_cast<void>(SendProcessGroupSignal(
+            process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
+        static_cast<void>(PumpJobEvents(*job, false));
+        ReleaseJob(*job);
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
+    if (!WriteLiteral(OS_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER)) {
+        static_cast<void>(SendProcessGroupSignal(
+            process_group_id, os::abi::OS_ABI_SIGNAL_KILL_NUMBER));
+        static_cast<void>(PumpJobEvents(*job, false));
+        static_cast<void>(SetTerminalForegroundGroup(shell_process_group_id));
+        ReleaseJob(*job);
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
+    const bool wait_succeeded = PumpJobEvents(*job, false);
+    const bool terminal_restored =
+        SetTerminalForegroundGroup(shell_process_group_id) == OS_USER_SHELL_SUCCESS_RESULT;
+    if (!wait_succeeded || !terminal_restored) {
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
+    const int64_t last_exit_code = job->last_exit_code;
+    if (job->state == ShellJobState::Stopped) {
+        static_cast<void>(WriteJob(*job));
+        static_cast<void>(WriteLiteral(OS_USER_SHELL_JOB_STOPPED_MARKER));
+        return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+    ReleaseJob(*job);
+
     bool has_redirection = false;
     for (uint64_t stage_index = OS_USER_SHELL_EMPTY_VALUE; stage_index < execution_plan.stage_count;
          ++stage_index) {
@@ -424,7 +803,8 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
     }
     const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
     const uint64_t command_index = stage.first_argument_index;
-    return !stage.has_input_redirection && !stage.has_output_redirection &&
+    return !execution_plan.background && !stage.has_input_redirection &&
+           !stage.has_output_redirection &&
            BytesEqual(ShellExecutionArgumentBytes(execution_plan, command_index),
                       execution_plan.arguments[command_index].length_bytes, command,
                       command_length_bytes);
@@ -460,6 +840,77 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         }
         exit_requested = true;
         return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+    if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_JOBS_COMMAND,
+                             sizeof(OS_USER_SHELL_JOBS_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
+        const ShellExecutionStage &stage =
+            execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+        if (stage.argument_count != OS_USER_SHELL_JOBS_ARGUMENT_COUNT) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        ReapBackgroundJobs();
+        for (uint64_t job_index = OS_USER_SHELL_EMPTY_VALUE;
+             job_index < OS_USER_SHELL_JOB_CAPACITY; ++job_index) {
+            if (shell_jobs[job_index].state != ShellJobState::Free &&
+                !WriteJob(shell_jobs[job_index])) {
+                return OS_USER_SHELL_FAILURE_EXIT_CODE;
+            }
+        }
+        return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+    const bool foreground_builtin =
+        IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_FOREGROUND_COMMAND,
+                             sizeof(OS_USER_SHELL_FOREGROUND_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES);
+    const bool background_builtin =
+        IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_BACKGROUND_COMMAND,
+                             sizeof(OS_USER_SHELL_BACKGROUND_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES);
+    if (foreground_builtin || background_builtin) {
+        uint64_t job_id = OS_USER_SHELL_EMPTY_VALUE;
+        if (!ParseJobId(execution_plan, job_id)) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        ShellJob *const job = FindJob(job_id);
+        if (job == nullptr) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_JOB_NOT_FOUND_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        if (background_builtin) {
+            if ((job->state == ShellJobState::Stopped && !ContinueJob(*job)) ||
+                !WriteJob(*job)) {
+                return OS_USER_SHELL_FAILURE_EXIT_CODE;
+            }
+            return OS_USER_SHELL_SUCCESS_RESULT;
+        }
+        if (SetTerminalForegroundGroup(job->process_group_id) !=
+            OS_USER_SHELL_SUCCESS_RESULT) {
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        if (!WriteLiteral(OS_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER)) {
+            static_cast<void>(SetTerminalForegroundGroup(shell_process_group_id));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        const bool continued =
+            job->state != ShellJobState::Stopped || ContinueJob(*job);
+        const bool waited = continued && PumpJobEvents(*job, false);
+        const bool restored =
+            SetTerminalForegroundGroup(shell_process_group_id) ==
+            OS_USER_SHELL_SUCCESS_RESULT;
+        if (!waited || !restored) {
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        if (job->state == ShellJobState::Stopped) {
+            static_cast<void>(WriteJob(*job));
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_JOB_STOPPED_MARKER));
+            return OS_USER_SHELL_SUCCESS_RESULT;
+        }
+        const int64_t last_exit_code = job->last_exit_code;
+        ReleaseJob(*job);
+        return last_exit_code;
     }
 
     const int64_t result = ExecuteExternalPipeline(execution_plan);
@@ -517,6 +968,20 @@ int64_t RunShellCommand(const char *const command, const uint64_t command_length
 }
 
 int64_t RunShell(const uint64_t argument_count, const char *const *const arguments) noexcept {
+    InitializeJobTable();
+    const uint64_t process_id = GetProcessId();
+    if (process_id == OS_USER_SHELL_EMPTY_VALUE ||
+        SetProcessGroup(process_id) != OS_USER_SHELL_SUCCESS_RESULT) {
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
+    shell_process_group_id = process_id;
+    os::abi::TerminalInformation terminal_information{};
+    if (GetTerminalInformation(terminal_information) != OS_USER_SHELL_SUCCESS_RESULT ||
+        SetTerminalForegroundGroup(shell_process_group_id) !=
+            OS_USER_SHELL_SUCCESS_RESULT ||
+        !InstallShellSignalPolicy()) {
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
     if (argument_count == OS_USER_SHELL_NONINTERACTIVE_ARGUMENT_COUNT && arguments != nullptr &&
         BytesEqual(arguments[OS_USER_SHELL_NONINTERACTIVE_OPTION_INDEX],
                    StringLength(arguments[OS_USER_SHELL_NONINTERACTIVE_OPTION_INDEX],
@@ -530,37 +995,39 @@ int64_t RunShell(const uint64_t argument_count, const char *const *const argumen
                                                OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES));
     }
 
-    if (!WriteLiteral(OS_USER_SHELL_BANNER) || !WriteLiteral(OS_USER_SHELL_READY_MARKER)) {
+    if (!WriteLiteral(OS_USER_SHELL_BANNER) ||
+        !WriteLiteral(OS_USER_SHELL_JOB_CONTROL_READY_MARKER) ||
+        !WriteLiteral(OS_USER_SHELL_READY_MARKER)) {
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
     char line[OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES]{};
     uint64_t line_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
     while (true) {
+        ReapBackgroundJobs();
         if (!WritePrompt()) {
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         line_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
+        bool input_interrupted = false;
         while (true) {
             uint8_t character = OS_USER_SHELL_EMPTY_VALUE;
             const int64_t read_result = ReadDescriptor(os::abi::OS_ABI_STANDARD_INPUT_DESCRIPTOR,
                                                        &character, OS_USER_SHELL_FIRST_VALUE);
+            if (read_result == os::abi::OS_ABI_SYSTEM_CALL_RESULT_INTERRUPTED) {
+                input_interrupted = true;
+                break;
+            }
             if (read_result != static_cast<int64_t>(OS_USER_SHELL_FIRST_VALUE)) {
                 return OS_USER_SHELL_FAILURE_EXIT_CODE;
             }
             if (character == OS_USER_SHELL_NEWLINE_CHARACTER ||
                 character == OS_USER_SHELL_CARRIAGE_RETURN_CHARACTER) {
-                if (!WriteLiteral(OS_USER_SHELL_NEWLINE)) {
-                    return OS_USER_SHELL_FAILURE_EXIT_CODE;
-                }
                 break;
             }
             if (character == OS_USER_SHELL_BACKSPACE_CHARACTER ||
                 character == OS_USER_SHELL_DELETE_CHARACTER) {
                 if (line_length_bytes != OS_USER_SHELL_EMPTY_VALUE) {
                     --line_length_bytes;
-                    if (!WriteLiteral(OS_USER_SHELL_BACKSPACE_SEQUENCE)) {
-                        return OS_USER_SHELL_FAILURE_EXIT_CODE;
-                    }
                 }
                 continue;
             }
@@ -573,10 +1040,9 @@ int64_t RunShell(const uint64_t argument_count, const char *const *const argumen
             }
             line[line_length_bytes] = static_cast<char>(character);
             ++line_length_bytes;
-            if (!WriteBytes(reinterpret_cast<const char *>(&character),
-                            OS_USER_SHELL_FIRST_VALUE)) {
-                return OS_USER_SHELL_FAILURE_EXIT_CODE;
-            }
+        }
+        if (input_interrupted) {
+            continue;
         }
 
         bool exit_requested = false;
@@ -599,7 +1065,13 @@ int64_t RunShell(const uint64_t argument_count, const char *const *const argumen
             if (!WriteBytes(message, message_length_bytes)) {
                 return OS_USER_SHELL_FAILURE_EXIT_CODE;
             }
+            if (!WriteLiteral(OS_USER_SHELL_COMMAND_COMPLETE_MARKER)) {
+                return OS_USER_SHELL_FAILURE_EXIT_CODE;
+            }
             continue;
+        }
+        if (!WriteLiteral(OS_USER_SHELL_COMMAND_COMPLETE_MARKER)) {
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         if (exit_requested) {
             return WriteLiteral(OS_USER_SHELL_EXIT_MARKER) ? OS_USER_SHELL_SUCCESS_RESULT

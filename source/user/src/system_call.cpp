@@ -191,6 +191,41 @@ int64_t SetProcessGroup(const uint64_t process_group_id) noexcept {
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t SetProcessGroupFor(const uint64_t process_id,
+                           const uint64_t process_group_id) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetProcessGroupFor),
+                            process_id, process_group_id,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t CreateSession() noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSession),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetSession() noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetSession),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetTerminalInformation(os::abi::TerminalInformation &information) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetTerminalInformation),
+        reinterpret_cast<uint64_t>(&information), sizeof(information),
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetTerminalForegroundGroup(const uint64_t process_group_id) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalForegroundGroup),
+        process_group_id, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t TryReadPipe(uint8_t *destination, const uint64_t capacity_bytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::TryReadPipe),
                             reinterpret_cast<uint64_t>(destination), capacity_bytes,
@@ -492,6 +527,20 @@ int64_t WaitProcess(const uint64_t process_id, os::abi::ProcessWaitResult &resul
             InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcess),
                              process_id, reinterpret_cast<uint64_t>(&result), sizeof(result));
         if (wait_result != os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK) {
+            return wait_result;
+        }
+    }
+}
+
+int64_t WaitProcessEvent(const uint64_t process_id, const uint64_t wait_flags,
+                         os::abi::ProcessWaitEventResult &result) noexcept {
+    while (true) {
+        const int64_t wait_result = InvokeSystemCall(
+            static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent), process_id,
+            wait_flags, reinterpret_cast<uint64_t>(&result), sizeof(result));
+        if (wait_result != os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK ||
+            (wait_flags & os::abi::OS_ABI_PROCESS_WAIT_NO_HANG_FLAG) !=
+                OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT) {
             return wait_result;
         }
     }

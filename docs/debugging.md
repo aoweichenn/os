@@ -1667,3 +1667,59 @@ RFLAGS 白名单、用户段、RIP 的 R-X 映射和 RSP 的 RW-NX 映射。失�
 `PROCESS_GROUP_VERIFIED`、`FORK_INHERITANCE_VERIFIED`、
 `BAD_FRAME_ISOLATED` 与 `DEFAULT_TERMINATION_VERIFIED`。缺少哪一项，就沿该
 项前最后一条带宿主到达时间的 QEMU 日志定位，不能只延长超时。
+
+## v1.15：TTY、前台组与作业控制
+
+### Ctrl-Z 只输入了字母 z，没有停止前台程序
+
+QMP `send-key ctrl-z` 产生 Set 1 Ctrl make、Z make/break、Ctrl break，不会
+直接写入 `0x1A`。先运行 `os_kernel_device_model_unit_tests`，确认左右 Ctrl
+和扩展 `E0 1D` 都维护修饰状态，再检查 TTY 是否收到
+`TerminalInputAction::StopForeground`。若字母可见而 `TTY_STOPS` 为零，
+故障在扫描码修饰翻译；若 `TTY_STOPS` 增加但 `DEFAULT_STOPS` 为零，故障在
+foreground PGID 或组信号。
+
+### Ctrl-Z 后整机无 Ready Thread，CPU 忙转或永久卡住
+
+停止当前 Process 时，scheduler 必须跳过该 Process 所有 Ready 节点，并选择
+仍可运行的 Shell。检查 `HasSchedulableReadyThread`，不能只检查 run queue
+非空；队列可能只含 stopped 成员。没有可运行 Thread 但仍有可唤醒等待时，应
+进入既有 `sti; hlt; cli` idle，而不是反复 yield。
+
+### `fg` 后程序没有继续，或 Shell 再也读不到输入
+
+按顺序检查：
+
+1. SIGCONT 是否产生 `DEFAULT_CONTINUES` 和 Continued event；
+2. stopped Thread 是否重新成为 Ready；
+3. `fg` 是否先把 TTY foreground PGID 交给作业；
+4. 作业退出/停止的所有路径是否把 TTY 恢复为 Shell PGID。
+
+`FOREGROUND_JOB_WAITING` 是 QEMU 控制键注入屏障，不等于完成标记。只有新的
+`COMMAND_COMPLETE` 才允许发送下一条命令。
+
+### 极短命令偶发显示“操作失败”，未知命令 marker 丢失
+
+这是 fork 后 parent/child `setpgid` 的生命周期竞态。child 可能在 parent
+设置组前已经退出。进程级 signal/PGID 身份应保留到 Zombie 被 wait 收集；
+Thread signal 状态仍在退出时释放。若退出时提前删除组身份，单个 `unknown`
+就可能随机复现。不要用 sleep 调整父子先后。
+
+### TTY 统计 submitted 比 read 大
+
+Ctrl-C、Ctrl-Z、Ctrl-D 和退格本来就不会全部交给用户。检查精确等式：
+
+```text
+submitted = read + buffered + editing + dropped + consumed
+```
+
+若只比较 submitted/read，控制键测试必然误报；若等式本身不成立，则逐分支
+检查编辑字节被撤销时是否同时计入 consumed。
+
+局部回归命令：
+
+```bash
+ctest --test-dir build/developer \
+  -R '^(os_kernel_terminal_unit_tests|os_kernel_job_control_unit_tests|os_kernel_terminal_job_control_integration_tests|os_kernel_job_control_randomized_tests|os_qemu_functional_smoke)$' \
+  --output-on-failure
+```

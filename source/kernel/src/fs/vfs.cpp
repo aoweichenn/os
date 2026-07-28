@@ -449,7 +449,8 @@ Status Vfs::Truncate(const FsContext &context, const uint8_t *const path,
         return Status::IsDirectory;
     }
     if (resolved.vnode.type != NodeType::RegularFile) {
-        return Status::Corrupt;
+        return resolved.vnode.type == NodeType::CharacterDevice ? Status::Unsupported
+                                                               : Status::Corrupt;
     }
     Superblock *const superblock = resolved.vnode.superblock;
     if (superblock->read_only) {
@@ -531,11 +532,16 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
     if (resolved.vnode.type == NodeType::Directory) {
         return Status::IsDirectory;
     }
-    if (resolved.vnode.type != NodeType::RegularFile) {
+    if (resolved.vnode.type != NodeType::RegularFile &&
+        resolved.vnode.type != NodeType::CharacterDevice) {
         return Status::Corrupt;
     }
     Superblock *const superblock = resolved.vnode.superblock;
-    if ((options.writable || options.truncate) && superblock->read_only) {
+    if (options.truncate && resolved.vnode.type != NodeType::RegularFile) {
+        return Status::Unsupported;
+    }
+    if ((options.writable || options.truncate) && superblock->read_only &&
+        resolved.vnode.type != NodeType::CharacterDevice) {
         return Status::ReadOnly;
     }
     if (options.truncate) {
@@ -602,7 +608,8 @@ Status Vfs::RetainOpenFile(const OpenFile &source,
     }
     if (!source.open || !this->PathIsValid(source.path) ||
         (source.path.vnode.type != NodeType::RegularFile &&
-         source.path.vnode.type != NodeType::Directory)) {
+         source.path.vnode.type != NodeType::Directory &&
+         source.path.vnode.type != NodeType::CharacterDevice)) {
         return Status::InvalidHandle;
     }
     Superblock *const superblock = source.path.vnode.superblock;
@@ -992,7 +999,8 @@ bool Vfs::PathIsValid(const Path &path) const noexcept {
     return mount != nullptr && path.vnode.superblock == mount->superblock &&
            path.vnode.identifier != OS_KERNEL_VFS_EMPTY_VALUE &&
            path.vnode.generation != OS_KERNEL_VFS_EMPTY_VALUE &&
-           (path.vnode.type == NodeType::RegularFile || path.vnode.type == NodeType::Directory);
+           (path.vnode.type == NodeType::RegularFile || path.vnode.type == NodeType::Directory ||
+            path.vnode.type == NodeType::CharacterDevice);
 }
 
 bool Vfs::PathsAreEqual(const Path &left, const Path &right) const noexcept {

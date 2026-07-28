@@ -56,6 +56,8 @@ enum class FileSystemStatus : uint64_t {
     CrossDevice,
     Busy,
     Unsupported,
+    WouldBlock,
+    BackgroundTerminalRead,
 };
 
 struct FileSystemStatistics final {

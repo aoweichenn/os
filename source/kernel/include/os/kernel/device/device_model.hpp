@@ -52,6 +52,8 @@ enum class KeyboardKey : uint64_t {
     Printable,
     LeftShift,
     RightShift,
+    LeftControl,
+    RightControl,
     CapsLock,
     ArrowUp,
     ArrowDown,
@@ -86,6 +88,8 @@ class ScanCodeSet1Decoder final {
     bool extended_prefix_pending_{false};
     bool left_shift_pressed_{false};
     bool right_shift_pressed_{false};
+    bool left_control_pressed_{false};
+    bool right_control_pressed_{false};
     bool caps_lock_enabled_{false};
 };
 
