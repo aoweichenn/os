@@ -267,7 +267,7 @@
         fd 0、阻塞唤醒、命令解析与资源回收；
   \item 能从 \code{USER\_RING3\_ENTER} 走读到 \code{INT 0x80}、
         TSS.RSP0、系统调用分发、exit 与 \code{USER\_RETURNED\_TO\_KERNEL}；
-  \item 能运行二十个合法用户 ELF 的逐文件审计、一个截断 ELF 拒绝用例和
+  \item 能运行二十二个合法用户 ELF 的逐文件审计、一个截断 ELF 拒绝用例和
         三条用户失败/隔离 QEMU 路径；
   \item 能从 rootfs 走读 \filepath{/sbin/init} 到磁盘 ELF 两遍装载，
         并说明普通用户程序为什么不再内嵌到正常 Kernel；
@@ -337,5 +337,13 @@
         实际执行工具证据为何不能互相替代；
   \item 能解释宿主测试并行、QEMU 测试共享 CTest 资源锁的原因，并区分资源
         竞争超时与真实来宾断言失败；
+  \item 能区分项目版本、用户 ABI 版本和 rootfs 盘面版本，并说明 v2.0
+        为什么只提升第一种；
+  \item 能画出主仓 commit、PDF SHA-256、web commit、Sites 保存版本和
+        生产部署之间的发布身份链；
+  \item 能说明 64 MiB、256 MiB 与 64 GiB 三档机器分别排除哪一类错误，
+        以及 4 GiB 以上真实页生命周期为何不能由配置常量替代；
+  \item 能从公网发布记录、核心源码路由和教材下载件反向追溯到精确主仓与
+        web 提交；
   \item 新设计先写 ADR 和验收条件，再扩展实现。
 \end{itemize}

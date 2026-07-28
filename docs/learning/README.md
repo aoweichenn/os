@@ -1,9 +1,9 @@
-# 从零到 v1.0：分阶段学习指南
+# 从复位向量到 v2.0：分阶段学习指南
 
 ## 1. 这套文档解决什么问题
 
 本目录以提交 `65b0e95` 的 v1.0 第一周期闭环为学习基线，并逐项对应生产
-实现。当前 `main` 已推进到 v1.18：
+实现。当前 `main` 已冻结为 v2.0：
 
 - v1.1 建立可回收资源生命周期、动态物理内存、buddy、类型缓存、KVA、
   动态双 guard 内核栈和页表空分支回收；
@@ -39,9 +39,11 @@
   descriptor/payload/commit 校验、checkpoint 与幂等 mount replay。
 - v1.18 冻结 ABI v2，加入通用最小 devfs、六文件只读 procfs、32 个
   rootfs 工具和发布溯源门禁。
+- v2.0 不增加机制，把三档整机、完整测试图、教材、手机导出、主仓、网站和
+  生产部署收束为一个可复现发布。
 
 第一周期文档仍按机制首次出现的顺序教学；涉及已替换实现时，会明确标记
-“v1.0 历史模型”和“v1.18 当前模型”。当前阶段的权威验收分别见
+“v1.0 历史模型”和“v2.0 当前模型”。当前阶段的权威验收分别见
 [v1.1](../releases/v1.1.md)、[v1.2](../releases/v1.2.md)、
 [v1.3](../releases/v1.3.md)、[v1.4](../releases/v1.4.md)、
 [v1.5](../releases/v1.5.md)、[v1.6](../releases/v1.6.md)、
@@ -55,7 +57,8 @@
 [v1.15](../releases/v1.15.md) 与
 [v1.16](../releases/v1.16.md) 与
 [v1.17](../releases/v1.17.md) 与
-[v1.18](../releases/v1.18.md) 发布记录。
+[v1.18](../releases/v1.18.md) 与
+[v2.0](../releases/v2.0.md) 发布记录。
 整套路线不把项目讲成一组互不相关的源文件，而是沿 CPU 真正执行的因果链展开：
 
 ```text
@@ -90,6 +93,7 @@
   → v1.16 IRQ14 块请求、BlockIo 与 shared page writeback
   → v1.17 ordered metadata journal、checkpoint 与 crash replay
   → v1.18 ABI v2、devfs/procfs、32 工具与发布冻结
+  → v2.0 三档回归、产物溯源、教材与公开生产发布
 ```
 
 目标读者可以只了解普通 C++，不必预先掌握操作系统、汇编或 PC 硬件。前置篇会
@@ -193,8 +197,9 @@
 | 24 | [v1.16：IRQ14 块请求与共享页写回](24-v1.16-irq14-block-request-writeback.md) | ATA/PIC 标志、单飞请求、IRQ/超时单赢家、BlockIo、write-notify、dirty/writeback/error 与稳定落盘 |
 | 25 | [v1.17：ordered metadata journal](25-v1.17-ordered-metadata-journal.md) | WAL 历史、credit、盘面记录、FLUSH 顺序、checkpoint、断电矩阵、幂等 replay 与保证边界 |
 | 26 | [v1.18：ABI v2、devfs/procfs 与发布冻结](26-v1.18-abi-v2-devfs-procfs-release-freeze.md) | ABI 布局、设备命名、动态只读快照、32 工具、QEMU 资源锁与发布溯源 |
+| 27 | [v2.0：把冻结实现变成可复现发布](27-v2.0-integration-release.md) | 版本冻结、测试矩阵、精确源码身份、教材哈希、独立网站与公网验收 |
 
-### 5.1 从第一周期过渡到当前 v1.18
+### 5.1 从第一周期过渡到当前 v2.0
 
 完成上表后，不要把 v1.0 类型名直接套到当前源码。按下面顺序阅读第二周期：
 
@@ -214,12 +219,13 @@
 | [v1.12](../releases/v1.12.md) | 每 Process 单用户执行流 → 用户 Thread、FS-base TLS、private futex 与同步原语 | ABI `thread.hpp`、Kernel `sync/private_futex.*`、`process/process_runtime.*`、User `thread.*`、`synchronization.*` |
 | [v1.13](../releases/v1.13.md) | 只有调度 tick → 单调纳秒、统一 deadline 与绝对时间等待 | ABI `time.hpp`、Kernel `time/*`、`process/thread_scheduler.*`、User `system_call.*`、`synchronization.*` |
 | [v1.14](../releases/v1.14.md) | 只能同步等待子进程 → 异步信号、进程组、可中断等待与受控用户返回 | ABI `signal.hpp`、Kernel `process/signal_manager.*`、`process/process_runtime.*`、User `system_call.*`、`signal_probe.cpp` |
-| [v1.15](../releases/v1.15.md) | 只有进程组信号 → TTY 前台所有权、session、停止/继续事件与 Shell 作业控制 | ABI `terminal.hpp`、Kernel `io/terminal.*`、`process/job_control.*`、`fs/console_device_file_system.*`、User `shell_execution.*` |
+| [v1.15](../releases/v1.15.md) | 只有进程组信号 → TTY 前台所有权、session、停止/继续事件与 Shell 作业控制 | ABI `terminal.hpp`、Kernel `io/terminal.*`、`process/job_control.*`、User `shell_execution.*` |
 | [v1.16](../releases/v1.16.md) | 同步轮询/clean-only cache → IRQ14 BlockRequest、BlockIo 与 dirty/writeback/error shared page | Kernel `device/block_request.*`、`device/ata_pio.*`、`memory/file_page_cache.*`、`user/user_memory.*` |
 | [v1.17](../releases/v1.17.md) | Dirty/Clean 拒绝协议 → ordered metadata journal、checkpoint 与幂等 replay | Kernel `fs/root_journal.*`、`fs/root_file_system.*`、工具 `rootfs_v2.py` |
 | [v1.18](../releases/v1.18.md) | 隐式用户边界/专用 console 后端 → ABI v2、devfs/procfs、32 工具和发布门禁 | ABI `version/elf/layout.hpp`、Kernel `fs/devfs.*`、`fs/procfs.*`、User `tool_probe.cpp` |
+| [v2.0](../releases/v2.0.md) | 分阶段完成事实 → 同一源码身份下的三档回归、教材、网站与生产发布 | `CMakeLists.txt`、`docs/releases/v2.0.md`、`docs/releasing.md` |
 
-二十六个阶段的架构结论已合并到
+二十七个阶段的架构结论已合并到
 [architecture.md](../architecture.md)，当前 Kernel 的功能目录见
 [source/kernel/README.md](../../source/kernel/README.md)。第一周期章节负责解释
 机制为什么出现；发布记录和当前源码负责解释它后来怎样演化。
@@ -410,5 +416,6 @@ Ring 3
 - 为一个正常路径和一个失败路径添加可重复测试。
 - 在不使用 BIOS、第三方 bootloader、libc 或 QEMU `-kernel` 的条件下复现整机。
 
-达到这些标准后，按 5.1 节进入已经完成的 v1.1–v1.17，再沿
-[roadmap.md](../roadmap.md) 继续 ABI v2 冻结与系统加固。
+达到这些标准后，按 5.1 节走读已经完成的 v1.1–v2.0；需要继续开发时，从
+[roadmap.md](../roadmap.md) 的“v2.0 之后”重新建立独立 ADR、范围和验收
+闭环，不回写已经冻结的 v2.0 承诺。

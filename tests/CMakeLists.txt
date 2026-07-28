@@ -1229,6 +1229,22 @@ os_add_user_elf_audit_test(
     "${OS_USER_MEMORY_PROBE_ELF_PATH}"
 )
 os_add_user_elf_audit_test(
+    os_user_fork_probe_elf_layout
+    "${OS_USER_FORK_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_thread_probe_elf_layout
+    "${OS_USER_THREAD_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_time_probe_elf_layout
+    "${OS_USER_TIME_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_signal_probe_elf_layout
+    "${OS_USER_SIGNAL_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
     os_user_memory_guard_probe_elf_layout
     "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
 )

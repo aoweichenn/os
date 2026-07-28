@@ -1044,8 +1044,9 @@ v1.15 构建图共 158 项。新增测试不是只调用 Shell 字符串解析�
   前后台读取、输出排空和输入/输出守恒；
 - `os_kernel_job_control_unit_tests`：PID1 session、fork 继承、PGID 建立/
   加入、session leader 约束和回收；
-- `os_kernel_console_device_file_system_unit_tests`：字符 vnode、VFS open、
-  stat/readdir 和引用守恒；
+- `os_kernel_console_device_file_system_unit_tests`（v1.15 历史目标，v1.18
+  后由 devfs 单元/集成测试替代）：字符 vnode、VFS open、stat/readdir 和
+  引用守恒；
 - `os_kernel_terminal_job_control_integration_tests`：同一子进程的
   Stopped→Continued→Exited 事件和 scheduler 状态；
 - `os_kernel_job_control_randomized_tests`：固定种子 100000 步 PGID 迁移，
@@ -1167,3 +1168,30 @@ timeout 的问题；不允许靠事后“失败再重跑”掩盖错误调度。
 同步归档必须校验 SHA-256；只检查、终止本次验证创建的进程，不读取、修改或
 停止验证机上的其他工作负载。用户明确允许且远端空闲时，干净构建和宿主测试
 可使用全部在线 CPU；QEMU 仍服从资源锁和来宾内存边界。
+
+## v2.0 集成发布测试
+
+v2.0 不新增重复机制测试，但发布审计发现 22 个合法用户 ELF 中
+`fork_probe`、`thread_probe`、`time_probe` 和 `signal_probe` 只有整机运行
+证据，缺少逐文件产物审计。v2.0 为这四个生产 ELF 补齐 W^X、入口、段范围、
+对齐和目标身份门禁，测试图由 169 项增至 173 项：
+
+- 149 项宿主测试并行检查单元、模块集成、固定种子随机模型、目标产物和源码
+  规范；
+- 24 项 QEMU 测试继续由 `os_qemu_system_x86_64` 资源锁串行；
+- 64 MiB、256 MiB、64 GiB 三档均使用同一生产镜像生成路径；
+- 64 GiB 用例实际触及 4 GiB 以上页帧，不接受仅检查规格常量；
+- persistence 使用同一磁盘的两个新 QEMU 实例；
+- ROM、Stage 1、CPU 特性、Kernel/User ELF、rootfs/journal 和用户异常
+  失败镜像全部保留明确负向 marker；
+- LaTeX、手机导出、网站同步、静态构建、Sites 归档和公网路由作为发布层
+  测试，不由 CTest 数字替代。
+
+项目版本 2.0.0、ABI 版本 2.0.0 和 rootfs 格式 3 分别从自己的权威来源
+读取。测试不得为了统一数字而改写 ABI 或盘面版本。
+
+最终 caw 验证以 698 文件全量 SHA-256 清单校准远端候选源码，清单哈希为
+`ef9bf628994537f33f371759cb55c5b522fcffc0db2a05a4489b5ef1182393f4`。
+干净配置耗时 0.45 秒，2057 个构建步骤耗时 5.06 秒；`ctest --parallel 20`
+以 63.61 秒完成 173/173、0 失败，24 项 QEMU 全部通过。该结果在四项新增
+产物门禁进入候选源码后重新取得，没有沿用 169 项候选结果。

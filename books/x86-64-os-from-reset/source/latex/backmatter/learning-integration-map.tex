@@ -16,7 +16,7 @@
 \section*{一、融合时采用的五条规则}
 
 \begin{enumerate}[leftmargin=2.2em]
-  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v1.18 在容量、数据结构
+  \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v2.0 在容量、数据结构
         或路径上不同，正文先解释历史基线，再明确当前增量，不把旧数字冒充现状。
   \item \textbf{背景知识前置。}第一次使用 ROM、RAM、地址、寄存器、端口、
         中断、页表、进程、fd 等概念时先解释“是什么和为什么”，再进入项目细节。
@@ -73,7 +73,7 @@ oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持�
 \bottomrule
 \end{longtable}
 
-\section*{三、v0.0--v1.18 阶段分册怎样进入十章}
+\section*{三、v0.0--v2.0 阶段分册怎样进入十章}
 
 \begin{longtable}{L{0.25\linewidth}L{0.34\linewidth}L{0.31\linewidth}}
 \toprule
@@ -162,6 +162,9 @@ WAL 历史、credit、盘面记录、FLUSH 顺序、断电矩阵、checkpoint �
 \learningpathiii{26-v1.18-abi-v2-}{devfs-procfs-}{release-freeze.md} &
 ABI 版本/offset、ELF 身份、devfs 分层、procfs 快照、32 工具与发布冻结 &
 第 9 章 ABI/devfs/procfs 深入节；第 10 章 v2.0 发布边界 \\
+\learningpathiii{27-v2.0-}{integration-}{release.md} &
+版本分离、三档回归、精确源码身份、PDF 哈希、独立网站与公网验收 &
+第 10 章 v2.0 集成发布与可复现证据；书末发布验收清单 \\
 \bottomrule
 \end{longtable}
 
