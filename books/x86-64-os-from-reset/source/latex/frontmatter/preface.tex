@@ -1,176 +1,137 @@
 \chapter*{前言}
 
 写一个操作系统很容易被误解为“先写一个内核主函数”。真正的机器没有主函数，
-也不会替开发者建立栈、清空未初始化区或选择执行模式。CPU 复位以后只承诺一组
-架构状态；固件必须从固定地址取到合法指令，初始化最早的观测通道，找到后续
-程序，把处理器带入长模式，最后才可能进入 C++20 内核。
+也不会替开发者建立栈、清空未初始化区或选择执行模式。CPU 复位以后只承诺
+一组架构状态；固件必须从固定地址取到合法指令，建立最早的观测通道，找到
+后续程序，把处理器带入长模式，最后才可能进入 C++20 内核。
 
-\section*{这本书不要求你预先成为硬件或历史专家}
+进入内核也不是终点。页表、异常、中断、Process、Thread、系统调用、VFS、
+文件系统、用户运行时和 Shell 都在回答不同问题；把它们堆在一个目录或一个
+巨型章节里，会让“功能已经运行”掩盖控制权、所有权和失败语义尚未说清。
+本书以 v2.0 冻结实现为事实底座，重新按知识依赖组织整台系统。
+
+\section*{这本书不要求预先成为硬件或历史专家}
 
 本书从 bit、byte、电压、电流、地址、CPU、寄存器、ROM、RAM 和磁盘开始。
 第一次使用重要概念时，不只给英文全称和一句翻译，还要说明它对应什么物理器件
-或软件结构、当初为解决什么问题而出现、由谁在什么时候初始化、数据怎样经过它、
-条件不满足时会看到什么失败。比如“RAM 是随机存取存储器”并不足以理解启动；
-读者还需要知道 DRAM 为什么断电丢失、为什么需要刷新和训练、固件为什么必须先
-从非易失 Flash 执行、内核又为什么要从磁盘复制到 RAM。
+或软件结构、当初为解决什么问题而出现、由谁在什么时候初始化、数据怎样经过
+它、条件不满足时会看到什么失败。
 
-硬件史也不按年份表背诵。本书采用
-“当时的问题 \(\rightarrow\) 工程限制 \(\rightarrow\) 当时方案
-\(\rightarrow\) 今天仍保留的兼容痕迹”解释 8086 分段、独立 I/O 空间、
-保护模式、长模式、PIC、PIT、PS/2 和现代 PCIe/UEFI。读者只需要愿意沿因果链
-逐步核对，不需要先修完数字电路、计算机组成或 PC 历史课程。
+例如“RAM 是随机存取存储器”不足以理解启动；读者还需要知道 DRAM 为什么
+断电丢失、为什么需要刷新和训练、固件为什么必须先从非易失 Flash 执行、
+Kernel 又为什么要从磁盘复制到 RAM。“进程拥有地址空间”也不足以理解 fork；
+还要区分 VMA 意图、PTE 驻留、物理页引用、Thread 执行现场和 FileDescription
+共享状态分别由谁拥有。
 
-\section*{虚拟 PC 与实体硬件分别证明什么}
+硬件史不按年份表背诵。本书始终采用：
 
-本书和配套工程坚持一个严格边界：QEMU 只模拟 x86-64 CPU、内存、串口、IDE
-等硬件，不使用 SeaBIOS、OVMF、GRUB、Limine、Multiboot 或
-\code{-kernel} 替代启动链。汇编统一采用 NASM Intel 语法，高层代码采用
-freestanding C++20。构建和测试脚本运行在宿主机，可以使用 Python；进入
-镜像的目标代码则必须由我们掌握。
+\[
+\text{当时的问题}
+\rightarrow \text{工程限制}
+\rightarrow \text{当时方案}
+\rightarrow \text{今天仍保留的兼容痕迹}
+\]
 
-为了不把 QEMU 的地址/端口关系误当成 PCB 铜线，第二章另选 LattePanda Mu
-N100/N305 计算模块和 DFR1142 Lite Carrier V2 作为实体案例。书中嵌入十页
-真实 KiCad 参考原理图、一页纯 TikZ 模块正反面/260 触点方向图和三张
-“简化但不省连接”的矢量学习图，
-逐项解释三路输入、电源树、260-pin 接口、HDMI、USB、PCIe x4、M.2、
-RTL8111H 千兆网、I2C、UART、SPI、RTC、风扇和四层 PCB。实体案例用于建立
-真实电气载体和系统适配知识，不冒充当前 STUOS 已经能在该板裸机启动；UEFI、
-ACPI、PCIe 枚举、NVMe、GOP/xHCI 等缺口会被明确列出。
+由此解释 8086 分段、A20、独立 I/O 空间、保护模式、长模式、PIC、PIT、
+PS/2、ATA，以及现代 PCIe/UEFI 平台为什么与早期 PC 既相连又不同。
 
-\code{docs/learning} 中的七张全机、阶段、Port I/O、启动/内存、中断、输入和
-持久化图也分别进入对应正文，并由附录逐项追踪来源。七张宽图不与段落争抢
-页面，而是各占横向整页；每条外部图形资源均以矢量 PDF 嵌入，模块方向图由
-TikZ 直接生成。这样既能在 PDF 中无损放大，又能为文字、边框、连线和图注
-预留确定空间，最终版本还需通过逐页重叠与裁切检查。
+\section*{QEMU 与实体硬件分别证明什么}
 
-\section*{全书怎样组织证据}
+配套工程坚持严格边界：QEMU 只模拟 x86-64 CPU、内存、串口、IDE 等硬件，
+不使用 SeaBIOS、OVMF、GRUB、Limine、Multiboot 或 \code{-kernel}
+替代启动链。汇编采用 NASM Intel 语法，高层目标代码采用 freestanding
+C++20；构建和测试脚本可以使用宿主 Python，但进入镜像的目标运行时由项目
+自行实现。
 
-全书既讲原理，也讲证据。每个阶段都明确记录输入状态、输出不变量、失败语义
-和可重复验收。正文先补足所需背景，再进入寄存器、地址、字节布局和控制流，
-使实验现象能够沿硬件与软件因果链得到解释。
+为了不把 QEMU 地址/端口关系误当成 PCB 铜线，第三章使用 LattePanda Mu
+N100/N305 计算模块和 DFR1142 Lite Carrier V2 作为实体案例。书中嵌入
+十页真实 KiCad 参考原理图、一页纯 TikZ 模块方向图和三张矢量学习图，逐项
+解释三路输入、电源树、260-pin 接口、HDMI、USB、PCIe、M.2、GbE、
+I2C、UART、SPI、RTC、风扇和四层 PCB。
 
-正文组织为五部分、十个完整主题章。相关的小主题被放回同一条因果链，而不是
-拆成只有提纲的短章。每章从历史背景和机器状态出发，继续深入位字段、数据结构、
-时序或控制流，再落到失败路径、调试证据和阶段验收。尚未进入当前版本代码的
-机制会明确标注为设计路线；已经实现的机制则同时给出源码、二进制和整机行为
-三类证据。
+实体案例用于建立真实电气载体和实机适配知识，不声称当前系统已能在该板裸机
+启动。UEFI 入口、ACPI、PCIe 枚举、NVMe、GOP、xHCI、DMA/IOMMU 等缺口
+会被明确列为未来适配条件。
 
-当前配套实现已经完成 v2.0 集成冻结。v2.0 不新增内核机制，而是把 v1.1 至
-v1.18 的分阶段证据收束到同一源码、测试、教材与公开发布身份。其基础从
-v1.0 建立：Stage 1 在 64 位模式中自行读取 Kernel 容器，
-验证 CRC32 与 ELF64，执行两遍加载和 BSS 清零，通过版本化 BootInfo 调用
-freestanding C++20 内核。内核随后自建 GDT、TSS 和 IDT，规范化 32 个架构
-异常；再读取并验证物理内存图与处理器地址宽度，动态管理 64 GiB 主规格页帧，
-建立带 2 MiB/4 KiB 高半区物理直映的四级页表、guard page
-与高半区早期堆。INT3、UD2、not-present 页故障和 Ring 0 写只读页共同验证
-异常返回、panic、NX 与 CR0.WP。内核又接管本地 APIC/PIC 兼容路由，为
-向量 32--47 建立硬件 IRQ 入口，以 PIT 形成单调 tick，处理中断驱动的
-PS/2 按键，并用独立 ATA PIO 驱动重读启动盘。QEMU 自动注入的按键必须经过
-真实 i8042、IRQ1、IDT 与解码状态机才能成为语义事件。内核进一步严格装入
-自研用户 ELF，以 GDT、TSS.RSP0、用户页权限和 \code{IRETQ} 进入 Ring 3，
-通过 \code{INT 0x80} 提供有界系统调用，并把用户非法指令与页故障隔离为
-用户终止而非内核 panic。在这条边界上，内核进一步为四个进程创建独立
-PML4、同址用户 ELF/栈、KVA 动态双 guard Ring 0 栈和保存现场；真实 PIT
-每四个 tick 驱动 round-robin，切换 CR3 与 TSS.RSP0。worker 验证 BSS
-物理隔离，退出后递归释放用户叶页和页表，并以创建前后页帧统计证明资源
-生命周期闭环。终止路径先回到永久启动栈安全点，再撤映射、清零物理帧并释放
-KVA，四个动态栈的创建/销毁与峰值也进入整机守恒。调度器实现 Blocked、
-具名等待原因与定向唤醒；带
-acquire/release 语义的自旋锁保护 64 字节有界管道。Ring 3 生产者和
-消费者跨多个时间片传输并逐字节验证 256 字节载荷，真实覆盖满/空阻塞、
-环形回绕、部分传输、端点关闭、EOF 与 broken pipe。全部热路径保持无串口
-日志，结束后以阻塞/唤醒、字节守恒、端点状态和页帧回收形成证据。
+\section*{为什么从十章重构为十六章}
 
-在同一条 I/O 边界上，v0.11 建立固定布局文件系统、显式小端磁盘格式、
-CRC32、bitmap/inode/目录、八项写回缓存、Dirty/Clean 提交和 ATA PIO
-write/flush。同一临时磁盘上的两个全新 QEMU 实例证明旧载荷可恢复，损坏
-超级块的第三次启动必须拒绝挂载。v1.0 又把控制台、文件、目录和管道统一到
-每进程八槽描述符表；真实 PS/2 字符进入 256 字节 FIFO，唤醒等待 fd 0 的
-Shell。没有 Ready 进程时，内核在永久地址空间执行 \code{sti; hlt; cli}，由
-中断恢复调度。独立 freestanding C++20 Shell 使用固定容量解析器执行帮助、
-回显、切换目录、文件、同步和退出命令。QEMU 在 \code{READY} 后逐字产生
-18 条命令，215 个字符必须零丢弃地经过完整硬件与 Ring 3 路径。v1.1 又以
-\code{ScopeRollback}、\code{ReferenceCounter} 和 26 字段
-\code{ResourceSnapshot} 收口跨层所有权；256 MiB functional 与 64 GiB
-capacity 运行同一完整路径。v1.2 又分离 Process/Thread，以 WaitQueue
-统一完成竞争，并用每 Thread FXSAVE64 隔离 x87/SSE2。v1.3 进一步建立
-CPUID 能力与地址宽度规格门禁、CpuLocal、原生 SYSCALL/SYSRET、SWAPGS
-可信换栈、统一 UserContext、IRET 安全回退，以及系统调用期间 IRQ 与返回前
-延迟调度。v1.4 又加入带 generation 的类型化 KernelObject、共享
-FileDescription 与每 Process 的 64 槽延迟分块 FileTable，把功能硬限额
-提高到 256、容量规格提高到 4096，并以复制共享偏移、独立打开、fd flags、
-soft/hard limit、最低编号复用和最终析构收口描述符生命周期。v1.4 的历史
-回归集合继续保留；v1.5 又建立 Vnode、Path、Mount、Superblock、
-每 Process FsContext 与 OpenFile，把旧磁盘接成 legacy 后端，并把完整
-memfs 挂在 \filepath{/tmp}。绝对/相对路径、点组件、根钳制、挂载穿越、
-4096/255 字节边界和 getcwd 由同一状态机处理；两个后端通过同一契约，
-命名空间另有十万步独立模型。v1.6 进一步把生产根切到严格挂载的
-256 MiB rootfs v2：版本化小端盘面、8192 个 inode、八个 direct 加
-single/double/triple 块、64 MiB 稀疏文件、unlink/rmdir/rename/truncate/stat、
-真实短写与 ENOSPC 都已落地。独立 Python mkfs/inspector/fsck 与 Kernel
-互相校验，QEMU 同盘两次启动后再损坏第三次拒绝；完整回归数量由构建图自动
-产生，不在正文冻结。页表、资源生命周期、调度现场、双系统调用入口、动态
-文件表、VFS 和 rootfs 各有单元、集成、随机模型和真实 QEMU 证明。
-v1.7 又把生产启动路径从 Kernel 内嵌普通用户镜像改为从 rootfs 按路径读取
-\filepath{/sbin/init}。PID1 通过 \code{spawn/exec/wait} 建立真实父子树，
-孤儿会重新归属 PID1，退出结果以 Zombie 状态保留到唯一一次回收。ELF
-装载改为按偏移读取的两遍事务；失败的 \code{exec} 不发布半成品地址空间，
-成功提交时才切换 CR3、用户 RIP/RSP、FsContext 与 close-on-exec 文件。
-256 KiB 用户栈按 SysV AMD64 规则构造 \code{argc/argv/envp}，真实 QEMU
-验证 128 KiB 参数环境边界、失败后旧映像可继续运行、磁盘用户程序执行和
-八个进程的创建、退出、等待、重归属与资源守恒。普通用户 ELF 由离线
-rootfs 安装器写入磁盘；Kernel 只保留故障隔离所需的专用内嵌测试镜像。
-Clang AST 锁定标识符语义，Python 词法门禁锁定命名空间的单词层级。
-v1.8 又把地址空间从“只有已安装 PTE”提升为 VMA 意图与 PTE 驻留两层：
-匿名 \code{mmap} 和 program break 先保留区间，真实用户 load/store 引发
-\#PF 后才取得并清零物理页；8 MiB 用户栈只连续向下提交，永久 guard 和
-只读写入由 vector 14 隔离。Ring 3 \code{UserHeap} 用 boundary tag、
-first-fit、split 与双向 coalesce 管理最多 8 MiB 的 break 空间。十万步
-VMA/heap/COW 引用模型、128 轮真实页表生命周期、用户 VM/fork probe、四十五个 Process
-资源守恒以及 64 MiB、256 MiB、64 GiB 三档整机运行共同证明 reservation、
-首次触页、权限拒绝、页表回收和描述符池归零。
-v1.9 又加入稳定 FileIdentity、FileBacking、按需 ELF、文件 VMA 和有界 clean
-page cache；v1.10 在 anonymous/private 页上加入稀疏引用与 COW，让用户
-write fault 和 Kernel CopyToUser 共用私有化路径，并以 32 次
-fork/exec/wait 验证地址、fd、cwd 和后备继承。v1.11 再把 Shell 普通命令
-移入 rootfs 外部 ELF，新增 64 KiB 按需动态 Pipe、分档 PipeManager、
-pipe/dup2 ABI、输入输出重定向和 16 级流水线。v1.12 在同一 Process 内开放
-用户 Thread，建立 64 KiB 用户栈与 guard、FS-base TLS、private futex、
-Mutex、ConditionVariable、Once、ThreadExit/Join，以及多线程 exec/exit
-回收。v1.13 再把 PIT 实际除数转换为精确余数累计的 64 位单调纳秒，以
-512 槽 deadline queue 统一 sleep、timed futex 和 timed condition，并由
-同一 scheduler lock 裁决通知、超时与取消。v1.14 进一步分离 Process
-disposition、Thread mask 与两级 pending，引入进程组发送、普通信号合并、
-可中断/可重启阻塞和固定用户 SignalFrame；Intel NASM restorer 通过严格
-sigreturn 验证恢复现场，畸形 frame 只隔离目标 Process。v1.15 再以
-\code{Terminal} 统一行规、控制字符、前台进程组与有界输入输出；以
-session/PGID、\code{Stopped} 状态、停止/继续 wait event 和
-\filepath{/dev/console} 字符设备支撑 Shell 的后台启动、\code{jobs}、
-\code{fg} 与 \code{bg}。真实 Ctrl-C/Ctrl-Z 不由 Shell 假装解析，而是从
-PS/2 扫描码经过 TTY 投递给前台作业。v1.16 又建立 64 槽 BlockRequest
-FIFO、ATA IRQ14 与 PIT timeout 单赢家、BlockIo 定向唤醒，以及
-Clean/Dirty/Writeback/Error 文件页状态。完整页 writable MAP\_SHARED
-通过 PTE 写保护捕获第一次修改，sync 重新保护并经 VFS WriteAt 与异步
-ATA FLUSH 落盘；private COW 不回写。当前 161 项 CTest 与两档日常 QEMU
-要求 72/99 个 Process 创建、71/102 次 wait event、32 条功能 Thread，
-并由显式 64 GiB 发布门禁验证 64 条 Thread；全部 TTY 输入输出、作业事件、
-signal 状态、deadline、Pipe 页、futex entry、KernelStack、
-FileDescription、TLS/VMA 和 Zombie 最终共同回到基线。
-v1.17 又把 rootfs 升级为格式 3：在固定 128 KiB journal 中以四个 descriptor
-块提供 124 个 metadata credit，相关数据稳定后依次写 prepared payload、
-commit、home checkpoint 与清理 FLUSH。mount 在信任 superblock 前验证并
-幂等 replay；1000 个确定性断电点和十万步随机模型证明 metadata 只能恢复为
-完整旧状态或完整新状态。构建图因此增加到 164 项，三档 QEMU 与跨启动
-persistence 使用同一 production journal 路径。
-v1.18 最后冻结 ABI v2.0.0：69 个系统调用、公共错误边界、跨 Ring 结构
-offset 与目标 ELF 身份都进入共享编译契约。专用 console 文件系统被分解为
-只负责设备命名的 devfs，终端字符行为继续由 FileDescription 与 TTY 拥有；
-只读 procfs 则按每次 read 采集 15 项动态快照，以六个文件向 Ring 3 暴露
-时间、内存、进程、资源和挂载。rootfs 中 32 个独立工具路径同时由
-tool probe 验证 inode/ELF，并在 256 MiB QEMU 中真实运行。构建图达到
-169 项；宿主测试并行，24 项 QEMU 由资源锁串行，64 GiB 主规格继续验证
-4 GiB 以上真实页生命周期。
-v2.0 不再改变上述机制，而是把三档 QEMU、完整失败矩阵、目标产物审计、
-教材 PDF 与手机同哈希副本、主仓提交、独立网站提交和 Sites 生产部署绑定为
-同一发布证据。项目版本、ABI 版本与 rootfs 盘面版本继续由各自兼容边界
-独立管理，后续新增能力进入 v2.x。
+旧结构的第九章同时承载进程、同步、文件系统、VFS、虚拟内存、COW、用户
+Thread、时间、signal、TTY、写回、journal、ABI 与 Shell，约占正文
+四成。顺序虽然保留了版本历史，却迫使读者在一个章节中自行维护过多对象和
+寿命。相反，数据与汇编章篇幅过薄，寄存器别名、RFLAGS、寻址、模式相关
+语义和原子指令没有形成完整知识面。
+
+新结构采用六部分十六章：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 机器基础、x86 历史与真实硬件；
+  \item 数据、指令、工具链与自研固件；
+  \item Loader、内核保护、内存、中断与 Ring 3；
+  \item Process/Thread、对象/VFS、PID1/VM；
+  \item 持久化、并发服务、Shell 与 ABI；
+  \item 工程治理、v2.0 集成和可复现发布。
+\end{enumerate}
+
+这不是把长章机械切成短章。新的边界分别围绕一种核心问题：控制权、地址
+翻译、执行身份、对象身份、程序映像、持久顺序、等待竞争或发布身份。每章
+仍保留背景、机制、失败、源码走读和证据，不产生只有几页提纲的孤立章节。
+
+\section*{本书怎样组织“完整知识”}
+
+这里的“完整”不表示穷举 Intel 手册或复制 Linux 所有子系统，而表示当前
+承诺范围中的每个核心概念都回答七个问题：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 它是什么，为解决什么历史问题出现？
+  \item 它属于 CPU、平台、Kernel、用户 ABI 还是磁盘格式？
+  \item 谁创建它，谁拥有它，谁只能临时引用它？
+  \item 正常路径怎样从候选状态进入公开状态？
+  \item 中途失败时哪些事实必须保持不变？
+  \item 哪类测试能反驳错误实现？
+  \item 当前实现没有承诺什么，未来扩展要重建哪些边界？
+\end{enumerate}
+
+正文中的位字段、状态图和数据结构服务于这七个问题，而不是为了显得底层。
+读者如果只能背出 CR3 或 inode 的定义，却不能沿一次缺页、一次 write 或一次
+exec 解释所有权转移，就还没有形成系统知识。
+
+\section*{v2.0 提供什么事实底座}
+
+当前系统从自研 ROM 复位入口启动，经 Stage 1、长模式、ELF64 loader 和
+freestanding C++20 Kernel，建立异常、内存、中断、设备和 Ring 3。其上
+已经形成 Process/Thread、双系统调用入口、VMA/PTE、COW、类型化对象、
+动态 FileTable、VFS、rootfs 格式 3、PID1、用户 Thread、futex、deadline、
+signal、TTY、作业控制、IRQ14 writeback、ordered metadata journal、
+devfs、procfs、外部 Shell 与 32 个磁盘工具。
+
+v2.0 不再增加机制，而是冻结项目版本、ABI 与盘面边界，补齐目标 ELF 审计，
+并把三档 QEMU、完整失败矩阵、LaTeX PDF、手机副本、主仓、独立网站和
+Sites 生产部署绑定为同一份可追溯证据。第十六章专门解释这条发布身份链，
+避免前言再次按版本复述整本书。
+
+\section*{怎样读每一章}
+
+建议采用四遍法：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 第一遍只找输入状态、输出状态和本章边界；
+  \item 第二遍手算地址、位字段、大小、对齐、队列或引用变化；
+  \item 第三遍沿源码与汇编检查真实控制流；
+  \item 第四遍主动寻找能推翻错误实现的测试与故障注入。
+\end{enumerate}
+
+书后的十六章实验为每章提供“解释、推导、观察、证伪”四类任务。答案不要求
+与作者使用相同措辞，但必须能指出硬件事实、软件所有者、提交点和失败现象。
+
+\section*{当前边界必须诚实保留}
+
+本系统仍是单 BSP、Kernel 不可抢占，不支持 SMP、网络、完整权限模型、动态
+链接、共享库、USB、图形、DMA、AHCI/NVMe、swap、OOM killer 或完整 POSIX。
+devfs/procfs 也不承诺 Linux 文本兼容。书中会解释这些机制的前置知识与未来
+影响，但不会把路线图写成已经实现的能力。
+
+\begin{contractbox}
+本书的目标不是让读者相信系统“很完整”，而是让读者能够准确说出已经实现
+什么、为什么这样实现、每一步怎样失败、如何证明，以及下一步扩展会破坏哪些
+既有假设。
+\end{contractbox}

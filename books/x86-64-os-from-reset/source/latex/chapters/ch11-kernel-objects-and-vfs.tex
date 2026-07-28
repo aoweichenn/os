@@ -1,0 +1,10 @@
+\chapter{内核对象、文件描述符与 VFS 命名空间}
+
+\begin{keyidea}
+fd、打开文件实例、vnode、持久 inode 和路径不是同一种身份。类型化对象、
+generation、引用生命周期、FileTable、Mount 与 FsContext 把局部整数、
+共享状态、命名空间和后端实现分层，失败时才能沿所有权图精确回滚。
+\end{keyidea}
+
+\input{deepening/ch11-kernel-object-file-table-v14}
+\input{deepening/ch11-vfs-memfs-v15}

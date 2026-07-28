@@ -1,0 +1,12 @@
+\chapter{磁盘装载、ELF64 与长模式转换}
+
+\begin{keyidea}
+模式转换不是一条指令，而是一组只能按依赖顺序提交的状态变化。A20、GDT、
+控制寄存器、页表、ELF64、BSS 与 BootInfo 必须共同形成从 16 位固件到
+64 位 C++ 内核的可证明交接。
+\end{keyidea}
+
+\input{topics/ch07-long-mode-and-loader}
+\input{topics/ch07-stage1-implementation}
+\input{deepening/ch07-loader-and-long-mode}
+\input{deepening/ch07-boot-memory-wiring-atlas}

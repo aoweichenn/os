@@ -1,5 +1,6 @@
 \chapter*{能力与验收清单}
 \addcontentsline{toc}{chapter}{能力与验收清单}
+\markboth{能力与验收清单}{能力与验收清单}
 
 \section*{零基础机器概念与实体载板验收}
 
@@ -235,6 +236,27 @@
         哪类自我验证；
   \item 持久 memfs heap/vnode 为什么从 Process 快照分账，又为何不能掩盖
         未登记资源泄漏。
+\end{itemize}
+
+\section*{十六章教材结构与知识闭环验收}
+
+\begin{itemize}
+  \item 能说明六部分分别回答机器建立、字节生成、内核接管、执行与对象、
+        持久化与并发、工程发布中的哪一个闭合问题；
+  \item 能沿“上电到 PID1、一次系统调用、一次缺页与 COW、一个字节跨重启、
+        Ctrl-Z 到 \code{fg}”五条路径跨章复述完整状态变化；
+  \item 能对任一概念回答历史动机、所属层、初始化者、所有权、提交点、失败
+        边界和验证方法，而不是只背诵名词；
+  \item 能区分历史阶段的最小基线、当前 v2.0 产品事实和未来路线，不把旧容量
+        或未实现能力写成当前规格；
+  \item 能解释 Process/Thread、fd/FileDescription、Path/Vnode/inode、
+        VMA/PTE、signal pending/action/frame 的寿命与所有权差异；
+  \item 能区分 CPU 架构、PC 平台、QEMU 设备模型和实体载板四种事实来源，
+        并为每种陈述找到对应证据；
+  \item 能完成书末每章的“解释、推导、观察、证伪”练习，并指出各类测试
+        仍然不能证明什么；
+  \item 能说明教材结构修订为何不得改变 Kernel 行为、ABI、rootfs 格式或
+        项目版本，并能从 PDF 哈希追溯到同一份发布源码。
 \end{itemize}
 
 \section*{进入下一阶段前}

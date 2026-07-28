@@ -1,0 +1,13 @@
+\chapter{Unix I/O、并发等待、信号与作业控制}
+
+\begin{keyidea}
+pipe、futex、deadline、signal 和 TTY 表面上属于不同接口，底层却都在解决
+“条件尚未成立时谁阻塞、多个完成原因谁获胜、醒来后怎样继续”。Shell 再用
+fd、进程组和控制终端把这些机制组合成可交互作业图。
+\end{keyidea}
+
+\input{deepening/ch14-unix-io-v111}
+\input{deepening/ch14-user-threads-futex-v112}
+\input{deepening/ch14-monotonic-time-v113}
+\input{deepening/ch14-signals-v114}
+\input{deepening/ch14-tty-job-control-v115}

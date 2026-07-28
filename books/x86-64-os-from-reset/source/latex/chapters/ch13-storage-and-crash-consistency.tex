@@ -1,0 +1,13 @@
+\chapter{文件系统、写回与崩溃一致性}
+
+\begin{keyidea}
+“write 返回”只说明某层接受了数据，不自动等于磁盘已经持久。显式盘面编码、
+块树、缓存状态、IRQ14 请求、ATA FLUSH、ordered journal、commit、
+checkpoint 与 replay 共同建立跨重启仍可证明的顺序。
+\end{keyidea}
+
+\input{deepening/ch13-file-system-v011}
+\input{deepening/ch13-rootfs-v2-v16}
+\input{deepening/ch13-storage-persistence-wiring-atlas}
+\input{deepening/ch13-irq14-writeback-v116}
+\input{deepening/ch13-ordered-journal-v117}

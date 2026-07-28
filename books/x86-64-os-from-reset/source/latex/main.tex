@@ -13,56 +13,74 @@
 \frontmatter
 \input{frontmatter/title}
 \input{frontmatter/preface}
+\input{frontmatter/reading-guide}
 \tableofcontents
 
 \mainmatter
-\part{从物理机器到处理器复位}
+\part{机器基础、x86 历史与真实硬件}
 \begin{partbridge}
-操作系统开始执行之前，电源、时钟、复位、地址译码和指令存储已经组成一条
-不可省略的硬件通路。本部分先从 bit、CPU、ROM、RAM、电压、引脚和总线建立
-零基础词汇，再沿 8086 到 x86-64 的兼容历史建立寄存器、分段、地址和 I/O
-模型；最后用 LattePanda Mu 四层载板把抽象事务落到真实电源与逐根铜线。
+操作系统执行以前，电源、时钟、复位、地址译码和指令存储已经组成不可省略的
+物理通路。本部分从机器角色与电气条件开始，沿 x86 兼容历史解释复位状态，
+再把 QEMU 平台事务对照到实体载板的供电、引脚、差分对和 PCB。
 \end{partbridge}
-\input{chapters/ch01-machine-and-operating-system}
-\input{chapters/ch02-reset-platform-and-io}
+\input{chapters/ch01-machine-foundations}
+\input{chapters/ch02-x86-history-and-reset}
+\input{chapters/ch03-platform-io-and-physical-hardware}
 
-\part{从 bit、汇编到 ROM 字节}
+\part{数据、指令、工具链与自研固件}
 \begin{partbridge}
-源代码不会被处理器直接执行。本部分先建立二进制数、补码、小端序、指令编码
-与汇编语言，再把 NASM、ELF、链接脚本和裸 ROM 连成可逐字节审计的生成链。
-复位入口的每条指令都落到寄存器变化、机器码和物理地址。
+源代码不会被处理器直接执行。本部分先建立精确位宽、寄存器、RFLAGS、寻址、
+Intel 汇编和机器码，再把 NASM、Clang、LLD、ELF、链接脚本、C++20 与裸
+ROM 连成可逐字节审计的生成链，最后用 UART 建立第一个可观察硬件协议。
 \end{partbridge}
-\input{chapters/ch03-bits-assembly-and-machine-code}
-\input{chapters/ch04-toolchain-cpp-and-rom}
+\input{chapters/ch04-data-registers-and-assembly}
+\input{chapters/ch05-toolchain-cpp-and-rom}
+\input{chapters/ch06-uart-observability-and-testing}
 
-\part{第一条可观察的硬件事务}
+\part{从磁盘字节到受保护的 64 位内核}
 \begin{partbridge}
-串口把处理器内部状态转换成宿主可以保存的字节流。本部分从异步通信的线路和
-时钟误差进入 16550A 寄存器协议，再建立有界轮询、故障注入、ROM 审计和
-QEMU 整机证据。
+本部分沿 ATA 扇区、镜像容器、ELF64、保护模式与长模式进入内核，再建立
+GDT/TSS/IDT、异常、物理/虚拟内存、中断和 Ring 3。每次控制权转移都同时
+说明硬件动作、汇编适配、C++ 所有权、失败现场和整机证据。
 \end{partbridge}
-\input{chapters/ch05-uart-testing-and-evidence}
+\input{chapters/ch07-loader-and-long-mode}
+\input{chapters/ch08-kernel-exceptions-and-memory}
+\input{chapters/ch09-interrupts-devices-and-user-boundary}
 
-\part{从实模式到 64 位内核}
+\part{执行模型、对象命名与虚拟内存}
 \begin{partbridge}
-这一部分从已经实现的保护模式、长模式和 ELF64 装载继续展开，完整解释它们与
-后续异常、内存、中断及设备驱动之间的依赖关系。
+进入 Ring 3 以后，系统必须回答谁拥有资源、谁占用 CPU、整数句柄指向什么、
+路径怎样跨挂载解析，以及程序映像如何按需出现和消失。本部分把 Process、
+Thread、系统调用、内核对象、VFS、PID1、VMA、文件后备和 COW 拆成三条
+相互依赖但不混淆的主线。
 \end{partbridge}
-\input{chapters/ch06-loader-and-long-mode}
-\input{chapters/ch07-kernel-exceptions-and-memory}
-\input{chapters/ch08-interrupts-devices-and-users}
+\input{chapters/ch10-process-thread-and-system-call}
+\input{chapters/ch11-kernel-objects-and-vfs}
+\input{chapters/ch12-process-lifecycle-and-virtual-memory}
 
-\part{把内核发展成操作系统}
+\part{持久化、并发服务与用户环境}
 \begin{partbridge}
-最后把执行流、同步、文件、系统调用和工程治理组织成长期可演进的学习项目，
-并给出从 v0.0 到 v2.0 的完整验收地图。
+文件系统要让名称跨重启存活，并发服务要让等待在多个完成原因之间保持单赢家，
+用户环境则把二者通过 ABI、fd、TTY、Shell、devfs 与 procfs 组合起来。
+本部分分别建立持久顺序、Unix 组合语义和最终用户边界，避免再次形成一章
+包揽所有高层机制的巨型叙事。
 \end{partbridge}
-\input{chapters/ch09-processes-files-and-shell}
-\input{chapters/ch10-roadmap-metrics-and-practice}
+\input{chapters/ch13-storage-and-crash-consistency}
+\input{chapters/ch14-unix-io-concurrency-and-job-control}
+\input{chapters/ch15-user-environment-and-abi}
+
+\part{工程治理、学习闭环与 v2.0 发布}
+\begin{partbridge}
+最后把十六章重新连接到需求、ADR、测试、日志、代码统计、教材、双仓提交和
+公网部署。v2.0 不靠“功能很多”完成，而靠精确输入、明确限制、分层反例和
+他人可复现的交付身份完成。
+\end{partbridge}
+\input{chapters/ch16-engineering-and-v20-release}
 
 \backmatter
 \input{backmatter/learning-integration-map}
 \input{backmatter/beginner-glossary}
+\input{backmatter/study-labs}
 \input{backmatter/checklist}
 \input{backmatter/references}
 

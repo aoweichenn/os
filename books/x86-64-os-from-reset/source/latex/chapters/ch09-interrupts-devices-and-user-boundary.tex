@@ -1,0 +1,11 @@
+\chapter{中断、设备驱动与用户边界}
+
+\begin{keyidea}
+中断把异步设备事件引入内核并发，Ring 3 又把不可信执行引入同一机器。IRQ
+路由、入口栈、锁、页权限、用户复制、系统调用和异常隔离必须作为一条完整
+控制流理解，任何局部正确都不能替代端到端边界。
+\end{keyidea}
+
+\input{topics/ch09-interrupts-devices-users}
+\input{deepening/ch09-interrupts-devices-and-users}
+\input{deepening/ch09-interrupt-input-wiring-atlas}

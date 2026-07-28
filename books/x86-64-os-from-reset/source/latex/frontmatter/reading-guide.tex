@@ -1,0 +1,164 @@
+\chapter*{阅读路线与全书知识地图}
+\addcontentsline{toc}{chapter}{阅读路线与全书知识地图}
+\markboth{阅读路线与全书知识地图}{阅读路线与全书知识地图}
+
+\begin{keyidea}
+这不是一本按源码目录从头抄到尾的手册。全书按“机器事实先于软件抽象、失败
+边界先于功能扩张、所有权先于接口数量”的依赖顺序组织。读者既可以顺序建立
+完整体系，也可以沿一条端到端路径反复穿越硬件、汇编、C++、用户态与测试。
+\end{keyidea}
+
+\section*{一、六部分分别解决什么问题}
+
+\begin{longtable}{L{0.12\linewidth}L{0.24\linewidth}L{0.54\linewidth}}
+\toprule
+部分 & 核心问题 & 完成以后应当能够解释 \\
+\midrule
+\endfirsthead
+\toprule
+部分 & 核心问题 & 完成以后应当能够解释 \\
+\midrule
+\endhead
+第一部分 & 机器为什么能够开始工作 &
+电源、时钟、复位、非易失指令来源、地址译码、x86 兼容状态和实体铜线怎样
+共同允许第一条指令被取出。\\
+第二部分 & 源码怎样变成可观察硬件行为 &
+整数、寄存器、RFLAGS、寻址、Intel 汇编、机器码、ELF、链接脚本、
+freestanding C++20、ROM 和 UART 怎样形成逐字节证据。\\
+第三部分 & 内核怎样取得并保护机器 &
+磁盘装载、长模式、GDT/TSS/IDT、异常、页表、中断、驱动、Ring 3 和用户
+复制怎样形成可信控制边界。\\
+第四部分 & 多个程序怎样安全共享 CPU 与对象 &
+Process/Thread、调度、系统调用、类型化对象、fd、VFS、PID1、VMA、文件
+后备和 COW 怎样分离身份、执行与所有权。\\
+第五部分 & 状态怎样等待、组合并跨重启存活 &
+块映射、写回、FLUSH、journal、pipe、futex、deadline、signal、TTY、
+Shell、devfs、procfs 和 ABI 怎样组成完整用户系统。\\
+第六部分 & 怎样证明这一切属于同一版本 &
+需求、ADR、分层测试、故障注入、真实代码统计、教材、Git、Sites 和公网
+路由怎样形成 v2.0 可复现发布。\\
+\bottomrule
+\end{longtable}
+
+\section*{二、十六章的依赖关系}
+
+\begin{longtable}{L{0.08\linewidth}L{0.29\linewidth}L{0.24\linewidth}L{0.29\linewidth}}
+\toprule
+章 & 主题 & 主要前置 & 交付的关键事实 \\
+\midrule
+\endfirsthead
+\toprule
+章 & 主题 & 主要前置 & 交付的关键事实 \\
+\midrule
+\endhead
+1 & 机器、电气与 OS 职责 & 无 & 可取指机器与操作系统边界 \\
+2 & x86 历史与复位 & 第 1 章 & 复位状态、分段遗产、首条取指 \\
+3 & 平台 I/O 与实体硬件 & 第 1--2 章 & 地址译码、设备事务与真实载体 \\
+4 & 数据、寄存器与汇编 & 第 2 章 & 从位模式到指令状态转换 \\
+5 & 工具链、C++ 与 ROM & 第 4 章 & 从源码到复位可读字节 \\
+6 & UART、日志与测试 & 第 3--5 章 & 第一个有界观测通道与独立 oracle \\
+7 & Loader、ELF64 与长模式 & 第 2--6 章 & 从磁盘到 64 位 C++ 入口 \\
+8 & 异常与内存体系 & 第 7 章 & 可信失败现场、地址翻译与资源回收 \\
+9 & 中断、设备与用户边界 & 第 6--8 章 & 异步事件与 CPL3 隔离 \\
+10 & Process、Thread 与 syscall & 第 8--9 章 & 执行身份、调度现场与可信入口 \\
+11 & KernelObject、fd 与 VFS & 第 10 章 & 对象身份、引用和路径命名空间 \\
+12 & PID1、VM 与 fork & 第 10--11 章 & 程序映像、按需驻留与复制语义 \\
+13 & 文件系统与崩溃一致性 & 第 3、11--12 章 & 从用户写入到跨重启持久顺序 \\
+14 & Unix I/O、等待与作业控制 & 第 9--13 章 & 单赢家等待与可组合进程图 \\
+15 & 用户环境与 ABI v2 & 第 10--14 章 & 磁盘工具、设备名、观察面与线协议 \\
+16 & 工程治理与 v2.0 发布 & 全部前章 & 可复现、可审计、可继续演进的基线 \\
+\bottomrule
+\end{longtable}
+
+\section*{三、六条可独立选择的阅读路线}
+
+\topic{第一次系统学习。}
+按第 1--16 章顺序阅读。第一次不要追求记住每个端口值，而要持续回答：
+当前状态由谁建立、下一步依赖什么、失败会留下什么可观察事实。
+
+\topic{只想先把机器启动起来。}
+阅读第 1--7 章，再读第 8 章的入口、GDT/TSS/IDT 与页表前半部分。此路线能
+理解 ROM、Stage 1、ATA、ELF64、长模式和 C++ Kernel 入口，但还不能解释
+完整用户系统。
+
+\topic{重点学习 CPU、汇编和内存。}
+阅读第 2、4、7、8、9、10 章。把每一段汇编同时写成“输入寄存器、输出
+寄存器、内存副作用、RFLAGS、副作用发生前的失败条件”五列表。
+
+\topic{重点学习 Unix 内核对象。}
+阅读第 8--15 章，尤其区分 Process/Thread、fd/FileDescription、
+Path/Vnode/inode、VMA/PTE、pending/action/frame。名称相似不表示寿命相同。
+
+\topic{重点学习文件系统与持久性。}
+先读第 3 章 ATA 端口与第 11 章 VFS，再读第 13 章。始终区分用户可见、
+页缓存已接收、设备已接收、FLUSH 已完成和新实例可恢复五种状态。
+
+\topic{重点学习软件工程和验证。}
+先读第 6 章，再读每章的 failure box 与 evidence，最后完整阅读第 16 章和
+书末实验。不要用 QEMU 启动成功替代 ELF、盘面、随机模型或公网身份证据。
+
+\section*{四、五条端到端主线怎样穿越章节}
+
+\begin{longtable}{L{0.19\linewidth}L{0.20\linewidth}L{0.51\linewidth}}
+\toprule
+主线 & 章节 & 必须连续说出的状态变化 \\
+\midrule
+\endfirsthead
+\toprule
+主线 & 章节 & 必须连续说出的状态变化 \\
+\midrule
+\endhead
+上电到 PID1 &
+1--3、5--12 &
+电源稳定 \(\rightarrow\) 复位取指 \(\rightarrow\) ROM \(\rightarrow\)
+Stage 1 \(\rightarrow\) 长模式 \(\rightarrow\) Kernel \(\rightarrow\)
+页表/中断 \(\rightarrow\) rootfs \(\rightarrow\) ELF \(\rightarrow\) PID1。\\
+一次系统调用 &
+4、8--12、15 &
+用户寄存器 \(\rightarrow\) SYSCALL 或 INT 0x80 \(\rightarrow\) 可信内核栈
+\(\rightarrow\) UserContext \(\rightarrow\) 用户指针复制 \(\rightarrow\)
+对象操作 \(\rightarrow\) SYSRET/IRETQ。\\
+一次缺页与 COW &
+8、9、12 &
+VMA 意图 \(\rightarrow\) 不存在 PTE \(\rightarrow\) vector 14
+\(\rightarrow\) fault 分类 \(\rightarrow\) 零页/文件页/COW 私有化
+\(\rightarrow\) TLB 更新 \(\rightarrow\) 原指令重试。\\
+一个字节跨重启 &
+3、11--13 &
+用户缓冲 \(\rightarrow\) fd \(\rightarrow\) FileDescription
+\(\rightarrow\) vnode/inode \(\rightarrow\) page cache
+\(\rightarrow\) journal/ATA \(\rightarrow\) FLUSH \(\rightarrow\)
+新 QEMU 实例 mount/replay/read。\\
+Ctrl-Z 到 \code{fg} &
+3、9--10、14--15 &
+PS/2 make/break \(\rightarrow\) IRQ1 \(\rightarrow\) TTY 控制字符
+\(\rightarrow\) 前台 PGID \(\rightarrow\) signal pending
+\(\rightarrow\) Stopped wait event \(\rightarrow\) Shell 作业表
+\(\rightarrow\) SIGCONT 与终端交还。\\
+\bottomrule
+\end{longtable}
+
+\section*{五、每个概念都用七个问题验收}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 它解决了什么历史或工程问题？
+  \item 它属于 CPU 架构、平台硬件、内核对象、用户 ABI 还是持久盘面？
+  \item 哪个阶段、哪段代码或哪条硬件规则创建它？
+  \item 它拥有哪一份状态，明确不拥有什么？
+  \item 正常路径如何提交，失败以前哪些状态必须保持不变？
+  \item 单元、随机、产物和 QEMU 证据分别能证明什么、不能证明什么？
+  \item 若替换为另一个方案，必须新增哪些约束和反例？
+\end{enumerate}
+
+\section*{六、当前事实、历史基线和未来方向必须分栏}
+
+正文会同时出现 v0.x 的第一次实现、v1.x 的机制深化和 v2.0 冻结状态。版本
+较早不代表内容错误，而是它只能说明当时建立的最小契约。每次遇到容量、路径、
+结构大小或测试数量，应先确认它属于哪一个阶段。
+
+\begin{contractbox}
+当前产品事实以 v2.0 为准：项目版本 2.0.0，用户 ABI 2.0.0，rootfs 格式 3，
+三档内存为 64 MiB、256 MiB、64 GiB。系统仍是单 BSP、Kernel 不可抢占，
+没有网络、权限模型、动态链接、SMP、NVMe 或 USB；后续路线不能被写成已经
+完成的能力。
+\end{contractbox}

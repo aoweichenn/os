@@ -11,7 +11,7 @@ OS_BOOK_GRAPHIC_PATTERN = re.compile(
     r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}"
 )
 OS_BOOK_CHAPTER_PATTERN = re.compile(r"\\chapter\{")
-OS_BOOK_EXPECTED_CHAPTER_COUNT = 10
+OS_BOOK_EXPECTED_CHAPTER_COUNT = 16
 OS_BOOK_GRAPHIC_EXTENSIONS = (".pdf",)
 OS_BOOK_RASTER_IMAGE_PATTERN = re.compile(rb"/Subtype\s*/Image\b")
 OS_BOOK_UPSTREAM_SCHEMATIC = "reference_schematic.pdf"

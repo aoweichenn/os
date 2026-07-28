@@ -1,0 +1,12 @@
+\chapter{Process、Thread、调度与系统调用}
+
+\begin{keyidea}
+Process 拥有共享资源，Thread 承载处理器执行。抢占、阻塞、退出、FXSAVE
+现场、CpuLocal、SWAPGS 与双系统调用入口共同决定“谁正在运行、使用哪一份
+地址空间、从哪个可信栈进入内核，以及何时允许切换”。
+\end{keyidea}
+
+\input{topics/ch10-processes-files-system-calls}
+\input{deepening/ch10-processes-files-and-shell}
+\input{deepening/ch10-process-thread-v12}
+\input{deepening/ch10-cpu-local-syscall-v13}

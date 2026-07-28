@@ -1,0 +1,11 @@
+\chapter{x86 兼容历史、架构状态与复位取指}
+
+\begin{keyidea}
+x86-64 的复位地址、分段残留、独立 I/O 空间和多种执行模式都来自向后兼容。
+理解“旧问题留下了什么今天仍有效的硬件契约”，才能解释复位后为什么从
+\code{0xFFFFFFF0} 取指，以及第一条跳转为何不能随意改写。
+\end{keyidea}
+
+\input{topics/ch02-x86-history-architecture}
+\input{topics/ch02-x86-reset-model}
+\input{deepening/ch02-reset-platform-and-io}

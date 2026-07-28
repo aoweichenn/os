@@ -1,0 +1,12 @@
+\chapter{UART、日志时间与可反驳证据}
+
+\begin{keyidea}
+串口输出不是装饰性日志，而是 CPU 与异步设备共同推进的硬件协议。测试必须
+把阶段、时间、正常完成和失败原因编码成有界证据，并用独立 oracle 证明看到
+的现象确实来自生产路径。
+\end{keyidea}
+
+\input{topics/ch06-serial-driver}
+\input{topics/ch06-chip-register-map}
+\input{topics/ch06-testing-and-observability}
+\input{deepening/ch06-uart-testing-and-evidence}

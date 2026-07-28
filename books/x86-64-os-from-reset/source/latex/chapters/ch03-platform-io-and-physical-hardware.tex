@@ -1,0 +1,11 @@
+\chapter{平台地址、Port I/O 与实体载板}
+
+\begin{keyidea}
+CPU 发出的地址只是事务起点；平台译码决定它到达 RAM、ROM 还是设备。QEMU
+能够复现架构与设备协议，却不能替代实体载板上的供电、时钟、复位、差分对、
+参考平面和连接器方向。本章把两类证据明确分开后再重新连接。
+\end{keyidea}
+
+\input{topics/ch03-platform-memory-and-io}
+\input{deepening/ch03-port-io-wiring-atlas}
+\input{deepening/ch03-physical-carrier-case-study}

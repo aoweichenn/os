@@ -1,0 +1,10 @@
+\chapter{用户环境、ABI v2、devfs 与 procfs}
+
+\begin{keyidea}
+完整用户环境不是把 Shell 编进内核。磁盘 ELF、统一 fd、设备命名、动态
+系统快照和 32 个工具必须通过冻结 ABI 组合；项目版本、线协议版本和盘面
+版本又必须保持各自独立的兼容边界。
+\end{keyidea}
+
+\input{deepening/ch15-user-environment-v100}
+\input{deepening/ch15-abi-devfs-procfs-v118}

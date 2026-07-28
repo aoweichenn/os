@@ -1,0 +1,170 @@
+\chapter*{十六章推导实验与复习路线}
+\addcontentsline{toc}{chapter}{十六章推导实验与复习路线}
+\markboth{十六章推导实验与复习路线}{十六章推导实验与复习路线}
+
+\begin{keyidea}
+实验不是照抄命令得到相同输出。每章都用“解释、推导、观察、证伪”四个动作
+验收：先说清机制和所有权，再手算关键状态，随后取得真实证据，最后主动构造
+一个能够推翻错误实现的反例。
+\end{keyidea}
+
+\section*{使用规则}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 每个实验先记录当前 Git SHA、工具版本、QEMU RAM 档和随机种子。
+  \item 推导题不得先运行程序；先写预期寄存器、地址、对象或盘面状态。
+  \item 观察题必须区分宿主输出、来宾时间、目标二进制和源码静态事实。
+  \item 证伪题必须穿过生产分支；只修改测试期待值不算故障注入。
+  \item 完成后记录“本证据能证明什么、明确不能证明什么”。
+\end{enumerate}
+
+\section*{第 1 章：从电气条件建立可取指机器}
+
+\begin{itemize}
+  \item 解释：画出电源、时钟、复位、ROM、CPU、RAM、磁盘的不可交换依赖图。
+  \item 推导：给定电压、电流与转换效率，估算一条电源轨的输入功率和热损耗。
+  \item 观察：从全机图指出每条线属于能量、时钟/控制、事务还是软件所有权。
+  \item 证伪：构造“只有 RAM、没有非易失指令来源”的机器，说明为何无法冷启动。
+\end{itemize}
+
+\section*{第 2 章：复位现场与兼容历史}
+
+\begin{itemize}
+  \item 解释：用“旧问题、当时方案、今日痕迹”说明分段、A20 与独立 I/O 空间。
+  \item 推导：从 CS 隐藏 base 和 IP 推导 \code{0xFFFFFFF0}，再换算 ROM 文件偏移。
+  \item 观察：反汇编复位末端，核对近跳转位移与下一 IP。
+  \item 证伪：把近跳转错误替换为会刷新 CS 的远跳转，预测首个错误取指地址。
+\end{itemize}
+
+\section*{第 3 章：平台事务与实体硬件}
+
+\begin{itemize}
+  \item 解释：区分 CPU 物理地址、端口号、PCIe 配置空间和 PCB 网络名。
+  \item 推导：从 COM1、PIC、PIT、i8042、ATA 端口表写出一次事务的地址与宽度。
+  \item 观察：在 Mu 载板原理图中沿一条电源、一条差分对和一条低速控制线追踪。
+  \item 证伪：选择一个错误的访问宽度或差分对交换，说明软件与电气侧各自症状。
+\end{itemize}
+
+\section*{第 4 章：寄存器、标志和机器码}
+
+\begin{itemize}
+  \item 解释：区分寄存器别名、操作数宽度、地址宽度和指针宽度。
+  \item 推导：手算一条含 REX、ModR/M、SIB 和位移的指令编码与有效地址。
+  \item 观察：逐条记录地址、字节、反汇编、输入、输出和失败六列 trace。
+  \item 证伪：用 AX/EAX 写入差异、有符号/无符号分支差异构造两个边界错误。
+\end{itemize}
+
+\section*{第 5 章：工具链、C++ 与 ROM}
+
+\begin{itemize}
+  \item 解释：说明预处理、编译、汇编、链接、objcopy 各自新增或丢弃什么信息。
+  \item 推导：把链接地址、装载地址、文件偏移和符号值放入同一张表。
+  \item 观察：用 ELF/ROM 审计核对节、段、入口、复位向量和未解析符号。
+  \item 证伪：引入一个会生成宿主运行时辅助符号的 C++ 特性，要求产物门禁拒绝。
+\end{itemize}
+
+\section*{第 6 章：UART 与证据}
+
+\begin{itemize}
+  \item 解释：逐位说明 DLAB、LCR、LSR 和波特率除数的状态机作用。
+  \item 推导：计算 115200 8N1 一个字符的理论线时间与轮询预算。
+  \item 观察：对照来宾 PIT 时间与 QEMU \code{T+...ms}，说明二者为何不同。
+  \item 证伪：注入 THRE 永不就绪和设备错误，要求有限时间内得到不同根因。
+\end{itemize}
+
+\section*{第 7 章：Loader 与长模式}
+
+\begin{itemize}
+  \item 解释：按顺序列出 A20、GDT、CR4.PAE、EFER.LME、CR0.PG 与远转移。
+  \item 推导：给定 ELF 程序头，计算文件区间、内存区间、BSS 和入口合法性。
+  \item 观察：核对 Stage 1、Kernel 容器 CRC、PT\_LOAD W\^X 与 BootInfo 字段。
+  \item 证伪：分别破坏 header、checksum、ELF 和内存图，要求失败 marker 可区分。
+\end{itemize}
+
+\section*{第 8 章：异常与内存}
+
+\begin{itemize}
+  \item 解释：从 GDT/TSS/IDT 到统一异常帧复述 CPU 与汇编各压入什么。
+  \item 推导：拆解一个虚拟地址的 PML4/PDPT/PD/PT index 与页内偏移。
+  \item 观察：比较 not-present、用户权限和 Ring 0 写保护三种页故障现场。
+  \item 证伪：对 frame、页表、KVA、KernelStack 事务逐点注入失败并验证资源守恒。
+\end{itemize}
+
+\section*{第 9 章：中断、设备与 Ring 3}
+
+\begin{itemize}
+  \item 解释：区分 IRQ、vector、PIC ISR、EOI、RFLAGS.IF 和 scheduler 抢占状态。
+  \item 推导：从 PIC remap 与级联关系得到 IRQ0、IRQ1、IRQ14 的最终向量。
+  \item 观察：让 QMP 按键穿过 i8042、IRQ1、扫描码和用户消费路径。
+  \item 证伪：构造用户 \#UD、用户 \#PF、非法 ELF 和非法用户指针，要求只隔离目标。
+\end{itemize}
+
+\section*{第 10 章：Process、Thread 与 syscall}
+
+\begin{itemize}
+  \item 解释：画出 Process 资源容器与 Thread 执行实体的寿命和引用方向。
+  \item 推导：列出一次上下文切换修改的 CR3、RSP、TSS.RSP0、FXSAVE 与 CpuLocal。
+  \item 观察：比较 INT 0x80、SYSCALL/SYSRET 和 IRET 回退的相同/不同现场。
+  \item 证伪：构造 wake/timeout 竞争，要求同一 Thread 最多一次进入 Ready。
+\end{itemize}
+
+\section*{第 11 章：对象、fd 与 VFS}
+
+\begin{itemize}
+  \item 解释：区分 fd、FileTable entry、FileDescription、Vnode、inode 和 Path。
+  \item 推导：为 open、dup、fork、close、exec、exit 画引用计数变化表。
+  \item 观察：从相对路径跨 mount 解析到后端操作，再用 getcwd 反向构造路径。
+  \item 证伪：注入表扩容、路径组件、后端操作失败，要求不发布半个 fd 或 mount。
+\end{itemize}
+
+\section*{第 12 章：PID1、VM 与 fork}
+
+\begin{itemize}
+  \item 解释：区分父子关系、Zombie、wait/reap、exec 候选映像和唯一提交点。
+  \item 推导：给定 VMA/PTE/FileBacking/COW 引用，手算一次读缺页和写缺页。
+  \item 观察：执行磁盘 PID1、参数环境边界、按需 ELF、fork/exec/wait 整机路径。
+  \item 证伪：在 child 准备每一步失败，要求 parent PTE、fd、cwd 和旧映像不变。
+\end{itemize}
+
+\section*{第 13 章：持久化与崩溃}
+
+\begin{itemize}
+  \item 解释：区分 write、dirty、writeback、FLUSH、commit、checkpoint 和 replay。
+  \item 推导：从 direct/single/double/triple index 计算指定文件 offset 的块路径。
+  \item 观察：在同一磁盘上用两个新 QEMU 实例验证写入，再检查 fsck 与 journal。
+  \item 证伪：遍历 prepared、commit、checkpoint 前后的断电点，只接受完整旧/新状态。
+\end{itemize}
+
+\section*{第 14 章：Unix I/O、等待与作业}
+
+\begin{itemize}
+  \item 解释：把 pipe、futex、deadline、signal、TTY 都还原为条件与 WakeReason。
+  \item 推导：画出 16 级流水线的 fd 关闭矩阵和所有 Pipe 端点最终归零条件。
+  \item 观察：执行重定向、流水线、Thread join、timed wait、Ctrl-Z/fg/Ctrl-C。
+  \item 证伪：交换 signal、timeout、close、condition 的到达顺序，要求只有一个赢家。
+\end{itemize}
+
+\section*{第 15 章：用户环境与 ABI}
+
+\begin{itemize}
+  \item 解释：区分项目版本、ABI 版本、ELF 身份和 rootfs 盘面版本。
+  \item 推导：核对 syscall/error 范围、共享结构 size/alignment/offset 和 32 个工具。
+  \item 观察：从 Shell 运行 procfs 工具并检查 devfs/procfs 的不同所有权。
+  \item 证伪：破坏一个共享 offset、ELF 身份或工具 inode 唯一性，要求发布门禁拒绝。
+\end{itemize}
+
+\section*{第 16 章：v2.0 可复现发布}
+
+\begin{itemize}
+  \item 解释：画出主仓、目标产物、CTest、PDF、手机、web commit、Sites 与公网身份链。
+  \item 推导：说明 64 MiB、256 MiB、64 GiB 分别排除什么反例，为什么不能互换。
+  \item 观察：核对主仓 SHA、PDF SHA-256、网站清单、生产版本和关键 HTTP 路由。
+  \item 证伪：分别制造陈旧主仓、陈旧 PDF、未推送 web commit 和缺失新路由，要求闭环停止。
+\end{itemize}
+
+\section*{综合结业题}
+
+任选以下一条主线，在不看书的情况下画出硬件状态、汇编现场、C++ 对象、用户
+可见结果和测试证据：复位到 PID1、系统调用读文件、匿名缺页与 COW、一个
+字节跨重启、Ctrl-Z 到 \code{fg}。图中每个箭头都必须写出输入、输出、所有者、
+提交点和失败现象；无法标注的箭头就是下一轮应回读的章节。

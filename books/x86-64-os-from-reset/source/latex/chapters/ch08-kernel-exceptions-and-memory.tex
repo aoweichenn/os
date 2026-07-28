@@ -1,0 +1,10 @@
+\chapter{内核入口、异常与内存体系}
+
+\begin{keyidea}
+内存管理不只是“分配空间”。GDT、TSS、IDT 和异常帧先建立可信失败边界；
+物理页、页表、TLB、权限、KVA、动态栈、堆和类型缓存再把地址许诺、所有权、
+硬件翻译与回收组织成可验证生命周期。
+\end{keyidea}
+
+\input{topics/ch08-kernel-and-memory}
+\input{deepening/ch08-kernel-exceptions-and-memory}
