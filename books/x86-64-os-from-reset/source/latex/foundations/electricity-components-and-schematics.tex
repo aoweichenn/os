@@ -195,6 +195,20 @@ Q=CV,\qquad i=C\frac{\mathrm{d}v}{\mathrm{d}t},
 和能量缓冲。真实电容还有等效串联电阻、等效串联电感、漏电、容差和耐压。
 
 \topic{RC 充电与时间常数}
+先不看公式。电容刚接上电源时，两端电压还来不及改变，电阻两端几乎承受全部
+电源电压，因此初始充电电流最大。电容电压升高后，电阻两端剩余电压变小，
+充电电流随之下降。越接近最终电压，曲线越平缓。
+
+\begin{fromzerobox}
+可以把一次 RC 充电按四个时刻阅读：
+\begin{enumerate}[leftmargin=2.2em]
+  \item \(t=0\)：电容电压仍为 0，电流约为 \(V_{\mathrm{DD}}/R\)；
+  \item \(t=\tau\)：电压达到最终值约 \(63.2\%\)；
+  \item \(t=3\tau\)：电压达到约 \(95.0\%\)；
+  \item \(t=5\tau\)：电压超过 \(99\%\)，工程上常近似认为充电完成。
+\end{enumerate}
+\end{fromzerobox}
+
 电阻 \(R\) 给电容 \(C\) 充电时：
 
 \[
@@ -202,7 +216,38 @@ V_C(t)=V_{\mathrm{DD}}\left(1-e^{-t/(RC)}\right),
 \qquad \tau=RC.
 \]
 
-在 \(t=\tau\) 时约达到最终值的 \(63.2\%\)，\(5\tau\) 时超过 \(99\%\)。
+\begin{center}
+\begin{osgridtabular}{cL{0.65\linewidth}}
+符号 & 在这次充电中的含义 \\ \hline
+\(V_C(t)\) & 从开始充电算起，经过时间 \(t\) 后电容两端的电压 \\ \hline
+\(V_{\mathrm{DD}}\) & 经过足够长时间后趋近的电源电压 \\ \hline
+\(R\) & 充电路径中的电阻，越大则电流越小、充电越慢 \\ \hline
+\(C\) & 电容量，越大则同样电压变化需要搬运的电荷越多 \\ \hline
+\(\tau=RC\) & 时间常数，决定整条曲线沿时间轴伸展的尺度 \\ \hline
+\(e^{-t/(RC)}\) & 尚未完成部分随时间衰减的比例 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+\begin{center}
+\begin{tikzpicture}[x=1.6cm,y=4.2cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (5.6,0) node[right]{时间 \(t/\tau\)};
+  \draw[->,BookMuted] (0,0) -- (0,1.13) node[above]{\(V_C/V_{\mathrm{DD}}\)};
+  \draw[BookBlue,very thick,domain=0:5.2,samples=80]
+    plot (\x,{1-exp(-\x)});
+  \draw[dashed,BookRule] (0,1) -- (5.3,1);
+  \foreach \x/\label/\value in {
+    1/\(\tau\)/0.632,3/\(3\tau\)/0.950,5/\(5\tau\)/0.993} {
+    \draw[dashed,BookRule] (\x,0) -- (\x,\value);
+    \fill[BookTeal] (\x,\value) circle (0.035);
+    \node[below] at (\x,0) {\label};
+    \node[above left] at (\x,\value) {\(\value\)};
+  }
+  \node[BookBlue,align=left] at (3.65,0.45)
+    {开始上升快\\接近终值后变慢};
+\end{tikzpicture}
+\end{center}
+\diagramnote{纵轴按最终电压归一化。曲线显示相对速度，不代表某块真实板上的
+复位阈值；器件阈值和元件容差仍要单独代入。}
 
 \begin{center}
 \begin{circuitikz}
@@ -291,6 +336,9 @@ t=-\tau\ln(0.3)
 输入高时下管导通、输出被拉低。稳定状态下理想静态电流很小，切换时则要给
 节点电容充放电。第三章会从这个开关模型进入逻辑门。
 
+\deepunderstanding
+\input{foundations/expanded/ch03-logic-electrical-interface}
+
 \topic{电感、稳压器、晶振和连接器}
 \begin{osgridlongtable}{L{0.15\linewidth}L{0.27\linewidth}L{0.48\linewidth}}
 部件 & 基本作用 & 读图时必须检查 \\ \hline
@@ -304,6 +352,53 @@ Buck & 用开关、电感和电容高效降压 & 输入范围、开关节点、�
 连接器 & 让电源与信号跨机械边界连接 & 方向、pin 1、额定电流、插拔、屏蔽和防呆 \\ \hline
 保险丝/TVS & 限制过流或瞬态过压后果 & 触发条件、能量、钳位电压、位置与失效模式 \\ \hline
 \end{osgridlongtable}
+
+\topic{时钟稳定与复位释放不能颠倒}
+时钟把连续时间切成可重复观察的边沿。振荡器刚上电时，幅度和频率可能仍在
+建立；PLL 也需要时间锁定。复位电路在这段时间把关键触发器保持在已知状态，
+等电源与时钟满足要求后，再让状态机从统一起点开始推进。
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=0.72cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (13.7,0) node[right]{时间};
+  \foreach \y/\name in {5/VDD,3.6/CLK,2.2/PWRGOOD,0.8/RESET\_N} {
+    \draw[BookRule] (0,\y) -- (13.1,\y);
+    \node[left] at (0,\y) {\name};
+  }
+  \draw[BookBlue,thick] (0,5) -- (1,5) .. controls (2.2,5.05) and (3.2,5.48) ..
+    (4.2,5.48) -- (13.1,5.48);
+  \draw[BookAmber,thick] (0,3.6) -- (2.3,3.6);
+  \foreach \x in {2.3,3.1,...,12.7} {
+    \draw[BookAmber,thick] (\x,3.6) -- (\x,4.05) -- ({\x+0.4},4.05)
+      -- ({\x+0.4},3.6);
+  }
+  \draw[BookTeal,thick] (0,2.2) -- (4.7,2.2) -- (4.7,2.65) -- (13.1,2.65);
+  \draw[BookRed,thick] (0,0.8) -- (6.1,0.8) -- (6.1,1.25) -- (13.1,1.25);
+  \fill[BookAmber!10] (0.9,0.2) rectangle (4.7,5.9);
+  \node[BookAmber] at (2.8,5.75) {电源与时钟建立};
+  \draw[dashed,BookTeal] (4.7,0.2) -- (4.7,5.9);
+  \draw[dashed,BookRed] (6.1,0.2) -- (6.1,5.9);
+  \node[BookTeal,below,anchor=east] at (4.55,0.2) {电源有效};
+  \node[BookRed,below,anchor=west] at (6.25,0.2) {同步释放复位};
+\end{tikzpicture}
+\end{center}
+
+图里的先后关系比具体延时数字更重要：VDD 进入允许范围，参考时钟开始稳定，
+power-good 才有效；复位再经过规定保持时间和本时钟域同步后释放。真实平台
+还可能有多个电压域和多级复位，但每一级都应回答“由谁保持、依据什么释放、
+释放后第一个状态是什么”。
+
+\begin{workedexample}
+若复位同步器要求在 power-good 后至少观察 4 个
+\(\SI{25}{MHz}\) 时钟边沿，时钟周期为
+
+\[
+T=\frac{1}{25\times10^6}=\SI{40}{ns}.
+\]
+
+只计算同步等待就至少需要 \(4\times\SI{40}{ns}=\SI{160}{ns}\)。这还没有
+包含电源爬升、振荡器启动、PLL 锁定和 supervisor 自身延时。
+\end{workedexample}
 
 \section{原理图、PCB、测量与安全上电}
 
@@ -389,3 +484,25 @@ circuit board}回答“这些网络在真实板材上怎样用铜几何实现”
 这条链解释了为什么“ROM 中已经有正确代码”仍不足以启动。CPU 必须先处于
 允许的电压、温度、时钟和复位条件，取指接口才能产生有意义的事务。第四章会
 把 CPU 产生的事务继续连接到 ROM、RAM 与设备。
+
+\topic{QEMU 从哪一层接过这条物理链}
+\projectconnection
+本项目使用 QEMU TCG 模拟 x86-64 CPU 和选定设备。运行虚拟机时，不需要等待
+真实电源轨爬升，也不会因为某颗去耦电容焊错而产生纹波；QEMU 直接为软件提供
+一个已经能够执行架构状态转换的机器模型。
+
+\begin{osgridlongtable}{L{0.29\linewidth}L{0.27\linewidth}L{0.34\linewidth}}
+现象 & QEMU 是否提供 & 本书怎样处理 \\ \hline
+\endfirsthead
+现象 & QEMU 是否提供 & 本书怎样处理 \\ \hline
+\endhead
+CPU 复位寄存器与首条取指 & 提供架构可见结果 & 在 GDB、反汇编和 ROM 审计中检查 \\ \hline
+UART、ATA、PIC、PIT 寄存器行为 & 按所选机器模型提供 & 由自研驱动按设备接口访问 \\ \hline
+VDD 爬升、去耦和电源纹波 & 不模拟板级波形 & 用电路图和实体平台资料解释 \\ \hline
+晶振起振、PLL 锁定和抖动 & 不按真实模拟电路展开 & 把稳定时钟作为机器模型入口条件 \\ \hline
+焊点、走线阻抗、ESD 与散热 & 不提供 & 放入板级附录和实体硬件案例 \\ \hline
+\end{osgridlongtable}
+
+因此，QEMU 中的启动成功说明软件遵守了所选 CPU 与设备模型。它没有替我们
+写 ROM、引导程序或驱动，也没有验证实体主板的供电和信号完整性。第四章从
+这个模型提供的复位状态继续追踪第一条总线读取。

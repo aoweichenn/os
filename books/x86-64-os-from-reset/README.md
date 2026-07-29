@@ -10,11 +10,11 @@ x86-64 CPU 和外围硬件。书中的代码都来自仓库根目录 `source/` �
 可运行项目。
 
 前四章不要求读者学过电路或计算机组成。从 bit、byte 和地址开始，依次介绍
-电压、逻辑门、寄存器、CPU、RAM、ROM 和第一次取指。正文保留电路公式、
-时序、setup/hold、亚稳态、总线事务和项目连接；器件选型、PCB、复杂 CDC
-与 DRAM 训练等参考材料留在硬件深化附录。后续 31 个主线章节沿项目的实际
-执行顺序加入串口、磁盘、分页、异常、中断、进程、
-文件系统和用户环境。
+电压、引脚、逻辑门、触发器、寄存器、教学 CPU、RAM、ROM、总线和第一次
+取指。正文保留数制手算、电路公式、波形、setup/hold、基础 CDC、逐周期指令、
+总线事务和项目连接；测量误差、器件选型、板级工程、高级 CDC、DRAM 训练与
+现代平台等参考材料留在硬件深化附录。后续章节沿项目实际执行顺序加入串口、
+磁盘、分页、异常、中断、进程、文件系统和用户环境。
 
 ## 构建
 
@@ -37,8 +37,9 @@ make phone-export
 
 - `source/latex/main.tex`：全书入口与阅读顺序。
 - `source/latex/chapters/`：31 个主线章和 4 个硬件附录的入口文件。
-- `source/latex/foundations/mainline/`：第一次阅读需要的硬件主线。
-- `source/latex/foundations/`：公式、电路、时序和整机硬件深化。
+- `source/latex/foundations/`：前四章的完整硬件正文。
+- `source/latex/foundations/expanded/`：由正文或附录按依赖顺序引入的细化材料。
+- `source/latex/foundations/mainline/`：保留的简明素材，不直接作为成书入口。
 - `source/latex/topics/`：进入机制前需要的背景材料。
 - `source/latex/deepening/`：代码走读、状态变化和实验记录。
 - `source/latex/figures/`：原理图、结构图和连线图。

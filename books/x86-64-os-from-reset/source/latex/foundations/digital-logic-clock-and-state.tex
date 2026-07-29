@@ -239,6 +239,60 @@ ROM 还是设备。
     node[midway,below=5pt,BookTeal]{保持到下一有效边沿};
 \end{pdfdiagram}
 
+\begin{fromzerobox}
+这里的三个词可以先按电路动作理解：
+\begin{itemize}[leftmargin=2.2em]
+  \item \textbf{输入 \(D\)：}触发器外部正在提供、等待被观察的电压状态；
+  \item \textbf{采样：}在有效时钟边沿附近判断 \(D\) 属于可靠低还是可靠高；
+  \item \textbf{状态 \(Q\)：}边沿过去后，由触发器内部交叉反馈节点继续维持的结果。
+\end{itemize}
+普通组合门的输出随当前输入变化。触发器增加了反馈和受时钟控制的传输路径，
+所以外部 \(D\) 改变后，\(Q\) 仍能保持上一次采样结果。保存状态依赖晶体管
+与内部节点电荷持续获得供电；它不是把一个抽象数字放进没有物理载体的盒子。
+\end{fromzerobox}
+
+\begin{center}
+\begin{tikzpicture}[x=0.82cm,y=0.78cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (15.0,0) node[right]{时间};
+  \foreach \y/\name in {5/CLK,3.2/D,1.4/Q} {
+    \draw[BookRule] (0,\y) -- (14.4,\y);
+    \node[left] at (0,\y) {\name};
+  }
+
+  \draw[BookBlue,thick]
+    (0,5) -- (2,5) -- (2,5.5) -- (4,5.5) -- (4,5)
+    -- (7,5) -- (7,5.5) -- (9,5.5) -- (9,5)
+    -- (12,5) -- (12,5.5) -- (14,5.5) -- (14,5);
+  \draw[BookTeal,thick]
+    (0,3.2) -- (1.2,3.2) -- (1.2,3.7) -- (5.4,3.7)
+    -- (5.4,3.2) -- (10.2,3.2) -- (10.2,3.7) -- (14.4,3.7);
+  \draw[BookAmber,very thick]
+    (0,1.4) -- (2.18,1.4) -- (2.18,1.9)
+    -- (7.18,1.9) -- (7.18,1.4)
+    -- (12.18,1.4) -- (12.18,1.9) -- (14.4,1.9);
+
+  \foreach \x/\sample in {2/1,7/0,12/1} {
+    \draw[dashed,BookRed] (\x,0.45) -- (\x,5.9);
+    \draw[->,BookRed,thick] (\x,0.7) -- (\x,1.25);
+    \node[BookRed,below] at (\x,0.45) {采样 \sample};
+  }
+  \draw[<->,BookMuted] (2,2.45) -- (2.18,2.45)
+    node[midway,above,font=\scriptsize]{\(t_{cq}\)};
+\end{tikzpicture}
+\end{center}
+\diagramnote{D 可以在两个上升沿之间变化，Q 仍保持旧值；每个上升沿读取一次
+D，Q 再经过 clock-to-Q 延迟更新。竖虚线表示理想采样时刻，真实器件还要求
+边沿前后的建立与保持窗口。}
+
+\begin{center}
+\begin{osgridtabular}{cccc}
+上升沿 & 边沿前的 \(D\) & 边沿后的 \(Q\) & 直到何时保持 \\ \hline
+第 1 个 & 1 & 1 & 第 2 个上升沿 \\ \hline
+第 2 个 & 0 & 0 & 第 3 个上升沿 \\ \hline
+第 3 个 & 1 & 1 & 下一有效边沿 \\ \hline
+\end{osgridtabular}
+\end{center}
+
 \topic{建立时间、保持时间与 clock-to-Q}
 数据必须在采样边沿前稳定至少 \(t_{setup}\)，边沿后继续稳定至少
 \(t_{hold}\)。采样后输出还需 \(t_{cq}\) 才稳定。两个寄存器之间的组合路径
@@ -273,6 +327,9 @@ T_{\mathrm{clk}}
 逻辑的概率降得足够低；多 bit 总线则需要握手、FIFO 或编码协议，不能让每一位
 独立同步后就假定组合仍一致。
 
+\deepunderstanding
+\input{foundations/expanded/ch03-sequential-clock-and-cdc}
+
 \section{寄存器、状态机与算术逻辑单元}
 
 \projectconnection
@@ -287,6 +344,65 @@ T_{\mathrm{clk}}
   \draw[os arrow] (reg) -- (output);
   \draw[os arrow,bend left=35] (reg.north) to node[above]{current state} (next.north);
 \end{pdfdiagram}
+
+\topic{四个 D 触发器怎样组成一个 4-bit 寄存器}
+把四个 D 触发器接到同一个时钟，每个触发器负责一个 bit。装载使能无效时，
+前面的 MUX 把旧 \(Q\) 送回 \(D\)，寄存器保持；装载使能有效时，MUX 选择
+新输入，四个 bit 在同一边沿一起更新。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \foreach \i in {0,...,3} {
+    \node[draw=BookBlue,fill=BookCodeBg,minimum width=18mm,minimum height=13mm]
+      (ff\i) at ({\i*3.0},0) {DFF \i};
+    \node[above=11mm of ff\i] (d\i) {\(D_\i\)};
+    \node[below=11mm of ff\i] (q\i) {\(Q_\i\)};
+    \draw[os arrow] (d\i) -- (ff\i);
+    \draw[os arrow] (ff\i) -- (q\i);
+  }
+  \draw[BookTeal,very thick] (-1.1,-1.85) -- (10.1,-1.85);
+  \node[left,BookTeal] at (-1.1,-1.85) {CLK};
+  \foreach \i in {0,...,3}
+    \draw[os arrow,BookTeal] ({\i*3.0},-1.85) -- (ff\i.south);
+  \draw[decorate,decoration={brace,amplitude=5pt}]
+    (-1.0,1.45) -- (10.0,1.45)
+    node[midway,above=6pt]{并行输入 \(\texttt{D[3:0]}\)};
+\end{tikzpicture}
+\end{center}
+
+8 个触发器得到 8-bit 寄存器，64 个得到 64-bit 寄存器。真实寄存器文件还要
+增加地址译码、多路读端口、写使能和旁路，但“每一位都有状态载体，并在规定
+边沿提交”这层关系没有改变。
+
+\topic{程序计数器是在寄存器前加入下一地址选择}
+程序计数器 PC 需要保存下一次取指地址。组合逻辑先形成候选值：顺序执行时
+选择 \(PC+\text{指令长度}\)，跳转时选择目标地址，复位时选择固定入口。
+时钟边沿只把被选中的一个候选写回 PC。
+
+\begin{pdfdiagram}
+  \node[os state] (old) {当前 PC};
+  \node[os block,right=22mm of old,yshift=11mm] (inc) {加法器\\PC + 长度};
+  \node[os block,right=22mm of old,yshift=-11mm] (target) {跳转/复位\\目标地址};
+  \node[os block,right=28mm of old] (mux) {下一 PC MUX};
+  \node[os state,right=24mm of mux] (pc) {PC 寄存器\\边沿更新};
+  \draw[os bus] (old) -- (inc);
+  \draw[os bus] (old) -- (target);
+  \draw[os bus] (inc) -- (mux);
+  \draw[os bus] (target) -- (mux);
+  \draw[os bus] (mux) -- (pc);
+\end{pdfdiagram}
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.28\linewidth}L{0.40\linewidth}}
+控制情况 & 写入 PC 的值 & 下一次取指会发生什么 \\ \hline
+\endfirsthead
+控制情况 & 写入 PC 的值 & 下一次取指会发生什么 \\ \hline
+\endhead
+复位有效 & 固定复位入口 & 从平台规定地址读取第一条指令 \\ \hline
+普通顺序指令 & 当前 PC + 指令长度 & 读取紧随其后的指令 \\ \hline
+无条件跳转 & 编码给出的目标地址 & 改从目标位置继续 \\ \hline
+条件跳转成立 & 目标地址 & 选择分支路径 \\ \hline
+条件跳转不成立 & 当前 PC + 指令长度 & 继续顺序路径 \\ \hline
+\end{osgridlongtable}
 
 \term{有限状态机}{finite-state machine, FSM}由有限状态集合、输入、转换规则和
 输出组成。例如一个极简内存读控制器可有：
@@ -340,3 +456,26 @@ overflow 等条件。
 ALU 本身不会决定“下一条执行什么”。程序计数器、寄存器文件、指令译码、
 访存接口和控制状态机共同组成处理器。下一章把这些积木连接成一台能够取指的
 完整计算机。
+
+\topic{项目中的寄存器都能追溯到这些状态单元}
+\projectconnection
+x86 的 RIP 保存控制流位置，RFLAGS 保存算术和控制条件，CR0 等控制寄存器
+保存处理器工作模式。设备也用寄存器暴露内部状态：UART Line Status Register
+的 THRE 位表示发送保持寄存器是否为空；ATA Status Register 的 BSY 与 DRQ
+位表示设备正在忙还是已有数据可传。
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.24\linewidth}L{0.42\linewidth}}
+软件看到的名称 & 保存的状态 & 项目为什么读取或修改它 \\ \hline
+\endfirsthead
+软件看到的名称 & 保存的状态 & 项目为什么读取或修改它 \\ \hline
+\endhead
+RIP/IP & 下一指令位置 & 复位跳转、函数调用、中断返回 \\ \hline
+RFLAGS & 运算条件和控制位 & 条件跳转、进位检查、中断使能 \\ \hline
+UART THRE & 发送保持寄存器为空 & 写字符前确认设备能够接收 \\ \hline
+ATA BSY & 设备仍在处理命令 & 避免过早读取数据端口 \\ \hline
+ATA DRQ & 数据阶段已经就绪 & 决定何时搬运扇区字 \\ \hline
+\end{osgridlongtable}
+
+“状态寄存器”不保证每一位都由一个简单、独立、对软件可见的 D 触发器实现。
+芯片内部可能有编码状态机、同步器和组合逻辑。架构或设备手册承诺的是读写后
+能观察到的位语义；本章的电路模型负责解释这种承诺为何能够保存并跨周期存在。

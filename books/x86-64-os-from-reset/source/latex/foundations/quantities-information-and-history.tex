@@ -21,6 +21,28 @@ bit 数 & 状态组合数 & 能够使用的无符号编号 \\ \hline
 模式；它可以表示 0--255，也可以按另一套规则表示字符、指令或带符号整数。
 模式本身没有自动携带含义，读它的软件或硬件规则决定怎样解释。
 
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \i/\index/\bit in {
+    0/7/1,1/6/0,2/5/1,3/4/1,4/3/0,5/2/1,6/1/0,7/0/0} {
+    \draw[BookRule,fill=BookCodeBg] ({\i*1.25},0) rectangle ++(1.25,0.82);
+    \node at ({\i*1.25+0.625},0.41) {\bit};
+    \node[below] at ({\i*1.25+0.625},0) {bit \index};
+  }
+  \draw[decorate,decoration={brace,amplitude=5pt}]
+    (0,1.05) -- (10,1.05)
+    node[midway,above=6pt]{8 bit = 1 byte = \texttt{10110100}};
+\end{tikzpicture}
+\end{center}
+\diagramnote{图从左到右写最高位到最低位；bit 编号通常从最右侧最低有效位
+开始为 0。纸面顺序、编号方向和内存地址方向是三个需要分别说明的约定。}
+
+\term{word}{字或机器字}不是跨平台固定宽度。x86 术语中的 word 是 16 bit，
+doubleword 是 32 bit，quadword 是 64 bit；其他体系可能把自然寄存器宽度称为
+word。项目 C++ 接口因此使用 \code{uint8\_t}、\code{uint16\_t}、
+\code{uint32\_t} 和 \code{uint64\_t} 一类显式宽度类型，不让“一个
+\code{int} 到底多宽”混入磁盘格式、寄存器或启动协议。
+
 纸上写 0 和 1 很容易，真实芯片却只能产生电压、电流、磁性或电荷等物理状态。
 为了判断某根引脚是否真的满足“逻辑 1”的条件，我们必须说明测量哪两个点、
 使用什么单位、仪器怎样连接以及何时采样。于是，从 bit 继续走向电路以前，
@@ -124,6 +146,35 @@ pico & p & \(10^{-12}\) & \(\SI{22}{pF}\) \\ \hline
 十六进制并不会改变电路中的 bit，只是让人更容易观察边界、掩码和地址。
 
 \begin{workedexample}
+把 \(\texttt{0b10110110}\) 从右向左标出位权：
+
+\begin{center}
+\begin{osgridtabular}{ccccccccc}
+bit & 7 & 6 & 5 & 4 & 3 & 2 & 1 & 0 \\ \hline
+值 & 1 & 0 & 1 & 1 & 0 & 1 & 1 & 0 \\ \hline
+位权 & 128 & 64 & 32 & 16 & 8 & 4 & 2 & 1 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+置 1 的位权相加得到
+
+\[
+128+32+16+4+2=182.
+\]
+
+再从中间分成两组四位：
+
+\[
+\texttt{1011}\rightarrow\texttt{B},\qquad
+\texttt{0110}\rightarrow\texttt{6}.
+\]
+
+所以同一组 8 bit 可写成
+\(\texttt{0b10110110}=\texttt{0xB6}=182\)。转换时没有改变数据，只改变了
+人类书写方法。
+\end{workedexample}
+
+\begin{workedexample}
 将 \(\texttt{0x2D7}\) 转换为十进制和二进制：
 
 \[
@@ -144,6 +195,138 @@ pico & p & \(10^{-12}\) & \(\SI{22}{pF}\) \\ \hline
 \end{workedexample}
 
 \input{foundations/expanded/ch01-bits-integers-and-layout}
+
+\topic{地址给每个 byte 一个可以计算的编号}
+先想象一排可以各自保存一个 byte 的格子。若格子从 0 开始编号，编号就是
+\term{地址}{用于选择一个存储位置的数值}。读取地址 3 的含义是“选择编号
+为 3 的格子并取回其中 8 bit”，不是“读取值为 3 的格子”。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \i/\value in {
+    0/\texttt{4F},1/\texttt{53},2/\texttt{21},3/\texttt{00},
+    4/\texttt{78},5/\texttt{56},6/\texttt{34},7/\texttt{12}} {
+    \node[draw=BookBlue,fill=BookCodeBg,minimum width=16mm,minimum height=9mm]
+      (m\i) at ({\i*1.65},0) {\value};
+    \node[below=2mm of m\i] {地址 \i};
+  }
+  \draw[os arrow,BookTeal] (4.95,-1.25) -- (m3.south);
+  \node[BookTeal,below] at (4.95,-1.25) {地址选择格子，格子返回 \texttt{00}};
+\end{tikzpicture}
+\end{center}
+
+若地址有 \(n\) bit，就能写出 \(2^n\) 个不同编号。每个地址选择 1 byte 时，
+最大直接覆盖容量为 \(2^n\) byte：
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.25\linewidth}L{0.24\linewidth}L{0.23\linewidth}}
+地址宽度 & 地址范围 & 格子数量 & byte 容量 \\ \hline
+\endfirsthead
+地址宽度 & 地址范围 & 格子数量 & byte 容量 \\ \hline
+\endhead
+4 bit & \(\texttt{0x0}\)--\(\texttt{0xF}\) & \(2^4=16\) & 16 B \\ \hline
+10 bit & 0--1023 & \(2^{10}\) & 1 KiB \\ \hline
+16 bit & \(\texttt{0x0000}\)--\(\texttt{0xFFFF}\) & \(2^{16}\) & 64 KiB \\ \hline
+20 bit & \(\texttt{0x00000}\)--\(\texttt{0xFFFFF}\) & \(2^{20}\) & 1 MiB \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+20 根二值地址线分别取 0 或 1，共有 \(2^{20}=1\,048\,576\) 种组合。若每个
+组合选择一个 byte，容量为
+
+\[
+1\,048\,576\ \mathrm{B}
+=1024\ \mathrm{KiB}
+=1\ \mathrm{MiB}.
+\]
+
+最后一个地址是 \(\texttt{0xFFFFF}\)，因为编号从 0 开始；容量是
+\(\texttt{0x100000}\) byte。把“最后地址”和“容量”写成同一个数会产生
+典型的差一错误。
+\end{workedexample}
+
+\topic{内存转储要同时读地址、byte 和解释宽度}
+\term{内存转储}{memory dump}通常按地址显示原始 byte。下面四个 byte 从
+\(\texttt{0x1000}\) 开始：
+
+\begin{center}
+\begin{osgridtabular}{ccccc}
+地址 & \(\texttt{0x1000}\) & \(\texttt{0x1001}\) &
+  \(\texttt{0x1002}\) & \(\texttt{0x1003}\) \\ \hline
+byte & \(\texttt{34}\) & \(\texttt{12}\) &
+  \(\texttt{00}\) & \(\texttt{80}\) \\ \hline
+\end{osgridtabular}
+\end{center}
+
+若只读 16 bit 并采用 x86 little-endian，前两个 byte 得到
+\(\texttt{0x1234}\)。若从同一地址读 32 bit，则得到
+\(\texttt{0x80001234}\)。读取宽度不同，纳入解释的 byte 数也不同。
+
+\begin{workedexample}
+把 \(\texttt{0x1234}\) 写入地址 \(\texttt{0x2000}\) 的 16-bit 位置。
+数值可拆成：
+
+\[
+\text{低 byte}=\texttt{0x34},\qquad
+\text{高 byte}=\texttt{0x12}.
+\]
+
+x86 把低 byte 放在低地址：
+
+\[
+M[\texttt{0x2000}]=\texttt{34},\qquad
+M[\texttt{0x2001}]=\texttt{12}.
+\]
+
+调试器显示“\texttt{34 12}”时没有把数字写反；它正在按地址递增显示 byte。
+\end{workedexample}
+
+\topic{从 ROM 大小算出复位向量的文件偏移}
+\projectconnection
+项目固件镜像长 128 KiB：
+
+\[
+128\ \mathrm{KiB}=128\times1024
+=131072
+=\texttt{0x20000}\ \mathrm{B}.
+\]
+
+镜像映射到 4 GiB 地址空间顶端，因此物理基址为
+
+\[
+\texttt{0x100000000}-\texttt{0x20000}
+=\texttt{0xFFFE0000}.
+\]
+
+复位地址 \(\texttt{0xFFFFFFF0}\) 在镜像中的文件偏移为
+
+\[
+\texttt{0xFFFFFFF0}-\texttt{0xFFFE0000}
+=\texttt{0x1FFF0}.
+\]
+
+这个偏移正好是 128 KiB 文件最后 16 byte 的开头。项目在这里放置
+\texttt{E9 0D F0}。第一个 byte \texttt{E9} 是近相对跳转操作码，后两个
+byte 按 little-endian 组成 16-bit 位移 \(\texttt{0xF00D}\)。
+
+把它按 16-bit 补码解释为负数：
+
+\[
+\texttt{0xF00D}-\texttt{0x10000}=-\texttt{0x0FF3}.
+\]
+
+CPU 已经取完 3 byte 时，下一 IP 是 \(\texttt{0xFFF3}\)。加上位移：
+
+\[
+\texttt{0xFFF3}-\texttt{0x0FF3}=\texttt{0xF000}.
+\]
+
+第 7 章再解释 x86 复位时的 CS 隐藏基址和 near jump 语义；此处只需看到：
+地址、文件偏移、字节序和补码四件事已经足以手算真实项目的三字节入口。
+
+\handsonexperiment
+构建固件后，可用项目审计脚本检查文件长度、偏移
+\texttt{0x1FFF0} 处的三个 byte 和链接区间。不要先相信汇编源文件；最终由
+CPU 读取的是链接、抽取并填充后的 ROM 字节。
 
 \section{状态编码、可靠传输与性能量}
 

@@ -1,4 +1,4 @@
-\section{触发器、时钟与跨时钟域}
+\topic{从 SR 锁存器逐步走到边沿触发器}
 
 下面的低有效 NAND 型 SR latch 用
 \(\overline{S}\) 置位、\(\overline{R}\) 复位。两输入都为 1 时保持；把两者
@@ -107,7 +107,7 @@ clock uncertainty & 设计中合并考虑的时序不确定量 & 时序分析中
 时钟不是普通数据线。随意用组合门对时钟做 AND/OR 可能产生窄脉冲或额外
 偏斜；时钟门控通常使用专用单元，在安全相位锁存 enable。
 
-\section{同步器与跨时钟域传输}
+\topic{异步信号进入另一个时钟域时会发生什么}
 \begin{center}
 \begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
   \node[os hardware] (async) at (0,2) {异步输入};
@@ -208,21 +208,27 @@ Error & clear=1 & Idle & 清错误 \\ \hline
 \end{osgridlongtable}
 
 \begin{center}
-\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex,node distance=18mm and 22mm]
-  \node[os state] (idle) {Idle};
-  \node[os state,right=of idle] (address) {Address};
-  \node[os state,right=of address] (wait) {Wait};
-  \node[os state,above right=of wait] (complete) {Complete};
-  \node[os state,below right=of wait] (error) {Error};
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os state] (idle) at (0,0) {Idle};
+  \node[os state] (address) at (3.4,0) {Address};
+  \node[os state] (wait) at (6.8,0) {Wait};
+  \node[os state,minimum width=28mm] (complete) at (10.5,1.45)
+    {Complete\\done 后回 Idle};
+  \node[os state,minimum width=28mm] (error) at (10.5,-1.45)
+    {Error\\clear 后回 Idle};
   \draw[os arrow] (idle) -- node[above]{request} (address);
-  \draw[os arrow] (address) -- node[above]{发出事务} (wait);
-  \draw[os arrow] (wait) -- node[above,sloped]{response \(\land\lnot error\)} (complete);
-  \draw[os arrow] (wait) -- node[below,sloped]{response \(\land error\)} (error);
-  \draw[os arrow,bend left=25] (complete) to node[above]{done} (idle);
-  \draw[os arrow,bend right=25] (error) to node[below]{clear} (idle);
-  \draw[os arrow,loop below] (wait) to node[below]{\(\lnot response\)} (wait);
+  \draw[os arrow] (address) -- node[above]{发出 read} (wait);
+  \draw[os arrow] (wait) -- node[above,sloped]
+    {response \(\land\lnot error\)} (complete);
+  \draw[os arrow] (wait) -- node[below,sloped]
+    {response \(\land error\)} (error);
+  \draw[os arrow,loop below,min distance=11mm]
+    (wait) to node[below]{\(\lnot response\)} (wait);
 \end{tikzpicture}
 \end{center}
+\diagramnote{主路径从左向右推进。Complete 在发出 done 后回到 Idle；Error
+保持错误，直到 clear 后回到 Idle。返回动作写进节点，避免两条长回边遮住
+response 条件。}
 
 非法状态必须有策略：回到 reset/idle、保持并报告错误，或触发安全停机。只写
 “正常情况下永远不会进入”不能替代恢复设计与断言。

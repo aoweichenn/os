@@ -103,37 +103,125 @@
   \item 某些 ISA 中的权限或扩展前缀。
 \end{itemize}
 
-为建立直觉，定义一个\textbf{纯教学、不是 x86} 的 16-bit 定长编码：
-
-\[
-\underbrace{15\ldots12}_{opcode}
-\ \underbrace{11\ldots8}_{rd}
-\ \underbrace{7\ldots4}_{rs}
-\ \underbrace{3\ldots0}_{imm4}.
-\]
+为建立直觉，定义一套\textbf{纯教学、不是 x86} 的 16-bit 定长指令。所有
+指令都占 2 byte，最高 4 bit 是 opcode，其余字段随指令种类解释：
 
 \begin{center}
 \begin{tikzpicture}[font=\footnotesize\sffamily]
   \foreach \x/\w/\colorname/\title/\bits in {
     0/3.2/BookBlue/opcode/\(15..12\),
-    3.2/3.2/BookTeal/rd/\(11..8\),
-    6.4/3.2/BookAmber/rs/\(7..4\),
-    9.6/3.2/BookMuted/imm4/\(3..0\)} {
+    3.2/3.2/BookTeal/字段 A/\(11..8\),
+    6.4/6.4/BookAmber/字段 B/\(7..0\)} {
     \fill[\colorname!18] (\x,0) rectangle ++(\w,1.15);
     \draw[\colorname,thick] (\x,0) rectangle ++(\w,1.15);
-    \node at (\x+1.6,0.68) {\title};
-    \node[below] at (\x+1.6,0) {\bits};
+    \node at (\x+\w/2,0.68) {\title};
+    \node[below] at (\x+\w/2,0) {\bits};
   }
 \end{tikzpicture}
 \end{center}
 
-若 opcode \(\texttt{0x1}\) 表示
-\(\mathrm{ADDI}\ rd,rs,imm4\)，编码 \(\texttt{0x1325}\) 可解释为
-“读取 R2，把立即数 5 相加，提交到 R3”。真实 x86 指令为可变长度，字段和
-前缀复杂得多；教学编码只用于理解“byte 如何控制数据通路”。
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.19\linewidth}L{0.25\linewidth}L{0.33\linewidth}}
+opcode & 汇编写法 & 字段解释 & 执行动作 \\ \hline
+\endfirsthead
+opcode & 汇编写法 & 字段解释 & 执行动作 \\ \hline
+\endhead
+\texttt{0x1} & \code{LOAD Rd, imm8} & A=Rd，B=8-bit 立即数 & \(R_d\leftarrow imm8\) \\ \hline
+\texttt{0x2} & \code{ADD Rd, Rs} & A=Rd，B 高 4 bit=Rs & \(R_d\leftarrow R_d+R_s\) \\ \hline
+\texttt{0x3} & \code{STORE [addr8], Rs} & A=Rs，B=byte 地址 & \(M[addr8]\leftarrow R_s\) \\ \hline
+\texttt{0x4} & \code{JMP addr12} & 低 12 bit 合成目标 & \(PC\leftarrow addr12\) \\ \hline
+\texttt{0x0} & \code{HALT} & 其余字段必须为 0 & 停在 Halt 状态 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+\code{LOAD R0, 5} 的字段为 opcode=\texttt{1}、Rd=\texttt{0}、
+imm8=\texttt{05}，16-bit 指令字是 \texttt{0x1005}。若 ROM 也采用
+little-endian byte 排列，低地址先放 \texttt{05}，高地址再放
+\texttt{10}。汇编写法、指令字和 ROM 中的 byte 顺序属于三个相邻层次。
+\end{workedexample}
+
+真实 x86 指令是可变长度编码，前缀、操作码、ModR/M、SIB、位移和立即数字段
+会按指令变化。教学编码只用于把“哪几个 bit 控制哪条数据通路”看清楚。
+
+\topic{让五条教学指令在 ROM 中跑一圈}
+把程序从地址 \(\texttt{0x10}\) 开始排列：
+
+\begin{center}
+\begin{osgridtabular}{cL{0.29\linewidth}cL{0.29\linewidth}}
+地址 & 汇编 & 指令字 & ROM 中两个 byte \\ \hline
+\texttt{0x10} & \code{LOAD R0, 5} & \texttt{0x1005} & \texttt{05 10} \\ \hline
+\texttt{0x12} & \code{LOAD R1, 3} & \texttt{0x1103} & \texttt{03 11} \\ \hline
+\texttt{0x14} & \code{ADD R0, R1} & \texttt{0x2010} & \texttt{10 20} \\ \hline
+\texttt{0x16} & \code{STORE [0x20], R0} & \texttt{0x3020} & \texttt{20 30} \\ \hline
+\texttt{0x18} & \code{JMP 0x10} & \texttt{0x4010} & \texttt{10 40} \\ \hline
+\end{osgridtabular}
+\end{center}
+
+复位先令 \(PC=\texttt{0x10}\)，R0、R1 和 RAM
+\(\texttt{0x20}\) 均为 0。第一条 \code{LOAD} 可以拆成五拍：
+
+\begin{osgridlongtable}{L{0.12\linewidth}L{0.20\linewidth}L{0.35\linewidth}L{0.23\linewidth}}
+周期 & 控制状态 & 发生的动作 & 周期结束后的关键状态 \\ \hline
+\endfirsthead
+周期 & 控制状态 & 发生的动作 & 周期结束后的关键状态 \\ \hline
+\endhead
+1 & FetchAddr & PC 把 \texttt{0x10} 送到地址总线，发出读请求 & ROM 开始选择指令 byte \\ \hline
+2 & FetchData & ROM 返回 \texttt{05 10}，IR 锁存 \texttt{0x1005} & \(PC=\texttt{0x12}\) \\ \hline
+3 & Decode & 译码 opcode=\texttt{1}、Rd=R0、imm8=\texttt{5} & 控制器选择立即数输入 \\ \hline
+4 & Execute & 数据通路形成候选值 5 & R0 仍为 0 \\ \hline
+5 & Commit & R0 写使能在边沿生效 & \(R0=5\) \\ \hline
+\end{osgridlongtable}
+
+第二条 \code{LOAD} 以同样步骤得到 \(R1=3\)。第三条
+\code{ADD R0,R1} 读取两个寄存器，由 ALU 算出 8，再把结果写回 R0。
+第四条把 8 写到 RAM 地址 \(\texttt{0x20}\)。第五条不采用顺序
+\(\texttt{0x1A}\)，而把 PC 改回 \(\texttt{0x10}\)。
+
+\begin{osgridlongtable}{L{0.14\linewidth}L{0.25\linewidth}L{0.15\linewidth}L{0.15\linewidth}L{0.21\linewidth}}
+指令完成后 & 刚完成的指令 & R0 & R1 & RAM[\texttt{0x20}] / PC \\ \hline
+\endfirsthead
+指令完成后 & 刚完成的指令 & R0 & R1 & RAM[\texttt{0x20}] / PC \\ \hline
+\endhead
+复位 & 尚未取指 & 0 & 0 & 0 / \texttt{0x10} \\ \hline
+第 1 条 & \code{LOAD R0,5} & 5 & 0 & 0 / \texttt{0x12} \\ \hline
+第 2 条 & \code{LOAD R1,3} & 5 & 3 & 0 / \texttt{0x14} \\ \hline
+第 3 条 & \code{ADD R0,R1} & 8 & 3 & 0 / \texttt{0x16} \\ \hline
+第 4 条 & \code{STORE [0x20],R0} & 8 & 3 & 8 / \texttt{0x18} \\ \hline
+第 5 条 & \code{JMP 0x10} & 8 & 3 & 8 / \texttt{0x10} \\ \hline
+\end{osgridlongtable}
+
+\handsonexperiment
+在纸上执行第二轮。注意第一条会把 R0 从 8 重新写成 5，所以每一轮写入
+\(\texttt{0x20}\) 的仍是 8，而不是 16。只看最后一条 \code{JMP} 无法猜出
+程序效果；必须按 PC、IR、寄存器和内存的状态变化逐条跟踪。
 
 \topic{逐拍跟踪一条指令，才能知道每个部件何时有用}
 设教学 CPU 每个状态占一个时钟周期：
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os state] (fa) at (0,2.5) {FetchAddr};
+  \node[os state] (fd) at (3.0,2.5) {FetchData};
+  \node[os state] (decode) at (6.0,2.5) {Decode};
+  \node[os state] (execute) at (9.0,2.5) {Execute};
+  \node[os state,minimum width=27mm] (commit) at (12.0,2.5)
+    {Commit\\完成后取下一条};
+  \node[os state] (memory) at (9.0,0) {Memory};
+  \node[os state,draw=BookRed,minimum width=27mm] (error) at (3.0,0)
+    {Error/Halt\\保持错误现场};
+
+  \draw[os arrow] (fa) -- (fd);
+  \draw[os arrow] (fd) -- (decode);
+  \draw[os arrow] (decode) -- (execute);
+  \draw[os arrow] (execute) -- node[above]{ALU/JMP} (commit);
+  \draw[os arrow] (execute) -- node[right]{LOAD/STORE} (memory);
+  \draw[os arrow] (memory) -- node[above,sloped]{完成访存} (commit);
+  \draw[os arrow,draw=BookRed] (fd) -- node[right]{取指错误} (error);
+  \draw[os arrow,draw=BookRed] (memory) -- node[above]{数据错误} (error);
+\end{tikzpicture}
+\end{center}
+\diagramnote{控制单元本身也是有限状态机。ALU/JMP 可从 Execute 直接进入
+Commit，LOAD/STORE 先经过 Memory；取指或数据错误进入 Error/Halt。Commit
+结束后回到 FetchAddr 的动作写在节点中，避免回边穿过错误路径。}
 
 \begin{osgridlongtable}{L{0.13\linewidth}L{0.23\linewidth}L{0.31\linewidth}L{0.23\linewidth}}
 拍 & 主状态 & 数据移动 & 控制动作 \\ \hline
@@ -141,19 +229,19 @@
 拍 & 主状态 & 数据移动 & 控制动作 \\ \hline
 \endhead
 \(T_0\) & Fetch address & \(MAR\leftarrow PC\) & 发出 memory read \\ \hline
-\(T_1\) & Fetch data & \(IR\leftarrow M[MAR]\) & 等待 ready，PC 加指令长度 \\ \hline
-\(T_2\) & Decode/read & \(A\leftarrow R[rs]\) & 译码 opcode、选择源/目标 \\ \hline
-\(T_3\) & Execute & \(ALUOut\leftarrow A+signext(imm4)\) & 选择 ADD，形成标志候选 \\ \hline
+\(T_1\) & Fetch data & \(IR\leftarrow M[MAR]\) & 等待 ready，\(PC\leftarrow PC+2\) \\ \hline
+\(T_2\) & Decode/read & \(A\leftarrow R[rd], B\leftarrow R[rs]\) & 译码 opcode、选择两个寄存器 \\ \hline
+\(T_3\) & Execute & \(ALUOut\leftarrow A+B\) & 选择 ADD，形成标志候选 \\ \hline
 \(T_4\) & Commit & \(R[rd]\leftarrow ALUOut\) & 写使能生效，架构状态改变 \\ \hline
 \end{osgridlongtable}
 
 \begin{workedexample}
-执行 \(\mathrm{ADDI}\ R3,R2,5\)，初始
-\(R2=7\)、\(R3=99\)。在 \(T_2\) 前，R3 仍是 99；\(T_3\) 形成内部候选
-12，但软件可见 R3 仍未改变；只有 \(T_4\) 提交后 R3 才为 12。
+执行 \code{ADD R0,R1}，初始 \(R0=5\)、\(R1=3\)。在 \(T_2\) 前，R0
+仍是 5；\(T_3\) 形成内部候选 8，但软件可见 R0 仍未改变；只有
+\(T_4\) 写回后 R0 才为 8。
 
 若 \(T_1\) 取指返回错误，处理器应报告异常而不是继续使用旧 IR；若执行阶段
-发现权限错误，精确异常要求不提交 R3。提交点把“内部计算过”与“架构上已经
+发现权限错误，精确异常要求不提交 R0。提交点把“内部计算过”与“架构上已经
 发生”分开。
 \end{workedexample}
 

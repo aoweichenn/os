@@ -24,6 +24,19 @@ OS_BOOK_MAXIMUM_SECTION_COUNT = 6
 OS_BOOK_GRAPHIC_EXTENSIONS = (".pdf",)
 OS_BOOK_RASTER_IMAGE_PATTERN = re.compile(rb"/Subtype\s*/Image\b")
 OS_BOOK_UPSTREAM_SCHEMATIC = "reference_schematic.pdf"
+OS_BOOK_ELECTRICAL_FOUNDATION_FILE = (
+    OS_BOOK_ROOT / "foundations" / "electricity-components-and-schematics.tex"
+)
+OS_BOOK_LOGIC_FOUNDATION_FILE = (
+    OS_BOOK_ROOT / "foundations" / "digital-logic-clock-and-state.tex"
+)
+OS_BOOK_CPU_FOUNDATION_FILE = (
+    OS_BOOK_ROOT / "foundations" / "expanded"
+    / "ch04-cpu-datapath-and-instruction-cycle.tex"
+)
+OS_BOOK_LOGIC_APPENDIX_FILE = (
+    OS_BOOK_ROOT / "chapters" / "appendix-c-logic-timing-and-cdc.tex"
+)
 OS_BOOK_RAW_TABLE_PATTERN = re.compile(
     r"\\begin\{(?:tabular|tabularx|longtable)\}"
 )
@@ -69,6 +82,47 @@ def checkTypographyAndNavigation() -> None:
         raise SystemExit(
             "章内 topic 必须生成二级 PDF 书签，便于手机导航"
         )
+
+
+def checkFoundationPlacement() -> None:
+    electricalText = OS_BOOK_ELECTRICAL_FOUNDATION_FILE.read_text(
+        encoding="utf-8"
+    )
+    logicText = OS_BOOK_LOGIC_FOUNDATION_FILE.read_text(encoding="utf-8")
+    cpuText = OS_BOOK_CPU_FOUNDATION_FILE.read_text(encoding="utf-8")
+    logicAppendixText = OS_BOOK_LOGIC_APPENDIX_FILE.read_text(encoding="utf-8")
+
+    requiredFoundationFragments = (
+        (
+            electricalText,
+            r"\input{foundations/expanded/ch03-logic-electrical-interface}",
+            "推挽、开漏、三态与逻辑电平必须保留在第二章正文",
+        ),
+        (
+            logicText,
+            r"\input{foundations/expanded/ch03-sequential-clock-and-cdc}",
+            "锁存器、D 触发器、基础时序与 CDC 必须保留在第三章正文",
+        ),
+        (
+            cpuText,
+            r"\code{LOAD R0, 5}",
+            "第四章必须保留可逐周期执行的教学 CPU 程序",
+        ),
+    )
+    for sourceText, requiredFragment, errorMessage in requiredFoundationFragments:
+        if requiredFragment not in sourceText:
+            raise SystemExit(f"硬件主线内容放置错误：{errorMessage}")
+
+    forbiddenAppendixInputs = (
+        "ch03-logic-electrical-interface",
+        "ch03-sequential-clock-and-cdc",
+    )
+    for forbiddenInput in forbiddenAppendixInputs:
+        if forbiddenInput in logicAppendixText:
+            raise SystemExit(
+                "硬件主线内容放置错误："
+                f"{forbiddenInput} 不能重新退回附录 C"
+            )
 
 
 def resolveInput(inputName: str) -> Path:
@@ -207,6 +261,7 @@ def checkChapterStructure() -> list[tuple[str, int]]:
 
 def main() -> int:
     checkTypographyAndNavigation()
+    checkFoundationPlacement()
     visitedFiles: set[Path] = set()
     activeFiles: list[Path] = []
     graphicFiles: set[Path] = set()
