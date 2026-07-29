@@ -46,13 +46,13 @@ CPU 将按 16 位默认值解释后续字节；如果源码要求另一种宽度
 \endfirsthead
 源码 & 最终机器字节 & 实际操作宽度 & 执行后的模式 \\ \hline
 \endhead
-\code{mov eax,cr0} & \code{0F 20 C0} & 控制寄存器传送规定的宽度 & 实模式 \\ \hline
-\code{or eax,1} & \code{66 83 C8 01} & 32 位；\code{66} 覆盖 16 位默认值 & 实模式 \\ \hline
-\code{mov cr0,eax} & \code{0F 22 C0} & 写 CR0；这一条把 PE 置为 1 & 进入保护模式转换点 \\ \hline
+\code{mov eax, cr0} & \code{0F 20 C0} & 控制寄存器传送规定的宽度 & 实模式 \\ \hline
+\code{or eax, 1} & \code{66 83 C8 01} & 32 位；\code{66} 覆盖 16 位默认值 & 实模式 \\ \hline
+\code{mov cr0, eax} & \code{0F 22 C0} & 写 CR0；这一条把 PE 置为 1 & 进入保护模式转换点 \\ \hline
 \end{osgridlongtable}
 
 第二行是最好的反例：使用 \code{EAX} 不等于进入了“32 位模式”。执行
-\code{or eax,1} 时，改变的只有 EAX 和算术标志。直到第三行把候选值写入
+\code{or eax, 1} 时，改变的只有 EAX 和算术标志。直到第三行把候选值写入
 CR0，\code{PE} 才真的改变。
 
 \begin{pdfdiagram}
@@ -60,7 +60,7 @@ CR0，\code{PE} 才真的改变。
   \node[os state,right=of reset] (real) {实模式\\默认 16/16};
   \node[os block,right=of real] (wide) {带 \code{66} 的一条指令\\32 位操作数};
   \node[os state,below=of wide] (realagain) {仍是实模式\\PE=0};
-  \node[os block,left=of realagain] (pe) {\code{mov cr0,eax}\\PE 置 1};
+  \node[os block,left=of realagain] (pe) {\code{mov cr0, eax}\\PE 置 1};
   \node[os state,left=of pe] (protected) {far jump 后\\32 位代码段};
   \draw[os arrow] (reset) -- (real);
   \draw[os arrow] (real) -- (wide);

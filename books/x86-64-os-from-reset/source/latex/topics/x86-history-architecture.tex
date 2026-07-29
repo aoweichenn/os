@@ -300,7 +300,7 @@ RFLAGS 是一组一位状态的集合，而不是一个普通整数。算术指�
 \begin{osgridlongtable}{L{0.12\linewidth}L{0.23\linewidth}L{0.55\linewidth}}
 标志 & 产生或修改方式 & 固件中的意义 \\ \hline
 CF & 算术、\code{stc}/\code{clc} & 无符号进位；也可作为固件函数的一位返回协议 \\ \hline
-ZF & 比较、测试和算术结果 & \code{test al,al} 判断字符串结尾 \\ \hline
+ZF & 比较、测试和算术结果 & \code{test al, al} 判断字符串结尾 \\ \hline
 SF/OF & 算术结果的最高位与有符号溢出 & 正确解释有符号比较和范围错误 \\ \hline
 IF & \code{sti}/\code{cli} & IDT 建立前保持可屏蔽中断关闭 \\ \hline
 DF & \code{std}/\code{cld} & 控制字符串指令地址增加或减少 \\ \hline

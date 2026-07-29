@@ -57,11 +57,11 @@ CPU 仍在实模式，默认操作数和地址宽度仍为 16 位。Stage 1 装�
 \endfirsthead
 物理地址 & 机器字节 & 16 位默认下的解释 & 执行后的关键状态 \\ \hline
 \endhead
-\code{8025} & \code{0F 20 C0} & \code{mov eax,cr0} &
+\code{8025} & \code{0F 20 C0} & \code{mov eax, cr0} &
 EAX 得到 CR0；PE 仍为 0 \\ \hline
-\code{8028} & \code{66 83 C8 01} & \code{or eax,1} &
+\code{8028} & \code{66 83 C8 01} & \code{or eax, 1} &
 \code{66} 令本条使用 32 位 EAX；只改 EAX，PE 仍为 0 \\ \hline
-\code{802C} & \code{0F 22 C0} & \code{mov cr0,eax} &
+\code{802C} & \code{0F 22 C0} & \code{mov cr0, eax} &
 CR0.PE 变为 1 \\ \hline
 \code{802F} & \code{EA 34 80 08 00} &
 \code{jmp 0x0008:0x8034} &
@@ -81,8 +81,8 @@ CS 载入选择子 \code{0x0008}，目标代码段 D=1 \\ \hline
 
 \begin{pdfdiagram}
   \node[os state] (real) {实模式\\CS=0800\\默认 16};
-  \node[os block,right=of real] (candidate) {\code{or eax,1}\\只改 EAX};
-  \node[os state,right=of candidate] (pe) {\code{mov cr0,eax}\\PE=1};
+  \node[os block,right=of real] (candidate) {\code{or eax, 1}\\只改 EAX};
+  \node[os state,right=of candidate] (pe) {\code{mov cr0, eax}\\PE=1};
   \node[os block,below=of pe] (far) {\code{EA 34 80 08 00}\\装入 CS=0008};
   \node[os state,left=of far] (pm) {保护模式代码段\\CS.D=1\\默认 32};
   \draw[os arrow] (real) -- (candidate);
@@ -100,14 +100,14 @@ CS 载入选择子 \code{0x0008}，目标代码段 D=1 \\ \hline
 \[
   \mathtt{66\ B8\ 10\ 00}
   \quad\longrightarrow\quad
-  \code{mov ax,0x0010}.
+  \code{mov ax, 0x0010}.
 \]
 此时默认值已经是 32 位，\code{66} 反而把这一条缩成 16 位，用 AX 装载数据
 段选择子。可见 \code{66} 的含义不是永远“切到 32 位”，而是覆盖当前默认
 操作数宽度：默认 16 时变成 32，默认 32 时变成 16。
 
 \begin{pitfallbox}
-\code{mov cr0,eax} 执行完以后，PE 已经为 1；far jump 不是第二次“打开”
+\code{mov cr0, eax} 执行完以后，PE 已经为 1；far jump 不是第二次“打开”
 保护模式。它紧接着重装 CS，使处理器取得 GDT 描述符中的 base、limit 和
 D 位，并清除旧取指路径的影响。两条指令之间不要插入普通业务代码。
 \end{pitfallbox}
@@ -116,21 +116,21 @@ D 位，并清除旧取指路径的影响。两条指令之间不要插入普通
 
 入口的核心顺序可以用下列机器状态解释：
 
-\begin{osgridlongtable}{L{0.12\linewidth}L{0.21\linewidth}L{0.23\linewidth}L{0.34\linewidth}}
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.19\linewidth}L{0.22\linewidth}L{0.30\linewidth}}
 指令 & 机器码示例 & 执行后 & 若提前或省略 \\ \hline
 \endfirsthead
 指令 & 机器码示例 & 执行后 & 若提前或省略 \\ \hline
 \endhead
 \code{cli} & \texttt{FA} & IF=0 & IDT 未建立时可能接收外部中断 \\ \hline
 \code{cld} & \texttt{FC} & DF=0 & \code{lodsb} 可能向低地址移动 \\ \hline
-\code{xor ax,ax} & \texttt{31 C0} & AX=0，ZF=1 等 & 段寄存器没有已知零值来源 \\ \hline
-\code{mov ds,ax} & \texttt{8E D8} & DS 基址为 0 & 低 RAM 地址计算带入旧 DS \\ \hline
-\code{mov ss,ax} & \texttt{8E D0} & SS 基址为 0 & 栈物理地址仍未知 \\ \hline
-\code{mov sp,7000h} & \texttt{BC 00 70} & SP=\texttt{7000} & CALL 写入未知位置 \\ \hline
+\code{xor ax, ax} & \texttt{31 C0} & AX=0，ZF=1 等 & 段寄存器没有已知零值来源 \\ \hline
+\code{mov ds, ax} & \texttt{8E D8} & DS 基址为 0 & 低 RAM 地址计算带入旧 DS \\ \hline
+\code{mov ss, ax} & \texttt{8E D0} & SS 基址为 0 & 栈物理地址仍未知 \\ \hline
+\code{mov sp, 7000h} & \texttt{BC 00 70} & SP=\texttt{7000} & CALL 写入未知位置 \\ \hline
 \code{call near} & \texttt{E8 xx xx} & 压入返回 IP & 依赖 SS:SP 已可用 \\ \hline
 \end{osgridlongtable}
 
-\code{xor ax,ax} 会修改算术标志，后续 MOV 不再修改它们；\code{cli} 只清 IF，
+\code{xor ax, ax} 会修改算术标志，后续 MOV 不再修改它们；\code{cli} 只清 IF，
 \code{cld} 只清 DF。trace 要逐位区分，不能写成“FLAGS 被初始化”。
 
 \begin{workedexample}
@@ -145,7 +145,7 @@ SP=\texttt{6FFE}.
 M[\texttt{6FFE}]=\texttt{23},\qquad
 M[\texttt{6FFF}]=\texttt{F1}.
 \]
-若把 \code{mov sp,7000h} 移到 CALL 之后，两个 byte 的写入地址由复位残留
+若把 \code{mov sp, 7000h} 移到 CALL 之后，两个 byte 的写入地址由复位残留
 SP 决定，可能覆盖 IVT、BootInfo 或未实现区域。
 \end{workedexample}
 
@@ -187,7 +187,7 @@ DF & 执行前 SI & 读取地址 & 执行后 SI \\ \hline
 \end{faultinjectionbox}
 
 \begin{faultinjectionbox}{交换 MOV SS 与 MOV SP}
-把 \code{mov sp,7000h} 放在 \code{mov ss,ax} 之前。x86 对装载 SS 附近的
+把 \code{mov sp, 7000h} 放在 \code{mov ss, ax} 之前。x86 对装载 SS 附近的
 中断有特殊抑制规则，但这不能把任意顺序都变安全：SP 在旧 SS 下只是一个偏移，
 CALL 的物理栈地址仍取决于最终 SS:SP。实验中在两条指令之间禁止插入 CALL、
 PUSH 或可能使用栈的代码。恢复为先建立 SS、紧接着建立 SP 的顺序。
@@ -232,8 +232,8 @@ PUSH 或可能使用栈的代码。恢复为先建立 SS、紧接着建立 SP �
   \item \texttt{01FE}；
   \item 可见选择子没有表达复位时缓存的特殊 CS base。近跳转保留隐藏基址
     \texttt{FFFF0000}，而普通实模式公式会错误得到 \texttt{000F0000}。
-  \item \code{66} 覆盖 16 位默认值，指令是 \code{or eax,1}，实际操作
-    EAX。它只准备候选值；没有执行 \code{mov cr0,eax}，CPU 仍在实模式。
+  \item \code{66} 覆盖 16 位默认值，指令是 \code{or eax, 1}，实际操作
+    EAX。它只准备候选值；没有执行 \code{mov cr0, eax}，CPU 仍在实模式。
   \item offset=\texttt{0x8034}，selector=\texttt{0x0008}。描述符 base
     为 0，所以目标线性地址是 \texttt{0x8034}；CS.D=1 以后默认操作数宽度
     为 32 位。

@@ -86,7 +86,7 @@ x86 相对位移以完整指令之后的地址为基准。复位跳转长度
 
 \code{IN} 与 \code{OUT} 使用 16 位端口号，不经过普通内存页表翻译。
 立即数形式只能编码 8 位端口，COM1 的 \code{0x3F8} 超出范围，因此代码先
-把端口号装入 DX，再用 \code{out dx,al}。数据宽度由 AL、AX 或 EAX
+把端口号装入 DX，再用 \code{out dx, al}。数据宽度由 AL、AX 或 EAX
 决定，不由端口号决定。
 
 \begin{osgridlongtable}{L{0.20\textwidth}L{0.24\textwidth}L{0.24\textwidth}L{0.20\textwidth}}
@@ -94,10 +94,10 @@ x86 相对位移以完整指令之后的地址为基准。复位跳转长度
 \endfirsthead
 \textbf{指令} & \textbf{端口来源} & \textbf{数据宽度} & \textbf{方向}\\ \hline
 \endhead
-\code{in al,dx} & DX 低 16 位 & 8 位 & 设备到 CPU\\ \hline
-\code{in ax,dx} & DX 低 16 位 & 16 位 & 设备到 CPU\\ \hline
-\code{out dx,al} & DX 低 16 位 & 8 位 & CPU 到设备\\ \hline
-\code{out dx,ax} & DX 低 16 位 & 16 位 & CPU 到设备\\ \hline
+\code{in al, dx} & DX 低 16 位 & 8 位 & 设备到 CPU\\ \hline
+\code{in ax, dx} & DX 低 16 位 & 16 位 & 设备到 CPU\\ \hline
+\code{out dx, al} & DX 低 16 位 & 8 位 & CPU 到设备\\ \hline
+\code{out dx, ax} & DX 低 16 位 & 16 位 & CPU 到设备\\ \hline
 \end{osgridlongtable}
 
 IDE 数据端口需要 16 位读取，UART 寄存器需要 8 位访问。统一包装端口号不能

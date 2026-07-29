@@ -158,7 +158,7 @@ FLAGS 可能相同，但被写回的寄存器不同。运行前先预测 AX/BX�
 \begin{enumerate}[leftmargin=2.2em]
   \item \texttt{B8 78 56} 在 16-bit 模式中执行后 AX 和 IP 怎样变化？
   \item \(AX=\texttt{8000},BX=\texttt{FFFF}\)，执行
-    \code{add ax,bx}。求结果、CF、ZF、SF 和 OF。
+    \code{add ax, bx}。求结果、CF、ZF、SF 和 OF。
   \item \(DS=\texttt{2000},BX=\texttt{0010},SI=\texttt{0003}\)，求
     \code{[bx+si+4]} 的实模式线性地址。
   \item CALL 从 \texttt{0100} 开始，位移为 \(-16\)，长度 3。求目标和返回

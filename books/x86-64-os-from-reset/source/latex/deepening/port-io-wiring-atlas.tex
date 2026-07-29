@@ -38,9 +38,9 @@ ISA 支持这些宽度，并不表示任意设备寄存器都接受它们；本�
 
 \begin{osgridlongtable}{L{0.19\linewidth}L{0.22\linewidth}L{0.24\linewidth}L{0.25\linewidth}}
 指令形态 & 端口来源 & 数据宽度 & 典型用途 \\ \hline
-\code{in al,dx} / \code{out dx,al} & \code{DX} 的低 16 位 & 8 位 & UART、PIC、PIT、i8042、ATA 状态 \\ \hline
-\code{in ax,dx} / \code{out dx,ax} & \code{DX} 的低 16 位 & 16 位 & ATA data port 一次传一个 word \\ \hline
-\code{in eax,dx} / \code{out dx,eax} & \code{DX} 的低 16 位 & 32 位 & 仅用于明确支持 32 位端口事务的设备 \\ \hline
+\code{in al, dx} / \code{out dx, al} & \code{DX} 的低 16 位 & 8 位 & UART、PIC、PIT、i8042、ATA 状态 \\ \hline
+\code{in ax, dx} / \code{out dx, ax} & \code{DX} 的低 16 位 & 16 位 & ATA data port 一次传一个 word \\ \hline
+\code{in eax, dx} / \code{out dx, eax} & \code{DX} 的低 16 位 & 32 位 & 仅用于明确支持 32 位端口事务的设备 \\ \hline
 立即数端口形式 & 指令中的 8 位端口 & 由 AL/AX/EAX 决定 & 编号不超过 \code{0xFF} 的固定端口 \\ \hline
 \end{osgridlongtable}
 
@@ -127,7 +127,7 @@ Local APIC 通常位于物理地址 \code{0xFEE00000} 的 MMIO 窗口，使用�
 另有红色 ExtINT 中断路由；完整关系在中断专题图展开。
 
 \topic{九、一次端口访问实际经历哪些检查}
-以 \code{out dx,al} 为例，处理器和平台依次承担：
+以 \code{out dx, al} 为例，处理器和平台依次承担：
 
 \begin{enumerate}[leftmargin=2.2em]
   \item CPU 检查当前特权与 I/O 权限，确定该指令能否执行；

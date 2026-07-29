@@ -6,7 +6,7 @@ C++ 运行时都尚未存在，必须直接控制每一项架构状态。
 
 \topic{一、从机器码到助记符}
 机器码 \code{FA} 表示 \code{cli}，\code{FC} 表示 \code{cld}，
-\code{31 C0} 表示 \code{xor ax,ax}。NASM 查照 x86 编码规则，把助记符与
+\code{31 C0} 表示 \code{xor ax, ax}。NASM 查照 x86 编码规则，把助记符与
 操作数转换成字节；反汇编器执行逆向解释。汇编器不会验证硬件初始化顺序，
 链接器也不会证明寄存器前置条件成立。
 
@@ -14,9 +14,9 @@ C++ 运行时都尚未存在，必须直接控制每一项架构状态。
 ROM 字节 & Intel 语法 & 架构变化 & 固件目的 \\ \hline
 \code{FA} & \code{cli} & IF 清零 & IDT 建立前关闭中断 \\ \hline
 \code{FC} & \code{cld} & DF 清零 & 字符串读取向高地址推进 \\ \hline
-\code{31 C0} & \code{xor ax,ax} & AX 变为零 & 为段寄存器准备零值 \\ \hline
-\code{8E D8} & \code{mov ds,ax} & DS 缓存重载 & 数据段基址归零 \\ \hline
-\code{BC 00 70} & \code{mov sp,0x7000} & SP 变为 0x7000 & 建立向低地址增长的栈 \\ \hline
+\code{31 C0} & \code{xor ax, ax} & AX 变为零 & 为段寄存器准备零值 \\ \hline
+\code{8E D8} & \code{mov ds, ax} & DS 缓存重载 & 数据段基址归零 \\ \hline
+\code{BC 00 70} & \code{mov sp, 0x7000} & SP 变为 0x7000 & 建立向低地址增长的栈 \\ \hline
 \end{osgridlongtable}
 
 \topic{二、Intel 语法的操作数顺序}
@@ -24,8 +24,8 @@ Intel 语法写作 \code{mov destination, source}，目的操作数在前。AT\&
 语法采用相反顺序并给寄存器加百分号。本项目统一 NASM Intel 语法，避免在
 固件、反汇编和文档之间反复转换。
 
-\code{mov ax,bx} 复制 BX 到 AX；\code{mov [address],al} 把 AL 写入内存；
-\code{mov al,[address]} 从内存读到 AL。方括号表达内存操作数，没有方括号的
+\code{mov ax, bx} 复制 BX 到 AX；\code{mov [address], al} 把 AL 写入内存；
+\code{mov al, [address]} 从内存读到 AL。方括号表达内存操作数，没有方括号的
 立即数和寄存器不会自动解引用。
 
 \topic{三、BITS 指令与当前执行模式}
@@ -92,12 +92,12 @@ x86 栈向低地址增长。16 位 \code{call} 先把返回 IP 压栈，再跳�
 覆盖前缀，让读取使用 CS 隐藏基址。这个编码字节会改变实际使用的段基址，
 因此会改变最终物理地址。
 
-字符串以零结束。\code{test al,al} 对 AL 与自身做按位与，只更新标志不保留
+字符串以零结束。\code{test al, al} 对 AL 与自身做按位与，只更新标志不保留
 结果；AL 为零时 ZF 置位，\code{jz} 结束循环。非零字符进入发送过程。
 
 \topic{八、端口 I/O 指令}
-\code{out dx,al} 把 AL 的 8 位值写到 DX 指定的 I/O 端口；
-\code{in al,dx} 读取 8 位端口。I/O 空间与内存地址空间分离，普通
+\code{out dx, al} 把 AL 的 8 位值写到 DX 指定的 I/O 端口；
+\code{in al, dx} 读取 8 位端口。I/O 空间与内存地址空间分离，普通
 \code{mov} 不能替代。端口值、访问宽度和顺序共同组成设备协议。
 
 后续 MMIO 设备改用普通内存读写指令，但还要配置不可缓存属性、volatile
@@ -116,7 +116,7 @@ NASM 的 \code{equ} 在汇编期建立具名常量，不产生存储。端口、
 物理地址 & 字节 & 指令 & 状态变化 & 下一地址 \\ \hline
 FFFFF000 & FA & \code{cli} & IF=0 & FFFFF001 \\ \hline
 FFFFF001 & FC & \code{cld} & DF=0 & FFFFF002 \\ \hline
-FFFFF002 & 31 C0 & \code{xor ax,ax} & AX=0 & FFFFF004 \\ \hline
-FFFFF004 & 8E D8 & \code{mov ds,ax} & DS base=0 & FFFFF006 \\ \hline
-FFFFF00A & BC 00 70 & \code{mov sp,0x7000} & SP=7000 & FFFFF00D \\ \hline
+FFFFF002 & 31 C0 & \code{xor ax, ax} & AX=0 & FFFFF004 \\ \hline
+FFFFF004 & 8E D8 & \code{mov ds, ax} & DS base=0 & FFFFF006 \\ \hline
+FFFFF00A & BC 00 70 & \code{mov sp, 0x7000} & SP=7000 & FFFFF00D \\ \hline
 \end{osgridlongtable}

@@ -6,7 +6,7 @@ FLAGS、执行后寄存器和下一 IP，再用 GDB 单步核对。
 \end{experimentbox}
 
 \begin{faultinjectionbox}{交换 ModRM 字段}
-把 \code{add ax,bx} 的 ModRM 改成写 BX。预期 FLAGS 可能相同，但写回寄存器
+把 \code{add ax, bx} 的 ModRM 改成写 BX。预期 FLAGS 可能相同，但写回寄存器
 不同。恢复 byte 后再次单步。
 \end{faultinjectionbox}
 

@@ -20,7 +20,7 @@
 \code{0xFFFF888000000000+physical} 建立 direct-map。未声明为 RAM 的
 保留区与 MMIO 洞保持 not-present；LAPIC 继续使用独立 PCD 映射。
 
-映射完成、NX 和 WP 打开之后才执行 \code{mov cr3,new_root}。如果先切 CR3
+映射完成、NX 和 WP 打开之后才执行 \code{mov cr3, new_root}。如果先切 CR3
 再补当前 RIP、RSP 或 IDT 所需映射，下一条取指或压栈就会故障；异常入口本身
 也可能未映射，最终表现为 triple fault。先构造完整候选、后一次激活，是页表
 版的两遍 ELF 副作用边界。CR3 读回成功后，管理器原子切换访问基址，页表

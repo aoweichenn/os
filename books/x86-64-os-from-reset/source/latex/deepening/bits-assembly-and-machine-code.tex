@@ -28,13 +28,13 @@ ModR/M 的高两位 mod 选择寄存器或不同位移长度，中间三位 reg 
 中的 r/m 表对应 BX、BP、SI、DI 的历史组合，32/64 位模式则配合 SIB 表达
 \(base+index\times scale+displacement\)。
 
-例如 16 位 \code{mov ds,ax} 编码为 \code{8E D8}。\code{8E} 选择从
+例如 16 位 \code{mov ds, ax} 编码为 \code{8E D8}。\code{8E} 选择从
 r/m16 装入段寄存器，\code{D8}=二进制 \code{11 011 000}：mod 为
 \code{11} 表示寄存器，reg 为 \code{011} 选择 DS，r/m 为
 \code{000} 选择 AX。两字节共同表达完整语义。
 
 \topic{立即数宽度由指令形式而不是数值大小决定}
-\code{mov sp,0x7000} 在 16 位模式编码为 \code{BC 00 70}。\code{BC}
+\code{mov sp, 0x7000} 在 16 位模式编码为 \code{BC 00 70}。\code{BC}
 已经把目标寄存器 SP 编入操作码低位，后面跟 16 位立即数。即使数值较小，
 该形式仍按操作数宽度保存两个字节；小端序使低字节 \code{00} 在前。
 

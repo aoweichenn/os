@@ -357,9 +357,10 @@ Shell 使用 16 项固定表。每项保存 job id、PGID、最多 16 个 PID、
 \end{aligned}
 \]
 
-\code{command \&} 只允许 \code{\&} 位于整行最后。中间 \code{\&} 返回
-BackgroundOperatorNotLast，且在 fork/pipe 前失败。后台作业建立后立即返回
-提示符；\code{jobs} 以 NoHang 收割事件；\code{bg} 发送 CONT 但不交出 TTY；
+\code{command \&} 只允许 \code{\&} 位于整行最后。如果 \code{\&} 出现在中间，
+解析器会在 fork/pipe 以前返回错误，错误码为
+\code{BackgroundOperatorNotLast}。后台作业建立后立即返回提示符；
+\code{jobs} 以 NoHang 收割事件；\code{bg} 发送 CONT 但不交出 TTY；
 \code{fg} 先交出 TTY，再发送 CONT 并阻塞等待。
 
 \begin{failurebox}

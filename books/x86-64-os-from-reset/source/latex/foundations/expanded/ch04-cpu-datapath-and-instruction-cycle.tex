@@ -172,7 +172,7 @@ little-endian byte 排列，低地址先放 \texttt{05}，高地址再放
 \end{osgridlongtable}
 
 第二条 \code{LOAD} 以同样步骤得到 \(R1=3\)。第三条
-\code{ADD R0,R1} 读取两个寄存器，由 ALU 算出 8，再把结果写回 R0。
+\code{ADD R0, R1} 读取两个寄存器，由 ALU 算出 8，再把结果写回 R0。
 第四条把 8 写到 RAM 地址 \(\texttt{0x20}\)。第五条不采用顺序
 \(\texttt{0x1A}\)，而把 PC 改回 \(\texttt{0x10}\)。
 
@@ -182,10 +182,10 @@ little-endian byte 排列，低地址先放 \texttt{05}，高地址再放
 指令完成后 & 刚完成的指令 & R0 & R1 & RAM[\texttt{0x20}] / PC \\ \hline
 \endhead
 复位 & 尚未取指 & 0 & 0 & 0 / \texttt{0x10} \\ \hline
-第 1 条 & \code{LOAD R0,5} & 5 & 0 & 0 / \texttt{0x12} \\ \hline
-第 2 条 & \code{LOAD R1,3} & 5 & 3 & 0 / \texttt{0x14} \\ \hline
-第 3 条 & \code{ADD R0,R1} & 8 & 3 & 0 / \texttt{0x16} \\ \hline
-第 4 条 & \code{STORE [0x20],R0} & 8 & 3 & 8 / \texttt{0x18} \\ \hline
+第 1 条 & \code{LOAD R0, 5} & 5 & 0 & 0 / \texttt{0x12} \\ \hline
+第 2 条 & \code{LOAD R1, 3} & 5 & 3 & 0 / \texttt{0x14} \\ \hline
+第 3 条 & \code{ADD R0, R1} & 8 & 3 & 0 / \texttt{0x16} \\ \hline
+第 4 条 & \code{STORE [0x20], R0} & 8 & 3 & 8 / \texttt{0x18} \\ \hline
 第 5 条 & \code{JMP 0x10} & 8 & 3 & 8 / \texttt{0x10} \\ \hline
 \end{osgridlongtable}
 
@@ -236,7 +236,7 @@ Commit，LOAD/STORE 先经过 Memory；取指或数据错误进入 Error/Halt。
 \end{osgridlongtable}
 
 \begin{workedexample}
-执行 \code{ADD R0,R1}，初始 \(R0=5\)、\(R1=3\)。在 \(T_2\) 前，R0
+执行 \code{ADD R0, R1}，初始 \(R0=5\)、\(R1=3\)。在 \(T_2\) 前，R0
 仍是 5；\(T_3\) 形成内部候选 8，但软件可见 R0 仍未改变；只有
 \(T_4\) 写回后 R0 才为 8。
 

@@ -104,7 +104,7 @@ GS 的独立 64 位 base。历史兼容机制因此成为现代系统放置 TLS 
 \end{itemize}
 
 TLS 页首保存 \code{ThreadRuntimeState* self}。同一条
-\code{mov reg,qword ptr fs:[0]} 指令的线性地址为
+\code{mov reg, qword ptr fs:[0]} 指令的线性地址为
 
 \[
   linear = IA32\_FS\_BASE_{current\ thread}+0.
@@ -114,7 +114,7 @@ TLS 页首保存 \code{ThreadRuntimeState* self}。同一条
 对象。运行时再检查 self 指针和 64 位 validation tag，避免把任意映射误认
 为有效线程状态。
 
-传统 32 位特权入口常执行 \code{mov fs,kernel\_data\_selector}。若机械保留
+传统 32 位特权入口常执行 \code{mov fs, kernel\_data\_selector}。若机械保留
 这条指令，第一次系统调用可能把隐藏 FS base 重置为描述符的零基址。Kernel
 自身不使用 FS，因此 SYSCALL、IRET 和调度汇编路径不再重载 FS；
 真正切换 Thread 时由架构包装写 \code{IA32\_FS\_BASE} 并读回验证。

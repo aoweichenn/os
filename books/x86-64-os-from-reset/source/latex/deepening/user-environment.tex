@@ -71,7 +71,7 @@ RDI、RSI、RDX、R10 传递前四个参数。四参数包装把 R8 搬到 R10 �
 \begin{osgridlongtable}{L{0.22\textwidth}L{0.24\textwidth}L{0.36\textwidth}}
 \textbf{边界} & \textbf{第四个参数} & \textbf{谁完成转换}\\ \hline
 C++ 调用包装函数 & R8 & 编译器按照 System V ABI 生成调用\\ \hline
-系统调用入口 & R10 & 用户汇编包装执行 \code{mov r10,r8}\\ \hline
+系统调用入口 & R10 & 用户汇编包装执行 \code{mov r10, r8}\\ \hline
 内核分发器 & 保存帧中的 R10 & 内核按项目 ABI 读取\\ \hline
 \end{osgridlongtable}
 

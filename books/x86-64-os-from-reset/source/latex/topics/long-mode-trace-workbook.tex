@@ -28,14 +28,14 @@ Loader 数据。
 \endfirsthead
 步骤 & 指令/机器码形态 & 状态变化 & 此刻尚不能做什么 \\ \hline
 \endhead
-1 & \code{mov eax,cr4} / \texttt{0F 20 E0} & 读 CR4 & 尚未启用 PAE \\ \hline
-2 & \code{or eax,20h} / \texttt{83 C8 20} & 候选值 PAE=1 & CPU 状态未变 \\ \hline
-3 & \code{mov cr4,eax} / \texttt{0F 22 E0} & CR4.PAE=1 & 还没有页表根 \\ \hline
-4 & \code{mov cr3,eax} / \texttt{0F 22 D8} & CR3 指向 PML4 & LME/PG 尚未同时有效 \\ \hline
+1 & \code{mov eax, cr4} / \texttt{0F 20 E0} & 读 CR4 & 尚未启用 PAE \\ \hline
+2 & \code{or eax, 20h} / \texttt{83 C8 20} & 候选值 PAE=1 & CPU 状态未变 \\ \hline
+3 & \code{mov cr4, eax} / \texttt{0F 22 E0} & CR4.PAE=1 & 还没有页表根 \\ \hline
+4 & \code{mov cr3, eax} / \texttt{0F 22 D8} & CR3 指向 PML4 & LME/PG 尚未同时有效 \\ \hline
 5 & \code{rdmsr} / \texttt{0F 32} & 读取 EFER & 只读还未修改 \\ \hline
 6 & \code{wrmsr} / \texttt{0F 30} & EFER.LME=1 & 长模式尚未 active \\ \hline
-7 & \code{mov eax,cr0} / \texttt{0F 20 C0} & 读 CR0 & PG 仍保留旧值 \\ \hline
-8 & \code{mov cr0,eax} / \texttt{0F 22 C0} & CR0.PG=1，LMA 变为 1 &
+7 & \code{mov eax, cr0} / \texttt{0F 20 C0} & 读 CR0 & PG 仍保留旧值 \\ \hline
+8 & \code{mov cr0, eax} / \texttt{0F 22 C0} & CR0.PG=1，LMA 变为 1 &
 当前 CS.L=0，先按 32-bit 兼容子模式执行 \\ \hline
 9 & far jump / \texttt{EA FF 81 00 00 18 00} &
 CS 指向 L=1 代码段 & 目标才按 64-bit 方式解码 \\ \hline
@@ -71,13 +71,13 @@ L 位进入当前执行状态。
 \endfirsthead
 线性地址 & 机器字节 & 解码结果 & 执行后的状态 \\ \hline
 \endhead
-\code{81D8} & \code{0F 20 C0} & \code{mov eax,cr0} &
+\code{81D8} & \code{0F 20 C0} & \code{mov eax, cr0} &
 仍是 32 位保护模式 \\ \hline
-\code{81DB} & \code{0D 00 00 00 80} & \code{or eax,0x80000000} &
+\code{81DB} & \code{0D 00 00 00 80} & \code{or eax, 0x80000000} &
 只在 EAX 中准备 PG 位 \\ \hline
-\code{81E0} & \code{0F 22 C0} & \code{mov cr0,eax} &
+\code{81E0} & \code{0F 22 C0} & \code{mov cr0, eax} &
 PG=1、LMA=1，进入 IA-32e 兼容子模式 \\ \hline
-\code{81E3} & \code{0F 20 C0} & \code{mov eax,cr0} &
+\code{81E3} & \code{0F 20 C0} & \code{mov eax, cr0} &
 仍按当前 CS.D=1 解码，回读 PG \\ \hline
 \end{osgridlongtable}
 
@@ -116,9 +116,9 @@ far jump 到 \code{0x0018:0x81FF} 后 & 1 & 1 / 0 & 64 位子模式 \\ \hline
 
 \begin{workedexample}
 初始 \(CR4=\texttt{0x00000000}\)。执行
-\code{or eax,0x20} 后 EAX=\texttt{0x20}，FLAGS 按 OR 结果更新：
+\code{or eax, 0x20} 后 EAX=\texttt{0x20}，FLAGS 按 OR 结果更新：
 ZF=0、SF=0、CF=0、OF=0。只有随后
-\code{mov cr4,eax} 才让 CR4.PAE=1；在此之前修改的只是通用寄存器候选值。
+\code{mov cr4, eax} 才让 CR4.PAE=1；在此之前修改的只是通用寄存器候选值。
 \end{workedexample}
 
 \begin{workedexample}
@@ -203,7 +203,7 @@ triple fault。恢复为分配后先清零、再逐项写入，未使用项应�
     byte？
   \item CR4 初值 \texttt{200}，设置 PAE 后是多少？
   \item 打开 PG 前至少要确认哪三类地址已映射？
-  \item 已有 PAE=1、LME=1、PE=1，执行 \code{mov cr0,eax} 令 PG=1，
+  \item 已有 PAE=1、LME=1、PE=1，执行 \code{mov cr0, eax} 令 PG=1，
     但当前代码段仍为 L=0、D=1。下一条指令按 32 位还是 64 位解码？这时
     LMA 是多少？
   \item 按 32 位默认方式拆解

@@ -8,6 +8,7 @@ OS_BOOK_ROOT = Path(__file__).resolve().parents[1]
 OS_BOOK_MAIN_FILE = OS_BOOK_ROOT / "main.tex"
 OS_BOOK_LAYOUT_FILE = OS_BOOK_ROOT / "preamble" / "layout.tex"
 OS_BOOK_MACROS_FILE = OS_BOOK_ROOT / "preamble" / "macros.tex"
+OS_BOOK_PACKAGES_FILE = OS_BOOK_ROOT / "preamble" / "packages.tex"
 OS_BOOK_INPUT_PATTERN = re.compile(r"\\input\{([^}]+)\}")
 OS_BOOK_GRAPHIC_PATTERN = re.compile(
     r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}"
@@ -68,11 +69,19 @@ OS_BOOK_TABLE_ROW_PATTERN = re.compile(
     r"\\\\(?:\s+\\hline)?\s*(?:%.*)?$"
 )
 OS_BOOK_GRID_ROW_PATTERN = re.compile(r"\\\\\s+\\hline\s*(?:%.*)?$")
+OS_BOOK_INLINE_ASSEMBLY_COMMA_PATTERN = re.compile(
+    r"\\code\{(?:"
+    r"adc|add|and|bt|bts|cmp|in|lea|load|mov|movsx|movzx|or|out|"
+    r"sar|sbb|shl|shr|store|sub|test|xadd|xchg|xor"
+    r")\b[^}\n]*,[^\s}\n]",
+    re.IGNORECASE,
+)
 
 
 def checkTypographyAndNavigation() -> None:
     layoutText = OS_BOOK_LAYOUT_FILE.read_text(encoding="utf-8")
     macrosText = OS_BOOK_MACROS_FILE.read_text(encoding="utf-8")
+    packagesText = OS_BOOK_PACKAGES_FILE.read_text(encoding="utf-8")
 
     requiredLayoutFragments = (
         r"\setmainfont{Maple Mono NF CN}",
@@ -100,6 +109,25 @@ def checkTypographyAndNavigation() -> None:
         raise SystemExit(
             "章内 topic 必须生成二级 PDF 书签，便于手机导航"
         )
+
+    if r"\usepackage[obeyspaces,spaces]{url}" not in packagesText:
+        raise SystemExit(
+            "行内代码排版必须保留并允许在空格处换行，"
+            "否则汇编指令和机器字节会粘连"
+        )
+
+
+def checkInlineAssemblyStyle(sourcePath: Path) -> None:
+    sourceText = sourcePath.read_text(encoding="utf-8")
+    invalidMatch = OS_BOOK_INLINE_ASSEMBLY_COMMA_PATTERN.search(sourceText)
+    if invalidMatch is None:
+        return
+
+    lineNumber = sourceText.count("\n", 0, invalidMatch.start()) + 1
+    raise SystemExit(
+        "行内汇编的逗号后必须保留一个空格："
+        f"{sourcePath}:{lineNumber}：{invalidMatch.group(0)}"
+    )
 
 
 def checkFoundationPlacement() -> None:
@@ -362,6 +390,7 @@ def main() -> int:
     gridTableCount = 0
     gridRowCount = 0
     for sourcePath in sorted(OS_BOOK_ROOT.rglob("*.tex")):
+        checkInlineAssemblyStyle(sourcePath)
         sourceTableCount, sourceRowCount = checkGridTables(sourcePath)
         gridTableCount += sourceTableCount
         gridRowCount += sourceRowCount
