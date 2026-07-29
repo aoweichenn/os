@@ -1,0 +1,48 @@
+\section{write 返回以后，数据可能还在路上}
+
+假设用户程序把一个字节写进文件，然后立刻关闭电源。这个字节至少可能停在
+用户缓冲区、内核页缓存、块缓存、设备控制器缓存或磁盘介质中的一层。
+\code{write} 返回只能说明本次系统调用接受了数据；需要持久化时，程序还要
+调用同步接口，内核也必须把数据、元数据和设备 flush 排成可恢复的顺序。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (user) {用户缓冲区};
+  \node[os block,right=of user] (page) {文件页缓存};
+  \node[os block,right=of page] (block) {块缓存};
+  \node[os block,right=of block] (ata) {ATA 请求};
+  \node[os state,right=of ata] (disk) {磁盘介质};
+  \draw[os arrow] (user) -- node[above]{write} (page);
+  \draw[os arrow] (page) -- node[above]{writeback} (block);
+  \draw[os arrow] (block) -- node[above]{IRQ14} (ata);
+  \draw[os arrow] (ata) -- node[above]{flush} (disk);
+\end{tikzpicture}
+\end{center}
+
+\topic{一个重命名为什么需要日志}
+把 \filepath{/tmp/a} 改名为 \filepath{/tmp/b} 可能修改目录项、inode 和空闲
+块信息。电源若在第二个块写完后中断，磁盘上会留下前后不一致的组合。
+rootfs journal 先把这些目标块和校验写入日志区，flush 后写入 commit record，
+再次 flush，最后才把块写回正式位置。重启时，存在有效 commit 的事务可以
+重放；缺少 commit 的事务被丢弃。
+
+\begin{enumerate}[label=\arabic*.]
+  \item 把将要修改的块写入日志数据区；
+  \item 写入带校验的描述符并 flush；
+  \item 写入 commit record 并再次 flush；
+  \item 把日志中的块写回各自正式位置；
+  \item 清除日志状态。
+\end{enumerate}
+
+顺序错误不能靠最后一次正常启动掩盖。测试会在这些步骤之间构造中断镜像，再
+次挂载并检查结果。实现入口位于
+\filepath{source/kernel/src/fs/root\_journal.cpp}；设备完成请求后，
+\filepath{source/kernel/src/device/block\_request.cpp} 与 IRQ14 路径唤醒
+等待的 Thread。
+
+\topic{从启动日志判断当前走到哪一层}
+\code{ROOTFS_V2_MOUNTED} 表示 superblock 和盘面结构已通过检查；
+\code{ATA_IRQ14_READY} 表示块请求可以由中断完成；
+\code{ROOTFS_JOURNAL_READY} 表示恢复过程已经结束。它们对应不同阶段，缺少
+其中一行时应先查此前最后一条标记。文件内容是否真的保留下来，还要在重启后
+重新读取，而不能只看第一次运行的内存缓存。

@@ -1,4 +1,4 @@
-\section{Thread 状态机、等待队列与处理器现场}
+\section{Thread 怎样保存处理器现场}
 
 前面的 v0.9--v1.1 路径用一个 PCB 同时保存页表根、文件状态、动态内核栈和
 寄存器现场。这个结构不是错误：当一个进程恰有一条执行流时，它是最短、最容易
@@ -7,11 +7,9 @@
 只有一份，但 RIP、RSP、内核栈和浮点寄存器必须各有一份；一个控制块已经无法
 同时表达两种所有权。
 
-\begin{keyidea}
 Process 回答“哪些资源被一组执行流共享”；Thread 回答“哪一份现场有资格取得
 CPU”。调度器只选择 Thread，地址空间、描述符和退出关系则由 Process 统一
 拥有。
-\end{keyidea}
 
 这种拆分不是为了模仿某个接口名称，而是由寿命差异强制得到。Thread 可以在
 同一 Process 内独立退出，其他 Thread 继续使用原地址空间；只有最后一个
@@ -411,7 +409,7 @@ Process/Thread 当前量，变化掩码必须为零。历史累计允许增加�
 恢复。为使 512 个栈不会先耗尽次级元数据，KVA 描述符容量提升为 1024，
 内核栈槽容量提升为 512。
 
-\topic{测试不是数量装饰，而是四个不同观察位置}\par
+\topic{四层测试观察不同位置}\par
 \begin{osgridlongtable}{L{0.18\textwidth}L{0.31\textwidth}L{0.39\textwidth}}
 层次 & 输入 & 能证明的性质\\ \hline
 单元 & 非法容量、256/512 对象、五种 WakeReason、Mutex/锁 &
@@ -435,7 +433,7 @@ create thread、start/tick/yield、block、wake、exit、reap 和 discard 中
 十万步随机测试，而全部历史启动、损坏镜像、用户异常、文件持久化、命名和
 教材门禁继续存在。
 
-\topic{按目录走读 v1.2 实现}\par
+\topic{沿目录走读 Process 与 Thread}\par
 \begin{osgridlongtable}{L{0.43\textwidth}L{0.45\textwidth}}
 文件 & 阅读问题\\ \hline
 \filepath{process/thread_scheduler.hpp/.cpp} &
@@ -474,8 +472,6 @@ shootdown 或 SMP 锁竞争。
 Thread 模型尚未冻结时同时改写架构入口。AVX/XSAVE 也保持关闭。清晰记录未做
 的边界，使后续阶段知道哪些不变量可以复用，哪些能力仍必须从失败路径开始设计。
 
-\begin{keyidea}
 v1.2 的完成不是“能同时放 512 个结构体”。它同时证明：Thread 是唯一调度
 实体，等待只有一个完成赢家，x87/SSE2 不跨执行流泄漏，三档真实资源能够
 完整取得并归还，且这些事实可以由宿主模型和从复位启动的 QEMU 整机共同重现。
-\end{keyidea}

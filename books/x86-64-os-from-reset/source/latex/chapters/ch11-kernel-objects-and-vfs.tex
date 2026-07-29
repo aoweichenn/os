@@ -1,10 +1,9 @@
-\chapter{内核对象、文件描述符与 VFS 命名空间}
+\chapter{文件描述符怎样找到文件}
 
-\begin{keyidea}
-fd、打开文件实例、vnode、持久 inode 和路径不是同一种身份。类型化对象、
-generation、引用生命周期、FileTable、Mount 与 FsContext 把局部整数、
-共享状态、命名空间和后端实现分层，失败时才能沿所有权图精确回滚。
-\end{keyidea}
+用户程序只拿到一个很小的整数，内核却要借它找到共享的文件位置、路径所在的
+挂载点和真正保存数据的后端。本章从 fd=3 开始，先走完一次
+\filepath{/tmp/session} 的打开和读取，再处理复制、关闭与路径切换。
 
-\input{deepening/ch11-kernel-object-file-table-v14}
-\input{deepening/ch11-vfs-memfs-v15}
+\input{topics/ch11-fd-and-path-introduction}
+\input{deepening/ch11-kernel-objects-and-file-table}
+\input{deepening/ch11-vfs-and-memfs}

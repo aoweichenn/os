@@ -1,10 +1,9 @@
-\chapter{磁盘装载、ELF64 与长模式转换}
+\chapter{从磁盘进入 64 位内核}
 
-\begin{keyidea}
-模式转换不是一条指令，而是一组只能按依赖顺序提交的状态变化。A20、GDT、
-控制寄存器、页表、ELF64、BSS 与 BootInfo 必须共同形成从 16 位固件到
-64 位 C++ 内核的可证明交接。
-\end{keyidea}
+这一章从串口上的 \code{[OS][STAGE1] ENTERED} 开始，到
+\code{[OS][KERNEL] ENTERED} 结束。中间的代码要读磁盘、打开 A20、建立
+GDT 和页表、切换处理器模式、检查 ELF64，并把 BootInfo 地址交给 C++
+入口。我们会沿日志出现的顺序逐步完成这些工作。
 
 \input{topics/ch07-long-mode-and-loader}
 \input{topics/ch07-stage1-implementation}

@@ -1,10 +1,8 @@
-\section{Pipe、fd 与 Unix I/O 组合}
+\section{Shell 怎样用 fd 和 Pipe 连接程序}
 
-\begin{keyidea}
-流水线不是 Shell 的字符串技巧，而是 Process、fd、FileDescription、Pipe、
-物理页和等待队列共同组成的所有权图。v1.11 的完成标准不是输出文本相同，
-而是成功和失败路径都能把整张图逆序回收到基线。
-\end{keyidea}
+Shell 解析出流水线以后，要建立由 Process、fd、FileDescription、Pipe、
+物理页和等待队列组成的关系。相同的输出文本只覆盖成功路径；v1.11 还要求
+失败路径把这些对象逆序回收到基线。
 
 \topic{历史动机：为什么是 fd、fork、exec 和 pipe}
 早期计算机常为终端、磁带和磁盘提供互不相同的调用。程序若想把一种设备的
@@ -272,11 +270,3 @@ cat、tee、head 和 wc，因而同时覆盖 15 根 Pipe、短读写、EOF、文
 145 项 CTest 不冻结为永恒数字；它是 v1.11 发布时构建图产生的证据。真正
 冻结的是每层必须证明的性质、随机种子可复现、QEMU 生命周期有截止时间，
 以及成功路径禁止 Kernel fatal、panic 和资源差异。
-
-\begin{contractbox}
-不看源码回答：为什么一个 duplicate reader 仍存活会阻止 BrokenPipe；
-为什么逐 stage fork 后立即 wait 会死锁；为什么 FileDescription finalizer
-不能在 FileTable 锁内运行；为什么 8 MiB 用户栈不能容许任意 5 KiB 栈跳；
-以及怎样从 active、peak、creation、release 和 wait 五类数字证明 16 级
-流水线没有泄漏。
-\end{contractbox}

@@ -1,13 +1,11 @@
-\section{rootfs v2 盘面、块树与命名空间}
+\section{rootfs v2 怎样保存大文件和目录}
 
-\begin{keyidea}
 文件系统不是“把一个 C++ 对象写进文件”。它要把断电后仍有意义的名字、
 对象身份、逻辑长度、块所有权和提交状态编码到扇区中，再让另一个全新启动
 实例能够独立证明这些事实。v1.6 用 256 MiB rootfs、三级间接树、稀疏文件、
 完整命名空间修改和只读 fsck，把这条链从 Ring 3 一直闭合到 ATA LBA。
-\end{keyidea}
 
-\topic{为什么 v1.5 的 VFS 之后才能替换根格式}
+\topic{为什么先分离 VFS，随后才替换根格式}
 v1.5 已经把路径遍历、挂载、每 Process 的 root/cwd、一次打开和底层后端
 分开。如果跳过这一步直接扩展旧文件系统，任意失败都可能同时来自三类原因：
 
@@ -630,10 +628,3 @@ rootfs 启动只输出一次：
 每进入一个函数，都记录五件事：当前锁、当前持久状态、尚未发布的临时状态、
 失败后的可观察结果，以及下一次全新挂载会看到什么。文件系统正确性不是某个
 函数局部返回 true，而是跨对象、跨 flush、跨重启仍满足同一组守恒关系。
-
-\begin{contractbox}
-v1.6 的完成边界是：1 GiB 稀疏盘、256 MiB rootfs、64 MiB 文件、完整
-namespace mutation、真实 ENOSPC、十万步双后端模型、双启动、独立 fsck 和
-损坏拒绝同时成立。journal、orphan inode、权限、符号链接、dentry/page
-cache 与异步块层仍是后续独立阶段，不能借本阶段名称提前宣称。
-\end{contractbox}

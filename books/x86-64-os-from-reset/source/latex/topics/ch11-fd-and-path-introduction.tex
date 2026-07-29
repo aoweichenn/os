@@ -1,0 +1,65 @@
+\section{从 fd=3 走到一个文件}
+
+用户程序打开文件后，内核通常返回 3、4、5 这样的整数。0、1、2 默认留给
+标准输入、标准输出和标准错误，因此 3 往往是进程第一次打开文件得到的编号。
+这个数字只在当前进程的文件表中有意义；另一个进程的 fd=3 可以指向完全不同
+的对象。
+
+先跟一次读取。系统调用收到 fd=3 后，在当前进程的 \code{FileTable} 中找到
+一条强引用，再由 \code{FileDescriptionManager} 取得打开文件实例。打开实例
+保存读写权限和当前位置，最后通过 VFS 中的 \code{OpenFile} 找到后端文件。
+
+\begin{pdfdiagram}
+  \node[os state] (process) {当前进程\\fd=3};
+  \node[os block,right=of process] (table) {FileTable\\第 3 项};
+  \node[os block,right=of table] (description) {FileDescription\\offset};
+  \node[os block,below=of description] (open) {VFS OpenFile\\Path};
+  \node[os state,left=of open] (node) {后端 vnode\\文件数据};
+  \draw[os arrow] (process) -- (table);
+  \draw[os arrow] (table) -- (description);
+  \draw[os arrow] (description) -- (open);
+  \draw[os arrow] (open) -- (node);
+\end{pdfdiagram}
+
+这条链解释了一个容易困惑的现象：\code{dup} 得到的新 fd 和原 fd 共享文件
+位置。两个表项引用同一个打开实例，所以从其中一个 fd 读取 10 字节以后，
+另一个 fd 也从新的 offset 继续。fd 自己的 close-on-exec 标志仍留在各自的
+表项中，不会因为共享打开实例而混在一起。
+
+\topic{为什么不能把对象地址直接交给用户程序}
+内核堆中的地址会被释放和复用。若 fd 直接保存裸地址，一条过期引用可能在
+同一地址重新分配后误指向新对象。项目的 \code{KernelObjectHandle} 同时保存
+存储地址和 generation；临时使用对象时，再取得不可复制的
+\code{KernelObjectReference}。最后一条强引用释放时，管理器调用对象的
+finalizer，然后回收存储。
+
+第一次读这里时，可以先抓住两条规则：文件表拥有长期 handle，函数执行期间
+持有临时 reference。随后再去看引用计数溢出、终结失败和两阶段回滚。
+
+\topic{路径怎样穿过挂载点}
+
+现在把输入换成 \filepath{/tmp/session}。VFS 从当前进程
+\code{FsContext.root} 出发，依次查找 \code{tmp} 和 \code{session}。项目把
+memfs 挂载在 \filepath{/tmp}，所以解析到挂载点时要从 rootfs 的 vnode
+切换到 memfs 的根 vnode，剩余的 \code{session} 再交给 memfs 查找。
+
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.32\textwidth}L{0.38\textwidth}}
+\hline
+\textbf{对象} & \textbf{保存什么} & \textbf{在例子中的作用}\\ \hline
+\code{FsContext} & 根目录与当前工作目录 & 决定相对路径从哪里开始，并限制
+\code{..} 不能越过进程看到的根\\ \hline
+\code{Path} & mount id 与 vnode & 同一个 vnode 编号在不同挂载实例中不会
+混淆\\ \hline
+\code{Mount} & 挂载点、父挂载和后端 superblock & 让解析器在
+\filepath{/tmp} 切换到 memfs\\ \hline
+\code{Vnode} & superblock、节点编号、generation 与类型 & 表示“哪个文件”
+而不保存本次打开的 offset\\ \hline
+\code{OpenFile} & Path、offset 与读写权限 & 表示一次打开操作的可变状态\\ \hline
+\end{osgridlongtable}
+
+代码走读从
+\filepath{source/kernel/src/user/system\_calls.cpp} 的打开文件分发开始，再看
+\filepath{source/kernel/src/fs/vfs.cpp} 的路径解析和
+\filepath{source/kernel/src/fs/memfs.cpp} 的后端操作。启动日志中的
+\code{VFS_READY}、\code{MEMFS_MOUNTED=/tmp} 只说明初始化成功；真正的路径
+行为还要由创建、打开、重命名、删除和跨挂载失败测试分别检查。

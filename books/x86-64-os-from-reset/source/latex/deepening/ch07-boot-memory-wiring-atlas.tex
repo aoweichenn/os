@@ -1,11 +1,9 @@
-\section{控制权、处理器模式与物理内存所有权}
+\section{启动停住时，从最后一行日志开始查}
 
-\begin{keyidea}
 “启动到内核”不是一根跳转箭头。控制权在 ROM、Stage 1、ELF loader 和 Kernel
 之间交接；CPU 同时从实模式推进到保护模式和长模式；代码、页表、BootInfo、
 staging 区和栈又必须占用互不冲突的物理内存。三条链有一条不成立，下一条
 指令就可能不存在。
-\end{keyidea}
 
 \begin{sidewaysfigure}[p]
   \centering
@@ -19,8 +17,8 @@ staging 区和栈又必须占用互不冲突的物理内存。三条链有一条
 \clearpage
 
 \topic{1.1 CPU Reset 到 ROM Firmware}
-复位不是调用固件函数，而是 CPU 把架构状态设置为规范值，并从复位向量附近
-取指。本项目的平台把 128 KiB ROM 映射到物理地址空间顶部，入口字节覆盖
+复位时，CPU 把架构状态设置为规范值，并从复位向量附近取指。本项目的平台把
+128 KiB ROM 映射到物理地址空间顶部，入口字节覆盖
 \code{0xFFFFFFF0}。CPU 只承诺到这里取字节，不承诺字节合法、串口存在日志、
 栈已建立或 RAM 内容为零。
 
@@ -93,8 +91,8 @@ Kernel ELF staging & 从磁盘读入的精确 ELF 文件字节 & Stage 1 loader 
 高地址 ROM & 固件代码、常量与复位入口 & 平台/ROM 镜像 & 当作可写 RAM 或可分配 frame \\ \hline
 \end{osgridlongtable}
 
-\term{所有者}{owner}不是说“只有一个函数知道地址”，而是说当前谁有权解释、
-修改和最终释放这段存储。staging 区在 ELF 复制完成前属于 loader；装载目标
+\term{所有者}{owner}说明当前谁有权解释、修改和最终释放一段存储，并不限制
+知道地址的函数数量。staging 区在 ELF 复制完成前属于 loader；装载目标
 成功提交后属于 Kernel 镜像；可用 E820 RAM 经保留区扣除并交给页分配器后，
 才成为可分配 frame。所有权转换必须发生在明确提交点。
 

@@ -1,10 +1,9 @@
-\chapter{工具链、freestanding C++20 与 ROM}
+\chapter{把源码变成一块启动 ROM}
 
-\begin{keyidea}
-源码只有经过预处理、编译、汇编、重定位、链接和镜像布局，才成为硬件可读取
-的字节。现代 C++ 抽象也必须下降到明确的 ABI、地址、符号、构造顺序和自研
-运行时责任，不能偷偷借用宿主环境。
-\end{keyidea}
+CPU 不能读取 \code{.cpp} 文件。编译器先生成指令和未决符号，汇编器与链接器
+再决定每段代码的最终地址，镜像工具最后把复位跳转放进 ROM 末尾的固定 16
+字节。本章从一份短源码一直跟到 ROM 十六进制内容，并说明裸机 C++ 还缺哪些
+运行时支持。
 
 \input{topics/ch05-toolchain-and-binary}
 \input{topics/ch05-freestanding-cpp}

@@ -1,0 +1,39 @@
+\section{条件没有成立时，Thread 去哪里}
+
+管道暂时没有数据、futex 的值仍未变化、睡眠期限还没到时，循环读取会白白
+占用 CPU。内核把当前 Thread 放进等待队列，将状态改为 Blocked，再调度其他
+Ready Thread。产生数据、显式唤醒、期限到达或信号到来时，竞争中的一个原因
+取得本次完成权，Thread 回到 Ready。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (running) {Running};
+  \node[os block,right=of running] (prepare) {登记等待条件};
+  \node[os state,right=of prepare] (blocked) {Blocked};
+  \node[os block,below=of blocked] (event) {数据 / wake / timeout / signal};
+  \node[os state,left=of event] (ready) {Ready};
+  \draw[os arrow] (running) -- (prepare);
+  \draw[os arrow] (prepare) -- (blocked);
+  \draw[os arrow] (blocked) -- (event);
+  \draw[os arrow] (event) -- (ready);
+  \draw[os arrow] (ready) -- (running);
+\end{tikzpicture}
+\end{center}
+
+登记条件与改变 Thread 状态必须放在不会丢失唤醒的临界区内。否则生产者可能
+恰好在消费者检查“暂无数据”之后、真正入队之前发出唤醒；消费者随后睡眠，
+而下一次唤醒也许永远不会出现。后文的 pipe、futex、deadline 和 signal
+各自携带不同数据，但都要处理这条时间窗口。
+
+\topic{Shell 为什么还需要进程组和控制终端}
+管道只连接字节流。交互式 Shell 还要知道哪一组进程占有终端。例如用户按下
+Ctrl+C 时，终端把信号发给前台进程组；后台作业试图读取控制终端时会被拒绝
+或停止；\code{fg} 再把选中的进程组设为前台并继续执行。
+
+\filepath{source/user/src/shell\_execution.cpp} 建立管道、重定向和进程组，
+\filepath{source/kernel/src/process/job\_control.cpp} 保存 session、
+process group 与前台归属，
+\filepath{source/kernel/src/io/terminal.cpp} 处理行编辑和控制字符。
+运行作业控制测试时可以观察
+\code{JOB_CONTROL_READY}、\code{BACKGROUND_JOB_STARTED} 和
+\code{FOREGROUND_JOB_STOPPED}，再结合内核的 TTY 统计判断字节与状态变化。

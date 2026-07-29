@@ -1,10 +1,8 @@
 \section{Port I/O 拓扑与设备协议}
 
-\begin{keyidea}
 端口号只回答“把事务送到哪组设备寄存器”，不能回答“接下来按什么顺序读写”。
 COM1、PIC、PIT、i8042、ATA 和 \code{fw\_cfg} 都位于 x86 Port I/O 空间，
 但它们的访问宽度、状态位、副作用和完成条件完全不同。
-\end{keyidea}
 
 \begin{sidewaysfigure}[p]
   \centering

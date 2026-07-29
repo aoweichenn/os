@@ -1,13 +1,12 @@
-\chapter{Unix I/O、并发等待、信号与作业控制}
+\chapter{进程怎样等待、通信和控制终端}
 
-\begin{keyidea}
-pipe、futex、deadline、signal 和 TTY 表面上属于不同接口，底层却都在解决
-“条件尚未成立时谁阻塞、多个完成原因谁获胜、醒来后怎样继续”。Shell 再用
-fd、进程组和控制终端把这些机制组合成可交互作业图。
-\end{keyidea}
+管道没有数据、锁仍被占用或睡眠时间未到时，Thread 应该让出 CPU。数据到达、
+超时和信号又可能同时发生。本章先把这条等待路径画清楚，再看 Shell 怎样用
+管道、进程组和控制终端组织前后台作业。
 
-\input{deepening/ch14-unix-io-v111}
-\input{deepening/ch14-user-threads-futex-v112}
-\input{deepening/ch14-monotonic-time-v113}
-\input{deepening/ch14-signals-v114}
-\input{deepening/ch14-tty-job-control-v115}
+\input{topics/ch14-waiting-and-terminal-introduction}
+\input{deepening/ch14-unix-io}
+\input{deepening/ch14-user-threads-and-futex}
+\input{deepening/ch14-monotonic-time-and-deadlines}
+\input{deepening/ch14-signals}
+\input{deepening/ch14-tty-and-job-control}

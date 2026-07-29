@@ -1,15 +1,55 @@
-\section{启动阶段、地址模式与交接契约}
+\section{ROM 放不下不断增长的内核}
 
-\topic{转换不是一条指令}
-进入长模式至少需要验证 CPU 能力、建立 GDT、打开 A20、建立页表、设置
-CR4.PAE、写 EFER.LME、设置 CR0.PG 和 CR0.PE，再通过远跳转装载 64 位代码
-段。顺序错误会导致通用保护异常或三重故障。
+上一章结束时，CPU 已经能从 128 KiB ROM 启动并向 COM1 输出文字。继续把
+内核代码塞进 ROM 很快会遇到两个问题：空间有限，更新也不方便。磁盘适合保存
+较大的程序，但 CPU 不能直接执行“磁盘里的地址”。代码必须先被读入 RAM。
+
+我们先把目标缩小到 Stage 1。磁盘的 LBA 0 保存描述符，负载从 LBA 1 开始。
+ROM 检查描述符和校验值，把 Stage 1 复制到物理地址 \code{0x8000}，然后
+跳过去执行。成功时串口依次出现：
+
+\begin{lstlisting}
+[OS][FIRMWARE] STAGE1_HEADER_VALID
+[OS][FIRMWARE] STAGE1_LOADED
+[OS][STAGE1] A20_READY
+[OS][STAGE1] ENTERED
+\end{lstlisting}
+
+后两行由刚刚读入 RAM 的代码输出。看到它们以后，我们才知道磁盘端口、校验、
+目标内存、控制转移和 A20 地址实验都已经走通。下一步是让这段 16 位代码进入
+64 位模式，再装入 ELF64 内核。
+
+\topic{先手算一次 1 MiB 地址}
+实模式用“段值左移四位，再加偏移”的方法形成线性地址。取
+\code{FFFF:0010}：
+\[
+  \mathtt{0xFFFF}\times16+\mathtt{0x0010}
+  =\mathtt{0x100000}.
+\]
+8086 只有 20 根地址线，最高只能表达 \code{0xFFFFF}。多出来的第 21 位被
+丢掉以后，结果回到 \code{0x00000}。一些旧软件依赖这种回绕，后来能够访问
+更大地址空间的 PC 因而保留了 A20 兼容门。
+
+Stage 1 需要把 Kernel 放到 1 MiB 以上，所以先通过端口 \code{0x92} 请求
+打开 A20。写端口还不够：代码保存两个测试地址的原值，写入不同字节，检查它们
+是否仍然互不影响，最后恢复原值。串口输出 \code{A20_READY} 时，表示这次
+地址别名实验已经通过。
+
+\topic{为什么 64 位 CPU 仍从实模式开始}
+8086 的实模式直接用段值参与地址计算。80286 增加保护模式以后，段寄存器改为
+选择 GDT 中的描述符；80386 又加入 32 位寄存器和分页。AMD64 在这些状态
+之上增加长模式，同时保留旧入口，使新处理器仍能启动旧软件。
+
+因此 Stage 1 要经过两个跳转。第一次设置 CR0.PE，并通过远跳转装入 32 位
+代码段；第二次在页表和长模式控制位准备好以后，再远跳到 L 位代码段。只修改
+汇编文件中的 \code{BITS 32} 或 \code{BITS 64} 不会改变 CPU 模式，那只是
+告诉 NASM 应该生成哪一种指令编码。
 
 \begin{center}
 \begin{tikzpicture}[os diagram]
   \node[os state] (real) {16 位实模式};
   \node[os block,right=of real] (protected) {32 位保护模式};
-  \node[os block,right=of protected] (paging) {PAE 四级页表};
+  \node[os block,right=of protected] (paging) {PAE 与四级页表};
   \node[os state,right=of paging] (long) {64 位长模式};
   \draw[os arrow] (real) -- (protected);
   \draw[os arrow] (protected) -- (paging);
@@ -17,185 +57,73 @@ CR4.PAE、写 EFER.LME、设置 CR0.PG 和 CR0.PE，再通过远跳转装载 64 
 \end{tikzpicture}
 \end{center}
 
-\topic{A20 与地址环绕}
-早期 PC 为兼容 8086 曾让地址第 20 位可屏蔽。若 A20 未开启，1 MiB 以上地址
-可能回绕。项目必须自行启用并验证 A20，不能因为 QEMU 默认环境“似乎可用”
-就删除这项契约。
+\topic{进入长模式前要准备哪些状态}
+当前实现按下面的顺序修改处理器状态：
 
-\topic{Stage 1 与磁盘}
-v0.2 已通过 IDE PIO 读取自研 Stage 1。驱动选择主通道、主设备和 LBA28，
-发送 \code{READ SECTORS}，轮询 BSY/DRQ/ERR/DF，并从 16 位数据端口读取
-扇区。每次传输都有超时、扇区范围和错误状态验证；负载通过校验后才执行。
-
-\topic{ELF64 装载}
-ELF 头不是值得盲目信任的结构体。装载器验证 magic、类别、端序、机器类型、
-程序头表范围和每个 PT\_LOAD 段；检查文件范围不越界、
-\code{filesz <= memsz}、目标区间不重叠保留内存；复制文件字节并清零 BSS，
-最后构造 BootInfo 交给内核入口。
-
-\topic{实模式与保护模式的历史接力}
-8086 分段把 16 位段值左移四位再加 16 位偏移，从有限寄存器构造 20 位地址。
-这种设计让代码、数据和栈可以分别移动，却没有可靠的权限隔离。80286 引入保护
-模式，段寄存器不再直接贡献地址，而是选择 GDT/LDT 中的描述符；描述符包含
-基址、界限、类型和特权级。80386 又把偏移和通用寄存器扩展到 32 位，并加入
-分页。
-
-现代 64 位内核通常使用基址为零、覆盖完整空间的平坦段，把地址隔离交给页表。
-但保护模式的描述符、特权级和门机制仍是进入长模式及建立用户态边界的一部分。
-x86-64 因此不是抛弃旧模式的新体系，而是在兼容链上增加的新执行状态。
-
-\topic{GDT 为模式切换提供代码属性}
-全局描述符表由 GDTR 指向。每个段描述符编码基址、界限、可执行/可写属性、
-当前特权级和默认操作数宽度。软件先在内存中构造 GDT，用 \code{lgdt} 装载
-表位置，再通过远跳转同时更新 CS 选择子与流水线中的代码属性。
-
-只写 CR0.PE 不会自动刷新 CS 的隐藏缓存。远跳转是状态转换的一部分：它让
-后续字节按新代码段的规则译码。数据段寄存器随后也要装入有效选择子，不能继续
-假定复位值适用于保护模式。
-
-\topic{A20 兼容门保留了 8086 环绕行为}
-8086 的 20 位地址加法会在 1 MiB 处自然回绕。80286 可以产生更高地址后，
-部分旧软件仍依赖这一现象，IBM PC/AT 因而增加了可屏蔽地址线 20 的兼容门。
-现代硬件通常默认打开 A20，模拟器也可能表现得始终可用，但启动代码应执行并
-验证自己的平台契约。
-
-验证不能只写控制位。固件要选择两个只在 A20 开启时不同的安全地址，保存原值、
-写入区分模式、比较结果并恢复，且不能覆盖自身、栈或设备内存。
-
-\topic{四级页表把地址翻译分解为索引}
-经典 4 KiB 页面下，48 位规范虚拟地址被拆成四个 9 位索引和 12 位页内偏移：
-\[
-  9\;(\mathrm{PML4})+9\;(\mathrm{PDPT})+9\;(\mathrm{PD})
-  +9\;(\mathrm{PT})+12\;(\mathrm{offset})=48.
-\]
-每张表占 4 KiB，含 512 个 64 位表项。CR3 保存顶级表物理地址，处理器逐级
-读取 present、writable、user 和 execute-disable 等属性，最终得到物理页。
+\begin{enumerate}[label=\arabic*.]
+  \item 建立 GDT，关闭中断，设置 CR0.PE，再远跳到 32 位代码段；
+  \item 清零并填写初始页表；
+  \item 设置 CR4.PAE，并把 PML4 物理地址写入 CR3；
+  \item 通过 RDMSR/WRMSR 设置 IA32\_EFER.LME；
+  \item 设置 CR0.PG，开启分页；
+  \item 远跳到 GDT 中 L=1 的代码段。
+\end{enumerate}
 
 \begin{pdfdiagram}
-  \node[os state] (virtual) {48 位规范\\虚拟地址};
-  \node[os block,right=of virtual] (pml4) {PML4\\索引 47:39};
-  \node[os block,right=of pml4] (pdpt) {PDPT\\索引 38:30};
-  \node[os block,below=of pdpt] (pd) {PD\\索引 29:21};
-  \node[os block,left=of pd] (pt) {PT\\索引 20:12};
-  \node[os hardware,left=of pt] (page) {物理页\\加偏移 11:0};
-  \draw[os arrow] (virtual) -- (pml4);
-  \draw[os arrow] (pml4) -- (pdpt);
-  \draw[os arrow] (pdpt) -- (pd);
-  \draw[os arrow] (pd) -- (pt);
-  \draw[os arrow] (pt) -- (page);
+  \node[os state] (protected) {保护模式\\CR0.PE=1\\CR0.PG=0};
+  \node[os block,right=of protected] (pae) {CR4.PAE=1\\CR3=PML4};
+  \node[os block,right=of pae] (lme) {IA32\_EFER\\LME=1};
+  \node[os state,below=of lme] (paging) {CR0.PG=1\\硬件置 LMA=1};
+  \node[os block,left=of paging] (jump) {far jump\\CS.L=1};
+  \node[os state,left=of jump] (mode64) {64 位子模式};
+  \draw[os arrow] (protected) -- (pae);
+  \draw[os arrow] (pae) -- (lme);
+  \draw[os arrow] (lme) -- (paging);
+  \draw[os arrow] (paging) -- (jump);
+  \draw[os arrow] (jump) -- (mode64);
 \end{pdfdiagram}
-\diagramnote{页表既做地址翻译，也在每一级累计权限；上级禁止的权限不能由下级重新开放。}
+\diagramnote{依据 Intel SDM Vol. 3A 12.8.5 重绘，并按
+\filepath{source/boot/stage1/src/entry.asm} 的执行顺序标注。LME=1 时若
+PAE=0 就开启分页，或者在 PG=1 时修改 LME，处理器会产生 \#GP。}
 
-最初页表只映射切换代码、栈、BootInfo 和内核装载区。映射过少会在启用分页
-后的下一次取指或栈访问触发页故障；映射全部内存虽容易启动，却会掩盖权限边界。
-早期可先使用 2 MiB 大页减少表数量，内核内存管理建立后再细化权限。
+这些步骤之间没有可随意交换的空隙。分页打开后的下一次取指、栈访问和页表
+读取都必须落在有效映射中。GDT 选择子错误会产生 \#GP；早期 IDT 尚未准备好
+时，连续异常可能发展为三重故障，QEMU 表现为机器重新复位。
 
-当前实现把 PML4、PDPT 和 PD 分别放在物理地址
-\code{0x10000}、\code{0x11000} 和 \code{0x12000}。三页先整体清零，再只
-建立第零项链路；PD 的前 32 项设置 PS 位，把虚拟地址
-\code{0x00000000..0x03FFFFFF} 身份映射到同一物理区间。Stage 1、早期栈、
-页表、Kernel 暂存区、所有加载段和独立内核栈都落在该窗口内。构造完成只输出
-\code{PAGE\_TABLES\_READY}，尚不设置 CR3 或开启分页，从而让“表内容正确”
-与“处理器开始使用它”成为两个独立验收边界。
+当前 Stage 1 面向项目固定的 QEMU x86-64 机器，尚未在访问 EFER 前执行
+CPUID 能力检查。Kernel 入口稍后会检查处理器特性，但这无法保护更早的
+RDMSR/WRMSR。若要适配未知实体 CPU，能力检查必须前移到这里。
 
-\topic{控制位的依赖顺序}
-长模式能力先由 CPUID 验证。软件建立页表并把物理地址写入 CR3，设置 CR4.PAE，
-再在 EFER 中设置 LME。随后开启 CR0.PE 与 CR0.PG，处理器进入长模式激活
-状态；最后通过指向 L 位代码段的远跳转进入 64 位子模式。
+\topic{用三张表先映射低 64 MiB}
+当前 Stage 1 把 PML4、PDPT 和 PD 放在物理地址 \code{0x10000}、
+\code{0x11000} 和 \code{0x12000}。PD 的一项在设置 PS 位以后映射一个
+2 MiB 大页。填写前 32 项即可得到：
+\[
+  32\times2\ \mathrm{MiB}=64\ \mathrm{MiB}.
+\]
+这段恒等映射让虚拟地址和物理地址暂时相等。Stage 1、早期栈、BootInfo、
+Kernel 暂存区和加载后的段都位于其中，分页开启前后的地址不会突然改变。
 
-这些位不是相互独立的开关。没有 PAE 页表就开启分页会使地址解释错误；没有
-有效 GDT 就远跳转会产生 \#GP；异常处理尚未建立时，连续异常可能升级为双重
-故障和三重故障，平台最终复位。每设置一个控制位，代码都要确保下一条取指和
-数据访问仍有合法映射。
+四级页表仍然存在，只是 PD 项直接指向大页，没有继续走到 PT。每张表含
+512 个 64 位表项；地址索引分别取虚拟地址的 47:39、38:30 和 29:21 位。
+第十二章建立 4 KiB 页面时会继续使用 20:12 位的 PT 索引。
 
-v0.3 将这条依赖链拆成可观察的硬件状态边界。代码先用端口
-\code{0x92} 打开并实测 A20，再进入保护模式；页表自检后设置
-\code{CR4.PAE} 和 \code{CR3}，回读成功才设置
-\code{IA32\_EFER.LME}。打开 \code{CR0.PG} 后继续在兼容子模式中检查
-\code{IA32\_EFER.LMA}，最后远跳到 L 位代码段并由 64 位串口例程输出
-\code{LONG\_MODE}。因此日志不仅表示“执行到了某行”，还对应处理器已经回读
-确认的状态事实。
+\topic{用串口定位模式转换停在哪里}
+Stage 1 不在每条指令后打印日志。它只在一个状态已经写入并回读以后输出标记：
 
-\topic{磁盘扇区是装载器的第一个不可信输入}
-IDE PIO 通过端口选择设备与 LBA，写入读取命令，然后等待 BSY 清除和 DRQ
-置位。状态寄存器中的 ERR 或 DF 必须立即转入失败路径；每次等待都有预算。
-数据端口宽度为 16 位，一个 512 字节扇区需要读取 256 个字。
+\begin{lstlisting}
+[OS][STAGE1] GDT_READY
+[OS][STAGE1] PROTECTED_MODE
+[OS][STAGE1] PAGE_TABLES_READY
+[OS][STAGE1] PAE_READY
+[OS][STAGE1] LME_READY
+[OS][STAGE1] PAGING_ENABLED
+[OS][STAGE1] LONG_MODE
+\end{lstlisting}
 
-即使磁盘镜像由项目生成，装载器也按不可信输入验证。扇区数量乘法可能溢出，
-LBA 可能越过镜像，声明长度可能超过目标缓冲区。把这些错误在固件层拒绝，
-能够避免损坏页表、栈和正在执行的代码。
+如果最后一行是 \code{PAE_READY}，调查范围就在 EFER、CR0.PG、当前映射和
+随后的远跳之间。若连 \code{PROTECTED_MODE} 都没有出现，应先检查 GDT、
+选择子和第一条 32 位入口，而不是去调试 ELF 解析。
 
-\topic{ELF 将文件布局与内存布局分离}
-ELF 的节表主要服务链接与调试，运行时装载器依据程序头。每个
-\code{PT_LOAD} 项分别给出文件偏移、虚拟地址、文件字节数、内存字节数、
-对齐和权限。BSS 在文件中不保存全零内容，所以
-\code{p_memsz} 可以大于 \code{p_filesz}；装载器复制已有字节，再把余下
-范围清零。
-
-所有加法和乘法在使用前做溢出检查，区间采用半开形式并检查相互重叠。入口地址
-必须落入可执行装载段，目标区不能覆盖固件、页表、栈和 BootInfo。只有整个
-ELF 验证通过后才开始不可逆复制，避免“验证到一半已经破坏系统”的状态。
-
-\topic{BootInfo 固定固件与内核的交接}
-固件知道内存布局、磁盘来源、内核段位置和早期日志设备；内核不应重新猜测这些
-事实。BootInfo 用带版本与长度的显式宽度字段交付内存区间、保留区、启动设备
-和日志配置。指针字段必须说明是物理地址还是当前页表下的虚拟地址。
-
-交接文档同时规定寄存器、栈对齐、中断状态、页表和对象生命周期。版本不兼容
-时内核应在最早日志通道报告并停止，而不是按错误结构继续解析。
-
-\topic{v0.4 先把内核文件变成可证明的输入}
-进入长模式和装载内核是两个不同的提交点。v0.3 证明处理器已经在 64 位子模式
-执行，却仍停留在 Stage 1 自身；v0.4 的第一步也没有立刻增加磁盘读取代码，
-而是先生成一个独立、可由宿主完整审计的内核文件。这样，装载器出现错误时可以
-区分“输入文件违反契约”和“目标机解析实现错误”，不会让两类问题互相遮蔽。
-
-当前内核由 Clang 以 \code{x86\_64-unknown-none-elf} 目标编译，再由 LLD 的
-\code{elf\_x86\_64} 模式直接链接为 \code{ET\_EXEC}。即使构建宿主是
-ARM64，链接步骤也不会经过宿主 GCC 驱动，更不会暗中加入启动对象、libc 或
-C++ 运行库。编译选项关闭异常、RTTI、栈保护、红区、PIC/PIE 和自动 SSE
-代码生成；这些限制不是否定 C++20，而是在尚未建立相应内核运行时之前明确
-拒绝隐含依赖。
-
-\begin{osgridlongtable}{L{0.26\textwidth}L{0.24\textwidth}L{0.38\textwidth}}
-\textbf{产物契约} & \textbf{当前值} & \textbf{原因}\\ \hline
-\endfirsthead
-\textbf{产物契约} & \textbf{当前值} & \textbf{原因}\\ \hline
-\endhead
-ELF 类别与机器 & ELF64、x86-64 & 与目标处理器和 64 位入口一致\\ \hline
-文件类型 & \code{ET\_EXEC} & 初期采用固定地址，暂不引入动态重定位\\ \hline
-入口与首地址 & \code{0x00100000} & 位于传统低端内存边界之上，且仍在初始
-64 MiB 恒等映射内\\ \hline
-段对齐 & 4 KiB & 与基础页大小一致，便于后续逐页建立权限\\ \hline
-地址关系 & 虚拟地址等于物理地址 & 初期装载不依赖高半映射或重定位器\\ \hline
-段权限 & \code{R E}、\code{R}、\code{RW} & 写与执行互斥，为后续 W\^X
-页表策略保留直接来源\\ \hline
-入口行为 & 验证 BootInfo、BSS、CR3 后 HLT & 以目标机证据证明完整交接\\ \hline
-\end{osgridlongtable}
-
-把链接地址放在 1 MiB 并非“操作系统必须如此”。早期 PC 的
-\code{0xA0000..0xFFFFF} 区间长期被视频内存、扩展 ROM 与系统 ROM 占用，
-1 MiB 又是 8086 二十位地址空间的上界；因此许多早期装载布局选择从该边界
-以上放置较大的内核。这里把 v0.3 的最低 2 MiB 恒等映射扩展为 64 MiB，使
-Stage 1 在第一次装载时不需要同时解决高半地址映射。内存管理成熟后，内核
-可以迁移到高半虚拟地址，但那将是一次有明确页表与重定位策略的契约变更。
-
-链接脚本把入口函数放进专用
-\code{.text.os\_kernel\_entry} 节并置于代码段开头，随后分别收集只读数据、
-可写数据和 BSS。ELF 中空节不需要产生加载段；当前入口、字符串常量和 BSS
-已经自然形成三个 \code{PT\_LOAD}：\code{R E}、\code{R} 与
-\code{RW}。装载器始终读取程序头，不根据当前段数编写特例。
-
-宿主审计逐层拒绝错误：文件头必须是当前小端 ELF64 与 x86-64
-\code{ET\_EXEC}；程序头表必须完整落在文件中；每个 \code{PT\_LOAD}
-必须满足文件长度不大于内存长度、4 KiB 对齐、页内偏移一致和 64 位范围不
-溢出。当前阶段还要求物理地址与虚拟地址相等、各段范围互不重叠、未知权限位
-为零、所有段可读且不存在可写可执行段。入口固定为
-\code{0x00100000}，并且必须落入可执行加载段。最后用
-\code{llvm-nm} 检查没有未解析运行时符号。
-
-单元测试在内存中构造最小有效 ELF，再分别破坏长度、入口、权限、对齐和地址
-关系；固定种子随机测试对标识、目标地址、负载和尾部补零做变异；集成测试审计
-真实构建出的 \filepath{kernel.elf}。Stage 1 已独立执行相同边界规则、完成
-段复制与 BSS 清零，并通过 BootInfo 把机器事实交给入口。宿主审计和目标解析
-是两套实现，前者不能替代后者。
+后面几节会从磁盘字节继续往下走：先定义 Stage 1 和 Kernel 在磁盘中的位置，
+再检查 ELF64 的程序头，最后把 BootInfo 地址放进 RDI 并调用 C++ 入口。

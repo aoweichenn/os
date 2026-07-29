@@ -2,7 +2,7 @@ LATEX_SOURCE_DIR := source/latex
 PROJECT_ROOT := ../..
 SOURCE_METRICS_FILE := $(LATEX_SOURCE_DIR)/generated/source_metrics.tex
 
-.PHONY: metrics source-check check pdf phone-export clean
+.PHONY: metrics source-check editorial-check check pdf phone-export clean
 
 metrics:
 	python3 $(PROJECT_ROOT)/tools/os.py source-metrics --latex-output $(SOURCE_METRICS_FILE)
@@ -10,7 +10,10 @@ metrics:
 source-check: metrics
 	python3 $(LATEX_SOURCE_DIR)/scripts/check_inputs.py
 
-check: source-check
+editorial-check:
+	python3 $(LATEX_SOURCE_DIR)/scripts/check_editorial_style.py
+
+check: source-check editorial-check
 	@command -v xelatex >/dev/null 2>&1 || { echo "missing xelatex"; exit 1; }
 	@command -v latexmk >/dev/null 2>&1 || { echo "missing latexmk"; exit 1; }
 

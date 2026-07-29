@@ -1,193 +1,132 @@
-\chapter*{阅读路线与全书知识地图}
-\addcontentsline{toc}{chapter}{阅读路线与全书知识地图}
-\markboth{阅读路线与全书知识地图}{阅读路线与全书知识地图}
+\chapter*{怎样使用这本书}
+\addcontentsline{toc}{chapter}{怎样使用这本书}
+\markboth{怎样使用这本书}{怎样使用这本书}
 
-\begin{keyidea}
-全书不把“会使用电脑”当作“理解计算机”。前四章从量、单位、电路和逻辑开始，
-让读者亲手推导一台可取指机器；后十六章再沿真实 v2.0 系统建立固件、内核、
-用户空间与工程证据。任何路线都不能把尚未建立的名词当作前置知识。
-\end{keyidea}
+第一次接触操作系统时，建议按目录顺序阅读。前四章解释后面会反复出现的
+电路、逻辑和 CPU 概念；从第五章开始，每章都会回到项目中的文件、构建产物
+和运行结果。
 
-目录只保留每章 5--6 个承担完整知识链的主节。主节内部不再用连续编号把一个
-机制切成几十段；必要的局部转折以段首主题进入连续正文，读者可以沿因果、
-状态、所有权和证据一路读完，也可以从目录直接找到一条完整主线。
+已经学过计算机组成的读者可以从第六章开始。遇到电源、时钟、逻辑电平或状态
+存储等概念时，再回看前四章。无论从哪里进入，都建议亲手运行实验，不要只读
+最终结论。
 
-\section*{一、七部分分别解决什么问题}
+\section*{先观察，再打开代码}
 
-\begin{osgridlongtable}{L{0.10\linewidth}L{0.24\linewidth}L{0.56\linewidth}}
-部分 & 核心问题 & 完成以后应当能够解释 \\ \hline
-\endfirsthead
-部分 & 核心问题 & 完成以后应当能够解释 \\ \hline
-\endhead
-第一部分 & 物理世界怎样成为可取指机器 &
-单位、编码、电路、元件、逻辑门、状态、CPU、存储器、引脚和总线怎样组成
-一台具备电气条件与首条指令来源的计算机。\\ \hline
-第二部分 & 为什么是今天这台 x86 机器 &
-软件层次、x86 兼容历史、复位状态、平台地址译码、QEMU 设备事务与实体 PCB
-之间分别承诺什么。\\ \hline
-第三部分 & 源码怎样成为可观察硬件行为 &
-数据、寄存器、RFLAGS、Intel 汇编、机器码、工具链、C++、ROM 和 UART 怎样
-形成逐字节可审计证据。\\ \hline
-第四部分 & 内核怎样取得并保护机器 &
-磁盘装载、长模式、描述符、异常、页表、中断、驱动、Ring 3 和用户复制怎样
-形成可信控制边界。\\ \hline
-第五部分 & 多个程序怎样共享 CPU、对象和地址空间 &
-Process/Thread、系统调用、KernelObject、fd、VFS、PID1、VMA、文件后备和
-COW 怎样分离身份与所有权。\\ \hline
-第六部分 & 状态怎样等待、组合并跨重启存活 &
-文件系统、写回、journal、pipe、futex、deadline、signal、TTY、Shell 和
-ABI 怎样组成可持久、可交互的用户系统。\\ \hline
-第七部分 & 怎样证明整套材料属于同一版本 &
-需求、ADR、分层测试、目标产物、代码统计、教材与发布身份怎样冻结 v2.0。\\ \hline
-\end{osgridlongtable}
-
-\section*{二、二十章的输入、输出与依赖}
-
-\begin{osgridlongtable}{L{0.07\linewidth}L{0.28\linewidth}L{0.22\linewidth}L{0.33\linewidth}}
-章 & 主题 & 主要前置 & 交付的关键事实 \\ \hline
-\endfirsthead
-章 & 主题 & 主要前置 & 交付的关键事实 \\ \hline
-\endhead
-1 & 量、计数、编码与推理 & 无 & 单位、范围、进制、bit/byte、模型与证据 \\ \hline
-2 & 电、电路、元件与原理图 & 第 1 章 & 欧姆定律、功率、RC、元件、网络和封装 \\ \hline
-3 & 逻辑门、时钟与状态 & 第 1--2 章 & 布尔逻辑、加法器、触发器、时序和状态机 \\ \hline
-4 & CPU、存储器、总线与整机 & 第 1--3 章 & 从电源到非易失取指的完整物理/逻辑链 \\ \hline
-5 & OS 职责与学习工程 & 第 4 章 & 软件层次、项目边界、提交点和证据闭环 \\ \hline
-6 & x86 历史与复位 & 第 4--5 章 & 兼容遗产、架构状态和首条 x86 取指 \\ \hline
-7 & 平台 I/O 与实体硬件 & 第 2、4、6 章 & 地址/端口事务与真实载板证据边界 \\ \hline
-8 & 数据、寄存器与汇编 & 第 1、3、6 章 & 位模式到 x86 指令状态转换 \\ \hline
-9 & 工具链、C++ 与 ROM & 第 5、8 章 & 从源码到复位可读字节 \\ \hline
-10 & UART、日志与测试 & 第 7--9 章 & 第一个有界观测通道与独立 oracle \\ \hline
-11 & Loader、ELF64 与长模式 & 第 6--10 章 & 从磁盘到 64 位 C++ 入口 \\ \hline
-12 & 异常与内存体系 & 第 11 章 & 可信失败现场、地址翻译与资源回收 \\ \hline
-13 & 中断、设备与用户边界 & 第 10--12 章 & 异步事件与 CPL3 隔离 \\ \hline
-14 & Process、Thread 与 syscall & 第 12--13 章 & 执行身份、调度现场与可信入口 \\ \hline
-15 & KernelObject、fd 与 VFS & 第 14 章 & 对象身份、引用和路径命名空间 \\ \hline
-16 & PID1、VM 与 fork & 第 14--15 章 & 程序映像、按需驻留与复制语义 \\ \hline
-17 & 文件系统与崩溃一致性 & 第 7、15--16 章 & 从用户写入到跨重启持久顺序 \\ \hline
-18 & Unix I/O、等待与作业控制 & 第 13--17 章 & 单赢家等待与可组合进程图 \\ \hline
-19 & 用户环境与 ABI v2 & 第 14--18 章 & 磁盘工具、设备名、观察面与线协议 \\ \hline
-20 & 工程治理与 v2.0 发布 & 全部前章 & 可复现、可审计、可继续演进的基线 \\ \hline
-\end{osgridlongtable}
-
-\section*{三、真正零基础的顺序}
-
-第一次接触计算机的人按第 1--20 章顺序阅读，并遵守四条规则：
+学习一个阶段时，可以按下面的顺序进行：
 
 \begin{enumerate}[leftmargin=2.2em]
-  \item 公式先代入单位，再代入数值；结果先检查数量级。
-  \item 图中每根箭头都说清“传的是能量、时钟、地址、数据还是所有权”。
-  \item 第一次见缩写时写出全称、所属层次和一句自己的解释。
-  \item 不背端口和位值；先说明它在状态机中选择了什么转换。
+  \item 运行该阶段的测试或 QEMU，用原样文本记录串口输出和退出状态。
+  \item 找到产生这条输出的汇编或 C++ 函数，沿调用路径向前追踪。
+  \item 手算其中一个地址、位字段、容量或状态变化。
+  \item 改变一个输入，再比较输出走到了哪个分支。
 \end{enumerate}
 
-第 1--4 章每章都可脱离项目代码完成纸笔学习。第 5 章以后才要求逐步接触
-源码、反汇编、QEMU 和测试。
+例如，UART 阶段先确认终端是否出现字符，再检查 Line Status Register 的
+发送保持寄存器空位。长模式阶段先观察跳转前后的日志，再核对 CR0、CR4、
+EFER 和页表。文件系统阶段先创建并读回一个文件，随后才分析 inode、位图和
+磁盘写入顺序。
 
-\section*{四、已有基础时的六条专题路线}
+\section*{二十章会做什么}
 
-\topic{先把机器启动起来。}
-读第 4--11 章，再读第 12 章的入口、GDT/TSS/IDT 与页表前半部分。电路基础
-不牢时回读第 2--3 章，不要把 reset、clock、ready 当作普通变量。
-
-\topic{重点学习电路、芯片和载板。}
-读第 1--4、7 章。先在教学图中辨认电源/地、上拉、去耦、时钟、复位和引脚
-方向，再进入实体模块的 260-pin、差分对和十页参考原理图。
-
-\topic{重点学习 CPU、汇编和内存。}
-读第 3--4、6、8、11--14 章。把每条指令写成输入状态、有效地址、输出状态、
-RFLAGS 和异常条件；把每个虚拟地址继续拆到页表和物理事务。
-
-\topic{重点学习 Unix 内核对象。}
-读第 12--19 章，尤其区分 Process/Thread、fd/FileDescription、
-Path/Vnode/inode、VMA/PTE、pending/action/frame 的创建者和寿命。
-
-\topic{重点学习文件系统与持久性。}
-先读第 4、7 章的设备事务、第 15 章 VFS，再读第 17 章。始终区分用户缓冲、
-页缓存、设备缓存、FLUSH 完成和新实例恢复五种状态。
-
-\topic{重点学习软件工程和验证。}
-先读第 1 章的测量/证据、第 5、10 章，再读各章 failure box，最后完整阅读
-第 20 章和书末实验。
-
-\section*{五、七条端到端主线}
-
-\begin{osgridlongtable}{L{0.18\linewidth}L{0.16\linewidth}L{0.56\linewidth}}
-主线 & 章节 & 必须连续说出的状态变化 \\ \hline
+\begin{osgridlongtable}{L{0.06\linewidth}L{0.28\linewidth}L{0.56\linewidth}}
+章 & 主题 & 读完以后可以亲手完成的事情 \\ \hline
 \endfirsthead
-主线 & 章节 & 必须连续说出的状态变化 \\ \hline
+章 & 主题 & 读完以后可以亲手完成的事情 \\ \hline
 \endhead
-一个逻辑 1 怎样产生 &
-1--3 &
-电源与参考地 \(\rightarrow\) 晶体管导通组合 \(\rightarrow\) 输出电压范围
-\(\rightarrow\) 接收阈值 \(\rightarrow\) 触发器在时钟边沿保存 1。\\ \hline
-上电到首条指令 &
-2--4、6、9 &
-输入电源 \(\rightarrow\) 稳压/时钟/power-good \(\rightarrow\) 复位释放
-\(\rightarrow\) 架构复位地址 \(\rightarrow\) 平台译码
-\(\rightarrow\) ROM 字节 \(\rightarrow\) CPU 译码。\\ \hline
-上电到 PID1 &
-4--16 &
-首条取指 \(\rightarrow\) 自研 ROM \(\rightarrow\) Stage 1
-\(\rightarrow\) 长模式 \(\rightarrow\) Kernel \(\rightarrow\) 内存/中断
-\(\rightarrow\) rootfs \(\rightarrow\) 磁盘 ELF \(\rightarrow\) PID1。\\ \hline
-一次系统调用 &
-8、12--16、19 &
-用户寄存器 \(\rightarrow\) 可信内核栈 \(\rightarrow\) UserContext
-\(\rightarrow\) 用户指针复制 \(\rightarrow\) 对象操作
-\(\rightarrow\) SYSRET/IRETQ。\\ \hline
-一次缺页与 COW &
-12--13、16 &
-VMA 意图 \(\rightarrow\) 不存在/只读 PTE \(\rightarrow\) vector 14
-\(\rightarrow\) fault 分类 \(\rightarrow\) 建页/COW
-\(\rightarrow\) TLB 更新 \(\rightarrow\) 原指令重试。\\ \hline
-一个字节跨重启 &
-7、15--17 &
-用户缓冲 \(\rightarrow\) fd/FileDescription \(\rightarrow\) vnode/inode
-\(\rightarrow\) page cache \(\rightarrow\) journal/ATA
-\(\rightarrow\) FLUSH \(\rightarrow\) 新实例 replay/read。\\ \hline
-Ctrl-Z 到 \code{fg} &
-7、13--14、18--19 &
-PS/2 线路/端口 \(\rightarrow\) IRQ1 \(\rightarrow\) TTY 控制字符
-\(\rightarrow\) 前台 PGID \(\rightarrow\) signal/Stopped
-\(\rightarrow\) Shell 作业表 \(\rightarrow\) SIGCONT。\\ \hline
+1 & 从测量和计数开始 &
+带着单位计算时间、频率、容量和地址范围。\\ \hline
+2 & 电路怎样传递能量和信号 &
+阅读基本原理图，并计算电阻、电流、功率和 RC 时间。\\ \hline
+3 & 机器怎样记住一个状态 &
+从真值表画出组合逻辑，沿时钟边沿分析寄存器和状态机。\\ \hline
+4 & CPU 怎样读到第一条指令 &
+沿电源、复位、地址总线和 ROM 说明一次取指。\\ \hline
+5 & 操作系统替程序做了什么 &
+区分固件、Loader、Kernel、驱动和用户程序接手工作的时刻。\\ \hline
+6 & x86 为什么从实模式醒来 &
+手算复位地址、分段地址和 A20 回绕。\\ \hline
+7 & CPU 怎样找到内存和设备 &
+区分内存事务与 Port I/O，并在载板原理图中找到对应器件。\\ \hline
+8 & 读懂 CPU 执行的指令 &
+阅读 Intel 语法汇编，跟踪寄存器、RFLAGS 和内存变化。\\ \hline
+9 & 把源码变成一块启动 ROM &
+从源文件追到 ELF、链接布局、ROM 偏移和最终机器字节。\\ \hline
+10 & 让机器第一次说话 &
+初始化 UART，发送字符，并识别设备忙与超时。\\ \hline
+11 & 从磁盘进入 64 位内核 &
+读取 ATA 扇区、解析 ELF64，并检查进入长模式需要的寄存器。\\ \hline
+12 & 内核怎样管理内存和异常 &
+解读异常现场，手算页表索引，并跟踪页帧申请与释放。\\ \hline
+13 & 中断怎样把设备带进内核 &
+从设备 IRQ 追到 IDT 入口，再返回 Ring 3。\\ \hline
+14 & 让多个线程轮流使用 CPU &
+观察 Thread 状态变化、上下文切换和一次系统调用。\\ \hline
+15 & 文件描述符怎样找到文件 &
+从用户 fd 追到 FileDescription、Vnode、路径和挂载点。\\ \hline
+16 & 进程怎样装入程序和分配内存 &
+跟踪 exec、缺页、文件映射、fork 和写时复制。\\ \hline
+17 & 文件怎样在断电后留下来 &
+检查磁盘布局，并比较不同断电位置留下的文件系统状态。\\ \hline
+18 & 进程怎样等待、通信和控制终端 &
+运行 pipe、futex、signal 和前后台作业实验。\\ \hline
+19 & 用户程序怎样使用系统服务 &
+读取 ABI、devfs 和 procfs，并运行磁盘中的命令行工具。\\ \hline
+20 & 回看整个系统并准备下一次修改 &
+选择一个模块，找到接口、相关测试和修改后需要重跑的路径。\\ \hline
 \end{osgridlongtable}
 
-\section*{六、图表的阅读规则}
+\section*{按问题选择阅读路线}
 
-全书表格统一使用闭合实线网格：外框界定表的范围，每条竖线界定字段，每条
-横线界定一条记录；跨页长表会重复表头。阅读时先锁定行与列的交点，再解释
-单元格内容，不能把相邻记录或相邻字段拼成同一个事实。
+\topic{我想先看到系统启动。}
+读第 4、6、8--13 章。第 4 章解释取指所需的硬件条件，第 6 章解释 x86
+复位状态，第 8--11 章把源码变成 ROM 并进入内核，第 12--13 章加入保护和
+用户态。
 
-\begin{osgridlongtable}{L{0.20\linewidth}L{0.30\linewidth}L{0.40\linewidth}}
-图表类型 & 它主要证明什么 & 不能从中擅自推出什么 \\ \hline
+\topic{我想理解进程和虚拟内存。}
+先读第 12--14 章，弄清异常、页表、中断和 Thread 切换，再读第 16 章。
+fork 和写时复制都依赖这些基础。
+
+\topic{我想理解文件和磁盘。}
+读第 7、15、17 章。先区分设备端口和磁盘扇区，再沿 fd、VFS、inode、页
+缓存和设备写入追踪一个字节。
+
+\topic{我想理解 Shell 怎样控制程序。}
+读第 13--19 章，重点观察系统调用、pipe、signal、TTY、进程组和前后台
+切换。
+
+\section*{遇到陌生概念时停一下}
+
+看到新的缩写时，先确认它属于 CPU、设备、内核对象、用户接口还是磁盘格式。
+看到地址时，先写出地址空间和单位。看到一个失败返回时，继续找调用者怎样
+处理它。看到测试通过时，记录输入、输出和它没有覆盖的分支。
+
+这本书不要求背下所有端口号和位值。更重要的是能够回到规格和代码，重新找到
+它们，并解释某一位改变以后 CPU 或设备接下来会做什么。
+
+\section*{怎样查 Intel 手册}
+
+Intel Software Developer's Manual（SDM）不是一本适合从第一页顺序读到
+最后一页的教材。遇到具体问题时，先在卷目录中判断问题属于哪一类，再用章节
+标题、寄存器名或指令名检索。不同版次可能改变页码，章节号和标题通常比页码
+更适合作为笔记索引。
+
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.31\textwidth}L{0.39\textwidth}}
+\textbf{手册} & \textbf{先到这里找什么} & \textbf{本书怎样使用}\\ \hline
 \endfirsthead
-图表类型 & 它主要证明什么 & 不能从中擅自推出什么 \\ \hline
+\textbf{手册} & \textbf{先到这里找什么} & \textbf{本书怎样使用}\\ \hline
 \endhead
-电路图 & 元件引脚和网络的电气连接 & PCB 几何、温升、信号完整性自动合格 \\ \hline
-引脚图 & 视角、编号和功能分组 & 所有同名接口电压和协议兼容 \\ \hline
-逻辑图/真值表 & 离散输入输出关系 & 传播延迟、阈值和功耗为零 \\ \hline
-时序图 & 信号变化的先后与采样窗口 & 未标尺度时的绝对时间 \\ \hline
-结构图 & 模块、职责、依赖和数据流 & 模块在实体芯片中的精确位置 \\ \hline
-状态图 & 允许状态与转换 & 每个转换已经正确实现和验证 \\ \hline
-波形/测量表 & 指定条件下的观测结果 & 所有器件、温度和负载下都相同 \\ \hline
+Volume 1 & 寄存器、数据类型、执行环境和指令集概览 &
+解释汇编程序看到的寄存器、标志位和基本执行模型。\\ \hline
+Volume 2 & 单条指令的编码、操作过程、标志位影响和异常 &
+核对 \code{LGDT}、\code{MOV CRx}、\code{IRETQ}、
+\code{SYSCALL} 等指令实际会改变什么。\\ \hline
+Volume 3A--3D & 复位、保护模式、分页、中断、任务状态和系统寄存器 &
+重绘复位地址、长模式切换、页表、异常现场和系统调用入口图。\\ \hline
+Volume 4 & 型号相关寄存器（MSR）的编号与位字段 &
+核对 EFER 等 MSR；使用前仍需通过 CPUID 判断处理器是否提供相应能力。\\ \hline
 \end{osgridlongtable}
 
-\section*{七、每个概念都用八个问题验收}
-
-\begin{enumerate}[leftmargin=2.2em]
-  \item 它属于物理元件、可测量量、编码、硬件状态还是软件抽象？
-  \item 它解决了什么历史或工程问题？
-  \item 它的单位、范围、位宽、有效极性或地址空间是什么？
-  \item 哪个阶段、器件、代码或规则创建它？
-  \item 它拥有哪一份状态，明确不拥有什么？
-  \item 正常路径如何提交，失败以前哪些状态必须保持不变？
-  \item 公式、原理图、产物、测试和整机证据分别能证明什么？
-  \item 若替换方案，必须新增哪些条件和反例？
-\end{enumerate}
-
-\begin{contractbox}
-当前产品事实仍以 v2.0 为准：项目版本 2.0.0，用户 ABI 2.0.0，rootfs 格式 3，
-三档内存为 64 MiB、256 MiB、64 GiB。新增零基础章节只扩展解释深度，不改变
-Kernel、盘面、ABI 或 QEMU 硬件边界。
-\end{contractbox}
+查到手册结论后，还要回到项目做三次核对。先在源码中找到写寄存器或构造数据
+结构的指令；再检查 ELF、ROM 或磁盘镜像中的最终字节；最后观察 QEMU 串口
+日志是否真的越过了对应状态。手册说明处理器应当怎样工作，源码说明我们希望
+它怎样工作，构建产物和运行结果则用来发现两者之间的差异。

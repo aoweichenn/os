@@ -1,4 +1,4 @@
-\section{CpuLocal、原生系统调用与安全返回}
+\section{系统调用怎样找到当前 CPU 和 Thread}
 
 v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的学习顺序：
 异常章已经建立 GDT、IDT、TSS 和 \code{iretq}，软件中断只需把一扇 IDT gate
@@ -19,11 +19,28 @@ v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的
   \item \code{sysret} 前必须证明 RCX、R11 和段状态安全。
 \end{itemize}
 
-\begin{keyidea}
+\begin{pdfdiagram}
+  \node[os state] (user) {Ring 3\\RIP/RFLAGS/RSP};
+  \node[os block,right=of user] (cpu) {SYSCALL 硬件动作\\
+  RCX\(\leftarrow\)RIP\\R11\(\leftarrow\)RFLAGS};
+  \node[os block,right=of cpu] (target) {STAR/LSTAR/FMASK\\
+  改 CS、SS、RIP、RFLAGS\\RSP 不变};
+  \node[os block,below=of target] (prefix) {入口汇编\\SWAPGS\\保存用户 RSP};
+  \node[os state,left=of prefix] (stack) {可信内核栈\\规范化 UserContext};
+  \node[os block,left=of stack] (cpp) {C++ 分发器};
+  \draw[os arrow] (user) -- (cpu);
+  \draw[os arrow] (cpu) -- (target);
+  \draw[os arrow] (target) -- (prefix);
+  \draw[os arrow] (prefix) -- (stack);
+  \draw[os arrow] (stack) -- (cpp);
+\end{pdfdiagram}
+\diagramnote{依据 Intel SDM Vol. 3A 6.8.8 重绘。手册明确指出 SYSCALL
+不会保存或切换 RSP；下半段的 SWAPGS、用户 RSP 暂存和内核栈选择来自
+\filepath{source/kernel/src/arch/architecture.asm}。}
+
 \code{syscall} 不是“更快的 \code{int 0x80}”。它把换栈、每 CPU 状态、统一
 保存现场和安全返回从硬件门描述符移交给内核。只有 Thread 栈所有权已经冻结，
 才能单独验收这份新合同。
-\end{keyidea}
 
 \topic{三代跨特权入口背后的取舍}
 保护模式提供 call gate。GDT/LDT 描述符可以指定目标段、偏移、目标特权级和
@@ -504,7 +521,7 @@ strip 只删除不进入运行时的调试段，三个 \code{PT_LOAD}、入口�
 避免每次打包临时扩大分区或手工删除文件。Stage 1 审计实际写盘 payload，
 GDB 仍加载完整 ELF。
 
-\topic{按目录走读 v1.3}\par
+\topic{沿目录走读 CPU-local 与系统调用}\par
 \begin{osgridlongtable}{L{0.43\textwidth}L{0.45\textwidth}}
 文件 & 阅读时要回答的问题\\ \hline
 \filepath{arch/processor_features.hpp/.cpp} &
@@ -542,9 +559,7 @@ RFLAGS、调度、页表、栈和 GS 六种状态，容易把结果当成原因�
 改写本章冻结的架构入口、UserContext 和返回验证。这个后续结果反向证明了
 分层的意义：对象层可以演进，特权边界不需要跟着重新冒险。
 
-\begin{keyidea}
 v1.3 的完成不是“用户程序执行了一次 \code{syscall}”。完整结论是：能力在
 使用前被证明，入口在接触内存前取得可信栈，两条入口汇聚为一份现场，IRQ 只在
 合法边界请求调度，返回指令由白名单选择，非局部控制流与 NMI 都有明确 GS/栈
 策略，而且正常、随机与能力失败证据可以从复位向量重新产生。
-\end{keyidea}

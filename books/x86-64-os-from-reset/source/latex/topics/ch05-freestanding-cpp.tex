@@ -1,10 +1,8 @@
 \section{freestanding C++20 与跨语言 ABI}
 
-\begin{keyidea}
 C++ 是一种语言，不等于桌面操作系统提供的运行环境。内核可以使用类型系统、
 封装、\code{constexpr} 和强枚举，但必须自行建立 ABI、内存、对象生命周期
 与失败策略。
-\end{keyidea}
 
 \topic{一、托管环境与独立环境}
 C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作系统装载器

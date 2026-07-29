@@ -1,10 +1,8 @@
-\chapter{中断、设备驱动与用户边界}
+\chapter{中断怎样把设备带进内核}
 
-\begin{keyidea}
-中断把异步设备事件引入内核并发，Ring 3 又把不可信执行引入同一机器。IRQ
-路由、入口栈、锁、页权限、用户复制、系统调用和异常隔离必须作为一条完整
-控制流理解，任何局部正确都不能替代端到端边界。
-\end{keyidea}
+按下键盘时，CPU 可能正在执行完全无关的 C++ 代码。IRQ1 让处理器暂时保存
+当前现场，进入内核读取扫描码，然后回到被打断的位置。随后我们让用户程序在
+Ring 3 运行，并检查它怎样通过系统调用进入内核、怎样因非法访问被单独终止。
 
 \input{topics/ch09-interrupts-devices-users}
 \input{deepening/ch09-interrupts-devices-and-users}

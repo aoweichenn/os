@@ -1,9 +1,8 @@
-\chapter{数据表示、寄存器与 Intel 汇编}
+\chapter{读懂 CPU 执行的指令}
 
-\begin{keyidea}
-数值、字节、地址、寄存器、机器码和汇编助记符是同一处理器状态的不同观察面。
-系统程序必须能从源码推导编码与标志位，也能从故障现场反向恢复指令语义。
-\end{keyidea}
+字节 \code{B0 41} 可以被 x86 解码成“把 \code{0x41} 放入 AL”。第二个字节
+既可以写成十六进制 41，也可以解释成字符 A；CPU 只看到编码。本章练习二进制、
+补码、字节序、寄存器、标志位和 Intel 语法汇编，直到能够手算一小段机器码。
 
 \input{topics/ch04-data-representation}
 \input{topics/ch04-assembly-language}

@@ -1,30 +1,21 @@
 # 从复位向量到自研操作系统
 
-本目录是 x86-64 OS Lab 的正式 LaTeX 教材工程。书稿不是项目文档的汇编，
-而是沿“硬件契约 → 二进制布局 → 启动链 → 内核机制 → 用户环境”的学习顺序，
-解释为什么这样设计、代码如何落地、证据如何形成。读者不需要预先学习硬件史
-或数字电路；前四章从量、单位、计数与编码开始，依次建立电路元件、原理图、
-逻辑门、触发器、CPU、存储器、芯片引脚、总线、ROM 与完整启动条件。每个
-重要概念都沿“是什么、怎样测量、为什么出现、怎样工作、怎样计算、失败怎样
-观察”的链条展开。
+普通程序可以从 `main()` 开始，因为操作系统已经准备好了内存、栈和运行
+环境。操作系统自己没有这些条件。CPU 刚刚复位时，只会从硬件规定的位置读取
+第一条指令。
 
-## 目录
+这本书从那条指令开始。配套项目自行实现 ROM、Stage 1、长模式转换、
+freestanding C++20 内核、驱动、用户程序和文件系统；QEMU 只负责模拟
+x86-64 CPU 和外围硬件。书中的代码都来自仓库根目录 `source/` 下的同一个
+可运行项目。
 
-- `source/latex/main.tex`：全书入口。
-- `source/latex/chapters/`：二十个完整主题章的入口，负责组织一章的学习主线。
-- `source/latex/foundations/`：面向完全零基础读者的物理、电路、逻辑和整机材料；
-  其中 `expanded/` 是前四章的第二深度层，承载完整推导、数值算例、电路/时序图、
-  失败诊断和动手验收，避免主叙事退化成术语表。
-- `source/latex/topics/`：主题章中的基础材料，记录背景、历史和已有实现。
-- `source/latex/deepening/`：机制级深入内容，记录状态转换、数据结构、失败路径
-  和验证方法。
-- `source/latex/frontmatter/`：书名页与前言。
-- `source/latex/backmatter/`：详细术语表、验收清单与参考资料。
-- `source/latex/figures/`：全机链路、实体载板连线和原始参考原理图的矢量 PDF。
-- `source/latex/preamble/`：排版、颜色和教材环境。
-- `source/latex/scripts/check_inputs.py`：书稿输入、章节数量和图片资源检查。
+前四章不要求读者学过电路或计算机组成。从量、单位和编码开始，依次介绍
+电路、逻辑门、寄存器、CPU、存储器和总线。后续章节沿项目的实际启动顺序
+加入串口、磁盘、分页、异常、中断、进程、文件系统和用户环境。
 
 ## 构建
+
+在本目录运行：
 
 ```bash
 make check
@@ -32,186 +23,35 @@ make pdf
 make phone-export
 ```
 
-`make check` 更新生产目标代码统计，并检查所有 `\input` 文件、图片资源、
-章节数量、XeLaTeX 和 latexmk；检查脚本会拒绝书稿直接引用 PNG/JPG 位图，
-拒绝生成的学习图 PDF 内嵌栅格 image XObject，并拒绝绕过统一实线网格的
-原始表格环境或缺少逐行横线的表格行。全书 290 张语义表格统一使用闭合外框、
-逐列竖线和逐行横线，跨页长表重复表头后仍保持网格闭合。
-`make pdf` 生成 `source/latex/main.pdf`。
-`make phone-export` 重新构建 PDF，并导出到手机书库的独立目录
-`按卷类型/原理卷/从复位向量到自研x8664操作系统/`。
-当前 v2.0 教材结构修订版 PDF 为 467 页、5333662 字节，SHA-256 为
-`210733ade49ea42644902ee352f08b3d01310f7052108a04e8fdcb343d82890e`。
-手机书库必须与书稿产物逐字节同哈希。网站下载件只在明确进入网站发布流程时
-一并更新和核验；本地书稿修订不会隐式触发网页改动。
+- `make check` 检查 LaTeX 输入、章节结构、矢量图片和实线表格。
+- `make pdf` 生成 `source/latex/main.pdf`。
+- `make phone-export` 重新检查并把同一份 PDF 复制到手机书库。
 
-生产代码统计只扫描仓库根目录的 `source/`，计入核心 `.asm`、`.cpp`、
-`.hpp` 中的非空、非纯注释行。汇编 include、测试、宿主工具、书稿、网站、构建
-描述和链接脚本均不计入该数字。
+构建需要 XeLaTeX、latexmk、Python 3，以及仓库根目录下可用的项目统计工具。
+代码行数由构建脚本从 `source/` 重新计算，不手工维护。
 
-当前书稿为 7 部 20 个完整主题章。当前生产目标包含 208 个核心
-`.asm`、`.cpp`、`.hpp` 文件，共 56,649 行有效代码；该口径严格排除测试、
-宿主工具、书稿和网站。每章只保留 5--6 个编号主节：先建立历史背景和前置
-状态，再展开寄存器、位布局、数据结构或控制流，随后说明失败模式、调试方法与
-可重复验收证据。局部细节以不编号的段首主题进入连续正文，不再让几十个一级、
-二级标题把同一机制切成提纲。小主题不会独立占用一章或一个编号节，而是作为
-主题材料进入一条连续的因果链。
+## 目录
 
-前四章现在占正文页码第 3--72 页，共 70 页：第 1 章 19 页、第 2 章
-18 页、第 3 章 14 页、第 4 章 19 页。它们不是术语摘要，而是从测量证据、
-电气与元件、组合/时序逻辑一路推导到 CPU、互连、存储层次、x86 reset
-地址和 128 KiB ROM 文件偏移的独立基础课程。
+- `source/latex/main.tex`：全书入口与阅读顺序。
+- `source/latex/chapters/`：二十章的入口文件。
+- `source/latex/foundations/`：物理、电路、逻辑和整机基础。
+- `source/latex/topics/`：进入机制前需要的背景材料。
+- `source/latex/deepening/`：代码走读、状态变化和实验记录。
+- `source/latex/figures/`：原理图、结构图和连线图。
+- `source/latex/frontmatter/`：前言与阅读路线。
+- `source/latex/backmatter/`：实验、术语、检查清单和参考资料。
+- `STRUCTURE.md`：章节依赖、素材归属和排版边界。
+- `EDITORIAL.md`：书稿的文字编辑与技术审校方法。
 
-七部分依次回答“物理世界怎样成为可取指机器、为什么是今天这台 x86 平台、
-源码怎样成为硬件行为、内核怎样取得并保护机器、多个程序怎样共享执行和对象、
-状态怎样等待并跨重启存活、怎样证明这些内容属于同一 v2.0”。原先集中在单章
-中的进程、VFS、虚拟内存、持久化、并发和用户环境按所有权与前置依赖成为
-第 14--19 章；第 20 章只负责工程治理与发布证据。完整编辑边界见
-`STRUCTURE.md`。
+## 阅读方式
 
-全书已把 `docs/learning` 的总路线、全机连线、启动与内存、Port I/O、
-中断路由、键盘到 Shell、存储持久化 7 张系统图逐张纳入相应章节；附录再把
-00--13 阶段、B1--B7 背景、硬件装配文档和每张图映射到正文落点，避免资料
-只是复制进书却没有进入解释链。7 张宽图均使用独立横向整页，正文逐线说明
-实物电气连接、虚拟平台边界、控制流与数据/所有权流。
+第一次阅读可以按目录顺序进行。每完成一个阶段，先运行对应实验并记录输出，
+再回到代码中追踪那条输出经过的汇编、C++ 和硬件状态。遇到地址、位字段或
+容量公式时，建议停下来手算一次。
 
-第七章另加入一个完整实体硬件学习案例：LattePanda Mu N100/N305 计算模块与
-DFR1142 Lite Carrier V2。正文直接嵌入 10 页真实 KiCad 参考原理图、1 页
-纯 TikZ 模块正反面与 260 触点方向图，以及 3 张简化但不省连接的矢量图，
-逐根解释三路电源输入、VDC 汇流、
-12 V/5 V/3.3 V 电源树、260-pin 模块接口、HDMI、USB、PCIe x4、M.2、
-RTL8111H 千兆网、I2C、UART、SPI、RTC、风扇和四层 PCB。章节同时明确
-QEMU 自研复位 ROM 与实体 UEFI 平台的边界，并列出 ACPI、PCIe 枚举、NVMe、
-GOP/xHCI 等实机适配缺口，不声称当前内核已经能在该板裸机启动。
+只想先看到系统启动时，可以从“CPU 怎样读到第一条指令”读到“从磁盘进入
+64 位内核”；遇到电气或逻辑概念再回看前四章。想学习进程、虚拟内存和文件
+系统，则需要先理解异常、中断、页表和用户态入口。
 
-以上合计 21 页系统/硬件图面：7 页系统链路、10 页参考原理图、3 页实体连线
-和 1 页模块方向图。外部插图统一为矢量 PDF，模块方向图由 TikZ 直接绘制；
-因此 PDF 放大时线条与文字不会按位图像素变糊。宽图同时限制最大宽高并保持
-纵横比，最终构建还要逐页检查文字、框、连线、图注和纸张边界没有重叠或裁切。
-十页上游 KiCad PDF 原样保留其小型标题标识图像，但原理图符号、文字、网络和
-导线本身均为矢量；其余十张外部学习图经对象扫描确认不含 image XObject。
-
-当前实现内容与 v2.0 冻结基线对齐：中断/设备/用户边界章包含用户 ELF、
-四级 U/S 权限、TSS.RSP0、五项 IRETQ 帧、INT 0x80 ABI、用户指针复制和
-异常隔离；进程章进一步完整展开 PCB、独立 CR3、每进程 Ring 0 栈、176
-字节保存现场、round-robin 抢占、退出回收和多进程整机证据，并深入解释
-Blocked/Ready 状态转换、丢失唤醒、x86 原子操作与 C++ 内存顺序、64 字节
-环形管道、持久文件系统、统一 fd、idle 和交互式 Shell。第二十章进一步冻结
-ADR 0019 的 v2 演进基线：单 BSP 内核执行模型、Process/Thread/CpuLocal、
-双系统调用入口、WaitQueue 单赢家、匿名与文件 VM、COW、private futex、
-TTY、异步块层、ordered metadata journal、三档容量和测试频率。
-第十二章已同步 v1.1 可回收内核堆，完整解释 boundary tag、best-fit、对齐
-分裂、双向合并、统计守恒和十万步固定种子验证；同章还从 PFN 二进制结构、
-XOR 伙伴、双位图尺寸、E820 分解、范围申请、错阶释放、完整校验到
-64 MiB/64 GiB QEMU 首尾写回，展开已实现的 buddy 页帧分配器。最新增补的
-固定大小类型缓存继续解释 slab 思想的历史来源、位图与槽内空闲链表的分工、
-单次堆后备布局、精确指针验证、常数时间申请/释放、失败原子性、销毁约束，
-以及单元、集成、十万步随机测试和 QEMU 整机自检如何共同形成证据链。KVA
-增量进一步区分 not-present 与 free，逐项展开 32 TiB 高半区布局、PML4 槽、
-逐页位图成本、有序描述符、绝对页对齐、best-fit、精确释放、TLB 回收顺序，
-以及双 guard 的跨 KVA/buddy/页表整机事务。最新动态内核栈增量继续解释
-TSS.RSP0 的历史与硬件职责、六页双 guard 布局、虚拟连续与物理离散、
-四帧事务回滚、精确 KVA 所有权、进程 CR3 高半区共享、176 字节首次现场，
-以及为何必须回到永久启动栈安全点后才能撤映射、清零并回收。页表回收主节
-又从硬件四级遍历与 PML4 共享讲到三种根所有权、逐字空表判定、两阶段撤销、
-映射失败事务回滚、进程递归销毁与十万步独立层级模型。v1.1 收束内容继续
-解释不可复活强引用、固定存储 ScopeRollback、九动作动态栈事务、26 字段稳定
-资源快照和所有权守恒方程。v1.2 进一步把 Process 收束为资源容器、Thread
-确立为唯一调度实体，完整展开独立 PID/TID、侵入式运行/等待队列、WaitQueue
-单赢家唤醒、SpinLock/IrqSaveSpinLock/Mutex 的分层职责，以及每 Thread
-512 字节、16 字节对齐的 FXSAVE64/FXRSTOR64 x87/SSE2 现场。v1.3 新增
-CPUID 处理器规格门禁、CpuLocal、STAR/LSTAR/FMASK/GS MSR 配置、
-SWAPGS 可信换栈、统一 176 字节 UserContext、原生 SYSCALL/SYSRET、
-IRET 安全回退、系统调用期间 IRQ 与返回前延迟调度，并保留 INT 0x80 作为
-差分基准。v1.4 继续完整展开带 generation 的类型化 KernelObject、不可复制
-临时 Reference、长期 Handle、共享 FileDescription、64 槽动态 FileTable、
-descriptor/file status flags 分层、soft/hard limit、两阶段安装、最后引用
-析构和 PID 4 的真实 Ring 3 证明。v1.5 又完整展开 Vnode、Path、Superblock、
-Mount、每 Process FsContext、逐组件路径状态机、挂载进入/退出、反向
-getcwd、memfs 节点与数据事务、legacy 旧格式适配、目录项 ABI、持久 VFS
-资源分账，以及双后端契约、十万步命名空间模型和真实 Shell `cd` 证明。
-v1.6 继续深入逻辑 1 GiB 稀疏盘、256 MiB rootfs、冻结小端盘面、8192 个
-inode、八个 direct 与 single/double/triple 索引、64 MiB 稀疏文件、
-truncate 反向释放、完整 unlink/rmdir/rename/stat、真实短写和 ENOSPC、
-Dirty/Data/Clean 失败边界、独立 mkfs/fsck、同种子双后端十万步与 QEMU
-跨启动损坏拒绝。v1.7 再完整展开 PID1 的历史与最小职责、ProcessTree
-状态机、Zombie 与孤儿重归属、ATA→rootfs→VFS→ELF→CR3 的生产启动链、
-按偏移读取的两遍 ELF、256 KiB `argc/argv/envp` 栈、spawn 多资源事务、
-exec 候选映像与唯一提交点、close-on-exec、wait 唯一回收和八进程验收树。
-v1.8 在同章继续解释 VMA 与 PTE 为何分别表示区间意图和驻留事实、8192
-描述符共享池、排序/合并/拆分、匿名 first-gap、零填充按需缺页、8 MiB
-连续增长栈和永久 guard、program break、撤映射时的数据页/空页表回收，以及
-Ring 3 UserHeap 的 boundary tag、first-fit、split 和双向 coalesce。
-VMA 与 UserHeap 各用十万步固定种子模型验证，128 轮组合测试连接真实页表
-和 frame；三个磁盘用户 probe 再验证 32 MiB 稀疏映射、2 MiB break、
-递归栈、5000 步分配与 vector 14 保护边界。
-v1.9 在同章继续建立稳定文件 identity、FileBacking generation、文件 VMA
-offset 几何、按需 ELF、文件尾/BSS 零填充、有界 clean page cache、共享
-引用与 LRU、只读 shared、可写 private，以及 write/truncate 撤销 PTE 后
-失效 cache 的完整控制流；单元、共享页集成、两个十万步模型和三档 QEMU
-共同证明生命周期闭环。
-v1.10 再从早期 Unix fork 的历史动机出发，逐位解释 x86-64 page-fault
-error code 与 PTE 软件位，建立“独占隐含为一”的稀疏 private frame 引用、
-引用为一时恢复权限和引用大于一时单页复制的双分支；用户写与 Kernel
-CopyToUser 共用 COW break。章节同时完整走读 FileTable/FileDescription、
-FsContext、FileBacking 的继承和候选 child 优先、父 PTE 后提交的失败回滚，
-并以十万步模型和 32 次 fork/exec/wait 连接到真实 QEMU 证据。
-v1.11 继续沿早期 Unix 的组合思想建立 64 KiB 逻辑容量、4 KiB 按需后备页
-的动态 Pipe，分离 fd、FileTable entry、FileDescription 与 Pipe 四层
-所有权；教材逐步推导 EOF、BrokenPipe、WaitQueue 和跨页失败回滚。随后走读
-8/128/1024 分档 PipeManager、functional 512 fd hard limit、系统调用
-45/46、精确 dup2、固定容量无副作用解析器、fork/接线/exec/wait 事务、
-输入输出重定向、16 级流水线以及没有 libc 的十九个 multi-call 核心工具。
-100000 步 Pipe 模型、4096 条 Shell 随机输入、1024 槽集成测试和两档真实
-QEMU 共同证明资源闭环。
-v1.12 继续把 Process 与 Thread 所有权落到用户运行时，完整解释 64 KiB
-guarded stack、FS-base TLS、private futex compare-and-block、Mutex、
-ConditionVariable、Once、ThreadExit/Join 与多线程 exec/exit 回收。v1.13
-再从 8253/8254 与 PC 参考时钟历史出发，推导实际 PIT 除数的有理数纳秒换算，
-解释余数携带、64 位饱和、绝对 deadline、512 槽稳定队列、idle 唤醒、
-timed futex 和通知/超时单赢家，并把单元、集成、十万步随机模型与三档
-QEMU 串成同一证据链。
-v1.14 继续从早期 Unix 的异步通知需求出发，分离 Process disposition/group/
-pending 与 Thread mask/pending/活动 frame，逐步解释普通信号合并、未屏蔽
-Thread 选择、进程组发送、WaitQueue 单赢家唤醒和阻塞系统调用重启。用户
-handler 通过受控栈上的 240 字节 SignalFrame 与 Intel NASM restorer 返回；
-sigreturn 联合验证 cookie、mask、canonical 地址、段、RFLAGS、栈边界和
-RIP/RSP 页面权限，畸形 frame 只隔离目标 Process。单元、集成、十万步随机
-模型与三档 QEMU 共同证明 fork/exec/exit 语义及最终状态归零。
-v1.15 再从电传打字机与早期 Unix 控制终端历史出发，逐层连接 PS/2 Set 1
-Ctrl make/break、C0 控制码、canonical 编辑、irq-save TTY 输入/输出守恒、
-PID/PGID/SID、controlling terminal、Stopped/Continued/Exited 事件、
-`/dev/console` 字符 vnode、Shell 有界作业表与前台终端交接。教材专门复盘
-真实 QEMU 暴露的极短 child exit/setpgid 竞态，说明为何 Zombie 必须保留
-进程级组身份到 wait；也复盘 Ctrl-Z 落入 fork/exec 窗口时为何必须保留
-Process/survivor pending。最后以单元、集成、100000 步随机模型和真实
-Ctrl-Z/fg/Ctrl-C/bg 整机路径冻结状态与资源账本。
-v1.16 再从 early boot polling 的依赖原因出发，逐寄存器解释 ATA primary
-command block、BSY/DRQ/DF/ERR、nIEN/SRST、slave IR6、master cascade、
-LAPIC ExtINT 与 vector 0x2E；随后建立 64 位 identifier、64 槽 FIFO、
-单个 Issued、IRQ/timeout 单赢家、software reset 和 BlockIo 定向唤醒。
-文件页部分完整展开 write-protect notification、Clean/Dirty/Writeback/Error、
-脏页回压、失败保留、VFS WriteAt、mount generation 稳定、shared alias、
-private COW 隔离与 ATA FLUSH。两个十万步参考模型和三档 QEMU 把请求、
-页状态、调度前进和落盘读回接成同一证据链。
-v1.17 再从早期 Unix `fsck` 与写前日志的历史出发，区分 write、FLUSH、
-commit 与 checkpoint，逐字段展开 `OSRFV003`、固定 128 KiB journal、
-四个 descriptor block、124-credit overlay、CRC32 与 64 位 sequence。
-章节用持久 happens-before 推导 ordered mode 的五段提交顺序，逐项分类
-commit 前后和 checkpoint 中断电窗口，并走读 mount 前恢复、全量验证后 replay、
-失败冻结和幂等清理。1000 个确定性 Write/Flush crash point、十万步固定种子
-模型、独立 fsck 与三档 QEMU 共同证明 metadata 只能恢复为完整旧状态或完整
-新状态，同时明确普通数据旧内容不属于回滚保证。
-v1.18 最后把 69 个系统调用、公共错误值、关键结构 offset 与 ELF 身份冻结为
-ABI v2.0.0，并以最小 devfs 分离设备名称和 TTY 字符行为，以六文件只读
-procfs 暴露有界动态快照。32 个 rootfs 工具由唯一 inode/ELF 探针和真实
-functional Shell 双重验证；教材同时解释 QEMU 资源锁、发布清单和公开路由。
-v2.0 不再加入 Kernel 机制，而是在第二十章把项目/ABI/盘面版本分离、三档机器、
-精确源码传输、目标产物审计、PDF 哈希、独立网站和 Sites 生产部署组织为
-可复现发布工程。
-正常 Kernel 不再内嵌普通用户程序；二十二个合法用户 ELF 逐个审计后由离线
-安装器写入 rootfs，截断 ELF 只作为明确失败夹具。完整回归由当前构建图自动
-产生；动态栈、VMA、按需分页、页表
-回收、资源快照、Thread 调度、双系统调用入口、文件表十万步模型、256 MiB
-functional、64 GiB capacity、缺失 SSE2 与缺失 SYSCALL 的 QEMU 路径共同
-证明容量、隔离、失败边界与最终回收。
+书稿的编辑原则是先讲问题和实验，再引出抽象概念。版本发布、PDF 哈希和网站
+同步属于维护流程，不放进面向初学者的正文。

@@ -1,10 +1,9 @@
-\chapter{用户环境、ABI v2、devfs 与 procfs}
+\chapter{用户程序怎样使用系统服务}
 
-\begin{keyidea}
-完整用户环境不是把 Shell 编进内核。磁盘 ELF、统一 fd、设备命名、动态
-系统快照和 32 个工具必须通过冻结 ABI 组合；项目版本、线协议版本和盘面
-版本又必须保持各自独立的兼容边界。
-\end{keyidea}
+用户程序通过寄存器 ABI 请求内核服务，再用同一组 open、read、write 接口
+访问普通文件、设备和系统状态。本章沿一次系统调用进入 Ring 0，然后分别查看
+rootfs、devfs 和 procfs 怎样支撑 Shell 与命令行工具。
 
-\input{deepening/ch15-user-environment-v100}
-\input{deepening/ch15-abi-devfs-procfs-v118}
+\input{topics/ch15-user-kernel-interface-introduction}
+\input{deepening/ch15-user-environment}
+\input{deepening/ch15-abi-devfs-and-procfs}

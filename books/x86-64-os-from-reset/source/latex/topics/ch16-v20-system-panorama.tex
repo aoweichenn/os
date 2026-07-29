@@ -1,146 +1,62 @@
-\section{v2.0 系统全景与端到端旅程}
+\section{沿一条 Shell 命令回看整个系统}
 
-读到本章时，读者已经分别理解启动、内存、进程、VFS、持久化和用户环境。
-集成发布需要把它们重新放回同一台机器，并明确每一层只拥有哪一种事实。
+在 Shell 中输入 \code{cat /tmp/note}，表面上只是读取并打印一个文件。这个
+命令恰好能把前十九章重新连在一起：键盘产生中断，TTY 提交一行输入，Shell
+解析参数并启动外部 ELF，用户程序通过系统调用打开路径，VFS 穿过
+\filepath{/tmp} 挂载点，memfs 返回字节，最后标准输出又回到终端。
 
-\begin{osgridlongtable}{L{0.17\linewidth}L{0.25\linewidth}L{0.26\linewidth}L{0.22\linewidth}}
-层 & 主要状态 & 交给下一层的契约 & 不拥有的事实 \\ \hline
-\endfirsthead
-层 & 主要状态 & 交给下一层的契约 & 不拥有的事实 \\ \hline
-\endhead
-QEMU 硬件 & CPU、RAM、端口、IRQ、磁盘字节 & x86-64 PC 硬件行为 & 固件和 OS 策略 \\ \hline
-ROM 固件 & 复位现场、串口、Stage 1 读取 & 校验后的 Stage 1 控制权 & Kernel 对象与 VFS \\ \hline
-Stage 1 & 模式、临时页表、内存图、ELF 装载 & 版本化 BootInfo 与 Kernel 入口 & 用户进程语义 \\ \hline
-Kernel 架构层 & GDT/TSS/IDT、CR3、IRQ、CpuLocal & 可信现场与设备事件 & 路径和文件名称 \\ \hline
-Kernel 服务层 & Process/Thread、VM、对象、VFS、时间 & 冻结系统调用语义 & 用户运行时策略 \\ \hline
-用户运行时 & syscall 桩、堆、Thread、同步原语 & 可组合 C++20 接口 & 内核所有权 \\ \hline
-用户程序 & PID1、Shell、工具与探针 & 可观察功能与退出结果 & 物理设备寄存器 \\ \hline
-发布层 & Git、测试、PDF、网站和部署身份 & 他人可取得的证据 & 来宾运行期状态 \\ \hline
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (key) {键盘 IRQ1};
+  \node[os block,right=of key] (tty) {TTY\\提交一行};
+  \node[os block,right=of tty] (shell) {Shell\\解析与启动};
+  \node[os state,right=of shell] (cat) {cat ELF\\Ring 3};
+  \node[os block,below=of cat] (syscall) {open/read/write\\系统调用};
+  \node[os block,left=of syscall] (vfs) {VFS\\路径与挂载};
+  \node[os state,left=of vfs] (memfs) {memfs\\文件字节};
+  \draw[os arrow] (key) -- (tty);
+  \draw[os arrow] (tty) -- (shell);
+  \draw[os arrow] (shell) -- (cat);
+  \draw[os arrow] (cat) -- (syscall);
+  \draw[os arrow] (syscall) -- (vfs);
+  \draw[os arrow] (vfs) -- (memfs);
+\end{tikzpicture}
+\end{center}
+
+\topic{命令执行前，启动链已经做了什么}
+CPU 从 ROM 复位向量开始，固件建立串口并读取 Stage 1。Stage 1 打开 A20，
+进入保护模式和长模式，检查并装入 Kernel ELF。Kernel 接管 GDT、IDT、TSS、
+页表和中断控制器，挂载文件系统，再由 PID 1 从磁盘启动 Shell。Shell 不是
+内核函数，而是一个普通用户进程。
+
+\topic{输入一行时，异步事件怎样进入普通代码}
+键盘控制器在端口准备好扫描码后触发 IRQ1。中断入口保存现场，驱动读取字节，
+TTY 把 make/break 和控制字符解释为行编辑动作。回车使等待输入的 Thread
+变为 Ready；调度器随后让 Shell 从 read 系统调用继续。
+
+\topic{启动 cat 时，进程与文件怎样组合}
+Shell 准备 argv 和文件描述符，创建子进程并执行磁盘上的 cat ELF。装载器先
+建立 VMA；代码页第一次取指时再从文件后备读入。标准输出 fd=1 继续引用终端
+打开实例，因此 cat 不需要知道串口或显存地址。
+
+\topic{读取路径时，各层分别拥有哪件事}
+\begin{osgridlongtable}{L{0.21\textwidth}L{0.31\textwidth}L{0.36\textwidth}}
+\textbf{层} & \textbf{在本例中保存什么} & \textbf{不处理什么}\\ \hline
+FileTable & 当前进程的 fd 编号与 fd flags & 路径分量和磁盘布局\\ \hline
+FileDescription & offset、读写状态与共享引用 & 当前工作目录\\ \hline
+VFS & \filepath{/tmp/note} 的挂载切换与 vnode & memfs 字节怎样存放\\ \hline
+memfs & 节点、名称和文件内容 & ATA 端口与 journal\\ \hline
+TTY & 输出队列与终端归属 & 文件路径\\ \hline
 \end{osgridlongtable}
 
-这张表防止“跨层捷径”。Kernel 不能用宿主文件系统替代 rootfs，用户程序不能
-直接访问 QEMU 端口，网站也不能手工写一个与主仓不一致的测试数字。每次穿过
-一层都需要显式数据结构、版本、范围和失败返回。
+\topic{换成持久文件以后，最后一段路径发生变化}
+若读取 \filepath{/home/note}，VFS 仍完成相同的分量解析，但后端变为 rootfs。
+数据可能先从文件页缓存命中；缺失时形成块请求并等待 IRQ14。写入后还要经过
+writeback、journal 顺序和 ATA flush，才能讨论断电后的结果。用户程序的
+read/write 接口没有因此改变。
 
-\topic{旅程一：复位到普通磁盘程序}\par
-\[
-\text{Reset}
-\rightarrow \text{ROM}
-\rightarrow \text{Stage 1}
-\rightarrow \text{Kernel}
-\rightarrow \text{rootfs}
-\rightarrow \text{/sbin/init}
-\rightarrow \text{/bin/sh}
-\]
-
-前四步改变 CPU 模式和控制权，后四步改变软件对象和地址空间。ROM/Stage 1
-失败由固件串口 marker 表达；Kernel 入口以后由 panic 或显式错误表达；
-用户 ELF 失败只隔离目标 Process。把所有失败都写成“没有 READY”会丢失真正
-的层次。
-
-\topic{旅程二：用户指针穿过系统调用边界}
-用户把地址数值放入 ABI 寄存器，不表示 Kernel 已获得一块可信内存。入口先
-切换可信栈并保存 UserContext，系统调用实现再验证半开区间、加法溢出、每级
-PTE 的 Present/User/Write/NX 条件，最后通过固定内核缓冲复制。锁内不得发生
-可能触页或阻塞的任意用户访问。
-
-\topic{旅程三：缺页把地址意图变成驻留事实}
-VMA 描述允许发生什么，PTE 描述当前驻留在哪里。第一次匿名访问取得零页；
-文件 VMA 从稳定 FileBacking 读取对应偏移；private COW 写入根据共享引用
-选择恢复写权限或复制一页。成功后更新 PTE/TLB 并重试原指令，失败则保持
-VMA、引用计数和旧映射可回收。
-
-\topic{旅程四：一次阻塞只有一个完成赢家}
-pipe 空、futex 值仍匹配、deadline 未到、子进程尚未产生事件、TTY 没有完整
-行，本质上都要求 Thread 离开 Ready 集合。condition、timeout、signal、
-close 和 cancel 在同一调度临界区竞争 WakeReason；输家只能更新自己的
-pending 或统计，不能再次发布 Thread。
-
-\topic{旅程五：一个用户字节成为持久文件}\par
-\[
-\begin{aligned}
-\text{user buffer}
-&\rightarrow \text{fd}
-\rightarrow \text{FileDescription}
-\rightarrow \text{Vnode}\\
-&\rightarrow \text{page/block state}
-\rightarrow \text{journal + ATA}
-\rightarrow \text{FLUSH}.
-\end{aligned}
-\]
-
-write 返回、metadata commit、home checkpoint 和新启动可读是四个不同
-线性化边界。ordered journal 只承诺相关数据先稳定、元数据事务旧或新，不把
-普通数据内容变成全量 data journal。
-
-\topic{旅程六：按键成为前台作业事件}
-QMP 只向模拟键盘产生硬件输入。i8042 状态、IRQ1、扫描码 make/break、TTY
-行规和控制字符仍由来宾处理。普通字符进入前台读取；Ctrl-C/Ctrl-Z 转成前台
-PGID 的 signal。Shell 通过 wait event 更新作业表，\code{fg} 再交还终端并
-发送 Continue。
-
-\topic{旅程七：源码成为公开可复核事实}
-干净主仓提交产生目标产物、CTest 和 LaTeX PDF；手机副本与网站下载件按
-SHA-256 比较；独立 web commit 记录代码目录和主仓身份；Sites 只保存该精确
-提交生成的归档；最后从公网访问文档、源码、PDF、sitemap 和 Worker 路由。
-任一身份断开都只能称为局部完成。
-
-\topic{三类版本描述三个不同兼容边界}\par
-\begin{osgridlongtable}{L{0.21\linewidth}L{0.18\linewidth}L{0.25\linewidth}L{0.26\linewidth}}
-版本 & v2.0 当前值 & 消费者 & 何时必须变化 \\ \hline
-\endfirsthead
-版本 & v2.0 当前值 & 消费者 & 何时必须变化 \\ \hline
-\endhead
-项目发布版本 & 2.0.0 & 构建、文档、用户与发布系统 & 整体产品进入新公开基线 \\ \hline
-用户 ABI 版本 & 2.0.0 & Kernel、用户运行时、ELF 与测试 & 线布局或兼容语义变化 \\ \hline
-rootfs 格式 & 3 & mkfs、Kernel、fsck 与磁盘镜像 & 持久字节布局不兼容变化 \\ \hline
-\end{osgridlongtable}
-
-三者数字相近只是历史结果。集成发布可以提升项目版本而保持 ABI 与盘面格式；
-文件系统升级也可能不需要改变系统调用号。把三个数字绑定到同一个常量会让
-无关消费者被迫升级，并掩盖真正的迁移责任。
-
-\topic{三档机器不是容量从小到大的重复}
-64 MiB bootstrap 强迫系统面对紧张内存和最小启动路径；256 MiB functional
-组合 PID1、Shell、32 个工具、VM、I/O、signal、TTY 与持久化；64 GiB
-capacity 则触及 4 GiB 以上物理页，验证 64 位 PFN、direct-map、页表和动态
-容量。相同生产镜像在三档运行，区别只来自机器事实和 runtime profile。
-
-只在 64 GiB 运行会让宽松容量掩盖失败回滚，只在 64 MiB 运行又无法发现
-32 位截断。规格常量写着 64 GiB 也不是证据；测试必须实际取得、写入、读回
-并释放高地址物理页。
-
-\topic{“对齐 Linux”应理解为方法而不是宣称等价}
-本项目借鉴成熟系统的对象分层、生命周期、失败语义和可观察性，例如把
-Process/Thread、fd/FileDescription、VMA/PTE、VFS/backend 分开，却不声称
-拥有 Linux 的规模和兼容面。当前明确不包含：
-
-\begin{itemize}
-  \item SMP、内核抢占、跨核 TLB shootdown 与 NUMA；
-  \item 用户/组权限、capability、完整 POSIX 与安全模块；
-  \item 网络栈、USB、图形、音频和通用设备热插拔；
-  \item AHCI/NVMe、DMA、IOMMU、swap、OOM killer 与 overcommit；
-  \item 动态链接、共享库、ASLR 和完整进程凭据；
-  \item Linux 文本兼容的 procfs/devfs 或通用 dentry cache。
-\end{itemize}
-
-限制不是缺陷隐藏区，而是 v2.0 状态空间的一部分。加入任一方向都必须重新
-建立硬件依据、对象所有权、锁顺序、失败原子性、资源账本和独立证据。
-
-\topic{二十章最终汇合成四条不变量}\par
-\begin{enumerate}[leftmargin=2.2em]
-  \item \textbf{控制权可追踪：}任一时刻都能说明当前 RIP、RSP、CPL、CR3、
-        中断状态和返回路径由谁建立。
-  \item \textbf{资源有唯一账本：}frame、KVA、KernelStack、Thread、fd、
-        Pipe、VMA、cache page、inode 与 journal credit 都有明确所有者。
-  \item \textbf{失败不发布半状态：}候选对象在完整验证前不可见；提交以后
-        的恢复则遵循持久或并发线性化点。
-  \item \textbf{结论可被反驳：}纯模型、组合测试、目标产物、真实 QEMU、
-        PDF 哈希与公网路由分别拒绝不同类别的错误。
-\end{enumerate}
-
-\begin{contractbox}
-v2.0 的价值不是把所有操作系统概念都实现一遍，而是让已实现范围中的每个
-状态都有来源、所有者、迁移、失败语义和证据。读者若不能从一个公开现象反向
-追到对应硬件状态和源码边界，就还没有真正完成集成理解。
-\end{contractbox}
+\topic{用一条命令检查自己的理解}
+读完本书后，可以画出这条命令涉及的 Thread 状态、CPL、CR3、fd 引用、VMA、
+Vnode 和中断向量。再任选一个失败点，例如 cat 的 ELF 被截断或
+\filepath{/tmp/note} 不存在，说明错误在哪一层产生、沿哪条返回路径到达
+Shell。能把成功与失败都走通，比记住模块名单更接近真正理解系统。

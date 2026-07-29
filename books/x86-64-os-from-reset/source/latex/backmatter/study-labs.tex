@@ -2,11 +2,9 @@
 \addcontentsline{toc}{chapter}{二十章推导实验与复习路线}
 \markboth{二十章推导实验与复习路线}{二十章推导实验与复习路线}
 
-\begin{keyidea}
 实验不是照抄命令得到相同输出。每章都用“解释、推导、观察、证伪”四个动作
 验收：先说清机制和所有权，再手算关键状态，随后取得真实证据，最后主动构造
 一个能够推翻错误实现的反例。
-\end{keyidea}
 
 \section*{使用规则}
 
@@ -230,7 +228,7 @@
 \section*{第 16 章：PID1、VM 与 fork}
 
 \begin{itemize}
-  \item 解释：区分父子关系、Zombie、wait/reap、exec 候选映像和唯一提交点。
+  \item 解释：区分父子关系、Zombie、wait/reap，以及 exec 何时替换旧映像。
   \item 推导：给定 VMA/PTE/FileBacking/COW 引用，手算一次读缺页和写缺页。
   \item 观察：执行磁盘 PID1、参数环境边界、按需 ELF、fork/exec/wait 整机路径。
   \item 证伪：在 child 准备每一步失败，要求 parent PTE、fd、cwd 和旧映像不变。
@@ -263,13 +261,14 @@
   \item 证伪：破坏一个共享 offset、ELF 身份或工具 inode 唯一性，要求发布门禁拒绝。
 \end{itemize}
 
-\section*{第 20 章：v2.0 可复现发布}
+\section*{第 20 章：回看系统并继续开发}
 
 \begin{itemize}
-  \item 解释：画出主仓、目标产物、CTest、PDF、手机、web commit、Sites 与公网身份链。
+  \item 解释：沿一条 \code{cat /tmp/note} 命令画出键盘、TTY、Shell、进程、
+        系统调用、VFS 与 memfs。
   \item 推导：说明 64 MiB、256 MiB、64 GiB 分别排除什么反例，为什么不能互换。
-  \item 观察：核对主仓 SHA、PDF SHA-256、网站清单、生产版本和关键 HTTP 路由。
-  \item 证伪：分别制造陈旧主仓、陈旧 PDF、未推送 web commit 和缺失新路由，要求闭环停止。
+  \item 观察：任选一条启动或用户日志，从最外层行为找到产生它的源码和测试。
+  \item 证伪：为下一项改动构造成功、边界、故障和资源回收场景。
 \end{itemize}
 
 \section*{综合结业题}

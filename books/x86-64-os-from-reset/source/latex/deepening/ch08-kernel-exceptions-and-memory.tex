@@ -82,7 +82,7 @@ base、limit、type、DPL 和 present。长模式随后把大多数代码/数据
 也保留门描述符和 TSS。
 
 这种历史兼容带来一个看似矛盾的事实：64 位内核采用平坦地址空间，却仍必须
-拥有 GDT。原因不是还要用传统分段切内存，而是：
+拥有 GDT，因为：
 
 \begin{itemize}
   \item CS 必须引用 present 的 64 位代码段，L 位决定 64 位指令语义；
@@ -94,7 +94,7 @@ base、limit、type、DPL 和 present。长模式随后把大多数代码/数据
 Stage 1 的 GDT 是模式切换工具，不是内核资产。v0.5 用内核 BSS 中的新表覆盖
 GDTR，从依赖方向上切断内核对加载器私有内存的长期依赖。
 
-\topic{v0.5 五槽 GDT 的逐位结构}\par
+\topic{五槽 GDT 每一位表示什么}\par
 \begin{osgridlongtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.25\textwidth}L{0.36\textwidth}}
 \textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\ \hline
 \endfirsthead
@@ -208,15 +208,15 @@ GDT 描述符和专用栈都要映射并保持生命周期覆盖整个内核运�
 跳过错误。
 
 \topic{统一异常帧让 C++ 分发器看到稳定布局}
-处理器有时压错误码，有时不压；特权切换时还会多压 SS 与 RSP。每个汇编桩
-补齐缺失字段并保存通用寄存器，把向量号与规范化错误码放到固定位置。C++ 只
-接受指向统一 \code{InterruptFrame} 的指针。
+处理器有时压错误码，有时不压；在 IA-32e 模式中，旧 SS 与 RSP 则总会进入
+硬件现场。每个汇编桩补齐缺失字段并保存通用寄存器，把向量号与规范化错误码
+放到固定位置。C++ 只接受指向统一 \code{ExceptionFrame} 公共前缀的指针。
 
 结构字段偏移由汇编常量和 C++ \code{static_assert} 双向检查。新增寄存器或
 改变压栈顺序必须同时更新弹栈路径；\code{iretq} 前残留一个八字节字段都会把
 后续值错当 RIP 或 CS。
 
-\topic{v0.5 的 32 个桩怎样形成 160 字节帧}
+\topic{32 个桩怎样形成同一种 C++ 视图}
 CPU 对向量 8、10、11、12、13、14、17、21、29、30 压入错误码，其余异常
 不压。NASM 用两种项目内宏生成桩；宏只减少机械重复，不隐藏硬件策略：
 
@@ -253,9 +253,40 @@ CPU 保存的 RIP、CS、RFLAGS。公共入口执行 \code{CLD}，因为 C++ ABI
 \code{0x98} & RFLAGS & CPU\\ \hline
 \end{osgridlongtable}
 
-共 20 个 64 位字段，即 160 字节。v0.5 的异常来自 Ring 0，没有特权级切换，
-所以 CPU 不另压旧 RSP 和 SS。v0.8 的 Ring 3 入口在公共结构之后真实增加
-旧 RSP 与 SS，形成 176 字节 \code{UserPrivilegeFrame}；公共前缀保持不变。
+这 20 个 64 位字段组成 160 字节的 \code{ExceptionFrame}。在 IA-32e 模式
+中，处理器还会无条件保存旧 RSP 和 SS；它们紧跟在公共前缀之后，所以一次
+可以由 \code{IRETQ} 返回的现场实际占 176 字节。用户态路径把这两个字段
+暴露为 \code{UserContext::stack\_pointer} 和
+\code{UserContext::stack\_segment}，普通 C++ 异常分发器只需要读取前
+160 字节。
+
+\begin{pdfdiagram}[node distance=0mm]
+  \node[os block,minimum width=66mm,minimum height=7mm] (registers)
+    {低地址：R15 \ldots RAX（汇编公共入口，15 槽）};
+  \node[os state,below=of registers,minimum width=66mm,minimum height=7mm] (vector)
+    {vector（每向量桩）};
+  \node[os state,below=of vector,minimum width=66mm,minimum height=7mm] (error)
+    {error code（CPU 或汇编补零）};
+  \node[os hardware,below=of error,minimum width=66mm,minimum height=7mm] (rip)
+    {RIP（CPU）};
+  \node[os hardware,below=of rip,minimum width=66mm,minimum height=7mm] (cs)
+    {CS（CPU）};
+  \node[os hardware,below=of cs,minimum width=66mm,minimum height=7mm] (rflags)
+    {RFLAGS（CPU）};
+  \node[os hardware,below=of rflags,minimum width=66mm,minimum height=7mm] (rsp)
+    {旧 RSP（CPU）};
+  \node[os hardware,below=of rsp,minimum width=66mm,minimum height=7mm] (ss)
+    {高地址：旧 SS（CPU）};
+  \draw[decorate,decoration={brace,amplitude=4pt},BookBlue,thick]
+    ([xshift=-5mm]registers.north west) -- ([xshift=-5mm]rflags.south west)
+    node[midway,left=6mm,align=center]{160 B\\\code{ExceptionFrame}};
+  \draw[decorate,decoration={brace,amplitude=4pt},BookAmber,thick]
+    ([xshift=5mm]registers.north east) -- ([xshift=5mm]ss.south east)
+    node[midway,right=6mm,align=center]{176 B\\可返回现场};
+\end{pdfdiagram}
+\diagramnote{依据 Intel SDM Vol. 3A 7.14.2--7.14.3 重新绘制，再叠加
+\filepath{source/kernel/src/arch/architecture.asm} 保存的通用寄存器和
+规范化 vector/error code。栈向低地址增长，图从上到下按地址递增排列。}
 
 C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把帧地址放入 RDI，
 再把 RSP 向下按 16 字节对齐，预留一槽保存原帧地址后调用分发器。若分发器
@@ -287,8 +318,8 @@ C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把�
 29--30 & \#VC/\#SX & fault & 有 & panic\\ \hline
 \end{osgridlongtable}
 
-表中未列出的保留向量也有独立桩并进入 panic。只允许 breakpoint 返回不是
-因为其他 fault 永远不能恢复，而是 v0.5 还没有足够策略证明恢复安全。例如
+表中未列出的保留向量也有独立桩并进入 panic。v0.5 只允许 breakpoint 返回，
+因为其他 fault 尚无足够策略保证恢复安全。例如
 页不存在可以在 v0.6 分配并映射后重试；非法指令通常意味着代码或 CPU 能力
 契约错误，跳过一个字节既不知道指令长度，也会掩盖破坏。
 
@@ -766,6 +797,23 @@ i_2&=(v\gg21)\mathbin{\&}0x1FF, &
 i_1&=(v\gg12)\mathbin{\&}0x1FF.
 \end{aligned}
 \]
+
+\begin{pdfdiagram}
+  \node[os state] (virtual) {48 位 canonical\\虚拟地址};
+  \node[os block,right=of virtual] (pml4) {bits 47:39\\PML4E};
+  \node[os block,right=of pml4] (pdpt) {bits 38:30\\PDPTE};
+  \node[os block,below=of pdpt] (pd) {bits 29:21\\PDE};
+  \node[os block,left=of pd] (pt) {bits 20:12\\PTE};
+  \node[os state,left=of pt] (physical) {页帧基址\\+ bits 11:0};
+  \draw[os arrow] (virtual) -- (pml4);
+  \draw[os arrow] (pml4) -- (pdpt);
+  \draw[os arrow] (pdpt) -- (pd);
+  \draw[os arrow] (pd) -- (pt);
+  \draw[os arrow] (pt) -- (physical);
+\end{pdfdiagram}
+\diagramnote{依据 Intel SDM Vol. 3A 5.5.4、Figure 5-8 的字段关系重新绘制。
+本图只画项目当前使用的四级、4 KiB 路径；PDE.PS=1 时在 PD 提前结束，并把
+低 21 位作为 2 MiB 页内偏移。}
 
 中间表不存在时分配并清零。PML4E 与 PDPTE 出现 PS 仍属于当前实现不支持的
 1 GiB 页并明确拒绝；PDE 的 PS=1 则是合法 2 MiB 叶，查询时使用

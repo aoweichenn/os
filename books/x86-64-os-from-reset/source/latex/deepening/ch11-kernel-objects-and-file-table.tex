@@ -1,11 +1,9 @@
-\section{内核对象、身份与引用生命周期}
+\section{一个 fd 背后有几个对象}
 
-\begin{keyidea}
 文件描述符不是文件，也不是内核对象的地址。它只是某个进程文件表中的局部
 整数索引；表项持有强引用，强引用指向 \code{FileDescription}，后者才保存
 一次打开实例的共享偏移、状态标志与底层 I/O 端点。把这四层分开以后，复制、
 关闭、执行时关闭、限额和最终析构才有各自明确的位置。
-\end{keyidea}
 
 \topic{历史问题：为什么 Unix 没有把路径直接交给每次读写}
 早期文件接口必须同时解决三个彼此不同的问题。第一，目录中的名字可能被
@@ -407,7 +405,7 @@ RAX 在进入前保存系统调用号，返回时保存 64 位结果。负数沿
 \code{-12} 是非法 fd，\code{-24} 是限额拒绝，\code{-25} 是内核对象失败。
 用户包装不读取平台相关的 \code{errno}，也不依赖宿主 C 库。
 
-\topic{汇编边界为什么不需要为 v1.4 重写}
+\topic{对象模型变化为什么没有改写汇编入口}
 本阶段仍然真实经过 Intel 语法汇编，而不是绕过汇编。以
 \code{DuplicateDescriptor} 为例，控制流是：
 
@@ -424,8 +422,8 @@ RAX 在进入前保存系统调用号，返回时保存 64 位结果。负数沿
         \code{iretq} 返回。
 \end{enumerate}
 
-没有增加新的寄存器，也没有改变汇编帧偏移。这不是“没有汇编工作”，而是
-v1.3 分层成功的证据：硬件特权转换与对象语义在 UserContext 边界解耦。
+没有增加新的寄存器，也没有改变汇编帧偏移。硬件特权转换与对象操作已经在
+UserContext 边界分开，因此 v1.4 只需修改 C++ dispatcher 和文件表。
 若新增一个 fd 操作就必须修改 SWAPGS 或返回帧，说明 ABI 层次没有真正稳定。
 
 \topic{PID 4 的整机语义证明}
@@ -504,7 +502,7 @@ v1.4 功能里程碑把回归从 102 项推进到 106 项；当前仓库又加�
 针对已不存在结构的测试只会制造虚假安全感。
 
 \topic{增量构建为什么必须依赖生成文件}
-用户 worker 不是由 QEMU 从宿主目录直接读取，而是先链接成 User ELF，再由
+用户 worker 先链接成 User ELF，再由
 \filepath{user\_images.o} 嵌入 Kernel，随后依次生成
 \filepath{kernel.elf}、\filepath{kernel.payload.elf} 和磁盘镜像：
 
@@ -530,7 +528,7 @@ CMake 的自定义 target 是 phony 节点。它适合声明“生产者必须�
 GDB 使用，其非加载调试段不属于 Stage 1 暂存载荷。这个区分同时修复了
 “旧镜像假失败”和“把调试文件长度当启动载荷长度”两类工程错误。
 
-\topic{按目录走读 v1.4}\par
+\topic{沿目录走读对象表与文件表}\par
 \begin{osgridlongtable}{L{0.43\textwidth}L{0.45\textwidth}}
 文件 & 阅读时要回答的问题\\ \hline
 \filepath{foundation/reference\_counter.hpp/.cpp} &
@@ -571,10 +569,8 @@ FileTable 的空 chunk 只在 Destroy 时释放；4096 hard limit 是 v1.x 规�
 循环引用检测、RCU 延迟释放或多核缓存。把这些边界明确写出，才能让 v1.5
 聚焦 VFS，而不是把尚未实现的能力藏在“类似 Linux”的模糊表述中。
 
-\begin{keyidea}
 v1.4 的完成不是“fd 从 8 个增加到 4096 个”。完整结论是：进程局部名字与
 共享打开实例已经分离；地址复用由 generation 防护；强引用从创建、安装、
 查找、复制、关闭到最终析构具有单一所有权链；descriptor flags 与 file
 status flags 位于正确层次；容量、随机、双系统调用入口和 QEMU 最终统计都能
 重复证明失败原子性与零泄漏。
-\end{keyidea}

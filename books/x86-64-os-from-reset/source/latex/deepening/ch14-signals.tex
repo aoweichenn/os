@@ -1,10 +1,8 @@
-\section{信号、用户 handler 与安全返回}
+\section{信号怎样打断并恢复用户程序}
 
-\begin{keyidea}
 信号不是“内核替用户调用函数”。它先把异步事实记入 Process/Thread 状态，
 再在安全的用户返回边界构造可验证的 Ring 3 控制流，并让条件、timeout 与
 signal 竞争同一个 Blocked 到 Ready 提交点。
-\end{keyidea}
 
 \topic{为什么 Unix 需要一种非轮询通知}
 同步系统调用假定发起者知道自己在等待什么：读文件、等孩子或睡眠都由当前

@@ -1,10 +1,8 @@
-\section{单调时间、deadline 与竞争完成}
+\section{超时为什么要使用单调时间}
 
-\begin{keyidea}
 周期中断不是时间 API。只有把硬件实际周期、整数换算余数、单调表示、等待
 排序和唯一唤醒结果连接起来，\code{sleep} 与 timed condition 才具有可以证明
 的语义。
-\end{keyidea}
 
 \topic{8253/8254 为什么仍在 64 位启动路径上}
 IBM PC 用 8253 Programmable Interval Timer 提供可编程周期，PC/AT 后续采用

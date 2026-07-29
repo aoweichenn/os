@@ -1,13 +1,12 @@
-\chapter{文件系统、写回与崩溃一致性}
+\chapter{文件怎样在断电后留下来}
 
-\begin{keyidea}
-“write 返回”只说明某层接受了数据，不自动等于磁盘已经持久。显式盘面编码、
-块树、缓存状态、IRQ14 请求、ATA FLUSH、ordered journal、commit、
-checkpoint 与 replay 共同建立跨重启仍可证明的顺序。
-\end{keyidea}
+文件写入要穿过页缓存、块缓存、ATA 请求和设备缓存。电源可能在其中任意一步
+中断。本章先追踪一个字节怎样到达磁盘，再看 rootfs 如何保存大文件，以及
+journal 怎样让中断后的磁盘回到可挂载状态。
 
-\input{deepening/ch13-file-system-v011}
-\input{deepening/ch13-rootfs-v2-v16}
+\input{topics/ch13-persistence-introduction}
+\input{deepening/ch13-file-system}
+\input{deepening/ch13-rootfs-v2}
 \input{deepening/ch13-storage-persistence-wiring-atlas}
-\input{deepening/ch13-irq14-writeback-v116}
-\input{deepening/ch13-ordered-journal-v117}
+\input{deepening/ch13-irq14-and-writeback}
+\input{deepening/ch13-ordered-journal}

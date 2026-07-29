@@ -1,10 +1,8 @@
-\chapter{x86 兼容历史、架构状态与复位取指}
+\chapter{x86 为什么从实模式醒来}
 
-\begin{keyidea}
-x86-64 的复位地址、分段残留、独立 I/O 空间和多种执行模式都来自向后兼容。
-理解“旧问题留下了什么今天仍有效的硬件契约”，才能解释复位后为什么从
-\code{0xFFFFFFF0} 取指，以及第一条跳转为何不能随意改写。
-\end{keyidea}
+x86-64 CPU 复位后不会立即执行 64 位 C++。它先从线性地址
+\code{0xFFFFFFF0} 附近读取旧式编码，并保留实模式分段和独立端口空间。本章
+沿 8086、80286、80386 到 AMD64 的变化，解释这些旧入口为什么一直留到今天。
 
 \input{topics/ch02-x86-history-architecture}
 \input{topics/ch02-x86-reset-model}

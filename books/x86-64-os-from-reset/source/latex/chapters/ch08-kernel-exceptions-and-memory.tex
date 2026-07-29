@@ -1,10 +1,8 @@
-\chapter{内核入口、异常与内存体系}
+\chapter{内核怎样管理内存和异常}
 
-\begin{keyidea}
-内存管理不只是“分配空间”。GDT、TSS、IDT 和异常帧先建立可信失败边界；
-物理页、页表、TLB、权限、KVA、动态栈、堆和类型缓存再把地址许诺、所有权、
-硬件翻译与回收组织成可验证生命周期。
-\end{keyidea}
+进入 C++ Kernel 后，我们故意执行一条非法指令。CPU 应通过 IDT 进入异常桩，
+在独立栈上保存现场，再由 panic 打印向量和 RIP。确认故障能够被接住以后，
+本章才开始接管物理页、页表、TLB、内核虚拟地址、动态栈和堆。
 
 \input{topics/ch08-kernel-and-memory}
 \input{deepening/ch08-kernel-exceptions-and-memory}

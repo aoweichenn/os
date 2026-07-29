@@ -1,10 +1,8 @@
 \topic{把 learning 图册读成同一台机器}\par
-\begin{keyidea}
 图里的方框不是都代表一颗芯片，线也不是都代表 PCB 上的一根铜线。整机学习图
 把“物理部件、处理器接口、软件状态和宿主测试边界”放在同一张因果地图中；
-读图的第一步不是沿箭头背名称，而是先确认每个对象属于哪一层、每条线表达哪种
-事务。
-\end{keyidea}
+读图时先确认每个对象属于哪一层，再判断每条线表达哪种事务。箭头名称留到
+这两步之后阅读。
 
 本书把 \filepath{docs/learning/} 中的七张整机学习图全部纳入对应章节。它们与
 第七章的实体载板图承担不同职责：整机图解释 STUOS 在 QEMU PC 模型中看见的
@@ -105,7 +103,7 @@ CPU 寄存器只保存入口、根地址或当前选择状态。
 线用于报告事件，绿色 MMIO 线用于配置 Local APIC；三条线共同存在才构成
 完整中断路径。
 
-\topic{四、路线图不是版本纪念册，而是依赖图}\par
+\topic{四、沿依赖关系阅读路线图}\par
 \begin{sidewaysfigure}[p]
   \centering
   \includegraphics[width=0.96\textheight,height=0.82\textwidth,keepaspectratio]
@@ -118,8 +116,7 @@ CPU 寄存器只保存入口、根地址或当前选择状态。
 \end{sidewaysfigure}
 \clearpage
 
-路线图把第一周期分成四组，不是为了按颜色记忆，而是为了防止同时打开太多
-不可观测状态：
+路线图把第一周期分成四组，避免同时引入太多还无法观察的状态：
 
 \begin{osgridlongtable}{L{0.14\linewidth}L{0.21\linewidth}L{0.30\linewidth}L{0.25\linewidth}}
 阶段 & 增量 & 新获得的能力 & 为什么不能提前 \\ \hline
@@ -134,7 +131,7 @@ v1.0 的 Shell 打印一个字符，仍要依赖 v0.1 建立的 UART；读取文
 v0.2 开始使用的 ATA；进入 Ring 3 仍要依赖 v0.3 的模式转换和 v0.5 的
 描述符表。版本号表达的是第一次建立某项能力，不是该能力只在那个版本存在。
 
-\topic{v1.1--v1.8 为什么画在第一周期之后}%
+\topic{为什么先跑通一条路径，再深化内部机制}%
 v1.1 收口可回收内核资源，v1.2 把 Process 与 Thread 分离，v1.3 加入原生
 SYSCALL/SYSRET 与 CPU-local，v1.4 建立类型化 KernelObject、共享
 FileDescription 和动态 FileTable，v1.5 再建立 VFS、挂载与 memfs，v1.6

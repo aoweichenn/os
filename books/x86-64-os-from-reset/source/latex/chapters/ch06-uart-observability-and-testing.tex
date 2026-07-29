@@ -1,10 +1,8 @@
-\chapter{UART、日志时间与可反驳证据}
+\chapter{让机器第一次说话}
 
-\begin{keyidea}
-串口输出不是装饰性日志，而是 CPU 与异步设备共同推进的硬件协议。测试必须
-把阶段、时间、正常完成和失败原因编码成有界证据，并用独立 oracle 证明看到
-的现象确实来自生产路径。
-\end{keyidea}
+我们希望机器打印第一个字符 A。代码不能只把 \code{0x41} 写到端口，还要先
+配置 UART，并等待发送保持寄存器空闲；设备一直忙时又不能永久卡住。本章从
+这一个字符写出串口状态机，再设计日志格式、超时和自动测试。
 
 \input{topics/ch06-serial-driver}
 \input{topics/ch06-chip-register-map}

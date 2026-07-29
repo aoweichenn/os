@@ -1,11 +1,9 @@
-\section{VFS 对象模型与路径命名空间}
+\section{路径怎样穿过 VFS 和挂载点}
 
-\begin{keyidea}
 路径不是文件，目录项不是 Vnode，Vnode 不是一次打开，文件描述符也不是这些
 对象的地址。v1.5 把“进程从哪里开始找”“名字怎样逐项解析”“对象属于哪个
 文件系统”“挂载点怎样跨越”和“一次打开怎样保存偏移”分成独立层次，再用
 memfs 与旧磁盘格式两个后端证明这条边界不依赖某一种存储布局。
-\end{keyidea}
 
 \topic{上一阶段留下的精确缺口}
 v1.4 已经完成四层对象关系中的前三层：
@@ -163,8 +161,8 @@ Superblock 将自己的 \code{maximum\_name\_length\_bytes} 设为 40；
 memfs 设为 255。VFS 先检查公共上限，再检查当前后端上限，因此旧格式限制
 不会污染其他后端。
 
-路径参数不是 C 字符串，而是“用户地址 + 精确长度”。内核先验证整个用户
-区间可读，再复制到固定 4096 字节 Ring 0 缓冲。解析拒绝 C0 控制字符、
+路径参数以“用户地址 + 精确长度”传递，不依赖 NUL 结尾。内核先验证整个
+用户区间可读，再复制到固定 4096 字节 Ring 0 缓冲。解析拒绝 C0 控制字符、
 \code{DEL} 和组件中的分隔符。路径可以占满 4096 字节，不需要为
 \code{'\textbackslash 0'} 额外保留一字节。
 
@@ -621,7 +619,7 @@ mkdir/write/cat/ls 次数。
 这很重要：VFS 初始化顺序若提前打开中断，非法 ELF 可能不再在预期边界失败；
 若持久 memfs 被误算作 Process 泄漏，用户异常测试会以错误运行时状态结束。
 
-\topic{按目录走读 v1.5}\par
+\topic{沿目录走读 VFS 与 memfs}\par
 \begin{osgridlongtable}{L{0.44\textwidth}L{0.44\textwidth}}
 文件 & 阅读时要回答的问题\\ \hline
 \filepath{kernel/fs/vfs.hpp/.cpp} &
@@ -689,10 +687,8 @@ create/mkdir/unlink/rename/truncate/stat、稀疏大文件、独立
 mkfs/inspector/fsck 和崩溃边界；Path、Mount 与 FileDescription 的基本
 语义仍保持本节冻结的形状。
 
-\begin{keyidea}
-v1.5 的完成不是“Shell 多了 cd”，也不是“增加一个内存目录”。真正结果是：
-路径从 Process root/cwd 开始，逐组件经过有界状态机；Mount 与 Vnode 共同
-确定对象位置；FileDescription 继续保存一次打开；memfs 和旧磁盘后端通过
-同一契约；持久挂载资源与 Process 所有权可以分别守恒；宿主模型、真实
-SYSCALL 汇编入口、QEMU 硬件路径和跨启动磁盘共同证明这套边界。
-\end{keyidea}
+在 Shell 输入 \code{cd /tmp/session} 时，路径查找从当前 Process 的 root
+和 cwd 开始，依次处理每个组件。Mount 与 Vnode 确定当前走到哪个对象；
+FileDescription 保存已经打开的那一次访问。memfs 和旧磁盘后端都实现相同
+操作，所以同一条系统调用路径可以访问二者。宿主测试检查路径状态机，QEMU
+继续检查真实 SYSCALL 入口和跨启动磁盘读取。

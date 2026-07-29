@@ -1,13 +1,11 @@
-\section{PID1、进程树与程序映像}
+\section{PID 1 怎样启动第一个用户程序}
 
-\begin{keyidea}
 一个内核能够同时调度多个 Ring 3 地址空间，还不等于它已经拥有用户空间。
 只有当普通程序来自文件系统、用户进程能够创建和等待孩子、程序映像能够在
 失败时保留旧状态并在成功时一次替换，调度器、虚拟内存、VFS 和系统调用才
 真正闭合为一个操作系统。v1.7 用磁盘 \filepath{/sbin/init}、独立
 ProcessTree、reader 驱动 ELF、\code{argc/argv/envp} 和
 \code{spawn/exec/wait} 建立这条闭环。
-\end{keyidea}
 
 \topic{上一阶段留下的最后一条“编译期脐带”}
 v1.6 已经可以严格挂载 256 MiB rootfs v2。名字可以经过 VFS 找到 inode，
@@ -62,7 +60,7 @@ Unix 用三个相互正交的动作表达这件事：
   \item fork/COW 留到地址空间已经由 VMA 描述之后。
 \end{itemize}
 
-这不是绕过 Unix 模型，而是把每一项机制放到其依赖已经存在的阶段。
+这些取舍让每项机制等到所需依赖已经存在时再加入。
 
 \topic{PID1 为什么不是“恰好编号为一的普通程序”}
 进程树必须有根。Kernel 创建的第一个用户 Process 没有普通用户父进程；
@@ -413,7 +411,7 @@ spawn 使用父 FsContext 解析路径，所以相对程序名服从调用者当
 Process 随后获得新初始化的根 FsContext 和标准 fd。这个区别必须明确：
 “用谁的命名空间找程序”和“孩子启动后拥有什么命名空间”不是同一个问题。
 
-\topic{exec 的唯一提交点}
+\topic{exec 到哪一步才替换旧映像}
 exec 最危险的错误是先销毁旧地址空间。路径不存在、ATA 错误、程序头截断、
 W+X、frame 耗尽、参数过大或 CR3 无效都会让当前 Process 无处返回。正确
 做法是让旧映像持续权威，旁路构造候选：
@@ -538,7 +536,8 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
 正常峰值为八个 Process：PID1、六个直接孩子和一个孙进程。64 MiB bootstrap
 规格因此由 4/4/1 提升为 8 Process、8 Thread、每 Process 1 Thread；
 256 MiB 和 64 GiB 的 64/128/32 与 256/512/64 规格不变。提高 bootstrap
-容量不是用小配置冒充压力测试，而是保证最小兼容配置也运行同一完整功能链。
+提高 bootstrap 容量以后，最小兼容配置也能运行相同的功能路径。更大的两档
+配置继续承担容量测试。
 
 \topic{构建期离线安装为什么不是启动后门}
 构建工具先格式化空 rootfs，再把十个文件一次性安装到
@@ -597,7 +596,7 @@ wait 无直接孩子 & NoChildProcess & 树与调度器不变\\ \hline
 \end{osgridlongtable}
 
 \begin{failurebox}
-exec 的“原子性”不是 CPU 提供的一条原子指令，而是软件定义的发布边界。
+exec 的“原子性”由软件定义，CPU 没有提供一条对应的原子指令。
 提交前所有新对象都可丢弃，提交后只有新映像权威。若某项资源既在提交前修改
 旧对象、又无法回滚，就说明它放错了事务位置。
 \end{failurebox}
@@ -746,11 +745,3 @@ v1.7 已经完成：
 guarded stack growth 与用户 heap 稳定后，fork/COW 才能共享有明确来源和
 权限的页；只有 fork/exec/fd 继承都稳定后，Shell 才能把内建命令迁移为普通
 外部程序。
-
-\begin{contractbox}
-v1.7 的完成判定不是“屏幕出现 init”。必须同时证明：程序字节来自 rootfs，
-PID1 收养并回收孤儿，精确 128 KiB 参数到达新用户栈，失败 exec 保留旧
-CR3/RIP/fd，成功 exec 不返回旧入口，八个 Process/Thread 与全部页、栈、
-fd、FsContext 最终恢复基线，宿主模型与真实 QEMU 对同一不变量给出一致
-结论。
-\end{contractbox}

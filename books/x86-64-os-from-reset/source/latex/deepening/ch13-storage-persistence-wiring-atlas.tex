@@ -1,11 +1,9 @@
 \section{用户字节跨重启的完整路径}
 
-\begin{keyidea}
 write 返回、同次启动读回、块缓存标为 clean 和新机器进程重新读回，是四个不同
 强度的结论。只有数据经过系统调用、文件对象、文件系统、缓存写回、ATA PIO 和
 FLUSH，并由一个全新的 QEMU 进程重新 mount 后得到相同字节，才形成当前项目的
 跨启动持久化证据。
-\end{keyidea}
 
 \begin{sidewaysfigure}[p]
   \centering

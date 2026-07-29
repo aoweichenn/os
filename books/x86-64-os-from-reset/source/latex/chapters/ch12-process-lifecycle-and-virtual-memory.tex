@@ -1,12 +1,11 @@
-\chapter{PID1、程序映像、按需分页与 fork}
+\chapter{进程怎样装入程序和分配内存}
 
-\begin{keyidea}
-进程生命周期不等于一块 PCB。父子树、Zombie、exec 提交点、VMA 意图、
-PTE 驻留、文件后备、clean page cache 和 COW 共同决定程序映像怎样出现、
-共享、修改并最终完整消失。
-\end{keyidea}
+这一章跟随一个进程完成三件事：用 exec 换成新程序，第一次访问页面时把内容
+装入内存，再用 fork 创建子进程。VMA、页表和页帧引用分别记录地址范围、
+当前映射和共享关系。
 
-\input{deepening/ch12-pid1-process-tree-v17}
-\input{deepening/ch12-anonymous-vma-v18}
-\input{deepening/ch12-file-backed-vma-v19}
-\input{deepening/ch12-fork-cow-v110}
+\input{topics/ch12-program-image-and-vma-introduction}
+\input{deepening/ch12-pid1-process-tree-and-exec}
+\input{deepening/ch12-anonymous-vma}
+\input{deepening/ch12-file-backed-vma}
+\input{deepening/ch12-fork-and-copy-on-write}

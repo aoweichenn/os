@@ -1,10 +1,8 @@
-\section{文件后备 VMA、按需 ELF 与页缓存}
+\section{ELF 页面怎样从文件进入内存}
 
-\begin{keyidea}
 文件映射不是把 \code{read} 换一个名字，而是让文件字节成为页故障可以反复
 取得的后备。VMA、PTE、后备对象与缓存页必须分别表达地址意图、当前驻留、
 稳定来源和可丢弃内容。
-\end{keyidea}
 
 \topic{从主动装入到 fault-driven execution}
 传统 loader 可以在创建进程时遍历所有 ELF \code{PT\_LOAD}，为每页分配

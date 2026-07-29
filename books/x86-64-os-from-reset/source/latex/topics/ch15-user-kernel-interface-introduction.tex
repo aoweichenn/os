@@ -1,0 +1,55 @@
+\section{一次系统调用跨过了哪些边界}
+
+用户程序不能直接调用内核里的 C++ 函数。它把系统调用号和参数放入约定寄存器，
+执行 \code{SYSCALL}；CPU 按 MSR 中的入口设置切换到 Ring 0，汇编入口保存
+用户现场并换到当前 Thread 的内核栈。C++ 分发器检查调用号、用户地址和长度，
+调用具体服务，最后把返回值放入 RAX。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (wrapper) {用户包装函数};
+  \node[os block,right=of wrapper] (instruction) {SYSCALL\\寄存器 ABI};
+  \node[os block,right=of instruction] (entry) {汇编入口\\保存现场};
+  \node[os block,right=of entry] (dispatch) {C++ 分发\\检查参数};
+  \node[os state,right=of dispatch] (service) {内核服务};
+  \draw[os arrow] (wrapper) -- (instruction);
+  \draw[os arrow] (instruction) -- (entry);
+  \draw[os arrow] (entry) -- (dispatch);
+  \draw[os arrow] (dispatch) -- (service);
+\end{tikzpicture}
+\end{center}
+
+调用号、结构大小、字段 offset 和错误返回值都属于 ABI。只要已经编译好的用户
+程序仍要运行，这些数字就不能随着 C++ 结构重排而悄悄改变。因此共享定义放在
+\filepath{source/abi/include/os/abi}，内核和用户程序从同一处编译；汇编所用
+offset 还要由静态断言和布局测试检查。
+
+\topic{用户指针为什么必须逐段检查}
+Ring 3 传入的地址可能未映射、跨页、指向内核空间，也可能在复制过程中触发
+缺页。分发器不能把它直接转换成 C++ 指针后解引用。项目先按用户地址空间和
+请求权限验证范围，再通过受控复制函数传入或传出数据。坏指针应只让系统调用
+返回错误或终止当前用户进程，不能让 Ring 0 在任意地址读写。
+
+\topic{\filepath{/dev} 和 \filepath{/proc} 为什么看起来像文件}
+
+\filepath{/dev/console} 表示设备端点，读写最终进入终端驱动；它没有普通文件
+的数据块。\filepath{/proc/meminfo} 一类路径在读取时根据内核当前状态生成
+文本，也没有对应的持久 inode。VFS 让用户程序继续使用 open/read/close，
+后端则分别由 devfs 和 procfs 实现。
+
+\begin{osgridlongtable}{L{0.20\textwidth}L{0.25\textwidth}L{0.43\textwidth}}
+\hline
+\textbf{路径} & \textbf{后端} & \textbf{数据从哪里来}\\ \hline
+\filepath{/bin/...} & rootfs & 磁盘上的 ELF 和普通文件块\\ \hline
+\filepath{/tmp/...} & memfs & 内核内存中的临时节点和字节数组\\ \hline
+\filepath{/dev/...} & devfs & 终端等设备操作\\ \hline
+\filepath{/proc/...} & procfs & 读取时采集的进程、内存和系统统计\\ \hline
+\end{osgridlongtable}
+
+启动日志依次出现 \code{DEVFS_READY=/dev}、\code{PROCFS_READY=/proc} 和
+\code{ABI_V2_FROZEN} 后，用户程序才开始依赖这些接口。继续走读时先看
+\filepath{source/user/src/system\_call.asm} 怎样装入寄存器，再看
+\filepath{source/kernel/src/user/system\_calls.cpp} 怎样分发，最后进入
+\filepath{source/kernel/src/fs/devfs.cpp} 或
+\filepath{source/kernel/src/fs/procfs.cpp}。这样可以始终知道一次 read
+正在 ABI、VFS 还是具体后端的哪一层。

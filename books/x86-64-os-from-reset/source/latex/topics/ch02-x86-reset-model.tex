@@ -11,6 +11,24 @@
 隐藏基址是理解现代 x86 复位地址的关键。此时不能简单套用普通实模式
 \(segment \times 16 + offset\) 去解释第一次取指。
 
+\begin{pdfdiagram}
+  \node[os hardware] (reset) {RESET};
+  \node[os state,below left=of reset] (visible) {CS 可见值\\\code{0xF000}};
+  \node[os block,below=of reset] (hidden) {CS 隐藏基址\\\code{0xFFFF0000}};
+  \node[os block,below right=of reset] (offset) {EIP\\\code{0x0000FFF0}};
+  \node[os hardware,below=of hidden] (physical) {首条物理地址\\\code{0xFFFFFFF0}};
+  \node[os state,below=of physical] (reload) {far transfer 重载 CS\\恢复
+  selector \(\times16\) 规则};
+  \draw[os arrow] (reset) -- (visible);
+  \draw[os arrow] (reset) -- (hidden);
+  \draw[os arrow] (reset) -- (offset);
+  \draw[os arrow] (hidden) -- node[above left]{相加} (physical);
+  \draw[os arrow] (offset) -- (physical);
+  \draw[os arrow] (physical) -- (reload);
+\end{pdfdiagram}
+\diagramnote{依据 Intel SDM Vol. 3A 12.1.4 重绘。手册给出复位时 CS
+可见值、隐藏基址和 EIP；项目再把结果映射到 128 KiB ROM 的文件偏移。}
+
 \topic{128 KiB ROM 的顶端映射}
 项目 ROM 覆盖 \code{0xFFFE0000} 到 \code{0xFFFFFFFF}。文件偏移与物理
 地址之间满足：

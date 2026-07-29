@@ -1,11 +1,9 @@
-\section{fork、写时复制与跨资源回滚}
+\section{fork 怎样共享页面又保持隔离}
 
-\begin{keyidea}
 \code{fork} 的本质不是复制一块连续内存，而是复制一个 Process 的可观察资源
 关系。COW 则把“现在复制全部字节”改成“先共享所有权，真正写入哪一页才复制
 哪一页”。硬件只负责报告写保护异常；页面分类、引用、回滚和内核代写都必须
 由操作系统解释。
-\end{keyidea}
 
 \topic{从早期 Unix 的进程复制说起}
 Unix 选择 \code{fork}，是因为 Shell 需要一个可组合的控制点：父进程先得到
@@ -288,10 +286,3 @@ killer。系统仍是单 BSP，不实现跨核 TLB shootdown。writable
 下一阶段 v1.11 将复用本阶段已经正确继承的 FileTable，在 fork 与 exec 之间
 加入 pipe、dup、重定向和外部 Shell。它不应重新定义 private 页所有权；阶段
 边界的价值正是让 I/O 组合建立在已经冻结的 COW 事务上。
-
-\begin{contractbox}
-完成本节后，读者应能从一条 CPL3 store 出发，逐项写出 CR2/error code、
-VMA/PTE 判断、引用分支、frame 复制、INVLPG、指令重试和最终回收；也应能
-解释为什么 Kernel CopyToUser、共享 FileDescription offset 和 fork 回滚
-都是同一进程复制语义不可缺少的部分。
-\end{contractbox}

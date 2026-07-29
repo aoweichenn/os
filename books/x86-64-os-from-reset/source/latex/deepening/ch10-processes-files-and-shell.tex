@@ -29,7 +29,7 @@ TSS.RSP0，再从另一份现场执行 \code{iretq}。QEMU 只产生硬件事件
 \end{pdfdiagram}
 \diagramnote{时钟只提供机制；选择下一个 Ready 进程是策略；页表和内核栈使策略结果可由硬件安全执行。}
 
-\topic{v0.9 只实现拥有完整语义的四态模型}
+\topic{先用四种状态跑通调度}
 本阶段固定四个 PCB，状态为
 \code{Unused -> Ready -> Running -> Terminated}。创建失败可以把尚未运行
 的 Ready 槽回滚为 Unused；启动选择第一个 Ready；时间片到期把当前 Running
@@ -135,7 +135,7 @@ not-present，其上 16 KiB 可用。guard 不是数组边界检查；它依赖�
 的现场。切换 CR3 后必须同步把 TSS.RSP0 改为新栈顶；TSS 是每 CPU 状态，
 不是自动随 CR3 切换的进程字段。
 
-\topic{v1.1 在不改变保存帧 ABI 的前提下迁移动态栈}
+\topic{保存帧 ABI 不变时怎样迁移动态栈}
 当前实现为每个进程从 KVA 窗口取得 6 页连续虚拟区间，首尾两页
 not-present，中间 4 页分别映射四个 order-0 帧。可用容量仍为 16 KiB，
 176 字节帧布局和汇编恢复入口完全不变；变化发生在所有权与生命周期，而不是
@@ -235,11 +235,6 @@ run tick、dispatch、syscall。创建前与全部销毁后的物理页统计必
 才能输出 \code{PROCESS\_RESOURCES\_RECLAIMED}。这避免日志反过来延长量子，
 也避免把 Terminated 状态误当作内存已经释放。
 
-\begin{contractbox}
-调度正确性由三层证据共同成立：宿主纯模型证明状态与守恒，ELF 审计证明同址
-程序契约，QEMU 证明真实 IRQ、CR3、TSS、IRETQ 和页回收。任一层不能替代
-另外两层。
-\end{contractbox}
 
 \section{阻塞、唤醒、管道与资源回收}
 
@@ -618,4 +613,5 @@ stdout 与消费者 stdin 复制到管道端点，关闭多余 fd，分别装载
 不能简单递归 delete。
 
 测试循环创建、执行和回收进程，比较前后物理页、内核堆对象与打开文件计数。
-单次成功无法发现缓慢泄漏，压力回归才验证生命周期闭环。
+单次运行看不出每轮泄漏一个对象的问题。重复运行以后，三个计数仍应回到开始
+时的数值；只要其中一个逐轮增长，回收路径就还漏了一步。

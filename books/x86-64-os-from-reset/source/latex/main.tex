@@ -17,74 +17,71 @@
 \tableofcontents
 
 \mainmatter
-\part{零基础预备：从物理量到可取指计算机}
+\part{先把物理世界变成一台计算机}
 \begin{partbridge}
-本部分不假设读者学过物理、电路或计算机。我们从量、单位、计数和编码开始，
-逐步建立电路、元件、逻辑门、触发器、CPU、存储器、引脚、总线和地址译码。
-完成四章后，ROM、复位、CPU 接线与机器码才成为可以推导的事实，而不是缩写。
+先从尺子、秒表和电压表能够测到的量开始。我们会把连续的电压解释成离散的
+0 和 1，再用逻辑门保存状态、执行加法，最后拼出能够读取指令的 CPU。读完
+这一部分，你应该能沿着电源、时钟、地址和数据说明第一条指令怎样到达 CPU。
 \end{partbridge}
 \input{chapters/foundation01-quantities-information-and-history}
 \input{chapters/foundation02-electricity-components-and-schematics}
 \input{chapters/foundation03-digital-logic-clock-and-state}
 \input{chapters/foundation04-cpu-memory-bus-and-machine}
 
-\part{操作系统职责、x86 历史与真实硬件}
+\part{认识我们要启动的 x86 机器}
 \begin{partbridge}
-硬件具备取指能力以后，仍没有固件、进程、文件或用户。本部分先划清固件、
-Loader、Kernel、驱动与应用程序的责任，再沿 x86 兼容历史解释复位状态，
-最后把 QEMU 平台事务对照到实体载板的供电、引脚、差分对和 PCB。
+CPU 能够取指以后，仍然没有操作系统。我们先看看固件、Loader、Kernel、
+驱动和应用程序各自接过哪一段工作，再回到 8086 理解今天的 x86 为什么仍从
+实模式启动。最后把 QEMU 中的端口和地址放回实体芯片、引脚与 PCB。
 \end{partbridge}
 \input{chapters/ch01-machine-foundations}
 \input{chapters/ch02-x86-history-and-reset}
 \input{chapters/ch03-platform-io-and-physical-hardware}
 
-\part{数据、指令、工具链与自研固件}
+\part{写出 CPU 能执行的字节}
 \begin{partbridge}
-源代码不会被处理器直接执行。本部分先建立精确位宽、寄存器、RFLAGS、寻址、
-Intel 汇编和机器码，再把 NASM、Clang、LLD、ELF、链接脚本、C++20 与裸
-ROM 连成可逐字节审计的生成链，最后用 UART 建立第一个可观察硬件协议。
+我们先手算几条 Intel 语法指令怎样改变寄存器和标志位，再让 NASM、Clang
+和 LLD 生成 CPU 能读取的字节。ROM 成形以后，UART 会成为这台机器最早的
+输出设备，终端上的第一行文字也会成为后续调试的起点。
 \end{partbridge}
 \input{chapters/ch04-data-registers-and-assembly}
 \input{chapters/ch05-toolchain-cpp-and-rom}
 \input{chapters/ch06-uart-observability-and-testing}
 
-\part{从磁盘字节到受保护的 64 位内核}
+\part{从磁盘进入内核和用户态}
 \begin{partbridge}
-本部分沿 ATA 扇区、镜像容器、ELF64、保护模式与长模式进入内核，再建立
-GDT/TSS/IDT、异常、物理/虚拟内存、中断和 Ring 3。每次控制权转移都同时
-说明硬件动作、汇编适配、C++ 所有权、失败现场和整机证据。
+ROM 空间有限，内核要从磁盘装入内存。我们先读回扇区、解析 ELF64，再依次
+打开 A20、保护模式、分页和长模式。进入内核后，异常、中断和页表让错误能够
+被定位，也让第一个用户程序在 Ring 3 中运行。
 \end{partbridge}
 \input{chapters/ch07-loader-and-long-mode}
 \input{chapters/ch08-kernel-exceptions-and-memory}
 \input{chapters/ch09-interrupts-devices-and-user-boundary}
 
-\part{执行模型、对象命名与虚拟内存}
+\part{让进程共享 CPU、文件和内存}
 \begin{partbridge}
-进入 Ring 3 以后，系统必须回答谁拥有资源、谁占用 CPU、整数句柄指向什么、
-路径怎样跨挂载解析，以及程序映像如何按需出现和消失。本部分把 Process、
-Thread、系统调用、内核对象、VFS、PID1、VMA、文件后备和 COW 拆成三条
-相互依赖但不混淆的主线。
+多个程序开始运行以后，CPU 要在 Thread 之间切换，文件描述符要找到仍然存活
+的内核对象，虚拟地址也要在缺页时取得内容。我们沿一次调度、一次路径查找、
+一次 exec 和一次 fork，把这些关系接起来。
 \end{partbridge}
 \input{chapters/ch10-process-thread-and-system-call}
 \input{chapters/ch11-kernel-objects-and-vfs}
 \input{chapters/ch12-process-lifecycle-and-virtual-memory}
 
-\part{持久化、并发服务与用户环境}
+\part{让数据留下来，让程序彼此协作}
 \begin{partbridge}
-文件系统要让名称跨重启存活，并发服务要让等待在多个完成原因之间保持单赢家，
-用户环境则把二者通过 ABI、fd、TTY、Shell、devfs 与 procfs 组合起来。
-本部分分别建立持久顺序、Unix 组合语义和最终用户边界，避免再次形成一章
-包揽所有高层机制的巨型叙事。
+一次 \code{write} 返回以后，数据还要经过页缓存、设备请求和磁盘缓存。
+我们会在不同位置模拟断电，观察哪些内容能够恢复。随后再加入 pipe、futex、
+signal、TTY 和 Shell，让程序能够等待、通信并接受终端控制。
 \end{partbridge}
 \input{chapters/ch13-storage-and-crash-consistency}
 \input{chapters/ch14-unix-io-concurrency-and-job-control}
 \input{chapters/ch15-user-environment-and-abi}
 
-\part{工程治理、学习闭环与 v2.0 发布}
+\part{回看整个系统并继续开发}
 \begin{partbridge}
-最后把二十章重新连接到需求、ADR、测试、日志、代码统计、教材、双仓提交和
-公网部署。v2.0 不靠“功能很多”完成，而靠精确输入、明确限制、分层反例和
-他人可复现的交付身份完成。
+最后从复位向量重新走到 Shell，检查各阶段留下的接口和测试。这里也会说明
+怎样修改一个模块、怎样选择测试，以及哪些方向适合作为读者自己的下一步。
 \end{partbridge}
 \input{chapters/ch16-engineering-and-v20-release}
 

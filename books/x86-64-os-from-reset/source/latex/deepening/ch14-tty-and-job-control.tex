@@ -1,10 +1,8 @@
-\section{TTY、会话与前后台作业控制}
+\section{终端怎样区分前台和后台作业}
 
-\begin{keyidea}
 键盘只产生扫描码，字符设备只搬运字节。把 Ctrl-Z 解释为“停止当前前台
 管线”，需要 TTY 行规程、控制终端、session、process group、signal、
 scheduler 和 Shell 作业表共同维护一条所有权链。
-\end{keyidea}
 
 \topic{从电传打字机到控制终端}
 终端这个词早于今天的图形窗口。电传打字机把按键编码为串行字符，同时在纸上
@@ -424,8 +422,8 @@ output\_queued=output\_written
 \]
 
 Stopped、Zombie、active job process、active session/group、editing bytes、
-buffered bytes 和 pending output 必须全为零。用户 marker 正确而资源账本
-错误时，整机仍输出 \code{USER\_RESULT\_INVALID}。
+buffered bytes 和 pending output 必须全为零。即使用户 marker 正确，只要
+这些计数还有一个非零，整机仍输出 \code{USER\_RESULT\_INVALID}。
 
 \topic{四层测试怎样冻结机制而非演示}\par
 \begin{table}[htbp]
@@ -446,7 +444,7 @@ Stopped/Continued produced 与 observed 各为两次。后台读取拒绝至少�
 64 MiB bootstrap 保持兼容，256 MiB 执行完整功能，64 GiB 继续验证同一 ABI
 在更大容量配置下运行；QEMU 仍只使用自研 ROM 启动。
 
-\topic{当前边界与 v1.16 的连接}
+\topic{终端完成以后，磁盘等待暴露了什么问题}
 当前只有一个控制终端和 canonical 基线，没有 termios/raw mode、多个虚拟
 终端或 pty、窗口尺寸、SIGWINCH、SIGHUP、SIGTTIN/SIGTTOU、孤儿进程组规则
 与完整 POSIX job spec。Shell 作业表固定 16 项；这些限制均明确返回或记录，

@@ -1,11 +1,9 @@
-\section{有序元数据日志与崩溃恢复}
+\section{断电后怎样重放元数据日志}
 
-\begin{keyidea}
 程序顺序只约束 CPU 怎样发出写入，不能自动约束断电后哪些字节仍在介质上。
 ordered metadata journal 用 ``data stable''、``prepared log stable'' 和
 ``commit stable'' 三条持久顺序，把一次多块元数据修改收敛成旧状态或完整
 新状态；checkpoint 可以重复执行，因而恢复本身再次断电也不会制造第三种状态。
-\end{keyidea}
 
 \topic{从事后检查到写前日志}
 早期 Unix 文件系统直接覆盖目录、inode 与 free list。异常断电后，\code{fsck}

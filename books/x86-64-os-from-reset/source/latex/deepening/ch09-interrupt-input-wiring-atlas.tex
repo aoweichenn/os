@@ -1,10 +1,8 @@
 \section{中断到键盘输入的全链路验证}
 
-\begin{keyidea}
 中断不把设备数据“推入 C++ 函数”。设备先把事实保存在自己的寄存器或缓冲区，
 再用 IRQ 请求 CPU 改变控制流；处理函数必须读取真正的数据来源、确认中断、
 更新有界软件状态，最后恢复被打断的现场。
-\end{keyidea}
 
 \begin{sidewaysfigure}[p]
   \centering

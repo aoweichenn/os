@@ -1,10 +1,8 @@
-\section{用户线程、futex 与同步原语}
+\section{用户线程怎样等待同一把锁}
 
-\begin{keyidea}
 Process 是地址空间、文件表和目录上下文的资源容器；Thread 才是处理器可以
 选择、阻塞和恢复的执行流。增加用户线程不是复制一个栈指针，而是同时建立
 调度身份、两级栈、完整处理器现场、TLS、等待关系、退出值和可回滚所有权。
-\end{keyidea}
 
 \topic{历史动机：共享资源为什么不等于共享执行现场}
 早期 Unix 主要用进程表达并发。每个进程有独立地址空间，隔离清晰，但两个
@@ -86,7 +84,7 @@ Thread，错误 RIP/RSP 往往表现为“偶发 QEMU 卡住”，本质却是�
 
 \begin{failurebox}
 父 Thread 不能在 \code{CreateThread} 返回后才把 TID 写入子 TLS。新 Thread
-一经 Ready 就可能先运行；子入口必须调用 \code{GetThreadId} 自行发布身份。
+一经 Ready 就可能先运行；子入口必须调用 \code{GetThreadId} 取得自己的 TID。
 线程创建给出的是并发关系，不是“父返回必然先于子入口”的顺序保证。
 \end{failurebox}
 
@@ -340,11 +338,3 @@ ABI 集成测试冻结系统调用 47--53、48 字节创建请求、16 字节 jo
   \item 最后读 \filepath{source/kernel/src/arch/architecture.asm}，确认系统
         调用与调度返回没有重载 FS。
 \end{enumerate}
-
-\begin{contractbox}
-不看源码回答：为什么 Ready 必须最后发布；为什么子 Thread 可以在父
-\code{CreateThread} 返回前运行；为什么 private futex key 不能只用 VA 或
-frame；为什么 ConditionVariable 保存 sequence 仍要求循环检查谓词；为什么
-exec 验证失败不能终止 sibling；以及怎样用 Thread、WaitQueue、futex entry、
-VMA、KernelStack 和 frame 六组统计证明 join 没有泄漏。
-\end{contractbox}

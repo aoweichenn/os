@@ -1,12 +1,10 @@
-\chapter{Process、Thread、调度与系统调用}
+\chapter{让多个线程轮流使用 CPU}
 
-\begin{keyidea}
-Process 拥有共享资源，Thread 承载处理器执行。抢占、阻塞、退出、FXSAVE
-现场、CpuLocal、SWAPGS 与双系统调用入口共同决定“谁正在运行、使用哪一份
-地址空间、从哪个可信栈进入内核，以及何时允许切换”。
-\end{keyidea}
+让两个用户程序各打印三行。如果没有调度器，第一个程序会一直运行到退出；
+加入 PIT 时钟中断后，内核可以保存当前寄存器和栈，恢复另一个 Thread 的现场。
+本章从这次切换区分 Process 与 Thread，再加入阻塞、退出和原生系统调用入口。
 
 \input{topics/ch10-processes-files-system-calls}
 \input{deepening/ch10-processes-files-and-shell}
-\input{deepening/ch10-process-thread-v12}
-\input{deepening/ch10-cpu-local-syscall-v13}
+\input{deepening/ch10-process-and-thread}
+\input{deepening/ch10-cpu-local-and-syscall}
