@@ -35,8 +35,10 @@ Loader 数据。
 5 & \code{rdmsr} / \texttt{0F 32} & 读取 EFER & 只读还未修改 \\ \hline
 6 & \code{wrmsr} / \texttt{0F 30} & EFER.LME=1 & 长模式尚未 active \\ \hline
 7 & \code{mov eax,cr0} / \texttt{0F 20 C0} & 读 CR0 & PG 仍保留旧值 \\ \hline
-8 & \code{mov cr0,eax} / \texttt{0F 22 C0} & CR0.PE=1、PG=1 & 需 far jump 装载 64-bit CS \\ \hline
-9 & far jump & CS 指向 L=1 代码段 & 才按 64-bit 代码执行 \\ \hline
+8 & \code{mov cr0,eax} / \texttt{0F 22 C0} & CR0.PG=1，LMA 变为 1 &
+当前 CS.L=0，先按 32-bit 兼容子模式执行 \\ \hline
+9 & far jump / \texttt{EA FF 81 00 00 18 00} &
+CS 指向 L=1 代码段 & 目标才按 64-bit 方式解码 \\ \hline
 \end{osgridlongtable}
 
 \begin{pdfdiagram}
@@ -58,6 +60,59 @@ Loader 数据。
 顺序不能随意交换。CR3 必须先指向已初始化并包含当前代码、栈和目标入口的
 PML4；打开 PG 后的下一次取指立刻受页表约束。far jump 还负责让 CS 描述符的
 L 位进入当前执行状态。
+
+\topic{打开 PG 与开始执行 64 位指令之间还有几步}
+
+项目的实际控制流可以把这个边界看得很清楚。设置 CR0.PG 的代码本身位于
+32 位代码段：
+
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.23\linewidth}L{0.25\linewidth}L{0.29\linewidth}}
+线性地址 & 机器字节 & 解码结果 & 执行后的状态 \\ \hline
+\endfirsthead
+线性地址 & 机器字节 & 解码结果 & 执行后的状态 \\ \hline
+\endhead
+\code{81D8} & \code{0F 20 C0} & \code{mov eax,cr0} &
+仍是 32 位保护模式 \\ \hline
+\code{81DB} & \code{0D 00 00 00 80} & \code{or eax,0x80000000} &
+只在 EAX 中准备 PG 位 \\ \hline
+\code{81E0} & \code{0F 22 C0} & \code{mov cr0,eax} &
+PG=1、LMA=1，进入 IA-32e 兼容子模式 \\ \hline
+\code{81E3} & \code{0F 20 C0} & \code{mov eax,cr0} &
+仍按当前 CS.D=1 解码，回读 PG \\ \hline
+\end{osgridlongtable}
+
+在 \code{0x81E0} 之后，分页已经生效。下一条取指
+\code{0x81E3} 必须先经过 CR3 指向的页表；项目的恒等映射把它仍然翻译到
+物理 \code{0x81E3}。此时 LMA 已经为 1，但当前代码段的 L 位还是 0，
+所以 \code{0x81E3} 以及后面的检查、\code{ret} 和日志输出仍按 32 位兼容
+子模式执行。这不是“长模式设置失败”，而是 IA-32e 模式规定的过渡状态。
+
+随后控制流到达线性地址 \code{0x8096}：
+\[
+  \underbrace{\mathtt{EA}}_{\text{far jump}}
+  \quad
+  \underbrace{\mathtt{FF\ 81\ 00\ 00}}_{\text{offset32 }0x000081FF}
+  \quad
+  \underbrace{\mathtt{18\ 00}}_{\text{selector }0x0018}.
+\]
+当前默认宽度是 32 位，所以 \code{EA} 后先取四字节 offset，再取两字节
+selector。选择子 \code{0x0018} 指向 GDT 中 L=1、D=0 的代码段。far
+jump 完成以后，CS.L 变为 1，目标 \code{0x81FF} 才成为第一条按 64 位方式
+解码的指令。
+
+\begin{osgridlongtable}{L{0.25\linewidth}L{0.25\linewidth}L{0.22\linewidth}L{0.18\linewidth}}
+边界 & IA32\_EFER.LMA & 当前 CS.L / D & 默认解码 \\ \hline
+\endfirsthead
+边界 & IA32\_EFER.LMA & 当前 CS.L / D & 默认解码 \\ \hline
+\endhead
+写 CR0.PG 之前 & 0 & 0 / 1 & 32 位保护模式 \\ \hline
+写 CR0.PG 之后 & 1 & 0 / 1 & 32 位兼容子模式 \\ \hline
+far jump 到 \code{0x0018:0x81FF} 后 & 1 & 1 / 0 & 64 位子模式 \\ \hline
+\end{osgridlongtable}
+
+\code{[bits 64]} 在源码中放在 \code{os\_stage1\_long\_mode\_entry}
+标签之前。它仍然只是汇编器指示。CPU 能正确解释目标字节，是因为 far jump
+已经把 CS.L 变成 1；两件事在同一个地址边界上相互配合。
 
 \begin{workedexample}
 初始 \(CR4=\texttt{0x00000000}\)。执行
@@ -121,10 +176,12 @@ jump 后断点未命中，先核对页表项和代码段描述符，不要直接
 triple fault。恢复为分配后先清零、再逐项写入，未使用项应全部为 0。
 \end{faultinjectionbox}
 
-\begin{faultinjectionbox}{交换 far jump 与 CR0.PG}
-在尚未使长模式 active 时跳入标记为 64-bit 的代码段，或在打开 PG 后继续按
-错误默认操作数大小解释后续 byte，都会让指令边界失配。恢复顺序：准备 GDT、
-PAE、CR3、LME，设置 PE/PG，最后 far jump 到 L=1 的代码段。
+\begin{faultinjectionbox}{把 far jump 放到 CR0.PG 之前}
+在 LMA 尚未成为 1 时装入 L=1 的代码段，不能建立合法的 64 位执行环境。
+反过来，打开 PG 后暂时留在 L=0、D=1 的代码段是合法的，项目正是在兼容
+子模式中回读 LMA 并输出日志；错误是把这段字节提前按 \code{bits 64} 编码，
+或者在进入 L=1 代码段以后仍放置只适合 32 位默认解码的字节。恢复顺序：
+准备 GDT、PAE、CR3、LME，设置 PE/PG，最后 far jump 到 L=1 的代码段。
 \end{faultinjectionbox}
 
 \begin{pitfallbox}
@@ -146,6 +203,11 @@ PAE、CR3、LME，设置 PE/PG，最后 far jump 到 L=1 的代码段。
     byte？
   \item CR4 初值 \texttt{200}，设置 PAE 后是多少？
   \item 打开 PG 前至少要确认哪三类地址已映射？
+  \item 已有 PAE=1、LME=1、PE=1，执行 \code{mov cr0,eax} 令 PG=1，
+    但当前代码段仍为 L=0、D=1。下一条指令按 32 位还是 64 位解码？这时
+    LMA 是多少？
+  \item 按 32 位默认方式拆解
+    \texttt{EA FF 81 00 00 18 00}。目标 offset 和 selector 分别是什么？
 \end{enumerate}
 
 \begin{answerbox}
@@ -156,5 +218,9 @@ PAE、CR3、LME，设置 PE/PG，最后 far jump 到 L=1 的代码段。
   \item \texttt{0x220}；
   \item 当前代码/RIP、当前栈/RSP、异常入口及其所需描述符/数据；还要覆盖即将
     跳入的 64-bit 入口。
+  \item 按 32 位兼容子模式解码；LMA=1。LMA 表示 IA-32e 已激活，
+    CS.L 才决定当前是否进入 64 位子模式。
+  \item offset=\texttt{0x000081FF}，selector=\texttt{0x0018}。装入
+    L=1 的描述符后，目标位置开始按 64 位方式解码。
 \end{enumerate}
 \end{answerbox}

@@ -40,22 +40,41 @@ Stage 1 需要把 Kernel 放到 1 MiB 以上，所以先通过端口 \code{0x92}
 选择 GDT 中的描述符；80386 又加入 32 位寄存器和分页。AMD64 在这些状态
 之上增加长模式，同时保留旧入口，使新处理器仍能启动旧软件。
 
-因此 Stage 1 要经过两个跳转。第一次设置 CR0.PE，并通过远跳转装入 32 位
-代码段；第二次在页表和长模式控制位准备好以后，再远跳到 L 位代码段。只修改
-汇编文件中的 \code{BITS 32} 或 \code{BITS 64} 不会改变 CPU 模式，那只是
-告诉 NASM 应该生成哪一种指令编码。
+这里没有“64 位 CPU 先以 32 位运行，再退回实模式”的过程。RESET 直接建立
+实模式状态。Stage 1 要从这个起点向前经过两个远跳转：第一次设置
+CR0.PE，并装入 D=1 的 32 位代码段；第二次在页表和 IA32\_EFER.LME
+准备好以后，装入 L=1 的 64 位代码段。
+
+中间还有一个容易漏掉的状态。设置 LME、PAE 和 CR0.PG 后，
+IA32\_EFER.LMA 变为 1，IA-32e 模式已经激活；但当前 CS 仍指向 L=0、
+D=1 的代码段，所以 CPU 暂时按 32 位兼容子模式继续解码。只有随后的 far
+jump 装入 L=1 的代码段，目标位置才按 64 位方式解码。
+
+只修改汇编文件中的 \code{BITS 32} 或 \code{BITS 64} 不会改变 CPU 模式，
+那只是告诉 NASM 应该生成哪一种指令编码。
 
 \begin{center}
 \begin{tikzpicture}[os diagram]
-  \node[os state] (real) {16 位实模式};
-  \node[os block,right=of real] (protected) {32 位保护模式};
-  \node[os block,right=of protected] (paging) {PAE 与四级页表};
-  \node[os state,right=of paging] (long) {64 位长模式};
+  \node[os state] (real) {实模式\\默认 16};
+  \node[os block,right=of real] (protected) {保护模式\\CS.D=1\\默认 32};
+  \node[os block,below=of protected] (compat) {IA-32e 已激活\\CS.L=0\\兼容子模式};
+  \node[os state,left=of compat] (long) {CS.L=1\\64 位子模式};
   \draw[os arrow] (real) -- (protected);
-  \draw[os arrow] (protected) -- (paging);
-  \draw[os arrow] (paging) -- (long);
+  \draw[os arrow] (protected) -- node[right]{PAE、LME、PG} (compat);
+  \draw[os arrow] (compat) -- node[below]{far jump} (long);
 \end{tikzpicture}
 \end{center}
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.23\linewidth}}
+执行区间 & 决定状态的关键位 & 默认解码宽度 & 下一次变化由谁触发 \\ \hline
+\endfirsthead
+执行区间 & 决定状态的关键位 & 默认解码宽度 & 下一次变化由谁触发 \\ \hline
+\endhead
+Stage 1 前半段 & PE=0、PG=0 & 16 位 & 写 CR0.PE \\ \hline
+32 位保护模式 & PE=1、PG=0、CS.D=1 & 32 位 & 设置 PAE、LME、PG \\ \hline
+IA-32e 兼容子模式 & LMA=1、CS.L=0、CS.D=1 & 32 位 & far jump 装入 L=1 的 CS \\ \hline
+64 位子模式 & LMA=1、CS.L=1、CS.D=0 & 64 位 & 已到 64 位入口 \\ \hline
+\end{osgridlongtable}
 
 \topic{进入长模式前要准备哪些状态}
 当前实现按下面的顺序修改处理器状态：
@@ -73,7 +92,7 @@ Stage 1 需要把 Kernel 放到 1 MiB 以上，所以先通过端口 \code{0x92}
   \node[os state] (protected) {保护模式\\CR0.PE=1\\CR0.PG=0};
   \node[os block,right=of protected] (pae) {CR4.PAE=1\\CR3=PML4};
   \node[os block,right=of pae] (lme) {IA32\_EFER\\LME=1};
-  \node[os state,below=of lme] (paging) {CR0.PG=1\\硬件置 LMA=1};
+  \node[os state,below=of lme] (paging) {CR0.PG=1\\LMA=1，兼容子模式};
   \node[os block,left=of paging] (jump) {far jump\\CS.L=1};
   \node[os state,left=of jump] (mode64) {64 位子模式};
   \draw[os arrow] (protected) -- (pae);

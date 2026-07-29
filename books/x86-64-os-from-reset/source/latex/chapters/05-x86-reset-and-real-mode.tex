@@ -1,15 +1,21 @@
-\chapter{x86 为什么从实模式醒来}
+\chapter{CPU 复位后为什么先执行 16 位代码}
 
-现代 x86-64 处理器复位以后并不会直接以 64 位方式执行。它先呈现一组兼容
-早期 x86 的状态，并从平台规定的位置取指。我们从 8086 的地址线和分段方式
-开始，手算复位地址、A20 回绕和模式切换需要改变的处理器状态。
+一颗支持 x86-64 的处理器，复位后为什么没有直接执行 64 位指令？Stage 1
+明明还在实模式，为什么源码里已经出现了 \code{EAX}？\code{E9 0D F0}
+究竟把哪一个寄存器改成了什么，为什么跳完以后仍在实模式？本章先把这些容易
+混在一起的问题拆开，再沿项目 ROM 的三个真实字节逐步计算。
 
-\chapterroute{8086 分段地址 $\rightarrow$ 复位后的 CS:EIP
-$\rightarrow$ 复位向量与 ROM 映射 $\rightarrow$ A20 地址回绕
-$\rightarrow$ CR0、GDT 与长模式前置条件。}
+处理器“最多支持多少位”、此刻处于哪种模式、当前代码段的默认宽度，以及某一
+条指令实际操作多少位，是四个不同问题。读完本章以后，我们再把它们接回
+8086 分段、A20 和后面的保护模式切换。
 
-\input{topics/x86-history-architecture}
+\chapterroute{处理器能力、模式与指令宽度 $\rightarrow$ 复位后的 CS:EIP
+$\rightarrow$ \code{E9 0D F0} 的逐字节跳转
+$\rightarrow$ near 与 far jump $\rightarrow$ 实模式中的 32 位操作数
+$\rightarrow$ A20、CR0 与 GDT。}
+
 \input{topics/x86-reset-model}
+\input{topics/x86-history-architecture}
 \input{topics/reset-trace-workbook}
 \input{deepening/reset-platform-and-io}
 \input{practice/05-x86-reset-and-real-mode}

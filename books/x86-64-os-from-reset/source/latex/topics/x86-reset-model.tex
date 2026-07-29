@@ -1,3 +1,76 @@
+\section{先分清处理器能力、运行模式和指令宽度}
+
+\topic{“64 位处理器”不表示上电第一条就是 64 位指令}
+先直接回答最容易混淆的三个问题。
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{32 位或 64 位处理器怎样进入实模式？}
+    它不是先以 32 位或 64 位方式运行，再执行一条指令进入实模式。硬件复位
+    直接把控制寄存器和代码段状态设成实地址模式，软件看到的
+    \code{CR0.PE=0}、\code{CR0.PG=0}。第一条软件指令已经处在实模式中。
+  \item \textbf{复位后的指令是 16 位还是 32 位？}
+    当前代码段的默认操作数宽度和默认地址宽度都是 16 位，所以没有宽度前缀
+    的普通指令先按 16 位默认方式解码。
+  \item \textbf{实模式里能不能使用 \code{EAX}？}
+    80386 及后续处理器可以。在 16 位默认代码中，指令前缀可以把某一条指令
+    的操作数改成 32 位。那一条指令会读写 \code{EAX}，处理器模式并没有
+    随之改变。
+\end{enumerate}
+
+“位数”至少可能在说下面五件事。把它们压成一句“现在是 16 位”会丢掉必要
+信息。
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.25\linewidth}L{0.27\linewidth}L{0.19\linewidth}}
+名称 & 它回答的问题 & 本项目刚复位时的答案 & 决定者 \\ \hline
+\endfirsthead
+名称 & 它回答的问题 & 本项目刚复位时的答案 & 决定者 \\ \hline
+\endhead
+处理器能力 & 这颗 CPU 实现了哪些寄存器、指令和模式？ &
+支持 x86-64，也兼容 16/32 位执行 & CPU 型号与 ISA \\ \hline
+当前运行模式 & CPU 此刻按哪套分段、保护和分页规则工作？ &
+实地址模式，PE=0、PG=0 & 控制寄存器、EFER 与段状态 \\ \hline
+代码段默认宽度 & 没有宽度前缀时，操作数和地址按多少位解码？ &
+默认操作数 16 位、默认地址 16 位 & 当前 CS 的隐藏属性 \\ \hline
+本条指令宽度 & 这一条指令实际读写 AX 还是 EAX？ &
+由操作码、默认值和前缀共同决定 & 指令字节 \\ \hline
+汇编器编码策略 & NASM 应按哪种默认值选择机器码？ &
+\code{bits 16} & 源文件中的汇编指示 \\ \hline
+\end{osgridlongtable}
+
+\code{bits 16} 不会被写成一条供 CPU 执行的指令。它只告诉 NASM：“假定
+CPU 将按 16 位默认值解释后续字节；如果源码要求另一种宽度，请生成前缀。”
+项目 Stage 1 的下面三条指令都在实模式中：
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.24\linewidth}L{0.20\linewidth}L{0.22\linewidth}}
+源码 & 最终机器字节 & 实际操作宽度 & 执行后的模式 \\ \hline
+\endfirsthead
+源码 & 最终机器字节 & 实际操作宽度 & 执行后的模式 \\ \hline
+\endhead
+\code{mov eax,cr0} & \code{0F 20 C0} & 控制寄存器传送规定的宽度 & 实模式 \\ \hline
+\code{or eax,1} & \code{66 83 C8 01} & 32 位；\code{66} 覆盖 16 位默认值 & 实模式 \\ \hline
+\code{mov cr0,eax} & \code{0F 22 C0} & 写 CR0；这一条把 PE 置为 1 & 进入保护模式转换点 \\ \hline
+\end{osgridlongtable}
+
+第二行是最好的反例：使用 \code{EAX} 不等于进入了“32 位模式”。执行
+\code{or eax,1} 时，改变的只有 EAX 和算术标志。直到第三行把候选值写入
+CR0，\code{PE} 才真的改变。
+
+\begin{pdfdiagram}
+  \node[os hardware] (reset) {硬件 RESET};
+  \node[os state,right=of reset] (real) {实模式\\默认 16/16};
+  \node[os block,right=of real] (wide) {带 \code{66} 的一条指令\\32 位操作数};
+  \node[os state,below=of wide] (realagain) {仍是实模式\\PE=0};
+  \node[os block,left=of realagain] (pe) {\code{mov cr0,eax}\\PE 置 1};
+  \node[os state,left=of pe] (protected) {far jump 后\\32 位代码段};
+  \draw[os arrow] (reset) -- (real);
+  \draw[os arrow] (real) -- (wide);
+  \draw[os arrow] (wide) -- (realagain);
+  \draw[os arrow] (realagain) -- (pe);
+  \draw[os arrow] (pe) -- (protected);
+\end{pdfdiagram}
+\diagramnote{“32 位操作数”只描述一条指令读写的数据宽度；“32 位保护模式
+代码段”描述后续指令的默认解码环境。两者不能互换。}
+
 \section{复位状态、ROM 映射与首条指令}
 
 \topic{复位是契约，不是初始化完成}
@@ -11,14 +84,20 @@
 隐藏基址是理解现代 x86 复位地址的关键。此时不能简单套用普通实模式
 \(segment \times 16 + offset\) 去解释第一次取指。
 
+手册把寄存器记作 EIP，并不表示当前正在按 32 位默认方式执行。EIP 是处理器
+已经实现的架构寄存器；当前代码段的默认宽度则是另一项状态。复位时
+EIP=\code{0x0000FFF0}，本项目的 \code{E9 rel16} 只产生 16 位跳转目标，
+所以我们在计算中写 IP=\code{0xFFF0} 和 IP=\code{0xF000}，是在明确只看
+它此刻参与控制流的低 16 位。
+
 \begin{pdfdiagram}
   \node[os hardware] (reset) {RESET};
   \node[os state,below left=of reset] (visible) {CS 可见值\\\code{0xF000}};
   \node[os block,below=of reset] (hidden) {CS 隐藏基址\\\code{0xFFFF0000}};
   \node[os block,below right=of reset] (offset) {EIP\\\code{0x0000FFF0}};
   \node[os hardware,below=of hidden] (physical) {首条物理地址\\\code{0xFFFFFFF0}};
-  \node[os state,below=of physical] (reload) {far transfer 重载 CS\\恢复
-  selector \(\times16\) 规则};
+  \node[os state,below=of physical] (reload) {实模式 far transfer 重载 CS\\
+  base 变为 selector \(\times16\)};
   \draw[os arrow] (reset) -- (visible);
   \draw[os arrow] (reset) -- (hidden);
   \draw[os arrow] (reset) -- (offset);
@@ -53,14 +132,65 @@
 \end{tikzpicture}
 \end{center}
 
-\topic{16 位近跳转保留复位隐藏状态}
-复位向量放置操作码 \code{E9} 和有符号 16 位位移。近跳转只修改 IP，不
-重载 CS，因而保留隐藏基址 \code{0xFFFF0000}。目标 IP 是
-\code{0xF000}，物理目标正好是 \code{0xFFFFF000}。位移为：
+\topic{三个复位字节 E9 0D F0 到底怎样跳转}
+复位后的默认操作数宽度是 16 位，因此 CPU 读到 \code{E9} 后，还要读取
+两个字节的 \code{rel16}。内存按低字节在前保存整数，所以
+\code{0D F0} 合成 \code{0xF00D}。把它当作 16 位有符号数时：
 \[
-  0xF000 - (0xFFF0 + 3) = -4083 = 0xF00D.
+  \operatorname{signext}_{16}(\mathtt{0xF00D})=-4083.
 \]
-因此复位向量前三个字节是 \code{E9 0D F0}。
+
+相对跳转不是从指令开头加位移。CPU 已经取完三个字节，顺序 IP 先从
+\code{0xFFF0} 走到 \code{0xFFF3}，然后才加上 \(-4083\)：
+\[
+  0xF000 - (0xFFF0 + 3) = -4083,
+  \qquad
+  (-4083)\bmod 2^{16}=0xF00D.
+\]
+也可以正向验算：
+\[
+  \mathtt{0xFFF3}+(-4083)
+  =\mathtt{0xF000}.
+\]
+
+这是 \emph{near jump}。它改写 IP，不重装 CS，也不写 CR0。因此跳转完成
+以后，CS 可见值仍为 \code{0xF000}，CS 隐藏基址仍为
+\code{0xFFFF0000}，处理器仍在实模式，默认宽度仍为 16 位。下一条指令的
+物理地址才是：
+\[
+  \mathtt{0xFFFF0000}+\mathtt{0xF000}
+  =\mathtt{0xFFFFF000}.
+\]
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.24\linewidth}L{0.24\linewidth}L{0.18\linewidth}}
+状态 & 跳转前 & 跳转后 & 是否改变 \\ \hline
+\endfirsthead
+状态 & 跳转前 & 跳转后 & 是否改变 \\ \hline
+\endhead
+IP/EIP 的有效低 16 位 & \code{0xFFF0} & \code{0xF000} & 是 \\ \hline
+CS 可见值 & \code{0xF000} & \code{0xF000} & 否 \\ \hline
+CS 隐藏基址 & \code{0xFFFF0000} & \code{0xFFFF0000} & 否 \\ \hline
+CR0.PE / CR0.PG & 0 / 0 & 0 / 0 & 否 \\ \hline
+当前模式 & 实模式 & 实模式 & 否 \\ \hline
+默认操作数/地址宽度 & 16 / 16 & 16 / 16 & 否 \\ \hline
+\end{osgridlongtable}
+
+\topic{near、far 和模式切换不是同一个动作}
+\code{near jump} 只在当前代码段内改变指令偏移。\code{far jump} 同时
+给出新的 CS 和偏移，所以会重装 CS 的隐藏部分。但 far jump 本身也不等于
+“进入保护模式”：实模式中的 far jump 仍然跳到实模式代码，只有
+\code{CR0.PE} 改变以后，处理器才按保护模式规则用选择子查 GDT。
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.23\linewidth}L{0.24\linewidth}L{0.23\linewidth}}
+动作 & 改写的主要状态 & 会不会单独改模式 & 本项目中的用途 \\ \hline
+\endfirsthead
+动作 & 改写的主要状态 & 会不会单独改模式 & 本项目中的用途 \\ \hline
+\endhead
+\code{E9 rel16} near jump & IP & 不会 & 从复位向量跳到同一特殊 CS 下的 ROM 入口 \\ \hline
+实模式 far jump / \code{retf} & CS:IP 及 CS 隐藏基址 & 不会 & ROM 把控制权交给 RAM 中的 Stage 1 \\ \hline
+写 \code{CR0.PE=1} & 保护模式使能位 & 会，进入转换点 & 启用保护模式规则 \\ \hline
+PE 置位后的 far jump & CS 与代码段属性 & 模式已由 PE 改变 & 装入 GDT 的 32 位代码段并建立新默认宽度 \\ \hline
+\end{osgridlongtable}
 
 \begin{failurebox}
 如果使用会重载 CS 的远跳转，就必须重新证明目标段如何映射到 ROM；如果链接

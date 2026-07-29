@@ -41,6 +41,77 @@ IP_{next}=\texttt{FFF3}-\texttt{0FF3}
 \(selector\ll4\) 重新计算，目标物理地址完全不同。项目使用 near jump 正是
 为了保留复位时的特殊隐藏基址。
 
+\topic{从 16 位默认解码走到 32 位默认解码}
+
+ROM 把 Stage 1 装到物理地址 \code{0x8000} 后，用实模式远转移进入
+\code{0800:0000}。此时
+\[
+  (\mathtt{0x0800}\ll4)+\mathtt{0x0000}
+  =\mathtt{0x8000},
+\]
+CPU 仍在实模式，默认操作数和地址宽度仍为 16 位。Stage 1 装好 GDT 以后，
+物理地址 \code{0x8025} 开始的真实字节如下。
+
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.22\linewidth}L{0.24\linewidth}L{0.31\linewidth}}
+物理地址 & 机器字节 & 16 位默认下的解释 & 执行后的关键状态 \\ \hline
+\endfirsthead
+物理地址 & 机器字节 & 16 位默认下的解释 & 执行后的关键状态 \\ \hline
+\endhead
+\code{8025} & \code{0F 20 C0} & \code{mov eax,cr0} &
+EAX 得到 CR0；PE 仍为 0 \\ \hline
+\code{8028} & \code{66 83 C8 01} & \code{or eax,1} &
+\code{66} 令本条使用 32 位 EAX；只改 EAX，PE 仍为 0 \\ \hline
+\code{802C} & \code{0F 22 C0} & \code{mov cr0,eax} &
+CR0.PE 变为 1 \\ \hline
+\code{802F} & \code{EA 34 80 08 00} &
+\code{jmp 0x0008:0x8034} &
+CS 载入选择子 \code{0x0008}，目标代码段 D=1 \\ \hline
+\end{osgridlongtable}
+
+\code{EA} 后四个字节不是一个 32 位平坦地址。当前代码段还采用 16 位默认
+操作数，所以它们被拆成：
+\[
+  \underbrace{\mathtt{34\ 80}}_{\text{offset }0x8034}
+  \quad
+  \underbrace{\mathtt{08\ 00}}_{\text{selector }0x0008}.
+\]
+选择子 \code{0x0008} 指向 GDT 中 base 为 0、D 位为 1 的代码段。因此目标
+线性地址是 \(0+\mathtt{0x8034}\)。far jump 装载这个描述符以后，后续普通
+指令才改用 32 位默认操作数和 32 位默认地址。
+
+\begin{pdfdiagram}
+  \node[os state] (real) {实模式\\CS=0800\\默认 16};
+  \node[os block,right=of real] (candidate) {\code{or eax,1}\\只改 EAX};
+  \node[os state,right=of candidate] (pe) {\code{mov cr0,eax}\\PE=1};
+  \node[os block,below=of pe] (far) {\code{EA 34 80 08 00}\\装入 CS=0008};
+  \node[os state,left=of far] (pm) {保护模式代码段\\CS.D=1\\默认 32};
+  \draw[os arrow] (real) -- (candidate);
+  \draw[os arrow] (candidate) -- (pe);
+  \draw[os arrow] (pe) -- (far);
+  \draw[os arrow] (far) -- (pm);
+\end{pdfdiagram}
+
+源码中的 \code{[bits 32]} 恰好写在目标标签前，但 CPU 看不到这行文字。
+它不产生任何机器字节。运行时 far jump 先让 CS.D 变成 1；汇编时
+\code{bits 32} 再保证目标位置的字节确实适合 32 位默认解码。两边若有一边
+写错，同一串字节就会被拆成另一组指令。
+
+目标位置的第一条真实指令又提供了一个对称例子：
+\[
+  \mathtt{66\ B8\ 10\ 00}
+  \quad\longrightarrow\quad
+  \code{mov ax,0x0010}.
+\]
+此时默认值已经是 32 位，\code{66} 反而把这一条缩成 16 位，用 AX 装载数据
+段选择子。可见 \code{66} 的含义不是永远“切到 32 位”，而是覆盖当前默认
+操作数宽度：默认 16 时变成 32，默认 32 时变成 16。
+
+\begin{pitfallbox}
+\code{mov cr0,eax} 执行完以后，PE 已经为 1；far jump 不是第二次“打开”
+保护模式。它紧接着重装 CS，使处理器取得 GDT 描述符中的 base、limit 和
+D 位，并清除旧取指路径的影响。两条指令之间不要插入普通业务代码。
+\end{pitfallbox}
+
 \topic{入口七条指令怎样建立可用的栈}
 
 入口的核心顺序可以用下列机器状态解释：
@@ -112,8 +183,7 @@ DF & 执行前 SI & 读取地址 & 执行后 SI \\ \hline
 \code{lodsb} 第一次仍能读起始字符，随后 SI 向低地址移动。串口可能只输出
 第一个字符，之后输出 ROM 中前向相邻的其他 byte，或直到超时/零 byte 才停。
 
-记录每次 SI、读取的物理地址和 AL。恢复 \code{cld} 后，SI 每次增加 1，字符
-按源码顺序出现。
+记录每次 SI、读取的物理地址和 AL。恢复 \code{cld} 后，SI 每次增加 1。
 \end{faultinjectionbox}
 
 \begin{faultinjectionbox}{交换 MOV SS 与 MOV SP}
@@ -144,6 +214,12 @@ PUSH 或可能使用栈的代码。恢复为先建立 SS、紧接着建立 SP �
   \item DF=1，SI=\texttt{0200}，执行两次 \code{lodsb} 后 SI 是多少？
   \item 为什么复位近跳转完成后不能用可见 CS 的
     \(\texttt{F000}\ll4\) 计算项目入口物理地址？
+  \item 在 16 位默认代码中执行机器字节
+    \texttt{66 83 C8 01}。这条指令操作哪个寄存器？执行后 CPU 是否已经
+    进入保护模式？
+  \item 按 16 位默认方式拆解
+    \texttt{EA 34 80 08 00}，分别写出 offset 和 selector。若 GDT 代码段
+    base=0、D=1，跳转后的线性地址和默认操作数宽度分别是什么？
 \end{enumerate}
 
 \begin{answerbox}
@@ -156,5 +232,10 @@ PUSH 或可能使用栈的代码。恢复为先建立 SS、紧接着建立 SP �
   \item \texttt{01FE}；
   \item 可见选择子没有表达复位时缓存的特殊 CS base。近跳转保留隐藏基址
     \texttt{FFFF0000}，而普通实模式公式会错误得到 \texttt{000F0000}。
+  \item \code{66} 覆盖 16 位默认值，指令是 \code{or eax,1}，实际操作
+    EAX。它只准备候选值；没有执行 \code{mov cr0,eax}，CPU 仍在实模式。
+  \item offset=\texttt{0x8034}，selector=\texttt{0x0008}。描述符 base
+    为 0，所以目标线性地址是 \texttt{0x8034}；CS.D=1 以后默认操作数宽度
+    为 32 位。
 \end{enumerate}
 \end{answerbox}
