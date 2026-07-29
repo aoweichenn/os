@@ -1,12 +1,12 @@
 \section{路径怎样穿过 VFS 和挂载点}
 
 路径不是文件，目录项不是 Vnode，Vnode 不是一次打开，文件描述符也不是这些
-对象的地址。v1.5 把“进程从哪里开始找”“名字怎样逐项解析”“对象属于哪个
+对象的地址。VFS 把“进程从哪里开始找”“名字怎样逐项解析”“对象属于哪个
 文件系统”“挂载点怎样跨越”和“一次打开怎样保存偏移”分成独立层次，再用
 memfs 与旧磁盘格式两个后端证明这条边界不依赖某一种存储布局。
 
 \topic{上一阶段留下的精确缺口}
-v1.4 已经完成四层对象关系中的前三层：
+前一章已经完成四层对象关系中的前三层：
 
 \begin{enumerate}
   \item Process 中的小整数 fd；
@@ -17,7 +17,7 @@ v1.4 已经完成四层对象关系中的前三层：
 但 FileDescription 的最底层仍是
 \code{FileSystem* + FileSystemHandle}。旧 FileSystem 同时负责完整路径
 切分、inode 查找、目录格式、块分配、缓存和 ATA 事务。这在只有一个根磁盘
-时可以形成垂直闭环，却产生四个继续演进的障碍：
+时可以让一次 open/read 走通，却产生四个继续演进的障碍：
 
 \begin{itemize}
   \item Process 没有自己的当前目录，相对路径没有事实来源；
@@ -26,8 +26,8 @@ v1.4 已经完成四层对象关系中的前三层：
   \item 若此时直接升级磁盘格式，路径错误与落盘错误会同时暴露。
 \end{itemize}
 
-因此 v1.5 不修改 rootfs 盘面格式，而是先把命名层独立出来。旧格式成为一个
-后端，新的 memfs 成为第二个后端；两者共同通过以后，v1.6 才有资格在 VFS
+因此这里不修改 rootfs 盘面格式，而是先把命名层独立出来。旧格式成为一个
+后端，新的 memfs 成为第二个后端；两者使用同一套路径测试以后，后续盘面格式才在 VFS
 接口不变的条件下替换根磁盘格式。
 
 \topic{历史来源：为什么名字不属于 inode}
@@ -50,14 +50,14 @@ Vnode 一类对象出现的根本原因。
 
 挂载又增加一层位置。同一个文件系统以后可能经不同挂载点可见；同一个 Vnode
 从不同位置执行 \code{..}，命名空间父级可能不同。因此当前 \code{Path}
-同时保存 Mount identity 与 Vnode，即使 v1.5 尚未实现 bind mount，也不把
+同时保存 Mount identity 与 Vnode。即使尚未实现 bind mount，也不把
 未来需要的位置语义丢掉。
 
 \topic{从 Ring 3 字符串到 ATA 扇区的完整控制链}
 以 Shell 在 \filepath{/demo/message} 上执行 \code{cat} 为例，真实路径跨越
 用户 C++、Intel 语法汇编、CPU 特权转换、内核对象与 ATA：
 
-\begin{lstlisting}[caption={v1.5 文件读取的端到端路径}]
+\begin{lstlisting}[caption={文件读取经过 VFS 的路径}]
 Ring 3 shell.cpp
   -> OpenFile("/demo/message", read)
   -> system_call.cpp prepares RAX/RDI/RSI/RDX
@@ -193,7 +193,7 @@ memfs 设为 255。VFS 先检查公共上限，再检查当前后端上限，因
 
 \topic{四类特殊路径的精确语义}
 重复分隔符、点组件、父组件和尾斜杠看似只是字符串细节，实际上分别影响组件
-折叠、父级遍历、根边界与最终对象类型，必须逐项冻结语义。
+折叠、父级遍历、根边界与最终对象类型，都必须有确定的处理规则。
 
 \topic{重复分隔符}
 
@@ -270,7 +270,7 @@ Mount 0, legacy root
   \item 父 Mount 链形成环。
 \end{itemize}
 
-这些限制不是 VFS 理论上做不到，而是 v1.5 尚未定义动态拓扑下已有 Path、
+这些限制来自当前尚未定义动态拓扑下已有 Path、
 cwd 和 OpenFile 的生命周期。如果调度开始后允许 unmount，还必须回答：
 正在 lookup 的线程怎样持有 Mount、打开文件是否阻止卸载、cwd 落在子树中
 怎么办、缓存怎样失效。当前挂载只在用户调度前建立，运行期拓扑只读，因而
@@ -312,7 +312,7 @@ point 调用 get-name，所以 memfs 根显示为 \code{tmp}，而不是空字�
 \code{size/capacity} & 各 64 位 & 逻辑长度和已申请容量\\ \hline
 \end{osgridlongtable}
 
-节点链采用线性查找，不是为了假装高性能。v1.5 的目标是让所有节点、父关系和
+节点链采用线性查找。当前先让所有节点、父关系和
 资源可直接遍历校验；节点上限在实例初始化时明确给出。未来如果改用哈希目录
 或树，VFS 操作表和路径语义不变，新的后端结构必须用同一契约测试比较。
 
@@ -358,8 +358,8 @@ point 调用 get-name，所以 memfs 根显示为 \code{tmp}，而不是空字�
 下标暴露给 OpenFile，而是把上一次返回的 node identifier 保存为 64 位
 cursor；每次寻找当前目录下大于 cursor 的最小 identifier。
 
-这样枚举顺序由单调身份决定，与链表插入位置无关。v1.5 没有删除，因此游标
-不会遇到中途消失的项；v1.6 引入 unlink 后必须重新定义并发修改语义，不能
+这样枚举顺序由单调身份决定，与链表插入位置无关。当前没有删除，因此游标
+不会遇到中途消失的项；引入 unlink 后必须重新定义并发修改语义，不能
 直接把当前性质外推。
 
 \topic{memfs Validate 重新计算什么}
@@ -399,7 +399,7 @@ sync/validate & 复用缓存 flush 与完整可达性检查\\ \hline
 \end{osgridlongtable}
 
 parent 扫描在 inode 上限内是有界的，但不是最终高性能实现。它的价值在于
-不改变盘面格式就能提供 \code{..} 和 getcwd 语义；v1.6 新格式可以直接保存
+不改变盘面格式就能提供 \code{..} 和 getcwd 语义；新的盘面格式可以直接保存
 或高效查找父关系。
 
 旧 MountOrFormat 规则保持不变：全零未初始化介质允许建立格式；magic、CRC、
@@ -408,7 +408,7 @@ parent 扫描在 inode 上限内是有界的，但不是最终高性能实现。
 启动第三次验证拒绝。
 
 \topic{FileDescription 迁移为什么没有破坏 dup}
-v1.4 的共享关系是：
+接入 VFS 以前的共享关系是：
 
 \begin{lstlisting}
 fd A --+
@@ -416,7 +416,7 @@ fd A --+
 fd B --+
 \end{lstlisting}
 
-v1.5 改为：
+接入 VFS 后改为：
 
 \begin{lstlisting}
 fd A --+
@@ -429,7 +429,7 @@ FileTable 和 KernelObject 引用图没有变化，只有 FileDescription payloa
 独立 open 仍创建新 FileDescription，所以 offset 从零开始。最后引用释放时
 调用 \code{Vfs::Close}，把 OpenFile 清零；当前后端没有额外 per-open 分配。
 
-这种迁移次序正是分阶段软件工程的价值。若 v1.4 与 v1.5 同时修改 FileTable、
+若同时修改 FileTable、
 对象引用、路径和磁盘，很难判断共享偏移失败属于哪一层。
 
 \topic{每 Process FsContext 与系统调用 29、30}
@@ -438,7 +438,7 @@ FileTable 和 KernelObject 引用图没有变化，只有 FileDescription payloa
 走相同初始化。当前没有 fork，因此尚未定义父子 FsContext 复制，但 cwd
 已经不是全局 Shell 字符串。
 
-两个新调用沿用 v1.3 的寄存器 ABI：
+两个新调用沿用既有寄存器 ABI：
 
 \begin{osgridlongtable}{L{0.10\textwidth}L{0.29\textwidth}L{0.37\textwidth}L{0.12\textwidth}}
 编号 & 名称 & 参数 & 成功结果\\ \hline
@@ -467,7 +467,7 @@ C++ 结构按 8 字节对齐时，编译器通常把总大小补到 280。若最
 Ring 3 可能泄露内核栈残留。
 
 因此 ABI 明确声明一个 \code{uint8\_t reserved}，内核把它写零，并用
-\code{static\_assert(sizeof(DirectoryEntry)==280)} 冻结大小。这个例子说明
+\code{static\_assert(sizeof(DirectoryEntry)==280)} 检查大小。这个例子说明
 固定宽度字段仍不足以自动得到稳定 ABI；字段顺序、对齐、总大小和每个传出
 字节都必须显式定义。
 
@@ -519,7 +519,7 @@ memfs 自身不能靠“已登记”逃过验证：宿主单元/集成测试调�
 波特，逐组件打印 4096 字节路径不仅刷屏，还会改变 PIT IRQ 打断系统调用的
 概率，使日志本身改变被测调度。
 
-v1.5 只在初始化和全部 Process 结束时输出：
+内核只在初始化和全部 Process 结束时输出：
 
 \begin{lstlisting}[caption={VFS 的有界阶段日志}]
 [OS][KERNEL] VFS_READY
@@ -560,7 +560,7 @@ v1.5 只在初始化和全部 Process 结束时输出：
   \item 两个 memfs 的资源汇总和最终 Destroy。
 \end{itemize}
 
-\topic{双后端契约集成}
+\topic{同一条路径测试怎样覆盖 rootfs 和 memfs}
 
 同一函数分别接收以 memfs 和 legacy-fs 为根的 VFS，执行目录创建、chdir、
 文件创建/写入/读取、目录枚举、sync 和 validate。legacy 写入完成后，新建
@@ -671,7 +671,7 @@ legacy 损坏非零盘 & {\small\code{Corrupt / Incomplete}} & 不格式化、�
 \end{osgridlongtable}
 
 \topic{当前实现范围}
-v1.5 没有 rootfs v2、间接块、64 MiB 单文件、unlink、rename、非零
+当前还没有 rootfs v2、间接块、64 MiB 单文件、unlink、rename、非零
 truncate、stat 或符号链接。没有正/负 dentry cache，没有动态 unmount、
 bind mount 或每 Process mount namespace 复制。没有 uid/gid、权限位、
 时间戳和设备节点。

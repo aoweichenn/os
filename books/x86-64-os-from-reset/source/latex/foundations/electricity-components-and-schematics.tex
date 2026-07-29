@@ -1,5 +1,6 @@
 \section{电荷、电压、电流与参考网络}
 
+\mustunderstand
 物质由带电粒子组成。电荷是物理属性，电流描述电荷通过截面的速率：
 
 \[
@@ -30,6 +31,7 @@ V=\frac{W}{Q}.
 
 \section{电路定律、等效模型与动态响应}
 
+\mustunderstand
 电流要形成闭合回路。电源把能量送入回路，负载把电能转成光、热、机械运动
 或内部状态变化。下图中电流从电源正端经过限流电阻和发光二极管，再沿地返回
 电源负端。
@@ -129,6 +131,7 @@ R_{\mathrm{parallel}}=\frac{R_1R_2}{R_1+R_2}.
 
 \section{无源元件、半导体器件与基础电路}
 
+\deepunderstanding
 电阻不是“把多余电压吃掉”的黑盒。它在给定两端电压下限制电流，并把电能
 转化为热。除阻值外，还要关注误差、额定功率、温度系数和封装。
 
@@ -302,10 +305,9 @@ Buck & 用开关、电感和电容高效降压 & 输入范围、开关节点、�
 保险丝/TVS & 限制过流或瞬态过压后果 & 触发条件、能量、钳位电压、位置与失效模式 \\ \hline
 \end{osgridlongtable}
 
-\input{foundations/expanded/ch02-component-library-and-power}
-
 \section{原理图、PCB、测量与安全上电}
 
+\handsonexperiment
 \term{原理图}{schematic}回答“哪些引脚应该电气相连”；\term{PCB}{printed
 circuit board}回答“这些网络在真实板材上怎样用铜几何实现”；\term{封装}
 {footprint/package}连接逻辑符号与实体焊盘。
@@ -366,8 +368,6 @@ circuit board}回答“这些网络在真实板材上怎样用铜几何实现”
   \item 对每个连接器核对视角、pin 1、插入方向和保留脚。
   \item 最后才检查数据总线、差分对、终端和软件可见功能。
 \end{enumerate}
-
-\input{foundations/expanded/ch02-pcb-measurement-and-debug}
 
 \topic{从电源按键到复位释放的物理链}
 \begin{pdfdiagram}

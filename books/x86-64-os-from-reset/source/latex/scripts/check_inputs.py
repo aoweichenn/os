@@ -44,10 +44,10 @@ def checkTypographyAndNavigation() -> None:
     macrosText = OS_BOOK_MACROS_FILE.read_text(encoding="utf-8")
 
     requiredLayoutFragments = (
-        r"\setmainfont{TeX Gyre Pagella}",
-        r"\setsansfont{TeX Gyre Heros}",
-        r"\setCJKmainfont{FandolSong}",
-        r"\setCJKsansfont{FandolHei}",
+        r"\setmainfont{Maple Mono NF CN}",
+        r"\setsansfont{Maple Mono NF CN}",
+        r"\setCJKmainfont{Maple Mono NF CN}",
+        r"\setCJKsansfont{Maple Mono NF CN}",
         "bookmarksdepth=2",
     )
     for requiredFragment in requiredLayoutFragments:
@@ -57,9 +57,12 @@ def checkTypographyAndNavigation() -> None:
                 f"{OS_BOOK_LAYOUT_FILE} 中没有 {requiredFragment}"
             )
 
-    if re.search(r"\\set(?:CJK)?(?:main|sans)font\{[^}]*Maple", layoutText):
+    if not re.search(
+        r"\\set(?:CJK)?(?:main|sans)font\{[^}]*Maple",
+        layoutText,
+    ):
         raise SystemExit(
-            "Maple Mono 只能用于代码，不能设置为正文或标题字体"
+            "正文和标题必须统一使用 Maple Mono 字体"
         )
 
     if r"\pdfbookmark[2]" not in macrosText:

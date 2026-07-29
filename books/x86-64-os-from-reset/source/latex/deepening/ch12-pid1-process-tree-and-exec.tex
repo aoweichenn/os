@@ -3,12 +3,13 @@
 一个内核能够同时调度多个 Ring 3 地址空间，还不等于它已经拥有用户空间。
 只有当普通程序来自文件系统、用户进程能够创建和等待孩子、程序映像能够在
 失败时保留旧状态并在成功时一次替换，调度器、虚拟内存、VFS 和系统调用才
-真正闭合为一个操作系统。v1.7 用磁盘 \filepath{/sbin/init}、独立
+真正形成一个可从磁盘启动用户环境的系统。这里使用磁盘
+\filepath{/sbin/init}、独立
 ProcessTree、reader 驱动 ELF、\code{argc/argv/envp} 和
 \code{spawn/exec/wait} 建立这条闭环。
 
 \topic{上一阶段留下的最后一条“编译期脐带”}
-v1.6 已经可以严格挂载 256 MiB rootfs v2。名字可以经过 VFS 找到 inode，
+rootfs v2 已经可以挂载 256 MiB 文件系统。名字可以经过 VFS 找到 inode，
 inode 可以经过 direct、single、double、triple 指针树找到 ATA 扇区，文件
 可以在新 QEMU 实例中重新读回。然而正常用户程序仍由 Kernel 链接时决定：
 Shell、worker、producer 和 consumer 的 ELF 字节被 \code{incbin} 到
@@ -27,7 +28,7 @@ Kernel，那么“程序”还不是命名空间中的普通文件；若 Kernel 
 用户进程，那么用户空间不能组织服务、Shell 也不能运行外部命令；若 Process
 退出后只由 Kernel 全局扫尾，父进程就无法取得退出状态。
 
-v1.7 不删除内嵌机制本身，而是缩小它的责任。正常路径只从 rootfs 加载
+这里不删除内嵌机制本身，而是缩小它的责任。正常路径只从 rootfs 加载
 \filepath{/sbin/init}；内嵌区只保留最小 smoke、用户 \code{\#UD} 和用户
 \code{\#PF} 夹具，用于明确选择的启动/故障模式。这样“根文件系统尚未可信”
 和“正常用户空间”成为两条可解释路径，而不是两套彼此漂移的 ELF 规则。
@@ -49,7 +50,7 @@ Unix 用三个相互正交的动作表达这件事：
 首次写故障。
 
 本项目此时还没有 VMA 和 COW。直接实现一个名为 fork、实际却创建空白地址
-空间的接口，会让名称掩盖语义。因此 v1.7 先提供 \term{spawn}{直接从文件
+空间的接口，会让名称掩盖语义。因此先提供 \term{spawn}{直接从文件
 建立全新孩子}，并单独实现真实的 exec 与 wait：
 
 \begin{itemize}
@@ -70,7 +71,7 @@ Unix 用三个相互正交的动作表达这件事：
 
 \begin{enumerate}
   \item PID1 是唯一无父用户 Process；
-  \item PID1 创建正常验收程序；
+  \item PID1 创建正常测试程序；
   \item 普通父进程先退出时，其孩子改挂到 PID1；
   \item PID1 对直接孩子和收养的孤儿执行 wait；
   \item 仍有孩子时 PID1 不得退出；
@@ -82,7 +83,7 @@ cwd 或优先级。若直接删除孤儿，仍运行的 Thread 与地址空间�
 所有者；若保留已经释放的父槽位，槽位复用后 wait 可能错误命中新 Process。
 
 \topic{四种身份必须分开}
-v1.7 同时使用四种容易混淆的量：
+进程树同时使用四种容易混淆的量：
 
 \begin{osgridlongtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.48\textwidth}}
 概念 & 生命周期 & 责任\\ \hline
@@ -313,7 +314,7 @@ reader 调整 \code{OpenFile.offset\_bytes} 并循环读取。ELF 层不认识 i
 
 清零必须先于文件覆盖。这样 \code{p\_memsz-p\_filesz}、最后一页文件尾空隙
 和新分配 frame 的旧内容都不会暴露给 Ring 3。任何页分配、页表建立或 reader
-失败都会递归销毁整个候选根；空 PT/PD 继续遵守 v1.1 的所有权回收规则。
+失败都会递归销毁整个候选根；空 PT/PD 继续沿用页表所有权回收规则。
 
 \topic{256 KiB 用户栈的精确几何}
 参数和环境分别最多 256 项，全部字符串连同每项 NUL 最多 128 KiB。用户栈
@@ -374,7 +375,7 @@ Kernel 不能信任用户提供的计数、长度或指针，也不能在 16 KiB
   \item 逐项读取 16 字节 \code{ProcessString}；
   \item 对 \code{length+1} 和累计总量执行 64 位溢出检查；
   \item 在不写用户页的条件下计算全部地址；
-  \item Finalize 后冻结计划；
+  \item Finalize 后不再修改计划；
   \item 用 256 字节临时缓冲分块复制字符串；
   \item 最后写 argc、argv、envp 和 null。
 \end{enumerate}
@@ -465,7 +466,7 @@ CS/SS/RFLAGS & 安全用户初始常量 & 恢复 CPL3 段和允许的标志集�
 
 176 字节 UserContext 先整体清零，再写上述必要字段。旧程序留下的通用寄存器、
 DF、RF 或临时地址不能泄漏到新程序。当前 Thread 的 FXSAVE 区继续属于同一
-Thread；用户程序不得依赖 exec 前的 x87/SSE2 值。以后冻结更完整 POSIX
+Thread；用户程序不得依赖 exec 前的 x87/SSE2 值。以后扩展 POSIX
 语义时，可以在提交处显式恢复默认浮点环境。
 
 \topic{close-on-exec 为什么属于 fd 表项}
@@ -481,10 +482,10 @@ fd 9 --CLOEXEC=1--/
 
 成功 exec 关闭 fd 9，fd 4 仍保持同一打开实例；只有最后一个强引用释放时
 才执行 FileDescription finalizer。失败 exec 完全不调用
-\code{CloseOnExec}。v1.4 建立的模型能力由此第一次进入真实程序替换路径。
+\code{CloseOnExec}。前面建立的描述符模型由此第一次进入真实程序替换路径。
 
 \topic{系统调用 ABI 如何保持固定宽度}
-v1.7 在既有编号之后追加 36--38，不重排历史接口：
+系统调用表在既有编号之后追加 36--38，不重排历史接口：
 
 \begin{osgridlongtable}{L{0.11\textwidth}L{0.20\textwidth}L{0.31\textwidth}L{0.27\textwidth}}
 编号 & 接口 & 输入 & 成功结果\\ \hline
@@ -505,7 +506,7 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
 \code{NoChildProcess}。用户包装在 WouldBlock 唤醒后重试，不把内部等待
 状态暴露成忙循环。
 
-\topic{PID1 的验收树不冻结调度时序}
+\topic{PID1 的进程树不依赖调度时序}
 \filepath{/sbin/init} 创建六个直接孩子：
 
 \begin{itemize}
@@ -531,7 +532,7 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
   \draw[os arrow] (init) -- (services);
 \end{pdfdiagram}
 \diagramnote{只有 PID1 的编号固定。普通孩子的具体 PID 取决于合法抢占顺序，
-验收只冻结父子关系、退出码和最终计数，不冻结偶然时序。}
+测试只检查父子关系、退出码和最终计数，不固定偶然时序。}
 
 正常峰值为八个 Process：PID1、六个直接孩子和一个孙进程。64 MiB bootstrap
 规格因此由 4/4/1 提升为 8 Process、8 Thread、每 Process 1 Thread；
@@ -611,7 +612,7 @@ exec 的“原子性”由软件定义，CPU 没有提供一条对应的原子�
 异常退出、孤儿收养、Init 最终回收与统计损坏。\code{ProgramArgumentPlan}
 覆盖空向量、256 项、精确 128 KiB、下一字节、16 字节对齐、算术溢出和栈
 不足。reader ELF 测试在头或程序头 offset 注入读取失败，并保证失败不发布
-半个 layout。调度器测试冻结单 Thread exec 提交前置条件和失败不修改旧值。
+半个 layout。调度器测试检查单 Thread exec 的提交前置条件和失败不修改旧值。
 
 \topic{集成层}
 
@@ -641,7 +642,7 @@ exec 的“原子性”由软件定义，CPU 没有提供一条对应的原子�
 \topic{日志为何记录边界而不记录字节}
 Kernel 对低频生命周期输出：
 
-\begin{lstlisting}[caption={v1.7 进程生命周期日志}]
+\begin{lstlisting}[caption={进程生命周期日志}]
 [OS][KERNEL][PROC] SPAWN_PID=0x...
 [OS][KERNEL][PROC] EXEC_PID=0x...
 [OS][KERNEL][PROC] EXIT_PID=0x...
@@ -676,7 +677,7 @@ wait block 次数受合法调度交错影响，只要求至少一次；其余字
 推荐按“纯模型先于跨层组合”阅读：
 
 \begin{enumerate}
-  \item \filepath{source/abi/include/os/abi/system\_call.hpp}：先冻结 36--38
+  \item \filepath{source/abi/include/os/abi/system\_call.hpp}：先确定 36--38
         号、结构宽度、上限与错误值；
   \item \filepath{process/process\_tree.hpp/.cpp}：只看父子状态与守恒；
   \item \filepath{process/program\_arguments.hpp/.cpp}：手算一个栈布局；
@@ -718,7 +719,7 @@ GDB 的符号名显示可能受 C++ mangling 和版本影响，实际地址以
 debug，但三个 \code{PT\_LOAD} 与入口保持一致。
 
 \topic{当前完成边界与下一步}
-v1.7 已经完成：
+运行这组实验以后，可以观察到：
 
 \begin{itemize}
   \item 正常用户空间来自自研 rootfs 和 ATA；

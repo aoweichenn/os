@@ -1,5 +1,6 @@
 \section{芯片封装、引脚、ISA 与 CPU 结构}
 
+\mustunderstand
 \term{die}{裸片}是在晶圆上制造并切割出的半导体区域；它包含晶体管、互连和
 片上存储。\term{package}{封装}保护裸片并把微小焊盘转换成可装配的外部焊盘
 或引脚。\term{chip}{芯片}在日常语境中常指已经封装的器件。\term{module}
@@ -137,6 +138,7 @@ R_1=7,\qquad R_2=5.
 
 \section{总线、互连与设备事务}
 
+\mustunderstand
 \term{总线}{bus}不是一根粗线，而是一组信号及其时序、寻址、仲裁和错误规则。
 传统并行总线可抽象为：
 
@@ -155,12 +157,17 @@ R_1=7,\qquad R_2=5.
 一次概念读事务：
 
 \begin{enumerate}[leftmargin=2.2em]
-  \item 主设备给出地址和“读”方向；
-  \item 互连比较地址范围并选择目标；
-  \item 目标取得片内偏移，准备数据；
-  \item 目标返回数据和完成/错误；
-  \item 主设备在协议规定时刻采样结果。
+  \item CPU 给出地址和“读”方向，并在等待期间保持这些信号稳定；
+  \item 地址译码器比较地址范围，只选择负责该范围的 ROM；
+  \item ROM 根据低位地址找到片内字节，并开始驱动数据通路；
+  \item 若数据尚未稳定，ROM 或互连保持 \code{ready} 未完成，CPU 继续等待；
+  \item 数据有效后，ROM 给出完成信号，CPU 在协议规定的边沿采样；
+  \item 事务结束，ROM 撤销输出使能并释放共享数据通路，下一目标才可驱动它。
 \end{enumerate}
+
+这里的“释放”不是清零数据线，而是让输出进入高阻态或由互连停止转发，避免
+两个目标同时驱动相反电平。现代封装内部未必还能看到一组共享并行数据线，但
+地址选择、等待完成、采样结果和结束事务这几个逻辑阶段仍然存在。
 
 \topic{时序图怎样读}
 \begin{center}
@@ -191,6 +198,7 @@ R_1=7,\qquad R_2=5.
 
 \section{存储层次、器件与地址译码}
 
+\mustunderstand
 若有 \(n\) 根二值地址线，可形成 \(2^n\) 个地址组合。若每个地址选择一个
 byte，最大直接寻址容量为 \(2^n\) byte。
 
@@ -263,8 +271,6 @@ DRAM 单元用微小电容保存电荷，电荷会泄漏，需要定期刷新。
 \diagramnote{常见 SPI NOR 教学引脚关系。不同型号可能复用 IO2/IO3、支持
 quad 模式或采用不同封装；必须以具体料号数据手册为准。}
 
-\input{foundations/expanded/ch04-memory-hierarchy-and-devices}
-
 \topic{地址译码把同一 CPU 地址空间分给不同目标}
 CPU 发出物理地址后，平台互连根据范围选择目标。物理地址空间不等于 RAM：
 
@@ -324,7 +330,30 @@ x86-64 架构复位取指会落到物理地址 \(\texttt{0xFFFFFFF0}\) 附近。
 
 \input{foundations/expanded/ch04-reset-rom-mapping-and-debug}
 
+\topic{把教学 CPU 的取指接到项目中的 x86}
+\projectconnection
+前面的教学模型刻意省略了缓存、预取、乱序和复杂指令译码。回到项目时，可以
+先建立下面的对应关系，再逐项补入 x86 的特殊规则：
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.30\linewidth}L{0.36\linewidth}}
+教学模型 & x86-64 与本项目 & 仍要补充的事实 \\ \hline
+\endfirsthead
+教学模型 & x86-64 与本项目 & 仍要补充的事实 \\ \hline
+\endhead
+程序计数器 PC & 当前模式下的 IP、EIP 或 RIP & 复位时 CS 隐藏基址也参与形成取指地址 \\ \hline
+保存指令的 ROM & 项目生成的 128 KiB firmware ROM & QEMU 把镜像映射到复位窗口 \\ \hline
+固定的第一取指地址 & 物理地址 \code{0xFFFFFFF0} & 它位于 4 GiB 边界下方 16 字节 \\ \hline
+取指、译码、执行 & x86 前端、执行单元与架构提交 & 内部可以并行和乱序，提交结果仍须符合 ISA \\ \hline
+跳转到下一段程序 & 复位向量中的相对跳转 & 位移按“下一条指令地址”计算 \\ \hline
+\end{osgridlongtable}
+
+因此，CPU 能从 ROM 执行第一条指令并不依赖一句“固件会启动”的假设。复位
+状态给出地址，平台译码选中 ROM，ROM 返回项目构建出的机器字节，CPU 译码
+并执行其中的跳转；后面的实模式和长模式章节只是在这条链上继续增加 x86
+架构状态。
+
 \topic{一台完整计算机是多条闭合链路的交集}
+\projectconnection
 \begin{center}
 \resizebox{0.98\textwidth}{!}{%
 \begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex,node distance=6mm and 8mm]

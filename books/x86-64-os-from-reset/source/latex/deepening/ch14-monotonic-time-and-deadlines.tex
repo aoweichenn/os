@@ -70,7 +70,7 @@ wall clock，向后调整会延长等待，向前调整会让大量 deadline 同
 t_n=n\left\lfloor\frac{d\times 10^9}{f}\right\rfloor
 \]
 
-真实有理数累计与它之间的差随 \(n\) 增长。v1.13 的
+真实有理数累计与它之间的差随 \(n\) 增长。当前
 \code{MonotonicClock} 保存整纳秒 \(t\) 和分子余数 \(r\)。一次推进 \(k\)
 个 tick 时执行：
 
@@ -125,7 +125,7 @@ t=\mathrm{UINT64\_MAX},\qquad saturated=true
 \topic{为什么内核只接受绝对 deadline}
 若等待层层保存“还剩多少”，每次虚假唤醒、信号或 Mutex 重获都必须重新
 扣除已经经过的时间。某一层忘记扣除会延长总等待，多层整数换算又会增加误差。
-v1.13 在接口边界只转换一次：
+接口边界只转换一次：
 
 \[
 deadline=\operatorname{saturating\_add}(now,duration)
@@ -133,7 +133,7 @@ deadline=\operatorname{saturating\_add}(now,duration)
 
 Kernel、ThreadScheduler 和 DeadlineQueue 都保存同一个绝对纳秒。Condition
 被唤醒但谓词仍不成立时，下一轮继续使用原 deadline，而不是重新取得完整
-时长。这也为 v1.14 signal 中断等待留下明确语义。
+时长。这也为后面的 signal 中断等待留下明确语义。
 
 \topic{DeadlineQueue 的身份与稳定顺序}
 当前系统最多 512 个 Thread，每个 Thread 同时只能处于一个 Blocked 关系，
@@ -173,7 +173,7 @@ timed wait 让 Thread 同时出现在两种关系中：
 
 登记也必须是事务。若先加入 WaitQueue、解锁后才登记 deadline，通知可能在
 中间获胜，随后代码又给已经 Ready 的 Thread 留下 deadline。反向顺序则可能
-让 IRQ0 到期后找不到业务队列。v1.13 的
+让 IRQ0 到期后找不到业务队列。当前
 \code{BlockCurrentThreadUntil} 在 scheduler irq-save lock 下同时验证当前
 Running Thread、deadline 与两种容量，再发布 Blocked。
 
@@ -216,7 +216,7 @@ ProcessRuntime 在 scheduler lock 下反复查看最早 deadline，直到队首�
 被选中时，汇编从它保存的 176 字节 UserContext 恢复寄存器。因此超时路径
 必须修改保存 frame 的 RAX，而不是某个 IRQ0 局部变量。
 
-\topic{idle 是 sleep 正确性的硬件证据}
+\topic{没有 Ready Thread 时 CPU 为什么执行 HLT}
 最后一个 Running Thread 调用 Sleep 后可能没有 Ready Thread。内核切回永久
 地址空间和启动栈，执行相邻的 \code{sti; hlt; cli}：
 
@@ -269,7 +269,7 @@ timeout 还是失败，它都先重新取得 Mutex，才返回强类型结果
 unlock 到 block 之间的丢失通知。
 
 \topic{固定 ABI 与边界}
-v1.13 在既有 0--53 系统调用后增加：
+系统调用表在既有 0--53 之后增加：
 
 \begin{table}[htbp]
 \centering
@@ -279,10 +279,10 @@ v1.13 在既有 0--53 系统调用后增加：
 \code{SleepUntil} & 55 & 状态 & 阻塞到绝对 deadline，已到立即成功\\ \hline
 \code{WaitPrivateFutexUntil} & 56 & 状态 & compare-and-block 加绝对 deadline\\ \hline
 \end{osgridtabularx}
-\caption{v1.13 固定宽度用户 ABI}
+\caption{单调时间与 deadline 的固定宽度用户 ABI}
 \end{table}
 
-超时结果冻结为 \code{-51}。接口没有 \code{time\_t}、\code{long} 或平台
+超时结果使用 \code{-51}。接口没有 \code{time\_t}、\code{long} 或平台
 相关宽度，也没有 Kernel 指针。wall clock、RTC、日期、时区、tickless 和
 高精度 timer 均明确不在本阶段。
 
@@ -313,7 +313,7 @@ Timeout 只发生一次、condition 先赢会取消 deadline，以及败者重�
 通知真实赢过 deadline。
 
 \topic{日志必须观察边界而不改变热路径}
-一千赫兹 IRQ 若每次写串口，会把 PIO 延迟注入被测调度时序。v1.13 只在用户
+一千赫兹 IRQ 若每次写串口，会把 PIO 延迟注入被测调度时序。内核只在用户
 事务完成和系统回收边界打印：
 
 \begin{lstlisting}
@@ -335,7 +335,7 @@ Sleep 不醒时先检查 idle IRQ 是否仍解析 deadline；不能先扩大宿�
 Thread Ready 两次时检查通知与到期是否共用 scheduler lock，普通 wake 是否
 取消 deadline。futex 容量缓慢下降时检查 timeout 和取消路径是否释放空 key。
 
-v1.14 将加入 signal，使 condition、deadline 与异步通知成为三方竞争。signal
+后面的 signal 会使 condition、deadline 与异步通知成为三方竞争。signal
 必须复用本节的 Blocked 状态与唯一 WakeReason，不能建立一条绕开 WaitQueue
 和 deadline 的平行唤醒路径。这样时间阶段不是一次性 Sleep 功能，而是后续
 全部可中断阻塞语义的基础。

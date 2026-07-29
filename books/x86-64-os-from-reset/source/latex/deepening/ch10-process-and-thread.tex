@@ -1,6 +1,6 @@
 \section{Thread 怎样保存处理器现场}
 
-前面的 v0.9--v1.1 路径用一个 PCB 同时保存页表根、文件状态、动态内核栈和
+前面的实现用一个 PCB 同时保存页表根、文件状态、动态内核栈和
 寄存器现场。这个结构不是错误：当一个进程恰有一条执行流时，它是最短、最容易
 观察的实现，可以先证明 CPL3、CR3、TSS.RSP0、IRQ0 和 \code{iretq} 真的
 连成闭环。问题出现在继续演进时。若两个执行流共享同一个地址空间，页表根应当
@@ -21,18 +21,18 @@ live Thread 离开，Process 才能发布退出结果并进入 Zombie。反过�
   \node[os block,below left=of process] (threada) {Thread A\\TID / 帧 / 栈\\FXSAVE};
   \node[os block,below right=of process] (threadb) {Thread B\\TID / 帧 / 栈\\FXSAVE};
   \node[os hardware,below=of threada] (cpu) {单个 BSP\\当前 CPU};
-  \node[os state,below=of threadb] (wait) {run queue\\WaitQueue};
+  \node[os state,below=of threadb] (ready) {Ready queue};
   \draw[os arrow] (process) -- node[left]{owns} (threada);
   \draw[os arrow] (process) -- node[right]{owns} (threadb);
   \draw[os arrow] (threada) -- (cpu);
-  \draw[os arrow] (threadb) -- (wait);
-  \draw[os arrow] (wait) -- (cpu);
+  \draw[os arrow] (threadb) -- (ready);
+  \draw[os arrow] (ready) -- (cpu);
 \end{pdfdiagram}
 \diagramnote{Process 不进入 run queue；Thread 不独占共享地址空间。当前只有一个 BSP，但对象边界已经不依赖“四个程序”这一偶然数量。}
 
-\topic{两级对象分别保存什么}\par
+\topic{先把共享资源和执行现场分开}\par
 \begin{osgridlongtable}{L{0.20\textwidth}L{0.31\textwidth}L{0.37\textwidth}}
-对象 & 当前字段组 & 所有权不变量\\ \hline
+对象 & 当前字段组 & 代码必须维持的条件\\ \hline
 Process &
 \code{ProcessId}、Alive/Zombie、页表根、Thread 链、live/exited 数 &
 PID 不等于槽位；页表根非零；Thread 链计数与三类计数一致\\ \hline
@@ -43,10 +43,10 @@ Thread 现场 &
 176 B 通用/IRET 帧、512 B FXSAVE 区 &
 帧完整位于本 Thread 动态内核栈；FXSAVE 区 16 B 对齐\\ \hline
 Thread 队列 &
-Process 链、双向 run queue 链、WaitQueue 链 &
-一个 Thread 不能同时是 Running、Ready 和 waiter\\ \hline
+Process 链、双向 Ready queue 链 &
+Running 不在 Ready queue；Ready 在队列中只出现一次\\ \hline
 统计 &
-run tick、dispatch、block、wake &
+run tick、dispatch、yield、preemption &
 当前量与累计 create/discard/reap 分开\\ \hline
 \end{osgridlongtable}
 
@@ -59,16 +59,12 @@ PID 与 TID 都用显式 \code{uint64_t} 包装，零值表示无身份；
 把有效前缀限制为 4、128 或 512 个 Thread；调度状态机和身份分配仍是同一份
 代码。以后把槽替换为 type cache 时，PID/TID、队列和退出协议不需要改变。
 
-\section{Process 与 Thread 的生命周期怎样分开}
+\section{Thread 怎样从创建走到退出}
 Thread 状态机为：
 
 \[
   \text{Unused}\rightarrow\text{Ready}
-  \leftrightarrow\text{Running}
-  \rightarrow\text{Blocked}
-  \rightarrow\text{Ready},
-\]
-\[
+  \leftrightarrow\text{Running},\qquad
   \text{Running}\rightarrow\text{Exited}\rightarrow\text{Unused}.
 \]
 
@@ -84,25 +80,23 @@ Process 状态机为：
   \node[os state] (unused) {Thread\\Unused};
   \node[os block,right=of unused] (ready) {Ready};
   \node[os hardware,right=of ready] (running) {Running};
-  \node[os state,below=of running] (blocked) {Blocked};
   \node[os block,right=of running] (exited) {Exited};
   \draw[os arrow] (unused) -- node[above]{create} (ready);
   \draw[os arrow] (ready) -- node[above]{dispatch} (running);
   \draw[os arrow] (running) to[bend left] node[above]{quantum/yield} (ready);
-  \draw[os arrow] (running) -- node[right]{wait} (blocked);
-  \draw[os arrow] (blocked) -- node[below]{wake winner} (ready);
   \draw[os arrow] (running) -- node[above]{exit} (exited);
   \draw[os arrow] (exited) to[bend left] node[below]{safe reap} (unused);
 \end{pdfdiagram}
 \diagramnote{Exited 表示不再执行，却不表示栈已经可以在当前 RSP 上销毁；状态发布与资源安全点是两个时刻。}
 
-每次完整校验都重新扫描对象，而不是相信增量计数。核心守恒式为：
+调度器校验时重新扫描对象，不直接相信累计计数。扫描完成后，下面的关系必须
+成立：
 
 \[
 \begin{aligned}
 T_{\mathrm{owned}} &=
 T_{\mathrm{ready}}+T_{\mathrm{running}}+
-T_{\mathrm{blocked}}+T_{\mathrm{exited}},\\
+T_{\mathrm{exited}},\\
 P_{\mathrm{owned}} &=P_{\mathrm{alive}}+P_{\mathrm{zombie}},\\
 P_i.\mathrm{thread\_count} &=
 P_i.\mathrm{live\_thread\_count}+
@@ -112,8 +106,8 @@ T_{\mathrm{running}} &\le 1.
 \]
 
 若 Process 为 Zombie，它的 live 数必须为零；若 Thread 为 Running，它必须
-等于全局 current 索引，且不得仍带 run queue 或 WaitQueue 链接。Ready
-Thread 必须恰好在 run queue 出现一次。扫描还限制遍历步数不超过 Thread
+等于全局 current 索引，且不得仍带 Ready queue 链接。Ready Thread 必须
+恰好在队列中出现一次。扫描还限制遍历步数不超过 Thread
 容量，使环链被诊断为损坏，而不是让校验函数自身无限循环。
 
 \topic{为什么 Thread 与 Process 要分两次 reap}
@@ -134,17 +128,17 @@ Thread 必须恰好在 run queue 出现一次。扫描还限制遍历步数不�
 撤销当前内核栈的 PTE，函数的下一次压栈或返回就会页故障。两级状态与安全点
 共同把“逻辑停止”“硬件不再使用”和“存储已归还”分开。
 
-\topic{侵入式队列让调度热路径不依赖分配成功}
+\topic{Ready queue 怎样在中断中移动 Thread}
 Ready 队列把前后槽索引直接放进 Thread。入队写
 \code{previous\_run\_thread\_index} 与
 \code{next\_run\_thread\_index}，维护 head/tail；出队清除两个链接后才
-把 Thread 变成 Running。Process 的 Thread 链只需单向遍历，WaitQueue
-也用单向 FIFO。这样没有额外 node 对象，也不会在 IRQ 或退出边界调用 heap。
+把 Thread 变成 Running。Process 的 Thread 链只需单向遍历。队列结点直接
+放在 Thread 中，不需要在 IRQ 或退出边界调用 heap。
 
 \begin{contractbox}
-队列成员链接是状态的一部分。一个 Ready Thread 的双向链接必须与全局
-head/tail 相符；Blocked Thread 的 run 链必须为空；Exited Thread 的 run
-与 wait 链都必须为空。修改状态和链接必须在同一个调度提交区完成。
+先看实际动作：入队时同时写前驱、后继与 head/tail，出队时同时断开这些链接。
+中途若只改一半，下一次遍历就会漏掉 Thread 或形成环。因此代码把“状态为
+Ready”和“在 Ready queue 中恰好出现一次”作为同一临界区内必须维持的不变量。
 \end{contractbox}
 
 round-robin 的时间片仍为四个 PIT tick。IRQ0 到来时先记录当前 Thread 的
@@ -200,7 +194,7 @@ Thread B，B 可以直接读到 A 的 XMM0。这既会产生错误结果，也�
 26 & SSE2 & 满足当前 64 位用户程序的扩展指令基线\\ \hline
 \end{osgridlongtable}
 
-能力存在仍不代表 OS 已准备好。v1.2 配置：
+能力存在仍不代表 OS 已准备好。当前内核配置：
 
 \begin{osgridlongtable}{L{0.14\textwidth}L{0.24\textwidth}L{0.14\textwidth}L{0.36\textwidth}}
 寄存器 & 位 & 当前值 & 原因\\ \hline
@@ -218,12 +212,12 @@ AVX 的 YMM 上半部不在 FXSAVE 中。若开启 OSXSAVE 却不读取 CPUID le
 “忘了做 AVX”，而是主动把不可维护的状态面关闭。
 
 \topic{512 字节 FXSAVE 区是一份硬件规定的二进制结构}
-\code{FXSAVE64} 要求内存操作数按 16 字节对齐。v1.2 用
+\code{FXSAVE64} 要求内存操作数按 16 字节对齐。代码用
 \code{alignas(16)} 定义恰好 512 字节的 \code{FxSaveArea}，并用两个
 \code{static_assert} 锁定大小和对齐。主要布局为：
 
 \begin{osgridlongtable}{L{0.14\textwidth}L{0.15\textwidth}L{0.48\textwidth}L{0.13\textwidth}}
-偏移 & 长度 & 内容 & 验收关注\\ \hline
+偏移 & 长度 & 内容 & 检查重点\\ \hline
 \code{0x000} & 8 B & FCW、FSW、abridged FTW、FOP & x87 控制/状态\\ \hline
 \code{0x008} & 16 B & 64 位 FIP 与 FDP & 指令/数据指针\\ \hline
 \code{0x018} & 8 B & MXCSR 与 MXCSR\_MASK & SIMD 控制/能力\\ \hline
@@ -249,13 +243,13 @@ FSAVE 的完整 tag word 混用。当前代码不手工解析字段，只把整�
 
 代价是新增一个与 scheduler current 不同的“当前 FPU owner”，还要处理
 \#NM 嵌套、内核代码是否可用浮点、退出时 owner 清理，以及推测执行时代的
-敏感状态边界。本项目选择 eager：抢占、阻塞和退出保存 current，激活目标
+敏感状态边界。本项目选择 eager：抢占、主动让出和退出保存 current，激活目标
 Thread 恢复 next。多做一次固定 512 字节硬件事务的成本，换来没有隐藏 owner
 的直接状态机。
 
 \section{怎样验证上下文切换}
 布局单元测试只能证明结构大小，累计计数只能证明函数被调用；二者都不能证明
-保存区属于正确 Thread。v1.2 的四个 Ring 3 程序按 PID 安装互不相同的模式：
+保存区属于正确 Thread。四个 Ring 3 程序按 PID 安装互不相同的模式：
 
 \begin{osgridlongtable}{L{0.19\textwidth}L{0.27\textwidth}L{0.42\textwidth}}
 状态 & 模式 & 覆盖目的\\ \hline
@@ -271,13 +265,14 @@ ST0 & 1.0、2.0、3.0、4.0 & 覆盖 x87 数据栈且可精确比较\\ \hline
 立即自检，排除表索引错误；完成函数在写日志之前校验一次，输出
 \code{EXTENDED_STATE_ISOLATED} 后再校验一次，证明系统调用本身没有污染。
 
-四个程序经过不同调度路径：
+四个程序先安装不同的扩展状态，再执行长度不同的整数循环和系统调用。PIT
+可以在任意一个循环中打断当前 Thread，调度器随后恢复另一个 Thread：
 
 \begin{itemize}
-  \item Shell 等待真实 PS/2 键盘字符，经历无 Ready 时的 idle 与唤醒；
-  \item producer 在 64 字节管道写满时阻塞；
-  \item consumer 在管道为空时阻塞并在写端关闭后观察 EOF；
-  \item worker 执行有界计算，由真实 1000 Hz PIT 多次抢占。
+  \item 每个程序写入不同的 XMM0、XMM15、MXCSR、x87 control word 与 ST0；
+  \item 程序执行有界计算，使真实 1000 Hz PIT 至少发生一次抢占；
+  \item 每次恢复后重新读取五组状态，任一字节属于其他 PID 都立即失败；
+  \item 程序退出后，内核在永久栈安全点回收它的动态内核栈。
 \end{itemize}
 
 QEMU 必须精确看到四次隔离标记，并看到 Kernel save/restore 均非零。再使用
@@ -285,7 +280,7 @@ QEMU 必须精确看到四次隔离标记，并看到 Kernel save/restore 均非
 \code{EXTENDED_STATE_UNSUPPORTED}，不能进入 GDT、用户态或 READY。
 成功与能力失败共享同一实现，避免“测试专用内核”掩盖真实边界。
 
-\topic{三档容量事务证明规格不是常量表}\par
+\topic{三档容量怎样取得并归还真实资源}\par
 \begin{osgridlongtable}{L{0.20\textwidth}L{0.13\textwidth}L{0.16\textwidth}L{0.15\textwidth}L{0.20\textwidth}}
 档位 & RAM & Process & Thread & 单 Process Thread\\ \hline
 bootstrap & 64 MiB & 4 & 4 & 1\\ \hline
@@ -326,23 +321,23 @@ Process/Thread 当前量，变化掩码必须为零。历史累计允许增加�
 恢复。为使 512 个栈不会先耗尽次级元数据，KVA 描述符容量提升为 1024，
 内核栈槽容量提升为 512。
 
-\topic{四层测试观察不同位置}\par
+\topic{四类测试分别检查什么}\par
 \begin{osgridlongtable}{L{0.18\textwidth}L{0.31\textwidth}L{0.39\textwidth}}
 层次 & 输入 & 能证明的性质\\ \hline
-单元 & 非法容量、256/512 对象、五种 WakeReason、Mutex/锁 &
-失败原子性、状态机、FIFO、身份与计数\\ \hline
-集成 & 三 Process、六 Thread、48 tick、阻塞/唤醒/退出 &
-多 Thread 公平性与两级所有权组合\\ \hline
+单元 & 非法容量、256/512 对象、Ready queue 操作 &
+创建失败后的清理、状态转换、FIFO、身份与计数\\ \hline
+集成 & 三 Process、六 Thread、48 tick、主动让出与退出 &
+多 Thread 公平性、Process/Thread 两级回收\\ \hline
 随机 & 固定种子 100000 步操作序列 &
-长序列槽复用、三条 WaitQueue、累计与当前量对照\\ \hline
-QEMU & 真实 CPUID、CR0/CR4、PIT、PS/2、管道和 Ring 3 &
+长序列槽复用、Ready queue、累计与当前量对照\\ \hline
+QEMU & 真实 CPUID、CR0/CR4、PIT 和 Ring 3 &
 硬件现场隔离、三档容量、失败停止与资源回收\\ \hline
 \end{osgridlongtable}
 
 随机模型的种子为 \code{0x5448524541445632}。每一步从 create process、
-create thread、start/tick/yield、block、wake、exit、reap 和 discard 中
+create thread、start、tick、yield、exit、reap 和 discard 中
 选择一个动作，再与独立参考状态比较。测试不是在 100000 步结束时才
-\code{Validate}；每一步都检查 current Thread、三条 WaitQueue、每个状态
+\code{Validate}；每一步都检查 current Thread、Ready queue、每个状态
 集合、PID/TID 单调性和累计计数，因此首次破坏位置可以稳定复现。
 
 回归加入扩展现场布局单元测试和 SSE2 缺失系统用例；旧
@@ -354,12 +349,6 @@ ProcessScheduler 测试由 ThreadScheduler 的单元、集成和十万步随机�
 文件 & 阅读问题\\ \hline
 \filepath{process/thread_scheduler.hpp/.cpp} &
 Process/Thread 状态、侵入式链和 Validate 如何彼此约束？\\ \hline
-\filepath{process/wait_queue.hpp/.cpp} &
-为什么队列只暴露生命周期与统计，实际链接由 scheduler 维护？\\ \hline
-\filepath{sync/spin_lock.hpp/.cpp} &
-acquire/release、PAUSE、IF 保存和持锁深度在哪里建立？\\ \hline
-\filepath{sync/mutex.hpp/.cpp} &
-直接 handoff 如何避免 owner 空窗与插队？\\ \hline
 \filepath{arch/extended_state_layout.hpp/.cpp} &
 哪些能力和布局可在宿主测试而不执行特权指令？\\ \hline
 \filepath{arch/extended_state.hpp/.cpp} &
@@ -377,17 +366,12 @@ ProcessRuntime 与两份汇编。直接从目标运行时开始，会同时面�
 队列和 FXSAVE，难以判断一个分支属于策略还是硬件落实。
 
 \topic{当前实现范围}
-v1.2 的正常用户进程仍只有一个初始 Thread；用户
-\code{CreateThread/Join}、TLS ABI 和 private futex 在后续阶段开放。当前
-Process/Thread 存储仍有 256/512 编译期上界，但身份、状态和等待协议不依赖
-槽位。内核仍是单 BSP、内核不可抢占模型，没有 per-CPU run queue、远端 TLB
-shootdown 或 SMP 锁竞争。
+本章只跟踪 Unused、Ready、Running 与 Exited。用户多线程接口以及等待、
+唤醒和 futex 在第 28 章加入。Process/Thread 存储仍有 256/512 编译期上界；内核仍是单
+BSP、内核不可抢占模型，没有 per-CPU Ready queue、远端 TLB shootdown
+或 SMP 锁竞争。
 
-\code{INT 0x80} 仍是唯一用户入口。下一阶段先建立 CpuLocal、可信入口栈、
-\code{swapgs} 与统一 UserContext，再加入 \code{syscall/sysret}；不能在
-Thread 模型尚未冻结时同时改写架构入口。AVX/XSAVE 也保持关闭。清晰记录未做
-的边界，使后续阶段知道哪些不变量可以复用，哪些能力仍必须从失败路径开始设计。
-
-v1.2 的完成不是“能同时放 512 个结构体”。它同时证明：Thread 是唯一调度
-实体，等待只有一个完成赢家，x87/SSE2 不跨执行流泄漏，三档真实资源能够
-完整取得并归还，且这些事实可以由宿主模型和从复位启动的 QEMU 整机共同重现。
+\code{INT 0x80} 仍是唯一用户入口。后续章节再建立 CpuLocal、可信入口栈、
+\code{swapgs} 与统一 UserContext，并加入 \code{syscall/sysret}。本章运行
+结束时应看到四个程序各自的扩展状态标记、至少一次 PIT 抢占、四次正常退出，
+以及动态内核栈和地址空间计数回到启动前的数值。

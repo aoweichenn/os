@@ -97,7 +97,7 @@ edit:   h e l
 input:  h e l l o \n
 \end{lstlisting}
 
-v1.15 的 \code{Terminal} 固定拥有 512 字节编辑区、1024 字节可读输入环与
+\code{Terminal} 固定拥有 512 字节编辑区、1024 字节可读输入环与
 2048 字节输出环。固定容量使最坏内存、失败语义和测试边界均可推导；这不是
 宣称现实终端永远只需这些字节。
 
@@ -121,7 +121,7 @@ Buffered、InputReady、EndOfFileReady、InterruptForeground 或 StopForeground
 分派，不重复认识 \code{0x03}/\code{0x1A}。这把硬件编码与作业策略隔开。
 
 \topic{输入守恒为何必须增加 consumed}
-v1.0 ConsoleInput 可以要求 submitted 等于 read 加 buffered，因为每个接受
+早期 ConsoleInput 可以要求 submitted 等于 read 加 buffered，因为每个接受
 字符最终都交给用户。行规程会故意吞掉控制字符，还会撤销已经进入编辑区的
 数据。一次有效退格消耗两个已提交事实：退格按键本身和被删除字符。
 
@@ -196,7 +196,7 @@ inactive 槽全零且统计数等于实际数。
 把这些字段压进一个枚举会使“停止但仍是同一组成员”“Zombie 仍需被父进程
 收集”等合法组合无法表达。
 
-\topic{控制终端怎样裁决输入所有权}
+\topic{后台进程为什么不能读取控制终端}
 \code{Terminal} 记录 terminal id、controlling SID、session leader PID 和
 foreground PGID。只有：
 
@@ -207,14 +207,14 @@ caller.SID=tty.SID\quad\land\quad caller.PGID=tty.foreground.PGID
 的进程可以读取。后台组收到固定错误
 \code{BACKGROUND\_TERMINAL\_READ=-55}，输入环完全不前进。立即返回比盲目
 睡眠更清楚：输入到达不能改变后台身份，只有 Shell 的前台切换才可能满足条件。
-完整 Unix 可发送 SIGTTIN；本阶段先冻结专用错误。
+完整 Unix 可发送 SIGTTIN；当前先返回专用错误。
 
 输出目前允许后台写。这符合“后台构建仍可输出日志”的基础需求，但可能与 Shell
-提示符交错。终端显示重绘、SIGTTOU 和 termios \code{TOSTOP} 不在 v1.15。
+提示符交错。当前还没有终端显示重绘、SIGTTOU 和 termios \code{TOSTOP}。
 
 \topic{/dev/console 为何进入 VFS}
 标准 fd 曾以 ConsoleInput/ConsoleOutput 特殊 kind 直接指向全局对象，用户
-不能通过路径观察设备。v1.15 增加最小只读设备后端：
+不能通过路径观察设备。这里增加最小只读设备后端：
 
 \begin{lstlisting}
 VFS
@@ -230,7 +230,7 @@ VFS 继续负责逐组件路径、mount identity、vnode 引用、stat 与 readd
 用户只持有 fd，不获得内核对象地址。
 
 当前后端不是完整 devfs：节点在启动期固定，不能动态注册设备，也没有 uid/gid
-权限或热插拔。保留 VFS 契约后，v1.18 可以替换后端而不重写 Shell I/O。
+权限或热插拔。保留 VFS 接口后，后面的 devfs 可以替换后端而不重写 Shell I/O。
 
 \topic{Ctrl-C 和 Ctrl-Z 如何选择目标}
 TTY 不保存 PID 列表，只保存 foreground PGID：

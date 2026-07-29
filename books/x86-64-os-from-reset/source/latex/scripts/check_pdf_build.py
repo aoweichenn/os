@@ -17,10 +17,6 @@ OS_BOOK_FORBIDDEN_LOG_FRAGMENTS = (
     "destination with the same identifier",
 )
 OS_BOOK_REQUIRED_PDF_FONTS = (
-    "FandolSong",
-    "FandolHei",
-    "TeXGyrePagella",
-    "TeXGyreHeros",
     "MapleMono",
 )
 
@@ -78,7 +74,7 @@ def main() -> int:
         "书稿 PDF 检查通过："
         f"{OS_BOOK_PDF_FILE.stat().st_size} 字节，"
         f"{topicBookmarkCount} 个章内 topic 书签，"
-        "正文、标题和代码字体均已嵌入，构建日志无越界。"
+        "正文、标题和代码所用 Maple Mono 字体已嵌入，构建日志无越界。"
     )
     return 0
 

@@ -22,7 +22,7 @@ Reset ROM
 \end{lstlisting}
 
 运行期继续轮询却会浪费已经存在的并发结构。一个 Thread 等设备时反复读端口，
-其他 Ready Thread 无法获得本应可用的 CPU。v1.16 因而保留两种适配器：
+其他 Ready Thread 无法获得本应可用的 CPU。因此这里保留两种适配器：
 ROM、Stage 1 和 early Kernel 以 nIEN 禁止设备中断并有界轮询；调度器就绪后，
 运行期请求队列才清 nIEN、开放 IRQ14。两者不能同时拥有 ATA 通道。
 
@@ -53,7 +53,7 @@ APIC LINT0 的 ExtINT virtual-wire 模式到达 CPU。
 \end{pdfdiagram}
 \diagramnote{IRQ14 经过 slave 与 master 两层 in-service 状态；EOI 必须先 slave 后 master。}
 
-PIC 初始化后全屏蔽。v1.16 最终掩码是 \code{0xBFF8}：
+PIC 初始化后全屏蔽。接入磁盘中断后的最终掩码是 \code{0xBFF8}：
 
 \begin{table}[htbp]
 \centering
@@ -94,7 +94,7 @@ Status 的决定性位如下：
 \centering
 \small
 \begin{osgridtabularx}{\textwidth}{c l X}
-位 & 名称 & v1.16 解释\\ \hline
+位 & 名称 & 当前解释\\ \hline
 7 & BSY & 设备仍拥有内部状态，不能发下一命令\\ \hline
 6 & DRDY & 设备就绪提示，不单独表示传输完成\\ \hline
 5 & DF & device fault，本请求完成为 DeviceError\\ \hline
@@ -156,7 +156,7 @@ Unused
 
 数组下标会复用。若等待者只保存下标，请求 A 完成后槽位立刻给请求 B，迟醒的
 等待者可能把 B 当成 A，这就是 ABA。identifier 与槽位分离，通用队列的消费方
-必须在复制冻结结果后显式 Reap，槽位才重新成为 Unused。生产 ATA 适配器在
+必须在复制终态结果后显式 Reap，槽位才重新成为 Unused。生产 ATA 适配器在
 IRQ/超时路径中完成这次 copy+Reap，再把独立完成记录交给调度器；等待 Thread
 不引用已经复用的槽位。
 
@@ -188,11 +188,11 @@ Complete(TimedOut)
 \end{lstlisting}
 
 若只唤醒 Thread 就发下一命令，两个协议阶段会交叉，队列在软件上正确而设备
-状态已经损坏。若 reset 的有界 BSY 检查也失败，controller 被永久冻结；
+状态已经损坏。若 reset 的有界 BSY 检查也失败，controller 被标记为不可用；
 队列余项逐个以 DeviceError 完成，后续 Submit 直接失败，不再向未知状态的
 硬件发命令。这样等待者能收敛，设备所有权也不会被伪装成已经恢复。
 
-\topic{BlockIo 等待与调度证据}
+\topic{BlockIo 等待期间怎样让出 CPU}
 显式 sync 在写回 VFS 后提交异步 Flush。调用 Thread 以请求 identifier 进入
 \code{WaitCondition::BlockIo}。IRQ handler 只把 owner 从 Blocked 变为 Ready，
 不在任意 IRQ 调用栈上直接切换；现有返回用户态前调度边界稍后选择它。
@@ -245,7 +245,7 @@ dirty hard limit 在 MarkDirty 之前检查。达到上限，页故障返回失�
 记录这份债务。
 
 \topic{用写保护捕获 MAP\_SHARED 修改}
-x86 没有“每次 store 都调用 Kernel”的页模式。v1.16 使用 write-protect
+x86 没有“每次 store 都调用 Kernel”的页模式。当前使用 write-protect
 notification：
 
 \begin{enumerate}
@@ -283,11 +283,11 @@ generation。
 rootfs 有两种 generation。transaction generation 描述盘面提交次数，应随
 普通写增长；VFS superblock generation 描述一次 mount 的身份，必须保持
 稳定。若把前者每次复制给后者，同一 inode 会在一次写前后产生两个 cache key，
-shared alias 便不再共享。v1.16 的 rootfs 集成测试专门冻结这条边界。
+shared alias 便不再共享。rootfs 集成测试专门检查这一条。
 
-FLUSH 完成只说明当前设备模型报告先前写入已越过其 cache 边界；v1.17 还需
+FLUSH 完成只说明当前设备模型报告先前写入已越过其 cache 边界；下一章还需
 定义数据、metadata、journal descriptor 和 commit record 的顺序。没有
-journal 时，v1.16 仍只能在 Dirty superblock 后拒绝不完整事务，不能自动恢复。
+journal 时，文件系统仍只能在 Dirty superblock 后拒绝未完成事务，不能自动恢复。
 
 \topic{日志为何必须低频且带两种时间}
 ATA status、PIO word、cache lookup、PIT tick 都是热路径。逐次打印会让串口
@@ -314,7 +314,7 @@ FILE_SHARED_WRITEBACK_VERIFIED
 \centering
 \small
 \begin{osgridtabularx}{\textwidth}{l X}
-证据层 & v1.16 覆盖\\ \hline
+检查位置 & 输入与观察\\ \hline
 单元 & 参数、FIFO、单飞、容量、取消、完成、超时、Reap、dirty limit、Error 重试\\ \hline
 集成 & completion/timeout 后下一请求、PIC cascade、rootfs identity 稳定\\ \hline
 随机 & 两个固定种子模型各 100000 步，逐步对照请求与页状态参考模型\\ \hline
@@ -340,10 +340,10 @@ Shell 继承的 handler。正确修复不是让 QMP 多等一会，而是父进�
   \item writable shared 暂只接受完整页；
   \item 只有全局显式 sync，没有 \code{msync} 和后台 flusher；
   \item Error 页持续占用 cache 并产生回压，不会静默丢弃；
-  \item rootfs 尚无 journal/replay；v1.17 才加入 credits、commit 与断电矩阵；
+  \item rootfs 尚无 journal/replay；下一章才加入 credits、commit 与断电矩阵；
   \item 单 BSP 下完成状态正确，不宣称已经处理跨 CPU completion 与 cache coherence。
 \end{itemize}
 
-这些边界把学习顺序保持清晰：v1.16 先建立“请求只能完成一次、脏页责任不会
-消失、写回有真实设备稳定边界”，v1.17 再讨论多块元数据事务怎样在断电后只
+这里先让请求只能完成一次，让脏页在写回失败后仍然可见，并通过 FLUSH 等待
+设备报告稳定。下一章再讨论多块元数据事务怎样在断电后只
 恢复为完整旧状态或完整新状态。

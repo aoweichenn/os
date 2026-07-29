@@ -9,29 +9,29 @@
 \definecolor{BookRule}{HTML}{CCD1D1}
 
 \defaultfontfeatures{Ligatures=TeX}
-% 正文、标题和代码承担不同职责。正文使用衬线体保证长篇阅读节奏，标题使用
-% 无衬线体建立层级，Maple Mono 只用于代码、寄存器、路径和日志。
-\IfFontExistsTF{TeX Gyre Pagella}{
-  \setmainfont{TeX Gyre Pagella}
-}{
-  \setmainfont{Latin Modern Roman}
-}
-\IfFontExistsTF{TeX Gyre Heros}{
-  \setsansfont{TeX Gyre Heros}
-}{
-  \setsansfont{Latin Modern Sans}
-}
-\setCJKmainfont{FandolSong}[AutoFakeBold=2,AutoFakeSlant=0.2]
-\setCJKsansfont{FandolHei}[AutoFakeBold=2]
+% 按本书的统一视觉规范，正文、标题和代码都使用 Maple Mono NF CN。
+% 层级由字号、字重、颜色、间距和代码框建立，不依赖切换字体家族。
 \IfFontExistsTF{Maple Mono NF CN}{
+  \setmainfont{Maple Mono NF CN}[Ligatures=NoCommon]
+  \setsansfont{Maple Mono NF CN}[Ligatures=NoCommon]
   \setmonofont{Maple Mono NF CN}[Ligatures=NoCommon]
+  \setCJKmainfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolFang]
+  \setCJKsansfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolFang]
   \setCJKmonofont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolFang]
 }{
   \IfFontExistsTF{Maple Mono NL NF CN}{
+    \setmainfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+    \setsansfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
     \setmonofont{Maple Mono NL NF CN}[Ligatures=NoCommon]
+    \setCJKmainfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolFang]
+    \setCJKsansfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolFang]
     \setCJKmonofont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolFang]
   }{
+    \setmainfont{Latin Modern Mono}[Ligatures=NoCommon]
+    \setsansfont{Latin Modern Sans}
     \setmonofont{Latin Modern Mono}[Ligatures=NoCommon]
+    \setCJKmainfont{FandolFang}[AutoFakeBold=2]
+    \setCJKsansfont{FandolHei}[AutoFakeBold=2]
     \setCJKmonofont{FandolFang}[AutoFakeBold=2]
   }
 }
@@ -51,8 +51,8 @@
 
 \ctexset{
   chapter={
-    format=\Huge\bfseries\sffamily\color{BookNavy},
-    titleformat=\Huge\bfseries\sffamily\color{BookNavy}
+    format=\huge\bfseries\sffamily\color{BookNavy},
+    titleformat=\huge\bfseries\sffamily\color{BookNavy}
   },
   section={format=\Large\bfseries\sffamily\color{BookBlue}},
   subsection={format=\large\bfseries\sffamily\color{BookNavy}}

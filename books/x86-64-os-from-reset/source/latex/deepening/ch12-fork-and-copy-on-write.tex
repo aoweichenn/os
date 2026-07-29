@@ -34,7 +34,7 @@ child Thread & 0 & 可修改继承资源或 exec\\ \hline
 \end{osgridlongtable}
 
 Process 是 AddressSpace、FileTable、FsContext 与父子关系的容器；Thread
-才拥有通用寄存器、内核栈和 FXSAVE 现场。v1.10 因此冻结：child Process
+才拥有通用寄存器、内核栈和 FXSAVE 现场。因此 child Process
 只创建调用 fork 的 Thread。将来用户多线程开放后，其他 Thread 也不会被
 连同“正运行到一半的内核栈”复制过去。
 
@@ -92,7 +92,7 @@ CPU 可能已经在 TLB 缓存旧 writable 翻译。parent leaf 降权或当前 
 \topic{稀疏引用：独占隐含为一}
 若为 64 GiB 中每个 4 KiB frame 永久保存一个 64 位引用，仅计数就需要
 128 MiB，而且 KernelStack、页表、cache 页与 private 用户页并不共享同一
-生命周期。v1.10 只登记“经历 fork 后尚未恢复独占”的 private 用户页：
+生命周期。反向映射只登记“经历 fork 后尚未恢复独占”的 private 用户页：
 
 \begin{center}
 \begin{osgridtabular}{ll}
@@ -200,7 +200,7 @@ child 后续 chdir 不改变 parent。FileBacking 也取得独立 VFS 打开实�
 
 \topic{父 PTE 最晚提交：fork 是跨资源事务}
 若先把 parent 全部 leaf 降为只读，再尝试创建 child，任何中途失败都会让
-parent 无故停留在 COW 状态。v1.10 先准备不可运行的候选 child：
+parent 无故停留在 COW 状态。实现先准备不可运行的候选 child：
 
 \begin{enumerate}[label=\arabic*.]
   \item 预留 Process、Thread 与 ProcessTree 身份；
@@ -271,18 +271,18 @@ share、retain、release、exclusive restore，并要求 active entry/reference
   \item 初版用户 writable validation 在 private break 之前看到 RW=0 就拒绝，
         使 Kernel 写 VM statistics 失败；最终验证层主动进入统一 COW break。
   \item Process 数从 11 增至 45 后，Kernel 汇总结果仍使用旧容量，产生越界
-        风险；整机验收必须同时更新数据结构上界与预期计数。
+        风险；整机测试必须同时更新数据结构上界与预期计数。
 \end{itemize}
 
 这些问题说明：纯引用模型、页表模型和 QEMU 不是互相替代，而是分别约束
 状态机、硬件编码与跨模块组合。
 
 \topic{阶段边界与后续演化}
-v1.10 不支持用户多 Thread 的 fork 停世、\code{vfork}、Linux
+当前不支持用户多 Thread 的 fork 停世、\code{vfork}、Linux
 \code{clone}、shared anonymous、huge-page COW、swap、overcommit 或 OOM
 killer。系统仍是单 BSP，不实现跨核 TLB shootdown。writable
 \code{MAP\_SHARED}、dirty/writeback 与 \code{msync} 也没有因 fork 自动出现。
 
-实现演进到 v1.11 时，pipe、dup、重定向和外部 Shell 复用了这里继承的
+后面的 pipe、dup、重定向和外部 Shell 复用了这里继承的
 FileTable。它们没有重新定义 private 页所有权，I/O 组合仍建立在同一套 COW
 事务上。

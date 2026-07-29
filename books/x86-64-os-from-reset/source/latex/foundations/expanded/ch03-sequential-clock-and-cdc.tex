@@ -107,7 +107,7 @@ clock uncertainty & 设计中合并考虑的时序不确定量 & 时序分析中
 时钟不是普通数据线。随意用组合门对时钟做 AND/OR 可能产生窄脉冲或额外
 偏斜；时钟门控通常使用专用单元，在安全相位锁存 enable。
 
-\topic{两级同步器降低单 bit 亚稳态传播概率}
+\section{同步器与跨时钟域传输}
 \begin{center}
 \begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
   \node[os hardware] (async) at (0,2) {异步输入};

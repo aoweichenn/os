@@ -1,6 +1,6 @@
 \section{系统调用怎样找到当前 CPU 和 Thread}
 
-v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的学习顺序：
+第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。此时
 异常章已经建立 GDT、IDT、TSS 和 \code{iretq}，软件中断只需把一扇 IDT gate
 的 DPL 设为 3，就能复用同一套特权切换与保存帧。CPU 会自动读取 TSS.RSP0，
 从用户栈切换到当前 Thread 的 Ring 0 栈，再压入
@@ -39,8 +39,8 @@ v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的
 \filepath{source/kernel/src/arch/architecture.asm}。}
 
 \code{syscall} 不是“更快的 \code{int 0x80}”。它把换栈、每 CPU 状态、统一
-保存现场和安全返回从硬件门描述符移交给内核。只有 Thread 栈所有权已经冻结，
-才能单独验收这份新合同。
+保存现场和安全返回从硬件门描述符移交给内核。Thread 的动态内核栈、当前栈顶
+和回收时刻确定以后，才能安全地把换栈动作交给这条新入口。
 
 \topic{三代跨特权入口背后的取舍}
 保护模式提供 call gate。GDT/LDT 描述符可以指定目标段、偏移、目标特权级和
@@ -66,7 +66,7 @@ FXSAVE、SSE2 和 SYSCALL 分布在不同 CPUID 叶；地址宽度又决定规�
 能表达的范围。若代码先执行 \code{wrmsr} 或 \code{syscall}，再等待 \#UD
 暴露能力缺失，系统已经进入难以解释的半初始化状态。
 
-v1.3 读取三组叶：
+初始化代码读取三组 CPUID 叶：
 
 \begin{osgridlongtable}{L{0.24\textwidth}L{0.16\textwidth}L{0.21\textwidth}L{0.27\textwidth}}
 CPUID 位置 & 位 & 名称 & 本阶段用途\\ \hline
@@ -106,7 +106,7 @@ CPUID 位置 & 位 & 名称 & 本阶段用途\\ \hline
 CR4.LA57，内核/用户地址布局、canonical 检查和页表管理都要共同变化。
 
 仅因为 CPUID 报告 LA57 就把宽度传入一个通用函数，会让软件宣称自己支持从未
-建立的第五级。因此 profile 当前把 linear width 精确冻结为 48。未来开放
+建立的第五级。因此 profile 当前要求 linear width 等于 48。未来开放
 57 位必须作为独立阶段，改变启动链、内存布局、测试向量和文档，而不是放宽一个
 比较符。
 
@@ -185,7 +185,7 @@ TSS.RSP0 属于 CPU，不属于 Process；原生入口栈同样是“当前 CPU 
 哪个 Thread”的派生状态。若 current Thread、TSS.RSP0、原生 entry RSP 和
 need-resched 分散在无关全局变量中，调度切换很难证明它们一起更新。
 
-v1.3 的 \code{CpuLocal} 按缓存线大小 64 字节对齐。前四个字段是 C++ 与汇编
+\code{CpuLocal} 按缓存线大小 64 字节对齐。前四个字段是 C++ 与汇编
 共同遵守的 ABI：
 
 \begin{osgridlongtable}{L{0.13\textwidth}L{0.31\textwidth}L{0.44\textwidth}}
@@ -397,7 +397,7 @@ Ring 0 中的 timer IRQ 不直接调用完整换栈调度。它只设置
 \code{SYSCALL_RETURN_RESCHEDULES>0}。两项分别证明“中断发生”和“请求在正确
 边界消费”。
 
-\topic{非局部返回暴露了 SWAPGS 的真正状态所有权}
+\topic{切到另一份栈以后谁负责执行 SWAPGS}
 正常原生尾部在恢复用户段之前执行第二次 SWAPGS。可是系统调用可能使最后一个
 可运行 Thread 阻塞或退出；调度器没有后继时，会直接恢复
 \code{ExecuteProcesses} 之前保存的永久内核调用栈，而不是回到系统调用汇编
@@ -429,7 +429,7 @@ IF=0 不能屏蔽 NMI。NMI 可能发生在 SYSCALL 刚进入、尚未 SWAPGS，
 
 成熟内核可实现 paranoid entry：根据保存 CS、GS base 或嵌套标记判断交换
 状态，并使用独立 IST 栈完成可恢复处理。该协议本身足以构成一个独立阶段。
-v1.3 选择较小但真实的边界：
+当前 NMI 路径只做五个动作：
 
 \begin{itemize}
   \item IDT vector 2 使用 TSS.IST2；
@@ -481,7 +481,7 @@ QEMU & 真实 SYSCALL、SYSRET、IRQ 与 MSR &
 \topic{QEMU 冷路径统计如何判读}
 一次代表性 256 MiB functional 运行得到：
 
-\begin{lstlisting}[caption={v1.3 原生入口代表性统计}]
+\begin{lstlisting}[caption={原生入口的一次代表性统计}]
 LEGACY_SYSCALL_ENTRIES=0x2
 NATIVE_SYSCALL_ENTRIES=0x230
 SYSCALL_IRQ_INTERRUPTS=0x56
@@ -553,14 +553,13 @@ RFLAGS、调度、页表、栈和 GS 六种状态，容易把结果当成原因�
 当前 CpuLocal 只有一个 BSP 实例；没有 AP 启动、per-CPU 分配、跨核 IPI 或
 远端 TLB shootdown。用户 GS/TLS 尚未开放，IA32\_GS\_BASE 为零。虚拟地址
 继续固定四级 48 位，LA57 未启用。NMI 采用 fail-stop，不提供可恢复诊断。
-\code{INT 0x80} 继续作为兼容入口，移除时间留给 ABI 冻结阶段。
+\code{INT 0x80} 继续作为兼容入口，何时移除由公共 ABI 的兼容要求决定。
 
-本章完成时，系统调用背后的描述符仍是 v1.0 固定槽；紧随其后的 v1.4 已经
-建立类型化 KernelObject、动态 FileTable 和共享 FileDescription，而且没有
-改写本章冻结的架构入口、UserContext 和返回验证。这个后续结果反向证明了
-分层的意义：对象层可以演进，特权边界不需要跟着重新冒险。
+此时系统调用背后的描述符仍是固定槽。后面的类型化 KernelObject、动态
+FileTable 和共享 FileDescription 只修改 C++ 对象层，没有改写汇编入口、
+UserContext 和返回验证。对象表示可以继续变化，跨特权边界仍沿同一条路径。
 
-v1.3 的完成不是“用户程序执行了一次 \code{syscall}”。完整结论是：能力在
-使用前被证明，入口在接触内存前取得可信栈，两条入口汇聚为一份现场，IRQ 只在
-合法边界请求调度，返回指令由白名单选择，非局部控制流与 NMI 都有明确 GS/栈
-策略，而且正常、随机与能力失败证据可以从复位向量重新产生。
+运行 QEMU 时应当看到兼容与原生入口都被使用，至少一次 IRQ 在系统调用期间
+到达，SYSRET 和 IRET fallback 计数都非零，非法用户返回计数为零。关闭
+SYSCALL 能力的 CPU 配置则必须在写 MSR 以前停止。两组结果共同检查能力探测、
+可信换栈、统一现场和返回白名单。

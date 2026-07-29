@@ -88,10 +88,10 @@ base、limit、type、DPL 和 present。长模式随后把大多数代码/数据
   \item CS 必须引用 present 的 64 位代码段，L 位决定 64 位指令语义；
   \item IDT gate 必须给出目标代码段选择子；
   \item TSS 描述符仍位于 GDT，\code{LTR} 通过选择子找到它；
-  \item v0.8 的 Ring 3 到 Ring 0 控制转移依赖特权级和 RSP0。
+  \item Ring 3 到 Ring 0 的控制转移依赖特权级和 RSP0。
 \end{itemize}
 
-Stage 1 的 GDT 是模式切换工具，不是内核资产。v0.5 用内核 BSS 中的新表覆盖
+Stage 1 的 GDT 只负责模式切换。内核随后用 BSS 中的新表覆盖
 GDTR，从依赖方向上切断内核对加载器私有内存的长期依赖。
 
 \topic{五槽 GDT 每一位表示什么}\par
@@ -124,10 +124,10 @@ DS、ES、FS、GS、SS，最后执行 \code{LTR}。
 
 顺序不能反过来：TSS 选择子只有在新 GDT 可见后才有效；普通近跳转不能刷新
 CS；只改变可见选择子而忽略隐藏描述符，会让日志看起来正确、处理器实际仍沿用
-旧属性。v0.5 最终用 CS、SS 和 \code{STR} 回读分别得到
+旧属性。装载新表后用 CS、SS 和 \code{STR} 回读分别得到
 \code{0x08}、\code{0x10}、\code{0x18}。
 
-这是 v0.5 的阶段形状。v0.8 在 Ring 0 数据段之后插入用户数据段与用户
+这套表先只服务 Ring 0。进入用户态前，还要在 Ring 0 数据段之后插入用户数据段与用户
 代码段，TSS 随之移到索引 5--6、选择子 \code{0x28}；对应的七槽结构在
 用户边界章节逐项展开。把两个阶段区分开，才能理解选择子变化是 GDT 演进，
 而不是文档与二进制冲突。
@@ -157,7 +157,7 @@ CS；只改变可见选择子而忽略隐藏描述符，会让日志看起来正
 执行 \code{LTR} 后，处理器会把 GDT 内描述符从 available type 9 改成 busy
 type 11；验证程序若仍要求字节值为 9，反而误解了硬件副作用。
 
-v0.6 把每个 IST 存储块扩为 20 KiB：低端 4 KiB 保持 guard，随后 16 KiB
+每个 IST 存储块占 20 KiB：低端 4 KiB 保持 guard，随后 16 KiB
 才是可写栈。内核新页表明确跳过三个 guard 物理页；TSS 的 IST 指针仍指向可写
 部分的高端。这样栈向下越界会遇到 not-present 页，而不是静默写入相邻对象。
 
@@ -295,9 +295,9 @@ C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把�
 
 \section{异常分类、故障输出与整机实验}
 \begin{osgridlongtable}{L{0.08\textwidth}L{0.14\textwidth}L{0.17\textwidth}L{0.20\textwidth}L{0.27\textwidth}}
-\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\ \hline
+\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{当前处理}\\ \hline
 \endfirsthead
-\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\ \hline
+\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{当前处理}\\ \hline
 \endhead
 0 & \#DE & fault & 无 & panic\\ \hline
 1 & \#DB & fault/trap & 无 & panic\\ \hline
@@ -318,13 +318,13 @@ C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把�
 29--30 & \#VC/\#SX & fault & 有 & panic\\ \hline
 \end{osgridlongtable}
 
-表中未列出的保留向量也有独立桩并进入 panic。v0.5 只允许 breakpoint 返回，
+表中未列出的保留向量也有独立桩并进入 panic。这里先只允许 breakpoint 返回，
 因为其他 fault 尚无足够策略保证恢复安全。例如
-页不存在可以在 v0.6 分配并映射后重试；非法指令通常意味着代码或 CPU 能力
+页不存在可以在内存管理器分配并映射后重试；非法指令通常意味着代码或 CPU 能力
 契约错误，跳过一个字节既不知道指令长度，也会掩盖破坏。
 
-\topic{INT3、UD2 和页故障组成三角验收}
-单一正常启动不能证明异常系统。v0.5 用三条具有不同语义的真实指令路径：
+\topic{分别触发 INT3、UD2 和页故障}
+单一正常启动不能覆盖异常系统。测试执行三条具有不同语义的真实指令路径：
 
 \begin{enumerate}
   \item 正常内核执行 \code{INT3}。CPU 保存下一条 RIP，分发器确认
@@ -348,7 +348,7 @@ C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把�
 
 \topic{panic 的可信计算基}
 panic 可能由坏页表、坏栈、坏堆或坏锁引起。让 panic 调用通用格式化器、分配
-字符串或获取日志锁，会扩大它必须信任的系统。v0.5 把可信集合压到：
+字符串或获取日志锁，会扩大它必须信任的系统。panic 路径只保留：
 
 \begin{itemize}
   \item 已在入口独立初始化的 COM1 端口；

@@ -1,272 +1,196 @@
-\section{Shell 怎样用 fd 和 Pipe 连接程序}
+\section{一个 Pipe 怎样让 reader 等待数据}
 
-Shell 解析出流水线以后，要建立由 Process、fd、FileDescription、Pipe、
-物理页和等待队列组成的关系。相同的输出文本只覆盖成功路径；v1.11 还要求
-失败路径把这些对象逆序回收到基线。
+创建一条空 Pipe，让 reader 先执行 \code{read}。此时没有字节可以复制，
+writer 又仍然存活，所以返回 EOF 是错误的；持续轮询也会让 reader 占满 CPU。
+内核先用 \code{TryRead} 得到 \code{WouldBlock}，随后让当前 Thread 睡眠。
+writer 写入数据后把 reader 移回 Ready，reader 再次运行时从头检查条件。
 
-\topic{历史动机：为什么是 fd、fork、exec 和 pipe}
-早期计算机常为终端、磁带和磁盘提供互不相同的调用。程序若想把一种设备的
-结果交给另一程序，就必须知道双方的具体记录格式。Unix 选择把普通文件、
-终端和管道统一放在小整数 file descriptor 后面，约定 fd 0、1、2 分别是
-标准输入、标准输出和标准错误。统一的是连接方式，不是底层对象的全部语义。
+\begin{pdfdiagram}
+  \node[os hardware] (read) {read(fd)};
+  \node[os block,right=of read] (try) {TryRead\\缓冲为空};
+  \node[os state,right=of try] (wait) {登记 reader\\Thread=Blocked};
+  \node[os block,below=of wait] (write) {writer 写入\\唤醒一个 reader};
+  \node[os state,left=of write] (ready) {Thread=Ready};
+  \node[os hardware,left=of ready] (retry) {重新 TryRead\\复制字节};
+  \draw[os arrow] (read) -- (try);
+  \draw[os arrow] (try) -- node[above]{WouldBlock} (wait);
+  \draw[os arrow] (wait) -- (write);
+  \draw[os arrow] (write) -- (ready);
+  \draw[os arrow] (ready) -- (retry);
+\end{pdfdiagram}
+\diagramnote{唤醒只改变调度资格，不把某一段数据预留给 reader；恢复运行后仍要重新检查缓冲区。}
+
+\topic{先把 read 和 write 的四种结果列清楚}
+Pipe 是没有消息边界的字节流。一次 write 可以被多次短 read 取走，一次 read
+也可能合并多次 write 的内容。缓冲区是否为空、是否已满，以及两类端点是否
+仍然存活，共同决定本次操作：
 
 \begin{center}
-\begin{osgridtabular}{lll}
-描述符 & 程序动作 & 实际对象可变化为 \\ \hline
-0 & read & 终端、普通文件、管道读端 \\ \hline
-1 & write & 终端、普通文件、管道写端 \\ \hline
-2 & write diagnostic & 终端或独立日志目标 \\ \hline
+\begin{osgridtabular}{L{0.32\linewidth}L{0.27\linewidth}L{0.28\linewidth}}
+当前状态 & read & write \\ \hline
+空且 writer 存活 & WouldBlock & 可以写入 \\ \hline
+存在数据 & 返回当前可用的短读 & 取决于剩余空间 \\ \hline
+空且 writer 全关闭 & EOF & 不适用 \\ \hline
+reader 全关闭 & 不适用 & BrokenPipe \\ \hline
+满且 reader 存活 & 可以读取 & WouldBlock \\ \hline
 \end{osgridtabular}
 \end{center}
 
-\code{fork} 保留父进程资源视图，\code{exec} 替换程序映像。两者分开，
-恰好在中间留下“修改 child 的 fd 图”的窗口。Shell 无需链接 \code{cat}
-或理解 \code{wc}，只需要让前者的 fd 1 与后者的 fd 0 指向同一条 Pipe，
-然后分别 exec 两个磁盘 ELF。
+EOF 不是缓冲区里的特殊字节。writer 关闭时若仍有数据，reader 必须先把数据
+读完；缓冲区变空后的下一次 read 才返回 EOF。BrokenPipe 也要等最后一个
+reader 引用消失才能成立，关闭其中一个复制出来的 fd 还不够。
 
-管道是无消息边界的字节流。一次 write 可能对应多次短 read，一次 read 也
-不表示取得某次 write 的完整数据。生产者必须处理短写和背压，消费者必须
-处理短读和 EOF。这一选择牺牲记录边界，却让文本、二进制数据和设备流都能
-使用同一组合规则。
+\topic{锁内复查堵住丢失唤醒的窗口}
+reader 第一次检查为空后，writer 可能立刻写入。若 reader 接下来无条件入队，
+writer 的唤醒已经过去，它会永久留在 Blocked。实现把以下动作放进同一临界区：
 
-\topic{四层对象分别拥有哪一种事实}
-一条管道的“端点”至少横跨四层：
+\begin{enumerate}[label=\arabic*.]
+  \item 取得 Pipe 锁，再检查 buffered 与 writer 数量；
+  \item 条件已经改变时立即返回，不进入等待队列；
+  \item 条件仍未成立时，把当前 Thread 链到 reader 队尾；
+  \item 在调度器中把该 Thread 从 Running 改为 Blocked；
+  \item 释放锁并切换到另一个 Ready Thread。
+\end{enumerate}
 
-\begin{center}
-\begin{osgridtabular}{L{0.22\linewidth}L{0.25\linewidth}L{0.40\linewidth}}
-层次 & 所有者 & 保存的事实 \\ \hline
-fd number & 单个 Process & FileTable 中的局部名字与 fd flags \\ \hline
-FileTable entry & 单个 FileTable & 对 FileDescription 的强引用 \\ \hline
-FileDescription & KernelObject manager & 读/写能力、共享状态与 finalizer \\ \hline
-Pipe & PipeManager slot & 字节、索引、端点状态、等待条件与后备页 \\ \hline
-\end{osgridtabular}
-\end{center}
+writer 在同一把锁下增加 buffered，然后从 reader 队首取出一个 Thread，
+将它改为 Ready。超时或信号也可能同时尝试完成这次等待，因此每个等待记录只
+允许一个完成原因成功写入。先把具体竞争关进锁和单赢家状态后，我们才把这条
+规则称为等待协议的不变量。
 
-\code{dup2(3,0)} 复制的是强引用，不是 Pipe 数据。fork 后 parent 与 child
-拥有独立 FileTable，但表项仍可引用同一个 FileDescription。对普通文件，
-这意味着 offset 共享；对 Pipe reader，则意味着关闭一个 duplicate fd
-不一定关闭逻辑读端。只有最后一个 FileDescription 强引用消失，finalizer
-才通知 PipeManager 关闭真正端点。
-
-若把 fd 直接当成 Pipe 数组下标，fork 后无法表达独立表和共享对象；若每次
-duplicate 都复制 FileDescription，又会错误产生多个逻辑 reader/writer。
-因此分层不是面向对象形式，而是 Unix 语义所要求的所有权边界。
-
-\topic{64 KiB 逻辑容量为什么按 4 KiB 页承诺}
-历史启动探针继续使用 64 字节固定环形缓冲。普通用户管道则具有
-\(65536\) 字节逻辑容量，分成
-
+\topic{64 KiB 容量按需要取得 4 KiB 页面}
+普通用户 Pipe 的逻辑容量是 \(65536\) 字节，分成
 \[
   \frac{65536}{4096}=16
 \]
-
-个后备页槽。刚创建时 buffered 和 allocated page count 都为零。写入某个
+个后备页槽。刚创建时，buffered 和 allocated page count 都为零。写入某个
 页覆盖的区间时才经 allocator callback 取得物理 frame，并通过 direct-map
-访问它。于是 1024 条空 capacity Pipe 不会仅因声明容量就预占 64 MiB。
+访问它。这样，1024 条空 Pipe 不会仅因声明容量就预占 64 MiB。
 
 环形状态保存 read index、write index 和 buffered byte count。索引相等时，
 buffered 区分空与满；可写空间始终为
-
 \[
   \mathrm{writable}=65536-\mathrm{buffered}.
 \]
-
-任一逻辑字节位置 \(i\) 映射为
-
+逻辑位置 \(i\) 落到
 \[
   \mathrm{page}=\left\lfloor\frac{i}{4096}\right\rfloor,\qquad
   \mathrm{offset}=i\bmod4096.
 \]
 
-Pipe 不理解 E820、buddy 或页表层级。它只调用固定签名的页 acquire/release
-回调；ProcessRuntime 把回调接到生产物理页生命周期。这样宿主测试能注入
-确定性内存，目标 Kernel 又能使用真实 frame。
+Pipe 不读取 E820，也不操作 buddy 或页表层级。它只调用固定签名的页面
+acquire/release 回调；宿主测试给它一组普通内存，目标 Kernel 则把回调接到
+真实物理页分配器。
 
-\topic{跨页写入是一项小型事务}
-一次写可能同时触及多个尚未分配的页。若第一页和第二页申请成功、第三页失败，
-不能推进 write index，也不能把前两页永久留给一条并未提交数据的操作。
-实现先收集所需页，再逐页准备：
+\topic{第三个页面申请失败时，前两个也要归还}
+一次跨页 write 可能需要三个尚未分配的页面。若前两次申请成功、第三次失败，
+代码不能推进 write index，也不能把前两页留在 Pipe 中。实现先计算缺失页，
+把本次新取得的地址暂存在局部数组中；所有页面都准备好以后才复制字节并更新
+buffered。中途失败就逆序归还局部数组中的页面。
 
-\begin{enumerate}[label=\arabic*.]
-  \item 计算本次可提交的字节区间和缺失页；
-  \item 为每个缺失页申请、清零并暂记所有权；
-  \item 任一申请失败，只逆序归还本次新页；
-  \item 全部页面准备完成后复制字节；
-  \item 最后一次性推进 write index、buffered 和统计。
-\end{enumerate}
+释放时采用相反的谨慎顺序：release callback 成功以后才清除页槽。若先把地址
+清零，回调失败后系统就失去了仍被自己占用的 frame。一次操作要么让所有状态
+一起前进，要么恢复到调用前的状态；这种由具体回滚动作保证的性质称为失败
+原子性。
 
-释放同样不能先把地址槽清零、再尝试归还页面。若 release callback 报错而
-槽已经遗忘地址，系统会把“仍拥有 frame”伪装成“已经释放”。当前实现只在
-释放成功后清除已保存地址，使故障仍可审计。
+\topic{fd 为什么不能直接保存 Pipe 槽号}
+现在让同一条 Pipe 的读端出现在两个 fd 中。关闭其中一个 fd 后，另一个仍然
+应该能读；fork 以后，父子进程也可能继续引用同一读端。若 fd 直接等于 Pipe
+数组下标，内核无法区分“关闭一个名字”和“关闭最后一个读端”。
 
-\topic{EOF、WouldBlock 与 BrokenPipe 的状态推导}\par
 \begin{center}
-\begin{osgridtabular}{L{0.32\linewidth}L{0.27\linewidth}L{0.28\linewidth}}
-状态 & read & write \\ \hline
-空且 writer 存活 & WouldBlock & 可推进 \\ \hline
-存在数据 & 返回当前可用短读 & 取决于剩余空间 \\ \hline
-空且 writer 全关闭 & EOF & 不适用 \\ \hline
-reader 全关闭 & 不适用 & BrokenPipe \\ \hline
-满且 reader 存活 & 可读 & WouldBlock \\ \hline
+\begin{osgridtabular}{L{0.22\linewidth}L{0.25\linewidth}L{0.40\linewidth}}
+层次 & 保存位置 & 具体内容 \\ \hline
+fd number & 单个 Process & FileTable 中的局部名字与 fd flags \\ \hline
+FileTable entry & 单个 FileTable & 指向 FileDescription 的强引用 \\ \hline
+FileDescription & KernelObject manager & 读/写能力、共享状态与 finalizer \\ \hline
+Pipe & PipeManager slot & 字节、索引、端点数量、等待队列与后备页 \\ \hline
 \end{osgridtabular}
 \end{center}
 
-EOF 不是写入缓冲的特殊 byte，而是“未来不可能再出现数据”的生命周期结论。
-writer 关闭时已有数据仍必须被 reader 排空；缓冲变空后的下一次 read 才返回
-EOF。相反，只要任何 reader 强引用仍在，writer 就不能得到 BrokenPipe。
+\code{dup2(3,0)} 增加的是对同一 FileDescription 的引用，不复制 Pipe
+数据。只有最后一个强引用消失，finalizer 才通知 PipeManager 关闭逻辑端点。
+这些对象各自负责不同的销毁时刻，这就是后文所说的所有权边界。
 
-WouldBlock 也不是失败。用户包装先执行 try；只有条件暂不满足时才进入
-WaitQueue，唤醒后重新检查条件。唤醒只表示状态可能改变，不预留字节，也
-不能替代循环复验。Pipe 锁内禁止调度、串口输出和用户地址复制。
+\topic{PipeManager 怎样创建和销毁一对端点}
+PipeManager 最多保存 1024 个槽，按 RAM 档开放 8、128 或 1024 项。创建时
+先取得空槽，再依次建立 reader FileDescription、writer FileDescription、
+reader fd 和 writer fd。任一步失败，代码都按相反顺序关闭已经取得的对象；
+用户最终只看到两个可用 fd，或者一个明确错误。
 
-\topic{PipeManager 把容量、身份和回收集中起来}
-单个全局 Pipe 无法实现 \code{pipe()}。PipeManager 持有最多 1024 个槽，
-按 RAM 档开放 8、128、1024 项。槽位限制控制同时存活的流对象，lazy page
-控制实际数据内存，两者解决不同维度。
+两端最后关闭后，manager 释放后备页并归还槽。启动自检会先占满当前档位，
+确认额外创建被拒绝，再关闭全部对象并重新创建一次。日志只在结束时打印
+capacity、active、peak、creation、release 和 rejection 汇总；逐字节打印会
+改变本章正在观察的调度时序。
 
-创建先取得空槽并初始化两端。接着 ProcessRuntime 依次建立 reader
-FileDescription、writer FileDescription、reader fd 和 writer fd。任何一步
-失败都逆序关闭已经取得的对象，用户只会观察到完整的 16 字节 fd pair 或一个
-明确错误。两端最后关闭后，manager 释放所有页并归还槽。
+\topic{从一条 Pipe 过渡到两个程序}
+Unix 约定 fd 0、1、2 分别表示标准输入、标准输出和标准错误。普通文件、终端
+和 Pipe 可以被放在这些相同的小整数后面，程序因而只调用 read/write，不需要
+知道另一端究竟连接了谁。
 
-启动自检先占满本档所有槽，下一次创建必须被拒绝，再关闭全部对象。整机结束
-只打印一次 capacity、active、peak、creation、release 和 rejection 摘要；
-逐 Pipe、逐页和逐字节日志会改变调度时序，因此被禁止。
-
-\topic{dup2 为什么必须精确且原子}
-普通 duplicate 寻找不低于 minimum 的最小空 fd。流水线却必须把端点放在
-精确的 0 或 1：
-
-\begin{verbatim}
-dup2(previous_pipe.reader, 0)
-dup2(next_pipe.writer, 1)
-\end{verbatim}
+Shell 要运行 \code{cat | wc} 时，先创建 Pipe，再 fork 两个 child。第一个
+child 用 \code{dup2(pipe_writer,1)} 把标准输出接到写端；第二个 child 用
+\code{dup2(pipe_reader,0)} 把标准输入接到读端。接线完成后，两边都关闭不再
+使用的临时 fd，再分别 exec \code{cat} 和 \code{wc}。
 
 FileTable 的 \code{DuplicateTo} 先验证 source 和目标范围，需要时在锁外
-准备新的 chunk；重新加锁后复验 source、取得新强引用并替换目标 entry。
-旧目标引用在解锁后释放，因为 finalizer 可能进入 VFS、关闭 Pipe 或唤醒
-Thread，不能在 FileTable 锁内执行。
+准备新 chunk；重新加锁后复查 source，取得新强引用并替换目标 entry。旧目标
+引用在解锁后释放，因为 finalizer 可能关闭 Pipe 并唤醒 Thread，不能在
+FileTable 锁内执行。source 等于 destination 时直接成功，否则先关闭目标会
+把唯一 source 一同删除。
 
-source 等于 destination 必须直接成功。若错误地先关闭 destination，唯一
-source 就会同时消失。fd 的 close-on-exec 属于 entry，FileDescription 的
-offset 和访问状态属于共享对象；duplicate 时不能把两种 flags 混成一份。
-functional hard limit 在本阶段提高到 512，capacity 保持 4096。
+\topic{多级流水线为什么要先全部启动}
+对 \(N\) 个 stage，parent 先创建 \(N-1\) 条 Pipe，然后 fork 全部 child。
+child \(i\) 把前一条 Pipe 的 reader 接到 fd 0，把后一条 Pipe 的 writer
+接到 fd 1；首尾两端只连接自己需要的一侧。parent 完成所有 fork 后关闭临时
+端点，最后才逐个 wait。
 
-\topic{先完成纯解析，再允许任何系统调用}
-若 Shell 边读字符边 fork，输入末尾的未闭合引号可能发生在三个 child 已经
-创建之后。v1.11 先把整行转换为自包含的
-\code{ShellExecutionPlan}：
+若 Shell 启动 stage 0 后立刻等待，它写满 64 KiB 就会进入 Blocked，而读取
+数据的 stage 1 尚未创建，系统确定性死锁。若 parent 或无关 child 忘记关闭
+writer，末端 reader 即使读完全部数据也看不到 EOF。流水线因此先建立所有
+消费者，再等待任何一个生产者结束。
 
-\begin{verbatim}
-storage[513]
-arguments[128]
-stages[16]
-argument_count
-stage_count
-\end{verbatim}
+输入重定向把只读文件 duplicate 到 fd 0，输出重定向把 create/truncate 文件
+duplicate 到 fd 1。修改只发生在 child 的 FileTable 中，所以 parent 的下一
+条 prompt 仍写向终端。
 
-argument 只保存 storage 内的 offset 和 length，stage 保存参数区间以及可选
-输入/输出路径。解析器识别空格、单引号、双引号、反斜杠、\code{|}、
-\code{<}、\code{>}，并拒绝空 stage、重复重定向、缺失路径、悬空转义、
-未闭合引号和容量超限。任一拒绝都把输出计划保持为零，不产生 Process、fd
-或 Pipe 副作用。
+\topic{解析失败发生在创建进程以前}
+Shell 先把整行转换为 \code{ShellExecutionPlan}。计划包含 513 字节存储、
+128 个参数槽和 16 个 stage；argument 保存存储区内的 offset/length，stage
+保存参数范围和可选重定向路径。
 
-每 stage 暂限 8 个参数，完整计划用 \code{static\_assert} 保持在 4096
-字节以内。用户栈 VMA 虽预留 8 MiB，却只允许相邻页面逐步增长；过大的单个
-局部对象会让函数序言跨过未提交页，被 Kernel 正确判为非法 stack jump。
-未来可把更大计划放入 UserHeap，本阶段不放宽栈安全策略来掩盖局部对象设计。
+解析器识别空格、单双引号、反斜杠、\code{|}、\code{<} 和 \code{>}。空
+stage、重复重定向、缺失路径、悬空转义、未闭合引号或容量超限都会使计划清零。
+在计划成功以前不调用 pipe、fork 或 open，因此一个语法错误不会遗留半组 child
+和 fd。
 
-\topic{十六级流水线必须并发启动}
-对 \(N\) 个 stage，parent 先创建 \(N-1\) 根 Pipe，然后依次 fork 全部
-child，不在单个 stage 后立即 wait。child \(i\) 执行：
+每个 stage 暂限 8 个参数，计划通过 \code{static\_assert} 保持在 4096 字节
+内。用户栈 VMA 虽预留 8 MiB，却只允许相邻页面逐步增长；过大的局部对象可能
+让函数序言跨过未提交页，所以更大的计划应迁移到 UserHeap。
 
-\begin{enumerate}[label=\arabic*.]
-  \item 若 \(i>0\)，把前一 Pipe reader duplicate 到 fd 0；
-  \item 若 \(i+1<N\)，把后一 Pipe writer duplicate 到 fd 1；
-  \item 应用 \code{<} 与 \code{>} 打开的文件描述符；
-  \item 关闭全部临时 Pipe fd；
-  \item 从 rootfs exec 对应 \code{/bin/*} ELF。
-\end{enumerate}
+\topic{中途 fork 失败时先关闭端点，再等待 child}
+第 \(k\) 个 fork 失败时，前 \(k\) 个 child 已经可能运行。parent 先关闭自己
+保存的全部 Pipe fd，使正在等待的 child 得到 EOF 或 BrokenPipe，然后 wait
+已经发布的 child。若直接返回 prompt，系统会遗留 Zombie、FileDescription
+引用和 Pipe 页面。
 
-parent 在 fork 全部 stage 后关闭自己持有的全部端点，再 wait 每个 child。
-若先运行并等待 stage 0，它输出超过 64 KiB 时会等待空间，而 stage 1 尚未
-启动，系统形成确定性死锁。若 parent 或无关 child 遗留 writer，末端 reader
-则永远看不到 EOF。
+child 接线失败以 126 退出，exec 或程序查找失败以 127 退出。child 不能返回
+Shell 主循环，否则会出现第二个交互 Shell 与 parent 争用键盘。资源按照
+“临时 fd、FileDescription、Pipe 页面与槽”的顺序逐层释放；每一层只销毁
+自己实际取得的对象。
 
-输出重定向使用 write、create、truncate 打开目标，再 duplicate 到 fd 1；
-输入重定向以 read 打开并 duplicate 到 fd 0。改变的是 child 的表，parent
-标准输出不变，所以下一条 prompt 不会落入文件。本阶段明确不支持 append、
-stderr 重定向、here-document、环境展开和作业控制。
+\topic{运行哪些实验可以看见这些状态}
+宿主单元测试分别制造空、满、跨页、回绕、EOF、BrokenPipe 和页面申请失败。
+动态模型用固定种子执行 100000 次读、写、关闭和唤醒，每一步都检查 buffered、
+端点数量、页面数量与队列成员。Shell 解析测试再输入 4096 条任意字节序列，
+成功计划必须满足 stage/fd 边界，失败计划必须保持全零。
 
-\topic{没有 libc 的十九个核心工具}
-\code{core\_tool.cpp} 是 freestanding multi-call ELF。它从自研
-\code{argc/argv} 栈取得 \code{argv[0]} 的 basename，并分派为不同工具：
+QEMU 中先运行一个 producer/consumer：consumer 在空 Pipe 上进入 Blocked，
+producer 写入后将它唤醒；writer 关闭以后，consumer 排空数据并读到 EOF。
+随后输入一条 16 级流水线，同时使用 15 条 Pipe。运行结束时，active Pipe
+应为 0，所有 child 均已 wait，动态页面、FileDescription 和 Zombie 数量回到
+运行前。测试脚本设置截止时间，所以丢失唤醒或遗留 writer 会以稳定超时暴露，
+而不是让终端无限等待。
 
-\begin{center}
-\begin{osgridtabular}{L{0.28\linewidth}L{0.56\linewidth}}
-组合面 & 工具 \\ \hline
-输出与退出状态 & help、echo、true、false \\ \hline
-流式 stdin/stdout & cat、wc、head、tee \\ \hline
-cwd 与目录 & pwd、ls \\ \hline
-元数据 & stat \\ \hline
-命名空间修改 & mkdir、touch、rm、rmdir、mv \\ \hline
-文件内容与长度 & write、truncate \\ \hline
-持久化 & sync \\ \hline
-\end{osgridtabular}
-\end{center}
-
-所有 I/O 都经过自研 wrapper；十进制转换使用固定缓冲，字符串扫描有上界，
-不调用 libc、iostream、malloc 或宿主 API。一个 ELF 共享实现代码，但
-rootfs 中的 19 个路径、每次 fork/exec、每个 Process 的 fd 图都是真实的。
-只有 \code{cd} 和 \code{exit} 留在 Shell，因为 child 无法修改 parent cwd，
-也不能替 parent 退出交互循环。
-
-\topic{失败路径为什么必须等待已经发布的 child}
-第 \(k\) 个 fork 失败时，前 \(k\) 个 child 已经可以运行。parent 必须先关闭
-全部 Pipe fd，使被阻塞 child 得到 EOF 或 BrokenPipe，再 wait 已发布孩子。
-直接返回 prompt 会遗留 Zombie 和 FileDescription 强引用。child 接线失败
-以 126 退出，exec/查找失败以 127 退出，不能返回 Shell 主循环，否则会产生
-第二个交互 Shell 争用同一键盘 FIFO。
-
-这是一条跨层逆序：
-
-\begin{verbatim}
-parse plan
-  -> create Pipe slots and endpoint descriptions
-  -> install parent fds
-  -> fork children
-  -> child dup2/close/exec
-  -> parent close temporary fds
-  -> wait all children
-  -> release FileDescriptions, Pipe pages and slots
-\end{verbatim}
-
-每一层只释放自己已经取得的所有权。Pipe finalizer 不销毁 Process，
-ProcessTree 不直接清空 Pipe 槽，Shell 也看不到 Kernel 对象地址。
-
-\topic{五层证据怎样共同闭合}
-单元测试验证 lazy page、跨页、回绕、EOF、BrokenPipe、分配失败回滚、
-128 槽 manager、dup2 精确替换和 16 stage 解析。集成测试占满 1024 条 Pipe，
-验证额外创建拒绝、全部端点关闭和槽复用。固定种子动态 Pipe 模型执行
-100000 次操作；Shell 随机测试输入 4096 条任意 byte 序列并检查成功计划
-或失败清零。
-
-64 MiB bootstrap QEMU 真实执行基础外部工具；256 MiB functional 再通过
-QMP 键盘逐字输入两次重定向和一条 16 级流水线。该流水线包含 echo、多个
-cat、tee、head 和 wc，因而同时覆盖 15 根 Pipe、短读写、EOF、文件输出和
-全部 child wait。
-
-最终 functional 证据要求：
-
-\begin{itemize}
-  \item 88 个 Process 创建和回收，87 次 wait 成功；
-  \item Pipe capacity 为 128，active 为 0，peak 精确为 128；
-  \item creation 与 release 均为 143，rejection 至少一次；
-  \item \code{REDIRECTION\_VERIFIED} 两次，
-        \code{PIPELINE\_16\_VERIFIED} 一次；
-  \item Zombie、FileDescription、用户页、页表和动态 Pipe 后备页回到基线。
-\end{itemize}
-
-测试总数会随着实现变化。稳定要求是：每层检查的性质明确、随机种子可复现、
-QEMU 生命周期有截止时间，并且成功路径不能出现 Kernel fatal、panic 或
-资源差异。
+完整的 Shell 命令、十九个 freestanding 工具、进程组、Ctrl+C 与前后台切换
+在第 29 章继续。本章到这里已经建立一条更小的因果链：条件不满足时 Thread
+进入 Blocked，写入或关闭改变条件，等待者回到 Ready 并重新检查。

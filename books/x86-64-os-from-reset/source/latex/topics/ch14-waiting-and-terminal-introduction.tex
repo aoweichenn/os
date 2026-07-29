@@ -25,15 +25,15 @@ Ready Thread。产生数据、显式唤醒、期限到达或信号到来时，�
 而下一次唤醒也许永远不会出现。后文的 pipe、futex、deadline 和 signal
 各自携带不同数据，但都要处理这条时间窗口。
 
-\topic{Shell 为什么还需要进程组和控制终端}
-管道只连接字节流。交互式 Shell 还要知道哪一组进程占有终端。例如用户按下
-Ctrl+C 时，终端把信号发给前台进程组；后台作业试图读取控制终端时会被拒绝
-或停止；\code{fg} 再把选中的进程组设为前台并继续执行。
+\topic{一次空管道读取怎样避免永远睡下去}
+先看一个只有 reader 和 writer 的例子。reader 发现缓冲区为空，准备睡眠；
+writer 随后写入一个字节并唤醒 reader。危险窗口恰好位于“检查为空”和
+“进入等待队列”之间：若 writer 在这个窗口完成，reader 会错过唯一一次唤醒。
 
-\filepath{source/user/src/shell\_execution.cpp} 建立管道、重定向和进程组，
-\filepath{source/kernel/src/process/job\_control.cpp} 保存 session、
-process group 与前台归属，
-\filepath{source/kernel/src/io/terminal.cpp} 处理行编辑和控制字符。
-运行作业控制测试时可以观察
-\code{JOB_CONTROL_READY}、\code{BACKGROUND_JOB_STARTED} 和
-\code{FOREGROUND_JOB_STOPPED}，再结合内核的 TTY 统计判断字节与状态变化。
+内核因此在 Pipe 锁保护下执行三步：再次检查缓冲区，把当前 Thread 链入
+reader 等待队列，再把状态改成 Blocked。writer 取得同一把锁以后，要么看见
+reader 尚未入队并让它在复查时直接读到数据，要么看见已经入队的 reader 并将
+它移回 Ready。两种交错都不会留下“数据已经存在、reader 却永久睡眠”的状态。
+
+这里先只研究一个等待条件和一次唤醒。多个命令怎样组成流水线放在本章后半，
+进程组、Ctrl+C 和控制终端留到第 29 章。

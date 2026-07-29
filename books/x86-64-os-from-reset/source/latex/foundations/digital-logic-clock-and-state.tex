@@ -1,5 +1,6 @@
 \section{逻辑电平、晶体管与接口契约}
 
+\mustunderstand
 第二章看到真实电压连续变化；数字逻辑把允许范围映射成有限符号。接收器只在
 规定采样条件下把输入判作 0 或 1。发送器要保证输出低电平不高于接收器允许的
 \(V_{IL(max)}\)，输出高电平不低于 \(V_{IH(min)}\)，并留出噪声裕量：
@@ -92,10 +93,9 @@ P_{\mathrm{dynamic}}\approx\alpha C_L V_{\mathrm{DD}}^2 f,
 这解释了为什么提高电压和频率会显著增加功耗，也解释了现代处理器为什么需要
 时钟门控、动态调压和散热设计。
 
-\input{foundations/expanded/ch03-logic-electrical-interface}
-
 \section{布尔代数与组合逻辑}
 
+\mustunderstand
 \term{组合逻辑}{combinational logic}没有有意保存的历史状态。在传播延迟
 过去后，输出由当前输入唯一决定。
 
@@ -198,6 +198,7 @@ ROM 还是设备。
 
 \section{传播延迟、反馈与状态存储}
 
+\mustunderstand
 一个门从输入改变到输出稳定需要传播延迟 \(t_{pd}\)。不同路径延迟不同，即使
 布尔表达式最终正确，中间也可能产生短脉冲，称为 glitch 或 hazard。
 
@@ -272,10 +273,9 @@ T_{\mathrm{clk}}
 逻辑的概率降得足够低；多 bit 总线则需要握手、FIFO 或编码协议，不能让每一位
 独立同步后就假定组合仍一致。
 
-\input{foundations/expanded/ch03-sequential-clock-and-cdc}
-
 \section{寄存器、状态机与算术逻辑单元}
 
+\projectconnection
 把多个触发器并列可保存一个固定宽度的字，称为寄存器。寄存器前放多路选择器，
 可以选择保持旧值、装载新值、加一或清零。
 

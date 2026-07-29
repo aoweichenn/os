@@ -10,12 +10,12 @@
   \node[os state] (user) {用户缓冲区};
   \node[os block,right=of user] (page) {文件页缓存};
   \node[os block,right=of page] (block) {块缓存};
-  \node[os block,right=of block] (ata) {ATA 请求};
-  \node[os state,right=of ata] (disk) {磁盘介质};
+  \node[os block,right=of block] (request) {块设备请求};
+  \node[os state,right=of request] (disk) {磁盘介质};
   \draw[os arrow] (user) -- node[above]{write} (page);
   \draw[os arrow] (page) -- node[above]{writeback} (block);
-  \draw[os arrow] (block) -- node[above]{IRQ14} (ata);
-  \draw[os arrow] (ata) -- node[above]{flush} (disk);
+  \draw[os arrow] (block) -- node[above]{write block} (request);
+  \draw[os arrow] (request) -- node[above]{flush} (disk);
 \end{tikzpicture}
 \end{center}
 
@@ -40,9 +40,9 @@ rootfs journal 先把这些目标块和校验写入日志区，flush 后写入 c
 \filepath{source/kernel/src/device/block\_request.cpp} 与 IRQ14 路径唤醒
 等待的 Thread。
 
-\topic{从启动日志判断当前走到哪一层}
-\code{ROOTFS_V2_MOUNTED} 表示 superblock 和盘面结构已通过检查；
-\code{ATA_IRQ14_READY} 表示块请求可以由中断完成；
-\code{ROOTFS_JOURNAL_READY} 表示恢复过程已经结束。它们对应不同阶段，缺少
-其中一行时应先查此前最后一条标记。文件内容是否真的保留下来，还要在重启后
-重新读取，而不能只看第一次运行的内存缓存。
+\topic{从重新挂载判断字节是否已经离开内存}
+第一次运行输出 \code{ROOTFS_V2_MOUNTED}，只能说明当前实例已经读懂
+superblock 和盘面结构。程序写入文件并执行同步后，测试关闭 QEMU，再用同一
+磁盘启动第二次。只有第二次启动重新读出相同内容，才能排除“字节仍停在第一次
+运行的内存缓存”这一情况。IRQ14 怎样完成块请求放到第 26 章，日志怎样恢复
+中断事务放到第 27 章。

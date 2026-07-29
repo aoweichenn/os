@@ -72,7 +72,7 @@ FileTable 项引用 KernelObject；文件类型进一步引用共享 FileDescrip
 \term{inode}{索引节点}保存文件类型、大小和数据块映射；
 \term{bitmap}{位图}用 bit 记录 inode 或 block 是否已占用；
 \term{directory entry}{目录项}把名称关联到 inode；
-\term{superblock}{超级块}冻结磁盘格式、范围和校验。一次路径解析依次读取
+\term{superblock}{超级块}记录磁盘格式、范围和校验。一次路径解析依次读取
 目录项和 inode，文件 offset 再映射到相对 block，最后加上文件系统分区起点
 得到全盘 LBA。
 
@@ -105,7 +105,7 @@ NVMe 也有自己的 namespace 与 logical block 规格。
 
 \topic{七、步骤 9：raw disk 是镜像容器，不等于文件系统}
 \term{raw disk image}{原始磁盘镜像}按扇区保存整块虚拟磁盘，没有宿主文件系统
-替 Guest 自动解释内容。v0.11 的历史 2 MiB 镜像共有
+替 Guest 自动解释内容。早期 2 MiB 镜像共有
 \[
 4096\times512\ \mathrm{B}=2\ \mathrm{MiB}.
 \]
@@ -121,7 +121,7 @@ LBA 半开区间 & 大小 & 所有者 & 内容 \\ \hline
 都必须拒绝越过边界；否则一次大文件写入可能覆盖下一次启动所需的 Kernel，
 表面文件系统成功却让机器再也不能启动。
 
-自 v1.6 起镜像已扩为逻辑 1 GiB 稀疏文件；v1.9 当前从 LBA 32768 起分配
+当前镜像是逻辑 1 GiB 稀疏文件，从 LBA 32768 起分配
 固定 256 MiB rootfs。本表保留为第一版持久格式的历史基线，详细新布局见本章
 后续 rootfs v2 节。
 

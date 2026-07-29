@@ -15,8 +15,8 @@
 早期磁盘操作系统常把连续扇区直接分给文件。文件增长后，连续空洞越来越难找，
 于是出现链式分配、索引分配和 inode。Multics 与 UNIX 又把目录层次、权限和
 设备抽象放到同一命名空间中。现代 ext4、XFS、ZFS 已包含日志、extent、
-校验、延迟分配和复杂恢复；直接移植其中任何一个都会隐藏本阶段最重要的状态
-转换。v0.11 因此采用固定布局和十个直接块，把范围压小到可以逐字节审计。
+校验、延迟分配和复杂恢复。这里采用固定布局和十个直接块，让一个 inode 的
+盘面字节可以逐项写出，也让损坏测试能够指出究竟是哪一个字段出错。
 
 
 \topic{磁盘分区边界先于文件系统格式}
@@ -34,7 +34,7 @@ LBA 半开区间 & 所有者 & 不变量\\ \hline
 \endhead
 \code{[0,2048)} & 固件描述符、Stage 1、Kernel 描述符与 ELF &
 打包器证明 Kernel 负载结束位置不越过 2048\\ \hline
-\code{[2048,3072)} & v0.11 文件系统 & 1024 个固定大小逻辑块\\ \hline
+\code{[2048,3072)} & 文件系统 & 1024 个固定大小逻辑块\\ \hline
 \code{[3072,4096)} & 保留 & 当前必须不被文件系统分配\\ \hline
 \end{osgridlongtable}
 
@@ -51,46 +51,20 @@ ELF 增长到 505 KiB 后，其 LBA 66 起的负载已经延伸到约 LBA 1054�
 磁盘布局是跨启动阶段的 ABI。只修改内核常量而不修改镜像生成器、审计器、
 测试设备和教材，会制造多个互相矛盾的“真相”。
 
-\topic{ATA PIO 写入是一条可失败的硬件状态机}
-v0.7 的读取路径已经会选择 primary master、写 LBA28 寄存器、发
-\code{READ SECTORS} 命令并等待 DRQ。写入不能简单把 \code{inw} 换成
-\code{outw}；命令、数据方向和持久化完成具有不同阶段。
+\topic{文件系统只向块设备请求三个动作}
+文件系统需要读取一个 512 字节块、写入一个 512 字节块，并在提交边界要求
+此前写入稳定下来。它通过 \code{FileSystemBlockDevice} 调用
+\code{ReadBlock}、\code{WriteBlock} 和 \code{Flush}，只接收成功、超时或
+设备失败，不读取 ATA 状态寄存器。
 
-\begin{enumerate}[label=\arabic*.]
-  \item 向设备控制端口写入禁用设备中断位，使当前轮询状态机独占完成事件；
-  \item 轮询状态端口，等待 BSY 清零，同时拒绝 ERR 与 DF；
-  \item 写 drive/head、扇区数 1、LBA low/mid/high；
-  \item 向命令端口写 \code{WRITE SECTORS} 的 \code{0x30}；
-  \item 等待 DRQ，证明设备已经准备接收一个扇区；
-  \item 把 512 字节按小端组合成 256 个 \code{uint16_t}，逐字写数据端口；
-  \item 等待 BSY 再次清零，拒绝设备错误；
-  \item 事务屏障处发送 \code{FLUSH CACHE} 的 \code{0xE7} 并等待完成。
-\end{enumerate}
-
-\begin{pdfdiagram}
-  \node[os state] (idle) {非忙};
-  \node[os block,right=of idle] (command) {写 LBA\\发 0x30};
-  \node[os hardware,right=of command] (drq) {DRQ=1};
-  \node[os block,below=of drq] (data) {256 次 outw};
-  \node[os state,left=of data] (complete) {BSY=0};
-  \node[os hardware,left=of complete] (flush) {0xE7 flush};
-  \draw[os arrow] (idle) -- (command);
-  \draw[os arrow] (command) -- (drq);
-  \draw[os arrow] (drq) -- (data);
-  \draw[os arrow] (data) -- (complete);
-  \draw[os arrow] (complete) -- (flush);
-\end{pdfdiagram}
-\diagramnote{DRQ 只说明可以传输数据；BSY 清零只说明命令结束；事务需要的持久化边界由显式 flush 提供。}
-
-每个轮询都有固定预算。永久忙返回 \code{BusyTimeout}，一直没有 DRQ 返回
-\code{DataRequestTimeout}，ERR/DF 返回 \code{DeviceError}。文件系统不
-依赖具体 ATA 错误枚举，只通过 \code{FileSystemBlockDeviceStatus} 接收
-读、写、flush 成败。宿主测试以同一接口挂接内存设备，目标内核挂接
-\code{AtaPioDevice}。
+宿主测试把这三个动作接到 4096 扇区的内存数组，因此可以精确翻转某个盘面
+字节。目标内核则把同一接口接到真实块请求层。文件系统中的相对块先加起始
+LBA，再交给接口；至于请求怎样写入 ATA 端口、怎样由 IRQ14 完成以及超时怎样
+与中断竞争，都在第 26 章沿一次请求逐步展开。
 
 \section{超级块、inode 和目录项怎样编码}
 C++ 结构体适合内存中的类型检查，不适合直接成为持久格式。编译器可能插入
-padding，枚举宽度和对齐规则也属于 ABI。v0.11 对每个多字节字段显式执行
+padding，枚举宽度和对齐规则也属于 ABI。编码器对每个多字节字段显式执行
 little-endian store/load；磁盘格式由偏移表定义。
 
 \topic{超级块}
@@ -194,7 +168,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 一致性检查处输出汇总。
 
 \topic{Dirty/Clean 协议先保证可检测，再讨论恢复}
-创建目录、创建/截断文件和写文件会同时改变多个块。v0.11 使用超级块中的
+创建目录、创建/截断文件和写文件会同时改变多个块。超级块中的
 \code{transaction_state} 和 64 位代次建立最小提交协议：
 
 \begin{enumerate}[label=\arabic*.]
@@ -239,7 +213,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 
 \topic{根可达性检查拒绝孤儿、环和重复引用}
 只遍历 inode bitmap 会接受孤儿 inode：它有合法 CRC 和数据块，但没有任何
-路径可以到达。v0.11 在完成局部校验后，以 inode 1 为起点执行最多 32 项的
+路径可以到达。局部校验完成后，代码以 inode 1 为起点执行最多 32 项的
 有界广度优先遍历。
 
 \begin{enumerate}[label=\arabic*.]
@@ -318,12 +292,12 @@ QEMU 调度器为每一行串口输出附加宿主单调
 \code{[QEMU][T+xxxxxxms]}，因此能看见格式化、用户写、同步和第二次挂载的
 真实先后；来宾日志仍保持低频里程碑，不在 256 个端口字或位图扫描中刷屏。
 
-\topic{当前限制是下一阶段的设计输入}
-v0.11 没有删除、rename、硬链接、权限、时间戳、间接块、稀疏文件、当前目录、
+\topic{这一盘面格式暂时没有哪些字段}
+当前格式没有删除、rename、硬链接、权限、时间戳、间接块、稀疏文件、当前目录、
 通用 VFS 对象、可睡眠 I/O 或日志恢复。全局文件系统锁使每次操作串行，ATA
 每次只传一个扇区并轮询完成。Dirty 事务只检测，不重放。
 
-这些限制都被类型、常量、状态和测试明确表达。下一步若加入日志，应先冻结日志
+这些限制都被类型、常量、状态和测试明确表达。下一步若加入日志，应先规定日志
 记录与 commit 顺序，并对每个断电边界生成磁盘镜像；若加入间接块，应先扩展
 inode 版本和最大文件测试；若把管道纳入通用 fd，应引入对象类型、引用计数和
 共享打开描述，而不是把当前四槽文件句柄强行称作完整 VFS。

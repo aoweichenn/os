@@ -36,8 +36,8 @@ ordered metadata journal 用 ``data stable''、``prepared log stable'' 和
     的 inode/目录落盘。
 \end{description}
 
-v1.16 已经建立 dirty/writeback/error page、BlockRequest 和 ATA FLUSH
-边界。v1.17 选择 ordered mode，是因为它能直接复用这条 ``相关数据已稳定''
+前一章已经建立 dirty/writeback/error page、BlockRequest 和 ATA FLUSH
+路径。这里选择 ordered mode，因为它能直接复用 ``相关数据已稳定''
 证据，同时把教学范围限制在元数据事务。它保证目录、inode、位图和指针不会
 形成半事务，不承诺普通数据旧内容可回滚。
 
@@ -71,7 +71,7 @@ journal 相对块 & 数量 & 内容\\ \hline
 1--4 & 4 & descriptor blocks\\ \hline
 5--128 & 124 & metadata payload blocks\\ \hline
 129 & 1 & commit record\\ \hline
-130--255 & 126 & 冻结保留区\\ \hline
+130--255 & 126 & 必须保持为零的保留区\\ \hline
 \end{osgridtabular}
 \end{center}
 
@@ -85,11 +85,11 @@ payload CRC32 与 32 位保留零。descriptor 最后 4 字节保存自身 CRC�
 \[
   4\times31=124.
 \]
-其余 descriptor 字节必须为零并纳入 CRC。这里的 124 来自冻结格式，而不是
+其余 descriptor 字节必须为零并纳入 CRC。这里的 124 来自盘面字段宽度，而不是
 随手散落在代码中的数字；格式工具、Kernel 和测试读取同一显式常量契约。
 
 \begin{contractbox}
-教材中的容量必须以实现的冻结字段为准。若未来把每个 descriptor 块扩到理论
+教材中的容量必须以当前盘面字段为准。若未来把每个 descriptor 块扩到理论
 最大 entry 数，那是盘面格式升级，不能只改一个循环上限。
 \end{contractbox}
 
@@ -104,7 +104,7 @@ header 保存 magic、格式版本、64 位 sequence、entry count、descriptor 
   \item header 与 commit 的 magic/version 正确；
   \item sequence 非零且两处相同；
   \item entry count 在 1 到 124，且两处相同；
-  \item descriptor count 等于冻结值；
+  \item descriptor count 等于盘面规定值；
   \item 每个 descriptor CRC 与 payload CRC 正确；
   \item target 在 rootfs 内、不落入 journal、同一事务内不重复；
   \item reserved 字段与未使用区域满足格式约束；
@@ -128,12 +128,12 @@ CRC32 用于检测随机位翻转、截断与错块，不是密码学认证；�
 
 当前 rootfs 串行一个 mutation，并预留固定上限。Begin 同时保存 superblock、
 统计与 allocation hint 快照。commit 前的逻辑、credit 或设备错误会丢弃
-overlay 并恢复快照。若未来支持多个并发事务，应先冻结锁顺序、reservation
+overlay 并恢复快照。若未来支持多个并发事务，应先规定锁顺序、reservation
 所有权和 checkpoint 调度，不能简单把固定数组复制到每个 Thread。
 
 \topic{overlay 让事务读到自己的写}
 Create 可能先更新 inode block，随后又因目录插入读取同一块。如果 read 只看
-BlockCache，就会观察旧字节。v1.17 的 metadata read 顺序为：
+BlockCache，就会观察旧字节。metadata read 顺序为：
 
 \begin{center}
 \begin{tikzpicture}[node distance=9mm and 13mm]
@@ -218,7 +218,7 @@ checkpoint 不是不可中断的魔法操作。若恢复写完第 37 个 target 
 =\operatorname{Apply}(H,P).
 \]
 
-checkpoint 或其 FLUSH 失败时不能清除 commit；当前文件系统实例被冻结，下一
+checkpoint 或其 FLUSH 失败时不能清除 commit；当前文件系统实例停止接受写入，下一
 次 mount 仍有权威恢复材料。只有 home 全部稳定后才能清 journal，并再次
 FLUSH 清理结果。
 
@@ -226,7 +226,7 @@ FLUSH 清理结果。
 \code{fs/root\_journal.*} 只认识固定块设备、盘面记录、overlay、CRC、FLUSH、
 checkpoint 和 replay，不认识路径、inode 语义或 Process。\code{fs/root\_file\_system.*}
 决定哪些写是 metadata、何时先同步数据、如何保存事务快照以及设备失败后何时
-冻结。\code{fs/root\_file\_system\_format.*} 只编码/解析小端字段。
+规定。\code{fs/root\_file\_system\_format.*} 只编码/解析小端字段。
 
 所有盘面整数通过显式 Store/Load 写入字节数组，不能把 C++ struct 直接
 \code{reinterpret\_cast} 到磁盘。后者会把 padding、alignment、宿主端序与
@@ -272,7 +272,7 @@ failure 汇总，并带来宾单调时间。宿主 QEMU 的到达时间帮助定
 来宾事件顺序。
 
 \topic{当前 journal 的范围}
-v1.17 不包含 data journal、后台 checkpoint、并行 transaction、SMP、
+当前不包含 data journal、后台 checkpoint、并行 transaction、SMP、
 \code{fsync}/\code{fdatasync}/\code{msync}、snapshot、在线扩容、AHCI 或
 NVMe。CRC 用于发现偶发损坏，不能抵抗主动篡改。
 

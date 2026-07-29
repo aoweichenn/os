@@ -5,16 +5,13 @@
 和真实用户 ELF 检查漂移。devfs 与 procfs 也在这一阶段接入 VFS：前者提供
 设备端点，后者在读取时生成内核状态。
 
-\topic{为什么最终开发阶段要主动停止扩张}
-到 v1.17，系统已经拥有从复位到 Ring 3、从页故障到 COW、从键盘中断到
-作业控制、从文件写入到 journal replay 的完整闭环。此时再加入一个看似很小
-的系统调用，实际会同时改变调用号、dispatcher、用户封装、错误语义、测试、
-教材和测试。若新调用还携带结构体，字段宽度、对齐、指针合法性和未来兼容都
-会成为长期责任。
+\topic{增加一个系统调用会同时改动哪些位置}
+假设在调用号 30 和 31 之间插入一个新调用。重新编译后的 Kernel 会把旧用户
+程序发来的 31 解释成另一项操作；编译仍然成功，运行结果却已经改变。若参数
+还是一个结构体，字段顺序、宽度、对齐和错误值也必须由内核与旧 ELF 作出相同
+解释。
 
-这与早期阶段的最优策略不同。早期要尽快建立一条最小垂直链，以真实反馈替代
-纸面设计；临近发布则要减少边界数量，扩大每条边界的证明强度。v1.18 因此只
-允许三类改动：
+因此这一章不再插入调用号，而是做三件具体的事：
 
 \begin{enumerate}[leftmargin=2.1em]
   \item 把已经存在的用户/内核约定写成共享且可编译的 ABI；
@@ -22,10 +19,9 @@
   \item 用已有系统调用组合用户工具，不为“工具数量”发明新的内核机制。
 \end{enumerate}
 
-冻结仍然可能发现实现缺陷。例如 \code{cp} 若先截断目标、再发现源和目标是
-同一 inode，源数据已经丢失；procfs 若持自己的锁调用 VFS 快照，锁方向可能
-形成环；多个 TCG 实例并行运行，则正确的故障路径也可能撞上墙钟超时。所谓
-“收尾”并不比开发简单，它只是把注意力从功能宽度转向契约完整度。
+整理这些边界仍然会发现代码错误。例如 \code{cp} 若先截断目标、再发现源和
+目标是同一 inode，源数据已经丢失；procfs 若持自己的锁调用 VFS 快照，两把
+锁可能形成环；多个 TCG 实例并行运行，也可能让正确用例撞上墙钟超时。
 
 \topic{ABI 的历史：源代码兼容与二进制兼容不是一回事}
 \term{API}{Application Programming Interface}描述源代码怎样调用一个
@@ -85,9 +81,9 @@ padding，也不会验证枚举是否合法、地址相加是否溢出、指针�
 也不够：枚举号、错误边界或目标 ELF 身份仍可能漂移。
 
 \begin{osgridlongtable}{L{0.28\linewidth}L{0.22\linewidth}L{0.38\linewidth}}
-对象 & 关键冻结点 & 为什么必须冻结 \\ \hline
+对象 & 机器码依赖的值 & 改动后会发生什么 \\ \hline
 \endfirsthead
-对象 & 关键冻结点 & 为什么必须冻结 \\ \hline
+对象 & 机器码依赖的值 & 改动后会发生什么 \\ \hline
 \endhead
 \code{ProcessLaunchRequest} &
 六个 64 位字段位于 0、8、16、24、32、40 &
@@ -123,7 +119,7 @@ Stage 1、Kernel 和产物审计必须接受同一种目标身份 \\ \hline
 \topic{ELF 常量为何也属于 ABI}
 此前 Stage 1、Kernel 用户 ELF loader 与离线审计都需要知道
 \code{0x7F ELF}、64 位 class、小端 encoding、x86-64 machine 和段权限。
-若三处各有一组魔法数字，它们可能逐渐形成三个略有差异的“标准”。v1.18
+若三处各有一组魔法数字，它们可能逐渐形成三个略有差异的“标准”。代码
 把目标身份集中到 \filepath{source/abi/include/os/abi/elf.hpp}，Kernel 的
 \filepath{source/kernel/src/user/user_elf.cpp} 直接消费它。
 
@@ -132,10 +128,10 @@ Kernel ELF，Kernel 仍对不可信用户 ELF 进行两遍事务加载，Python 
 独立 oracle。应当共享的是协议事实，而不是把生产 parser 原样调用一遍并
 宣布“双方结果一致”。
 
-\section{devfs、procfs、用户工具与发布证据}
+\section{devfs、procfs 与用户工具}
 
-v1.15 为了让 fd 0/1/2 指向终端，曾用专用后端提供
-\filepath{/dev/console}。它完成了垂直闭环，却把两个责任粘在一起：
+为了让 fd 0/1/2 指向终端，早期实现曾用专用后端提供
+\filepath{/dev/console}。这让 open/read/write 可以走通，却把两个责任粘在一起：
 
 \begin{enumerate}[leftmargin=2.1em]
   \item \code{console} 这个名称怎样出现在 \filepath{/dev}；
@@ -213,12 +209,12 @@ TerminalDevice，不经 devfs 普通文件回调。这样同一设备不会拥�
 \end{osgridlongtable}
 
 没有每 PID 目录、\filepath{/proc/self}、符号链接、权限、命令行和可写调优。
-这些不是“漏做”，而是冻结时明确排除的新机制。
+当前没有这些机制；加入它们需要新的 vnode 类型、权限字段和生命周期处理。
 
 \topic{为什么每次 read 都要重新生成快照}
 进程数、空闲页和单调时间会持续变化。若挂载时生成文本，内容在第一次读取前
 就可能过时；若每个 open 长期保存完整快照，则需要动态分配、新的关闭生命
-周期和更复杂的偏移状态。v1.18 选择在每次 read 或 stat 时采集一次
+周期和更复杂的偏移状态。因此每次 read 或 stat 都重新采集一次
 \code{ProcfsSnapshot}，使用 256 字节局部缓冲格式化。
 
 \begin{pdfdiagram}
@@ -260,7 +256,7 @@ procfs 锁只保护自己的 active open、成功读取、失败和累计字节�
 \end{pdfdiagram}
 \diagramnote{跨子系统读取放在锁外，procfs 自身统计放在末尾，锁方向不会倒置。}
 
-VFS 汇总也不能在全局锁内递归回调后端。当前 mount 数组在初始化完成后冻结，
+VFS 汇总也不能在全局锁内递归回调后端。当前 mount 数组在初始化完成后不再修改，
 汇总逐个调用后端的 \code{ReadResourceUsage}，并在每次加法前检查
 \code{uint64_t} 溢出。任何后端失败或总和溢出都清空输出并返回失败，不能
 提供“看起来合理”的部分统计。procfs 自己的 resource usage 只报告固定节点，
@@ -278,12 +274,12 @@ freestanding Kernel 不依赖 \code{snprintf}、iostream 或动态 string。
 
 累计统计同样采用饱和加法。观察计数到达 \code{uint64_t} 最大值后保持最大值，
 而不是回绕为零。active open 则在达到最大值时拒绝新 open，因为继续增加会
-破坏 close 后的生命周期账本。
+使 active open 无法与 close 次数相互核对。
 
-\topic{32 个工具：用户空间组合比新增 syscall 更有价值}
-v1.18 的 rootfs 冻结 32 个独立工具路径：
+\topic{32 个工具怎样只用现有系统调用完成工作}
+rootfs 安装 32 个独立工具路径：
 
-\begin{lstlisting}[caption={冻结的用户工具集合}]
+\begin{lstlisting}[caption={rootfs 中安装的用户工具}]
 help echo cat wc head tee true false pwd ls stat mkdir write touch
 rm rmdir mv truncate sync basename dirname cp seq uptime ps free uname
 mounts resources sleep kill id
@@ -327,11 +323,11 @@ Shell 实际运行新增工具：basename/dirname/seq 使用唯一输出，procf
 忽略的 SIGCHLD。前者证明镜像产物，后者证明 dispatch、参数、syscall、
 procfs 和资源回收，二者不能互相替代。
 
-\topic{测试矩阵怎样证明冻结边界}\par
+\topic{每类测试拦截哪一种错误}\par
 \begin{osgridlongtable}{L{0.23\linewidth}L{0.62\linewidth}}
-证据层 & 拒绝的错误 \\ \hline
+检查位置 & 拒绝的错误 \\ \hline
 \endfirsthead
-证据层 & 拒绝的错误 \\ \hline
+检查位置 & 拒绝的错误 \\ \hline
 \endhead
 ABI 单元测试 & 版本、号值、枚举、大小、对齐、字段 offset 或 ELF 身份漂移 \\ \hline
 devfs 单元测试 & 重名、容量、半发布、readdir、只读语义、open/close 账本错误 \\ \hline
@@ -368,7 +364,7 @@ QEMU runner 给每行串口加的 \code{[QEMU][T+...ms]} 是宿主收到字节�
 
 \begin{enumerate}[leftmargin=2.1em]
   \item \filepath{source/abi/include/os/abi/version.hpp}、
-        \filepath{elf.hpp} 与 \filepath{layout.hpp}：先看冻结了什么；
+        \filepath{elf.hpp} 与 \filepath{layout.hpp}：先看机器码共享哪些值；
   \item \filepath{source/kernel/include/os/kernel/fs/devfs.hpp} 与
         \filepath{source/kernel/src/fs/devfs.cpp}：看注册表怎样发布 vnode；
   \item \filepath{source/kernel/include/os/kernel/fs/procfs.hpp} 与
@@ -394,7 +390,7 @@ devfs 没有权限、uid/gid、major/minor、注销、热插拔或 udev；procfs
 共享库、能力协商或向后加载 v1 用户程序；调度仍是单 BSP、内核不可抢占，
 这一实现只适用于当前单核配置；SMP 需要补充跨 CPU 同步。
 
-这些限制必须与已完成能力写在同一份发布记录中。冻结的意义不是把未来想象
-成已经实现，而是给下一代设计一个可靠起点。v2.0 只整合并发布已冻结机制；
-若以后引入 SMP、权限、动态链接或设备热插拔，需要新的 ADR、所有权图、锁
-顺序、失败模型和独立验收，而不能悄悄扩大 v1.18 的承诺。
+若以后引入 SMP、权限、动态链接或设备热插拔，旧 ELF 仍会按 ABI v2 的调用号
+和结构布局访问内核。兼容实现要保留旧解释；不兼容实现则必须提高 ABI major，
+让装载器在运行程序以前明确拒绝。新增对象还要补充销毁顺序、锁顺序和失败后
+保留的状态。

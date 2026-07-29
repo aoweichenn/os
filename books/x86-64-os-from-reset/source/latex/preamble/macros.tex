@@ -27,6 +27,16 @@
   \sffamily\textbf{\color{BookNavy}本章路线}\quad #1
   \end{tcolorbox}
 }
+\newcommand{\readingbadge}[2]{%
+  \par\smallskip\noindent
+  \colorbox{#1!12}{\strut\sffamily\bfseries\color{BookNavy}#2}%
+  \quad\ignorespaces
+}
+\newcommand{\mustunderstand}{\readingbadge{BookBlue}{必须理解}}
+\newcommand{\deepunderstanding}{\readingbadge{BookAmber}{深入理解}}
+\newcommand{\projectconnection}{\readingbadge{BookTeal}{项目连接}}
+\newcommand{\handsonexperiment}{\readingbadge{BookBlue}{动手实验}}
+\newcommand{\maybeskip}{\readingbadge{BookMuted}{暂时跳过}}
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 
 % 全书语义表格统一使用实线网格：列格式负责竖线，源码中的每个表格行以

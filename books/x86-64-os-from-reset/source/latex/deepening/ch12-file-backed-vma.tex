@@ -22,7 +22,7 @@ frame、读取文件并建立 PTE。这条 eager 路径容易理解，却把启�
 \end{enumerate}
 
 校验不能延迟到每次 fault。若在进程已经运行后才发现 ELF segment 重叠或
-入口无效，候选映像的原子提交就被破坏。v1.9 只延迟物理装入，不延迟结构
+入口无效，候选映像的原子提交就被破坏。这里只延迟物理装入，不延迟结构
 合法性判断。
 
 \topic{四类状态不能压进一个对象}\par
@@ -121,7 +121,7 @@ CPU 不知道 inode、ELF BSS 或 \code{MAP\_PRIVATE}。这些政策都由 Kerne
 读取 CR2、查找 VMA 后决定。成功建立 PTE 后不手动推进 RIP；返回异常现场，
 原指令自然重试。
 
-\topic{有界 clean cache 的状态与所有权}
+\topic{同一文件页为什么只保留一个 clean cache 项}
 当前 cache 初始化时由调用方提供 entry 数组。容量按 managed frames 的
 十六分之一缩放，并限制在 256 至 4096 页。fault 热路径不向 Kernel heap
 申请任意元数据，资源上界在启动时即可计算。
@@ -159,7 +159,7 @@ LRU 使用 64 位单调 access generation。每次装入、命中或引用变化
 可写 shared & 不支持 & 明确返回错误，不能静默降级\\ \hline
 \end{osgridlongtable}
 
-完整 COW 留给 v1.10。v1.9 的 writable private 在第一次 fault 就复制文件
+COW 留给下一节。当前 writable private 在第一次 fault 就复制文件
 内容，内存效率较低，但不需要提前引入匿名页引用计数和只读 COW PTE 软件位。
 
 \topic{文件修改需要同时处理 PTE 与 cache}
@@ -197,8 +197,8 @@ file fault、cache hit、cache invalidation 与 descriptor block 都只在
 
 \topic{启动布局也是文件装入系统的一部分}
 代码增长使 Kernel payload 超过历史 1 MiB 暂存区。Stage 1 的 ATA reader
-必须先把容器放到不会覆盖 Kernel segment、临时页表和栈的物理窗口。v1.9
-冻结 8 MiB \code{0x03600000..0x03E00000} staging，并把 rootfs v2 移到
+必须先把容器放到不会覆盖 Kernel segment、临时页表和栈的物理窗口。构建布局
+预留 8 MiB \code{0x03600000..0x03E00000} staging，并把 rootfs v2 移到
 LBA 32768，即 16 MiB。
 
 汇编、C++ 与 Python 各自需要常量，但不能各自决定事实。Python
@@ -247,9 +247,9 @@ key、refs、resident 和统计；QEMU 验证 CR2、真实 PTE、ATA/VFS、系�
 \end{itemize}
 
 \topic{阶段边界}
-v1.9 不包含 dirty page、writeback、writable shared、\code{msync}、
+当前不包含 dirty page、writeback、writable shared、\code{msync}、
 readahead、swap、SMP fault I/O 或动态链接。所有 cache 页都能从 rootfs
-重建。v1.10 才为私有可写页增加共享引用和 COW，并要求 Kernel
+重建。下一节才为私有可写页增加共享引用和 COW，并要求 Kernel
 \code{CopyToUser} 与用户写 fault 使用同一 break-COW 路径。
-这个顺序使两个问题保持正交：v1.9 先回答“相同文件页怎样成为唯一 clean
-对象”，v1.10 再回答“相同私有页怎样在第一次写时分裂”。
+这个顺序先回答“相同文件页怎样成为唯一 clean 对象”，再回答“相同私有页
+怎样在第一次写时分裂”，避免一次页故障同时调试两种共享关系。

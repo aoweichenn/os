@@ -21,7 +21,7 @@ Unix 系接口因此逐渐形成三层模型：
   \item inode 或 vnode 表示命名空间与文件系统中的底层对象。
 \end{enumerate}
 
-v1.0 的八槽 \code{IoDescriptor} 已经让控制台、管道和文件使用同一组系统
+早期的八槽 \code{IoDescriptor} 已经让控制台、管道和文件使用同一组系统
 调用，却把“进程索引”“打开实例”和“设备载荷”压在一个固定数组元素里。
 这种表示能证明接口形状，不能正确表达以下演进：
 
@@ -33,12 +33,12 @@ v1.0 的八槽 \code{IoDescriptor} 已经让控制台、管道和文件使用同
   \item 最后一个引用离开时，文件、管道端点或设备载荷必须恰好析构一次。
 \end{itemize}
 
-因此 v1.4 没有只把数组从 8 改成 4096。那只会扩大旧表示，同时掩盖所有权
-仍未分层的事实。本阶段先建立通用 \code{KernelObject} 生命周期，再用
+只把数组从 8 改成 4096 会扩大旧表示，却仍然无法表达共享偏移和最后关闭。
+代码先建立通用 \code{KernelObject} 生命周期，再用
 \code{FileDescription} 适配已有 I/O，最后让每个 Process 持有动态
 \code{FileTable}。
 
-\topic{四层对象图与所有权方向}\par
+\topic{关闭 fd 时哪一层真正销毁对象}\par
 \begin{lstlisting}[caption={Process、FileTable 与共享 FileDescription 的所有权图}]
 Process
   |
@@ -59,8 +59,8 @@ Process
 则是一次内核操作期间的临时强引用。二者都不向用户态暴露地址。
 
 当前 \code{FileDescription} 直接保存 legacy 文件系统的
-\code{FileSystemHandle}，还没有独立 Vnode。这个边界是有意的：v1.4 先冻结
-打开实例与 fd 的语义，v1.5 再在它下面接入 Path、Mount 与 Vnode。若同一阶段
+\code{FileSystemHandle}，还没有独立 Vnode。这里先确定
+打开实例与 fd 的语义，下一章再在它下面接入 Path、Mount 与 Vnode。若同时
 同时替换描述符表、命名空间和磁盘格式，失败时将无法判断错误属于哪层。
 
 \section{KernelObject 怎样保存类型和引用}
@@ -129,8 +129,8 @@ generation 从 1 单调增长，0 永远表示空。到达
 代次碰撞留出隐藏例外。
 
 \topic{强引用状态机与最后释放}
-\code{ReferenceCounter} 在 v1.1 已冻结三条性质：非零启动、零后禁止复活、
-上溢拒绝。v1.4 把它改为可用于原始 \code{uint64\_t} 状态的基础操作，
+\code{ReferenceCounter} 已经处理三条规则：非零启动、零后禁止复活、
+上溢拒绝。动态对象把同一操作用于原始 \code{uint64\_t} 状态，
 原有类封装继续委托给同一实现，因此动态对象没有复制另一套计数规则。
 
 一次查找的状态变化为：
@@ -227,11 +227,11 @@ descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\ \hline
 \end{osgridlongtable}
 
 若把 close-on-exec 放入 FileDescription，那么给复制出来的 fd 设置该位会
-连带修改源 fd；下一次 exec 将同时关闭两者。这与 fd 局部语义冲突。v1.4 的
+连带修改源 fd；下一次 exec 将同时关闭两者。这与 fd 局部语义冲突。
 \code{Duplicate} 接受目标 descriptor flags，源表项完全不变。
 
 当前系统还没有完整 \code{execve}，但 \code{CloseOnExec} 已经实现并通过
-宿主单元测试。提前冻结位置和批量关闭语义，能让 v1.7 接入真正 exec 时不再
+宿主单元测试。先确定位置和批量关闭语义，接入真正 exec 时便不需要
 重塑对象所有权。
 
 \section{FileTable 怎样分配和复制槽位}
@@ -248,21 +248,21 @@ handle 和一个 64 位 descriptor flags，64 个表项连同块头并考虑 64 
 fd 64 才创建第二块。关闭表项不会立即释放中间空块，Process 销毁时统一
 释放，使热路径更简单且统计可预测。
 
-三档 hard limit 对应不同验收目标：
+三档 hard limit 对应不同运行环境：
 
 \begin{osgridlongtable}{L{0.24\textwidth}L{0.20\textwidth}L{0.44\textwidth}}
 配置 & hard limit & 用途\\ \hline
 最小调度事务 & 64 & 验证小容量拒绝与失败原子性\\ \hline
-functional QEMU & 256 & 完整 Shell、文件、管道与 v1.4 用户证明\\ \hline
+functional QEMU & 256 & 运行 Shell、文件、管道与用户态 fd 测试\\ \hline
 capacity QEMU & 4096 & 在 64 GiB 主规格上证明表结构不被教学小值锁死\\ \hline
 \end{osgridlongtable}
 
-4096 是当前冻结的 v1.x 能力上限，不是假装已经复制 Linux 的任意动态上限。
+4096 是当前实现的能力上限，不表示已经复制 Linux 的动态上限。
 数据结构、计数、参数和系统调用均使用 64 位固定宽度类型，未来提高上限无需
 改变 ABI；真正提高前仍要重新评估 heap、每进程内存预算与遍历成本。
 
 \topic{soft limit 与 hard limit 的不同职责}
-hard limit 在 FileTable 初始化时冻结，且不能超过 4096。soft limit 可由
+hard limit 在 FileTable 初始化时确定，且不能超过 4096。soft limit 可由
 当前进程调整，但必须满足：
 
 \[
@@ -343,7 +343,7 @@ descriptor 与 chunk 归零。若任一 finalizer 失败，销毁返回失败并
 但不会故意保留已失去所有者的表内存。
 
 \topic{锁顺序与目前的并发边界}
-v1.4 的主要锁层次为：
+当前主要锁层次为：
 
 \[
   \text{FileTable lock}
@@ -356,9 +356,9 @@ Pipe 或 FileSystem。最后析构也在对象管理器和表锁之外进入下�
 独立短临界区，不在每个读写字节打印日志。
 
 当前内核仍是单 BSP，但 PIT IRQ 可在系统调用期间到达，调度也可在返回前
-切换 Thread。锁因此不是装饰：它们冻结抢占边界下的对象状态，并为 v2 多核
-路线写下可审计的顺序。另一方面，本阶段没有宣称实现跨核 RCU、无锁 fd 查找
-或远端 close；这些需要 AP、IPI 与内存回收协议共同验收。
+切换 Thread。取得 FileTable 锁以后先完成表项替换，释放它以后才可能进入
+对象 finalizer，这个顺序避免两把锁互相等待。当前没有跨核 RCU、无锁 fd
+查找或远端 close；这些能力还需要 AP、IPI 与内存回收协议。
 
 \topic{既有 I/O 如何无旁路迁移}
 迁移后的通用路径统一为：
@@ -388,8 +388,8 @@ PipeWriter & 拒绝 & Pipe TryWrite、背压与 broken pipe\\ \hline
 内核读取函数。这样历史 QEMU 路径与新能力同时检验迁移是否完整。
 
 \section{从系统调用到整机测试}
-v1.3 已冻结原生 \code{SYSCALL} 与 \code{INT 0x80} 共用的
-\code{UserContext}，v1.4 只在分发层增加操作：
+原生 \code{SYSCALL} 与 \code{INT 0x80} 已经共用
+\code{UserContext}，fd 操作只在分发层增加：
 
 \begin{osgridlongtable}{L{0.10\textwidth}L{0.31\textwidth}L{0.35\textwidth}L{0.12\textwidth}}
 编号 & 名称 & 参数 & 成功结果\\ \hline
@@ -423,7 +423,7 @@ RAX 在进入前保存系统调用号，返回时保存 64 位结果。负数沿
 \end{enumerate}
 
 没有增加新的寄存器，也没有改变汇编帧偏移。硬件特权转换与对象操作已经在
-UserContext 边界分开，因此 v1.4 只需修改 C++ dispatcher 和文件表。
+UserContext 边界分开，因此这里只需修改 C++ dispatcher 和文件表。
 若新增一个 fd 操作就必须修改 SWAPGS 或返回帧，说明 ABI 层次没有真正稳定。
 
 \topic{PID 4 的整机语义证明}
@@ -449,13 +449,13 @@ UserContext 边界分开，因此 v1.4 只需修改 C++ dispatcher 和文件表�
 
 载荷是 8 字节；整个 PID 4 文件描述模型累计读取 9 字节、写入 8 字节。
 历史 Shell、管道和文件系统仍执行自己的路径，因此最终管理器统计会包含更多
-对象与字节，验收不把某次局部事务误当成全系统总量。
+对象与字节，检查脚本不会把某次局部事务误当成全系统总量。
 
 \topic{统计为何在阶段结束时集中打印}
 fd 查找、字符读写和引用增减都是热路径。逐次串口输出会改变 PIT 调度时序，
-淹没真正异常，还可能让 QEMU 超时。v1.4 只在阶段边界打印汇总：
+淹没真正异常，还可能让 QEMU 超时。内核只在这组操作结束后打印汇总：
 
-\begin{lstlisting}[caption={v1.4 functional 运行的代表性对象证据}]
+\begin{lstlisting}[caption={functional 运行的一次对象统计}]
 [OS][KERNEL] OBJECT_ACTIVE_COUNT=0x0000000000000000
 [OS][KERNEL] OBJECT_ACTIVE_REFERENCES=0x0000000000000000
 [OS][KERNEL] OBJECT_CREATIONS=0x0000000000000017
@@ -474,7 +474,7 @@ fd 查找、字符读写和引用增减都是热路径。逐次串口输出会�
 \code{MONOTONIC\_MILLISECONDS} 与调度 tick，给来宾内部时间提供可比较
 坐标；宿主运行器另记录整体阶段耗时和有界超时。创建等于析构、分块申请等于
 释放、活动对象与强引用为零、finalization failure 为零，四者联合证明生命
-周期闭环；只检查 \code{READY} 无法排除泄漏。
+周期；只检查 \code{READY} 无法排除泄漏。
 
 \topic{四层测试怎样互补}\par
 \begin{osgridlongtable}{L{0.25\textwidth}L{0.28\textwidth}L{0.35\textwidth}}
@@ -557,19 +557,19 @@ KernelObject，向上进入 ProcessRuntime 与系统调用。最后阅读 PID 4 
 解析器，检查模型承诺是否真的穿过硬件入口到达整机证据。
 
 \topic{当前实现范围}
-v1.4 没有 Vnode、Path、Mount、memfs 或新磁盘格式；legacy-fs handle 仍直接
+当前还没有 Vnode、Path、Mount、memfs 或新磁盘格式；legacy-fs handle 仍直接
 存在于 FileDescription。没有 fork，因此还没有跨 Process 继承表；没有完整
-exec，因此 close-on-exec 只在对象层验收。没有 seek、append、非阻塞 flag
+exec，因此 close-on-exec 只在对象层测试。没有 seek、append、非阻塞 flag
 或 advisory lock。对象类型当前只有 FileDescription，通用 manager 的目的
-是冻结生命周期协议，不是提前制造庞大类层次。
+是让最后一次释放有确定路径，不是提前制造庞大类层次。
 
-FileTable 的空 chunk 只在 Destroy 时释放；4096 hard limit 是 v1.x 规格，
+FileTable 的空 chunk 只在 Destroy 时释放；4096 是当前 hard limit，
 不是 Linux 兼容声明。KernelObject finalizer 仍是同步调用，也没有弱引用、
-循环引用检测、RCU 延迟释放或多核缓存。把这些边界明确写出，才能让 v1.5
+循环引用检测、RCU 延迟释放或多核缓存。把这些边界写出，下一章才能
 聚焦 VFS，而不是把尚未实现的能力藏在“类似 Linux”的模糊表述中。
 
-v1.4 的完成不是“fd 从 8 个增加到 4096 个”。完整结论是：进程局部名字与
-共享打开实例已经分离；地址复用由 generation 防护；强引用从创建、安装、
-查找、复制、关闭到最终析构具有单一所有权链；descriptor flags 与 file
-status flags 位于正确层次；容量、随机、双系统调用入口和 QEMU 最终统计都能
-重复证明失败原子性与零泄漏。
+运行 fd 测试后，进程局部名字与共享打开实例应当仍然分离：复制 fd 会共享
+offset，两次独立 open 不共享 offset，close-on-exec 只改变一个表项。地址
+复用由 generation 检出，最后一个强引用触发一次 finalizer。容量与随机测试
+还要在每次失败后检查原表项、引用数和已分配 chunk 没有变化，并在销毁后回到
+零。

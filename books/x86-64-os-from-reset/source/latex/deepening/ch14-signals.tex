@@ -52,7 +52,7 @@ mask & Thread & 一个执行流的临界区不应屏蔽全部兄弟\\ \hline
 Thread pending & Thread & 普通信号已经完成唯一接收者选择\\ \hline
 active frame & Thread & sigreturn 只能恢复本 Thread 的寄存器与栈\\ \hline
 \end{osgridtabularx}
-\caption{v1.14 信号状态的所有权分层}
+\caption{信号状态分别保存在哪个对象中}
 \end{table}
 
 若 action 存在 Thread 中，新建 Thread 可能看到不同程序行为；若 mask 存在
@@ -91,7 +91,7 @@ mask 时强制清除对应 bit，并在 action 校验时拒绝非 Default；用�
 additional mask 与 flags：
 
 \begin{itemize}
-  \item \textbf{Default}：Child 当前默认忽略；其他已冻结信号终止 Process，
+  \item \textbf{Default}：Child 当前默认忽略；其他已定义信号终止 Process，
         退出原因记录为 Signal 并保存信号号；
   \item \textbf{Ignore}：消费 pending，不触碰用户栈，也不唤醒无关 Thread；
   \item \textbf{Handler}：构造用户 frame，把当前信号和 additional mask
@@ -100,7 +100,7 @@ additional mask 与 flags：
 
 handler 运行期间同一普通信号再次发送会保持 pending，因为本信号已自动
 屏蔽。sigreturn 恢复旧 mask 后，下一次用户返回边界才可再投递。这阻止同一
-信号无限递归堆叠；未来若支持 \code{nodefer}，必须新增冻结的 action flag，
+信号无限递归堆叠；未来若支持 \code{nodefer}，必须新增明确的 action flag，
 不能偷偷改变现有行为。
 
 \topic{进程组不是进程树的另一种写法}
@@ -112,11 +112,11 @@ handler 运行期间同一普通信号再次发送会保持 pending，因为本�
 整机 probe 必须先调用 \code{SetProcessGroup(0)} 建立独立组，再把 User2
 设为 Ignore 并执行组发送。若 probe 留在 PID1 继承组，init 同样收到 User2
 默认动作而终止；这不是随机投递故障，而是测试没有隔离广播身份。后续 TTY
-将用前台进程组产生 Ctrl-C，但 v1.14 只有身份和组发送，还没有 session、
+将用前台进程组产生 Ctrl-C，但这里先只有身份和组发送，还没有 session、
 控制终端或前后台作业。
 
 \topic{signal 怎样加入单赢家唤醒}
-v1.13 已让 Blocked Thread 同时关联业务 WaitQueue 与 deadline。v1.14 不建立
+Blocked Thread 已能同时关联业务 WaitQueue 与 deadline。信号路径不建立
 绕过调度器的“信号就绪链”，而把 Signal 加入同一个完成竞争：
 
 \begin{pdfdiagram}[node distance=12mm and 18mm]
@@ -228,8 +228,8 @@ sigreturn 不会各自演化出不同的 RFLAGS 漏洞。
 
 \topic{主栈按需扩展与用户 Thread 栈边界}
 主用户栈保留 8 MiB VMA，启动只提交参数真正占用的高端页面。SignalFrame 位于
-当前 RSP 下方，可能跨入紧邻未提交页。v1.14 的
-\code{PrepareUserStackRange} 验证 frame 与当前 RSP 均在冻结主栈窗口，然后
+当前 RSP 下方，可能跨入紧邻未提交页。
+\code{PrepareUserStackRange} 验证 frame 与当前 RSP 均在主栈窗口，然后
 只逐页提交紧邻 committed bottom 的页面，并复用用户写 not-present fault 的
 VMA、权限和 64 KiB 邻近约束。
 
@@ -260,7 +260,7 @@ frame 全部写入后才提交 active 登记。sigreturn 要求用户参数和�
 \topic{sigreturn 是特权返回验证器}
 用户可以修改 frame 中的 RIP、RSP、RFLAGS 和段选择子。Kernel 若只
 \code{CopyFromUser} 后直接 IRETQ，攻击者就能尝试返回 Kernel 高半地址、
-不可执行页、错误段或危险 flags。v1.14 依次验证：
+不可执行页、错误段或危险 flags。返回路径依次验证：
 
 \begin{enumerate}
   \item 当前 Thread 存在活动 frame；
@@ -291,7 +291,7 @@ mask；pending 与 active frame 不复制。否则父进程尚未处理的事件
 新程序不知道旧 handler 地址，所以 Handler 重置为 Default，Ignore 保留。
 Process pending 与 survivor pending 是已经发生的异步事实，和 survivor mask
 一同保留；活动 frame 和被删除兄弟 Thread 的状态清空。早期实现曾错误清空
-pending，v1.15 的 TTY 整机测试在 Ctrl-Z 落入 fork/exec 窗口时抓到信号丢失，
+pending。TTY 整机测试曾让 Ctrl-Z 落入 fork/exec 窗口，由此抓到信号丢失；
 由此修正。PID、父子关系与进程组没有变化，因为 exec 替换程序映像而非
 Process 身份。
 
@@ -302,7 +302,7 @@ ThreadExit 移除对应信号状态；仍可交付的 Process pending 重新选�
 两类 active count 都为零。
 
 \topic{固定 ABI、错误和值宽}
-v1.14 在 0--56 号调用后增加：
+系统调用表在 0--56 号之后增加：
 
 \begin{table}[htbp]
 \centering
@@ -317,15 +317,15 @@ v1.14 在 0--56 号调用后增加：
 \code{GetProcessGroup} & 62 & 读取 Process 组号\\ \hline
 \code{SetProcessGroup} & 63 & 设置本 Process 组号\\ \hline
 \end{osgridtabularx}
-\caption{v1.14 固定宽度系统调用增量}
+\caption{信号相关的固定宽度系统调用}
 \end{table}
 
 \code{Interrupted=-52}、\code{ProcessNotFound=-53} 与
 \code{SignalStateInvalid=-54} 使用显式固定宽度枚举；action、context 与
-frame 大小分别冻结为 40、176 与 240 字节。ABI 不包含平台相关的
+frame 大小分别规定为 40、176 与 240 字节。ABI 不包含平台相关的
 \code{long}、\code{size\_t} 或 Kernel 指针。
 
-\topic{四层测试与真实机器证据}
+\topic{分别触发发送、递送、屏蔽和返回}
 下面四层证据从局部状态机一路连接到真实用户程序；前一层负责扩大状态空间，
 后一层负责确认真实硬件边界，任何一层都不能代替其余层。
 

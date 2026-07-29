@@ -1,4 +1,4 @@
-\topic{PCB 不是把原理图导线画成铜线}
+\section{原理图网络怎样变成 PCB 铜线}
 原理图表达理想网络关系；PCB 决定真实电流路径、寄生参数、热、机械和制造。
 典型多层板可能包括元件层、连续参考平面、电源层和底层布线。每个信号都有
 去程和回程；回流通常选择最小阻抗路径，而不总是人凭直流电阻想象的最短几何
@@ -79,7 +79,7 @@ V_{\mathrm{diff}}=V_P-V_N,
 \end{center}
 \diagramnote{图中位置代表 PCB 物理邻近关系；与只画网络连接的原理图不同。}
 
-\topic{从网络表到一颗 SPI Flash 的完整连接检查}
+\section{从网络表检查一颗 SPI Flash}
 以 8-pin SPI NOR 为例，真正可启动不只需要四根 SPI 信号：
 
 \begin{osgridlongtable}{L{0.16\linewidth}L{0.25\linewidth}L{0.31\linewidth}L{0.18\linewidth}}
@@ -123,7 +123,7 @@ HOLD\_N/IO3 & 上拉或 quad 数据 & 不能悬空、配置一致 & 传输被意
 \end{circuitikz}
 \end{center}
 
-\topic{安全上电：限流、温升和 ESD 先于功能测试}
+\section{安全上电与故障定位}
 首次上电应把可恢复故障限制在小能量范围。一个可重复流程：
 
 \begin{enumerate}[leftmargin=2.2em]

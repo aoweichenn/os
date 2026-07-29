@@ -1,13 +1,13 @@
 \section{第一次访问匿名 VMA 时发生什么}
 
 页表只能回答“处理器此刻怎样翻译这个地址”，不能回答“一个尚未驻留的地址
-为什么有权在未来出现”。v1.8 用 VMA 保存区间意图、来源和软件权限，用 PTE
+为什么有权在未来出现”。VMA 保存区间意图、来源和软件权限，PTE
 保存当前驻留事实；再让 x86-64 页故障把真实用户访问转换成一次有边界、可
 回滚的物理页提交。匿名映射、program break、受控用户栈和 Ring 3 用户堆由此
 第一次形成完整生命周期。
 
 \topic{上一阶段留下的虚拟内存缺口}
-v1.7 已经能够从 rootfs 读取 ELF，建立候选地址空间，构造
+前面的 exec 已经能够从 rootfs 读取 ELF，建立候选地址空间，构造
 \code{argc/argv/envp}，再由 PID1 组织 \code{spawn/exec/wait}。但每个合法
 用户页都必须在进入 Ring 3 前存在：
 
@@ -50,7 +50,7 @@ v1.7 已经能够从 rootfs 读取 ELF，建立候选地址空间，构造
   \item 文件页、COW 和零页都需要同一条 fault 解析入口。
 \end{enumerate}
 
-v1.8 同时保留 brk 与匿名 mmap，目的不是一次复制完整 POSIX，而是先冻结
+这里同时保留 brk 与匿名 mmap，先明确
 连续区间和独立区间两种所有权。
 
 \topic{x86-64 页故障提供的硬件事实}
@@ -65,7 +65,7 @@ CPU 都会：
   \item 压入返回现场并提供 page-fault error code。
 \end{enumerate}
 
-v1.8 使用的 error-code 位如下：
+页故障处理使用的 error-code 位如下：
 
 \begin{osgridlongtable}{L{0.08\textwidth}L{0.12\textwidth}L{0.31\textwidth}L{0.31\textwidth}}
 位 & 名称 & 为零 & 为一\\ \hline
@@ -116,8 +116,8 @@ not-present，也必须视为越界。
 \diagramnote{VMA 和硬件 fault 事实共同决定策略；页表与物理页是成功策略的
 提交结果，不能反过来替代 VMA。}
 
-\topic{冻结的用户虚拟地址几何}
-v1.8 使用可审计的固定窗口：
+\topic{用户虚拟地址窗口怎样划分}
+当前使用以下固定窗口：
 
 \begin{osgridlongtable}{L{0.25\textwidth}L{0.31\textwidth}L{0.32\textwidth}}
 区域 & 范围或上限 & 语义\\ \hline
@@ -128,8 +128,8 @@ ELF 与 brk & 最高不越过 \code{0x60000000} & ELF eager，break 从最高段
 用户 heap & 最大 8 MiB & UserHeap 自行施加的运行时边界\\ \hline
 \end{osgridlongtable}
 
-这个匿名窗口不等于处理器全部用户地址能力。CPU profile 仍冻结 48 位虚拟
-地址；窄窗口只是 v1.8 的公开策略，使重叠、first-gap、容量耗尽和边界溢出
+这个匿名窗口不等于处理器全部用户地址能力。CPU profile 要求 48 位虚拟
+地址；窄窗口是当前分配策略，使重叠、first-gap、容量耗尽和边界溢出
 可以被完整测试。
 
 \topic{描述符池为什么独立于每个 map}
@@ -235,7 +235,7 @@ R10 = argument 3
 \end{lstlisting}
 
 fixed mapping 不是破坏性 Linux \code{MAP\_FIXED}：它只在指定页对齐空洞
-成功，重叠返回 \code{AddressInUse}。这避免 v1.8 同时承担跨 kind 替换事务。
+成功，重叠返回 \code{AddressInUse}。当前不承担跨 kind 替换事务。
 
 权限只接受 NONE、R、R|W 与 R|X。W 或 X 缺少 R、W|X 和未知位都拒绝；
 VMA 软件权限随后成为 PTE RW/NX 的唯一策略来源。
@@ -432,10 +432,10 @@ Kernel 只在每 Process 累计值达到二次幂时输出：
 \end{lstlisting}
 
 不同 Process 的计数各自从一开始，整机可以出现多行同值。宿主 runner 因此
-检查“至少出现且数值非零”，不冻结精确 multiplicity。最终再一次输出池容量、
+检查“至少出现且数值非零”，不要求精确 multiplicity。最终再一次输出池容量、
 active、peak、acquire 和 release。
 
-\topic{六层证据如何互补}\par
+\topic{分别在 VMA、PTE、随机模型和 QEMU 中检查什么}\par
 \begin{osgridlongtable}{L{0.17\textwidth}L{0.71\textwidth}}
 层次 & 直接证明\\ \hline
 VMA 单元 & 排序、重叠、三类合并、trim/split、kind guard、first-gap、耗尽失败原子性\\ \hline
@@ -469,7 +469,7 @@ RIP/RSP、命中 VMA、分配 frame 和 resident 前后值。继续执行后原 
 重试成功，而不是跳到人工恢复点。
 
 \topic{阶段边界为何仍然重要}
-v1.8 没有实现：
+当前没有实现：
 
 \begin{itemize}
   \item file-backed VMA、按需 ELF 或 clean page cache；
@@ -481,10 +481,10 @@ v1.8 没有实现：
 
 文件页需要 \code{(Vnode,page index)} 身份、尾页清零、缓存共享和
 truncate/write 失效；COW 又需要 VMA 权限、PTE COW 状态和物理页引用共同
-成立。因此 v1.9 先在本阶段 fault 边界上加入文件来源，v1.10 再加入 fork/COW。
+成立。因此下一章先在 fault 边界上加入文件来源，再加入 fork/COW。
 
 \topic{本阶段完成判定}
-一次用户页故障后继续运行只覆盖了正常路径。v1.8 还要同时满足：
+一次用户页故障后继续运行只覆盖了正常路径。测试还要同时满足：
 
 \begin{enumerate}
   \item VMA 图与描述符池在所有操作后通过 Validate；

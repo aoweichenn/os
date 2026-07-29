@@ -30,7 +30,7 @@ EOI，控制器可能不再交付同优先级 IRQ。顺序来自控制器触发�
 为了让旧 PIC 与新 APIC 共存，PC 固件通常建立 virtual wire mode，把 PIC
 输出作为本地 APIC 的 ExtINT 输入。这里的关键词是“固件通常”：它不是
 x86 指令集自动完成的复位承诺。本项目没有 SeaBIOS/OVMF，自研 ROM 尚未配置
-LAPIC LVT，因此 v0.7 由内核显式建立 virtual wire。内存管理器先从当前
+LAPIC LVT，因此内核显式建立 virtual wire。内存管理器先从当前
 xAPIC 实现使用的 \code{IA32\_APIC\_BASE[35:12]} 取得 4 KiB MMIO 基址，
 把该页做 supervisor RW/NX/PCD 身份映射；PCD 禁止把带副作用的设备寄存器
 当作普通缓存内存。
@@ -73,7 +73,7 @@ LVT LINT0 后，PIC 输出稳定地经 ExtINT 交付。这说明跨芯片拓扑�
   \node[os block,below=of model] (drivers) {PIC/PIT/PS2/ATA\\寄存器所有权};
   \node[os state,below=of drivers] (runtime) {interrupt\_runtime\\组合与共享状态};
   \node[os block,right=of runtime] (assembly) {architecture.asm\\IRQ 帧 ABI};
-  \node[os state,below=of runtime] (main) {kernel\_main\\有界日志与验收};
+  \node[os state,below=of runtime] (main) {kernel\_main\\有界日志与检查};
   \draw[os arrow] (model) -- (drivers);
   \draw[os arrow] (io) -- (drivers);
   \draw[os arrow] (drivers) -- (runtime);
@@ -141,7 +141,7 @@ PIC 初始化后先把主从 IMR 都写成 \code{0xFF}。PIT、键盘与 ATA 自
 
 \topic{软件虚假 IRQ 自检覆盖最难自然复现的分支}
 IRQ7/IRQ15 的虚假条件来自请求在 CPU 确认前撤销，自动化测试很难稳定控制这个
-模拟时序。v0.7 在 IF 开放前执行 \code{INT 0x27}：软件中断进入同一 IDT
+模拟时序。内核在 IF 开放前执行 \code{INT 0x27}：软件中断进入同一 IDT
 gate 和硬件公共桩，但 PIC ISR bit 7 并未置位，所以分发器稳定走虚假 IRQ7
 分支并且不发 EOI。统计必须恰好增加一次。
 
@@ -182,7 +182,7 @@ volatile 表达中断可见存储，并用“读取 RFLAGS、CLI、复制、按�
 形成一致快照。
 
 恢复函数不能无条件 STI。调用者可能本来就在 IF=0 的初始化或中断上下文，
-无条件开启会扩大可重入区域。v0.7 的 \code{DisableInterrupts} 返回旧 IF，
+无条件开启会扩大可重入区域。\code{DisableInterrupts} 返回旧 IF，
 \code{RestoreInterrupts} 只在旧状态为一时 STI。进入多核后，这只保护本地
 IRQ，不保护另一颗 CPU；届时还需锁或原子顺序。
 
@@ -214,9 +214,9 @@ bit 1 清零，读之前等待 bit 0 置位，所有循环上限为命名常量�
 支持 Escape、Backspace、Enter、Space、A 与方向键，未知码返回强状态而不
 伪造 Unknown 按键。后续加入修饰键和布局时，硬件位置事件仍保持稳定。
 
-\topic{内核 ATA 自检建立设备所有权而不伪装异步块层}
+\topic{第一次 ATA 读取为什么仍然使用轮询}
 固件和 Stage 1 已有 ATA PIO，但内核不能调用它们的私有例程或依赖遗留寄存器
-状态。v0.7 的 C++ 驱动独立选择 primary master LBA28，向 device control
+状态。C++ 驱动独立选择 primary master LBA28，向 device control
 写 \code{nIEN}，等待 BSY 清除，选择设备后读取 alternate status 四次满足
 约 400 ns 延时，再写 sector count、LBA 三字节和 \code{READ SECTORS=0x20}。
 
@@ -244,7 +244,7 @@ Unix socket，等串口出现 \code{READY} 后协商 capabilities，并执行
 这些中间状态都不会被证明。QMP 与真人按键的差异只在可重复性，不在来宾
 硬件边界。
 
-捕获生命周期不能把某一台宿主机的速度写成来宾契约。最初固定等待两秒再验收，
+捕获生命周期不能把某一台宿主机的速度写成来宾条件。最初固定等待两秒再检查，
 远端 QEMU 曾在 \code{INTERRUPTS\_ENABLED} 后结束进程。把上界增至五秒后
 停顿位置完全不变，这反证了“只是 runner 较慢”的假设，并把问题收窄到 PIC
 与 CPU 之间的路由。当前捕获器观察每个用例最后一个必需里程碑：到达后短暂
@@ -265,7 +265,7 @@ IRQ0 以 1000 Hz 到达，若每次都经 115200 波特串口打印，日志本�
 管道延迟；来宾毫秒来自 PIT 除数与 IRQ 计数。二者起点与用途不同，不能让
 宿主时间冒充操作系统时钟，也不能用来宾启动后 tick 追溯尚未计数的复位阶段。
 
-\topic{四层证据把异步偶然性变成可回归契约}\par
+\topic{怎样分别检查端口、IRQ、用户态和超时}\par
 \begin{osgridlongtable}{L{0.18\textwidth}L{0.28\textwidth}L{0.42\textwidth}}
 层次 & 代表检查 & 排除的错误\\ \hline
 单元 & PIC/PIT/扫描码/ATA 纯模型 &
@@ -330,7 +330,7 @@ CS=\code{0x08} 的 RPL 为零，用户 CS=\code{0x23} 的 RPL 为三。修改一
 C++ 布尔量不能改变 CPL，只有合法控制转移让处理器装入 DPL3 的 CS 后，
 硬件才真正按 Ring 3 约束取指和访问。
 
-v0.8 的七槽 GDT 结构如下：
+进入用户态时使用的七槽 GDT 结构如下：
 
 \begin{osgridlongtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.28\textwidth}L{0.33\textwidth}}
 槽 & 选择子 & 类型 & 关键属性\\ \hline
@@ -355,7 +355,7 @@ v0.8 的七槽 GDT 结构如下：
 目标内核仍必须把它当作不可信输入重新解析。
 
 ELF program header 描述运行时装载，section header 主要服务链接和调试。
-v0.8 只接受最多八个 \code{PT\_LOAD}，对每个 64 位字段执行以下检查：
+装载器只接受最多八个 \code{PT\_LOAD}，对每个 64 位字段执行以下检查：
 
 \begin{enumerate}
   \item ELF magic、64 位 class、小端编码、AMD64 machine 与当前 version
@@ -380,7 +380,7 @@ ELF 是一种文件契约，不是信任证明。偏移、长度、地址和权�
 
 \topic{用户页权限要在四级路径上同时成立}
 x86-64 的 U/S 与 RW 权限沿 PML4E、PDPTE、PDE、PTE 路径合并。叶项
-U/S=1 而上级任一项 U/S=0，用户访问仍会故障。v0.8 的页表管理器在建立用户
+U/S=1 而上级任一项 U/S=0，用户访问仍会故障。页表管理器在建立用户
 映射时向所有中间项传播 user 位；既有内核叶项仍是 supervisor，因此中间项
 开放不会自动把内核页暴露给 Ring 3。
 
@@ -435,7 +435,7 @@ TSS 取 RSP0，随后在该内核栈保存用户 SS、RSP、RFLAGS、CS 与 RIP�
 从同一顶端向下压入硬件帧和 15 个通用寄存器，恰好破坏未来需要恢复的调用链。
 故障可能随编译布局、日志长度或寄存器保存量变化，看起来像随机返回地址损坏。
 
-v0.8 为 RSP0 分配独立 16 KiB 特权转换栈，底端另有 4 KiB not-present
+内核为 RSP0 分配独立 16 KiB 特权转换栈，底端另有 4 KiB not-present
 guard。进入用户态前的内核 RSP 保存在内核 BSS。普通系统调用在转换栈上
 \code{IRETQ} 回用户；exit 或用户异常则丢弃整条转换栈，把 RSP 恢复为先前
 值，从 \code{ExecuteUserProgram} 的调用点继续。
@@ -460,7 +460,7 @@ LSTAR 与 FMASK。\code{SYSCALL} 不自动读取 TSS.RSP0，软件必须先保�
 RSP 并取得当前线程内核栈；RCX/R11 还具有特殊破坏语义，\code{SYSRET} 对
 非规范返回地址尤其敏感。
 
-v0.8 已经拥有真实验证的 IDT、统一寄存器帧与 TSS，所以把 IDT
+此时内核已经拥有经过测试的 IDT、统一寄存器帧与 TSS，所以把 IDT
 \code{0x80} 安装成 present、DPL3 的 interrupt gate。DPL3 只允许用户显式
 \code{INT 0x80}，不会放宽其他内核向量。硬件自动换栈和压五项返回状态，
 入口机制更适合逐字段审计。
@@ -497,7 +497,7 @@ RAX 保存调用号与返回值，RDI/RSI 保存前两个参数。所有协议�
 
 \topic{用户内存复制从 64 位区间证明开始}
 用户提供的地址不是 C++ 指针承诺。首地址可能在用户范围，而长度使末端回绕；
-缓冲也可能跨越 user 页和 supervisor/not-present 页。v0.8 的
+缓冲也可能跨越 user 页和 supervisor/not-present 页。
 \code{CopyFromUser} 顺序为：
 
 \begin{enumerate}
@@ -512,7 +512,7 @@ RAX 保存调用号与返回值，RDI/RSI 保存前两个参数。所有协议�
 \code{WriteLog} 把最大长度固定为 160 字节，先复制再访问串口，不用
 \code{strlen} 扫描不可信、可能没有 NUL 的用户地址。空写、超长、未映射
 内存、未知编号和设备失败各有稳定负错误码。当前只有单个同步用户执行，没有
-另一线程并发解除映射，所以检查与复制之间不存在 v0.8 可触发的 TOCTOU；
+另一线程并发解除映射，所以当前检查与复制之间不存在可触发的 TOCTOU；
 调度阶段必须引入地址空间锁、页固定或可恢复 fault 的复制原语。
 
 \topic{用户异常与内核异常共享向量而不共享命运}
@@ -528,7 +528,7 @@ RAX 保存调用号与返回值，RDI/RSI 保存前两个参数。所有协议�
   \mathrm{P}=0,\qquad \mathrm{W/R}=0,\qquad \mathrm{U/S}=1.
 \]
 
-它表示“用户读 not-present”，与 v0.6 的 \code{0x3}
+它表示“用户读 not-present”，与内核早期自检使用的 \code{0x3}
 “supervisor 写 present 只读页”形成鲜明对照。两者虽然都是向量 14，却证明
 不同特权、访问类型和页表状态。
 
@@ -577,9 +577,9 @@ READY & 内核 EXCEPTION/PANIC\\ \hline
 阻塞/唤醒和管道测试加入后，这些早期启动路径仍作为回归保留。
 
 \topic{单一用户程序怎样演化为调度运行时}
-v0.8 只有一个同步用户执行单元，全局保存一个原内核 RSP，所有用户页位于
+初次进入用户态时只有一个同步执行单元，全局保存一个原内核 RSP，所有用户页位于
 当前内核页表根。用户结束后页面不回收，也没有 PID、进程状态或上下文切换。
-v0.9 已把这些限制逐项转化为明确的所有权：
+加入多进程以后，这些限制分别落到具体对象：
 
 \begin{itemize}
   \item 每进程独立 PML4 和退出时递归回收的用户页；
@@ -593,6 +593,6 @@ v0.9 已把这些限制逐项转化为明确的所有权：
 “调度生命周期错误”分开定位。阶段拆分的价值正在于每次只增加一组可证伪
 不变量。
 
-下一章沿这份清单逐项落实 v0.9：独立 PML4、每进程 Ring 0 栈、PIT
+下一章沿这份清单加入独立 PML4、每进程 Ring 0 栈、PIT
 round-robin、CR3/TSS.RSP0 切换和递归页回收都已有真实 QEMU 证据；Blocked、
 Zombie 与 wait 仍保留为后续同步阶段的明确边界。

@@ -2,11 +2,11 @@
 
 文件系统不是“把一个 C++ 对象写进文件”。它要把断电后仍有意义的名字、
 对象身份、逻辑长度、块所有权和提交状态编码到扇区中，再让另一个全新启动
-实例能够独立证明这些事实。v1.6 用 256 MiB rootfs、三级间接树、稀疏文件、
+实例能够独立检查这些事实。rootfs v2 使用 256 MiB 容量、三级间接树、稀疏文件、
 完整命名空间修改和只读 fsck，把这条链从 Ring 3 一直闭合到 ATA LBA。
 
 \topic{为什么先分离 VFS，随后才替换根格式}
-v1.5 已经把路径遍历、挂载、每 Process 的 root/cwd、一次打开和底层后端
+VFS 已经把路径遍历、挂载、每 Process 的 root/cwd、一次打开和底层后端
 分开。如果跳过这一步直接扩展旧文件系统，任意失败都可能同时来自三类原因：
 
 \begin{itemize}
@@ -24,7 +24,7 @@ v1.5 已经把路径遍历、挂载、每 Process 的 root/cwd、一次打开和
 inode 只有十个直接块，单文件最多 5120 字节，名称最多 40 字节，并且没有
 unlink、rename、非零 truncate 或 stat。这个闭环适合第一次理解持久化，
 却不足以保存后续 \filepath{/sbin/init}、\filepath{/bin/sh} 和多个用户
-ELF。v1.6 因此创建新 magic 和新版本，绝不让同一个 magic 在新旧内核中
+ELF。因此新盘面使用新的 magic 和格式版本，不让同一个 magic 在新旧内核中
 具有两种含义。
 
 \topic{历史因果链：从连续分配到 inode 块树}
@@ -45,7 +45,7 @@ ELF。v1.6 因此创建新 magic 和新版本，绝不让同一个 magic 在新�
 
 经典 Unix inode 把少量指针直接放在 inode 中，再提供 single、double、
 triple indirect。小文件只付直接项成本，大文件按需增加索引层。ext2 等格式
-沿用过这套模型；现代 ext4、XFS 常用 extent 描述连续范围。v1.6 选择块树，
+沿用过这套模型；现代 ext4、XFS 常用 extent 描述连续范围。这里选择块树，
 不是声称它比 extent 更新，而是因为每个逻辑块、每个元数据块和每次回收都能
 画成一棵确定所有权树，适合作为 extent 与 page cache 之前的学习基础。
 
@@ -89,7 +89,7 @@ QEMU IDE 控制器向来宾提供完整 LBA 空间；来宾看不见宿主是否
   \item 来宾稀疏文件减少 rootfs data block 占用。
 \end{itemize}
 
-派生故障镜像和持久化临时盘不能用一个只复制已知前缀的旧工具。v1.6 的稀疏
+派生故障镜像和持久化临时盘不能用一个只复制已知前缀的旧工具。稀疏
 复制先建立精确逻辑长度，再复制非零 extent，并测试靠近 1 GiB 尾部的
 非零内容；\code{pwrite} 还要循环处理短写。否则“看起来很快的复制”可能
 悄悄截掉未来分区或把全部 hole 物化。
@@ -122,7 +122,7 @@ QEMU IDE 控制器向来宾提供完整 LBA 空间；来宾看不见宿主是否
 \end{pdfdiagram}
 \diagramnote{图中块号从 rootfs 起点重新计数；真正 ATA LBA 还要统一加 32768。}
 
-superblock 会把每段位置和数量写盘，但 Kernel 仍要求它们精确等于冻结布局。
+superblock 会把每段位置和数量写盘，但 Kernel 仍要求它们精确等于当前布局。
 “自描述”让 inspector 能解释镜像、迁移器能识别版本；“严格匹配”则防止一项
 损坏字段把 inode table 指向启动链、data 区或盘外。
 
@@ -142,7 +142,7 @@ device.WriteBlock(reinterpret_cast<const uint8_t*>(&inode));
 
 \begin{enumerate}
   \item 清零完整 512、320 或 256 字节输出；
-  \item 逐字段按冻结 offset 写小端整数；
+  \item 逐字段按规定 offset 写小端整数；
   \item 名称只复制精确长度，其余存储保持零；
   \item 对规定前缀计算 CRC32；
   \item 最后写 checksum 字段。
@@ -212,7 +212,7 @@ triple & \(P^3\) &
   8+63+63^2+63^3=254087.
 \]
 
-乘以 512 后大于 64 MiB；公开上限仍冻结为
+乘以 512 后大于 64 MiB；当前单文件上限为
 \(67108864=2^{26}\) 字节。内部结构的理论余量不自动成为稳定规格，所有
 \code{offset + length}、乘法与索引换算都先检查 64 位溢出和公开上限。
 
@@ -299,7 +299,7 @@ hole 读取不能直接复用“未初始化局部缓冲”。刚释放的数据
 第二块仍保留，但 offset 513..1023 必须清零；未来扩到 700 时这些字节应为
 零，而不是上一次内容。
 
-\topic{bitmap 与全盘所有权守恒}
+\topic{bitmap 怎样与 inode 引用逐位对照}
 inode bitmap 回答“哪个 inode 槽被分配”，data bitmap 回答“哪个 data 区
 块被某个文件数据或 pointer block 拥有”。单看 bitmap 不能知道所有者，
 所以 Validate 从根重新推导事实。
@@ -359,7 +359,7 @@ close(fd)            // last open reference may reclaim inode
 这要求 link count 为零但仍打开的 inode 进入 orphan 状态。若此时掉电，启动
 恢复还必须找到并回收 orphan；日志文件系统通常为此维护持久 orphan 机制。
 
-v1.6 尚无 journal 和 orphan list，所以不冒充完整语义。RootFileSystem 为
+当前尚无 journal 和 orphan list。RootFileSystem 为
 每个 inode 保存运行期 open count；unlink、rmdir 或 rename replace 若会
 释放一个 open count 非零的对象，明确返回 \code{Busy}。未来放宽规则时必须
 同时增加盘面状态、最后关闭回收和每个掉电点测试。
@@ -391,7 +391,7 @@ source inode，移动会把目录接到自己的子树中，必须返回 \code{L
 缓存的路径字符串；后续 getcwd 从新父链重建名字。
 
 \topic{truncate、stat 与系统调用 31--35}
-v1.6 在共享 ABI 中追加五个编号，不重排已有系统调用：
+共享 ABI 在末尾追加五个编号，不重排已有系统调用：
 
 \begin{osgridlongtable}{L{0.09\textwidth}L{0.22\textwidth}L{0.56\textwidth}}
 编号 & 名称 & 语义\\ \hline
@@ -547,7 +547,7 @@ Kernel 的 \code{Validate}，一个共同的错误可能让写入和检查同时
 宿主 \code{SparseMemoryBlockDevice} 只为真正写入的块保存存储，不建立连续
 256 MiB 数组。测试的是生产布局和生产算法，不是另一个缩小文件系统。
 
-\topic{短写的可观察契约}
+\topic{磁盘空间不足时为什么返回短写}
 写请求可能跨多个逻辑块。每个块开始前，RootFileSystem 已知道建立该块需要
 多少 data/metadata block：
 
@@ -611,7 +611,7 @@ RootFileSystem 已经持久化 Dirty 后注入失败，并验证：
 \topic{日志为何汇总而不逐块输出}
 rootfs 启动只输出一次：
 
-\begin{lstlisting}[caption={v1.6 稳定文件系统里程碑}]
+\begin{lstlisting}[caption={rootfs v2 的一次启动日志}]
 [OS][KERNEL] ROOTFS_V2_MOUNTED
 [OS][KERNEL] ROOTFS_V2_REGION_BYTES=0x0000000010000000
 [OS][KERNEL] ROOTFS_V2_MAX_FILE_BYTES=0x0000000004000000
@@ -628,9 +628,9 @@ rootfs 启动只输出一次：
 到达时间。所有 QEMU 用例还有阶段 deadline 和 CTest 外层 timeout，卡住不是
 成功状态。
 
-\topic{源码与证据的推荐走读顺序}\par
+\topic{沿一次文件读写走读源码}\par
 \begin{enumerate}
-  \item \filepath{root\_file\_system\_format.hpp/.cpp}：先冻结盘面；
+  \item \filepath{root\_file\_system\_format.hpp/.cpp}：先读盘面字段与偏移；
   \item \filepath{tools/os\_tools/rootfs\_v2.py}：对照独立编码与 fsck；
   \item \filepath{root\_file\_system.hpp/.cpp}：再看分配、块树和事务；
   \item \filepath{vfs.hpp/.cpp}：看跨 mount 的 remove/rename 边界；

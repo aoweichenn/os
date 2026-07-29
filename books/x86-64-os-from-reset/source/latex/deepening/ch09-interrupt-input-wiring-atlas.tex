@@ -79,7 +79,7 @@ present 位和可选 IST 编号。CPU 接受事件后按规范保存返回现场
 C++ 前还要满足 System V AMD64 栈对齐。handler 看到的是经 adapter 明确定义的
 数据结构，不是可以随意改字段顺序的普通函数参数。
 
-\topic{四、Kernel 软件泳道的四个提交点}\par
+\topic{四、一个输入字节在哪四处改变状态}\par
 \begin{osgridlongtable}{L{0.16\linewidth}L{0.27\linewidth}L{0.30\linewidth}L{0.17\linewidth}}
 阶段 & 必须完成 & 失败边界 & 提交证据 \\ \hline
 汇编入口 & 保存/规范化现场，建立 ABI 栈 & 任何调用前，不可破坏原现场 & 固定 frame 可审计 \\ \hline

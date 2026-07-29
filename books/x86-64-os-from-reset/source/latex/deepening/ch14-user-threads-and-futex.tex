@@ -27,8 +27,8 @@ FS-base TLS & Thread & 同一条机器指令要定位不同私有实例 \\ \hlin
 \end{center}
 
 Linux 后来用可组合的共享标志构造任务；POSIX pthread 又为应用提供可移植
-接口。本项目不先复制两套庞大兼容层，而是在 v1.2 已分离的 Process/Thread
-内核模型上冻结最小公开 ABI。这样每个新增字段都有硬件或所有权原因，而不是
+接口。本项目不先复制两套庞大兼容层，而是在已经分离的 Process/Thread
+内核模型上定义最小公开 ABI。这样每个新增字段都有硬件或所有权原因，而不是
 为了让接口名字看起来像现成系统。
 
 \topic{一条 Thread 从用户请求到 Ready 发布}
@@ -116,7 +116,7 @@ TLS 页首保存 \code{ThreadRuntimeState* self}。同一条
 
 传统 32 位特权入口常执行 \code{mov fs,kernel\_data\_selector}。若机械保留
 这条指令，第一次系统调用可能把隐藏 FS base 重置为描述符的零基址。Kernel
-自身不使用 FS，因此 v1.12 的 SYSCALL、IRET 和调度汇编路径不再重载 FS；
+自身不使用 FS，因此 SYSCALL、IRET 和调度汇编路径不再重载 FS；
 真正切换 Thread 时由架构包装写 \code{IA32\_FS\_BASE} 并读回验证。
 
 \topic{为什么仅靠自旋不能形成通用用户 Mutex}
@@ -124,7 +124,7 @@ TLS 页首保存 \code{ThreadRuntimeState* self}。同一条
 竞争失败者应怎样等待。在单 vCPU QEMU 中，若持锁者刚被抢占，竞争者持续
 自旋会白白耗尽整个时间片；CPU 显示繁忙，受保护工作却没有推进。
 
-v1.12 把路径分成两层：
+实现把路径分成两层：
 
 \begin{center}
 \begin{osgridtabular}{L{0.23\linewidth}L{0.29\linewidth}L{0.36\linewidth}}
@@ -217,7 +217,7 @@ wake all。观察到 1 的 Thread 在状态字上等待，观察到 2 的 Thread
 
 本阶段没有 C++ exception、Thread cancellation 或 robust owner-death。
 初始化函数若永不返回，其他 Thread 继续等待。这不是未记录的偶然行为，而是
-v1.12 明确冻结、等待以后扩展的失败语义。
+当前先返回明确错误，等待以后扩展这些失败语义。
 
 \topic{ExitThread、Join 与 ProcessExit 是三种回收边界}
 普通 \code{ExitThread} 只终止当前执行流：
@@ -228,7 +228,7 @@ v1.12 明确冻结、等待以后扩展的失败语义。
   \item 切换到另一条 Thread，不关闭 Process 共享对象。
 \end{enumerate}
 
-join 为目标冻结唯一 join owner。目标退出后，Kernel 在安全点释放其
+join 为目标记录唯一 join owner。目标退出后，Kernel 在安全点释放其
 KernelStack 并 reap 调度槽，把 TID 与 exit value 复制给 joiner；用户运行时
 随后撤销目标用户栈和 TLS 页。若先撤用户映射，Kernel 的 saved frame 或退出
 路径可能仍引用旧栈；若两个 joiner 都能消费，则同一槽会被重复回收。
@@ -297,7 +297,7 @@ capacity & 64 GiB & 系统 512、每 Process 64 & 总计 64 条并验证上限 \
 每条用户 Thread 还消耗 \(64\,\mathrm{KiB}\) 用户栈 reservation、4 KiB
 TLS、一组页表/VMA 描述符、动态 KernelStack 和 FXSAVE 区。逻辑 reservation
 不等于全部物理驻留：未触及的匿名栈页不分配 frame；guard 永远没有 VMA。
-容量验收既检查“能创建目标数量”，也检查 join 后活动 Thread、栈槽、futex
+容量测试既检查“能创建目标数量”，也检查 join 后活动 Thread、栈槽、futex
 entry、VMA、页表和 frame 回到基线。
 
 \topic{测试怎样分别证明局部算法与真实硬件路径}
@@ -307,7 +307,7 @@ Ready 和 Blocked sibling。固定种子随机测试在 \(8\times8\) 个 futex k
 上执行十万步 acquire、enqueue、wake、cancel、release；独立模型逐步比较
 状态和统计。
 
-ABI 集成测试冻结系统调用 47--53、48 字节创建请求、16 字节 join 结果和
+ABI 集成测试检查系统调用 47--53、48 字节创建请求、16 字节 join 结果和
 所有固定宽度常量。真实 QEMU probe 再建立 32 或 64 条 Thread，让它们：
 
 \begin{itemize}

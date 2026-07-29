@@ -47,6 +47,17 @@ OS_BOOK_REPEATED_IDEA_PATTERN = re.compile(r"\\begin\{keyidea\}")
 OS_BOOK_VERSION_HEADING_PATTERN = re.compile(
     r"\\topic\{[^}\n]*v[0-9]+\.[0-9]+"
 )
+OS_BOOK_PROJECT_VERSION_PATTERN = re.compile(
+    r"(?<![A-Za-z0-9_])v(?:0|1)\.[0-9]+(?:\.[0-9]+)?"
+)
+OS_BOOK_DEEPENING_REPORT_PHRASES = (
+    "验收",
+    "冻结",
+    "证据层",
+    "完成不是",
+    "完整结论",
+    "垂直闭环",
+)
 OS_BOOK_STRUCTURAL_PARAGRAPH_PATTERN = re.compile(
     r"^\\(?:begin|end|section|chapter|part|input|includegraphics|"
     r"label|caption|item|clearpage|newcommand)\b"
@@ -157,6 +168,21 @@ def main() -> int:
                 f"{relativePath}:{lineNumber}: "
                 "段首标题应描述问题或机制，版本号只作为正文中的历史坐标"
             )
+
+        if relativePath.parts[0] == "deepening":
+            for match in OS_BOOK_PROJECT_VERSION_PATTERN.finditer(sourceText):
+                lineNumber = sourceText.count("\n", 0, match.start()) + 1
+                violations.append(
+                    f"{relativePath}:{lineNumber}: "
+                    "项目版本标签应进入发布记录，机制正文直接描述动作与状态"
+                )
+            for phrase in OS_BOOK_DEEPENING_REPORT_PHRASES:
+                for match in re.finditer(re.escape(phrase), sourceText):
+                    lineNumber = sourceText.count("\n", 0, match.start()) + 1
+                    violations.append(
+                        f"{relativePath}:{lineNumber}: "
+                        f"deepening 正文仍含验收报告表达“{phrase}”"
+                    )
 
         contrastCount += len(OS_BOOK_CONTRAST_PATTERN.findall(sourceText))
         additiveContrastCount += len(
