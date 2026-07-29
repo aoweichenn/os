@@ -1,0 +1,13 @@
+\chapter{线程怎样等待数据、锁和时间}
+
+管道为空、互斥锁被占用或睡眠时间未到时，Thread 应离开运行队列。数据到达、
+对象关闭、超时和信号可能同时竞争唤醒。本章用 WaitQueue 的单赢家规则连接
+pipe、futex、条件变量和 deadline。
+
+\chapterroute{Blocked 与 WaitQueue $\rightarrow$ pipe $\rightarrow$
+用户线程和 futex $\rightarrow$ 单调时间与超时。}
+
+\input{topics/ch14-waiting-and-terminal-introduction}
+\input{deepening/ch14-unix-io}
+\input{deepening/ch14-user-threads-and-futex}
+\input{deepening/ch14-monotonic-time-and-deadlines}

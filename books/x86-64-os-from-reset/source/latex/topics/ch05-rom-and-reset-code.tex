@@ -1,4 +1,4 @@
-\section{ROM 布局、复位代码与入口不变量}
+\section{ROM 布局、复位代码与入口状态}
 
 \topic{入口先建立确定状态}
 入口依次执行 \code{cli}、\code{cld}，清零数据段、附加段和栈段，设置栈顶，
@@ -11,15 +11,36 @@
 被清零并用于低地址 RAM。使用 \code{cs lodsb} 可以按当前代码段读取日志
 字符串，避免假设 ROM 在低端还存在别名。
 
-\topic{源码走读}
-下面的清单直接引用配套工程，书与代码保持同源：
+\topic{先只看复位向量的三个字节}
+复位向量不承担初始化工作，只把控制流送到 ROM 中较大的入口。最终三个字节由
+一个近跳转操作码和一个 16 位相对位移组成：
 
 \lstinputlisting[
   language={[x86masm]Assembler},
-  firstline=1,
-  lastline=177,
-  caption={16 位复位与串口入口}
+  firstline=620,
+  lastline=624,
+  caption={ROM 末尾的复位跳转}
 ]{../../../../source/firmware/src/reset_and_serial.asm}
+
+这里使用近跳转，是为了保留复位后的 CS 隐藏基址。CPU 执行这三个字节后，
+IP 进入 ROM 内的 \code{os_firmware_entry}，CS 隐藏基址仍指向高端地址。
+
+\topic{入口先准备栈，再调用过程}
+现在只看进入入口后的十二行。此时没有可依赖的栈，也没有已经初始化的 C++
+运行时：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=139,
+  lastline=150,
+  caption={固件入口建立最小执行状态}
+]{../../../../source/firmware/src/reset_and_serial.asm}
+
+\code{cli} 和 \code{cld} 各改变一个标志位；三次段寄存器写入和一次
+\code{mov sp} 决定下一条 \code{call} 把返回地址写到哪里。串口初始化过程
+留到下一章逐行阅读。完整源码位于
+\filepath{source/firmware/src/reset_and_serial.asm}，这里按执行阶段切片，
+避免把尚未解释的 ATA、PIT 和错误路径提前混进来。
 
 \topic{ROM 审计}
 宿主工具不通过“文件存在”判断成功。它检查镜像恰为 131072 字节，复位偏移的
@@ -39,9 +60,10 @@
 初始化 UART & 建立 8N1 轮询发送协议 & 串口输出不能作为可靠证据\\ \hline
 \end{osgridlongtable}
 
-初始化顺序具有数据依赖。写 \code{SS} 与 \code{SP} 之前不能安全使用
+初始化顺序存在直接的数据依赖。写 \code{SS} 与 \code{SP} 之前不能安全使用
 \code{call}；设置 \code{DS} 之前不能按低端数据模型访问 RAM；清除方向标志
-之前不能假设字符串指令递增。汇编列表的顺序不是排版选择，而是一条状态证明。
+之前不能假设字符串指令递增。调换这些指令，CPU 就可能把返回地址写进错误的
+内存，或沿错误方向读取字符串。
 
 \topic{栈把控制流转换成内存状态}
 \code{call} 在 16 位入口中先把返回 IP 压入栈，再跳到过程入口；

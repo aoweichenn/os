@@ -541,7 +541,7 @@ v1.5 只在初始化和全部 Process 结束时输出：
 内部阶段截止和外层 CTest 截止，超时后由 Python 回收进程，不留下永久后台
 终端。
 
-\topic{三层宿主测试与整机证据}
+\section{怎样验证路径、挂载和 memfs}
 宿主侧先用局部契约、双后端协作和独立随机模型扩大覆盖面，随后再由 QEMU
 证明同一套语义确实穿过磁盘镜像、内核对象和用户态调用链。
 
@@ -670,7 +670,7 @@ legacy 损坏非零盘 & {\small\code{Corrupt / Incomplete}} & 不格式化、�
 用户目标不可写 & {\small\code{InvalidUserMemory}} & 不调用 getcwd 写回\\ \hline
 \end{osgridlongtable}
 
-\topic{本阶段明确没有做什么}
+\topic{当前实现范围}
 v1.5 没有 rootfs v2、间接块、64 MiB 单文件、unlink、rename、非零
 truncate、stat 或符号链接。没有正/负 dentry cache，没有动态 unmount、
 bind mount 或每 Process mount namespace 复制。没有 uid/gid、权限位、
@@ -682,10 +682,9 @@ memfs 线性节点链和 legacy parent 全盘扫描都是可审计基线，不�
 64 位固定宽度类型，后续提高规格无需改变用户 ABI，但仍必须重新验证内存预算
 和算法复杂度。
 
-下一节将验证 v1.6 已经在 VFS 不变的前提下引入版本化 rootfs v2、完整
-create/mkdir/unlink/rename/truncate/stat、稀疏大文件、独立
-mkfs/inspector/fsck 和崩溃边界；Path、Mount 与 FileDescription 的基本
-语义仍保持本节冻结的形状。
+第 25 章回到磁盘后端，介绍 rootfs v2、稀疏大文件、命名空间修改以及独立的
+mkfs、inspector 和 fsck。这里建立的 Path、Mount 与 FileDescription 语义
+保持不变。
 
 在 Shell 输入 \code{cd /tmp/session} 时，路径查找从当前 Process 的 root
 和 cwd 开始，依次处理每个组件。Mount 与 Vnode 确定当前走到哪个对象；

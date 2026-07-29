@@ -1,6 +1,6 @@
-\chapter*{二十章推导实验与复习路线}
-\addcontentsline{toc}{chapter}{二十章推导实验与复习路线}
-\markboth{二十章推导实验与复习路线}{二十章推导实验与复习路线}
+\chapter*{按机制组织的推导实验与复习路线}
+\addcontentsline{toc}{chapter}{按机制组织的推导实验与复习路线}
+\markboth{推导实验与复习路线}{推导实验与复习路线}
 
 实验不是照抄命令得到相同输出。每章都用“解释、推导、观察、证伪”四个动作
 验收：先说清机制和所有权，再手算关键状态，随后取得真实证据，最后主动构造
@@ -16,12 +16,12 @@
   \item 完成后记录“本证据能证明什么、明确不能证明什么”。
 \end{enumerate}
 
-\section*{第 1 章：量、单位、编码与证据}
+\section*{bit、byte、单位与地址}
 
 \begin{itemize}
   \item 解释：区分物体、现象、物理量、单位、数值、状态、编码和协议含义。
   \item 测量：为电压、周期和文件长度各写一条“对象、仪器、接法、量程、
-        分辨率、扰动、原始读数、结论”证据链。
+        分辨率、扰动、原始读数、结论”记录。
   \item 推导：完成 ns/MHz、bit/byte、MB/MiB 与二/十/十六进制换算，并在
         每一步保留单位、有效数字和数量级。
   \item 推导：手算一个 8-bit 加法的逐位进位，同时分别判断无符号
@@ -41,7 +41,7 @@
   \item 证伪：寻找一个因单位大小写或 bit/byte 混淆而差 \(8\) 倍以上的错误结论。
 \end{itemize}
 
-\section*{第 2 章：电路、元件与原理图}
+\section*{电压、元件与原理图}
 
 \begin{itemize}
   \item 解释：从电荷移动和电势差开始，画出电源、保护、负载、回流与参考地；
@@ -69,7 +69,7 @@
         地未共参考和示波器地夹短路的失败。
 \end{itemize}
 
-\section*{第 3 章：逻辑门、时钟与状态}
+\section*{逻辑门、时钟与状态}
 
 \begin{itemize}
   \item 电气边界：给定发送端 \(V_{OL}/V_{OH}\) 与接收端
@@ -95,7 +95,7 @@
         证明无亚稳态；再构造机械按键抖动让一次按压产生多次边沿。
 \end{itemize}
 
-\section*{第 4 章：CPU、存储器、总线与启动条件}
+\section*{CPU、存储器、总线与启动条件}
 
 \begin{itemize}
   \item 分层：为一颗概念 CPU 分开画 ISA 契约、微架构数据通路、封装引脚、
@@ -126,7 +126,7 @@
         和“ready 永不返回”的机器，预测它们不同的冷启动失败现场。
 \end{itemize}
 
-\section*{第 5 章：软件层次与学习工程}
+\section*{软件层次与学习工程}
 
 \begin{itemize}
   \item 解释：区分固件、Loader、Kernel、驱动、运行时、用户程序和宿主工具。
@@ -135,7 +135,7 @@
   \item 证伪：让 QEMU 或宿主脚本偷偷代替一段目标启动链，指出学习证据为何失效。
 \end{itemize}
 
-\section*{第 6 章：复位现场与兼容历史}
+\section*{复位现场与兼容历史}
 
 \begin{itemize}
   \item 解释：用“旧问题、当时方案、今日痕迹”说明分段、A20 与独立 I/O 空间。
@@ -144,7 +144,7 @@
   \item 证伪：把近跳转错误替换为会刷新 CS 的远跳转，预测首个错误取指地址。
 \end{itemize}
 
-\section*{第 7 章：平台事务与实体硬件}
+\section*{平台事务与实体硬件}
 
 \begin{itemize}
   \item 解释：区分 CPU 物理地址、端口号、PCIe 配置空间和 PCB 网络名。
@@ -153,7 +153,7 @@
   \item 证伪：选择一个错误的访问宽度或差分对交换，说明软件与电气侧各自症状。
 \end{itemize}
 
-\section*{第 8 章：寄存器、标志和机器码}
+\section*{寄存器、标志和机器码}
 
 \begin{itemize}
   \item 解释：区分寄存器别名、操作数宽度、地址宽度和指针宽度。
@@ -162,7 +162,7 @@
   \item 证伪：用 AX/EAX 写入差异、有符号/无符号分支差异构造两个边界错误。
 \end{itemize}
 
-\section*{第 9 章：工具链、C++ 与 ROM}
+\section*{工具链、C++ 与 ROM}
 
 \begin{itemize}
   \item 解释：说明预处理、编译、汇编、链接、objcopy 各自新增或丢弃什么信息。
@@ -171,7 +171,7 @@
   \item 证伪：引入一个会生成宿主运行时辅助符号的 C++ 特性，要求产物门禁拒绝。
 \end{itemize}
 
-\section*{第 10 章：UART 与证据}
+\section*{UART、日志与超时}
 
 \begin{itemize}
   \item 解释：逐位说明 DLAB、LCR、LSR 和波特率除数的状态机作用。
@@ -180,7 +180,7 @@
   \item 证伪：注入 THRE 永不就绪和设备错误，要求有限时间内得到不同根因。
 \end{itemize}
 
-\section*{第 11 章：Loader 与长模式}
+\section*{Loader 与长模式}
 
 \begin{itemize}
   \item 解释：按顺序列出 A20、GDT、CR4.PAE、EFER.LME、CR0.PG 与远转移。
@@ -189,7 +189,7 @@
   \item 证伪：分别破坏 header、checksum、ELF 和内存图，要求失败 marker 可区分。
 \end{itemize}
 
-\section*{第 12 章：异常与内存}
+\section*{异常、物理页、页表、KVA 与堆}
 
 \begin{itemize}
   \item 解释：从 GDT/TSS/IDT 到统一异常帧复述 CPU 与汇编各压入什么。
@@ -198,7 +198,7 @@
   \item 证伪：对 frame、页表、KVA、KernelStack 事务逐点注入失败并验证资源守恒。
 \end{itemize}
 
-\section*{第 13 章：中断、设备与 Ring 3}
+\section*{中断、设备与 Ring 3}
 
 \begin{itemize}
   \item 解释：区分 IRQ、vector、PIC ISR、EOI、RFLAGS.IF 和 scheduler 抢占状态。
@@ -207,7 +207,7 @@
   \item 证伪：构造用户 \#UD、用户 \#PF、非法 ELF 和非法用户指针，要求只隔离目标。
 \end{itemize}
 
-\section*{第 14 章：Process、Thread 与 syscall}
+\section*{Process、Thread 与系统调用}
 
 \begin{itemize}
   \item 解释：画出 Process 资源容器与 Thread 执行实体的寿命和引用方向。
@@ -216,7 +216,7 @@
   \item 证伪：构造 wake/timeout 竞争，要求同一 Thread 最多一次进入 Ready。
 \end{itemize}
 
-\section*{第 15 章：对象、fd 与 VFS}
+\section*{对象、fd 与 VFS}
 
 \begin{itemize}
   \item 解释：区分 fd、FileTable entry、FileDescription、Vnode、inode 和 Path。
@@ -225,7 +225,7 @@
   \item 证伪：注入表扩容、路径组件、后端操作失败，要求不发布半个 fd 或 mount。
 \end{itemize}
 
-\section*{第 16 章：PID1、VM 与 fork}
+\section*{PID 1、exec、VMA 与 fork}
 
 \begin{itemize}
   \item 解释：区分父子关系、Zombie、wait/reap，以及 exec 何时替换旧映像。
@@ -234,7 +234,7 @@
   \item 证伪：在 child 准备每一步失败，要求 parent PTE、fd、cwd 和旧映像不变。
 \end{itemize}
 
-\section*{第 17 章：持久化与崩溃}
+\section*{盘面、writeback、journal 与崩溃}
 
 \begin{itemize}
   \item 解释：区分 write、dirty、writeback、FLUSH、commit、checkpoint 和 replay。
@@ -243,7 +243,7 @@
   \item 证伪：遍历 prepared、commit、checkpoint 前后的断电点，只接受完整旧/新状态。
 \end{itemize}
 
-\section*{第 18 章：Unix I/O、等待与作业}
+\section*{Unix I/O、等待、信号与作业控制}
 
 \begin{itemize}
   \item 解释：把 pipe、futex、deadline、signal、TTY 都还原为条件与 WakeReason。
@@ -252,7 +252,7 @@
   \item 证伪：交换 signal、timeout、close、condition 的到达顺序，要求只有一个赢家。
 \end{itemize}
 
-\section*{第 19 章：用户环境与 ABI}
+\section*{用户环境与 ABI}
 
 \begin{itemize}
   \item 解释：区分项目版本、ABI 版本、ELF 身份和 rootfs 盘面版本。
@@ -261,7 +261,7 @@
   \item 证伪：破坏一个共享 offset、ELF 身份或工具 inode 唯一性，要求发布门禁拒绝。
 \end{itemize}
 
-\section*{第 20 章：回看系统并继续开发}
+\section*{回看系统并继续开发}
 
 \begin{itemize}
   \item 解释：沿一条 \code{cat /tmp/note} 命令画出键盘、TTY、Shell、进程、

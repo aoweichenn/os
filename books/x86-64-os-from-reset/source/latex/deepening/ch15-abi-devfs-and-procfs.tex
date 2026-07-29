@@ -52,8 +52,8 @@ Linux ABI，但学习同一条工程规律。ABI major 为 2 表示这一代边�
 \begin{contractbox}
 ABI v2.0.0 固定 69 个系统调用，合法调用号从 1 到 69，公共错误区间从
 \(-1\) 到 \(-57\)。目标程序必须是小端 ELF64、x86-64 的
-\code{ET_EXEC}。这是一份项目自身的 64 位协议，不声称 syscall number、
-errno、结构布局或调用约定与 Linux 兼容。
+\code{ET_EXEC}。syscall number、errno、结构布局和调用约定均由本项目定义，
+与 Linux ABI 不兼容。
 \end{contractbox}
 
 \topic{固定宽度类型只解决位数，不自动解决序列化}
@@ -344,10 +344,9 @@ VFS 集成测试 & rootfs、memfs、devfs、procfs 同时挂载后的路径穿�
 64 GiB QEMU & 主规格地址宽度、4 GiB 以上真实页和容量模型 \\ \hline
 \end{osgridlongtable}
 
-构建图共有 169 项测试，其中 145 项宿主测试允许开满 CPU，24 项
-\code{os_qemu_*} 共享同一个 CTest \code{RESOURCE_LOCK}。这条锁不是功能
-依赖，而是机器资源约束：多个 TCG 实例争抢 CPU 和内存，会让正确的 2--20 秒
-用例撞上有界超时。把串行要求写进测试图后，执行者即使使用
+宿主测试可以并行运行，\code{os_qemu_*} 共享同一个 CTest
+\code{RESOURCE_LOCK}。这条锁处理机器资源约束：多个 TCG 实例争抢 CPU 和
+内存，会让正确的 2--20 秒用例撞上有界超时。把串行要求写进测试图后，执行者即使使用
 \code{ctest -j20} 也不会制造虚假失败。
 
 \topic{日志中的时间与来宾中的时间}
@@ -393,7 +392,7 @@ QEMU runner 给每行串口加的 \code{[QEMU][T+...ms]} 是宿主收到字节�
 devfs 没有权限、uid/gid、major/minor、注销、热插拔或 udev；procfs 没有
 每进程目录、符号链接、可写控制项和 Linux 文本兼容；ABI v2 没有动态链接、
 共享库、能力协商或向后加载 v1 用户程序；调度仍是单 BSP、内核不可抢占，
-不声称 SMP-safe。
+这一实现只适用于当前单核配置；SMP 需要补充跨 CPU 同步。
 
 这些限制必须与已完成能力写在同一份发布记录中。冻结的意义不是把未来想象
 成已经实现，而是给下一代设计一个可靠起点。v2.0 只整合并发布已冻结机制；

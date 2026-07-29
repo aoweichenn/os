@@ -1,0 +1,137 @@
+\section{内核页表、direct map 与访问权限}
+
+构造新页表时处理器仍运行在 Stage 1 的 CR3 下。旧表把低 64 MiB 通过
+32 个 2 MiB 大页恒等映射，所以新分配的页表帧可以直接把物理地址解释为指针
+并清零。但这个等式只是启动前置条件，不是运行期 C++ 地址模型。
+\code{PageTableMemoryAccess} 因而显式保存“物理内存通过哪个虚拟基址访问”
+和“页表帧本轮最多从哪里分配”：
+
+\begin{osgridlongtable}{L{0.28\textwidth}L{0.25\textwidth}L{0.35\textwidth}}
+\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\ \hline
+\endfirsthead
+\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\ \hline
+\endhead
+旧 CR3 下构造 & 0，依赖身份映射 & 低 64 MiB\\ \hline
+新 CR3 激活后 & \code{FFFF888000000000} & 全部受管 RAM\\ \hline
+\end{osgridlongtable}
+
+内核先分配根 PML4，再对低 64 MiB 的启动访问逐页建立带精细权限的身份映射。
+随后遍历 E820 type 1 RAM，在
+\code{0xFFFF888000000000+physical} 建立 direct-map。未声明为 RAM 的
+保留区与 MMIO 洞保持 not-present；LAPIC 继续使用独立 PCD 映射。
+
+映射完成、NX 和 WP 打开之后才执行 \code{mov cr3,new_root}。如果先切 CR3
+再补当前 RIP、RSP 或 IDT 所需映射，下一条取指或压栈就会故障；异常入口本身
+也可能未映射，最终表现为 triple fault。先构造完整候选、后一次激活，是页表
+版的两遍 ELF 副作用边界。CR3 读回成功后，管理器原子切换访问基址，页表
+遍历、用户页清零和 ELF 段复制从此都不再把物理地址直接转换成指针。
+
+\topic{direct-map 为什么同时使用 2 MiB 与 4 KiB 页}
+若把 64 GiB RAM 全部用 4 KiB PTE 映射，叶项数量为：
+\[
+ \frac{64\ \mathrm{GiB}}{4\ \mathrm{KiB}}=16777216,
+\]
+仅叶 PT 就需要约 32 MiB。使用 2 MiB PDE 大页时只需：
+\[
+ \frac{64\ \mathrm{GiB}}{2\ \mathrm{MiB}}=32768
+\]
+个叶项。大页显著减少页表内存，并让一个 TLB 项覆盖更大范围。
+
+内核不能简单把每个 E820 条目向外取整到 2 MiB：那会把条目两侧的保留页也
+映射成普通 RAM。算法先把起点向内对齐到 4 KiB，再用 4 KiB 页走到下一个
+2 MiB 边界；中间完整区间使用大页，尾部回到 4 KiB。因而页粒度是每段的
+局部选择，所有权边界仍由 E820 决定。
+
+2 MiB PDE 设置 bit 7 的 PS，并把物理基址放在 bit 21..51；查询任意内部
+地址时必须把虚拟地址低 21 位加回基址。普通用户页、Kernel 段和 guard page
+仍使用 4 KiB PTE，因为它们需要细粒度权限或单页 not-present 语义。
+
+\section{沿四级页表翻译一个地址}
+48 位 canonical 地址把 bit 47 符号扩展到 bit 63。若高 16 位既不是
+\code{0x0000} 也不是 \code{0xFFFF} 对应的扩展，映射器在写表前就返回
+\code{InvalidVirtualAddress}。四级索引为：
+\[
+\begin{aligned}
+i_4&=(v\gg39)\mathbin{\&}0x1FF, &
+i_3&=(v\gg30)\mathbin{\&}0x1FF,\\
+i_2&=(v\gg21)\mathbin{\&}0x1FF, &
+i_1&=(v\gg12)\mathbin{\&}0x1FF.
+\end{aligned}
+\]
+
+\begin{pdfdiagram}
+  \node[os state] (virtual) {48 位 canonical\\虚拟地址};
+  \node[os block,right=of virtual] (pml4) {bits 47:39\\PML4E};
+  \node[os block,right=of pml4] (pdpt) {bits 38:30\\PDPTE};
+  \node[os block,below=of pdpt] (pd) {bits 29:21\\PDE};
+  \node[os block,left=of pd] (pt) {bits 20:12\\PTE};
+  \node[os state,left=of pt] (physical) {页帧基址\\+ bits 11:0};
+  \draw[os arrow] (virtual) -- (pml4);
+  \draw[os arrow] (pml4) -- (pdpt);
+  \draw[os arrow] (pdpt) -- (pd);
+  \draw[os arrow] (pd) -- (pt);
+  \draw[os arrow] (pt) -- (physical);
+\end{pdfdiagram}
+\diagramnote{依据 Intel SDM Vol. 3A 5.5.4、Figure 5-8 的字段关系重新绘制。
+本图只画项目当前使用的四级、4 KiB 路径；PDE.PS=1 时在 PD 提前结束，并把
+低 21 位作为 2 MiB 页内偏移。}
+
+中间表不存在时分配并清零。PML4E 与 PDPTE 出现 PS 仍属于当前实现不支持的
+1 GiB 页并明确拒绝；PDE 的 PS=1 则是合法 2 MiB 叶，查询时使用
+\code{0x000FFFFFFFE00000} 取物理基址。普通路径用
+\code{0x000FFFFFFFFFF000} 取得下一级表。叶项写入前拒绝重复映射。
+4 KiB 或 2 MiB 映射分别验证对应对齐，物理地址还不能越过处理器、页表字段
+和 direct-map 访问环境的共同范围。
+
+取消映射把叶项清零并执行 \code{INVLPG}，当前不回收空的 PT/PD/PDPT。
+这是明确的早期边界：启动只映射固定集合，不会反复创建销毁地址空间。进程
+阶段必须补充中间表引用计数或空表扫描，才能把页表帧安全归还分配器。
+
+\section{每一级权限怎样共同限制访问}
+任一上级项 RW=0 都会限制下级写，任一上级 US=0 都会限制用户访问。当前中间
+表保持 RW，叶项决定具体内核页是否可写；用户映射请求出现时，映射器会把沿途
+parent 的 US 置一，但 supervisor 叶项仍因自身 US=0 对用户不可见。
+
+链接脚本导出 image、text、rodata、writable 的起止符号。内核按页应用：
+
+\begin{osgridlongtable}{L{0.23\textwidth}L{0.18\textwidth}L{0.45\textwidth}}
+\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\ \hline
+\endfirsthead
+\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\ \hline
+\endhead
+text & R/X & 指令可取，Ring 0 不可写\\ \hline
+rodata & R/NX & 常量不可写，也不能作为代码执行\\ \hline
+data/BSS/普通栈 & RW/NX & 状态可变但不可取指\\ \hline
+heap & RW/NX & 动态对象默认不是代码\\ \hline
+type 1 RAM direct-map & RW/NX & supervisor 访问物理页内容，未知洞不映射\\ \hline
+零页与四个 guard & not-present & 把空指针和向下越界变成 \#PF\\ \hline
+\end{osgridlongtable}
+
+NX 叶位只有在 \code{IA32\_EFER.NXE}=1 时才具有预期语义。内核先用 CPUID
+扩展特性叶检查 NX，再设置 EFER.NXE；若硬件不支持就返回
+\code{MemoryProtectionUnsupported}，不默默退化为全可执行。随后设置
+\code{CR0.WP}，使 supervisor 写也遵守只读叶权限。
+
+\section{修改页表以后为什么要刷新 TLB}
+处理器不会每次访问都重新走四级表。修改页表后，本核心可能继续使用旧 TLB
+项；\code{invlpg} 使单页失效，写 CR3 或相应指令刷新更大范围。PCID 可以
+减少地址空间切换的刷新，但需要额外代际管理。
+
+多核系统每个核心有自己的 TLB。取消映射后必须向曾运行该地址空间的核心发送
+shootdown，并等待确认，才能释放和复用物理页。否则另一个核心可能通过旧翻译
+写入已经分配给新对象的页面。
+
+\section{用写保护故障检查真实权限}
+页表查询函数能解码 RW=0，却不能证明处理器当前真的使用这张表，也不能证明
+CR0.WP 已启用。v0.6 另外分配一帧，映射到
+\code{0xFFFF800000100000}，权限为 present、supervisor、read-only、NX。
+故障镜像在新 CR3 激活后执行 64 位写。
+
+预期页故障错误码为 \code{0x3}：
+\[
+  \mathtt{0x3}=\underbrace{1}_{P}
+                 +\underbrace{2}_{W/R},
+\]
+U/S、RSVD 和 I/D 都为零。P=1 把它与“忘记映射测试页”的错误码 2 区分；
+W/R=1 把它与普通读取区分；CR2 必须精确等于高半区测试地址。只有随后进入同一
+panic 并禁止 \code{READY}，才能说明权限执行、异常入口和停止边界全部连通。

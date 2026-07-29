@@ -1,0 +1,13 @@
+\chapter{缺页和 fork 怎样共享物理页}
+
+VMA 说明一段地址应该具有什么用途，PTE 只记录当前已经驻留的页面。我们先让
+匿名页和文件页在第一次访问时进入内存，再用 fork 复制进程；父子写入同一页
+时，COW 页故障才真正分离数据。
+
+\chapterroute{VMA 与 PTE $\rightarrow$ 匿名缺页 $\rightarrow$ 文件缺页
+$\rightarrow$ clean cache $\rightarrow$ fork 与 copy-on-write。}
+
+\input{topics/ch12-program-image-and-vma-introduction}
+\input{deepening/ch12-anonymous-vma}
+\input{deepening/ch12-file-backed-vma}
+\input{deepening/ch12-fork-and-copy-on-write}

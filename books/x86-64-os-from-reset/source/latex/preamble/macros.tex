@@ -1,9 +1,31 @@
 \DeclareRobustCommand{\code}[1]{\textcolor{BookBlue}{\texttt{\nolinkurl{#1}}}}
 \DeclareRobustCommand{\filepath}[1]{\textcolor{BookTeal}{\texttt{\nolinkurl{#1}}}}
 \DeclareRobustCommand{\term}[2]{\textbf{#1}（#2）}
-% \topic 是连续正文中的段首提示，不参与章节编号和目录层级。
+\newcounter{ostopic}[chapter]
+% \topic 不进入纸面目录和章节编号，但会建立 PDF 书签并更新奇数页页眉，
+% 使手机阅读可以跳到章内机制。
 \newcommand{\topic}[1]{%
-  \par\smallskip\noindent{\normalsize\bfseries\color{BookNavy}#1}\quad\ignorespaces
+  \refstepcounter{ostopic}%
+  \phantomsection%
+  \pdfbookmark[2]{#1}{os-topic-\theHchapter-\arabic{ostopic}}%
+  \markright{#1}%
+  \par\smallskip\noindent{\normalsize\bfseries\sffamily\color{BookNavy}#1}\quad\ignorespaces
+}
+\newcommand{\chapterroute}[1]{%
+  \begin{tcolorbox}[
+    enhanced,
+    breakable,
+    colback=BookCodeBg,
+    colframe=BookRule,
+    boxrule=0.45pt,
+    arc=1.2mm,
+    left=2.5mm,
+    right=2.5mm,
+    top=1.5mm,
+    bottom=1.5mm
+  ]
+  \sffamily\textbf{\color{BookNavy}本章路线}\quad #1
+  \end{tcolorbox}
 }
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
 

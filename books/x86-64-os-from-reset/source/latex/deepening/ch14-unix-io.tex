@@ -133,7 +133,7 @@ FileDescription、writer FileDescription、reader fd 和 writer fd。任何一�
 只打印一次 capacity、active、peak、creation、release 和 rejection 摘要；
 逐 Pipe、逐页和逐字节日志会改变调度时序，因此被禁止。
 
-\topic{\code{dup2} 为什么必须精确且原子}
+\topic{dup2 为什么必须精确且原子}
 普通 duplicate 寻找不低于 minimum 的最小空 fd。流水线却必须把端点放在
 精确的 0 或 1：
 
@@ -267,6 +267,6 @@ cat、tee、head 和 wc，因而同时覆盖 15 根 Pipe、短读写、EOF、文
   \item Zombie、FileDescription、用户页、页表和动态 Pipe 后备页回到基线。
 \end{itemize}
 
-145 项 CTest 不冻结为永恒数字；它是 v1.11 发布时构建图产生的证据。真正
-冻结的是每层必须证明的性质、随机种子可复现、QEMU 生命周期有截止时间，
-以及成功路径禁止 Kernel fatal、panic 和资源差异。
+测试总数会随着实现变化。稳定要求是：每层检查的性质明确、随机种子可复现、
+QEMU 生命周期有截止时间，并且成功路径不能出现 Kernel fatal、panic 或
+资源差异。

@@ -1,0 +1,11 @@
+\chapter{文件描述符背后有哪些对象}
+
+用户程序只拿到一个小整数，内核却要由它找到打开实例、当前位置、访问模式和
+真正的后端对象。我们从 fd=3 开始，区分进程局部槽位与可共享
+FileDescription，再处理复制、关闭和最后释放。
+
+\chapterroute{KernelObject $\rightarrow$ 引用和 generation $\rightarrow$
+FileDescription $\rightarrow$ FileTable $\rightarrow$ dup/close 系统调用。}
+
+\input{topics/ch11-fd-and-path-introduction}
+\input{deepening/ch11-kernel-objects-and-file-table}

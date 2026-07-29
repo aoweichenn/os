@@ -1,0 +1,856 @@
+\section{资源生命周期、回滚与可验证回收}
+
+\topic{资源管理的历史困难不是缺少一个 free 函数}
+一个内核对象很少只拥有一块同质内存。动态内核栈同时占有 KVA 区间、四个
+物理页、四张叶映射和管理器槽；用户进程还会占有页表根、用户代码页、用户栈、
+描述符和调度现场。创建函数执行到一半失败时，只能释放已经取得的部分，而且
+必须按依赖关系的反方向撤销：
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (kva) {六页 KVA\\软件所有权};
+  \node[os state,right=of kva] (frames) {四个 frame\\物理所有权};
+  \node[os state,right=of frames] (pte) {四个 PTE\\地址翻译};
+  \node[os state,below=of frames] (slot) {KernelStack 槽\\对外发布};
+  \draw[os arrow] (kva) -- (frames);
+  \draw[os arrow] (frames) -- (pte);
+  \draw[os arrow] (pte) -- (slot);
+  \draw[os arrow,dashed] (slot) -- node[right]{失败时反向} (pte);
+  \draw[os arrow,dashed] (pte) -- (frames);
+  \draw[os arrow,dashed] (frames) -- (kva);
+\end{tikzpicture}
+\end{center}
+
+若先归还 frame 而 PTE 仍 present，原虚拟地址会指向后来取得该 frame 的
+新对象；若先释放 KVA，另一个调用者可能取得同一虚拟区间，而旧 PTE 尚未
+撤销。四个步骤都调用过某种 release 仍不够，顺序本身就是安全属性。
+
+早期 C 系统常用逐层 \code{goto fail\_map}/\code{fail\_frame} 标签表达
+展开。它没有语言运行时依赖，也能精确工作，但创建步骤增加时必须同步修改多个
+标签；漏掉一条清理或把标签跳错一级，通常只在稀有故障注入中出现。普通 hosted
+C++ 通过 RAII、标准容器和异常展开减轻这类重复；freestanding Kernel 没有
+理由引入异常运行时，更不能把页表、锁和设备请求都误当成普通堆内存。
+
+因此本阶段不是寻找一个“自动释放所有东西”的黑箱，而是建立三种互补机制：
+
+\begin{enumerate}[label=\arabic*.]
+  \item \code{ScopeRollback} 记录当前事务已经完成的可逆步骤；
+  \item \code{ReferenceCounter} 决定共享对象何时取得最后释放资格；
+  \item \code{ResourceSnapshot} 在较长生命周期两端证明跨管理器当前量恢复。
+\end{enumerate}
+
+前者负责单次调用内的失败展开，中者负责多个所有者之间的销毁时机，后者负责
+发现局部检查互相抵消或遗漏的泄漏。三者不能相互替代。
+
+\topic{ScopeRollback 是无分配的显式小事务}
+\code{ScopeRollback} 不持有动态容器。调用者提供固定
+\code{ScopeRollbackAction} 数组，每项只保存一个
+\code{bool (*)(void*) noexcept} 操作和一个上下文指针。它的状态机为：
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os state] (u) {Uninitialized};
+  \node[os state,right=of u] (a) {Armed};
+  \node[os state,above right=of a] (c) {Committed};
+  \node[os state,below right=of a] (r) {RolledBack};
+  \draw[os arrow] (u) -- node[above]{Initialize} (a);
+  \draw[os arrow] (a) edge[loop above] node{TryPush} (a);
+  \draw[os arrow] (a) -- node[above left]{Commit} (c);
+  \draw[os arrow] (a) -- node[below left]{TryRollback / 析构} (r);
+\end{tikzpicture}
+\end{center}
+
+外部存储有两个重要原因。第一，低内存失败路径不能为了登记“稍后释放内存”
+再次申请内存，否则诊断机制会重入原故障。第二，动作容量成为调用点可审计的
+上界；当创建过程新增一步时，测试和代码审查能直接看到容量是否同步改变。
+
+典型控制流可以抽象为：
+
+\begin{verbatim}
+ScopeRollbackAction actions[capacity];
+ScopeRollback rollback;
+rollback.Initialize(actions, capacity);
+
+acquire A;
+rollback.TryPush(ReleaseA, context_a);
+
+acquire B;
+rollback.TryPush(ReleaseB, context_b);
+
+publish candidate;
+rollback.Commit();
+\end{verbatim}
+
+未执行 \code{Commit} 时离开作用域，析构从最后一个动作向第一个动作执行。
+显式 \code{TryRollback} 用于调用者需要检查清理结果的失败分支；析构是防止
+遗漏的最后安全网。回滚动作之一返回 false 时，实现仍继续执行更早动作，
+最后报告 \code{ActionFailed}。这是有意选择：一张 PTE 撤销失败不意味着应
+故意保留所有其他可独立归还的 frame 和 KVA。上层收到失败后仍不能把候选对象
+当作干净状态继续使用。
+
+\topic{九项动态栈补偿动作如何推导}
+动态栈创建取得一次 KVA 和四组“物理页加叶映射”。在取得顺序中，每个数据页
+先申请并清零 frame，再建立映射；对应的最大补偿动作数是：
+\[
+  1_{\mathrm{KVA}}+
+  4\times
+  \left(1_{\mathrm{frame}}+1_{\mathrm{PTE}}\right)=9.
+\]
+
+\begin{center}
+\begin{osgridtabular}{cll}
+登记次序 & 正向步骤 & 回滚时的动作\\ \hline
+0 & 取得六页 KVA & 精确释放 KVA allocation\\ \hline
+1,3,5,7 & 取得一个 order-0 frame & 清零并释放该 frame\\ \hline
+2,4,6,8 & 建立一个数据叶映射 & 撤销对应 PTE\\ \hline
+\end{osgridtabular}
+\end{center}
+
+动作数组按正向取得顺序登记，执行时从 8 走到 0，所以每个已映射页先 unmap，
+再归还其 frame，最终才释放 KVA。若第三个 frame 申请失败，数组中只存在
+KVA、前两个 frame 和前两个 PTE 的动作；未取得资源没有虚构的补偿项。候选
+\code{KernelStack} 仍是局部值，目标槽只有完整验证后才覆盖，因此回滚期间
+其他代码看不到半对象。
+
+销毁既有活动栈没有直接复用同一事务，因为它必须先证明所有权仍一致，再执行
+不可回退的正式销毁。创建失败展开和已发布对象销毁是不同状态转换；把二者
+强行塞进一个通用函数会模糊“候选从未可见”和“活动对象正在消失”的边界。
+
+\section{引用计数和资源快照记录什么}
+共享对象需要回答“还有多少所有者保证其存活”。本阶段以明确的 64 位状态机
+定义强引用：
+
+\[
+R\in[0,2^{64}-1],\qquad
+\operatorname{Acquire}(R)=R+1\ \text{only if}\ 0<R<2^{64}-1.
+\]
+
+释放语义为：
+\[
+\operatorname{Release}(R)=
+\begin{cases}
+(R-1,\mathrm{false}), & R>1,\\
+(0,\mathrm{true}), & R=1,\\
+\mathrm{failure}, & R=0.
+\end{cases}
+\]
+
+\code{Start(initial)} 只允许在未启动状态设置非零初值。\code{TryAcquire}
+拒绝从零复活，因为最后释放者一旦观察到零，就可能已经开始销毁相关页和锁；
+此后把计数加回一不能恢复对象内容。\code{TryAcquire} 也拒绝最大值上溢，
+否则无符号回绕会把最多所有者误写成零。
+
+\code{TryRelease(bool\& is\_last)} 只有成功时才修改输出。这个看似细小的
+失败原子性十分关键：若计数已经为零而函数先把 \code{is\_last} 写成 true，
+调用者可能在失败处理里再次销毁对象。计数和输出必须作为一个逻辑结果提交。
+
+这里的 v1.1 实现有意不是 atomic。v1.2 仍是单 BSP，基础原语先冻结可测试的所有权
+语义。多 CPU 下不能只把字段替换成 \code{atomic<uint64\_t>} 就宣告正确：
+最后释放前的对象写入需要怎样发布，零后获取如何与销毁互斥，弱引用如何升级，
+析构与 RCU 或锁如何配合，都必须一起定义。后来的 v1.4 动态 KernelObject
+选择管理器锁串行化强引用和最后释放。弱引用、RCU 与多核内存序仍未实现。
+
+\topic{ResourceSnapshot 为什么排除历史累计量}
+一次资源事务成功创建再销毁后，当前活动量应恢复，但历史计数合理增加。若把
+\code{successful\_allocations} 或峰值放入泄漏比较，每一个正确完成的事务
+都会被误报。因此快照只保存稳定当前所有权，字段分成六组：
+
+\small
+\noindent\begin{osgridtabularx}{\textwidth}{L{0.14\textwidth}L{0.12\textwidth}X}
+组 & 字段数量 & 当前量\\ \hline
+frame & 4 & managed、free、allocated、reserved（unavailable 由差值推导）\\ \hline
+buddy & 1 & active blocks\\ \hline
+heap & 4 & capacity、consumed、active requested bytes、allocation count\\ \hline
+KVA & 7 & capacity/free/allocated/reserved page、活动描述符/申请/保留\\ \hline
+kernel stack & 4 & slot capacity、active stack、mapped page、guard page\\ \hline
+未来对象 & 6 & Process、Thread、FileDescription、Vnode、CachePage、BlockRequest\\ \hline
+合计 & 26 & 使用低 26 位差异掩码\\ \hline
+\end{osgridtabularx}
+\normalsize
+
+未来六项在 v1.1 为零，但字段位置现在就固定，使后续阶段能接入同一个比较器，
+不必另造一条“进程计数看起来归零”的旁路验收。快照不是永久用户 ABI；字段
+语义改变仍需 ADR 和测试同步更新。
+
+\topic{内部守恒先于前后比较}
+两个同样损坏的快照可能逐字段相等。若只比较 before 和 after，进入事务前
+已经存在的错误会被当作“没有变化”。因此构造和比较都先检查每个管理器的
+内部方程：
+
+\[
+\begin{aligned}
+F_{\mathrm{accounted}}
+  &=F_{\mathrm{free}}+F_{\mathrm{allocated}}
+    +F_{\mathrm{reserved}}
+    \le F_{\mathrm{managed}},\\
+F_{\mathrm{unavailable}}
+  &=F_{\mathrm{managed}}-F_{\mathrm{accounted}},\\
+K_{\mathrm{capacity}}
+  &=K_{\mathrm{free}}+K_{\mathrm{allocated}}+K_{\mathrm{reserved}},\\
+H_{\mathrm{consumed}} &\le H_{\mathrm{capacity}},\\
+S_{\mathrm{mapped}} &=4S_{\mathrm{active}},\\
+S_{\mathrm{guard}} &=2S_{\mathrm{active}},\\
+S_{\mathrm{KVA}} &=6S_{\mathrm{active}}.
+\end{aligned}
+\]
+
+这里的 managed 是从零到最高受管物理地址的页跨度，不等于全部可分配 RAM。
+E820 保留洞、MMIO 窗口与不足整页的边界都保持 unavailable。快照用
+managed 与三类当前所有权的差值推导 unavailable，既不浪费差异位，也仍能
+检测任何跨状态误转移。这个区别在 64 GiB QEMU 的 3--4 GiB PCI 洞上会直接
+影响验收；把不等式误写成等式会错误拒绝合法容量布局。
+
+buddy 活动页和活动块不能超过 frame allocated；KVA 活动对象数不能超过
+描述符容量。所有加法、乘法和类型转换先做 64 位溢出检查。快照构造先写局部
+候选，完整验证成功后才覆盖调用者输出；比较也先产生局部差异，失败不交付
+半份掩码。
+
+差异位 \(i\) 对应字段 \(i\)：
+\[
+  D=\bigvee_{i=0}^{25}
+  \left([B_i\ne A_i]\ll i\right),\qquad
+  C=\operatorname{popcount}(D).
+\]
+当前不依赖标准库 \code{popcount}，而是显式遍历 26 个字段；字段总数由
+\code{static\_assert} 保证小于 64，避免未来新增字段后左移越界。零差异必须
+同时满足 \(D=0\) 和 \(C=0\)。
+
+\section{宿主测试与目标机回收边界}
+第一道位于内存初始化尾部。管理器在保留的最后一个槽创建真实六页动态栈，
+外层 \code{ScopeRollback} 登记销毁动作；随后验证栈布局、引用计数状态机和
+回滚状态，显式执行回滚，再拍摄 after 快照。只有 26 字段恢复才输出：
+
+\begin{verbatim}
+[OS][KERNEL] RESOURCE_LIFECYCLE_READY
+[OS][KERNEL] RESOURCE_SNAPSHOT_TRACKED_FIELDS=0x000000000000001A
+[OS][KERNEL] RESOURCE_SNAPSHOT_CHANGED_FIELDS=0x0000000000000000
+[OS][KERNEL] REFERENCE_COUNTER_SELF_TEST_PASSED
+[OS][KERNEL] SCOPE_ROLLBACK_SELF_TEST_PASSED
+[OS][KERNEL] RESOURCE_SNAPSHOT_SELF_TEST_PASSED
+\end{verbatim}
+
+第二道跨越真实四进程运行。创建第一个进程前拍摄 before；Shell、管道、
+文件系统、抢占和用户异常隔离全部完成，汇编返回永久启动栈并回收所有终止栈
+之后拍摄 after。任一字段变化使 \code{ProcessRuntime} 返回
+\code{ResourceLeakDetected}，禁止输出：
+
+\begin{verbatim}
+[OS][KERNEL] PROCESS_RESOURCES_RECLAIMED
+[OS][KERNEL] RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED
+\end{verbatim}
+
+启动期自检增加一次栈创建和销毁，四进程再增加四次，所以正常整机累计值为
+五次创建、五次销毁；自检栈在进程阶段前已经释放，峰值仍是四个活动栈和
+十六个映射页。区分“累计五次”和“峰值四个”正是当前量与历史量分离的实例。
+
+\topic{四层测试怎样避免同源自证}\par
+\noindent\begin{osgridtabularx}{\textwidth}{L{0.16\textwidth}L{0.18\textwidth}X}
+层级 & 输入规模 & 主要证明\\ \hline
+原语单元 & 边界与故障枚举 & 状态、输出原子性、逆序和幂等拒绝\\ \hline
+固定种子随机 & 100000 个事务 & 与独立动作/资源模型逐步一致\\ \hline
+组合集成 & 四个真实动态栈 & frame/buddy/KVA/PTE/stack 同时变化并恢复\\ \hline
+QEMU 系统 & 256 MiB 与 64 GiB & 真实 CPU、页表、Shell、IPC、文件系统与回收\\ \hline
+\end{osgridtabularx}
+
+固定种子 \code{0x5245534F55524345} 不是随机演示。参考模型独立保存每个
+资源是否活动、动作登记顺序和预期终态；被测实现只暴露公共接口。每轮随机选择
+登记、提交、显式回滚、容量耗尽或动作失败，并比较调用次数、顺序、状态与
+资源归零。失败会报告种子和精确迭代，可以稳定重现并沉淀为单元样例。
+
+组合测试初始化真实 2-bit frame state、buddy、四级页表、
+32 TiB KVA 描述符和栈管理器，创建四个双 guard 栈。活动快照必须观测
+4 个栈、16 个物理数据页、24 个 KVA 页、16 个 present 数据页和 8 个
+not-present guard；逆序销毁后差异掩码必须为零。
+
+具名 256 MiB functional smoke 运行完整 Shell、IPC、文件系统、用户故障隔离
+和资源快照，不是只看 \code{READY} 的简化镜像。64 GiB capacity 使用同一
+代码，另要求在 4 GiB 以上真实申请、写回和回收页帧。64 MiB bootstrap 保留
+启动与历史故障路径。三种 RAM 规格只改变 QEMU 参数，不通过条件编译切回固定
+资源表。
+
+\topic{可观测性与阶段完成边界}
+引用获取、补偿动作、逐页 map/unmap 都是热路径，不逐次输出串口。日志只在
+整个事务提交或完整回收后输出稳定标记；QEMU runner 对 tracked field、
+changed mask 和通过标记做精确次数检查，并继续给每行附加宿主单调相对时间。
+来宾时间仍来自 PIT，两种时间域不会混在一个字段中。
+
+这一组回归包含原语单元测试、十万事务随机测试、快照测试、跨层生命周期集成
+测试和 256 MiB QEMU functional smoke。复位、长模式、异常、持久化和故障
+镜像仍同时运行，用来发现新资源管理对旧路径造成的退化。
+
+v1.1 完成时的受控边界也必须明确：引用计数尚未接入动态 KernelObject，
+未来六个快照字段仍为零，\code{ScopeRollback} 的动作是同步函数且没有锁。
+v1.2 随后把 Process/Thread 当前量接入既有快照；v1.4 又以管理器锁、强引用
+和类型 finalizer 完成动态对象的最后释放，但仍不提供弱引用。先建立可证明的
+单核语义，再扩展并发，不用一个未经定义的 atomic 字段制造“已经线程安全”
+的错觉。
+
+\section{内核堆、类型缓存与内存验证}
+
+heap 虚拟基址为 \code{0xFFFF800000000000}，容量 64 KiB。页表管理器为
+16 个虚拟页分别取得物理帧；这些帧不要求连续，因为虚拟地址负责把它们组织成
+连续区间。每页权限为 RW/NX。
+
+v0.6 的 \code{KernelHeap} 保存 base、size、consumed 和 allocation count。
+分配大小必须非零，对齐必须是二的幂。当前地址先检查
+\code{base+consumed} 溢出，再计算：
+\[
+  a=(current+alignment-1)\mathbin{\&}\sim(alignment-1).
+\]
+padding 和请求大小分别与剩余容量比较，避免组合加法先溢出。只有全部检查
+通过才更新 consumed、次数和输出指针；失败调用不会把调用者指针改成半有效值。
+
+这个 heap 故意没有 \code{free}。启动期的页表、设备对象和全局服务通常与
+内核同寿命，单调策略没有碎片合并、双重释放和锁状态。它的缺点同样明确：
+容量一旦消耗不能回收，所以后续通用堆仍需 size class、slab 或其他所有权
+策略，不能把早期 heap 当成最终实现。
+
+v0.6 目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 字节、
+4096 字节对齐
+对象，分别写入
+\code{0x13579BDF2468ACE0} 和 \code{0xC001D00DC0FFEE11} 后读回。
+\code{HEAP\_SELF\_TEST\_PASSED} 因而同时证明高半区地址 canonical、四级
+映射存在、页可写、NX/WP 没有误伤数据、对齐算法和真实访存都成立。
+
+未来可释放分配器不能在持有自身锁时调用可能再次分配的日志格式化。panic 和
+低内存路径继续使用预分配缓冲与串口最小输出，避免诊断代码递归触发原故障。
+
+\topic{为什么“能够分配”还不是资源管理}
+单调堆的 consumed 指针只回答“下一块从哪里开始”。它没有记录一个返回指针
+对应多大的物理块，也没有办法判断相邻空间是否空闲，因此不存在可靠的
+\code{free}。这不是少写一个接口的问题，而是缺少恢复所有权所需的信息。
+
+动态 Thread、内核栈、FileTable 和缓存对象都有明确销毁点。若仍把它们放进
+单调堆，功能测试可能短时间成功，长时间创建/退出却只会让 consumed 单向增长。
+这类泄漏尤其危险：它不一定破坏当前对象，而是在距离根因很远的后来请求上
+表现为耗尽。v1.1 因而分别建立通用字节块和 buddy 页块的申请、释放与守恒，
+再在其上推进 KVA 与类型缓存；每层只回答一种所有权问题。
+
+\topic{块头同时服务物理邻接和空闲集合}
+64 KiB 后备虚拟区间保持不变，块头固定为 48 字节并按 16 字节对齐：
+
+\begin{center}
+\begin{osgridtabular}{lll}
+字段 & 宽度 & 作用\\ \hline
+\code{size_bytes} & 64 bit & 当前物理块的完整跨度\\ \hline
+\code{previous_block_size_bytes} & 64 bit & 从当前头反向定位前块\\ \hline
+\code{requested_size_bytes} & 64 bit & 区分调用者负载与内部开销\\ \hline
+\code{state_signature} & 64 bit & 区分 free、allocated 与旧 released 头\\ \hline
+\code{previous_free_block} & 64 bit & 空闲链反向链接\\ \hline
+\code{next_free_block} & 64 bit & 空闲链正向链接\\ \hline
+\end{osgridtabular}
+\end{center}
+
+物理块链与空闲链不是同一件事。前者必须无缝覆盖整个 heap，包括活动块；
+后者只索引 free 块，并按地址递增。对地址为 \(b_i\)、长度为 \(s_i\) 的块，
+相邻关系为
+\[
+  b_{i+1}=b_i+s_i,\qquad
+  b_{i-1}=b_i-\operatorname{previous_size}(b_i).
+\]
+保存前块长度就是 boundary tag 的核心。释放时可以在常数时间找到两个物理
+邻居，无需从 heap 起点重新搜索；空闲链则让分配只遍历可用候选。
+
+48 字节头看起来昂贵，这是本阶段有意识的取舍。一个 16 字节小对象会占用至少
+64 字节块，空间效率不高；但每个字段都可在 GDB 和一致性检查器中直接解释。
+后续固定尺寸热对象交给 type cache，通用 heap 不需要同时承担 slab 的职责。
+
+\topic{对齐会同时产生前缀、活动块和后缀}
+请求负载长度 \(n\)、对齐 \(a\) 时，先取
+\[
+  a_{\mathrm{effective}}=\max(a,16).
+\]
+负载必须紧跟 48 字节块头，因此先对
+\(\operatorname{block_begin}+48\) 向上对齐，再反推出活动块起点。若前缀
+非零但小于最小块 64 字节，它既不能进入空闲链，又不能放在负载与块头之间；
+实现继续前进一个对齐单位，直到前缀为零或足够形成完整块。
+
+活动块初始跨度为
+\[
+  \operatorname{align_up}(48+n,16).
+\]
+尾部不足 64 字节时并入活动块，避免制造永远不能分配的碎片；否则尾部形成
+新的 free 块。只有候选地址、三段长度、溢出和边界全部验证后，best-fit
+选择才会提交。失败调用不修改空闲链、块头、统计或调用者输出指针。
+
+best-fit 从所有可容纳请求的 free 块中选最小者。它仍是线性搜索，也不保证
+消灭外部碎片；v1.1 此时的 heap 只有 64 KiB，这个策略的可解释性和确定性比
+复杂索引更重要。对象尺寸分布明确后再用 type cache 消除高频扫描与块头开销。
+
+\topic{释放先预检，再完成唯一一次状态提交}
+\code{TryRelease} 只接受原分配返回的精确负载首地址。它先验证：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 指针非空、位于 heap 内并满足最小对齐；
+  \item 负载前 48 字节确实是 allocated 块头；
+  \item 该块确实出现在从 heap 基址遍历得到的物理块链中；
+  \item requested、size 和活动统计不会下溢；
+  \item 前后块边界、状态和反向长度彼此一致。
+\end{enumerate}
+
+全部预检成功后，当前块才改为 released。若前块 free，先从空闲链摘除并向前
+扩展；若后块 free，再摘除并向后扩展。最后更新后继块保存的 previous size，
+把一个合并结果按地址插回空闲链并提交统计。于是
+
+\[
+  \mathrm{successful_allocation_count}
+  =
+  \mathrm{releases}
+  +
+  \mathrm{allocation_count}
+\]
+
+在任意合法时刻都成立。重复释放会命中 free 或 released 签名并明确失败；
+内部指针即使碰巧按 16 字节对齐，也无法通过物理块成员检查。
+
+\topic{一致性检查不能只数链表节点}
+两个集合节点数相同，不代表它们包含相同块。\code{Validate} 先沿物理块链
+验证尺寸、对齐、状态、前块长度和完整覆盖；再沿空闲链验证地址递增、双向链接
+和有界无环；最后逐个确认每个物理 free 块在空闲链中恰好出现一次。它还重新
+计算活动请求字节、活动块完整跨度和活动数量，与保存统计交叉比较。
+
+统计特意区分 requested 与 consumed。前者是调用者可见负载，后者包含 48 字节
+块头和被吸收的短尾部。\code{remaining_bytes} 只是
+\(\mathrm{capacity}-\mathrm{consumed}\)，可能散落在多个块；真正的单次
+上限由 \code{largest_free_allocation_bytes} 描述。峰值则记录启动周期曾经
+占用的最大完整跨度。
+
+\topic{测试从样例释放扩展到十万步状态机}
+单元测试覆盖无效区间、重复初始化、五种对齐、耗尽失败原子性、空/区间外/
+内部/重复释放、乱序三向合并、起始地址复用和统计守恒。集成测试使用目标同样
+的 64 KiB 区间，混合分配小对象、缓存行对象与 4 KiB 对齐对象，写入模式后
+乱序释放，再申请整个最大连续负载。
+
+固定种子 \code{0x4845415056313031} 执行 100000 次随机申请与释放。参考
+模型独立保存每个活动负载的地址、长度、对齐与首尾模式；每一步核对数据未被
+邻接分裂破坏、区间不重叠、活动请求字节和累计计数一致，并周期性执行完整
+拓扑检查。失败输出包含种子与精确迭代号。
+
+QEMU 自检仍完成 64 字节/16 字节对齐和 4096 字节/4096 字节对齐的真实
+写回，但随后逆序释放并执行 \code{Validate}。日志要求
+\code{HEAP\_ACTIVE\_ALLOCATIONS=0}，同时报告非零峰值和合并后的最大连续
+空闲负载，最后才输出 \code{HEAP\_SELF\_TEST\_PASSED}。分裂和释放不逐次
+写串口，避免诊断改变时序。
+
+v1.1 实现仍有清晰边界：后备区当时固定为 64 KiB，没有内部并发锁，也不能在
+IRQ、NMI 或 panic 中调用。v1.4 为动态对象和文件表把后备区扩为 512 KiB，
+但仍不是按页增长 heap。buddy 与 KVA 已由前文的独立页层和虚拟区间层承担；
+动态 guard stack 与空中间页表回收均已由独立模块闭环，按页增长仍是后续
+能力，而不是 heap 接口暗中承担的职责。固定尺寸 type cache 已经作为下一层
+独立机制建立，下面沿其历史、布局和状态机继续展开。
+
+\section{类型缓存怎样复用固定大小对象}
+通用堆接受任意尺寸和二次幂对齐。这样的接口必须为每次请求回答三个问题：
+哪个空闲块容得下、对齐会怎样切割前缀、剩余后缀是否还能成为独立块。即使连续
+申请的都是 64 字节 Thread 对象，堆也不能从接口上知道下一次请求仍然同型。
+
+内核中的许多资源却天然同构。一个特定版本的 Thread、VMA、等待节点或打开
+文件描述具有固定 \code{sizeof} 与 \code{alignof}；它们会大量创建、释放，
+又需要独立的容量、峰值和泄漏证据。若每个对象直接走 48 字节块头的通用堆，
+64 字节负载至少要消耗 112 字节左右，还要在空闲链中搜索。对象本身很小，
+通用性开销反而接近负载。
+
+20 世纪 80 年代末的 SunOS 内核把这种观察发展成 slab 分配思想：为一种对象
+准备一批同尺寸槽，空闲对象保留在缓存中，后续创建可以复用已经对齐的存储。
+Linux 后来的 SLAB、SLUB 等实现继续加入多个 slab 的空/部分/满状态、
+per-CPU 快速路径、NUMA、poison、red-zone 和内存压力回收。名称与内部数据
+结构会变化，核心分层却稳定：
+
+\begin{center}
+\begin{osgridtabular}{lll}
+层 & 管理单位 & 回答的问题\\ \hline
+buddy & \(2^k\) 个连续物理页 & 哪些 PFN 由谁持有\\ \hline
+KVA/页表 & 虚拟区间与映射 & 页出现在哪个地址、具有什么权限\\ \hline
+通用 heap & 任意字节块 & 一个已映射区间怎样分裂与合并\\ \hline
+type cache & 同尺寸对象槽 & 某一类型还有多少可交付对象\\ \hline
+\end{osgridtabular}
+\end{center}
+
+本项目不能因为最终方向类似 SLUB，就一次复制其全部复杂度。type cache 增量
+落地时 KVA 与 Thread/IRQ 锁语义都尚未冻结，因此没有同时引入多 slab 增长和
+per-CPU 缓存，避免把页后备、地址空间、并发与对象析构错误混在一起。KVA 现已
+由前文的独立闭环完成；缓存仍保持一个固定容量、一个 heap 后备块、可以整体
+销毁的既有协议，等待按页 slab 作为单独增量接入。
+
+\topic{原始核心与模板包装为什么分成两层}
+\code{KernelFixedObjectCache} 接受对象字节数、对象对齐和容量，返回无类型
+存储；\code{KernelTypeCache<ObjectType>} 只负责把
+\code{sizeof(ObjectType)} 与 \code{alignof(ObjectType)} 送给核心，并把
+成功结果转回 \code{ObjectType*}。布局、位图、链表、统计和错误路径只有一份
+实现。
+
+这层包装不调用构造函数，也不在释放时调用析构函数。原因不是 C++ 对象生命期
+不重要，恰恰是它必须由所有者明确决定。缓存只知道“一段适合放置 T 的存储”
+何时空闲，不知道 Thread 的等待队列是否已摘除、FileDescription 的引用是否
+归零，也不知道一次构造失败需要逆序释放哪些资源。把这些动作偷偷放进通用
+模板，会让真正的所有权关系消失。
+
+当前目标自检对象只包含八个 \code{uint64_t}，属于可直接写入的平凡存储。
+未来非平凡 KernelObject 必须在所属模块中明确形成：
+
+\begin{lstlisting}[language=C++]
+storage = cache.TryAcquire()
+construct object and acquire child resources
+if any step fails:
+    roll back committed child resources
+    return storage to cache
+
+on final reference:
+    detach object from all owners
+    destroy object state
+    return storage to cache
+\end{lstlisting}
+
+因此“模板返回类型化指针”不等于“缓存拥有对象语义”。接口注释把这条边界
+写在声明旁，ELF 审计继续拒绝隐藏构造器和运行时符号。
+
+\topic{一个后备块怎样同时容纳位图与对象}
+设对象大小为 \(Z\)，语言要求对齐为 \(A_T\)，容量为 \(N\)。空闲槽首要保存
+一个 64 位下一索引，所以内部存储对齐与槽步长为：
+
+\[
+\begin{aligned}
+ B &= \left\lceil\frac{N}{8}\right\rceil,\\
+ A &= \max(A_T,8),\\
+ S &= \operatorname{align\_up}(\max(Z,8),A),\\
+ O &= \operatorname{align\_up}(B,A),\\
+ H &= O+N S.
+\end{aligned}
+\]
+
+\(B\) 是活动位图字节数，\(A\) 是后备申请所需对齐，\(S\) 是槽步长，
+\(O\) 是对象区相对后备块起点的偏移，\(H\) 是唯一 heap 请求长度。布局为：
+
+\begin{verbatim}
+backing allocation, H bytes
+low address
+┌──────────────┬───────────────┬────────┬────────┬─────┬──────────┐
+│ bitmap B byte│ align padding │ slot 0 │ slot 1 │ ... │ slot N-1 │
+└──────────────┴───────────────┴────────┴────────┴─────┴──────────┘
+                                  each slot S bytes, aligned to A
+high address
+\end{verbatim}
+
+位图与槽共用一个后备块有两项可验证结果。第一，缓存初始化成功只会让 heap
+活动申请数增加一；第二，活动对象归零后一次 \code{Destroy} 就能把全部缓存
+元数据和槽归还，不存在忘记释放旁路位图的第二条路径。
+
+每个算式都可能溢出。\code{align_up(value,alignment)} 不能先无条件执行
+\code{value+alignment-1}；实现先验证 value 不大于
+\code{UINT64_MAX-(alignment-1)}。乘法先检查 \(N\le
+\mathrm{UINT64\_MAX}/S\)，最后再检查 \(O\le\mathrm{UINT64\_MAX}-NS\)。
+这些检查发生在调用 heap 之前，所以非法配置不能改变全局堆累计值。
+
+\topic{32 个缓存行对象为什么得到 0x840}
+目标自检选择 \(Z=64\)、\(A_T=64\)、\(N=32\)。代入：
+
+\[
+\begin{aligned}
+B&=\lceil32/8\rceil=4,\\
+A&=64,\\
+S&=\operatorname{align\_up}(64,64)=64,\\
+O&=\operatorname{align\_up}(4,64)=64,\\
+H&=64+32\times64=2112=\mathtt{0x840}.
+\end{aligned}
+\]
+
+4 字节位图之后有 60 字节填充。这看似浪费，却确保第一个槽和随后每个
+64 字节步长槽都从缓存行边界开始。这里的“缓存行”只是一种代表性对齐，
+项目没有把 64 字节写成所有 x86-64 CPU 的架构 ABI；真实处理器的缓存拓扑
+可以由 CPUID 单独发现。该自检只要求请求的语言对齐被分配器兑现。
+
+单元测试另用 \(Z=1\)、\(A_T=1\)、\(N=9\) 验证相反边界：
+
+\[
+B=2,\quad A=8,\quad S=8,\quad O=8,\quad H=8+9\times8=80.
+\]
+
+容量 9 迫使位图使用第二字节的一个有效 bit，其余七个尾 bit 必须保持零；
+1 字节对象又迫使槽扩展到 8 字节以保存空闲索引。这不是为了支持某个实际
+1 字节内核对象，而是把两个容易被普通 32 槽样例掩盖的布局分支变成证据。
+
+\topic{活动位图与槽内空闲链各自证明什么}
+每个槽有且只有两种状态：
+
+\begin{osgridlongtable}{L{0.14\textwidth}L{0.22\textwidth}L{0.50\textwidth}}
+\textbf{bitmap} & \textbf{所有者} & \textbf{槽内容解释}\\ \hline
+\endfirsthead
+\textbf{bitmap} & \textbf{所有者} & \textbf{槽内容解释}\\ \hline
+\endhead
+0 & cache & 槽首 \code{uint64_t} 是下一空闲槽索引\\ \hline
+1 & caller & 全部 \(S\) 字节属于调用者，缓存不得写入\\ \hline
+\end{osgridlongtable}
+
+只保存空闲链不够。活动对象正在使用槽首，缓存不能在那里留下链节点；重复
+释放若没有位图，会把同一槽插入两次，之后两次申请可能向两个调用者交付同一
+地址。只保存位图也可以辨别活动，但申请最坏要线性扫描 \(N\) 个 bit。释放
+时已经知道槽索引，把它压入链头即可让下一次申请为 \(O(1)\)。
+
+位图定位采用：
+\[
+  \mathrm{byte}=i/8,\qquad
+  \mathrm{bit}=i\mathbin{\&}7.
+\]
+链尾使用 \code{UINT64_MAX}，有效索引严格小于容量。初始化把槽
+\(i\) 的 next 写成 \(i+1\)，最后一槽写链尾，链头设为 0。由于对象区和
+步长至少按 8 字节对齐，这些 64 位读写在 x86-64 上不会产生未对齐访问。
+
+空闲链采用 LIFO，而不是保持地址排序。释放只需三步：写旧 head、更新 head、
+增加 free；最近释放的存储也更可能仍在 CPU 数据缓存中。LIFO 不是公平性
+契约，调用者不能依赖长期地址顺序；目标自检只用“刚完成一组确定释放后应复用
+最后槽”证明链提交方向正确。
+
+\topic{初始化是一项先申请、后发布的事务}
+\code{Initialize} 依次执行：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 拒绝重复初始化、零对象尺寸、非二次幂对齐和零容量；
+  \item 在局部 \code{KernelTypeCacheLayout} 中计算全部尺寸与溢出；
+  \item 向 heap 申请一个 \(H\) 字节、\(A\) 对齐的后备块；
+  \item 只有 heap 成功后才发布 heap 指针、位图、对象基址和配置字段；
+  \item 清零 \(B\) 个位图字节，写入 \(N\) 个空闲 next 索引；
+  \item 设置 active=0、free=\(N\)、累计值和峰值为零。
+\end{enumerate}
+
+若前三步失败，缓存仍处于 \code{NotInitialized}；不会出现“保存了 heap
+指针却没有后备块”的半状态。heap 自身也保证分配失败不改输出和拓扑，于是
+两层事务边界可以组合。
+
+初始化不会清零全部对象槽。空闲链本来就要占用每槽首 8 字节，而其余字节没有
+安全语义；对象所有者必须初始化自己将读取的字段。无条件清零不仅掩盖遗漏的
+对象初始化，还会让缓存容量越大、启动时间越长，却没有改变所有权。
+
+\topic{申请路径在写位图前验证局部守恒}
+\code{TryAcquire} 先核对：
+
+\[
+\begin{aligned}
+\mathrm{active}+\mathrm{free}&=N,\\
+\mathrm{successful}-\mathrm{releases}&=\mathrm{active},\\
+\mathrm{active}&\le\mathrm{peak}\le N.
+\end{aligned}
+\]
+
+若 free=0，head 必须恰为链尾，然后返回 \code{OutOfObjects}。输出引用保留
+调用者原值，因此调用者不能把耗尽误当成一个新的空指针对象。若仍有空闲槽，
+head 必须在范围内且位图为 0；下一索引必须与剩余 free 数相符、不能指向自身
+或一个活动槽。累计申请已为最大 64 位值时返回 \code{CounterOverflow}，
+不能回绕为零。
+
+提交顺序为：
+
+\begin{lstlisting}[language=C++]
+index = free_head
+next = slot[index].next
+bitmap[index] = active
+free_head = next
+active += 1
+free -= 1
+successful += 1
+peak = max(peak, active)
+output = address_of(index)
+\end{lstlisting}
+
+输出最后写入很重要。之前任一验证失败都不应把一个尚未拥有的槽地址暴露给
+调用者。当前是串行路径，所以这些普通读写不使用原子指令；这不是宣称编译器
+或 CPU 会替未来并发保持事务。
+
+\topic{释放先从地址恢复索引，再接触槽内容}
+释放路径不能先把 next 写进对象，因为输入指针可能位于另一个对象内部。实现
+先把指针解释为 64 位地址，并验证它落在：
+\[
+  [\mathrm{object\_base},\,
+    \mathrm{object\_base}+N S).
+\]
+随后计算 offset，要求 \(\mathrm{offset}\bmod S=0\)，再取
+\(i=\mathrm{offset}/S\)。只有位图 \(i\) 为 1，才说明这是当前活动槽的精确
+首地址。
+
+空指针返回 \code{NullObject}；区间外或槽内指针返回
+\code{InvalidObject}；位图已经为 0 返回 \code{ObjectNotActive}。三者分开
+使调试器能区分调用方没有对象、地址算错和生命周期重复结束。验证计数与当前
+free head 后，提交为：
+
+\begin{lstlisting}[language=C++]
+bitmap[index] = free
+slot[index].next = free_head
+free_head = index
+active -= 1
+free += 1
+releases += 1
+\end{lstlisting}
+
+清位和写 next 都发生在全部拒绝条件之后，因此重复释放不能把现有链截断。
+释放成功之后，旧对象的槽首已经是缓存元数据；调用者继续读取它属于 use-after-
+release，而不是缓存应保持的数据契约。
+
+\topic{销毁为什么必须先证明没有活动对象}
+缓存后备块同时包含所有槽。只要一个对象仍活动，归还该块就会让其指针指向
+heap 可能重新分配的区域，形成跨类型 use-after-free。因此
+\code{Destroy} 在 active 非零时返回 \code{ActiveObjectsRemain}，缓存保持
+原状。
+
+active 为零仍不足以立即释放。空闲链可能因更早的错误断裂，位图尾部也可能
+损坏；\code{Destroy} 先调用完整 \code{Validate}。只有校验成功且 heap
+\code{TryRelease(backing)} 也成功，才清空内部指针和统计。若 heap 拒绝，
+返回 \code{BackingReleaseFailed} 并保留缓存状态，调试器仍能检查原现场。
+
+销毁前由调用者取得 \code{Statistics} 快照，因为成功销毁后对象已经回到
+未初始化状态，旧统计不再描述一个存在的缓存。目标内存管理器正是先保存
+33/33/32 的自检快照，再销毁并记录到全局启动统计。
+
+\topic{完整校验怎样在不分配临时内存时发现环}
+\code{Validate} 首先根据保存的 \(Z,A_T,N\) 重算 \(B,A,S,O,H\)，核对
+位图确实等于后备块起点、对象基址等于 backing+\(O\)，再验证全部计数关系。
+若 \(N\) 不是 8 的倍数，最后一个位图字节中超出容量的高 bit 必须为零。
+
+然后扫描 \(0..N-1\) 的位图，得到 observed active。空闲链从 head 开始，
+每访问一个索引就要求：
+
+\begin{itemize}
+  \item 已访问步数小于 \(N\)；
+  \item 索引小于 \(N\)；
+  \item 对应位图为 0。
+\end{itemize}
+
+单向链中若再次访问某节点，之后路径必然重复，步数最终达到容量；因而不需要
+另分配 visited 位图也能在下一次解引用前识别环。断链或未连入的空闲槽则让
+observed free 小于保存的 free。最后要求 observed active/free 分别等于
+统计，两者之和为容量。
+
+校验器不能为了验证缓存再从同一缓存申请临时节点，也不应调用可能依赖 heap 的
+日志格式化。它只返回状态；冷路径启动代码在整个内存初始化成功后统一打印
+里程碑。
+
+\section{从随机状态机到 QEMU 自检}
+单元测试从 API 失败语义开始：未初始化申请/释放/销毁、无效配置、尺寸溢出、
+heap 后备不足、重复初始化、全容量耗尽、输出保持、空/外部/内部指针、活动
+对象销毁、重复释放和 LIFO 复用。最后把全部槽归还，要求唯一 heap 后备块
+消失。前述 1 字节、9 槽配置专门覆盖最小步长与尾 bit。
+
+集成测试在一个 64 KiB heap 上同时建立三种缓存：
+
+\begin{center}
+\begin{osgridtabular}{rrrr}
+对象 & 对齐 & 容量 & 关注点\\ \hline
+SmallObject & 8 & 64 & 普通小对象与交错释放\\ \hline
+CacheLineObject & 64 & 32 & 缓存行对齐与数据保持\\ \hline
+LargeObject & 256 & 8 & 大对齐和较大槽\\ \hline
+\end{osgridtabular}
+\end{center}
+
+测试填满三者，释放 small/large 的偶数槽，同时完整读回仍活动的 cache-line
+模式。带活动对象的缓存销毁必须失败；随后释放奇数槽和全部 cache-line 槽，
+按不同于创建顺序销毁三者。heap 最终必须恢复单一最大空闲负载，累计三次后备
+申请等于三次释放。
+
+固定种子 \code{0x5459504543414348} 执行 100000 步。独立记录保存每个活动
+指针及首尾模式，随机选择申请或某个活动序号释放；每步核对活动地址唯一、
+数据未被空闲链覆盖、active/free 与累计值一致。每 257 步执行完整校验，
+每 509 步的相应释放机会再尝试一次重复释放。失败报告包含种子与迭代号，
+不会留下只能“再跑一次看看”的偶现结果。
+
+\topic{QEMU 自检把软件状态机连接到真实映射}
+宿主模型证明算法，却不能证明高半区地址真的由当前 CR3 映射，也不能证明
+freestanding 目标生成的 64 位加载/存储能访问后备页。目标自检在 heap 自检
+完成后执行：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 建立 32 槽、64 字节对象、64 字节对齐的缓存；
+  \item 申请全部槽，逐地址验证低 6 bit 为零，在索引 0 与 7 写入带槽序号的
+        两组 64 位模式；
+  \item 第 33 次申请必须耗尽且保留输出，随后读回全部 64 组边界模式；
+  \item 先释放 0,2,\ldots,30，重复释放槽 0 必须被拒绝；
+  \item 再释放 1,3,\ldots,31，此时 LIFO head 应为槽 31；
+  \item 再申请一次必须得到原槽 31，然后立即归还；
+  \item 完整校验后保存统计，销毁缓存并再次校验 heap。
+\end{enumerate}
+
+自检进入前 heap 已完成两次自身申请/释放。缓存销毁后，当前 consumed、
+allocation count、active requested 和 largest free 必须与进入前相同；
+累计 heap 申请与释放各增加一次。只有这一整条链成立，内核才在冷路径输出：
+
+\begin{verbatim}
+[OS][KERNEL] TYPE_CACHE_READY
+[OS][KERNEL] TYPE_CACHE_OBJECT_SIZE_BYTES=0x0000000000000040
+[OS][KERNEL] TYPE_CACHE_OBJECT_ALIGNMENT_BYTES=0x0000000000000040
+[OS][KERNEL] TYPE_CACHE_SLOT_STRIDE_BYTES=0x0000000000000040
+[OS][KERNEL] TYPE_CACHE_CAPACITY=0x0000000000000020
+[OS][KERNEL] TYPE_CACHE_BACKING_STORAGE_BYTES=0x0000000000000840
+[OS][KERNEL] TYPE_CACHE_ACTIVE_OBJECTS=0x0000000000000000
+[OS][KERNEL] TYPE_CACHE_FREE_OBJECTS=0x0000000000000020
+[OS][KERNEL] TYPE_CACHE_SUCCESSFUL_ALLOCATIONS=0x0000000000000021
+[OS][KERNEL] TYPE_CACHE_RELEASES=0x0000000000000021
+[OS][KERNEL] TYPE_CACHE_PEAK_ACTIVE_OBJECTS=0x0000000000000020
+[OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED
+\end{verbatim}
+
+每次申请或释放都打印会产生两个反效果：115200 波特串口把分配器变成 I/O
+基准，日志路径还可能在未来再次申请内存。当前只更新固定宽度计数，在事务
+完成后打印一次，使日志既能证明容量和守恒，又不反向改变热路径。
+
+\topic{为什么当前没有原子指令和内部锁}
+x86-64 对齐的普通 64 位 load/store 足以让当前 BSP 串行启动代码读写索引，
+但它不构成多个执行流之间的互斥。若 Thread A 与 IRQ 同时弹出同一个 head，
+两者都可能看到旧索引并交付同一槽；仅把 head 改成 atomic 也不能原子提交
+位图和三项计数。
+
+v1.2 将冻结三种调用环境：普通 Thread 上下文、与本 CPU IRQ 共享的短临界区、
+以及绝不分配的 NMI/panic。具体缓存的所有者届时用 \code{SpinLock} 或
+\code{IrqSaveSpinLock} 包围完整状态转换，锁顺序由对象模块声明。当前缓存
+内部不擅自 \code{CLI}，也不加入一个尚无调用上下文语义的锁；IRQ、NMI 和
+panic 明确不得调用。
+
+未来 per-CPU magazine 可以让常见申请不触及共享锁，但那是性能层。即使快速
+路径改变，重复释放拒绝、容量守恒、销毁前 active=0 和后备所有权仍必须与
+本次状态机一致。
+
+\topic{从固定单块到多 slab 的演进边界}
+这里的固定缓存容量初始化后不变。它没有空/部分/满 slab 列表，也不能只归还
+一部分后备页；在 v1.1 时后备仍受 64 KiB heap 总容量约束，v1.4 的通用 heap
+虽已扩为 512 KiB，缓存自身仍是单后备块。这足以验证固定槽所有权，却不是
+大规模内核的最终分配策略。
+
+KVA 已经能够从高半区分配虚拟区间，并与 buddy、页表组成经过整机验证的跨层
+事务。下一步让类型缓存拥有多个按页后备 slab；空 slab 才能撤销映射、归还
+物理页和 KVA。动态内核栈使用同一 KVA/页后备事务，但额外长期保留
+not-present guard。已经落地的页表回收保证撤销映射不会永久泄漏独占
+中间表。
+
+v1.2 的 Process/Thread 对等路径通过后，固定 PCB 才迁入动态缓存；v1.4
+进一步把引用计数 KernelObject 和动态 FileDescription 建立在通用可回收
+heap 上。类型缓存继续服务尺寸完全一致的热对象，不被强行用于带私有头和异构
+载荷的对象。这一顺序保留一条重要工程原则：基础设施可以先存在，旧生产路径
+必须在新对象模型拥有对等测试之前继续工作，不能为了“看起来已经动态化”制造不可启动的
+中间版本。
+
+\topic{内存测试从纯函数扩展到处理器执行}
+四层验证各自回答不同问题：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 单元测试验证最高可用 RAM 与高端保留洞的区别、元数据区搜索、
+        64 GiB 状态尺寸、高地址范围分配、direct-map canonical 边界、
+        heap 原子失败、释放合并和表项权限编码；
+  \item 集成测试同时保留 64 MiB 启动图，并构造 3--4 GiB 洞和总计 64 GiB
+        可用 RAM，核对 16777216 个 free frame 和 4 GiB 以上分配/回收；
+  \item 固定种子 \code{0x6D656D6F72793634} 完成 8192 组叶表项往返，
+        执行 4096 步随机 allocate/release，再执行 1024 轮随机高地址窗口
+        分配并立即回收；独立 heap、type cache 与 KVA 种子分别再执行
+        100000 步字节块、固定槽和虚拟区间申请/释放；
+  \item QEMU 主路径固定使用 64 GiB RAM，真实加载 CR3、访问 heap，并要求
+        direct-map 精确覆盖 64 GiB、使用 32768 个 2 MiB 页，在
+        \code{0x0000000100001000} 或更高帧写入读回两个 64 位模式；失败路径
+        继续证明 \code{MEMORY\_MAP\_INVALID} 和错误码 3 的写保护 \#PF。
+\end{enumerate}
+
+随机测试不是用随机数替代设计。种子、迭代号和性质名都写入失败报告，任何失败
+可以精确重放。参考模型只记录“这一帧是否 allocated”，不调用被测分配器的
+内部状态，因此不会与实现犯同一种编码错误。
+
+\topic{panic 是终止协议而不是普通日志函数}
+panic 首先禁止本地中断并阻止其他核心继续修改共享状态，随后输出原因、CPU、
+RIP、寄存器、控制寄存器和有限栈回溯。输出函数不得动态分配或获取未知锁。
+最后进入明确停机、调试陷阱或重启策略。
+
+QEMU 测试可让 panic 写入专用退出端口或稳定串口标记，宿主据此区分预期故障
+与超时。生产硬件则可能保存崩溃区或触发看门狗，机制边界保持相同。

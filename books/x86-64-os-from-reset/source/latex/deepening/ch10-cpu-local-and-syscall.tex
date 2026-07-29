@@ -48,7 +48,7 @@ v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的
 \code{SYSENTER/SYSEXIT}，它通过专用 MSR 缩短路径，却没有天然适配长模式的
 完整返回语义。软件中断则最容易调试，但需要 IDT gate 和通用中断路径。
 
-\begin{osgridlongtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.24\textwidth}L{0.25\textwidth}}
+\begin{osgridlongtable}{L{0.15\textwidth}L{0.29\textwidth}L{0.19\textwidth}L{0.23\textwidth}}
 机制 & 入口来源 & 是否自动换栈 & 返回与主要代价\\ \hline
 call gate & GDT/LDT gate & 按 TSS 与 gate 规则 & RETF；描述符语义复杂\\ \hline
 \code{INT n} & IDT interrupt/trap gate & 是，使用 TSS.RSP0 & IRETQ；通用且路径较长\\ \hline
@@ -60,7 +60,7 @@ SYSCALL & STAR/LSTAR/FMASK & 否 & SYSRETQ；软件承担可信栈与返回校�
 同一个 PID 查询分别经两条入口，若返回值或副作用不同，错误一定发生在进入/
 规范化/返回边界，而不是系统调用业务本身。
 
-\topic{先冻结处理器规格，再执行依赖能力的指令}
+\section{进入系统调用前先检查处理器能力}
 “目标是 x86-64”仍不足以说明一台 CPU 暴露哪些可选能力。长模式、NX、
 FXSAVE、SSE2 和 SYSCALL 分布在不同 CPUID 叶；地址宽度又决定规范地址和页表
 能表达的范围。若代码先执行 \code{wrmsr} 或 \code{syscall}，再等待 \#UD
@@ -180,7 +180,7 @@ R11 中仍是用户原值。入口 \code{cld} 只维护当前内核 ABI，构造
 \code{UserContext} 时写入的是 R11。因此设置 DF 的测试能证明“内核执行时
 清 DF”和“返回时保留用户 DF”不是相互冲突的要求。
 
-\topic{CpuLocal 把每 CPU 入口状态收束为一个对象}
+\section{CpuLocal 怎样保存当前入口状态}
 TSS.RSP0 属于 CPU，不属于 Process；原生入口栈同样是“当前 CPU 正在运行
 哪个 Thread”的派生状态。若 current Thread、TSS.RSP0、原生 entry RSP 和
 need-resched 分散在无关全局变量中，调度切换很难证明它们一起更新。
@@ -221,10 +221,11 @@ IRQ 可以嵌套，抢占禁止 guard 也可能由调用链分层取得。单个
 \code{UINT64\_MAX} 上溢都明确失败。最大深度只在新峰值出现时更新，运行结束
 要求当前深度归零但峰值非零。
 
-\code{CpuPreemptionGuard} 构造时增加深度，析构时减少；失败不伪造取得成功。
+\code{CpuPreemptionGuard} 构造时增加深度，析构时减少；增加失败时守卫保持
+未取得状态。
 它没有让内核自动变成 SMP-safe，只把当前单 BSP 的合法调度点变成可检查状态。
 
-\topic{原生入口逐条建立可信状态}
+\section{SYSCALL 入口怎样建立内核现场}
 用户包装器按 System V ABI 收到 number 与四个参数，再变换为项目 ABI：
 
 \begin{lstlisting}[language={[x86masm]Assembler},caption={用户侧最小原生包装}]
@@ -301,7 +302,7 @@ vector 不表示“发生异常”，而是统一现场的来源标签：
 用户复制、文件和管道逻辑不需要知道最初执行了哪条指令。来源只服务计数、入口
 一致性和返回选择。
 
-\topic{返回前的校验顺序是一条安全证明}
+\section{返回用户态前检查哪些状态}
 SYSRET 的 RCX 来自用户 RIP。非规范地址可能在处理器仍处于 Ring 0 的阶段
 触发 \#GP，因此不能把“让硬件试一下”当作验证。当前返回准备从所有权开始：
 
@@ -462,7 +463,7 @@ worker 执行：
 双入口调用选无副作用 PID 查询，避免“调用两次本来就应该改变状态”使差分失去
 意义。
 
-\topic{四层测试从不同位置观察同一合同}\par
+\section{怎样测试快速系统调用路径}
 \begin{osgridlongtable}{L{0.17\textwidth}L{0.30\textwidth}L{0.41\textwidth}}
 层次 & 主要输入 & 能证明的事实\\ \hline
 单元 & CPUID 叶、UserContext 边界 & profile、canonical、段、RFLAGS 和返回选择\\ \hline
@@ -548,7 +549,7 @@ TSS/CpuLocal 如何同步，Thread 切换和永久栈恢复如何收束 GS？\\ 
 ProcessRuntime。若直接从 \code{sysret} 向前逆推，会同时遇到 selector、
 RFLAGS、调度、页表、栈和 GS 六种状态，容易把结果当成原因。
 
-\topic{本阶段明确没有做什么}
+\topic{当前实现范围}
 当前 CpuLocal 只有一个 BSP 实例；没有 AP 启动、per-CPU 分配、跨核 IPI 或
 远端 TLB shootdown。用户 GS/TLS 尚未开放，IA32\_GS\_BASE 为零。虚拟地址
 继续固定四级 48 位，LA57 未启用。NMI 采用 fail-stop，不提供可恢复诊断。

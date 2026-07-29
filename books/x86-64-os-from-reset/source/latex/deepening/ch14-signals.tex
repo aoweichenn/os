@@ -172,7 +172,7 @@ x86-64 \code{SYSCALL} 编码固定为两个字节；RDI、RSI、RDX、R10 等参
 若按相对时长盲目重启会把 handler 时间再次加入等待，futex 若重新比较错误
 条件也会掩盖值变化，因此“可重启”不是一个全局布尔默认值。
 
-\topic{用户 handler 的栈看起来像一次真正的 call}
+\section{用户 handler 怎样进入和返回}
 C++ handler 遵守 System V AMD64 ABI。普通函数入口期待
 \(RSP\bmod16=8\)，栈顶保存返回地址；被中断代码却没有执行过 \code{call}。
 Kernel 因而在目标用户栈合成：
@@ -278,7 +278,7 @@ Exception/vector 13 并交给父进程 wait；Kernel 与旁系 Process 继续运
 整机 probe 的孩子故意清零 magic，父进程必须观察隔离结果。这证明安全检查
 穿过真实 ELF、页表和系统调用，而不是仅存在于宿主单元模型。
 
-\topic{fork、exec 与退出怎样迁移信号状态}
+\section{fork、exec 与退出怎样迁移信号状态}
 这三个生命周期动作都保留 Process 身份，却对信号状态采用不同的复制、
 重置或销毁规则；把它们逐项展开，才能看清异步事件在哪一侧继续生效。
 
@@ -369,8 +369,8 @@ cookie、用户 RIP 的 R-X 页和用户栈的 RW-NX 页；按组发送误伤 in
 是否仍继承 PID1 进程组。不能放宽 \code{ValidateUserContext} 或扩大 QEMU
 timeout 来掩盖状态错误。
 
-v1.14 已完成普通信号、进程组、用户 handler、严格 sigreturn 和可中断/可重启
-阻塞。TTY、session、前台组、Ctrl-C、stop/continue、alternate stack、实时
-信号队列和 \code{siginfo\_t} 均留给后续阶段。下一阶段应让 i8042 输入先经过
-TTY line discipline，再由 TTY 向前台进程组发送信号；键盘 IRQ 不应直接选择
-某个 PID。
+普通信号、进程组、用户 handler、严格 sigreturn 和可中断/可重启阻塞已经
+具备。下面接入 TTY、session、前台组、Ctrl-C 与 stop/continue：i8042 输入
+先经过 TTY line discipline，再由 TTY 向前台进程组发送信号；键盘 IRQ
+不会直接选择某个 PID。alternate stack、实时信号队列和
+\code{siginfo\_t} 尚未实现。

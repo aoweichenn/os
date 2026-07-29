@@ -9,30 +9,29 @@
 \definecolor{BookRule}{HTML}{CCD1D1}
 
 \defaultfontfeatures{Ligatures=TeX}
-% Maple Mono 新旧版本使用过不同的字体族名称。优先使用当前版本，
-% 同时兼容已有构建机上的 NL 版本；最末级使用 TeX Live 自带字体，
-% 避免仅因可选字体未安装而中断整本书的可复现构建。
+% 正文、标题和代码承担不同职责。正文使用衬线体保证长篇阅读节奏，标题使用
+% 无衬线体建立层级，Maple Mono 只用于代码、寄存器、路径和日志。
+\IfFontExistsTF{TeX Gyre Pagella}{
+  \setmainfont{TeX Gyre Pagella}
+}{
+  \setmainfont{Latin Modern Roman}
+}
+\IfFontExistsTF{TeX Gyre Heros}{
+  \setsansfont{TeX Gyre Heros}
+}{
+  \setsansfont{Latin Modern Sans}
+}
+\setCJKmainfont{FandolSong}[AutoFakeBold=2,AutoFakeSlant=0.2]
+\setCJKsansfont{FandolHei}[AutoFakeBold=2]
 \IfFontExistsTF{Maple Mono NF CN}{
-  \setmainfont{Maple Mono NF CN}[Ligatures=NoCommon]
-  \setsansfont{Maple Mono NF CN}[Ligatures=NoCommon]
   \setmonofont{Maple Mono NF CN}[Ligatures=NoCommon]
-  \setCJKmainfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-  \setCJKsansfont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-  \setCJKmonofont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+  \setCJKmonofont{Maple Mono NF CN}[AutoFakeBold=2,FallBack=FandolFang]
 }{
   \IfFontExistsTF{Maple Mono NL NF CN}{
-    \setmainfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
-    \setsansfont{Maple Mono NL NF CN}[Ligatures=NoCommon]
     \setmonofont{Maple Mono NL NF CN}[Ligatures=NoCommon]
-    \setCJKmainfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-    \setCJKsansfont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
-    \setCJKmonofont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolHei]
+    \setCJKmonofont{Maple Mono NL NF CN}[AutoFakeBold=2,FallBack=FandolFang]
   }{
-    \setmainfont{Latin Modern Roman}
-    \setsansfont{Latin Modern Sans}
     \setmonofont{Latin Modern Mono}[Ligatures=NoCommon]
-    \setCJKmainfont{FandolSong}[AutoFakeBold=2]
-    \setCJKsansfont{FandolHei}[AutoFakeBold=2]
     \setCJKmonofont{FandolFang}[AutoFakeBold=2]
   }
 }
@@ -45,25 +44,26 @@
 \sloppy
 \emergencystretch=2em
 
-% Maple Mono 的三位页码比 LaTeX 默认目录页码盒略宽；扩大盒子，避免页码
-% 与点线或纸张边界发生挤压。
+% 三位页码需要比 LaTeX 默认值更宽的目录页码盒。
 \makeatletter
 \renewcommand{\@pnumwidth}{2.1em}
 \makeatother
 
 \ctexset{
   chapter={
-    format=\Huge\bfseries\color{BookNavy},
-    titleformat=\Huge\bfseries\color{BookNavy}
+    format=\Huge\bfseries\sffamily\color{BookNavy},
+    titleformat=\Huge\bfseries\sffamily\color{BookNavy}
   },
-  section={format=\Large\bfseries\color{BookBlue}},
-  subsection={format=\large\bfseries\color{BookNavy}}
+  section={format=\Large\bfseries\sffamily\color{BookBlue}},
+  subsection={format=\large\bfseries\sffamily\color{BookNavy}}
 }
 
 \pagestyle{fancy}
 \fancyhf{}
-\fancyhead[LE]{\footnotesize\color{BookMuted}\thepage\quad\leftmark}
-\fancyhead[RO]{\footnotesize\color{BookMuted}\leftmark\quad\thepage}
+\renewcommand{\chaptermark}[1]{\markboth{\thechapter\quad #1}{}}
+\renewcommand{\sectionmark}[1]{\markright{\thesection\quad #1}}
+\fancyhead[LE]{\footnotesize\sffamily\color{BookMuted}\thepage\quad\nouppercase{\leftmark}}
+\fancyhead[RO]{\footnotesize\sffamily\color{BookMuted}\nouppercase{\rightmark}\quad\thepage}
 \renewcommand{\headrulewidth}{0.25pt}
 \fancypagestyle{plain}{
   \fancyhf{}
@@ -72,11 +72,12 @@
 }
 
 \hypersetup{
+  bookmarksdepth=2,
   colorlinks=true,
   linkcolor=BookBlue,
   urlcolor=BookBlue,
   citecolor=BookBlue,
   pdftitle={从复位向量到自研 x86-64 操作系统},
   pdfauthor={x86-64 OS Lab},
-  pdfsubject={硬件、启动链、内核与软件工程实践}
+  pdfsubject={结合完整源码学习 x86-64 操作系统}
 }

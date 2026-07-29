@@ -5,6 +5,9 @@ CPU 不能读取 \code{.cpp} 文件。编译器先生成指令和未决符号，
 字节。本章从一份短源码一直跟到 ROM 十六进制内容，并说明裸机 C++ 还缺哪些
 运行时支持。
 
+\chapterroute{编译与重定位 $\rightarrow$ freestanding C++ $\rightarrow$
+链接脚本 $\rightarrow$ 复位入口的短代码片段 $\rightarrow$ 镜像和反汇编核对}
+
 \input{topics/ch05-toolchain-and-binary}
 \input{topics/ch05-freestanding-cpp}
 \input{topics/ch05-rom-and-reset-code}

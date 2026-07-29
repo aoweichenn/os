@@ -1,0 +1,10 @@
+\chapter{内核堆怎样管理不同大小的对象}
+
+页分配器只提供 4 KiB 及以上的块，内核却要频繁创建较小对象。我们先建立
+能够分裂、合并和对齐的堆，再用类型缓存重复利用同尺寸槽位。每条失败路径都
+要释放此前取得的页、映射和元数据。
+
+\chapterroute{回滚动作 $\rightarrow$ 引用与资源快照 $\rightarrow$ 堆块
+分裂合并 $\rightarrow$ 类型缓存 $\rightarrow$ 随机测试和目标机自检。}
+
+\input{deepening/ch08-heap-and-resource-lifetimes}

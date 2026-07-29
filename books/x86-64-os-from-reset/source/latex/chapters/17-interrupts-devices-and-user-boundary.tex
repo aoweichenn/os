@@ -4,6 +4,9 @@
 当前现场，进入内核读取扫描码，然后回到被打断的位置。随后我们让用户程序在
 Ring 3 运行，并检查它怎样通过系统调用进入内核、怎样因非法访问被单独终止。
 
+\chapterroute{PIC 和 IDT $\rightarrow$ IRQ 现场 $\rightarrow$ 驱动并发
+$\rightarrow$ Ring 3 入口 $\rightarrow$ 用户指针复制与故障隔离}
+
 \input{topics/ch09-interrupts-devices-users}
 \input{deepening/ch09-interrupts-devices-and-users}
 \input{deepening/ch09-interrupt-input-wiring-atlas}

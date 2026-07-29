@@ -4,6 +4,9 @@
 配置 UART，并等待发送保持寄存器空闲；设备一直忙时又不能永久卡住。本章从
 这一个字符写出串口状态机，再设计日志格式、超时和自动测试。
 
+\chapterroute{认识 16550A $\rightarrow$ 理解寄存器复用 $\rightarrow$
+初始化 COM1 $\rightarrow$ 等待 THRE 与处理超时 $\rightarrow$ 自动检查日志}
+
 \input{topics/ch06-serial-driver}
 \input{topics/ch06-chip-register-map}
 \input{topics/ch06-testing-and-observability}

@@ -9,9 +9,11 @@ freestanding C++20 内核、驱动、用户程序和文件系统；QEMU 只负�
 x86-64 CPU 和外围硬件。书中的代码都来自仓库根目录 `source/` 下的同一个
 可运行项目。
 
-前四章不要求读者学过电路或计算机组成。从量、单位和编码开始，依次介绍
-电路、逻辑门、寄存器、CPU、存储器和总线。后续章节沿项目的实际启动顺序
-加入串口、磁盘、分页、异常、中断、进程、文件系统和用户环境。
+前四章不要求读者学过电路或计算机组成。从 bit、byte 和地址开始，依次介绍
+电压、逻辑门、寄存器、CPU、RAM、ROM 和第一次取指。导数、电路公式、时序、
+CDC、PCB 与整机连线放入硬件深化附录，不挡在第一条 OS 指令之前。后续
+31 个主线章节沿项目的实际执行顺序加入串口、磁盘、分页、异常、中断、进程、
+文件系统和用户环境。
 
 ## 构建
 
@@ -27,14 +29,15 @@ make phone-export
 - `make pdf` 生成 `source/latex/main.pdf`。
 - `make phone-export` 重新检查并把同一份 PDF 复制到手机书库。
 
-构建需要 XeLaTeX、latexmk、Python 3，以及仓库根目录下可用的项目统计工具。
-代码行数由构建脚本从 `source/` 重新计算，不手工维护。
+构建需要 XeLaTeX、latexmk 和 Python 3。项目仍可生成维护用源码统计，但这些
+数字不进入教材正文。
 
 ## 目录
 
 - `source/latex/main.tex`：全书入口与阅读顺序。
-- `source/latex/chapters/`：二十章的入口文件。
-- `source/latex/foundations/`：物理、电路、逻辑和整机基础。
+- `source/latex/chapters/`：31 个主线章和 4 个硬件附录的入口文件。
+- `source/latex/foundations/mainline/`：第一次阅读需要的硬件主线。
+- `source/latex/foundations/`：公式、电路、时序和整机硬件深化。
 - `source/latex/topics/`：进入机制前需要的背景材料。
 - `source/latex/deepening/`：代码走读、状态变化和实验记录。
 - `source/latex/figures/`：原理图、结构图和连线图。
@@ -55,3 +58,6 @@ make phone-export
 
 书稿的编辑原则是先讲问题和实验，再引出抽象概念。版本发布、PDF 哈希和网站
 同步属于维护流程，不放进面向初学者的正文。
+
+正文使用衬线字体，标题使用无衬线字体；Maple Mono NF CN 仅用于代码、
+寄存器、路径和日志。

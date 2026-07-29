@@ -4,6 +4,9 @@
 访问普通文件、设备和系统状态。本章沿一次系统调用进入 Ring 0，然后分别查看
 rootfs、devfs 和 procfs 怎样支撑 Shell 与命令行工具。
 
+\chapterroute{用户态 ABI $\rightarrow$ 最小运行时 $\rightarrow$ Shell 命令
+$\rightarrow$ devfs 与 procfs $\rightarrow$ 用户工具的构建和测试}
+
 \input{topics/ch15-user-kernel-interface-introduction}
 \input{deepening/ch15-user-environment}
 \input{deepening/ch15-abi-devfs-and-procfs}

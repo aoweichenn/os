@@ -1,0 +1,395 @@
+\section{从 Loader 进入 C++ 内核}
+Stage 1 已经把 RSP 放到独立的 64 KiB 栈顶，用 \code{CALL} 进入固定地址
+\code{OsKernelEntry}，并在 RDI 中传入 BootInfo。这里故意使用正常 System V
+AMD64 调用形状：函数入口的 RSP 模 16 等于 8，编译器可以按普通 C++20 ABI
+生成代码。入口函数自身只有一项职责：选择“无故障注入”并进入
+\code{RunKernel}，不复制启动逻辑。
+
+内核先重新初始化 COM1，然后逐字段验证 BootInfo、BSS 探针和 CR3。任何失败
+只输出一次对应边界并停机。只有这三项都成立，才开始覆盖 Stage 1 留下的 GDT。
+这种顺序很重要：如果 BootInfo 已损坏，内核不能拿其中的栈顶去构造 TSS；
+如果 BSS 没有清零，全局描述符表和不可重入状态也没有语言层保证。
+
+System V AMD64 ABI 区分调用者与被调用者保存寄存器。内核入口虽然由加载器
+\code{CALL}，但协议规定它永不返回；若意外返回，Stage 1 会输出
+\code{KERNEL\_RETURNED} 并停机。异常入口则不是普通调用，必须由单独汇编边界
+转换后才能进入 C++。
+
+\topic{标识符在跨语言边界上也是 ABI}
+C++ 标识符主要服务于类型检查和源码阅读，NASM 标签与链接脚本符号则直接进入
+ELF 符号表。两边都区分大小写，\code{OsKernelEntry} 与
+\code{osKernelEntry} 是两个完全不同的链接名字。早期项目把一部分变量写成
+小驼峰，也把自研 C/汇编入口写成小写开头；代码量较小时尚可辨认，模块增多后，
+函数、变量和链接数据在走读中很难一眼区分。
+
+当前规则按语义角色拆开：
+
+\begin{osgridlongtable}{L{0.25\textwidth}L{0.27\textwidth}L{0.38\textwidth}}
+\textbf{对象} & \textbf{形式} & \textbf{示例}\\ \hline
+\endfirsthead
+\textbf{对象} & \textbf{形式} & \textbf{示例}\\ \hline
+\endhead
+类型与函数 & 大驼峰 & \code{PhysicalAddress}、\code{RunKernel}\\ \hline
+局部变量与参数 & 小写蛇形 & \code{physical\_address}、\code{frame\_index}\\ \hline
+私有数据成员 & 小写蛇形，可带尾部下划线 &
+\code{free\_frame\_count\_}\\ \hline
+项目常量 & 项目/模块/功能全大写 &
+\code{OS\_KERNEL\_MEMORY\_PAGE\_SIZE\_BYTES}\\ \hline
+自研汇编函数符号 & 大驼峰 & \code{OsKernelExceptionDispatch}\\ \hline
+自研链接数据符号 & 小写蛇形 & \code{os\_kernel\_image\_start}\\ \hline
+\end{osgridlongtable}
+
+成员尾部下划线解决参数遮蔽，\code{this->} 则说明一次访问确实读取对象状态；
+二者用途不同。命名空间的每一层只放一个简短小写单词，例如
+\code{os::kernel::memory}，需要更细归属时增加层级，不把多个模块压成一个
+冗长名称。Clang-Tidy 的 \code{lower\_case} 风格仍允许下划线，不能单独证明
+“每层一个单词”；因此同一 CTest 先用 Python 词法扫描要求每层匹配
+\code{[a-z]+}，再用 Clang AST 区分变量、函数、成员和类型。词法扫描会屏蔽
+注释、普通/原始字符串和字符字面量，匿名命名空间则按 C++ 语义保留。
+
+\code{extern "C"} 只关闭 C++ 名字改编，不会替我们同步 NASM 或链接脚本。
+因此一次符号重命名必须同时修改声明、定义、\code{global}/\code{extern}、
+链接器 \code{ENTRY}、ELF 审计器和调试文档。项目自己拥有这些 ABI，所以函数
+统一为 \code{OsKernel...}/\code{OsUser...}，数据统一为
+\code{os\_kernel\_...}；只有 C 标准和编译器明确要求的
+\code{main}、\code{memset}、\code{memcpy} 保留固定拼写。
+
+文本正则无法判断一个单词究竟是类型、函数还是变量。本次迁移用 Clang AST 扫描
+136 个 C++ 头文件和源文件；初始 7018 条编译单元诊断包含公共头文件的重复报告，
+迁移后诊断为零。加入 buddy、类型缓存与 KVA 测试后，当前门禁扫描 150 个
+文件，并在每次完整回归中重新执行同一检查，使命名规范从说明文字变成可失败
+的工程契约。
+
+\topic{BSS 让大表和专用栈不膨胀磁盘文件}
+链接脚本把代码、只读数据和可写/BSS 分成 \code{R E}、\code{R}、
+\code{RW} 三个 \code{PT\_LOAD}。Stage 1 第二遍装载时复制
+\code{p\_filesz}，再清零到 \code{p\_memsz}；内核入口只验证结果，不重复
+清零。
+
+IDT 占 4096 字节，三个 IST 栈合计 48 KiB，再加 GDT、TSS 和 panic 状态，
+绝大多数初值都是零。把它们放入 BSS 后，生产内核文件约 58 KiB，而 RW
+加载段的文件长度仍为零、内存长度约 52 KiB。若把零字节实存进 ELF，磁盘
+读取和 CRC 都会为没有信息量的内容付出成本。
+
+BSS 探针必须在任何描述符对象使用前保持零。它把 C++ 静态存储期的语言保证
+连接到 ELF \code{p\_memsz} 语义：日志出现 \code{BSS\_ZEROED}，才说明
+加载器真正为后续内核对象建立了确定初态。
+
+\section{GDT 与 TSS 留下哪些硬件职责}
+8086 用段寄存器参与地址计算；80286 和 80386 把段值改成描述符选择子，引入
+base、limit、type、DPL 和 present。长模式随后把大多数代码/数据段的 base
+和 limit 忽略，把地址隔离主责交给页表，但保留 CS 的执行模式与特权语义，
+也保留门描述符和 TSS。
+
+这种历史兼容带来一个看似矛盾的事实：64 位内核采用平坦地址空间，却仍必须
+拥有 GDT，因为：
+
+\begin{itemize}
+  \item CS 必须引用 present 的 64 位代码段，L 位决定 64 位指令语义；
+  \item IDT gate 必须给出目标代码段选择子；
+  \item TSS 描述符仍位于 GDT，\code{LTR} 通过选择子找到它；
+  \item v0.8 的 Ring 3 到 Ring 0 控制转移依赖特权级和 RSP0。
+\end{itemize}
+
+Stage 1 的 GDT 是模式切换工具，不是内核资产。v0.5 用内核 BSS 中的新表覆盖
+GDTR，从依赖方向上切断内核对加载器私有内存的长期依赖。
+
+\topic{五槽 GDT 每一位表示什么}\par
+\begin{osgridlongtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.25\textwidth}L{0.36\textwidth}}
+\textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\ \hline
+\endfirsthead
+\textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\ \hline
+\endhead
+0 & \code{0x00} & null & 全零，捕获误用空选择子\\ \hline
+1 & \code{0x08} & Ring 0 code & P=1、DPL=0、execute/read、L=1、D=0\\ \hline
+2 & \code{0x10} & Ring 0 data & P=1、DPL=0、read/write、L=0\\ \hline
+3--4 & \code{0x18} & 64-bit TSS & type=9、P=1、完整 64 位 base\\ \hline
+\end{osgridlongtable}
+
+选择子低两位是 RPL，第 2 位选择 GDT 或 LDT，其余高位是表索引。因此索引
+1、2、3 左移三位分别得到 \code{0x08}、\code{0x10}、\code{0x18}。
+TSS 描述符需要 16 字节：传统 8 字节只有位置保存 32 位 base，后一个槽保存
+base[63:32]。构造器把 limit[19:0] 和 base[63:0] 分散写入硬件规定字段，
+宿主单元测试再完整解码，避免“QEMU 恰好只用了低地址”掩盖高位错误。
+
+GDTR 的 limit 是最后一个有效字节偏移，不是条目数或字节数。五槽表总长
+40 字节，所以 limit 为 39。项目在加载后执行 \code{SGDT} 比较 base 和
+limit，使“执行过 LGDT”升级为“处理器确实引用预期表”。
+
+\topic{LGDT 不会替我们刷新段缓存}
+\code{LGDT} 只修改 GDTR，不自动重新解释当前 CS、SS 或数据段隐藏缓存。
+内核先加载 GDTR，再把代码选择子和一个本地返回地址压栈，执行
+\code{RETFQ}。远控制转移同时装载新的 CS 描述符和 RIP。到达新标签后才重载
+DS、ES、FS、GS、SS，最后执行 \code{LTR}。
+
+顺序不能反过来：TSS 选择子只有在新 GDT 可见后才有效；普通近跳转不能刷新
+CS；只改变可见选择子而忽略隐藏描述符，会让日志看起来正确、处理器实际仍沿用
+旧属性。v0.5 最终用 CS、SS 和 \code{STR} 回读分别得到
+\code{0x08}、\code{0x10}、\code{0x18}。
+
+这是 v0.5 的阶段形状。v0.8 在 Ring 0 数据段之后插入用户数据段与用户
+代码段，TSS 随之移到索引 5--6、选择子 \code{0x28}；对应的七槽结构在
+用户边界章节逐项展开。把两个阶段区分开，才能理解选择子变化是 GDT 演进，
+而不是文档与二进制冲突。
+
+\topic{104 字节 TSS 不再承担硬件任务切换}
+早期保护模式把寄存器现场也放进 TSS，可用硬件 task switch 切换任务。现代
+操作系统通常自行保存上下文，因为软件调度更灵活、成本和副作用更可控。
+长模式 TSS 因此缩减为特权栈和 I/O bitmap 等关键状态。
+
+\begin{osgridlongtable}{L{0.14\textwidth}L{0.14\textwidth}L{0.26\textwidth}L{0.32\textwidth}}
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前值}\\ \hline
+\endfirsthead
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前值}\\ \hline
+\endhead
+\code{0x04} & 64 & RSP0 & BootInfo 的内核初始栈顶\\ \hline
+\code{0x0C} & 64 & RSP1 & 0\\ \hline
+\code{0x14} & 64 & RSP2 & 0\\ \hline
+\code{0x24} & 64 & IST1 & 双重故障栈顶\\ \hline
+\code{0x2C} & 64 & IST2 & NMI 栈顶\\ \hline
+\code{0x34} & 64 & IST3 & 机器检查栈顶\\ \hline
+\code{0x3C..0x5C} & 64 & IST4..IST7 & 0\\ \hline
+\code{0x66} & 16 & I/O bitmap offset & 104\\ \hline
+\end{osgridlongtable}
+
+每个 IST 栈为 16 KiB，互不重叠，向低地址增长。I/O bitmap offset 等于结构
+大小，已经超过 TSS 的 inclusive limit 103，表示当前 TSS 内没有权限位图。
+执行 \code{LTR} 后，处理器会把 GDT 内描述符从 available type 9 改成 busy
+type 11；验证程序若仍要求字节值为 9，反而误解了硬件副作用。
+
+v0.6 把每个 IST 存储块扩为 20 KiB：低端 4 KiB 保持 guard，随后 16 KiB
+才是可写栈。内核新页表明确跳过三个 guard 物理页；TSS 的 IST 指针仍指向可写
+部分的高端。这样栈向下越界会遇到 not-present 页，而不是静默写入相邻对象。
+
+\section{IDT 怎样把异常交给内核}
+IDTR 保存 IDT 基址和界限。64 位门描述符包含 64 位处理函数地址、段选择子、
+IST 索引、门类型、DPL 和 present 位。处理器根据向量索引门，检查权限，
+必要时切换栈，再压入返回现场。
+
+\begin{osgridlongtable}{L{0.19\textwidth}L{0.24\textwidth}L{0.43\textwidth}}
+\textbf{门字段} & \textbf{取值策略} & \textbf{作用}\\ \hline
+\endfirsthead
+\textbf{门字段} & \textbf{取值策略} & \textbf{作用}\\ \hline
+\endhead
+offset & 异常桩地址 & 分三段编码完整 64 位入口\\ \hline
+selector & Ring 0 代码段 & 进入内核执行环境\\ \hline
+type & interrupt/trap gate & 决定入口是否自动清 IF\\ \hline
+DPL & 通常 0 & 限制用户软件主动触发\\ \hline
+IST & 关键异常专用栈 & 在当前栈损坏时仍可诊断\\ \hline
+present & 1 & 允许处理器使用该门\\ \hline
+\end{osgridlongtable}
+
+陷阱门保留 IF，适合调试类异常；中断门清 IF，避免普通硬件中断立刻嵌套。
+选择是并发策略的一部分，不能对所有向量机械使用同一类型。
+
+\topic{TSS 在 64 位模式主要提供特权栈}
+长模式不使用 TSS 做硬件任务切换，但保留 RSP0--RSP2 和七个 IST 指针。
+从 Ring 3 进入 Ring 0 时处理器使用 RSP0；设置 IST 的门无条件切到对应栈。
+双重故障、NMI 和机器检查适合使用独立 IST，避免普通内核栈溢出导致再次故障。
+
+TSS 描述符占两个 GDT 槽，必须编码完整 64 位基址。加载 TR 前，TSS 内存、
+GDT 描述符和专用栈都要映射并保持生命周期覆盖整个内核运行。
+
+\topic{异常向量具有不同错误码和恢复语义}\par
+\begin{osgridlongtable}{L{0.12\textwidth}L{0.22\textwidth}L{0.17\textwidth}L{0.37\textwidth}}
+\textbf{向量} & \textbf{异常} & \textbf{错误码} & \textbf{初期策略}\\ \hline
+\endfirsthead
+\textbf{向量} & \textbf{异常} & \textbf{错误码} & \textbf{初期策略}\\ \hline
+\endhead
+0 & 除法错误 & 无 & 记录 RIP 与寄存器后 panic\\ \hline
+6 & 非法指令 & 无 & 反汇编故障地址并 panic\\ \hline
+8 & 双重故障 & 固定错误码 & IST 栈上最小诊断并停机\\ \hline
+13 & 一般保护 & 有 & 解码选择子相关位并 panic\\ \hline
+14 & 页故障 & 有 & 结合 CR2 分类映射或非法访问\\ \hline
+\end{osgridlongtable}
+
+某些异常属于 fault，保存 RIP 指向故障指令，修复原因后可以重试；trap 通常
+保存下一指令；abort 不保证可恢复。处理程序必须知道类别，不能统一递增 RIP
+跳过错误。
+
+\topic{统一异常帧让 C++ 分发器看到稳定布局}
+处理器有时压错误码，有时不压；在 IA-32e 模式中，旧 SS 与 RSP 则总会进入
+硬件现场。每个汇编桩补齐缺失字段并保存通用寄存器，把向量号与规范化错误码
+放到固定位置。C++ 只接受指向统一 \code{ExceptionFrame} 公共前缀的指针。
+
+结构字段偏移由汇编常量和 C++ \code{static_assert} 双向检查。新增寄存器或
+改变压栈顺序必须同时更新弹栈路径；\code{iretq} 前残留一个八字节字段都会把
+后续值错当 RIP 或 CS。
+
+\topic{32 个桩怎样形成同一种 C++ 视图}
+CPU 对向量 8、10、11、12、13、14、17、21、29、30 压入错误码，其余异常
+不压。NASM 用两种项目内宏生成桩；宏只减少机械重复，不隐藏硬件策略：
+
+\begin{lstlisting}[language={[x86masm]Assembler}]
+; 无硬件错误码
+push qword 0
+push qword vector
+jmp OsKernelExceptionDispatch
+
+; 有硬件错误码：CPU 已经压入 error_code
+push qword vector
+jmp OsKernelExceptionDispatch
+\end{lstlisting}
+
+两条路径到达公共入口时，栈顶永远是 vector，其后永远是 error code，再后是
+CPU 保存的 RIP、CS、RFLAGS。公共入口执行 \code{CLD}，因为 C++ ABI 假定
+方向标志清零；被打断代码若设置过 DF，\code{IRETQ} 最终会从保存的 RFLAGS
+恢复原值。
+
+寄存器依次压入 RAX、RBX、RCX、RDX、RBP、RSI、RDI、R8 到 R15。栈向低地址
+增长，所以 C++ 看到的结构顺序正好反过来：
+
+\begin{osgridlongtable}{L{0.16\textwidth}L{0.23\textwidth}L{0.47\textwidth}}
+\textbf{帧内偏移} & \textbf{字段} & \textbf{来源}\\ \hline
+\endfirsthead
+\textbf{帧内偏移} & \textbf{字段} & \textbf{来源}\\ \hline
+\endhead
+\code{0x00..0x38} & R15..R8 & 公共桩保存\\ \hline
+\code{0x40..0x70} & RDI..RAX & 公共桩保存\\ \hline
+\code{0x78} & vector & 每向量桩\\ \hline
+\code{0x80} & error code & CPU 或零占位\\ \hline
+\code{0x88} & RIP & CPU\\ \hline
+\code{0x90} & CS & CPU\\ \hline
+\code{0x98} & RFLAGS & CPU\\ \hline
+\end{osgridlongtable}
+
+这 20 个 64 位字段组成 160 字节的 \code{ExceptionFrame}。在 IA-32e 模式
+中，处理器还会无条件保存旧 RSP 和 SS；它们紧跟在公共前缀之后，所以一次
+可以由 \code{IRETQ} 返回的现场实际占 176 字节。用户态路径把这两个字段
+暴露为 \code{UserContext::stack\_pointer} 和
+\code{UserContext::stack\_segment}，普通 C++ 异常分发器只需要读取前
+160 字节。
+
+\begin{pdfdiagram}[node distance=0mm]
+  \node[os block,minimum width=66mm,minimum height=7mm] (registers)
+    {低地址：R15 \ldots RAX（汇编公共入口，15 槽）};
+  \node[os state,below=of registers,minimum width=66mm,minimum height=7mm] (vector)
+    {vector（每向量桩）};
+  \node[os state,below=of vector,minimum width=66mm,minimum height=7mm] (error)
+    {error code（CPU 或汇编补零）};
+  \node[os hardware,below=of error,minimum width=66mm,minimum height=7mm] (rip)
+    {RIP（CPU）};
+  \node[os hardware,below=of rip,minimum width=66mm,minimum height=7mm] (cs)
+    {CS（CPU）};
+  \node[os hardware,below=of cs,minimum width=66mm,minimum height=7mm] (rflags)
+    {RFLAGS（CPU）};
+  \node[os hardware,below=of rflags,minimum width=66mm,minimum height=7mm] (rsp)
+    {旧 RSP（CPU）};
+  \node[os hardware,below=of rsp,minimum width=66mm,minimum height=7mm] (ss)
+    {高地址：旧 SS（CPU）};
+  \draw[decorate,decoration={brace,amplitude=4pt},BookBlue,thick]
+    ([xshift=-5mm]registers.north west) -- ([xshift=-5mm]rflags.south west)
+    node[midway,left=6mm,align=center]{160 B\\\code{ExceptionFrame}};
+  \draw[decorate,decoration={brace,amplitude=4pt},BookAmber,thick]
+    ([xshift=5mm]registers.north east) -- ([xshift=5mm]ss.south east)
+    node[midway,right=6mm,align=center]{176 B\\可返回现场};
+\end{pdfdiagram}
+\diagramnote{依据 Intel SDM Vol. 3A 7.14.2--7.14.3 重新绘制，再叠加
+\filepath{source/kernel/src/arch/architecture.asm} 保存的通用寄存器和
+规范化 vector/error code。栈向低地址增长，图从上到下按地址递增排列。}
+
+C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把帧地址放入 RDI，
+再把 RSP 向下按 16 字节对齐，预留一槽保存原帧地址后调用分发器。若分发器
+返回，就从预留槽恢复原 RSP，逆序弹出寄存器，丢弃 vector/error 两槽并执行
+\code{IRETQ}。普通 \code{RET} 无法恢复 CS 和 RFLAGS。
+
+\section{异常分类、故障输出与整机实验}
+\begin{osgridlongtable}{L{0.08\textwidth}L{0.14\textwidth}L{0.17\textwidth}L{0.20\textwidth}L{0.27\textwidth}}
+\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\ \hline
+\endfirsthead
+\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\ \hline
+\endhead
+0 & \#DE & fault & 无 & panic\\ \hline
+1 & \#DB & fault/trap & 无 & panic\\ \hline
+2 & NMI & interrupt & 无 & IST2 后 panic\\ \hline
+3 & \#BP & trap & 无 & 仅启动自检返回\\ \hline
+4 & \#OF & trap & 无 & panic\\ \hline
+5 & \#BR & fault & 无 & panic\\ \hline
+6 & \#UD & fault & 无 & 注入测试后 panic\\ \hline
+7 & \#NM & fault & 无 & panic\\ \hline
+8 & \#DF & abort & 固定 0 & IST1 后 panic\\ \hline
+10--14 & \#TS..\#PF & fault & 有 & panic\\ \hline
+16 & \#MF & fault & 无 & panic\\ \hline
+17 & \#AC & fault & 有 & panic\\ \hline
+18 & \#MC & abort & 无 & IST3 后 panic\\ \hline
+19--20 & \#XM/\#VE & fault & 无 & panic\\ \hline
+21 & \#CP & fault & 有 & panic\\ \hline
+28 & \#HV & fault & 无 & panic\\ \hline
+29--30 & \#VC/\#SX & fault & 有 & panic\\ \hline
+\end{osgridlongtable}
+
+表中未列出的保留向量也有独立桩并进入 panic。v0.5 只允许 breakpoint 返回，
+因为其他 fault 尚无足够策略保证恢复安全。例如
+页不存在可以在 v0.6 分配并映射后重试；非法指令通常意味着代码或 CPU 能力
+契约错误，跳过一个字节既不知道指令长度，也会掩盖破坏。
+
+\topic{INT3、UD2 和页故障组成三角验收}
+单一正常启动不能证明异常系统。v0.5 用三条具有不同语义的真实指令路径：
+
+\begin{enumerate}
+  \item 正常内核执行 \code{INT3}。CPU 保存下一条 RIP，分发器确认
+        vector=3、error=0，输出 \code{BREAKPOINT\_HANDLED} 后返回；
+        只有随后出现 \code{EXCEPTION\_SELF\_TEST\_READY} 和
+        \code{READY}，才证明 \code{IRETQ} 往返正确。
+  \item 非法指令内核执行 \code{UD2}。它是架构保证始终触发 \#UD 的两字节
+        指令，避免用“碰巧非法”的字节序列。panic 必须报告 vector=6、
+        error=0，禁止输出 \code{READY}。
+  \item 页故障内核读取 \code{0x04000000}。Stage 1 只映射低 64 MiB，
+        因此该值是第一个确定未映射地址。panic 必须报告 vector=14、
+        error=0、CR2 同值，并禁止 \code{READY}。
+\end{enumerate}
+
+页故障错误码零逐位表示 P=0、W/R=0、U/S=0、RSVD=0、I/D=0：supervisor
+读取 not-present 的数据页。这比只看到“向量 14”提供更多证据；若访问意外
+变成写、用户态或权限违反，错误码会改变，测试能及时暴露。
+
+两份故障内核不复制描述符和异常实现，只用最薄入口选择注入模式。否则测试代码
+可能通过，而实际生产入口链接的是另一套未经验证的处理器。
+
+\topic{panic 的可信计算基}
+panic 可能由坏页表、坏栈、坏堆或坏锁引起。让 panic 调用通用格式化器、分配
+字符串或获取日志锁，会扩大它必须信任的系统。v0.5 把可信集合压到：
+
+\begin{itemize}
+  \item 已在入口独立初始化的 COM1 端口；
+  \item 当前统一异常帧；
+  \item CR2 等直接可读架构寄存器；
+  \item 一个零初始化的 64 位不可重入状态。
+\end{itemize}
+
+panic 首先 \code{CLI}，发现状态已 active 就直接 HLT，不再次打印。首次进入
+依次输出向量、错误码、RIP、CS、RFLAGS；只有页故障读取 CR2。每个字段使用
+固定 16 位十六进制宽度，不需要除法、区域设置或动态缓冲。最后输出一次
+\code{PANIC} 并进入 \code{CLI; HLT} 循环。
+
+RIP 会随链接变化，RFLAGS 也可能包含处理器为 fault 设置的 RF 等位，因此
+QEMU 协议要求字段存在，却不硬编码这两个不稳定数值。向量、错误码、页故障
+地址和终止标记才是阶段稳定主键。这正是“日志丰富但不刷屏”的工程边界。
+
+\topic{从位字段单元测试到整机失败路径}
+描述符纯编码使用宿主 C++ 测试，不必每次启动 QEMU。确定样例把 TSS base、
+limit、type 和 IDT offset、selector、IST、attributes 逐字段解码。固定种子
+\code{0xD35C71A05EED6405} 再生成 4096 个完整 64 位地址，分别经过 TSS
+descriptor 和 IDT gate 编码解码，共执行 8192 条往返性质断言。
+
+集成审计读取真实 ELF，逐项要求以下入口存在，同时拒绝任何未解析运行时符号：
+\begin{itemize}
+  \item \code{OsKernelLoadGdtAndTss}；
+  \item \code{OsKernelExceptionDispatch}；
+  \item \code{OsKernelDispatchException}；
+  \item 异常桩表以及向量 0..31 的全部符号。
+\end{itemize}
+
+QEMU 验证纯逻辑无法证明的事实：处理器接受 GDT/TSS/IDT，TR 真正装载，
+INT3 能返回，UD2 和页故障进入正确向量，panic 后不会继续成功路径。写保护
+故障镜像不复制异常实现，只让同一个生产内核入口选择
+\code{WriteProtection} 注入；错误码 3、CR2 和 PANIC 会同时经过页表、
+CR0.WP、IDT、统一帧与串口路径。
+
+\topic{页故障错误码提供访问分类}
+页故障错误码的 P 位区分不存在与权限违反，W/R 区分写与读，U/S 区分用户与
+内核，RSVD 表示页表保留位错误，I/D 表示取指。CR2 保存故障线性地址。
+
+用户访问不存在页可能触发按需分配，用户写只读共享页可能触发写时复制，用户
+访问内核页应终止进程；内核访问非法地址通常是内核缺陷。处理器给出的位只描述
+机制原因，内核还要结合虚拟区间元数据决定策略。

@@ -94,7 +94,7 @@ QEMU IDE 控制器向来宾提供完整 LBA 空间；来宾看不见宿主是否
 非零内容；\code{pwrite} 还要循环处理短写。否则“看起来很快的复制”可能
 悄悄截掉未来分区或把全部 hole 物化。
 
-\topic{256 MiB rootfs 的精确所有权图}
+\section{rootfs v2 的盘面布局}
 当前 rootfs 从 LBA 32768 开始，固定包含 524288 个 512 字节块，即
 \(2^{28}\) 字节。区域如下：
 
@@ -192,7 +192,7 @@ name length、256 字节名称槽、CRC 和保留区。活动名称最长 255 �
 零指针表示未分配；非零值必须位于 data 区，不能指向 superblock、bitmap、
 inode table 或盘外。
 
-\topic{direct/single/double/triple 的完整索引算术}
+\section{大文件怎样沿多级索引找到数据块}
 令 direct 数 \(D=8\)，每个 pointer block 的指针数 \(P=63\)。逻辑块号
 \(L\) 的区间为：
 
@@ -328,7 +328,7 @@ inode bitmap 回答“哪个 inode 槽被分配”，data bitmap 回答“哪个
 十万步模型中会放大为巨大成本。当前算法只在内存 validation bitmap 标记
 所有权，遍历结束后一次性逐位比较。优化改变复杂度，不放宽任何不变量。
 
-\topic{create 先预检，避免不可达 inode}
+\section{目录修改怎样避免留下不可达对象}
 创建文件至少可能修改 inode bitmap、inode、父目录数据和 data bitmap。
 若先分配 inode，最后才发现父目录没有槽或没有数据块，就会留下 orphan。
 
@@ -496,7 +496,7 @@ commit record、数据先行屏障、checkpoint、幂等 replay 和逐断电点�
 在块所有权与 namespace mutation 尚未稳定前提前加入这些机制，只会让一次
 错误同时具有更多解释。
 
-\topic{CRC 为什么不能替代 fsck}
+\section{怎样生成、检查和破坏一个镜像}
 CRC32 能发现随机 bit flip、截断和错位写入，但两个 inode 可以各自 CRC
 正确却引用同一数据块；一个目录项也可以 CRC 正确却指向错误 generation。
 CRC 不提供密码学认证，攻击者还可以修改数据后重新计算校验。

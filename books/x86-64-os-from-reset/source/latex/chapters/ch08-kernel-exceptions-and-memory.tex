@@ -1,8 +1,0 @@
-\chapter{内核怎样管理内存和异常}
-
-进入 C++ Kernel 后，我们故意执行一条非法指令。CPU 应通过 IDT 进入异常桩，
-在独立栈上保存现场，再由 panic 打印向量和 RIP。确认故障能够被接住以后，
-本章才开始接管物理页、页表、TLB、内核虚拟地址、动态栈和堆。
-
-\input{topics/ch08-kernel-and-memory}
-\input{deepening/ch08-kernel-exceptions-and-memory}

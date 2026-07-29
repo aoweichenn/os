@@ -19,6 +19,7 @@ check: source-check editorial-check
 
 pdf: check
 	cd $(LATEX_SOURCE_DIR) && latexmk -xelatex -interaction=nonstopmode -halt-on-error main.tex
+	python3 $(LATEX_SOURCE_DIR)/scripts/check_pdf_build.py
 
 phone-export: pdf
 	python3 $(PROJECT_ROOT)/tools/os.py phone-book-export

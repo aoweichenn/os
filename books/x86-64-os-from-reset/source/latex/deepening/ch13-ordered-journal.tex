@@ -45,7 +45,7 @@ v1.16 已经建立 dirty/writeback/error page、BlockRequest 和 ATA FLUSH
 指向合法块，文件系统结构一致，但块内容可能已经是新字节。这不是 replay
 错误，而是 metadata-only 的明确边界。
 
-\topic{格式 3 的固定区域}
+\section{日志区域和记录格式怎样布局}
 rootfs 仍使用 256\,MiB 分区和 512\,B 文件系统块。盘面 magic 从格式 2
 升级为 \code{OSRFV003}，并固定保留 256 个 journal block：
 
@@ -115,7 +115,7 @@ header 保存 magic、格式版本、64 位 sequence、entry count、descriptor 
 CRC32 用于检测随机位翻转、截断与错块，不是密码学认证；面对主动构造碰撞的
 攻击者，边界检查仍负责保证只能拒绝，不能越界或 panic。
 
-\topic{credit 是空间预留，也是失败原子性}
+\section{事务怎样预留空间并提交}
 一个操作如果修改到一半才发现 journal 放不下，Kernel 需要撤销所有内存状态，
 且相关普通数据可能已经变化。transaction credit 把容量判断前移：
 
@@ -181,7 +181,7 @@ BlockCache，就会观察旧字节。v1.17 的 metadata read 顺序为：
 CPU 按顺序调用 Write 并不能替代这些关系。ATA/QEMU cache 可以让命令完成早于
 掉电持久化；没有 FLUSH 的 ``先写 payload、后写 commit'' 只是提交顺序。
 
-\topic{把所有断电点归约为两种状态}\par
+\section{断电以后为什么只接受两种磁盘状态}
 \begin{center}
 \begin{osgridtabularx}{\textwidth}{p{0.24\textwidth}XX}
 断电窗口 & mount 看到的证据 & 恢复结果\\ \hline
@@ -222,7 +222,7 @@ checkpoint 或其 FLUSH 失败时不能清除 commit；当前文件系统实例�
 次 mount 仍有权威恢复材料。只有 home 全部稳定后才能清 journal，并再次
 FLUSH 清理结果。
 
-\topic{生产源码的责任分界}
+\section{怎样验证 replay 和再次断电}
 \code{fs/root\_journal.*} 只认识固定块设备、盘面记录、overlay、CRC、FLUSH、
 checkpoint 和 replay，不认识路径、inode 语义或 Process。\code{fs/root\_file\_system.*}
 决定哪些写是 metadata、何时先同步数据、如何保存事务快照以及设备失败后何时
@@ -271,11 +271,11 @@ RootJournal parser。两个 oracle 若共享实现，同一个 target 换算错�
 failure 汇总，并带来宾单调时间。宿主 QEMU 的到达时间帮助定位停滞，不充当
 来宾事件顺序。
 
-\topic{本阶段没有偷偷承诺什么}
+\topic{当前 journal 的范围}
 v1.17 不包含 data journal、后台 checkpoint、并行 transaction、SMP、
 \code{fsync}/\code{fdatasync}/\code{msync}、snapshot、在线扩容、AHCI 或
-NVMe。它也不声称 CRC 能抵抗主动篡改。
+NVMe。CRC 用于发现偶发损坏，不能抵抗主动篡改。
 
-这些边界让结论保持精确：现在已经能证明多块 metadata mutation 在覆盖的任意
-断电点后只有旧/新两种结构状态；下一阶段应冻结 ABI、补齐观察面和畸形输入
-审计，而不是继续往 journal 里塞新的文件系统机制。
+覆盖的断电点恢复后，多个 metadata 修改只会呈现旧状态或新状态。第 30 章
+再从用户 ABI、procfs 观察面和畸形输入检查整个系统，不继续扩大 journal
+本身的职责。

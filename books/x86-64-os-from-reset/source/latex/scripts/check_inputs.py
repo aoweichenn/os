@@ -6,12 +6,14 @@ from pathlib import Path
 
 OS_BOOK_ROOT = Path(__file__).resolve().parents[1]
 OS_BOOK_MAIN_FILE = OS_BOOK_ROOT / "main.tex"
+OS_BOOK_LAYOUT_FILE = OS_BOOK_ROOT / "preamble" / "layout.tex"
+OS_BOOK_MACROS_FILE = OS_BOOK_ROOT / "preamble" / "macros.tex"
 OS_BOOK_INPUT_PATTERN = re.compile(r"\\input\{([^}]+)\}")
 OS_BOOK_GRAPHIC_PATTERN = re.compile(
     r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}"
 )
 OS_BOOK_CHAPTER_PATTERN = re.compile(r"\\chapter\{")
-OS_BOOK_EXPECTED_CHAPTER_COUNT = 20
+OS_BOOK_EXPECTED_CHAPTER_COUNT = 35
 OS_BOOK_MAIN_CHAPTER_PATTERN = re.compile(r"^\\chapter\{([^}]+)\}")
 OS_BOOK_SECTION_PATTERN = re.compile(r"^\\section\{")
 OS_BOOK_LOCAL_HEADING_PATTERN = re.compile(
@@ -35,6 +37,35 @@ OS_BOOK_TABLE_ROW_PATTERN = re.compile(
     r"\\\\(?:\s+\\hline)?\s*(?:%.*)?$"
 )
 OS_BOOK_GRID_ROW_PATTERN = re.compile(r"\\\\\s+\\hline\s*(?:%.*)?$")
+
+
+def checkTypographyAndNavigation() -> None:
+    layoutText = OS_BOOK_LAYOUT_FILE.read_text(encoding="utf-8")
+    macrosText = OS_BOOK_MACROS_FILE.read_text(encoding="utf-8")
+
+    requiredLayoutFragments = (
+        r"\setmainfont{TeX Gyre Pagella}",
+        r"\setsansfont{TeX Gyre Heros}",
+        r"\setCJKmainfont{FandolSong}",
+        r"\setCJKsansfont{FandolHei}",
+        "bookmarksdepth=2",
+    )
+    for requiredFragment in requiredLayoutFragments:
+        if requiredFragment not in layoutText:
+            raise SystemExit(
+                "书稿排版职责缺失："
+                f"{OS_BOOK_LAYOUT_FILE} 中没有 {requiredFragment}"
+            )
+
+    if re.search(r"\\set(?:CJK)?(?:main|sans)font\{[^}]*Maple", layoutText):
+        raise SystemExit(
+            "Maple Mono 只能用于代码，不能设置为正文或标题字体"
+        )
+
+    if r"\pdfbookmark[2]" not in macrosText:
+        raise SystemExit(
+            "章内 topic 必须生成二级 PDF 书签，便于手机导航"
+        )
 
 
 def resolveInput(inputName: str) -> Path:
@@ -172,6 +203,7 @@ def checkChapterStructure() -> list[tuple[str, int]]:
 
 
 def main() -> int:
+    checkTypographyAndNavigation()
     visitedFiles: set[Path] = set()
     activeFiles: list[Path] = []
     graphicFiles: set[Path] = set()

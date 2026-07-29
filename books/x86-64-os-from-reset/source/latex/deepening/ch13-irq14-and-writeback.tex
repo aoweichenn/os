@@ -71,7 +71,7 @@ master bit 2，级联线可达，却没有允许的 slave 来源。真实 IRQ14 
 \code{0xA0} 发 EOI，再向 \code{0x20} 发 EOI；相反顺序可能让级联服务状态
 停留，下一次 IRQ 看起来像随机丢失。
 
-\topic{ATA 命令块、状态位与控制位}\par
+\section{ATA 状态寄存器怎样报告完成和错误}
 \begin{table}[htbp]
 \centering
 \small
@@ -213,7 +213,7 @@ Complete(TimedOut)
 \diagramnote{OTHER\_THREAD\_PROGRESS=1 证明等待期间发生了真实前进，而不只证明最终返回。}
 
 普通 signal 不把 BlockIo 当成字符输入等待唤醒。若一个系统调用需要可中断 I/O，
-必须另行冻结取消、设备撤回和 restart ABI；v1.16 不伪造该语义。
+取消、设备撤回和 restart ABI 尚未定义，当前实现不返回这类结果。
 
 完成路径同时核对 owner Thread 槽和 64 位 identifier。Thread 已退出或槽位已
 复用时，迟到完成成为 abandoned 诊断，不会唤醒后来占用同一槽的新 Thread。
@@ -221,7 +221,7 @@ Complete(TimedOut)
 消费者是显式 sync 的最终 ATA FLUSH。异步 Read/Write 状态机是后续迁移
 journal 和块消费者的基础，不能据此宣称全部文件 I/O 已异步化。
 
-\topic{为什么 clean/dirty 两态仍然不够}\par
+\section{写回中的页面和缓存需要哪些状态}
 \begin{table}[htbp]
 \centering
 \small
@@ -309,7 +309,7 @@ FILE_SHARED_WRITEBACK_VERIFIED
 \code{[QEMU][T+...ms]} 是宿主收到串口行的单调时间，只用于定位慢阶段。
 两种时钟起点和调度环境不同，不能比较绝对值。
 
-\topic{测试怎样覆盖状态而不是只看最终成功}\par
+\section{怎样注入超时、错误和重挂载}
 \begin{table}[htbp]
 \centering
 \small

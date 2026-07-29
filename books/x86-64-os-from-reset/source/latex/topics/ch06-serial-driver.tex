@@ -16,10 +16,40 @@
 设置 modem & 0x3FC / 0x0B & 拉起 DTR、RTS、OUT2 \\ \hline
 \end{osgridlongtable}
 
+\topic{七次写操作在源码中的顺序}
+下面的清单只保留 UART 初始化过程。先写 DLAB，再写除数，最后用
+\code{0x03} 同时选择 8N1 并清除 DLAB：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=487,
+  lastline=522,
+  caption={COM1 初始化的七次端口写入}
+]{../../../../source/firmware/src/reset_and_serial.asm}
+
 \topic{发送不是直接写字节}
 写数据前读取线路状态寄存器，等待 bit 5 表示发送保持寄存器为空。若直接连续
 写而不检查，代码隐含了设备永远足够快的假设。当前实现用 16 位计数器进行最多
 \code{0xFFFF} 次轮询，成功通过进位标志返回，超时清除进位标志。
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=566,
+  lastline=586,
+  caption={等待 THRE，超时后明确返回失败}
+]{../../../../source/firmware/src/reset_and_serial.asm}
+
+\topic{字符串发送把一个问题拆成两层}
+\code{os_firmware_write_string} 负责读取 NUL 结尾字符串，
+\code{os_firmware_write_byte} 负责等待并写一个字节。这样任何一次 THRE
+超时都会清除 CF，并逐层返回给调用者：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=533,
+  lastline=564,
+  caption={字符串遍历与单字节发送}
+]{../../../../source/firmware/src/reset_and_serial.asm}
 
 \topic{两条日志的协议意义}
 \code{RESET} 证明复位跳转、栈和 UART 初始化已经工作；

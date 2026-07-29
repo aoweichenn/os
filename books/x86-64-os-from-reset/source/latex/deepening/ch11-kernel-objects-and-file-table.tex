@@ -63,7 +63,7 @@ Process
 打开实例与 fd 的语义，v1.5 再在它下面接入 Path、Mount 与 Vnode。若同一阶段
 同时替换描述符表、命名空间和磁盘格式，失败时将无法判断错误属于哪层。
 
-\topic{KernelObject 的内存布局}
+\section{KernelObject 怎样保存类型和引用}
 每个动态对象由一个 64 字节对齐的私有头和紧随其后的类型载荷组成：
 
 \begin{osgridlongtable}{L{0.29\textwidth}L{0.17\textwidth}L{0.42\textwidth}}
@@ -234,7 +234,7 @@ descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\ \hline
 宿主单元测试。提前冻结位置和批量关闭语义，能让 v1.7 接入真正 exec 时不再
 重塑对象所有权。
 
-\topic{FileTable 的分块表示}
+\section{FileTable 怎样分配和复制槽位}
 每个 Process 持有独立 FileTable。表不预分配 4096 个表项，而是按 64 个
 descriptor 一块延迟增长：
 
@@ -387,7 +387,7 @@ PipeWriter & 拒绝 & Pipe TryWrite、背压与 broken pipe\\ \hline
 对象路径。没有旧 \code{IoDescriptor} 旁路，也没有为 PID 4 的证明写特殊
 内核读取函数。这样历史 QEMU 路径与新能力同时检验迁移是否完整。
 
-\topic{系统调用 23 到 28 的 ABI}
+\section{从系统调用到整机测试}
 v1.3 已冻结原生 \code{SYSCALL} 与 \code{INT 0x80} 共用的
 \code{UserContext}，v1.4 只在分发层增加操作：
 
@@ -496,10 +496,9 @@ fd flags、最低复用、close-on-exec 与销毁\\ \hline
 操作同时作用于模型和真实实现。每一步都比较整个可见状态，结束时要求所有
 对象与堆分配归零。
 
-v1.4 功能里程碑把回归从 102 项推进到 106 项；当前仓库又加入实体学习图
-连通性门禁，完整 CTest 总数为 107。v1.4 新增的四个测试目标并不替代原有
-102 个证据；历史固定槽实现的专用测试被移除，因为生产类型也已经删除。保留
-针对已不存在结构的测试只会制造虚假安全感。
+对象和 FileTable 测试加入后，早期回归与实体学习图连通性门禁仍然保留。
+历史固定槽实现的专用测试随生产类型一同删除；继续测试已经不存在的数据结构
+无法保护当前实现。
 
 \topic{增量构建为什么必须依赖生成文件}
 用户 worker 先链接成 User ELF，再由
@@ -557,7 +556,7 @@ freestanding 包装怎样保持 RAX/RDI/RSI/RDX ABI？\\ \hline
 KernelObject，向上进入 ProcessRuntime 与系统调用。最后阅读 PID 4 与 QEMU
 解析器，检查模型承诺是否真的穿过硬件入口到达整机证据。
 
-\topic{本阶段明确没有做什么}
+\topic{当前实现范围}
 v1.4 没有 Vnode、Path、Mount、memfs 或新磁盘格式；legacy-fs handle 仍直接
 存在于 FileDescription。没有 fork，因此还没有跨 Process 继承表；没有完整
 exec，因此 close-on-exec 只在对象层验收。没有 seek、append、非阻塞 flag

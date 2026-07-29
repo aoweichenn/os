@@ -1,0 +1,339 @@
+\section{物理内存图、页帧所有权与伙伴分配}
+
+当前平台后端是 QEMU PC \code{fw\_cfg}。Stage 1 从
+\code{etc/e820} 读取 20 字节原始项，扩展成：
+
+\begin{lstlisting}[language=C++]
+struct PhysicalMemoryMapEntry final {
+    uint64_t base_address;
+    uint64_t length_bytes;
+    uint32_t type;
+    uint32_t attributes;
+};
+\end{lstlisting}
+
+结构精确为 24 字节。base 和 length 必须保持 64 位，因为物理地址可能远高于
+当前管理窗口；type/attributes 是外部格式的 32 位字段，不能为了“用大的”
+擅自改变 ABI。Stage 1 在交接前按 base 排序，BootInfo v2 提供
+\code{0x18000}、条目数和条目宽度。
+
+内核不重新排序，也不尝试猜测重叠优先级。它把“已排序、互不重叠”视为交接
+契约并独立验证：
+
+\begin{enumerate}[label=\arabic*.]
+  \item 指针非空，数量在 1 到 128，管理上限非零；
+  \item 每项 length 非零，base+length 不发生 64 位溢出；
+  \item 当前 base 不小于前一项 base，也不小于前一项 end；
+  \item 所有描述长度求和、type 1 可用长度求和均不溢出；
+  \item 由最高 type 1 RAM 页、处理器物理地址宽度与 direct-map 容量共同
+        确定的管理范围内至少存在完整可用页。
+\end{enumerate}
+
+乱序和重叠使用不同状态返回，因为前者通常是平台规范化缺失，后者表示两个
+所有者对同一物理地址作了冲突声明。内核若自行切分并选择“保留优先”，反而会
+把上游错误悄悄变成某种策略；早期系统选择明确拒绝，现场更容易解释。
+
+汇总输出先写入局部候选对象，全部成功后才覆盖调用者。这样某个高地址条目在
+最后溢出时，调用者不会误用前面已经累加的半份统计。日志分别打印
+\code{MEMORY\_DESCRIBED\_BYTES}、\code{MEMORY\_USABLE\_BYTES} 和
+\code{MEMORY\_MANAGED\_BYTES}；高端保留 MMIO 窗口只进入第一个值，不能
+冒充 RAM。
+
+\topic{2-bit 页帧状态把所有权错误变成显式状态}
+v0.6 最初固定管理低 64 MiB；v1.1 已把这个教学脚手架替换为运行期容量。内核
+先读取 \code{CPUID.80000008H:EAX[7:0]} 的物理地址宽度，再取三个上限
+的最小值：
+
+\begin{enumerate}[label=\arabic*.]
+  \item E820 中最高 type 1 RAM 完整页的末端；
+  \item 处理器能够表达的物理地址上限；
+  \item 四级页表为高半区 direct-map 保留的 64 TiB。
+\end{enumerate}
+
+这里必须使用“最高可用 RAM”而不是“最高被描述地址”。64 MiB QEMU 配置会
+同时描述一个延伸到 1 TiB 的保留窗口；保留洞要阻止分配，却不能让 64 MiB
+机器为 1 TiB PFN 建表。
+
+每帧不用一位，而用两位表示四种状态：
+
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.25\textwidth}L{0.43\textwidth}}
+\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\ \hline
+\endfirsthead
+\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\ \hline
+\endhead
+unavailable & 默认、非 type 1、碎片页 & 不参与普通分配\\ \hline
+free & 完整落入可用区域的 4 KiB 帧 & allocate 或 reserve\\ \hline
+allocated & 动态分配成功 & 只能 release 回 free\\ \hline
+reserved & 平台、Kernel、初始栈 & 普通接口不释放\\ \hline
+\end{osgridlongtable}
+
+设管理上界为 \(L\)，页大小为 \(P=4096\)，状态存储为：
+\[
+  N_{\mathrm{frame}}=\frac{L}{P},\qquad
+  S_{\mathrm{state}}=
+  \left\lceil\frac{N_{\mathrm{frame}}}{4}\right\rceil.
+\]
+64 MiB 连续 RAM 仍只需 4096 字节。64 GiB QEMU 机器在 3--4 GiB 有一段
+物理地址洞，最高 RAM 末端为 65 GiB，因此状态存储需要
+\code{0x410000} 字节；洞中的 PFN 保持 unavailable，实际可用 RAM 仍精确为
+64 GiB。
+这里使用 \code{uint8\_t} 数组并不是违背内部大位宽规范；密集状态的每字节
+恰好保存四帧，扩大为 64 位会把元数据增加八倍。对外地址、计数、容量和索引
+仍全部使用 64 位。
+
+初始化先把所需状态字节清零，对应 unavailable，再把可用区间按 4 KiB 向内
+收缩。若区域起点不是页边界，向上对齐；终点向下对齐。只有整个页都被平台声明
+为可用时才进入 free。连续四帧使用预计算的 \code{0x55} 状态字节批量提交，
+避免 64 GiB 启动执行一千六百万次逐帧 read-modify-write；边界不足四帧时
+仍逐项更新，不会把相邻洞误标为 free。全部扫描后仍没有 free 帧，分配器把
+managed count 恢复为零再返回 \code{NoUsableFrames}，不会留下“看似初始化”
+的对象。
+
+\topic{启动保留采用先检查、后提交}
+状态数组本身不能继续放在固定 BSS。内核先根据上式计算并向页对齐所需大小，
+再在 Stage 1 可访问的低 64 MiB RAM 中搜索连续区间；搜索器逐个跳过重叠
+保留区，并在每次跳转后重新满足 4 KiB 对齐。内核随后依次保留四类范围：
+
+\begin{itemize}
+  \item \code{[0,1 MiB)}：复位、固件、Stage 1、旧页表、BootInfo、内存图、
+        VGA 传统窗口等低端平台资产；
+  \item 链接器符号 \code{os_kernel_image_start..os_kernel_image_end}：精确覆盖
+        text、rodata、data、BSS、IDT 与 IST；
+  \item BootInfo 给出的 64 KiB 初始栈。
+  \item 动态选出的页帧状态数组与 buddy 双位图元数据。
+\end{itemize}
+
+任意起点和终点先向页边界扩张，保证部分接触的帧也被保留。
+\code{ReserveRange} 第一遍只读状态；只要遇到 allocated 就立即失败。
+第二遍才把 free 改为 reserved 并更新计数。若边扫描边修改，范围前半段可能
+已经 reserved，后半段才发现冲突，调用者得到失败却留下不可恢复的部分副作用。
+
+早期线性模型从 next-search 索引开始环形搜索，成功后把状态改为 allocated
+并把下一搜索点移到后一帧。正式启动在产生首个动态页之前启用 buddy，此后
+同一接口改走 order 0 位图，next-search 不再是权威空闲集合。两种阶段都验证
+页对齐、管理范围和 allocated 状态；重复释放、释放 reserved 或 unavailable
+都返回明确错误。
+
+\code{AllocateInRange(begin,end)} 在同一状态机上增加页对齐的半开区间约束。
+启动新 CR3 前用它把页表帧限制在低 64 MiB 身份映射中；高内存验收则把
+begin 设为 4 GiB+4 KiB。范围接口没有复制第二套所有权规则，因此普通分配、
+受限分配和释放共享重复释放与统计不变量。
+
+单元测试专门构造“第一帧 free、第二帧 allocated”的两页保留请求，确认失败
+后 free、allocated、reserved 三个计数完全不变。这条测试验证事务边界，而
+不只是某个返回枚举。
+
+\section{伙伴系统怎样寻找连续页帧}
+每帧 2 bit 状态已经能回答“这个 4 KiB 页是否可以交给调用者”，却不能直接
+回答“从这里开始的八页是不是一个可交付、可原样收回的连续对象”。在状态数组
+上向后数八个 free 可以实现一次成功申请，但释放后还要重新发现相邻区间；
+更危险的是，调用者若把八页申请中的第一页按单页释放，逐页状态本身无法知道
+原所有权边界。
+
+连续页并不是为了让普通小对象跳过 heap。它服务于页表批量后备、某些设备缓冲、
+将来可能采用的物理大页，以及需要一次保留若干页的内核资源。KVA 与动态内核栈
+通常只要求\emph{虚拟}连续，物理页可以离散；但物理层仍必须有明确提供连续块
+的能力，且不能让这种能力破坏现有单页路径。
+
+早期系统常在两种极端之间取舍：顺序表能精确表达任意长度，却需要搜索和合并
+相邻区间；固定大小池查找很快，却只能服务一个尺寸。伙伴方法把尺寸限制为
+二的幂，换取由地址位直接确定的唯一合并对象。这种限制带来内部碎片，但让
+分裂、释放和局部一致性都能用短而确定的规则描述，适合先建立可信页资源地基。
+
+\topic{order 是页号二进制结构，不是随意标签}
+order \(k\) 的块含 \(2^k\) 页，字节数为：
+
+\[
+  B(k)=2^k\times4096=2^{k+12}.
+\]
+
+块首 PFN 必须按 \(2^k\) 对齐。若首 PFN 为 \(p\)，同阶伙伴可写成：
+
+\[
+  \operatorname{buddy}(p,k)=p\oplus2^k.
+\]
+
+实现把 PFN 先右移 \(k\) 位得到块索引，所以等价代码是
+\code{buddy\_block\_index = block\_index XOR 1}。这不是一种搜索启发式；
+第 \(k\) 位恰好表示当前块处于同一父块的左半还是右半。只有这两个半块都空闲
+时，清掉该位才得到唯一父块。
+
+\begin{center}
+\begin{osgridtabular}{llll}
+order & 页数 & 字节数 & 典型含义\\ \hline
+0 & 1 & 4 KiB & 普通页表页、用户页\\ \hline
+1 & 2 & 8 KiB & 小型连续后备\\ \hline
+3 & 8 & 32 KiB & 本项目 QEMU 连续块自检\\ \hline
+9 & 512 & 2 MiB & 与 x86-64 2 MiB 大页同尺寸\\ \hline
+24 & 16777216 & 64 GiB & 64 GiB 页规模的理论最高阶\\ \hline
+\end{osgridtabular}
+\end{center}
+
+“同尺寸”不代表当前 order 9 申请会自动安装成 2 MiB PDE。buddy 只交付物理
+连续性；页表层是否使用 PS 位、虚拟地址是否对齐、权限是否一致仍由映射契约
+决定。
+
+\topic{为什么保留 2-bit 状态并再加两族位图}
+只用一张 free buddy 位图可以完成分裂和合并，却不能证明释放参数正是原申请。
+例如 order 3 块首也满足 order 2 对齐；若释放接口盲信调用者传回的 order，
+它可能释放前四页而让后四页永远悬空。于是每阶保存两张位图：
+
+\begin{itemize}
+  \item free 位图表示这一阶中哪些完整块是空闲集合成员；
+  \item allocated 位图表示哪些块首曾以这一阶交付且尚未释放；
+  \item 原 2-bit/PFN 状态继续区分 unavailable、reserved、free 与 allocated。
+\end{itemize}
+
+free 位图回答算法集合，allocated 位图回答块身份，2-bit 状态回答逐页硬件与
+启动所有权。三者职责相邻但不可互相冒充。正式内核没有另一个可以绕过 buddy
+的页分配器：旧 \code{Allocate}/\code{AllocateInRange}/\code{Release}
+在启用后统一解释为 order 0，页表和用户地址空间无需改写公开单页契约。
+
+设最高 PFN 范围含 \(N\) 帧，一族位图大小为：
+
+\[
+\begin{aligned}
+  F(N) &=
+  \sum_{k=0}^{\lfloor\log_2N\rfloor}
+  \left\lceil
+    \frac{\left\lceil N/2^k\right\rceil}{8}
+  \right\rceil,\\
+  M_{\mathrm{buddy}}(N)&=2F(N).
+\end{aligned}
+\]
+
+块数随阶数形成 \(N+N/2+N/4+\cdots\)，所以两族总位数小于约 \(4N\)。
+若为每个 PFN 保存一个 64 位 next 指针，64 GiB 就要 128 MiB；双位图的
+同规格精确值只有 8388612 字节。
+
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.16\textwidth}L{0.19\textwidth}L{0.19\textwidth}}
+\textbf{PFN 覆盖} & \textbf{页数} & \textbf{buddy 精确字节} &
+\textbf{页对齐字节}\\ \hline
+\endfirsthead
+\textbf{PFN 覆盖} & \textbf{页数} & \textbf{buddy 精确字节} &
+\textbf{页对齐字节}\\ \hline
+\endhead
+64 MiB & 16384 & 8200 & \code{0x3000}\\ \hline
+64 GiB & 16777216 & 8388612 & \code{0x801000}\\ \hline
+65 GiB 最高 PFN & 17039360 & 8519694 & \code{0x821000}\\ \hline
+\end{osgridlongtable}
+
+QEMU 主规格报告 64 GiB 可用 RAM，但 3--4 GiB 洞把最高可用地址推到
+65 GiB，所以线性 PFN 元数据按第三行计算。对应 2-bit 状态为
+\code{0x410000} 字节，两类元数据合计 \code{0xC31000}，约 12.2 MiB。
+这是按最高 PFN 换取简单索引的明确代价；极端稀疏物理地址空间以后需要
+分段 vmemmap，而不是假称当前布局没有开销。
+
+\section{初始化和申请怎样改变位图}
+页状态区和 buddy 区分别按 4 KiB 对齐，再合并成一个连续启动元数据事务。
+搜索仍发生在 Stage 1 身份映射可访问的低 64 MiB，跳过低端平台、Kernel 和
+初始栈。初始化顺序必须保持：
+
+\begin{enumerate}
+  \item 从 E820 建立 2-bit 页状态；
+  \item 保留低端平台、Kernel、初始栈和完整元数据区；
+  \item 确认 allocated 页计数仍为零；
+  \item 扫描每一段连续 free PFN，建立 buddy；
+  \item 此后才允许页表、heap 和用户页开始申请。
+\end{enumerate}
+
+第三步阻止一种不可恢复的猜测：若旧线性分配器已经交付若干单页，buddy 不知道
+它们是否本来属于更大的调用者请求。当前启动流程不猜，而是返回
+\code{ExistingAllocationsPreventBuddyInitialization}。
+
+每段 free PFN 使用“满足当前首地址对齐的最大阶”贪心分解。设区间为
+\([s,e)\)，先取不超过 \(e-s\) 的最高阶，再把阶降低到 \(s\) 也满足对齐；
+登记该块后令 \(s\) 前进块大小并重复。这样 E820 洞、reserved 页和不完整尾部
+自然切断块，同时不会留下本可直接合并的两个同阶伙伴。
+
+buddy 建立后 \code{ReserveRange} 返回
+\code{ReservationAfterBuddyInitialization}。运行期内存下线不是“把几页改成
+reserved”这么简单；它要从空闲块拆出范围、迁移活动页并支持失败回滚，因此
+必须作为以后独立协议实现。
+
+\topic{范围申请先选目标，再提交分裂}
+\code{AllocateBlockInRange(order,begin,end)} 要求 begin/end 页对齐，并保证
+最终目标块完整落入半开区间。算法从请求阶向上寻找最低存在候选的源阶。某个
+较大源块可以只与请求范围部分相交，只要其中存在一个按请求阶对齐且完整位于
+范围内的目标块。
+
+找到源块并不立即改位图。实现先在局部变量中重放每一级“选择左半还是右半”，
+确认最终正好到达目标 PFN，随后一次提交：
+
+\begin{lstlisting}[language=C++]
+remove free[source_order][source_index]
+while current_order > requested_order:
+    current_order -= 1
+    keep the half containing target
+    insert the other half into free[current_order]
+insert allocated[requested_order][target_index]
+mark every target page allocated
+commit counters and output
+\end{lstlisting}
+
+假设从 order 3 的八页块申请 order 0 的一页，位图中会依次留下 order 2 的
+四页伙伴、order 1 的两页伙伴和 order 0 的一页伙伴。源块不再同时存在；
+任一 PFN 在任何时刻只能被一个已登记 free/allocated 块覆盖。
+
+若总 free 页不少但碎片无法形成请求阶，结果仍是 \code{OutOfMemory}。这是
+连续性契约的真实失败，不应退回八个离散页并假装成功。无效 order、范围未对齐、
+越界和溢出同样在修改输出之前返回，调用者可以安全地进行作用域回滚。
+
+\section{释放怎样拒绝错误地址和错误阶}
+\code{ReleaseBlock} 先验证页对齐、阶对齐、管理边界，再查精确
+\code{allocated[order][index]}：
+
+\begin{itemize}
+  \item 同一物理位置被另一阶活动块覆盖，返回
+        \code{AllocationOrderMismatch}；
+  \item 没有活动块覆盖，返回 \code{FrameNotAllocated}，包括重复释放和
+        reserved 页；
+  \item 活动位存在但块内某页不是 allocated，返回 \code{CorruptedState}。
+\end{itemize}
+
+验证成功后才清活动位、把整块页状态恢复为 free。当前块此时尚未插入 free
+位图；循环只查询并移除 XOR 伙伴，每成功一次就把块索引右移一位、order 加一。
+最后只插入唯一最高合并结果。这一顺序避免“当前块和父块短暂同时可见”，也让
+空闲块计数能够逐阶守恒。
+
+\topic{完整校验为何不需要再申请内存}
+分配器不能为了验证自己再调用自己。因而 \code{ValidateBuddy} 逐阶扫描现有
+位图，并利用块内页状态作交叉证据：
+
+\begin{enumerate}
+  \item 位图尾部超出完整块数的 bit 必须为零；
+  \item 同块不能同时属于 free 与 allocated；
+  \item 任意已登记块不能再有 free 或 allocated 祖先；
+  \item 同阶 XOR 伙伴若都 free，说明遗漏了一次合并；
+  \item free/allocated 块内每页必须具有对应 2-bit 状态；
+  \item 各块按 \(2^k\) 加权后的页数必须等于全局页统计；
+  \item 累计成功数减释放数必须等于活动块数。
+\end{enumerate}
+
+64 GiB 下这项检查会遍历覆盖最高 PFN 的元数据，所以 QEMU 宿主时间明显长于
+64 MiB。日志中的 \code{[QEMU][T+......ms]} 让这段成本可见；不能通过只管理
+64 MiB 或删除检查来制造更快的假结果。
+
+\section{怎样验证页帧分配器}
+单元测试以 64 页验证 36 字节精确位图、缺失/过小存储、已有活动页、最大块
+分解、错阶、错位、重复释放和保留冻结。集成测试构造 1024 页并在中间放置
+256 页 E820 洞，要求 order 5 块完整落入指定高地址区间，随后混合 order
+0/3/5/6 并乱序回收。
+
+固定种子 \code{0x425544445936344D} 执行 100000 步随机申请、释放、耗尽和
+重复释放。独立布尔数组逐页记录参考所有权，每 257 步运行一次完整校验，失败
+会报告种子和迭代号。
+
+QEMU 不是再做一遍纯算法测试。64 MiB 与 64 GiB 都申请 order 3 的八页块，
+通过 direct-map 查询首尾映射、写入
+\code{0x4255444459464952} 与 \code{0x42554444594C4153}，读回后释放。
+64 GiB 还要求物理地址高于 4 GiB、最大 order 至少 24。只有进入前后的页统计
+与活动块数恢复基线，并通过完整校验，才输出
+\code{BUDDY\_SELF\_TEST\_PASSED}。
+
+日志中的 \code{BUDDY\_ACTIVE\_BLOCKS} 不应为零：正式页表、heap 后备页和
+写保护测试页仍由内核持有。正确问题是“一段生命周期之后是否回到进入前”，
+而不是“运行中的内核是否拥有零页”。当前单 BSP 路径由调用顺序串行化；
+v1.2 已建立 Thread 与三类锁的调用边界，但尚未宣称分配器支持 SMP 并发。
+未来开放并发调用时必须由外层物理内存锁保护；IRQ、NMI 和 panic 仍不得进入
+通用分配路径。

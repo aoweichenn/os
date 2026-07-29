@@ -32,7 +32,7 @@ v1.7 不删除内嵌机制本身，而是缩小它的责任。正常路径只从
 \code{\#PF} 夹具，用于明确选择的启动/故障模式。这样“根文件系统尚未可信”
 和“正常用户空间”成为两条可解释路径，而不是两套彼此漂移的 ELF 规则。
 
-\topic{历史背景：为什么 Unix 把 fork、exec 与 wait 分开}
+\section{为什么 Unix 把 fork、exec 与 wait 分开}
 早期批处理系统由监督程序依次装入作业。交互式分时系统出现后，一个正在运行
 的用户程序需要创建另一个执行上下文，同时保留自身继续接收输入或等待结果。
 Unix 用三个相互正交的动作表达这件事：
@@ -144,7 +144,7 @@ rootfs、VFS、ELF、页表、栈与进程树全部由项目代码实现。}
 
 只有第 9 步完成，磁盘上的普通文件才真正成为 CPU 正在执行的用户程序。
 
-\topic{ProcessTree 是调度器之外的第二个状态机}
+\section{ProcessTree 怎样处理退出、wait 和孤儿}
 ThreadScheduler 回答“哪个 Thread 可以运行”；ProcessTree 回答“哪个父
 Process 有权取得哪个孩子的退出状态”。把父指针塞进 ready queue 会让两种
 变化原因纠缠：一个 Thread Blocked 不表示它失去父进程，一个 Process
@@ -572,14 +572,14 @@ PIT/设备 IRQ 可以在系统调用期间进入，调度器锁必须保护 Proc
   \item wait 登记与条件复查遵守 WaitQueue 协议，避免 lost wakeup；
   \item exec 的大部分准备不持有 scheduler lock，只有 CR3/RSP 提交持锁；
   \item 用户复制不在文件系统内部锁持有期间进行；
-  \item 参数全局工作区的安全来自不可抢占 Kernel 边界，不假装已经支持 SMP。
+  \item 参数全局工作区依赖不可抢占 Kernel 边界，当前只适用于单核。
 \end{itemize}
 
 未来开放 Kernel preemption 或多核时，最后一条不再成立；那时必须把参数计划
 放入每次调用拥有的对象，或以能够睡眠/取消的同步策略保护，不能只把普通
 SpinLock 套在可能触发 VFS 和页分配的长事务外面。
 
-\topic{失败矩阵：哪一层失败，什么必须保持}\par
+\section{装载失败时怎样保留旧进程}
 \begin{osgridlongtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.35\textwidth}}
 失败位置 & 对外结果 & 必须保持\\ \hline
 请求尺寸错误 & InvalidArgument & 不读取未知布局，不改变 Process\\ \hline

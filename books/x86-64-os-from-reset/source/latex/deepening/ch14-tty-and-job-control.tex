@@ -168,7 +168,7 @@ Q=W+P
 未来异步输出必须把请求移交到锁外队列，而不是扩大当前临界区。
 \end{contractbox}
 
-\topic{JobControlManager 的状态和不变量}
+\section{控制终端怎样决定前台进程组}
 PID1 的初始身份为：
 
 \[
@@ -297,7 +297,7 @@ parent PID、event type、termination reason、exit code、exception vector
 分别保存 stopped/continued pending，exit 不覆盖前两个事实；父进程按顺序
 消费。统计同时记录 produced 与 observed，终态必须相等。
 
-\topic{Shell 如何建立一条进程组管线}
+\section{Shell 怎样建立和回收前后台作业}
 对于 \code{echo data | cat | wc}：
 
 \begin{enumerate}
@@ -397,7 +397,7 @@ QEMU runner 不用固定 sleep 猜测 guest 速度。它为每个输入命令等
 \code{FOREGROUND\_JOB\_WAITING}。单步 20 秒无进展立即失败并设置协议完成
 事件，finally 终止、wait 并删除 QMP socket；不会再静默等满 120 秒。
 
-\topic{日志为何选择事务 marker 与终态账本}
+\topic{热路径不逐事件打印，只保留事务标记}
 扫描码、普通字符和 scheduler 扫描都是热路径。逐事件串口日志会改变时序，
 甚至让日志本身成为竞态放大器。低频用户 marker 只描述可作为协议屏障的事务：
 
@@ -410,7 +410,7 @@ COMMAND_COMPLETE
 \end{lstlisting}
 
 全部进程结束后，Kernel 一次输出 TTY、scheduler、signal、ProcessTree 和
-JobControl 账本。重要终态包括：
+JobControl 汇总计数。重要终态包括：
 
 \[
 stops=continues,\qquad
@@ -425,18 +425,18 @@ Stopped、Zombie、active job process、active session/group、editing bytes、
 buffered bytes 和 pending output 必须全为零。即使用户 marker 正确，只要
 这些计数还有一个非零，整机仍输出 \code{USER\_RESULT\_INVALID}。
 
-\topic{四层测试怎样冻结机制而非演示}\par
+\topic{四层测试分别会抓到什么错误}\par
 \begin{table}[htbp]
 \centering
 \small
 \begin{osgridtabularx}{\textwidth}{l X}
-层次 & v1.15 证据\\ \hline
+层次 & 检查内容\\ \hline
 单元 & Terminal 行规程/守恒、JobControl 身份、字符 vnode、Ctrl 扫描码\\ \hline
 集成 & 同一 child 的 Stopped→Continued→Exited 与 scheduler 状态\\ \hline
 随机 & 64 槽、固定种子 100000 步 PGID 迁移，每步完整 Validate\\ \hline
 系统 & QMP 真按键、IRQ1、Ring 3 cat、jobs/fg/bg/\&、终态资源守恒\\ \hline
 \end{osgridtabularx}
-\caption{四层证据分别隔离局部算法、组合事务、长序列性质和真实硬件路径}
+\caption{单元、集成、随机和整机测试覆盖不同故障范围}
 \end{table}
 
 functional QEMU 精确观察两次 stop、两次 continue、一次 interrupt，且
@@ -444,13 +444,12 @@ Stopped/Continued produced 与 observed 各为两次。后台读取拒绝至少�
 64 MiB bootstrap 保持兼容，256 MiB 执行完整功能，64 GiB 继续验证同一 ABI
 在更大容量配置下运行；QEMU 仍只使用自研 ROM 启动。
 
-\topic{终端完成以后，磁盘等待暴露了什么问题}
+\topic{当前终端范围}
 当前只有一个控制终端和 canonical 基线，没有 termios/raw mode、多个虚拟
 终端或 pty、窗口尺寸、SIGWINCH、SIGHUP、SIGTTIN/SIGTTOU、孤儿进程组规则
-与完整 POSIX job spec。Shell 作业表固定 16 项；这些限制均明确返回或记录，
-不伪装成完整 Linux。
+与完整 POSIX job spec。Shell 作业表固定 16 项；达到上限或遇到未支持行为时，
+系统返回错误。
 
-v1.16 将把 ATA 同步轮询升级为 IRQ14 完成的 BlockRequest，并为 page cache
-建立 clean/dirty/writeback/error。TTY 阶段已经验证的 irq-save 临界区、
-WaitQueue 单赢家、deadline、signal 中断、超时进度门禁和终态账本会直接复用：
-设备 IRQ 只提交有界完成，Thread 在安全边界恢复，错误不能伪装成成功。
+终端与第 26 章的磁盘请求复用 irq-save 临界区、WaitQueue 单赢家、deadline
+和超时处理。两类设备都只在 IRQ 中提交有界结果，Thread 在安全边界恢复；
+失败结果保持为失败，不会被唤醒动作改写成成功。

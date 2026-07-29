@@ -1,0 +1,10 @@
+\chapter{内核怎样分配物理页}
+
+Loader 告诉内核哪些物理地址属于 RAM、ROM、内核、页表和保留区。内核先把
+这些页标记清楚，再让伙伴分配器从剩余区域取得连续的 4 KiB 页帧。错误地址、
+错误阶和重复释放都必须在修改位图前被拒绝。
+
+\chapterroute{物理内存图 $\rightarrow$ 2-bit 页状态 $\rightarrow$ 伙伴块
+$\rightarrow$ 分裂与合并 $\rightarrow$ 随机模型和 QEMU 自检。}
+
+\input{deepening/ch08-physical-memory}

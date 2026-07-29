@@ -206,7 +206,7 @@ LBA 32768，即 16 MiB。
 和 Kernel image 工具的边界一致。legacy-fs 的历史 LBA 2048 是另一种格式的
 测试区域，不能因数字相同或接近而与生产 rootfs 合并。
 
-\topic{Ring 3 验收把语义串成闭环}
+\topic{在 Ring 3 连续检查映射语义}
 \code{/bin/memory\_probe} 在真实用户态完成：
 
 \begin{enumerate}[label=\arabic*.]

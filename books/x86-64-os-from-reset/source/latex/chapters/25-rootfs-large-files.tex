@@ -1,0 +1,10 @@
+\chapter{rootfs 怎样保存大文件和目录树}
+
+连续数据区很快会限制文件大小。rootfs v2 使用 direct、single、double 和
+triple 索引按需寻找块，同时让目录修改、截断和重命名保持 bitmap 与 inode
+一致。镜像工具和内核使用两份独立实现互相检查。
+
+\chapterroute{盘面几何 $\rightarrow$ 多级块索引 $\rightarrow$ 稀疏文件
+$\rightarrow$ 目录事务 $\rightarrow$ mkfs、fsck 与故障镜像。}
+
+\input{deepening/ch13-rootfs-v2}

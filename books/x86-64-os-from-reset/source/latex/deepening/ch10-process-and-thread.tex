@@ -59,7 +59,7 @@ PID 与 TID 都用显式 \code{uint64_t} 包装，零值表示无身份；
 把有效前缀限制为 4、128 或 512 个 Thread；调度状态机和身份分配仍是同一份
 代码。以后把槽替换为 type cache 时，PID/TID、队列和退出协议不需要改变。
 
-\topic{两个状态机比一个巨型枚举更能表达寿命}
+\section{Process 与 Thread 的生命周期怎样分开}
 Thread 状态机为：
 
 \[
@@ -173,90 +173,7 @@ run tick；预算未到或没有其他 Ready 时返回原帧。预算到且队�
 \end{pdfdiagram}
 \diagramnote{调度器只返回索引和决策；CR3、TSS、FXSAVE 与帧地址验证留在目标机 ProcessRuntime。}
 
-\topic{WaitQueue 解决的是竞争完成，不只是“睡一下”}
-一个读者等待数据时，至少有五种事件可能结束等待：条件满足、deadline 到达、
-signal、对象关闭、映射取消。若五条路径各自执行一次“设为 Ready”，同一
-Thread 可能被插入 run queue 多次。链表随后不是简单地“多运行一次”，而是
-可能形成环、覆盖 tail 或让统计永久失衡。
-
-v1.2 为每个等待对象建立 \code{WaitQueueId}、head/tail、当前 waiter 数、
-累计 enqueue/wake、close 次数和 closed 状态。阻塞事务为：
-
-\begin{lstlisting}[language=C++,caption={等待提交的语义顺序}]
-Running
-  -> wait_condition = requested_condition
-  -> wake_reason = None
-  -> wait_queue = &object_queue
-  -> append FIFO waiter
-  -> Blocked
-  -> select next Ready Thread
-\end{lstlisting}
-
-唤醒事务只接受以下前置状态：
-
-\[
-  \mathrm{state=Blocked}\land
-  \mathrm{queue=target}\land
-  \mathrm{wake\_reason=None}.
-\]
-
-第一个完成者从 WaitQueue 移除 Thread，写入具体 WakeReason，再追加到 Ready
-队尾。第二个完成者发现前置状态已不成立，得到
-\code{WakeAlreadyResolved}；它不能再次入队。这里的“单赢家”不是指只有
-一种事件能发生，而是只有一种事件能取得状态转换的提交权。
-
-\begin{osgridlongtable}{L{0.27\textwidth}L{0.25\textwidth}L{0.36\textwidth}}
-WakeReason & 典型来源 & 调用者恢复后的含义\\ \hline
-ConditionSatisfied & 数据到达、空间释放、Mutex handoff & 重新检查条件并尝试操作\\ \hline
-Timeout & 单调 deadline 到达 & 无进度时返回超时；本阶段仅冻结原因\\ \hline
-Signal & 可中断等待收到信号 & 按系统调用重启规则处理；后续阶段实现\\ \hline
-ObjectClosed & pipe/descriptor/队列关闭 & 重新检查 EOF、broken pipe 或关闭错误\\ \hline
-Cancelled & futex 地址 unmap 等取消 & 资源身份已失效，不得继续使用旧 key\\ \hline
-\end{osgridlongtable}
-
-关闭不是简单地设置布尔值。实现先令 queue closed，使新阻塞立即失败；再按
-FIFO 以 ObjectClosed 唤醒所有已登记 waiter。若先逐个唤醒、最后才 closed，
-中间可能重新进入一个新 waiter，关闭操作就无法形成明确边界。
-
-\topic{检查条件与入队为什么必须不可分割}
-经典丢失唤醒序列是：
-
-\begin{enumerate}[label=\arabic*.]
-  \item 读者观察“无数据”；
-  \item 生产者写入数据并尝试唤醒，但队列尚为空；
-  \item 读者随后入队并睡眠；
-  \item 再无事件发生，数据存在而读者永久睡眠。
-\end{enumerate}
-
-当前单 BSP 的 \code{INT 0x80} interrupt gate 会清 IF，调度提交再由
-\code{IrqSaveSpinLock} 包围。Try/Wait 用户包装在 Wait 系统调用中重新检查
-条件，只有仍不满足才入队。SMP 后关本地中断不能阻止另一 CPU，必须让对象
-条件锁与 WaitQueue 提交遵守同一锁序；当前单赢家状态机可以原样保留。
-
-\topic{三类锁服务三种不同等待成本}\par
-\begin{osgridlongtable}{L{0.22\textwidth}L{0.25\textwidth}L{0.18\textwidth}L{0.23\textwidth}}
-原语 & 使用位置 & 能否睡眠 & v1.2 关键语义\\ \hline
-SpinLock & Thread 上下文短提交区 & 否 & exchange-acquire、store-release、内层 PAUSE\\ \hline
-IrqSaveSpinLock & 与本 BSP IRQ 共享状态 & 否 & 保存 IF、CLI、取锁、释放后恢复原 IF\\ \hline
-Mutex & 可能较长的 Thread 临界区 & 是 & 竞争者进 WaitQueue，解锁直接 handoff\\ \hline
-\end{osgridlongtable}
-
-SpinLock 的 acquire 防止临界区读取被移到取锁前，release 防止临界区写被移到
-解锁后。\code{pause} 只减少忙等对执行资源的压力，不提供互斥或内存屏障。
-IrqSaveSpinLock 不能在释放时无条件 \code{sti}：调用者进入前可能已经关中断，
-所以必须恢复保存的 IF。
-
-Mutex 竞争时不能持有任何 spinlock。否则当前 Thread 睡眠后，另一个需要该
-spinlock 才能满足条件的 Thread 永远无法前进。v1.2 的
-\code{CurrentSpinLockDepth} 是单 BSP 防误用门禁；深度非零时 Mutex 返回
-\code{SpinLockHeld}，不调用调度器。
-
-解锁存在 waiter 时使用直接交接：队首 Thread 在变 Ready 的同时成为逻辑
-owner，并带有 handoff pending。它实际运行后用一次 \code{TryLock} 确认
-handoff。若先把 owner 清空再普通唤醒，另一 Ready Thread 可能在原队首运行
-之前抢到 Mutex，形成不必要的插队和饥饿。
-
-\topic{x87 到 SSE2 的历史解释了为什么现场不只是一组通用寄存器}
+\section{扩展处理器状态怎样随 Thread 切换}
 8086 最初没有片上浮点单元，8087 是独立数值协处理器。它采用八槽寄存器栈，
 并拥有 control、status、tag、instruction pointer 与 data pointer。后来的
 x86 把 FPU 集成进处理器，却为了兼容保留了这套可见状态。MMX 又复用 x87
@@ -336,7 +253,7 @@ FSAVE 的完整 tag word 混用。当前代码不手工解析字段，只把整�
 Thread 恢复 next。多做一次固定 512 字节硬件事务的成本，换来没有隐藏 owner
 的直接状态机。
 
-\topic{四组用户模式让保存协议接受真实硬件审问}
+\section{怎样验证上下文切换}
 布局单元测试只能证明结构大小，累计计数只能证明函数被调用；二者都不能证明
 保存区属于正确 Thread。v1.2 的四个 Ring 3 程序按 PID 安装互不相同的模式：
 
@@ -428,10 +345,9 @@ create thread、start/tick/yield、block、wake、exit、reap 和 discard 中
 \code{Validate}；每一步都检查 current Thread、三条 WaitQueue、每个状态
 集合、PID/TID 单调性和累计计数，因此首次破坏位置可以稳定复现。
 
-完整回归为 99 项 CTest。新增扩展现场布局单元测试和 SSE2 缺失系统用例；
-旧 ProcessScheduler 的三项测试被等层替换为 ThreadScheduler 单元、集成和
-十万步随机测试，而全部历史启动、损坏镜像、用户异常、文件持久化、命名和
-教材门禁继续存在。
+回归加入扩展现场布局单元测试和 SSE2 缺失系统用例；旧
+ProcessScheduler 测试由 ThreadScheduler 的单元、集成和十万步随机测试
+替换。启动、损坏镜像、用户异常、文件持久化和命名门禁仍继续运行。
 
 \topic{沿目录走读 Process 与 Thread}\par
 \begin{osgridlongtable}{L{0.43\textwidth}L{0.45\textwidth}}
@@ -460,7 +376,7 @@ FXSAVE64/FXRSTOR64 为什么保持为三个极小 Intel 语法边界？\\ \hline
 ProcessRuntime 与两份汇编。直接从目标运行时开始，会同时面对页表、栈、
 队列和 FXSAVE，难以判断一个分支属于策略还是硬件落实。
 
-\topic{本阶段明确没有做什么}
+\topic{当前实现范围}
 v1.2 的正常用户进程仍只有一个初始 Thread；用户
 \code{CreateThread/Join}、TLS ABI 和 private futex 在后续阶段开放。当前
 Process/Thread 存储仍有 256/512 编译期上界，但身份、状态和等待协议不依赖

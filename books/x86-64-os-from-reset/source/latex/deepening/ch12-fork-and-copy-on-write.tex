@@ -283,6 +283,6 @@ v1.10 不支持用户多 Thread 的 fork 停世、\code{vfork}、Linux
 killer。系统仍是单 BSP，不实现跨核 TLB shootdown。writable
 \code{MAP\_SHARED}、dirty/writeback 与 \code{msync} 也没有因 fork 自动出现。
 
-下一阶段 v1.11 将复用本阶段已经正确继承的 FileTable，在 fork 与 exec 之间
-加入 pipe、dup、重定向和外部 Shell。它不应重新定义 private 页所有权；阶段
-边界的价值正是让 I/O 组合建立在已经冻结的 COW 事务上。
+实现演进到 v1.11 时，pipe、dup、重定向和外部 Shell 复用了这里继承的
+FileTable。它们没有重新定义 private 页所有权，I/O 组合仍建立在同一套 COW
+事务上。
