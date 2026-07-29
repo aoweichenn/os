@@ -246,18 +246,19 @@ run tick、dispatch、syscall。创建前与全部销毁后的物理页统计必
 
 v0.10 在原四态中加入 \code{Blocked}：
 
-\begin{pdfdiagram}
+\begin{pdfdiagram}[node distance=11mm and 15mm]
   \node[os state] (unused) {Unused};
   \node[os block,right=of unused] (ready) {Ready};
   \node[os state,right=of ready] (running) {Running};
+  \node[os hardware,right=of running] (terminated) {Terminated};
   \node[os block,below=of running] (blocked) {Blocked\\wait reason};
-  \node[os hardware,left=of blocked] (terminated) {Terminated};
   \draw[os arrow] (unused) -- node[above]{创建} (ready);
   \draw[os arrow] (ready) -- node[above]{派发} (running);
-  \draw[os arrow] (running) to[bend left] node[above]{抢占} (ready);
+  \draw[os arrow] (running) to[bend left=32] node[above]{抢占} (ready);
   \draw[os arrow] (running) -- node[right]{条件不满足} (blocked);
-  \draw[os arrow] (blocked) -- node[below]{条件变化} (ready);
-  \draw[os arrow] (running) -- node[below]{退出/异常} (terminated);
+  \draw[os arrow] (blocked.west) to[out=180,in=-90]
+    node[below left]{条件变化} (ready.south);
+  \draw[os arrow] (running) -- node[above]{退出/异常} (terminated);
 \end{pdfdiagram}
 \diagramnote{唤醒只恢复调度资格，不把 Blocked 直接变成 Running，也不承诺资源仍然可用。}
 
@@ -459,20 +460,21 @@ QEMU 正常镜像创建生产者、消费者和两个 worker。稳定验收要�
 进入 blocked，条件满足后回到 runnable；退出后进入 zombie，父进程取得退出
 状态并回收后才变为 reaped。每次转换由持有相应队列锁的代码完成。
 
-\begin{pdfdiagram}
+\begin{pdfdiagram}[node distance=11mm and 13mm]
   \node[os state] (created) {created};
   \node[os block,right=of created] (runnable) {runnable};
   \node[os state,right=of runnable] (running) {running};
+  \node[os state,right=of running] (zombie) {zombie};
+  \node[os hardware,right=20mm of zombie] (reaped) {reaped};
   \node[os block,below=of running] (blocked) {blocked};
-  \node[os state,left=of blocked] (zombie) {zombie};
-  \node[os hardware,left=of zombie] (reaped) {reaped};
   \draw[os arrow] (created) -- (runnable);
   \draw[os arrow] (runnable) -- node[above]{调度} (running);
-  \draw[os arrow] (running) to[bend left] node[above]{抢占} (runnable);
+  \draw[os arrow] (running) to[bend left=32] node[above]{抢占} (runnable);
   \draw[os arrow] (running) -- node[right]{等待} (blocked);
-  \draw[os arrow] (blocked) -- node[below]{唤醒} (runnable);
-  \draw[os arrow] (running) -- node[below]{退出} (zombie);
-  \draw[os arrow] (zombie) -- node[below]{父进程回收} (reaped);
+  \draw[os arrow] (blocked.west) to[out=180,in=-90]
+    node[below left]{唤醒} (runnable.south);
+  \draw[os arrow] (running) -- node[above]{退出} (zombie);
+  \draw[os arrow] (zombie) -- node[above]{父进程回收} (reaped);
 \end{pdfdiagram}
 \diagramnote{线程状态与所在队列必须一致；一个线程不能同时位于运行队列和等待队列。}
 

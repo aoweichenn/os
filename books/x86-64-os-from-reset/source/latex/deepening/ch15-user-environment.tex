@@ -273,16 +273,24 @@ Shell 是普通 Ring 3 ELF，不拥有特权后门。它的行缓冲为 128 字�
 视图不依赖外部行缓冲生命周期，也不需要为每个字符串分配内存。
 
 \begin{pdfdiagram}
-  \node[os state] (none) {无引号};
-  \node[os block,right=of none] (single) {单引号};
-  \node[os block,below=of single] (double) {双引号};
-  \node[os hardware,left=of double] (escape) {转义下一字节};
-  \draw[os arrow] (none) to[bend left] node[above]{'} (single);
-  \draw[os arrow] (single) to[bend left] node[below]{'} (none);
-  \draw[os arrow] (none) -- node[right]{"} (double);
-  \draw[os arrow] (double) -- node[below]{"} (none);
-  \draw[os arrow] (none) -- node[left]{\textbackslash} (escape);
-  \draw[os arrow] (double) -- node[right]{\textbackslash} (escape);
+  \node[os state] (none-single) {无引号};
+  \node[os block,right=35mm of none-single] (single) {单引号};
+  \draw[os arrow] ([yshift=2mm]none-single.east) --
+    node[above]{读到单引号} ([yshift=2mm]single.west);
+  \draw[os arrow] ([yshift=-2mm]single.west) --
+    node[below]{再次读到单引号} ([yshift=-2mm]none-single.east);
+
+  \node[os state,below=9mm of none-single] (none-double) {无引号};
+  \node[os block,right=35mm of none-double] (double) {双引号};
+  \draw[os arrow] ([yshift=2mm]none-double.east) --
+    node[above]{读到双引号} ([yshift=2mm]double.west);
+  \draw[os arrow] ([yshift=-2mm]double.west) --
+    node[below]{再次读到双引号} ([yshift=-2mm]none-double.east);
+
+  \node[os state,below=9mm of none-double] (escape-source) {无引号或双引号};
+  \node[os hardware,right=35mm of escape-source] (escape) {转义下一字节};
+  \draw[os arrow] (escape-source) --
+    node[above]{读到反斜杠} (escape);
 \end{pdfdiagram}
 \diagramnote{单引号内反斜杠按普通字符处理；无引号和双引号状态中，转义使下一字节失去语法含义。}
 

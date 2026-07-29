@@ -212,8 +212,26 @@
   },
   os hardware/.style={os block,draw=BookAmber,fill=white},
   os state/.style={os block,draw=BookTeal},
-  os arrow/.style={-{Stealth[length=2.4mm]},draw=BookMuted,thick},
-  os bus/.style={-{Stealth[length=2.4mm]},draw=BookBlue,very thick,double},
+  os edge label/.style={
+    fill=white,
+    text=BookNavy,
+    inner sep=1.5pt,
+    font=\scriptsize\sffamily,
+    align=center
+  },
+  os arrow/.style={
+    -{Stealth[length=2.4mm]},
+    draw=BookMuted,
+    thick,
+    every node/.append style={os edge label}
+  },
+  os bus/.style={
+    -{Stealth[length=2.4mm]},
+    draw=BookBlue,
+    very thick,
+    double,
+    every node/.append style={os edge label}
+  },
   os pin/.style={
     draw=BookMuted,
     fill=white,

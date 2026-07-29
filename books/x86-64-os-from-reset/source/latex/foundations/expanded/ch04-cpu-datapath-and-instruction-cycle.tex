@@ -25,29 +25,40 @@
 
 \begin{center}
 \begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
-  \node[os state,minimum width=24mm] (pc) at (0,4.5) {PC/RIP\\取指地址};
-  \node[os hardware,minimum width=26mm] (memory) at (4.0,4.5) {指令存储接口\\返回机器码};
-  \node[os state,minimum width=24mm] (ir) at (8.0,4.5) {指令寄存器 IR\\当前编码};
-  \node[os block,minimum width=28mm] (decode) at (11.8,4.5) {译码/控制器\\产生控制信号};
-  \node[os state,minimum width=28mm] (regs) at (2.0,1.6) {寄存器文件\\两个读口、一个写口};
-  \node[os block,minimum width=24mm] (muxa) at (5.8,2.4) {MUX A};
-  \node[os block,minimum width=24mm] (muxb) at (5.8,0.8) {MUX B};
-  \node[os block,minimum width=27mm] (alu) at (9.0,1.6) {ALU\\算术/地址/逻辑};
-  \node[os state,minimum width=24mm] (flags) at (12.2,1.6) {结果与标志};
+  \node[os state,minimum width=23mm] (pc) at (0,4.6) {PC/RIP\\取指地址};
+  \node[os hardware,minimum width=25mm] (memory) at (3.5,4.6)
+    {指令存储接口\\返回机器码};
+  \node[os state,minimum width=23mm] (ir) at (7.0,4.6)
+    {指令寄存器 IR\\当前编码};
+  \node[os block,minimum width=27mm] (decode) at (10.5,4.6)
+    {译码/控制器\\产生控制信号};
+
+  \node[os state,minimum width=28mm] (regs) at (0.5,1.5)
+    {寄存器文件\\两个读口、一个写口};
+  \node[os block,minimum width=28mm] (operands) at (4.0,1.5)
+    {操作数选择\\MUX A / MUX B};
+  \node[os block,minimum width=27mm] (alu) at (7.4,1.5)
+    {ALU\\算术/地址/逻辑};
+  \node[os state,minimum width=25mm] (result) at (10.5,1.5)
+    {结果与标志};
 
   \draw[os bus] (pc) -- (memory);
   \draw[os bus] (memory) -- (ir);
   \draw[os bus] (ir) -- (decode);
-  \draw[os bus] (regs) -- (muxa);
-  \draw[os bus] (regs) -- (muxb);
-  \draw[os bus] (muxa) -- (alu);
-  \draw[os bus] (muxb) -- (alu);
-  \draw[os bus] (alu) -- (flags);
-  \draw[os arrow,BookTeal] (decode) |- node[pos=0.2,right]{选择/使能} (muxa);
-  \draw[os arrow,BookTeal] (decode) |- (muxb);
-  \draw[os arrow,BookTeal] (decode) -- (flags);
-  \draw[os bus,bend right=18] (flags.south) to node[below]{写回} (regs.south);
-  \draw[os arrow,bend left=32] (flags.north) to node[above]{顺序、分支或异常} (pc.north);
+  \draw[os bus] ([yshift=2mm]regs.east) -- ([yshift=2mm]operands.west);
+  \draw[os bus] ([yshift=-2mm]regs.east) -- ([yshift=-2mm]operands.west);
+  \draw[os bus] (operands) -- (alu);
+  \draw[os bus] (alu) -- (result);
+
+  \draw[os arrow,BookTeal] (decode.south) --
+    node[right]{提交使能} (result.north);
+  \draw[os arrow,BookTeal] ([xshift=-4mm]decode.south) -- ++(0,-0.55) -|
+    node[pos=0.30,above]{选择与运算控制} (operands.north);
+
+  \draw[os bus] (result.south) -- ++(0,-1.0) -|
+    node[pos=0.45,below]{写回} (regs.south);
+  \draw[os arrow] (result.east) -- ++(0.65,0) |- ++(0,4.2) -|
+    node[pos=0.45,above]{顺序、分支或异常决定下一 RIP} (pc.north);
 \end{tikzpicture}
 \end{center}
 \diagramnote{蓝色双线表示多 bit 数据，绿色细线表示控制选择。图按职责展开，

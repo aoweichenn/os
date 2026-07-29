@@ -154,7 +154,7 @@ N-MOS 串联，只有 \(A=B=1\) 才能下拉；P-MOS 并联，任一输入为 0 
   \draw (0,5.5) -| (p2.S);
   \draw (p1.D) |- (0,3.8) node[circ] (y) {};
   \draw (p2.D) |- (y);
-  \draw (y) -- (3.0,3.8) node[right]{\(Y=\lnot(A\land B)\)};
+  \draw (y) -- (3.0,3.8) node[right]{\(Y\)};
   \draw (0,3.8) -- (0,3.2) node[nmos,anchor=D] (n1) {};
   \draw (n1.S) -- (0,1.7) node[nmos,anchor=D] (n2) {};
   \draw (n2.S) -- (0,0) node[ground]{};

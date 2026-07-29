@@ -217,20 +217,37 @@ triple & \(P^3\) &
 \code{offset + length}、乘法与索引换算都先检查 64 位溢出和公开上限。
 
 \begin{pdfdiagram}
-  \node[os block] (inode) {inode};
-  \node[os state,above right=of inode] (direct) {direct\\data};
-  \node[os state,right=of inode] (single) {single\\pointer};
-  \node[os state,below right=of inode] (double) {double\\pointer};
-  \node[os state,below=of inode] (triple) {triple\\pointer};
-  \node[os hardware,right=of single] (leaves) {data blocks};
-  \draw[os arrow] (inode) -- (direct);
-  \draw[os arrow] (direct) -- (leaves);
-  \draw[os arrow] (inode) -- (single);
-  \draw[os arrow] (single) -- (leaves);
-  \draw[os arrow] (inode) -- (double);
-  \draw[os arrow] (double) -- node[below,sloped]{再索引一层} (leaves);
-  \draw[os arrow] (inode) -- (triple);
-  \draw[os arrow] (triple) -- node[below,sloped]{再索引两层} (leaves);
+  \node[os block,minimum height=32mm] (inode) at (0,1.8) {inode};
+
+  \node[os state] (direct) at (3.0,3.6) {direct slot};
+  \node[os hardware] (directdata) at (10.0,3.6) {data block};
+
+  \node[os state] (single) at (3.0,2.4) {pointer block};
+  \node[os hardware] (singledata) at (10.0,2.4) {data block};
+
+  \node[os state] (double1) at (3.0,1.2) {pointer L1};
+  \node[os state] (double2) at (6.5,1.2) {pointer L2};
+  \node[os hardware] (doubledata) at (10.0,1.2) {data block};
+
+  \node[os state] (triple1) at (3.0,0.0) {pointer L1};
+  \node[os state] (triple2) at (5.3,0.0) {pointer L2};
+  \node[os state] (triple3) at (7.6,0.0) {pointer L3};
+  \node[os hardware] (tripledata) at (10.0,0.0) {data block};
+
+  \draw[os arrow] (inode) -- node[above]{direct} (direct);
+  \draw[os arrow] (direct) -- (directdata);
+
+  \draw[os arrow] (inode) -- node[above]{single} (single);
+  \draw[os arrow] (single) -- (singledata);
+
+  \draw[os arrow] (inode) -- node[above]{double} (double1);
+  \draw[os arrow] (double1) -- (double2);
+  \draw[os arrow] (double2) -- (doubledata);
+
+  \draw[os arrow] (inode) -- node[below]{triple} (triple1);
+  \draw[os arrow] (triple1) -- (triple2);
+  \draw[os arrow] (triple2) -- (triple3);
+  \draw[os arrow] (triple3) -- (tripledata);
 \end{pdfdiagram}
 \diagramnote{direct 直接到数据；每增加一级 indirect，就增加一个由 bitmap 拥有且带 CRC 的元数据块。}
 

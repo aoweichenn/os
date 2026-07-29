@@ -517,7 +517,7 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
   \item Shell：执行完整 PS/2、控制台与 VFS 命令序列。
 \end{itemize}
 
-\begin{pdfdiagram}[node distance=7mm and 8mm]
+\begin{pdfdiagram}[node distance=9mm and 13mm]
   \node[os hardware] (init) {PID1\\\filepath{/sbin/init}};
   \node[os block,below left=of init] (orphan) {orphan parent};
   \node[os state,below=of orphan] (child) {orphan child\\reparent to PID1};
@@ -525,8 +525,8 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
   \node[os block,below right=of init] (services) {fs / smoke / sh};
   \draw[os arrow] (init) -- (orphan);
   \draw[os arrow] (orphan) -- (child);
-  \draw[os arrow,dashed] (child) to[bend left=34]
-      node[right,font=\scriptsize]{父退出后收养} (init);
+  \draw[os arrow,dashed] (child.west) to[out=180,in=180,looseness=1.25]
+      node[left,align=right]{父退出后\\由 PID1 收养} (init.west);
   \draw[os arrow] (init) -- (args);
   \draw[os arrow] (init) -- (services);
 \end{pdfdiagram}
