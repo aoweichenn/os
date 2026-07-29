@@ -63,7 +63,7 @@ Process
 打开实例与 fd 的语义，下一章再在它下面接入 Path、Mount 与 Vnode。若同时
 同时替换描述符表、命名空间和磁盘格式，失败时将无法判断错误属于哪层。
 
-\section{KernelObject 怎样保存类型和引用}
+\topic{KernelObject 怎样保存类型和引用}
 每个动态对象由一个 64 字节对齐的私有头和紧随其后的类型载荷组成：
 
 \begin{osgridlongtable}{L{0.29\textwidth}L{0.17\textwidth}L{0.42\textwidth}}
@@ -234,7 +234,7 @@ descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\ \hline
 宿主单元测试。先确定位置和批量关闭语义，接入真正 exec 时便不需要
 重塑对象所有权。
 
-\section{FileTable 怎样分配和复制槽位}
+\topic{FileTable 怎样分配和复制槽位}
 每个 Process 持有独立 FileTable。表不预分配 4096 个表项，而是按 64 个
 descriptor 一块延迟增长：
 

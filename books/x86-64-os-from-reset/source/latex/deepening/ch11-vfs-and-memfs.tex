@@ -172,7 +172,7 @@ memfs 设为 255。VFS 先检查公共上限，再检查当前后端上限，因
 只测试常见短路径不能证明数组边界没有 off-by-one。
 \end{contractbox}
 
-\section{路径解析、挂载与目录语义}
+\topic{路径解析、挂载与目录语义}
 
 绝对路径从 \code{FsContext.root} 开始，相对路径从 cwd 开始。算法不先申请
 一个组件数组，而是在原始有界字节序列上移动索引：
@@ -296,7 +296,7 @@ shift contiguous result to destination[0]
 挂载根没有普通子后端名称。此时 \code{ReadPathName} 改为对父后端的 mount
 point 调用 get-name，所以 memfs 根显示为 \code{tmp}，而不是空字符串。
 
-\section{memfs 事务、兼容适配与验证}
+\topic{memfs 事务、兼容适配与验证}
 
 当前 memfs Node 的逻辑内容为：
 
@@ -682,7 +682,7 @@ memfs 线性节点链和 legacy parent 全盘扫描都是可审计基线，不�
 64 位固定宽度类型，后续提高规格无需改变用户 ABI，但仍必须重新验证内存预算
 和算法复杂度。
 
-第 25 章回到磁盘后端，介绍 rootfs v2、稀疏大文件、命名空间修改以及独立的
+第 16 章回到磁盘后端，介绍 rootfs v2、稀疏大文件、命名空间修改以及独立的
 mkfs、inspector 和 fsck。这里建立的 Path、Mount 与 FileDescription 语义
 保持不变。
 

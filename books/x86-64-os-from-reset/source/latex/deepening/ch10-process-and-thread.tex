@@ -167,7 +167,7 @@ run tick；预算未到或没有其他 Ready 时返回原帧。预算到且队�
 \end{pdfdiagram}
 \diagramnote{调度器只返回索引和决策；CR3、TSS、FXSAVE 与帧地址验证留在目标机 ProcessRuntime。}
 
-\section{扩展处理器状态怎样随 Thread 切换}
+\topic{扩展处理器状态怎样随 Thread 切换}
 8086 最初没有片上浮点单元，8087 是独立数值协处理器。它采用八槽寄存器栈，
 并拥有 control、status、tag、instruction pointer 与 data pointer。后来的
 x86 把 FPU 集成进处理器，却为了兼容保留了这套可见状态。MMX 又复用 x87
@@ -367,7 +367,7 @@ ProcessRuntime 与两份汇编。直接从目标运行时开始，会同时面�
 
 \topic{当前实现范围}
 本章只跟踪 Unused、Ready、Running 与 Exited。用户多线程接口以及等待、
-唤醒和 futex 在第 28 章加入。Process/Thread 存储仍有 256/512 编译期上界；内核仍是单
+唤醒和 futex 在第 18 章加入。Process/Thread 存储仍有 256/512 编译期上界；内核仍是单
 BSP、内核不可抢占模型，没有 per-CPU Ready queue、远端 TLB shootdown
 或 SMP 锁竞争。
 

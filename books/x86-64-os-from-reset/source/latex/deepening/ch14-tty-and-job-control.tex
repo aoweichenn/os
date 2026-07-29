@@ -168,7 +168,7 @@ Q=W+P
 未来异步输出必须把请求移交到锁外队列，而不是扩大当前临界区。
 \end{contractbox}
 
-\section{控制终端怎样决定前台进程组}
+\topic{控制终端怎样决定前台进程组}
 PID1 的初始身份为：
 
 \[
@@ -297,7 +297,7 @@ parent PID、event type、termination reason、exit code、exception vector
 分别保存 stopped/continued pending，exit 不覆盖前两个事实；父进程按顺序
 消费。统计同时记录 produced 与 observed，终态必须相等。
 
-\section{Shell 怎样建立和回收前后台作业}
+\topic{Shell 怎样建立和回收前后台作业}
 对于 \code{echo data | cat | wc}：
 
 \begin{enumerate}
@@ -450,6 +450,6 @@ Stopped/Continued produced 与 observed 各为两次。后台读取拒绝至少�
 与完整 POSIX job spec。Shell 作业表固定 16 项；达到上限或遇到未支持行为时，
 系统返回错误。
 
-终端与第 26 章的磁盘请求复用 irq-save 临界区、WaitQueue 单赢家、deadline
+终端与第 17 章的磁盘请求复用 irq-save 临界区、WaitQueue 单赢家、deadline
 和超时处理。两类设备都只在 IRQ 中提交有界结果，Thread 在安全边界恢复；
 失败结果保持为失败，不会被唤醒动作改写成成功。

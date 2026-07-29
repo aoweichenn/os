@@ -1,0 +1,12 @@
+\chapter{物理页怎样变成受保护的虚拟地址}
+
+BootInfo 给出哪些物理页可以使用，页表则决定每个虚拟地址落到哪个页帧以及
+允许怎样访问。本章把分配和翻译放在同一条链上：先从伙伴系统取得页帧，再
+建立四级页表项，最后用写保护故障和释放测试检查权限与回收。
+
+\chapterroute{物理内存图和页状态 $\rightarrow$ 伙伴块的分裂与合并
+$\rightarrow$ direct map 与四级索引 $\rightarrow$ 页表层级权限
+$\rightarrow$ TLB 更新 $\rightarrow$ 分配、映射和写保护实验。}
+
+\input{deepening/ch08-physical-memory}
+\input{deepening/ch08-page-tables}

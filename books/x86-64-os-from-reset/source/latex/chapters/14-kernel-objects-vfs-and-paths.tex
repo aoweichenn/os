@@ -1,0 +1,14 @@
+\chapter{文件描述符和路径怎样找到同一个对象}
+
+整数 \code{fd=3} 不是文件本身，它先索引进程的 FileTable，再找到一次打开
+实例和底层 KernelObject。路径解析则从名字出发，穿过目录、挂载点和 VFS，
+最终到达同类对象。本章从这两个方向走到同一个读写操作。
+
+\chapterroute{fd、槽位与 generation $\rightarrow$ KernelObject 和引用
+$\rightarrow$ FileDescription 与 FileTable $\rightarrow$ VFS 对象
+$\rightarrow$ 路径组件、\code{.}、\code{..} 与挂载 $\rightarrow$ memfs
+事务和系统调用测试。}
+
+\input{topics/ch11-fd-and-path-introduction}
+\input{deepening/ch11-kernel-objects-and-file-table}
+\input{deepening/ch11-vfs-and-memfs}

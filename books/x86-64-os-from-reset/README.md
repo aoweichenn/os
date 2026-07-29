@@ -9,7 +9,7 @@ freestanding C++20 内核、驱动、用户程序和文件系统；QEMU 只负�
 x86-64 CPU 和外围硬件。书中的代码都来自仓库根目录 `source/` 下的同一个
 可运行项目。
 
-前四章不要求读者学过电路或计算机组成。从 bit、byte 和地址开始，依次介绍
+前三章不要求读者学过电路或计算机组成。从 bit、byte 和地址开始，依次介绍
 电压、引脚、逻辑门、触发器、寄存器、教学 CPU、RAM、ROM、总线和第一次
 取指。正文保留数制手算、电路公式、波形、setup/hold、基础 CDC、逐周期指令、
 总线事务和项目连接；测量误差、器件选型、板级工程、高级 CDC、DRAM 训练与
@@ -36,8 +36,8 @@ make phone-export
 ## 目录
 
 - `source/latex/main.tex`：全书入口与阅读顺序。
-- `source/latex/chapters/`：31 个主线章和 4 个硬件附录的入口文件。
-- `source/latex/foundations/`：前四章的完整硬件正文。
+- `source/latex/chapters/`：20 个主线章和 4 个硬件附录的入口文件。
+- `source/latex/foundations/`：前三章的完整硬件正文。
 - `source/latex/foundations/expanded/`：由正文或附录按依赖顺序引入的细化材料。
 - `source/latex/foundations/mainline/`：保留的简明素材，不直接作为成书入口。
 - `source/latex/topics/`：进入机制前需要的背景材料。
@@ -55,7 +55,7 @@ make phone-export
 容量公式时，建议停下来手算一次。
 
 只想先看到系统启动时，可以从“CPU 怎样读到第一条指令”读到“从磁盘进入
-64 位内核”；遇到电气或逻辑概念再回看前四章。想学习进程、虚拟内存和文件
+64 位内核”；遇到电气或逻辑概念再回看前三章。想学习进程、虚拟内存和文件
 系统，则需要先理解异常、中断、页表和用户态入口。
 
 书稿的编辑原则是先讲问题和实验，再引出抽象概念。版本发布、PDF 哈希和网站

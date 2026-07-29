@@ -1,0 +1,12 @@
+\chapter{内核怎样接住第一次异常}
+
+进入 C++ 只说明控制流到达了 Kernel，还不能保证异常发生时能够安全返回。
+内核先清理 BSS、建立自己的段和栈，再配置 GDT、TSS、IDT 与异常入口。我们
+会逐字段解码一份 176 字节现场，并用故意触发的异常检查它。
+
+\chapterroute{Kernel 入口和 BSS $\rightarrow$ GDT 与 TSS
+$\rightarrow$ IDT 门描述符 $\rightarrow$ 汇编入口和 176 字节现场
+$\rightarrow$ C++ 分发、错误码与异常实验。}
+
+\input{topics/ch08-kernel-and-memory}
+\input{deepening/ch08-kernel-entry-and-exceptions}

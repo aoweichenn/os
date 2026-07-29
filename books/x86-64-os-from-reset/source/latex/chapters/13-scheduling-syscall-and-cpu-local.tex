@@ -1,0 +1,13 @@
+\chapter{线程怎样轮流运行并进入系统调用}
+
+时钟中断让内核有机会停止当前 Thread，保存现场并选择另一个可运行线程。
+用户程序需要内核服务时，\code{syscall} 又要从当前 CPU 找到当前 Thread，
+建立可信的内核现场并返回用户态。本章把这两条控制流放在一起追踪。
+
+\chapterroute{Ready、Running 与抢占 $\rightarrow$ 通用和扩展寄存器现场
+$\rightarrow$ Thread 创建、切换和退出 $\rightarrow$ CpuLocal
+$\rightarrow$ STAR、LSTAR 与 FMASK $\rightarrow$ 系统调用入口和返回。}
+
+\input{deepening/ch10-processes-files-and-shell}
+\input{deepening/ch10-process-and-thread}
+\input{deepening/ch10-cpu-local-and-syscall}

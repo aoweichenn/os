@@ -1,0 +1,13 @@
+\chapter{CPU 怎样找到内存和设备}
+
+CPU 发出的地址必须由平台电路解释。部分地址选择 RAM 或 ROM，部分地址选择
+MMIO 设备；x86 还保留了独立的 Port I/O 空间。本章先走完一次总线事务，再
+把端口、芯片引脚、译码器和项目使用的实体载板连接起来。
+
+\chapterroute{地址译码和总线事务 $\rightarrow$ Port I/O 与 MMIO
+$\rightarrow$ 设备寄存器和等待状态 $\rightarrow$ 芯片引脚与译码网络
+$\rightarrow$ 实体载板、电源和调试测点。}
+
+\input{topics/ch03-platform-memory-and-io}
+\input{deepening/ch03-port-io-wiring-atlas}
+\input{deepening/ch03-physical-carrier-case-study}

@@ -1,0 +1,12 @@
+\chapter{扇区怎样组成 rootfs 的目录和文件}
+
+ATA 只读写编号扇区，文件系统必须在扇区中约定超级块、inode、bitmap、目录项
+和数据块的位置。文件变大以后，inode 还要通过多级索引寻找更多数据块。本章
+从一个空镜像开始，创建目录和大文件，再重新挂载并运行检查器。
+
+\chapterroute{分区、超级块和 inode $\rightarrow$ bitmap、目录项与缓存
+$\rightarrow$ rootfs v2 盘面 $\rightarrow$ 多级块索引和稀疏文件
+$\rightarrow$ 目录修改顺序 $\rightarrow$ 镜像生成、破坏和 fsck。}
+
+\input{deepening/ch13-file-system}
+\input{deepening/ch13-rootfs-v2}

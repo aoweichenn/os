@@ -1,0 +1,16 @@
+\chapter{线程怎样等待、收信号并接受终端控制}
+
+pipe 没有数据、futex 值未改变或截止时间未到时，Thread 不应继续占用 CPU。
+它进入 WaitQueue，等待数据、超时、关闭或信号唤醒。信号和 TTY 又把这套
+等待机制扩展到用户 handler、进程组以及 Shell 的前后台作业。
+
+\chapterroute{Blocked 与 WaitQueue $\rightarrow$ pipe 的读写等待
+$\rightarrow$ futex 和用户线程 $\rightarrow$ 单调时间与 deadline
+$\rightarrow$ signal frame 和返回 $\rightarrow$ TTY、进程组与作业控制。}
+
+\input{topics/ch14-waiting-and-terminal-introduction}
+\input{deepening/ch14-unix-io}
+\input{deepening/ch14-user-threads-and-futex}
+\input{deepening/ch14-monotonic-time-and-deadlines}
+\input{deepening/ch14-signals}
+\input{deepening/ch14-tty-and-job-control}

@@ -23,43 +23,32 @@
 这一部分，你应该能沿着电源、时钟、地址和数据说明第一条指令怎样到达 CPU。
 \end{partbridge}
 \input{chapters/01-bits-bytes-and-addresses}
-\input{chapters/02-voltage-switches-and-signals}
-\input{chapters/03-gates-registers-and-state}
-\input{chapters/04-cpu-memory-and-first-instruction}
+\input{chapters/02-voltage-logic-and-state}
+\input{chapters/03-cpu-memory-and-first-instruction}
 
-\part{先学会读 x86，再回到复位现场}
+\part{读懂 x86，并从复位现场进入内核}
 \begin{partbridge}
 CPU 能够取指以后，仍然没有操作系统。我们先区分固件、Loader、Kernel 和
 应用程序，再学习最小 x86 寄存器、寻址和跳转。读懂这些状态以后，才回到
-8086 的兼容历史和现代处理器的复位现场。
+8086 的兼容历史和现代处理器的复位现场。随后把源码制成 ROM，通过 UART
+观察执行结果，并由 Stage 1 把 64 位 C++ 内核装入内存。
 \end{partbridge}
-\input{chapters/05-operating-system-services}
-\input{chapters/06-x86-assembly-and-registers}
-\input{chapters/07-x86-history-and-reset}
-\input{chapters/08-platform-io-and-physical-hardware}
-
-\part{把源码变成会输出日志的机器}
-\begin{partbridge}
-NASM、Clang 和 LLD 把源码变成 CPU 能读取的字节。ROM 成形以后，UART
-成为这台机器最早的输出设备。随后 Stage 1 从磁盘读取 ELF，建立页表并进入
-64 位 C++ 内核。
-\end{partbridge}
-\input{chapters/09-toolchain-cpp-and-rom}
-\input{chapters/10-uart-observability-and-testing}
-\input{chapters/11-loader-and-long-mode}
+\input{chapters/04-os-services-and-x86-assembly}
+\input{chapters/05-x86-reset-and-real-mode}
+\input{chapters/06-platform-io-and-physical-hardware}
+\input{chapters/07-toolchain-rom-and-uart}
+\input{chapters/08-loader-and-long-mode}
 
 \part{让内核接管异常、内存和中断}
 \begin{partbridge}
 进入 C++ 以后，内核先接住异常，再接管物理页、页表、虚拟地址、动态栈和堆。
-每种内存资源单独成章，读者可以从一个地址或一次分配追到实际页帧。最后再让
-时钟、键盘和用户态程序通过中断进入这些基础设施。
+物理页与页表放在同一条地址翻译链中，KVA、动态栈与堆放在同一条分配链中。
+最后再让时钟、键盘和用户态程序通过中断进入这些基础设施。
 \end{partbridge}
-\input{chapters/12-kernel-entry-and-exceptions}
-\input{chapters/13-physical-memory}
-\input{chapters/14-page-tables}
-\input{chapters/15-kva-and-kernel-stacks}
-\input{chapters/16-kernel-heap-and-caches}
-\input{chapters/17-interrupts-devices-and-user-boundary}
+\input{chapters/09-kernel-entry-and-exceptions}
+\input{chapters/10-physical-memory-and-page-tables}
+\input{chapters/11-kva-stacks-heap-and-caches}
+\input{chapters/12-interrupts-devices-and-user-boundary}
 
 \part{让进程共享 CPU、对象和地址空间}
 \begin{partbridge}
@@ -67,12 +56,9 @@ NASM、Clang 和 LLD 把源码变成 CPU 能读取的字节。ROM 成形以后�
 文件描述符要找到仍然存活的对象，路径要穿过 VFS。随后 PID 1 从磁盘装入
 程序，缺页和 fork 再决定物理页怎样共享。
 \end{partbridge}
-\input{chapters/18-scheduling-and-context}
-\input{chapters/19-syscall-and-cpu-local}
-\input{chapters/20-kernel-objects-and-file-table}
-\input{chapters/21-vfs-paths-and-memfs}
-\input{chapters/22-pid1-exec-and-process-tree}
-\input{chapters/23-vma-fault-and-fork}
+\input{chapters/13-scheduling-syscall-and-cpu-local}
+\input{chapters/14-kernel-objects-vfs-and-paths}
+\input{chapters/15-pid1-exec-vma-and-fork}
 
 \part{让数据穿过缓存并在断电后留下来}
 \begin{partbridge}
@@ -80,27 +66,19 @@ ATA 只提供扇区，文件系统要在其上建立 inode、目录和块索引�
 \code{write} 返回以后，数据还要经过页缓存、块缓存、IRQ14 和设备 FLUSH。
 最后在不同写入位置模拟断电，由 journal replay 恢复元数据。
 \end{partbridge}
-\input{chapters/24-disk-and-filesystem-layout}
-\input{chapters/25-rootfs-large-files}
-\input{chapters/26-ata-irq-and-writeback}
-\input{chapters/27-ordered-journal}
+\input{chapters/16-filesystem-layout-and-rootfs}
+\input{chapters/17-ata-writeback-and-journal}
 
-\part{让程序等待、通信并接受终端控制}
+\part{让程序等待、通信并进入用户环境}
 \begin{partbridge}
 条件未满足时，Thread 从运行队列进入 WaitQueue；数据、超时、关闭或信号到来
 时再恢复运行。pipe、futex、signal 和 TTY 在同一等待框架上组合，Shell
-最终用进程组和控制终端组织前后台作业。
+最终用进程组和控制终端组织前后台作业。本部分最后从复位向量重新走到
+Shell，并说明怎样继续修改和验证这个系统。
 \end{partbridge}
-\input{chapters/28-wait-pipe-futex-and-time}
-\input{chapters/29-signals-tty-and-job-control}
-\input{chapters/30-user-environment-and-abi}
-
-\part{回看整个系统并继续开发}
-\begin{partbridge}
-最后从复位向量重新走到 Shell，检查各阶段留下的接口和测试。这里也会说明
-怎样修改一个模块、怎样选择测试，以及哪些方向适合作为读者自己的下一步。
-\end{partbridge}
-\input{chapters/31-system-review-and-next-change}
+\input{chapters/18-wait-signals-and-tty}
+\input{chapters/19-user-environment-and-abi}
+\input{chapters/20-system-review-and-next-change}
 
 \appendix
 \part{需要时再回来的硬件深化}

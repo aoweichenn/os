@@ -13,7 +13,18 @@ OS_BOOK_GRAPHIC_PATTERN = re.compile(
     r"\\includegraphics(?:\[[^\]]*\])?\s*\{([^}]+)\}"
 )
 OS_BOOK_CHAPTER_PATTERN = re.compile(r"\\chapter\{")
-OS_BOOK_EXPECTED_CHAPTER_COUNT = 35
+OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT = 20
+OS_BOOK_EXPECTED_APPENDIX_CHAPTER_COUNT = 4
+OS_BOOK_EXPECTED_CHAPTER_COUNT = (
+    OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT
+    + OS_BOOK_EXPECTED_APPENDIX_CHAPTER_COUNT
+)
+OS_BOOK_MAIN_CHAPTER_INPUT_PATTERN = re.compile(
+    r"\\input\{chapters/(\d{2})-[^}]+\}"
+)
+OS_BOOK_APPENDIX_CHAPTER_INPUT_PATTERN = re.compile(
+    r"\\input\{chapters/appendix-[^}]+\}"
+)
 OS_BOOK_MAIN_CHAPTER_PATTERN = re.compile(r"^\\chapter\{([^}]+)\}")
 OS_BOOK_SECTION_PATTERN = re.compile(r"^\\section\{")
 OS_BOOK_LOCAL_HEADING_PATTERN = re.compile(
@@ -96,17 +107,17 @@ def checkFoundationPlacement() -> None:
         (
             electricalText,
             r"\input{foundations/expanded/ch03-logic-electrical-interface}",
-            "推挽、开漏、三态与逻辑电平必须保留在第二章正文",
+            "推挽、开漏、三态与逻辑电平必须保留在硬件基础正文",
         ),
         (
             logicText,
             r"\input{foundations/expanded/ch03-sequential-clock-and-cdc}",
-            "锁存器、D 触发器、基础时序与 CDC 必须保留在第三章正文",
+            "锁存器、D 触发器、基础时序与 CDC 必须保留在硬件基础正文",
         ),
         (
             cpuText,
             r"\code{LOAD R0, 5}",
-            "第四章必须保留可逐周期执行的教学 CPU 程序",
+            "CPU 基础章必须保留可逐周期执行的教学 CPU 程序",
         ),
     )
     for sourceText, requiredFragment, errorMessage in requiredFoundationFragments:
@@ -259,9 +270,37 @@ def checkChapterStructure() -> list[tuple[str, int]]:
     return chapterSections
 
 
+def checkChapterEntrySequence() -> None:
+    mainText = OS_BOOK_MAIN_FILE.read_text(encoding="utf-8")
+    mainChapterNumbers = [
+        int(chapterNumber)
+        for chapterNumber in OS_BOOK_MAIN_CHAPTER_INPUT_PATTERN.findall(mainText)
+    ]
+    expectedMainChapterNumbers = list(
+        range(1, OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT + 1)
+    )
+    if mainChapterNumbers != expectedMainChapterNumbers:
+        raise SystemExit(
+            "主线章节入口必须从 01 到 "
+            f"{OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT:02d} 连续编号："
+            f"实际为 {mainChapterNumbers}"
+        )
+
+    appendixChapterCount = len(
+        OS_BOOK_APPENDIX_CHAPTER_INPUT_PATTERN.findall(mainText)
+    )
+    if appendixChapterCount != OS_BOOK_EXPECTED_APPENDIX_CHAPTER_COUNT:
+        raise SystemExit(
+            "硬件附录数量不一致："
+            f"实际 {appendixChapterCount}，"
+            f"预期 {OS_BOOK_EXPECTED_APPENDIX_CHAPTER_COUNT}"
+        )
+
+
 def main() -> int:
     checkTypographyAndNavigation()
     checkFoundationPlacement()
+    checkChapterEntrySequence()
     visitedFiles: set[Path] = set()
     activeFiles: list[Path] = []
     graphicFiles: set[Path] = set()
@@ -326,7 +365,9 @@ def main() -> int:
 
     print(
         f"书稿输入检查通过：{len(visitedFiles)} 个文件，"
-        f"{chapterCount} 个正文章节，{len(graphicFiles)} 个图片资源，"
+        f"{OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT} 个主线章和 "
+        f"{OS_BOOK_EXPECTED_APPENDIX_CHAPTER_COUNT} 个硬件附录，"
+        f"{len(graphicFiles)} 个图片资源，"
         f"{gridTableCount} 张实线网格表，{gridRowCount} 个实线分隔行；"
         "每章主节数量为 "
         f"{min(count for _, count in chapterSections)}--"

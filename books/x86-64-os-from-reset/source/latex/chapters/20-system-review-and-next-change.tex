@@ -1,0 +1,14 @@
+\chapter{回看整个系统并准备下一次修改}
+
+现在从复位向量重新走到 Shell：每个阶段都接收前一阶段留下的状态，并把新的
+接口交给下一阶段。最后选择一个可观察现象，从系统调用找到接口和实现，确定
+需要运行的单元测试、集成测试、随机测试和 QEMU 回归。
+
+\chapterroute{复位到用户空间的控制流 $\rightarrow$ 地址和对象的变化
+$\rightarrow$ 从现象定位源码 $\rightarrow$ 选择测试与故障注入
+$\rightarrow$ v2.0 之后的演进路线。}
+
+\input{topics/ch16-roadmap-and-practice}
+\input{topics/ch16-v20-system-panorama}
+\input{deepening/ch16-v2-evolution}
+\input{deepening/ch16-roadmap-metrics-and-practice}

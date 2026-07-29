@@ -1,0 +1,18 @@
+\chapter{把源码变成能够输出的 ROM}
+
+NASM、Clang 和 LLD 先把源码变成带地址的字节，再由镜像生成步骤把这些字节
+放进 ROM。复位跳转生效以后，UART 是最早能够观察执行过程的设备。本章从
+一个符号追到 ROM 偏移，然后初始化 16550A 并输出第一行带时间的日志。
+
+\chapterroute{编译、重定位与链接地址 $\rightarrow$ freestanding C++20
+$\rightarrow$ ROM 布局和复位入口 $\rightarrow$ 16550A 端口与寄存器复用
+$\rightarrow$ THRE 轮询、超时和首行日志 $\rightarrow$ 故障注入与测试。}
+
+\input{topics/ch05-toolchain-and-binary}
+\input{topics/ch05-freestanding-cpp}
+\input{topics/ch05-rom-and-reset-code}
+\input{deepening/ch05-toolchain-cpp-and-rom}
+\input{topics/ch06-serial-driver}
+\input{topics/ch06-chip-register-map}
+\input{topics/ch06-testing-and-observability}
+\input{deepening/ch06-uart-testing-and-evidence}

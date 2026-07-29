@@ -1,0 +1,13 @@
+\chapter{用户程序怎样使用系统服务}
+
+用户程序不能直接调用内核中的 C++ 函数，它们通过稳定的系统调用号、寄存器
+约定和返回值与内核通信。最小运行时把这些约定包装成可用接口，Shell、
+devfs 和 procfs 再把进程、设备和系统状态组织成用户能够操作的环境。
+
+\chapterroute{用户态 ABI 与系统调用号 $\rightarrow$ 最小 C++ 运行时
+$\rightarrow$ Shell 命令与管道 $\rightarrow$ devfs 设备节点
+$\rightarrow$ procfs 状态文件 $\rightarrow$ 自动键盘会话和兼容测试。}
+
+\input{topics/ch15-user-kernel-interface-introduction}
+\input{deepening/ch15-user-environment}
+\input{deepening/ch15-abi-devfs-and-procfs}

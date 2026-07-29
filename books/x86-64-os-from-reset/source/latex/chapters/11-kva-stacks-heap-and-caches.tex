@@ -1,0 +1,12 @@
+\chapter{内核怎样分配虚拟空间和对象}
+
+有了页帧和页表，内核还需要管理自己的虚拟地址区间。动态内核栈必须带保护
+页并跨越特权切换，堆和类型缓存则要服务不同大小、不同生命周期的对象。本章
+从一次 KVA 申请走到对象释放，并检查中途失败时已经取得的资源怎样归还。
+
+\chapterroute{KVA 区间与页表创建 $\rightarrow$ 页表根和内核半区
+$\rightarrow$ 动态内核栈与 guard page $\rightarrow$ 堆块与尺寸类别
+$\rightarrow$ 类型缓存和引用 $\rightarrow$ 回滚、延迟回收与随机测试。}
+
+\input{deepening/ch08-kva-and-kernel-stacks}
+\input{deepening/ch08-heap-and-resource-lifetimes}

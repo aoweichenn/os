@@ -1,0 +1,13 @@
+\chapter{数据怎样写入磁盘并在断电后恢复}
+
+\code{write} 把字节交给内核以后，脏页、块缓存和 ATA 请求仍要继续工作。
+IRQ14 通知请求完成，FLUSH 决定设备缓存中的写入何时持久化；journal 再约束
+元数据的提交顺序。本章在不同写入位置模拟超时、设备错误和断电。
+
+\chapterroute{用户字节到 ATA 请求 $\rightarrow$ 状态寄存器和 IRQ14
+$\rightarrow$ 页缓存、块缓存与 writeback $\rightarrow$ journal 记录和
+credit $\rightarrow$ ordered 提交与 FLUSH $\rightarrow$ replay 和再次断电。}
+
+\input{deepening/ch13-storage-persistence-wiring-atlas}
+\input{deepening/ch13-irq14-and-writeback}
+\input{deepening/ch13-ordered-journal}

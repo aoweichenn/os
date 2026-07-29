@@ -26,7 +26,7 @@
         初始化者、完成条件和失败现象；正文声称的完整路径也必须能在图上追踪。
 \end{enumerate}
 
-\section*{二、零基础四章怎样吸收全仓资料}
+\section*{二、零基础三章怎样吸收全仓资料}
 
 \begin{osgridlongtable}{L{0.12\linewidth}L{0.37\linewidth}L{0.41\linewidth}}
 章节 & 主要本地事实来源 & 重组后的教学职责 \\ \hline
@@ -41,15 +41,12 @@
 范围、单位和数量级。\\ \hline
 第 2 章 &
 \learningpathiii{docs/learning/}{physical-carrier-}{circuit-guide.md}、实体原理图、
-manufacturing checklist 与初学者硬件词汇表 &
+manufacturing checklist、初学者硬件词汇表、硬件状态图与
+\learningpathii{hardware-assembly-}{and-wiring.md} &
 把电源、地、电阻、电容、二极管、MOSFET、上拉、去耦、RC、符号、网络、
-封装和实物方向连成可计算电路。\\ \hline
+封装和实物方向连成可计算电路，再用 CMOS、逻辑门、触发器和 FSM 解释
+状态怎样保存。\\ \hline
 第 3 章 &
-\learningpathiii{docs/learning/background/}{01-computer-pc-and-x86-}{history.md}、
-\learningpathii{hardware-assembly-}{and-wiring.md} 与硬件状态图 &
-用 CMOS、逻辑门、全加器、MUX、译码器、触发器、setup/hold、亚稳态和 FSM
-解释处理器与设备控制器的共同数字积木。\\ \hline
-第 4 章 &
 \filepath{docs/background_knowledge.md}、\filepath{docs/architecture.md}、
 \filepath{docs/modules/firmware.md}、\filepath{docs/modules/stage1.md}、
 整机/启动图与实体载板资料 &
@@ -66,39 +63,39 @@ Learning 来源 & 核心知识链 & 成书中的主要落点 \\ \hline
 \endhead
 \filepath{docs/learning/README.md} &
 项目边界、学习顺序、四遍阅读法、构建运行、生产源码覆盖与完成判定 &
-前言与阅读地图；第 5 章机器边界；第 31 章实践与检查 \\ \hline
+前言与阅读地图；第 4 章机器边界；第 20 章实践与检查 \\ \hline
 \learningpathii{00-prerequisites-}{and-hardware.md} &
 复位、四类地址、数据表示、x86 模式、寄存器、描述符、中断、分页、设备、
 磁盘/内存、ELF、freestanding、QEMU/GDB &
-第 5--12 章的基础主题；零基础机器章；初学者术语表 \\ \hline
+第 4--9 章的基础主题；零基础机器章；初学者术语表 \\ \hline
 \filepath{background/README.md} &
 背景专题地图、统一符号、反事实阅读方法和通过标准 &
-前言中的阅读方法；第 5 章软件边界；书末检查清单 \\ \hline
+前言中的阅读方法；第 4 章软件边界；书末检查清单 \\ \hline
 \learningpathiii{background/01-computer-}{pc-and-x86-}{history.md} &
 计算机角色、取指循环、ISA/微架构/平台、电源复位、8086--AMD64、PC 设备史 &
-第 1--5 章机器部件与软件边界；第 7 章 x86 四十多年兼容史；
-第 8、11 章平台与模式切换 \\ \hline
+第 1--4 章机器部件与软件边界；第 5 章 x86 四十多年兼容史；
+第 6、8 章平台与模式切换 \\ \hline
 \learningpathiii{background/02-data-}{address-assembly-}{and-abi.md} &
 bit、整数、溢出、字节序、对齐、地址、汇编、栈、函数/系统调用 ABI &
-第 1--4 章零基础；第 6 章数据与汇编；第 9、11、17--19 章 ABI 边界 \\ \hline
+第 1--3 章零基础；第 4 章数据与汇编；第 7、8、12--13 章 ABI 边界 \\ \hline
 \learningpathiii{background/03-toolchain-}{elf-and-freestanding-}{cpp.md} &
 host/target、预处理到链接、ELF、ROM/raw image、freestanding C++、产物审计 &
-第 9 章工具链；第 11 章 ELF loader；第 31 章修改与验证方法 \\ \hline
+第 7 章工具链；第 8 章 ELF loader；第 20 章修改与验证方法 \\ \hline
 \learningpathiii{background/04-memory-}{paging-protection-}{and-exceptions.md} &
 RAM/cache、E820、frame、四级分页、权限、TLB、GDT/TSS/IDT、异常、用户指针 &
-第 12--16 章异常与内存；第 17 章用户边界；第 23 章虚拟内存；术语表 \\ \hline
+第 9--11 章异常与内存；第 12 章用户边界；第 15 章虚拟内存；术语表 \\ \hline
 \learningpathiii{background/05-interrupts-}{time-and-pc-}{devices.md} &
 Port I/O/MMIO、polling/timeout、PIC/LAPIC、PIT、UART、i8042、ATA、QMP &
-第 8 章 Port I/O 全图；第 10 章 UART 与测试；第 17 章中断/键盘全图 \\ \hline
+第 6 章 Port I/O 全图；第 7 章 UART 与测试；第 12 章中断/键盘全图 \\ \hline
 \learningpathiii{background/06-processes-}{syscalls-files-}{and-shell.md} &
 Kernel/User、进程/线程、调度、系统调用、阻塞、锁、pipe、fd、文件系统、Shell &
-第 17 章特权边界；第 18--30 章进程、对象、VM、持久化与用户环境 \\ \hline
+第 12 章特权边界；第 13--19 章进程、对象、VM、持久化与用户环境 \\ \hline
 \learningpathiii{background/07-testing-}{debugging-and-}{evidence.md} &
 oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持久性、调试 &
-第 10 章观测与测试；各章失败框；第 31 章实践；书末实验与检查清单 \\ \hline
+第 7 章观测与测试；各章失败框；第 20 章实践；书末实验与检查清单 \\ \hline
 \end{osgridlongtable}
 
-\section*{四、历史阶段分册怎样进入三十一章}
+\section*{四、历史阶段分册怎样进入二十章}
 
 \begin{osgridlongtable}{L{0.25\linewidth}L{0.34\linewidth}L{0.31\linewidth}}
 阶段分册 & 被保留的完整机制 & 成书落点 \\ \hline
@@ -107,85 +104,85 @@ oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持�
 \endhead
 \learningpathii{01-v0.0-engineering-}{baseline.md} &
 CMake/Preset、host/target、AddressRange、测试分层、失败语义、源码顺序 &
-第 5 章软件边界；第 9 章工具链；第 10/31 章测试与实践 \\ \hline
+第 4 章软件边界；第 7 章工具链；第 7/20 章测试与实践 \\ \hline
 \learningpathii{02-v0.1-reset-}{and-serial.md} &
 复位状态、段/栈、COM1、PIT、ROM 布局、串口协议、故障注入 &
-第 7 章复位；第 9 章 ROM；第 10 章 UART；第 11 章启动全图 \\ \hline
+第 5 章复位；第 7 章 ROM/UART；第 8 章启动全图 \\ \hline
 \learningpathii{03-v0.2-firmware-}{stage1-loader.md} &
 Stage 1 磁盘描述符、RAM 窗口、ATA PIO、校验、远转移、镜像生成 &
-第 11 章 loader 主线与启动/内存全图 \\ \hline
+第 8 章 loader 主线与启动/内存全图 \\ \hline
 \learningpathii{04-v0.3-}{long-mode.md} &
 A20、GDT、保护模式、临时页表、PAE/LME/PG、64 位入口与故障标记 &
-第 7 章历史依赖；第 11 章模式转换及失败定位 \\ \hline
+第 5 章历史依赖；第 8 章模式转换及失败定位 \\ \hline
 \learningpathii{05-v0.4-kernel-elf-}{and-boot-info.md} &
 Kernel 容器、CRC32、ELF64、严格 PT\_LOAD、两遍装载、BSS、BootInfo、C++ &
-第 9 章 ELF/freestanding；第 11 章装载与交接 \\ \hline
+第 7 章 ELF/freestanding；第 8 章装载与交接 \\ \hline
 \learningpathiii{06-v0.5-descriptor-}{tables-and-}{exceptions.md} &
 GDT/TSS/IST/IDT、异常 frame、汇编 adapter、panic、自检和三重故障 &
-第 12 章描述符、异常与内核接管 \\ \hline
+第 9 章描述符、异常与内核接管 \\ \hline
 \learningpathii{07-v0.6-memory-}{management.md} &
 E820、物理 frame、正式页表、NX/WP、guard、堆及当前可回收内存演进 &
-第 13--16 章物理页、页表、KVA、堆与资源管理 \\ \hline
+第 10--11 章物理页、页表、KVA、堆与资源管理 \\ \hline
 \learningpathii{08-v0.7-interrupts-}{and-devices.md} &
 PIC/LAPIC、PIT、PS/2、Kernel ATA、初始化顺序、中断安全和设备测试 &
-第 17 章中断/设备主线及两张整页矢量图 \\ \hline
+第 12 章中断/设备主线及两张整页矢量图 \\ \hline
 \learningpathii{09-v0.8-ring3-}{and-system-calls.md} &
 用户 ELF、四道 Ring 3 门、IRETQ、INT 0x80、用户复制与异常隔离 &
-第 17 章用户边界；第 19 章系统调用入口 \\ \hline
+第 12 章用户边界；第 13 章系统调用入口 \\ \hline
 \learningpathii{10-v0.9-processes-}{and-scheduling.md} &
 PCB、独立 CR3/Ring 0 栈、176 B frame、PIT 抢占、退出和资源守恒 &
-第 18 章进程/调度；第 15 章动态栈与页表回收 \\ \hline
+第 13 章进程/调度；第 11 章动态栈与页表回收 \\ \hline
 \learningpathii{11-v0.10-synchronization-}{and-ipc.md} &
 SpinLock、Blocked/Ready、定向唤醒、64 B 管道、丢失唤醒与用户复制 &
-第 18、28 章同步/IPC；键盘到 Shell 的阻塞链 \\ \hline
+第 13、18 章同步/IPC；键盘到 Shell 的阻塞链 \\ \hline
 \learningpathii{12-v0.11-}{file-system.md} &
 磁盘所有权、superblock、inode、bitmap、目录、LRU cache、事务和跨启动 &
-第 24 章文件系统盘面；第 26--27 章写回与恢复 \\ \hline
+第 16 章文件系统盘面；第 17 章写回与恢复 \\ \hline
 \learningpathii{13-v1.0-user-}{environment.md} &
 i8042、Console FIFO、统一 fd、Try/Wait、idle、Ring 3 Shell 和自动输入 &
-第 17 章按键全链；第 30 章用户环境；第 31 章整体验收 \\ \hline
+第 12 章按键全链；第 19 章用户环境；第 20 章整体验收 \\ \hline
 \learningpathii{14-v1.6-rootfs-}{v2.md} &
 rootfs v2 盘面、三级间接树、稀疏文件、完整命名空间修改、fsck 与跨启动 &
-第 25 章 rootfs v2 与大文件边界 \\ \hline
+第 16 章 rootfs v2 与大文件边界 \\ \hline
 \learningpathii{15-v1.7-pid1-process-}{tree-exec.md} &
 PID1、父子树、Zombie/孤儿、磁盘 ELF、参数栈、spawn/exec/wait 与事务回滚 &
-第 22 章 PID 1、进程树与程序映像 \\ \hline
+第 15 章 PID 1、进程树与程序映像 \\ \hline
 \learningpathii{16-v1.8-anonymous-vma-}{demand-paging.md} &
 VMA/PTE 分层、匿名 reservation、按需缺页、连续栈、brk、用户堆与资源守恒 &
-第 23 章匿名 VMA、用户堆与虚拟内存演进 \\ \hline
+第 15 章匿名 VMA、用户堆与虚拟内存演进 \\ \hline
 \learningpathiii{17-v1.9-file-backed-}{vma-lazy-elf-}{page-cache.md} &
 稳定文件身份、FileBacking、按需 ELF、clean cache、shared/private 与失效 &
-第 23 章文件后备 VMA、按需 ELF 与页缓存 \\ \hline
+第 15 章文件后备 VMA、按需 ELF 与页缓存 \\ \hline
 \learningpathii{18-v1.10-fork-copy-}{on-write.md} &
 fork 返回、private COW、CopyToUser、fd/cwd/后备继承和两阶段失败回滚 &
-第 23 章 fork/COW 与多线程 fork/exec 边界 \\ \hline
+第 15 章 fork/COW 与多线程 fork/exec 边界 \\ \hline
 \learningpathiii{19-v1.11-unix-io-}{external-}{shell.md} &
 动态 Pipe、pipe/dup2、外部工具、重定向、16 级流水线与跨层资源守恒 &
-第 28 章 Unix I/O；第 30 章外部工具与用户环境 \\ \hline
+第 18 章 Unix I/O；第 19 章外部工具与用户环境 \\ \hline
 \learningpathiii{20-v1.12-user-threads-}{tls-private-}{futex.md} &
 用户 Thread、FS-base TLS、private futex、Mutex/CV/Once、join 与多线程 exec &
-第 28 章用户线程、futex 与并发演进 \\ \hline
+第 18 章用户线程、futex 与并发演进 \\ \hline
 \learningpathiii{21-v1.13-monotonic-clock-}{deadline-timed-}{wait.md} &
 PIT 有理数换算、单调纳秒、deadline queue、sleep、timed futex 与单赢家竞争 &
-第 28 章单调时间、deadline 与可中断等待 \\ \hline
+第 18 章单调时间、deadline 与可中断等待 \\ \hline
 \learningpathiii{22-v1.14-process-}{signals-}{sigreturn.md} &
 处置、mask、pending、进程组、单赢家唤醒、用户 frame 与严格 sigreturn &
-第 29 章进程信号、sigreturn 与作业控制前置 \\ \hline
+第 18 章进程信号、sigreturn 与作业控制前置 \\ \hline
 \learningpathiii{23-v1.15-tty-}{session-job-}{control.md} &
 行规、控制字符、控制终端、session/进程组、停止/继续事件与交互式作业控制 &
-第 29 章 TTY、session 与交互式作业控制 \\ \hline
+第 18 章 TTY、session 与交互式作业控制 \\ \hline
 \learningpathiii{24-v1.16-irq14-}{block-request-}{writeback.md} &
 ATA/PIC 标志、单飞请求、IRQ/timeout 单赢家、BlockIo、写通知与页状态写回 &
-第 26 章 IRQ14、BlockIo 与 writeback \\ \hline
+第 17 章 IRQ14、BlockIo 与 writeback \\ \hline
 \learningpathiii{25-v1.17-ordered-}{metadata-}{journal.md} &
 WAL 历史、credit、盘面记录、FLUSH 顺序、断电矩阵、checkpoint 与幂等 replay &
-第 27 章 ordered metadata journal 与恢复边界 \\ \hline
+第 17 章 ordered metadata journal 与恢复边界 \\ \hline
 \learningpathiii{26-v1.18-abi-v2-}{devfs-procfs-}{release-freeze.md} &
 ABI 版本/offset、ELF 身份、devfs 分层、procfs 快照与 32 个用户工具 &
-第 30 章 ABI/devfs/procfs \\ \hline
+第 19 章 ABI/devfs/procfs \\ \hline
 \learningpathiii{27-v2.0-}{integration-}{release.md} &
 三档回归、跨层代码走读、故障定位与后续演进边界 &
-第 31 章系统回顾、测试方法与下一步路线 \\ \hline
+第 20 章系统回顾、测试方法与下一步路线 \\ \hline
 \end{osgridlongtable}
 
 \section*{五、硬件图册与实体资料逐项落点}
@@ -197,7 +194,7 @@ ABI 版本/offset、ELF 身份、devfs 分层、procfs 快照与 32 个用户工
 \endhead
 \learningpathii{hardware-assembly-}{and-wiring.md} &
 十三阶段怎样装配；整机、启动/内存、Port I/O、中断、按键和持久化路径 &
-第 4、8、11、17、24--30 章的横置整页矢量图及逐图讲解 \\ \hline
+第 3、6、8、12、16--19 章的横置整页矢量图及逐图讲解 \\ \hline
 \filepath{assets/hardware_stage_roadmap.svg} &
 v0.0--v1.0 十三个能力增量及 v1.1--v1.8 延伸 &
 图~\ref{fig:hardware-stage-roadmap} 与四阶段依赖表 \\ \hline
@@ -221,13 +218,13 @@ Ring 3 写入、文件对象、cache、ATA、raw disk 与新启动验证 &
 图~\ref{fig:storage-persistence-full} 与持久性证据层级 \\ \hline
 \learningpathii{physical-carrier-}{circuit-guide.md} &
 Mu/DFR1142 电源、高速、低速、260-pin、PCB 与实机适配 &
-第 8 章“实体 x86-64 载板全链路案例” \\ \hline
+第 6 章“实体 x86-64 载板全链路案例” \\ \hline
 三张 \learningpathii{assets/physical\_}{carrier/*.svg} &
 电源、高速和控制接口逐引脚/逐网络简化图 &
-第 8 章三张矢量学习图；377 个显式引脚与 210 段导线门禁 \\ \hline
+第 6 章三张矢量学习图；377 个显式引脚与 210 段导线门禁 \\ \hline
 DFR1142 十页上游原理图 PDF/KiCad &
 全部器件位号、数值、网络、NC/DNP 与 PCB 事实 &
-第 8 章按功能嵌入十页原始矢量原理图并逐页解释 \\ \hline
+第 6 章按功能嵌入十页原始矢量原理图并逐页解释 \\ \hline
 Mu pinout 与 260-pin 表 &
 模块正反方向、辅助连接器、奇偶触点和每个信号定义 &
 纯 TikZ 矢量方向图、关键 pin 表与 HSIO 分配表 \\ \hline

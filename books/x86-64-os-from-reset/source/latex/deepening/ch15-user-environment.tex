@@ -35,7 +35,7 @@ Shell 启动时，fd 0 指向控制台输入，fd 1 和 fd 2 指向控制台输�
 
 控制台暂时没有数据时，读取包装先得到 would-block，再调用等待系统调用。
 线程此时进入 Blocked；下一次输入到达后，它回到 Ready，重新尝试读取。
-这里复用第 28 章已经讲过的 Try/Wait 循环，不再重复 WaitQueue 和 TTY
+这里复用第 18 章已经讲过的 Try/Wait 循环，不再重复 WaitQueue 和 TTY
 内部实现。
 
 \topic{扫描码覆盖范围是可检查的实现边界}

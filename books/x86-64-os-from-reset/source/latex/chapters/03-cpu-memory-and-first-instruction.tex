@@ -1,0 +1,11 @@
+\chapter{CPU 怎样读到第一条指令}
+
+寄存器能够保存状态，ALU 能够执行运算，但它们还不会自动形成程序。我们给
+它们加入程序计数器、指令寄存器、译码器和控制状态机，再用地址总线、数据
+总线和读写信号连接 ROM、RAM 与设备。最后逐周期执行一段五条指令的程序。
+
+\chapterroute{寄存器组、ALU 与控制器 $\rightarrow$ 教学指令集和机器码
+$\rightarrow$ PC、地址总线与逐周期状态表 $\rightarrow$ RAM、ROM 和设备
+事务 $\rightarrow$ 复位地址与第一条真实 x86 指令。}
+
+\input{foundations/cpu-memory-bus-and-machine}

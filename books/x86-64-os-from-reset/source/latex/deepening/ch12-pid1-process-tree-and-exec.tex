@@ -580,7 +580,7 @@ PIT/设备 IRQ 可以在系统调用期间进入，调度器锁必须保护 Proc
 放入每次调用拥有的对象，或以能够睡眠/取消的同步策略保护，不能只把普通
 SpinLock 套在可能触发 VFS 和页分配的长事务外面。
 
-\section{装载失败时怎样保留旧进程}
+\topic{装载失败时怎样保留旧进程}
 \begin{osgridlongtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.35\textwidth}}
 失败位置 & 对外结果 & 必须保持\\ \hline
 请求尺寸错误 & InvalidArgument & 不读取未知布局，不改变 Process\\ \hline

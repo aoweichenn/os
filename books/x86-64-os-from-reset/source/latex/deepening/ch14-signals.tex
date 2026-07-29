@@ -172,7 +172,7 @@ x86-64 \code{SYSCALL} 编码固定为两个字节；RDI、RSI、RDX、R10 等参
 若按相对时长盲目重启会把 handler 时间再次加入等待，futex 若重新比较错误
 条件也会掩盖值变化，因此“可重启”不是一个全局布尔默认值。
 
-\section{用户 handler 怎样进入和返回}
+\topic{用户 handler 怎样进入和返回}
 C++ handler 遵守 System V AMD64 ABI。普通函数入口期待
 \(RSP\bmod16=8\)，栈顶保存返回地址；被中断代码却没有执行过 \code{call}。
 Kernel 因而在目标用户栈合成：
@@ -278,7 +278,7 @@ Exception/vector 13 并交给父进程 wait；Kernel 与旁系 Process 继续运
 整机 probe 的孩子故意清零 magic，父进程必须观察隔离结果。这证明安全检查
 穿过真实 ELF、页表和系统调用，而不是仅存在于宿主单元模型。
 
-\section{fork、exec 与退出怎样迁移信号状态}
+\topic{fork、exec 与退出怎样迁移信号状态}
 这三个生命周期动作都保留 Process 身份，却对信号状态采用不同的复制、
 重置或销毁规则；把它们逐项展开，才能看清异步事件在哪一侧继续生效。
 

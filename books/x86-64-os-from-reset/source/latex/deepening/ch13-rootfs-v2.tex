@@ -94,7 +94,7 @@ QEMU IDE 控制器向来宾提供完整 LBA 空间；来宾看不见宿主是否
 非零内容；\code{pwrite} 还要循环处理短写。否则“看起来很快的复制”可能
 悄悄截掉未来分区或把全部 hole 物化。
 
-\section{rootfs v2 的盘面布局}
+\topic{rootfs v2 的盘面布局}
 当前 rootfs 从 LBA 32768 开始，固定包含 524288 个 512 字节块，即
 \(2^{28}\) 字节。区域如下：
 
@@ -328,7 +328,7 @@ inode bitmap 回答“哪个 inode 槽被分配”，data bitmap 回答“哪个
 十万步模型中会放大为巨大成本。当前算法只在内存 validation bitmap 标记
 所有权，遍历结束后一次性逐位比较。优化改变复杂度，不放宽任何不变量。
 
-\section{目录修改怎样避免留下不可达对象}
+\topic{目录修改怎样避免留下不可达对象}
 创建文件至少可能修改 inode bitmap、inode、父目录数据和 data bitmap。
 若先分配 inode，最后才发现父目录没有槽或没有数据块，就会留下 orphan。
 

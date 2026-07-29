@@ -1,0 +1,15 @@
+\chapter{进程怎样装入程序、缺页并完成 fork}
+
+PID 1 创建进程以后，exec 要把 ELF 变成新的用户地址空间；页面可以立即装入，
+也可以等第一次访问时由缺页处理程序补上。fork 又要求父子进程先共享内容，
+随后在任一方写入时分离。本章围绕一个程序映像走完这三种变化。
+
+\chapterroute{PID 1、进程树与 wait $\rightarrow$ ELF、用户栈和 exec
+$\rightarrow$ VMA 与 PTE $\rightarrow$ 匿名缺页和文件缺页
+$\rightarrow$ fork 与写时复制 $\rightarrow$ 失败回滚和孤儿接管。}
+
+\input{deepening/ch12-pid1-process-tree-and-exec}
+\input{topics/ch12-program-image-and-vma-introduction}
+\input{deepening/ch12-anonymous-vma}
+\input{deepening/ch12-file-backed-vma}
+\input{deepening/ch12-fork-and-copy-on-write}

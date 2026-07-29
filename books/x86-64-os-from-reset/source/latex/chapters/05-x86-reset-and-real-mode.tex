@@ -1,0 +1,13 @@
+\chapter{x86 为什么从实模式醒来}
+
+现代 x86-64 处理器复位以后并不会直接以 64 位方式执行。它先呈现一组兼容
+早期 x86 的状态，并从平台规定的位置取指。我们从 8086 的地址线和分段方式
+开始，手算复位地址、A20 回绕和模式切换需要改变的处理器状态。
+
+\chapterroute{8086 分段地址 $\rightarrow$ 复位后的 CS:EIP
+$\rightarrow$ 复位向量与 ROM 映射 $\rightarrow$ A20 地址回绕
+$\rightarrow$ CR0、GDT 与长模式前置条件。}
+
+\input{topics/ch02-x86-history-architecture}
+\input{topics/ch02-x86-reset-model}
+\input{deepening/ch02-reset-platform-and-io}

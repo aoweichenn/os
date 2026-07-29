@@ -45,7 +45,7 @@ ordered metadata journal 用 ``data stable''、``prepared log stable'' 和
 指向合法块，文件系统结构一致，但块内容可能已经是新字节。这不是 replay
 错误，而是 metadata-only 的明确边界。
 
-\section{日志区域和记录格式怎样布局}
+\topic{日志区域和记录格式怎样布局}
 rootfs 仍使用 256\,MiB 分区和 512\,B 文件系统块。盘面 magic 从格式 2
 升级为 \code{OSRFV003}，并固定保留 256 个 journal block：
 
@@ -181,7 +181,7 @@ BlockCache，就会观察旧字节。metadata read 顺序为：
 CPU 按顺序调用 Write 并不能替代这些关系。ATA/QEMU cache 可以让命令完成早于
 掉电持久化；没有 FLUSH 的 ``先写 payload、后写 commit'' 只是提交顺序。
 
-\section{断电以后为什么只接受两种磁盘状态}
+\topic{断电以后为什么只接受两种磁盘状态}
 \begin{center}
 \begin{osgridtabularx}{\textwidth}{p{0.24\textwidth}XX}
 断电窗口 & mount 看到的证据 & 恢复结果\\ \hline
@@ -276,6 +276,6 @@ failure 汇总，并带来宾单调时间。宿主 QEMU 的到达时间帮助定
 \code{fsync}/\code{fdatasync}/\code{msync}、snapshot、在线扩容、AHCI 或
 NVMe。CRC 用于发现偶发损坏，不能抵抗主动篡改。
 
-覆盖的断电点恢复后，多个 metadata 修改只会呈现旧状态或新状态。第 30 章
+覆盖的断电点恢复后，多个 metadata 修改只会呈现旧状态或新状态。第 19 章
 再从用户 ABI、procfs 观察面和畸形输入检查整个系统，不继续扩大 journal
 本身的职责。
