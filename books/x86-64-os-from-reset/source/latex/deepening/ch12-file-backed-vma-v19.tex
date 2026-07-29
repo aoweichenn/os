@@ -1,4 +1,4 @@
-\section{v1.9：文件后备、按需 ELF 与 clean page cache}
+\section{文件后备 VMA、按需 ELF 与页缓存}
 
 \begin{keyidea}
 文件映射不是把 \code{read} 换一个名字，而是让文件字节成为页故障可以反复
@@ -6,8 +6,7 @@
 稳定来源和可丢弃内容。
 \end{keyidea}
 
-\subsection{从主动装入到 fault-driven execution}
-
+\topic{从主动装入到 fault-driven execution}
 传统 loader 可以在创建进程时遍历所有 ELF \code{PT\_LOAD}，为每页分配
 frame、读取文件并建立 PTE。这条 eager 路径容易理解，却把启动时间和内存
 占用绑定到整个映像大小。程序可能只执行入口附近几页，未触及的错误处理与
@@ -28,28 +27,23 @@ frame、读取文件并建立 PTE。这条 eager 路径容易理解，却把启�
 入口无效，候选映像的原子提交就被破坏。v1.9 只延迟物理装入，不延迟结构
 合法性判断。
 
-\subsection{四类状态不能压进一个对象}
-
-\begin{longtable}{L{0.20\textwidth}L{0.31\textwidth}L{0.33\textwidth}}
-\toprule
-\textbf{对象} & \textbf{保存的事实} & \textbf{不应保存的事实}\\
-\midrule
+\topic{四类状态不能压进一个对象}\par
+\begin{osgridlongtable}{L{0.20\textwidth}L{0.31\textwidth}L{0.33\textwidth}}
+\textbf{对象} & \textbf{保存的事实} & \textbf{不应保存的事实}\\ \hline
 VMA & 半开地址区间、R/W/X、kind、后备与文件区间 & 当前 frame 和硬件
-accessed 位\\
-PTE & present、frame、U/S、R/W、NX & fd、inode 生命周期与文件长度\\
+accessed 位\\ \hline
+PTE & present、frame、U/S、R/W、NX & fd、inode 生命周期与文件长度\\ \hline
 FileBacking & 可按 offset 读取的稳定 VFS 打开实例或内存镜像 & 某页是否
-已经驻留\\
+已经驻留\\ \hline
 CachePage & 文件页身份、clean frame、映射引用与 LRU 代数 & 虚拟区间
-split 和进程权限\\
-\bottomrule
-\end{longtable}
+split 和进程权限\\ \hline
+\end{osgridlongtable}
 
 PTE 不存在正是 fault 发生的前提，因此来源不能只存于 PTE。fd 可以关闭和
 复用，因此来源也不能是进程局部整数。CachePage 可能被多个 VMA 引用，不能
 反过来拥有某一个 VMA 的地址几何。
 
-\subsection{稳定文件身份来自对象代数}
-
+\topic{稳定文件身份来自对象代数}
 文件页键由
 
 \begin{center}
@@ -80,8 +74,7 @@ VFS 的 \code{ReadAt} 使用显式 offset，不推进共享 FileDescription offs
 否则一个 page fault 会改变进程下一次普通 \code{read} 的位置，把 VM 副作用
 泄漏到 Unix I/O 语义。
 
-\subsection{文件 VMA 的 split 必须平移 offset}
-
+\topic{文件 VMA 的 split 必须平移 offset}
 设 VMA 将三张虚拟页映射到文件 offset 8192。移除中间页后，右段的虚拟起点
 增加 8192 字节，其文件起点也必须增加 8192 字节。只修改虚拟半开区间会让
 右段重新读取原文件首页。
@@ -99,8 +92,7 @@ VFS 的 \code{ReadAt} 使用显式 offset，不推进共享 FileDescription offs
 中段 unmap 在修改旧描述符前先取得 split descriptor。元数据池耗尽时原图
 保持不变，不能留下只有左半次提交的映射。
 
-\subsection{ELF 文件大小与内存大小的历史含义}
-
+\topic{ELF 文件大小与内存大小的历史含义}
 ELF segment 同时给出 \code{p\_filesz} 和 \code{p\_memsz}。C/C++ 的已初始化
 全局对象需要占据文件字节；零初始化对象放入 BSS，只需要在内存中存在，不必
 让可执行文件保存大量零。
@@ -116,8 +108,7 @@ fault handler 先清零整页，再只读取 segment 有效 file bytes。普通�
 完整只读页的逻辑内容唯一，可以进入共享 clean cache。部分尾页与可写 private
 页使用独立 frame，避免同一个 cache key 同时代表不同的有效长度视图。
 
-\subsection{x86-64 \#PF 提供的是原因，不是政策}
-
+\topic{x86-64 \#PF 提供的是原因，不是政策}
 页故障 error code 的 P、W/R、U/S、RSVD 与 I/D 位描述硬件观察到的访问：
 
 \begin{itemize}
@@ -132,8 +123,7 @@ CPU 不知道 inode、ELF BSS 或 \code{MAP\_PRIVATE}。这些政策都由 Kerne
 读取 CR2、查找 VMA 后决定。成功建立 PTE 后不手动推进 RIP；返回异常现场，
 原指令自然重试。
 
-\subsection{有界 clean cache 的状态与所有权}
-
+\topic{有界 clean cache 的状态与所有权}
 当前 cache 初始化时由调用方提供 entry 数组。容量按 managed frames 的
 十六分之一缩放，并限制在 256 至 4096 页。fault 热路径不向 Kernel heap
 申请任意元数据，资源上界在启动时即可计算。
@@ -160,26 +150,21 @@ LRU 使用 64 位单调 access generation。每次装入、命中或引用变化
 容量满时扫描零引用条目并选择最小 generation。O(n) 扫描不是最终高性能结构，
 但在最大 4096 entry 的学习内核中让身份、引用和淘汰可以逐项审计。
 
-\subsection{MAP\_SHARED 与 MAP\_PRIVATE}
-
+\topic{MAP\_SHARED 与 MAP\_PRIVATE}
 本阶段接受只读 shared 和可写 private：
 
-\begin{longtable}{L{0.27\textwidth}L{0.25\textwidth}L{0.30\textwidth}}
-\toprule
-\textbf{映射} & \textbf{frame} & \textbf{写入语义}\\
-\midrule
-只读 shared & 完整页引用 clean cache & 用户写产生 protection fault\\
-只读 private & 可引用 clean cache & 无写入\\
-可写 private & fault 时读取到独立 frame & 只修改进程副本，不回写\\
-可写 shared & 不支持 & 明确返回错误，不能静默降级\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.27\textwidth}L{0.25\textwidth}L{0.30\textwidth}}
+\textbf{映射} & \textbf{frame} & \textbf{写入语义}\\ \hline
+只读 shared & 完整页引用 clean cache & 用户写产生 protection fault\\ \hline
+只读 private & 可引用 clean cache & 无写入\\ \hline
+可写 private & fault 时读取到独立 frame & 只修改进程副本，不回写\\ \hline
+可写 shared & 不支持 & 明确返回错误，不能静默降级\\ \hline
+\end{osgridlongtable}
 
 完整 COW 留给 v1.10。v1.9 的 writable private 在第一次 fault 就复制文件
 内容，内存效率较低，但不需要提前引入匿名页引用计数和只读 COW PTE 软件位。
 
-\subsection{文件修改需要同时处理 PTE 与 cache}
-
+\topic{文件修改需要同时处理 PTE 与 cache}
 只删除 cache entry 不足以让已建立的 PTE 失效。CPU 命中旧 PTE 时不会重新
 进入 Kernel。write/truncate 因此：
 
@@ -197,8 +182,7 @@ LRU 使用 64 位单调 access generation。每次装入、命中或引用变化
 曾使文件写被误报为损坏，只有真实 PID1、Shell、Zombie 与 VM 交错的 QEMU
 路径才能稳定暴露。
 
-\subsection{日志必须反映事件变化而不是调用次数}
-
+\topic{日志必须反映事件变化而不是调用次数}
 用户的 4096 字节 \code{WriteDescriptor} 会按 256 字节 ABI 上限拆成十六个
 系统调用。第一次块写撤销一张 cache page，后十五次没有新 entry。若 logger
 只判断累计 invalidation count 仍是二次幂 1，就会打印十六条相同日志。
@@ -213,8 +197,7 @@ file fault、cache hit、cache invalidation 与 descriptor block 都只在
 1、2、4、8……次变化时采样。QEMU 宿主为每行增加毫秒时间；来宾 PIT 继续
 提供独立单调时间。成功探针输出一次语义标记，失败探针输出具名阶段。
 
-\subsection{启动布局也是文件装入系统的一部分}
-
+\topic{启动布局也是文件装入系统的一部分}
 代码增长使 Kernel payload 超过历史 1 MiB 暂存区。Stage 1 的 ATA reader
 必须先把容器放到不会覆盖 Kernel segment、临时页表和栈的物理窗口。v1.9
 冻结 8 MiB \code{0x03600000..0x03E00000} staging，并把 rootfs v2 移到
@@ -225,8 +208,7 @@ LBA 32768，即 16 MiB。
 和 Kernel image 工具的边界一致。legacy-fs 的历史 LBA 2048 是另一种格式的
 测试区域，不能因数字相同或接近而与生产 rootfs 合并。
 
-\subsection{Ring 3 验收把语义串成闭环}
-
+\topic{Ring 3 验收把语义串成闭环}
 \code{/bin/memory\_probe} 在真实用户态完成：
 
 \begin{enumerate}[label=\arabic*.]
@@ -244,8 +226,7 @@ LBA 32768，即 16 MiB。
 小内存；功能档提供日常完整路径；容量档还建立并销毁 512 个 KernelStack 和
 2048 个映射页，最终活动 VMA、对象、描述符与进程均归零。
 
-\subsection{测试分层与失败诊断}
-
+\topic{测试分层与失败诊断}
 单元测试验证唯一 identity、miss/hit、busy invalidation、LRU 和后备
 generation；集成测试让两个 AddressSpace 的 PTE 指向同一 frame，并按先后
 unmap 证明最后引用所有权；固定种子随机模型执行十万步，每一步对照 active
@@ -267,8 +248,7 @@ key、refs、resident 和统计；QEMU 验证 CR2、真实 PTE、ATA/VFS、系�
        计算 262143 页。
 \end{itemize}
 
-\subsection{阶段边界}
-
+\topic{阶段边界}
 v1.9 不包含 dirty page、writeback、writable shared、\code{msync}、
 readahead、swap、SMP fault I/O 或动态链接。所有 cache 页都能从 rootfs
 重建。v1.10 才为私有可写页增加共享引用和 COW，并要求 Kernel

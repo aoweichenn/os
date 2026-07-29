@@ -1,0 +1,157 @@
+\topic{从“能表示多少状态”到“怎样可靠传送状态”}
+若 \(n\) 个 bit 可以独立取 0 或 1，就有 \(2^n\) 种模式。但模式数量只是编码
+空间，协议还可能保留部分模式、增加校验，或让某些组合非法。可靠通信必须
+同时回答：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 一帧从哪里开始、在哪里结束；
+  \item 每组 bit 按什么顺序解释；
+  \item 发送和采样在什么时刻发生；
+  \item 接收方怎样发现错误；
+  \item 出错后丢弃、重试还是带错继续。
+\end{enumerate}
+
+\topic{并行与串行只描述组织方式，不直接决定快慢}
+并行接口同一时刻可在多根线上传多个 bit，但线间偏斜、连接器引脚数和串扰随
+宽度增长。串行接口用更少信号线按时间连续发送 bit，却可以通过更高信号速率、
+差分传输、嵌入时钟和多条 lane 获得很高吞吐。
+
+\begin{pdfdiagram}[node distance=8mm and 13mm]
+  \node[os hardware,minimum width=25mm] (pa) {并行发送端};
+  \node[os hardware,right=57mm of pa,minimum width=25mm] (pb) {并行接收端};
+  \foreach \y/\label in {7/D0,4/D1,1/D2,-2/D3} {
+    \draw[os arrow] ([yshift=\y mm]pa.east) -- node[above,font=\scriptsize]{\label}
+      ([yshift=\y mm]pb.west);
+  }
+  \node[BookMuted] at ($(pa)!0.5!(pb)+(0,-12mm)$) {四根数据线在同一采样时刻组成一个 4-bit 字};
+
+  \node[os hardware,below=25mm of pa,minimum width=25mm] (sa) {串行发送端\\并行转串行};
+  \node[os hardware,right=57mm of sa,minimum width=25mm] (sb) {串行接收端\\串行转并行};
+  \draw[os bus] (sa) -- node[above]{一根数据通道：\(D_0,D_1,D_2,D_3,\ldots\)} (sb);
+  \node[BookMuted] at ($(sa)!0.5!(sb)+(0,-9mm)$) {同一通道在多个符号时刻依次承载 bit};
+\end{pdfdiagram}
+
+吞吐近似为
+
+\[
+\text{有效吞吐}
+=\text{每秒符号数}
+\times\text{每符号有效 bit}
+\times\text{lane 数}
+\times\text{协议效率}.
+\]
+
+最后一个因子小于等于 1，因为帧头、校验、空闲、编码和重传都占用传输机会。
+
+\topic{时钟同步、异步和时钟恢复}
+同步接口额外传送或共享时钟，接收方在规定边沿采样。异步 UART 不传连续时钟，
+而是双方约定接近的波特率，接收方用起始位定位一帧并在预计中心采样。高速串行
+接口常把时钟信息编码进数据变化，由接收端时钟数据恢复电路重建采样节拍。
+
+\begin{center}
+\begin{tikzpicture}[x=0.82cm,y=0.72cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (14.5,0) node[right]{时间};
+  \node[left] at (0,3.4) {UART};
+  \draw[BookBlue,very thick]
+    (0,3.8) -- (1,3.8) -- (1,3.0)
+    -- (2.5,3.0) -- (2.5,3.8)
+    -- (4,3.8) -- (4,3.0)
+    -- (5.5,3.0) -- (5.5,3.8)
+    -- (7,3.8) -- (7,3.0)
+    -- (8.5,3.0) -- (8.5,3.8)
+    -- (10,3.8) -- (10,3.0)
+    -- (11.5,3.0) -- (11.5,3.8) -- (14,3.8);
+  \foreach \x/\label in {1.75/start,3.25/D0,4.75/D1,6.25/D2,7.75/D3,9.25/D4,10.75/D5,12.25/stop} {
+    \draw[dashed,BookRule] (\x,2.65) -- (\x,4.15);
+    \node[below,rotate=35,anchor=east,font=\scriptsize] at (\x,2.6) {\label};
+    \fill[BookRed] (\x,3.4) circle (0.055);
+  }
+  \node[BookRed,align=center] at (7.5,1.2)
+    {接收器在每个预计 bit 中心采样；\\边沿只帮助定位，不代表采样点本身};
+\end{tikzpicture}
+\end{center}
+
+\topic{冗余让错误变得可观察}
+若所有编码都用于有效数据，接收一个模式时无法仅凭该模式知道传输是否出错。
+加入冗余可以检测部分错误。
+
+\topic{奇偶校验}
+偶校验增加一个 bit，使整组 1 的数量为偶数。例如数据
+\(\texttt{1011001}\) 中有 4 个 1，偶校验位为 0；若传输中恰有一个 bit
+翻转，接收方会看到奇数个 1。
+
+奇偶校验能检测所有奇数个 bit 翻转，却不能检测偶数个翻转，也不能告诉哪一位
+错了。错误检测能力必须与故障模型一起描述。
+
+\topic{校验和、CRC 与纠错码}
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.32\linewidth}L{0.40\linewidth}}
+机制 & 基本思路 & 能做什么与不能做什么 \\ \hline
+\endfirsthead
+机制 & 基本思路 & 能做什么与不能做什么 \\ \hline
+\endhead
+重复发送 & 多次发送同一信息并比较 & 简单但效率低；多个副本同错时仍可能失败 \\ \hline
+奇偶校验 & 约束 1 的个数奇偶性 & 检测奇数个翻转，不能定位错误 \\ \hline
+加法校验和 & 按固定规则累加数据块 & 便于软件实现，对某些重排或抵消错误较弱 \\ \hline
+CRC & 把 bit 串视为多项式并计算余数 & 对突发错误有明确检测能力，仍不是密码学认证 \\ \hline
+ECC & 加入足够冗余以定位部分错误 & 可纠正规定数量错误，不能保证任意损坏可恢复 \\ \hline
+哈希/MAC & 摘要或带密钥认证 & 面向完整性甚至攻击者，但不能替代介质错误恢复 \\ \hline
+\end{osgridlongtable}
+
+\begin{fromzerobox}
+“发现损坏”“纠正损坏”“证明发送者身份”和“故障后恢复旧版本”是四个不同
+目标。CRC 不能证明数据来自可信者；数字签名不能自动修复被破坏的磁盘块；
+冗余副本若同时被错误软件覆盖，也不再是可恢复备份。
+\end{fromzerobox}
+
+\topic{延迟、带宽、吞吐和并发不能互相替代}
+\term{延迟}{latency}描述一次操作从开始到完成要多久；\term{带宽}{bandwidth}
+描述单位时间可搬运多少；\term{吞吐}{throughput}描述系统实际完成多少工作；
+\term{并发度}{concurrency}描述同时在途的操作数量。
+
+若单次访问往返延迟为 \(L\)，每个请求大小为 \(S\)，同时最多有 \(N\) 个请求
+在途，则仅由延迟隐藏能力给出的吞吐上界近似为
+
+\[
+\text{throughput}\le\frac{N S}{L},
+\]
+
+同时还不能超过物理链路带宽和目标设备处理能力。
+
+\begin{workedexample}
+磁盘读取每个请求 \(\SI{128}{KiB}\)，平均完成延迟
+\(\SI{2}{ms}\)，最多 8 个请求并发。理想上界：
+
+\[
+\frac{8\times\SI{128}{KiB}}{\SI{2}{ms}}
+=\SI{512}{MiB/s}.
+\]
+
+若接口实际只有 \(\SI{300}{MB/s}\)，最终上界取两者较小值，而且协议、排队和
+软件开销还会继续降低实际吞吐。只降低单次延迟或只提高链路带宽都未必消除
+系统瓶颈。
+\end{workedexample}
+
+\topic{编码分层：字符、整数、指令和文件格式各有契约}
+同一串 byte 可以跨多层解释。以终端输出字符 `A' 为例：
+
+\begin{pdfdiagram}[node distance=7mm and 10mm]
+  \node[os block,minimum width=22mm] (meaning) {人的意图\\字符 `A'};
+  \node[os state,right=of meaning,minimum width=22mm] (codepoint) {字符编码\\ASCII 65};
+  \node[os state,right=of codepoint,minimum width=22mm] (byte) {byte 模式\\\texttt{0x41}};
+  \node[os hardware,right=of byte,minimum width=25mm] (frame) {UART 帧\\起始/数据/停止};
+  \node[os hardware,right=of frame,minimum width=22mm] (voltage) {引脚波形\\高低电压随时间};
+  \draw[os arrow] (meaning) -- node[above,font=\scriptsize]{编码} (codepoint);
+  \draw[os arrow] (codepoint) -- node[above,font=\scriptsize]{序列化} (byte);
+  \draw[os arrow] (byte) -- node[above,font=\scriptsize]{成帧} (frame);
+  \draw[os arrow] (frame) -- node[above,font=\scriptsize]{驱动} (voltage);
+\end{pdfdiagram}
+
+接收方沿相反方向解帧、取 byte、按字符编码解释，最后显示字形。任一层契约
+不一致都可能产生乱码，但“乱码”不能直接告诉我们错误位于字体、编码、字节序、
+串口参数还是电气连接。
+
+\begin{failurebox}
+看到一串 byte 时直接宣布“这是文本”“这是指令”或“这是地址”，等于跳过解释
+契约。高质量分析应先记录来源、长度、边界、字节序、版本和校验，再选择解释器；
+解释失败时保留原始 byte 作为证据。
+\end{failurebox}

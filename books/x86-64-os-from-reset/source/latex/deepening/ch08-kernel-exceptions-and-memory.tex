@@ -1,5 +1,4 @@
-\section{64 位入口先把加载器状态收敛为内核 ABI}
-
+\topic{64 位入口先把加载器状态收敛为内核 ABI}
 Stage 1 已经把 RSP 放到独立的 64 KiB 栈顶，用 \code{CALL} 进入固定地址
 \code{OsKernelEntry}，并在 RDI 中传入 BootInfo。这里故意使用正常 System V
 AMD64 调用形状：函数入口的 RSP 模 16 等于 8，编译器可以按普通 C++20 ABI
@@ -16,8 +15,7 @@ System V AMD64 ABI 区分调用者与被调用者保存寄存器。内核入口�
 \code{KERNEL\_RETURNED} 并停机。异常入口则不是普通调用，必须由单独汇编边界
 转换后才能进入 C++。
 
-\section{标识符在跨语言边界上也是 ABI}
-
+\topic{标识符在跨语言边界上也是 ABI}
 C++ 标识符主要服务于类型检查和源码阅读，NASM 标签与链接脚本符号则直接进入
 ELF 符号表。两边都区分大小写，\code{OsKernelEntry} 与
 \code{osKernelEntry} 是两个完全不同的链接名字。早期项目把一部分变量写成
@@ -26,25 +24,20 @@ ELF 符号表。两边都区分大小写，\code{OsKernelEntry} 与
 
 当前规则按语义角色拆开：
 
-\begin{longtable}{L{0.25\textwidth}L{0.27\textwidth}L{0.38\textwidth}}
-\toprule
-\textbf{对象} & \textbf{形式} & \textbf{示例}\\
-\midrule
+\begin{osgridlongtable}{L{0.25\textwidth}L{0.27\textwidth}L{0.38\textwidth}}
+\textbf{对象} & \textbf{形式} & \textbf{示例}\\ \hline
 \endfirsthead
-\toprule
-\textbf{对象} & \textbf{形式} & \textbf{示例}\\
-\midrule
+\textbf{对象} & \textbf{形式} & \textbf{示例}\\ \hline
 \endhead
-类型与函数 & 大驼峰 & \code{PhysicalAddress}、\code{RunKernel}\\
-局部变量与参数 & 小写蛇形 & \code{physical\_address}、\code{frame\_index}\\
+类型与函数 & 大驼峰 & \code{PhysicalAddress}、\code{RunKernel}\\ \hline
+局部变量与参数 & 小写蛇形 & \code{physical\_address}、\code{frame\_index}\\ \hline
 私有数据成员 & 小写蛇形，可带尾部下划线 &
-\code{free\_frame\_count\_}\\
+\code{free\_frame\_count\_}\\ \hline
 项目常量 & 项目/模块/功能全大写 &
-\code{OS\_KERNEL\_MEMORY\_PAGE\_SIZE\_BYTES}\\
-自研汇编函数符号 & 大驼峰 & \code{OsKernelExceptionDispatch}\\
-自研链接数据符号 & 小写蛇形 & \code{os\_kernel\_image\_start}\\
-\bottomrule
-\end{longtable}
+\code{OS\_KERNEL\_MEMORY\_PAGE\_SIZE\_BYTES}\\ \hline
+自研汇编函数符号 & 大驼峰 & \code{OsKernelExceptionDispatch}\\ \hline
+自研链接数据符号 & 小写蛇形 & \code{os\_kernel\_image\_start}\\ \hline
+\end{osgridlongtable}
 
 成员尾部下划线解决参数遮蔽，\code{this->} 则说明一次访问确实读取对象状态；
 二者用途不同。命名空间的每一层只放一个简短小写单词，例如
@@ -67,8 +60,7 @@ ELF 符号表。两边都区分大小写，\code{OsKernelEntry} 与
 文件，并在每次完整回归中重新执行同一检查，使命名规范从说明文字变成可失败
 的工程契约。
 
-\section{BSS 让大表和专用栈不膨胀磁盘文件}
-
+\topic{BSS 让大表和专用栈不膨胀磁盘文件}
 链接脚本把代码、只读数据和可写/BSS 分成 \code{R E}、\code{R}、
 \code{RW} 三个 \code{PT\_LOAD}。Stage 1 第二遍装载时复制
 \code{p\_filesz}，再清零到 \code{p\_memsz}；内核入口只验证结果，不重复
@@ -83,8 +75,7 @@ BSS 探针必须在任何描述符对象使用前保持零。它把 C++ 静态�
 连接到 ELF \code{p\_memsz} 语义：日志出现 \code{BSS\_ZEROED}，才说明
 加载器真正为后续内核对象建立了确定初态。
 
-\section{为什么 64 位模式没有删除 GDT}
-
+\topic{为什么 64 位模式没有删除 GDT}
 8086 用段寄存器参与地址计算；80286 和 80386 把段值改成描述符选择子，引入
 base、limit、type、DPL 和 present。长模式随后把大多数代码/数据段的 base
 和 limit 忽略，把地址隔离主责交给页表，但保留 CS 的执行模式与特权语义，
@@ -103,23 +94,17 @@ base、limit、type、DPL 和 present。长模式随后把大多数代码/数据
 Stage 1 的 GDT 是模式切换工具，不是内核资产。v0.5 用内核 BSS 中的新表覆盖
 GDTR，从依赖方向上切断内核对加载器私有内存的长期依赖。
 
-\section{v0.5 五槽 GDT 的逐位结构}
-
-\begin{longtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.25\textwidth}L{0.36\textwidth}}
-\toprule
-\textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\
-\midrule
+\topic{v0.5 五槽 GDT 的逐位结构}\par
+\begin{osgridlongtable}{L{0.10\textwidth}L{0.15\textwidth}L{0.25\textwidth}L{0.36\textwidth}}
+\textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\ \hline
 \endfirsthead
-\toprule
-\textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\
-\midrule
+\textbf{索引} & \textbf{选择子} & \textbf{描述符} & \textbf{关键属性}\\ \hline
 \endhead
-0 & \code{0x00} & null & 全零，捕获误用空选择子\\
-1 & \code{0x08} & Ring 0 code & P=1、DPL=0、execute/read、L=1、D=0\\
-2 & \code{0x10} & Ring 0 data & P=1、DPL=0、read/write、L=0\\
-3--4 & \code{0x18} & 64-bit TSS & type=9、P=1、完整 64 位 base\\
-\bottomrule
-\end{longtable}
+0 & \code{0x00} & null & 全零，捕获误用空选择子\\ \hline
+1 & \code{0x08} & Ring 0 code & P=1、DPL=0、execute/read、L=1、D=0\\ \hline
+2 & \code{0x10} & Ring 0 data & P=1、DPL=0、read/write、L=0\\ \hline
+3--4 & \code{0x18} & 64-bit TSS & type=9、P=1、完整 64 位 base\\ \hline
+\end{osgridlongtable}
 
 选择子低两位是 RPL，第 2 位选择 GDT 或 LDT，其余高位是表索引。因此索引
 1、2、3 左移三位分别得到 \code{0x08}、\code{0x10}、\code{0x18}。
@@ -131,8 +116,7 @@ GDTR 的 limit 是最后一个有效字节偏移，不是条目数或字节数�
 40 字节，所以 limit 为 39。项目在加载后执行 \code{SGDT} 比较 base 和
 limit，使“执行过 LGDT”升级为“处理器确实引用预期表”。
 
-\section{LGDT 不会替我们刷新段缓存}
-
+\topic{LGDT 不会替我们刷新段缓存}
 \code{LGDT} 只修改 GDTR，不自动重新解释当前 CS、SS 或数据段隐藏缓存。
 内核先加载 GDTR，再把代码选择子和一个本地返回地址压栈，执行
 \code{RETFQ}。远控制转移同时装载新的 CS 描述符和 RIP。到达新标签后才重载
@@ -148,31 +132,25 @@ CS；只改变可见选择子而忽略隐藏描述符，会让日志看起来正
 用户边界章节逐项展开。把两个阶段区分开，才能理解选择子变化是 GDT 演进，
 而不是文档与二进制冲突。
 
-\section{104 字节 TSS 不再承担硬件任务切换}
-
+\topic{104 字节 TSS 不再承担硬件任务切换}
 早期保护模式把寄存器现场也放进 TSS，可用硬件 task switch 切换任务。现代
 操作系统通常自行保存上下文，因为软件调度更灵活、成本和副作用更可控。
 长模式 TSS 因此缩减为特权栈和 I/O bitmap 等关键状态。
 
-\begin{longtable}{L{0.14\textwidth}L{0.14\textwidth}L{0.26\textwidth}L{0.32\textwidth}}
-\toprule
-\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前值}\\
-\midrule
+\begin{osgridlongtable}{L{0.14\textwidth}L{0.14\textwidth}L{0.26\textwidth}L{0.32\textwidth}}
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前值}\\ \hline
 \endfirsthead
-\toprule
-\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前值}\\
-\midrule
+\textbf{偏移} & \textbf{宽度} & \textbf{字段} & \textbf{当前值}\\ \hline
 \endhead
-\code{0x04} & 64 & RSP0 & BootInfo 的内核初始栈顶\\
-\code{0x0C} & 64 & RSP1 & 0\\
-\code{0x14} & 64 & RSP2 & 0\\
-\code{0x24} & 64 & IST1 & 双重故障栈顶\\
-\code{0x2C} & 64 & IST2 & NMI 栈顶\\
-\code{0x34} & 64 & IST3 & 机器检查栈顶\\
-\code{0x3C..0x5C} & 64 & IST4..IST7 & 0\\
-\code{0x66} & 16 & I/O bitmap offset & 104\\
-\bottomrule
-\end{longtable}
+\code{0x04} & 64 & RSP0 & BootInfo 的内核初始栈顶\\ \hline
+\code{0x0C} & 64 & RSP1 & 0\\ \hline
+\code{0x14} & 64 & RSP2 & 0\\ \hline
+\code{0x24} & 64 & IST1 & 双重故障栈顶\\ \hline
+\code{0x2C} & 64 & IST2 & NMI 栈顶\\ \hline
+\code{0x34} & 64 & IST3 & 机器检查栈顶\\ \hline
+\code{0x3C..0x5C} & 64 & IST4..IST7 & 0\\ \hline
+\code{0x66} & 16 & I/O bitmap offset & 104\\ \hline
+\end{osgridlongtable}
 
 每个 IST 栈为 16 KiB，互不重叠，向低地址增长。I/O bitmap offset 等于结构
 大小，已经超过 TSS 的 inclusive limit 103，表示当前 TSS 内没有权限位图。
@@ -183,35 +161,28 @@ v0.6 把每个 IST 存储块扩为 20 KiB：低端 4 KiB 保持 guard，随后 1
 才是可写栈。内核新页表明确跳过三个 guard 物理页；TSS 的 IST 指针仍指向可写
 部分的高端。这样栈向下越界会遇到 not-present 页，而不是静默写入相邻对象。
 
-\section{IDT 门描述符定义异常入口的硬件动作}
-
+\topic{IDT 门描述符定义异常入口的硬件动作}
 IDTR 保存 IDT 基址和界限。64 位门描述符包含 64 位处理函数地址、段选择子、
 IST 索引、门类型、DPL 和 present 位。处理器根据向量索引门，检查权限，
 必要时切换栈，再压入返回现场。
 
-\begin{longtable}{L{0.19\textwidth}L{0.24\textwidth}L{0.43\textwidth}}
-\toprule
-\textbf{门字段} & \textbf{取值策略} & \textbf{作用}\\
-\midrule
+\begin{osgridlongtable}{L{0.19\textwidth}L{0.24\textwidth}L{0.43\textwidth}}
+\textbf{门字段} & \textbf{取值策略} & \textbf{作用}\\ \hline
 \endfirsthead
-\toprule
-\textbf{门字段} & \textbf{取值策略} & \textbf{作用}\\
-\midrule
+\textbf{门字段} & \textbf{取值策略} & \textbf{作用}\\ \hline
 \endhead
-offset & 异常桩地址 & 分三段编码完整 64 位入口\\
-selector & Ring 0 代码段 & 进入内核执行环境\\
-type & interrupt/trap gate & 决定入口是否自动清 IF\\
-DPL & 通常 0 & 限制用户软件主动触发\\
-IST & 关键异常专用栈 & 在当前栈损坏时仍可诊断\\
-present & 1 & 允许处理器使用该门\\
-\bottomrule
-\end{longtable}
+offset & 异常桩地址 & 分三段编码完整 64 位入口\\ \hline
+selector & Ring 0 代码段 & 进入内核执行环境\\ \hline
+type & interrupt/trap gate & 决定入口是否自动清 IF\\ \hline
+DPL & 通常 0 & 限制用户软件主动触发\\ \hline
+IST & 关键异常专用栈 & 在当前栈损坏时仍可诊断\\ \hline
+present & 1 & 允许处理器使用该门\\ \hline
+\end{osgridlongtable}
 
 陷阱门保留 IF，适合调试类异常；中断门清 IF，避免普通硬件中断立刻嵌套。
 选择是并发策略的一部分，不能对所有向量机械使用同一类型。
 
-\section{TSS 在 64 位模式主要提供特权栈}
-
+\topic{TSS 在 64 位模式主要提供特权栈}
 长模式不使用 TSS 做硬件任务切换，但保留 RSP0--RSP2 和七个 IST 指针。
 从 Ring 3 进入 Ring 0 时处理器使用 RSP0；设置 IST 的门无条件切到对应栈。
 双重故障、NMI 和机器检查适合使用独立 IST，避免普通内核栈溢出导致再次故障。
@@ -219,31 +190,24 @@ present & 1 & 允许处理器使用该门\\
 TSS 描述符占两个 GDT 槽，必须编码完整 64 位基址。加载 TR 前，TSS 内存、
 GDT 描述符和专用栈都要映射并保持生命周期覆盖整个内核运行。
 
-\section{异常向量具有不同错误码和恢复语义}
-
-\begin{longtable}{L{0.12\textwidth}L{0.22\textwidth}L{0.17\textwidth}L{0.37\textwidth}}
-\toprule
-\textbf{向量} & \textbf{异常} & \textbf{错误码} & \textbf{初期策略}\\
-\midrule
+\topic{异常向量具有不同错误码和恢复语义}\par
+\begin{osgridlongtable}{L{0.12\textwidth}L{0.22\textwidth}L{0.17\textwidth}L{0.37\textwidth}}
+\textbf{向量} & \textbf{异常} & \textbf{错误码} & \textbf{初期策略}\\ \hline
 \endfirsthead
-\toprule
-\textbf{向量} & \textbf{异常} & \textbf{错误码} & \textbf{初期策略}\\
-\midrule
+\textbf{向量} & \textbf{异常} & \textbf{错误码} & \textbf{初期策略}\\ \hline
 \endhead
-0 & 除法错误 & 无 & 记录 RIP 与寄存器后 panic\\
-6 & 非法指令 & 无 & 反汇编故障地址并 panic\\
-8 & 双重故障 & 固定错误码 & IST 栈上最小诊断并停机\\
-13 & 一般保护 & 有 & 解码选择子相关位并 panic\\
-14 & 页故障 & 有 & 结合 CR2 分类映射或非法访问\\
-\bottomrule
-\end{longtable}
+0 & 除法错误 & 无 & 记录 RIP 与寄存器后 panic\\ \hline
+6 & 非法指令 & 无 & 反汇编故障地址并 panic\\ \hline
+8 & 双重故障 & 固定错误码 & IST 栈上最小诊断并停机\\ \hline
+13 & 一般保护 & 有 & 解码选择子相关位并 panic\\ \hline
+14 & 页故障 & 有 & 结合 CR2 分类映射或非法访问\\ \hline
+\end{osgridlongtable}
 
 某些异常属于 fault，保存 RIP 指向故障指令，修复原因后可以重试；trap 通常
 保存下一指令；abort 不保证可恢复。处理程序必须知道类别，不能统一递增 RIP
 跳过错误。
 
-\section{统一异常帧让 C++ 分发器看到稳定布局}
-
+\topic{统一异常帧让 C++ 分发器看到稳定布局}
 处理器有时压错误码，有时不压；特权切换时还会多压 SS 与 RSP。每个汇编桩
 补齐缺失字段并保存通用寄存器，把向量号与规范化错误码放到固定位置。C++ 只
 接受指向统一 \code{InterruptFrame} 的指针。
@@ -252,8 +216,7 @@ GDT 描述符和专用栈都要映射并保持生命周期覆盖整个内核运�
 改变压栈顺序必须同时更新弹栈路径；\code{iretq} 前残留一个八字节字段都会把
 后续值错当 RIP 或 CS。
 
-\section{v0.5 的 32 个桩怎样形成 160 字节帧}
-
+\topic{v0.5 的 32 个桩怎样形成 160 字节帧}
 CPU 对向量 8、10、11、12、13、14、17、21、29、30 压入错误码，其余异常
 不压。NASM 用两种项目内宏生成桩；宏只减少机械重复，不隐藏硬件策略：
 
@@ -276,24 +239,19 @@ CPU 保存的 RIP、CS、RFLAGS。公共入口执行 \code{CLD}，因为 C++ ABI
 寄存器依次压入 RAX、RBX、RCX、RDX、RBP、RSI、RDI、R8 到 R15。栈向低地址
 增长，所以 C++ 看到的结构顺序正好反过来：
 
-\begin{longtable}{L{0.16\textwidth}L{0.23\textwidth}L{0.47\textwidth}}
-\toprule
-\textbf{帧内偏移} & \textbf{字段} & \textbf{来源}\\
-\midrule
+\begin{osgridlongtable}{L{0.16\textwidth}L{0.23\textwidth}L{0.47\textwidth}}
+\textbf{帧内偏移} & \textbf{字段} & \textbf{来源}\\ \hline
 \endfirsthead
-\toprule
-\textbf{帧内偏移} & \textbf{字段} & \textbf{来源}\\
-\midrule
+\textbf{帧内偏移} & \textbf{字段} & \textbf{来源}\\ \hline
 \endhead
-\code{0x00..0x38} & R15..R8 & 公共桩保存\\
-\code{0x40..0x70} & RDI..RAX & 公共桩保存\\
-\code{0x78} & vector & 每向量桩\\
-\code{0x80} & error code & CPU 或零占位\\
-\code{0x88} & RIP & CPU\\
-\code{0x90} & CS & CPU\\
-\code{0x98} & RFLAGS & CPU\\
-\bottomrule
-\end{longtable}
+\code{0x00..0x38} & R15..R8 & 公共桩保存\\ \hline
+\code{0x40..0x70} & RDI..RAX & 公共桩保存\\ \hline
+\code{0x78} & vector & 每向量桩\\ \hline
+\code{0x80} & error code & CPU 或零占位\\ \hline
+\code{0x88} & RIP & CPU\\ \hline
+\code{0x90} & CS & CPU\\ \hline
+\code{0x98} & RFLAGS & CPU\\ \hline
+\end{osgridlongtable}
 
 共 20 个 64 位字段，即 160 字节。v0.5 的异常来自 Ring 0，没有特权级切换，
 所以 CPU 不另压旧 RSP 和 SS。v0.8 的 Ring 3 入口在公共结构之后真实增加
@@ -304,44 +262,37 @@ C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把�
 返回，就从预留槽恢复原 RSP，逆序弹出寄存器，丢弃 vector/error 两槽并执行
 \code{IRETQ}。普通 \code{RET} 无法恢复 CS 和 RFLAGS。
 
-\section{全部异常先被分类，再决定是否恢复}
-
-\begin{longtable}{L{0.08\textwidth}L{0.14\textwidth}L{0.17\textwidth}L{0.20\textwidth}L{0.27\textwidth}}
-\toprule
-\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\
-\midrule
+\topic{全部异常先被分类，再决定是否恢复}\par
+\begin{osgridlongtable}{L{0.08\textwidth}L{0.14\textwidth}L{0.17\textwidth}L{0.20\textwidth}L{0.27\textwidth}}
+\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\ \hline
 \endfirsthead
-\toprule
-\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\
-\midrule
+\textbf{向量} & \textbf{名称} & \textbf{类别} & \textbf{错误码} & \textbf{v0.5 策略}\\ \hline
 \endhead
-0 & \#DE & fault & 无 & panic\\
-1 & \#DB & fault/trap & 无 & panic\\
-2 & NMI & interrupt & 无 & IST2 后 panic\\
-3 & \#BP & trap & 无 & 仅启动自检返回\\
-4 & \#OF & trap & 无 & panic\\
-5 & \#BR & fault & 无 & panic\\
-6 & \#UD & fault & 无 & 注入测试后 panic\\
-7 & \#NM & fault & 无 & panic\\
-8 & \#DF & abort & 固定 0 & IST1 后 panic\\
-10--14 & \#TS..\#PF & fault & 有 & panic\\
-16 & \#MF & fault & 无 & panic\\
-17 & \#AC & fault & 有 & panic\\
-18 & \#MC & abort & 无 & IST3 后 panic\\
-19--20 & \#XM/\#VE & fault & 无 & panic\\
-21 & \#CP & fault & 有 & panic\\
-28 & \#HV & fault & 无 & panic\\
-29--30 & \#VC/\#SX & fault & 有 & panic\\
-\bottomrule
-\end{longtable}
+0 & \#DE & fault & 无 & panic\\ \hline
+1 & \#DB & fault/trap & 无 & panic\\ \hline
+2 & NMI & interrupt & 无 & IST2 后 panic\\ \hline
+3 & \#BP & trap & 无 & 仅启动自检返回\\ \hline
+4 & \#OF & trap & 无 & panic\\ \hline
+5 & \#BR & fault & 无 & panic\\ \hline
+6 & \#UD & fault & 无 & 注入测试后 panic\\ \hline
+7 & \#NM & fault & 无 & panic\\ \hline
+8 & \#DF & abort & 固定 0 & IST1 后 panic\\ \hline
+10--14 & \#TS..\#PF & fault & 有 & panic\\ \hline
+16 & \#MF & fault & 无 & panic\\ \hline
+17 & \#AC & fault & 有 & panic\\ \hline
+18 & \#MC & abort & 无 & IST3 后 panic\\ \hline
+19--20 & \#XM/\#VE & fault & 无 & panic\\ \hline
+21 & \#CP & fault & 有 & panic\\ \hline
+28 & \#HV & fault & 无 & panic\\ \hline
+29--30 & \#VC/\#SX & fault & 有 & panic\\ \hline
+\end{osgridlongtable}
 
 表中未列出的保留向量也有独立桩并进入 panic。只允许 breakpoint 返回不是
 因为其他 fault 永远不能恢复，而是 v0.5 还没有足够策略证明恢复安全。例如
 页不存在可以在 v0.6 分配并映射后重试；非法指令通常意味着代码或 CPU 能力
 契约错误，跳过一个字节既不知道指令长度，也会掩盖破坏。
 
-\section{INT3、UD2 和页故障组成三角验收}
-
+\topic{INT3、UD2 和页故障组成三角验收}
 单一正常启动不能证明异常系统。v0.5 用三条具有不同语义的真实指令路径：
 
 \begin{enumerate}
@@ -364,8 +315,7 @@ C++ 调用前不能假设异常发生时 RSP 恰好满足 ABI。公共桩先把�
 两份故障内核不复制描述符和异常实现，只用最薄入口选择注入模式。否则测试代码
 可能通过，而实际生产入口链接的是另一套未经验证的处理器。
 
-\section{panic 的可信计算基}
-
+\topic{panic 的可信计算基}
 panic 可能由坏页表、坏栈、坏堆或坏锁引起。让 panic 调用通用格式化器、分配
 字符串或获取日志锁，会扩大它必须信任的系统。v0.5 把可信集合压到：
 
@@ -385,8 +335,7 @@ RIP 会随链接变化，RFLAGS 也可能包含处理器为 fault 设置的 RF �
 QEMU 协议要求字段存在，却不硬编码这两个不稳定数值。向量、错误码、页故障
 地址和终止标记才是阶段稳定主键。这正是“日志丰富但不刷屏”的工程边界。
 
-\section{从位字段单元测试到整机失败路径}
-
+\topic{从位字段单元测试到整机失败路径}
 描述符纯编码使用宿主 C++ 测试，不必每次启动 QEMU。确定样例把 TSS base、
 limit、type 和 IDT offset、selector、IST、attributes 逐字段解码。固定种子
 \code{0xD35C71A05EED6405} 再生成 4096 个完整 64 位地址，分别经过 TSS
@@ -409,8 +358,7 @@ v0.6 在这条回归上增加七项测试，完整集合为 43 项。新增 QEMU
 复制异常实现，只让同一个生产内核入口选择 \code{WriteProtection} 注入；
 因此错误码 3、CR2 和 PANIC 同时验证页表、CR0.WP、IDT、统一帧与串口路径。
 
-\section{页故障错误码提供访问分类}
-
+\topic{页故障错误码提供访问分类}
 页故障错误码的 P 位区分不存在与权限违反，W/R 区分写与读，U/S 区分用户与
 内核，RSVD 表示页表保留位错误，I/D 表示取指。CR2 保存故障线性地址。
 
@@ -418,7 +366,7 @@ v0.6 在这条回归上增加七项测试，完整集合为 43 项。新增 QEMU
 访问内核页应终止进程；内核访问非法地址通常是内核缺陷。处理器给出的位只描述
 机制原因，内核还要结合虚拟区间元数据决定策略。
 
-\section{内存图在加载器排序，在内核验证}
+\section{物理内存图、页帧所有权与伙伴分配}
 
 当前平台后端是 QEMU PC \code{fw\_cfg}。Stage 1 从
 \code{etc/e820} 读取 20 字节原始项，扩展成：
@@ -459,8 +407,7 @@ struct PhysicalMemoryMapEntry final {
 \code{MEMORY\_MANAGED\_BYTES}；高端保留 MMIO 窗口只进入第一个值，不能
 冒充 RAM。
 
-\section{2-bit 页帧状态把所有权错误变成显式状态}
-
+\topic{2-bit 页帧状态把所有权错误变成显式状态}
 v0.6 最初固定管理低 64 MiB；v1.1 已把这个教学脚手架替换为运行期容量。内核
 先读取 \code{CPUID.80000008H:EAX[7:0]} 的物理地址宽度，再取三个上限
 的最小值：
@@ -477,21 +424,16 @@ v0.6 最初固定管理低 64 MiB；v1.1 已把这个教学脚手架替换为运
 
 每帧不用一位，而用两位表示四种状态：
 
-\begin{longtable}{L{0.18\textwidth}L{0.25\textwidth}L{0.43\textwidth}}
-\toprule
-\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\
-\midrule
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.25\textwidth}L{0.43\textwidth}}
+\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\ \hline
 \endfirsthead
-\toprule
-\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\
-\midrule
+\textbf{状态} & \textbf{来源} & \textbf{允许的迁移}\\ \hline
 \endhead
-unavailable & 默认、非 type 1、碎片页 & 不参与普通分配\\
-free & 完整落入可用区域的 4 KiB 帧 & allocate 或 reserve\\
-allocated & 动态分配成功 & 只能 release 回 free\\
-reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
-\bottomrule
-\end{longtable}
+unavailable & 默认、非 type 1、碎片页 & 不参与普通分配\\ \hline
+free & 完整落入可用区域的 4 KiB 帧 & allocate 或 reserve\\ \hline
+allocated & 动态分配成功 & 只能 release 回 free\\ \hline
+reserved & 平台、Kernel、初始栈 & 普通接口不释放\\ \hline
+\end{osgridlongtable}
 
 设管理上界为 \(L\)，页大小为 \(P=4096\)，状态存储为：
 \[
@@ -515,8 +457,7 @@ reserved & 平台、Kernel、初始栈 & 普通接口不释放\\
 managed count 恢复为零再返回 \code{NoUsableFrames}，不会留下“看似初始化”
 的对象。
 
-\section{启动保留采用先检查、后提交}
-
+\topic{启动保留采用先检查、后提交}
 状态数组本身不能继续放在固定 BSS。内核先根据上式计算并向页对齐所需大小，
 再在 Stage 1 可访问的低 64 MiB RAM 中搜索连续区间；搜索器逐个跳过重叠
 保留区，并在每次跳转后重新满足 4 KiB 对齐。内核随后依次保留四类范围：
@@ -550,10 +491,7 @@ begin 设为 4 GiB+4 KiB。范围接口没有复制第二套所有权规则，�
 后 free、allocated、reserved 三个计数完全不变。这条测试验证事务边界，而
 不只是某个返回枚举。
 
-\section{伙伴系统把连续页变成可证明的块}
-
-\subsection{为什么逐页所有权还不足以支持连续申请}
-
+\topic{为什么逐页所有权还不足以支持连续申请}
 每帧 2 bit 状态已经能回答“这个 4 KiB 页是否可以交给调用者”，却不能直接
 回答“从这里开始的八页是不是一个可交付、可原样收回的连续对象”。在状态数组
 上向后数八个 free 可以实现一次成功申请，但释放后还要重新发现相邻区间；
@@ -570,8 +508,7 @@ begin 设为 4 GiB+4 KiB。范围接口没有复制第二套所有权规则，�
 二的幂，换取由地址位直接确定的唯一合并对象。这种限制带来内部碎片，但让
 分裂、释放和局部一致性都能用短而确定的规则描述，适合先建立可信页资源地基。
 
-\subsection{order 是页号二进制结构，不是随意标签}
-
+\topic{order 是页号二进制结构，不是随意标签}
 order \(k\) 的块含 \(2^k\) 页，字节数为：
 
 \[
@@ -590,25 +527,21 @@ order \(k\) 的块含 \(2^k\) 页，字节数为：
 时，清掉该位才得到唯一父块。
 
 \begin{center}
-\begin{tabular}{llll}
-\toprule
-order & 页数 & 字节数 & 典型含义\\
-\midrule
-0 & 1 & 4 KiB & 普通页表页、用户页\\
-1 & 2 & 8 KiB & 小型连续后备\\
-3 & 8 & 32 KiB & 本项目 QEMU 连续块自检\\
-9 & 512 & 2 MiB & 与 x86-64 2 MiB 大页同尺寸\\
-24 & 16777216 & 64 GiB & 64 GiB 页规模的理论最高阶\\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{llll}
+order & 页数 & 字节数 & 典型含义\\ \hline
+0 & 1 & 4 KiB & 普通页表页、用户页\\ \hline
+1 & 2 & 8 KiB & 小型连续后备\\ \hline
+3 & 8 & 32 KiB & 本项目 QEMU 连续块自检\\ \hline
+9 & 512 & 2 MiB & 与 x86-64 2 MiB 大页同尺寸\\ \hline
+24 & 16777216 & 64 GiB & 64 GiB 页规模的理论最高阶\\ \hline
+\end{osgridtabular}
 \end{center}
 
 “同尺寸”不代表当前 order 9 申请会自动安装成 2 MiB PDE。buddy 只交付物理
 连续性；页表层是否使用 PS 位、虚拟地址是否对齐、权限是否一致仍由映射契约
 决定。
 
-\subsection{为什么保留 2-bit 状态并再加两族位图}
-
+\topic{为什么保留 2-bit 状态并再加两族位图}
 只用一张 free buddy 位图可以完成分裂和合并，却不能证明释放参数正是原申请。
 例如 order 3 块首也满足 order 2 对齐；若释放接口盲信调用者传回的 order，
 它可能释放前四页而让后四页永远悬空。于是每阶保存两张位图：
@@ -641,22 +574,17 @@ free 位图回答算法集合，allocated 位图回答块身份，2-bit 状态�
 若为每个 PFN 保存一个 64 位 next 指针，64 GiB 就要 128 MiB；双位图的
 同规格精确值只有 8388612 字节。
 
-\begin{longtable}{L{0.18\textwidth}L{0.16\textwidth}L{0.19\textwidth}L{0.19\textwidth}}
-\toprule
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.16\textwidth}L{0.19\textwidth}L{0.19\textwidth}}
 \textbf{PFN 覆盖} & \textbf{页数} & \textbf{buddy 精确字节} &
-\textbf{页对齐字节}\\
-\midrule
+\textbf{页对齐字节}\\ \hline
 \endfirsthead
-\toprule
 \textbf{PFN 覆盖} & \textbf{页数} & \textbf{buddy 精确字节} &
-\textbf{页对齐字节}\\
-\midrule
+\textbf{页对齐字节}\\ \hline
 \endhead
-64 MiB & 16384 & 8200 & \code{0x3000}\\
-64 GiB & 16777216 & 8388612 & \code{0x801000}\\
-65 GiB 最高 PFN & 17039360 & 8519694 & \code{0x821000}\\
-\bottomrule
-\end{longtable}
+64 MiB & 16384 & 8200 & \code{0x3000}\\ \hline
+64 GiB & 16777216 & 8388612 & \code{0x801000}\\ \hline
+65 GiB 最高 PFN & 17039360 & 8519694 & \code{0x821000}\\ \hline
+\end{osgridlongtable}
 
 QEMU 主规格报告 64 GiB 可用 RAM，但 3--4 GiB 洞把最高可用地址推到
 65 GiB，所以线性 PFN 元数据按第三行计算。对应 2-bit 状态为
@@ -664,8 +592,7 @@ QEMU 主规格报告 64 GiB 可用 RAM，但 3--4 GiB 洞把最高可用地址�
 这是按最高 PFN 换取简单索引的明确代价；极端稀疏物理地址空间以后需要
 分段 vmemmap，而不是假称当前布局没有开销。
 
-\subsection{启动时先冻结所有保留，再建立最大块分解}
-
+\topic{启动时先冻结所有保留，再建立最大块分解}
 页状态区和 buddy 区分别按 4 KiB 对齐，再合并成一个连续启动元数据事务。
 搜索仍发生在 Stage 1 身份映射可访问的低 64 MiB，跳过低端平台、Kernel 和
 初始栈。初始化顺序必须保持：
@@ -692,8 +619,7 @@ buddy 建立后 \code{ReserveRange} 返回
 reserved”这么简单；它要从空闲块拆出范围、迁移活动页并支持失败回滚，因此
 必须作为以后独立协议实现。
 
-\subsection{范围申请先选目标，再提交分裂}
-
+\topic{范围申请先选目标，再提交分裂}
 \code{AllocateBlockInRange(order,begin,end)} 要求 begin/end 页对齐，并保证
 最终目标块完整落入半开区间。算法从请求阶向上寻找最低存在候选的源阶。某个
 较大源块可以只与请求范围部分相交，只要其中存在一个按请求阶对齐且完整位于
@@ -721,8 +647,7 @@ commit counters and output
 连续性契约的真实失败，不应退回八个离散页并假装成功。无效 order、范围未对齐、
 越界和溢出同样在修改输出之前返回，调用者可以安全地进行作用域回滚。
 
-\subsection{释放必须证明地址、阶和页状态三者一致}
-
+\topic{释放必须证明地址、阶和页状态三者一致}
 \code{ReleaseBlock} 先验证页对齐、阶对齐、管理边界，再查精确
 \code{allocated[order][index]}：
 
@@ -739,8 +664,7 @@ commit counters and output
 最后只插入唯一最高合并结果。这一顺序避免“当前块和父块短暂同时可见”，也让
 空闲块计数能够逐阶守恒。
 
-\subsection{完整校验为何不需要再申请内存}
-
+\topic{完整校验为何不需要再申请内存}
 分配器不能为了验证自己再调用自己。因而 \code{ValidateBuddy} 逐阶扫描现有
 位图，并利用块内页状态作交叉证据：
 
@@ -758,8 +682,7 @@ commit counters and output
 64 MiB。日志中的 \code{[QEMU][T+......ms]} 让这段成本可见；不能通过只管理
 64 MiB 或删除检查来制造更快的假结果。
 
-\subsection{三层模型和真实执行各自证明什么}
-
+\topic{三层模型和真实执行各自证明什么}
 单元测试以 64 页验证 36 字节精确位图、缺失/过小存储、已有活动页、最大块
 分解、错阶、错位、重复释放和保留冻结。集成测试构造 1024 页并在中间放置
 256 页 E820 洞，要求 order 5 块完整落入指定高地址区间，随后混合 order
@@ -783,7 +706,7 @@ v1.2 已建立 Thread 与三类锁的调用边界，但尚未宣称分配器支�
 未来开放并发调用时必须由外层物理内存锁保护；IRQ、NMI 和 panic 仍不得进入
 通用分配路径。
 
-\section{从 Stage 1 大页平滑切换到内核 4 KiB 页表}
+\section{内核页表、direct map 与访问权限}
 
 构造新页表时处理器仍运行在 Stage 1 的 CR3 下。旧表把低 64 MiB 通过
 32 个 2 MiB 大页恒等映射，所以新分配的页表帧可以直接把物理地址解释为指针
@@ -791,19 +714,14 @@ v1.2 已建立 Thread 与三类锁的调用边界，但尚未宣称分配器支�
 \code{PageTableMemoryAccess} 因而显式保存“物理内存通过哪个虚拟基址访问”
 和“页表帧本轮最多从哪里分配”：
 
-\begin{longtable}{L{0.28\textwidth}L{0.25\textwidth}L{0.35\textwidth}}
-\toprule
-\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\
-\midrule
+\begin{osgridlongtable}{L{0.28\textwidth}L{0.25\textwidth}L{0.35\textwidth}}
+\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\ \hline
 \endfirsthead
-\toprule
-\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\
-\midrule
+\textbf{阶段} & \textbf{访问基址} & \textbf{页表帧分配上限}\\ \hline
 \endhead
-旧 CR3 下构造 & 0，依赖身份映射 & 低 64 MiB\\
-新 CR3 激活后 & \code{FFFF888000000000} & 全部受管 RAM\\
-\bottomrule
-\end{longtable}
+旧 CR3 下构造 & 0，依赖身份映射 & 低 64 MiB\\ \hline
+新 CR3 激活后 & \code{FFFF888000000000} & 全部受管 RAM\\ \hline
+\end{osgridlongtable}
 
 内核先分配根 PML4，再对低 64 MiB 的启动访问逐页建立带精细权限的身份映射。
 随后遍历 E820 type 1 RAM，在
@@ -816,8 +734,7 @@ v1.2 已建立 Thread 与三类锁的调用边界，但尚未宣称分配器支�
 版的两遍 ELF 副作用边界。CR3 读回成功后，管理器原子切换访问基址，页表
 遍历、用户页清零和 ELF 段复制从此都不再把物理地址直接转换成指针。
 
-\section{direct-map 为什么同时使用 2 MiB 与 4 KiB 页}
-
+\topic{direct-map 为什么同时使用 2 MiB 与 4 KiB 页}
 若把 64 GiB RAM 全部用 4 KiB PTE 映射，叶项数量为：
 \[
  \frac{64\ \mathrm{GiB}}{4\ \mathrm{KiB}}=16777216,
@@ -837,8 +754,7 @@ v1.2 已建立 Thread 与三类锁的调用边界，但尚未宣称分配器支�
 地址时必须把虚拟地址低 21 位加回基址。普通用户页、Kernel 段和 guard page
 仍使用 4 KiB PTE，因为它们需要细粒度权限或单页 not-present 语义。
 
-\section{页表遍历必须验证每一级}
-
+\topic{页表遍历必须验证每一级}
 48 位 canonical 地址把 bit 47 符号扩展到 bit 63。若高 16 位既不是
 \code{0x0000} 也不是 \code{0xFFFF} 对应的扩展，映射器在写表前就返回
 \code{InvalidVirtualAddress}。四级索引为：
@@ -862,39 +778,32 @@ i_1&=(v\gg12)\mathbin{\&}0x1FF.
 这是明确的早期边界：启动只映射固定集合，不会反复创建销毁地址空间。进程
 阶段必须补充中间表引用计数或空表扫描，才能把页表帧安全归还分配器。
 
-\section{权限在页表层级上累积}
-
+\topic{权限在页表层级上累积}
 任一上级项 RW=0 都会限制下级写，任一上级 US=0 都会限制用户访问。当前中间
 表保持 RW，叶项决定具体内核页是否可写；用户映射请求出现时，映射器会把沿途
 parent 的 US 置一，但 supervisor 叶项仍因自身 US=0 对用户不可见。
 
 链接脚本导出 image、text、rodata、writable 的起止符号。内核按页应用：
 
-\begin{longtable}{L{0.23\textwidth}L{0.18\textwidth}L{0.45\textwidth}}
-\toprule
-\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\
-\midrule
+\begin{osgridlongtable}{L{0.23\textwidth}L{0.18\textwidth}L{0.45\textwidth}}
+\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\ \hline
 \endfirsthead
-\toprule
-\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\
-\midrule
+\textbf{区域} & \textbf{叶权限} & \textbf{理由}\\ \hline
 \endhead
-text & R/X & 指令可取，Ring 0 不可写\\
-rodata & R/NX & 常量不可写，也不能作为代码执行\\
-data/BSS/普通栈 & RW/NX & 状态可变但不可取指\\
-heap & RW/NX & 动态对象默认不是代码\\
-type 1 RAM direct-map & RW/NX & supervisor 访问物理页内容，未知洞不映射\\
-零页与四个 guard & not-present & 把空指针和向下越界变成 \#PF\\
-\bottomrule
-\end{longtable}
+text & R/X & 指令可取，Ring 0 不可写\\ \hline
+rodata & R/NX & 常量不可写，也不能作为代码执行\\ \hline
+data/BSS/普通栈 & RW/NX & 状态可变但不可取指\\ \hline
+heap & RW/NX & 动态对象默认不是代码\\ \hline
+type 1 RAM direct-map & RW/NX & supervisor 访问物理页内容，未知洞不映射\\ \hline
+零页与四个 guard & not-present & 把空指针和向下越界变成 \#PF\\ \hline
+\end{osgridlongtable}
 
 NX 叶位只有在 \code{IA32\_EFER.NXE}=1 时才具有预期语义。内核先用 CPUID
 扩展特性叶检查 NX，再设置 EFER.NXE；若硬件不支持就返回
 \code{MemoryProtectionUnsupported}，不默默退化为全可执行。随后设置
 \code{CR0.WP}，使 supervisor 写也遵守只读叶权限。
 
-\section{TLB 是页表结果的处理器缓存}
-
+\topic{TLB 是页表结果的处理器缓存}
 处理器不会每次访问都重新走四级表。修改页表后，本核心可能继续使用旧 TLB
 项；\code{invlpg} 使单页失效，写 CR3 或相应指令刷新更大范围。PCID 可以
 减少地址空间切换的刷新，但需要额外代际管理。
@@ -903,8 +812,7 @@ NX 叶位只有在 \code{IA32\_EFER.NXE}=1 时才具有预期语义。内核先�
 shootdown，并等待确认，才能释放和复用物理页。否则另一个核心可能通过旧翻译
 写入已经分配给新对象的页面。
 
-\section{写保护故障证明权限不是软件自我声明}
-
+\topic{写保护故障证明权限不是软件自我声明}
 页表查询函数能解码 RW=0，却不能证明处理器当前真的使用这张表，也不能证明
 CR0.WP 已启用。v0.6 另外分配一帧，映射到
 \code{0xFFFF800000100000}，权限为 present、supervisor、read-only、NX。
@@ -919,10 +827,9 @@ U/S、RSVD 和 I/D 都为零。P=1 把它与“忘记映射测试页”的错误
 W/R=1 把它与普通读取区分；CR2 必须精确等于高半区测试地址。只有随后进入同一
 panic 并禁止 \code{READY}，才能说明权限执行、异常入口和停止边界全部连通。
 
-\section{v1.1 用独立 KVA 层记录内核虚拟区间所有权}
+\section{KVA、页表回收与动态内核栈}
 
-\subsection{not-present 从来不等于 free}
-
+\topic{not-present 从来不等于 free}
 早期内核的 heap、初始栈、IST、LAPIC 和写保护测试页都有固定地址。只要每种
 资源恰好存在一份，链接脚本和常量表就能避免冲突；动态 Thread、可增长 slab、
 临时设备缓冲和模块映射出现后，地址本身也成为必须申请、持有和归还的资源。
@@ -931,20 +838,15 @@ panic 并禁止 \code{READY}，才能说明权限执行、异常入口和停止�
 地址翻译成物理地址。以下三种状态在硬件看来都可能是 present=0，软件含义却
 完全不同：
 
-\begin{longtable}{L{0.24\textwidth}L{0.22\textwidth}L{0.40\textwidth}}
-\toprule
-\textbf{软件状态} & \textbf{叶 PTE} & \textbf{能否交给新调用者}\\
-\midrule
+\begin{osgridlongtable}{L{0.24\textwidth}L{0.22\textwidth}L{0.40\textwidth}}
+\textbf{软件状态} & \textbf{叶 PTE} & \textbf{能否交给新调用者}\\ \hline
 \endfirsthead
-\toprule
-\textbf{软件状态} & \textbf{叶 PTE} & \textbf{能否交给新调用者}\\
-\midrule
+\textbf{软件状态} & \textbf{叶 PTE} & \textbf{能否交给新调用者}\\ \hline
 \endhead
-空闲地址 & not-present & 可以，由 KVA 分配器提交所有权\\
-事务准备中 & not-present & 不可以，调用者正在取得物理后备或构造页表\\
-guard page & 永久 not-present & 不可以，它属于栈区间并负责捕获越界\\
-\bottomrule
-\end{longtable}
+空闲地址 & not-present & 可以，由 KVA 分配器提交所有权\\ \hline
+事务准备中 & not-present & 不可以，调用者正在取得物理后备或构造页表\\ \hline
+guard page & 永久 not-present & 不可以，它属于栈区间并负责捕获越界\\ \hline
+\end{osgridlongtable}
 
 若通过遍历 PTE 寻找 not-present 空洞，两个并发或交错事务都可能在首个映射
 提交前得到同一地址；guard 也会被错误复用。KVA（kernel virtual address）
@@ -957,31 +859,25 @@ guard page & 永久 not-present & 不可以，它属于栈区间并负责捕获�
 调试 guard 与并发回收。本项目先冻结串行、有界、可完整证明的区间状态机，
 不复制尚无调用场景的性能层。
 
-\subsection{32 TiB 窗口怎样落在四级页表中}
-
+\topic{32 TiB 窗口怎样落在四级页表中}
 四级分页使用 48 位 canonical 线性地址：bit 63..48 必须全部复制 bit 47。
 高半区因此从 \code{0xFFFF800000000000} 延伸到
 \code{0xFFFFFFFFFFFFFFFF}。当前内核把 direct-map 与 KVA 排列为：
 
-\begin{longtable}{L{0.20\textwidth}L{0.24\textwidth}L{0.24\textwidth}L{0.18\textwidth}}
-\toprule
-\textbf{区域} & \textbf{起点} & \textbf{末端（不含）} & \textbf{PML4 槽}\\
-\midrule
+\begin{osgridlongtable}{L{0.20\textwidth}L{0.24\textwidth}L{0.24\textwidth}L{0.18\textwidth}}
+\textbf{区域} & \textbf{起点} & \textbf{末端（不含）} & \textbf{PML4 槽}\\ \hline
 \endfirsthead
-\toprule
-\textbf{区域} & \textbf{起点} & \textbf{末端（不含）} & \textbf{PML4 槽}\\
-\midrule
+\textbf{区域} & \textbf{起点} & \textbf{末端（不含）} & \textbf{PML4 槽}\\ \hline
 \endhead
 direct-map &
 \code{FFFF888000000000} &
 \code{FFFFC88000000000} &
-273--400\\
+273--400\\ \hline
 KVA &
 \code{FFFFC90000000000} &
 \code{FFFFE90000000000} &
-402--465\\
-\bottomrule
-\end{longtable}
+402--465\\ \hline
+\end{osgridlongtable}
 
 一个 PML4 槽覆盖 512 GiB，64 个槽正好覆盖 32 TiB。KVA 起点的四级索引是
 \((402,0,0,0)\)，exclusive 末端是 \((466,0,0,0)\)。起点、长度和末端都在
@@ -998,8 +894,7 @@ KVA &
 映射；它只让窗口零偏移误用具有稳定的软件诊断，而不是直接成为第一个正常
 对象。
 
-\subsection{为什么 32 TiB 没有配一张逐页位图}
-
+\topic{为什么 32 TiB 没有配一张逐页位图}
 若每个虚拟页只用一位表示“占用”，元数据也需要
 \[
  \frac{2^{33}}{8}=2^{30}\ \mathrm{bytes}=1\ \mathrm{GiB}.
@@ -1013,15 +908,12 @@ KVA &
 字段：
 
 \begin{center}
-\begin{tabular}{lll}
-\toprule
-字段 & 含义 & 有效约束\\
-\midrule
-\code{begin\_address} & 区间首虚拟地址 & 4 KiB 对齐、位于窗口内\\
-\code{page\_count} & 区间页数 & 非零、换算字节不溢出\\
-\code{kind} & Unused/Allocation/Reservation & 活动前缀不能为 Unused\\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{lll}
+字段 & 含义 & 有效约束\\ \hline
+\code{begin\_address} & 区间首虚拟地址 & 4 KiB 对齐、位于窗口内\\ \hline
+\code{page\_count} & 区间页数 & 非零、换算字节不溢出\\ \hline
+\code{kind} & Unused/Allocation/Reservation & 活动前缀不能为 Unused\\ \hline
+\end{osgridtabular}
 \end{center}
 
 总大小为 \(256\times24=6144\) 字节。数组前部是按起始地址严格递增的活动
@@ -1047,8 +939,7 @@ KVA &
 尾部，复杂度为 \(O(N)\)。当前串行规模下，完整可检查的不变量比尚未被测量
 需要的红黑树更重要。
 
-\subsection{best-fit 必须对齐绝对虚拟页号}
-
+\topic{best-fit 必须对齐绝对虚拟页号}
 请求页数 \(n\)、对齐页数 \(a\) 时，\(a\) 必须是二的幂。对一个字节起点为
 \(g\) 的 free gap，先得到绝对虚拟页号
 \[
@@ -1069,8 +960,7 @@ KVA &
 任何失败都保持数组、统计和输出 range 原值。这样上层跨资源事务可以根据
 明确状态执行回滚，不会拿到“返回失败但部分有效”的地址。
 
-\subsection{reservation 与精确释放阻止所有权猜测}
-
+\topic{reservation 与精确释放阻止所有权猜测}
 \code{ReserveRange} 用来表达固定软件占用。它与普通申请共享页对齐、窗口、
 canonical、溢出和重叠检查，但不能由 \code{TryRelease} 释放。重叠检查先于
 元数据容量检查，因此即使 256 项已满，重复保留已有地址也仍报告
@@ -1092,8 +982,7 @@ canonical、溢出和重叠检查，但不能由 \code{TryRelease} 释放。重�
 \]
 当前分配页与保留页之和不得超过 \(2^{33}\)，当前值不得超过各自峰值。
 
-\subsection{Validate 从唯一有主集合重建全部事实}
-
+\topic{Validate 从唯一有主集合重建全部事实}
 \code{Validate} 不申请临时内存。它先验证窗口本身，再沿活动前缀逐项证明：
 
 \begin{enumerate}[label=\arabic*.]
@@ -1109,8 +998,7 @@ canonical、溢出和重叠检查，但不能由 \code{TryRelease} 释放。重�
 双结构漂移。若未来为性能加入平衡树或分段索引，它必须被视为可重建的派生
 结构，完整验证仍应回到唯一所有权集合。
 
-\subsection{跨三层创建必须正向提交、逆向撤销}
-
+\topic{跨三层创建必须正向提交、逆向撤销}
 取得 KVA 只是跨层事务的第一步。一个带 guard 的动态对象遵循：
 
 \begin{verbatim}
@@ -1141,8 +1029,7 @@ unpublish object
 一张叶撤销时回收 PT 与 PD。因此物理页、buddy、KVA 与页表自身都进入可解释
 的所有权基线；唯一保留的 PDPT 是共享协议，不是被忽略的泄漏。
 
-\subsection{六页整机事务把 guard、权限和回收连成一条证据链}
-
+\topic{六页整机事务把 guard、权限和回收连成一条证据链}
 预热后，QEMU 中的正式 KVA 自检执行：
 
 \begin{enumerate}[label=\arabic*.]
@@ -1184,8 +1071,7 @@ unpublish object
 申请、描述符移动、映射和释放热路径不逐步打串口。日志只证明最终事务和守恒，
 不会让 115200 波特 I/O 改变分配器时序。
 
-\subsection{三类宿主模型与真实处理器路径各自证明什么}
-
+\topic{三类宿主模型与真实处理器路径各自证明什么}
 单元测试覆盖未初始化、无存储、零容量、canonical 空洞、保留重叠、best-fit、
 绝对对齐、输出失败原子性、描述符与地址分别耗尽、精确释放错误和人为破坏
 元数据。它证明边界和每个状态码，但不宣称页表真正执行。
@@ -1212,10 +1098,7 @@ Thread 栈及其他启动事务，不改变区间算法。
 持有 KVA、物理帧和叶映射的真实调度资源。性能树、per-CPU KVA cache 和延迟
 shootdown 必须等并发契约与测量证据出现后再加入。
 
-\section{v1.1 页表空分支回收：硬件树之上的软件所有权}
-
-\subsection{四级结构来自地址空间扩张，不来自对象生命周期}
-
+\topic{四级结构来自地址空间扩张，不来自对象生命周期}
 80386 的 32 位分页已经采用目录加页表的层次结构，避免为整个线性地址空间
 预先保存逐页表项。PAE 把表项扩为 64 位并增加层级，x86-64 又让常见四级
 模式用四组 9 位索引覆盖 48 位 canonical 线性地址。这个历史方向始终在解决
@@ -1225,16 +1108,13 @@ shootdown 必须等并发契约与测量证据出现后再加入。
 在四级 4 KiB 模式中，每张表恰有 512 个 8 字节项，所以正好占一个 4096
 字节物理页。各层覆盖范围为：
 
-\begin{longtable}{@{}lll@{}}
-\toprule
-层 & 一个表项覆盖 & 一张完整表覆盖\\
-\midrule
-PT / level 1 & \(4\ \mathrm{KiB}\) & \(2\ \mathrm{MiB}\)\\
-PD / level 2 & \(2\ \mathrm{MiB}\) & \(1\ \mathrm{GiB}\)\\
-PDPT / level 3 & \(1\ \mathrm{GiB}\) & \(512\ \mathrm{GiB}\)\\
-PML4 / level 4 & \(512\ \mathrm{GiB}\) & \(256\ \mathrm{TiB}\) canonical envelope\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{@{}lll@{}}
+层 & 一个表项覆盖 & 一张完整表覆盖\\ \hline
+PT / level 1 & \(4\ \mathrm{KiB}\) & \(2\ \mathrm{MiB}\)\\ \hline
+PD / level 2 & \(2\ \mathrm{MiB}\) & \(1\ \mathrm{GiB}\)\\ \hline
+PDPT / level 3 & \(1\ \mathrm{GiB}\) & \(512\ \mathrm{GiB}\)\\ \hline
+PML4 / level 4 & \(512\ \mathrm{GiB}\) & \(256\ \mathrm{TiB}\) canonical envelope\\ \hline
+\end{osgridlongtable}
 
 CR3 给出根表物理地址。处理器从虚拟地址取出 \(47{:}39\)、\(38{:}30\)、
 \(29{:}21\)、\(20{:}12\) 四组索引，最后把 \(11{:}0\) 当页内偏移。每个
@@ -1246,8 +1126,7 @@ CR3 给出根表物理地址。处理器从虚拟地址取出 \(47{:}39\)、\(38
 对象生命周期属于操作系统策略。代价是软件不能从某个非叶项孤立地推出子表
 是否独占。
 
-\subsection{复制 PML4 项共享的是子树，不是子树副本}
-
+\topic{复制 PML4 项共享的是子树，不是子树副本}
 当前进程地址空间为了共享内核映射，会把内核根中的高半 PML4 项按值复制到
 新的进程 PML4。复制的 64 位值仍包含同一 PDPT 物理地址：
 
@@ -1273,26 +1152,22 @@ PDPT 的根共同观察到，所以它指向的空 PD 以及更低的 PT 可以�
 空只说明没有有效内容；回收还必须证明当前管理器拥有最后一个硬件引用。
 \end{quote}
 
-\subsection{三种根类型把隐含关系变成构造契约}
-
+\topic{三种根类型把隐含关系变成构造契约}
 \code{PageTableManager} 构造时必须显式接收
 \code{PageTableRootKind}，不能从虚拟地址、当前 CR3 或调用栈猜测：
 
-\begin{longtable}{@{}p{0.18\textwidth}p{0.42\textwidth}p{0.30\textwidth}@{}}
-\toprule
-根类型 & 允许修改的分支 & 最深回收边界\\
-\midrule
+\begin{osgridlongtable}{@{}p{0.18\textwidth}p{0.42\textwidth}p{0.30\textwidth}@{}}
+根类型 & 允许修改的分支 & 最深回收边界\\ \hline
 \code{Exclusive}
 & 整棵树都只属于该管理器
-& PT、PD、PDPT\\
+& PT、PD、PDPT\\ \hline
 \code{KernelShared}
 & 内核根中的映射；下级父项变化对所有借用者可见
-& PT、PD；PDPT 保持稳定\\
+& PT、PD；PDPT 保持稳定\\ \hline
 \code{Process}
 & PML4[0] 下的用户程序分支和 PML4[255] 下的用户栈分支
-& 程序低端克隆 PDPT 留到进程销毁；用户栈可回收到 PDPT\\
-\bottomrule
-\end{longtable}
+& 程序低端克隆 PDPT 留到进程销毁；用户栈可回收到 PDPT\\ \hline
+\end{osgridlongtable}
 
 进程低地址还有一个细节。PML4[0] 指向克隆的 PDPT，其中只有约定的
 PDPT[1] 用户程序分支归进程修改；其余低端内容可能来自启动兼容映射。用户栈
@@ -1304,8 +1179,7 @@ PDPT[1] 用户程序分支归进程修改；其余低端内容可能来自启动
 无法编译。相比默认成“最宽松”或根据地址猜测，这会把架构判断前移到代码
 评审和单元测试。
 
-\subsection{“空”必须表示其余 511 个原始项逐字为零}
-
+\topic{“空”必须表示其余 511 个原始项逐字为零}
 一个表是否可回收，不能只数 Present 位。现代操作系统经常在 non-present
 PTE 中保存 swap 类型、文件页状态或诊断标记；处理器不继续遍历，不代表软件
 没有保存事实。当前项目尚未实现 swap，也仍采用更强定义：排除马上要解除的
@@ -1326,8 +1200,7 @@ PT except target PTE is all-zero
 \code{UnexpectedLargePage}，不把不同粒度的数据所有权偷偷塞进 4 KiB
 接口。
 
-\subsection{撤销先完整预检，再一次性断开}
-
+\topic{撤销先完整预检，再一次性断开}
 直接“边走边清”会产生难以回滚的半状态。假设已经清掉 PTE，走到 PD 时才
 发现父项指向未拥有或越界物理帧；调用方既失去映射，又无法证明中间树安全。
 当前撤销因此分为两阶段。
@@ -1364,8 +1237,7 @@ zero and release PT, then PD, then permitted PDPT
 表帧数。数据页由上层对象拥有，不由撤销接口释放，也不计入结果。这使调用者
 可以精确区分“PTE 已清但共享表仍存在”和“本次真正回收了页表帧”。
 
-\subsection{映射也必须能撤销父项权限与新表}
-
+\topic{映射也必须能撤销父项权限与新表}
 映射一张原先不存在的叶页，可能依次成功创建 PDPT、PD，却在申请 PT 时耗尽。
 旧式实现若立即链接每张新表，只返回
 \code{FrameAllocationFailed}，就会永久留下两个空页。另一个更隐蔽的例子是
@@ -1391,8 +1263,7 @@ table_created           whether this transaction allocated it
 旧事实，再改变共享结构。区别是它使用固定长度栈上记录，不分配内存，也没有
 持久化恢复需求。
 
-\subsection{查询和进程整体销毁也必须服从同一边界}
-
+\topic{查询和进程整体销毁也必须服从同一边界}
 \code{QueryPage} 是只读接口，却不能无条件解引用页表地址。损坏或已释放的
 父项同样会让宿主测试越界、让目标内核读取任意 direct-map 内容。因此查询在
 每一级复用范围、对齐、环和精确 order-0 所有权验证。命中 4 KiB 页时返回
@@ -1409,8 +1280,7 @@ table_created           whether this transaction allocated it
 必须在释放任何相关表帧前返回 \code{InvalidTableFrame}。测试随后恢复原项并
 重试销毁，用同一个对象证明拒绝路径没有偷改所有权状态。
 
-\subsection{从单叶到十万步模型的证据梯度}
-
+\topic{从单叶到十万步模型的证据梯度}
 页表回收新增三类宿主测试。单元测试分别建立三种根，覆盖重复初始化、单叶
 完整级联、同 PT 相邻叶、共享 PDPT 保留、进程借用拒绝、程序与栈分支差异、
 申请耗尽回滚、所有权破坏与原址修复、越界表地址、查询祖先环、递归销毁
@@ -1445,10 +1315,7 @@ order-0 allocation，还没有 PageTable 类型标签；\code{KernelShared}
 shootdown、页表锁或 RCU 读者。这些属于 Process/Thread 与并发地址空间模型
 之后的独立问题，不应削弱本阶段已经闭合的单核所有权契约。
 
-\section{v1.1 动态内核栈把地址许诺变成可回收调度资源}
-
-\subsection{特权切换为什么需要一块不能自我销毁的栈}
-
+\topic{特权切换为什么需要一块不能自我销毁的栈}
 x86 的任务状态段诞生于硬件任务切换时代。现代 64 位内核通常不使用 TSS
 保存整份任务现场，但处理器从低特权级进入高特权级时，仍需要一个不受用户
 RSP 控制的可信落脚点。当前系统在 CPL3 收到中断、异常或
@@ -1467,8 +1334,7 @@ v0.9 为了先证明抢占调度，给四个 PCB 各编译进一块固定 20 KiB
 本身迁移成跨 KVA、buddy 和页表三层的动态对象。这样 v1.2 把 PCB 拆为
 Process/Thread 时，可以迁移所有者，而不必再次发明栈资源协议。
 
-\subsection{六页布局同时表达容量和两侧故障边界}
-
+\topic{六页布局同时表达容量和两侧故障边界}
 一个动态内核栈取得 6 个连续虚拟页，但只有中间 4 页存在叶映射：
 
 \begin{center}
@@ -1503,8 +1369,7 @@ Process/Thread 时，可以迁移所有者，而不必再次发明栈资源协�
 紧贴栈顶，错误的向上访问可能静默写进另一个内核对象；双 guard 用额外 4 KiB
 虚拟地址换取对称且稳定的故障边界，并不消耗额外物理 RAM。
 
-\subsection{虚拟连续不要求四个物理帧连续}
-
+\topic{虚拟连续不要求四个物理帧连续}
 \code{KernelStack} 保存一个六页
 \code{KernelVirtualAddressRange}、四个 \code{PhysicalFrame}、已映射
 页数和 active 状态。管理器对四个 data 页分别调用 order-0 物理分配：
@@ -1525,19 +1390,16 @@ cache enabled；任何 user、executable 或 cache-disabled 偏差都由完整�
 Thread 持有，不等于 PID、TID 或数组身份；栈管理器本身不理解调度状态或
 用户地址空间。统计记录：
 
-\begin{longtable}{L{0.31\textwidth}L{0.53\textwidth}}
-\toprule
-\textbf{字段} & \textbf{必须成立的含义}\\
-\midrule
-\code{active\_stack\_count} & 当前 active 槽数量\\
-\code{active\_mapped\_page\_count} & active 数量乘 4\\
-\code{active\_guard\_page\_count} & active 数量乘 2，由前两者派生\\
-\code{successful\_creation\_count} & 从初始化以来完整发布的栈数量\\
-\code{destruction\_count} & 完整撤销并清空槽的数量\\
-\code{peak\_active\_stack\_count} & 历史同时活动栈峰值\\
-\code{peak\_active\_mapped\_page\_count} & 历史物理后备页峰值\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.31\textwidth}L{0.53\textwidth}}
+\textbf{字段} & \textbf{必须成立的含义}\\ \hline
+\code{active\_stack\_count} & 当前 active 槽数量\\ \hline
+\code{active\_mapped\_page\_count} & active 数量乘 4\\ \hline
+\code{active\_guard\_page\_count} & active 数量乘 2，由前两者派生\\ \hline
+\code{successful\_creation\_count} & 从初始化以来完整发布的栈数量\\ \hline
+\code{destruction\_count} & 完整撤销并清空槽的数量\\ \hline
+\code{peak\_active\_stack\_count} & 历史同时活动栈峰值\\ \hline
+\code{peak\_active\_mapped\_page\_count} & 历史物理后备页峰值\\ \hline
+\end{osgridlongtable}
 
 累计计数必须满足：
 \[
@@ -1550,8 +1412,7 @@ Thread 持有，不等于 PID、TID 或数组身份；栈管理器本身不理�
 峰值只增不减，当前值不得超过峰值。64 位计数在提交前检查溢出，不能让一次
 成功操作把守恒式绕回零。
 
-\subsection{创建是一笔直到发布前都可完整撤销的事务}
-
+\topic{创建是一笔直到发布前都可完整撤销的事务}
 \code{TryCreate(slot)} 先验证管理器、槽位、依赖分配器和统计，再执行：
 
 \begin{enumerate}[label=\arabic*.]
@@ -1588,8 +1449,7 @@ on any failure:
 它当成普通“内存不足”继续运行。失败输出不发布半有效 \code{KernelStack}，
 目标槽仍保持全零。
 
-\subsection{精确 KVA 所有权阻止部分销毁}
-
+\topic{精确 KVA 所有权阻止部分销毁}
 仅验证六页都在 KVA 窗口内还不够。若其他错误代码提前释放了栈的 KVA
 描述符，PTE 和物理帧可能仍然存在；此时销毁函数若先撤映射、归还物理帧，
 最后才发现 KVA 不再归自己，就会留下无法重试的半销毁对象。
@@ -1611,8 +1471,7 @@ clear the slot and commit statistics
 版本必须把“验证后执行”放入同一个锁或代际协议，否则预检成功不能阻止另一个
 CPU 在提交前改变页表或 KVA 所有权。
 
-\subsection{高半区共享让所有进程在同一虚拟地址看见栈}
-
+\topic{高半区共享让所有进程在同一虚拟地址看见栈}
 动态栈位于 KVA 窗口，对应 PML4 槽 402--465。创建进程根时，页表管理器复制
 永久内核 PML4 的高半区项目；因此每个进程 CR3 都通过共享的内核页表子树看到
 相同栈映射。栈不是用户地址空间中的私有叶页，也不需要为四个进程重复建立四份
@@ -1630,8 +1489,7 @@ CPU 在提交前改变页表或 KVA 所有权。
 其他进程根会观察同一结构。单核路径通过 CR3 切换和 \code{INVLPG} 处理当前
 TLB；SMP 后必须跟踪哪些 CPU 运行过相关根，并在物理帧复用前完成 shootdown。
 
-\subsection{176 字节首次现场必须完全落在最后一个 data 页}
-
+\topic{176 字节首次现场必须完全落在最后一个 data 页}
 \code{UserPrivilegeFrame} 长 176 字节。创建进程时，运行时读取管理器发布的
 栈顶 \(t\)，按 16 字节 ABI 对齐后在其下方构造首次现场：
 \[
@@ -1646,8 +1504,7 @@ CR3，并把 TSS.RSP0 设置为该动态栈顶。抢占切换时返回的另一�
 RSP0 属于同一个目标进程；若只换 CR3 不换 RSP0，下次用户态陷入会把现场压到
 旧进程的栈上。
 
-\subsection{安全点回收把逻辑死亡和物理释放分开}
-
+\topic{安全点回收把逻辑死亡和物理释放分开}
 用户 exit 或用户异常发生时，C++ 处理函数正在终止进程的动态栈上运行。
 \code{CompleteCurrentProcess} 只完成以下工作：
 
@@ -1684,8 +1541,7 @@ RSP，并用 \code{Contains} 检查一个 64 位探针范围；只要当前 RSP 
 永久根里同样存在。“进程状态已经 Terminated”也不能替代检查，因为状态是
 调度事实，不是 CPU 当前栈指针的物理事实。安全点必须由真实处理器状态证明。
 
-\subsection{完整校验从槽集合重建跨层事实}
-
+\topic{完整校验从槽集合重建跨层事实}
 \code{KernelStackManager::Validate} 不只比较计数。它遍历全部 512 槽并
 重新证明：
 
@@ -1705,8 +1561,7 @@ RSP，并用 \code{Contains} 检查一个 64 位探针范围；只要当前 RSP 
 但 KVA 描述符已丢失，在页表看来可以访问，在 buddy 看来帧也已分配，只有联合
 所有权协议能判为损坏。
 
-\subsection{三层测试和三条整机路径怎样分工}
-
+\topic{三层测试和三条整机路径怎样分工}
 单元测试覆盖初始化失败、非法槽、重复创建/销毁、地址窗口耗尽、物理帧耗尽、
 页表冲突、创建回滚、读出、范围包含、双 guard、权限、非连续物理帧、统计和
 人为破坏。测试先外部释放一个物理帧，证明 PTE 仍在也不能冒充所有权；原址
@@ -1751,8 +1606,7 @@ QEMU 正常路径、用户 \#UD 隔离路径和用户 \#PF 隔离路径都必须
 单一常数；验收要求 successful creations 与 destructions 相等、active 为零，
 并要求 peak mapped pages 等于 peak active stacks 的四倍。
 
-\subsection{当前完成边界与下一资源问题}
-
+\topic{当前完成边界与下一资源问题}
 动态栈已经消除了编译期四份 20 KiB 进程栈存储。v1.1 最初由四个 PCB 保存
 管理器槽索引，存储上限为 256；v1.2 已把所有者迁移为 Thread，并把槽上限
 提升为 512。管理器仍是单 BSP、无内部锁；栈大小固定 16 KiB，不支持按需
@@ -1761,10 +1615,9 @@ PDPT 回收已经完成，并由页表帧统计证明动态栈反复创建/销�
 中间表基础设施。v1.1 的最后一步进一步把这些局部结论收束为通用引用计数、
 可组合的作用域回滚与跨层资源快照。
 
-\section{v1.1 通用资源生命周期把“已经释放”变成可验证结论}
+\section{资源生命周期、回滚与可验证回收}
 
-\subsection{资源管理的历史困难不是缺少一个 free 函数}
-
+\topic{资源管理的历史困难不是缺少一个 free 函数}
 一个内核对象很少只拥有一块同质内存。动态内核栈同时占有 KVA 区间、四个
 物理页、四张叶映射和管理器槽；用户进程还会占有页表根、用户代码页、用户栈、
 描述符和调度现场。创建函数执行到一半失败时，只能释放已经取得的部分，而且
@@ -1806,8 +1659,7 @@ C++ 通过 RAII、标准容器和异常展开减轻这类重复；freestanding K
 前者负责单次调用内的失败展开，中者负责多个所有者之间的销毁时机，后者负责
 发现局部检查互相抵消或遗漏的泄漏。三者不能相互替代。
 
-\subsection{ScopeRollback 是无分配的显式小事务}
-
+\topic{ScopeRollback 是无分配的显式小事务}
 \code{ScopeRollback} 不持有动态容器。调用者提供固定
 \code{ScopeRollbackAction} 数组，每项只保存一个
 \code{bool (*)(void*) noexcept} 操作和一个上下文指针。它的状态机为：
@@ -1853,8 +1705,7 @@ rollback.Commit();
 故意保留所有其他可独立归还的 frame 和 KVA。上层收到失败后仍不能把候选对象
 当作干净状态继续使用。
 
-\subsection{九项动态栈补偿动作如何推导}
-
+\topic{九项动态栈补偿动作如何推导}
 动态栈创建取得一次 KVA 和四组“物理页加叶映射”。在取得顺序中，每个数据页
 先申请并清零 frame，再建立映射；对应的最大补偿动作数是：
 \[
@@ -1864,15 +1715,12 @@ rollback.Commit();
 \]
 
 \begin{center}
-\begin{tabular}{cll}
-\toprule
-登记次序 & 正向步骤 & 回滚时的动作\\
-\midrule
-0 & 取得六页 KVA & 精确释放 KVA allocation\\
-1,3,5,7 & 取得一个 order-0 frame & 清零并释放该 frame\\
-2,4,6,8 & 建立一个数据叶映射 & 撤销对应 PTE\\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{cll}
+登记次序 & 正向步骤 & 回滚时的动作\\ \hline
+0 & 取得六页 KVA & 精确释放 KVA allocation\\ \hline
+1,3,5,7 & 取得一个 order-0 frame & 清零并释放该 frame\\ \hline
+2,4,6,8 & 建立一个数据叶映射 & 撤销对应 PTE\\ \hline
+\end{osgridtabular}
 \end{center}
 
 动作数组按正向取得顺序登记，执行时从 8 走到 0，所以每个已映射页先 unmap，
@@ -1885,8 +1733,7 @@ KVA、前两个 frame 和前两个 PTE 的动作；未取得资源没有虚构�
 不可回退的正式销毁。创建失败展开和已发布对象销毁是不同状态转换；把二者
 强行塞进一个通用函数会模糊“候选从未可见”和“活动对象正在消失”的边界。
 
-\subsection{ReferenceCounter 冻结强引用的最小语义}
-
+\topic{ReferenceCounter 冻结强引用的最小语义}
 共享对象需要回答“还有多少所有者保证其存活”。本阶段以明确的 64 位状态机
 定义强引用：
 
@@ -1921,35 +1768,29 @@ R\in[0,2^{64}-1],\qquad
 选择管理器锁串行化强引用和最后释放，并明确不声称已有弱引用或 RCU；真正的
 多核内存序仍留给 v2 对应阶段。
 
-\subsection{ResourceSnapshot 为什么排除历史累计量}
-
+\topic{ResourceSnapshot 为什么排除历史累计量}
 一次资源事务成功创建再销毁后，当前活动量应恢复，但历史计数合理增加。若把
 \code{successful\_allocations} 或峰值放入泄漏比较，每一个正确完成的事务
 都会被误报。因此快照只保存稳定当前所有权，字段分成六组：
 
 \small
-\noindent\begin{tabularx}{\textwidth}{L{0.14\textwidth}L{0.12\textwidth}X}
-\toprule
-组 & 字段数量 & 当前量\\
-\midrule
-frame & 4 & managed、free、allocated、reserved（unavailable 由差值推导）\\
-buddy & 1 & active blocks\\
-heap & 4 & capacity、consumed、active requested bytes、allocation count\\
-KVA & 7 & capacity/free/allocated/reserved page、活动描述符/申请/保留\\
-kernel stack & 4 & slot capacity、active stack、mapped page、guard page\\
-未来对象 & 6 & Process、Thread、FileDescription、Vnode、CachePage、BlockRequest\\
-\midrule
-合计 & 26 & 使用低 26 位差异掩码\\
-\bottomrule
-\end{tabularx}
+\noindent\begin{osgridtabularx}{\textwidth}{L{0.14\textwidth}L{0.12\textwidth}X}
+组 & 字段数量 & 当前量\\ \hline
+frame & 4 & managed、free、allocated、reserved（unavailable 由差值推导）\\ \hline
+buddy & 1 & active blocks\\ \hline
+heap & 4 & capacity、consumed、active requested bytes、allocation count\\ \hline
+KVA & 7 & capacity/free/allocated/reserved page、活动描述符/申请/保留\\ \hline
+kernel stack & 4 & slot capacity、active stack、mapped page、guard page\\ \hline
+未来对象 & 6 & Process、Thread、FileDescription、Vnode、CachePage、BlockRequest\\ \hline
+合计 & 26 & 使用低 26 位差异掩码\\ \hline
+\end{osgridtabularx}
 \normalsize
 
 未来六项在 v1.1 为零，但字段位置现在就固定，使后续阶段能接入同一个比较器，
 不必另造一条“进程计数看起来归零”的旁路验收。快照不是永久用户 ABI；字段
 语义改变仍需 ADR 和测试同步更新。
 
-\subsection{内部守恒先于前后比较}
-
+\topic{内部守恒先于前后比较}
 两个同样损坏的快照可能逐字段相等。若只比较 before 和 after，进入事务前
 已经存在的错误会被当作“没有变化”。因此构造和比较都先检查每个管理器的
 内部方程：
@@ -1992,8 +1833,7 @@ buddy 活动页和活动块不能超过 frame allocated；KVA 活动对象数不
 \code{static\_assert} 保证小于 64，避免未来新增字段后左移越界。零差异必须
 同时满足 \(D=0\) 和 \(C=0\)。
 
-\subsection{目标机有两道不同的生命周期边界}
-
+\topic{目标机有两道不同的生命周期边界}
 第一道位于内存初始化尾部。管理器在保留的最后一个槽创建真实六页动态栈，
 外层 \code{ScopeRollback} 登记销毁动作；随后验证栈布局、引用计数状态机和
 回滚状态，显式执行回滚，再拍摄 after 快照。只有 26 字段恢复才输出：
@@ -2021,18 +1861,14 @@ buddy 活动页和活动块不能超过 frame allocated；KVA 活动对象数不
 五次创建、五次销毁；自检栈在进程阶段前已经释放，峰值仍是四个活动栈和
 十六个映射页。区分“累计五次”和“峰值四个”正是当前量与历史量分离的实例。
 
-\subsection{四层测试怎样避免同源自证}
-
-\noindent\begin{tabularx}{\textwidth}{L{0.16\textwidth}L{0.18\textwidth}X}
-\toprule
-层级 & 输入规模 & 主要证明\\
-\midrule
-原语单元 & 边界与故障枚举 & 状态、输出原子性、逆序和幂等拒绝\\
-固定种子随机 & 100000 个事务 & 与独立动作/资源模型逐步一致\\
-组合集成 & 四个真实动态栈 & frame/buddy/KVA/PTE/stack 同时变化并恢复\\
-QEMU 系统 & 256 MiB 与 64 GiB & 真实 CPU、页表、Shell、IPC、文件系统与回收\\
-\bottomrule
-\end{tabularx}
+\topic{四层测试怎样避免同源自证}\par
+\noindent\begin{osgridtabularx}{\textwidth}{L{0.16\textwidth}L{0.18\textwidth}X}
+层级 & 输入规模 & 主要证明\\ \hline
+原语单元 & 边界与故障枚举 & 状态、输出原子性、逆序和幂等拒绝\\ \hline
+固定种子随机 & 100000 个事务 & 与独立动作/资源模型逐步一致\\ \hline
+组合集成 & 四个真实动态栈 & frame/buddy/KVA/PTE/stack 同时变化并恢复\\ \hline
+QEMU 系统 & 256 MiB 与 64 GiB & 真实 CPU、页表、Shell、IPC、文件系统与回收\\ \hline
+\end{osgridtabularx}
 
 固定种子 \code{0x5245534F55524345} 不是随机演示。参考模型独立保存每个
 资源是否活动、动作登记顺序和预期终态；被测实现只暴露公共接口。每轮随机选择
@@ -2050,8 +1886,7 @@ not-present guard；逆序销毁后差异掩码必须为零。
 启动与历史故障路径。三种 RAM 规格只改变 QEMU 参数，不通过条件编译切回固定
 资源表。
 
-\subsection{可观测性与阶段完成边界}
-
+\topic{可观测性与阶段完成边界}
 引用获取、补偿动作、逐页 map/unmap 都是热路径，不逐次输出串口。日志只在
 整个事务提交或完整回收后输出稳定标记；QEMU runner 对 tracked field、
 changed mask 和通过标记做精确次数检查，并继续给每行附加宿主单调相对时间。
@@ -2069,7 +1904,7 @@ v1.2 随后把 Process/Thread 当前量接入既有快照；v1.4 又以管理器
 单核语义，再扩展并发，不用一个未经定义的 atomic 字段制造“已经线程安全”
 的错觉。
 
-\section{v0.6 高半区早期堆用最小策略验证对象分配}
+\section{内核堆、类型缓存与内存验证}
 
 heap 虚拟基址为 \code{0xFFFF800000000000}，容量 64 KiB。页表管理器为
 16 个虚拟页分别取得物理帧；这些帧不要求连续，因为虚拟地址负责把它们组织成
@@ -2099,10 +1934,7 @@ v0.6 目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 �
 未来可释放分配器不能在持有自身锁时调用可能再次分配的日志格式化。panic 和
 低内存路径继续使用预分配缓冲与串口最小输出，避免诊断代码递归触发原故障。
 
-\section{v1.1 用边界标记把早期堆推进到完整生命周期}
-
-\subsection{为什么“能够分配”还不是资源管理}
-
+\topic{为什么“能够分配”还不是资源管理}
 单调堆的 consumed 指针只回答“下一块从哪里开始”。它没有记录一个返回指针
 对应多大的物理块，也没有办法判断相邻空间是否空闲，因此不存在可靠的
 \code{free}。这不是少写一个接口的问题，而是缺少恢复所有权所需的信息。
@@ -2113,23 +1945,19 @@ v0.6 目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 �
 表现为耗尽。v1.1 因而分别建立通用字节块和 buddy 页块的申请、释放与守恒，
 再在其上推进 KVA 与类型缓存；每层只回答一种所有权问题。
 
-\subsection{块头同时服务物理邻接和空闲集合}
-
+\topic{块头同时服务物理邻接和空闲集合}
 64 KiB 后备虚拟区间保持不变，块头固定为 48 字节并按 16 字节对齐：
 
 \begin{center}
-\begin{tabular}{lll}
-\toprule
-字段 & 宽度 & 作用\\
-\midrule
-\code{size_bytes} & 64 bit & 当前物理块的完整跨度\\
-\code{previous_block_size_bytes} & 64 bit & 从当前头反向定位前块\\
-\code{requested_size_bytes} & 64 bit & 区分调用者负载与内部开销\\
-\code{state_signature} & 64 bit & 区分 free、allocated 与旧 released 头\\
-\code{previous_free_block} & 64 bit & 空闲链反向链接\\
-\code{next_free_block} & 64 bit & 空闲链正向链接\\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{lll}
+字段 & 宽度 & 作用\\ \hline
+\code{size_bytes} & 64 bit & 当前物理块的完整跨度\\ \hline
+\code{previous_block_size_bytes} & 64 bit & 从当前头反向定位前块\\ \hline
+\code{requested_size_bytes} & 64 bit & 区分调用者负载与内部开销\\ \hline
+\code{state_signature} & 64 bit & 区分 free、allocated 与旧 released 头\\ \hline
+\code{previous_free_block} & 64 bit & 空闲链反向链接\\ \hline
+\code{next_free_block} & 64 bit & 空闲链正向链接\\ \hline
+\end{osgridtabular}
 \end{center}
 
 物理块链与空闲链不是同一件事。前者必须无缝覆盖整个 heap，包括活动块；
@@ -2146,8 +1974,7 @@ v0.6 目标自检先请求 64 字节、16 字节对齐对象，再请求 4096 �
 64 字节块，空间效率不高；但每个字段都可在 GDB 和一致性检查器中直接解释。
 后续固定尺寸热对象交给 type cache，通用 heap 不需要同时承担 slab 的职责。
 
-\subsection{对齐会同时产生前缀、活动块和后缀}
-
+\topic{对齐会同时产生前缀、活动块和后缀}
 请求负载长度 \(n\)、对齐 \(a\) 时，先取
 \[
   a_{\mathrm{effective}}=\max(a,16).
@@ -2169,8 +1996,7 @@ best-fit 从所有可容纳请求的 free 块中选最小者。它仍是线性�
 消灭外部碎片；v1.1 此时的 heap 只有 64 KiB，这个策略的可解释性和确定性比
 复杂索引更重要。对象尺寸分布明确后再用 type cache 消除高频扫描与块头开销。
 
-\subsection{释放先预检，再完成唯一一次状态提交}
-
+\topic{释放先预检，再完成唯一一次状态提交}
 \code{TryRelease} 只接受原分配返回的精确负载首地址。它先验证：
 
 \begin{enumerate}[label=\arabic*.]
@@ -2196,8 +2022,7 @@ best-fit 从所有可容纳请求的 free 块中选最小者。它仍是线性�
 在任意合法时刻都成立。重复释放会命中 free 或 released 签名并明确失败；
 内部指针即使碰巧按 16 字节对齐，也无法通过物理块成员检查。
 
-\subsection{一致性检查不能只数链表节点}
-
+\topic{一致性检查不能只数链表节点}
 两个集合节点数相同，不代表它们包含相同块。\code{Validate} 先沿物理块链
 验证尺寸、对齐、状态、前块长度和完整覆盖；再沿空闲链验证地址递增、双向链接
 和有界无环；最后逐个确认每个物理 free 块在空闲链中恰好出现一次。它还重新
@@ -2209,8 +2034,7 @@ best-fit 从所有可容纳请求的 free 块中选最小者。它仍是线性�
 上限由 \code{largest_free_allocation_bytes} 描述。峰值则记录启动周期曾经
 占用的最大完整跨度。
 
-\subsection{测试从样例释放扩展到十万步状态机}
-
+\topic{测试从样例释放扩展到十万步状态机}
 单元测试覆盖无效区间、重复初始化、五种对齐、耗尽失败原子性、空/区间外/
 内部/重复释放、乱序三向合并、起始地址复用和统计守恒。集成测试使用目标同样
 的 64 KiB 区间，混合分配小对象、缓存行对象与 4 KiB 对齐对象，写入模式后
@@ -2234,10 +2058,7 @@ IRQ、NMI 或 panic 中调用。v1.4 为动态对象和文件表把后备区扩�
 能力，而不是 heap 接口暗中承担的职责。固定尺寸 type cache 已经作为下一层
 独立机制建立，下面沿其历史、布局和状态机继续展开。
 
-\section{v1.1 用固定尺寸类型缓存分离对象容量}
-
-\subsection{从任意字节块到同构对象}
-
+\topic{从任意字节块到同构对象}
 通用堆接受任意尺寸和二次幂对齐。这样的接口必须为每次请求回答三个问题：
 哪个空闲块容得下、对齐会怎样切割前缀、剩余后缀是否还能成为独立块。即使连续
 申请的都是 64 字节 Thread 对象，堆也不能从接口上知道下一次请求仍然同型。
@@ -2255,16 +2076,13 @@ per-CPU 快速路径、NUMA、poison、red-zone 和内存压力回收。名称�
 结构会变化，核心分层却稳定：
 
 \begin{center}
-\begin{tabular}{lll}
-\toprule
-层 & 管理单位 & 回答的问题\\
-\midrule
-buddy & \(2^k\) 个连续物理页 & 哪些 PFN 由谁持有\\
-KVA/页表 & 虚拟区间与映射 & 页出现在哪个地址、具有什么权限\\
-通用 heap & 任意字节块 & 一个已映射区间怎样分裂与合并\\
-type cache & 同尺寸对象槽 & 某一类型还有多少可交付对象\\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{lll}
+层 & 管理单位 & 回答的问题\\ \hline
+buddy & \(2^k\) 个连续物理页 & 哪些 PFN 由谁持有\\ \hline
+KVA/页表 & 虚拟区间与映射 & 页出现在哪个地址、具有什么权限\\ \hline
+通用 heap & 任意字节块 & 一个已映射区间怎样分裂与合并\\ \hline
+type cache & 同尺寸对象槽 & 某一类型还有多少可交付对象\\ \hline
+\end{osgridtabular}
 \end{center}
 
 本项目不能因为最终方向类似 SLUB，就一次复制其全部复杂度。type cache 增量
@@ -2273,8 +2091,7 @@ per-CPU 缓存，避免把页后备、地址空间、并发与对象析构错误
 由前文的独立闭环完成；缓存仍保持一个固定容量、一个 heap 后备块、可以整体
 销毁的既有协议，等待按页 slab 作为单独增量接入。
 
-\subsection{原始核心与模板包装为什么分成两层}
-
+\topic{原始核心与模板包装为什么分成两层}
 \code{KernelFixedObjectCache} 接受对象字节数、对象对齐和容量，返回无类型
 存储；\code{KernelTypeCache<ObjectType>} 只负责把
 \code{sizeof(ObjectType)} 与 \code{alignof(ObjectType)} 送给核心，并把
@@ -2306,8 +2123,7 @@ on final reference:
 因此“模板返回类型化指针”不等于“缓存拥有对象语义”。接口注释把这条边界
 写在声明旁，ELF 审计继续拒绝隐藏构造器和运行时符号。
 
-\subsection{一个后备块怎样同时容纳位图与对象}
-
+\topic{一个后备块怎样同时容纳位图与对象}
 设对象大小为 \(Z\)，语言要求对齐为 \(A_T\)，容量为 \(N\)。空闲槽首要保存
 一个 64 位下一索引，所以内部存储对齐与槽步长为：
 
@@ -2344,8 +2160,7 @@ high address
 \mathrm{UINT64\_MAX}/S\)，最后再检查 \(O\le\mathrm{UINT64\_MAX}-NS\)。
 这些检查发生在调用 heap 之前，所以非法配置不能改变全局堆累计值。
 
-\subsection{32 个缓存行对象为什么得到 \code{0x840}}
-
+\topic{32 个缓存行对象为什么得到 \code{0x840}}
 目标自检选择 \(Z=64\)、\(A_T=64\)、\(N=32\)。代入：
 
 \[
@@ -2373,23 +2188,17 @@ B=2,\quad A=8,\quad S=8,\quad O=8,\quad H=8+9\times8=80.
 1 字节对象又迫使槽扩展到 8 字节以保存空闲索引。这不是为了支持某个实际
 1 字节内核对象，而是把两个容易被普通 32 槽样例掩盖的布局分支变成证据。
 
-\subsection{活动位图与槽内空闲链各自证明什么}
-
+\topic{活动位图与槽内空闲链各自证明什么}
 每个槽有且只有两种状态：
 
-\begin{longtable}{L{0.14\textwidth}L{0.22\textwidth}L{0.50\textwidth}}
-\toprule
-\textbf{bitmap} & \textbf{所有者} & \textbf{槽内容解释}\\
-\midrule
+\begin{osgridlongtable}{L{0.14\textwidth}L{0.22\textwidth}L{0.50\textwidth}}
+\textbf{bitmap} & \textbf{所有者} & \textbf{槽内容解释}\\ \hline
 \endfirsthead
-\toprule
-\textbf{bitmap} & \textbf{所有者} & \textbf{槽内容解释}\\
-\midrule
+\textbf{bitmap} & \textbf{所有者} & \textbf{槽内容解释}\\ \hline
 \endhead
-0 & cache & 槽首 \code{uint64_t} 是下一空闲槽索引\\
-1 & caller & 全部 \(S\) 字节属于调用者，缓存不得写入\\
-\bottomrule
-\end{longtable}
+0 & cache & 槽首 \code{uint64_t} 是下一空闲槽索引\\ \hline
+1 & caller & 全部 \(S\) 字节属于调用者，缓存不得写入\\ \hline
+\end{osgridlongtable}
 
 只保存空闲链不够。活动对象正在使用槽首，缓存不能在那里留下链节点；重复
 释放若没有位图，会把同一槽插入两次，之后两次申请可能向两个调用者交付同一
@@ -2410,8 +2219,7 @@ B=2,\quad A=8,\quad S=8,\quad O=8,\quad H=8+9\times8=80.
 契约，调用者不能依赖长期地址顺序；目标自检只用“刚完成一组确定释放后应复用
 最后槽”证明链提交方向正确。
 
-\subsection{初始化是一项先申请、后发布的事务}
-
+\topic{初始化是一项先申请、后发布的事务}
 \code{Initialize} 依次执行：
 
 \begin{enumerate}[label=\arabic*.]
@@ -2431,8 +2239,7 @@ B=2,\quad A=8,\quad S=8,\quad O=8,\quad H=8+9\times8=80.
 安全语义；对象所有者必须初始化自己将读取的字段。无条件清零不仅掩盖遗漏的
 对象初始化，还会让缓存容量越大、启动时间越长，却没有改变所有权。
 
-\subsection{申请路径在写位图前验证局部守恒}
-
+\topic{申请路径在写位图前验证局部守恒}
 \code{TryAcquire} 先核对：
 
 \[
@@ -2467,8 +2274,7 @@ output = address_of(index)
 调用者。当前是串行路径，所以这些普通读写不使用原子指令；这不是宣称编译器
 或 CPU 会替未来并发保持事务。
 
-\subsection{释放先从地址恢复索引，再接触槽内容}
-
+\topic{释放先从地址恢复索引，再接触槽内容}
 释放路径不能先把 next 写进对象，因为输入指针可能位于另一个对象内部。实现
 先把指针解释为 64 位地址，并验证它落在：
 \[
@@ -2497,8 +2303,7 @@ releases += 1
 释放成功之后，旧对象的槽首已经是缓存元数据；调用者继续读取它属于 use-after-
 release，而不是缓存应保持的数据契约。
 
-\subsection{销毁为什么必须先证明没有活动对象}
-
+\topic{销毁为什么必须先证明没有活动对象}
 缓存后备块同时包含所有槽。只要一个对象仍活动，归还该块就会让其指针指向
 heap 可能重新分配的区域，形成跨类型 use-after-free。因此
 \code{Destroy} 在 active 非零时返回 \code{ActiveObjectsRemain}，缓存保持
@@ -2513,8 +2318,7 @@ active 为零仍不足以立即释放。空闲链可能因更早的错误断裂�
 未初始化状态，旧统计不再描述一个存在的缓存。目标内存管理器正是先保存
 33/33/32 的自检快照，再销毁并记录到全局启动统计。
 
-\subsection{完整校验怎样在不分配临时内存时发现环}
-
+\topic{完整校验怎样在不分配临时内存时发现环}
 \code{Validate} 首先根据保存的 \(Z,A_T,N\) 重算 \(B,A,S,O,H\)，核对
 位图确实等于后备块起点、对象基址等于 backing+\(O\)，再验证全部计数关系。
 若 \(N\) 不是 8 的倍数，最后一个位图字节中超出容量的高 bit 必须为零。
@@ -2537,8 +2341,7 @@ observed free 小于保存的 free。最后要求 observed active/free 分别等
 日志格式化。它只返回状态；冷路径启动代码在整个内存初始化成功后统一打印
 里程碑。
 
-\subsection{三层宿主测试分别攻击哪一条边界}
-
+\topic{三层宿主测试分别攻击哪一条边界}
 单元测试从 API 失败语义开始：未初始化申请/释放/销毁、无效配置、尺寸溢出、
 heap 后备不足、重复初始化、全容量耗尽、输出保持、空/外部/内部指针、活动
 对象销毁、重复释放和 LIFO 复用。最后把全部槽归还，要求唯一 heap 后备块
@@ -2547,15 +2350,12 @@ heap 后备不足、重复初始化、全容量耗尽、输出保持、空/外�
 集成测试在一个 64 KiB heap 上同时建立三种缓存：
 
 \begin{center}
-\begin{tabular}{rrrr}
-\toprule
-对象 & 对齐 & 容量 & 关注点\\
-\midrule
-SmallObject & 8 & 64 & 普通小对象与交错释放\\
-CacheLineObject & 64 & 32 & 缓存行对齐与数据保持\\
-LargeObject & 256 & 8 & 大对齐和较大槽\\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{rrrr}
+对象 & 对齐 & 容量 & 关注点\\ \hline
+SmallObject & 8 & 64 & 普通小对象与交错释放\\ \hline
+CacheLineObject & 64 & 32 & 缓存行对齐与数据保持\\ \hline
+LargeObject & 256 & 8 & 大对齐和较大槽\\ \hline
+\end{osgridtabular}
 \end{center}
 
 测试填满三者，释放 small/large 的偶数槽，同时完整读回仍活动的 cache-line
@@ -2569,8 +2369,7 @@ LargeObject & 256 & 8 & 大对齐和较大槽\\
 每 509 步的相应释放机会再尝试一次重复释放。失败报告包含种子与迭代号，
 不会留下只能“再跑一次看看”的偶现结果。
 
-\subsection{QEMU 自检把软件状态机连接到真实映射}
-
+\topic{QEMU 自检把软件状态机连接到真实映射}
 宿主模型证明算法，却不能证明高半区地址真的由当前 CR3 映射，也不能证明
 freestanding 目标生成的 64 位加载/存储能访问后备页。目标自检在 heap 自检
 完成后执行：
@@ -2609,8 +2408,7 @@ allocation count、active requested 和 largest free 必须与进入前相同；
 基准，日志路径还可能在未来再次申请内存。当前只更新固定宽度计数，在事务
 完成后打印一次，使日志既能证明容量和守恒，又不反向改变热路径。
 
-\subsection{为什么当前没有原子指令和内部锁}
-
+\topic{为什么当前没有原子指令和内部锁}
 x86-64 对齐的普通 64 位 load/store 足以让当前 BSP 串行启动代码读写索引，
 但它不构成多个执行流之间的互斥。若 Thread A 与 IRQ 同时弹出同一个 head，
 两者都可能看到旧索引并交付同一槽；仅把 head 改成 atomic 也不能原子提交
@@ -2626,8 +2424,7 @@ panic 明确不得调用。
 路径改变，重复释放拒绝、容量守恒、销毁前 active=0 和后备所有权仍必须与
 本次状态机一致。
 
-\subsection{从固定单块到多 slab 的演进边界}
-
+\topic{从固定单块到多 slab 的演进边界}
 这里的固定缓存容量初始化后不变。它没有空/部分/满 slab 列表，也不能只归还
 一部分后备页；在 v1.1 时后备仍受 64 KiB heap 总容量约束，v1.4 的通用 heap
 虽已扩为 512 KiB，缓存自身仍是单后备块。这足以验证固定槽所有权，却不是
@@ -2646,8 +2443,7 @@ heap 上。类型缓存继续服务尺寸完全一致的热对象，不被强行
 必须在新对象模型拥有对等测试之前继续工作，不能为了“看起来已经动态化”制造不可启动的
 中间版本。
 
-\section{内存测试从纯函数扩展到处理器执行}
-
+\topic{内存测试从纯函数扩展到处理器执行}
 四层验证各自回答不同问题：
 
 \begin{enumerate}[label=\arabic*.]
@@ -2670,8 +2466,7 @@ heap 上。类型缓存继续服务尺寸完全一致的热对象，不被强行
 可以精确重放。参考模型只记录“这一帧是否 allocated”，不调用被测分配器的
 内部状态，因此不会与实现犯同一种编码错误。
 
-\section{panic 是终止协议而不是普通日志函数}
-
+\topic{panic 是终止协议而不是普通日志函数}
 panic 首先禁止本地中断并阻止其他核心继续修改共享状态，随后输出原因、CPU、
 RIP、寄存器、控制寄存器和有限栈回溯。输出函数不得动态分配或获取未知锁。
 最后进入明确停机、调试陷阱或重启策略。

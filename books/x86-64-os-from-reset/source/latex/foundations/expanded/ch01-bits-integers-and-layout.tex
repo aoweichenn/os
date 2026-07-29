@@ -1,0 +1,263 @@
+\topic{二进制运算不是十进制运算换一种字体}
+位置权重决定进位规则。二进制每一位只有 0 和 1，因此
+
+\[
+0+0=0,\quad 0+1=1,\quad 1+1=10_2,\quad 1+1+1=11_2.
+\]
+
+最后两个式子分别表示“本位为 0/1，并向高位进 1”。硬件加法器正是逐位产生
+和与进位；第三章会把这张算术表变成逻辑门。
+
+\begin{workedexample}
+计算 \(0110_2+0011_2\)：
+
+\[
+\begin{array}{r}
+  0110\\
+ +0011\\
+ \hline
+  1001
+\end{array}
+\]
+
+从右向左依次为 \(0+1=1\)、\(1+1=0\) 进 1、
+\(1+0+1=0\) 进 1、\(0+0+1=1\)，结果为 \(9\)。
+\end{workedexample}
+
+\topic{固定位宽会产生回绕、进位和溢出}
+数学整数没有固定上限，寄存器和字段却有位宽。一个 \(n\)-bit 无符号加法只
+保留结果对 \(2^n\) 的余数：
+
+\[
+\operatorname{result}=(a+b)\bmod 2^n.
+\]
+
+超出最高位的部分可由 carry 条件记录。它不是“CPU 算错”，而是接口只承诺
+保存 \(n\) 位。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \x in {0,...,15} {
+    \coordinate (p\x) at ({90-22.5*\x}:2.2);
+    \fill[BookBlue] (p\x) circle (0.045);
+    \node[font=\scriptsize] at ({90-22.5*\x}:2.58) {\x};
+  }
+  \draw[->,BookBlue,very thick] (90:2.2) arc[start angle=90,end angle=-247.5,radius=2.2];
+  \node[align=center] at (0,0) {4-bit 无符号环\\加 1 沿圆周前进};
+  \node[BookRed,align=center] at (4.4,0.8) {\(15+1\rightarrow0\)\\产生进位};
+  \draw[os arrow] (15:2.65) -- (3.6,0.8);
+\end{tikzpicture}
+\end{center}
+\diagramnote{环形图只表示模 \(16\) 的编码行为，不表示实际寄存器在空间中排成
+圆。}
+
+\topic{补码让同一加法器处理正数和负数}
+\(n\)-bit 二进制补码把最高位权重解释为 \(-2^{n-1}\)，其余位保持正权重：
+
+\[
+x=-b_{n-1}2^{n-1}+\sum_{i=0}^{n-2}b_i2^i.
+\]
+
+因此 8-bit 补码范围为
+
+\[
+-128\le x\le127.
+\]
+
+求 \(-x\) 的常用位操作是“逐位取反再加 1”。例如
+
+\[
+5=\texttt{0000\,0101},\qquad
+-5=\texttt{1111\,1011}.
+\]
+
+两者相加得到 \(\texttt{1\,0000\,0000}\)，丢弃第九位后为 0。同一组 bit
+是无符号数还是有符号数，取决于当前操作和类型，不取决于存储单元自身。
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.23\linewidth}L{0.26\linewidth}L{0.23\linewidth}}
+4-bit 模式 & 无符号解释 & 补码解释 & 说明 \\ \hline
+\endfirsthead
+4-bit 模式 & 无符号解释 & 补码解释 & 说明 \\ \hline
+\endhead
+\texttt{0000} & 0 & 0 & 两种解释相同 \\ \hline
+\texttt{0111} & 7 & 7 & 补码最大正数 \\ \hline
+\texttt{1000} & 8 & \(-8\) & 补码最小负数 \\ \hline
+\texttt{1111} & 15 & \(-1\) & 所有位为 1 \\ \hline
+\end{osgridlongtable}
+
+\topic{carry 与 signed overflow 回答不同问题}
+carry 表示无符号结果超出位宽；signed overflow 表示补码真值超出有符号范围。
+4-bit 中 \(15+1\) 产生 carry，但按补码解释是 \(-1+1=0\)，没有 signed
+overflow；\(7+1\) 没有最高位 carry，却从 \(0111\) 变成 \(1000\)，即
+\(7\) 变成 \(-8\)，产生 signed overflow。
+
+\begin{workedexample}
+对 8-bit 运算 \(\texttt{0x7F}+\texttt{0x01}\)：
+
+\[
+\texttt{0111\,1111}+\texttt{0000\,0001}
+=\texttt{1000\,0000}.
+\]
+
+无符号解释是 \(127+1=128\)，合法且无 carry；补码解释期望
+\(127+1=128\)，超出最大值 127，因此发生 signed overflow。条件标志必须与
+程序想采用的解释配套使用。
+\end{workedexample}
+
+\topic{按位运算是在位置集合上操作}
+AND、OR、XOR 和 NOT 对同一位置独立运算。常量
+\term{掩码}{mask}用 1 表示“关心或修改该位”，用 0 表示“保持或忽略”。
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.25\linewidth}L{0.46\linewidth}}
+目的 & 表达式 & 位级效果 \\ \hline
+\endfirsthead
+目的 & 表达式 & 位级效果 \\ \hline
+\endhead
+读取字段 & \(x\land mask\) & 掩码为 0 的位置被清零 \\ \hline
+设置若干位 & \(x\lor mask\) & 掩码为 1 的位置变为 1 \\ \hline
+清除若干位 & \(x\land\lnot mask\) & 掩码为 1 的位置变为 0 \\ \hline
+翻转若干位 & \(x\oplus mask\) & 掩码为 1 的位置取反 \\ \hline
+测试第 \(k\) 位 & \(x\land(1\ll k)\) & 结果非零表示该位为 1 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+设备状态寄存器为 \(\texttt{1011\,0100}_2\)，bit 2 表示 ready，bit 5 表示
+error。掩码分别为
+
+\[
+1\ll2=\texttt{0000\,0100},\qquad
+1\ll5=\texttt{0010\,0000}.
+\]
+
+\[
+\texttt{1011\,0100}\land\texttt{0000\,0100}
+=\texttt{0000\,0100}\ne0,
+\]
+
+\[
+\texttt{1011\,0100}\land\texttt{0010\,0000}
+=\texttt{0010\,0000}\ne0.
+\]
+
+两个状态都已置位。这里的 bit 编号从最低有效位开始为 0；若手册采用不同编号
+约定，必须先明确。
+\end{workedexample}
+
+\topic{移位既可能表示乘除，也可能只是重排位置}
+对不溢出的无符号数，左移 \(k\) 位相当于乘 \(2^k\)，逻辑右移相当于向下取整
+除 \(2^k\)。但移位也常用于构造字段和拆地址，此时不应把它强行理解成算术。
+
+\[
+\texttt{0011\,0101}\ll2
+=\texttt{1101\,0100}\quad\text{（只保留 8 bit）}.
+\]
+
+有符号右移是否复制符号位属于语言和指令语义；不能只画箭头猜测。移位计数、
+位宽和被移走的位都是接口的一部分。
+
+\topic{字节序回答多字节值怎样排进连续地址}
+假设 32-bit 值为 \(\texttt{0x12345678}\)，占用地址 \(A\) 到 \(A+3\)。
+x86 使用 little-endian，最低有效 byte 放在最低地址：
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \i/\addr/\byte in {
+    0/\(A\)/\texttt{78},
+    1/\(A+1\)/\texttt{56},
+    2/\(A+2\)/\texttt{34},
+    3/\(A+3\)/\texttt{12}} {
+    \node[draw=BookBlue,fill=BookCodeBg,minimum width=26mm,minimum height=9mm]
+      (b\i) at ({3.0*\i},0) {\byte};
+    \node[below=2mm of b\i] {\addr};
+  }
+  \draw[decorate,decoration={brace,amplitude=5pt}]
+    (-1.3,0.65) -- (10.3,0.65)
+    node[midway,above=6pt]{同一个 32-bit 值：\texttt{0x12345678}};
+  \node[BookTeal,align=center] at (1.4,-1.25) {低地址\\低有效 byte};
+  \node[BookAmber,align=center] at (7.6,-1.25) {高地址\\高有效 byte};
+\end{tikzpicture}
+\end{center}
+
+字节序不改变一个 byte 内的 bit 编号，也不改变寄存器中这个数的数学值。只有
+当多字节对象被拆成有地址的 byte、发送到协议或写入磁盘格式时，排列规则才
+显现。
+
+\topic{按地址逐字节重建值}
+若内存从低到高包含
+\(\texttt{EF BE AD DE}\)，按 x86 little-endian 读取 32-bit 无符号值：
+
+\[
+\texttt{0xDEADBEEF}.
+\]
+
+推导顺序是
+
+\[
+\texttt{EF}\times2^0+
+\texttt{BE}\times2^8+
+\texttt{AD}\times2^{16}+
+\texttt{DE}\times2^{24}.
+\]
+
+磁盘格式、网络协议和设备寄存器可能指定不同字节序，所以可靠代码要显式编码
+和解码，不能把宿主机内存布局原样复制后假定到处一致。
+
+\topic{对齐、填充与半开区间是布局推理的最低工具}
+\term{对齐}{alignment}要求对象起始地址是某个粒度的整数倍。例如
+8-byte 对齐意味着
+
+\[
+address\bmod8=0.
+\]
+
+结构体字段之间可能插入 padding，以满足后续字段对齐；结构末尾也可能填充，
+使数组中下一个元素仍然对齐。因此“字段大小之和”等于结构大小并不总成立。
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily]
+  \foreach \i in {0,...,15} {
+    \draw[BookRule] (\i*0.72,0) rectangle ++(0.72,0.72);
+    \node[below] at (\i*0.72+0.36,0) {\i};
+  }
+  \fill[BookBlue!22] (0,0) rectangle (0.72,0.72);
+  \node at (0.36,0.36) {A};
+  \fill[BookRed!12] (0.72,0) rectangle (2.88,0.72);
+  \node at (1.8,0.36) {padding};
+  \fill[BookTeal!22] (2.88,0) rectangle (5.76,0.72);
+  \node at (4.32,0.36) {32-bit B};
+  \fill[BookAmber!22] (5.76,0) rectangle (11.52,0.72);
+  \node at (8.64,0.36) {64-bit C};
+  \node[align=center] at (5.76,-1.0) {示意布局：具体 ABI 可能不同，必须由
+  \texttt{sizeof}/\texttt{alignof} 与二进制契约确认};
+\end{tikzpicture}
+\end{center}
+
+\term{半开区间}{half-open interval}写作 \([begin,end)\)：包含 begin，不包含
+end。长度直接为
+
+\[
+length=end-begin.
+\]
+
+相邻区间 \([a,b)\) 与 \([b,c)\) 不重叠也不留缝。地址、缓冲区和磁盘扇区范围
+都适合用这种表示。
+
+\begin{workedexample}
+缓冲区从地址 \(\texttt{0x1000}\) 开始，长度
+\(\texttt{0x180}\) byte，则区间为
+
+\[
+[\texttt{0x1000},\texttt{0x1180}).
+\]
+
+最后一个有效 byte 地址是 \(\texttt{0x117F}\)，不是
+\(\texttt{0x1180}\)。检查访问 \([p,p+n)\) 时还必须防止
+\(p+n\) 发生固定位宽溢出。
+\end{workedexample}
+
+\begin{failurebox}
+“这个数放得进 64 bit”不代表它是合法地址；“结构字段看起来连续”不代表没有
+填充；“读四个 byte”不代表可以在任意未对齐地址安全读取；“内存里看到
+\texttt{78 56 34 12}”也不代表人类书写值是 \texttt{0x78563412}。每个结论都
+需要位宽、类型、字节序、对齐和地址空间上下文。
+\end{failurebox}

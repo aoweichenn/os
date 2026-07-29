@@ -1,4 +1,4 @@
-\section{v1.10：fork、写时复制与可回滚的进程复制}
+\section{fork、写时复制与跨资源回滚}
 
 \begin{keyidea}
 \code{fork} 的本质不是复制一块连续内存，而是复制一个 Process 的可观察资源
@@ -7,8 +7,7 @@
 由操作系统解释。
 \end{keyidea}
 
-\subsection{从早期 Unix 的进程复制说起}
-
+\topic{从早期 Unix 的进程复制说起}
 Unix 选择 \code{fork}，是因为 Shell 需要一个可组合的控制点：父进程先得到
 几乎相同的 child，child 可以关闭、复制或重定向描述符，再用 \code{exec}
 替换程序；父进程则保留自己的执行环境并 \code{wait}。如果“创建进程”和
@@ -24,21 +23,17 @@ Unix 选择 \code{fork}，是因为 Shell 需要一个可组合的控制点：�
 User/Supervisor 和 Execute Disable。COW 是 Kernel 对“一个本来允许写、
 现在因共享而暂时只读的 leaf”的软件解释。
 
-\subsection{fork 返回两次，但只进入内核一次}
-
+\topic{fork 返回两次，但只进入内核一次}
 父 Thread 执行系统调用 44 后，Kernel 复制它的 \code{UserContext}。父现场
 的返回寄存器接收 child PID，child 现场的 RAX 被写成零。调度器日后分别恢复
 这两个现场，于是同一个用户调用看起来返回了两次：
 
-\begin{longtable}{L{0.24\textwidth}L{0.28\textwidth}L{0.32\textwidth}}
-\toprule
-\textbf{执行者} & \textbf{返回值} & \textbf{后续语义}\\
-\midrule
-parent Thread & child PID & 可继续工作或 wait\\
-child Thread & 0 & 可修改继承资源或 exec\\
-失败的 parent & 负状态 & 原 Process 保持可观察不变\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.24\textwidth}L{0.28\textwidth}L{0.32\textwidth}}
+\textbf{执行者} & \textbf{返回值} & \textbf{后续语义}\\ \hline
+parent Thread & child PID & 可继续工作或 wait\\ \hline
+child Thread & 0 & 可修改继承资源或 exec\\ \hline
+失败的 parent & 负状态 & 原 Process 保持可观察不变\\ \hline
+\end{osgridlongtable}
 
 Process 是 AddressSpace、FileTable、FsContext 与父子关系的容器；Thread
 才拥有通用寄存器、内核栈和 FXSAVE 现场。v1.10 因此冻结：child Process
@@ -56,21 +51,17 @@ Process 是 AddressSpace、FileTable、FsContext 与父子关系的容器；Thre
 \diagramnote{子 Process 不是父 Process 的第二个调度槽；它拥有独立 PID、CR3
 和资源容器，只在明确允许处共享底层对象。}
 
-\subsection{x86 页故障错误码是硬件事实，不是 COW 判决}
-
+\topic{x86 页故障错误码是硬件事实，不是 COW 判决}
 vector 14 把故障线性地址写入 CR2，并给出 error code：
 
-\begin{longtable}{L{0.11\textwidth}L{0.16\textwidth}L{0.54\textwidth}}
-\toprule
-\textbf{位} & \textbf{名称} & \textbf{为 1 时的硬件事实}\\
-\midrule
-0 & P & 页存在，但访问违反保护；为 0 是 not-present\\
-1 & W/R & 这次访问是写\\
-2 & U/S & 访问发生于 CPL3\\
-3 & RSVD & 页表保留位编码非法\\
-4 & I/D & NX 开启时，这是取指访问\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.11\textwidth}L{0.16\textwidth}L{0.54\textwidth}}
+\textbf{位} & \textbf{名称} & \textbf{为 1 时的硬件事实}\\ \hline
+0 & P & 页存在，但访问违反保护；为 0 是 not-present\\ \hline
+1 & W/R & 这次访问是写\\ \hline
+2 & U/S & 访问发生于 CPL3\\ \hline
+3 & RSVD & 页表保留位编码非法\\ \hline
+4 & I/D & NX 开启时，这是取指访问\\ \hline
+\end{osgridlongtable}
 
 典型 COW fault 为 P=1、W/R=1、U/S=1。但写只读 ELF text、写只读文件映射
 也会产生相同三位。Kernel 还必须联合检查：
@@ -82,20 +73,16 @@ vector 14 把故障线性地址写入 CR2，并给出 error code：
 RSVD 表示页表自身损坏，不能通过分配新页掩盖；I/D 表示取指保护，不能进入
 写时复制；真正只读 VMA 即使 leaf 也是只读，也必须终止出错的用户 Process。
 
-\subsection{软件位 9 把三种只读状态分开}
-
+\topic{软件位 9 把三种只读状态分开}
 项目使用 4 KiB leaf PTE 的软件位 9 表示 COW：
 
-\begin{longtable}{L{0.29\textwidth}L{0.12\textwidth}L{0.12\textwidth}L{0.28\textwidth}}
-\toprule
-\textbf{状态} & \textbf{RW} & \textbf{COW} & \textbf{写入结果}\\
-\midrule
-普通可写 private & 1 & 0 & CPU 直接写\\
-fork 后共享 private & 0 & 1 & \#PF 后 private break\\
-真正只读 & 0 & 0 & protection fault\\
-非法组合 & 1 & 1 & 页表 API 拒绝建立\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.29\textwidth}L{0.12\textwidth}L{0.12\textwidth}L{0.28\textwidth}}
+\textbf{状态} & \textbf{RW} & \textbf{COW} & \textbf{写入结果}\\ \hline
+普通可写 private & 1 & 0 & CPU 直接写\\ \hline
+fork 后共享 private & 0 & 1 & \#PF 后 private break\\ \hline
+真正只读 & 0 & 0 & protection fault\\ \hline
+非法组合 & 1 & 1 & 页表 API 拒绝建立\\ \hline
+\end{osgridlongtable}
 
 VMA 仍保存“政策上允许写”，PTE 保存“当前驻留页暂时不能直接写”。两者看似
 矛盾，正是 COW 捕获首次 store 的条件。
@@ -104,21 +91,20 @@ CPU 可能已经在 TLB 缓存旧 writable 翻译。parent leaf 降权或当前 
 替换 frame 后必须执行 \code{INVLPG}。child 尚未运行，不持有旧 TLB 翻译。
 当前只有一个 BSP，所以没有跨核 shootdown；这不能外推成 SMP 已经安全。
 
-\subsection{稀疏引用：独占隐含为一}
-
+\topic{稀疏引用：独占隐含为一}
 若为 64 GiB 中每个 4 KiB frame 永久保存一个 64 位引用，仅计数就需要
 128 MiB，而且 KernelStack、页表、cache 页与 private 用户页并不共享同一
 生命周期。v1.10 只登记“经历 fork 后尚未恢复独占”的 private 用户页：
 
 \begin{center}
-\begin{tabular}{ll}
-无表项 & 隐含一个映射独占 frame\\
-第一次 fork & 建表项，reference count 从隐含 1 变为 2\\
-后续 fork & retain，计数递增\\
-退出或 private copy & release，计数递减\\
-只剩一个映射 & 可删除表项并恢复独占\\
-最后映射销毁 & 计数归零，释放 frame\\
-\end{tabular}
+\begin{osgridtabular}{ll}
+无表项 & 隐含一个映射独占 frame\\ \hline
+第一次 fork & 建表项，reference count 从隐含 1 变为 2\\ \hline
+后续 fork & retain，计数递增\\ \hline
+退出或 private copy & release，计数递减\\ \hline
+只剩一个映射 & 可删除表项并恢复独占\\ \hline
+最后映射销毁 & 计数归零，释放 frame\\ \hline
+\end{osgridtabular}
 \end{center}
 
 \code{UserPageReferenceManager} 使用调用方提供的 32768 项固定存储和
@@ -137,16 +123,15 @@ SpinLock。固定上界使 fork 可以明确报告容量耗尽；fault 热路径
 \diagramnote{表中 refs=1 是一个暂态：最后持有者尚未写，或 fork 回滚正在恢复
 parent。它不意味着还有第二个可访问映射。}
 
-\subsection{COW break 的两条路径}
-
+\topic{COW break 的两条路径}
 故障页对齐后，Kernel 先查 VMA 与 PTE，再读物理页引用。
 
-\paragraph{引用大于一：真正复制。}
+\topic{引用大于一：真正复制。}
 Kernel 申请新 frame，经高半 direct-map 复制完整 4096 字节，把当前
 AddressSpace 的 leaf 替换到新 frame，并清除 COW、设置 writable。PTE 提交
 后才 release 旧 frame 的一个引用。准备新 frame 失败时，旧映射完全不变。
 
-\paragraph{引用等于一：恢复独占。}
+\topic{引用等于一：恢复独占。}
 另一个 Process 已经退出或先完成 private copy，当前映射是最后持有者。再复制
 自己的唯一页没有意义。Kernel 删除稀疏元数据，在原 leaf 上清除 COW、恢复
 writable，并失效 TLB。
@@ -156,8 +141,7 @@ COW fault 成功后不推进 RIP。异常返回到原 store，CPU 重新执行�
 已经 writable。手动跳过指令会让程序看似继续，却丢失本应发生的写入。
 \end{contractbox}
 
-\subsection{CopyToUser 不能依赖用户页故障}
-
+\topic{CopyToUser 不能依赖用户页故障}
 系统调用经常把结果结构写到用户缓冲，例如长度为 200 字节的结果结构；
 本项目对应类型是 \code{VirtualMemoryStatistics}。Kernel 用 direct-map 访问目标物理 frame
 时，并没有通过那个用户 PTE 执行 store，因此硬件不会替它产生 CPL3 COW
@@ -178,28 +162,23 @@ validate user range and writable VMA
 fork probe 把统计 sentinel 放入 COW 页，再让 Kernel 写结果；parent 必须仍
 看到原 sentinel。
 
-\subsection{文件页不能全部用同一种引用}
-
+\topic{文件页不能全部用同一种引用}
 fork 时按 VMA 与当前 leaf 分类：
 
-\begin{longtable}{L{0.32\textwidth}L{0.43\textwidth}}
-\toprule
-\textbf{页来源} & \textbf{child 行为}\\
-\midrule
-anonymous writable & 同 frame，父子 COW\\
-writable file private / ELF data & 同 private frame，父子 COW\\
-完整 readonly file/ELF & 继续共享 clean cache，不标 COW\\
-readonly private tail & 继续只读并复制后备生命周期\\
-not-present VMA & 只 clone VMA/FileBacking，以后各自 fault\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.32\textwidth}L{0.43\textwidth}}
+\textbf{页来源} & \textbf{child 行为}\\ \hline
+anonymous writable & 同 frame，父子 COW\\ \hline
+writable file private / ELF data & 同 private frame，父子 COW\\ \hline
+完整 readonly file/ELF & 继续共享 clean cache，不标 COW\\ \hline
+readonly private tail & 继续只读并复制后备生命周期\\ \hline
+not-present VMA & 只 clone VMA/FileBacking，以后各自 fault\\ \hline
+\end{osgridlongtable}
 
 clean cache frame 可以从文件重读，使用 cache mapping reference 与 LRU；
 private frame 的最后引用负责归还 buddy。把两者塞进同一引用表会让“淘汰 clean
 内容”和“释放匿名所有权”互相污染。
 
-\subsection{FileTable、打开实例与 cwd 的继承}
-
+\topic{FileTable、打开实例与 cwd 的继承}
 fd 是 Process 局部编号，FileDescription 才保存共享文件 offset。fork 后两张
 FileTable 独立，但同号表项强引用同一个 FileDescription：
 
@@ -221,8 +200,7 @@ FsContext 值复制 root/cwd/mount 视图。父子 fork 时都位于 \code{/bin}
 child 后续 chdir 不改变 parent。FileBacking 也取得独立 VFS 打开实例引用，
 因此 mmap 生命周期不重新依赖原 fd。
 
-\subsection{父 PTE 最晚提交：fork 是跨资源事务}
-
+\topic{父 PTE 最晚提交：fork 是跨资源事务}
 若先把 parent 全部 leaf 降为只读，再尝试创建 child，任何中途失败都会让
 parent 无故停留在 COW 状态。v1.10 先准备不可运行的候选 child：
 
@@ -247,8 +225,7 @@ Thread、KernelStack 和 ProcessTree 预留。失败 child 从未可调度。
 回滚不能只检查“没有返回 child PID”。frame、PTE 权限、VMA、后备、对象
 强引用、KVA、KernelStack、ProcessTree 和 Zombie 都必须恢复到 fork 前快照。
 
-\subsection{从用户探针沿代码向内阅读}
-
+\topic{从用户探针沿代码向内阅读}
 推荐阅读顺序保持“外部契约先于内部机制”：
 
 \begin{enumerate}[label=\arabic*.]
@@ -265,8 +242,7 @@ Thread、KernelStack 和 ProcessTree 预留。失败 child 从未可调度。
 阅读每一层时都记录：当前 CR3 是谁的；当前对象是否已发布；哪一步首次改变
 parent；发生失败由谁逆序释放；最后一个物理页引用由谁归还 buddy。
 
-\subsection{测试为何必须跨四层}
-
+\topic{测试为何必须跨四层}
 单元测试能把引用状态机的错误定位到一次 retain/release；页表集成测试能证明
 位 9 编解码、父子共享与 leaf 替换；100000 步固定种子模型能逐步比较所有
 frame 的引用，并在末尾排空；这些都不能证明 CPU 真的产生了预期 error code
@@ -290,8 +266,7 @@ share、retain、release、exclusive restore，并要求 active entry/reference
 精确为零。宿主给每条来宾日志附加相对 QEMU 启动毫秒，来宾 PIT 保留独立
 单调时间。
 
-\subsection{真实调试中暴露的三个边界}
-
+\topic{真实调试中暴露的三个边界}\par
 \begin{itemize}
   \item 初版 parent 提交把 readonly leaf 也标成 COW。硬件位看似可用，却让
         真正只读写入被错误私有化；最终只处理 VMA 本来 writable 的 leaf。
@@ -304,8 +279,7 @@ share、retain、release、exclusive restore，并要求 active entry/reference
 这些问题说明：纯引用模型、页表模型和 QEMU 不是互相替代，而是分别约束
 状态机、硬件编码与跨模块组合。
 
-\subsection{阶段边界与后续演化}
-
+\topic{阶段边界与后续演化}
 v1.10 不支持用户多 Thread 的 fork 停世、\code{vfork}、Linux
 \code{clone}、shared anonymous、huge-page COW、swap、overcommit 或 OOM
 killer。系统仍是单 BSP，不实现跨核 TLB shootdown。writable

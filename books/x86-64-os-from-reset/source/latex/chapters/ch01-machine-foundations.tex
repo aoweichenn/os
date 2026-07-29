@@ -1,13 +1,10 @@
-\chapter{机器、电气条件与操作系统职责}
+\chapter{操作系统职责、软件层次与学习工程}
 
 \begin{keyidea}
-操作系统不是从 \code{main} 开始的普通程序。bit、地址、CPU、ROM、RAM 和
-磁盘分别承担不同职责；电源、时钟、复位与地址译码先建立可取指机器，软件才
-有机会接管资源、隔离程序并提供持久命名。
+前四章已经建立一台能够取指的机器，但硬件不会自动产生进程、文件或权限。
+本章区分固件、Loader、Kernel、驱动、运行时与应用程序，说明本项目为何只让
+QEMU 模拟硬件，并用需求、实现、测试和证据组成可重复的学习闭环。
 \end{keyidea}
 
 \input{topics/ch01-learning-and-engineering}
-\input{topics/ch01-machine-parts-from-zero}
-\input{topics/ch01-system-wiring-atlas}
-\input{topics/ch01-power-clock-reset}
 \input{deepening/ch01-machine-and-operating-system}

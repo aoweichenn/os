@@ -1,0 +1,397 @@
+\section{电荷、电压、电流与参考网络}
+
+物质由带电粒子组成。电荷是物理属性，电流描述电荷通过截面的速率：
+
+\[
+I=\frac{\mathrm{d}Q}{\mathrm{d}t}.
+\]
+
+\(\SI{1}{A}=\SI{1}{C/s}\)。传统电流方向定义为正电荷移动方向；金属导线中
+主要载流电子的平均漂移方向与传统电流相反。分析电路时保持传统电流方向即可，
+不需要每次改用电子运动方向。
+
+\term{电压}{两点之间的电势差}表示单位电荷可交换的能量：
+
+\[
+V=\frac{W}{Q}.
+\]
+
+因此电压必须在两个点之间测量。“某引脚是 \(\SI{3.3}{V}\)”通常省略了
+“相对于该电路的参考地 GND”。两个没有共同参考的系统即使都标着
+\(\SI{3.3}{V}\)，也不能直接假定信号兼容。
+
+\begin{fromzerobox}
+导线是低阻连接，不是理想的“瞬间传送”。真实导线有电阻、电感和对周围导体
+的电容；频率越高、边沿越快，几何形状和回流路径越重要。低速原理图可以先把
+短导线视为同一节点，高速章节再恢复被忽略的寄生参数。
+\end{fromzerobox}
+
+\input{foundations/expanded/ch02-charge-sources-and-reference}
+
+\section{电路定律、等效模型与动态响应}
+
+电流要形成闭合回路。电源把能量送入回路，负载把电能转成光、热、机械运动
+或内部状态变化。下图中电流从电源正端经过限流电阻和发光二极管，再沿地返回
+电源负端。
+
+\begin{center}
+\begin{circuitikz}[american voltages]
+  \draw
+    (0,0) to[battery1,l_={\(\SI{5}{V}\)}] (0,3)
+    to[short] (1.2,3)
+    to[R,l={\(R_1\ \SI{330}{\ohm}\)}] (3.6,3)
+    to[leD,l={\(D_1\)}] (5.3,3)
+    to[short] (5.3,0)
+    -- (0,0);
+  \draw[->,BookBlue,thick] (1.2,3.35) -- (2.5,3.35) node[midway,above]{传统电流 \(I\)};
+  \node[ground] at (2.65,0) {};
+\end{circuitikz}
+\end{center}
+\diagramnote{元件符号表达电气关系，不表达实物尺寸或 PCB 位置。\(R_1\) 和
+\(D_1\) 是位号；\(\SI{330}{\ohm}\) 是属性；导线交点和网络标签决定连接。}
+
+把所有由理想导线相连的点看作一个\term{节点}{同一电位网络}。元件连接在
+节点之间形成支路。读原理图时先找节点，不要按纸面上“线从左向右流动”的外观
+猜测电气关系。
+
+\topic{欧姆定律与功率}
+对线性电阻，电压、电流和电阻满足：
+
+\[
+V=IR,\qquad I=\frac{V}{R},\qquad R=\frac{V}{I}.
+\]
+
+功率为
+
+\[
+P=VI=I^2R=\frac{V^2}{R}.
+\]
+
+这些等式中的方向与正负号必须一致；入门计算可以先使用大小，再检查元件额定
+功率和温升。
+
+\begin{workedexample}
+用 \(\SI{3.3}{V}\) GPIO 驱动红色 LED，假定 LED 在目标电流附近压降约
+\(\SI{1.9}{V}\)，期望电流 \(\SI{4}{mA}\)。串联电阻近似为
+
+\[
+R=\frac{\SI{3.3}{V}-\SI{1.9}{V}}{\SI{4}{mA}}
+=\SI{350}{\ohm}.
+\]
+
+可选择邻近标准值 \(\SI{360}{\ohm}\)。此时
+
+\[
+I\approx\frac{\SI{1.4}{V}}{\SI{360}{\ohm}}
+=\SI{3.89}{mA},
+\qquad
+P_R=I^2R\approx\SI{5.4}{mW}.
+\]
+
+还必须检查 GPIO 最大输出电流、输出高电压在该电流下是否仍满足规格、LED
+极性与脉冲条件。公式给出候选值，数据手册决定候选值是否安全。
+\end{workedexample}
+
+\topic{基尔霍夫定律：电流不能凭空消失，能量不能凭空出现}
+对一个节点，流入电流代数和等于流出电流代数和：
+
+\[
+\sum I_k=0.
+\]
+
+对一个闭合回路，各元件电压升降代数和为零：
+
+\[
+\sum V_k=0.
+\]
+
+它们分别来自电荷守恒和能量守恒。复杂电路仍可拆成节点方程和回路方程。
+
+\topic{串联和并联}
+串联电阻流过相同电流：
+
+\[
+R_{\mathrm{series}}=R_1+R_2+\cdots.
+\]
+
+并联电阻两端电压相同：
+
+\[
+\frac{1}{R_{\mathrm{parallel}}}
+=\frac{1}{R_1}+\frac{1}{R_2}+\cdots.
+\]
+
+两个并联电阻可写成
+
+\[
+R_{\mathrm{parallel}}=\frac{R_1R_2}{R_1+R_2}.
+\]
+
+\section{无源元件、半导体器件与基础电路}
+
+电阻不是“把多余电压吃掉”的黑盒。它在给定两端电压下限制电流，并把电能
+转化为热。除阻值外，还要关注误差、额定功率、温度系数和封装。
+
+\topic{分压器}
+\begin{center}
+\begin{circuitikz}[american voltages]
+  \draw (0,3) node[vcc]{\(V_{\mathrm{in}}\)}
+    to[R,l={\(R_1\)}] (0,1.5)
+    to[R,l={\(R_2\)}] (0,0) node[ground]{};
+  \draw (0,1.5) -- (2,1.5) node[right]{\(V_{\mathrm{out}}\)};
+\end{circuitikz}
+\end{center}
+
+若输出端没有额外负载，则
+
+\[
+V_{\mathrm{out}}
+=V_{\mathrm{in}}\frac{R_2}{R_1+R_2}.
+\]
+
+\begin{workedexample}
+\(V_{\mathrm{in}}=\SI{5}{V}\)，\(R_1=\SI{10}{k\ohm}\)，
+\(R_2=\SI{20}{k\ohm}\)：
+
+\[
+V_{\mathrm{out}}=\SI{5}{V}\times\frac{20}{10+20}
+\approx\SI{3.33}{V}.
+\]
+
+但这不能直接当作大电流 \(\SI{3.3}{V}\) 电源。输出接入负载 \(R_L\) 后，
+下臂变成 \(R_2\parallel R_L\)，输出电压会下降。分压器适合偏置和测量，
+稳定供电通常需要稳压器。
+\end{workedexample}
+
+\topic{上拉、下拉与悬空输入}
+数字输入阻抗通常很高。若没有器件主动驱动，引脚会受泄漏、耦合和静电影响，
+读到不确定状态。上拉电阻让释放状态偏向电源，下拉电阻让释放状态偏向地。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,3) node[vcc]{\(\SI{3.3}{V}\)}
+    to[R,l={\(R_{\mathrm{pull}}\ \SI{10}{k\ohm}\)}] (0,1.5)
+    -- (2,1.5) node[right]{GPIO 输入};
+  \draw (0,1.5) to[push button,l_={按键}] (0,0) node[ground]{};
+\end{circuitikz}
+\end{center}
+
+按键松开时电阻把输入拉高；按下时输入接地。按下电流约为
+\(\SI{3.3}{V}/\SI{10}{k\ohm}=\SI{0.33}{mA}\)。软件看到的是松开 1、
+按下 0，称为\term{低有效}{asserted 时为低电平}。
+
+\topic{电容：储存电场能量并反对电压突变}
+电容的基本关系是
+
+\[
+Q=CV,\qquad i=C\frac{\mathrm{d}v}{\mathrm{d}t},
+\qquad E=\frac{1}{2}CV^2.
+\]
+
+电容两端电压不能在有限电流下瞬间跳变。它可用于去耦、滤波、定时、交流耦合
+和能量缓冲。真实电容还有等效串联电阻、等效串联电感、漏电、容差和耐压。
+
+\topic{RC 充电与时间常数}
+电阻 \(R\) 给电容 \(C\) 充电时：
+
+\[
+V_C(t)=V_{\mathrm{DD}}\left(1-e^{-t/(RC)}\right),
+\qquad \tau=RC.
+\]
+
+在 \(t=\tau\) 时约达到最终值的 \(63.2\%\)，\(5\tau\) 时超过 \(99\%\)。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,2.5) node[vcc]{\(V_{\mathrm{DD}}\)}
+    to[R,l={\(R\)}] (2,2.5)
+    -- (3.5,2.5) node[right]{RESET\_N};
+  \draw (2,2.5) to[C,l_={\(C\)}] (2,0) node[ground]{};
+\end{circuitikz}
+\end{center}
+
+简单 RC 可以产生延迟，但真实复位通常还要保证明确阈值、迟滞、掉电快速复位、
+电源斜率范围和多个电源域顺序，因此常使用专用 supervisor 或 PMIC 输出，
+不能看到 RC 就假定复位一定可靠。
+
+\begin{workedexample}
+\(R=\SI{100}{k\ohm}\)，\(C=\SI{100}{nF}\)：
+
+\[
+\tau=RC=100\,000\times100\times10^{-9}
+=\SI{10}{ms}.
+\]
+
+若输入高阈值假设为电源的 \(70\%\)，求过阈时间：
+
+\[
+0.7=1-e^{-t/\tau}
+\Rightarrow
+t=-\tau\ln(0.3)
+\approx1.204\tau
+\approx\SI{12.0}{ms}.
+\]
+
+这个结果依赖阈值、容差和电源斜率；不能把 \(\tau\) 直接等同于复位保持时间。
+\end{workedexample}
+
+\topic{去耦电容为什么要靠近电源引脚}
+芯片内部大量晶体管同时翻转会在很短时间内需要电流。远处电源经导线和 PCB
+平面的寄生电感来不及提供快速变化电流，局部电压可能下降。靠近电源脚的去耦
+电容提供短时电流，并让高频回流形成小回路。
+
+\begin{pdfdiagram}
+  \node[os hardware] (reg) {稳压器\\较慢能量来源};
+  \node[os hardware,right=25mm of reg] (cap) {去耦电容\\局部储能};
+  \node[os hardware,right=25mm of cap] (ic) {芯片 VDD/GND\\瞬态负载};
+  \draw[os arrow] (reg) -- node[above]{补充平均能量} (cap);
+  \draw[os arrow] (cap) -- node[above]{短小高频回路} (ic);
+  \draw[os arrow,bend left=35] (ic.south) to node[below]{回流} (cap.south);
+\end{pdfdiagram}
+
+\topic{二极管与 LED：方向和压降不能忽略}
+二极管主要允许一个方向导通。硅 PN 结常被入门材料近似为正向压降约
+\(\SI{0.7}{V}\)，但实际压降随器件、温度和电流变化；肖特基、LED、稳压管
+又有不同用途和曲线。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,0) to[D,l={普通二极管}] (2.5,0)
+        (4,0) to[leD,l={发光二极管}] (6.5,0);
+  \node[below] at (0,-0.35) {阳极};
+  \node[below] at (2.5,-0.35) {阴极};
+\end{circuitikz}
+\end{center}
+
+二极管可用于反接保护、钳位、整流和感性负载续流。保护是否有效取决于浪涌
+能量、响应速度、位置和回流路径，不能只看原理图上“画了一颗二极管”。
+
+\topic{晶体管：用一个端口控制另一个电流通路}
+晶体管是现代数字电路的关键开关。MOSFET 具有栅极、漏极和源极；栅极电压
+控制漏源通路。入门时可以把 N 沟道 MOSFET 理解为“栅极足够高时把负载拉向
+地”的受控开关，但设计还需检查阈值不是完全导通电压、导通电阻、栅电荷、
+体二极管和最大额定值。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,4) node[vcc]{\(V_{\mathrm{DD}}\)}
+    to[R,l={负载}] (0,2.4)
+    -- (0,1.8);
+  \draw (0,1.8) node[nmos,anchor=D] (mos) {};
+  \draw (mos.S) -- (0,0) node[ground]{};
+  \draw (mos.G) -- (-2,1.0) node[left]{控制输入};
+  \node[right] at (0.4,1.0) {N-MOS};
+\end{circuitikz}
+\end{center}
+
+互补的 P-MOS 与 N-MOS 可以组成 CMOS 反相器：输入低时上管导通、输出被拉高；
+输入高时下管导通、输出被拉低。稳定状态下理想静态电流很小，切换时则要给
+节点电容充放电。第三章会从这个开关模型进入逻辑门。
+
+\topic{电感、稳压器、晶振和连接器}
+\begin{osgridlongtable}{L{0.15\linewidth}L{0.27\linewidth}L{0.48\linewidth}}
+部件 & 基本作用 & 读图时必须检查 \\ \hline
+\endfirsthead
+部件 & 基本作用 & 读图时必须检查 \\ \hline
+\endhead
+电感 & 储存磁场能量，反对电流突变 & 电感值、饱和电流、直流电阻、磁芯和布局 \\ \hline
+LDO & 用线性方式把较高电压稳成较低电压 & 压差、静态电流、功耗、稳定电容与热 \\ \hline
+Buck & 用开关、电感和电容高效降压 & 输入范围、开关节点、反馈、补偿、纹波和 EMI \\ \hline
+晶体/振荡器 & 提供频率基准 & 频率、负载电容、启动时间、幅度、抖动和使能 \\ \hline
+连接器 & 让电源与信号跨机械边界连接 & 方向、pin 1、额定电流、插拔、屏蔽和防呆 \\ \hline
+保险丝/TVS & 限制过流或瞬态过压后果 & 触发条件、能量、钳位电压、位置与失效模式 \\ \hline
+\end{osgridlongtable}
+
+\input{foundations/expanded/ch02-component-library-and-power}
+
+\section{原理图、PCB、测量与安全上电}
+
+\term{原理图}{schematic}回答“哪些引脚应该电气相连”；\term{PCB}{printed
+circuit board}回答“这些网络在真实板材上怎样用铜几何实现”；\term{封装}
+{footprint/package}连接逻辑符号与实体焊盘。
+
+\begin{pdfdiagram}
+  \node[os block] (symbol) {原理图符号\\U1、引脚名/号};
+  \node[os state,right=of symbol] (net) {网络表\\谁与谁相连};
+  \node[os hardware,right=of net] (foot) {PCB 封装\\焊盘与外形};
+  \node[os hardware,right=of foot] (part) {实体元件\\方向与 pin 1};
+  \draw[os arrow] (symbol) -- node[above]{生成} (net);
+  \draw[os arrow] (net) -- node[above]{布线} (foot);
+  \draw[os arrow] (foot) -- node[above]{装配} (part);
+\end{pdfdiagram}
+
+\topic{同一芯片的三种视图}
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,scale=0.87,transform shape]
+  \node[draw=BookBlue,minimum width=28mm,minimum height=22mm,align=center]
+    (logic) at (0,0) {U1\\SPI Flash};
+  \foreach \y/\name in {0.7/CS\_N,0.2/MISO,-0.3/WP\_N,-0.8/GND}
+    \draw (-1.4,\y) -- (-2.2,\y) node[left]{\name};
+  \foreach \y/\name in {0.7/VCC,0.2/HOLD\_N,-0.3/SCLK,-0.8/MOSI}
+    \draw (1.4,\y) -- (2.2,\y) node[right]{\name};
+  \node at (0,-1.65) {逻辑符号：按功能排引脚};
+
+  \draw[rounded corners=2pt,draw=BookMuted,fill=BookCodeBg]
+    (5.0,-1.15) rectangle (7.8,1.15);
+  \draw[fill=BookMuted] (6.2,0.8) circle (0.09);
+  \foreach \y/\n in {0.75/1,0.25/2,-0.25/3,-0.75/4}
+    \node[os pin] at (4.65,\y) {\n};
+  \foreach \y/\n in {0.75/8,0.25/7,-0.25/6,-0.75/5}
+    \node[os pin] at (8.15,\y) {\n};
+  \node at (6.4,-1.65) {顶视封装：按物理位置编号};
+
+  \draw[draw=BookAmber,fill=white] (10.8,-1.1) rectangle (13.6,1.1);
+  \foreach \y in {0.75,0.25,-0.25,-0.75} {
+    \draw[fill=BookAmber!30] (10.45,\y-0.12) rectangle (10.8,\y+0.12);
+    \draw[fill=BookAmber!30] (13.6,\y-0.12) rectangle (13.95,\y+0.12);
+  }
+  \node[align=center] at (12.2,0) {实物俯视\\缺口/圆点标 pin 1};
+  \node at (12.2,-1.65) {元件图：有方向但不显示内部逻辑};
+\end{tikzpicture}
+\end{center}
+
+\begin{failurebox}
+最危险的常见错误是把底视图当顶视图、把原理图上的上下位置当物理引脚位置，
+或让符号 pin number 与 footprint pad number 不一致。软件无论写得多正确，
+错误接到 VCC、GND、时钟或数据脚都不会被软件修复。
+\end{failurebox}
+
+\topic{怎样从一张陌生原理图开始}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 找标题栏、版本、页码和层次入口，确认正在看哪一版。
+  \item 找电源入口、GND、稳压器、power-good、时钟和复位。
+  \item 找核心芯片位号，按数据手册核对每组电源脚和去耦。
+  \item 沿网络标签追踪接口，不把跨页同名网络误认为断开。
+  \item 对低有效名称（\code{\_N}、\(\overline{\mathrm{RESET}}\)）标出有效电平。
+  \item 对每个连接器核对视角、pin 1、插入方向和保留脚。
+  \item 最后才检查数据总线、差分对、终端和软件可见功能。
+\end{enumerate}
+
+\input{foundations/expanded/ch02-pcb-measurement-and-debug}
+
+\topic{从电源按键到复位释放的物理链}
+\begin{pdfdiagram}
+  \node[os hardware] (source) {外部电源\\电压与电流能力};
+  \node[os hardware,right=of source] (protection) {保护/转换\\保险、TVS、MOSFET};
+  \node[os hardware,right=of protection] (rails) {稳压电源轨\\核心、I/O、内存};
+  \node[os state,below=of rails] (pg) {Power Good\\电压进入允许窗口};
+  \node[os hardware,left=of pg] (clock) {参考时钟\\振荡并稳定};
+  \node[os state,left=of clock] (reset) {复位逻辑\\保持后再释放};
+  \node[os hardware,below=of reset] (cpu) {CPU 开始取指};
+  \draw[os arrow] (source) -- (protection);
+  \draw[os arrow] (protection) -- (rails);
+  \draw[os arrow] (rails) -- (pg);
+  \draw[os arrow] (pg) -- (clock);
+  \draw[os arrow] (clock) -- (reset);
+  \draw[os arrow] (reset) -- (cpu);
+\end{pdfdiagram}
+
+这条链解释了为什么“ROM 中已经有正确代码”仍不足以启动。CPU 必须先处于
+允许的电压、温度、时钟和复位条件，取指接口才能产生有意义的事务。第四章会
+把 CPU 产生的事务继续连接到 ROM、RAM 与设备。
+
+\begin{contractbox}
+读完本章，应会手算 LED 限流、分压、功率与 RC 时间；能区分符号、位号、
+引脚号、网络、封装和实物方向；能说明数据手册、电气范围与回流路径为什么
+不能被“逻辑上是 0/1”替代。
+\end{contractbox}

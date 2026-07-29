@@ -1,0 +1,208 @@
+\section{指令周期、数据通路与流水线}
+
+\term{冯·诺依曼式}{von Neumann}组织让指令和数据共享一个可寻址存储体系；
+\term{Harvard 式}{Harvard}组织为指令和数据提供分离存储或接口。现代 CPU
+常表现为混合结构：软件看到统一虚拟地址空间，内部却有分离的 L1 指令缓存和
+数据缓存，更下层再汇合。
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.31\linewidth}L{0.40\linewidth}}
+组织 & 优势 & 代价与现实变体 \\ \hline
+\endfirsthead
+组织 & 优势 & 代价与现实变体 \\ \hline
+\endhead
+统一存储 & 指令和数据可共享容量，程序易装载修改 & 取指与数据访问争用同一通路 \\ \hline
+分离存储 & 可同时取指和访数据，权限/宽度可不同 & 两边容量固定，交换内容需要额外机制 \\ \hline
+现代混合 & ISA 统一、近端缓存分离、下层汇合 & 必须维护指令/数据缓存与修改代码的一致性 \\ \hline
+\end{osgridlongtable}
+
+“程序也是 byte”表示指令可以存储和搬运，不表示 CPU 会把任意数据自动执行。
+取指必须来自当前控制流选择的地址，并通过执行权限、模式和译码规则。
+
+\topic{把 CPU 打开：数据通路与控制通路分别做什么}
+\term{数据通路}{datapath}搬运并变换值，包括寄存器文件、ALU、多路选择器和
+总线；\term{控制通路}{control path}根据指令、状态和条件产生选择、读写、
+使能与下一状态。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os state,minimum width=24mm] (pc) at (0,4.5) {PC/RIP\\取指地址};
+  \node[os hardware,minimum width=26mm] (memory) at (4.0,4.5) {指令存储接口\\返回机器码};
+  \node[os state,minimum width=24mm] (ir) at (8.0,4.5) {指令寄存器 IR\\当前编码};
+  \node[os block,minimum width=28mm] (decode) at (11.8,4.5) {译码/控制器\\产生控制信号};
+  \node[os state,minimum width=28mm] (regs) at (2.0,1.6) {寄存器文件\\两个读口、一个写口};
+  \node[os block,minimum width=24mm] (muxa) at (5.8,2.4) {MUX A};
+  \node[os block,minimum width=24mm] (muxb) at (5.8,0.8) {MUX B};
+  \node[os block,minimum width=27mm] (alu) at (9.0,1.6) {ALU\\算术/地址/逻辑};
+  \node[os state,minimum width=24mm] (flags) at (12.2,1.6) {结果与标志};
+
+  \draw[os bus] (pc) -- (memory);
+  \draw[os bus] (memory) -- (ir);
+  \draw[os bus] (ir) -- (decode);
+  \draw[os bus] (regs) -- (muxa);
+  \draw[os bus] (regs) -- (muxb);
+  \draw[os bus] (muxa) -- (alu);
+  \draw[os bus] (muxb) -- (alu);
+  \draw[os bus] (alu) -- (flags);
+  \draw[os arrow,BookTeal] (decode) |- node[pos=0.2,right]{选择/使能} (muxa);
+  \draw[os arrow,BookTeal] (decode) |- (muxb);
+  \draw[os arrow,BookTeal] (decode) -- (flags);
+  \draw[os bus,bend right=18] (flags.south) to node[below]{写回} (regs.south);
+  \draw[os arrow,bend left=32] (flags.north) to node[above]{顺序、分支或异常} (pc.north);
+\end{tikzpicture}
+\end{center}
+\diagramnote{蓝色双线表示多 bit 数据，绿色细线表示控制选择。图按职责展开，
+不声称真实 x86 核心只有这些块或按此几何布局。}
+
+\topic{寄存器文件为什么常有多个端口}
+一条二操作数算术指令通常要同时读取两个源，再写一个目标。寄存器文件可提供
+两个组合读端口和一个时钟写端口。地址译码选择寄存器，读多路选择器返回内容，
+写使能只在提交时更新目标。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \draw[rounded corners=3pt,draw=BookBlue,fill=BookCodeBg]
+    (3,0) rectangle (8,4.8);
+  \node[font=\bfseries] at (5.5,4.3) {寄存器文件};
+  \foreach \y/\name in {3.4/R0,2.7/R1,2.0/R2,1.3/\(\cdots\),0.6/R15}
+    \node[draw=BookRule,fill=white,minimum width=18mm,minimum height=5mm]
+      at (5.5,\y) {\name};
+  \node[os state] (ra) at (0,3.6) {read addr A};
+  \node[os state] (rb) at (0,2.4) {read addr B};
+  \node[os state] (wa) at (0,1.2) {write addr};
+  \node[os state] (wd) at (5.5,-1.0) {write data + enable};
+  \node[os state] (qa) at (11,3.3) {read data A};
+  \node[os state] (qb) at (11,1.6) {read data B};
+  \draw[os arrow] (ra) -- (3,3.6);
+  \draw[os arrow] (rb) -- (3,2.4);
+  \draw[os arrow] (wa) -- (3,1.2);
+  \draw[os bus] (wd) -- (5.5,0);
+  \draw[os bus] (8,3.3) -- (qa);
+  \draw[os bus] (8,1.6) -- (qb);
+\end{tikzpicture}
+\end{center}
+
+\topic{机器指令包含“做什么”和“对谁做”}
+机器指令编码通常要表达部分或全部字段：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item opcode：ADD、LOAD、JUMP 等操作；
+  \item 源/目标寄存器编号；
+  \item 立即数或位移；
+  \item 寻址方式、操作数宽度和条件；
+  \item 某些 ISA 中的权限或扩展前缀。
+\end{itemize}
+
+为建立直觉，定义一个\textbf{纯教学、不是 x86} 的 16-bit 定长编码：
+
+\[
+\underbrace{15\ldots12}_{opcode}
+\ \underbrace{11\ldots8}_{rd}
+\ \underbrace{7\ldots4}_{rs}
+\ \underbrace{3\ldots0}_{imm4}.
+\]
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \x/\w/\colorname/\title/\bits in {
+    0/3.2/BookBlue/opcode/\(15..12\),
+    3.2/3.2/BookTeal/rd/\(11..8\),
+    6.4/3.2/BookAmber/rs/\(7..4\),
+    9.6/3.2/BookMuted/imm4/\(3..0\)} {
+    \fill[\colorname!18] (\x,0) rectangle ++(\w,1.15);
+    \draw[\colorname,thick] (\x,0) rectangle ++(\w,1.15);
+    \node at (\x+1.6,0.68) {\title};
+    \node[below] at (\x+1.6,0) {\bits};
+  }
+\end{tikzpicture}
+\end{center}
+
+若 opcode \(\texttt{0x1}\) 表示
+\(\mathrm{ADDI}\ rd,rs,imm4\)，编码 \(\texttt{0x1325}\) 可解释为
+“读取 R2，把立即数 5 相加，提交到 R3”。真实 x86 指令为可变长度，字段和
+前缀复杂得多；教学编码只用于理解“byte 如何控制数据通路”。
+
+\topic{逐拍跟踪一条指令，才能知道每个部件何时有用}
+设教学 CPU 每个状态占一个时钟周期：
+
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.23\linewidth}L{0.31\linewidth}L{0.23\linewidth}}
+拍 & 主状态 & 数据移动 & 控制动作 \\ \hline
+\endfirsthead
+拍 & 主状态 & 数据移动 & 控制动作 \\ \hline
+\endhead
+\(T_0\) & Fetch address & \(MAR\leftarrow PC\) & 发出 memory read \\ \hline
+\(T_1\) & Fetch data & \(IR\leftarrow M[MAR]\) & 等待 ready，PC 加指令长度 \\ \hline
+\(T_2\) & Decode/read & \(A\leftarrow R[rs]\) & 译码 opcode、选择源/目标 \\ \hline
+\(T_3\) & Execute & \(ALUOut\leftarrow A+signext(imm4)\) & 选择 ADD，形成标志候选 \\ \hline
+\(T_4\) & Commit & \(R[rd]\leftarrow ALUOut\) & 写使能生效，架构状态改变 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+执行 \(\mathrm{ADDI}\ R3,R2,5\)，初始
+\(R2=7\)、\(R3=99\)。在 \(T_2\) 前，R3 仍是 99；\(T_3\) 形成内部候选
+12，但软件可见 R3 仍未改变；只有 \(T_4\) 提交后 R3 才为 12。
+
+若 \(T_1\) 取指返回错误，处理器应报告异常而不是继续使用旧 IR；若执行阶段
+发现权限错误，精确异常要求不提交 R3。提交点把“内部计算过”与“架构上已经
+发生”分开。
+\end{workedexample}
+
+\topic{硬连线控制与微程序控制是两种实现策略}
+\term{硬连线控制}{hardwired control}直接由组合逻辑和状态机产生控制信号，
+延迟可低但复杂指令修改困难；\term{微程序控制}{microprogrammed control}
+把复杂指令拆成内部微操作序列，由控制存储器选择下一微指令。
+
+x86 实现常把复杂指令译为内部微操作，再由乱序核心调度。微码不是操作系统
+固件，也不是主板 SPI Flash 中的普通启动代码；它属于处理器实现层，更新和
+装载方式由平台与处理器定义。
+
+\topic{流水线让多条指令重叠，不让依赖自动消失}
+若取指、译码、执行、访存、写回各需一拍，非流水实现一条指令需 5 拍；流水
+稳定后理想情况下可每拍完成一条，但单条延迟仍约 5 拍。
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily,x=1.25cm,y=0.65cm]
+  \foreach \x in {1,...,9} {
+    \node at (\x,4.8) {拍 \x};
+    \draw[BookRule] (\x-0.45,0) -- (\x-0.45,4.5);
+  }
+  \foreach \row/\name in {4/I1,3/I2,2/I3,1/I4} {
+    \node[left] at (0.4,\row) {\name};
+  }
+  \foreach \x/\label/\colorname in {
+    1/F/BookBlue,2/D/BookTeal,3/E/BookAmber,4/M/BookMuted,5/W/BookRed}
+    \node[draw=\colorname,fill=\colorname!12,minimum width=9mm,minimum height=5mm]
+      at (\x,4) {\label};
+  \foreach \x/\label/\colorname in {
+    2/F/BookBlue,3/D/BookTeal,4/E/BookAmber,5/M/BookMuted,6/W/BookRed}
+    \node[draw=\colorname,fill=\colorname!12,minimum width=9mm,minimum height=5mm]
+      at (\x,3) {\label};
+  \foreach \x/\label/\colorname in {
+    3/F/BookBlue,4/D/BookTeal,5/E/BookAmber,6/M/BookMuted,7/W/BookRed}
+    \node[draw=\colorname,fill=\colorname!12,minimum width=9mm,minimum height=5mm]
+      at (\x,2) {\label};
+  \foreach \x/\label/\colorname in {
+    4/F/BookBlue,5/D/BookTeal,6/E/BookAmber,7/M/BookMuted,8/W/BookRed}
+    \node[draw=\colorname,fill=\colorname!12,minimum width=9mm,minimum height=5mm]
+      at (\x,1) {\label};
+  \node[align=left] at (10.2,2.5)
+    {F 取指\\D 译码\\E 执行\\M 访存\\W 写回};
+\end{tikzpicture}
+\end{center}
+
+流水线要处理：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 数据冒险：后一指令需要前一指令尚未写回的结果；
+  \item 控制冒险：分支结果未定时不知道下一取指地址；
+  \item 结构冒险：两阶段同时争用一个端口；
+  \item 异常：内部已有多条在途指令，却要提供精确架构状态。
+\end{itemize}
+
+转发、停顿、预测、重命名和重排序缓冲分别缓解这些问题。它们属于微架构，
+不能改变 ISA 对最终寄存器、内存顺序和异常的承诺。
+
+\begin{failurebox}
+框图中的一根“数据箭头”可能代表 8、64、256 bit 或更宽内部总线；一个方框
+可能含数百万晶体管。框图用来证明职责和流向，不证明门级实现、物理位置或
+时钟周期数。读图必须先确认抽象层级。
+\end{failurebox}

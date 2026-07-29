@@ -1,6 +1,6 @@
-\chapter*{十六章推导实验与复习路线}
-\addcontentsline{toc}{chapter}{十六章推导实验与复习路线}
-\markboth{十六章推导实验与复习路线}{十六章推导实验与复习路线}
+\chapter*{二十章推导实验与复习路线}
+\addcontentsline{toc}{chapter}{二十章推导实验与复习路线}
+\markboth{二十章推导实验与复习路线}{二十章推导实验与复习路线}
 
 \begin{keyidea}
 实验不是照抄命令得到相同输出。每章都用“解释、推导、观察、证伪”四个动作
@@ -18,16 +18,126 @@
   \item 完成后记录“本证据能证明什么、明确不能证明什么”。
 \end{enumerate}
 
-\section*{第 1 章：从电气条件建立可取指机器}
+\section*{第 1 章：量、单位、编码与证据}
 
 \begin{itemize}
-  \item 解释：画出电源、时钟、复位、ROM、CPU、RAM、磁盘的不可交换依赖图。
-  \item 推导：给定电压、电流与转换效率，估算一条电源轨的输入功率和热损耗。
-  \item 观察：从全机图指出每条线属于能量、时钟/控制、事务还是软件所有权。
-  \item 证伪：构造“只有 RAM、没有非易失指令来源”的机器，说明为何无法冷启动。
+  \item 解释：区分物体、现象、物理量、单位、数值、状态、编码和协议含义。
+  \item 测量：为电压、周期和文件长度各写一条“对象、仪器、接法、量程、
+        分辨率、扰动、原始读数、结论”证据链。
+  \item 推导：完成 ns/MHz、bit/byte、MB/MiB 与二/十/十六进制换算，并在
+        每一步保留单位、有效数字和数量级。
+  \item 推导：手算一个 8-bit 加法的逐位进位，同时分别判断无符号
+        \code{carry} 和有符号 \code{overflow}，说明二者为何不能互换。
+  \item 编码：把同一组 4 byte 分别解释为无符号数、有符号补码、ASCII 和
+        little-endian 整数，写出“字节未变、解释规则改变”的证据。
+  \item 布局：给出起始地址、长度与对齐要求，写出半开区间、末地址、
+        padding 和下一对象地址，专门检查 \(A+N-1\) 与 \(A+N\) 的区别。
+  \item 通信：为一段带起止标记的 byte 流加入长度、校验和或 CRC，翻转一位
+        后说明接收方能检测什么、不能恢复什么。
+  \item 性能：用排队的三项任务构造“低 latency 但低 throughput”和“高
+        throughput 但单项等待长”两个反例，避免把带宽等同于完成时间。
+  \item 观察：从任意五条硬件规格中标出参考点、允许范围、测试条件、典型值
+        与保证值，指出缺少哪一项时结论不能成立。
+  \item 历史：任选继电器、电子管、晶体管、集成电路、分时、虚拟内存中的
+        三次转折，用“旧瓶颈、当时方案、新问题、今日痕迹”连接成因果链。
+  \item 证伪：寻找一个因单位大小写或 bit/byte 混淆而差 \(8\) 倍以上的错误结论。
 \end{itemize}
 
-\section*{第 2 章：复位现场与兼容历史}
+\section*{第 2 章：电路、元件与原理图}
+
+\begin{itemize}
+  \item 解释：从电荷移动和电势差开始，画出电源、保护、负载、回流与参考地；
+        区分保护地、机壳地、模拟地、数字地和网络名 \code{GND}。
+  \item 推导：把带内阻电源化为戴维南等效，计算开路电压、负载电流、端电压、
+        负载功率和电源内部损耗，并检查极端负载是否超限。
+  \item 推导：计算 LED 限流、分压、功率、容差范围、RC 阈值穿越时间和电感
+        断流能量；每题再给出一个器件额定值不满足的反例。
+  \item 元件：为电阻、电容、二极管、BJT、MOSFET、电感、晶振、LDO 和 Buck
+        分别写出“控制量、被控制量、主要非理想参数、典型失败”。
+  \item 资料：选一颗真实 IC，从 datasheet 中找到 absolute maximum、
+        recommended condition、DC characteristics、timing、pinout、package
+        和参考布局，禁止用典型值代替保证值。
+  \item 原理图：区分符号、位号、引脚号、网络、封装、焊盘与实物；从
+        \code{pin 1} 标记一直核对到 footprint 的 pad 1。
+  \item PCB：为一条高速信号同时画去程、参考平面回流和换层回流过孔；再画
+        一条局部去耦的最小高频电流环，不把电容画成“远处电源仓库”。
+  \item 接线：画出 SPI Flash 的 VCC/GND、CS、SCLK、MOSI、MISO、
+        WP/HOLD 和去耦，逐根标方向、空闲电平与上拉原因。
+  \item 测量：制定断电阻值、限流上电、各电源轨、power-good、时钟、复位和
+        接口波形的 bring-up 顺序；每一步只增加一个新变量。
+  \item 观察：在实体原理图上寻找一组电源脚、去耦、上拉、低有效信号、ESD、
+        测试点和 pin 1，并说明原理图看不到哪些 PCB/热/装配事实。
+  \item 证伪：分别构造输入悬空、LED 反接、感性负载无续流、封装镜像、
+        地未共参考和示波器地夹短路的失败。
+\end{itemize}
+
+\section*{第 3 章：逻辑门、时钟与状态}
+
+\begin{itemize}
+  \item 电气边界：给定发送端 \(V_{OL}/V_{OH}\) 与接收端
+        \(V_{IL}/V_{IH}\)，计算高低噪声裕量；判断 5 V、3.3 V、开漏和
+        三态接口能否直接相连。
+  \item 解释：区分组合逻辑、时序逻辑、传播延迟、状态和采样边沿，并说明
+        “逻辑关系正确”为什么不等于“电气与时序一定正确”。
+  \item 推导：从真值表写出半加器、全加器、MUX、译码器与优先编码器表达式，
+        再用德摩根律或卡诺图化简其中两项。
+  \item 推导：把四个全加器串成 4-bit ripple-carry adder，手算和值、逐位进位、
+        关键路径上界和 signed overflow。
+  \item 结构：分别画 SR latch、D latch 和边沿触发 DFF，指出透明期、采样点、
+        保持状态和非法输入，而不是把三者都叫“寄存器”。
+  \item 时序：对一条寄存器到寄存器路径列出 \(t_{cq}\)、组合最大/最小延迟、
+        setup、hold、skew 和 jitter，分别检查 setup 与 hold 不等式。
+  \item 观察：在时序图上标出 setup、hold、clock-to-Q、毛刺、透明窗口、
+        异步复位释放和稳定窗口。
+  \item 跨域：为单 bit 状态设计两级同步器；为多 bit 数据选择握手或异步 FIFO，
+        解释为何逐 bit 同步不能保证组合值一致。
+  \item FSM：从文字协议写出状态表、非法输入、复位态、输出和转移图，再检查
+        每个状态对全部输入是否都有定义。
+  \item 证伪：让异步输入或复位释放靠近采样边沿，说明单次确定模拟为何不能
+        证明无亚稳态；再构造机械按键抖动让一次按压产生多次边沿。
+\end{itemize}
+
+\section*{第 4 章：CPU、存储器、总线与启动条件}
+
+\begin{itemize}
+  \item 分层：为一颗概念 CPU 分开画 ISA 契约、微架构数据通路、封装引脚、
+        平台地址图和 PCB 连线，说明每张图能证明什么。
+  \item 数据通路：让一条 \(R_3\leftarrow R_1+R_2\) 指令逐周期穿过 PC、
+        取指接口、译码器、寄存器文件、ALU、标志与提交点，列出每步输入输出。
+  \item 编码：为教学 ISA 设计固定宽度的 opcode、寄存器和立即数字段，手工
+        编码两条指令，再说明 x86 可变长编码增加了哪些译码问题。
+  \item 解释：画出电源、时钟、复位、CPU、ROM、RAM、译码器和设备的完整依赖，
+        并把能量链、时序链、事务链与软件链分泳道。
+  \item 推导：由地址/数据位数计算容量、芯片数量、引脚与窗口；由时钟周期、
+        byte enable 和等待状态估算理论带宽与实际事务时间。
+  \item 总线：把一条读事务拆成请求、地址、属性、目标选择、ready、数据、
+        error 和提交；在等待期间写出哪些信号必须保持稳定。
+  \item 互连：给两个主设备和三个从设备设计最小地址译码与仲裁规则，分别处理
+        重叠窗口、无人响应、超时和窄写 byte lane。
+  \item 缓存：给定容量、路数、line size 和地址，拆出 tag/index/offset，
+        再用命中率、命中时间和 miss penalty 计算 AMAT。
+  \item 存储：对 SRAM、DRAM、NOR Flash 和磁盘分别写出保存介质、访问粒度、
+        易失性、初始化要求、写入限制和失败表现。
+  \item 启动：从 \(CS.base+IP\) 推导 x86 reset 地址，再从 ROM 物理基址推导
+        128 KiB 镜像中的复位向量文件偏移，核对半开窗口两端。
+  \item 观察：把 QEMU 中一条首取指事务拆成 CPU 地址、平台译码、ROM 文件
+        offset、返回字节和译码结果，说明它不能证明实体供电与信号完整性。
+  \item 调试：按电源、power-good、时钟、复位、首条地址、ROM 响应、首条提交、
+        UART 配置和接收参数建立十二级证据，不从“无输出”直接跳到 C++。
+  \item 证伪：分别构造“只有 RAM”“ROM 窗口偏一 byte”“数据总线方向相反”
+        和“ready 永不返回”的机器，预测它们不同的冷启动失败现场。
+\end{itemize}
+
+\section*{第 5 章：软件层次与学习工程}
+
+\begin{itemize}
+  \item 解释：区分固件、Loader、Kernel、驱动、运行时、用户程序和宿主工具。
+  \item 推导：为一个最小机制列出需求、初态、提交点、失败不变量与四层证据。
+  \item 观察：从全机图指出每条线属于能量、控制、硬件事务还是软件所有权。
+  \item 证伪：让 QEMU 或宿主脚本偷偷代替一段目标启动链，指出学习证据为何失效。
+\end{itemize}
+
+\section*{第 6 章：复位现场与兼容历史}
 
 \begin{itemize}
   \item 解释：用“旧问题、当时方案、今日痕迹”说明分段、A20 与独立 I/O 空间。
@@ -36,7 +146,7 @@
   \item 证伪：把近跳转错误替换为会刷新 CS 的远跳转，预测首个错误取指地址。
 \end{itemize}
 
-\section*{第 3 章：平台事务与实体硬件}
+\section*{第 7 章：平台事务与实体硬件}
 
 \begin{itemize}
   \item 解释：区分 CPU 物理地址、端口号、PCIe 配置空间和 PCB 网络名。
@@ -45,7 +155,7 @@
   \item 证伪：选择一个错误的访问宽度或差分对交换，说明软件与电气侧各自症状。
 \end{itemize}
 
-\section*{第 4 章：寄存器、标志和机器码}
+\section*{第 8 章：寄存器、标志和机器码}
 
 \begin{itemize}
   \item 解释：区分寄存器别名、操作数宽度、地址宽度和指针宽度。
@@ -54,7 +164,7 @@
   \item 证伪：用 AX/EAX 写入差异、有符号/无符号分支差异构造两个边界错误。
 \end{itemize}
 
-\section*{第 5 章：工具链、C++ 与 ROM}
+\section*{第 9 章：工具链、C++ 与 ROM}
 
 \begin{itemize}
   \item 解释：说明预处理、编译、汇编、链接、objcopy 各自新增或丢弃什么信息。
@@ -63,7 +173,7 @@
   \item 证伪：引入一个会生成宿主运行时辅助符号的 C++ 特性，要求产物门禁拒绝。
 \end{itemize}
 
-\section*{第 6 章：UART 与证据}
+\section*{第 10 章：UART 与证据}
 
 \begin{itemize}
   \item 解释：逐位说明 DLAB、LCR、LSR 和波特率除数的状态机作用。
@@ -72,7 +182,7 @@
   \item 证伪：注入 THRE 永不就绪和设备错误，要求有限时间内得到不同根因。
 \end{itemize}
 
-\section*{第 7 章：Loader 与长模式}
+\section*{第 11 章：Loader 与长模式}
 
 \begin{itemize}
   \item 解释：按顺序列出 A20、GDT、CR4.PAE、EFER.LME、CR0.PG 与远转移。
@@ -81,7 +191,7 @@
   \item 证伪：分别破坏 header、checksum、ELF 和内存图，要求失败 marker 可区分。
 \end{itemize}
 
-\section*{第 8 章：异常与内存}
+\section*{第 12 章：异常与内存}
 
 \begin{itemize}
   \item 解释：从 GDT/TSS/IDT 到统一异常帧复述 CPU 与汇编各压入什么。
@@ -90,7 +200,7 @@
   \item 证伪：对 frame、页表、KVA、KernelStack 事务逐点注入失败并验证资源守恒。
 \end{itemize}
 
-\section*{第 9 章：中断、设备与 Ring 3}
+\section*{第 13 章：中断、设备与 Ring 3}
 
 \begin{itemize}
   \item 解释：区分 IRQ、vector、PIC ISR、EOI、RFLAGS.IF 和 scheduler 抢占状态。
@@ -99,7 +209,7 @@
   \item 证伪：构造用户 \#UD、用户 \#PF、非法 ELF 和非法用户指针，要求只隔离目标。
 \end{itemize}
 
-\section*{第 10 章：Process、Thread 与 syscall}
+\section*{第 14 章：Process、Thread 与 syscall}
 
 \begin{itemize}
   \item 解释：画出 Process 资源容器与 Thread 执行实体的寿命和引用方向。
@@ -108,7 +218,7 @@
   \item 证伪：构造 wake/timeout 竞争，要求同一 Thread 最多一次进入 Ready。
 \end{itemize}
 
-\section*{第 11 章：对象、fd 与 VFS}
+\section*{第 15 章：对象、fd 与 VFS}
 
 \begin{itemize}
   \item 解释：区分 fd、FileTable entry、FileDescription、Vnode、inode 和 Path。
@@ -117,7 +227,7 @@
   \item 证伪：注入表扩容、路径组件、后端操作失败，要求不发布半个 fd 或 mount。
 \end{itemize}
 
-\section*{第 12 章：PID1、VM 与 fork}
+\section*{第 16 章：PID1、VM 与 fork}
 
 \begin{itemize}
   \item 解释：区分父子关系、Zombie、wait/reap、exec 候选映像和唯一提交点。
@@ -126,7 +236,7 @@
   \item 证伪：在 child 准备每一步失败，要求 parent PTE、fd、cwd 和旧映像不变。
 \end{itemize}
 
-\section*{第 13 章：持久化与崩溃}
+\section*{第 17 章：持久化与崩溃}
 
 \begin{itemize}
   \item 解释：区分 write、dirty、writeback、FLUSH、commit、checkpoint 和 replay。
@@ -135,7 +245,7 @@
   \item 证伪：遍历 prepared、commit、checkpoint 前后的断电点，只接受完整旧/新状态。
 \end{itemize}
 
-\section*{第 14 章：Unix I/O、等待与作业}
+\section*{第 18 章：Unix I/O、等待与作业}
 
 \begin{itemize}
   \item 解释：把 pipe、futex、deadline、signal、TTY 都还原为条件与 WakeReason。
@@ -144,7 +254,7 @@
   \item 证伪：交换 signal、timeout、close、condition 的到达顺序，要求只有一个赢家。
 \end{itemize}
 
-\section*{第 15 章：用户环境与 ABI}
+\section*{第 19 章：用户环境与 ABI}
 
 \begin{itemize}
   \item 解释：区分项目版本、ABI 版本、ELF 身份和 rootfs 盘面版本。
@@ -153,7 +263,7 @@
   \item 证伪：破坏一个共享 offset、ELF 身份或工具 inode 唯一性，要求发布门禁拒绝。
 \end{itemize}
 
-\section*{第 16 章：v2.0 可复现发布}
+\section*{第 20 章：v2.0 可复现发布}
 
 \begin{itemize}
   \item 解释：画出主仓、目标产物、CTest、PDF、手机、web commit、Sites 与公网身份链。

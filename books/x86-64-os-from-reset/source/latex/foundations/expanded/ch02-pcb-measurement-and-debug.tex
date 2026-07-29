@@ -1,0 +1,165 @@
+\topic{PCB 不是把原理图导线画成铜线}
+原理图表达理想网络关系；PCB 决定真实电流路径、寄生参数、热、机械和制造。
+典型多层板可能包括元件层、连续参考平面、电源层和底层布线。每个信号都有
+去程和回程；回流通常选择最小阻抗路径，而不总是人凭直流电阻想象的最短几何
+距离。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \fill[BookBlue!20] (0,3.3) rectangle (13,3.8);
+  \fill[BookTeal!18] (0,2.4) rectangle (13,2.9);
+  \fill[BookAmber!18] (0,1.5) rectangle (13,2.0);
+  \fill[BookBlue!12] (0,0.6) rectangle (13,1.1);
+  \node[left] at (0,3.55) {顶层信号};
+  \node[left] at (0,2.65) {连续 GND 平面};
+  \node[left] at (0,1.75) {电源平面};
+  \node[left] at (0,0.85) {底层信号};
+  \draw[BookBlue,very thick,->] (1,3.55) .. controls (4,4.25) and (8,3.0) .. (12,3.55);
+  \draw[BookTeal,very thick,->] (12,2.65) .. controls (8,2.25) and (4,3.05) .. (1,2.65);
+  \node[BookBlue,above] at (6.5,3.7) {信号去程};
+  \node[BookTeal,below] at (6.5,2.45) {相邻参考平面上的回程};
+  \draw[BookRed,dashed,thick] (6.5,2.35) -- (6.5,2.95);
+  \node[BookRed,align=center] at (9.8,1.75)
+    {若参考平面被切缝，\\回流必须绕行并扩大环路};
+\end{tikzpicture}
+\end{center}
+
+\topic{边沿速度比时钟频率更能决定互连难度}
+一个 \(\SI{1}{MHz}\) 方波若上升时间只有 \(\SI{1}{ns}\)，其边沿包含远高于
+\(\SI{1}{MHz}\) 的频率成分。互连是否要当传输线处理，常与传播延迟相对于
+上升时间的比例有关，而不是只看重复频率。
+
+在 FR-4 PCB 上信号传播速度量级约为真空光速的一半到三分之二。若走线传播
+时间已经占上升时间不可忽略的一部分，阻抗不连续、分支和终端就可能产生反射。
+
+\topic{差分对传的是两个节点之差}
+差分接收器关心
+
+\[
+V_{\mathrm{diff}}=V_P-V_N,
+\]
+
+同时两根线相对于地的共模电压必须落在允许范围。P/N 应按规定间距、参考平面、
+阻抗和长度关系布线。把两根线互换可能反相逻辑；只接其中一根会失去差分接收
+和共模抑制能力。
+
+\topic{去耦布局要画出闭合电流环，而不是只数电容}
+高频瞬态电流路径是
+
+\[
+\text{电容正端}
+\rightarrow \text{芯片 VDD}
+\rightarrow \text{芯片内部开关}
+\rightarrow \text{芯片 GND}
+\rightarrow \text{电容负端}.
+\]
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \draw[rounded corners=3pt,draw=BookBlue,fill=BookCodeBg]
+    (5.1,0.6) rectangle (9.3,4.2);
+  \node[font=\bfseries] at (7.2,2.4) {数字芯片};
+  \node[os pin] (vdd) at (5.0,3.3) {VDD};
+  \node[os pin] (gnd) at (5.0,1.5) {GND};
+  \draw[fill=BookAmber!20,draw=BookAmber,rounded corners=2pt]
+    (1.5,1.6) rectangle (3.1,3.2);
+  \node at (2.3,2.4) {\(C_{\mathrm{dec}}\)};
+  \node[above] at (2.3,3.25) {正端};
+  \node[below] at (2.3,1.55) {负端};
+  \draw[BookRed,very thick,->] (3.1,3.0) -- (4.0,3.0) -- (4.0,3.3) -- (vdd);
+  \draw[BookRed,very thick,->] (vdd) -- (6.0,3.3) -- (6.0,1.5) -- (gnd);
+  \draw[BookRed,very thick,->] (gnd) -- (4.2,1.5) -- (4.2,1.8) -- (3.1,1.8);
+  \node[BookRed,align=center] at (5.4,0.35) {目标：面积小、阻抗低的瞬态电流环};
+
+  \draw[BookMuted,dashed,thick] (0,4.8) -- (11.5,4.8);
+  \node[BookMuted,above] at (5.75,4.8) {较远稳压器补充平均能量，但不替代局部高频回路};
+  \node[os hardware] (reg) at (11.0,2.4) {稳压器};
+  \draw[os arrow,dashed] (reg.north) |- (9.0,4.8);
+\end{tikzpicture}
+\end{center}
+\diagramnote{图中位置代表 PCB 物理邻近关系；与只画网络连接的原理图不同。}
+
+\topic{从网络表到一颗 SPI Flash 的完整连接检查}
+以 8-pin SPI NOR 为例，真正可启动不只需要四根 SPI 信号：
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.25\linewidth}L{0.31\linewidth}L{0.18\linewidth}}
+引脚组 & 连接目标 & 必须检查 & 失败表现 \\ \hline
+\endfirsthead
+引脚组 & 连接目标 & 必须检查 & 失败表现 \\ \hline
+\endhead
+VCC/GND & 正确电源轨和回流 & 电压范围、去耦、上电斜率 & 完全无响应或不稳定 \\ \hline
+CS\_N & 控制器片选 & 默认上拉、时序、是否误选 & 总线无事务或多个器件冲突 \\ \hline
+SCLK & 控制器时钟 & 模式、频率、边沿质量 & ID/数据随机错误 \\ \hline
+MOSI/IO0 & 控制器输出 & 电压域、方向、串阻 & 命令不能被器件识别 \\ \hline
+MISO/IO1 & 控制器输入 & 三态、上拉、采样边沿 & 读取全 0、全 1 或错位 \\ \hline
+WP\_N/IO2 & 上拉或 quad 数据 & 启动模式和写保护策略 & 无法编程或 quad 模式失败 \\ \hline
+HOLD\_N/IO3 & 上拉或 quad 数据 & 不能悬空、配置一致 & 传输被意外暂停 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{circuitikz}
+  \node[draw=BookBlue,fill=BookCodeBg,minimum width=28mm,minimum height=38mm,
+        align=center] (ctrl) at (0,2.5) {SoC/控制器\\SPI master};
+  \node[draw=BookAmber,fill=white,minimum width=28mm,minimum height=38mm,
+        align=center] (flash) at (8.0,2.5) {U1\\SPI NOR};
+  \draw[->,BookBlue,thick] ([yshift=13mm]ctrl.east) --
+    node[above,font=\scriptsize]{CS\_N} ([yshift=13mm]flash.west);
+  \draw[->,BookBlue,thick] ([yshift=6mm]ctrl.east) --
+    node[above,font=\scriptsize]{SCLK} ([yshift=6mm]flash.west);
+  \draw[->,BookBlue,thick] ([yshift=-1mm]ctrl.east) --
+    node[above,font=\scriptsize]{MOSI} ([yshift=-1mm]flash.west);
+  \draw[<-,BookTeal,thick] ([yshift=-8mm]ctrl.east) --
+    node[below,font=\scriptsize]{MISO} ([yshift=-8mm]flash.west);
+  \draw (6.4,5.6) node[vcc]{\(\SI{3.3}{V}\)}
+    to[R,l={\(\SI{10}{k\ohm}\)}] (6.4,4.6)
+    -- (flash.north west);
+  \draw (9.6,5.6) node[vcc]{\(\SI{3.3}{V}\)}
+    to[C,l={\(\SI{100}{nF}\)}] (9.6,4.6)
+    -- (flash.north east);
+  \draw (9.6,4.6) -- (10.8,4.6) node[right]{VCC};
+  \draw (9.6,0.4) node[ground]{} -- (9.6,0.6) -- (flash.south east);
+  \node[align=center,BookMuted] at (4.0,0.2)
+    {还需核对 WP\_N、HOLD\_N、pin 1、\\封装焊盘号和控制器启动 strap};
+\end{circuitikz}
+\end{center}
+
+\topic{安全上电：限流、温升和 ESD 先于功能测试}
+首次上电应把可恢复故障限制在小能量范围。一个可重复流程：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 断电检查极性、短路、焊桥、器件方向和电源轨对地阻值；
+  \item 将台式电源电压设为目标值，电流限制从保守值开始；
+  \item 不装关键器件或保持复位，先验证每条电源轨；
+  \item 观察恒压/限流状态、输入电流和异常发热；
+  \item 按电源树从输入到末端测量，确认 power-good 与复位顺序；
+  \item 最后再接调试器、时钟和高速接口，逐层开放功能。
+\end{enumerate}
+
+普通实验室低压电路仍可能因短路产生高温、熔铜和电池起火。市电、高能电池、
+大电容和无隔离电源不属于“照着入门图试一试”的范围，应使用合格设备和专业
+安全流程。
+
+\topic{ESD 为什么会在“人没感觉”时损坏输入}
+人体和衣物可积累静电，放电持续时间短但电压很高。芯片内部保护结构只能吸收
+规定能量。防静电工作垫、腕带、接地工具、合适包装和接口 TVS 分别降低产生、
+传递和进入敏感节点的风险；它们不能互相完全替代。
+
+\topic{按症状沿物理链定位，而不是一次换完所有元件}
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.31\linewidth}L{0.41\linewidth}}
+症状 & 先建立的证据 & 下一步 \\ \hline
+\endfirsthead
+症状 & 先建立的证据 & 下一步 \\ \hline
+\endhead
+电源一接就限流 & 断电电阻、热像/温升、分段电源树 & 找短路或反装，不继续强行升流 \\ \hline
+电压正常但无时钟 & 振荡器使能、供电、参考波形 & 核对负载、布局、启动时间和探头影响 \\ \hline
+时钟有但复位不释放 & power-good、复位源、RC/supervisor 时序 & 逐个时钟域核对同步释放 \\ \hline
+复位释放但无总线活动 & 启动 strap、CPU 取指地址、片选 & 检查地址译码和非易失介质 \\ \hline
+低速正常、高速出错 & 边沿、反射、回流、串扰和采样裕量 & 检查阻抗、终端、参考平面与时序 \\ \hline
+加探头后故障消失 & 探头电容/地线改变了节点 & 把测量负载纳入模型，缩短地弹簧 \\ \hline
+\end{osgridlongtable}
+
+\begin{failurebox}
+原理图网络正确不等于板一定正确。封装焊盘号、元件方向、未装/DNP、焊接、
+PCB 参考平面、回流、温升和测量方式都可能让同一网络在实物上表现不同。每次
+改动只针对一条被证据支持的假设，并保存改动前后的波形和条件。
+\end{failurebox}

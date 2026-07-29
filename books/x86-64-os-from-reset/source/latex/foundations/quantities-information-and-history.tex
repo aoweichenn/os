@@ -1,0 +1,391 @@
+\section{量、单位、测量与数量级}
+
+如果读者从未拆过电脑，也没有学过电路，本书仍然应该能够独立阅读。“从零”
+并不表示用比喻替代事实，而是遵守以下顺序：
+
+\[
+\text{能观察什么}
+\rightarrow
+\text{怎样测量}
+\rightarrow
+\text{怎样表示}
+\rightarrow
+\text{规则怎样改变状态}
+\rightarrow
+\text{怎样验证结论}
+\]
+
+看到一个新名词时，先不要问“考试定义是什么”，而要问：它是一个物体、一种
+可测量的量、一组编码规则、一次状态变化，还是人为划定的抽象边界？例如：
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.28\linewidth}L{0.44\linewidth}}
+词语 & 类别 & 可以直接追问的问题 \\ \hline
+\endfirsthead
+词语 & 类别 & 可以直接追问的问题 \\ \hline
+\endhead
+电阻 & 物理元件 & 两端怎样连接，阻值、功率和误差是多少？\\ \hline
+电压 & 可测量的量 & 哪两个点之间，使用什么参考，单位是什么？\\ \hline
+bit & 可区分状态的编码 & 哪个物理状态代表 0，哪个代表 1？\\ \hline
+地址 & 编号规则 & 编号属于哪个地址空间，由谁译码？\\ \hline
+指令 & 状态转换规则 & 输入状态、输出状态和失败条件是什么？\\ \hline
+进程 & 软件抽象边界 & 它拥有什么，谁创建和回收它？\\ \hline
+\end{osgridlongtable}
+
+\begin{fromzerobox}
+“地是零伏”“1 是高电平”“地址就是内存位置”都省略了限定条件。更准确的
+说法分别是：电压相对于选定参考点测量；逻辑输入在规定阈值范围内被解释为
+高电平；某个地址空间中的编号经过相应译码后选择一个目标。
+\end{fromzerobox}
+
+\topic{物体、现象、量、单位和数值不是一回事}
+一块电路板是物体；电流流动、芯片发热和时钟振荡是现象；电压、电流、温度
+和频率是可以测量的量；伏特、安培、摄氏度和赫兹是单位；\(\SI{3.3}{V}\)、
+\(\SI{20}{mA}\) 和 \(\SI{100}{MHz}\) 才是带单位的数值。
+
+一个完整测量至少包含：
+
+\[
+Q = q \times [Q]
+\]
+
+其中 \(Q\) 是物理量，\(q\) 是数值，\([Q]\) 是单位。只写“电压是 3.3”
+会丢失单位；只写“这个点是 3.3 V”仍会丢失参考点和工作条件。
+
+\topic{七个常见量先建立直觉}
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.12\linewidth}L{0.19\linewidth}L{0.43\linewidth}}
+量 & 符号 & 常用单位 & 在计算机硬件中的问题 \\ \hline
+\endfirsthead
+量 & 符号 & 常用单位 & 在计算机硬件中的问题 \\ \hline
+\endhead
+时间 & \(t\) & s、ms、\(\mu\)s、ns & 一个周期多长，超时等待多久？\\ \hline
+频率 & \(f\) & Hz、MHz、GHz & 每秒重复多少周期？\\ \hline
+电压 & \(V\) & V、mV & 两点电势差是否落在器件允许范围？\\ \hline
+电流 & \(I\) & A、mA & 某支路每秒通过多少电荷？\\ \hline
+电阻 & \(R\) & \(\Omega\)、k\(\Omega\) & 给定电压会形成多大电流？\\ \hline
+功率 & \(P\) & W、mW & 单位时间转换多少能量，会不会过热？\\ \hline
+数据量 & \(N\) & bit、B、KiB、MiB & 能表示多少状态、保存多少字节？\\ \hline
+\end{osgridlongtable}
+
+周期与频率互为倒数：
+
+\[
+T=\frac{1}{f}
+\]
+
+若时钟频率为 \(\SI{100}{MHz}=100\times10^6\ \mathrm{s}^{-1}\)，周期为
+
+\[
+T=\frac{1}{100\times10^6}\ \mathrm{s}
+=10^{-8}\ \mathrm{s}
+=\SI{10}{ns}.
+\]
+
+这不表示 CPU 在每个周期必然“完成一条指令”。频率只描述节拍；指令吞吐还
+取决于流水线、依赖、缓存、分支和微架构。
+
+\topic{前缀每差三级就是一千倍}
+\begin{center}
+\begin{osgridtabular}{llll}
+前缀 & 符号 & 倍率 & 示例 \\ \hline
+giga & G & \(10^9\) & \(\SI{3}{GHz}\) \\ \hline
+mega & M & \(10^6\) & \(\SI{100}{MHz}\) \\ \hline
+kilo & k & \(10^3\) & \(\SI{10}{k\ohm}\) \\ \hline
+milli & m & \(10^{-3}\) & \(\SI{20}{mA}\) \\ \hline
+micro & \(\mu\) & \(10^{-6}\) & \(\SI{5}{\micro s}\) \\ \hline
+nano & n & \(10^{-9}\) & \(\SI{10}{ns}\) \\ \hline
+pico & p & \(10^{-12}\) & \(\SI{22}{pF}\) \\ \hline
+\end{osgridtabular}
+\end{center}
+
+大小写有意义：\(\mathrm{m}\) 是 milli，\(\mathrm{M}\) 是 mega；二者相差
+\(10^9\) 倍。工程记录中应写 \(\SI{10}{k\ohm}\)，不写含糊的“10K”。
+
+\input{foundations/expanded/ch01-measurement-and-mathematics}
+
+\section{进制、固定位宽与内存布局}
+
+位置计数法把一串数字解释成不同权重的和。十进制数 \(507\) 表示
+
+\[
+5\times10^2+0\times10^1+7\times10^0.
+\]
+
+二进制 \(101101_2\) 表示
+
+\[
+1\times2^5+0\times2^4+1\times2^3+1\times2^2+0\times2^1+1\times2^0
+=32+8+4+1=45.
+\]
+
+十六进制使用 \(0\)--\(9\) 和 \(A\)--\(F\) 表示 0--15。因为
+\(16=2^4\)，一个十六进制数字恰好对应四个 bit：
+
+\begin{center}
+\begin{osgridtabular}{cccccccc}
+二进制 & 0000 & 0001 & 0010 & 0111 & 1000 & 1010 & 1111 \\ \hline
+十六进制 & 0 & 1 & 2 & 7 & 8 & A & F \\ \hline
+\end{osgridtabular}
+\end{center}
+
+因此
+
+\[
+1011\,0110\,1111\,0001_2 = \texttt{0xB6F1}.
+\]
+
+十六进制并不会改变电路中的 bit，只是让人更容易观察边界、掩码和地址。
+
+\begin{workedexample}
+将 \(\texttt{0x2D7}\) 转换为十进制和二进制：
+
+\[
+\texttt{0x2D7}=2\times16^2+13\times16+7
+=512+208+7=727.
+\]
+
+逐个十六进制数字展开为四位：
+
+\[
+\texttt{2}\rightarrow0010,\quad
+\texttt{D}\rightarrow1101,\quad
+\texttt{7}\rightarrow0111,
+\]
+
+所以 \(\texttt{0x2D7}=0010\,1101\,0111_2\)。前导 0 是否保留取决于
+所讨论的宽度；在一个 12-bit 字段中应保留，在纯数学数值中可以省略。
+\end{workedexample}
+
+\input{foundations/expanded/ch01-bits-integers-and-layout}
+
+\section{状态编码、可靠传输与性能量}
+
+一个开关可以处于断开或闭合；一根满足电气条件的数字线可以被接收器判为低或
+高；一个触发器可以保存两个稳定状态。只要两个状态能够可靠区分，就可以约定
+它们分别表示 0 和 1。
+
+\begin{pdfdiagram}
+  \node[os hardware] (physical0) {物理状态 A\\低电压范围};
+  \node[os hardware,below=of physical0] (physical1) {物理状态 B\\高电压范围};
+  \node[os state,right=22mm of physical0,yshift=-10mm] (bit) {逻辑解释\\0 或 1};
+  \node[os block,right=22mm of bit] (meaning) {协议赋义\\数据、地址或控制};
+  \draw[os arrow] (physical0) -- (bit);
+  \draw[os arrow] (physical1) -- (bit);
+  \draw[os arrow] (bit) -- (meaning);
+\end{pdfdiagram}
+\diagramnote{同一物理高电平可以在某根线上表示数据 1，在低有效复位线上表示
+“没有复位”。意义来自协议和上下文，不来自电压本身。}
+
+\topic{一个 bit 与多个 bit}
+一个 bit 有 \(2\) 种状态；\(n\) 个相互独立的 bit 有
+
+\[
+2^n
+\]
+
+种组合。8 bit 有 \(2^8=256\) 种组合，通常组成一个 byte（字节）。一个
+无符号 \(n\)-bit 数能表示
+
+\[
+0\le x\le 2^n-1.
+\]
+
+所以 8-bit 无符号数范围是 0--255，16-bit 是 0--65535。范围上限要减 1，
+因为状态总数包含 0。
+
+\begin{workedexample}
+某设备寄存器有 5 bit 用于队列编号。最多可以编码
+\(2^5=32\) 个编号，即 0--31。若需要单独保留一个编码表示“无效”，可用于
+真实队列的编码只剩 31 个。硬件字段宽度给出的是编码容量，不自动等于可用
+对象数量。
+\end{workedexample}
+
+\topic{编码不是对象本身}
+字符 `A' 可以采用 ASCII 编码为 \(\texttt{0x41}\)；像素颜色可以编码为三组
+通道值；机器指令也编码为字节序列。相同字节只有在解释规则相同时才有相同
+含义。
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.25\linewidth}L{0.47\linewidth}}
+位模式 & 解释规则 & 可能含义 \\ \hline
+\endfirsthead
+位模式 & 解释规则 & 可能含义 \\ \hline
+\endhead
+\texttt{0x41} & ASCII & 字符 `A' \\ \hline
+\texttt{0x41} & 无符号整数 & 十进制 65 \\ \hline
+\texttt{0x41} & x86 指令流的一部分 & 可能是 REX 前缀，含义取决于后续字节与模式 \\ \hline
+\texttt{0x41} & 设备寄存器字段 & 由该设备数据手册定义 \\ \hline
+\end{osgridlongtable}
+
+\topic{数据量、地址数量与传输速度必须分开}
+bit（b）和 byte（B）大小写不同：
+
+\[
+1\ \mathrm{B}=8\ \mathrm{b}.
+\]
+
+SI 前缀按 1000 进位，IEC 二进制前缀按 1024 进位：
+
+\[
+1\ \mathrm{MB}=10^6\ \mathrm{B},\qquad
+1\ \mathrm{MiB}=2^{20}\ \mathrm{B}=1\,048\,576\ \mathrm{B}.
+\]
+
+“64-bit CPU”通常描述通用寄存器和指令集能力，不等于机器一定安装
+\(2^{64}\) byte RAM，也不等于一次总线事务总会传 64 bit。寄存器宽度、
+虚拟地址有效位、物理地址有效位、数据总线宽度和内存容量是不同规格。
+
+\begin{workedexample}
+一条标称 \(\SI{1}{Gb/s}\) 的链路，每秒原始 bit 数为 \(10^9\)。即使暂时
+忽略编码、协议头、间隙和重传，换算为 byte 也只有
+
+\[
+\frac{10^9}{8}=125\,000\,000\ \mathrm{B/s}=125\ \mathrm{MB/s}.
+\]
+
+实际应用吞吐一定不大于原始线速换算值。看到“1 G”时必须先确认是 bit/s、
+byte/s、十进制容量还是频率。
+\end{workedexample}
+
+\input{foundations/expanded/ch01-information-and-transmission}
+
+\topic{误差、范围和边界条件}
+真实测量不是无限精确。标称 \(\SI{10}{k\ohm}\)、误差 \(1\%\) 的电阻，实际
+允许范围是
+
+\[
+\SI{10}{k\ohm}\times(1\pm0.01)
+=\SIrange{9.9}{10.1}{k\ohm}.
+\]
+
+数字系统通过给 0 和 1 留出电压范围来容纳噪声，而不是要求某条线精确等于
+\(\SI{0}{V}\) 或 \(\SI{3.3}{V}\)。软件中的范围检查也是同一种思路：
+先定义允许集合，再拒绝集合外输入。
+
+\begin{pdfdiagram}[x=1cm,y=1cm]
+  \draw[->,draw=BookMuted,thick] (0,0) -- (12,0) node[right]{输入电压};
+  \fill[BookTeal!15] (0,0.15) rectangle (3.3,0.65);
+  \fill[BookRed!10] (3.3,0.15) rectangle (7.0,0.65);
+  \fill[BookBlue!12] (7.0,0.15) rectangle (11.5,0.65);
+  \node at (1.65,0.4) {可靠低};
+  \node at (5.15,0.4) {未保证区};
+  \node at (9.25,0.4) {可靠高};
+  \draw (3.3,0.05) -- (3.3,0.75) node[above]{\(V_{IL(max)}\)};
+  \draw (7.0,0.05) -- (7.0,0.75) node[above]{\(V_{IH(min)}\)};
+\end{pdfdiagram}
+\diagramnote{这是概念图，不给出某一具体逻辑族的阈值。实际数值必须查器件
+数据手册，并同时满足输出端与输入端规格。}
+
+\section{计算机历史怎样逼出操作系统}
+
+“计算”早于电子计算机。人类先用手指、刻痕、算盘和纸笔保存中间结果，再用
+机械装置自动完成某类运算。后来继电器、电子管、晶体管和集成电路依次改善
+速度、可靠性、体积、功耗与制造规模。历史的重点不是背年份，而是理解为什么
+今天的机器同时保留数字逻辑、存储程序、层次存储和兼容接口。
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.21\linewidth}L{0.27\linewidth}L{0.26\linewidth}}
+阶段 & 主要载体 & 解决的问题 & 留给今天的思想 \\ \hline
+\endfirsthead
+阶段 & 主要载体 & 解决的问题 & 留给今天的思想 \\ \hline
+\endhead
+人工计数 & 刻痕、算盘、纸笔 & 保存数量与中间步骤 & 状态、位置计数、算法步骤 \\ \hline
+机械计算 & 齿轮、连杆、打孔介质 & 自动重复确定操作 & 控制序列与可编程输入 \\ \hline
+机电计算 & 继电器 & 用电控制开关，减少机械传动 & 离散逻辑与布尔电路 \\ \hline
+电子管计算 & 真空电子器件 & 大幅提高开关速度 & 电子数字计算与时钟控制 \\ \hline
+晶体管计算 & 半导体开关 & 降低体积、功耗并提高寿命 & 现代逻辑门的器件基础 \\ \hline
+集成电路 & 单片多晶体管 & 降低连接成本，提高密度 & 芯片、标准逻辑与模块化 \\ \hline
+微处理器 & 单芯片 CPU & 让通用处理器成为可复制部件 & ISA、软件生态与个人计算机 \\ \hline
+现代系统 & 多核 CPU/SoC、层次存储 & 缓解速度、功耗和并行瓶颈 & 缓存、并发、虚拟化与专用加速 \\ \hline
+\end{osgridlongtable}
+
+\begin{historybox}
+早期机器常通过重新接线、开关或外部介质改变任务。存储程序思想把“将执行的
+步骤”也编码成存储器里的数据，CPU 因而能按地址取出指令并改变后续控制流。
+这并不意味着指令和普通数据在概念上相同，而是它们可以共享同一种位存储与
+传输基础设施；执行权限、地址空间和解释规则仍会区分二者。
+\end{historybox}
+
+\topic{九个转折点怎样连接到今天}
+\begin{osgridlongtable}{L{0.14\linewidth}L{0.22\linewidth}L{0.28\linewidth}L{0.26\linewidth}}
+大致时期 & 转折 & 当时要突破的限制 & 今天仍能看到的结果 \\ \hline
+\endfirsthead
+大致时期 & 转折 & 当时要突破的限制 & 今天仍能看到的结果 \\ \hline
+\endhead
+古代到近代 & 位置计数和机械辅助 & 人脑难以可靠保存大量中间结果 & 进位、数位权重、算法步骤 \\ \hline
+19 世纪 & 打孔介质与机械可编程设想 & 每换任务都重新制造或接线 & 程序与执行机器可以分离 \\ \hline
+19 世纪中叶 & 布尔代数 & 逻辑推理缺少可演算形式 & AND/OR/NOT 和逻辑化简 \\ \hline
+20 世纪上半叶 & 继电器/电子开关逻辑 & 机械部件慢且磨损 & 离散开关电路和自动控制 \\ \hline
+1940 年代 & 通用电子数字计算 & 专用计算流程难以复用 & 指令、寄存器和控制单元 \\ \hline
+1940--1950 年代 & 存储程序体系 & 程序配置慢，控制与数据设备割裂 & CPU 按地址取指，程序可生成程序 \\ \hline
+1940 年代末以后 & 晶体管替代电子管 & 体积、功耗、热和寿命限制规模 & 半导体逻辑与低电压数字系统 \\ \hline
+1950--1960 年代 & 集成电路 & 分立元件和焊点数量限制可靠性 & 芯片、标准单元和大规模集成 \\ \hline
+1970 年代以后 & 微处理器与个人计算机 & 通用 CPU 昂贵且难以复制部署 & ISA 生态、主板、外设和兼容历史 \\ \hline
+\end{osgridlongtable}
+
+这些转折没有一条单独的“发明日”能完整概括。例如存储程序思想来自理论、
+工程项目、存储器可用性与多位研究者的共同推进；实际机器也经历“设计思想提出”
+“局部实现”“稳定投入使用”不同时间。读历史时应避免把复杂演进压成某个人
+某一天突然完成整台现代计算机的神话。
+
+\topic{操作系统为什么会出现}
+最早的机器资源昂贵，操作人员手工装入任务，CPU 在准备输入输出时大量空闲。
+批处理系统让任务排队自动衔接；中断和 DMA 等机制让 I/O 与计算重叠；
+多道程序在一个任务等待时运行另一个任务；分时系统又用短时间片给多个交互
+用户提供“机器正在响应我”的体验。
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.29\linewidth}L{0.43\linewidth}}
+阶段 & 主要问题 & 操作系统增加的责任 \\ \hline
+\endfirsthead
+阶段 & 主要问题 & 操作系统增加的责任 \\ \hline
+\endhead
+人工操作 & 装带、拨开关和记录结果占用机器 & 尚无稳定 OS，操作流程由人承担 \\ \hline
+批处理 & 任务切换成本高 & 作业队列、自动装入、错误后继续下一任务 \\ \hline
+多道程序 & CPU 等待慢速 I/O & 中断、内存分区、调度和设备管理 \\ \hline
+分时 & 多个用户需要交互响应 & 抢占、隔离、终端、账号和共享文件 \\ \hline
+虚拟内存 & 程序超过物理内存且彼此需隔离 & 地址翻译、分页、按需装入和保护 \\ \hline
+Unix 式系统 & 工具需要组合，硬件接口需要统一 & 进程、fd、层次文件系统、pipe 与 Shell \\ \hline
+现代系统 & 多核、网络、安全和设备规模巨大 & 并发、权限、协议栈、驱动模型和资源控制 \\ \hline
+\end{osgridlongtable}
+
+因此操作系统不是为了“让屏幕好看”才出现，而是在昂贵共享硬件上持续回答：
+谁获得 CPU、谁拥有哪段内存、慢设备完成时通知谁、数据怎样命名并在故障后
+存活、不可信程序之间如何隔离。本项目随后会亲手建立这些责任。
+
+\input{foundations/expanded/ch01-history-causal-chain}
+
+\section{模型、证据与从零推理}
+
+模型主动忽略细节。地铁图忽略真实弯曲距离，却保留换乘关系；指令集模型忽略
+晶体管布局，却保留软件可见寄存器和指令结果；QEMU TCG 在另一种宿主 CPU
+上复现目标 x86-64 CPU 和选定设备的可观察行为。
+
+\begin{pdfdiagram}
+  \node[os hardware] (board) {实体机器\\电源、芯片、铜线};
+  \node[os state,right=of board] (arch) {架构/设备契约\\寄存器、时序、结果};
+  \node[os block,right=of arch] (qemu) {QEMU 模型\\在宿主机上执行};
+  \node[os block,below=of arch] (book) {本书推理\\只在声明边界内成立};
+  \draw[os arrow] (board) -- node[above]{呈现} (arch);
+  \draw[os arrow] (qemu) -- node[above]{复现} (arch);
+  \draw[os arrow] (arch) -- (book);
+\end{pdfdiagram}
+
+QEMU 能证明项目 ROM 字节是否被模拟 CPU 从复位地址取到，也能证明对 UART
+端口的访问是否遵循设备模型；它不能证明真实板上的电源纹波、焊点、走线阻抗
+或散热满足要求。本书后续每一张图都会标明它描述的是逻辑关系、架构事务还是
+实体电气连接。
+
+\topic{从零推理的六步纸笔法}
+以后遇到任何机制，都可以在纸上写出六栏：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{对象：}有哪些元件、寄存器、内存区或软件对象？
+  \item \textbf{量与单位：}宽度、地址、时间、电压、容量分别是什么？
+  \item \textbf{初始状态：}上电、复位或函数进入时已经保证什么？
+  \item \textbf{转换规则：}哪条线、指令或函数让状态发生变化？
+  \item \textbf{边界：}允许范围、提交点和禁止状态是什么？
+  \item \textbf{证据：}用计算、测量、反汇编、日志或反例怎样推翻错误答案？
+\end{enumerate}
+
+\begin{contractbox}
+读完本章，读者至少应能独立完成四件事：在 SI 与二进制单位间正确换算；把
+二进制和十六进制按位互换；区分物理状态、逻辑编码和协议含义；看到一个规格
+时主动追问单位、范围、参考点与证据来源。下一章才开始把这些量放进真实电路。
+\end{contractbox}

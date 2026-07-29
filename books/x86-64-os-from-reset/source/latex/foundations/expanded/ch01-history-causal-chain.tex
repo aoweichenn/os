@@ -1,0 +1,136 @@
+\topic{从人工操作到操作系统：问题怎样一层层逼出抽象}
+历史不是一串互不相干的发明。每一层新抽象通常来自上一层机器在规模、速度或
+共享方面遇到的瓶颈。
+
+\topic{人工计算时期：算法和执行者还没有分开}
+纸笔、算盘和表格已经包含计算机思想的雏形：输入、规则、中间状态和结果。
+但执行规则主要保存在人的训练和文档里，速度、重复性和错误率受操作者限制。
+机械计算器把某些步骤固化进齿轮，使“规则”部分转移到机器结构。
+
+\topic{可编程介质：改变任务不必重造整台机器}
+打孔卡、纸带和插线板让控制序列能够脱离部分机械结构。这里出现了一个关键
+分离：
+
+\[
+\text{通用执行机构}+\text{可更换控制描述}=\text{可编程机器}.
+\]
+
+早期“程序”不一定存放在今天意义上的 RAM 中，但已经回答了为什么同一台机器
+可以重复承担不同任务。
+
+\topic{继电器和电子管：逻辑速度提高，可靠性成为新瓶颈}
+继电器用电磁作用控制机械触点，容易理解和隔离，但开关慢、会磨损并产生触点
+抖动。电子管取消机械触点，大幅提高速度，却需要较大功耗、体积和维护成本。
+机器越大，器件数量越多，单个器件较小的失效率也会累积成系统可用性问题。
+
+\topic{晶体管和集成电路：连接本身成为制造对象}
+晶体管比电子管更小、更省电且更耐用；集成电路进一步把晶体管与互连一起制造。
+真正的跨越不只是“元件变小”，还包括：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 大量连接从人工焊接变成可复制的版图；
+  \item 单位逻辑功能成本下降，复杂控制器成为可能；
+  \item 芯片接口可以标准化，系统可按模块组合；
+  \item 规模继续扩大后，功耗、布线延迟和验证又成为新限制。
+\end{itemize}
+
+\topic{存储程序：指令成为可寻址的编码}
+当指令和数据都能以编码形式进入可寻址存储，CPU 可以维护“下一条指令地址”，
+顺序取指，也可以通过跳转改变控制流。编译器、装载器、调试器和操作系统由此
+拥有共同基础：程序不再只是插线板状态，而是可以复制、检查、重定位和保护的
+字节布局。
+
+\begin{pdfdiagram}[node distance=7mm and 6mm]
+  \node[os hardware,minimum width=25mm] (rewire) {专用/重新接线\\人工改变机器};
+  \node[os hardware,right=of rewire,minimum width=25mm] (media) {外部程序介质\\控制序列可更换};
+  \node[os state,right=of media,minimum width=25mm] (stored) {存储程序\\指令可寻址};
+  \node[os block,right=of stored,minimum width=25mm] (software) {软件工具链\\编译、装载、调试};
+  \node[os block,below=9mm of software,minimum width=28mm] (os) {操作系统\\共享、保护和持久化};
+  \draw[os arrow] (rewire) -- (media);
+  \draw[os arrow] (media) -- (stored);
+  \draw[os arrow] (stored) -- (software);
+  \draw[os arrow] (software) -- (os);
+\end{pdfdiagram}
+
+\topic{为什么 CPU 变快以后反而更需要操作系统}
+早期 CPU 极其昂贵，人工装入下一任务的几分钟会浪费大量计算能力。批处理监控
+程序先解决“自动接续任务”；I/O 远慢于 CPU 后，多道程序解决“一个任务等待时
+让另一个任务运行”；多人交互需求又推动分时、权限和文件共享。
+
+\begin{center}
+\begin{tikzpicture}[x=0.82cm,y=0.68cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (15,0) node[right]{时间};
+  \node[left] at (0,4.2) {单任务};
+  \fill[BookBlue!25] (0.5,3.8) rectangle (3.2,4.5);
+  \node at (1.85,4.15) {CPU 计算};
+  \fill[BookRed!15] (3.2,3.8) rectangle (8.5,4.5);
+  \node at (5.85,4.15) {等待 I/O，CPU 空闲};
+  \fill[BookBlue!25] (8.5,3.8) rectangle (11.2,4.5);
+  \node at (9.85,4.15) {继续};
+
+  \node[left] at (0,2.4) {多道};
+  \fill[BookBlue!25] (0.5,2.0) rectangle (3.2,2.7);
+  \node at (1.85,2.35) {任务 A};
+  \fill[BookTeal!25] (3.2,2.0) rectangle (6.8,2.7);
+  \node at (5.0,2.35) {A 等待时运行 B};
+  \fill[BookAmber!25] (6.8,2.0) rectangle (8.5,2.7);
+  \node at (7.65,2.35) {任务 C};
+  \fill[BookBlue!25] (8.5,2.0) rectangle (11.2,2.7);
+  \node at (9.85,2.35) {任务 A};
+  \node[align=left] at (12.8,3.15)
+    {需要：中断通知\\保存/恢复现场\\内存隔离\\调度策略};
+\end{tikzpicture}
+\end{center}
+
+由此可以看到，操作系统职责不是凭空设计出来的：
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.31\linewidth}L{0.39\linewidth}}
+机器矛盾 & 若没有新机制会怎样 & 被逼出的 OS 抽象 \\ \hline
+\endfirsthead
+机器矛盾 & 若没有新机制会怎样 & 被逼出的 OS 抽象 \\ \hline
+\endhead
+CPU 快、I/O 慢 & CPU 长时间空等设备 & 中断、阻塞/唤醒、异步驱动 \\ \hline
+多个任务共享 CPU & 一个任务可永久霸占执行 & 定时器、抢占和调度 \\ \hline
+多个程序共享内存 & 错误地址破坏别的程序或内核 & 地址空间、页表和权限 \\ \hline
+设备接口各异 & 每个程序重复操纵硬件寄存器 & 驱动、统一 I/O 与系统调用 \\ \hline
+数据需要跨重启 & 内存断电后全部丢失 & 块层、文件系统、命名和恢复 \\ \hline
+用户彼此不可信 & 一个程序能窃取或破坏全部状态 & 特权级、身份、访问控制和审计 \\ \hline
+\end{osgridlongtable}
+
+\topic{为什么兼容性让现代 x86 看起来“不整齐”}
+成功的平台会积累大量已有软件、设备和知识。新处理器若完全抛弃旧接口，性能
+也许更整齐，却会失去生态。x86 的复位模式、历史设备端口、可变长指令和多种
+执行模式因此同时存在。兼容性不是单纯技术保守，而是已有投资与新设计之间的
+工程权衡。
+
+本书后续会反复采用同一历史读法：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 当时机器有什么限制；
+  \item 新机制解决了哪一个主要问题；
+  \item 为兼容旧软件保留了什么；
+  \item 新机制又制造了哪些复杂性；
+  \item 本项目在 QEMU 平台上选择实现哪一部分；
+  \item 哪些实机问题被模型暂时省略。
+\end{enumerate}
+
+\begin{historybox}
+“旧”不等于“无用”，“新”也不等于“没有代价”。例如中断减少 CPU 轮询浪费，
+却引入异步控制流和并发；分页提供保护与虚拟内存，却引入页表、TLB 和页故障；
+缓存提高平均速度，却引入一致性与可见性问题。理解历史问题，才能理解机制为何
+以今天的形状存在。
+\end{historybox}
+
+\topic{本章纸笔实验：不接触硬件也能形成可检验证据}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 给出 \(\SI{250}{MHz}\)，计算周期并写出完整单位消去过程；
+  \item 把 \(\texttt{0xB37A}\) 展开成 16 bit，再按 little-endian 写出四个
+        地址上的 byte；
+  \item 对 8-bit 运算 \(\texttt{0xFF}+1\) 分别写出无符号与补码解释；
+  \item 为一个含 ready、error 和 3-bit queue id 的寄存器设计位布局和掩码；
+  \item 画出字符 `A' 从人的含义到 UART 引脚波形的五层编码链；
+  \item 选择“中断”“分页”或“文件系统”，用“旧限制—新机制—新代价”写出
+        一页因果说明。
+\end{enumerate}
+
+验收不只看答案，还要检查是否写明位宽、单位、字节序、地址区间和解释契约。

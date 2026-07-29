@@ -1,0 +1,236 @@
+\topic{从原子到导线：电荷为什么能移动}
+原子由带正电的原子核和带负电的电子组成。宏观物体通常近似电中性，但电子的
+分布和移动会产生电场、电势差与电流。金属中有较容易响应电场的载流电子，
+绝缘体中的电荷则更难长距离移动；半导体的导电能力可以通过材料、掺杂、电场、
+光和温度控制，因此适合制造二极管和晶体管。
+
+这里不需要先掌握量子力学，但要保留三个边界：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 电流不是导线里储存的一桶“电”；它是电荷流动的速率；
+  \item 信号变化由电磁场沿互连传播，不等到某个电子从电源跑完整条导线；
+  \item 导体、绝缘体和半导体不是绝对分类，温度、电压和结构会改变行为。
+\end{itemize}
+
+\topic{库仑、电流和“每秒有多少电子”}
+一个电子携带的电荷量大小约为
+
+\[
+e=1.602\times10^{-19}\ \mathrm{C}.
+\]
+
+若电流为 \(I\)，每秒通过截面的电子数量量级为
+
+\[
+N=\frac{I}{e}.
+\]
+
+\begin{workedexample}
+\(\SI{1}{mA}\) 电流每秒对应的电子数量约为
+
+\[
+N=\frac{1\times10^{-3}}{1.602\times10^{-19}}
+\approx6.24\times10^{15}.
+\]
+
+这个巨大数量解释了为什么宏观电流看起来连续，但数字电路最终仍由微观载流子
+行为实现。计算不表示这些电子都从电源出发后在一秒内穿过整块主板。
+\end{workedexample}
+
+\topic{电压是两点之差，GND 是人为选择的参考网络}
+电势本身取决于参考；电压是两点电势之差：
+
+\[
+V_{AB}=V_A-V_B,\qquad V_{BA}=-V_{AB}.
+\]
+
+把某网络命名为 GND，通常表示设计者选择它作为本电路的零电势参考和主要回流
+网络。它不自动等于大地，也不保证板上任意两个“地”点在高速或大电流条件下
+严格没有电压差。
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.33\linewidth}L{0.39\linewidth}}
+名称 & 常见职责 & 不能自动推出 \\ \hline
+\endfirsthead
+名称 & 常见职责 & 不能自动推出 \\ \hline
+\endhead
+电路 GND & 信号与电源的公共参考/回流网络 & 必然与大地相连 \\ \hline
+保护地 PE & 故障电流安全路径和外壳保护 & 可以随意当作高速信号回流 \\ \hline
+机壳地/chassis & 屏蔽、连接器外壳和 ESD 泄放 & 与数字地处处短接 \\ \hline
+模拟地/数字地 & 表达噪声与回流分区意图 & 原理图中名字不同就完全隔离 \\ \hline
+隔离侧地 & 隔离器某一侧的局部参考 & 与另一侧可直接连普通信号 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[draw=BookBlue,fill=BookCodeBg,minimum width=30mm,minimum height=14mm,
+        align=center]
+    (a) at (0,1.8) {系统 A\\\(V_A=\SI{3.3}{V}\) 相对 \(GND_A\)};
+  \node[draw=BookTeal,fill=BookCodeBg,minimum width=30mm,minimum height=14mm,
+        align=center]
+    (b) at (7.2,1.8) {系统 B\\\(V_B=\SI{3.3}{V}\) 相对 \(GND_B\)};
+  \node[os state] (ga) at (0,0) {\(GND_A\)};
+  \node[os state] (gb) at (7.2,0) {\(GND_B\)};
+  \draw[os arrow] (ga) -- (a);
+  \draw[os arrow] (gb) -- (b);
+  \draw[BookRed,very thick,dashed] (a) -- node[above,align=center]
+    {只连信号，\\共同参考未知} (b);
+  \node[BookRed,align=center] at (3.6,-0.8)
+    {\(V_A\) 与 \(V_B\) 数字相同，\\不代表接收端看到的差分电压相同};
+\end{tikzpicture}
+\end{center}
+
+\topic{电源不是“恒定电压标签”，而是带能力边界的能量源}
+理想电压源无论负载电流多少都保持电压；真实电源具有最大电流、内部阻抗、
+动态响应、纹波、启动时间、保护与温升。一个简单等效模型是理想电压
+\(V_s\) 串联内部电阻 \(R_s\)：
+
+\[
+V_{\mathrm{load}}=V_s-I_{\mathrm{load}}R_s.
+\]
+
+\begin{center}
+\begin{circuitikz}[american voltages]
+  \draw (0,0) to[battery1,l_={理想源 \(V_s\)}] (0,3)
+    to[R,l={内部阻抗 \(R_s\)}] (3,3)
+    -- (4,3)
+    to[R,l={负载 \(R_L\)}] (4,0)
+    -- (0,0);
+  \draw[->,BookBlue,thick] (1.1,3.45) -- (2.4,3.45)
+    node[midway,above]{\(I_{\mathrm{load}}\)};
+  \draw[<->,BookTeal,thick] (4.7,0.1) -- (4.7,2.9)
+    node[midway,right]{\(V_{\mathrm{load}}\)};
+\end{circuitikz}
+\end{center}
+
+\begin{workedexample}
+\(\SI{5}{V}\) 电源等效内部电阻 \(\SI{0.2}{\ohm}\)。负载从
+\(\SI{0.1}{A}\) 突增到 \(\SI{1.5}{A}\)，仅按静态模型估算：
+
+\[
+V_{\mathrm{load}}=\SI{5}{V}
+-\SI{1.5}{A}\times\SI{0.2}{\ohm}
+=\SI{4.7}{V}.
+\]
+
+若芯片最低允许电压是 \(\SI{4.75}{V}\)，静态就已越界。真实瞬态还要叠加
+电源控制环路响应、线缆/PCB 电感和去耦电容，因此需要示波器而不是只看电源
+铭牌。
+\end{workedexample}
+
+\topic{恒压、恒流与限流状态}
+台式电源设定 \(\SI{5}{V}\)、限流 \(\SI{0.5}{A}\) 时，负载需求低于
+\(\SI{0.5}{A}\) 通常工作在恒压模式；若负载试图取得更大电流，电源会降低
+输出电压以把电流限制在设定值。此时看到板上电压很低，不一定是电源损坏，
+可能是短路或负载过重触发限流。
+
+\topic{节点方程应先于“电流从哪条画线走”}
+对任一节点选择流入为正、流出为负：
+
+\[
+\sum_k I_k=0.
+\]
+
+方向可以先任意假设；计算结果为负表示真实方向与假设相反。关键是整组方程
+保持同一符号约定。
+
+\begin{center}
+\begin{circuitikz}[american currents]
+  \draw (0,3) node[vcc]{\(\SI{5}{V}\)}
+    to[R,l={\(R_1=\SI{1}{k\ohm}\)},i>^={\(I_1\)}] (0,1.5)
+    -- (2.2,1.5) node[circ,label=above:{节点 \(X\)}] (x) {};
+  \draw (x) to[R,l={\(R_2=\SI{2}{k\ohm}\)},i>^={\(I_2\)}] (2.2,0)
+    node[ground]{};
+  \draw (x) -- (4.4,1.5)
+    to[R,l={\(R_3=\SI{3}{k\ohm}\)},i>^={\(I_3\)}] (4.4,0)
+    node[ground]{};
+\end{circuitikz}
+\end{center}
+
+若节点电压为 \(V_X\)，则
+
+\[
+\frac{\SI{5}{V}-V_X}{R_1}
+=\frac{V_X}{R_2}+\frac{V_X}{R_3}.
+\]
+
+这个方法可扩展到复杂偏置、电源监控和模拟接口。图画得弯曲还是笔直不影响
+方程，节点连接才影响。
+
+\topic{戴维南等效把复杂网络缩成一个源和一个电阻}
+从两个端口向内看，许多线性网络可等效为开路电压
+\(V_{\mathrm{th}}\) 串联等效电阻 \(R_{\mathrm{th}}\)。它不会保留内部每条支路，
+却能回答接入不同负载时端口电压怎样变化。
+
+以分压器为例：
+
+\[
+V_{\mathrm{th}}=V_{\mathrm{in}}\frac{R_2}{R_1+R_2},
+\qquad
+R_{\mathrm{th}}=R_1\parallel R_2.
+\]
+
+这比记住“分压器不能带负载”更精确：负载与
+\(R_{\mathrm{th}}\) 相比足够大时，误差才足够小。
+
+\topic{直流、交流、周期信号和数字边沿}
+\term{直流}{DC}在所关注时间尺度上方向和大小近似稳定；
+\term{交流}{AC}随时间变化并可能改变方向。数字信号虽然只被解释为有限状态，
+其引脚电压仍是随时间变化的模拟波形，包含上升时间、下降时间、过冲、振铃和
+噪声。
+
+正弦信号可写为
+
+\[
+v(t)=V_{\mathrm{pk}}\sin(2\pi f t+\phi).
+\]
+
+其中 \(V_{\mathrm{pk}}\) 是峰值，\(f\) 是频率，\(\phi\) 是相位。对正弦波：
+
+\[
+V_{\mathrm{pp}}=2V_{\mathrm{pk}},
+\qquad
+V_{\mathrm{rms}}=\frac{V_{\mathrm{pk}}}{\sqrt{2}}.
+\]
+
+峰值、峰峰值和 RMS 回答不同问题；仪器读数若未说明是哪一种，就可能差一倍或
+\(\sqrt{2}\)。
+
+\topic{电容和电感对变化速度敏感}
+电容与电感的理想关系：
+
+\[
+i_C=C\frac{\mathrm{d}v_C}{\mathrm{d}t},
+\qquad
+v_L=L\frac{\mathrm{d}i_L}{\mathrm{d}t}.
+\]
+
+电容反对电压瞬变，电感反对电流瞬变。对频率为 \(f\) 的正弦稳态，阻抗大小
+分别为
+
+\[
+|X_C|=\frac{1}{2\pi f C},
+\qquad
+|X_L|=2\pi f L.
+\]
+
+因此同一颗去耦电容在低频和高频下表现不同；真实寄生电感还会让它在足够高频
+不再像理想电容。
+
+\begin{workedexample}
+\(C=\SI{100}{nF}\)。在 \(\SI{1}{kHz}\) 时：
+
+\[
+|X_C|\approx\frac{1}{2\pi\times10^3\times100\times10^{-9}}
+\approx\SI{1.59}{k\ohm}.
+\]
+
+在 \(\SI{10}{MHz}\) 时理想值约为 \(\SI{0.159}{\ohm}\)。但实际电容的封装和
+走线电感会限制高频效果，所以“容量越大越好”并不成立，布局与频率范围同样
+重要。
+\end{workedexample}
+
+\begin{failurebox}
+用直流万用表读到 \(\SI{3.3}{V}\)，只能说明它在仪表响应范围内的平均/稳定
+分量大致正常，不能证明没有短时跌落、过冲或噪声。判断复位、电源完整性和时钟
+必须选择足够带宽、正确接地的测量方式。
+\end{failurebox}

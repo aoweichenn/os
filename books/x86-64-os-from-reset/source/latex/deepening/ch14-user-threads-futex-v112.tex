@@ -1,4 +1,4 @@
-\section{v1.12：从一个执行流到用户线程系统}
+\section{用户线程、futex 与同步原语}
 
 \begin{keyidea}
 Process 是地址空间、文件表和目录上下文的资源容器；Thread 才是处理器可以
@@ -6,8 +6,7 @@ Process 是地址空间、文件表和目录上下文的资源容器；Thread �
 调度身份、两级栈、完整处理器现场、TLS、等待关系、退出值和可回滚所有权。
 \end{keyidea}
 
-\subsection{历史动机：共享资源为什么不等于共享执行现场}
-
+\topic{历史动机：共享资源为什么不等于共享执行现场}
 早期 Unix 主要用进程表达并发。每个进程有独立地址空间，隔离清晰，但两个
 协作执行流若只想共享一张缓存表，仍要经 pipe、共享内存或文件传递。图形界面、
 数据库和网络服务器逐渐需要在同一地址空间中安排多个阻塞任务：代码、堆、
@@ -16,20 +15,17 @@ Process 是地址空间、文件表和目录上下文的资源容器；Thread �
 这形成今天仍重要的分界：
 
 \begin{center}
-\begin{tabular}{L{0.27\linewidth}L{0.27\linewidth}L{0.34\linewidth}}
-\toprule
-事实 & 所有者 & 不共享的原因或共享收益 \\
-\midrule
-页表根、VMA 与后备 & Process & 所有 Thread 观察同一组用户对象 \\
-FileTable 与 FsContext & Process & fd、共享 offset 和 cwd 形成同一环境 \\
-PID 与父子关系 & Process & wait 消费的是程序实例的终止记录 \\
-RIP/RSP/RFLAGS & Thread & 每个执行流停在不同指令和调用深度 \\
-通用/FXSAVE 现场 & Thread & 整数、x87、MMX、XMM 状态不能串用 \\
-内核栈与用户栈 & Thread & 特权入口和普通调用都需要独立生存区间 \\
-TID、等待节点与退出值 & Thread & 调度、join 和同步以执行流为单位 \\
-FS-base TLS & Thread & 同一条机器指令要定位不同私有实例 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.27\linewidth}L{0.27\linewidth}L{0.34\linewidth}}
+事实 & 所有者 & 不共享的原因或共享收益 \\ \hline
+页表根、VMA 与后备 & Process & 所有 Thread 观察同一组用户对象 \\ \hline
+FileTable 与 FsContext & Process & fd、共享 offset 和 cwd 形成同一环境 \\ \hline
+PID 与父子关系 & Process & wait 消费的是程序实例的终止记录 \\ \hline
+RIP/RSP/RFLAGS & Thread & 每个执行流停在不同指令和调用深度 \\ \hline
+通用/FXSAVE 现场 & Thread & 整数、x87、MMX、XMM 状态不能串用 \\ \hline
+内核栈与用户栈 & Thread & 特权入口和普通调用都需要独立生存区间 \\ \hline
+TID、等待节点与退出值 & Thread & 调度、join 和同步以执行流为单位 \\ \hline
+FS-base TLS & Thread & 同一条机器指令要定位不同私有实例 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 Linux 后来用可组合的共享标志构造任务；POSIX pthread 又为应用提供可移植
@@ -37,8 +33,7 @@ Linux 后来用可组合的共享标志构造任务；POSIX pthread 又为应用
 内核模型上冻结最小公开 ABI。这样每个新增字段都有硬件或所有权原因，而不是
 为了让接口名字看起来像现成系统。
 
-\subsection{一条 Thread 从用户请求到 Ready 发布}
-
+\topic{一条 Thread 从用户请求到 Ready 发布}
 用户运行时先保留 \(68\,\mathrm{KiB}\) 栈区：低端一页撤销 VMA，成为永久
 not-present guard；其上 \(64\,\mathrm{KiB}\) 为读写、不可执行栈。TLS 另占
 一张读写、不可执行页。两处都来自现有匿名 VMA，而不是 Kernel 私自选择用户
@@ -62,17 +57,14 @@ not-present guard；其上 \(64\,\mathrm{KiB}\) 为读写、不可执行栈。TL
 公开请求只含固定宽度字段：
 
 \begin{center}
-\begin{tabular}{L{0.30\linewidth}L{0.19\linewidth}L{0.39\linewidth}}
-\toprule
-字段 & 宽度 & Kernel 要证明的性质 \\
-\midrule
-entry address & 64 bit & 用户规范地址，位于可执行且不可写 VMA \\
-argument & 64 bit & 原样放入初始 RDI，不由 Kernel 解引用 \\
-stack base/size & 各 64 bit & 页对齐、至少 16 KiB、读写且 NX、无溢出 \\
-stack pointer & 64 bit & 精确位于栈顶减 8，满足入口 ABI \\
-TLS base & 64 bit & 16 字节对齐，当前地址空间内可写 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.30\linewidth}L{0.19\linewidth}L{0.39\linewidth}}
+字段 & 宽度 & Kernel 要证明的性质 \\ \hline
+entry address & 64 bit & 用户规范地址，位于可执行且不可写 VMA \\ \hline
+argument & 64 bit & 原样放入初始 RDI，不由 Kernel 解引用 \\ \hline
+stack base/size & 各 64 bit & 页对齐、至少 16 KiB、读写且 NX、无溢出 \\ \hline
+stack pointer & 64 bit & 精确位于栈顶减 8，满足入口 ABI \\ \hline
+TLS base & 64 bit & 16 字节对齐，当前地址空间内可写 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 初始 RSP 选择为
@@ -98,8 +90,7 @@ Thread，错误 RIP/RSP 往往表现为“偶发 QEMU 卡住”，本质却是�
 线程创建给出的是并发关系，不是“父返回必然先于子入口”的顺序保证。
 \end{failurebox}
 
-\subsection{FS-base：长模式为什么仍保留一小块分段}
-
+\topic{FS-base：长模式为什么仍保留一小块分段}
 8086 用 segment 与 offset 扩展地址表达；保护模式又让 selector 指向带权限
 的描述符。x86-64 长模式把普通代码与数据段基址基本固定为零，却保留 FS 和
 GS 的独立 64 位 base。历史兼容机制因此成为现代系统放置 TLS 与 per-CPU
@@ -130,8 +121,7 @@ TLS 页首保存 \code{ThreadRuntimeState* self}。同一条
 自身不使用 FS，因此 v1.12 的 SYSCALL、IRET 和调度汇编路径不再重载 FS；
 真正切换 Thread 时由架构包装写 \code{IA32\_FS\_BASE} 并读回验证。
 
-\subsection{为什么仅靠自旋不能形成通用用户 Mutex}
-
+\topic{为什么仅靠自旋不能形成通用用户 Mutex}
 原子 compare-exchange 已能保证“只有一个 Thread 把 0 改为 1”，却不能决定
 竞争失败者应怎样等待。在单 vCPU QEMU 中，若持锁者刚被抢占，竞争者持续
 自旋会白白耗尽整个时间片；CPU 显示繁忙，受保护工作却没有推进。
@@ -139,23 +129,19 @@ TLS 页首保存 \code{ThreadRuntimeState* self}。同一条
 v1.12 把路径分成两层：
 
 \begin{center}
-\begin{tabular}{L{0.23\linewidth}L{0.29\linewidth}L{0.36\linewidth}}
-\toprule
-路径 & 操作 & 成本与语义 \\
-\midrule
-无竞争 Lock & CAS \(0\rightarrow1\), acquire & 不进入 Kernel \\
-竞争 Lock & wait(word, expected \(=1\)) & Thread 进入 WaitQueue \\
-Unlock & release store 0，wake one & 发布临界区写入并允许一个竞争者重试 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.23\linewidth}L{0.29\linewidth}L{0.36\linewidth}}
+路径 & 操作 & 成本与语义 \\ \hline
+无竞争 Lock & CAS \(0\rightarrow1\), acquire & 不进入 Kernel \\ \hline
+竞争 Lock & wait(word, expected \(=1\)) & Thread 进入 WaitQueue \\ \hline
+Unlock & release store 0，wake one & 发布临界区写入并允许一个竞争者重试 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 acquire/release 不是“让编译器慢一点”的提示。成功 acquire 后的读写不能
 移动到取得锁之前；release 之前的临界区写入必须在另一个 Thread 的 acquire
 之后可见。futex 只安排睡眠，不替代该内存顺序，也不保存 Mutex owner。
 
-\subsection{compare-and-block 封闭丢失唤醒窗口}
-
+\topic{compare-and-block 封闭丢失唤醒窗口}
 错误实现把检查与阻塞分开：
 
 \begin{pdfdiagram}[node distance=9mm and 17mm]
@@ -180,8 +166,7 @@ Kernel 在锁外先做一次用户地址验证和读取，使合法 demand fault
 锁内第二次复制才决定是否真正睡眠。若锁内复制失败，操作返回明确状态，不能
 在持 scheduler lock 时递归处理页故障。
 
-\subsection{private futex 的 key 为什么不是虚拟地址或物理页}
-
+\topic{private futex 的 key 为什么不是虚拟地址或物理页}
 两个 Process 可以同时把 \code{0x60001000} 映射为不同 frame。只用虚拟地址
 会让 A 的 unlock 唤醒 B。改用当前物理地址仍不正确：匿名 reservation 在
 首次 fault 前没有 frame，fork COW 会暂时共享 frame，写故障又会替换 frame。
@@ -201,31 +186,26 @@ Process 槽。futex word 固定为 \code{uint32\_t}，ABI 对齐为四字节，�
 后，\code{ReleaseIfEmpty} 重置 queue 再归还 entry。仍有 waiter 时释放必须
 返回 WaitersRemain，容量耗尽则返回 LimitExceeded；实现不能退回无界自旋。
 
-\subsection{ConditionVariable 保存变化序列而不是业务条件}
-
+\topic{ConditionVariable 保存变化序列而不是业务条件}
 “队列非空”“工作已完成”之类谓词属于调用者数据，并受 Mutex 保护。条件变量
 只保存一个 32 位 sequence：
 
 \begin{center}
-\begin{tabular}{L{0.43\linewidth}L{0.43\linewidth}}
-\toprule
-等待者 & 通知者 \\
-\midrule
-持 Mutex 读取 sequence & 修改受保护谓词 \\
-释放 Mutex & sequence 加一，release \\
-futex wait(sequence, old) & wake one 或 wake all \\
-重新取得 Mutex & 返回继续工作 \\
-循环复查谓词 & 不替等待者判定谓词 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.43\linewidth}L{0.43\linewidth}}
+等待者 & 通知者 \\ \hline
+持 Mutex 读取 sequence & 修改受保护谓词 \\ \hline
+释放 Mutex & sequence 加一，release \\ \hline
+futex wait(sequence, old) & wake one 或 wake all \\ \hline
+重新取得 Mutex & 返回继续工作 \\ \hline
+循环复查谓词 & 不替等待者判定谓词 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 通知若落在“释放 Mutex”与“进入内核 wait”之间，内核二次比较看到序列已改变，
 等待者不会睡眠。序列允许自然回绕；正确性来自循环复查谓词，而不是把每次
 通知当作不可丢失的消息队列。
 
-\subsection{Once 用三态区分执行中与已发布}
-
+\topic{Once 用三态区分执行中与已发布}
 一个 bool 只能表示“未完成/完成”，无法区分“无人开始”和“某个 Thread 正在
 构造共享对象”。本阶段固定：
 
@@ -241,8 +221,7 @@ wake all。观察到 1 的 Thread 在状态字上等待，观察到 2 的 Thread
 初始化函数若永不返回，其他 Thread 继续等待。这不是未记录的偶然行为，而是
 v1.12 明确冻结、等待以后扩展的失败语义。
 
-\subsection{ExitThread、Join 与 ProcessExit 是三种回收边界}
-
+\topic{ExitThread、Join 与 ProcessExit 是三种回收边界}
 普通 \code{ExitThread} 只终止当前执行流：
 
 \begin{enumerate}[label=\arabic*.]
@@ -273,8 +252,7 @@ KernelStack 并 reap 调度槽，把 TID 与 exit value 复制给 joiner；用�
 FileTable、FsContext 与 AddressSpace。取消也必须增加 queue、Thread 和
 scheduler 的 wake 账本，否则对象虽不再可达，资源快照仍会暴露计数不守恒。
 
-\subsection{多线程 exec 为什么先验证候选、再停止 sibling}
-
+\topic{多线程 exec 为什么先验证候选、再停止 sibling}
 exec 替换整个 AddressSpace。兄弟 Thread 的 RIP、RSP 和 FS-base 全部指向
 旧映像，不能只让调用者切换 CR3 后继续放任 sibling。另一方面，路径不存在、
 ELF 截断、W+X、参数越界或内存不足都属于可恢复错误，不应先杀死旧 Thread。
@@ -295,8 +273,7 @@ ELF 截断、W+X、参数越界或内存不足都属于可恢复错误，不应�
 fork 的边界不同：只复制调用 Thread，child 不继承其他 Thread 的栈、TLS 或
 等待关系。
 
-\subsection{munmap 必须认识活动 Thread 和 futex waiter}
-
+\topic{munmap 必须认识活动 Thread 和 futex waiter}
 若 Thread A 在地址 \(X\) 上等待，Thread B 直接撤销 \(X\)，Kernel queue 会
 保存一个不再属于原对象的 key；同地址重新映射后甚至可能接收旧 wake。因此
 成功 unmap 会按 AddressSpaceId 与半开区间取消相交 futex，waiter 得到
@@ -307,20 +284,16 @@ Cancelled 后回到用户态重新判断。
 stack/TLS 半开区间，unmap 在修改 VMA 前完成重叠预检。只有 join 已在 Kernel
 reap 目标后，用户运行时才有权撤销对应映射。
 
-\subsection{容量不是一个孤立数字}
-
+\topic{容量不是一个孤立数字}
 三档 QEMU 运行同一实现，只改变资源配置和探针目标：
 
 \begin{center}
-\begin{tabular}{L{0.25\linewidth}L{0.20\linewidth}L{0.23\linewidth}L{0.22\linewidth}}
-\toprule
-档位 & RAM & Thread 规格 & thread probe \\
-\midrule
-bootstrap & 64 MiB & 每 Process 1 & 明确验证不能再创建 \\
-functional & 256 MiB & 系统 128、每 Process 32 & 总计 32 条同时 Ready \\
-capacity & 64 GiB & 系统 512、每 Process 64 & 总计 64 条并验证上限 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.25\linewidth}L{0.20\linewidth}L{0.23\linewidth}L{0.22\linewidth}}
+档位 & RAM & Thread 规格 & thread probe \\ \hline
+bootstrap & 64 MiB & 每 Process 1 & 明确验证不能再创建 \\ \hline
+functional & 256 MiB & 系统 128、每 Process 32 & 总计 32 条同时 Ready \\ \hline
+capacity & 64 GiB & 系统 512、每 Process 64 & 总计 64 条并验证上限 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 每条用户 Thread 还消耗 \(64\,\mathrm{KiB}\) 用户栈 reservation、4 KiB
@@ -329,8 +302,7 @@ TLS、一组页表/VMA 描述符、动态 KernelStack 和 FXSAVE 区。逻辑 re
 容量验收既检查“能创建目标数量”，也检查 join 后活动 Thread、栈槽、futex
 entry、VMA、页表和 frame 回到基线。
 
-\subsection{测试怎样分别证明局部算法与真实硬件路径}
-
+\topic{测试怎样分别证明局部算法与真实硬件路径}
 宿主单元测试检查相同 key 复用、不同 AddressSpaceId 隔离、非空 entry 拒绝
 释放、容量耗尽、唯一 join owner，以及 Process 终止同时处理 Running、
 Ready 和 Blocked sibling。固定种子随机测试在 \(8\times8\) 个 futex key
@@ -353,8 +325,7 @@ ABI 集成测试冻结系统调用 47--53、48 字节创建请求、16 字节 jo
 是测试层次、随机可复现、QEMU 总截止/静默截止、64 GiB 发布门禁，以及成功
 摘要中创建、退出、等待、唤醒和回收必须守恒。
 
-\subsection{按控制流走读源码}
-
+\topic{按控制流走读源码}\par
 \begin{enumerate}[label=\arabic*.]
   \item 从 \filepath{source/abi/include/os/abi/thread.hpp} 读固定布局；
   \item 读 \filepath{source/user/src/thread.cpp} 的 guard/TLS/入口/Join；

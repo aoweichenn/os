@@ -1,0 +1,348 @@
+\section{逻辑电平、晶体管与接口契约}
+
+第二章看到真实电压连续变化；数字逻辑把允许范围映射成有限符号。接收器只在
+规定采样条件下把输入判作 0 或 1。发送器要保证输出低电平不高于接收器允许的
+\(V_{IL(max)}\)，输出高电平不低于 \(V_{IH(min)}\)，并留出噪声裕量：
+
+\[
+NM_L=V_{IL(max)}-V_{OL(max)},
+\qquad
+NM_H=V_{OH(min)}-V_{IH(min)}.
+\]
+
+两个裕量都应为正。不同电压域之间可能需要电平转换器；把
+\(\SI{5}{V}\) 输出直接接到只允许 \(\SI{3.3}{V}\) 的输入可能永久损坏器件。
+
+\topic{布尔变量与真值表}
+布尔变量只有 0 和 1。逻辑非、与、或分别写作
+
+\[
+Y=\lnot A,\qquad Y=A\land B,\qquad Y=A\lor B.
+\]
+
+真值表穷举有限输入组合：
+
+\begin{center}
+\begin{osgridtabular}{cc|ccccc}
+\(A\) & \(B\) & NOT \(A\) & AND & OR & XOR & NAND \\ \hline
+0 & 0 & 1 & 0 & 0 & 0 & 1 \\ \hline
+0 & 1 & 1 & 0 & 1 & 1 & 1 \\ \hline
+1 & 0 & 0 & 0 & 1 & 1 & 1 \\ \hline
+1 & 1 & 0 & 1 & 1 & 0 & 0 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+XOR（异或）在输入不同的时候为 1。NAND（与非）先执行 AND 再取反。只用
+NAND 就能构造其他逻辑门，因此称它为功能完备门；“完备”描述表达能力，
+不表示真实芯片只由一种版图单元组成。
+
+\begin{center}
+\begin{tikzpicture}[circuit logic US,font=\footnotesize\sffamily]
+  \node[not gate US,draw,logic gate inputs=nn] (not) at (0,0) {};
+  \node[and gate US,draw,logic gate inputs=nn] (and) at (3,0) {};
+  \node[or gate US,draw,logic gate inputs=nn] (or) at (6,0) {};
+  \node[xor gate US,draw,logic gate inputs=nn] (xor) at (9,0) {};
+  \node[nand gate US,draw,logic gate inputs=nn] (nand) at (12,0) {};
+  \node[below=5mm of not] {NOT};
+  \node[below=5mm of and] {AND};
+  \node[below=5mm of or] {OR};
+  \node[below=5mm of xor] {XOR};
+  \node[below=5mm of nand] {NAND};
+\end{tikzpicture}
+\end{center}
+\diagramnote{逻辑符号表示布尔关系；具体器件还包含电源脚、阈值、传播延迟和
+驱动能力。}
+
+\topic{德摩根定律解释低有效逻辑}
+\[
+\lnot(A\land B)=(\lnot A)\lor(\lnot B),
+\qquad
+\lnot(A\lor B)=(\lnot A)\land(\lnot B).
+\]
+
+低有效信号在名称上常带 \code{\_N} 或上划线。若多个故障源都能把共享线拉低，
+“任一故障发生”在正逻辑描述为 OR，在低有效线路实现中常表现为多个开漏输出
+共同拉低。不能只看符号形状，必须同时看有效极性。
+
+\topic{晶体管怎样组成反相器}
+CMOS 反相器由上拉 P-MOS 与下拉 N-MOS 组成。输入低时 P-MOS 导通、N-MOS
+关闭，输出趋向 \(V_{\mathrm{DD}}\)；输入高时相反，输出趋向 GND。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,4) node[vcc]{\(V_{\mathrm{DD}}\)}
+    -- (0,3.4) node[pmos,anchor=S] (p) {};
+  \draw (p.D) -- (0,1.8) node[nmos,anchor=D] (n) {};
+  \draw (n.S) -- (0,0) node[ground]{};
+  \draw (p.G) -- (-1.8,2.8);
+  \draw (n.G) -- (-1.8,1.2);
+  \draw (-1.8,1.2) -- (-1.8,2.8) -- (-2.8,2) node[left]{\(A\)};
+  \draw (0,1.8) -- (2.0,1.8) node[right]{\(Y=\lnot A\)};
+\end{circuitikz}
+\end{center}
+
+切换不是瞬间完成。输出节点具有电容，晶体管有有限导通电阻，因而边沿需要
+时间。切换期间上下管还可能短暂同时部分导通。动态功耗常用近似式：
+
+\[
+P_{\mathrm{dynamic}}\approx\alpha C_L V_{\mathrm{DD}}^2 f,
+\]
+
+其中 \(\alpha\) 是翻转活动率，\(C_L\) 是负载电容，\(f\) 是切换频率。
+这解释了为什么提高电压和频率会显著增加功耗，也解释了现代处理器为什么需要
+时钟门控、动态调压和散热设计。
+
+\input{foundations/expanded/ch03-logic-electrical-interface}
+
+\section{布尔代数与组合逻辑}
+
+\term{组合逻辑}{combinational logic}没有有意保存的历史状态。在传播延迟
+过去后，输出由当前输入唯一决定。
+
+\topic{半加器与全加器}
+半加器把两个 1-bit 数相加：
+
+\[
+S=A\oplus B,\qquad C=A\land B.
+\]
+
+\begin{center}
+\begin{osgridtabular}{cc|cc}
+\(A\) & \(B\) & 和 \(S\) & 进位 \(C\) \\ \hline
+0 & 0 & 0 & 0\\ \hline
+0 & 1 & 1 & 0\\ \hline
+1 & 0 & 1 & 0\\ \hline
+1 & 1 & 0 & 1\\ \hline
+\end{osgridtabular}
+\end{center}
+
+全加器还接收低位进位 \(C_{\mathrm{in}}\)：
+
+\[
+S=A\oplus B\oplus C_{\mathrm{in}},
+\]
+\[
+C_{\mathrm{out}}
+=(A\land B)\lor
+\left(C_{\mathrm{in}}\land(A\oplus B)\right).
+\]
+
+\begin{pdfdiagram}
+  \node[os block] (fa0) {bit 0\\全加器};
+  \node[os block,right=of fa0] (fa1) {bit 1\\全加器};
+  \node[os block,right=of fa1] (fa2) {\(\cdots\)};
+  \node[os block,right=of fa2] (fan) {最高 bit\\全加器};
+  \draw[os arrow] (fa0) -- node[above]{进位} (fa1);
+  \draw[os arrow] (fa1) -- node[above]{进位} (fa2);
+  \draw[os arrow] (fa2) -- node[above]{进位} (fan);
+\end{pdfdiagram}
+\diagramnote{最简单的串行进位加法器必须等待进位逐级传播。更快的加法器用
+额外逻辑并行预测进位，以面积和布线换取延迟。}
+
+\begin{workedexample}
+计算四位 \(1011_2+0110_2\)。从最低位开始：
+
+\[
+\begin{array}{c@{\quad}c@{\quad}c@{\quad}c}
+1+0=1, &
+1+1=0\ \text{进 1}, &
+0+1+1=0\ \text{进 1}, &
+1+0+1=0\ \text{进 1}.
+\end{array}
+\]
+
+得到五位结果 \(1\,0001_2=17\)。若结果被限制在 4 bit，只保留
+\(0001_2\)，并用 carry flag 记录无符号进位。位宽是计算语义的一部分。
+\end{workedexample}
+
+\topic{多路选择器：由控制位选择数据来源}
+2 选 1 多路选择器满足
+
+\[
+Y=(\lnot S\land D_0)\lor(S\land D_1).
+\]
+
+\begin{pdfdiagram}
+  \node[trapezium,trapezium left angle=70,trapezium right angle=110,
+        draw=BookBlue,fill=BookCodeBg,minimum width=18mm,minimum height=20mm] (mux) {MUX};
+  \node[left=16mm of mux,yshift=5mm] (d0) {\(D_0\)};
+  \node[left=16mm of mux,yshift=-5mm] (d1) {\(D_1\)};
+  \node[below=10mm of mux] (s) {\(S\)};
+  \node[right=16mm of mux] (y) {\(Y\)};
+  \draw[os arrow] (d0) -- (mux.west |- d0);
+  \draw[os arrow] (d1) -- (mux.west |- d1);
+  \draw[os arrow] (s) -- (mux.south);
+  \draw[os arrow] (mux) -- (y);
+\end{pdfdiagram}
+
+CPU 数据通路中，多路选择器决定 ALU 输入来自寄存器、立即数、程序计数器还是
+转发结果；控制器产生选择信号。
+
+\topic{译码器：把编号变成唯一选择}
+一个 \(n\)-to-\(2^n\) 译码器把 \(n\) 位输入展开为最多 \(2^n\) 条选择线。
+地址译码就是更大规模的选择：比较地址的某些高位，决定当前事务送往 RAM、
+ROM 还是设备。
+
+\begin{workedexample}
+若一个芯片只在地址 \(\texttt{0xF000}\)--\(\texttt{0xFFFF}\) 响应，窗口大小为
+
+\[
+\texttt{0x10000}-\texttt{0xF000}=\texttt{0x1000}=4096\ \mathrm{B}.
+\]
+
+在 16-bit 地址中，这等价于最高 4 bit 必须为 \(1111_2\)，低 12 bit 选择
+窗口内的 4096 个字节。地址比较负责选芯，低位负责片内寻址。
+\end{workedexample}
+
+\input{foundations/expanded/ch03-boolean-and-combinational-design}
+
+\section{传播延迟、反馈与状态存储}
+
+一个门从输入改变到输出稳定需要传播延迟 \(t_{pd}\)。不同路径延迟不同，即使
+布尔表达式最终正确，中间也可能产生短脉冲，称为 glitch 或 hazard。
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=0.65cm,font=\footnotesize\sffamily]
+  \draw[->] (0,0) -- (12,0) node[right]{时间};
+  \foreach \y/\name in {3/A,2/B,1/Y} {
+    \draw[BookRule] (0,\y) -- (12,\y);
+    \node[left] at (0,\y) {\name};
+  }
+  \draw[BookBlue,thick] (0,3) -- (2,3) -- (2,3.45) -- (8,3.45) -- (8,3) -- (12,3);
+  \draw[BookTeal,thick] (0,2) -- (5,2) -- (5,2.45) -- (10,2.45) -- (10,2);
+  \draw[BookRed,thick] (0,1.45) -- (5.4,1.45) -- (5.4,1)
+    -- (5.9,1) -- (5.9,1.45) -- (12,1.45);
+  \draw[<->] (5,0.45) -- (5.9,0.45) node[midway,below]{短暂毛刺};
+\end{tikzpicture}
+\end{center}
+
+同步设计通常在时钟边沿采样，让组合逻辑有一个周期减去时序裕量的时间稳定。
+异步复位、时钟切换和外部输入仍需专门处理，不能假定所有毛刺都会自动消失。
+
+\topic{存储状态：从反馈到锁存器}
+若电路输出反馈到输入，就可能形成多个稳定状态。交叉耦合门组成的 SR latch
+能够保存一个 bit，但某些输入组合非法或具有歧义。D latch 用额外逻辑把数据
+和使能组织成更安全接口；D flip-flop 只在规定时钟边沿采样。
+
+\begin{pdfdiagram}
+  \node[os state,minimum width=26mm] (source) {数据源\\在边沿前稳定 \(D\)};
+  \node[draw=BookBlue,fill=BookCodeBg,minimum width=31mm,minimum height=24mm,
+        align=center,right=22mm of source] (ff) {D 触发器\\\(D\quad\triangleright\quad Q\)};
+  \node[os state,minimum width=28mm,right=22mm of ff] (q) {保存输出 \(Q\)\\边沿后延迟更新};
+  \node[os block,below=11mm of ff,minimum width=27mm] (clk) {时钟 CLK\\有效边沿};
+  \draw[os bus] (source) -- node[above]{采样输入} (ff);
+  \draw[os arrow] (clk) -- (ff);
+  \draw[os bus] (ff) -- node[above]{\(t_{cq}\) 后稳定} (q);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt},BookTeal]
+    ($(q.south west)+(0,-5mm)$) -- ($(q.south east)+(0,-5mm)$)
+    node[midway,below=5pt,BookTeal]{保持到下一有效边沿};
+\end{pdfdiagram}
+
+\topic{建立时间、保持时间与 clock-to-Q}
+数据必须在采样边沿前稳定至少 \(t_{setup}\)，边沿后继续稳定至少
+\(t_{hold}\)。采样后输出还需 \(t_{cq}\) 才稳定。两个寄存器之间的组合路径
+要满足近似约束：
+
+\[
+T_{\mathrm{clk}}
+\ge t_{cq}+t_{\mathrm{comb,max}}+t_{setup}+t_{\mathrm{skew}}.
+\]
+
+\begin{center}
+\begin{tikzpicture}[x=1cm,y=0.7cm,font=\footnotesize\sffamily]
+  \draw[->] (0,0) -- (12,0) node[right]{时间};
+  \node[left] at (0,3) {CLK};
+  \node[left] at (0,1.6) {D};
+  \draw[BookBlue,thick] (0,3) -- (2,3) -- (2,3.5) -- (5,3.5)
+    -- (5,3) -- (8,3) -- (8,3.5) -- (11,3.5) -- (11,3);
+  \draw[dashed,BookRed] (8,0.5) -- (8,4);
+  \draw[BookTeal,thick] (0,1.6) -- (6.3,1.6) -- (6.3,2.1) -- (9.2,2.1) -- (9.2,1.6) -- (12,1.6);
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}]
+    (6.3,0.9) -- (8,0.9) node[midway,below=5pt]{建立窗口};
+  \draw[decorate,decoration={brace,mirror,amplitude=4pt}]
+    (8,0.9) -- (9.2,0.9) node[midway,below=5pt]{保持窗口};
+  \node[above] at (8,4) {采样边沿};
+\end{tikzpicture}
+\end{center}
+
+\topic{亚稳态不是“随机读错一个 bit”这么简单}
+若异步输入恰在采样窗口变化，触发器内部可能暂时停留在不满足正常 0/1 时序的
+状态，称为 metastability。它最终通常会解析到 0 或 1，但解析时间无法对单次
+事件作确定保证。常见做法是在目标时钟域串联同步触发器，把亚稳态传播到业务
+逻辑的概率降得足够低；多 bit 总线则需要握手、FIFO 或编码协议，不能让每一位
+独立同步后就假定组合仍一致。
+
+\input{foundations/expanded/ch03-sequential-clock-and-cdc}
+
+\section{寄存器、状态机与算术逻辑单元}
+
+把多个触发器并列可保存一个固定宽度的字，称为寄存器。寄存器前放多路选择器，
+可以选择保持旧值、装载新值、加一或清零。
+
+\begin{pdfdiagram}
+  \node[os block] (next) {组合逻辑\\计算 next state};
+  \node[os state,right=25mm of next] (reg) {状态寄存器\\在时钟边沿提交};
+  \node[os block,right=25mm of reg] (output) {输出逻辑\\驱动数据通路};
+  \draw[os arrow] (next) -- (reg);
+  \draw[os arrow] (reg) -- (output);
+  \draw[os arrow,bend left=35] (reg.north) to node[above]{current state} (next.north);
+\end{pdfdiagram}
+
+\term{有限状态机}{finite-state machine, FSM}由有限状态集合、输入、转换规则和
+输出组成。例如一个极简内存读控制器可有：
+
+\[
+\text{Idle}\rightarrow\text{Address}\rightarrow\text{Wait}
+\rightarrow\text{Complete}\rightarrow\text{Idle}.
+\]
+
+软件设备驱动中的状态机和硬件 FSM 使用相同推理方式：先列状态与合法转换，
+再确定每个转换的触发条件和超时失败。
+
+\topic{复位决定初始状态，时钟决定推进时刻}
+上电时触发器状态未必自动为 0。复位网络把关键状态强制到已知值。复位可以
+异步置位、同步释放，也可以完全同步；具体选择取决于时钟是否已经存在、器件
+库和跨时钟域要求。
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.34\linewidth}L{0.36\linewidth}}
+方式 & 优点 & 风险与约束 \\ \hline
+\endfirsthead
+方式 & 优点 & 风险与约束 \\ \hline
+\endhead
+异步置位 & 无需时钟即可立即进入复位 & 释放靠近时钟边沿可能破坏 recovery/removal 要求 \\ \hline
+同步复位 & 释放天然与时钟对齐 & 时钟停止时不能改变状态，复位要进入数据路径 \\ \hline
+异步置位、同步释放 & 兼顾早期强制与安全退出 & 每个时钟域通常需要自己的同步释放链 \\ \hline
+\end{osgridlongtable}
+
+CPU 的架构复位状态是大量内部硬件状态机完成复位后的软件可见结果。操作系统
+不需要知道每个晶体管怎样复位，但必须严格遵守处理器手册承诺的寄存器、模式
+和取指地址。
+
+\topic{从逻辑积木到 ALU}
+\term{算术逻辑单元}{arithmetic logic unit, ALU}组合加法、减法、按位逻辑、
+移位和比较。操作码经控制逻辑选择一种结果，并产生 zero、carry、sign、
+overflow 等条件。
+
+\begin{pdfdiagram}
+  \node[os state] (a) {操作数 A};
+  \node[os state,below=of a] (b) {操作数 B};
+  \node[os block,right=25mm of a,yshift=-10mm] (alu) {ALU\\加减、逻辑、移位};
+  \node[os state,right=25mm of alu] (result) {结果};
+  \node[os state,below=of result] (flags) {条件标志};
+  \node[below=of alu] (op) {操作选择};
+  \draw[os bus] (a) -- (alu);
+  \draw[os bus] (b) -- (alu);
+  \draw[os arrow] (op) -- (alu);
+  \draw[os bus] (alu) -- (result);
+  \draw[os arrow] (alu) -- (flags);
+\end{pdfdiagram}
+
+ALU 本身不会决定“下一条执行什么”。程序计数器、寄存器文件、指令译码、
+访存接口和控制状态机共同组成处理器。下一章把这些积木连接成一台能够取指的
+完整计算机。
+
+\begin{contractbox}
+读完本章，应能从真值表写出简单布尔表达式；手算半加器、全加器和译码窗口；
+区分组合逻辑与时序逻辑；解释传播延迟、建立/保持时间、亚稳态和复位；并能
+把“CPU 做加法”拆成寄存器提供输入、ALU 形成结果、时钟边沿提交状态三步。
+\end{contractbox}

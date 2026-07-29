@@ -1,32 +1,26 @@
-\section{寄存器不是变量名，而是处理器状态接口}
+\section{寄存器、RFLAGS 与有效地址}
 
 x86-64 汇编最容易产生的误解，是把寄存器看成“比内存快的局部变量”。寄存器
 首先是指令集架构公开的状态：每条指令规定读取哪些位、写回哪些位、怎样影响
 RFLAGS，以及异常发生时哪些结果已经提交。调试器之所以能显示寄存器，是因为
 CPU、异常入口和调试协议对这些状态有共同定义。
 
-\subsection{通用寄存器的名称还编码访问宽度}
-
-\begin{longtable}{L{0.18\linewidth}L{0.18\linewidth}L{0.18\linewidth}L{0.36\linewidth}}
-\toprule
-64 位 & 32 位 & 16/8 位 & 常见系统职责 \\
-\midrule
+\topic{通用寄存器的名称还编码访问宽度}\par
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.18\linewidth}L{0.18\linewidth}L{0.36\linewidth}}
+64 位 & 32 位 & 16/8 位 & 常见系统职责 \\ \hline
 \endfirsthead
-\toprule
-64 位 & 32 位 & 16/8 位 & 常见系统职责 \\
-\midrule
+64 位 & 32 位 & 16/8 位 & 常见系统职责 \\ \hline
 \endhead
-\code{RAX} & \code{EAX} & \code{AX/AL/AH} & 返回值、累加器、系统调用号 \\
-\code{RBX} & \code{EBX} & \code{BX/BL/BH} & 被调用者保存状态或普通基址 \\
-\code{RCX} & \code{ECX} & \code{CX/CL/CH} & 计数；SYSCALL 自动保存用户 RIP \\
-\code{RDX} & \code{EDX} & \code{DX/DL/DH} & 扩展算术、端口地址、参数 \\
-\code{RSI} & \code{ESI} & \code{SI/SIL} & 源地址或第二参数 \\
-\code{RDI} & \code{EDI} & \code{DI/DIL} & 目的地址或第一参数 \\
-\code{RBP} & \code{EBP} & \code{BP/BPL} & 可选帧指针或普通被调用者保存寄存器 \\
-\code{RSP} & \code{ESP} & \code{SP/SPL} & 当前栈顶，控制流与异常边界的核心状态 \\
-\code{R8--R15} & \code{R8D--R15D} & \code{R8W/R8B} 等 & x86-64 新增通用状态 \\
-\bottomrule
-\end{longtable}
+\code{RAX} & \code{EAX} & \code{AX/AL/AH} & 返回值、累加器、系统调用号 \\ \hline
+\code{RBX} & \code{EBX} & \code{BX/BL/BH} & 被调用者保存状态或普通基址 \\ \hline
+\code{RCX} & \code{ECX} & \code{CX/CL/CH} & 计数；SYSCALL 自动保存用户 RIP \\ \hline
+\code{RDX} & \code{EDX} & \code{DX/DL/DH} & 扩展算术、端口地址、参数 \\ \hline
+\code{RSI} & \code{ESI} & \code{SI/SIL} & 源地址或第二参数 \\ \hline
+\code{RDI} & \code{EDI} & \code{DI/DIL} & 目的地址或第一参数 \\ \hline
+\code{RBP} & \code{EBP} & \code{BP/BPL} & 可选帧指针或普通被调用者保存寄存器 \\ \hline
+\code{RSP} & \code{ESP} & \code{SP/SPL} & 当前栈顶，控制流与异常边界的核心状态 \\ \hline
+\code{R8--R15} & \code{R8D--R15D} & \code{R8W/R8B} 等 & x86-64 新增通用状态 \\ \hline
+\end{osgridlongtable}
 
 写入一个 32 位通用寄存器会把对应 64 位寄存器的高 32 位清零；写 16 位或
 8 位子寄存器则保留其余位。这条规则使 \code{mov eax, value} 同时成为一种
@@ -40,8 +34,7 @@ movzx eax, byte [rsi]   ; 读取 8 位并显式零扩展到 32/64 位
 movsx rax, word [rsi]   ; 读取 16 位并符号扩展到 64 位
 \end{lstlisting}
 
-\subsection{RIP、RSP 与 RFLAGS 不是普通三元组}
-
+\topic{RIP、RSP 与 RFLAGS 不是普通三元组}
 \code{RIP} 指向下一条将执行的指令。普通 \code{mov} 不能直接写 RIP；跳转、
 调用、返回、中断和异常通过受约束的控制转移修改它。长模式常使用
 RIP-relative 地址，编码保存“目标减下一指令地址”的有符号位移，使只读数据
@@ -55,29 +48,23 @@ RFLAGS 同时保存算术结果、方向、陷阱、中断使能和若干系统�
 都可由用户任意恢复。系统调用返回或 sigreturn 必须对白名单位、保留位和 IOPL
 进行验证，避免用户借一次返回修改特权执行条件。
 
-\section{RFLAGS 把数据通路连接到控制流}
-
-\begin{longtable}{L{0.13\linewidth}L{0.20\linewidth}L{0.57\linewidth}}
-\toprule
-标志 & 名称 & 典型意义 \\
-\midrule
+\topic{RFLAGS 把数据通路连接到控制流}\par
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.20\linewidth}L{0.57\linewidth}}
+标志 & 名称 & 典型意义 \\ \hline
 \endfirsthead
-\toprule
-标志 & 名称 & 典型意义 \\
-\midrule
+标志 & 名称 & 典型意义 \\ \hline
 \endhead
-\code{CF} & Carry & 无符号加法进位、减法借位；也被移位和旋转使用 \\
-\code{PF} & Parity & 结果低字节中 1 的数量是否为偶数，属于兼容遗产 \\
-\code{AF} & Auxiliary carry & 低四位进位，主要服务早期 BCD 语义 \\
-\code{ZF} & Zero & 截断到操作数宽度后的结果是否为零 \\
-\code{SF} & Sign & 结果最高位，只有结合操作数宽度才有意义 \\
-\code{OF} & Overflow & 有符号结果是否超出当前宽度 \\
-\code{DF} & Direction & 字符串指令地址递增还是递减；跨语言入口通常先 CLD \\
-\code{IF} & Interrupt enable & 是否接受可屏蔽外部中断；不是“当前没有中断” \\
-\code{TF} & Trap & 单步调试请求，返回用户态前必须受控 \\
-\code{IOPL} & I/O privilege level & 端口 I/O 权限边界，用户返回不能任意提升 \\
-\bottomrule
-\end{longtable}
+\code{CF} & Carry & 无符号加法进位、减法借位；也被移位和旋转使用 \\ \hline
+\code{PF} & Parity & 结果低字节中 1 的数量是否为偶数，属于兼容遗产 \\ \hline
+\code{AF} & Auxiliary carry & 低四位进位，主要服务早期 BCD 语义 \\ \hline
+\code{ZF} & Zero & 截断到操作数宽度后的结果是否为零 \\ \hline
+\code{SF} & Sign & 结果最高位，只有结合操作数宽度才有意义 \\ \hline
+\code{OF} & Overflow & 有符号结果是否超出当前宽度 \\ \hline
+\code{DF} & Direction & 字符串指令地址递增还是递减；跨语言入口通常先 CLD \\ \hline
+\code{IF} & Interrupt enable & 是否接受可屏蔽外部中断；不是“当前没有中断” \\ \hline
+\code{TF} & Trap & 单步调试请求，返回用户态前必须受控 \\ \hline
+\code{IOPL} & I/O privilege level & 端口 I/O 权限边界，用户返回不能任意提升 \\ \hline
+\end{osgridlongtable}
 
 无符号和有符号比较读取同一次减法留下的不同标志。例如
 \code{cmp rax, rbx} 计算但不保存 \(RAX-RBX\)：\code{jb} 读取 CF 判断无符号
@@ -91,15 +78,13 @@ jl  signed_less
 je  equal
 \end{lstlisting}
 
-\subsection{INC 与 ADD 并不完全等价}
-
+\topic{INC 与 ADD 并不完全等价}
 \code{inc} 不修改 CF，而 \code{add operand, 1} 会修改 CF。两者都能让整数
 增加一，却不能在依赖进位链的代码中互换。类似地，\code{test x, x} 适合检查
 零和符号但会清除 CF/OF；在错误路径、位图扫描和多字精度运算中，必须先列出
 后续分支真正消费哪些标志。
 
-\section{内存操作数先计算有效地址}
-
+\topic{内存操作数先计算有效地址}
 长模式下常见内存形式可以写成：
 
 \[
@@ -120,8 +105,7 @@ lea rdx, [rbx + rcx * 8 + 16]
 目标页面不存在而产生数据读缺页。LEA 常被编译器用于整数加乘，但它不设置
 算术标志。
 
-\subsection{括号、宽度与对齐必须分别说明}
-
+\topic{括号、宽度与对齐必须分别说明}
 NASM 的方括号表示内存操作数。若其他操作数不能推导宽度，就应使用
 \code{byte}、\code{word}、\code{dword} 或 \code{qword}。访问宽度决定跨越
 多少字节、是否可能跨页、设备寄存器是否接受该事务，以及原子性保证适用于
@@ -138,31 +122,25 @@ mov qword [rdi], rax
 协议有更严格要求。本书中的“地址合法”始终至少包含范围、溢出、宽度、权限和
 必要对齐五项，而不只是起始指针看起来位于某个区间。
 
-\section{指令语义应按状态转换分类}
-
-\begin{longtable}{L{0.19\linewidth}L{0.25\linewidth}L{0.46\linewidth}}
-\toprule
-类别 & 例子 & 阅读时必须检查 \\
-\midrule
+\topic{指令语义应按状态转换分类}\par
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.25\linewidth}L{0.46\linewidth}}
+类别 & 例子 & 阅读时必须检查 \\ \hline
 \endfirsthead
-\toprule
-类别 & 例子 & 阅读时必须检查 \\
-\midrule
+类别 & 例子 & 阅读时必须检查 \\ \hline
 \endhead
-数据搬运 & MOV、MOVZX、MOVSX、XCHG & 宽度、扩展规则、内存副作用 \\
-算术 & ADD、SUB、ADC、SBB、MUL、DIV & 溢出、除零、隐式寄存器、RFLAGS \\
-位操作 & AND、OR、XOR、TEST、BT、BTS & 掩码含义、位号、并发原子性 \\
-移位旋转 & SHL、SHR、SAR、ROL、ROR & 算术/逻辑右移、计数截断、CF \\
-控制流 & JMP、Jcc、CALL、RET & 下一 RIP、栈、canonical 目标 \\
-字符串 & MOVS、STOS、LODS、SCAS & RSI/RDI/RCX、DF、REP、缺页位置 \\
-系统状态 & CLI、STI、HLT、LGDT、LIDT & CPL、序列化要求、失败后是否可观察 \\
-地址转换 & MOV CR3、INVLPG & 当前根、TLB、共享映射与 shootdown 边界 \\
-端口 I/O & IN、OUT & 端口、宽度、IOPL、设备状态机 \\
-原子同步 & LOCK CMPXCHG、XADD、MFENCE & 对齐、缓存一致性、内存顺序 \\
-\bottomrule
-\end{longtable}
+数据搬运 & MOV、MOVZX、MOVSX、XCHG & 宽度、扩展规则、内存副作用 \\ \hline
+算术 & ADD、SUB、ADC、SBB、MUL、DIV & 溢出、除零、隐式寄存器、RFLAGS \\ \hline
+位操作 & AND、OR、XOR、TEST、BT、BTS & 掩码含义、位号、并发原子性 \\ \hline
+移位旋转 & SHL、SHR、SAR、ROL、ROR & 算术/逻辑右移、计数截断、CF \\ \hline
+控制流 & JMP、Jcc、CALL、RET & 下一 RIP、栈、canonical 目标 \\ \hline
+字符串 & MOVS、STOS、LODS、SCAS & RSI/RDI/RCX、DF、REP、缺页位置 \\ \hline
+系统状态 & CLI、STI、HLT、LGDT、LIDT & CPL、序列化要求、失败后是否可观察 \\ \hline
+地址转换 & MOV CR3、INVLPG & 当前根、TLB、共享映射与 shootdown 边界 \\ \hline
+端口 I/O & IN、OUT & 端口、宽度、IOPL、设备状态机 \\ \hline
+原子同步 & LOCK CMPXCHG、XADD、MFENCE & 对齐、缓存一致性、内存顺序 \\ \hline
+\end{osgridlongtable}
 
-\section{CALL、RET 与 ABI 共同定义函数}
+\section{控制流、ABI、模式与内存顺序}
 
 \code{call target} 把下一 RIP 压栈后跳转；\code{ret} 从当前栈顶取回目标。
 这两条指令不知道参数、局部变量或哪组寄存器应保存，那些属于 ABI。SysV
@@ -187,8 +165,7 @@ range_length:
 其余寄存器、处理可能存在的硬件错误码、清 DF、选择可信栈并满足 C++ 调用
 对齐；返回则使用 IRETQ 或 SYSRET 的特定现场，而不是普通 RET。
 
-\section{模式与特权会改变同一字节的意义}
-
+\topic{模式与特权会改变同一字节的意义}
 指令编码的解释受当前模式、默认操作数宽度、地址宽度、REX 前缀、段属性和
 CPL 影响。同一个 \code{0x48} 在旧模式可表示 DEC，在 64 位模式是 REX.W
 前缀；\code{push}、近跳转和地址大小也随模式变化。NASM 的
@@ -198,8 +175,7 @@ CLI、HLT、MOV CR3、LGDT、LIDT、IN 和 OUT 等指令还受特权检查。用
 执行 UD2 会得到 \#UD；执行特权指令通常得到 \#GP。内核必须用异常来源 CPL
 和现场判断是隔离用户进程还是进入 panic，不能只根据向量编号做同一种处理。
 
-\section{原子指令、缓存一致性与 C++ 内存顺序是三层问题}
-
+\topic{原子指令、缓存一致性与 C++ 内存顺序是三层问题}
 对齐的普通 load/store 是否原子、多个处理器是否看到一致缓存线、编译器是否
 允许重排，是三个不同层次。LOCK 前缀为特定读改写提供处理器原子性和强顺序，
 但不会自动建立正确的等待队列协议；C++ \code{memory\_order\_acquire} 与
@@ -211,25 +187,19 @@ CLI、HLT、MOV CR3、LGDT、LIDT、IN 和 OUT 等指令还受特权检查。用
 若加入 SMP，还必须补充跨核缓存一致性、锁争用、per-CPU 数据、TLB shootdown
 和内核数据竞争证据，不能把现有单核正确性直接外推。
 
-\section{逐条 trace 应同时记录六列}
-
-\begin{longtable}{L{0.14\linewidth}L{0.76\linewidth}}
-\toprule
-列 & 内容 \\
-\midrule
+\topic{逐条 trace 应同时记录六列}\par
+\begin{osgridlongtable}{L{0.14\linewidth}L{0.76\linewidth}}
+列 & 内容 \\ \hline
 \endfirsthead
-\toprule
-列 & 内容 \\
-\midrule
+列 & 内容 \\ \hline
 \endhead
-地址 & 指令开始的线性/物理地址以及所在模式 \\
-字节 & 前缀、opcode、ModR/M、SIB、位移和立即数 \\
-反汇编 & Intel 语法助记符、显式和隐式操作数 \\
-输入 & 被读取的寄存器、内存、端口与标志 \\
-输出 & 写回的寄存器、内存、端口、RIP 与标志 \\
-失败 & 可能出现的 \#UD、\#GP、\#PF、设备超时或边界拒绝 \\
-\bottomrule
-\end{longtable}
+地址 & 指令开始的线性/物理地址以及所在模式 \\ \hline
+字节 & 前缀、opcode、ModR/M、SIB、位移和立即数 \\ \hline
+反汇编 & Intel 语法助记符、显式和隐式操作数 \\ \hline
+输入 & 被读取的寄存器、内存、端口与标志 \\ \hline
+输出 & 写回的寄存器、内存、端口、RIP 与标志 \\ \hline
+失败 & 可能出现的 \#UD、\#GP、\#PF、设备超时或边界拒绝 \\ \hline
+\end{osgridlongtable}
 
 例如分析复位近跳转时，不能只写“跳到入口”。应记录取指物理地址、机器码
 \code{E9 disp16}、下一 IP、位移符号扩展、CS 隐藏 base 保持不变，以及目标

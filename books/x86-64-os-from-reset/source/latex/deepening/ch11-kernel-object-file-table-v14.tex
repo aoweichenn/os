@@ -1,4 +1,4 @@
-\section{v1.4：从整数槽位到类型化内核对象}
+\section{内核对象、身份与引用生命周期}
 
 \begin{keyidea}
 文件描述符不是文件，也不是内核对象的地址。它只是某个进程文件表中的局部
@@ -7,8 +7,7 @@
 关闭、执行时关闭、限额和最终析构才有各自明确的位置。
 \end{keyidea}
 
-\subsection{历史问题：为什么 Unix 没有把路径直接交给每次读写}
-
+\topic{历史问题：为什么 Unix 没有把路径直接交给每次读写}
 早期文件接口必须同时解决三个彼此不同的问题。第一，目录中的名字可能被
 重命名，进程却仍要继续访问已经打开的对象；第二，两次独立打开同一路径应有
 独立读写位置；第三，父子进程或复制操作又需要有意共享一次打开的读写位置。
@@ -41,8 +40,7 @@ v1.0 的八槽 \code{IoDescriptor} 已经让控制台、管道和文件使用同
 \code{FileDescription} 适配已有 I/O，最后让每个 Process 持有动态
 \code{FileTable}。
 
-\subsection{四层对象图与所有权方向}
-
+\topic{四层对象图与所有权方向}\par
 \begin{lstlisting}[caption={Process、FileTable 与共享 FileDescription 的所有权图}]
 Process
   |
@@ -67,25 +65,21 @@ Process
 打开实例与 fd 的语义，v1.5 再在它下面接入 Path、Mount 与 Vnode。若同一阶段
 同时替换描述符表、命名空间和磁盘格式，失败时将无法判断错误属于哪层。
 
-\subsection{KernelObject 的内存布局}
-
+\topic{KernelObject 的内存布局}
 每个动态对象由一个 64 字节对齐的私有头和紧随其后的类型载荷组成：
 
-\begin{longtable}{L{0.29\textwidth}L{0.17\textwidth}L{0.42\textwidth}}
-\toprule
-字段 & 宽度 & 作用\\
-\midrule
-\code{previous/next} & 各 64 位 & 活动对象侵入链，不另行分配节点\\
-\code{type/state} & 各 64 位 & 类型门禁与 Active/Finalizing 状态机\\
-\code{variant} & 64 位 & 记录 FileDescription 的具体种类\\
-\code{generation} & 64 位 & 区分同址堆内存的不同生命代次\\
-\code{strong_reference_count} & 64 位 & 当前强引用总数\\
-\code{allocation_size_bytes} & 64 位 & 精确归还整个堆块\\
-\code{payload_size_bytes} & 64 位 & 检查载荷边界\\
-\code{finalize_operation/context} & 各 64 位 & 最后释放时的类型析构回调\\
-\code{operation_lock} & 实现定义 & 串行化该对象的可变语义状态\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.29\textwidth}L{0.17\textwidth}L{0.42\textwidth}}
+字段 & 宽度 & 作用\\ \hline
+\code{previous/next} & 各 64 位 & 活动对象侵入链，不另行分配节点\\ \hline
+\code{type/state} & 各 64 位 & 类型门禁与 Active/Finalizing 状态机\\ \hline
+\code{variant} & 64 位 & 记录 FileDescription 的具体种类\\ \hline
+\code{generation} & 64 位 & 区分同址堆内存的不同生命代次\\ \hline
+\code{strong_reference_count} & 64 位 & 当前强引用总数\\ \hline
+\code{allocation_size_bytes} & 64 位 & 精确归还整个堆块\\ \hline
+\code{payload_size_bytes} & 64 位 & 检查载荷边界\\ \hline
+\code{finalize_operation/context} & 各 64 位 & 最后释放时的类型析构回调\\ \hline
+\code{operation_lock} & 实现定义 & 串行化该对象的可变语义状态\\ \hline
+\end{osgridlongtable}
 
 所有位数都由 \code{uint64\_t} 等固定宽度类型表达。代码不把宿主平台的
 \code{long}、\code{size\_t} 或指针宽度当成磁盘、ABI 或统计规格。对象地址
@@ -107,8 +101,7 @@ Process
 统计也没有宣称它存在。这个顺序把失败原子性落实成可检查的状态，而不是依靠
 调用者猜测“失败到哪一步”。
 
-\subsection{地址加 generation：处理内存复用造成的 ABA}
-
+\topic{地址加 generation：处理内存复用造成的 ABA}
 堆释放一个对象后，下一次 best-fit 分配完全可能返回同一虚拟地址。若 handle
 只保存地址，旧 handle 会把新对象误认成原对象，这就是一种 ABA：
 
@@ -137,8 +130,7 @@ generation 从 1 单调增长，0 永远表示空。到达
 几乎不会耗尽，但“很难发生”不能替代状态定义；拒绝回绕也使随机模型不必为
 代次碰撞留出隐藏例外。
 
-\subsection{强引用状态机与最后释放}
-
+\topic{强引用状态机与最后释放}
 \code{ReferenceCounter} 在 v1.1 已冻结三条性质：非零启动、零后禁止复活、
 上溢拒绝。v1.4 把它改为可用于原始 \code{uint64\_t} 状态的基础操作，
 原有类封装继续委托给同一实现，因此动态对象没有复制另一套计数规则。
@@ -170,8 +162,7 @@ finalizer 不能在管理器全局锁内调用。文件系统关闭或管道端�
 \code{failed\_finalization\_count}，让调用路径返回明确失败，同时仍释放无主
 存储。这样既不制造悬空“僵尸对象”，也不把设备或文件系统错误从证据中抹掉。
 
-\subsection{Reference 与 Handle 为什么是两种类型}
-
+\topic{Reference 与 Handle 为什么是两种类型}
 \code{KernelObjectReference} 不可复制、可以移动，析构时自动释放。它适合
 \code{read}、\code{write} 或状态读取这样的有界调用。若函数提前返回，
 RAII 仍会归还临时引用。
@@ -190,25 +181,22 @@ RAII 仍会归还临时引用。
         隐式复制与双重释放。
 \end{itemize}
 
-\subsection{FileDescription：一次打开，而不是一个文件名}
+\section{打开实例、文件描述符与进程文件表}
 
 \code{FileDescriptionStorage} 的逻辑内容如下：
 
-\begin{longtable}{L{0.31\textwidth}L{0.57\textwidth}}
-\toprule
-字段 & 语义\\
-\midrule
+\begin{osgridlongtable}{L{0.31\textwidth}L{0.57\textwidth}}
+字段 & 语义\\ \hline
 \code{kind} & ConsoleInput、ConsoleOutput、ConsoleError、RegularFile、
-Directory、PipeReader 或 PipeWriter\\
-\code{file_status_flags} & 可读、可写等共享打开状态\\
-\code{console_input} & 指向 PS/2 字符进入的有界控制台 FIFO\\
+Directory、PipeReader 或 PipeWriter\\ \hline
+\code{file_status_flags} & 可读、可写等共享打开状态\\ \hline
+\code{console_input} & 指向 PS/2 字符进入的有界控制台 FIFO\\ \hline
 \code{device_write_operation/context} & 注入串口或控制台写操作，不把设备
-实现硬编码进对象层\\
-\code{pipe} & 指向现有 64 字节有界 Pipe 及相应端点\\
-\code{file_system} & 指向已挂载的 legacy 文件系统实例\\
-\code{file_system_handle} & inode、类型与当前共享偏移\\
-\bottomrule
-\end{longtable}
+实现硬编码进对象层\\ \hline
+\code{pipe} & 指向现有 64 字节有界 Pipe 及相应端点\\ \hline
+\code{file_system} & 指向已挂载的 legacy 文件系统实例\\ \hline
+\code{file_system_handle} & inode、类型与当前共享偏移\\ \hline
+\end{osgridlongtable}
 
 创建请求必须与 kind 匹配。例如 ConsoleInput 必须提供输入对象且具有可读
 状态，ConsoleOutput 必须有写回调且具有可写状态，RegularFile 与 Directory
@@ -231,18 +219,14 @@ D(fd_a) &= D(fd_b),\\
 两份 \code{FileSystemHandle.offset\_bytes} 都从零开始。路径相同不意味着
 打开实例相同。
 
-\subsection{共享状态标志与局部描述符标志}
-
+\topic{共享状态标志与局部描述符标志}
 两组名字相似的 flags 必须分开：
 
-\begin{longtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.34\textwidth}}
-\toprule
-类别 & 存储位置 & 复制后的关系\\
-\midrule
-file status flags & FileDescription & 共享；描述一次打开的读写能力\\
-descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.34\textwidth}}
+类别 & 存储位置 & 复制后的关系\\ \hline
+file status flags & FileDescription & 共享；描述一次打开的读写能力\\ \hline
+descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\ \hline
+\end{osgridlongtable}
 
 若把 close-on-exec 放入 FileDescription，那么给复制出来的 fd 设置该位会
 连带修改源 fd；下一次 exec 将同时关闭两者。这与 fd 局部语义冲突。v1.4 的
@@ -252,8 +236,7 @@ descriptor flags & FileTableEntry & 独立；当前只有 close-on-exec\\
 宿主单元测试。提前冻结位置和批量关闭语义，能让 v1.7 接入真正 exec 时不再
 重塑对象所有权。
 
-\subsection{FileTable 的分块表示}
-
+\topic{FileTable 的分块表示}
 每个 Process 持有独立 FileTable。表不预分配 4096 个表项，而是按 64 个
 descriptor 一块延迟增长：
 
@@ -269,22 +252,18 @@ fd 64 才创建第二块。关闭表项不会立即释放中间空块，Process 
 
 三档 hard limit 对应不同验收目标：
 
-\begin{longtable}{L{0.24\textwidth}L{0.20\textwidth}L{0.44\textwidth}}
-\toprule
-配置 & hard limit & 用途\\
-\midrule
-最小调度事务 & 64 & 验证小容量拒绝与失败原子性\\
-functional QEMU & 256 & 完整 Shell、文件、管道与 v1.4 用户证明\\
-capacity QEMU & 4096 & 在 64 GiB 主规格上证明表结构不被教学小值锁死\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.24\textwidth}L{0.20\textwidth}L{0.44\textwidth}}
+配置 & hard limit & 用途\\ \hline
+最小调度事务 & 64 & 验证小容量拒绝与失败原子性\\ \hline
+functional QEMU & 256 & 完整 Shell、文件、管道与 v1.4 用户证明\\ \hline
+capacity QEMU & 4096 & 在 64 GiB 主规格上证明表结构不被教学小值锁死\\ \hline
+\end{osgridlongtable}
 
 4096 是当前冻结的 v1.x 能力上限，不是假装已经复制 Linux 的任意动态上限。
 数据结构、计数、参数和系统调用均使用 64 位固定宽度类型，未来提高上限无需
 改变 ABI；真正提高前仍要重新评估 heap、每进程内存预算与遍历成本。
 
-\subsection{soft limit 与 hard limit 的不同职责}
-
+\topic{soft limit 与 hard limit 的不同职责}
 hard limit 在 FileTable 初始化时冻结，且不能超过 4096。soft limit 可由
 当前进程调整，但必须满足：
 
@@ -300,8 +279,7 @@ soft limit 限制新安装可取得的 fd 数值范围，不会因为降低限�
 \code{SoftLimitExceeded}。用户 ABI 将其映射为 \code{-24}。底层对象引用、
 原表项、分块集合与计数都保持原值。
 
-\subsection{为什么分配必须返回最低可用 fd}
-
+\topic{为什么分配必须返回最低可用 fd}
 用户程序长期依赖“从给定下界开始的最低可用描述符”语义。它不只是方便打印：
 标准输入、输出和错误固定为 0、1、2；关闭 fd 4 后再次打开，若没有更小空位，
 就应稳定复用 4。确定性也使整机证据能够检查确切数字。
@@ -311,8 +289,7 @@ soft limit 限制新安装可取得的 fd 数值范围，不会因为降低限�
 直接视为 64 个永久空槽后立刻发布，因为分配新块需要 heap，而表锁内不应嵌套
 执行复杂分配。
 
-\subsection{安装的两阶段提交}
-
+\topic{安装的两阶段提交}
 \code{Install} 的关键循环可以写成以下事务：
 
 \begin{lstlisting}[caption={FileTable 安装的两阶段提交}]
@@ -339,34 +316,35 @@ unlock table
 reference；在它之后，handle 与统计在同一表锁临界区内发布。用户永远看不到
 只有 flags 没有对象，或只有对象却未计数的半表项。
 
-\subsection{查找、复制、关闭和销毁的完整路径}
+\topic{查找、复制、关闭和销毁的完整路径}
+四个动作围绕同一条所有权主线展开：先在锁内改变表项和引用，再把可能触发
+复杂析构的工作移到锁外，从而同时守住可见性与生命周期。
 
-\paragraph{Lookup}
+\topic{Lookup}
 
 表锁保护 chunk 与 entry 的稳定性。在锁内验证 fd、找到非空 handle，再调用
 \code{AcquireHandle}。取得临时强引用后才释放表锁，因此并发 close 只能
 释放表的那份引用，正在进行的 I/O 仍拥有自己的引用。
 
-\paragraph{Duplicate}
+\topic{Duplicate}
 
 先 Lookup 源 fd，得到同一 generation 的临时引用；再按目标下界 Install。
 成功时临时引用被转移为新表项，因此对象计数净增 1。安装失败时 RAII 析构
 临时引用，计数恢复，源 fd 不变。
 
-\paragraph{Close}
+\topic{Close}
 
 先在表锁内清空 entry 并递减 active descriptor，再在锁外释放 handle。
 最后引用可能触发文件系统或管道 finalizer，所以不能在表锁内执行。表项一旦
 清空，新 Lookup 就会失败；已经取得的临时引用仍可安全完成。
 
-\paragraph{Destroy}
+\topic{Destroy}
 
 Process 回收时逐项释放所有非空 handle，再释放全部 chunk，最后检查活动
 descriptor 与 chunk 归零。若任一 finalizer 失败，销毁返回失败并记录证据，
 但不会故意保留已失去所有者的表内存。
 
-\subsection{锁顺序与目前的并发边界}
-
+\topic{锁顺序与目前的并发边界}
 v1.4 的主要锁层次为：
 
 \[
@@ -384,8 +362,7 @@ Pipe 或 FileSystem。最后析构也在对象管理器和表锁之外进入下�
 路线写下可审计的顺序。另一方面，本阶段没有宣称实现跨核 RCU、无锁 fd 查找
 或远端 close；这些需要 AP、IPI 与内存回收协议共同验收。
 
-\subsection{既有 I/O 如何无旁路迁移}
-
+\topic{既有 I/O 如何无旁路迁移}
 迁移后的通用路径统一为：
 
 \[
@@ -398,47 +375,39 @@ Pipe 或 FileSystem。最后析构也在对象管理器和表锁之外进入下�
 \end{aligned}
 \]
 
-\begin{longtable}{L{0.29\textwidth}L{0.29\textwidth}L{0.30\textwidth}}
-\toprule
-端点 & 读路径 & 写路径\\
-\midrule
-ConsoleInput & 读取 256 字节 FIFO，可返回 WouldBlock & 拒绝\\
-ConsoleOutput/Error & 拒绝 & 调用注入的设备写函数\\
-RegularFile & legacy-fs Read 并推进共享 offset & Write 并推进共享 offset\\
-Directory & ReadDirectory 并推进目录位置 & 拒绝\\
-PipeReader & Pipe TryRead、EOF 与唤醒语义 & 拒绝\\
-PipeWriter & 拒绝 & Pipe TryWrite、背压与 broken pipe\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.29\textwidth}L{0.29\textwidth}L{0.30\textwidth}}
+端点 & 读路径 & 写路径\\ \hline
+ConsoleInput & 读取 256 字节 FIFO，可返回 WouldBlock & 拒绝\\ \hline
+ConsoleOutput/Error & 拒绝 & 调用注入的设备写函数\\ \hline
+RegularFile & legacy-fs Read 并推进共享 offset & Write 并推进共享 offset\\ \hline
+Directory & ReadDirectory 并推进目录位置 & 拒绝\\ \hline
+PipeReader & Pipe TryRead、EOF 与唤醒语义 & 拒绝\\ \hline
+PipeWriter & 拒绝 & Pipe TryWrite、背压与 broken pipe\\ \hline
+\end{osgridlongtable}
 
 原先专用的文件、管道和控制台系统调用仍保留 ABI 兼容，但它们最终汇入同一
 对象路径。没有旧 \code{IoDescriptor} 旁路，也没有为 PID 4 的证明写特殊
 内核读取函数。这样历史 QEMU 路径与新能力同时检验迁移是否完整。
 
-\subsection{系统调用 23 到 28 的 ABI}
-
+\topic{系统调用 23 到 28 的 ABI}
 v1.3 已冻结原生 \code{SYSCALL} 与 \code{INT 0x80} 共用的
 \code{UserContext}，v1.4 只在分发层增加操作：
 
-\begin{longtable}{L{0.10\textwidth}L{0.31\textwidth}L{0.35\textwidth}L{0.12\textwidth}}
-\toprule
-编号 & 名称 & 参数 & 成功结果\\
-\midrule
-23 & DuplicateDescriptor & RDI=源 fd，RSI=最低目标，RDX=目标 flags & 新 fd\\
-24 & GetDescriptorFlags & RDI=fd & flags\\
-25 & SetDescriptorFlags & RDI=fd，RSI=flags & 0\\
-26 & SetDescriptorSoftLimit & RDI=新 soft limit & 0\\
-27 & GetDescriptorSoftLimit & 无 & soft limit\\
-28 & GetDescriptorHardLimit & 无 & hard limit\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.10\textwidth}L{0.31\textwidth}L{0.35\textwidth}L{0.12\textwidth}}
+编号 & 名称 & 参数 & 成功结果\\ \hline
+23 & DuplicateDescriptor & RDI=源 fd，RSI=最低目标，RDX=目标 flags & 新 fd\\ \hline
+24 & GetDescriptorFlags & RDI=fd & flags\\ \hline
+25 & SetDescriptorFlags & RDI=fd，RSI=flags & 0\\ \hline
+26 & SetDescriptorSoftLimit & RDI=新 soft limit & 0\\ \hline
+27 & GetDescriptorSoftLimit & 无 & soft limit\\ \hline
+28 & GetDescriptorHardLimit & 无 & hard limit\\ \hline
+\end{osgridlongtable}
 
 RAX 在进入前保存系统调用号，返回时保存 64 位结果。负数沿既有 ABI 表示错误：
 \code{-12} 是非法 fd，\code{-24} 是限额拒绝，\code{-25} 是内核对象失败。
 用户包装不读取平台相关的 \code{errno}，也不依赖宿主 C 库。
 
-\subsection{汇编边界为什么不需要为 v1.4 重写}
-
+\topic{汇编边界为什么不需要为 v1.4 重写}
 本阶段仍然真实经过 Intel 语法汇编，而不是绕过汇编。以
 \code{DuplicateDescriptor} 为例，控制流是：
 
@@ -459,8 +428,7 @@ RAX 在进入前保存系统调用号，返回时保存 64 位结果。负数沿
 v1.3 分层成功的证据：硬件特权转换与对象语义在 UserContext 边界解耦。
 若新增一个 fd 操作就必须修改 SWAPGS 或返回帧，说明 ABI 层次没有真正稳定。
 
-\subsection{PID 4 的整机语义证明}
-
+\topic{PID 4 的整机语义证明}
 调度 worker 在真实 Ring 3 中执行以下序列：
 
 \begin{enumerate}
@@ -485,8 +453,7 @@ v1.3 分层成功的证据：硬件特权转换与对象语义在 UserContext �
 历史 Shell、管道和文件系统仍执行自己的路径，因此最终管理器统计会包含更多
 对象与字节，验收不把某次局部事务误当成全系统总量。
 
-\subsection{统计为何在阶段结束时集中打印}
-
+\topic{统计为何在阶段结束时集中打印}
 fd 查找、字符读写和引用增减都是热路径。逐次串口输出会改变 PIT 调度时序，
 淹没真正异常，还可能让 QEMU 超时。v1.4 只在阶段边界打印汇总：
 
@@ -511,24 +478,20 @@ fd 查找、字符读写和引用增减都是热路径。逐次串口输出会�
 释放、活动对象与强引用为零、finalization failure 为零，四者联合证明生命
 周期闭环；只检查 \code{READY} 无法排除泄漏。
 
-\subsection{四层测试怎样互补}
-
-\begin{longtable}{L{0.25\textwidth}L{0.28\textwidth}L{0.35\textwidth}}
-\toprule
-层次 & 代表测试 & 主要排除的问题\\
-\midrule
+\topic{四层测试怎样互补}\par
+\begin{osgridlongtable}{L{0.25\textwidth}L{0.28\textwidth}L{0.35\textwidth}}
+层次 & 代表测试 & 主要排除的问题\\ \hline
 单元 & \filepath{file\_table\_test.cpp} & 引用转移、共享 generation、独立
-fd flags、最低复用、close-on-exec 与销毁\\
+fd flags、最低复用、close-on-exec 与销毁\\ \hline
 集成 & \filepath{file\_description\_lifecycle\_test.cpp} & legacy-fs、
-管道和对象 finalizer 的跨模块生命周期\\
+管道和对象 finalizer 的跨模块生命周期\\ \hline
 容量 & \filepath{file\_table\_capacity\_test.cpp} & 4096 fd、64 个分块、
-耗尽失败原子性与完全释放\\
+耗尽失败原子性与完全释放\\ \hline
 随机 & \filepath{file\_table\_randomized\_test.cpp} & 固定种子 100000 步
-模型对照，每一步核对占用、generation、flags、引用与统计\\
+模型对照，每一步核对占用、generation、flags、引用与统计\\ \hline
 整机 & functional/capacity QEMU & Ring 3 ABI、真实汇编入口、调度、
-文件系统、heap 与最终全局守恒\\
-\bottomrule
-\end{longtable}
+文件系统、heap 与最终全局守恒\\ \hline
+\end{osgridlongtable}
 
 随机模型不把实现本身当预言机。宿主侧以独立数组记录每个 fd 是否占用、
 对应 generation 与 flags，再把 Install、Duplicate、Lookup、Close 和限额
@@ -540,8 +503,7 @@ v1.4 功能里程碑把回归从 102 项推进到 106 项；当前仓库又加�
 102 个证据；历史固定槽实现的专用测试被移除，因为生产类型也已经删除。保留
 针对已不存在结构的测试只会制造虚假安全感。
 
-\subsection{增量构建为什么必须依赖生成文件}
-
+\topic{增量构建为什么必须依赖生成文件}
 用户 worker 不是由 QEMU 从宿主目录直接读取，而是先链接成 User ELF，再由
 \filepath{user\_images.o} 嵌入 Kernel，随后依次生成
 \filepath{kernel.elf}、\filepath{kernel.payload.elf} 和磁盘镜像：
@@ -568,41 +530,36 @@ CMake 的自定义 target 是 phony 节点。它适合声明“生产者必须�
 GDB 使用，其非加载调试段不属于 Stage 1 暂存载荷。这个区分同时修复了
 “旧镜像假失败”和“把调试文件长度当启动载荷长度”两类工程错误。
 
-\subsection{按目录走读 v1.4}
-
-\begin{longtable}{L{0.43\textwidth}L{0.45\textwidth}}
-\toprule
-文件 & 阅读时要回答的问题\\
-\midrule
+\topic{按目录走读 v1.4}\par
+\begin{osgridlongtable}{L{0.43\textwidth}L{0.45\textwidth}}
+文件 & 阅读时要回答的问题\\ \hline
 \filepath{foundation/reference\_counter.hpp/.cpp} &
-原始计数操作怎样与旧类封装共享零后不可复活语义？\\
+原始计数操作怎样与旧类封装共享零后不可复活语义？\\ \hline
 \filepath{kernel/object/kernel\_object.hpp/.cpp} &
-创建、handle/reference 转换、generation 检查与最后析构的提交点在哪里？\\
+创建、handle/reference 转换、generation 检查与最后析构的提交点在哪里？\\ \hline
 \filepath{kernel/io/file\_description.hpp/.cpp} &
-哪些状态属于共享打开实例，控制台、文件、目录和管道如何统一？\\
+哪些状态属于共享打开实例，控制台、文件、目录和管道如何统一？\\ \hline
 \filepath{kernel/io/file\_table.hpp/.cpp} &
-64 槽分块、最低 fd、软硬限额和两阶段安装怎样保持失败原子性？\\
+64 槽分块、最低 fd、软硬限额和两阶段安装怎样保持失败原子性？\\ \hline
 \filepath{kernel/process/process\_runtime.hpp/.cpp} &
-每个 Process 怎样创建标准 fd、接入 Pipe，并在退出时销毁 FileTable？\\
+每个 Process 怎样创建标准 fd、接入 Pipe，并在退出时销毁 FileTable？\\ \hline
 \filepath{kernel/user/system\_calls.cpp} &
-23--28 号调用怎样验证参数、映射 \code{-24/-25} 并复用双入口？\\
+23--28 号调用怎样验证参数、映射 \code{-24/-25} 并复用双入口？\\ \hline
 \filepath{user/src/system\_call.cpp} &
-freestanding 包装怎样保持 RAX/RDI/RSI/RDX ABI？\\
+freestanding 包装怎样保持 RAX/RDI/RSI/RDX ABI？\\ \hline
 \filepath{user/programs/scheduler\_worker.cpp} &
-共享偏移、独立打开、fd flags、限额和最低复用怎样由 Ring 3 证明？\\
+共享偏移、独立打开、fd flags、限额和最低复用怎样由 Ring 3 证明？\\ \hline
 \filepath{tests/randomized/kernel/file\_table\_randomized\_test.cpp} &
-独立模型在十万步中保存哪些状态，何时检查引用守恒？\\
+独立模型在十万步中保存哪些状态，何时检查引用守恒？\\ \hline
 \filepath{tools/os\_tools/qemu\_runner.py} &
-哪些串口 marker 被精确解析，超时怎样终止而不永久卡住？\\
-\bottomrule
-\end{longtable}
+哪些串口 marker 被精确解析，超时怎样终止而不永久卡住？\\ \hline
+\end{osgridlongtable}
 
 推荐先从 unit test 推导公开语义，再读 FileTable；随后向下进入
 KernelObject，向上进入 ProcessRuntime 与系统调用。最后阅读 PID 4 与 QEMU
 解析器，检查模型承诺是否真的穿过硬件入口到达整机证据。
 
-\subsection{本阶段明确没有做什么}
-
+\topic{本阶段明确没有做什么}
 v1.4 没有 Vnode、Path、Mount、memfs 或新磁盘格式；legacy-fs handle 仍直接
 存在于 FileDescription。没有 fork，因此还没有跨 Process 继承表；没有完整
 exec，因此 close-on-exec 只在对象层验收。没有 seek、append、非阻塞 flag

@@ -1,4 +1,4 @@
-\section{v1.3 从通用中断入口走向 x86-64 原生系统调用}
+\section{CpuLocal、原生系统调用与安全返回}
 
 v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的学习顺序：
 异常章已经建立 GDT、IDT、TSS 和 \code{iretq}，软件中断只需把一扇 IDT gate
@@ -25,30 +25,25 @@ v0.8 第一次进入 Ring 3 时，项目选择 \code{INT 0x80}。这是有意的
 才能单独验收这份新合同。
 \end{keyidea}
 
-\subsection{三代跨特权入口背后的取舍}
-
+\topic{三代跨特权入口背后的取舍}
 保护模式提供 call gate。GDT/LDT 描述符可以指定目标段、偏移、目标特权级和
 需要复制的参数数量，功能通用但规则繁复。32 位系统又使用
 \code{SYSENTER/SYSEXIT}，它通过专用 MSR 缩短路径，却没有天然适配长模式的
 完整返回语义。软件中断则最容易调试，但需要 IDT gate 和通用中断路径。
 
-\begin{longtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.24\textwidth}L{0.25\textwidth}}
-\toprule
-机制 & 入口来源 & 是否自动换栈 & 返回与主要代价\\
-\midrule
-call gate & GDT/LDT gate & 按 TSS 与 gate 规则 & RETF；描述符语义复杂\\
-\code{INT n} & IDT interrupt/trap gate & 是，使用 TSS.RSP0 & IRETQ；通用且路径较长\\
-SYSENTER & SYSENTER MSR & 不自动保存完整返回现场 & SYSEXIT；主要面向 32 位\\
-SYSCALL & STAR/LSTAR/FMASK & 否 & SYSRETQ；软件承担可信栈与返回校验\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.24\textwidth}L{0.25\textwidth}}
+机制 & 入口来源 & 是否自动换栈 & 返回与主要代价\\ \hline
+call gate & GDT/LDT gate & 按 TSS 与 gate 规则 & RETF；描述符语义复杂\\ \hline
+\code{INT n} & IDT interrupt/trap gate & 是，使用 TSS.RSP0 & IRETQ；通用且路径较长\\ \hline
+SYSENTER & SYSENTER MSR & 不自动保存完整返回现场 & SYSEXIT；主要面向 32 位\\ \hline
+SYSCALL & STAR/LSTAR/FMASK & 否 & SYSRETQ；软件承担可信栈与返回校验\\ \hline
+\end{osgridlongtable}
 
 本项目保留 \code{INT 0x80}，不是因为不敢删除旧路径，而是把它变成差分基准。
 同一个 PID 查询分别经两条入口，若返回值或副作用不同，错误一定发生在进入/
 规范化/返回边界，而不是系统调用业务本身。
 
-\section{先冻结处理器规格，再执行依赖能力的指令}
-
+\topic{先冻结处理器规格，再执行依赖能力的指令}
 “目标是 x86-64”仍不足以说明一台 CPU 暴露哪些可选能力。长模式、NX、
 FXSAVE、SSE2 和 SYSCALL 分布在不同 CPUID 叶；地址宽度又决定规范地址和页表
 能表达的范围。若代码先执行 \code{wrmsr} 或 \code{syscall}，再等待 \#UD
@@ -56,20 +51,17 @@ FXSAVE、SSE2 和 SYSCALL 分布在不同 CPUID 叶；地址宽度又决定规�
 
 v1.3 读取三组叶：
 
-\begin{longtable}{L{0.24\textwidth}L{0.16\textwidth}L{0.21\textwidth}L{0.27\textwidth}}
-\toprule
-CPUID 位置 & 位 & 名称 & 本阶段用途\\
-\midrule
-\code{01H:EDX} & 24 & FXSR & FXSAVE/FXRSTOR 存在\\
-\code{01H:EDX} & 25 & SSE & XMM/MXCSR 架构状态存在\\
-\code{01H:EDX} & 26 & SSE2 & 当前 64 位用户指令基线\\
-\code{80000001H:EDX} & 11 & SYSCALL & 原生入口/返回存在\\
-\code{80000001H:EDX} & 20 & NX & 页表执行禁止能力存在\\
-\code{80000001H:EDX} & 29 & LM & long mode 存在\\
-\code{80000008H:EAX} & 7:0 & physical width & 必须位于 36--52\\
-\code{80000008H:EAX} & 15:8 & linear width & 当前精确要求 48\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.24\textwidth}L{0.16\textwidth}L{0.21\textwidth}L{0.27\textwidth}}
+CPUID 位置 & 位 & 名称 & 本阶段用途\\ \hline
+\code{01H:EDX} & 24 & FXSR & FXSAVE/FXRSTOR 存在\\ \hline
+\code{01H:EDX} & 25 & SSE & XMM/MXCSR 架构状态存在\\ \hline
+\code{01H:EDX} & 26 & SSE2 & 当前 64 位用户指令基线\\ \hline
+\code{80000001H:EDX} & 11 & SYSCALL & 原生入口/返回存在\\ \hline
+\code{80000001H:EDX} & 20 & NX & 页表执行禁止能力存在\\ \hline
+\code{80000001H:EDX} & 29 & LM & long mode 存在\\ \hline
+\code{80000008H:EAX} & 7:0 & physical width & 必须位于 36--52\\ \hline
+\code{80000008H:EAX} & 15:8 & linear width & 当前精确要求 48\\ \hline
+\end{osgridlongtable}
 
 六项布尔能力被编码为 \code{uint64_t} mask：
 
@@ -91,8 +83,7 @@ CPUID 位置 & 位 & 名称 & 本阶段用途\\
 型号的经验默认值。
 \end{contractbox}
 
-\subsection{为什么当前只接受 48 位，不顺便开放 LA57}
-
+\topic{为什么当前只接受 48 位，不顺便开放 LA57}
 四级页表使用虚拟地址 47--12 位形成 PML4/PDPT/PD/PT 四个索引，bit 47 以上
 必须是符号扩展。五级页表把实现宽度扩展到 57 位，但需要在进入分页前设置
 CR4.LA57，内核/用户地址布局、canonical 检查和页表管理都要共同变化。
@@ -102,31 +93,26 @@ CR4.LA57，内核/用户地址布局、canonical 检查和页表管理都要共�
 57 位必须作为独立阶段，改变启动链、内存布局、测试向量和文档，而不是放宽一个
 比较符。
 
-\section{六个 MSR 共同定义原生入口}
-
+\topic{六个 MSR 共同定义原生入口}
 CPUID 只证明能力存在。操作系统还要通过 \code{RDMSR/WRMSR} 配置：
 
-\begin{longtable}{L{0.22\textwidth}L{0.17\textwidth}L{0.49\textwidth}}
-\toprule
-MSR & 地址 & 当前合同\\
-\midrule
-IA32\_EFER & \code{0xC0000080} & 保留 LME/LMA/NXE，设置 SCE bit 0\\
-IA32\_STAR & \code{0xC0000081} & kernel selector base 与 SYSRET selector base\\
-IA32\_LSTAR & \code{0xC0000082} & 64 位入口 \code{OsKernelNativeSystemCallEntry}\\
-IA32\_FMASK & \code{0xC0000084} & 进入时清 TF、IF、DF、NT、AC\\
-IA32\_GS\_BASE & \code{0xC0000101} & 当前用户 GS base 为 0\\
+\begin{osgridlongtable}{L{0.22\textwidth}L{0.17\textwidth}L{0.49\textwidth}}
+MSR & 地址 & 当前合同\\ \hline
+IA32\_EFER & \code{0xC0000080} & 保留 LME/LMA/NXE，设置 SCE bit 0\\ \hline
+IA32\_STAR & \code{0xC0000081} & kernel selector base 与 SYSRET selector base\\ \hline
+IA32\_LSTAR & \code{0xC0000082} & 64 位入口 \code{OsKernelNativeSystemCallEntry}\\ \hline
+IA32\_FMASK & \code{0xC0000084} & 进入时清 TF、IF、DF、NT、AC\\ \hline
+IA32\_GS\_BASE & \code{0xC0000101} & 当前用户 GS base 为 0\\ \hline
 \shortstack[l]{IA32\_KERNEL\_\\GS\_BASE} &
-\code{0xC0000102} & \code{CpuLocal} 地址\\
-\bottomrule
-\end{longtable}
+\code{0xC0000102} & \code{CpuLocal} 地址\\ \hline
+\end{osgridlongtable}
 
 \code{native_system_call_layout.cpp} 是不执行特权指令的纯布局层。它验证地址
 宽度、selector 顺序与两个规范地址，再构造期望值；目标机层负责写 MSR，
 随后把六项全部读回并逐项比较。这样“selector 算错”和“硬件写回不符”分别
 可由宿主集成测试与 QEMU 定位。
 
-\subsection{STAR 的高字段不是最终用户 CS}
-
+\topic{STAR 的高字段不是最终用户 CS}
 当前 GDT 顺序为：
 
 \begin{lstlisting}[caption={与 SYSCALL/SYSRET 配套的 GDT 选择子}]
@@ -160,29 +146,24 @@ STAR[63:48] 的规则不同：
 第一次返回才以 \#GP 或三重故障表现，所以必须在写 MSR 前验证选择子算术。
 \end{failurebox}
 
-\subsection{FMASK 改变内核活动标志，不抹掉用户原值}
-
+\topic{FMASK 改变内核活动标志，不抹掉用户原值}
 SYSCALL 先把用户 RFLAGS 复制到 R11，再从当前活动 RFLAGS 清除 FMASK 指定
 的位。当前 \code{FMASK=0x44700}：
 
-\begin{longtable}{L{0.12\textwidth}L{0.18\textwidth}L{0.58\textwidth}}
-\toprule
-位 & 名称 & 入口必须清除的原因\\
-\midrule
-8 & TF & 防止用户单步在可信栈形成前触发调试异常\\
-9 & IF & 完整保存现场前不能接受可屏蔽 IRQ\\
-10 & DF & C++ 与字符串操作要求向高地址方向\\
-14 & NT & 不继承遗留嵌套任务语义\\
-18 & AC & 不把用户对齐检查状态带入内核\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.12\textwidth}L{0.18\textwidth}L{0.58\textwidth}}
+位 & 名称 & 入口必须清除的原因\\ \hline
+8 & TF & 防止用户单步在可信栈形成前触发调试异常\\ \hline
+9 & IF & 完整保存现场前不能接受可屏蔽 IRQ\\ \hline
+10 & DF & C++ 与字符串操作要求向高地址方向\\ \hline
+14 & NT & 不继承遗留嵌套任务语义\\ \hline
+18 & AC & 不把用户对齐检查状态带入内核\\ \hline
+\end{osgridlongtable}
 
 R11 中仍是用户原值。入口 \code{cld} 只维护当前内核 ABI，构造
 \code{UserContext} 时写入的是 R11。因此设置 DF 的测试能证明“内核执行时
 清 DF”和“返回时保留用户 DF”不是相互冲突的要求。
 
-\section{CpuLocal 把每 CPU 入口状态收束为一个对象}
-
+\topic{CpuLocal 把每 CPU 入口状态收束为一个对象}
 TSS.RSP0 属于 CPU，不属于 Process；原生入口栈同样是“当前 CPU 正在运行
 哪个 Thread”的派生状态。若 current Thread、TSS.RSP0、原生 entry RSP 和
 need-resched 分散在无关全局变量中，调度切换很难证明它们一起更新。
@@ -190,16 +171,13 @@ need-resched 分散在无关全局变量中，调度切换很难证明它们一�
 v1.3 的 \code{CpuLocal} 按缓存线大小 64 字节对齐。前四个字段是 C++ 与汇编
 共同遵守的 ABI：
 
-\begin{longtable}{L{0.13\textwidth}L{0.31\textwidth}L{0.44\textwidth}}
-\toprule
-偏移 & 字段 & 不变量\\
-\midrule
-0 & self address & 初始化后等于对象自身地址\\
-8 & current Thread index & 与 scheduler current 一致；无 Thread 为 UINT64\_MAX\\
-16 & kernel entry RSP & 当前 Thread 动态栈顶，非零且 16 B 对齐\\
-24 & syscall user RSP scratch & 只由原生入口换栈前暂存，退出入口时清零\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.13\textwidth}L{0.31\textwidth}L{0.44\textwidth}}
+偏移 & 字段 & 不变量\\ \hline
+0 & self address & 初始化后等于对象自身地址\\ \hline
+8 & current Thread index & 与 scheduler current 一致；无 Thread 为 UINT64\_MAX\\ \hline
+16 & kernel entry RSP & 当前 Thread 动态栈顶，非零且 16 B 对齐\\ \hline
+24 & syscall user RSP scratch & 只由原生入口换栈前暂存，退出入口时清零\\ \hline
+\end{osgridlongtable}
 
 后续字段保存 IRQ/抢占深度与峰值、need-resched、活动系统调用来源，以及入口、
 IRQ 打断、返回前调度、SYSRET/IRET、拒绝和可信栈校验统计。
@@ -220,8 +198,7 @@ IRQ 打断、返回前调度、SYSRET/IRET、拒绝和可信栈校验统计。
 \end{pdfdiagram}
 \diagramnote{两种入口使用同一 Thread 栈；TSS 与 CpuLocal 是两个硬件入口的适配状态，不是两份独立所有权。}
 
-\subsection{深度为什么比布尔值更可靠}
-
+\topic{深度为什么比布尔值更可靠}
 IRQ 可以嵌套，抢占禁止 guard 也可能由调用链分层取得。单个布尔值不能区分
 “内层释放”与“最后一层释放”。深度从零进入一、离开时减一；零下溢和
 \code{UINT64\_MAX} 上溢都明确失败。最大深度只在新峰值出现时更新，运行结束
@@ -230,8 +207,7 @@ IRQ 可以嵌套，抢占禁止 guard 也可能由调用链分层取得。单个
 \code{CpuPreemptionGuard} 构造时增加深度，析构时减少；失败不伪造取得成功。
 它没有让内核自动变成 SMP-safe，只把当前单 BSP 的合法调度点变成可检查状态。
 
-\section{原生入口逐条建立可信状态}
-
+\topic{原生入口逐条建立可信状态}
 用户包装器按 System V ABI 收到 number 与四个参数，再变换为项目 ABI：
 
 \begin{lstlisting}[language={[x86masm]Assembler},caption={用户侧最小原生包装}]
@@ -271,8 +247,7 @@ RSP，并检查该 RSP 属于当前用户栈映射。暂存只能证明“汇编
 值”，不能证明用户地址本身安全。
 \end{contractbox}
 
-\subsection{SWAPGS 为什么能在不占通用寄存器时找到 CpuLocal}
-
+\topic{SWAPGS 为什么能在不占通用寄存器时找到 CpuLocal}
 用户态时 IA32\_GS\_BASE 当前为零，IA32\_KERNEL\_GS\_BASE 保存 CpuLocal
 地址。SWAPGS 原子交换二者，因而第一条后 GS 就能寻址内核对象。若先把一个
 通用寄存器用于地址，必须先保存它；而保存又需要可信内存，形成循环依赖。
@@ -281,43 +256,35 @@ RSP，并检查该 RSP 属于当前用户栈映射。暂存只能证明“汇编
 一侧，返回前第二次 SWAPGS 恢复。当前不开放用户 GS，是明确阶段边界，不是
 SWAPGS 只能处理零值。
 
-\section{两条入口规范化为同一份 UserContext}
-
+\topic{两条入口规范化为同一份 UserContext}
 原 \code{ExceptionFrame} 保存 15 个通用寄存器、vector、error code、
 RIP、CS 与 RFLAGS，共 160 字节。来自 Ring 3 的现场还具有 RSP 与 SS，
 统一结构因此为 176 字节：
 
-\begin{longtable}{L{0.17\textwidth}L{0.17\textwidth}L{0.26\textwidth}L{0.28\textwidth}}
-\toprule
-偏移 & 长度 & 字段组 & 来源\\
-\midrule
-0--119 & 120 B & R15..RAX & 汇编逐项保存/人工初始现场\\
-120--127 & 8 B & vector & Initial、IRQ、INT80、SYSCALL\\
-128--135 & 8 B & normalized error & 系统调用与 IRQ 为零\\
-136--159 & 24 B & RIP、CS、RFLAGS & CPU 帧或 RCX/R11 规范化\\
-160--175 & 16 B & RSP、SS & CPU 特权帧或原生入口人工补齐\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.17\textwidth}L{0.17\textwidth}L{0.26\textwidth}L{0.28\textwidth}}
+偏移 & 长度 & 字段组 & 来源\\ \hline
+0--119 & 120 B & R15..RAX & 汇编逐项保存/人工初始现场\\ \hline
+120--127 & 8 B & vector & Initial、IRQ、INT80、SYSCALL\\ \hline
+128--135 & 8 B & normalized error & 系统调用与 IRQ 为零\\ \hline
+136--159 & 24 B & RIP、CS、RFLAGS & CPU 帧或 RCX/R11 规范化\\ \hline
+160--175 & 16 B & RSP、SS & CPU 特权帧或原生入口人工补齐\\ \hline
+\end{osgridlongtable}
 
 vector 不表示“发生异常”，而是统一现场的来源标签：
 
-\begin{longtable}{L{0.28\textwidth}L{0.20\textwidth}L{0.39\textwidth}}
-\toprule
-来源 & vector & 最终返回基线\\
-\midrule
-首次进入用户态 & 0 & IRETQ\\
-8259A IRQ & 32--47 & IRETQ\\
-\code{INT 0x80} & \code{0x80} & IRETQ\\
-\code{SYSCALL} & \code{0x81} & 满足快速白名单时 SYSRETQ，否则 IRETQ\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.28\textwidth}L{0.20\textwidth}L{0.39\textwidth}}
+来源 & vector & 最终返回基线\\ \hline
+首次进入用户态 & 0 & IRETQ\\ \hline
+8259A IRQ & 32--47 & IRETQ\\ \hline
+\code{INT 0x80} & \code{0x80} & IRETQ\\ \hline
+\code{SYSCALL} & \code{0x81} & 满足快速白名单时 SYSRETQ，否则 IRETQ\\ \hline
+\end{osgridlongtable}
 
 系统调用 C++ switch 只存在一份。入口差异在进入分发器前消失；阻塞、退出、
 用户复制、文件和管道逻辑不需要知道最初执行了哪条指令。来源只服务计数、入口
 一致性和返回选择。
 
-\section{返回前的校验顺序是一条安全证明}
-
+\topic{返回前的校验顺序是一条安全证明}
 SYSRET 的 RCX 来自用户 RIP。非规范地址可能在处理器仍处于 Ring 0 的阶段
 触发 \#GP，因此不能把“让硬件试一下”当作验证。当前返回准备从所有权开始：
 
@@ -331,8 +298,7 @@ SYSRET 的 RCX 来自用户 RIP。非规范地址可能在处理器仍处于 Rin
   \item RFLAGS bit 1 必须为 1，未开放或危险位必须为零。
 \end{enumerate}
 
-\subsection{规范地址与低半用户地址不是同一概念}
-
+\topic{规范地址与低半用户地址不是同一概念}
 48 位模式以 bit 47 作为符号位：
 
 \[
@@ -348,8 +314,7 @@ lower 与 upper 都是 canonical，hole 不是。用户返回只允许 lower；�
 完全规范的高半内核地址仍可能被当作用户 RIP。通过低半检查后还要查 PTE，
 因为“地址形状合法”不表示页面存在或具有用户权限。
 
-\subsection{RFLAGS 使用合法集合与快速集合}
-
+\topic{RFLAGS 使用合法集合与快速集合}\par
 bit 1 是架构保留常一位。CF/PF/AF/ZF/SF/TF/IF/DF/OF/RF 等被当前模型明确
 分类；IOPL、NT、VM、AC、ID 等不开放。合法并不等于适合 SYSRET：
 
@@ -373,8 +338,7 @@ bit 1 是架构保留常一位。CF/PF/AF/ZF/SF/TF/IF/DF/OF/RF 等被当前模�
 \end{pdfdiagram}
 \diagramnote{快速路径是合法集合的真子集；回退 IRET 是正常语义，不是失败。}
 
-\subsection{非法返回为什么终止用户进程而不是内核 panic}
-
+\topic{非法返回为什么终止用户进程而不是内核 panic}
 如果 frame 确实属于当前用户 Thread，但字段被破坏，错误的安全域是该用户
 执行流。内核输出一次有界诊断，记录 ownership、validation status、mapping、
 entry、vector、RIP、RSP 与 RFLAGS，再按用户异常终止该 Process。调度器选择
@@ -384,8 +348,7 @@ entry、vector、RIP、RSP 与 RFLAGS，再按用户异常终止该 Process。�
 停机。把用户输入错误和内核内部错误分开，才能避免一个普通用户现场导致整个
 系统 panic。
 
-\section{IRQ 可以打断系统调用，但不能在任意内核调用链换栈}
-
+\topic{IRQ 可以打断系统调用，但不能在任意内核调用链换栈}
 完整 UserContext 形成后，入口执行 \code{sti}，因此 1000 Hz PIT 可以在
 系统调用 C++ 分发期间到达。IRQ 进入/离开更新 CpuLocal 深度；若活动
 system-call depth 为一，再累计 \code{interrupt_during_system_call_count}。
@@ -416,8 +379,7 @@ Ring 0 中的 timer IRQ 不直接调用完整换栈调度。它只设置
 \code{SYSCALL_RETURN_RESCHEDULES>0}。两项分别证明“中断发生”和“请求在正确
 边界消费”。
 
-\section{非局部返回暴露了 SWAPGS 的真正状态所有权}
-
+\topic{非局部返回暴露了 SWAPGS 的真正状态所有权}
 正常原生尾部在恢复用户段之前执行第二次 SWAPGS。可是系统调用可能使最后一个
 可运行 Thread 阻塞或退出；调度器没有后继时，会直接恢复
 \code{ExecuteProcesses} 之前保存的永久内核调用栈，而不是回到系统调用汇编
@@ -442,8 +404,7 @@ Ring 0 中的 timer IRQ 不直接调用完整换栈调度。它只设置
 选择另一 Thread 的 IRQ 或初始 frame，但当前硬件 GS 状态仍由“从哪条入口进入
 这个内核调用链”决定。
 
-\section{NMI 必须承认自己可能落在最危险的两条指令之间}
-
+\topic{NMI 必须承认自己可能落在最危险的两条指令之间}
 IF=0 不能屏蔽 NMI。NMI 可能发生在 SYSCALL 刚进入、尚未 SWAPGS，也可能发生
 在已经 SWAPGS、尚未切到可信 RSP。普通 C++ handler 若无条件读 GS 或使用当前
 栈，至少一种状态会错。
@@ -466,8 +427,7 @@ v1.3 选择较小但真实的边界：
 合同，而不是直接在最小桩中调用普通异常分发器。
 \end{failurebox}
 
-\section{用户侧三个标记分别回答三个问题}
-
+\topic{用户侧三个标记分别回答三个问题}
 worker 执行：
 
 \begin{enumerate}[label=\arabic*.]
@@ -485,27 +445,22 @@ worker 执行：
 双入口调用选无副作用 PID 查询，避免“调用两次本来就应该改变状态”使差分失去
 意义。
 
-\section{四层测试从不同位置观察同一合同}
-
-\begin{longtable}{L{0.17\textwidth}L{0.30\textwidth}L{0.41\textwidth}}
-\toprule
-层次 & 主要输入 & 能证明的事实\\
-\midrule
-单元 & CPUID 叶、UserContext 边界 & profile、canonical、段、RFLAGS 和返回选择\\
-集成 & CpuLocal 与六 MSR 纯布局 & 深度/统计/清理、STAR 算术与回读比较\\
-随机 & 100000 个确定性现场 & 400000 项规范性、合法性、选择和拒绝性质\\
+\topic{四层测试从不同位置观察同一合同}\par
+\begin{osgridlongtable}{L{0.17\textwidth}L{0.30\textwidth}L{0.41\textwidth}}
+层次 & 主要输入 & 能证明的事实\\ \hline
+单元 & CPUID 叶、UserContext 边界 & profile、canonical、段、RFLAGS 和返回选择\\ \hline
+集成 & CpuLocal 与六 MSR 纯布局 & 深度/统计/清理、STAR 算术与回读比较\\ \hline
+随机 & 100000 个确定性现场 & 400000 项规范性、合法性、选择和拒绝性质\\ \hline
 QEMU & 真实 SYSCALL、SYSRET、IRQ 与 MSR &
-可信换栈、双入口、IRQ 打断、调度与失败停止\\
-\bottomrule
-\end{longtable}
+可信换栈、双入口、IRQ 打断、调度与失败停止\\ \hline
+\end{osgridlongtable}
 
 随机种子为 \code{0x5A17C011BADC0FFE}。每轮随机地址先与独立 48 位 canonical
 定义比较，再构造一个合法 Initial/IRQ/INT80/SYSCALL 现场；返回选择必须与
 独立白名单条件一致。最后强制把 RIP 置入地址空洞，验证拒绝。每轮四项性质，
 合计 400000 项。
 
-\subsection{QEMU 冷路径统计如何判读}
-
+\topic{QEMU 冷路径统计如何判读}
 一次代表性 256 MiB functional 运行得到：
 
 \begin{lstlisting}[caption={v1.3 原生入口代表性统计}]
@@ -530,8 +485,7 @@ Kernel payload。它必须输出 missing mask \code{0x20}，且禁止出现 proc
 ready、扩展现场、GDT、用户态、panic 和最终 READY。这证明系统主动拒绝能力，
 不是执行未支持指令后偶然 \#UD。
 
-\section{调试 ELF 与启动 payload 分离是本阶段的工程修复}
-
+\topic{调试 ELF 与启动 payload 分离是本阶段的工程修复}
 随着 C++ 类型、测试行号和文档关联增加，Debug DWARF 会让
 \filepath{kernel.elf} 文件长度持续增长。Stage 1 的内核载荷区位于文件系统
 LBA 2048 之前；若直接把完整 Debug 文件写盘，非加载调试段也会占用磁盘扇区，
@@ -550,39 +504,34 @@ strip 只删除不进入运行时的调试段，三个 \code{PT_LOAD}、入口�
 避免每次打包临时扩大分区或手工删除文件。Stage 1 审计实际写盘 payload，
 GDB 仍加载完整 ELF。
 
-\section{按目录走读 v1.3}
-
-\begin{longtable}{L{0.43\textwidth}L{0.45\textwidth}}
-\toprule
-文件 & 阅读时要回答的问题\\
-\midrule
+\topic{按目录走读 v1.3}\par
+\begin{osgridlongtable}{L{0.43\textwidth}L{0.45\textwidth}}
+文件 & 阅读时要回答的问题\\ \hline
 \filepath{arch/processor_features.hpp/.cpp} &
-CPUID 最大叶、六位 mask 和地址宽度为何是一份 profile？\\
+CPUID 最大叶、六位 mask 和地址宽度为何是一份 profile？\\ \hline
 \filepath{arch/cpu_local.hpp/.cpp} &
-汇编 ABI 字段、current Thread、深度和统计如何保持一致？\\
+汇编 ABI 字段、current Thread、深度和统计如何保持一致？\\ \hline
 \filepath{arch/native_system_call_layout.hpp/.cpp} &
-为什么 STAR 用户基值是 \code{0x10}，六项回读如何比较？\\
+为什么 STAR 用户基值是 \code{0x10}，六项回读如何比较？\\ \hline
 \filepath{arch/native_system_call.hpp/.cpp} &
-纯布局怎样落实为真实 RDMSR/WRMSR，又如何区分失败状态？\\
+纯布局怎样落实为真实 RDMSR/WRMSR，又如何区分失败状态？\\ \hline
 \filepath{arch/user_context.hpp/.cpp} &
-四类来源如何共享 176 字节布局，合法集合与快速集合如何区分？\\
+四类来源如何共享 176 字节布局，合法集合与快速集合如何区分？\\ \hline
 \filepath{arch/architecture.asm} &
-SWAPGS、换栈、STI 时刻、返回弹栈和非局部恢复分别在哪里？\\
+SWAPGS、换栈、STI 时刻、返回弹栈和非局部恢复分别在哪里？\\ \hline
 \filepath{user/system_calls.cpp} &
-入口所有权、映射验证、need-resched、非法返回循环和返回选择如何分层？\\
+入口所有权、映射验证、need-resched、非法返回循环和返回选择如何分层？\\ \hline
 \filepath{process/process_runtime.cpp} &
-TSS/CpuLocal 如何同步，Thread 切换和永久栈恢复如何收束 GS？\\
+TSS/CpuLocal 如何同步，Thread 切换和永久栈恢复如何收束 GS？\\ \hline
 \filepath{user/src/system_call.asm} &
-默认、兼容和 DF 测试包装如何保持同一参数 ABI？\\
-\bottomrule
-\end{longtable}
+默认、兼容和 DF 测试包装如何保持同一参数 ABI？\\ \hline
+\end{osgridlongtable}
 
 推荐先读三个纯策略文件及宿主测试，再读 CpuLocal，最后逐条跟踪汇编与
 ProcessRuntime。若直接从 \code{sysret} 向前逆推，会同时遇到 selector、
 RFLAGS、调度、页表、栈和 GS 六种状态，容易把结果当成原因。
 
-\section{本阶段明确没有做什么}
-
+\topic{本阶段明确没有做什么}
 当前 CpuLocal 只有一个 BSP 实例；没有 AP 启动、per-CPU 分配、跨核 IPI 或
 远端 TLB shootdown。用户 GS/TLS 尚未开放，IA32\_GS\_BASE 为零。虚拟地址
 继续固定四级 48 位，LA57 未启用。NMI 采用 fail-stop，不提供可恢复诊断。

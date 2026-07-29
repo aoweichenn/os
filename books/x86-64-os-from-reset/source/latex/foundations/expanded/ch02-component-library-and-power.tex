@@ -1,0 +1,240 @@
+\section{器件选型、电源转换与时钟}
+
+看到原理图中的元件，应同时追踪：
+
+\[
+\text{功能模型}
+\rightarrow\text{电气参数}
+\rightarrow\text{具体料号}
+\rightarrow\text{封装与方向}
+\rightarrow\text{PCB/装配约束}.
+\]
+
+“这里需要一颗电容”只是功能模型；容量、耐压、介质、温度特性、封装和偏压
+降额决定具体器件是否能完成任务。
+
+\topic{怎样读数据手册的边界}
+\begin{osgridlongtable}{L{0.21\linewidth}L{0.33\linewidth}L{0.36\linewidth}}
+手册区域 & 它回答什么 & 常见误读 \\ \hline
+\endfirsthead
+手册区域 & 它回答什么 & 常见误读 \\ \hline
+\endhead
+Absolute Maximum Ratings & 不应超过的损伤边界 & 当成可以长期工作的推荐条件 \\ \hline
+Recommended Operating Conditions & 保证功能的工作范围 & 只看典型值，不看最小/最大值 \\ \hline
+DC Characteristics & 静态电压、电流、泄漏和阈值 & 忽略测试条件和温度 \\ \hline
+AC/Timing Characteristics & 延迟、建立/保持、频率和边沿 & 把典型延迟当最坏保证 \\ \hline
+Package/Pinout & 引脚编号、视角、热焊盘和机械尺寸 & 把底视图当顶视图 \\ \hline
+Application Circuit & 厂商建议的外围连接与布局 & 不核对型号/版本就机械照抄 \\ \hline
+\end{osgridlongtable}
+
+\begin{fromzerobox}
+“绝对最大 \(\SI{4}{V}\)”不表示器件适合在 \(\SI{4}{V}\) 工作；它更接近
+“越过这里可能损坏，而且接近这里也未承诺正常功能”。设计应落在推荐工作范围，
+并为电源误差、纹波、温度和瞬态留裕量。
+\end{fromzerobox}
+
+\topic{电阻的实物信息：阻值之外还有功率和温度}
+分立电阻可用色环或表面印字表示阻值。贴片电阻“103”常表示
+\(10\times10^3=\SI{10}{k\ohm}\)，但 0 欧跳线、精密编码和小封装标记可能
+采用不同规则，不能脱离料号猜测。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \draw[very thick,BookMuted] (-4,0) -- (-2.5,0);
+  \draw[rounded corners=5pt,fill=BookAmber!18,draw=BookAmber,thick]
+    (-2.5,-0.65) rectangle (2.5,0.65);
+  \draw[very thick,BookMuted] (2.5,0) -- (4,0);
+  \foreach \x/\colorname/\label in {
+    -1.5/brown/1,
+    -0.75/black/0,
+    0.0/orange/\(\times10^3\),
+    1.55/BookAmber/\(\pm5\%\)} {
+    \fill[\colorname] (\x-0.15,-0.65) rectangle (\x+0.15,0.65);
+    \node[below=8mm,align=center] at (\x,-0.65) {\label};
+  }
+  \node[above=6mm] at (0,0.65)
+    {教学色环：棕、黑、橙、金 \(\Rightarrow\SI{10}{k\ohm}\pm5\%\)};
+\end{tikzpicture}
+\end{center}
+
+额定功率通常在规定环境温度下给出，温度升高后需要降额。脉冲承受能力也不等于
+连续功率。小型贴片电阻即使平均功率不大，过压、浪涌或局部温升仍可能失效。
+
+\topic{电容类型决定“同样的容量”能否互换}
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.25\linewidth}L{0.27\linewidth}L{0.20\linewidth}}
+类型 & 特点 & 常见用途 & 主要注意事项 \\ \hline
+\endfirsthead
+类型 & 特点 & 常见用途 & 主要注意事项 \\ \hline
+\endhead
+陶瓷 C0G/NP0 & 稳定、损耗低、小容量 & 时钟、滤波、精密模拟 & 容量范围较小 \\ \hline
+陶瓷 X7R/X5R & 体积小、容量较大 & 数字电源去耦 & 直流偏压下容量下降 \\ \hline
+铝电解 & 大容量、成本低、有极性 & 低频储能和电源输入 & 极性、寿命、ESR、纹波电流 \\ \hline
+钽/聚合物 & 容量密度高、ESR 可较低 & 电源轨缓冲 & 浪涌、短路失效和降额 \\ \hline
+薄膜 & 稳定、脉冲能力好 & 滤波、定时和高压 & 体积通常较大 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \draw[BookBlue,very thick] (0,0) -- (0,2.6);
+  \draw[BookBlue,very thick] (0.55,0) -- (0.55,2.6);
+  \node[below] at (0.275,-0.1) {无极性电容符号};
+  \draw[BookTeal,very thick] (4,0) -- (4,2.6);
+  \draw[BookTeal,very thick] (4.6,0.2) arc[start angle=190,end angle=170,radius=7.5];
+  \node[BookRed,font=\Large] at (3.65,2.15) {\(+\)};
+  \node[below] at (4.3,-0.1) {有极性电容符号};
+  \draw[fill=BookAmber!20,draw=BookAmber,rounded corners=2pt]
+    (8,-0.1) rectangle (9.6,2.5);
+  \draw[fill=BookMuted] (8.0,-0.1) rectangle (8.25,2.5);
+  \node[align=center] at (8.8,1.2) {贴片\\电解外观};
+  \node[below,align=center] at (8.8,-0.2) {外壳条纹常标负极；\\仍须核对具体料号};
+\end{tikzpicture}
+\end{center}
+
+\begin{workedexample}
+某 \(\SI{10}{\micro F}\)、\(\SI{6.3}{V}\) X5R 陶瓷电容在
+\(\SI{3.3}{V}\) 直流偏压下只保留标称容量的 55\%，再考虑 \(-20\%\) 容差，
+最坏有效容量近似：
+
+\[
+C_{\mathrm{eff}}
+=\SI{10}{\micro F}\times0.55\times0.8
+=\SI{4.4}{\micro F}.
+\]
+
+若稳压器稳定性要求输出端至少 \(\SI{6}{\micro F}\) 有效容量，这颗“标称
+\(\SI{10}{\micro F}\)”电容仍不合格。
+\end{workedexample}
+
+\topic{二极管族：整流、钳位、发光和续流是不同任务}
+二极管的 \(I\)-\(V\) 关系不是固定压降开关。PN 二极管常用近似式：
+
+\[
+I_D\approx I_S\left(e^{V_D/(nV_T)}-1\right).
+\]
+
+入门计算可用压降近似，但选型还要检查反向耐压、正向电流、浪涌、恢复时间、
+结电容和温升。
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.32\linewidth}L{0.40\linewidth}}
+器件 & 主要特点 & 典型任务 \\ \hline
+\endfirsthead
+器件 & 主要特点 & 典型任务 \\ \hline
+\endhead
+普通 PN 二极管 & 成本低，压降和恢复速度依型号变化 & 整流、方向隔离、续流 \\ \hline
+肖特基二极管 & 正向压降较低、恢复快、漏电较大 & 电源 OR-ing、低压整流 \\ \hline
+TVS & 为吸收短瞬态能量优化 & 接口浪涌和 ESD 钳位的一部分 \\ \hline
+稳压管 & 在规定反向区形成近似电压 & 基准或低能量钳位 \\ \hline
+LED & 复合发光，颜色对应材料和能隙 & 状态显示、照明、光通信 \\ \hline
+\end{osgridlongtable}
+
+\topic{感性负载为什么需要续流路径}
+电感电流不能瞬间中断。关断继电器、风扇或电机线圈时，若没有路径继续流动，
+电感会产生足以损坏晶体管的高电压。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,4) node[vcc]{\(V_{\mathrm{DD}}\)}
+    to[L,l={线圈 \(L\)}] (0,2)
+    -- (0,1.6) node[nmos,anchor=D] (mos) {};
+  \draw (mos.S) -- (0,0) node[ground]{};
+  \draw (mos.G) -- (-1.8,0.8) node[left]{控制};
+  \draw (0,2) -- (2.0,2)
+    to[D,l_={续流二极管}] (2.0,4)
+    -- (0,4);
+  \draw[->,BookTeal,thick] (2.35,2.4) -- (2.35,3.6)
+    node[midway,right]{关断后的电流};
+\end{circuitikz}
+\end{center}
+
+二极管位置要让关断电流形成短回路；方向应在正常通电时截止、关断时导通。
+不同关断速度和能量要求可能使用 TVS 或主动钳位，而不是普通续流二极管。
+
+\topic{BJT 与 MOSFET：两种受控器件不能只叫“开关”}
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.32\linewidth}L{0.40\linewidth}}
+比较 & BJT & MOSFET \\ \hline
+\endfirsthead
+比较 & BJT & MOSFET \\ \hline
+\endhead
+控制直觉 & 基极电流影响集电极电流 & 栅源电压控制沟道 \\ \hline
+稳态驱动 & 需要持续基极驱动电流 & 理想栅极稳态电流很小 \\ \hline
+动态驱动 & 受存储电荷影响 & 必须给栅电荷充放电 \\ \hline
+导通损耗 & 常用 \(V_{CE(sat)}\) 估算 & 常用 \(I^2R_{DS(on)}\) 估算 \\ \hline
+常见误区 & 把 \(\beta\) 当固定精确值 & 把 \(V_{GS(th)}\) 当完全导通电压 \\ \hline
+\end{osgridlongtable}
+
+逻辑电平 MOSFET 必须在实际栅压下有保证的
+\(R_{DS(on)}\)。数据手册的阈值电压只说明微小测试电流开始出现，并不说明
+器件已经适合承载额定负载。
+
+\begin{workedexample}
+MOSFET 在 \(V_{GS}=\SI{3.3}{V}\) 时保证
+\(R_{DS(on)}\le\SI{80}{m\ohm}\)，负载电流 \(\SI{2}{A}\)。导通损耗上界近似
+
+\[
+P=I^2R=(\SI{2}{A})^2\times\SI{0.08}{\ohm}
+=\SI{0.32}{W}.
+\]
+
+还需用封装热阻估算结温，并检查开关期间损耗、体二极管和浪涌。只看
+“额定 \(\SI{30}{A}\)”不能证明板上条件安全。
+\end{workedexample}
+
+\topic{稳压：LDO 与 Buck 的能量路径不同}
+LDO 像受反馈控制的可变压降器件，近似损耗为
+
+\[
+P_{\mathrm{loss,LDO}}\approx
+(V_{\mathrm{in}}-V_{\mathrm{out}})I_{\mathrm{out}}.
+\]
+
+Buck 在开关节点周期性连接输入与地，借助电感和电容把脉冲能量变成较稳定的
+低电压，效率通常更高，但增加纹波、EMI、补偿和布局约束。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,2) node[left]{\(V_{\mathrm{in}}\)}
+    -- (0.7,2)
+    node[draw=BookBlue,fill=BookCodeBg,minimum width=20mm,minimum height=12mm,
+         anchor=west] (switch) {受控开关};
+  \draw (switch.east) -- (3.5,2)
+    to[L,l={\(L\)}] (5.3,2)
+    -- (7.0,2) node[right]{\(V_{\mathrm{out}}\)};
+  \draw (5.8,2) to[C,l_={\(C_{\mathrm{out}}\)}] (5.8,0) node[ground]{};
+  \draw (3.5,2) to[D,l_={续流路径}] (3.5,0) node[ground]{};
+  \draw[BookTeal,dashed,->] (7.0,1.5) -- (6.3,1.5)
+    -- (6.3,0.5) -- (1.7,0.5) -- (1.7,1.35);
+  \node[BookTeal] at (4.0,0.25) {反馈控制占空比，维持输出};
+\end{circuitikz}
+\end{center}
+\diagramnote{这是非同步 Buck 的功能图，省略补偿、驱动、自举、保护和实际
+开关器件；不能直接当成可生产电路。}
+
+\begin{workedexample}
+用 LDO 把 \(\SI{12}{V}\) 降到 \(\SI{3.3}{V}\)，电流
+\(\SI{0.5}{A}\)：
+
+\[
+P_{\mathrm{loss}}\approx(12-3.3)\times0.5=\SI{4.35}{W}.
+\]
+
+输出功率只有 \(\SI{1.65}{W}\)，理想效率约
+\(3.3/12=27.5\%\)。这通常需要 Buck，而不是简单换一颗“更大封装 LDO”。
+\end{workedexample}
+
+\topic{时钟源：晶体、振荡器与 PLL 各承担哪一层}
+无源晶体需要放大器和匹配负载才能振荡；有源振荡器模块直接输出时钟；PLL
+比较参考时钟与反馈相位，生成不同频率并控制长期相位关系。CPU 内部 GHz
+时钟通常不是主板晶体直接输出，而是由较低频参考经过 PLL 倍频。
+
+\begin{pdfdiagram}[node distance=7mm and 12mm]
+  \node[os hardware,minimum width=24mm] (crystal) {晶体/参考振荡器\\低频稳定基准};
+  \node[os block,right=of crystal,minimum width=22mm] (pll) {PLL\\相位比较与倍频};
+  \node[os state,right=of pll,minimum width=22mm] (clocktree) {时钟树\\分频、门控、分配};
+  \node[os hardware,right=of clocktree,minimum width=24mm] (loads) {CPU/内存/设备\\各自时钟域};
+  \draw[os arrow] (crystal) -- node[above,font=\scriptsize]{参考} (pll);
+  \draw[os arrow] (pll) -- node[above,font=\scriptsize]{合成} (clocktree);
+  \draw[os arrow] (clocktree) -- node[above,font=\scriptsize]{低偏斜分配} (loads);
+\end{pdfdiagram}
+
+频率准确度、周期抖动、相位噪声、启动时间和占空比都可能影响系统。示波器上
+“看见在跳”并不等于时钟满足接收器规格。

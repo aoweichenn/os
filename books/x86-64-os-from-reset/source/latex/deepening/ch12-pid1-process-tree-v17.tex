@@ -1,4 +1,4 @@
-\section{v1.7：从磁盘 PID1 到进程树与原子 exec}
+\section{PID1、进程树与程序映像}
 
 \begin{keyidea}
 一个内核能够同时调度多个 Ring 3 地址空间，还不等于它已经拥有用户空间。
@@ -9,8 +9,7 @@ ProcessTree、reader 驱动 ELF、\code{argc/argv/envp} 和
 \code{spawn/exec/wait} 建立这条闭环。
 \end{keyidea}
 
-\subsection{上一阶段留下的最后一条“编译期脐带”}
-
+\topic{上一阶段留下的最后一条“编译期脐带”}
 v1.6 已经可以严格挂载 256 MiB rootfs v2。名字可以经过 VFS 找到 inode，
 inode 可以经过 direct、single、double、triple 指针树找到 ATA 扇区，文件
 可以在新 QEMU 实例中重新读回。然而正常用户程序仍由 Kernel 链接时决定：
@@ -35,8 +34,7 @@ v1.7 不删除内嵌机制本身，而是缩小它的责任。正常路径只从
 \code{\#PF} 夹具，用于明确选择的启动/故障模式。这样“根文件系统尚未可信”
 和“正常用户空间”成为两条可解释路径，而不是两套彼此漂移的 ELF 规则。
 
-\subsection{历史背景：为什么 Unix 把 fork、exec 与 wait 分开}
-
+\topic{历史背景：为什么 Unix 把 fork、exec 与 wait 分开}
 早期批处理系统由监督程序依次装入作业。交互式分时系统出现后，一个正在运行
 的用户程序需要创建另一个执行上下文，同时保留自身继续接收输入或等待结果。
 Unix 用三个相互正交的动作表达这件事：
@@ -66,8 +64,7 @@ Unix 用三个相互正交的动作表达这件事：
 
 这不是绕过 Unix 模型，而是把每一项机制放到其依赖已经存在的阶段。
 
-\subsection{PID1 为什么不是“恰好编号为一的普通程序”}
-
+\topic{PID1 为什么不是“恰好编号为一的普通程序”}
 进程树必须有根。Kernel 创建的第一个用户 Process 没有普通用户父进程；
 传统 Unix 把它称为 init，并赋予 PID 1。现实 Linux 的 PID1 还负责服务
 管理、关机编排和特殊信号策略，本项目不复制这些上层功能，只保留最小而必要
@@ -86,20 +83,16 @@ Unix 用三个相互正交的动作表达这件事：
 cwd 或优先级。若直接删除孤儿，仍运行的 Thread 与地址空间会失去生命周期
 所有者；若保留已经释放的父槽位，槽位复用后 wait 可能错误命中新 Process。
 
-\subsection{四种身份必须分开}
-
+\topic{四种身份必须分开}
 v1.7 同时使用四种容易混淆的量：
 
-\begin{longtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.48\textwidth}}
-\toprule
-概念 & 生命周期 & 责任\\
-\midrule
-Process & 程序资源容器 & AddressSpace、FileTable、FsContext、父子身份和退出记录\\
-Thread & 可调度执行流 & UserContext、KernelStack、FXSAVE、run/wait queue 关系\\
-PID & 单调 64 位公开身份 & 系统调用、日志和父进程保存的稳定名字\\
-process index & 可复用内部槽位 & 有界数组定位；回收后可用于另一 PID\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.48\textwidth}}
+概念 & 生命周期 & 责任\\ \hline
+Process & 程序资源容器 & AddressSpace、FileTable、FsContext、父子身份和退出记录\\ \hline
+Thread & 可调度执行流 & UserContext、KernelStack、FXSAVE、run/wait queue 关系\\ \hline
+PID & 单调 64 位公开身份 & 系统调用、日志和父进程保存的稳定名字\\ \hline
+process index & 可复用内部槽位 & 有界数组定位；回收后可用于另一 PID\\ \hline
+\end{osgridlongtable}
 
 假设槽位 3 曾属于 PID 7，回收后又属于 PID 12：
 
@@ -112,8 +105,7 @@ process slot 3: PID 12 -> Alive
 暴露 PID。Kernel 内部 ProcessTree 可以保存经过验证的父槽位，因为它还会在
 每次读取时核对条目状态和 PID 唯一性。
 
-\subsection{从 ATA 扇区到用户第一条指令}
-
+\topic{从 ATA 扇区到用户第一条指令}
 正常启动第一次把此前分散的硬件与软件机制连成一条不可跳过的链：
 
 \begin{pdfdiagram}[node distance=7mm and 9mm]
@@ -154,8 +146,7 @@ rootfs、VFS、ELF、页表、栈与进程树全部由项目代码实现。}
 
 只有第 9 步完成，磁盘上的普通文件才真正成为 CPU 正在执行的用户程序。
 
-\subsection{ProcessTree 是调度器之外的第二个状态机}
-
+\topic{ProcessTree 是调度器之外的第二个状态机}
 ThreadScheduler 回答“哪个 Thread 可以运行”；ProcessTree 回答“哪个父
 Process 有权取得哪个孩子的退出状态”。把父指针塞进 ready queue 会让两种
 变化原因纠缠：一个 Thread Blocked 不表示它失去父进程，一个 Process
@@ -202,8 +193,7 @@ struct ProcessTreeEntry final {
 从事实重建统计比“相信每条路径都正确加减”更强。某个错误分支漏减一次时，
 条目和累计量会在最近的验证点产生直接矛盾。
 
-\subsection{Zombie 保留什么，释放什么}
-
+\topic{Zombie 保留什么，释放什么}
 孩子最后一个 Thread 结束后，父进程可能尚未调用 wait。若立即删除全部记录，
 父进程无法得知正常退出、异常向量或退出码；若保留地址空间、KernelStack 和
 FileTable，又会让不能运行的 Process 长期占用昂贵资源。
@@ -230,8 +220,7 @@ Zombie 只保留：
 因此“Process 已 Zombie”和“执行资源已经释放”并不矛盾。Zombie 是一条尚未
 被父进程消费的小型消息，而不是仍在执行的尸体。
 
-\subsection{退出、孤儿收养与 wait 的精确顺序}
-
+\topic{退出、孤儿收养与 wait 的精确顺序}
 普通 Process 退出的跨模块顺序为：
 
 \begin{lstlisting}[caption={退出路径的所有权顺序}]
@@ -267,7 +256,7 @@ return the collected PID in RAX
 “条件可能改变”，用户包装必须重新尝试；全局 child queue 可能同时唤醒一个
 无关父进程，不能把 wakeup 当作已经获得某个 Zombie。
 
-\subsection{为什么 ELF reader 是随机访问接口}
+\section{ELF、用户栈与 spawn/exec 事务}
 
 ELF 程序头与段内容不必按消费顺序排列。校验器需要先读取文件头，再按
 \code{e\_phoff} 定位程序头，随后按每个 \code{p\_offset} 读取加载段。因此
@@ -293,8 +282,7 @@ reader 调整 \code{OpenFile.offset\_bytes} 并循环读取。ELF 层不认识 i
   \item 内嵌夹具和磁盘程序不会形成两套逐渐不同的安全校验器。
 \end{enumerate}
 
-\subsection{第一遍 ELF：分配之前拒绝不可信元数据}
-
+\topic{第一遍 ELF：分配之前拒绝不可信元数据}
 第一遍只形成 \code{UserElfLayout}，不创建用户页。它验证：
 
 \begin{itemize}
@@ -313,8 +301,7 @@ reader 调整 \code{OpenFile.offset\_bytes} 并循环读取。ELF 层不认识 i
 分配了大量资源。两遍算法仍需要处理第二遍的 I/O 与内存失败，但第一遍先把
 全部纯格式错误排除，回滚对象变成单一候选 AddressSpace。
 
-\subsection{第二遍 ELF：物理页、BSS 与 PTE 权限}
-
+\topic{第二遍 ELF：物理页、BSS 与 PTE 权限}
 第二遍建立 Process 页表根，并为每个段逐页执行：
 
 \begin{enumerate}
@@ -330,8 +317,7 @@ reader 调整 \code{OpenFile.offset\_bytes} 并循环读取。ELF 层不认识 i
 和新分配 frame 的旧内容都不会暴露给 Ring 3。任何页分配、页表建立或 reader
 失败都会递归销毁整个候选根；空 PT/PD 继续遵守 v1.1 的所有权回收规则。
 
-\subsection{256 KiB 用户栈的精确几何}
-
+\topic{256 KiB 用户栈的精确几何}
 参数和环境分别最多 256 项，全部字符串连同每项 NUL 最多 128 KiB。用户栈
 固定为 64 个 4 KiB 页：
 
@@ -380,8 +366,7 @@ RSP=R_{\mathrm{raw}}\mathbin{\&}\sim15.
 成本的同时为这些元数据和初始执行留出空间。栈底下方页仍 not-present；
 按需增长属于下一阶段 VMA。
 
-\subsection{为什么参数采用“先计划、后复制”}
-
+\topic{为什么参数采用“先计划、后复制”}
 Kernel 不能信任用户提供的计数、长度或指针，也不能在 16 KiB Ring 0 栈上
 建立 128 KiB 数组。\code{ProgramArgumentPlan} 因此只保存固定数量的
 \code{uint64\_t} 长度：
@@ -401,8 +386,7 @@ Kernel 不能信任用户提供的计数、长度或指针，也不能在 16 KiB
 引入 SMP、Kernel preemption 或并发多 Thread exec 前，必须改为每次调用
 所有权或显式同步，不能沿用这项隐含前提。
 
-\subsection{spawn 是一项多资源发布事务}
-
+\topic{spawn 是一项多资源发布事务}
 spawn 正向取得的资源为：
 
 \begin{lstlisting}[caption={spawn 的正向所有权链}]
@@ -429,8 +413,7 @@ spawn 使用父 FsContext 解析路径，所以相对程序名服从调用者当
 Process 随后获得新初始化的根 FsContext 和标准 fd。这个区别必须明确：
 “用谁的命名空间找程序”和“孩子启动后拥有什么命名空间”不是同一个问题。
 
-\subsection{exec 的唯一提交点}
-
+\topic{exec 的唯一提交点}
 exec 最危险的错误是先销毁旧地址空间。路径不存在、ATA 错误、程序头截断、
 W+X、frame 耗尽、参数过大或 CR3 无效都会让当前 Process 无处返回。正确
 做法是让旧映像持续权威，旁路构造候选：
@@ -469,30 +452,25 @@ Kernel 高半映射仍可访问。}
 内部状态违反不变量，已经无法安全恢复两套映像，Kernel 必须停机暴露缺陷。
 “尽量继续”会产生半旧半新的 Process，比明确停止更危险。
 
-\subsection{x86-64 在 exec 成功时真正改变什么}
-
+\topic{x86-64 在 exec 成功时真正改变什么}
 exec 不只是修改一个 C++ 对象。下一次返回 Ring 3 前，至少有五组架构状态
 发生变化：
 
-\begin{longtable}{L{0.19\textwidth}L{0.31\textwidth}L{0.39\textwidth}}
-\toprule
-状态 & 新值来源 & 意义\\
-\midrule
-CR3 & 候选 AddressSpace 根物理地址 & 改变用户虚拟地址翻译；Kernel 高半分支保持共享\\
-RIP & ELF \code{e\_entry} & 新程序第一条指令，旧 syscall 后继不再执行\\
-RSP & ProgramArgumentPlan & 指向 16 字节对齐的新用户栈\\
-RDI/RSI/RDX & argc/argv/envp 布局 & freestanding 入口直接取得参数\\
-CS/SS/RFLAGS & 安全用户初始常量 & 恢复 CPL3 段和允许的标志集合\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.19\textwidth}L{0.31\textwidth}L{0.39\textwidth}}
+状态 & 新值来源 & 意义\\ \hline
+CR3 & 候选 AddressSpace 根物理地址 & 改变用户虚拟地址翻译；Kernel 高半分支保持共享\\ \hline
+RIP & ELF \code{e\_entry} & 新程序第一条指令，旧 syscall 后继不再执行\\ \hline
+RSP & ProgramArgumentPlan & 指向 16 字节对齐的新用户栈\\ \hline
+RDI/RSI/RDX & argc/argv/envp 布局 & freestanding 入口直接取得参数\\ \hline
+CS/SS/RFLAGS & 安全用户初始常量 & 恢复 CPL3 段和允许的标志集合\\ \hline
+\end{osgridlongtable}
 
 176 字节 UserContext 先整体清零，再写上述必要字段。旧程序留下的通用寄存器、
 DF、RF 或临时地址不能泄漏到新程序。当前 Thread 的 FXSAVE 区继续属于同一
 Thread；用户程序不得依赖 exec 前的 x87/SSE2 值。以后冻结更完整 POSIX
 语义时，可以在提交处显式恢复默认浮点环境。
 
-\subsection{close-on-exec 为什么属于 fd 表项}
-
+\topic{close-on-exec 为什么属于 fd 表项}
 两个 fd 可以 duplicate 到同一个 FileDescription。它们共享 file status
 flags 与 offset，却各自拥有 descriptor flags。CLOEXEC 描述的是“这个
 编号是否跨程序映像保留”，所以必须位于 fd entry：
@@ -507,19 +485,15 @@ fd 9 --CLOEXEC=1--/
 才执行 FileDescription finalizer。失败 exec 完全不调用
 \code{CloseOnExec}。v1.4 建立的模型能力由此第一次进入真实程序替换路径。
 
-\subsection{系统调用 ABI 如何保持固定宽度}
-
+\topic{系统调用 ABI 如何保持固定宽度}
 v1.7 在既有编号之后追加 36--38，不重排历史接口：
 
-\begin{longtable}{L{0.11\textwidth}L{0.20\textwidth}L{0.31\textwidth}L{0.27\textwidth}}
-\toprule
-编号 & 接口 & 输入 & 成功结果\\
-\midrule
-36 & SpawnProcess & 48 B launch request & 新 64 位 PID\\
-37 & ExecProcess & 48 B launch request & 不回旧入口\\
-38 & WaitProcess & PID/ANY + 40 B result & 被回收 PID\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.11\textwidth}L{0.20\textwidth}L{0.31\textwidth}L{0.27\textwidth}}
+编号 & 接口 & 输入 & 成功结果\\ \hline
+36 & SpawnProcess & 48 B launch request & 新 64 位 PID\\ \hline
+37 & ExecProcess & 48 B launch request & 不回旧入口\\ \hline
+38 & WaitProcess & PID/ANY + 40 B result & 被回收 PID\\ \hline
+\end{osgridlongtable}
 
 \code{ProcessLaunchRequest} 是六个 \code{uint64\_t}；每个
 \code{ProcessString} 是地址与长度两个 \code{uint64\_t}；
@@ -533,8 +507,7 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
 \code{NoChildProcess}。用户包装在 WouldBlock 唤醒后重试，不把内部等待
 状态暴露成忙循环。
 
-\subsection{PID1 的验收树不冻结调度时序}
-
+\topic{PID1 的验收树不冻结调度时序}
 \filepath{/sbin/init} 创建六个直接孩子：
 
 \begin{itemize}
@@ -567,8 +540,7 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
 256 MiB 和 64 GiB 的 64/128/32 与 256/512/64 规格不变。提高 bootstrap
 容量不是用小配置冒充压力测试，而是保证最小兼容配置也运行同一完整功能链。
 
-\subsection{构建期离线安装为什么不是启动后门}
-
+\topic{构建期离线安装为什么不是启动后门}
 构建工具先格式化空 rootfs，再把十个文件一次性安装到
 \filepath{/sbin} 与 \filepath{/bin}。它执行与盘面格式一致的 inode、
 目录项、bitmap 和间接块编码，并在完成后用独立解析器重新读取。
@@ -588,8 +560,7 @@ wait 的 \code{UINT64\_MAX} 表示任意直接孩子；零不是 PID，也不表
 明确失败。\filepath{/bin/truncated.elf} 是唯一故意非法的程序文件，用于
 证明 exec 失败仍保留旧映像。
 
-\subsection{锁、IRQ 与发布边界}
-
+\topic{锁、IRQ 与发布边界}
 当前执行模型是单 BSP、IRQ 可进入、Kernel 不可抢占。它仍然需要锁：
 PIT/设备 IRQ 可以在系统调用期间进入，调度器锁必须保护 Process/Thread
 状态；CpuLocal 的 system-call depth 又保证 reschedule 在安全返回边界消费。
@@ -609,25 +580,21 @@ PIT/设备 IRQ 可以在系统调用期间进入，调度器锁必须保护 Proc
 放入每次调用拥有的对象，或以能够睡眠/取消的同步策略保护，不能只把普通
 SpinLock 套在可能触发 VFS 和页分配的长事务外面。
 
-\subsection{失败矩阵：哪一层失败，什么必须保持}
-
-\begin{longtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.35\textwidth}}
-\toprule
-失败位置 & 对外结果 & 必须保持\\
-\midrule
-请求尺寸错误 & InvalidArgument & 不读取未知布局，不改变 Process\\
-请求/字符串页错误 & InvalidUserMemory & 旧映像、fd、树和候选资源不变\\
-项目数或 128 KiB 越界 & ArgumentListTooLarge & 旧 RIP/CR3/RSP 可继续执行\\
-路径/文件读取失败 & executable read error & VFS 临时打开引用关闭\\
-ELF 截断/W+X/重叠 & InvalidExecutable & 不提交任何候选页\\
-frame/页表不足 & image/address-space failure & 候选根递归销毁，旧根权威\\
-候选 CR3 激活失败 & page-table activation failure & 恢复旧 CR3，销毁候选\\
-Process 容量耗尽 & ProcessLimitExceeded & 父 Process 与现有孩子不变\\
-wait 结果页错误 & InvalidUserMemory & Zombie 尚未被消费\\
-wait 无直接孩子 & NoChildProcess & 树与调度器不变\\
-提交后内部不变量失败 & Kernel 停机 & 不伪装为可恢复用户错误\\
-\bottomrule
-\end{longtable}
+\topic{失败矩阵：哪一层失败，什么必须保持}\par
+\begin{osgridlongtable}{L{0.25\textwidth}L{0.29\textwidth}L{0.35\textwidth}}
+失败位置 & 对外结果 & 必须保持\\ \hline
+请求尺寸错误 & InvalidArgument & 不读取未知布局，不改变 Process\\ \hline
+请求/字符串页错误 & InvalidUserMemory & 旧映像、fd、树和候选资源不变\\ \hline
+项目数或 128 KiB 越界 & ArgumentListTooLarge & 旧 RIP/CR3/RSP 可继续执行\\ \hline
+路径/文件读取失败 & executable read error & VFS 临时打开引用关闭\\ \hline
+ELF 截断/W+X/重叠 & InvalidExecutable & 不提交任何候选页\\ \hline
+frame/页表不足 & image/address-space failure & 候选根递归销毁，旧根权威\\ \hline
+候选 CR3 激活失败 & page-table activation failure & 恢复旧 CR3，销毁候选\\ \hline
+Process 容量耗尽 & ProcessLimitExceeded & 父 Process 与现有孩子不变\\ \hline
+wait 结果页错误 & InvalidUserMemory & Zombie 尚未被消费\\ \hline
+wait 无直接孩子 & NoChildProcess & 树与调度器不变\\ \hline
+提交后内部不变量失败 & Kernel 停机 & 不伪装为可恢复用户错误\\ \hline
+\end{osgridlongtable}
 
 \begin{failurebox}
 exec 的“原子性”不是 CPU 提供的一条原子指令，而是软件定义的发布边界。
@@ -635,9 +602,11 @@ exec 的“原子性”不是 CPU 提供的一条原子指令，而是软件定�
 旧对象、又无法回滚，就说明它放错了事务位置。
 \end{failurebox}
 
-\subsection{五层测试分别证明什么}
+\topic{五层测试分别证明什么}
+验证沿着局部算法、对象协作、可重放大输入、离线产物和整机执行逐层展开；
+每层只回答自己能够观察的问题，并把结果交给下一层继续收紧。
 
-\paragraph{单元层}
+\topic{单元层}
 
 \code{ProcessTree} 测试覆盖 PID1 唯一性、指定/任意 wait、Alive/Zombie、
 异常退出、孤儿收养、Init 最终回收与统计损坏。\code{ProgramArgumentPlan}
@@ -645,33 +614,32 @@ exec 的“原子性”不是 CPU 提供的一条原子指令，而是软件定�
 不足。reader ELF 测试在头或程序头 offset 注入读取失败，并保证失败不发布
 半个 layout。调度器测试冻结单 Thread exec 提交前置条件和失败不修改旧值。
 
-\paragraph{集成层}
+\topic{集成层}
 
 生命周期模型连续执行 4096 轮。每轮创建父与孩子、制造孤儿、改变退出顺序、
 执行 wait 并恢复空树，共覆盖 8192 个子 Process 生命周期。这里反复复用
 同一有限存储，能发现只在计数累计、槽位清空或父索引复用后出现的错误。
 
-\paragraph{固定种子随机层}
+\topic{固定种子随机层}
 
 随机模型让 8192 个孩子以不同顺序退出和回收，并生成 4096 组参数/环境长度。
 布局结果与独立 64 位公式逐项比较；失败输出固定 seed 和迭代号。随机不是
 “碰运气”，而是用可重放的大输入空间检查一般性质。
 
-\paragraph{工具与产物层}
+\topic{工具与产物层}
 
 每个合法用户 ELF 单独执行 AMD64、\code{ET\_EXEC}、W\^X、入口、段范围和
 未解析符号审计。rootfs 工具把程序安装到嵌套目录，重新解析 inode/间接树并
 逐字节读回。截断夹具故意不能通过合法 ELF 审计，它只进入明确失败测试。
 
-\paragraph{QEMU 整机层}
+\topic{QEMU 整机层}
 
 真实 64 MiB 与 256 MiB 路径从复位向量运行到磁盘 PID1，再完成八进程树、
 128 KiB 参数、两次 exec 回滚、一次成功提交、孤儿收养、Shell/文件 I/O 和
 最终资源快照。64 GiB 路径继续验证 4 GiB 以上物理页和容量实现。QEMU 能
 证明 CR3、RSP、CPL、ATA 与 IRQ；它不能替代 4096 轮状态搜索。
 
-\subsection{日志为何记录边界而不记录字节}
-
+\topic{日志为何记录边界而不记录字节}
 Kernel 对低频生命周期输出：
 
 \begin{lstlisting}[caption={v1.7 进程生命周期日志}]
@@ -705,8 +673,7 @@ wait block 次数受合法调度交错影响，只要求至少一次；其余字
 \code{[QEMU][T+...ms]} 到达时间。阶段 deadline 与 CTest 外层 timeout
 共同保证丢失唤醒不会变成无限后台 QEMU。
 
-\subsection{源码走读顺序}
-
+\topic{源码走读顺序}
 推荐按“纯模型先于跨层组合”阅读：
 
 \begin{enumerate}
@@ -731,8 +698,7 @@ wait block 次数受合法调度交错影响，只要求至少一次；其余字
 “当前权威 CR3”“候选已取得的资源”“本分支释放什么”“用户还能观察什么”。
 如果其中任一项答不出来，就还没有真正理解 exec 事务。
 
-\subsection{用 GDB 观察提交前后的 CPU}
-
+\topic{用 GDB 观察提交前后的 CPU}
 以 QEMU \code{-S -s} 启动后，可在以下符号断点：
 
 \begin{lstlisting}[caption={exec 的硬件状态观察点}]
@@ -752,8 +718,7 @@ GDB 的符号名显示可能受 C++ mangling 和版本影响，实际地址以
 \filepath{kernel.payload.elf} 上期待完整调试信息；写盘 payload 已 strip
 debug，但三个 \code{PT\_LOAD} 与入口保持一致。
 
-\subsection{当前完成边界与下一步}
-
+\topic{当前完成边界与下一步}
 v1.7 已经完成：
 
 \begin{itemize}

@@ -1,4 +1,4 @@
-\section{v0.11 把持久化扇区提升为可命名对象}
+\section{从扇区到可命名持久对象}
 
 管道中的字节在最后一个持有者退出后消失；磁盘中的字节则要跨越进程结束、
 内核停止乃至整机重启继续存在。两者都可以提供 \code{read/write}，但生命
@@ -24,8 +24,7 @@
 第三个实例必须拒绝挂载且不能用自动格式化掩盖故障。
 \end{contractbox}
 
-\section{磁盘分区边界先于文件系统格式}
-
+\topic{磁盘分区边界先于文件系统格式}
 启动磁盘精确为 2 MiB，即 4096 个 512 字节扇区。LBA 是扇区编号，不是字节
 地址；字节偏移由
 \[
@@ -33,21 +32,16 @@
 \]
 得到。当前边界为：
 
-\begin{longtable}{L{0.19\textwidth}L{0.27\textwidth}L{0.42\textwidth}}
-\toprule
-LBA 半开区间 & 所有者 & 不变量\\
-\midrule
+\begin{osgridlongtable}{L{0.19\textwidth}L{0.27\textwidth}L{0.42\textwidth}}
+LBA 半开区间 & 所有者 & 不变量\\ \hline
 \endfirsthead
-\toprule
-LBA 半开区间 & 所有者 & 不变量\\
-\midrule
+LBA 半开区间 & 所有者 & 不变量\\ \hline
 \endhead
 \code{[0,2048)} & 固件描述符、Stage 1、Kernel 描述符与 ELF &
-打包器证明 Kernel 负载结束位置不越过 2048\\
-\code{[2048,3072)} & v0.11 文件系统 & 1024 个固定大小逻辑块\\
-\code{[3072,4096)} & 保留 & 当前必须不被文件系统分配\\
-\bottomrule
-\end{longtable}
+打包器证明 Kernel 负载结束位置不越过 2048\\ \hline
+\code{[2048,3072)} & v0.11 文件系统 & 1024 个固定大小逻辑块\\ \hline
+\code{[3072,4096)} & 保留 & 当前必须不被文件系统分配\\ \hline
+\end{osgridlongtable}
 
 最初设计把文件系统放在 LBA 1024。宿主内存块测试全部通过，但真实 Kernel
 ELF 增长到 505 KiB 后，其 LBA 66 起的负载已经延伸到约 LBA 1054。QEMU
@@ -64,8 +58,7 @@ ELF 增长到 505 KiB 后，其 LBA 66 起的负载已经延伸到约 LBA 1054�
 测试设备和教材，会制造多个互相矛盾的“真相”。
 \end{keyidea}
 
-\section{ATA PIO 写入是一条可失败的硬件状态机}
-
+\topic{ATA PIO 写入是一条可失败的硬件状态机}
 v0.7 的读取路径已经会选择 primary master、写 LBA28 寄存器、发
 \code{READ SECTORS} 命令并等待 DRQ。写入不能简单把 \code{inw} 换成
 \code{outw}；命令、数据方向和持久化完成具有不同阶段。
@@ -102,37 +95,31 @@ v0.7 的读取路径已经会选择 primary master、写 LBA28 寄存器、发
 读、写、flush 成败。宿主测试以同一接口挂接内存设备，目标内核挂接
 \code{AtaPioDevice}。
 
-\section{磁盘格式只由显式字节编码定义}
-
+\topic{磁盘格式只由显式字节编码定义}
 C++ 结构体适合内存中的类型检查，不适合直接成为持久格式。编译器可能插入
 padding，枚举宽度和对齐规则也属于 ABI。v0.11 对每个多字节字段显式执行
 little-endian store/load；磁盘格式由偏移表定义。
 
-\subsection{超级块}
-
+\topic{超级块}
 相对块 0 是 512 字节超级块。前 8 字节为 \code{OSFSV001}，随后以
 \code{uint64_t} 保存版本、块大小、总块数、inode 位图、inode 表、数据
 位图、数据区、数量、根 inode、事务状态和代次。偏移 508 保存对前 508
 字节计算的 IEEE CRC32。
 
-\begin{longtable}{L{0.17\textwidth}L{0.18\textwidth}L{0.53\textwidth}}
-\toprule
-相对块 & 数量 & 内容\\
-\midrule
-0 & 1 & superblock、事务状态与 CRC32\\
-1 & 1 & 32 位有效范围的 inode bitmap\\
-2--9 & 8 & 32 个固定 128 字节 inode\\
-10 & 1 & 1013 位有效范围的数据块 bitmap\\
-11--1023 & 1013 & 目录项和普通文件数据\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.17\textwidth}L{0.18\textwidth}L{0.53\textwidth}}
+相对块 & 数量 & 内容\\ \hline
+0 & 1 & superblock、事务状态与 CRC32\\ \hline
+1 & 1 & 32 位有效范围的 inode bitmap\\ \hline
+2--9 & 8 & 32 个固定 128 字节 inode\\ \hline
+10 & 1 & 1013 位有效范围的数据块 bitmap\\ \hline
+11--1023 & 1013 & 目录项和普通文件数据\\ \hline
+\end{osgridlongtable}
 
 bitmap 仍占完整扇区，但有效位之外必须全零。这个规则能发现错误循环把位图
 扫描到 4096 位、或未来格式被旧内核误读的情况。inode 0 永久保留，inode 1
 固定为根目录。
 
-\subsection{inode}
-
+\topic{inode}
 每个 inode 精确 128 字节：类型、文件长度、代次、链接数、已分配块数、
 十个 64 位相对块号、四字节保留区和 CRC32。普通文件与目录都最多使用十个
 直接块，因此显式上限为
@@ -145,8 +132,7 @@ bitmap 仍占完整扇区，但有效位之外必须全零。这个规则能发�
 直接块不是 ATA 绝对 LBA，而是文件系统区域内的相对块。I/O 前统一加
 \code{OS_KERNEL_FILE_SYSTEM_START_LBA}，避免把格式绑死到物理分区位置。
 
-\subsection{目录项}
-
+\topic{目录项}
 目录内容由连续的 64 字节目录项组成。每项包含 64 位 inode 号、64 位类型、
 64 位名称长度和 40 字节名称。名称不是以 NUL 结尾；长度是唯一边界，剩余
 字节编码时清零。当前拒绝空名称、超过 40 字节、斜杠、C0 控制字符、
@@ -156,8 +142,7 @@ bitmap 仍占完整扇区，但有效位之外必须全零。这个规则能发�
 8 项，十个直接块最多容纳 80 项。inode 不保存路径；路径来自从根目录开始
 的一串目录项，这正是 rename 不需要搬动文件数据的原因。
 
-\section{CRC 能发现变化，但不能证明所有权正确}
-
+\topic{CRC 能发现变化，但不能证明所有权正确}
 CRC32 对随机位翻转很敏感，适合发现镜像损坏、偏移错误和部分写入。它不是
 密码学认证，也不能发现“字段本身合法但引用了错误对象”的语义损坏。例如两个
 inode 各自 CRC 都正确，却可能引用同一数据块；目录项也可能引用未分配 inode。
@@ -173,8 +158,7 @@ inode 各自 CRC 都正确，却可能引用同一数据块；目录项也可能
 内容或边界错误，必须返回 \code{Corrupt}。如果此时自动格式化，恰好会把最
 重要的故障证据覆盖掉。
 
-\section{bitmap 分配把空间所有权变成守恒关系}
-
+\topic{bitmap 分配把空间所有权变成守恒关系}
 inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 个有效位中寻找
 零位，再转换为相对块 \code{11+bit_index}。释放文件时逐个验证块位于数据区，
 清对应位，并把 inode 的直接块、块数和长度归零。
@@ -195,8 +179,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 \]
 不接受隐藏的尾部已分配块。
 
-\section{八项写回缓存具有明确状态转换}
-
+\topic{八项写回缓存具有明确状态转换}
 块缓存固定八项，每项保存 512 字节、绝对 LBA、valid、dirty 和单调访问
 代次。读取命中只复制缓存；未命中选择无效项或最小代次项。若淘汰项为 dirty，
 必须先写回设备。写接口接收完整块，因此未命中时不必先读旧扇区。
@@ -217,8 +200,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 设备读写和 flush 次数，但热路径不打印逐块日志；内核只在挂载、同步和最终
 一致性检查处输出汇总。
 
-\section{Dirty/Clean 协议先保证可检测，再讨论恢复}
-
+\topic{Dirty/Clean 协议先保证可检测，再讨论恢复}
 创建目录、创建/截断文件和写文件会同时改变多个块。v0.11 使用超级块中的
 \code{transaction_state} 和 64 位代次建立最小提交协议：
 
@@ -230,15 +212,12 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
   \item 把超级块写为 Clean、重算 CRC，再 flush。
 \end{enumerate}
 
-\begin{longtable}{L{0.21\textwidth}L{0.28\textwidth}L{0.39\textwidth}}
-\toprule
-停止位置 & 磁盘可见状态 & 下次挂载\\
-\midrule
-步骤 1 以前 & 上一份 Clean 格式 & 正常挂载\\
-步骤 2--4 & Dirty，元数据可能部分新旧混合 & 报未完成事务并停止\\
-步骤 5 完成 & 新一代 Clean 格式 & 正常挂载\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.21\textwidth}L{0.28\textwidth}L{0.39\textwidth}}
+停止位置 & 磁盘可见状态 & 下次挂载\\ \hline
+步骤 1 以前 & 上一份 Clean 格式 & 正常挂载\\ \hline
+步骤 2--4 & Dirty，元数据可能部分新旧混合 & 报未完成事务并停止\\ \hline
+步骤 5 完成 & 新一代 Clean 格式 & 正常挂载\\ \hline
+\end{osgridlongtable}
 
 容量不足属于正常业务结果，不应故意留下 Dirty。实现因此在写 Dirty 前统计
 空闲 inode/数据块和目录容量。真正设备失败发生后则不能假装回滚成功：
@@ -248,8 +227,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 保存 redo 记录和 commit record，再根据代次重放；只有到那时 Dirty 才能
 进入恢复状态机。
 
-\section{路径解析从根目录逐组件证明类型}
-
+\topic{路径解析从根目录逐组件证明类型}
 当前只接受绝对路径，最长 128 字节。解析器先验证第一个字节是 \code{/}，
 再扫描每个组件；不使用 NUL 终止，也不访问路径长度之外的用户内存。
 \code{/} 直接得到根 inode，其他路径按以下循环：
@@ -266,8 +244,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 组件尚不存在，再分配 inode 并向父目录尾部追加目录项。目录需要新数据块时，
 先分配并清零完整块，防止旧释放内容被解释为目录项。
 
-\section{根可达性检查拒绝孤儿、环和重复引用}
-
+\topic{根可达性检查拒绝孤儿、环和重复引用}
 只遍历 inode bitmap 会接受孤儿 inode：它有合法 CRC 和数据块，但没有任何
 路径可以到达。v0.11 在完成局部校验后，以 inode 1 为起点执行最多 32 项的
 有界广度优先遍历。
@@ -285,8 +262,7 @@ inode 分配从编号 2 开始寻找第一个零位；数据块分配在 1013 �
 位图中的空闲位，证明孤儿被拒绝；另一项把根目录名称字节从 \code{s} 改为
 \code{DEL}，证明格式正确但语义非法的目录项也被拒绝。
 
-\section{文件描述符把用户整数绑定到每进程句柄}
-
+\topic{文件描述符把用户整数绑定到每进程句柄}
 每个 PCB 有四个 \code{FileSystemHandle} 槽。用户看到的 fd 只是槽索引，
 句柄保存 inode 号、当前偏移、读写能力和 open 状态。分别打开同一文件得到
 独立偏移；本阶段没有 \code{dup}，因此尚无共享 open-file-description。
@@ -311,8 +287,7 @@ ret
 结果区分非法 fd、not found、already exists、not directory、容量耗尽、
 文件过大、损坏、未初始化和权限错误。
 
-\section{生产者与消费者组成持久化因果链}
-
+\topic{生产者与消费者组成持久化因果链}
 PID1 仍生成公式
 \[
   b_i=(37i+11)\mathbin{\&}\mathtt{0xFF},\quad 0\le i<256
@@ -335,27 +310,22 @@ PID2 从管道读到 EOF 后，因果上已经晚于生产者关闭文件和写�
 每进程统计要求 PID1 文件写 256/读 0，PID2 文件读 256/写 0，两个 worker
 文件读写均为零。
 
-\section{测试按失败层次分开，而不是只增加数量}
-
-\begin{longtable}{L{0.19\textwidth}L{0.28\textwidth}L{0.41\textwidth}}
-\toprule
-层次 & 替身或环境 & 主要证据\\
-\midrule
-单元 & 编码缓冲 & superblock/inode/目录项往返、CRC 损坏\\
-集成 & 4096 扇区内存设备 & 格式化、目录、跨块文件、重挂载、截断、孤儿与非法名称\\
-随机 & 固定种子内存设备 & 128 次随机长度/内容、每轮新实例重挂载并对照参考数组\\
-目标系统 & QEMU TCG + ATA PIO & Ring 3 文件 ABI、真实端口写、flush、统计与最终一致性\\
-重启系统 & 同一 snapshot-off 临时磁盘 & 第一次格式化写入，第二次先恢复旧载荷\\
-损坏系统 & 第二次启动后的磁盘 & 翻转超级块受 CRC 保护字节，第三次必须拒绝挂载\\
-\bottomrule
-\end{longtable}
+\topic{测试按失败层次分开，而不是只增加数量}\par
+\begin{osgridlongtable}{L{0.19\textwidth}L{0.28\textwidth}L{0.41\textwidth}}
+层次 & 替身或环境 & 主要证据\\ \hline
+单元 & 编码缓冲 & superblock/inode/目录项往返、CRC 损坏\\ \hline
+集成 & 4096 扇区内存设备 & 格式化、目录、跨块文件、重挂载、截断、孤儿与非法名称\\ \hline
+随机 & 固定种子内存设备 & 128 次随机长度/内容、每轮新实例重挂载并对照参考数组\\ \hline
+目标系统 & QEMU TCG + ATA PIO & Ring 3 文件 ABI、真实端口写、flush、统计与最终一致性\\ \hline
+重启系统 & 同一 snapshot-off 临时磁盘 & 第一次格式化写入，第二次先恢复旧载荷\\ \hline
+损坏系统 & 第二次启动后的磁盘 & 翻转超级块受 CRC 保护字节，第三次必须拒绝挂载\\ \hline
+\end{osgridlongtable}
 
 QEMU 调度器为每一行串口输出附加宿主单调
 \code{[QEMU][T+xxxxxxms]}，因此能看见格式化、用户写、同步和第二次挂载的
 真实先后；来宾日志仍保持低频里程碑，不在 256 个端口字或位图扫描中刷屏。
 
-\section{当前限制是下一阶段的设计输入}
-
+\topic{当前限制是下一阶段的设计输入}
 v0.11 没有删除、rename、硬链接、权限、时间戳、间接块、稀疏文件、当前目录、
 通用 VFS 对象、可睡眠 I/O 或日志恢复。全局文件系统锁使每次操作串行，ATA
 每次只传一个扇区并轮询完成。Dirty 事务只检测，不重放。

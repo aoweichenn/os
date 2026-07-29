@@ -1,0 +1,185 @@
+\section{复位状态、ROM 映射与首条取指}
+
+x86 处理器复位后并不是已经进入 64-bit mode。对本书当前路径，最关键的架构
+事实是：复位取指物理地址为
+
+\[
+\texttt{0xFFFFFFF0}.
+\]
+
+仅按普通实模式公式 \(\texttt{CS}\times16+\texttt{IP}\) 会得到错误答案。
+复位时 CS 可见 selector 与隐藏 descriptor cache 有特殊架构初值，概念上：
+
+\[
+\text{CS hidden base}=\texttt{0xFFFF0000},
+\]
+\[
+\text{EIP}=\texttt{0x0000FFF0},
+\]
+\[
+\text{linear/physical fetch}
+=\texttt{0xFFFF0000}+\texttt{0xFFF0}
+=\texttt{0xFFFFFFF0}.
+\]
+
+执行改变 CS 的远跳转后，隐藏基址会按新的模式规则重新装载。因此复位入口通常
+先在最后 16 byte 内放一条短小跳转，转入更大的固件正文。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,scale=0.95,transform shape]
+  \draw[->,BookMuted,thick] (0,0) -- (13.5,0) node[right]{32-bit 物理地址};
+  \fill[BookBlue!12] (0.5,0.35) rectangle (8.4,1.1);
+  \node at (4.45,0.72) {低地址 RAM、设备窗口和空洞};
+  \fill[BookAmber!20] (8.4,0.35) rectangle (13.0,1.1);
+  \node at (10.7,0.72) {128 KiB ROM 顶端映射};
+  \draw[BookAmber,thick] (8.4,0.2) -- (8.4,1.35);
+  \node[above,rotate=25,anchor=west] at (8.4,1.32) {\texttt{0xFFFE0000}};
+  \draw[BookRed,very thick] (12.7,0.2) -- (12.7,1.55);
+  \node[BookRed,above,rotate=25,anchor=west] at (12.7,1.52)
+    {\texttt{0xFFFFFFF0} reset vector};
+  \draw[BookMuted,thick] (13.0,0.2) -- (13.0,1.35);
+  \node[above,rotate=25,anchor=west] at (13.0,1.32) {\texttt{0xFFFFFFFF}};
+\end{tikzpicture}
+\end{center}
+
+\topic{128 KiB ROM 文件偏移怎样对应顶端物理地址}
+本项目 ROM 物理窗口为
+
+\[
+[\texttt{0xFFFE0000},\texttt{0x100000000}),
+\]
+
+长度
+
+\[
+\texttt{0x100000000}-\texttt{0xFFFE0000}
+=\texttt{0x20000}
+=131072\ \mathrm{B}
+=\SI{128}{KiB}.
+\]
+
+物理地址 \(P\) 在 ROM 文件中的偏移为
+
+\[
+offset=P-\texttt{0xFFFE0000}.
+\]
+
+\begin{workedexample}
+复位向量 \(\texttt{0xFFFFFFF0}\) 的文件偏移：
+
+\[
+\texttt{0xFFFFFFF0}-\texttt{0xFFFE0000}
+=\texttt{0x1FFF0}.
+\]
+
+文件总长 \(\texttt{0x20000}\)，因此复位入口位于最后 16 byte 的开头。构建
+必须同时检查文件精确长度、入口 opcode 和跳转目标，不能只看到 QEMU 有输出
+就认为布局正确。
+\end{workedexample}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \draw[BookBlue,thick] (0,0) rectangle (12.8,1.2);
+  \fill[BookCodeBg] (0,0) rectangle (10.9,1.2);
+  \fill[BookAmber!22] (10.9,0) rectangle (12.8,1.2);
+  \draw[BookRed,very thick] (12.2,0) -- (12.2,1.2);
+  \node at (5.45,0.6) {固件正文、只读数据与填充};
+  \node at (11.55,0.6) {末端区域};
+  \node[BookRed,above] at (12.2,1.2) {offset \texttt{0x1FFF0}};
+  \node[below] at (0,0) {\texttt{0x00000}};
+  \node[below] at (12.8,0) {\texttt{0x20000}};
+  \draw[os arrow] (12.2,2.2) -- (12.2,1.25);
+  \node[above,align=center] at (12.2,2.2)
+    {16-bit near jump\\跳到固件入口};
+\end{tikzpicture}
+\end{center}
+
+\topic{QEMU 的 \texttt{-bios} 只装入字节，不替我们写固件}
+本项目允许 QEMU TCG 模拟 x86-64 CPU、地址空间和设备，使用
+\code{-bios} 把自研 128 KiB ROM 映射到平台启动窗口。边界如下：
+
+\begin{osgridlongtable}{L{0.23\linewidth}L{0.32\linewidth}L{0.35\linewidth}}
+动作 & 谁负责 & 本项目证据 \\ \hline
+\endfirsthead
+动作 & 谁负责 & 本项目证据 \\ \hline
+\endhead
+复位产生初始 CPU 状态 & QEMU 模拟 CPU 硬件 & GDB 观察 CS/RIP 与首条取指 \\ \hline
+把 ROM 文件映射到顶端 & QEMU 平台硬件模型 & 镜像尺寸和物理窗口检查 \\ \hline
+最后 16 byte 放哪条指令 & 本项目链接脚本与汇编 & opcode、目标与越界测试 \\ \hline
+初始化 UART & 本项目 ROM 固件 & 端口写序列与串口日志 \\ \hline
+读取磁盘并进入 Stage 1 & 本项目 ROM 固件 & ATA 事务和阶段协议 \\ \hline
+切换保护/长模式 & 本项目代码 & CR0/CR4/EFER、GDT、页表证据 \\ \hline
+\end{osgridlongtable}
+
+如果改用 SeaBIOS/OVMF，前几行仍可看到相似的“CPU 复位—固件—启动”层次，
+但固件实现已经不属于本项目。这里坚持自研是为了让每一个状态转换都能在源码、
+二进制和 QEMU 事务中对应。
+
+\topic{从按下电源到第一条指令，至少有十二个可失败关口}
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily,>=Latex,node distance=7mm and 7mm]
+  \node[os hardware,minimum width=20mm] (input) {1 输入电源};
+  \node[os hardware,right=of input,minimum width=20mm] (protect) {2 保护/转换};
+  \node[os hardware,right=of protect,minimum width=20mm] (rails) {3 电源轨};
+  \node[os state,right=of rails,minimum width=20mm] (pg) {4 power-good};
+  \node[os hardware,right=of pg,minimum width=20mm] (clock) {5 参考时钟};
+  \node[os state,right=of clock,minimum width=20mm] (reset) {6 复位释放};
+
+  \node[os state,below=13mm of reset,minimum width=20mm] (state) {7 架构初态};
+  \node[os state,left=of state,minimum width=20mm] (fetch) {8 取指地址};
+  \node[os block,left=of fetch,minimum width=20mm] (decode) {9 地址译码};
+  \node[os hardware,left=of decode,minimum width=20mm] (rom) {10 ROM 响应};
+  \node[os state,left=of rom,minimum width=20mm] (bytes) {11 指令字节};
+  \node[os state,left=of bytes,minimum width=20mm] (commit) {12 译码/提交};
+
+  \draw[os arrow] (input) -- (protect);
+  \draw[os arrow] (protect) -- (rails);
+  \draw[os arrow] (rails) -- (pg);
+  \draw[os arrow] (pg) -- (clock);
+  \draw[os arrow] (clock) -- (reset);
+  \draw[os arrow] (reset) -- (state);
+  \draw[os arrow] (state) -- (fetch);
+  \draw[os arrow] (fetch) -- (decode);
+  \draw[os arrow] (decode) -- (rom);
+  \draw[os arrow] (rom) -- (bytes);
+  \draw[os arrow] (bytes) -- (commit);
+\end{tikzpicture}
+\end{center}
+\diagramnote{链条使用蛇形单向布局，不用跨层回箭头；每个方框都对应一个可以
+独立测量、调试或由模拟器观察的关口。}
+
+\topic{黑屏或无串口时怎样沿关口建立证据}
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.31\linewidth}L{0.43\linewidth}}
+层次 & 实体板证据 & QEMU/本项目证据 \\ \hline
+\endfirsthead
+层次 & 实体板证据 & QEMU/本项目证据 \\ \hline
+\endhead
+供电 & 电压、纹波、电流、温升、power-good & 启动参数和设备模型存在 \\ \hline
+时钟/复位 & 示波器观察振荡与释放顺序 & monitor/GDB 观察 CPU 是否停在 reset \\ \hline
+首条取指 & 逻辑分析仪或芯片调试接口 & GDB 在 \texttt{0xFFFFFFF0} 断点 \\ \hline
+ROM 布局 & 编程器读回、校验、片选波形 & 文件大小、SHA、反汇编和链接断言 \\ \hline
+UART & TX 引脚波形、电平与波特率 & \code{-serial stdio} 的首个协议行 \\ \hline
+后续介质 & SPI/ATA/PCIe 事务与状态 & QEMU trace、端口访问与阶段日志 \\ \hline
+\end{osgridlongtable}
+
+每层只有在前一层证据成立后才向后推进。直接修改内核代码无法修复未释放的
+复位，反复更换电容也无法修复 ROM 跳转位移。
+
+\topic{本章动手推理与验收}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 从 128 KiB ROM 物理基址推导复位向量文件偏移；
+  \item 画出一颗 \(64\ \mathrm{Ki}\times16\) SRAM 至少需要的地址线、数据线
+        和控制线，并说明系统高位地址去哪里；
+  \item 对一条 32-bit 数据总线写地址 \(A+1\) 的 16-bit 值，标出 byte lane
+        和 little-endian 排列；
+  \item 沿 valid/ready 时序解释目标延迟三个周期时主设备必须保持哪些信号；
+  \item 把“无串口”拆成供电、时钟、复位、取指、ROM、UART 配置和接收参数七个
+        可反驳假设；
+  \item 用不同颜色重画电源链、控制链、数据链和软件所有权链，不把它们混成
+        一根“启动箭头”。
+\end{enumerate}
+
+\begin{failurebox}
+复位向量是 CPU、平台地址译码和 ROM 布局三份契约的交点。只知道地址而不知道
+映射，或只有正确 ROM 文件却没有电源/时钟/复位，都不能产生第一条已提交指令。
+\end{failurebox}

@@ -1,4 +1,4 @@
-\section{物理地址事务包含地址、属性、数据与完成响应}
+\section{物理地址、兼容地址图与复位坐标}
 
 处理器访问物理地址时，平台接收的不只是一个整数。事务还带有读写方向、访问
 宽度、缓存属性和权限来源；响应方返回数据或错误。真实总线可能把一次请求拆成
@@ -24,36 +24,29 @@
 转换为普通指针后，C++ 类型系统不会自动知道这些区别，驱动必须在接口层保留
 协议语义。
 
-\section{PC 物理地址图由兼容性层层叠加}
-
+\topic{PC 物理地址图由兼容性层层叠加}
 最初 8086 只有 1 MiB 空间。低端区域用于中断向量与 RAM，高端保留显存、
 扩展 ROM 和系统固件。处理器地址扩展到 32 位和 64 位后，旧设备窗口仍需
 兼容，PCI MMIO、APIC 和固件映射继续占据若干范围。现代 PC 的物理地址空间
 因此不是一整块连续 DRAM。
 
-\begin{longtable}{L{0.24\textwidth}L{0.26\textwidth}L{0.36\textwidth}}
-\toprule
-\textbf{示意范围} & \textbf{传统用途} & \textbf{本项目使用原则}\\
-\midrule
+\begin{osgridlongtable}{L{0.24\textwidth}L{0.26\textwidth}L{0.36\textwidth}}
+\textbf{示意范围} & \textbf{传统用途} & \textbf{本项目使用原则}\\ \hline
 \endfirsthead
-\toprule
-\textbf{示意范围} & \textbf{传统用途} & \textbf{本项目使用原则}\\
-\midrule
+\textbf{示意范围} & \textbf{传统用途} & \textbf{本项目使用原则}\\ \hline
 \endhead
-\code{0x00000000} 起 & 低端 RAM、向量和固件数据 & 明确保留后再放栈与启动结构\\
-\code{0x000A0000} 附近 & VGA 与适配器窗口 & 不当作普通可用 RAM\\
-\code{0x00100000} 以上 & 扩展 RAM & 后续装载内核和页表\\
-4 GiB 以下高端 & PCI 窗口与平台设备 & 依据机器模型排除\\
-\code{0xFFFE0000} 起 & 本项目 128 KiB ROM & 只读执行与常量区域\\
-\bottomrule
-\end{longtable}
+\code{0x00000000} 起 & 低端 RAM、向量和固件数据 & 明确保留后再放栈与启动结构\\ \hline
+\code{0x000A0000} 附近 & VGA 与适配器窗口 & 不当作普通可用 RAM\\ \hline
+\code{0x00100000} 以上 & 扩展 RAM & 后续装载内核和页表\\ \hline
+4 GiB 以下高端 & PCI 窗口与平台设备 & 依据机器模型排除\\ \hline
+\code{0xFFFE0000} 起 & 本项目 128 KiB ROM & 只读执行与常量区域\\ \hline
+\end{osgridlongtable}
 
 表中除项目 ROM 外是解释兼容结构的示意，不是可以硬编码的完整内存图。后续
 内核必须读取固件交付的内存区间并验证重叠，而不是假定“内存大小”等于从零
 开始的连续 RAM。
 
-\section{复位取指的三个坐标系逐项对应}
-
+\topic{复位取指的三个坐标系逐项对应}
 链接器中的地址是符号运行地址，ROM 文件中的位置是文件偏移，处理器发出的是
 物理地址。128 KiB 等于 \code{0x20000}，ROM 顶端对齐到
 \code{0x100000000}，所以起点为：
@@ -67,24 +60,18 @@
 入口 \code{0xFFFFF000} 对应 \code{0x1F000}。这两个偏移相差
 \code{0xFF0}，复位位置又距 ROM 末端只有 16 字节。
 
-\begin{longtable}{L{0.22\textwidth}L{0.22\textwidth}L{0.22\textwidth}L{0.22\textwidth}}
-\toprule
-\textbf{对象} & \textbf{物理地址} & \textbf{文件偏移} & \textbf{作用}\\
-\midrule
+\begin{osgridlongtable}{L{0.22\textwidth}L{0.22\textwidth}L{0.22\textwidth}L{0.22\textwidth}}
+\textbf{对象} & \textbf{物理地址} & \textbf{文件偏移} & \textbf{作用}\\ \hline
 \endfirsthead
-\toprule
-\textbf{对象} & \textbf{物理地址} & \textbf{文件偏移} & \textbf{作用}\\
-\midrule
+\textbf{对象} & \textbf{物理地址} & \textbf{文件偏移} & \textbf{作用}\\ \hline
 \endhead
-ROM 起点 & \code{FFFE0000} & \code{00000} & 镜像映射基准\\
-入口 & \code{FFFFF000} & \code{1F000} & 完整初始化代码\\
-复位向量 & \code{FFFFFFF0} & \code{1FFF0} & 三字节近跳转\\
-ROM 末端 & \code{FFFFFFFF} & \code{1FFFF} & 最后一个可寻址字节\\
-\bottomrule
-\end{longtable}
+ROM 起点 & \code{FFFE0000} & \code{00000} & 镜像映射基准\\ \hline
+入口 & \code{FFFFF000} & \code{1F000} & 完整初始化代码\\ \hline
+复位向量 & \code{FFFFFFF0} & \code{1FFF0} & 三字节近跳转\\ \hline
+ROM 末端 & \code{FFFFFFFF} & \code{1FFFF} & 最后一个可寻址字节\\ \hline
+\end{osgridlongtable}
 
-\section{相对跳转依赖下一指令地址}
-
+\topic{相对跳转依赖下一指令地址}
 x86 相对位移不是从当前指令起点计算，而是从完整指令之后计算。复位跳转长度
 为 3，因此基准 IP 为 \code{0xFFF3}。16 位位移 \code{0xF00D}
 符号扩展为 \(-4083\)，结果为 \code{0xF000}。机器码按小端序保存为
@@ -95,34 +82,28 @@ x86 相对位移不是从当前指令起点计算，而是从完整指令之后�
 装载。三类错误都能生成“看起来像跳转”的字节，却不会到达预期物理地址，所以
 审计器必须实际解码最终镜像。
 
-\section{端口 I/O 形成独立的地址域}
+\section{Port I/O、设备寄存器与故障诊断}
 
 \code{IN} 与 \code{OUT} 使用 16 位端口号，不经过普通内存页表翻译。
 立即数形式只能编码 8 位端口，COM1 的 \code{0x3F8} 超出范围，因此代码先
 把端口号装入 DX，再用 \code{out dx,al}。数据宽度由 AL、AX 或 EAX
 决定，不由端口号决定。
 
-\begin{longtable}{L{0.20\textwidth}L{0.24\textwidth}L{0.24\textwidth}L{0.20\textwidth}}
-\toprule
-\textbf{指令} & \textbf{端口来源} & \textbf{数据宽度} & \textbf{方向}\\
-\midrule
+\begin{osgridlongtable}{L{0.20\textwidth}L{0.24\textwidth}L{0.24\textwidth}L{0.20\textwidth}}
+\textbf{指令} & \textbf{端口来源} & \textbf{数据宽度} & \textbf{方向}\\ \hline
 \endfirsthead
-\toprule
-\textbf{指令} & \textbf{端口来源} & \textbf{数据宽度} & \textbf{方向}\\
-\midrule
+\textbf{指令} & \textbf{端口来源} & \textbf{数据宽度} & \textbf{方向}\\ \hline
 \endhead
-\code{in al,dx} & DX 低 16 位 & 8 位 & 设备到 CPU\\
-\code{in ax,dx} & DX 低 16 位 & 16 位 & 设备到 CPU\\
-\code{out dx,al} & DX 低 16 位 & 8 位 & CPU 到设备\\
-\code{out dx,ax} & DX 低 16 位 & 16 位 & CPU 到设备\\
-\bottomrule
-\end{longtable}
+\code{in al,dx} & DX 低 16 位 & 8 位 & 设备到 CPU\\ \hline
+\code{in ax,dx} & DX 低 16 位 & 16 位 & 设备到 CPU\\ \hline
+\code{out dx,al} & DX 低 16 位 & 8 位 & CPU 到设备\\ \hline
+\code{out dx,ax} & DX 低 16 位 & 16 位 & CPU 到设备\\ \hline
+\end{osgridlongtable}
 
 IDE 数据端口需要 16 位读取，UART 寄存器需要 8 位访问。统一包装端口号不能
 抹去寄存器宽度，驱动接口应让错误宽度难以表达。
 
-\section{设备寄存器不是可随意重排的变量}
-
+\topic{设备寄存器不是可随意重排的变量}
 编译器可能重排普通内存访问，处理器和总线也可能缓冲写入。端口 I/O 指令具有
 x86 规定的顺序属性，但 MMIO 设备还需要合适的缓存类型和屏障。驱动必须依据
 设备规范区分配置写入、命令提交、状态读取和完成确认。
@@ -132,8 +113,7 @@ UART 的 DLAB 展示了最小状态依赖：同一个端口偏移在 DLAB 为 0 
 变化。早期固件通过关闭中断和单线程执行避免并发，成熟驱动则要用锁保护整个
 寄存器事务。
 
-\section{ROM、RAM 与设备失败具有不同诊断形态}
-
+\topic{ROM、RAM 与设备失败具有不同诊断形态}
 ROM 地址错误常表现为执行填充值，RAM 地址错误可能破坏栈后延迟爆发，设备
 地址错误则可能读到固定全一或访问另一个设备。三者都可能最终表现为“串口没有
 输出”，但定位路径不同。

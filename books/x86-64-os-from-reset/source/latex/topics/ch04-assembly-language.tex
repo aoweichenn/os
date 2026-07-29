@@ -1,4 +1,4 @@
-\section{汇编语言、机器码与调用结构}
+\section{Intel 汇编、机器码与过程结构}
 
 \begin{keyidea}
 汇编是机器指令的符号表示。助记符、寄存器名和标签帮助人阅读，处理器最终只
@@ -6,27 +6,22 @@
 C++ 运行时都尚未存在，必须直接控制每一项架构状态。
 \end{keyidea}
 
-\subsection{一、从机器码到助记符}
-
+\topic{一、从机器码到助记符}
 机器码 \code{FA} 表示 \code{cli}，\code{FC} 表示 \code{cld}，
 \code{31 C0} 表示 \code{xor ax,ax}。NASM 查照 x86 编码规则，把助记符与
 操作数转换成字节；反汇编器执行逆向解释。汇编器不会验证硬件初始化顺序，
 链接器也不会证明寄存器前置条件成立。
 
-\begin{longtable}{L{0.18\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.25\linewidth}}
-\toprule
-ROM 字节 & Intel 语法 & 架构变化 & 固件目的 \\
-\midrule
-\code{FA} & \code{cli} & IF 清零 & IDT 建立前关闭中断 \\
-\code{FC} & \code{cld} & DF 清零 & 字符串读取向高地址推进 \\
-\code{31 C0} & \code{xor ax,ax} & AX 变为零 & 为段寄存器准备零值 \\
-\code{8E D8} & \code{mov ds,ax} & DS 缓存重载 & 数据段基址归零 \\
-\code{BC 00 70} & \code{mov sp,0x7000} & SP 变为 0x7000 & 建立向低地址增长的栈 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.25\linewidth}}
+ROM 字节 & Intel 语法 & 架构变化 & 固件目的 \\ \hline
+\code{FA} & \code{cli} & IF 清零 & IDT 建立前关闭中断 \\ \hline
+\code{FC} & \code{cld} & DF 清零 & 字符串读取向高地址推进 \\ \hline
+\code{31 C0} & \code{xor ax,ax} & AX 变为零 & 为段寄存器准备零值 \\ \hline
+\code{8E D8} & \code{mov ds,ax} & DS 缓存重载 & 数据段基址归零 \\ \hline
+\code{BC 00 70} & \code{mov sp,0x7000} & SP 变为 0x7000 & 建立向低地址增长的栈 \\ \hline
+\end{osgridlongtable}
 
-\subsection{二、Intel 语法的操作数顺序}
-
+\topic{二、Intel 语法的操作数顺序}
 Intel 语法写作 \code{mov destination, source}，目的操作数在前。AT\&T
 语法采用相反顺序并给寄存器加百分号。本项目统一 NASM Intel 语法，避免在
 固件、反汇编和文档之间反复转换。
@@ -35,8 +30,7 @@ Intel 语法写作 \code{mov destination, source}，目的操作数在前。AT\&
 \code{mov al,[address]} 从内存读到 AL。方括号表达内存操作数，没有方括号的
 立即数和寄存器不会自动解引用。
 
-\subsection{三、BITS 指令与当前执行模式}
-
+\topic{三、BITS 指令与当前执行模式}
 NASM 的 \code{bits 16} 告诉汇编器按 16 位默认操作数和地址宽度选择编码。
 它不会在运行时切换 CPU 模式。CPU 是否按实模式、保护模式或长模式解释字节，
 由 CR0、EFER、段描述符等架构状态决定。
@@ -45,8 +39,7 @@ NASM 的 \code{bits 16} 告诉汇编器按 16 位默认操作数和地址宽度�
 地址宽度前缀。前缀属于指令编码的一部分，过度混用会增加体积并引入未建立的
 寄存器高位假设。
 
-\subsection{四、标签、节与重定位}
-
+\topic{四、标签、节与重定位}
 标签给当前位置命名。局部 \code{call label} 的最终位移可能在汇编时计算；
 跨节符号需要目标文件保存重定位，让链接器在安排地址后回填。节把具有共同属性
 和布局要求的内容分组，本项目用 \code{.text.entry} 保存入口，
@@ -64,8 +57,7 @@ NASM 的 \code{bits 16} 告诉汇编器按 16 位默认操作数和地址宽度�
 \diagramnote{汇编器解决单个源文件内的指令编码，链接器解决跨节最终地址，
 objcopy 再把带元数据的 ELF 变成硬件直接读取的 ROM 字节。}
 
-\subsection{五、栈、CALL 与 RET}
-
+\topic{五、栈、CALL 与 RET}
 x86 栈向低地址增长。16 位 \code{call} 先把返回 IP 压栈，再跳到目标；
 \code{ret} 从栈顶弹出 IP。若 SP 尚未设置，第一次 \code{call} 就会把返回
 地址写到未知位置。固件在调用串口函数前把 SS 清零、SP 设为
@@ -87,8 +79,7 @@ x86 栈向低地址增长。16 位 \code{call} 先把返回 IP 压栈，再跳�
 组合期间使用不一致栈。后续进入 C++20 时还要建立 64 位 ABI 要求的栈对齐、
 参数寄存器和被调用者保存寄存器规则。
 
-\subsection{六、过程接口与进位标志}
-
+\topic{六、过程接口与进位标志}
 早期汇编没有语言级返回类型。当前串口函数用 CF 表示结果：\code{stc} 返回
 成功，\code{clc} 返回超时，调用者用 \code{jnc} 进入失败路径。字符值通过 AL
 传入，字符串偏移通过 SI 传入。
@@ -97,8 +88,7 @@ x86 栈向低地址增长。16 位 \code{call} 先把返回 IP 压栈，再跳�
 汇编却会反转控制流。进入高级语言后，项目改用强类型返回状态，汇编适配层负责
 把标志和寄存器转换成明确 ABI。
 
-\subsection{七、字符串指令与段覆盖}
-
+\topic{七、字符串指令与段覆盖}
 \code{lodsb} 从 \code{DS:SI} 读取一个字节到 AL，再按 DF 增减 SI。复位
 固件的字符串在高端 ROM，DS 已清零指向低地址；使用 \code{cs lodsb} 加入段
 覆盖前缀，让读取使用 CS 隐藏基址。这个前缀不是语法装饰，而是决定物理地址的
@@ -107,8 +97,7 @@ x86 栈向低地址增长。16 位 \code{call} 先把返回 IP 压栈，再跳�
 字符串以零结束。\code{test al,al} 对 AL 与自身做按位与，只更新标志不保留
 结果；AL 为零时 ZF 置位，\code{jz} 结束循环。非零字符进入发送过程。
 
-\subsection{八、端口 I/O 指令}
-
+\topic{八、端口 I/O 指令}
 \code{out dx,al} 把 AL 的 8 位值写到 DX 指定的 I/O 端口；
 \code{in al,dx} 读取 8 位端口。I/O 空间与内存地址空间分离，普通
 \code{mov} 不能替代。端口值、访问宽度和顺序共同组成设备协议。
@@ -116,25 +105,20 @@ x86 栈向低地址增长。16 位 \code{call} 先把返回 IP 压栈，再跳�
 后续 MMIO 设备改用普通内存读写指令，但还要配置不可缓存属性、volatile
 访问和内存屏障。端口 I/O 的强顺序不应被错误推广为所有设备访问天然有序。
 
-\subsection{九、宏、常量与编译边界}
-
+\topic{九、宏、常量与编译边界}
 NASM 的 \code{equ} 在汇编期建立具名常量，不产生存储。端口、位掩码、消息
 地址和轮询上限都使用带项目与模块前缀的名称。故障镜像使用一个构建期条件符号
 改变测试状态；它被限制在固件构建边界，不承担普通控制流或领域建模。
 
-\subsection{十、逐条执行 trace 的记录格式}
-
+\topic{十、逐条执行 trace 的记录格式}
 可靠走读同时记录地址、字节、指令、输入状态、输出状态和下一地址。仅列汇编
 助记符会漏掉链接地址和机器码，仅列十六进制又无法表达寄存器意图。
 
-\begin{longtable}{L{0.13\linewidth}L{0.16\linewidth}L{0.18\linewidth}L{0.23\linewidth}L{0.20\linewidth}}
-\toprule
-物理地址 & 字节 & 指令 & 状态变化 & 下一地址 \\
-\midrule
-FFFFF000 & FA & \code{cli} & IF=0 & FFFFF001 \\
-FFFFF001 & FC & \code{cld} & DF=0 & FFFFF002 \\
-FFFFF002 & 31 C0 & \code{xor ax,ax} & AX=0 & FFFFF004 \\
-FFFFF004 & 8E D8 & \code{mov ds,ax} & DS base=0 & FFFFF006 \\
-FFFFF00A & BC 00 70 & \code{mov sp,0x7000} & SP=7000 & FFFFF00D \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.16\linewidth}L{0.18\linewidth}L{0.23\linewidth}L{0.20\linewidth}}
+物理地址 & 字节 & 指令 & 状态变化 & 下一地址 \\ \hline
+FFFFF000 & FA & \code{cli} & IF=0 & FFFFF001 \\ \hline
+FFFFF001 & FC & \code{cld} & DF=0 & FFFFF002 \\ \hline
+FFFFF002 & 31 C0 & \code{xor ax,ax} & AX=0 & FFFFF004 \\ \hline
+FFFFF004 & 8E D8 & \code{mov ds,ax} & DS base=0 & FFFFF006 \\ \hline
+FFFFF00A & BC 00 70 & \code{mov sp,0x7000} & SP=7000 & FFFFF00D \\ \hline
+\end{osgridlongtable}

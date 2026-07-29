@@ -1,0 +1,167 @@
+\topic{互连不仅转发地址，还负责仲裁、排序与错误}
+早期总线可由 CPU、ROM、RAM 和外设共享一组并行线；现代 SoC/CPU 使用分层
+互连、点对点链路和协议桥。无论物理形式怎样变化，一次事务仍要回答：
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.30\linewidth}L{0.41\linewidth}}
+问题 & 协议字段/机制 & 若缺失会怎样 \\ \hline
+\endfirsthead
+问题 & 协议字段/机制 & 若缺失会怎样 \\ \hline
+\endhead
+访问哪里 & 地址、目标 ID、路由 & 多个目标同时响应或无人响应 \\ \hline
+读还是写 & opcode、read/write、byte enable & 数据方向冲突或错误修改 \\ \hline
+传什么 & 数据、宽度、burst 长度 & 双方对有效 byte 理解不同 \\ \hline
+何时有效 & valid/ready、时钟边沿、握手 & 采到旧值或丢事务 \\ \hline
+谁可以发送 & 仲裁、所有权、tag & 多个主设备同时驱动 \\ \hline
+是否成功 & response、error、timeout & 主设备永久等待或把错误当数据 \\ \hline
+完成顺序 & ordering、barrier、ID & 软件观察到不允许的重排 \\ \hline
+\end{osgridlongtable}
+
+\topic{一次读事务应沿五条独立泳道阅读}
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os hardware,minimum width=25mm] (master) at (0,2.5) {主设备\\CPU};
+  \node[os block,minimum width=27mm] (fabric) at (6.0,2.5) {互连/译码};
+  \node[os hardware,minimum width=25mm] (target) at (12.0,2.5) {目标\\RAM/设备};
+
+  \draw[BookBlue,very thick,->] ([yshift=12mm]master.east) --
+    node[above]{1. 地址 + READ + 宽度} ([yshift=12mm]fabric.west);
+  \draw[BookBlue,very thick,->] ([yshift=12mm]fabric.east) --
+    ([yshift=12mm]target.west);
+
+  \draw[BookTeal,thick,->] ([yshift=5mm]master.east) --
+    node[above,font=\scriptsize]{2. request valid} ([yshift=5mm]fabric.west);
+  \draw[BookTeal,thick,->] ([yshift=5mm]fabric.east) --
+    ([yshift=5mm]target.west);
+
+  \draw[BookAmber,thick,<-] ([yshift=-3mm]master.east) --
+    node[below,font=\scriptsize]{3. request accepted} ([yshift=-3mm]fabric.west);
+  \draw[BookAmber,thick,<-] ([yshift=-3mm]fabric.east) --
+    ([yshift=-3mm]target.west);
+
+  \draw[BookBlue,very thick,<-] ([yshift=-11mm]master.east) --
+    node[below]{4. 返回数据} ([yshift=-11mm]fabric.west);
+  \draw[BookBlue,very thick,<-] ([yshift=-11mm]fabric.east) --
+    ([yshift=-11mm]target.west);
+
+  \draw[BookRed,thick,<-] ([yshift=-18mm]master.east) --
+    node[below,font=\scriptsize]{5. response/错误} ([yshift=-18mm]fabric.west);
+  \draw[BookRed,thick,<-] ([yshift=-18mm]fabric.east) --
+    ([yshift=-18mm]target.west);
+\end{tikzpicture}
+\end{center}
+\diagramnote{五条泳道分开绘制，箭头明确谁驱动、谁返回。实际协议可能把多种
+信息编码到通道中，也可能允许地址与数据分离并并发在途。}
+
+\topic{握手允许快主设备等待慢目标}
+valid/ready 型握手中，发送方在 valid 为 1 时保持有效负载；只有 valid 与
+ready 在同一采样边沿同时为 1，传输才真正发生。接收方可拉低 ready 插入
+backpressure。
+
+\begin{center}
+\begin{tikzpicture}[x=0.82cm,y=0.66cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (15,0) node[right]{时间};
+  \foreach \y/\name in {5/CLK,4/VALID,3/READY,2/ADDR,1/DATA} {
+    \draw[BookRule] (0,\y) -- (14.3,\y);
+    \node[left] at (0,\y) {\name};
+  }
+  \foreach \x in {1,3,5,7,9,11,13}
+    \draw[BookBlue,thick] (\x,5) -- (\x,5.45) -- (\x+1,5.45) -- (\x+1,5);
+  \draw[BookTeal,thick] (0,4) -- (2.3,4) -- (2.3,4.4) -- (10.3,4.4) -- (10.3,4);
+  \draw[BookAmber,thick] (0,3) -- (6.3,3) -- (6.3,3.4) -- (10.3,3.4) -- (10.3,3);
+  \draw[BookBlue,thick] (0,2) -- (2.3,2) -- (2.7,2.35) -- (10.3,2.35) -- (10.7,2);
+  \draw[BookBlue,thick] (0,1) -- (2.3,1) -- (2.7,1.35) -- (10.3,1.35) -- (10.7,1);
+  \fill[BookRed!10] (2.3,0.45) rectangle (6.3,5.75);
+  \node[BookRed] at (4.3,5.65) {等待：VALID=1，READY=0};
+  \draw[dashed,BookTeal,thick] (7,0.45) -- (7,5.75);
+  \node[BookTeal,above] at (7,5.75) {该边沿完成传输};
+\end{tikzpicture}
+\end{center}
+
+发送方若在等待期间改变地址或数据，接收方可能采到不一致负载。状态机必须把
+“提出请求”和“请求被接受”分成两个状态。
+
+\topic{总线仲裁决定多个主设备谁先使用共享目标}
+CPU、DMA 控制器、显示控制器和存储控制器都可能发起内存事务。仲裁策略包括
+固定优先级、轮转、带宽配额和实时优先级。
+
+\begin{pdfdiagram}[node distance=7mm and 12mm]
+  \node[os hardware] (cpu) {CPU master};
+  \node[os hardware,below=of cpu] (dma) {DMA master};
+  \node[os hardware,below=of dma] (display) {显示 master};
+  \node[os block,right=28mm of dma,minimum width=30mm] (arbiter) {仲裁器\\选择一项请求};
+  \node[os state,right=28mm of arbiter,minimum width=30mm] (fabric) {共享互连\\保留事务 ID};
+  \node[os hardware,right=of fabric] (dram) {DRAM};
+  \draw[os arrow] (cpu) -| (arbiter);
+  \draw[os arrow] (dma) -- (arbiter);
+  \draw[os arrow] (display) -| (arbiter);
+  \draw[os bus] (arbiter) -- node[above]{获胜者事务} (fabric);
+  \draw[os bus] (fabric) -- (dram);
+  \draw[os arrow,bend right=35] (fabric.south) to node[below]{按 ID 返回} (arbiter.south);
+\end{pdfdiagram}
+
+固定优先级简单但可能让低优先级长期饥饿；轮转提高公平性，却可能增加关键请求
+延迟。操作系统的 DMA 与缓存管理建立在这些硬件事务规则之上。
+
+\topic{byte enable 说明一次宽事务中哪些 byte 有效}
+假设数据总线为 32 bit，地址按 byte 编号。写一个 byte 时不应覆盖同一 32-bit
+字中的其余三个 byte；协议可使用 4 根 byte enable：
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \i/\addr/\label in {
+    0/\(A+0\)/D7..0,
+    1/\(A+1\)/D15..8,
+    2/\(A+2\)/D23..16,
+    3/\(A+3\)/D31..24} {
+    \node[draw=BookBlue,fill=BookCodeBg,minimum width=31mm,minimum height=11mm]
+      (lane\i) at ({3.35*\i},0) {\label};
+    \node[above=2mm of lane\i] {\addr};
+    \node[below=2mm of lane\i] {BE\(\i\)};
+  }
+  \draw[BookRed,very thick,rounded corners=4pt]
+    (6.9,-0.62) rectangle (9.8,0.62);
+  \node[BookRed,align=center] at (8.35,-1.35)
+    {写地址 \(A+2\) 的 byte：\\只使能 BE2};
+\end{tikzpicture}
+\end{center}
+
+x86 little-endian 决定多字节值如何落到这些 byte lane；总线宽度本身不改变
+字节序。
+
+\topic{MMIO 与 Port I/O 都是设备寄存器访问契约}
+\term{MMIO}{memory-mapped I/O}把设备寄存器放入物理地址空间，使用普通或专用
+内存访问指令；x86 \term{Port I/O}{端口 I/O}使用独立 16-bit 端口编号和
+IN/OUT 指令。两者都不是 RAM，必须遵守设备规定的访问宽度、顺序和副作用。
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.32\linewidth}L{0.39\linewidth}}
+比较 & MMIO & x86 Port I/O \\ \hline
+\endfirsthead
+比较 & MMIO & x86 Port I/O \\ \hline
+\endhead
+编号空间 & 物理地址空间的一部分 & 独立端口地址空间 \\ \hline
+指令 & 内存读写形式 & IN/OUT \\ \hline
+缓存属性 & 必须映射为合适设备类型 & 不经普通内存缓存 \\ \hline
+典型设备 & PCI/PCIe BAR、APIC、帧缓冲 & 16550、PIC、PIT、ATA 传统端口 \\ \hline
+共同风险 & 读写有副作用、宽度敏感、需要顺序 & 同左 \\ \hline
+\end{osgridlongtable}
+
+对状态寄存器的“读”可能清中断；写 1 可能表示清位；同一地址的 8-bit 与
+32-bit 访问可能语义不同。设备寄存器不能像普通内存变量一样随意重复读取。
+
+\topic{超时是互连失败语义的一部分}
+若目标永久不返回 ready，主设备不能无限阻塞整台机器。平台可能返回总线错误，
+控制器可能设置 timeout 状态，软件驱动也应有更高层期限。诊断要区分：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 地址无人响应；
+  \item 目标被选中但内部状态机卡住；
+  \item 返回错误；
+  \item 数据返回但校验失败；
+  \item 软件把慢响应误判为永久故障。
+\end{itemize}
+
+\begin{failurebox}
+在图上把 CPU 和设备连一根双向粗线，会隐藏谁在何时驱动、等待怎样发生、
+错误怎样返回。总线图至少应分开地址/请求、数据方向、握手和响应；否则它只能
+表示“二者有关”，不能支持调试。
+\end{failurebox}

@@ -6,7 +6,7 @@
 \input{generated/source_metrics}
 
 \setcounter{tocdepth}{1}
-\setcounter{secnumdepth}{2}
+\setcounter{secnumdepth}{1}
 
 \begin{document}
 
@@ -17,11 +17,22 @@
 \tableofcontents
 
 \mainmatter
-\part{机器基础、x86 历史与真实硬件}
+\part{零基础预备：从物理量到可取指计算机}
 \begin{partbridge}
-操作系统执行以前，电源、时钟、复位、地址译码和指令存储已经组成不可省略的
-物理通路。本部分从机器角色与电气条件开始，沿 x86 兼容历史解释复位状态，
-再把 QEMU 平台事务对照到实体载板的供电、引脚、差分对和 PCB。
+本部分不假设读者学过物理、电路或计算机。我们从量、单位、计数和编码开始，
+逐步建立电路、元件、逻辑门、触发器、CPU、存储器、引脚、总线和地址译码。
+完成四章后，ROM、复位、CPU 接线与机器码才成为可以推导的事实，而不是缩写。
+\end{partbridge}
+\input{chapters/foundation01-quantities-information-and-history}
+\input{chapters/foundation02-electricity-components-and-schematics}
+\input{chapters/foundation03-digital-logic-clock-and-state}
+\input{chapters/foundation04-cpu-memory-bus-and-machine}
+
+\part{操作系统职责、x86 历史与真实硬件}
+\begin{partbridge}
+硬件具备取指能力以后，仍没有固件、进程、文件或用户。本部分先划清固件、
+Loader、Kernel、驱动与应用程序的责任，再沿 x86 兼容历史解释复位状态，
+最后把 QEMU 平台事务对照到实体载板的供电、引脚、差分对和 PCB。
 \end{partbridge}
 \input{chapters/ch01-machine-foundations}
 \input{chapters/ch02-x86-history-and-reset}
@@ -71,7 +82,7 @@ Thread、系统调用、内核对象、VFS、PID1、VMA、文件后备和 COW �
 
 \part{工程治理、学习闭环与 v2.0 发布}
 \begin{partbridge}
-最后把十六章重新连接到需求、ADR、测试、日志、代码统计、教材、双仓提交和
+最后把二十章重新连接到需求、ADR、测试、日志、代码统计、教材、双仓提交和
 公网部署。v2.0 不靠“功能很多”完成，而靠精确输入、明确限制、分层反例和
 他人可复现的交付身份完成。
 \end{partbridge}

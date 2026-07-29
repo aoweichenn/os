@@ -1,56 +1,44 @@
-\section{把芯片写成寄存器与标志位结构}
+\section{芯片寄存器、复用端口与标志位}
 
 端口号只是地址，不能代表完整设备。要理解一颗芯片，至少要同时记录寄存器宽度、
 读写方向、字段位、复用条件和状态所有权。项目把当前启动链使用的 CPU、16550A
 UART 和 ATA/IDE 主通道整理为机器可读的 \filepath{docs/hardware/register_map.yaml}，
 本节提炼最常用的走读视图。
 
-\subsection{CPU 标志与模式控制}
-
-\begin{longtable}{L{0.12\textwidth}L{0.16\textwidth}L{0.56\textwidth}}
-\toprule
-\textbf{位} & \textbf{名称} & \textbf{当前含义}\\
-\midrule
+\topic{CPU 标志与模式控制}\par
+\begin{osgridlongtable}{L{0.12\textwidth}L{0.16\textwidth}L{0.56\textwidth}}
+\textbf{位} & \textbf{名称} & \textbf{当前含义}\\ \hline
 \endfirsthead
-\toprule
-\textbf{位} & \textbf{名称} & \textbf{当前含义}\\
-\midrule
+\textbf{位} & \textbf{名称} & \textbf{当前含义}\\ \hline
 \endhead
-0 & CF & 无符号加法进位；地址和 LBA 加法后用于溢出判断。\\
-2 & PF & 低字节偶校验；当前不作为协议条件。\\
-6 & ZF & 结果为零；由 \code{cmp}、\code{test} 和循环条件消费。\\
-8 & TF & 单步陷阱；正常启动保持关闭。\\
-9 & IF & 可屏蔽中断开关；固件入口用 \code{CLI} 关闭。\\
-10 & DF & 字符串方向；入口用 \code{CLD} 清零，保证 \code{lodsb/lodsw} 向高地址走。\\
-11 & OF & 有符号溢出；当前不作为硬件协议条件。\\
-\bottomrule
-\end{longtable}
+0 & CF & 无符号加法进位；地址和 LBA 加法后用于溢出判断。\\ \hline
+2 & PF & 低字节偶校验；当前不作为协议条件。\\ \hline
+6 & ZF & 结果为零；由 \code{cmp}、\code{test} 和循环条件消费。\\ \hline
+8 & TF & 单步陷阱；正常启动保持关闭。\\ \hline
+9 & IF & 可屏蔽中断开关；固件入口用 \code{CLI} 关闭。\\ \hline
+10 & DF & 字符串方向；入口用 \code{CLD} 清零，保证 \code{lodsb/lodsw} 向高地址走。\\ \hline
+11 & OF & 有符号溢出；当前不作为硬件协议条件。\\ \hline
+\end{osgridlongtable}
 
 模式转换还会写 CR0.PE、CR0.PG、CR3、CR4.PAE 与 IA32\_EFER.LME。CR0.PG
 不能孤立打开：页表根、PAE、EFER 和远跳转顺序共同决定处理器最终状态。
 EFER.LMA 是处理器激活后的只读结果，软件不能把“请求写入”误认为“已经进入长模式”。
 
-\subsection{描述符寄存器与异常位字段}
-
+\topic{描述符寄存器与异常位字段}
 v0.5 把 GDTR、IDTR、TR 和 CR2 加入结构化硬件图。GDTR/IDTR 都由 64 位
 base 与 16 位 inclusive limit 组成；TR 保存 TSS 选择子和处理器内部缓存。
 v0.8 当前 GDT limit=55，IDT limit=4095，TR=\code{0x28}。
 
-\begin{longtable}{L{0.10\textwidth}L{0.18\textwidth}L{0.22\textwidth}L{0.34\textwidth}}
-\toprule
-\textbf{对象} & \textbf{宽度} & \textbf{访问指令} & \textbf{当前职责}\\
-\midrule
+\begin{osgridlongtable}{L{0.10\textwidth}L{0.18\textwidth}L{0.22\textwidth}L{0.34\textwidth}}
+\textbf{对象} & \textbf{宽度} & \textbf{访问指令} & \textbf{当前职责}\\ \hline
 \endfirsthead
-\toprule
-\textbf{对象} & \textbf{宽度} & \textbf{访问指令} & \textbf{当前职责}\\
-\midrule
+\textbf{对象} & \textbf{宽度} & \textbf{访问指令} & \textbf{当前职责}\\ \hline
 \endhead
-GDTR & 80 位 & LGDT/SGDT & 七槽 GDT 的 base/limit\\
-IDTR & 80 位 & LIDT/SIDT & 256 槽 IDT 的 base/limit\\
-TR & 16 位可见 & LTR/STR & 选择 104 字节 TSS\\
-CR2 & 64 位 & MOV & 最近页故障线性地址\\
-\bottomrule
-\end{longtable}
+GDTR & 80 位 & LGDT/SGDT & 七槽 GDT 的 base/limit\\ \hline
+IDTR & 80 位 & LIDT/SIDT & 256 槽 IDT 的 base/limit\\ \hline
+TR & 16 位可见 & LTR/STR & 选择 104 字节 TSS\\ \hline
+CR2 & 64 位 & MOV & 最近页故障线性地址\\ \hline
+\end{osgridlongtable}
 
 页故障错误码 bit 0 是 present/permission，bit 1 是 read/write，bit 2 是
 supervisor/user，bit 3 是 reserved-bit violation，bit 4 是
@@ -63,55 +51,43 @@ data/instruction fetch。Ring 0 not-present 注入结果为全零，CR2 为
 NMI→IST2、双重故障→IST1、机器检查→IST3 的结构关系。这样芯片文档、C++
 位字段测试和 NASM 异常桩共享同一组可审查事实。
 
-\subsection{16550A UART 的复用寄存器}
-
+\topic{16550A UART 的复用寄存器}
 COM1 基址为 \code{0x3F8}，寄存器宽度为 8 位。LCR 的 DLAB 位使偏移 0 和 1
 在发送/接收寄存器与除数锁存器之间复用：
 
-\begin{longtable}{L{0.12\textwidth}L{0.30\textwidth}L{0.38\textwidth}}
-\toprule
-\textbf{偏移} & \textbf{名称} & \textbf{关键字段}\\
-\midrule
+\begin{osgridlongtable}{L{0.12\textwidth}L{0.30\textwidth}L{0.38\textwidth}}
+\textbf{偏移} & \textbf{名称} & \textbf{关键字段}\\ \hline
 \endfirsthead
-\toprule
-\textbf{偏移} & \textbf{名称} & \textbf{关键字段}\\
-\midrule
+\textbf{偏移} & \textbf{名称} & \textbf{关键字段}\\ \hline
 \endhead
-0 & RBR/THR/DLL & DLAB=0 时接收或发送；DLAB=1 时除数低字节。\\
-1 & IER/DLM & DLAB=0 时中断使能；DLAB=1 时除数高字节。\\
-2 & IIR/FCR & 读中断识别，写 FIFO 控制。\\
-3 & LCR & WLS、停止位、奇偶校验和 DLAB。\\
-4 & MCR & DTR、RTS、OUT2 等 modem 控制。\\
-5 & LSR & DR、错误位、THRE、TEMT 和 FIFO 错误。\\
-\bottomrule
-\end{longtable}
+0 & RBR/THR/DLL & DLAB=0 时接收或发送；DLAB=1 时除数低字节。\\ \hline
+1 & IER/DLM & DLAB=0 时中断使能；DLAB=1 时除数高字节。\\ \hline
+2 & IIR/FCR & 读中断识别，写 FIFO 控制。\\ \hline
+3 & LCR & WLS、停止位、奇偶校验和 DLAB。\\ \hline
+4 & MCR & DTR、RTS、OUT2 等 modem 控制。\\ \hline
+5 & LSR & DR、错误位、THRE、TEMT 和 FIFO 错误。\\ \hline
+\end{osgridlongtable}
 
 LSR bit 5 的 THRE 只表示发送保持寄存器可接收新字节；bit 6 的 TEMT 表示保持
 寄存器和移位寄存器都空，语义更强但不是本阶段写入的必要条件。固件因此只等待
 THRE，并给每次等待设置 \code{0xFFFF} 次预算。
 
-\subsection{ATA/IDE 状态位决定数据所有权}
-
+\topic{ATA/IDE 状态位决定数据所有权}
 主通道命令块端口为 \code{0x1F0..0x1F7}，控制端口为 \code{0x3F6}。DATA
 是 16 位寄存器，每个 512 字节扇区必须读取 256 个字；LBA 地址分散在三个
 8 位端口和 DRIVE/HEAD 的四个高位中。
 
-\begin{longtable}{L{0.10\textwidth}L{0.18\textwidth}L{0.56\textwidth}}
-\toprule
-\textbf{位} & \textbf{名称} & \textbf{决策}\\
-\midrule
+\begin{osgridlongtable}{L{0.10\textwidth}L{0.18\textwidth}L{0.56\textwidth}}
+\textbf{位} & \textbf{名称} & \textbf{决策}\\ \hline
 \endfirsthead
-\toprule
-\textbf{位} & \textbf{名称} & \textbf{决策}\\
-\midrule
+\textbf{位} & \textbf{名称} & \textbf{决策}\\ \hline
 \endhead
-0 & ERR & 设备报告命令错误，立即进入 \code{IDE\_ERROR}。\\
-3 & DRQ & 数据可读；必须同时满足 BSY=0 且 ERR/DF=0。\\
-5 & DF & 设备故障，与 ERR 归入同一设备错误边界。\\
-6 & DRDY & 设备就绪，当前不单独推进状态。\\
-7 & BSY & 设备忙，继续有界等待；预算耗尽进入 \code{IDE\_TIMEOUT}。\\
-\bottomrule
-\end{longtable}
+0 & ERR & 设备报告命令错误，立即进入 \code{IDE\_ERROR}。\\ \hline
+3 & DRQ & 数据可读；必须同时满足 BSY=0 且 ERR/DF=0。\\ \hline
+5 & DF & 设备故障，与 ERR 归入同一设备错误边界。\\ \hline
+6 & DRDY & 设备就绪，当前不单独推进状态。\\ \hline
+7 & BSY & 设备忙，继续有界等待；预算耗尽进入 \code{IDE\_TIMEOUT}。\\ \hline
+\end{osgridlongtable}
 
 因此一条读取事务的状态机是：
 

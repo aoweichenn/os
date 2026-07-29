@@ -1,0 +1,205 @@
+\topic{存储层次用容量、延迟、带宽、成本和持久性换取平衡}
+不存在同时无限快、无限大、断电不丢且零成本的存储器。系统把不同介质组成
+层次，让常用数据靠近 CPU，把大容量和持久数据放到更远层。
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.17\linewidth}L{0.20\linewidth}L{0.17\linewidth}L{0.19\linewidth}}
+层次 & 典型容量 & 访问直觉 & 断电后 & 管理者 \\ \hline
+\endfirsthead
+层次 & 典型容量 & 访问直觉 & 断电后 & 管理者 \\ \hline
+\endhead
+寄存器 & 数十到数百 byte 架构状态 & 最接近执行单元 & 丢失 & 指令与编译器 \\ \hline
+L1/L2/L3 缓存 & KiB 到数十 MiB & 自动按 cache line 搬运 & 丢失 & 硬件缓存协议 \\ \hline
+DRAM & GiB 级 & 经内存控制器访问 & 丢失 & 硬件 + OS 页管理 \\ \hline
+SSD/磁盘 & GiB 到 TiB & 经控制器按块完成 & 保留 & 驱动、块层、文件系统 \\ \hline
+远程/归档 & 更大 & 网络/介质访问 & 依系统而定 & 分布式软件和运维 \\ \hline
+\end{osgridlongtable}
+
+\begin{pdfdiagram}[node distance=6mm and 10mm]
+  \node[os state,minimum width=23mm] (reg) {寄存器\\最小、最快};
+  \node[os state,right=of reg,minimum width=23mm] (l1) {L1 缓存};
+  \node[os state,right=of l1,minimum width=23mm] (llc) {末级缓存};
+  \node[os hardware,right=of llc,minimum width=23mm] (dram) {DRAM};
+  \node[os hardware,right=of dram,minimum width=23mm] (disk) {SSD/磁盘\\最大、持久};
+  \draw[os bus] (reg) -- (l1);
+  \draw[os bus] (l1) -- (llc);
+  \draw[os bus] (llc) -- (dram);
+  \draw[os bus] (dram) -- (disk);
+  \draw[decorate,decoration={brace,mirror,amplitude=5pt}]
+    ($(reg.south)+(0,-8mm)$) -- ($(disk.south)+(0,-8mm)$)
+    node[midway,below=6pt]{向右：容量与持久性增加，访问路径通常更长};
+\end{pdfdiagram}
+
+\topic{局部性解释缓存为什么有效}
+\term{时间局部性}{temporal locality}表示刚访问的数据可能很快再次访问；
+\term{空间局部性}{spatial locality}表示邻近地址可能很快被访问。缓存以
+cache line 为单位搬运一段连续 byte，利用两种局部性降低平均延迟。
+
+平均访问时间可粗略写为
+
+\[
+AMAT=t_{\mathrm{hit}}
++r_{\mathrm{miss}}\times p_{\mathrm{miss}},
+\]
+
+其中 \(r_{\mathrm{miss}}\) 是 miss rate，\(p_{\mathrm{miss}}\) 是 miss penalty。
+
+\begin{workedexample}
+L1 hit 时间 \(\SI{1}{ns}\)，miss rate 为 \(5\%\)，miss 后平均再花
+\(\SI{12}{ns}\)：
+
+\[
+AMAT=\SI{1}{ns}+0.05\times\SI{12}{ns}
+=\SI{1.6}{ns}.
+\]
+
+只报告 \(\SI{1}{ns}\) 会隐藏 miss；只报告 \(\SI{13}{ns}\) 又忽略大多数
+访问命中。平均值还不能表达尾延迟，实际分析需要工作负载分布。
+\end{workedexample}
+
+\topic{地址怎样选择 cache set、tag 和 line offset}
+直接映射缓存中，地址可概念分为：
+
+\[
+\boxed{\text{tag}}\ \boxed{\text{set index}}\ \boxed{\text{line offset}}.
+\]
+
+若 line 为 64 byte，offset 需要 \(\log_2 64=6\) bit。若有 256 个 set，
+index 需要 8 bit；其余高位作为 tag。组相联缓存允许每个 set 保存多个 way，
+减少不同地址争用同一 set 的冲突。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \fill[BookBlue!15] (0,0) rectangle (5.4,1.1);
+  \fill[BookTeal!15] (5.4,0) rectangle (8.6,1.1);
+  \fill[BookAmber!20] (8.6,0) rectangle (11.8,1.1);
+  \draw[BookBlue,thick] (0,0) rectangle (5.4,1.1);
+  \draw[BookTeal,thick] (5.4,0) rectangle (8.6,1.1);
+  \draw[BookAmber,thick] (8.6,0) rectangle (11.8,1.1);
+  \node at (2.7,0.55) {tag：确认是哪一块内存};
+  \node at (7.0,0.55) {set：选组};
+  \node at (10.2,0.55) {offset：选 line 内 byte};
+  \node[below] at (10.2,0) {6 bit（64 B line）};
+  \node[below] at (7.0,0) {8 bit（256 sets）};
+\end{tikzpicture}
+\end{center}
+
+缓存一致性、写回、预取和替换会继续增加复杂度。操作系统还必须为设备 MMIO
+选择不可缓存或设备型属性，不能让读取设备状态命中旧 cache line。
+
+\topic{SRAM 单元、字线和位线怎样组成数组}
+SRAM 的双稳态单元保存一个 bit，访问晶体管把内部节点连接到互补位线
+BL/\(\overline{\mathrm{BL}}\)。行译码器选择 word line，列电路读出或写入。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os block,minimum width=24mm] (row) at (0,2.4) {行译码器\\地址高位};
+  \draw[step=0.85cm,BookRule] (3,0) grid (8.1,5.1);
+  \node[above] at (5.55,5.1) {SRAM bit-cell 阵列};
+  \foreach \y in {0.425,1.275,2.125,2.975,3.825,4.675}
+    \draw[->,BookBlue] (row.east) -- (3,\y);
+  \node[os block,minimum width=31mm] (column) at (5.55,-1.0) {列选择 + sense amplifier\\地址低位与读写控制};
+  \foreach \x in {3.425,4.275,5.125,5.975,6.825,7.675}
+    \draw[->,BookTeal] (\x,0) -- (\x,-0.45);
+  \node[os state] (data) at (10.6,-1.0) {数据 DQ};
+  \draw[os bus] (column) -- (data);
+\end{tikzpicture}
+\end{center}
+
+阵列图说明地址译码不是“直接连接到每个 bit”：行列结构减少引脚和内部连线。
+实际 SRAM 还包含预充电、写驱动、冗余修复和时序控制。
+
+\topic{DRAM 单元必须被感测、恢复并刷新}
+典型 DRAM bit 使用一个访问晶体管和一个小电容。读操作会扰动电荷，sense
+amplifier 把微小差异放大并恢复内容。访问通常经历：
+
+\[
+\text{PRECHARGE}
+\rightarrow\text{ACTIVATE row}
+\rightarrow\text{READ/WRITE column}
+\rightarrow\text{PRECHARGE}.
+\]
+
+同一已打开行内的访问可较快；切换到另一行需要关闭和激活。刷新周期性重读并
+恢复各行，否则漏电会丢失数据。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (-2,2) node[left]{word line} -- (-0.7,2) node[nmos,anchor=G] (access) {};
+  \draw (access.D) -- (0.7,2.7) node[above]{bit line};
+  \draw (access.S) -- (0.7,1.2)
+    to[C,l={存储电容}] (0.7,0) node[ground]{};
+  \node[align=center] at (0.7,-0.7)
+    {1T1C 教学模型：\\电荷代表状态，读后要恢复};
+
+  \begin{scope}[xshift=6cm]
+    \node[os block] (mc) at (0,2.0) {内存控制器\\调度命令};
+    \node[os hardware] (dimm) at (3.6,2.0) {DIMM/DRAM\\多个 rank/bank};
+    \draw[os bus] (mc) -- node[above]{命令/地址/数据} (dimm);
+    \draw[os arrow,bend right=32] (dimm.south) to node[below]{训练结果与状态} (mc.south);
+    \node[align=center] at (1.8,0.3)
+      {上电训练确定采样延迟、\\参考电压和 lane 对齐};
+  \end{scope}
+\end{circuitikz}
+\end{center}
+
+\topic{一颗并行 SRAM 怎样真正接到地址和数据总线}
+以 \(32\ \mathrm{Ki}\times8\) SRAM 为例：A0--A14 选择 32768 个 byte，D0--D7
+双向传输数据，CS\_N 片选，OE\_N 控制读输出，WE\_N 控制写入。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os hardware,minimum width=29mm,minimum height=44mm] (cpu) at (0,2.6)
+    {CPU/互连\\地址、数据、控制};
+  \node[os block,minimum width=28mm] (decode) at (5.1,4.5)
+    {高位地址译码\\产生 CS\_N};
+  \node[os hardware,minimum width=33mm,minimum height=49mm] (sram) at (11.2,2.6)
+    {32 Ki\(\times\)8 SRAM\\A0--A14\\D0--D7\\CS\_N/OE\_N/WE\_N};
+  \draw[os bus] ([yshift=12mm]cpu.east) -- node[above]{地址高位} (decode.west);
+  \draw[os arrow] (decode.east) -| node[above,pos=0.25]{CS\_N} ([yshift=16mm]sram.west);
+  \draw[os bus] ([yshift=4mm]cpu.east) -- node[above]{A0--A14} ([yshift=4mm]sram.west);
+  \draw[os bus,<->] ([yshift=-5mm]cpu.east) -- node[below]{D0--D7} ([yshift=-5mm]sram.west);
+  \draw[os arrow] ([yshift=-14mm]cpu.east) -- node[below]{OE\_N/WE\_N} ([yshift=-14mm]sram.west);
+\end{tikzpicture}
+\end{center}
+\diagramnote{高位地址不进入 SRAM 地址脚，而由平台译码决定是否选择该芯片；
+低 15 位决定芯片内部 byte。读周期只有被选中且 OE\_N 有效时 SRAM 才驱动
+数据线。}
+
+\topic{读写方向冲突为什么危险}
+读周期目标芯片驱动数据总线，CPU/主设备接收；写周期方向相反。若 OE\_N 与
+主设备输出同时有效，两端可能驱动相反电平，形成总线争用。控制时序常插入
+turnaround 周期，确保旧驱动者先进入高阻。
+
+\topic{Flash 的读、编程和擦除不是对称操作}
+NOR Flash 常能随机读取 byte/word，但写入前需要编程命令，bit 通常只能沿一个
+方向改变；要恢复另一方向必须按 sector/block 擦除。擦除和编程比读取慢得多，
+有寿命限制且掉电可能留下半完成状态。
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.26\linewidth}}
+操作 & 粒度 & 相对时间 & 失败关注 \\ \hline
+\endfirsthead
+操作 & 粒度 & 相对时间 & 失败关注 \\ \hline
+\endhead
+read & byte/word 或连续流 & 快 & 地址、模式、dummy cycle \\ \hline
+page program & page 内有限 byte & 较慢 & 跨页、写保护、掉电 \\ \hline
+sector erase & KiB 级扇区 & 更慢 & 寿命、错误扇区、掉电 \\ \hline
+chip erase & 整片 & 很慢 & 不可误触发、需要恢复策略 \\ \hline
+\end{osgridlongtable}
+
+可靠固件更新通常使用双槽、版本、校验和单一提交标志，避免覆盖当前唯一可启动
+副本后才发现断电。
+
+\topic{设备寄存器、RAM 和持久块为什么需要不同软件接口}
+三者都可能最终表现为 byte，但操作语义完全不同：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item RAM 读通常无副作用，写后立即可见且断电丢失；
+  \item 设备寄存器读写可能触发动作、清状态或要求顺序；
+  \item 磁盘/Flash 经控制器异步完成，具有块粒度、错误和持久化时点；
+  \item 缓存可能暂存数据，使“CPU 已写”不等于“介质已持久”。
+\end{itemize}
+
+\begin{failurebox}
+“都能按地址读写”只是表面相似。若把 MMIO 当普通 RAM 缓存、把 Flash 当可任意
+覆盖的内存、或把写回缓存中的脏数据当已经落盘，系统会在真实时序和掉电时失败。
+\end{failurebox}

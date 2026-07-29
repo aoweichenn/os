@@ -1,4 +1,4 @@
-\section{v1.8：匿名 VMA、按需分页与用户堆}
+\section{匿名 VMA、按需分页与用户堆}
 
 \begin{keyidea}
 页表只能回答“处理器此刻怎样翻译这个地址”，不能回答“一个尚未驻留的地址
@@ -8,8 +8,7 @@
 第一次形成完整生命周期。
 \end{keyidea}
 
-\subsection{上一阶段留下的虚拟内存缺口}
-
+\topic{上一阶段留下的虚拟内存缺口}
 v1.7 已经能够从 rootfs 读取 ELF，建立候选地址空间，构造
 \code{argc/argv/envp}，再由 PID1 组织 \code{spawn/exec/wait}。但每个合法
 用户页都必须在进入 Ring 3 前存在：
@@ -31,8 +30,7 @@ v1.7 已经能够从 rootfs 读取 ELF，建立候选地址空间，构造
 若没有第一层，处理器报告一个 not-present 地址时，Kernel 无法知道应该分配
 零页、读取文件、复制 COW 页、增长栈，还是把它当作越界终止。
 
-\subsection{历史：从连续数据段到通用映射}
-
+\topic{历史：从连续数据段到通用映射}
 早期 Unix 进程常被画成 text、data、BSS、向高地址增长的 heap 和向低地址
 增长的 stack。\term{program break}{进程数据段的逻辑末端}让用户分配器用
 一个连续边界取得新空间：
@@ -57,8 +55,7 @@ v1.7 已经能够从 rootfs 读取 ELF，建立候选地址空间，构造
 v1.8 同时保留 brk 与匿名 mmap，目的不是一次复制完整 POSIX，而是先冻结
 连续区间和独立区间两种所有权。
 
-\subsection{x86-64 页故障提供的硬件事实}
-
+\topic{x86-64 页故障提供的硬件事实}
 用户 load、store 或 instruction fetch 首先查 TLB；未命中时由硬件遍历
 PML4、PDPT、PD 和 PT。任何层级不存在、有效权限合取失败或保留位非法，
 CPU 都会：
@@ -72,17 +69,14 @@ CPU 都会：
 
 v1.8 使用的 error-code 位如下：
 
-\begin{longtable}{L{0.08\textwidth}L{0.12\textwidth}L{0.31\textwidth}L{0.31\textwidth}}
-\toprule
-位 & 名称 & 为零 & 为一\\
-\midrule
-0 & P & 页不在场 & 已在场但权限违反\\
-1 & W/R & 读访问 & 写访问\\
-2 & U/S & supervisor 访问 & user 访问\\
-3 & RSVD & 无保留位错误 & 页表保留位非法\\
-4 & I/D & 数据访问 & 指令取址\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.08\textwidth}L{0.12\textwidth}L{0.31\textwidth}L{0.31\textwidth}}
+位 & 名称 & 为零 & 为一\\ \hline
+0 & P & 页不在场 & 已在场但权限违反\\ \hline
+1 & W/R & 读访问 & 写访问\\ \hline
+2 & U/S & supervisor 访问 & user 访问\\ \hline
+3 & RSVD & 无保留位错误 & 页表保留位非法\\ \hline
+4 & I/D & 数据访问 & 指令取址\\ \hline
+\end{osgridlongtable}
 
 RSVD 必须先于普通 not-present 策略拒绝，因为它通常表示 Kernel 构造了非法
 页表。P 为一也不能被“补一张可写页”修复：向只读页写入正是硬件保护应捕获
@@ -91,8 +85,7 @@ RSVD 必须先于普通 not-present 策略拒绝，因为它通常表示 Kernel 
 如果 Kernel 建好合法 PTE 并从异常返回，CPU 会重试原用户指令。用户程序不
 需要显式循环，也不会从一个人为指定的“fault 后继”继续。
 
-\subsection{VMA 与 PTE 的正交关系}
-
+\topic{VMA 与 PTE 的正交关系}
 考虑四页匿名区域，只触及第二页：
 
 \begin{lstlisting}[caption={区间意图和驻留事实可以不同}]
@@ -125,28 +118,23 @@ not-present，也必须视为越界。
 \diagramnote{VMA 和硬件 fault 事实共同决定策略；页表与物理页是成功策略的
 提交结果，不能反过来替代 VMA。}
 
-\subsection{冻结的用户虚拟地址几何}
-
+\topic{冻结的用户虚拟地址几何}
 v1.8 使用可审计的固定窗口：
 
-\begin{longtable}{L{0.25\textwidth}L{0.31\textwidth}L{0.32\textwidth}}
-\toprule
-区域 & 范围或上限 & 语义\\
-\midrule
-ELF 与 brk & 最高不越过 \code{0x60000000} & ELF eager，break 从最高段页尾开始\\
-匿名窗口 & \code{[0x60000000,0x80000000)} & 512 MiB first-fit 或非覆盖 fixed\\
-栈 guard & \code{0x00007FFFFF7EF000} & 永久无 VMA、无 PTE\\
-用户栈 & \code{[0x00007FFFFF7F0000,0x00007FFFFFFF0000)} & 8 MiB 预留、向低地址提交\\
-用户 heap & 最大 8 MiB & UserHeap 自行施加的运行时边界\\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.25\textwidth}L{0.31\textwidth}L{0.32\textwidth}}
+区域 & 范围或上限 & 语义\\ \hline
+ELF 与 brk & 最高不越过 \code{0x60000000} & ELF eager，break 从最高段页尾开始\\ \hline
+匿名窗口 & \code{[0x60000000,0x80000000)} & 512 MiB first-fit 或非覆盖 fixed\\ \hline
+栈 guard & \code{0x00007FFFFF7EF000} & 永久无 VMA、无 PTE\\ \hline
+用户栈 & \code{[0x00007FFFFF7F0000,0x00007FFFFFFF0000)} & 8 MiB 预留、向低地址提交\\ \hline
+用户 heap & 最大 8 MiB & UserHeap 自行施加的运行时边界\\ \hline
+\end{osgridlongtable}
 
 这个匿名窗口不等于处理器全部用户地址能力。CPU profile 仍冻结 48 位虚拟
 地址；窄窗口只是 v1.8 的公开策略，使重叠、first-gap、容量耗尽和边界溢出
 可以被完整测试。
 
-\subsection{描述符池为什么独立于每个 map}
-
+\topic{描述符池为什么独立于每个 map}
 \code{VirtualMemoryAreaPool} 拥有 8192 个实际描述符和一条自由索引链；
 每个 \code{VirtualMemoryMap} 只链接带自己 owner identifier 的节点。单个
 Process 最多拥有 4096 个区域。
@@ -171,8 +159,7 @@ Process 最多拥有 4096 个区域。
 工作负载结束后还要求 active 为零、free 等于 capacity，并比较阶段内
 acquire/release 增量。
 
-\subsection{Insert：先检查，再合并，最后申请}
-
+\topic{Insert：先检查，再合并，最后申请}
 VMA 使用页对齐半开区间 \([b,e)\)。Insert 先找到前驱和后继，再拒绝：
 
 \[
@@ -195,8 +182,7 @@ VMA 使用页对齐半开区间 \([b,e)\)。Insert 先找到前驱和后继，�
 只有无法合并时才从池取得新节点。这样连续多次 brk growth 仍保持一段，而
 不是每次系统调用永久消耗一个描述符。
 
-\subsection{Remove：中段拆分为何必须预取资源}
-
+\topic{Remove：中段拆分为何必须预取资源}
 从 \([0,16)\) 移除 \([6,10)\) 会形成两个区域：
 
 \[
@@ -215,8 +201,7 @@ VMA 使用页对齐半开区间 \([b,e)\)。Insert 先找到前驱和后继，�
 只有一个描述符的宿主测试刻意触发这一条件，要求返回
 \code{AreaLimitExceeded} 且旧区域逐字段不变。
 
-\subsection{first-gap 是一项有界区间算法}
-
+\topic{first-gap 是一项有界区间算法}
 自动 mmap 从窗口起点开始，按页对齐计算候选地址。对每个有序 VMA：
 
 \begin{enumerate}
@@ -229,21 +214,17 @@ VMA 使用页对齐半开区间 \([b,e)\)。Insert 先找到前驱和后继，�
 当前实现为线性复杂度。这是经过选择的学习基线：公开接口没有泄漏链表，
 未来可以用树替换，而本阶段所有修改路径仍能在源码中直接推演。
 
-\subsection{系统调用 39 至 42}
-
+\topic{系统调用 39 至 42}
 共享 ABI 在旧编号之后追加：
 
-\begin{longtable}{L{0.08\textwidth}L{0.29\textwidth}L{0.31\textwidth}L{0.20\textwidth}}
-\toprule
-号 & 名称 & 输入 & 成功结果\\
-\midrule
-39 & \code{MapAnonymousMemory} & 地址、长度、权限、flags & 映射起点\\
-40 & \code{UnmapMemory} & 页对齐地址、长度 & 0\\
-41 & \code{SetProgramBreak} & 0 查询或新地址 & 当前 break\\
+\begin{osgridlongtable}{L{0.08\textwidth}L{0.29\textwidth}L{0.31\textwidth}L{0.20\textwidth}}
+号 & 名称 & 输入 & 成功结果\\ \hline
+39 & \code{MapAnonymousMemory} & 地址、长度、权限、flags & 映射起点\\ \hline
+40 & \code{UnmapMemory} & 页对齐地址、长度 & 0\\ \hline
+41 & \code{SetProgramBreak} & 0 查询或新地址 & 当前 break\\ \hline
 42 & \shortstack[l]{\code{GetVirtualMemory}\\\code{Statistics}} &
-目标地址、结构尺寸 & 0\\
-\bottomrule
-\end{longtable}
+目标地址、结构尺寸 & 0\\ \hline
+\end{osgridlongtable}
 
 AMD64 用户包装继续使用：
 
@@ -261,8 +242,7 @@ fixed mapping 不是破坏性 Linux \code{MAP\_FIXED}：它只在指定页对齐
 权限只接受 NONE、R、R|W 与 R|X。W 或 X 缺少 R、W|X 和未知位都拒绝；
 VMA 软件权限随后成为 PTE RW/NX 的唯一策略来源。
 
-\subsection{统一缺页提交路径}
-
+\topic{统一缺页提交路径}
 \code{HandleUserPageFault} 的判断顺序是安全边界本身：
 
 \begin{lstlisting}[caption={用户页故障决策顺序}]
@@ -287,8 +267,7 @@ return to retry the user instruction
 之前分开。
 \end{failurebox}
 
-\subsection{一页提交为何必须可回滚}
-
+\topic{一页提交为何必须可回滚}
 \code{MapDemandPage} 取得 frame、建立必要页表分支、写 PTE，再通过高半区
 direct-map 清零 4096 字节。若 direct-map 地址无效或提交失败，必须调用
 \code{ReleaseUserPage}：
@@ -303,8 +282,7 @@ direct-map 清零 4096 字节。若 direct-map 地址无效或提交失败，必
 用户指令尚未从异常返回，因此不会观察清零前内容。未来 SMP 会额外需要并发
 fault 协调与远端 TLB shootdown；当前单 BSP 不把这项未来承诺伪装成已完成。
 
-\subsection{栈预留和实际提交必须分开}
-
+\topic{栈预留和实际提交必须分开}
 装载 ELF 时，完整 8 MiB \code{UserStack} VMA 已经存在；参数布局只提交
 实际覆盖的顶部页。设栈顶为 \(T\)，最低已提交地址为 \(C\)，fault page 为
 \(F\)，一次合法增长首先要求：
@@ -340,8 +318,7 @@ fault 协调与远端 TLB shootdown；当前单 BSP 不把这项未来承诺伪�
 guard 完全没有 VMA，而不只是一个临时 not-present PTE。因此通用
 \code{FindContaining} 已经能够拒绝它，后续文件页或 COW 策略也不会误认。
 
-\subsection{Kernel 用户复制为什么只解析部分 VMA}
-
+\topic{Kernel 用户复制为什么只解析部分 VMA}
 系统调用经常需要读用户请求或写用户结果。如果目标是合法、尚未驻留的匿名/
 break 页，直接返回 bad pointer 会让按需语义在 syscall 内外不一致。
 \code{CopyFromUser} 与 \code{CopyToUser} 因此可以调用
@@ -351,8 +328,7 @@ break 页，直接返回 bad pointer 会让按需语义在 syscall 内外不一�
 可用于证明栈推进的异常现场；替用户制造栈页会绕过 RSP 策略。候选 exec 参数
 栈则由已经验证最低地址的 \code{PrepareUserStack} 显式预提交。
 
-\subsection{brk 只管理页级承诺}
-
+\topic{brk 只管理页级承诺}
 ELF 最高 \code{PT\_LOAD} 末端向上页对齐得到 break base。查询使用请求零；
 扩大时插入或合并 \code{ProgramBreak} VMA，不分配数据页。缩小时按页对齐
 边界撤销 VMA 并释放实际驻留页。
@@ -366,8 +342,7 @@ ELF 最高 \code{PT\_LOAD} 末端向上页对齐得到 break base。查询使用
 
 这让对象分配器使用字节边界，同时让页表仍只处理整页。
 
-\subsection{unmap 如何同时回收数据页和页表页}
-
+\topic{unmap 如何同时回收数据页和页表页}
 \code{UnmapMemory} 只接受 Anonymous kind，不能顺便删除 ELF、stack 或
 program break。完成 VMA remove 后逐页查询：
 
@@ -384,8 +359,7 @@ exec 成功后销毁旧页表和旧 VMA；Process 退出切回永久 Kernel CR3 
 当前地址空间。最终 VMA 池与 frame、buddy、KVA、KernelStack、fd 和 VFS
 资源一起比较基线。
 
-\subsection{UserHeap 为什么放在 Ring 3}
-
+\topic{UserHeap 为什么放在 Ring 3}
 Kernel 提供页级 break，不应理解每个 C++ 对象的大小和释放顺序。用户
 \code{UserHeap} 注入 break operation、页大小、增长 quantum 与最大容量，
 再在取得的连续空间中管理块。
@@ -416,8 +390,7 @@ Kernel 提供页级 break，不应理解每个 C++ 对象的大小和释放顺�
 \diagramnote{物理相邻关系用于 coalesce，空闲双链用于 first-fit；同一个
 free block 同时属于两张图。}
 
-\subsection{first-fit、split 与双向 coalesce}
-
+\topic{first-fit、split 与双向 coalesce}
 Allocate 把请求向上对齐到 16 字节，沿 free list 找第一个足够块。若没有，
 按页对齐 growth quantum 扩大 break，再重新查找。
 
@@ -434,8 +407,7 @@ Release 只接受精确 payload 起点。标记 free 后先合并前一物理邻
 后一邻居；将消失的节点必须先从 free list 摘除，最终合并块只在链中出现一次。
 外部指针、块内部指针、重复释放和 signature 错误分别返回明确状态。
 
-\subsection{Validate 为什么要遍历两张图}
-
+\topic{Validate 为什么要遍历两张图}
 只验证 free list 不能发现一个活动块覆盖下一 header；只验证物理块又不能
 发现 free 节点重复或遗漏。Validate 首先从 heap base 走到 capacity：
 
@@ -450,8 +422,7 @@ Release 只接受精确 payload 起点。标记 free 后先合并前一物理邻
 随后遍历 free list，核对 prev/next、状态、节点数和物理遍历观察到的 free
 数完全相同。活动 allocation 数和 requested bytes 也从事实重建后比较。
 
-\subsection{日志为什么采用二次幂采样}
-
+\topic{日志为什么采用二次幂采样}
 一个 32 MiB 区间有 8192 页。若每次 fault 都打印 CR2、frame 和页表层级，
 115200 波特串口会成为主要工作负载，并改变 PIT 抢占与 TCG 时序。
 
@@ -466,27 +437,22 @@ Kernel 只在每 Process 累计值达到二次幂时输出：
 检查“至少出现且数值非零”，不冻结精确 multiplicity。最终再一次输出池容量、
 active、peak、acquire 和 release。
 
-\subsection{六层证据如何互补}
-
-\begin{longtable}{L{0.17\textwidth}L{0.71\textwidth}}
-\toprule
-层次 & 直接证明\\
-\midrule
-VMA 单元 & 排序、重叠、三类合并、trim/split、kind guard、first-gap、耗尽失败原子性\\
-Heap 单元 & 增长、对齐、split、复用、双向合并、耗尽、外部和重复释放\\
-固定随机 & VMA 与 heap 各 100000 步，逐步对照独立参考模型与活动载荷\\
-组合生命周期 & 128 轮 reservation、真实 PTE、空页表回收和 frame/descriptor 基线\\
-Ring 3 & 32 MiB 稀疏触页、2 MiB brk、递归栈和 5000 步 UserHeap\\
-保护与容量 & guard/只读写 vector 14；64 MiB、256 MiB、64 GiB 同一工作负载\\
-\bottomrule
-\end{longtable}
+\topic{六层证据如何互补}\par
+\begin{osgridlongtable}{L{0.17\textwidth}L{0.71\textwidth}}
+层次 & 直接证明\\ \hline
+VMA 单元 & 排序、重叠、三类合并、trim/split、kind guard、first-gap、耗尽失败原子性\\ \hline
+Heap 单元 & 增长、对齐、split、复用、双向合并、耗尽、外部和重复释放\\ \hline
+固定随机 & VMA 与 heap 各 100000 步，逐步对照独立参考模型与活动载荷\\ \hline
+组合生命周期 & 128 轮 reservation、真实 PTE、空页表回收和 frame/descriptor 基线\\ \hline
+Ring 3 & 32 MiB 稀疏触页、2 MiB brk、递归栈和 5000 步 UserHeap\\ \hline
+保护与容量 & guard/只读写 vector 14；64 MiB、256 MiB、64 GiB 同一工作负载\\ \hline
+\end{osgridlongtable}
 
 reservation 测试要求 VMA 插入后 frame count 不变；只看到 mmap 返回成功并
 不能证明这一点。QEMU 又证明真实 CR2、异常入口、CR3、PTE 与用户指令重试；
 宿主模型不能替代这层硬件证据。
 
-\subsection{代码阅读顺序}
-
+\topic{代码阅读顺序}\par
 \begin{enumerate}
   \item \filepath{source/abi/include/os/abi/virtual\_memory.hpp}；
   \item \filepath{memory/virtual\_memory\_area.hpp/.cpp}；
@@ -504,8 +470,7 @@ reservation 测试要求 VMA 插入后 frame count 不变；只看到 mmap 返�
 RIP/RSP、命中 VMA、分配 frame 和 resident 前后值。继续执行后原 RIP 应
 重试成功，而不是跳到人工恢复点。
 
-\subsection{阶段边界为何仍然重要}
-
+\topic{阶段边界为何仍然重要}
 v1.8 没有实现：
 
 \begin{itemize}
@@ -520,8 +485,7 @@ v1.8 没有实现：
 truncate/write 失效；COW 又需要 VMA 权限、PTE COW 状态和物理页引用共同
 成立。因此 v1.9 先在本阶段 fault 边界上加入文件来源，v1.10 再加入 fork/COW。
 
-\subsection{本阶段完成判定}
-
+\topic{本阶段完成判定}
 v1.8 的完成不是“出现一次用户页故障后继续运行”，而是同时满足：
 
 \begin{enumerate}

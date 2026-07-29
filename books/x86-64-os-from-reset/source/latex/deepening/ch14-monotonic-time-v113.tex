@@ -1,4 +1,4 @@
-\section{v1.13：从 PIT 周期到统一 deadline}
+\section{单调时间、deadline 与竞争完成}
 
 \begin{keyidea}
 周期中断不是时间 API。只有把硬件实际周期、整数换算余数、单调表示、等待
@@ -6,8 +6,7 @@
 的语义。
 \end{keyidea}
 
-\subsection{8253/8254 为什么仍在 64 位启动路径上}
-
+\topic{8253/8254 为什么仍在 64 位启动路径上}
 IBM PC 用 8253 Programmable Interval Timer 提供可编程周期，PC/AT 后续采用
 兼容的 8254。传统通道 0 连接 8259A IRQ0，通道 2 还参与扬声器门控。现代
 处理器已经拥有 TSC、Local APIC timer，PC 平台也曾引入 HPET，但兼容历史
@@ -41,8 +40,7 @@ f_{\mathrm{irq}}=\frac{1193182}{d}
 \end{pdfdiagram}
 \diagramnote{硬件只提供分频事件；纳秒、deadline 和 Thread 状态都属于软件契约。}
 
-\subsection{clock source、clock event 与 wall clock}
-
+\topic{clock source、clock event 与 wall clock}
 时间子系统容易把三个问题混为一谈：
 
 \begin{itemize}
@@ -61,8 +59,7 @@ wall clock，向后调整会延长等待，向前调整会让大量 deadline 同
 \code{MONOTONIC\_START\_NS} 才来自自写 PIT、PIC、IDT 与 IRQ0 路径。两者
 可以一起定位停顿，却不能比较绝对起点。
 
-\subsection{整数余数必须成为持久状态}
-
+\topic{整数余数必须成为持久状态}
 设 PIT 输入频率为 \(f\)，实际除数为 \(d\)。一次 tick 对应：
 
 \[
@@ -89,17 +86,14 @@ t_n=n\left\lfloor\frac{d\times 10^9}{f}\right\rfloor
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{lX}
-\toprule
-字段 & 不变量与用途\\
-\midrule
-\code{input\_frequency\_hz} & 非零，来自 PIT 硬件规格而不是目标频率\\
-\code{divisor} & 实际写入通道 0 的整数除数\\
-\code{nanoseconds} & 已经提交的整纳秒，只增不减\\
-\code{fraction\_numerator} & 小于输入频率，保存尚未成为一纳秒整数的部分\\
-\code{saturated} & 达到表示上界后保持真，后续推进不再回绕\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{lX}
+字段 & 不变量与用途\\ \hline
+\code{input\_frequency\_hz} & 非零，来自 PIT 硬件规格而不是目标频率\\ \hline
+\code{divisor} & 实际写入通道 0 的整数除数\\ \hline
+\code{nanoseconds} & 已经提交的整纳秒，只增不减\\ \hline
+\code{fraction\_numerator} & 小于输入频率，保存尚未成为一纳秒整数的部分\\ \hline
+\code{saturated} & 达到表示上界后保持真，后续推进不再回绕\\ \hline
+\end{osgridtabularx}
 \caption{单调时钟状态不是一个裸 tick counter}
 \end{table}
 
@@ -114,8 +108,7 @@ t_n=n\left\lfloor\frac{d\times 10^9}{f}\right\rfloor
 \(f\) 的余数。这样周期乘积或“乘积加旧余数”的中间值越界时，仍能保留
 最终可表示的精确结果，而不会过早饱和。
 
-\subsection{饱和把 64 位边界变成全序}
-
+\topic{饱和把 64 位边界变成全序}
 无符号 64 位纳秒可表达约 584 年。教学系统不会依靠这个运行年限，但仍必须
 定义边界。若计数从 \code{UINT64\_MAX} 回绕到零，一个旧的远期 deadline
 会突然变成“尚未到达很久”，队列排序也失去时间意义。
@@ -131,8 +124,7 @@ t=\mathrm{UINT64\_MAX},\qquad saturated=true
 采用饱和加法。这样极大时长表示“最远可表达未来”，不会伪装成一个已经过去
 的小数字。
 
-\subsection{为什么内核只接受绝对 deadline}
-
+\topic{为什么内核只接受绝对 deadline}
 若等待层层保存“还剩多少”，每次虚假唤醒、信号或 Mutex 重获都必须重新
 扣除已经经过的时间。某一层忘记扣除会延长总等待，多层整数换算又会增加误差。
 v1.13 在接口边界只转换一次：
@@ -145,8 +137,7 @@ Kernel、ThreadScheduler 和 DeadlineQueue 都保存同一个绝对纳秒。Cond
 被唤醒但谓词仍不成立时，下一轮继续使用原 deadline，而不是重新取得完整
 时长。这也为 v1.14 signal 中断等待留下明确语义。
 
-\subsection{DeadlineQueue 的身份与稳定顺序}
-
+\topic{DeadlineQueue 的身份与稳定顺序}
 当前系统最多 512 个 Thread，每个 Thread 同时只能处于一个 Blocked 关系，
 因此最多拥有一个活动 deadline。队列为每个 Thread 索引保留直接可定位槽，
 活动槽再按如下键组成有序关系：
@@ -165,8 +156,7 @@ sequence 使相同 deadline 的 Thread 有稳定顺序。测试参考模型因�
 从 Thread 读取权威 WaitQueue membership。这样 \code{munmap}、exec 和
 ProcessExit 不会在 timer 层留下第二份悬空用户地址索引。
 
-\subsection{一个等待同时属于两张图}
-
+\topic{一个等待同时属于两张图}
 timed wait 让 Thread 同时出现在两种关系中：
 
 \begin{pdfdiagram}[node distance=12mm and 18mm]
@@ -189,8 +179,7 @@ timed wait 让 Thread 同时出现在两种关系中：
 \code{BlockCurrentThreadUntil} 在 scheduler irq-save lock 下同时验证当前
 Running Thread、deadline 与两种容量，再发布 Blocked。
 
-\subsection{条件与超时的单赢家竞争}
-
+\topic{条件与超时的单赢家竞争}
 通知路径和 IRQ0 到期路径都取得同一把 scheduler lock：
 
 \begin{enumerate}
@@ -213,8 +202,7 @@ active=schedules-expirations-cancellations
 \(schedules=expirations+cancellations\)。只检查“程序退出码为零”无法发现
 一个已退出 Thread 仍留在 deadline queue；账本把这种残留变成发布失败。
 
-\subsection{IRQ0 到用户 RAX 的完整控制流}
-
+\topic{IRQ0 到用户 RAX 的完整控制流}
 每次 IRQ0 先推进 MonotonicClock，再处理调度 tick 和 PIC EOI。随后
 ProcessRuntime 在 scheduler lock 下反复查看最早 deadline，直到队首仍在
 未来。每个到期项按等待条件解析：
@@ -230,8 +218,7 @@ ProcessRuntime 在 scheduler lock 下反复查看最早 deadline，直到队首�
 被选中时，汇编从它保存的 176 字节 UserContext 恢复寄存器。因此超时路径
 必须修改保存 frame 的 RAX，而不是某个 IRQ0 局部变量。
 
-\subsection{idle 是 sleep 正确性的硬件证据}
-
+\topic{idle 是 sleep 正确性的硬件证据}
 最后一个 Running Thread 调用 Sleep 后可能没有 Ready Thread。内核切回永久
 地址空间和启动栈，执行相邻的 \code{sti; hlt; cli}：
 
@@ -247,8 +234,7 @@ ProcessRuntime 在 scheduler lock 下反复查看最早 deadline，直到队首�
 系统进入 idle 后就永远不会醒。64 MiB bootstrap 只有一个用户 Thread，
 正好是最直接的非忙等证明；额外放置一个轮询线程只能掩盖错误。
 
-\subsection{timed futex 仍要关闭 compare-and-block 窗口}
-
+\topic{timed futex 仍要关闭 compare-and-block 窗口}
 \code{WaitPrivateFutexUntil} 不能先在锁外比较用户 word，再单独登记 deadline。
 正确事务在 wake 使用的同一 scheduler lock 下完成：
 
@@ -265,8 +251,7 @@ ProcessRuntime 在 scheduler lock 下反复查看最早 deadline，直到队首�
 的空 entry。Timeout、普通 wake、unmap、exec 和 ProcessExit 最终都必须使
 空 entry 可回收，否则重复超时会缓慢耗尽 512 个 key。
 
-\subsection{ConditionVariable 返回前为什么必须重新加锁}
-
+\topic{ConditionVariable 返回前为什么必须重新加锁}
 ConditionVariable 不保存业务谓词。通知只说明“谓词可能变化”，调用者应当：
 
 \begin{lstlisting}
@@ -285,21 +270,17 @@ timeout 还是失败，它都先重新取得 Mutex，才返回强类型结果
 会误以为仍在临界区内访问谓词。sequence 与内核锁内二次比较共同消除
 unlock 到 block 之间的丢失通知。
 
-\subsection{固定 ABI 与边界}
-
+\topic{固定 ABI 与边界}
 v1.13 在既有 0--53 系统调用后增加：
 
 \begin{table}[htbp]
 \centering
-\begin{tabularx}{\textwidth}{lclX}
-\toprule
-接口 & 编号 & 返回 & 语义\\
-\midrule
-\code{GetMonotonicTime} & 54 & \code{uint64\_t} & 当前单调纳秒\\
-\code{SleepUntil} & 55 & 状态 & 阻塞到绝对 deadline，已到立即成功\\
-\code{WaitPrivateFutexUntil} & 56 & 状态 & compare-and-block 加绝对 deadline\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{lclX}
+接口 & 编号 & 返回 & 语义\\ \hline
+\code{GetMonotonicTime} & 54 & \code{uint64\_t} & 当前单调纳秒\\ \hline
+\code{SleepUntil} & 55 & 状态 & 阻塞到绝对 deadline，已到立即成功\\ \hline
+\code{WaitPrivateFutexUntil} & 56 & 状态 & compare-and-block 加绝对 deadline\\ \hline
+\end{osgridtabularx}
 \caption{v1.13 固定宽度用户 ABI}
 \end{table}
 
@@ -307,32 +288,33 @@ v1.13 在既有 0--53 系统调用后增加：
 相关宽度，也没有 Kernel 指针。wall clock、RTC、日期、时区、tickless 和
 高精度 timer 均明确不在本阶段。
 
-\subsection{四层测试为什么不能相互替代}
+\topic{四层测试为什么不能相互替代}
+时间错误既可能来自算术，也可能来自队列竞争或真实中断路径，因此证据必须
+从可控时钟模型逐层延伸到 QEMU 中的 PIT、PIC、IDT 和用户态系统调用。
 
-\paragraph{单元层}
+\topic{单元层}
 \code{MonotonicClock} 测试精确控制输入频率、除数和 tick 数，验证余数携带、
 逐步/批量等价、长跨度和饱和。DeadlineQueue 测试稳定同 deadline 顺序、
 重复 Thread 拒绝、任意取消、批量到期、容量与结构校验。
 
-\paragraph{集成层}
+\topic{集成层}
 虚拟时钟、ThreadScheduler 与两个 WaitQueue 组合，证明 deadline 前不早醒、
 Timeout 只发生一次、condition 先赢会取消 deadline，以及败者重复操作没有
 副作用。最终 Thread 回收后队列与统计都必须守恒。
 
-\paragraph{固定种子随机层}
+\topic{固定种子随机层}
 参考模型在 100000 步中随机执行 schedule、cancel、advance 与 expire。每一步
 比较活动集合、最早项、稳定顺序和统计；失败输出固定种子与步骤。它覆盖人工
 样例难以穷举的长交错，又保持完全可复现。
 
-\paragraph{QEMU 整机层}
+\topic{QEMU 整机层}
 \filepath{/bin/time\_probe} 经真实 PIT、PIC、IDT、idle、系统调用和调度路径
 验证 20 ms Sleep 不早醒、10 ms futex timeout、通知先于 200 ms deadline
 以及 10 ms condition timeout。64 MiB 因每 Process 只有一个 Thread，明确
 输出单线程 profile；256 MiB 与 64 GiB 必须创建 notifier Thread，让普通
 通知真实赢过 deadline。
 
-\subsection{日志必须观察边界而不改变热路径}
-
+\topic{日志必须观察边界而不改变热路径}
 一千赫兹 IRQ 若每次写串口，会把 PIO 延迟注入被测调度时序。v1.13 只在用户
 事务完成和系统回收边界打印：
 
@@ -349,8 +331,7 @@ Timeout 只发生一次、condition 先赢会取消 deadline，以及败者重�
 start/wake 数字证明来宾时间前进，一次性语义标记证明操作已经提交，最终汇总
 证明没有残留。三类证据互补，不能用大量逐 tick 文本替代结构不变量。
 
-\subsection{调试顺序与下一阶段输入}
-
+\topic{调试顺序与下一阶段输入}
 Sleep 不醒时先检查 idle IRQ 是否仍解析 deadline；不能先扩大宿主 timeout。
 时间漂移时检查余数是否跨 tick 保留；时间变小时检查乘加回绕和饱和。一个
 Thread Ready 两次时检查通知与到期是否共用 scheduler lock，普通 wake 是否

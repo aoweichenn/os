@@ -1,0 +1,399 @@
+\section{芯片封装、引脚、ISA 与 CPU 结构}
+
+\term{die}{裸片}是在晶圆上制造并切割出的半导体区域；它包含晶体管、互连和
+片上存储。\term{package}{封装}保护裸片并把微小焊盘转换成可装配的外部焊盘
+或引脚。\term{chip}{芯片}在日常语境中常指已经封装的器件。\term{module}
+{模块}可以把处理器、内存、Flash 和电源管理等多个器件装在一块小板上；
+\term{carrier board}{载板}再提供连接器、供电和外围接口。
+
+\begin{pdfdiagram}
+  \node[os hardware] (die) {硅裸片 die\\晶体管与片上互连};
+  \node[os hardware,right=of die] (package) {封装 package\\焊球/引脚};
+  \node[os hardware,right=of package] (module) {计算模块\\芯片与无源元件};
+  \node[os hardware,right=of module] (board) {载板/主板\\接口与电源};
+  \draw[os arrow] (die) -- node[above]{键合/倒装} (package);
+  \draw[os arrow] (package) -- node[above]{焊接} (module);
+  \draw[os arrow] (module) -- node[above]{板间连接} (board);
+\end{pdfdiagram}
+
+“CPU 有多少个引脚”不是只数地址线。现代封装中大量焊球用于多个电源域和地，
+其余还承担内存通道、PCIe、显示、时钟、复位、调试、配置和保留功能。
+
+\topic{芯片引脚的六类职责}
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.32\linewidth}L{0.42\linewidth}}
+类别 & 例子 & 为什么需要 \\ \hline
+\endfirsthead
+类别 & 例子 & 为什么需要 \\ \hline
+\endhead
+电源与地 & VCC、VDD、VSS、GND & 输送能量、建立参考和低阻回流 \\ \hline
+时钟与复位 & CLK、RESET\_N、PWRGOOD & 规定时序并建立已知初态 \\ \hline
+数据 & DQ、TX/RX、MOSI/MISO & 传送有效载荷 \\ \hline
+地址与选择 & A[\,]、CS\_N、BA[\,] & 选择芯片、存储体或位置 \\ \hline
+控制与状态 & RD\_N、WR\_N、READY、IRQ & 描述方向、完成、错误和事件 \\ \hline
+配置与测试 & strap、JTAG、保留脚 & 选择启动配置、制造测试与调试 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily]
+  \draw[rounded corners=3pt,draw=BookBlue,fill=BookCodeBg]
+    (-3.2,-2.3) rectangle (3.2,2.3);
+  \node[font=\bfseries] at (0,0) {概念 CPU/SoC 封装顶视};
+  \foreach \x/\name in {-2.4/VDD,-1.2/GND,0/VDD,1.2/GND,2.4/VDD}
+    \node[os pin] at (\x,2.65) {\name};
+  \foreach \x/\name in {-2.4/CLK,-1.2/RESET\_N,0/PWRGOOD,1.2/JTAG,2.4/GND}
+    \node[os pin] at (\x,-2.65) {\name};
+  \foreach \y/\name in {1.65/A0,0.9/A1,0.15/CS\_N,-0.6/RD\_N,-1.35/WR\_N}
+    \node[os pin] at (-3.65,\y) {\name};
+  \foreach \y/\name in {1.65/D0,0.9/D1,0.15/D2,-0.6/D3,-1.35/IRQ}
+    \node[os pin] at (3.65,\y) {\name};
+  \draw[fill=BookAmber] (-2.85,1.85) circle (0.11);
+  \node[BookMuted] at (-2.1,1.85) {pin 1 标记};
+\end{tikzpicture}
+\end{center}
+\diagramnote{这是一张教学引脚图，不对应具体处理器。真实 BGA 常有数百至上千
+焊球，必须使用厂商 pin list、封装图和电源设计指南，不能照此图接线。}
+
+\topic{CPU 的承诺分为架构与微架构}
+\term{指令集架构}{instruction set architecture, ISA}规定软件可见寄存器、
+指令编码、地址计算、异常与特权等契约。\term{微架构}{microarchitecture}
+规定某颗 CPU 内部怎样用流水线、执行单元、缓存和预测器实现这些契约。
+
+两个处理器可以都执行 x86-64 程序，却具有不同缓存大小、流水线深度和执行
+吞吐。操作系统可以利用 CPUID 等架构接口发现部分能力，但不应依赖未承诺的
+内部节点。
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.33\linewidth}L{0.37\linewidth}}
+层次 & 对软件承诺 & 例子 \\ \hline
+\endfirsthead
+层次 & 对软件承诺 & 例子 \\ \hline
+\endhead
+ISA & 必须长期兼容的软件可见行为 & RAX、RIP、ADD、MOV、页表、异常向量 \\ \hline
+微架构 & 在 ISA 允许范围内选择实现 & 乱序窗口、执行端口、缓存替换、分支预测 \\ \hline
+平台 & CPU 外围地址与设备组织 & ROM 映射、RAM 窗口、UART/ATA/PIC \\ \hline
+电路板 & 真实供电、封装和连线 & 电源轨、晶振、Flash、PCB 差分对 \\ \hline
+\end{osgridlongtable}
+
+\topic{一颗教学 CPU 至少需要哪些部分}
+\begin{pdfdiagram}[node distance=8mm and 8mm]
+  \node[BookMuted,font=\bfseries] (control-label) {控制链};
+  \node[os state,right=of control-label,minimum width=24mm] (pc)
+    {程序计数器\\给出取指地址};
+  \node[os hardware,right=of pc,minimum width=24mm] (imem)
+    {指令接口\\返回机器码};
+  \node[os block,right=of imem,minimum width=24mm] (decode)
+    {译码与控制\\形成控制信号};
+  \draw[os bus] (pc) -- node[above]{地址} (imem);
+  \draw[os bus] (imem) -- node[above]{指令字节} (decode);
+
+  \node[BookMuted,font=\bfseries,below=13mm of control-label] (data-label)
+    {数据链};
+  \node[os state,right=of data-label,minimum width=24mm] (regs)
+    {寄存器文件\\读出操作数};
+  \node[os block,right=of regs,minimum width=24mm] (alu)
+    {ALU\\计算值或地址};
+  \node[os hardware,right=of alu,minimum width=24mm] (dmem)
+    {数据接口\\访问 RAM/设备};
+  \draw[os bus] (regs) -- node[above]{操作数} (alu);
+  \draw[os bus] (alu) -- node[above]{值/地址} (dmem);
+
+  \draw[os arrow,dashed] (decode.south) --
+    node[right]{选择、使能、读写} (dmem.north);
+  \draw[os arrow,dashed] (decode.south west) --
+    node[left]{ALU 操作} (alu.north);
+\end{pdfdiagram}
+\diagramnote{上泳道决定“做什么”，下泳道搬运并变换“对什么做”。写回寄存器、
+更新标志和选择下一条 PC 都发生在本次指令提交处；为避免交叉线，提交反馈在下一幅
+逐周期数据通路图中展开。}
+
+真实现代 CPU 会把取指、译码、重命名、调度、执行和退休重叠，还会把复杂
+x86 指令转换成内部微操作。但从 ISA 观察，处理器仍要产生与顺序规则一致的
+架构结果或精确异常。
+
+\topic{取指、译码、执行、访存和提交}
+教学上可把一条指令分成五个逻辑阶段：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \textbf{取指：}用 RIP/PC 给出的地址请求机器码字节；
+  \item \textbf{译码：}识别操作码、寄存器、立即数、长度和权限要求；
+  \item \textbf{执行：}由 ALU 或其他单元计算结果或有效地址；
+  \item \textbf{访存：}若需要，对缓存、RAM 或设备发起事务；
+  \item \textbf{提交：}更新软件可见寄存器、标志和下一指令地址，或提交异常。
+\end{enumerate}
+
+\begin{workedexample}
+假设一台简化 CPU 执行“把寄存器 \(R_1\) 与 \(R_2\) 相加写入 \(R_3\)”：
+
+\[
+R_1=7,\qquad R_2=5.
+\]
+
+译码器选择两个读端口和 ALU 的 ADD 功能；ALU 形成 \(12\)；时钟边沿允许
+寄存器 \(R_3\leftarrow12\)；PC 增加指令长度。若位宽为 4 bit，结果仍是
+\(1100_2\)；若计算 \(15+3=18\)，4-bit 结果只保存 \(0010_2\)，并产生
+进位条件。CPU 执行的是固定宽度状态转换，不是无限精度数学。
+\end{workedexample}
+
+\input{foundations/expanded/ch04-cpu-datapath-and-instruction-cycle}
+
+\section{总线、互连与设备事务}
+
+\term{总线}{bus}不是一根粗线，而是一组信号及其时序、寻址、仲裁和错误规则。
+传统并行总线可抽象为：
+
+\begin{pdfdiagram}
+  \node[os hardware] (master) {主设备\\CPU/控制器};
+  \node[os state,right=32mm of master] (fabric) {互连与地址译码};
+  \node[os hardware,right=32mm of fabric] (target) {目标\\RAM/ROM/设备};
+  \draw[os bus] ([yshift=7mm]master.east) -- node[above]{地址 \(A[n:0]\)} ([yshift=7mm]fabric.west);
+  \draw[os bus] ([yshift=2mm]fabric.east) -- ([yshift=7mm]target.west);
+  \draw[os bus,<->] ([yshift=-2mm]master.east) -- node[below]{数据 \(D[m:0]\)} ([yshift=-2mm]fabric.west);
+  \draw[os bus,<->] ([yshift=-7mm]fabric.east) -- ([yshift=-2mm]target.west);
+  \draw[os arrow] ([yshift=-8mm]master.east) -- node[below]{读/写、宽度、有效} ([yshift=-8mm]fabric.west);
+  \draw[os arrow] ([yshift=-12mm]target.west) -- node[below]{ready/error} ([yshift=-12mm]fabric.east);
+\end{pdfdiagram}
+
+一次概念读事务：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 主设备给出地址和“读”方向；
+  \item 互连比较地址范围并选择目标；
+  \item 目标取得片内偏移，准备数据；
+  \item 目标返回数据和完成/错误；
+  \item 主设备在协议规定时刻采样结果。
+\end{enumerate}
+
+\topic{时序图怎样读}
+\begin{center}
+\begin{tikzpicture}[x=0.9cm,y=0.7cm,font=\footnotesize\sffamily]
+  \draw[->] (0,0) -- (13,0) node[right]{时间};
+  \foreach \y/\name in {5/CLK,4/ADDR,3/READ,2/DATA,1/READY} {
+    \node[left] at (0,\y) {\name};
+    \draw[BookRule] (0,\y) -- (13,\y);
+  }
+  \foreach \x in {1,3,5,7,9,11} {
+    \draw[BookBlue,thick] (\x,5) -- (\x,5.45) -- (\x+1,5.45) -- (\x+1,5);
+  }
+  \draw[BookTeal,thick] (0,4) -- (2,4) -- (2.4,4.35) -- (7.6,4.35) -- (8,4);
+  \node at (5,4.65) {有效地址};
+  \draw[BookBlue,thick] (0,3) -- (2.5,3) -- (2.5,3.4) -- (7.5,3.4) -- (7.5,3);
+  \draw[BookAmber,thick] (0,2) -- (5,2) -- (5.4,2.35) -- (8,2.35) -- (8.4,2);
+  \node at (6.7,2.65) {返回数据};
+  \draw[BookRed,thick] (0,1) -- (6,1) -- (6,1.4) -- (7.5,1.4) -- (7.5,1);
+  \draw[dashed,BookMuted] (6,0.4) -- (6,5.8);
+  \node[above] at (6,5.8) {目标完成};
+\end{tikzpicture}
+\end{center}
+
+这张图只表达相对关系。真实协议会精确定义在哪个边沿驱动、何时允许变化、
+等待周期怎样插入以及错误怎样返回。
+
+\input{foundations/expanded/ch04-interconnect-and-transactions}
+
+\section{存储层次、器件与地址译码}
+
+若有 \(n\) 根二值地址线，可形成 \(2^n\) 个地址组合。若每个地址选择一个
+byte，最大直接寻址容量为 \(2^n\) byte。
+
+\begin{center}
+\begin{osgridtabular}{ccc}
+地址位数 & byte 地址数 & 容量 \\ \hline
+10 & \(2^{10}\) & \(\SI{1}{KiB}\) \\ \hline
+20 & \(2^{20}\) & \(\SI{1}{MiB}\) \\ \hline
+32 & \(2^{32}\) & \(\SI{4}{GiB}\) \\ \hline
+36 & \(2^{36}\) & \(\SI{64}{GiB}\) \\ \hline
+64 & \(2^{64}\) & 理论编码空间，不等于实现容量 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+\begin{workedexample}
+一颗 \(32\ \mathrm{Ki}\times8\) SRAM 保存 32 Ki 个 8-bit 单元。需要
+
+\[
+\log_2(32\times1024)=\log_2(32768)=15
+\]
+
+根片内地址输入 \(A_0\)--\(A_{14}\)，8 根数据线 \(D_0\)--\(D_7\)，以及
+片选、读写控制、电源和地等引脚。系统更高地址位通常在外部译码，用来决定
+是否拉低该芯片的 CS\_N。
+\end{workedexample}
+
+\topic{RAM、ROM、Flash 和磁盘为什么不能互换}
+\begin{osgridlongtable}{L{0.14\linewidth}L{0.18\linewidth}L{0.20\linewidth}L{0.38\linewidth}}
+类型 & 是否易失 & 访问粒度/方式 & 典型职责 \\ \hline
+\endfirsthead
+类型 & 是否易失 & 访问粒度/方式 & 典型职责 \\ \hline
+\endhead
+寄存器 & 是 & CPU 内部直接选择 & 当前操作数、地址和控制状态 \\ \hline
+SRAM & 是 & 快速随机读写 & CPU 缓存、片上缓冲、小容量存储 \\ \hline
+DRAM & 是 & 行/列命令、刷新与训练 & 大容量主内存 RAM \\ \hline
+ROM & 否 & 运行时通常只读 & 固定表或不可变启动入口的概念 \\ \hline
+NOR Flash & 否 & 可随机读取，擦除后编程 & 固件与复位可见非易失代码 \\ \hline
+NAND Flash/SSD & 否 & 经控制器按块/页管理 & 大容量持久文件和磁盘镜像 \\ \hline
+磁盘设备 & 否 & 通过控制器命令搬运扇区 & 文件系统、程序和用户数据 \\ \hline
+\end{osgridlongtable}
+
+\topic{SRAM 为什么快而面积大}
+典型 SRAM 单元用多个晶体管形成双稳态并提供读写通路。只要供电存在就保持
+状态，不需要周期刷新；但每 bit 占用的晶体管和面积较多，适合缓存而非廉价
+超大容量主存。
+
+\topic{DRAM 为什么需要刷新和训练}
+DRAM 单元用微小电容保存电荷，电荷会泄漏，需要定期刷新。访问会选择行和列，
+并受激活、预充电、读写延迟等时序约束。上电后内存控制器还要配置参数并训练
+数据线采样窗口。CPU 封装中有内存控制器并不代表 DRAM 上电立刻可用。
+
+\topic{ROM 是职责名，Flash 是常见物理介质}
+早期只读存储可能在制造时固定或使用可编程熔丝。现代平台所谓“ROM 区域”
+经常由 SPI NOR Flash、片上 boot ROM 或地址别名实现。对 CPU 而言，关键
+不是介质名字，而是复位取指地址能否返回确定指令字节；对更新系统而言，还要
+区分读、擦除、编程、写保护和失败恢复。
+
+\begin{center}
+\begin{tikzpicture}[font=\scriptsize\sffamily]
+  \draw[rounded corners=2pt,draw=BookBlue,fill=BookCodeBg]
+    (-2.0,-1.4) rectangle (2.0,1.4);
+  \node[font=\bfseries] at (0,0) {8-pin SPI NOR};
+  \foreach \y/\n/\name in {1.0/1/CS\_N,0.35/2/MISO,-0.35/3/WP\_N,-1.0/4/GND}
+    \node[os pin,anchor=east] at (-2.15,\y) {\n\ \name};
+  \foreach \y/\n/\name in {1.0/8/VCC,0.35/7/HOLD\_N,-0.35/6/SCLK,-1.0/5/MOSI}
+    \node[os pin,anchor=west] at (2.15,\y) {\name\ \n};
+  \draw[fill=BookAmber] (-1.55,0.95) circle (0.10);
+\end{tikzpicture}
+\end{center}
+\diagramnote{常见 SPI NOR 教学引脚关系。不同型号可能复用 IO2/IO3、支持
+quad 模式或采用不同封装；必须以具体料号数据手册为准。}
+
+\input{foundations/expanded/ch04-memory-hierarchy-and-devices}
+
+\topic{地址译码把同一 CPU 地址空间分给不同目标}
+CPU 发出物理地址后，平台互连根据范围选择目标。物理地址空间不等于 RAM：
+
+\begin{pdfdiagram}
+  \node[os state] (addr) {CPU 物理地址事务};
+  \node[os block,right=22mm of addr] (decode) {平台地址译码};
+  \node[os hardware,right=24mm of decode,yshift=17mm] (ram) {RAM};
+  \node[os hardware,right=24mm of decode,yshift=5mm] (mmio) {MMIO 设备};
+  \node[os hardware,right=24mm of decode,yshift=-7mm] (rom) {ROM/Flash 窗口};
+  \node[os hardware,right=24mm of decode,yshift=-19mm] (hole) {未实现空洞/错误};
+  \draw[os bus] (addr) -- (decode);
+  \draw[os arrow] (decode) -- (ram);
+  \draw[os arrow] (decode) -- (mmio);
+  \draw[os arrow] (decode) -- (rom);
+  \draw[os arrow] (decode) -- (hole);
+\end{pdfdiagram}
+
+假设教学平台使用如下两个窗口：
+
+\[
+\begin{array}{lll}
+\texttt{0x00000000} & \text{到 }\texttt{0x0009FFFF} & \text{映射到 RAM},\\
+\texttt{0xFFF00000} & \text{到 }\texttt{0xFFFFFFFF} & \text{映射到 Flash}.
+\end{array}
+\]
+
+访问两个范围之外的位置不会“自动扩大内存”，而可能读到全 1、被忽略或产生
+总线错误，具体由平台契约决定。
+
+\topic{复位向量为什么必须有非易失字节响应}
+CPU 刚复位时 RAM 可能没有初始化，磁盘也必须先发命令才能读取。处理器只能
+从架构规定的初始指令地址发出取指请求；平台必须让该地址落到上电后已经保存
+内容的非易失区域。
+
+\begin{pdfdiagram}
+  \node[os state] (reset) {复位释放\\架构设置初始 RIP/CS};
+  \node[os state,right=of reset] (fetch) {CPU 发出取指地址};
+  \node[os block,right=of fetch] (decode) {平台译码/别名};
+  \node[os hardware,right=of decode] (flash) {ROM/Flash\\返回首条指令};
+  \node[os state,below=of flash] (execute) {CPU 译码并执行\\建立下一状态};
+  \draw[os arrow] (reset) -- (fetch);
+  \draw[os bus] (fetch) -- (decode);
+  \draw[os arrow] (decode) -- (flash);
+  \draw[os bus] (flash) -- (execute);
+\end{pdfdiagram}
+
+x86-64 架构复位取指会落到物理地址 \(\texttt{0xFFFFFFF0}\) 附近。它只剩很小
+空间到 4 GiB 边界，通常先放一条跳转，再进入较大的固件区域。这里的“ROM”
+描述该地址窗口的启动职责；QEMU 可用 \code{-bios} 装入本项目自研镜像，
+实体平台则可能由片上 boot ROM、SPI 控制器和地址别名共同完成。
+
+\begin{historybox}
+早期处理器和平台直接使用并行地址/数据总线连接 ROM；后来芯片组与 SoC 把
+启动路径逐渐集成，外部固件介质也常改为低引脚数串行 Flash。软件仍看到一个
+复位地址和指令字节，这正是架构抽象跨越物理实现变化的价值。
+\end{historybox}
+
+\input{foundations/expanded/ch04-reset-rom-mapping-and-debug}
+
+\topic{一台完整计算机是多条闭合链路的交集}
+\begin{center}
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex,node distance=6mm and 8mm]
+  \node[BookMuted,font=\bfseries] at (-0.3,5.4) {能量链};
+  \node[os hardware,minimum width=24mm] (input) at (2.0,5.4) {外部输入};
+  \node[os hardware,minimum width=24mm] (rails) at (6.0,5.4) {保护与稳压};
+  \node[os state,minimum width=24mm] (pg) at (10.0,5.4) {电源轨稳定};
+  \node[os hardware,minimum width=24mm] (powered) at (14.0,5.4) {芯片获得能量};
+  \draw[os arrow] (input) -- (rails);
+  \draw[os arrow] (rails) -- (pg);
+  \draw[os arrow] (pg) -- (powered);
+
+  \node[BookMuted,font=\bfseries] at (-0.3,3.7) {时序链};
+  \node[os hardware,minimum width=24mm] (osc) at (2.0,3.7) {参考振荡};
+  \node[os state,minimum width=24mm] (pll) at (6.0,3.7) {PLL/时钟稳定};
+  \node[os state,minimum width=24mm] (reset) at (10.0,3.7) {复位同步释放};
+  \node[os hardware,minimum width=24mm] (cpu) at (14.0,3.7) {CPU 状态推进};
+  \draw[os arrow] (osc) -- (pll);
+  \draw[os arrow] (pll) -- (reset);
+  \draw[os arrow] (reset) -- (cpu);
+
+  \node[BookMuted,font=\bfseries] at (-0.3,2.0) {事务链};
+  \node[os hardware,minimum width=24mm] (rom) at (2.0,2.0) {ROM/Flash};
+  \node[os hardware,minimum width=24mm] (ram) at (6.0,2.0) {RAM};
+  \node[os hardware,minimum width=24mm] (io) at (10.0,2.0) {I/O 设备};
+  \node[os state,minimum width=24mm] (fabric) at (14.0,2.0) {互连与 CPU};
+  \draw[BookBlue,very thick,double] (2.0,1.25) -- (14.0,1.25);
+  \draw[BookBlue,very thick] (rom.south) -- (2.0,1.25);
+  \draw[BookBlue,very thick] (ram.south) -- (6.0,1.25);
+  \draw[BookBlue,very thick] (io.south) -- (10.0,1.25);
+  \draw[BookBlue,very thick] (fabric.south) -- (14.0,1.25);
+
+  \node[BookMuted,font=\bfseries] at (-0.3,0.3) {软件链};
+  \node[os block,minimum width=24mm] (firmware) at (2.0,0.3) {固件};
+  \node[os block,minimum width=24mm] (loader) at (6.0,0.3) {Loader};
+  \node[os block,minimum width=24mm] (kernel) at (10.0,0.3) {Kernel/驱动};
+  \node[os block,minimum width=24mm] (user) at (14.0,0.3) {用户程序};
+  \draw[os arrow] (firmware) -- (loader);
+  \draw[os arrow] (loader) -- (kernel);
+  \draw[os arrow] (kernel) -- (user);
+\end{tikzpicture}
+}
+\end{center}
+\diagramnote{四条链分泳道绘制：能量、时序、硬件事务和软件控制不能混成一根
+箭头。纵向依赖由正文说明，横向箭头只表示本泳道内部的推进或传输。}
+
+任何一条链断开都可能表现为“黑屏”或“没有串口”。高质量调试不能只猜软件：
+要按电源、时钟、复位、首条取指、最早日志、内存、设备和后续镜像逐层建立
+证据。
+
+\topic{CPU、内存和设备没有自动形成操作系统}
+硬件只提供机制。CPU 不知道“文件”“进程”或“用户”；RAM 不知道某个 byte
+属于代码还是页表；磁盘控制器只执行块命令；UART 只收发串行字符。操作系统
+通过数据结构和规则建立：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 谁可以运行、何时切换以及怎样保存现场；
+  \item 哪段地址可读、可写、可执行，物理页由谁拥有；
+  \item 设备寄存器怎样封装成稳定驱动接口；
+  \item 持久块怎样组织成目录、文件和路径；
+  \item 不可信程序怎样通过受控入口请求服务。
+\end{itemize}
+
+下一部分的第一章会正式界定固件、引导器、内核、驱动和用户程序；再之后才进入
+x86 四十多年兼容史和本项目的真实复位字节。
+
+\begin{contractbox}
+读完本章，应能画出 CPU、地址译码、RAM、ROM 和设备之间的事务图；能根据
+地址位数计算可区分位置，根据存储器组织计算地址/数据引脚；能区分 ISA、
+微架构、平台与 PCB；并能从电源稳定一直解释到 CPU 为什么必须在复位地址
+读到非易失指令。
+\end{contractbox}

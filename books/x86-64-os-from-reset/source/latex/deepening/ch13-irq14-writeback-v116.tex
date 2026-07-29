@@ -1,4 +1,4 @@
-\section{v1.16：从轮询磁盘到 IRQ14 与文件页写回}
+\section{异步块 I/O、IRQ14 与文件页写回}
 
 \begin{keyidea}
 异步 I/O 的本质不是把轮询换成中断，而是把命令、缓冲区、完成结果和等待者
@@ -7,8 +7,7 @@
 责任，写回时重新建立下一次写通知边界。
 \end{keyidea}
 
-\subsection{为什么启动链必须轮询，运行期才适合中断}
-
+\topic{为什么启动链必须轮询，运行期才适合中断}
 CPU 从复位向量进入 ROM 时没有 Process、Thread、IDT、PIC 路由、WaitQueue
 或 scheduler。ROM 为了读取 Stage 1，只能发出 ATA 命令，再有界检查
 BSY、DRQ、ERR 和 DF。Stage 1 也不能等待由尚未装载的 Kernel 处理 IRQ。
@@ -34,8 +33,7 @@ command tag。IRQ14 本身不会携带“这是第几个请求”。只要硬件
 未完成命令，软件便无法可靠配对。因此软件队列可以有多个 Queued，请求进入
 硬件后却只能有一个 Issued。这个单飞约束来自协议，不是数组容量不够。
 
-\subsection{从 ATA 引脚语义到 CPU vector 0x2E}
-
+\topic{从 ATA 引脚语义到 CPU vector 0x2E}
 QEMU 的 \code{pc} 机器模拟传统连线。primary ATA controller 把中断接到
 slave 8259A 的 IR6；slave 的输出接到 master IR2；master INTR 再经 Local
 APIC LINT0 的 ExtINT virtual-wire 模式到达 CPU。
@@ -62,14 +60,11 @@ PIC 初始化后全屏蔽。v1.16 最终掩码是 \code{0xBFF8}：
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l l X}
-\toprule
-控制器 & mask & 开放输入\\
-\midrule
-master & \code{0xF8 = 11111000b} & IRQ0 PIT、IRQ1 keyboard、IRQ2 cascade\\
-slave & \code{0xBF = 10111111b} & IR6，即系统 IRQ14\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l l X}
+控制器 & mask & 开放输入\\ \hline
+master & \code{0xF8 = 11111000b} & IRQ0 PIT、IRQ1 keyboard、IRQ2 cascade\\ \hline
+slave & \code{0xBF = 10111111b} & IR6，即系统 IRQ14\\ \hline
+\end{osgridtabularx}
 \caption{开放 slave IRQ 必须同时开放 master cascade}
 \end{table}
 
@@ -78,24 +73,20 @@ master bit 2，级联线可达，却没有允许的 slave 来源。真实 IRQ14 
 \code{0xA0} 发 EOI，再向 \code{0x20} 发 EOI；相反顺序可能让级联服务状态
 停留，下一次 IRQ 看起来像随机丢失。
 
-\subsection{ATA 命令块、状态位与控制位}
-
+\topic{ATA 命令块、状态位与控制位}\par
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l l l X}
-\toprule
-端口 & 宽度 & 名称 & 读写语义\\
-\midrule
-\code{0x1F0} & 16 & DATA & 一个扇区 256 个 word\\
-\code{0x1F1} & 8 & ERROR/FEATURES & 读错误，写 feature\\
-\code{0x1F2} & 8 & SECTOR COUNT & 当前命令写一扇区\\
-\code{0x1F3..0x1F5} & 8 & LBA LOW/MID/HIGH & LBA 的低 24 位\\
-\code{0x1F6} & 8 & DRIVE/HEAD & master、LBA mode 与 LBA[27:24]\\
-\code{0x1F7} & 8 & STATUS/COMMAND & 读状态，写命令\\
-\code{0x3F6} & 8 & ALT STATUS/CONTROL & 读状态不确认 IRQ；写 nIEN/SRST\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l l l X}
+端口 & 宽度 & 名称 & 读写语义\\ \hline
+\code{0x1F0} & 16 & DATA & 一个扇区 256 个 word\\ \hline
+\code{0x1F1} & 8 & ERROR/FEATURES & 读错误，写 feature\\ \hline
+\code{0x1F2} & 8 & SECTOR COUNT & 当前命令写一扇区\\ \hline
+\code{0x1F3..0x1F5} & 8 & LBA LOW/MID/HIGH & LBA 的低 24 位\\ \hline
+\code{0x1F6} & 8 & DRIVE/HEAD & master、LBA mode 与 LBA[27:24]\\ \hline
+\code{0x1F7} & 8 & STATUS/COMMAND & 读状态，写命令\\ \hline
+\code{0x3F6} & 8 & ALT STATUS/CONTROL & 读状态不确认 IRQ；写 nIEN/SRST\\ \hline
+\end{osgridtabularx}
 \caption{primary ATA command block 与 control port}
 \end{table}
 
@@ -104,17 +95,14 @@ Status 的决定性位如下：
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{c l X}
-\toprule
-位 & 名称 & v1.16 解释\\
-\midrule
-7 & BSY & 设备仍拥有内部状态，不能发下一命令\\
-6 & DRDY & 设备就绪提示，不单独表示传输完成\\
-5 & DF & device fault，本请求完成为 DeviceError\\
-3 & DRQ & CPU 必须执行一个数据阶段\\
-0 & ERR & 命令错误，读取 ERROR 并完成为 DeviceError\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{c l X}
+位 & 名称 & v1.16 解释\\ \hline
+7 & BSY & 设备仍拥有内部状态，不能发下一命令\\ \hline
+6 & DRDY & 设备就绪提示，不单独表示传输完成\\ \hline
+5 & DF & device fault，本请求完成为 DeviceError\\ \hline
+3 & DRQ & CPU 必须执行一个数据阶段\\ \hline
+0 & ERR & 命令错误，读取 ERROR 并完成为 DeviceError\\ \hline
+\end{osgridtabularx}
 \caption{ATA STATUS 标志不是可任意组合的软件布尔量}
 \end{table}
 
@@ -126,8 +114,7 @@ Read 请求收到 DRQ IRQ 后执行 256 次 16-bit IN；Write 在第一个 DRQ I
 执行 256 次 16-bit OUT，随后还要等待设备完成 IRQ；Flush 没有数据阶段。
 逐 word 传输不打印日志，否则串口开销会改变设备与调度时序。
 
-\subsection{RFLAGS.IF 与页故障 error code}
-
+\topic{RFLAGS.IF 与页故障 error code}
 RFLAGS bit 9 的 IF 控制可屏蔽外部中断。Kernel 在 IDT、PIC、设备对象和请求
 存储发布前保持 IF=0，全部准备完成后才 STI。interrupt gate 进入时处理器
 清 IF，并把旧 RFLAGS 保存进特权帧；IRETQ 恢复它。C++ handler 不在任意点
@@ -138,17 +125,14 @@ RFLAGS bit 9 的 IF 控制可屏蔽外部中断。Kernel 在 IDT、PIC、设备�
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{c l l X}
-\toprule
-位 & 名称 & 写通知要求 & 排除的情况\\
-\midrule
-0 & P & 1 & not-present 首次装页\\
-1 & W/R & 1 & 读访问\\
-2 & U/S & 1 & Kernel 自身访问\\
-3 & RSVD & 0 & 页表保留位损坏\\
-4 & I/D & 0 & 取指权限 fault\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{c l l X}
+位 & 名称 & 写通知要求 & 排除的情况\\ \hline
+0 & P & 1 & not-present 首次装页\\ \hline
+1 & W/R & 1 & 读访问\\ \hline
+2 & U/S & 1 & Kernel 自身访问\\ \hline
+3 & RSVD & 0 & 页表保留位损坏\\ \hline
+4 & I/D & 0 & 取指权限 fault\\ \hline
+\end{osgridtabularx}
 \caption{writable FileShared 只接管 present+write+user 保护 fault}
 \end{table}
 
@@ -156,8 +140,7 @@ RFLAGS bit 9 的 IF 控制可屏蔽外部中断。Kernel 在 IDT、PIC、设备�
 MarkDirty。若把所有写 fault 都直接改 PTE.W，便会同时破坏只读保护、private
 隔离和 dirty backpressure。
 
-\subsection{请求身份为何不能等于数组下标}
-
+\topic{请求身份为何不能等于数组下标}
 \code{BlockRequestQueue} 使用调用方提供的 64 槽固定存储，不在 IRQ 中申请。
 每个请求保存 operation、LBA、Kernel buffer、owner Thread、absolute deadline、
 state、result 和 64 位单调 identifier。
@@ -185,8 +168,7 @@ Issued 请求不能普通取消。命令已经进入设备，仅从链表删除�
 容量耗尽时 Submit 返回明确失败。队列不能覆盖最旧请求，也不能无限增长。
 64 是本阶段的内存/压力边界，identifier 和累计统计仍使用显式 \code{uint64_t}。
 
-\subsection{IRQ 与 PIT 超时怎样只产生一个结果}
-
+\topic{IRQ 与 PIT 超时怎样只产生一个结果}
 IRQ14 和 PIT IRQ0 可能在同一 deadline 附近到达。唯一完成由状态转移保证：
 
 \begin{enumerate}
@@ -212,8 +194,7 @@ Complete(TimedOut)
 队列余项逐个以 DeviceError 完成，后续 Submit 直接失败，不再向未知状态的
 硬件发命令。这样等待者能收敛，设备所有权也不会被伪装成已经恢复。
 
-\subsection{BlockIo 等待与调度证据}
-
+\topic{BlockIo 等待与调度证据}
 显式 sync 在写回 VFS 后提交异步 Flush。调用 Thread 以请求 identifier 进入
 \code{WaitCondition::BlockIo}。IRQ handler 只把 owner 从 Blocked 变为 Ready，
 不在任意 IRQ 调用栈上直接切换；现有返回用户态前调度边界稍后选择它。
@@ -242,22 +223,18 @@ Complete(TimedOut)
 消费者是显式 sync 的最终 ATA FLUSH。异步 Read/Write 状态机是后续迁移
 journal 和块消费者的基础，不能据此宣称全部文件 I/O 已异步化。
 
-\subsection{为什么 clean/dirty 两态仍然不够}
-
+\topic{为什么 clean/dirty 两态仍然不够}\par
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l X l}
-\toprule
-状态 & 责任 & 零引用时能否 clean LRU 淘汰\\
-\midrule
-Empty & 没有 frame 或文件身份 & 不适用\\
-Clean & frame 与文件一致，无写回债务 & 可以\\
-Dirty & 内存比文件新 & 不可以\\
-Writeback & writer 正在提交这个快照 & 不可以\\
-Error & 上次 writer 失败，债务仍存在 & 不可以\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l X l}
+状态 & 责任 & 零引用时能否 clean LRU 淘汰\\ \hline
+Empty & 没有 frame 或文件身份 & 不适用\\ \hline
+Clean & frame 与文件一致，无写回债务 & 可以\\ \hline
+Dirty & 内存比文件新 & 不可以\\ \hline
+Writeback & writer 正在提交这个快照 & 不可以\\ \hline
+Error & 上次 writer 失败，债务仍存在 & 不可以\\ \hline
+\end{osgridtabularx}
 \caption{Error 不是 Clean，也不是没有诊断信息的 Dirty}
 \end{table}
 
@@ -269,8 +246,7 @@ dirty hard limit 在 MarkDirty 之前检查。达到上限，页故障返回失�
 只读。不能先开放 PTE 再发现无容量，否则用户已经能够继续修改，缓存却无法
 记录这份债务。
 
-\subsection{用写保护捕获 MAP\_SHARED 修改}
-
+\topic{用写保护捕获 MAP\_SHARED 修改}
 x86 没有“每次 store 都调用 Kernel”的页模式。v1.16 使用 write-protect
 notification：
 
@@ -290,8 +266,7 @@ sync 开始时必须重新写保护所有 writable FileShared PTE。否则 write
 交给 VFS 后，用户仍能经 writable PTE 修改，而缓存最终被标为 Clean。重新
 保护让“写回快照之后的新 store”再次 fault 并形成下一轮 Dirty。
 
-\subsection{从页身份到 ATA FLUSH 稳定边界}
-
+\topic{从页身份到 ATA FLUSH 稳定边界}\par
 \begin{lstlisting}
 Protect shared writable PTEs
   -> Dirty/Error page Writeback
@@ -316,8 +291,7 @@ FLUSH 完成只说明当前设备模型报告先前写入已越过其 cache 边�
 定义数据、metadata、journal descriptor 和 commit record 的顺序。没有
 journal 时，v1.16 仍只能在 Dirty superblock 后拒绝不完整事务，不能自动恢复。
 
-\subsection{日志为何必须低频且带两种时间}
-
+\topic{日志为何必须低频且带两种时间}
 ATA status、PIO word、cache lookup、PIT tick 都是热路径。逐次打印会让串口
 成为主要工作负载并改变 IRQ 竞争。项目只在初始化、请求提交、唯一完成、
 shared writeback 验证和终态统计输出 marker。
@@ -337,22 +311,18 @@ FILE_SHARED_WRITEBACK_VERIFIED
 \code{[QEMU][T+...ms]} 是宿主收到串口行的单调时间，只用于定位慢阶段。
 两种时钟起点和调度环境不同，不能比较绝对值。
 
-\subsection{测试怎样覆盖状态而不是只看最终成功}
-
+\topic{测试怎样覆盖状态而不是只看最终成功}\par
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l X}
-\toprule
-证据层 & v1.16 覆盖\\
-\midrule
-单元 & 参数、FIFO、单飞、容量、取消、完成、超时、Reap、dirty limit、Error 重试\\
-集成 & completion/timeout 后下一请求、PIC cascade、rootfs identity 稳定\\
-随机 & 两个固定种子模型各 100000 步，逐步对照请求与页状态参考模型\\
-故障 & ATA busy/error/timeout、重复解析、writer 失败与重试\\
-QEMU & 三档 RAM、真实 IRQ14、shared alias、落盘读回、private 隔离与 Thread 前进\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l X}
+证据层 & v1.16 覆盖\\ \hline
+单元 & 参数、FIFO、单飞、容量、取消、完成、超时、Reap、dirty limit、Error 重试\\ \hline
+集成 & completion/timeout 后下一请求、PIC cascade、rootfs identity 稳定\\ \hline
+随机 & 两个固定种子模型各 100000 步，逐步对照请求与页状态参考模型\\ \hline
+故障 & ATA busy/error/timeout、重复解析、writer 失败与重试\\ \hline
+QEMU & 三档 RAM、真实 IRQ14、shared alias、落盘读回、private 隔离与 Thread 前进\\ \hline
+\end{osgridtabularx}
 \caption{最终出现一行 READY 不能代替中间状态和失败证据}
 \end{table}
 
@@ -366,8 +336,7 @@ Shell 继承的 handler。正确修复不是让 QMP 多等一会，而是父进�
 屏蔽两种信号；child 先恢复默认 action、加入 PGID，再恢复继承前 mask。
 窗口内到达的信号只进入 pending，解除 mask 时才按 child 的默认动作交付。
 
-\subsection{本阶段没有宣称什么}
-
+\topic{本阶段没有宣称什么}\par
 \begin{itemize}
   \item ATA 仍是 primary master、LBA28、PIO、单飞，没有 DMA/AHCI/NVMe；
   \item writable shared 暂只接受完整页；

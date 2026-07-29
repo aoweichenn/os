@@ -1,0 +1,270 @@
+\topic{测量不是“看见一个数字”，而是一条有条件的证据链}
+真正的测量包含被测对象、被测量、参考点、仪器、连接方法、量程、工作条件和
+读数。缺少其中任何一项，数字都可能无法复现。例如“复位脚是 1”只是一种逻辑
+解释；“上电后 \(\SI{18}{ms}\)，示波器探头相对板上数字地测得 RESET\_N 为
+\(\SI{3.26}{V}\)”才接近一条可复查记录。
+
+\begin{pdfdiagram}[node distance=7mm and 11mm]
+  \node[os hardware,minimum width=25mm] (object) {被测对象\\电路节点或事件};
+  \node[os block,right=of object,minimum width=24mm] (quantity) {选择量与参考\\电压、时间、频率};
+  \node[os hardware,right=of quantity,minimum width=24mm] (instrument) {仪器与连接\\量程、探头、带宽};
+  \node[os state,right=of instrument,minimum width=22mm] (reading) {原始读数\\数值、单位、波形};
+  \node[os block,below=9mm of instrument,minimum width=32mm] (judgement) {结合误差和规格判断\\支持或推翻一个结论};
+  \draw[os arrow] (object) -- (quantity);
+  \draw[os arrow] (quantity) -- (instrument);
+  \draw[os arrow] (instrument) -- (reading);
+  \draw[os arrow] (reading) |- (judgement);
+  \draw[os arrow] (quantity) |- (judgement);
+\end{pdfdiagram}
+\diagramnote{仪器不会直接给出“系统正确”。它只在规定连接和误差范围内提供
+观测，再由规格和推理把观测转成结论。}
+
+\topic{基本量、导出量和量纲检查}
+有些量作为计量体系的基础；另一些量由关系式导出。本书常用的关系包括：
+
+\[
+\text{频率}\ [f]=\mathrm{s}^{-1},\qquad
+\text{电荷}\ [Q]=\mathrm{A\,s},\qquad
+\text{电压}\ [V]=\mathrm{J/C},\qquad
+\text{功率}\ [P]=\mathrm{J/s}.
+\]
+
+\term{量纲检查}{dimensional analysis}不能证明公式一定正确，却能迅速发现
+许多错误。等号两边必须描述同一种量。例如 \(T=1/f\) 的右侧单位为
+\(\mathrm{Hz}^{-1}=\mathrm{s}\)，与周期一致；若有人写 \(T=f/2\)，右侧仍是
+\(\mathrm{s}^{-1}\)，仅看单位就知道不可能是时间。
+
+\begin{workedexample}
+一条串行链路每个帧发送 10 bit，其中 8 bit 是数据，波特率为
+\(\SI{115200}{bit/s}\)。每秒最多完成的帧数为
+
+\[
+\frac{\SI{115200}{bit/s}}{\SI{10}{bit/frame}}
+=\SI{11520}{frame/s}.
+\]
+
+每帧承载 1 byte，因此有效数据率为
+\(\SI{11520}{B/s}\)，不是 \(\SI{115200}{B/s}\)。分母中的
+\(\mathrm{bit/frame}\) 与分子中的 bit 消去后留下 frame/s，这也同时检查了
+推导的单位。
+\end{workedexample}
+
+\topic{科学计数法把极大与极小放到同一张纸上}
+计算机硬件同时处理 GHz、ns、mV、pF 和 GiB。科学计数法把非零数写成
+
+\[
+a\times10^n,\qquad 1\le |a|<10.
+\]
+
+乘法时有效数字相乘、指数相加；除法时指数相减：
+
+\[
+(3.3\times10^0)(2.0\times10^{-3})
+=6.6\times10^{-3},
+\]
+\[
+\frac{5.0\times10^9}{2.5\times10^8}
+=2.0\times10^1.
+\]
+
+工程前缀通常让十进制指数是 3 的倍数。把
+\(\SI{0.0000047}{F}\) 写成 \(\SI{4.7}{\micro F}\)，不是改变数值，而是选择
+更便于阅读的尺度。
+
+\begin{workedexample}
+把 \(\SI{25}{ns}\) 换算为秒：
+
+\[
+\SI{25}{ns}=25\times10^{-9}\ \mathrm{s}
+=2.5\times10^{-8}\ \mathrm{s}.
+\]
+
+一秒中包含的这类时间片数量为
+
+\[
+\frac{\SI{1}{s}}{\SI{25}{ns}}
+=\frac{1}{25\times10^{-9}}
+=4.0\times10^7.
+\]
+
+所以周期 \(\SI{25}{ns}\) 对应频率 \(\SI{40}{MHz}\)。换算时保留单位可以
+避免把 \(10^{-9}\) 错写成 \(10^9\)。
+\end{workedexample}
+
+\topic{四种常用仪器分别怎样“接入”电路}
+仪器本身也是电路的一部分。接错位置不仅会得到错误读数，还可能短路电源或
+损坏被测板。
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.27\linewidth}}
+仪器/模式 & 连接方式 & 主要观察 & 常见错误 \\ \hline
+\endfirsthead
+仪器/模式 & 连接方式 & 主要观察 & 常见错误 \\ \hline
+\endhead
+万用表电压档 & 并联在两个节点之间 & 近似稳定的电势差 & 把表笔串进回路，或忘记参考地 \\ \hline
+万用表电流档 & 断开支路后串联接入 & 经过该支路的平均电流 & 直接跨接电源，等价于近似短路 \\ \hline
+万用表电阻档 & 断电并释放储能后跨接元件 & 低频等效电阻 & 带电测量，或把并联路径误当元件本体 \\ \hline
+示波器 & 探头尖端接信号，地夹接允许的参考点 & 电压随时间的变化 & 地夹造成短路，探头带宽/衰减设置错误 \\ \hline
+逻辑分析仪 & 多路数字输入与公共参考相连 & 阈值判定后的数字时序 & 把模拟边沿质量问题隐藏成整齐的 0/1 \\ \hline
+频率计/计时器 & 在允许电平和带宽内接收周期信号 & 周期、频率或事件间隔 & 输入幅度、耦合方式或触发条件不匹配 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \draw[BookMuted,thick] (0,2.4) -- (4.8,2.4);
+  \draw[BookMuted,thick] (0,0) -- (4.8,0);
+  \node[left] at (0,2.4) {\(V_{\mathrm{DD}}\)};
+  \node[left] at (0,0) {GND};
+  \node[draw=BookAmber,fill=white,minimum width=15mm,minimum height=12mm]
+    (load) at (2.4,1.2) {负载};
+  \draw (2.4,2.4) -- (load.north);
+  \draw (load.south) -- (2.4,0);
+
+  \node[draw=BookBlue,fill=BookCodeBg,minimum width=16mm,minimum height=11mm]
+    (voltmeter) at (6.7,1.2) {电压表 \(V\)};
+  \draw[BookBlue,thick] (4.4,2.4) -| (voltmeter.north);
+  \draw[BookBlue,thick] (4.4,0) -| (voltmeter.south);
+  \node[align=center,BookBlue] at (6.7,-0.45) {并联：比较两个节点};
+
+  \draw[BookMuted,thick] (9.0,2.4) -- (10.0,2.4);
+  \node[draw=BookTeal,fill=BookCodeBg,minimum width=16mm,minimum height=11mm]
+    (ammeter) at (11.0,2.4) {电流表 \(A\)};
+  \draw[BookMuted,thick] (12.0,2.4) -- (13.0,2.4);
+  \node[draw=BookAmber,fill=white,minimum width=15mm,minimum height=12mm]
+    (load2) at (13.0,1.2) {负载};
+  \draw (13.0,2.4) -- (load2.north);
+  \draw (load2.south) -- (13.0,0) -- (9.0,0);
+  \node[align=center,BookTeal] at (11.0,-0.45) {串联：让支路电流经过仪器};
+\end{tikzpicture}
+\end{center}
+\diagramnote{电压表理想输入电阻无限大，电流表理想内阻为零；真实仪器只能
+接近这些理想模型，因此仍会改变被测电路。}
+
+\topic{分辨率、准确度、精密度和采样率不是一回事}
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.34\linewidth}L{0.38\linewidth}}
+概念 & 回答的问题 & 例子 \\ \hline
+\endfirsthead
+概念 & 回答的问题 & 例子 \\ \hline
+\endhead
+分辨率 & 最小能显示或区分多小的变化？ & 三位半万用表在某量程显示到 \(\SI{1}{mV}\) \\ \hline
+准确度 & 读数离真实值可能有多远？ & \(\pm(0.5\%\text{ 读数}+2\text{ 字})\) \\ \hline
+精密度/重复性 & 重复测量聚集得有多紧？ & 多次读数都在 \(\SIrange{3.298}{3.301}{V}\) \\ \hline
+采样率 & 每秒取得多少样本？ & \(\SI{100}{MS/s}\) \\ \hline
+模拟带宽 & 多快的变化仍能以规定幅度误差通过？ & \(\SI{20}{MHz}\) 示波器不适合判断 GHz 边沿 \\ \hline
+\end{osgridlongtable}
+
+显示很多小数位不代表准确。一个稳定显示
+\(\SI{3.3000}{V}\) 的仪器若校准偏差为 \(\SI{50}{mV}\)，精密但不准确；
+一个准确度足够但采样率很低的万用表可以看到平均电压，却看不到
+\(\SI{5}{ns}\) 毛刺。
+
+\topic{仪器负载效应：观察者会改变被观察对象}
+假设信号源可等效为理想电压 \(V_s\) 串联源电阻 \(R_s\)，电压表输入电阻为
+\(R_m\)。接表后读数是
+
+\[
+V_m=V_s\frac{R_m}{R_s+R_m}.
+\]
+
+\begin{workedexample}
+\(V_s=\SI{3.3}{V}\)、\(R_s=\SI{1}{M\ohm}\)，表的输入电阻
+\(R_m=\SI{10}{M\ohm}\)：
+
+\[
+V_m=\SI{3.3}{V}\times\frac{10}{1+10}
+=\SI{3.0}{V}.
+\]
+
+仪表精度即使完美，也只会诚实报告被它拉低后的 \(\SI{3.0}{V}\)。高阻节点
+应使用更高输入阻抗的缓冲器或探头，并把探头电容纳入高速分析。
+\end{workedexample}
+
+\topic{误差怎样传播，数字应该保留到哪里}
+若量 \(x\) 的标称值为 \(x_0\)，绝对误差不超过 \(\Delta x\)，可写成
+
+\[
+x=x_0\pm\Delta x.
+\]
+
+相对误差为
+
+\[
+\varepsilon_x=\frac{\Delta x}{|x_0|}.
+\]
+
+对于独立量的粗略最坏情况估算，乘除结果的相对误差可近似相加。若
+\(R=\SI{10}{k\ohm}\pm1\%\)，\(C=\SI{100}{nF}\pm10\%\)，则
+\(\tau=RC\) 的最坏相对偏差近似为 \(11\%\)。因此把时间常数报告成
+\(\SI{1.000000}{ms}\) 会制造并不存在的精度。
+
+\begin{workedexample}
+一个 \(\SI{1}{V}\) 标称基准误差 \(\pm0.5\%\)，测量仪器在该点的总误差
+\(\pm\SI{8}{mV}\)。若只做保守上界相加：
+
+\[
+\Delta V_{\mathrm{ref}}=\SI{1}{V}\times0.005=\SI{5}{mV},
+\]
+\[
+\Delta V_{\mathrm{total}}\le\SI{5}{mV}+\SI{8}{mV}
+=\SI{13}{mV}.
+\]
+
+读数 \(\SI{1.006}{V}\) 与理想值的差小于误差上界，不能据此宣布电路异常。
+测量结论必须与不确定度一起表达。
+\end{workedexample}
+
+\topic{比例、斜率、面积和对数为什么会反复出现}
+硬件公式不是需要孤立背诵的符号：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item \(y=kx\) 表示比例关系，输入加倍时输出也加倍；
+  \item \(\mathrm{d}y/\mathrm{d}t\) 是变化率，例如电流是电荷变化率；
+  \item 曲线下面积表示累积量，例如功率对时间积分得到能量；
+  \item \(2^n\) 表示每增加一个二值选择，组合数量翻倍；
+  \item \(\log_2 N\) 反问“至少需要多少个二值位置才能区分 \(N\) 个状态”；
+  \item \(e^{-t/\tau}\) 描述许多储能系统向稳态逼近的过程。
+\end{itemize}
+
+\begin{center}
+\begin{tikzpicture}[x=0.85cm,y=0.85cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (6.2,0) node[right]{输入 \(x\)};
+  \draw[->,BookMuted] (0,0) -- (0,4.2) node[above]{输出 \(y\)};
+  \draw[BookBlue,very thick] (0,0) -- (5.4,3.6);
+  \draw[dashed,BookRule] (1.5,0) -- (1.5,1.0) -- (0,1.0);
+  \draw[dashed,BookRule] (4.5,0) -- (4.5,3.0) -- (0,3.0);
+  \node[BookBlue] at (4.4,3.55) {\(y=kx\)};
+  \node[align=center] at (3.0,-0.75) {斜率 \(k=\Delta y/\Delta x\)\\表示每单位输入带来多少输出};
+
+  \begin{scope}[xshift=8cm]
+    \draw[->,BookMuted] (0,0) -- (6.2,0) node[right]{时间 \(t\)};
+    \draw[->,BookMuted] (0,0) -- (0,4.2) node[above]{响应};
+    \draw[BookTeal,very thick,samples=80,domain=0:5.5,smooth]
+      plot (\x,{3.6*(1-exp(-\x/1.3))});
+    \draw[dashed,BookRule] (0,3.6) -- (5.7,3.6);
+    \draw[dashed,BookAmber] (1.3,0) -- (1.3,2.28);
+    \node[BookAmber,below] at (1.3,0) {\(\tau\)};
+    \node[align=center] at (3.0,-0.75) {指数响应先快后慢\\在 \(t=\tau\) 到达约 \(63.2\%\)};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+
+\topic{估算先于精算：数量级能拦住荒谬答案}
+在使用计算器前先估算数量级。若 \(\SI{3.3}{V}\) 加在
+\(\SI{1}{k\ohm}\) 上，电流应在 mA 量级；若算出 \(\SI{3.3}{kA}\)，说明单位
+换算错了。若 \(\SI{1}{GHz}\) 时钟的周期算成一秒，也应立即被常识拦下。
+
+一个实用检查顺序是：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 先写物理关系，不急着代数字；
+  \item 把所有前缀展开成 \(10^n\) 或 \(2^n\)；
+  \item 让单位在式子里约掉；
+  \item 估算数量级和上下界；
+  \item 再计算有效数字；
+  \item 用反向代入或另一种方法核对。
+\end{enumerate}
+
+\begin{failurebox}
+公式计算器只会忠实执行输入。把 \(\SI{100}{nF}\) 当成
+\(\SI{100}{F}\)、把 byte 当 bit、把峰峰值当幅值、把十六进制字符串当十进制，
+都可能得到形式整齐但物理荒谬的结果。单位、参考点和数量级检查不能省略。
+\end{failurebox}

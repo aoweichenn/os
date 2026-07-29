@@ -1,0 +1,202 @@
+\topic{逻辑 0/1 的电气契约包含发送端和接收端}
+发送端保证输出范围 \(V_{OL(max)}\)、\(V_{OH(min)}\)；接收端保证把
+\(V_{IL(max)}\) 以下判为低，把 \(V_{IH(min)}\) 以上判为高。中间区域不是
+“随机区”，而是手册不承诺逻辑结果的区域。
+
+\begin{center}
+\begin{tikzpicture}[x=1.05cm,y=0.9cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted,thick] (0,0) -- (13.6,0) node[right]{电压};
+  \fill[BookTeal!18] (0,0.25) rectangle (3.2,1.1);
+  \fill[BookBlue!12] (4.2,0.25) rectangle (8.4,1.1);
+  \fill[BookAmber!18] (9.5,0.25) rectangle (13.0,1.1);
+  \node at (1.6,0.68) {发送器保证低输出};
+  \node at (6.3,0.68) {不确定区};
+  \node at (11.25,0.68) {发送器保证高输出};
+  \foreach \x/\label/\colorname in {
+    3.2/\(V_{OL(max)}\)/BookTeal,
+    4.2/\(V_{IL(max)}\)/BookBlue,
+    8.4/\(V_{IH(min)}\)/BookBlue,
+    9.5/\(V_{OH(min)}\)/BookAmber} {
+    \draw[\colorname,thick] (\x,0.1) -- (\x,1.45);
+    \node[above,rotate=25,anchor=west,\colorname] at (\x,1.42) {\label};
+  }
+  \draw[<->,BookRed,thick] (3.2,-0.45) -- (4.2,-0.45)
+    node[midway,below]{低噪声裕量};
+  \draw[<->,BookRed,thick] (8.4,-0.45) -- (9.5,-0.45)
+    node[midway,below]{高噪声裕量};
+\end{tikzpicture}
+\end{center}
+\diagramnote{只有发送端最坏输出与接收端最坏阈值共同满足时，接口才有正噪声
+裕量。图中位置是概念关系，不代表某种具体逻辑族的电压数值。}
+
+\begin{workedexample}
+发送器保证 \(V_{OL(max)}=\SI{0.4}{V}\)、
+\(V_{OH(min)}=\SI{2.4}{V}\)；接收器保证
+\(V_{IL(max)}=\SI{0.8}{V}\)、
+\(V_{IH(min)}=\SI{2.0}{V}\)。则
+
+\[
+NM_L=0.8-0.4=\SI{0.4}{V},
+\qquad
+NM_H=2.4-2.0=\SI{0.4}{V}.
+\]
+
+静态上兼容。但仍需检查供电范围、输入绝对最大值、输出电流、边沿和时序；
+正噪声裕量不能单独证明接口完整。
+\end{workedexample}
+
+\topic{推挽输出主动拉高也主动拉低}
+CMOS 推挽输出用上拉管和下拉管分别驱动高低电平。它能提供较强的上升和下降
+能力，但两个推挽输出若一个拉高、一个拉低，会形成争用大电流，不能直接并联。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,4.4) node[vcc]{\(V_{\mathrm{DD}}\)}
+    -- (0,3.8) node[pmos,anchor=S] (p) {};
+  \draw (p.D) -- (0,2.1) node[circ] (out) {};
+  \draw (out) -- (0,1.5) node[nmos,anchor=D] (n) {};
+  \draw (n.S) -- (0,0) node[ground]{};
+  \draw (out) -- (2.1,2.1) node[right]{OUT};
+  \draw[<-,BookBlue,thick] (p.G) -- (-2,3.1) node[left]{控制};
+  \draw[<-,BookBlue,thick] (n.G) -- (-2,1.0) node[left]{互补控制};
+  \node[align=center] at (0,-0.65) {推挽：主动上拉/下拉};
+
+  \begin{scope}[xshift=7cm]
+    \draw (0,4.4) node[vcc]{\(V_{\mathrm{DD}}\)}
+      to[R,l={上拉 \(R_P\)}] (0,2.1) node[circ] (odout) {};
+    \draw (odout) -- (0,1.5) node[nmos,anchor=D] (odn) {};
+    \draw (odn.S) -- (0,0) node[ground]{};
+    \draw (odout) -- (2.1,2.1) node[right]{BUS};
+    \draw[<-,BookTeal,thick] (odn.G) -- (-2,1.0) node[left]{控制};
+    \node[align=center] at (0,-0.65) {开漏：只主动拉低，\\释放后由电阻拉高};
+  \end{scope}
+\end{circuitikz}
+\end{center}
+
+\topic{开漏允许多个器件共享一根“任意一方可拉低”的线}
+多个开漏输出关闭时都呈高阻，由公共电阻把线拉高；任一输出导通都把线拉低。
+这适合低有效中断、I\(^2\)C 等接口。上升沿由上拉电阻和总线电容决定：
+
+\[
+\tau=R_P C_{\mathrm{bus}}.
+\]
+
+上拉太大时上升慢，太小时低电平电流增大。共享能力不是免费的。
+
+\begin{workedexample}
+\(R_P=\SI{4.7}{k\ohm}\)、总线电容 \(C=\SI{200}{pF}\)：
+
+\[
+\tau=4.7\times10^3\times200\times10^{-12}
+=\SI{0.94}{\micro s}.
+\]
+
+达到 \(70\%\) 电源电压约需 \(1.204\tau\approx\SI{1.13}{\micro s}\)。若协议
+要求更短上升时间，应减小电阻、降低电容、使用有源上拉或降低速率，同时检查
+器件允许的灌电流。
+\end{workedexample}
+
+\topic{三态输出增加高阻态，用于分时共享}
+三态输出具有 0、1 和 \(Z\)（高阻）三种电气状态。\(Z\) 不是第三个逻辑值，
+而是输出暂时不驱动总线。仲裁必须确保同一时刻至多一个推挽发送器使能；全部
+高阻时总线仍可能悬空，需要保持器或上下拉。
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.25\linewidth}L{0.28\linewidth}L{0.20\linewidth}}
+输出结构 & 可主动拉高 & 可主动拉低 & 典型共享方式 \\ \hline
+\endfirsthead
+输出结构 & 可主动拉高 & 可主动拉低 & 典型共享方式 \\ \hline
+\endhead
+推挽 & 是 & 是 & 点对点；不可无仲裁并联 \\ \hline
+开漏/开集 & 否 & 是 & 多设备共同拉低，外部上拉 \\ \hline
+三态 & 使能时是 & 使能时是 & 通过使能/仲裁分时共享 \\ \hline
+输入 & 否 & 否 & 只观察，不应驱动网络 \\ \hline
+\end{osgridlongtable}
+
+\topic{扇出由电流能力、输入电容和时序共同限制}
+\term{扇出}{fan-out}是一个输出可可靠驱动的输入数量。静态时要满足
+
+\[
+N I_{IH}\le I_{OH},
+\qquad
+N I_{IL}\le I_{OL}.
+\]
+
+CMOS 输入静态电流很小，但每个输入和走线增加电容，数量越多边沿越慢：
+
+\[
+t_r\propto R_{\mathrm{driver}}C_{\mathrm{load}}.
+\]
+
+所以“输入几乎不耗电”不等于一个 GPIO 能无限分叉。
+
+\begin{workedexample}
+输出允许灌电流 \(\SI{8}{mA}\)，每个接收器低电平输入电流最坏
+\(\SI{0.4}{mA}\)，静态电流给出的扇出上限为
+
+\[
+N\le\frac{8}{0.4}=20.
+\]
+
+若时序分析发现驱动 12 个输入时上升沿已经超过协议上限，则实际扇出必须小于
+12。静态和动态两个约束取更严格者。
+\end{workedexample}
+
+\topic{CMOS NAND 与 NOR 怎样从串并联晶体管得到}
+CMOS 门由互补上拉网络 PUN 和下拉网络 PDN 组成。对 2-input NAND：
+N-MOS 串联，只有 \(A=B=1\) 才能下拉；P-MOS 并联，任一输入为 0 就能上拉。
+
+\begin{center}
+\begin{circuitikz}
+  \draw (0,5.5) node[vcc]{\(V_{\mathrm{DD}}\)};
+  \draw (-1.1,5.0) node[pmos,anchor=S] (p1) {};
+  \draw (1.1,5.0) node[pmos,anchor=S] (p2) {};
+  \draw (0,5.5) -| (p1.S);
+  \draw (0,5.5) -| (p2.S);
+  \draw (p1.D) |- (0,3.8) node[circ] (y) {};
+  \draw (p2.D) |- (y);
+  \draw (y) -- (3.0,3.8) node[right]{\(Y=\lnot(A\land B)\)};
+  \draw (0,3.8) -- (0,3.2) node[nmos,anchor=D] (n1) {};
+  \draw (n1.S) -- (0,1.7) node[nmos,anchor=D] (n2) {};
+  \draw (n2.S) -- (0,0) node[ground]{};
+  \draw (p1.G) -- (-2.2,4.2) node[left]{\(A\)};
+  \draw (n1.G) -- (-2.2,2.6) node[left]{\(A\)};
+  \draw (p2.G) -- (2.2,4.2) node[right]{\(B\)};
+  \draw (n2.G) -- (2.2,1.1) node[right]{\(B\)};
+  \node[align=center] at (0,-0.7) {NAND：上拉并联、下拉串联};
+
+  \begin{scope}[xshift=8cm]
+    \node[os block,minimum width=24mm] (nand) at (0,4.0) {NAND};
+    \node[os block,minimum width=24mm] (inv) at (0,1.9) {反相器};
+    \node[left=15mm of nand,yshift=3mm] (a) {\(A\)};
+    \node[left=15mm of nand,yshift=-3mm] (b) {\(B\)};
+    \node[right=15mm of inv] (andout) {\(A\land B\)};
+    \draw[os arrow] (a) -- ([yshift=3mm]nand.west);
+    \draw[os arrow] (b) -- ([yshift=-3mm]nand.west);
+    \draw[os arrow] (nand) -- node[right]{取反} (inv);
+    \draw[os arrow] (inv) -- (andout);
+    \node[align=center] at (0,0.3)
+      {NAND 后再反相得到 AND；\\功能完备描述可构造性};
+  \end{scope}
+\end{circuitikz}
+\end{center}
+
+NOR 使用并联 N-MOS 下拉和串联 P-MOS 上拉。晶体管级图让德摩根定律、有效
+极性和导电路径连接起来，而不仅是一张真值表。
+
+\topic{电压域不同必须有明确的电平转换策略}
+\begin{osgridlongtable}{L{0.23\linewidth}L{0.31\linewidth}L{0.36\linewidth}}
+情况 & 可能方案 & 必须核对 \\ \hline
+\endfirsthead
+情况 & 可能方案 & 必须核对 \\ \hline
+\endhead
+低压推挽驱动高压输入 & 输入阈值兼容时可直连，否则缓冲/转换 & \(V_{IH}\)、输入容限、边沿 \\ \hline
+高压推挽驱动低压输入 & 分压、限流钳位或专用转换器 & 绝对最大、速度、掉电反灌 \\ \hline
+开漏双向总线 & 双电源 MOSFET 或专用双向转换器 & 上拉、电容、方向与关机状态 \\ \hline
+高速差分接口 & 协议专用 PHY/收发器 & 共模、终端、阻抗、参考时钟 \\ \hline
+\end{osgridlongtable}
+
+\begin{failurebox}
+输入端“能读出正确 0/1”不等于连接安全。高压可能经输入保护二极管向未上电
+电源域反灌；慢边沿可能增加短路电流或重复越过阈值；多个推挽输出可能争用。
+逻辑功能、电气安全和时序必须分别验收。
+\end{failurebox}

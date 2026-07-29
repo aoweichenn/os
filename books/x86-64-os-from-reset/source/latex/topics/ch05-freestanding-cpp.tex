@@ -1,4 +1,4 @@
-\section{没有宿主运行库的现代 C++20}
+\section{freestanding C++20 与跨语言 ABI}
 
 \begin{keyidea}
 C++ 是一种语言，不等于桌面操作系统提供的运行环境。内核可以使用类型系统、
@@ -6,8 +6,7 @@ C++ 是一种语言，不等于桌面操作系统提供的运行环境。内核�
 与失败策略。
 \end{keyidea}
 
-\subsection{一、托管环境与独立环境}
-
+\topic{一、托管环境与独立环境}
 C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作系统装载器
 映射程序和动态库，语言运行时准备栈、线程局部存储、全局构造、堆和退出流程，
 随后才调用 \code{main}。程序还可以把文件、时钟、终端和线程交给系统调用。
@@ -17,26 +16,20 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 \code{--target=x86_64-unknown-none-elf} 和 \code{-ffreestanding}，
 明确告诉编译器当前程序不依赖宿主平台。
 
-\begin{longtable}{L{0.23\textwidth}L{0.29\textwidth}L{0.32\textwidth}}
-\toprule
-\textbf{能力} & \textbf{普通应用中的来源} & \textbf{本项目中的建立方式}\\
-\midrule
+\begin{osgridlongtable}{L{0.23\textwidth}L{0.29\textwidth}L{0.32\textwidth}}
+\textbf{能力} & \textbf{普通应用中的来源} & \textbf{本项目中的建立方式}\\ \hline
 \endfirsthead
-\toprule
-\textbf{能力} & \textbf{普通应用中的来源} & \textbf{本项目中的建立方式}\\
-\midrule
+\textbf{能力} & \textbf{普通应用中的来源} & \textbf{本项目中的建立方式}\\ \hline
 \endhead
-初始栈 & 进程装载器与内核 & 启动汇编选择保留 RAM 并对齐\\
-零初始化区 & 装载器或 C 运行时 & 入口按链接符号主动清零\\
-全局构造 & CRT 初始化数组 & 后续自研初始化遍历或避免依赖\\
-动态内存 & libc 与系统调用 & 物理页、虚拟内存和内核堆\\
-异常展开 & ABI 运行库与展开表 & 初期禁用，使用显式状态\\
-程序退出 & 运行库调用操作系统 & 内核停机、重启或结束任务\\
-\bottomrule
-\end{longtable}
+初始栈 & 进程装载器与内核 & 启动汇编选择保留 RAM 并对齐\\ \hline
+零初始化区 & 装载器或 C 运行时 & 入口按链接符号主动清零\\ \hline
+全局构造 & CRT 初始化数组 & 后续自研初始化遍历或避免依赖\\ \hline
+动态内存 & libc 与系统调用 & 物理页、虚拟内存和内核堆\\ \hline
+异常展开 & ABI 运行库与展开表 & 初期禁用，使用显式状态\\ \hline
+程序退出 & 运行库调用操作系统 & 内核停机、重启或结束任务\\ \hline
+\end{osgridlongtable}
 
-\subsection{二、编译器选项固定生成代码边界}
-
+\topic{二、编译器选项固定生成代码边界}
 \code{-fno-exceptions} 避免生成异常展开和 \code{__cxa\_*} 依赖；
 \code{-fno-rtti} 避免类型信息与动态转换运行时；
 \code{-fno-stack-protector} 避免尚未提供的栈保护符号；
@@ -52,8 +45,7 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 这些扩展寄存器，也未建立每线程浮点状态。只有上下文切换协议覆盖相应状态后，
 编译器才能安全生成这些指令。
 
-\subsection{三、ABI 是汇编与 C++ 的共同契约}
-
+\topic{三、ABI 是汇编与 C++ 的共同契约}
 应用二进制接口规定参数寄存器、返回值、调用者与被调用者保存寄存器、栈方向
 和对齐。它使分别编译的函数能够协作，也使启动汇编能够调用 C++ 入口。函数
 签名只描述源语言类型，真正的跨边界行为还包括寄存器和内存约束。
@@ -63,8 +55,7 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 覆盖代码、栈和参数。C++ 返回后的行为也要预先定义，通常进入 panic 或停机，
 而不是落入未知字节。
 
-\subsection{四、精确宽度与领域类型}
-
+\topic{四、精确宽度与领域类型}
 裸机代码面对寄存器、页表项和磁盘字段，不能让 \code{int}、\code{long} 的
 平台差异进入协议。项目采用 \code{uint8_t}、\code{uint16_t}、
 \code{uint32_t} 和 \code{uint64_t} 等显式宽度类型。外部格式严格服从协议；
@@ -76,8 +67,7 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 签名携带领域含义。显式构造函数阻止普通整数无意转换，\code{[[nodiscard]]}
 提醒调用者不能丢弃失败状态，\code{noexcept} 固定当前没有异常展开的契约。
 
-\subsection{五、半开区间消除边界歧义}
-
+\topic{五、半开区间消除边界歧义}
 地址范围表示为 \([begin,end)\)：起点属于范围，终点不属于范围。大小直接为
 \(end-begin\)，相邻范围 \([a,b)\) 与 \([b,c)\) 不重叠，空范围满足
 \(begin=end\)。这种约定与数组迭代器、页范围和 ELF 文件区间保持一致。
@@ -95,8 +85,7 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 \code{AddressRangeCreationStatus} 返回，不依赖异常、全局错误码或宿主
 运行库。
 
-\subsection{六、头文件与源文件承担不同责任}
-
+\topic{六、头文件与源文件承担不同责任}
 公共头文件描述其他模块可以依赖的类型、常量和函数契约；源文件保存实现细节。
 调用者不需要看到成员函数怎样比较原始数值，修改实现也不应迫使所有上层代码
 重新理解内部算法。模板和必须内联的定义是语言规则要求的例外，仍要放入明确的
@@ -116,8 +105,7 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
   caption={地址范围的独立实现}
 ]{../../../../source/foundation/src/address_range.cpp}
 
-\subsection{七、常量替代魔法数字与魔法字符串}
-
+\topic{七、常量替代魔法数字与魔法字符串}
 硬件端口、位掩码、页大小和协议标记都要用
 \code{OS\_项目模块\_功能} 形式的全大写常量表达。名称使评审者能够追溯数值
 来源，也让同一硬件事实只维护一次。优先使用有类型的 \code{constexpr} 或
@@ -127,8 +115,7 @@ C++ 标准区分 hosted 与 freestanding 实现。普通应用启动前，操作
 项目目前对它们也采用领域常量，是为了统一强调地址计算的语义。更重要的规则是
 任何协议值、容量上限和特殊标记都必须有准确来源，不能把知识埋在表达式里。
 
-\subsection{八、volatile、原子操作与内存顺序}
-
+\topic{八、volatile、原子操作与内存顺序}
 \code{volatile} 表示一次访问具有必须保留的外部可见性，适合按规范访问某些
 MMIO 寄存器，但它不提供线程同步、原子性或处理器内存屏障。端口映射 I/O 使用
 \code{in}/\code{out} 汇编边界，同样要明确编译器约束和设备顺序。
@@ -137,8 +124,7 @@ MMIO 寄存器，但它不提供线程同步、原子性或处理器内存屏障
 屏障。把共享变量声明为 volatile 不能修复竞态。当前单核、关闭中断的复位阶段
 尚未进入并发模型，后续引入中断和多核时再建立这些机制。
 
-\subsection{九、现代语言特性服务于可证明约束}
-
+\topic{九、现代语言特性服务于可证明约束}
 \code{enum class} 防止不同状态域意外混用；\code{constexpr} 允许在编译期
 验证布局和掩码；概念与模板可用于受约束的寄存器或容器抽象；
 \code{std::span} 一类无所有权视图适合表达指针加长度，但前提是项目提供所需

@@ -1,4 +1,4 @@
-\section{v1.18：把接口、设备名和观察面冻结成可执行契约}
+\section{ABI v2 冻结与二进制契约}
 
 \begin{keyidea}
 操作系统接近一个正式版本时，最重要的能力不再是继续增加机制，而是准确回答：
@@ -9,8 +9,7 @@ v1.18 把系统调用、公共结构与 ELF 假设收束为 ABI v2；把设备�
 发布都能拒绝的错误。
 \end{keyidea}
 
-\subsection{为什么最终开发阶段要主动停止扩张}
-
+\topic{为什么最终开发阶段要主动停止扩张}
 到 v1.17，系统已经拥有从复位到 Ring 3、从页故障到 COW、从键盘中断到
 作业控制、从文件写入到 journal replay 的完整闭环。此时再加入一个看似很小
 的系统调用，实际会同时改变调用号、dispatcher、用户封装、错误语义、测试、
@@ -32,8 +31,7 @@ v1.18 把系统调用、公共结构与 ELF 假设收束为 ABI v2；把设备�
 形成环；多个 TCG 实例并行运行，则正确的故障路径也可能撞上墙钟超时。所谓
 “收尾”并不比开发简单，它只是把注意力从功能宽度转向契约完整度。
 
-\subsection{ABI 的历史：源代码兼容与二进制兼容不是一回事}
-
+\topic{ABI 的历史：源代码兼容与二进制兼容不是一回事}
 \term{API}{Application Programming Interface}描述源代码怎样调用一个
 接口。头文件变了，调用者与实现一起重新编译，很多变化仍可被吸收。
 \term{ABI}{Application Binary Interface}约束的是已经生成的机器码怎样
@@ -62,8 +60,7 @@ ABI v2.0.0 固定 69 个系统调用，合法调用号从 1 到 69，公共错�
 errno、结构布局或调用约定与 Linux 兼容。
 \end{contractbox}
 
-\subsection{固定宽度类型只解决位数，不自动解决序列化}
-
+\topic{固定宽度类型只解决位数，不自动解决序列化}
 宿主环境中的 \code{long} 在 LP64 和 LLP64 下宽度不同，\code{size_t}
 表达当前编译目标可容纳的对象大小，\code{bool} 的外部表示也不适合成为线
 协议。ABI、磁盘布局、硬件寄存器和汇编交接因此只使用
@@ -85,42 +82,36 @@ padding，也不会验证枚举是否合法、地址相加是否溢出、指针�
 不能用来隐藏协议不清晰。地址、文件长度、inode、时间和累计统计选择
 \code{uint64_t}；磁盘扇区中的固定位域仍按盘面定义选择准确宽度。
 
-\subsection{编译器怎样成为 ABI 检查器}
-
+\topic{编译器怎样成为 ABI 检查器}
 \filepath{source/abi/include/os/abi/layout.hpp} 对共享结构执行
 \code{offsetof} 与 \code{static_assert}。检查总大小而不检查 offset
 是不够的：两个结构可能总大小相同，字段顺序却已经互换。只检查 offset
 也不够：枚举号、错误边界或目标 ELF 身份仍可能漂移。
 
-\begin{longtable}{L{0.28\linewidth}L{0.22\linewidth}L{0.38\linewidth}}
-\toprule
-对象 & 关键冻结点 & 为什么必须冻结 \\
-\midrule
+\begin{osgridlongtable}{L{0.28\linewidth}L{0.22\linewidth}L{0.38\linewidth}}
+对象 & 关键冻结点 & 为什么必须冻结 \\ \hline
 \endfirsthead
-\toprule
-对象 & 关键冻结点 & 为什么必须冻结 \\
-\midrule
+对象 & 关键冻结点 & 为什么必须冻结 \\ \hline
 \endhead
 \code{ProcessLaunchRequest} &
 六个 64 位字段位于 0、8、16、24、32、40 &
-Kernel 必须用与用户程序相同的方式解释路径、参数和环境 \\
+Kernel 必须用与用户程序相同的方式解释路径、参数和环境 \\ \hline
 \code{SignalFrame} &
 header 0--56，\code{context} 从 64 开始 &
-signal handler 返回时会把同一对象再次交给 Kernel 验证 \\
+signal handler 返回时会把同一对象再次交给 Kernel 验证 \\ \hline
 \code{FileInformation} &
 身份、类型、逻辑/分配长度和链接数的 offset &
-\code{stat}、\code{cp} 与工具不能把长度解释成 inode \\
+\code{stat}、\code{cp} 与工具不能把长度解释成 inode \\ \hline
 \code{TerminalInformation} &
 terminal、session、foreground group 各 64 位 &
-TTY 作业控制的权限判断横跨 Ring 0 与 Ring 3 \\
+TTY 作业控制的权限判断横跨 Ring 0 与 Ring 3 \\ \hline
 \code{SystemCallNumber} &
 首项、末项与总数 &
-中间插值或重排不能在编译仍成功时改变旧程序语义 \\
+中间插值或重排不能在编译仍成功时改变旧程序语义 \\ \hline
 ELF 常量 &
 magic、class、data、machine、flags &
-Stage 1、Kernel 和产物审计必须接受同一种目标身份 \\
-\bottomrule
-\end{longtable}
+Stage 1、Kernel 和产物审计必须接受同一种目标身份 \\ \hline
+\end{osgridlongtable}
 
 共享断言由 Kernel 与用户程序共同编译，独立
 \filepath{tests/unit/abi_v2_contract_test.cpp} 再从消费者角度检查版本、
@@ -133,8 +124,7 @@ Stage 1、Kernel 和产物审计必须接受同一种目标身份 \\
 结构只表达数据；所有权、锁和行为留在各自地址空间的实现对象中。
 \end{failurebox}
 
-\subsection{ELF 常量为何也属于 ABI}
-
+\topic{ELF 常量为何也属于 ABI}
 此前 Stage 1、Kernel 用户 ELF loader 与离线审计都需要知道
 \code{0x7F ELF}、64 位 class、小端 encoding、x86-64 machine 和段权限。
 若三处各有一组魔法数字，它们可能逐渐形成三个略有差异的“标准”。v1.18
@@ -146,7 +136,7 @@ Kernel ELF，Kernel 仍对不可信用户 ELF 进行两遍事务加载，Python 
 独立 oracle。应当共享的是协议事实，而不是把生产 parser 原样调用一遍并
 宣布“双方结果一致”。
 
-\subsection{为什么设备节点需要单独的文件系统}
+\section{devfs、procfs、用户工具与发布证据}
 
 v1.15 为了让 fd 0/1/2 指向终端，曾用专用后端提供
 \filepath{/dev/console}。它完成了垂直闭环，却把两个责任粘在一起：
@@ -172,8 +162,7 @@ v1.15 为了让 fd 0/1/2 指向终端，曾用专用后端提供
 \end{pdfdiagram}
 \diagramnote{devfs 不保存驱动指针；路径、打开对象和字符行为各自只有一个所有者。}
 
-\subsection{devfs 的注册、发布与 vnode 生命周期}
-
+\topic{devfs 的注册、发布与 vnode 生命周期}
 \code{Devfs} 由调用者提供固定 \code{DevfsDevice[16]}。每项只保存稳定
 node identifier、generation、名称长度、最多 255 字节名称和 active 状态。
 初始化后注册 \code{console}，再把 superblock 挂载到 \filepath{/dev}。
@@ -206,8 +195,7 @@ devfs 命名空间只读。create、remove、rename 和 truncate 返回只读错
 TerminalDevice，不经 devfs 普通文件回调。这样同一设备不会拥有两条内容
 不一致的读写路径。
 
-\subsection{procfs 的历史动机与本项目范围}
-
+\topic{procfs 的历史动机与本项目范围}
 “一切皆文件”从来不是说所有对象都真的位于磁盘，而是说不同资源尽量复用
 统一的名称和 I/O 协议。早期 Unix 的 \filepath{/dev} 让设备进入文件 API；
 后来 procfs 让进程与系统状态也可由普通工具读取。Linux 的 procfs 经过多年
@@ -215,29 +203,23 @@ TerminalDevice，不经 devfs 普通文件回调。这样同一设备不会拥�
 
 本项目只取其中最适合教学的一层：以 VFS 暴露动态只读观察面。固定六个文件：
 
-\begin{longtable}{L{0.24\linewidth}L{0.62\linewidth}}
-\toprule
-路径 & 一次快照中的含义 \\
-\midrule
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.62\linewidth}}
+路径 & 一次快照中的含义 \\ \hline
 \endfirsthead
-\toprule
-路径 & 一次快照中的含义 \\
-\midrule
+路径 & 一次快照中的含义 \\ \hline
 \endhead
-\filepath{/proc/version} & ABI major/minor 与 \code{x86_64} 目标架构 \\
-\filepath{/proc/uptime} & PIT 驱动的单调纳秒，不是宿主墙钟 \\
-\filepath{/proc/meminfo} & managed、free、allocated 物理内存字节 \\
-\filepath{/proc/processes} & 活动 Process/Thread、容量与当前 PID \\
-\filepath{/proc/resources} & heap、FileDescription、Pipe、vnode 与 journal commit \\
-\filepath{/proc/mounts} & 当前 VFS mount 数 \\
-\bottomrule
-\end{longtable}
+\filepath{/proc/version} & ABI major/minor 与 \code{x86_64} 目标架构 \\ \hline
+\filepath{/proc/uptime} & PIT 驱动的单调纳秒，不是宿主墙钟 \\ \hline
+\filepath{/proc/meminfo} & managed、free、allocated 物理内存字节 \\ \hline
+\filepath{/proc/processes} & 活动 Process/Thread、容量与当前 PID \\ \hline
+\filepath{/proc/resources} & heap、FileDescription、Pipe、vnode 与 journal commit \\ \hline
+\filepath{/proc/mounts} & 当前 VFS mount 数 \\ \hline
+\end{osgridlongtable}
 
 没有每 PID 目录、\filepath{/proc/self}、符号链接、权限、命令行和可写调优。
 这些不是“漏做”，而是冻结时明确排除的新机制。
 
-\subsection{为什么每次 read 都要重新生成快照}
-
+\topic{为什么每次 read 都要重新生成快照}
 进程数、空闲页和单调时间会持续变化。若挂载时生成文本，内容在第一次读取前
 就可能过时；若每个 open 长期保存完整快照，则需要动态分配、新的关闭生命
 周期和更复杂的偏移状态。v1.18 选择在每次 read 或 stat 时采集一次
@@ -260,8 +242,7 @@ offset 大于等于渲染长度时返回 EOF；否则只复制
 伪文件的用户程序必须正确处理 short read 和 EOF，不能把 stat size 当成
 跨调用事务承诺。
 
-\subsection{锁顺序：最容易被文本文件隐藏的内核死锁}
-
+\topic{锁顺序：最容易被文本文件隐藏的内核死锁}
 snapshot provider 需要读取物理页、heap、Process/Thread、FileDescription、
 Pipe、VFS、rootfs journal 和 PIT 时间。若 procfs 先持自己的锁再调用这些
 子系统，而某个资源统计路径又反向访问 procfs，就形成锁环。
@@ -289,8 +270,7 @@ VFS 汇总也不能在全局锁内递归回调后端。当前 mount 数组在初
 提供“看起来合理”的部分统计。procfs 自己的 resource usage 只报告固定节点，
 不再次采集快照，因此不会递归进入自身。
 
-\subsection{没有 libc 时怎样安全输出十进制}
-
+\topic{没有 libc 时怎样安全输出十进制}
 freestanding Kernel 不依赖 \code{snprintf}、iostream 或动态 string。
 \code{SnapshotWriter} 用最多 20 字节临时区保存一个 \code{uint64_t}：
 反复取模 10 得到低位、除以 10 推进、再反转到正序。零必须单独输出一个字符，
@@ -304,8 +284,7 @@ freestanding Kernel 不依赖 \code{snprintf}、iostream 或动态 string。
 而不是回绕为零。active open 则在达到最大值时拒绝新 open，因为继续增加会
 破坏 close 后的生命周期账本。
 
-\subsection{32 个工具：用户空间组合比新增 syscall 更有价值}
-
+\topic{32 个工具：用户空间组合比新增 syscall 更有价值}
 v1.18 的 rootfs 冻结 32 个独立工具路径：
 
 \begin{lstlisting}[caption={冻结的用户工具集合}]
@@ -331,8 +310,7 @@ mount identifier、superblock identifier、inode 与 generation；确认不是
 和 \filepath{/b} 可能解析到同一 vnode。
 \end{failurebox}
 
-\subsection{tool probe 为什么不能被普通编译替代}
-
+\topic{tool probe 为什么不能被普通编译替代}
 CMake 能证明目标被列入构建，却不能证明 rootfs 安装后仍有 32 个正确路径。
 所有名字若意外指向同一个 inode，或者某个路径没有写入镜像，编译和链接都
 可能成功。
@@ -353,28 +331,22 @@ Shell 实际运行新增工具：basename/dirname/seq 使用唯一输出，procf
 忽略的 SIGCHLD。前者证明镜像产物，后者证明 dispatch、参数、syscall、
 procfs 和资源回收，二者不能互相替代。
 
-\subsection{测试矩阵怎样证明冻结边界}
-
-\begin{longtable}{L{0.23\linewidth}L{0.62\linewidth}}
-\toprule
-证据层 & 拒绝的错误 \\
-\midrule
+\topic{测试矩阵怎样证明冻结边界}\par
+\begin{osgridlongtable}{L{0.23\linewidth}L{0.62\linewidth}}
+证据层 & 拒绝的错误 \\ \hline
 \endfirsthead
-\toprule
-证据层 & 拒绝的错误 \\
-\midrule
+证据层 & 拒绝的错误 \\ \hline
 \endhead
-ABI 单元测试 & 版本、号值、枚举、大小、对齐、字段 offset 或 ELF 身份漂移 \\
-devfs 单元测试 & 重名、容量、半发布、readdir、只读语义、open/close 账本错误 \\
-procfs 单元测试 & 六文件格式、short read、EOF、stat、provider 失败与统计错误 \\
-VFS 集成测试 & rootfs、memfs、devfs、procfs 同时挂载后的路径穿越错误 \\
-随机测试 & 十万组变化数值、offset 与 capacity 相对独立 oracle 的偏差 \\
-产物审计 & Kernel/用户 ELF 段、权限、符号或 freestanding 依赖异常 \\
-64 MiB QEMU & 启动、ABI/devfs/procfs 标记和 32 个独立 ELF 路径 \\
-256 MiB QEMU & 新工具、16 级流水线、TTY、signal 与资源守恒 \\
-64 GiB QEMU & 主规格地址宽度、4 GiB 以上真实页和容量模型 \\
-\bottomrule
-\end{longtable}
+ABI 单元测试 & 版本、号值、枚举、大小、对齐、字段 offset 或 ELF 身份漂移 \\ \hline
+devfs 单元测试 & 重名、容量、半发布、readdir、只读语义、open/close 账本错误 \\ \hline
+procfs 单元测试 & 六文件格式、short read、EOF、stat、provider 失败与统计错误 \\ \hline
+VFS 集成测试 & rootfs、memfs、devfs、procfs 同时挂载后的路径穿越错误 \\ \hline
+随机测试 & 十万组变化数值、offset 与 capacity 相对独立 oracle 的偏差 \\ \hline
+产物审计 & Kernel/用户 ELF 段、权限、符号或 freestanding 依赖异常 \\ \hline
+64 MiB QEMU & 启动、ABI/devfs/procfs 标记和 32 个独立 ELF 路径 \\ \hline
+256 MiB QEMU & 新工具、16 级流水线、TTY、signal 与资源守恒 \\ \hline
+64 GiB QEMU & 主规格地址宽度、4 GiB 以上真实页和容量模型 \\ \hline
+\end{osgridlongtable}
 
 构建图共有 169 项测试，其中 145 项宿主测试允许开满 CPU，24 项
 \code{os_qemu_*} 共享同一个 CTest \code{RESOURCE_LOCK}。这条锁不是功能
@@ -382,8 +354,7 @@ VFS 集成测试 & rootfs、memfs、devfs、procfs 同时挂载后的路径穿�
 用例撞上有界超时。把串行要求写进测试图后，执行者即使使用
 \code{ctest -j20} 也不会制造虚假失败。
 
-\subsection{日志中的时间与来宾中的时间}
-
+\topic{日志中的时间与来宾中的时间}
 Kernel 只新增三个低频阶段标记：
 
 \begin{lstlisting}
@@ -397,8 +368,7 @@ QEMU runner 给每行串口加的 \code{[QEMU][T+...ms]} 是宿主收到字节�
 墙钟，用于判断停滞发生在哪一阶段；\filepath{/proc/uptime} 与内核 deadline
 来自来宾 PIT 单调纳秒。前者是测试观测，后者是 OS 时间语义，不能相互冒充。
 
-\subsection{源码走读：从协议到真实整机}
-
+\topic{源码走读：从协议到真实整机}
 建议按“定义、实现、消费者、反例证据”的顺序阅读：
 
 \begin{enumerate}[leftmargin=2.1em]
@@ -423,8 +393,7 @@ QEMU runner 给每行串口加的 \code{[QEMU][T+...ms]} 是宿主收到字节�
 路径上观察到这些事实。代码命名和注释应使答案能直接从相邻定义获得，而不是
 依靠作者记忆。
 
-\subsection{v1.18 没有承诺什么}
-
+\topic{v1.18 没有承诺什么}
 devfs 没有权限、uid/gid、major/minor、注销、热插拔或 udev；procfs 没有
 每进程目录、符号链接、可写控制项和 Linux 文本兼容；ABI v2 没有动态链接、
 共享库、能力协商或向后加载 v1 用户程序；调度仍是单 BSP、内核不可抢占，

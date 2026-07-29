@@ -30,18 +30,15 @@
 字符常占一个字节，而 UTF-8 编码的汉字通常占三个字节；一条 x86 指令也可能
 由一个到十多个字节组成。
 
-\begin{longtable}{L{0.17\linewidth}L{0.24\linewidth}L{0.49\linewidth}}
-\toprule
-写法 & 含义 & 容易混淆之处 \\
-\midrule
-\code{b}、bit & 一个二值位 & 网络速率的 Mb/s 通常是每秒多少 megabit \\
-\code{B}、byte & 八个 bit & 文件大小的 MB 通常是 megabyte，大小写不能混用 \\
-KiB & \(1024\) B & 二进制容量单位；本项目 ROM 的 128 KiB 是 131072 B \\
-MiB & \(1024\) KiB & 256 MiB 是 \(256\times1024\times1024\) B \\
-GiB & \(1024\) MiB & 本项目容量规格会使用 64 GiB RAM \\
-十六进制 & 每一位表示四个 bit & \code{0xFF} 等于二进制 \code{11111111} 和十进制 255 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.24\linewidth}L{0.49\linewidth}}
+写法 & 含义 & 容易混淆之处 \\ \hline
+\code{b}、bit & 一个二值位 & 网络速率的 Mb/s 通常是每秒多少 megabit \\ \hline
+\code{B}、byte & 八个 bit & 文件大小的 MB 通常是 megabyte，大小写不能混用 \\ \hline
+KiB & \(1024\) B & 二进制容量单位；本项目 ROM 的 128 KiB 是 131072 B \\ \hline
+MiB & \(1024\) KiB & 256 MiB 是 \(256\times1024\times1024\) B \\ \hline
+GiB & \(1024\) MiB & 本项目容量规格会使用 64 GiB RAM \\ \hline
+十六进制 & 每一位表示四个 bit & \code{0xFF} 等于二进制 \code{11111111} 和十进制 255 \\ \hline
+\end{osgridlongtable}
 
 十六进制不是另一种数据，只是更适合查看二进制的写法。一个十六进制数字恰好
 覆盖四个 bit，所以两位十六进制数正好描述一个字节。后文看见
@@ -70,18 +67,15 @@ GiB & \(1024\) MiB & 本项目容量规格会使用 64 GiB RAM \\
 \term{寄存器}{register}直接位于处理器架构状态中。它们数量少、宽度固定，
 用于保存当前运算数、地址或控制状态。x86-64 中常见的几类如下。
 
-\begin{longtable}{L{0.20\linewidth}L{0.27\linewidth}L{0.43\linewidth}}
-\toprule
-寄存器类别 & 例子 & 在完整执行链中的作用 \\
-\midrule
-通用寄存器 & \code{RAX}、\code{RBX} & 暂存整数、地址、函数参数和计算结果 \\
-指令指针 & \code{RIP} & 指向下一段要取出的指令字节；复位时由 CPU 规定初值 \\
-栈指针 & \code{RSP} & 指向 RAM 中当前栈顶；调用函数前必须由早期代码建立 \\
-标志寄存器 & \code{RFLAGS} & 保存零、进位、中断允许等条件和控制位 \\
-控制寄存器 & \code{CR0}、\code{CR3} & 控制执行模式、分页以及当前页表根 \\
-段寄存器 & \code{CS}、\code{DS} & 来自早期 x86 分段模型，现代模式仍保留部分职责 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.27\linewidth}L{0.43\linewidth}}
+寄存器类别 & 例子 & 在完整执行链中的作用 \\ \hline
+通用寄存器 & \code{RAX}、\code{RBX} & 暂存整数、地址、函数参数和计算结果 \\ \hline
+指令指针 & \code{RIP} & 指向下一段要取出的指令字节；复位时由 CPU 规定初值 \\ \hline
+栈指针 & \code{RSP} & 指向 RAM 中当前栈顶；调用函数前必须由早期代码建立 \\ \hline
+标志寄存器 & \code{RFLAGS} & 保存零、进位、中断允许等条件和控制位 \\ \hline
+控制寄存器 & \code{CR0}、\code{CR3} & 控制执行模式、分页以及当前页表根 \\ \hline
+段寄存器 & \code{CS}、\code{DS} & 来自早期 x86 分段模型，现代模式仍保留部分职责 \\ \hline
+\end{osgridlongtable}
 
 寄存器不是 RAM 的另一种名称。CPU 使用寄存器完成当前一步，使用 RAM 保存远
 多得多的代码和数据。一次普通加法可能先把 RAM 中的数装入寄存器，完成加法，
@@ -102,13 +96,10 @@ GiB & \(1024\) MiB & 本项目容量规格会使用 64 GiB RAM \\
 假设 RAM 中有连续四个字节：
 
 \begin{center}
-\begin{tabular}{lllll}
-\toprule
-地址 & \code{0x7000} & \code{0x7001} & \code{0x7002} & \code{0x7003} \\
-\midrule
-内容 & \code{0x48} & \code{0x69} & \code{0x21} & \code{0x00} \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{lllll}
+地址 & \code{0x7000} & \code{0x7001} & \code{0x7002} & \code{0x7003} \\ \hline
+内容 & \code{0x48} & \code{0x69} & \code{0x21} & \code{0x00} \\ \hline
+\end{osgridtabular}
 \end{center}
 
 这里每个地址选中一个字节。CPU 从 \code{0x7000} 读取一字节会得到
@@ -182,17 +173,14 @@ RAM 可写不代表任何地址都能随便写。地址必须确实映射到已�
 正常运行时，平台会限制写入以避免错误或恶意程序破坏固件。本书继续称其为
 ROM，是在描述它在启动地址空间中的角色，不是在断言芯片一定是古老掩模 ROM。
 
-\begin{longtable}{L{0.19\linewidth}L{0.24\linewidth}L{0.25\linewidth}L{0.22\linewidth}}
-\toprule
-技术 & 内容怎样写入 & 断电后 & 为什么出现 \\
-\midrule
-掩模 ROM & 芯片制造时固定 & 保留 & 大批量产品成本低，但不能现场升级 \\
-PROM & 用户一次性熔写 & 保留 & 允许制造后决定内容，通常不能擦除 \\
-EPROM & 紫外线擦除后重写 & 保留 & 开发阶段能够反复修改，但操作不方便 \\
-EEPROM & 电方式按字节或小块改写 & 保留 & 在系统中更新少量配置更方便 \\
-NOR Flash & 先按块擦除，再编程 & 保留 & 容量、成本与可更新性适合现代固件 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.24\linewidth}L{0.25\linewidth}L{0.22\linewidth}}
+技术 & 内容怎样写入 & 断电后 & 为什么出现 \\ \hline
+掩模 ROM & 芯片制造时固定 & 保留 & 大批量产品成本低，但不能现场升级 \\ \hline
+PROM & 用户一次性熔写 & 保留 & 允许制造后决定内容，通常不能擦除 \\ \hline
+EPROM & 紫外线擦除后重写 & 保留 & 开发阶段能够反复修改，但操作不方便 \\ \hline
+EEPROM & 电方式按字节或小块改写 & 保留 & 在系统中更新少量配置更方便 \\ \hline
+NOR Flash & 先按块擦除，再编程 & 保留 & 容量、成本与可更新性适合现代固件 \\ \hline
+\end{osgridlongtable}
 
 \topic{为什么不能只要 ROM，不要 RAM}%
 CPU 可以从 ROM 读取并执行指令，却不能把所有运行状态都写回只读区域。函数
@@ -223,17 +211,14 @@ NVMe SSD、eMMC 和 U 盘的内部技术不同，但操作系统通常通过控�
 起来”。先执行的固件或引导器负责把它读入 RAM、验证格式，然后把控制权交给
 内核。
 
-\begin{longtable}{L{0.15\linewidth}L{0.15\linewidth}L{0.18\linewidth}L{0.20\linewidth}L{0.22\linewidth}}
-\toprule
-对象 & 断电保存 & 运行时可写 & CPU 能否直接按普通地址取指 & 典型职责 \\
-\midrule
-寄存器 & 否 & 是 & 指令直接使用，不作为主存地址区 & 当前一步的状态 \\
-SRAM 缓存 & 否 & 是 & 通常由 CPU 自动管理 & 缓解 CPU 与主存速度差 \\
-DRAM 主存 & 否 & 是 & 可以，但须先初始化和映射 & 运行中的代码与数据 \\
-固件 Flash & 是 & 受限制 & 平台映射后可以 & 第一段可执行代码 \\
-SSD/磁盘 & 是 & 是 & 通常不可以，须经控制器读取 & 内核、程序、文件长期保存 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.15\linewidth}L{0.15\linewidth}L{0.18\linewidth}L{0.20\linewidth}L{0.22\linewidth}}
+对象 & 断电保存 & 运行时可写 & CPU 能否直接按普通地址取指 & 典型职责 \\ \hline
+寄存器 & 否 & 是 & 指令直接使用，不作为主存地址区 & 当前一步的状态 \\ \hline
+SRAM 缓存 & 否 & 是 & 通常由 CPU 自动管理 & 缓解 CPU 与主存速度差 \\ \hline
+DRAM 主存 & 否 & 是 & 可以，但须先初始化和映射 & 运行中的代码与数据 \\ \hline
+固件 Flash & 是 & 受限制 & 平台映射后可以 & 第一段可执行代码 \\ \hline
+SSD/磁盘 & 是 & 是 & 通常不可以，须经控制器读取 & 内核、程序、文件长期保存 \\ \hline
+\end{osgridlongtable}
 
 \topic{“内存”这个中文词为什么容易混淆}%
 日常语境常把 RAM 叫“内存”，把 SSD 叫“硬盘”。从广义存储层次看，寄存器、
@@ -303,18 +288,15 @@ P=V I.
 串行差分链路。总线不只是几根铜线，协议还规定谁可以发送、如何表示一位、
 怎样确认完成、发生错误如何恢复。
 
-\begin{longtable}{L{0.17\linewidth}L{0.23\linewidth}L{0.50\linewidth}}
-\toprule
-词语 & 它回答的问题 & 载板案例中的例子 \\
-\midrule
-引脚 & 器件的哪个接点 & Mu 连接器第 250--260 脚共同提供 \code{VIN} \\
-网络 & 哪些接点逻辑相连 & \code{VDC} 把输入汇合点连到模块和多个稳压器 \\
-走线 & PCB 上铜怎样铺设 & PCIe 差分对必须按阻抗和长度约束布线 \\
-连接器 & 板与板或线缆怎样插接 & HDMI、USB、RJ45、M.2 和 260 针模块座 \\
-协议 & 线上电平随时间怎样解释 & I2C 的起始、地址、应答和停止条件 \\
-总线/链路 & 哪组线和协议共同传输 & PCIe lane、USB 端口、SPI 固件接口 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.23\linewidth}L{0.50\linewidth}}
+词语 & 它回答的问题 & 载板案例中的例子 \\ \hline
+引脚 & 器件的哪个接点 & Mu 连接器第 250--260 脚共同提供 \code{VIN} \\ \hline
+网络 & 哪些接点逻辑相连 & \code{VDC} 把输入汇合点连到模块和多个稳压器 \\ \hline
+走线 & PCB 上铜怎样铺设 & PCIe 差分对必须按阻抗和长度约束布线 \\ \hline
+连接器 & 板与板或线缆怎样插接 & HDMI、USB、RJ45、M.2 和 260 针模块座 \\ \hline
+协议 & 线上电平随时间怎样解释 & I2C 的起始、地址、应答和停止条件 \\ \hline
+总线/链路 & 哪组线和协议共同传输 & PCIe lane、USB 端口、SPI 固件接口 \\ \hline
+\end{osgridlongtable}
 
 \subsection{九、单端、差分、时钟和复位信号}
 
@@ -438,19 +420,16 @@ RAM，引导器再把磁盘中的内核装入 RAM，最后由内核管理用户�
 IDE、PIC、PIT 和 i8042。它不需要真的在宿主桌面上生成 3.3 V 电源轨，也不会
 让我们用万用表测到 PCIe 差分对；它直接建立满足架构接口的模型状态。
 
-\begin{longtable}{L{0.19\linewidth}L{0.32\linewidth}L{0.39\linewidth}}
-\toprule
-观察对象 & 本项目 QEMU PC & LattePanda Mu 实体案例 \\
-\midrule
-最早固件 & 自研 128 KiB ROM 直接映射 & 模块内部厂商固件，通常提供 UEFI \\
-主存 & 命令行指定的虚拟 RAM & 模块上的真实 DRAM，需电源与训练 \\
-磁盘接口 & 教学使用传统 IDE/ATA PIO & 常见 NVMe、eMMC、USB 或 SATA 路径 \\
-早期输出 & COM1 16550A，宿主标准输入输出 & 需真实 UART 接口或 UEFI 图形输出 \\
-中断系统 & PIC 兼容路径和本地 APIC 模型 & 现代 SoC/APIC、ACPI 描述与真实设备拓扑 \\
-电气连接 & 由模型代码表达逻辑关系 & 由 4 层 PCB、连接器、保护和电源器件实现 \\
-可验证证据 & 串口日志、退出码、ROM 字节、测试 & 电压、波形、枚举信息、固件日志与软件日志 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.32\linewidth}L{0.39\linewidth}}
+观察对象 & 本项目 QEMU PC & LattePanda Mu 实体案例 \\ \hline
+最早固件 & 自研 128 KiB ROM 直接映射 & 模块内部厂商固件，通常提供 UEFI \\ \hline
+主存 & 命令行指定的虚拟 RAM & 模块上的真实 DRAM，需电源与训练 \\ \hline
+磁盘接口 & 教学使用传统 IDE/ATA PIO & 常见 NVMe、eMMC、USB 或 SATA 路径 \\ \hline
+早期输出 & COM1 16550A，宿主标准输入输出 & 需真实 UART 接口或 UEFI 图形输出 \\ \hline
+中断系统 & PIC 兼容路径和本地 APIC 模型 & 现代 SoC/APIC、ACPI 描述与真实设备拓扑 \\ \hline
+电气连接 & 由模型代码表达逻辑关系 & 由 4 层 PCB、连接器、保护和电源器件实现 \\ \hline
+可验证证据 & 串口日志、退出码、ROM 字节、测试 & 电压、波形、枚举信息、固件日志与软件日志 \\ \hline
+\end{osgridlongtable}
 
 QEMU 不是“虚假的玩具”，实体板也不是 QEMU 的一比一替身。模拟器非常适合把
 复位地址、机器码、I/O 协议和失败路径固定下来；实体硬件则暴露电源完整性、

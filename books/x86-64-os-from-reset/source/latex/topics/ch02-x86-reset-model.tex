@@ -1,7 +1,6 @@
-\section{x86 复位状态与第一条指令}
+\section{复位状态、ROM 映射与首条指令}
 
-\subsection{复位是契约，不是初始化完成}
-
+\topic{复位是契约，不是初始化完成}
 上电复位后，处理器处于实地址模式。最关键的可观察状态是指令入口：
 \code{CS} 的可见值为 \code{0xF000}，隐藏基址为
 \code{0xFFFF0000}，\code{IP/EIP} 指向 \code{0xFFF0}，因此第一条
@@ -12,8 +11,7 @@
 隐藏基址是理解现代 x86 复位地址的关键。此时不能简单套用普通实模式
 \(segment \times 16 + offset\) 去解释第一次取指。
 
-\subsection{128 KiB ROM 的顶端映射}
-
+\topic{128 KiB ROM 的顶端映射}
 项目 ROM 覆盖 \code{0xFFFE0000} 到 \code{0xFFFFFFFF}。文件偏移与物理
 地址之间满足：
 \[
@@ -37,8 +35,7 @@
 \end{tikzpicture}
 \end{center}
 
-\subsection{16 位近跳转保留复位隐藏状态}
-
+\topic{16 位近跳转保留复位隐藏状态}
 复位向量放置操作码 \code{E9} 和有符号 16 位位移。近跳转只修改 IP，不
 重载 CS，因而保留隐藏基址 \code{0xFFFF0000}。目标 IP 是
 \code{0xF000}，物理目标正好是 \code{0xFFFFF000}。位移为：
@@ -52,8 +49,7 @@
 脚本把入口放错一个字节，CPU 也不会给出友好错误，只会执行填充值或触发异常。
 \end{failurebox}
 
-\subsection{复位向量固定在末端的历史连续性}
-
+\topic{复位向量固定在末端的历史连续性}
 8086 只有 20 位物理地址总线，复位后从物理地址 \code{0xFFFF0} 开始执行，
 这个位置距 1 MiB 地址空间末端只有 16 字节。把入口放在顶端，使主板能够把
 固件映射在高地址，同时把大部分低地址留给 RAM。后续处理器扩展了地址宽度，
@@ -66,8 +62,7 @@
 生态、主板设计和诊断工具。长模式因此是软件逐步建立的目标状态，而不是上电
 默认状态。
 
-\subsection{近跳转字节的逐项推导}
-
+\topic{近跳转字节的逐项推导}
 复位位置只有 16 字节可供使用，真正的初始化代码必须放在 ROM 的其他位置。
 \code{JMP rel16} 的机器编码由一个字节操作码和一个小端序的 16 位有符号
 位移组成。处理器先把 IP 推进到下一条指令，再把位移加到 IP：
@@ -77,29 +72,23 @@
   \mathrm{IP}_{target}=0xFFF3+\operatorname{signext}(0xF00D)=0xF000.
 \]
 
-\begin{longtable}{L{0.16\textwidth}L{0.22\textwidth}L{0.48\textwidth}}
-\toprule
-\textbf{字节位置} & \textbf{数值} & \textbf{处理器解释}\\
-\midrule
+\begin{osgridlongtable}{L{0.16\textwidth}L{0.22\textwidth}L{0.48\textwidth}}
+\textbf{字节位置} & \textbf{数值} & \textbf{处理器解释}\\ \hline
 \endfirsthead
-\toprule
-\textbf{字节位置} & \textbf{数值} & \textbf{处理器解释}\\
-\midrule
+\textbf{字节位置} & \textbf{数值} & \textbf{处理器解释}\\ \hline
 \endhead
-\code{0xFFFFFFF0} & \code{E9} & 选择近相对跳转指令\\
-\code{0xFFFFFFF1} & \code{0D} & 位移低字节\\
-\code{0xFFFFFFF2} & \code{F0} & 位移高字节；组合为 \code{0xF00D}\\
-\code{0xFFFFFFF3} & \code{FF} & 不属于该指令；正常执行不会到达\\
-\bottomrule
-\end{longtable}
+\code{0xFFFFFFF0} & \code{E9} & 选择近相对跳转指令\\ \hline
+\code{0xFFFFFFF1} & \code{0D} & 位移低字节\\ \hline
+\code{0xFFFFFFF2} & \code{F0} & 位移高字节；组合为 \code{0xF00D}\\ \hline
+\code{0xFFFFFFF3} & \code{FF} & 不属于该指令；正常执行不会到达\\ \hline
+\end{osgridlongtable}
 
 近跳转不写 CS，因此隐藏基址保持 \code{0xFFFF0000}。新的线性地址为
 \code{0xFFFF0000 + 0xF000 = 0xFFFFF000}，正好落在链接器安排的 ROM
 入口。这个推导同时连接了机器码、小端序、符号扩展、指令长度、段缓存和链接
 布局，任何一个量变化都必须重新证明。
 
-\subsection{填充值也是系统行为}
-
+\topic{填充值也是系统行为}
 ROM 未占用区域填充为 \code{0xFF}，能够使镜像大小和烧录语义保持确定，但
 \code{0xFF} 并不是安全的“空指令”。控制流意外进入填充区后，处理器可能将
 连续字节解释为有效指令前缀与操作码，也可能触发异常。早期尚未建立异常处理，

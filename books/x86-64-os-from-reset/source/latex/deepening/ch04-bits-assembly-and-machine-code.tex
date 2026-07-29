@@ -1,34 +1,28 @@
-\section{x86 指令是变长字段的组合}
+\section{变长指令编码与逐字节审计}
 
 x86 没有统一固定长度。一个指令可以包含前缀、操作码、ModR/M、SIB、位移和
 立即数，最长不超过 15 字节。当前执行模式给出默认操作数与地址宽度，前缀再
 覆盖默认值。译码器必须从字节流判断当前指令在哪里结束，下一条指令才从正确
 边界开始。
 
-\begin{longtable}{L{0.15\textwidth}L{0.17\textwidth}L{0.23\textwidth}L{0.33\textwidth}}
-\toprule
-\textbf{字段} & \textbf{是否总有} & \textbf{典型内容} & \textbf{作用}\\
-\midrule
+\begin{osgridlongtable}{L{0.15\textwidth}L{0.17\textwidth}L{0.23\textwidth}L{0.33\textwidth}}
+\textbf{字段} & \textbf{是否总有} & \textbf{典型内容} & \textbf{作用}\\ \hline
 \endfirsthead
-\toprule
-\textbf{字段} & \textbf{是否总有} & \textbf{典型内容} & \textbf{作用}\\
-\midrule
+\textbf{字段} & \textbf{是否总有} & \textbf{典型内容} & \textbf{作用}\\ \hline
 \endhead
-前缀 & 否 & 段覆盖、宽度、重复 & 修改默认译码或内存来源\\
-操作码 & 是 & 一至数个字节 & 选择指令语义\\
-ModR/M & 否 & mod、reg、r/m & 选择寄存器和寻址形态\\
-SIB & 否 & scale、index、base & 表达比例索引地址\\
-位移 & 否 & 8/16/32 位 & 加到有效地址或相对目标\\
-立即数 & 否 & 指令内嵌常量 & 作为源操作数或掩码\\
-\bottomrule
-\end{longtable}
+前缀 & 否 & 段覆盖、宽度、重复 & 修改默认译码或内存来源\\ \hline
+操作码 & 是 & 一至数个字节 & 选择指令语义\\ \hline
+ModR/M & 否 & mod、reg、r/m & 选择寄存器和寻址形态\\ \hline
+SIB & 否 & scale、index、base & 表达比例索引地址\\ \hline
+位移 & 否 & 8/16/32 位 & 加到有效地址或相对目标\\ \hline
+立即数 & 否 & 指令内嵌常量 & 作为源操作数或掩码\\ \hline
+\end{osgridlongtable}
 
 变长编码来自长期兼容扩展。8086 操作码不能全部重新分配，新功能只能复用转义
 字节、前缀和新增字段。它提升了代码密度，也让错误控制流危险：跳到一条指令
 中间后，同一串字节可能被重新分割成另一组合法指令。
 
-\section{ModR/M 把寄存器与内存形式压入一个字节}
-
+\topic{ModR/M 把寄存器与内存形式压入一个字节}
 ModR/M 的高两位 mod 选择寄存器或不同位移长度，中间三位 reg 通常选择一个
 寄存器或扩展操作码，低三位 r/m 选择另一个寄存器或寻址组合。16 位地址模式
 中的 r/m 表对应 BX、BP、SI、DI 的历史组合，32/64 位模式则配合 SIB 表达
@@ -39,8 +33,7 @@ r/m16 装入段寄存器，\code{D8}=二进制 \code{11 011 000}：mod 为
 \code{11} 表示寄存器，reg 为 \code{011} 选择 DS，r/m 为
 \code{000} 选择 AX。两字节共同表达完整语义。
 
-\section{立即数宽度由指令形式而不是数值大小决定}
-
+\topic{立即数宽度由指令形式而不是数值大小决定}
 \code{mov sp,0x7000} 在 16 位模式编码为 \code{BC 00 70}。\code{BC}
 已经把目标寄存器 SP 编入操作码低位，后面跟 16 位立即数。即使数值较小，
 该形式仍按操作数宽度保存两个字节；小端序使低字节 \code{00} 在前。
@@ -49,8 +42,7 @@ r/m16 装入段寄存器，\code{D8}=二进制 \code{11 011 000}：mod 为
 宽度立即数。源码中的数值相同不保证机器码长度相同，因此依赖固定偏移的复位
 区域必须由链接断言和产物审计保护，不能按源代码行数估计大小。
 
-\section{操作数宽度、地址宽度和指针宽度相互独立}
-
+\topic{操作数宽度、地址宽度和指针宽度相互独立}
 操作数宽度决定一次算术或搬运处理多少位；地址宽度决定有效地址计算使用哪些
 寄存器和回绕规则；指针宽度是软件类型与 ABI 的约定。16 位入口可以用前缀
 执行 32 位操作，64 位模式也可以访问 8 位设备寄存器。
@@ -60,36 +52,29 @@ r/m16 装入段寄存器，\code{D8}=二进制 \code{11 011 000}：mod 为
 \(-4083\) 得到的低 16 位相同，但进入更宽计算后语义会分离。公式和类型必须
 明确扩展规则。
 
-\section{标志寄存器连接算术与控制流}
-
+\topic{标志寄存器连接算术与控制流}
 加减和比较会更新 CF、ZF、SF、OF 等状态。CF 描述无符号进位或借位，OF
 描述有符号结果越界，ZF 描述结果为零，SF 复制结果最高位。相同位模式可以在
 有符号与无符号比较中产生不同结论，所以条件跳转分为 \code{ja/jb} 与
 \code{jg/jl} 等两组。
 
-\begin{longtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.24\textwidth}L{0.23\textwidth}}
-\toprule
-\textbf{场景} & \textbf{关键标志} & \textbf{条件跳转} & \textbf{解释域}\\
-\midrule
+\begin{osgridlongtable}{L{0.18\textwidth}L{0.23\textwidth}L{0.24\textwidth}L{0.23\textwidth}}
+\textbf{场景} & \textbf{关键标志} & \textbf{条件跳转} & \textbf{解释域}\\ \hline
 \endfirsthead
-\toprule
-\textbf{场景} & \textbf{关键标志} & \textbf{条件跳转} & \textbf{解释域}\\
-\midrule
+\textbf{场景} & \textbf{关键标志} & \textbf{条件跳转} & \textbf{解释域}\\ \hline
 \endhead
-相等 & ZF & \code{je/jne} & 位模式相等\\
-无符号低于 & CF & \code{jb/jae} & 地址、容量、端口值\\
-有符号小于 & SF 与 OF & \code{jl/jge} & 有符号整数\\
-加法溢出 & OF & \code{jo/jno} & 补码范围\\
-过程状态 & 项目约定 CF & \code{jc/jnc} & 汇编内部 ABI\\
-\bottomrule
-\end{longtable}
+相等 & ZF & \code{je/jne} & 位模式相等\\ \hline
+无符号低于 & CF & \code{jb/jae} & 地址、容量、端口值\\ \hline
+有符号小于 & SF 与 OF & \code{jl/jge} & 有符号整数\\ \hline
+加法溢出 & OF & \code{jo/jno} & 补码范围\\ \hline
+过程状态 & 项目约定 CF & \code{jc/jnc} & 汇编内部 ABI\\ \hline
+\end{osgridlongtable}
 
 当前串口过程主动用 CF 返回成功状态，这是软件约定而非 UART 自动设置。过程
 中任何会修改 CF 的指令都必须安排在最终 \code{stc/clc} 之前，调用者也要在
 下一条可能改标志的指令前消费结果。
 
-\section{CALL 与 RET 建立最小控制流栈}
-
+\topic{CALL 与 RET 建立最小控制流栈}
 近 \code{call} 把下一条 IP 压栈，再把目标位移加到 IP；\code{ret} 从
 SS:SP 弹出返回 IP。16 位压栈先让 SP 减 2，再向新位置写入两个字节。若
 SP 初始为 \code{0x7000}，首次返回地址占用 \code{0x6FFE..0x6FFF}。
@@ -98,8 +83,7 @@ SP 初始为 \code{0x7000}，首次返回地址占用 \code{0x6FFE..0x6FFF}。
 数据。硬件不会知道某段 RAM 被软件称为“栈”，守护页和边界检查要等分页与
 内核设施建立后才能提供。
 
-\section{字符串指令包含隐式操作数}
-
+\topic{字符串指令包含隐式操作数}
 \code{lodsb} 隐式读取 DS:SI 到 AL，并根据 DF 增减 SI；\code{stosb}
 隐式写入 ES:DI；\code{rep movsb} 还隐式使用计数寄存器。它们代码紧凑，
 却把状态藏在寄存器约定里。入口必须清 DF，调用约定必须说明哪些隐式寄存器
@@ -109,32 +93,25 @@ SP 初始为 \code{0x7000}，首次返回地址占用 \code{0x6FFE..0x6FFF}。
 执行的指令，CPU 把它和后续操作码作为一个整体译码。如果控制流落到操作码
 而跳过前缀，内存来源就会变回 DS。
 
-\section{汇编过程也需要清晰 ABI}
-
+\topic{汇编过程也需要清晰 ABI}
 每个过程都要记录输入寄存器、输出寄存器、破坏集合、标志返回、栈使用和可重入
 条件。寄存器数量有限不意味着可以隐式共享所有状态。下面的最小约定适合当前
 单线程固件：
 
-\begin{longtable}{L{0.19\textwidth}L{0.31\textwidth}L{0.38\textwidth}}
-\toprule
-\textbf{过程} & \textbf{输入与输出} & \textbf{主要破坏状态}\\
-\midrule
+\begin{osgridlongtable}{L{0.19\textwidth}L{0.31\textwidth}L{0.38\textwidth}}
+\textbf{过程} & \textbf{输入与输出} & \textbf{主要破坏状态}\\ \hline
 \endfirsthead
-\toprule
-\textbf{过程} & \textbf{输入与输出} & \textbf{主要破坏状态}\\
-\midrule
+\textbf{过程} & \textbf{输入与输出} & \textbf{主要破坏状态}\\ \hline
 \endhead
-UART 初始化 & 无输入；CF 返回结果 & AX、DX、计数寄存器\\
-发送字节 & AL 为字节；CF 返回结果 & DX、轮询计数、标志\\
-发送字符串 & CS:SI 为零结尾文本 & AX、SI、DX、计数、标志\\
-\bottomrule
-\end{longtable}
+UART 初始化 & 无输入；CF 返回结果 & AX、DX、计数寄存器\\ \hline
+发送字节 & AL 为字节；CF 返回结果 & DX、轮询计数、标志\\ \hline
+发送字符串 & CS:SI 为零结尾文本 & AX、SI、DX、计数、标志\\ \hline
+\end{osgridlongtable}
 
 后续汇编调用 C++ 时要切换到平台 ABI，保存被调用者保存寄存器并保证栈对齐。
 内部小过程可以使用更简单约定，但边界必须有唯一书面定义。
 
-\section{从源码到字节的逐层审计}
-
+\topic{从源码到字节的逐层审计}
 审计先用 \code{nasm -l} 或反汇编得到地址与字节，再把关键指令按字段解码。
 复位入口至少核对 \code{cli}、\code{cld}、段初始化、栈设置和首个调用；
 复位向量核对操作码、位移端序和目标；端口访问核对 DX 与 AL/AX 宽度。

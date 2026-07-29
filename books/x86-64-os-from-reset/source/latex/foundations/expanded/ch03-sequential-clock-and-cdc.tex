@@ -1,0 +1,234 @@
+\section{触发器、时钟与跨时钟域}
+
+下面的低有效 NAND 型 SR latch 用
+\(\overline{S}\) 置位、\(\overline{R}\) 复位。两输入都为 1 时保持；把两者
+同时拉低会让两个输出都为 1，释放顺序又可能决定最终状态，因此该组合不允许。
+
+\begin{center}
+\begin{tikzpicture}[circuit logic US,font=\footnotesize\sffamily,>=Latex]
+  \node[nand gate US,draw,logic gate inputs=nn] (top) at (4,3.1) {};
+  \node[nand gate US,draw,logic gate inputs=nn] (bottom) at (4,0.8) {};
+  \node[left=22mm of top.input 1] (sn) {\(\overline{S}\)};
+  \node[left=22mm of bottom.input 2] (rn) {\(\overline{R}\)};
+  \draw[->] (sn) -- (top.input 1);
+  \draw[->] (rn) -- (bottom.input 2);
+  \draw[->,BookBlue,thick] (top.output) -- ++(1.7,0)
+    node[right] {\(Q\)};
+  \draw[->,BookTeal,thick] (bottom.output) -- ++(1.7,0)
+    node[right] {\(\overline{Q}\)};
+  \draw[->,BookTeal,thick] (top.output) -- ++(0.7,0)
+    |- (bottom.input 1);
+  \draw[->,BookBlue,thick] (bottom.output) -- ++(0.45,0)
+    |- (top.input 2);
+  \node[align=center] at (4,-0.4)
+    {交叉反馈让输出在输入释放后仍保持};
+
+  \node[draw=BookRule,fill=white,minimum width=43mm,minimum height=30mm,
+        align=left] at (11,2.0)
+    {\(\overline{S}\ \overline{R}\quad Q_{\mathrm{next}}\)\\
+     \(1\quad1\qquad Q_{\mathrm{current}}\)\\
+     \(0\quad1\qquad1\)（置位）\\
+     \(1\quad0\qquad0\)（复位）\\
+     \(0\quad0\qquad\)非法};
+\end{tikzpicture}
+\end{center}
+\diagramnote{反馈连线分别从 \(Q\) 回到底部门、从 \(\overline{Q}\) 回到顶部门；
+输出线与反馈线分开绘制，避免把交叉点误读为短接。}
+
+\topic{D latch 用使能窗口控制“何时透明”}
+D latch 在 EN 有效期间，输出会在传播延迟后跟随 D；EN 失效后保持最后状态。
+因此它是电平敏感器件，不是只在一个瞬间采样。
+
+\begin{center}
+\begin{tikzpicture}[x=0.9cm,y=0.72cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (14,0) node[right]{时间};
+  \foreach \y/\name in {4/EN,2.6/D,1.2/Q} {
+    \draw[BookRule] (0,\y) -- (13.5,\y);
+    \node[left] at (0,\y) {\name};
+  }
+  \fill[BookBlue!10] (2,0.45) rectangle (8,4.8);
+  \node[BookBlue] at (5,4.55) {透明窗口};
+  \draw[BookBlue,thick] (0,4) -- (2,4) -- (2,4.45) -- (8,4.45) -- (8,4) -- (13.5,4);
+  \draw[BookTeal,thick] (0,2.6) -- (3,2.6) -- (3,3.05) -- (5.3,3.05)
+    -- (5.3,2.6) -- (7,2.6) -- (7,3.05) -- (10.5,3.05) -- (10.5,2.6) -- (13.5,2.6);
+  \draw[BookAmber,thick] (0,1.2) -- (3.25,1.2) -- (3.25,1.65)
+    -- (5.55,1.65) -- (5.55,1.2) -- (7.25,1.2) -- (7.25,1.65) -- (13.5,1.65);
+  \draw[dashed,BookRed] (8,0.5) -- (8,4.8);
+  \node[BookRed,below] at (8,0.5) {关闭后保持};
+\end{tikzpicture}
+\end{center}
+
+\topic{边沿触发器把采样窗口压缩到时钟边沿附近}
+实际边沿触发 DFF 可由主从锁存器或专用晶体管结构实现。接口只承诺：D 在
+建立/保持窗口内稳定时，Q 在 clock-to-Q 延迟后更新为采样值，并保持到下一
+有效边沿。
+
+\begin{pdfdiagram}[node distance=8mm and 12mm]
+  \node[os state,minimum width=25mm] (source) {源寄存器\\边沿后产生 \(Q_1\)};
+  \node[os block,right=of source,minimum width=31mm] (logic) {组合逻辑\\最大延迟 \(t_{\mathrm{comb,max}}\)};
+  \node[os state,right=of logic,minimum width=25mm] (dest) {目标寄存器\\采样 \(D_2\)};
+  \draw[os bus] (source) -- node[above,font=\scriptsize]{\(t_{cq}\)} (logic);
+  \draw[os bus] (logic) -- node[above,font=\scriptsize]{建立前到达} (dest);
+  \draw[BookBlue,thick] ($(source.south)+(0,-8mm)$) -- ($(dest.south)+(0,-8mm)$);
+  \draw[BookBlue,thick] ($(source.south)+(0,-10mm)$) -- ($(source.south)+(0,-6mm)$);
+  \draw[BookBlue,thick] ($(dest.south)+(0,-10mm)$) -- ($(dest.south)+(0,-6mm)$);
+  \node[below=11mm of logic] {一个时钟周期预算 \(T_{\mathrm{clk}}\)};
+\end{pdfdiagram}
+
+建立约束防止数据到得太晚：
+
+\[
+T_{\mathrm{clk}}\ge
+t_{cq,\max}+t_{\mathrm{comb,max}}+t_{setup}+t_{\mathrm{skew}}.
+\]
+
+保持约束防止新数据到得太快：
+
+\[
+t_{cq,\min}+t_{\mathrm{comb,min}}
+\ge t_{hold}+t_{\mathrm{skew}}.
+\]
+
+降低时钟频率能放宽建立约束，却不自动修复保持违例，因为保持问题发生在同一
+边沿附近。
+
+\topic{时钟偏斜、抖动和占空比是三种不同误差}
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.31\linewidth}L{0.39\linewidth}}
+概念 & 含义 & 可能后果 \\ \hline
+\endfirsthead
+概念 & 含义 & 可能后果 \\ \hline
+\endhead
+clock skew & 同一名义边沿到不同寄存器的时间差 & 吃掉建立或保持裕量 \\ \hline
+jitter & 同一位置的边沿相对理想时刻抖动 & 周期预算变化、采样误差 \\ \hline
+duty cycle distortion & 高低电平宽度偏离目标比例 & 半周期路径或 PLL/门控违例 \\ \hline
+clock uncertainty & 设计中合并考虑的时序不确定量 & 时序分析中预留保守裕量 \\ \hline
+\end{osgridlongtable}
+
+时钟不是普通数据线。随意用组合门对时钟做 AND/OR 可能产生窄脉冲或额外
+偏斜；时钟门控通常使用专用单元，在安全相位锁存 enable。
+
+\topic{两级同步器降低单 bit 亚稳态传播概率}
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[os hardware] (async) at (0,2) {异步输入};
+  \node[os state] (ff1) at (4,2) {DFF 1\\可能亚稳};
+  \node[os state] (ff2) at (8,2) {DFF 2\\业务可用};
+  \node[os block] (logic) at (12,2) {目标域逻辑};
+  \draw[os arrow] (async) -- (ff1);
+  \draw[os arrow] (ff1) -- node[above]{一周期解析时间} (ff2);
+  \draw[os arrow] (ff2) -- (logic);
+  \draw[BookBlue,thick] (3,0.5) -- (9,0.5);
+  \node[below] at (6,0.5) {两级都由目标时钟 CLK\(_B\) 采样};
+  \draw[os arrow] (4,0.5) -- (ff1.south);
+  \draw[os arrow] (8,0.5) -- (ff2.south);
+\end{tikzpicture}
+\end{center}
+
+常见概率模型把平均失效间隔近似写成
+
+\[
+MTBF\propto
+\frac{e^{T_{\mathrm{resolve}}/\tau_m}}
+{f_{\mathrm{clk}}f_{\mathrm{data}}},
+\]
+
+其中参数依工艺和单元。增加解析时间可指数级改善 MTBF，却无法给单次事件提供
+绝对保证。
+
+\topic{窄脉冲可能在目标域两个边沿之间完全消失}
+源域的单周期脉冲若比目标时钟周期短，两级同步器可能一次也采不到。解决方法
+包括把脉冲展宽、转换为 toggle、使用 request/acknowledge 握手，或用异步 FIFO
+传递事件和数据。
+
+\topic{多 bit 总线不能逐位各接两个触发器}
+每一位独立同步可能在不同周期稳定，接收方看到源端从未产生过的混合值。常见
+方案：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 数据保持稳定，同时同步 valid/ack 握手；
+  \item 单调计数器采用 Gray code，让相邻状态只变一位；
+  \item 连续流数据使用带 Gray 指针的异步 FIFO；
+  \item 复位、时钟和电源域跨越使用专用 CDC/RDC 方法检查。
+\end{itemize}
+
+\topic{机械按键需要去抖，异步输入需要同步}
+机械触点闭合时会在几毫秒内多次弹跳。按下一次可能形成一串高低边沿。RC 与
+施密特触发器可以在硬件侧滤波；软件也可在首次变化后等待稳定窗口，再确认
+状态。去抖解决重复边沿，同步器解决时钟域采样，二者不是同一问题。
+
+\begin{center}
+\begin{tikzpicture}[x=0.85cm,y=0.75cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (14,0) node[right]{时间};
+  \node[left] at (0,3.2) {原始触点};
+  \node[left] at (0,1.4) {去抖结果};
+  \draw[BookRed,thick] (0,3.2) -- (2,3.2)
+    -- (2,3.7) -- (2.4,3.7) -- (2.4,3.2)
+    -- (2.8,3.2) -- (2.8,3.7) -- (3.1,3.7)
+    -- (3.1,3.2) -- (3.5,3.2) -- (3.5,3.7) -- (13,3.7);
+  \fill[BookRed!10] (2,0.5) rectangle (5.5,4.3);
+  \node[BookRed] at (3.75,4.05) {弹跳窗口};
+  \draw[BookTeal,very thick] (0,1.4) -- (5.5,1.4) -- (5.5,1.9) -- (13,1.9);
+  \draw[dashed,BookTeal] (5.5,0.5) -- (5.5,4.3);
+  \node[BookTeal,below] at (5.5,0.5) {确认稳定后只产生一次变化};
+\end{tikzpicture}
+\end{center}
+
+\topic{复位也是跨时钟域信号}
+异步复位可以在时钟未运行时立即强制状态，但释放若靠近时钟边沿，会违反
+recovery/removal 要求，使同一状态机不同触发器在不同周期退出复位。常用结构
+是“异步置位、同步释放”：每个时钟域有自己的两级释放链。
+
+\begin{pdfdiagram}[node distance=7mm and 11mm]
+  \node[os hardware,minimum width=27mm] (external) {外部 RESET\_N\\可异步拉低};
+  \node[os state,right=of external,minimum width=25mm] (sync1) {释放同步 DFF 1\\复位时清零};
+  \node[os state,right=of sync1,minimum width=25mm] (sync2) {释放同步 DFF 2\\目标域复位};
+  \node[os block,right=of sync2,minimum width=26mm] (domain) {时钟域状态机\\同边沿退出};
+  \draw[os arrow] (external) -- node[above,font=\scriptsize]{置位可异步} (sync1);
+  \draw[os arrow] (sync1) -- (sync2);
+  \draw[os arrow] (sync2) -- (domain);
+  \node[below=8mm of sync2] {同步链由该域时钟驱动};
+\end{pdfdiagram}
+
+\topic{FSM 设计要有状态表、转移图和默认恢复}
+以简化读事务控制器为例：
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.25\linewidth}L{0.28\linewidth}L{0.19\linewidth}}
+当前状态 & 输入条件 & 下一状态 & 输出动作 \\ \hline
+\endfirsthead
+当前状态 & 输入条件 & 下一状态 & 输出动作 \\ \hline
+\endhead
+Idle & request=0 & Idle & ready=1 \\ \hline
+Idle & request=1 & Address & 锁存地址，ready=0 \\ \hline
+Address & 始终 & Wait & 发出 read valid \\ \hline
+Wait & response=0 & Wait & 保持事务 \\ \hline
+Wait & response=1,error=0 & Complete & 锁存返回数据 \\ \hline
+Wait & response=1,error=1 & Error & 锁存错误码 \\ \hline
+Complete & 始终 & Idle & done 脉冲 \\ \hline
+Error & clear=1 & Idle & 清错误 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex,node distance=18mm and 22mm]
+  \node[os state] (idle) {Idle};
+  \node[os state,right=of idle] (address) {Address};
+  \node[os state,right=of address] (wait) {Wait};
+  \node[os state,above right=of wait] (complete) {Complete};
+  \node[os state,below right=of wait] (error) {Error};
+  \draw[os arrow] (idle) -- node[above]{request} (address);
+  \draw[os arrow] (address) -- node[above]{发出事务} (wait);
+  \draw[os arrow] (wait) -- node[above,sloped]{response \(\land\lnot error\)} (complete);
+  \draw[os arrow] (wait) -- node[below,sloped]{response \(\land error\)} (error);
+  \draw[os arrow,bend left=25] (complete) to node[above]{done} (idle);
+  \draw[os arrow,bend right=25] (error) to node[below]{clear} (idle);
+  \draw[os arrow,loop below] (wait) to node[below]{\(\lnot response\)} (wait);
+\end{tikzpicture}
+\end{center}
+
+非法状态必须有策略：回到 reset/idle、保持并报告错误，或触发安全停机。只写
+“正常情况下永远不会进入”不能替代恢复设计与断言。
+
+\begin{failurebox}
+时序电路问题不能只靠重新画布尔表达式修复。建立/保持违例、亚稳态、CDC、
+复位释放和时钟门控都与时间相关。仿真中理想 0 延迟通过，不代表真实硅片在
+PVT（工艺、电压、温度）角落满足时序。
+\end{failurebox}

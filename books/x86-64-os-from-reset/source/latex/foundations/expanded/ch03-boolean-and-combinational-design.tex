@@ -1,0 +1,213 @@
+\topic{布尔代数把真值表变成可化简的表达式}
+常用恒等律包括：
+
+\[
+A\land1=A,\quad A\lor0=A,\qquad
+A\land0=0,\quad A\lor1=1,
+\]
+\[
+A\land A=A,\quad A\lor A=A,\qquad
+A\land\lnot A=0,\quad A\lor\lnot A=1,
+\]
+\[
+A\land(B\lor C)=(A\land B)\lor(A\land C).
+\]
+
+逻辑化简可以减少门数量、减少门级，或适配已有标准单元。但表达式更短不总
+等于物理实现更快；布局、扇出与门类型同样影响延迟。
+
+\topic{从真值表写出“与项之和”}
+对输出为 1 的每一行，写一个只在该行成立的与项，再把这些项 OR。例如多数
+表决函数 \(M(A,B,C)\) 在至少两个输入为 1 时输出 1：
+
+\[
+M=(A\land B\land\lnot C)
+\lor(A\land\lnot B\land C)
+\lor(\lnot A\land B\land C)
+\lor(A\land B\land C).
+\]
+
+化简后：
+
+\[
+M=(A\land B)\lor(A\land C)\lor(B\land C).
+\]
+
+这也正是全加器进位输出的一种表达形式。
+
+\begin{center}
+\begin{osgridtabular}{ccc|c}
+\(A\) & \(B\) & \(C\) & 多数 \(M\) \\ \hline
+0&0&0&0\\ \hline
+0&0&1&0\\ \hline
+0&1&0&0\\ \hline
+0&1&1&1\\ \hline
+1&0&0&0\\ \hline
+1&0&1&1\\ \hline
+1&1&0&1\\ \hline
+1&1&1&1\\ \hline
+\end{osgridtabular}
+\end{center}
+
+\topic{卡诺图用相邻格合并只差一个 bit 的项}
+卡诺图按 Gray code 排列，让相邻格只有一个输入位变化。下图函数在 \(B=1\)
+的两行都为 1，因此 \(A\) 可被消去：
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \draw (0,0) grid[xstep=2,ystep=1] (4,2);
+  \node at (1,2.35) {\(B=0\)};
+  \node at (3,2.35) {\(B=1\)};
+  \node[left] at (0,1.5) {\(A=0\)};
+  \node[left] at (0,0.5) {\(A=1\)};
+  \node at (1,1.5) {0};
+  \node at (3,1.5) {1};
+  \node at (1,0.5) {0};
+  \node at (3,0.5) {1};
+  \draw[BookBlue,very thick,rounded corners=8pt]
+    (2.12,0.12) rectangle (3.88,1.88);
+  \node[BookBlue,right] at (4.1,1.0) {合并后 \(Y=B\)};
+\end{tikzpicture}
+\end{center}
+
+卡诺图适合少量变量的纸笔化简；大规模逻辑由综合工具完成，但工程师仍需理解
+don’t-care、冒险和时序约束。
+
+\topic{半加器和全加器应该能从门级逐线读出}
+\begin{center}
+\begin{tikzpicture}[circuit logic US,font=\footnotesize\sffamily,>=Latex]
+  \node (a) at (0,2.2) {\(A\)};
+  \node (b) at (0,0.8) {\(B\)};
+  \node[xor gate US,draw,logic gate inputs=nn] (xor) at (4,2.0) {};
+  \node[and gate US,draw,logic gate inputs=nn] (and) at (4,0.4) {};
+  \draw[->] (a) -- ++(1,0) |- (xor.input 1);
+  \draw[->] (b) -- ++(1.4,0) |- (xor.input 2);
+  \draw[->] (a) -- ++(1.0,0) |- (and.input 1);
+  \draw[->] (b) -- ++(1.4,0) |- (and.input 2);
+  \draw[->] (xor.output) -- ++(1.4,0) node[right]{和 \(S\)};
+  \draw[->] (and.output) -- ++(1.4,0) node[right]{进位 \(C\)};
+  \node[align=center] at (3,-0.7)
+    {半加器：XOR 产生本位和，AND 产生向高位的进位};
+
+  \begin{scope}[xshift=8cm]
+    \node[os block,minimum width=19mm] (ha1) at (0,2.1) {半加器 1};
+    \node[os block,minimum width=19mm] (ha2) at (3.0,2.1) {半加器 2};
+    \node[or gate US,draw,logic gate inputs=nn] (or) at (4.7,0.4) {};
+    \node[left=12mm of ha1,yshift=3mm] (fa) {\(A\)};
+    \node[left=12mm of ha1,yshift=-3mm] (fb) {\(B\)};
+    \node[above=8mm of ha2] (cin) {\(C_{\mathrm{in}}\)};
+    \draw[os arrow] (fa) -- ([yshift=3mm]ha1.west);
+    \draw[os arrow] (fb) -- ([yshift=-3mm]ha1.west);
+    \draw[os arrow] (ha1) -- node[above]{部分和} (ha2);
+    \draw[os arrow] (cin) -- (ha2);
+    \draw[os arrow] (ha2) -- ++(1.4,0) node[right]{\(S\)};
+    \draw[os arrow] (ha1.south) |- (or.input 1);
+    \draw[os arrow] (ha2.south) |- (or.input 2);
+    \draw[os arrow] (or.output) -- ++(1.0,0) node[right]{\(C_{\mathrm{out}}\)};
+  \end{scope}
+\end{tikzpicture}
+\end{center}
+\diagramnote{全加器可由两个半加器和一个 OR 组成。实际标准单元可能采用更快
+拓扑，但逻辑关系相同。}
+
+\topic{进位链决定宽加法器延迟}
+串行进位加法器中，第 \(i\) 位必须等待低位进位。定义
+
+\[
+G_i=A_i\land B_i\quad\text{（本位生成进位）},
+\]
+\[
+P_i=A_i\oplus B_i\quad\text{（本位传播进位）},
+\]
+
+则
+
+\[
+C_{i+1}=G_i\lor(P_i\land C_i).
+\]
+
+展开多位关系可以并行预测进位，形成 carry-lookahead；树形前缀加法器进一步
+降低逻辑深度。代价是更多门、布线和功耗。
+
+\topic{carry 与 signed overflow 来自不同条件}
+无符号进位关注最高位之外的 carry；补码溢出发生在两个同号操作数得到异号
+结果时。对最高位进位还可写成
+
+\[
+OF=C_{n-1}\oplus C_n.
+\]
+
+\begin{workedexample}
+8-bit 模式 \(\texttt{1111\,1110}\) 与 \(\texttt{0000\,0010}\)：
+
+\begin{itemize}[leftmargin=2.2em]
+  \item 无符号解释：254 大于 2；
+  \item 补码解释：\(-2\) 小于 2。
+\end{itemize}
+
+bit 完全相同，比较结果不同，原因是比较器选择了不同数值解释。CPU 条件跳转
+因此分别提供 unsigned 和 signed 条件组合。
+\end{workedexample}
+
+\topic{译码器、编码器和优先编码器方向相反}
+\begin{osgridlongtable}{L{0.21\linewidth}L{0.30\linewidth}L{0.39\linewidth}}
+模块 & 输入到输出 & 典型用途 \\ \hline
+\endfirsthead
+模块 & 输入到输出 & 典型用途 \\ \hline
+\endhead
+译码器 & \(n\) 位编号 \(\rightarrow 2^n\) 条 one-hot 线 & 寄存器选择、片选、指令类别 \\ \hline
+编码器 & one-hot 输入 \(\rightarrow n\) 位编号 & 把唯一请求者变成索引 \\ \hline
+优先编码器 & 多个请求 \(\rightarrow\) 最高优先级编号与 valid & 中断、仲裁和前导零检测 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,>=Latex]
+  \node[draw=BookBlue,fill=BookCodeBg,trapezium,trapezium left angle=70,
+        trapezium right angle=110,minimum width=25mm,minimum height=26mm,
+        align=center]
+        (dec) at (0,2) {2-to-4\\译码器};
+  \foreach \shift/\name in {-9/Y0,-3/Y1,3/Y2,9/Y3}
+    \draw[->] ([yshift=\shift mm]dec.east) -- ++(1.25,0) node[right]{\name};
+  \draw[->] (-1.5,1.6) node[left]{\(A_0\)} -- ([yshift=-4mm]dec.west);
+  \draw[->] (-1.5,2.4) node[left]{\(A_1\)} -- ([yshift=4mm]dec.west);
+
+  \node[draw=BookTeal,fill=BookCodeBg,trapezium,trapezium left angle=110,
+        trapezium right angle=70,minimum width=28mm,minimum height=28mm,
+        align=center]
+        (enc) at (6.8,2) {4-to-2\\优先编码器};
+  \foreach \shift/\name in {-9/R0,-3/R1,3/R2,9/R3}
+    \draw[->] ([yshift=\shift mm]enc.west)+(-1.25,0) node[left]{\name}
+      -- ([yshift=\shift mm]enc.west);
+  \draw[->] ([yshift=-4mm]enc.east) -- ++(1.4,0) node[right]{INDEX};
+  \draw[->] ([yshift=4mm]enc.east) -- ++(1.4,0) node[right]{VALID};
+\end{tikzpicture}
+\end{center}
+
+\topic{桶形移位器用多级 MUX 在固定级数内移动多位}
+逐次移动 \(k\) 次会让延迟随 \(k\) 增长。8-bit 桶形移位器可使用 3 级
+多路选择器，分别选择移动 0/1、0/2、0/4 位，组合得到任意距离。
+
+\begin{pdfdiagram}[node distance=7mm and 11mm]
+  \node[os state,minimum width=22mm] (input) {8-bit 输入};
+  \node[os block,right=of input,minimum width=24mm] (s1) {第 0 级\\移 0/1};
+  \node[os block,right=of s1,minimum width=24mm] (s2) {第 1 级\\移 0/2};
+  \node[os block,right=of s2,minimum width=24mm] (s4) {第 2 级\\移 0/4};
+  \node[os state,right=of s4,minimum width=22mm] (output) {8-bit 输出};
+  \draw[os bus] (input) -- (s1);
+  \draw[os bus] (s1) -- (s2);
+  \draw[os bus] (s2) -- (s4);
+  \draw[os bus] (s4) -- (output);
+  \node[below=8mm of s2,align=center]
+    {控制位 \(\texttt{shift[2:0]}\) 分别控制三层};
+\end{pdfdiagram}
+
+\topic{组合逻辑必须定义非法输入和输出有效条件}
+如果译码器输入含越界组合，输出是全不选、选默认目标还是报告错误？如果除法器
+除数为 0，结果和异常怎样表达？如果多个请求同时有效，优先级如何决定？高质量
+接口要同时定义正常路径、默认值和错误路径。
+
+\begin{failurebox}
+真值表只列 0/1 时容易隐藏现实问题：输入可能在阈值间、正在切换、违反时序，
+或来自不同电压/时钟域。组合逻辑正确性需要布尔关系、电气范围和稳定时间三份
+条件同时成立。
+\end{failurebox}

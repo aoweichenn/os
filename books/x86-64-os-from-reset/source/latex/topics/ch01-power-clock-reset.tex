@@ -1,12 +1,10 @@
-\section{电源、时钟、复位与首条取指}
+\section{整机供电、启动链路与模型边界}
 
 \begin{keyidea}
 处理器开始执行不是一个孤立事件。电压进入允许窗口、参考时钟稳定、复位按
 时钟域释放、启动地址完成译码、ROM 返回合法指令，五类条件依次成立以后，
 软件才获得第一份可改变的架构状态。
 \end{keyidea}
-
-\subsection{一、数字状态建立在模拟电气条件之上}
 
 \topic{逻辑 0 和逻辑 1 是电压区间}数字电路用电压范围表达布尔状态。输入低于
 低电平上限时解释为 0，高于高电平下限时解释为 1；中间区域不保证结果。
@@ -18,21 +16,17 @@ PGOOD 和处理器复位输入属于不同层次。PWR\_OK 只说明电源认为
 核心、内存与 I/O 的局部稳压器仍可能没有就绪。平台把多个状态汇聚成复位树，
 逐级放行依赖它们的逻辑。
 
-\begin{longtable}{L{0.19\linewidth}L{0.28\linewidth}L{0.43\linewidth}}
-\toprule
-对象 & 已建立的事实 & 尚未建立的事实 \\
-\midrule
-待机电源有效 & 电源控制器或 EC 可以运行 & 主 CPU 电源、时钟和内存可用 \\
-PWR\_OK 有效 & 主电源轨进入监测窗口 & 板级各负载点电压全部合格 \\
-核心 PGOOD 有效 & 处理器供电满足本地条件 & 参考时钟已经锁定 \\
-时钟活动存在 & 输入端出现周期信号 & PLL、分频和各时钟域都稳定 \\
-复位释放 & 处理器可以开始状态转换 & ROM 地址译码和返回数据正确 \\
-ROM 总线活动 & 启动介质被访问 & 指令已完成译码和提交 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.28\linewidth}L{0.43\linewidth}}
+对象 & 已建立的事实 & 尚未建立的事实 \\ \hline
+待机电源有效 & 电源控制器或 EC 可以运行 & 主 CPU 电源、时钟和内存可用 \\ \hline
+PWR\_OK 有效 & 主电源轨进入监测窗口 & 板级各负载点电压全部合格 \\ \hline
+核心 PGOOD 有效 & 处理器供电满足本地条件 & 参考时钟已经锁定 \\ \hline
+时钟活动存在 & 输入端出现周期信号 & PLL、分频和各时钟域都稳定 \\ \hline
+复位释放 & 处理器可以开始状态转换 & ROM 地址译码和返回数据正确 \\ \hline
+ROM 总线活动 & 启动介质被访问 & 指令已完成译码和提交 \\ \hline
+\end{osgridlongtable}
 
-\subsection{二、时钟把组合传播切成离散状态}
-
+\topic{二、时钟把组合传播切成离散状态}
 组合逻辑的输出会随着输入和门延迟连续变化。触发器只在有效时钟边沿采样输入，
 让复杂计算被切分成一拍一拍的状态转换。时钟周期必须覆盖寄存器时钟到输出延迟、
 组合路径最大延迟、建立时间和时钟偏斜：
@@ -47,8 +41,7 @@ T_{clock} \ge T_{cq} + T_{logic,max} + T_{setup} + T_{skew}.
 组合。平台通常先让电源与时钟控制逻辑运行，再释放互连、内存控制器和处理器，
 最后释放依赖这些资源的设备。
 
-\subsection{三、冷启动的逐级放行}
-
+\topic{三、冷启动的逐级放行}\par
 \begin{pdfdiagram}[x=1cm,y=1cm]
   \node[os hardware] (power) at (0,3.8) {电源轨\\进入窗口};
   \node[os state] (clock) at (3.2,3.8) {参考时钟与 PLL\\稳定};
@@ -73,8 +66,7 @@ T_{clock} \ge T_{cq} + T_{logic,max} + T_{setup} + T_{skew}.
 高端物理地址映射到非易失存储。复位向量通常只容纳跳转，因为最后几个字节不足
 以完成设备初始化；跳转目标位于同一固件镜像中更宽裕的区域。
 
-\subsection{四、ROM、Flash 与 RAM 的职责差异}
-
+\topic{四、ROM、Flash 与 RAM 的职责差异}
 ROM 代表复位后立即可读的非易失入口。传统掩模 ROM 在制造时固定内容；EPROM、
 EEPROM 和 SPI NOR Flash 逐步让固件可更新。现代 PC 常把 Flash 的一部分映射
 到 4 GiB 顶端，使处理器无需先配置 DRAM 就能取到第一条指令。
@@ -83,37 +75,29 @@ RAM 需要供电，并可能依赖内存控制器和 DRAM 训练。复位早期�
 都已经经过固件初始化。QEMU 的 PC 模型为教学环境提供确定的低端 RAM，本项目
 仍然显式选择并记录栈地址，而不把“模拟器里能写”当作架构保证。
 
-\begin{longtable}{L{0.16\linewidth}L{0.25\linewidth}L{0.27\linewidth}L{0.22\linewidth}}
-\toprule
-介质 & 断电后内容 & 复位早期状态 & 本项目用途 \\
-\midrule
-ROM/Flash & 保留 & 由平台映射后可取指 & 128 KiB 自研固件 \\
-SRAM & 丢失 & 控制简单，容量与成本较高 & 现代芯片内部临时状态 \\
-DRAM & 丢失 & 需要控制器、刷新与训练 & QEMU 低端 RAM、后续主存 \\
-磁盘 & 保留 & 必须先有控制器驱动 & v0.2 Stage 1 与内核镜像 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.25\linewidth}L{0.27\linewidth}L{0.22\linewidth}}
+介质 & 断电后内容 & 复位早期状态 & 本项目用途 \\ \hline
+ROM/Flash & 保留 & 由平台映射后可取指 & 128 KiB 自研固件 \\ \hline
+SRAM & 丢失 & 控制简单，容量与成本较高 & 现代芯片内部临时状态 \\ \hline
+DRAM & 丢失 & 需要控制器、刷新与训练 & QEMU 低端 RAM、后续主存 \\ \hline
+磁盘 & 保留 & 必须先有控制器驱动 & v0.2 Stage 1 与内核镜像 \\ \hline
+\end{osgridlongtable}
 
-\subsection{五、复位、重启与掉电的状态范围}
-
+\topic{五、复位、重启与掉电的状态范围}
 冷启动从电源域重新建立开始；热复位可能保留 DRAM、芯片组或设备的部分状态；
 CPU 内部复位不一定复位外设。固件不能把所有入口都当成“全系统纯净”。本项目
 早期只实现 QEMU 冷启动主线，并把所有依赖状态显式写入入口代码。以后支持重启
 时，需要为启动原因、内存保留和设备复位范围增加独立契约。
 
-\begin{longtable}{L{0.20\linewidth}L{0.30\linewidth}L{0.40\linewidth}}
-\toprule
-启动类型 & 通常被重新建立的状态 & 软件必须重新确认的边界 \\
-\midrule
-冷启动 & 电源、时钟、处理器与设备 & 全部平台状态和非易失镜像 \\
-平台热复位 & 处理器、部分芯片组与设备 & DRAM 是否保留、设备是否真正复位 \\
-CPU 局部复位 & 处理器架构状态 & 外设 DMA、队列和中断可能仍活动 \\
-三重故障复位 & 由平台实现决定 & 不能依赖未记录的故障现场 \\
-\bottomrule
-\end{longtable}
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.30\linewidth}L{0.40\linewidth}}
+启动类型 & 通常被重新建立的状态 & 软件必须重新确认的边界 \\ \hline
+冷启动 & 电源、时钟、处理器与设备 & 全部平台状态和非易失镜像 \\ \hline
+平台热复位 & 处理器、部分芯片组与设备 & DRAM 是否保留、设备是否真正复位 \\ \hline
+CPU 局部复位 & 处理器架构状态 & 外设 DMA、队列和中断可能仍活动 \\ \hline
+三重故障复位 & 由平台实现决定 & 不能依赖未记录的故障现场 \\ \hline
+\end{osgridlongtable}
 
-\subsection{六、QEMU 对这一物理过程的抽象}
-
+\topic{六、QEMU 对这一物理过程的抽象}
 QEMU 不模拟每个晶体管、电源爬升和 PLL 锁定过程。它在虚拟机创建时直接建立
 一个满足取指条件的硬件状态，再让虚拟 CPU 从架构复位入口执行。这个抽象省去
 板级电气等待，却保留对操作系统学习最关键的接口：复位寄存器、物理地址、ROM

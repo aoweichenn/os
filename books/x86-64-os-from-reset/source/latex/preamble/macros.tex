@@ -1,10 +1,95 @@
 \DeclareRobustCommand{\code}[1]{\textcolor{BookBlue}{\texttt{\nolinkurl{#1}}}}
 \DeclareRobustCommand{\filepath}[1]{\textcolor{BookTeal}{\texttt{\nolinkurl{#1}}}}
 \DeclareRobustCommand{\term}[2]{\textbf{#1}（#2）}
+% \topic 是连续正文中的段首提示，不参与章节编号和目录层级。
 \newcommand{\topic}[1]{%
-  \par\medskip{\normalsize\bfseries\color{BookNavy}#1}\quad\ignorespaces
+  \par\smallskip\noindent{\normalsize\bfseries\color{BookNavy}#1}\quad\ignorespaces
 }
 \newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+
+% 全书语义表格统一使用实线网格：列格式负责竖线，源码中的每个表格行以
+% “\\ \hline”结束并负责横线。输入检查会拒绝原始表格环境和缺少横线的行。
+\ExplSyntaxOn
+\tl_new:N \l_os_book_grid_columns_tl
+
+\cs_new_protected:Npn \os_book_prepare_grid_columns:n #1
+  {
+    \tl_set:Nn \l_os_book_grid_columns_tl {#1}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {|} {}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {L} {|L}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {l} {|l}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {c} {|c}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {r} {|r}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {p} {|p}
+    \tl_replace_all:Nnn \l_os_book_grid_columns_tl {X} {|X}
+    \tl_put_right:Nn \l_os_book_grid_columns_tl {|}
+  }
+
+\cs_new_eq:NN \os_book_original_tabular: \tabular
+\cs_new_eq:NN \os_book_original_endtabular: \endtabular
+\cs_new_eq:NN \os_book_original_tabularx: \tabularx
+\cs_new_eq:NN \os_book_original_endtabularx: \endtabularx
+\cs_new_eq:NN \os_book_original_longtable: \longtable
+\cs_new_eq:NN \os_book_original_endlongtable: \endlongtable
+
+\cs_new_protected:Npn \os_book_start_tabular:nn #1#2
+  {\os_book_original_tabular:[#1]{#2}}
+
+\cs_new_protected:Npn \os_book_start_tabularx:nn #1#2
+  {\os_book_original_tabularx:{#1}{#2}}
+
+\cs_new_protected:Npn \os_book_start_longtable:nn #1#2
+  {\os_book_original_longtable:[#1]{#2}}
+
+\cs_new_protected:Npn \os_book_activate_grid_style:
+  {
+    \setlength{\arrayrulewidth}{0.45pt}
+    \setlength{\tabcolsep}{4pt}
+    \renewcommand{\arraystretch}{1.16}
+  }
+
+\NewDocumentEnvironment{osgridtabular}{O{c}m}
+  {
+    \group_begin:
+    \os_book_prepare_grid_columns:n {#2}
+    \os_book_activate_grid_style:
+    \exp_args:NnV \os_book_start_tabular:nn {#1}
+      \l_os_book_grid_columns_tl
+    \hline
+  }
+  {
+    \os_book_original_endtabular:
+    \group_end:
+  }
+
+\NewDocumentEnvironment{osgridtabularx}{m m}
+  {
+    \group_begin:
+    \os_book_prepare_grid_columns:n {#2}
+    \os_book_activate_grid_style:
+    \exp_args:NnV \os_book_start_tabularx:nn {#1}
+      \l_os_book_grid_columns_tl
+    \hline
+  }
+  {
+    \os_book_original_endtabularx:
+    \group_end:
+  }
+
+\NewDocumentEnvironment{osgridlongtable}{O{c}m}
+  {
+    \group_begin:
+    \os_book_prepare_grid_columns:n {#2}
+    \os_book_activate_grid_style:
+    \exp_args:NnV \os_book_start_longtable:nn {#1}
+      \l_os_book_grid_columns_tl
+    \hline
+  }
+  {
+    \os_book_original_endlongtable:
+    \group_end:
+  }
+\ExplSyntaxOff
 
 \lstdefinestyle{oscode}{
   basicstyle=\ttfamily\small,
@@ -59,6 +144,45 @@
   coltitle=BookRed
 }
 
+\newtcolorbox{fromzerobox}{
+  enhanced,
+  breakable,
+  sharp corners,
+  boxrule=0pt,
+  leftrule=0.7pt,
+  colback=BookCodeBg,
+  colframe=BookAmber,
+  title=从零建立,
+  fonttitle=\bfseries,
+  coltitle=BookNavy
+}
+
+\newtcolorbox{workedexample}{
+  enhanced,
+  breakable,
+  sharp corners,
+  boxrule=0pt,
+  leftrule=0.7pt,
+  colback=white,
+  colframe=BookBlue,
+  title=完整算例,
+  fonttitle=\bfseries,
+  coltitle=BookNavy
+}
+
+\newtcolorbox{historybox}{
+  enhanced,
+  breakable,
+  sharp corners,
+  boxrule=0pt,
+  leftrule=0.7pt,
+  colback=white,
+  colframe=BookMuted,
+  title=历史因果,
+  fonttitle=\bfseries,
+  coltitle=BookNavy
+}
+
 \newenvironment{partbridge}
 {\clearpage\thispagestyle{plain}\vspace*{0.5em}
  \noindent{\Large\bfseries\color{BookNavy}本部分导读}\par\medskip}
@@ -88,5 +212,14 @@
   },
   os hardware/.style={os block,draw=BookAmber,fill=white},
   os state/.style={os block,draw=BookTeal},
-  os arrow/.style={-{Stealth[length=2.4mm]},draw=BookMuted,thick}
+  os arrow/.style={-{Stealth[length=2.4mm]},draw=BookMuted,thick},
+  os bus/.style={-{Stealth[length=2.4mm]},draw=BookBlue,very thick,double},
+  os pin/.style={
+    draw=BookMuted,
+    fill=white,
+    minimum width=8mm,
+    minimum height=5mm,
+    inner sep=1pt,
+    font=\scriptsize\sffamily
+  }
 }

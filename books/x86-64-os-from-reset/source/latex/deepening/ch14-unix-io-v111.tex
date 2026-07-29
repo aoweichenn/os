@@ -1,4 +1,4 @@
-\section{v1.11：把程序接成 Unix I/O 图}
+\section{Pipe、fd 与 Unix I/O 组合}
 
 \begin{keyidea}
 流水线不是 Shell 的字符串技巧，而是 Process、fd、FileDescription、Pipe、
@@ -6,23 +6,19 @@
 而是成功和失败路径都能把整张图逆序回收到基线。
 \end{keyidea}
 
-\subsection{历史动机：为什么是 fd、fork、exec 和 pipe}
-
+\topic{历史动机：为什么是 fd、fork、exec 和 pipe}
 早期计算机常为终端、磁带和磁盘提供互不相同的调用。程序若想把一种设备的
 结果交给另一程序，就必须知道双方的具体记录格式。Unix 选择把普通文件、
 终端和管道统一放在小整数 file descriptor 后面，约定 fd 0、1、2 分别是
 标准输入、标准输出和标准错误。统一的是连接方式，不是底层对象的全部语义。
 
 \begin{center}
-\begin{tabular}{lll}
-\toprule
-描述符 & 程序动作 & 实际对象可变化为 \\
-\midrule
-0 & read & 终端、普通文件、管道读端 \\
-1 & write & 终端、普通文件、管道写端 \\
-2 & write diagnostic & 终端或独立日志目标 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{lll}
+描述符 & 程序动作 & 实际对象可变化为 \\ \hline
+0 & read & 终端、普通文件、管道读端 \\ \hline
+1 & write & 终端、普通文件、管道写端 \\ \hline
+2 & write diagnostic & 终端或独立日志目标 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 \code{fork} 保留父进程资源视图，\code{exec} 替换程序映像。两者分开，
@@ -35,21 +31,17 @@
 处理短读和 EOF。这一选择牺牲记录边界，却让文本、二进制数据和设备流都能
 使用同一组合规则。
 
-\subsection{四层对象分别拥有哪一种事实}
-
+\topic{四层对象分别拥有哪一种事实}
 一条管道的“端点”至少横跨四层：
 
 \begin{center}
-\begin{tabular}{L{0.22\linewidth}L{0.25\linewidth}L{0.40\linewidth}}
-\toprule
-层次 & 所有者 & 保存的事实 \\
-\midrule
-fd number & 单个 Process & FileTable 中的局部名字与 fd flags \\
-FileTable entry & 单个 FileTable & 对 FileDescription 的强引用 \\
-FileDescription & KernelObject manager & 读/写能力、共享状态与 finalizer \\
-Pipe & PipeManager slot & 字节、索引、端点状态、等待条件与后备页 \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.22\linewidth}L{0.25\linewidth}L{0.40\linewidth}}
+层次 & 所有者 & 保存的事实 \\ \hline
+fd number & 单个 Process & FileTable 中的局部名字与 fd flags \\ \hline
+FileTable entry & 单个 FileTable & 对 FileDescription 的强引用 \\ \hline
+FileDescription & KernelObject manager & 读/写能力、共享状态与 finalizer \\ \hline
+Pipe & PipeManager slot & 字节、索引、端点状态、等待条件与后备页 \\ \hline
+\end{osgridtabular}
 \end{center}
 
 \code{dup2(3,0)} 复制的是强引用，不是 Pipe 数据。fork 后 parent 与 child
@@ -62,8 +54,7 @@ Pipe & PipeManager slot & 字节、索引、端点状态、等待条件与后备
 duplicate 都复制 FileDescription，又会错误产生多个逻辑 reader/writer。
 因此分层不是面向对象形式，而是 Unix 语义所要求的所有权边界。
 
-\subsection{64 KiB 逻辑容量为什么按 4 KiB 页承诺}
-
+\topic{64 KiB 逻辑容量为什么按 4 KiB 页承诺}
 历史启动探针继续使用 64 字节固定环形缓冲。普通用户管道则具有
 \(65536\) 字节逻辑容量，分成
 
@@ -93,8 +84,7 @@ Pipe 不理解 E820、buddy 或页表层级。它只调用固定签名的页 acq
 回调；ProcessRuntime 把回调接到生产物理页生命周期。这样宿主测试能注入
 确定性内存，目标 Kernel 又能使用真实 frame。
 
-\subsection{跨页写入是一项小型事务}
-
+\topic{跨页写入是一项小型事务}
 一次写可能同时触及多个尚未分配的页。若第一页和第二页申请成功、第三页失败，
 不能推进 write index，也不能把前两页永久留给一条并未提交数据的操作。
 实现先收集所需页，再逐页准备：
@@ -111,20 +101,16 @@ Pipe 不理解 E820、buddy 或页表层级。它只调用固定签名的页 acq
 槽已经遗忘地址，系统会把“仍拥有 frame”伪装成“已经释放”。当前实现只在
 释放成功后清除已保存地址，使故障仍可审计。
 
-\subsection{EOF、WouldBlock 与 BrokenPipe 的状态推导}
-
+\topic{EOF、WouldBlock 与 BrokenPipe 的状态推导}\par
 \begin{center}
-\begin{tabular}{L{0.32\linewidth}L{0.27\linewidth}L{0.28\linewidth}}
-\toprule
-状态 & read & write \\
-\midrule
-空且 writer 存活 & WouldBlock & 可推进 \\
-存在数据 & 返回当前可用短读 & 取决于剩余空间 \\
-空且 writer 全关闭 & EOF & 不适用 \\
-reader 全关闭 & 不适用 & BrokenPipe \\
-满且 reader 存活 & 可读 & WouldBlock \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.32\linewidth}L{0.27\linewidth}L{0.28\linewidth}}
+状态 & read & write \\ \hline
+空且 writer 存活 & WouldBlock & 可推进 \\ \hline
+存在数据 & 返回当前可用短读 & 取决于剩余空间 \\ \hline
+空且 writer 全关闭 & EOF & 不适用 \\ \hline
+reader 全关闭 & 不适用 & BrokenPipe \\ \hline
+满且 reader 存活 & 可读 & WouldBlock \\ \hline
+\end{osgridtabular}
 \end{center}
 
 EOF 不是写入缓冲的特殊 byte，而是“未来不可能再出现数据”的生命周期结论。
@@ -135,8 +121,7 @@ WouldBlock 也不是失败。用户包装先执行 try；只有条件暂不满�
 WaitQueue，唤醒后重新检查条件。唤醒只表示状态可能改变，不预留字节，也
 不能替代循环复验。Pipe 锁内禁止调度、串口输出和用户地址复制。
 
-\subsection{PipeManager 把容量、身份和回收集中起来}
-
+\topic{PipeManager 把容量、身份和回收集中起来}
 单个全局 Pipe 无法实现 \code{pipe()}。PipeManager 持有最多 1024 个槽，
 按 RAM 档开放 8、128、1024 项。槽位限制控制同时存活的流对象，lazy page
 控制实际数据内存，两者解决不同维度。
@@ -150,8 +135,7 @@ FileDescription、writer FileDescription、reader fd 和 writer fd。任何一�
 只打印一次 capacity、active、peak、creation、release 和 rejection 摘要；
 逐 Pipe、逐页和逐字节日志会改变调度时序，因此被禁止。
 
-\subsection{\code{dup2} 为什么必须精确且原子}
-
+\topic{\code{dup2} 为什么必须精确且原子}
 普通 duplicate 寻找不低于 minimum 的最小空 fd。流水线却必须把端点放在
 精确的 0 或 1：
 
@@ -170,8 +154,7 @@ source 就会同时消失。fd 的 close-on-exec 属于 entry，FileDescription 
 offset 和访问状态属于共享对象；duplicate 时不能把两种 flags 混成一份。
 functional hard limit 在本阶段提高到 512，capacity 保持 4096。
 
-\subsection{先完成纯解析，再允许任何系统调用}
-
+\topic{先完成纯解析，再允许任何系统调用}
 若 Shell 边读字符边 fork，输入末尾的未闭合引号可能发生在三个 child 已经
 创建之后。v1.11 先把整行转换为自包含的
 \code{ShellExecutionPlan}：
@@ -195,8 +178,7 @@ argument 只保存 storage 内的 offset 和 length，stage 保存参数区间�
 局部对象会让函数序言跨过未提交页，被 Kernel 正确判为非法 stack jump。
 未来可把更大计划放入 UserHeap，本阶段不放宽栈安全策略来掩盖局部对象设计。
 
-\subsection{十六级流水线必须并发启动}
-
+\topic{十六级流水线必须并发启动}
 对 \(N\) 个 stage，parent 先创建 \(N-1\) 根 Pipe，然后依次 fork 全部
 child，不在单个 stage 后立即 wait。child \(i\) 执行：
 
@@ -218,25 +200,21 @@ parent 在 fork 全部 stage 后关闭自己持有的全部端点，再 wait 每
 标准输出不变，所以下一条 prompt 不会落入文件。本阶段明确不支持 append、
 stderr 重定向、here-document、环境展开和作业控制。
 
-\subsection{没有 libc 的十九个核心工具}
-
+\topic{没有 libc 的十九个核心工具}
 \code{core\_tool.cpp} 是 freestanding multi-call ELF。它从自研
 \code{argc/argv} 栈取得 \code{argv[0]} 的 basename，并分派为不同工具：
 
 \begin{center}
-\begin{tabular}{L{0.28\linewidth}L{0.56\linewidth}}
-\toprule
-组合面 & 工具 \\
-\midrule
-输出与退出状态 & help、echo、true、false \\
-流式 stdin/stdout & cat、wc、head、tee \\
-cwd 与目录 & pwd、ls \\
-元数据 & stat \\
-命名空间修改 & mkdir、touch、rm、rmdir、mv \\
-文件内容与长度 & write、truncate \\
-持久化 & sync \\
-\bottomrule
-\end{tabular}
+\begin{osgridtabular}{L{0.28\linewidth}L{0.56\linewidth}}
+组合面 & 工具 \\ \hline
+输出与退出状态 & help、echo、true、false \\ \hline
+流式 stdin/stdout & cat、wc、head、tee \\ \hline
+cwd 与目录 & pwd、ls \\ \hline
+元数据 & stat \\ \hline
+命名空间修改 & mkdir、touch、rm、rmdir、mv \\ \hline
+文件内容与长度 & write、truncate \\ \hline
+持久化 & sync \\ \hline
+\end{osgridtabular}
 \end{center}
 
 所有 I/O 都经过自研 wrapper；十进制转换使用固定缓冲，字符串扫描有上界，
@@ -245,8 +223,7 @@ rootfs 中的 19 个路径、每次 fork/exec、每个 Process 的 fd 图都是�
 只有 \code{cd} 和 \code{exit} 留在 Shell，因为 child 无法修改 parent cwd，
 也不能替 parent 退出交互循环。
 
-\subsection{失败路径为什么必须等待已经发布的 child}
-
+\topic{失败路径为什么必须等待已经发布的 child}
 第 \(k\) 个 fork 失败时，前 \(k\) 个 child 已经可以运行。parent 必须先关闭
 全部 Pipe fd，使被阻塞 child 得到 EOF 或 BrokenPipe，再 wait 已发布孩子。
 直接返回 prompt 会遗留 Zombie 和 FileDescription 强引用。child 接线失败
@@ -269,8 +246,7 @@ parse plan
 每一层只释放自己已经取得的所有权。Pipe finalizer 不销毁 Process，
 ProcessTree 不直接清空 Pipe 槽，Shell 也看不到 Kernel 对象地址。
 
-\subsection{五层证据怎样共同闭合}
-
+\topic{五层证据怎样共同闭合}
 单元测试验证 lazy page、跨页、回绕、EOF、BrokenPipe、分配失败回滚、
 128 槽 manager、dup2 精确替换和 16 stage 解析。集成测试占满 1024 条 Pipe，
 验证额外创建拒绝、全部端点关闭和槽复用。固定种子动态 Pipe 模型执行

@@ -1,4 +1,4 @@
-\section{v1.15：TTY、会话与前后台作业控制}
+\section{TTY、会话与前后台作业控制}
 
 \begin{keyidea}
 键盘只产生扫描码，字符设备只搬运字节。把 Ctrl-Z 解释为“停止当前前台
@@ -6,8 +6,7 @@
 scheduler 和 Shell 作业表共同维护一条所有权链。
 \end{keyidea}
 
-\subsection{从电传打字机到控制终端}
-
+\topic{从电传打字机到控制终端}
 终端这个词早于今天的图形窗口。电传打字机把按键编码为串行字符，同时在纸上
 打印远端返回的字符；后来 CRT 终端仍保留“输入流加输出流”的接口。早期 Unix
 让每个登录 Shell 关联一台终端，程序继承标准输入输出，于是出现一个不可回避
@@ -21,15 +20,12 @@ Ctrl-C；Shell 是它们的父进程，却必须继续存活。Unix 因而把身
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l l X}
-\toprule
-关系 & 公开身份 & 解决的问题\\
-\midrule
-进程树 & PID 与 parent PID & 谁 wait、谁收养 Zombie\\
-进程组 & PGID & 哪些兄弟进程组成一个作业和信号目标\\
-会话 & SID & 哪些进程组共享一台控制终端\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l l X}
+关系 & 公开身份 & 解决的问题\\ \hline
+进程树 & PID 与 parent PID & 谁 wait、谁收养 Zombie\\ \hline
+进程组 & PGID & 哪些兄弟进程组成一个作业和信号目标\\ \hline
+会话 & SID & 哪些进程组共享一台控制终端\\ \hline
+\end{osgridtabularx}
 \caption{PID、PGID 与 SID 的职责不能互相替代}
 \end{table}
 
@@ -38,8 +34,7 @@ session 通常由登录 Shell 的祖先建立；一个 session 包含多个 proc
 TTY 把控制字符定向给该组。设备驱动不解析命令，Shell 也不在前台程序运行时
 偷偷读取同一输入。
 
-\subsection{整条控制流跨越哪些硬件和软件层}
-
+\topic{整条控制流跨越哪些硬件和软件层}\par
 \begin{pdfdiagram}[node distance=9mm and 11mm]
   \node[os hardware] (key) {PS/2 键盘\\Set 1 make/break};
   \node[os hardware,right=of key] (irq) {i8042\\IRQ1};
@@ -63,8 +58,7 @@ QEMU 只模拟第一行硬件。QMP \code{send-key ctrl-z} 不会调用 Kernel �
 不会直接写 ASCII。自研固件、Stage 1、Kernel、i8042、IRQ、TTY、信号和用户
 Shell 仍由目标代码完成。
 
-\subsection{Set 1 扫描码为何需要修饰键状态}
-
+\topic{Set 1 扫描码为何需要修饰键状态}
 PS/2 键盘发送的是按键位置事件。左 Ctrl 的 make code 是 \code{0x1D}，
 break code 把最高位置一，成为 \code{0x9D}；右 Ctrl 使用扩展前缀
 \code{E0 1D/E0 9D}。字母 Z 的 make code 本身永远不会说明 Ctrl 是否仍按下，
@@ -92,8 +86,7 @@ E0 right Ctrl break  -> right_control_pressed = false
 \filepath{device/device\_model.cpp} 只把扫描码变成字符；它不知道前台进程组，
 也不直接发送信号。
 
-\subsection{行规程为何位于键盘和文件描述符之间}
-
+\topic{行规程为何位于键盘和文件描述符之间}
 如果每个可打印键都立即让阻塞 \code{read} 返回，退格会成为用户数据，用户
 程序必须重复实现行编辑。canonical 行规程先把半行保存在 edit buffer，
 换行后才把一整行转移到 input ring：
@@ -113,18 +106,15 @@ v1.15 的 \code{Terminal} 固定拥有 512 字节编辑区、1024 字节可读�
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l X l}
-\toprule
-输入 & 行规程动作 & 用户是否读取该控制字节\\
-\midrule
-普通字符 & 追加编辑区 & 换行提交后读取\\
-CR/LF & 提交编辑区并统一附加 LF & LF 可见\\
-Backspace/Delete & 删除最后一个编辑字节 & 否\\
-Ctrl-D & 提交当前内容，或登记一次 EOF & 否\\
-Ctrl-C & 清除未提交行，产生 InterruptForeground & 否\\
-Ctrl-Z & 清除未提交行，产生 StopForeground & 否\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l X l}
+输入 & 行规程动作 & 用户是否读取该控制字节\\ \hline
+普通字符 & 追加编辑区 & 换行提交后读取\\ \hline
+CR/LF & 提交编辑区并统一附加 LF & LF 可见\\ \hline
+Backspace/Delete & 删除最后一个编辑字节 & 否\\ \hline
+Ctrl-D & 提交当前内容，或登记一次 EOF & 否\\ \hline
+Ctrl-C & 清除未提交行，产生 InterruptForeground & 否\\ \hline
+Ctrl-Z & 清除未提交行，产生 StopForeground & 否\\ \hline
+\end{osgridtabularx}
 \caption{canonical 输入不是普通字节 FIFO}
 \end{table}
 
@@ -132,8 +122,7 @@ Ctrl-Z & 清除未提交行，产生 StopForeground & 否\\
 Buffered、InputReady、EndOfFileReady、InterruptForeground 或 StopForeground
 分派，不重复认识 \code{0x03}/\code{0x1A}。这把硬件编码与作业策略隔开。
 
-\subsection{输入守恒为何必须增加 consumed}
-
+\topic{输入守恒为何必须增加 consumed}
 v1.0 ConsoleInput 可以要求 submitted 等于 read 加 buffered，因为每个接受
 字符最终都交给用户。行规程会故意吞掉控制字符，还会撤销已经进入编辑区的
 数据。一次有效退格消耗两个已提交事实：退格按键本身和被删除字符。
@@ -166,8 +155,7 @@ Q=W+P
 \(Q\) 是 queued，\(W\) 是 written，\(P\) 是 pending。阶段结束要求
 \(P=0\)，所以所有成功接收的目标输出都已经到达串口设备。
 
-\subsection{单核为什么仍需要 irq-save 锁}
-
+\topic{单核为什么仍需要 irq-save 锁}
 单 BSP 只排除了另一个 CPU 并行执行，没有排除同核中断重入。Thread 在系统
 调用中修改输出环时，IRQ1 可以打断它并提交输入；若日志或终端状态共享索引，
 普通自旋锁还会造成“Thread 持锁，被 IRQ 打断，IRQ 等待同一锁”的永久自锁。
@@ -182,8 +170,7 @@ Q=W+P
 未来异步输出必须把请求移交到锁外队列，而不是扩大当前临界区。
 \end{contractbox}
 
-\subsection{JobControlManager 的状态和不变量}
-
+\topic{JobControlManager 的状态和不变量}
 PID1 的初始身份为：
 
 \[
@@ -211,8 +198,7 @@ inactive 槽全零且统计数等于实际数。
 把这些字段压进一个枚举会使“停止但仍是同一组成员”“Zombie 仍需被父进程
 收集”等合法组合无法表达。
 
-\subsection{控制终端怎样裁决输入所有权}
-
+\topic{控制终端怎样裁决输入所有权}
 \code{Terminal} 记录 terminal id、controlling SID、session leader PID 和
 foreground PGID。只有：
 
@@ -228,8 +214,7 @@ caller.SID=tty.SID\quad\land\quad caller.PGID=tty.foreground.PGID
 输出目前允许后台写。这符合“后台构建仍可输出日志”的基础需求，但可能与 Shell
 提示符交错。终端显示重绘、SIGTTOU 和 termios \code{TOSTOP} 不在 v1.15。
 
-\subsection{/dev/console 为何进入 VFS}
-
+\topic{/dev/console 为何进入 VFS}
 标准 fd 曾以 ConsoleInput/ConsoleOutput 特殊 kind 直接指向全局对象，用户
 不能通过路径观察设备。v1.15 增加最小只读设备后端：
 
@@ -249,8 +234,7 @@ VFS 继续负责逐组件路径、mount identity、vnode 引用、stat 与 readd
 当前后端不是完整 devfs：节点在启动期固定，不能动态注册设备，也没有 uid/gid
 权限或热插拔。保留 VFS 契约后，v1.18 可以替换后端而不重写 Shell I/O。
 
-\subsection{Ctrl-C 和 Ctrl-Z 如何选择目标}
-
+\topic{Ctrl-C 和 Ctrl-Z 如何选择目标}
 TTY 不保存 PID 列表，只保存 foreground PGID：
 
 \begin{lstlisting}
@@ -267,22 +251,18 @@ TTY 不在 IRQ 中遍历全部 Process 并完成上下文切换。IRQ 只产出�
 ProcessRuntime 在既有安全边界调用 SignalManager、ProcessTree 与 scheduler，
 把复杂生命周期留在可统一验证的位置。
 
-\subsection{Stopped 为什么必须是独立生命周期状态}
-
+\topic{Stopped 为什么必须是独立生命周期状态}
 停止不是退出，也不是普通 Blocked：
 
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l X X}
-\toprule
-状态 & 等待什么 & 资源语义\\
-\midrule
-Blocked & I/O、condition、deadline 等具体条件 & 条件满足后自动 Ready\\
-Stopped & SIGCONT 或作业控制动作 & 全部地址空间、fd 与 CPU 现场保留\\
-Zombie & parent wait 收集 & 执行资源已释放，只保留身份和退出事实\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l X X}
+状态 & 等待什么 & 资源语义\\ \hline
+Blocked & I/O、condition、deadline 等具体条件 & 条件满足后自动 Ready\\ \hline
+Stopped & SIGCONT 或作业控制动作 & 全部地址空间、fd 与 CPU 现场保留\\ \hline
+Zombie & parent wait 收集 & 执行资源已释放，只保留身份和退出事实\\ \hline
+\end{osgridtabularx}
 \caption{Blocked、Stopped 与 Zombie 不能合并}
 \end{table}
 
@@ -294,8 +274,7 @@ run queue 可能仍含停止进程以前发布的节点，所以 PopReady 必须
 “是否存在可运行 Thread”也必须调用 \code{HasSchedulableReadyThread}，
 不能只检查队列非空。否则全是 stopped 节点时 CPU 会在空调度中忙转。
 
-\subsection{事件式 wait 如何保留三种事实}
-
+\topic{事件式 wait 如何保留三种事实}
 传统 \code{wait} 只在孩子退出时返回，并立即收集 Zombie。Shell 还必须知道
 孩子何时停止或继续。公共 56 字节 \code{ProcessWaitEventResult} 保存 PID、
 parent PID、event type、termination reason、exit code、exception vector
@@ -320,8 +299,7 @@ parent PID、event type、termination reason、exit code、exception vector
 分别保存 stopped/continued pending，exit 不覆盖前两个事实；父进程按顺序
 消费。统计同时记录 produced 与 observed，终态必须相等。
 
-\subsection{Shell 如何建立一条进程组管线}
-
+\topic{Shell 如何建立一条进程组管线}
 对于 \code{echo data | cat | wc}：
 
 \begin{enumerate}
@@ -337,8 +315,7 @@ parent PID、event type、termination reason、exit code、exception vector
 父子双方调用 setpgid 是经典竞态收缩：child 先运行也能在 exec 前入组，parent
 先运行也能在交接终端前建立组。但极短 child 仍可能在 parent 调用前退出。
 
-\subsection{控制信号为何必须跨过 exec}
-
+\topic{控制信号为何必须跨过 exec}
 还有一个更短的窗口：parent 已把 TTY 交给新 PGID，而 child 尚未完成 exec。
 此时 Ctrl-Z 已经成为 pending 异步事实。exec 可以把旧 Handler 重置为
 Default、清除活动 handler frame 和被删除兄弟 Thread 的状态，却不能清掉
@@ -346,8 +323,7 @@ Process pending 或 survivor pending；否则替换映像会把用户已经按�
 抹去。QEMU 分步注入把 Ctrl-Z 放进这一窗口，新映像必须在第一次返回用户态前
 兑现默认停止。这项测试修正了早期“exec 清空全部 pending”的错误契约。
 
-\subsection{为何 Zombie 仍需保留进程组身份}
-
+\topic{为何 Zombie 仍需保留进程组身份}
 最初实现在线程退出后立即删除进程级 SignalManager 状态。真实 QEMU 中
 \code{unknown} child 以 127 极快退出，parent 随后设置 PGID 得到不存在，
 Shell 把它误报为普通执行失败，\code{UNKNOWN\_COMMAND\_REJECTED} 偶发丢失。
@@ -371,8 +347,7 @@ Zombie 仍不执行 handler，因为已经没有活动 Thread；保留的少量�
 作为 PID/PGID 锚点。管线组长即使先退出，后续成员仍能加入相同组。这个修复
 把“进程存在多久”从实现细节提升为作业控制契约。
 
-\subsection{作业表怎样归约成员状态}
-
+\topic{作业表怎样归约成员状态}
 Shell 使用 16 项固定表。每项保存 job id、PGID、最多 16 个 PID、成员状态和
 最后 stage 退出码。作业状态按成员归约：
 
@@ -395,8 +370,7 @@ BackgroundOperatorNotLast，且在 fork/pipe 前失败。后台作业建立后�
 在阶段末留下 Pipe、Zombie 或错误终端所有者。
 \end{failurebox}
 
-\subsection{Ctrl-Z、fg 与 Ctrl-C 的逐步时序}
-
+\topic{Ctrl-Z、fg 与 Ctrl-C 的逐步时序}\par
 \begin{lstlisting}
 QMP: ctrl-z
   i8042 IRQ1 -> decoder 0x1A
@@ -425,8 +399,7 @@ QEMU runner 不用固定 sleep 猜测 guest 速度。它为每个输入命令等
 \code{FOREGROUND\_JOB\_WAITING}。单步 20 秒无进展立即失败并设置协议完成
 事件，finally 终止、wait 并删除 QMP socket；不会再静默等满 120 秒。
 
-\subsection{日志为何选择事务 marker 与终态账本}
-
+\topic{日志为何选择事务 marker 与终态账本}
 扫描码、普通字符和 scheduler 扫描都是热路径。逐事件串口日志会改变时序，
 甚至让日志本身成为竞态放大器。低频用户 marker 只描述可作为协议屏障的事务：
 
@@ -454,21 +427,17 @@ Stopped、Zombie、active job process、active session/group、editing bytes、
 buffered bytes 和 pending output 必须全为零。用户 marker 正确而资源账本
 错误时，整机仍输出 \code{USER\_RESULT\_INVALID}。
 
-\subsection{四层测试怎样冻结机制而非演示}
-
+\topic{四层测试怎样冻结机制而非演示}\par
 \begin{table}[htbp]
 \centering
 \small
-\begin{tabularx}{\textwidth}{l X}
-\toprule
-层次 & v1.15 证据\\
-\midrule
-单元 & Terminal 行规程/守恒、JobControl 身份、字符 vnode、Ctrl 扫描码\\
-集成 & 同一 child 的 Stopped→Continued→Exited 与 scheduler 状态\\
-随机 & 64 槽、固定种子 100000 步 PGID 迁移，每步完整 Validate\\
-系统 & QMP 真按键、IRQ1、Ring 3 cat、jobs/fg/bg/\&、终态资源守恒\\
-\bottomrule
-\end{tabularx}
+\begin{osgridtabularx}{\textwidth}{l X}
+层次 & v1.15 证据\\ \hline
+单元 & Terminal 行规程/守恒、JobControl 身份、字符 vnode、Ctrl 扫描码\\ \hline
+集成 & 同一 child 的 Stopped→Continued→Exited 与 scheduler 状态\\ \hline
+随机 & 64 槽、固定种子 100000 步 PGID 迁移，每步完整 Validate\\ \hline
+系统 & QMP 真按键、IRQ1、Ring 3 cat、jobs/fg/bg/\&、终态资源守恒\\ \hline
+\end{osgridtabularx}
 \caption{四层证据分别隔离局部算法、组合事务、长序列性质和真实硬件路径}
 \end{table}
 
@@ -477,8 +446,7 @@ Stopped/Continued produced 与 observed 各为两次。后台读取拒绝至少�
 64 MiB bootstrap 保持兼容，256 MiB 执行完整功能，64 GiB 继续验证同一 ABI
 在更大容量配置下运行；QEMU 仍只使用自研 ROM 启动。
 
-\subsection{当前边界与 v1.16 的连接}
-
+\topic{当前边界与 v1.16 的连接}
 当前只有一个控制终端和 canonical 基线，没有 termios/raw mode、多个虚拟
 终端或 pty、窗口尺寸、SIGWINCH、SIGHUP、SIGTTIN/SIGTTOU、孤儿进程组规则
 与完整 POSIX job spec。Shell 作业表固定 16 项；这些限制均明确返回或记录，

@@ -7,7 +7,8 @@
   headheight=14pt
 ]{geometry}
 \usepackage{amsmath}
-\usepackage{booktabs}
+\usepackage{amssymb}
+\usepackage{circuitikz}
 \usepackage{enumitem}
 \usepackage{fancyhdr}
 \usepackage{fontspec}
@@ -16,11 +17,29 @@
 \usepackage{listings}
 \usepackage{longtable}
 \usepackage{microtype}
+\usepackage{pgfplots}
 \usepackage{rotating}
 \usepackage{tabularx}
 \usepackage[most]{tcolorbox}
 \usepackage{tikz}
 \usepackage{xcolor}
 \usepackage{xeCJK}
+\usepackage{siunitx}
 
-\usetikzlibrary{arrows.meta,fit,matrix,positioning,shapes.geometric}
+\usetikzlibrary{
+  arrows.meta,
+  calc,
+  circuits.logic.US,
+  decorations.pathreplacing,
+  fit,
+  matrix,
+  positioning,
+  shapes.geometric
+}
+\pgfplotsset{compat=1.18}
+\sisetup{
+  detect-all,
+  group-separator={\,},
+  group-minimum-digits=4,
+  per-mode=symbol
+}
