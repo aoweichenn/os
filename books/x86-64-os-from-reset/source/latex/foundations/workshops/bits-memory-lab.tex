@@ -1,0 +1,187 @@
+\topic{从一段内存转储重建数值}
+
+调试器显示：
+
+\begin{lstlisting}
+00001ff0: e9 0d f0 90 ff ff 7f 80 34 12 00 80 00 00 00 00
+\end{lstlisting}
+
+左侧是第一个 byte 的地址，中间是按地址递增排列的原始 byte。“跳转、整数或
+字符”等含义要由读取宽度和解释规则另行决定。先给前八个 byte 标地址：
+
+\begin{center}
+\small
+\begin{osgridtabular}{L{0.16\linewidth}cccccccc}
+地址 & 1FF0 & 1FF1 & 1FF2 & 1FF3 & 1FF4 & 1FF5 & 1FF6 & 1FF7 \\ \hline
+byte & E9 & 0D & F0 & 90 & FF & FF & 7F & 80 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+从 \(\texttt{0x1FF1}\) 读取 little-endian 16-bit 值：
+\[
+\texttt{0x0D}+(\texttt{0xF0}\ll8)=\texttt{0xF00D}.
+\]
+把同一位模式按有符号补码解释：
+\[
+\texttt{0xF00D}-2^{16}=61453-65536=-4083=-\texttt{0x0FF3}.
+\]
+byte 没变，解释规则变了。
+
+\begin{pdfdiagram}
+  \node[os state] (dump) {原始 byte\\\texttt{0D F0}};
+  \node[os block,right=20mm of dump,yshift=14mm] (unsigned) {unsigned\\61453};
+  \node[os block,right=20mm of dump] (signed) {signed\\$-4083$};
+  \node[os block,right=20mm of dump,yshift=-14mm] (rel) {x86 rel16\\相对位移};
+  \draw[os arrow] (dump) -- (unsigned);
+  \draw[os arrow] (dump) -- (signed);
+  \draw[os arrow] (dump) -- (rel);
+\end{pdfdiagram}
+
+\begin{workedexample}
+从地址 \(\texttt{0x1FF4}\) 读取 \texttt{FF FF}：
+\[
+\text{unsigned}=\texttt{FFFF}=65535,\qquad
+\text{signed}=65535-65536=-1.
+\]
+从 \(\texttt{0x1FF6}\) 读取 \texttt{7F 80}：
+\[
+\text{unsigned}=\texttt{807F}=32895,\qquad
+\text{signed}=32895-65536=-32641.
+\]
+若凭视觉拼成 \texttt{7F80} 就得到了 32640。可靠做法是每次写出
+\(M[a]+(M[a+1]\ll8)\)。
+\end{workedexample}
+
+\topic{补码加法要同时观察结果、进位和溢出}
+
+\begin{osgridlongtable}{L{0.12\linewidth}L{0.12\linewidth}L{0.15\linewidth}L{0.13\linewidth}L{0.10\linewidth}L{0.10\linewidth}}
+A & B & 9-bit 数学和 & 8-bit 结果 & CF & OF \\ \hline
+\endfirsthead
+A & B & 9-bit 数学和 & 8-bit 结果 & CF & OF \\ \hline
+\endhead
+\texttt{7F} & \texttt{01} & \texttt{080} & \texttt{80} & 0 & 1 \\ \hline
+\texttt{FF} & \texttt{01} & \texttt{100} & \texttt{00} & 1 & 0 \\ \hline
+\texttt{80} & \texttt{80} & \texttt{100} & \texttt{00} & 1 & 1 \\ \hline
+\texttt{40} & \texttt{20} & \texttt{060} & \texttt{60} & 0 & 0 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+\(\texttt{7F}+\texttt{01}=\texttt{80}\)。无符号的 \(127+1=128\) 仍在范围
+内，所以 CF=0。带符号时两个正数得到最高位为 1 的结果，按补码是 \(-128\)，
+所以 OF=1。
+\end{workedexample}
+
+\begin{workedexample}
+\(\texttt{FF}+\texttt{01}=\texttt{100}\)，低 8 bit 写回 \texttt{00}，
+第九位形成 CF=1。带符号时是 \(-1+1=0\)，所以 OF=0；结果全零使 Z=1。
+CPU 只有一个位结果，CF 与 OF 回答不同的解释问题。
+\end{workedexample}
+
+\topic{地址宽度、容量和最后地址分三步计算}
+
+\begin{pdfdiagram}
+  \node[os state] (bits) {20 个地址 bit};
+  \node[os block,right=17mm of bits] (states) {\(2^{20}\) 个编码};
+  \node[os block,right=17mm of states] (capacity) {每个选 1 byte\\容量 1 MiB};
+  \node[os state,right=17mm of capacity] (last) {从 0 编号\\末址 \texttt{FFFFF}};
+  \draw[os arrow] (bits) -- (states);
+  \draw[os arrow] (states) -- (capacity);
+  \draw[os arrow] (capacity) -- (last);
+\end{pdfdiagram}
+
+若每个编码选择一个 32-bit word，容量是 \(2^n\times4\) byte；若按 byte
+寻址，一次 32-bit 读取使用连续四个地址。地址线数量不能单独推出容量。
+
+\begin{workedexample}
+128 KiB ROM 的大小为 \texttt{0x20000}。映射到 32-bit 地址空间顶端时：
+\[
+\text{base}=\texttt{0x100000000}-\texttt{0x20000}
+=\texttt{0xFFFE0000}.
+\]
+复位地址对应的文件偏移为：
+\[
+\texttt{0xFFFFFFF0}-\texttt{0xFFFE0000}=\texttt{0x1FFF0}.
+\]
+偏移范围是 \([0,\texttt{0x20000})\)，最后一个 byte 在
+\texttt{0x1FFFF}。复位向量从倒数 16 byte 的第一个位置开始。
+\end{workedexample}
+
+\topic{最小 little-endian 读取器和项目字节}
+
+\begin{lstlisting}[language=C++]
+constexpr std::uint64_t OS_BOOK_DATA_BYTE_BIT_COUNT = 8U;
+
+[[nodiscard]] constexpr std::uint16_t ReadLittleEndian16(
+    const std::uint8_t low_byte,
+    const std::uint8_t high_byte) noexcept {
+    return static_cast<std::uint16_t>(
+        static_cast<std::uint16_t>(low_byte)
+        | (static_cast<std::uint16_t>(high_byte)
+           << OS_BOOK_DATA_BYTE_BIT_COUNT));
+}
+\end{lstlisting}
+
+先提升高 byte 再移位，避免在过窄类型中丢位。项目正式复位向量采用同一规则：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=620,
+  lastline=624,
+  caption={ROM 末尾的项目复位跳转}
+]{../../../../source/firmware/src/reset_and_serial.asm}
+
+最终字节是 \texttt{E9 0D F0}。\texttt{E9} 是操作码，
+\texttt{0D F0} 是 little-endian 的 rel16。
+
+\begin{experimentbox}{用两种宽度读同一组 byte}
+准备 \texttt{34 12 00 80 FF FF 7F 00} 八个 byte。用
+\code{xxd -g1} 观察逐 byte 结果，再用 \code{od -An -tx2} 观察 16-bit
+分组。纸上独立计算四个 little-endian 16-bit 无符号值与带符号值。
+
+再从偏移 1 开始分组。记录起始偏移、读取宽度和宿主端序；缺少这些条件，工具
+输出无法由别人复查。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{把 ROM 位移当成 big-endian}
+故意把 \texttt{0D F0} 解释成 \texttt{0x0DF0}。下一 IP 为
+\texttt{0xFFF3} 时：
+\[
+\texttt{0xFFF3}+\texttt{0x0DF0}
+=\texttt{0x10DE3}\longrightarrow\texttt{0x0DE3}.
+\]
+错误目标不再是项目入口 \texttt{0xF000}，最早串口日志不会出现。恢复
+little-endian 后，目标重新成为 \texttt{0xF000}。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item \(2^n\) 是状态数，最大编号是 \(2^n-1\)；
+  \item little-endian 不反转一个 byte 内的 bit；
+  \item \texttt{FF} 可表示 255、\(-1\) 或指令的一部分；
+  \item CF 观察无符号进位，OF 观察有符号范围越界；
+  \item 读转储时必须同时记录地址、宽度和对齐边界。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：从 byte 走到复位地址}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 把 \(\texttt{11010110}_2\) 写成十六进制、无符号数和 8-bit 补码数。
+  \item 求 \(\texttt{80}+\texttt{80}\) 的 8-bit 结果、CF、OF 和 Z。
+  \item 内存为 \texttt{78 56 34 12}。从首地址读 16-bit 和 32-bit
+    little-endian 分别得到什么？
+  \item 36-bit byte 地址覆盖多大容量，最后地址是什么？
+  \item 64 KiB 镜像映射到 1 MiB 顶端。求基址和物理地址
+    \texttt{FFFF0} 的文件偏移。
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \texttt{D6}，无符号 214，补码 \(214-256=-42\)；
+  \item 结果 \texttt{00}，CF=1，OF=1，Z=1；
+  \item \texttt{5678} 和 \texttt{12345678}；
+  \item \(2^{36}\) byte \(=64\) GiB，末址 \texttt{0xFFFFFFFFF}；
+  \item 基址 \texttt{F0000}，偏移
+    \texttt{FFFF0}-\texttt{F0000}=\texttt{FFF0}。
+\end{enumerate}
+\end{answerbox}

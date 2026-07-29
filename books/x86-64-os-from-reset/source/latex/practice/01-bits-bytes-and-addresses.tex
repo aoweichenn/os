@@ -1,0 +1,25 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{逐 byte 审计复位向量}
+构建 ROM 后，用逐 byte 工具查看偏移 \texttt{0x1FFF0}，记录文件大小、起始
+偏移和 \texttt{E9 0D F0}。纸上把 rel16 解释为补码，再算目标 IP。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{把位移 byte 交换}
+把 \texttt{0D F0} 当作 \texttt{F0 0D}。预期目标不再是
+\texttt{F000}，最早串口日志消失。恢复 little-endian 解释后重新计算。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+容量不是最后地址；byte 顺序不是 bit 顺序；补码值必须先固定宽度。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 12 bit 能编码多少状态，最大无符号值是多少？
+  \item \texttt{FE} 的 8-bit 补码值是什么？
+  \item \texttt{78 56} 按 little-endian 读成什么？
+\end{enumerate}
+\begin{answerbox}
+1. \(4096\) 种、最大 4095；2. \(254-256=-2\)；3. \texttt{0x5678}。
+\end{answerbox}

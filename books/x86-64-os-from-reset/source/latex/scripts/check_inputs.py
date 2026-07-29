@@ -25,6 +25,13 @@ OS_BOOK_MAIN_CHAPTER_INPUT_PATTERN = re.compile(
 OS_BOOK_APPENDIX_CHAPTER_INPUT_PATTERN = re.compile(
     r"\\input\{chapters/appendix-[^}]+\}"
 )
+OS_BOOK_PRACTICE_INPUT_PATTERN = re.compile(
+    r"\\input\{(practice/[^}]+)\}"
+)
+OS_BOOK_EXERCISE_BLOCK_PATTERN = re.compile(
+    r"\\textbf\{练习\}(.*?)\\begin\{answerbox\}",
+    re.DOTALL,
+)
 OS_BOOK_MAIN_CHAPTER_PATTERN = re.compile(r"^\\chapter\{([^}]+)\}")
 OS_BOOK_SECTION_PATTERN = re.compile(r"^\\section\{")
 OS_BOOK_LOCAL_HEADING_PATTERN = re.compile(
@@ -297,10 +304,57 @@ def checkChapterEntrySequence() -> None:
         )
 
 
+def checkChapterPractice() -> None:
+    chapterDirectory = OS_BOOK_ROOT / "chapters"
+    chapterFiles = sorted(chapterDirectory.glob("[0-9][0-9]-*.tex"))
+    if len(chapterFiles) != OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT:
+        raise SystemExit(
+            "章节练习检查数量不一致："
+            f"实际 {len(chapterFiles)}，"
+            f"预期 {OS_BOOK_EXPECTED_MAIN_CHAPTER_COUNT}"
+        )
+
+    requiredFragments = (
+        r"\begin{experimentbox}",
+        r"\begin{faultinjectionbox}",
+        r"\begin{pitfallbox}",
+        r"\textbf{练习}",
+        r"\begin{answerbox}",
+    )
+    for chapterFile in chapterFiles:
+        chapterText = chapterFile.read_text(encoding="utf-8")
+        practiceInputs = OS_BOOK_PRACTICE_INPUT_PATTERN.findall(chapterText)
+        if len(practiceInputs) != 1:
+            raise SystemExit(
+                f"每个主线章必须且只能输入一份章内练习：{chapterFile}"
+            )
+
+        practiceFile = resolveInput(practiceInputs[0])
+        if not practiceFile.is_file():
+            raise SystemExit(f"缺少章内练习文件：{practiceFile}")
+        practiceText = practiceFile.read_text(encoding="utf-8")
+        for requiredFragment in requiredFragments:
+            if requiredFragment not in practiceText:
+                raise SystemExit(
+                    "章内练习缺少“实验、破坏、易错点、练习、答案”中的一项："
+                    f"{practiceFile}：{requiredFragment}"
+                )
+
+        exerciseMatch = OS_BOOK_EXERCISE_BLOCK_PATTERN.search(practiceText)
+        if exerciseMatch is None:
+            raise SystemExit(f"章内练习无法定位题目区：{practiceFile}")
+        exerciseCount = exerciseMatch.group(1).count(r"\item")
+        if not 3 <= exerciseCount <= 5:
+            raise SystemExit(
+                f"每章应有 3--5 道练习：{practiceFile} 实际 {exerciseCount} 道"
+            )
+
+
 def main() -> int:
     checkTypographyAndNavigation()
     checkFoundationPlacement()
     checkChapterEntrySequence()
+    checkChapterPractice()
     visitedFiles: set[Path] = set()
     activeFiles: list[Path] = []
     graphicFiles: set[Path] = set()

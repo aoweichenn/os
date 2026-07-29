@@ -1,0 +1,27 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{跟踪一次键盘 IRQ}
+记录设备状态、PIC vector、进入内核的帧、读取的数据端口、EOI 和唤醒的用户
+等待者。日志只在 IRQ 到达和状态异常时打印。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{提前发送 EOI}
+在读取设备状态前发送 EOI，并快速注入多个按键。预期可能合并或丢失边沿。
+恢复为确认设备原因后再 EOI。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+IRQ vector 不等于设备端口；EOI 只通知控制器；从用户态进入还要切换内核栈和
+验证返回现场。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item IRQ0 常由哪个定时设备产生？
+  \item 为什么 ISR 中避免动态 heap 分配？
+  \item 返回用户态前至少检查 RIP 的什么性质？
+\end{enumerate}
+\begin{answerbox}
+1. PIT；2. 中断上下文不能安全等待，分配器也可能被中断；3. canonical 且
+属于允许的用户地址/权限。
+\end{answerbox}

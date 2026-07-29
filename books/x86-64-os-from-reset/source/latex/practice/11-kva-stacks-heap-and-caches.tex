@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{跨页分配并核对映射}
+申请一个跨两页的 KVA 区间，记录虚拟区间、两个物理页、叶权限和释放后的空闲
+计数。向两个页边界写不同模式，再读回。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{第二页映射失败}
+让第二个叶项建立失败。预期清除第一页映射、释放两张数据页和本次新建的页表，
+KVA 区间回到空闲集合。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+KVA 地址空间和物理页是两种资源；guard page 必须 not-present；释放顺序与
+申请顺序相反。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 9000 byte 至少跨多少个 4 KiB 页？
+  \item 向下增长栈的 guard page 应放在栈的哪一侧？
+  \item heap 对象释放后还要归还哪两层资源？
+\end{enumerate}
+\begin{answerbox}
+1. 3；2. 低地址侧；3. KVA 区间和后备物理页，必要时还包括空页表。
+\end{answerbox}

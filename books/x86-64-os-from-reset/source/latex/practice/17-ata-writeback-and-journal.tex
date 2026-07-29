@@ -1,0 +1,25 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{五个 FLUSH 点分别重启}
+在 data、prepared、commit、checkpoint、clear 五个 FLUSH 后复制磁盘并重启，
+记录 journal 字段、replay 次数、路径结果和 fsck。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{commit 先于 prepared 稳定}
+交换 prepared FLUSH 与 commit。预期可能留下 valid commit 和不完整 payload。
+恢复为 payload 全稳定后才写 commit。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+IRQ14 只表示请求完成；FLUSH 决定持久顺序；checkpoint 失败时不能清 journal。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item commit 缺失但 payload 完整时选择哪种状态？
+  \item checkpoint 一半后断电怎样恢复？
+  \item 同一 target stage 两次消耗几个 credit？
+\end{enumerate}
+\begin{answerbox}
+1. 旧状态；2. 重放全部 target；3. 一个。
+\end{answerbox}

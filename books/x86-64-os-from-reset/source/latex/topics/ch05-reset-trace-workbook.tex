@@ -1,0 +1,160 @@
+\topic{复位跳转从三个机器 byte 开始}
+
+x86 复位后，软件可见 \(CS=\texttt{F000}\)、\(EIP=\texttt{FFF0}\)，CS
+隐藏基址为 \texttt{FFFF0000}。首条取指物理地址是：
+\[
+\texttt{FFFF0000}+\texttt{FFF0}
+=\texttt{FFFFFFF0}.
+\]
+
+项目在这里放置 \texttt{E9 0D F0}。当前代码段默认 16-bit，因此
+\texttt{E9} 后读取 rel16：
+\[
+disp=\texttt{F00D}-\texttt{10000}=-\texttt{0FF3}.
+\]
+取完三个 byte 后，顺序 IP 是 \texttt{FFF3}：
+\[
+IP_{next}=\texttt{FFF3}-\texttt{0FF3}
+=\texttt{F000}.
+\]
+近跳转不重装 CS，隐藏基址保持 \texttt{FFFF0000}，所以目标物理地址为：
+\[
+\texttt{FFFF0000}+\texttt{F000}
+=\boxed{\texttt{FFFFF000}}.
+\]
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.20\linewidth}L{0.20\linewidth}L{0.33\linewidth}}
+时刻 & CS 可见值 & EIP/IP & 物理取指地址或动作 \\ \hline
+\endfirsthead
+时刻 & CS 可见值 & EIP/IP & 物理取指地址或动作 \\ \hline
+\endhead
+复位完成 & \texttt{F000} & \texttt{FFF0} & 取 \texttt{E9} 于
+  \texttt{FFFFFFF0} \\ \hline
+取位移低 byte & 不变 & \texttt{FFF1} & 取 \texttt{0D} \\ \hline
+取位移高 byte & 不变 & \texttt{FFF2} & 取 \texttt{F0} \\ \hline
+执行跳转前 & 不变 & 顺序值 \texttt{FFF3} & 计算有符号 rel16 \\ \hline
+执行跳转后 & 不变 & \texttt{F000} & 下一取指
+  \texttt{FFFFF000} \\ \hline
+\end{osgridlongtable}
+
+若这里使用 far jump 并把 CS 重装为普通实模式段，隐藏基址会按
+\(selector\ll4\) 重新计算，目标物理地址完全不同。项目使用 near jump 正是
+为了保留复位时的特殊隐藏基址。
+
+\topic{入口七条指令怎样建立可用的栈}
+
+入口的核心顺序可以用下列机器状态解释：
+
+\begin{osgridlongtable}{L{0.12\linewidth}L{0.21\linewidth}L{0.23\linewidth}L{0.34\linewidth}}
+指令 & 机器码示例 & 执行后 & 若提前或省略 \\ \hline
+\endfirsthead
+指令 & 机器码示例 & 执行后 & 若提前或省略 \\ \hline
+\endhead
+\code{cli} & \texttt{FA} & IF=0 & IDT 未建立时可能接收外部中断 \\ \hline
+\code{cld} & \texttt{FC} & DF=0 & \code{lodsb} 可能向低地址移动 \\ \hline
+\code{xor ax,ax} & \texttt{31 C0} & AX=0，ZF=1 等 & 段寄存器没有已知零值来源 \\ \hline
+\code{mov ds,ax} & \texttt{8E D8} & DS 基址为 0 & 低 RAM 地址计算带入旧 DS \\ \hline
+\code{mov ss,ax} & \texttt{8E D0} & SS 基址为 0 & 栈物理地址仍未知 \\ \hline
+\code{mov sp,7000h} & \texttt{BC 00 70} & SP=\texttt{7000} & CALL 写入未知位置 \\ \hline
+\code{call near} & \texttt{E8 xx xx} & 压入返回 IP & 依赖 SS:SP 已可用 \\ \hline
+\end{osgridlongtable}
+
+\code{xor ax,ax} 会修改算术标志，后续 MOV 不再修改它们；\code{cli} 只清 IF，
+\code{cld} 只清 DF。trace 要逐位区分，不能写成“FLAGS 被初始化”。
+
+\begin{workedexample}
+设 \code{call} 开始于 \(IP=\texttt{F120}\)，编码 3 byte，
+\(SS=\texttt{0000}\)、\(SP=\texttt{7000}\)。返回地址为
+\texttt{F123}。CPU 先把 SP 减 2：
+\[
+SP=\texttt{6FFE}.
+\]
+随后写：
+\[
+M[\texttt{6FFE}]=\texttt{23},\qquad
+M[\texttt{6FFF}]=\texttt{F1}.
+\]
+若把 \code{mov sp,7000h} 移到 CALL 之后，两个 byte 的写入地址由复位残留
+SP 决定，可能覆盖 IVT、BootInfo 或未实现区域。
+\end{workedexample}
+
+\topic{字符串读取同时依赖 CS 覆盖和 DF}
+
+\code{cs lodsb} 读取 CS:SI 的一个 byte 到 AL。CS 覆盖只影响本次内存读取，
+SI 的更新方向由 DF 决定：
+
+\begin{osgridtabular}{L{0.16\linewidth}L{0.17\linewidth}L{0.24\linewidth}L{0.23\linewidth}}
+DF & 执行前 SI & 读取地址 & 执行后 SI \\ \hline
+0 & \texttt{F200} & CS 基址+\texttt{F200} & \texttt{F201} \\ \hline
+1 & \texttt{F200} & CS 基址+\texttt{F200} & \texttt{F1FF} \\ \hline
+\end{osgridtabular}
+
+因此 \code{cld} 必须出现在字符串循环之前。删除 CS 覆盖又会改成 DS:SI；
+当前 DS=0 时，CPU 会去低 RAM 读取同一偏移，不再读取高端 ROM 字符串。
+
+\begin{experimentbox}{从复位向量单步到首次 CALL}
+使用 QEMU GDB stub 在物理复位地址附近停住。
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 用字节视图确认 \texttt{E9 0D F0}；
+  \item 记录跳转前后的 CS、EIP 和下一条物理取指地址；
+  \item 单步 \code{cli}、\code{cld} 和段寄存器设置，逐次读 EFLAGS；
+  \item 在首次 CALL 前查看 \texttt{0x6FF8}--\texttt{0x7007}；
+  \item 单步 CALL 后再次查看同一区域，标出返回地址的两个 byte。
+\end{enumerate}
+
+若调试器只显示线性地址，要把 CS 隐藏基址的特殊复位状态单独记在实验表中，
+不能用普通 \(CS\ll4\) 替代。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{删除 CLD}
+在专用故障镜像中删除 \code{cld}，并在进入字符串循环前故意设置 DF=1。
+\code{lodsb} 第一次仍能读起始字符，随后 SI 向低地址移动。串口可能只输出
+第一个字符，之后输出 ROM 中前向相邻的其他 byte，或直到超时/零 byte 才停。
+
+记录每次 SI、读取的物理地址和 AL。恢复 \code{cld} 后，SI 每次增加 1，字符
+按源码顺序出现。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{交换 MOV SS 与 MOV SP}
+把 \code{mov sp,7000h} 放在 \code{mov ss,ax} 之前。x86 对装载 SS 附近的
+中断有特殊抑制规则，但这不能把任意顺序都变安全：SP 在旧 SS 下只是一个偏移，
+CALL 的物理栈地址仍取决于最终 SS:SP。实验中在两条指令之间禁止插入 CALL、
+PUSH 或可能使用栈的代码。恢复为先建立 SS、紧接着建立 SP 的顺序。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item 复位时 CS 隐藏基址不能用普通 \(CS\ll4\) 重新推导；
+  \item near jump 保留 CS，far jump 会重装 CS 及其隐藏部分；
+  \item 相对位移从顺序 IP 开始加；
+  \item CALL 的第一次可观察副作用是栈内存写入；
+  \item DF 影响字符串指令的地址方向，不影响普通 MOV。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：从复位地址算到栈}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 复位 CS 隐藏基址为 \texttt{FFFF0000}、IP 为 \texttt{FFF0}，求物理
+    取指地址。
+  \item \texttt{E9 FD FF} 从 IP=\texttt{0100} 开始。求顺序 IP、位移和目标。
+  \item CALL 从 \texttt{F300} 开始，长度 3，SP 从 \texttt{7000} 开始。
+    写出新 SP 和两个返回地址 byte。
+  \item DF=1，SI=\texttt{0200}，执行两次 \code{lodsb} 后 SI 是多少？
+  \item 为什么复位近跳转完成后不能用可见 CS 的
+    \(\texttt{F000}\ll4\) 计算项目入口物理地址？
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \texttt{FFFFFFF0}；
+  \item 顺序 IP=\texttt{0103}，位移 \texttt{FFFD} 是 \(-3\)，目标回到
+    \texttt{0100}；
+  \item 返回地址 \texttt{F303}，新 SP=\texttt{6FFE}，
+    \texttt{6FFE} 存 \texttt{03}，\texttt{6FFF} 存 \texttt{F3}；
+  \item \texttt{01FE}；
+  \item 可见选择子没有表达复位时缓存的特殊 CS base。近跳转保留隐藏基址
+    \texttt{FFFF0000}，而普通实模式公式会错误得到 \texttt{000F0000}。
+\end{enumerate}
+\end{answerbox}

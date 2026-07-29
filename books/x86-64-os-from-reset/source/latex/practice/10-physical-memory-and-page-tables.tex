@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{从 CR3 手算到物理 byte}
+选择一个已映射虚拟地址，记录四级索引、每级表项原值、页帧基址和偏移，再用
+QEMU physical memory 查看最终 byte。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{清父级 RW}
+叶项保持 RW=1，清 PD.RW，刷新 TLB 后写测试页。预期 CR2 等于目标，错误码
+\texttt{0x3}。恢复父项后写入成功。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+2 MiB 页在 PDE 结束；权限逐级合成；改 PTE 后要处理 TLB；失败回滚要清叶项
+并释放新表。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 4 KiB 页偏移有几 bit？
+  \item 2 MiB 页偏移掩码是多少？
+  \item 错误码 \texttt{0x7} 表示什么访问？
+\end{enumerate}
+\begin{answerbox}
+1. 12；2. \texttt{0x1FFFFF}；3. 用户写 present 页面时发生保护错误。
+\end{answerbox}

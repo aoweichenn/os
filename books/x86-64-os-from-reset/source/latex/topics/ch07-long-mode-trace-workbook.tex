@@ -1,0 +1,160 @@
+\topic{A20 决定第 21 个地址 bit 是否到达内存}
+
+实模式地址 \(\texttt{FFFF:0010}\) 的数学结果是：
+\[
+(\texttt{FFFF}\ll4)+\texttt{0010}
+=\texttt{FFFF0}+\texttt{0010}
+=\texttt{100000}.
+\]
+若 A20 被强制为 0，\texttt{0x100000} 回绕为 \texttt{0x00000}。Loader
+可在低地址和相差 1 MiB 的地址写不同 byte，再读回判断是否仍发生别名。
+
+\begin{osgridtabular}{L{0.16\linewidth}L{0.18\linewidth}L{0.22\linewidth}L{0.24\linewidth}}
+A20 状态 & 写 \texttt{000000} & 写 \texttt{100000} & 随后读 \texttt{000000} \\ \hline
+关闭 & \texttt{11} & \texttt{22} & \texttt{22}，发生别名 \\ \hline
+开启 & \texttt{11} & \texttt{22} & \texttt{11}，地址分离 \\ \hline
+\end{osgridtabular}
+
+测试前要保存两个位置原 byte，测试后恢复。否则 A20 检查本身会破坏 IVT 或
+Loader 数据。
+
+\topic{打开长模式前的控制寄存器状态表}
+
+以下表只写每一步新增的位，其余位保持原值。常见机器码给出指令形态；立即数和
+符号地址仍由最终反汇编确认。
+
+\begin{osgridlongtable}{L{0.12\linewidth}L{0.20\linewidth}L{0.20\linewidth}L{0.38\linewidth}}
+步骤 & 指令/机器码形态 & 状态变化 & 此刻尚不能做什么 \\ \hline
+\endfirsthead
+步骤 & 指令/机器码形态 & 状态变化 & 此刻尚不能做什么 \\ \hline
+\endhead
+1 & \code{mov eax,cr4} / \texttt{0F 20 E0} & 读 CR4 & 尚未启用 PAE \\ \hline
+2 & \code{or eax,20h} / \texttt{83 C8 20} & 候选值 PAE=1 & CPU 状态未变 \\ \hline
+3 & \code{mov cr4,eax} / \texttt{0F 22 E0} & CR4.PAE=1 & 还没有页表根 \\ \hline
+4 & \code{mov cr3,eax} / \texttt{0F 22 D8} & CR3 指向 PML4 & LME/PG 尚未同时有效 \\ \hline
+5 & \code{rdmsr} / \texttt{0F 32} & 读取 EFER & 只读还未修改 \\ \hline
+6 & \code{wrmsr} / \texttt{0F 30} & EFER.LME=1 & 长模式尚未 active \\ \hline
+7 & \code{mov eax,cr0} / \texttt{0F 20 C0} & 读 CR0 & PG 仍保留旧值 \\ \hline
+8 & \code{mov cr0,eax} / \texttt{0F 22 C0} & CR0.PE=1、PG=1 & 需 far jump 装载 64-bit CS \\ \hline
+9 & far jump & CS 指向 L=1 代码段 & 才按 64-bit 代码执行 \\ \hline
+\end{osgridlongtable}
+
+\begin{pdfdiagram}
+  \node[os state] (a20) {A20 已开};
+  \node[os state,right=of a20] (gdt) {GDT 已装入};
+  \node[os state,right=of gdt] (pae) {CR4.PAE=1};
+  \node[os state,below=of pae] (cr3) {CR3=PML4};
+  \node[os state,left=of cr3] (lme) {EFER.LME=1};
+  \node[os state,left=of lme] (pg) {CR0.PE/PG=1};
+  \node[os hardware,below=of lme] (jump) {far jump\\64-bit CS};
+  \draw[os arrow] (a20) -- (gdt);
+  \draw[os arrow] (gdt) -- (pae);
+  \draw[os arrow] (pae) -- (cr3);
+  \draw[os arrow] (cr3) -- (lme);
+  \draw[os arrow] (lme) -- (pg);
+  \draw[os arrow] (pg) -- (jump);
+\end{pdfdiagram}
+
+顺序不能随意交换。CR3 必须先指向已初始化并包含当前代码、栈和目标入口的
+PML4；打开 PG 后的下一次取指立刻受页表约束。far jump 还负责让 CS 描述符的
+L 位进入当前执行状态。
+
+\begin{workedexample}
+初始 \(CR4=\texttt{0x00000000}\)。执行
+\code{or eax,0x20} 后 EAX=\texttt{0x20}，FLAGS 按 OR 结果更新：
+ZF=0、SF=0、CF=0、OF=0。只有随后
+\code{mov cr4,eax} 才让 CR4.PAE=1；在此之前修改的只是通用寄存器候选值。
+\end{workedexample}
+
+\begin{workedexample}
+Stage 1 的身份映射使用 2 MiB 页覆盖低 64 MiB，需要：
+\[
+\frac{64\ \mathrm{MiB}}{2\ \mathrm{MiB}}=32
+\]
+个 PDE。第 \(k\) 项映射物理基址 \(k\times\texttt{0x200000}\)，并设置
+P、RW、PS。当前 RIP=\texttt{0x9000}、RSP=\texttt{0x7000} 都落在第 0 个
+大页；Kernel 入口若在 \texttt{0x200000}，落在第 1 个大页。漏掉第 1 项会
+使 far jump 后第一次内核取指 \#PF。
+\end{workedexample}
+
+\topic{ELF 装载把文件区间变成内存区间}
+
+设一个 LOAD 段：
+\[
+p\_offset=\texttt{0x1000},\quad
+p\_paddr=\texttt{0x200000},\quad
+p\_filesz=\texttt{0x1800},\quad
+p\_memsz=\texttt{0x2000}.
+\]
+Loader 先验证 \(filesz\le memsz\)，再复制文件
+\([\texttt{1000},\texttt{2800})\) 到物理内存
+\([\texttt{200000},\texttt{201800})\)，最后清零
+\([\texttt{201800},\texttt{202000})\)。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \draw[BookRule,fill=BookCodeBg] (0,1.2) rectangle (5.4,2.0);
+  \draw[BookRule,fill=BookTeal!12] (0,0) rectangle (5.4,0.8);
+  \draw[BookRule,fill=BookAmber!12] (5.4,0) rectangle (7.2,0.8);
+  \node at (2.7,1.6) {ELF 文件 byte \texttt{1000--27FF}};
+  \node at (2.7,0.4) {复制到 RAM \texttt{200000--2017FF}};
+  \node[align=center] at (6.3,0.4) {清零 BSS\\\texttt{201800--201FFF}};
+  \draw[os arrow] (2.7,1.15) -- (2.7,0.85);
+\end{tikzpicture}
+\end{center}
+
+若先清零整个 \(memsz\) 再验证文件区间，损坏 ELF 可能在被拒绝前覆盖 Loader
+仍在使用的内存。先验证所有段、再执行复制和清零，失败时机器状态保持在旧
+Loader。
+
+\begin{experimentbox}{在 far jump 前后各停一次}
+在打开 CR0.PG 前设置断点，记录 CR0、CR3、CR4、EFER、GDTR、CS、EIP 和 RSP。
+再在 64-bit 标签设置硬件断点，记录同一组状态和 RIP。
+
+用 QEMU monitor 查看 CR3 指向的 PML4，并手算当前指令和栈的翻译。若 far
+jump 后断点未命中，先核对页表项和代码段描述符，不要直接假设“长模式失败”。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{把 CR3 指向未清零页}
+用一张包含旧随机 byte 的页作为 PML4，故意跳过清零。某些旧 bit 可能让表项
+看似 present，并携带保留位或错误物理地址。打开 PG 后可能 \#PF、\#GP 或
+triple fault。恢复为分配后先清零、再逐项写入，未使用项应全部为 0。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{交换 far jump 与 CR0.PG}
+在尚未使长模式 active 时跳入标记为 64-bit 的代码段，或在打开 PG 后继续按
+错误默认操作数大小解释后续 byte，都会让指令边界失配。恢复顺序：准备 GDT、
+PAE、CR3、LME，设置 PE/PG，最后 far jump 到 L=1 的代码段。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item 修改 EAX 中的候选位不等于控制寄存器已经改变；
+  \item 打开 PG 后下一次取指和压栈立即使用新页表；
+  \item ELF 的 filesz byte 要复制，memsz-filesz 要清零；
+  \item A20 测试要恢复被临时修改的 byte；
+  \item far jump 同时改变控制流和 CS 的隐藏状态。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：从 A20 走到 64-bit 入口}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 求 \texttt{FFFF:0020} 的实模式数学地址，以及 A20 关闭后的回绕地址。
+  \item 96 MiB 身份映射需要多少个 2 MiB PDE？
+  \item LOAD 段 filesz=\texttt{2500}、memsz=\texttt{3000}，需要清零多少
+    byte？
+  \item CR4 初值 \texttt{200}，设置 PAE 后是多少？
+  \item 打开 PG 前至少要确认哪三类地址已映射？
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \texttt{0x100010}，A20 被清零后为 \texttt{0x000010}；
+  \item \(96/2=48\)；
+  \item \texttt{0x0B00} byte；
+  \item \texttt{0x220}；
+  \item 当前代码/RIP、当前栈/RSP、异常入口及其所需描述符/数据；还要覆盖即将
+    跳入的 64-bit 入口。
+\end{enumerate}
+\end{answerbox}

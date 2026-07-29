@@ -1,0 +1,238 @@
+\topic{悬空输入为什么会变成随机按键}
+
+输入引脚悬空时仍有微小电容，也会通过漏电、手指和邻近信号获得电荷。输入
+缓冲器看到一个不受保证的模拟电压；当它穿过阈值时，软件可能观察到重复中断、
+随机按键或复位抖动。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \node[os hardware] (vcc) {\(\SI{3.3}{V}\)};
+  \node[draw=BookAmber,minimum width=18mm,minimum height=7mm,right=14mm of vcc] (r) {\(R_{pull}\)};
+  \node[circle,fill=BookBlue,inner sep=2pt,right=14mm of r] (point) {};
+  \node[os hardware,right=14mm of point] (input) {CPU 输入引脚};
+  \node[os hardware,below=14mm of point] (button) {按键接 GND};
+  \draw[BookBlue,thick] (vcc) -- (r) -- (point) -- (input);
+  \draw[BookBlue,thick] (point) -- (button);
+\end{tikzpicture}
+\end{center}
+
+\begin{workedexample}
+\(\SI{3.3}{V}\) 电源配 \(\SI{10}{k\ohm}\) 上拉。按键闭合时：
+\[
+I=\frac{V}{R}=\frac{\SI{3.3}{V}}{\SI{10}{k\ohm}}
+=\SI{0.33}{mA},
+\qquad
+P=VI\approx\SI{1.09}{mW}.
+\]
+若误用 \(\SI{10}{\ohm}\)，电流变为 \(\SI{330}{mA}\)，功耗约
+\(\SI{1.09}{W}\)。单位错三个数量级会把逻辑问题变成发热问题。
+\end{workedexample}
+
+\begin{workedexample}
+输入漏电最坏为 \(\SI{5}{\micro A}\)，上拉为
+\(\SI{100}{k\ohm}\)。电阻压降：
+\[
+\Delta V=IR=\SI{5}{\micro A}\times\SI{100}{k\ohm}
+=\SI{0.5}{V}.
+\]
+节点最低约 \(\SI{2.8}{V}\)。若 \(V_{IH(min)}=\SI{2.0}{V}\)，静态裕量
+为 \(\SI{0.8}{V}\)。还要检查输入电容带来的上升时间；电阻越大，静态电流
+越小，但恢复越慢。
+\end{workedexample}
+
+\topic{RC 复位要算跨过阈值的时刻}
+
+\[
+V(t)=V_{CC}\left(1-e^{-t/(RC)}\right).
+\]
+复位监控器在输入达到 \(0.7V_{CC}\) 时释放：
+\[
+0.7=1-e^{-t/(RC)}
+\Rightarrow t=-RC\ln(0.3)\approx1.204RC.
+\]
+若 \(R=\SI{10}{k\ohm}\)、\(C=\SI{1}{\micro F}\)，则
+\(RC=\SI{10}{ms}\)，释放时刻约 \(\SI{12.04}{ms}\)。
+
+\begin{center}
+\begin{tikzpicture}[x=1.05cm,y=1.0cm,font=\footnotesize\sffamily]
+  \draw[->,BookMuted] (0,0) -- (7.2,0) node[right]{时间};
+  \draw[->,BookMuted] (0,0) -- (0,4.1) node[above]{电压};
+  \draw[domain=0:6.7,smooth,variable=\x,BookBlue,very thick]
+    plot ({\x},{3.5*(1-exp(-\x/1.6))});
+  \draw[dashed,BookRed] (0,2.45) -- (6.8,2.45);
+  \draw[dashed,BookRed] (1.93,0) -- (1.93,2.45);
+  \node[anchor=east] at (0,2.45) {\(0.7V_{CC}\)};
+  \node[below] at (1.93,0) {\(1.204RC\)};
+\end{tikzpicture}
+\end{center}
+
+RC 解释延迟来源，但不保证慢上电、掉电重启和噪声下都有干净边沿。真实板卡常
+使用带迟滞和电源良好输入的复位监控器。QEMU 从定义好的处理器复位状态开始，
+不模拟这条充电曲线。
+
+\topic{全加器、MUX 和译码器怎样进入 CPU}
+
+一位全加器满足：
+\[
+S=A\oplus B\oplus C_{in},\qquad
+C_{out}=AB+C_{in}(A\oplus B).
+\]
+
+\begin{center}
+\begin{osgridtabular}{ccccc}
+\(A\) & \(B\) & \(C_{in}\) & \(S\) & \(C_{out}\) \\ \hline
+0 & 0 & 0 & 0 & 0 \\ \hline
+0 & 0 & 1 & 1 & 0 \\ \hline
+0 & 1 & 0 & 1 & 0 \\ \hline
+0 & 1 & 1 & 0 & 1 \\ \hline
+1 & 0 & 0 & 1 & 0 \\ \hline
+1 & 0 & 1 & 0 & 1 \\ \hline
+1 & 1 & 0 & 0 & 1 \\ \hline
+1 & 1 & 1 & 1 & 1 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+\begin{workedexample}
+用四个全加器计算
+\(\texttt{1011}_2+\texttt{0110}_2\)：
+
+\begin{center}
+\begin{osgridtabular}{ccccc}
+bit & \(A_i\) & \(B_i\) & \(C_{in}\) & \(S_i,C_{out}\) \\ \hline
+0 & 1 & 0 & 0 & 1,0 \\ \hline
+1 & 1 & 1 & 0 & 0,1 \\ \hline
+2 & 0 & 1 & 1 & 0,1 \\ \hline
+3 & 1 & 0 & 1 & 0,1 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+低四位为 \texttt{0001}，最外层进位为 1，五位和为
+\texttt{10001}\(_2=17\)。四位寄存器写回 \texttt{0001}，CF 保存进位。
+\end{workedexample}
+
+MUX 决定下一状态来自顺序地址还是跳转目标：
+\[
+PC_{next}=
+\begin{cases}
+target,& branch\_taken=1,\\
+PC+length,& branch\_taken=0.
+\end{cases}
+\]
+译码器把操作码变成互斥控制信号。操作码 \texttt{41} 表示 JZ 时，应激活
+PC 选择，不得同时激活 RAM 写使能。
+
+\begin{pdfdiagram}
+  \node[os state] (opcode) {操作码 \texttt{41}};
+  \node[os block,right=17mm of opcode] (decoder) {译码器};
+  \node[os state,right=17mm of decoder,yshift=15mm] (alu) {ALU=保持};
+  \node[os state,right=17mm of decoder] (pc) {PC MUX=Z};
+  \node[os state,right=17mm of decoder,yshift=-15mm] (memory) {RAM write=0};
+  \draw[os arrow] (opcode) -- (decoder);
+  \draw[os arrow] (decoder) -- (alu);
+  \draw[os arrow] (decoder) -- (pc);
+  \draw[os arrow] (decoder) -- (memory);
+\end{pdfdiagram}
+
+\topic{D 触发器保存的是边沿附近的输入}
+
+\begin{center}
+\begin{tikzpicture}[x=0.85cm,y=0.68cm,font=\footnotesize\sffamily]
+  \foreach \y/\name in {3/CLK,2/D,1/Q} {
+    \node[anchor=east] at (-0.3,\y) {\name};
+    \draw[BookRule] (0,\y-0.35) -- (10,\y-0.35);
+  }
+  \draw[BookBlue,thick]
+    (0,3) -- (2,3) -- (2,3.35) -- (3,3.35) -- (3,3)
+    -- (6,3) -- (6,3.35) -- (7,3.35) -- (7,3) -- (10,3);
+  \draw[BookTeal,thick]
+    (0,2) -- (1,2) -- (1,2.35) -- (4.8,2.35) -- (4.8,2) -- (10,2);
+  \draw[BookAmber,thick]
+    (0,1) -- (2.1,1) -- (2.1,1.35) -- (6.1,1.35) -- (6.1,1) -- (10,1);
+  \draw[dashed,BookRed] (2,0.5) -- (2,3.8);
+  \draw[dashed,BookRed] (6,0.5) -- (6,3.8);
+  \node[below] at (2,0.5) {采样 1};
+  \node[below] at (6,0.5) {采样 0};
+\end{tikzpicture}
+\end{center}
+
+Q 稍晚于边沿变化，这段时间是 clock-to-Q。D 必须在边沿前满足 setup，在边沿
+后满足 hold。若边沿在 \(\SI{20}{ns}\)，
+\(t_{setup}=\SI{1.2}{ns}\)，\(t_{hold}=\SI{0.5}{ns}\)，D 必须从
+\(\SI{18.8}{ns}\) 到 \(\SI{20.5}{ns}\) 保持稳定。D 在
+\(\SI{19.4}{ns}\) 才变化就违反 setup，内部节点可能进入亚稳态。
+
+16 个 D 触发器共享时钟和写使能可组成 16-bit 寄存器。PC 在 D 输入前再放一
+个 MUX，选择复位值、顺序地址、跳转目标或返回地址。教学 CPU 的正式 C++20
+例子把修改集中到写回阶段：
+
+\lstinputlisting[
+  language=C++,
+  firstline=201,
+  lastline=234,
+  caption={JZ、CALL 和 RET 最后才更新 PC}
+]{../../examples/teaching_cpu/source/teaching_cpu.cpp}
+
+\topic{复位、时钟和 ready 的顺序}
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.22\linewidth}L{0.20\linewidth}L{0.31\linewidth}}
+阶段 & 电源/时钟 & reset & 允许动作 \\ \hline
+\endfirsthead
+阶段 & 电源/时钟 & reset & 允许动作 \\ \hline
+\endhead
+上电初期 & 电源爬升，时钟未锁定 & 有效 & 寄存器保持复位值 \\ \hline
+时钟稳定 & 周期满足规格 & 仍有效 & 等待同步释放 \\ \hline
+复位释放 & 稳定边沿到达 & 撤销 & PC 取得复位向量 \\ \hline
+首条总线读 & 地址与 read 稳定 & 无效 & 等待 ROM ready \\ \hline
+ready 有效 & 数据满足采样 & 无效 & IR 接收，PC 才递增 \\ \hline
+\end{osgridlongtable}
+
+先释放 reset 再等待时钟，寄存器可能在不满足时序的边沿推进；ready 尚未有效
+就递增 PC，返回 byte 会与错误地址配对。
+
+\begin{experimentbox}{观察两拍 ready 延迟}
+运行 \code{python3 examples/teaching_cpu/verify.py}，找到
+\code{scenario=ready-delay}。任取一个 fetch 地址，应先出现两行
+\code{ready=0}，第三行同一地址才出现 \code{ready=1}。等待期间 PC、地址和
+read 不得变化；正常与延迟场景最终都应写出
+\code{memory[0x8000]=0x34}。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{删除上拉并提前释放复位}
+删除输入上拉后，把节点状态标为“未知”，不能在真值表中擅自填 0。再把复位
+释放移到时钟稳定之前，找出第一个可能推进的寄存器并标未知。PC 一旦未知，
+后续取指地址都无法计算。恢复上拉和释放顺序后，PC 才能从复位向量推进。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item 电压必须写清测量的两个点；GND 是选定参考网络；
+  \item 上拉只在没有更强驱动时把节点带入高电平范围；
+  \item 真值表没有表达传播延迟；
+  \item latch 在窗口内透明，D 触发器在边沿附近采样；
+  \item reset 定初值，clock 定推进时刻，ready 定事务完成时刻。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：从引脚算到 PC}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \(\SI{5}{V}\) 配 \(\SI{4.7}{k\ohm}\) 上拉，按键闭合时电流和功耗
+    约为多少？
+  \item \(R=\SI{22}{k\ohm}\)、\(C=\SI{100}{nF}\)，求 RC 和充到
+    \(0.7V_{CC}\) 的时间。
+  \item 求全加器 \(A=1,B=0,C_{in}=1\) 的两个输出。
+  \item 边沿在 \(\SI{12}{ns}\)，setup 为 \(\SI{0.8}{ns}\)，hold 为
+    \(\SI{0.3}{ns}\)。D 在什么区间必须稳定？
+  \item PC MUX 的顺序值为 \texttt{1014}，目标为 \texttt{2000}。写出
+    Z=0 和 Z=1 时的下一 PC。
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \(I\approx\SI{1.064}{mA}\)，\(P\approx\SI{5.32}{mW}\)；
+  \item \(RC=\SI{2.2}{ms}\)，70\% 约需 \(1.204RC=\SI{2.65}{ms}\)；
+  \item \(S=0,C_{out}=1\)；
+  \item \(\SI{11.2}{ns}\) 到 \(\SI{12.3}{ns}\)；
+  \item Z=0 选 \texttt{1014}，Z=1 选 \texttt{2000}。
+\end{enumerate}
+\end{answerbox}

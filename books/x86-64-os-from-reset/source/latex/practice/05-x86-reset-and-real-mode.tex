@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{单步复位 near jump}
+从 \texttt{FFFFFFF0} 读取三个 byte，记录跳转前后的 CS、EIP、CS 隐藏基址和
+物理取指地址，验证目标是 \texttt{FFFFF000}。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{删除 CLD}
+在字符串读取前设置 DF=1。预期 SI 递减，串口输出从第二个字符开始偏离。恢复
+\code{cld} 后 SI 应逐 byte 增加。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+复位 CS hidden base 不是 \(CS\ll4\)；near jump 不重装 CS；A20 影响第 21
+个地址 bit。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 求 \texttt{FFFF:0010} 的数学地址。
+  \item \texttt{FFFD} 作为 rel16 是多少？
+  \item SP=\texttt{7000}，CALL 压两个 byte 后 SP 是多少？
+\end{enumerate}
+\begin{answerbox}
+1. \texttt{0x100000}；2. \(-3\)；3. \texttt{0x6FFE}。
+\end{answerbox}

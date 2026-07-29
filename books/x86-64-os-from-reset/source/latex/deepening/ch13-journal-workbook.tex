@@ -1,0 +1,168 @@
+\topic{把一次提交画成磁盘状态时间线}
+
+用四组符号跟踪一次目录更新：D 是新文件普通数据，M 是 metadata home，
+JP 是 journal 中的 header/descriptor/payload，JC 是 commit record。每次
+FLUSH 成功才把之前发出的写纳入项目故障模型中的稳定集合。
+
+\begin{center}
+\small
+\begin{osgridtabular}{L{0.08\linewidth}L{0.24\linewidth}L{0.18\linewidth}L{0.20\linewidth}L{0.20\linewidth}}
+步骤 & 发出的动作 & 稳定数据 & 稳定 journal & 稳定 home metadata \\ \hline
+S0 & 开始 & D old & 空 & M old \\ \hline
+S1 & 写 D，FLUSH & D new & 空 & M old \\ \hline
+S2 & 写 JP，FLUSH & D new & JP new & M old \\ \hline
+S3 & 写 JC，FLUSH & D new & JP+JC valid & M old \\ \hline
+S4 & checkpoint M，FLUSH & D new & JP+JC valid & M new \\ \hline
+S5 & 清 JP/JC，FLUSH & D new & 空 & M new \\ \hline
+\end{osgridtabular}
+\end{center}
+
+\begin{pdfdiagram}
+  \node[os state] (data) {D 写 home};
+  \node[os block,right=of data] (f1) {FLUSH 1};
+  \node[os state,right=of f1] (prepared) {写 JP};
+  \node[os block,right=of prepared] (f2) {FLUSH 2};
+  \node[os state,below=of f2] (commit) {写 JC};
+  \node[os block,left=of commit] (f3) {FLUSH 3};
+  \node[os state,left=of f3] (home) {checkpoint M};
+  \node[os block,left=of home] (f4) {FLUSH 4};
+  \node[os state,below=of f4] (clear) {清 journal};
+  \node[os block,right=of clear] (f5) {FLUSH 5};
+  \draw[os arrow] (data) -- (f1);
+  \draw[os arrow] (f1) -- (prepared);
+  \draw[os arrow] (prepared) -- (f2);
+  \draw[os arrow] (f2) -- (commit);
+  \draw[os arrow] (commit) -- (f3);
+  \draw[os arrow] (f3) -- (home);
+  \draw[os arrow] (home) -- (f4);
+  \draw[os arrow] (f4) -- (clear);
+  \draw[os arrow] (clear) -- (f5);
+\end{pdfdiagram}
+
+前两个 FLUSH 保证普通数据和 prepared payload 先稳定；第三个让 valid commit
+成为恢复判据；第四个保证 home 已更新；第五个保证日志清空状态也稳定。省略
+第五个通常不破坏数据，但会让下次挂载重复 replay 已完成事务。
+
+\topic{断电落在不同箭头之间时看到什么}
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.24\linewidth}L{0.28\linewidth}L{0.21\linewidth}}
+断电点 & 磁盘上可依赖的 byte & mount 动作 & 结果 \\ \hline
+\endfirsthead
+断电点 & 磁盘上可依赖的 byte & mount 动作 & 结果 \\ \hline
+\endhead
+S0--S1 & M old，无 valid JC & 忽略未提交写 & 旧目录 \\ \hline
+S1--S2 & D new，M old，无 valid JC & 清不完整 prepared & 旧目录；D 暂不可达 \\ \hline
+S2--S3 & D new，JP 完整，无 JC & 丢弃 JP & 旧目录 \\ \hline
+S3--S4 & JP+JC valid，M 可能 old/部分 new & replay 全部 payload & 新目录 \\ \hline
+S4--S5 & M new，JP+JC 仍 valid & 再 replay 相同 byte & 新目录 \\ \hline
+S5 后 & M new，journal 空 & 正常挂载 & 新目录 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+事务修改 inode block 40 和 directory block 72。JP 保存两个完整 4 KiB
+payload，并在 descriptor 中记录目标 [40,72]。断电发生在 checkpoint 写完
+block 40、尚未写 block 72 时。home 此刻一新一旧，但 JC 仍 valid。
+
+mount 不尝试猜“哪个 home 已经新”，而是依次把两个 payload 重写到 40 和 72，
+再 FLUSH。结果两个都新。第二次 replay 写入相同 byte，磁盘状态不再变化。
+\end{workedexample}
+
+\begin{workedexample}
+prepared payload 的一个 byte 被翻转，descriptor 中的 CRC 不再匹配。即使
+commit record 外观看似存在，也不能把损坏 payload 写到 home。恢复应报告
+格式或校验错误并停止可写挂载，保留磁盘以供检查。把 CRC 错误当成“无日志”
+会悄悄选择旧状态并掩盖介质损坏。
+\end{workedexample}
+
+\topic{credit 先回答日志装不装得下}
+
+事务预留 3 个 target credit，依次 stage block 10、11、10、12：
+
+\begin{osgridtabular}{L{0.14\linewidth}L{0.20\linewidth}L{0.20\linewidth}L{0.25\linewidth}}
+stage & overlay 中的 target & 已用 credit & 动作 \\ \hline
+10 第一次 & [10] & 1 & 保存完整新块 \\ \hline
+11 第一次 & [10,11] & 2 & 保存完整新块 \\ \hline
+10 第二次 & [10,11] & 2 & 替换 target 10 的 overlay \\ \hline
+12 第一次 & [10,11,12] & 3 & 保存完整新块 \\ \hline
+13 第一次 & 不变 & 3 & 返回 CreditsExhausted \\ \hline
+\end{osgridtabular}
+
+第五次 stage 失败时，home metadata 尚未改变。调用者丢弃 overlay，并恢复
+开始事务时保存的 superblock、统计和 allocation hint 快照。
+
+\begin{lstlisting}
+Begin(reserved_targets);
+Stage(target_10, new_block_a);
+Stage(target_11, new_block_b);
+Stage(target_10, newer_block_a);  // 不重复计费
+if (!Stage(target_12, new_block_c)) {
+    RestoreInMemorySnapshot();
+    DiscardOverlay();
+    return CreditsExhausted;
+}
+CommitWithFlushes();
+\end{lstlisting}
+
+正式代码路径在 \filepath{source/kernel/src/fs/root\_journal.cpp} 和
+\filepath{source/kernel/src/fs/root\_file\_system.cpp}；盘面小端字段由
+\filepath{source/kernel/src/fs/root\_file\_system\_format.cpp} 编解码。
+
+\begin{experimentbox}{在五个稳定点逐次断电}
+为同一个 create 操作选择固定磁盘镜像，分别在 S1、S2、S3、S4、S5 后复制
+镜像并模拟重启。每次记录：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item journal header、descriptor、commit 是否存在且 CRC 正确；
+  \item 两个 home metadata block 的 byte 是否为旧/新；
+  \item mount 是否 replay；
+  \item fsck 是否通过；
+  \item 目标路径最终存在还是不存在。
+\end{enumerate}
+
+S1/S2 应回到旧目录；S3/S4/S5 应得到新目录。任何一次都不允许目录项存在但
+inode 未分配，或 inode 已分配却被空闲位图同时标为空闲。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{交换 commit 与 prepared FLUSH}
+故意在 prepared payload 尚未 FLUSH 时先写并 FLUSH commit。断电后可能留下
+valid JC 和不完整 JP；恢复会把缺失或混合 payload 当成新 metadata。正确修复
+是先让全部 JP 稳定，再允许 JC 稳定。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{checkpoint 失败后仍清 journal}
+让第二个 home block 写入失败，然后错误地继续清 JP/JC。重启后既没有完整
+home，也没有恢复材料，fsck 应检测出目录/inode/位图不一致。恢复正确顺序后，
+checkpoint 或其 FLUSH 失败必须保留 valid commit，并停止当前实例继续写入。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item write 命令完成不等于断电后仍存在，持久顺序靠 FLUSH；
+  \item commit 只在 prepared payload 已稳定后写入；
+  \item checkpoint 可以再次断电，所以 replay 必须幂等；
+  \item home 全部稳定前不能清 journal；
+  \item journal 保护元数据顺序，不能替代独立 fsck。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：判断每个断电点}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item prepared 已 FLUSH、commit 不存在。恢复选择旧状态还是新状态？
+  \item commit 已 FLUSH，checkpoint 只完成一半。恢复怎样处理？
+  \item checkpoint 完成但 clear FLUSH 未完成，重复 replay 是否安全？
+  \item 三个不同 target 和一次同 target 覆盖需要多少 credit？
+  \item 为什么 ordered journal 要先稳定普通数据，再提交指向这些数据的
+    metadata？
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 旧状态；没有 valid commit，完整 prepared 也不能发布；
+  \item 重放全部 target，不只补“看起来旧”的一半；
+  \item 安全，完整块覆盖满足幂等；清理可在重放后再次执行；
+  \item 3，重复 target 只替换 overlay；
+  \item 否则新 metadata 可能在断电后指向尚未稳定的旧数据或垃圾块，形成
+    “文件存在但内容不是本次写入”的状态。
+\end{enumerate}
+\end{answerbox}

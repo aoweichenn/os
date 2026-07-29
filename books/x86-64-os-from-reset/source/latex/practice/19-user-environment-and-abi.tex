@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{核对一次用户 ABI 调用}
+选择 \code{write}，记录系统调用号、参数寄存器、用户指针验证、返回寄存器和
+errno 转换。用用户程序传入正常缓冲与跨页坏指针。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{相信用户长度并直接复制}
+传入跨越用户地址上限的 pointer+length。预期发生整数回绕或内核页访问。恢复
+为先检查加法溢出、canonical、VMA 和逐页权限。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+ABI 固定宽度和布局；用户指针始终不可信；procfs 文本是一次快照，不应暴露
+悬空内核指针。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item x86-64 syscall 返回值通常放在哪个寄存器？
+  \item pointer+length 为什么先查溢出？
+  \item 用户结构为何用显式宽度字段？
+\end{enumerate}
+\begin{answerbox}
+1. RAX；2. 回绕后范围检查会错误接受小终点；3. 固定跨编译器/平台 ABI。
+\end{answerbox}

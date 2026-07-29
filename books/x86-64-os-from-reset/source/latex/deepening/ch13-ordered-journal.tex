@@ -149,7 +149,7 @@ BlockCache，就会观察旧字节。metadata read 顺序为：
 \end{center}
 \diagramnote{overlay 是固定容量 512\,B 整块镜像，不依赖动态分配，也不保存容易错序的小 patch。}
 
-\topic{四次 FLUSH 建立的持久 happens-before}
+\topic{五次 FLUSH 建立的持久先后关系}
 成功事务严格执行：
 
 \begin{enumerate}
@@ -262,7 +262,7 @@ RootJournal parser。两个 oracle 若共享实现，同一个 target 换算错�
 
 随机模型用固定 seed 执行 100000 步 Begin、Stage、Abort、Commit 和非法
 操作。独立 oracle 跟踪 active、staged 与 durable；durable 只允许在 commit
-后变化，失败操作不能发布状态。固定 seed 使任何失败可复现，而不是用 ``随机
+后变化，任何返回失败的操作都必须保持 durable 原值。固定 seed 使任何失败可复现，而不是用 ``随机
 跑过一次'' 代替证明。
 
 \topic{日志只记录低频语义边界}

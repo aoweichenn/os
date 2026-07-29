@@ -1,0 +1,459 @@
+\topic{先把 64-bit 虚拟地址切成五段}
+
+四级分页使用虚拟地址 bit 47:12 选择四张表，bit 11:0 选择 4 KiB 页内 byte：
+
+\begin{center}
+\resizebox{0.98\textwidth}{!}{%
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \x/\w/\label/\range in {
+    0/2.2/符号扩展/63:48,
+    2.2/2.2/PML4/47:39,
+    4.4/2.2/PDPT/38:30,
+    6.6/2.2/PD/29:21,
+    8.8/2.2/PT/20:12,
+    11.0/2.6/页内偏移/11:0} {
+    \draw[BookRule,fill=BookCodeBg] (\x,0) rectangle ++(\w,1.0);
+    \node at ({\x+\w/2},0.62) {\label};
+    \node at ({\x+\w/2},0.25) {bits \range};
+  }
+\end{tikzpicture}
+}
+\end{center}
+
+每个索引有 9 bit，可选 512 项；每项 8 byte，一张表正好是
+\[
+512\times8=4096\ \text{byte}.
+\]
+给定表的物理基址 \(B\) 和索引 \(i\)，表项物理地址是：
+\[
+E=B+8i.
+\]
+页表遍历不是在虚拟地址上连续“加四次”，而是每一级表项给出下一张表的物理
+页帧，再用下一个索引进入那张表。
+
+\topic{canonical 地址先检查高位复制}
+
+当前四级模式使用 bit 47 作为符号位，bit 63:48 必须全部等于 bit 47。
+
+\begin{osgridlongtable}{L{0.29\linewidth}L{0.18\linewidth}L{0.43\linewidth}}
+地址 & 是否 canonical & 判断过程 \\ \hline
+\endfirsthead
+地址 & 是否 canonical & 判断过程 \\ \hline
+\endhead
+\texttt{0000000000401234} & 是 & bit 47=0，高 16 bit 全 0 \\ \hline
+\texttt{00007FFFFFFFFFFF} & 是 & 低 canonical 区最后一个地址 \\ \hline
+\texttt{0000800000000000} & 否 & bit 47=1，高 16 bit 却为 0 \\ \hline
+\texttt{FFFF800000000000} & 是 & bit 47=1，高 16 bit 全 1 \\ \hline
+\texttt{FFFF888012345678} & 是 & 高半区 direct-map 示例 \\ \hline
+\end{osgridlongtable}
+
+非 canonical 线性地址不会正常走到某个 PTE。依据触发它的指令类别，处理器
+会报告 \#GP 或 \#SS 等异常。映射 API 应在写任何页表之前拒绝该地址，避免
+先分配两张表，最后才发现输入根本不属于可翻译集合。
+
+\begin{workedexample}
+检查 \texttt{0xFFFF888012345678}。bit 47 位于低 48 bit 的最高位。地址的
+高四个十六进制数字是 \texttt{FFFF}，bit 47 也是 1，因此高 16 bit 正是
+符号扩展，地址 canonical。
+
+检查 \texttt{0x0000888012345678}。它的 bit 47=1，但高 16 bit 是
+\texttt{0000}。正确扩展应以 \texttt{FFFF} 开头，所以该地址非 canonical。
+二者低 48 bit 相同，高位检查结果不同。
+\end{workedexample}
+
+\topic{算例一：4 KiB 用户代码页}
+
+翻译虚拟地址 \(\texttt{0x0000000000401234}\)。逐级索引和偏移为：
+
+\[
+\begin{aligned}
+i_4&=(v\gg39)\mathbin{\&}\texttt{1FF}=\texttt{000},\\
+i_3&=(v\gg30)\mathbin{\&}\texttt{1FF}=\texttt{000},\\
+i_2&=(v\gg21)\mathbin{\&}\texttt{1FF}=\texttt{002},\\
+i_1&=(v\gg12)\mathbin{\&}\texttt{1FF}=\texttt{001},\\
+offset&=v\mathbin{\&}\texttt{FFF}=\texttt{234}.
+\end{aligned}
+\]
+
+假设 \(CR3=\texttt{0x00101000}\)，且物理内存中的表项如下：
+
+\begin{osgridlongtable}{L{0.10\linewidth}L{0.27\linewidth}L{0.22\linewidth}L{0.21\linewidth}}
+级别 & 表项物理地址 & 表项值 & 解释 \\ \hline
+\endfirsthead
+级别 & 表项物理地址 & 表项值 & 解释 \\ \hline
+\endhead
+PML4 & \texttt{101000}+8(0)=\texttt{101000} &
+  \texttt{0000000000102007} & 下一表 \texttt{102000}，P/RW/US \\ \hline
+PDPT & \texttt{102000}+8(0)=\texttt{102000} &
+  \texttt{0000000000103007} & 下一表 \texttt{103000}，P/RW/US \\ \hline
+PD & \texttt{103000}+8(2)=\texttt{103010} &
+  \texttt{0000000000104007} & 下一表 \texttt{104000}，P/RW/US \\ \hline
+PT & \texttt{104000}+8(1)=\texttt{104008} &
+  \texttt{0000000012345005} & 页帧 \texttt{12345000}，P/US、只读 \\ \hline
+\end{osgridlongtable}
+
+最后物理地址为：
+\[
+\texttt{0x12345000}+\texttt{0x234}
+=\boxed{\texttt{0x12345234}}.
+\]
+四级都 present；四级都允许 user；叶项 RW=0，所以用户能读和取指，不能写。
+
+\topic{算例二：带 NX 的用户栈页}
+
+翻译 \(\texttt{0x00007FFF12345ABC}\)：
+\[
+(i_4,i_3,i_2,i_1,offset)
+=(\texttt{0FF},\texttt{1FC},\texttt{091},\texttt{145},\texttt{ABC}).
+\]
+
+假设前三个表项都是 P/RW/US，叶项为
+\(\texttt{0x8000000034567007}\)。bit 63 的 NX=1，页帧基址为
+\texttt{0x34567000}，因此：
+\[
+p=\texttt{0x34567000}+\texttt{0xABC}
+=\boxed{\texttt{0x34567ABC}}.
+\]
+
+数据读写满足权限；从同一地址取指会触发 protection fault。NX 不改变物理
+地址计算，只改变“这次访问能否完成”。
+
+\topic{算例三：高半区内核代码}
+
+翻译 \(\texttt{0xFFFFFFFF80001234}\)：
+\[
+(i_4,i_3,i_2,i_1,offset)
+=(\texttt{1FF},\texttt{1FE},\texttt{000},\texttt{001},\texttt{234}).
+\]
+
+假设叶项为 \texttt{0x0000000000200001}：P=1、RW=0、US=0、NX=0。
+最终地址：
+\[
+\texttt{0x00200000}+\texttt{0x234}
+=\boxed{\texttt{0x00200234}}.
+\]
+
+Ring 0 可读和执行；用户态因 US=0 不能访问。若任一上级项 US=0，即使叶项误设
+US=1，用户访问仍失败。权限从每一级共同得到。
+
+\topic{算例四：2 MiB direct-map 大页}
+
+翻译 \(\texttt{0xFFFF8880005ABCDE}\)：
+\[
+(i_4,i_3,i_2)=(\texttt{111},\texttt{000},\texttt{002}),\qquad
+offset_{2M}=\texttt{1ABCDE}.
+\]
+
+PDE 值为 \texttt{0x8000000000400083}。P=1、RW=1、PS=1、NX=1，物理大页
+基址是 \texttt{0x00400000}。PS=1 使遍历在 PD 提前结束，不再读取 PT：
+\[
+\texttt{0x00400000}+\texttt{0x1ABCDE}
+=\boxed{\texttt{0x005ABCDE}}.
+\]
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,node distance=9mm and 13mm]
+  \node[os state] (va) {虚拟地址};
+  \node[os block,right=of va] (pml4) {PML4E};
+  \node[os block,right=of pml4] (pdpt) {PDPTE};
+  \node[os block,right=of pdpt] (pde) {PDE\\PS=1};
+  \node[os state,below=of pde] (base) {2 MiB 页帧基址};
+  \node[os state,left=of base] (offset) {低 21 bit 偏移};
+  \node[os state,left=of offset] (pa) {物理地址};
+  \draw[os arrow] (va) -- (pml4);
+  \draw[os arrow] (pml4) -- (pdpt);
+  \draw[os arrow] (pdpt) -- (pde);
+  \draw[os arrow] (pde) -- (base);
+  \draw[os arrow] (base) -- (offset);
+  \draw[os arrow] (offset) -- (pa);
+\end{tikzpicture}
+\end{center}
+\diagramnote{4 KiB 路径使用 12-bit 偏移并访问 PT；2 MiB 路径使用 21-bit
+偏移并在 PDE.PS=1 处结束。}
+
+\topic{权限逐级合成，而不是只读叶项}
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.24\linewidth}L{0.26\linewidth}L{0.20\linewidth}}
+访问条件 & 上级项 & 叶项 & 有效结果 \\ \hline
+\endfirsthead
+访问条件 & 上级项 & 叶项 & 有效结果 \\ \hline
+\endhead
+present & 每级 P=1 & P=1 & 才能完成翻译 \\ \hline
+用户访问 & 每级 US=1 & US=1 & Ring 3 才可访问 \\ \hline
+写访问 & 每级 RW=1 & RW=1 & 页面才可写 \\ \hline
+取指 & 每级 NX=0 & NX=0 & 页面才可执行 \\ \hline
+\end{osgridlongtable}
+
+有效 RW 和 US 可理解为沿路径做逻辑 AND；有效 NX 可理解为沿路径做逻辑 OR。
+任何一级 NX=1 都禁止从该页取指。
+
+\begin{workedexample}
+四级 RW 依次为 \(1,1,0,1\)，US 为 \(1,1,1,1\)，NX 为
+\(0,0,0,0\)。用户读成功，用户写失败，用户取指成功。PD 的 RW=0 已经限制
+整个 2 MiB 范围，叶项 RW=1 不能重新放宽。
+
+若把叶项 NX 改为 1，地址翻译仍得到同一物理地址，但取指失败。权限错误与
+not-present 错误必须从页故障错误码区分。
+\end{workedexample}
+
+\topic{CR0.WP 决定内核写入是否服从只读页}
+
+当 \(CR0.WP=1\) 时，supervisor 写入也要满足有效 RW。内核
+\texttt{.text} 和 \texttt{.rodata} 才能依靠页表阻止意外写入。若 WP=0，
+Ring 0 可能写入 supervisor 只读页，代码中的越界写会悄悄修改指令或常量。
+
+启用顺序必须是：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 先为当前 RIP、RSP、IDT 和数据建立正确映射；
+  \item 设置 EFER.NXE，使 NX 位获得定义的执行禁止语义；
+  \item 设置 CR0.WP；
+  \item 切换到候选 CR3；
+  \item 用一次故意写只读页确认 \#PF 的 CR2 和错误码。
+\end{enumerate}
+
+先切 CR3 再补当前栈，会在下一次压栈时故障；异常入口若也未映射，处理器无法
+保存故障现场，可能继续演变为 double fault 和 triple fault。
+
+\topic{页故障错误码要和 CR2 一起读}
+
+\begin{osgridlongtable}{L{0.12\linewidth}L{0.17\linewidth}L{0.61\linewidth}}
+bit & 名称 & 为 1 时的含义 \\ \hline
+\endfirsthead
+bit & 名称 & 为 1 时的含义 \\ \hline
+\endhead
+0 & P & 保护检查失败；为 0 时通常是页不存在 \\ \hline
+1 & W/R & 访问是写；为 0 时是读 \\ \hline
+2 & U/S & 访问来自用户态；为 0 时来自 supervisor \\ \hline
+3 & RSVD & 页表项的保留位组合不合法 \\ \hline
+4 & I/D & 访问是取指，需启用相应架构能力 \\ \hline
+5 & PK & 保护键检查失败 \\ \hline
+6 & SS & shadow-stack 访问失败 \\ \hline
+\end{osgridlongtable}
+
+\begin{osgridlongtable}{L{0.25\linewidth}L{0.18\linewidth}L{0.47\linewidth}}
+场景 & 错误码 & 解码 \\ \hline
+\endfirsthead
+场景 & 错误码 & 解码 \\ \hline
+\endhead
+用户读取 not-present 页 & \texttt{0x4} & P=0，read，user \\ \hline
+内核写 present 只读页 & \texttt{0x3} & P=1，write，supervisor \\ \hline
+用户写 present 只读页 & \texttt{0x7} & P=1，write，user \\ \hline
+用户从 NX 页取指 & \texttt{0x15} & P=1，user，instruction fetch \\ \hline
+页表保留位错误 & \texttt{0x9} 或更多位 & P=1，RSVD=1，其余位随访问而定 \\ \hline
+\end{osgridlongtable}
+
+CR2 保存引发最近一次页故障的线性地址，错误码说明访问类型。异常处理程序应在
+允许再次触发 \#PF 的操作前保存 CR2，否则嵌套故障会覆盖它。CR3 给出当前
+地址空间的根表物理地址；启用 PCID 时低位还携带标识，取得根表基址时要按
+架构掩码清除非地址位。
+
+\topic{TLB 让“内存里的新 PTE”不等于“CPU 已使用新翻译”}
+
+第一次访问后，CPU 可把虚拟页、物理页和权限缓存在 TLB。软件把 PTE 从可写
+改为只读后，旧 TLB 项可能仍允许写。单页修改后可执行
+\code{invlpg [virtual_address]}；切换地址空间常通过写 CR3 改变当前翻译
+上下文。
+
+\begin{pdfdiagram}
+  \node[os state] (access1) {第一次访问};
+  \node[os block,right=of access1] (walk) {四级 page walk};
+  \node[os state,right=of walk] (tlb) {TLB 保存翻译和权限};
+  \node[os state,below=of walk] (pte) {软件修改 PTE};
+  \node[os block,left=of pte] (stale) {未刷新\\继续命中旧项};
+  \node[os block,right=of pte] (flush) {\code{invlpg}\\下一次重新遍历};
+  \draw[os arrow] (access1) -- (walk);
+  \draw[os arrow] (walk) -- (tlb);
+  \draw[os arrow] (tlb) -- (stale);
+  \draw[os arrow] (pte) -- (stale);
+  \draw[os arrow] (pte) -- (flush);
+\end{pdfdiagram}
+
+多核机器的 TLB 属于各个核心。取消映射后，内核要通知曾运行该地址空间的其他
+核心，让它们失效并确认，然后才能把物理页交给别的对象。否则旧核心仍可能
+通过陈旧翻译写入已经复用的页。
+
+\topic{最小页表遍历器先返回状态，再返回物理地址}
+
+下面的遍历器把“读取物理 64-bit 表项”作为外部函数。它只覆盖四级、4 KiB 和
+2 MiB 页，不尝试支持 1 GiB 页：
+
+\begin{lstlisting}[language=C++]
+namespace os::book::paging {
+
+constexpr std::uint64_t OS_BOOK_PAGING_ENTRY_COUNT = 512U;
+constexpr std::uint64_t OS_BOOK_PAGING_INDEX_MASK = 0x1FFU;
+constexpr std::uint64_t OS_BOOK_PAGING_PRESENT = 1U << 0U;
+constexpr std::uint64_t OS_BOOK_PAGING_PAGE_SIZE = 1U << 7U;
+constexpr std::uint64_t OS_BOOK_PAGING_TABLE_ADDRESS_MASK =
+    0x000F'FFFF'FFFF'F000U;
+constexpr std::uint64_t OS_BOOK_PAGING_LARGE_ADDRESS_MASK =
+    0x000F'FFFF'FFE0'0000U;
+constexpr std::uint64_t OS_BOOK_PAGING_4K_OFFSET_MASK = 0xFFFU;
+constexpr std::uint64_t OS_BOOK_PAGING_2M_OFFSET_MASK = 0x1F'FFFFU;
+
+enum class WalkStatus : std::uint8_t {
+    Translated,
+    NonCanonical,
+    NotPresent,
+    UnsupportedLargePage,
+};
+
+struct WalkResult final {
+    WalkStatus status;
+    std::uint64_t physical_address;
+};
+
+using ReadPhysicalEntry = std::uint64_t (*)(
+    std::uint64_t physical_address) noexcept;
+
+[[nodiscard]] WalkResult WalkFourLevel(
+    const std::uint64_t virtual_address,
+    const std::uint64_t cr3,
+    const ReadPhysicalEntry read_entry) noexcept {
+    const std::uint64_t sign =
+        (virtual_address >> 47U) & 1U;
+    const std::uint64_t high = virtual_address >> 48U;
+    const std::uint64_t expected_high = sign == 0U ? 0U : 0xFFFFU;
+    if (high != expected_high) {
+        return {WalkStatus::NonCanonical, 0U};
+    }
+
+    const std::array<std::uint64_t, 4U> shifts{39U, 30U, 21U, 12U};
+    std::uint64_t table =
+        cr3 & OS_BOOK_PAGING_TABLE_ADDRESS_MASK;
+    for (std::uint64_t level = 0U; level < shifts.size(); ++level) {
+        const std::uint64_t index =
+            (virtual_address >> shifts[level]) & OS_BOOK_PAGING_INDEX_MASK;
+        const std::uint64_t entry = read_entry(table + index * 8U);
+        if ((entry & OS_BOOK_PAGING_PRESENT) == 0U) {
+            return {WalkStatus::NotPresent, 0U};
+        }
+        if ((entry & OS_BOOK_PAGING_PAGE_SIZE) != 0U) {
+            if (level != 2U) {
+                return {WalkStatus::UnsupportedLargePage, 0U};
+            }
+            return {
+                WalkStatus::Translated,
+                (entry & OS_BOOK_PAGING_LARGE_ADDRESS_MASK)
+                    + (virtual_address & OS_BOOK_PAGING_2M_OFFSET_MASK)};
+        }
+        table = entry & OS_BOOK_PAGING_TABLE_ADDRESS_MASK;
+    }
+    return {
+        WalkStatus::Translated,
+        table + (virtual_address & OS_BOOK_PAGING_4K_OFFSET_MASK)};
+}
+
+}  // namespace os::book::paging
+\end{lstlisting}
+
+这个最小版本只计算地址。正式内核还要沿路径累计 RW、US、NX，检查保留位和
+物理地址宽度，并区分“查询现有映射”和“创建缺失中间表”。
+
+\topic{第四个页帧申请失败时怎样回到原状态}
+
+假设要映射四个虚拟页，前三个已经取得物理页并建立 PTE，第四次物理页申请
+失败。具体恢复动作是：
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 把已写入的三个叶 PTE 按反向顺序清零；
+  \item 若本次新建的 PT 已无有效叶项，从 PDE 断开它并释放 PT 页帧；
+  \item 对本次新建且已经变空的 PD、PDPT 采用同样处理；
+  \item 释放前三个数据页帧；
+  \item 若修改的是当前活动地址空间，对三个虚拟页执行失效；候选 CR3 尚未
+    激活时没有对应的活动 TLB 项；
+  \item 返回申请失败，调用者看到的原映射保持不变。
+\end{enumerate}
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.22\linewidth}L{0.24\linewidth}L{0.28\linewidth}}
+时刻 & 已取数据页 & 已写 PTE & 下一动作 \\ \hline
+\endfirsthead
+时刻 & 已取数据页 & 已写 PTE & 下一动作 \\ \hline
+\endhead
+开始 & 0 & 0 & 记录原表项 \\ \hline
+页 1 成功 & 1 & 1 & 继续页 2 \\ \hline
+页 2 成功 & 2 & 2 & 继续页 3 \\ \hline
+页 3 成功 & 3 & 3 & 请求页 4 \\ \hline
+页 4 失败 & 3 & 3 & 清 PTE 3、2、1 \\ \hline
+恢复完成 & 0 & 0 & 释放变空的新表并返回失败 \\ \hline
+\end{osgridlongtable}
+
+如果只释放数据页却保留三个 present PTE，后续分配器会把这些页给新对象，旧
+虚拟地址仍能访问它们。若只清 PTE 不释放新建中间表，重复失败会逐步泄漏页表
+页。所谓失败原子性在这里就是上述每一个可检查动作。
+
+\topic{用 QEMU 和 GDB 逐级查看页表}
+
+\begin{experimentbox}{从 CR3 找到一个 PTE}
+以带 GDB stub 的 QEMU 启动系统，在内核进入稳定日志点后暂停。
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 在 GDB 中执行 \code{p/x \$cr3}，记录根表物理地址；
+  \item 选取日志中已知的虚拟地址，手算四级索引；
+  \item 使用 QEMU monitor 的物理内存查看命令
+    \code{xp/4gx physical\_address} 读取根表项；
+  \item 清除表项低 12 位得到下一级表物理基址，重复到叶项；
+  \item 把页帧基址与偏移相加，再用 monitor 查看该物理地址的 byte；
+  \item 用 \code{monitor info tlb} 或 \code{monitor info mem} 辅助观察，
+    但最终索引与地址仍要在纸上独立计算。
+\end{enumerate}
+
+命令名称可能随 QEMU monitor 前端略有差异；关键记录是 CR3、四个索引、每级
+表项原值、最终页帧和偏移。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{清除一个父级 RW 并写入子页}
+选择一张测试专用页表，把目标路径中 PD 的 RW 清零，叶 PTE 保持 RW=1。
+执行 \code{invlpg} 后从 Ring 0 写该页，并确保 CR0.WP=1。
+
+预期得到 \#PF，CR2 等于测试虚拟地址，错误码为 \texttt{0x3}。若写入成功，
+先检查 WP；若错误码为 \texttt{0x2}，说明某级 P=0，测试没有到达只读权限
+检查。恢复 PD 原值并再次失效后，写入应成功。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{切换到缺少当前栈的候选 CR3}
+只在专用故障镜像中进行。候选表映射当前 RIP 和异常入口，但故意不映射当前
+RSP 所在页。写 CR3 后执行一次 \code{push}。预期 CR2 落在栈顶下方，错误码
+P=0、W/R=1。若异常入口所需栈也缺失，可能看不到普通 \#PF 日志并发生重启，
+这正说明激活前必须同时检查代码、栈和异常路径。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item CR3 给出根表物理地址，不是一个可直接解引用的普通 C++ 指针；
+  \item 2 MiB 页在 PDE.PS=1 处结束，偏移是 21 bit；
+  \item 叶项 RW=1 不能放宽父级 RW=0；
+  \item 修改 PTE 后要处理 TLB；只看内存中的新值可能误判；
+  \item CR2 是故障地址，错误码是访问类别，两者缺一不可；
+  \item 分配失败要清已写 PTE、释放数据页和本次新建的空表。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：手算、遍历、改错}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 求 \texttt{0x00007FFF12345ABC} 的四级索引和 4 KiB 偏移。
+  \item 2 MiB 页基址为 \texttt{0x02000000}，虚拟地址页内偏移为
+    \texttt{0x1F0123}。求物理地址。
+  \item 四级 US 为 \(1,1,0,1\)，RW 为 \(1,1,1,1\)，NX 为
+    \(0,0,0,0\)。用户读、内核写、用户取指分别能否完成？
+  \item 解码错误码 \texttt{0x15}。CR2 在异常处理程序中提供什么信息？
+  \item 映射 8 页时第 6 个数据页申请失败。列出要清理的叶项数量和数据页
+    数量，并说明何时需要释放中间表。
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \((\texttt{0FF},\texttt{1FC},\texttt{091},
+    \texttt{145})\)，偏移 \texttt{ABC}；
+  \item \texttt{0x02000000}+\texttt{0x1F0123}
+    \(=\texttt{0x021F0123}\)；
+  \item 用户读失败，因为父级 US=0；内核写可完成，所有 RW=1；用户取指也因
+    US=0 失败；
+  \item \texttt{0x15} 表示 present 页面上的用户取指违反保护，常见原因是
+    NX。CR2 给出发生这次取指的线性地址；
+  \item 已成功 5 页，所以清 5 个叶项并释放 5 个数据页。只释放本次创建且
+    清理后没有任何有效子项的中间表，不能释放原先已有或仍含其他映射的表。
+\end{enumerate}
+\end{answerbox}

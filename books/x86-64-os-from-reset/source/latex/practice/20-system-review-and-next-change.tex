@@ -1,0 +1,27 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{从一条用户输出反向走读}
+从 Shell 输出的一行字开始，反向记录 write syscall、fd/FileDescription、
+TTY/pipe、调度、驱动、中断和串口/屏幕设备，给每个箭头标源码路径和可观察点。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{删除一个中间观测点}
+拿掉系统调用入口日志，只保留用户输出和驱动输出。预期无法区分用户未调用、
+参数验证失败和设备未发送。恢复一个低频边界日志，使故障范围可缩小。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+修改前先找接口、实现、调用者和测试；日志记录状态变化而不冲屏；一次只改变
+一个可验证假设。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 修改页表接口前至少要搜索哪三类使用者？
+  \item 随机测试失败为什么要记录 seed？
+  \item 新机制的故障注入应先写预期什么？
+\end{enumerate}
+\begin{answerbox}
+1. 映射创建者、查询/访问者、销毁/回滚者；2. 让同一操作序列可复现；
+3. 具体状态、日志、错误码和不应发生的副作用。
+\end{answerbox}

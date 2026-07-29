@@ -1,0 +1,181 @@
+\topic{逐指令 trace 的八栏记录法}
+
+只写“执行了 \code{mov}”会漏掉读取宽度、地址和下一指令位置。本书后续用同一
+张表记录一条指令：
+
+\begin{osgridlongtable}{L{0.14\linewidth}L{0.76\linewidth}}
+栏 & 要记录的内容 \\ \hline
+\endfirsthead
+栏 & 要记录的内容 \\ \hline
+\endhead
+机器码 & CPU 实际读取的 byte 及当前默认操作数/地址大小 \\ \hline
+执行前 & 相关通用寄存器、段寄存器、FLAGS 和 IP \\ \hline
+译码 & opcode、ModRM、立即数或位移怎样从 byte 取得 \\ \hline
+地址 & 段基址、有效地址、线性/物理地址怎样相加 \\ \hline
+内存 & 读取或写入哪些 byte，顺序和宽度是什么 \\ \hline
+运算 & ALU 输入、完整数学结果和截断结果 \\ \hline
+执行后 & 哪些寄存器和 FLAGS 改变，哪些保持不变 \\ \hline
+下一条 & IP/RIP 是顺序增加、相对跳转还是从栈恢复 \\ \hline
+\end{osgridlongtable}
+
+\topic{Trace 1：把立即数装入 AX}
+
+在 16-bit 模式，机器码 \texttt{B8 34 12} 表示
+\code{mov ax, 0x1234}。
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.71\linewidth}}
+时刻 & 状态 \\ \hline
+\endfirsthead
+时刻 & 状态 \\ \hline
+\endhead
+执行前 & \(IP=\texttt{0100}\)，\(AX=\texttt{BEEF}\)，
+  FLAGS=\texttt{0246} \\ \hline
+取操作码 & 从 CS:0100 读取 \texttt{B8}，选择 MOV r16,imm16 \\ \hline
+取立即数 & CS:0101 读 \texttt{34}，CS:0102 读 \texttt{12} \\ \hline
+拼接 & \(\texttt{34}+(\texttt{12}\ll8)=\texttt{1234}\) \\ \hline
+写回 & \(AX\leftarrow\texttt{1234}\) \\ \hline
+FLAGS & MOV 不修改算术标志，仍为 \texttt{0246} \\ \hline
+下一条 & 三个 byte 已取完，\(IP=\texttt{0103}\) \\ \hline
+\end{osgridlongtable}
+
+若反汇编器在该位置按 32-bit 模式译码，\texttt{B8} 后需要四个立即数 byte。
+同一串 byte 的指令边界会不同。trace 必须先记录当前模式。
+
+\topic{Trace 2：ADD 同时改变多个标志}
+
+机器码 \texttt{01 D8} 的 ModRM 为
+\(\texttt{11 011 000}_2\)：mod=11 表示第二操作数是寄存器，reg=011 选择
+BX，r/m=000 选择 AX，所以指令是 \code{add ax, bx}。
+
+设执行前 \(AX=\texttt{FFFF}\)、\(BX=\texttt{0001}\)：
+\[
+\texttt{0xFFFF}+\texttt{0x0001}=\texttt{0x10000}.
+\]
+16-bit 写回值为 \texttt{0000}。
+
+\begin{osgridtabular}{L{0.16\linewidth}L{0.19\linewidth}L{0.45\linewidth}}
+状态 & 新值 & 原因 \\ \hline
+AX & \texttt{0000} & 只保留低 16 bit \\ \hline
+BX & \texttt{0001} & 来源寄存器不写回 \\ \hline
+CF & 1 & 第 17 bit 有进位 \\ \hline
+ZF & 1 & 结果全零 \\ \hline
+SF & 0 & 结果最高位为 0 \\ \hline
+OF & 0 & 按 signed 是 \(-1+1=0\)，未越界 \\ \hline
+PF & 1 & 结果低 byte \texttt{00} 有偶数个 1 \\ \hline
+IP & 原值 \(+2\) & opcode 与 ModRM 共 2 byte \\ \hline
+\end{osgridtabular}
+
+\begin{workedexample}
+把输入改为 \(AX=\texttt{7FFF}\)、\(BX=\texttt{0001}\)。结果
+\texttt{8000}，CF=0，ZF=0，SF=1。两个正数得到 signed 负数，所以 OF=1。
+这组输入和上一组输入能区分 CF 与 OF，测试时不能只覆盖全零结果。
+\end{workedexample}
+
+\topic{Trace 3：从 DS:BX+SI+4 读取一个 byte}
+
+机器码 \texttt{8A 40 04} 表示
+\code{mov al, [bx + si + 4]}。设：
+\[
+DS=\texttt{1000},\quad BX=\texttt{0020},\quad
+SI=\texttt{0006},\quad AL=\texttt{FF}.
+\]
+
+16-bit 有效偏移：
+\[
+EA=\texttt{0020}+\texttt{0006}+\texttt{0004}
+=\texttt{002A}.
+\]
+实模式线性地址：
+\[
+linear=(\texttt{1000}\ll4)+\texttt{002A}
+=\texttt{1002A}.
+\]
+若 \(M[\texttt{1002A}]=\texttt{41}\)，执行后 AL=\texttt{41}。MOV 不改
+FLAGS，BX、SI 和 DS 都不变，IP 增加 3。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \node[os state] (ds) {DS \(\ll4\)\\\texttt{10000}};
+  \node[os state,below=of ds] (ea) {BX+SI+4\\\texttt{002A}};
+  \node[os block,right=20mm of ds,yshift=-10mm] (add) {20-bit 地址加法};
+  \node[os hardware,right=20mm of add] (memory) {内存 \texttt{1002A}\\byte \texttt{41}};
+  \node[os state,below=of memory] (al) {AL \(\leftarrow\) \texttt{41}};
+  \draw[os arrow] (ds) -- (add);
+  \draw[os arrow] (ea) -- (add);
+  \draw[os arrow] (add) -- (memory);
+  \draw[os arrow] (memory) -- (al);
+\end{tikzpicture}
+\end{center}
+
+\topic{Trace 4：CALL 和 RET 怎样改变栈}
+
+16-bit \code{call rel16} 使用操作码 \texttt{E8} 和两 byte 位移。假设 CALL
+从 \(IP=\texttt{0200}\) 开始，机器码为
+\texttt{E8 05 00}，\(SS=\texttt{0000}\)，\(SP=\texttt{7000}\)。
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 取完三个 byte，顺序 IP 为 \texttt{0203}；
+  \item \(SP\leftarrow\texttt{7000}-2=\texttt{6FFE}\)；
+  \item \(M[\texttt{6FFE}]\leftarrow\texttt{03}\)，
+    \(M[\texttt{6FFF}]\leftarrow\texttt{02}\)；
+  \item 位移 \texttt{0005} 加到顺序 IP，目标为 \texttt{0208}；
+  \item FLAGS 不变。
+\end{enumerate}
+
+\code{ret} 的机器码为 \texttt{C3}。它从 SS:SP 读取
+\texttt{03 02}，恢复 \(IP=\texttt{0203}\)，再令
+\(SP=\texttt{7000}\)。栈 byte 仍留在内存，SP 已不再指向它们。
+
+\begin{experimentbox}{在 GDB 中单步三条指令}
+选择书中提供的最小汇编片段，在 QEMU GDB stub 处停住。每次执行
+\code{si} 前后记录 \code{\$cs}、\code{\$eip}、\code{\$eax}、
+\code{\$eflags} 和反汇编 byte。遇到内存操作时，用 \code{x/8bx address}
+先读执行前 byte，再读执行后 byte。
+
+结果表至少包含一条 MOV、一条 ADD 和一条 CALL。不要只复制 GDB 输出；在纸上
+独立计算下一 IP、有效地址和预期 FLAGS，再和工具比较。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{把 ModRM 的 reg 与 r/m 对调}
+将 \texttt{01 D8} 改成 \texttt{01 C3}。后者 ModRM 为
+\(\texttt{11 000 011}_2\)，表示 \code{add bx, ax}。输入数值相同，
+FLAGS 可能相同，但被写回的寄存器不同。运行前先预测 AX/BX，单步后检查。
+恢复 \texttt{D8} 后，目标寄存器重新变为 AX。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item 机器码必须和当前模式、默认操作数大小一起解释；
+  \item ModRM 的 reg 和 r/m 字段在不同 opcode 中承担的方向由指令定义；
+  \item MOV 通常不修改算术标志，ADD 会修改多项标志；
+  \item 相对位移加到“取完本条指令后的 IP”；
+  \item 实模式内存地址还要加段基址，方括号里的只是有效偏移。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：写出完整 trace}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item \texttt{B8 78 56} 在 16-bit 模式中执行后 AX 和 IP 怎样变化？
+  \item \(AX=\texttt{8000},BX=\texttt{FFFF}\)，执行
+    \code{add ax,bx}。求结果、CF、ZF、SF 和 OF。
+  \item \(DS=\texttt{2000},BX=\texttt{0010},SI=\texttt{0003}\)，求
+    \code{[bx+si+4]} 的实模式线性地址。
+  \item CALL 从 \texttt{0100} 开始，位移为 \(-16\)，长度 3。求目标和返回
+    地址。
+  \item 为什么执行一条 MOV 后不能凭新 FLAGS 判断 MOV 的结果是否为零？
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item AX=\texttt{5678}，IP 增加 3；
+  \item 数学和 \texttt{17FFF}，结果 \texttt{7FFF}，CF=1，ZF=0，
+    SF=0；两个 signed 负数得到正数，OF=1；
+  \item \((\texttt{2000}\ll4)+\texttt{0010}+\texttt{0003}+4
+    =\texttt{20017}\)；
+  \item 返回地址 \texttt{0103}，目标
+    \texttt{0103}-\texttt{0010}=\texttt{00F3}；
+  \item MOV 保留旧算术标志。要判断结果是否为零，需要使用会按结果设置标志的
+    CMP/TEST 等指令，或直接检查数据。
+\end{enumerate}
+\end{answerbox}

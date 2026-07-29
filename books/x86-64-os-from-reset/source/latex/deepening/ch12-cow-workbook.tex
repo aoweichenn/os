@@ -1,0 +1,148 @@
+\topic{一页内存从 fork 到两次写入的时间线}
+
+父进程 P 的虚拟页 V 最初独占物理页 F0，内容首 byte 为 \texttt{41}。fork
+建立子进程 C 后，父子 PTE 都指向 F0、清 RW、置 COW，F0 引用数变为 2。
+
+\begin{center}
+\small
+\begin{osgridtabular}{L{0.08\linewidth}L{0.15\linewidth}L{0.15\linewidth}L{0.10\linewidth}L{0.13\linewidth}L{0.18\linewidth}}
+时刻 & P 的 PTE & C 的 PTE & F0 refs & 新页 & 可见内容 \\ \hline
+t0 fork 前 & F0,RW & -- & 1 & -- & P:\texttt{41} \\ \hline
+t1 fork 后 & F0,COW & F0,COW & 2 & -- & P/C:\texttt{41} \\ \hline
+t2 C 写前 & F0,COW & F0,COW & 2 & -- & 写触发 \#PF \\ \hline
+t3 复制后 & F0,COW & F1,RW & 1 & F1 refs=1 & 两页均 \texttt{41} \\ \hline
+t4 C 重试写 & F0,COW & F1,RW & 1 & F1 首 byte=\texttt{42} & P:\texttt{41},C:\texttt{42} \\ \hline
+t5 P 写前 & F0,COW & F1,RW & 1 & -- & P 触发 \#PF \\ \hline
+t6 P 恢复独占 & F0,RW & F1,RW & 1/1 & 不再复制 & P 可原地写 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+\begin{pdfdiagram}
+  \node[os state] (parent) {Parent V\\PTE: F0,COW};
+  \node[os state,below=of parent] (child) {Child V\\PTE: F0,COW};
+  \node[os block,right=23mm of parent,yshift=-8mm] (f0) {Frame F0\\refs=2\\byte 41};
+  \node[os block,right=24mm of f0] (copy) {Child write\\复制 4 KiB};
+  \node[os block,right=24mm of copy,yshift=9mm] (old) {F0 refs=1\\Parent};
+  \node[os block,right=24mm of copy,yshift=-9mm] (new) {F1 refs=1\\Child byte 42};
+  \draw[os arrow] (parent) -- (f0);
+  \draw[os arrow] (child) -- (f0);
+  \draw[os arrow] (f0) -- (copy);
+  \draw[os arrow] (copy) -- (old);
+  \draw[os arrow] (copy) -- (new);
+\end{pdfdiagram}
+
+\begin{workedexample}
+V=\texttt{0x60001234}，故障写入 8 byte，页内偏移为
+\(\texttt{0x234}\)。COW handler 对齐得到页首
+\[
+\texttt{0x60001234}\mathbin{\&}\sim\texttt{0xFFF}
+=\texttt{0x60001000}.
+\]
+它复制整个 4096-byte F0 到 F1，再让 C 的叶项指向 F1。异常返回时不增加
+RIP；CPU 重试原 store，才把 F1 的偏移 \texttt{234}--\texttt{23B} 改写。
+若 handler 手动跳过 store，C 会继续运行，却仍看到旧内容。
+\end{workedexample}
+
+\begin{workedexample}
+fork 后 C 立即退出，F0 refs 从 2 降为 1，P 仍标 COW。P 第一次写时无需申请
+F1：删除 refs=1 的稀疏记录，把 PTE 改回 RW，执行 \code{invlpg}，再重试
+store。物理页没有移动，只有权限和引用元数据变化。
+\end{workedexample}
+
+\topic{写时复制先准备新页，最后替换叶项}
+
+\begin{lstlisting}[language=C++]
+new_frame = AllocateFrame();
+if (!new_frame) {
+    return OutOfMemory;
+}
+CopyPage(new_frame, old_frame);
+new_leaf = MakeWritablePrivateLeaf(new_frame);
+if (!ReplaceLeaf(virtual_page, old_leaf, new_leaf)) {
+    ReleaseFrame(new_frame);
+    return PageTableChanged;
+}
+InvalidatePage(virtual_page);
+ReleaseReference(old_frame);
+return RetryInstruction;
+\end{lstlisting}
+
+先改 PTE 再复制会让当前进程短暂看到未初始化新页；先减少旧页引用再确认 PTE
+替换成功，会在失败时少算一个所有者。项目正式路径在
+\filepath{source/kernel/src/user/user\_memory.cpp}，
+引用状态在
+\filepath{source/kernel/src/memory/user\_page\_reference.cpp}，
+叶项替换在 \filepath{source/kernel/src/memory/page\_table.cpp}。
+
+\topic{fork 失败时父 PTE 要逐页恢复}
+
+假设共有 6 个 writable 页，提交父 COW 时前三页成功，第四页因引用表容量不足
+失败：
+
+\begin{osgridlongtable}{L{0.14\linewidth}L{0.23\linewidth}L{0.24\linewidth}L{0.29\linewidth}}
+步骤 & Parent 页 0--5 & Child & 恢复动作 \\ \hline
+\endfirsthead
+步骤 & Parent 页 0--5 & Child & 恢复动作 \\ \hline
+\endhead
+开始 & 全部 RW & 候选未发布 & 无 \\ \hline
+提交三页 & 0--2 COW，3--5 RW & 共享 0--2 & 尝试页 3 \\ \hline
+页 3 失败 & 混合权限 & 仍不可运行 & 先销毁 Child 映射 \\ \hline
+引用下降 & 0--2 各剩 Parent & 已销毁 & 逐页恢复 0--2 RW \\ \hline
+完成 & 0--5 全部原状态 & 不存在 & 失效三个父页 TLB \\ \hline
+\end{osgridlongtable}
+
+销毁 Child 要先做，因为它仍持有共享引用。随后只有 refs=1 的父页才能恢复
+RW。失败路径不能只返回“没有 child PID”；父进程继续运行时必须观察到 fork
+前相同的页内容与权限。
+
+\begin{experimentbox}{父子交替写同一页}
+父进程先在页首写 \texttt{P}，fork 后让子进程写 \texttt{C}，父进程随后再写
+\texttt{Q}。在每一步打印 PID、虚拟地址、首 byte，并从内核低频日志记录物理
+页号、引用数和 COW break 路径。
+
+预期：fork 后物理页相同且 refs=2；子写后物理页不同；父写走 refs=1 快路径，
+不再分配第三页。父最终看到 Q，子最终看到 C。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{复制成功后让 ReplaceLeaf 失败}
+在专用测试中令新页分配和 4 KiB 复制成功，但让叶项比较替换返回失败。预期
+释放新页，旧 PTE、旧页内容和旧引用数全部不变。若新页计数增加，说明泄漏；
+若旧 refs 减少，说明释放顺序错误。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{忘记 INVLPG}
+把父 PTE 从 COW 改回 RW，却跳过 \code{invlpg}。CPU 可能继续命中旧只读 TLB
+项，再次产生相同 \#PF。日志会显示 PTE 已 RW、错误码仍为写保护。恢复失效后，
+原 store 重试成功。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item COW fault 成功后重试原指令，不手动跳过；
+  \item 引用数描述物理页所有者，PTE 权限描述当前地址空间访问；
+  \item refs=1 的 COW 页可原地恢复 RW；
+  \item Kernel 代写用户页时要主动 break COW；
+  \item fork 候选未发布前，失败要恢复父页权限和全部引用。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：沿引用数推导页面归属}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item fork 两次后，父进程和两个子进程共享 F0。F0 refs 是多少？
+  \item 其中一个子写入后，需要哪些页、各自 refs 是多少？
+  \item 另一个子退出，随后父写入。父是否需要复制？为什么？
+  \item PTE 显示 COW，但页故障错误码 P=0。应先处理缺页还是 COW？
+  \item 新页复制完、ReplaceLeaf 失败时，列出三个必须保持不变的旧状态。
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 3；
+  \item 写入子取得 F1，F1 refs=1；父与另一子仍共享 F0，F0 refs=2；
+  \item 另一子退出后 F0 refs=1，父可在 F0 上清 COW、恢复 RW，无需复制；
+  \item P=0 表示当前没有 present 叶项，应按 VMA/缺页路径建立页面；COW 写保护
+    需要 present 且写保护错误；
+  \item 旧 PTE 值、旧页引用数、旧页内容都不变；新页必须释放。
+\end{enumerate}
+\end{answerbox}

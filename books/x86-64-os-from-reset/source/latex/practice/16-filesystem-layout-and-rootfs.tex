@@ -1,0 +1,27 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{从路径算到磁盘块}
+选择一个小文件，记录目录项、inode 号、inode block、数据块号和块内偏移。
+用镜像查看工具核对每个小端字段。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{位图标空闲但 inode 仍引用}
+在镜像副本中清除一个仍被文件引用的数据块位。预期 fsck 报告交叉所有权或
+引用空闲块，正常挂载不得把该块再次分配。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+磁盘 struct 不能依赖 C++ padding；目录项名字需要长度边界；块号和 byte 偏移
+要乘块大小转换。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 4 KiB 块的 block 12 从哪个 byte 偏移开始？
+  \item inode 号是否等于数据块号？
+  \item 为什么删除目录项后还要更新 inode/位图？
+\end{enumerate}
+\begin{answerbox}
+1. \texttt{0xC000}；2. 不等于；3. 名字、对象和空间分配是不同盘面结构，
+必须一致更新。
+\end{answerbox}

@@ -1,0 +1,27 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{记录一次真实抢占}
+让两个 Thread 使用不同通用寄存器和 XMM0 模式，跨 100 次抢占后核对。每次
+真正切换只记 from、to、tick 和原因。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{忘记更新 TSS.RSP0}
+切到目标 Thread 却保留旧内核栈顶。预期下一次 CPL3 中断把帧压到错误 Thread
+的栈。恢复切换顺序后，帧地址应落在目标栈范围。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+Ready 与队列位置同步改变；系统调用入口先找到当前 CpuLocal；用户 RSP 不能
+直接当内核栈使用。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 时间片到但 Ready queue 空时是否切换？
+  \item syscall 的用户返回 RIP 通常来自哪个寄存器？
+  \item 为什么 CR3 要和 Thread 所属 Process 一起切换？
+\end{enumerate}
+\begin{answerbox}
+1. 不切；2. RCX（按 SYSCALL/SYSRET 约定）；3. 相同虚拟地址在不同 Process
+中可能映射不同物理页。
+\end{answerbox}

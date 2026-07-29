@@ -1,0 +1,332 @@
+\topic{把一条指令拆成每个时钟周期}
+
+前文已经列出取指、译码、执行、访存和写回。现在让这些词落到一台可以运行的
+机器上。教学 CPU 使用 16-bit 地址、4 个 16-bit 通用寄存器、一位零标志和
+一个向低地址增长的栈。ROM 占用
+\(\texttt{0x0000}\)--\(\texttt{0x7FFF}\)，RAM 占用
+\(\texttt{0x8000}\)--\(\texttt{0xDFFF}\)，
+\(\texttt{0xE000}\) 起始的窗口故意不连接任何设备。
+
+\begin{pdfdiagram}
+  \node[os state] (pc) {PC\\下一次取指地址};
+  \node[os block,right=18mm of pc] (bus) {地址/数据/读写/ready};
+  \node[os hardware,right=18mm of bus,yshift=16mm] (rom) {ROM\\指令字节};
+  \node[os hardware,right=18mm of bus] (ram) {RAM\\数据与栈};
+  \node[os hardware,right=18mm of bus,yshift=-16mm] (hole) {未映射窗口\\不返回响应};
+  \node[os state,below=18mm of bus] (ir) {操作码与操作数};
+  \node[os block,left=18mm of ir] (decode) {译码与控制};
+  \node[os state,left=18mm of decode] (registers) {R0--R3、Z、SP};
+  \draw[os bus] (pc) -- (bus);
+  \draw[os arrow] (bus) -- (rom);
+  \draw[os arrow] (bus) -- (ram);
+  \draw[os arrow] (bus) -- (hole);
+  \draw[os arrow] (bus) -- (ir);
+  \draw[os arrow] (ir) -- (decode);
+  \draw[os arrow] (decode) -- (registers);
+  \draw[os arrow] (registers) |- (bus);
+\end{pdfdiagram}
+\diagramnote{箭头表示一次周期中的信息方向。CPU 先把 PC 放到地址侧；目标只在
+ready 有效时交付数据。未映射窗口保持无响应，CPU 不能把全零误当成合法数据。}
+
+这套指令编码刻意保持简单，所有 16-bit 立即数和地址都采用 little-endian：
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.25\linewidth}L{0.22\linewidth}L{0.27\linewidth}}
+操作码 & 汇编形式 & 后续 byte & 状态变化 \\ \hline
+\endfirsthead
+操作码 & 汇编形式 & 后续 byte & 状态变化 \\ \hline
+\endhead
+\texttt{10} & \code{LOAD Rd, imm16} & 寄存器号、低 byte、高 byte &
+  \(R_d\leftarrow imm\)，更新 Z \\ \hline
+\texttt{20} & \code{ADD Rd, Rs} & 目标号、来源号 &
+  \(R_d\leftarrow R_d+R_s\)，更新 Z \\ \hline
+\texttt{30} & \code{STORE Rs, [addr16]} & 来源号、地址低 byte、地址高 byte &
+  把寄存器低 byte 写入 RAM \\ \hline
+\texttt{40} & \code{JMP addr16} & 地址低 byte、地址高 byte &
+  \(PC\leftarrow addr\) \\ \hline
+\texttt{41} & \code{JZ addr16} & 地址低 byte、地址高 byte &
+  Z=1 时改写 PC，否则保留顺序 PC \\ \hline
+\texttt{50} & \code{CALL addr16} & 地址低 byte、地址高 byte &
+  压入返回 PC，再跳转 \\ \hline
+\texttt{51} & \code{RET} & 无 &
+  从栈弹出 PC \\ \hline
+\texttt{FF} & \code{HALT} & 无 &
+  停止继续取指 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+ROM 从地址 \(\texttt{0x0000}\) 开始保存
+\(\texttt{10 02 34 12}\)。复位后 \(PC=\texttt{0x0000}\)。
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 取地址 \(\texttt{0000}\) 的 \(\texttt{10}\)，PC 增为
+    \(\texttt{0001}\)，译码为 \code{LOAD}；
+  \item 取地址 \(\texttt{0001}\) 的 \(\texttt{02}\)，选择 R2；
+  \item 取地址 \(\texttt{0002}\) 的 \(\texttt{34}\) 作为低 byte；
+  \item 取地址 \(\texttt{0003}\) 的 \(\texttt{12}\) 作为高 byte；
+  \item 合成为
+    \(\texttt{0x34}\mathbin{|}(\texttt{0x12}\ll8)
+      =\texttt{0x1234}\)；
+  \item 写回后 R2 从 \(\texttt{0000}\) 变为
+    \(\texttt{1234}\)，Z 保持 0，PC 已是 \(\texttt{0004}\)。
+\end{enumerate}
+
+这里有四次总线读取，却只有一次寄存器写回。把“执行一条指令”和“只过一个
+周期”视为同一件事，会遗漏操作数读取和 ready 等待。
+\end{workedexample}
+
+\begin{center}
+\small
+\begin{osgridtabular}{L{0.08\linewidth}L{0.13\linewidth}L{0.11\linewidth}L{0.09\linewidth}L{0.09\linewidth}L{0.09\linewidth}L{0.10\linewidth}L{0.13\linewidth}}
+周期 & 阶段 & 地址 & 数据 & ready & PC 后值 & R2 后值 & 发生的动作 \\ \hline
+0 & fetch & 0000 & 10 & 1 & 0001 & 0000 & 取得操作码 \\ \hline
+1 & decode & -- & -- & 1 & 0001 & 0000 & 选择 LOAD 状态 \\ \hline
+2 & fetch & 0001 & 02 & 1 & 0002 & 0000 & 取得寄存器号 \\ \hline
+3 & fetch & 0002 & 34 & 1 & 0003 & 0000 & 取得低 byte \\ \hline
+4 & fetch & 0003 & 12 & 1 & 0004 & 0000 & 取得高 byte \\ \hline
+5 & execute & -- & -- & 1 & 0004 & 0000 & 拼接立即数 \\ \hline
+6 & writeback & -- & -- & 1 & 0004 & 1234 & 写 R2，更新 Z \\ \hline
+\end{osgridtabular}
+\end{center}
+
+\topic{条件跳转让 PC 有两个候选值}
+
+顺序执行时，取完 \code{JZ} 的三个 byte 后，PC 已经指向下一条指令。执行阶段
+只需在“保留顺序 PC”和“写入跳转目标”之间选择。这个选择器就是前一章学过的
+MUX，选择信号来自 Z。
+
+\begin{pdfdiagram}
+  \node[os state] (sequential) {顺序地址\\旧 PC + 指令长度};
+  \node[os state,below=of sequential] (target) {目标地址\\指令中的 imm16};
+  \node[os block,right=22mm of sequential,yshift=-10mm] (mux) {PC MUX\\选择信号 Z};
+  \node[os state,right=22mm of mux] (next) {下一周期 PC};
+  \draw[os arrow] (sequential) -- (mux);
+  \draw[os arrow] (target) -- (mux);
+  \draw[os arrow] (mux) -- (next);
+\end{pdfdiagram}
+
+示例程序先执行
+\(\texttt{FFFF}+\texttt{0001}=\texttt{0000}\)。16-bit 结果回绕为零，
+所以 Z 置 1。\code{JZ 0x0010} 取完后，顺序 PC 为
+\(\texttt{0x000E}\)，目标为 \(\texttt{0x0010}\)：
+
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.16\linewidth}L{0.17\linewidth}L{0.17\linewidth}L{0.27\linewidth}}
+时刻 & Z & 顺序 PC & 目标 & 写入 PC 的值 \\ \hline
+\endfirsthead
+时刻 & Z & 顺序 PC & 目标 & 写入 PC 的值 \\ \hline
+\endhead
+执行 ADD 前 & 0 & -- & -- & -- \\ \hline
+ADD 写回后 & 1 & -- & -- & -- \\ \hline
+JZ 取完操作数 & 1 & \texttt{000E} & \texttt{0010} & 尚未选择 \\ \hline
+JZ 写回 & 1 & \texttt{000E} & \texttt{0010} & \texttt{0010} \\ \hline
+\end{osgridlongtable}
+
+若把 R1 的立即数改为 2，ADD 结果变成 \(\texttt{0001}\)，Z 为 0，JZ 不跳。
+CPU 会在 \(\texttt{000E}\) 取到故意放置的 \code{HALT}。一处输入变化经过
+ALU、标志寄存器和 PC MUX，最终改变了下一次总线地址。
+
+\topic{CALL 和 RET 把返回地址保存到 RAM}
+
+\code{CALL 0x0018} 占 3 byte，位于 \(\texttt{0x0010}\)。CPU 取完操作数
+时，PC 已是 \(\texttt{0x0013}\)，这个值才是返回地址。初始
+\(SP=\texttt{0xDFFE}\)，压入一个 16-bit 值的步骤为：
+
+\[
+SP\leftarrow SP-2=\texttt{0xDFFC}.
+\]
+
+x86 和本教学 CPU 都按 little-endian 保存多 byte 值，因此：
+
+\[
+M[\texttt{DFFC}]=\texttt{13},\qquad
+M[\texttt{DFFD}]=\texttt{00}.
+\]
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily]
+  \foreach \y/\address/\before/\after in {
+    3/DFFE/--/--,2/DFFD/00/00,1/DFFC/00/13,0/DFFB/00/00} {
+    \node[anchor=east] at (0,\y) {\texttt{\address}};
+    \draw[BookRule,fill=BookCodeBg] (0.3,\y-0.35) rectangle (2.0,\y+0.35);
+    \node at (1.15,\y) {\texttt{\after}};
+  }
+  \draw[os arrow,BookRed] (3.7,2.8) -- (2.1,2.05);
+  \node[anchor=west] at (3.8,2.8) {CALL 前 SP=\texttt{DFFE}};
+  \draw[os arrow,BookTeal] (3.7,1.2) -- (2.1,1.05);
+  \node[anchor=west] at (3.8,1.2) {CALL 后 SP=\texttt{DFFC}};
+\end{tikzpicture}
+\end{center}
+\diagramnote{地址向上增大，栈向下增长。图中只画两个返回地址 byte；压栈不等于
+把 SP 指向“最后一个空格”，SP 指向当前栈顶对象的低地址。}
+
+\begin{workedexample}
+子程序在 \(\texttt{0x0018}\) 装入 R2 后执行 \code{RET}。RET 先读
+\(\texttt{DFFC}\) 得到低 byte \(\texttt{13}\)，再读
+\(\texttt{DFFD}\) 得到高 byte \(\texttt{00}\)，合成
+\(\texttt{0x0013}\)。随后
+\[
+PC\leftarrow\texttt{0x0013},\qquad
+SP\leftarrow\texttt{0xDFFE}.
+\]
+地址 \(\texttt{DFFC}\) 和 \(\texttt{DFFD}\) 中的旧 byte 没有自动清零；
+它们已经位于 SP 之下，因而不再属于当前栈内容。调试内存时要同时看 SP，不能
+只凭残留 byte 判断栈里仍有一个返回地址。
+\end{workedexample}
+
+\topic{ready 延迟期间地址和控制必须保持稳定}
+
+慢 ROM 可以在收到读请求后等待两个周期再返回数据。CPU 在等待期间不能递增
+PC，也不能把地址换成下一个 byte：
+
+\begin{center}
+\begin{tikzpicture}[x=1.15cm,y=0.62cm,font=\footnotesize\sffamily]
+  \foreach \y/\name in {5/CLK,4/address,3/read,2/ready,1/data} {
+    \node[anchor=east] at (-0.3,\y) {\name};
+    \draw[BookRule] (0,\y-0.35) -- (8,\y-0.35);
+  }
+  \foreach \x in {0,2,4,6} {
+    \draw[BookBlue,thick] (\x,5) -- (\x,5.32) -- (\x+1,5.32) -- (\x+1,5);
+  }
+  \draw[BookTeal,thick] (0,4) -- (0.4,4.25) -- (6.0,4.25) -- (6.4,4);
+  \node at (3.2,4.55) {\texttt{0x0018} 保持不变};
+  \draw[BookBlue,thick] (0,3) -- (0.4,3.25) -- (6.0,3.25) -- (6.4,3);
+  \draw[BookRed,thick] (0,2) -- (4.4,2) -- (4.8,2.25) -- (6.0,2.25) -- (6.4,2);
+  \draw[BookAmber,thick] (0,1) -- (4.4,1) -- (4.8,1.25) -- (6.0,1.25) -- (6.4,1);
+  \node at (5.4,1.55) {\texttt{0x10}};
+  \draw[dashed,BookMuted] (4.8,0.4) -- (4.8,5.7);
+  \node[below] at (4.8,0.4) {采样};
+\end{tikzpicture}
+\end{center}
+
+模拟器把每次等待打印为 \code{ready=0}，最后一次响应打印为
+\code{ready=1}。同一条正常程序在零等待与两拍等待下都应把
+\(\texttt{0x34}\) 写入 \(\texttt{0x8000}\)，只有周期数增加。若等待期间
+PC 提前递增，返回的 byte 会被错误地配给另一地址。
+
+\lstinputlisting[
+  language=C++,
+  firstline=293,
+  lastline=317,
+  caption={等待 ready 的最小总线读取}
+]{../../examples/teaching_cpu/source/teaching_cpu.cpp}
+
+\topic{非法操作码和无响应目标必须结束当前路径}
+
+ROM 的第一个 byte 若改成 \(\texttt{7E}\)，译码器找不到对应指令。模拟器把
+状态改为 \code{illegal-opcode}，不猜测字节长度，也不继续取下一条。真实 CPU
+同样需要为未定义指令进入明确异常路径；“忽略后继续”会让 PC 与指令边界失去
+同步。
+
+地址 \(\texttt{0xE000}\) 没有连接 ROM、RAM 或设备。向它执行 STORE 时，
+模拟器打印一次 \code{ready=0} 并结束为 \code{bus-no-response}。硬件系统
+可以选择总线错误、超时或机器检查，具体机制不同；共同要求是软件能区分
+“目标返回了数值 0”和“目标根本没有响应”。
+
+\begin{osgridlongtable}{L{0.21\linewidth}L{0.22\linewidth}L{0.23\linewidth}L{0.24\linewidth}}
+故障 & 最后可信状态 & 不能继续的原因 & 可观察结果 \\ \hline
+\endfirsthead
+故障 & 最后可信状态 & 不能继续的原因 & 可观察结果 \\ \hline
+\endhead
+非法操作码 \texttt{7E} & PC 已越过该 byte & 不知道后续 byte 是否是操作数 &
+  \code{illegal-opcode} \\ \hline
+寄存器号 4 & 操作数已取完 & 机器只有 R0--R3 &
+  \code{invalid-register} \\ \hline
+读取 \texttt{E000} & 地址已驱动 & 没有目标交付数据 &
+  \code{bus-no-response} \\ \hline
+空栈执行 RET & SP 仍在初值 & 没有可读取的返回地址 &
+  \code{stack-underflow} \\ \hline
+无限跳转 & 状态仍可执行 & 教学程序不应永久占用宿主测试 &
+  \code{instruction-limit} \\ \hline
+\end{osgridlongtable}
+
+\topic{运行 C++20 模拟器并对照正式实现}
+
+可运行例子位于
+\filepath{examples/teaching_cpu}。公共头文件定义 ISA 状态与总线边界，
+源文件实现逐周期状态变化，\filepath{source/main.cpp} 放入四组程序。以下
+片段就是正常程序的 ROM 字节；它不是只用于排版的伪代码：
+
+\lstinputlisting[
+  language=C++,
+  firstline=17,
+  lastline=39,
+  caption={正常路径与两种故障程序的真实 ROM 字节}
+]{../../examples/teaching_cpu/source/main.cpp}
+
+在书稿根目录运行：
+
+\begin{lstlisting}[language=bash]
+python3 examples/teaching_cpu/verify.py
+\end{lstlisting}
+
+脚本使用 C++20、\code{-Wall -Wextra -Wpedantic -Werror} 编译，再检查正常、
+ready 延迟、非法操作码和总线无响应四种结果。构建发生在临时目录，不会把
+宿主二进制混进书稿。
+
+\begin{experimentbox}{跟踪 ADD、JZ、CALL 和 RET}
+先运行验证脚本。把输出保存到文本文件后，按
+\code{scenario=normal} 到下一条场景标记截取正常路径。
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 找到 ADD 的 writeback 周期，确认 R0 从 \texttt{FFFF} 变为
+    \texttt{0000}，Z 同时从 0 变为 1；
+  \item 找到 JZ 写回后的 PC，确认它从顺序候选
+    \texttt{000E} 变为 \texttt{0010}；
+  \item 找到两个 \code{phase=stack-write} 周期，记录地址和数据；
+  \item 找到两个 \code{phase=stack-read} 周期，确认读回次序相同；
+  \item 检查最后的 \code{memory[0x8000]=0x34}。
+\end{enumerate}
+
+每一步都同时记录周期号、PC、SP 和相关寄存器。这样才能说明“跳转发生”和
+“返回地址确实经过 RAM”是两个不同结论。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{交换返回地址的高低 byte}
+在 \code{PushWord} 中交换 low byte 与 high byte 的写入位置。重新运行后，
+RET 会把 \texttt{0x1300} 写入 PC，而不是 \texttt{0x0013}。下一次取指仍落在
+ROM 范围内，但那里没有这段程序，常见结果是取到 \texttt{00} 并报告非法
+操作码。
+
+预期失败不能只写“程序不工作”。应记录：栈内两个 byte、RET 合成的目标 PC、
+下一次取指地址和最终状态。恢复原顺序后再次运行，四种场景都应通过。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item PC 指向下一次取指地址；显示“当前指令地址”时要另存开始值；
+  \item CALL 压入取完操作数后的 PC，不是 CALL 自身地址；
+  \item ready=0 表示本周期不能接收数据，不表示数据值恰好为 0；
+  \item 栈弹出后旧 byte 仍可留在 RAM，是否有效由 SP 决定；
+  \item 非法操作码、未映射地址和正常 HALT 是三种不同停止原因。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：自己增加一条指令}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 手算 \(\texttt{0x7FFF}+\texttt{0x0001}\) 的 16-bit 结果和 Z。若新增
+    signed overflow 标志，它应是什么？
+  \item CALL 位于 \(\texttt{0x0200}\)，编码长度为 3，执行前
+    \(SP=\texttt{0x9000}\)。写出执行后的 SP 和两个栈 byte 地址。
+  \item ready 延迟从 0 改为 3。一次四 byte LOAD 至少增加多少个等待周期？
+    只计算四次取 byte，不计译码和执行周期。
+  \item 在当前 ISA 中加入 \code{LOADM Rd, [addr16]}。写出建议操作码、编码
+    长度、读取顺序、失败状态和最小测试。
+  \item 为什么不能把未映射地址的读取结果固定为 0，然后继续执行？
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 结果为 \(\texttt{0x8000}\)，Z=0。两个正数相加得到符号位为 1 的
+    结果，若按 16-bit signed 解释，overflow=1；
+  \item 返回地址为 \(\texttt{0x0203}\)，新
+    \(SP=\texttt{0x8FFE}\)。地址 \texttt{8FFE} 保存 \texttt{03}，
+    \texttt{8FFF} 保存 \texttt{02}；
+  \item 每个 byte 多等 3 拍，四次读取共增加 \(4\times3=12\) 拍；
+  \item 可选 \texttt{11}，编码为操作码、寄存器号、地址低 byte、地址高
+    byte。先验证寄存器号，再读取目标；目标无响应时保持寄存器旧值并报告
+    \code{bus-no-response}。测试至少覆盖 RAM 成功读取和
+    \texttt{E000} 失败；
+  \item 0 是合法数据。混淆“返回 0”和“未响应”会让错误地址悄悄参与后续
+    计算，故障位置被推迟，调试时只看到更远处的错误结果。
+\end{enumerate}
+\end{answerbox}

@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{画出复位节点}
+选定 VCC、GND、上拉电阻、复位输入和电容，画闭合电流路径。给定 R、C 后算
+时间常数，并在波形上标出阈值跨越时刻。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{让输入悬空}
+删除上拉，把输入标为未知。预期无法从已知电压范围推出稳定逻辑值，后续状态机
+初态也无法确定。恢复上拉后再算静态电流和阈值裕量。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+电压是两点之差；真值表不含传播延迟；触发器只在规定边沿附近采样。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \(\SI{3.3}{V}/\SI{3.3}{k\ohm}\) 等于多少电流？
+  \item \(R=\SI{1}{k\ohm},C=\SI{1}{\micro F}\) 的 RC 是多少？
+  \item D 在上升沿前不满足 setup，Q 有什么风险？
+\end{enumerate}
+\begin{answerbox}
+1. \(\SI{1}{mA}\)；2. \(\SI{1}{ms}\)；3. 可能进入亚稳态，不能保证在规定
+时间内得到可靠 0 或 1。
+\end{answerbox}

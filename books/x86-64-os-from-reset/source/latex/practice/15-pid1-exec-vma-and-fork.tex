@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{观察一页 COW 的引用变化}
+fork 前后、子写后、父写后分别记录父子 PTE、物理页号、引用数和首 byte。
+确认子写复制，父在 refs=1 时原地恢复。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{ReplaceLeaf 前先释放旧引用}
+让叶项替换失败。预期旧页引用数被错误减少。恢复为 PTE 成功替换并失效后才
+release 旧引用。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+exec 先构造候选地址空间；COW 成功后重试原 store；not-present VMA 与 present
+COW 页走不同路径。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 三个 Process 共享一页时 refs 是多少？
+  \item 其中一个写后共有几张物理页？
+  \item exec 候选 ELF 验证失败时旧程序是否还能运行？
+\end{enumerate}
+\begin{answerbox}
+1. 3；2. 两张；3. 能，旧地址空间在候选通过前不替换。
+\end{answerbox}

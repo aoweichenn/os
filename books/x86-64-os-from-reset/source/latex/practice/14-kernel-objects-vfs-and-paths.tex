@@ -1,0 +1,27 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{追踪 fd 到 inode}
+从一个用户 fd 开始，依次记录 FileTable entry、FileDescription 引用数、
+VFS node、mount 和最终 inode。dup 后再次记录哪些对象相同。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{关闭 dup 后的一个 fd 就销毁对象}
+故意在第一次 close 时执行 finalizer。预期另一个 fd 变成悬空引用。恢复为
+最后一个强引用消失时才 finalize。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+fd 是进程局部编号；共享 offset 属于 FileDescription；路径解析遇到 mount
+时会改变后续查找起点。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item dup 后两个 fd 是否共享文件 offset？
+  \item close 一个 fd 是否必然关闭设备？
+  \item 解析 \code{a/../b} 时 \code{..} 作用于哪个当前节点？
+\end{enumerate}
+\begin{answerbox}
+1. 是；2. 否，取决于是否为最后引用；3. 解析到 a 后所在节点的父节点，并受
+mount/root 边界约束。
+\end{answerbox}

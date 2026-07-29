@@ -1,0 +1,27 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{沿端口访问找到实体职责}
+选择 UART LSR 端口，记录 base、寄存器偏移、端口号、读宽度和关注位。画出 CPU
+\code{in} 指令、平台译码、UART 寄存器和返回 AL 的路径。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{使用错误寄存器偏移}
+把 LSR 偏移从 5 改为 4。预期轮询读取另一寄存器，THRE 判断不再可靠并最终
+超时。恢复偏移后发送路径继续。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+Port I/O 与 MMIO 是两种地址域；芯片引脚图不等于寄存器图；QEMU 不模拟板级
+电气故障。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item COM1 base=\texttt{3F8}，LSR 偏移 5，端口是多少？
+  \item 8-bit 端口读应使用 AL 还是 EAX 作为结果宽度？
+  \item 未实现端口返回值为什么不能凭经验写死？
+\end{enumerate}
+\begin{answerbox}
+1. \texttt{3FD}；2. AL；3. 行为由平台/设备模型规定，可能返回全 1、忽略或
+报告错误。
+\end{answerbox}

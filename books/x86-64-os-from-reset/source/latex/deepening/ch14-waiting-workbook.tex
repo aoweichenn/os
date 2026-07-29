@@ -1,0 +1,180 @@
+\topic{丢失唤醒发生在三行代码之间}
+
+错误实现先在锁外读条件，稍后再入队：
+
+\begin{center}
+\small
+\begin{osgridtabular}{L{0.09\linewidth}L{0.34\linewidth}L{0.34\linewidth}L{0.13\linewidth}}
+时刻 & Reader & Writer & queue \\ \hline
+t0 & 读 buffered=0 & -- & [] \\ \hline
+t1 & 尚未入队 & 写入 8 byte & [] \\ \hline
+t2 & -- & wake one，发现空队列 & [] \\ \hline
+t3 & 把自己标 Blocked 并入队 & -- & [R] \\ \hline
+t4 & 永久等待 & 已离开 & [R] \\ \hline
+\end{osgridtabular}
+\end{center}
+
+数据已经存在，Reader 却睡着了。增加超时只能让错误晚些暴露。正确实现让
+Reader 的“锁内复查+入队+改 Blocked”和 Writer 的“写数据+取 waiter+改
+Ready”使用同一把锁。
+
+\begin{osgridlongtable}{L{0.15\linewidth}L{0.36\linewidth}L{0.39\linewidth}}
+全序 & Reader 最后一次检查 & Writer 行为 \\ \hline
+\endfirsthead
+全序 & Reader 最后一次检查 & Writer 行为 \\ \hline
+\endhead
+Writer 先 & 看到 buffered=8，直接读取 & 无需唤醒 \\ \hline
+Reader 先 & 在锁内入队并标 Blocked & 随后一定找到 R 并标 Ready \\ \hline
+\end{osgridlongtable}
+
+\begin{pdfdiagram}
+  \node[os state] (running) {R Running};
+  \node[os block,right=of running] (check) {持 Pipe 锁复查};
+  \node[os state,right=of check] (blocked) {入 WaitQueue\\R=Blocked};
+  \node[os block,below=of blocked] (writer) {W 持同锁\\写入并摘 waiter};
+  \node[os state,left=of writer] (ready) {R=Ready};
+  \node[os state,left=of ready] (retry) {R 再运行\\重新 TryRead};
+  \draw[os arrow] (running) -- (check);
+  \draw[os arrow] (check) -- (blocked);
+  \draw[os arrow] (blocked) -- (writer);
+  \draw[os arrow] (writer) -- (ready);
+  \draw[os arrow] (ready) -- (retry);
+\end{pdfdiagram}
+
+\topic{pipe 的数据量和端点引用一起决定结果}
+
+设 Pipe 缓冲区还有 5 byte，reader 端点强引用 2 个，writer 端点强引用 1 个。
+
+\begin{center}
+\begin{osgridtabular}{L{0.11\linewidth}L{0.19\linewidth}L{0.17\linewidth}L{0.17\linewidth}L{0.26\linewidth}}
+时刻 & buffered & readers & writers & read 结果 \\ \hline
+t0 & 5 & 2 & 1 & 返回最多 5 byte \\ \hline
+t1 writer close & 5 & 2 & 0 & 仍先返回 5 byte \\ \hline
+t2 数据读完 & 0 & 2 & 0 & 下一次 read 返回 EOF \\ \hline
+t3 一个 reader close & 0 & 1 & 0 & Pipe 仍存在 \\ \hline
+t4 最后 reader close & 0 & 0 & 0 & 释放后备页与槽 \\ \hline
+\end{osgridtabular}
+\end{center}
+
+EOF 是“buffered=0 且 writers=0”的组合，不是缓冲区中的特殊 byte。
+BrokenPipe 是“readers=0”时的写入结果。dup 和 fork 会增加对端点对象的强
+引用，所以关闭一个 fd 不一定改变逻辑端点数量。
+
+\begin{workedexample}
+容量 65536 byte，当前 read index=65530、write index=2、buffered=8。
+逻辑数据分为末尾 6 byte 和开头 2 byte。读取 7 byte 后：
+\[
+read\_index=(65530+7)\bmod65536=1,\qquad buffered=1.
+\]
+write index 保持 2。read index 与 write index 不相等；即使相等，也要用
+buffered 区分空与满。
+\end{workedexample}
+
+\begin{workedexample}
+一次 write 跨三个尚未分配的 4 KiB 页面。前两次取得 F10、F11，第三次失败。
+操作返回前要逆序释放 F11、F10；write index、buffered 和用户可见 byte 都不
+改变。若留下前两页，重复失败会泄漏物理页。
+\end{workedexample}
+
+\topic{futex 的 compare-and-block 关闭同一个窗口}
+
+waiter 想在 word 仍为 1 时睡眠。错误交错：
+
+\begin{osgridtabular}{L{0.10\linewidth}L{0.36\linewidth}L{0.36\linewidth}}
+时刻 & Waiter & Owner \\ \hline
+t0 & 用户态读 word=1 & 持锁 \\ \hline
+t1 & 进入系统调用前被抢占 & store-release word=0 \\ \hline
+t2 & -- & futex wake，队列为空 \\ \hline
+t3 & 内核无条件入队 & 已继续运行 \\ \hline
+\end{osgridtabular}
+
+正确内核在 scheduler lock 内再次读取 word。若 Owner 已先写 0，wait 返回
+\code{ValueChanged}；若 waiter 先完成入队，Owner 的 wake 一定能看到它。
+
+\begin{lstlisting}
+LockScheduler();
+current = CopyUserWordWithoutFault(user_address);
+if (current != expected) {
+    UnlockScheduler();
+    return ValueChanged;
+}
+entry = FindOrCreateFutex(address_space_id, aligned_address);
+Enqueue(entry.wait_queue, current_thread);
+SetThreadState(current_thread, Blocked);
+SwitchAndUnlockScheduler();
+\end{lstlisting}
+
+正式路径位于
+\filepath{source/kernel/src/sync/private\_futex.cpp} 和
+\filepath{source/kernel/src/process/thread\_scheduler.cpp}；用户原子快路径
+位于 \filepath{source/user/src/synchronization.cpp}。
+
+\topic{同一 waiter 只能有一个完成原因}
+
+Thread 可以同时等待数据和 deadline，也可能收到 signal。三个路径都尝试从
+Blocked 变 Ready：
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.22\linewidth}L{0.25\linewidth}L{0.27\linewidth}}
+到达顺序 & 第一个原因 & 后续原因 & 返回给用户 \\ \hline
+\endfirsthead
+到达顺序 & 第一个原因 & 后续原因 & 返回给用户 \\ \hline
+\endhead
+数据先 & DataReady 成功写入 & timeout/signal 发现已完成 & 正常读取 \\ \hline
+超时先 & TimedOut 成功写入 & 数据只保留在 Pipe & 超时 \\ \hline
+信号先 & Interrupted 成功写入 & timeout 取消，数据仍可后读 & EINTR/信号路径 \\ \hline
+\end{osgridlongtable}
+
+完成原因需要一次 compare-exchange 或同锁保护。若 timeout 和 writer 都把
+Thread 入 Ready queue，会出现重复调度；若两者都负责释放 waiter，又会双重
+释放。
+
+\begin{experimentbox}{制造“检查后立刻写入”的交错}
+让 Reader 在第一次看到空 Pipe 后触发一个测试 hook；Writer 只在 hook 到达后
+写入。正确实现的第二次锁内检查会看到数据并跳过睡眠，或 Reader 已入队而
+Writer 将其唤醒。循环数万次，检查没有 Thread 永久 Blocked，Ready queue
+没有重复索引。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{删除锁内第二次 futex 读取}
+保留用户态第一次比较，删除内核入队前的第二次读取。使用栅栏让 Owner 恰在
+waiter 进入系统调用前 unlock+wake。预期 waiter 永久 Blocked，futex word
+却为 0。恢复二次读取后，wait 返回 \code{ValueChanged}。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{最后一个 writer 关闭时不唤醒 reader}
+让 Reader 在空 Pipe 上睡眠，关闭最后一个 writer，但跳过 reader wake。预期
+Reader 永久 Blocked，尽管 EOF 条件已经成立。恢复 wake 后，Reader 重新检查
+\(\text{buffered}=0,\text{writers}=0\) 并返回 EOF。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item wake 只让 Thread 重新具备运行资格，恢复后必须复查条件；
+  \item EOF 取决于空缓冲和最后一个 writer 引用；
+  \item futex key 还要包含地址空间身份，不能只用虚拟地址；
+  \item 用户态原子操作提供内存顺序，futex 只负责睡眠和唤醒；
+  \item 数据、超时和信号竞争时只能有一个完成原因。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：写出不会丢通知的交错}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 空 Pipe 有两个 writer 引用。关闭一个后，read 应返回什么？
+  \item Pipe 有 3 byte 且最后 writer 已关闭。连续两次 read 最多各返回什么？
+  \item futex waiter 锁内读到 0，expected=1。它是否入队？
+  \item timeout 与数据同时到达，怎样防止同一 Thread 两次进入 Ready queue？
+  \item 一次跨四页 write 在取得第三页时失败，应释放多少页，哪些索引不变？
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item writer 仍存活且无数据，返回 WouldBlock/进入等待，不能 EOF；
+  \item 第一次返回 3 byte，第二次在缓冲为空且 writers=0 时返回 EOF；
+  \item 不入队，返回 ValueChanged；
+  \item 在同一锁下或用原子状态让第一个原因从 Pending 改为完成值，后续原因
+    看到非 Pending 后只清理自己的定时器/观察，不再入队；
+  \item 释放本次已取得的两页；write index、buffered、read index 和已有页槽
+    都保持调用前状态。
+\end{enumerate}
+\end{answerbox}

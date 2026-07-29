@@ -1,0 +1,146 @@
+\topic{把两个 Thread 的轮转写成时间线}
+
+设时间片为 4 个 PIT tick，初始 Running=T0，Ready queue=[T1,T2]。每个 tick
+先增加当前 Thread 的运行计数；只有预算用完且队列非空时才切换。
+
+\begin{center}
+\small
+\begin{osgridtabular}{L{0.07\linewidth}L{0.09\linewidth}L{0.12\linewidth}L{0.18\linewidth}L{0.15\linewidth}L{0.18\linewidth}}
+tick & 进入 IRQ 前 & 已用预算 & IRQ 内队列变化 & IRET 后运行 & Ready queue \\ \hline
+0 & T0 & 0 & 无 & T0 & [T1,T2] \\ \hline
+1 & T0 & 1 & 无 & T0 & [T1,T2] \\ \hline
+2 & T0 & 2 & 无 & T0 & [T1,T2] \\ \hline
+3 & T0 & 3 & T0 入尾、T1 出头 & T1 & [T2,T0] \\ \hline
+4 & T1 & 0 & 无 & T1 & [T2,T0] \\ \hline
+7 & T1 & 3 & T1 入尾、T2 出头 & T2 & [T0,T1] \\ \hline
+\end{osgridtabular}
+\end{center}
+
+IRQ0 不是在表格两行之间凭空发生。处理器先从用户栈切到 TSS.RSP0 指向的内核
+栈，汇编保存 176-byte 通用现场；调度器随后选择目标，切换 CR3 和 TSS.RSP0，
+最后从目标 Thread 的现场执行 \code{iretq}。
+
+\begin{pdfdiagram}
+  \node[os state] (t0user) {T0 用户现场};
+  \node[os hardware,right=of t0user] (irq) {IRQ0};
+  \node[os block,right=of irq] (save) {保存 T0\\RIP/RSP/GPR/FXSAVE};
+  \node[os state,below=of save] (queue) {T0 入队\\T1 出队};
+  \node[os block,left=of queue] (activate) {CR3=T1\\TSS.RSP0=T1};
+  \node[os state,left=of activate] (t1user) {恢复 T1\\IRETQ};
+  \draw[os arrow] (t0user) -- (irq);
+  \draw[os arrow] (irq) -- (save);
+  \draw[os arrow] (save) -- (queue);
+  \draw[os arrow] (queue) -- (activate);
+  \draw[os arrow] (activate) -- (t1user);
+\end{pdfdiagram}
+
+\begin{workedexample}
+T0 被中断前 \(RAX=\texttt{1111}\)、\(RIP=\texttt{400120}\)，T1 上次被抢占时
+\(RAX=\texttt{2222}\)、\(RIP=\texttt{500080}\)。切换完成后：
+\[
+\begin{array}{lll}
+\text{T0 保存现场：}&RAX=\texttt{1111},&RIP=\texttt{400120},\\
+\text{CPU 当前现场：}&RAX=\texttt{2222},&RIP=\texttt{500080}.
+\end{array}
+\]
+若只切换 RIP 和 RSP，不恢复 RAX，T1 会观察到 \texttt{1111}。这不是抽象的
+“上下文不完整”，而是一个可在用户探针中打印出来的寄存器串扰。
+\end{workedexample}
+
+\begin{workedexample}
+只有 T0 可运行，Ready queue 为空。即使预算达到 4，调度器也返回原现场；把 T0
+先入队再弹出只会制造无意义切换，还可能错误增加抢占计数。调度决定需要同时
+查看“预算已用完”和“存在另一个 Ready Thread”。
+\end{workedexample}
+
+\topic{状态和队列位置必须同一次改变}
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.28\linewidth}L{0.42\linewidth}}
+Thread 状态 & 允许出现的位置 & 禁止组合 \\ \hline
+\endfirsthead
+Thread 状态 & 允许出现的位置 & 禁止组合 \\ \hline
+\endhead
+Running & 当前 CPU 槽 & 同时在 Ready queue \\ \hline
+Ready & Ready queue 恰好一次 & 无队列结点或出现两次 \\ \hline
+Blocked & 某个 WaitQueue & 仍留在 Ready queue \\ \hline
+Zombie & 回收链 & 仍能被调度 \\ \hline
+\end{osgridlongtable}
+
+出队顺序是：修复前驱/后继和 head/tail，清当前结点链接，再把状态改为 Running。
+若先改状态后修链，调试器会短暂看到 Running Thread 仍在 Ready queue；若中途
+发生故障，队列可能永久保留这个矛盾。
+
+\begin{lstlisting}[language=C++]
+[[nodiscard]] ThreadIndex SelectNext(ThreadIndex current) noexcept {
+    if (!TimeSliceExpired(current) || ReadyQueueEmpty()) {
+        return current;
+    }
+    SaveCurrentContext(current);
+    SetThreadState(current, ThreadState::Ready);
+    PushReadyBack(current);
+    const ThreadIndex next = PopReadyFront();
+    SetThreadState(next, ThreadState::Running);
+    return next;
+}
+\end{lstlisting}
+
+这段最小实现只显示决定顺序。项目正式路径位于
+\filepath{source/kernel/src/process/thread\_scheduler.cpp}，体系结构现场切换
+位于 \filepath{source/kernel/src/arch/architecture.asm}。正文前一节已经
+逐项列出 CR3、TSS、通用现场和 FXSAVE 的实际动作。
+
+\begin{experimentbox}{让两个用户程序交替打印}
+运行两个每次只打印“线程名、序号、单调 tick”的用户程序，各打印 8 次。日志
+应显示同一 Thread 在一个时间片内连续推进，预算用完后另一 Thread 获得 CPU。
+
+同时打开调度低频日志，记录 \code{from}、\code{to}、原因和 tick。不要在每个
+tick 打完整队列；只在真正切换或状态异常时记录，避免日志本身淹没时序。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{不保存 XMM0}
+让 T0 和 T1 分别在 XMM0 中保持不同 128-bit 模式，调度器故意跳过当前 Thread
+的 FXSAVE。切换后，用户探针会在 T1 中读到 T0 的模式，或反向污染。恢复
+FXSAVE/FXRSTOR 后，跨数百次抢占仍应保持各自值。
+\end{faultinjectionbox}
+
+\begin{faultinjectionbox}{把 T0 入队两次}
+在专用模型测试中重复调用一次 \code{PushReadyBack(T0)}。预期队列检查立即
+报告重复结点，而不是继续运行到形成环。修复后，对每个 Ready Thread 计数应
+恰为 1，Running Thread 计数应为 0。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+\begin{itemize}[leftmargin=2.2em]
+  \item 中断帧属于被中断 Thread，不能保存在一个全局临时区；
+  \item 预算用完不代表一定切换，Ready queue 可能为空；
+  \item 切 CR3 后要保证目标 RIP、内核栈和异常入口都已映射；
+  \item TSS.RSP0 必须指向目标 Thread 的内核栈；
+  \item 通用寄存器、RFLAGS 和扩展状态都属于执行现场。
+\end{itemize}
+\end{pitfallbox}
+
+\topic{练习：手排一次 round-robin}
+
+\begin{enumerate}[leftmargin=2.2em]
+  \item 时间片为 3，初始 Running=A，Ready=[B,C]。写出 tick 2、5、8 后的
+    Running 和 Ready。
+  \item A 退出时 Running=A，Ready=[B]。列出从逻辑退出到 B 运行的状态变化。
+  \item 若恢复 B 前忘记切换 CR3，B 的 RIP 数值仍合法，最可能访问哪个地址
+    空间？
+  \item 为什么删除当前 Thread 的内核栈必须等到 CPU 切到安全栈以后？
+  \item 设计一个检查：验证每个 Thread 在 Running、Ready、Blocked 和 Zombie
+    四个集合中最多出现一次。
+\end{enumerate}
+
+\begin{answerbox}
+\begin{enumerate}[leftmargin=2.2em]
+  \item tick 2 后 B/[C,A]，tick 5 后 C/[A,B]，tick 8 后 A/[B,C]；
+  \item A 标 Zombie，移出当前运行槽且不再入 Ready；B 出队并标 Running，
+    激活 B 的 CR3/RSP0/现场，IRET 到 B；
+  \item 仍访问 A 的地址空间；相同虚拟地址可能映到完全不同的物理页；
+  \item 当前函数调用、局部变量和返回地址仍在那张栈上，提前撤销会让下一次
+    push、call 或 ret 页故障；
+  \item 遍历四个集合，为每个 Thread 索引累加出现次数，并同时核对状态字段与
+    所在集合；任一计数大于 1 或状态不匹配就停止测试。
+\end{enumerate}
+\end{answerbox}

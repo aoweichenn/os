@@ -1,0 +1,25 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{完成一条八栏 trace}
+对一条带 ModRM 的 ADD 记录机器码、执行前寄存器、译码、地址/内存、运算、
+FLAGS、执行后寄存器和下一 IP，再用 GDB 单步核对。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{交换 ModRM 字段}
+把 \code{add ax,bx} 的 ModRM 改成写 BX。预期 FLAGS 可能相同，但写回寄存器
+不同。恢复 byte 后再次单步。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+模式决定指令边界；相对位移从顺序 IP 开始；MOV 不提供新的算术 FLAGS。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \texttt{B8 34 12} 在 16-bit 模式占几 byte？
+  \item \(DS=\texttt{1000}\)、偏移 \texttt{20} 的线性地址是多少？
+  \item CALL 长 3 byte，从 \texttt{200} 开始，返回 IP 是多少？
+\end{enumerate}
+\begin{answerbox}
+1. 3；2. \texttt{0x10020}；3. \texttt{0x203}。
+\end{answerbox}

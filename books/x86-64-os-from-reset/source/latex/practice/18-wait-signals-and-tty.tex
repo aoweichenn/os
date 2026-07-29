@@ -1,0 +1,25 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{固定 lost-wakeup 交错}
+让 Reader 第一次检查空后暂停，Writer 写入并 wake，再放行 Reader。正确实现应
+在锁内复查时读到数据，或已经入队并被唤醒。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{删除 futex 二次比较}
+Owner 在 waiter 入内核前 unlock+wake。预期 word=0 但 waiter 永久 Blocked。
+恢复锁内比较后返回 ValueChanged。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+wake 后要复查条件；EOF 依赖最后 writer；数据、超时和信号只能有一个完成原因。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 空 Pipe 仍有 writer 时 read 是 EOF 吗？
+  \item futex word 已变时 waiter 是否入队？
+  \item 最后 writer 关闭时为什么要唤醒 reader？
+\end{enumerate}
+\begin{answerbox}
+1. 不是，应等待；2. 不入队；3. EOF 条件已经成立，reader 要重新运行并返回。
+\end{answerbox}

@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{从符号追到 ROM byte}
+选择复位入口符号，依次记录目标文件地址、链接地址、ROM 文件偏移和最终三个
+byte；再运行 QEMU，确认首条串口日志带时间出现。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{保持 DLAB=1 就发送字符}
+DLAB 为 1 时，base 端口访问除数低 byte，不是发送保持寄存器。预期字符不出现
+且波特率配置被改坏。清 DLAB 后再等 THRE 并发送。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+源码符号不等于最终 byte；THRE 要有有界轮询；串口时间戳不能早于可用时钟来源。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 128 KiB ROM 的十六进制大小是多少？
+  \item THRE 未就绪时应继续写还是等待？
+  \item 为什么超时日志要打印最后一次 LSR？
+\end{enumerate}
+\begin{answerbox}
+1. \texttt{0x20000}；2. 有界等待；3. 区分设备一直 busy、读错端口和线路状态
+异常。
+\end{answerbox}

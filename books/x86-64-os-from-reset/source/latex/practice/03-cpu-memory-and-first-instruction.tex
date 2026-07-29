@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{运行教学 CPU}
+执行 \code{python3 examples/teaching_cpu/verify.py}，分别找出 ADD 写回、JZ
+选择、CALL 压栈、RET 弹栈和 ready 等待周期。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{把未映射读当成零}
+让总线对 \texttt{E000} 返回 0 并继续。预期故障位置被推迟，CPU 无法区分合法
+零值和无响应。恢复 \code{bus-no-response} 状态后应在原访问处停止。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+PC 指向下一次取指；CALL 压顺序 PC；ready=0 时地址和控制必须保持。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 四 byte 指令在每次读多等两拍时增加多少拍？
+  \item SP=\texttt{9000} 压入一个 16-bit 值后是多少？
+  \item 为新增 \code{LOADM} 写出一个成功和一个失败测试。
+\end{enumerate}
+\begin{answerbox}
+1. 8 拍；2. \texttt{8FFE}；3. RAM 地址读回预置 byte，未映射地址返回
+\code{bus-no-response} 且目标寄存器不变。
+\end{answerbox}

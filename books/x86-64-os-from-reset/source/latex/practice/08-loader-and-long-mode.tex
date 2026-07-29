@@ -1,0 +1,25 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{在模式切换两侧记录状态}
+在写 CR0.PG 前和 64-bit 标签各停一次，记录 CR0、CR3、CR4、EFER、CS、RIP
+和 RSP，并手算当前指令和栈的页表路径。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{漏映射 Kernel 入口}
+候选页表只映射 Loader，不映射 Kernel 入口。预期 far jump 后取指页故障或
+重启。补上目标页映射后再切 CR3。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+先验证 ELF 再复制；先建页表再开 PG；far jump 才装入 L=1 代码段。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item 64 MiB 需要多少个 2 MiB PDE？
+  \item filesz=\texttt{1800}、memsz=\texttt{2000}，清零多少 byte？
+  \item CR4.PAE 是哪一位？
+\end{enumerate}
+\begin{answerbox}
+1. 32；2. \texttt{800} byte；3. bit 5。
+\end{answerbox}

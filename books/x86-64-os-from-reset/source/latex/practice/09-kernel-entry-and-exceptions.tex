@@ -1,0 +1,26 @@
+\topic{本章实验、故意破坏与练习}
+
+\begin{experimentbox}{触发一次可识别的异常}
+执行专用 \code{ud2}，记录 vector、error code、RIP、CS、RFLAGS 和栈地址。
+确认 RIP 指向 \code{ud2}，异常日志出现后系统进入规定停止路径。
+\end{experimentbox}
+
+\begin{faultinjectionbox}{把 IDT gate selector 改错}
+让 \#UD gate 指向不存在的代码段。预期原异常无法进入处理程序，可能升级为
+double fault。恢复 selector 后应得到普通 \#UD 日志。
+\end{faultinjectionbox}
+
+\begin{pitfallbox}
+有些异常有硬件 error code、有些没有；汇编入口要归一化帧；BSS 必须在 C++
+依赖零初始化前清零。
+\end{pitfallbox}
+
+\textbf{练习}
+\begin{enumerate}[leftmargin=2.2em]
+  \item \code{ud2} 通常触发哪个 vector？
+  \item CPL3 进入内核时为何还要保存旧 SS:RSP？
+  \item 清 BSS 的区间应采用闭区间还是半开区间？
+\end{enumerate}
+\begin{answerbox}
+1. \#UD，vector 6；2. 返回用户态时要恢复旧栈；3. \([begin,end)\)。
+\end{answerbox}
