@@ -48,6 +48,9 @@ make phone-export
 - `STRUCTURE.md`：章节依赖、素材归属和排版边界。
 - `EDITORIAL.md`：书稿的文字编辑与技术审校方法。
 
+全书章号只在 `chapters/` 与 `main.tex` 中定义。`topics/` 和
+`deepening/` 按机制命名，素材文件名不再携带旧版章号。
+
 ## 阅读方式
 
 第一次阅读可以按目录顺序进行。每完成一个阶段，先运行对应实验并记录输出，

@@ -15,6 +15,7 @@ editorial-check:
 
 example-check:
 	python3 examples/teaching_cpu/verify.py
+	python3 examples/page_table_walker/verify.py
 
 check: source-check editorial-check example-check
 	@command -v xelatex >/dev/null 2>&1 || { echo "missing xelatex"; exit 1; }

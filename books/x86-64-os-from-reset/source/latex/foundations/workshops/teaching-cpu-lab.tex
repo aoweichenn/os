@@ -204,10 +204,29 @@ PC 提前递增，返回的 byte 会被错误地配给另一地址。
 
 \lstinputlisting[
   language=C++,
-  firstline=293,
-  lastline=317,
-  caption={等待 ready 的最小总线读取}
+  firstline=461,
+  lastline=488,
+  caption={只等待有限周期，超过上限就返回总线超时}
 ]{../../examples/teaching_cpu/source/teaching_cpu.cpp}
+
+\topic{延迟、超时和没有目标是三种不同状态}
+
+两拍 ready 延迟会在第三拍得到数据，属于正常的慢设备。模拟器还设置四拍
+超时上限，并让另一个场景等待十二拍。CPU 只输出四行 \code{ready=0}，随后
+结束为 \code{bus-timeout}；PC 保持在本次取指地址，没有接收尚未有效的数据。
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.23\linewidth}L{0.24\linewidth}L{0.25\linewidth}}
+总线状态 & CPU 等待拍数 & 最终状态 & PC 与数据 \\ \hline
+\endfirsthead
+总线状态 & CPU 等待拍数 & 最终状态 & PC 与数据 \\ \hline
+\endhead
+ready 延迟 2 拍 & 2 & 继续运行 & 第 3 拍接收，随后 PC 递增 \\ \hline
+ready 延迟 12 拍、上限 4 & 4 & \code{bus-timeout} & PC 不前进，不接收数据 \\ \hline
+地址无目标 & 0 & \code{bus-no-response} & 地址译码失败，不等待 ready \\ \hline
+\end{osgridlongtable}
+
+这三个结果必须分开。把慢设备立即报成“无目标”，会错误拒绝合法事务；无限
+等待慢设备，又会让整个宿主测试和单核系统永远停在同一条指令。
 
 \topic{非法操作码和无响应目标必须结束当前路径}
 
@@ -218,8 +237,8 @@ ROM 的第一个 byte 若改成 \(\texttt{7E}\)，译码器找不到对应指令
 
 地址 \(\texttt{0xE000}\) 没有连接 ROM、RAM 或设备。向它执行 STORE 时，
 模拟器打印一次 \code{ready=0} 并结束为 \code{bus-no-response}。硬件系统
-可以选择总线错误、超时或机器检查，具体机制不同；共同要求是软件能区分
-“目标返回了数值 0”和“目标根本没有响应”。
+可以选择总线错误、超时或机器检查，具体机制不同。软件至少要区分“目标返回
+数值 0”“目标还没准备好”和“该地址没有目标”。
 
 \begin{osgridlongtable}{L{0.21\linewidth}L{0.22\linewidth}L{0.23\linewidth}L{0.24\linewidth}}
 故障 & 最后可信状态 & 不能继续的原因 & 可观察结果 \\ \hline
@@ -232,6 +251,8 @@ ROM 的第一个 byte 若改成 \(\texttt{7E}\)，译码器找不到对应指令
   \code{invalid-register} \\ \hline
 读取 \texttt{E000} & 地址已驱动 & 没有目标交付数据 &
   \code{bus-no-response} \\ \hline
+ready 超过四拍 & 地址和 read 保持稳定 & 等待预算已经用完 &
+  \code{bus-timeout} \\ \hline
 空栈执行 RET & SP 仍在初值 & 没有可读取的返回地址 &
   \code{stack-underflow} \\ \hline
 无限跳转 & 状态仍可执行 & 教学程序不应永久占用宿主测试 &
@@ -242,14 +263,14 @@ ROM 的第一个 byte 若改成 \(\texttt{7E}\)，译码器找不到对应指令
 
 可运行例子位于
 \filepath{examples/teaching_cpu}。公共头文件定义 ISA 状态与总线边界，
-源文件实现逐周期状态变化，\filepath{source/main.cpp} 放入四组程序。以下
+源文件实现逐周期状态变化，\filepath{source/main.cpp} 组合五个运行场景。以下
 片段就是正常程序的 ROM 字节；它不是只用于排版的伪代码：
 
 \lstinputlisting[
   language=C++,
-  firstline=17,
-  lastline=39,
-  caption={正常路径与两种故障程序的真实 ROM 字节}
+  firstline=67,
+  lastline=124,
+  caption={正常路径、非法操作码和未映射写的真实 ROM 字节}
 ]{../../examples/teaching_cpu/source/main.cpp}
 
 在书稿根目录运行：
@@ -259,8 +280,8 @@ python3 examples/teaching_cpu/verify.py
 \end{lstlisting}
 
 脚本使用 C++20、\code{-Wall -Wextra -Wpedantic -Werror} 编译，再检查正常、
-ready 延迟、非法操作码和总线无响应四种结果。构建发生在临时目录，不会把
-宿主二进制混进书稿。
+ready 延迟、总线超时、非法操作码和总线无响应五种结果。构建发生在临时
+目录，不会把宿主二进制混进书稿。
 
 \begin{experimentbox}{跟踪 ADD、JZ、CALL 和 RET}
 先运行验证脚本。把输出保存到文本文件后，按
@@ -295,6 +316,7 @@ ROM 范围内，但那里没有这段程序，常见结果是取到 \texttt{00} 
   \item PC 指向下一次取指地址；显示“当前指令地址”时要另存开始值；
   \item CALL 压入取完操作数后的 PC，不是 CALL 自身地址；
   \item ready=0 表示本周期不能接收数据，不表示数据值恰好为 0；
+  \item 超时前每个等待周期都要保持地址、读写方向和 PC；
   \item 栈弹出后旧 byte 仍可留在 RAM，是否有效由 SP 决定；
   \item 非法操作码、未映射地址和正常 HALT 是三种不同停止原因。
 \end{itemize}

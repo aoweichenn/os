@@ -248,6 +248,59 @@ CR2 保存引发最近一次页故障的线性地址，错误码说明访问类�
 地址空间的根表物理地址；启用 PCID 时低位还携带标识，取得根表基址时要按
 架构掩码清除非地址位。
 
+\begin{workedexample}
+Ring 3 执行
+\code{mov byte [0x0000000000402000], 1}。目标页 present、US=1，但 PD 的
+RW=0，CR0.WP=1。处理器先算出线性地址，再完成四级遍历；最终物理页帧即使
+已经算出，写访问仍不能提交。
+
+\begin{osgridlongtable}{L{0.12\linewidth}L{0.30\linewidth}L{0.48\linewidth}}
+时刻 & CPU 内部动作 & 可观察状态 \\ \hline
+\endfirsthead
+时刻 & CPU 内部动作 & 可观察状态 \\ \hline
+\endhead
+t0 & 形成线性地址 \texttt{402000} & RIP 指向 faulting \code{mov} \\ \hline
+t1 & TLB miss，按 CR3 逐级读表 & PML4E、PDPTE、PDE、PTE 都 P=1 \\ \hline
+t2 & 合成权限 & US=1，RW=0，所以用户写失败 \\ \hline
+t3 & 进入 \#PF & CR2=\texttt{402000}，error=\texttt{07} \\ \hline
+t4 & 异常入口保存现场 & 保存的 RIP 仍指向原 \code{mov} \\ \hline
+t5 & 处理程序修复 PTE 并 \code{invlpg} & 旧 TLB 项不再可用 \\ \hline
+t6 & \code{iretq} 后重试原指令 & 第二次遍历允许写，byte 才变为 1 \\ \hline
+\end{osgridlongtable}
+
+错误码 \texttt{07} 的二进制低三位是 \texttt{111}：present 页面上的写访问，
+访问来自 user。CR2 回答“哪个线性地址”，错误码回答“怎样访问时失败”，保存
+的 RIP 回答“哪条指令要重试”。
+\end{workedexample}
+
+\topic{先把 CR3 中的根地址和上下文编号分开}
+
+假设调试器显示 \(\mathrm{CR3}=\texttt{0x0000000000101007}\)，并且
+CR4.PCIDE=1。低 12 bit 是 PCID，页表根基址来自其余地址位：
+\[
+\begin{aligned}
+root&=\texttt{0x101007}\mathbin{\&}
+      \texttt{0x000FFFFFFFFFF000}
+      =\texttt{0x101000},\\
+pcid&=\texttt{0x101007}\mathbin{\&}\texttt{0xFFF}
+      =\texttt{0x007}.
+\end{aligned}
+\]
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.27\linewidth}L{0.41\linewidth}}
+条件 & CR3 低位怎样解释 & 调试时先做什么 \\ \hline
+\endfirsthead
+条件 & CR3 低位怎样解释 & 调试时先做什么 \\ \hline
+\endhead
+CR4.PCIDE=0 & PWT、PCD 等控制位，不是 PCID & 查当前分页模式，再取根地址 \\ \hline
+CR4.PCIDE=1 & bits 11:0 是 PCID & 同时记录 root 与 PCID \\ \hline
+切换 CR3 & 选择新的根表和翻译上下文 & 不把 CR3 数值当普通虚拟指针 \\ \hline
+\end{osgridlongtable}
+
+书中手算用固定物理地址掩码帮助观察；正式实现还要根据 CPUID 报告的物理地址
+宽度处理地址位和保留位。直接把 \texttt{\symbol{36}cr3} 强制转换成 C++ 指针会让 CPU
+用当前虚拟地址空间解释一个物理地址，二者通常不是同一件事。
+
 \topic{TLB 让“内存里的新 PTE”不等于“CPU 已使用新翻译”}
 
 第一次访问后，CPU 可把虚拟页、物理页和权限缓存在 TLB。软件把 PTE 从可写
@@ -273,83 +326,78 @@ CR2 保存引发最近一次页故障的线性地址，错误码说明访问类�
 核心，让它们失效并确认，然后才能把物理页交给别的对象。否则旧核心仍可能
 通过陈旧翻译写入已经复用的页。
 
-\topic{最小页表遍历器先返回状态，再返回物理地址}
+\begin{experimentbox}{用同一个 store 比较刷新前后}
+在测试专用页 \code{test_page} 上按下面顺序操作：
 
-下面的遍历器把“读取物理 64-bit 表项”作为外部函数。它只覆盖四级、4 KiB 和
-2 MiB 页，不尝试支持 1 GiB 页：
+\begin{enumerate}[leftmargin=2.2em]
+  \item 先写一次 \code{test_page[0]=0x11}，让当前 CPU 建立 TLB 项；
+  \item 在 GDB 中暂停，找到叶 PTE，清除 RW，但保持 P=1；
+  \item 不执行失效，恢复并再次写 \code{0x22}，记录它是否完成；
+  \item 再次暂停，对同一线性地址执行 \code{invlpg}；
+  \item 第三次写 \code{0x33}，应进入 \#PF，并记录 CR2 和错误码；
+  \item 恢复 PTE.RW，执行 \code{invlpg}，确认重试后写入成功。
+\end{enumerate}
 
-\begin{lstlisting}[language=C++]
-namespace os::book::paging {
+第 3 步不能作为跨处理器型号的稳定断言：没有按架构要求失效时，软件已经
+失去可靠语义，CPU 可能继续使用缓存项。真正的检查点是第 4--5 步：刷新以后，
+下一次访问必须重新看到只读权限。
+\end{experimentbox}
 
-constexpr std::uint64_t OS_BOOK_PAGING_ENTRY_COUNT = 512U;
-constexpr std::uint64_t OS_BOOK_PAGING_INDEX_MASK = 0x1FFU;
-constexpr std::uint64_t OS_BOOK_PAGING_PRESENT = 1U << 0U;
-constexpr std::uint64_t OS_BOOK_PAGING_PAGE_SIZE = 1U << 7U;
-constexpr std::uint64_t OS_BOOK_PAGING_TABLE_ADDRESS_MASK =
-    0x000F'FFFF'FFFF'F000U;
-constexpr std::uint64_t OS_BOOK_PAGING_LARGE_ADDRESS_MASK =
-    0x000F'FFFF'FFE0'0000U;
-constexpr std::uint64_t OS_BOOK_PAGING_4K_OFFSET_MASK = 0xFFFU;
-constexpr std::uint64_t OS_BOOK_PAGING_2M_OFFSET_MASK = 0x1F'FFFFU;
+\topic{运行页表遍历器，而不只在纸上看伪代码}
 
-enum class WalkStatus : std::uint8_t {
-    Translated,
-    NonCanonical,
-    NotPresent,
-    UnsupportedLargePage,
-};
+\filepath{examples/page\_table\_walker/} 是一个可以单独编译的 C++20
+程序。它把一段数组当作物理内存中的页表镜像，从 CR3 指向的根表开始读取。
+每读一级，它都保存表项物理地址、原始值和累计后的 RW、US、NX。遍历结束
+以后，再根据访问类型、特权级和 CR0.WP 判断这次访问能否完成。
 
-struct WalkResult final {
-    WalkStatus status;
-    std::uint64_t physical_address;
-};
+\lstinputlisting[
+  language=C++,
+  firstline=178,
+  lastline=221,
+  caption={先检查 canonical 地址，再逐级读取并累计权限}
+]{../../examples/page_table_walker/source/page_table_walker.cpp}
 
-using ReadPhysicalEntry = std::uint64_t (*)(
-    std::uint64_t physical_address) noexcept;
+4 KiB 路径走完 PT，2 MiB 路径在 PDE.PS=1 时提前结束。地址算完以后仍不能
+立刻返回成功，因为同一个物理地址可能允许读、禁止写，或允许数据访问、禁止
+取指：
 
-[[nodiscard]] WalkResult WalkFourLevel(
-    const std::uint64_t virtual_address,
-    const std::uint64_t cr3,
-    const ReadPhysicalEntry read_entry) noexcept {
-    const std::uint64_t sign =
-        (virtual_address >> 47U) & 1U;
-    const std::uint64_t high = virtual_address >> 48U;
-    const std::uint64_t expected_high = sign == 0U ? 0U : 0xFFFFU;
-    if (high != expected_high) {
-        return {WalkStatus::NonCanonical, 0U};
-    }
+\lstinputlisting[
+  language=C++,
+  firstline=223,
+  lastline=255,
+  caption={大页偏移、最终权限检查和页故障错误码}
+]{../../examples/page_table_walker/source/page_table_walker.cpp}
 
-    const std::array<std::uint64_t, 4U> shifts{39U, 30U, 21U, 12U};
-    std::uint64_t table =
-        cr3 & OS_BOOK_PAGING_TABLE_ADDRESS_MASK;
-    for (std::uint64_t level = 0U; level < shifts.size(); ++level) {
-        const std::uint64_t index =
-            (virtual_address >> shifts[level]) & OS_BOOK_PAGING_INDEX_MASK;
-        const std::uint64_t entry = read_entry(table + index * 8U);
-        if ((entry & OS_BOOK_PAGING_PRESENT) == 0U) {
-            return {WalkStatus::NotPresent, 0U};
-        }
-        if ((entry & OS_BOOK_PAGING_PAGE_SIZE) != 0U) {
-            if (level != 2U) {
-                return {WalkStatus::UnsupportedLargePage, 0U};
-            }
-            return {
-                WalkStatus::Translated,
-                (entry & OS_BOOK_PAGING_LARGE_ADDRESS_MASK)
-                    + (virtual_address & OS_BOOK_PAGING_2M_OFFSET_MASK)};
-        }
-        table = entry & OS_BOOK_PAGING_TABLE_ADDRESS_MASK;
-    }
-    return {
-        WalkStatus::Translated,
-        table + (virtual_address & OS_BOOK_PAGING_4K_OFFSET_MASK)};
-}
+\begin{experimentbox}{编译并运行五条遍历路径}
+在书稿目录运行：
 
-}  // namespace os::book::paging
+\begin{lstlisting}[language=bash]
+python3 examples/page_table_walker/verify.py
 \end{lstlisting}
 
-这个最小版本只计算地址。正式内核还要沿路径累计 RW、US、NX，检查保留位和
-物理地址宽度，并区分“查询现有映射”和“创建缺失中间表”。
+脚本以 \code{-std=c++20 -Wall -Wextra -Wpedantic -Werror} 编译声明、实现和
+驱动程序，然后运行五个场景：
+
+\begin{osgridlongtable}{L{0.25\linewidth}L{0.23\linewidth}L{0.18\linewidth}L{0.24\linewidth}}
+场景 & 结果 & 错误码 & 要检查的中间状态 \\ \hline
+\endfirsthead
+场景 & 结果 & 错误码 & 要检查的中间状态 \\ \hline
+\endhead
+4 KiB 用户读 & \code{translated} & 0 & 四级 entry-address 与最终偏移 \\ \hline
+2 MiB supervisor 读 & \code{translated} & 0 & 只访问三级，offset 为 21 bit \\ \hline
+用户从 NX 页取指 & \code{execute-denied} & \texttt{15} & 地址算出后权限失败 \\ \hline
+父级只读、用户写 & \code{write-denied} & \texttt{07} & 叶 RW=1 也不能放宽父级 \\ \hline
+用户读 not-present 页 & \code{not-present} & \texttt{04} & 停在第一个 P=0 表项 \\ \hline
+\end{osgridlongtable}
+
+不要只看脚本最后一行“通过”。把 \code{scenario=4k-read} 下的四个
+\code{entry-address} 与算例一逐项对照；随后把驱动中的叶项 US 清零，重新
+运行，确认物理地址没有变化，但状态改为 \code{user-denied}。
+\end{experimentbox}
+
+这个程序仍然刻意省略 1 GiB 页、保留位检查和真实物理地址宽度。它只查询
+已有页表，不为缺失层分配页帧。正式内核还必须区分“查询映射”和“创建映射”，
+创建路径失败时还要撤销已经写入的表项。
 
 \topic{第四个页帧申请失败时怎样回到原状态}
 
@@ -389,18 +437,47 @@ using ReadPhysicalEntry = std::uint64_t (*)(
 以带 GDB stub 的 QEMU 启动系统，在内核进入稳定日志点后暂停。
 
 \begin{enumerate}[leftmargin=2.2em]
-  \item 在 GDB 中执行 \code{p/x \$cr3}，记录根表物理地址；
+  \item 在 GDB 中执行
+    \textcolor{BookBlue}{\texttt{p/x \symbol{36}cr3}}，记录根表物理地址；
   \item 选取日志中已知的虚拟地址，手算四级索引；
   \item 使用 QEMU monitor 的物理内存查看命令
-    \code{xp/4gx physical\_address} 读取根表项；
+    \textcolor{BookBlue}{\texttt{xp/4gx physical\_address}} 读取根表项；
   \item 清除表项低 12 位得到下一级表物理基址，重复到叶项；
   \item 把页帧基址与偏移相加，再用 monitor 查看该物理地址的 byte；
-  \item 用 \code{monitor info tlb} 或 \code{monitor info mem} 辅助观察，
+  \item 用 \textcolor{BookBlue}{\texttt{monitor info tlb}} 或
+    \textcolor{BookBlue}{\texttt{monitor info mem}} 辅助观察，
     但最终索引与地址仍要在纸上独立计算。
 \end{enumerate}
 
 命令名称可能随 QEMU monitor 前端略有差异；关键记录是 CR3、四个索引、每级
 表项原值、最终页帧和偏移。
+
+若使用算例一的页表镜像，完整会话应能整理成下面这张表。命令中的地址是物理
+地址，不是让 GDB 按当前虚拟地址空间解引用：
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.37\linewidth}L{0.37\linewidth}}
+动作 & 命令或手算 & 预期值 \\ \hline
+\endfirsthead
+动作 & 命令或手算 & 预期值 \\ \hline
+\endhead
+读根表 & \textcolor{BookBlue}{\texttt{p/x \symbol{36}cr3}} &
+  \texttt{0x101000} \\ \hline
+读 PML4E & \textcolor{BookBlue}{\texttt{monitor xp /1gx 0x101000}} &
+  \texttt{0x102007} \\ \hline
+读 PDPTE & \textcolor{BookBlue}{\texttt{monitor xp /1gx 0x102000}} &
+  \texttt{0x103007} \\ \hline
+读 PDE & \textcolor{BookBlue}{\texttt{monitor xp /1gx 0x103010}} &
+  \texttt{0x104007} \\ \hline
+读 PTE & \textcolor{BookBlue}{\texttt{monitor xp /1gx 0x104008}} &
+  \texttt{0x12345005} \\ \hline
+读目标 byte & \textcolor{BookBlue}{\texttt{monitor xp /1bx 0x12345234}} &
+  与虚拟地址读取相同 \\ \hline
+\end{osgridlongtable}
+
+若第二级就读到 0，不要继续用书中的下一级地址。先确认当前 CR3、所选虚拟
+地址和索引；每一级的新基址都必须来自刚刚读到的表项。若 monitor 不提供
+\code{info tlb}，逐级物理内存读取仍然足以验证页表；TLB 是否刷新则用前面的
+权限故障实验验证。
 \end{experimentbox}
 
 \begin{faultinjectionbox}{清除一个父级 RW 并写入子页}

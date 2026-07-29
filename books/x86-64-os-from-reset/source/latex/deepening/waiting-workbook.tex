@@ -38,8 +38,32 @@ Reader 先 & 在锁内入队并标 Blocked & 随后一定找到 R 并标 Ready \
   \draw[os arrow] (check) -- (blocked);
   \draw[os arrow] (blocked) -- (writer);
   \draw[os arrow] (writer) -- (ready);
-  \draw[os arrow] (ready) -- (retry);
+\draw[os arrow] (ready) -- (retry);
 \end{pdfdiagram}
+
+\begin{workedexample}
+下面把正确的空 Pipe 读取拆到每一次状态变化。初始 R 正在运行，W 已在 Ready
+queue，Pipe 没有数据，两个端点都仍有一个强引用。
+
+\begin{osgridlongtable}{L{0.06\linewidth}L{0.09\linewidth}L{0.11\linewidth}L{0.12\linewidth}L{0.12\linewidth}L{0.14\linewidth}L{0.17\linewidth}}
+时刻 & CPU & R 状态 & Ready queue & Pipe waiters & buffered / refs & 动作 \\ \hline
+\endfirsthead
+时刻 & CPU & R 状态 & Ready queue & Pipe waiters & buffered / refs & 动作 \\ \hline
+\endhead
+t0 & R & Running & [W] & [] & 0 / R1,W1 & R 取得 Pipe 锁 \\ \hline
+t1 & R & Running & [W] & [] & 0 / R1,W1 & 锁内复查仍为空 \\ \hline
+t2 & R & Blocked & [W] & [R] & 0 / R1,W1 & 入队并切换 \\ \hline
+t3 & W & Blocked & [] & [R] & 0 / R1,W1 & W 成为 Running \\ \hline
+t4 & W & Blocked & [] & [R] & 4 / R1,W1 & 锁内写入 4 byte \\ \hline
+t5 & W & Ready & [R] & [] & 4 / R1,W1 & 摘 R，R 改 Ready \\ \hline
+t6 & R & Running & [W] & [] & 4 / R1,W1 & R 被重新调度 \\ \hline
+t7 & R & Running & [W] & [] & 0 / R1,W1 & 再 TryRead，返回 4 byte \\ \hline
+\end{osgridlongtable}
+
+t3--t5 的“R 状态”保持 Blocked，直到 W 持同一把锁把它从 WaitQueue 摘下。
+wake 不直接把 CPU 交给 R，只把 R 放回 Ready queue；R 真正运行后还要重新
+检查 buffered。表中引用数始终不变，因为睡眠和唤醒不等于关闭端点。
+\end{workedexample}
 
 \topic{pipe 的数据量和端点引用一起决定结果}
 
@@ -108,6 +132,29 @@ SwitchAndUnlockScheduler();
 \filepath{source/kernel/src/sync/private\_futex.cpp} 和
 \filepath{source/kernel/src/process/thread\_scheduler.cpp}；用户原子快路径
 位于 \filepath{source/user/src/synchronization.cpp}。
+
+\begin{workedexample}
+正确 futex 路径中，word、线程状态和队列位置必须放在同一条时间线上。这里
+waiter 期望值为 1，Owner 最终把 word 改成 0：
+
+\begin{osgridlongtable}{L{0.06\linewidth}L{0.08\linewidth}L{0.14\linewidth}L{0.14\linewidth}L{0.16\linewidth}L{0.22\linewidth}}
+时刻 & word & Waiter & Owner & futex queue & 动作 \\ \hline
+\endfirsthead
+时刻 & word & Waiter & Owner & futex queue & 动作 \\ \hline
+\endhead
+t0 & 1 & Running & Ready & [] & 用户 compare 失败，进入内核 \\ \hline
+t1 & 1 & Running & Ready & [] & scheduler lock 内再次读取 \\ \hline
+t2 & 1 & Blocked & Ready & [Waiter] & 入队、改状态、切换 \\ \hline
+t3 & 1 & Blocked & Running & [Waiter] & Owner 取得用户锁 \\ \hline
+t4 & 0 & Blocked & Running & [Waiter] & store-release \\ \hline
+t5 & 0 & Ready & Running & [] & wake 摘队并放 Ready \\ \hline
+t6 & 0 & Running & Ready & [] & waiter 返回并重试用户操作 \\ \hline
+\end{osgridlongtable}
+
+如果 Owner 在 t1 之前已经把 word 写成 0，t1 直接返回
+\code{ValueChanged}，表中不会出现 t2。两种先后顺序都不允许出现
+“word=0、Waiter=Blocked、queue=[Waiter] 且再无唤醒者”的最终状态。
+\end{workedexample}
 
 \topic{同一 waiter 只能有一个完成原因}
 

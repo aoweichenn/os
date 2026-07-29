@@ -49,6 +49,8 @@ constexpr std::string_view OS_BOOK_CPU_STATUS_INVALID_REGISTER =
     "invalid-register";
 constexpr std::string_view OS_BOOK_CPU_STATUS_BUS_NO_RESPONSE =
     "bus-no-response";
+constexpr std::string_view OS_BOOK_CPU_STATUS_BUS_TIMEOUT =
+    "bus-timeout";
 constexpr std::string_view OS_BOOK_CPU_STATUS_STACK_OVERFLOW =
     "stack-overflow";
 constexpr std::string_view OS_BOOK_CPU_STATUS_STACK_UNDERFLOW =
@@ -67,9 +69,12 @@ MemoryBus::MemoryBus() noexcept
 bool MemoryBus::LoadRom(
     const std::uint16_t begin_address,
     const std::span<const std::uint8_t> bytes) noexcept {
-    const auto byte_count = static_cast<std::uint64_t>(bytes.size());
-    const auto begin = static_cast<std::uint64_t>(begin_address);
-    const auto rom_end = static_cast<std::uint64_t>(OS_BOOK_CPU_ROM_END);
+    const std::uint64_t byte_count =
+        static_cast<std::uint64_t>(bytes.size());
+    const std::uint64_t begin =
+        static_cast<std::uint64_t>(begin_address);
+    const std::uint64_t rom_end =
+        static_cast<std::uint64_t>(OS_BOOK_CPU_ROM_END);
 
     if (byte_count == 0U || begin > rom_end) {
         return false;
@@ -132,7 +137,8 @@ TeachingCpu::TeachingCpu(
       zero_flag_(false),
       status_(CpuStatus::Running),
       cycle_count_(0U),
-      instruction_count_(0U) {
+      instruction_count_(0U),
+      bus_timeout_cycles_(OS_BOOK_CPU_DEFAULT_BUS_TIMEOUT_CYCLE_COUNT) {
 }
 
 void TeachingCpu::Reset(const std::uint16_t reset_vector) noexcept {
@@ -143,6 +149,11 @@ void TeachingCpu::Reset(const std::uint16_t reset_vector) noexcept {
     this->status_ = CpuStatus::Running;
     this->cycle_count_ = 0U;
     this->instruction_count_ = 0U;
+}
+
+void TeachingCpu::SetBusTimeoutCycles(
+    const std::uint64_t bus_timeout_cycles) noexcept {
+    this->bus_timeout_cycles_ = bus_timeout_cycles;
 }
 
 CpuStatus TeachingCpu::Run() noexcept {
@@ -170,7 +181,7 @@ CpuStatus TeachingCpu::Step() noexcept {
     ++this->instruction_count_;
     this->EmitInternalCycle(OS_BOOK_CPU_PHASE_DECODE);
 
-    const auto opcode = static_cast<Opcode>(opcode_byte);
+    const Opcode opcode = static_cast<Opcode>(opcode_byte);
     switch (opcode) {
         case Opcode::LoadImmediate: {
             std::uint8_t register_index = 0U;
@@ -221,7 +232,7 @@ CpuStatus TeachingCpu::Step() noexcept {
                 return this->status_;
             }
             this->EmitInternalCycle(OS_BOOK_CPU_PHASE_EXECUTE);
-            const auto value = static_cast<std::uint8_t>(
+            const std::uint8_t value = static_cast<std::uint8_t>(
                 this->registers_[register_index] & OS_BOOK_CPU_LOW_BYTE_MASK);
             if (!this->WriteByte(address, value, OS_BOOK_CPU_PHASE_WRITEBACK)) {
                 return this->status_;
@@ -309,7 +320,7 @@ std::uint64_t TeachingCpu::CycleCount() const noexcept {
 }
 
 bool TeachingCpu::FetchByte(std::uint8_t& value) noexcept {
-    const auto fetch_address = this->program_counter_;
+    const std::uint16_t fetch_address = this->program_counter_;
     if (!this->ReadByte(fetch_address, value, OS_BOOK_CPU_PHASE_FETCH)) {
         return false;
     }
@@ -334,12 +345,20 @@ bool TeachingCpu::ReadByte(
     const std::uint16_t address,
     std::uint8_t& value,
     const std::string_view phase) noexcept {
-    const auto access = this->bus_.Read(address);
-    for (
-        std::uint64_t wait_cycle = 0U;
-        wait_cycle < access.ready_delay_cycles;
-        ++wait_cycle) {
+    const BusAccess access = this->bus_.Read(address);
+    if (!access.response) {
         this->EmitBusCycle(phase, address, 0U, true, false, false);
+        this->SetStatus(CpuStatus::BusNoResponse);
+        return false;
+    }
+    if (!this->WaitForReady(
+            access.ready_delay_cycles,
+            address,
+            0U,
+            true,
+            false,
+            phase)) {
+        return false;
     }
     this->EmitBusCycle(
         phase,
@@ -348,10 +367,6 @@ bool TeachingCpu::ReadByte(
         true,
         false,
         access.response);
-    if (!access.response) {
-        this->SetStatus(CpuStatus::BusNoResponse);
-        return false;
-    }
     value = access.value;
     return true;
 }
@@ -360,12 +375,20 @@ bool TeachingCpu::WriteByte(
     const std::uint16_t address,
     const std::uint8_t value,
     const std::string_view phase) noexcept {
-    const auto access = this->bus_.Write(address, value);
-    for (
-        std::uint64_t wait_cycle = 0U;
-        wait_cycle < access.ready_delay_cycles;
-        ++wait_cycle) {
+    const BusAccess access = this->bus_.Write(address, value);
+    if (!access.response) {
         this->EmitBusCycle(phase, address, value, false, true, false);
+        this->SetStatus(CpuStatus::BusNoResponse);
+        return false;
+    }
+    if (!this->WaitForReady(
+            access.ready_delay_cycles,
+            address,
+            value,
+            false,
+            true,
+            phase)) {
+        return false;
     }
     this->EmitBusCycle(
         phase,
@@ -374,10 +397,6 @@ bool TeachingCpu::WriteByte(
         false,
         true,
         access.response);
-    if (!access.response) {
-        this->SetStatus(CpuStatus::BusNoResponse);
-        return false;
-    }
     return true;
 }
 
@@ -390,9 +409,9 @@ bool TeachingCpu::PushWord(const std::uint16_t value) noexcept {
     }
     this->stack_pointer_ = static_cast<std::uint16_t>(
         this->stack_pointer_ - OS_BOOK_CPU_STACK_WORD_BYTE_COUNT);
-    const auto low_byte = static_cast<std::uint8_t>(
+    const std::uint8_t low_byte = static_cast<std::uint8_t>(
         value & OS_BOOK_CPU_LOW_BYTE_MASK);
-    const auto high_byte = static_cast<std::uint8_t>(
+    const std::uint8_t high_byte = static_cast<std::uint8_t>(
         value >> OS_BOOK_CPU_BYTE_BIT_COUNT);
     if (
         !this->WriteByte(
@@ -436,6 +455,35 @@ bool TeachingCpu::PopWord(std::uint16_t& value) noexcept {
            << OS_BOOK_CPU_BYTE_BIT_COUNT));
     this->stack_pointer_ = static_cast<std::uint16_t>(
         this->stack_pointer_ + OS_BOOK_CPU_STACK_WORD_BYTE_COUNT);
+    return true;
+}
+
+bool TeachingCpu::WaitForReady(
+    const std::uint64_t ready_delay_cycles,
+    const std::uint16_t address,
+    const std::uint8_t value,
+    const bool read,
+    const bool write,
+    const std::string_view phase) noexcept {
+    const std::uint64_t emitted_wait_cycles = std::min(
+        ready_delay_cycles,
+        this->bus_timeout_cycles_);
+    for (
+        std::uint64_t wait_cycle = 0U;
+        wait_cycle < emitted_wait_cycles;
+        ++wait_cycle) {
+        this->EmitBusCycle(
+            phase,
+            address,
+            value,
+            read,
+            write,
+            false);
+    }
+    if (ready_delay_cycles > this->bus_timeout_cycles_) {
+        this->SetStatus(CpuStatus::BusTimeout);
+        return false;
+    }
     return true;
 }
 
@@ -519,6 +567,8 @@ std::string_view CpuStatusName(const CpuStatus status) noexcept {
             return OS_BOOK_CPU_STATUS_INVALID_REGISTER;
         case CpuStatus::BusNoResponse:
             return OS_BOOK_CPU_STATUS_BUS_NO_RESPONSE;
+        case CpuStatus::BusTimeout:
+            return OS_BOOK_CPU_STATUS_BUS_TIMEOUT;
         case CpuStatus::StackOverflow:
             return OS_BOOK_CPU_STATUS_STACK_OVERFLOW;
         case CpuStatus::StackUnderflow:

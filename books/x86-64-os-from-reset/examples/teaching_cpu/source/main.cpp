@@ -13,6 +13,10 @@ constexpr std::uint16_t OS_BOOK_CPU_EXAMPLE_RESET_VECTOR = 0x0000U;
 constexpr std::uint16_t OS_BOOK_CPU_EXAMPLE_RESULT_ADDRESS = 0x8000U;
 constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_EXPECTED_RESULT = 0x34U;
 constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_DELAY_CYCLE_COUNT = 2U;
+constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_TIMEOUT_DELAY_CYCLE_COUNT = 12U;
+constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_TIMEOUT_LIMIT_CYCLE_COUNT = 4U;
+constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_DEFAULT_TIMEOUT_CYCLE_COUNT =
+    OS_BOOK_CPU_DEFAULT_BUS_TIMEOUT_CYCLE_COUNT;
 constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT = 0U;
 constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_R0_INDEX = 0U;
 constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_R1_INDEX = 1U;
@@ -34,6 +38,10 @@ constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_UNMAPPED_ADDRESS_LOW = 0x00U;
 constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_UNMAPPED_ADDRESS_HIGH = 0xE0U;
 constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_NO_RESPONSE_VALUE = 0x5AU;
 constexpr std::uint8_t OS_BOOK_CPU_EXAMPLE_ILLEGAL_OPCODE = 0x7EU;
+constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_NORMAL_PROGRAM_BYTE_COUNT = 29U;
+constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_ILLEGAL_PROGRAM_BYTE_COUNT = 1U;
+constexpr std::uint64_t OS_BOOK_CPU_EXAMPLE_NO_RESPONSE_PROGRAM_BYTE_COUNT =
+    9U;
 constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_NORMAL = "normal";
 constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_READY_DELAY =
     "ready-delay";
@@ -41,6 +49,8 @@ constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_ILLEGAL_OPCODE =
     "illegal-opcode";
 constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_BUS_NO_RESPONSE =
     "bus-no-response";
+constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_BUS_TIMEOUT =
+    "bus-timeout";
 constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_PREFIX =
     "=== scenario=";
 constexpr std::string_view OS_BOOK_CPU_EXAMPLE_SCENARIO_SUFFIX = " ===\n";
@@ -55,7 +65,10 @@ constexpr std::uint8_t EncodeOpcode(const Opcode opcode) noexcept {
 }
 
 // 正常程序先制造零标志，再跨过失败 HALT，调用子程序并把结果写入 RAM。
-constexpr auto OS_BOOK_CPU_NORMAL_PROGRAM = std::to_array<std::uint8_t>({
+constexpr std::array<
+    std::uint8_t,
+    OS_BOOK_CPU_EXAMPLE_NORMAL_PROGRAM_BYTE_COUNT>
+    OS_BOOK_CPU_NORMAL_PROGRAM{
     EncodeOpcode(Opcode::LoadImmediate),
     OS_BOOK_CPU_EXAMPLE_R0_INDEX,
     OS_BOOK_CPU_EXAMPLE_LOW_BYTE_FFFF,
@@ -85,14 +98,20 @@ constexpr auto OS_BOOK_CPU_NORMAL_PROGRAM = std::to_array<std::uint8_t>({
     OS_BOOK_CPU_EXAMPLE_RESULT_LOW,
     OS_BOOK_CPU_EXAMPLE_RESULT_HIGH,
     EncodeOpcode(Opcode::Return),
-});
+};
 
-constexpr auto OS_BOOK_CPU_ILLEGAL_PROGRAM = std::to_array<std::uint8_t>({
+constexpr std::array<
+    std::uint8_t,
+    OS_BOOK_CPU_EXAMPLE_ILLEGAL_PROGRAM_BYTE_COUNT>
+    OS_BOOK_CPU_ILLEGAL_PROGRAM{
     OS_BOOK_CPU_EXAMPLE_ILLEGAL_OPCODE,
-});
+};
 
 // 该程序把一个 byte 写到未映射窗口，用于观察总线无响应。
-constexpr auto OS_BOOK_CPU_NO_RESPONSE_PROGRAM = std::to_array<std::uint8_t>({
+constexpr std::array<
+    std::uint8_t,
+    OS_BOOK_CPU_EXAMPLE_NO_RESPONSE_PROGRAM_BYTE_COUNT>
+    OS_BOOK_CPU_NO_RESPONSE_PROGRAM{
     EncodeOpcode(Opcode::LoadImmediate),
     OS_BOOK_CPU_EXAMPLE_R0_INDEX,
     OS_BOOK_CPU_EXAMPLE_NO_RESPONSE_VALUE,
@@ -102,7 +121,7 @@ constexpr auto OS_BOOK_CPU_NO_RESPONSE_PROGRAM = std::to_array<std::uint8_t>({
     OS_BOOK_CPU_EXAMPLE_UNMAPPED_ADDRESS_LOW,
     OS_BOOK_CPU_EXAMPLE_UNMAPPED_ADDRESS_HIGH,
     EncodeOpcode(Opcode::Halt),
-});
+};
 
 struct ScenarioResult final {
     CpuStatus status;
@@ -113,7 +132,8 @@ struct ScenarioResult final {
 [[nodiscard]] ScenarioResult RunScenario(
     const std::string_view scenario_name,
     const std::span<const std::uint8_t> program,
-    const std::uint64_t ready_delay_cycles) {
+    const std::uint64_t ready_delay_cycles,
+    const std::uint64_t bus_timeout_cycles) {
     std::cout
         << OS_BOOK_CPU_EXAMPLE_SCENARIO_PREFIX
         << scenario_name
@@ -127,8 +147,10 @@ struct ScenarioResult final {
 
     TeachingCpu cpu{bus, std::cout};
     cpu.Reset(OS_BOOK_CPU_EXAMPLE_RESET_VECTOR);
-    const auto status = cpu.Run();
-    const auto memory_result = bus.Inspect(OS_BOOK_CPU_EXAMPLE_RESULT_ADDRESS);
+    cpu.SetBusTimeoutCycles(bus_timeout_cycles);
+    const CpuStatus status = cpu.Run();
+    const std::uint8_t memory_result =
+        bus.Inspect(OS_BOOK_CPU_EXAMPLE_RESULT_ADDRESS);
     std::cout
         << OS_BOOK_CPU_EXAMPLE_RESULT_STATUS << CpuStatusName(status)
         << OS_BOOK_CPU_EXAMPLE_RESULT_CYCLES << cpu.CycleCount()
@@ -144,22 +166,31 @@ struct ScenarioResult final {
 int main() {
     using namespace os::book::cpu;
 
-    const auto normal_result = RunScenario(
+    const ScenarioResult normal_result = RunScenario(
         OS_BOOK_CPU_EXAMPLE_SCENARIO_NORMAL,
         OS_BOOK_CPU_NORMAL_PROGRAM,
-        OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT);
-    const auto delayed_result = RunScenario(
+        OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT,
+        OS_BOOK_CPU_EXAMPLE_DEFAULT_TIMEOUT_CYCLE_COUNT);
+    const ScenarioResult delayed_result = RunScenario(
         OS_BOOK_CPU_EXAMPLE_SCENARIO_READY_DELAY,
         OS_BOOK_CPU_NORMAL_PROGRAM,
-        OS_BOOK_CPU_EXAMPLE_DELAY_CYCLE_COUNT);
-    const auto illegal_result = RunScenario(
+        OS_BOOK_CPU_EXAMPLE_DELAY_CYCLE_COUNT,
+        OS_BOOK_CPU_EXAMPLE_DEFAULT_TIMEOUT_CYCLE_COUNT);
+    const ScenarioResult illegal_result = RunScenario(
         OS_BOOK_CPU_EXAMPLE_SCENARIO_ILLEGAL_OPCODE,
         OS_BOOK_CPU_ILLEGAL_PROGRAM,
-        OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT);
-    const auto no_response_result = RunScenario(
+        OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT,
+        OS_BOOK_CPU_EXAMPLE_DEFAULT_TIMEOUT_CYCLE_COUNT);
+    const ScenarioResult no_response_result = RunScenario(
         OS_BOOK_CPU_EXAMPLE_SCENARIO_BUS_NO_RESPONSE,
         OS_BOOK_CPU_NO_RESPONSE_PROGRAM,
-        OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT);
+        OS_BOOK_CPU_EXAMPLE_NO_DELAY_CYCLE_COUNT,
+        OS_BOOK_CPU_EXAMPLE_DEFAULT_TIMEOUT_CYCLE_COUNT);
+    const ScenarioResult timeout_result = RunScenario(
+        OS_BOOK_CPU_EXAMPLE_SCENARIO_BUS_TIMEOUT,
+        OS_BOOK_CPU_NORMAL_PROGRAM,
+        OS_BOOK_CPU_EXAMPLE_TIMEOUT_DELAY_CYCLE_COUNT,
+        OS_BOOK_CPU_EXAMPLE_TIMEOUT_LIMIT_CYCLE_COUNT);
 
     const bool results_match =
         normal_result.status == CpuStatus::Halted
@@ -168,6 +199,7 @@ int main() {
         && delayed_result.memory_result == OS_BOOK_CPU_EXAMPLE_EXPECTED_RESULT
         && delayed_result.cycle_count > normal_result.cycle_count
         && illegal_result.status == CpuStatus::IllegalOpcode
-        && no_response_result.status == CpuStatus::BusNoResponse;
+        && no_response_result.status == CpuStatus::BusNoResponse
+        && timeout_result.status == CpuStatus::BusTimeout;
     return results_match ? 0 : 1;
 }

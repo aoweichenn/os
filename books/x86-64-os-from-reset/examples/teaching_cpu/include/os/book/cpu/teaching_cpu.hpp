@@ -17,6 +17,8 @@ inline constexpr std::uint16_t OS_BOOK_CPU_UNMAPPED_BEGIN = 0xE000U;
 inline constexpr std::uint16_t OS_BOOK_CPU_STACK_INITIAL = 0xDFFEU;
 inline constexpr std::uint64_t OS_BOOK_CPU_REGISTER_COUNT = 4U;
 inline constexpr std::uint64_t OS_BOOK_CPU_MAXIMUM_INSTRUCTION_COUNT = 64U;
+inline constexpr std::uint64_t OS_BOOK_CPU_DEFAULT_BUS_TIMEOUT_CYCLE_COUNT =
+    8U;
 
 enum class Opcode : std::uint8_t {
     LoadImmediate = 0x10U,
@@ -35,6 +37,7 @@ enum class CpuStatus : std::uint8_t {
     IllegalOpcode,
     InvalidRegister,
     BusNoResponse,
+    BusTimeout,
     StackOverflow,
     StackUnderflow,
     InstructionLimit,
@@ -74,6 +77,7 @@ public:
     TeachingCpu(MemoryBus& bus, std::ostream& trace_output) noexcept;
 
     void Reset(std::uint16_t reset_vector) noexcept;
+    void SetBusTimeoutCycles(std::uint64_t bus_timeout_cycles) noexcept;
     [[nodiscard]] CpuStatus Run() noexcept;
     [[nodiscard]] CpuStatus Step() noexcept;
 
@@ -96,6 +100,13 @@ private:
         std::string_view phase) noexcept;
     [[nodiscard]] bool PushWord(std::uint16_t value) noexcept;
     [[nodiscard]] bool PopWord(std::uint16_t& value) noexcept;
+    [[nodiscard]] bool WaitForReady(
+        std::uint64_t ready_delay_cycles,
+        std::uint16_t address,
+        std::uint8_t value,
+        bool read,
+        bool write,
+        std::string_view phase) noexcept;
     [[nodiscard]] bool IsRegisterIndexValid(
         std::uint8_t register_index) const noexcept;
     void EmitInternalCycle(std::string_view phase) noexcept;
@@ -118,6 +129,7 @@ private:
     CpuStatus status_;
     std::uint64_t cycle_count_;
     std::uint64_t instruction_count_;
+    std::uint64_t bus_timeout_cycles_;
 };
 
 [[nodiscard]] std::string_view CpuStatusName(CpuStatus status) noexcept;

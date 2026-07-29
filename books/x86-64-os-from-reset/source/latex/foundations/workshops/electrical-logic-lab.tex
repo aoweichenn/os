@@ -167,10 +167,148 @@ Q 稍晚于边沿变化，这段时间是 clock-to-Q。D 必须在边沿前满�
 
 \lstinputlisting[
   language=C++,
-  firstline=201,
-  lastline=234,
+  firstline=252,
+  lastline=285,
   caption={JZ、CALL 和 RET 最后才更新 PC}
 ]{../../examples/teaching_cpu/source/teaching_cpu.cpp}
+
+\topic{连续动手：从加法器搭到四位计数器}
+
+这组练习只增加一层硬件再观察一次状态，不允许直接把“计数器”当成现成模块。
+可以在纸上画门，也可以使用任意数字逻辑仿真器；无论用什么工具，都要保存每
+一级的真值表和时钟波形。
+
+\begin{center}
+\begin{tikzpicture}[font=\footnotesize\sffamily,node distance=8mm and 9mm]
+  \node[os state] (half) {半加器};
+  \node[os block,right=of half] (full) {全加器};
+  \node[os block,right=of full] (adder) {四位加法器};
+  \node[os state,below=of adder] (sr) {SR 锁存器};
+  \node[os block,left=of sr] (dlatch) {D latch};
+  \node[os block,left=of dlatch] (dff) {D 触发器};
+  \node[os state,below=of dff] (register) {四位寄存器};
+  \node[os hardware,right=of register] (counter) {四位计数器};
+  \draw[os arrow] (half) -- (full);
+  \draw[os arrow] (full) -- (adder);
+  \draw[os arrow] (adder) -- (sr);
+  \draw[os arrow] (sr) -- (dlatch);
+  \draw[os arrow] (dlatch) -- (dff);
+  \draw[os arrow] (dff) -- (register);
+  \draw[os arrow] (register) -- (counter);
+\end{tikzpicture}
+\end{center}
+\diagramnote{上半条链产生“下一值”，下半条链保存“当前值”。计数器只是把
+寄存器当前值送回加法器，并在下一个边沿写回。}
+
+\mustunderstand\textbf{第一步：先让一位加法器正确。}
+半加器给出
+\[
+S=A\oplus B,\qquad C=AB.
+\]
+全加器可以由两个半加器组成：第一只计算 \(A+B\)，第二只把
+\(C_{in}\) 加到第一次的和上，两个进位再做 OR。逐行核对前面的八行真值表，
+尤其要测 \((A,B,C_{in})=(1,1,1)\)，它应得到 \(S=1,C_{out}=1\)。
+
+\mustunderstand\textbf{第二步：串接四个全加器。}
+最低位的 \(C_{in}=0\)，每一位的 \(C_{out}\) 接到更高一位的
+\(C_{in}\)。手算 \(\texttt{0111}+\texttt{0001}\)：
+
+\begin{osgridtabular}{L{0.08\linewidth}L{0.10\linewidth}L{0.10\linewidth}L{0.12\linewidth}L{0.12\linewidth}L{0.15\linewidth}}
+bit & \(A_i\) & \(B_i\) & \(C_{in}\) & \(S_i\) & \(C_{out}\) \\ \hline
+0 & 1 & 1 & 0 & 0 & 1 \\ \hline
+1 & 1 & 0 & 1 & 0 & 1 \\ \hline
+2 & 1 & 0 & 1 & 0 & 1 \\ \hline
+3 & 0 & 0 & 1 & 1 & 0 \\ \hline
+\end{osgridtabular}
+
+结果是 \texttt{1000}。把任一进位线断开后重算；最先与正确答案不同的 bit
+就是故障从哪一级开始传播。
+
+\mustunderstand\textbf{第三步：用 NOR 门观察“保持”。}
+交叉反馈的 SR 锁存器不依赖时钟：
+
+\begin{osgridtabular}{cccl}
+\(S\) & \(R\) & \(Q_{next}\) & 动作 \\ \hline
+0 & 0 & \(Q_{old}\) & 保持以前的状态 \\ \hline
+1 & 0 & 1 & set \\ \hline
+0 & 1 & 0 & reset \\ \hline
+1 & 1 & 未定义 & 两个输出不再互补 \\ \hline
+\end{osgridtabular}
+
+先施加 \(S=1,R=0\)，再回到 \(0,0\)。如果 Q 也跟着回到 0，反馈没有接好；
+正确电路会继续保存 1。随后故意施加 \(1,1\)，记录两个输出和撤销顺序。这个
+实验说明“未定义”不是随机挑一个正确答案。
+
+\mustunderstand\textbf{第四步：把任意输入收束成 D 与 enable。}
+令
+\[
+S=E\cdot D,\qquad R=E\cdot\overline D.
+\]
+当 \(E=1\) 时，Q 跟随 D；当 \(E=0\) 时，S=R=0，锁存器保持。因为 D 和
+\(\overline D\) 不会同时为 1，这层组合逻辑避免正常使用时进入 SR 的非法
+输入。让 E 保持 1 并翻转 D，会看到 Q 在整个窗口内透明；这还不是边沿触发。
+
+\mustunderstand\textbf{第五步：只在上升沿更新。}
+把两个互补相位的 latch 串起来，或在仿真器中用门级 D 触发器。按下面的输入
+序列逐拍记录，不能在两次边沿之间偷改 Q：
+
+\begin{osgridtabular}{L{0.16\linewidth}L{0.20\linewidth}L{0.20\linewidth}L{0.32\linewidth}}
+时刻 & CLK 动作 & D & Q 应怎样变化 \\ \hline
+t0 & 低电平 & 0 & 保持初值 0 \\ \hline
+t1 & 上升沿前 & 1 & 尚未采样，Q 仍为 0 \\ \hline
+t2 & 上升沿 & 1 & 经过 clock-to-Q 后变为 1 \\ \hline
+t3 & 高电平中间 & 0 & Q 仍为 1 \\ \hline
+t4 & 下一上升沿 & 0 & Q 变为 0 \\ \hline
+\end{osgridtabular}
+
+\mustunderstand\textbf{第六步：四只触发器组成寄存器。}
+四只触发器共用 CLK 和 reset。每个 D 前放一个 MUX：
+\[
+D_i=
+\begin{cases}
+input_i,& load=1,\\
+Q_i,& load=0.
+\end{cases}
+\]
+先在一个边沿以 \(load=1,input=\texttt{1010}\) 写入，再令 load=0 并把
+input 改成 \texttt{0101}。下一个边沿后 Q 仍应是 \texttt{1010}；若变成输入，
+说明反馈候选没有接到 MUX。
+
+\mustunderstand\textbf{第七步：把寄存器输出接回加法器。}
+加法器另一输入固定为 \texttt{0001}，MUX 在 \(enable=1\) 时选择
+\(Q+1\)，否则选择 Q。复位以后逐拍状态为：
+
+\begin{osgridtabular}{L{0.10\linewidth}L{0.12\linewidth}L{0.17\linewidth}L{0.17\linewidth}L{0.17\linewidth}}
+边沿 & enable & Q 边沿前 & D 候选 & Q 边沿后 \\ \hline
+0 & -- & 未知 & reset & 0000 \\ \hline
+1 & 1 & 0000 & 0001 & 0001 \\ \hline
+2 & 1 & 0001 & 0010 & 0010 \\ \hline
+3 & 0 & 0010 & 0010 & 0010 \\ \hline
+4 & 1 & 0010 & 0011 & 0011 \\ \hline
+5 & 1 & 0011 & 0100 & 0100 \\ \hline
+\end{osgridtabular}
+
+\begin{workedexample}
+从 \texttt{1110} 连续计数两拍。第一拍加法器得到 \texttt{1111}，
+外部进位为 0；第二拍低四位得到 \texttt{0000}，外部进位为 1。若计数器只
+保存四位，Q 回绕到 0；如果还要检测溢出，就把外部进位保存到单独状态位。
+\end{workedexample}
+
+\begin{faultinjectionbox}{让状态链在不同位置断一次}
+先把半加器的 XOR 错换成 OR，输入 \(1+1\) 会得到和位 1、进位 1，即错误值
+\texttt{3}。恢复以后，再断开寄存器 MUX 的 Q 反馈：enable=0 时 D 不再有
+确定来源，下一个边沿后的 Q 不能继续标为旧值。最后把 counter 的 enable
+选择反接，比较上表第 3、4 拍。每次只引入一个错误，并记录第一个错误节点，
+不要只记录最终计数不对。
+\end{faultinjectionbox}
+
+\begin{experimentbox}{自己增加“向下计数”输入}
+在加法器第二输入前再放一个 MUX：up=1 选择 \texttt{0001}，up=0 选择
+\texttt{1111}，后者是四位的 \(-1\)。验证
+\texttt{0010}\(\rightarrow\)\texttt{0001}\(\rightarrow\)\texttt{0000}
+\(\rightarrow\)\texttt{1111}，并解释最后一步为何按模 16 回绕。完成后画出
+PC 使用同类“保持、加一、跳转目标、返回地址”四选一结构。
+\end{experimentbox}
 
 \topic{复位、时钟和 ready 的顺序}
 

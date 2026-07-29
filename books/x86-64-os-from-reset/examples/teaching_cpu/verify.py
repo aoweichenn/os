@@ -14,6 +14,8 @@ OS_BOOK_CPU_REQUIRED_OUTPUT = (
     "scenario=ready-delay",
     "result status=illegal-opcode",
     "result status=bus-no-response",
+    "scenario=bus-timeout",
+    "result status=bus-timeout",
     "ready=0",
     "phase=stack-write",
     "phase=stack-read",
@@ -70,7 +72,8 @@ def main() -> int:
     print(
         "教学 CPU 检查通过："
         f"{trace_line_count} 行逐周期 trace，"
-        "覆盖条件跳转、CALL/RET、ready 延迟、非法操作码和总线无响应。"
+        "覆盖条件跳转、CALL/RET、ready 延迟、总线超时、"
+        "非法操作码和总线无响应。"
     )
     return 0
 
