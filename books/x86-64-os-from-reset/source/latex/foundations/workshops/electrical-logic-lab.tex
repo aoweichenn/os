@@ -328,8 +328,9 @@ ready 有效 & 数据满足采样 & 无效 & IR 接收，PC 才递增 \\ \hline
 就递增 PC，返回 byte 会与错误地址配对。
 
 \begin{experimentbox}{观察两拍 ready 延迟}
-运行 \code{python3 examples/teaching_cpu/verify.py}，找到
-\code{scenario=ready-delay}。任取一个 fetch 地址，应先出现两行
+进入配套源码的 \filepath{examples/teaching_cpu} 目录，运行
+\code{python3 verify.py}，找到 \code{scenario=ready-delay}。任取一个
+fetch 地址，应先出现两行
 \code{ready=0}，第三行同一地址才出现 \code{ready=1}。等待期间 PC、地址和
 read 不得变化；正常与延迟场景最终都应写出
 \code{memory[0x8000]=0x34}。

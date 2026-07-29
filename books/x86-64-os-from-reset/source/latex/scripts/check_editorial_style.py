@@ -42,6 +42,7 @@ OS_BOOK_FORBIDDEN_PHRASES = (
     "本章将",
     "本节将",
     "下面将从",
+    "书稿",
 )
 OS_BOOK_REPEATED_IDEA_PATTERN = re.compile(r"\\begin\{keyidea\}")
 OS_BOOK_VERSION_HEADING_PATTERN = re.compile(

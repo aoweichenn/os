@@ -44,9 +44,9 @@ Mu 计算模块内部。DFR1142 载板把整个模块视为一个有 260 个触�
 \topic{来源与可追溯性}%
 电气基线来自 LattePandaTeam 公开的 DFR1142 V2 参考工程，上游版本固定在
 提交 \code{f954bf0275fa0aec4c1e9eb168f09644563b28a4}，许可证为 MIT。
-仓库保存原始十页 PDF、KiCad 工程、PCB、260-pin 引脚表、机械模型、来源记录
-和制造前检查表。本项目新增的是本地归档、逐页讲解、三张学习图和自动连通性
-门禁，不把参考设计冒充为 STUOS 原创硬件。
+随书配套资料收录原始十页 PDF、KiCad 工程、PCB、260-pin 引脚表、机械模型、
+来源记录和制造前检查表。本项目新增的是逐页讲解、三张学习图和自动连通性
+检查，不把参考设计冒充为 STUOS 原创硬件。
 
 \topic{二、案例的硬件参数先完整列出}\par
 \begin{osgridlongtable}{L{0.23\linewidth}L{0.25\linewidth}L{0.42\linewidth}}
@@ -760,10 +760,9 @@ PCB 文件 & 焊盘、铜线、叠层、布局与设计规则 & 制造厂是否�
 成品测量 & 电压、波形、温升、枚举和真实行为 & 未测工况的长期可靠性与全部规范裕量 \\ \hline
 \end{osgridlongtable}
 
-当前开发环境没有 \code{kicad-cli}，因此不能声称 ERC/DRC 已在当前 KiCad 版本
-通过。上游工程也未在本目录提供可直接采购的完整 BOM、CPL 与 Gerber。学习
-资料是完整可检查基线，正式投板仍要完成库、物料、封装、阻抗、ERC/DRC、机械、
-热和法规审查。
+本书使用的构建环境没有 \code{kicad-cli}，因此这里不把 ERC/DRC 标为已通过。
+上游参考工程也没有提供可直接采购的完整 BOM、CPL 与 Gerber。正式投板前仍要
+重新检查库、物料、封装、阻抗、ERC/DRC、机械、热和法规要求。
 
 \topic{十六、十页图的阅读路线与故障问题}\par
 \begin{osgridlongtable}{L{0.08\linewidth}L{0.23\linewidth}L{0.31\linewidth}L{0.28\linewidth}}

@@ -1,9 +1,9 @@
-\chapter*{Learning 与硬件资料融合索引}
-\addcontentsline{toc}{chapter}{Learning 与硬件资料融合索引}
-\markboth{Learning 与硬件资料融合索引}{Learning 与硬件资料融合索引}
+\chapter*{配套学习资料索引}
+\addcontentsline{toc}{chapter}{配套学习资料索引}
+\markboth{配套学习资料索引}{配套学习资料索引}
 
-本索引列出每一组 learning 材料在书中的落点。书稿按因果依赖重组内容；
-读者可以顺序读书，也可以从原学习分册或硬件图反查对应章节。
+本索引列出配套学习资料在正文中的落点。读者可以按目录顺序阅读，也可以从
+实验记录、硬件图或背景材料反查对应章节。
 
 \newcommand{\learningpathii}[2]{%
   \shortstack[l]{\scriptsize\filepath{#1}\\[-0.15em]\scriptsize\filepath{#2}}}
@@ -11,7 +11,7 @@
   \shortstack[l]{\scriptsize\filepath{#1}\\[-0.15em]\scriptsize\filepath{#2}\\[-0.15em]
   \scriptsize\filepath{#3}}}
 
-\section*{一、融合时采用的五条规则}
+\section*{一、怎样使用这份资料索引}
 
 \begin{enumerate}[leftmargin=2.2em]
   \item \textbf{当前实现优先。}若早期 v0.x 分册与当前 v2.0 在容量、数据结构
@@ -26,12 +26,12 @@
         初始化者、完成条件和失败现象；正文声称的完整路径也必须能在图上追踪。
 \end{enumerate}
 
-\section*{二、零基础三章怎样吸收全仓资料}
+\section*{二、前三章对应哪些基础资料}
 
 \begin{osgridlongtable}{L{0.12\linewidth}L{0.37\linewidth}L{0.41\linewidth}}
-章节 & 主要本地事实来源 & 重组后的教学职责 \\ \hline
+章节 & 配套资料 & 正文中的用途 \\ \hline
 \endfirsthead
-章节 & 主要本地事实来源 & 重组后的教学职责 \\ \hline
+章节 & 配套资料 & 正文中的用途 \\ \hline
 \endhead
 第 1 章 &
 \learningpathiii{docs/learning/background/}{01-computer-pc-and-x86-}{history.md}、
@@ -54,12 +54,12 @@ manufacturing checklist、初学者硬件词汇表、硬件状态图与
 地址译码和复位取指接成一台完整机器。\\ \hline
 \end{osgridlongtable}
 
-\section*{三、总览、前置与背景分册怎样进入正文}
+\section*{三、总览和背景资料对应哪些章节}
 
 \begin{osgridlongtable}{L{0.25\linewidth}L{0.33\linewidth}L{0.32\linewidth}}
-Learning 来源 & 核心知识链 & 成书中的主要落点 \\ \hline
+配套资料 & 核心知识链 & 正文中的主要位置 \\ \hline
 \endfirsthead
-Learning 来源 & 核心知识链 & 成书中的主要落点 \\ \hline
+配套资料 & 核心知识链 & 正文中的主要位置 \\ \hline
 \endhead
 \filepath{docs/learning/README.md} &
 项目边界、学习顺序、四遍阅读法、构建运行、生产源码覆盖与完成判定 &
@@ -95,12 +95,12 @@ oracle、分层测试、随机模型、产物审计、QEMU、故障注入、持�
 第 7 章观测与测试；各章失败框；第 20 章实践；书末实验与检查清单 \\ \hline
 \end{osgridlongtable}
 
-\section*{四、历史阶段分册怎样进入二十章}
+\section*{四、开发阶段记录对应哪些章节}
 
 \begin{osgridlongtable}{L{0.25\linewidth}L{0.34\linewidth}L{0.31\linewidth}}
-阶段分册 & 被保留的完整机制 & 成书落点 \\ \hline
+阶段分册 & 被保留的完整机制 & 正文位置 \\ \hline
 \endfirsthead
-阶段分册 & 被保留的完整机制 & 成书落点 \\ \hline
+阶段分册 & 被保留的完整机制 & 正文位置 \\ \hline
 \endhead
 \learningpathii{01-v0.0-engineering-}{baseline.md} &
 CMake/Preset、host/target、AddressRange、测试分层、失败语义、源码顺序 &
@@ -140,7 +140,7 @@ SpinLock、Blocked/Ready、定向唤醒、64 B 管道、丢失唤醒与用户复
 第 16 章文件系统盘面；第 17 章写回与恢复 \\ \hline
 \learningpathii{13-v1.0-user-}{environment.md} &
 i8042、Console FIFO、统一 fd、Try/Wait、idle、Ring 3 Shell 和自动输入 &
-第 12 章按键全链；第 19 章用户环境；第 20 章整体验收 \\ \hline
+第 12 章按键全链；第 19 章用户环境；第 20 章系统回顾 \\ \hline
 \learningpathii{14-v1.6-rootfs-}{v2.md} &
 rootfs v2 盘面、三级间接树、稀疏文件、完整命名空间修改、fsck 与跨启动 &
 第 16 章 rootfs v2 与大文件边界 \\ \hline
@@ -185,12 +185,12 @@ ABI 版本/offset、ELF 身份、devfs 分层、procfs 快照与 32 个用户工
 第 20 章系统回顾、测试方法与下一步路线 \\ \hline
 \end{osgridlongtable}
 
-\section*{五、硬件图册与实体资料逐项落点}
+\section*{五、硬件图册和实体资料对应哪些章节}
 
 \begin{osgridlongtable}{L{0.29\linewidth}L{0.27\linewidth}L{0.34\linewidth}}
-来源 & 图/资料回答的问题 & 成书呈现 \\ \hline
+来源 & 图/资料回答的问题 & 正文呈现 \\ \hline
 \endfirsthead
-来源 & 图/资料回答的问题 & 成书呈现 \\ \hline
+来源 & 图/资料回答的问题 & 正文呈现 \\ \hline
 \endhead
 \learningpathii{hardware-assembly-}{and-wiring.md} &
 十三阶段怎样装配；整机、启动/内存、Port I/O、中断、按键和持久化路径 &
@@ -236,9 +236,9 @@ ERC/DRC、BOM、叠层、阻抗、热、机械和上电前检查 &
 实体案例 bring-up 段与书末硬件验收清单 \\ \hline
 \end{osgridlongtable}
 
-\section*{六、为什么不把同一段文字复制两遍}
+\section*{六、同一概念应该从哪里开始阅读}
 
-Learning 分册保留按版本实验的阅读顺序，书稿则保留按机制依赖的长篇叙事。
+配套实验记录保留开发时的先后顺序，正文则按照概念依赖组织。
 例如 \code{TSS.RSP0} 同时出现在 v0.5 异常、v0.8 Ring 3、v0.9 进程和 v1.3
 SYSCALL 分册中；书中先在处理器契约处解释 TSS，再分别说明异常换栈、每进程
 Ring 0 栈和 SYSCALL 可信换栈，不把四段近似文字连续粘贴。
@@ -255,21 +255,21 @@ Ring 0 栈和 SYSCALL 可信换栈，不把四段近似文字连续粘贴。
 \end{aligned}
 \]
 
-这种融合方式既保留全部知识责任，又避免相互矛盾的重复段落。若从原分册反查，
-上面的表给出主落点；若从书顺序学习，正文已经把前置概念放在第一次需要它之前。
+这样阅读可以避免相互矛盾的重复解释。若从开发记录反查，上面的表给出主要
+位置；若按目录顺序阅读，前置概念会在第一次需要它时出现。
 
-\section*{六、读者怎样验证“已经融合”}
+\section*{七、怎样从正文返回原始资料}
 
 \begin{enumerate}[leftmargin=2.2em]
   \item 在本索引找原 learning 文件，定位对应章节；
-  \item 在章节先找术语定义，再找状态表、图、失败框和验收证据；
+  \item 在章节先找术语定义，再找状态表、图、失败框和实验结果；
   \item 对图中任一箭头回答源、目的、载荷、初始化者、完成条件和失败所有权；
   \item 对实体网络回到十页原理图和 KiCad，不把学习图当制造数据；
   \item 对实现数字回到当前源码/CTest，不把历史阶段值当当前版本；
-  \item 在书末术语表回查跨层同名概念，再用验收清单确认能够独立复述完整链。
+  \item 在书末术语表回查跨层同名概念，再用检查清单确认能够独立复述完整链。
 \end{enumerate}
 
-书稿输入检查会递归验证全部章节和图片存在，图形几何检查会验证七张整机图的
-卡片净距以及三张实体电路图的显式引脚/导线连通；最终 XeLaTeX 构建和抽页渲染
-再检查横置页、图注、字体和边界。自动化证明的是资源与几何底线，概念正确性
-仍以源码、处理器/设备规范和固定上游硬件资料交叉审查。
+生成 PDF 前，自动检查会确认全部章节和图片存在，并检查七张整机图的卡片净距
+以及三张实体电路图的显式引脚和导线连通。随后通过 XeLaTeX 构建和页面渲染
+检查横置页、图注、字体与边界。概念和数值仍需同源码、处理器/设备规范以及
+固定版本的上游硬件资料交叉核对。

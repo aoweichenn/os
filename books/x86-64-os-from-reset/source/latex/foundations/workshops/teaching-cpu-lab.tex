@@ -261,9 +261,10 @@ ready 超过四拍 & 地址和 read 保持稳定 & 等待预算已经用完 &
 
 \topic{运行 C++20 模拟器并对照正式实现}
 
-可运行例子位于
-\filepath{examples/teaching_cpu}。公共头文件定义 ISA 状态与总线边界，
-源文件实现逐周期状态变化，\filepath{source/main.cpp} 组合五个运行场景。以下
+随书配套源码中的
+\filepath{examples/teaching_cpu} 是一个可以独立运行的示例。公共头文件定义
+ISA 状态与总线边界，源文件实现逐周期状态变化，
+\filepath{examples/teaching_cpu/source/main.cpp} 组合五个运行场景。以下
 片段就是正常程序的 ROM 字节；它不是只用于排版的伪代码：
 
 \lstinputlisting[
@@ -273,15 +274,16 @@ ready 超过四拍 & 地址和 read 保持稳定 & 等待预算已经用完 &
   caption={正常路径、非法操作码和未映射写的真实 ROM 字节}
 ]{../../examples/teaching_cpu/source/main.cpp}
 
-在书稿根目录运行：
+进入教学 CPU 示例目录，再执行验证脚本：
 
 \begin{lstlisting}[language=bash]
-python3 examples/teaching_cpu/verify.py
+cd examples/teaching_cpu
+python3 verify.py
 \end{lstlisting}
 
 脚本使用 C++20、\code{-Wall -Wextra -Wpedantic -Werror} 编译，再检查正常、
 ready 延迟、总线超时、非法操作码和总线无响应五种结果。构建发生在临时
-目录，不会把宿主二进制混进书稿。
+目录，运行结束后不会在示例目录留下宿主二进制。
 
 \begin{experimentbox}{跟踪 ADD、JZ、CALL 和 RET}
 先运行验证脚本。把输出保存到文本文件后，按

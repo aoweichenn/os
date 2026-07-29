@@ -369,10 +369,11 @@ CR4.PCIDE=1 & bits 11:0 是 PCID & 同时记录 root 与 PCID \\ \hline
 ]{../../examples/page_table_walker/source/page_table_walker.cpp}
 
 \begin{experimentbox}{编译并运行五条遍历路径}
-在书稿目录运行：
+进入页表遍历器示例目录，再执行验证脚本：
 
 \begin{lstlisting}[language=bash]
-python3 examples/page_table_walker/verify.py
+cd examples/page_table_walker
+python3 verify.py
 \end{lstlisting}
 
 脚本以 \code{-std=c++20 -Wall -Wextra -Wpedantic -Werror} 编译声明、实现和
