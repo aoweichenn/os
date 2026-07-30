@@ -9,6 +9,11 @@
 - `power_wiring.pdf`、`high_speed_wiring.pdf`、`control_wiring.pdf`
   分别由 `docs/learning/assets/physical_carrier/` 中的同名 SVG 转换而成，
   转换只改变容器格式，保留矢量内容。
+- `intel_n_series_ballout_points.tex` 由
+  `scripts/generate_intel_n_series_ballout.py` 从 Intel 文档 759603 随附的
+  `759603_001_Ballout.xlsx` Rev.001 生成。文件包含 1264 个球位的矢量坐标、
+  接口分类颜色及完整行列标尺；输入工作簿 SHA-256 为
+  `25c6df23fccf4a9c3859787764e35ff8fe1d0ae839509d5ee9b3130a5bee9bd8`。
 
 上游 `module_pinout/pinout.jpg` 是一张位图照片，直接嵌入 PDF 后无法无损
 放大。因此书稿没有复制它，而是依据该照片、260-pin 表和模块资料，用 TikZ

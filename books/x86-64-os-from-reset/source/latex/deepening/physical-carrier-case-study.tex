@@ -22,11 +22,15 @@ LattePanda Mu N100/N305 计算模块和 DFR1142 Lite Carrier V2 为案例，从
   \label{#3}
 \end{figure}}
 
-\topic{为什么不把 N100 芯片内部也全部画出来}%
-Intel Processor N100/N305、DRAM、平台固件存储和核心电源管理位于 LattePanda
-Mu 计算模块内部。DFR1142 载板把整个模块视为一个有 260 个触点的器件，再把
-这些触点接到外部电源和连接器。公开载板资料没有展开 CPU 封装到 DDR 的内部
-网络，也不应凭猜测补画。
+\topic{CPU 封装、计算模块和载板是三层不同引脚}%
+Intel Processor N100/N305 使用 BGA1264 封装。Intel 数据手册 759603 随附的
+\code{759603\_001\_Ballout.xlsx} 给出了 1264 个球位的编号、信号名、方向、
+坐标和接口分类，因此 CPU 封装的引脚图可以按公开资料重绘。
+
+CPU 焊在 LattePanda Mu 计算模块上，模块再通过 260 个边缘触点插入 DFR1142
+载板。Intel 球位表没有描述 Mu 模块的 PCB 走线；DFR1142 原理图也从 Mu
+边缘触点开始，不包含 CPU 到板载 DRAM、固件 Flash 和电源管理器的模块内走线。
+本节分别画出 CPU 球位和 Mu 触点，不把两种编号写在同一层。
 
 “完整”必须相对于一个明确边界。本案例的边界是
 \[
@@ -230,6 +234,141 @@ USB 连接器可能画成规整矩形，实物却是有金属外壳和塑料舌�
   不冒充模块内部原理图。}
   \label{fig:carrier-module-pinout}
 \end{sidewaysfigure}
+
+\topic{N100/N305 的 BGA1264 引脚图}%
+图~\ref{fig:carrier-cpu-bga1264-ballout} 中每个圆点对应一个实际球位。它不是
+用规则网格填满 1264 个位置：Intel 把这种排布称为
+\term{balls anywhere}{球位可以按封装需要分布，不要求填满每个规则网格交点}。
+图保持官方 Ballmap 工作表的方向，上方从 column 59 排到 column 1，左侧从
+row DE 排到 row A。球位 \code{CT45} 就是 row CT 与 column 45 的交点。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      legend/.style={
+        draw=BookRule,
+        fill=white,
+        rounded corners=1mm,
+        text width=8.7cm,
+        minimum height=0.72cm,
+        align=left,
+        anchor=west
+      }
+    ]
+    \draw[
+      fill=BookCodeBg,
+      draw=BookNavy,
+      very thick,
+      rounded corners=1mm
+    ] (0.42,0.35) rectangle (8.58,12.25);
+    \node[
+      font=\bfseries\color{BookNavy},
+      fill=white,
+      inner sep=1.5pt
+    ] at (4.50,12.25) {Intel N-Series BGA1264 Ballmap};
+    \begin{scope}[shift={(4.50,6.30)}]
+      \input{figures/physical_carrier/intel_n_series_ballout_points}
+    \end{scope}
+
+    \node[
+      font=\Large\bfseries\color{BookNavy},
+      anchor=west
+    ] at (9.55,11.95) {1264 个球位按接口着色};
+    \node[anchor=west,align=left,text width=9.4cm] at (9.55,11.15) {
+      BGA 封装尺寸 \(24\ \mathrm{mm}\times35\ \mathrm{mm}\)，最小球距
+      \(0.62\ \mathrm{mm}\)。官方资料将它列为双 die 的 MCP 封装。};
+
+    \node[legend] at (9.55,10.10)
+      {\tikz\fill[BookRed] (0,0) circle[radius=2.3pt];\quad
+       电源与地：601 balls（Power、CPU Power、PCH Power）};
+    \node[legend] at (9.55,9.20)
+      {\tikz\fill[BookBlue] (0,0) circle[radius=2.3pt];\quad
+       DRAM 接口：136 balls（数据、选通、命令、时钟与复位）};
+    \node[legend] at (9.55,8.30)
+      {\tikz\fill[BookTeal] (0,0) circle[radius=2.3pt];\quad
+       高速和专用 I/O：175 balls（PCIe、USB、Display、Type-C、Camera）};
+    \node[legend] at (9.55,7.40)
+      {\tikz\fill[BookAmber] (0,0) circle[radius=2.3pt];\quad
+       GPIO 与 sideband：192 balls（UART、I2C、SPI 和平台控制）};
+    \node[legend] at (9.55,6.50)
+      {\tikz\fill[BookNavy] (0,0) circle[radius=2.3pt];\quad
+       调试与测试：81 balls（CPU/PCH debug 与 test points）};
+    \node[legend] at (9.55,5.60)
+      {\tikz\fill[BookMuted] (0,0) circle[radius=2.3pt];\quad
+       保留、N/A 与其他：79 balls};
+
+    \node[
+      draw=BookTeal,
+      fill=BookTeal!8,
+      rounded corners=1mm,
+      anchor=north west,
+      align=left,
+      text width=9.25cm
+    ] at (9.55,4.90) {
+      \textbf{怎样查一个球位}\quad
+      先在后表找到 \code{CT45 SYS\_RESET\#}。沿图左侧找到 row CT，
+      再沿上下边找到 column 45；交点处的青色圆点就是该封装焊球。
+      颜色只帮助识别接口类别，电气设计仍需查信号方向、电压域和时序。};
+
+    \node[
+      draw=BookAmber,
+      fill=BookAmber!9,
+      rounded corners=1mm,
+      anchor=north west,
+      align=left,
+      text width=9.25cm
+    ] at (9.55,2.85) {
+      \textbf{两级编号不能混用}\quad
+      \code{CT45} 是 CPU 封装球位；\code{Mu pin 137} 是计算模块的边缘触点。
+      两者之间还经过 Mu 模块 PCB、复用选择和可能的电平/电源处理。
+      DFR1142 载板只从 Mu pin 开始继续布线。};
+  \end{tikzpicture}
+  \caption{Intel N-Series BGA1264 引脚图。1264 个圆点及其坐标来自 Intel
+  数据手册 759603 附带的 Ballout Rev.001；颜色由官方 Interface 字段合并，
+  圆点位置和行列编号没有按视觉效果重新排列。}
+  \label{fig:carrier-cpu-bga1264-ballout}
+\end{sidewaysfigure}
+
+一页图无法在每个圆点旁同时写下最长可达数十个字符的复用信号名。下面列出
+启动、时钟、固件、内存和常见外设所需的代表球位。查其他球位时使用同样方法：
+先从官方 Pinlist 搜索信号，再回到 Ballmap 按“row + column”定位。
+
+\begin{osgridlongtable}{L{0.13\linewidth}L{0.42\linewidth}L{0.35\linewidth}}
+球位 & 官方信号名 & 它连接的硬件动作 \\ \hline
+\code{CT45} & \code{SYS\_RESET\#} & 外部平台复位输入，低有效 \\ \hline
+\code{CN55} & \code{GPD3/PWRBTN\#} & 电源键输入及平台电源状态机 \\ \hline
+\code{CY4}/\code{DB4} & \code{XTAL\_IN}/\code{XTAL\_OUT} &
+晶体或外部参考时钟的输入与输出 \\ \hline
+\code{CC52}/\code{CC50} &
+\code{SPI0\_CS0\#}/\code{SPI0\_CLK} &
+启动固件 SPI Flash 的片选与时钟 \\ \hline
+\code{CF52}/\code{CH52} &
+\code{SPI0\_MOSI}/\code{SPI0\_MISO} &
+启动固件 SPI Flash 的双向数据路径 \\ \hline
+\code{CT57} & \code{DRAM\_RESET\#} &
+内存控制器释放或保持 DRAM 复位 \\ \hline
+\code{AF15}/\code{AF17} &
+\code{DDR0\_DQSP[7]}/\code{DDR0\_DQSN[7]} &
+一组差分数据选通信号；实际名称随内存配置复用 \\ \hline
+\code{CT11}/\code{CP11} &
+\code{PCIE1\_TXP}/\code{PCIE1\_TXN} &
+PCIe/USB3 可复用高速发送差分对 \\ \hline
+\code{CU1}/\code{CU3} &
+\code{PCIE1\_RXP}/\code{PCIE1\_RXN} &
+PCIe/USB3 可复用高速接收差分对 \\ \hline
+\code{DE12}/\code{DD12} &
+\code{USB2P\_1}/\code{USB2N\_1} &
+USB 2.0 的 D+ 与 D- 双向差分线 \\ \hline
+\code{CM45}/\code{CL45} &
+\code{DDPB\_CTRLDATA}/\code{DDPB\_CTRLCLK} &
+显示接口 B 的控制数据与控制时钟 \\ \hline
+\code{DB40}/\code{DB34} &
+\code{GPP\_H11/UART0\_TXD}/\code{GPP\_H10/UART0\_RXD} &
+复用为 UART0 发送与接收的 GPIO 球位 \\ \hline
+\end{osgridlongtable}
 
 CPU 核心并没有一组“HDMI 引脚”或“NVMe 引脚”直接伸到连接器。程序执行
 MMIO load/store 时，请求先经过 SoC 内部互连到达 xHCI、PCIe root port、
