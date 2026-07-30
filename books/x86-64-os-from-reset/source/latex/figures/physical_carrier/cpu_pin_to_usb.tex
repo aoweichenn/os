@@ -1,0 +1,107 @@
+\begin{circuitikz}[
+    x=1cm,
+    y=1cm,
+    every node/.style={font=\footnotesize\sffamily},
+    data/.style={BookBlue,very thick},
+    supply/.style={BookRed,very thick},
+    part/.style={
+      draw=BookAmber,
+      fill=BookAmber!15,
+      rounded corners=0.8mm,
+      minimum width=2.15cm,
+      minimum height=0.75cm,
+      align=center
+    }
+  ]
+  \draw[BookNavy,very thick,fill=BookNavy!9,rounded corners=1.5mm]
+    (0.45,2.0) rectangle (5.70,9.65);
+  \node[font=\bfseries\Large\sffamily,align=center] at (3.08,8.95)
+    {Intel N-Series SoC\\USB2 PHY};
+
+  \draw[BookNavy,thick] (5.10,6.85) -- (5.70,6.85)
+    node[ocirc,pos=1,fill=white]{};
+  \node[anchor=east,align=right] at (4.95,6.85)
+    {\textbf{ball DE12}\\\code{USB2P\_1}};
+  \draw[BookNavy,thick] (5.10,4.85) -- (5.70,4.85)
+    node[ocirc,pos=1,fill=white]{};
+  \node[anchor=east,align=right] at (4.95,4.85)
+    {\textbf{ball DD12}\\\code{USB2N\_1}};
+
+  \draw[BookTeal,very thick,fill=BookTeal!8,rounded corners=1.5mm]
+    (8.25,2.0) rectangle (12.90,9.65);
+  \node[font=\bfseries\large\sffamily,align=center] at (10.58,8.95)
+    {U2 USBLC6-2SC6\\双线 ESD 保护};
+
+  \draw[BookTeal,thick] (8.25,6.85) -- (8.85,6.85)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=west] at (8.98,6.85) {\textbf{pin 1}\quad\code{I/O1}};
+  \draw[BookTeal,thick] (8.25,4.85) -- (8.85,4.85)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=west] at (8.98,4.85) {\textbf{pin 3}\quad\code{I/O2}};
+
+  \draw[BookTeal,thick] (12.30,6.85) -- (12.90,6.85)
+    node[ocirc,pos=1,fill=white]{};
+  \node[anchor=east] at (12.17,6.85) {\textbf{pin 6}\quad\code{I/O1}};
+  \draw[BookTeal,thick] (12.30,4.85) -- (12.90,4.85)
+    node[ocirc,pos=1,fill=white]{};
+  \node[anchor=east] at (12.17,4.85) {\textbf{pin 4}\quad\code{I/O2}};
+
+  \draw[data] (5.70,6.85) --
+    node[above,font=\scriptsize]{\code{USB\_D+}} (8.25,6.85);
+  \draw[data] (5.70,4.85) --
+    node[above,font=\scriptsize]{\code{USB\_D-}} (8.25,4.85);
+
+  \draw[BookAmber,very thick,fill=BookAmber!12,rounded corners=1.5mm]
+    (16.0,1.30) rectangle (21.65,10.25);
+  \node[font=\bfseries\Large\sffamily,align=center] at (18.83,9.55)
+    {J1 USB 2.0\\Type-A 插座};
+
+  \draw[BookAmber!80!black,thick] (16.0,6.85) -- (16.60,6.85)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=west] at (16.75,6.85) {\textbf{pin 3}\quad\code{D+}};
+  \draw[BookAmber!80!black,thick] (16.0,4.85) -- (16.60,4.85)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=west] at (16.75,4.85) {\textbf{pin 2}\quad\code{D-}};
+  \draw[data] (12.90,6.85) -- (16.0,6.85);
+  \draw[data] (12.90,4.85) -- (16.0,4.85);
+
+  \draw[BookAmber!80!black,thick] (16.0,8.15) -- (16.60,8.15)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=west] at (16.75,8.15) {\textbf{pin 1}\quad\code{VBUS}};
+  \node[part] (fuse) at (13.75,10.0) {F1 自恢复保险丝};
+  \node[part] (switch) at (9.80,10.0) {U3 5 V 负载开关};
+  \draw[supply,-{Latex[length=2mm]}] (6.75,10.0)
+    node[left,font=\bfseries]{\code{+5V}} -- (switch.west);
+  \draw[supply,-{Latex[length=2mm]}] (switch.east) -- (fuse.west);
+  \draw[supply,-{Latex[length=2mm]}] (fuse.east) -| (16.0,8.15);
+
+  \draw[BookAmber!80!black,thick] (16.0,3.0) -- (16.60,3.0)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=west] at (16.75,3.0) {\textbf{pin 4}\quad\code{GND}};
+  \draw[BookNavy,thick] (16.0,3.0) -- (15.35,3.0) node[ground]{};
+
+  \draw[BookTeal,thick] (10.58,2.0) -- (10.58,1.45)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=east] at (10.42,1.72) {\textbf{pin 2 GND}};
+  \draw[BookNavy,thick] (10.58,1.45) node[ground]{};
+
+  \draw[BookTeal,thick] (12.90,8.15) -- (13.40,8.15)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=east] at (12.75,8.15) {\textbf{pin 5 VBUS}};
+  \draw[supply] (13.40,8.15) -- (16.0,8.15);
+
+  \node[
+    draw=BookMuted,
+    fill=white,
+    rounded corners=1mm,
+    align=left,
+    text width=12.4cm,
+    font=\scriptsize\sffamily
+  ] at (10.85,0.35) {
+    \textbf{逐线检查：}
+    DE12 最终到 J1 pin 3，DD12 最终到 J1 pin 2；U2 的 1--6 与 3--4
+    是同一数据线两侧的保护引脚。J1 pin 1 的 5 V 不来自 CPU 数据球，
+    pin 4 单独回到地平面。D+/D- 要按约 \(\SI{90}{\ohm}\) 差分阻抗成对布线，
+    U2 靠近插座，保护支路和接地回路都应尽量短。
+  };
+\end{circuitikz}

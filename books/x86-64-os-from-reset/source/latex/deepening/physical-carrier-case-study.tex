@@ -513,6 +513,69 @@ CPU 不能只接电源以后独自运行。它需要参考时钟、复位状态�
   \label{fig:carrier-cpu-local-wiring}
 \end{sidewaysfigure}
 
+\topic{把 SPI0 一根一根接到 8 引脚启动 Flash}%
+上一页说明了 CPU 周围需要哪些器件，但还没有回答“某个球到底接到器件哪一脚”。
+图~\ref{fig:carrier-cpu-spi-pin-to-pin} 改用原理图画法：线从 CPU 封装球上的
+小圆点出发，到 W25Q128JV 的具体封装脚结束。图中每条数据线都同时写出
+CPU 球号、网络名、Flash pin 和方向。
+
+这是一张使用 Intel N-Series 实际 SPI0 球位与 W25Q128JV SOIC-8 实际 pinout
+构成的最小参考电路。LattePanda Mu 没有公开模块内部原理图，因此不能把
+W25Q128JV 的型号、R1/R2 阻值或器件位号冒充为 Mu 的真实用料；它们用于
+展示一张可以逐脚检查、可以据此绘制 PCB 的电路应该达到什么粒度。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \input{figures/physical_carrier/cpu_pin_to_spi}
+  \caption{Intel N-Series SPI0 到 SOIC-8 启动 Flash 的逐引脚参考接线。
+  四条协议线、两个配置上拉、供电、地和去耦电容均有明确端点。}
+  \label{fig:carrier-cpu-spi-pin-to-pin}
+\end{sidewaysfigure}
+
+顺着第一根线检查：CPU ball \code{CC52} 输出低电平，经过
+\code{SPI0\_CS0\#} 网络到达 U1 pin 1，Flash 随后才采样 pin 6 的时钟。
+CPU 从 ball \code{CF52} 发出的命令位进入 U1 pin 5；U1 从 pin 2 返回的数据
+进入 CPU ball \code{CH52}。把 pin 2 和 pin 5 交换，波形分析仪仍可能看到
+时钟和片选，但 CPU 读回的厂商 ID 会是全 0、全 1 或不稳定值。
+
+\topic{把 USB2 数据球接到插座 pin 2 和 pin 3}%
+图~\ref{fig:carrier-cpu-usb-pin-to-pin} 展开一条 USB 2.0 端口。
+CPU 的 D+ 与 D- 不先合并成“USB 总线”，而是分别穿过 ESD 器件的一组
+直通引脚，最后到达 Type-A 插座 pin 3 和 pin 2。插座 pin 1 的 VBUS 来自
+板上 5 V 电源树，pin 4 回到地平面；这两根电源线不经过 CPU 的 USB 数据球。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \input{figures/physical_carrier/cpu_pin_to_usb}
+  \caption{Intel N-Series USB2 数据球、USBLC6-2SC6 和 Type-A 插座的逐引脚
+  参考接线。线的连续性可以从 CPU ball 一直核对到标准连接器 pin。}
+  \label{fig:carrier-cpu-usb-pin-to-pin}
+\end{sidewaysfigure}
+
+故意交换 J1 pin 2 和 pin 3 后，VBUS 仍有 5 V，插入设备也可能亮灯，但接收器
+看到的是反相的差分极性，主机无法正常完成 USB reset 和枚举。断开 U2 pin 2
+的短地线时，普通万用表仍会显示 D+/D- 直流连通；ESD 电流却失去低电感回路，
+保护器件在真正的静电事件中可能来不及把接口钳位到安全范围。
+
+\topic{I2C 与 UART 也按发送端、接收端和封装脚追线}%
+图~\ref{fig:carrier-cpu-i2c-uart-pin-to-pin} 上半页把 I2C0 接到一颗
+24C02。SCL、SDA 各有一只上拉电阻；EEPROM 的地址脚、写保护脚、电源和地
+没有因为“不是数据线”而省略。下半页把 UART0 接到调试排针，CPU TX 明确
+连接适配器 RX，CPU RX 明确连接适配器 TX。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \input{figures/physical_carrier/cpu_pin_to_i2c_uart}
+  \caption{Intel N-Series I2C0、24C02 与 UART0 调试排针的逐引脚参考接线。
+  开漏总线的上拉和串口的交叉方向都直接画在导线上。}
+  \label{fig:carrier-cpu-i2c-uart-pin-to-pin}
+\end{sidewaysfigure}
+
+I2C 的两只上拉若完全删除，CPU 和 EEPROM 都只能主动把线路拉低，没有器件负责
+把线路恢复为高电平。逻辑分析仪会看到 SCL/SDA 在第一次低电平以后不再上升。
+UART 若把 TX 接 TX、RX 接 RX，两端都在各自的发送线上产生正常波形，却没有
+任何波形进入接收脚；这就是为什么原理图必须同时写引脚号和信号方向。
+
 \topic{CPU 外设球位怎样到达载板连接器}%
 外设路径比“一个引脚接一个插座”多两层。以 PCIe 为例，CPU 的可复用
 \code{PCIE1/USB32\_1} 球位先经过 SoC PHY 和 Mu 模块 PCB；模块按固件配置

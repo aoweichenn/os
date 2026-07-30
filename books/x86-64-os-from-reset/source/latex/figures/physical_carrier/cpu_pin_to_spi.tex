@@ -1,0 +1,112 @@
+\begin{circuitikz}[
+    x=1cm,
+    y=1cm,
+    every node/.style={font=\footnotesize\sffamily},
+    net/.style={BookBlue,very thick},
+    supply/.style={BookRed,very thick},
+    passive/.style={
+      draw=BookAmber,
+      fill=BookAmber!15,
+      rounded corners=0.6mm,
+      minimum width=1.65cm,
+      minimum height=0.55cm,
+      align=center
+    }
+  ]
+  \draw[BookNavy,very thick,fill=BookNavy!9,rounded corners=1.5mm]
+    (0.35,1.35) rectangle (6.15,10.25);
+  \node[font=\bfseries\Large\sffamily,align=center] at (3.25,9.55)
+    {Intel N-Series SoC\\SPI0 控制器};
+  \node[font=\scriptsize\color{BookMuted},align=center,text width=4.8cm]
+    at (3.25,2.10) {
+      左侧大框只展开本图使用的四个封装球。
+      CPU 的其他电源、地和接口球仍然存在。
+    };
+
+  \foreach \osy/\osball/\ossignal in {
+    8.15/CC52/SPI0\_CS0\#,
+    6.65/CC50/SPI0\_CLK,
+    5.15/CF52/SPI0\_MOSI,
+    3.65/CH52/SPI0\_MISO
+  } {
+    \draw[BookNavy,thick] (5.55,\osy) -- (6.15,\osy)
+      node[ocirc,pos=1,fill=white]{};
+    \node[anchor=east,align=right] at (5.40,\osy)
+      {\textbf{ball \osball}\\\code{\ossignal}};
+  }
+
+  \draw[BookTeal,very thick,fill=BookTeal!8,rounded corners=1.5mm]
+    (13.55,1.35) rectangle (19.25,10.25);
+  \node[font=\bfseries\Large\sffamily,align=center] at (16.40,9.55)
+    {U1 W25Q128JV\\SOIC-8 SPI NOR};
+
+  \foreach \osy/\ospin/\ossignal in {
+    8.15/1/CS\#,
+    6.65/6/CLK,
+    5.15/5/DI(IO0),
+    3.65/2/DO(IO1)
+  } {
+    \draw[BookTeal,thick] (13.55,\osy) -- (14.15,\osy)
+      node[ocirc,pos=0,fill=white]{};
+    \node[anchor=west,align=left] at (14.30,\osy)
+      {\textbf{pin \ospin}\\\code{\ossignal}};
+  }
+
+  \draw[net,-{Latex[length=2mm]}] (6.15,8.15) --
+    node[above,font=\scriptsize]{\code{SPI0\_CS0\#}} (13.55,8.15);
+  \draw[net,-{Latex[length=2mm]}] (6.15,6.65) --
+    node[above,font=\scriptsize]{\code{SPI0\_CLK}} (13.55,6.65);
+  \draw[net,-{Latex[length=2mm]}] (6.15,5.15) --
+    node[above,font=\scriptsize]{\code{SPI0\_MOSI}} (13.55,5.15);
+  \draw[net,{Latex[length=2mm]}-] (6.15,3.65) --
+    node[above,font=\scriptsize]{\code{SPI0\_MISO}} (13.55,3.65);
+
+  \draw[BookTeal,thick] (19.25,8.15) -- (19.70,8.15)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=east] at (19.10,8.15) {\textbf{pin 8}\quad\code{VCC}};
+  \draw[supply] (19.70,8.15) -- (20.35,8.15)
+    node[right,font=\bfseries]{\code{VCC\_SPI}};
+
+  \draw[BookTeal,thick] (19.25,6.65) -- (19.70,6.65)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=east] at (19.10,6.65)
+    {\textbf{pin 7}\quad\code{HOLD\#/RESET\#/IO3}};
+  \node[passive] (r2) at (21.30,6.65) {R2\\\(\SI{10}{k\ohm}\)};
+  \draw[net] (19.70,6.65) -- (r2.west);
+  \draw[supply] (r2.east) -- (22.35,6.65) -- (22.35,8.15);
+
+  \draw[BookTeal,thick] (19.25,5.15) -- (19.70,5.15)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=east] at (19.10,5.15)
+    {\textbf{pin 3}\quad\code{WP\#/IO2}};
+  \node[passive] (r1) at (21.30,5.15) {R1\\\(\SI{10}{k\ohm}\)};
+  \draw[net] (19.70,5.15) -- (r1.west);
+  \draw[supply] (r1.east) -- (22.35,5.15);
+
+  \draw[BookTeal,thick] (19.25,3.65) -- (19.70,3.65)
+    node[ocirc,pos=0,fill=white]{};
+  \node[anchor=east] at (19.10,3.65) {\textbf{pin 4}\quad\code{GND}};
+  \draw[BookNavy,thick] (19.70,3.65) -- (20.30,3.65)
+    node[ground]{};
+
+  \draw[supply] (22.35,8.15) -- (22.35,7.75);
+  \draw[supply] (22.35,6.65) -- (22.35,5.15);
+  \node[passive] (c1) at (21.30,3.65) {C1\\\(\SI{100}{nF}\)};
+  \draw[supply] (22.35,5.15) |- (c1.east);
+  \draw[BookNavy,thick] (c1.west) -- (20.55,3.65) node[ground]{};
+
+  \node[
+    draw=BookMuted,
+    fill=white,
+    rounded corners=1mm,
+    align=left,
+    text width=10.8cm,
+    font=\scriptsize\sffamily
+  ] at (10.75,0.45) {
+    \textbf{逐线检查：}
+    \code{MOSI} 接 Flash 的数据输入 pin 5，\code{MISO} 接数据输出 pin 2；
+    时钟只由 CPU 驱动；\code{CS\#} 为低时 U1 才响应。
+    R1/R2 让未使用 Quad SPI 时的 IO2/IO3 保持高电平。
+    C1 必须靠近 pin 8 与 pin 4，\code{VCC\_SPI} 必须匹配 SoC SPI pad 电压。
+  };
+\end{circuitikz}
