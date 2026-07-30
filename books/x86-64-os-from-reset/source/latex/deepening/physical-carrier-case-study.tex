@@ -7,9 +7,11 @@ LattePanda Mu N100/N305 计算模块和 DFR1142 Lite Carrier V2 为案例，从
 固件与操作系统启动链。
 
 这一案例不是凭外观想象的方框图。书中嵌入的十页原理图来自公开 KiCad 9
-参考工程，三张学习图由同一工程确定性整理而成。学习图把同类器件组合为更容易
-阅读的块，但每个可见信号、差分正负线、电源和地都有明确落点；需要器件值、
-封装、DNP 状态和 PCB 网络时，十页原图与 KiCad 源文件仍是事实依据。
+参考工程，三张全连线学习图由同一工程确定性整理而成。本节的逐链案例图再从
+原图中抽出一条具体路径，标出 SoC 功能端、Mu pin、载板器件和外部连接器。
+学习图把同类器件组合为更容易阅读的块，但每个可见信号、差分正负线、电源和地
+都有明确落点；需要器件值、封装、DNP 状态和 PCB 网络时，十页原图与 KiCad
+源文件仍是事实依据。
 
 \newcommand{\carrierschematicpage}[3]{%
 \begin{figure}[!htbp]
@@ -36,7 +38,7 @@ Mu 计算模块内部。DFR1142 载板把整个模块视为一个有 260 个触�
 正如设计 PCIe 扩展卡时可以把主机主板视为标准接口的另一端。
 
 \begin{contractbox}
-本节的“完整连线”表示学习图上每个可见引脚都必须连接或明确标为 NC，不能用
+本节的“完整连线”表示全连线学习图上每个可见引脚都必须连接或明确标为 NC，不能用
 省略号替代差分线；它不表示仅凭书中截图就能制造。真正制造数据还包括 KiCad
 原理图、PCB、封装、设计规则、物料、坐标、Gerber、叠层和检查报告。
 \end{contractbox}
@@ -45,8 +47,8 @@ Mu 计算模块内部。DFR1142 载板把整个模块视为一个有 260 个触�
 电气基线来自 LattePandaTeam 公开的 DFR1142 V2 参考工程，上游版本固定在
 提交 \code{f954bf0275fa0aec4c1e9eb168f09644563b28a4}，许可证为 MIT。
 随书配套资料收录原始十页 PDF、KiCad 工程、PCB、260-pin 引脚表、机械模型、
-来源记录和制造前检查表。本项目新增的是逐页讲解、三张学习图和自动连通性
-检查，不把参考设计冒充为 STUOS 原创硬件。
+来源记录和制造前检查表。本项目新增的是逐页讲解、三张全连线学习图、逐链
+案例图和自动连通性检查，不把参考设计冒充为 STUOS 原创硬件。
 
 \topic{二、案例的硬件参数先完整列出}\par
 \begin{osgridlongtable}{L{0.23\linewidth}L{0.25\linewidth}L{0.42\linewidth}}
@@ -229,6 +231,144 @@ USB 连接器可能画成规整矩形，实物却是有金属外壳和塑料舌�
   \label{fig:carrier-module-pinout}
 \end{sidewaysfigure}
 
+CPU 核心并没有一组“HDMI 引脚”或“NVMe 引脚”直接伸到连接器。程序执行
+MMIO load/store 时，请求先经过 SoC 内部互连到达 xHCI、PCIe root port、
+显示引擎或 Serial I/O 控制器；设备 DMA 也沿互连访问内存控制器。控制器再经
+PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、SoC fabric、
+控制器/PHY”合在左侧功能端，右侧从公开的 Mu pin 开始画真实载板铜线。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      soc/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=4.1cm,
+        minimum height=0.72cm,
+        align=center
+      },
+      edge/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=5.8cm,
+        minimum height=0.72cm,
+        align=center
+      },
+      carrier/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=5.4cm,
+        minimum height=0.72cm,
+        align=center
+      },
+      inside/.style={BookBlue,dashed,thick,-{Latex[length=2mm]}},
+      copper/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      power/.style={BookRed,very thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\Large\bfseries\color{BookNavy}] at (9.6,9.15)
+      {从 SoC 功能端点经过 260-pin 边界追到载板器件};
+    \node[font=\bfseries\color{BookBlue},align=center] at (2.4,8.45)
+      {CPU cores/APIC 经 SoC fabric\\到达控制器/PHY};
+    \node[font=\bfseries\color{BookTeal}] at (9.6,8.45)
+      {公开的 260-pin 信号组};
+    \node[font=\bfseries\color{BookAmber!70!black}] at (16.8,8.45)
+      {DFR1142 V2 载板落点};
+
+    \node[soc] (pcie) at (2.4,7.55) {PCIe root ports};
+    \node[edge] (hsio) at (9.6,7.55)
+      {HSIO2/3/6/8--11\\pins 25--66};
+    \node[carrier] (pcie-devices) at (16.8,7.55)
+      {J15 M Key、J16 E Key\\U6 RTL8111H、J2 PCIe x4};
+
+    \node[soc] (xhci) at (2.4,6.45) {xHCI 与 USB PHY};
+    \node[edge] (usb) at (9.6,6.45)
+      {HSIO0/1 pins 13--24\\USB2 pins 67--84、109--111};
+    \node[carrier] (usb-devices) at (16.8,6.45)
+      {J4/J5 USB 插座\\J19 UPS 的 USB2 通道};
+
+    \node[soc] (display) at (2.4,5.35) {显示引擎与 DDI B};
+    \node[edge] (ddi) at (9.6,5.35)
+      {TMDS pins 197--217\\DDC 169/171，HPD 183};
+    \node[carrier] (hdmi) at (16.8,5.35)
+      {J3 HDMI\\TMDS、DDC、HPD 与 5 V};
+
+    \node[soc] (serial) at (2.4,4.25) {Serial I/O 控制器};
+    \node[edge] (slow) at (9.6,4.25)
+      {UART 137--143，I2C 142--156\\SPI 153--165};
+    \node[carrier] (headers) at (16.8,4.25)
+      {J7--J14 排针\\U18 可选 SPI ROM};
+
+    \node[soc] (pm) at (2.4,3.15) {平台电源与复位状态机};
+    \node[edge] (control) at (9.6,3.15)
+      {PWR\_SW\# 1，RST\_SW\# 3\\PSON 5，SLP\_S4 7};
+    \node[carrier] (buttons) at (16.8,3.15)
+      {SW1/SW2、JP1/R46\\U15/U16 的 PWR\_EN};
+
+    \node[soc] (memory) at (2.4,2.05)
+      {内存控制器};
+    \node[edge] (dram-local) at (9.6,2.05)
+      {模块内 DRAM\\不经过 260-pin 载板接口};
+    \node[carrier] (no-dram) at (16.8,2.05)
+      {载板没有 DDR 数据总线\\也不参与 DRAM 训练布线};
+
+    \node[soc] (boot) at (2.4,0.95)
+      {平台启动与固件控制};
+    \node[edge] (boot-edge) at (9.6,0.95)
+      {模块内固件；另有 BIOS\_SEL 133\\与 SPI pins 153--165};
+    \node[carrier] (boot-carrier) at (16.8,0.95)
+      {默认使用模块固件\\U18 是 DNP 的可选路径};
+
+    \node[soc] (rails) at (2.4,-0.15)
+      {模块核心电源轨与 SoC};
+    \node[edge] (vin) at (9.6,-0.15)
+      {VIN pins 250--260\\11 个并联功率触点};
+    \node[carrier] (vdc) at (16.8,-0.15)
+      {VDC：DC、USB-PD、UPS\\经过保护后的汇流点};
+
+    \draw[inside] (pcie.east) -- (hsio.west);
+    \draw[inside] (xhci.east) -- (usb.west);
+    \draw[inside] (display.east) -- (ddi.west);
+    \draw[inside] (serial.east) -- (slow.west);
+    \draw[inside] (pm.east) -- (control.west);
+    \draw[inside] (memory.east) -- (dram-local.west);
+    \draw[inside] (boot.east) -- (boot-edge.west);
+    \draw[inside,<-] (rails.east) -- (vin.west);
+
+    \draw[copper] (hsio.east) -- (pcie-devices.west);
+    \draw[copper] (usb.east) -- (usb-devices.west);
+    \draw[copper] (ddi.east) -- (hdmi.west);
+    \draw[copper] (slow.east) -- (headers.west);
+    \draw[copper] (control.east) -- (buttons.west);
+    \draw[copper] (boot-edge.east) -- (boot-carrier.west);
+    \draw[BookMuted,thick] (dram-local.east) -- (no-dram.west);
+    \draw[power,<-] (vin.east) -- (vdc.west);
+
+    \draw[inside] (boot.south) -- ++(0,-0.28) -| (rails.north);
+    \node[
+      draw=BookMuted,
+      fill=white,
+      rounded corners=1mm,
+      align=left,
+      text width=19cm,
+      anchor=north west
+    ] at (0.05,-0.85) {
+      虚线表示模块内部的功能关系。公开载板资料没有给出 N100/N305
+      封装球位、模块内层走线和电源时序细节，因此这里不冒充封装级原理图。
+      实线从 260-pin 边界开始，对应载板原理图中的真实网络；红线表示功率从
+      VDC 经 VIN 进入模块，方向与普通外设信号相反。
+    };
+  \end{tikzpicture}
+  \caption{CPU/SoC 到载板的总接线索引。先按行确定 SoC 中负责该事务的控制器，
+  再查中间列的 Mu 信号与物理 pin，最后追到右侧连接器或器件。}
+  \label{fig:carrier-soc-to-board-overview}
+\end{sidewaysfigure}
+
 \section{电源树、260-pin 接口与高速信号}
 
 信号电路只有在电源轨和参考地成立后才有意义。读板子的第一条路径应从输入
@@ -349,6 +489,89 @@ JP1 在与 \code{PSON}、\code{SLP\_S4} 相关的状态之间提供配置，经 
 或关机阶段，载板据此放行或关闭外设电源。若软件请求关机却永远强制 EN 为高，
 外设仍会耗电，状态机也会失去契约。
 
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      source/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=2.65cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      stage/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=2.8cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      module/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=3.1cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      flow/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      request/.style={BookBlue,thick,-{Latex[length=2mm]}},
+      return/.style={BookRed,thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.6,5.55)
+      {案例：功率进入模块以后，按键和状态线怎样决定外设电源};
+
+    \node[source] (dc) at (1.4,4.5)
+      {J17 DC\\F6、D15--D17};
+    \node[source] (pd) at (1.4,3.3)
+      {J18 USB-C PD\\U14、D18--D20};
+    \node[source] (ups) at (1.4,2.1)
+      {J19 UPS\\D30--D32};
+    \node[stage] (vdc) at (4.6,3.3) {VDC 汇流点};
+    \node[stage] (vin) at (7.8,3.3)
+      {Mu VIN\\pins 250--260};
+    \node[module] (pm) at (11.3,3.3)
+      {模块内待机电源\\与平台状态机};
+
+    \draw[flow] (dc.east) -| (vdc.west);
+    \draw[flow] (pd.east) -- (vdc.west);
+    \draw[flow] (ups.east) -| (vdc.west);
+    \draw[flow] (vdc.east) -- (vin.west);
+    \draw[flow,dashed] (vin.east) -- (pm.west);
+
+    \node[source] (sw1) at (1.4,0.45)
+      {SW1 瞬时拉低\\PWR\_SW\#};
+    \node[stage] (pin1) at (4.6,0.45) {Mu pin 1};
+    \draw[request] (sw1.east) -- (pin1.west);
+    \draw[request,dashed] (pin1.east) -| (pm.south);
+
+    \node[module] (state) at (11.3,1.45)
+      {PSON pin 5\\SLP\_S4 pin 7};
+    \node[stage] (enable) at (7.8,1.45)
+      {JP1、R46\\形成 PWR\_EN};
+    \node[source] (bucks) at (4.6,1.65)
+      {U15/U16 使能\\建立 +5V、+3V3};
+    \draw[return] (pm.south) -- (state.north);
+    \draw[return] (state.west) -- (enable.east);
+    \draw[return] (enable.west) -- (bucks.east);
+
+    \node[font=\scriptsize\color{BookMuted},align=left,text width=12.3cm]
+      at (6.6,-0.35) {
+        实线是载板上的真实功率或控制网络；进入模块后的虚线表示公开资料只给出
+        接口行为，没有给出模块内电源管理电路。按下 SW1 只是发出请求，
+        U15/U16 是否开启取决于模块返回的状态线和 JP1 配置。
+      };
+  \end{tikzpicture}
+  \caption{从三路输入到模块，再从模块状态返回载板稳压器的往返路径。它解释了
+  为什么“VIN 已有电”和“USB、网卡等外设电源已经打开”是两个不同状态。}
+  \label{fig:carrier-power-state-trace}
+\end{figure}
+
 \topic{5.8 USB 端口为什么各有自己的保险丝}
 四个 USB VBUS 分别经 F2--F5 从 5 V 供电。F4/F5 为 6 V、2 A 类器件，
 F2/F3 为 6 V、1 A 类器件。单端口短路时，独立保护可以限制故障向整个 5 V
@@ -464,6 +687,85 @@ Mu 信号 & pin & HDMI pin & 含义 \\ \hline
 GND/Shield & 地网/机壳策略 & 2/5/8/11/17/外壳 & 差分回流、低速参考和屏蔽 \\ \hline
 \end{osgridlongtable}
 
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      endpoint/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=2.7cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      pins/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=4.1cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      connector/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=3.2cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      tx/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      control/.style={
+        BookBlue,
+        thick,
+        {Latex[length=2mm]}-{Latex[length=2mm]}
+      },
+      detect/.style={BookRed,thick}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.55,4.95)
+      {案例：显示引擎不是只接四对 TMDS};
+    \node[endpoint] (engine) at (1.45,3.75)
+      {SoC 显示引擎\\DDI B};
+    \node[pins] (tmds) at (6.55,3.75)
+      {TX0/1/2/3 P/N\\Mu pins 197--217};
+    \node[connector] (j3) at (11.65,3.75)
+      {J3 HDMI\\pins 1--12};
+    \draw[tx,dashed] (engine.east) -- (tmds.west);
+    \draw[tx] (tmds.east) -- node[above]{四对 TMDS} (j3.west);
+
+    \node[endpoint] (ddc-engine) at (1.45,2.45)
+      {DDC 控制器\\读取 EDID};
+    \node[pins] (ddc) at (6.55,2.45)
+      {SCL pin 171\\SDA pin 169};
+    \node[connector] (ddc-j3) at (11.65,2.45)
+      {J3 pins 15/16\\显示器 DDC};
+    \draw[control,dashed] (ddc-engine.east) -- (ddc.west);
+    \draw[control] (ddc.east) -- (ddc-j3.west);
+
+    \node[endpoint] (detect-engine) at (1.45,1.15)
+      {热插拔检测\\与模式选择};
+    \node[pins] (hpd) at (6.55,1.15)
+      {HPD Mu pin 183\\HDMI\_5V 来自板上 +5V};
+    \node[connector] (hpd-j3) at (11.65,1.15)
+      {J3 pin 19 返回 HPD\\J3 pin 18 得到 5V};
+    \draw[detect,dashed,<-] (detect-engine.east) -- (hpd.west);
+    \draw[detect,<-] (hpd.east) -- (hpd-j3.west);
+
+    \node[font=\scriptsize\color{BookMuted},align=center,text width=12.5cm]
+      at (6.55,0.15) {
+        插入显示器时先有 5 V、HPD 和 DDC 事务；固件或驱动读取 EDID 并选择模式后，
+        显示引擎才在 TMDS 对上连续发送像素。三行是三种电气职责，不能合并成一根
+        “HDMI 总线”。
+      };
+  \end{tikzpicture}
+  \caption{从 SoC 显示功能到 Mu 引脚，再到 HDMI 连接器的三条并行路径。虚线
+  只表示模块内功能归属，实线对应载板原理图第 4 页。}
+  \label{fig:carrier-hdmi-trace}
+\end{figure}
+
 CEC pin 13 和 HEAC/reserved pin 14 明确 NC。它们出现在标准连接器上，不代表
 本设计必须实现。学习图保留 NC 状态，是为了避免读者误以为“原图少画两根”。
 
@@ -492,6 +794,92 @@ J5 下层 & 无 & 无 & Port 5 D+ 111、D- 109 \\ \hline
 C26--C29 均为 100 nF/16 V AC 耦合电容，位于模块的 SuperSpeed TX 方向。
 RX 方向由对端发送器负责相应耦合，不能因为图形看起来对称便随意在每条线上重复
 添加电容。
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      endpoint/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=2.8cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      pins/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=3.5cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      part/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=2.5cm,
+        minimum height=0.8cm,
+        align=center
+      },
+      bus/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      duplex/.style={
+        BookBlue,
+        thick,
+        {Latex[length=2mm]}-{Latex[length=2mm]}
+      },
+      supply/.style={BookRed,thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.6,5.5)
+      {案例：J4A 同时连接 SuperSpeed、USB2 和端口电源};
+    \node[endpoint] (xhci) at (1.4,4.2) {SoC xHCI\\与 USB PHY};
+    \node[pins] (txpins) at (5.2,4.2)
+      {HSIO0 TX\\pins 13/15};
+    \node[part] (caps) at (8.5,4.2)
+      {C27/C26\\100 nF};
+    \node[part] (sstx) at (11.8,4.2)
+      {J4A SSTX\\P/N};
+    \draw[bus,dashed] (xhci.east) -- (txpins.west);
+    \draw[bus] (txpins.east) -- (caps.west);
+    \draw[bus] (caps.east) -- (sstx.west);
+
+    \node[endpoint] (xhci-rx) at (1.4,2.95) {SoC SuperSpeed\\接收器};
+    \node[pins] (rxpins) at (5.2,2.95)
+      {HSIO0 RX\\pins 16/18};
+    \node[part] (ssrx) at (11.8,2.95)
+      {J4A SSRX\\P/N};
+    \draw[bus,dashed,<-] (xhci-rx.east) -- (rxpins.west);
+    \draw[bus,<-] (rxpins.east) -- (ssrx.west);
+    \node[font=\scriptsize\color{BookMuted}] at (8.5,3.45)
+      {接收方向不重复放 C26/C27};
+
+    \node[endpoint] (usb2) at (1.4,1.7)
+      {SoC USB2\\控制器/PHY};
+    \node[pins] (usb2pins) at (5.2,1.7)
+      {Port 2 D+/D-\\pins 75/73};
+    \node[part] (esd) at (8.5,1.7)
+      {低电容 ESD\\靠近插座};
+    \node[part] (dpdm) at (11.8,1.7)
+      {J4A D+/D-};
+    \draw[duplex,dashed] (usb2.east) -- (usb2pins.west);
+    \draw[duplex] (usb2pins.east) -- (esd.west);
+    \draw[duplex] (esd.east) -- (dpdm.west);
+
+    \node[endpoint] (five) at (1.4,0.45) {板上 +5V};
+    \node[pins] (fuse) at (5.2,0.45)
+      {该端口独立保险丝\\F2--F5 中的一路};
+    \node[part] (vbus) at (11.8,0.45)
+      {J4A VBUS\\与 GND 回流};
+    \draw[supply] (five.east) -- (fuse.west);
+    \draw[supply] (fuse.east) -- (vbus.west);
+  \end{tikzpicture}
+  \caption{一个 USB 3.x Type-A 插座的四条职责。高速发送、接收、USB2 和供电
+  分别追线，便能区分“完全不枚举”“只能以 USB2 工作”和“端口没有 VBUS”。}
+  \label{fig:carrier-usb-j4a-trace}
+\end{figure}
 
 每个插口的 VBUS 经独立保险丝从 5 V 获得，数据线靠近连接器经过低电容 ESD
 器件。VBUS 提供设备电源；D+/D- 和 SuperSpeed 对传数据；GND 提供信号参考和
@@ -533,6 +921,87 @@ Mu 的 TX 必须到扩展设备的 RX，扩展设备 TX 必须回到 Mu RX。不
 GND & 地平面 & 覆盖标准规定的所有返回触点和屏蔽参考 \\ \hline
 \end{osgridlongtable}
 
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      endpoint/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=2.9cm,
+        minimum height=0.82cm,
+        align=center
+      },
+      group/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        text width=4.25cm,
+        minimum width=4.75cm,
+        minimum height=0.82cm,
+        align=center
+      },
+      slot/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=3.6cm,
+        minimum height=0.82cm,
+        align=center
+      },
+      forward/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      backward/.style={BookBlue,very thick,{Latex[length=2mm]}-},
+      control/.style={BookRed,thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.55,5.85)
+      {案例：SoC 的四个 root-port lane 怎样落到 J2};
+    \node[endpoint] (root) at (1.45,4.55)
+      {SoC PCIe\\root complex};
+    \node[group] (tx) at (6.35,4.55)
+      {HSIO8--11 TX\\
+       pins 37/39、43/45、49/51、55/57\\
+       经 C1--C8 AC 耦合};
+    \node[slot] (pet) at (11.65,4.55)
+      {J2 PETp/n\\lane 0--3};
+    \draw[forward,dashed] (root.east) -- (tx.west);
+    \draw[forward] (tx.east) -- (pet.west);
+
+    \node[endpoint] (root-rx) at (1.45,2.95)
+      {SoC PCIe\\接收器};
+    \node[group] (rx) at (6.35,2.95)
+      {HSIO8--11 RX\\
+       pins 40/42、46/48、52/54、58/60};
+    \node[slot] (per) at (11.65,2.95)
+      {J2 PERp/n\\lane 0--3};
+    \draw[backward,dashed] (root-rx.east) -- (rx.west);
+    \draw[backward] (rx.east) -- (per.west);
+
+    \node[endpoint] (platform) at (1.45,1.35)
+      {平台时钟、复位\\与电源管理};
+    \node[group] (sideband) at (6.35,1.35)
+      {REFCLK2 pins 97/99\\PLT\_RST\# 105，PEWAKE\# 103};
+    \node[slot] (slot-sideband) at (11.65,1.35)
+      {J2 REFCLK、PERST\#\\WAKE\#};
+    \draw[control,dashed] (platform.east) -- (sideband.west);
+    \draw[control] (sideband.east) -- (slot-sideband.west);
+
+    \node[endpoint] (rails) at (1.45,0.1)
+      {VDC/+3V3\\载板电源树};
+    \node[group] (switch) at (6.35,0.1)
+      {Q7 受控形成 +12VA\\U16 形成 +3V3};
+    \node[slot] (slot-power) at (11.65,0.1)
+      {J2 12V、3.3V\\与全部 GND};
+    \draw[control] (rails.east) -- (switch.west);
+    \draw[control] (switch.east) -- (slot-power.west);
+  \end{tikzpicture}
+  \caption{PCIe x4 不是一条粗线。四条发送 lane、四条接收 lane、参考时钟、
+  复位、唤醒和电源分别到达 J2；其中只有发送方向的 C1--C8 位于本板。}
+  \label{fig:carrier-pcie-x4-trace}
+\end{figure}
+
 \topic{复位释放后仍不能立刻把 PCIe 当内存用}%
 根端口和设备先进行链路训练，协商速度和 lane 数。固件或内核随后枚举配置空间，
 读取 vendor/device ID，分配 BAR 地址窗口，配置中断与总线主控，驱动才可使用
@@ -558,6 +1027,85 @@ PCIe RX P/N & HSIO2 pins 28/30 & \code{PERp0/PERn0} \\ \hline
 供电 & \code{+3V3}/GND & 标准规定的全部供电与地触点 \\ \hline
 未用 & 未从模块接出 & SATA 与 \code{CLKREQ\#} 明确 NC \\ \hline
 \end{osgridlongtable}
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      module/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=3.15cm,
+        minimum height=0.82cm,
+        align=center
+      },
+      carrier/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=3.4cm,
+        minimum height=0.82cm,
+        align=center
+      },
+      device/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=3.1cm,
+        minimum height=0.82cm,
+        align=center
+      },
+      forward/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      backward/.style={BookBlue,very thick,{Latex[length=2mm]}-},
+      side/.style={BookRed,thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.55,5.55)
+      {案例：M Key NVMe 卡的一次 PCIe 物理连接};
+    \node[module] (root) at (1.55,4.25)
+      {SoC PCIe root\\HSIO2 TX 25/27};
+    \node[carrier] (caps) at (6.55,4.25)
+      {C49/C50\\220 nF AC 耦合};
+    \node[device] (nvme-rx) at (11.55,4.25)
+      {J15 PETp0/n0\\NVMe 接收器};
+    \draw[forward,dashed] (root.east) -- (caps.west);
+    \draw[forward] (caps.east) -- (nvme-rx.west);
+
+    \node[module] (root-rx) at (1.55,2.95)
+      {SoC PCIe RX\\HSIO2 pins 28/30};
+    \node[carrier] (direct-rx) at (6.55,2.95)
+      {载板直接布线\\本方向无 C49/C50};
+    \node[device] (nvme-tx) at (11.55,2.95)
+      {J15 PERp0/n0\\NVMe 发送器};
+    \draw[backward,dashed] (root-rx.east) -- (direct-rx.west);
+    \draw[backward] (direct-rx.east) -- (nvme-tx.west);
+
+    \node[module] (platform) at (1.55,1.35)
+      {REFCLK0 85/87\\原图交换 P/N\\PLT\_RST\# 105};
+    \node[carrier] (j15-side) at (6.55,1.35)
+      {J15 REFCLKp/n\\PERST\#、PEWAKE\#};
+    \node[device] (nvme-side) at (11.55,1.35)
+      {NVMe 时钟、复位\\与唤醒逻辑};
+    \draw[side] (platform.east) -- (j15-side.west);
+    \draw[side] (j15-side.east) -- (nvme-side.west);
+
+    \node[module] (software) at (1.55,-0.05)
+      {CPU 写 NVMe doorbell\\并读取完成队列};
+    \node[carrier] (bar) at (6.55,-0.05)
+      {PCIe 配置空间、BAR\\与 DMA 地址};
+    \node[device] (controller) at (11.55,-0.05)
+      {NVMe 控制器\\提交/完成队列};
+    \draw[BookMuted,thick,dashed,-{Latex[length=2mm]}]
+      (software.east) -- (bar.west);
+    \draw[BookMuted,thick,dashed,-{Latex[length=2mm]}]
+      (bar.east) -- (controller.west);
+  \end{tikzpicture}
+  \caption{M.2 M Key 上的 NVMe 案例。上三行是载板接线，最后一行是链路训练和
+  枚举以后才成立的软件事务；机械插入本身不会自动产生 BAR 和队列。}
+  \label{fig:carrier-mkey-nvme-trace}
+\end{figure}
 
 参考时钟 P/N 交换是原设计明确记录的选择，不能推广为所有差分对可任意交换。
 某些接收器或协议允许极性反转并在训练中恢复，另一些不允许；每条网络必须查询
@@ -602,6 +1150,86 @@ HSIO6 RX P/N & 64/66 & \code{HSOP/HSON}，网卡向主机的 PCIe 高速数据 \
 触点。磁性器件提供交流耦合、共模抑制和电气隔离，不能为了“少几个器件”把 PHY
 直接接到长网线。J6 的 LED0/LED1 显示 link/activity；金属外壳与数字 GND、
 机壳地之间的处理还影响 ESD 与 EMC。
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      block/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=2.45cm,
+        minimum height=0.9cm,
+        align=center
+      },
+      boundary/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=2.55cm,
+        minimum height=0.9cm,
+        align=center
+      },
+      hardware/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=2.55cm,
+        minimum height=0.9cm,
+        align=center
+      },
+      data/.style={
+        BookTeal,
+        very thick,
+        {Latex[length=2mm]}-{Latex[length=2mm]}
+      },
+      side/.style={BookRed,thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.55,4.9)
+      {案例：一帧数据跨过 PCIe 域和以太网线缆域};
+    \node[block] (root) at (1.25,3.55)
+      {SoC PCIe root\\与 DMA/APIC};
+    \node[boundary] (hsio6) at (4.7,3.55)
+      {HSIO6 TX 61/63\\RX 64/66};
+    \node[hardware] (rtl) at (8.15,3.55)
+      {U6 RTL8111H\\PCIe + MAC/PHY};
+    \node[hardware] (mag) at (11.6,3.55)
+      {J6 内置磁性\\四对 MDI};
+    \draw[data,dashed] (root.east) -- (hsio6.west);
+    \draw[data] (hsio6.east) -- (rtl.west);
+    \draw[data] (rtl.east) -- (mag.west);
+
+    \node[block] (clock) at (1.25,1.95)
+      {平台时钟\\与复位控制};
+    \node[boundary] (pins) at (4.7,1.95)
+      {REFCLK4 94/96\\PLT\_RST\# 105};
+    \node[hardware] (rtl-side) at (8.15,1.95)
+      {U6 REFCLK\\PERSTB/CLKREQB};
+    \node[hardware] (cable) at (11.6,1.95)
+      {RJ45 触点\\双绞网线};
+    \draw[side,dashed] (clock.east) -- (pins.west);
+    \draw[side] (pins.east) -- (rtl-side.west);
+    \draw[data] (mag.south) |- (cable.north);
+
+    \node[
+      draw=BookMuted,
+      fill=white,
+      rounded corners=1mm,
+      align=left,
+      text width=11.9cm
+    ] at (6.55,0.45) {
+      左半段传输 PCIe 事务，右半段传输以太网物理符号。RTL8111H 在中间完成
+      协议和电气域转换。收包时 U6 通过 DMA 写 RAM，再由中断通知 CPU；
+      发包时 CPU/驱动准备描述符，U6 读取内存并从四对 MDI 发出。
+    };
+  \end{tikzpicture}
+  \caption{CPU 到真实网口的接线链。PCIe lane 只到 RTL8111H，网线并不直接
+  连到 CPU；磁性器件也不是可省略的“普通连接器内部导线”。}
+  \label{fig:carrier-ethernet-trace}
+\end{figure}
 
 \topic{从一包网络数据到用户程序的完整链}%
 网线电压波形经磁性器件进入 PHY，PHY 恢复符号和帧，RTL8111H 经 DMA 把数据
@@ -663,6 +1291,87 @@ UART2 & Mu pin 140 到 pin 3 & Mu pin 138 到 pin 3 \\ \hline
 J14 提供 +3V3，J11 提供 GND，U10/U12 提供 ESD 保护。调试线连接时要交叉
 方向：板的 TX 接 USB-UART 适配器 RX，板的 RX 接适配器 TX，两边 GND 相连，
 并确认都是 3.3 V 逻辑。
+
+\begin{figure}[!htbp]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      module/.style={
+        draw=BookBlue,
+        fill=BookBlue!10,
+        rounded corners=1mm,
+        minimum width=2.55cm,
+        minimum height=0.78cm,
+        align=center
+      },
+      protection/.style={
+        draw=BookTeal,
+        fill=BookTeal!10,
+        rounded corners=1mm,
+        minimum width=2.35cm,
+        minimum height=0.78cm,
+        align=center
+      },
+      external/.style={
+        draw=BookAmber,
+        fill=BookAmber!18,
+        rounded corners=1mm,
+        minimum width=2.7cm,
+        minimum height=0.78cm,
+        align=center
+      },
+      tx/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      rx/.style={BookBlue,very thick,{Latex[length=2mm]}-},
+      ground/.style={BookMuted,thick}
+    ]
+    \node[font=\bfseries\color{BookNavy}] at (6.55,4.65)
+      {案例：UART0 调试线为什么必须交叉 TX/RX};
+    \node[module] (soc-tx) at (1.35,3.45)
+      {SoC UART0 TX\\Mu pin 139};
+    \node[protection] (tx-esd) at (4.55,3.45)
+      {U10/U12\\ESD 路径};
+    \node[protection] (j10) at (7.75,3.45)
+      {J10 pin 1\\板端 TX};
+    \node[external] (adapter-rx) at (11.45,3.45)
+      {USB-UART\\适配器 RX};
+    \draw[tx,dashed] (soc-tx.east) -- (tx-esd.west);
+    \draw[tx] (tx-esd.east) -- (j10.west);
+    \draw[tx] (j10.east) -- (adapter-rx.west);
+
+    \node[module] (soc-rx) at (1.35,2.15)
+      {SoC UART0 RX\\Mu pin 137};
+    \node[protection] (rx-esd) at (4.55,2.15)
+      {U10/U12\\ESD 路径};
+    \node[protection] (j8) at (7.75,2.15)
+      {J8 pin 1\\板端 RX};
+    \node[external] (adapter-tx) at (11.45,2.15)
+      {USB-UART\\适配器 TX};
+    \draw[rx,dashed] (soc-rx.east) -- (rx-esd.west);
+    \draw[rx] (rx-esd.east) -- (j8.west);
+    \draw[rx] (j8.east) -- (adapter-tx.west);
+
+    \node[module] (module-ground) at (1.35,0.85)
+      {Mu/载板 GND};
+    \node[protection] (j11) at (7.75,0.85)
+      {J11 GND};
+    \node[external] (adapter-ground) at (11.45,0.85)
+      {适配器 GND};
+    \draw[ground] (module-ground.east) -- (j11.west);
+    \draw[ground] (j11.east) -- (adapter-ground.west);
+
+    \node[font=\scriptsize\color{BookRed},align=left,text width=11.7cm]
+      at (6.55,-0.15) {
+        J14 的 +3V3 用于给外接低功耗逻辑提供参考或受控电源，不表示可以把
+        适配器的 5 V TX 接到 Mu。连接前先确认适配器 I/O 是 3.3 V，
+        再连接 TX、RX 和共同地。
+      };
+  \end{tikzpicture}
+  \caption{UART0 的实际调试接线。箭头沿发送方向画出，因此上行从 Mu 到适配器，
+  下行从适配器回到 Mu；同名 TX 对 TX 的接法会让两端都在发送、无人接收。}
+  \label{fig:carrier-uart0-debug-trace}
+\end{figure}
 
 \topic{13.3 SPI 与可选载板固件 Flash}
 \term{SPI}{Serial Peripheral Interface}常用时钟、片选和双向数据线进行同步

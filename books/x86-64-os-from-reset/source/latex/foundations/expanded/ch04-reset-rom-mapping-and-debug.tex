@@ -35,10 +35,11 @@ x86 处理器复位后并不是已经进入 64-bit mode。对本书当前路径�
   \draw[BookAmber,thick] (8.4,0.2) -- (8.4,1.35);
   \node[above,rotate=25,anchor=west] at (8.4,1.32) {\texttt{0xFFFE0000}};
   \draw[BookRed,very thick] (12.7,0.2) -- (12.7,1.55);
-  \node[BookRed,above,rotate=25,anchor=west] at (12.7,1.52)
-    {\texttt{0xFFFFFFF0} reset vector};
+  \node[BookRed,above,align=center] (resetlabel) at (10.8,1.75)
+    {reset vector\\\texttt{0xFFFFFFF0}};
+  \draw[BookRed,->,thick] (resetlabel.east) -- (12.7,1.52);
   \draw[BookMuted,thick] (13.0,0.2) -- (13.0,1.35);
-  \node[above,rotate=25,anchor=west] at (13.0,1.32) {\texttt{0xFFFFFFFF}};
+  \node[above,rotate=90,anchor=west] at (13.0,1.32) {\texttt{0xFFFFFFFF}};
 \end{tikzpicture}
 \end{center}
 

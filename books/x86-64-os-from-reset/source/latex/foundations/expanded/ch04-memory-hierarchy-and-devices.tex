@@ -134,9 +134,13 @@ amplifier 把微小差异放大并恢复内容。访问通常经历：
   \begin{scope}[xshift=6cm]
     \node[os block] (mc) at (0,2.0) {内存控制器\\调度命令};
     \node[os hardware] (dimm) at (3.6,2.0) {DIMM/DRAM\\多个 rank/bank};
-    \draw[os bus] (mc) -- node[above]{命令/地址/数据} (dimm);
-    \draw[os arrow,bend right=32] (dimm.south) to node[below]{训练结果与状态} (mc.south);
-    \node[align=center] at (1.8,0.3)
+    \draw[os bus] (mc.north) -- ++(0,0.55) -| (dimm.north);
+    \node[BookMuted,align=center,anchor=south] at (1.8,3.18)
+      {命令、地址与数据};
+    \draw[os arrow] (dimm.south) -- ++(0,-0.55) -| (mc.south);
+    \node[BookMuted,align=center,anchor=north] at (1.8,0.72)
+      {训练结果与状态};
+    \node[align=center] at (1.8,-0.55)
       {上电训练确定采样延迟、\\参考电压和 lane 对齐};
   \end{scope}
 \end{circuitikz}

@@ -66,7 +66,7 @@ QEMU 在这里模拟 CPU、RAM、ROM 与设备响应。上表中的初始化、�
   \node[os state,right=of segment] (base) {段基址\\DS \(\ll 4\)};
   \node[os hardware,right=20mm of offset] (sum) {线性地址\\base+offset};
   \node[os block,below=of sum] (a20) {A20 门\\处理 bit 20};
-  \node[os hardware,left=of a20] (physical) {物理地址\\送往平台译码};
+  \node[os hardware,below=of a20] (physical) {物理地址\\送往平台译码};
   \draw[os arrow] (operand) -- (offset);
   \draw[os arrow] (segment) -- (base);
   \draw[os arrow] (offset) -- (sum);
