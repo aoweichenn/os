@@ -53,6 +53,19 @@ OS_BOOK_CPU_FOUNDATION_FILE = (
     OS_BOOK_ROOT / "foundations" / "expanded"
     / "ch04-cpu-datapath-and-instruction-cycle.tex"
 )
+OS_BOOK_X86_RESET_MODEL_FILE = (
+    OS_BOOK_ROOT / "topics" / "x86-reset-model.tex"
+)
+OS_BOOK_REAL_MODE_MODEL_FILE = (
+    OS_BOOK_ROOT / "topics" / "real-mode-programming-model.tex"
+)
+OS_BOOK_LONG_MODE_INTRODUCTION_FILE = (
+    OS_BOOK_ROOT / "topics" / "long-mode-and-loader.tex"
+)
+OS_BOOK_PROTECTED_LONG_MODE_MODEL_FILE = (
+    OS_BOOK_ROOT / "topics"
+    / "protected-and-long-mode-programming-model.tex"
+)
 OS_BOOK_LOGIC_APPENDIX_FILE = (
     OS_BOOK_ROOT / "chapters" / "appendix-c-logic-timing-and-cdc.tex"
 )
@@ -168,6 +181,67 @@ def checkFoundationPlacement() -> None:
             raise SystemExit(
                 "硬件主线内容放置错误："
                 f"{forbiddenInput} 不能重新退回附录 C"
+            )
+
+
+def checkProcessorModeCoverage() -> None:
+    resetModelText = OS_BOOK_X86_RESET_MODEL_FILE.read_text(encoding="utf-8")
+    realModeText = OS_BOOK_REAL_MODE_MODEL_FILE.read_text(encoding="utf-8")
+    longModeIntroductionText = (
+        OS_BOOK_LONG_MODE_INTRODUCTION_FILE.read_text(encoding="utf-8")
+    )
+    protectedLongModeText = (
+        OS_BOOK_PROTECTED_LONG_MODE_MODEL_FILE.read_text(encoding="utf-8")
+    )
+
+    requiredInputs = (
+        (
+            resetModelText,
+            r"\input{topics/real-mode-programming-model}",
+            "实模式地址、寄存器、指令和 IVT 教程必须位于第 5 章主线",
+        ),
+        (
+            longModeIntroductionText,
+            r"\input{topics/protected-and-long-mode-programming-model}",
+            "32 位保护模式和 64 位模式教程必须位于第 8 章主线",
+        ),
+    )
+    for sourceText, requiredFragment, errorMessage in requiredInputs:
+        if requiredFragment not in sourceText:
+            raise SystemExit(f"处理器模式主线内容放置错误：{errorMessage}")
+
+    requiredRealModeFragments = (
+        r"\term{实地址模式}{real-address mode}",
+        r"\code{0x10FFEF}",
+        r"\code{66}",
+        r"\code{67}",
+        "Intel SDM Volume 3B 23.1.3",
+        r"\term{中断向量表}{interrupt vector table, IVT}",
+        r"\lstinputlisting[",
+    )
+    for requiredFragment in requiredRealModeFragments:
+        if requiredFragment not in realModeText:
+            raise SystemExit(
+                "实模式教程缺少名称、地址、位宽、指令、IVT 或项目代码："
+                f"{requiredFragment}"
+            )
+
+    requiredProtectedLongModeFragments = (
+        "80286",
+        "80386",
+        r"\term{保护模式}{protected mode}",
+        r"\term{长模式}{long mode}",
+        "REX.W",
+        "R8--R15",
+        "canonical",
+        "兼容子模式",
+        r"\lstinputlisting[",
+    )
+    for requiredFragment in requiredProtectedLongModeFragments:
+        if requiredFragment not in protectedLongModeText:
+            raise SystemExit(
+                "保护模式与长模式教程缺少历史、地址、编码、子模式或项目代码："
+                f"{requiredFragment}"
             )
 
 
@@ -381,6 +455,7 @@ def checkChapterPractice() -> None:
 def main() -> int:
     checkTypographyAndNavigation()
     checkFoundationPlacement()
+    checkProcessorModeCoverage()
     checkChapterEntrySequence()
     checkChapterPractice()
     visitedFiles: set[Path] = set()

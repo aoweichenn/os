@@ -1,8 +1,16 @@
 \topic{本章实验、故意破坏与练习}
 
 \begin{experimentbox}{在模式切换两侧记录状态}
-在写 CR0.PG 前和 64-bit 标签各停一次，记录 CR0、CR3、CR4、EFER、CS、RIP
-和 RSP，并手算当前指令和栈的页表路径。
+让配套启动镜像在写 CR0.PG 前、写入后但 far jump 前、64-bit 入口各停一次，
+记录 CR0、CR3、CR4、EFER、CS、RIP 和 RSP。分别写明当前是 32 位保护
+模式、IA-32e 兼容子模式还是 64 位子模式，再手算当前指令和栈的页表路径。
+\end{experimentbox}
+
+\begin{experimentbox}{解码选择子、描述符和 REX}
+从构建产物中读取选择子 \texttt{0x0008} 和代码描述符
+\texttt{0x00CF9A000000FFFF}，手算 index、RPL、base、有效 limit、L 与 D。
+进入 64 位入口后，再对比 \texttt{89 D8} 与 \texttt{48 89 D8}，核对
+目的寄存器、高 32 位和 REX.W 的作用。
 \end{experimentbox}
 
 \begin{faultinjectionbox}{漏映射 Kernel 入口}
@@ -10,16 +18,40 @@
 重启。补上目标页映射后再切 CR3。
 \end{faultinjectionbox}
 
+\begin{faultinjectionbox}{让长模式代码段同时设置 L 和 D}
+把目标代码描述符错误设置为 L=1、D=1。这个组合保留，不能作为合法 64 位
+代码段使用；far jump 应在到达 64 位入口前失败。恢复为 L=1、D=0，并核对
+选择子仍指向修复后的描述符。
+\end{faultinjectionbox}
+
 \begin{pitfallbox}
-先验证 ELF 再复制；先建页表再开 PG；far jump 才装入 L=1 代码段。
+先验证 ELF 再复制；先建页表再开 PG；LME=1 不等于 LMA=1；LMA=1 也不
+表示当前已经按 64 位解码；far jump 才装入 L=1、D=0 的代码段。
 \end{pitfallbox}
 
 \textbf{练习}
 \begin{enumerate}[leftmargin=2.2em]
-  \item 64 MiB 需要多少个 2 MiB PDE？
-  \item filesz=\texttt{1800}、memsz=\texttt{2000}，清零多少 byte？
-  \item CR4.PAE 是哪一位？
+  \item 64 MiB 需要多少个 2 MiB PDE？CR4.PAE 是哪一位？
+    filesz=\texttt{1800}、memsz=\texttt{2000} 时还要清零多少 byte？
+  \item 把选择子 \texttt{0x001B} 拆成 index、TI 和 RPL；描述符 raw
+    limit=\texttt{0x12345}、G=1 时，有效界限是多少？
+  \item 四级分页下，\texttt{0x0000800000000000} 是否 canonical？
+  \item 若 RAX=\texttt{0xFFFF000012345678}，执行
+    \code{mov eax, 1} 后 RAX 是多少？执行 \code{mov ax, 1} 又是多少？
+    \texttt{89 D8} 与 \texttt{48 89 D8} 分别写多宽的目的寄存器？
+  \item EFER.LME 已为 1、CR4.PAE 已为 1。刚把 CR0.PG 置一，当前
+    CS 仍为 L=0、D=1。此刻 LMA 是多少，下一条按多少位默认值解码？
 \end{enumerate}
 \begin{answerbox}
-1. 32；2. \texttt{800} byte；3. bit 5。
+\begin{enumerate}[leftmargin=2.2em]
+  \item 32 个 PDE；PAE 是 bit 5；清零 \texttt{0x800} byte。
+  \item index=3、TI=0、RPL=3；有效界限为
+    \((\texttt{0x12345}\ll12)|\texttt{0xFFF}
+    =\texttt{0x12345FFF}\)。
+  \item 否。bit 47=1，但 bit 63:48 没有扩展成全一。
+  \item 写 EAX 后为 \texttt{0x0000000000000001}；只写 AX 后为
+    \texttt{0xFFFF000012340001}。\texttt{89 D8} 写 EAX 并清 RAX
+    高 32 位；\texttt{48 89 D8} 带 REX.W，写完整 RAX。
+  \item LMA=1，已进入 IA-32e；当前仍是兼容子模式，按 32 位默认值解码。
+\end{enumerate}
 \end{answerbox}

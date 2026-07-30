@@ -1,0 +1,422 @@
+\topic{“保护模式”保护的是什么}
+\term{保护模式}{protected mode} 得名于硬件开始检查内存段、控制转移和
+特权边界。实模式中的段值直接参与地址加法；保护模式中的段寄存器保存
+\term{选择子}{selector}，选择子指向 GDT 或 LDT 中的描述符。描述符说明
+段基址、界限、代码或数据类型、可读写性、是否存在以及允许哪个特权级访问。
+
+“保护”不表示把 CR0.PE 置一后机器立刻安全。软件必须先建立正确的描述符表，
+为内核和用户代码选择特权级，安装异常入口，并在需要时建立带权限的页表。
+如果所有段覆盖整个地址空间、所有页都可写、所有程序都运行在 ring 0，CPU
+虽然处于保护模式，程序之间仍没有实际隔离。
+
+80286 首先把保护模式带入 x86，但它仍以 16 位代码为主。它把物理地址扩到
+24 位，可访问 16 MiB，并引入描述符表、四个特权环、任务状态与保护式中断。
+早期 286 退出保护模式的正式路径十分笨重，常需借助复位；这也说明保护模式
+最初被设想为操作系统长期驻留的环境，不是每个函数临时打开的开关。
+
+\topic{80386 怎样在不抛弃 16 位软件的前提下扩展到 32 位}
+80386 没有重新设计一套互不兼容的寄存器和指令。它在原状态外面继续加宽，
+再让代码段属性和指令前缀选择本条代码使用旧宽度还是新宽度：
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.30\linewidth}L{0.36\linewidth}}
+被扩展的部分 & 80386 的做法 & 为什么旧代码仍能运行 \\ \hline
+\endfirsthead
+被扩展的部分 & 80386 的做法 & 为什么旧代码仍能运行 \\ \hline
+\endhead
+通用寄存器 & AX 外扩成 EAX，其他七个寄存器同样外扩 &
+旧操作码仍可只访问低 16 位 AX \\ \hline
+指令指针与标志 & IP/FLAGS 外扩成 EIP/EFLAGS &
+16 位代码仍按低 16 位控制流和旧标志语义运行 \\ \hline
+默认操作数和地址 & 代码段描述符增加 D 位 &
+D=0 默认 16 位，D=1 默认 32 位 \\ \hline
+单条指令切换宽度 & 增加 \code{66} 与 \code{67} 前缀 &
+16 位段可临时用 32 位，32 位段也可临时用 16 位 \\ \hline
+有效地址 & 加入 32 位 base、index、scale、displacement 和 SIB &
+原 16 位 BX/BP/SI/DI 编码保持原义 \\ \hline
+段基址与界限 & 描述符支持 32 位基址、20 位 limit 和 G 粒度 &
+16 位段仍可保持 64 KiB，32 位平坦段可覆盖 4 GiB \\ \hline
+物理地址 & 386DX 提供 32 位物理地址空间 &
+分页关闭时可直接到 4 GiB；旧机器地址仍落在低端 \\ \hline
+虚拟内存 & 增加 CR3 和两级 4 KiB 分页 &
+分页由 CR0.PG 单独开启，不强迫旧保护模式代码使用 \\ \hline
+额外段寄存器 & 增加 FS 与 GS &
+CS、DS、SS、ES 的旧编码与用途不变 \\ \hline
+旧 8086 程序 & 增加 virtual-8086 环境 &
+保护模式操作系统可把旧程序放在受分页控制的任务中运行 \\ \hline
+\end{osgridlongtable}
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os hardware,minimum width=22mm] (al) {AL\\8 位};
+  \node[os state,right=of al,minimum width=25mm] (ax) {AX\\低 16 位};
+  \node[os block,right=of ax,minimum width=28mm] (eax) {EAX\\32 位};
+  \node[os state,below=of ax,minimum width=25mm] (ah) {AH\\bit 15:8};
+  \draw[os arrow] (al) -- (ax);
+  \draw[os arrow] (ah) -- (ax);
+  \draw[os arrow] (ax) -- (eax);
+\end{tikzpicture}
+\end{center}
+\diagramnote{EAX 不是与 AX 平行的第二个寄存器。写 AX 改变 EAX 的低
+16 位而保留高 16 位；写 AL 或 AH 只改变相应 byte。}
+
+这种扩展方式解释了为什么本项目能在实模式读写 EAX，也解释了进入 D=1 的
+32 位代码段后，原来的 16 位形式仍可通过 \code{66} 使用。处理器模式、
+代码段默认值与单条指令宽度始终是三层状态。
+
+\topic{选择子怎样找到一个受检查的段}
+保护模式的 16 位选择子不再表示 \(segment\ll4\)。其低两位是请求特权级
+RPL，bit 2 是表指示 TI，其余 13 位是描述符索引：
+\[
+  selector=(index\ll3)\;|\;(TI\ll2)\;|\;RPL.
+\]
+项目的代码选择子 \code{0x0008} 拆开以后：
+\[
+  index=1,\qquad TI=0,\qquad RPL=0.
+\]
+所以它选择 GDT 第 1 项，并以 ring 0 请求访问。数据选择子
+\code{0x0010} 的 index 为 2。
+
+\begin{pdfdiagram}
+  \node[os state] (selector) {段选择子\\index, TI, RPL};
+  \node[os block,right=of selector] (table) {GDT 或 LDT\\8-byte 描述符};
+  \node[os state,right=of table] (cache) {隐藏段缓存\\base, limit, attributes};
+  \node[os block,below=of cache] (offset) {EIP/ESP/有效偏移};
+  \node[os hardware,left=of offset] (linear) {线性地址\\base+offset};
+  \node[os block,left=of linear] (paging) {可选分页\\linear \(\to\) physical};
+  \draw[os arrow] (selector) -- (table);
+  \draw[os arrow] (table) -- (cache);
+  \draw[os arrow] (cache) -- (linear);
+  \draw[os arrow] (offset) -- (linear);
+  \draw[os arrow] (linear) -- (paging);
+\end{pdfdiagram}
+\diagramnote{加载段寄存器时，CPU 检查描述符并缓存 base、limit 和属性。
+以后每次访问使用隐藏缓存，不会每条指令重新读取 GDT。}
+
+8-byte 代码/数据描述符包含 32 位 base、20 位原始 limit、类型、S、DPL、
+P、AVL、L、D/B 和 G。G=0 时 limit 按 byte 计；G=1 时：
+\[
+  effective\_limit=(raw\_limit\ll12)\;|\;0xFFF.
+\]
+本项目 32 位代码描述符为 \code{0x00CF9A000000FFFF}。其中 base=0，
+raw limit=\code{0xFFFFF}，G=1，所以有效界限为 \code{0xFFFFFFFF}；
+P=1、DPL=0、S=1、type 表示可读可执行代码，L=0、D=1。它建立的是
+base 为零、覆盖 4 GiB、默认 32 位的 ring 0 代码段。
+
+\topic{32 位保护模式的地址到底有多少位}
+在本项目的平坦段模型中，CS、DS、ES 和 SS 对应描述符的 base 都为零，limit
+覆盖 \code{0x00000000..0xFFFFFFFF}。因此 32 位有效偏移与线性地址数值
+相同，但 CPU 仍完成描述符类型、界限和权限检查。
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.18\linewidth}L{0.48\linewidth}}
+量 & 32 位基线 & 含义 \\ \hline
+\endfirsthead
+量 & 32 位基线 & 含义 \\ \hline
+\endhead
+段选择子 & 16 位 &
+包含 13 位索引、TI 与 RPL，不直接成为地址高位 \\ \hline
+段描述符 base & 32 位 &
+加到有效偏移上，项目平坦段把它设为零 \\ \hline
+默认有效地址 & 32 位 &
+由 EAX--EDI、SIB、位移或 EIP/ESP 等形成 \\ \hline
+线性地址 & 32 位 &
+范围为 \code{0x00000000..0xFFFFFFFF}，共 4 GiB \\ \hline
+物理地址 & 386DX 为 32 位 &
+分页关闭时等于线性地址；后来 PAE 处理器可实现更多物理位 \\ \hline
+页内偏移 & 12 位 &
+传统 4 KiB 页的低位，不参加页表索引 \\ \hline
+页目录/页表索引 & 各 10 位 &
+传统两级分页用 \(10+10+12=32\) 位覆盖 4 GiB \\ \hline
+默认操作数 & 8 或 32 位 &
+D=1 时普通整数形式默认使用 32 位；\code{66} 可临时选择 16 位 \\ \hline
+\end{osgridlongtable}
+
+\begin{workedexample}
+项目数据选择子为 \code{0x0010}，描述符 base=0、limit=
+\code{0xFFFFFFFF}。执行 \code{mov eax, [ebx+esi*4+8]}，若
+\code{EBX=0x00100000}、\code{ESI=3}：
+\[
+  offset=0x00100000+3\times4+8=0x00100014.
+\]
+DS base 为零，线性地址仍是 \code{0x00100014}。分页尚未开启时，物理地址
+也等于 \code{0x00100014}；打开分页以后，同一个线性地址还要由 CR3 指向的
+页表翻译。
+\end{workedexample}
+
+\topic{特权环、描述符和分页怎样形成保护}
+x86 定义 ring 0 到 ring 3 四个特权级，数字越小权限越高。CPL 来自当前
+CS 的低两位，描述符携带 DPL，选择子还携带 RPL。不同访问类型使用不同的
+比较规则，因此不能把所有检查简化成“数字小就能访问”。
+
+\begin{osgridlongtable}{L{0.20\linewidth}L{0.27\linewidth}L{0.43\linewidth}}
+检查位置 & 主要字段 & 能阻止什么 \\ \hline
+\endfirsthead
+检查位置 & 主要字段 & 能阻止什么 \\ \hline
+\endhead
+代码/数据描述符 & type、DPL、P、limit &
+向数据段取指、向只读段写入、越界或访问不存在的段 \\ \hline
+控制转移 & CPL、RPL、DPL、门描述符 &
+低权限代码直接跳入高权限入口或伪造返回状态 \\ \hline
+页表 & P、RW、US，后续还有 NX &
+访问未映射页、用户访问 supervisor 页或违反读写权限 \\ \hline
+I/O 权限 & IOPL 与 TSS I/O bitmap &
+低权限程序直接操作设备端口 \\ \hline
+系统指令 & 当前模式与 CPL &
+用户程序改 CR3、关闭保护或重写描述符表 \\ \hline
+\end{osgridlongtable}
+
+分页在保护模式中是可选的。PE=1、PG=0 时，描述符仍然检查访问，线性地址
+直接成为物理地址；PE=1、PG=1 时，页表再做一层映射和权限检查。项目先进入
+无分页的 32 位保护模式，用这个较简单的环境构造页表，之后才打开 PG。
+
+\topic{32 位保护模式能执行哪些指令}
+进入 D=1 的代码段以后，原有整数、控制流、栈、字符串和端口指令仍然存在，
+但默认寄存器与偏移扩成 EAX、EIP、ESP 和 32 位有效地址。
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.31\linewidth}L{0.37\linewidth}}
+类别 & 典型指令 & 相比实模式新增或改变的重点 \\ \hline
+\endfirsthead
+类别 & 典型指令 & 相比实模式新增或改变的重点 \\ \hline
+\endhead
+普通计算 & MOV、ADD、SUB、IMUL、DIV、AND、OR、XOR、SHIFT &
+32 位操作数成为默认，16 位形式使用 \code{66} \\ \hline
+32 位寻址 & LEA、所有带 ModR/M/SIB 的内存形式 &
+基址加变址乘比例，再加位移，可覆盖 4 GiB 段内偏移 \\ \hline
+过程与栈 & CALL、RET、PUSH、POP、ENTER、LEAVE &
+默认保存 EIP，ESP 每次按操作数宽度移动 \\ \hline
+保护式中断 & INT、IRET、32 位 IDT gate &
+门描述符检查特权，可切换到 TSS 提供的高权限栈 \\ \hline
+描述符管理 & LGDT、LIDT、LLDT、LTR、LAR、LSL、VERR、VERW &
+装入或检查全局、局部和任务相关描述符状态 \\ \hline
+分页与控制 & MOV CRn、INVLPG、CLTS &
+选择页表根、使局部翻译失效或管理浮点任务状态 \\ \hline
+系统调用入口 & call gate、INT；后续 CPU 还可提供 SYSENTER/SYSEXIT &
+从 ring 3 进入 ring 0 时由硬件检查入口和栈状态 \\ \hline
+原子与同步 & LOCK、XCHG、CMPXCHG、XADD、CMPXCHG8B &
+为多处理器共享内存提供原子读改写基础 \\ \hline
+\end{osgridlongtable}
+
+具体指令仍受处理器代际和 CPUID 约束。保护模式不是“所有指令都可执行”的
+万能状态；VMX、SSE、AVX、MSR 等各有控制位、特权与功能检查。相反，一些
+系统指令在 ring 3 会产生 \(\#GP\)，正是保护模式发挥作用的表现。
+
+\topic{项目怎样从 16 位入口进入 32 位保护模式}
+下面这段正式代码横跨两个默认解码环境：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=65,
+  lastline=82,
+  caption={CR0.PE 与 far jump 分别改变什么}
+]{../../../../source/boot/stage1/src/entry.asm}
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.26\linewidth}L{0.45\linewidth}}
+步骤 & 执行后的关键状态 & 为什么下一步依赖它 \\ \hline
+\endfirsthead
+步骤 & 执行后的关键状态 & 为什么下一步依赖它 \\ \hline
+\endhead
+\code{lgdt [memory]} & GDTR 指向项目 GDT，仍是实模式 &
+PE 置一后，far jump 的选择子需要从这里取得描述符 \\ \hline
+\code{mov eax, cr0} & EAX 保存旧 CR0 &
+必须保留未打算改变的控制位 \\ \hline
+\code{or eax, 1} & 只在 EAX 候选值中设置 PE &
+CPU 仍在实模式，可以在写回前检查计算结果 \\ \hline
+\code{mov cr0, eax} & CR0.PE=1 &
+保护模式规则开始生效，但 CS 仍保留旧隐藏状态 \\ \hline
+far \code{jmp 0x0008:target} & CS 选择 GDT 第 1 项，D=1 &
+刷新取指路径，目标开始按 32 位默认宽度解码 \\ \hline
+\code{mov ds/es/ss, 0x0010} & 数据和栈段采用 GDT 第 2 项 &
+后续内存与栈访问不再依赖实模式遗留段缓存 \\ \hline
+\code{mov esp, 0x7000} & 32 位栈顶确定 &
+CALL 和异常才有已知的保存位置 \\ \hline
+\end{osgridlongtable}
+
+源码中的 \code{[bits 32]} 不会修改 CPU。它告诉 NASM：“下面标签将由
+D=1 的代码段执行，请按 32 位默认值编码。”若 far jump 选中的描述符仍是
+D=0，CPU 会用 16 位默认值解释同一串 byte，汇编器意图与机器状态便分离。
+
+\topic{从 32 位扩展到 64 位时，哪些部分继续兼容}
+AMD64 再次采用“保留旧编码，增加可选择的宽度和寄存器”的办法。AMD 手册把
+新环境称为 \term{长模式}{long mode}，并把它分成 64 位子模式和兼容子模式。
+所以“长模式”不是“每条指令都操作 64 位”的同义词，而是容纳新 64 位执行
+环境和旧 16/32 位程序的上层状态。
+
+\begin{osgridlongtable}{L{0.23\linewidth}L{0.31\linewidth}L{0.36\linewidth}}
+扩展对象 & AMD64 的做法 & 兼容策略 \\ \hline
+\endfirsthead
+扩展对象 & AMD64 的做法 & 兼容策略 \\ \hline
+\endhead
+通用寄存器 & EAX 外扩为 RAX，并增加 R8--R15 &
+旧名称继续选择低 8/16/32 位 \\ \hline
+指令指针和栈 & EIP/ESP 外扩为 RIP/RSP &
+兼容子模式仍按旧代码段属性执行 16/32 位程序 \\ \hline
+指令编码 & 增加 REX 前缀的 W、R、X、B 位 &
+旧操作码主体保留，64 位子模式才把 \code{0x40..0x4F} 解释为 REX \\ \hline
+地址计算 & 默认地址宽度扩为 64 位，并增加 RIP-relative &
+\code{67} 可选择 32 位地址形式，旧 SIB 结构继续使用 \\ \hline
+分段 & CS/DS/ES/SS 的 base 在 64 位子模式中按零处理 &
+FS/GS base 保留，兼容子模式仍使用旧分段语义 \\ \hline
+分页 & PAE 表项扩成四级长模式页表 &
+兼容子模式和 64 位子模式共享同一 IA-32e 页表体系 \\ \hline
+控制转移与中断 & 64 位 IDT gate、RIP、RSP、TSS/IST &
+旧应用可在兼容子模式运行，由 64 位内核处理事件 \\ \hline
+\end{osgridlongtable}
+
+在旧模式中，单字节 \code{0x40..0x4F} 曾编码 INC/DEC 寄存器。64 位子模式
+把这段编码空间解释为 REX：
+\[
+  \underbrace{0100}_{REX\ 标识}\;W\;R\;X\;B.
+\]
+W 选择 64 位操作数；R、X、B 分别扩展 ModR/M 的 reg、SIB index 和
+base/rm 字段，使原来的 3-bit 寄存器编号能够选择 R8--R15。旧 INC/DEC
+仍可用通用的 ModR/M 编码表达，因此没有丢失运算能力。
+
+\begin{workedexample}
+\code{89 D8} 在 64 位子模式中表示 \code{mov eax, ebx}。加上
+\code{REX.W=0x48} 后，\code{48 89 D8} 表示
+\code{mov rax, rbx}。ModR/M 的源、目的关系没有重写，REX.W 只把操作数
+宽度提升为 64 位。
+\end{workedexample}
+
+\topic{64 位模式中的“默认 64 位”只对了一半}
+64 位子模式的默认地址宽度是 64 位，但多数普通整数指令的默认操作数宽度仍是
+32 位。\code{REX.W} 通常选择 64 位操作数；\code{66} 可选择 16 位。
+byte 指令继续操作 8 位。
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.20\linewidth}L{0.46\linewidth}}
+项目 & 64 位子模式的规则 & 例子 \\ \hline
+\endfirsthead
+项目 & 64 位子模式的规则 & 例子 \\ \hline
+\endhead
+默认地址宽度 & 64 位 & \code{[rbx+rsi*4+8]} \\ \hline
+\code{67} 地址覆盖 & 32 位，结果按规则扩展到线性地址 &
+\code{[ebx+esi*4+8]} \\ \hline
+普通整数默认操作数 & 32 位 & \code{mov eax, ebx} \\ \hline
+\code{REX.W} 操作数 & 64 位 & \code{mov rax, rbx} \\ \hline
+\code{66} 操作数覆盖 & 通常选择 16 位 & \code{mov ax, bx} \\ \hline
+近 CALL/RET、PUSH/POP & 栈项通常为 64 位 &
+RSP 每压入一个返回 RIP 减 8 \\ \hline
+写 32 位通用寄存器 & 结果零扩展到完整 64 位寄存器 &
+\code{mov eax, 1} 令 RAX=\code{0x0000000000000001} \\ \hline
+写 16/8 位子寄存器 & 保留其余高位 &
+\code{mov ax, 1} 只替换 RAX 低 16 位 \\ \hline
+\end{osgridlongtable}
+
+写 EAX 自动清 RAX 高 32 位，是 AMD64 新增的重要规则。它避免普通 32 位
+结果依赖旧高位，也让 CPU 更容易消除部分寄存器依赖。写 AX、AL 或 AH 没有
+同样的清高位效果。
+
+使用任何 REX 前缀时，传统高 byte 寄存器 AH、BH、CH、DH 不能在该指令中
+编码；相应编码位置用于 SPL、BPL、SIL、DIL。这是扩展寄存器编码必须付出的
+兼容代价，汇编器报错时不能把它误解为寄存器本身消失。
+
+\topic{64 位虚拟地址和物理地址都没有简单等于 64 位}
+长模式要求分页开启，不存在本项目可使用的“关闭分页的 64 位子模式”。CPU
+先检查线性地址是否 canonical，再用 CR3 指向的长模式页表翻译。
+
+本项目使用四级页表，对应 48 位 canonical 虚拟地址。bit 63:48 必须全部
+复制 bit 47：
+
+\begin{osgridlongtable}{L{0.30\linewidth}L{0.19\linewidth}L{0.41\linewidth}}
+地址 & 是否 canonical & 原因 \\ \hline
+\endfirsthead
+地址 & 是否 canonical & 原因 \\ \hline
+\endhead
+\code{0x00007FFFFFFFF000} & 是 &
+bit 47=0，高 16 位全零 \\ \hline
+\code{0xFFFF800000001000} & 是 &
+bit 47=1，高 16 位全一 \\ \hline
+\code{0x0000800000000000} & 否 &
+bit 47=1，但高 16 位没有符号扩展为全一 \\ \hline
+\code{0xFFFF7FFFFFFFFFFF} & 否 &
+bit 47=0，但高 16 位不是全零 \\ \hline
+\end{osgridlongtable}
+
+四级索引使用 bit 47:39、38:30、29:21、20:12，低 12 位是 4 KiB
+页内偏移。支持 LA57 的处理器还可采用五级、57 位 canonical 地址，但项目
+当前没有开启 CR4.LA57。
+
+物理地址宽度由具体 CPU 的 CPUID 报告，常见实现少于 64 位。页表项虽然是
+64 位，也只有其中一段 bit 保存物理页框号，其他位承担权限、缓存、访问和
+执行禁止等属性。因此“64 位 CPU”不能推出“可安装 \(2^{64}\) byte RAM”。
+本项目的软件规格按 64 GiB 物理内存设计，架构接口保留继续扩展的能力。
+
+\topic{64 位子模式中的分段、指令和系统入口}
+在 64 位子模式中，CS、DS、ES 和 SS 的 base 按零处理，普通代码采用平坦
+线性地址；FS 与 GS 仍可通过 MSR 保存 64 位 base，适合线程本地状态和
+CPU-local 数据。CS 描述符的 L=1 选择 64 位子模式，且 D 必须为零。
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.31\linewidth}L{0.37\linewidth}}
+类别 & 典型指令或形式 & 64 位子模式的重点 \\ \hline
+\endfirsthead
+类别 & 典型指令或形式 & 64 位子模式的重点 \\ \hline
+\endhead
+64 位整数 & 带 REX.W 的 MOV、ADD、SUB、IMUL、AND、OR、XOR、SHIFT &
+操作 RAX--R15；许多立即数仍只有 32 位并符号扩展 \\ \hline
+位置无关寻址 & RIP-relative LEA/MOV &
+把下一条 RIP 加位移，便于访问附近代码和数据 \\ \hline
+调用和返回 & CALL、RET、JMP、Jcc &
+near 控制流使用 RIP；直接 near 分支通常仍编码相对 8/32 位位移 \\ \hline
+栈 & PUSH、POP、CALL、RET &
+使用 RSP，返回地址和常见栈项为 8 byte \\ \hline
+快速系统调用 & SYSCALL、SYSRET；Intel 还提供 SYSENTER/SYSEXIT &
+入口 MSR、权限、RCX/R11 与栈切换必须由内核安排 \\ \hline
+CPU-local 切换 & SWAPGS &
+在用户 GS base 与内核 GS base 之间切换，不能当作普通数据交换 \\ \hline
+中断和异常 & 16-byte IDT gate、IRETQ、TSS/IST &
+保存 64 位 RIP/CS/RFLAGS/RSP/SS，并可切换到专用栈 \\ \hline
+扩展状态 & x87、SSE、AVX 等 &
+继续由 CPUID、CR0、CR4 和 XCR0 决定可用性 \\ \hline
+\end{osgridlongtable}
+
+一些历史形式在 64 位子模式中无效，例如 PUSHA/POPA、LDS/LES、BOUND、
+INTO，以及 AAA/AAS/DAA/DAS 等旧十进制调整指令。遇到具体指令时仍应查看
+Intel Volume 2 或 AMD Volume 3 的 mode 表，不能只凭助记符年代猜测。
+
+\topic{兼容子模式不是保护模式退回 32 位}
+IA-32e 激活后，代码段 L=0 时运行兼容子模式。D=1 的段按 32 位默认值解码，
+D=0 的段可运行 16 位代码；它们继续使用当前长模式页表。64 位操作系统因此
+可以在同一分页环境下运行旧应用。
+
+兼容子模式不能执行 64 位操作数形式或使用 R8--R15，也不能直接利用 64 位
+RIP；它与普通 32 位保护模式的关键区别在于 IA-32e 已激活、分页格式已经是
+长模式格式，并由 64 位系统管理全局环境。AMD 手册还明确指出，长模式不支持
+real mode 或 virtual-8086 mode；要回到它们，必须先退出长模式。
+
+本项目打开 CR0.PG 后，EFER.LMA 变为 1，但当前 CS 仍是 L=0、D=1，所以
+CPU 短暂处于 32 位兼容子模式。far jump 装入 L=1 的代码段以后，目标才按
+64 位子模式解码。
+
+\topic{项目怎样从保护模式进入 64 位子模式}
+项目先在 32 位保护模式完成页表、PAE 和 LME，再打开分页并远跳：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=90,
+  lastline=105,
+  caption={32 位入口依次建立 PAE、LME、PG，再执行 far jump}
+]{../../../../source/boot/stage1/src/entry.asm}
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=258,
+  lastline=285,
+  caption={PG 置位后的回读检查与 64 位入口}
+]{../../../../source/boot/stage1/src/entry.asm}
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.28\linewidth}L{0.45\linewidth}}
+状态点 & 此刻的模式与默认解码 & 为什么还没到下一状态 \\ \hline
+\endfirsthead
+状态点 & 此刻的模式与默认解码 & 为什么还没到下一状态 \\ \hline
+\endhead
+CR4.PAE=1 & 32 位保护模式 & 只允许使用 PAE/长模式页表格式，LME 仍为零 \\ \hline
+CR3=PML4 & 32 位保护模式 & 页表根已选择，但 PG 尚未开启 \\ \hline
+EFER.LME=1 & 32 位保护模式 & 只表示请求长模式，LMA 仍为零 \\ \hline
+CR0.PG=1 & IA-32e 已激活，CS.L=0，兼容子模式 &
+LMA=1，但当前代码段仍按 32 位默认值解码 \\ \hline
+far jump 到 L=1 段 & 64 位子模式 &
+CS 隐藏属性已经重载，目标 byte 才按 64 位环境解释 \\ \hline
+\end{osgridlongtable}
+
+顺序不能交换。LME=1 时用不合要求的分页状态打开 PG 会产生 \(\#GP\)；
+页表若未映射当前 EIP、栈或 far jump 目标，开启 PG 后的取指和保存现场会
+失败；把 \code{[bits 64]} 标签提前不会修复任何硬件状态。

@@ -4,9 +4,11 @@ ROM 空间有限，真正的内核保存在磁盘镜像中。Stage 1 要读取 A
 ELF、安置各个段，打开 A20 和 PAE，建立最初页表，最后切换到长模式并跳入
 C++ 入口。本章沿启动日志逐步核对每一次状态变化。
 
-\chapterroute{Stage 1 入口和内存布局 $\rightarrow$ ATA 读取与超时
-$\rightarrow$ ELF 段检查和装载 $\rightarrow$ A20、GDT、PAE 与页表
-$\rightarrow$ 长模式远跳转 $\rightarrow$ BootInfo 和 Kernel 入口。}
+\chapterroute{16 位如何兼容扩展到 32 位 $\rightarrow$ “保护模式”和
+“长模式”的名称 $\rightarrow$ 32 位保护模式的地址、寄存器与指令
+$\rightarrow$ IA-32e 兼容子模式与 64 位子模式
+$\rightarrow$ ATA、ELF、A20、GDT、PAE 与页表
+$\rightarrow$ 长模式远跳转、BootInfo 和 Kernel 入口。}
 
 \input{topics/long-mode-and-loader}
 \input{topics/stage1-implementation}

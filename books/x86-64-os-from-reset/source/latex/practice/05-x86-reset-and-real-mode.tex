@@ -1,8 +1,17 @@
 \topic{本章实验、故意破坏与练习}
 
 \begin{experimentbox}{单步复位 near jump}
-从 \texttt{FFFFFFF0} 读取三个 byte，记录跳转前后的 CS、EIP、CS 隐藏基址和
-物理取指地址，验证目标是 \texttt{FFFFF000}。
+让配套 QEMU 实验镜像在复位入口暂停，连接 GDB。从
+\texttt{FFFFFFF0} 读取三个 byte，记录跳转前后的 CS、EIP、CS 隐藏基址和
+物理取指地址，验证目标是 \texttt{FFFFF000}。不要从汇编标签反推结果，要
+先从 \texttt{E9 0D F0} 独立计算。
+\end{experimentbox}
+
+\begin{experimentbox}{区分操作数覆盖和地址覆盖}
+在 16 位 Stage 1 中各找一条使用 EAX 的寄存器指令和一条 16 位内存指令。
+记录机器 byte、默认操作数宽度、默认地址宽度、是否出现 \texttt{66} 或
+\texttt{67}，再单步核对实际改变的寄存器和访问地址。最后把“使用 EAX”
+与“进入保护模式”分别写成两条结论。
 \end{experimentbox}
 
 \begin{faultinjectionbox}{删除 CLD}
@@ -10,17 +19,43 @@
 \code{cld} 后 SI 应逐 byte 增加。
 \end{faultinjectionbox}
 
+\begin{faultinjectionbox}{让 A20 保持关闭}
+跳过端口 \code{0x92} 的 A20 使能写入，但保留低地址与
+\code{FFFF:0010} 的别名检查。预期两个测试位置相互覆盖，Stage 1 输出
+\code{A20\_INVALID} 并停机，不得继续打印 GDT 或保护模式成功标记。
+\end{faultinjectionbox}
+
 \begin{pitfallbox}
 复位 CS hidden base 不是 \(CS\ll4\)；near jump 不重装 CS；A20 影响第 21
-个地址 bit。
+个地址 bit；\code{66} 改变操作数宽度，\code{67} 改变有效地址算法；
+普通实模式段的界限仍为 \code{0xFFFF}。
 \end{pitfallbox}
 
 \textbf{练习}
 \begin{enumerate}[leftmargin=2.2em]
-  \item 求 \texttt{FFFF:0010} 的数学地址。
-  \item \texttt{FFFD} 作为 rel16 是多少？
-  \item SP=\texttt{7000}，CALL 压两个 byte 后 SP 是多少？
+  \item 求 \texttt{FFFF:0010} 与 \texttt{FFFF:FFFF} 的数学地址；
+    再分别写出 A20 关闭时的 20 位回绕结果。
+  \item \texttt{FFFD} 作为 rel16 是多少？SP=\texttt{7000}，near CALL
+    压入返回 IP 后 SP 是多少？
+  \item DS=\texttt{1357}、BX=\texttt{0100}、SI=\texttt{0020}，
+    求 \code{[bx+si-4]} 的段内偏移和线性地址；再写出一个与
+    \texttt{1234:0020} 指向同一地址、偏移为零的 segment:offset。
+  \item 实模式中 \code{mov eax, [bx+si]} 的操作数宽度和地址宽度各是多少？
+    哪个宽度需要覆盖前缀？
+  \item IVT 向量 \texttt{0x0D} 的四字节表项从哪个物理地址开始？
 \end{enumerate}
 \begin{answerbox}
-1. \texttt{0x100000}；2. \(-3\)；3. \texttt{0x6FFE}。
+\begin{enumerate}[leftmargin=2.2em]
+  \item 数学地址分别是 \texttt{0x100000} 和 \texttt{0x10FFEF}；
+    20 位回绕后分别是 \texttt{0x00000} 和 \texttt{0x0FFEF}。
+  \item rel16 为 \(-3\)；新 SP 为 \texttt{0x6FFE}。
+  \item 偏移为
+    \(\texttt{0x0100}+\texttt{0x0020}-4=\texttt{0x011C}\)；
+    段基址为 \texttt{0x13570}，线性地址为 \texttt{0x1368C}。
+    \texttt{1236:0000} 与 \texttt{1234:0020} 都得到
+    \texttt{0x12360}。
+  \item 操作数为 32 位，地址为 16 位；\code{66} 选择 32 位操作数，
+    不需要 \code{67}。
+  \item \(\texttt{0x0D}\times4=\texttt{0x34}\)。
+\end{enumerate}
 \end{answerbox}

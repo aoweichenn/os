@@ -1,0 +1,479 @@
+\topic{“实模式”的“实”究竟指什么}
+Intel 手册使用的完整名称是 \term{实地址模式}{real-address mode}。这里的
+“实”首先描述地址模型：程序给出段值和偏移，处理器把二者相加形成线性地址；
+分页关闭时，线性地址直接送往物理地址空间。它与后来能把一段虚拟地址重新映射
+到任意物理页的分页模型形成对照。
+
+这个名称不表示其他模式运行在“假的 CPU”上，也不表示实模式更接近晶体管。
+保护模式同样在真实硬件上执行。实模式只是保留了 8086 的地址形成方法，并在
+后来的处理器上加入了 32 位操作数、控制寄存器和模式切换等扩展。Intel SDM
+Volume 3B 23.1 把它概括为“几乎复制 8086 执行环境，并带有扩展”。
+
+还要把实模式与 \term{虚拟 8086 模式}{virtual-8086 mode} 分开。后者运行在
+保护模式内部，由操作系统借助分页和异常模拟一台 8086 环境；实模式则是 RESET
+直接建立的机器状态。本项目从实模式启动，不使用虚拟 8086 模式。
+
+\topic{实模式足以完成一条真正的启动链}
+实模式没有现成的文件、进程或内存分配器，却能直接使用处理器指令和平台硬件。
+本项目的 ROM 固件在实模式中建立栈，初始化 UART 与 PIT，读取 ATA 磁盘，
+校验 Stage 1，再执行远控制转移。Stage 1 随后验证 A20、装入 GDT，并设置
+CR0.PE：
+
+\lstinputlisting[
+  language={[x86masm]Assembler},
+  firstline=49,
+  lastline=72,
+  caption={Stage 1 在实模式中准备保护模式入口}
+]{../../../../source/boot/stage1/src/entry.asm}
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.26\linewidth}L{0.42\linewidth}}
+能完成的工作 & 指令或状态 & 本项目中的实例 \\ \hline
+\endfirsthead
+能完成的工作 & 指令或状态 & 本项目中的实例 \\ \hline
+\endhead
+整数计算与判断 & ADD、SUB、CMP、TEST、Jcc &
+计算 LBA 和内存范围，检查描述符、校验和与设备状态 \\ \hline
+读写 RAM 与 ROM & MOV、LODS、STOS、段覆盖 &
+读取 ROM 字符串，把磁盘扇区写入 RAM，恢复 A20 测试字节 \\ \hline
+建立栈与过程调用 & SS:SP、PUSH、POP、CALL、RET/RETF &
+调用串口、磁盘和校验过程，把控制权交给 Stage 1 \\ \hline
+直接访问设备 & IN、OUT、INS、OUTS &
+配置 COM1、PIT、ATA 和端口 \code{0x92} \\ \hline
+响应中断与异常 & IVT、INT、IRET &
+硬件支持 256 个实模式向量；最早入口暂时关闭可屏蔽中断 \\ \hline
+识别和控制 CPU & CPUID、MOV CRn、LGDT、RDMSR/WRMSR &
+准备 GDT，设置 PE、PAE 和 EFER 等模式切换状态 \\ \hline
+\end{osgridlongtable}
+
+QEMU 在这里模拟 CPU、RAM、ROM 与设备响应。上表中的初始化、驱动、等待、
+超时、校验和模式切换均由项目代码完成，没有调用 SeaBIOS 或 UEFI 服务。
+
+\topic{段值、偏移和 A20 共同决定物理地址}
+普通实模式内存操作数写成“段值:段内偏移”。CPU 把 16 位段值左移四位，
+再加有效偏移：
+\[
+  base = segment \ll 4,
+  \qquad
+  linear = base + offset.
+\]
+分页处于关闭状态，因此没有页表转换。A20 兼容门最后决定地址 bit 20 是保留
+还是清零，平台再把所得物理地址译码给 RAM、ROM 或设备。
+
+\begin{pdfdiagram}
+  \node[os block] (operand) {内存操作数\\例如 \code{[bx+si+2]}};
+  \node[os state,right=of operand] (offset) {有效偏移\\BX+SI+2};
+  \node[os block,below=of operand] (segment) {默认或覆盖段\\例如 DS};
+  \node[os state,right=of segment] (base) {段基址\\DS \(\ll 4\)};
+  \node[os hardware,right=20mm of offset] (sum) {线性地址\\base+offset};
+  \node[os block,below=of sum] (a20) {A20 门\\处理 bit 20};
+  \node[os hardware,left=of a20] (physical) {物理地址\\送往平台译码};
+  \draw[os arrow] (operand) -- (offset);
+  \draw[os arrow] (segment) -- (base);
+  \draw[os arrow] (offset) -- (sum);
+  \draw[os arrow] (base) -- (sum);
+  \draw[os arrow] (sum) -- (a20);
+  \draw[os arrow] (a20) -- (physical);
+\end{pdfdiagram}
+\diagramnote{图中是装载过普通实模式段值后的路径。复位时 CS 隐藏基址具有
+特殊初值，不能用 \(CS\ll4\) 代替；下一节会单独计算复位取指。}
+
+\begin{osgridlongtable}{L{0.25\linewidth}L{0.19\linewidth}L{0.46\linewidth}}
+量 & 宽度或范围 & 它实际限制什么 \\ \hline
+\endfirsthead
+量 & 宽度或范围 & 它实际限制什么 \\ \hline
+\endhead
+段寄存器可见值 & 16 位 &
+CS、DS、SS、ES，以及后来加入的 FS、GS \\ \hline
+段基址 & 20 位 &
+16 位段值左移四位，最低四位补零 \\ \hline
+默认有效偏移 & 16 位 &
+段内范围为 \code{0x0000..0xFFFF} \\ \hline
+普通段界限 & \code{0xFFFF} &
+每个代码段、数据段或栈段最多 64 KiB \\ \hline
+段基址加偏移 & 最多 21 位 &
+最大数学结果为 \code{0x10FFEF} \\ \hline
+8086 地址线 & 20 根 &
+bit 20 被截断，超过 1 MiB 的地址发生回绕 \\ \hline
+后来处理器的 A20 门 & 控制 bit 20 &
+打开后可区分 \code{0x100000..0x10FFEF} 与对应低地址 \\ \hline
+默认操作数 & 8 或 16 位 &
+普通 byte/word 指令读写多少数据 \\ \hline
+\code{66} 操作数覆盖 & 可选 32 位 &
+单条指令可使用 EAX 等寄存器，模式和段界限不变 \\ \hline
+\code{67} 地址覆盖 & 可选 32 位算法 &
+可使用 32 位寻址形式；普通实模式最终偏移仍不得超过 \code{0xFFFF} \\ \hline
+\end{osgridlongtable}
+
+\code{67} 不会把实模式变成 4 GiB 平坦空间。Intel SDM Volume 3B
+23.1.1 规定，实模式中生成的 32 位偏移若超过 \code{0xFFFF}，会产生越段
+异常。所谓“unreal mode”依赖先在保护模式扩大隐藏段界限、再返回实模式后的
+残留状态，不是本项目采用的普通实模式。
+
+\topic{四次地址手算}
+\begin{workedexample}
+给定 \code{DS=0x1234}、偏移 \code{0x0020}：
+\[
+  base=0x1234\ll4=0x12340,
+  \qquad
+  physical=0x12340+0x0020=0x12360.
+\]
+如果读取一个 word，CPU 访问 \code{0x12360} 和 \code{0x12361} 两个
+相邻 byte；小端序规定低字节放在较低地址。
+\end{workedexample}
+
+\begin{workedexample}
+\code{1000:0020} 与 \code{1002:0000} 指向同一地址：
+\[
+  0x1000\ll4+0x0020=0x10020,
+  \qquad
+  0x1002\ll4+0=0x10020.
+\]
+段起点每次只移动 16 byte，而段长可达 64 KiB，所以大量段互相重叠。两个
+far pointer 的字面形式不同，仍可能引用同一个物理 byte。
+\end{workedexample}
+
+\begin{workedexample}
+\code{FFFF:0010} 的加法结果为：
+\[
+  0xFFFF0+0x0010=0x100000.
+\]
+A20 关闭时 bit 20 被清零，访问回绕到 \code{0x00000}；A20 打开时访问
+1 MiB 处的第一个 byte。项目 Stage 1 正是用 \code{0000:0000} 和
+\code{FFFF:0010} 检查这两个位置是否仍然别名。
+\end{workedexample}
+
+\begin{workedexample}
+普通段值与偏移能形成的最大和是：
+\[
+  \code{FFFF:FFFF}
+  \quad\Rightarrow\quad
+  0xFFFF0+0xFFFF=0x10FFEF.
+\]
+A20 打开时可见 \code{0x10FFEF}；按 8086 的 20 位回绕规则只保留低
+20 位，得到 \code{0x0FFEF}。结果能出现 bit 20，不表示可以连续寻址
+2 MiB；最高只到 1 MiB 再加 64 KiB 减 16 byte。
+\end{workedexample}
+
+\topic{16 位有效地址只允许八种寄存器骨架}
+默认地址宽度为 16 位时，ModR/M 编码提供八种基址/变址组合，再选择无位移、
+8 位有符号位移或 16 位位移：
+
+\begin{osgridlongtable}{L{0.25\linewidth}L{0.20\linewidth}L{0.25\linewidth}L{0.20\linewidth}}
+有效地址形式 & 默认段 & 常见用途 & 可加位移的例子 \\ \hline
+\endfirsthead
+有效地址形式 & 默认段 & 常见用途 & 可加位移的例子 \\ \hline
+\endhead
+\code{[bx+si]} & DS & 基址加源索引 & \code{[bx+si+2]} \\ \hline
+\code{[bx+di]} & DS & 基址加目标索引 & \code{[bx+di+8]} \\ \hline
+\code{[bp+si]} & SS & 栈帧基址加索引 & \code{[bp+si-4]} \\ \hline
+\code{[bp+di]} & SS & 栈帧基址加索引 & \code{[bp+di+6]} \\ \hline
+\code{[si]} & DS & 顺序源地址 & \code{[si+1]} \\ \hline
+\code{[di]} & DS & 顺序目标地址 & \code{[di+1]} \\ \hline
+\code{[bp]} & SS & 参数或局部数据 & \code{[bp+4]} \\ \hline
+\code{[bx]} & DS & 表或缓冲区 & \code{[bx+16]} \\ \hline
+\end{osgridlongtable}
+
+BP 参与计算时默认使用 SS，其余上表形式默认使用 DS。段覆盖前缀可临时改成
+CS、ES、SS、FS 或 GS。项目固件用 \code{cs lodsb} 从高端 ROM 读取
+字符串，Stage 1 的 A20 检查则明确使用 \code{[ds:si]} 和
+\code{[fs:si]}。
+
+\code{[sp]} 和 \code{[ax]} 都不能按 16 位 ModR/M 形式直接编码。SP 由
+PUSH、POP、CALL、RET 和中断隐式使用；普通指令若需要按当前栈顶寻址，可以
+先把 SP 复制给 BP。这个限制来自 8086 编码表，不是地址加法本身做不到。
+
+\begin{workedexample}
+给定 \code{DS=0x1200}、\code{BX=0x0030}、\code{SI=0x0004}，
+执行 \code{mov al, [bx+si+2]}：
+\[
+  offset=0x0030+0x0004+2=0x0036,
+\]
+\[
+  physical=(0x1200\ll4)+0x0036=0x12036.
+\]
+若 \code{M[0x12036]=0x7F}，执行后 AL 为 \code{0x7F}，MOV 不修改
+算术标志。随后执行 \code{add al, 1} 得到 \code{0x80}：
+CF=0、OF=1、SF=1、ZF=0。CF 表示无符号进位，OF 表示有符号
+\(127+1\) 越界。
+\end{workedexample}
+
+\topic{66 改数据宽度，67 改地址算法}
+操作数宽度和地址宽度互相独立。\code{66} 覆盖一条指令的默认操作数宽度，
+\code{67} 覆盖一条指令的默认地址宽度。两者可以单独出现，也可以同时出现。
+
+\begin{osgridlongtable}{L{0.29\linewidth}L{0.16\linewidth}L{0.16\linewidth}L{0.29\linewidth}}
+实模式中的指令意图 & 操作数 & 地址 & 需要改变什么 \\ \hline
+\endfirsthead
+实模式中的指令意图 & 操作数 & 地址 & 需要改变什么 \\ \hline
+\endhead
+\code{mov ax, [bx+si]} & 16 位 & 16 位 & 无宽度覆盖 \\ \hline
+\code{mov eax, [bx+si]} & 32 位 & 16 位 & \code{66} 扩大数据 \\ \hline
+\code{mov ax, [ebx+esi*4+8]} & 16 位 & 32 位 & \code{67} 改变地址计算 \\ \hline
+\code{mov eax, [ebx+esi*4+8]} & 32 位 & 32 位 &
+同时使用 \code{66} 与 \code{67} \\ \hline
+\end{osgridlongtable}
+
+假设 \code{DS=0x2000}、\code{EBX=0x1000}、\code{ESI=3}。最后一行
+的有效偏移是：
+\[
+  0x1000+3\times4+8=0x1014,
+\]
+仍未超过 \code{0xFFFF}，线性地址为 \code{0x21014}。若把 EBX 改成
+\code{0x10000}，有效偏移越过普通实模式段界限；使用 E 寄存器不会扩大
+这个段。
+
+32 位数据本身不会被截成 16 位。项目固件在实模式中用
+\code{mov ebx, [memory]} 读取 32 位 LBA，用 \code{add edx, ecx}
+检查扇区范围，再用 CF 发现 32 位加法溢出。CPU 完整读写 EAX、EBX 等
+寄存器，只是当前代码段的默认解码宽度仍为 16 位。
+
+\topic{实模式能看到的寄存器不止 AX 和 IP}
+“8086 兼容”描述默认环境，并不把后来增加的架构状态全部隐藏。Intel SDM
+Volume 3B 23.1.2 明确列出：实模式包含 8086 寄存器，也能访问后续增加的
+FS、GS、控制寄存器、调试寄存器和浮点状态。
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.28\linewidth}L{0.40\linewidth}}
+寄存器组 & 实模式中的宽度 & 本书最先怎样使用 \\ \hline
+\endfirsthead
+寄存器组 & 实模式中的宽度 & 本书最先怎样使用 \\ \hline
+\endhead
+AX、BX、CX、DX & 16 位，可拆成 AH/AL 等 8 位部分 &
+算术、计数、端口号、设备和磁盘字段 \\ \hline
+SP、BP、SI、DI & 16 位默认地址部件 &
+栈、栈帧、字符串源和目标 \\ \hline
+EAX 到 EDI & 32 位，由 32 位操作数形式选择 &
+范围检查、LBA28、CR0/CR4 和页表准备 \\ \hline
+CS、DS、SS、ES & 16 位段值 &
+代码、数据、栈和字符串目标段 \\ \hline
+FS、GS & 16 位段值，80386 以后提供 &
+Stage 1 同时保留 A20 测试的低地址段与高地址段 \\ \hline
+IP / EIP & 普通实模式取指使用低 16 位范围 &
+顺序执行、近跳转、调用与返回 \\ \hline
+FLAGS / EFLAGS & 16 位核心状态及后来增加的状态位 &
+条件分支、方向、中断允许和算术结果 \\ \hline
+CR0、CR2、CR3、CR4 & 具体寄存器由处理器代际决定 &
+从实模式准备保护模式、分页和长模式 \\ \hline
+GDTR、IDTR & 基址和界限 &
+装入 GDT；LIDT 还能重定位实模式中断向量表 \\ \hline
+DR0--DR7 & 调试寄存器定义的宽度 &
+硬件断点；启动主线不依赖它们 \\ \hline
+x87、MMX、XMM & CPU 支持且控制状态允许时可用 &
+启动主线暂不使用，内核以后统一管理扩展现场 \\ \hline
+\end{osgridlongtable}
+
+RAX 的 64 位整数形式、R8--R15、REX 前缀和 RIP-relative 寻址属于
+64 位模式，不能在普通实模式中使用。\code{mov rax, 1} 无法靠再加一个
+16 位前缀变成实模式指令，因为当前模式没有这组编码语义。
+
+\topic{数据传送、算术和位操作指令}
+实模式不是一套只含少量启动指令的 ISA。处理器代际决定实现哪些扩展，当前
+模式和控制状态再决定某个编码是否有效。先掌握启动代码最常使用的一组：
+
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.32\linewidth}L{0.39\linewidth}}
+类别 & 指令 & 读代码时要检查什么 \\ \hline
+\endfirsthead
+类别 & 指令 & 读代码时要检查什么 \\ \hline
+\endhead
+传送与交换 & MOV、XCHG、LDS、LES、LFS、LGS、LSS &
+源和目的有多宽，是否访问内存，段寄存器的隐藏状态是否重载 \\ \hline
+地址形成 & LEA、XLATB &
+LEA 只计算偏移而不读取目标内存；XLATB 用 AL 作为表索引 \\ \hline
+加减与比较 & ADD、ADC、SUB、SBB、INC、DEC、CMP、NEG &
+结果是否写回，CF 与 OF 分别怎样变化 \\ \hline
+乘除 & MUL、IMUL、DIV、IDIV &
+隐含输入输出是否占用 AX、DX:AX 或 EDX:EAX，除数是否为零 \\ \hline
+扩展与转换 & CBW、CWD、CWDE、CDQ、MOVSX、MOVZX &
+高位补符号还是补零，结果宽度由什么决定 \\ \hline
+逻辑 & AND、OR、XOR、NOT、TEST &
+TEST 只修改标志；OR 常用于置位，AND 常用于清位 \\ \hline
+移位与旋转 & SAL/SHL、SHR、SAR、ROL、ROR、RCL、RCR、SHLD、SHRD &
+空位补零还是符号位，移出的 bit 是否进入 CF \\ \hline
+位测试与扫描 & BT、BTS、BTR、BTC、BSF、BSR &
+结果进入哪个标志，目标 bit 是否同时改变 \\ \hline
+十进制兼容 & DAA、DAS、AAA、AAS、AAM、AAD &
+为早期 BCD/ASCII 算术保留；本项目不用它们计算二进制地址 \\ \hline
+\end{osgridlongtable}
+
+\code{cmp left, right} 内部计算 \(left-right\) 并只留下标志；
+\code{test left, right} 做 AND 并只留下标志。因此项目用
+\code{test al, al}/\code{jz} 判断字符串结束，用
+\code{cmp al, ah}/\code{je} 判断 A20 的两个测试位置是否仍然别名。
+
+\topic{控制流、栈、字符串和端口指令}
+\begin{osgridlongtable}{L{0.19\linewidth}L{0.32\linewidth}L{0.39\linewidth}}
+类别 & 指令或前缀 & 实模式中的作用 \\ \hline
+\endfirsthead
+类别 & 指令或前缀 & 实模式中的作用 \\ \hline
+\endhead
+无条件跳转 & JMP short/near/far &
+short/near 只改 IP；far 同时装载 CS:IP \\ \hline
+条件跳转 & Jcc、JCXZ、LOOP、LOOPE、LOOPNE &
+Jcc 读取 FLAGS；LOOP 还会减少 CX 或 ECX \\ \hline
+过程调用 & CALL near/far、RET/RETF、ENTER、LEAVE &
+near 保存 IP；far 还保存 CS，返回形式必须与调用匹配 \\ \hline
+显式栈操作 & PUSH、POP、PUSHA/POPA、PUSHAD/POPAD、PUSHF/POPF &
+使用 SS:SP 或对应的 32 位形式，栈向低偏移增长 \\ \hline
+字符串 & MOVS、CMPS、SCAS、LODS、STOS &
+隐式使用 SI/DI、DS/ES，由 DF 决定递增或递减 \\ \hline
+重复 & REP、REPE/REPZ、REPNE/REPNZ &
+结合 CX/ECX 和可选的 ZF 重复字符串指令 \\ \hline
+软件中断 & INT n、INT3、INTO、IRET &
+从 IVT 取得 far pointer，在栈中保存并恢复现场 \\ \hline
+端口 I/O & IN、OUT、INS、OUTS &
+在独立 I/O 空间与设备寄存器交换 8、16 或设备支持的 32 位数据 \\ \hline
+标志控制 & STC、CLC、CMC、CLI、STI、CLD、STD、LAHF、SAHF &
+控制 CF、IF、DF，或在 AH 与 FLAGS 低位之间传送状态 \\ \hline
+停机与占位 & HLT、NOP &
+HLT 等待可唤醒事件；NOP 推进 IP 而不改变普通计算结果 \\ \hline
+总线原子前缀 & LOCK &
+只能用于手册明确允许的内存读改写形式 \\ \hline
+\end{osgridlongtable}
+
+\code{out dx, al} 只发起一次 8 位端口写，不保证设备接收成功。UART 是否
+接受该值还取决于端口号、寄存器选择、线路配置和就绪状态。项目在发送字符前
+轮询 Line Status Register，并设置轮询上限，避免设备不响应时永久卡住。
+
+\topic{系统指令和后续扩展也能在实模式出现}
+Intel SDM Volume 3B 23.1.3 列出的后续实模式指令包括以下启动相关类别：
+
+\begin{osgridlongtable}{L{0.22\linewidth}L{0.32\linewidth}L{0.36\linewidth}}
+用途 & 指令 & 使用前必须确认 \\ \hline
+\endfirsthead
+用途 & 指令 & 使用前必须确认 \\ \hline
+\endhead
+处理器识别与计时 & CPUID、RDTSC、RDPMC &
+处理器是否实现相应叶或计数器，读数是否需要序列化 \\ \hline
+描述符表 & LGDT、SGDT、LIDT、SIDT &
+内存格式、基址和界限；LGDT 本身不会切换模式 \\ \hline
+机器状态字 & LMSW、SMSW &
+历史形式只覆盖或读取 CR0 的一部分 \\ \hline
+控制与调试寄存器 & MOV CRn、MOV DRn、CLTS &
+寄存器是否存在，保留位是否保持规定值 \\ \hline
+模型专用寄存器 & RDMSR、WRMSR &
+CPUID 是否声明 MSR，ECX 编号和 EDX:EAX 数据格式是否正确 \\ \hline
+缓存和翻译状态 & INVD、WBINVD、INVLPG &
+副作用影响整机；实模式主线没有页表需要 INVLPG \\ \hline
+原子读改写 & CMPXCHG、CMPXCHG8B、XADD、SETcc &
+处理器代际、操作数宽度和 LOCK 用法是否合法 \\ \hline
+\end{osgridlongtable}
+
+x87、MMX 和 SSE 在支持它们的 IA-32 处理器上也可从实模式访问，但编码
+有效不等于启动代码已经准备好使用。软件仍需检查 CPUID，设置 CR0/CR4
+相关位，处理异常，并决定何时保存扩展状态。本项目把这些工作留到内核能够
+管理线程现场以后，早期启动只依赖整数、字符串、端口和系统控制指令。
+
+遇到这里未列出的现代扩展，必须查 Intel Volume 2 的单条指令页：确认允许
+的模式、所需 CPUID feature flag、控制位和异常。不能从“CPU 支持该扩展”
+直接推导“当前实模式入口可安全执行”。
+
+\topic{CALL 和 RET 怎样改变栈}
+设 \code{SS=0x2000}、\code{SP=0x0100}，三字节 near CALL 位于
+\code{CS:0x0200}，位移为 \code{0x0010}。CPU 先得到返回 IP
+\code{0x0203}，再把它压栈：
+\[
+  SP=0x0100-2=0x00FE,
+  \qquad
+  physical=(0x2000\ll4)+0x00FE=0x200FE.
+\]
+小端序写入 \code{M[0x200FE]=0x03}、
+\code{M[0x200FF]=0x02}，随后目标 IP 为
+\code{0x0203+0x0010=0x0213}。RET 从 SS:SP 读回返回 IP，再把 SP
+加二。
+
+\begin{osgridlongtable}{L{0.17\linewidth}L{0.17\linewidth}L{0.17\linewidth}L{0.39\linewidth}}
+时刻 & IP & SP & 栈内存变化 \\ \hline
+\endfirsthead
+时刻 & IP & SP & 栈内存变化 \\ \hline
+\endhead
+CALL 前 & \code{0x0200} & \code{0x0100} & 尚未写返回地址 \\ \hline
+取完 CALL & \code{0x0203} & \code{0x0100} & 顺序 IP 成为返回地址 \\ \hline
+压栈后 & \code{0x0203} & \code{0x00FE} &
+\code{0x200FE..0x200FF} 保存 \code{03 02} \\ \hline
+转移后 & \code{0x0213} & \code{0x00FE} & 被调用过程开始执行 \\ \hline
+RET 后 & \code{0x0203} & \code{0x0100} & 内存旧字节仍在，但不再属于栈 \\ \hline
+\end{osgridlongtable}
+
+far CALL 还保存 CS，RETF 同时恢复 IP 与 CS。项目固件把 Stage 1 的目标
+段和目标偏移压栈后执行 \code{retf}。如果压入顺序写反，RETF 会把偏移解释
+成段值，把段值解释成偏移，下一次取指落到错误物理地址。
+
+\topic{IVT 让实模式也能接收中断和异常}
+复位后 IDTR 基址为 \code{0x00000000}，界限为 \code{0x03FF}。实模式
+\term{中断向量表}{interrupt vector table, IVT} 有 256 项，每项 4 byte：
+先存处理程序 offset，再存 segment。向量 \(n\) 的表项地址为 \(4n\)。
+
+\begin{center}
+\begin{tikzpicture}[os diagram]
+  \node[os hardware,minimum width=48mm] (v0)
+    {0x0000--0x0003\\向量 0：offset, segment};
+  \node[os state,above=8mm of v0,minimum width=48mm] (v1)
+    {0x0004--0x0007\\向量 1};
+  \node[os block,above=8mm of v1,minimum width=48mm] (vn)
+    {4n--4n+3\\向量 n};
+  \node[os hardware,above=8mm of vn,minimum width=48mm] (v255)
+    {0x03FC--0x03FF\\向量 255};
+  \draw[os arrow] (v0) -- (v1);
+  \draw[os arrow] (v1) -- (vn);
+  \draw[os arrow] (vn) -- (v255);
+\end{tikzpicture}
+\end{center}
+
+假设执行 \code{int 0x21}，下一 IP 为 \code{0x0123}，原状态是
+\code{FLAGS=0x0202}、\code{CS=0x0800}、\code{SS=0x1000}、
+\code{SP=0x0100}。表项地址为：
+\[
+  0x21\times4=0x84.
+\]
+若 \code{M[0x84..0x87]=78 56 34 12}，处理程序地址就是
+\code{1234:5678}。CPU 保存现场，清 IF 和 TF，再装入目标：
+
+\begin{osgridlongtable}{L{0.18\linewidth}L{0.18\linewidth}L{0.25\linewidth}L{0.29\linewidth}}
+动作 & 新 SP & 写入或读取地址 & word 值 \\ \hline
+\endfirsthead
+动作 & 新 SP & 写入或读取地址 & word 值 \\ \hline
+\endhead
+压入 FLAGS & \code{0x00FE} & \code{0x100FE} & \code{0x0202} \\ \hline
+压入 CS & \code{0x00FC} & \code{0x100FC} & \code{0x0800} \\ \hline
+压入返回 IP & \code{0x00FA} & \code{0x100FA} & \code{0x0123} \\ \hline
+读取向量 & \code{0x00FA} & \code{0x00084..0x00087} &
+\code{CS:IP=1234:5678} \\ \hline
+\end{osgridlongtable}
+
+IRET 依次弹出 IP、CS 和 FLAGS。实模式异常不会向处理程序压入保护模式式的
+错误码。常见事件包括除零 \(\#DE\)、调试 \(\#DB\)、断点 \(\#BP\)、
+无效操作码 \(\#UD\)、设备不可用 \(\#NM\)、双重故障 \(\#DF\)、越段
+\(\#SS/\#GP\)、x87 错误和机器检查。分页未启用，因此不会由普通页表访问
+产生 \(\#PF\)。
+
+最早入口执行 \code{cli}，因为项目尚未安装自己的外部中断处理程序。CLI 只
+屏蔽可屏蔽外部中断，不能阻止除零、无效操作码、NMI 或机器检查；早期代码
+仍须避免异常，或者先安装最小处理程序。
+
+\topic{为什么具备这些能力以后仍要离开实模式}
+实模式能完成启动，历史上的 DOS 也长期在这种环境中运行。它的问题在系统需要
+更多内存和相互隔离的程序时才集中出现：
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.31\linewidth}L{0.35\linewidth}}
+限制 & 直接后果 & 后续模式的处理 \\ \hline
+\endfirsthead
+限制 & 直接后果 & 后续模式的处理 \\ \hline
+\endhead
+普通段只有 64 KiB & 大数组、代码和栈需要频繁换段 &
+保护模式可建立更大段，项目最终采用长模式平坦地址 \\ \hline
+可见地址约 1 MiB 加高端小窗口 & 无法直接管理现代机器的大量 RAM &
+保护模式和分页建立更大的物理、线性与虚拟地址体系 \\ \hline
+地址别名很多 & 多个 far pointer 可指向同一 byte &
+平坦模型使每个线性地址有统一表示 \\ \hline
+没有用户/内核隔离 & 代码可改 IVT、端口、CR0 或其他程序的内存 &
+描述符、特权级、页权限和系统调用限制访问 \\ \hline
+没有分页 & 不能提供独立虚拟地址空间或页级权限 &
+CR3、页表、U/S、RW 和 NX 建立映射与保护 \\ \hline
+IVT 只有 far pointer & 没有门描述符、特权检查和 IST 栈切换 &
+保护模式 IDT 与长模式 TSS/IST 提供更强入口控制 \\ \hline
+没有 64 位整数执行环境 & 不能使用 RAX、R8--R15 和 64 位 RIP &
+长模式提供 64 位寄存器、地址计算和 ABI \\ \hline
+\end{osgridlongtable}
+
+离开实模式并不是因为它几乎什么都做不了。启动代码先利用它驱动平台、读取
+磁盘并准备描述符；当 64 KiB 段、低端地址和无保护执行开始妨碍内核扩展时，
+再由软件建立 GDT、页表和新的代码段。
