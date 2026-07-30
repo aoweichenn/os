@@ -370,6 +370,306 @@ USB 2.0 的 D+ 与 D- 双向差分线 \\ \hline
 复用为 UART0 发送与接收的 GPIO 球位 \\ \hline
 \end{osgridlongtable}
 
+\topic{CPU 引脚怎样接到模块内的必要器件}%
+CPU 不能只接电源以后独自运行。它需要参考时钟、复位状态、启动固件和内存；
+不同电源域还要按规定时序建立。图~\ref{fig:carrier-cpu-local-wiring} 把这些
+连接画到实际球位一级。图中的器件关系来自 Intel 信号定义；具体电阻、电容、
+电源芯片型号和 PCB 走线由计算模块设计决定。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      cpu/.style={
+        draw=BookNavy,
+        fill=BookNavy!12,
+        very thick,
+        rounded corners=1.5mm,
+        text width=2.7cm,
+        minimum width=3.0cm,
+        minimum height=9.2cm,
+        align=center
+      },
+      pin/.style={
+        draw=BookBlue,
+        fill=BookBlue!8,
+        rounded corners=1mm,
+        font=\scriptsize\sffamily,
+        text width=3.1cm,
+        minimum width=3.35cm,
+        minimum height=0.92cm,
+        align=center
+      },
+      device/.style={
+        draw=BookTeal,
+        fill=BookTeal!9,
+        rounded corners=1mm,
+        text width=3.2cm,
+        minimum width=3.55cm,
+        minimum height=0.92cm,
+        align=center
+      },
+      signal/.style={BookBlue,thick,-{Latex[length=2mm]}},
+      bidirectional/.style={
+        BookBlue,
+        thick,
+        {Latex[length=2mm]}-{Latex[length=2mm]}
+      },
+      power/.style={BookRed,very thick,-{Latex[length=2mm]}}
+    ]
+    \node[cpu] (cpu) at (10.0,5.65) {
+      \textbf{\Large Intel N-Series SoC}\\[3mm]
+      x86 CPU cores\\
+      memory controller\\
+      SPI/eMMC controllers\\
+      power/reset state machine\\
+      platform interconnect
+    };
+
+    \node[device] (pmic) at (2.10,9.55)
+      {多路稳压器与去耦电容\\按电源时序建立各电压域};
+    \node[pin] (power-pins) at (6.25,9.55)
+      {\code{VCCCORE} 69 balls\\
+       \code{VCCIN\_AUX} 36 balls\\
+       \code{VCCANA} 9 balls};
+    \draw[power] (pmic.east) -- (power-pins.west);
+    \draw[power] (power-pins.east) -- (cpu.west |- power-pins.east);
+
+    \node[device] (reset) at (2.10,7.45)
+      {电源良好与复位控制器\\电压稳定以后才释放复位};
+    \node[pin] (reset-pins) at (6.25,7.45)
+      {\code{CT45 SYS\_RESET\#}\\
+       \code{T21 VCCST\_PWRGD}};
+    \draw[signal] (reset.east) -- (reset-pins.west);
+    \draw[signal] (reset-pins.east) -- (cpu.west |- reset-pins.east);
+
+    \node[device] (crystal) at (2.10,5.35)
+      {参考晶体或有源时钟\\匹配网络与负载电容};
+    \node[pin] (clock-pins) at (6.25,5.35)
+      {\code{CY4 XTAL\_IN}\\
+       \code{DB4 XTAL\_OUT}};
+    \draw[bidirectional] (crystal.east) -- (clock-pins.west);
+    \draw[bidirectional] (clock-pins.east) -- (cpu.west |- clock-pins.east);
+
+    \node[device] (button) at (2.10,3.25)
+      {电源键与去抖/保护\\按下时把输入拉到有效电平};
+    \node[pin] (button-pin) at (6.25,3.25)
+      {\code{CN55 GPD3/PWRBTN\#}\\低有效平台输入};
+    \draw[signal] (button.east) -- (button-pin.west);
+    \draw[signal] (button-pin.east) -- (cpu.west |- button-pin.east);
+
+    \node[device] (dram) at (17.90,9.25)
+      {板载 DRAM 器件\\数据、命令、差分时钟与复位};
+    \node[pin] (dram-pins) at (13.75,9.25)
+      {\code{R23 DQ[0][0]}，\code{L23 DQSN[0]}\\
+       \code{A23/A21 CLK\_P/N[0]}\\
+       \code{CT57 DRAM\_RESET\#}};
+    \draw[bidirectional] (cpu.east |- dram-pins.west) -- (dram-pins.west);
+    \draw[bidirectional] (dram-pins.east) -- (dram.west);
+
+    \node[device] (flash) at (17.90,6.85)
+      {启动 SPI Flash\\保存上电后首先读取的平台固件};
+    \node[pin] (flash-pins) at (13.75,6.85)
+      {\code{CC52 CS0\#}\\
+       \code{CC50 CLK}\\
+       \code{CF52 MOSI}，\code{CH52 MISO}};
+    \draw[bidirectional] (cpu.east |- flash-pins.west) -- (flash-pins.west);
+    \draw[bidirectional] (flash-pins.east) -- (flash.west);
+
+    \node[device] (peci) at (17.90,4.45)
+      {平台温度/电源控制器\\读取处理器热状态并参与风扇策略};
+    \node[pin] (peci-pin) at (13.75,4.45)
+      {\code{BN12 PECI}\\单线双向管理接口};
+    \draw[bidirectional] (cpu.east |- peci-pin.west) -- (peci-pin.west);
+    \draw[bidirectional] (peci-pin.east) -- (peci.west);
+
+    \node[device] (emmc) at (17.90,2.05)
+      {可选 eMMC 存储器\\是否安装由具体模块决定};
+    \node[pin] (emmc-pins) at (13.75,2.05)
+      {\code{CU52 EMMC\_CLK}\\
+       \code{CU50 EMMC\_CMD}\\
+       \code{GPP\_I8--I15 EMMC\_DATA[0--7]}};
+    \draw[bidirectional] (cpu.east |- emmc-pins.west) -- (emmc-pins.west);
+    \draw[bidirectional] (emmc-pins.east) -- (emmc.west);
+
+    \node[
+      draw=BookMuted,
+      fill=white,
+      rounded corners=1mm,
+      anchor=north west,
+      align=left,
+      text width=19.2cm
+    ] at (0.35,0.65) {
+      \textbf{读图顺序：}
+      先从中央 CPU 找控制器，再读蓝色框中的封装球位，最后到达外部器件。
+      电源线只从稳压器流向供电球；数据线根据协议单向或双向。
+      Mu 模块没有公开上述器件的逐网 PCB，因此这张图表达 Intel 规定的接口连接，
+      不宣称图中位置、器件型号或走线形状就是 Mu 的内部布局。};
+  \end{tikzpicture}
+  \caption{CPU 封装到模块内必要器件的信号级连接。球位来自 Intel N-Series
+  Ballout；每一组线还需要相应电压域、端接、去耦、长度匹配和上电时序。}
+  \label{fig:carrier-cpu-local-wiring}
+\end{sidewaysfigure}
+
+\topic{CPU 外设球位怎样到达载板连接器}%
+外设路径比“一个引脚接一个插座”多两层。以 PCIe 为例，CPU 的可复用
+\code{PCIE1/USB32\_1} 球位先经过 SoC PHY 和 Mu 模块 PCB；模块按固件配置
+把选定协议发布为 HSIO 触点；DFR1142 再从这些触点布线到 M.2 或 PCIe 插槽。
+图~\ref{fig:carrier-cpu-pin-to-carrier} 把每一层分开。
+
+\begin{sidewaysfigure}[p]
+  \centering
+  \begin{tikzpicture}[
+      x=1cm,
+      y=1cm,
+      every node/.style={font=\footnotesize\sffamily},
+      ball/.style={
+        draw=BookBlue,
+        fill=BookBlue!9,
+        rounded corners=1mm,
+        minimum width=4.35cm,
+        minimum height=0.88cm,
+        align=center
+      },
+      hidden/.style={
+        draw=BookNavy,
+        dashed,
+        fill=BookNavy!5,
+        rounded corners=1mm,
+        minimum width=2.9cm,
+        minimum height=0.88cm,
+        align=center
+      },
+      edge/.style={
+        draw=BookTeal,
+        fill=BookTeal!9,
+        rounded corners=1mm,
+        minimum width=4.25cm,
+        minimum height=0.88cm,
+        align=center
+      },
+      endpoint/.style={
+        draw=BookAmber,
+        fill=BookAmber!16,
+        rounded corners=1mm,
+        minimum width=4.7cm,
+        minimum height=0.88cm,
+        align=center
+      },
+      unknown/.style={BookBlue,dashed,thick,-{Latex[length=2mm]}},
+      copper/.style={BookTeal,very thick,-{Latex[length=2mm]}},
+      power/.style={BookRed,very thick,-{Latex[length=2mm]}}
+    ]
+    \node[font=\bfseries\color{BookBlue}] at (2.45,10.55)
+      {Intel 已公开的 CPU 球位};
+    \node[font=\bfseries\color{BookNavy}] at (6.90,10.55)
+      {Mu 模块内部};
+    \node[font=\bfseries\color{BookTeal}] at (11.35,10.55)
+      {公开的 Mu 260-pin};
+    \node[font=\bfseries\color{BookAmber!70!black}] at (17.35,10.55)
+      {DFR1142 V2 载板与外设};
+
+    \node[ball] (pcie-ball) at (2.45,9.45)
+      {\code{CT11/CP11 PCIE1\_TXP/N}\\
+       \code{CU1/CU3 PCIE1\_RXP/N}};
+    \node[hidden] (pcie-hidden) at (6.90,9.45)
+      {HSIO 复用、PHY\\模块内走线未公开};
+    \node[edge] (pcie-edge) at (11.35,9.45)
+      {HSIO2/3/6/8--11\\pins 25--66};
+    \node[endpoint] (pcie-device) at (17.35,9.45)
+      {J15 M.2 M Key、J16 E Key\\U6 网卡、J2 PCIe x4};
+
+    \node[ball] (usb-ball) at (2.45,7.75)
+      {\code{DE12/DD12 USB2P/N\_1}\\
+       SuperSpeed 可复用 PCIE/USB32 球位};
+    \node[hidden] (usb-hidden) at (6.90,7.75)
+      {xHCI、USB PHY\\模块内 ESD/布线};
+    \node[edge] (usb-edge) at (11.35,7.75)
+      {HSIO0/1 pins 13--24\\USB2 pins 67--84、109--111};
+    \node[endpoint] (usb-device) at (17.35,7.75)
+      {J4/J5 USB 插座\\J19 UPS 的 USB2 通道};
+
+    \node[ball] (display-ball) at (2.45,6.05)
+      {\code{AJ53/AJ52 DDIB\_TXP/N[3]} 等\\
+       \code{W53/W52 AUXP/N}，\code{CA50 HPDB}};
+    \node[hidden] (display-hidden) at (6.90,6.05)
+      {显示 PHY、协议选择\\模块内转换与布线};
+    \node[edge] (display-edge) at (11.35,6.05)
+      {TMDS pins 197--217\\DDC 169/171，HPD 183};
+    \node[endpoint] (display-device) at (17.35,6.05)
+      {J3 HDMI\\TMDS、DDC、HPD、5 V};
+
+    \node[ball] (serial-ball) at (2.45,4.35)
+      {\code{DB40/DB34 UART0 TX/RX}\\
+       \code{CW42/CU42 I2C0 SCL/SDA}};
+    \node[hidden] (serial-hidden) at (6.90,4.35)
+      {GPIO pad mux\\电压域与模块布线};
+    \node[edge] (serial-edge) at (11.35,4.35)
+      {UART 137--143，I2C 142--156\\SPI 153--165};
+    \node[endpoint] (serial-device) at (17.35,4.35)
+      {J7--J14 排针\\U18 可选 SPI ROM};
+
+    \node[ball] (control-ball) at (2.45,2.65)
+      {\code{CT45 SYS\_RESET\#}\\
+       \code{CN55 PWRBTN\#} 与平台状态球位};
+    \node[hidden] (control-hidden) at (6.90,2.65)
+      {电源/复位状态机\\模块内防抖与时序};
+    \node[edge] (control-edge) at (11.35,2.65)
+      {PWR\_SW\# pin 1，RST\_SW\# pin 3\\
+       PSON pin 5，SLP\_S4 pin 7};
+    \node[endpoint] (control-device) at (17.35,2.65)
+      {SW1/SW2 按键\\U15/U16 电源使能};
+
+    \node[ball] (power-ball) at (2.45,0.95)
+      {\code{VCCCORE/VCCIN\_AUX/VCCANA}\\
+       供电、地与 sense balls};
+    \node[hidden] (power-hidden) at (6.90,0.95)
+      {模块 PMIC、负载点稳压\\去耦与电源时序};
+    \node[edge] (power-edge) at (11.35,0.95)
+      {VIN pins 250--260\\11 个并联输入触点};
+    \node[endpoint] (power-device) at (17.35,0.95)
+      {VDC：DC、USB-PD、UPS\\保护、汇流与输入电容};
+
+    \draw[unknown] (pcie-ball.east) -- (pcie-hidden.west);
+    \draw[unknown] (pcie-hidden.east) -- (pcie-edge.west);
+    \draw[unknown] (usb-ball.east) -- (usb-hidden.west);
+    \draw[unknown] (usb-hidden.east) -- (usb-edge.west);
+    \draw[unknown] (display-ball.east) -- (display-hidden.west);
+    \draw[unknown] (display-hidden.east) -- (display-edge.west);
+    \draw[unknown] (serial-ball.east) -- (serial-hidden.west);
+    \draw[unknown] (serial-hidden.east) -- (serial-edge.west);
+    \draw[unknown] (control-ball.east) -- (control-hidden.west);
+    \draw[unknown] (control-hidden.east) -- (control-edge.west);
+    \draw[unknown,<-] (power-ball.east) -- (power-hidden.west);
+    \draw[unknown,<-] (power-hidden.east) -- (power-edge.west);
+
+    \draw[copper] (pcie-edge.east) -- (pcie-device.west);
+    \draw[copper] (usb-edge.east) -- (usb-device.west);
+    \draw[copper] (display-edge.east) -- (display-device.west);
+    \draw[copper] (serial-edge.east) -- (serial-device.west);
+    \draw[copper,<-] (control-edge.east) -- (control-device.west);
+    \draw[power,<-] (power-edge.east) -- (power-device.west);
+
+    \node[
+      draw=BookMuted,
+      fill=white,
+      rounded corners=1mm,
+      anchor=north west,
+      align=left,
+      text width=19.3cm
+    ] at (0.25,0.15) {
+      蓝色虚线穿过 Mu 模块内部，表示接口类别能够对应，但公开资料不足以断言
+      某个 CPU 球位精确连接到某个 Mu 触点。绿色实线从 260-pin 边界开始，
+      是 DFR1142 原理图可以逐网核对的载板连接。红线表示功率从载板流入模块和 CPU。};
+  \end{tikzpicture}
+  \caption{CPU 外设球位经过 Mu 模块到达载板硬件。图把封装球号、模块内部
+  复用、公开的 260-pin 触点和载板落点分成四列；虚线部分需要 Mu 模块内部
+  原理图才能升级为逐网连接。}
+  \label{fig:carrier-cpu-pin-to-carrier}
+\end{sidewaysfigure}
+
 CPU 核心并没有一组“HDMI 引脚”或“NVMe 引脚”直接伸到连接器。程序执行
 MMIO load/store 时，请求先经过 SoC 内部互连到达 xHCI、PCIe root port、
 显示引擎或 Serial I/O 控制器；设备 DMA 也沿互连访问内存控制器。控制器再经
