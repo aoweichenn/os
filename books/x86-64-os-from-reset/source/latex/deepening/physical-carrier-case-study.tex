@@ -519,11 +519,22 @@ CPU 不能只接电源以后独自运行。它需要参考时钟、复位状态�
 小圆点出发，到 W25Q128JV 的具体封装脚结束。图中每条数据线都同时写出
 CPU 球号、网络名、Flash pin 和方向。
 
+先认识图上的标记。CPU 使用 BGA 封装，\code{CC52} 由行字母和列数字定位一颗
+焊球；Flash 使用 SOIC-8 封装，\code{pin 1} 由封装缺口和圆点确定。原理图为了
+让导线少交叉，可以把器件引脚按功能重排，所以图上 pin 1 与 pin 2 的上下位置
+不等于芯片实物上的顺序。焊接和检查时以球号、pin 号和网络名为准。
+
+线端的小圆圈表示器件引脚，连续蓝线表示同一个导电网络。箭头只帮助判断这一笔
+事务的数据方向，不表示铜线内部存在单向器件。红线是供电，地符号表示连接到
+公共参考平面。读图时先沿蓝线核对信号，再单独核对电源和地；只检查四根 SPI
+数据线仍不足以让 Flash 工作。
+
 这是一张使用 Intel N-Series 实际 SPI0 球位与 W25Q128JV SOIC-8 实际 pinout
 构成的最小参考电路。LattePanda Mu 没有公开模块内部原理图，因此不能把
 W25Q128JV 的型号、R1/R2 阻值或器件位号冒充为 Mu 的真实用料；它们用于
 展示一张可以逐脚检查、可以据此绘制 PCB 的电路应该达到什么粒度。
 
+\clearpage
 \begin{sidewaysfigure}[p]
   \centering
   \input{figures/physical_carrier/cpu_pin_to_spi}
@@ -531,12 +542,47 @@ W25Q128JV 的型号、R1/R2 阻值或器件位号冒充为 Mu 的真实用料；
   四条协议线、两个配置上拉、供电、地和去耦电容均有明确端点。}
   \label{fig:carrier-cpu-spi-pin-to-pin}
 \end{sidewaysfigure}
+\clearpage
 
-顺着第一根线检查：CPU ball \code{CC52} 输出低电平，经过
-\code{SPI0\_CS0\#} 网络到达 U1 pin 1，Flash 随后才采样 pin 6 的时钟。
-CPU 从 ball \code{CF52} 发出的命令位进入 U1 pin 5；U1 从 pin 2 返回的数据
-进入 CPU ball \code{CH52}。把 pin 2 和 pin 5 交换，波形分析仪仍可能看到
-时钟和片选，但 CPU 读回的厂商 ID 会是全 0、全 1 或不稳定值。
+\textbf{第一步：先看谁驱动谁。}
+CPU ball \code{CC52} 把 \code{CS\#} 拉低以后，U1 才响应随后到来的时钟。
+ball \code{CC50} 驱动 U1 pin 6；ball \code{CF52} 把命令位送到 U1 pin 5；
+U1 pin 2 则反过来驱动 CPU ball \code{CH52}。因此 MOSI 是 CPU 视角的输出，
+MISO 是 CPU 视角的输入。
+
+\begin{osgridlongtable}{L{0.16\linewidth}L{0.22\linewidth}L{0.19\linewidth}L{0.33\linewidth}}
+CPU 端 & Flash 端 & 空闲时 & 接错后的直接现象 \\ \hline
+\code{CC52 CS0\#} & pin 1 \code{CS\#} & 高电平 & U1 从不响应，或一直错误地占用 MISO \\ \hline
+\code{CC50 CLK} & pin 6 \code{CLK} & 由控制器保持规定电平 & 没有移位节拍，读回值不变化 \\ \hline
+\code{CF52 MOSI} & pin 5 \code{DI/IO0} & 由控制器保持 & U1 收不到 \code{0x9F} 等命令 \\ \hline
+\code{CH52 MISO} & pin 2 \code{DO/IO1} & U1 未选中时高阻 & CPU 读到全 0、全 1 或不稳定值 \\ \hline
+\end{osgridlongtable}
+
+\textbf{第二步：跟踪一次读取厂商 ID。}
+控制器先把 \code{CS\#} 从 1 拉到 0，再从 MOSI 发送命令
+\code{0x9F}。这个字节写成二进制是
+\[
+  \code{0x9F} = 1001\,1111_2 .
+\]
+在常见的 MSB-first 配置下，最左边的 1 先进入 U1 pin 5；每出现一个有效
+采样边沿，Flash 接收一位。八位命令结束后，U1 从 pin 2 依次送出厂商、
+存储器类型和容量代码，CPU 从 \code{CH52} 采样。
+
+示波器或逻辑分析仪应依次观察 U1 pin 1、6、5、2。pin 1 应在整笔事务期间为低；
+pin 6 应出现成组时钟；pin 5 先出现 \code{10011111}；pin 2 随后才出现返回值。
+探头地夹接到 U1 pin 4 附近的地，不能跨很长导线夹到远处机壳，否则地线电感
+会把高速边沿变成振铃。
+
+\textbf{第三步：再看没有参与传输的四个脚。}
+pin 8 与 pin 4 分别给 U1 供电和提供电流回路。C1 储存在器件旁边的少量电荷，
+时钟翻转导致 U1 瞬时取电时，电流不必先穿过很长的电源走线。R1、R2 让
+\code{WP\#/IO2} 和 \code{HOLD\#/RESET\#/IO3} 在普通单线 SPI 阶段保持高电平，
+避免悬空输入偶然暂停事务或改变保护状态。
+
+把 pin 2 和 pin 5 交换后，时钟和片选仍然会出现，所以“看到波形”不能直接说明
+接线正确。更可靠的判断是同时解码 MOSI 上的 \code{0x9F} 和 MISO 上的返回值，
+再把每根探针对应到图中的球号与 pin 号。QEMU 能模拟控制器与 Flash 的协议行为，
+不会模拟探头接错、焊球开路、去耦过远或供电噪声。
 
 \topic{把 USB2 数据球接到插座 pin 2 和 pin 3}%
 图~\ref{fig:carrier-cpu-usb-pin-to-pin} 展开一条 USB 2.0 端口。
@@ -544,6 +590,7 @@ CPU 的 D+ 与 D- 不先合并成“USB 总线”，而是分别穿过 ESD 器�
 直通引脚，最后到达 Type-A 插座 pin 3 和 pin 2。插座 pin 1 的 VBUS 来自
 板上 5 V 电源树，pin 4 回到地平面；这两根电源线不经过 CPU 的 USB 数据球。
 
+\clearpage
 \begin{sidewaysfigure}[p]
   \centering
   \input{figures/physical_carrier/cpu_pin_to_usb}
@@ -551,11 +598,41 @@ CPU 的 D+ 与 D- 不先合并成“USB 总线”，而是分别穿过 ESD 器�
   参考接线。线的连续性可以从 CPU ball 一直核对到标准连接器 pin。}
   \label{fig:carrier-cpu-usb-pin-to-pin}
 \end{sidewaysfigure}
+\clearpage
 
-故意交换 J1 pin 2 和 pin 3 后，VBUS 仍有 5 V，插入设备也可能亮灯，但接收器
-看到的是反相的差分极性，主机无法正常完成 USB reset 和枚举。断开 U2 pin 2
-的短地线时，普通万用表仍会显示 D+/D- 直流连通；ESD 电流却失去低电感回路，
-保护器件在真正的静电事件中可能来不及把接口钳位到安全范围。
+\textbf{从 D+ 追到插座。}
+CPU ball \code{DE12} 先到 U2 pin 1，同一条网络从 U2 pin 6 继续到 J1 pin 3。
+U2 把同一保护通道的两个封装脚分别放在线路两侧，是为了让差分线可以近似直穿
+器件；它不是把 D+ 转换成另一种协议。D- 以相同方式从 \code{DD12} 经过
+U2 pin 3/4 到达 J1 pin 2。
+
+USB 接收器判断的是
+\[
+  V_{\mathrm{diff}} = V_{\mathrm{D+}} - V_{\mathrm{D-}},
+\]
+所以两根线必须一起看。PCB 让它们并行、保持相近长度并控制约
+\(\SI{90}{\ohm}\) 差分阻抗；U2 也选用低电容器件并靠近插座。若保护器件离
+J1 很远，静电电流会先沿长走线进入板内，再到达钳位器件。
+
+\textbf{插入设备以后发生什么。}
+U3 和 F1 先把 5 V 送到 J1 pin 1，设备从 VBUS 获得电源。设备在 D+ 或 D-
+呈现规定的上拉状态，主机 PHY 由此发现连接；主机随后驱动总线复位并判断速度，
+再发送读取设备描述符的控制传输。任何一步失败，上层都不会凭空出现“USB 键盘”
+或“U 盘”对象。
+
+\begin{osgridlongtable}{L{0.24\linewidth}L{0.30\linewidth}L{0.36\linewidth}}
+故障位置 & 电气现象 & 软件或仪器看到的结果 \\ \hline
+F1 开路 & J1 pin 1 没有 5 V & 设备不亮，也不会呈现上拉 \\ \hline
+D+ 单线开路 & VBUS 正常，D- 仍连通 & 主机反复连接、复位或完全不枚举 \\ \hline
+J1 pin 2/3 交换 & 两线都有波形但极性相反 & 设备可能有电，链路无法按正常极性解码 \\ \hline
+U2 pin 2 未接低电感地 & 日常通信可能暂时正常 & ESD 测试时钳位路径过长，接口或 SoC 可能受损 \\ \hline
+J1 pin 4 开路 & 设备缺少稳定参考与电源回路 & VBUS 测量漂移，通信和供电均异常 \\ \hline
+\end{osgridlongtable}
+
+断电后可用万用表通断档检查 J1 pin 3 到 U2 pin 6、U2 pin 1 到 SoC 侧测试点，
+再检查 D- 路径；通电后先量 pin 1 对 pin 4 的 VBUS。高速通信质量不能只靠
+通断档判断，还要看 D+/D- 的波形、枚举日志和控制器状态。逻辑分析仪或差分探头
+应使用适合 USB 速度的带宽与连接方式，普通长地夹会显著改变被测波形。
 
 \topic{I2C 与 UART 也按发送端、接收端和封装脚追线}%
 图~\ref{fig:carrier-cpu-i2c-uart-pin-to-pin} 上半页把 I2C0 接到一颗
@@ -563,6 +640,7 @@ CPU 的 D+ 与 D- 不先合并成“USB 总线”，而是分别穿过 ESD 器�
 没有因为“不是数据线”而省略。下半页把 UART0 接到调试排针，CPU TX 明确
 连接适配器 RX，CPU RX 明确连接适配器 TX。
 
+\clearpage
 \begin{sidewaysfigure}[p]
   \centering
   \input{figures/physical_carrier/cpu_pin_to_i2c_uart}
@@ -570,11 +648,58 @@ CPU 的 D+ 与 D- 不先合并成“USB 总线”，而是分别穿过 ESD 器�
   开漏总线的上拉和串口的交叉方向都直接画在导线上。}
   \label{fig:carrier-cpu-i2c-uart-pin-to-pin}
 \end{sidewaysfigure}
+\clearpage
 
-I2C 的两只上拉若完全删除，CPU 和 EEPROM 都只能主动把线路拉低，没有器件负责
-把线路恢复为高电平。逻辑分析仪会看到 SCL/SDA 在第一次低电平以后不再上升。
-UART 若把 TX 接 TX、RX 接 RX，两端都在各自的发送线上产生正常波形，却没有
-任何波形进入接收脚；这就是为什么原理图必须同时写引脚号和信号方向。
+\textbf{为什么 I2C 线要接电阻。}
+CPU 和 24C02 的 SCL/SDA 输出都采用开漏方式：器件可以把线路拉到地，却不主动
+向高电平推电流。没有器件拉低时，R3/R4 把线路拉回 \code{VCC\_IO}。这样多个
+器件可以共用一根线；某个器件拉低时，其他器件不会同时用强推挽输出把线路推高。
+
+假设 \code{VCC\_IO} 为 \(\SI{3.3}{V}\)，上拉为
+\(\SI{2.2}{k\ohm}\)，器件拉低时每根线的电流近似为
+\[
+  I_{\mathrm{LOW}}
+  = \frac{\SI{3.3}{V}}{\SI{2.2}{k\ohm}}
+  \approx \SI{1.5}{mA}.
+\]
+若总线电容约为 \(\SI{100}{pF}\)，30\% 到 70\% 的上升时间可粗略估为
+\[
+  t_r \approx 0.8473 R C
+      \approx 0.8473 \times \SI{2.2}{k\ohm}
+      \times \SI{100}{pF}
+      \approx \SI{186}{ns}.
+\]
+阻值太大时上升过慢，阻值太小时器件拉低所需电流变大，因此上拉值要结合速度、
+电容和器件低电平能力选择。
+
+U4 的 A0/A1/A2 都接地时，24C02 的七位地址为 \code{0x50}。控制器写入时先产生
+START，再发送地址字节 \code{0xA0}；最低位 0 表示写。若要读数据，控制器可先
+写入内部字节地址，再产生 repeated START 并发送 \code{0xA1}；最低位 1 表示读。
+每发送八位，接收方在第九个时钟把 SDA 拉低作为 ACK。
+
+pin 7 \code{WP} 接地允许正常写入；把它接高通常会阻止对存储阵列的写操作。
+pin 8 与 pin 4 是 EEPROM 的电源和地。删除上拉以后，逻辑分析仪会看到 SCL/SDA
+在第一次低电平后无法正常回到高电平；只删除 SDA 上拉时，SCL 仍有时钟，
+但地址和 ACK 都无法形成。
+
+\textbf{UART 为什么必须交叉。}
+ball \code{DB40} 是 SoC 的发送输出，因此它连接 J2 pin 2，也就是适配器的
+接收输入。ball \code{DB34} 是 SoC 的接收输入，所以连接适配器的发送输出。
+J2 pin 1 把两端地连在一起，让双方对“高”和“低”使用同一个电压参考。
+
+以 \(115200\) baud、8-N-1 为例，每一位持续
+\[
+  t_{\mathrm{bit}} = \frac{1}{115200}
+  \approx \SI{8.68}{\micro\second}.
+\]
+一个字符包含 1 个起始位、8 个数据位和 1 个停止位，共 10 位，因此发送时间约
+为 \(\SI{86.8}{\micro\second}\)。逻辑分析仪若按错误波特率解码，会看到帧错误
+或乱码；这与 TX/RX 接反造成的“接收线上完全没有波形”是两种不同现象。
+
+调试时先把探头接到 J2 pin 2，确认 CPU 发送字符时这里出现波形；再看 J2 pin 3，
+确认在适配器发送数据时波形确实进入 CPU。TX 接 TX、RX 接 RX 时，两端可能都在
+自己的输出脚上产生正常波形，却没有任何波形进入接收脚。还要先确认
+\code{VCC\_IO}，CMOS/TTL 调试口不能直接连接使用正负电压的 RS-232 DB9。
 
 \topic{CPU 外设球位怎样到达载板连接器}%
 外设路径比“一个引脚接一个插座”多两层。以 PCIe 为例，CPU 的可复用
