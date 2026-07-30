@@ -235,7 +235,9 @@ CPU 核心并没有一组“HDMI 引脚”或“NVMe 引脚”直接伸到连接
 MMIO load/store 时，请求先经过 SoC 内部互连到达 xHCI、PCIe root port、
 显示引擎或 Serial I/O 控制器；设备 DMA 也沿互连访问内存控制器。控制器再经
 PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、SoC fabric、
-控制器/PHY”合在左侧功能端，右侧从公开的 Mu pin 开始画真实载板铜线。
+控制器/PHY”分成三层画在左侧，右侧从公开的 Mu pin 开始画真实载板铜线。
+最上面的两个深蓝色方框就是执行指令的 CPU 和接收中断的 Local APIC；它们
+先连接 SoC 内部互连，再由互连把事务送往下方的控制器。
 
 \begin{sidewaysfigure}[p]
   \centering
@@ -243,11 +245,28 @@ PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、S
       x=1cm,
       y=1cm,
       every node/.style={font=\footnotesize\sffamily},
+      cpu/.style={
+        draw=BookNavy,
+        fill=BookNavy!12,
+        rounded corners=1mm,
+        minimum width=2.25cm,
+        minimum height=0.92cm,
+        align=center
+      },
+      fabric/.style={
+        draw=BookBlue,
+        fill=BookBlue!18,
+        rounded corners=1mm,
+        minimum width=4.8cm,
+        minimum height=0.68cm,
+        align=center,
+        font=\footnotesize\bfseries\sffamily
+      },
       soc/.style={
         draw=BookBlue,
         fill=BookBlue!10,
         rounded corners=1mm,
-        minimum width=4.1cm,
+        minimum width=4.8cm,
         minimum height=0.72cm,
         align=center
       },
@@ -268,16 +287,25 @@ PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、S
         align=center
       },
       inside/.style={BookBlue,dashed,thick,-{Latex[length=2mm]}},
+      fabricbus/.style={BookBlue,dashed,thick},
       copper/.style={BookTeal,very thick,-{Latex[length=2mm]}},
       power/.style={BookRed,very thick,-{Latex[length=2mm]}}
     ]
-    \node[font=\Large\bfseries\color{BookNavy}] at (9.6,9.15)
-      {从 SoC 功能端点经过 260-pin 边界追到载板器件};
-    \node[font=\bfseries\color{BookBlue},align=center] at (2.4,8.45)
-      {CPU cores/APIC 经 SoC fabric\\到达控制器/PHY};
-    \node[font=\bfseries\color{BookTeal}] at (9.6,8.45)
+    \node[cpu] (cpu-cores) at (1.25,10.35)
+      {\textbf{x86 CPU 核心}\\取指、执行、访存};
+    \node[cpu] (local-apic) at (3.95,10.35)
+      {\textbf{Local APIC}\\每核中断端点};
+    \node[fabric] (soc-fabric) at (2.6,9.15)
+      {SoC internal fabric（片上互连）};
+
+    \draw[inside] (cpu-cores.south) -- (cpu-cores.south |- soc-fabric.north);
+    \draw[inside] (local-apic.south) -- (local-apic.south |- soc-fabric.north);
+
+    \node[font=\bfseries\color{BookBlue},align=center] at (2.6,8.25)
+      {SoC 内部的控制器与 PHY};
+    \node[font=\bfseries\color{BookTeal}] at (9.6,8.25)
       {公开的 260-pin 信号组};
-    \node[font=\bfseries\color{BookAmber!70!black}] at (16.8,8.45)
+    \node[font=\bfseries\color{BookAmber!70!black}] at (16.8,8.25)
       {DFR1142 V2 载板落点};
 
     \node[soc] (pcie) at (2.4,7.55) {PCIe root ports};
@@ -331,6 +359,15 @@ PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、S
     \node[carrier] (vdc) at (16.8,-0.15)
       {VDC：DC、USB-PD、UPS\\经过保护后的汇流点};
 
+    \draw[fabricbus] (soc-fabric.west) -- (-0.20,9.15) -- (-0.20,0.95);
+    \draw[inside] (-0.20,7.55) -- (pcie.west);
+    \draw[inside] (-0.20,6.45) -- (xhci.west);
+    \draw[inside] (-0.20,5.35) -- (display.west);
+    \draw[inside] (-0.20,4.25) -- (serial.west);
+    \draw[inside] (-0.20,3.15) -- (pm.west);
+    \draw[inside] (-0.20,2.05) -- (memory.west);
+    \draw[inside] (-0.20,0.95) -- (boot.west);
+
     \draw[inside] (pcie.east) -- (hsio.west);
     \draw[inside] (xhci.east) -- (usb.west);
     \draw[inside] (display.east) -- (ddi.west);
@@ -358,14 +395,16 @@ PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、S
       text width=19cm,
       anchor=north west
     ] at (0.05,-0.85) {
-      虚线表示模块内部的功能关系。公开载板资料没有给出 N100/N305
+      深蓝色方框表示真正执行指令的 CPU 核心及其 Local APIC；蓝色虚线表示
+      模块内部的功能关系。公开载板资料没有给出 N100/N305
       封装球位、模块内层走线和电源时序细节，因此这里不冒充封装级原理图。
       实线从 260-pin 边界开始，对应载板原理图中的真实网络；红线表示功率从
       VDC 经 VIN 进入模块，方向与普通外设信号相反。
     };
   \end{tikzpicture}
-  \caption{CPU/SoC 到载板的总接线索引。先按行确定 SoC 中负责该事务的控制器，
-  再查中间列的 Mu 信号与物理 pin，最后追到右侧连接器或器件。}
+  \caption{CPU/SoC 到载板的总接线索引。CPU 核心和 Local APIC 先连接 SoC
+  内部互连；互连把事务分派给控制器。再按行查询 Mu 信号与物理 pin，最后追到
+  载板上的连接器或器件。}
   \label{fig:carrier-soc-to-board-overview}
 \end{sidewaysfigure}
 
@@ -384,6 +423,7 @@ PHY 和模块布线到达 Mu 边缘触点。所以下图把“CPU cores/APIC、S
   \label{fig:carrier-power-learning}
 \end{figure}
 
+\clearpage
 \carrierschematicpage{9}{DFR1142 V2 原理图第 9 页：三路输入、降压、电源按键、
 状态与 PCIe 12 V 的原始器件级电路。}{fig:carrier-power-original}
 
