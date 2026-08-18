@@ -429,8 +429,25 @@ chips:
       irq14_ata_primary: 0x2E
       irq7_spurious_test: 0x27
       irq15_spurious: 0x2F
+  vga_text_console:
+    role: current-display-observability
+    text_memory_address: 0x000B8000
+    visible_columns: 80
+    visible_rows: 25
+    shared_log_address: 0x00020000
+    shared_log_size_bytes: 0x00080000
+    io_ports:
+      attribute_index_data: 0x03C0
+      misc_output: 0x03C2
+      sequencer_index: 0x03C4
+      sequencer_data: 0x03C5
+      graphics_index: 0x03CE
+      graphics_data: 0x03CF
+      crtc_index: 0x03D4
+      crtc_data: 0x03D5
+      input_status: 0x03DA
   ns16550a_com1:
-    role: serial-observability
+    role: historical-serial-observability
     io_base: 0x03F8
     register_width_bits: 8
     registers:

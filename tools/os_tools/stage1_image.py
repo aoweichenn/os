@@ -16,6 +16,8 @@ OS_STAGE1_IMAGE_MAXIMUM_PAYLOAD_SECTORS = 64
 OS_STAGE1_IMAGE_LBA28_MAXIMUM = 0x0FFF_FFFF
 OS_STAGE1_IMAGE_MINIMUM_LOAD_ADDRESS = 0x0000_8000
 OS_STAGE1_IMAGE_MAXIMUM_LOAD_END_ADDRESS = 0x0009_FC00
+OS_STAGE1_IMAGE_VGA_STATE_BEGIN_ADDRESS = 0x0002_0000
+OS_STAGE1_IMAGE_VGA_STATE_END_ADDRESS = 0x000A_0000
 OS_STAGE1_IMAGE_DEFAULT_LOAD_SEGMENT = 0x0800
 OS_STAGE1_IMAGE_DEFAULT_ENTRY_OFFSET = 0
 OS_STAGE1_IMAGE_FLAGS_NONE = 0
@@ -123,6 +125,14 @@ def validateStage1Layout(
     ):
         raise OsToolError(
             "Stage 1 加载范围不在约定 RAM 窗口："
+            f"0x{loadAddress:08X}..0x{loadEndAddress:08X}"
+        )
+    if (
+        loadAddress < OS_STAGE1_IMAGE_VGA_STATE_END_ADDRESS
+        and loadEndAddress > OS_STAGE1_IMAGE_VGA_STATE_BEGIN_ADDRESS
+    ):
+        raise OsToolError(
+            "Stage 1 加载范围覆盖 VGA 共享状态："
             f"0x{loadAddress:08X}..0x{loadEndAddress:08X}"
         )
     if not 0 <= entryOffset < payloadSizeBytes:

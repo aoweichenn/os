@@ -1,17 +1,37 @@
-# 启动日志规范
+# 系统日志与前台终端规范
 
-串口日志是本项目的启动观测接口，也是 QEMU 集成测试的稳定证据。日志必须同时满足“足够解释状态”和“不会淹没真正的故障”。
+`0x20000..0x9FFFF` 的只追加内存区是系统诊断的权威启动观测接口，也是 QEMU
+集成测试的稳定证据。VGA 是用户前台，不再承载进入 Shell 后的普通 Kernel
+统计。日志必须同时满足“足够解释状态”和“不会淹没真正的故障”。
+
+## 输出路由
+
+| 来源 | 内存日志/转录 | VGA 屏幕 | 宿主文件 |
+| --- | --- | --- | --- |
+| Firmware/Stage 1/Kernel 启动诊断 | 是 | 终端激活前可见 | QEMU 工具导出 |
+| Kernel 运行期诊断 | 是 | 否 | QEMU 工具导出 |
+| TTY stdout/stderr | 是 | 是 | QEMU 工具导出 |
+| panic | 尽力写入 | 始终写入 | 会话仍存活时导出 |
+
+共享头版本 3 的 `output_mode` 初值为 0。Kernel 准备运行用户环境时先清屏、
+复位光标，再提交模式 1；此后的诊断写入不能移动前台光标。日志溢出会令普通
+诊断失败并置位 overflow，但 panic 仍继续渲染，不能因为观测缓冲耗尽而隐藏
+致命现场。
+
+自动测试用 QMP `pmemsave` 读取该区域；`qemu-display` 默认持续导出到
+`build/developer/qemu-display.log`，可用 `--guest-log-file` 改路径。目标系统
+不调用 QMP，复位后内存记录丢失；v2.3 以前不能让早期日志或 panic 依赖 VFS。
 
 ## 日志分层
 
 | 层级 | 目的 | 允许频率 | 示例 |
 | --- | --- | --- | --- |
 | `MILESTONE` | 记录不可逆阶段边界 | 每个阶段一次 | `[OS][STAGE1] GDT_READY` |
-| `DEVICE` | 记录设备初始化结果 | 每个设备一次 | `[OS][FIRMWARE] SERIAL_READY` |
+| `DEVICE` | 记录设备初始化结果 | 每个设备一次 | `[OS][FIRMWARE] VGA_READY` |
 | `FAILURE` | 记录停止原因 | 每条故障路径一次 | `[OS][FIRMWARE] STAGE1_CHECKSUM_INVALID` |
 | `TRACE` | 调试内部细节 | 默认关闭 | 轮询计数、寄存器快照 |
 
-当前串口格式使用稳定的组件和事件名代替显式等级字段：固件事件使用
+当前系统日志格式使用稳定的组件和事件名代替显式等级字段：固件事件使用
 `[OS][FIRMWARE]`，Stage 1 事件使用 `[OS][STAGE1]`，内核事件使用
 `[OS][KERNEL]`。事件名必须是大写下划线形式，并且纳入 QEMU 测试的顺序或
 禁止标记集合。
@@ -30,9 +50,9 @@
 重新编程 PIT，并且只有真实接收至少 16 个 IRQ0 后才输出单调毫秒。因为复位到
 内核接管之间没有连续软件溢出计数，不能把内核 tick 伪装成“从复位开始”的时间。
 
-QEMU 验收工具另用宿主单调时钟记录每条串口行抵达时刻，格式为
-`[QEMU][T+000123ms]`。该字段由逐行读取线程在收到换行时生成，只描述测试进程
-观察到日志的时间，不冒充来宾 PIT 时间。捕获器在最终必需里程碑到达后主动结束，
+QEMU 验收工具另用宿主单调时钟记录每条 VGA 行首次出现在追加区的时刻，格式为
+`[QEMU][T+000123ms]`。该字段由 QMP 捕获线程在观察到完整换行时生成，只描述
+测试进程观察到日志的时间，不冒充来宾 PIT 时间。捕获器在最终必需里程碑到达后主动结束，
 未完成路径最多等待十五秒；两种路径都必须显式终止并等待回收 QEMU，避免后台残留
 模拟器进程。
 
@@ -245,7 +265,7 @@ Shell 与控制台协议见文末。
 
 ```text
 [OS][FIRMWARE] RESET
-[OS][FIRMWARE] SERIAL_READY
+[OS][FIRMWARE] VGA_READY
 [OS][FIRMWARE] STAGE1_HEADER_VALID
 [OS][FIRMWARE] STAGE1_LOADED
 [OS][STAGE1] ENTERED
@@ -390,13 +410,13 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 
 设备日志遵循“初始化一次、热路径计数、消费时记录”的规则：
 
-- IRQ0 不写串口，只在启动自检结束时汇总 tick 与毫秒。
+- IRQ0 不写 VGA，只在启动自检结束时汇总 tick 与毫秒。
 - IRQ1 不在汇编入口格式化日志；C++ 事件循环消费首个完整事件后记录。
 - ATA PIO 不逐字、逐扇区输出，只记录驱动可用与启动描述符校验结果。
 - PIC 只记录最终 mask 和一次虚假 IRQ 自检，不逐次记录 EOI。
 
-这样 1000 Hz 时钟不会淹没键盘、异常与失败标记，也避免串口轮询延长中断
-服务时间。
+这样 1000 Hz 时钟不会淹没键盘、异常与失败标记，也避免逐字符显存写和光标
+更新延长中断服务时间。
 
 用户日志分可信级别：
 
@@ -404,7 +424,7 @@ Kernel 读取阶段分别使用 `KERNEL_ATA_TIMEOUT`、`KERNEL_ATA_ERROR`、
 - `[OS][USER] ...` 是经长度和地址检查后转发的用户文本，不能作为安全决策
   依据；测试只把三个内置验收程序的固定文本当作该镜像的行为证据。
 - 系统调用不逐次打印。正常程序结束后只汇总一次
-  `USER_SYSCALL_COUNT`，避免未来高频调用冲垮串口。
+  `USER_SYSCALL_COUNT`，避免未来高频调用冲垮 VGA 控制台。
 - 用户异常只输出向量、错误码、RIP 和可选 CR2，再输出一次终止与返回标记；
   不复用 `[OS][KERNEL] EXCEPTION`/`PANIC`，从协议上区分隔离事件与内核崩溃。
 
@@ -511,7 +531,7 @@ Shell 读取全部输入，后台三个程序均不读取控制台。
 没有 Ready 进程时，内核不会周期性打印 `IDLE`。它在永久地址空间和默认
 RSP0 上执行同一汇编块中的 `sti; hlt; cli`；IRQ0 可能只推进时间，IRQ1 提交有效字符后才按原因
 唤醒等待 fd 0 的 Shell。禁止逐 tick、逐按键、逐 FIFO 操作打印，是为了不让
-115200 波特串口反向改变中断时序，也让“日志丰富”保持为可解释的状态摘要。
+显存滚屏与硬件光标更新反向改变中断时序，也让日志保持为可解释的状态摘要。
 
 当前正常镜像的进程编号固定为 PID1 Shell、PID2 生产者、PID3 消费者、PID4
 worker。创建、终止、描述符关闭、管道字节、文件系统一致性与控制台统计都在
@@ -569,7 +589,7 @@ QEMU 参数代替来宾容量证据。
 [OS][KERNEL] EXTENDED_STATE_RESTORES=0x...
 ```
 
-二者必须非零；每次 FXSAVE/FXRSTOR 不打印。逐切换日志会显著增加串口耗时，
+二者必须非零；每次 FXSAVE/FXRSTOR 不打印。逐切换日志会显著增加 VGA 控制台耗时，
 使测试改变调度时序，也会把真正的状态失败淹没。最终 `SCHEDULER_COMPLETE`
 还要求 Process/Thread owned count 为零、create/reap 守恒和 26 字段资源
 快照零差异。
@@ -648,8 +668,8 @@ need-resched 与拒绝数则必须精确为零。可信栈验证次数必须覆�
 
 只有安全失败才输出 `USER_RETURN_REJECTED` 及 ownership、status、mapping、
 entry、vector、RIP、RSP、RFLAGS 八项诊断。正常路径把该标记列为禁止项。
-这种低频展开日志能定位返回攻击面，又不会让高频系统调用冲刷 115200 波特
-串口或反向改变调度时序。
+这种低频展开日志能定位返回攻击面，又不会让高频系统调用持续滚屏或反向改变
+调度时序。
 
 ## v1.4 对象与动态描述符日志
 
@@ -660,7 +680,7 @@ entry、vector、RIP、RSP、RFLAGS 八项诊断。正常路径把该标记列�
 ```
 
 open、lookup、duplicate、每次读写、引用 acquire/release 和普通 close 都
-不打印。它们是高频路径，逐项串口输出会延长持锁或系统调用时间，改变 PIT
+不打印。它们是高频路径，逐项 VGA 控制台输出会延长持锁或系统调用时间，改变 PIT
 抢占与管道阻塞时序。失败由系统调用返回值和测试断言定位，不靠无界日志。
 
 四个 Process 全部退出、FileTable 已销毁后，Kernel 在冷路径输出一次有界
@@ -775,7 +795,7 @@ v1.6 新增命名空间命令 marker：
 - 每个 memfs 节点分配；
 - 每次 OpenFile offset 推进。
 
-这些次数由聚合统计和宿主模型覆盖。逐组件串口日志会显著改变系统调用被 PIT
+这些次数由聚合统计和宿主模型覆盖。逐组件 VGA 控制台日志会显著改变系统调用被 PIT
 打断的时序，也可能让 4096 字节路径制造数千行输出。需要调试某个失败时，应
 在宿主单元测试中缩小种子/步骤，或临时启用有界诊断后再移除，不能把无界
 trace 留在默认镜像。
@@ -783,7 +803,7 @@ trace 留在默认镜像。
 时间仍采用双坐标：
 
 - 来宾 `TIMER_TICKS` 与 `MONOTONIC_MILLISECONDS` 表示 PIT 驱动的目标时间；
-- 宿主 QEMU 捕获器为每条串口行加 `[QEMU][T+...ms]`，表示从当前 QEMU
+- 宿主 QEMU 捕获器为每条内存日志行加 `[QEMU][T+...ms]`，表示从当前 QEMU
   进程启动开始的墙钟相对时间。
 
 两者不能混为一谈。TCG 宿主负载会改变墙钟耗时，来宾 tick 又会受中断开放
@@ -828,7 +848,7 @@ trace 留在默认镜像。
 
 这些行描述语义边界，不逐字打印 128 KiB 参数、不打印每个 ELF chunk、每张
 用户页、每个 argv 指针或每次 wait 扫描。参数内容由目标程序逐字节校验，ELF
-字节由 reader 单元/集成测试覆盖；把这些热路径写入串口会改变调度时序并淹没
+字节由 reader 单元/集成测试覆盖；把这些热路径写入 VGA 控制台会改变调度时序并淹没
 真正失败位置。
 
 全部 Process 安全点回收后，Kernel 一次性输出进程树摘要：
@@ -850,7 +870,7 @@ wait block 次数受合法调度交错影响，只要求至少一次；注册、
 `PROCESS_TREE_VALID` 还要求 active/alive 均为零，并与 ThreadScheduler 的八次
 Process/Thread 创建回收、动态栈活动数零和资源快照零差异同时成立。
 
-时间仍使用两套来源。上述每条串口行会由宿主补上 `[QEMU][T+...ms]`；来宾
+时间仍使用两套来源。上述每条内存日志行会由宿主补上 `[QEMU][T+...ms]`；来宾
 在设备初始化后仍输出 PIT 的 `TIMER_TICKS` 与
 `MONOTONIC_MILLISECONDS`。进程日志不自行读取 RTC，也不为每次系统调用打印
 时间。若卡在某个生命周期事件，runner 的阶段 deadline 会终止并回收 QEMU；
@@ -859,7 +879,7 @@ Process/Thread 创建回收、动态栈活动数零和资源快照零差异同�
 ## v1.8 按需分页与 VMA 日志
 
 页故障是潜在高频事件。默认镜像不为每页打印 CR2、frame、PTE 或页表层级，
-否则一个 32 MiB 线性触页就能制造 8192 组串口输出，并改变 TCG 下的抢占与
+否则一个 32 MiB 线性触页就能制造 8192 组 VGA 控制台输出，并改变 TCG 下的抢占与
 wait 交错。
 
 Kernel 只在当前 Process 的累计计数达到二次幂时采样：
@@ -994,7 +1014,7 @@ active 两项必须精确为零；peak、first share 和 release 必须非零。
 
 时间策略不变：来宾使用 PIT 单调毫秒，宿主捕获器为每行附加
 `[QEMU][T+...ms]`。日志只描述已提交状态，不在页表锁、引用锁或回滚中间
-打印，避免串口吞吐改变 fault 与调度顺序。
+打印，避免 VGA 控制台吞吐改变 fault 与调度顺序。
 
 ## v1.11 动态管道与外部 Shell 日志
 
@@ -1038,7 +1058,7 @@ Thread create/exit/join 和 futex wait/wake 都是并发热路径。Kernel 只�
 [OS][KERNEL][FUTEX] WAKE_OPERATION_COUNT=0x...
 ```
 
-因此 64 Thread 工作负载最多产生对数级进度行，不把串口锁和 PIO 延迟引入每
+因此 64 Thread 工作负载最多产生对数级进度行，不把显存滚屏和光标更新成本引入每
 次 mutex 临界区。用户探针只在完整语义提交后输出：
 
 ```text
@@ -1090,7 +1110,7 @@ PIT IRQ0、deadline 队首检查和逐 waiter 解析均为热路径，不输出�
 ```
 
 正常终态 active 为零且 schedule=expiration+cancellation。数值使用来宾
-单调时钟和内核账本；宿主添加的 `[QEMU][T+...ms]` 只描述串口到达时间。
+单调时钟和内核账本；宿主添加的 `[QEMU][T+...ms]` 只描述内存日志观察时间。
 二者起点和调度环境不同，不比较绝对值。
 
 ## v1.14 进程信号与用户返回日志
@@ -1139,6 +1159,7 @@ Shell 只在可作为协议屏障的低频边界打印：
 ```text
 [OS][USER][SHELL] JOB_CONTROL_READY
 [OS][USER][SHELL] FOREGROUND_JOB_WAITING
+[OS][KERNEL][SIGNAL] DEFAULT_CONTINUE_DELIVERED
 [OS][USER][SHELL] FOREGROUND_JOB_STOPPED
 [OS][USER][SHELL] BACKGROUND_JOB_STARTED
 [OS][USER][SHELL] COMMAND_COMPLETE
@@ -1168,8 +1189,10 @@ Kernel 在全部 Process 收集后输出一次权威账本：
 
 控制字符采用“动作计数 + 终态账本”，不打印每次扫描码。QEMU runner 等待
 新的 `COMMAND_COMPLETE` 再发送下一条命令；等待控制键前还要求新的
-`FOREGROUND_JOB_WAITING`。每步超过 20 秒立即失败并终止协议等待，不能继续
-耗尽整机总预算。
+`FOREGROUND_JOB_WAITING`。`fg` 后还必须观察
+`DEFAULT_CONTINUE_DELIVERED` 才注入 Ctrl-C，不能依靠宿主执行快慢决定
+SIGCONT/SIGINT 顺序。每步超过 20 秒立即失败并终止协议等待，不能继续耗尽
+整机总预算。
 
 ## v1.16 IRQ14、块请求与写回日志
 
@@ -1192,9 +1215,9 @@ DeviceError、TimedOut 只在唯一解析边界记录；迟到 IRQ 进入累计�
 不重复打印同一完成。
 
 来宾时间来自 PIT 单调纳秒，必须满足 completion time 不早于 submit time。
-宿主捕获器继续添加 `[QEMU][T+......ms]`，它只描述串口到达时间，用于看出
-64 GiB TCG 扫描或宿主竞争造成的阶段延迟，不能参与请求 deadline。
+宿主捕获器继续添加 `[QEMU][T+......ms]`，它只描述内存日志观察时间，用于看出
+32 GiB TCG 扫描或宿主竞争造成的阶段延迟，不能参与请求 deadline。
 
 页缓存只在 sync 边界记录 writeback 状态/页数/VFS 结果；Dirty/Writeback
-的逐页状态转移由统计与测试观察，不冲串口。写回失败必须保留明确 error
+的逐页状态转移由统计与测试观察，不冲 VGA 控制台。写回失败必须保留明确 error
 结果，不能用一条“sync complete”掩盖部分失败。

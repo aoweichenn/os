@@ -2,11 +2,8 @@ bits 16
 org 0
 
 %include "kernel_loader.inc"
+%include "vga_console.inc"
 
-OS_STAGE1_COM1_BASE_PORT equ 0x03F8
-OS_STAGE1_COM1_LINE_STATUS_OFFSET equ 0x0005
-OS_STAGE1_COM1_TRANSMITTER_EMPTY_BIT equ 0x20
-OS_STAGE1_COM1_READY_POLL_LIMIT equ 0xFFFF
 OS_STAGE1_GDT_CODE_SELECTOR equ 0x0008
 OS_STAGE1_GDT_DATA_SELECTOR equ 0x0010
 OS_STAGE1_GDT_LONG_CODE_SELECTOR equ 0x0018
@@ -140,23 +137,129 @@ os_stage1_protected_write_complete:
     ret
 
 os_stage1_protected_write_byte:
+    push eax
+    push ebx
+    push ecx
+    push edx
+    push esi
+    push edi
     mov bl, al
-    mov ecx, OS_STAGE1_COM1_READY_POLL_LIMIT
-    mov edx, OS_STAGE1_COM1_BASE_PORT + OS_STAGE1_COM1_LINE_STATUS_OFFSET
+    cmp dword [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_MAGIC_OFFSET], \
+        OS_STAGE1_VGA_STATE_MAGIC
+    jne os_stage1_protected_write_byte_failed
+    cmp dword [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_VERSION_OFFSET], \
+        OS_STAGE1_VGA_STATE_VERSION
+    jne os_stage1_protected_write_byte_failed
+    mov eax, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_LENGTH_OFFSET]
+    cmp eax, OS_STAGE1_VGA_STATE_TRACE_CAPACITY
+    jae os_stage1_protected_write_byte_overflow
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_OFFSET + eax], bl
+    inc eax
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_LENGTH_OFFSET], eax
 
-os_stage1_protected_write_byte_poll:
-    in al, dx
-    test al, OS_STAGE1_COM1_TRANSMITTER_EMPTY_BIT
-    jnz os_stage1_protected_write_byte_ready
-    loop os_stage1_protected_write_byte_poll
+    cmp bl, OS_STAGE1_VGA_CARRIAGE_RETURN
+    je os_stage1_protected_write_byte_carriage_return
+    cmp bl, OS_STAGE1_VGA_LINE_FEED
+    je os_stage1_protected_write_byte_line_feed
+    cmp bl, OS_STAGE1_VGA_FIRST_PRINTABLE
+    jb os_stage1_protected_write_byte_render_complete
+    cmp bl, OS_STAGE1_VGA_LAST_PRINTABLE
+    ja os_stage1_protected_write_byte_render_complete
+    call os_stage1_protected_put_vga_character
+    jmp os_stage1_protected_write_byte_render_complete
+
+os_stage1_protected_write_byte_carriage_return:
+    mov word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], 0
+    jmp os_stage1_protected_write_byte_render_complete
+
+os_stage1_protected_write_byte_line_feed:
+    call os_stage1_protected_advance_vga_line
+
+os_stage1_protected_write_byte_render_complete:
+    call os_stage1_protected_update_vga_cursor
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
+    stc
+    ret
+
+os_stage1_protected_write_byte_overflow:
+    mov dword [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_OVERFLOW_OFFSET], 1
+
+os_stage1_protected_write_byte_failed:
+    pop edi
+    pop esi
+    pop edx
+    pop ecx
+    pop ebx
+    pop eax
     clc
     ret
 
-os_stage1_protected_write_byte_ready:
-    mov edx, OS_STAGE1_COM1_BASE_PORT
+os_stage1_protected_put_vga_character:
+    movzx eax, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    imul eax, OS_STAGE1_VGA_COLUMN_COUNT
+    movzx edx, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    add eax, edx
+    shl eax, 1
+    mov edi, eax
+    mov ah, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_ATTRIBUTE_OFFSET]
+    mov al, bl
+    mov [OS_STAGE1_VGA_TEXT_ADDRESS + edi], ax
+    mov ax, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    inc ax
+    cmp ax, OS_STAGE1_VGA_COLUMN_COUNT
+    jae os_stage1_protected_put_vga_character_wrap
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], ax
+    ret
+
+os_stage1_protected_put_vga_character_wrap:
+    call os_stage1_protected_advance_vga_line
+    ret
+
+os_stage1_protected_advance_vga_line:
+    mov word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], 0
+    mov ax, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    inc ax
+    cmp ax, OS_STAGE1_VGA_ROW_COUNT
+    jae os_stage1_protected_scroll_vga
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET], ax
+    ret
+
+os_stage1_protected_scroll_vga:
+    mov esi, OS_STAGE1_VGA_TEXT_ADDRESS + OS_STAGE1_VGA_ROW_SIZE_BYTES
+    mov edi, OS_STAGE1_VGA_TEXT_ADDRESS
+    mov ecx, (OS_STAGE1_VGA_CELL_COUNT - OS_STAGE1_VGA_COLUMN_COUNT) / 2
+    rep movsd
+    mov edi, OS_STAGE1_VGA_TEXT_ADDRESS + OS_STAGE1_VGA_LAST_ROW_OFFSET
+    mov ax, OS_STAGE1_VGA_BLANK_CELL
+    mov ecx, OS_STAGE1_VGA_COLUMN_COUNT
+    rep stosw
+    mov word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET], \
+        OS_STAGE1_VGA_ROW_COUNT - 1
+    ret
+
+os_stage1_protected_update_vga_cursor:
+    movzx eax, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    imul eax, OS_STAGE1_VGA_COLUMN_COUNT
+    movzx ebx, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    add eax, ebx
+    mov ebx, eax
+    mov edx, OS_STAGE1_VGA_CRTC_INDEX_PORT
+    mov al, OS_STAGE1_VGA_CRTC_CURSOR_HIGH_INDEX
+    out dx, al
+    mov edx, OS_STAGE1_VGA_CRTC_DATA_PORT
+    mov al, bh
+    out dx, al
+    mov edx, OS_STAGE1_VGA_CRTC_INDEX_PORT
+    mov al, OS_STAGE1_VGA_CRTC_CURSOR_LOW_INDEX
+    out dx, al
+    mov edx, OS_STAGE1_VGA_CRTC_DATA_PORT
     mov al, bl
     out dx, al
-    stc
     ret
 
 os_stage1_build_page_tables:
@@ -275,6 +378,7 @@ os_stage1_paging_invalid:
     ret
 
 [bits 64]
+default abs
 os_stage1_long_mode_entry:
     mov ax, OS_STAGE1_GDT_DATA_SELECTOR
     mov ds, ax
@@ -374,23 +478,129 @@ os_stage1_long_write_complete:
     ret
 
 os_stage1_long_write_byte:
+    push rax
+    push rbx
+    push rcx
+    push rdx
+    push rsi
+    push rdi
     mov bl, al
-    mov ecx, OS_STAGE1_COM1_READY_POLL_LIMIT
-    mov edx, OS_STAGE1_COM1_BASE_PORT + OS_STAGE1_COM1_LINE_STATUS_OFFSET
+    cmp dword [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_MAGIC_OFFSET], \
+        OS_STAGE1_VGA_STATE_MAGIC
+    jne os_stage1_long_write_byte_failed
+    cmp dword [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_VERSION_OFFSET], \
+        OS_STAGE1_VGA_STATE_VERSION
+    jne os_stage1_long_write_byte_failed
+    mov eax, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_LENGTH_OFFSET]
+    cmp eax, OS_STAGE1_VGA_STATE_TRACE_CAPACITY
+    jae os_stage1_long_write_byte_overflow
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_OFFSET + rax], bl
+    inc eax
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_LENGTH_OFFSET], eax
 
-os_stage1_long_write_byte_poll:
-    in al, dx
-    test al, OS_STAGE1_COM1_TRANSMITTER_EMPTY_BIT
-    jnz os_stage1_long_write_byte_ready
-    loop os_stage1_long_write_byte_poll
+    cmp bl, OS_STAGE1_VGA_CARRIAGE_RETURN
+    je os_stage1_long_write_byte_carriage_return
+    cmp bl, OS_STAGE1_VGA_LINE_FEED
+    je os_stage1_long_write_byte_line_feed
+    cmp bl, OS_STAGE1_VGA_FIRST_PRINTABLE
+    jb os_stage1_long_write_byte_render_complete
+    cmp bl, OS_STAGE1_VGA_LAST_PRINTABLE
+    ja os_stage1_long_write_byte_render_complete
+    call os_stage1_long_put_vga_character
+    jmp os_stage1_long_write_byte_render_complete
+
+os_stage1_long_write_byte_carriage_return:
+    mov word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], 0
+    jmp os_stage1_long_write_byte_render_complete
+
+os_stage1_long_write_byte_line_feed:
+    call os_stage1_long_advance_vga_line
+
+os_stage1_long_write_byte_render_complete:
+    call os_stage1_long_update_vga_cursor
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
+    stc
+    ret
+
+os_stage1_long_write_byte_overflow:
+    mov dword [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_TRACE_OVERFLOW_OFFSET], 1
+
+os_stage1_long_write_byte_failed:
+    pop rdi
+    pop rsi
+    pop rdx
+    pop rcx
+    pop rbx
+    pop rax
     clc
     ret
 
-os_stage1_long_write_byte_ready:
-    mov edx, OS_STAGE1_COM1_BASE_PORT
+os_stage1_long_put_vga_character:
+    movzx eax, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    imul eax, OS_STAGE1_VGA_COLUMN_COUNT
+    movzx edx, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    add eax, edx
+    shl eax, 1
+    mov edi, eax
+    mov ah, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_ATTRIBUTE_OFFSET]
+    mov al, bl
+    mov [OS_STAGE1_VGA_TEXT_ADDRESS + rdi], ax
+    mov ax, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    inc ax
+    cmp ax, OS_STAGE1_VGA_COLUMN_COUNT
+    jae os_stage1_long_put_vga_character_wrap
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], ax
+    ret
+
+os_stage1_long_put_vga_character_wrap:
+    call os_stage1_long_advance_vga_line
+    ret
+
+os_stage1_long_advance_vga_line:
+    mov word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], 0
+    mov ax, [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    inc ax
+    cmp ax, OS_STAGE1_VGA_ROW_COUNT
+    jae os_stage1_long_scroll_vga
+    mov [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET], ax
+    ret
+
+os_stage1_long_scroll_vga:
+    mov rsi, OS_STAGE1_VGA_TEXT_ADDRESS + OS_STAGE1_VGA_ROW_SIZE_BYTES
+    mov rdi, OS_STAGE1_VGA_TEXT_ADDRESS
+    mov ecx, (OS_STAGE1_VGA_CELL_COUNT - OS_STAGE1_VGA_COLUMN_COUNT) / 4
+    rep movsq
+    mov rdi, OS_STAGE1_VGA_TEXT_ADDRESS + OS_STAGE1_VGA_LAST_ROW_OFFSET
+    mov ax, OS_STAGE1_VGA_BLANK_CELL
+    mov ecx, OS_STAGE1_VGA_COLUMN_COUNT
+    rep stosw
+    mov word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET], \
+        OS_STAGE1_VGA_ROW_COUNT - 1
+    ret
+
+os_stage1_long_update_vga_cursor:
+    movzx eax, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    imul eax, OS_STAGE1_VGA_COLUMN_COUNT
+    movzx ebx, word [OS_STAGE1_VGA_STATE_ADDRESS + OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    add eax, ebx
+    mov ebx, eax
+    mov edx, OS_STAGE1_VGA_CRTC_INDEX_PORT
+    mov al, OS_STAGE1_VGA_CRTC_CURSOR_HIGH_INDEX
+    out dx, al
+    mov edx, OS_STAGE1_VGA_CRTC_DATA_PORT
+    mov al, bh
+    out dx, al
+    mov edx, OS_STAGE1_VGA_CRTC_INDEX_PORT
+    mov al, OS_STAGE1_VGA_CRTC_CURSOR_LOW_INDEX
+    out dx, al
+    mov edx, OS_STAGE1_VGA_CRTC_DATA_PORT
     mov al, bl
     out dx, al
-    stc
     ret
 
 [bits 16]
@@ -473,25 +683,143 @@ os_stage1_write_string_complete:
 
 os_stage1_write_byte:
     push ax
-    mov cx, OS_STAGE1_COM1_READY_POLL_LIMIT
-    mov dx, OS_STAGE1_COM1_BASE_PORT \
-        + OS_STAGE1_COM1_LINE_STATUS_OFFSET
+    push bx
+    push cx
+    push dx
+    push si
+    push di
+    push ds
+    push es
+    push fs
+    mov bl, al
+    mov ax, OS_STAGE1_VGA_STATE_SEGMENT
+    mov fs, ax
+    cmp dword [fs:OS_STAGE1_VGA_STATE_MAGIC_OFFSET], OS_STAGE1_VGA_STATE_MAGIC
+    jne os_stage1_write_byte_failed
+    cmp dword [fs:OS_STAGE1_VGA_STATE_VERSION_OFFSET], OS_STAGE1_VGA_STATE_VERSION
+    jne os_stage1_write_byte_failed
+    mov eax, [fs:OS_STAGE1_VGA_STATE_TRACE_LENGTH_OFFSET]
+    cmp eax, OS_STAGE1_VGA_STATE_TRACE_CAPACITY
+    jae os_stage1_write_byte_overflow
+    mov di, ax
+    add di, OS_STAGE1_VGA_STATE_TRACE_OFFSET
+    mov [fs:di], bl
+    inc eax
+    mov [fs:OS_STAGE1_VGA_STATE_TRACE_LENGTH_OFFSET], eax
 
-os_stage1_write_byte_poll:
-    in al, dx
-    test al, OS_STAGE1_COM1_TRANSMITTER_EMPTY_BIT
-    jnz os_stage1_write_byte_ready
-    loop os_stage1_write_byte_poll
+    cmp bl, OS_STAGE1_VGA_CARRIAGE_RETURN
+    je os_stage1_write_byte_carriage_return
+    cmp bl, OS_STAGE1_VGA_LINE_FEED
+    je os_stage1_write_byte_line_feed
+    cmp bl, OS_STAGE1_VGA_FIRST_PRINTABLE
+    jb os_stage1_write_byte_render_complete
+    cmp bl, OS_STAGE1_VGA_LAST_PRINTABLE
+    ja os_stage1_write_byte_render_complete
+    call os_stage1_put_vga_character
+    jmp os_stage1_write_byte_render_complete
 
+os_stage1_write_byte_carriage_return:
+    mov word [fs:OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], 0
+    jmp os_stage1_write_byte_render_complete
+
+os_stage1_write_byte_line_feed:
+    call os_stage1_advance_vga_line
+
+os_stage1_write_byte_render_complete:
+    call os_stage1_update_vga_cursor
+    pop fs
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
+    pop ax
+    stc
+    ret
+
+os_stage1_write_byte_overflow:
+    mov dword [fs:OS_STAGE1_VGA_STATE_TRACE_OVERFLOW_OFFSET], 1
+
+os_stage1_write_byte_failed:
+    pop fs
+    pop es
+    pop ds
+    pop di
+    pop si
+    pop dx
+    pop cx
+    pop bx
     pop ax
     clc
     ret
 
-os_stage1_write_byte_ready:
-    pop ax
-    mov dx, OS_STAGE1_COM1_BASE_PORT
+os_stage1_put_vga_character:
+    mov ax, OS_STAGE1_VGA_TEXT_SEGMENT
+    mov es, ax
+    mov ax, [fs:OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    mov dx, OS_STAGE1_VGA_COLUMN_COUNT
+    mul dx
+    add ax, [fs:OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    shl ax, 1
+    mov di, ax
+    mov al, bl
+    mov ah, [fs:OS_STAGE1_VGA_STATE_ATTRIBUTE_OFFSET]
+    mov [es:di], ax
+    mov ax, [fs:OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    inc ax
+    cmp ax, OS_STAGE1_VGA_COLUMN_COUNT
+    jae os_stage1_put_vga_character_wrap
+    mov [fs:OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], ax
+    ret
+
+os_stage1_put_vga_character_wrap:
+    call os_stage1_advance_vga_line
+    ret
+
+os_stage1_advance_vga_line:
+    mov word [fs:OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET], 0
+    mov ax, [fs:OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    inc ax
+    cmp ax, OS_STAGE1_VGA_ROW_COUNT
+    jae os_stage1_scroll_vga
+    mov [fs:OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET], ax
+    ret
+
+os_stage1_scroll_vga:
+    mov ax, OS_STAGE1_VGA_TEXT_SEGMENT
+    mov ds, ax
+    mov es, ax
+    mov si, OS_STAGE1_VGA_ROW_SIZE_BYTES
+    xor di, di
+    mov cx, OS_STAGE1_VGA_CELL_COUNT - OS_STAGE1_VGA_COLUMN_COUNT
+    rep movsw
+    mov di, OS_STAGE1_VGA_LAST_ROW_OFFSET
+    mov ax, OS_STAGE1_VGA_BLANK_CELL
+    mov cx, OS_STAGE1_VGA_COLUMN_COUNT
+    rep stosw
+    mov word [fs:OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET], OS_STAGE1_VGA_ROW_COUNT - 1
+    ret
+
+os_stage1_update_vga_cursor:
+    mov ax, [fs:OS_STAGE1_VGA_STATE_CURSOR_ROW_OFFSET]
+    mov bx, OS_STAGE1_VGA_COLUMN_COUNT
+    mul bx
+    add ax, [fs:OS_STAGE1_VGA_STATE_CURSOR_COLUMN_OFFSET]
+    mov bx, ax
+    mov dx, OS_STAGE1_VGA_CRTC_INDEX_PORT
+    mov al, OS_STAGE1_VGA_CRTC_CURSOR_HIGH_INDEX
     out dx, al
-    stc
+    mov dx, OS_STAGE1_VGA_CRTC_DATA_PORT
+    mov al, bh
+    out dx, al
+    mov dx, OS_STAGE1_VGA_CRTC_INDEX_PORT
+    mov al, OS_STAGE1_VGA_CRTC_CURSOR_LOW_INDEX
+    out dx, al
+    mov dx, OS_STAGE1_VGA_CRTC_DATA_PORT
+    mov al, bl
+    out dx, al
     ret
 
 os_stage1_entered_message:

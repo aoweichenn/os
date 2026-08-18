@@ -8,11 +8,12 @@
 #include "os/kernel/arch/native_system_call.hpp"
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/user_context.hpp"
-#include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/process/process_runtime.hpp"
 #include "os/kernel/user/user_elf.hpp"
 #include "os/kernel/user/user_memory.hpp"
+#include <os/kernel/device/port_io.hpp>
+#include <os/kernel/device/vga_text_console.hpp>
 
 namespace os::kernel {
 
@@ -76,15 +77,16 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_COPY_ON_WRITE_FLAG = 1ULL << 3ULL;
 
 bool system_call_interrupt_self_test_completed;
 
-void WriteRequiredSystemCallMessage(const SerialPort &serial_port, const char *message) noexcept {
-    if (!serial_port.TryWriteString(message)) {
+void WriteRequiredSystemCallMessage(const VgaTextConsole &vga_console,
+                                    const char *message) noexcept {
+    if (!vga_console.TryWriteDiagnosticString(message)) {
         HaltProcessor();
     }
 }
 
-void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *prefix,
+void WriteRequiredSystemCallValue(const VgaTextConsole &vga_console, const char *prefix,
                                   const uint64_t value) noexcept {
-    if (!serial_port.TryWriteHexLine(prefix, value)) {
+    if (!vga_console.TryWriteDiagnosticHexLine(prefix, value)) {
         HaltProcessor();
     }
 }
@@ -448,7 +450,7 @@ void WriteRequiredSystemCallValue(const SerialPort &serial_port, const char *pre
 }
 
 void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
-    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
+    const VgaTextConsole vga_console{VgaTextConsole::Hardware(WritePort8)};
     const UserContext &context = AsUserContext(frame);
     const bool owned = CurrentThreadOwnsUserContext(frame);
     const UserContextStatus context_status =
@@ -463,36 +465,36 @@ void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
     const PageTableStatus instruction_status =
         QueryActivePage(context.common.instruction_pointer, instruction_mapping);
     const PageTableStatus stack_status = QueryActivePage(stack_probe_address, stack_mapping);
-    WriteRequiredSystemCallMessage(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MESSAGE);
-    WriteRequiredSystemCallValue(serial_port,
+    WriteRequiredSystemCallMessage(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MESSAGE);
+    WriteRequiredSystemCallValue(vga_console,
                                  OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_OWNERSHIP_PREFIX,
                                  owned ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
                                        : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STATUS_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STATUS_PREFIX,
                                  static_cast<uint64_t>(context_status));
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MEMORY_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MEMORY_PREFIX,
                                  memory_valid ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
                                               : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX,
                                  static_cast<uint64_t>(DecodeUserContextEntryMethod(context)));
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX,
                                  context.common.vector);
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RIP_PREFIX,
                                  context.common.instruction_pointer);
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RSP_PREFIX,
                                  context.stack_pointer);
-    WriteRequiredSystemCallValue(serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX,
+    WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_FLAGS_PREFIX,
                                  context.common.flags);
     WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_STATUS_PREFIX,
+        vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_STATUS_PREFIX,
         static_cast<uint64_t>(instruction_status));
     WriteRequiredSystemCallValue(
-        serial_port, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_FLAGS_PREFIX,
+        vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_INSTRUCTION_PAGE_FLAGS_PREFIX,
         EncodePagePermissionFlags(instruction_mapping));
-    WriteRequiredSystemCallValue(serial_port,
+    WriteRequiredSystemCallValue(vga_console,
                                  OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STACK_PAGE_STATUS_PREFIX,
                                  static_cast<uint64_t>(stack_status));
-    WriteRequiredSystemCallValue(serial_port,
+    WriteRequiredSystemCallValue(vga_console,
                                  OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STACK_PAGE_FLAGS_PREFIX,
                                  EncodePagePermissionFlags(stack_mapping));
 }
@@ -523,10 +525,10 @@ void CompleteSystemCallInterruptSelfTest() noexcept {
         UserMemoryCopyStatus::Succeeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
-    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
+    const VgaTextConsole vga_console{VgaTextConsole::Hardware(WritePort8)};
     for (uint64_t byte_index = OS_KERNEL_SYSTEM_CALL_FIRST_BYTE_INDEX; byte_index < length_bytes;
          ++byte_index) {
-        if (!serial_port.TryWriteByte(static_cast<char>(message[byte_index]))) {
+        if (!vga_console.TryWriteDiagnosticByte(static_cast<char>(message[byte_index]))) {
             return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
         }
     }
@@ -743,8 +745,7 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
 }
 
-[[nodiscard]] ExceptionFrame *
-DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
+[[nodiscard]] ExceptionFrame *DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
     const int64_t sync_result = MapFileSystemStatus(
         SyncCurrentProcessFileSystem(),
         static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
@@ -755,53 +756,44 @@ DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
     const uint64_t owner_thread_index = CurrentThreadIndexForBlockIo();
     const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
     const uint64_t deadline_nanoseconds =
-        now_nanoseconds >
-                UINT64_MAX -
-                    OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS
+        now_nanoseconds > UINT64_MAX - OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS
             ? UINT64_MAX
-            : now_nanoseconds +
-                  OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS;
+            : now_nanoseconds + OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_TIMEOUT_NANOSECONDS;
     const bool interrupts_were_enabled = DisableInterrupts();
     uint64_t request_identifier = OS_KERNEL_SYSTEM_CALL_EMPTY_REQUEST_IDENTIFIER;
     BlockRequestResult immediate_result = BlockRequestResult::None;
     const AtaPioStatus submit_status = SubmitAsynchronousAtaFlush(
-        owner_thread_index, deadline_nanoseconds, request_identifier,
-        immediate_result);
-    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
-    if (!serial_port.TryWriteHexLine(
-            OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_REQUEST_PREFIX,
-            request_identifier) ||
-        !serial_port.TryWriteHexLine(
-            OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_TIME_PREFIX,
-            now_nanoseconds)) {
+        owner_thread_index, deadline_nanoseconds, request_identifier, immediate_result);
+    const VgaTextConsole vga_console{VgaTextConsole::Hardware(WritePort8)};
+    if (!vga_console.TryWriteDiagnosticHexLine(
+            OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_REQUEST_PREFIX, request_identifier) ||
+        !vga_console.TryWriteDiagnosticHexLine(OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_TIME_PREFIX,
+                                               now_nanoseconds)) {
         HaltProcessor();
     }
-    if (submit_status != AtaPioStatus::Succeeded ||
-        immediate_result != BlockRequestResult::None) {
-        if (!serial_port.TryWriteHexLine(
+    if (submit_status != AtaPioStatus::Succeeded || immediate_result != BlockRequestResult::None) {
+        if (!vga_console.TryWriteDiagnosticHexLine(
                 OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_STATUS_PREFIX,
                 static_cast<uint64_t>(submit_status)) ||
-            !serial_port.TryWriteHexLine(
+            !vga_console.TryWriteDiagnosticHexLine(
                 OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_IMMEDIATE_RESULT_PREFIX,
                 static_cast<uint64_t>(immediate_result))) {
             HaltProcessor();
         }
         RestoreInterrupts(interrupts_were_enabled);
-        frame.register_rax = static_cast<uint64_t>(
-            immediate_result == BlockRequestResult::TimedOut
-                ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT
-                : os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE);
+        frame.register_rax =
+            static_cast<uint64_t>(immediate_result == BlockRequestResult::TimedOut
+                                      ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_TIMED_OUT
+                                      : os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE);
         return &frame;
     }
-    if (RegisterCurrentBlockIoRequest(request_identifier) !=
-        ProcessRuntimeStatus::Succeeded) {
+    if (RegisterCurrentBlockIoRequest(request_identifier) != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
     }
     ExceptionFrame *resume_frame = &frame;
-    if (BlockCurrentThread(
-            frame, WaitCondition::BlockIo,
-            static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem),
-            false, resume_frame) != ProcessRuntimeStatus::Succeeded) {
+    if (BlockCurrentThread(frame, WaitCondition::BlockIo,
+                           static_cast<uint64_t>(os::abi::SystemCallNumber::SyncFileSystem), false,
+                           resume_frame) != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
     }
     return resume_frame;
@@ -1314,9 +1306,11 @@ DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
     return resume_frame;
 }
 
-[[nodiscard]] ExceptionFrame *DispatchWaitProcessEvent(
-    ExceptionFrame &frame, const uint64_t requested_process_id, const uint64_t wait_flags,
-    const uint64_t user_result_address, const uint64_t result_size_bytes) noexcept {
+[[nodiscard]] ExceptionFrame *DispatchWaitProcessEvent(ExceptionFrame &frame,
+                                                       const uint64_t requested_process_id,
+                                                       const uint64_t wait_flags,
+                                                       const uint64_t user_result_address,
+                                                       const uint64_t result_size_bytes) noexcept {
     if (result_size_bytes != sizeof(os::abi::ProcessWaitEventResult) ||
         (wait_flags & ~os::abi::OS_ABI_PROCESS_WAIT_VALID_FLAG_MASK) !=
             OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
@@ -1357,8 +1351,7 @@ DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
             static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE);
         return &frame;
     }
-    frame.register_rax =
-        static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK);
+    frame.register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_WOULD_BLOCK);
     if ((wait_flags & os::abi::OS_ABI_PROCESS_WAIT_NO_HANG_FLAG) !=
         OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
         return &frame;
@@ -1366,8 +1359,7 @@ DispatchSyncFileSystem(ExceptionFrame &frame) noexcept {
     ExceptionFrame *resume_frame = &frame;
     const ProcessRuntimeStatus block_status = BlockCurrentThread(
         frame, WaitCondition::ChildProcess,
-        static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent), true,
-        resume_frame);
+        static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent), true, resume_frame);
     if (block_status != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
     }
@@ -1793,8 +1785,7 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
         return DispatchWaitProcess(*frame, frame->register_rdi, frame->register_rsi,
                                    frame->register_rdx);
     }
-    if (system_call_number ==
-        static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent)) {
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WaitProcessEvent)) {
         return DispatchWaitProcessEvent(*frame, frame->register_rdi, frame->register_rsi,
                                         frame->register_rdx, frame->register_r10);
     }
@@ -1958,8 +1949,8 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
     }
     if (system_call_number ==
         static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalForegroundGroup)) {
-        frame->register_rax = static_cast<uint64_t>(MapUserSignalStatus(
-            SetCurrentTerminalForegroundGroup(frame->register_rdi)));
+        frame->register_rax = static_cast<uint64_t>(
+            MapUserSignalStatus(SetCurrentTerminalForegroundGroup(frame->register_rdi)));
         return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

@@ -3,10 +3,14 @@ import re
 import unittest
 
 from tools.os_tools.boot_layout import (
+    OS_BOOT_LAYOUT_LBA28_MAXIMUM,
     OS_BOOT_LAYOUT_KERNEL_MAXIMUM_LOAD_END_ADDRESS,
     OS_BOOT_LAYOUT_KERNEL_STAGING_ADDRESS,
     OS_BOOT_LAYOUT_KERNEL_STAGING_CAPACITY_BYTES,
     OS_BOOT_LAYOUT_KERNEL_STAGING_END_ADDRESS,
+    OS_BOOT_LAYOUT_REFERENCE_DISK_SECTOR_COUNT,
+    OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES,
+    OS_BOOT_LAYOUT_REFERENCE_ROOTFS_AVAILABLE_BYTES,
     OS_BOOT_LAYOUT_ROOTFS_START_BYTES,
     OS_BOOT_LAYOUT_ROOTFS_START_LBA,
     OS_BOOT_LAYOUT_SECTOR_SIZE_BYTES,
@@ -31,6 +35,7 @@ OS_TEST_BOOT_LAYOUT_ROOTFS_HEADER_PATH = (
     OS_TEST_BOOT_LAYOUT_PROJECT_ROOT
     / "source/kernel/include/os/kernel/fs/root_file_system_format.hpp"
 )
+OS_TEST_BOOT_LAYOUT_CMAKE_PATH = OS_TEST_BOOT_LAYOUT_PROJECT_ROOT / "CMakeLists.txt"
 OS_TEST_BOOT_LAYOUT_IDENTITY_MAP_SIZE_BYTES = 0x0400_0000
 OS_TEST_BOOT_LAYOUT_KERNEL_STACK_RESERVED_BEGIN = 0x03FE_F000
 OS_TEST_BOOT_LAYOUT_EXPECTED_STAGING_CAPACITY_BYTES = 8 * 1024 * 1024
@@ -58,6 +63,32 @@ def readCppIntegerConstant(sourceText: str, constantName: str) -> int:
 
 
 class BootLayoutContractToolTests(unittest.TestCase):
+    def testReferenceDiskUsesTheCompleteLba28AddressSpace(self) -> None:
+        cmakeSource = OS_TEST_BOOT_LAYOUT_CMAKE_PATH.read_text(encoding="utf-8")
+        diskSizeMatch = re.search(
+            r"set\(OS_DISK_IMAGE_SIZE_BYTES ([0-9]+)\)", cmakeSource
+        )
+        self.assertIsNotNone(diskSizeMatch)
+        assert diskSizeMatch is not None
+
+        self.assertEqual(
+            OS_BOOT_LAYOUT_REFERENCE_DISK_SECTOR_COUNT - 1,
+            OS_BOOT_LAYOUT_LBA28_MAXIMUM,
+        )
+        self.assertEqual(
+            OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES,
+            128 * 1024 * 1024 * 1024,
+        )
+        self.assertEqual(
+            int(diskSizeMatch.group(1)),
+            OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES,
+        )
+        self.assertEqual(
+            OS_BOOT_LAYOUT_REFERENCE_ROOTFS_AVAILABLE_BYTES,
+            OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES
+            - OS_BOOT_LAYOUT_ROOTFS_START_BYTES,
+        )
+
     def testStage1PythonAndKernelBootInfoUseSameStagingWindow(
         self,
     ) -> None:
@@ -158,3 +189,6 @@ class BootLayoutContractToolTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    OS_BOOT_LAYOUT_REFERENCE_DISK_SECTOR_COUNT,
+    OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES,
+    OS_BOOT_LAYOUT_REFERENCE_ROOTFS_AVAILABLE_BYTES,

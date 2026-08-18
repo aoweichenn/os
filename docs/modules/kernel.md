@@ -10,7 +10,9 @@ v1.10 在真实交接之上建立处理器、内存、中断、设备、文件�
 - 入口符号为 C ABI 的 `OsKernelEntry`，链接地址为 `0x00100000`。
 - 不链接 libc、C++ 标准库、异常、RTTI、栈保护或宿主运行时。
 - 入口按 System V AMD64 ABI 从 RDI 接收 BootInfo。
-- 内核独立初始化 COM1，不依赖 Stage 1 函数或隐藏状态。
+- 内核验证并接管固定布局的 VGA 光标、输出模式与内存日志，不调用 Stage 1 函数。
+- 用户环境启动前清屏并提交终端模式；普通诊断随后只进日志，TTY 写前台，
+  panic 始终尽力双写。
 - 入口验证 BootInfo、BSS 清零结果和当前 CR3，再接管 GDT、TSS 和 IDT。
 - 32 个架构异常由 NASM 桩规范化为固定 C++ `ExceptionFrame`。
 - 可恢复 breakpoint 经 `IRETQ` 返回，其他异常输出固定现场并 panic。
@@ -42,7 +44,7 @@ src/<module>/<name>.cpp
 | `arch` | GDT/TSS/IDT、异常/IRQ 汇编边界、处理器状态与 panic |
 | `boot` | BootInfo 与 C ABI 入口 |
 | `core` | 主流程和 freestanding 内存运行时 |
-| `device` | 端口、串口、PIC、PIT、PS/2、ATA |
+| `device` | 端口、VGA 控制台、PIC、PIT、PS/2、ATA |
 | `fs` | 磁盘格式、块缓存、文件系统 |
 | `io` | 控制台、FileDescription 和动态 FileTable |
 | `ipc` | 管道 |
@@ -395,7 +397,7 @@ Ring 0 异常稳定拥有的字段。公共入口在调用 C++ 前向下对齐 R
 
 1. 立即 `CLI`。
 2. 用 BSS 状态位拒绝递归进入，避免重复日志。
-3. 重新初始化 COM1，绕过可能不完整的上层日志状态。
+3. 直接使用固定物理地址的 VGA 文本显存与只追加验收区。
 4. 固定输出向量、错误码、RIP、CS、RFLAGS；页故障增加 CR2。
 5. 进入 `CLI; HLT` 循环，绝不返回异常入口。
 
@@ -413,7 +415,7 @@ PIC 初始屏蔽所有 IRQ，只有 PIT、PS/2 和 ATA 自检全部成功后，�
 硬件 IRQ 桩统一压入零错误码和向量号，保存集合与异常 ABI 相同。分发器把
 向量 32..47 还原为 IRQ0..15：
 
-- IRQ0：增加 64 位 tick，不执行串口 I/O。
+- IRQ0：增加 64 位 tick，不执行VGA 控制台 I/O。
 - IRQ1：读取 i8042 数据端口，推进扫描码集合 1 解码器，保留一个待消费事件。
 - IRQ7/IRQ15：读取 PIC ISR 判定是否虚假，并遵守各自 EOI 规则。
 - 其余 IRQ：当前保持屏蔽；若错误进入仍会完成合法 PIC 确认，但没有设备动作。
@@ -461,7 +463,7 @@ CS=`0x23`、SS=`0x1B`、RIP 所在叶页为 user RX、RSP 位于四页用户栈�
 退出当前 Thread 并交接到下一个 Ready Thread，只有最后一个 Thread 结束时才用
 `OsKernelReturnFromUserMode` 恢复调度启动前的内核调用链。
 
-`WriteLog` 最多复制 160 字节到固定内核缓冲后再访问串口。用户日志带
+`WriteLog` 最多复制 160 字节到固定内核缓冲后再访问 VGA 控制台。用户日志带
 `[OS][USER]` 只是协议来源标记，不获得内核可信度。ABI 详见
 [User 与 ABI 模块](user.md)。
 
@@ -484,7 +486,7 @@ PDPT[1]，并让用户栈从空的 PML4[255] 开始建立。销毁时只递归�
 永久启动栈，再清零并释放叶映射、物理页和 KVA。
 
 IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预算。中断热路径
-不分配、不释放、不写串口；用户页和页表只在进程退出/异常路径切回内核 CR3 后
+不分配、不释放、不写 VGA 控制台；用户页和页表只在进程退出/异常路径切回内核 CR3 后
 释放。全部结束后一次性输出调度汇总与每进程结果，并比较物理页帧统计。
 
 ## v0.10 同步与 IPC 运行时契约
@@ -492,7 +494,7 @@ IRQ0 先由设备运行时更新 tick 并向 PIC EOI，随后调度器计算预�
 `SpinLock` 使用编译器原子内建完成 exchange-acquire、store-release 和
 relaxed 观察；忙等内层执行 x86 `PAUSE`，降低共享执行资源上的无效竞争。
 `SpinLockGuard` 以 RAII 限定锁生命周期。该锁只保护不能睡眠的短临界区；
-锁内禁止系统调用阻塞、串口输出和用户内存复制。
+锁内禁止系统调用阻塞、VGA 控制台输出和用户内存复制。
 
 `ProcessScheduler` 新增 `Blocked` 与
 `PipeReadable/PipeWritable` 等待原因。`BlockCurrentProcess` 只允许
@@ -518,7 +520,7 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 
 ## v1.2 Process/Thread 与统一等待运行时
 
-`ThreadScheduler` 是不接触 CR3、TSS、串口和动态分配的纯状态模型。
+`ThreadScheduler` 是不接触 CR3、TSS、VGA 控制台和动态分配的纯状态模型。
 `ProcessRuntime` 把其决定落实到页表、动态内核栈、系统调用和 x87/SSE2
 硬件现场。二者的职责不能反向渗透：
 
@@ -617,7 +619,7 @@ OsKernelSelectUserReturn(frame)
 file status flags 和具体依赖；RegularFile/Directory 的
 `FileSystemHandle::offset_bytes` 位于 payload 内。因此 duplicate 只增加
 引用就能共享偏移，再次 open 则因新建对象而获得独立偏移。Console 输出通过
-设备回调注入，通用 host 模型不依赖串口。
+设备回调注入，通用 host 模型不依赖 VGA 控制台。
 
 `io/file_table.*` 每 64 个 fd 申请一个有序分块。表项只保存对象 handle 和
 fd flags。安装成功会把传入 reference 的强引用所有权转给表；lookup 在持表
@@ -920,7 +922,7 @@ pool Validate == Succeeded
 ```
 
 QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚合一次打印
-容量、峰值、申请与释放，避免串口吞吐改变调度和 fault 时序。详细算法见
+容量、峰值、申请与释放，避免 VGA 控制台吞吐改变调度和 fault 时序。详细算法见
 [ADR 0035](../adr/0035-anonymous-vma-demand-paging-user-heap.md)。
 
 ## 已知边界

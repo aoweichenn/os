@@ -1,5 +1,37 @@
 # 调试记录
 
+## 当前 VGA 控制台
+
+目标系统不再产生串口日志。交互观察使用 `python3 tools/os.py qemu-display ...`；
+自动系统测试在 `-display none` 下仍实例化 VGA 设备，并通过 QMP 读取
+`0x20000..0x9FFFF` 的追加式验收区。
+
+无桌面宿主可使用 `--display-backend vnc`。该模式固定绑定回环地址，手机访问应
+先经 noVNC 转成回环 HTTP/WebSocket，再通过 Tailscale Serve 等已认证的私有
+转发完成；不能把无认证 VNC 或 noVNC 直接绑定到 `0.0.0.0`。
+
+若窗口显示 `guest has not initialized the display`，依次检查：
+
+1. QEMU 命令是否同时包含 `-device VGA` 和非 `none` 的 display backend；
+2. ROM 是否到达 `os_firmware_initialize_vga_console`；
+3. `0x3C0..0x3DF` 模式寄存器、字符平面和 `0xB8000` 文本页是否写入；
+4. 共享区 magic 是否为字节 `OSVG`、版本是否为 2；
+5. overflow 是否仍为零，trace length 是否不超过 `0x7FFE0`。
+
+屏幕只有最后 25 行属于正常滚屏。若自动化报告缺少早期标记，应检查追加区是否
+被 Stage 1 覆盖、Kernel 是否保留低端 supervisor identity mapping，以及
+runner 的 `pmemsave` 是否从 16 KiB 起按需扩展、最终覆盖全部已提交字节。
+
+若 VNC 已连接但画面全黑，先用 QMP `screendump` 判断 QEMU 原始扫描画面是否也
+全黑，再读取 `0xB8000`。显存有属性 `0x07` 的文本而截图全黑时，检查 ROM 是否
+通过 `0x3C6/0x3C8/0x3C9` 提交了 DAC mask、索引和 RGB 分量；不能依赖未执行的
+VGA BIOS 遗留调色板。
+
+Termux 同机访问时若完整 noVNC 控制栏在手机浏览器中不可见，使用
+`tools/novnc_mobile.html`。该页面把普通 HTML 输入框中的 ASCII 命令转换成 RFB
+按键并自动追加 Enter，控制按钮直接发送 PS/2 可识别的 Backspace、Ctrl-C 与
+Ctrl-Z；不依赖隐藏侧栏或 Android WebView 自动弹出键盘。
+
 ## v0.0：工程基线故障记录
 
 ### 静态库符号审计误报
@@ -171,7 +203,7 @@ llvm-nm --undefined-only build/developer/source/kernel/kernel.elf
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
-  131072 1073741824 --expected-outcome success
+  131072 137438953472 --expected-outcome success
 ```
 
 当前成功产物为 28,168 字节、56 个扇区，包含 3 个 `PT_LOAD`；这些数字会随
@@ -225,12 +257,12 @@ x/32gx &kernel_interrupt_descriptor_table
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/kernel_invalid_opcode/boot_disk.img \
-  131072 1073741824 --expected-outcome kernel-invalid-opcode
+  131072 137438953472 --expected-outcome kernel-invalid-opcode
 
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/kernel_page_fault/boot_disk.img \
-  131072 1073741824 --expected-outcome kernel-page-fault
+  131072 137438953472 --expected-outcome kernel-page-fault
 ```
 
 非法指令的向量必须为 6。页故障必须同时满足：
@@ -320,7 +352,7 @@ IDT、页表页本身和串口端口访问所需地址是否在新表中，而�
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/kernel_write_protection/boot_disk.img \
-  131072 1073741824 --expected-outcome kernel-write-protection
+  131072 137438953472 --expected-outcome kernel-write-protection
 ```
 
 预期关键现场：
@@ -356,7 +388,7 @@ PANIC
 若已有 `BUDDY_ALLOCATOR_READY` 但没有 `BUDDY_SELF_TEST_PASSED`：
 
 1. 检查 `BUDDY_SELF_TEST_ORDER` 是否为 3，地址是否按 32 KiB 对齐；
-2. 64 GiB 配置的地址必须高于 4 GiB；64 MiB 配置允许位于普通低端 RAM；
+2. 32 GiB 配置的地址必须高于 4 GiB；64 MiB 配置允许位于普通低端 RAM；
 3. 在 direct-map 的首页和末页观察模式 `0x4255444459464952` 与
    `0x42554444594C4153`，区分“找到连续 PFN”与“映射可真实写入”；
 4. 若写回成功但释放失败，检查 allocated 位图是否在原 order 和原块首置位，
@@ -366,7 +398,7 @@ PANIC
 
 `BUDDY_ACTIVE_BLOCKS` 在日志中非零是正常现象，它包含内核仍持有的页表和 heap
 后备页。判断泄漏应比较某段生命周期前后的活动块与页数，而不是要求全局为零。
-64 GiB 下完整校验会扫描最高 PFN 覆盖的位图和页状态，因此
+32 GiB 下完整校验会扫描最高 PFN 覆盖的位图和页状态，因此
 `[QEMU][T+......ms]` 可显示这一阶段比 64 MiB 明显更长；这不应通过删除校验
 或降低管理容量来掩盖。
 
@@ -663,9 +695,9 @@ generation 写回 VFS mount generation。
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
-2. 未到达时，64 MiB 启动档以 30 秒、承担 90 个进程和时间探针验收的
-   256 MiB 功能档以 120 秒、64 GiB 主规格以 240 秒为总失败上界；主规格要在
-   Debug 构建中扫描 16777216 个页状态。QMP 等待 `READY` 使用与当前内存规格
+2. 未到达时，64 MiB 启动档以 35 秒、承担 90 个进程和时间探针验收的
+   256 MiB 功能档以 120 秒、32 GiB 主规格以 240 秒为总失败上界；主规格要在
+   Debug 构建中扫描约 8388608 个页状态。QMP 等待 `READY` 使用与当前内存规格
    相同的预算，外层 CTest 分别保留额外回收余量。
 
 协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计既移除
@@ -889,7 +921,7 @@ dropped = buffered = 0
 
 ## v1.1：资源快照与跨目录镜像依赖
 
-### 256 MiB 通过，但 64 GiB 报资源快照账本错误
+### 256 MiB 通过，但 32 GiB 报资源快照账本错误
 
 先区分 `managed_frame_count` 与可用 RAM 页数。前者由最高受管物理地址除以
 4 KiB 得到，包含 E820 保留洞、MMIO 和 PCI 窗口；后者只包含能进入 free、
@@ -901,16 +933,16 @@ accounted <= managed
 unavailable = managed - accounted
 ```
 
-64 GiB QEMU 在 3–4 GiB 附近存在明显 PCI 洞，因此错误地检查
+32 GiB QEMU 在 3–4 GiB 附近存在明显 PCI 洞，因此错误地检查
 `accounted == managed` 会只在容量档稳定失败。修复不能通过忽略快照错误或
 修改 QEMU 内存图完成；应保留 2-bit `Unavailable` 状态，把差值作为不可用页
 推导出来，同时继续比较 managed/free/allocated/reserved 四个稳定字段。
-单元样例必须显式包含不可用间隙，256 MiB functional 与 64 GiB capacity
+单元样例必须显式包含不可用间隙，256 MiB functional 与 32 GiB capacity
 必须共同进入门禁。QEMU 捕获器在看到禁止失败标记时会立即结束实例并报告该
-标记，不再等待 64 GiB 档的 240 秒总截止时间。
+标记，不再等待 32 GiB 档的 240 秒总截止时间。
 
 40 秒旧预算曾在共享宿主负载约 16 时于 `EXCEPTION_SELF_TEST_READY` 后耗尽，
-来宾尚在执行 64 GiB 页状态、buddy、direct-map 与跨层自检，串口因提交后才
+来宾尚在执行 32 GiB 页状态、buddy、direct-map 与跨层自检，串口因提交后才
 输出统计而没有中间行。这不是放宽来宾轮询：64 MiB 启动档为 30 秒，
 256 MiB 功能档因完整用户工作负载与时间探针使用 120 秒，禁止失败标记
 仍会立即收尾；容量档把宿主外部保险调整为有明确上界的 240/250 秒，并由工具
@@ -1017,7 +1049,7 @@ entry、vector、RIP、RSP 和 RFLAGS。先按 status 定位，不要直接放�
 ```text
 64 MiB  : process=4,   thread=4,   per-process=1
 256 MiB : process=64,  thread=128, per-process=32
-64 GiB  : process=256, thread=512, per-process=64
+32 GiB  : process=256, thread=512, per-process=64
 ```
 
 常见次级上限是 KVA 描述符或内核栈槽；当前必须分别为 1024 和 512。创建
@@ -1049,7 +1081,7 @@ Ready + condition=None + concrete wake_reason + wait_queue=nullptr
 closed，再以 ObjectClosed 唤醒全部 waiter。重复完成返回
 `WakeAlreadyResolved` 是正确结果，不应再次把 Thread 插入 Ready。
 
-### 64 GiB 容量测试像“卡住”
+### 32 GiB 容量测试像“卡住”
 
 本阶段新增 256 个真实页表根和 512 个六页动态栈，Debug/TCG 下会放大启动
 成本。QEMU 捕获器仍使用 75 秒总截止、CTest 使用 85 秒外层保险；禁止失败
@@ -1646,7 +1678,7 @@ ctest --test-dir build/developer \
   --output-on-failure
 ```
 
-64 GiB TCG 初始化和全 RAM 管理天然比 256 MiB 慢，因此 runner 使用分档但
+32 GiB TCG 初始化和全 RAM 管理天然比 256 MiB 慢，因此 runner 使用分档但
 有界预算，CTest 外层预算略大。若日志在同一 guest 状态停住，应修复等待或
 资源问题；只有日志持续前进但被宿主负载截断时才调整有界预算。任何退出路径
 都必须 terminate、wait，发布前不得残留后台 QEMU。
@@ -1717,7 +1749,14 @@ foreground PGID 或组信号。
 4. 作业退出/停止的所有路径是否把 TTY 恢复为 Shell PGID。
 
 `FOREGROUND_JOB_WAITING` 是 QEMU 控制键注入屏障，不等于完成标记。只有新的
-`COMMAND_COMPLETE` 才允许发送下一条命令。
+`DEFAULT_CONTINUE_DELIVERED` 才允许注入 Ctrl-C，只有新的 `COMMAND_COMPLETE`
+才允许发送下一条命令。
+
+若已显示 `^C`/`^Z` 却没有投递记录，检查组信号入口是否错误依赖
+`thread_scheduler.IsActive()`：所有用户线程阻塞时 CPU 会合法进入 idle，但键盘
+IRQ 仍必须向现有进程组排队信号并唤醒目标。另需在把线程放入 wait queue 后、
+释放 scheduler lock 前复查 eligible pending signal，封闭“已排队但尚未阻塞”的
+lost-wakeup 窗口。
 
 ### 极短命令偶发显示“操作失败”，未知命令 marker 丢失
 

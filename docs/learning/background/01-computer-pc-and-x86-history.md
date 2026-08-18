@@ -533,7 +533,7 @@ PC 物理地址空间包含保留区和 MMIO hole。只有内存图标为 usable
 
 ## 21. 对照项目阅读
 
-1. [固件入口](../../../source/firmware/src/reset_and_serial.asm)
+1. [固件入口](../../../source/firmware/src/reset_and_vga.asm)
 2. [ROM 链接脚本](../../../source/firmware/linker/rom.ld)
 3. [Stage 1 入口](../../../source/boot/stage1/src/entry.asm)
 4. [Kernel loader](../../../source/boot/stage1/src/kernel_loader.asm)

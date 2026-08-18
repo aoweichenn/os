@@ -5,6 +5,7 @@ from .errors import OsToolError
 
 OS_FIRMWARE_AUDIT_ROM_SIZE_BYTES = 128 * 1024
 OS_FIRMWARE_AUDIT_ENTRY_FILE_OFFSET = 0x1F000
+OS_FIRMWARE_AUDIT_FONT_FILE_OFFSET = 0x1E000
 OS_FIRMWARE_AUDIT_RESET_VECTOR_FILE_OFFSET = 0x1FFF0
 OS_FIRMWARE_AUDIT_RESET_VECTOR_RUNTIME_OFFSET = 0xFFF0
 OS_FIRMWARE_AUDIT_ENTRY_RUNTIME_OFFSET = 0xF000
@@ -12,6 +13,12 @@ OS_FIRMWARE_AUDIT_NEAR_JUMP_OPCODE = 0xE9
 OS_FIRMWARE_AUDIT_NEAR_JUMP_SIZE_BYTES = 3
 OS_FIRMWARE_AUDIT_RUNTIME_OFFSET_MASK = 0xFFFF
 OS_FIRMWARE_AUDIT_ENTRY_PREFIX = bytes((0xFA, 0xFC))
+OS_FIRMWARE_AUDIT_FONT_PREFIX = bytes(
+    (
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x18, 0x3C, 0x3C, 0x18, 0x18, 0x00, 0x18, 0x00,
+    )
+)
 
 
 def decodeResetVectorTarget(firmwareImage: bytes) -> int:
@@ -64,10 +71,16 @@ def auditFirmwareImageBytes(firmwareImage: bytes) -> None:
     if firmwareImage[entryStart:entryEnd] != OS_FIRMWARE_AUDIT_ENTRY_PREFIX:
         raise OsToolError("固件入口没有以 CLI、CLD 建立确定的处理器状态")
 
+    fontStart = OS_FIRMWARE_AUDIT_FONT_FILE_OFFSET
+    fontEnd = fontStart + len(OS_FIRMWARE_AUDIT_FONT_PREFIX)
+    if firmwareImage[fontStart:fontEnd] != OS_FIRMWARE_AUDIT_FONT_PREFIX:
+        raise OsToolError("固件没有在 0xFFFFE000 保存固定 VGA 字形前缀")
+
 
 def auditFirmwareImage(firmwareImagePath: Path) -> None:
     auditFirmwareImageBytes(firmwareImagePath.read_bytes())
     print(
         "固件 ROM 审计通过："
-        "128 KiB 布局、0xFFFFFFF0 复位向量和 0xFFFFF000 入口一致。"
+        "128 KiB 布局、0xFFFFE000 VGA 字形、0xFFFFFFF0 复位向量和 "
+        "0xFFFFF000 入口一致。"
     )

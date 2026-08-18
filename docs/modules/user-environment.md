@@ -23,8 +23,8 @@ QEMU 只产生硬件输入。`source/kernel` 负责扫描码、输入排队、�
 | fd | 初始对象 | 能力 |
 | ---: | --- | --- |
 | 0 | TerminalDevice stdin | 仅前台组可读；空时可等待 |
-| 1 | TerminalDevice stdout | 经 TTY 输出环写到 COM1 |
-| 2 | TerminalDevice stderr | 经 TTY 输出环写到 COM1 |
+| 1 | TerminalDevice stdout | 经 TTY 输出环写到 VGA，并追加宿主可导出的终端转录 |
+| 2 | TerminalDevice stderr | 经 TTY 输出环写到 VGA，并追加宿主可导出的终端转录 |
 | 3..hard limit-1 | Closed | 文件、目录或动态管道端点 |
 
 FileTable 使用按需 chunk；bootstrap、functional 与 capacity 的 hard limit
@@ -201,8 +201,8 @@ EXIT 输出稳定用户标记；
 - block、wakeup、dispatch、preemption 和系统调用次数。
 
 正常 QEMU 验收要求输入提交数等于读取数、丢弃与残留都为零；Shell 退出后由
-PID1 执行 wait 并确认没有 Zombie。宿主捕获器仍为每一串口行添加
-`[QEMU][T+......ms]`，但这只是宿主单调到达时间。
+PID1 执行 wait 并确认没有 Zombie。宿主捕获器仍为每一内存日志行添加
+`[QEMU][T+......ms]`，但这只是宿主首次观察到该行的单调时间。
 
 详细代码走读见
 [v1.11 学习章](../learning/19-v1.11-unix-io-external-shell.md)，事务边界见

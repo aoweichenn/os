@@ -22,13 +22,16 @@
 
 ### QEMU 系统测试
 
-从 CPU 复位向量启动，捕获串口输出和 QEMU 生命周期。每个里程碑至少包含
-一条成功路径和一条失败路径。
+从 CPU 复位向量启动，通过 QMP 捕获只追加内存日志和 QEMU 生命周期。成功与
+失败路径都
+执行 `screendump` 并解析 P6 PPM，要求至少 512 个非黑像素，防止调色板或扫描
+输出全黑时仅凭内存日志误判成功。每个里程碑至少包含一条成功路径和一条失败路径。
 
 ## v2 演进测试配置契约
 
-当前 v1.18 已具备具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
-64 GiB capacity 系统路径。三档使用同一个 ThreadScheduler、deadline queue、
+当前 v2.1 使用具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+32 GiB capacity 系统路径；v2.0 已发布证据中的 capacity 仍保持当时的 64 GiB
+历史事实。当前三档使用同一个 ThreadScheduler、deadline queue、
 SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
 历史链在 v1.18 加入 tool probe 后，bootstrap 正常链累计注册 73 个 Process、
 完成 72 次 wait；functional/capacity 因 42 条完整 Shell 命令与四次作业
@@ -41,7 +44,7 @@ capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | bootstrap | 64 MiB | 8 | 8 | 1 | 不规定 | 不规定 | 启动链、磁盘 PID1、异常、基础内存、全部历史故障镜像 |
 | functional | 256 MiB | 64 | 128 | 32 | 512 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
-| capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
+| capacity | 32 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
 
 三种配置必须走同一启动链、相同动态对象实现和相同 ABI。测试配置只改变内存
 容量和运行时资源上限，不得通过条件编译换回固定 PCB、fd 或 pipe 表。
@@ -52,11 +55,11 @@ capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明
 | --- | --- |
 | 每次提交 | 受影响单元/集成/固定种子随机测试；64 MiB boot；256 MiB smoke |
 | 每个小版本 | 全部宿主测试与产物审计；完整 256 MiB functional |
-| nightly / 候选发布 | 完整 64 GiB capacity；soak；故障和崩溃点矩阵 |
+| nightly / 候选发布 | 完整 32 GiB capacity；soak；故障和崩溃点矩阵 |
 | v2.0 发布 | 三配置全量、全部故障镜像、教材/网站构建和发布溯源 |
 
 capacity 测试必须解析来宾日志证明实际使用 4 GiB 以上物理页，不能以
-“QEMU 参数写了 64G”替代高地址证据。functional/capacity 达到资源限制时，
+“QEMU 参数写了 32G”替代高地址证据。functional/capacity 达到资源限制时，
 必须验证调用返回明确错误、旧对象保持不变、本次资源全部回滚。
 
 ### 第二周期新增通用 oracle
@@ -77,6 +80,12 @@ capacity 测试必须解析来宾日志证明实际使用 4 GiB 以上物理页�
 
 随机 oracle 失败时输出固定种子、精确迭代和最后一项成功操作。崩溃注入还要
 输出断电点、镜像哈希、journal 序号和第一次不一致的 fsck 事实。
+
+当前系统测试显式实例化 VGA 设备但使用 `-display none`。Firmware 把每个
+VGA 输出字节同时追加到 `0x80020` 起的固定验收区；Stage 1 和 Kernel 接续同一
+长度。runner 通过独立 QMP 连接执行 `pmemsave`，逐行恢复完整输出并沿用必需
+标记、禁止标记、出现次数和十六进制下界检查。magic、版本、长度越界或 overflow
+任一异常都必须令用例失败。键盘注入使用第二条 QMP 连接，不与显存抓取争用响应。
 
 `v0.0` 尚无可执行固件，因此系统测试使用项目生成的空 ROM 和空磁盘，以
 `-bios` 显式传入 ROM，并使用 `-S` 暂停 CPU。该测试只验证 QEMU TCG、PC
@@ -271,9 +280,9 @@ QEMU 自行异常退出仍视为失败。
 - 固定种子 `0x46445441424C4531` 执行 100000 步 open、duplicate、close、
   soft-limit 修改，与独立 4096 项参考表逐步比较；
 - PID4 Ring 3 真实读写文件、duplicate、CLOEXEC、限额失败和最低编号复用；
-  256 MiB/64 GiB 使用 minimum 64，64 MiB 兼容档使用 minimum 8，内核核对
+  256 MiB/32 GiB 使用 minimum 64，64 MiB 兼容档使用 minimum 8，内核核对
   读取 9 字节、写入 8 字节；
-- 256 MiB/64 GiB QEMU 分别要求 hard limit 精确为 256/4096，退出后 active
+- 256 MiB/32 GiB QEMU 分别要求 hard limit 精确为 256/4096，退出后 active
   对象/引用为零、finalizer 无失败、分块申请/释放相等及三层 validation 为一。
 
 `v1.5` 为路径、挂载和双后端增加四层证据：
@@ -369,13 +378,13 @@ QEMU 自行异常退出仍视为失败。
 
 - 内存图单元测试区分“最高描述地址”和“最高可用 RAM 地址”，并覆盖启动
   元数据搜索的保留区跳过、对齐、容量不足和溢出保留区拒绝。
-- 页帧单元测试精确验证 64 GiB 的 2-bit 状态容量为 4 MiB，并用稀疏图在
+- 页帧单元测试精确验证 64 GiB 可扩展性的 2-bit 状态容量为 4 MiB，并用稀疏图在
   4 GiB 以上执行范围分配、释放与未对齐拒绝。
 - 集成模型构造 3--4 GiB 物理洞和总计 64 GiB 可用 RAM，要求全部
   16777216 个可用页进入状态机；随机测试再执行 1024 轮高地址窗口分配。
-- 主系统用例明确传入 `--memory-mebibytes 65536`，而不是依赖工具默认值。
-  宿主解析来宾十六进制统计，要求可用/受管/direct-map 字节均至少 64 GiB、
-  物理/虚拟地址宽度至少 36/48、状态存储至少 4 MiB、至少一个 2 MiB
+- 主系统用例明确传入 `--memory-mebibytes 32768`，而不是依赖工具默认值。
+  宿主解析来宾十六进制统计，要求可用/受管/direct-map 字节均至少 32 GiB、
+  物理/虚拟地址宽度至少 36/48、状态存储至少 2 MiB、至少一个 2 MiB
   direct-map 页，并且高内存自检地址不低于 4 GiB+4 KiB。
 - 目标内高内存自检查询 direct-map 权限，写入并读回两个 64 位模式，再释放
   页帧；最终进程资源回收检查继续证明后续高地址页表没有泄漏。
@@ -404,9 +413,9 @@ QEMU 自行异常退出仍视为失败。
 - 固定种子 `0x425544445936344D` 执行 100000 步随机申请、释放、耗尽和重复
   释放，与逐页布尔参考模型同步；每 257 步交叉核对每阶位图、页状态、父子
   不重叠和加权统计；
-- 64 MiB 与 64 GiB 目标自检都申请 order 3 的 8 页连续块，经 direct-map
-  在首尾页写回模式后释放。64 GiB 额外要求元数据至少 8 MiB、最大阶至少
-  24、自检物理地址高于 4 GiB；
+- 64 MiB 与 32 GiB 目标自检都申请 order 3 的 8 页连续块，经 direct-map
+  在首尾页写回模式后释放。32 GiB 额外要求元数据至少 4 MiB、最大阶至少
+  23、自检物理地址高于 4 GiB；
 - 系统测试要求 `BUDDY_ACTIVE_BLOCKS` 反映真实页表和 heap 持有量，而不是
   错误要求为零；`BUDDY_SELF_TEST_PASSED` 证明自检相对进入前活动块数恢复
   基线。热路径不逐次写串口。
@@ -511,7 +520,7 @@ QEMU 自行异常退出仍视为失败。
   frame、buddy、heap、KVA 与栈全部恢复。只有两层检查都通过，才允许输出
   `RESOURCE_LIFECYCLE_SELF_TEST_PASSED` 和
   `PROCESS_RESOURCE_SNAPSHOT_MATCHED`；
-- `os_qemu_functional_smoke` 明确使用 256 MiB RAM，执行与 64 GiB 主路径
+- `os_qemu_functional_smoke` 明确使用 256 MiB RAM，执行与 32 GiB 主路径
   相同的磁盘 PID1、十一进程生命周期、Shell、exec、虚拟内存、文件系统、
   用户隔离和资源快照
   协议。它不是
@@ -616,7 +625,7 @@ runner 只要求它们至少出现且数值非零，不错误冻结为恰好一�
 11，wait success 为 10，Zombie 为 0；这些新字段与既有资源快照共同通过。
 
 `os_qemu_bootstrap_smoke` 把 64 MiB 完整链固化为独立 CTest，而不是发布时
-手工传参。256 MiB functional 与 64 GiB capacity 运行同一 VM probe；三档
+手工传参。256 MiB functional 与 32 GiB capacity 运行同一 VM probe；三档
 只改变资源规格，不切换实现。
 
 ## 验收证据
@@ -675,7 +684,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_native_system_call_integration_tests` | 集成 | CpuLocal 生命周期、深度/统计与原生系统调用 MSR 布局 |
 | `os_kernel_user_context_randomized_tests` | 随机 | 固定种子 100000 个用户现场与 400000 项性质 |
 | `os_kernel_physical_memory_map_unit_tests` | 单元 | 内存图结构、最高可用地址、元数据区搜索与溢出 |
-| `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、64 GiB 容量、高地址范围分配与回收 |
+| `os_kernel_physical_frame_allocator_unit_tests` | 单元 | 2-bit 帧状态、32 GiB 容量、高地址范围分配与回收 |
 | `os_kernel_buddy_frame_allocator_unit_tests` | 单元 | 双位图尺寸、初始化、分裂合并、失败原子性与非法释放 |
 | `os_kernel_heap_and_page_layout_unit_tests` | 单元 | 早期堆、canonical 地址、四级索引和页权限 |
 | `os_kernel_heap_unit_tests` | 单元 | 可回收堆的对齐、原子失败、非法释放、合并、复用与统计 |
@@ -685,7 +694,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_stack_manager_unit_tests` | 单元 | 动态栈双 guard、清零、权限、回滚、耗尽，以及物理/KVA/PTE 所有权破坏、修复和安全销毁 |
 | `os_kernel_page_table_reclamation_unit_tests` | 单元 | 三种根所有权、精确空表、级联回收、借用拒绝、失败回滚与损坏检测 |
 | `os_kernel_virtual_memory_area_unit_tests` | 单元 | VMA 排序、合并、拆分、kind guard、first-gap、耗尽事务与池守恒 |
-| `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、64 GiB 带洞内存图与高端帧 |
+| `os_kernel_memory_bootstrap_integration_tests` | 集成 | 64 MiB 基线、32 GiB 带洞内存图与高端帧 |
 | `os_kernel_buddy_frame_allocator_lifecycle_integration_tests` | 集成 | E820 洞、范围连续块与混合阶生命周期恢复 |
 | `os_kernel_heap_lifecycle_integration_tests` | 集成 | 64 KiB 回归堆的混合对象、数据保持、耗尽与完整恢复 |
 | `os_kernel_type_cache_lifecycle_integration_tests` | 集成 | 三种对齐缓存共享堆、交错释放与乱序销毁恢复 |
@@ -703,6 +712,7 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_page_table_reclamation_randomized_tests` | 随机 | 固定种子 100000 步映射/撤销与独立层级表数量模型 |
 | `os_kernel_virtual_memory_area_randomized_tests` | 随机 | 固定种子 100000 步 VMA 与独立有序区间参考模型 |
 | `os_kernel_device_model_unit_tests` | 单元 | PIC、PIT、扫描码和 ATA 纯状态机 |
+| `os_kernel_vga_text_console_unit_tests` | 单元 | 字符、换行、滚屏、共享验收区与溢出拒绝 |
 | `os_kernel_device_bootstrap_integration_tests` | 集成 | IRQ 开放、时钟、键盘与启动盘设备闭环 |
 | `os_kernel_interrupt_device_randomized_tests` | 随机 | 4096 轮 IRQ/PIT/键盘组合性质 |
 | `os_kernel_user_elf_unit_tests` | 单元 | 用户 ELF 全字段、范围、W^X、重叠与入口 |
@@ -754,7 +764,7 @@ python3 tools/os.py test --layer failure-path
 | `os_user_shell_elf_layout` | 集成 | 交互式 Shell ELF 的结构、权限、入口与无动态运行时依赖 |
 | `os_qemu_hardware_smoke` | 系统 | 自定义空 ROM、空磁盘与 QEMU TCG |
 | `os_qemu_rejects_invalid_image_size` | 失败路径 | 错误镜像尺寸必须导致测试失败 |
-| `os_firmware_rom_layout` | 集成 | ROM 大小、复位 near jump 与入口字节 |
+| `os_firmware_rom_layout` | 集成 | ROM 大小、VGA 字形前缀、复位 near jump 与入口字节 |
 | `os_stage1_disk_layout` | 集成 | 描述符、LBA、加载范围和负载校验 |
 | `os_kernel_disk_layout` | 集成 | 真实启动磁盘的 Kernel 描述符、CRC32、范围与内嵌 ELF |
 | `os_kernel_disk_rejects_invalid_header` | 集成/失败路径 | 损坏 Kernel 描述符必须被拒绝 |
@@ -766,9 +776,9 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_root_file_system_capacity_integration_tests` | 容量/集成 | 真实 256 MiB 近满镜像、短写、ENOSPC 与一致性 |
 | `os_qemu_bootstrap_smoke` | 系统 | 64 MiB 完整 PID1、VM probe、故障策略与资源守恒 |
 | `os_qemu_functional_smoke` | 系统 | 256 MiB 完整 Shell、IPC、文件系统、用户隔离和资源快照路径 |
-| `os_qemu_stage1_load_success` | 系统 | 64 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
+| `os_qemu_stage1_load_success` | 系统 | 32 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
 | `os_qemu_file_system_persistence` | 系统/失败路径 | 同盘双启动持久化与损坏 superblock 拒绝挂载 |
-| `os_qemu_firmware_serial_timeout_failure` | 系统/失败路径 | 有界轮询超时和禁止标记 |
+| `os_qemu_firmware_vga_initialization_failure` | 系统/失败路径 | 首条 VGA 日志后的显示自检失败和禁止标记 |
 | `os_qemu_firmware_ide_busy_timeout_failure` | 系统/失败路径 | BSY 永久置位必须有界失败 |
 | `os_qemu_firmware_ide_error_failure` | 系统/失败路径 | ATA ERR 必须进入设备错误分支 |
 | `os_qemu_stage1_header_failure` | 系统/失败路径 | ROM 必须拒绝损坏描述符 |
@@ -820,10 +830,10 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
 工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
-规格选择的有界总截止：64 MiB 启动档为 30 秒；256 MiB 功能档需要完成
-90 个进程与时间探针验收，使用 120 秒；64 GiB 主规格因 Debug 构建需要
+规格选择的有界总截止：64 MiB 启动档为 35 秒；256 MiB 功能档需要完成
+90 个进程与时间探针验收，使用 120 秒；32 GiB 主规格因 Debug 构建需要
 扫描 16777216 个页状态而使用 240 秒。外层 CTest 分别使用 40、130 和 250 秒
-作为独立保险。三次启动的持久化用例对每次 QEMU 使用 30 秒内部截止，
+作为独立保险。三次启动的持久化用例对每次 QEMU 使用 35 秒内部截止，
 CTest 总预算为 100 秒；十万步 VFS 命名空间模型的硬上限为 300 秒，给 Debug
 构建在共享宿主上的完整双后端运行保留调度余量。所有路径都保持有限上界，不把扩大预算变成
 无限等待。
@@ -870,8 +880,8 @@ lifetime、write invalidation、writable shared 拒绝、private write 不回写
 exception 和 invalid user result 全部列为禁止标记。
 
 启动布局另有跨语言契约测试，要求 NASM staging、C++ BootInfo、Python Kernel
-image 和 rootfs LBA 一致。完整阶段在 64 MiB、256 MiB、64 GiB 运行同一
-PID1 workload；64 GiB 还要求 512 个内核栈与 2048 个映射页容量事务回收。
+image 和 rootfs LBA 一致。完整阶段在 64 MiB、256 MiB、32 GiB 运行同一
+PID1 workload；32 GiB 还要求 512 个内核栈与 2048 个映射页容量事务回收。
 
 ## v1.10 fork 与 COW 测试
 
@@ -902,7 +912,7 @@ Ring 3 `/bin/fork_probe` 同时覆盖四种不能由纯宿主模型证明的事�
 3. anonymous、writable private file 和真正 readonly file 不混淆；
 4. cwd、共享 fd offset 与连续 32 次 fork/exec/wait 语义闭合。
 
-64 MiB bootstrap、256 MiB functional 与 64 GiB capacity 继续运行同一
+64 MiB bootstrap、256 MiB functional 与 32 GiB capacity 继续运行同一
 用户语义。每个来宾阶段有内部 deadline，CTest 还有外层 timeout；任何
 fork 循环停滞都会被有界终止，不留下后台 QEMU。
 
@@ -956,7 +966,7 @@ v1.12 新增两个顶层 CTest，构建图共 147 项，并扩展调度器、ABI
 | --- | ---: | --- |
 | 64 MiB bootstrap | 0 | `BOOTSTRAP_SINGLE_THREAD_VERIFIED` |
 | 256 MiB functional | 31 | `FUNCTIONAL_32_READY` |
-| 64 GiB capacity | 63 | `CAPACITY_64_READY` |
+| 32 GiB capacity | 63 | `CAPACITY_64_READY` |
 
 functional/capacity 还必须顺序出现 `TLS_ISOLATED`、
 `FUTEX_SYNCHRONIZATION_VERIFIED`、`JOIN_RECLAIMED`、`COMPLETED` 和 PID1
@@ -984,7 +994,7 @@ v1.13 新增四个顶层 CTest，构建图共 151 项，并扩展 ABI、调度�
   10 ms futex timeout、condition-before-200 ms 和 10 ms condition timeout。
 
 64 MiB 的 Thread-per-Process 上限为 1，因而 condition 先赢场景记录
-`CONDITION_SINGLE_THREAD_PROFILE`；256 MiB 与 64 GiB 必须建立 notifier
+`CONDITION_SINGLE_THREAD_PROFILE`；256 MiB 与 32 GiB 必须建立 notifier
 Thread 并记录 `CONDITION_WON_BEFORE_DEADLINE`。三档均要求：
 
 ```text
@@ -997,7 +1007,7 @@ Thread 并记录 `CONDITION_WON_BEFORE_DEADLINE`。三档均要求：
 ```
 
 runner 解析十六进制数并验证 start/wake 前进、统计非零和一次性 marker 次数。
-整机墙钟仍严格有界：64 MiB、256 MiB、64 GiB 分别按真实工作量选择预算，
+整机墙钟仍严格有界：64 MiB、256 MiB、32 GiB 分别按真实工作量选择预算，
 CTest 外层预算略大于 runner 内层预算。超时必须报告最后里程碑并回收 QEMU，
 不能用无界等待掩盖 idle、WaitQueue 或文件系统停滞。
 
@@ -1056,8 +1066,11 @@ v1.15 构建图共 158 项。新增测试不是只调用 Shell 字符串解析�
 
 QEMU functional 输入使用命令完成 marker 作为逐条屏障。对前台 `cat`，
 runner 先观察 `FOREGROUND_JOB_WAITING`，再通过 QMP 注入真实 Ctrl-Z；
-Shell 观察停止后执行 jobs/fg，再注入 Ctrl-C。第二个 `cat` 验证 bg，第三个
-`cat &` 验证后台读取拒绝。
+Shell 观察停止后执行 jobs/fg，并等待 Kernel 明确输出
+`DEFAULT_CONTINUE_DELIVERED` 后再注入 Ctrl-C。第二个 `cat` 验证 bg，第三个
+`cat &` 验证后台读取拒绝。控制终端从 IRQ 投递组信号时允许 scheduler
+暂时没有 running thread；目标阻塞线程必须被信号唤醒，不能把 idle 窗口误判为
+“进程调度已停止”。
 
 每个按键事务有 20 秒进度上限；协议失败会立即设置完成事件，使 runner 不再
 等待整机总预算。finally 仍负责 terminate/wait 和临时 QMP socket 回收。
@@ -1103,7 +1116,7 @@ memory probe 让两个 shared alias 观察同一写入，执行 sync 后从文�
 completion time 不早于 submit time，结果为 Succeeded；完成时还必须观察
 `OTHER_THREAD_PROGRESS=1`。
 
-宿主纯逻辑测试可并行。交互式 functional、跨启动 persistence 与 64 GiB
+宿主纯逻辑测试可并行。交互式 functional、跨启动 persistence 与 32 GiB
 capacity 共享大量 TCG CPU 时可能越过逐键 20 秒进度门限，发布门禁因此在
 并行全量后对失败的 QEMU 用例进行低优先级、单任务复验；复验仍保留有限
 deadline，禁止以无限等待掩盖死锁。
@@ -1195,3 +1208,27 @@ v2.0 不新增重复机制测试，但发布审计发现 22 个合法用户 ELF 
 干净配置耗时 0.45 秒，2057 个构建步骤耗时 5.06 秒；`ctest --parallel 20`
 以 63.61 秒完成 173/173、0 失败，24 项 QEMU 全部通过。该结果在四项新增
 产物门禁进入候选源码后重新取得，没有沿用 169 项候选结果。
+
+## v2.1 输出路由与参考机测试
+
+v2.1 新增的 VGA 单元测试分别验证启动诊断、终端文本和紧急输出，不允许再用
+一个无语义的 write 接口混合三条路径：
+
+- 模式 0 的诊断同时追加日志和渲染，模式 1 的诊断只追加；
+- `ActivateTerminal` 清空 2000 个文本单元、复位光标并最后提交模式 1；
+- TTY 字节在模式 1 同时进入终端转录和 VGA；
+- 日志满后普通写失败并置 overflow，紧急写仍能完成屏幕报告；
+- 共享头版本、光标、模式或长度越界时 Kernel 拒绝接管。
+
+QEMU 在最终标记处同时保存 P6 像素截图与 `0xB8000` 的 4000 字节文本页。全部
+成功和失败路径都要求至少 512 个非黑像素；正常 READY 还逐字符解码文本页，
+禁止残留 `[OS][FIRMWARE]`、`[OS][STAGE1]` 或 `[OS][KERNEL]`，从而直接证明
+用户终端没有被后台诊断刷屏。
+
+参考盘契约测试要求逻辑长度精确为 137438953472 字节、末 LBA 为
+`0x0FFFFFFF`，空镜像宿主分配小于 1 MiB。稀疏复制在支持
+`SEEK_DATA/SEEK_HOLE` 时只复制数据 extent；不支持时只允许扫描至多 1 GiB，
+对 128 GiB 镜像必须立即失败并删除未完成目标，不能静默进行全盘字节扫描。
+
+当前 capacity QEMU 明确传入 32768 MiB，仍要求 4 GiB 以上页帧读写与回收；
+v2.1 不触碰全部 32 GiB。全内存压力、swap 和 OOM 场景属于 v2.5。

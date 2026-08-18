@@ -4,7 +4,11 @@ find_program(OS_FIRMWARE_OBJCOPY_EXECUTABLE llvm-objcopy REQUIRED)
 
 set(
     OS_FIRMWARE_SOURCE
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/reset_and_serial.asm"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/reset_and_vga.asm"
+)
+set(
+    OS_FIRMWARE_FONT_SOURCE
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/font8x8_basic.inc"
 )
 set(
     OS_FIRMWARE_LINKER_SCRIPT
@@ -50,11 +54,15 @@ function(
             "${OS_FIRMWARE_NASM_EXECUTABLE}"
             -f
             elf32
+            -I
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/"
             ${OS_FIRMWARE_NASM_DEFINITIONS}
             -o
             "${OS_FIRMWARE_OBJECT}"
             "${OS_FIRMWARE_SOURCE}"
-        DEPENDS "${OS_FIRMWARE_SOURCE}"
+        DEPENDS
+            "${OS_FIRMWARE_SOURCE}"
+            "${OS_FIRMWARE_FONT_SOURCE}"
         COMMENT "汇编 ${OS_FIRMWARE_TARGET} 的 16 位复位入口"
         VERBATIM
     )
@@ -108,11 +116,11 @@ os_add_firmware_image(
     ""
 )
 
-# 该测试变体只改变串口就绪位的读取结果，用于稳定覆盖超时失败路径。
+# 该测试变体在首条可见日志后强制 VGA 自检失败，覆盖显示初始化失败路径。
 os_add_firmware_image(
-    os_firmware_serial_failure
-    "${OS_FIRMWARE_SERIAL_FAILURE_IMAGE}"
-    "OS_FIRMWARE_TEST_FORCE_SERIAL_FAILURE"
+    os_firmware_vga_failure
+    "${OS_FIRMWARE_VGA_FAILURE_IMAGE}"
+    "OS_FIRMWARE_TEST_FORCE_VGA_FAILURE"
 )
 
 # 这两个测试变体保持真实 ATA PIO 控制流，只替换状态寄存器观测结果。

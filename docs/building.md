@@ -50,15 +50,15 @@ Python 入口依次执行：
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
    命名空间单词门禁、64 MiB bootstrap 与 256 MiB functional 系统用例。
-6. 发布前另用下文的有界命令运行 64 GiB capacity 主规格；它不进入日常
-   `verify`，避免每次局部验证都申请 64 GiB 来宾虚拟地址空间。
+6. 发布前另用下文的有界命令运行 32 GiB capacity 主规格；它不进入日常
+   `verify`，避免每次局部验证都申请 32 GiB 来宾虚拟地址空间。
 
 正常 QEMU 系统用例包含显式 `-m 64` 的 bootstrap、`-m 256` 的 functional
-门禁和发布时显式 `-m 65536`
-的 64 GiB capacity 主规格；三者运行同一份 Shell、IPC、文件系统、用户隔离
+门禁和发布时显式 `-m 32768`
+的 32 GiB capacity 主规格；三者运行同一份 Shell、IPC、文件系统、用户隔离
 和资源生命周期实现。故障注入和最小兼容路径保留 64 MiB，以免重复为不相关
 失败分支建立大容量模型。QEMU
-默认按需提交来宾 RAM，宿主不要求实际装有 64 GiB 空闲内存，但必须允许创建
+默认按需提交来宾 RAM，宿主不要求实际装有 32 GiB 空闲内存，但必须允许创建
 相应大小的虚拟地址映射。若容器或 `ulimit` 限制虚拟内存，测试会在启动前
 明确失败。
 
@@ -73,18 +73,83 @@ python3 tools/os.py source-metrics
 python3 tools/os.py phone-book-export
 ```
 
-只运行 64 GiB 正常整机验收：
+在有 GTK 图形会话的本机打开 VGA 窗口：
+
+```bash
+python3 tools/os.py qemu-display \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk.img \
+  131072 137438953472
+```
+
+纯终端环境可增加 `--display-backend curses`。默认使用磁盘快照；只有明确需要
+保留来宾写入时才增加 `--persistent-disk-writes`。该命令仍使用自研 ROM、
+QEMU TCG 和显式 VGA 设备，不启用串口输出。详细来宾日志默认持续写到
+`build/developer/qemu-display.log`；可用
+`--guest-log-file <path>` 指定其他宿主路径，VGA 只保留用户终端和紧急错误。
+
+宿主没有桌面、需要从手机查看时，先在宿主启动仅回环监听的 VNC：
+
+```bash
+python3 tools/os.py qemu-display \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk.img \
+  131072 137438953472 \
+  --display-backend vnc
+```
+
+另一个终端安装 noVNC，把本机 VNC 转成仍只监听回环地址的网页：
+
+```bash
+sudo dnf install novnc python3-websockify
+novnc_proxy \
+  --listen 127.0.0.1:6080 \
+  --vnc 127.0.0.1:5901 \
+  --web /usr/share/novnc \
+  --file-only
+```
+
+再开一个终端，把 `6080` 的 HTTP/WebSocket 服务发布到自己的 Tailscale
+网络：
+
+```bash
+tailscale serve --bg http://127.0.0.1:6080
+tailscale serve status
+```
+
+首次使用时 Tailscale 可能输出一次性的 Serve 启用链接，需由 tailnet 所有者确认。
+手机登录同一 Tailscale 账号后，打开
+`https://<宿主的 Tailscale DNS 名称>/vnc.html?autoconnect=1&resize=scale`。
+QEMU 与 noVNC 都不直接监听公网或局域网地址；停止后用 `tailscale serve reset`
+移除转发。若 `5901` 已占用，可给 QEMU 增加 `--vnc-display-number 2`，并把
+noVNC 的目标端口同步改为 `5902`。
+
+若 QEMU 就运行在手机本机的 Termux/proot 中，Android 与 Termux 共享回环网络，
+不需要 Tailscale。把 `tools/novnc_mobile.html` 链接到 noVNC Web 根后可直接由
+Termux 打开：
+
+```bash
+ln -s "$PWD/tools/novnc_mobile.html" /usr/share/novnc/os_mobile.html
+termux-open-url http://127.0.0.1:6080/os_mobile.html
+```
+
+手机页面底部固定提供命令输入、回车、退格、Ctrl-C、Ctrl-Z 和缩放切换。
+页面默认自动适应当前横竖屏；“原始清晰度”切回 VGA 720×400 像素一一对应，
+适合拖动查看。竖屏时控制区固定在底部，横屏时移到右侧，把剩余区域全部留给
+等比 VGA 画面。目标 Shell 只接受当前 PS/2/ASCII 键盘路径支持的字符。
+
+只运行 32 GiB 正常整机验收：
 
 ```bash
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
-  131072 1073741824 \
-  --memory-mebibytes 65536 \
+  131072 137438953472 \
+  --memory-mebibytes 32768 \
   --expected-outcome success
 ```
 
-`--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 64 GiB
+`--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 32 GiB
 容量、高地址直映和回收验收。
 
 只运行 256 MiB 日常 functional 验收：
@@ -105,7 +170,7 @@ ctest --test-dir build/developer \
 
 该用例不是精简启动：它从磁盘启动 PID1，执行完整进程树、spawn/exec/wait、
 外部 Shell 命令、文件系统、用户隔离和 26 字段资源快照。64 MiB、256 MiB 与
-64 GiB 只改变 QEMU RAM
+32 GiB 只改变 QEMU RAM
 规格，不切换实现。
 
 只验证原生系统调用能力失败边界：
@@ -114,7 +179,7 @@ ctest --test-dir build/developer \
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
-  131072 1073741824 \
+  131072 137438953472 \
   --memory-mebibytes 64 \
   --cpu-model 'qemu64,-syscall' \
   --expected-outcome processor-feature-unsupported
@@ -133,7 +198,7 @@ python3 tools/os.py qemu-firmware \
 source/foundation/libos_foundation_host.a
 source/foundation/libos_foundation_x86_64.a
 source/firmware/generated/os_firmware.elf
-source/firmware/generated/os_firmware_serial_failure.elf
+source/firmware/generated/os_firmware_vga_failure.elf
 source/firmware/generated/os_firmware_ide_busy_failure.elf
 source/firmware/generated/os_firmware_ide_error_failure.elf
 source/boot/stage1/generated/stage1.bin
@@ -155,7 +220,7 @@ source/user/user_exec_target.elf
 source/user/user_file_system_probe.elf
 source/user/user_truncated.elf
 images/firmware.bin
-images/firmware_serial_failure.bin
+images/firmware_vga_failure.bin
 images/firmware_ide_busy_failure.bin
 images/firmware_ide_error_failure.bin
 images/boot_disk.img
@@ -199,22 +264,24 @@ tests/os_kernel_interrupt_device_randomized_tests
 `kernel.elf` 仍做符号、段权限与 GDB 调试输入，但不拿非加载调试段长度冒充
 Stage 1 载荷长度。
 `firmware.bin` 和失败路径变体必须都是精确 131072 字节。
-全部启动磁盘镜像必须具有精确 1073741824 字节逻辑长度。镜像使用稀疏文件
+全部启动磁盘镜像必须具有精确 137438953472 字节逻辑长度。镜像使用稀疏文件
 保存，不能把“逻辑容量”误当作“宿主实际占用”；派生镜像必须保留尾部 extent
-与逻辑长度。
+与逻辑长度。宿主文件系统若不支持 `SEEK_DATA/SEEK_HOLE`，工具会拒绝逐字节
+扫描 128 GiB 镜像并删除未完成副本；不得为了“兼容”退化为普通全盘复制。
 `build/` 不进入 Git。
 
 ## 固件生成链
 
 ```text
-reset_and_serial.asm
+reset_and_vga.asm
   └─ NASM elf32 → .o
        └─ LLD + rom.ld → .elf
             └─ llvm-objcopy --gap-fill=0xff → 128 KiB .bin
 ```
 
 `elf32` 是保存 16 位代码节和符号的目标文件容器，不表示 CPU 已进入 32 位模式。
-链接脚本用 `ASSERT` 保证入口不侵占最后 16 字节的复位向量区域。
+链接脚本把 VGA 字形固定到 `0xFFFFE000`、入口固定到 `0xFFFFF000`，并用
+`ASSERT` 保证字形不侵入入口、入口不侵占最后 16 字节的复位向量区域。
 
 ## Stage 1 生成链
 
@@ -243,7 +310,7 @@ python3 tools/os.py fsck-rootfs build/developer/images/boot_disk.img
 
 ```bash
 python3 tools/os.py mkfs-rootfs /tmp/rootfs-lab.img \
-  --create --size-bytes 1073741824
+  --create --size-bytes 137438953472
 python3 tools/os.py corrupt-rootfs /tmp/rootfs-lab.img superblock-checksum
 ```
 

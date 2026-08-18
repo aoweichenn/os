@@ -9,6 +9,17 @@ SECTIONS
         BYTE(0xFF)
     }
 
+    . = 0xFFFFE000;
+    .font :
+    {
+        KEEP(*(.font))
+    }
+
+    ASSERT(
+        . <= 0xFFFFF000,
+        "VGA 字形超过高端 CS 窗口保留区"
+    )
+
     . = 0xFFFFF000;
     .text.entry :
     {

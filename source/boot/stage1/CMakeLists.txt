@@ -17,6 +17,10 @@ set(
     "${CMAKE_CURRENT_SOURCE_DIR}/include/kernel_loader.inc"
 )
 set(
+    OS_STAGE1_VGA_CONSOLE_CONSTANTS
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/vga_console.inc"
+)
+set(
     OS_STAGE1_BINARY
     "${CMAKE_CURRENT_BINARY_DIR}/generated/stage1.bin"
 )
@@ -44,6 +48,7 @@ add_custom_command(
         "${OS_STAGE1_KERNEL_LOADER_SOURCE}"
         "${OS_STAGE1_MEMORY_MAP_SOURCE}"
         "${OS_STAGE1_KERNEL_LOADER_CONSTANTS}"
+        "${OS_STAGE1_VGA_CONSOLE_CONSTANTS}"
     COMMENT "汇编自研 Stage 1 模式切换与 ELF64 内核加载器"
     VERBATIM
 )
@@ -81,6 +86,7 @@ function(
             "${OS_STAGE1_KERNEL_LOADER_SOURCE}"
             "${OS_STAGE1_MEMORY_MAP_SOURCE}"
             "${OS_STAGE1_KERNEL_LOADER_CONSTANTS}"
+            "${OS_STAGE1_VGA_CONSOLE_CONSTANTS}"
         COMMENT "${OS_STAGE1_FAILURE_COMMENT}"
         VERBATIM
     )

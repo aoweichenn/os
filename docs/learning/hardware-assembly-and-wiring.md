@@ -80,10 +80,10 @@ python3 tools/check_learning_diagrams.py --self-test
 
 | 线型 | 表示什么 | CPU 使用的机制 | 典型例子 |
 | --- | --- | --- | --- |
-| 绿色实线 | 内存或 MMIO | 普通 load/store，经 MMU 或物理地址访问 | ROM、RAM、Local APIC `0xFEE00000` |
+| 绿色实线 | 内存或 MMIO | 普通 load/store，经 MMU 或物理地址访问 | ROM、RAM、VGA `0xB8000`、Local APIC `0xFEE00000` |
 | 蓝色虚线 | Port I/O | `IN` / `OUT`，端口号不参与页表翻译 | COM1 `0x3F8`、PIT `0x40`、ATA `0x1F0` |
 | 红色实线 | IRQ / 中断请求 | 设备电平/脉冲 → PIC → LAPIC → CPU IDT | PIT IRQ0、键盘 IRQ1 |
-| 紫色虚线 | 宿主控制或观测 | QEMU 参数、QMP、串口 capture、镜像构建 | `sendkey`、GDB stub、raw disk 生成 |
+| 紫色虚线 | 宿主控制或观测 | QEMU 参数、QMP、内存日志、镜像构建 | `sendkey`、`pmemsave`、GDB stub、raw disk 生成 |
 
 深灰箭头表示软件所有权或启动控制权交接，例如 ROM Firmware 跳到 Stage 1，
 Stage 1 再调用 Kernel。总线类型相同不代表协议相同：COM1、PIC、PIT、PS/2
@@ -121,19 +121,21 @@ Stage 1 再调用 Kernel。总线类型相同不代表协议相同：COM1、PIC�
 QEMU 把自研的 128 KiB ROM 映射到物理区间
 `0xFFFE0000..0xFFFFFFFF`。x86 CPU 复位后从 `0xFFFFFFF0` 取第一条指令，
 所以链接脚本必须把 reset stub 精确放在 ROM 顶部附近。Firmware 建立实模式
-段和栈后，通过 Port I/O 初始化 COM1：
+段和栈后，历史 v0.1 通过 Port I/O 初始化 COM1；当前主线改为项目自行编程
+VGA 寄存器和字符平面：
 
 ```text
 CPU reset
   → PA 0xFFFFFFF0
   → 128 KiB ROM Firmware
-  → OUT 访问 COM1 0x3F8..0x3FF
-  → QEMU serial capture
-  → 宿主测试读取日志
+  → OUT 访问 VGA 0x3C0..0x3DF
+  → load/store 写入 VGA text memory 0xB8000
+  → QEMU 显示窗口
+  → 宿主测试经 QMP 读取 0x20000 的只追加内存日志
 ```
 
-串口是最早的观测通道。此时还没有文件系统、屏幕驱动、系统调用甚至可用的 C++
-运行环境；如果 COM1 没接通，后续失败只会表现成沉默。
+ROM 在此时还没有文件系统、系统调用或可用的 C++ 运行环境，因此 VGA 模式、
+字形、文本页和光标都由 16 位汇编建立，不能借用第三方 VGA BIOS。
 
 ### 4.2 内存总线、MMU 与物理布局
 
@@ -257,7 +259,7 @@ v0.11 的历史 2 MiB 磁盘共有 4096 个 512 字节扇区；自 v1.6 起盘�
 
 ```text
 reset vector
-  → ROM Firmware 初始化 COM1/PIT
+  → ROM Firmware 初始化 VGA/PIT
   → ATA PIO 读取并校验 Stage 1 到 RAM 0x8000
   → A20 + GDT + 临时 CR3，进入 Long Mode
   → fw_cfg 读取 E820
@@ -321,20 +323,20 @@ Ring 3 Shell
 
 | 软件层 | 运行状态 | 直接拥有的硬件职责 | 交接点 |
 | --- | --- | --- | --- |
-| ROM Firmware | 16 位实模式 | reset、COM1、PIT bootstrap、ATA 读取 Stage 1 | `CS:IP → 0000:8000` |
+| ROM Firmware | 16 位实模式 | reset、VGA、PIT bootstrap、ATA 读取 Stage 1 | `CS:IP → 0000:8000` |
 | Stage 1 | 16→32→64 位 | A20、GDT、临时 CR3、fw_cfg、ATA Kernel loader | `RDI=BootInfo; call entry` |
 | Kernel / Ring 0 | 64 位 CPL0 | 正式页表、GDT/TSS/IDT、PIC/LAPIC/PIT/PS2/ATA | `IRETQ` / system call ABI |
 | User / Ring 3 | 64 位 CPL3 | 不直接操作硬件；只持有 fd 和用户虚拟内存 | `INT 0x80` 进入 Kernel |
 
-Ring 3 Shell 即使最终把字符发到 COM1，也不能执行 `OUT 0x3F8`。它写 fd 1/2，
-Kernel 再通过串口驱动访问硬件。这条边界使用户错误可以被隔离，并保证设备状态
+Ring 3 Shell 即使最终把字符显示到 VGA，也不能直接写 `0xB8000`。它写 fd 1/2，
+Kernel 再通过 VGA 控制台访问 supervisor-only 映射。这条边界使用户错误可以被隔离，并保证设备状态
 只有一个受控所有者。
 
 ## 7. 按连线定位故障
 
 | 现象 | 优先检查哪一段线 | 关键证据 |
 | --- | --- | --- |
-| 完全没有日志 | reset vector → ROM → COM1 → serial capture | ROM 布局、第一条 `OUT`、QEMU serial 参数 |
+| 完全没有显示 | reset vector → ROM → VGA → text memory | ROM 布局、VGA 寄存器表、字形平面、QEMU VGA 参数 |
 | Firmware 有日志，Stage 1 没进入 | ROM → ATA → disk → RAM `0x8000` | BSY/DRQ/ERR/DF、descriptor CRC、far transfer |
 | Long Mode 前停止 | CPU 模式控制线 | A20、GDT、CR4.PAE、CR3、EFER.LME、CR0.PG |
 | Kernel ELF 被拒绝 | ATA → staging → PT_LOAD | 文件 CRC、ELF header、区间溢出、段重叠、W^X |
@@ -343,7 +345,7 @@ Kernel 再通过串口驱动访问硬件。这条边界使用户错误可以被�
 | 键盘中断有计数，Shell 不醒 | decoder → Console FIFO → wait condition → fd 0 | make/break 状态、lost wakeup、descriptor owner |
 | 同次启动读回成功，重启后丢失 | cache → ATA WRITE/FLUSH → disk | dirty→clean、LBA 偏移、flush、跨启动测试 |
 
-先确定断在哪一条线，再进入对应模块；不要在“没有串口输出”时直接猜调度器或
+先确定断在哪一条线，再进入对应模块；不要在“没有 VGA 输出”时直接猜调度器或
 文件系统。
 
 ## 8. 沿图读源码
@@ -351,7 +353,7 @@ Kernel 再通过串口驱动访问硬件。这条边界使用户错误可以被�
 建议按硬件因果链阅读：
 
 1. ROM 与最早 I/O：
-   [`reset_and_serial.asm`](../../source/firmware/src/reset_and_serial.asm)。
+   [`reset_and_vga.asm`](../../source/firmware/src/reset_and_vga.asm)。
 2. 模式切换和 Stage 1：
    [`entry.asm`](../../source/boot/stage1/src/entry.asm)、
    [`kernel_loader.asm`](../../source/boot/stage1/src/kernel_loader.asm)、

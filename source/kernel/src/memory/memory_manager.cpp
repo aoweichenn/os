@@ -14,6 +14,8 @@ namespace os::kernel {
 namespace {
 
 constexpr uint64_t OS_KERNEL_MEMORY_LOW_PLATFORM_RESERVATION_SIZE_BYTES = 1ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_VGA_LEGACY_APERTURE_BEGIN_ADDRESS = 0x000A0000ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_VGA_LEGACY_APERTURE_END_ADDRESS = 0x000C0000ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_EARLY_STACK_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_PAGE_MASK = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - 1ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_LARGE_PAGE_MASK =
@@ -237,6 +239,9 @@ extern "C" uint8_t os_kernel_writable_data_end[];
 }
 
 [[nodiscard]] PagePermissions IdentityPermissions(const uint64_t page_address) noexcept {
+    const bool cache_disabled =
+        page_address >= OS_KERNEL_MEMORY_VGA_LEGACY_APERTURE_BEGIN_ADDRESS &&
+        page_address < OS_KERNEL_MEMORY_VGA_LEGACY_APERTURE_END_ADDRESS;
     const uint64_t text_begin = AddressOf(os_kernel_text_start);
     const uint64_t text_end = AlignUpToPage(AddressOf(os_kernel_text_end));
     if (page_address >= text_begin && page_address < text_end) {
@@ -244,7 +249,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
             .writable = false,
             .executable = true,
             .user_accessible = false,
-            .cache_disabled = false,
+            .cache_disabled = cache_disabled,
             .copy_on_write = false,
         };
     }
@@ -255,7 +260,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
             .writable = false,
             .executable = false,
             .user_accessible = false,
-            .cache_disabled = false,
+            .cache_disabled = cache_disabled,
             .copy_on_write = false,
         };
     }
@@ -263,7 +268,7 @@ extern "C" uint8_t os_kernel_writable_data_end[];
         .writable = true,
         .executable = false,
         .user_accessible = false,
-        .cache_disabled = false,
+        .cache_disabled = cache_disabled,
         .copy_on_write = false,
     };
 }
@@ -1476,9 +1481,7 @@ const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept {
     return current_kernel_memory_statistics;
 }
 
-PhysicalFrameAllocator &GetKernelPhysicalFrameAllocator() noexcept {
-    return FrameAllocator();
-}
+PhysicalFrameAllocator &GetKernelPhysicalFrameAllocator() noexcept { return FrameAllocator(); }
 
 PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept {
     return FrameAllocator().Statistics();
@@ -1572,9 +1575,8 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t root_physical_address
     if (FrameAllocator().Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelUserPageStatus::FrameAllocationFailed;
     }
-    if (MapExistingUserPage(root_physical_address, virtual_address,
-                            frame.physical_address, writable, executable) !=
-        KernelUserPageStatus::Succeeded) {
+    if (MapExistingUserPage(root_physical_address, virtual_address, frame.physical_address,
+                            writable, executable) != KernelUserPageStatus::Succeeded) {
         static_cast<void>(FrameAllocator().Release(frame));
         return KernelUserPageStatus::PageMappingFailed;
     }
@@ -1582,25 +1584,23 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t root_physical_address
     return KernelUserPageStatus::Succeeded;
 }
 
-KernelUserPageStatus MapExistingUserPage(
-    const uint64_t root_physical_address, const uint64_t virtual_address,
-    const uint64_t physical_address, const bool writable,
-    const bool executable, const bool copy_on_write) noexcept {
+KernelUserPageStatus MapExistingUserPage(const uint64_t root_physical_address,
+                                         const uint64_t virtual_address,
+                                         const uint64_t physical_address, const bool writable,
+                                         const bool executable, const bool copy_on_write) noexcept {
     if (root_physical_address == 0ULL ||
         (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return KernelUserPageStatus::InvalidPageTableRoot;
     }
     if ((virtual_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
-        !IsUserVirtualAddressRange(virtual_address,
-                                   OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        !IsUserVirtualAddressRange(virtual_address, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
     if ((writable && executable) || (writable && copy_on_write)) {
         return KernelUserPageStatus::InvalidPermissions;
     }
     if ((physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
-        !FrameAllocator().OwnsAllocation(
-            PhysicalFrame{.physical_address = physical_address})) {
+        !FrameAllocator().OwnsAllocation(PhysicalFrame{.physical_address = physical_address})) {
         return KernelUserPageStatus::FrameNotOwned;
     }
     const PagePermissions permissions{
@@ -1610,35 +1610,31 @@ KernelUserPageStatus MapExistingUserPage(
         .cache_disabled = false,
         .copy_on_write = copy_on_write,
     };
-    PageTableManager process_page_table{
-        FrameAllocator(), root_physical_address,
-        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
-    return process_page_table.MapPage(virtual_address, physical_address,
-                                      permissions) ==
+    PageTableManager process_page_table{FrameAllocator(), root_physical_address,
+                                        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
+    return process_page_table.MapPage(virtual_address, physical_address, permissions) ==
                    PageTableStatus::Succeeded
                ? KernelUserPageStatus::Succeeded
                : KernelUserPageStatus::PageMappingFailed;
 }
 
-KernelUserPageStatus ReplaceUserPage(
-    const uint64_t root_physical_address, const uint64_t virtual_address,
-    const uint64_t physical_address, const bool writable,
-    const bool executable, const bool copy_on_write) noexcept {
+KernelUserPageStatus ReplaceUserPage(const uint64_t root_physical_address,
+                                     const uint64_t virtual_address,
+                                     const uint64_t physical_address, const bool writable,
+                                     const bool executable, const bool copy_on_write) noexcept {
     if (root_physical_address == 0ULL ||
         (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL) {
         return KernelUserPageStatus::InvalidPageTableRoot;
     }
     if ((virtual_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
-        !IsUserVirtualAddressRange(virtual_address,
-                                   OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        !IsUserVirtualAddressRange(virtual_address, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
     if ((writable && executable) || (writable && copy_on_write)) {
         return KernelUserPageStatus::InvalidPermissions;
     }
     if ((physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
-        !FrameAllocator().OwnsAllocation(
-            PhysicalFrame{.physical_address = physical_address})) {
+        !FrameAllocator().OwnsAllocation(PhysicalFrame{.physical_address = physical_address})) {
         return KernelUserPageStatus::FrameNotOwned;
     }
     const PagePermissions permissions{
@@ -1648,20 +1644,17 @@ KernelUserPageStatus ReplaceUserPage(
         .cache_disabled = false,
         .copy_on_write = copy_on_write,
     };
-    PageTableManager process_page_table{
-        FrameAllocator(), root_physical_address,
-        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
-    return process_page_table.ReplacePage(virtual_address, physical_address,
-                                          permissions) ==
+    PageTableManager process_page_table{FrameAllocator(), root_physical_address,
+                                        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
+    return process_page_table.ReplacePage(virtual_address, physical_address, permissions) ==
                    PageTableStatus::Succeeded
                ? KernelUserPageStatus::Succeeded
                : KernelUserPageStatus::PageMappingFailed;
 }
 
-KernelUserPageStatus UnmapUserPage(
-    const uint64_t root_physical_address, const uint64_t virtual_address,
-    uint64_t &physical_address,
-    uint64_t &reclaimed_table_frame_count) noexcept {
+KernelUserPageStatus UnmapUserPage(const uint64_t root_physical_address,
+                                   const uint64_t virtual_address, uint64_t &physical_address,
+                                   uint64_t &reclaimed_table_frame_count) noexcept {
     physical_address = 0ULL;
     reclaimed_table_frame_count = 0ULL;
     if (root_physical_address == 0ULL ||
@@ -1669,29 +1662,24 @@ KernelUserPageStatus UnmapUserPage(
         return KernelUserPageStatus::InvalidPageTableRoot;
     }
     if ((virtual_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
-        !IsUserVirtualAddressRange(virtual_address,
-                                   OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
+        !IsUserVirtualAddressRange(virtual_address, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
         return KernelUserPageStatus::InvalidVirtualAddress;
     }
-    PageTableManager process_page_table{
-        FrameAllocator(), root_physical_address,
-        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
+    PageTableManager process_page_table{FrameAllocator(), root_physical_address,
+                                        ActivePageTableMemoryAccess(), PageTableRootKind::Process};
     PageMapping mapping{};
-    if (process_page_table.QueryPage(virtual_address, mapping) !=
-        PageTableStatus::Succeeded) {
+    if (process_page_table.QueryPage(virtual_address, mapping) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageNotMapped;
     }
     if (!mapping.permissions.user_accessible) {
         return KernelUserPageStatus::NotUserAccessible;
     }
     PageTableUnmapResult unmap_result{};
-    if (process_page_table.UnmapPage(virtual_address, unmap_result) !=
-        PageTableStatus::Succeeded) {
+    if (process_page_table.UnmapPage(virtual_address, unmap_result) != PageTableStatus::Succeeded) {
         return KernelUserPageStatus::PageUnmappingFailed;
     }
     physical_address = mapping.physical_address;
-    reclaimed_table_frame_count =
-        unmap_result.reclaimed_table_frame_count;
+    reclaimed_table_frame_count = unmap_result.reclaimed_table_frame_count;
     return KernelUserPageStatus::Succeeded;
 }
 
@@ -1699,14 +1687,12 @@ KernelUserPageStatus ReleaseUserPage(const uint64_t root_physical_address,
                                      const uint64_t virtual_address,
                                      uint64_t &reclaimed_table_frame_count) noexcept {
     uint64_t physical_address = 0ULL;
-    const KernelUserPageStatus unmap_status =
-        UnmapUserPage(root_physical_address, virtual_address,
-                      physical_address, reclaimed_table_frame_count);
+    const KernelUserPageStatus unmap_status = UnmapUserPage(
+        root_physical_address, virtual_address, physical_address, reclaimed_table_frame_count);
     if (unmap_status != KernelUserPageStatus::Succeeded) {
         return unmap_status;
     }
-    if (FrameAllocator().Release(
-            PhysicalFrame{.physical_address = physical_address}) !=
+    if (FrameAllocator().Release(PhysicalFrame{.physical_address = physical_address}) !=
         PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelUserPageStatus::FrameReleaseFailed;
     }

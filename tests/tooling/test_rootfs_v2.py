@@ -1,7 +1,10 @@
 from pathlib import Path
+import errno
 import tempfile
 import unittest
+from unittest.mock import patch
 
+from tools.os_tools.boot_layout import OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.rootfs_v2 import (
     OS_ROOTFS_V2_CAPACITY_IMAGE_SIZE_BYTES,
@@ -190,6 +193,25 @@ class RootfsV2ToolTests(unittest.TestCase):
                 inspectRootfsV2(destinationPath).reachableInodeCount,
                 1,
             )
+
+    def testRejectsLargeSparseCopyWhenExtentSeekingIsUnavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as temporaryDirectory:
+            temporaryPath = Path(temporaryDirectory)
+            sourcePath = temporaryPath / "source.img"
+            destinationPath = temporaryPath / "destination.img"
+            with sourcePath.open("wb") as sourceFile:
+                sourceFile.truncate(OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES)
+
+            with (
+                patch(
+                    "tools.os_tools.sparse_image.os.lseek",
+                    side_effect=OSError(errno.EINVAL, "unsupported"),
+                ),
+                self.assertRaisesRegex(OsToolError, "拒绝逐字节扫描"),
+            ):
+                copySparseImage(sourcePath, destinationPath)
+
+            self.assertFalse(destinationPath.exists())
 
 
 if __name__ == "__main__":

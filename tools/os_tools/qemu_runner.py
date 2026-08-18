@@ -16,13 +16,15 @@ from .sparse_image import copySparseImage
 
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
-OS_QEMU_FIRMWARE_TIMEOUT_SECONDS = 30.0
+OS_QEMU_FIRMWARE_TIMEOUT_SECONDS = 35.0
 OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS = 120.0
 OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS = 240.0
 OS_QEMU_DEFAULT_CPU_MODEL = "qemu64"
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
 OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
+OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS = 5.0
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
+OS_QEMU_VGA_TRACE_POLL_INTERVAL_SECONDS = 0.05
 OS_QEMU_KEY_INJECTION_INTERVAL_SECONDS = 0.003
 OS_QEMU_KEYBOARD_STEP_TIMEOUT_SECONDS = 20.0
 OS_QEMU_QMP_MAXIMUM_RESPONSE_COUNT = 32
@@ -30,13 +32,41 @@ OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
 OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
 OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES = 64
 OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES = 256
-OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES = 64 * 1024
+OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES = 32 * 1024
+OS_QEMU_VNC_BASE_TCP_PORT = 5900
+OS_QEMU_VNC_MAXIMUM_CONNECTION_COUNT = 8
+OS_QEMU_VNC_MAXIMUM_DISPLAY_NUMBER = 99
+OS_QEMU_VNC_LOOPBACK_ADDRESS = "127.0.0.1"
 OS_QEMU_FILE_SYSTEM_START_LBA = OS_BOOT_LAYOUT_ROOTFS_START_LBA
 OS_QEMU_FILE_SYSTEM_SECTOR_SIZE_BYTES = 512
 OS_QEMU_FILE_SYSTEM_CORRUPTION_OFFSET_BYTES = 64
 OS_QEMU_FILE_SYSTEM_CORRUPTION_MASK = 0x80
+OS_QEMU_VGA_TRACE_PHYSICAL_ADDRESS = 0x0002_0000
+OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES = 0x0008_0000
+OS_QEMU_VGA_TRACE_MAGIC = b"OSVG"
+OS_QEMU_VGA_TRACE_VERSION = 3
+OS_QEMU_VGA_TRACE_VERSION_OFFSET = 4
+OS_QEMU_VGA_TRACE_LENGTH_OFFSET = 8
+OS_QEMU_VGA_TRACE_OVERFLOW_OFFSET = 12
+OS_QEMU_VGA_TRACE_BYTES_OFFSET = 32
+OS_QEMU_VGA_TRACE_CAPTURE_CHUNK_SIZE_BYTES = 0x0000_4000
+OS_QEMU_VGA_DISPLAY_MINIMUM_LIT_PIXEL_COUNT = 512
+OS_QEMU_VGA_TEXT_PHYSICAL_ADDRESS = 0x000B_8000
+OS_QEMU_VGA_TEXT_COLUMN_COUNT = 80
+OS_QEMU_VGA_TEXT_ROW_COUNT = 25
+OS_QEMU_VGA_TEXT_CELL_SIZE_BYTES = 2
+OS_QEMU_VGA_TEXT_SNAPSHOT_SIZE_BYTES = (
+    OS_QEMU_VGA_TEXT_COLUMN_COUNT
+    * OS_QEMU_VGA_TEXT_ROW_COUNT
+    * OS_QEMU_VGA_TEXT_CELL_SIZE_BYTES
+)
+OS_QEMU_VGA_TERMINAL_FORBIDDEN_DIAGNOSTIC_MARKERS = (
+    "[OS][FIRMWARE]",
+    "[OS][STAGE1]",
+    "[OS][KERNEL]",
+)
 OS_QEMU_FIRMWARE_RESET_MARKER = "[OS][FIRMWARE] RESET"
-OS_QEMU_FIRMWARE_SERIAL_READY_MARKER = "[OS][FIRMWARE] SERIAL_READY"
+OS_QEMU_FIRMWARE_VGA_READY_MARKER = "[OS][FIRMWARE] VGA_READY"
 OS_QEMU_FIRMWARE_CLOCK_READY_MARKER = "[OS][FIRMWARE] CLOCK_READY"
 OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER = (
     "[OS][FIRMWARE] STAGE1_HEADER_VALID"
@@ -1170,6 +1200,9 @@ OS_QEMU_KERNEL_SIGNAL_RESTARTED_WAITS_MARKER = (
 OS_QEMU_KERNEL_SIGNAL_REJECTED_FRAMES_MARKER = (
     "[OS][KERNEL][SIGNAL] REJECTED_FRAMES=0x"
 )
+OS_QEMU_KERNEL_SIGNAL_DEFAULT_CONTINUE_DELIVERED_MARKER = (
+    "[OS][KERNEL][SIGNAL] DEFAULT_CONTINUE_DELIVERED"
+)
 OS_QEMU_USER_ORPHAN_CHILD_SPAWNED_MARKER = (
     "[OS][USER][PROC] ORPHAN_CHILD_SPAWNED"
 )
@@ -1377,7 +1410,7 @@ OS_QEMU_KERNEL_PAGE_FAULT_INJECTION_MARKER = (
 OS_QEMU_KERNEL_WRITE_PROTECTION_INJECTION_MARKER = (
     "[OS][KERNEL] FAULT_INJECTION=WRITE_PROTECTION"
 )
-OS_QEMU_KERNEL_EXCEPTION_MARKER = "[OS][KERNEL] EXCEPTION\n"
+OS_QEMU_KERNEL_EXCEPTION_MARKER = "[OS][KERNEL] EXCEPTION\r\n"
 OS_QEMU_KERNEL_INVALID_OPCODE_VECTOR_MARKER = (
     "[OS][KERNEL] EXCEPTION_VECTOR=0x0000000000000006"
 )
@@ -1417,6 +1450,20 @@ def validateImageSize(
         )
 
 
+def qemuVncDisplayBackend(displayNumber: int) -> str:
+    if displayNumber < 0 or displayNumber > OS_QEMU_VNC_MAXIMUM_DISPLAY_NUMBER:
+        raise OsToolError(
+            "QEMU VNC display 编号必须位于 0.."
+            f"{OS_QEMU_VNC_MAXIMUM_DISPLAY_NUMBER}"
+        )
+    return (
+        f"vnc={OS_QEMU_VNC_LOOPBACK_ADDRESS}:{displayNumber},"
+        "share=force-shared,"
+        f"connections={OS_QEMU_VNC_MAXIMUM_CONNECTION_COUNT},"
+        "lossy=off"
+    )
+
+
 def runQemuHardwareSmoke(
     projectRoot: Path,
     firmwareImagePath: Path,
@@ -1444,6 +1491,8 @@ def runQemuHardwareSmoke(
         "-m",
         str(OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES),
         "-nodefaults",
+        "-device",
+        "VGA",
         "-display",
         "none",
         "-serial",
@@ -1478,10 +1527,11 @@ def runQemuHardwareSmoke(
 def createQemuFirmwareCommand(
     firmwareImagePath: Path,
     diskImagePath: Path,
-    qmpSocketPath: Path | None = None,
+    qmpSocketPaths: tuple[Path, ...] = (),
     persistentDiskWrites: bool = False,
     memoryMebibytes: int = OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     cpuModel: str = OS_QEMU_DEFAULT_CPU_MODEL,
+    displayBackend: str = "none",
 ) -> list[str]:
     if memoryMebibytes < OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES:
         raise OsToolError(
@@ -1498,10 +1548,12 @@ def createQemuFirmwareCommand(
         "-m",
         str(memoryMebibytes),
         "-nodefaults",
+        "-device",
+        "VGA",
         "-display",
-        "none",
+        displayBackend,
         "-serial",
-        "stdio",
+        "none",
         "-monitor",
         "none",
         "-no-reboot",
@@ -1511,7 +1563,7 @@ def createQemuFirmwareCommand(
         "-drive",
         f"file={diskImagePath},format=raw,if=ide,snapshot={snapshotMode}",
     ]
-    if qmpSocketPath is not None:
+    for qmpSocketPath in qmpSocketPaths:
         command.extend(
             (
                 "-qmp",
@@ -1519,6 +1571,140 @@ def createQemuFirmwareCommand(
             )
         )
     return command
+
+
+def runQemuVgaDisplay(
+    projectRoot: Path,
+    firmwareImagePath: Path,
+    diskImagePath: Path,
+    expectedFirmwareSizeBytes: int,
+    expectedDiskSizeBytes: int,
+    displayBackend: str,
+    persistentDiskWrites: bool,
+    memoryMebibytes: int,
+    cpuModel: str,
+    guestLogFilePath: Path,
+) -> None:
+    validateImageSize(firmwareImagePath, expectedFirmwareSizeBytes, "固件 ROM")
+    validateImageSize(diskImagePath, expectedDiskSizeBytes, "启动磁盘镜像")
+    resolvedGuestLogFilePath = (
+        guestLogFilePath
+        if guestLogFilePath.is_absolute()
+        else projectRoot / guestLogFilePath
+    )
+    resolvedGuestLogFilePath.parent.mkdir(parents=True, exist_ok=True)
+    resolvedGuestLogFilePath.write_text("", encoding="utf-8")
+
+    with tempfile.TemporaryDirectory(prefix="os-qemu-display-") as temporaryDirectory:
+        temporaryPath = Path(temporaryDirectory)
+        traceQmpSocketPath = temporaryPath / "guest-log-qmp.sock"
+        traceDumpPath = temporaryPath / "guest-log.bin"
+        command = createQemuFirmwareCommand(
+            firmwareImagePath,
+            diskImagePath,
+            (traceQmpSocketPath,),
+            persistentDiskWrites,
+            memoryMebibytes,
+            cpuModel,
+            displayBackend,
+        )
+        normalizedCommand = [str(argument) for argument in command]
+        print(f"+ {shlex.join(normalizedCommand)}", flush=True)
+        print(f"来宾系统日志：{resolvedGuestLogFilePath}", flush=True)
+        qemuProcess = subprocess.Popen(normalizedCommand, cwd=projectRoot)
+        captureFinishedEvent = threading.Event()
+        captureFailureMessages: list[str] = []
+
+        def captureGuestLog() -> None:
+            connectionDeadline = (
+                time.monotonic() + OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS
+            )
+            while (
+                not traceQmpSocketPath.exists()
+                and qemuProcess.poll() is None
+                and not captureFinishedEvent.is_set()
+                and time.monotonic() < connectionDeadline
+            ):
+                time.sleep(OS_QEMU_QMP_RETRY_INTERVAL_SECONDS)
+            if qemuProcess.poll() is not None or captureFinishedEvent.is_set():
+                return
+            capturedOutput = ""
+            snapshotSizeBytes = OS_QEMU_VGA_TRACE_CAPTURE_CHUNK_SIZE_BYTES
+            try:
+                with (
+                    resolvedGuestLogFilePath.open(
+                        "a", encoding="utf-8", newline=""
+                    ) as guestLogFile,
+                    socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as qmpSocket,
+                ):
+                    qmpSocket.settimeout(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS)
+                    qmpSocket.connect(str(traceQmpSocketPath))
+                    with qmpSocket.makefile("rwb", buffering=0) as qmpStream:
+                        greetingLine = qmpStream.readline()
+                        if not greetingLine:
+                            raise OsToolError("QMP 未返回系统日志捕获握手信息。")
+                        greeting = json.loads(greetingLine.decode("utf-8"))
+                        if "QMP" not in greeting:
+                            raise OsToolError("QMP 系统日志捕获握手缺少版本对象。")
+                        sendQmpCommand(qmpStream, {"execute": "qmp_capabilities"})
+                        while (
+                            qemuProcess.poll() is None
+                            and not captureFinishedEvent.is_set()
+                        ):
+                            snapshot = readVgaTraceSnapshot(
+                                qmpStream, traceDumpPath, snapshotSizeBytes
+                            )
+                            requiredSizeBytes = requiredVgaTraceSnapshotSize(snapshot)
+                            if requiredSizeBytes > snapshotSizeBytes:
+                                snapshotSizeBytes = roundedVgaTraceSnapshotSize(
+                                    requiredSizeBytes
+                                )
+                                continue
+                            output = decodeVgaTraceSnapshot(snapshot)
+                            if not output.startswith(capturedOutput):
+                                raise OsToolError("来宾系统日志发生非追加修改")
+                            guestLogFile.write(output[len(capturedOutput):])
+                            guestLogFile.flush()
+                            capturedOutput = output
+                            time.sleep(OS_QEMU_VGA_TRACE_POLL_INTERVAL_SECONDS)
+            except (OSError, ValueError, OsToolError) as error:
+                if qemuProcess.poll() is None and not captureFinishedEvent.is_set():
+                    captureFailureMessages.append(str(error))
+                    print(f"来宾系统日志捕获失败：{error}", flush=True)
+
+        captureThread = threading.Thread(
+            target=captureGuestLog,
+            name="os-qemu-interactive-guest-log",
+            daemon=True,
+        )
+        captureThread.start()
+        interrupted = False
+        try:
+            returnCode = qemuProcess.wait()
+        except KeyboardInterrupt:
+            interrupted = True
+            qemuProcess.terminate()
+            try:
+                returnCode = qemuProcess.wait(
+                    timeout=OS_QEMU_TERMINATION_TIMEOUT_SECONDS
+                )
+            except subprocess.TimeoutExpired:
+                qemuProcess.kill()
+                returnCode = qemuProcess.wait()
+        finally:
+            captureFinishedEvent.set()
+            captureThread.join()
+
+    if captureFailureMessages:
+        raise OsToolError(
+            "QEMU VGA 会话未能保存来宾系统日志："
+            + "; ".join(captureFailureMessages)
+        )
+    if interrupted:
+        print("QEMU VGA 显示会话已停止。")
+        return
+    if returnCode != 0:
+        raise OsToolError(f"QEMU VGA 显示会话异常退出：{returnCode}")
 
 
 def qemuFirmwareTimeoutSeconds(memoryMebibytes: int) -> float:
@@ -1530,57 +1716,381 @@ def qemuFirmwareTimeoutSeconds(memoryMebibytes: int) -> float:
     return OS_QEMU_FIRMWARE_TIMEOUT_SECONDS
 
 
-def normalizeCapturedOutput(output: str | bytes | None) -> str:
-    if output is None:
+def decodeVgaTraceSnapshot(snapshot: bytes) -> str:
+    if not (
+        OS_QEMU_VGA_TRACE_BYTES_OFFSET
+        <= len(snapshot)
+        <= OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES
+    ):
+        raise OsToolError(
+            "VGA 验收区大小不正确："
+            f"实际 {len(snapshot)} 字节，预期位于 "
+            f"{OS_QEMU_VGA_TRACE_BYTES_OFFSET}.."
+            f"{OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES} 字节"
+        )
+    if snapshot[: len(OS_QEMU_VGA_TRACE_MAGIC)] != OS_QEMU_VGA_TRACE_MAGIC:
         return ""
-    if isinstance(output, bytes):
-        return output.decode("utf-8", errors="replace")
-    return output
+    version = int.from_bytes(
+        snapshot[
+            OS_QEMU_VGA_TRACE_VERSION_OFFSET:
+            OS_QEMU_VGA_TRACE_VERSION_OFFSET + 4
+        ],
+        "little",
+    )
+    if version != OS_QEMU_VGA_TRACE_VERSION:
+        raise OsToolError(f"VGA 验收区版本不支持：{version}")
+    traceLengthBytes = int.from_bytes(
+        snapshot[
+            OS_QEMU_VGA_TRACE_LENGTH_OFFSET:
+            OS_QEMU_VGA_TRACE_LENGTH_OFFSET + 4
+        ],
+        "little",
+    )
+    traceCapacityBytes = (
+        OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES - OS_QEMU_VGA_TRACE_BYTES_OFFSET
+    )
+    if traceLengthBytes > traceCapacityBytes:
+        raise OsToolError(
+            "VGA 验收区长度越界："
+            f"{traceLengthBytes} > {traceCapacityBytes}"
+        )
+    overflow = int.from_bytes(
+        snapshot[
+            OS_QEMU_VGA_TRACE_OVERFLOW_OFFSET:
+            OS_QEMU_VGA_TRACE_OVERFLOW_OFFSET + 4
+        ],
+        "little",
+    )
+    if overflow != 0:
+        raise OsToolError("VGA 验收区已溢出，不能把截断日志判为成功")
+    traceBegin = OS_QEMU_VGA_TRACE_BYTES_OFFSET
+    traceEnd = traceBegin + traceLengthBytes
+    if traceEnd > len(snapshot):
+        raise OsToolError(
+            "VGA 验收快照没有覆盖已提交字节："
+            f"需要 {traceEnd} 字节，实际 {len(snapshot)} 字节"
+        )
+    return snapshot[traceBegin:traceEnd].decode("utf-8", errors="replace")
 
 
-def runQemuWithTimedSerial(
+def requiredVgaTraceSnapshotSize(snapshot: bytes) -> int:
+    if len(snapshot) < OS_QEMU_VGA_TRACE_BYTES_OFFSET:
+        raise OsToolError("VGA 验收快照不足以读取共享头")
+    if snapshot[: len(OS_QEMU_VGA_TRACE_MAGIC)] != OS_QEMU_VGA_TRACE_MAGIC:
+        return OS_QEMU_VGA_TRACE_BYTES_OFFSET
+    version = int.from_bytes(
+        snapshot[
+            OS_QEMU_VGA_TRACE_VERSION_OFFSET:
+            OS_QEMU_VGA_TRACE_VERSION_OFFSET + 4
+        ],
+        "little",
+    )
+    if version != OS_QEMU_VGA_TRACE_VERSION:
+        raise OsToolError(f"VGA 验收区版本不受支持：{version}")
+    traceLengthBytes = int.from_bytes(
+        snapshot[
+            OS_QEMU_VGA_TRACE_LENGTH_OFFSET:
+            OS_QEMU_VGA_TRACE_LENGTH_OFFSET + 4
+        ],
+        "little",
+    )
+    maximumTraceLengthBytes = (
+        OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES - OS_QEMU_VGA_TRACE_BYTES_OFFSET
+    )
+    if traceLengthBytes > maximumTraceLengthBytes:
+        raise OsToolError(
+            "VGA 验收区长度超出容量："
+            f"{traceLengthBytes} > {maximumTraceLengthBytes}"
+        )
+    overflow = int.from_bytes(
+        snapshot[
+            OS_QEMU_VGA_TRACE_OVERFLOW_OFFSET:
+            OS_QEMU_VGA_TRACE_OVERFLOW_OFFSET + 4
+        ],
+        "little",
+    )
+    if overflow != 0:
+        raise OsToolError("VGA 验收区已溢出，不能把截断日志判为成功")
+    return OS_QEMU_VGA_TRACE_BYTES_OFFSET + traceLengthBytes
+
+
+def roundedVgaTraceSnapshotSize(requiredSizeBytes: int) -> int:
+    if not (
+        OS_QEMU_VGA_TRACE_BYTES_OFFSET
+        <= requiredSizeBytes
+        <= OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES
+    ):
+        raise OsToolError(f"VGA 验收快照所需大小无效：{requiredSizeBytes}")
+    roundedSizeBytes = (
+        (
+            requiredSizeBytes
+            + OS_QEMU_VGA_TRACE_CAPTURE_CHUNK_SIZE_BYTES
+            - 1
+        )
+        // OS_QEMU_VGA_TRACE_CAPTURE_CHUNK_SIZE_BYTES
+        * OS_QEMU_VGA_TRACE_CAPTURE_CHUNK_SIZE_BYTES
+    )
+    return min(roundedSizeBytes, OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES)
+
+
+def validateVgaDisplaySnapshot(snapshot: bytes) -> None:
+    headerLines = snapshot.split(b"\n", 3)
+    if len(headerLines) != 4 or headerLines[0] != b"P6" or headerLines[2] != b"255":
+        raise OsToolError("QEMU VGA 截图不是受支持的 P6 PPM")
+    dimensions = headerLines[1].split()
+    if len(dimensions) != 2:
+        raise OsToolError("QEMU VGA 截图尺寸字段无效")
+    try:
+        width = int(dimensions[0])
+        height = int(dimensions[1])
+    except ValueError as error:
+        raise OsToolError("QEMU VGA 截图尺寸不是整数") from error
+    if width <= 0 or height <= 0:
+        raise OsToolError("QEMU VGA 截图尺寸必须为正数")
+    pixels = headerLines[3]
+    expectedPixelBytes = width * height * 3
+    if len(pixels) != expectedPixelBytes:
+        raise OsToolError(
+            "QEMU VGA 截图像素长度不正确："
+            f"实际 {len(pixels)} 字节，预期 {expectedPixelBytes} 字节"
+        )
+    litPixelCount = sum(
+        pixels[offset] != 0 or pixels[offset + 1] != 0 or pixels[offset + 2] != 0
+        for offset in range(0, len(pixels), 3)
+    )
+    if litPixelCount < OS_QEMU_VGA_DISPLAY_MINIMUM_LIT_PIXEL_COUNT:
+        raise OsToolError(
+            "QEMU VGA 可见画面接近全黑："
+            f"非黑像素 {litPixelCount}，至少需要 "
+            f"{OS_QEMU_VGA_DISPLAY_MINIMUM_LIT_PIXEL_COUNT}"
+        )
+
+
+def decodeVgaTextSnapshot(snapshot: bytes) -> str:
+    if len(snapshot) != OS_QEMU_VGA_TEXT_SNAPSHOT_SIZE_BYTES:
+        raise OsToolError(
+            "VGA 文本快照大小不正确："
+            f"实际 {len(snapshot)} 字节，预期 {OS_QEMU_VGA_TEXT_SNAPSHOT_SIZE_BYTES} 字节"
+        )
+    characterBytes = snapshot[0::OS_QEMU_VGA_TEXT_CELL_SIZE_BYTES]
+    lines: list[str] = []
+    for rowIndex in range(OS_QEMU_VGA_TEXT_ROW_COUNT):
+        rowBegin = rowIndex * OS_QEMU_VGA_TEXT_COLUMN_COUNT
+        rowEnd = rowBegin + OS_QEMU_VGA_TEXT_COLUMN_COUNT
+        lines.append(
+            characterBytes[rowBegin:rowEnd].decode("ascii", errors="replace").rstrip(" ")
+        )
+    return "\n".join(lines)
+
+
+def validateVgaTerminalSnapshot(snapshot: bytes) -> None:
+    visibleText = decodeVgaTextSnapshot(snapshot)
+    if not any(character not in (" ", "\n", "\x00") for character in visibleText):
+        raise OsToolError("VGA 用户终端没有可见文本")
+    for marker in OS_QEMU_VGA_TERMINAL_FORBIDDEN_DIAGNOSTIC_MARKERS:
+        if marker in visibleText:
+            raise OsToolError(f"VGA 用户终端仍包含启动诊断：{marker}")
+
+
+def readPhysicalMemorySnapshot(
+    qmpStream: socket.SocketIO,
+    dumpPath: Path,
+    physicalAddress: int,
+    snapshotSizeBytes: int,
+    snapshotDescription: str,
+) -> bytes:
+    response = sendQmpCommand(
+        qmpStream,
+        {
+            "execute": "human-monitor-command",
+            "arguments": {
+                "command-line": (
+                    f"pmemsave {physicalAddress:#x} "
+                    f'{snapshotSizeBytes:#x} "{dumpPath}"'
+                ),
+            },
+        },
+    )
+    monitorOutput = response.get("return")
+    if monitorOutput not in (None, ""):
+        raise OsToolError(f"QMP pmemsave 返回诊断：{monitorOutput!r}")
+    if not dumpPath.is_file():
+        raise OsToolError(f"QMP pmemsave 未生成{snapshotDescription}：{dumpPath}")
+    snapshot = dumpPath.read_bytes()
+    if len(snapshot) != snapshotSizeBytes:
+        raise OsToolError(
+            f"QMP {snapshotDescription}大小不正确："
+            f"实际 {len(snapshot)} 字节，预期 {snapshotSizeBytes} 字节"
+        )
+    return snapshot
+
+
+def readVgaTraceSnapshot(
+    qmpStream: socket.SocketIO,
+    dumpPath: Path,
+    snapshotSizeBytes: int,
+) -> bytes:
+    if not (
+        OS_QEMU_VGA_TRACE_BYTES_OFFSET
+        <= snapshotSizeBytes
+        <= OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES
+    ):
+        raise OsToolError(f"QMP VGA 捕获大小无效：{snapshotSizeBytes}")
+    return readPhysicalMemorySnapshot(
+        qmpStream,
+        dumpPath,
+        OS_QEMU_VGA_TRACE_PHYSICAL_ADDRESS,
+        snapshotSizeBytes,
+        "VGA 验收文件",
+    )
+
+
+def readVgaTextSnapshot(qmpStream: socket.SocketIO, dumpPath: Path) -> bytes:
+    return readPhysicalMemorySnapshot(
+        qmpStream,
+        dumpPath,
+        OS_QEMU_VGA_TEXT_PHYSICAL_ADDRESS,
+        OS_QEMU_VGA_TEXT_SNAPSHOT_SIZE_BYTES,
+        "VGA 文本快照",
+    )
+
+
+def readVgaDisplaySnapshot(qmpStream: socket.SocketIO, dumpPath: Path) -> bytes:
+    response = sendQmpCommand(
+        qmpStream,
+        {
+            "execute": "human-monitor-command",
+            "arguments": {
+                "command-line": f'screendump "{dumpPath}"',
+            },
+        },
+    )
+    monitorOutput = response.get("return")
+    if monitorOutput not in (None, ""):
+        raise OsToolError(f"QMP screendump 返回诊断：{monitorOutput!r}")
+    if not dumpPath.is_file():
+        raise OsToolError(f"QMP screendump 未生成 VGA 截图：{dumpPath}")
+    return dumpPath.read_bytes()
+
+
+def runQemuWithTimedVgaTrace(
     command: list[str],
     projectRoot: Path,
+    traceQmpSocketPath: Path,
+    traceDumpPath: Path,
     timeoutSeconds: float,
     lineObserver: Callable[[str], None] | None = None,
     completionEvent: threading.Event | None = None,
-) -> tuple[str, str, bool, bool, int]:
-    """逐行捕获串口，并按最终里程碑或总截止条件回收目标进程。"""
+    finishedEvent: threading.Event | None = None,
+    failureMessages: list[str] | None = None,
+    captureVisibleVga: bool = False,
+) -> tuple[str, str, bool, bool, int, bytes | None, bytes | None]:
+    """轮询 VGA 验收区，并按最终里程碑或总截止条件回收目标进程。"""
     normalizedCommand = [str(argument) for argument in command]
     print(f"+ {shlex.join(normalizedCommand)}", flush=True)
 
     startTime = time.monotonic()
-    serialLines: list[str] = []
     timedLines: list[str] = []
+    capturedOutput = [""]
+    capturedDisplaySnapshot: list[bytes | None] = [None]
+    capturedTextSnapshot: list[bytes | None] = [None]
+    captureFailedEvent = threading.Event()
+    displayCapturedEvent = threading.Event()
+    localFinishedEvent = finishedEvent or threading.Event()
+    capturedFailureMessages = failureMessages if failureMessages is not None else []
     qemuProcess = subprocess.Popen(
         normalizedCommand,
         cwd=projectRoot,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
     )
 
-    def captureSerialLines() -> None:
-        if qemuProcess.stdout is None:
+    def captureVgaTrace() -> None:
+        connectionDeadline = (
+            time.monotonic() + OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS
+        )
+        while (
+            not traceQmpSocketPath.exists()
+            and not localFinishedEvent.is_set()
+            and time.monotonic() < connectionDeadline
+        ):
+            time.sleep(OS_QEMU_QMP_RETRY_INTERVAL_SECONDS)
+        if localFinishedEvent.is_set():
             return
-        for line in qemuProcess.stdout:
-            elapsedMilliseconds = int(
-                (time.monotonic() - startTime) * 1000
-            )
-            serialLines.append(line)
-            timedLines.append(
-                f"[QEMU][T+{elapsedMilliseconds:06d}ms] "
-                f"{line.rstrip('\r\n')}\n"
-            )
-            if lineObserver is not None:
-                lineObserver(line)
+        pendingLine = ""
+        snapshotSizeBytes = OS_QEMU_VGA_TRACE_CAPTURE_CHUNK_SIZE_BYTES
+        displayDumpPath = traceDumpPath.with_name("vga-display.ppm")
+        textDumpPath = traceDumpPath.with_name("vga-text.bin")
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as qmpSocket:
+                qmpSocket.settimeout(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS)
+                qmpSocket.connect(str(traceQmpSocketPath))
+                with qmpSocket.makefile("rwb", buffering=0) as qmpStream:
+                    greetingLine = qmpStream.readline()
+                    if not greetingLine:
+                        raise OsToolError("QMP 未返回 VGA 捕获握手信息。")
+                    greeting = json.loads(greetingLine.decode("utf-8"))
+                    if "QMP" not in greeting:
+                        raise OsToolError("QMP VGA 捕获握手缺少版本对象。")
+                    sendQmpCommand(qmpStream, {"execute": "qmp_capabilities"})
+                    while not localFinishedEvent.is_set():
+                        snapshot = readVgaTraceSnapshot(
+                            qmpStream,
+                            traceDumpPath,
+                            snapshotSizeBytes,
+                        )
+                        requiredSizeBytes = requiredVgaTraceSnapshotSize(snapshot)
+                        if requiredSizeBytes > snapshotSizeBytes:
+                            snapshotSizeBytes = roundedVgaTraceSnapshotSize(
+                                requiredSizeBytes
+                            )
+                            continue
+                        output = decodeVgaTraceSnapshot(snapshot)
+                        previousOutput = capturedOutput[0]
+                        if not output.startswith(previousOutput):
+                            raise OsToolError("VGA 验收区内容发生非追加修改")
+                        delta = output[len(previousOutput):]
+                        capturedOutput[0] = output
+                        pendingLine += delta
+                        while "\n" in pendingLine:
+                            lineEnd = pendingLine.index("\n") + 1
+                            line = pendingLine[:lineEnd]
+                            pendingLine = pendingLine[lineEnd:]
+                            elapsedMilliseconds = int(
+                                (time.monotonic() - startTime) * 1000
+                            )
+                            timedLines.append(
+                                f"[QEMU][T+{elapsedMilliseconds:06d}ms] "
+                                f"{line.rstrip(chr(13) + chr(10))}\n"
+                            )
+                            if lineObserver is not None:
+                                lineObserver(line)
+                        if (
+                            captureVisibleVga
+                            and completionEvent is not None
+                            and completionEvent.is_set()
+                            and not displayCapturedEvent.is_set()
+                        ):
+                            capturedDisplaySnapshot[0] = readVgaDisplaySnapshot(
+                                qmpStream,
+                                displayDumpPath,
+                            )
+                            capturedTextSnapshot[0] = readVgaTextSnapshot(
+                                qmpStream,
+                                textDumpPath,
+                            )
+                            displayCapturedEvent.set()
+                        time.sleep(OS_QEMU_VGA_TRACE_POLL_INTERVAL_SECONDS)
+        except (OSError, ValueError, OsToolError) as error:
+            if not localFinishedEvent.is_set() and qemuProcess.poll() is None:
+                capturedFailureMessages.append(str(error))
+                captureFailedEvent.set()
+                if completionEvent is not None:
+                    completionEvent.set()
 
     captureThread = threading.Thread(
-        target=captureSerialLines,
-        name="os-qemu-serial-capture",
+        target=captureVgaTrace,
+        name="os-qemu-vga-trace-capture",
         daemon=True,
     )
     captureThread.start()
@@ -1590,8 +2100,16 @@ def runQemuWithTimedSerial(
     try:
         completionDeadline = startTime + timeoutSeconds
         while qemuProcess.poll() is None:
+            if captureFailedEvent.is_set():
+                break
             if completionEvent is not None and completionEvent.is_set():
                 completedByObserver = True
+                if captureVisibleVga and not displayCapturedEvent.wait(
+                    OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS
+                ):
+                    if not captureFailedEvent.is_set():
+                        capturedFailureMessages.append("QMP 未在期限内捕获 VGA 可见画面")
+                        captureFailedEvent.set()
                 time.sleep(OS_QEMU_COMPLETION_SETTLE_SECONDS)
                 break
             remainingSeconds = completionDeadline - time.monotonic()
@@ -1608,6 +2126,7 @@ def runQemuWithTimedSerial(
                 completionEvent.wait(waitSeconds)
 
         if qemuProcess.poll() is None:
+            localFinishedEvent.set()
             qemuProcess.terminate()
             try:
                 returnCode = qemuProcess.wait(
@@ -1622,16 +2141,17 @@ def runQemuWithTimedSerial(
         if qemuProcess.poll() is None:
             qemuProcess.kill()
             qemuProcess.wait()
+        localFinishedEvent.set()
         captureThread.join()
-        if qemuProcess.stdout is not None:
-            qemuProcess.stdout.close()
 
     return (
-        "".join(serialLines),
+        capturedOutput[0],
         "".join(timedLines),
         timedOut,
         completedByObserver,
         returnCode,
+        capturedDisplaySnapshot[0],
+        capturedTextSnapshot[0],
     )
 
 
@@ -1651,7 +2171,7 @@ def waitForQmpResponse(
 def sendQmpCommand(
     qmpStream: socket.SocketIO,
     command: dict[str, object],
-) -> None:
+) -> dict[str, object]:
     qmpStream.write(
         json.dumps(command, separators=(",", ":")).encode("utf-8")
         + b"\r\n"
@@ -1660,6 +2180,7 @@ def sendQmpCommand(
     response = waitForQmpResponse(qmpStream)
     if "error" in response:
         raise OsToolError(f"QMP 命令执行失败：{response['error']!r}")
+    return response
 
 
 def qemuKeyNameForCharacter(character: str) -> str:
@@ -1706,7 +2227,7 @@ def waitForQemuKeyboardProgress(
             remainingSeconds = progressDeadline - time.monotonic()
             if remainingSeconds <= 0.0:
                 raise OsToolError(
-                    "QEMU 键盘分步注入等待串口标记超时："
+                    "QEMU 键盘分步注入等待VGA标记超时："
                     f"{marker!r} 第 {expectedCount} 次"
                 )
             progressCondition.wait(
@@ -1763,6 +2284,7 @@ def injectQemuText(
                         else ""
                     )
                     foregroundWaitTarget = 0
+                    continueDeliveryTarget = 0
                     if (
                         character == "\n" and
                         nextCharacter in ("\x03", "\x1a")
@@ -1774,6 +2296,13 @@ def injectQemuText(
                                     0,
                                 ) + 1
                             )
+                            if nextCharacter == "\x03":
+                                continueDeliveryTarget = (
+                                    markerCounts.get(
+                                        OS_QEMU_KERNEL_SIGNAL_DEFAULT_CONTINUE_DELIVERED_MARKER,
+                                        0,
+                                    ) + 1
+                                )
                     keyName = qemuKeyNameForCharacter(character)
                     sendQmpCommand(
                         qmpStream,
@@ -1797,6 +2326,14 @@ def injectQemuText(
                             finishedEvent,
                         ):
                             return
+                        if nextCharacter == "\x03" and not waitForQemuKeyboardProgress(
+                            progressCondition,
+                            markerCounts,
+                            OS_QEMU_KERNEL_SIGNAL_DEFAULT_CONTINUE_DELIVERED_MARKER,
+                            continueDeliveryTarget,
+                            finishedEvent,
+                        ):
+                            return
                     elif character == "\n" or character in ("\x03", "\x1a"):
                         expectedCommandCompletionCount += 1
                         if not waitForQemuKeyboardProgress(
@@ -1813,37 +2350,37 @@ def injectQemuText(
         failureEvent.set()
 
 
-def validateSerialProtocol(
-    serialOutput: str,
+def validateVgaProtocol(
+    vgaOutput: str,
     requiredMarkers: tuple[str, ...],
     forbiddenMarkers: tuple[str, ...],
     expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
 ) -> None:
     for forbiddenMarker in forbiddenMarkers:
-        if forbiddenMarker in serialOutput:
+        if forbiddenMarker in vgaOutput:
             raise OsToolError(
-                f"串口输出包含禁止标记：{forbiddenMarker!r}"
+                f"VGA输出包含禁止标记：{forbiddenMarker!r}"
             )
 
     previousMarkerPosition = 0
     for requiredMarker in requiredMarkers:
-        markerPosition = serialOutput.find(
+        markerPosition = vgaOutput.find(
             requiredMarker,
             previousMarkerPosition,
         )
         if markerPosition < 0:
             raise OsToolError(
-                "串口输出缺少必需标记或标记顺序错误："
+                "VGA输出缺少必需标记或标记顺序错误："
                 f"{requiredMarker!r}"
             )
         previousMarkerPosition = markerPosition + len(requiredMarker)
 
     for marker, expectedCount in expectedMarkerCounts:
-        actualCount = serialOutput.count(marker)
+        actualCount = vgaOutput.count(marker)
         if actualCount != expectedCount:
             raise OsToolError(
-                "串口标记出现次数不正确："
+                "VGA标记出现次数不正确："
                 f"{marker!r} 实际 {actualCount} 次，预期 {expectedCount} 次"
             )
 
@@ -1853,11 +2390,11 @@ def validateSerialProtocol(
         )
         markerValues = [
             int(match.group(1), 16)
-            for match in markerPattern.finditer(serialOutput)
+            for match in markerPattern.finditer(vgaOutput)
         ]
         if not markerValues or min(markerValues) < minimumValue:
             raise OsToolError(
-                "串口十六进制统计未达到下界："
+                "VGA十六进制统计未达到下界："
                 f"{marker!r} 下界 {minimumValue}"
             )
 
@@ -1890,7 +2427,9 @@ def runQemuFirmwareBoot(
     )
 
     with tempfile.TemporaryDirectory(prefix="os-qemu-") as temporaryDirectory:
-        qmpSocketPath = Path(temporaryDirectory) / "qmp.sock"
+        traceQmpSocketPath = Path(temporaryDirectory) / "vga-trace-qmp.sock"
+        inputQmpSocketPath = Path(temporaryDirectory) / "keyboard-qmp.sock"
+        traceDumpPath = Path(temporaryDirectory) / "vga-trace.bin"
         keyboardReadyEvent = threading.Event()
         protocolCompleteEvent = threading.Event()
         qemuFinishedEvent = threading.Event()
@@ -1899,11 +2438,15 @@ def runQemuFirmwareBoot(
         keyboardMarkerCounts = {
             OS_QEMU_USER_SHELL_COMMAND_COMPLETE_MARKER: 0,
             OS_QEMU_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER: 0,
+            OS_QEMU_KERNEL_SIGNAL_DEFAULT_CONTINUE_DELIVERED_MARKER: 0,
         }
         finalRequiredMarker = requiredMarkers[-1]
+        # 每条系统路径都必须同时证明内存日志与可见 VGA；失败路径不能只靠
+        # QMP 日志“通过”，却把用户留在黑屏上。
+        captureVisibleVga = len(requiredMarkers) > 0
         firmwareTimeoutSeconds = qemuFirmwareTimeoutSeconds(memoryMebibytes)
 
-        def observeSerialLine(line: str) -> None:
+        def observeVgaLine(line: str) -> None:
             if keyboardReadyMarker in line:
                 keyboardReadyEvent.set()
             with keyboardProgressCondition:
@@ -1920,7 +2463,7 @@ def runQemuFirmwareBoot(
             qmpThread = threading.Thread(
                 target=injectQemuText,
                 args=(
-                    qmpSocketPath,
+                    inputQmpSocketPath,
                     keyboardInputText,
                     firmwareTimeoutSeconds,
                     keyboardReadyEvent,
@@ -1938,24 +2481,35 @@ def runQemuFirmwareBoot(
         command = createQemuFirmwareCommand(
             firmwareImagePath,
             diskImagePath,
-            qmpSocketPath if keyboardInputText is not None else None,
+            (
+                (traceQmpSocketPath, inputQmpSocketPath)
+                if keyboardInputText is not None
+                else (traceQmpSocketPath,)
+            ),
             persistentDiskWrites,
             memoryMebibytes,
             cpuModel,
         )
         try:
             (
-                serialOutput,
-                timedSerialOutput,
+                vgaOutput,
+                timedVgaOutput,
                 timedOut,
                 completedByObserver,
                 returnCode,
-            ) = runQemuWithTimedSerial(
+                vgaDisplaySnapshot,
+                vgaTextSnapshot,
+            ) = runQemuWithTimedVgaTrace(
                 command,
                 projectRoot,
+                traceQmpSocketPath,
+                traceDumpPath,
                 firmwareTimeoutSeconds,
-                observeSerialLine,
+                observeVgaLine,
                 protocolCompleteEvent,
+                qemuFinishedEvent,
+                qmpFailureMessages,
+                captureVisibleVga,
             )
         finally:
             qemuFinishedEvent.set()
@@ -1964,29 +2518,37 @@ def runQemuFirmwareBoot(
                 qmpThread.join()
 
     if qmpFailureMessages:
-        print(timedSerialOutput, end="")
+        print(timedVgaOutput, end="")
         raise OsToolError(
-            "QEMU 键盘注入失败：" + "; ".join(qmpFailureMessages)
+            "QEMU VGA 捕获或键盘注入失败：" + "; ".join(qmpFailureMessages)
         )
+    if captureVisibleVga:
+        if vgaDisplaySnapshot is None:
+            raise OsToolError("QEMU 没有返回 VGA 可见画面")
+        validateVgaDisplaySnapshot(vgaDisplaySnapshot)
+        if vgaTextSnapshot is None:
+            raise OsToolError("QEMU 没有返回 VGA 文本快照")
+        if OS_QEMU_KERNEL_READY_MARKER in requiredMarkers:
+            validateVgaTerminalSnapshot(vgaTextSnapshot)
     if timedOut or completedByObserver:
         try:
-            validateSerialProtocol(
-                serialOutput,
+            validateVgaProtocol(
+                vgaOutput,
                 requiredMarkers,
                 forbiddenMarkers,
                 expectedMarkerCounts,
                 minimumHexMarkerValues,
             )
         except OsToolError as protocolError:
-            print(timedSerialOutput, end="")
+            print(timedVgaOutput, end="")
             if timedOut:
                 raise OsToolError(
                     "QEMU 固件测试超过有界墙钟预算 "
                     f"{firmwareTimeoutSeconds:.1f} 秒：{protocolError}"
                 ) from protocolError
             raise
-        print(timedSerialOutput, end="")
-        print("QEMU 固件串口协议验收通过。")
+        print(timedVgaOutput, end="")
+        print("QEMU 固件 VGA 协议验收通过。")
         return
 
     raise OsToolError(

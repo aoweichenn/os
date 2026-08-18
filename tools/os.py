@@ -27,7 +27,7 @@ from os_tools.qemu_runner import (
     OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
     OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
     OS_QEMU_FIRMWARE_RESET_MARKER,
-    OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+    OS_QEMU_FIRMWARE_VGA_READY_MARKER,
     OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
     OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER,
     OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
@@ -534,9 +534,12 @@ from os_tools.qemu_runner import (
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
+    OS_QEMU_VNC_BASE_TCP_PORT,
+    qemuVncDisplayBackend,
     runQemuFileSystemPersistence,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
+    runQemuVgaDisplay,
 )
 from os_tools.rootfs_v2 import (
     OS_ROOTFS_V2_CAPACITY_IMAGE_SIZE_BYTES,
@@ -562,9 +565,9 @@ OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES = (
 )
 OS_TOOL_QEMU_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS = 36
 OS_TOOL_QEMU_MINIMUM_VIRTUAL_ADDRESS_WIDTH_BITS = 48
-OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES = 4 * 1024 * 1024
-OS_TOOL_QEMU_MINIMUM_BUDDY_STORAGE_SIZE_BYTES = 8 * 1024 * 1024
-OS_TOOL_QEMU_MINIMUM_BUDDY_MAXIMUM_ORDER = 24
+OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES = 2 * 1024 * 1024
+OS_TOOL_QEMU_MINIMUM_BUDDY_STORAGE_SIZE_BYTES = 4 * 1024 * 1024
+OS_TOOL_QEMU_MINIMUM_BUDDY_MAXIMUM_ORDER = 23
 OS_TOOL_QEMU_MINIMUM_LARGE_PAGE_COUNT = 1
 OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS = (
     4 * 1024 * 1024 * 1024 + 4 * 1024
@@ -777,6 +780,31 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
         arguments.diskImagePath,
         arguments.expectedFirmwareSizeBytes,
         arguments.expectedDiskSizeBytes,
+    )
+
+
+def handleQemuDisplay(arguments: argparse.Namespace) -> None:
+    displayBackend = arguments.displayBackend
+    if displayBackend == "vnc":
+        displayBackend = qemuVncDisplayBackend(arguments.vncDisplayNumber)
+        vncTcpPort = OS_QEMU_VNC_BASE_TCP_PORT + arguments.vncDisplayNumber
+        print(
+            "QEMU VGA 已通过 VNC 仅监听本机："
+            f"127.0.0.1:{vncTcpPort}。"
+            "可用 Tailscale Serve 安全转发到手机。",
+            flush=True,
+        )
+    runQemuVgaDisplay(
+        OS_TOOL_PROJECT_ROOT,
+        arguments.firmwareImagePath,
+        arguments.diskImagePath,
+        arguments.expectedFirmwareSizeBytes,
+        arguments.expectedDiskSizeBytes,
+        displayBackend,
+        arguments.persistentDiskWrites,
+        arguments.memoryMebibytes,
+        arguments.cpuModel,
+        arguments.guestLogFilePath,
     )
 
 
@@ -1361,7 +1389,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     if arguments.expectedOutcome == "success":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedBootMarkers,
@@ -2112,7 +2140,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "processor-feature-unsupported":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2137,17 +2165,17 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         minimumHexMarkerValues = (
             (OS_QEMU_KERNEL_PROCESSOR_MISSING_FEATURES_MARKER, 1),
         )
-    elif arguments.expectedOutcome == "serial-failure":
+    elif arguments.expectedOutcome == "vga-failure":
         requiredMarkers = (OS_QEMU_FIRMWARE_RESET_MARKER,)
         forbiddenMarkers = (
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             *completedBootMarkers,
         )
     elif arguments.expectedOutcome == "ide-timeout":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_IDE_TIMEOUT_MARKER,
         )
@@ -2155,7 +2183,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "ide-error":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_IDE_ERROR_MARKER,
         )
@@ -2163,7 +2191,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "stage1-header-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_INVALID_MARKER,
         )
@@ -2171,7 +2199,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "stage1-checksum-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_CHECKSUM_INVALID_MARKER,
@@ -2180,7 +2208,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "memory-map-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers[:-1],
@@ -2194,7 +2222,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-header-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2209,7 +2237,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-checksum-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2225,7 +2253,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-elf-invalid":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2242,7 +2270,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-ata-timeout":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2256,7 +2284,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-invalid-opcode":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2279,7 +2307,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-page-fault":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2302,7 +2330,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "kernel-write-protection":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2327,7 +2355,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "user-invalid-opcode":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2363,7 +2391,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "user-page-fault":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2399,7 +2427,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     elif arguments.expectedOutcome == "user-invalid-elf":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2419,7 +2447,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     else:
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
-            OS_QEMU_FIRMWARE_SERIAL_READY_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
             OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
             OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
             *completedLongModeMarkers,
@@ -2678,10 +2706,57 @@ def createArgumentParser() -> argparse.ArgumentParser:
     qemuParser.add_argument("expectedFirmwareSizeBytes", type=int)
     qemuParser.add_argument("expectedDiskSizeBytes", type=int)
 
+    qemuDisplayParser = addCommand(
+        subparsers,
+        "qemu-display",
+        "在 VGA 窗口或终端中交互运行当前系统",
+        handleQemuDisplay,
+    )
+    qemuDisplayParser.add_argument("firmwareImagePath", type=Path)
+    qemuDisplayParser.add_argument("diskImagePath", type=Path)
+    qemuDisplayParser.add_argument("expectedFirmwareSizeBytes", type=int)
+    qemuDisplayParser.add_argument("expectedDiskSizeBytes", type=int)
+    qemuDisplayParser.add_argument(
+        "--display-backend",
+        choices=("gtk", "sdl", "curses", "vnc"),
+        default="gtk",
+        dest="displayBackend",
+    )
+    qemuDisplayParser.add_argument(
+        "--vnc-display-number",
+        type=int,
+        default=1,
+        dest="vncDisplayNumber",
+        help="VNC display 编号；1 对应本机 TCP 5901",
+    )
+    qemuDisplayParser.add_argument(
+        "--persistent-disk-writes",
+        action="store_true",
+        dest="persistentDiskWrites",
+    )
+    qemuDisplayParser.add_argument(
+        "--memory-mebibytes",
+        type=int,
+        default=OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
+        dest="memoryMebibytes",
+    )
+    qemuDisplayParser.add_argument(
+        "--cpu-model",
+        default=OS_QEMU_DEFAULT_CPU_MODEL,
+        dest="cpuModel",
+    )
+    qemuDisplayParser.add_argument(
+        "--guest-log-file",
+        type=Path,
+        default=Path("build/developer/qemu-display.log"),
+        dest="guestLogFilePath",
+        help="把详细来宾日志持续导出到该宿主文件",
+    )
+
     qemuFirmwareParser = addCommand(
         subparsers,
         "qemu-firmware",
-        "运行并验收自研固件的串口协议",
+        "运行并验收自研固件的 VGA 文本协议",
         handleQemuFirmware,
     )
     qemuFirmwareParser.add_argument("firmwareImagePath", type=Path)
@@ -2716,7 +2791,7 @@ def createArgumentParser() -> argparse.ArgumentParser:
         choices=(
             "success",
             "processor-feature-unsupported",
-            "serial-failure",
+            "vga-failure",
             "ide-timeout",
             "ide-error",
             "stage1-header-invalid",

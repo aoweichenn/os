@@ -6,6 +6,7 @@ from .errors import OsToolError
 
 
 OS_SPARSE_IMAGE_COPY_CHUNK_SIZE_BYTES = 1024 * 1024
+OS_SPARSE_IMAGE_MAXIMUM_SCAN_FALLBACK_SIZE_BYTES = 1024 * 1024 * 1024
 
 
 def _writeAllAt(
@@ -94,6 +95,11 @@ def _copySparseByScanning(
     destinationDescriptor: int,
     imageSizeBytes: int,
 ) -> None:
+    if imageSizeBytes > OS_SPARSE_IMAGE_MAXIMUM_SCAN_FALLBACK_SIZE_BYTES:
+        raise OsToolError(
+            "宿主文件系统不支持 SEEK_DATA/SEEK_HOLE，拒绝逐字节扫描大型稀疏镜像："
+            f"{imageSizeBytes} 字节"
+        )
     currentOffsetBytes = 0
     while currentOffsetBytes < imageSizeBytes:
         chunkSizeBytes = min(
@@ -123,62 +129,66 @@ def copySparseImage(sourcePath: Path, destinationPath: Path) -> None:
     destinationPath.parent.mkdir(parents=True, exist_ok=True)
     sourceFlags = os.O_RDONLY
     destinationFlags = os.O_RDWR | os.O_CREAT | os.O_TRUNC
-    sourceDescriptor = os.open(sourcePath, sourceFlags)
     try:
-        destinationDescriptor = os.open(
-            destinationPath,
-            destinationFlags,
-            0o600,
-        )
+        sourceDescriptor = os.open(sourcePath, sourceFlags)
         try:
-            os.ftruncate(destinationDescriptor, imageSizeBytes)
-            currentOffsetBytes = 0
-            sparseSeekingSupported = hasattr(os, "SEEK_DATA") and hasattr(
-                os, "SEEK_HOLE"
+            destinationDescriptor = os.open(
+                destinationPath,
+                destinationFlags,
+                0o600,
             )
-            if sparseSeekingSupported:
-                try:
-                    while currentOffsetBytes < imageSizeBytes:
-                        dataOffsetBytes = os.lseek(
-                            sourceDescriptor,
-                            currentOffsetBytes,
-                            os.SEEK_DATA,
-                        )
-                        holeOffsetBytes = os.lseek(
-                            sourceDescriptor,
-                            dataOffsetBytes,
-                            os.SEEK_HOLE,
-                        )
-                        _copyExtent(
+            try:
+                os.ftruncate(destinationDescriptor, imageSizeBytes)
+                currentOffsetBytes = 0
+                sparseSeekingSupported = hasattr(os, "SEEK_DATA") and hasattr(
+                    os, "SEEK_HOLE"
+                )
+                if sparseSeekingSupported:
+                    try:
+                        while currentOffsetBytes < imageSizeBytes:
+                            dataOffsetBytes = os.lseek(
+                                sourceDescriptor,
+                                currentOffsetBytes,
+                                os.SEEK_DATA,
+                            )
+                            holeOffsetBytes = os.lseek(
+                                sourceDescriptor,
+                                dataOffsetBytes,
+                                os.SEEK_HOLE,
+                            )
+                            _copyExtent(
+                                sourceDescriptor,
+                                destinationDescriptor,
+                                dataOffsetBytes,
+                                min(holeOffsetBytes, imageSizeBytes),
+                            )
+                            currentOffsetBytes = holeOffsetBytes
+                    except OSError as error:
+                        if error.errno == errno.ENXIO:
+                            return
+                        if error.errno not in (
+                            errno.EINVAL,
+                            errno.ENOTSUP,
+                            errno.EOPNOTSUPP,
+                        ):
+                            raise
+                        os.ftruncate(destinationDescriptor, 0)
+                        os.ftruncate(destinationDescriptor, imageSizeBytes)
+                        _copySparseByScanning(
                             sourceDescriptor,
                             destinationDescriptor,
-                            dataOffsetBytes,
-                            min(holeOffsetBytes, imageSizeBytes),
+                            imageSizeBytes,
                         )
-                        currentOffsetBytes = holeOffsetBytes
-                except OSError as error:
-                    if error.errno == errno.ENXIO:
-                        return
-                    if error.errno not in (
-                        errno.EINVAL,
-                        errno.ENOTSUP,
-                        errno.EOPNOTSUPP,
-                    ):
-                        raise
-                    os.ftruncate(destinationDescriptor, 0)
-                    os.ftruncate(destinationDescriptor, imageSizeBytes)
-                    _copySparseByScanning(
-                        sourceDescriptor,
-                        destinationDescriptor,
-                        imageSizeBytes,
-                    )
-                return
-            _copySparseByScanning(
-                sourceDescriptor,
-                destinationDescriptor,
-                imageSizeBytes,
-            )
+                    return
+                _copySparseByScanning(
+                    sourceDescriptor,
+                    destinationDescriptor,
+                    imageSizeBytes,
+                )
+            finally:
+                os.close(destinationDescriptor)
         finally:
-            os.close(destinationDescriptor)
-    finally:
-        os.close(sourceDescriptor)
+            os.close(sourceDescriptor)
+    except Exception:
+        destinationPath.unlink(missing_ok=True)
+        raise

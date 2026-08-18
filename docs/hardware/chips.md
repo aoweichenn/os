@@ -441,9 +441,26 @@ status bit0=1 才能读 `0x60`，bit1=0 才能写命令或数据。初始化使�
 集合 1 的 `A` 按下为 `0x1E`，释放为 `0x9E`；`0xE0` 是扩展前缀，下一字节
 才构成完整方向键事件。前缀本身不能被错误报告为按键。
 
-## 6. 16550A UART / COM1
+## 6. VGA 文本控制台与历史 COM1
 
-### 6.1 寄存器窗口
+当前系统由 ROM 直接编程 VGA `0x3C0..0x3DF`，把 80×25 文本单元写入
+`0xB8000`。每个单元低字节为字符，高字节为前景/背景属性；当前默认属性
+`0x07` 表示浅灰前景和黑色背景。字符到达第 25 行后，目标代码把后 24 行
+前移并清空末行。
+
+`0x3C6` 是 DAC mask，`0x3C8` 选择写入索引，连续写 `0x3C9` 提交红、绿、蓝
+三个 6 位分量。自研 ROM 不经过 VGA BIOS，因此必须自行设置属性控制器引用的
+16 个 EGA 兼容 DAC 表项；只写 `0xB8000` 而保留复位后的全黑 DAC，会得到有
+字符、有追踪但物理扫描画面全黑的结果。
+
+VGA 字形存储在字符平面，不能依赖未执行的第三方 VGA BIOS。ROM 装载项目自带的
+Basic Latin 字形，并通过 CRTC `0x0E/0x0F` 更新硬件光标。完整自动化记录位于
+`0x20000..0x9FFFF`：启动阶段同时记录并显示，终端激活后普通内核诊断只记录，
+TTY 输出记录后显示，panic 始终尽力显示。
+
+以下 COM1 内容只解释历史 v0.1/v0.2，不再是当前输出路径。
+
+### 6.1 历史 16550A 寄存器窗口
 
 COM1 基址为 `0x3F8`，每个寄存器宽 8 位。偏移 0 和 1 会被 `LCR.DLAB` 复用，
 所以初始化顺序是：关闭中断、置 DLAB、写除数、清 DLAB、写 8N1、配置 FIFO 与
@@ -458,7 +475,7 @@ modem control。
 | 4 | MCR modem control | MCR modem control | 不复用 |
 | 5 | LSR 线路状态 | 保留 | 不复用 |
 
-### 6.2 LCR 与 LSR 位
+### 6.2 历史 LCR 与 LSR 位
 
 | 寄存器 | 位 | 名称 | 含义 |
 | --- | ---: | --- | --- |
@@ -475,8 +492,8 @@ modem control。
 | LSR | 6 | TEMT | 发送保持和移位寄存器都为空 |
 | LSR | 7 | FIFO_ERROR | FIFO 中存在错误 |
 
-当前固件只把 `THRE` 作为发送所有权条件；它不把 `TEMT` 误当成“可以写入”的
-唯一条件，也不启用中断。每次等待最多 `0xFFFF` 次，超时后输出明确失败标记。
+历史固件只把 `THRE` 作为发送所有权条件；它不把 `TEMT` 误当成“可以写入”的
+唯一条件，也不启用中断。当前源码已由 VGA 文本控制台取代该发送路径。
 
 ## 7. PATA IDE 主通道与 ATA 状态
 
@@ -577,7 +594,7 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 [fw_cfg 规范](https://qemu.readthedocs.io/en/master/specs/fw_cfg.html)。
 
 - `docs/hardware/register_map.yaml`：芯片、寄存器、位和访问宽度的机器可读规格。
-- `source/firmware/src/reset_and_serial.asm`：固件端口访问与 ATA 状态机实现。
+- `source/firmware/src/reset_and_vga.asm`：固件端口访问与 ATA 状态机实现。
 - `source/boot/stage1/src/entry.asm`：模式切换、页表和 Stage 1 串口路径。
 - `source/boot/stage1/src/kernel_loader.asm`：长模式 ATA、CRC32、ELF 和 BootInfo。
 - `source/boot/stage1/src/memory_map.asm`：`fw_cfg`、E820 转换与排序。
@@ -600,9 +617,9 @@ NUL 结尾名称组成。`etc/e820` 数据本身每项是 x86 小端的 64 位 b
 - `source/kernel/src/memory/kernel_stack_manager.cpp`：KVA 支持的每 Thread Ring 0 动态栈、
   双 guard、精确所有权验证和安全点回收。
 - `source/user/src/system_call.asm`：Ring 3 系统调用指令入口。
-- `source/kernel/src/arch/panic.cpp`：异常现场和 CR2 的有界串口诊断。
-- `source/kernel/src/device/serial_port.cpp`：内核独立的 COM1 访问层。
-- `tests/tooling/test_qemu_runner.py`：串口标记的顺序与禁止条件。
+- `source/kernel/src/arch/panic.cpp`：异常现场和 CR2 的有界紧急诊断。
+- `source/kernel/src/device/vga_text_console.cpp`：内核 VGA 文本、滚屏与内存日志访问层。
+- `tests/tooling/test_qemu_runner.py`：内存日志标记、VGA 文本页和像素截图门禁。
 - `docs/testing.md`：状态边界对应的 QEMU 失败注入。
 
 以后新增 PCI、LAPIC、I/O APIC 或 MSI 时，先在这份结构化规格中定义寄存器和

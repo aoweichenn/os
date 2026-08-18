@@ -2,7 +2,13 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v2.0 集成发布` 已冻结。该版本不新增核心机制，而是把 v1.1 至
+当前状态：`v2.1 参考机与可见交互` 正在开发。当前主线已把 Firmware、Stage 1、
+Kernel、panic 以及 Ring 3 stdout/stderr 从 COM1 迁移到项目自研的 80×25 VGA
+文本控制台，并把详细系统诊断分流到只追加内存日志。进入 Shell 时屏幕清空；
+此后普通 Kernel 事件只进入宿主可导出的日志，TTY stdout/stderr 写 VGA，panic
+始终双写。参考机固定为 32 GiB RAM 与 128 GiB 稀疏磁盘，rootfs v2 在 v2.3
+以前仍只使用固定 256 MiB。`v2.0 集成发布`
+仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI
 主版本、69 个系统调用、错误区间和关键结构偏移已经冻结；`/dev` 使用通用
@@ -12,7 +18,7 @@ v2.0 的冻结边界。v1.1 已
 落地动态物理内存、
 可回收内核堆、buddy 页帧分配器、固定尺寸类型缓存、KVA、动态内核栈、
 页表空分支回收，以及通用引用计数、作用域回滚和 26 字段资源快照。自研
-128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、初始化 COM1，通过 IDE ATA PIO
+128 KiB ROM 从 `0xFFFFFFF0` 接管 CPU、自行初始化 VGA 文本模式，通过 IDE ATA PIO
 读取并校验自研 Stage 1；Stage 1 随后完成 A20、保护模式、64 MiB 身份映射、
 长模式切换、Kernel 容器校验、ELF64 装载和 BootInfo 交接，最终进入
 freestanding C++20 内核。内核随即替换 Stage 1 的描述符状态，建立自己的
@@ -21,8 +27,8 @@ QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo
 内核读取 `CPUID.80000008H` 与 E820，按实际可用 RAM 动态放置 2-bit 页帧
 元数据，并建立从 `0xFFFF888000000000` 开始、容量 64 TiB 的高半区物理
 直映窗口。直映内部优先使用 2 MiB 页，边界退回 4 KiB 页；Stage 1 的低
-64 MiB 身份映射只负责启动，不再限制正式页帧管理。主 QEMU 规格为 64 GiB，
-最小兼容规格仍为 64 MiB；64 GiB 启动必须在 4 GiB 以上分配、写回并回收
+64 MiB 身份映射只负责启动，不再限制正式页帧管理。主 QEMU 规格为 32 GiB，
+最小兼容规格仍为 64 MiB；32 GiB 启动必须在 4 GiB 以上分配、写回并回收
 页帧。内核同时建立 W^X/NX/WP 权限、guard page 和 512 KiB 高半区内核堆，
 并真实切换 CR3。该堆现已支持 best-fit、二次幂对齐、释放、前后合并、非法
 释放检测、完整一致性检查和生命周期统计；QEMU 启动自检完成真实写回后会
@@ -80,7 +86,7 @@ type cache、32 TiB KVA、动态双 guard 内核栈与页表空分支回收均�
 随机模型和 QEMU 真实生命周期验收。通用 `ScopeRollback` 已接管动态栈创建
 失败路径，`ReferenceCounter` 冻结强引用生命周期，`ResourceSnapshot` 同时
 核对 frame、buddy、heap、KVA 与栈的当前所有权。目标启动和四进程退出各做
-一次零差异验证；具名 256 MiB functional smoke 与 64 GiB 主规格共同通过，
+一次零差异验证；具名 256 MiB functional smoke 与 32 GiB 主规格共同通过，
 因此 v1.1 已闭环。
 v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符和文件系统
 上下文的共享资源容器，把 Thread 固定为唯一调度实体。独立单调 PID/TID
@@ -89,7 +95,7 @@ v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符�
 condition、timeout、signal、close、cancel 使用单赢家 WakeReason；SpinLock、
 IrqSaveSpinLock 和可睡眠 Mutex 的调用边界由测试冻结。运行时规格随同一镜像
 按 RAM 选择：64 MiB 兼容档为 8/8/1，256 MiB 为 64 Process/128 Thread/单进程
-32 Thread，64 GiB 为 256/512/64；启动容量自检建立真实页表根、动态栈和
+32 Thread，32 GiB 为 256/512/64；启动容量自检建立真实页表根、动态栈和
 FXSAVE 区，再退出、reap 并用 ResourceSnapshot 验证零差异。四个 Ring 3
 程序分别写入不同 XMM0、XMM15、MXCSR、x87 控制字和 ST0 模式，在抢占、
 阻塞、唤醒和退出边界反复校验。宿主固定种子模型执行 100000 步状态迁移，
@@ -112,10 +118,10 @@ handle 同时保存地址与全局单调 generation，操作期间使用 RAII �
 引用在对象管理器锁外执行文件、管道或控制台 finalizer。FileDescription
 保存种类、file status flags 和文件偏移，因此 duplicate 共享偏移、独立 open
 不共享；close-on-exec 等 fd flags 则独立保存在表项。FileTable 每 64 项按需
-增长，64 MiB、256 MiB、64 GiB 配置分别使用 64、512、4096 hard limit，
+增长，64 MiB、256 MiB、32 GiB 配置分别使用 64、512、4096 hard limit，
 分块申请采用锁外准备和锁内复验的两阶段提交。PID4 已在真实 Ring 3 中验证
 duplicate、CLOEXEC、共享/独立偏移、soft-limit 失败和最低编号复用；
-256 MiB/64 GiB 档使用 minimum 64，hard limit 仅为 64 的兼容档使用
+256 MiB/32 GiB 档使用 minimum 64，hard limit 仅为 64 的兼容档使用
 minimum 8。退出后对象、引用、finalizer 和分块统计全部守恒。
 
 v1.5 已建立 `Vnode`、`Path`、`Superblock`、`Mount` 和每 Process
@@ -165,7 +171,7 @@ committed bottom 且与用户 RSP 邻近的 fault 增长，底部下一页永久
 撤销、exec 与 exit 同时回收实际驻留 frame、空页表分支和描述符。Ring 3
 `UserHeap` 在最多 8 MiB program break 上实现 16 字节对齐、first-fit、
 split、前后 coalesce 与完整结构校验。VMA 和 heap 各通过 100000 步参考
-模型；64 MiB、256 MiB、64 GiB QEMU 均验证零填充、稀疏触页、unmap、
+模型；64 MiB、256 MiB、32 GiB QEMU 均验证零填充、稀疏触页、unmap、
 2 MiB break、栈增长、5000 步 heap、guard/protection fault 和最终资源守恒。
 详细证据见 [v1.8 发布记录](docs/releases/v1.8.md) 与
 [ADR 0035](docs/adr/0035-anonymous-vma-demand-paging-user-heap.md)。
@@ -197,7 +203,7 @@ fork/exec/wait 完整回收。详细证据见
 
 v1.11 新增系统调用 45/46 `CreatePipe` 与 `DuplicateDescriptorTo`。
 动态 Pipe 的逻辑容量为 64 KiB，4 KiB 数据页按首次写入申请；同一镜像按
-64 MiB、256 MiB、64 GiB 选择 8、128、1024 条 Pipe 容量。reader/writer
+64 MiB、256 MiB、32 GiB 选择 8、128、1024 条 Pipe 容量。reader/writer
 通过 FileDescription 最后引用关闭，EOF、broken pipe、短读/短写和创建失败
 回滚均有独立语义。Shell 只保留 `cd`/`exit`，其他十九个工具均作为 rootfs
 多调用 ELF 经 fork/dup2/exec/wait 执行；解析器支持引号、转义、`<`、`>` 和
@@ -212,7 +218,7 @@ v1.12 新增系统调用 47--53，开放同一 Process 内的用户 Thread、64 
 compare-and-block；用户 Mutex、ConditionVariable 与 Once 只有竞争路径进入
 Kernel。`munmap`、多线程 exec 和 ProcessExit 会取消旧地址 waiter，普通
 ThreadExit 不关闭 Process 共享资源。64 MiB 验证单线程降级，256 MiB 真实
-建立 32 Thread，64 GiB 建立 64 Thread 并拒绝第 65 个，最终 TLS、futex、
+建立 32 Thread，32 GiB 建立 64 Thread 并拒绝第 65 个，最终 TLS、futex、
 Join、KernelStack 和 Process 资源全部守恒。详细证据见
 [v1.12 发布记录](docs/releases/v1.12.md) 与
 [ADR 0039](docs/adr/0039-user-threads-fs-tls-private-futex.md)。
@@ -274,7 +280,8 @@ QEMU 除验证 32 个唯一 inode/ELF 外，还在 functional Shell 中实际运
 [ADR 0045](docs/adr/0045-abi-v2-devfs-procfs-release-freeze.md)。
 
 v2.0 只集成已经冻结的机制，收敛为从自研文件系统启动 `/sbin/init` 与外部
-Shell 的单 BSP、多进程、多线程类 Unix 教学系统。64 MiB、256 MiB 和 64 GiB
+Shell 的单 BSP、多进程、多线程类 Unix 教学系统。该发布当时使用 64 MiB、
+256 MiB 和 64 GiB
 分别承担启动兼容、完整功能和容量压力；完整宿主测试、目标产物审计、QEMU
 成功/失败矩阵、教材、手机导出和公开网站共同形成发布证据。详细结论见
 [v2.0 发布记录](docs/releases/v2.0.md) 和
@@ -291,6 +298,21 @@ GDB、CMake 和 Ninja 后执行：
 python3 tools/os.py verify
 ```
 
+构建完成后可在有图形会话的本机打开 VGA 控制台：
+
+```bash
+python3 tools/os.py qemu-display \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk.img \
+  131072 137438953472
+```
+
+无桌面环境时可增加 `--display-backend curses`；从手机查看时使用
+`--display-backend vnc`，它只监听宿主机回环地址，再通过 noVNC 与 Tailscale
+Serve 提供经认证的浏览器页面。详细诊断默认写入
+`build/developer/qemu-display.log`，不会在 Shell 前台持续刷屏；路径和手机操作
+详见 [构建说明](docs/building.md)。
+
 该命令会完成工具链检查、宿主机测试构建、x86-64 freestanding
 交叉编译、自研 ROM 生成与审计、单元测试、集成测试、固定种子随机测试和
 QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
@@ -300,7 +322,7 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 
 ```text
 [OS][FIRMWARE] RESET
-[OS][FIRMWARE] SERIAL_READY
+[OS][FIRMWARE] VGA_READY
 [OS][FIRMWARE] CLOCK_READY
 [OS][FIRMWARE] STAGE1_HEADER_VALID
 [OS][FIRMWARE] STAGE1_LOADED
@@ -496,7 +518,7 @@ DWARF 调试信息；固定启动分区写入由 `llvm-objcopy --strip-debug` �
 覆盖 LBA 32768 开始的 rootfs 区域。两者入口都固定为 `0x00100000`，加载段
 内容相同。当前产物包含严格分权的 `R E`、`R`、`RW/BSS` 三个
 `PT_LOAD`；Stage 1 在目标机上以两遍算法先验证全部段，再复制文件内容并清零
-BSS。成功交接后内核重新初始化 COM1，验证 104 字节 BootInfo v2、BSS 和
+BSS。成功交接后内核接管固件建立的 VGA 文本控制台，验证 104 字节 BootInfo v2、BSS 和
 Stage 1 的 CR3，再加载自己的 GDTR、IDTR 和 TR。正常镜像执行一次可恢复
 `INT3` 自检，随后验证内存图、分配器、页权限、堆和类型缓存。独立故障镜像分别执行
 `UD2`、访问首个未映射地址，以及让 Ring 0 写入只读页；最后一项必须产生

@@ -8,7 +8,6 @@
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/processor_features.hpp"
 #include "os/kernel/device/ata_pio.hpp"
-#include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/fs/devfs.hpp"
 #include "os/kernel/fs/memfs.hpp"
 #include "os/kernel/fs/procfs.hpp"
@@ -16,6 +15,8 @@
 #include "os/kernel/fs/vfs.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/process/process_runtime.hpp"
+#include <os/kernel/device/port_io.hpp>
+#include <os/kernel/device/vga_text_console.hpp>
 
 namespace os::kernel {
 
@@ -281,12 +282,9 @@ constexpr char OS_KERNEL_MAIN_VFS_VALID_MESSAGE[] = "[OS][KERNEL] VFS_VALID\r\n"
 constexpr char OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE[] = "[OS][KERNEL] MEMFS_MOUNTED=/tmp\r\n";
 constexpr char OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE[] =
     "[OS][KERNEL] CONSOLE_DEVICE_MOUNTED=/dev/console\r\n";
-constexpr char OS_KERNEL_MAIN_DEVFS_READY_MESSAGE[] =
-    "[OS][KERNEL] DEVFS_READY=/dev\r\n";
-constexpr char OS_KERNEL_MAIN_PROCFS_READY_MESSAGE[] =
-    "[OS][KERNEL] PROCFS_READY=/proc\r\n";
-constexpr char OS_KERNEL_MAIN_ABI_V2_FROZEN_MESSAGE[] =
-    "[OS][KERNEL] ABI_V2_FROZEN\r\n";
+constexpr char OS_KERNEL_MAIN_DEVFS_READY_MESSAGE[] = "[OS][KERNEL] DEVFS_READY=/dev\r\n";
+constexpr char OS_KERNEL_MAIN_PROCFS_READY_MESSAGE[] = "[OS][KERNEL] PROCFS_READY=/proc\r\n";
+constexpr char OS_KERNEL_MAIN_ABI_V2_FROZEN_MESSAGE[] = "[OS][KERNEL] ABI_V2_FROZEN\r\n";
 constexpr char OS_KERNEL_MAIN_VFS_STATUS_PREFIX[] = "[OS][KERNEL] VFS_STATUS=";
 constexpr char OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX[] = "[OS][KERNEL] VFS_MOUNTS=";
 constexpr char OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX[] =
@@ -625,6 +623,7 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE[] = "[OS][KERNEL] SCHED
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
+constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.1 terminal ready\r\n";
 constexpr uint64_t OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT = 16ULL;
 constexpr uint64_t OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT = 1ULL;
 constexpr int64_t OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE = 0LL;
@@ -706,16 +705,12 @@ constexpr uint8_t OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH[] = {
     static_cast<uint8_t>('v'),
 };
 constexpr uint8_t OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH[] = {
-    static_cast<uint8_t>('/'),
-    static_cast<uint8_t>('p'),
-    static_cast<uint8_t>('r'),
-    static_cast<uint8_t>('o'),
-    static_cast<uint8_t>('c'),
+    static_cast<uint8_t>('/'), static_cast<uint8_t>('p'), static_cast<uint8_t>('r'),
+    static_cast<uint8_t>('o'), static_cast<uint8_t>('c'),
 };
 constexpr uint8_t OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME[] = {
-    static_cast<uint8_t>('c'), static_cast<uint8_t>('o'),
-    static_cast<uint8_t>('n'), static_cast<uint8_t>('s'),
-    static_cast<uint8_t>('o'), static_cast<uint8_t>('l'),
+    static_cast<uint8_t>('c'), static_cast<uint8_t>('o'), static_cast<uint8_t>('n'),
+    static_cast<uint8_t>('s'), static_cast<uint8_t>('o'), static_cast<uint8_t>('l'),
     static_cast<uint8_t>('e'),
 };
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
@@ -731,339 +726,340 @@ constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_PATH[] = {
 // 非零初值不能用于证明加载器执行了 p_memsz 对应的 BSS 清零。
 uint64_t kernel_main_bss_probe;
 
-void WriteRequiredMessage(const SerialPort &serial_port, const char *message) noexcept {
-    if (!serial_port.TryWriteString(message)) {
+void WriteRequiredMessage(const VgaTextConsole &vga_console, const char *message) noexcept {
+    if (!vga_console.TryWriteDiagnosticString(message)) {
         HaltProcessor();
     }
 }
 
-void WriteRequiredHexLine(const SerialPort &serial_port, const char *prefix,
+void WriteRequiredHexLine(const VgaTextConsole &vga_console, const char *prefix,
                           const uint64_t value) noexcept {
-    if (!serial_port.TryWriteHexLine(prefix, value)) {
+    if (!vga_console.TryWriteDiagnosticHexLine(prefix, value)) {
         HaltProcessor();
     }
 }
 
-void ValidateBootEnvironment(const SerialPort &serial_port, const BootInfo *boot_info) noexcept {
+void ValidateBootEnvironment(const VgaTextConsole &vga_console,
+                             const BootInfo *boot_info) noexcept {
     if (ValidateBootInfo(boot_info) != BootInfoValidationStatus::Succeeded) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BOOT_INFO_INVALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_BOOT_INFO_INVALID_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BOOT_INFO_VALID_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_BOOT_INFO_VALID_MESSAGE);
 
     if (kernel_main_bss_probe != OS_KERNEL_MAIN_BSS_PROBE_ZERO_VALUE) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BSS_INVALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_BSS_INVALID_MESSAGE);
         HaltProcessor();
     }
     kernel_main_bss_probe = OS_KERNEL_MAIN_BSS_PROBE_WRITTEN_VALUE;
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BSS_ZEROED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_BSS_ZEROED_MESSAGE);
 
     if (ReadPageTableRoot() != boot_info->page_table_root_physical_address) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CR3_INVALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_CR3_INVALID_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CR3_VALID_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_CR3_VALID_MESSAGE);
 }
 
-void InitializeKernelArchitecture(const SerialPort &serial_port,
+void InitializeKernelArchitecture(const VgaTextConsole &vga_console,
                                   const BootInfo &boot_info) noexcept {
     static_cast<void>(boot_info);
     const ProcessorFeatureProfile processor_feature_profile = ReadProcessorFeatureProfile();
     const ProcessorFeatureStatus processor_feature_status =
         ValidateProcessorFeatureProfile(processor_feature_profile);
     if (processor_feature_status != ProcessorFeatureStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESSOR_FEATURES_UNSUPPORTED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESSOR_FEATURES_UNSUPPORTED_PREFIX,
                              static_cast<uint64_t>(processor_feature_status));
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESSOR_MISSING_FEATURES_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESSOR_MISSING_FEATURES_PREFIX,
                              processor_feature_profile.missing_feature_mask);
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESSOR_FEATURES_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESSOR_REQUIRED_FEATURES_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PROCESSOR_FEATURES_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESSOR_REQUIRED_FEATURES_PREFIX,
                          OS_KERNEL_PROCESSOR_REQUIRED_FEATURES);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESSOR_AVAILABLE_FEATURES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESSOR_AVAILABLE_FEATURES_PREFIX,
                          processor_feature_profile.available_feature_mask);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESSOR_PROFILE_PHYSICAL_WIDTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESSOR_PROFILE_PHYSICAL_WIDTH_PREFIX,
                          processor_feature_profile.physical_address_width_bits);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESSOR_PROFILE_VIRTUAL_WIDTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESSOR_PROFILE_VIRTUAL_WIDTH_PREFIX,
                          processor_feature_profile.virtual_address_width_bits);
 
     const ExtendedStateStatus extended_state_status = InitializeExtendedState();
     if (extended_state_status != ExtendedStateStatus::Succeeded) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_UNSUPPORTED_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_UNSUPPORTED_MESSAGE);
         HaltProcessor();
     }
     const ExtendedStateConfiguration extended_state_configuration = GetExtendedStateConfiguration();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_CR0_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_CR0_PREFIX,
                          extended_state_configuration.control_register0);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_CR4_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_CR4_PREFIX,
                          extended_state_configuration.control_register4);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_AVX_DISABLED_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_AVX_DISABLED_PREFIX,
                          extended_state_configuration.avx_disabled);
     InitializeGlobalDescriptorTable();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_GDT_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TSS_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_GDT_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_TSS_READY_MESSAGE);
 
     InitializeInterruptDescriptorTable();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_IDT_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_IDT_READY_MESSAGE);
     if (ValidateDescriptorTables() != DescriptorTableValidationStatus::Succeeded) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_INVALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_INVALID_MESSAGE);
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_VALID_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_DESCRIPTOR_TABLES_VALID_MESSAGE);
 
     CpuLocal &cpu_local = GetCpuLocal();
     const CpuLocalStatus cpu_local_initialization_status =
         cpu_local.Initialize(DefaultPrivilegeStackPointer0());
     if (cpu_local_initialization_status != CpuLocalStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(cpu_local_initialization_status));
         HaltProcessor();
     }
     const CpuLocalStatus cpu_local_validation_status = cpu_local.Validate();
     if (cpu_local_validation_status != CpuLocalStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(cpu_local_validation_status));
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_ADDRESS_PREFIX, cpu_local.Address());
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_ADDRESS_PREFIX, cpu_local.Address());
 
     const NativeSystemCallStatus native_system_call_status =
         InitializeNativeSystemCalls(processor_feature_profile, cpu_local.Address());
     if (native_system_call_status != NativeSystemCallStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port,
+        WriteRequiredHexLine(vga_console,
                              OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(native_system_call_status));
         HaltProcessor();
     }
     const NativeSystemCallConfiguration native_system_call_configuration =
         GetNativeSystemCallConfiguration();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_STAR_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_STAR_PREFIX,
                          native_system_call_configuration.registers.segment_selector_register);
     WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_LSTAR_PREFIX,
+        vga_console, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_LSTAR_PREFIX,
         native_system_call_configuration.registers.entry_instruction_pointer_register);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_FMASK_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_FMASK_PREFIX,
                          native_system_call_configuration.registers.flags_mask_register);
     WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_EFER_PREFIX,
+        vga_console, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_EFER_PREFIX,
         native_system_call_configuration.registers.extended_feature_enable_register);
 
     TriggerBreakpoint();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_EXCEPTION_SELF_TEST_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_EXCEPTION_SELF_TEST_READY_MESSAGE);
 }
 
-void InitializeKernelMemorySubsystem(const SerialPort &serial_port,
+void InitializeKernelMemorySubsystem(const VgaTextConsole &vga_console,
                                      const BootInfo &boot_info) noexcept {
     const KernelMemoryInitializationStatus status = InitializeKernelMemory(boot_info);
     if (status != KernelMemoryInitializationStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(status));
         HaltProcessor();
     }
     const KernelMemoryStatistics &statistics = GetKernelMemoryStatistics();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMORY_MAP_VALID_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_MAP_ENTRY_COUNT_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_MEMORY_MAP_VALID_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_MAP_ENTRY_COUNT_PREFIX,
                          statistics.memory_map_entry_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_DESCRIBED_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_DESCRIBED_PREFIX,
                          statistics.described_address_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_USABLE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_USABLE_PREFIX,
                          statistics.reported_usable_memory_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_MANAGED_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_MANAGED_PREFIX,
                          statistics.managed_usable_memory_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMORY_MANAGED_LIMIT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_MANAGED_LIMIT_PREFIX,
                          statistics.managed_physical_address_limit);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PHYSICAL_ADDRESS_WIDTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PHYSICAL_ADDRESS_WIDTH_PREFIX,
                          statistics.physical_address_width_bits);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VIRTUAL_ADDRESS_WIDTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VIRTUAL_ADDRESS_WIDTH_PREFIX,
                          statistics.virtual_address_width_bits);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FIVE_LEVEL_PAGING_SUPPORTED_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FIVE_LEVEL_PAGING_SUPPORTED_PREFIX,
                          statistics.five_level_paging_supported);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_ADDRESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_ADDRESS_PREFIX,
                          statistics.frame_state_storage_physical_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FRAME_STATE_STORAGE_SIZE_PREFIX,
                          statistics.frame_state_storage_size_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_STORAGE_ADDRESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_STORAGE_ADDRESS_PREFIX,
                          statistics.buddy_storage_physical_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_STORAGE_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_STORAGE_SIZE_PREFIX,
                          statistics.buddy_storage_size_bytes);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FRAME_ALLOCATOR_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FREE_FRAME_COUNT_PREFIX,
                          statistics.free_frame_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ALLOCATED_FRAME_COUNT_PREFIX,
                          statistics.allocated_frame_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_RESERVED_FRAME_COUNT_PREFIX,
                          statistics.reserved_frame_count);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BUDDY_ALLOCATOR_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_MAXIMUM_ORDER_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_BUDDY_ALLOCATOR_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_MAXIMUM_ORDER_PREFIX,
                          statistics.buddy_maximum_order);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_FREE_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_FREE_BLOCK_COUNT_PREFIX,
                          statistics.buddy_free_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_ACTIVE_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_ACTIVE_BLOCK_COUNT_PREFIX,
                          statistics.buddy_active_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
                          statistics.buddy_successful_allocation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_RELEASE_COUNT_PREFIX,
                          statistics.buddy_release_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SPLIT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_SPLIT_COUNT_PREFIX,
                          statistics.buddy_split_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_MERGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_MERGE_COUNT_PREFIX,
                          statistics.buddy_merge_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_LARGEST_FREE_ORDER_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_LARGEST_FREE_ORDER_PREFIX,
                          statistics.buddy_largest_free_order);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SELF_TEST_ADDRESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_SELF_TEST_ADDRESS_PREFIX,
                          statistics.buddy_self_test_physical_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_BUDDY_SELF_TEST_ORDER_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BUDDY_SELF_TEST_ORDER_PREFIX,
                          statistics.buddy_self_test_order);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_BUDDY_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_BUDDY_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PAGING_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PAGING_ROOT_PREFIX,
                          statistics.page_table_root_physical_address);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL1_TABLE_COUNT_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL1_TABLE_COUNT_PREFIX,
                          statistics.page_table_reclaimed_level1_table_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL2_TABLE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL2_TABLE_COUNT_PREFIX,
                          statistics.page_table_reclaimed_level2_table_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL3_TABLE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIMED_LEVEL3_TABLE_COUNT_PREFIX,
                          statistics.page_table_reclaimed_level3_table_count);
-    WriteRequiredHexLine(serial_port,
+    WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_PAGE_TABLE_RETAINED_SHARED_LEVEL3_TABLE_COUNT_PREFIX,
                          statistics.page_table_retained_shared_level3_table_count);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_BASE_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PAGE_TABLE_RECLAIM_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DIRECT_MAP_BASE_PREFIX,
                          OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_MAPPED_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DIRECT_MAP_MAPPED_BYTES_PREFIX,
                          statistics.direct_map_mapped_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_LARGE_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DIRECT_MAP_LARGE_PAGE_COUNT_PREFIX,
                          statistics.direct_map_large_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DIRECT_MAP_SMALL_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DIRECT_MAP_SMALL_PAGE_COUNT_PREFIX,
                          statistics.direct_map_small_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HIGH_MEMORY_TEST_ADDRESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_HIGH_MEMORY_TEST_ADDRESS_PREFIX,
                          statistics.high_memory_test_physical_address);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HIGH_MEMORY_VALIDATION_COMPLETE_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HEAP_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_HIGH_MEMORY_VALIDATION_COMPLETE_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_MEMORY_PERMISSIONS_VALID_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_HEAP_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_HEAP_CAPACITY_PREFIX,
                          statistics.heap_capacity_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_ACTIVE_ALLOCATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_HEAP_ACTIVE_ALLOCATION_COUNT_PREFIX,
                          statistics.heap_active_allocation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_PEAK_CONSUMED_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_HEAP_PEAK_CONSUMED_BYTES_PREFIX,
                          statistics.heap_peak_consumed_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_HEAP_LARGEST_FREE_ALLOCATION_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_HEAP_LARGEST_FREE_ALLOCATION_BYTES_PREFIX,
                          statistics.heap_largest_free_allocation_bytes);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_SIZE_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_HEAP_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_SIZE_PREFIX,
                          statistics.type_cache_object_size_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_ALIGNMENT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_OBJECT_ALIGNMENT_PREFIX,
                          statistics.type_cache_object_alignment_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SLOT_STRIDE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_SLOT_STRIDE_PREFIX,
                          statistics.type_cache_slot_stride_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_CAPACITY_PREFIX,
                          statistics.type_cache_capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_BACKING_STORAGE_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_BACKING_STORAGE_SIZE_PREFIX,
                          statistics.type_cache_backing_storage_size_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_ACTIVE_OBJECT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_ACTIVE_OBJECT_COUNT_PREFIX,
                          statistics.type_cache_active_object_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_FREE_OBJECT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_FREE_OBJECT_COUNT_PREFIX,
                          statistics.type_cache_free_object_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
                          statistics.type_cache_successful_allocation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_RELEASE_COUNT_PREFIX,
                          statistics.type_cache_release_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX,
                          statistics.type_cache_peak_active_object_count);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_WINDOW_BASE_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_WINDOW_BASE_PREFIX,
                          statistics.kva_window_begin_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_WINDOW_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_WINDOW_SIZE_PREFIX,
                          statistics.kva_window_size_bytes);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_DESCRIPTOR_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_DESCRIPTOR_CAPACITY_PREFIX,
                          statistics.kva_descriptor_capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_ACTIVE_DESCRIPTOR_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_ACTIVE_DESCRIPTOR_COUNT_PREFIX,
                          statistics.kva_active_descriptor_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_FREE_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_FREE_PAGE_COUNT_PREFIX,
                          statistics.kva_free_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_ALLOCATED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_ALLOCATED_PAGE_COUNT_PREFIX,
                          statistics.kva_allocated_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_RESERVED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_RESERVED_PAGE_COUNT_PREFIX,
                          statistics.kva_reserved_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_SUCCESSFUL_ALLOCATION_COUNT_PREFIX,
                          statistics.kva_successful_allocation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_RELEASE_COUNT_PREFIX,
                          statistics.kva_release_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_PEAK_ALLOCATED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_PEAK_ALLOCATED_PAGE_COUNT_PREFIX,
                          statistics.kva_peak_allocated_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_LARGEST_FREE_RANGE_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_LARGEST_FREE_RANGE_PAGE_COUNT_PREFIX,
                          statistics.kva_largest_free_range_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_VIRTUAL_ADDRESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_SELF_TEST_VIRTUAL_ADDRESS_PREFIX,
                          statistics.kva_self_test_virtual_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_PHYSICAL_ADDRESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_SELF_TEST_PHYSICAL_ADDRESS_PREFIX,
                          statistics.kva_self_test_physical_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_MAPPED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_SELF_TEST_MAPPED_PAGE_COUNT_PREFIX,
                          statistics.kva_self_test_mapped_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_GUARD_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_SELF_TEST_GUARD_PAGE_COUNT_PREFIX,
                          statistics.kva_self_test_guard_page_count);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KVA_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_RESOURCE_LIFECYCLE_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_TRACKED_FIELD_COUNT_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KVA_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_RESOURCE_LIFECYCLE_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_TRACKED_FIELD_COUNT_PREFIX,
                          statistics.resource_snapshot_tracked_field_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_CHANGED_FIELDS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_CHANGED_FIELDS_PREFIX,
                          statistics.resource_snapshot_changed_fields_mask);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_REFERENCE_COUNTER_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_SCOPE_ROLLBACK_SELF_TEST_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_REFERENCE_COUNTER_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_SCOPE_ROLLBACK_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_SELF_TEST_PASSED_MESSAGE);
 }
 
-void InitializeKernelDevices(const SerialPort &serial_port) noexcept {
+void InitializeKernelDevices(const VgaTextConsole &vga_console) noexcept {
     const InterruptRuntimeStatus status = InitializeInterruptRuntime();
     if (status != InterruptRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
                              static_cast<uint64_t>(status));
         HaltProcessor();
     }
 
     InterruptRuntimeStatistics statistics = GetInterruptRuntimeStatistics();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIC_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIC_MASK_PREFIX, statistics.pic_mask);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIT_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIT_DIVISOR_PREFIX, statistics.pit_divisor);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIT_FREQUENCY_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_LEGACY_INTERRUPT_ROUTING_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PIC_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIC_MASK_PREFIX, statistics.pic_mask);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PIT_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIT_DIVISOR_PREFIX, statistics.pit_divisor);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIT_FREQUENCY_PREFIX,
                          statistics.pit_actual_frequency_hz);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ATA_IRQ14_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ATA_REQUEST_CAPACITY_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PS2_KEYBOARD_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ATA_PIO_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ATA_IRQ14_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ATA_REQUEST_CAPACITY_PREFIX,
                          statistics.ata_request_capacity);
 
     TriggerLegacyPicSpuriousInterrupt();
     statistics = GetInterruptRuntimeStatistics();
     if (statistics.spurious_interrupt_count !=
         OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DEVICE_INITIALIZATION_FAILED_PREFIX,
                              statistics.spurious_interrupt_count);
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_PASSED_MESSAGE);
 
     EnableInterrupts();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_INTERRUPTS_ENABLED_MESSAGE);
     do {
         WaitForInterrupt();
         statistics = GetInterruptRuntimeStatistics();
     } while (statistics.timer_tick_count < OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT);
 
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TIMER_TICK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TIMER_TICK_COUNT_PREFIX,
                          statistics.timer_tick_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MONOTONIC_MILLISECONDS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MONOTONIC_MILLISECONDS_PREFIX,
                          statistics.monotonic_milliseconds);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
 }
 
 [[nodiscard]] uint8_t ExpectedFileSystemPayloadByte(const uint64_t byte_index) noexcept {
@@ -1105,69 +1101,69 @@ void InitializeKernelDevices(const SerialPort &serial_port) noexcept {
     return valid ? fs::Status::Succeeded : fs::Status::Corrupt;
 }
 
-void WriteFileSystemStatistics(const SerialPort &serial_port,
+void WriteFileSystemStatistics(const VgaTextConsole &vga_console,
                                const fs::RootFileSystem &file_system) noexcept {
     const fs::RootFileSystemStatistics statistics = file_system.ReadStatistics();
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_GENERATION_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_GENERATION_PREFIX,
                          statistics.transaction_generation);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_INODE_COUNT_PREFIX,
                          statistics.allocated_inode_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_DATA_BLOCK_COUNT_PREFIX,
                          statistics.allocated_data_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_METADATA_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_METADATA_BLOCK_COUNT_PREFIX,
                          statistics.allocated_metadata_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_FREE_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_FREE_BLOCK_COUNT_PREFIX,
                          statistics.free_data_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_JOURNAL_COMMIT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_COMMIT_COUNT_PREFIX,
                          statistics.journal.transaction_commit_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_JOURNAL_REPLAY_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_REPLAY_COUNT_PREFIX,
                          statistics.journal.replay_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_JOURNAL_DISCARD_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_DISCARD_COUNT_PREFIX,
                          statistics.journal.discarded_incomplete_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_JOURNAL_CHECKSUM_FAILURE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_CHECKSUM_FAILURE_COUNT_PREFIX,
                          statistics.journal.checksum_failure_count);
 }
 
-void InitializeKernelFileSystem(const SerialPort &serial_port, fs::RootFileSystem &file_system,
+void InitializeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileSystem &file_system,
                                 AtaPioDevice &device) noexcept {
     const fs::Status mount_status =
         file_system.Initialize(device, OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER);
     if (mount_status != fs::Status::Succeeded) {
         if (mount_status == fs::Status::Corrupt ||
             mount_status == fs::Status::IncompleteTransaction) {
-            WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+            WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         }
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_STATUS_PREFIX,
                              static_cast<uint64_t>(mount_status));
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ROOTFS_V2_MOUNTED_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_V2_REGION_SIZE_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_V2_MOUNTED_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V2_REGION_SIZE_PREFIX,
                          fs::OS_KERNEL_ROOTFS_REGION_SIZE_BYTES);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_V2_MAXIMUM_FILE_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V2_MAXIMUM_FILE_SIZE_PREFIX,
                          fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ROOTFS_JOURNAL_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_ROOTFS_JOURNAL_CREDIT_CAPACITY_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_CREDIT_CAPACITY_PREFIX,
                          fs::OS_KERNEL_ROOTFS_JOURNAL_MAXIMUM_CREDIT_COUNT);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
-    WriteFileSystemStatistics(serial_port, file_system);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteFileSystemStatistics(vga_console, file_system);
 }
 
-void WriteVfsStatistics(const SerialPort &serial_port, const fs::Vfs &vfs,
+void WriteVfsStatistics(const VgaTextConsole &vga_console, const fs::Vfs &vfs,
                         const fs::Memfs &memfs) noexcept {
     const fs::Statistics vfs_statistics = vfs.ReadStatistics();
     const fs::MemfsStatistics memfs_statistics = memfs.ReadStatistics();
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_MOUNT_COUNT_PREFIX,
                          vfs_statistics.mount_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_PATH_RESOLUTION_COUNT_PREFIX,
                          vfs_statistics.path_resolution_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_FAILED_PATH_RESOLUTION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_FAILED_PATH_RESOLUTION_COUNT_PREFIX,
                          vfs_statistics.failed_path_resolution_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MOUNT_TRANSITION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_MOUNT_TRANSITION_COUNT_PREFIX,
                          vfs_statistics.mount_transition_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMFS_ACTIVE_NODE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMFS_ACTIVE_NODE_COUNT_PREFIX,
                          memfs_statistics.active_node_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_MEMFS_DATA_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMFS_DATA_CAPACITY_PREFIX,
                          memfs_statistics.active_data_capacity_bytes);
 }
 
@@ -1176,36 +1172,30 @@ struct KernelProcfsContext final {
     fs::RootFileSystem *root_file_system;
 };
 
-[[nodiscard]] bool CaptureKernelProcfsSnapshot(
-    void *const context, fs::ProcfsSnapshot &snapshot) noexcept {
+[[nodiscard]] bool CaptureKernelProcfsSnapshot(void *const context,
+                                               fs::ProcfsSnapshot &snapshot) noexcept {
     snapshot = fs::ProcfsSnapshot{};
     if (context == nullptr) {
         return false;
     }
-    const KernelProcfsContext &procfs_context =
-        *static_cast<const KernelProcfsContext *>(context);
-    if (procfs_context.vfs == nullptr ||
-        procfs_context.root_file_system == nullptr) {
+    const KernelProcfsContext &procfs_context = *static_cast<const KernelProcfsContext *>(context);
+    if (procfs_context.vfs == nullptr || procfs_context.root_file_system == nullptr) {
         return false;
     }
     fs::ResourceUsage vfs_usage{};
-    if (procfs_context.vfs->ReadResourceUsage(vfs_usage) !=
-        fs::Status::Succeeded) {
+    if (procfs_context.vfs->ReadResourceUsage(vfs_usage) != fs::Status::Succeeded) {
         return false;
     }
-    const PhysicalFrameAllocatorStatistics frame_statistics =
-        GetPhysicalFrameAllocatorStatistics();
+    const PhysicalFrameAllocatorStatistics frame_statistics = GetPhysicalFrameAllocatorStatistics();
     const KernelHeapStatistics heap_statistics = GetKernelHeap().Statistics();
-    const ProcessObservationSnapshot process_snapshot =
-        GetProcessObservationSnapshot();
+    const ProcessObservationSnapshot process_snapshot = GetProcessObservationSnapshot();
     const fs::RootFileSystemStatistics root_statistics =
         procfs_context.root_file_system->ReadStatistics();
     snapshot = fs::ProcfsSnapshot{
         .monotonic_nanoseconds = GetMonotonicNanoseconds(),
         .managed_memory_bytes =
             frame_statistics.managed_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
-        .free_memory_bytes =
-            frame_statistics.free_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .free_memory_bytes = frame_statistics.free_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
         .allocated_memory_bytes =
             frame_statistics.allocated_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
         .active_process_count = process_snapshot.active_process_count,
@@ -1213,27 +1203,22 @@ struct KernelProcfsContext final {
         .process_capacity = process_snapshot.process_capacity,
         .thread_capacity = process_snapshot.thread_capacity,
         .current_process_id =
-            IsProcessSchedulingActive()
-                ? CurrentProcessId()
-                : OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER,
+            IsProcessSchedulingActive() ? CurrentProcessId() : OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER,
         .heap_consumed_bytes = heap_statistics.consumed_bytes,
-        .active_file_description_count =
-            process_snapshot.active_file_description_count,
+        .active_file_description_count = process_snapshot.active_file_description_count,
         .active_pipe_count = process_snapshot.active_pipe_count,
         .mount_count = procfs_context.vfs->ReadStatistics().mount_count,
         .vnode_count = vfs_usage.vnode_count,
-        .journal_commit_count =
-            root_statistics.journal.transaction_commit_count,
+        .journal_commit_count = root_statistics.journal.transaction_commit_count,
     };
     return true;
 }
 
-void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file_system,
+void InitializeKernelVfs(const VgaTextConsole &vga_console, fs::RootFileSystem &file_system,
                          fs::Memfs &memfs, fs::Devfs &devfs, fs::Procfs &procfs,
                          KernelProcfsContext &procfs_context, fs::Vfs &vfs,
-                         fs::DevfsDevice *const devfs_devices,
-                         const uint64_t devfs_device_capacity, fs::Mount *const mounts,
-                         const uint64_t mount_capacity) noexcept {
+                         fs::DevfsDevice *const devfs_devices, const uint64_t devfs_device_capacity,
+                         fs::Mount *const mounts, const uint64_t mount_capacity) noexcept {
     fs::Status status = memfs.Initialize(
         GetKernelHeap(), OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER,
         OS_KERNEL_MAIN_MEMFS_NODE_LIMIT, OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES);
@@ -1258,15 +1243,14 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
                              sizeof(OS_KERNEL_MAIN_MEMFS_MOUNT_PATH), memfs.GetSuperblock());
     }
     if (status == fs::Status::Succeeded) {
-        status = devfs.Initialize(
-            OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER,
-            devfs_devices, devfs_device_capacity);
+        status = devfs.Initialize(OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER, devfs_devices,
+                                  devfs_device_capacity);
     }
     uint64_t console_node_identifier = OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
     if (status == fs::Status::Succeeded) {
-        status = devfs.RegisterCharacterDevice(
-            OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME,
-            sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME), console_node_identifier);
+        status = devfs.RegisterCharacterDevice(OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME,
+                                               sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_NAME),
+                                               console_node_identifier);
     }
     if (status == fs::Status::Succeeded) {
         const fs::Status mount_point_status =
@@ -1278,34 +1262,31 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
         }
     }
     if (status == fs::Status::Succeeded) {
-        status = vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH,
-                             sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH),
-                             devfs.GetSuperblock());
+        status =
+            vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH,
+                        sizeof(OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNT_PATH), devfs.GetSuperblock());
     }
     if (status == fs::Status::Succeeded) {
         procfs_context = KernelProcfsContext{
             .vfs = &vfs,
             .root_file_system = &file_system,
         };
-        status = procfs.Initialize(
-            OS_KERNEL_MAIN_VFS_PROCESS_SUPERBLOCK_IDENTIFIER,
-            CaptureKernelProcfsSnapshot, &procfs_context);
+        status = procfs.Initialize(OS_KERNEL_MAIN_VFS_PROCESS_SUPERBLOCK_IDENTIFIER,
+                                   CaptureKernelProcfsSnapshot, &procfs_context);
     }
     if (status == fs::Status::Succeeded) {
         const fs::Status mount_point_status =
-            vfs.CreateDirectory(
-                bootstrap_context, OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH,
-                sizeof(OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH));
+            vfs.CreateDirectory(bootstrap_context, OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH,
+                                sizeof(OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH));
         if (mount_point_status != fs::Status::Succeeded &&
             mount_point_status != fs::Status::AlreadyExists) {
             status = mount_point_status;
         }
     }
     if (status == fs::Status::Succeeded) {
-        status = vfs.MountAt(
-            bootstrap_context, OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH,
-            sizeof(OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH),
-            procfs.GetSuperblock());
+        status = vfs.MountAt(bootstrap_context, OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH,
+                             sizeof(OS_KERNEL_MAIN_PROCESS_FILE_SYSTEM_MOUNT_PATH),
+                             procfs.GetSuperblock());
     }
     if (status == fs::Status::Succeeded) {
         status = vfs.Validate();
@@ -1327,39 +1308,39 @@ void InitializeKernelVfs(const SerialPort &serial_port, fs::RootFileSystem &file
     }
     if (status != fs::Status::Succeeded) {
         if (status == fs::Status::Corrupt || status == fs::Status::IncompleteTransaction) {
-            WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+            WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         }
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
                              static_cast<uint64_t>(status));
         HaltProcessor();
     }
     if (persistence_restored) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE);
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_DEVFS_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCFS_READY_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ABI_V2_FROZEN_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_PATH_LENGTH_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_VFS_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_MEMFS_MOUNTED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_CONSOLE_DEVICE_MOUNTED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_DEVFS_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PROCFS_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ABI_V2_FROZEN_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_MAXIMUM_PATH_LENGTH_PREFIX,
                          fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_MAXIMUM_NAME_LENGTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_MAXIMUM_NAME_LENGTH_PREFIX,
                          fs::OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_VALID_MESSAGE);
-    WriteVfsStatistics(serial_port, vfs, memfs);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_VFS_VALID_MESSAGE);
+    WriteVfsStatistics(vga_console, vfs, memfs);
 }
 
-void FinalizeKernelFileSystem(const SerialPort &serial_port, fs::RootFileSystem &file_system,
+void FinalizeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileSystem &file_system,
                               fs::Vfs &vfs, const fs::Memfs &memfs,
                               const bool require_payload) noexcept {
     const fs::Status sync_status = vfs.Sync();
     if (sync_status != fs::Status::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
                              static_cast<uint64_t>(sync_status));
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_SYNCED_MESSAGE);
     fs::Status validation_status = vfs.Validate();
     fs::FsContext validation_context{};
     if (validation_status == fs::Status::Succeeded && require_payload) {
@@ -1375,41 +1356,41 @@ void FinalizeKernelFileSystem(const SerialPort &serial_port, fs::RootFileSystem 
         }
     }
     if (validation_status != fs::Status::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VFS_STATUS_PREFIX,
                              static_cast<uint64_t>(validation_status));
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE);
         HaltProcessor();
     }
     if (require_payload) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_VALID_MESSAGE);
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_VFS_VALID_MESSAGE);
-    WriteFileSystemStatistics(serial_port, file_system);
-    WriteVfsStatistics(serial_port, vfs, memfs);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_VFS_VALID_MESSAGE);
+    WriteFileSystemStatistics(vga_console, file_system);
+    WriteVfsStatistics(vga_console, vfs, memfs);
 }
 
-void WriteProcessCreationSuccess(const SerialPort &serial_port,
+void WriteProcessCreationSuccess(const VgaTextConsole &vga_console,
                                  const ProcessCreationResult &creation_result) noexcept {
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_ELF_VALID_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ENTRY_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_ELF_VALID_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_ENTRY_PREFIX,
                          creation_result.entry_virtual_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_MAPPED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_MAPPED_PAGE_COUNT_PREFIX,
                          creation_result.mapped_page_count);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_STACK_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, creation_result.process_id);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_THREAD_ID_PREFIX, creation_result.thread_id);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CR3_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_STACK_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, creation_result.process_id);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_THREAD_ID_PREFIX, creation_result.thread_id);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_CR3_PREFIX,
                          creation_result.root_physical_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_LOWER_GUARD_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_LOWER_GUARD_PREFIX,
                          creation_result.kernel_stack_lower_guard_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_TOP_PREFIX,
                          creation_result.kernel_stack_top_address);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_UPPER_GUARD_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_KERNEL_STACK_UPPER_GUARD_PREFIX,
                          creation_result.kernel_stack_upper_guard_address);
 }
 
-void CreateRequiredProcess(const SerialPort &serial_port,
+void CreateRequiredProcess(const VgaTextConsole &vga_console,
                            const UserProgramSelection selection) noexcept {
     ProcessCreationResult creation_result{};
     UserElfValidationStatus elf_validation_status = UserElfValidationStatus::Succeeded;
@@ -1417,19 +1398,19 @@ void CreateRequiredProcess(const SerialPort &serial_port,
     const ProcessRuntimeStatus runtime_status =
         CreateProcess(selection, creation_result, elf_validation_status, address_space_status);
     if (runtime_status == ProcessRuntimeStatus::InvalidElf) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
                              static_cast<uint64_t>(elf_validation_status));
         HaltProcessor();
     }
     if (runtime_status != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
                              static_cast<uint64_t>(address_space_status));
         HaltProcessor();
     }
-    WriteProcessCreationSuccess(serial_port, creation_result);
+    WriteProcessCreationSuccess(vga_console, creation_result);
 }
 
-void CreateInitialDiskProcess(const SerialPort &serial_port) noexcept {
+void CreateInitialDiskProcess(const VgaTextConsole &vga_console) noexcept {
     const KernelProgramString arguments[]{
         KernelProgramString{
             .data = reinterpret_cast<const uint8_t *>(OS_KERNEL_MAIN_INIT_PATH),
@@ -1454,56 +1435,56 @@ void CreateInitialDiskProcess(const SerialPort &serial_port) noexcept {
         sizeof(environment) / sizeof(environment[OS_KERNEL_MAIN_FIRST_PROCESS_INDEX]),
         creation_result, elf_validation_status, address_space_status);
     if (runtime_status == ProcessRuntimeStatus::InvalidElf) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
                              static_cast<uint64_t>(elf_validation_status));
         HaltProcessor();
     }
     if (runtime_status != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_ADDRESS_SPACE_FAILED_PREFIX,
                              static_cast<uint64_t>(runtime_status));
         HaltProcessor();
     }
-    WriteProcessCreationSuccess(serial_port, creation_result);
+    WriteProcessCreationSuccess(vga_console, creation_result);
 }
 
-void PrepareRequiredProcesses(const SerialPort &serial_port,
+void PrepareRequiredProcesses(const VgaTextConsole &vga_console,
                               const UserProgramSelection selection) noexcept {
     if (InitializeProcessRuntime() != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::SchedulerFailure));
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE);
     const ProcessRuntimeStatistics runtime_statistics = GetProcessRuntimeStatistics();
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_CAPACITY_PREFIX,
                          runtime_statistics.configured_process_capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_THREAD_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_THREAD_CAPACITY_PREFIX,
                          runtime_statistics.configured_thread_capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_THREADS_PER_PROCESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_THREADS_PER_PROCESS_PREFIX,
                          runtime_statistics.configured_threads_per_process);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CAPACITY_SELF_TEST_PROCESSES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CAPACITY_SELF_TEST_PROCESSES_PREFIX,
                          runtime_statistics.capacity_self_test_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CAPACITY_SELF_TEST_THREADS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CAPACITY_SELF_TEST_THREADS_PREFIX,
                          runtime_statistics.capacity_self_test_thread_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CAPACITY_SELF_TEST_THREADS_PER_PROCESS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CAPACITY_SELF_TEST_THREADS_PER_PROCESS_PREFIX,
                          runtime_statistics.capacity_self_test_threads_per_process);
-    WriteRequiredMessage(serial_port,
+    WriteRequiredMessage(vga_console,
                          OS_KERNEL_MAIN_PROCESS_THREAD_CAPACITY_SELF_TEST_PASSED_MESSAGE);
     const KernelStackManagerStatistics kernel_stack_statistics =
         GetKernelStackManager().Statistics();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_MANAGER_READY_MESSAGE);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SLOT_CAPACITY_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_MANAGER_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_SLOT_CAPACITY_PREFIX,
                          kernel_stack_statistics.slot_capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_MAPPED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_MAPPED_PAGE_COUNT_PREFIX,
                          OS_KERNEL_STACK_MAPPED_PAGE_COUNT);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_GUARD_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_GUARD_PAGE_COUNT_PREFIX,
                          OS_KERNEL_STACK_GUARD_PAGE_COUNT);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_SIZE_PREFIX,
                          OS_KERNEL_STACK_SIZE_BYTES);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PIPE_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PIPE_READY_MESSAGE);
 
     if (selection != UserProgramSelection::Smoke) {
-        CreateRequiredProcess(serial_port, selection);
+        CreateRequiredProcess(vga_console, selection);
     }
 }
 
@@ -1562,46 +1543,46 @@ void PrepareRequiredProcesses(const SerialPort &serial_port,
     return false;
 }
 
-void WriteProcessExecutionResult(const SerialPort &serial_port,
+void WriteProcessExecutionResult(const VgaTextConsole &vga_console,
                                  const ProcessExecutionResult &result) noexcept {
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, result.process_id);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_ID_PREFIX, result.process_id);
     if (result.termination_reason == ProcessTerminationReason::Exited) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXIT_CODE_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXIT_CODE_PREFIX,
                              static_cast<uint64_t>(result.exit_code));
     } else if (result.termination_reason == ProcessTerminationReason::Exception) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXCEPTION_VECTOR_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXCEPTION_VECTOR_PREFIX,
                              result.exception_vector);
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXCEPTION_ERROR_CODE_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXCEPTION_ERROR_CODE_PREFIX,
                              result.exception_error_code);
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXCEPTION_RIP_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXCEPTION_RIP_PREFIX,
                              result.exception_instruction_pointer);
         if (result.exception_vector == OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR) {
-            WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS_PREFIX,
+            WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS_PREFIX,
                                  result.page_fault_address);
         }
     }
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_SYSTEM_CALL_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_SYSTEM_CALL_COUNT_PREFIX,
                          result.system_call_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_RUN_TICKS_PREFIX,
                          result.run_tick_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_DISPATCH_COUNT_PREFIX,
                          result.dispatch_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_PIPE_READ_BYTES_PREFIX,
                          result.pipe_bytes_read);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_PIPE_WRITTEN_BYTES_PREFIX,
                          result.pipe_bytes_written);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_FILE_READ_BYTES_PREFIX,
                          result.file_system_bytes_read);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_FILE_WRITTEN_BYTES_PREFIX,
                          result.file_system_bytes_written);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CONSOLE_READ_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_CONSOLE_READ_BYTES_PREFIX,
                          result.console_bytes_read);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_CONSOLE_WRITTEN_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_CONSOLE_WRITTEN_BYTES_PREFIX,
                          result.console_bytes_written);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_TERMINATED_MESSAGE);
 
     if (!IsExpectedProcessExecutionResult(result)) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
     }
 }
@@ -1688,13 +1669,13 @@ ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
                OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT;
 }
 
-void ExecuteRequiredProcesses(const SerialPort &serial_port,
+void ExecuteRequiredProcesses(const VgaTextConsole &vga_console,
                               const UserProgramSelection selection) noexcept {
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RING3_ENTER_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_RING3_ENTER_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_SCHEDULER_STARTED_MESSAGE);
     const ProcessRuntimeStatus runtime_status = ExecuteProcesses();
     if (runtime_status != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(runtime_status));
         HaltProcessor();
     }
@@ -1750,248 +1731,248 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
         file_table_installation_count += file_table.successful_installation_count;
         file_table_close_count += file_table.successful_close_count;
     }
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_CREATED_PROCESS_COUNT_PREFIX,
                          statistics.scheduler.created_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_TERMINATED_PROCESS_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_TERMINATED_PROCESS_COUNT_PREFIX,
                          statistics.scheduler.reaped_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_TIMER_TICK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_TIMER_TICK_COUNT_PREFIX,
                          statistics.scheduler.timer_tick_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_PREEMPTION_COUNT_PREFIX,
                          statistics.scheduler.preemption_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_DISPATCH_COUNT_PREFIX,
                          statistics.scheduler.dispatch_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_BLOCK_COUNT_PREFIX,
                          statistics.scheduler.block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_WAKEUP_COUNT_PREFIX,
                          statistics.scheduler.wake_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_STOPPED_PROCESS_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_STOPPED_PROCESS_COUNT_PREFIX,
                          statistics.scheduler.stopped_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PROCESS_STOP_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_PROCESS_STOP_COUNT_PREFIX,
                          statistics.scheduler.process_stop_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PROCESS_CONTINUE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_PROCESS_CONTINUE_COUNT_PREFIX,
                          statistics.scheduler.process_continue_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_ACTIVE_DEADLINE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_ACTIVE_DEADLINE_COUNT_PREFIX,
                          statistics.scheduler.active_deadline_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_PEAK_DEADLINE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_PEAK_DEADLINE_COUNT_PREFIX,
                          statistics.scheduler.peak_deadline_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_SCHEDULE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_SCHEDULE_COUNT_PREFIX,
                          statistics.scheduler.deadline_schedule_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_EXPIRATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_EXPIRATION_COUNT_PREFIX,
                          statistics.scheduler.deadline_expiration_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_CANCELLATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SCHEDULER_DEADLINE_CANCELLATION_COUNT_PREFIX,
                          statistics.scheduler.deadline_cancellation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FUTEX_TIMEOUT_OPERATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FUTEX_TIMEOUT_OPERATION_COUNT_PREFIX,
                          statistics.private_futexes.timeout_operation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_QUEUED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_QUEUED_COUNT_PREFIX,
                          statistics.signals.queued_signal_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_COALESCED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_COALESCED_COUNT_PREFIX,
                          statistics.signals.coalesced_signal_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_IGNORED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_IGNORED_COUNT_PREFIX,
                          statistics.signals.ignored_signal_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_HANDLER_DELIVERY_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_HANDLER_DELIVERY_COUNT_PREFIX,
                          statistics.signals.handler_delivery_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_TERMINATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_DEFAULT_TERMINATION_COUNT_PREFIX,
                          statistics.signals.default_termination_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_STOP_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_DEFAULT_STOP_COUNT_PREFIX,
                          statistics.signals.default_stop_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_DEFAULT_CONTINUE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_DEFAULT_CONTINUE_COUNT_PREFIX,
                          statistics.signals.default_continue_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_GROUP_SEND_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_GROUP_SEND_COUNT_PREFIX,
                          statistics.signals.process_group_send_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_INTERRUPTED_WAIT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_INTERRUPTED_WAIT_COUNT_PREFIX,
                          statistics.signals.interrupted_wait_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_RESTARTED_WAIT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_RESTARTED_WAIT_COUNT_PREFIX,
                          statistics.signals.restarted_wait_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SIGNAL_REJECTED_FRAME_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SIGNAL_REJECTED_FRAME_COUNT_PREFIX,
                          statistics.signals.rejected_frame_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_SAVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_SAVE_COUNT_PREFIX,
                          statistics.extended_state.save_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_EXTENDED_STATE_RESTORE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_EXTENDED_STATE_RESTORE_COUNT_PREFIX,
                          statistics.extended_state.restore_count);
     const CpuLocalStatistics cpu_local_statistics = GetCpuLocal().Statistics();
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_CURRENT_THREAD_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_CURRENT_THREAD_PREFIX,
                          cpu_local_statistics.current_thread_index);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_INTERRUPT_DEPTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_INTERRUPT_DEPTH_PREFIX,
                          cpu_local_statistics.interrupt_depth);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_MAXIMUM_INTERRUPT_DEPTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_MAXIMUM_INTERRUPT_DEPTH_PREFIX,
                          cpu_local_statistics.maximum_interrupt_depth);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_PREEMPTION_DEPTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_PREEMPTION_DEPTH_PREFIX,
                          cpu_local_statistics.preemption_disable_depth);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_MAXIMUM_PREEMPTION_DEPTH_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_MAXIMUM_PREEMPTION_DEPTH_PREFIX,
                          cpu_local_statistics.maximum_preemption_disable_depth);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CPU_LOCAL_NEED_RESCHEDULE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CPU_LOCAL_NEED_RESCHEDULE_PREFIX,
                          cpu_local_statistics.need_reschedule);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_LEGACY_SYSTEM_CALL_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_LEGACY_SYSTEM_CALL_COUNT_PREFIX,
                          cpu_local_statistics.legacy_system_call_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NATIVE_SYSTEM_CALL_COUNT_PREFIX,
                          cpu_local_statistics.native_system_call_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SYSTEM_CALL_INTERRUPT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SYSTEM_CALL_INTERRUPT_COUNT_PREFIX,
                          cpu_local_statistics.interrupt_during_system_call_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SYSTEM_CALL_RETURN_RESCHEDULE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SYSTEM_CALL_RETURN_RESCHEDULE_COUNT_PREFIX,
                          cpu_local_statistics.return_reschedule_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SYSTEM_RETURN_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SYSTEM_RETURN_COUNT_PREFIX,
                          cpu_local_statistics.system_return_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_INTERRUPT_RETURN_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_INTERRUPT_RETURN_COUNT_PREFIX,
                          cpu_local_statistics.interrupt_return_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_NATIVE_INTERRUPT_RETURN_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NATIVE_INTERRUPT_RETURN_COUNT_PREFIX,
                          cpu_local_statistics.native_interrupt_return_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_REJECTED_USER_RETURN_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_REJECTED_USER_RETURN_COUNT_PREFIX,
                          cpu_local_statistics.rejected_return_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TRUSTED_STACK_VALIDATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TRUSTED_STACK_VALIDATION_COUNT_PREFIX,
                          cpu_local_statistics.trusted_stack_validation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIPE_CAPACITY_PREFIX,
                          OS_KERNEL_PIPE_CAPACITY_BYTES);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_WRITTEN_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIPE_WRITTEN_BYTES_PREFIX,
                          statistics.ipc.pipe.bytes_written);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_READ_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIPE_READ_BYTES_PREFIX,
                          statistics.ipc.pipe.bytes_read);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIPE_READER_BLOCK_COUNT_PREFIX,
                          statistics.ipc.reader_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIPE_WRITER_BLOCK_COUNT_PREFIX,
                          statistics.ipc.writer_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PIPE_END_OF_FILE_COUNT_PREFIX,
                          statistics.ipc.end_of_file_observation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_PREFIX,
                          statistics.ipc.dynamic_pipes.capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DYNAMIC_PIPE_ACTIVE_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.active_pipe_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_PEAK_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DYNAMIC_PIPE_PEAK_ACTIVE_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.peak_active_pipe_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_CREATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DYNAMIC_PIPE_CREATION_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.creation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DYNAMIC_PIPE_RELEASE_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.release_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_REJECTION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_DYNAMIC_PIPE_CAPACITY_REJECTION_COUNT_PREFIX,
                          statistics.ipc.dynamic_pipes.capacity_rejection_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CONSOLE_SUBMITTED_BYTES_PREFIX,
                          statistics.terminal.submitted_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CONSOLE_READ_BYTES_PREFIX,
                          statistics.terminal.read_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CONSOLE_DROPPED_BYTES_PREFIX,
                          statistics.terminal.dropped_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_CONSUMED_BYTE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_CONSUMED_BYTE_COUNT_PREFIX,
                          statistics.terminal.consumed_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_CONSOLE_BUFFERED_BYTES_PREFIX,
                          statistics.terminal.buffered_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_COMMITTED_LINE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_COMMITTED_LINE_COUNT_PREFIX,
                          statistics.terminal.committed_line_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_EDITING_BYTE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_EDITING_BYTE_COUNT_PREFIX,
                          statistics.terminal.editing_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_INTERRUPT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_INTERRUPT_COUNT_PREFIX,
                          statistics.terminal.interrupt_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_STOP_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_STOP_COUNT_PREFIX,
                          statistics.terminal.stop_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_OUTPUT_QUEUED_BYTE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_OUTPUT_QUEUED_BYTE_COUNT_PREFIX,
                          statistics.terminal.output_queued_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_OUTPUT_WRITTEN_BYTE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_OUTPUT_WRITTEN_BYTE_COUNT_PREFIX,
                          statistics.terminal.output_written_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_OUTPUT_PENDING_BYTE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_OUTPUT_PENDING_BYTE_COUNT_PREFIX,
                          statistics.terminal.output_pending_byte_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_TERMINAL_FOREGROUND_CHANGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TERMINAL_FOREGROUND_CHANGE_COUNT_PREFIX,
                          statistics.terminal.foreground_change_count);
-    WriteRequiredHexLine(serial_port,
+    WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_TERMINAL_BACKGROUND_READ_REJECTION_COUNT_PREFIX,
                          statistics.terminal.rejected_background_read_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OBJECT_ACTIVE_COUNT_PREFIX,
                          statistics.object_manager.active_object_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_ACTIVE_REFERENCE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OBJECT_ACTIVE_REFERENCE_COUNT_PREFIX,
                          statistics.object_manager.active_strong_reference_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_CREATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OBJECT_CREATION_COUNT_PREFIX,
                          statistics.object_manager.successful_creation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_DESTRUCTION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OBJECT_DESTRUCTION_COUNT_PREFIX,
                          statistics.object_manager.destruction_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_OBJECT_PEAK_REFERENCE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OBJECT_PEAK_REFERENCE_COUNT_PREFIX,
                          statistics.object_manager.peak_strong_reference_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_DESCRIPTION_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_DESCRIPTION_ACTIVE_COUNT_PREFIX,
                          statistics.object_manager.active_file_description_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_DESCRIPTION_FINALIZATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_DESCRIPTION_FINALIZATION_COUNT_PREFIX,
                          statistics.file_descriptions.successful_finalization_count);
-    WriteRequiredHexLine(serial_port,
+    WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_FILE_DESCRIPTION_FAILED_FINALIZATION_COUNT_PREFIX,
                          statistics.file_descriptions.failed_finalization_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_HARD_LIMIT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_TABLE_HARD_LIMIT_PREFIX,
                          statistics.file_tables[OS_KERNEL_MAIN_FIRST_PROCESS_INDEX].hard_limit);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_PEAK_DESCRIPTOR_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_TABLE_PEAK_DESCRIPTOR_COUNT_PREFIX,
                          file_table_peak_descriptor_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_CHUNK_ALLOCATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_TABLE_CHUNK_ALLOCATION_COUNT_PREFIX,
                          file_table_chunk_allocation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_CHUNK_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_TABLE_CHUNK_RELEASE_COUNT_PREFIX,
                          file_table_chunk_release_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_INSTALLATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_TABLE_INSTALLATION_COUNT_PREFIX,
                          file_table_installation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_FILE_TABLE_CLOSE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_TABLE_CLOSE_COUNT_PREFIX,
                          file_table_close_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_DESCRIPTOR_CAPACITY_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VMA_DESCRIPTOR_CAPACITY_PREFIX,
                          statistics.virtual_memory_areas_after_processes.capacity);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_ACTIVE_DESCRIPTOR_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VMA_ACTIVE_DESCRIPTOR_COUNT_PREFIX,
                          statistics.virtual_memory_areas_after_processes.active_descriptor_count);
     WriteRequiredHexLine(
-        serial_port, OS_KERNEL_MAIN_VMA_PEAK_DESCRIPTOR_COUNT_PREFIX,
+        vga_console, OS_KERNEL_MAIN_VMA_PEAK_DESCRIPTOR_COUNT_PREFIX,
         statistics.virtual_memory_areas_after_processes.peak_active_descriptor_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_ACQUIRE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VMA_ACQUIRE_COUNT_PREFIX,
                          statistics.virtual_memory_areas_after_processes.successful_acquire_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_VMA_RELEASE_COUNT_PREFIX,
                          statistics.virtual_memory_areas_after_processes.release_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_ENTRY_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_ENTRY_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.active_entry_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_ACTIVE_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.active_reference_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_PEAK_ENTRY_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_PEAK_ENTRY_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.peak_active_entry_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_FIRST_SHARE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_FIRST_SHARE_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.first_share_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RETAIN_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RETAIN_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.retain_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.release_count);
-    WriteRequiredHexLine(serial_port,
+    WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.exclusive_restore_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.active_stack_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.successful_creation_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_DESTRUCTION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_DESTRUCTION_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.destruction_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_PEAK_ACTIVE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_PEAK_ACTIVE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.peak_active_stack_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_PEAK_MAPPED_PAGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_PEAK_MAPPED_PAGE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.peak_active_mapped_page_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_REGISTERED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_REGISTERED_COUNT_PREFIX,
                          statistics.process_tree.registered_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_EXITED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_EXITED_COUNT_PREFIX,
                          statistics.process_tree.exited_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_COLLECTED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_COLLECTED_COUNT_PREFIX,
                          statistics.process_tree.collected_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_REPARENTED_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_REPARENTED_COUNT_PREFIX,
                          statistics.process_tree.reparented_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_ZOMBIE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_ZOMBIE_COUNT_PREFIX,
                          statistics.process_tree.zombie_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_SUCCESS_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_SUCCESS_COUNT_PREFIX,
                          statistics.process_tree.wait_success_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_BLOCK_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_BLOCK_COUNT_PREFIX,
                          statistics.process_tree.wait_block_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_NO_CHILD_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_WAIT_NO_CHILD_COUNT_PREFIX,
                          statistics.process_tree.wait_no_child_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_STOPPED_EVENT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_STOPPED_EVENT_COUNT_PREFIX,
                          statistics.process_tree.stopped_event_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_CONTINUED_EVENT_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_CONTINUED_EVENT_COUNT_PREFIX,
                          statistics.process_tree.continued_event_count);
-    WriteRequiredHexLine(serial_port,
+    WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_PROCESS_TREE_OBSERVED_STOPPED_EVENT_COUNT_PREFIX,
                          statistics.process_tree.observed_stopped_event_count);
-    WriteRequiredHexLine(serial_port,
+    WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_PROCESS_TREE_OBSERVED_CONTINUED_EVENT_COUNT_PREFIX,
                          statistics.process_tree.observed_continued_event_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_COUNT_PREFIX,
                          statistics.job_control.active_process_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_SESSION_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_SESSION_COUNT_PREFIX,
                          statistics.job_control.active_session_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_GROUP_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_JOB_CONTROL_ACTIVE_PROCESS_GROUP_COUNT_PREFIX,
                          statistics.job_control.active_process_group_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_SESSION_CREATE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_JOB_CONTROL_SESSION_CREATE_COUNT_PREFIX,
                          statistics.job_control.session_create_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_JOB_CONTROL_PROCESS_GROUP_CHANGE_COUNT_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_JOB_CONTROL_PROCESS_GROUP_CHANGE_COUNT_PREFIX,
                          statistics.job_control.process_group_change_count);
     const bool process_tree_state_valid =
         statistics.process_tree.active_process_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
@@ -2092,84 +2073,86 @@ void ExecuteRequiredProcesses(const SerialPort &serial_port,
          statistics.terminal.buffered_byte_count == OS_KERNEL_MAIN_EXPECTED_EMPTY_PIPE_BYTE_COUNT);
     const bool process_resources_valid = ProcessResourcesWereReclaimed(
         statistics, expected_process_count, expected_virtual_address_lifecycle_count);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_RUNTIME_STATE_VALIDATION_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_RUNTIME_STATE_VALIDATION_PREFIX,
                          runtime_state_valid ? OS_KERNEL_MAIN_VALIDATION_PASSED
                                              : OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_SMOKE_STATE_VALIDATION_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SMOKE_STATE_VALIDATION_PREFIX,
                          smoke_state_valid ? OS_KERNEL_MAIN_VALIDATION_PASSED
                                            : OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT);
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_PROCESS_RESOURCE_VALIDATION_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_PROCESS_RESOURCE_VALIDATION_PREFIX,
                          process_resources_valid ? OS_KERNEL_MAIN_VALIDATION_PASSED
                                                  : OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT);
 
     if (!runtime_state_valid || !smoke_state_valid || !process_resources_valid) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE);
         HaltProcessor();
     }
 
     if (!normal_execution) {
-        WriteProcessExecutionResult(serial_port,
+        WriteProcessExecutionResult(vga_console,
                                     statistics.processes[OS_KERNEL_MAIN_FIRST_PROCESS_INDEX]);
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_TREE_VALID_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KERNEL_STACK_RESOURCES_RECLAIMED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
-    WriteRequiredMessage(serial_port,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PROCESS_TREE_VALID_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_RESOURCES_RECLAIMED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PROCESS_RESOURCES_RECLAIMED_MESSAGE);
+    WriteRequiredMessage(vga_console,
                          OS_KERNEL_MAIN_RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_USER_RETURNED_TO_KERNEL_MESSAGE);
 }
 
-void WriteKeyboardEvent(const SerialPort &serial_port, const KeyboardEvent &event) noexcept {
-    WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_KEYBOARD_SCAN_CODE_PREFIX, event.scan_code);
+void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &event) noexcept {
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KEYBOARD_SCAN_CODE_PREFIX, event.scan_code);
     if (event.key == KeyboardKey::A && event.pressed) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KEYBOARD_A_PRESSED_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KEYBOARD_A_PRESSED_MESSAGE);
         return;
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_KEYBOARD_SUPPORTED_EVENT_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KEYBOARD_SUPPORTED_EVENT_MESSAGE);
 }
 
-[[noreturn]] void RunKernelEventLoop(const SerialPort &serial_port) noexcept {
+[[noreturn]] void RunKernelEventLoop(const VgaTextConsole &vga_console) noexcept {
     while (true) {
         WaitForInterrupt();
         KeyboardEvent event{};
         if (TryTakeKeyboardEvent(event)) {
-            WriteKeyboardEvent(serial_port, event);
+            WriteKeyboardEvent(vga_console, event);
         }
     }
 }
 
-[[noreturn]] void ExecuteFaultInjection(const SerialPort &serial_port,
+[[noreturn]] void ExecuteFaultInjection(const VgaTextConsole &vga_console,
                                         const KernelFaultInjection fault_injection) noexcept {
     if (fault_injection == KernelFaultInjection::InvalidOpcode) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_INVALID_OPCODE_INJECTION_MESSAGE);
         TriggerInvalidOpcode();
     }
     if (fault_injection == KernelFaultInjection::WriteProtection) {
-        WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_WRITE_PROTECTION_INJECTION_MESSAGE);
         TriggerWriteProtectionFault(OS_KERNEL_MEMORY_WRITE_PROTECTION_TEST_VIRTUAL_ADDRESS);
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE);
     TriggerPageFault();
 }
 }
 
 [[noreturn]] void RunKernel(const BootInfo *boot_info, const KernelFaultInjection fault_injection,
                             const UserProgramSelection user_program_selection) noexcept {
-    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
-    serial_port.Initialize();
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_ENTERED_MESSAGE);
+    const VgaTextConsole vga_console{VgaTextConsole::Hardware(WritePort8)};
+    if (!vga_console.Initialize()) {
+        HaltProcessor();
+    }
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ENTERED_MESSAGE);
 
-    ValidateBootEnvironment(serial_port, boot_info);
-    InitializeKernelArchitecture(serial_port, *boot_info);
-    InitializeKernelMemorySubsystem(serial_port, *boot_info);
+    ValidateBootEnvironment(vga_console, boot_info);
+    InitializeKernelArchitecture(vga_console, *boot_info);
+    InitializeKernelMemorySubsystem(vga_console, *boot_info);
 
     if (fault_injection != KernelFaultInjection::None) {
-        ExecuteFaultInjection(serial_port, fault_injection);
+        ExecuteFaultInjection(vga_console, fault_injection);
     }
 
-    PrepareRequiredProcesses(serial_port, user_program_selection);
-    InitializeKernelDevices(serial_port);
+    PrepareRequiredProcesses(vga_console, user_program_selection);
+    InitializeKernelDevices(vga_console);
     AtaPioDevice file_system_device{};
     // rootfs 含全盘校验工作区，必须驻留 BSS，不能消耗有界内核栈。
     static fs::RootFileSystem file_system{};
@@ -2178,33 +2161,35 @@ void WriteKeyboardEvent(const SerialPort &serial_port, const KeyboardEvent &even
     fs::Procfs procfs{};
     KernelProcfsContext procfs_context{};
     fs::Vfs vfs{};
-    static fs::DevfsDevice
-        devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
+    static fs::DevfsDevice devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
-    InitializeKernelFileSystem(serial_port, file_system, file_system_device);
-    InitializeKernelVfs(
-        serial_port, file_system, memfs, devfs, procfs, procfs_context, vfs,
-        devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
-        OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
+    InitializeKernelFileSystem(vga_console, file_system, file_system_device);
+    InitializeKernelVfs(vga_console, file_system, memfs, devfs, procfs, procfs_context, vfs,
+                        devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
+                        OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
     if (AttachProcessVfs(vfs) != ProcessRuntimeStatus::Succeeded) {
-        WriteRequiredHexLine(serial_port, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
         HaltProcessor();
     }
     if (user_program_selection == UserProgramSelection::Smoke) {
-        CreateInitialDiskProcess(serial_port);
+        CreateInitialDiskProcess(vga_console);
     }
-    ExecuteRequiredProcesses(serial_port, user_program_selection);
-    FinalizeKernelFileSystem(serial_port, file_system, vfs, memfs,
-                             user_program_selection == UserProgramSelection::Smoke);
-
-    if (!serial_port.TryWriteHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
-                                     boot_info->kernel_file_size_bytes) ||
-        !serial_port.TryWriteHexLine(OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX,
-                                     boot_info->kernel_load_segment_count)) {
+    if (!vga_console.ActivateTerminal() ||
+        !vga_console.TryWriteTerminalString(OS_KERNEL_MAIN_TERMINAL_BANNER)) {
         HaltProcessor();
     }
-    WriteRequiredMessage(serial_port, OS_KERNEL_MAIN_READY_MESSAGE);
-    RunKernelEventLoop(serial_port);
+    ExecuteRequiredProcesses(vga_console, user_program_selection);
+    FinalizeKernelFileSystem(vga_console, file_system, vfs, memfs,
+                             user_program_selection == UserProgramSelection::Smoke);
+
+    if (!vga_console.TryWriteDiagnosticHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
+                                               boot_info->kernel_file_size_bytes) ||
+        !vga_console.TryWriteDiagnosticHexLine(OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX,
+                                               boot_info->kernel_load_segment_count)) {
+        HaltProcessor();
+    }
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_READY_MESSAGE);
+    RunKernelEventLoop(vga_console);
 }
 }

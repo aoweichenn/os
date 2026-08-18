@@ -219,11 +219,35 @@ v2.0 仍是单处理器内核，但“单核”不等于可以忽略资源生命
 dentry cache、writable shared mapping、swap 和 OOM killer 同样延后，避免
 在 v2.0 主线中引入尚无独立验收闭环的并发状态。
 
+## 当前 VGA 前台与内存日志
+
+当前启动链不再向 COM1 输出。QEMU 显式提供标准 VGA 设备，ROM 自行编程
+`0x3C0..0x3DF` 寄存器、装载 8×16 字形并清空 `0xB8000` 的 80×25 文本页。
+Firmware、Stage 1 的 16/32/64 位路径和 Kernel 共用以下低端 RAM 状态与
+输出路由：
+
+```text
+0x00020000  magic "OSVG"、版本 3、追加长度、溢出状态
+0x00020010  cursor row、cursor column、attribute、output mode
+0x00020020  追加式来宾系统日志与终端转录
+0x000A0000  验收区末端
+0x000B8000  当前可见的 VGA 文本页
+```
+
+`output_mode=0` 时启动诊断先追加日志再渲染，早期停机仍能在屏幕定位。Kernel
+准备运行用户环境时清空文本页、复位光标并最后提交 `output_mode=1`；此后普通
+Kernel 诊断只追加日志，TTY stdout/stderr 同时追加转录并渲染，panic 则忽略
+日志溢出对屏幕输出的影响。QEMU runner 通过 QMP `pmemsave` 读取追加区，完成
+顺序、禁止标记、计数和十六进制下界验收；交互式 runner 同时持续导出宿主
+日志文件。目标代码不调用 QMP，也不依赖 QEMU 专用调试端口；
+`0x20000..0x9FFFF` 由既有低 1 MiB 平台保留区覆盖。
+
 ## v0.1 ROM 与复位路径
 
 ```text
 128 KiB ROM 文件偏移             x86 物理地址
 0x00000                         0xFFFE0000
+0x1E000  VGA 字形              0xFFFFE000
 0x1F000  16 位入口              0xFFFFF000
 0x1FFF0  E9 0D F0              0xFFFFFFF0  ← CPU 复位取指
 0x1FFFF                         0xFFFFFFFF
@@ -1862,15 +1886,18 @@ source/foundation/
 
 source/firmware/
 ├── CMakeLists.txt
+├── include/
+│   └── font8x8_basic.inc
 ├── linker/
 │   └── rom.ld
 └── src/
-    └── reset_and_serial.asm
+    └── reset_and_vga.asm
 
 source/boot/stage1/
 ├── CMakeLists.txt
 ├── include/
-│   └── kernel_loader.inc
+│   ├── kernel_loader.inc
+│   └── vga_console.inc
 └── src/
     ├── entry.asm
     ├── kernel_loader.asm

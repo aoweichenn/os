@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.28)
 
 project(
     x86_64_os_lab
-    VERSION 2.0.0
+    VERSION 2.1.0
     DESCRIPTION "从复位向量开始实现的 x86-64 教学操作系统"
     LANGUAGES CXX
 )
@@ -31,7 +31,7 @@ add_subdirectory(source/user)
 add_subdirectory(source/kernel)
 
 set(OS_FIRMWARE_IMAGE_SIZE_BYTES 131072)
-set(OS_DISK_IMAGE_SIZE_BYTES 1073741824)
+set(OS_DISK_IMAGE_SIZE_BYTES 137438953472)
 set(OS_IMAGE_SIZE_MISMATCH_INCREMENT 1)
 math(
     EXPR
@@ -52,8 +52,8 @@ set(
     "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware.bin"
 )
 set(
-    OS_FIRMWARE_SERIAL_FAILURE_IMAGE
-    "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware_serial_failure.bin"
+    OS_FIRMWARE_VGA_FAILURE_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware_vga_failure.bin"
 )
 set(
     OS_FIRMWARE_IDE_BUSY_FAILURE_IMAGE
@@ -150,7 +150,7 @@ add_custom_target(
     ALL
     DEPENDS
         os_firmware
-        os_firmware_serial_failure
+        os_firmware_vga_failure
         os_firmware_ide_busy_failure
         os_firmware_ide_error_failure
         os_stage1_images

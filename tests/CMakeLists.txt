@@ -592,6 +592,11 @@ os_add_kernel_device_test(
     "unit"
 )
 os_add_kernel_device_test(
+    os_kernel_vga_text_console_unit_tests
+    unit/kernel/vga_text_console_test.cpp
+    "unit"
+)
+os_add_kernel_device_test(
     os_kernel_device_bootstrap_integration_tests
     integration/boot/kernel_device_bootstrap_test.cpp
     "integration"
@@ -1397,8 +1402,8 @@ set_tests_properties(
 
 set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
-set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 65536)
-set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 40)
+set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 32768)
+set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 45)
 set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 130)
 set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 250)
 set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 100)
@@ -1510,20 +1515,20 @@ set_tests_properties(
 )
 
 add_test(
-    NAME os_qemu_firmware_serial_timeout_failure
+    NAME os_qemu_firmware_vga_initialization_failure
     COMMAND
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         qemu-firmware
-        "${OS_FIRMWARE_SERIAL_FAILURE_IMAGE}"
+        "${OS_FIRMWARE_VGA_FAILURE_IMAGE}"
         "${OS_BOOT_DISK_IMAGE}"
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --expected-outcome
-        serial-failure
+        vga-failure
 )
 set_tests_properties(
-    os_qemu_firmware_serial_timeout_failure
+    os_qemu_firmware_vga_initialization_failure
     PROPERTIES
         LABELS "system;failure-path"
         TIMEOUT 10
@@ -1851,7 +1856,7 @@ set_tests_properties(
 
 set(OS_TEST_QEMU_RESOURCE_LOCK_NAME os_qemu_system_x86_64)
 set(
-    OS_TEST_QEMU_SERIAL_TEST_NAMES
+    OS_TEST_QEMU_VGA_TEST_NAMES
     os_qemu_hardware_smoke
     os_qemu_rejects_invalid_image_size
     os_qemu_bootstrap_smoke
@@ -1859,7 +1864,7 @@ set(
     os_qemu_native_system_call_unsupported
     os_qemu_stage1_load_success
     os_qemu_file_system_persistence
-    os_qemu_firmware_serial_timeout_failure
+    os_qemu_firmware_vga_initialization_failure
     os_qemu_firmware_ide_busy_timeout_failure
     os_qemu_firmware_ide_error_failure
     os_qemu_stage1_header_failure
@@ -1878,7 +1883,7 @@ set(
     os_qemu_user_invalid_elf_rejection
 )
 set_tests_properties(
-    ${OS_TEST_QEMU_SERIAL_TEST_NAMES}
+    ${OS_TEST_QEMU_VGA_TEST_NAMES}
     PROPERTIES
         RESOURCE_LOCK "${OS_TEST_QEMU_RESOURCE_LOCK_NAME}"
 )

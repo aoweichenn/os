@@ -306,8 +306,8 @@ ctest --preset developer -L system --output-on-failure
 
 ```text
 reset vector
-  source/firmware/src/reset_and_serial.asm
-    ├─ 初始化段、栈、COM1、PIT
+  source/firmware/src/reset_and_vga.asm
+    ├─ 初始化段、栈、VGA、PIT
     ├─ 读取并验证 Stage 1 描述符与负载
     └─ far return 到 0000:8000
 
@@ -362,12 +362,12 @@ Ring 3
 | `source/foundation/**` | v0.0 | 地址范围、溢出安全与宿主/目标复用 |
 | 根 `CMakeLists.txt`、`CMakePresets.json`、`tools/os.py`、`tools/os_tools/**` | v0.0 | 工具链、构建编排、产物审计和 QEMU 自动化 |
 | `source/firmware/linker/rom.ld` | v0.1 | 128 KiB ROM VMA/LMA 与复位向量布局 |
-| `source/firmware/src/reset_and_serial.asm` | v0.1、v0.2 | 复位、COM1、PIT、ATA PIO 和 Stage 1 跳转 |
+| `source/firmware/src/reset_and_vga.asm` | 当前主线；历史源于 v0.1、v0.2 | 复位、VGA、PIT、ATA PIO 和 Stage 1 跳转 |
 | `source/boot/stage1/src/entry.asm` | v0.2、v0.3 | Stage 1 入口、A20、GDT、模式切换和临时页表 |
 | `source/boot/stage1/src/kernel_loader.asm`、`include/kernel_loader.inc` | v0.4 | Kernel 描述符、CRC32、ELF64 和 BootInfo |
 | `source/boot/stage1/src/memory_map.asm` | v0.6 | fw_cfg 目录、E820 转换、排序和边界验证 |
 | `source/kernel/linker/kernel.ld.in` | v0.4 | Kernel ELF 入口、三个 PT_LOAD 与 W^X |
-| `boot/boot_info.*`、`boot/entry.*`、`device/serial_port.*`、`core/freestanding_memory.*` | v0.4 | 首次 C++ Kernel 交接和最小运行时 |
+| `boot/boot_info.*`、`boot/entry.*`、`device/vga_text_console.*`、`core/freestanding_memory.*` | v0.4 历史起点、当前 VGA 后端 | C++ Kernel 交接、VGA 控制台和最小运行时 |
 | `arch/descriptor_layout.*`、`descriptor_tables.*`、`exception_frame.*` | v0.5 | GDT/TSS/IDT 编码与异常现场 |
 | `arch/architecture.asm`、`exceptions.*`、`panic.*` | v0.5 起 | 异常/IRQ/系统调用/调度汇编边界 |
 | `memory/physical_memory_map.*`、`physical_frame_allocator.*` | v0.6 | E820 规范化与页帧所有权 |

@@ -3,6 +3,8 @@ import unittest
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.firmware_audit import (
     OS_FIRMWARE_AUDIT_ENTRY_FILE_OFFSET,
+    OS_FIRMWARE_AUDIT_FONT_FILE_OFFSET,
+    OS_FIRMWARE_AUDIT_FONT_PREFIX,
     OS_FIRMWARE_AUDIT_NEAR_JUMP_OPCODE,
     OS_FIRMWARE_AUDIT_RESET_VECTOR_FILE_OFFSET,
     OS_FIRMWARE_AUDIT_ROM_SIZE_BYTES,
@@ -22,6 +24,10 @@ def createValidFirmwareImage() -> bytes:
         OS_FIRMWARE_AUDIT_ENTRY_FILE_OFFSET:
         OS_FIRMWARE_AUDIT_ENTRY_FILE_OFFSET + 2
     ] = bytes((0xFA, 0xFC))
+    firmwareImage[
+        OS_FIRMWARE_AUDIT_FONT_FILE_OFFSET:
+        OS_FIRMWARE_AUDIT_FONT_FILE_OFFSET + len(OS_FIRMWARE_AUDIT_FONT_PREFIX)
+    ] = OS_FIRMWARE_AUDIT_FONT_PREFIX
     resetVectorOffset = OS_FIRMWARE_AUDIT_RESET_VECTOR_FILE_OFFSET
     firmwareImage[resetVectorOffset] = (
         OS_FIRMWARE_AUDIT_NEAR_JUMP_OPCODE
@@ -72,6 +78,13 @@ class FirmwareAuditToolTests(unittest.TestCase):
     def testRejectsWrongEntryPrefix(self) -> None:
         firmwareImage = bytearray(createValidFirmwareImage())
         firmwareImage[OS_FIRMWARE_AUDIT_ENTRY_FILE_OFFSET] = 0x90
+
+        with self.assertRaises(OsToolError):
+            auditFirmwareImageBytes(bytes(firmwareImage))
+
+    def testRejectsWrongVgaFontPrefix(self) -> None:
+        firmwareImage = bytearray(createValidFirmwareImage())
+        firmwareImage[OS_FIRMWARE_AUDIT_FONT_FILE_OFFSET] = 0xFF
 
         with self.assertRaises(OsToolError):
             auditFirmwareImageBytes(bytes(firmwareImage))

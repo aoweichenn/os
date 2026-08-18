@@ -100,7 +100,7 @@ user 包装与程序    kernel 分发与校验
 | 68 | `SetTerminalForegroundGroup` | `RDI=PGID` | 成功 0 或错误 |
 | 69 | `WaitProcessEvent` | `RDI=PID`，`RSI=flags`，`RDX=结果地址`，`R10=56` | PID、would block 或错误 |
 
-错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 串口失败。
+错误值为 `-1` 非法用户内存、`-2` 未知编号、`-3` 写入过长、`-4` 设备失败。
 v0.10 又定义 `-5` would block、`-6` broken pipe、`-7` 端点权限、
 `-8` 端点已关闭、`-9` 无 Ready 后继、`-10` 非法参数和 `-11` 管道传输
 过长。所有值使用显式 `int64_t`；ABI 不使用与平台宽度相关的 `long`、

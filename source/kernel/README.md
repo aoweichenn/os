@@ -21,7 +21,7 @@ src/memory/page_table.cpp
 | `arch/` | x86-64 描述符表、异常/IRQ、CpuLocal、SYSCALL、处理器现场和 panic |
 | `boot/` | BootInfo 校验与 C ABI 内核入口 |
 | `core/` | Kernel 主流程和 freestanding 内存运行时 |
-| `device/` | 端口 I/O、串口、PIC、PIT、PS/2 与 ATA |
+| `device/` | 端口 I/O、VGA 控制台、PIC、PIT、PS/2 与 ATA |
 | `fs/` | 磁盘格式、块缓存和文件系统 |
 | `io/` | 控制台输入、共享 FileDescription 与动态 FileTable |
 | `ipc/` | 有界管道和端点生命周期 |
@@ -64,7 +64,7 @@ sync/spin_lock.*               acquire/release 与 irq-save 短临界区
 sync/mutex.*                   基于 WaitQueue 的可睡眠直接交接互斥
 ```
 
-`ThreadScheduler` 不允许依赖 `memory/`、`device/` 或串口；硬件切换只存在于
+`ThreadScheduler` 不允许依赖 `memory/`、`device/` 或 VGA 控制台；硬件切换只存在于
 `process_runtime.cpp`。`extended_state_layout.cpp` 不执行特权指令，因此
 宿主单元测试可以验证 CPUID 位和结构布局；`extended_state.cpp` 只进入
 freestanding Kernel 目标。新增执行机制时应保持这条“纯策略—目标机落实”
@@ -205,7 +205,7 @@ process/process_runtime.*     sleep/timed futex 与保存用户 frame 的结果
 user/system_calls.*           47..56 Thread/futex/time ABI 分发
 ```
 
-`time/` 纯模型不访问端口、IRQ、Process、用户地址或串口，可直接进入宿主测试。
+`time/` 纯模型不访问端口、IRQ、Process、用户地址或 VGA 控制台，可直接进入宿主测试。
 硬件周期只由 `arch/interrupt_runtime` 推进；等待对象和唯一 WakeReason 仍由
 ThreadScheduler 拥有。设计理由见
 [ADR 0040](../../docs/adr/0040-monotonic-clock-deadline-timed-wait.md)。

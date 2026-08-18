@@ -2,6 +2,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from tools.os_tools.boot_layout import OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES
 from tools.os_tools.errors import OsToolError
 from tools.os_tools.images import (
     OS_IMAGES_EMPTY_DISK_FILE_NAME,
@@ -44,6 +45,26 @@ class ImageToolTests(unittest.TestCase):
                     -1,
                     512,
                 )
+
+    def testCreatesReferenceDiskAsSparseFile(self) -> None:
+        with tempfile.TemporaryDirectory() as temporaryDirectory:
+            outputDirectory = Path(temporaryDirectory)
+            createEmptyImages(
+                outputDirectory,
+                0,
+                OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES,
+            )
+            diskPath = outputDirectory / OS_IMAGES_EMPTY_DISK_FILE_NAME
+            diskStatistics = diskPath.stat()
+
+            self.assertEqual(
+                diskStatistics.st_size,
+                OS_BOOT_LAYOUT_REFERENCE_DISK_SIZE_BYTES,
+            )
+            self.assertLess(
+                diskStatistics.st_blocks * 512,
+                1024 * 1024,
+            )
 
 
 if __name__ == "__main__":

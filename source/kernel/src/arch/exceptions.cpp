@@ -2,8 +2,9 @@
 
 #include "os/kernel/arch/panic.hpp"
 #include "os/kernel/arch/processor.hpp"
-#include "os/kernel/device/serial_port.hpp"
 #include "os/kernel/process/process_runtime.hpp"
+#include <os/kernel/device/port_io.hpp>
+#include <os/kernel/device/vga_text_console.hpp>
 
 namespace os::kernel {
 
@@ -16,8 +17,8 @@ constexpr char OS_KERNEL_EXCEPTION_BREAKPOINT_HANDLED_MESSAGE[] =
     "[OS][KERNEL] BREAKPOINT_HANDLED\r\n";
 
 void WriteBreakpointHandled() noexcept {
-    const SerialPort serial_port{OS_KERNEL_SERIAL_COM1_BASE_PORT};
-    if (!serial_port.TryWriteString(OS_KERNEL_EXCEPTION_BREAKPOINT_HANDLED_MESSAGE)) {
+    const VgaTextConsole vga_console{VgaTextConsole::Hardware(WritePort8)};
+    if (!vga_console.TryWriteDiagnosticString(OS_KERNEL_EXCEPTION_BREAKPOINT_HANDLED_MESSAGE)) {
         HaltProcessor();
     }
 }

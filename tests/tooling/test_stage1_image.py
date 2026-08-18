@@ -128,6 +128,14 @@ class Stage1ImageToolTests(unittest.TestCase):
                 loadSegment=0x0100,
             )
 
+    def testRejectsLoadRangeOverlappingVgaState(self) -> None:
+        with self.assertRaisesRegex(OsToolError, "VGA 共享状态"):
+            createStage1DiskImageBytes(
+                OS_TEST_STAGE1_BINARY,
+                OS_TEST_STAGE1_DISK_SIZE_BYTES,
+                loadSegment=0x8000,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

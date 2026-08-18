@@ -34,7 +34,7 @@ set(
     include/os/kernel/device/port_io.hpp
     include/os/kernel/device/programmable_interval_timer.hpp
     include/os/kernel/device/ps2_keyboard.hpp
-    include/os/kernel/device/serial_port.hpp
+    include/os/kernel/device/vga_text_console.hpp
 )
 set(
     OS_KERNEL_FILE_SYSTEM_HEADERS
@@ -163,7 +163,7 @@ set(
     src/device/port_io.cpp
     src/device/programmable_interval_timer.cpp
     src/device/ps2_keyboard.cpp
-    src/device/serial_port.cpp
+    src/device/vga_text_console.cpp
 )
 set(
     OS_KERNEL_FILE_SYSTEM_SOURCES
@@ -354,8 +354,10 @@ add_library(
     STATIC
         src/device/block_request.cpp
         src/device/device_model.cpp
+        src/device/vga_text_console.cpp
         include/os/kernel/device/block_request.hpp
         include/os/kernel/device/device_model.hpp
+        include/os/kernel/device/vga_text_console.hpp
 )
 
 add_library(
