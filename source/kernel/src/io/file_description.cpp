@@ -152,72 +152,56 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
     fs::NodeInformation information{};
     if (IsVfsBackedKind(storage.kind) &&
         (storage.vfs == nullptr ||
-         storage.vfs->StatOpenFile(storage.open_file, information) !=
-             fs::Status::Succeeded)) {
+         storage.vfs->StatOpenFile(storage.open_file, information) != fs::Status::Succeeded)) {
         return FileDescriptionStatus::FileSystemFailure;
     }
     snapshot = FileDescriptionSnapshot{
         .kind = storage.kind,
         .file_status_flags = storage.file_status_flags,
-        .offset_bytes = IsVfsBackedKind(storage.kind)
-                            ? storage.open_file.offset_bytes
-                            : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .offset_bytes = IsVfsBackedKind(storage.kind) ? storage.open_file.offset_bytes
+                                                      : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .generation = identity.generation,
         .strong_reference_count = identity.strong_reference_count,
-        .superblock_identifier =
-            IsVfsBackedKind(storage.kind)
-                ? storage.open_file.path.vnode.superblock->identifier
-                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
-        .superblock_generation =
-            IsVfsBackedKind(storage.kind)
-                ? storage.open_file.path.vnode.superblock->generation
-                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
-        .node_identifier =
-            IsVfsBackedKind(storage.kind)
-                ? storage.open_file.path.vnode.identifier
-                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
-        .node_generation =
-            IsVfsBackedKind(storage.kind)
-                ? storage.open_file.path.vnode.generation
-                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
-        .size_bytes =
-            IsVfsBackedKind(storage.kind)
-                ? information.size_bytes
-                : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .superblock_identifier = IsVfsBackedKind(storage.kind)
+                                     ? storage.open_file.path.vnode.superblock->identifier
+                                     : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .superblock_generation = IsVfsBackedKind(storage.kind)
+                                     ? storage.open_file.path.vnode.superblock->generation
+                                     : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .node_identifier = IsVfsBackedKind(storage.kind) ? storage.open_file.path.vnode.identifier
+                                                         : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .node_generation = IsVfsBackedKind(storage.kind) ? storage.open_file.path.vnode.generation
+                                                         : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .size_bytes = IsVfsBackedKind(storage.kind) ? information.size_bytes
+                                                    : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
     };
     return FileDescriptionStatus::Succeeded;
 }
 
-FileDescriptionStatus FileDescriptionManager::RetainRegularFile(
-    const KernelObjectReference &reference,
-    RetainedRegularFile &retained_file) noexcept {
+FileDescriptionStatus
+FileDescriptionManager::RetainRegularFile(const KernelObjectReference &reference,
+                                          RetainedRegularFile &retained_file) noexcept {
     retained_file = RetainedRegularFile{};
     if (!this->initialized_ || this->object_manager_ == nullptr) {
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
     SpinLock *operation_lock = nullptr;
-    const KernelObjectStatus payload_status =
-        this->object_manager_->TryGetPayload(
-            reference, KernelObjectType::FileDescription, payload,
-            operation_lock);
-    if (payload_status != KernelObjectStatus::Succeeded ||
-        payload == nullptr || operation_lock == nullptr) {
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
     SpinLockGuard guard{*operation_lock};
-    const FileDescriptionStorage &storage =
-        *static_cast<const FileDescriptionStorage *>(payload);
-    if (storage.kind != FileDescriptionKind::RegularFile ||
-        storage.vfs == nullptr ||
-        (storage.file_status_flags &
-         OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr ||
+        (storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
             OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
         return FileDescriptionStatus::PermissionDenied;
     }
     fs::OpenFile retained_open_file{};
-    if (storage.vfs->RetainOpenFile(storage.open_file,
-                                    retained_open_file) !=
+    if (storage.vfs->RetainOpenFile(storage.open_file, retained_open_file) !=
         fs::Status::Succeeded) {
         return FileDescriptionStatus::FileSystemFailure;
     }
@@ -264,10 +248,8 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         storage.kind == FileDescriptionKind::TerminalDevice) {
         const TerminalStatus terminal_status =
             storage.terminal->TryRead(destination, capacity_bytes, read_bytes);
-        status = terminal_status == TerminalStatus::Succeeded
-                     ? FileDescriptionStatus::Succeeded
-                 : terminal_status == TerminalStatus::Empty
-                     ? FileDescriptionStatus::WouldBlock
+        status = terminal_status == TerminalStatus::Succeeded ? FileDescriptionStatus::Succeeded
+                 : terminal_status == TerminalStatus::Empty   ? FileDescriptionStatus::WouldBlock
                  : terminal_status == TerminalStatus::EndOfFile
                      ? FileDescriptionStatus::EndOfFile
                      : FileDescriptionStatus::InvalidArgument;
@@ -340,6 +322,19 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
                          : FileDescriptionStatus::DeviceFailure;
         }
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
+        if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) !=
+            OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+            fs::NodeInformation information{};
+            const fs::Status stat_status =
+                storage.vfs->StatOpenFile(storage.open_file, information);
+            if (stat_status != fs::Status::Succeeded) {
+                file_system_status = fs::ToFileSystemStatus(stat_status);
+                return FileDescriptionStatus::FileSystemFailure;
+            }
+            // 单 BSP 内核不会在 Stat 与 Write 之间调度；当前操作锁还保证 duplicate
+            // 共享描述符串行。未来 SMP 必须把这段事务下沉到 vnode/后端锁。
+            storage.open_file.offset_bytes = information.size_bytes;
+        }
         file_system_status = fs::ToFileSystemStatus(
             storage.vfs->Write(storage.open_file, source, length_bytes, written_bytes));
         status = file_system_status == FileSystemStatus::Succeeded
@@ -532,6 +527,12 @@ bool FileDescriptionManager::IsRequestValid(
     const bool writable =
         (request.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) !=
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    const bool append =
+        (request.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) !=
+        OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    if (append && (request.kind != FileDescriptionKind::RegularFile || !writable)) {
+        return false;
+    }
     if (request.kind == FileDescriptionKind::TerminalInput) {
         return readable && !writable && request.terminal != nullptr;
     }
@@ -541,8 +542,8 @@ bool FileDescriptionManager::IsRequestValid(
     }
     if (request.kind == FileDescriptionKind::TerminalDevice) {
         return (readable || writable) && request.terminal != nullptr &&
-               (!writable || request.device_write_operation != nullptr) &&
-               request.vfs != nullptr && request.open_file.open &&
+               (!writable || request.device_write_operation != nullptr) && request.vfs != nullptr &&
+               request.open_file.open &&
                request.open_file.path.vnode.type == fs::NodeType::CharacterDevice &&
                request.open_file.readable == readable && request.open_file.writable == writable;
     }

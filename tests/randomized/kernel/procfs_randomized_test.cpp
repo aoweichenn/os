@@ -64,6 +64,7 @@ int main() {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile uptime_file{};
     bool oracle_valid =

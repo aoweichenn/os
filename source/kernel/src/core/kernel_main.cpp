@@ -623,7 +623,7 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE[] = "[OS][KERNEL] SCHED
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
-constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.1 terminal ready\r\n";
+constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.2 terminal ready\r\n";
 constexpr uint64_t OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT = 16ULL;
 constexpr uint64_t OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT = 1ULL;
 constexpr int64_t OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE = 0LL;
@@ -632,7 +632,7 @@ constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_VECTOR = 14ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ERROR_CODE = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_PAGE_FAULT_ADDRESS = 0x0000000030000000ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT = 73ULL;
-constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 42ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT = 58ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
     OS_KERNEL_MAIN_FUNCTIONAL_SHELL_ACCEPTANCE_PROCESS_COUNT;
@@ -1075,6 +1075,7 @@ void InitializeKernelDevices(const VgaTextConsole &vga_console) noexcept {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     fs::OpenFile file{};
     const fs::Status open_status =

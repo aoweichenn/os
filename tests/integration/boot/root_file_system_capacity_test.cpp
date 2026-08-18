@@ -62,6 +62,7 @@ int main() {
         .writable = true,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile file{};
     uint64_t short_written_bytes = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE;

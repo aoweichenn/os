@@ -1232,3 +1232,26 @@ QEMU 在最终标记处同时保存 P6 像素截图与 `0xB8000` 的 4000 字节
 
 当前 capacity QEMU 明确传入 32768 MiB，仍要求 4 GiB 以上页帧读写与回收；
 v2.1 不触碰全部 32 GiB。全内存压力、swap 和 OOM 场景属于 v2.5。
+
+## v2.2 Shell 控制序列与 append 重定向测试
+
+当前增量在 v2.1 的 174 项测试图上扩展既有目标，不用整机 marker 替代宿主
+模型：
+
+- Shell 单元测试覆盖 `;`、`&&`、`||` 的引号/转义边界、最多 8 条命令、悬空
+  操作符、后段错误时的整行失败原子性，以及 `>`/`>>`/`2>`/`2>>` 的独立字段；
+- 固定种子随机测试对序列和管线各执行 4096 组双解析，比较状态与完整有界布局；
+- FileDescription 集成测试用两个独立 append 打开描述先后写入，证明每次 write
+  都从当前文件尾开始，并检查共享 offset 与最终长度；
+- tooling 测试锁定分号、`&`、`|` 和 `>` 的 QMP 键盘映射，避免控制语法只在
+  宿主解析器里成立。
+
+256 MiB functional QEMU 真实输入控制序列，短路分支只保留键盘回显、不出现
+第二份命令输出；stdout append 和 `/bin/err` stderr append 都先截断、再追加、
+最后由 `cat` 回读两个唯一 marker。rootfs 探针改为验证 33 个不同 inode 的
+regular ELF，functional Shell child 精确增至 58，并继续核对全部进程退出、
+收集和 wait 计数。
+
+解析计划仍由 `static_assert(sizeof(ShellExecutionPlan) <= 4096)` 约束。真实 QEMU
+还承担用户栈回归：可执行路径缓冲只允许 `/bin/`、512 字节命令和 NUL，参数
+offset/length 为显式 16 位，防止调试构建在 fork/exec 前跨越尚未提交的栈页。

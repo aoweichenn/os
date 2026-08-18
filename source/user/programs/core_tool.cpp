@@ -44,10 +44,10 @@ constexpr char OS_USER_CORE_SPACE[] = " ";
 constexpr char OS_USER_CORE_NEWLINE[] = "\r\n";
 constexpr char OS_USER_CORE_HELP_TEXT[] =
     "内置于 rootfs 的外置工具：\r\n"
-    "help echo cat wc head tee true false pwd ls stat mkdir write touch\r\n"
+    "help echo err cat wc head tee true false pwd ls stat mkdir write touch\r\n"
     "rm rmdir mv truncate sync basename dirname cp seq uptime ps free\r\n"
     "uname mounts resources sleep kill id\r\n"
-    "Shell 仅保留 cd 与 exit；支持 <、> 与最多 16 级管线。\r\n";
+    "Shell 仅保留状态类命令；支持 ;、&&、||、<、>、>>、2>、2>> 与 16 级管线。\r\n";
 constexpr char OS_USER_CORE_OPERATION_ERROR[] = "error: 操作失败\r\n";
 constexpr char OS_USER_CORE_UNKNOWN_TOOL_ERROR[] = "error: 未知核心工具\r\n";
 constexpr char OS_USER_CORE_STAT_INODE_PREFIX[] = "inode=";
@@ -60,6 +60,7 @@ constexpr char OS_USER_CORE_STAT_DIRECTORY_TYPE[] = "directory";
 constexpr char OS_USER_CORE_WC_SEPARATOR[] = " ";
 constexpr char OS_USER_CORE_HELP_COMMAND[] = "help";
 constexpr char OS_USER_CORE_ECHO_COMMAND[] = "echo";
+constexpr char OS_USER_CORE_ERROR_COMMAND[] = "err";
 constexpr char OS_USER_CORE_CAT_COMMAND[] = "cat";
 constexpr char OS_USER_CORE_WC_COMMAND[] = "wc";
 constexpr char OS_USER_CORE_HEAD_COMMAND[] = "head";
@@ -286,20 +287,20 @@ template <uint64_t SizeBytes>
                : OS_USER_CORE_FAILURE_EXIT_CODE;
 }
 
-[[nodiscard]] int64_t RunEcho(const uint64_t argument_count,
+[[nodiscard]] int64_t RunEcho(const uint64_t descriptor, const uint64_t argument_count,
                               const char *const *const arguments) noexcept {
     for (uint64_t argument_index = OS_USER_CORE_FIRST_ARGUMENT_INDEX;
          argument_index < argument_count; ++argument_index) {
         if (argument_index != OS_USER_CORE_FIRST_ARGUMENT_INDEX &&
-            !WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_SPACE)) {
+            !WriteLiteral(descriptor, OS_USER_CORE_SPACE)) {
             return OS_USER_CORE_FAILURE_EXIT_CODE;
         }
-        if (!WriteText(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, arguments[argument_index],
+        if (!WriteText(descriptor, arguments[argument_index],
                        StringLength(arguments[argument_index]))) {
             return OS_USER_CORE_FAILURE_EXIT_CODE;
         }
     }
-    return WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_NEWLINE)
+    return WriteLiteral(descriptor, OS_USER_CORE_NEWLINE)
                ? OS_USER_CORE_SUCCESS_EXIT_CODE
                : OS_USER_CORE_FAILURE_EXIT_CODE;
 }
@@ -881,7 +882,10 @@ template <uint64_t SizeBytes>
         return RunHelp(argument_count);
     }
     if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_ECHO_COMMAND)) {
-        return RunEcho(argument_count, arguments);
+        return RunEcho(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_ERROR_COMMAND)) {
+        return RunEcho(os::abi::OS_ABI_STANDARD_ERROR_DESCRIPTOR, argument_count, arguments);
     }
     if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_CAT_COMMAND)) {
         return RunCat(argument_count, arguments);

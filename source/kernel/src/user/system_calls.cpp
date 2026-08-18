@@ -671,6 +671,8 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
                   OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
         .truncate = (open_flags & os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG) !=
                     OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+        .append = (open_flags & os::abi::OS_ABI_FILE_OPEN_APPEND_FLAG) !=
+                  OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
     };
     uint64_t file_descriptor = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
     const FileSystemStatus status =

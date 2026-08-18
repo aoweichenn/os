@@ -168,6 +168,7 @@ int main() {
         .writable = true,
         .create = true,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile forbidden_file{};
     const bool read_only_contract_valid =

@@ -152,6 +152,8 @@
 | file descriptor | 进程局部的非负整数句柄；描述符表把它解析为控制台、文件、目录或管道对象及访问方向 |
 | standard input/output/error | 固定为 fd 0/1/2 的标准输入、标准输出和标准错误约定 |
 | Shell | 从标准输入读取并解析命令、再通过系统调用组合内核服务的 Ring 3 用户程序 |
+| control operator | Shell 中按前一条实际退出码组织命令的 `;`、`&&`、`||`；只在未引用、未转义位置生效 |
+| append redirection | `>>` 或 `2>>`；每次 write 都从当时的文件尾开始，而不是仅在 open 时定位一次 |
 | idle state | 没有 Ready 进程但仍存在可唤醒 Blocked 进程时，内核以相邻的 `sti; hlt; cli` 开放中断、等待并恢复临界区的状态 |
 | Zombie | 子进程已经停止执行并释放运行资源，但退出状态尚未被父进程 wait 收取的进程状态 |
 | reparent | 父进程先退出时，把仍存活或 Zombie 子进程的回收责任转交 PID1 |

@@ -141,6 +141,7 @@ int main() {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile memory_file{};
     uint8_t memory_bytes[os::kernel::fs::OS_KERNEL_PROCFS_MAXIMUM_SNAPSHOT_SIZE_BYTES]{};

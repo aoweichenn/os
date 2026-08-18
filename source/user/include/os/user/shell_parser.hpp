@@ -40,9 +40,11 @@ enum class ShellCommand : uint64_t {
 };
 
 struct ShellArgument final {
-    uint64_t offset_bytes;
-    uint64_t length_bytes;
+    uint16_t offset_bytes;
+    uint16_t length_bytes;
 };
+
+static_assert(OS_USER_SHELL_STORAGE_SIZE_BYTES <= UINT16_MAX);
 
 struct ShellCommandLine final {
     char storage[OS_USER_SHELL_STORAGE_SIZE_BYTES];

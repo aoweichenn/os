@@ -19,6 +19,8 @@ constexpr std::string_view OS_TEST_FILE_DESCRIPTION_SHARED_OFFSET =
     "复制描述符必须共享文件偏移而独立打开必须拥有独立偏移";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_PIPE_LIFETIME =
     "管道端点只能在最后一个文件描述引用释放时关闭";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_APPEND_ATOMICITY =
+    "独立 append 文件描述每次写入都必须重新定位到当前文件尾";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_FINALIZATION =
     "文件表销毁后文件、管道、对象和堆资源必须全部归零";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_INVALID_DIRECTORY_CONFIGURATION =
@@ -55,6 +57,12 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD[] = {
     static_cast<uint8_t>('P'),
     static_cast<uint8_t>('E'),
 };
+constexpr uint8_t OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD[] = {
+    static_cast<uint8_t>('X'),
+};
+constexpr uint8_t OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD[] = {
+    static_cast<uint8_t>('Y'),
+};
 
 [[nodiscard]] bool BytesEqual(const uint8_t *const left, const uint8_t *const right,
                               const uint64_t length_bytes) noexcept {
@@ -73,13 +81,17 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD[] = {
 [[nodiscard]] os::kernel::FileDescriptionStatus
 CreateFileDescription(os::kernel::FileDescriptionManager &manager, os::kernel::fs::Vfs &vfs,
                       const os::kernel::fs::OpenFile &open_file,
-                      os::kernel::KernelObjectReference &reference) noexcept {
+                      os::kernel::KernelObjectReference &reference,
+                      const bool append = false) noexcept {
     uint64_t file_status_flags = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
     if (open_file.readable) {
         file_status_flags |= os::kernel::OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG;
     }
     if (open_file.writable) {
         file_status_flags |= os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG;
+    }
+    if (append) {
+        file_status_flags |= os::kernel::OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG;
     }
     const os::kernel::FileDescriptionCreateRequest request{
         .kind = os::kernel::FileDescriptionKind::RegularFile,
@@ -154,6 +166,7 @@ int main() {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     const bool handles_opened =
         file_prepared &&
@@ -271,6 +284,60 @@ int main() {
                    sizeof(second_bytes)) &&
         BytesEqual(independent_bytes, OS_TEST_FILE_DESCRIPTION_PAYLOAD, sizeof(independent_bytes));
     test_context.Expect(shared_offset_valid, OS_TEST_FILE_DESCRIPTION_SHARED_OFFSET);
+
+    os::kernel::fs::OpenFile first_append_open_file{};
+    os::kernel::fs::OpenFile second_append_open_file{};
+    const os::kernel::fs::OpenOptions append_options{
+        .readable = false,
+        .writable = true,
+        .create = false,
+        .truncate = false,
+        .append = true,
+    };
+    os::kernel::KernelObjectReference first_append_reference{};
+    os::kernel::KernelObjectReference second_append_reference{};
+    uint64_t append_written_bytes = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    os::kernel::FileDescriptionSnapshot first_append_snapshot{};
+    os::kernel::FileDescriptionSnapshot second_append_snapshot{};
+    const bool append_atomic =
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), append_options,
+                 first_append_open_file) == os::kernel::fs::Status::Succeeded &&
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), append_options,
+                 second_append_open_file) == os::kernel::fs::Status::Succeeded &&
+        CreateFileDescription(description_manager, vfs, first_append_open_file,
+                              first_append_reference,
+                              true) == os::kernel::FileDescriptionStatus::Succeeded &&
+        CreateFileDescription(description_manager, vfs, second_append_open_file,
+                              second_append_reference,
+                              true) == os::kernel::FileDescriptionStatus::Succeeded &&
+        description_manager.TryWrite(
+            first_append_reference, OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD,
+            sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD), append_written_bytes,
+            file_system_status, pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        append_written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD) &&
+        description_manager.TryWrite(
+            second_append_reference, OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD,
+            sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD), append_written_bytes,
+            file_system_status, pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        append_written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD) &&
+        description_manager.ReadSnapshot(first_append_reference, first_append_snapshot) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        description_manager.ReadSnapshot(second_append_reference, second_append_snapshot) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        first_append_snapshot.offset_bytes ==
+            sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD) +
+                sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD) &&
+        second_append_snapshot.offset_bytes ==
+            sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD) +
+                sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD) +
+                sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD) &&
+        first_append_snapshot.size_bytes == second_append_snapshot.offset_bytes &&
+        second_append_snapshot.size_bytes == second_append_snapshot.offset_bytes &&
+        first_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        second_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    test_context.Expect(append_atomic, OS_TEST_FILE_DESCRIPTION_APPEND_ATOMICITY);
 
     os::kernel::Pipe pipe{};
     pipe.Initialize();

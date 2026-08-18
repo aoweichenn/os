@@ -79,6 +79,7 @@ struct OpenOptions final {
     bool writable;
     bool create;
     bool truncate;
+    bool append;
 };
 
 struct Path final {
@@ -195,8 +196,7 @@ class Vfs final {
     [[nodiscard]] Status Initialize(Mount *mount_storage, uint64_t mount_capacity,
                                     Superblock &root_superblock) noexcept;
     [[nodiscard]] Status InitializeContext(FsContext &context) const noexcept;
-    [[nodiscard]] Status CloneContext(const FsContext &source,
-                                      FsContext &context) const noexcept;
+    [[nodiscard]] Status CloneContext(const FsContext &source, FsContext &context) const noexcept;
     [[nodiscard]] Status ReleaseContext(FsContext &context) const noexcept;
     [[nodiscard]] Status MountAt(const FsContext &context, const uint8_t *path,
                                  uint64_t path_length_bytes, Superblock &superblock) noexcept;
@@ -220,8 +220,7 @@ class Vfs final {
                               OpenFile &open_file) noexcept;
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
-    [[nodiscard]] Status RetainOpenFile(const OpenFile &source,
-                                        OpenFile &retained_file) noexcept;
+    [[nodiscard]] Status RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noexcept;
     [[nodiscard]] Status StatOpenFile(const OpenFile &open_file,
                                       NodeInformation &information) noexcept;
     [[nodiscard]] Status ReadAt(const OpenFile &open_file, uint64_t offset_bytes,

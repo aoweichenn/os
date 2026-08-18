@@ -122,6 +122,7 @@ constexpr uint8_t OS_TEST_ROOTFS_REPLACED_PAYLOAD[] = {
         .writable = true,
         .create = true,
         .truncate = true,
+        .append = false,
     };
     os::kernel::fs::OpenFile file{};
     uint64_t written_bytes = OS_TEST_ROOTFS_EMPTY_VALUE;
@@ -142,6 +143,7 @@ constexpr uint8_t OS_TEST_ROOTFS_REPLACED_PAYLOAD[] = {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile file{};
     uint64_t read_bytes = OS_TEST_ROOTFS_EMPTY_VALUE;
@@ -197,6 +199,7 @@ int main() {
         .writable = true,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile sparse_file{};
     uint64_t written_bytes = OS_TEST_ROOTFS_EMPTY_VALUE;
@@ -264,6 +267,7 @@ int main() {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile busy_file{};
     const bool busy_protected =

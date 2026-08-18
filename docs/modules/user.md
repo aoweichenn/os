@@ -543,3 +543,15 @@ Exited、Stopped、Continued 和 NoHang；只有 Exited 事件触发最终回收
 不会消费输入。完整 ABI 和作业状态机见
 [v1.15 学习章](../learning/23-v1.15-tty-session-job-control.md) 与
 [ADR 0042](../adr/0042-tty-session-and-job-control.md)。
+
+## v2.2 控制序列与追加打开状态
+
+Shell 在既有 16-stage 管线计划外保存最多 8 个轻量命令 span；`;`、`&&`、`||`
+先完成整行预检，再按上一条实际退出码执行。`>`/`>>` 与 `2>`/`2>>` 分别控制
+stdout/stderr，Shell child 仍只用 OpenFile 与 DuplicateDescriptorTo 完成接线。
+
+OpenFile 的 append bit 是打开状态，不是 fd flag。Kernel 只允许 writable regular
+file 使用该状态；FileDescription 每次 write 前重新定位到当前文件尾，dup/fork
+共享同一个 offset 与 append 语义。用户 ABI 不暴露 vnode 或后端锁。
+
+详细边界见 [ADR 0048](../adr/0048-shell-control-and-append-redirection.md)。

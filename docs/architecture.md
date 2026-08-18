@@ -2022,7 +2022,7 @@ Python 只运行在宿主机，负责工具链检查、CMake/CTest 调度、镜�
 替代 CMake 构建图。所有外部程序均以参数列表直接启动，不经过 Shell 字符串
 求值。
 
-## v1.11 当前 Unix I/O 架构
+## v2.2 当前 Unix I/O 与 Shell 组合架构
 
 v1.11 把第一周期“一个预接线启动管道、Shell 自己完成所有操作”的历史模型
 拆成四层：
@@ -2046,7 +2046,20 @@ FileDescription 和文件偏移。Shell 解析器只产生最多 16 个 stage �
 关闭端点、wait”的顺序提交。
 语法拒绝没有副作用，执行中途失败则逆序关闭所有已取得资源并回收已发布孩子。
 
-`/bin/help`、`echo`、`cat`、`wc`、`head`、`tee`、`true`、`false`、`pwd`、
+v2.2 在单条管线之外增加一层最多 8 个 span 的 `ShellExecutionSequence`：
+`;` 使用 `Always`，`&&` 使用 `OnSuccess`，`||` 使用 `OnFailure`。控制操作符只在
+未引用、未转义位置切分。Shell 在执行第一条命令前完成所有 span 的语法预检，
+执行时逐条重新构造单个计划，因此既不会让 8 份计划同时占据用户栈，也不会在
+后段语法失败时留下前段文件或进程副作用。
+
+输出重定向保存 `None/Truncate/Append`，stdout 与 stderr 分别接到 fd 1 和 fd 2。
+append 是 FileDescription 的打开状态，而不是 Shell 的一次性 seek：每次普通
+文件 write 都在受保护操作中重新读取 vnode 长度并更新共享 OpenFile offset。
+当前单 BSP、内核不可抢占模型使独立 FileDescription 的定位与写入不会交错；
+引入 SMP 前必须把这段原子性下沉到 vnode 或后端锁。完整取舍见
+[ADR 0048](adr/0048-shell-control-and-append-redirection.md)。
+
+`/bin/help`、`echo`、`err`、`cat`、`wc`、`head`、`tee`、`true`、`false`、`pwd`、
 `ls`、`stat`、`mkdir`、`write`、`touch`、`rm`、`rmdir`、`mv`、`truncate`
 和 `sync` 由同一个 multi-call ELF 根据 `argv[0]` 分派；共享实现减少教学
 系统的重复运行时体积，但 rootfs 名称、spawn/exec 边界和每个进程的 fd

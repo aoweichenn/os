@@ -1847,3 +1847,29 @@ ctest --test-dir build/developer \
   -R '^(os_kernel_terminal_unit_tests|os_kernel_job_control_unit_tests|os_kernel_terminal_job_control_integration_tests|os_kernel_job_control_randomized_tests|os_qemu_functional_smoke)$' \
   --output-on-failure
 ```
+
+## v2.2：控制序列、append 与用户栈
+
+### `&&`/`||` 在引号内仍被切开，或后段语法错却执行了前段
+
+先单独运行 Shell execution 单元测试。顶层切分器必须与管线解析器使用相同的
+单引号、双引号和反斜杠状态；它只记录源行 span，不解析单个 `|`。随后确认
+`ParseAndExecute` 先遍历全部 span 调用验证 helper，第二次遍历才按退出码执行。
+不要把 8 个完整计划一次性放到用户栈上，也不要边解析边执行。
+
+### `>>` 第二次写覆盖第一次内容
+
+确认 append flag 同时经过 ABI open mask、VFS OpenOptions、Process open 和
+FileDescription status flag。只在 open 时把 offset 设到文件尾是不够的；每次
+write 都必须重新读取当前 vnode 长度。若同一个 fd 的 duplicate 表现不同，
+说明 append 或 offset 被错误放进 FileTable descriptor flags，而没有保存在共享
+FileDescription 中。
+
+### 宿主单元测试通过，但 QEMU 报 `USER_RETURN_REJECTED`
+
+先查看失败时 RSP 是否紧邻用户栈已提交页的下边界。调试构建不会消除大型局部
+对象：如果 caller 同时保留 `ShellExecutionPlan`、4096 字节路径和 child 参数，
+嵌套调用可能跨过按需栈增长允许的单页窗口。当前约束是单个计划小于 4096 字节、
+argument offset/length 使用 16 位、可执行路径缓冲精确为 518 字节，并用独立
+helper 分隔验证计划与执行计划的生命周期。不要通过放宽返回地址校验掩盖栈布局
+错误。

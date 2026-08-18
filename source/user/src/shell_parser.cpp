@@ -82,7 +82,7 @@ ShellParseStatus ParseShellCommandLine(const char *const line, const uint64_t li
         }
 
         ShellArgument &argument = parsed_command_line.arguments[parsed_command_line.argument_count];
-        argument.offset_bytes = write_index;
+        argument.offset_bytes = static_cast<uint16_t>(write_index);
         ShellQuoteState quote_state = ShellQuoteState::None;
         bool escaping = false;
         bool argument_started = false;

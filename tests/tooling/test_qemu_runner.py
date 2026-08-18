@@ -263,6 +263,7 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(qemuKeyNameForCharacter("<"), "shift-comma")
         self.assertEqual(qemuKeyNameForCharacter(">"), "shift-dot")
         self.assertEqual(qemuKeyNameForCharacter("|"), "shift-backslash")
+        self.assertEqual(qemuKeyNameForCharacter(";"), "semicolon")
         self.assertEqual(qemuKeyNameForCharacter("\x03"), "ctrl-c")
         self.assertEqual(qemuKeyNameForCharacter("\x1a"), "ctrl-z")
         self.assertEqual(qemuKeyNameForCharacter("\n"), "ret")

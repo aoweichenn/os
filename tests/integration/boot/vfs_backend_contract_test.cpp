@@ -102,6 +102,7 @@ constexpr uint64_t OS_TEST_VFS_BACKEND_FILE_SIZE_LIMIT = sizeof(OS_TEST_VFS_BACK
         .writable = true,
         .create = true,
         .truncate = true,
+        .append = false,
     };
     os::kernel::fs::OpenFile open_file{};
     uint64_t transferred_bytes = OS_TEST_VFS_BACKEND_EMPTY_VALUE;
@@ -119,6 +120,7 @@ constexpr uint64_t OS_TEST_VFS_BACKEND_FILE_SIZE_LIMIT = sizeof(OS_TEST_VFS_BACK
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     uint8_t payload[sizeof(OS_TEST_VFS_BACKEND_PAYLOAD)]{};
     transferred_bytes = OS_TEST_VFS_BACKEND_EMPTY_VALUE;
@@ -159,6 +161,7 @@ constexpr uint64_t OS_TEST_VFS_BACKEND_FILE_SIZE_LIMIT = sizeof(OS_TEST_VFS_BACK
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile open_file{};
     uint8_t payload[sizeof(OS_TEST_VFS_BACKEND_PAYLOAD)]{};

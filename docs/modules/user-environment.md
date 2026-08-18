@@ -105,9 +105,11 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 2. `src/shell.cpp` 输出 banner 与 READY，随后在 fd 0 上逐字符阻塞读取并回显。
 3. 行缓冲只接受可打印 ASCII、Backspace 和 Enter；超出 512 字节后
    丢弃到本行 Enter，并报告稳定错误。
-4. `src/shell_execution.cpp` 把输入复制到固定存储，参数只保存 offset 与
-   length；解析引号、转义、`|`、`<`、`>`，产生最多 16 个 stage。
-5. `src/shell.cpp` 只在解析完全成功后创建 N-1 根 Pipe，再 fork N 个 child；
+4. `src/shell_execution.cpp` 先把整行切成最多 8 条 `;`/`&&`/`||` 控制命令，
+   再把每条命令复制到固定存储；参数只保存 16 位 offset/length，解析引号、
+   转义、`|`、`<`、`>`、`>>`、`2>`、`2>>`，产生最多 16 个 stage。
+5. `src/shell.cpp` 在任何命令执行前预检整行，再按实际退出码短路；单条管线只在
+   解析完全成功后创建 N-1 根 Pipe，再 fork N 个 child；
    child 用 dup2 接线并 exec，parent 关闭端点并 wait 全部 child。
 6. `cd` 和 `exit` 改变 Shell 自身状态，因此留作 builtin；其他命令从
    `/bin` 执行 `core_tool` multi-call ELF。
@@ -118,6 +120,7 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | --- | --- |
 | `help` | 显示外部工具及参数 |
 | `echo [text...]` | 以空格连接参数并换行 |
+| `err [text...]` | 把参数写到 stderr，用于错误重定向与管线组合验证 |
 | `pwd` | 通过 getcwd 输出当前 Process 的 cwd |
 | `cd <path>` | 修改当前 Shell Process 的 cwd |
 | `ls [path]` | 用目录句柄列出名称，目录追加 `/` |
@@ -156,9 +159,10 @@ v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级
 QEMU 还会实际运行新增 13 个工具，检查唯一输出、cp 回读、procfs 文本、
 deadline sleep、信号投递和 PID 查询。v1.15
 已经提供 session、前后台 PGID、控制终端、`jobs/fg/bg`、尾部 `&`，以及
-TTY 生成的 Ctrl-C/Ctrl-Z 组信号。当前仍不支持 `>>`、stderr 重定向、环境
-展开、通配符、termios/raw mode、多个终端和完整 POSIX job spec。所有命令
-解释始终位于用户态。
+TTY 生成的 Ctrl-C/Ctrl-Z 组信号。v2.2 当前增量进一步提供 `;`、`&&`、`||`、
+`>>`、`2>`、`2>>` 和第 33 个 `/bin/err` 工具。环境展开、通配符、历史、补全、
+termios/raw mode、多个终端和完整 POSIX job spec 仍未完成。所有命令解释始终
+位于用户态。
 
 Shell 的 16 项作业表按成员事件归约 Running/Stopped/Done。外部管线全部 stage
 使用同一 PGID；前台事务交出并最终收回 TTY，后台事务不改变前台组。child 在
@@ -184,7 +188,8 @@ exec 前恢复 SIGINT/SIGTSTP 默认动作，避免继承 Shell 的保护 handle
 - wait 没有匹配的直接子进程：`NO_CHILD_PROCESS`；
 - wait 的匹配子进程仍 Alive：内部阻塞并在唤醒后由用户包装重试。
 - pipe manager 容量耗尽：`PIPE_LIMIT_EXCEEDED`；
-- 流水线空 stage、重复重定向、未闭合引号或悬空转义：Shell 解析失败且
+- 流水线空 stage、空控制命令、悬空 `&&`/`||`、重复重定向、未闭合引号或
+  悬空转义：Shell 解析失败且
   不创建任何资源；
 - child 接线失败：以 126 退出；exec/命令查找失败：以 127 退出。
 

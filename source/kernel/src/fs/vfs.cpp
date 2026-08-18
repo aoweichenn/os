@@ -129,8 +129,7 @@ Status Vfs::InitializeContext(FsContext &context) const noexcept {
     return Status::Succeeded;
 }
 
-Status Vfs::CloneContext(const FsContext &source,
-                         FsContext &context) const noexcept {
+Status Vfs::CloneContext(const FsContext &source, FsContext &context) const noexcept {
     context = FsContext{};
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
@@ -140,19 +139,17 @@ Status Vfs::CloneContext(const FsContext &source,
         return Status::InvalidArgument;
     }
     Superblock *const root_superblock = source.root.vnode.superblock;
-    Status status = root_superblock->operations->open(
-        root_superblock->backend_context, source.root.vnode);
+    Status status =
+        root_superblock->operations->open(root_superblock->backend_context, source.root.vnode);
     if (status != Status::Succeeded) {
         return status;
     }
-    Superblock *const working_superblock =
-        source.current_working_directory.vnode.superblock;
-    status = working_superblock->operations->open(
-        working_superblock->backend_context,
-        source.current_working_directory.vnode);
+    Superblock *const working_superblock = source.current_working_directory.vnode.superblock;
+    status = working_superblock->operations->open(working_superblock->backend_context,
+                                                  source.current_working_directory.vnode);
     if (status != Status::Succeeded) {
-        static_cast<void>(root_superblock->operations->close(
-            root_superblock->backend_context, source.root.vnode));
+        static_cast<void>(root_superblock->operations->close(root_superblock->backend_context,
+                                                             source.root.vnode));
         return status;
     }
     context = FsContext{
@@ -450,7 +447,7 @@ Status Vfs::Truncate(const FsContext &context, const uint8_t *const path,
     }
     if (resolved.vnode.type != NodeType::RegularFile) {
         return resolved.vnode.type == NodeType::CharacterDevice ? Status::Unsupported
-                                                               : Status::Corrupt;
+                                                                : Status::Corrupt;
     }
     Superblock *const superblock = resolved.vnode.superblock;
     if (superblock->read_only) {
@@ -477,8 +474,7 @@ Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
     information = NodeInformation{
         .mount_identifier = resolved.mount_identifier,
         .superblock_identifier = resolved.vnode.superblock->identifier,
-        .superblock_generation =
-            resolved.vnode.superblock->generation,
+        .superblock_generation = resolved.vnode.superblock->generation,
         .node_identifier = resolved.vnode.identifier,
         .generation = resolved.vnode.generation,
         .type = resolved.vnode.type,
@@ -493,7 +489,8 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
                  const uint64_t path_length_bytes, const OpenOptions &options,
                  OpenFile &open_file) noexcept {
     open_file = OpenFile{};
-    if ((!options.readable && !options.writable) || (options.truncate && !options.writable)) {
+    if ((!options.readable && !options.writable) || (options.truncate && !options.writable) ||
+        (options.append && !options.writable)) {
         return Status::InvalidArgument;
     }
 
@@ -600,8 +597,7 @@ Status Vfs::OpenDirectory(const FsContext &context, const uint8_t *const path,
     return Status::Succeeded;
 }
 
-Status Vfs::RetainOpenFile(const OpenFile &source,
-                           OpenFile &retained_file) noexcept {
+Status Vfs::RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noexcept {
     retained_file = OpenFile{};
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
@@ -613,8 +609,8 @@ Status Vfs::RetainOpenFile(const OpenFile &source,
         return Status::InvalidHandle;
     }
     Superblock *const superblock = source.path.vnode.superblock;
-    const Status open_status = superblock->operations->open(
-        superblock->backend_context, source.path.vnode);
+    const Status open_status =
+        superblock->operations->open(superblock->backend_context, source.path.vnode);
     if (open_status != Status::Succeeded) {
         return open_status;
     }
@@ -623,8 +619,7 @@ Status Vfs::RetainOpenFile(const OpenFile &source,
     return Status::Succeeded;
 }
 
-Status Vfs::StatOpenFile(const OpenFile &open_file,
-                         NodeInformation &information) noexcept {
+Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information) noexcept {
     information = NodeInformation{};
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
@@ -633,19 +628,16 @@ Status Vfs::StatOpenFile(const OpenFile &open_file,
         return Status::InvalidHandle;
     }
     BackendNodeInformation backend_information{};
-    const Status stat_status =
-        open_file.path.vnode.superblock->operations->stat(
-            open_file.path.vnode.superblock->backend_context,
-            open_file.path.vnode, backend_information);
+    const Status stat_status = open_file.path.vnode.superblock->operations->stat(
+        open_file.path.vnode.superblock->backend_context, open_file.path.vnode,
+        backend_information);
     if (stat_status != Status::Succeeded) {
         return stat_status;
     }
     information = NodeInformation{
         .mount_identifier = open_file.path.mount_identifier,
-        .superblock_identifier =
-            open_file.path.vnode.superblock->identifier,
-        .superblock_generation =
-            open_file.path.vnode.superblock->generation,
+        .superblock_identifier = open_file.path.vnode.superblock->identifier,
+        .superblock_generation = open_file.path.vnode.superblock->generation,
         .node_identifier = open_file.path.vnode.identifier,
         .generation = open_file.path.vnode.generation,
         .type = open_file.path.vnode.type,
@@ -657,8 +649,7 @@ Status Vfs::StatOpenFile(const OpenFile &open_file,
 }
 
 Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
-                   uint8_t *const destination,
-                   const uint64_t capacity_bytes,
+                   uint8_t *const destination, const uint64_t capacity_bytes,
                    uint64_t &read_bytes) noexcept {
     read_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
     if (!this->IsInitialized()) {
@@ -671,14 +662,13 @@ Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (!open_file.readable) {
         return Status::PermissionDenied;
     }
-    if (destination == nullptr &&
-        capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+    if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
     Superblock *const superblock = open_file.path.vnode.superblock;
-    const Status status = superblock->operations->read(
-        superblock->backend_context, open_file.path.vnode, offset_bytes,
-        destination, capacity_bytes, read_bytes);
+    const Status status =
+        superblock->operations->read(superblock->backend_context, open_file.path.vnode,
+                                     offset_bytes, destination, capacity_bytes, read_bytes);
     if (status == Status::Succeeded) {
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_read += read_bytes;
@@ -687,8 +677,7 @@ Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
 }
 
 Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
-                    const uint8_t *const source,
-                    const uint64_t length_bytes,
+                    const uint8_t *const source, const uint64_t length_bytes,
                     uint64_t &written_bytes) noexcept {
     written_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
     if (!this->IsInitialized()) {
@@ -708,9 +697,9 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    const Status status = superblock->operations->write(
-        superblock->backend_context, open_file.path.vnode, offset_bytes,
-        source, length_bytes, written_bytes);
+    const Status status =
+        superblock->operations->write(superblock->backend_context, open_file.path.vnode,
+                                      offset_bytes, source, length_bytes, written_bytes);
     if (status == Status::Succeeded) {
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_written += written_bytes;

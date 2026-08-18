@@ -260,6 +260,7 @@ int main() {
         .writable = true,
         .create = true,
         .truncate = true,
+        .append = false,
     };
     os::kernel::fs::OpenFile write_file{};
     uint64_t written_bytes = OS_TEST_VFS_EMPTY_VALUE;
@@ -279,6 +280,7 @@ int main() {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile read_file{};
     os::kernel::fs::OpenFile retained_file{};

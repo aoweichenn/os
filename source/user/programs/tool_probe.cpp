@@ -10,7 +10,7 @@ namespace {
 constexpr uint64_t OS_USER_TOOL_PROBE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_ELF_MAGIC_SIZE_BYTES = 4ULL;
-constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT = 32ULL;
+constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT = 33ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_ARGUMENT_COUNT = 1ULL;
 constexpr int64_t OS_USER_TOOL_PROBE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_USER_TOOL_PROBE_SUCCESS_EXIT_CODE = 0LL;
@@ -22,7 +22,7 @@ constexpr uint8_t OS_USER_TOOL_PROBE_ELF_MAGIC[]{
     os::abi::OS_ABI_ELF_MAGIC_BYTE_3,
 };
 constexpr char OS_USER_TOOL_PROBE_VERIFIED_MESSAGE[] =
-    "[OS][USER][TOOLS] ELF32_VERIFIED\r\n";
+    "[OS][USER][TOOLS] ELF_SET_VERIFIED\r\n";
 
 struct ToolPath final {
     const char *bytes;
@@ -41,6 +41,7 @@ template <uint64_t SizeBytes>
 
 constexpr ToolPath OS_USER_TOOL_PROBE_PATHS[]{
     MakeToolPath("/bin/help"),      MakeToolPath("/bin/echo"),
+    MakeToolPath("/bin/err"),
     MakeToolPath("/bin/cat"),       MakeToolPath("/bin/wc"),
     MakeToolPath("/bin/head"),      MakeToolPath("/bin/tee"),
     MakeToolPath("/bin/true"),      MakeToolPath("/bin/false"),
@@ -61,7 +62,7 @@ constexpr ToolPath OS_USER_TOOL_PROBE_PATHS[]{
 static_assert(sizeof(OS_USER_TOOL_PROBE_PATHS) /
                       sizeof(OS_USER_TOOL_PROBE_PATHS[OS_USER_TOOL_PROBE_EMPTY_VALUE]) ==
                   OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT,
-              "用户工具验收清单必须精确覆盖 32 个独立 ELF 路径");
+              "用户工具验收清单必须精确覆盖 33 个独立 ELF 路径");
 
 [[nodiscard]] bool MagicIsValid(const uint8_t *const magic) noexcept {
     for (uint64_t byte_index = OS_USER_TOOL_PROBE_EMPTY_VALUE;

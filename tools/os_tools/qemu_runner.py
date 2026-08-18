@@ -1009,8 +1009,8 @@ OS_QEMU_USER_INIT_ALL_CHILDREN_REAPED_MARKER = (
     "[OS][USER][INIT] ALL_CHILDREN_REAPED"
 )
 OS_QEMU_USER_INIT_NO_ZOMBIES_MARKER = "[OS][USER][INIT] NO_ZOMBIES"
-OS_QEMU_USER_TOOL_ELF32_VERIFIED_MARKER = (
-    "[OS][USER][TOOLS] ELF32_VERIFIED"
+OS_QEMU_USER_TOOL_ELF_SET_VERIFIED_MARKER = (
+    "[OS][USER][TOOLS] ELF_SET_VERIFIED"
 )
 OS_QEMU_USER_INIT_TOOL_PROBE_REAPED_MARKER = (
     "[OS][USER][INIT] TOOL_PROBE_REAPED"
@@ -1258,6 +1258,16 @@ OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER = (
 OS_QEMU_USER_SHELL_BACKGROUND_JOB_STARTED_MARKER = (
     "[OS][USER][SHELL] BACKGROUND_JOB_STARTED"
 )
+OS_QEMU_USER_SHELL_CONTROL_AND_OUTPUT_MARKER = "control-and"
+OS_QEMU_USER_SHELL_SKIPPED_AND_OUTPUT_MARKER = "skipped-and"
+OS_QEMU_USER_SHELL_CONTROL_OR_OUTPUT_MARKER = "control-or"
+OS_QEMU_USER_SHELL_SKIPPED_OR_OUTPUT_MARKER = "skipped-or"
+OS_QEMU_USER_SHELL_SEQUENCE_FIRST_OUTPUT_MARKER = "sequence-one"
+OS_QEMU_USER_SHELL_SEQUENCE_SECOND_OUTPUT_MARKER = "sequence-two"
+OS_QEMU_USER_SHELL_APPEND_FIRST_OUTPUT_MARKER = "append-one"
+OS_QEMU_USER_SHELL_APPEND_SECOND_OUTPUT_MARKER = "append-two"
+OS_QEMU_USER_SHELL_ERROR_FIRST_OUTPUT_MARKER = "error-one"
+OS_QEMU_USER_SHELL_ERROR_SECOND_OUTPUT_MARKER = "error-two"
 OS_QEMU_USER_TOOL_BASENAME_OUTPUT_MARKER = "tool-basename"
 OS_QEMU_USER_TOOL_DIRNAME_OUTPUT_MARKER = "/alpha/beta"
 OS_QEMU_USER_TOOL_SEQUENCE_OUTPUT_MARKER = "700003"
@@ -1308,6 +1318,19 @@ OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
     "touch /tmp/touched\n"
     "true\n"
     "false\n"
+    "true && echo control-and\n"
+    "false && echo skipped-and\n"
+    "false || echo control-or\n"
+    "true || echo skipped-or\n"
+    "echo sequence-one; echo sequence-two\n"
+    "echo append-one > /tmp/appended\n"
+    "echo append-two >> /tmp/appended\n"
+    "cat /tmp/appended\n"
+    "rm /tmp/appended\n"
+    "err error-one 2> /tmp/errors\n"
+    "err error-two 2>> /tmp/errors\n"
+    "cat /tmp/errors\n"
+    "rm /tmp/errors\n"
     "rm /tmp/touched\n"
     "echo pipeline|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|tee /tmp/pipeline|head|wc\n"
     "basename /alpha/beta/tool-basename\n"
@@ -2197,6 +2220,7 @@ def qemuKeyNameForCharacter(character: str) -> str:
         ".": "dot",
         "-": "minus",
         "=": "equal",
+        ";": "semicolon",
         ",": "comma",
         "&": "shift-7",
         "<": "shift-comma",
@@ -2524,9 +2548,11 @@ def runQemuFirmwareBoot(
         )
     if captureVisibleVga:
         if vgaDisplaySnapshot is None:
+            print(timedVgaOutput if timedVgaOutput else vgaOutput, end="")
             raise OsToolError("QEMU 没有返回 VGA 可见画面")
         validateVgaDisplaySnapshot(vgaDisplaySnapshot)
         if vgaTextSnapshot is None:
+            print(timedVgaOutput if timedVgaOutput else vgaOutput, end="")
             raise OsToolError("QEMU 没有返回 VGA 文本快照")
         if OS_QEMU_KERNEL_READY_MARKER in requiredMarkers:
             validateVgaTerminalSnapshot(vgaTextSnapshot)

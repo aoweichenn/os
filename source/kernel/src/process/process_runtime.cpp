@@ -1226,6 +1226,7 @@ LoadExecutableFromPath(fs::FsContext &file_system_context, const uint8_t *const 
                                                          .writable = false,
                                                          .create = false,
                                                          .truncate = false,
+                                                         .append = false,
                                                      },
                                                      open_file);
     if (open_status != fs::Status::Succeeded) {
@@ -4542,6 +4543,12 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
     if (status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(status);
     }
+    if (options.append && open_file.path.vnode.type != fs::NodeType::RegularFile) {
+        if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
+            HaltProcessor();
+        }
+        return FileSystemStatus::InvalidArgument;
+    }
     if (options.truncate) {
         fs::NodeInformation information{};
         if (process_vfs->StatOpenFile(open_file, information) != fs::Status::Succeeded ||
@@ -4557,7 +4564,9 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         (options.readable ? OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG
                           : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) |
         (options.writable ? OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG
-                          : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+                          : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) |
+        (options.append ? OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG
+                        : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
     const bool terminal_device = open_file.path.vnode.type == fs::NodeType::CharacterDevice;
     const FileDescriptionCreateRequest request{
         .kind = terminal_device ? FileDescriptionKind::TerminalDevice
@@ -5299,8 +5308,7 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame, const WaitConditi
     const ThreadSchedulerStatus status =
         thread_scheduler.BlockCurrentThread(*wait_queue, wait_condition, decision);
     bool pending_signal_wake_failed = false;
-    if (status == ThreadSchedulerStatus::Succeeded &&
-        wait_condition != WaitCondition::BlockIo) {
+    if (status == ThreadSchedulerStatus::Succeeded && wait_condition != WaitCondition::BlockIo) {
         SignalThreadState signal_thread{};
         const SignalManagerStatus signal_status =
             signal_manager.ReadThread(thread_index, signal_thread);
@@ -5317,8 +5325,8 @@ ProcessRuntimeStatus BlockCurrentThread(ExceptionFrame &frame, const WaitConditi
             pending_signal_wake_failed =
                 wake_status != ThreadSchedulerStatus::Succeeded || !wake_won;
             if (!pending_signal_wake_failed) {
-                runtime_thread.saved_frame->register_rax = static_cast<uint64_t>(
-                    os::abi::OS_ABI_SYSTEM_CALL_RESULT_INTERRUPTED);
+                runtime_thread.saved_frame->register_rax =
+                    static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_INTERRUPTED);
             }
         }
     }

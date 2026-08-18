@@ -180,6 +180,7 @@ struct ObservedDirectoryEntry final {
             .writable = true,
             .create = true,
             .truncate = false,
+            .append = false,
         };
         os::kernel::fs::OpenFile open_file{};
         status = vfs.Open(context, reinterpret_cast<const uint8_t *>(path.data()),
@@ -274,6 +275,7 @@ struct ObservedDirectoryEntry final {
         .writable = true,
         .create = false,
         .truncate = true,
+        .append = false,
     };
     os::kernel::fs::OpenFile open_file{};
     uint64_t written_bytes = OS_TEST_VFS_RANDOM_EMPTY_VALUE;
@@ -292,6 +294,7 @@ struct ObservedDirectoryEntry final {
         .writable = false,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     std::vector<uint8_t> output(payload_length_bytes);
     uint64_t read_bytes = OS_TEST_VFS_RANDOM_EMPTY_VALUE;

@@ -172,6 +172,7 @@ int main() {
         .writable = true,
         .create = false,
         .truncate = false,
+        .append = false,
     };
     os::kernel::fs::OpenFile console_file{};
     os::kernel::fs::OpenFile retained_console_file{};
