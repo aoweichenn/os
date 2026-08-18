@@ -2265,3 +2265,55 @@ fork 的 FileShared 页不加 COW；FilePrivate 继续走 COW 且不回写。写
 [ADR 0043](adr/0043-irq14-block-request-and-writeback-cache.md)，逐寄存器和
 代码控制流见
 [v1.16 学习章](learning/24-v1.16-irq14-block-request-writeback.md)。
+
+## v2.3 rootfs v4 容量与恢复架构
+
+生产存储路径保持项目自有启动链和 ATA LBA28 驱动，只替换 rootfs 盘面与 VFS
+语义：
+
+```text
+128 GiB sparse raw image
+  → boot prefix: LBA 0..32767
+  → rootfs v4: LBA 32768..0x0FFFFFFF
+    → superblock / 4K-block journal / inode+data bitmap
+    → 65536 inode / five-level sparse block tree
+      → BlockCache → RootJournal → FileSystemBlockDevice → ATA PIO
+```
+
+superblock 的 23 个 64 位字段定义 journal、inode bitmap/table、data bitmap/
+area 和单文件上限。生产几何使用余下全部 268402688 个扇区；结构校验同时允许
+不超过该上限的较小 v4 几何，供真实 ENOSPC 模型使用。块号在进入 cache、
+journal 和设备前分别按已挂载 superblock 与 LBA28 上限验证，不能依赖截断。
+
+inode 将单/双/三/四/五级根、四个纳秒时间戳、link count 与 orphan flag
+保存在同一个 CRC 保护的 256 字节记录中。硬链接只增加非目录 inode 引用；
+符号链接目标作为普通稀疏文件数据存储，VFS 使用两块 4096 字节常驻 scratch
+在不增加 16 KiB Kernel 栈压力的前提下重写剩余路径。绝对目标回到 Process
+root，相对目标从链接所在目录继续，超过 40 跳返回 `LoopDetected`。
+
+打开后删除状态机为：
+
+```text
+linked(open>0, nlink=1)
+  --unlink transaction-->
+orphan(open>0, nlink=0, name absent)
+  --last close transaction--> free inode/data
+  --power loss-------------> mount scan → free inode/data
+```
+
+unlink 提交后旧 OpenFile 仍以 inode number+generation 访问数据。最后 close
+先保持引用有效，成功提交释放事务后才返回；设备失败允许调用方重试。mount
+在公开 root vnode 前加载分配统计、回放 journal、清理全部 orphan，再执行
+命名空间与位图验证。目录始终不进入 orphan 状态，保持 Busy/空目录约束。
+
+完整数据 bitmap 约 32 MiB，不进入 `RootFileSystem` 常驻对象。Kernel 对每个
+可达引用查询分配位、核对 inode 内数据/元数据计数和 superblock 摘要；完整
+重复所有权集合由宿主 fsck 在发布/损坏检查中重建。这样 64 MiB 兼容机不会
+仅因挂载 128 GiB 盘而支付 32 MiB Kernel BSS。superblock 的三项分配摘要随
+事务提交，mount 将逐引用结果与摘要比较，不顺序读取 65504 个 bitmap 块；
+生产写路径仍由位图和事务阻止正常运行产生重复引用。
+
+journal 仍使用 metadata-only ordered 模式，但 descriptor 增至八块、单事务
+248 credits。测试以 1000 个断电点覆盖 1..248 个不同 target，并在恢复后
+执行二次 clean 检查。设计冻结见
+[ADR 0051](adr/0051-rootfs-v4-full-disk-links-and-recovery.md)。

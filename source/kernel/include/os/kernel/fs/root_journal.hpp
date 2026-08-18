@@ -7,7 +7,7 @@
 
 namespace os::kernel::fs {
 
-inline constexpr uint64_t OS_KERNEL_ROOTFS_JOURNAL_DESCRIPTOR_BLOCK_COUNT = 4ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_JOURNAL_DESCRIPTOR_BLOCK_COUNT = 8ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_JOURNAL_DESCRIPTOR_ENTRY_SIZE_BYTES = 16ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_JOURNAL_DESCRIPTOR_CHECKSUM_SIZE_BYTES = 4ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_JOURNAL_ENTRIES_PER_DESCRIPTOR_BLOCK =
@@ -57,8 +57,9 @@ class RootJournal final {
     RootJournal(const RootJournal &) = delete;
     RootJournal &operator=(const RootJournal &) = delete;
 
-    [[nodiscard]] RootJournalStatus Initialize(FileSystemBlockDevice &device,
-                                               uint64_t rootfs_start_lba) noexcept;
+    [[nodiscard]] RootJournalStatus
+    Initialize(FileSystemBlockDevice &device, uint64_t rootfs_start_lba,
+               uint64_t rootfs_total_block_count = OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT) noexcept;
     [[nodiscard]] RootJournalStatus Recover(RootJournalRecoveryResult &result) noexcept;
     [[nodiscard]] RootJournalStatus Begin(uint64_t sequence,
                                           uint64_t reserved_credit_count) noexcept;
@@ -97,6 +98,7 @@ class RootJournal final {
     StagedBlock staged_blocks_[OS_KERNEL_ROOTFS_JOURNAL_MAXIMUM_CREDIT_COUNT]{};
     RootJournalStatistics statistics_{};
     uint64_t rootfs_start_lba_{};
+    uint64_t rootfs_total_block_count_{};
     uint64_t sequence_{};
     uint64_t reserved_credit_count_{};
     uint64_t staged_block_count_{};

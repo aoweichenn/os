@@ -4,17 +4,23 @@ namespace os::kernel::fs {
 
 namespace {
 
-constexpr uint8_t OS_KERNEL_ROOTFS_FORMAT_MAGIC[] = {'O', 'S', 'R', 'F', 'V', '0', '0', '3'};
+constexpr uint8_t OS_KERNEL_ROOTFS_FORMAT_MAGIC[] = {'O', 'S', 'R', 'F', 'V', '0', '0', '4'};
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_MAGIC_SIZE_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FIELD_START_BYTES = 8ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FIELD_COUNT = 18ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_RESERVED_START_BYTES = 152ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FIELD_COUNT = 23ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_RESERVED_START_BYTES = 192ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_CHECKSUM_OFFSET_BYTES = 508ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_DIRECT_START_BYTES = 64ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_SINGLE_INDIRECT_OFFSET_BYTES = 128ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_DOUBLE_INDIRECT_OFFSET_BYTES = 136ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_TRIPLE_INDIRECT_OFFSET_BYTES = 144ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_RESERVED_START_BYTES = 152ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_QUADRUPLE_INDIRECT_OFFSET_BYTES = 152ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_QUINTUPLE_INDIRECT_OFFSET_BYTES = 160ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_ACCESS_TIME_OFFSET_BYTES = 168ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_MODIFICATION_TIME_OFFSET_BYTES = 176ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_CHANGE_TIME_OFFSET_BYTES = 184ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_BIRTH_TIME_OFFSET_BYTES = 192ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_RESERVED_START_BYTES = 200ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_CHECKSUM_OFFSET_BYTES = 252ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_TYPE_OFFSET_BYTES = 0ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_FLAGS_OFFSET_BYTES = 8ULL;
@@ -54,21 +60,28 @@ constexpr uint32_t OS_KERNEL_ROOTFS_FORMAT_ZERO_CRC32 = 0U;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_VERSION_FIELD_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_BLOCK_SIZE_FIELD_INDEX = 1ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_TOTAL_BLOCKS_FIELD_INDEX = 2ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_BITMAP_START_FIELD_INDEX = 3ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_BITMAP_COUNT_FIELD_INDEX = 4ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_TABLE_START_FIELD_INDEX = 5ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_TABLE_COUNT_FIELD_INDEX = 6ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_BITMAP_START_FIELD_INDEX = 7ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_BITMAP_COUNT_FIELD_INDEX = 8ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_START_FIELD_INDEX = 9ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_COUNT_FIELD_INDEX = 10ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_COUNT_FIELD_INDEX = 11ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ROOT_INODE_FIELD_INDEX = 12ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_MAXIMUM_FILE_SIZE_FIELD_INDEX = 13ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_TRANSACTION_STATE_FIELD_INDEX = 14ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_TRANSACTION_GENERATION_FIELD_INDEX = 15ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_NEXT_INODE_GENERATION_FIELD_INDEX = 16ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FEATURE_FLAGS_FIELD_INDEX = 17ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_JOURNAL_START_FIELD_INDEX = 3ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_JOURNAL_COUNT_FIELD_INDEX = 4ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_BITMAP_START_FIELD_INDEX = 5ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_BITMAP_COUNT_FIELD_INDEX = 6ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_TABLE_START_FIELD_INDEX = 7ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_TABLE_COUNT_FIELD_INDEX = 8ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_BITMAP_START_FIELD_INDEX = 9ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_BITMAP_COUNT_FIELD_INDEX = 10ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_START_FIELD_INDEX = 11ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_DATA_COUNT_FIELD_INDEX = 12ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_COUNT_FIELD_INDEX = 13ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ROOT_INODE_FIELD_INDEX = 14ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_MAXIMUM_FILE_SIZE_FIELD_INDEX = 15ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_TRANSACTION_STATE_FIELD_INDEX = 16ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_TRANSACTION_GENERATION_FIELD_INDEX = 17ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_NEXT_INODE_GENERATION_FIELD_INDEX = 18ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FEATURE_FLAGS_FIELD_INDEX = 19ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ALLOCATED_INODE_COUNT_FIELD_INDEX = 20ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ALLOCATED_DATA_COUNT_FIELD_INDEX = 21ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ALLOCATED_METADATA_COUNT_FIELD_INDEX = 22ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_MINIMUM_DATA_START_RELATIVE_BLOCK =
+    OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK + OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT + 3ULL;
 
 void ClearBytes(uint8_t *const bytes, const uint64_t length_bytes) noexcept {
     for (uint64_t byte_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX; byte_index < length_bytes;
@@ -125,12 +138,12 @@ void StoreLittleEndian32(uint8_t *const bytes, const uint32_t value) noexcept {
 
 [[nodiscard]] bool NodeTypeIsValid(const RootNodeType type, const bool allow_unused) noexcept {
     return type == RootNodeType::RegularFile || type == RootNodeType::Directory ||
-           (allow_unused && type == RootNodeType::Unused);
+           type == RootNodeType::SymbolicLink || (allow_unused && type == RootNodeType::Unused);
 }
 
 [[nodiscard]] bool BlockReferenceIsValid(const uint64_t relative_block) noexcept {
     return relative_block == OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
-           (relative_block >= OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK &&
+           (relative_block >= OS_KERNEL_ROOTFS_FORMAT_MINIMUM_DATA_START_RELATIVE_BLOCK &&
             relative_block < OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT);
 }
 
@@ -160,26 +173,61 @@ void StoreLittleEndian32(uint8_t *const bytes, const uint32_t value) noexcept {
 }
 
 [[nodiscard]] bool SuperblockLayoutIsValid(const RootSuperblock &superblock) noexcept {
-    return superblock.version == OS_KERNEL_ROOTFS_FORMAT_VERSION &&
-           superblock.block_size_bytes == OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES &&
-           superblock.total_block_count == OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT &&
-           superblock.inode_bitmap_start_relative_block ==
-               OS_KERNEL_ROOTFS_INODE_BITMAP_START_RELATIVE_BLOCK &&
-           superblock.inode_bitmap_block_count == OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT &&
-           superblock.inode_table_start_relative_block ==
-               OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK &&
-           superblock.inode_table_block_count == OS_KERNEL_ROOTFS_INODE_TABLE_BLOCK_COUNT &&
-           superblock.data_bitmap_start_relative_block ==
-               OS_KERNEL_ROOTFS_DATA_BITMAP_START_RELATIVE_BLOCK &&
-           superblock.data_bitmap_block_count == OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT &&
-           superblock.data_start_relative_block == OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK &&
-           superblock.data_block_count == OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT &&
-           superblock.inode_count == OS_KERNEL_ROOTFS_INODE_COUNT &&
-           superblock.root_inode_number == OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER &&
-           superblock.maximum_file_size_bytes == OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES &&
-           superblock.feature_flags == OS_KERNEL_ROOTFS_REQUIRED_FEATURES &&
-           superblock.transaction_generation != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE &&
-           superblock.next_inode_generation != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE;
+    if (superblock.version != OS_KERNEL_ROOTFS_FORMAT_VERSION ||
+        superblock.block_size_bytes != OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES ||
+        superblock.total_block_count > OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT ||
+        superblock.journal_start_relative_block != OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK ||
+        superblock.journal_block_count != OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT ||
+        superblock.inode_bitmap_start_relative_block !=
+            superblock.journal_start_relative_block + superblock.journal_block_count ||
+        superblock.inode_count < OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER ||
+        superblock.inode_count > OS_KERNEL_ROOTFS_INODE_COUNT ||
+        superblock.inode_bitmap_block_count > OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT ||
+        superblock.inode_table_block_count > OS_KERNEL_ROOTFS_INODE_TABLE_BLOCK_COUNT ||
+        superblock.data_bitmap_block_count > OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT ||
+        superblock.inode_count % OS_KERNEL_ROOTFS_INODES_PER_BLOCK !=
+            OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+        superblock.root_inode_number != OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER ||
+        superblock.feature_flags != OS_KERNEL_ROOTFS_REQUIRED_FEATURES ||
+        superblock.transaction_generation == OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+        superblock.next_inode_generation == OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) {
+        return false;
+    }
+    if (superblock.allocated_inode_count < OS_KERNEL_ROOTFS_FORMAT_ROOT_LINK_COUNT ||
+        superblock.allocated_inode_count > superblock.inode_count ||
+        superblock.allocated_data_block_count > superblock.data_block_count ||
+        superblock.allocated_metadata_block_count >
+            superblock.data_block_count - superblock.allocated_data_block_count) {
+        return false;
+    }
+    const uint64_t bitmap_bits_per_block =
+        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES * OS_KERNEL_ROOTFS_BITMAP_BITS_PER_BYTE;
+    const uint64_t expected_inode_bitmap_blocks =
+        (superblock.inode_count - OS_KERNEL_ROOTFS_FORMAT_COUNTER_INCREMENT) /
+            bitmap_bits_per_block +
+        OS_KERNEL_ROOTFS_FORMAT_COUNTER_INCREMENT;
+    const uint64_t expected_inode_table_blocks =
+        superblock.inode_count / OS_KERNEL_ROOTFS_INODES_PER_BLOCK;
+    if (superblock.inode_bitmap_block_count != expected_inode_bitmap_blocks ||
+        superblock.inode_table_start_relative_block !=
+            superblock.inode_bitmap_start_relative_block + superblock.inode_bitmap_block_count ||
+        superblock.inode_table_block_count != expected_inode_table_blocks ||
+        superblock.data_bitmap_start_relative_block !=
+            superblock.inode_table_start_relative_block + superblock.inode_table_block_count ||
+        superblock.data_start_relative_block !=
+            superblock.data_bitmap_start_relative_block + superblock.data_bitmap_block_count ||
+        superblock.data_start_relative_block >= superblock.total_block_count ||
+        superblock.data_block_count !=
+            superblock.total_block_count - superblock.data_start_relative_block) {
+        return false;
+    }
+    const uint64_t expected_data_bitmap_blocks =
+        (superblock.data_block_count - OS_KERNEL_ROOTFS_FORMAT_COUNTER_INCREMENT) /
+            bitmap_bits_per_block +
+        OS_KERNEL_ROOTFS_FORMAT_COUNTER_INCREMENT;
+    return superblock.data_bitmap_block_count == expected_data_bitmap_blocks &&
+           superblock.maximum_file_size_bytes ==
+               superblock.data_block_count * OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
 }
 
 [[nodiscard]] bool InodeIsValid(const RootInode &inode, const bool allow_unused) noexcept {
@@ -196,7 +244,13 @@ void StoreLittleEndian32(uint8_t *const bytes, const uint32_t value) noexcept {
             inode.parent_inode_number != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
             inode.single_indirect_block != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
             inode.double_indirect_block != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
-            inode.triple_indirect_block != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) {
+            inode.triple_indirect_block != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.quadruple_indirect_block != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.quintuple_indirect_block != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.access_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.modification_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.change_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.birth_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) {
             return false;
         }
         for (uint64_t block_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX;
@@ -207,22 +261,38 @@ void StoreLittleEndian32(uint8_t *const bytes, const uint32_t value) noexcept {
         }
         return true;
     }
-    if (inode.flags != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+    if ((inode.flags & ~OS_KERNEL_ROOTFS_INODE_FLAG_ORPHAN) !=
+            OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
         inode.size_bytes > OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES ||
         inode.generation == OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
-        inode.link_count < OS_KERNEL_ROOTFS_FORMAT_ROOT_LINK_COUNT ||
+        (inode.link_count < OS_KERNEL_ROOTFS_FORMAT_ROOT_LINK_COUNT &&
+         (inode.flags & OS_KERNEL_ROOTFS_INODE_FLAG_ORPHAN) ==
+             OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) ||
+        (inode.link_count != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE &&
+         (inode.flags & OS_KERNEL_ROOTFS_INODE_FLAG_ORPHAN) !=
+             OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) ||
+        (inode.type == RootNodeType::Directory &&
+         (inode.link_count != OS_KERNEL_ROOTFS_FORMAT_ROOT_LINK_COUNT ||
+          inode.flags != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE)) ||
         inode.parent_inode_number == OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
         inode.parent_inode_number > OS_KERNEL_ROOTFS_INODE_COUNT ||
         inode.allocated_data_block_count > OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT ||
         inode.allocated_metadata_block_count > OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT ||
         !BlockReferenceIsValid(inode.single_indirect_block) ||
         !BlockReferenceIsValid(inode.double_indirect_block) ||
-        !BlockReferenceIsValid(inode.triple_indirect_block)) {
+        !BlockReferenceIsValid(inode.triple_indirect_block) ||
+        !BlockReferenceIsValid(inode.quadruple_indirect_block) ||
+        !BlockReferenceIsValid(inode.quintuple_indirect_block)) {
         return false;
     }
     if (inode.type == RootNodeType::Directory &&
         inode.size_bytes % OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES !=
             OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) {
+        return false;
+    }
+    if (inode.type == RootNodeType::SymbolicLink &&
+        (inode.size_bytes == OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+         inode.size_bytes > OS_KERNEL_ROOTFS_MAXIMUM_SYMBOLIC_LINK_LENGTH_BYTES)) {
         return false;
     }
     for (uint64_t block_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX;
@@ -295,6 +365,9 @@ RootFormatStatus DecodeRootSuperblock(const uint8_t *const block, const uint64_t
         .version = fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_VERSION_FIELD_INDEX],
         .block_size_bytes = fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_BLOCK_SIZE_FIELD_INDEX],
         .total_block_count = fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_TOTAL_BLOCKS_FIELD_INDEX],
+        .journal_start_relative_block =
+            fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_JOURNAL_START_FIELD_INDEX],
+        .journal_block_count = fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_JOURNAL_COUNT_FIELD_INDEX],
         .inode_bitmap_start_relative_block =
             fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_INODE_BITMAP_START_FIELD_INDEX],
         .inode_bitmap_block_count =
@@ -321,6 +394,12 @@ RootFormatStatus DecodeRootSuperblock(const uint8_t *const block, const uint64_t
         .next_inode_generation =
             fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_NEXT_INODE_GENERATION_FIELD_INDEX],
         .feature_flags = fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FEATURE_FLAGS_FIELD_INDEX],
+        .allocated_inode_count =
+            fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ALLOCATED_INODE_COUNT_FIELD_INDEX],
+        .allocated_data_block_count =
+            fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ALLOCATED_DATA_COUNT_FIELD_INDEX],
+        .allocated_metadata_block_count =
+            fields[OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_ALLOCATED_METADATA_COUNT_FIELD_INDEX],
     };
     if (decoded.version != OS_KERNEL_ROOTFS_FORMAT_VERSION) {
         return RootFormatStatus::InvalidVersion;
@@ -360,6 +439,8 @@ RootFormatStatus EncodeRootSuperblock(const RootSuperblock &superblock, uint8_t 
         superblock.version,
         superblock.block_size_bytes,
         superblock.total_block_count,
+        superblock.journal_start_relative_block,
+        superblock.journal_block_count,
         superblock.inode_bitmap_start_relative_block,
         superblock.inode_bitmap_block_count,
         superblock.inode_table_start_relative_block,
@@ -375,6 +456,9 @@ RootFormatStatus EncodeRootSuperblock(const RootSuperblock &superblock, uint8_t 
         superblock.transaction_generation,
         superblock.next_inode_generation,
         superblock.feature_flags,
+        superblock.allocated_inode_count,
+        superblock.allocated_data_block_count,
+        superblock.allocated_metadata_block_count,
     };
     for (uint64_t field_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX;
          field_index < OS_KERNEL_ROOTFS_FORMAT_SUPERBLOCK_FIELD_COUNT; ++field_index) {
@@ -435,6 +519,18 @@ RootFormatStatus DecodeRootInode(const uint8_t *const bytes, const uint64_t byte
             LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_DOUBLE_INDIRECT_OFFSET_BYTES),
         .triple_indirect_block =
             LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_TRIPLE_INDIRECT_OFFSET_BYTES),
+        .quadruple_indirect_block = LoadLittleEndian64(
+            bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_QUADRUPLE_INDIRECT_OFFSET_BYTES),
+        .quintuple_indirect_block = LoadLittleEndian64(
+            bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_QUINTUPLE_INDIRECT_OFFSET_BYTES),
+        .access_time_nanoseconds =
+            LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_ACCESS_TIME_OFFSET_BYTES),
+        .modification_time_nanoseconds = LoadLittleEndian64(
+            bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_MODIFICATION_TIME_OFFSET_BYTES),
+        .change_time_nanoseconds =
+            LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_CHANGE_TIME_OFFSET_BYTES),
+        .birth_time_nanoseconds =
+            LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_BIRTH_TIME_OFFSET_BYTES),
     };
     for (uint64_t block_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX;
          block_index < OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT; ++block_index) {
@@ -490,6 +586,18 @@ RootFormatStatus EncodeRootInode(const RootInode &inode, uint8_t *const bytes,
                         inode.double_indirect_block);
     StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_TRIPLE_INDIRECT_OFFSET_BYTES,
                         inode.triple_indirect_block);
+    StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_QUADRUPLE_INDIRECT_OFFSET_BYTES,
+                        inode.quadruple_indirect_block);
+    StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_QUINTUPLE_INDIRECT_OFFSET_BYTES,
+                        inode.quintuple_indirect_block);
+    StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_ACCESS_TIME_OFFSET_BYTES,
+                        inode.access_time_nanoseconds);
+    StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_MODIFICATION_TIME_OFFSET_BYTES,
+                        inode.modification_time_nanoseconds);
+    StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_CHANGE_TIME_OFFSET_BYTES,
+                        inode.change_time_nanoseconds);
+    StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_BIRTH_TIME_OFFSET_BYTES,
+                        inode.birth_time_nanoseconds);
     const uint32_t checksum =
         CalculateRootCrc32(bytes, OS_KERNEL_ROOTFS_FORMAT_INODE_CHECKSUM_OFFSET_BYTES);
     StoreLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_CHECKSUM_OFFSET_BYTES, checksum);

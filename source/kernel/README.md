@@ -106,9 +106,9 @@ fs/vfs.*                       路径、Mount、FsContext 与 namespace mutation
 fs/memfs.*                     /tmp 内存后端和差分模型
 fs/legacy_file_system.*        旧盘面 VFS 适配，仅保留兼容回归
 fs/file_system.*               v0.11 旧格式实现
-fs/root_file_system_format.*   rootfs v2 冻结小端盘面编码
+fs/root_file_system_format.*   rootfs v4、64 位几何与五级块树盘面编码
 fs/root_journal.*              格式 3 ordered metadata journal 与 mount replay
-fs/root_file_system.*          生产根、三级块树、journal 事务和全盘校验
+fs/root_file_system.*          生产根、链接/orphan、时间戳、journal 与流式校验
 fs/block_cache.*               固定容量写回缓存
 ```
 

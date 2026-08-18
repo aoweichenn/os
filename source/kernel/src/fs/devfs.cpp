@@ -51,6 +51,9 @@ const BackendOperations Devfs::operations{
     .close = Devfs::CloseOperation,
     .remove = Devfs::RemoveOperation,
     .rename = Devfs::RenameOperation,
+    .link = nullptr,
+    .create_symbolic_link = nullptr,
+    .read_symbolic_link = nullptr,
     .parent = Devfs::ParentOperation,
     .read = Devfs::ReadOperation,
     .write = Devfs::WriteOperation,
@@ -448,6 +451,10 @@ Status Devfs::StatOperation(void *const context, const Vnode &vnode,
         .link_count = vnode.type == NodeType::Directory
                           ? OS_KERNEL_DEVFS_ROOT_LINK_COUNT
                           : OS_KERNEL_DEVFS_DEVICE_LINK_COUNT,
+        .access_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
     };
     return Status::Succeeded;
 }

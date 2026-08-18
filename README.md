@@ -2,15 +2,19 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v2.2 终端、Shell 与本地命令环境` 已形成完整本地候选。v2.1 已建立 Firmware、Stage 1、
+当前状态：`v2.3 128 GiB rootfs v4` 已形成完整本地候选。v2.1 已建立 Firmware、Stage 1、
 Kernel、panic 以及 Ring 3 stdout/stderr 从 COM1 迁移到项目自研的 80×25 VGA
 文本控制台，并把详细系统诊断分流到只追加内存日志。进入 Shell 时屏幕清空；
 此后普通 Kernel 事件只进入宿主可导出的日志，TTY stdout/stderr 写 VGA，panic
 始终双写。v2.2 进一步加入有界行编辑、16 条历史、Tab 补全、环境继承与展开、
-glob、控制序列、完整重定向、CMOS UTC 和 43 个独立工具路径。ABI 以兼容扩展
-升级为 v2.1.0，共 71 个系统调用；参考机继续固定为 32 GiB RAM 与 128 GiB 稀疏磁盘，rootfs v2
-在 v2.3 以前仍只使用固定 256 MiB。`v2.0 集成发布`
-仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
+glob、控制序列、完整重定向、CMOS UTC 和 43 个独立工具路径。v2.3 把生产根
+升级为 `OSRFV004`：65536 inode、五级稀疏块树、248-credit journal、链接、
+四时间戳和 orphan 恢复共同覆盖 LBA 32768 到 `0x0FFFFFFF`，128 GiB 稀疏盘
+在启动前缀后的容量现已成为可分配 rootfs。ABI 兼容升级为 v2.2.0，仍为 71
+个系统调用，`FileInformation` 追加四个纳秒时间戳。v2.3 的盘面、恢复边界与
+本地证据见 [发布记录](docs/releases/v2.3.md) 和
+[ADR 0051](docs/adr/0051-rootfs-v4-full-disk-links-and-recovery.md)。
+`v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI
 v2.0 发布时的 ABI v2.0.0、69 个系统调用、错误区间和关键结构偏移仍是历史冻结基线；`/dev` 使用通用
@@ -420,7 +424,7 @@ QEMU TCG 整机测试。详细说明见 [docs/building.md](docs/building.md) 和
 [OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED
 [OS][KERNEL] PROCESS_RUNTIME_READY
 [OS][KERNEL] PIPE_READY
-[OS][KERNEL] ROOTFS_V2_MOUNTED
+[OS][KERNEL] ROOTFS_V4_MOUNTED
 [OS][KERNEL] FILE_SYSTEM_CONSISTENT
 [OS][KERNEL] USER_ELF_VALID
 [OS][KERNEL] USER_ENTRY=0x0000000040000000

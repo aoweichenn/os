@@ -156,6 +156,32 @@ v2.2 的 Shell 组合要求：
 - ABI v2.1.0 是对 v2.0.0 的兼容尾部扩展：系统调用 70 切换受控输入模式，71
   返回 CMOS UTC 与 Unix 秒；既有 1..69 编号和 -1..-57 错误值不变。
 
+v2.3 的 rootfs v4 要求：
+
+- 生产 rootfs 从 LBA 32768 覆盖到 `0x0FFFFFFF`，总计 268402688 个 512 字节
+  块；宿主 raw 文件的逻辑长度保持 137438953472 字节且空闲区保持稀疏。
+- superblock magic 必须为 `OSRFV004`，以 64 位字段显式保存 journal、inode
+  bitmap/table、data bitmap/area、inode 数、文件上限和 required features；
+  格式 3 只能明确拒绝，不能静默迁移或重新格式化。
+- 生产几何提供 65536 个 inode、65504 块数据 bitmap、4096 块 journal 和
+  268300303 个数据/指针块；结构相同的较小几何只能用于有界容量测试。
+- inode 保持 256 字节并加入四/五级间接根、atime/mtime/ctime/btime、链接与
+  orphan 状态；单文件逻辑上限为 137369755136 字节，稀疏末块必须经五级树
+  实际读写。
+- 非目录硬链接维护精确 link count；符号链接支持绝对/相对目标和最多 40 次
+  跳转。目录硬链接、损坏目标、超长展开和环路必须明确拒绝。
+- unlink 或 rename replace 删除最后名称时，已有 OpenFile 继续有效；最后
+  close 事务回收。若在两者之间断电，下一次 mount 必须先回收 orphan 再发布根。
+- journal 至少提供 248 个 metadata credits；1000 个确定性断电点覆盖
+  1..248 个 target，恢复只能得到完整旧状态或完整新状态，二次恢复必须 Clean。
+- `mkfs-rootfs`、`inspect-rootfs`、`fsck-rootfs`、`corrupt-rootfs` 必须解析
+  同一 v4；fsck 独立重建所有权/link/orphan 集合，高 LBA 用例必须从最后一个
+  LBA 读回数据，故障与复制镜像不得物化 128 GiB 空洞。
+- ABI 以 v2.2.0 兼容扩展 `FileInformation` 的四个 64 位纳秒时间戳；`stat`
+  可见，普通 read 采用 noatime，不为读路径制造持久事务。
+- Kernel 不得为完整数据 bitmap 常驻约 32 MiB BSS；Kernel 有界校验与宿主
+  完整 fsck 分工必须写入模块文档和 ADR。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

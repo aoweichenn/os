@@ -77,9 +77,15 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_WRITABLE_FLAG = 1ULL << 0ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_EXECUTABLE_FLAG = 1ULL << 1ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_USER_FLAG = 1ULL << 2ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_COPY_ON_WRITE_FLAG = 1ULL << 3ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_RENAME_PATH_COUNT = 2ULL;
+constexpr uint64_t OS_KERNEL_SYSTEM_CALL_RENAME_PATH_STORAGE_SIZE_BYTES =
+    OS_KERNEL_SYSTEM_CALL_RENAME_PATH_COUNT * os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES;
 
 bool system_call_interrupt_self_test_completed;
 UserVirtualMemoryStatus last_user_return_resolve_status = UserVirtualMemoryStatus::Succeeded;
+// 单 BSP 上 rename 关闭抢占后独占这块缓冲，避免两条最大路径耗尽 16 KiB Kernel 栈。
+alignas(uint64_t) uint8_t
+    rename_path_storage[OS_KERNEL_SYSTEM_CALL_RENAME_PATH_STORAGE_SIZE_BYTES]{};
 
 void WriteRequiredSystemCallMessage(const VgaTextConsole &vga_console,
                                     const char *message) noexcept {
@@ -1027,6 +1033,8 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
                     ? os::abi::DirectoryEntryType::Directory
                 : file_system_entry.type == fs::NodeType::CharacterDevice
                     ? os::abi::DirectoryEntryType::CharacterDevice
+                : file_system_entry.type == fs::NodeType::SymbolicLink
+                    ? os::abi::DirectoryEntryType::SymbolicLink
                     : os::abi::DirectoryEntryType::RegularFile,
         .name_length_bytes = file_system_entry.name_length_bytes,
         .name = {},
@@ -1125,12 +1133,19 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         destination_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
     }
-    uint8_t source_path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
-    uint8_t destination_path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
-    if (CopyFromUser(user_source_address, source_length_bytes, source_path, sizeof(source_path)) !=
+    CpuPreemptionGuard preemption_guard{};
+    if (!preemption_guard.Succeeded()) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE;
+    }
+    uint8_t *const source_path = rename_path_storage;
+    uint8_t *const destination_path =
+        rename_path_storage + os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES;
+    if (CopyFromUser(user_source_address, source_length_bytes, source_path,
+                     os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) !=
             UserMemoryCopyStatus::Succeeded ||
         CopyFromUser(user_destination_address, destination_length_bytes, destination_path,
-                     sizeof(destination_path)) != UserMemoryCopyStatus::Succeeded) {
+                     os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) !=
+            UserMemoryCopyStatus::Succeeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
     }
     return MapFileSystemStatus(
@@ -1196,10 +1211,16 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
                     ? os::abi::DirectoryEntryType::Directory
                 : node_information.type == fs::NodeType::CharacterDevice
                     ? os::abi::DirectoryEntryType::CharacterDevice
+                : node_information.type == fs::NodeType::SymbolicLink
+                    ? os::abi::DirectoryEntryType::SymbolicLink
                     : os::abi::DirectoryEntryType::RegularFile,
         .size_bytes = node_information.size_bytes,
         .allocated_size_bytes = node_information.allocated_size_bytes,
         .link_count = node_information.link_count,
+        .access_time_nanoseconds = node_information.access_time_nanoseconds,
+        .modification_time_nanoseconds = node_information.modification_time_nanoseconds,
+        .change_time_nanoseconds = node_information.change_time_nanoseconds,
+        .birth_time_nanoseconds = node_information.birth_time_nanoseconds,
     };
     if (CopyToUser(user_information_address, sizeof(information),
                    reinterpret_cast<const uint8_t *>(&information),

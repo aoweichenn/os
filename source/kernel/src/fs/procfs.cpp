@@ -184,6 +184,9 @@ const BackendOperations Procfs::operations{
     .close = Procfs::CloseOperation,
     .remove = Procfs::RemoveOperation,
     .rename = Procfs::RenameOperation,
+    .link = nullptr,
+    .create_symbolic_link = nullptr,
+    .read_symbolic_link = nullptr,
     .parent = Procfs::ParentOperation,
     .read = Procfs::ReadOperation,
     .write = Procfs::WriteOperation,
@@ -533,6 +536,10 @@ Status Procfs::StatOperation(void *const context, const Vnode &vnode,
         .link_count = vnode.type == NodeType::Directory
                           ? OS_KERNEL_PROCFS_ROOT_LINK_COUNT
                           : OS_KERNEL_PROCFS_FILE_LINK_COUNT,
+        .access_time_nanoseconds = OS_KERNEL_PROCFS_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_KERNEL_PROCFS_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_KERNEL_PROCFS_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_KERNEL_PROCFS_EMPTY_VALUE,
     };
     return Status::Succeeded;
 }

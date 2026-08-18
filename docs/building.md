@@ -299,7 +299,7 @@ source/boot/stage1/src/memory_map.asm
 执行。进入长模式后，`kernel_loader.asm` 用另一条自研 ATA PIO 路径读取
 Kernel。
 
-rootfs v2 由构建图在 Kernel 启动前显式格式化，Kernel 没有自动格式化入口：
+rootfs v4 由构建图在 Kernel 启动前显式格式化，Kernel 没有自动格式化入口：
 
 ```bash
 python3 tools/os.py inspect-rootfs build/developer/images/boot_disk.img
@@ -363,7 +363,7 @@ stage1.bin ────────────────┐
 kernel.elf ─ strip-debug ─ kernel.payload.elf ─ 审计 ─┘
                                   ├─ Stage 1 描述符与负载
                                   └─ Kernel 描述符、CRC32 与 ELF 文件
-user_*.elf ─ audit ─ mkfs/install ─ rootfs v2 (/sbin + /bin) ─┘
+user_*.elf ─ audit ─ mkfs/install ─ rootfs v4 (/sbin + /bin) ─┘
 ```
 
 `kernel.elf` 的链接命令直接依赖生成的 `architecture.o` 与最小

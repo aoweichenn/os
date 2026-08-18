@@ -94,6 +94,9 @@ const BackendOperations Memfs::operations{
     .close = Memfs::CloseOperation,
     .remove = Memfs::RemoveOperation,
     .rename = Memfs::RenameOperation,
+    .link = nullptr,
+    .create_symbolic_link = nullptr,
+    .read_symbolic_link = nullptr,
     .parent = Memfs::ParentOperation,
     .read = Memfs::ReadOperation,
     .write = Memfs::WriteOperation,
@@ -753,6 +756,10 @@ Status Memfs::StatOperation(void *const context, const Vnode &vnode,
         .size_bytes = node->size_bytes,
         .allocated_size_bytes = node->capacity_bytes,
         .link_count = OS_KERNEL_MEMFS_COUNTER_INCREMENT,
+        .access_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
     };
     return Status::Succeeded;
 }

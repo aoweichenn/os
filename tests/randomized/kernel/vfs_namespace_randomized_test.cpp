@@ -18,11 +18,11 @@ constexpr std::string_view OS_TEST_VFS_RANDOM_SUITE_NAME = "kernel/vfs/namespace
 constexpr std::string_view OS_TEST_VFS_RANDOM_REFERENCE_MODEL =
     "十万步目录树操作必须与独立参考模型保持逐步一致";
 constexpr std::string_view OS_TEST_VFS_RANDOM_ROOT_REFERENCE_MODEL =
-    "rootfs v2 的十万步目录树操作必须与同一独立参考模型保持逐步一致";
+    "rootfs v4 的十万步目录树操作必须与同一独立参考模型保持逐步一致";
 constexpr std::string_view OS_TEST_VFS_RANDOM_FINAL_STATE =
     "随机序列结束后命名空间、统计和堆资源必须完整收敛";
 constexpr std::string_view OS_TEST_VFS_RANDOM_BACKEND_PARITY =
-    "memfs 与 rootfs v2 必须在同一种子十万步后收敛到相同节点规模";
+    "memfs 与 rootfs v4 必须在同一种子十万步后收敛到相同节点规模";
 
 constexpr os::test::RandomSeed OS_TEST_VFS_RANDOM_SEED = 0x5646532026001500ULL;
 constexpr os::test::TestCount OS_TEST_VFS_RANDOM_STEP_COUNT = 100000ULL;

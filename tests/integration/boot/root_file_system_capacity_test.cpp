@@ -11,7 +11,7 @@ namespace {
 constexpr std::string_view OS_TEST_ROOTFS_CAPACITY_SUITE_NAME =
     "kernel/root_file_system/capacity/integration";
 constexpr std::string_view OS_TEST_ROOTFS_CAPACITY_SHORT_WRITE =
-    "真实 256 MiB rootfs 填满后必须先短写成功，再以零字节明确报告 ENOSPC";
+    "同构小几何 rootfs v4 填满后必须先短写成功，再以零字节明确报告 ENOSPC";
 constexpr std::string_view OS_TEST_ROOTFS_CAPACITY_CONSISTENCY =
     "容量耗尽后的盘面必须保持 clean、一致且零数据块继续稀疏存储";
 

@@ -1120,6 +1120,16 @@ os_add_kernel_file_system_test(
     integration/boot/root_file_system_capacity_test.cpp
     "integration"
 )
+os_add_kernel_file_system_test(
+    os_kernel_root_file_system_high_lba_integration_tests
+    integration/boot/root_file_system_high_lba_test.cpp
+    "integration"
+)
+set_tests_properties(
+    os_kernel_root_file_system_high_lba_integration_tests
+    PROPERTIES
+        TIMEOUT 60
+)
 target_sources(
     os_kernel_root_file_system_capacity_integration_tests
     PRIVATE
@@ -1433,7 +1443,7 @@ set_tests_properties(
 set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 32768)
-set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 45)
+set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 55)
 set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 130)
 set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 250)
 set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 300)

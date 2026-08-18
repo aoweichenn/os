@@ -25,7 +25,7 @@ constexpr char OS_USER_INIT_SIGNAL_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] SIGNAL_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_TOOL_PROBE_REAPED_MESSAGE[] = "[OS][USER][INIT] TOOL_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v2.2";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v2.3";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";

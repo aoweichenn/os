@@ -228,6 +228,9 @@ const BackendOperations LegacyFileSystem::operations{
     .close = LegacyFileSystem::CloseOperation,
     .remove = LegacyFileSystem::RemoveOperation,
     .rename = LegacyFileSystem::RenameOperation,
+    .link = nullptr,
+    .create_symbolic_link = nullptr,
+    .read_symbolic_link = nullptr,
     .parent = LegacyFileSystem::ParentOperation,
     .read = LegacyFileSystem::ReadOperation,
     .write = LegacyFileSystem::WriteOperation,
@@ -619,6 +622,10 @@ Status LegacyFileSystem::StatOperation(void *const context, const Vnode &vnode,
         .allocated_size_bytes =
             inode.allocated_block_count * OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES,
         .link_count = inode.link_count,
+        .access_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
     };
     return Status::Succeeded;
 }

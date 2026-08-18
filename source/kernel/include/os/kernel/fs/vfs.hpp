@@ -46,6 +46,7 @@ enum class NodeType : uint64_t {
     RegularFile,
     Directory,
     CharacterDevice,
+    SymbolicLink,
 };
 
 enum class BackendKind : uint64_t {
@@ -99,6 +100,10 @@ struct BackendNodeInformation final {
     uint64_t size_bytes;
     uint64_t allocated_size_bytes;
     uint64_t link_count;
+    uint64_t access_time_nanoseconds;
+    uint64_t modification_time_nanoseconds;
+    uint64_t change_time_nanoseconds;
+    uint64_t birth_time_nanoseconds;
 };
 
 struct NodeInformation final {
@@ -111,6 +116,10 @@ struct NodeInformation final {
     uint64_t size_bytes;
     uint64_t allocated_size_bytes;
     uint64_t link_count;
+    uint64_t access_time_nanoseconds;
+    uint64_t modification_time_nanoseconds;
+    uint64_t change_time_nanoseconds;
+    uint64_t birth_time_nanoseconds;
 };
 
 struct FsContext final {
@@ -132,6 +141,15 @@ struct BackendOperations final {
                      uint64_t source_name_length_bytes, const Vnode &destination_directory,
                      const uint8_t *destination_name, uint64_t destination_name_length_bytes,
                      bool replace) noexcept;
+    Status (*link)(void *context, const Vnode &source, const Vnode &destination_directory,
+                   const uint8_t *destination_name,
+                   uint64_t destination_name_length_bytes) noexcept;
+    Status (*create_symbolic_link)(void *context, const Vnode &destination_directory,
+                                   const uint8_t *destination_name,
+                                   uint64_t destination_name_length_bytes, const uint8_t *target,
+                                   uint64_t target_length_bytes, Vnode &vnode) noexcept;
+    Status (*read_symbolic_link)(void *context, const Vnode &vnode, uint8_t *destination,
+                                 uint64_t capacity_bytes, uint64_t &target_length_bytes) noexcept;
     Status (*parent)(void *context, const Vnode &vnode, Vnode &parent) noexcept;
     Status (*read)(void *context, const Vnode &vnode, uint64_t offset_bytes, uint8_t *destination,
                    uint64_t capacity_bytes, uint64_t &read_bytes) noexcept;
@@ -211,6 +229,17 @@ class Vfs final {
     [[nodiscard]] Status Rename(const FsContext &context, const uint8_t *source_path,
                                 uint64_t source_path_length_bytes, const uint8_t *destination_path,
                                 uint64_t destination_path_length_bytes, bool replace) noexcept;
+    [[nodiscard]] Status Link(const FsContext &context, const uint8_t *source_path,
+                              uint64_t source_path_length_bytes, const uint8_t *destination_path,
+                              uint64_t destination_path_length_bytes) noexcept;
+    [[nodiscard]] Status CreateSymbolicLink(const FsContext &context, const uint8_t *target,
+                                            uint64_t target_length_bytes,
+                                            const uint8_t *destination_path,
+                                            uint64_t destination_path_length_bytes) noexcept;
+    [[nodiscard]] Status ReadSymbolicLink(const FsContext &context, const uint8_t *path,
+                                          uint64_t path_length_bytes, uint8_t *destination,
+                                          uint64_t capacity_bytes,
+                                          uint64_t &target_length_bytes) noexcept;
     [[nodiscard]] Status Truncate(const FsContext &context, const uint8_t *path,
                                   uint64_t path_length_bytes, uint64_t size_bytes) noexcept;
     [[nodiscard]] Status Stat(const FsContext &context, const uint8_t *path,
@@ -265,6 +294,9 @@ class Vfs final {
     [[nodiscard]] Status ResolveParent(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes,
                                        ParentResolution &resolution) noexcept;
+    [[nodiscard]] Status ResolveInternal(const FsContext &context, const uint8_t *path,
+                                         uint64_t path_length_bytes, bool follow_final_link,
+                                         Path &resolved_path) noexcept;
     [[nodiscard]] Status ReadPathName(const Path &path, uint8_t *name, uint64_t name_capacity_bytes,
                                       uint64_t &name_length_bytes) noexcept;
     [[nodiscard]] Status ValidateSuperblock(const Superblock &superblock) const noexcept;
@@ -276,6 +308,9 @@ class Vfs final {
     uint64_t mount_capacity_{};
     uint64_t mount_count_{};
     mutable SpinLock lock_{};
+    mutable SpinLock resolution_lock_{};
+    uint8_t resolution_path_a_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
+    uint8_t resolution_path_b_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     Statistics statistics_{};
     bool initialized_{};
 };

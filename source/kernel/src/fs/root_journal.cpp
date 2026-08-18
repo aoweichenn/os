@@ -99,24 +99,31 @@ void StoreUint64(uint8_t *const bytes, const uint64_t offset_bytes, const uint64
     return value;
 }
 
-[[nodiscard]] bool TargetBlockIsValid(const uint64_t relative_block) noexcept {
+[[nodiscard]] bool TargetBlockIsValid(const uint64_t relative_block,
+                                      const uint64_t total_block_count) noexcept {
     const bool inside_journal = relative_block >= OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK &&
-                                relative_block < OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK;
-    return relative_block < OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT && !inside_journal;
+                                relative_block < OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK +
+                                                     OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT;
+    return relative_block < total_block_count && !inside_journal;
 }
 
 }
 
 RootJournalStatus RootJournal::Initialize(FileSystemBlockDevice &device,
-                                          const uint64_t rootfs_start_lba) noexcept {
+                                          const uint64_t rootfs_start_lba,
+                                          const uint64_t rootfs_total_block_count) noexcept {
     if (this->initialized_) {
         return RootJournalStatus::AlreadyInitialized;
     }
-    if (rootfs_start_lba > UINT64_MAX - OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT) {
+    if (rootfs_total_block_count <=
+            OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK + OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT ||
+        rootfs_total_block_count > OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT ||
+        rootfs_start_lba > UINT64_MAX - rootfs_total_block_count) {
         return RootJournalStatus::InvalidArgument;
     }
     this->device_ = &device;
     this->rootfs_start_lba_ = rootfs_start_lba;
+    this->rootfs_total_block_count_ = rootfs_total_block_count;
     this->statistics_ = RootJournalStatistics{};
     this->ResetTransaction();
     this->initialized_ = true;
@@ -128,7 +135,7 @@ RootJournalStatus RootJournal::ReadDeviceBlock(const uint64_t rootfs_relative_bl
     if (!this->initialized_ || this->device_ == nullptr) {
         return RootJournalStatus::NotInitialized;
     }
-    if (block == nullptr || rootfs_relative_block >= OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT) {
+    if (block == nullptr || rootfs_relative_block >= this->rootfs_total_block_count_) {
         return RootJournalStatus::InvalidArgument;
     }
     return this->device_->ReadBlock(this->rootfs_start_lba_ + rootfs_relative_block, block,
@@ -143,7 +150,7 @@ RootJournalStatus RootJournal::WriteDeviceBlock(const uint64_t rootfs_relative_b
     if (!this->initialized_ || this->device_ == nullptr) {
         return RootJournalStatus::NotInitialized;
     }
-    if (block == nullptr || rootfs_relative_block >= OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT) {
+    if (block == nullptr || rootfs_relative_block >= this->rootfs_total_block_count_) {
         return RootJournalStatus::InvalidArgument;
     }
     return this->device_->WriteBlock(this->rootfs_start_lba_ + rootfs_relative_block, block,
@@ -197,8 +204,8 @@ RootJournalStatus RootJournal::Stage(const uint64_t target_relative_block,
     if (!this->active_) {
         return RootJournalStatus::NotActive;
     }
-    if (!TargetBlockIsValid(target_relative_block) || block == nullptr ||
-        block_size_bytes != OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES) {
+    if (!TargetBlockIsValid(target_relative_block, this->rootfs_total_block_count_) ||
+        block == nullptr || block_size_bytes != OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES) {
         return RootJournalStatus::InvalidArgument;
     }
     for (uint64_t entry_index = OS_KERNEL_ROOTFS_JOURNAL_FIRST_INDEX;
@@ -511,7 +518,8 @@ RootJournalStatus RootJournal::LoadCommittedTransaction(uint64_t &sequence, uint
             const uint32_t reserved = LoadUint32(
                 descriptor,
                 entry_offset_bytes + OS_KERNEL_ROOTFS_JOURNAL_DESCRIPTOR_RESERVED_OFFSET_BYTES);
-            if (!TargetBlockIsValid(entry.target_relative_block) || reserved != 0U) {
+            if (!TargetBlockIsValid(entry.target_relative_block, this->rootfs_total_block_count_) ||
+                reserved != 0U) {
                 return RootJournalStatus::Corrupt;
             }
             for (uint64_t prior_index = OS_KERNEL_ROOTFS_JOURNAL_FIRST_INDEX;

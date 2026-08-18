@@ -77,8 +77,9 @@ constexpr char OS_USER_SHELL_EXPORT_COMMAND[] = "export";
 constexpr char OS_USER_SHELL_UNSET_COMMAND[] = "unset";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v2.2\r\n"
-    "行编辑、环境变量、通配符、完整重定向与 43 个用户工具已经启用。\r\n";
+    "\r\nx86-64 OS Lab v2.3\r\n"
+    "行编辑、环境变量、通配符、完整重定向与 43 个用户工具已经启用。\r\n"
+    "rootfs v4 已使用 128 GiB 参考盘并支持链接、时间戳与断电恢复。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";

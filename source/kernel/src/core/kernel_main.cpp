@@ -8,6 +8,7 @@
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/processor_features.hpp"
 #include "os/kernel/device/ata_pio.hpp"
+#include "os/kernel/device/cmos_rtc.hpp"
 #include "os/kernel/fs/devfs.hpp"
 #include "os/kernel/fs/memfs.hpp"
 #include "os/kernel/fs/procfs.hpp"
@@ -22,6 +23,8 @@ namespace os::kernel {
 
 namespace {
 
+constexpr uint64_t OS_KERNEL_MAIN_EMPTY_VALUE = 0ULL;
+constexpr uint64_t OS_KERNEL_MAIN_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BSS_PROBE_ZERO_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BSS_PROBE_WRITTEN_VALUE = 0xB007B007B007B007ULL;
 constexpr char OS_KERNEL_MAIN_ENTERED_MESSAGE[] = "[OS][KERNEL] ENTERED\r\n";
@@ -240,7 +243,7 @@ constexpr char OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE[] =
     "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID\r\n";
 constexpr char OS_KERNEL_MAIN_ATA_IRQ14_READY_MESSAGE[] = "[OS][KERNEL] ATA_IRQ14_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ATA_REQUEST_CAPACITY_PREFIX[] = "[OS][KERNEL] ATA_REQUEST_CAPACITY=";
-constexpr char OS_KERNEL_MAIN_ROOTFS_V2_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V2_MOUNTED\r\n";
+constexpr char OS_KERNEL_MAIN_ROOTFS_V4_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V4_MOUNTED\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE[] =
     "[OS][KERNEL] FILE_SYSTEM_CORRUPT\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE[] =
@@ -261,10 +264,10 @@ constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_METADATA_BLOCK_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_SYSTEM_ALLOCATED_METADATA_BLOCKS=";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_FREE_BLOCK_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_SYSTEM_FREE_DATA_BLOCKS=";
-constexpr char OS_KERNEL_MAIN_ROOTFS_V2_REGION_SIZE_PREFIX[] =
-    "[OS][KERNEL] ROOTFS_V2_REGION_BYTES=";
-constexpr char OS_KERNEL_MAIN_ROOTFS_V2_MAXIMUM_FILE_SIZE_PREFIX[] =
-    "[OS][KERNEL] ROOTFS_V2_MAX_FILE_BYTES=";
+constexpr char OS_KERNEL_MAIN_ROOTFS_V4_REGION_SIZE_PREFIX[] =
+    "[OS][KERNEL] ROOTFS_V4_REGION_BYTES=";
+constexpr char OS_KERNEL_MAIN_ROOTFS_V4_MAXIMUM_FILE_SIZE_PREFIX[] =
+    "[OS][KERNEL] ROOTFS_V4_MAX_FILE_BYTES=";
 constexpr char OS_KERNEL_MAIN_ROOTFS_JOURNAL_READY_MESSAGE[] =
     "[OS][KERNEL] ROOTFS_JOURNAL_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ROOTFS_JOURNAL_CREDIT_CAPACITY_PREFIX[] =
@@ -623,7 +626,7 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE[] = "[OS][KERNEL] SCHED
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
-constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.2 terminal ready\r\n";
+constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.3 terminal ready\r\n";
 constexpr uint64_t OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT = 16ULL;
 constexpr uint64_t OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT = 1ULL;
 constexpr int64_t OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE = 0LL;
@@ -677,7 +680,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v2.2";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v2.3";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER = 0ULL;
@@ -1125,10 +1128,35 @@ void WriteFileSystemStatistics(const VgaTextConsole &vga_console,
                          statistics.journal.checksum_failure_count);
 }
 
+[[nodiscard]] uint64_t ReadRootFileSystemTimestamp() noexcept {
+    static uint64_t realtime_base_nanoseconds = OS_KERNEL_MAIN_EMPTY_VALUE;
+    static uint64_t monotonic_base_nanoseconds = OS_KERNEL_MAIN_EMPTY_VALUE;
+    static bool initialized = false;
+    const uint64_t monotonic_nanoseconds = GetMonotonicNanoseconds();
+    if (!initialized) {
+        os::abi::RealtimeInformation information{};
+        if (ReadCmosRtc(information) == CmosRtcStatus::Succeeded &&
+            information.unix_seconds <= UINT64_MAX / os::abi::OS_ABI_TIME_NANOSECONDS_PER_SECOND) {
+            realtime_base_nanoseconds =
+                information.unix_seconds * os::abi::OS_ABI_TIME_NANOSECONDS_PER_SECOND;
+        } else {
+            realtime_base_nanoseconds = OS_KERNEL_MAIN_COUNTER_INCREMENT;
+        }
+        monotonic_base_nanoseconds = monotonic_nanoseconds;
+        initialized = true;
+    }
+    const uint64_t elapsed_nanoseconds = monotonic_nanoseconds >= monotonic_base_nanoseconds
+                                             ? monotonic_nanoseconds - monotonic_base_nanoseconds
+                                             : OS_KERNEL_MAIN_EMPTY_VALUE;
+    return elapsed_nanoseconds > UINT64_MAX - realtime_base_nanoseconds
+               ? UINT64_MAX
+               : realtime_base_nanoseconds + elapsed_nanoseconds;
+}
+
 void InitializeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileSystem &file_system,
                                 AtaPioDevice &device) noexcept {
-    const fs::Status mount_status =
-        file_system.Initialize(device, OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER);
+    const fs::Status mount_status = file_system.Initialize(
+        device, OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER, false, ReadRootFileSystemTimestamp);
     if (mount_status != fs::Status::Succeeded) {
         if (mount_status == fs::Status::Corrupt ||
             mount_status == fs::Status::IncompleteTransaction) {
@@ -1138,10 +1166,10 @@ void InitializeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileS
                              static_cast<uint64_t>(mount_status));
         HaltProcessor();
     }
-    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_V2_MOUNTED_MESSAGE);
-    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V2_REGION_SIZE_PREFIX,
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_V4_MOUNTED_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V4_REGION_SIZE_PREFIX,
                          fs::OS_KERNEL_ROOTFS_REGION_SIZE_BYTES);
-    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V2_MAXIMUM_FILE_SIZE_PREFIX,
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V4_MAXIMUM_FILE_SIZE_PREFIX,
                          fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES);
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_READY_MESSAGE);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_CREDIT_CAPACITY_PREFIX,

@@ -13,13 +13,13 @@ from .kernel_image import (
     calculateCrc32,
     createKernelDiskImageBytes,
 )
-from .rootfs_v2 import (
-    OS_ROOTFS_V2_BLOCK_SIZE_BYTES,
-    OS_ROOTFS_V2_MINIMUM_DISK_SIZE_BYTES,
-    OS_ROOTFS_V2_START_LBA,
-    RootfsV2InstallFile,
-    formatRootfsV2,
-    installRootfsV2Files,
+from .rootfs_v4 import (
+    OS_ROOTFS_V4_BLOCK_SIZE_BYTES,
+    OS_ROOTFS_V4_MINIMUM_DISK_SIZE_BYTES,
+    OS_ROOTFS_V4_START_LBA,
+    RootfsV4InstallFile,
+    formatRootfsV4,
+    installRootfsV4Files,
 )
 from .errors import OsToolError
 from .sparse_image import writeSparseImage
@@ -50,7 +50,7 @@ OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME = (
 )
 OS_BOOT_IMAGE_INVALID_KERNEL_ELF_CLASS = 0
 OS_BOOT_IMAGE_CONSTRUCTION_SIZE_BYTES = (
-    OS_ROOTFS_V2_START_LBA * OS_ROOTFS_V2_BLOCK_SIZE_BYTES
+    OS_ROOTFS_V4_START_LBA * OS_ROOTFS_V4_BLOCK_SIZE_BYTES
 )
 
 
@@ -58,11 +58,11 @@ def writeBootImage(
     imagePath: Path,
     imagePrefix: bytes | bytearray,
     diskSizeBytes: int,
-    rootfsFiles: tuple[RootfsV2InstallFile, ...] = (),
+    rootfsFiles: tuple[RootfsV4InstallFile, ...] = (),
 ) -> None:
     writeSparseImage(imagePath, imagePrefix, diskSizeBytes)
-    formatRootfsV2(imagePath)
-    installRootfsV2Files(imagePath, rootfsFiles)
+    formatRootfsV4(imagePath)
+    installRootfsV4Files(imagePath, rootfsFiles)
 
 
 def createInvalidKernelElfDiskImage(
@@ -120,11 +120,11 @@ def writeBootDiskImages(
     kernelElfPath: Path,
     outputDirectory: Path,
     diskSizeBytes: int,
-    rootfsFiles: tuple[RootfsV2InstallFile, ...] = (),
+    rootfsFiles: tuple[RootfsV4InstallFile, ...] = (),
 ) -> None:
-    if diskSizeBytes < OS_ROOTFS_V2_MINIMUM_DISK_SIZE_BYTES:
+    if diskSizeBytes < OS_ROOTFS_V4_MINIMUM_DISK_SIZE_BYTES:
         raise OsToolError(
-            "启动磁盘不足以容纳固定 256 MiB rootfs v2 区域。"
+            "启动磁盘不足以容纳完整参考盘 rootfs v4 区域。"
         )
     auditKernelElf(kernelElfPath.parent, kernelElfPath)
     stage1DiskImage = createStage1DiskImageBytes(

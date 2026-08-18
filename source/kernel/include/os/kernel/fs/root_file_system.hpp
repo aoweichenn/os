@@ -10,6 +10,8 @@
 
 namespace os::kernel::fs {
 
+using RootTimestampSource = uint64_t (*)() noexcept;
+
 struct RootFileSystemStatistics final {
     BlockCacheStatistics cache;
     RootJournalStatistics journal;
@@ -27,6 +29,9 @@ struct RootFileSystemStatistics final {
     uint64_t remove_count;
     uint64_t rename_count;
     uint64_t truncate_count;
+    uint64_t link_count;
+    uint64_t orphan_create_count;
+    uint64_t orphan_reap_count;
 };
 
 class RootFileSystem final {
@@ -36,7 +41,8 @@ class RootFileSystem final {
     RootFileSystem &operator=(const RootFileSystem &) = delete;
 
     [[nodiscard]] Status Initialize(FileSystemBlockDevice &device, uint64_t superblock_identifier,
-                                    bool read_only = false) noexcept;
+                                    bool read_only = false,
+                                    RootTimestampSource timestamp_source = nullptr) noexcept;
     [[nodiscard]] Superblock &GetSuperblock() noexcept;
     [[nodiscard]] const Superblock &GetSuperblock() const noexcept;
     [[nodiscard]] RootFileSystemStatistics ReadStatistics() const noexcept;
@@ -45,6 +51,17 @@ class RootFileSystem final {
     struct DirectoryEntryLocation final {
         uint64_t offset_bytes;
         RootDirectoryEntry entry;
+    };
+
+    struct RenameScratch final {
+        RootInode source_parent_inode;
+        RootInode destination_parent_inode;
+        RootInode source_inode;
+        RootInode destination_inode;
+        DirectoryEntryLocation source_location;
+        DirectoryEntryLocation destination_location;
+        RootDirectoryEntry destination_entry;
+        RootDirectoryEntry empty_entry;
     };
 
     [[nodiscard]] static Status LookupOperation(void *context, const Vnode &directory,
@@ -63,6 +80,19 @@ class RootFileSystem final {
                     uint64_t source_name_length_bytes, const Vnode &destination_directory,
                     const uint8_t *destination_name, uint64_t destination_name_length_bytes,
                     bool replace) noexcept;
+    [[nodiscard]] static Status LinkOperation(void *context, const Vnode &source,
+                                              const Vnode &destination_directory,
+                                              const uint8_t *destination_name,
+                                              uint64_t destination_name_length_bytes) noexcept;
+    [[nodiscard]] static Status
+    CreateSymbolicLinkOperation(void *context, const Vnode &destination_directory,
+                                const uint8_t *destination_name,
+                                uint64_t destination_name_length_bytes, const uint8_t *target,
+                                uint64_t target_length_bytes, Vnode &vnode) noexcept;
+    [[nodiscard]] static Status ReadSymbolicLinkOperation(void *context, const Vnode &vnode,
+                                                          uint8_t *destination,
+                                                          uint64_t capacity_bytes,
+                                                          uint64_t &target_length_bytes) noexcept;
     [[nodiscard]] static Status ParentOperation(void *context, const Vnode &vnode,
                                                 Vnode &parent) noexcept;
     [[nodiscard]] static Status ReadOperation(void *context, const Vnode &vnode,
@@ -153,6 +183,10 @@ class RootFileSystem final {
                                            RootInode &directory) noexcept;
     [[nodiscard]] Status DirectoryIsEmpty(RootInode &directory, bool &empty) noexcept;
     [[nodiscard]] Status RemoveInodeInTransaction(uint64_t inode_number, RootInode &inode) noexcept;
+    [[nodiscard]] Status DropLinkInTransaction(uint64_t inode_number, RootInode &inode) noexcept;
+    [[nodiscard]] Status ReapOrphans() noexcept;
+    [[nodiscard]] Status LoadRecoveryStatistics() noexcept;
+    [[nodiscard]] uint64_t ReadCurrentTimestamp() const noexcept;
     [[nodiscard]] Status ValidateVnode(const Vnode &vnode, RootInode &inode) noexcept;
     [[nodiscard]] Status ValidateUnlocked() noexcept;
     [[nodiscard]] Status MarkValidationDataBlock(uint64_t relative_block) noexcept;
@@ -179,8 +213,7 @@ class RootFileSystem final {
     uint64_t open_counts_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     uint8_t validation_inode_bitmap_[OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT *
                                      OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t validation_data_bitmap_[OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT *
-                                    OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint64_t validation_link_counts_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     uint64_t validation_queue_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     RootFileSystemStatistics statistics_{};
     RootFileSystemStatistics transaction_statistics_snapshot_{};
@@ -188,6 +221,9 @@ class RootFileSystem final {
     uint64_t next_inode_allocation_hint_{};
     uint64_t transaction_data_allocation_hint_snapshot_{};
     uint64_t transaction_inode_allocation_hint_snapshot_{};
+    uint64_t last_validated_transaction_generation_{};
+    RootTimestampSource timestamp_source_{nullptr};
+    RenameScratch rename_scratch_{};
     mutable SpinLock lock_{};
     bool initialized_{};
     bool failed_{};

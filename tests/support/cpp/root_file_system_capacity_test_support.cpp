@@ -28,6 +28,28 @@ constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_RESERVOIR_NAME_LENGTH_BYTES = 9ULL;
 constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_TARGET_NAME_LENGTH_BYTES = 8ULL;
 constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_INODE_TABLE_BLOCK_COUNT = 3ULL;
 constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_INITIAL_TRANSACTION_GENERATION = 1ULL;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_TOTAL_BLOCK_COUNT = 32768ULL;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_INODE_COUNT = 128ULL;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_START_RELATIVE_BLOCK =
+    os::kernel::fs::OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK +
+    os::kernel::fs::OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_BLOCK_COUNT = 1ULL;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_INODE_TABLE_START_RELATIVE_BLOCK =
+    OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_START_RELATIVE_BLOCK +
+    OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_BLOCK_COUNT;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_FULL_INODE_TABLE_BLOCK_COUNT = 64ULL;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_START_RELATIVE_BLOCK =
+    OS_TEST_ROOTFS_CAPACITY_INODE_TABLE_START_RELATIVE_BLOCK +
+    OS_TEST_ROOTFS_CAPACITY_FULL_INODE_TABLE_BLOCK_COUNT;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_BLOCK_COUNT = 7ULL;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_DATA_START_RELATIVE_BLOCK =
+    OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_START_RELATIVE_BLOCK +
+    OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_BLOCK_COUNT;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT =
+    OS_TEST_ROOTFS_CAPACITY_TOTAL_BLOCK_COUNT - OS_TEST_ROOTFS_CAPACITY_DATA_START_RELATIVE_BLOCK;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_MAXIMUM_FILE_SIZE_BYTES =
+    OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT * os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+constexpr uint64_t OS_TEST_ROOTFS_CAPACITY_RESERVOIR_MAXIMUM_DATA_BLOCK_COUNT = 8192ULL;
 constexpr uint8_t OS_TEST_ROOTFS_CAPACITY_ZERO_BYTE = 0U;
 
 constexpr uint8_t
@@ -95,12 +117,11 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
 [[nodiscard]] bool AllocateBlock(CapacityBuilderState &state, uint64_t &relative_block) noexcept {
     relative_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE;
     if (state.device == nullptr || state.data_bitmap == nullptr ||
-        state.next_data_bit >= os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT) {
+        state.next_data_bit >= OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT) {
         return false;
     }
     SetBitmapBit(state.data_bitmap, state.next_data_bit);
-    relative_block =
-        os::kernel::fs::OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK + state.next_data_bit;
+    relative_block = OS_TEST_ROOTFS_CAPACITY_DATA_START_RELATIVE_BLOCK + state.next_data_bit;
     ++state.next_data_bit;
     return true;
 }
@@ -205,6 +226,12 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
         .single_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .double_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .triple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .quadruple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .quintuple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .access_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
     };
     uint64_t remaining = data_block_count;
     const uint64_t direct_data_block_count =
@@ -251,8 +278,7 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
 
 [[nodiscard]] uint64_t SelectLastReservoirDataBlockCount(const uint64_t block_budget) noexcept {
     const uint64_t maximum_data_block_count =
-        os::kernel::fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES /
-        os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        OS_TEST_ROOTFS_CAPACITY_RESERVOIR_MAXIMUM_DATA_BLOCK_COUNT;
     uint64_t lower = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE;
     uint64_t upper = maximum_data_block_count;
     uint64_t selected = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE;
@@ -347,10 +373,9 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
     }
     for (uint64_t block_index = OS_TEST_ROOTFS_CAPACITY_FIRST_INDEX;
          block_index < OS_TEST_ROOTFS_CAPACITY_INODE_TABLE_BLOCK_COUNT; ++block_index) {
-        if (!WriteRelativeBlock(device,
-                                os::kernel::fs::OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK +
-                                    block_index,
-                                inode_table[block_index])) {
+        if (!WriteRelativeBlock(
+                device, OS_TEST_ROOTFS_CAPACITY_INODE_TABLE_START_RELATIVE_BLOCK + block_index,
+                inode_table[block_index])) {
             return false;
         }
     }
@@ -364,16 +389,14 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
          inode_index < OS_TEST_ROOTFS_CAPACITY_ALLOCATED_INODE_COUNT; ++inode_index) {
         SetBitmapBit(inode_bitmap, inode_index);
     }
-    if (!WriteRelativeBlock(device,
-                            os::kernel::fs::OS_KERNEL_ROOTFS_INODE_BITMAP_START_RELATIVE_BLOCK,
+    if (!WriteRelativeBlock(device, OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_START_RELATIVE_BLOCK,
                             inode_bitmap)) {
         return false;
     }
     for (uint64_t block_index = OS_TEST_ROOTFS_CAPACITY_FIRST_INDEX;
-         block_index < os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT; ++block_index) {
+         block_index < OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_BLOCK_COUNT; ++block_index) {
         if (!WriteRelativeBlock(
-                device,
-                os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BITMAP_START_RELATIVE_BLOCK + block_index,
+                device, OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_START_RELATIVE_BLOCK + block_index,
                 data_bitmap + block_index * os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES)) {
             return false;
         }
@@ -381,29 +404,43 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
     return true;
 }
 
-[[nodiscard]] bool WriteSuperblock(os::kernel::FileSystemBlockDevice &device) noexcept {
+[[nodiscard]] bool WriteSuperblock(os::kernel::FileSystemBlockDevice &device,
+                                   const os::kernel::fs::RootInode *const inodes) noexcept {
+    uint64_t allocated_data_block_count = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE;
+    uint64_t allocated_metadata_block_count = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE;
+    for (uint64_t inode_index = OS_TEST_ROOTFS_CAPACITY_FIRST_INDEX;
+         inode_index < OS_TEST_ROOTFS_CAPACITY_ALLOCATED_INODE_COUNT; ++inode_index) {
+        allocated_data_block_count += inodes[inode_index].allocated_data_block_count;
+        allocated_metadata_block_count += inodes[inode_index].allocated_metadata_block_count;
+    }
     const os::kernel::fs::RootSuperblock superblock{
         .version = os::kernel::fs::OS_KERNEL_ROOTFS_FORMAT_VERSION,
         .block_size_bytes = os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES,
-        .total_block_count = os::kernel::fs::OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT,
+        .total_block_count = OS_TEST_ROOTFS_CAPACITY_TOTAL_BLOCK_COUNT,
+        .journal_start_relative_block =
+            os::kernel::fs::OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK,
+        .journal_block_count = os::kernel::fs::OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT,
         .inode_bitmap_start_relative_block =
-            os::kernel::fs::OS_KERNEL_ROOTFS_INODE_BITMAP_START_RELATIVE_BLOCK,
-        .inode_bitmap_block_count = os::kernel::fs::OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT,
+            OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_START_RELATIVE_BLOCK,
+        .inode_bitmap_block_count = OS_TEST_ROOTFS_CAPACITY_INODE_BITMAP_BLOCK_COUNT,
         .inode_table_start_relative_block =
-            os::kernel::fs::OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK,
-        .inode_table_block_count = os::kernel::fs::OS_KERNEL_ROOTFS_INODE_TABLE_BLOCK_COUNT,
+            OS_TEST_ROOTFS_CAPACITY_INODE_TABLE_START_RELATIVE_BLOCK,
+        .inode_table_block_count = OS_TEST_ROOTFS_CAPACITY_FULL_INODE_TABLE_BLOCK_COUNT,
         .data_bitmap_start_relative_block =
-            os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BITMAP_START_RELATIVE_BLOCK,
-        .data_bitmap_block_count = os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT,
-        .data_start_relative_block = os::kernel::fs::OS_KERNEL_ROOTFS_DATA_START_RELATIVE_BLOCK,
-        .data_block_count = os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT,
-        .inode_count = os::kernel::fs::OS_KERNEL_ROOTFS_INODE_COUNT,
+            OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_START_RELATIVE_BLOCK,
+        .data_bitmap_block_count = OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_BLOCK_COUNT,
+        .data_start_relative_block = OS_TEST_ROOTFS_CAPACITY_DATA_START_RELATIVE_BLOCK,
+        .data_block_count = OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT,
+        .inode_count = OS_TEST_ROOTFS_CAPACITY_INODE_COUNT,
         .root_inode_number = os::kernel::fs::OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER,
-        .maximum_file_size_bytes = os::kernel::fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES,
+        .maximum_file_size_bytes = OS_TEST_ROOTFS_CAPACITY_MAXIMUM_FILE_SIZE_BYTES,
         .transaction_state = os::kernel::fs::RootTransactionState::Clean,
         .transaction_generation = OS_TEST_ROOTFS_CAPACITY_INITIAL_TRANSACTION_GENERATION,
         .next_inode_generation = OS_TEST_ROOTFS_CAPACITY_NEXT_INODE_GENERATION,
         .feature_flags = os::kernel::fs::OS_KERNEL_ROOTFS_REQUIRED_FEATURES,
+        .allocated_inode_count = OS_TEST_ROOTFS_CAPACITY_ALLOCATED_INODE_COUNT,
+        .allocated_data_block_count = allocated_data_block_count,
+        .allocated_metadata_block_count = allocated_metadata_block_count,
     };
     uint8_t block[os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     return os::kernel::fs::EncodeRootSuperblock(superblock, block, sizeof(block)) ==
@@ -419,10 +456,10 @@ bool FormatNearCapacityRootFileSystem(
     RootFileSystemCapacityImageInformation &information) noexcept {
     information = RootFileSystemCapacityImageInformation{};
     if (requested_free_data_block_count == OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE ||
-        requested_free_data_block_count >= os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT) {
+        requested_free_data_block_count >= OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT) {
         return false;
     }
-    uint8_t data_bitmap[os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BITMAP_BLOCK_COUNT *
+    uint8_t data_bitmap[OS_TEST_ROOTFS_CAPACITY_DATA_BITMAP_BLOCK_COUNT *
                         os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     ClearBytes(data_bitmap, sizeof(data_bitmap));
     CapacityBuilderState state{
@@ -444,14 +481,19 @@ bool FormatNearCapacityRootFileSystem(
         .single_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .double_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .triple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .quadruple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .quintuple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .access_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
     };
     if (!EncodeDirectory(inodes[OS_TEST_ROOTFS_CAPACITY_FIRST_INDEX], state)) {
         return false;
     }
 
     const uint64_t maximum_data_block_count =
-        os::kernel::fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES /
-        os::kernel::fs::OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        OS_TEST_ROOTFS_CAPACITY_RESERVOIR_MAXIMUM_DATA_BLOCK_COUNT;
     for (uint64_t reservoir_index = OS_TEST_ROOTFS_CAPACITY_FIRST_INDEX;
          reservoir_index <
          OS_TEST_ROOTFS_CAPACITY_RESERVOIR_FILE_COUNT - OS_TEST_ROOTFS_CAPACITY_COUNTER_INCREMENT;
@@ -464,10 +506,10 @@ bool FormatNearCapacityRootFileSystem(
         }
     }
     if (state.next_data_bit >
-        os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT - requested_free_data_block_count) {
+        OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT - requested_free_data_block_count) {
         return false;
     }
-    const uint64_t last_budget = os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT -
+    const uint64_t last_budget = OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT -
                                  requested_free_data_block_count - state.next_data_bit;
     const uint64_t last_data_block_count = SelectLastReservoirDataBlockCount(last_budget);
     const uint64_t last_inode_number = OS_TEST_ROOTFS_CAPACITY_FIRST_RESERVOIR_INODE_NUMBER +
@@ -492,16 +534,21 @@ bool FormatNearCapacityRootFileSystem(
         .single_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .double_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .triple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .quadruple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .quintuple_indirect_block = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .access_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .modification_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .change_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .birth_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
     };
 
     if (!WriteInodeTable(device, inodes) || !WriteBitmaps(device, data_bitmap) ||
-        !WriteSuperblock(device) ||
+        !WriteSuperblock(device, inodes) ||
         device.Flush() != os::kernel::FileSystemBlockDeviceStatus::Succeeded) {
         return false;
     }
     information = RootFileSystemCapacityImageInformation{
-        .free_data_block_count =
-            os::kernel::fs::OS_KERNEL_ROOTFS_DATA_BLOCK_COUNT - state.next_data_bit,
+        .free_data_block_count = OS_TEST_ROOTFS_CAPACITY_DATA_BLOCK_COUNT - state.next_data_bit,
         .reservoir_file_count = OS_TEST_ROOTFS_CAPACITY_RESERVOIR_FILE_COUNT,
         .allocated_inode_count = OS_TEST_ROOTFS_CAPACITY_ALLOCATED_INODE_COUNT,
     };

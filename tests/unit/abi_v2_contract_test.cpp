@@ -9,11 +9,11 @@ namespace {
 
 constexpr std::string_view OS_TEST_ABI_V2_SUITE_NAME = "abi/v2/unit";
 constexpr std::string_view OS_TEST_ABI_V2_VERSION_CONTRACT =
-    "ABI v2.1 必须兼容冻结的 v2.0 编号并只在尾部扩展";
+    "ABI v2.2 必须兼容冻结的系统调用编号并扩展文件时间戳";
 constexpr std::string_view OS_TEST_ABI_V2_ELF_CONTRACT =
     "ELF64 x86-64 小端静态可执行契约必须与加载器共享";
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MAJOR_VERSION = 2ULL;
-constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MINOR_VERSION = 1ULL;
+constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MINOR_VERSION = 2ULL;
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_SYSTEM_CALL_COUNT = 71ULL;
 constexpr int64_t OS_TEST_ABI_V2_EXPECTED_FIRST_ERROR = -1LL;
 constexpr int64_t OS_TEST_ABI_V2_EXPECTED_LAST_ERROR = -57LL;

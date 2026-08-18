@@ -16,7 +16,7 @@ inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_BLOCK_COUNT =
 inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_EMPTY_VALUE = 0ULL;
 inline constexpr uint8_t OS_TEST_SPARSE_BLOCK_DEVICE_ZERO_BYTE = 0U;
 
-// 逻辑容量按真实 rootfs 规格提供，未写入块隐式读取为全零，避免宿主测试占用 256 MiB。
+// 逻辑容量按真实 rootfs v4 规格提供，未写入块隐式读取为全零，避免物化 128 GiB。
 class SparseMemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
   public:
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus

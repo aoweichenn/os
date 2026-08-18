@@ -28,7 +28,10 @@ constexpr uint64_t OS_USER_CORE_TAIL_LINE_COUNT = 10ULL;
 constexpr uint64_t OS_USER_CORE_TRAVERSAL_PATH_COUNT = 128ULL;
 constexpr uint64_t OS_USER_CORE_TRAVERSAL_PATH_CAPACITY_BYTES = 513ULL;
 constexpr uint64_t OS_USER_CORE_HEXDUMP_LINE_SIZE_BYTES = 16ULL;
-constexpr uint64_t OS_USER_CORE_ROOTFS_REGION_SIZE_BYTES = 256ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_USER_CORE_REFERENCE_DISK_SIZE_BYTES = 128ULL * 1024ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_USER_CORE_ROOTFS_START_BYTES = 16ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_USER_CORE_ROOTFS_REGION_SIZE_BYTES =
+    OS_USER_CORE_REFERENCE_DISK_SIZE_BYTES - OS_USER_CORE_ROOTFS_START_BYTES;
 constexpr uint64_t OS_USER_CORE_NANOSECONDS_PER_MILLISECOND = 1'000'000ULL;
 constexpr uint64_t OS_USER_CORE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_CORE_MAXIMUM_UNSIGNED_VALUE = ~0ULL;
@@ -61,6 +64,10 @@ constexpr char OS_USER_CORE_STAT_INODE_PREFIX[] = "inode=";
 constexpr char OS_USER_CORE_STAT_SIZE_PREFIX[] = " size=";
 constexpr char OS_USER_CORE_STAT_ALLOCATED_PREFIX[] = " allocated=";
 constexpr char OS_USER_CORE_STAT_LINKS_PREFIX[] = " links=";
+constexpr char OS_USER_CORE_STAT_ACCESS_TIME_PREFIX[] = " atime_ns=";
+constexpr char OS_USER_CORE_STAT_MODIFICATION_TIME_PREFIX[] = " mtime_ns=";
+constexpr char OS_USER_CORE_STAT_CHANGE_TIME_PREFIX[] = " ctime_ns=";
+constexpr char OS_USER_CORE_STAT_BIRTH_TIME_PREFIX[] = " btime_ns=";
 constexpr char OS_USER_CORE_STAT_TYPE_PREFIX[] = " type=";
 constexpr char OS_USER_CORE_STAT_FILE_TYPE[] = "file";
 constexpr char OS_USER_CORE_STAT_DIRECTORY_TYPE[] = "directory";
@@ -646,6 +653,22 @@ struct InputSource final {
                      information.allocated_size_bytes) &&
         WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_STAT_LINKS_PREFIX) &&
         WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, information.link_count) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     OS_USER_CORE_STAT_ACCESS_TIME_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.access_time_nanoseconds) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     OS_USER_CORE_STAT_MODIFICATION_TIME_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.modification_time_nanoseconds) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     OS_USER_CORE_STAT_CHANGE_TIME_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.change_time_nanoseconds) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     OS_USER_CORE_STAT_BIRTH_TIME_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.birth_time_nanoseconds) &&
         WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_NEWLINE);
     return succeeded ? OS_USER_CORE_SUCCESS_EXIT_CODE : OS_USER_CORE_FAILURE_EXIT_CODE;
 }

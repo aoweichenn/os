@@ -182,6 +182,7 @@ enum class DirectoryEntryType : uint64_t {
     RegularFile = 1ULL,
     Directory = 2ULL,
     CharacterDevice = 3ULL,
+    SymbolicLink = 4ULL,
 };
 
 struct DirectoryEntry final {
@@ -194,7 +195,7 @@ struct DirectoryEntry final {
 
 static_assert(sizeof(DirectoryEntry) == OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES);
 
-inline constexpr uint64_t OS_ABI_FILE_INFORMATION_SIZE_BYTES = 64ULL;
+inline constexpr uint64_t OS_ABI_FILE_INFORMATION_SIZE_BYTES = 96ULL;
 
 struct FileInformation final {
     uint64_t mount_identifier;
@@ -205,6 +206,10 @@ struct FileInformation final {
     uint64_t size_bytes;
     uint64_t allocated_size_bytes;
     uint64_t link_count;
+    uint64_t access_time_nanoseconds;
+    uint64_t modification_time_nanoseconds;
+    uint64_t change_time_nanoseconds;
+    uint64_t birth_time_nanoseconds;
 };
 
 static_assert(sizeof(FileInformation) == OS_ABI_FILE_INFORMATION_SIZE_BYTES);

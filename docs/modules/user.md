@@ -560,3 +560,15 @@ ABI v2.1.0 在尾部追加 70 `SetTerminalInputMode` 和 71 `GetRealtime`。前�
 Canonical/ShellEditor，权限与空缓冲检查由 Kernel 完成；后者把 64 字节
 RealtimeInformation 写回用户态，包含 UTC 年月日时分秒和 Unix 秒。1..69 的
 编号、参数和返回约定保持不变。
+
+## v2.3 文件时间戳 ABI
+
+ABI 版本升级为 v2.2.0，系统调用仍为 71 个，既有编号和错误区间不变。
+`FileInformation` 在原八个 64 位字段后追加 atime/mtime/ctime/btime 四个纳秒
+字段，结构大小从 64 字节变为 96 字节。Kernel 的 `StatFile` 只接受精确新
+结构大小，所有用户 ELF 与 Kernel 在同一构建中重新生成，避免旧调用方按 64
+字节缓冲接收 96 字节结果。
+
+`stat` 工具输出四项 `*_ns`；`df` 的 total bytes 改为 rootfs v4 在 128 GiB
+参考盘启动前缀后的 137422176256 字节。普通 read 采用 noatime，只有创建、
+写入、truncate、链接、unlink 和 rename 修改持久时间戳。

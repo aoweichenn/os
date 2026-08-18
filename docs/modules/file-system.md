@@ -4,9 +4,10 @@
 
 File System 模块分为两个层次：VFS 负责路径、挂载、vnode、每 Process
 root/cwd、命名空间修改和打开实例；后端负责具体节点与存储。当前生产根目录
-由 rootfs v2 把 512 字节 ATA 扇区组织为带校验的 superblock、bitmap、
-inode、目录项、稀疏文件和三级间接树；memfs 从 KernelHeap 动态拥有目录、
-文件与数据。legacy 后端只保留旧格式兼容与回归，不再作为生产根。
+由 rootfs v4 把参考盘在 LBA 32768 之后的全部 512 字节 ATA 扇区组织为带校验的
+64 位 superblock、可扩展 bitmap/inode/journal、稀疏文件和五级间接树；memfs
+从 KernelHeap 动态拥有目录、文件与数据。legacy 后端只保留旧格式兼容与回归，
+不再作为生产根。
 
 依赖方向：
 
@@ -366,12 +367,71 @@ reader 生命周期结束后一定关闭 OpenFile，不能把 loader 的临时�
 rootfs 仍为 256 MiB，单文件仍最多 64 MiB。变化发生在“谁消费普通文件”与
 构建依赖链，而不是引入 executable 专用 inode 类型。
 
+## v2.3 rootfs v4 与完整参考盘
+
+v2.3 把生产盘面一次性升级为 magic `OSRFV004`。128 GiB 参考盘共有
+268435456 个扇区；启动前缀占 LBA `0..32767`，rootfs 使用余下
+268402688 个块，即 137422176256 字节，并精确结束于 LBA `0x0FFFFFFF`。
+
+| rootfs 相对块范围 | 块数 | 内容 |
+| --- | ---: | --- |
+| `0` | 1 | superblock 与 CRC32 |
+| `1..4096` | 4096 | ordered metadata journal |
+| `4097..4112` | 16 | 65536 位 inode bitmap |
+| `4113..36880` | 32768 | 65536 个 256 字节 inode |
+| `36881..102384` | 65504 | 数据块 bitmap |
+| `102385..268402687` | 268300303 | 文件数据与间接指针块 |
+
+superblock 新增显式 journal 起点/长度和 inode/data/metadata 三个分配摘要，全部
+几何与计数字段继续使用 64 位小端编码。摘要随每个 metadata 事务提交，mount
+无需顺序读取 65504 个 data bitmap 块；宿主 fsck 仍逐位重算并核对摘要。
+Kernel 接受满足同一结构公式、且不超过参考上限的较小 v4 几何，容量测试因此能
+在小型介质上真实跑到 ENOSPC；生产 mkfs 则只生成上述完整参考几何。格式 3
+镜像不会被静默迁移或挂载，必须由宿主工具重新创建。
+
+块树保留八个直接项，并从单/双/三级扩展到四/五级间接根。每个指针块仍保存
+63 个 64 位相对块号和 CRC32。单文件逻辑上限等于生产数据区大小
+137369755136 字节；稀疏 truncate 不预分配块，写到逻辑末尾只分配一条五级
+路径和实际叶块。Kernel 与宿主测试都直接从绝对 LBA `0x0FFFFFFF` 读回文件，
+避免把“字段是 64 位”误当成高 LBA 已经可用。
+
+journal 区扩大到 4096 块，descriptor 从四块增至八块，单事务 credit 从 124
+增至 248。header、八个 descriptor、最多 248 个 payload 和独立 commit 都有
+CRC；其余 journal 块保留。1000 个确定性断电点现在覆盖 1..248 个 metadata
+target，共完成 374620 项旧/新二选一和二次恢复幂等断言。journal 仍是项目内
+实现，QEMU 只提供 ATA 扇区与 FLUSH。
+
+inode v4 在原 256 字节内加入四/五级根、atime/mtime/ctime/btime 纳秒字段和
+orphan 标志。ABI 兼容升级到 v2.2.0，`FileInformation` 从 64 字节扩为 96
+字节，`stat` 输出四个时间戳。生产 Kernel 以稳定 CMOS UTC 秒为基准叠加单调
+时钟；宿主离线安装保留源文件 mtime。当前采用 noatime 策略，普通 read 不为
+更新 atime 额外制造 journal 事务。
+
+VFS/rootfs 同时支持：
+
+- 普通文件与符号链接硬链接，link count 必须等于目录引用数；目录禁止硬链接；
+- 最长 4096 字节的绝对/相对符号链接目标、链式解析和 40 次跳转环路上限；
+- unlink 后目录名立即消失，已有 OpenFile 继续读写；最后一个 close 在独立
+  事务中释放 inode 和块；
+- 若 orphan 事务提交后断电，下一次 mount 在发布根 superblock 前扫描并回收
+  link count 为零的 orphan，再执行一致性检查；
+- rename replace 对打开的普通文件使用同一 orphan 规则，打开目录仍返回 Busy。
+
+Kernel 不再常驻一张约 32 MiB 的完整数据验证 bitmap。它以有界 inode bitmap、
+链接计数表和队列遍历命名空间，对每个数据/指针引用核对盘面分配位，并以总数
+守恒发现常规重复或泄漏；独立宿主 fsck 使用可扩展集合完整检查重复引用、泄漏、
+硬链接计数、orphan、CRC 和高 LBA。启动不以宿主 fsck 替代 Kernel 恢复。
+
+公开宿主入口是 `tools/os_tools/rootfs_v4.py`；历史 `rootfs_v2.py` 模块名只为
+旧脚本导入兼容，实际编码、magic、输出与检查均为格式 4。mkfs、inspect、fsck、
+损坏注入和稀疏复制都保持 128 GiB 逻辑长度，不顺序读取或复制数据区空洞。
+
 ## 当前限制
 
-- rootfs 格式 3 已有 metadata journal 与 replay，但没有 data journal、
+- rootfs 格式 4 已有 metadata journal 与 replay，但没有 data journal、
   在线修复或自动格式化；
-- 没有硬链接、符号链接、权限、uid/gid、时间戳、设备节点和扩展属性；
-- 打开文件不能 unlink，尚无 orphan inode 与延迟回收；
+- 文件权限、uid/gid、umask、设备节点和扩展属性进入 v2.4；
+- v2.3 已冻结链接后端与路径语义，但用户态 `ln/readlink` 命令和权限检查进入 v2.4；
 - 没有 dentry/inode cache、动态 unmount 或 mount namespace 复制；
 - rootfs、legacy 和 memfs 都使用单实例锁串行化修改；
 - ATA 运行期使用单飞 IRQ14 PIO 和显式 FLUSH CACHE，没有 DMA 或 tagged

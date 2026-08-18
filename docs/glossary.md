@@ -165,6 +165,7 @@
 | `FsContext` | Process 持有的文件系统上下文，当前保存 root 与 cwd vnode，供绝对和相对路径解析使用 |
 | memfs | 由 KernelHeap 支撑、断电即失的内存文件系统；v1.5 挂载于 `/tmp`，名称内联于节点，并精确统计节点与数据容量 |
 | rootfs v2 | v1.6 生产根格式；固定 256 MiB 区域，含版本化小端 superblock、bitmap、inode、目录项和三级间接块 |
+| rootfs v4 | v2.3 生产根格式；使用完整 128 GiB 参考盘，含 64 位几何、五级块树、链接、时间戳、orphan 与 248-credit journal |
 | inode | 文件系统内部对象身份；保存类型、逻辑大小、generation、父关系和数据块索引，名字由目录项另行保存 |
 | inode generation | inode number 回收复用时递增的身份代次；目录项与 vnode 必须同时匹配编号和代次 |
 | direct block | inode 直接保存的数据块指针，小文件无需额外索引块 |

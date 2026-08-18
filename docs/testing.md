@@ -81,6 +81,39 @@ capacity 测试必须解析来宾日志证明实际使用 4 GiB 以上物理页�
 随机 oracle 失败时输出固定种子、精确迭代和最后一项成功操作。崩溃注入还要
 输出断电点、镜像哈希、journal 序号和第一次不一致的 fsck 事实。
 
+### v2.3 rootfs v4 门禁
+
+v2.3 新增或升级以下直接证据：
+
+- 格式单元测试逐字段往返 23 字段 superblock、五级 inode 根、四时间戳、
+  63 个 64 位指针和 320 字节目录项，并分别破坏 CRC/保留区/布局；
+- rootfs 集成测试在同一生产几何上创建数据区大小的稀疏文件，写入逻辑末尾，
+  覆盖硬链接计数、相对/链式符号链接、40 跳环路、时间戳、open-unlink、
+  最后 close 回收、rename replace、重挂载与只读拒绝；
+- 独立 high-LBA 集成镜像把普通文件叶块放到 rootfs 最后相对块，Kernel 经
+  VFS 从绝对 LBA `0x0FFFFFFF` 读回，并在完整 Validate 后保持两块稀疏存储；
+- capacity 集成使用结构相同的 32768 块 v4 几何真实填满 bitmap/指针树，先
+  观察短写，再观察零字节 `CapacityExhausted`，避免为一次测试写满 128 GiB；
+- journal crash matrix 固定 1000 个断电点，entry count 覆盖 1..248，写失败
+  序号覆盖 512 个位置，累计 374620 项断言；恢复后只允许全旧/全新并要求
+  第二次恢复为 Clean；
+- orphan 整机模型在 unlink 已提交、OpenFile 尚未 close 时丢弃第一实例，第二
+  个 RootFileSystem mount 必须回收 inode/data、保持路径 NotFound 并通过
+  Validate；
+- Python tooling 在 128 GiB 稀疏 raw 文件中构造末 LBA 文件，独立 fsck
+  重算 inode/link/orphan/data 所有权，核对逻辑长度、最高 LBA 和宿主物理占用；
+  superblock、inode、两张 bitmap、Dirty 状态和 journal header 损坏均须拒绝。
+
+成功 QEMU 日志从 v2.3 起使用 `ROOTFS_V4_MOUNTED`、
+`ROOTFS_V4_REGION_BYTES` 和 `ROOTFS_V4_MAX_FILE_BYTES`；测试不得继续接受旧
+`ROOTFS_V2_MOUNTED` 标记。详细诊断仍进入宿主导出的内存日志，VGA Shell
+前台不逐块打印 mkfs/fsck/journal 信息。
+
+64 MiB bootstrap 在完整 rootfs v4 最终 Validate 后的实测长尾为 37 秒左右；
+其内部墙钟预算固定为 45 秒，CTest 外层为 55 秒。256 MiB、32 GiB 和持久化
+仍分别使用 120/240/120 秒单实例预算。调整的是资源档门禁，不减少必需标记、
+命令、VGA 截图或失败检查。
+
 当前系统测试显式实例化 VGA 设备但使用 `-display none`。Firmware 把每个
 VGA 输出字节同时追加到 `0x80020` 起的固定验收区；Stage 1 和 Kernel 接续同一
 长度。runner 通过独立 QMP 连接执行 `pmemsave`，逐行恢复完整输出并沿用必需

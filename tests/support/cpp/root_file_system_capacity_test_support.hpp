@@ -16,7 +16,7 @@ struct RootFileSystemCapacityImageInformation final {
     uint64_t allocated_inode_count;
 };
 
-// 构造一个盘面一致、只剩少量空闲块的真实 256 MiB rootfs，用于直接验证
+// 构造一个盘面一致、只剩少量空闲块的同构小几何 rootfs v4，用于直接验证
 // short write 与 ENOSPC；大块零数据保持稀疏，不把宿主内存测试变成吞吐测试。
 [[nodiscard]] bool
 FormatNearCapacityRootFileSystem(os::kernel::FileSystemBlockDevice &device,

@@ -21,6 +21,8 @@ inline constexpr uint8_t OS_TEST_ROOTFS_ROOT_INODE_BITMAP_MASK = 0x01U;
         .version = OS_KERNEL_ROOTFS_FORMAT_VERSION,
         .block_size_bytes = OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES,
         .total_block_count = OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT,
+        .journal_start_relative_block = OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK,
+        .journal_block_count = OS_KERNEL_ROOTFS_JOURNAL_BLOCK_COUNT,
         .inode_bitmap_start_relative_block = OS_KERNEL_ROOTFS_INODE_BITMAP_START_RELATIVE_BLOCK,
         .inode_bitmap_block_count = OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT,
         .inode_table_start_relative_block = OS_KERNEL_ROOTFS_INODE_TABLE_START_RELATIVE_BLOCK,
@@ -36,6 +38,9 @@ inline constexpr uint8_t OS_TEST_ROOTFS_ROOT_INODE_BITMAP_MASK = 0x01U;
         .transaction_generation = OS_TEST_ROOTFS_INITIAL_TRANSACTION_GENERATION,
         .next_inode_generation = OS_TEST_ROOTFS_INITIAL_NEXT_INODE_GENERATION,
         .feature_flags = OS_KERNEL_ROOTFS_REQUIRED_FEATURES,
+        .allocated_inode_count = 1ULL,
+        .allocated_data_block_count = 0ULL,
+        .allocated_metadata_block_count = 0ULL,
     };
     uint8_t superblock_bytes[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     if (EncodeRootSuperblock(superblock, superblock_bytes, sizeof(superblock_bytes)) !=
@@ -68,6 +73,12 @@ inline constexpr uint8_t OS_TEST_ROOTFS_ROOT_INODE_BITMAP_MASK = 0x01U;
         .single_indirect_block = 0ULL,
         .double_indirect_block = 0ULL,
         .triple_indirect_block = 0ULL,
+        .quadruple_indirect_block = 0ULL,
+        .quintuple_indirect_block = 0ULL,
+        .access_time_nanoseconds = 0ULL,
+        .modification_time_nanoseconds = 0ULL,
+        .change_time_nanoseconds = 0ULL,
+        .birth_time_nanoseconds = 0ULL,
     };
     uint8_t inode_table_block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     if (EncodeRootInode(root_inode, inode_table_block, OS_KERNEL_ROOTFS_INODE_SIZE_BYTES) !=

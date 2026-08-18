@@ -10,6 +10,7 @@ constexpr uint64_t OS_KERNEL_VFS_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_PATH_LENGTH_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_TRAVERSAL_COUNT = OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES;
+constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_SYMBOLIC_LINK_COUNT = 40ULL;
 constexpr uint8_t OS_KERNEL_VFS_PATH_SEPARATOR = static_cast<uint8_t>('/');
 constexpr uint8_t OS_KERNEL_VFS_DOT_CHARACTER = static_cast<uint8_t>('.');
 constexpr uint8_t OS_KERNEL_VFS_DELETE_CONTROL_CHARACTER = 0x7FU;
@@ -75,6 +76,7 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
     this->mount_capacity_ = mount_capacity;
     this->mount_count_ = OS_KERNEL_VFS_COUNTER_INCREMENT;
     this->lock_ = SpinLock{};
+    this->resolution_lock_ = SpinLock{};
     this->statistics_ = Statistics{
         .mount_count = OS_KERNEL_VFS_COUNTER_INCREMENT,
         .path_resolution_count = OS_KERNEL_VFS_EMPTY_VALUE,
@@ -242,57 +244,66 @@ Status Vfs::MountAt(const FsContext &context, const uint8_t *const path,
 
 Status Vfs::Resolve(const FsContext &context, const uint8_t *const path,
                     const uint64_t path_length_bytes, Path &resolved_path) noexcept {
+    SpinLockGuard resolution_guard{this->resolution_lock_};
+    const Status status =
+        this->ResolveInternal(context, path, path_length_bytes, true, resolved_path);
+    this->RecordResolution(status);
+    return status;
+}
+
+Status Vfs::ResolveInternal(const FsContext &context, const uint8_t *const path,
+                            const uint64_t path_length_bytes, const bool follow_final_link,
+                            Path &resolved_path) noexcept {
     resolved_path = Path{};
     if (!this->IsInitialized()) {
-        this->RecordResolution(Status::NotInitialized);
         return Status::NotInitialized;
     }
     if (!context.initialized || !this->PathIsValid(context.root) ||
         !this->PathIsValid(context.current_working_directory)) {
-        this->RecordResolution(Status::InvalidArgument);
         return Status::InvalidArgument;
     }
     if (path == nullptr || path_length_bytes == OS_KERNEL_VFS_EMPTY_VALUE) {
-        this->RecordResolution(Status::InvalidPath);
         return Status::InvalidPath;
     }
     if (path_length_bytes > OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES) {
-        this->RecordResolution(Status::PathTooLong);
         return Status::PathTooLong;
     }
-
-    Path current = path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR
+    CopyBytes(this->resolution_path_a_, path, path_length_bytes);
+    uint8_t *active_path = this->resolution_path_a_;
+    uint8_t *scratch_path = this->resolution_path_b_;
+    uint64_t active_path_length_bytes = path_length_bytes;
+    Path current = active_path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR
                        ? context.root
                        : context.current_working_directory;
-    uint64_t byte_index = path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR
+    uint64_t byte_index = active_path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR
                               ? OS_KERNEL_VFS_COUNTER_INCREMENT
                               : OS_KERNEL_VFS_FIRST_INDEX;
     uint64_t traversal_count = OS_KERNEL_VFS_EMPTY_VALUE;
-    while (byte_index < path_length_bytes) {
-        while (byte_index < path_length_bytes && path[byte_index] == OS_KERNEL_VFS_PATH_SEPARATOR) {
+    uint64_t symbolic_link_count = OS_KERNEL_VFS_EMPTY_VALUE;
+    while (byte_index < active_path_length_bytes) {
+        while (byte_index < active_path_length_bytes &&
+               active_path[byte_index] == OS_KERNEL_VFS_PATH_SEPARATOR) {
             ++byte_index;
         }
-        if (byte_index == path_length_bytes) {
+        if (byte_index == active_path_length_bytes) {
             break;
         }
         if (traversal_count >= OS_KERNEL_VFS_MAXIMUM_TRAVERSAL_COUNT) {
-            this->RecordResolution(Status::LoopDetected);
             return Status::LoopDetected;
         }
         ++traversal_count;
 
         uint8_t name[OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES]{};
         uint64_t name_length_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
-        while (byte_index < path_length_bytes && path[byte_index] != OS_KERNEL_VFS_PATH_SEPARATOR) {
-            if (!NameByteIsValid(path[byte_index])) {
-                this->RecordResolution(Status::InvalidPath);
+        while (byte_index < active_path_length_bytes &&
+               active_path[byte_index] != OS_KERNEL_VFS_PATH_SEPARATOR) {
+            if (!NameByteIsValid(active_path[byte_index])) {
                 return Status::InvalidPath;
             }
             if (name_length_bytes >= OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES) {
-                this->RecordResolution(Status::NameTooLong);
                 return Status::NameTooLong;
             }
-            name[name_length_bytes] = path[byte_index];
+            name[name_length_bytes] = active_path[byte_index];
             ++name_length_bytes;
             ++byte_index;
         }
@@ -303,18 +314,15 @@ Status Vfs::Resolve(const FsContext &context, const uint8_t *const path,
         if (IsDotDot(name, name_length_bytes)) {
             const Status parent_status = this->MoveToParent(context, current);
             if (parent_status != Status::Succeeded) {
-                this->RecordResolution(parent_status);
                 return parent_status;
             }
             continue;
         }
         if (current.vnode.type != NodeType::Directory) {
-            this->RecordResolution(Status::NotDirectory);
             return Status::NotDirectory;
         }
         Superblock *const superblock = current.vnode.superblock;
         if (name_length_bytes > superblock->maximum_name_length_bytes) {
-            this->RecordResolution(Status::NameTooLong);
             return Status::NameTooLong;
         }
         Vnode child{};
@@ -325,24 +333,63 @@ Status Vfs::Resolve(const FsContext &context, const uint8_t *const path,
             ++this->statistics_.component_lookup_count;
         }
         if (lookup_status != Status::Succeeded) {
-            this->RecordResolution(lookup_status);
             return lookup_status;
+        }
+        uint64_t remaining_index = byte_index;
+        while (remaining_index < active_path_length_bytes &&
+               active_path[remaining_index] == OS_KERNEL_VFS_PATH_SEPARATOR) {
+            ++remaining_index;
+        }
+        const bool final_component = remaining_index == active_path_length_bytes;
+        if (child.type == NodeType::SymbolicLink && (follow_final_link || !final_component)) {
+            if (symbolic_link_count >= OS_KERNEL_VFS_MAXIMUM_SYMBOLIC_LINK_COUNT) {
+                return Status::LoopDetected;
+            }
+            if (superblock->operations->read_symbolic_link == nullptr) {
+                return Status::Unsupported;
+            }
+            uint64_t target_length_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+            const Status read_link_status = superblock->operations->read_symbolic_link(
+                superblock->backend_context, child, scratch_path,
+                OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES, target_length_bytes);
+            if (read_link_status != Status::Succeeded) {
+                return read_link_status;
+            }
+            const uint64_t remaining_length_bytes = active_path_length_bytes - byte_index;
+            if (target_length_bytes == OS_KERNEL_VFS_EMPTY_VALUE ||
+                target_length_bytes > OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES ||
+                remaining_length_bytes >
+                    OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES - target_length_bytes) {
+                return target_length_bytes == OS_KERNEL_VFS_EMPTY_VALUE ? Status::InvalidPath
+                                                                        : Status::PathTooLong;
+            }
+            CopyBytes(scratch_path + target_length_bytes, active_path + byte_index,
+                      remaining_length_bytes);
+            active_path_length_bytes = target_length_bytes + remaining_length_bytes;
+            uint8_t *const previous_active_path = active_path;
+            active_path = scratch_path;
+            scratch_path = previous_active_path;
+            current = active_path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR
+                          ? context.root
+                          : current;
+            byte_index = active_path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR
+                             ? OS_KERNEL_VFS_COUNTER_INCREMENT
+                             : OS_KERNEL_VFS_FIRST_INDEX;
+            ++symbolic_link_count;
+            continue;
         }
         current.vnode = child;
         const Status mount_status = this->FollowMounts(current);
         if (mount_status != Status::Succeeded) {
-            this->RecordResolution(mount_status);
             return mount_status;
         }
     }
     // 尾部分隔符表达“最终对象必须是目录”，不能把 /file/ 静默当成 /file。
-    if (PathRequestsDirectory(path, path_length_bytes) &&
+    if (PathRequestsDirectory(active_path, active_path_length_bytes) &&
         current.vnode.type != NodeType::Directory) {
-        this->RecordResolution(Status::NotDirectory);
         return Status::NotDirectory;
     }
     resolved_path = current;
-    this->RecordResolution(Status::Succeeded);
     return Status::Succeeded;
 }
 
@@ -435,6 +482,124 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
                                           destination_parent.name_length_bytes, replace);
 }
 
+Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
+                 const uint64_t source_path_length_bytes, const uint8_t *const destination_path,
+                 const uint64_t destination_path_length_bytes) noexcept {
+    Path source{};
+    Status status = this->Resolve(context, source_path, source_path_length_bytes, source);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (source.vnode.type == NodeType::Directory) {
+        return Status::PermissionDenied;
+    }
+    ParentResolution destination_parent{};
+    status = this->ResolveParent(context, destination_path, destination_path_length_bytes,
+                                 destination_parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (source.vnode.superblock != destination_parent.parent.vnode.superblock) {
+        return Status::CrossDevice;
+    }
+    Superblock *const superblock = source.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    if (superblock->operations->link == nullptr) {
+        return Status::Unsupported;
+    }
+    Path existing{};
+    const Status existing_status =
+        this->Resolve(context, destination_path, destination_path_length_bytes, existing);
+    if (existing_status == Status::Succeeded) {
+        return Status::AlreadyExists;
+    }
+    if (existing_status != Status::NotFound) {
+        return existing_status;
+    }
+    return superblock->operations->link(superblock->backend_context, source.vnode,
+                                        destination_parent.parent.vnode, destination_parent.name,
+                                        destination_parent.name_length_bytes);
+}
+
+Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const target,
+                               const uint64_t target_length_bytes,
+                               const uint8_t *const destination_path,
+                               const uint64_t destination_path_length_bytes) noexcept {
+    if (target == nullptr || target_length_bytes == OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    if (target_length_bytes > OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES) {
+        return Status::PathTooLong;
+    }
+    for (uint64_t byte_index = OS_KERNEL_VFS_FIRST_INDEX; byte_index < target_length_bytes;
+         ++byte_index) {
+        if (target[byte_index] <= OS_KERNEL_VFS_MAXIMUM_CONTROL_CHARACTER ||
+            target[byte_index] == OS_KERNEL_VFS_DELETE_CONTROL_CHARACTER) {
+            return Status::InvalidPath;
+        }
+    }
+    ParentResolution destination_parent{};
+    Status status = this->ResolveParent(context, destination_path, destination_path_length_bytes,
+                                        destination_parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    Superblock *const superblock = destination_parent.parent.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    if (superblock->operations->create_symbolic_link == nullptr) {
+        return Status::Unsupported;
+    }
+    {
+        SpinLockGuard resolution_guard{this->resolution_lock_};
+        Path existing{};
+        status = this->ResolveInternal(context, destination_path, destination_path_length_bytes,
+                                       false, existing);
+    }
+    if (status == Status::Succeeded) {
+        return Status::AlreadyExists;
+    }
+    if (status != Status::NotFound) {
+        return status;
+    }
+    Vnode vnode{};
+    return superblock->operations->create_symbolic_link(
+        superblock->backend_context, destination_parent.parent.vnode, destination_parent.name,
+        destination_parent.name_length_bytes, target, target_length_bytes, vnode);
+}
+
+Status Vfs::ReadSymbolicLink(const FsContext &context, const uint8_t *const path,
+                             const uint64_t path_length_bytes, uint8_t *const destination,
+                             const uint64_t capacity_bytes,
+                             uint64_t &target_length_bytes) noexcept {
+    target_length_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    Path resolved{};
+    Status status = Status::Succeeded;
+    {
+        SpinLockGuard resolution_guard{this->resolution_lock_};
+        status = this->ResolveInternal(context, path, path_length_bytes, false, resolved);
+    }
+    this->RecordResolution(status);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (resolved.vnode.type != NodeType::SymbolicLink) {
+        return Status::InvalidArgument;
+    }
+    if (resolved.vnode.superblock->operations->read_symbolic_link == nullptr) {
+        return Status::Unsupported;
+    }
+    return resolved.vnode.superblock->operations->read_symbolic_link(
+        resolved.vnode.superblock->backend_context, resolved.vnode, destination, capacity_bytes,
+        target_length_bytes);
+}
+
 Status Vfs::Truncate(const FsContext &context, const uint8_t *const path,
                      const uint64_t path_length_bytes, const uint64_t size_bytes) noexcept {
     Path resolved{};
@@ -481,6 +646,10 @@ Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
         .size_bytes = backend_information.size_bytes,
         .allocated_size_bytes = backend_information.allocated_size_bytes,
         .link_count = backend_information.link_count,
+        .access_time_nanoseconds = backend_information.access_time_nanoseconds,
+        .modification_time_nanoseconds = backend_information.modification_time_nanoseconds,
+        .change_time_nanoseconds = backend_information.change_time_nanoseconds,
+        .birth_time_nanoseconds = backend_information.birth_time_nanoseconds,
     };
     return Status::Succeeded;
 }
@@ -644,6 +813,10 @@ Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information
         .size_bytes = backend_information.size_bytes,
         .allocated_size_bytes = backend_information.allocated_size_bytes,
         .link_count = backend_information.link_count,
+        .access_time_nanoseconds = backend_information.access_time_nanoseconds,
+        .modification_time_nanoseconds = backend_information.modification_time_nanoseconds,
+        .change_time_nanoseconds = backend_information.change_time_nanoseconds,
+        .birth_time_nanoseconds = backend_information.birth_time_nanoseconds,
     };
     return Status::Succeeded;
 }
@@ -1021,7 +1194,8 @@ bool Vfs::PathIsValid(const Path &path) const noexcept {
            path.vnode.identifier != OS_KERNEL_VFS_EMPTY_VALUE &&
            path.vnode.generation != OS_KERNEL_VFS_EMPTY_VALUE &&
            (path.vnode.type == NodeType::RegularFile || path.vnode.type == NodeType::Directory ||
-            path.vnode.type == NodeType::CharacterDevice);
+            path.vnode.type == NodeType::CharacterDevice ||
+            path.vnode.type == NodeType::SymbolicLink);
 }
 
 bool Vfs::PathsAreEqual(const Path &left, const Path &right) const noexcept {
@@ -1191,11 +1365,18 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
         return Status::InvalidArgument;
     }
     Path resolved{};
-    const Status resolution_status = this->Resolve(context, path, path_length_bytes, resolved);
+    Status resolution_status = Status::Succeeded;
+    {
+        SpinLockGuard resolution_guard{this->resolution_lock_};
+        resolution_status =
+            this->ResolveInternal(context, path, path_length_bytes, false, resolved);
+    }
+    this->RecordResolution(resolution_status);
     if (resolution_status != Status::Succeeded) {
         return resolution_status;
     }
-    if (resolved.vnode.type != expected_type) {
+    if (resolved.vnode.type != expected_type && !(expected_type == NodeType::RegularFile &&
+                                                  resolved.vnode.type == NodeType::SymbolicLink)) {
         return expected_type == NodeType::Directory ? Status::NotDirectory : Status::IsDirectory;
     }
     if (this->PathsAreEqual(resolved, context.root) ||

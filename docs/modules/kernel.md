@@ -959,9 +959,9 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
   位图/基数树和多 Thread exec 留给后续阶段；v1.10 已完成 fork 精确 clone
   与共享 FileDescription offset。
 - VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs、legacy 回归后端与
-  生产 rootfs v2；unlink/rmdir/rename/truncate/stat、稀疏文件和三级间接树
-  已完成。mount 拓扑仍仅在启动期建立；动态 unmount、dentry cache、
-  orphan inode、权限和 journal 留给以后阶段。
+  生产 rootfs v4；unlink/rmdir/rename/truncate/stat、链接、时间戳、orphan、
+  五级稀疏块树和 ordered journal 已完成。mount 拓扑仍仅在启动期建立；
+  动态 unmount、dentry cache 与权限进入后续阶段。
 
 ## v1.10 COW 内核边界
 
