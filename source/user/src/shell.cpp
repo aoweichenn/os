@@ -1,7 +1,10 @@
 #include "os/user/shell.hpp"
 
 #include "os/abi/system_call.hpp"
+#include "os/user/shell_environment.hpp"
 #include "os/user/shell_execution.hpp"
+#include "os/user/shell_glob.hpp"
+#include "os/user/shell_line_editor.hpp"
 #include "os/user/system_call.hpp"
 
 namespace os::user {
@@ -13,6 +16,7 @@ constexpr uint64_t OS_USER_SHELL_FIRST_VALUE = 1ULL;
 constexpr uint64_t OS_USER_SHELL_BUILTIN_PARAMETER_INDEX = 1ULL;
 constexpr uint64_t OS_USER_SHELL_CD_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_EXIT_ARGUMENT_COUNT = 1ULL;
+constexpr uint64_t OS_USER_SHELL_ENVIRONMENT_BUILTIN_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_JOBS_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_JOB_BUILTIN_MINIMUM_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_JOB_BUILTIN_MAXIMUM_ARGUMENT_COUNT = 2ULL;
@@ -39,11 +43,18 @@ constexpr uint8_t OS_USER_SHELL_NEWLINE_CHARACTER = static_cast<uint8_t>('\n');
 constexpr uint8_t OS_USER_SHELL_CARRIAGE_RETURN_CHARACTER = static_cast<uint8_t>('\r');
 constexpr uint8_t OS_USER_SHELL_BACKSPACE_CHARACTER = static_cast<uint8_t>('\b');
 constexpr uint8_t OS_USER_SHELL_DELETE_CHARACTER = 0x7FU;
+constexpr uint8_t OS_USER_SHELL_ESCAPE_CHARACTER = 0x1BU;
+constexpr uint8_t OS_USER_SHELL_TAB_CHARACTER = static_cast<uint8_t>('\t');
 constexpr uint8_t OS_USER_SHELL_FIRST_PRINTABLE_CHARACTER = 0x20U;
 constexpr uint8_t OS_USER_SHELL_LAST_PRINTABLE_CHARACTER = 0x7EU;
 constexpr char OS_USER_SHELL_STRING_TERMINATOR = '\0';
 constexpr char OS_USER_SHELL_PATH_SEPARATOR = '/';
 constexpr char OS_USER_SHELL_BINARY_PREFIX[] = "/bin/";
+constexpr char OS_USER_SHELL_CURSOR_LEFT_SEQUENCE[] = "\x1b[D";
+constexpr char OS_USER_SHELL_CURSOR_RIGHT_SEQUENCE[] = "\x1b[C";
+constexpr char OS_USER_SHELL_EDITOR_REDRAW_SEQUENCE[] = "\r\x1b[2K";
+constexpr char OS_USER_SHELL_EDITOR_BACKSPACE_SEQUENCE[] = "\b \b";
+constexpr char OS_USER_SHELL_EDITOR_NEWLINE_SEQUENCE[] = "\r\n";
 constexpr char OS_USER_SHELL_HELP_COMMAND[] = "help";
 constexpr char OS_USER_SHELL_ECHO_COMMAND[] = "echo";
 constexpr char OS_USER_SHELL_PWD_COMMAND[] = "pwd";
@@ -62,16 +73,20 @@ constexpr char OS_USER_SHELL_EXIT_COMMAND[] = "exit";
 constexpr char OS_USER_SHELL_JOBS_COMMAND[] = "jobs";
 constexpr char OS_USER_SHELL_FOREGROUND_COMMAND[] = "fg";
 constexpr char OS_USER_SHELL_BACKGROUND_COMMAND[] = "bg";
+constexpr char OS_USER_SHELL_EXPORT_COMMAND[] = "export";
+constexpr char OS_USER_SHELL_UNSET_COMMAND[] = "unset";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
     "\r\nx86-64 OS Lab v2.2\r\n"
-    "控制操作符、追加/错误重定向与 33 个用户工具已经启用；输入 help 查看帮助。\r\n";
+    "行编辑、环境变量、通配符、完整重定向与 43 个用户工具已经启用。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";
 constexpr char OS_USER_SHELL_PARSE_ERROR[] = "error: 命令行语法错误\r\n";
 constexpr char OS_USER_SHELL_LINE_TOO_LONG_ERROR[] = "error: 命令行超过 512 字节\r\n";
 constexpr char OS_USER_SHELL_OPERATION_ERROR[] = "error: 命令执行失败\r\n";
+constexpr char OS_USER_SHELL_ENVIRONMENT_ERROR[] = "error: 环境变量无效或容量已满\r\n";
+constexpr char OS_USER_SHELL_GLOB_ERROR[] = "error: 通配符展开超过参数上限\r\n";
 constexpr char OS_USER_SHELL_JOB_NOT_FOUND_ERROR[] = "error: 作业不存在\r\n";
 constexpr char OS_USER_SHELL_JOB_TABLE_FULL_ERROR[] = "error: 作业表已满\r\n";
 constexpr char OS_USER_SHELL_USAGE_ERROR[] = "error: 参数数量不正确\r\n";
@@ -116,6 +131,8 @@ constexpr uint64_t OS_USER_SHELL_JOB_CONTROL_SIGNAL_SET =
     os::abi::SignalBit(os::abi::OS_ABI_SIGNAL_TERMINAL_STOP_NUMBER);
 
 static_assert(OS_USER_SHELL_EXECUTABLE_PATH_CAPACITY_BYTES <= OS_USER_SHELL_PATH_CAPACITY_BYTES);
+static_assert(OS_USER_SHELL_EDITOR_LINE_CAPACITY_BYTES ==
+              OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES);
 static_assert(sizeof(OS_USER_SHELL_BINARY_PREFIX) - OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES ==
               OS_USER_SHELL_BINARY_PREFIX_SIZE_BYTES);
 
@@ -176,6 +193,41 @@ struct ShellJob final {
 ShellJob shell_jobs[OS_USER_SHELL_JOB_CAPACITY];
 uint64_t next_shell_job_id = OS_USER_SHELL_FIRST_VALUE;
 uint64_t shell_process_group_id = OS_USER_SHELL_EMPTY_VALUE;
+int64_t shell_last_exit_code = OS_USER_SHELL_SUCCESS_RESULT;
+
+struct ShellPreparedArgument final {
+    char bytes[OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES];
+    uint16_t length_bytes;
+};
+
+ShellEnvironmentTable shell_environment{};
+ShellPreparedArgument
+    shell_prepared_arguments[OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE]{};
+os::abi::ProcessString
+    shell_prepared_process_arguments[OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE]{};
+os::abi::ProcessString shell_prepared_environment[OS_USER_SHELL_ENVIRONMENT_MAXIMUM_ENTRY_COUNT]{};
+char shell_glob_directory_path[OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES]{};
+os::abi::DirectoryEntry shell_glob_directory_entry{};
+ShellLineEditor shell_line_editor{};
+
+constexpr ShellCompletionCandidate OS_USER_SHELL_COMPLETION_CANDIDATES[]{
+    {"help", 4U},     {"echo", 4U},    {"err", 3U},     {"cat", 3U},      {"wc", 2U},
+    {"head", 4U},     {"tee", 3U},     {"true", 4U},    {"false", 5U},    {"pwd", 3U},
+    {"ls", 2U},       {"stat", 4U},    {"mkdir", 5U},   {"write", 5U},    {"touch", 5U},
+    {"rm", 2U},       {"rmdir", 5U},   {"mv", 2U},      {"truncate", 8U}, {"sync", 4U},
+    {"basename", 8U}, {"dirname", 7U}, {"cp", 2U},      {"seq", 3U},      {"uptime", 6U},
+    {"ps", 2U},       {"free", 4U},    {"uname", 5U},   {"mounts", 6U},   {"resources", 9U},
+    {"sleep", 5U},    {"kill", 4U},    {"id", 2U},      {"env", 3U},      {"cd", 2U},
+    {"exit", 4U},     {"jobs", 4U},    {"fg", 2U},      {"bg", 2U},       {"export", 6U},
+    {"unset", 5U},    {"grep", 4U},    {"find", 4U},    {"sort", 4U},     {"tail", 4U},
+    {"df", 2U},       {"du", 2U},      {"hexdump", 7U}, {"clear", 5U},    {"date", 4U},
+};
+
+enum class ShellEditorEscapeState : uint8_t {
+    Ground,
+    Escape,
+    ControlSequence,
+};
 
 struct ShellCommandMarker final {
     const char *command;
@@ -282,6 +334,253 @@ constexpr ShellCommandMarker OS_USER_SHELL_COMMAND_MARKERS[]{
         if (first[byte_index] != second[byte_index]) {
             return false;
         }
+    }
+    return true;
+}
+
+[[nodiscard]] bool LookupShellVariable(void *const context, const char *const name,
+                                       const uint64_t name_length_bytes, const char *&value,
+                                       uint64_t &value_length_bytes) noexcept {
+    if (context == nullptr) {
+        value = nullptr;
+        value_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
+        return false;
+    }
+    ShellEnvironmentTable &environment = *static_cast<ShellEnvironmentTable *>(context);
+    return environment.Find(name, name_length_bytes, value, value_length_bytes) ==
+           ShellEnvironmentStatus::Succeeded;
+}
+
+enum class ShellGlobPreparationStatus : uint64_t {
+    Succeeded,
+    CapacityExceeded,
+    IoFailure,
+};
+
+[[nodiscard]] bool CopyPreparedArgument(const char *const bytes, const uint64_t length_bytes,
+                                        uint64_t &prepared_count) noexcept {
+    if ((bytes == nullptr && length_bytes != OS_USER_SHELL_EMPTY_VALUE) ||
+        length_bytes >= OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES ||
+        prepared_count >= OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE) {
+        return false;
+    }
+    ShellPreparedArgument &destination = shell_prepared_arguments[prepared_count];
+    destination = ShellPreparedArgument{};
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < length_bytes; ++byte_index) {
+        destination.bytes[byte_index] = bytes[byte_index];
+    }
+    destination.bytes[length_bytes] = OS_USER_SHELL_STRING_TERMINATOR;
+    destination.length_bytes = static_cast<uint16_t>(length_bytes);
+    ++prepared_count;
+    return true;
+}
+
+[[nodiscard]] int64_t ComparePreparedArguments(const ShellPreparedArgument &first,
+                                               const ShellPreparedArgument &second) noexcept {
+    const uint64_t common_length_bytes =
+        first.length_bytes < second.length_bytes ? first.length_bytes : second.length_bytes;
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < common_length_bytes;
+         ++byte_index) {
+        if (first.bytes[byte_index] < second.bytes[byte_index]) {
+            return -1LL;
+        }
+        if (first.bytes[byte_index] > second.bytes[byte_index]) {
+            return 1LL;
+        }
+    }
+    if (first.length_bytes < second.length_bytes) {
+        return -1LL;
+    }
+    return first.length_bytes == second.length_bytes ? 0LL : 1LL;
+}
+
+void SortPreparedArguments(const uint64_t begin_index, const uint64_t end_index) noexcept {
+    for (uint64_t insertion_index = begin_index + OS_USER_SHELL_FIRST_VALUE;
+         insertion_index < end_index; ++insertion_index) {
+        ShellPreparedArgument value = shell_prepared_arguments[insertion_index];
+        uint64_t destination_index = insertion_index;
+        while (destination_index > begin_index &&
+               ComparePreparedArguments(
+                   shell_prepared_arguments[destination_index - OS_USER_SHELL_FIRST_VALUE], value) >
+                   0LL) {
+            shell_prepared_arguments[destination_index] =
+                shell_prepared_arguments[destination_index - OS_USER_SHELL_FIRST_VALUE];
+            --destination_index;
+        }
+        shell_prepared_arguments[destination_index] = value;
+    }
+}
+
+[[nodiscard]] bool IsDotDirectoryEntry(const os::abi::DirectoryEntry &entry) noexcept {
+    return (entry.name_length_bytes == OS_USER_SHELL_FIRST_VALUE && entry.name[0] == '.') ||
+           (entry.name_length_bytes == 2ULL && entry.name[0] == '.' && entry.name[1] == '.');
+}
+
+[[nodiscard]] ShellGlobPreparationStatus
+PrepareGlobArgument(const ShellExecutionPlan &execution_plan, const uint64_t argument_index,
+                    uint64_t &prepared_count) noexcept {
+    const ShellArgument &argument = execution_plan.arguments[argument_index];
+    const char *const pattern = ShellExecutionArgumentBytes(execution_plan, argument_index);
+    if (!ShellExecutionArgumentHasGlob(execution_plan, argument_index)) {
+        return CopyPreparedArgument(pattern, argument.length_bytes, prepared_count)
+                   ? ShellGlobPreparationStatus::Succeeded
+                   : ShellGlobPreparationStatus::CapacityExceeded;
+    }
+
+    uint64_t basename_begin_index = OS_USER_SHELL_EMPTY_VALUE;
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < argument.length_bytes;
+         ++byte_index) {
+        if (pattern[byte_index] == OS_USER_SHELL_PATH_SEPARATOR) {
+            basename_begin_index = byte_index + OS_USER_SHELL_FIRST_VALUE;
+        }
+    }
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < basename_begin_index;
+         ++byte_index) {
+        if (execution_plan.storage_flags[argument.offset_bytes + byte_index] != 0U) {
+            return CopyPreparedArgument(pattern, argument.length_bytes, prepared_count)
+                       ? ShellGlobPreparationStatus::Succeeded
+                       : ShellGlobPreparationStatus::CapacityExceeded;
+        }
+    }
+
+    const uint64_t directory_length_bytes =
+        basename_begin_index == OS_USER_SHELL_EMPTY_VALUE
+            ? OS_USER_SHELL_FIRST_VALUE
+            : (basename_begin_index == OS_USER_SHELL_FIRST_VALUE
+                   ? OS_USER_SHELL_FIRST_VALUE
+                   : basename_begin_index - OS_USER_SHELL_FIRST_VALUE);
+    if (basename_begin_index == OS_USER_SHELL_EMPTY_VALUE) {
+        shell_glob_directory_path[OS_USER_SHELL_EMPTY_VALUE] = '.';
+    } else {
+        for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < directory_length_bytes;
+             ++byte_index) {
+            shell_glob_directory_path[byte_index] = pattern[byte_index];
+        }
+    }
+    const int64_t descriptor = OpenDirectory(shell_glob_directory_path, directory_length_bytes);
+    if (descriptor < OS_USER_SHELL_SUCCESS_RESULT) {
+        return CopyPreparedArgument(pattern, argument.length_bytes, prepared_count)
+                   ? ShellGlobPreparationStatus::Succeeded
+                   : ShellGlobPreparationStatus::CapacityExceeded;
+    }
+
+    const uint64_t match_begin_index = prepared_count;
+    ShellGlobPreparationStatus status = ShellGlobPreparationStatus::Succeeded;
+    while (true) {
+        shell_glob_directory_entry = os::abi::DirectoryEntry{};
+        const int64_t read_result =
+            ReadDirectory(static_cast<uint64_t>(descriptor), shell_glob_directory_entry);
+        if (read_result == OS_USER_SHELL_SUCCESS_RESULT) {
+            break;
+        }
+        if (read_result < OS_USER_SHELL_SUCCESS_RESULT) {
+            status = ShellGlobPreparationStatus::IoFailure;
+            break;
+        }
+        if (IsDotDirectoryEntry(shell_glob_directory_entry)) {
+            continue;
+        }
+        const uint64_t pattern_component_length_bytes =
+            argument.length_bytes - basename_begin_index;
+        const bool pattern_starts_with_literal_dot =
+            pattern_component_length_bytes != OS_USER_SHELL_EMPTY_VALUE &&
+            pattern[basename_begin_index] == '.' &&
+            execution_plan.storage_flags[argument.offset_bytes + basename_begin_index] == 0U;
+        if (shell_glob_directory_entry.name_length_bytes != OS_USER_SHELL_EMPTY_VALUE &&
+            shell_glob_directory_entry.name[0] == '.' && !pattern_starts_with_literal_dot) {
+            continue;
+        }
+        if (!MatchShellGlobPattern(pattern + basename_begin_index,
+                                   execution_plan.storage_flags + argument.offset_bytes +
+                                       basename_begin_index,
+                                   pattern_component_length_bytes,
+                                   reinterpret_cast<const char *>(shell_glob_directory_entry.name),
+                                   shell_glob_directory_entry.name_length_bytes)) {
+            continue;
+        }
+        const uint64_t candidate_length_bytes =
+            basename_begin_index + shell_glob_directory_entry.name_length_bytes;
+        if (candidate_length_bytes >= OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES ||
+            prepared_count >= OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE) {
+            status = ShellGlobPreparationStatus::CapacityExceeded;
+            break;
+        }
+        ShellPreparedArgument &destination = shell_prepared_arguments[prepared_count];
+        destination = ShellPreparedArgument{};
+        for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < basename_begin_index;
+             ++byte_index) {
+            destination.bytes[byte_index] = pattern[byte_index];
+        }
+        for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE;
+             byte_index < shell_glob_directory_entry.name_length_bytes; ++byte_index) {
+            destination.bytes[basename_begin_index + byte_index] =
+                static_cast<char>(shell_glob_directory_entry.name[byte_index]);
+        }
+        destination.bytes[candidate_length_bytes] = OS_USER_SHELL_STRING_TERMINATOR;
+        destination.length_bytes = static_cast<uint16_t>(candidate_length_bytes);
+        ++prepared_count;
+    }
+    if (CloseDescriptor(static_cast<uint64_t>(descriptor)) != OS_USER_SHELL_SUCCESS_RESULT &&
+        status == ShellGlobPreparationStatus::Succeeded) {
+        status = ShellGlobPreparationStatus::IoFailure;
+    }
+    if (status != ShellGlobPreparationStatus::Succeeded) {
+        return status;
+    }
+    if (prepared_count == match_begin_index) {
+        return CopyPreparedArgument(pattern, argument.length_bytes, prepared_count)
+                   ? ShellGlobPreparationStatus::Succeeded
+                   : ShellGlobPreparationStatus::CapacityExceeded;
+    }
+    SortPreparedArguments(match_begin_index, prepared_count);
+    return ShellGlobPreparationStatus::Succeeded;
+}
+
+[[nodiscard]] ShellGlobPreparationStatus
+PrepareStageArguments(const ShellExecutionPlan &execution_plan, const ShellExecutionStage &stage,
+                      uint64_t &prepared_count) noexcept {
+    prepared_count = OS_USER_SHELL_EMPTY_VALUE;
+    for (uint64_t argument_index = OS_USER_SHELL_EMPTY_VALUE;
+         argument_index < OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE; ++argument_index) {
+        shell_prepared_arguments[argument_index] = ShellPreparedArgument{};
+        shell_prepared_process_arguments[argument_index] = os::abi::ProcessString{};
+    }
+    for (uint64_t argument_index = OS_USER_SHELL_EMPTY_VALUE; argument_index < stage.argument_count;
+         ++argument_index) {
+        const ShellGlobPreparationStatus status = PrepareGlobArgument(
+            execution_plan, stage.first_argument_index + argument_index, prepared_count);
+        if (status != ShellGlobPreparationStatus::Succeeded) {
+            return status;
+        }
+    }
+    for (uint64_t argument_index = OS_USER_SHELL_EMPTY_VALUE; argument_index < prepared_count;
+         ++argument_index) {
+        shell_prepared_process_arguments[argument_index] = os::abi::ProcessString{
+            .address = reinterpret_cast<uint64_t>(shell_prepared_arguments[argument_index].bytes),
+            .length_bytes = shell_prepared_arguments[argument_index].length_bytes,
+        };
+    }
+    return ShellGlobPreparationStatus::Succeeded;
+}
+
+[[nodiscard]] bool PrepareChildEnvironment(uint64_t &environment_count) noexcept {
+    environment_count = shell_environment.Count();
+    for (uint64_t environment_index = OS_USER_SHELL_EMPTY_VALUE;
+         environment_index < OS_USER_SHELL_ENVIRONMENT_MAXIMUM_ENTRY_COUNT; ++environment_index) {
+        shell_prepared_environment[environment_index] = os::abi::ProcessString{};
+    }
+    for (uint64_t environment_index = OS_USER_SHELL_EMPTY_VALUE;
+         environment_index < environment_count; ++environment_index) {
+        const char *entry = nullptr;
+        uint64_t entry_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
+        if (shell_environment.Read(environment_index, entry, entry_length_bytes) !=
+            ShellEnvironmentStatus::Succeeded) {
+            return false;
+        }
+        shell_prepared_environment[environment_index] = os::abi::ProcessString{
+            .address = reinterpret_cast<uint64_t>(entry),
+            .length_bytes = entry_length_bytes,
+        };
     }
     return true;
 }
@@ -645,32 +944,36 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
     }
     ClosePipelineDescriptors(pipes, pipe_count);
 
+    uint64_t prepared_argument_count = OS_USER_SHELL_EMPTY_VALUE;
+    const ShellGlobPreparationStatus glob_status =
+        PrepareStageArguments(execution_plan, stage, prepared_argument_count);
+    if (glob_status != ShellGlobPreparationStatus::Succeeded) {
+        if (glob_status == ShellGlobPreparationStatus::CapacityExceeded) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_GLOB_ERROR));
+        }
+        ExitProcess(OS_USER_SHELL_CHILD_SETUP_FAILURE_EXIT_CODE);
+    }
+    uint64_t environment_count = OS_USER_SHELL_EMPTY_VALUE;
+    if (!PrepareChildEnvironment(environment_count)) {
+        ExitProcess(OS_USER_SHELL_CHILD_SETUP_FAILURE_EXIT_CODE);
+    }
+
     char executable_path[OS_USER_SHELL_EXECUTABLE_PATH_CAPACITY_BYTES]{};
     uint64_t executable_path_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
-    const uint64_t command_index = stage.first_argument_index;
-    if (!BuildExecutablePath(ShellExecutionArgumentBytes(execution_plan, command_index),
-                             execution_plan.arguments[command_index].length_bytes, executable_path,
-                             executable_path_length_bytes)) {
+    if (prepared_argument_count == OS_USER_SHELL_EMPTY_VALUE ||
+        !BuildExecutablePath(shell_prepared_arguments[OS_USER_SHELL_EMPTY_VALUE].bytes,
+                             shell_prepared_arguments[OS_USER_SHELL_EMPTY_VALUE].length_bytes,
+                             executable_path, executable_path_length_bytes)) {
         ExitProcess(OS_USER_SHELL_COMMAND_NOT_FOUND_RESULT);
     }
 
-    os::abi::ProcessString arguments[OS_USER_SHELL_EXECUTION_MAXIMUM_ARGUMENTS_PER_STAGE]{};
-    for (uint64_t argument_index = OS_USER_SHELL_EMPTY_VALUE; argument_index < stage.argument_count;
-         ++argument_index) {
-        const uint64_t plan_argument_index = stage.first_argument_index + argument_index;
-        arguments[argument_index] = os::abi::ProcessString{
-            .address = reinterpret_cast<uint64_t>(
-                ShellExecutionArgumentBytes(execution_plan, plan_argument_index)),
-            .length_bytes = execution_plan.arguments[plan_argument_index].length_bytes,
-        };
-    }
     const os::abi::ProcessLaunchRequest request{
         .path_address = reinterpret_cast<uint64_t>(executable_path),
         .path_length_bytes = executable_path_length_bytes,
-        .argument_vector_address = reinterpret_cast<uint64_t>(arguments),
-        .argument_count = stage.argument_count,
-        .environment_vector_address = OS_USER_SHELL_EMPTY_VALUE,
-        .environment_count = OS_USER_SHELL_EMPTY_VALUE,
+        .argument_vector_address = reinterpret_cast<uint64_t>(shell_prepared_process_arguments),
+        .argument_count = prepared_argument_count,
+        .environment_vector_address = reinterpret_cast<uint64_t>(shell_prepared_environment),
+        .environment_count = environment_count,
     };
     static_cast<void>(ExecProcess(request));
     ExitProcess(OS_USER_SHELL_COMMAND_NOT_FOUND_RESULT);
@@ -831,11 +1134,88 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
                       command_length_bytes);
 }
 
+[[nodiscard]] bool IsShellAssignment(const ShellExecutionPlan &execution_plan) noexcept {
+    if (execution_plan.stage_count != OS_USER_SHELL_FIRST_VALUE || execution_plan.background) {
+        return false;
+    }
+    const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+    if (stage.argument_count != OS_USER_SHELL_FIRST_VALUE || stage.has_input_redirection ||
+        stage.output_redirection != ShellRedirectionMode::None ||
+        stage.error_redirection != ShellRedirectionMode::None) {
+        return false;
+    }
+    const ShellArgument &argument = execution_plan.arguments[stage.first_argument_index];
+    const char *const bytes =
+        ShellExecutionArgumentBytes(execution_plan, stage.first_argument_index);
+    uint64_t separator_index = argument.length_bytes;
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < argument.length_bytes;
+         ++byte_index) {
+        if (bytes[byte_index] == '=') {
+            separator_index = byte_index;
+            break;
+        }
+    }
+    return separator_index < argument.length_bytes &&
+           IsShellEnvironmentNameValid(bytes, separator_index);
+}
+
 [[nodiscard]] int64_t ExecutePlan(const ShellExecutionPlan &execution_plan,
                                   bool &exit_requested) noexcept {
     exit_requested = false;
     if (!WriteCommandMarker(execution_plan)) {
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
+
+    if (IsShellAssignment(execution_plan)) {
+        const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+        const ShellArgument &argument = execution_plan.arguments[stage.first_argument_index];
+        const ShellEnvironmentStatus status = shell_environment.SetAssignment(
+            ShellExecutionArgumentBytes(execution_plan, stage.first_argument_index),
+            argument.length_bytes);
+        if (status != ShellEnvironmentStatus::Succeeded) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_ENVIRONMENT_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+    if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_EXPORT_COMMAND,
+                             sizeof(OS_USER_SHELL_EXPORT_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
+        const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+        if (stage.argument_count != OS_USER_SHELL_ENVIRONMENT_BUILTIN_ARGUMENT_COUNT) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        const uint64_t assignment_index =
+            stage.first_argument_index + OS_USER_SHELL_BUILTIN_PARAMETER_INDEX;
+        const ShellEnvironmentStatus status = shell_environment.SetAssignment(
+            ShellExecutionArgumentBytes(execution_plan, assignment_index),
+            execution_plan.arguments[assignment_index].length_bytes);
+        if (status != ShellEnvironmentStatus::Succeeded) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_ENVIRONMENT_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+    if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_UNSET_COMMAND,
+                             sizeof(OS_USER_SHELL_UNSET_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
+        const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+        if (stage.argument_count != OS_USER_SHELL_ENVIRONMENT_BUILTIN_ARGUMENT_COUNT) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        const uint64_t name_index =
+            stage.first_argument_index + OS_USER_SHELL_BUILTIN_PARAMETER_INDEX;
+        const ShellEnvironmentStatus status =
+            shell_environment.Unset(ShellExecutionArgumentBytes(execution_plan, name_index),
+                                    execution_plan.arguments[name_index].length_bytes);
+        if (status != ShellEnvironmentStatus::Succeeded &&
+            status != ShellEnvironmentStatus::NotFound) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_ENVIRONMENT_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        return OS_USER_SHELL_SUCCESS_RESULT;
     }
 
     if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_CD_COMMAND,
@@ -903,18 +1283,27 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
             }
             return OS_USER_SHELL_SUCCESS_RESULT;
         }
+        if (SetTerminalInputMode(os::abi::TerminalInputMode::Canonical) !=
+            OS_USER_SHELL_SUCCESS_RESULT) {
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
         if (SetTerminalForegroundGroup(job->process_group_id) != OS_USER_SHELL_SUCCESS_RESULT) {
+            static_cast<void>(SetTerminalInputMode(os::abi::TerminalInputMode::ShellEditor));
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         if (!WriteLiteral(OS_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER)) {
             static_cast<void>(SetTerminalForegroundGroup(shell_process_group_id));
+            static_cast<void>(SetTerminalInputMode(os::abi::TerminalInputMode::ShellEditor));
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         const bool continued = job->state != ShellJobState::Stopped || ContinueJob(*job);
         const bool waited = continued && PumpJobEvents(*job, false);
         const bool restored =
             SetTerminalForegroundGroup(shell_process_group_id) == OS_USER_SHELL_SUCCESS_RESULT;
-        if (!waited || !restored) {
+        const bool editor_mode_restored =
+            restored && SetTerminalInputMode(os::abi::TerminalInputMode::ShellEditor) ==
+                            OS_USER_SHELL_SUCCESS_RESULT;
+        if (!waited || !editor_mode_restored) {
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         if (job->state == ShellJobState::Stopped) {
@@ -927,7 +1316,17 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         return last_exit_code;
     }
 
+    if (SetTerminalInputMode(os::abi::TerminalInputMode::Canonical) !=
+        OS_USER_SHELL_SUCCESS_RESULT) {
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
     const int64_t result = ExecuteExternalPipeline(execution_plan);
+    const bool editor_mode_restored =
+        SetTerminalInputMode(os::abi::TerminalInputMode::ShellEditor) ==
+        OS_USER_SHELL_SUCCESS_RESULT;
+    if (!editor_mode_restored) {
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
     if (result == OS_USER_SHELL_COMMAND_NOT_FOUND_RESULT) {
         static_cast<void>(WriteLiteral(OS_USER_SHELL_UNKNOWN_COMMAND_MARKER));
     } else if (result != OS_USER_SHELL_SUCCESS_RESULT) {
@@ -938,10 +1337,15 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
 
 [[nodiscard]] ShellExecutionParseStatus
 ValidateShellSequenceCommand(const char *const line, const ShellExecutionCommand &command,
-                             const bool final_command) noexcept {
+                             const bool final_command, const int64_t previous_exit_code) noexcept {
     ShellExecutionPlan validation_plan{};
-    const ShellExecutionParseStatus parse_status =
-        ParseShellExecutionPlan(line + command.offset_bytes, command.length_bytes, validation_plan);
+    const ShellExpansionContext expansion_context{
+        .context = &shell_environment,
+        .lookup_operation = LookupShellVariable,
+        .previous_exit_code = previous_exit_code,
+    };
+    const ShellExecutionParseStatus parse_status = ParseShellExecutionPlanExpanded(
+        line + command.offset_bytes, command.length_bytes, expansion_context, validation_plan);
     if (parse_status != ShellExecutionParseStatus::Succeeded) {
         return parse_status;
     }
@@ -952,10 +1356,16 @@ ValidateShellSequenceCommand(const char *const line, const ShellExecutionCommand
 
 [[nodiscard]] ShellExecutionParseStatus
 ExecuteShellSequenceCommand(const char *const line, const ShellExecutionCommand &command,
-                            bool &exit_requested, int64_t &command_result) noexcept {
+                            const int64_t previous_exit_code, bool &exit_requested,
+                            int64_t &command_result) noexcept {
     ShellExecutionPlan execution_plan{};
-    const ShellExecutionParseStatus parse_status =
-        ParseShellExecutionPlan(line + command.offset_bytes, command.length_bytes, execution_plan);
+    const ShellExpansionContext expansion_context{
+        .context = &shell_environment,
+        .lookup_operation = LookupShellVariable,
+        .previous_exit_code = previous_exit_code,
+    };
+    const ShellExecutionParseStatus parse_status = ParseShellExecutionPlanExpanded(
+        line + command.offset_bytes, command.length_bytes, expansion_context, execution_plan);
     if (parse_status != ShellExecutionParseStatus::Succeeded) {
         return parse_status;
     }
@@ -976,17 +1386,20 @@ ExecuteShellSequenceCommand(const char *const line, const ShellExecutionCommand 
     }
 
     // 整行必须先完成语法验证，避免后段错误时前段已经产生文件或进程副作用。
+    // 展开结果不会重新解释为控制操作符，因此预检可使用进入本行时的退出码；
+    // 实际执行仍会逐条用最新退出码重新展开 `$?`。
     for (uint64_t command_index = OS_USER_SHELL_EMPTY_VALUE; command_index < sequence.command_count;
          ++command_index) {
         const ShellExecutionCommand &command = sequence.commands[command_index];
         const ShellExecutionParseStatus parse_status = ValidateShellSequenceCommand(
-            line, command, command_index + OS_USER_SHELL_FIRST_VALUE == sequence.command_count);
+            line, command, command_index + OS_USER_SHELL_FIRST_VALUE == sequence.command_count,
+            shell_last_exit_code);
         if (parse_status != ShellExecutionParseStatus::Succeeded) {
             return parse_status;
         }
     }
 
-    command_result = OS_USER_SHELL_SUCCESS_RESULT;
+    command_result = shell_last_exit_code;
     for (uint64_t command_index = OS_USER_SHELL_EMPTY_VALUE; command_index < sequence.command_count;
          ++command_index) {
         const ShellExecutionCommand &command = sequence.commands[command_index];
@@ -999,8 +1412,8 @@ ExecuteShellSequenceCommand(const char *const line, const ShellExecutionCommand 
             continue;
         }
         bool command_exit_requested = false;
-        const ShellExecutionParseStatus parse_status =
-            ExecuteShellSequenceCommand(line, command, command_exit_requested, command_result);
+        const ShellExecutionParseStatus parse_status = ExecuteShellSequenceCommand(
+            line, command, command_result, command_exit_requested, command_result);
         if (parse_status != ShellExecutionParseStatus::Succeeded) {
             return parse_status;
         }
@@ -1008,6 +1421,7 @@ ExecuteShellSequenceCommand(const char *const line, const ShellExecutionCommand 
             exit_requested = true;
             break;
         }
+        shell_last_exit_code = command_result;
     }
     return ShellExecutionParseStatus::Succeeded;
 }
@@ -1019,6 +1433,36 @@ ExecuteShellSequenceCommand(const char *const line, const ShellExecutionCommand 
            WriteLiteral(OS_USER_SHELL_PROMPT_PREFIX) &&
            WriteBytes(path, static_cast<uint64_t>(path_length_bytes)) &&
            WriteLiteral(OS_USER_SHELL_PROMPT_SUFFIX);
+}
+
+[[nodiscard]] bool RedrawEditorLine() noexcept {
+    if (!WriteLiteral(OS_USER_SHELL_EDITOR_REDRAW_SEQUENCE) || !WritePrompt() ||
+        !WriteBytes(shell_line_editor.Bytes(), shell_line_editor.Length())) {
+        return false;
+    }
+    for (uint64_t byte_index = shell_line_editor.Cursor(); byte_index < shell_line_editor.Length();
+         ++byte_index) {
+        if (!WriteLiteral(OS_USER_SHELL_CURSOR_LEFT_SEQUENCE)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool HandleEditorControlSequence(const uint8_t final_byte) noexcept {
+    if (final_byte == static_cast<uint8_t>('A')) {
+        return !shell_line_editor.SelectPreviousHistory() || RedrawEditorLine();
+    }
+    if (final_byte == static_cast<uint8_t>('B')) {
+        return !shell_line_editor.SelectNextHistory() || RedrawEditorLine();
+    }
+    if (final_byte == static_cast<uint8_t>('C')) {
+        return !shell_line_editor.MoveRight() || WriteLiteral(OS_USER_SHELL_CURSOR_RIGHT_SEQUENCE);
+    }
+    if (final_byte == static_cast<uint8_t>('D')) {
+        return !shell_line_editor.MoveLeft() || WriteLiteral(OS_USER_SHELL_CURSOR_LEFT_SEQUENCE);
+    }
+    return true;
 }
 
 }
@@ -1043,8 +1487,13 @@ int64_t RunShellCommand(const char *const command, const uint64_t command_length
     return command_result;
 }
 
-int64_t RunShell(const uint64_t argument_count, const char *const *const arguments) noexcept {
+int64_t RunShell(const uint64_t argument_count, const char *const *const arguments,
+                 const char *const *const environment) noexcept {
     InitializeJobTable();
+    shell_last_exit_code = OS_USER_SHELL_SUCCESS_RESULT;
+    if (shell_environment.Initialize(environment) != ShellEnvironmentStatus::Succeeded) {
+        return OS_USER_SHELL_FAILURE_EXIT_CODE;
+    }
     const uint64_t process_id = GetProcessId();
     if (process_id == OS_USER_SHELL_EMPTY_VALUE ||
         SetProcessGroup(process_id) != OS_USER_SHELL_SUCCESS_RESULT) {
@@ -1070,20 +1519,21 @@ int64_t RunShell(const uint64_t argument_count, const char *const *const argumen
                                                OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES));
     }
 
-    if (!WriteLiteral(OS_USER_SHELL_BANNER) ||
+    if (SetTerminalInputMode(os::abi::TerminalInputMode::ShellEditor) !=
+            OS_USER_SHELL_SUCCESS_RESULT ||
+        !WriteLiteral(OS_USER_SHELL_BANNER) ||
         !WriteLiteral(OS_USER_SHELL_JOB_CONTROL_READY_MARKER) ||
         !WriteLiteral(OS_USER_SHELL_READY_MARKER)) {
         return OS_USER_SHELL_FAILURE_EXIT_CODE;
     }
-    char line[OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES]{};
-    uint64_t line_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
     while (true) {
         ReapBackgroundJobs();
         if (!WritePrompt()) {
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
-        line_length_bytes = OS_USER_SHELL_EMPTY_VALUE;
+        shell_line_editor.Clear();
         bool input_interrupted = false;
+        ShellEditorEscapeState escape_state = ShellEditorEscapeState::Ground;
         while (true) {
             uint8_t character = OS_USER_SHELL_EMPTY_VALUE;
             const int64_t read_result = ReadDescriptor(os::abi::OS_ABI_STANDARD_INPUT_DESCRIPTOR,
@@ -1095,14 +1545,47 @@ int64_t RunShell(const uint64_t argument_count, const char *const *const argumen
             if (read_result != static_cast<int64_t>(OS_USER_SHELL_FIRST_VALUE)) {
                 return OS_USER_SHELL_FAILURE_EXIT_CODE;
             }
+            if (escape_state == ShellEditorEscapeState::Escape) {
+                escape_state = character == static_cast<uint8_t>('[')
+                                   ? ShellEditorEscapeState::ControlSequence
+                                   : ShellEditorEscapeState::Ground;
+                continue;
+            }
+            if (escape_state == ShellEditorEscapeState::ControlSequence) {
+                escape_state = ShellEditorEscapeState::Ground;
+                if (!HandleEditorControlSequence(character)) {
+                    return OS_USER_SHELL_FAILURE_EXIT_CODE;
+                }
+                continue;
+            }
+            if (character == OS_USER_SHELL_ESCAPE_CHARACTER) {
+                escape_state = ShellEditorEscapeState::Escape;
+                continue;
+            }
             if (character == OS_USER_SHELL_NEWLINE_CHARACTER ||
                 character == OS_USER_SHELL_CARRIAGE_RETURN_CHARACTER) {
+                if (!WriteLiteral(OS_USER_SHELL_EDITOR_NEWLINE_SEQUENCE)) {
+                    return OS_USER_SHELL_FAILURE_EXIT_CODE;
+                }
                 break;
             }
             if (character == OS_USER_SHELL_BACKSPACE_CHARACTER ||
                 character == OS_USER_SHELL_DELETE_CHARACTER) {
-                if (line_length_bytes != OS_USER_SHELL_EMPTY_VALUE) {
-                    --line_length_bytes;
+                const bool was_at_end = shell_line_editor.Cursor() == shell_line_editor.Length();
+                if (shell_line_editor.Backspace() &&
+                    !((was_at_end && WriteLiteral(OS_USER_SHELL_EDITOR_BACKSPACE_SEQUENCE)) ||
+                      (!was_at_end && RedrawEditorLine()))) {
+                    return OS_USER_SHELL_FAILURE_EXIT_CODE;
+                }
+                continue;
+            }
+            if (character == OS_USER_SHELL_TAB_CHARACTER) {
+                if (shell_line_editor.CompleteCommand(
+                        OS_USER_SHELL_COMPLETION_CANDIDATES,
+                        sizeof(OS_USER_SHELL_COMPLETION_CANDIDATES) /
+                            sizeof(OS_USER_SHELL_COMPLETION_CANDIDATES[0])) &&
+                    !RedrawEditorLine()) {
+                    return OS_USER_SHELL_FAILURE_EXIT_CODE;
                 }
                 continue;
             }
@@ -1110,20 +1593,23 @@ int64_t RunShell(const uint64_t argument_count, const char *const *const argumen
                 character > OS_USER_SHELL_LAST_PRINTABLE_CHARACTER) {
                 continue;
             }
-            if (line_length_bytes >= OS_USER_SHELL_EXECUTION_MAXIMUM_LINE_SIZE_BYTES) {
-                continue;
+            const bool append_at_end = shell_line_editor.Cursor() == shell_line_editor.Length();
+            if (shell_line_editor.Insert(static_cast<char>(character)) &&
+                !((append_at_end && WriteBytes(reinterpret_cast<const char *>(&character), 1ULL)) ||
+                  (!append_at_end && RedrawEditorLine()))) {
+                return OS_USER_SHELL_FAILURE_EXIT_CODE;
             }
-            line[line_length_bytes] = static_cast<char>(character);
-            ++line_length_bytes;
         }
         if (input_interrupted) {
+            shell_line_editor.Clear();
             continue;
         }
 
+        shell_line_editor.CommitHistory();
         bool exit_requested = false;
         int64_t command_result = OS_USER_SHELL_SUCCESS_RESULT;
-        const ShellExecutionParseStatus parse_status =
-            ParseAndExecute(line, line_length_bytes, exit_requested, command_result);
+        const ShellExecutionParseStatus parse_status = ParseAndExecute(
+            shell_line_editor.Bytes(), shell_line_editor.Length(), exit_requested, command_result);
         if (parse_status == ShellExecutionParseStatus::Empty) {
             continue;
         }

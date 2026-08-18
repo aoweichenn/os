@@ -22,6 +22,14 @@ constexpr char OS_USER_SHELL_EXECUTION_OUTPUT = '>';
 constexpr char OS_USER_SHELL_EXECUTION_BACKGROUND = '&';
 constexpr char OS_USER_SHELL_EXECUTION_SEQUENCE = ';';
 constexpr char OS_USER_SHELL_EXECUTION_ERROR_DESCRIPTOR = '2';
+constexpr char OS_USER_SHELL_EXECUTION_VARIABLE_PREFIX = '$';
+constexpr char OS_USER_SHELL_EXECUTION_VARIABLE_OPEN = '{';
+constexpr char OS_USER_SHELL_EXECUTION_VARIABLE_CLOSE = '}';
+constexpr char OS_USER_SHELL_EXECUTION_PREVIOUS_STATUS = '?';
+constexpr char OS_USER_SHELL_EXECUTION_GLOB_STAR = '*';
+constexpr char OS_USER_SHELL_EXECUTION_GLOB_QUESTION = '?';
+constexpr uint64_t OS_USER_SHELL_EXECUTION_DECIMAL_RADIX = 10ULL;
+constexpr uint64_t OS_USER_SHELL_EXECUTION_DECIMAL_CAPACITY_BYTES = 20ULL;
 
 enum class ShellExecutionQuoteState : uint64_t {
     None,
@@ -47,6 +55,146 @@ enum class ShellExecutionPendingRedirection : uint64_t {
            character == OS_USER_SHELL_EXECUTION_INPUT ||
            character == OS_USER_SHELL_EXECUTION_OUTPUT ||
            character == OS_USER_SHELL_EXECUTION_BACKGROUND;
+}
+
+[[nodiscard]] bool IsVariableNameFirstCharacter(const char character) noexcept {
+    return (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z') ||
+           character == '_';
+}
+
+[[nodiscard]] bool IsVariableNameCharacter(const char character) noexcept {
+    return IsVariableNameFirstCharacter(character) || (character >= '0' && character <= '9');
+}
+
+[[nodiscard]] uint8_t GlobFlagForCharacter(const char character, const bool glob_enabled) noexcept {
+    if (!glob_enabled) {
+        return 0U;
+    }
+    if (character == OS_USER_SHELL_EXECUTION_GLOB_STAR) {
+        return OS_USER_SHELL_STORAGE_GLOB_STAR_FLAG;
+    }
+    if (character == OS_USER_SHELL_EXECUTION_GLOB_QUESTION) {
+        return OS_USER_SHELL_STORAGE_GLOB_QUESTION_FLAG;
+    }
+    return 0U;
+}
+
+[[nodiscard]] ShellExecutionParseStatus AppendWordByte(ShellExecutionPlan &parsed_plan,
+                                                       ShellArgument &argument,
+                                                       uint64_t &write_index, const char character,
+                                                       const bool glob_enabled) noexcept {
+    if (write_index >= OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES) {
+        return ShellExecutionParseStatus::LineTooLong;
+    }
+    parsed_plan.storage[write_index] = character;
+    parsed_plan.storage_flags[write_index] = GlobFlagForCharacter(character, glob_enabled);
+    ++write_index;
+    ++argument.length_bytes;
+    return ShellExecutionParseStatus::Succeeded;
+}
+
+[[nodiscard]] ShellExecutionParseStatus
+AppendWordBytes(ShellExecutionPlan &parsed_plan, ShellArgument &argument, uint64_t &write_index,
+                const char *const bytes, const uint64_t length_bytes,
+                const bool glob_enabled) noexcept {
+    if (bytes == nullptr && length_bytes != OS_USER_SHELL_EXECUTION_EMPTY_VALUE) {
+        return ShellExecutionParseStatus::InvalidArgument;
+    }
+    for (uint64_t byte_index = OS_USER_SHELL_EXECUTION_EMPTY_VALUE; byte_index < length_bytes;
+         ++byte_index) {
+        const ShellExecutionParseStatus status =
+            AppendWordByte(parsed_plan, argument, write_index, bytes[byte_index], glob_enabled);
+        if (status != ShellExecutionParseStatus::Succeeded) {
+            return status;
+        }
+    }
+    return ShellExecutionParseStatus::Succeeded;
+}
+
+[[nodiscard]] ShellExecutionParseStatus AppendPreviousExitCode(ShellExecutionPlan &parsed_plan,
+                                                               ShellArgument &argument,
+                                                               uint64_t &write_index,
+                                                               const int64_t previous_exit_code,
+                                                               const bool glob_enabled) noexcept {
+    char reversed[OS_USER_SHELL_EXECUTION_DECIMAL_CAPACITY_BYTES]{};
+    char output[OS_USER_SHELL_EXECUTION_DECIMAL_CAPACITY_BYTES]{};
+    uint64_t value = previous_exit_code < 0LL ? 1ULL : static_cast<uint64_t>(previous_exit_code);
+    uint64_t digit_count = OS_USER_SHELL_EXECUTION_EMPTY_VALUE;
+    do {
+        reversed[digit_count] =
+            static_cast<char>('0' + value % OS_USER_SHELL_EXECUTION_DECIMAL_RADIX);
+        value /= OS_USER_SHELL_EXECUTION_DECIMAL_RADIX;
+        ++digit_count;
+    } while (value != OS_USER_SHELL_EXECUTION_EMPTY_VALUE &&
+             digit_count < OS_USER_SHELL_EXECUTION_DECIMAL_CAPACITY_BYTES);
+    for (uint64_t digit_index = OS_USER_SHELL_EXECUTION_EMPTY_VALUE; digit_index < digit_count;
+         ++digit_index) {
+        output[digit_index] = reversed[digit_count - digit_index - 1ULL];
+    }
+    return AppendWordBytes(parsed_plan, argument, write_index, output, digit_count, glob_enabled);
+}
+
+[[nodiscard]] ShellExecutionParseStatus
+AppendVariable(const char *const line, const uint64_t line_length_bytes, uint64_t &read_index,
+               const ShellExpansionContext *const expansion_context,
+               ShellExecutionPlan &parsed_plan, ShellArgument &argument, uint64_t &write_index,
+               const bool glob_enabled) noexcept {
+    ++read_index;
+    if (read_index >= line_length_bytes) {
+        return AppendWordByte(parsed_plan, argument, write_index,
+                              OS_USER_SHELL_EXECUTION_VARIABLE_PREFIX, glob_enabled);
+    }
+    if (line[read_index] == OS_USER_SHELL_EXECUTION_PREVIOUS_STATUS) {
+        ++read_index;
+        const int64_t previous_exit_code =
+            expansion_context == nullptr ? 0LL : expansion_context->previous_exit_code;
+        return AppendPreviousExitCode(parsed_plan, argument, write_index, previous_exit_code,
+                                      glob_enabled);
+    }
+
+    uint64_t name_begin_index = read_index;
+    uint64_t name_end_index = read_index;
+    if (line[read_index] == OS_USER_SHELL_EXECUTION_VARIABLE_OPEN) {
+        ++name_begin_index;
+        name_end_index = name_begin_index;
+        while (name_end_index < line_length_bytes &&
+               line[name_end_index] != OS_USER_SHELL_EXECUTION_VARIABLE_CLOSE) {
+            ++name_end_index;
+        }
+        if (name_end_index >= line_length_bytes || name_begin_index == name_end_index) {
+            return ShellExecutionParseStatus::InvalidVariableExpansion;
+        }
+        read_index = name_end_index + 1ULL;
+    } else {
+        if (!IsVariableNameFirstCharacter(line[read_index])) {
+            return AppendWordByte(parsed_plan, argument, write_index,
+                                  OS_USER_SHELL_EXECUTION_VARIABLE_PREFIX, glob_enabled);
+        }
+        while (name_end_index < line_length_bytes &&
+               IsVariableNameCharacter(line[name_end_index])) {
+            ++name_end_index;
+        }
+        read_index = name_end_index;
+    }
+    if (!IsVariableNameFirstCharacter(line[name_begin_index])) {
+        return ShellExecutionParseStatus::InvalidVariableExpansion;
+    }
+    for (uint64_t byte_index = name_begin_index + 1ULL; byte_index < name_end_index; ++byte_index) {
+        if (!IsVariableNameCharacter(line[byte_index])) {
+            return ShellExecutionParseStatus::InvalidVariableExpansion;
+        }
+    }
+
+    const char *value = nullptr;
+    uint64_t value_length_bytes = OS_USER_SHELL_EXECUTION_EMPTY_VALUE;
+    if (expansion_context == nullptr || expansion_context->lookup_operation == nullptr ||
+        !expansion_context->lookup_operation(expansion_context->context, line + name_begin_index,
+                                             name_end_index - name_begin_index, value,
+                                             value_length_bytes)) {
+        return ShellExecutionParseStatus::Succeeded;
+    }
+    return AppendWordBytes(parsed_plan, argument, write_index, value, value_length_bytes,
+                           glob_enabled);
 }
 
 void TrimCommandSpan(const char *const line, uint64_t &begin_index, uint64_t &end_index) noexcept {
@@ -81,8 +229,8 @@ AppendSequenceCommand(const char *const line, uint64_t begin_index, uint64_t end
 
 [[nodiscard]] ShellExecutionParseStatus
 ParseWord(const char *const line, const uint64_t line_length_bytes, uint64_t &read_index,
-          ShellExecutionPlan &parsed_plan, ShellArgument &argument,
-          uint64_t &write_index) noexcept {
+          const ShellExpansionContext *const expansion_context, ShellExecutionPlan &parsed_plan,
+          ShellArgument &argument, uint64_t &write_index) noexcept {
     argument = ShellArgument{
         .offset_bytes = static_cast<uint16_t>(write_index),
         .length_bytes = OS_USER_SHELL_EXECUTION_EMPTY_VALUE,
@@ -94,12 +242,11 @@ ParseWord(const char *const line, const uint64_t line_length_bytes, uint64_t &re
     while (read_index < line_length_bytes) {
         const char character = line[read_index];
         if (escaping) {
-            if (write_index >= OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES) {
-                return ShellExecutionParseStatus::LineTooLong;
+            const ShellExecutionParseStatus append_status =
+                AppendWordByte(parsed_plan, argument, write_index, character, false);
+            if (append_status != ShellExecutionParseStatus::Succeeded) {
+                return append_status;
             }
-            parsed_plan.storage[write_index] = character;
-            ++write_index;
-            ++argument.length_bytes;
             ++read_index;
             escaping = false;
             word_started = true;
@@ -142,12 +289,23 @@ ParseWord(const char *const line, const uint64_t line_length_bytes, uint64_t &re
             (IsWhitespace(character) || IsOperator(character))) {
             break;
         }
-        if (write_index >= OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES) {
-            return ShellExecutionParseStatus::LineTooLong;
+        if (quote_state != ShellExecutionQuoteState::Single &&
+            character == OS_USER_SHELL_EXECUTION_VARIABLE_PREFIX) {
+            const ShellExecutionParseStatus expansion_status = AppendVariable(
+                line, line_length_bytes, read_index, expansion_context, parsed_plan, argument,
+                write_index, quote_state == ShellExecutionQuoteState::None);
+            if (expansion_status != ShellExecutionParseStatus::Succeeded) {
+                return expansion_status;
+            }
+            word_started = true;
+            continue;
         }
-        parsed_plan.storage[write_index] = character;
-        ++write_index;
-        ++argument.length_bytes;
+        const ShellExecutionParseStatus append_status =
+            AppendWordByte(parsed_plan, argument, write_index, character,
+                           quote_state == ShellExecutionQuoteState::None);
+        if (append_status != ShellExecutionParseStatus::Succeeded) {
+            return append_status;
+        }
         ++read_index;
         word_started = true;
     }
@@ -291,9 +449,12 @@ ParseShellExecutionSequence(const char *const line, const uint64_t line_length_b
     return ShellExecutionParseStatus::Succeeded;
 }
 
-ShellExecutionParseStatus ParseShellExecutionPlan(const char *const line,
-                                                  const uint64_t line_length_bytes,
-                                                  ShellExecutionPlan &execution_plan) noexcept {
+namespace {
+
+[[nodiscard]] ShellExecutionParseStatus
+ParseShellExecutionPlanInternal(const char *const line, const uint64_t line_length_bytes,
+                                const ShellExpansionContext *const expansion_context,
+                                ShellExecutionPlan &execution_plan) noexcept {
     execution_plan = ShellExecutionPlan{};
     if (line == nullptr && line_length_bytes != OS_USER_SHELL_EXECUTION_EMPTY_VALUE) {
         return ShellExecutionParseStatus::InvalidArgument;
@@ -389,8 +550,9 @@ ShellExecutionParseStatus ParseShellExecutionPlan(const char *const line,
         }
 
         ShellArgument parsed_argument{};
-        const ShellExecutionParseStatus word_status = ParseWord(
-            line, line_length_bytes, read_index, parsed_plan, parsed_argument, write_index);
+        const ShellExecutionParseStatus word_status =
+            ParseWord(line, line_length_bytes, read_index, expansion_context, parsed_plan,
+                      parsed_argument, write_index);
         if (word_status != ShellExecutionParseStatus::Succeeded) {
             return word_status;
         }
@@ -443,12 +605,43 @@ ShellExecutionParseStatus ParseShellExecutionPlan(const char *const line,
     return ShellExecutionParseStatus::Succeeded;
 }
 
+}
+
+ShellExecutionParseStatus ParseShellExecutionPlan(const char *const line,
+                                                  const uint64_t line_length_bytes,
+                                                  ShellExecutionPlan &execution_plan) noexcept {
+    return ParseShellExecutionPlanInternal(line, line_length_bytes, nullptr, execution_plan);
+}
+
+ShellExecutionParseStatus
+ParseShellExecutionPlanExpanded(const char *const line, const uint64_t line_length_bytes,
+                                const ShellExpansionContext &expansion_context,
+                                ShellExecutionPlan &execution_plan) noexcept {
+    return ParseShellExecutionPlanInternal(line, line_length_bytes, &expansion_context,
+                                           execution_plan);
+}
+
 const char *ShellExecutionArgumentBytes(const ShellExecutionPlan &execution_plan,
                                         const uint64_t argument_index) noexcept {
     if (argument_index >= execution_plan.argument_count) {
         return nullptr;
     }
     return execution_plan.storage + execution_plan.arguments[argument_index].offset_bytes;
+}
+
+bool ShellExecutionArgumentHasGlob(const ShellExecutionPlan &execution_plan,
+                                   const uint64_t argument_index) noexcept {
+    if (argument_index >= execution_plan.argument_count) {
+        return false;
+    }
+    const ShellArgument &argument = execution_plan.arguments[argument_index];
+    for (uint64_t byte_index = OS_USER_SHELL_EXECUTION_EMPTY_VALUE;
+         byte_index < argument.length_bytes; ++byte_index) {
+        if (execution_plan.storage_flags[argument.offset_bytes + byte_index] != 0U) {
+            return true;
+        }
+    }
+    return false;
 }
 
 }

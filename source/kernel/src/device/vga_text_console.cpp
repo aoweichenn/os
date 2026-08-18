@@ -13,6 +13,11 @@ constexpr uint8_t OS_KERNEL_VGA_TEXT_CARRIAGE_RETURN_CHARACTER = 0x0DU;
 constexpr uint8_t OS_KERNEL_VGA_TEXT_LINE_FEED_CHARACTER = 0x0AU;
 constexpr uint8_t OS_KERNEL_VGA_TEXT_BACKSPACE_CHARACTER = 0x08U;
 constexpr uint8_t OS_KERNEL_VGA_TEXT_TAB_CHARACTER = 0x09U;
+constexpr uint8_t OS_KERNEL_VGA_TEXT_ESCAPE_CHARACTER = 0x1BU;
+constexpr uint8_t OS_KERNEL_VGA_TEXT_CSI_CHARACTER = static_cast<uint8_t>('[');
+constexpr uint8_t OS_KERNEL_VGA_TEXT_FIRST_DIGIT = static_cast<uint8_t>('0');
+constexpr uint8_t OS_KERNEL_VGA_TEXT_LAST_DIGIT = static_cast<uint8_t>('9');
+constexpr uint16_t OS_KERNEL_VGA_TEXT_ESCAPE_PARAMETER_LIMIT = 999U;
 constexpr uint16_t OS_KERNEL_VGA_TEXT_TAB_WIDTH = 8U;
 constexpr uint16_t OS_KERNEL_VGA_CRTC_INDEX_PORT = 0x03D4U;
 constexpr uint16_t OS_KERNEL_VGA_CRTC_DATA_PORT = 0x03D5U;
@@ -52,6 +57,9 @@ bool VgaTextConsole::Initialize() const noexcept {
     if (!this->IsStateValid()) {
         return false;
     }
+    this->escape_state_ = EscapeState::Ground;
+    this->escape_parameter_ = 0U;
+    this->escape_parameter_present_ = false;
     this->UpdateHardwareCursor();
     return true;
 }
@@ -64,6 +72,9 @@ bool VgaTextConsole::ActivateTerminal() const noexcept {
     this->shared_state_->cursor_row = 0U;
     this->shared_state_->cursor_column = 0U;
     this->shared_state_->output_mode = OS_KERNEL_VGA_CONSOLE_TERMINAL_OUTPUT_MODE;
+    this->escape_state_ = EscapeState::Ground;
+    this->escape_parameter_ = 0U;
+    this->escape_parameter_present_ = false;
     this->UpdateHardwareCursor();
     return true;
 }
@@ -196,6 +207,10 @@ bool VgaTextConsole::AppendTrace(const uint8_t byte) const noexcept {
 }
 
 void VgaTextConsole::RenderByte(const uint8_t byte) const noexcept {
+    if (this->ConsumeEscapeByte(byte)) {
+        this->UpdateHardwareCursor();
+        return;
+    }
     if (byte == OS_KERNEL_VGA_TEXT_CARRIAGE_RETURN_CHARACTER) {
         this->shared_state_->cursor_column = 0U;
     } else if (byte == OS_KERNEL_VGA_TEXT_LINE_FEED_CHARACTER) {
@@ -218,11 +233,87 @@ void VgaTextConsole::RenderByte(const uint8_t byte) const noexcept {
     this->UpdateHardwareCursor();
 }
 
+bool VgaTextConsole::ConsumeEscapeByte(const uint8_t byte) const noexcept {
+    if (this->escape_state_ == EscapeState::Ground) {
+        if (byte != OS_KERNEL_VGA_TEXT_ESCAPE_CHARACTER) {
+            return false;
+        }
+        this->escape_state_ = EscapeState::Escape;
+        this->escape_parameter_ = 0U;
+        this->escape_parameter_present_ = false;
+        return true;
+    }
+    if (this->escape_state_ == EscapeState::Escape) {
+        this->escape_state_ = byte == OS_KERNEL_VGA_TEXT_CSI_CHARACTER
+                                  ? EscapeState::ControlSequence
+                                  : EscapeState::Ground;
+        return true;
+    }
+    if (byte >= OS_KERNEL_VGA_TEXT_FIRST_DIGIT && byte <= OS_KERNEL_VGA_TEXT_LAST_DIGIT) {
+        const uint16_t digit = static_cast<uint16_t>(byte - OS_KERNEL_VGA_TEXT_FIRST_DIGIT);
+        if (this->escape_parameter_ <= (OS_KERNEL_VGA_TEXT_ESCAPE_PARAMETER_LIMIT - digit) / 10U) {
+            this->escape_parameter_ = static_cast<uint16_t>(this->escape_parameter_ * 10U + digit);
+            this->escape_parameter_present_ = true;
+        }
+        return true;
+    }
+    this->ApplyControlSequence(byte);
+    this->escape_state_ = EscapeState::Ground;
+    this->escape_parameter_ = 0U;
+    this->escape_parameter_present_ = false;
+    return true;
+}
+
+void VgaTextConsole::ApplyControlSequence(const uint8_t final_byte) const noexcept {
+    const uint16_t parameter = this->escape_parameter_present_ ? this->escape_parameter_ : 1U;
+    const uint16_t movement_parameter = parameter == 0U ? 1U : parameter;
+    if (final_byte == static_cast<uint8_t>('A')) {
+        this->shared_state_->cursor_row =
+            movement_parameter > this->shared_state_->cursor_row
+                ? 0U
+                : static_cast<uint16_t>(this->shared_state_->cursor_row - movement_parameter);
+    } else if (final_byte == static_cast<uint8_t>('B')) {
+        const uint16_t maximum_row = static_cast<uint16_t>(OS_KERNEL_VGA_TEXT_ROW_COUNT - 1U);
+        this->shared_state_->cursor_row =
+            movement_parameter > maximum_row - this->shared_state_->cursor_row
+                ? maximum_row
+                : static_cast<uint16_t>(this->shared_state_->cursor_row + movement_parameter);
+    } else if (final_byte == static_cast<uint8_t>('C')) {
+        const uint16_t maximum_column = static_cast<uint16_t>(OS_KERNEL_VGA_TEXT_COLUMN_COUNT - 1U);
+        this->shared_state_->cursor_column =
+            movement_parameter > maximum_column - this->shared_state_->cursor_column
+                ? maximum_column
+                : static_cast<uint16_t>(this->shared_state_->cursor_column + movement_parameter);
+    } else if (final_byte == static_cast<uint8_t>('D')) {
+        this->shared_state_->cursor_column =
+            movement_parameter > this->shared_state_->cursor_column
+                ? 0U
+                : static_cast<uint16_t>(this->shared_state_->cursor_column - movement_parameter);
+    } else if (final_byte == static_cast<uint8_t>('H')) {
+        this->shared_state_->cursor_row = 0U;
+        this->shared_state_->cursor_column = 0U;
+    } else if (final_byte == static_cast<uint8_t>('J') && parameter == 2U) {
+        this->ClearScreen();
+    } else if (final_byte == static_cast<uint8_t>('K') && parameter == 2U) {
+        this->ClearCurrentLine();
+    }
+}
+
 void VgaTextConsole::ClearScreen() const noexcept {
     const uint16_t blank_cell =
         Cell(OS_KERNEL_VGA_TEXT_SPACE_CHARACTER, this->shared_state_->attribute);
     for (uint64_t cell_index = 0ULL; cell_index < OS_KERNEL_VGA_TEXT_CELL_COUNT; ++cell_index) {
         this->text_buffer_[cell_index] = blank_cell;
+    }
+}
+
+void VgaTextConsole::ClearCurrentLine() const noexcept {
+    const uint16_t blank_cell =
+        Cell(OS_KERNEL_VGA_TEXT_SPACE_CHARACTER, this->shared_state_->attribute);
+    const uint64_t line_begin =
+        static_cast<uint64_t>(this->shared_state_->cursor_row) * OS_KERNEL_VGA_TEXT_COLUMN_COUNT;
+    for (uint64_t column = 0ULL; column < OS_KERNEL_VGA_TEXT_COLUMN_COUNT; ++column) {
+        this->text_buffer_[line_begin + column] = blank_cell;
     }
 }
 

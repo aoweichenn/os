@@ -194,6 +194,10 @@
 | process group | 用于信号投递和终端作业控制的一组进程身份 |
 | session | 包含一个或多个进程组并关联控制终端的作业控制边界 |
 | line discipline | 位于字符设备和用户读取之间，处理 canonical 输入、退格、EOF 与控制字符的终端状态机 |
+| ShellEditor mode | 只允许控制终端前台 Shell 启用的逐字节无回显模式；外部作业仍切回 Canonical |
+| glob | 把未引用、未转义的 `*`/`?` 与目录项匹配并按字节序扩展为 argv 的 Shell 步骤 |
+| CSI | Control Sequence Introducer；本项目 VGA 支持光标、清行和清屏的有界 ANSI 子集 |
+| RTC / CMOS | PC 端口 `0x70/0x71` 暴露的电池墙钟；date 读取稳定快照，不能用于 deadline |
 | controlling terminal | 由一个 session 取得并保存其前台进程组的终端 |
 | foreground process group | 当前被控制终端允许读取输入并接收终端控制信号的进程组 |
 | stopped process | 保留地址空间、资源与执行现场但暂不参与调度，等待 SIGCONT 的进程 |

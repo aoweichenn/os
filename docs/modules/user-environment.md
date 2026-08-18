@@ -90,7 +90,7 @@ VFS OpenFile。
 
 Set 1 解码器只在 make code 上产生字符。左右 Shift 分别跟踪，Caps Lock
 在按下时翻转；字母使用 `shift XOR caps`，数字和标点只使用 Shift。字符进入
-256 字节环形 FIFO，满时增加 dropped 而不覆盖未读数据。
+1024 字节环形 FIFO，满时增加 dropped 而不覆盖未读数据。
 
 Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程，
 调度器保存 Shell 帧并清空当前进程，运行时回到永久内核页表执行
@@ -102,17 +102,18 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 ## Shell 代码走读
 
 1. `programs/shell_entry.cpp` 只调用 `RunShell()`，再用 `ExitProcess()` 结束。
-2. `src/shell.cpp` 输出 banner 与 READY，随后在 fd 0 上逐字符阻塞读取并回显。
-3. 行缓冲只接受可打印 ASCII、Backspace 和 Enter；超出 512 字节后
-   丢弃到本行 Enter，并报告稳定错误。
+2. `src/shell.cpp` 输出 banner 与 READY，把 TTY 切到 ShellEditor，随后在 fd 0
+   上逐字符阻塞读取并自行回显；执行外部作业时临时切回 Canonical。
+3. `ShellLineEditor` 接受可打印 ASCII、Backspace、方向键和 Tab；维护 512 字节
+   行、cursor、16 条历史与命令补全，容量满后拒绝继续插入。
 4. `src/shell_execution.cpp` 先把整行切成最多 8 条 `;`/`&&`/`||` 控制命令，
    再把每条命令复制到固定存储；参数只保存 16 位 offset/length，解析引号、
    转义、`|`、`<`、`>`、`>>`、`2>`、`2>>`，产生最多 16 个 stage。
 5. `src/shell.cpp` 在任何命令执行前预检整行，再按实际退出码短路；单条管线只在
    解析完全成功后创建 N-1 根 Pipe，再 fork N 个 child；
    child 用 dup2 接线并 exec，parent 关闭端点并 wait 全部 child。
-6. `cd` 和 `exit` 改变 Shell 自身状态，因此留作 builtin；其他命令从
-   `/bin` 执行 `core_tool` multi-call ELF。
+6. `cd`、`exit`、export/unset 与作业命令改变 Shell 自身状态，因此留作
+   builtin；其他命令从 `/bin` 执行 `core_tool` multi-call ELF。
 
 ## 命令与当前范围
 
@@ -151,6 +152,16 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | `sleep <ms>` | 经已有 deadline syscall 非忙等等待 |
 | `kill <pid> <signal>` | 经已有 signal syscall 投递进程信号 |
 | `id` | 输出当前 64 位 PID |
+| `env` | 输出当前导出环境；Shell 支持赋值、export/unset 与变量展开 |
+| `grep <pattern> [file]` | 有界逐行查找，匹配行写 stdout，无匹配返回失败 |
+| `find [path]` | 用最多 128 个 512 字节路径槽迭代遍历 |
+| `sort [file]` | 排序最多 64 行，每行最多 256 字节 |
+| `tail [file]` | 用 10 行环保存最后十行，每行最多 256 字节 |
+| `df` | 输出 rootfs v3 256 MiB 区域及可达文件分配字节估算 |
+| `du [path]` | 迭代累计可达 vnode 的 allocated size |
+| `hexdump [file]` | 按 16 字节行输出 8 位 offset 与十六进制字节 |
+| `clear` | 输出 VGA 支持的 CSI 清屏与归位序列 |
+| `date` | 经 CMOS RTC 输出 UTC 日期时间 |
 | `exit` | 正常退出 Shell |
 
 v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线；v1.18
@@ -159,10 +170,10 @@ v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级
 QEMU 还会实际运行新增 13 个工具，检查唯一输出、cp 回读、procfs 文本、
 deadline sleep、信号投递和 PID 查询。v1.15
 已经提供 session、前后台 PGID、控制终端、`jobs/fg/bg`、尾部 `&`，以及
-TTY 生成的 Ctrl-C/Ctrl-Z 组信号。v2.2 当前增量进一步提供 `;`、`&&`、`||`、
-`>>`、`2>`、`2>>` 和第 33 个 `/bin/err` 工具。环境展开、通配符、历史、补全、
-termios/raw mode、多个终端和完整 POSIX job spec 仍未完成。所有命令解释始终
-位于用户态。
+TTY 生成的 Ctrl-C/Ctrl-Z 组信号。v2.2 进一步提供完整控制/重定向、32 项环境、
+引用感知 glob、左右行编辑、16 条历史、Tab 补全和 43 个工具路径。完整 termios、
+任意 raw mode、路径补全、多个终端、时区数据库和完整 POSIX job spec 仍未实现。
+所有命令解释始终位于用户态。
 
 Shell 的 16 项作业表按成员事件归约 Running/Stopped/Done。外部管线全部 stage
 使用同一 PGID；前台事务交出并最终收回 TTY，后台事务不改变前台组。child 在

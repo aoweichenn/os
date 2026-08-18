@@ -1268,6 +1268,26 @@ OS_QEMU_USER_SHELL_APPEND_FIRST_OUTPUT_MARKER = "append-one"
 OS_QEMU_USER_SHELL_APPEND_SECOND_OUTPUT_MARKER = "append-two"
 OS_QEMU_USER_SHELL_ERROR_FIRST_OUTPUT_MARKER = "error-one"
 OS_QEMU_USER_SHELL_ERROR_SECOND_OUTPUT_MARKER = "error-two"
+OS_QEMU_USER_SHELL_ENVIRONMENT_INITIAL_OUTPUT_MARKER = "environment-v2.2"
+OS_QEMU_USER_SHELL_ENVIRONMENT_VARIABLE_OUTPUT_MARKER = "variable-expanded"
+OS_QEMU_USER_SHELL_ENVIRONMENT_EXPORTED_ENTRY_MARKER = "v2name=expanded"
+OS_QEMU_USER_SHELL_ENVIRONMENT_UNSET_OUTPUT_MARKER = "unset--done"
+OS_QEMU_USER_SHELL_PREVIOUS_STATUS_OUTPUT_MARKER = "status-1"
+OS_QEMU_USER_SHELL_GLOB_EXPANDED_OUTPUT_MARKER = "/tmp/glob/a.txt /tmp/glob/b.txt"
+OS_QEMU_USER_SHELL_GLOB_LITERAL_OUTPUT_MARKER = "/tmp/glob/*.txt"
+OS_QEMU_USER_SHELL_EDITOR_INSERT_OUTPUT_MARKER = "editor-abc"
+OS_QEMU_USER_SHELL_HISTORY_OUTPUT_MARKER = "history-recalled"
+OS_QEMU_USER_SHELL_COMPLETION_OUTPUT_MARKER = "completion-ready"
+OS_QEMU_USER_TOOL_GREP_OUTPUT_MARKER = "800005"
+OS_QEMU_USER_TOOL_TAIL_OUTPUT_MARKER = "800012"
+OS_QEMU_USER_TOOL_SORT_FIRST_OUTPUT_MARKER = "alpha-sort"
+OS_QEMU_USER_TOOL_SORT_SECOND_OUTPUT_MARKER = "zeta-sort"
+OS_QEMU_USER_TOOL_HEXDUMP_OUTPUT_MARKER = "7a 65 74 61"
+OS_QEMU_USER_TOOL_FIND_OUTPUT_MARKER = "/tmp/finddemo/needle"
+OS_QEMU_USER_TOOL_DU_OUTPUT_MARKER = "0 /tmp/finddemo"
+OS_QEMU_USER_TOOL_DF_OUTPUT_MARKER = "total_bytes 268435456"
+OS_QEMU_USER_TOOL_DATE_OUTPUT_MARKER = "utc 20"
+OS_QEMU_USER_TOOL_CLEAR_OUTPUT_MARKER = "clear-survived"
 OS_QEMU_USER_TOOL_BASENAME_OUTPUT_MARKER = "tool-basename"
 OS_QEMU_USER_TOOL_DIRNAME_OUTPUT_MARKER = "/alpha/beta"
 OS_QEMU_USER_TOOL_SEQUENCE_OUTPUT_MARKER = "700003"
@@ -1322,7 +1342,7 @@ OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
     "false && echo skipped-and\n"
     "false || echo control-or\n"
     "true || echo skipped-or\n"
-    "echo sequence-one; echo sequence-two\n"
+    "echo sequence-one; echo sequence-t\\wo\n"
     "echo append-one > /tmp/appended\n"
     "echo append-two >> /tmp/appended\n"
     "cat /tmp/appended\n"
@@ -1331,6 +1351,44 @@ OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
     "err error-two 2>> /tmp/errors\n"
     "cat /tmp/errors\n"
     "rm /tmp/errors\n"
+    "echo environment-$OS_STAGE\n"
+    "export v2name=expanded\n"
+    "echo variable-$v2name\n"
+    "env\n"
+    "unset v2name\n"
+    "echo unset-$v2name-done\n"
+    "false; echo status-$?\n"
+    "mkdir /tmp/glob\n"
+    "touch /tmp/glob/b.txt\n"
+    "touch /tmp/glob/a.txt\n"
+    "echo /tmp/glob/*.txt\n"
+    "echo /tmp/glob/\\*.txt\n"
+    "rm /tmp/glob/a.txt\n"
+    "rm /tmp/glob/b.txt\n"
+    "rmdir /tmp/glob\n"
+    "echo editor-ac\x02b\n"
+    "echo history-recalled\n"
+    "\x10\n"
+    "ec\tcompletion-ready\n"
+    "seq 800001 800012 > /tmp/tool-lines\n"
+    "grep 8000\\05 /tmp/tool-lines\n"
+    "tail /tmp/tool-lines\n"
+    "echo zeta-\\sort > /tmp/sort-lines\n"
+    "echo alpha-\\sort >> /tmp/sort-lines\n"
+    "sort /tmp/sort-lines\n"
+    "hexdump /tmp/sort-lines\n"
+    "mkdir /tmp/finddemo\n"
+    "touch /tmp/finddemo/n\\eedle\n"
+    "find /tmp/finddemo\n"
+    "du /tmp/finddemo\n"
+    "df\n"
+    "date\n"
+    "clear\n"
+    "echo clear-survived\n"
+    "rm /tmp/tool-lines\n"
+    "rm /tmp/sort-lines\n"
+    "rm /tmp/finddemo/n\\eedle\n"
+    "rmdir /tmp/finddemo\n"
     "rm /tmp/touched\n"
     "echo pipeline|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|tee /tmp/pipeline|head|wc\n"
     "basename /alpha/beta/tool-basename\n"
@@ -2007,6 +2065,7 @@ def runQemuWithTimedVgaTrace(
     finishedEvent: threading.Event | None = None,
     failureMessages: list[str] | None = None,
     captureVisibleVga: bool = False,
+    vgaCaptureTimeoutSeconds: float = OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS,
 ) -> tuple[str, str, bool, bool, int, bytes | None, bytes | None]:
     """轮询 VGA 验收区，并按最终里程碑或总截止条件回收目标进程。"""
     normalizedCommand = [str(argument) for argument in command]
@@ -2128,7 +2187,7 @@ def runQemuWithTimedVgaTrace(
             if completionEvent is not None and completionEvent.is_set():
                 completedByObserver = True
                 if captureVisibleVga and not displayCapturedEvent.wait(
-                    OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS
+                    vgaCaptureTimeoutSeconds
                 ):
                     if not captureFailedEvent.is_set():
                         capturedFailureMessages.append("QMP 未在期限内捕获 VGA 可见画面")
@@ -2211,9 +2270,16 @@ def qemuKeyNameForCharacter(character: str) -> str:
         raise OsToolError("QEMU 键盘映射只接受单个字符。")
     if "a" <= character <= "z" or "0" <= character <= "9":
         return character
+    if "A" <= character <= "Z":
+        return f"shift-{character.lower()}"
     keyNames = {
         "\x03": "ctrl-c",
         "\x1a": "ctrl-z",
+        "\x02": "left",
+        "\x06": "right",
+        "\x10": "up",
+        "\x0e": "down",
+        "\t": "tab",
         "\n": "ret",
         " ": "spc",
         "/": "slash",
@@ -2226,6 +2292,15 @@ def qemuKeyNameForCharacter(character: str) -> str:
         "<": "shift-comma",
         ">": "shift-dot",
         "|": "shift-backslash",
+        "\\": "backslash",
+        "_": "shift-minus",
+        "$": "shift-4",
+        "*": "shift-8",
+        "?": "shift-slash",
+        "{": "shift-leftbracket",
+        "}": "shift-rightbracket",
+        "'": "apostrophe",
+        '"': "shift-apostrophe",
     }
     if character not in keyNames:
         raise OsToolError(
@@ -2240,10 +2315,9 @@ def waitForQemuKeyboardProgress(
     marker: str,
     expectedCount: int,
     finishedEvent: threading.Event,
+    stepTimeoutSeconds: float,
 ) -> bool:
-    progressDeadline = (
-        time.monotonic() + OS_QEMU_KEYBOARD_STEP_TIMEOUT_SECONDS
-    )
+    progressDeadline = time.monotonic() + stepTimeoutSeconds
     with progressCondition:
         while markerCounts.get(marker, 0) < expectedCount:
             if finishedEvent.is_set():
@@ -2270,6 +2344,7 @@ def injectQemuText(
     progressCondition: threading.Condition,
     markerCounts: dict[str, int],
     failureEvent: threading.Event,
+    stepTimeoutSeconds: float,
 ) -> None:
     if not readyEvent.wait(readyTimeoutSeconds):
         return
@@ -2348,6 +2423,7 @@ def injectQemuText(
                             OS_QEMU_USER_SHELL_FOREGROUND_JOB_WAITING_MARKER,
                             foregroundWaitTarget,
                             finishedEvent,
+                            stepTimeoutSeconds,
                         ):
                             return
                         if nextCharacter == "\x03" and not waitForQemuKeyboardProgress(
@@ -2356,6 +2432,7 @@ def injectQemuText(
                             OS_QEMU_KERNEL_SIGNAL_DEFAULT_CONTINUE_DELIVERED_MARKER,
                             continueDeliveryTarget,
                             finishedEvent,
+                            stepTimeoutSeconds,
                         ):
                             return
                     elif character == "\n" or character in ("\x03", "\x1a"):
@@ -2366,6 +2443,7 @@ def injectQemuText(
                             OS_QEMU_USER_SHELL_COMMAND_COMPLETE_MARKER,
                             expectedCommandCompletionCount,
                             finishedEvent,
+                            stepTimeoutSeconds,
                         ):
                             return
     except (OSError, ValueError, OsToolError) as error:
@@ -2438,6 +2516,8 @@ def runQemuFirmwareBoot(
     persistentDiskWrites: bool = False,
     memoryMebibytes: int = OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     cpuModel: str = OS_QEMU_DEFAULT_CPU_MODEL,
+    keyboardStepTimeoutSeconds: float | None = None,
+    vgaCaptureTimeoutSeconds: float = OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS,
 ) -> None:
     validateImageSize(
         firmwareImagePath,
@@ -2469,6 +2549,15 @@ def runQemuFirmwareBoot(
         # QMP 日志“通过”，却把用户留在黑屏上。
         captureVisibleVga = len(requiredMarkers) > 0
         firmwareTimeoutSeconds = qemuFirmwareTimeoutSeconds(memoryMebibytes)
+        effectiveKeyboardStepTimeoutSeconds = (
+            keyboardStepTimeoutSeconds
+            if keyboardStepTimeoutSeconds is not None
+            else (
+                40.0
+                if memoryMebibytes >= OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES
+                else OS_QEMU_KEYBOARD_STEP_TIMEOUT_SECONDS
+            )
+        )
 
         def observeVgaLine(line: str) -> None:
             if keyboardReadyMarker in line:
@@ -2496,6 +2585,7 @@ def runQemuFirmwareBoot(
                     keyboardProgressCondition,
                     keyboardMarkerCounts,
                     protocolCompleteEvent,
+                    effectiveKeyboardStepTimeoutSeconds,
                 ),
                 name="os-qemu-keyboard-injection",
                 daemon=True,
@@ -2534,6 +2624,7 @@ def runQemuFirmwareBoot(
                 qemuFinishedEvent,
                 qmpFailureMessages,
                 captureVisibleVga,
+                vgaCaptureTimeoutSeconds,
             )
         finally:
             qemuFinishedEvent.set()
@@ -2637,6 +2728,8 @@ def runQemuFileSystemPersistence(
             ),
             persistentDiskWrites=True,
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
+            keyboardStepTimeoutSeconds=40.0,
+            vgaCaptureTimeoutSeconds=10.0,
         )
         runQemuFirmwareBoot(
             projectRoot,
@@ -2660,6 +2753,8 @@ def runQemuFileSystemPersistence(
             ),
             persistentDiskWrites=True,
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
+            keyboardStepTimeoutSeconds=40.0,
+            vgaCaptureTimeoutSeconds=10.0,
         )
 
         superblockByteOffset = (
@@ -2696,4 +2791,5 @@ def runQemuFileSystemPersistence(
             ),
             persistentDiskWrites=True,
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
+            vgaCaptureTimeoutSeconds=10.0,
         )

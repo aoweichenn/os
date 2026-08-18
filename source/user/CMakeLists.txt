@@ -7,8 +7,14 @@ add_library(
     STATIC
         src/shell_parser.cpp
         src/shell_execution.cpp
+        src/shell_environment.cpp
+        src/shell_glob.cpp
+        src/shell_line_editor.cpp
         include/os/user/shell_parser.hpp
         include/os/user/shell_execution.hpp
+        include/os/user/shell_environment.hpp
+        include/os/user/shell_glob.hpp
+        include/os/user/shell_line_editor.hpp
 )
 
 add_library(
@@ -333,7 +339,7 @@ set(
     OS_USER_TOOL_PROBE_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_tool_probe.elf"
     CACHE INTERNAL
-    "33 个独立用户工具 ELF 路径与 inode 验收程序"
+    "43 个独立用户工具 ELF 路径与 inode 验收程序"
 )
 set(
     OS_USER_TRUNCATED_ELF_PATH
@@ -387,6 +393,9 @@ os_add_user_program(
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_parser.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_execution.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_environment.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_glob.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/shell_line_editor.cpp"
 )
 os_add_user_program(
     os_user_core_tool_elf
@@ -483,7 +492,7 @@ os_add_user_program(
     os_user_tool_probe_elf
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/tool_probe.cpp"
     "${OS_USER_TOOL_PROBE_ELF_PATH}"
-    "链接 33 个独立用户工具 ELF 路径验收程序"
+    "链接 43 个独立用户工具 ELF 路径验收程序"
 )
 
 add_custom_command(

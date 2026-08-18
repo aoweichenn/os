@@ -29,6 +29,7 @@ set(
     OS_KERNEL_DEVICE_HEADERS
     include/os/kernel/device/ata_pio.hpp
     include/os/kernel/device/block_request.hpp
+    include/os/kernel/device/cmos_rtc.hpp
     include/os/kernel/device/device_model.hpp
     include/os/kernel/device/legacy_pic.hpp
     include/os/kernel/device/port_io.hpp
@@ -101,6 +102,7 @@ set(
     OS_KERNEL_TIME_HEADERS
     include/os/kernel/time/deadline_queue.hpp
     include/os/kernel/time/monotonic_clock.hpp
+    include/os/kernel/time/realtime_clock.hpp
 )
 set(
     OS_KERNEL_USER_HEADERS
@@ -158,6 +160,7 @@ set(
     OS_KERNEL_DEVICE_SOURCES
     src/device/ata_pio.cpp
     src/device/block_request.cpp
+    src/device/cmos_rtc.cpp
     src/device/device_model.cpp
     src/device/legacy_pic.cpp
     src/device/port_io.cpp
@@ -230,6 +233,7 @@ set(
     OS_KERNEL_TIME_SOURCES
     src/time/deadline_queue.cpp
     src/time/monotonic_clock.cpp
+    src/time/realtime_clock.cpp
 )
 set(
     OS_KERNEL_USER_SOURCES
@@ -365,8 +369,10 @@ add_library(
     STATIC
         src/time/deadline_queue.cpp
         src/time/monotonic_clock.cpp
+        src/time/realtime_clock.cpp
         include/os/kernel/time/deadline_queue.hpp
         include/os/kernel/time/monotonic_clock.hpp
+        include/os/kernel/time/realtime_clock.hpp
 )
 target_include_directories(
     os_kernel_time_model_host
@@ -508,6 +514,11 @@ target_include_directories(
     os_kernel_user_environment_model_host
     PUBLIC
         "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_link_libraries(
+    os_kernel_user_environment_model_host
+    PUBLIC
+        os_system_abi
 )
 target_compile_options(
     os_kernel_user_environment_model_host

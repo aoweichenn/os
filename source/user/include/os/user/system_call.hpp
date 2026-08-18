@@ -32,6 +32,7 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                             uint64_t deadline_nanoseconds) noexcept;
 [[nodiscard]] int64_t WakePrivateFutex(const uint32_t *word, uint64_t maximum_wake_count) noexcept;
 [[nodiscard]] uint64_t GetMonotonicTime() noexcept;
+[[nodiscard]] int64_t GetRealtime(os::abi::RealtimeInformation &information) noexcept;
 [[nodiscard]] int64_t SleepUntil(uint64_t deadline_nanoseconds) noexcept;
 [[nodiscard]] int64_t SleepFor(uint64_t duration_nanoseconds) noexcept;
 [[nodiscard]] int64_t SetSignalAction(uint64_t signal_number, const os::abi::SignalAction &action,
@@ -45,13 +46,12 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                              uint64_t signal_number) noexcept;
 [[nodiscard]] int64_t GetProcessGroup() noexcept;
 [[nodiscard]] int64_t SetProcessGroup(uint64_t process_group_id) noexcept;
-[[nodiscard]] int64_t SetProcessGroupFor(uint64_t process_id,
-                                         uint64_t process_group_id) noexcept;
+[[nodiscard]] int64_t SetProcessGroupFor(uint64_t process_id, uint64_t process_group_id) noexcept;
 [[nodiscard]] int64_t CreateSession() noexcept;
 [[nodiscard]] int64_t GetSession() noexcept;
-[[nodiscard]] int64_t
-GetTerminalInformation(os::abi::TerminalInformation &information) noexcept;
+[[nodiscard]] int64_t GetTerminalInformation(os::abi::TerminalInformation &information) noexcept;
 [[nodiscard]] int64_t SetTerminalForegroundGroup(uint64_t process_group_id) noexcept;
+[[nodiscard]] int64_t SetTerminalInputMode(os::abi::TerminalInputMode mode) noexcept;
 [[nodiscard]] int64_t TryReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t TryWritePipe(const uint8_t *source, uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t ReadPipe(uint8_t *destination, uint64_t capacity_bytes) noexcept;

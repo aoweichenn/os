@@ -4,7 +4,8 @@
 
 v1.13 把 PIT 的离散硬件事件提升为内核统一使用的 64 位单调纳秒时钟，并把
 “等待到某个时刻”纳入 ThreadScheduler。模块只回答经过时间和截止时刻，不
-提供日期、时区、闰秒或 RTC 墙钟；这些概念不能进入调度和同步正确性判断。
+让日期或 RTC 进入调度和同步正确性判断。v2.2 另加一条完全独立的只读 RTC
+墙钟路径；deadline 始终只消费单调时钟。
 
 公开边界分为三层：
 
@@ -130,6 +131,10 @@ need-resched，因此 `SleepUntil` 不需要忙等线程维持系统前进。
 - 固定种子随机测试执行 100000 次 schedule/cancel/advance/expire；
 - QEMU 同时证明空闲睡眠、真实 IRQ0、用户 ABI、资源守恒与有界宿主回收。
 
-本阶段没有 RTC、wall clock、tickless 和高精度硬件 timer。以后替换 PIT
-时，只能更换 clock source / clock event 输入，不能改变绝对 deadline、
-WakeReason 和用户 ABI 的既有语义。
+v2.2 的 GetRealtime 读取 QEMU PC CMOS：先等待 update-in-progress 清零，再
+比较两份完整快照；按 status B 处理 BCD/binary 与 12/24 小时模式，最后用
+Gregorian 闰年规则换算 Unix 秒。date 只输出 UTC `YYYY-MM-DDTHH:MM:SSZ`；当前
+没有时区数据库、闰秒表、RTC 设置接口、tickless 或高精度硬件 timer。
+
+以后替换 PIT 时，只能更换 monotonic clock source / event 输入，不能改变绝对
+deadline 与 WakeReason；替换 RTC 也不能让可回拨墙钟进入 timeout 判断。

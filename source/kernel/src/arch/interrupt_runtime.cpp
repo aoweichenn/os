@@ -15,6 +15,13 @@ namespace os::kernel {
 
 namespace {
 
+constexpr uint8_t OS_KERNEL_INTERRUPT_KEYBOARD_ESCAPE = 0x1BU;
+constexpr uint8_t OS_KERNEL_INTERRUPT_KEYBOARD_CSI = static_cast<uint8_t>('[');
+constexpr uint8_t OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_UP = static_cast<uint8_t>('A');
+constexpr uint8_t OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_DOWN = static_cast<uint8_t>('B');
+constexpr uint8_t OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_RIGHT = static_cast<uint8_t>('C');
+constexpr uint8_t OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_LEFT = static_cast<uint8_t>('D');
+
 constexpr uint64_t OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA = 0ULL;
 constexpr uint64_t OS_KERNEL_INTERRUPT_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_INTERRUPT_EMPTY_COUNTER = 0ULL;
@@ -30,10 +37,10 @@ class InterruptRuntime final {
     [[nodiscard]] InterruptRuntimeStatistics Statistics() const noexcept;
     [[nodiscard]] uint64_t MonotonicNanoseconds() const noexcept;
     [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
-    [[nodiscard]] AtaPioStatus
-    SubmitAtaFlush(uint64_t owner_thread_index, uint64_t deadline_nanoseconds,
-                   uint64_t &request_identifier,
-                   BlockRequestResult &immediate_result) noexcept;
+    [[nodiscard]] AtaPioStatus SubmitAtaFlush(uint64_t owner_thread_index,
+                                              uint64_t deadline_nanoseconds,
+                                              uint64_t &request_identifier,
+                                              BlockRequestResult &immediate_result) noexcept;
 
   private:
     void HandleKeyboardInterrupt() noexcept;
@@ -130,25 +137,21 @@ void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
             HaltProcessor();
         }
         AtaPioCompletion completion{};
-        if (this->ata_device_.ResolveTimeout(
-                this->monotonic_clock_.Read().nanoseconds, completion) !=
-            AtaPioStatus::Succeeded) {
+        if (this->ata_device_.ResolveTimeout(this->monotonic_clock_.Read().nanoseconds,
+                                             completion) != AtaPioStatus::Succeeded) {
             HaltProcessor();
         }
         if (completion.ready) {
             this->ata_timeout_count_ =
-                this->ata_timeout_count_ +
-                OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
+                this->ata_timeout_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
             this->DeliverAtaCompletion(completion);
             this->StartQueuedAtaRequests();
         }
     } else if (interrupt_request == OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) {
         this->HandleKeyboardInterrupt();
-    } else if (interrupt_request ==
-               OS_KERNEL_INTERRUPT_PRIMARY_ATA_REQUEST) {
+    } else if (interrupt_request == OS_KERNEL_INTERRUPT_PRIMARY_ATA_REQUEST) {
         AtaPioCompletion completion{};
-        if (this->ata_device_.HandleInterrupt(completion) !=
-            AtaPioStatus::Succeeded) {
+        if (this->ata_device_.HandleInterrupt(completion) != AtaPioStatus::Succeeded) {
             HaltProcessor();
         }
         if (completion.ready) {
@@ -212,16 +215,16 @@ bool InterruptRuntime::TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
     return event_available;
 }
 
-AtaPioStatus InterruptRuntime::SubmitAtaFlush(
-    const uint64_t owner_thread_index, const uint64_t deadline_nanoseconds,
-    uint64_t &request_identifier,
-    BlockRequestResult &immediate_result) noexcept {
+AtaPioStatus InterruptRuntime::SubmitAtaFlush(const uint64_t owner_thread_index,
+                                              const uint64_t deadline_nanoseconds,
+                                              uint64_t &request_identifier,
+                                              BlockRequestResult &immediate_result) noexcept {
     request_identifier = OS_KERNEL_INTERRUPT_EMPTY_COUNTER;
     immediate_result = BlockRequestResult::None;
     const AtaPioStatus submit_status = this->ata_device_.SubmitAsynchronous(
         BlockOperation::Flush, OS_KERNEL_INTERRUPT_EMPTY_COUNTER, nullptr,
-        OS_KERNEL_INTERRUPT_EMPTY_COUNTER, owner_thread_index,
-        deadline_nanoseconds, request_identifier);
+        OS_KERNEL_INTERRUPT_EMPTY_COUNTER, owner_thread_index, deadline_nanoseconds,
+        request_identifier);
     if (submit_status != AtaPioStatus::Succeeded) {
         return submit_status;
     }
@@ -239,22 +242,18 @@ AtaPioStatus InterruptRuntime::SubmitAtaFlush(
     return AtaPioStatus::Succeeded;
 }
 
-void InterruptRuntime::DeliverAtaCompletion(
-    const AtaPioCompletion &completion) noexcept {
+void InterruptRuntime::DeliverAtaCompletion(const AtaPioCompletion &completion) noexcept {
     if (!completion.ready) {
         HaltProcessor();
     }
-    const ProcessRuntimeStatus completion_status =
-        CompleteBlockIoRequest(completion.owner_thread_index,
-                               completion.request_identifier,
-                               completion.result);
+    const ProcessRuntimeStatus completion_status = CompleteBlockIoRequest(
+        completion.owner_thread_index, completion.request_identifier, completion.result);
     if (completion_status != ProcessRuntimeStatus::Succeeded &&
         completion_status != ProcessRuntimeStatus::BlockIoRequestAbandoned) {
         HaltProcessor();
     }
     this->ata_completion_count_ =
-        this->ata_completion_count_ +
-        OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
+        this->ata_completion_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
 }
 
 void InterruptRuntime::StartQueuedAtaRequests() noexcept {
@@ -262,8 +261,7 @@ void InterruptRuntime::StartQueuedAtaRequests() noexcept {
          iteration < OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY; ++iteration) {
         AtaPioCompletion completion{};
         bool request_started = false;
-        if (this->ata_device_.StartNextAsynchronous(completion,
-                                                    request_started) !=
+        if (this->ata_device_.StartNextAsynchronous(completion, request_started) !=
             AtaPioStatus::Succeeded) {
             HaltProcessor();
         }
@@ -293,6 +291,19 @@ void InterruptRuntime::HandleKeyboardInterrupt() noexcept {
         this->supported_keyboard_event_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
     if (decoded_event.pressed && decoded_event.character != OS_KERNEL_INTERRUPT_ZERO_BYTE) {
         SubmitConsoleCharacter(decoded_event.character);
+    } else if (decoded_event.pressed && (decoded_event.key == KeyboardKey::ArrowUp ||
+                                         decoded_event.key == KeyboardKey::ArrowDown ||
+                                         decoded_event.key == KeyboardKey::ArrowLeft ||
+                                         decoded_event.key == KeyboardKey::ArrowRight)) {
+        SubmitConsoleCharacter(OS_KERNEL_INTERRUPT_KEYBOARD_ESCAPE);
+        SubmitConsoleCharacter(OS_KERNEL_INTERRUPT_KEYBOARD_CSI);
+        const uint8_t final_byte =
+            decoded_event.key == KeyboardKey::ArrowUp     ? OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_UP
+            : decoded_event.key == KeyboardKey::ArrowDown ? OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_DOWN
+            : decoded_event.key == KeyboardKey::ArrowRight
+                ? OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_RIGHT
+                : OS_KERNEL_INTERRUPT_KEYBOARD_ARROW_LEFT;
+        SubmitConsoleCharacter(final_byte);
     }
     if (!this->keyboard_event_pending_) {
         this->pending_keyboard_event_ = decoded_event;
@@ -316,13 +327,12 @@ bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
     return kernel_interrupt_runtime.TryTakeKeyboardEvent(event);
 }
 
-AtaPioStatus SubmitAsynchronousAtaFlush(
-    const uint64_t owner_thread_index, const uint64_t deadline_nanoseconds,
-    uint64_t &request_identifier,
-    BlockRequestResult &immediate_result) noexcept {
-    return kernel_interrupt_runtime.SubmitAtaFlush(
-        owner_thread_index, deadline_nanoseconds, request_identifier,
-        immediate_result);
+AtaPioStatus SubmitAsynchronousAtaFlush(const uint64_t owner_thread_index,
+                                        const uint64_t deadline_nanoseconds,
+                                        uint64_t &request_identifier,
+                                        BlockRequestResult &immediate_result) noexcept {
+    return kernel_interrupt_runtime.SubmitAtaFlush(owner_thread_index, deadline_nanoseconds,
+                                                   request_identifier, immediate_result);
 }
 
 extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *frame) noexcept {

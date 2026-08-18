@@ -23,10 +23,9 @@ constexpr char OS_USER_INIT_THREAD_PROBE_REAPED_MESSAGE[] =
 constexpr char OS_USER_INIT_TIME_PROBE_REAPED_MESSAGE[] = "[OS][USER][INIT] TIME_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_SIGNAL_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] SIGNAL_PROBE_REAPED\r\n";
-constexpr char OS_USER_INIT_TOOL_PROBE_REAPED_MESSAGE[] =
-    "[OS][USER][INIT] TOOL_PROBE_REAPED\r\n";
+constexpr char OS_USER_INIT_TOOL_PROBE_REAPED_MESSAGE[] = "[OS][USER][INIT] TOOL_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v1.18";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v2.2";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";
@@ -294,8 +293,7 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
                             sizeof(OS_USER_INIT_TOOL_PROBE_PATH) -
                                 OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES,
                             os::abi::ProcessTerminationReason::Exited,
-                            OS_USER_INIT_SUCCESS_EXIT_CODE,
-                            OS_USER_INIT_FIRST_INDEX) ||
+                            OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_FIRST_INDEX) ||
         !WriteMessage(OS_USER_INIT_TOOL_PROBE_REAPED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
     }

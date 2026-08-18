@@ -80,6 +80,8 @@ enum class SystemCallNumber : uint64_t {
     GetTerminalInformation = 67ULL,
     SetTerminalForegroundGroup = 68ULL,
     WaitProcessEvent = 69ULL,
+    SetTerminalInputMode = 70ULL,
+    GetRealtime = 71ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;

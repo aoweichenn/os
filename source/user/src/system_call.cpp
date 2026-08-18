@@ -123,6 +123,12 @@ uint64_t GetMonotonicTime() noexcept {
                          OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT));
 }
 
+int64_t GetRealtime(os::abi::RealtimeInformation &information) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetRealtime),
+                            reinterpret_cast<uint64_t>(&information), sizeof(information),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t SleepUntil(const uint64_t deadline_nanoseconds) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil),
                             deadline_nanoseconds, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
@@ -191,11 +197,9 @@ int64_t SetProcessGroup(const uint64_t process_group_id) noexcept {
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
-int64_t SetProcessGroupFor(const uint64_t process_id,
-                           const uint64_t process_group_id) noexcept {
+int64_t SetProcessGroupFor(const uint64_t process_id, const uint64_t process_group_id) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetProcessGroupFor),
-                            process_id, process_group_id,
-                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+                            process_id, process_group_id, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t CreateSession() noexcept {
@@ -222,8 +226,13 @@ int64_t GetTerminalInformation(os::abi::TerminalInformation &information) noexce
 int64_t SetTerminalForegroundGroup(const uint64_t process_group_id) noexcept {
     return InvokeSystemCall(
         static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalForegroundGroup),
-        process_group_id, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
-        OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+        process_group_id, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetTerminalInputMode(const os::abi::TerminalInputMode mode) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalInputMode),
+                            static_cast<uint64_t>(mode), OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t TryReadPipe(uint8_t *destination, const uint64_t capacity_bytes) noexcept {

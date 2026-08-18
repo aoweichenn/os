@@ -87,9 +87,11 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
   DMA、tagged queue、AHCI/NVMe 或多控制器。ROM、Stage 1、early Kernel
   自检及当前 rootfs 普通扇区适配器仍使用有界轮询；异步生产路径当前由
   显式 sync 的最终 FLUSH 验证。
-- PS/2 已解码左右 Ctrl 的 Set 1 make/break，并将 Ctrl-C/Z 转为 C0 控制码；
-  尚无 Shift/Alt/CapsLock 完整布局、重复键和通用键事件环形缓冲。
+- PS/2 已解码左右 Shift/Ctrl、CapsLock、Basic Latin 和方向键；Ctrl-C/Z 转为
+  C0 控制码，方向键转为 CSI。尚无 Alt、重复键和通用键事件环形缓冲。
 - PIT 是调度时钟与 v1.13 单调纳秒的基础，不是 RTC 墙钟；已有 deadline
   queue 与非忙等 sleep，但尚无 tickless 或高精度 timer。
+- v2.2 只读 CMOS RTC 已支持 UIP 稳定快照、BCD/binary、12/24 小时和 UTC
+  Gregorian 换算；没有设置接口、时区数据库、闰秒表或持久校时服务。
 - 当前为单 BSP 动态 Process/Thread 调度器，仍使用固定四 tick 时间片；设备层
   尚未提供按最早 deadline 重新编程的 one-shot 时钟事件接口。

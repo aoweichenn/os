@@ -145,8 +145,16 @@ v2.2 的 Shell 组合要求：
   FileDescription 状态，每次 write 都重新定位文件尾，duplicate 共享该状态。
 - 单个解析计划必须小于 4 KiB；命令行 offset/length 的位宽由 512 字节上界
   静态证明，不能依赖隐式截断。
-- 本增量增加 `/bin/err`，rootfs 至少包含 33 个独立工具 inode。环境、通配、
-  历史、补全和新增常用工具仍是 v2.2 后续增量，不在本次提前宣称完成。
+- rootfs 必须包含 43 个独立工具 inode；新增集合至少含 `/bin/err`、env、grep、
+  find、sort、tail、df、du、hexdump、clear 和 date。
+- Shell 环境最多 32 项、每项最多 127 个 `NAME=value` 字节；支持赋值、
+  export/unset、`$NAME`、`${NAME}`、`$?` 和 exec 继承。未引用/未转义的 `*`、`?`
+  才参与 glob，展开后仍服从每 stage 8 参数上限。
+- ShellEditor 模式逐字节交付但不由 Kernel 回显；Shell 必须提供左右插入、
+  16 条去重历史和命令共同前缀补全。外部前台作业必须切回 Canonical，任何
+  失败路径都要把终端前台组和输入模式交还 Shell。
+- ABI v2.1.0 是对 v2.0.0 的兼容尾部扩展：系统调用 70 切换受控输入模式，71
+  返回 CMOS UTC 与 Unix 秒；既有 1..69 编号和 -1..-57 错误值不变。
 
 ## v2.0 完成基线
 

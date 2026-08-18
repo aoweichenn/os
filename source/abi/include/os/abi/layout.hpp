@@ -28,45 +28,38 @@ inline constexpr uint64_t OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES = 279ULL
 
 static_assert(static_cast<uint64_t>(SystemCallNumber::WriteLog) ==
               OS_ABI_LAYOUT_FIRST_SYSTEM_CALL_NUMBER);
-static_assert(static_cast<uint64_t>(SystemCallNumber::WaitProcessEvent) ==
+static_assert(static_cast<uint64_t>(SystemCallNumber::GetRealtime) ==
               OS_ABI_SYSTEM_CALL_LAST_NUMBER);
-static_assert(OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY ==
-              OS_ABI_SYSTEM_CALL_FIRST_ERROR);
-static_assert(OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED ==
-              OS_ABI_SYSTEM_CALL_LAST_ERROR);
+static_assert(OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY == OS_ABI_SYSTEM_CALL_FIRST_ERROR);
+static_assert(OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED == OS_ABI_SYSTEM_CALL_LAST_ERROR);
 
 static_assert(offsetof(PipeDescriptorPair, reader_descriptor) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
 static_assert(offsetof(PipeDescriptorPair, writer_descriptor) ==
               OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 
-static_assert(offsetof(DirectoryEntry, inode_number) ==
-              OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
-static_assert(offsetof(DirectoryEntry, type) ==
-              OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
+static_assert(offsetof(RealtimeInformation, year) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(RealtimeInformation, unix_seconds) ==
+              OS_ABI_LAYOUT_SEVENTH_FIELD_OFFSET_BYTES);
+
+static_assert(offsetof(DirectoryEntry, inode_number) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(DirectoryEntry, type) == OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 static_assert(offsetof(DirectoryEntry, name_length_bytes) ==
               OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
-static_assert(offsetof(DirectoryEntry, name) ==
-              OS_ABI_LAYOUT_DIRECTORY_NAME_OFFSET_BYTES);
-static_assert(offsetof(DirectoryEntry, reserved) ==
-              OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES);
+static_assert(offsetof(DirectoryEntry, name) == OS_ABI_LAYOUT_DIRECTORY_NAME_OFFSET_BYTES);
+static_assert(offsetof(DirectoryEntry, reserved) == OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES);
 
 static_assert(offsetof(FileInformation, mount_identifier) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
 static_assert(offsetof(FileInformation, superblock_identifier) ==
               OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
-static_assert(offsetof(FileInformation, inode_number) ==
-              OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
-static_assert(offsetof(FileInformation, generation) ==
-              OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(FileInformation, type) ==
-              OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(FileInformation, size_bytes) ==
-              OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileInformation, inode_number) == OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileInformation, generation) == OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileInformation, type) == OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileInformation, size_bytes) == OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
 static_assert(offsetof(FileInformation, allocated_size_bytes) ==
               OS_ABI_LAYOUT_SEVENTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(FileInformation, link_count) ==
-              OS_ABI_LAYOUT_EIGHTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileInformation, link_count) == OS_ABI_LAYOUT_EIGHTH_FIELD_OFFSET_BYTES);
 
 static_assert(offsetof(ProcessLaunchRequest, path_address) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
@@ -81,21 +74,18 @@ static_assert(offsetof(ProcessLaunchRequest, environment_vector_address) ==
 static_assert(offsetof(ProcessLaunchRequest, environment_count) ==
               OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
 
-static_assert(offsetof(ProcessWaitResult, process_id) ==
-              OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(ProcessWaitResult, process_id) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
 static_assert(offsetof(ProcessWaitResult, parent_process_id) ==
               OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 static_assert(offsetof(ProcessWaitResult, termination_reason) ==
               OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
-static_assert(offsetof(ProcessWaitResult, exit_code) ==
-              OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(ProcessWaitResult, exit_code) == OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
 static_assert(offsetof(ProcessWaitResult, exception_vector) ==
               OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
 
 static_assert(offsetof(ThreadCreateRequest, entry_address) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
-static_assert(offsetof(ThreadCreateRequest, argument) ==
-              OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
+static_assert(offsetof(ThreadCreateRequest, argument) == OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 static_assert(offsetof(ThreadCreateRequest, stack_base_address) ==
               OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
 static_assert(offsetof(ThreadCreateRequest, stack_size_bytes) ==
@@ -105,35 +95,21 @@ static_assert(offsetof(ThreadCreateRequest, stack_pointer) ==
 static_assert(offsetof(ThreadCreateRequest, thread_local_storage_base) ==
               OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
 
-static_assert(offsetof(SignalAction, disposition) ==
-              OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalAction, handler_address) ==
-              OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalAction, restorer_address) ==
-              OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalAction, additional_mask) ==
-              OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalAction, flags) ==
-              OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalAction, disposition) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalAction, handler_address) == OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalAction, restorer_address) == OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalAction, additional_mask) == OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalAction, flags) == OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
 
-static_assert(offsetof(SignalFrame, magic) ==
-              OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, version) ==
-              OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, size_bytes) ==
-              OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, cookie) ==
-              OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, signal_number) ==
-              OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, previous_mask) ==
-              OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, restorer_address) ==
-              OS_ABI_LAYOUT_SEVENTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, reserved) ==
-              OS_ABI_LAYOUT_EIGHTH_FIELD_OFFSET_BYTES);
-static_assert(offsetof(SignalFrame, context) ==
-              OS_ABI_LAYOUT_SIGNAL_CONTEXT_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, magic) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, version) == OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, size_bytes) == OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, cookie) == OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, signal_number) == OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, previous_mask) == OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, restorer_address) == OS_ABI_LAYOUT_SEVENTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, reserved) == OS_ABI_LAYOUT_EIGHTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(SignalFrame, context) == OS_ABI_LAYOUT_SIGNAL_CONTEXT_OFFSET_BYTES);
 
 static_assert(offsetof(FileMemoryMapRequest, requested_address) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
@@ -141,8 +117,7 @@ static_assert(offsetof(FileMemoryMapRequest, length_bytes) ==
               OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 static_assert(offsetof(FileMemoryMapRequest, protection_flags) ==
               OS_ABI_LAYOUT_THIRD_FIELD_OFFSET_BYTES);
-static_assert(offsetof(FileMemoryMapRequest, map_flags) ==
-              OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileMemoryMapRequest, map_flags) == OS_ABI_LAYOUT_FOURTH_FIELD_OFFSET_BYTES);
 static_assert(offsetof(FileMemoryMapRequest, file_descriptor) ==
               OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
 static_assert(offsetof(FileMemoryMapRequest, file_offset_bytes) ==
@@ -163,8 +138,7 @@ static_assert(offsetof(ProcessWaitEventResult, exception_vector) ==
 static_assert(offsetof(ProcessWaitEventResult, signal_number) ==
               OS_ABI_LAYOUT_SEVENTH_FIELD_OFFSET_BYTES);
 
-static_assert(offsetof(TerminalInformation, terminal_id) ==
-              OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(TerminalInformation, terminal_id) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
 static_assert(offsetof(TerminalInformation, controlling_session_id) ==
               OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 static_assert(offsetof(TerminalInformation, foreground_process_group_id) ==

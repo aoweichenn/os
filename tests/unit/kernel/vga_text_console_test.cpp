@@ -15,6 +15,7 @@ constexpr std::string_view OS_TEST_VGA_CONSOLE_TERMINAL_ACTIVATION =
     "激活终端必须清屏并让后续诊断只写日志、前台文本同时写屏幕";
 constexpr std::string_view OS_TEST_VGA_CONSOLE_OVERFLOW =
     "日志区写满后必须拒绝伪造完整日志但仍允许 panic 写入屏幕";
+constexpr std::string_view OS_TEST_VGA_CONSOLE_ANSI = "终端必须支持有界 CSI 光标、清行和清屏序列";
 constexpr uint8_t OS_TEST_VGA_CONSOLE_FIRST_CHARACTER = static_cast<uint8_t>('A');
 constexpr uint8_t OS_TEST_VGA_CONSOLE_SECOND_CHARACTER = static_cast<uint8_t>('B');
 constexpr uint8_t OS_TEST_VGA_CONSOLE_THIRD_CHARACTER = static_cast<uint8_t>('C');
@@ -133,6 +134,20 @@ int main() {
         storage.trace_bytes[0] == OS_TEST_VGA_CONSOLE_DIAGNOSTIC_CHARACTER &&
         storage.trace_bytes[1] == OS_TEST_VGA_CONSOLE_TERMINAL_CHARACTER;
     test_context.Expect(terminal_activated, OS_TEST_VGA_CONSOLE_TERMINAL_ACTIVATION);
+
+    ResetState(storage);
+    storage.state.output_mode = os::kernel::OS_KERNEL_VGA_CONSOLE_TERMINAL_OUTPUT_MODE;
+    const bool ansi_valid =
+        console.Initialize() && console.TryWriteTerminalString("AB\x1b[DX") &&
+        CharacterAt(text_buffer[0]) == OS_TEST_VGA_CONSOLE_FIRST_CHARACTER &&
+        CharacterAt(text_buffer[1]) == static_cast<uint8_t>('X') &&
+        storage.state.cursor_column == 2U && console.TryWriteTerminalString("\r\x1b[2K") &&
+        CharacterAt(text_buffer[0]) == OS_TEST_VGA_CONSOLE_SPACE_CHARACTER &&
+        CharacterAt(text_buffer[1]) == OS_TEST_VGA_CONSOLE_SPACE_CHARACTER &&
+        storage.state.cursor_column == 0U && console.TryWriteTerminalString("T\x1b[2J\x1b[H") &&
+        CharacterAt(text_buffer[0]) == OS_TEST_VGA_CONSOLE_SPACE_CHARACTER &&
+        storage.state.cursor_row == 0U && storage.state.cursor_column == 0U;
+    test_context.Expect(ansi_valid, OS_TEST_VGA_CONSOLE_ANSI);
 
     ResetState(storage);
     storage.state.output_mode = os::kernel::OS_KERNEL_VGA_CONSOLE_TERMINAL_OUTPUT_MODE;

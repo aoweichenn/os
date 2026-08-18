@@ -8,6 +8,7 @@
 #include "os/kernel/arch/native_system_call.hpp"
 #include "os/kernel/arch/processor.hpp"
 #include "os/kernel/arch/user_context.hpp"
+#include "os/kernel/device/cmos_rtc.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/process/process_runtime.hpp"
 #include "os/kernel/user/user_elf.hpp"
@@ -53,6 +54,8 @@ constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_STATUS_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_STATUS=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MEMORY_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_MEMORY_VALID=";
+constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RESOLVE_STATUS_PREFIX[] =
+    "[OS][KERNEL] USER_RETURN_RESOLVE_STATUS=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX[] =
     "[OS][KERNEL] USER_RETURN_ENTRY_METHOD=";
 constexpr char OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX[] =
@@ -76,6 +79,7 @@ constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_USER_FLAG = 1ULL << 2ULL;
 constexpr uint64_t OS_KERNEL_SYSTEM_CALL_PAGE_COPY_ON_WRITE_FLAG = 1ULL << 3ULL;
 
 bool system_call_interrupt_self_test_completed;
+UserVirtualMemoryStatus last_user_return_resolve_status = UserVirtualMemoryStatus::Succeeded;
 
 void WriteRequiredSystemCallMessage(const VgaTextConsole &vga_console,
                                     const char *message) noexcept {
@@ -444,9 +448,9 @@ void WriteRequiredSystemCallValue(const VgaTextConsole &vga_console, const char 
         UserContextStatus::Succeeded) {
         return false;
     }
-    return ResolveCurrentProcessUserReturnMemory(context.common.instruction_pointer,
-                                                 context.stack_pointer) ==
-           UserVirtualMemoryStatus::Succeeded;
+    last_user_return_resolve_status = ResolveCurrentProcessUserReturnMemory(
+        context.common.instruction_pointer, context.stack_pointer);
+    return last_user_return_resolve_status == UserVirtualMemoryStatus::Succeeded;
 }
 
 void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
@@ -475,6 +479,9 @@ void LogRejectedUserReturn(const ExceptionFrame &frame) noexcept {
     WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_MEMORY_PREFIX,
                                  memory_valid ? OS_KERNEL_SYSTEM_CALL_BOOLEAN_TRUE
                                               : OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
+    WriteRequiredSystemCallValue(vga_console,
+                                 OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_RESOLVE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(last_user_return_resolve_status));
     WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_ENTRY_PREFIX,
                                  static_cast<uint64_t>(DecodeUserContextEntryMethod(context)));
     WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_REJECTED_RETURN_VECTOR_PREFIX,
@@ -1391,6 +1398,27 @@ DispatchGetTerminalInformation(const uint64_t user_information_address,
     return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
 }
 
+[[nodiscard]] int64_t DispatchGetRealtime(const uint64_t user_information_address,
+                                          const uint64_t information_size_bytes) noexcept {
+    if (information_size_bytes != sizeof(os::abi::RealtimeInformation)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(user_information_address, information_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    os::abi::RealtimeInformation information{};
+    if (ReadCmosRtc(information) != CmosRtcStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DEVICE_FAILURE;
+    }
+    if (CopyToUser(user_information_address, sizeof(information),
+                   reinterpret_cast<const uint8_t *>(&information),
+                   sizeof(information)) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+}
+
 [[nodiscard]] int64_t DispatchMapAnonymousMemory(const uint64_t requested_address,
                                                  const uint64_t length_bytes,
                                                  const uint64_t protection_flags,
@@ -1953,6 +1981,17 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
         static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalForegroundGroup)) {
         frame->register_rax = static_cast<uint64_t>(
             MapUserSignalStatus(SetCurrentTerminalForegroundGroup(frame->register_rdi)));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetTerminalInputMode)) {
+        frame->register_rax = static_cast<uint64_t>(MapUserSignalStatus(SetCurrentTerminalInputMode(
+            static_cast<os::abi::TerminalInputMode>(frame->register_rdi))));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::GetRealtime)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchGetRealtime(frame->register_rdi, frame->register_rsi));
         return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

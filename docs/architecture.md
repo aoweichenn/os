@@ -2059,12 +2059,30 @@ append 是 FileDescription 的打开状态，而不是 Shell 的一次性 seek�
 引入 SMP 前必须把这段原子性下沉到 vnode 或后端锁。完整取舍见
 [ADR 0048](adr/0048-shell-control-and-append-redirection.md)。
 
+Shell 启动后把控制终端切到 `ShellEditor`：IRQ1 的普通字节、退格、Tab 和方向键
+CSI 都立即进入输入 FIFO，Kernel 不回显；ShellLineEditor 维护 512 字节行、
+cursor、16 条去重历史和 41 项命令补全表。执行外部前台作业前切回 `Canonical`，
+wait 后先收回 foreground PGID，再恢复 `ShellEditor`。模式切换只允许控制会话的
+当前前台组，且输入/edit 缓冲必须为空。
+
+变量在单词解析阶段展开，单引号禁止、双引号保留单参数；`$NAME`、`${NAME}`、
+`$?` 不会被重新解释为控制操作符。每个存储字节另带 glob flag，只有未引用、
+未转义的 `*`/`?` 参与目录匹配；child exec 前按字节序排序匹配项，展开后仍受
+每 stage 8 参数上限约束。环境表固定 32×128 字节，并用 `ProcessString` 向
+exec 继承。完整事务见 [ADR 0049](adr/0049-shell-editor-environment-and-glob.md)。
+
+ABI v2.1.0 在冻结的 1..69 后兼容追加 SetTerminalInputMode=70 与
+GetRealtime=71。后者从 CMOS 取得两份稳定快照，按 status B 解码 BCD/binary、
+12/24 小时，验证 Gregorian 日期并返回 UTC 字段与 Unix 秒。它与 PIT 单调
+deadline 完全分离，取舍见 [ADR 0050](adr/0050-abi-v2-1-rtc-and-local-tools.md)。
+
 `/bin/help`、`echo`、`err`、`cat`、`wc`、`head`、`tee`、`true`、`false`、`pwd`、
 `ls`、`stat`、`mkdir`、`write`、`touch`、`rm`、`rmdir`、`mv`、`truncate`
 和 `sync` 由同一个 multi-call ELF 根据 `argv[0]` 分派；共享实现减少教学
 系统的重复运行时体积，但 rootfs 名称、spawn/exec 边界和每个进程的 fd
-语义都是真实独立的。只有 `cd` 与 `exit` 因必须改变 Shell 自身状态而保留
-为内建命令。
+语义都是真实独立的。v2.2 共安装 43 个独立工具 inode；`cd`、`exit`、
+`export`、`unset`、`jobs`、`fg`、`bg` 因必须改变 Shell 自身状态而保留为
+内建命令。
 
 ## v1.12 当前用户线程、TLS 与 private futex 架构
 

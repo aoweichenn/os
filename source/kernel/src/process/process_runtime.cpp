@@ -3683,6 +3683,25 @@ UserSignalStatus SetCurrentTerminalForegroundGroup(const uint64_t process_group_
                : UserSignalStatus::InvalidArgument;
 }
 
+UserSignalStatus SetCurrentTerminalInputMode(const os::abi::TerminalInputMode mode) noexcept {
+    ThreadEntry current_thread{};
+    ProcessEntry current_process{};
+    if (!IsProcessSchedulingActive() ||
+        !ReadCurrentThreadAndProcess(current_thread, current_process)) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    JobControlProcessState state{};
+    if (job_control_manager.ReadProcess(current_thread.process_index, state) !=
+        JobControlStatus::Succeeded) {
+        return UserSignalStatus::RuntimeFailure;
+    }
+    const TerminalStatus status =
+        process_terminal.SetInputMode(state.session_id, state.process_group_id, mode);
+    return status == TerminalStatus::Succeeded          ? UserSignalStatus::Succeeded
+           : status == TerminalStatus::PermissionDenied ? UserSignalStatus::PermissionDenied
+                                                        : UserSignalStatus::InvalidArgument;
+}
+
 ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexcept {
     const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
     if (!IsProcessSchedulingActive() || !CurrentFrameIsValid(thread_index, frame) ||
@@ -5271,6 +5290,7 @@ void SubmitConsoleCharacter(const uint8_t character) noexcept {
                                                    target_process_count));
     }
     if (process_scheduling_active && (action == TerminalInputAction::InputReady ||
+                                      action == TerminalInputAction::InputReadyNoEcho ||
                                       action == TerminalInputAction::EndOfFileReady)) {
         WakeRequiredThreads(WaitCondition::DescriptorReadable, WakeReason::ConditionSatisfied);
     }

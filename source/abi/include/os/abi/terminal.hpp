@@ -4,6 +4,11 @@
 
 namespace os::abi {
 
+enum class TerminalInputMode : uint64_t {
+    Canonical = 0ULL,
+    ShellEditor = 1ULL,
+};
+
 enum class ProcessTerminationReason : uint64_t {
     None = 0ULL,
     Exited = 1ULL,
@@ -37,8 +42,7 @@ struct ProcessWaitEventResult final {
     uint64_t signal_number;
 };
 
-static_assert(sizeof(ProcessWaitEventResult) ==
-              OS_ABI_PROCESS_WAIT_EVENT_RESULT_SIZE_BYTES);
+static_assert(sizeof(ProcessWaitEventResult) == OS_ABI_PROCESS_WAIT_EVENT_RESULT_SIZE_BYTES);
 
 inline constexpr uint64_t OS_ABI_TERMINAL_INFORMATION_SIZE_BYTES = 24ULL;
 

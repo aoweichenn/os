@@ -1873,3 +1873,24 @@ FileDescription 中。
 argument offset/length 使用 16 位、可执行路径缓冲精确为 518 字节，并用独立
 helper 分隔验证计划与执行计划的生命周期。不要通过放宽返回地址校验掩盖栈布局
 错误。
+
+### 方向键无效，或前台 `cat` 逐字节读取而不等 Enter
+
+方向键应由 Set 1 decoder 产生 key event，再由 IRQ 路径提交 `ESC [ A/B/C/D`
+三个字节。Shell 等待输入时模式必须是 ShellEditor；执行外部管线前必须是
+Canonical。若 `SetTerminalInputMode` 返回权限错误，检查 caller session/PGID
+是否同时等于 controlling session/foreground group；若返回参数错误，检查输入
+FIFO、canonical edit 和 EOF pending 是否尚未清空。
+
+### 历史重画后出现残字，或 clear 只打印转义字符
+
+确认 stdout 仍经过 TerminalDevice 到 VgaTextConsole，CSI parser 必须消费
+`ESC [`、有界十进制参数与最终字节。Shell 重画使用 `CR + CSI 2K`，clear 使用
+`CSI 2J + CSI H`。转义字节仍进入宿主转录用于复现，但不能占 VGA 字符单元。
+
+### date 报设备失败或日期跳变
+
+先检查 CMOS status A 的 update-in-progress 是否在有限轮询内清零，再比较两份
+完整快照。status B 决定 BCD/binary 和 12/24 小时，12 小时 PM 位不属于小时
+数值。世纪寄存器为零时项目只对 QEMU PC 回退到 20；任何非法月/日/时都必须
+返回设备失败，不能输出部分日期。RTC 失败不能影响 monotonic deadline。

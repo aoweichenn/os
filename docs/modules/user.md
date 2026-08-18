@@ -555,3 +555,8 @@ file 使用该状态；FileDescription 每次 write 前重新定位到当前文�
 共享同一个 offset 与 append 语义。用户 ABI 不暴露 vnode 或后端锁。
 
 详细边界见 [ADR 0048](../adr/0048-shell-control-and-append-redirection.md)。
+
+ABI v2.1.0 在尾部追加 70 `SetTerminalInputMode` 和 71 `GetRealtime`。前者只接受
+Canonical/ShellEditor，权限与空缓冲检查由 Kernel 完成；后者把 64 字节
+RealtimeInformation 写回用户态，包含 UTC 年月日时分秒和 Unix 秒。1..69 的
+编号、参数和返回约定保持不变。

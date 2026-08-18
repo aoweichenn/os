@@ -57,6 +57,12 @@ class VgaTextConsole final {
   private:
     using ByteWriteOperation = bool (VgaTextConsole::*)(char byte) const noexcept;
 
+    enum class EscapeState : uint8_t {
+        Ground,
+        Escape,
+        ControlSequence,
+    };
+
     [[nodiscard]] bool IsStateValid() const noexcept;
     [[nodiscard]] bool IsRenderStateValid() const noexcept;
     [[nodiscard]] bool AppendTrace(uint8_t byte) const noexcept;
@@ -65,7 +71,10 @@ class VgaTextConsole final {
     [[nodiscard]] bool TryWriteHexLineWith(const char *prefix, uint64_t value,
                                            ByteWriteOperation write_operation) const noexcept;
     void RenderByte(uint8_t byte) const noexcept;
+    [[nodiscard]] bool ConsumeEscapeByte(uint8_t byte) const noexcept;
+    void ApplyControlSequence(uint8_t final_byte) const noexcept;
     void ClearScreen() const noexcept;
+    void ClearCurrentLine() const noexcept;
     void PutCharacter(uint8_t character) const noexcept;
     void AdvanceLine() const noexcept;
     void Scroll() const noexcept;
@@ -74,6 +83,9 @@ class VgaTextConsole final {
     volatile uint16_t *text_buffer_;
     volatile VgaConsoleSharedState *shared_state_;
     VgaTextPortWriteOperation port_write_operation_;
+    mutable EscapeState escape_state_{EscapeState::Ground};
+    mutable uint16_t escape_parameter_{};
+    mutable bool escape_parameter_present_{};
 };
 
 }

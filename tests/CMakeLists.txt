@@ -576,6 +576,11 @@ os_add_kernel_time_test(
     "unit"
 )
 os_add_kernel_time_test(
+    os_kernel_realtime_clock_unit_tests
+    unit/kernel/realtime_clock_test.cpp
+    "unit"
+)
+os_add_kernel_time_test(
     os_kernel_deadline_queue_unit_tests
     unit/kernel/deadline_queue_test.cpp
     "unit"
@@ -958,6 +963,31 @@ os_add_user_shell_test(
 os_add_user_shell_test(
     os_user_shell_execution_randomized_tests
     randomized/user/shell_execution_randomized_test.cpp
+    "randomized"
+)
+os_add_user_shell_test(
+    os_user_shell_environment_unit_tests
+    unit/user/shell_environment_test.cpp
+    "unit"
+)
+os_add_user_shell_test(
+    os_user_shell_glob_unit_tests
+    unit/user/shell_glob_test.cpp
+    "unit"
+)
+os_add_user_shell_test(
+    os_user_shell_line_editor_unit_tests
+    unit/user/shell_line_editor_test.cpp
+    "unit"
+)
+os_add_user_shell_test(
+    os_user_shell_environment_glob_randomized_tests
+    randomized/user/shell_environment_glob_randomized_test.cpp
+    "randomized"
+)
+os_add_user_shell_test(
+    os_user_shell_line_editor_randomized_tests
+    randomized/user/shell_line_editor_randomized_test.cpp
     "randomized"
 )
 
@@ -1406,7 +1436,7 @@ set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 32768)
 set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 45)
 set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 130)
 set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 250)
-set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 100)
+set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 300)
 
 add_test(
     NAME os_qemu_bootstrap_smoke

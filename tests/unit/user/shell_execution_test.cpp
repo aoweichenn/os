@@ -18,6 +18,10 @@ constexpr std::string_view OS_TEST_SHELL_EXECUTION_SEQUENCE =
     "分号、成功短路和失败短路必须在引号与转义之外划分有界命令序列";
 constexpr std::string_view OS_TEST_SHELL_EXECUTION_SEQUENCE_FAILURES =
     "空命令、悬空短路和第九条命令必须原子拒绝";
+constexpr std::string_view OS_TEST_SHELL_EXECUTION_EXPANSION =
+    "变量、上一退出码和 glob 标志必须服从引用与转义边界";
+constexpr std::string_view OS_TEST_SHELL_EXECUTION_EXPANSION_FAILURES =
+    "未闭合或非法 braced 变量必须失败原子";
 constexpr char OS_TEST_SHELL_EXECUTION_PIPELINE_LINE[] =
     "echo payload|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|cat|wc";
 constexpr char OS_TEST_SHELL_EXECUTION_REDIRECTION_LINE[] =
@@ -44,6 +48,20 @@ constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_SECOND_COMMAND[] = "echo no";
 constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_THIRD_COMMAND[] = "echo yes";
 constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_TRUE_COMMAND[] = "true";
 constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_QUOTED_COMMAND[] = "echo 'a;b&&c||d'";
+constexpr char OS_TEST_SHELL_EXECUTION_EXPANSION_LINE[] =
+    "echo $NAME \"$PATTERN\" '$NAME' ${EMPTY} $? *.cpp \"?\"";
+constexpr char OS_TEST_SHELL_EXECUTION_UNQUOTED_PATTERN_LINE[] = "echo $PATTERN";
+constexpr char OS_TEST_SHELL_EXECUTION_INVALID_VARIABLE_LINE[] = "echo ${BAD-NAME}";
+constexpr char OS_TEST_SHELL_EXECUTION_UNCLOSED_VARIABLE_LINE[] = "echo ${NAME";
+constexpr char OS_TEST_SHELL_EXECUTION_NAME[] = "NAME";
+constexpr char OS_TEST_SHELL_EXECUTION_NAME_VALUE[] = "expanded";
+constexpr char OS_TEST_SHELL_EXECUTION_PATTERN[] = "PATTERN";
+constexpr char OS_TEST_SHELL_EXECUTION_PATTERN_VALUE[] = "*.txt";
+constexpr char OS_TEST_SHELL_EXECUTION_EMPTY_NAME[] = "EMPTY";
+constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_LITERAL_NAME[] = "$NAME";
+constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_STATUS[] = "37";
+constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_CPP_PATTERN[] = "*.cpp";
+constexpr char OS_TEST_SHELL_EXECUTION_EXPECTED_QUESTION[] = "?";
 constexpr uint64_t OS_TEST_SHELL_EXECUTION_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_SHELL_EXECUTION_FIRST_VALUE = 1ULL;
 constexpr uint64_t OS_TEST_SHELL_EXECUTION_SECOND_STAGE_INDEX = 1ULL;
@@ -85,6 +103,46 @@ constexpr uint64_t OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
         }
     }
     return true;
+}
+
+[[nodiscard]] bool ExpansionLookup(void *const context, const char *const name,
+                                   const uint64_t name_length_bytes, const char *&value,
+                                   uint64_t &value_length_bytes) noexcept {
+    static_cast<void>(context);
+    value = nullptr;
+    value_length_bytes = OS_TEST_SHELL_EXECUTION_EMPTY_VALUE;
+    const auto name_matches = [name, name_length_bytes](const char *const expected,
+                                                        const uint64_t expected_length_bytes) {
+        if (name == nullptr || expected == nullptr || name_length_bytes != expected_length_bytes) {
+            return false;
+        }
+        for (uint64_t byte_index = OS_TEST_SHELL_EXECUTION_EMPTY_VALUE;
+             byte_index < expected_length_bytes; ++byte_index) {
+            if (name[byte_index] != expected[byte_index]) {
+                return false;
+            }
+        }
+        return true;
+    };
+    if (name_matches(OS_TEST_SHELL_EXECUTION_NAME,
+                     sizeof(OS_TEST_SHELL_EXECUTION_NAME) -
+                         OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES)) {
+        value = OS_TEST_SHELL_EXECUTION_NAME_VALUE;
+        value_length_bytes = sizeof(OS_TEST_SHELL_EXECUTION_NAME_VALUE) -
+                             OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES;
+        return true;
+    }
+    if (name_matches(OS_TEST_SHELL_EXECUTION_PATTERN,
+                     sizeof(OS_TEST_SHELL_EXECUTION_PATTERN) -
+                         OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES)) {
+        value = OS_TEST_SHELL_EXECUTION_PATTERN_VALUE;
+        value_length_bytes = sizeof(OS_TEST_SHELL_EXECUTION_PATTERN_VALUE) -
+                             OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES;
+        return true;
+    }
+    return name_matches(OS_TEST_SHELL_EXECUTION_EMPTY_NAME,
+                        sizeof(OS_TEST_SHELL_EXECUTION_EMPTY_NAME) -
+                            OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES);
 }
 
 }
@@ -229,6 +287,65 @@ int main() {
             sequence) == os::user::ShellExecutionParseStatus::TooManyCommands &&
         sequence.command_count == OS_TEST_SHELL_EXECUTION_EMPTY_VALUE;
     test_context.Expect(sequence_failures_atomic, OS_TEST_SHELL_EXECUTION_SEQUENCE_FAILURES);
+
+    const os::user::ShellExpansionContext expansion_context{
+        .context = nullptr,
+        .lookup_operation = ExpansionLookup,
+        .previous_exit_code = 37LL,
+    };
+    const bool expansion_valid =
+        os::user::ParseShellExecutionPlanExpanded(
+            OS_TEST_SHELL_EXECUTION_EXPANSION_LINE,
+            sizeof(OS_TEST_SHELL_EXECUTION_EXPANSION_LINE) -
+                OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES,
+            expansion_context, plan) == os::user::ShellExecutionParseStatus::Succeeded &&
+        plan.argument_count == 8ULL &&
+        ArgumentEquals(plan, plan.arguments[1], OS_TEST_SHELL_EXECUTION_NAME_VALUE,
+                       sizeof(OS_TEST_SHELL_EXECUTION_NAME_VALUE) -
+                           OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES) &&
+        ArgumentEquals(plan, plan.arguments[2], OS_TEST_SHELL_EXECUTION_PATTERN_VALUE,
+                       sizeof(OS_TEST_SHELL_EXECUTION_PATTERN_VALUE) -
+                           OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES) &&
+        !os::user::ShellExecutionArgumentHasGlob(plan, 2ULL) &&
+        ArgumentEquals(plan, plan.arguments[3], OS_TEST_SHELL_EXECUTION_EXPECTED_LITERAL_NAME,
+                       sizeof(OS_TEST_SHELL_EXECUTION_EXPECTED_LITERAL_NAME) -
+                           OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES) &&
+        plan.arguments[4].length_bytes == OS_TEST_SHELL_EXECUTION_EMPTY_VALUE &&
+        ArgumentEquals(plan, plan.arguments[5], OS_TEST_SHELL_EXECUTION_EXPECTED_STATUS,
+                       sizeof(OS_TEST_SHELL_EXECUTION_EXPECTED_STATUS) -
+                           OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES) &&
+        ArgumentEquals(plan, plan.arguments[6], OS_TEST_SHELL_EXECUTION_EXPECTED_CPP_PATTERN,
+                       sizeof(OS_TEST_SHELL_EXECUTION_EXPECTED_CPP_PATTERN) -
+                           OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES) &&
+        os::user::ShellExecutionArgumentHasGlob(plan, 6ULL) &&
+        ArgumentEquals(plan, plan.arguments[7], OS_TEST_SHELL_EXECUTION_EXPECTED_QUESTION,
+                       sizeof(OS_TEST_SHELL_EXECUTION_EXPECTED_QUESTION) -
+                           OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES) &&
+        !os::user::ShellExecutionArgumentHasGlob(plan, 7ULL) &&
+        os::user::ParseShellExecutionPlanExpanded(
+            OS_TEST_SHELL_EXECUTION_UNQUOTED_PATTERN_LINE,
+            sizeof(OS_TEST_SHELL_EXECUTION_UNQUOTED_PATTERN_LINE) -
+                OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES,
+            expansion_context, plan) == os::user::ShellExecutionParseStatus::Succeeded &&
+        os::user::ShellExecutionArgumentHasGlob(plan, 1ULL);
+    test_context.Expect(expansion_valid, OS_TEST_SHELL_EXECUTION_EXPANSION);
+
+    const bool expansion_failures_atomic =
+        os::user::ParseShellExecutionPlanExpanded(
+            OS_TEST_SHELL_EXECUTION_INVALID_VARIABLE_LINE,
+            sizeof(OS_TEST_SHELL_EXECUTION_INVALID_VARIABLE_LINE) -
+                OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES,
+            expansion_context,
+            plan) == os::user::ShellExecutionParseStatus::InvalidVariableExpansion &&
+        plan.argument_count == OS_TEST_SHELL_EXECUTION_EMPTY_VALUE &&
+        os::user::ParseShellExecutionPlanExpanded(
+            OS_TEST_SHELL_EXECUTION_UNCLOSED_VARIABLE_LINE,
+            sizeof(OS_TEST_SHELL_EXECUTION_UNCLOSED_VARIABLE_LINE) -
+                OS_TEST_SHELL_EXECUTION_STRING_TERMINATOR_SIZE_BYTES,
+            expansion_context,
+            plan) == os::user::ShellExecutionParseStatus::InvalidVariableExpansion &&
+        plan.argument_count == OS_TEST_SHELL_EXECUTION_EMPTY_VALUE;
+    test_context.Expect(expansion_failures_atomic, OS_TEST_SHELL_EXECUTION_EXPANSION_FAILURES);
 
     const bool failures_atomic =
         os::user::ParseShellExecutionPlan(OS_TEST_SHELL_EXECUTION_EMPTY_STAGE_LINE,

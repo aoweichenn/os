@@ -1233,10 +1233,10 @@ QEMU 在最终标记处同时保存 P6 像素截图与 `0xB8000` 的 4000 字节
 当前 capacity QEMU 明确传入 32768 MiB，仍要求 4 GiB 以上页帧读写与回收；
 v2.1 不触碰全部 32 GiB。全内存压力、swap 和 OOM 场景属于 v2.5。
 
-## v2.2 Shell 控制序列与 append 重定向测试
+## v2.2 终端、Shell、RTC 与本地工具测试
 
-当前增量在 v2.1 的 174 项测试图上扩展既有目标，不用整机 marker 替代宿主
-模型：
+v2.2 在 v2.1 的 174 项测试图上新增 6 项独立目标，形成 180 项本地候选；不用
+整机 marker 替代宿主模型：
 
 - Shell 单元测试覆盖 `;`、`&&`、`||` 的引号/转义边界、最多 8 条命令、悬空
   操作符、后段错误时的整行失败原子性，以及 `>`/`>>`/`2>`/`2>>` 的独立字段；
@@ -1245,13 +1245,34 @@ v2.1 不触碰全部 32 GiB。全内存压力、swap 和 OOM 场景属于 v2.5�
   都从当前文件尾开始，并检查共享 offset 与最终长度；
 - tooling 测试锁定分号、`&`、`|` 和 `>` 的 QMP 键盘映射，避免控制语法只在
   宿主解析器里成立。
+- 环境/glob 单元测试覆盖容量、替换、unset、引用 flags 与回退；10000 步环境
+  模型和 10000 组动态规划 glob oracle 逐步对照。
+- 行编辑单元测试覆盖中间插入、退格、草稿恢复、历史去重和共同前缀；20000 步
+  随机操作逐步对照 `std::string` 模型。
+- Terminal/VGA 单元测试覆盖 ShellEditor 权限、逐字节无回显、Canonical 切换，
+  以及 CSI 左右移动、清行、清屏；RTC 单元测试覆盖 epoch、闰年、非法日历和
+  现代 Unix 秒。
 
 256 MiB functional QEMU 真实输入控制序列，短路分支只保留键盘回显、不出现
 第二份命令输出；stdout append 和 `/bin/err` stderr append 都先截断、再追加、
-最后由 `cat` 回读两个唯一 marker。rootfs 探针改为验证 33 个不同 inode 的
-regular ELF，functional Shell child 精确增至 58，并继续核对全部进程退出、
-收集和 wait 计数。
+最后由 `cat` 回读两个唯一 marker。QMP 还真实注入 Left、Up 和 Tab，验证中间
+插入、历史回放、命令补全与模式恢复。rootfs 探针验证 43 个不同 inode 的
+regular ELF；functional QEMU 实际运行全部新增工具，并检查 grep、tail、sort、
+hexdump、find、du、df、clear 与 CMOS UTC 唯一输出。functional Shell child
+精确增至 95，并继续核对全部进程退出、收集和 wait 计数。
+
+单次 functional 继续保留原有限上限；persistence 必须串行完成两次完整启动，
+加上最后一次损坏启动，CTest 总上限为 300 秒。持久化场景在低速宿主上把逐键
+进度上限设为 40 秒；单次 functional 仍为 20 秒，任一阶段无进度仍会提前失败，
+VGA screendump 等待由 5 秒增至 10 秒；不能用总上限掩盖死锁。
+
+32 GiB primary 在物理内存较小的手机/本地主机上允许宿主页换入，因此逐键进度
+同样使用 40 秒；其 240 秒整机总上限不变。64/256 MiB 单次场景继续使用 20 秒。
 
 解析计划仍由 `static_assert(sizeof(ShellExecutionPlan) <= 4096)` 约束。真实 QEMU
 还承担用户栈回归：可执行路径缓冲只允许 `/bin/`、512 字节命令和 NUL，参数
 offset/length 为显式 16 位，防止调试构建在 fork/exec 前跨越尚未提交的栈页。
+
+最终本地候选在全新隔离目录构建 2129 步；串行 CTest 用 570.42 秒完成
+180/180、0 失败。functional、primary 与 persistence 分别为 59.89、102.66、
+149.96 秒；该结果在 primary/persistence 分档进度门禁进入候选后重新取得。

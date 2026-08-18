@@ -272,11 +272,21 @@ set(
     sleep
     kill
     id
+    env
+    grep
+    find
+    sort
+    tail
+    df
+    du
+    hexdump
+    clear
+    date
 )
-set(OS_STAGE1_REQUIRED_CORE_TOOL_COUNT 33)
+set(OS_STAGE1_REQUIRED_CORE_TOOL_COUNT 43)
 list(LENGTH OS_STAGE1_CORE_TOOL_NAMES OS_STAGE1_CORE_TOOL_COUNT)
 if(NOT OS_STAGE1_CORE_TOOL_COUNT EQUAL OS_STAGE1_REQUIRED_CORE_TOOL_COUNT)
-    message(FATAL_ERROR "rootfs 核心工具清单必须精确包含 33 个独立路径")
+    message(FATAL_ERROR "rootfs 核心工具清单必须精确包含 43 个独立路径")
 endif()
 set(OS_STAGE1_CORE_TOOL_INSTALL_ARGUMENTS)
 foreach(OS_STAGE1_CORE_TOOL_NAME IN LISTS OS_STAGE1_CORE_TOOL_NAMES)

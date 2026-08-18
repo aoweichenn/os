@@ -1,5 +1,6 @@
 #pragma once
 
+#include "os/abi/terminal.hpp"
 #include "os/kernel/sync/spin_lock.hpp"
 
 #include <stdint.h>
@@ -39,6 +40,7 @@ enum class TerminalInputAction : uint64_t {
     None,
     Buffered,
     InputReady,
+    InputReadyNoEcho,
     EndOfFileReady,
     Erased,
     InterruptForeground,
@@ -76,16 +78,19 @@ class Terminal final {
                                                  TerminalInputAction &action) noexcept;
     [[nodiscard]] TerminalStatus TryRead(uint8_t *destination, uint64_t capacity_bytes,
                                          uint64_t &read_bytes) noexcept;
+    [[nodiscard]] TerminalStatus TryWrite(const uint8_t *source, uint64_t length_bytes,
+                                          TerminalDeviceWriteOperation device_write_operation,
+                                          void *device_write_context,
+                                          uint64_t &written_bytes) noexcept;
     [[nodiscard]] TerminalStatus
-    TryWrite(const uint8_t *source, uint64_t length_bytes,
-             TerminalDeviceWriteOperation device_write_operation, void *device_write_context,
-             uint64_t &written_bytes) noexcept;
-    [[nodiscard]] TerminalStatus AcquireControllingSession(uint64_t session_id,
-                                                           uint64_t session_leader_process_id,
-                                                           uint64_t foreground_process_group_id)
-        noexcept;
-    [[nodiscard]] TerminalStatus SetForegroundProcessGroup(
-        uint64_t caller_session_id, uint64_t foreground_process_group_id) noexcept;
+    AcquireControllingSession(uint64_t session_id, uint64_t session_leader_process_id,
+                              uint64_t foreground_process_group_id) noexcept;
+    [[nodiscard]] TerminalStatus
+    SetForegroundProcessGroup(uint64_t caller_session_id,
+                              uint64_t foreground_process_group_id) noexcept;
+    [[nodiscard]] TerminalStatus SetInputMode(uint64_t caller_session_id,
+                                              uint64_t caller_process_group_id,
+                                              os::abi::TerminalInputMode mode) noexcept;
     [[nodiscard]] bool CanRead(uint64_t session_id, uint64_t process_group_id) noexcept;
     [[nodiscard]] bool ReadCanProgress() const noexcept;
     [[nodiscard]] uint64_t Identifier() const noexcept;
@@ -96,8 +101,8 @@ class Terminal final {
 
   private:
     [[nodiscard]] bool CommitEditedBytes(bool append_newline) noexcept;
-    [[nodiscard]] TerminalStatus DrainOutput(
-        TerminalDeviceWriteOperation device_write_operation, void *device_write_context) noexcept;
+    [[nodiscard]] TerminalStatus DrainOutput(TerminalDeviceWriteOperation device_write_operation,
+                                             void *device_write_context) noexcept;
 
     uint8_t input_bytes_[OS_KERNEL_TERMINAL_INPUT_CAPACITY_BYTES]{};
     uint8_t edit_bytes_[OS_KERNEL_TERMINAL_EDIT_CAPACITY_BYTES]{};
@@ -112,9 +117,9 @@ class Terminal final {
     uint64_t session_leader_process_id_{};
     uint64_t foreground_process_group_id_{};
     TerminalStatistics statistics_{};
-    mutable IrqSaveSpinLock lock_{TerminalDisableInterruptsNoop,
-                                  TerminalRestoreInterruptsNoop};
+    mutable IrqSaveSpinLock lock_{TerminalDisableInterruptsNoop, TerminalRestoreInterruptsNoop};
     bool end_of_file_pending_{};
+    os::abi::TerminalInputMode input_mode_{os::abi::TerminalInputMode::Canonical};
 };
 
 }

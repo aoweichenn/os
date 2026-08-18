@@ -24,7 +24,8 @@ constexpr char OS_TEST_SHELL_EXECUTION_RANDOM_STRING_TERMINATOR = '\0';
     }
     for (uint64_t byte_index = OS_TEST_SHELL_EXECUTION_RANDOM_EMPTY_VALUE;
          byte_index < os::user::OS_USER_SHELL_EXECUTION_STORAGE_SIZE_BYTES; ++byte_index) {
-        if (first.storage[byte_index] != second.storage[byte_index]) {
+        if (first.storage[byte_index] != second.storage[byte_index] ||
+            first.storage_flags[byte_index] != second.storage_flags[byte_index]) {
             return false;
         }
     }

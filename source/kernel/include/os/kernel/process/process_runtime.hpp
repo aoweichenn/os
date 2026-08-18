@@ -7,16 +7,16 @@
 #include "os/kernel/device/block_request.hpp"
 #include "os/kernel/fs/file_system.hpp"
 #include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/io/terminal.hpp"
 #include "os/kernel/io/file_description.hpp"
 #include "os/kernel/io/file_table.hpp"
+#include "os/kernel/io/terminal.hpp"
 #include "os/kernel/ipc/pipe.hpp"
 #include "os/kernel/ipc/pipe_manager.hpp"
 #include "os/kernel/memory/kernel_stack_manager.hpp"
 #include "os/kernel/memory/physical_frame_allocator.hpp"
 #include "os/kernel/memory/resource_snapshot.hpp"
-#include "os/kernel/process/process_tree.hpp"
 #include "os/kernel/process/job_control.hpp"
+#include "os/kernel/process/process_tree.hpp"
 #include "os/kernel/process/signal_manager.hpp"
 #include "os/kernel/process/thread_scheduler.hpp"
 #include "os/kernel/sync/private_futex.hpp"
@@ -287,6 +287,8 @@ SetCurrentProcessSignalAction(uint64_t signal_number, const os::abi::SignalActio
 GetCurrentTerminalInformation(os::abi::TerminalInformation &information) noexcept;
 [[nodiscard]] UserSignalStatus
 SetCurrentTerminalForegroundGroup(uint64_t process_group_id) noexcept;
+[[nodiscard]] UserSignalStatus
+SetCurrentTerminalInputMode(os::abi::TerminalInputMode mode) noexcept;
 [[nodiscard]] ExceptionFrame *PrepareCurrentThreadSignalDelivery(ExceptionFrame &frame) noexcept;
 [[nodiscard]] ExceptionFrame *ReturnFromCurrentThreadSignal(ExceptionFrame &frame,
                                                             uint64_t user_frame_address) noexcept;
@@ -410,10 +412,9 @@ void SubmitConsoleCharacter(uint8_t character) noexcept;
 [[nodiscard]] uint64_t CurrentThreadIndexForBlockIo() noexcept;
 [[nodiscard]] ProcessRuntimeStatus
 RegisterCurrentBlockIoRequest(uint64_t request_identifier) noexcept;
-[[nodiscard]] ProcessRuntimeStatus
-CompleteBlockIoRequest(uint64_t owner_thread_index,
-                       uint64_t request_identifier,
-                       BlockRequestResult result) noexcept;
+[[nodiscard]] ProcessRuntimeStatus CompleteBlockIoRequest(uint64_t owner_thread_index,
+                                                          uint64_t request_identifier,
+                                                          BlockRequestResult result) noexcept;
 [[nodiscard]] ExceptionFrame *HandleProcessTimerInterrupt(ExceptionFrame &frame) noexcept;
 [[nodiscard]] uint64_t HandleProcessDeadlineInterrupt(uint64_t now_nanoseconds) noexcept;
 [[nodiscard]] ExceptionFrame *RescheduleBeforeUserReturn(ExceptionFrame &frame) noexcept;
