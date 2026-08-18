@@ -27,7 +27,9 @@ class LegacyFileSystem final {
                                                 Vnode &vnode) noexcept;
     [[nodiscard]] static Status CreateOperation(void *context, const Vnode &directory,
                                                 const uint8_t *name, uint64_t name_length_bytes,
-                                                NodeType type, Vnode &vnode) noexcept;
+                                                NodeType type,
+                                                const NodeCreationAttributes &attributes,
+                                                Vnode &vnode) noexcept;
     [[nodiscard]] static Status OpenOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status CloseOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status RemoveOperation(void *context, const Vnode &directory,

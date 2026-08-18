@@ -10,7 +10,7 @@ namespace {
 constexpr uint64_t OS_USER_TOOL_PROBE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_ELF_MAGIC_SIZE_BYTES = 4ULL;
-constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT = 43ULL;
+constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT = 47ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_ARGUMENT_COUNT = 1ULL;
 constexpr int64_t OS_USER_TOOL_PROBE_SUCCESS_RESULT = 0LL;
 constexpr int64_t OS_USER_TOOL_PROBE_SUCCESS_EXIT_CODE = 0LL;
@@ -37,27 +37,28 @@ template <uint64_t SizeBytes>
 }
 
 constexpr ToolPath OS_USER_TOOL_PROBE_PATHS[]{
-    MakeToolPath("/bin/help"),     MakeToolPath("/bin/echo"),    MakeToolPath("/bin/err"),
-    MakeToolPath("/bin/cat"),      MakeToolPath("/bin/wc"),      MakeToolPath("/bin/head"),
-    MakeToolPath("/bin/tee"),      MakeToolPath("/bin/true"),    MakeToolPath("/bin/false"),
-    MakeToolPath("/bin/pwd"),      MakeToolPath("/bin/ls"),      MakeToolPath("/bin/stat"),
-    MakeToolPath("/bin/mkdir"),    MakeToolPath("/bin/write"),   MakeToolPath("/bin/touch"),
-    MakeToolPath("/bin/rm"),       MakeToolPath("/bin/rmdir"),   MakeToolPath("/bin/mv"),
-    MakeToolPath("/bin/truncate"), MakeToolPath("/bin/sync"),    MakeToolPath("/bin/basename"),
-    MakeToolPath("/bin/dirname"),  MakeToolPath("/bin/cp"),      MakeToolPath("/bin/seq"),
-    MakeToolPath("/bin/uptime"),   MakeToolPath("/bin/ps"),      MakeToolPath("/bin/free"),
-    MakeToolPath("/bin/uname"),    MakeToolPath("/bin/mounts"),  MakeToolPath("/bin/resources"),
-    MakeToolPath("/bin/sleep"),    MakeToolPath("/bin/kill"),    MakeToolPath("/bin/id"),
-    MakeToolPath("/bin/env"),      MakeToolPath("/bin/grep"),    MakeToolPath("/bin/find"),
-    MakeToolPath("/bin/sort"),     MakeToolPath("/bin/tail"),    MakeToolPath("/bin/df"),
-    MakeToolPath("/bin/du"),       MakeToolPath("/bin/hexdump"), MakeToolPath("/bin/clear"),
-    MakeToolPath("/bin/date"),
+    MakeToolPath("/bin/help"),      MakeToolPath("/bin/echo"),     MakeToolPath("/bin/err"),
+    MakeToolPath("/bin/cat"),       MakeToolPath("/bin/wc"),       MakeToolPath("/bin/head"),
+    MakeToolPath("/bin/tee"),       MakeToolPath("/bin/true"),     MakeToolPath("/bin/false"),
+    MakeToolPath("/bin/pwd"),       MakeToolPath("/bin/ls"),       MakeToolPath("/bin/stat"),
+    MakeToolPath("/bin/chmod"),     MakeToolPath("/bin/chown"),    MakeToolPath("/bin/ln"),
+    MakeToolPath("/bin/readlink"),  MakeToolPath("/bin/mkdir"),    MakeToolPath("/bin/write"),
+    MakeToolPath("/bin/touch"),     MakeToolPath("/bin/rm"),       MakeToolPath("/bin/rmdir"),
+    MakeToolPath("/bin/mv"),        MakeToolPath("/bin/truncate"), MakeToolPath("/bin/sync"),
+    MakeToolPath("/bin/basename"),  MakeToolPath("/bin/dirname"),  MakeToolPath("/bin/cp"),
+    MakeToolPath("/bin/seq"),       MakeToolPath("/bin/uptime"),   MakeToolPath("/bin/ps"),
+    MakeToolPath("/bin/free"),      MakeToolPath("/bin/uname"),    MakeToolPath("/bin/mounts"),
+    MakeToolPath("/bin/resources"), MakeToolPath("/bin/sleep"),    MakeToolPath("/bin/kill"),
+    MakeToolPath("/bin/id"),        MakeToolPath("/bin/env"),      MakeToolPath("/bin/grep"),
+    MakeToolPath("/bin/find"),      MakeToolPath("/bin/sort"),     MakeToolPath("/bin/tail"),
+    MakeToolPath("/bin/df"),        MakeToolPath("/bin/du"),       MakeToolPath("/bin/hexdump"),
+    MakeToolPath("/bin/clear"),     MakeToolPath("/bin/date"),
 };
 
 static_assert(sizeof(OS_USER_TOOL_PROBE_PATHS) /
                       sizeof(OS_USER_TOOL_PROBE_PATHS[OS_USER_TOOL_PROBE_EMPTY_VALUE]) ==
                   OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT,
-              "用户工具验收清单必须精确覆盖 43 个独立 ELF 路径");
+              "用户工具验收清单必须精确覆盖 47 个独立 ELF 路径");
 
 [[nodiscard]] bool MagicIsValid(const uint8_t *const magic) noexcept {
     for (uint64_t byte_index = OS_USER_TOOL_PROBE_EMPTY_VALUE;
@@ -98,6 +99,9 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
                 OS_USER_TOOL_PROBE_SUCCESS_RESULT ||
             information.type != os::abi::DirectoryEntryType::RegularFile ||
             information.size_bytes < OS_USER_TOOL_PROBE_ELF_MAGIC_SIZE_BYTES ||
+            (information.mode &
+             (os::abi::OS_ABI_FILE_MODE_OWNER_EXECUTE | os::abi::OS_ABI_FILE_MODE_GROUP_EXECUTE |
+              os::abi::OS_ABI_FILE_MODE_OTHER_EXECUTE)) == 0U ||
             InodeWasAlreadyObserved(inode_numbers, tool_index, information.inode_number)) {
             os::user::ExitProcess(OS_USER_TOOL_PROBE_FAILURE_EXIT_CODE);
         }

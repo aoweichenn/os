@@ -496,3 +496,20 @@ transaction generation 增长”。
 本阶段没有 `msync`、后台 flusher 或区间写回 ABI；显式全局 sync 是唯一正式
 稳定边界。详细状态与失败语义见
 [ADR 0043](../adr/0043-irq14-block-request-and-writeback-cache.md)。
+
+## v2.4 Unix metadata 与 VFS DAC
+
+rootfs v4 required feature `UNIX_METADATA` 激活 inode 的 uid32/gid32/mode32；旧
+v4 镜像缺少该位时拒绝 mount。create/symlink 后端接收 VFS 已计算好的
+`NodeCreationAttributes`，因此 owner、mode、inode 与目录项在同一 journal
+事务中发布。chmod/chown 以独立 metadata 事务更新 ctime，chown 同时清除
+setuid/setgid。
+
+VFS 逐组件检查目录 execute/search，并在最终操作追加 read/write/execute 或
+父目录 write+search。sticky 删除、setgid 目录组继承、root DAC 越权和普通
+文件无执行位时 root 仍不可 exec 的规则与 Linux 一致。既有 OpenFile 不因之后
+chmod 失效。
+
+procfs 根/文件固定为 root:root 0555/0444；devfs 根为 root:root 0755，字符
+设备为 root:tty 0660。详细盘面偏移、失败原子性和兼容边界见
+[ADR 0052](../adr/0052-linux-compatible-local-credentials-permissions-and-rlimits.md)。

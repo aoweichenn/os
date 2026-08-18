@@ -1309,3 +1309,33 @@ offset/length 为显式 16 位，防止调试构建在 fork/exec 前跨越尚未
 最终本地候选在全新隔离目录构建 2129 步；串行 CTest 用 570.42 秒完成
 180/180、0 失败。functional、primary 与 persistence 分别为 59.89、102.66、
 149.96 秒；该结果在 primary/persistence 分档进度门禁进入候选后重新取得。
+
+## v2.4 身份、权限与资源限制测试
+
+新增 `os_kernel_credentials_unit_tests` 与 `os_kernel_vfs_permission_unit_tests`。
+前者锁定 Linux mode/umask 位值、owner/group/other、root execute 例外、补充组去重
+和 chown 权限；后者用 memfs 真实覆盖逐组件 search、0640 read/write、setgid
+目录继承、sticky 删除、非 root chown 和 FsContext fork clone。
+
+rootfs 格式 round-trip 在原五级树和四时间戳之外检查 uid/gid/mode，superblock
+required feature 拒绝缺少 `UNIX_METADATA` 的旧 v4。devfs/procfs 单元测试分别
+锁定 root:tty 0660 与 root:root 0444；Python mkfs/install/fsck 共同解码 inode
+新字段，`/bin`、`/sbin` 安装项必须带执行位。
+
+Ring 3 `/bin/security_probe` 在 PID 1 的其他子进程之前串行运行：创建 0640 文件、
+硬/符号链接和 owner，设置补充组与 4 字节 RLIMIT_FSIZE，在 fork child 中降为
+UID/GID 1000 并验证短写和 chown 拒绝；父进程清理后降权 exec rootfs 上的
+setuid/setgid 目标，目标核对 real/effective/saved ID、组、umask 与 rlimit。
+functional QEMU 另用 Shell 真正执行 umask、chmod、chown、ln、readlink 命令链，
+只有全部成功才输出 `permission-tools-ready`。
+
+安全探针及其 fork 使正常整机精确增加两个 Process/Thread/地址空间生命周期和
+两次 wait；新增 13 条 functional 外部工具命令又使 functional shell child 从
+95 增至 108。Kernel 与 QEMU 调度器都按精确 183 个 functional Process 验证，
+不能把计数放宽为“至少”。
+
+最终本地统一轮次完成 185/185、0 失败，总墙钟 772.49 秒：55 unit、68
+integration、38 randomized、24 system，含 23 条 failure-path。64 MiB、256 MiB、
+32 GiB 与 persistence 分别为 41.24、104.39、127.29、190.63 秒；10 万步 VFS
+命名空间随机模型为 147.11 秒。新增两个安全 ELF 的 audit 与 Python Kernel 模块
+白名单均包含在同一轮。

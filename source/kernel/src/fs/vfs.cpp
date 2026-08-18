@@ -54,6 +54,22 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
     return true;
 }
 
+[[nodiscard]] os::abi::FileMode ModeTypeForNode(const NodeType type) noexcept {
+    if (type == NodeType::RegularFile) {
+        return os::abi::OS_ABI_FILE_MODE_REGULAR;
+    }
+    if (type == NodeType::Directory) {
+        return os::abi::OS_ABI_FILE_MODE_DIRECTORY;
+    }
+    if (type == NodeType::CharacterDevice) {
+        return os::abi::OS_ABI_FILE_MODE_CHARACTER_DEVICE;
+    }
+    if (type == NodeType::SymbolicLink) {
+        return os::abi::OS_ABI_FILE_MODE_SYMBOLIC_LINK;
+    }
+    return 0U;
+}
+
 }
 
 Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity,
@@ -126,6 +142,8 @@ Status Vfs::InitializeContext(FsContext &context) const noexcept {
     context = FsContext{
         .root = root,
         .current_working_directory = root,
+        .credentials = security::RootCredentials(),
+        .creation_mask = os::abi::OS_ABI_DEFAULT_CREATION_MASK,
         .initialized = true,
     };
     return Status::Succeeded;
@@ -157,6 +175,8 @@ Status Vfs::CloneContext(const FsContext &source, FsContext &context) const noex
     context = FsContext{
         .root = source.root,
         .current_working_directory = source.current_working_directory,
+        .credentials = source.credentials,
+        .creation_mask = source.creation_mask,
         .initialized = true,
     };
     return Status::Succeeded;
@@ -308,6 +328,14 @@ Status Vfs::ResolveInternal(const FsContext &context, const uint8_t *const path,
             ++byte_index;
         }
 
+        if (current.vnode.type != NodeType::Directory) {
+            return Status::NotDirectory;
+        }
+        const Status search_status =
+            this->RequireAccess(context, current, security::OS_KERNEL_ACCESS_EXECUTE);
+        if (search_status != Status::Succeeded) {
+            return search_status;
+        }
         if (IsDot(name, name_length_bytes)) {
             continue;
         }
@@ -317,9 +345,6 @@ Status Vfs::ResolveInternal(const FsContext &context, const uint8_t *const path,
                 return parent_status;
             }
             continue;
-        }
-        if (current.vnode.type != NodeType::Directory) {
-            return Status::NotDirectory;
         }
         Superblock *const superblock = current.vnode.superblock;
         if (name_length_bytes > superblock->maximum_name_length_bytes) {
@@ -405,10 +430,21 @@ Status Vfs::CreateDirectory(const FsContext &context, const uint8_t *const path,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    const Status access_status = this->RequireParentMutationAccess(context, resolution.parent);
+    if (access_status != Status::Succeeded) {
+        return access_status;
+    }
+    NodeCreationAttributes attributes{};
+    const Status attribute_status =
+        this->MakeCreationAttributes(context, resolution.parent, NodeType::Directory,
+                                     os::abi::OS_ABI_DEFAULT_DIRECTORY_CREATION_MODE, attributes);
+    if (attribute_status != Status::Succeeded) {
+        return attribute_status;
+    }
     Vnode created{};
     return superblock->operations->create(superblock->backend_context, resolution.parent.vnode,
                                           resolution.name, resolution.name_length_bytes,
-                                          NodeType::Directory, created);
+                                          NodeType::Directory, attributes, created);
 }
 
 Status Vfs::RemoveFile(const FsContext &context, const uint8_t *const path,
@@ -459,6 +495,18 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    status = this->RequireParentMutationAccess(context, source_parent.parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    status = this->RequireParentMutationAccess(context, destination_parent.parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    status = this->CheckStickyRemoval(context, source_parent.parent, source);
+    if (status != Status::Succeeded) {
+        return status;
+    }
 
     Path destination{};
     const Status destination_status =
@@ -472,6 +520,10 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
              this->PathsAreEqual(destination, context.current_working_directory)) ||
             this->FindChildMount(destination) != nullptr) {
             return Status::Busy;
+        }
+        status = this->CheckStickyRemoval(context, destination_parent.parent, destination);
+        if (status != Status::Succeeded) {
+            return status;
         }
     } else if (destination_status != Status::NotFound) {
         return destination_status;
@@ -505,6 +557,10 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
     Superblock *const superblock = source.vnode.superblock;
     if (superblock->read_only) {
         return Status::ReadOnly;
+    }
+    status = this->RequireParentMutationAccess(context, destination_parent.parent);
+    if (status != Status::Succeeded) {
+        return status;
     }
     if (superblock->operations->link == nullptr) {
         return Status::Unsupported;
@@ -550,6 +606,10 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    status = this->RequireParentMutationAccess(context, destination_parent.parent);
+    if (status != Status::Succeeded) {
+        return status;
+    }
     if (superblock->operations->create_symbolic_link == nullptr) {
         return Status::Unsupported;
     }
@@ -565,10 +625,17 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
     if (status != Status::NotFound) {
         return status;
     }
+    NodeCreationAttributes attributes{};
+    status =
+        this->MakeCreationAttributes(context, destination_parent.parent, NodeType::SymbolicLink,
+                                     os::abi::OS_ABI_DEFAULT_SYMBOLIC_LINK_MODE, attributes);
+    if (status != Status::Succeeded) {
+        return status;
+    }
     Vnode vnode{};
     return superblock->operations->create_symbolic_link(
         superblock->backend_context, destination_parent.parent.vnode, destination_parent.name,
-        destination_parent.name_length_bytes, target, target_length_bytes, vnode);
+        destination_parent.name_length_bytes, target, target_length_bytes, attributes, vnode);
 }
 
 Status Vfs::ReadSymbolicLink(const FsContext &context, const uint8_t *const path,
@@ -618,6 +685,11 @@ Status Vfs::Truncate(const FsContext &context, const uint8_t *const path,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    const Status access_status =
+        this->RequireAccess(context, resolved, security::OS_KERNEL_ACCESS_WRITE);
+    if (access_status != Status::Succeeded) {
+        return access_status;
+    }
     return superblock->operations->truncate(superblock->backend_context, resolved.vnode,
                                             size_bytes);
 }
@@ -650,8 +722,92 @@ Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
         .modification_time_nanoseconds = backend_information.modification_time_nanoseconds,
         .change_time_nanoseconds = backend_information.change_time_nanoseconds,
         .birth_time_nanoseconds = backend_information.birth_time_nanoseconds,
+        .owner_user_identifier = backend_information.owner_user_identifier,
+        .owner_group_identifier = backend_information.owner_group_identifier,
+        .mode = backend_information.mode,
     };
     return Status::Succeeded;
+}
+
+Status Vfs::CheckAccess(const FsContext &context, const uint8_t *const path,
+                        const uint64_t path_length_bytes,
+                        const uint32_t requested_access) noexcept {
+    Path resolved{};
+    const Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    return status == Status::Succeeded ? this->RequireAccess(context, resolved, requested_access)
+                                       : status;
+}
+
+Status Vfs::ChangeMode(const FsContext &context, const uint8_t *const path,
+                       const uint64_t path_length_bytes, const os::abi::FileMode mode) noexcept {
+    if ((mode & ~os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK) != 0U) {
+        return Status::InvalidArgument;
+    }
+    Path resolved{};
+    const Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    BackendNodeInformation information{};
+    const Status information_status = this->ReadNodeInformation(resolved, information);
+    if (information_status != Status::Succeeded) {
+        return information_status;
+    }
+    if (!security::CanChangeMode(context.credentials, information.owner_user_identifier)) {
+        return Status::PermissionDenied;
+    }
+    Superblock *const superblock = resolved.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    if (superblock->operations->change_mode == nullptr) {
+        return Status::Unsupported;
+    }
+    os::abi::FileMode updated_mode = (information.mode & os::abi::OS_ABI_FILE_MODE_TYPE_MASK) |
+                                     (mode & os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK);
+    if (!security::IsSuperuser(context.credentials) &&
+        !security::IsMemberOfGroup(context.credentials, information.owner_group_identifier)) {
+        updated_mode &= ~os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER;
+    }
+    return superblock->operations->change_mode(superblock->backend_context, resolved.vnode,
+                                               updated_mode);
+}
+
+Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
+                        const uint64_t path_length_bytes,
+                        const os::abi::UserIdentifier user_identifier,
+                        const os::abi::GroupIdentifier group_identifier) noexcept {
+    Path resolved{};
+    const Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    BackendNodeInformation information{};
+    const Status information_status = this->ReadNodeInformation(resolved, information);
+    if (information_status != Status::Succeeded) {
+        return information_status;
+    }
+    if (!security::CanChangeOwner(context.credentials, information.owner_user_identifier,
+                                  information.owner_group_identifier, user_identifier,
+                                  group_identifier)) {
+        return Status::PermissionDenied;
+    }
+    Superblock *const superblock = resolved.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    if (superblock->operations->change_owner == nullptr) {
+        return Status::Unsupported;
+    }
+    const os::abi::UserIdentifier updated_user_identifier =
+        user_identifier == os::abi::OS_ABI_IDENTIFIER_UNCHANGED ? information.owner_user_identifier
+                                                                : user_identifier;
+    const os::abi::GroupIdentifier updated_group_identifier =
+        group_identifier == os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED
+            ? information.owner_group_identifier
+            : group_identifier;
+    return superblock->operations->change_owner(superblock->backend_context, resolved.vnode,
+                                                updated_user_identifier, updated_group_identifier);
 }
 
 Status Vfs::Open(const FsContext &context, const uint8_t *const path,
@@ -665,6 +821,7 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
 
     Path resolved{};
     Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    bool created_file = false;
     if (status == Status::NotFound && options.create) {
         // 创建普通文件时保留尾部分隔符语义，避免先查找失败后误建同名文件。
         if (PathRequestsDirectory(path, path_length_bytes)) {
@@ -679,11 +836,22 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
         if (parent_superblock->read_only) {
             return Status::ReadOnly;
         }
+        status = this->RequireParentMutationAccess(context, parent_resolution.parent);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        NodeCreationAttributes attributes{};
+        status =
+            this->MakeCreationAttributes(context, parent_resolution.parent, NodeType::RegularFile,
+                                         os::abi::OS_ABI_DEFAULT_FILE_CREATION_MODE, attributes);
+        if (status != Status::Succeeded) {
+            return status;
+        }
         Vnode created{};
         status = parent_superblock->operations->create(
             parent_superblock->backend_context, parent_resolution.parent.vnode,
             parent_resolution.name, parent_resolution.name_length_bytes, NodeType::RegularFile,
-            created);
+            attributes, created);
         if (status != Status::Succeeded) {
             return status;
         }
@@ -691,6 +859,7 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
             .mount_identifier = parent_resolution.parent.mount_identifier,
             .vnode = created,
         };
+        created_file = true;
     }
     if (status != Status::Succeeded) {
         return status;
@@ -709,6 +878,19 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
     if ((options.writable || options.truncate) && superblock->read_only &&
         resolved.vnode.type != NodeType::CharacterDevice) {
         return Status::ReadOnly;
+    }
+    if (!created_file) {
+        uint32_t requested_access = 0U;
+        if (options.readable) {
+            requested_access |= security::OS_KERNEL_ACCESS_READ;
+        }
+        if (options.writable) {
+            requested_access |= security::OS_KERNEL_ACCESS_WRITE;
+        }
+        status = this->RequireAccess(context, resolved, requested_access);
+        if (status != Status::Succeeded) {
+            return status;
+        }
     }
     if (options.truncate) {
         status = superblock->operations->truncate(superblock->backend_context, resolved.vnode,
@@ -746,6 +928,11 @@ Status Vfs::OpenDirectory(const FsContext &context, const uint8_t *const path,
     if (resolved.vnode.type != NodeType::Directory) {
         return Status::NotDirectory;
     }
+    const Status access_status =
+        this->RequireAccess(context, resolved, security::OS_KERNEL_ACCESS_READ);
+    if (access_status != Status::Succeeded) {
+        return access_status;
+    }
     Superblock *const superblock = resolved.vnode.superblock;
     const Status open_status =
         superblock->operations->open(superblock->backend_context, resolved.vnode);
@@ -762,6 +949,41 @@ Status Vfs::OpenDirectory(const FsContext &context, const uint8_t *const path,
     {
         SpinLockGuard guard{this->lock_};
         ++this->statistics_.opened_directory_count;
+    }
+    return Status::Succeeded;
+}
+
+Status Vfs::OpenExecutable(const FsContext &context, const uint8_t *const path,
+                           const uint64_t path_length_bytes, OpenFile &open_file) noexcept {
+    open_file = OpenFile{};
+    Path resolved{};
+    Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (resolved.vnode.type != NodeType::RegularFile) {
+        return resolved.vnode.type == NodeType::Directory ? Status::IsDirectory
+                                                          : Status::PermissionDenied;
+    }
+    status = this->RequireAccess(context, resolved, security::OS_KERNEL_ACCESS_EXECUTE);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    Superblock *const superblock = resolved.vnode.superblock;
+    status = superblock->operations->open(superblock->backend_context, resolved.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    open_file = OpenFile{
+        .path = resolved,
+        .offset_bytes = OS_KERNEL_VFS_EMPTY_VALUE,
+        .readable = true,
+        .writable = false,
+        .open = true,
+    };
+    {
+        SpinLockGuard guard{this->lock_};
+        ++this->statistics_.opened_file_count;
     }
     return Status::Succeeded;
 }
@@ -817,6 +1039,9 @@ Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information
         .modification_time_nanoseconds = backend_information.modification_time_nanoseconds,
         .change_time_nanoseconds = backend_information.change_time_nanoseconds,
         .birth_time_nanoseconds = backend_information.birth_time_nanoseconds,
+        .owner_user_identifier = backend_information.owner_user_identifier,
+        .owner_group_identifier = backend_information.owner_group_identifier,
+        .mode = backend_information.mode,
     };
     return Status::Succeeded;
 }
@@ -987,6 +1212,11 @@ Status Vfs::ChangeDirectory(FsContext &context, const uint8_t *const path,
     }
     if (resolved.vnode.type != NodeType::Directory) {
         return Status::NotDirectory;
+    }
+    const Status access_status =
+        this->RequireAccess(context, resolved, security::OS_KERNEL_ACCESS_EXECUTE);
+    if (access_status != Status::Succeeded) {
+        return access_status;
     }
     Superblock *const new_superblock = resolved.vnode.superblock;
     Status reference_status =
@@ -1398,8 +1628,120 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    const Status access_status = this->RequireParentMutationAccess(context, parent.parent);
+    if (access_status != Status::Succeeded) {
+        return access_status;
+    }
+    const Status sticky_status = this->CheckStickyRemoval(context, parent.parent, resolved);
+    if (sticky_status != Status::Succeeded) {
+        return sticky_status;
+    }
     return superblock->operations->remove(superblock->backend_context, parent.parent.vnode,
                                           parent.name, parent.name_length_bytes, expected_type);
+}
+
+Status Vfs::ReadNodeInformation(const Path &path, BackendNodeInformation &information) noexcept {
+    information = BackendNodeInformation{};
+    if (!this->PathIsValid(path)) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const superblock = path.vnode.superblock;
+    const Status status =
+        superblock->operations->stat(superblock->backend_context, path.vnode, information);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    const os::abi::FileMode expected_type = ModeTypeForNode(path.vnode.type);
+    return expected_type != 0U && security::ModeTypeMatches(information.mode, expected_type)
+               ? Status::Succeeded
+               : Status::Corrupt;
+}
+
+Status Vfs::RequireAccess(const FsContext &context, const Path &path,
+                          const uint32_t requested_access) noexcept {
+    if (!context.initialized ||
+        context.credentials.supplementary_group_count >
+            security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY ||
+        (context.creation_mask & ~os::abi::OS_ABI_FILE_MODE_PERMISSION_MASK) != 0U) {
+        return Status::InvalidArgument;
+    }
+    BackendNodeInformation information{};
+    const Status status = this->ReadNodeInformation(path, information);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    return security::HasAccess(context.credentials, information.owner_user_identifier,
+                               information.owner_group_identifier, information.mode,
+                               requested_access, path.vnode.type == NodeType::Directory)
+               ? Status::Succeeded
+               : Status::PermissionDenied;
+}
+
+Status Vfs::RequireParentMutationAccess(const FsContext &context, const Path &parent) noexcept {
+    if (parent.vnode.type != NodeType::Directory) {
+        return Status::NotDirectory;
+    }
+    return this->RequireAccess(
+        context, parent, security::OS_KERNEL_ACCESS_WRITE | security::OS_KERNEL_ACCESS_EXECUTE);
+}
+
+Status Vfs::CheckStickyRemoval(const FsContext &context, const Path &directory,
+                               const Path &target) noexcept {
+    BackendNodeInformation directory_information{};
+    Status status = this->ReadNodeInformation(directory, directory_information);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if ((directory_information.mode & os::abi::OS_ABI_FILE_MODE_STICKY) == 0U ||
+        security::IsSuperuser(context.credentials) ||
+        context.credentials.effective_user_identifier ==
+            directory_information.owner_user_identifier) {
+        return Status::Succeeded;
+    }
+    BackendNodeInformation target_information{};
+    status = this->ReadNodeInformation(target, target_information);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    return context.credentials.effective_user_identifier == target_information.owner_user_identifier
+               ? Status::Succeeded
+               : Status::PermissionDenied;
+}
+
+Status Vfs::MakeCreationAttributes(const FsContext &context, const Path &parent,
+                                   const NodeType type, const os::abi::FileMode requested_mode,
+                                   NodeCreationAttributes &attributes) noexcept {
+    attributes = NodeCreationAttributes{};
+    const os::abi::FileMode type_mode = ModeTypeForNode(type);
+    if (type_mode == 0U || (requested_mode & ~os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK) != 0U ||
+        (context.creation_mask & ~os::abi::OS_ABI_FILE_MODE_PERMISSION_MASK) != 0U) {
+        return Status::InvalidArgument;
+    }
+    BackendNodeInformation parent_information{};
+    const Status status = this->ReadNodeInformation(parent, parent_information);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (parent.vnode.type != NodeType::Directory) {
+        return Status::NotDirectory;
+    }
+    const bool inherit_group =
+        (parent_information.mode & os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER) != 0U;
+    os::abi::FileMode mode = type_mode | requested_mode;
+    if (type != NodeType::SymbolicLink) {
+        mode = security::ApplyCreationMask(mode, context.creation_mask);
+    }
+    if (type == NodeType::Directory && inherit_group) {
+        mode |= os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER;
+    }
+    attributes = NodeCreationAttributes{
+        .owner_user_identifier = context.credentials.effective_user_identifier,
+        .owner_group_identifier = inherit_group ? parent_information.owner_group_identifier
+                                                : context.credentials.effective_group_identifier,
+        .mode = mode,
+    };
+    return security::ModeTypeMatches(attributes.mode, type_mode) ? Status::Succeeded
+                                                                 : Status::InvalidArgument;
 }
 
 Status Vfs::ReadPathName(const Path &path, uint8_t *const name, const uint64_t name_capacity_bytes,

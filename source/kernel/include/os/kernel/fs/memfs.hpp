@@ -43,7 +43,9 @@ class Memfs final {
                                                 Vnode &vnode) noexcept;
     [[nodiscard]] static Status CreateOperation(void *context, const Vnode &directory,
                                                 const uint8_t *name, uint64_t name_length_bytes,
-                                                NodeType type, Vnode &vnode) noexcept;
+                                                NodeType type,
+                                                const NodeCreationAttributes &attributes,
+                                                Vnode &vnode) noexcept;
     [[nodiscard]] static Status OpenOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status CloseOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status RemoveOperation(void *context, const Vnode &directory,
@@ -74,6 +76,11 @@ class Memfs final {
                                                  uint64_t &name_length_bytes) noexcept;
     [[nodiscard]] static Status StatOperation(void *context, const Vnode &vnode,
                                               BackendNodeInformation &information) noexcept;
+    [[nodiscard]] static Status ChangeModeOperation(void *context, const Vnode &vnode,
+                                                    os::abi::FileMode mode) noexcept;
+    [[nodiscard]] static Status
+    ChangeOwnerOperation(void *context, const Vnode &vnode, os::abi::UserIdentifier user_identifier,
+                         os::abi::GroupIdentifier group_identifier) noexcept;
     [[nodiscard]] static Status SyncOperation(void *context) noexcept;
     [[nodiscard]] static Status ValidateOperation(void *context) noexcept;
     [[nodiscard]] static Status ReadResourceUsageOperation(void *context,

@@ -2084,6 +2084,25 @@ deadline 完全分离，取舍见 [ADR 0050](adr/0050-abi-v2-1-rtc-and-local-too
 `export`、`unset`、`jobs`、`fg`、`bg` 因必须改变 Shell 自身状态而保留为
 内建命令。
 
+## v2.4 本地身份、权限与 rlimit
+
+Process 的 `FsContext` 继续拥有 root/cwd，并随当前单进程共享语义携带凭据和
+umask；real/effective/saved UID/GID、补充组、umask 和独立的 16 项 rlimit 在
+fork/spawn 时复制。exec 保留状态并在镜像成功提交后应用 inode setuid/setgid，
+失败路径不提前修改凭据。
+
+VFS 在 lookup 每个组件前以目录 mode 检查 execute/search；最终 open、exec、
+chdir、readdir、truncate 和 parent mutation 分别追加 read/write/execute 检查。
+后端 create 接收已经计算好的 owner/gid/mode，使 inode 与目录项在同一 rootfs
+journal 事务中发布。chmod/chown 由后端原子修改 ctime；open 成功后的 fd 保持
+既有访问能力。
+
+rootfs v4 inode 的 200/204/208 偏移保存 uid32/gid32/mode32，superblock 必需
+特性加入 `UNIX_METADATA`。ABI v2.3.0 追加调用 72..84，FileInformation 扩为
+112 字节。Linux RLIMIT 编号全部稳定，其中 FSIZE/DATA/STACK/NPROC/NOFILE/AS
+进入写入、program break、页故障、进程创建、fd 分配和 mmap/exec 的执行点。
+完整取舍见 [ADR 0052](adr/0052-linux-compatible-local-credentials-permissions-and-rlimits.md)。
+
 ## v1.12 当前用户线程、TLS 与 private futex 架构
 
 v1.12 让 Process 首次拥有多个可独立调度的用户 Thread。Process 继续拥有

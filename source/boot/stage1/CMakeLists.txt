@@ -253,6 +253,10 @@ set(
     pwd
     ls
     stat
+    chmod
+    chown
+    ln
+    readlink
     mkdir
     write
     touch
@@ -285,10 +289,10 @@ set(
     clear
     date
 )
-set(OS_STAGE1_REQUIRED_CORE_TOOL_COUNT 43)
+set(OS_STAGE1_REQUIRED_CORE_TOOL_COUNT 47)
 list(LENGTH OS_STAGE1_CORE_TOOL_NAMES OS_STAGE1_CORE_TOOL_COUNT)
 if(NOT OS_STAGE1_CORE_TOOL_COUNT EQUAL OS_STAGE1_REQUIRED_CORE_TOOL_COUNT)
-    message(FATAL_ERROR "rootfs 核心工具清单必须精确包含 43 个独立路径")
+    message(FATAL_ERROR "rootfs 核心工具清单必须精确包含 47 个独立路径")
 endif()
 set(OS_STAGE1_CORE_TOOL_INSTALL_ARGUMENTS)
 foreach(OS_STAGE1_CORE_TOOL_NAME IN LISTS OS_STAGE1_CORE_TOOL_NAMES)
@@ -338,6 +342,10 @@ set(
     --rootfs-file
     "/bin/tool_probe=${OS_USER_TOOL_PROBE_ELF_PATH}"
     --rootfs-file
+    "/bin/security_probe=${OS_USER_SECURITY_PROBE_ELF_PATH}"
+    --rootfs-file
+    "/bin/security_exec_target=${OS_USER_SECURITY_EXEC_TARGET_ELF_PATH}"
+    --rootfs-file
     "/bin/truncated.elf=${OS_USER_TRUNCATED_ELF_PATH}"
 )
 
@@ -379,6 +387,8 @@ add_custom_command(
         "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
         "${OS_USER_TOOL_PROBE_ELF_PATH}"
+        "${OS_USER_SECURITY_PROBE_ELF_PATH}"
+        "${OS_USER_SECURITY_EXEC_TARGET_ELF_PATH}"
         "${OS_USER_TRUNCATED_ELF_PATH}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
         "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_layout.py"
@@ -443,5 +453,7 @@ add_dependencies(
     os_user_memory_guard_probe_elf
     os_user_memory_protection_probe_elf
     os_user_tool_probe_elf
+    os_user_security_probe_elf
+    os_user_security_exec_target_elf
     os_user_truncated_elf
 )

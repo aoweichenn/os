@@ -232,6 +232,9 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index) noexcept {
         .modification_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .change_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .birth_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = os::abi::OS_ABI_FILE_MODE_REGULAR | 0000644U,
     };
     uint64_t remaining = data_block_count;
     const uint64_t direct_data_block_count =
@@ -487,6 +490,9 @@ bool FormatNearCapacityRootFileSystem(
         .modification_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .change_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .birth_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000755U,
     };
     if (!EncodeDirectory(inodes[OS_TEST_ROOTFS_CAPACITY_FIRST_INDEX], state)) {
         return false;
@@ -540,6 +546,9 @@ bool FormatNearCapacityRootFileSystem(
         .modification_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .change_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
         .birth_time_nanoseconds = OS_TEST_ROOTFS_CAPACITY_EMPTY_VALUE,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = os::abi::OS_ABI_FILE_MODE_REGULAR | 0000644U,
     };
 
     if (!WriteInodeTable(device, inodes) || !WriteBitmaps(device, data_bitmap) ||

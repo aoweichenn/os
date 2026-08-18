@@ -91,6 +91,7 @@ enum class UserVirtualMemoryStatus : uint64_t {
     PageCacheExhausted,
     CopyOnWriteFailure,
     ThreadMemoryInUse,
+    ResourceLimitExceeded,
     Corrupt,
 };
 
@@ -169,8 +170,7 @@ InvalidateUserFilePageCache(const FileIdentity &identity,
 [[nodiscard]] UserVirtualMemoryStatus
 ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
-WritebackUserFilePageCache(uint64_t maximum_page_count,
-                           uint64_t &written_page_count) noexcept;
+WritebackUserFilePageCache(uint64_t maximum_page_count, uint64_t &written_page_count) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus SetProgramBreak(UserAddressSpace &address_space,
                                                       uint64_t requested_address,
                                                       uint64_t &program_break_address) noexcept;

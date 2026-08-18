@@ -182,6 +182,25 @@ v2.3 的 rootfs v4 要求：
 - Kernel 不得为完整数据 bitmap 常驻约 32 MiB BSS；Kernel 有界校验与宿主
   完整 fsck 分工必须写入模块文档和 ADR。
 
+v2.4 的本地身份、安全与资源边界要求：
+
+- 未被项目硬件或固定内存边界覆盖的用户可见规格默认采用 Linux/POSIX：32 位
+  UID/GID/mode、root=0、umask 0022、mode 八进制位和 RLIMIT 0..15 编号；
+- Process 保存 real/effective/saved UID/GID 与补充组；fork/spawn/exec 必须继承，
+  set-ID exec 只改变 effective/saved，失败 exec 不得改变身份；
+- VFS 必须逐组件检查目录 search；read/write/exec/chdir/readdir/truncate 和父目录
+  mutation 各自检查所需权限，并覆盖 sticky 与 setgid 目录继承；
+- rootfs v4 必须通过 required feature 激活 uid/gid/mode 字段，旧 v4 镜像明确
+  拒绝；mkfs、Kernel 解码和完整 fsck 使用同一偏移与校验范围；
+- RLIMIT_FSIZE/DATA/STACK/NPROC/NOFILE/AS 必须进入真实执行点，CORE 固定为 0；
+  缺少对应设施的 Linux 编号不得伪报已约束；
+- `/proc` 使用 root:root 0555/0444，`/dev` 使用 root:root 0755 和 root:tty 0660；
+- ABI v2.3.0 只能在 71 后追加调用；FileInformation 扩为 112 字节。rootfs 至少
+  提供 47 个独立工具 inode，并包含 chmod、chown、ln、readlink；umask 是改变
+  Shell 自身状态的 builtin；
+- 本版不得加入密码数据库、登录、网络身份、ACL、capabilities、LSM 或 user
+  namespace。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

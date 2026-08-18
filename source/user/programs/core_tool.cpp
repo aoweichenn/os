@@ -11,6 +11,7 @@ constexpr uint64_t OS_USER_CORE_FIRST_VALUE = 1ULL;
 constexpr uint64_t OS_USER_CORE_COMMAND_INDEX = 0ULL;
 constexpr uint64_t OS_USER_CORE_FIRST_ARGUMENT_INDEX = 1ULL;
 constexpr uint64_t OS_USER_CORE_SECOND_ARGUMENT_INDEX = 2ULL;
+constexpr uint64_t OS_USER_CORE_THIRD_ARGUMENT_INDEX = 3ULL;
 constexpr uint64_t OS_USER_CORE_NO_OPERAND_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_CORE_SINGLE_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_CORE_TWO_ARGUMENT_COUNT = 3ULL;
@@ -20,6 +21,9 @@ constexpr uint64_t OS_USER_CORE_PATH_CAPACITY_BYTES =
     os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES;
 constexpr uint64_t OS_USER_CORE_DECIMAL_CAPACITY_BYTES = 20ULL;
 constexpr uint64_t OS_USER_CORE_DECIMAL_RADIX = 10ULL;
+constexpr uint64_t OS_USER_CORE_OCTAL_RADIX = 8ULL;
+constexpr uint64_t OS_USER_CORE_MODE_MAXIMUM_DIGIT_COUNT = 4ULL;
+constexpr uint64_t OS_USER_CORE_SUPPLEMENTARY_GROUP_CAPACITY = 32ULL;
 constexpr uint64_t OS_USER_CORE_HEAD_DEFAULT_LINE_COUNT = 10ULL;
 constexpr uint64_t OS_USER_CORE_SEQUENCE_MAXIMUM_VALUE_COUNT = 100000ULL;
 constexpr uint64_t OS_USER_CORE_TEXT_LINE_CAPACITY_BYTES = 256ULL;
@@ -57,7 +61,8 @@ constexpr char OS_USER_CORE_HELP_TEXT[] =
     "help echo err cat wc head tee true false pwd ls stat mkdir write touch\r\n"
     "rm rmdir mv truncate sync basename dirname cp seq uptime ps free\r\n"
     "uname mounts resources sleep kill id env grep find sort tail df du hexdump clear date\r\n"
-    "Shell 状态命令含 cd、export、unset；支持变量、glob、控制操作符、重定向与 16 级管线。\r\n";
+    "chmod chown ln readlink；Shell 状态命令含 cd、export、unset、umask。\r\n"
+    "支持变量、glob、控制操作符、重定向与 16 级管线。\r\n";
 constexpr char OS_USER_CORE_OPERATION_ERROR[] = "error: 操作失败\r\n";
 constexpr char OS_USER_CORE_UNKNOWN_TOOL_ERROR[] = "error: 未知核心工具\r\n";
 constexpr char OS_USER_CORE_STAT_INODE_PREFIX[] = "inode=";
@@ -69,6 +74,9 @@ constexpr char OS_USER_CORE_STAT_MODIFICATION_TIME_PREFIX[] = " mtime_ns=";
 constexpr char OS_USER_CORE_STAT_CHANGE_TIME_PREFIX[] = " ctime_ns=";
 constexpr char OS_USER_CORE_STAT_BIRTH_TIME_PREFIX[] = " btime_ns=";
 constexpr char OS_USER_CORE_STAT_TYPE_PREFIX[] = " type=";
+constexpr char OS_USER_CORE_STAT_MODE_PREFIX[] = " mode=";
+constexpr char OS_USER_CORE_STAT_USER_PREFIX[] = " uid=";
+constexpr char OS_USER_CORE_STAT_GROUP_PREFIX[] = " gid=";
 constexpr char OS_USER_CORE_STAT_FILE_TYPE[] = "file";
 constexpr char OS_USER_CORE_STAT_DIRECTORY_TYPE[] = "directory";
 constexpr char OS_USER_CORE_WC_SEPARATOR[] = " ";
@@ -115,6 +123,17 @@ constexpr char OS_USER_CORE_DISK_USAGE_COMMAND[] = "du";
 constexpr char OS_USER_CORE_HEXDUMP_COMMAND[] = "hexdump";
 constexpr char OS_USER_CORE_CLEAR_COMMAND[] = "clear";
 constexpr char OS_USER_CORE_DATE_COMMAND[] = "date";
+constexpr char OS_USER_CORE_CHANGE_MODE_COMMAND[] = "chmod";
+constexpr char OS_USER_CORE_CHANGE_OWNER_COMMAND[] = "chown";
+constexpr char OS_USER_CORE_LINK_COMMAND[] = "ln";
+constexpr char OS_USER_CORE_READ_LINK_COMMAND[] = "readlink";
+constexpr char OS_USER_CORE_SYMBOLIC_LINK_OPTION[] = "-s";
+constexpr char OS_USER_CORE_ID_USER_PREFIX[] = "uid=";
+constexpr char OS_USER_CORE_ID_EFFECTIVE_USER_PREFIX[] = " euid=";
+constexpr char OS_USER_CORE_ID_GROUP_PREFIX[] = " gid=";
+constexpr char OS_USER_CORE_ID_EFFECTIVE_GROUP_PREFIX[] = " egid=";
+constexpr char OS_USER_CORE_ID_GROUPS_PREFIX[] = " groups=";
+constexpr char OS_USER_CORE_ID_GROUP_SEPARATOR[] = ",";
 constexpr char OS_USER_CORE_ROOT_PATH[] = "/";
 constexpr char OS_USER_CORE_DISK_TOTAL_PREFIX[] = "total_bytes ";
 constexpr char OS_USER_CORE_DISK_USED_PREFIX[] = " file_bytes ";
@@ -262,6 +281,20 @@ template <uint64_t SizeBytes>
     return WriteText(descriptor, output, digit_count);
 }
 
+[[nodiscard]] bool WriteOctalMode(const uint64_t descriptor,
+                                  const os::abi::FileMode mode) noexcept {
+    char output[OS_USER_CORE_MODE_MAXIMUM_DIGIT_COUNT]{};
+    uint64_t value = mode & os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK;
+    for (uint64_t digit_index = OS_USER_CORE_EMPTY_VALUE;
+         digit_index < OS_USER_CORE_MODE_MAXIMUM_DIGIT_COUNT; ++digit_index) {
+        output[OS_USER_CORE_MODE_MAXIMUM_DIGIT_COUNT - digit_index - OS_USER_CORE_FIRST_VALUE] =
+            static_cast<char>(OS_USER_CORE_FIRST_DECIMAL_CHARACTER +
+                              value % OS_USER_CORE_OCTAL_RADIX);
+        value /= OS_USER_CORE_OCTAL_RADIX;
+    }
+    return value == OS_USER_CORE_EMPTY_VALUE && WriteText(descriptor, output, sizeof(output));
+}
+
 struct InputSource final {
     uint64_t descriptor;
     bool close_descriptor;
@@ -356,6 +389,25 @@ struct InputSource final {
         value = value * OS_USER_CORE_DECIMAL_RADIX + digit;
     }
     return true;
+}
+
+[[nodiscard]] bool ParseOctalMode(const char *const text, const uint64_t length_bytes,
+                                  os::abi::FileMode &mode) noexcept {
+    mode = 0U;
+    if (text == nullptr || length_bytes == OS_USER_CORE_EMPTY_VALUE ||
+        length_bytes > OS_USER_CORE_MODE_MAXIMUM_DIGIT_COUNT) {
+        return false;
+    }
+    for (uint64_t byte_index = OS_USER_CORE_EMPTY_VALUE; byte_index < length_bytes; ++byte_index) {
+        const char character = text[byte_index];
+        if (character < '0' || character > '7') {
+            return false;
+        }
+        mode = static_cast<os::abi::FileMode>(
+            mode * static_cast<os::abi::FileMode>(OS_USER_CORE_OCTAL_RADIX) +
+            static_cast<os::abi::FileMode>(character - '0'));
+    }
+    return (mode & ~os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK) == 0U;
 }
 
 [[nodiscard]] const char *ToolName(const char *const argument_zero,
@@ -653,6 +705,14 @@ struct InputSource final {
                      information.allocated_size_bytes) &&
         WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_STAT_LINKS_PREFIX) &&
         WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, information.link_count) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_STAT_MODE_PREFIX) &&
+        WriteOctalMode(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, information.mode) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_STAT_USER_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.owner_user_identifier) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_STAT_GROUP_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.owner_group_identifier) &&
         WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
                      OS_USER_CORE_STAT_ACCESS_TIME_PREFIX) &&
         WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
@@ -935,9 +995,144 @@ template <uint64_t SizeBytes>
 }
 
 [[nodiscard]] int64_t RunIdentity(const uint64_t argument_count) noexcept {
-    return argument_count == OS_USER_CORE_NO_OPERAND_ARGUMENT_COUNT &&
-                   WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
-                                os::user::GetProcessId()) &&
+    if (argument_count != OS_USER_CORE_NO_OPERAND_ARGUMENT_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    os::abi::CredentialInformation information{};
+    os::abi::GroupIdentifier groups[OS_USER_CORE_SUPPLEMENTARY_GROUP_CAPACITY]{};
+    const int64_t group_count =
+        os::user::GetSupplementaryGroups(groups, OS_USER_CORE_SUPPLEMENTARY_GROUP_CAPACITY);
+    if (os::user::GetCredentials(information) != OS_USER_CORE_SUCCESS_RESULT || group_count < 0) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    bool succeeded =
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_ID_USER_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.real_user_identifier) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     OS_USER_CORE_ID_EFFECTIVE_USER_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.effective_user_identifier) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_ID_GROUP_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.real_group_identifier) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     OS_USER_CORE_ID_EFFECTIVE_GROUP_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.effective_group_identifier) &&
+        WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_ID_GROUPS_PREFIX) &&
+        WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                     information.effective_group_identifier);
+    for (uint64_t group_index = OS_USER_CORE_EMPTY_VALUE;
+         succeeded && group_index < static_cast<uint64_t>(group_count); ++group_index) {
+        succeeded = WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR,
+                                 OS_USER_CORE_ID_GROUP_SEPARATOR) &&
+                    WriteDecimal(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, groups[group_index]);
+    }
+    succeeded =
+        succeeded && WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_NEWLINE);
+    return succeeded ? OS_USER_CORE_SUCCESS_EXIT_CODE : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunChangeMode(const uint64_t argument_count,
+                                    const char *const *const arguments) noexcept {
+    os::abi::FileMode mode = 0U;
+    return argument_count == OS_USER_CORE_TWO_ARGUMENT_COUNT &&
+                   ParseOctalMode(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                                  StringLength(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                                  mode) &&
+                   os::user::ChangeMode(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX],
+                                        StringLength(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX]),
+                                        mode) == OS_USER_CORE_SUCCESS_RESULT
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunChangeOwner(const uint64_t argument_count,
+                                     const char *const *const arguments) noexcept {
+    if (argument_count != OS_USER_CORE_TWO_ARGUMENT_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    const char *const owner = arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX];
+    const uint64_t owner_length_bytes = StringLength(owner);
+    uint64_t separator_index = owner_length_bytes;
+    for (uint64_t byte_index = OS_USER_CORE_EMPTY_VALUE; byte_index < owner_length_bytes;
+         ++byte_index) {
+        if (owner[byte_index] == ':') {
+            if (separator_index != owner_length_bytes) {
+                return OS_USER_CORE_FAILURE_EXIT_CODE;
+            }
+            separator_index = byte_index;
+        }
+    }
+    uint64_t user_identifier = os::abi::OS_ABI_IDENTIFIER_UNCHANGED;
+    uint64_t group_identifier = os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED;
+    const bool user_valid = separator_index == OS_USER_CORE_EMPTY_VALUE ||
+                            (separator_index != OS_USER_CORE_EMPTY_VALUE &&
+                             ParseDecimal(owner, separator_index, user_identifier));
+    const bool group_valid =
+        separator_index == owner_length_bytes ||
+        (separator_index + OS_USER_CORE_FIRST_VALUE < owner_length_bytes &&
+         ParseDecimal(owner + separator_index + OS_USER_CORE_FIRST_VALUE,
+                      owner_length_bytes - separator_index - OS_USER_CORE_FIRST_VALUE,
+                      group_identifier));
+    if (!user_valid || !group_valid ||
+        (user_identifier == os::abi::OS_ABI_IDENTIFIER_UNCHANGED &&
+         group_identifier == os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED) ||
+        (user_identifier != os::abi::OS_ABI_IDENTIFIER_UNCHANGED &&
+         user_identifier >= os::abi::OS_ABI_IDENTIFIER_UNCHANGED) ||
+        (group_identifier != os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED &&
+         group_identifier >= os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED)) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    return os::user::ChangeOwner(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX],
+                                 StringLength(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX]),
+                                 static_cast<os::abi::UserIdentifier>(user_identifier),
+                                 static_cast<os::abi::GroupIdentifier>(group_identifier)) ==
+                   OS_USER_CORE_SUCCESS_RESULT
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunLink(const uint64_t argument_count,
+                              const char *const *const arguments) noexcept {
+    if (argument_count == OS_USER_CORE_TWO_ARGUMENT_COUNT) {
+        return os::user::LinkFile(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                                  StringLength(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                                  arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX],
+                                  StringLength(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX])) ==
+                       OS_USER_CORE_SUCCESS_RESULT
+                   ? OS_USER_CORE_SUCCESS_EXIT_CODE
+                   : OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    if (argument_count != OS_USER_CORE_TWO_ARGUMENT_COUNT + OS_USER_CORE_FIRST_VALUE ||
+        !EqualsLiteral(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+                       StringLength(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]),
+                       OS_USER_CORE_SYMBOLIC_LINK_OPTION)) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    return os::user::CreateSymbolicLink(
+               arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX],
+               StringLength(arguments[OS_USER_CORE_SECOND_ARGUMENT_INDEX]),
+               arguments[OS_USER_CORE_THIRD_ARGUMENT_INDEX],
+               StringLength(arguments[OS_USER_CORE_THIRD_ARGUMENT_INDEX])) ==
+                   OS_USER_CORE_SUCCESS_RESULT
+               ? OS_USER_CORE_SUCCESS_EXIT_CODE
+               : OS_USER_CORE_FAILURE_EXIT_CODE;
+}
+
+[[nodiscard]] int64_t RunReadLink(const uint64_t argument_count,
+                                  const char *const *const arguments) noexcept {
+    if (argument_count != OS_USER_CORE_SINGLE_ARGUMENT_COUNT) {
+        return OS_USER_CORE_FAILURE_EXIT_CODE;
+    }
+    char target[OS_USER_CORE_PATH_CAPACITY_BYTES]{};
+    const int64_t target_length_bytes = os::user::ReadSymbolicLink(
+        arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX],
+        StringLength(arguments[OS_USER_CORE_FIRST_ARGUMENT_INDEX]), target, sizeof(target));
+    return target_length_bytes >= OS_USER_CORE_SUCCESS_RESULT &&
+                   WriteText(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, target,
+                             static_cast<uint64_t>(target_length_bytes)) &&
                    WriteLiteral(os::abi::OS_ABI_STANDARD_OUTPUT_DESCRIPTOR, OS_USER_CORE_NEWLINE)
                ? OS_USER_CORE_SUCCESS_EXIT_CODE
                : OS_USER_CORE_FAILURE_EXIT_CODE;
@@ -1475,6 +1670,18 @@ template <uint64_t SizeBytes>
     }
     if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_STAT_COMMAND)) {
         return RunStat(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_CHANGE_MODE_COMMAND)) {
+        return RunChangeMode(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_CHANGE_OWNER_COMMAND)) {
+        return RunChangeOwner(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_LINK_COMMAND)) {
+        return RunLink(argument_count, arguments);
+    }
+    if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_READ_LINK_COMMAND)) {
+        return RunReadLink(argument_count, arguments);
     }
     if (EqualsLiteral(tool_name, tool_name_length_bytes, OS_USER_CORE_MKDIR_COMMAND)) {
         return argument_count == OS_USER_CORE_SINGLE_ARGUMENT_COUNT &&

@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 import binascii
 import json
 from pathlib import Path
+import stat
 import struct
 
 from .boot_layout import (
@@ -78,6 +79,7 @@ OS_ROOTFS_V2_FEATURE_LINKS = 1 << 4
 OS_ROOTFS_V2_FEATURE_TIMESTAMPS = 1 << 5
 OS_ROOTFS_V2_FEATURE_ORPHAN_RECOVERY = 1 << 6
 OS_ROOTFS_V2_FEATURE_FIVE_LEVEL_BLOCK_TREE = 1 << 7
+OS_ROOTFS_V2_FEATURE_UNIX_METADATA = 1 << 8
 OS_ROOTFS_V2_REQUIRED_FEATURES = (
     OS_ROOTFS_V2_FEATURE_SPARSE_FILES
     | OS_ROOTFS_V2_FEATURE_CHECKSUMMED_POINTER_BLOCKS
@@ -87,7 +89,18 @@ OS_ROOTFS_V2_REQUIRED_FEATURES = (
     | OS_ROOTFS_V2_FEATURE_TIMESTAMPS
     | OS_ROOTFS_V2_FEATURE_ORPHAN_RECOVERY
     | OS_ROOTFS_V2_FEATURE_FIVE_LEVEL_BLOCK_TREE
+    | OS_ROOTFS_V2_FEATURE_UNIX_METADATA
 )
+OS_ROOTFS_V2_ROOT_USER_IDENTIFIER = 0
+OS_ROOTFS_V2_ROOT_GROUP_IDENTIFIER = 0
+OS_ROOTFS_V2_MODE_TYPE_MASK = 0o170000
+OS_ROOTFS_V2_MODE_REGULAR = 0o100000
+OS_ROOTFS_V2_MODE_DIRECTORY = 0o040000
+OS_ROOTFS_V2_MODE_SYMBOLIC_LINK = 0o120000
+OS_ROOTFS_V2_MODE_CHANGEABLE_MASK = 0o007777
+OS_ROOTFS_V2_DEFAULT_FILE_MODE = 0o000644
+OS_ROOTFS_V2_DEFAULT_DIRECTORY_MODE = 0o000755
+OS_ROOTFS_V2_DEFAULT_SYMBOLIC_LINK_MODE = 0o000777
 OS_ROOTFS_V2_INODE_FLAG_ORPHAN = 1 << 0
 OS_ROOTFS_V2_SUPERBLOCK_CHECKSUM_OFFSET_BYTES = 508
 OS_ROOTFS_V2_INODE_CHECKSUM_OFFSET_BYTES = 252
@@ -146,6 +159,9 @@ class RootfsV2Inode:
     modificationTimeNanoseconds: int
     changeTimeNanoseconds: int
     birthTimeNanoseconds: int
+    ownerUserIdentifier: int
+    ownerGroupIdentifier: int
+    mode: int
 
 
 @dataclass(frozen=True)
@@ -188,6 +204,9 @@ class _RootfsV2BuildNode:
     inodeNumber: int = 0
     generation: int = 0
     timestampNanoseconds: int = 0
+    ownerUserIdentifier: int = OS_ROOTFS_V2_ROOT_USER_IDENTIFIER
+    ownerGroupIdentifier: int = OS_ROOTFS_V2_ROOT_GROUP_IDENTIFIER
+    mode: int = 0
 
 
 def calculateRootfsV2Crc32(content: bytes | bytearray) -> int:
@@ -417,6 +436,11 @@ def encodeRootfsV2Inode(inode: RootfsV2Inode) -> bytes:
         raise OsToolError("rootfs v4 inode 类型无效。")
     if len(inode.directBlocks) != OS_ROOTFS_V2_DIRECT_BLOCK_COUNT:
         raise OsToolError("rootfs v4 inode 直接块数量无效。")
+    expectedModeType = {
+        OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE: OS_ROOTFS_V2_MODE_REGULAR,
+        OS_ROOTFS_V2_NODE_TYPE_DIRECTORY: OS_ROOTFS_V2_MODE_DIRECTORY,
+        OS_ROOTFS_V2_NODE_TYPE_SYMBOLIC_LINK: OS_ROOTFS_V2_MODE_SYMBOLIC_LINK,
+    }[inode.nodeType]
     if (
         inode.sizeBytes < 0
         or inode.sizeBytes > OS_ROOTFS_V2_MAXIMUM_FILE_SIZE_BYTES
@@ -432,6 +456,13 @@ def encodeRootfsV2Inode(inode: RootfsV2Inode) -> bytes:
         )
         or inode.parentInodeNumber <= 0
         or inode.parentInodeNumber > OS_ROOTFS_V2_INODE_COUNT
+        or not 0 <= inode.ownerUserIdentifier <= 0xFFFF_FFFF
+        or not 0 <= inode.ownerGroupIdentifier <= 0xFFFF_FFFF
+        or inode.mode & OS_ROOTFS_V2_MODE_TYPE_MASK != expectedModeType
+        or inode.mode & ~(
+            OS_ROOTFS_V2_MODE_TYPE_MASK
+            | OS_ROOTFS_V2_MODE_CHANGEABLE_MASK
+        )
         or (
             inode.nodeType == OS_ROOTFS_V2_NODE_TYPE_SYMBOLIC_LINK
             and not 1
@@ -466,6 +497,9 @@ def encodeRootfsV2Inode(inode: RootfsV2Inode) -> bytes:
     )
     struct.pack_into("<Q", encoded, 184, inode.changeTimeNanoseconds)
     struct.pack_into("<Q", encoded, 192, inode.birthTimeNanoseconds)
+    struct.pack_into("<I", encoded, 200, inode.ownerUserIdentifier)
+    struct.pack_into("<I", encoded, 204, inode.ownerGroupIdentifier)
+    struct.pack_into("<I", encoded, 208, inode.mode)
     checksum = calculateRootfsV2Crc32(
         encoded[:OS_ROOTFS_V2_INODE_CHECKSUM_OFFSET_BYTES]
     )
@@ -520,7 +554,15 @@ def decodeRootfsV2Inode(encoded: bytes) -> RootfsV2Inode:
         modificationTimeNanoseconds=struct.unpack_from("<Q", encoded, 176)[0],
         changeTimeNanoseconds=struct.unpack_from("<Q", encoded, 184)[0],
         birthTimeNanoseconds=struct.unpack_from("<Q", encoded, 192)[0],
+        ownerUserIdentifier=struct.unpack_from("<I", encoded, 200)[0],
+        ownerGroupIdentifier=struct.unpack_from("<I", encoded, 204)[0],
+        mode=struct.unpack_from("<I", encoded, 208)[0],
     )
+    expectedModeType = {
+        OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE: OS_ROOTFS_V2_MODE_REGULAR,
+        OS_ROOTFS_V2_NODE_TYPE_DIRECTORY: OS_ROOTFS_V2_MODE_DIRECTORY,
+        OS_ROOTFS_V2_NODE_TYPE_SYMBOLIC_LINK: OS_ROOTFS_V2_MODE_SYMBOLIC_LINK,
+    }.get(inode.nodeType)
     if (
         inode.nodeType not in (
             OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE,
@@ -544,7 +586,12 @@ def decodeRootfsV2Inode(encoded: bytes) -> RootfsV2Inode:
             <= inode.sizeBytes
             <= OS_ROOTFS_V2_MAXIMUM_SYMBOLIC_LINK_LENGTH_BYTES
         )
-        or any(encoded[200:OS_ROOTFS_V2_INODE_CHECKSUM_OFFSET_BYTES])
+        or inode.mode & OS_ROOTFS_V2_MODE_TYPE_MASK != expectedModeType
+        or inode.mode & ~(
+            OS_ROOTFS_V2_MODE_TYPE_MASK
+            | OS_ROOTFS_V2_MODE_CHANGEABLE_MASK
+        )
+        or any(encoded[212:OS_ROOTFS_V2_INODE_CHECKSUM_OFFSET_BYTES])
     ):
         raise OsToolError("rootfs v4 inode 内容无效。")
     return inode
@@ -809,6 +856,12 @@ def formatRootfsV2(
             modificationTimeNanoseconds=0,
             changeTimeNanoseconds=0,
             birthTimeNanoseconds=0,
+            ownerUserIdentifier=OS_ROOTFS_V2_ROOT_USER_IDENTIFIER,
+            ownerGroupIdentifier=OS_ROOTFS_V2_ROOT_GROUP_IDENTIFIER,
+            mode=(
+                OS_ROOTFS_V2_MODE_DIRECTORY
+                | OS_ROOTFS_V2_DEFAULT_DIRECTORY_MODE
+            ),
         )
         inodeBlock = bytearray(OS_ROOTFS_V2_BLOCK_SIZE_BYTES)
         inodeBlock[:OS_ROOTFS_V2_INODE_SIZE_BYTES] = (
@@ -961,6 +1014,9 @@ class _RootfsV2ImageBuilder:
             modificationTimeNanoseconds=node.timestampNanoseconds,
             changeTimeNanoseconds=node.timestampNanoseconds,
             birthTimeNanoseconds=node.timestampNanoseconds,
+            ownerUserIdentifier=node.ownerUserIdentifier,
+            ownerGroupIdentifier=node.ownerGroupIdentifier,
+            mode=node.mode,
         )
 
     def writeInode(self, inodeNumber: int, inode: RootfsV2Inode) -> None:
@@ -1092,6 +1148,10 @@ def installRootfsV2Files(
     root = _RootfsV2BuildNode(
         name=b"",
         nodeType=OS_ROOTFS_V2_NODE_TYPE_DIRECTORY,
+        mode=(
+            OS_ROOTFS_V2_MODE_DIRECTORY
+            | OS_ROOTFS_V2_DEFAULT_DIRECTORY_MODE
+        ),
     )
     seenPaths: set[str] = set()
     for installFile in files:
@@ -1115,6 +1175,10 @@ def installRootfsV2Files(
                     name=component,
                     nodeType=OS_ROOTFS_V2_NODE_TYPE_DIRECTORY,
                     parent=parent,
+                    mode=(
+                        OS_ROOTFS_V2_MODE_DIRECTORY
+                        | OS_ROOTFS_V2_DEFAULT_DIRECTORY_MODE
+                    ),
                 )
                 parent.children[component] = child
             elif (
@@ -1135,16 +1199,23 @@ def installRootfsV2Files(
             raise OsToolError(
                 f"rootfs v4 安装文件超过格式上限：{installFile.sourcePath}"
             )
+        sourceStatus = installFile.sourcePath.stat()
         timestampNanoseconds = max(
             0,
-            installFile.sourcePath.stat().st_mtime_ns,
+            sourceStatus.st_mtime_ns,
         )
+        sourceMode = stat.S_IMODE(sourceStatus.st_mode)
+        if sourceMode == 0:
+            sourceMode = OS_ROOTFS_V2_DEFAULT_FILE_MODE
+        if installFile.imagePath.startswith(("/bin/", "/sbin/")):
+            sourceMode |= 0o111
         parent.children[fileName] = _RootfsV2BuildNode(
             name=fileName,
             nodeType=OS_ROOTFS_V2_NODE_TYPE_REGULAR_FILE,
             content=content,
             parent=parent,
             timestampNanoseconds=timestampNanoseconds,
+            mode=OS_ROOTFS_V2_MODE_REGULAR | sourceMode,
         )
         timestampParent: _RootfsV2BuildNode | None = parent
         while timestampParent is not None:

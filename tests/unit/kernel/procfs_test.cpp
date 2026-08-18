@@ -57,9 +57,8 @@ struct SnapshotSource final {
     bool fail;
 };
 
-[[nodiscard]] bool CaptureSnapshot(
-    void *const context,
-    os::kernel::fs::ProcfsSnapshot &snapshot) noexcept {
+[[nodiscard]] bool CaptureSnapshot(void *const context,
+                                   os::kernel::fs::ProcfsSnapshot &snapshot) noexcept {
     if (context == nullptr) {
         return false;
     }
@@ -88,52 +87,41 @@ int main() {
     SnapshotSource source{
         .snapshot =
             {
-                .monotonic_nanoseconds =
-                    OS_TEST_PROCFS_MONOTONIC_NANOSECONDS,
+                .monotonic_nanoseconds = OS_TEST_PROCFS_MONOTONIC_NANOSECONDS,
                 .managed_memory_bytes = OS_TEST_PROCFS_EXPECTED_MANAGED_BYTES,
                 .free_memory_bytes = OS_TEST_PROCFS_EXPECTED_FREE_BYTES,
                 .allocated_memory_bytes = OS_TEST_PROCFS_EXPECTED_ALLOCATED_BYTES,
-                .active_process_count =
-                    OS_TEST_PROCFS_ACTIVE_PROCESS_COUNT,
+                .active_process_count = OS_TEST_PROCFS_ACTIVE_PROCESS_COUNT,
                 .active_thread_count = OS_TEST_PROCFS_ACTIVE_THREAD_COUNT,
                 .process_capacity = OS_TEST_PROCFS_PROCESS_CAPACITY,
                 .thread_capacity = OS_TEST_PROCFS_THREAD_CAPACITY,
-                .current_process_id =
-                    OS_TEST_PROCFS_CURRENT_PROCESS_IDENTIFIER,
+                .current_process_id = OS_TEST_PROCFS_CURRENT_PROCESS_IDENTIFIER,
                 .heap_consumed_bytes = OS_TEST_PROCFS_HEAP_CONSUMED_BYTES,
-                .active_file_description_count =
-                    OS_TEST_PROCFS_ACTIVE_FILE_DESCRIPTION_COUNT,
+                .active_file_description_count = OS_TEST_PROCFS_ACTIVE_FILE_DESCRIPTION_COUNT,
                 .active_pipe_count = OS_TEST_PROCFS_ACTIVE_PIPE_COUNT,
                 .mount_count = OS_TEST_PROCFS_SNAPSHOT_MOUNT_COUNT,
                 .vnode_count = OS_TEST_PROCFS_SNAPSHOT_VNODE_COUNT,
-                .journal_commit_count =
-                    OS_TEST_PROCFS_JOURNAL_COMMIT_COUNT,
+                .journal_commit_count = OS_TEST_PROCFS_JOURNAL_COMMIT_COUNT,
             },
         .call_count = OS_TEST_PROCFS_EMPTY_VALUE,
         .fail = false,
     };
 
     const bool initialized =
-        heap.Initialize(reinterpret_cast<uint64_t>(heap_bytes),
-                        sizeof(heap_bytes)) ==
+        heap.Initialize(reinterpret_cast<uint64_t>(heap_bytes), sizeof(heap_bytes)) ==
             os::kernel::KernelHeapStatus::Succeeded &&
         root_file_system.Initialize(
-            heap, OS_TEST_PROCFS_ROOT_SUPERBLOCK_IDENTIFIER,
-            OS_TEST_PROCFS_ROOT_NODE_LIMIT,
-            OS_TEST_PROCFS_MAXIMUM_FILE_SIZE_BYTES) ==
+            heap, OS_TEST_PROCFS_ROOT_SUPERBLOCK_IDENTIFIER, OS_TEST_PROCFS_ROOT_NODE_LIMIT,
+            OS_TEST_PROCFS_MAXIMUM_FILE_SIZE_BYTES) == os::kernel::fs::Status::Succeeded &&
+        procfs.Initialize(OS_TEST_PROCFS_SUPERBLOCK_IDENTIFIER, CaptureSnapshot, &source) ==
             os::kernel::fs::Status::Succeeded &&
-        procfs.Initialize(OS_TEST_PROCFS_SUPERBLOCK_IDENTIFIER,
-                          CaptureSnapshot, &source) ==
-            os::kernel::fs::Status::Succeeded &&
-        vfs.Initialize(mounts, OS_TEST_PROCFS_MOUNT_CAPACITY,
-                       root_file_system.GetSuperblock()) ==
+        vfs.Initialize(mounts, OS_TEST_PROCFS_MOUNT_CAPACITY, root_file_system.GetSuperblock()) ==
             os::kernel::fs::Status::Succeeded &&
         vfs.InitializeContext(context) == os::kernel::fs::Status::Succeeded &&
         vfs.CreateDirectory(context, OS_TEST_PROCFS_MOUNT_PATH,
                             sizeof(OS_TEST_PROCFS_MOUNT_PATH)) ==
             os::kernel::fs::Status::Succeeded &&
-        vfs.MountAt(context, OS_TEST_PROCFS_MOUNT_PATH,
-                    sizeof(OS_TEST_PROCFS_MOUNT_PATH),
+        vfs.MountAt(context, OS_TEST_PROCFS_MOUNT_PATH, sizeof(OS_TEST_PROCFS_MOUNT_PATH),
                     procfs.GetSuperblock()) == os::kernel::fs::Status::Succeeded;
 
     const os::kernel::fs::OpenOptions read_options{
@@ -146,32 +134,31 @@ int main() {
     os::kernel::fs::OpenFile memory_file{};
     uint8_t memory_bytes[os::kernel::fs::OS_KERNEL_PROCFS_MAXIMUM_SNAPSHOT_SIZE_BYTES]{};
     uint64_t memory_read_bytes = OS_TEST_PROCFS_EMPTY_VALUE;
+    os::kernel::fs::NodeInformation memory_information{};
     const bool snapshot_contract_valid =
         initialized &&
-        vfs.Open(context, OS_TEST_PROCFS_MEMORY_PATH,
-                 sizeof(OS_TEST_PROCFS_MEMORY_PATH), read_options,
-                 memory_file) == os::kernel::fs::Status::Succeeded &&
-        vfs.Read(memory_file, memory_bytes, sizeof(memory_bytes),
-                 memory_read_bytes) == os::kernel::fs::Status::Succeeded &&
-        std::string_view{reinterpret_cast<const char *>(memory_bytes),
-                         memory_read_bytes}
-                .find(OS_TEST_PROCFS_MANAGED_LINE) != std::string_view::npos &&
-        std::string_view{reinterpret_cast<const char *>(memory_bytes),
-                         memory_read_bytes}
-                .find(OS_TEST_PROCFS_FREE_LINE) != std::string_view::npos &&
-        std::string_view{reinterpret_cast<const char *>(memory_bytes),
-                         memory_read_bytes}
-                .find(OS_TEST_PROCFS_ALLOCATED_LINE) !=
-            std::string_view::npos;
-    test_context.Expect(snapshot_contract_valid,
-                        OS_TEST_PROCFS_SNAPSHOT_CONTRACT);
+        vfs.Stat(context, OS_TEST_PROCFS_MEMORY_PATH, sizeof(OS_TEST_PROCFS_MEMORY_PATH),
+                 memory_information) == os::kernel::fs::Status::Succeeded &&
+        memory_information.owner_user_identifier == os::abi::OS_ABI_ROOT_USER_IDENTIFIER &&
+        memory_information.owner_group_identifier == os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER &&
+        memory_information.mode == (os::abi::OS_ABI_FILE_MODE_REGULAR | 0000444U) &&
+        vfs.Open(context, OS_TEST_PROCFS_MEMORY_PATH, sizeof(OS_TEST_PROCFS_MEMORY_PATH),
+                 read_options, memory_file) == os::kernel::fs::Status::Succeeded &&
+        vfs.Read(memory_file, memory_bytes, sizeof(memory_bytes), memory_read_bytes) ==
+            os::kernel::fs::Status::Succeeded &&
+        std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
+            OS_TEST_PROCFS_MANAGED_LINE) != std::string_view::npos &&
+        std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
+            OS_TEST_PROCFS_FREE_LINE) != std::string_view::npos &&
+        std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
+            OS_TEST_PROCFS_ALLOCATED_LINE) != std::string_view::npos;
+    test_context.Expect(snapshot_contract_valid, OS_TEST_PROCFS_SNAPSHOT_CONTRACT);
 
     os::kernel::fs::OpenFile directory{};
     uint64_t directory_entry_count = OS_TEST_PROCFS_EMPTY_VALUE;
     bool directory_valid =
-        vfs.OpenDirectory(context, OS_TEST_PROCFS_MOUNT_PATH,
-                          sizeof(OS_TEST_PROCFS_MOUNT_PATH), directory) ==
-        os::kernel::fs::Status::Succeeded;
+        vfs.OpenDirectory(context, OS_TEST_PROCFS_MOUNT_PATH, sizeof(OS_TEST_PROCFS_MOUNT_PATH),
+                          directory) == os::kernel::fs::Status::Succeeded;
     while (directory_valid) {
         os::kernel::fs::DirectoryEntry entry{};
         bool end_of_directory = false;
@@ -186,38 +173,31 @@ int main() {
             ++directory_entry_count;
         }
     }
-    directory_valid =
-        directory_valid &&
-        directory_entry_count == os::kernel::fs::OS_KERNEL_PROCFS_FILE_COUNT &&
-        vfs.Close(directory) == os::kernel::fs::Status::Succeeded;
+    directory_valid = directory_valid &&
+                      directory_entry_count == os::kernel::fs::OS_KERNEL_PROCFS_FILE_COUNT &&
+                      vfs.Close(directory) == os::kernel::fs::Status::Succeeded;
     test_context.Expect(directory_valid, OS_TEST_PROCFS_DIRECTORY_CONTRACT);
 
     source.fail = true;
     uint64_t failure_read_bytes = OS_TEST_PROCFS_EMPTY_VALUE;
     const bool failure_contract_valid =
-        vfs.ReadAt(memory_file, OS_TEST_PROCFS_EMPTY_VALUE, memory_bytes,
-                   sizeof(memory_bytes), failure_read_bytes) ==
-            os::kernel::fs::Status::DeviceFailure &&
+        vfs.ReadAt(memory_file, OS_TEST_PROCFS_EMPTY_VALUE, memory_bytes, sizeof(memory_bytes),
+                   failure_read_bytes) == os::kernel::fs::Status::DeviceFailure &&
         failure_read_bytes == OS_TEST_PROCFS_EMPTY_VALUE &&
-        procfs.ReadStatistics().snapshot_failure_count ==
-            OS_TEST_PROCFS_EXPECTED_FAILURE_COUNT;
+        procfs.ReadStatistics().snapshot_failure_count == OS_TEST_PROCFS_EXPECTED_FAILURE_COUNT;
     source.fail = false;
-    test_context.Expect(failure_contract_valid,
-                        OS_TEST_PROCFS_FAILURE_CONTRACT);
+    test_context.Expect(failure_contract_valid, OS_TEST_PROCFS_FAILURE_CONTRACT);
 
     const bool lifetime_contract_valid =
         vfs.Close(memory_file) == os::kernel::fs::Status::Succeeded &&
-        procfs.ReadStatistics().active_open_count ==
-            OS_TEST_PROCFS_EMPTY_VALUE &&
-        procfs.ReadStatistics().snapshot_read_count >=
-            OS_TEST_PROCFS_MINIMUM_READ_COUNT &&
+        procfs.ReadStatistics().active_open_count == OS_TEST_PROCFS_EMPTY_VALUE &&
+        procfs.ReadStatistics().snapshot_read_count >= OS_TEST_PROCFS_MINIMUM_READ_COUNT &&
         procfs.Validate() == os::kernel::fs::Status::Succeeded &&
         vfs.ReleaseContext(context) == os::kernel::fs::Status::Succeeded &&
         vfs.Validate() == os::kernel::fs::Status::Succeeded &&
         root_file_system.Destroy() == os::kernel::fs::Status::Succeeded &&
         heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
         heap.Statistics().allocation_count == OS_TEST_PROCFS_EMPTY_VALUE;
-    test_context.Expect(lifetime_contract_valid,
-                        OS_TEST_PROCFS_LIFETIME_CONTRACT);
+    test_context.Expect(lifetime_contract_valid, OS_TEST_PROCFS_LIFETIME_CONTRACT);
     return test_context.ExitCode();
 }

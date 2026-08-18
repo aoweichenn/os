@@ -83,6 +83,11 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
         .modification_time_nanoseconds = OS_TEST_ROOTFS_HIGH_LBA_TIMESTAMP_NANOSECONDS,
         .change_time_nanoseconds = OS_TEST_ROOTFS_HIGH_LBA_TIMESTAMP_NANOSECONDS,
         .birth_time_nanoseconds = OS_TEST_ROOTFS_HIGH_LBA_TIMESTAMP_NANOSECONDS,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = type == os::kernel::fs::RootNodeType::Directory
+                    ? os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000755U
+                    : os::abi::OS_ABI_FILE_MODE_REGULAR | 0000644U,
     };
     inode.direct_blocks[OS_TEST_ROOTFS_HIGH_LBA_EMPTY_VALUE] = direct_block;
     return inode;

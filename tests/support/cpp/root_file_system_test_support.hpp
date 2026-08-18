@@ -79,6 +79,9 @@ inline constexpr uint8_t OS_TEST_ROOTFS_ROOT_INODE_BITMAP_MASK = 0x01U;
         .modification_time_nanoseconds = 0ULL,
         .change_time_nanoseconds = 0ULL,
         .birth_time_nanoseconds = 0ULL,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000755U,
     };
     uint8_t inode_table_block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     if (EncodeRootInode(root_inode, inode_table_block, OS_KERNEL_ROOTFS_INODE_SIZE_BYTES) !=

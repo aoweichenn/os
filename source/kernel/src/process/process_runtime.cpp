@@ -8,6 +8,7 @@
 #include "os/kernel/arch/user_context.hpp"
 #include "os/kernel/core/freestanding_memory.hpp"
 #include "os/kernel/fs/legacy_file_system.hpp"
+#include "os/kernel/fs/root_file_system_format.hpp"
 #include "os/kernel/memory/memory_manager.hpp"
 #include "os/kernel/process/program_arguments.hpp"
 #include "os/kernel/sync/spin_lock.hpp"
@@ -269,6 +270,7 @@ struct ProcessRuntimeProcess final {
     ProcessExecutionResult result;
     FileTable file_table;
     fs::FsContext file_system_context;
+    os::abi::ResourceLimit resource_limits[os::abi::OS_ABI_RESOURCE_LIMIT_KIND_COUNT];
     bool active;
 };
 
@@ -344,6 +346,107 @@ uint64_t capacity_self_test_threads_per_process;
 UserThreadRuntimeStatistics user_thread_runtime_statistics;
 bool process_runtime_initialized;
 bool process_scheduling_active;
+
+[[nodiscard]] bool ResourceLimitKindIsValid(const os::abi::ResourceLimitKind kind) noexcept {
+    return static_cast<uint64_t>(kind) < os::abi::OS_ABI_RESOURCE_LIMIT_KIND_COUNT;
+}
+
+[[nodiscard]] uint64_t ResourceLimitSystemMaximum(const os::abi::ResourceLimitKind kind) noexcept {
+    if (kind == os::abi::ResourceLimitKind::FileSize) {
+        return fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES;
+    }
+    if (kind == os::abi::ResourceLimitKind::Data) {
+        return os::abi::OS_ABI_USER_HEAP_MAXIMUM_SIZE_BYTES;
+    }
+    if (kind == os::abi::ResourceLimitKind::Stack) {
+        return os::abi::OS_ABI_USER_STACK_MAXIMUM_SIZE_BYTES;
+    }
+    if (kind == os::abi::ResourceLimitKind::Core ||
+        kind == os::abi::ResourceLimitKind::LockedMemory ||
+        kind == os::abi::ResourceLimitKind::MessageQueueBytes ||
+        kind == os::abi::ResourceLimitKind::Nice ||
+        kind == os::abi::ResourceLimitKind::RealtimePriority) {
+        return OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    }
+    if (kind == os::abi::ResourceLimitKind::ProcessCount) {
+        return process_runtime_limits.process_capacity;
+    }
+    if (kind == os::abi::ResourceLimitKind::OpenFileCount) {
+        return process_runtime_limits.file_descriptor_hard_limit;
+    }
+    return os::abi::OS_ABI_RESOURCE_LIMIT_INFINITY;
+}
+
+void InitializeResourceLimits(ProcessRuntimeProcess &process,
+                              const ProcessRuntimeProcess *const parent) noexcept {
+    if (parent != nullptr) {
+        for (uint64_t limit_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+             limit_index < os::abi::OS_ABI_RESOURCE_LIMIT_KIND_COUNT; ++limit_index) {
+            process.resource_limits[limit_index] = parent->resource_limits[limit_index];
+        }
+        return;
+    }
+    for (uint64_t limit_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         limit_index < os::abi::OS_ABI_RESOURCE_LIMIT_KIND_COUNT; ++limit_index) {
+        const auto kind = static_cast<os::abi::ResourceLimitKind>(limit_index);
+        const uint64_t maximum = ResourceLimitSystemMaximum(kind);
+        process.resource_limits[limit_index] = os::abi::ResourceLimit{
+            .current = maximum,
+            .maximum = maximum,
+        };
+    }
+}
+
+[[nodiscard]] bool IdentifierRequestAllowed(const uint32_t requested_identifier,
+                                            const uint32_t real_identifier,
+                                            const uint32_t effective_identifier,
+                                            const uint32_t saved_identifier) noexcept {
+    return requested_identifier == os::abi::OS_ABI_IDENTIFIER_UNCHANGED ||
+           requested_identifier == real_identifier ||
+           requested_identifier == effective_identifier || requested_identifier == saved_identifier;
+}
+
+[[nodiscard]] bool ProcessCountLimitReached(const uint64_t parent_process_index) noexcept {
+    if (parent_process_index >= process_runtime_limits.process_capacity ||
+        !runtime_processes[parent_process_index].active) {
+        return true;
+    }
+    const ProcessRuntimeProcess &parent = runtime_processes[parent_process_index];
+    const uint64_t limit =
+        parent.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::ProcessCount)]
+            .current;
+    uint64_t process_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const os::abi::UserIdentifier user_identifier =
+        parent.file_system_context.credentials.real_user_identifier;
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < process_runtime_limits.process_capacity; ++process_index) {
+        if (runtime_processes[process_index].active &&
+            runtime_processes[process_index].file_system_context.credentials.real_user_identifier ==
+                user_identifier) {
+            ++process_count;
+        }
+    }
+    return process_count >= limit;
+}
+
+void ApplyExecutableCredentials(fs::FsContext &context,
+                                const fs::NodeInformation &information) noexcept {
+    if ((information.mode & os::abi::OS_ABI_FILE_MODE_SET_USER_IDENTIFIER) != 0U) {
+        context.credentials.effective_user_identifier = information.owner_user_identifier;
+        context.credentials.saved_user_identifier = information.owner_user_identifier;
+    }
+    if ((information.mode & os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER) != 0U) {
+        context.credentials.effective_group_identifier = information.owner_group_identifier;
+        context.credentials.saved_group_identifier = information.owner_group_identifier;
+    }
+}
+
+[[nodiscard]] bool AddressSpaceWithinLimit(const UserAddressSpace &address_space,
+                                           const uint64_t limit_bytes) noexcept {
+    const os::abi::VirtualMemoryStatistics statistics =
+        GetUserVirtualMemoryStatistics(address_space);
+    return statistics.virtual_page_count <= limit_bytes / os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES;
+}
 
 [[nodiscard]] bool RemoveSignalThreadIfPresent(uint64_t thread_index) noexcept;
 [[nodiscard]] bool RemoveSignalProcessIfPresent(uint64_t process_index) noexcept;
@@ -1204,8 +1307,10 @@ PlanUserProgramArguments(const os::abi::ProcessLaunchRequest &request) noexcept 
 LoadExecutableFromPath(fs::FsContext &file_system_context, const uint8_t *const path,
                        const uint64_t path_length_bytes, UserAddressSpace &address_space,
                        UserElfValidationStatus &elf_validation_status,
-                       UserAddressSpaceStatus &address_space_status) noexcept {
+                       UserAddressSpaceStatus &address_space_status,
+                       fs::NodeInformation &executable_information) noexcept {
     address_space = UserAddressSpace{};
+    executable_information = fs::NodeInformation{};
     elf_validation_status = UserElfValidationStatus::Succeeded;
     address_space_status = UserAddressSpaceStatus::Succeeded;
     if (process_vfs == nullptr || path == nullptr ||
@@ -1213,22 +1318,15 @@ LoadExecutableFromPath(fs::FsContext &file_system_context, const uint8_t *const 
         path_length_bytes > fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES) {
         return ProcessRuntimeStatus::InvalidArguments;
     }
-    fs::NodeInformation information{};
     const fs::Status stat_status =
-        process_vfs->Stat(file_system_context, path, path_length_bytes, information);
-    if (stat_status != fs::Status::Succeeded || information.type != fs::NodeType::RegularFile) {
+        process_vfs->Stat(file_system_context, path, path_length_bytes, executable_information);
+    if (stat_status != fs::Status::Succeeded ||
+        executable_information.type != fs::NodeType::RegularFile) {
         return ProcessRuntimeStatus::ExecutableReadFailure;
     }
     fs::OpenFile open_file{};
-    const fs::Status open_status = process_vfs->Open(file_system_context, path, path_length_bytes,
-                                                     fs::OpenOptions{
-                                                         .readable = true,
-                                                         .writable = false,
-                                                         .create = false,
-                                                         .truncate = false,
-                                                         .append = false,
-                                                     },
-                                                     open_file);
+    const fs::Status open_status =
+        process_vfs->OpenExecutable(file_system_context, path, path_length_bytes, open_file);
     if (open_status != fs::Status::Succeeded) {
         return ProcessRuntimeStatus::ExecutableReadFailure;
     }
@@ -1258,6 +1356,7 @@ LoadExecutableFromPath(fs::FsContext &file_system_context, const uint8_t *const 
 [[nodiscard]] ProcessRuntimeStatus
 RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelection selection,
                        const uint64_t parent_process_index,
+                       const fs::NodeInformation *const executable_information,
                        ProcessCreationResult &creation_result) noexcept {
     uint64_t process_index = OS_KERNEL_PROCESS_INVALID_INDEX;
     ProcessId process_id{};
@@ -1359,11 +1458,32 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
         .console_bytes_written = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
     };
     runtime_process.file_system_context = fs::FsContext{};
+    const ProcessRuntimeProcess *const parent_runtime_process =
+        parent_process_index != OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX &&
+                parent_process_index < process_runtime_limits.process_capacity &&
+                runtime_processes[parent_process_index].active
+            ? &runtime_processes[parent_process_index]
+            : nullptr;
     const bool file_system_context_initialized =
-        process_vfs == nullptr || process_vfs->InitializeContext(
-                                      runtime_process.file_system_context) == fs::Status::Succeeded;
+        process_vfs == nullptr ||
+        (parent_runtime_process == nullptr
+             ? process_vfs->InitializeContext(runtime_process.file_system_context)
+             : process_vfs->CloneContext(parent_runtime_process->file_system_context,
+                                         runtime_process.file_system_context)) ==
+            fs::Status::Succeeded;
+    InitializeResourceLimits(runtime_process, parent_runtime_process);
+    if (file_system_context_initialized && executable_information != nullptr) {
+        ApplyExecutableCredentials(runtime_process.file_system_context, *executable_information);
+    }
     const bool file_table_initialized =
         file_system_context_initialized && InitializeProcessFileTable(runtime_process, selection);
+    if (file_table_initialized &&
+        runtime_process.file_table.SetSoftLimit(
+            runtime_process
+                .resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::OpenFileCount)]
+                .current) != FileTableStatus::Succeeded) {
+        HaltProcessor();
+    }
     ProcessTreeStatus tree_status = ProcessTreeStatus::InvalidState;
     JobControlStatus job_control_status = JobControlStatus::InvalidProcessId;
     SignalManagerStatus signal_process_status = SignalManagerStatus::InvalidProcessId;
@@ -2503,7 +2623,8 @@ ProcessRuntimeStatus CreateProcess(const UserProgramSelection selection,
         return ProcessRuntimeStatus::InvalidArguments;
     }
     const ProcessRuntimeStatus register_status = RegisterRuntimeProcess(
-        address_space, selection, OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX, creation_result);
+        address_space, selection, OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX, nullptr,
+        creation_result);
     if (register_status != ProcessRuntimeStatus::Succeeded &&
         DestroyUserAddressSpace(address_space) != UserAddressSpaceStatus::Succeeded) {
         HaltProcessor();
@@ -2533,9 +2654,10 @@ ProcessRuntimeStatus CreateInitialProcessFromPath(
         return ProcessRuntimeStatus::FileSystemFailure;
     }
     UserAddressSpace address_space{};
+    fs::NodeInformation executable_information{};
     ProcessRuntimeStatus status =
         LoadExecutableFromPath(loading_context, path, path_length_bytes, address_space,
-                               elf_validation_status, address_space_status);
+                               elf_validation_status, address_space_status, executable_information);
     if (status == ProcessRuntimeStatus::Succeeded &&
         !PopulateKernelProgramArguments(arguments, argument_count, environment, environment_count,
                                         address_space)) {
@@ -2549,9 +2671,9 @@ ProcessRuntimeStatus CreateInitialProcessFromPath(
         return ProcessRuntimeStatus::FileSystemFailure;
     }
     if (status == ProcessRuntimeStatus::Succeeded) {
-        status =
-            RegisterRuntimeProcess(address_space, UserProgramSelection::DiskExecutable,
-                                   OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX, creation_result);
+        status = RegisterRuntimeProcess(address_space, UserProgramSelection::DiskExecutable,
+                                        OS_KERNEL_PROCESS_RUNTIME_INVALID_PARENT_INDEX,
+                                        &executable_information, creation_result);
     }
     if (status != ProcessRuntimeStatus::Succeeded &&
         address_space.root_physical_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
@@ -2583,13 +2705,25 @@ ProcessRuntimeStatus SpawnCurrentProcess(const os::abi::ProcessLaunchRequest &re
     if (!ReadCurrentThreadAndProcess(parent_thread, parent_process)) {
         return ProcessRuntimeStatus::SchedulerFailure;
     }
+    if (ProcessCountLimitReached(parent_thread.process_index)) {
+        return ProcessRuntimeStatus::ProcessLimitExceeded;
+    }
     ProcessRuntimeProcess &parent_runtime_process = runtime_processes[parent_thread.process_index];
     UserAddressSpace address_space{};
     UserElfValidationStatus elf_validation_status = UserElfValidationStatus::Succeeded;
     UserAddressSpaceStatus address_space_status = UserAddressSpaceStatus::Succeeded;
+    fs::NodeInformation executable_information{};
     ProcessRuntimeStatus status = LoadExecutableFromPath(
         parent_runtime_process.file_system_context, launch_path_buffer, request.path_length_bytes,
-        address_space, elf_validation_status, address_space_status);
+        address_space, elf_validation_status, address_space_status, executable_information);
+    if (status == ProcessRuntimeStatus::Succeeded &&
+        !AddressSpaceWithinLimit(
+            address_space,
+            parent_runtime_process
+                .resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::AddressSpace)]
+                .current)) {
+        status = ProcessRuntimeStatus::ResourceLimitExceeded;
+    }
     if (status == ProcessRuntimeStatus::Succeeded &&
         !PopulateUserProgramArguments(request, address_space)) {
         status = ProcessRuntimeStatus::InvalidArguments;
@@ -2597,7 +2731,8 @@ ProcessRuntimeStatus SpawnCurrentProcess(const os::abi::ProcessLaunchRequest &re
     ProcessCreationResult creation_result{};
     if (status == ProcessRuntimeStatus::Succeeded) {
         status = RegisterRuntimeProcess(address_space, UserProgramSelection::DiskExecutable,
-                                        parent_thread.process_index, creation_result);
+                                        parent_thread.process_index, &executable_information,
+                                        creation_result);
     }
     if (status != ProcessRuntimeStatus::Succeeded &&
         address_space.root_physical_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
@@ -2622,6 +2757,9 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process
     if (!ReadCurrentThreadAndProcess(parent_thread, parent_process) ||
         parent_thread.process_index >= process_runtime_limits.process_capacity) {
         return ProcessRuntimeStatus::SchedulerFailure;
+    }
+    if (ProcessCountLimitReached(parent_thread.process_index)) {
+        return ProcessRuntimeStatus::ProcessLimitExceeded;
     }
     ProcessRuntimeProcess &parent_runtime_process = runtime_processes[parent_thread.process_index];
     UserAddressSpace child_address_space{};
@@ -2741,6 +2879,7 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process
         return file_system_context_initialized ? ProcessRuntimeStatus::DescriptorTableFailure
                                                : ProcessRuntimeStatus::FileSystemFailure;
     }
+    InitializeResourceLimits(child_runtime_process, &parent_runtime_process);
     if (signal_manager.ForkProcess(parent_thread.process_index, child_process_index,
                                    child_process_id.value) != SignalManagerStatus::Succeeded ||
         signal_manager.RegisterThread(child_thread_index, child_process_index,
@@ -2857,9 +2996,18 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
     UserAddressSpace candidate_address_space{};
     UserElfValidationStatus elf_validation_status = UserElfValidationStatus::Succeeded;
     UserAddressSpaceStatus address_space_status = UserAddressSpaceStatus::Succeeded;
-    ProcessRuntimeStatus status = LoadExecutableFromPath(
-        process.file_system_context, launch_path_buffer, request.path_length_bytes,
-        candidate_address_space, elf_validation_status, address_space_status);
+    fs::NodeInformation executable_information{};
+    ProcessRuntimeStatus status =
+        LoadExecutableFromPath(process.file_system_context, launch_path_buffer,
+                               request.path_length_bytes, candidate_address_space,
+                               elf_validation_status, address_space_status, executable_information);
+    if (status == ProcessRuntimeStatus::Succeeded &&
+        !AddressSpaceWithinLimit(
+            candidate_address_space,
+            process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::AddressSpace)]
+                .current)) {
+        status = ProcessRuntimeStatus::ResourceLimitExceeded;
+    }
     if (status == ProcessRuntimeStatus::Succeeded &&
         !PopulateUserProgramArguments(request, candidate_address_space)) {
         status = ProcessRuntimeStatus::InvalidArguments;
@@ -2939,6 +3087,7 @@ ProcessRuntimeStatus ExecCurrentProcess(ExceptionFrame &frame,
     process.result.selection = UserProgramSelection::DiskExecutable;
     process.result.root_physical_address = process.address_space.root_physical_address;
     process.result.mapped_page_count = process.address_space.mapped_page_count;
+    ApplyExecutableCredentials(process.file_system_context, executable_information);
     uint64_t closed_descriptor_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     if (process.file_table.CloseOnExec(closed_descriptor_count) != FileTableStatus::Succeeded ||
         DestroyUserAddressSpace(previous_address_space) != UserAddressSpaceStatus::Succeeded ||
@@ -4380,6 +4529,194 @@ UserProgramSelection CurrentProcessSelection() noexcept {
     return CurrentRuntimeProcess().result.selection;
 }
 
+ProcessCredentialStatus
+GetCurrentProcessCredentials(os::abi::CredentialInformation &information) noexcept {
+    information = os::abi::CredentialInformation{};
+    if (!IsProcessSchedulingActive()) {
+        return ProcessCredentialStatus::NotInitialized;
+    }
+    const fs::FsContext &context = CurrentRuntimeProcess().file_system_context;
+    if (!context.initialized || context.credentials.supplementary_group_count >
+                                    security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY) {
+        return ProcessCredentialStatus::InvalidArgument;
+    }
+    information = os::abi::CredentialInformation{
+        .real_user_identifier = context.credentials.real_user_identifier,
+        .effective_user_identifier = context.credentials.effective_user_identifier,
+        .saved_user_identifier = context.credentials.saved_user_identifier,
+        .real_group_identifier = context.credentials.real_group_identifier,
+        .effective_group_identifier = context.credentials.effective_group_identifier,
+        .saved_group_identifier = context.credentials.saved_group_identifier,
+        .supplementary_group_count =
+            static_cast<uint32_t>(context.credentials.supplementary_group_count),
+        .creation_mask = context.creation_mask,
+    };
+    return ProcessCredentialStatus::Succeeded;
+}
+
+ProcessCredentialStatus
+SetCurrentProcessUserIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return ProcessCredentialStatus::NotInitialized;
+    }
+    if (request.reserved != 0U) {
+        return ProcessCredentialStatus::InvalidArgument;
+    }
+    security::Credentials &credentials = CurrentRuntimeProcess().file_system_context.credentials;
+    if (!security::IsSuperuser(credentials) &&
+        (!IdentifierRequestAllowed(request.real_identifier, credentials.real_user_identifier,
+                                   credentials.effective_user_identifier,
+                                   credentials.saved_user_identifier) ||
+         !IdentifierRequestAllowed(request.effective_identifier, credentials.real_user_identifier,
+                                   credentials.effective_user_identifier,
+                                   credentials.saved_user_identifier) ||
+         !IdentifierRequestAllowed(request.saved_identifier, credentials.real_user_identifier,
+                                   credentials.effective_user_identifier,
+                                   credentials.saved_user_identifier))) {
+        return ProcessCredentialStatus::PermissionDenied;
+    }
+    if (request.real_identifier != os::abi::OS_ABI_IDENTIFIER_UNCHANGED) {
+        credentials.real_user_identifier = request.real_identifier;
+    }
+    if (request.effective_identifier != os::abi::OS_ABI_IDENTIFIER_UNCHANGED) {
+        credentials.effective_user_identifier = request.effective_identifier;
+    }
+    if (request.saved_identifier != os::abi::OS_ABI_IDENTIFIER_UNCHANGED) {
+        credentials.saved_user_identifier = request.saved_identifier;
+    }
+    return ProcessCredentialStatus::Succeeded;
+}
+
+ProcessCredentialStatus
+SetCurrentProcessGroupIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return ProcessCredentialStatus::NotInitialized;
+    }
+    if (request.reserved != 0U) {
+        return ProcessCredentialStatus::InvalidArgument;
+    }
+    security::Credentials &credentials = CurrentRuntimeProcess().file_system_context.credentials;
+    if (!security::IsSuperuser(credentials) &&
+        (!IdentifierRequestAllowed(request.real_identifier, credentials.real_group_identifier,
+                                   credentials.effective_group_identifier,
+                                   credentials.saved_group_identifier) ||
+         !IdentifierRequestAllowed(request.effective_identifier, credentials.real_group_identifier,
+                                   credentials.effective_group_identifier,
+                                   credentials.saved_group_identifier) ||
+         !IdentifierRequestAllowed(request.saved_identifier, credentials.real_group_identifier,
+                                   credentials.effective_group_identifier,
+                                   credentials.saved_group_identifier))) {
+        return ProcessCredentialStatus::PermissionDenied;
+    }
+    if (request.real_identifier != os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED) {
+        credentials.real_group_identifier = request.real_identifier;
+    }
+    if (request.effective_identifier != os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED) {
+        credentials.effective_group_identifier = request.effective_identifier;
+    }
+    if (request.saved_identifier != os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED) {
+        credentials.saved_group_identifier = request.saved_identifier;
+    }
+    return ProcessCredentialStatus::Succeeded;
+}
+
+ProcessCredentialStatus GetCurrentProcessSupplementaryGroups(os::abi::GroupIdentifier *const groups,
+                                                             const uint64_t capacity,
+                                                             uint64_t &group_count) noexcept {
+    group_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessCredentialStatus::NotInitialized;
+    }
+    const security::Credentials &credentials =
+        CurrentRuntimeProcess().file_system_context.credentials;
+    if (credentials.supplementary_group_count >
+        security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY) {
+        return ProcessCredentialStatus::InvalidArgument;
+    }
+    group_count = credentials.supplementary_group_count;
+    if (capacity < group_count) {
+        return ProcessCredentialStatus::CapacityExhausted;
+    }
+    if (group_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE && groups == nullptr) {
+        return ProcessCredentialStatus::InvalidArgument;
+    }
+    for (uint64_t group_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX; group_index < group_count;
+         ++group_index) {
+        groups[group_index] = credentials.supplementary_groups[group_index];
+    }
+    return ProcessCredentialStatus::Succeeded;
+}
+
+ProcessCredentialStatus
+SetCurrentProcessSupplementaryGroups(const os::abi::GroupIdentifier *const groups,
+                                     const uint64_t group_count) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return ProcessCredentialStatus::NotInitialized;
+    }
+    security::Credentials &credentials = CurrentRuntimeProcess().file_system_context.credentials;
+    if (!security::IsSuperuser(credentials)) {
+        return ProcessCredentialStatus::PermissionDenied;
+    }
+    const security::CredentialStatus status =
+        security::SetSupplementaryGroups(credentials, groups, group_count);
+    if (status == security::CredentialStatus::Succeeded) {
+        return ProcessCredentialStatus::Succeeded;
+    }
+    return status == security::CredentialStatus::CapacityExhausted
+               ? ProcessCredentialStatus::CapacityExhausted
+               : ProcessCredentialStatus::InvalidArgument;
+}
+
+ProcessCredentialStatus
+SetCurrentProcessCreationMask(const os::abi::FileMode creation_mask,
+                              os::abi::FileMode &previous_creation_mask) noexcept {
+    previous_creation_mask = 0U;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessCredentialStatus::NotInitialized;
+    }
+    fs::FsContext &context = CurrentRuntimeProcess().file_system_context;
+    previous_creation_mask = context.creation_mask;
+    context.creation_mask = creation_mask & os::abi::OS_ABI_FILE_MODE_PERMISSION_MASK;
+    return ProcessCredentialStatus::Succeeded;
+}
+
+ProcessResourceLimitStatus GetCurrentProcessResourceLimit(const os::abi::ResourceLimitKind kind,
+                                                          os::abi::ResourceLimit &limit) noexcept {
+    limit = os::abi::ResourceLimit{};
+    if (!IsProcessSchedulingActive()) {
+        return ProcessResourceLimitStatus::NotInitialized;
+    }
+    if (!ResourceLimitKindIsValid(kind)) {
+        return ProcessResourceLimitStatus::InvalidArgument;
+    }
+    limit = CurrentRuntimeProcess().resource_limits[static_cast<uint64_t>(kind)];
+    return ProcessResourceLimitStatus::Succeeded;
+}
+
+ProcessResourceLimitStatus
+SetCurrentProcessResourceLimit(const os::abi::ResourceLimitKind kind,
+                               const os::abi::ResourceLimit &limit) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return ProcessResourceLimitStatus::NotInitialized;
+    }
+    if (!ResourceLimitKindIsValid(kind) || limit.current > limit.maximum ||
+        limit.maximum > ResourceLimitSystemMaximum(kind)) {
+        return ProcessResourceLimitStatus::InvalidArgument;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const os::abi::ResourceLimit previous = process.resource_limits[static_cast<uint64_t>(kind)];
+    if (!security::IsSuperuser(process.file_system_context.credentials) &&
+        limit.maximum > previous.maximum) {
+        return ProcessResourceLimitStatus::PermissionDenied;
+    }
+    if (kind == os::abi::ResourceLimitKind::OpenFileCount &&
+        process.file_table.SetSoftLimit(limit.current) != FileTableStatus::Succeeded) {
+        return ProcessResourceLimitStatus::InvalidArgument;
+    }
+    process.resource_limits[static_cast<uint64_t>(kind)] = limit;
+    return ProcessResourceLimitStatus::Succeeded;
+}
+
 UserVirtualMemoryStatus MapCurrentProcessAnonymousMemory(const uint64_t requested_address,
                                                          const uint64_t length_bytes,
                                                          const uint64_t protection_flags,
@@ -4389,6 +4726,19 @@ UserVirtualMemoryStatus MapCurrentProcessAnonymousMemory(const uint64_t requeste
         return UserVirtualMemoryStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const os::abi::VirtualMemoryStatistics statistics =
+        GetUserVirtualMemoryStatistics(process.address_space);
+    const uint64_t address_space_limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::AddressSpace)]
+            .current;
+    const uint64_t current_virtual_bytes =
+        statistics.virtual_page_count > UINT64_MAX / os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES
+            ? UINT64_MAX
+            : statistics.virtual_page_count * os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES;
+    if (current_virtual_bytes > address_space_limit ||
+        length_bytes > address_space_limit - current_virtual_bytes) {
+        return UserVirtualMemoryStatus::ResourceLimitExceeded;
+    }
     const UserVirtualMemoryStatus status =
         MapAnonymousMemory(process.address_space, requested_address, length_bytes, protection_flags,
                            map_flags, mapped_address);
@@ -4403,6 +4753,19 @@ UserVirtualMemoryStatus MapCurrentProcessFileMemory(const os::abi::FileMemoryMap
         return UserVirtualMemoryStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const os::abi::VirtualMemoryStatistics statistics =
+        GetUserVirtualMemoryStatistics(process.address_space);
+    const uint64_t address_space_limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::AddressSpace)]
+            .current;
+    const uint64_t current_virtual_bytes =
+        statistics.virtual_page_count > UINT64_MAX / os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES
+            ? UINT64_MAX
+            : statistics.virtual_page_count * os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES;
+    if (current_virtual_bytes > address_space_limit ||
+        request.length_bytes > address_space_limit - current_virtual_bytes) {
+        return UserVirtualMemoryStatus::ResourceLimitExceeded;
+    }
     KernelObjectReference reference{};
     if (process.file_table.Lookup(request.file_descriptor, reference) !=
         FileTableStatus::Succeeded) {
@@ -4464,6 +4827,12 @@ UserVirtualMemoryStatus SetCurrentProcessProgramBreak(const uint64_t requested_a
         return UserVirtualMemoryStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    if (requested_address > process.address_space.program_break_base_address &&
+        requested_address - process.address_space.program_break_base_address >
+            process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::Data)]
+                .current) {
+        return UserVirtualMemoryStatus::ResourceLimitExceeded;
+    }
     const UserVirtualMemoryStatus status =
         SetProgramBreak(process.address_space, requested_address, program_break_address);
     process.result.mapped_page_count = process.address_space.mapped_page_count;
@@ -4777,6 +5146,12 @@ FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path, const uint64_t 
     if (stat_status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(stat_status);
     }
+    const uint64_t file_size_limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
+            .current;
+    if (size_bytes > file_size_limit) {
+        return FileSystemStatus::FileTooLarge;
+    }
     const fs::Status truncate_status =
         process_vfs->Truncate(process.file_system_context, path, path_length_bytes, size_bytes);
     if (truncate_status != fs::Status::Succeeded) {
@@ -4796,6 +5171,70 @@ FileSystemStatus StatCurrentProcessPath(const uint8_t *path, const uint64_t path
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     return fs::ToFileSystemStatus(
         process_vfs->Stat(process.file_system_context, path, path_length_bytes, information));
+}
+
+FileSystemStatus ChangeCurrentProcessPathMode(const uint8_t *const path,
+                                              const uint64_t path_length_bytes,
+                                              const os::abi::FileMode mode) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->ChangeMode(process.file_system_context, path, path_length_bytes, mode));
+}
+
+FileSystemStatus
+ChangeCurrentProcessPathOwner(const uint8_t *const path, const uint64_t path_length_bytes,
+                              const os::abi::UserIdentifier user_identifier,
+                              const os::abi::GroupIdentifier group_identifier) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(process_vfs->ChangeOwner(
+        process.file_system_context, path, path_length_bytes, user_identifier, group_identifier));
+}
+
+FileSystemStatus LinkCurrentProcessPath(const uint8_t *const source_path,
+                                        const uint64_t source_path_length_bytes,
+                                        const uint8_t *const destination_path,
+                                        const uint64_t destination_path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(process_vfs->Link(process.file_system_context, source_path,
+                                                    source_path_length_bytes, destination_path,
+                                                    destination_path_length_bytes));
+}
+
+FileSystemStatus
+CreateCurrentProcessSymbolicLink(const uint8_t *const target, const uint64_t target_length_bytes,
+                                 const uint8_t *const destination_path,
+                                 const uint64_t destination_path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->CreateSymbolicLink(process.file_system_context, target, target_length_bytes,
+                                        destination_path, destination_path_length_bytes));
+}
+
+FileSystemStatus ReadCurrentProcessSymbolicLink(const uint8_t *const path,
+                                                const uint64_t path_length_bytes,
+                                                uint8_t *const destination,
+                                                const uint64_t capacity_bytes,
+                                                uint64_t &target_length_bytes) noexcept {
+    target_length_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    return fs::ToFileSystemStatus(
+        process_vfs->ReadSymbolicLink(process.file_system_context, path, path_length_bytes,
+                                      destination, capacity_bytes, target_length_bytes));
 }
 
 FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
@@ -4934,9 +5373,27 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
         FileDescriptionStatus::Succeeded) {
         return ProcessIoStatus::ObjectFailure;
     }
+    uint64_t effective_length_bytes = length_bytes;
+    if (snapshot.kind == FileDescriptionKind::RegularFile && length_bytes != 0ULL) {
+        const uint64_t file_size_limit =
+            process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
+                .current;
+        const uint64_t write_offset =
+            (snapshot.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) != 0ULL
+                ? snapshot.size_bytes
+                : snapshot.offset_bytes;
+        if (write_offset >= file_size_limit) {
+            file_system_status = FileSystemStatus::FileTooLarge;
+            return ProcessIoStatus::FileSystemFailure;
+        }
+        const uint64_t available_bytes = file_size_limit - write_offset;
+        if (effective_length_bytes > available_bytes) {
+            effective_length_bytes = available_bytes;
+        }
+    }
     PipeStatus pipe_status = PipeStatus::Succeeded;
     const FileDescriptionStatus description_status = file_description_manager.TryWrite(
-        reference, source, length_bytes, written_bytes, file_system_status, pipe_status);
+        reference, source, effective_length_bytes, written_bytes, file_system_status, pipe_status);
     const ProcessIoStatus status = MapFileDescriptionStatus(description_status);
     if (status == ProcessIoStatus::Succeeded) {
         if (snapshot.kind == FileDescriptionKind::TerminalOutput ||
@@ -5111,7 +5568,17 @@ ProcessIoStatus SetCurrentProcessDescriptorSoftLimit(const uint64_t soft_limit) 
     if (!IsProcessSchedulingActive()) {
         return ProcessIoStatus::InvalidArgument;
     }
-    return MapFileTableStatus(CurrentRuntimeProcess().file_table.SetSoftLimit(soft_limit));
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    os::abi::ResourceLimit &limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::OpenFileCount)];
+    if (soft_limit > limit.maximum) {
+        return ProcessIoStatus::DescriptorLimitExceeded;
+    }
+    const ProcessIoStatus status = MapFileTableStatus(process.file_table.SetSoftLimit(soft_limit));
+    if (status == ProcessIoStatus::Succeeded) {
+        limit.current = soft_limit;
+    }
+    return status;
 }
 
 ProcessIoStatus GetCurrentProcessDescriptorLimits(uint64_t &soft_limit,
@@ -5604,6 +6071,15 @@ bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_a
         return false;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    if (fault_address >= OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS &&
+        fault_address < OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
+        const uint64_t stack_limit =
+            process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::Stack)]
+                .current;
+        if (fault_address < OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS - stack_limit) {
+            return false;
+        }
+    }
     const uint64_t previous_stack_growth_count =
         process.address_space.stack_growth_page_fault_count;
     const uint64_t previous_file_fault_count = process.address_space.file_page_fault_count;

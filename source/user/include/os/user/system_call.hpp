@@ -33,6 +33,18 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t WakePrivateFutex(const uint32_t *word, uint64_t maximum_wake_count) noexcept;
 [[nodiscard]] uint64_t GetMonotonicTime() noexcept;
 [[nodiscard]] int64_t GetRealtime(os::abi::RealtimeInformation &information) noexcept;
+[[nodiscard]] int64_t GetCredentials(os::abi::CredentialInformation &information) noexcept;
+[[nodiscard]] int64_t SetUserIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept;
+[[nodiscard]] int64_t SetGroupIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept;
+[[nodiscard]] int64_t GetSupplementaryGroups(os::abi::GroupIdentifier *groups,
+                                             uint64_t capacity) noexcept;
+[[nodiscard]] int64_t SetSupplementaryGroups(const os::abi::GroupIdentifier *groups,
+                                             uint64_t group_count) noexcept;
+[[nodiscard]] int64_t SetCreationMask(os::abi::FileMode creation_mask) noexcept;
+[[nodiscard]] int64_t GetResourceLimit(os::abi::ResourceLimitKind kind,
+                                       os::abi::ResourceLimit &limit) noexcept;
+[[nodiscard]] int64_t SetResourceLimit(os::abi::ResourceLimitKind kind,
+                                       const os::abi::ResourceLimit &limit) noexcept;
 [[nodiscard]] int64_t SleepUntil(uint64_t deadline_nanoseconds) noexcept;
 [[nodiscard]] int64_t SleepFor(uint64_t duration_nanoseconds) noexcept;
 [[nodiscard]] int64_t SetSignalAction(uint64_t signal_number, const os::abi::SignalAction &action,
@@ -100,6 +112,19 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                    uint64_t size_bytes) noexcept;
 [[nodiscard]] int64_t StatFile(const char *path, uint64_t path_length_bytes,
                                os::abi::FileInformation &information) noexcept;
+[[nodiscard]] int64_t ChangeMode(const char *path, uint64_t path_length_bytes,
+                                 os::abi::FileMode mode) noexcept;
+[[nodiscard]] int64_t ChangeOwner(const char *path, uint64_t path_length_bytes,
+                                  os::abi::UserIdentifier user_identifier,
+                                  os::abi::GroupIdentifier group_identifier) noexcept;
+[[nodiscard]] int64_t LinkFile(const char *source_path, uint64_t source_length_bytes,
+                               const char *destination_path,
+                               uint64_t destination_length_bytes) noexcept;
+[[nodiscard]] int64_t CreateSymbolicLink(const char *target, uint64_t target_length_bytes,
+                                         const char *destination_path,
+                                         uint64_t destination_length_bytes) noexcept;
+[[nodiscard]] int64_t ReadSymbolicLink(const char *path, uint64_t path_length_bytes,
+                                       char *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t ExecProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t WaitProcess(uint64_t process_id, os::abi::ProcessWaitResult &result) noexcept;

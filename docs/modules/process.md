@@ -331,3 +331,16 @@ SignalManager 删除、JobControlManager 删除和 runtime 槽释放。
 job-control active Process/session/group 为零。完整状态机见
 [v1.15 学习章](../learning/23-v1.15-tty-session-job-control.md) 与
 [ADR 0042](../adr/0042-tty-session-and-job-control.md)。
+
+## v2.4 凭据与资源限制
+
+每个 Process 继承 real/effective/saved UID/GID、最多 32 个 Kernel 补充组、umask
+和 16 项 Linux 编号 rlimit。fork 与 spawn 复制，普通 exec 保留；setuid/setgid
+只在新地址空间成功提交后修改 effective/saved ID。NPROC 按 real UID 统计，
+NOFILE 与 FileTable soft limit 共用状态；FSIZE、DATA、STACK、AS 分别进入文件
+写入、program break、栈页故障和映射/exec 检查。
+
+用户态可以降低 hard limit 或在 hard limit 内调整 soft limit；只有 effective
+root 能抬高 hard limit，且仍不能越过分档 Process/FileTable 和固定 8 MiB
+stack/data 等系统上限。详细规则见
+[ADR 0052](../adr/0052-linux-compatible-local-credentials-permissions-and-rlimits.md)。

@@ -151,17 +151,22 @@ Shell 对空 fd 0 执行 WaitDescriptorReadable。若没有其他 Ready 进程�
 | `resources` | 读取 heap、fd、pipe、vnode 与 journal 快照 |
 | `sleep <ms>` | 经已有 deadline syscall 非忙等等待 |
 | `kill <pid> <signal>` | 经已有 signal syscall 投递进程信号 |
-| `id` | 输出当前 64 位 PID |
+| `id` | 输出 real/effective UID/GID 与补充组 |
 | `env` | 输出当前导出环境；Shell 支持赋值、export/unset 与变量展开 |
 | `grep <pattern> [file]` | 有界逐行查找，匹配行写 stdout，无匹配返回失败 |
 | `find [path]` | 用最多 128 个 512 字节路径槽迭代遍历 |
 | `sort [file]` | 排序最多 64 行，每行最多 256 字节 |
 | `tail [file]` | 用 10 行环保存最后十行，每行最多 256 字节 |
-| `df` | 输出 rootfs v3 256 MiB 区域及可达文件分配字节估算 |
+| `df` | 输出 rootfs v4 的 128 GiB 区域及可达文件分配字节估算 |
 | `du [path]` | 迭代累计可达 vnode 的 allocated size |
 | `hexdump [file]` | 按 16 字节行输出 8 位 offset 与十六进制字节 |
 | `clear` | 输出 VGA 支持的 CSI 清屏与归位序列 |
 | `date` | 经 CMOS RTC 输出 UTC 日期时间 |
+| `chmod <mode> <path>` | 按 Linux 四位八进制 mode 修改权限 |
+| `chown <uid[:gid]> <path>` | 按数值 UID/GID 修改 owner |
+| `ln [-s] <target> <path>` | 创建硬链接或符号链接 |
+| `readlink <path>` | 输出符号链接的原始目标 |
+| `umask [mode]` | 查询或修改 Shell 自身创建掩码 |
 | `exit` | 正常退出 Shell |
 
 v1.11 已把普通命令移出 Shell，并支持输入/输出重定向与 16 级流水线；v1.18
@@ -171,7 +176,8 @@ QEMU 还会实际运行新增 13 个工具，检查唯一输出、cp 回读、pr
 deadline sleep、信号投递和 PID 查询。v1.15
 已经提供 session、前后台 PGID、控制终端、`jobs/fg/bg`、尾部 `&`，以及
 TTY 生成的 Ctrl-C/Ctrl-Z 组信号。v2.2 进一步提供完整控制/重定向、32 项环境、
-引用感知 glob、左右行编辑、16 条历史、Tab 补全和 43 个工具路径。完整 termios、
+引用感知 glob、左右行编辑、16 条历史、Tab 补全和 43 个工具路径。v2.4 又把
+独立工具路径增至 47，并加入本地身份、权限和 Shell builtin umask。完整 termios、
 任意 raw mode、路径补全、多个终端、时区数据库和完整 POSIX job spec 仍未实现。
 所有命令解释始终位于用户态。
 

@@ -238,6 +238,8 @@ const BackendOperations LegacyFileSystem::operations{
     .read_directory = LegacyFileSystem::ReadDirectoryOperation,
     .get_name = LegacyFileSystem::GetNameOperation,
     .stat = LegacyFileSystem::StatOperation,
+    .change_mode = nullptr,
+    .change_owner = nullptr,
     .sync = LegacyFileSystem::SyncOperation,
     .validate = LegacyFileSystem::ValidateOperation,
     .read_resource_usage = LegacyFileSystem::ReadResourceUsageOperation,
@@ -320,7 +322,9 @@ Status LegacyFileSystem::LookupOperation(void *const context, const Vnode &direc
 Status LegacyFileSystem::CreateOperation(void *const context, const Vnode &directory,
                                          const uint8_t *const name,
                                          const uint64_t name_length_bytes, const NodeType type,
+                                         const NodeCreationAttributes &attributes,
                                          Vnode &vnode) noexcept {
+    static_cast<void>(attributes);
     vnode = Vnode{};
     if (context == nullptr || !NameIsValid(name, name_length_bytes) ||
         (type != NodeType::RegularFile && type != NodeType::Directory)) {
@@ -626,6 +630,10 @@ Status LegacyFileSystem::StatOperation(void *const context, const Vnode &vnode,
         .modification_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
         .change_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
         .birth_time_nanoseconds = OS_KERNEL_LEGACY_FILE_SYSTEM_EMPTY_VALUE,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = vnode.type == NodeType::Directory ? os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000777U
+                                                  : os::abi::OS_ABI_FILE_MODE_REGULAR | 0000666U,
     };
     return Status::Succeeded;
 }

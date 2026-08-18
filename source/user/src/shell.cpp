@@ -17,6 +17,10 @@ constexpr uint64_t OS_USER_SHELL_BUILTIN_PARAMETER_INDEX = 1ULL;
 constexpr uint64_t OS_USER_SHELL_CD_ARGUMENT_COUNT = 2ULL;
 constexpr uint64_t OS_USER_SHELL_EXIT_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_ENVIRONMENT_BUILTIN_ARGUMENT_COUNT = 2ULL;
+constexpr uint64_t OS_USER_SHELL_UMASK_QUERY_ARGUMENT_COUNT = 1ULL;
+constexpr uint64_t OS_USER_SHELL_UMASK_SET_ARGUMENT_COUNT = 2ULL;
+constexpr uint64_t OS_USER_SHELL_UMASK_DIGIT_COUNT = 4ULL;
+constexpr uint64_t OS_USER_SHELL_OCTAL_BASE = 8ULL;
 constexpr uint64_t OS_USER_SHELL_JOBS_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_JOB_BUILTIN_MINIMUM_ARGUMENT_COUNT = 1ULL;
 constexpr uint64_t OS_USER_SHELL_JOB_BUILTIN_MAXIMUM_ARGUMENT_COUNT = 2ULL;
@@ -75,11 +79,12 @@ constexpr char OS_USER_SHELL_FOREGROUND_COMMAND[] = "fg";
 constexpr char OS_USER_SHELL_BACKGROUND_COMMAND[] = "bg";
 constexpr char OS_USER_SHELL_EXPORT_COMMAND[] = "export";
 constexpr char OS_USER_SHELL_UNSET_COMMAND[] = "unset";
+constexpr char OS_USER_SHELL_UMASK_COMMAND[] = "umask";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v2.3\r\n"
-    "行编辑、环境变量、通配符、完整重定向与 43 个用户工具已经启用。\r\n"
-    "rootfs v4 已使用 128 GiB 参考盘并支持链接、时间戳与断电恢复。\r\n";
+    "\r\nx86-64 OS Lab v2.4\r\n"
+    "行编辑、环境变量、通配符、完整重定向与 47 个用户工具已经启用。\r\n"
+    "rootfs v4 已启用本地身份、权限、资源边界与断电恢复。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";
@@ -220,7 +225,8 @@ constexpr ShellCompletionCandidate OS_USER_SHELL_COMPLETION_CANDIDATES[]{
     {"ps", 2U},       {"free", 4U},    {"uname", 5U},   {"mounts", 6U},   {"resources", 9U},
     {"sleep", 5U},    {"kill", 4U},    {"id", 2U},      {"env", 3U},      {"cd", 2U},
     {"exit", 4U},     {"jobs", 4U},    {"fg", 2U},      {"bg", 2U},       {"export", 6U},
-    {"unset", 5U},    {"grep", 4U},    {"find", 4U},    {"sort", 4U},     {"tail", 4U},
+    {"unset", 5U},    {"umask", 5U},   {"chmod", 5U},   {"chown", 5U},    {"ln", 2U},
+    {"readlink", 8U}, {"grep", 4U},    {"find", 4U},    {"sort", 4U},     {"tail", 4U},
     {"df", 2U},       {"du", 2U},      {"hexdump", 7U}, {"clear", 5U},    {"date", 4U},
 };
 
@@ -613,6 +619,37 @@ template <uint64_t SizeBytes>
         output[digit_index] = reversed[digit_count - digit_index - OS_USER_SHELL_FIRST_VALUE];
     }
     return WriteBytes(output, digit_count);
+}
+
+[[nodiscard]] bool WriteCreationMask(const os::abi::FileMode creation_mask) noexcept {
+    char output[OS_USER_SHELL_UMASK_DIGIT_COUNT]{};
+    uint64_t remaining = creation_mask & os::abi::OS_ABI_FILE_MODE_PERMISSION_MASK;
+    for (uint64_t digit_index = OS_USER_SHELL_EMPTY_VALUE;
+         digit_index < OS_USER_SHELL_UMASK_DIGIT_COUNT; ++digit_index) {
+        output[OS_USER_SHELL_UMASK_DIGIT_COUNT - digit_index - OS_USER_SHELL_FIRST_VALUE] =
+            static_cast<char>('0' + remaining % OS_USER_SHELL_OCTAL_BASE);
+        remaining /= OS_USER_SHELL_OCTAL_BASE;
+    }
+    return remaining == OS_USER_SHELL_EMPTY_VALUE && WriteBytes(output, sizeof(output)) &&
+           WriteLiteral(OS_USER_SHELL_EDITOR_NEWLINE_SEQUENCE);
+}
+
+[[nodiscard]] bool ParseCreationMask(const char *const bytes, const uint64_t length_bytes,
+                                     os::abi::FileMode &creation_mask) noexcept {
+    creation_mask = 0U;
+    if (bytes == nullptr || length_bytes == OS_USER_SHELL_EMPTY_VALUE ||
+        length_bytes > OS_USER_SHELL_UMASK_DIGIT_COUNT) {
+        return false;
+    }
+    for (uint64_t byte_index = OS_USER_SHELL_EMPTY_VALUE; byte_index < length_bytes; ++byte_index) {
+        if (bytes[byte_index] < '0' || bytes[byte_index] > '7') {
+            return false;
+        }
+        creation_mask = static_cast<os::abi::FileMode>(
+            creation_mask * static_cast<os::abi::FileMode>(OS_USER_SHELL_OCTAL_BASE) +
+            static_cast<os::abi::FileMode>(bytes[byte_index] - '0'));
+    }
+    return (creation_mask & ~os::abi::OS_ABI_FILE_MODE_PERMISSION_MASK) == 0U;
 }
 
 void InitializeJobTable() noexcept {
@@ -1214,6 +1251,33 @@ void ClosePipelineDescriptors(os::abi::PipeDescriptorPair *const pipes,
         if (status != ShellEnvironmentStatus::Succeeded &&
             status != ShellEnvironmentStatus::NotFound) {
             static_cast<void>(WriteLiteral(OS_USER_SHELL_ENVIRONMENT_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        return OS_USER_SHELL_SUCCESS_RESULT;
+    }
+
+    if (IsSingleStageBuiltin(execution_plan, OS_USER_SHELL_UMASK_COMMAND,
+                             sizeof(OS_USER_SHELL_UMASK_COMMAND) -
+                                 OS_USER_SHELL_STRING_TERMINATOR_SIZE_BYTES)) {
+        const ShellExecutionStage &stage = execution_plan.stages[OS_USER_SHELL_EMPTY_VALUE];
+        if (stage.argument_count == OS_USER_SHELL_UMASK_QUERY_ARGUMENT_COUNT) {
+            os::abi::CredentialInformation information{};
+            return GetCredentials(information) == OS_USER_SHELL_SUCCESS_RESULT &&
+                           WriteCreationMask(information.creation_mask)
+                       ? OS_USER_SHELL_SUCCESS_RESULT
+                       : OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        if (stage.argument_count != OS_USER_SHELL_UMASK_SET_ARGUMENT_COUNT) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
+            return OS_USER_SHELL_FAILURE_EXIT_CODE;
+        }
+        const uint64_t mask_index =
+            stage.first_argument_index + OS_USER_SHELL_BUILTIN_PARAMETER_INDEX;
+        os::abi::FileMode creation_mask = 0U;
+        if (!ParseCreationMask(ShellExecutionArgumentBytes(execution_plan, mask_index),
+                               execution_plan.arguments[mask_index].length_bytes, creation_mask) ||
+            SetCreationMask(creation_mask) < OS_USER_SHELL_SUCCESS_RESULT) {
+            static_cast<void>(WriteLiteral(OS_USER_SHELL_USAGE_ERROR));
             return OS_USER_SHELL_FAILURE_EXIT_CODE;
         }
         return OS_USER_SHELL_SUCCESS_RESULT;

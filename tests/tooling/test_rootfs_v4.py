@@ -12,6 +12,8 @@ from tools.os_tools.rootfs_v4 import (
     OS_ROOTFS_V4_INODE_BITMAP_START_RELATIVE_BLOCK,
     OS_ROOTFS_V4_INODE_SIZE_BYTES,
     OS_ROOTFS_V4_INODE_TABLE_START_RELATIVE_BLOCK,
+    OS_ROOTFS_V4_MODE_DIRECTORY,
+    OS_ROOTFS_V4_MODE_REGULAR,
     OS_ROOTFS_V4_NODE_TYPE_DIRECTORY,
     OS_ROOTFS_V4_NODE_TYPE_REGULAR_FILE,
     OS_ROOTFS_V4_ROOT_INODE_NUMBER,
@@ -68,6 +70,13 @@ def makeInode(
         modificationTimeNanoseconds=1,
         changeTimeNanoseconds=1,
         birthTimeNanoseconds=1,
+        ownerUserIdentifier=0,
+        ownerGroupIdentifier=0,
+        mode=(
+            (OS_ROOTFS_V4_MODE_DIRECTORY | 0o755)
+            if nodeType == OS_ROOTFS_V4_NODE_TYPE_DIRECTORY
+            else (OS_ROOTFS_V4_MODE_REGULAR | 0o644)
+        ),
     )
 
 

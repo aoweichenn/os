@@ -339,7 +339,19 @@ set(
     OS_USER_TOOL_PROBE_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/user_tool_probe.elf"
     CACHE INTERNAL
-    "43 个独立用户工具 ELF 路径与 inode 验收程序"
+    "47 个独立用户工具 ELF 路径与 inode 验收程序"
+)
+set(
+    OS_USER_SECURITY_PROBE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_security_probe.elf"
+    CACHE INTERNAL
+    "本地身份、权限、链接与资源限制验收程序"
+)
+set(
+    OS_USER_SECURITY_EXEC_TARGET_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/user_security_exec_target.elf"
+    CACHE INTERNAL
+    "fork/exec 凭据继承与 set-ID 验收目标"
 )
 set(
     OS_USER_TRUNCATED_ELF_PATH
@@ -492,7 +504,19 @@ os_add_user_program(
     os_user_tool_probe_elf
     "${CMAKE_CURRENT_SOURCE_DIR}/programs/tool_probe.cpp"
     "${OS_USER_TOOL_PROBE_ELF_PATH}"
-    "链接 43 个独立用户工具 ELF 路径验收程序"
+    "链接 47 个独立用户工具 ELF 路径验收程序"
+)
+os_add_user_program(
+    os_user_security_probe_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/security_probe.cpp"
+    "${OS_USER_SECURITY_PROBE_ELF_PATH}"
+    "链接本地身份、权限、链接与资源限制验收程序"
+)
+os_add_user_program(
+    os_user_security_exec_target_elf
+    "${CMAKE_CURRENT_SOURCE_DIR}/programs/security_exec_target.cpp"
+    "${OS_USER_SECURITY_EXEC_TARGET_ELF_PATH}"
+    "链接 fork/exec 凭据继承与 set-ID 验收目标"
 )
 
 add_custom_command(

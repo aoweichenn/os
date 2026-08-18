@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/abi/security.hpp"
+#include "os/kernel/security/credentials.hpp"
 #include "os/kernel/sync/spin_lock.hpp"
 
 #include <stdint.h>
@@ -104,6 +106,9 @@ struct BackendNodeInformation final {
     uint64_t modification_time_nanoseconds;
     uint64_t change_time_nanoseconds;
     uint64_t birth_time_nanoseconds;
+    os::abi::UserIdentifier owner_user_identifier;
+    os::abi::GroupIdentifier owner_group_identifier;
+    os::abi::FileMode mode;
 };
 
 struct NodeInformation final {
@@ -120,19 +125,31 @@ struct NodeInformation final {
     uint64_t modification_time_nanoseconds;
     uint64_t change_time_nanoseconds;
     uint64_t birth_time_nanoseconds;
+    os::abi::UserIdentifier owner_user_identifier;
+    os::abi::GroupIdentifier owner_group_identifier;
+    os::abi::FileMode mode;
 };
 
 struct FsContext final {
     Path root;
     Path current_working_directory;
+    security::Credentials credentials;
+    os::abi::FileMode creation_mask;
     bool initialized;
+};
+
+struct NodeCreationAttributes final {
+    os::abi::UserIdentifier owner_user_identifier;
+    os::abi::GroupIdentifier owner_group_identifier;
+    os::abi::FileMode mode;
 };
 
 struct BackendOperations final {
     Status (*lookup)(void *context, const Vnode &directory, const uint8_t *name,
                      uint64_t name_length_bytes, Vnode &vnode) noexcept;
     Status (*create)(void *context, const Vnode &directory, const uint8_t *name,
-                     uint64_t name_length_bytes, NodeType type, Vnode &vnode) noexcept;
+                     uint64_t name_length_bytes, NodeType type,
+                     const NodeCreationAttributes &attributes, Vnode &vnode) noexcept;
     Status (*open)(void *context, const Vnode &vnode) noexcept;
     Status (*close)(void *context, const Vnode &vnode) noexcept;
     Status (*remove)(void *context, const Vnode &directory, const uint8_t *name,
@@ -147,7 +164,8 @@ struct BackendOperations final {
     Status (*create_symbolic_link)(void *context, const Vnode &destination_directory,
                                    const uint8_t *destination_name,
                                    uint64_t destination_name_length_bytes, const uint8_t *target,
-                                   uint64_t target_length_bytes, Vnode &vnode) noexcept;
+                                   uint64_t target_length_bytes,
+                                   const NodeCreationAttributes &attributes, Vnode &vnode) noexcept;
     Status (*read_symbolic_link)(void *context, const Vnode &vnode, uint8_t *destination,
                                  uint64_t capacity_bytes, uint64_t &target_length_bytes) noexcept;
     Status (*parent)(void *context, const Vnode &vnode, Vnode &parent) noexcept;
@@ -161,6 +179,10 @@ struct BackendOperations final {
     Status (*get_name)(void *context, const Vnode &vnode, uint8_t *name,
                        uint64_t name_capacity_bytes, uint64_t &name_length_bytes) noexcept;
     Status (*stat)(void *context, const Vnode &vnode, BackendNodeInformation &information) noexcept;
+    Status (*change_mode)(void *context, const Vnode &vnode, os::abi::FileMode mode) noexcept;
+    Status (*change_owner)(void *context, const Vnode &vnode,
+                           os::abi::UserIdentifier user_identifier,
+                           os::abi::GroupIdentifier group_identifier) noexcept;
     Status (*sync)(void *context) noexcept;
     Status (*validate)(void *context) noexcept;
     Status (*read_resource_usage)(void *context, ResourceUsage &usage) noexcept;
@@ -244,9 +266,20 @@ class Vfs final {
                                   uint64_t path_length_bytes, uint64_t size_bytes) noexcept;
     [[nodiscard]] Status Stat(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, NodeInformation &information) noexcept;
+    [[nodiscard]] Status CheckAccess(const FsContext &context, const uint8_t *path,
+                                     uint64_t path_length_bytes,
+                                     uint32_t requested_access) noexcept;
+    [[nodiscard]] Status ChangeMode(const FsContext &context, const uint8_t *path,
+                                    uint64_t path_length_bytes, os::abi::FileMode mode) noexcept;
+    [[nodiscard]] Status ChangeOwner(const FsContext &context, const uint8_t *path,
+                                     uint64_t path_length_bytes,
+                                     os::abi::UserIdentifier user_identifier,
+                                     os::abi::GroupIdentifier group_identifier) noexcept;
     [[nodiscard]] Status Open(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, const OpenOptions &options,
                               OpenFile &open_file) noexcept;
+    [[nodiscard]] Status OpenExecutable(const FsContext &context, const uint8_t *path,
+                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
     [[nodiscard]] Status RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noexcept;
@@ -302,6 +335,17 @@ class Vfs final {
     [[nodiscard]] Status ValidateSuperblock(const Superblock &superblock) const noexcept;
     [[nodiscard]] Status Remove(const FsContext &context, const uint8_t *path,
                                 uint64_t path_length_bytes, NodeType expected_type) noexcept;
+    [[nodiscard]] Status ReadNodeInformation(const Path &path,
+                                             BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status RequireAccess(const FsContext &context, const Path &path,
+                                       uint32_t requested_access) noexcept;
+    [[nodiscard]] Status RequireParentMutationAccess(const FsContext &context,
+                                                     const Path &parent) noexcept;
+    [[nodiscard]] Status CheckStickyRemoval(const FsContext &context, const Path &directory,
+                                            const Path &target) noexcept;
+    [[nodiscard]] Status MakeCreationAttributes(const FsContext &context, const Path &parent,
+                                                NodeType type, os::abi::FileMode requested_mode,
+                                                NodeCreationAttributes &attributes) noexcept;
     void RecordResolution(Status status) noexcept;
 
     Mount *mounts_{nullptr};

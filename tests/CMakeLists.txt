@@ -1061,6 +1061,11 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_credentials_unit_tests
+    unit/kernel/credentials_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
     os_kernel_root_journal_unit_tests
     unit/kernel/root_journal_test.cpp
     "unit"
@@ -1078,6 +1083,11 @@ os_add_kernel_file_system_test(
 os_add_kernel_file_system_test(
     os_kernel_vfs_unit_tests
     unit/kernel/vfs_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_vfs_permission_unit_tests
+    unit/kernel/vfs_permission_test.cpp
     "unit"
 )
 os_add_kernel_file_system_test(
@@ -1300,6 +1310,14 @@ os_add_user_elf_audit_test(
 os_add_user_elf_audit_test(
     os_user_tool_probe_elf_layout
     "${OS_USER_TOOL_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_security_probe_elf_layout
+    "${OS_USER_SECURITY_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
+    os_user_security_exec_target_elf_layout
+    "${OS_USER_SECURITY_EXEC_TARGET_ELF_PATH}"
 )
 
 add_test(

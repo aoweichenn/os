@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/abi/resource.hpp"
+#include "os/abi/security.hpp"
 #include "os/abi/signal.hpp"
 #include "os/abi/system_call.hpp"
 #include "os/abi/terminal.hpp"
@@ -28,10 +30,10 @@ inline constexpr uint64_t OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES = 279ULL
 
 static_assert(static_cast<uint64_t>(SystemCallNumber::WriteLog) ==
               OS_ABI_LAYOUT_FIRST_SYSTEM_CALL_NUMBER);
-static_assert(static_cast<uint64_t>(SystemCallNumber::GetRealtime) ==
+static_assert(static_cast<uint64_t>(SystemCallNumber::SetResourceLimit) ==
               OS_ABI_SYSTEM_CALL_LAST_NUMBER);
 static_assert(OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY == OS_ABI_SYSTEM_CALL_FIRST_ERROR);
-static_assert(OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED == OS_ABI_SYSTEM_CALL_LAST_ERROR);
+static_assert(OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED == OS_ABI_SYSTEM_CALL_LAST_ERROR);
 
 static_assert(offsetof(PipeDescriptorPair, reader_descriptor) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
@@ -60,6 +62,23 @@ static_assert(offsetof(FileInformation, size_bytes) == OS_ABI_LAYOUT_SIXTH_FIELD
 static_assert(offsetof(FileInformation, allocated_size_bytes) ==
               OS_ABI_LAYOUT_SEVENTH_FIELD_OFFSET_BYTES);
 static_assert(offsetof(FileInformation, link_count) == OS_ABI_LAYOUT_EIGHTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(FileInformation, mode) == 96ULL);
+static_assert(offsetof(FileInformation, owner_user_identifier) == 100ULL);
+static_assert(offsetof(FileInformation, owner_group_identifier) == 104ULL);
+static_assert(offsetof(FileInformation, reserved) == 108ULL);
+
+static_assert(offsetof(CredentialInformation, real_user_identifier) == 0ULL);
+static_assert(offsetof(CredentialInformation, real_group_identifier) == 12ULL);
+static_assert(offsetof(CredentialInformation, supplementary_group_count) == 24ULL);
+static_assert(offsetof(CredentialInformation, creation_mask) == 28ULL);
+
+static_assert(offsetof(IdentifierChangeRequest, real_identifier) == 0ULL);
+static_assert(offsetof(IdentifierChangeRequest, effective_identifier) == 4ULL);
+static_assert(offsetof(IdentifierChangeRequest, saved_identifier) == 8ULL);
+static_assert(offsetof(IdentifierChangeRequest, reserved) == 12ULL);
+
+static_assert(offsetof(ResourceLimit, current) == OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);
+static_assert(offsetof(ResourceLimit, maximum) == OS_ABI_LAYOUT_SECOND_FIELD_OFFSET_BYTES);
 
 static_assert(offsetof(ProcessLaunchRequest, path_address) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);

@@ -258,10 +258,43 @@ void WriteRequiredSystemCallValue(const VgaTextConsole &vga_console, const char 
     if (status == ProcessRuntimeStatus::ProcessLimitExceeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_LIMIT_EXCEEDED;
     }
+    if (status == ProcessRuntimeStatus::ResourceLimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED;
+    }
     if (status == ProcessRuntimeStatus::ForkFailure) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY;
     }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
+}
+
+[[nodiscard]] int64_t MapProcessCredentialStatus(const ProcessCredentialStatus status) noexcept {
+    if (status == ProcessCredentialStatus::Succeeded) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == ProcessCredentialStatus::PermissionDenied) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_CREDENTIAL_PERMISSION_DENIED;
+    }
+    if (status == ProcessCredentialStatus::CapacityExhausted) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED;
+    }
+    if (status == ProcessCredentialStatus::InvalidMemory) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+}
+
+[[nodiscard]] int64_t
+MapProcessResourceLimitStatus(const ProcessResourceLimitStatus status) noexcept {
+    if (status == ProcessResourceLimitStatus::Succeeded) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (status == ProcessResourceLimitStatus::PermissionDenied) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_CREDENTIAL_PERMISSION_DENIED;
+    }
+    if (status == ProcessResourceLimitStatus::LimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED;
+    }
+    return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
 
 [[nodiscard]] int64_t MapUserThreadStatus(const UserThreadStatus status) noexcept {
@@ -363,6 +396,9 @@ void WriteRequiredSystemCallValue(const VgaTextConsole &vga_console, const char 
     }
     if (status == UserVirtualMemoryStatus::ThreadMemoryInUse) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_BUSY;
+    }
+    if (status == UserVirtualMemoryStatus::ResourceLimitExceeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED;
     }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PROCESS_IMAGE_FAILURE;
 }
@@ -1221,6 +1257,10 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
         .modification_time_nanoseconds = node_information.modification_time_nanoseconds,
         .change_time_nanoseconds = node_information.change_time_nanoseconds,
         .birth_time_nanoseconds = node_information.birth_time_nanoseconds,
+        .mode = node_information.mode,
+        .owner_user_identifier = node_information.owner_user_identifier,
+        .owner_group_identifier = node_information.owner_group_identifier,
+        .reserved = 0U,
     };
     if (CopyToUser(user_information_address, sizeof(information),
                    reinterpret_cast<const uint8_t *>(&information),
@@ -1438,6 +1478,250 @@ DispatchGetTerminalInformation(const uint64_t user_information_address,
         HaltProcessor();
     }
     return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+}
+
+[[nodiscard]] int64_t DispatchGetCredentials(const uint64_t user_information_address,
+                                             const uint64_t information_size_bytes) noexcept {
+    if (information_size_bytes != sizeof(os::abi::CredentialInformation)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(user_information_address, information_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    os::abi::CredentialInformation information{};
+    const ProcessCredentialStatus status = GetCurrentProcessCredentials(information);
+    if (status != ProcessCredentialStatus::Succeeded) {
+        return MapProcessCredentialStatus(status);
+    }
+    if (CopyToUser(user_information_address, sizeof(information),
+                   reinterpret_cast<const uint8_t *>(&information),
+                   sizeof(information)) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+}
+
+[[nodiscard]] int64_t DispatchSetIdentifiers(const uint64_t user_request_address,
+                                             const uint64_t request_size_bytes,
+                                             const bool user_identifiers) noexcept {
+    if (request_size_bytes != sizeof(os::abi::IdentifierChangeRequest)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    os::abi::IdentifierChangeRequest request{};
+    if (CopyFromUser(user_request_address, sizeof(request), reinterpret_cast<uint8_t *>(&request),
+                     sizeof(request)) != UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    const ProcessCredentialStatus status = user_identifiers
+                                               ? SetCurrentProcessUserIdentifiers(request)
+                                               : SetCurrentProcessGroupIdentifiers(request);
+    return MapProcessCredentialStatus(status);
+}
+
+[[nodiscard]] int64_t DispatchGetSupplementaryGroups(const uint64_t user_groups_address,
+                                                     const uint64_t capacity) noexcept {
+    if (capacity > os::abi::OS_ABI_SUPPLEMENTARY_GROUP_MAXIMUM_COUNT) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    os::abi::GroupIdentifier groups[security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY]{};
+    uint64_t group_count = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const ProcessCredentialStatus status = GetCurrentProcessSupplementaryGroups(
+        groups, security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY, group_count);
+    if (status != ProcessCredentialStatus::Succeeded) {
+        return MapProcessCredentialStatus(status);
+    }
+    if (capacity == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return static_cast<int64_t>(group_count);
+    }
+    if (capacity < group_count) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    const uint64_t transfer_size_bytes = group_count * sizeof(os::abi::GroupIdentifier);
+    if (transfer_size_bytes != OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES &&
+        ValidateUserWritableMemory(user_groups_address, transfer_size_bytes) !=
+            UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    if (transfer_size_bytes != OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES &&
+        CopyToUser(user_groups_address, transfer_size_bytes,
+                   reinterpret_cast<const uint8_t *>(groups),
+                   transfer_size_bytes) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return static_cast<int64_t>(group_count);
+}
+
+[[nodiscard]] int64_t DispatchSetSupplementaryGroups(const uint64_t user_groups_address,
+                                                     const uint64_t group_count) noexcept {
+    if (group_count > security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED;
+    }
+    os::abi::GroupIdentifier groups[security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY]{};
+    const uint64_t transfer_size_bytes = group_count * sizeof(os::abi::GroupIdentifier);
+    if (transfer_size_bytes != OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES &&
+        CopyFromUser(user_groups_address, transfer_size_bytes, reinterpret_cast<uint8_t *>(groups),
+                     sizeof(groups)) != UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    return MapProcessCredentialStatus(SetCurrentProcessSupplementaryGroups(groups, group_count));
+}
+
+[[nodiscard]] int64_t DispatchSetCreationMask(const os::abi::FileMode creation_mask) noexcept {
+    os::abi::FileMode previous_creation_mask = 0U;
+    const ProcessCredentialStatus status =
+        SetCurrentProcessCreationMask(creation_mask, previous_creation_mask);
+    return status == ProcessCredentialStatus::Succeeded
+               ? static_cast<int64_t>(previous_creation_mask)
+               : MapProcessCredentialStatus(status);
+}
+
+[[nodiscard]] int64_t CopySystemCallPath(const uint64_t user_path_address,
+                                         const uint64_t path_length_bytes,
+                                         uint8_t *const path) noexcept {
+    if (user_path_address == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES ||
+        path_length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (path_length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
+    }
+    return CopyFromUser(user_path_address, path_length_bytes, path,
+                        os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) ==
+                   UserMemoryCopyStatus::Succeeded
+               ? OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT
+               : os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+}
+
+[[nodiscard]] int64_t DispatchChangeMode(const uint64_t user_path_address,
+                                         const uint64_t path_length_bytes,
+                                         const os::abi::FileMode mode) noexcept {
+    uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    const int64_t copy_status = CopySystemCallPath(user_path_address, path_length_bytes, path);
+    return copy_status == OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT
+               ? MapFileSystemStatus(ChangeCurrentProcessPathMode(path, path_length_bytes, mode),
+                                     OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES)
+               : copy_status;
+}
+
+[[nodiscard]] int64_t
+DispatchChangeOwner(const uint64_t user_path_address, const uint64_t path_length_bytes,
+                    const os::abi::UserIdentifier user_identifier,
+                    const os::abi::GroupIdentifier group_identifier) noexcept {
+    uint8_t path[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES]{};
+    const int64_t copy_status = CopySystemCallPath(user_path_address, path_length_bytes, path);
+    return copy_status == OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT
+               ? MapFileSystemStatus(ChangeCurrentProcessPathOwner(path, path_length_bytes,
+                                                                   user_identifier,
+                                                                   group_identifier),
+                                     OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES)
+               : copy_status;
+}
+
+[[nodiscard]] int64_t DispatchLinkPath(const uint64_t user_source_address,
+                                       const uint64_t source_length_bytes,
+                                       const uint64_t user_destination_address,
+                                       const uint64_t destination_length_bytes,
+                                       const bool symbolic) noexcept {
+    CpuPreemptionGuard preemption_guard{};
+    if (!preemption_guard.Succeeded()) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE;
+    }
+    uint8_t *const source_or_target = rename_path_storage;
+    uint8_t *const destination =
+        rename_path_storage + os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES;
+    const int64_t source_status =
+        CopySystemCallPath(user_source_address, source_length_bytes, source_or_target);
+    if (source_status != OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT) {
+        return source_status;
+    }
+    const int64_t destination_status =
+        CopySystemCallPath(user_destination_address, destination_length_bytes, destination);
+    if (destination_status != OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT) {
+        return destination_status;
+    }
+    const FileSystemStatus status =
+        symbolic ? CreateCurrentProcessSymbolicLink(source_or_target, source_length_bytes,
+                                                    destination, destination_length_bytes)
+                 : LinkCurrentProcessPath(source_or_target, source_length_bytes, destination,
+                                          destination_length_bytes);
+    return MapFileSystemStatus(status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES);
+}
+
+[[nodiscard]] int64_t DispatchReadSymbolicLink(const uint64_t user_path_address,
+                                               const uint64_t path_length_bytes,
+                                               const uint64_t user_destination_address,
+                                               const uint64_t capacity_bytes) noexcept {
+    if (capacity_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (capacity_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_PATH_TOO_LONG;
+    }
+    if (ValidateUserWritableMemory(user_destination_address, capacity_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    CpuPreemptionGuard preemption_guard{};
+    if (!preemption_guard.Succeeded()) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE;
+    }
+    uint8_t *const path = rename_path_storage;
+    uint8_t *const destination =
+        rename_path_storage + os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_PATH_SIZE_BYTES;
+    const int64_t copy_status = CopySystemCallPath(user_path_address, path_length_bytes, path);
+    if (copy_status != OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT) {
+        return copy_status;
+    }
+    uint64_t target_length_bytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    const FileSystemStatus status = ReadCurrentProcessSymbolicLink(
+        path, path_length_bytes, destination, capacity_bytes, target_length_bytes);
+    if (status != FileSystemStatus::Succeeded) {
+        return MapFileSystemStatus(status, target_length_bytes);
+    }
+    if (CopyToUser(user_destination_address, target_length_bytes, destination, capacity_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return static_cast<int64_t>(target_length_bytes);
+}
+
+[[nodiscard]] int64_t DispatchGetResourceLimit(const uint64_t resource_kind,
+                                               const uint64_t user_limit_address,
+                                               const uint64_t limit_size_bytes) noexcept {
+    if (limit_size_bytes != sizeof(os::abi::ResourceLimit) ||
+        ValidateUserWritableMemory(user_limit_address, limit_size_bytes) !=
+            UserMemoryCopyStatus::Succeeded) {
+        return limit_size_bytes != sizeof(os::abi::ResourceLimit)
+                   ? os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT
+                   : os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    os::abi::ResourceLimit limit{};
+    const ProcessResourceLimitStatus status = GetCurrentProcessResourceLimit(
+        static_cast<os::abi::ResourceLimitKind>(resource_kind), limit);
+    if (status != ProcessResourceLimitStatus::Succeeded) {
+        return MapProcessResourceLimitStatus(status);
+    }
+    if (CopyToUser(user_limit_address, sizeof(limit), reinterpret_cast<const uint8_t *>(&limit),
+                   sizeof(limit)) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+}
+
+[[nodiscard]] int64_t DispatchSetResourceLimit(const uint64_t resource_kind,
+                                               const uint64_t user_limit_address,
+                                               const uint64_t limit_size_bytes) noexcept {
+    if (limit_size_bytes != sizeof(os::abi::ResourceLimit)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    os::abi::ResourceLimit limit{};
+    if (CopyFromUser(user_limit_address, sizeof(limit), reinterpret_cast<uint8_t *>(&limit),
+                     sizeof(limit)) != UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    return MapProcessResourceLimitStatus(SetCurrentProcessResourceLimit(
+        static_cast<os::abi::ResourceLimitKind>(resource_kind), limit));
 }
 
 [[nodiscard]] int64_t DispatchMapAnonymousMemory(const uint64_t requested_address,
@@ -2013,6 +2297,81 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
     if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::GetRealtime)) {
         frame->register_rax =
             static_cast<uint64_t>(DispatchGetRealtime(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::GetCredentials)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchGetCredentials(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetUserIdentifiers)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSetIdentifiers(frame->register_rdi, frame->register_rsi, true));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetGroupIdentifiers)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSetIdentifiers(frame->register_rdi, frame->register_rsi, false));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetSupplementaryGroups)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchGetSupplementaryGroups(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetSupplementaryGroups)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSetSupplementaryGroups(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SetCreationMask)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSetCreationMask(static_cast<os::abi::FileMode>(frame->register_rdi)));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeMode)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchChangeMode(frame->register_rdi, frame->register_rsi,
+                               static_cast<os::abi::FileMode>(frame->register_rdx)));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeOwner)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchChangeOwner(frame->register_rdi, frame->register_rsi,
+                                static_cast<os::abi::UserIdentifier>(frame->register_rdx),
+                                static_cast<os::abi::GroupIdentifier>(frame->register_r10)));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::LinkFile)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchLinkPath(frame->register_rdi, frame->register_rsi, frame->register_rdx,
+                             frame->register_r10, false));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSymbolicLink)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchLinkPath(frame->register_rdi, frame->register_rsi,
+                                                   frame->register_rdx, frame->register_r10, true));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ReadSymbolicLink)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchReadSymbolicLink(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx, frame->register_r10));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::GetResourceLimit)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchGetResourceLimit(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SetResourceLimit)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchSetResourceLimit(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx));
         return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

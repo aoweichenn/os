@@ -224,6 +224,10 @@ set(
     src/process/wait_queue.cpp
 )
 set(
+    OS_KERNEL_SECURITY_SOURCES
+    src/security/credentials.cpp
+)
+set(
     OS_KERNEL_SYNCHRONIZATION_SOURCES
     src/sync/mutex.cpp
     src/sync/private_futex.cpp
@@ -256,6 +260,7 @@ set(
     ${OS_KERNEL_MEMORY_SOURCES}
     ${OS_KERNEL_OBJECT_SOURCES}
     ${OS_KERNEL_PROCESS_SOURCES}
+    ${OS_KERNEL_SECURITY_SOURCES}
     ${OS_KERNEL_SYNCHRONIZATION_SOURCES}
     ${OS_KERNEL_TIME_SOURCES}
     ${OS_KERNEL_USER_SOURCES}
@@ -471,6 +476,7 @@ add_library(
         src/ipc/pipe_manager.cpp
         src/memory/kernel_heap.cpp
         src/object/kernel_object.cpp
+        src/security/credentials.cpp
         src/sync/spin_lock.cpp
         src/user/file_backing.cpp
         include/os/kernel/fs/block_cache.hpp
@@ -491,6 +497,7 @@ add_library(
         include/os/kernel/ipc/pipe_manager.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/object/kernel_object.hpp
+        include/os/kernel/security/credentials.hpp
         include/os/kernel/sync/spin_lock.hpp
         include/os/kernel/user/file_backing.hpp
 )
@@ -541,6 +548,7 @@ add_library(
         src/fs/root_journal.cpp
         src/fs/vfs.cpp
         src/memory/kernel_heap.cpp
+        src/security/credentials.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/fs/block_cache.hpp
         include/os/kernel/fs/devfs.hpp
@@ -554,6 +562,7 @@ add_library(
         include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
         include/os/kernel/memory/kernel_heap.hpp
+        include/os/kernel/security/credentials.hpp
         include/os/kernel/sync/spin_lock.hpp
 )
 target_include_directories(

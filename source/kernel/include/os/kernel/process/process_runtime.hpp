@@ -67,6 +67,7 @@ enum class ProcessRuntimeStatus : uint64_t {
     FutexFailure,
     SignalFailure,
     BlockIoRequestAbandoned,
+    ResourceLimitExceeded,
 };
 
 enum class UserSignalStatus : uint64_t {
@@ -114,6 +115,23 @@ enum class TimedWaitStatus : uint64_t {
     DeadlineReached,
     InvalidArgument,
     RuntimeFailure,
+};
+
+enum class ProcessCredentialStatus : uint64_t {
+    Succeeded,
+    NotInitialized,
+    InvalidArgument,
+    InvalidMemory,
+    CapacityExhausted,
+    PermissionDenied,
+};
+
+enum class ProcessResourceLimitStatus : uint64_t {
+    Succeeded,
+    NotInitialized,
+    InvalidArgument,
+    PermissionDenied,
+    LimitExceeded,
 };
 
 struct UserThreadRuntimeStatistics final {
@@ -308,6 +326,27 @@ WakeCurrentProcessPrivateFutex(uint64_t user_address, uint64_t maximum_wake_coun
 [[nodiscard]] uint64_t CurrentProcessId() noexcept;
 [[nodiscard]] uint64_t CurrentThreadId() noexcept;
 [[nodiscard]] UserProgramSelection CurrentProcessSelection() noexcept;
+[[nodiscard]] ProcessCredentialStatus
+GetCurrentProcessCredentials(os::abi::CredentialInformation &information) noexcept;
+[[nodiscard]] ProcessCredentialStatus
+SetCurrentProcessUserIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept;
+[[nodiscard]] ProcessCredentialStatus
+SetCurrentProcessGroupIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept;
+[[nodiscard]] ProcessCredentialStatus
+GetCurrentProcessSupplementaryGroups(os::abi::GroupIdentifier *groups, uint64_t capacity,
+                                     uint64_t &group_count) noexcept;
+[[nodiscard]] ProcessCredentialStatus
+SetCurrentProcessSupplementaryGroups(const os::abi::GroupIdentifier *groups,
+                                     uint64_t group_count) noexcept;
+[[nodiscard]] ProcessCredentialStatus
+SetCurrentProcessCreationMask(os::abi::FileMode creation_mask,
+                              os::abi::FileMode &previous_creation_mask) noexcept;
+[[nodiscard]] ProcessResourceLimitStatus
+GetCurrentProcessResourceLimit(os::abi::ResourceLimitKind kind,
+                               os::abi::ResourceLimit &limit) noexcept;
+[[nodiscard]] ProcessResourceLimitStatus
+SetCurrentProcessResourceLimit(os::abi::ResourceLimitKind kind,
+                               const os::abi::ResourceLimit &limit) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 MapCurrentProcessAnonymousMemory(uint64_t requested_address, uint64_t length_bytes,
                                  uint64_t protection_flags, uint64_t map_flags,
@@ -356,6 +395,25 @@ RenameCurrentProcessPath(const uint8_t *source_path, uint64_t source_path_length
 [[nodiscard]] FileSystemStatus StatCurrentProcessPath(const uint8_t *path,
                                                       uint64_t path_length_bytes,
                                                       fs::NodeInformation &information) noexcept;
+[[nodiscard]] FileSystemStatus ChangeCurrentProcessPathMode(const uint8_t *path,
+                                                            uint64_t path_length_bytes,
+                                                            os::abi::FileMode mode) noexcept;
+[[nodiscard]] FileSystemStatus
+ChangeCurrentProcessPathOwner(const uint8_t *path, uint64_t path_length_bytes,
+                              os::abi::UserIdentifier user_identifier,
+                              os::abi::GroupIdentifier group_identifier) noexcept;
+[[nodiscard]] FileSystemStatus
+LinkCurrentProcessPath(const uint8_t *source_path, uint64_t source_path_length_bytes,
+                       const uint8_t *destination_path,
+                       uint64_t destination_path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus
+CreateCurrentProcessSymbolicLink(const uint8_t *target, uint64_t target_length_bytes,
+                                 const uint8_t *destination_path,
+                                 uint64_t destination_path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus
+ReadCurrentProcessSymbolicLink(const uint8_t *path, uint64_t path_length_bytes,
+                               uint8_t *destination, uint64_t capacity_bytes,
+                               uint64_t &target_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
 [[nodiscard]] FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;

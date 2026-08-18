@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/abi/security.hpp"
+
 #include <stdint.h>
 
 namespace os::kernel::fs {
@@ -46,11 +48,13 @@ inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_LINKS = 1ULL << 4ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_TIMESTAMPS = 1ULL << 5ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_ORPHAN_RECOVERY = 1ULL << 6ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_FIVE_LEVEL_BLOCK_TREE = 1ULL << 7ULL;
+inline constexpr uint64_t OS_KERNEL_ROOTFS_FEATURE_UNIX_METADATA = 1ULL << 8ULL;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_REQUIRED_FEATURES =
     OS_KERNEL_ROOTFS_FEATURE_SPARSE_FILES | OS_KERNEL_ROOTFS_FEATURE_CHECKSUMMED_POINTER_BLOCKS |
     OS_KERNEL_ROOTFS_FEATURE_ORDERED_METADATA_JOURNAL | OS_KERNEL_ROOTFS_FEATURE_64_BIT_GEOMETRY |
     OS_KERNEL_ROOTFS_FEATURE_LINKS | OS_KERNEL_ROOTFS_FEATURE_TIMESTAMPS |
-    OS_KERNEL_ROOTFS_FEATURE_ORPHAN_RECOVERY | OS_KERNEL_ROOTFS_FEATURE_FIVE_LEVEL_BLOCK_TREE;
+    OS_KERNEL_ROOTFS_FEATURE_ORPHAN_RECOVERY | OS_KERNEL_ROOTFS_FEATURE_FIVE_LEVEL_BLOCK_TREE |
+    OS_KERNEL_ROOTFS_FEATURE_UNIX_METADATA;
 inline constexpr uint64_t OS_KERNEL_ROOTFS_INODE_FLAG_ORPHAN = 1ULL << 0ULL;
 
 static_assert(OS_KERNEL_ROOTFS_JOURNAL_START_RELATIVE_BLOCK +
@@ -160,6 +164,9 @@ struct RootInode final {
     uint64_t modification_time_nanoseconds;
     uint64_t change_time_nanoseconds;
     uint64_t birth_time_nanoseconds;
+    os::abi::UserIdentifier owner_user_identifier;
+    os::abi::GroupIdentifier owner_group_identifier;
+    os::abi::FileMode mode;
 };
 
 struct RootDirectoryEntry final {

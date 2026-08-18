@@ -69,7 +69,9 @@ class RootFileSystem final {
                                                 Vnode &vnode) noexcept;
     [[nodiscard]] static Status CreateOperation(void *context, const Vnode &directory,
                                                 const uint8_t *name, uint64_t name_length_bytes,
-                                                NodeType type, Vnode &vnode) noexcept;
+                                                NodeType type,
+                                                const NodeCreationAttributes &attributes,
+                                                Vnode &vnode) noexcept;
     [[nodiscard]] static Status OpenOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status CloseOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status RemoveOperation(void *context, const Vnode &directory,
@@ -84,11 +86,10 @@ class RootFileSystem final {
                                               const Vnode &destination_directory,
                                               const uint8_t *destination_name,
                                               uint64_t destination_name_length_bytes) noexcept;
-    [[nodiscard]] static Status
-    CreateSymbolicLinkOperation(void *context, const Vnode &destination_directory,
-                                const uint8_t *destination_name,
-                                uint64_t destination_name_length_bytes, const uint8_t *target,
-                                uint64_t target_length_bytes, Vnode &vnode) noexcept;
+    [[nodiscard]] static Status CreateSymbolicLinkOperation(
+        void *context, const Vnode &destination_directory, const uint8_t *destination_name,
+        uint64_t destination_name_length_bytes, const uint8_t *target, uint64_t target_length_bytes,
+        const NodeCreationAttributes &attributes, Vnode &vnode) noexcept;
     [[nodiscard]] static Status ReadSymbolicLinkOperation(void *context, const Vnode &vnode,
                                                           uint8_t *destination,
                                                           uint64_t capacity_bytes,
@@ -113,6 +114,11 @@ class RootFileSystem final {
                                                  uint64_t &name_length_bytes) noexcept;
     [[nodiscard]] static Status StatOperation(void *context, const Vnode &vnode,
                                               BackendNodeInformation &information) noexcept;
+    [[nodiscard]] static Status ChangeModeOperation(void *context, const Vnode &vnode,
+                                                    os::abi::FileMode mode) noexcept;
+    [[nodiscard]] static Status
+    ChangeOwnerOperation(void *context, const Vnode &vnode, os::abi::UserIdentifier user_identifier,
+                         os::abi::GroupIdentifier group_identifier) noexcept;
     [[nodiscard]] static Status SyncOperation(void *context) noexcept;
     [[nodiscard]] static Status ValidateOperation(void *context) noexcept;
     [[nodiscard]] static Status ReadResourceUsageOperation(void *context,

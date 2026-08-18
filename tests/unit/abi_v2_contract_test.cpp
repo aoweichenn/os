@@ -9,14 +9,16 @@ namespace {
 
 constexpr std::string_view OS_TEST_ABI_V2_SUITE_NAME = "abi/v2/unit";
 constexpr std::string_view OS_TEST_ABI_V2_VERSION_CONTRACT =
-    "ABI v2.2 必须兼容冻结的系统调用编号并扩展文件时间戳";
+    "ABI v2.3 必须保留旧编号并追加本地身份、权限与资源限制接口";
 constexpr std::string_view OS_TEST_ABI_V2_ELF_CONTRACT =
     "ELF64 x86-64 小端静态可执行契约必须与加载器共享";
+constexpr std::string_view OS_TEST_ABI_V2_SECURITY_CONTRACT =
+    "mode、RLIMIT 编号及身份结构必须与冻结的 Linux 兼容矩阵一致";
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MAJOR_VERSION = 2ULL;
-constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MINOR_VERSION = 2ULL;
-constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_SYSTEM_CALL_COUNT = 71ULL;
+constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MINOR_VERSION = 3ULL;
+constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_SYSTEM_CALL_COUNT = 84ULL;
 constexpr int64_t OS_TEST_ABI_V2_EXPECTED_FIRST_ERROR = -1LL;
-constexpr int64_t OS_TEST_ABI_V2_EXPECTED_LAST_ERROR = -57LL;
+constexpr int64_t OS_TEST_ABI_V2_EXPECTED_LAST_ERROR = -59LL;
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_ELF_HEADER_SIZE_BYTES = 64ULL;
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_PROGRAM_HEADER_SIZE_BYTES = 56ULL;
 constexpr uint16_t OS_TEST_ABI_V2_EXPECTED_X86_64_MACHINE = 0x003EU;
@@ -43,5 +45,19 @@ int main() {
             os::abi::OS_ABI_ELF_PROGRAM_KNOWN_FLAG_MASK ==
                 OS_TEST_ABI_V2_EXPECTED_PROGRAM_FLAG_MASK,
         OS_TEST_ABI_V2_ELF_CONTRACT);
+    test_context.Expect(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetRealtime) == 71ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::GetCredentials) == 72ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::SetResourceLimit) == 84ULL &&
+            static_cast<uint64_t>(os::abi::ResourceLimitKind::ProcessorTime) == 0ULL &&
+            static_cast<uint64_t>(os::abi::ResourceLimitKind::OpenFileCount) == 7ULL &&
+            static_cast<uint64_t>(os::abi::ResourceLimitKind::AddressSpace) == 9ULL &&
+            static_cast<uint64_t>(os::abi::ResourceLimitKind::RealtimeProcessorTime) == 15ULL &&
+            os::abi::OS_ABI_FILE_MODE_REGULAR == 0100000U &&
+            os::abi::OS_ABI_FILE_MODE_DIRECTORY == 0040000U &&
+            os::abi::OS_ABI_DEFAULT_CREATION_MASK == 0000022U &&
+            sizeof(os::abi::CredentialInformation) == 32ULL &&
+            sizeof(os::abi::ResourceLimit) == 16ULL && sizeof(os::abi::FileInformation) == 112ULL,
+        OS_TEST_ABI_V2_SECURITY_CONTRACT);
     return test_context.ExitCode();
 }

@@ -27,8 +27,7 @@ struct ProcfsSnapshot final {
     uint64_t journal_commit_count;
 };
 
-using ProcfsSnapshotOperation =
-    bool (*)(void *context, ProcfsSnapshot &snapshot) noexcept;
+using ProcfsSnapshotOperation = bool (*)(void *context, ProcfsSnapshot &snapshot) noexcept;
 
 struct ProcfsStatistics final {
     uint64_t active_open_count;
@@ -65,26 +64,23 @@ class Procfs final {
     };
 
     [[nodiscard]] static Status LookupOperation(void *context, const Vnode &directory,
-                                                const uint8_t *name,
-                                                uint64_t name_length_bytes,
+                                                const uint8_t *name, uint64_t name_length_bytes,
                                                 Vnode &vnode) noexcept;
     [[nodiscard]] static Status CreateOperation(void *context, const Vnode &directory,
-                                                const uint8_t *name,
-                                                uint64_t name_length_bytes, NodeType type,
+                                                const uint8_t *name, uint64_t name_length_bytes,
+                                                NodeType type,
+                                                const NodeCreationAttributes &attributes,
                                                 Vnode &vnode) noexcept;
-    [[nodiscard]] static Status OpenOperation(void *context,
-                                              const Vnode &vnode) noexcept;
-    [[nodiscard]] static Status CloseOperation(void *context,
-                                               const Vnode &vnode) noexcept;
+    [[nodiscard]] static Status OpenOperation(void *context, const Vnode &vnode) noexcept;
+    [[nodiscard]] static Status CloseOperation(void *context, const Vnode &vnode) noexcept;
     [[nodiscard]] static Status RemoveOperation(void *context, const Vnode &directory,
-                                                const uint8_t *name,
-                                                uint64_t name_length_bytes,
+                                                const uint8_t *name, uint64_t name_length_bytes,
                                                 NodeType expected_type) noexcept;
-    [[nodiscard]] static Status RenameOperation(
-        void *context, const Vnode &source_directory, const uint8_t *source_name,
-        uint64_t source_name_length_bytes, const Vnode &destination_directory,
-        const uint8_t *destination_name, uint64_t destination_name_length_bytes,
-        bool replace) noexcept;
+    [[nodiscard]] static Status
+    RenameOperation(void *context, const Vnode &source_directory, const uint8_t *source_name,
+                    uint64_t source_name_length_bytes, const Vnode &destination_directory,
+                    const uint8_t *destination_name, uint64_t destination_name_length_bytes,
+                    bool replace) noexcept;
     [[nodiscard]] static Status ParentOperation(void *context, const Vnode &vnode,
                                                 Vnode &parent) noexcept;
     [[nodiscard]] static Status ReadOperation(void *context, const Vnode &vnode,
@@ -97,11 +93,10 @@ class Procfs final {
                                                uint64_t &written_bytes) noexcept;
     [[nodiscard]] static Status TruncateOperation(void *context, const Vnode &vnode,
                                                   uint64_t size_bytes) noexcept;
-    [[nodiscard]] static Status ReadDirectoryOperation(
-        void *context, const Vnode &directory, uint64_t &cursor, DirectoryEntry &entry,
-        bool &end_of_directory) noexcept;
-    [[nodiscard]] static Status GetNameOperation(void *context, const Vnode &vnode,
-                                                 uint8_t *name,
+    [[nodiscard]] static Status ReadDirectoryOperation(void *context, const Vnode &directory,
+                                                       uint64_t &cursor, DirectoryEntry &entry,
+                                                       bool &end_of_directory) noexcept;
+    [[nodiscard]] static Status GetNameOperation(void *context, const Vnode &vnode, uint8_t *name,
                                                  uint64_t name_capacity_bytes,
                                                  uint64_t &name_length_bytes) noexcept;
     [[nodiscard]] static Status StatOperation(void *context, const Vnode &vnode,
@@ -112,8 +107,7 @@ class Procfs final {
                                                            ResourceUsage &usage) noexcept;
 
     [[nodiscard]] Status CaptureSnapshot(ProcfsSnapshot &snapshot) noexcept;
-    [[nodiscard]] Status Render(NodeKind kind, uint8_t *destination,
-                                uint64_t capacity_bytes,
+    [[nodiscard]] Status Render(NodeKind kind, uint8_t *destination, uint64_t capacity_bytes,
                                 uint64_t &rendered_bytes) noexcept;
     [[nodiscard]] Vnode MakeVnode(NodeKind kind) noexcept;
     [[nodiscard]] bool VnodeIsValid(const Vnode &vnode) const noexcept;

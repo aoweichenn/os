@@ -16,6 +16,8 @@ constexpr std::string_view OS_TEST_ROOTFS_FORMAT_DIRECTORY_ROUND_TRIP =
     "rootfs v4 目录项必须保留 inode 代际和有界名称";
 constexpr std::string_view OS_TEST_ROOTFS_FORMAT_CORRUPTION_REJECTED =
     "rootfs v4 的全部元数据类型都必须拒绝校验和损坏";
+constexpr std::string_view OS_TEST_ROOTFS_FORMAT_UNIX_METADATA_REQUIRED =
+    "rootfs v4 必须拒绝缺少 UNIX_METADATA 特性或类型不匹配的 mode";
 
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_TRANSACTION_GENERATION = 71ULL;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_NEXT_INODE_GENERATION = 93ULL;
@@ -40,6 +42,10 @@ constexpr uint64_t OS_TEST_ROOTFS_FORMAT_ACCESS_TIME_NANOSECONDS = 101ULL;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_MODIFICATION_TIME_NANOSECONDS = 102ULL;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_CHANGE_TIME_NANOSECONDS = 103ULL;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_BIRTH_TIME_NANOSECONDS = 104ULL;
+constexpr os::abi::UserIdentifier OS_TEST_ROOTFS_FORMAT_OWNER_USER_IDENTIFIER = 1000U;
+constexpr os::abi::GroupIdentifier OS_TEST_ROOTFS_FORMAT_OWNER_GROUP_IDENTIFIER = 100U;
+constexpr os::abi::FileMode OS_TEST_ROOTFS_FORMAT_MODE =
+    os::abi::OS_ABI_FILE_MODE_REGULAR | 0000640U;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_DIRECTORY_INODE = 17ULL;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_DIRECTORY_NAME_LENGTH_BYTES = 5ULL;
 constexpr uint64_t OS_TEST_ROOTFS_FORMAT_CORRUPTION_OFFSET_BYTES = 64ULL;
@@ -122,6 +128,9 @@ int main() {
         .modification_time_nanoseconds = OS_TEST_ROOTFS_FORMAT_MODIFICATION_TIME_NANOSECONDS,
         .change_time_nanoseconds = OS_TEST_ROOTFS_FORMAT_CHANGE_TIME_NANOSECONDS,
         .birth_time_nanoseconds = OS_TEST_ROOTFS_FORMAT_BIRTH_TIME_NANOSECONDS,
+        .owner_user_identifier = OS_TEST_ROOTFS_FORMAT_OWNER_USER_IDENTIFIER,
+        .owner_group_identifier = OS_TEST_ROOTFS_FORMAT_OWNER_GROUP_IDENTIFIER,
+        .mode = OS_TEST_ROOTFS_FORMAT_MODE,
     };
     uint8_t inode_bytes[os::kernel::fs::OS_KERNEL_ROOTFS_INODE_SIZE_BYTES]{};
     os::kernel::fs::RootInode decoded_inode{};
@@ -139,7 +148,10 @@ int main() {
         decoded_inode.modification_time_nanoseconds ==
             OS_TEST_ROOTFS_FORMAT_MODIFICATION_TIME_NANOSECONDS &&
         decoded_inode.change_time_nanoseconds == OS_TEST_ROOTFS_FORMAT_CHANGE_TIME_NANOSECONDS &&
-        decoded_inode.birth_time_nanoseconds == OS_TEST_ROOTFS_FORMAT_BIRTH_TIME_NANOSECONDS;
+        decoded_inode.birth_time_nanoseconds == OS_TEST_ROOTFS_FORMAT_BIRTH_TIME_NANOSECONDS &&
+        decoded_inode.owner_user_identifier == OS_TEST_ROOTFS_FORMAT_OWNER_USER_IDENTIFIER &&
+        decoded_inode.owner_group_identifier == OS_TEST_ROOTFS_FORMAT_OWNER_GROUP_IDENTIFIER &&
+        decoded_inode.mode == OS_TEST_ROOTFS_FORMAT_MODE;
     test_context.Expect(inode_valid, OS_TEST_ROOTFS_FORMAT_INODE_ROUND_TRIP);
 
     os::kernel::fs::RootPointerBlock pointer_block{};
@@ -188,6 +200,22 @@ int main() {
                                                  OS_TEST_ROOTFS_FORMAT_DIRECTORY_NAME[byte_index];
     }
     test_context.Expect(directory_valid, OS_TEST_ROOTFS_FORMAT_DIRECTORY_ROUND_TRIP);
+
+    os::kernel::fs::RootSuperblock legacy_superblock = MakeSuperblock();
+    legacy_superblock.feature_flags &= ~os::kernel::fs::OS_KERNEL_ROOTFS_FEATURE_UNIX_METADATA;
+    os::kernel::fs::RootInode mismatched_mode_inode = inode;
+    mismatched_mode_inode.mode = os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000640U;
+    test_context.Expect(os::kernel::fs::EncodeRootSuperblock(legacy_superblock, superblock_bytes,
+                                                             sizeof(superblock_bytes)) ==
+                                os::kernel::fs::RootFormatStatus::InvalidLayout &&
+                            os::kernel::fs::EncodeRootInode(mismatched_mode_inode, inode_bytes,
+                                                            sizeof(inode_bytes)) ==
+                                os::kernel::fs::RootFormatStatus::InvalidInode,
+                        OS_TEST_ROOTFS_FORMAT_UNIX_METADATA_REQUIRED);
+
+    static_cast<void>(os::kernel::fs::EncodeRootSuperblock(superblock, superblock_bytes,
+                                                           sizeof(superblock_bytes)));
+    static_cast<void>(os::kernel::fs::EncodeRootInode(inode, inode_bytes, sizeof(inode_bytes)));
 
     superblock_bytes[OS_TEST_ROOTFS_FORMAT_CORRUPTION_OFFSET_BYTES] ^=
         OS_TEST_ROOTFS_FORMAT_CORRUPTION_MASK;

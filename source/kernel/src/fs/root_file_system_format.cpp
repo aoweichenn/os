@@ -20,7 +20,10 @@ constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_ACCESS_TIME_OFFSET_BYTES = 168U
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_MODIFICATION_TIME_OFFSET_BYTES = 176ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_CHANGE_TIME_OFFSET_BYTES = 184ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_BIRTH_TIME_OFFSET_BYTES = 192ULL;
-constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_RESERVED_START_BYTES = 200ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_OWNER_USER_OFFSET_BYTES = 200ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_OWNER_GROUP_OFFSET_BYTES = 204ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_MODE_OFFSET_BYTES = 208ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_RESERVED_START_BYTES = 212ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_CHECKSUM_OFFSET_BYTES = 252ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_TYPE_OFFSET_BYTES = 0ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FORMAT_INODE_FLAGS_OFFSET_BYTES = 8ULL;
@@ -250,7 +253,10 @@ void StoreLittleEndian32(uint8_t *const bytes, const uint32_t value) noexcept {
             inode.access_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
             inode.modification_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
             inode.change_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
-            inode.birth_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) {
+            inode.birth_time_nanoseconds != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.owner_user_identifier != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.owner_group_identifier != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE ||
+            inode.mode != OS_KERNEL_ROOTFS_FORMAT_EMPTY_VALUE) {
             return false;
         }
         for (uint64_t block_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX;
@@ -283,6 +289,16 @@ void StoreLittleEndian32(uint8_t *const bytes, const uint32_t value) noexcept {
         !BlockReferenceIsValid(inode.triple_indirect_block) ||
         !BlockReferenceIsValid(inode.quadruple_indirect_block) ||
         !BlockReferenceIsValid(inode.quintuple_indirect_block)) {
+        return false;
+    }
+    const os::abi::FileMode expected_type =
+        inode.type == RootNodeType::RegularFile
+            ? os::abi::OS_ABI_FILE_MODE_REGULAR
+            : (inode.type == RootNodeType::Directory ? os::abi::OS_ABI_FILE_MODE_DIRECTORY
+                                                     : os::abi::OS_ABI_FILE_MODE_SYMBOLIC_LINK);
+    if ((inode.mode & os::abi::OS_ABI_FILE_MODE_TYPE_MASK) != expected_type ||
+        (inode.mode & ~(os::abi::OS_ABI_FILE_MODE_TYPE_MASK |
+                        os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK)) != 0U) {
         return false;
     }
     if (inode.type == RootNodeType::Directory &&
@@ -531,6 +547,11 @@ RootFormatStatus DecodeRootInode(const uint8_t *const bytes, const uint64_t byte
             LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_CHANGE_TIME_OFFSET_BYTES),
         .birth_time_nanoseconds =
             LoadLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_BIRTH_TIME_OFFSET_BYTES),
+        .owner_user_identifier =
+            LoadLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_OWNER_USER_OFFSET_BYTES),
+        .owner_group_identifier =
+            LoadLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_OWNER_GROUP_OFFSET_BYTES),
+        .mode = LoadLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_MODE_OFFSET_BYTES),
     };
     for (uint64_t block_index = OS_KERNEL_ROOTFS_FORMAT_FIRST_INDEX;
          block_index < OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT; ++block_index) {
@@ -598,6 +619,11 @@ RootFormatStatus EncodeRootInode(const RootInode &inode, uint8_t *const bytes,
                         inode.change_time_nanoseconds);
     StoreLittleEndian64(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_BIRTH_TIME_OFFSET_BYTES,
                         inode.birth_time_nanoseconds);
+    StoreLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_OWNER_USER_OFFSET_BYTES,
+                        inode.owner_user_identifier);
+    StoreLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_OWNER_GROUP_OFFSET_BYTES,
+                        inode.owner_group_identifier);
+    StoreLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_MODE_OFFSET_BYTES, inode.mode);
     const uint32_t checksum =
         CalculateRootCrc32(bytes, OS_KERNEL_ROOTFS_FORMAT_INODE_CHECKSUM_OFFSET_BYTES);
     StoreLittleEndian32(bytes + OS_KERNEL_ROOTFS_FORMAT_INODE_CHECKSUM_OFFSET_BYTES, checksum);

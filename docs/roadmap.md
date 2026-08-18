@@ -968,7 +968,7 @@ v2.0 已完成上述集成闭环。项目版本提升到 2.0.0，但 ABI 仍是 
 | v2.1 | 参考机、VGA 前台、内存日志、键盘和手机显示 | 本地实现基线已推送 |
 | v2.2 | 终端、Shell 与本地命令环境 | 本地候选完成，待 caw/手机发布闭环 |
 | v2.3 | 使用完整 128 GiB 的 rootfs v4 与可靠持久化 | 本地候选完成，待 caw/手机发布闭环 |
-| v2.4 | 本地身份、文件权限与资源限制 | 未开始 |
+| v2.4 | 本地身份、文件权限与资源限制 | 本地候选完成，待 caw/手机发布闭环 |
 | v2.5 | 32 GiB 内存规模下的回收、swap 与 OOM | 未开始 |
 | v2.6 | 全系统集成、长稳验证与规范冻结 | 未开始 |
 
@@ -1068,6 +1068,30 @@ mkfs、fsck、inspect、损坏注入、高 LBA 和断电矩阵必须同时完成
 实现 UID/GID、补充组、mode、umask、访问检查、凭据跨 fork/exec、资源限制
 和 proc/dev 权限；提供 chmod、chown、ln、readlink、umask 等工具。本版不
 加入网络身份、远程登录或密码服务。
+
+**本地候选已实现范围**
+
+- 未由项目硬件/容量约束决定的用户可见规格采用 Linux 语义：32 位 UID/GID/
+  mode、root=0、默认 umask 0022、Linux 八进制 mode 与 RLIMIT 0..15 编号。
+- real/effective/saved UID/GID、32 项 Kernel 补充组、fork/spawn/exec 继承和
+  setuid/setgid exec 已贯通；失败 exec 不改变凭据。
+- VFS 逐组件检查目录 search；open、exec、chdir、readdir、truncate 和父目录
+  mutation 各自检查所需权限，并实现 sticky 与 setgid 目录继承。
+- rootfs v4 用 required feature `UNIX_METADATA` 激活 inode 偏移 200/204/208 的
+  uid/gid/mode；旧 v4 镜像明确拒绝，不升级 magic 或静默猜测预留字节。
+- FSIZE、DATA、STACK、NPROC、NOFILE、AS 已进入执行点，CORE 固定为 0；其余
+  Linux 编号保持可查询，但不存在对应子系统时不伪报已约束。
+- `/proc` 为 root:root 0555/0444，`/dev` 为 root:root 0755、字符设备 root:tty
+  0660；ABI 升为 v2.3.0、84 个 syscall、112 字节 FileInformation。
+- chmod、chown、ln、readlink、真实 id/stat 和 Shell builtin umask 已加入；独立
+  工具路径增至 47。Ring 3 探针真实验证非 root、rlimit 短写、fork 继承与 set-ID
+  exec。
+
+**退出条件**
+
+- 凭据纯逻辑、VFS 权限、rootfs 持久化、proc/dev 和 ABI 均有独立宿主测试；
+- 64/256 MiB 与 32 GiB QEMU 使用同一安全探针，functional 还实际运行权限工具；
+- 全部分层和失败路径通过；caw、手机与正式发布身份继续留给 v2.6 闭环。
 
 ### v2.5 32 GiB 内存压力与恢复
 

@@ -85,6 +85,9 @@ struct Memfs::Node final {
     uint64_t size_bytes;
     uint64_t capacity_bytes;
     uint64_t open_count;
+    os::abi::UserIdentifier owner_user_identifier;
+    os::abi::GroupIdentifier owner_group_identifier;
+    os::abi::FileMode mode;
 };
 
 const BackendOperations Memfs::operations{
@@ -104,6 +107,8 @@ const BackendOperations Memfs::operations{
     .read_directory = Memfs::ReadDirectoryOperation,
     .get_name = Memfs::GetNameOperation,
     .stat = Memfs::StatOperation,
+    .change_mode = Memfs::ChangeModeOperation,
+    .change_owner = Memfs::ChangeOwnerOperation,
     .sync = Memfs::SyncOperation,
     .validate = Memfs::ValidateOperation,
     .read_resource_usage = Memfs::ReadResourceUsageOperation,
@@ -148,6 +153,9 @@ Status Memfs::Initialize(KernelHeap &heap, const uint64_t superblock_identifier,
         .size_bytes = OS_KERNEL_MEMFS_EMPTY_VALUE,
         .capacity_bytes = OS_KERNEL_MEMFS_EMPTY_VALUE,
         .open_count = OS_KERNEL_MEMFS_EMPTY_VALUE,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER,
+        .mode = os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000755U,
     };
 
     this->heap_ = &heap;
@@ -287,10 +295,14 @@ Status Memfs::LookupOperation(void *const context, const Vnode &directory,
 
 Status Memfs::CreateOperation(void *const context, const Vnode &directory,
                               const uint8_t *const name, const uint64_t name_length_bytes,
-                              const NodeType type, Vnode &vnode) noexcept {
+                              const NodeType type, const NodeCreationAttributes &attributes,
+                              Vnode &vnode) noexcept {
     vnode = Vnode{};
     if (context == nullptr || !NameIsValid(name, name_length_bytes) ||
-        (type != NodeType::RegularFile && type != NodeType::Directory)) {
+        (type != NodeType::RegularFile && type != NodeType::Directory) ||
+        !security::ModeTypeMatches(attributes.mode, type == NodeType::Directory
+                                                        ? os::abi::OS_ABI_FILE_MODE_DIRECTORY
+                                                        : os::abi::OS_ABI_FILE_MODE_REGULAR)) {
         return Status::InvalidArgument;
     }
     Memfs &memfs = *static_cast<Memfs *>(context);
@@ -332,6 +344,9 @@ Status Memfs::CreateOperation(void *const context, const Vnode &directory,
         .size_bytes = OS_KERNEL_MEMFS_EMPTY_VALUE,
         .capacity_bytes = OS_KERNEL_MEMFS_EMPTY_VALUE,
         .open_count = OS_KERNEL_MEMFS_EMPTY_VALUE,
+        .owner_user_identifier = attributes.owner_user_identifier,
+        .owner_group_identifier = attributes.owner_group_identifier,
+        .mode = attributes.mode,
     };
     CopyBytes(node->name, name, name_length_bytes);
     memfs.nodes_ = node;
@@ -760,7 +775,45 @@ Status Memfs::StatOperation(void *const context, const Vnode &vnode,
         .modification_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
         .change_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
         .birth_time_nanoseconds = OS_KERNEL_MEMFS_EMPTY_VALUE,
+        .owner_user_identifier = node->owner_user_identifier,
+        .owner_group_identifier = node->owner_group_identifier,
+        .mode = node->mode,
     };
+    return Status::Succeeded;
+}
+
+Status Memfs::ChangeModeOperation(void *const context, const Vnode &vnode,
+                                  const os::abi::FileMode mode) noexcept {
+    if (context == nullptr) {
+        return Status::InvalidArgument;
+    }
+    Memfs &memfs = *static_cast<Memfs *>(context);
+    SpinLockGuard guard{memfs.lock_};
+    Node *const node = memfs.ValidateVnode(vnode);
+    if (node == nullptr ||
+        !security::ModeTypeMatches(mode, node->mode & os::abi::OS_ABI_FILE_MODE_TYPE_MASK)) {
+        return node == nullptr ? Status::InvalidHandle : Status::InvalidArgument;
+    }
+    node->mode = mode;
+    return Status::Succeeded;
+}
+
+Status Memfs::ChangeOwnerOperation(void *const context, const Vnode &vnode,
+                                   const os::abi::UserIdentifier user_identifier,
+                                   const os::abi::GroupIdentifier group_identifier) noexcept {
+    if (context == nullptr) {
+        return Status::InvalidArgument;
+    }
+    Memfs &memfs = *static_cast<Memfs *>(context);
+    SpinLockGuard guard{memfs.lock_};
+    Node *const node = memfs.ValidateVnode(vnode);
+    if (node == nullptr) {
+        return Status::InvalidHandle;
+    }
+    node->owner_user_identifier = user_identifier;
+    node->owner_group_identifier = group_identifier;
+    node->mode &= ~(os::abi::OS_ABI_FILE_MODE_SET_USER_IDENTIFIER |
+                    os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER);
     return Status::Succeeded;
 }
 

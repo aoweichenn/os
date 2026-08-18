@@ -1,5 +1,7 @@
 #pragma once
 
+#include "os/abi/resource.hpp"
+#include "os/abi/security.hpp"
 #include "os/abi/signal.hpp"
 #include "os/abi/terminal.hpp"
 #include "os/abi/thread.hpp"
@@ -82,6 +84,19 @@ enum class SystemCallNumber : uint64_t {
     WaitProcessEvent = 69ULL,
     SetTerminalInputMode = 70ULL,
     GetRealtime = 71ULL,
+    GetCredentials = 72ULL,
+    SetUserIdentifiers = 73ULL,
+    SetGroupIdentifiers = 74ULL,
+    GetSupplementaryGroups = 75ULL,
+    SetSupplementaryGroups = 76ULL,
+    SetCreationMask = 77ULL,
+    ChangeMode = 78ULL,
+    ChangeOwner = 79ULL,
+    LinkFile = 80ULL,
+    CreateSymbolicLink = 81ULL,
+    ReadSymbolicLink = 82ULL,
+    GetResourceLimit = 83ULL,
+    SetResourceLimit = 84ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -168,6 +183,8 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SIGNAL_STATE_INVALID = -54LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_BACKGROUND_TERMINAL_READ = -55LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NOT_CONTROLLING_TERMINAL = -56LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED = -57LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_CREDENTIAL_PERMISSION_DENIED = -58LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED = -59LL;
 
 inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
 
@@ -195,7 +212,7 @@ struct DirectoryEntry final {
 
 static_assert(sizeof(DirectoryEntry) == OS_ABI_DIRECTORY_ENTRY_SIZE_BYTES);
 
-inline constexpr uint64_t OS_ABI_FILE_INFORMATION_SIZE_BYTES = 96ULL;
+inline constexpr uint64_t OS_ABI_FILE_INFORMATION_SIZE_BYTES = 112ULL;
 
 struct FileInformation final {
     uint64_t mount_identifier;
@@ -210,6 +227,10 @@ struct FileInformation final {
     uint64_t modification_time_nanoseconds;
     uint64_t change_time_nanoseconds;
     uint64_t birth_time_nanoseconds;
+    FileMode mode;
+    UserIdentifier owner_user_identifier;
+    GroupIdentifier owner_group_identifier;
+    uint32_t reserved;
 };
 
 static_assert(sizeof(FileInformation) == OS_ABI_FILE_INFORMATION_SIZE_BYTES);

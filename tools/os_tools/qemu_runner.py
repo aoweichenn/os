@@ -1015,6 +1015,15 @@ OS_QEMU_USER_TOOL_ELF_SET_VERIFIED_MARKER = (
 OS_QEMU_USER_INIT_TOOL_PROBE_REAPED_MARKER = (
     "[OS][USER][INIT] TOOL_PROBE_REAPED"
 )
+OS_QEMU_USER_SECURITY_PROBE_VERIFIED_MARKER = (
+    "[OS][USER][SECURITY] CREDENTIALS_PERMISSIONS_RLIMIT_VERIFIED"
+)
+OS_QEMU_USER_SECURITY_EXEC_VERIFIED_MARKER = (
+    "[OS][USER][SECURITY] FORK_EXEC_SETID_VERIFIED"
+)
+OS_QEMU_USER_INIT_SECURITY_PROBE_REAPED_MARKER = (
+    "[OS][USER][INIT] SECURITY_PROBE_REAPED"
+)
 OS_QEMU_USER_INIT_MEMORY_PROBE_REAPED_MARKER = (
     "[OS][USER][INIT] MEMORY_PROBE_REAPED"
 )
@@ -1268,7 +1277,7 @@ OS_QEMU_USER_SHELL_APPEND_FIRST_OUTPUT_MARKER = "append-one"
 OS_QEMU_USER_SHELL_APPEND_SECOND_OUTPUT_MARKER = "append-two"
 OS_QEMU_USER_SHELL_ERROR_FIRST_OUTPUT_MARKER = "error-one"
 OS_QEMU_USER_SHELL_ERROR_SECOND_OUTPUT_MARKER = "error-two"
-OS_QEMU_USER_SHELL_ENVIRONMENT_INITIAL_OUTPUT_MARKER = "environment-v2.3"
+OS_QEMU_USER_SHELL_ENVIRONMENT_INITIAL_OUTPUT_MARKER = "environment-v2.4"
 OS_QEMU_USER_SHELL_ENVIRONMENT_VARIABLE_OUTPUT_MARKER = "variable-expanded"
 OS_QEMU_USER_SHELL_ENVIRONMENT_EXPORTED_ENTRY_MARKER = "v2name=expanded"
 OS_QEMU_USER_SHELL_ENVIRONMENT_UNSET_OUTPUT_MARKER = "unset--done"
@@ -1297,6 +1306,7 @@ OS_QEMU_USER_TOOL_MEMORY_OUTPUT_MARKER = "managed_bytes "
 OS_QEMU_USER_TOOL_VERSION_OUTPUT_MARKER = "architecture x86_64"
 OS_QEMU_USER_TOOL_MOUNTS_OUTPUT_MARKER = "mount_count "
 OS_QEMU_USER_TOOL_RESOURCES_OUTPUT_MARKER = "heap_consumed_bytes "
+OS_QEMU_USER_SECURITY_TOOL_OUTPUT_MARKER = "permission-tools-ready"
 OS_QEMU_USER_SHELL_FOREGROUND_JOB_STOPPED_MARKER = (
     "[OS][USER][SHELL] FOREGROUND_JOB_STOPPED"
 )
@@ -1405,6 +1415,9 @@ OS_QEMU_USER_SHELL_FUNCTIONAL_TEST_INPUT = (
     "sleep 1\n"
     "kill 1 17\n"
     "id\n"
+    "umask 0027 && touch /permission-tool && chmod 0600 /permission-tool && chown 0 /permission-tool\n"
+    "ln /permission-tool /permission-hard && ln -s /permission-tool /permission-symbolic && readlink /permission-symbolic && write /tmp/permission-stage ok\n"
+    "cat /tmp/permission-stage && rm /tmp/permission-stage && rm /permission-symbolic && rm /permission-hard && rm /permission-tool && umask 0022 && echo permission-tools-ready\n"
     "rm /tmp/copied\n"
     "rm /tmp/redirected\n"
     "cat\n"

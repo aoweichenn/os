@@ -7,7 +7,7 @@
 namespace {
 
 constexpr char OS_USER_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
-constexpr char OS_USER_ARGUMENT_PROBE_ENVIRONMENT[] = "OS_STAGE=v2.3";
+constexpr char OS_USER_ARGUMENT_PROBE_ENVIRONMENT[] = "OS_STAGE=v2.4";
 constexpr char OS_USER_ARGUMENT_PROBE_VERIFIED_MESSAGE[] =
     "[OS][USER][PROC] ARG_ENV_128K_VERIFIED\r\n";
 constexpr uint64_t OS_USER_ARGUMENT_PROBE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;

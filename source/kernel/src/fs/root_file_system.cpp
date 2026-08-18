@@ -136,6 +136,8 @@ const BackendOperations RootFileSystem::operations{
     .read_directory = RootFileSystem::ReadDirectoryOperation,
     .get_name = RootFileSystem::GetNameOperation,
     .stat = RootFileSystem::StatOperation,
+    .change_mode = RootFileSystem::ChangeModeOperation,
+    .change_owner = RootFileSystem::ChangeOwnerOperation,
     .sync = RootFileSystem::SyncOperation,
     .validate = RootFileSystem::ValidateOperation,
     .read_resource_usage = RootFileSystem::ReadResourceUsageOperation,
@@ -1717,10 +1719,15 @@ Status RootFileSystem::LookupOperation(void *const context, const Vnode &directo
 
 Status RootFileSystem::CreateOperation(void *const context, const Vnode &directory,
                                        const uint8_t *const name, const uint64_t name_length_bytes,
-                                       const NodeType type, Vnode &vnode) noexcept {
+                                       const NodeType type,
+                                       const NodeCreationAttributes &attributes,
+                                       Vnode &vnode) noexcept {
     vnode = Vnode{};
     if (context == nullptr || !NameIsValid(name, name_length_bytes) ||
-        (type != NodeType::RegularFile && type != NodeType::Directory)) {
+        (type != NodeType::RegularFile && type != NodeType::Directory) ||
+        !security::ModeTypeMatches(attributes.mode, type == NodeType::Directory
+                                                        ? os::abi::OS_ABI_FILE_MODE_DIRECTORY
+                                                        : os::abi::OS_ABI_FILE_MODE_REGULAR)) {
         return name_length_bytes > OS_KERNEL_ROOTFS_MAXIMUM_NAME_LENGTH_BYTES
                    ? Status::NameTooLong
                    : Status::InvalidArgument;
@@ -1812,6 +1819,9 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
         .modification_time_nanoseconds = timestamp,
         .change_time_nanoseconds = timestamp,
         .birth_time_nanoseconds = timestamp,
+        .owner_user_identifier = attributes.owner_user_identifier,
+        .owner_group_identifier = attributes.owner_group_identifier,
+        .mode = attributes.mode,
     };
     ++file_system.disk_superblock_.next_inode_generation;
     status = file_system.WriteInode(inode_number, inode);
@@ -2340,11 +2350,13 @@ Status RootFileSystem::LinkOperation(void *const context, const Vnode &source,
 Status RootFileSystem::CreateSymbolicLinkOperation(
     void *const context, const Vnode &destination_directory, const uint8_t *const destination_name,
     const uint64_t destination_name_length_bytes, const uint8_t *const target,
-    const uint64_t target_length_bytes, Vnode &vnode) noexcept {
+    const uint64_t target_length_bytes, const NodeCreationAttributes &attributes,
+    Vnode &vnode) noexcept {
     vnode = Vnode{};
     if (context == nullptr || !NameIsValid(destination_name, destination_name_length_bytes) ||
         target == nullptr || target_length_bytes == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
-        target_length_bytes > OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES) {
+        target_length_bytes > OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES ||
+        !security::ModeTypeMatches(attributes.mode, os::abi::OS_ABI_FILE_MODE_SYMBOLIC_LINK)) {
         return target_length_bytes > OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES
                    ? Status::PathTooLong
                    : Status::InvalidArgument;
@@ -2436,6 +2448,9 @@ Status RootFileSystem::CreateSymbolicLinkOperation(
         .modification_time_nanoseconds = timestamp,
         .change_time_nanoseconds = timestamp,
         .birth_time_nanoseconds = timestamp,
+        .owner_user_identifier = attributes.owner_user_identifier,
+        .owner_group_identifier = attributes.owner_group_identifier,
+        .mode = attributes.mode,
     };
     ++file_system.disk_superblock_.next_inode_generation;
     uint64_t written_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
@@ -2764,8 +2779,75 @@ Status RootFileSystem::StatOperation(void *const context, const Vnode &vnode,
         .modification_time_nanoseconds = inode.modification_time_nanoseconds,
         .change_time_nanoseconds = inode.change_time_nanoseconds,
         .birth_time_nanoseconds = inode.birth_time_nanoseconds,
+        .owner_user_identifier = inode.owner_user_identifier,
+        .owner_group_identifier = inode.owner_group_identifier,
+        .mode = inode.mode,
     };
     return Status::Succeeded;
+}
+
+Status RootFileSystem::ChangeModeOperation(void *const context, const Vnode &vnode,
+                                           const os::abi::FileMode mode) noexcept {
+    if (context == nullptr) {
+        return Status::InvalidArgument;
+    }
+    RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
+    SpinLockGuard guard{file_system.lock_};
+    if (file_system.vfs_superblock_.read_only) {
+        return Status::ReadOnly;
+    }
+    RootInode inode{};
+    Status status = file_system.ValidateVnode(vnode, inode);
+    if (status != Status::Succeeded ||
+        !security::ModeTypeMatches(mode, inode.mode & os::abi::OS_ABI_FILE_MODE_TYPE_MASK)) {
+        return status != Status::Succeeded ? status : Status::InvalidArgument;
+    }
+    status = file_system.BeginTransaction();
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    inode.mode = mode;
+    inode.change_time_nanoseconds = file_system.ReadCurrentTimestamp();
+    status = file_system.WriteInode(vnode.identifier, inode);
+    if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
+        return status;
+    }
+    return file_system.CommitTransaction();
+}
+
+Status
+RootFileSystem::ChangeOwnerOperation(void *const context, const Vnode &vnode,
+                                     const os::abi::UserIdentifier user_identifier,
+                                     const os::abi::GroupIdentifier group_identifier) noexcept {
+    if (context == nullptr) {
+        return Status::InvalidArgument;
+    }
+    RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
+    SpinLockGuard guard{file_system.lock_};
+    if (file_system.vfs_superblock_.read_only) {
+        return Status::ReadOnly;
+    }
+    RootInode inode{};
+    Status status = file_system.ValidateVnode(vnode, inode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    status = file_system.BeginTransaction();
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    inode.owner_user_identifier = user_identifier;
+    inode.owner_group_identifier = group_identifier;
+    inode.mode &= ~(os::abi::OS_ABI_FILE_MODE_SET_USER_IDENTIFIER |
+                    os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER);
+    inode.change_time_nanoseconds = file_system.ReadCurrentTimestamp();
+    status = file_system.WriteInode(vnode.identifier, inode);
+    if (status != Status::Succeeded) {
+        file_system.AbortTransaction();
+        return status;
+    }
+    return file_system.CommitTransaction();
 }
 
 Status RootFileSystem::SyncOperation(void *const context) noexcept {

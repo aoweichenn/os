@@ -572,3 +572,14 @@ ABI 版本升级为 v2.2.0，系统调用仍为 71 个，既有编号和错误�
 `stat` 工具输出四项 `*_ns`；`df` 的 total bytes 改为 rootfs v4 在 128 GiB
 参考盘启动前缀后的 137422176256 字节。普通 read 采用 noatime，只有创建、
 写入、truncate、链接、unlink 和 rename 修改持久时间戳。
+
+## v2.4 身份、权限与资源 ABI
+
+ABI v2.3.0 在 71 后追加 72..84：凭据查询、setresuid/setresgid 语义、补充组、
+umask、chmod/chown、硬/符号链接、readlink 和 get/set rlimit。Linux RLIMIT 编号
+0..15 原样冻结，`ResourceLimit` 为两个 uint64。`FileInformation` 在 96 字节
+尾部追加 mode32、uid32、gid32 和 reserved32，扩大到 112 字节。
+
+`id` 输出 real/effective UID/GID 与组，`stat` 输出四位八进制 mode 和 owner；
+chmod、chown、ln、readlink 使用公开 syscall。umask 是 Shell builtin，因为外部
+子进程不能改变父 Shell 的创建掩码。

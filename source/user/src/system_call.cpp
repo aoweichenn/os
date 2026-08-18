@@ -129,6 +129,58 @@ int64_t GetRealtime(os::abi::RealtimeInformation &information) noexcept {
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t GetCredentials(os::abi::CredentialInformation &information) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetCredentials),
+                            reinterpret_cast<uint64_t>(&information), sizeof(information),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetUserIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetUserIdentifiers),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetGroupIdentifiers(const os::abi::IdentifierChangeRequest &request) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetGroupIdentifiers),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetSupplementaryGroups(os::abi::GroupIdentifier *const groups,
+                               const uint64_t capacity) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetSupplementaryGroups),
+        reinterpret_cast<uint64_t>(groups), capacity, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetSupplementaryGroups(const os::abi::GroupIdentifier *const groups,
+                               const uint64_t group_count) noexcept {
+    return InvokeSystemCall(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetSupplementaryGroups),
+        reinterpret_cast<uint64_t>(groups), group_count, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SetCreationMask(const os::abi::FileMode creation_mask) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetCreationMask),
+                            creation_mask, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t GetResourceLimit(const os::abi::ResourceLimitKind kind,
+                         os::abi::ResourceLimit &limit) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::GetResourceLimit),
+                            static_cast<uint64_t>(kind), reinterpret_cast<uint64_t>(&limit),
+                            sizeof(limit));
+}
+
+int64_t SetResourceLimit(const os::abi::ResourceLimitKind kind,
+                         const os::abi::ResourceLimit &limit) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SetResourceLimit),
+                            static_cast<uint64_t>(kind), reinterpret_cast<uint64_t>(&limit),
+                            sizeof(limit));
+}
+
 int64_t SleepUntil(const uint64_t deadline_nanoseconds) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SleepUntil),
                             deadline_nanoseconds, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
@@ -516,6 +568,43 @@ int64_t StatFile(const char *const path, const uint64_t path_length_bytes,
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::StatFile),
                             reinterpret_cast<uint64_t>(path), path_length_bytes,
                             reinterpret_cast<uint64_t>(&information), sizeof(information));
+}
+
+int64_t ChangeMode(const char *const path, const uint64_t path_length_bytes,
+                   const os::abi::FileMode mode) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeMode),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes, mode);
+}
+
+int64_t ChangeOwner(const char *const path, const uint64_t path_length_bytes,
+                    const os::abi::UserIdentifier user_identifier,
+                    const os::abi::GroupIdentifier group_identifier) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeOwner),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes, user_identifier,
+                            group_identifier);
+}
+
+int64_t LinkFile(const char *const source_path, const uint64_t source_length_bytes,
+                 const char *const destination_path,
+                 const uint64_t destination_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::LinkFile),
+                            reinterpret_cast<uint64_t>(source_path), source_length_bytes,
+                            reinterpret_cast<uint64_t>(destination_path), destination_length_bytes);
+}
+
+int64_t CreateSymbolicLink(const char *const target, const uint64_t target_length_bytes,
+                           const char *const destination_path,
+                           const uint64_t destination_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSymbolicLink),
+                            reinterpret_cast<uint64_t>(target), target_length_bytes,
+                            reinterpret_cast<uint64_t>(destination_path), destination_length_bytes);
+}
+
+int64_t ReadSymbolicLink(const char *const path, const uint64_t path_length_bytes,
+                         char *const destination, const uint64_t capacity_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ReadSymbolicLink),
+                            reinterpret_cast<uint64_t>(path), path_length_bytes,
+                            reinterpret_cast<uint64_t>(destination), capacity_bytes);
 }
 
 int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept {

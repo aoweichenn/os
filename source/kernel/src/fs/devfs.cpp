@@ -19,14 +19,13 @@ void IncrementSaturatingCounter(uint64_t &counter) noexcept {
     }
 }
 
-[[nodiscard]] bool BytesAreEqual(const uint8_t *const left,
-                                 const uint8_t *const right,
+[[nodiscard]] bool BytesAreEqual(const uint8_t *const left, const uint8_t *const right,
                                  const uint64_t length_bytes) noexcept {
     if (left == nullptr || right == nullptr) {
         return false;
     }
-    for (uint64_t byte_index = OS_KERNEL_DEVFS_EMPTY_VALUE;
-         byte_index < length_bytes; ++byte_index) {
+    for (uint64_t byte_index = OS_KERNEL_DEVFS_EMPTY_VALUE; byte_index < length_bytes;
+         ++byte_index) {
         if (left[byte_index] != right[byte_index]) {
             return false;
         }
@@ -36,8 +35,8 @@ void IncrementSaturatingCounter(uint64_t &counter) noexcept {
 
 void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                const uint64_t length_bytes) noexcept {
-    for (uint64_t byte_index = OS_KERNEL_DEVFS_EMPTY_VALUE;
-         byte_index < length_bytes; ++byte_index) {
+    for (uint64_t byte_index = OS_KERNEL_DEVFS_EMPTY_VALUE; byte_index < length_bytes;
+         ++byte_index) {
         destination[byte_index] = source[byte_index];
     }
 }
@@ -61,26 +60,26 @@ const BackendOperations Devfs::operations{
     .read_directory = Devfs::ReadDirectoryOperation,
     .get_name = Devfs::GetNameOperation,
     .stat = Devfs::StatOperation,
+    .change_mode = nullptr,
+    .change_owner = nullptr,
     .sync = Devfs::SyncOperation,
     .validate = Devfs::ValidateOperation,
     .read_resource_usage = Devfs::ReadResourceUsageOperation,
 };
 
-Status Devfs::Initialize(const uint64_t superblock_identifier,
-                         DevfsDevice *const device_storage,
+Status Devfs::Initialize(const uint64_t superblock_identifier, DevfsDevice *const device_storage,
                          const uint64_t device_capacity) noexcept {
     if (this->initialized_) {
         return Status::AlreadyInitialized;
     }
-    if (superblock_identifier == OS_KERNEL_DEVFS_EMPTY_VALUE ||
-        device_storage == nullptr ||
+    if (superblock_identifier == OS_KERNEL_DEVFS_EMPTY_VALUE || device_storage == nullptr ||
         device_capacity == OS_KERNEL_DEVFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
     this->devices_ = device_storage;
     this->device_capacity_ = device_capacity;
-    for (uint64_t device_index = OS_KERNEL_DEVFS_EMPTY_VALUE;
-         device_index < this->device_capacity_; ++device_index) {
+    for (uint64_t device_index = OS_KERNEL_DEVFS_EMPTY_VALUE; device_index < this->device_capacity_;
+         ++device_index) {
         this->devices_[device_index] = DevfsDevice{};
     }
     this->lock_ = SpinLock{};
@@ -101,8 +100,7 @@ Status Devfs::Initialize(const uint64_t superblock_identifier,
     return Status::Succeeded;
 }
 
-Status Devfs::RegisterCharacterDevice(const uint8_t *const name,
-                                      const uint64_t name_length_bytes,
+Status Devfs::RegisterCharacterDevice(const uint8_t *const name, const uint64_t name_length_bytes,
                                       uint64_t &node_identifier) noexcept {
     node_identifier = OS_KERNEL_DEVFS_EMPTY_VALUE;
     if (!this->initialized_) {
@@ -117,13 +115,12 @@ Status Devfs::RegisterCharacterDevice(const uint8_t *const name,
 
     SpinLockGuard guard{this->lock_};
     uint64_t available_index = this->device_capacity_;
-    for (uint64_t device_index = OS_KERNEL_DEVFS_EMPTY_VALUE;
-         device_index < this->device_capacity_; ++device_index) {
+    for (uint64_t device_index = OS_KERNEL_DEVFS_EMPTY_VALUE; device_index < this->device_capacity_;
+         ++device_index) {
         DevfsDevice &device = this->devices_[device_index];
         if (device.active && device.name_length_bytes == name_length_bytes &&
             BytesAreEqual(device.name, name, name_length_bytes)) {
-            IncrementSaturatingCounter(
-                this->statistics_.rejected_registration_count);
+            IncrementSaturatingCounter(this->statistics_.rejected_registration_count);
             return Status::AlreadyExists;
         }
         if (!device.active && available_index == this->device_capacity_) {
@@ -131,15 +128,13 @@ Status Devfs::RegisterCharacterDevice(const uint8_t *const name,
         }
     }
     if (available_index == this->device_capacity_) {
-        IncrementSaturatingCounter(
-            this->statistics_.rejected_registration_count);
+        IncrementSaturatingCounter(this->statistics_.rejected_registration_count);
         return Status::CapacityExhausted;
     }
 
     DevfsDevice &device = this->devices_[available_index];
     device = DevfsDevice{
-        .node_identifier =
-            OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER + available_index,
+        .node_identifier = OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER + available_index,
         .generation = OS_KERNEL_DEVFS_INITIAL_GENERATION,
         .name_length_bytes = name_length_bytes,
         .name = {},
@@ -153,9 +148,7 @@ Status Devfs::RegisterCharacterDevice(const uint8_t *const name,
 
 Superblock &Devfs::GetSuperblock() noexcept { return this->superblock_; }
 
-const Superblock &Devfs::GetSuperblock() const noexcept {
-    return this->superblock_;
-}
+const Superblock &Devfs::GetSuperblock() const noexcept { return this->superblock_; }
 
 DevfsStatistics Devfs::ReadStatistics() const noexcept {
     SpinLockGuard guard{this->lock_};
@@ -164,30 +157,26 @@ DevfsStatistics Devfs::ReadStatistics() const noexcept {
 
 Status Devfs::Validate() const noexcept {
     SpinLockGuard guard{this->lock_};
-    if (!this->initialized_ || !this->superblock_.initialized ||
-        this->devices_ == nullptr ||
+    if (!this->initialized_ || !this->superblock_.initialized || this->devices_ == nullptr ||
         this->device_capacity_ == OS_KERNEL_DEVFS_EMPTY_VALUE ||
         this->superblock_.backend_kind != BackendKind::Device ||
         this->superblock_.operations != &Devfs::operations ||
         this->superblock_.backend_context != this ||
         this->superblock_.identifier == OS_KERNEL_DEVFS_EMPTY_VALUE ||
         this->superblock_.generation != OS_KERNEL_DEVFS_INITIAL_GENERATION ||
-        !this->superblock_.read_only ||
-        !this->VnodeIsValid(this->superblock_.root) ||
-        this->statistics_.successful_open_count <
-            this->statistics_.active_open_count) {
+        !this->superblock_.read_only || !this->VnodeIsValid(this->superblock_.root) ||
+        this->statistics_.successful_open_count < this->statistics_.active_open_count) {
         return Status::Corrupt;
     }
     uint64_t active_count = OS_KERNEL_DEVFS_EMPTY_VALUE;
-    for (uint64_t device_index = OS_KERNEL_DEVFS_EMPTY_VALUE;
-         device_index < this->device_capacity_; ++device_index) {
+    for (uint64_t device_index = OS_KERNEL_DEVFS_EMPTY_VALUE; device_index < this->device_capacity_;
+         ++device_index) {
         const DevfsDevice &device = this->devices_[device_index];
         if (!device.active) {
             continue;
         }
         ++active_count;
-        if (device.node_identifier !=
-                OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER + device_index ||
+        if (device.node_identifier != OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER + device_index ||
             device.generation != OS_KERNEL_DEVFS_INITIAL_GENERATION ||
             device.name_length_bytes == OS_KERNEL_DEVFS_EMPTY_VALUE ||
             device.name_length_bytes > OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES) {
@@ -196,22 +185,18 @@ Status Devfs::Validate() const noexcept {
         for (uint64_t other_index = device_index + OS_KERNEL_DEVFS_COUNTER_INCREMENT;
              other_index < this->device_capacity_; ++other_index) {
             const DevfsDevice &other = this->devices_[other_index];
-            if (other.active &&
-                other.name_length_bytes == device.name_length_bytes &&
-                BytesAreEqual(other.name, device.name,
-                              device.name_length_bytes)) {
+            if (other.active && other.name_length_bytes == device.name_length_bytes &&
+                BytesAreEqual(other.name, device.name, device.name_length_bytes)) {
                 return Status::Corrupt;
             }
         }
     }
-    return active_count == this->statistics_.registered_device_count
-               ? Status::Succeeded
-               : Status::Corrupt;
+    return active_count == this->statistics_.registered_device_count ? Status::Succeeded
+                                                                     : Status::Corrupt;
 }
 
 Status Devfs::LookupOperation(void *const context, const Vnode &directory,
-                              const uint8_t *const name,
-                              const uint64_t name_length_bytes,
+                              const uint8_t *const name, const uint64_t name_length_bytes,
                               Vnode &vnode) noexcept {
     vnode = Vnode{};
     if (context == nullptr || name == nullptr) {
@@ -238,20 +223,20 @@ Status Devfs::LookupOperation(void *const context, const Vnode &directory,
 }
 
 Status Devfs::CreateOperation(void *const context, const Vnode &directory,
-                              const uint8_t *const name,
-                              const uint64_t name_length_bytes,
-                              const NodeType type, Vnode &vnode) noexcept {
+                              const uint8_t *const name, const uint64_t name_length_bytes,
+                              const NodeType type, const NodeCreationAttributes &attributes,
+                              Vnode &vnode) noexcept {
     static_cast<void>(context);
     static_cast<void>(directory);
     static_cast<void>(name);
     static_cast<void>(name_length_bytes);
     static_cast<void>(type);
+    static_cast<void>(attributes);
     vnode = Vnode{};
     return Status::ReadOnly;
 }
 
-Status Devfs::OpenOperation(void *const context,
-                            const Vnode &vnode) noexcept {
+Status Devfs::OpenOperation(void *const context, const Vnode &vnode) noexcept {
     if (context == nullptr) {
         return Status::InvalidArgument;
     }
@@ -260,18 +245,15 @@ Status Devfs::OpenOperation(void *const context,
         return Status::InvalidHandle;
     }
     SpinLockGuard guard{file_system.lock_};
-    if (file_system.statistics_.active_open_count ==
-        OS_KERNEL_DEVFS_MAXIMUM_COUNTER_VALUE) {
+    if (file_system.statistics_.active_open_count == OS_KERNEL_DEVFS_MAXIMUM_COUNTER_VALUE) {
         return Status::CapacityExhausted;
     }
     ++file_system.statistics_.active_open_count;
-    IncrementSaturatingCounter(
-        file_system.statistics_.successful_open_count);
+    IncrementSaturatingCounter(file_system.statistics_.successful_open_count);
     return Status::Succeeded;
 }
 
-Status Devfs::CloseOperation(void *const context,
-                             const Vnode &vnode) noexcept {
+Status Devfs::CloseOperation(void *const context, const Vnode &vnode) noexcept {
     if (context == nullptr) {
         return Status::InvalidArgument;
     }
@@ -280,8 +262,7 @@ Status Devfs::CloseOperation(void *const context,
         return Status::InvalidHandle;
     }
     SpinLockGuard guard{file_system.lock_};
-    if (file_system.statistics_.active_open_count ==
-        OS_KERNEL_DEVFS_EMPTY_VALUE) {
+    if (file_system.statistics_.active_open_count == OS_KERNEL_DEVFS_EMPTY_VALUE) {
         return Status::Corrupt;
     }
     --file_system.statistics_.active_open_count;
@@ -289,8 +270,7 @@ Status Devfs::CloseOperation(void *const context,
 }
 
 Status Devfs::RemoveOperation(void *const context, const Vnode &directory,
-                              const uint8_t *const name,
-                              const uint64_t name_length_bytes,
+                              const uint8_t *const name, const uint64_t name_length_bytes,
                               const NodeType expected_type) noexcept {
     static_cast<void>(context);
     static_cast<void>(directory);
@@ -300,11 +280,11 @@ Status Devfs::RemoveOperation(void *const context, const Vnode &directory,
     return Status::ReadOnly;
 }
 
-Status Devfs::RenameOperation(
-    void *const context, const Vnode &source_directory,
-    const uint8_t *const source_name, const uint64_t source_name_length_bytes,
-    const Vnode &destination_directory, const uint8_t *const destination_name,
-    const uint64_t destination_name_length_bytes, const bool replace) noexcept {
+Status
+Devfs::RenameOperation(void *const context, const Vnode &source_directory,
+                       const uint8_t *const source_name, const uint64_t source_name_length_bytes,
+                       const Vnode &destination_directory, const uint8_t *const destination_name,
+                       const uint64_t destination_name_length_bytes, const bool replace) noexcept {
     static_cast<void>(context);
     static_cast<void>(source_directory);
     static_cast<void>(source_name);
@@ -316,8 +296,7 @@ Status Devfs::RenameOperation(
     return Status::ReadOnly;
 }
 
-Status Devfs::ParentOperation(void *const context, const Vnode &vnode,
-                              Vnode &parent) noexcept {
+Status Devfs::ParentOperation(void *const context, const Vnode &vnode, Vnode &parent) noexcept {
     parent = Vnode{};
     if (context == nullptr) {
         return Status::InvalidArgument;
@@ -330,10 +309,8 @@ Status Devfs::ParentOperation(void *const context, const Vnode &vnode,
     return Status::Succeeded;
 }
 
-Status Devfs::ReadOperation(void *const context, const Vnode &vnode,
-                            const uint64_t offset_bytes,
-                            uint8_t *const destination,
-                            const uint64_t capacity_bytes,
+Status Devfs::ReadOperation(void *const context, const Vnode &vnode, const uint64_t offset_bytes,
+                            uint8_t *const destination, const uint64_t capacity_bytes,
                             uint64_t &read_bytes) noexcept {
     static_cast<void>(context);
     static_cast<void>(vnode);
@@ -344,10 +321,8 @@ Status Devfs::ReadOperation(void *const context, const Vnode &vnode,
     return Status::Unsupported;
 }
 
-Status Devfs::WriteOperation(void *const context, const Vnode &vnode,
-                             const uint64_t offset_bytes,
-                             const uint8_t *const source,
-                             const uint64_t length_bytes,
+Status Devfs::WriteOperation(void *const context, const Vnode &vnode, const uint64_t offset_bytes,
+                             const uint8_t *const source, const uint64_t length_bytes,
                              uint64_t &written_bytes) noexcept {
     static_cast<void>(context);
     static_cast<void>(vnode);
@@ -366,10 +341,8 @@ Status Devfs::TruncateOperation(void *const context, const Vnode &vnode,
     return Status::Unsupported;
 }
 
-Status Devfs::ReadDirectoryOperation(void *const context,
-                                     const Vnode &directory,
-                                     uint64_t &cursor, DirectoryEntry &entry,
-                                     bool &end_of_directory) noexcept {
+Status Devfs::ReadDirectoryOperation(void *const context, const Vnode &directory, uint64_t &cursor,
+                                     DirectoryEntry &entry, bool &end_of_directory) noexcept {
     entry = DirectoryEntry{};
     end_of_directory = false;
     if (context == nullptr) {
@@ -384,8 +357,7 @@ Status Devfs::ReadDirectoryOperation(void *const context,
     }
 
     SpinLockGuard guard{file_system.lock_};
-    while (cursor < file_system.device_capacity_ &&
-           !file_system.devices_[cursor].active) {
+    while (cursor < file_system.device_capacity_ && !file_system.devices_[cursor].active) {
         ++cursor;
     }
     if (cursor == file_system.device_capacity_) {
@@ -401,13 +373,11 @@ Status Devfs::ReadDirectoryOperation(void *const context,
     };
     CopyBytes(entry.name, device.name, device.name_length_bytes);
     ++cursor;
-    IncrementSaturatingCounter(
-        file_system.statistics_.directory_read_count);
+    IncrementSaturatingCounter(file_system.statistics_.directory_read_count);
     return Status::Succeeded;
 }
 
-Status Devfs::GetNameOperation(void *const context, const Vnode &vnode,
-                               uint8_t *const name,
+Status Devfs::GetNameOperation(void *const context, const Vnode &vnode, uint8_t *const name,
                                const uint64_t name_capacity_bytes,
                                uint64_t &name_length_bytes) noexcept {
     name_length_bytes = OS_KERNEL_DEVFS_EMPTY_VALUE;
@@ -422,8 +392,7 @@ Status Devfs::GetNameOperation(void *const context, const Vnode &vnode,
         return Status::Succeeded;
     }
     SpinLockGuard guard{file_system.lock_};
-    const DevfsDevice *const device =
-        file_system.FindDevice(vnode.identifier);
+    const DevfsDevice *const device = file_system.FindDevice(vnode.identifier);
     if (device == nullptr) {
         return Status::InvalidHandle;
     }
@@ -448,13 +417,19 @@ Status Devfs::StatOperation(void *const context, const Vnode &vnode,
     information = BackendNodeInformation{
         .size_bytes = OS_KERNEL_DEVFS_EMPTY_VALUE,
         .allocated_size_bytes = OS_KERNEL_DEVFS_EMPTY_VALUE,
-        .link_count = vnode.type == NodeType::Directory
-                          ? OS_KERNEL_DEVFS_ROOT_LINK_COUNT
-                          : OS_KERNEL_DEVFS_DEVICE_LINK_COUNT,
+        .link_count = vnode.type == NodeType::Directory ? OS_KERNEL_DEVFS_ROOT_LINK_COUNT
+                                                        : OS_KERNEL_DEVFS_DEVICE_LINK_COUNT,
         .access_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
         .modification_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
         .change_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
         .birth_time_nanoseconds = OS_KERNEL_DEVFS_EMPTY_VALUE,
+        .owner_user_identifier = os::abi::OS_ABI_ROOT_USER_IDENTIFIER,
+        .owner_group_identifier = vnode.type == NodeType::Directory
+                                      ? os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER
+                                      : os::abi::OS_ABI_TTY_GROUP_IDENTIFIER,
+        .mode = vnode.type == NodeType::Directory
+                    ? os::abi::OS_ABI_FILE_MODE_DIRECTORY | 0000755U
+                    : os::abi::OS_ABI_FILE_MODE_CHARACTER_DEVICE | 0000660U,
     };
     return Status::Succeeded;
 }
@@ -464,13 +439,10 @@ Status Devfs::SyncOperation(void *const context) noexcept {
 }
 
 Status Devfs::ValidateOperation(void *const context) noexcept {
-    return context == nullptr
-               ? Status::InvalidArgument
-               : static_cast<Devfs *>(context)->Validate();
+    return context == nullptr ? Status::InvalidArgument : static_cast<Devfs *>(context)->Validate();
 }
 
-Status Devfs::ReadResourceUsageOperation(void *const context,
-                                         ResourceUsage &usage) noexcept {
+Status Devfs::ReadResourceUsageOperation(void *const context, ResourceUsage &usage) noexcept {
     usage = ResourceUsage{};
     if (context == nullptr) {
         return Status::InvalidArgument;
@@ -480,8 +452,7 @@ Status Devfs::ReadResourceUsageOperation(void *const context,
         return Status::Corrupt;
     }
     usage.vnode_count =
-        OS_KERNEL_DEVFS_ROOT_NODE_IDENTIFIER +
-        file_system.ReadStatistics().registered_device_count;
+        OS_KERNEL_DEVFS_ROOT_NODE_IDENTIFIER + file_system.ReadStatistics().registered_device_count;
     return Status::Succeeded;
 }
 
@@ -504,24 +475,19 @@ Vnode Devfs::MakeDeviceVnode(const DevfsDevice &device) noexcept {
 }
 
 DevfsDevice *Devfs::FindDevice(const uint64_t node_identifier) noexcept {
-    return const_cast<DevfsDevice *>(
-        static_cast<const Devfs *>(this)->FindDevice(node_identifier));
+    return const_cast<DevfsDevice *>(static_cast<const Devfs *>(this)->FindDevice(node_identifier));
 }
 
-const DevfsDevice *
-Devfs::FindDevice(const uint64_t node_identifier) const noexcept {
+const DevfsDevice *Devfs::FindDevice(const uint64_t node_identifier) const noexcept {
     if (node_identifier < OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER) {
         return nullptr;
     }
-    const uint64_t device_index =
-        node_identifier - OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER;
+    const uint64_t device_index = node_identifier - OS_KERNEL_DEVFS_FIRST_DEVICE_NODE_IDENTIFIER;
     if (device_index >= this->device_capacity_) {
         return nullptr;
     }
     const DevfsDevice &device = this->devices_[device_index];
-    return device.active && device.node_identifier == node_identifier
-               ? &device
-               : nullptr;
+    return device.active && device.node_identifier == node_identifier ? &device : nullptr;
 }
 
 bool Devfs::VnodeIsValid(const Vnode &vnode) const noexcept {
@@ -532,8 +498,7 @@ bool Devfs::VnodeIsValid(const Vnode &vnode) const noexcept {
     if (vnode.identifier == OS_KERNEL_DEVFS_ROOT_NODE_IDENTIFIER) {
         return vnode.type == NodeType::Directory;
     }
-    return vnode.type == NodeType::CharacterDevice &&
-           this->FindDevice(vnode.identifier) != nullptr;
+    return vnode.type == NodeType::CharacterDevice && this->FindDevice(vnode.identifier) != nullptr;
 }
 
 }
