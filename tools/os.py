@@ -573,12 +573,18 @@ from os_tools.qemu_runner import (
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
+    OS_QEMU_SOAK_DEFAULT_ITERATION_COUNT,
     OS_QEMU_VNC_BASE_TCP_PORT,
     qemuVncDisplayBackend,
     runQemuFileSystemPersistence,
     runQemuFirmwareBoot,
     runQemuHardwareSmoke,
     runQemuVgaDisplay,
+    validateQemuSoakIterationCount,
+)
+from os_tools.release_identity import (
+    auditReleaseIdentity,
+    writeReleaseManifest,
 )
 from os_tools.rootfs_v4 import (
     OS_ROOTFS_V4_CAPACITY_IMAGE_SIZE_BYTES,
@@ -759,6 +765,30 @@ def handleCreateBootImages(arguments: argparse.Namespace) -> None:
 
 def handleCreateSwapImage(arguments: argparse.Namespace) -> None:
     writeSwapImage(arguments.imagePath)
+
+
+def handleAuditReleaseIdentity(_: argparse.Namespace) -> None:
+    identity = auditReleaseIdentity(OS_TOOL_PROJECT_ROOT)
+    print(
+        "发布身份检查通过："
+        f"project={identity.projectVersion}，"
+        f"ABI={identity.abiVersion}，"
+        f"rootfs=v{identity.rootfsFormatVersion}，"
+        f"RAM={identity.primaryMemoryMebibytes} MiB。"
+    )
+
+
+def handleWriteReleaseManifest(arguments: argparse.Namespace) -> None:
+    writeReleaseManifest(
+        OS_TOOL_PROJECT_ROOT,
+        arguments.outputPath,
+        arguments.sourceCommit,
+        arguments.firmwareImagePath,
+        arguments.kernelImagePath,
+        arguments.bootDiskImagePath,
+        arguments.swapDiskImagePath,
+    )
+    print(f"发布清单已写入：{arguments.outputPath}")
 
 
 def handleAuditSwapImage(arguments: argparse.Namespace) -> None:
@@ -2644,6 +2674,29 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     )
 
 
+def handleQemuSoak(arguments: argparse.Namespace) -> None:
+    validateQemuSoakIterationCount(arguments.iterationCount)
+    swapDiskImagePath = resolveSwapDiskImage(
+        arguments.diskImagePath,
+        arguments.swapDiskImagePath,
+    )
+    requireAllocatedImage(arguments.diskImagePath)
+    requireAllocatedImage(swapDiskImagePath)
+    arguments.swapDiskImagePath = swapDiskImagePath
+    arguments.expectedOutcome = "success"
+    for iterationIndex in range(arguments.iterationCount):
+        print(
+            "QEMU 长稳迭代 "
+            f"{iterationIndex + 1}/{arguments.iterationCount}",
+            flush=True,
+        )
+        handleQemuFirmware(arguments)
+    print(
+        f"QEMU 长稳验收通过：{arguments.iterationCount} 次完整工作负载。",
+        flush=True,
+    )
+
+
 def handleQemuFileSystemPersistence(
     arguments: argparse.Namespace,
 ) -> None:
@@ -2789,6 +2842,26 @@ def createArgumentParser() -> argparse.ArgumentParser:
         default=[],
         help="把宿主文件离线安装到 rootfs，格式为 /镜像路径=/宿主路径",
     )
+
+    addCommand(
+        subparsers,
+        "audit-release-identity",
+        "检查 v2.6 项目、ABI、盘面、机器规格与来宾标记",
+        handleAuditReleaseIdentity,
+    )
+
+    releaseManifestParser = addCommand(
+        subparsers,
+        "release-manifest",
+        "生成主仓 SHA、源码规模和发布产物结构化身份",
+        handleWriteReleaseManifest,
+    )
+    releaseManifestParser.add_argument("outputPath", type=Path)
+    releaseManifestParser.add_argument("sourceCommit")
+    releaseManifestParser.add_argument("firmwareImagePath", type=Path)
+    releaseManifestParser.add_argument("kernelImagePath", type=Path)
+    releaseManifestParser.add_argument("bootDiskImagePath", type=Path)
+    releaseManifestParser.add_argument("swapDiskImagePath", type=Path)
 
     swapImageParser = addCommand(
         subparsers,
@@ -3028,6 +3101,38 @@ def createArgumentParser() -> argparse.ArgumentParser:
         ),
         required=True,
         dest="expectedOutcome",
+    )
+
+    qemuSoakParser = addCommand(
+        subparsers,
+        "qemu-soak",
+        "在已物化磁盘上重复运行 4 GiB 完整工作负载",
+        handleQemuSoak,
+    )
+    qemuSoakParser.add_argument("firmwareImagePath", type=Path)
+    qemuSoakParser.add_argument("diskImagePath", type=Path)
+    qemuSoakParser.add_argument("expectedFirmwareSizeBytes", type=int)
+    qemuSoakParser.add_argument("expectedDiskSizeBytes", type=int)
+    qemuSoakParser.add_argument(
+        "--swap-disk-image",
+        type=Path,
+        default=None,
+        dest="swapDiskImagePath",
+    )
+    qemuSoakParser.add_argument(
+        "--iterations",
+        type=int,
+        default=OS_QEMU_SOAK_DEFAULT_ITERATION_COUNT,
+        dest="iterationCount",
+    )
+    qemuSoakParser.add_argument(
+        "--cpu-model",
+        default=OS_QEMU_DEFAULT_CPU_MODEL,
+        dest="cpuModel",
+    )
+    qemuSoakParser.set_defaults(
+        memoryMebibytes=OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
+        expectedOutcome="success",
     )
 
     qemuPersistenceParser = addCommand(

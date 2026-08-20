@@ -66,6 +66,7 @@ python3 tools/os.py configure
 python3 tools/os.py build
 python3 tools/os.py test
 python3 tools/os.py source-metrics
+python3 tools/os.py audit-release-identity
 python3 tools/os.py phone-book-export
 ```
 
@@ -82,6 +83,34 @@ python3 tools/os.py materialize-image \
 
 两个命令合计需要约 156.44 GiB 可用空间。`audit-allocated-image` 可独立复查，
 `qemu-display` 默认也会拒绝 `st_blocks * 512 < st_size` 的路径。
+
+v2.6 候选在两个已物化镜像上连续运行三次完整 4 GiB 工作负载：
+
+```bash
+python3 tools/os.py qemu-soak \
+  build/developer/images/firmware.bin \
+  build/developer/images/boot_disk_allocated.img \
+  131072 137438953472 \
+  --swap-disk-image build/developer/images/swap_disk_allocated.img
+```
+
+`--iterations` 允许 1..16，发布默认值为 3。每轮使用 snapshot，任一轮缺 marker、
+黑屏、panic、资源泄漏或超时都会立即失败。
+
+生成供网站和发布记录使用的结构化清单：
+
+```bash
+python3 tools/os.py release-manifest \
+  build/developer/project_release.json \
+  <40位已推送主仓SHA> \
+  build/developer/images/firmware.bin \
+  build/developer/source/kernel/kernel.payload.elf \
+  build/developer/images/boot_disk_allocated.img \
+  build/developer/images/swap_disk_allocated.img
+```
+
+清单同时记录候选源码树 SHA-256；ROM/Kernel 使用完整 SHA-256；两块大盘记录
+固定范围哈希、逻辑/已分配长度与 sparse 判定，避免顺序读取 156 GiB 空闲零区。
 
 在有 GTK 图形会话的本机打开 VGA 窗口：
 

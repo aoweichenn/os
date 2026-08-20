@@ -246,3 +246,6 @@
 | overcommit | 在建立 VMA 时允许虚拟承诺超过即时空闲 RAM 的策略；模式编号 0/1/2 与 Linux 一致 |
 | commit limit | overcommit accountant 允许同时承诺的总页数上限 |
 | OOM score | 根据 resident+swap 占用和 adjustment 计算的牺牲者优先级 |
+| release identity | 项目、ABI、盘面、机器规格、来宾标记和主仓 SHA 共同组成的发布身份 |
+| structured disk identity | 对大盘固定关键范围、长度和宿主分配状态的哈希清单，避免全读空闲零区 |
+| soak | 在同一冻结产物上有界重复完整整机工作负载，用于发现跨轮次和长尾错误 |

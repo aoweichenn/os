@@ -11,6 +11,7 @@ from tools.os_tools.qemu_runner import (
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
+    OS_QEMU_SOAK_MAXIMUM_ITERATION_COUNT,
     OS_QEMU_VGA_TRACE_BYTES_OFFSET,
     OS_QEMU_VGA_TRACE_LENGTH_OFFSET,
     OS_QEMU_VGA_TRACE_MAGIC,
@@ -31,6 +32,7 @@ from tools.os_tools.qemu_runner import (
     requiredVgaTraceSnapshotSize,
     roundedVgaTraceSnapshotSize,
     validateImageSize,
+    validateQemuSoakIterationCount,
     validateVgaDisplaySnapshot,
     validateVgaTerminalSnapshot,
     validateVgaProtocol,
@@ -215,6 +217,18 @@ class QemuRunnerToolTests(unittest.TestCase):
                 memoryMebibytes=(
                     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES - 1
                 ),
+            )
+
+    def testBoundsSoakIterationCount(self) -> None:
+        validateQemuSoakIterationCount(1)
+        validateQemuSoakIterationCount(
+            OS_QEMU_SOAK_MAXIMUM_ITERATION_COUNT
+        )
+        with self.assertRaises(OsToolError):
+            validateQemuSoakIterationCount(0)
+        with self.assertRaises(OsToolError):
+            validateQemuSoakIterationCount(
+                OS_QEMU_SOAK_MAXIMUM_ITERATION_COUNT + 1
             )
 
     def testCreatesQmpSocketForKeyboardInjection(self) -> None:

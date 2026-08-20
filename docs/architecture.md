@@ -2391,3 +2391,32 @@ overcommit 和记账不改变 ABI 编号。系统调用层仍把 commit 拒绝�
 out-of-memory 错误；`/proc/meminfo` 追加驻留预算、swap、commit 与 OOM 聚合值。
 详细事务顺序、默认值和非目标见
 [ADR 0053](adr/0053-memory-pressure-swap-overcommit-and-oom.md)。
+
+## v2.6 发布冻结架构
+
+v2.6 不改变 ROM → Stage 1 → Kernel → PID1 → Shell 的运行依赖，只在宿主工具层
+增加发布身份和候选验证：
+
+```text
+source consumers
+  CMake + ABI/rootfs headers + Kernel/PID1/Shell/probe + QEMU + docs
+    -> audit-release-identity
+    -> ReleaseIdentity(project 2.6.0, ABI 2.3.0, rootfs 4, machine geometry)
+
+build artifacts + pushed source SHA
+    -> release-manifest
+    -> ROM/Kernel full hashes
+    -> boot/swap structured range hashes
+    -> source metrics + logical/allocated bytes
+
+materialized boot disk + materialized swap disk
+    -> qemu-soak(iterations=3, RAM=4096 MiB, -mem-prealloc)
+    -> existing VGA/QMP protocol and resource invariants on every iteration
+```
+
+发布清单不进入来宾，不改变 ABI 或盘面。大盘结构化身份读取启动前缀、各自
+superblock 和最后扇区；无宿主空洞由独立 allocated-image 门禁负责。网站同步
+只能消费绑定已推送主仓 SHA 的清单，不能在另一源码状态上复用。
+
+详细冻结项和边界见
+[ADR 0054](adr/0054-v2-6-release-identity-and-soak-gates.md)。

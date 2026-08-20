@@ -1945,3 +1945,23 @@ marker 说明是宿主 TCG 降频，不是来宾死锁；无新 marker 才按逐
 writeback，4=FsContext，5=scheduler，6=signal thread，7=UserAddressSpace，
 8=RSP0，9=CpuLocal，10=下一个 Thread 激活。带状态的阶段同时打印 `EXIT_STATUS`。
 这些日志写入内存系统日志，不向活动 TTY 逐进程输出。
+
+## v2.6 发布冻结
+
+### `audit-release-identity` 报部分升级
+
+错误会指出实际消费者和预期值。不要只改 CMake 绕过：Kernel terminal banner、
+PID1/参数探针 `OS_STAGE`、Shell banner、QEMU 环境输出、README 和 v2.6 发布记录
+必须一起更新。ABI 和 rootfs 版本只有真实兼容变化才能调整。
+
+### `qemu-soak` 在启动前拒绝镜像
+
+长稳只接受 `st_blocks * 512 >= st_size` 的 rootfs 与交换盘。先用
+`materialize-image` 创建不同目标路径；工程 `boot_disk.img`/`swap_disk.img`
+保持稀疏是正常的，不能传给发布 soak。若 `posix_fallocate` 返回 ENOSPC，检查
+实际挂载点而不是只看容器中的另一个 `df`。
+
+### 发布清单 SHA 与最终提交不一致
+
+清单只接受 40 位小写 SHA。最终文档提交会改变 `HEAD`，所以主仓推送后必须用
+新 SHA 重新生成清单，再让网站同步；不得手改 JSON 中的 SHA。

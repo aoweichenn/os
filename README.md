@@ -2,7 +2,7 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v2.5 4 GiB 实体内存与 28 GiB 交换盘` 已形成候选。v2.1 已建立 Firmware、Stage 1、
+当前状态：`v2.6 集成冻结与正式发布` 正在形成主工程候选。v2.1 已建立 Firmware、Stage 1、
 Kernel、panic 以及 Ring 3 stdout/stderr 从 COM1 迁移到项目自研的 80×25 VGA
 文本控制台，并把详细系统诊断分流到只追加内存日志。进入 Shell 时屏幕清空；
 此后普通 Kernel 事件只进入宿主可导出的日志，TTY stdout/stderr 写 VGA，panic
@@ -20,6 +20,10 @@ overcommit 0/1/2、确定性 OOM 和 `/proc/meminfo` 压力统计。工程故障
 稀疏，手机实际运行的 rootfs 与交换盘必须先完整物化；设计见
 [ADR 0053](docs/adr/0053-memory-pressure-swap-overcommit-and-oom.md)，当前验证状态见
 [v2.5 发布记录](docs/releases/v2.5.md)。
+v2.6 不增加主要内核机制，新增跨消费者发布身份、结构化产物清单和已物化
+4 GiB 三轮长稳门禁；设计见
+[ADR 0054](docs/adr/0054-v2-6-release-identity-and-soak-gates.md)，候选状态见
+[v2.6 发布记录](docs/releases/v2.6.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

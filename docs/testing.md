@@ -1389,3 +1389,20 @@ procfs 为一个 OOM 计数在 16 KiB KernelStack 构造完整统计对象，PIT
 FsContext 关闭已打开目录时重复读取 root inode，ATA 瞬态使退出停在 stage 4。
 三者分别以固定路径长度、轻量 observation snapshot、目录 close 无 I/O 不变量修复，
 最后统一轮次未放宽任何 marker 或失败判定。
+
+## v2.6 集成冻结测试
+
+`os_release_identity_check` 与 tooling 内的 release identity 测试冻结项目 2.6.0、
+ABI 2.3.0/84/-59、rootfs v4、4096 MiB 主规格、两块磁盘字节数以及 Kernel、
+PID1、参数探针、Shell、QEMU、README 和发布记录中的版本文本。测试用稀疏
+128 GiB/28.44 GiB 夹具生成结构化清单，覆盖非法 SHA、产物尺寸、完整小产物哈希
+和大盘固定范围哈希。
+
+候选发布在日常 64/256 MiB 与 4 GiB 系统矩阵之外，增加两个门禁：
+
+- 两块运行镜像必须通过 `audit-allocated-image`，并用它们完成一次完整启动；
+- `qemu-soak` 默认连续三轮执行 4 GiB `-mem-prealloc` 成功工作负载，迭代边界
+  1..16 有独立失败测试。
+
+soak 不替代全量 CTest、三启动持久化或故障矩阵。最终发布记录分别报告全量、
+物化启动和三轮 soak 的墙钟、峰值 RSS、强 marker 与主仓 SHA。

@@ -2002,6 +2002,19 @@ add_test(
         -p
         "test_*.py"
 )
+
+add_test(
+    NAME os_release_identity_check
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-release-identity
+)
+set_tests_properties(
+    os_release_identity_check
+    PROPERTIES
+        LABELS "integration"
+)
 set_tests_properties(
     os_python_tooling_unit_tests
     PROPERTIES
