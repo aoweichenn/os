@@ -1,13 +1,13 @@
-#include "os/kernel/memory/memory_manager.hpp"
+#include <os/kernel/memory/memory_manager.hpp>
 
-#include "os/foundation/reference_counter.hpp"
-#include "os/foundation/scope_rollback.hpp"
-#include "os/kernel/arch/descriptor_tables.hpp"
-#include "os/kernel/arch/processor.hpp"
-#include "os/kernel/memory/page_table.hpp"
-#include "os/kernel/memory/physical_frame_allocator.hpp"
-#include "os/kernel/memory/physical_memory_map.hpp"
-#include "os/kernel/user/user_elf.hpp"
+#include <os/foundation/reference_counter.hpp>
+#include <os/foundation/scope_rollback.hpp>
+#include <os/kernel/arch/descriptor_tables.hpp>
+#include <os/kernel/arch/processor.hpp>
+#include <os/kernel/memory/page_table.hpp>
+#include <os/kernel/memory/physical_frame_allocator.hpp>
+#include <os/kernel/memory/physical_memory_map.hpp>
+#include <os/kernel/user/user_elf.hpp>
 
 namespace os::kernel {
 
@@ -1575,10 +1575,11 @@ KernelUserPageStatus AllocateAndMapUserPage(const uint64_t root_physical_address
     if (FrameAllocator().Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
         return KernelUserPageStatus::FrameAllocationFailed;
     }
-    if (MapExistingUserPage(root_physical_address, virtual_address, frame.physical_address,
-                            writable, executable) != KernelUserPageStatus::Succeeded) {
+    const KernelUserPageStatus map_status = MapExistingUserPage(
+        root_physical_address, virtual_address, frame.physical_address, writable, executable);
+    if (map_status != KernelUserPageStatus::Succeeded) {
         static_cast<void>(FrameAllocator().Release(frame));
-        return KernelUserPageStatus::PageMappingFailed;
+        return map_status;
     }
     physical_address = frame.physical_address;
     return KernelUserPageStatus::Succeeded;
@@ -1612,9 +1613,11 @@ KernelUserPageStatus MapExistingUserPage(const uint64_t root_physical_address,
     };
     PageTableManager process_page_table{FrameAllocator(), root_physical_address,
                                         ActivePageTableMemoryAccess(), PageTableRootKind::Process};
-    return process_page_table.MapPage(virtual_address, physical_address, permissions) ==
-                   PageTableStatus::Succeeded
-               ? KernelUserPageStatus::Succeeded
+    const PageTableStatus map_status =
+        process_page_table.MapPage(virtual_address, physical_address, permissions);
+    return map_status == PageTableStatus::Succeeded ? KernelUserPageStatus::Succeeded
+           : map_status == PageTableStatus::FrameAllocationFailed
+               ? KernelUserPageStatus::FrameAllocationFailed
                : KernelUserPageStatus::PageMappingFailed;
 }
 

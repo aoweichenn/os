@@ -1,19 +1,25 @@
 #pragma once
 
-#include "os/kernel/fs/vfs.hpp"
+#include <os/kernel/fs/vfs.hpp>
 
 #include <stdint.h>
 
 namespace os::kernel::fs {
 
 inline constexpr uint64_t OS_KERNEL_PROCFS_FILE_COUNT = 6ULL;
-inline constexpr uint64_t OS_KERNEL_PROCFS_MAXIMUM_SNAPSHOT_SIZE_BYTES = 256ULL;
+inline constexpr uint64_t OS_KERNEL_PROCFS_MAXIMUM_SNAPSHOT_SIZE_BYTES = 512ULL;
 
 struct ProcfsSnapshot final {
     uint64_t monotonic_nanoseconds;
     uint64_t managed_memory_bytes;
     uint64_t free_memory_bytes;
     uint64_t allocated_memory_bytes;
+    uint64_t resident_limit_bytes;
+    uint64_t swap_total_bytes;
+    uint64_t swap_free_bytes;
+    uint64_t committed_memory_bytes;
+    uint64_t commit_limit_bytes;
+    uint64_t oom_kill_count;
     uint64_t active_process_count;
     uint64_t active_thread_count;
     uint64_t process_capacity;

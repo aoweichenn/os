@@ -456,7 +456,8 @@ major/minor 或热插拔。
 version  uptime  meminfo  processes  resources  mounts
 ```
 
-每次 read/stat 通过 callback 采集 15 个固定宽度数值，在 256 字节局部缓冲中
+每次 read/stat 通过 callback 采集固定宽度数值；v2.5 扩展为 21 项并使用
+512 字节局部缓冲
 有界格式化，再遵守 offset/short-read/EOF。callback 执行时不持 procfs 锁；
 procfs 锁只保护自己的 open/read/failure 统计，防止与 VFS、调度器、内存和
 rootfs 形成锁环。所有节点只读，不支持 create/remove/rename/truncate。
@@ -513,3 +514,17 @@ chmod 失效。
 procfs 根/文件固定为 root:root 0555/0444；devfs 根为 root:root 0755，字符
 设备为 root:tty 0660。详细盘面偏移、失败原子性和兼容边界见
 [ADR 0052](../adr/0052-linux-compatible-local-credentials-permissions-and-rlimits.md)。
+
+## v2.5 swap 文件与目录引用释放
+
+VFS attach 以 root context 创建 `/.os-swap`，随后 chmod 0600、sparse truncate
+到 256 MiB，并核对类型、owner、mode、逻辑大小和已分配大小。内核保持一个
+OpenFile 与 FsContext，swap manager 只通过 ReadAt/WriteAt 访问，不进入用户 fd
+表或 file page cache。
+
+FsContext 的 root/cwd 都是已经 open 的目录引用。rootfs 目录不会进入 orphan，
+持有 open reference 时 rmdir 必须返回 Busy，inode 不能被复用。因此目录 close
+只做 vnode 结构、引用非零和总数守恒检查，然后递减引用；不得重新读取 inode。
+普通文件 close 仍读取 inode，因为最后一个 orphan 引用可能需要启动回收事务。
+该区分让进程退出不再因一次无关 ATA 读瞬态卡在 FsContext 释放，同时保留
+open-unlink 文件的持久恢复语义。

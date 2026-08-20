@@ -1,6 +1,6 @@
-#include "os/user/system_call.hpp"
+#include <os/user/system_call.hpp>
 
-#include "os/abi/system_call.hpp"
+#include <os/abi/system_call.hpp>
 
 #include <stdint.h>
 
@@ -27,7 +27,7 @@ constexpr char OS_USER_INIT_TOOL_PROBE_REAPED_MESSAGE[] = "[OS][USER][INIT] TOOL
 constexpr char OS_USER_INIT_SECURITY_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] SECURITY_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
-constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v2.4";
+constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v2.5";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";

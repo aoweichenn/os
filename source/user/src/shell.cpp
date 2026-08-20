@@ -1,11 +1,11 @@
-#include "os/user/shell.hpp"
+#include <os/user/shell.hpp>
 
-#include "os/abi/system_call.hpp"
-#include "os/user/shell_environment.hpp"
-#include "os/user/shell_execution.hpp"
-#include "os/user/shell_glob.hpp"
-#include "os/user/shell_line_editor.hpp"
-#include "os/user/system_call.hpp"
+#include <os/abi/system_call.hpp>
+#include <os/user/shell_environment.hpp>
+#include <os/user/shell_execution.hpp>
+#include <os/user/shell_glob.hpp>
+#include <os/user/shell_line_editor.hpp>
+#include <os/user/system_call.hpp>
 
 namespace os::user {
 
@@ -82,7 +82,7 @@ constexpr char OS_USER_SHELL_UNSET_COMMAND[] = "unset";
 constexpr char OS_USER_SHELL_UMASK_COMMAND[] = "umask";
 constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
-    "\r\nx86-64 OS Lab v2.4\r\n"
+    "\r\nx86-64 OS Lab v2.5\r\n"
     "行编辑、环境变量、通配符、完整重定向与 47 个用户工具已经启用。\r\n"
     "rootfs v4 已启用本地身份、权限、资源边界与断电恢复。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";

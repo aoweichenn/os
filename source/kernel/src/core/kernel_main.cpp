@@ -1,23 +1,23 @@
-#include "os/kernel/core/kernel_main.hpp"
+#include <os/kernel/core/kernel_main.hpp>
 
-#include "os/kernel/arch/cpu_local.hpp"
-#include "os/kernel/arch/descriptor_tables.hpp"
-#include "os/kernel/arch/extended_state.hpp"
-#include "os/kernel/arch/interrupt_runtime.hpp"
-#include "os/kernel/arch/native_system_call.hpp"
-#include "os/kernel/arch/processor.hpp"
-#include "os/kernel/arch/processor_features.hpp"
-#include "os/kernel/device/ata_pio.hpp"
-#include "os/kernel/device/cmos_rtc.hpp"
-#include "os/kernel/fs/devfs.hpp"
-#include "os/kernel/fs/memfs.hpp"
-#include "os/kernel/fs/procfs.hpp"
-#include "os/kernel/fs/root_file_system.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/memory/memory_manager.hpp"
-#include "os/kernel/process/process_runtime.hpp"
+#include <os/kernel/arch/cpu_local.hpp>
+#include <os/kernel/arch/descriptor_tables.hpp>
+#include <os/kernel/arch/extended_state.hpp>
+#include <os/kernel/arch/interrupt_runtime.hpp>
+#include <os/kernel/arch/native_system_call.hpp>
+#include <os/kernel/arch/processor.hpp>
+#include <os/kernel/arch/processor_features.hpp>
+#include <os/kernel/device/ata_pio.hpp>
+#include <os/kernel/device/cmos_rtc.hpp>
 #include <os/kernel/device/port_io.hpp>
 #include <os/kernel/device/vga_text_console.hpp>
+#include <os/kernel/fs/devfs.hpp>
+#include <os/kernel/fs/memfs.hpp>
+#include <os/kernel/fs/procfs.hpp>
+#include <os/kernel/fs/root_file_system.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/memory/memory_manager.hpp>
+#include <os/kernel/process/process_runtime.hpp>
 
 namespace os::kernel {
 
@@ -346,6 +346,24 @@ constexpr char OS_KERNEL_MAIN_USER_RESULT_INVALID_MESSAGE[] =
     "[OS][KERNEL] USER_RESULT_INVALID\r\n";
 constexpr char OS_KERNEL_MAIN_PROCESS_RUNTIME_READY_MESSAGE[] =
     "[OS][KERNEL] PROCESS_RUNTIME_READY\r\n";
+constexpr char OS_KERNEL_MAIN_MEMORY_PRESSURE_READY_MESSAGE[] =
+    "[OS][KERNEL] MEMORY_PRESSURE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_SWAP_READY_MESSAGE[] = "[OS][KERNEL] SWAP_READY\r\n";
+constexpr char OS_KERNEL_MAIN_SWAP_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] SWAP_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_MEMORY_RESIDENT_LIMIT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_RESIDENT_LIMIT_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_MINIMUM_WATERMARK_PREFIX[] =
+    "[OS][KERNEL] MEMORY_MIN_WATERMARK_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_LOW_WATERMARK_PREFIX[] =
+    "[OS][KERNEL] MEMORY_LOW_WATERMARK_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_HIGH_WATERMARK_PREFIX[] =
+    "[OS][KERNEL] MEMORY_HIGH_WATERMARK_PAGES=";
+constexpr char OS_KERNEL_MAIN_SWAP_SLOT_CAPACITY_PREFIX[] = "[OS][KERNEL] SWAP_SLOT_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_SWAP_INITIALIZATION_STAGE_PREFIX[] =
+    "[OS][KERNEL] SWAP_INITIALIZATION_STAGE=";
+constexpr char OS_KERNEL_MAIN_OVERCOMMIT_MODE_PREFIX[] = "[OS][KERNEL] OVERCOMMIT_MODE=";
+constexpr char OS_KERNEL_MAIN_COMMIT_LIMIT_PREFIX[] = "[OS][KERNEL] COMMIT_LIMIT_PAGES=";
 constexpr char OS_KERNEL_MAIN_KERNEL_STACK_MANAGER_READY_MESSAGE[] =
     "[OS][KERNEL] KERNEL_STACK_MANAGER_READY\r\n";
 constexpr char OS_KERNEL_MAIN_KERNEL_STACK_SLOT_CAPACITY_PREFIX[] =
@@ -575,6 +593,24 @@ constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_RELEASE_COUNT_PREFIX[] =
     "[OS][KERNEL] USER_PAGE_REFERENCE_RELEASES=";
 constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX[] =
     "[OS][KERNEL] USER_PAGE_REFERENCE_EXCLUSIVE_RESTORES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_PRESSURE_RESIDENT_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_PRESSURE_RESIDENT_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_PRESSURE_RECLAIM_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_PRESSURE_RECLAIMED_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_COMMITTED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_COMMITTED_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_PEAK_COMMITTED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_PEAK_COMMITTED_PAGES=";
+constexpr char OS_KERNEL_MAIN_SWAP_ACTIVE_SLOT_COUNT_PREFIX[] = "[OS][KERNEL] SWAP_ACTIVE_SLOTS=";
+constexpr char OS_KERNEL_MAIN_SWAP_PEAK_SLOT_COUNT_PREFIX[] =
+    "[OS][KERNEL] SWAP_PEAK_ACTIVE_SLOTS=";
+constexpr char OS_KERNEL_MAIN_SWAP_STORE_COUNT_PREFIX[] = "[OS][KERNEL] SWAP_STORES=";
+constexpr char OS_KERNEL_MAIN_SWAP_LOAD_COUNT_PREFIX[] = "[OS][KERNEL] SWAP_LOADS=";
+constexpr char OS_KERNEL_MAIN_SWAP_CHECKSUM_FAILURE_COUNT_PREFIX[] =
+    "[OS][KERNEL] SWAP_CHECKSUM_FAILURES=";
+constexpr char OS_KERNEL_MAIN_OOM_INVOCATION_COUNT_PREFIX[] = "[OS][KERNEL] OOM_INVOCATIONS=";
+constexpr char OS_KERNEL_MAIN_OOM_KILL_COUNT_PREFIX[] = "[OS][KERNEL] OOM_KILLS=";
+constexpr char OS_KERNEL_MAIN_OOM_LAST_VICTIM_PREFIX[] = "[OS][KERNEL] OOM_LAST_VICTIM=";
 constexpr char OS_KERNEL_MAIN_FILE_DESCRIPTION_FAILED_FINALIZATION_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_DESCRIPTION_FAILED_FINALIZATIONS=";
 constexpr char OS_KERNEL_MAIN_PROCESS_RESOURCE_VALIDATION_PREFIX[] =
@@ -626,7 +662,7 @@ constexpr char OS_KERNEL_MAIN_SCHEDULER_COMPLETE_MESSAGE[] = "[OS][KERNEL] SCHED
 constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
-constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.4 terminal ready\r\n";
+constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.5 terminal ready\r\n";
 constexpr uint64_t OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT = 16ULL;
 constexpr uint64_t OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT = 1ULL;
 constexpr int64_t OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE = 0LL;
@@ -680,7 +716,7 @@ constexpr uint64_t OS_KERNEL_MAIN_FILE_DESCRIPTION_PROOF_WRITTEN_BYTES = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FIRST_PROCESS_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr char OS_KERNEL_MAIN_INIT_PATH[] = "/sbin/init";
-constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v2.4";
+constexpr char OS_KERNEL_MAIN_INIT_ENVIRONMENT[] = "OS_STAGE=v2.5";
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES = 256ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER = 0ULL;
@@ -1218,6 +1254,9 @@ struct KernelProcfsContext final {
     const PhysicalFrameAllocatorStatistics frame_statistics = GetPhysicalFrameAllocatorStatistics();
     const KernelHeapStatistics heap_statistics = GetKernelHeap().Statistics();
     const ProcessObservationSnapshot process_snapshot = GetProcessObservationSnapshot();
+    const MemoryPressureStatistics pressure_statistics = GetUserMemoryPressureStatistics();
+    const MemoryOvercommitStatistics overcommit_statistics = GetUserMemoryOvercommitStatistics();
+    const SwapManagerStatistics swap_statistics = GetUserSwapStatistics();
     const fs::RootFileSystemStatistics root_statistics =
         procfs_context.root_file_system->ReadStatistics();
     snapshot = fs::ProcfsSnapshot{
@@ -1227,6 +1266,15 @@ struct KernelProcfsContext final {
         .free_memory_bytes = frame_statistics.free_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
         .allocated_memory_bytes =
             frame_statistics.allocated_frame_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .resident_limit_bytes = pressure_statistics.watermarks.resident_limit_page_count *
+                                OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .swap_total_bytes = swap_statistics.slot_capacity * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .swap_free_bytes = swap_statistics.free_slot_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .committed_memory_bytes =
+            overcommit_statistics.committed_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .commit_limit_bytes =
+            overcommit_statistics.normal_commit_limit_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+        .oom_kill_count = process_snapshot.oom_kill_count,
         .active_process_count = process_snapshot.active_process_count,
         .active_thread_count = process_snapshot.active_thread_count,
         .process_capacity = process_snapshot.process_capacity,
@@ -1957,6 +2005,30 @@ void ExecuteRequiredProcesses(const VgaTextConsole &vga_console,
     WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX,
                          statistics.user_page_references_after_processes.exclusive_restore_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PRESSURE_RESIDENT_PAGE_COUNT_PREFIX,
+                         statistics.memory_pressure.resident_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PRESSURE_RECLAIM_COUNT_PREFIX,
+                         statistics.memory_pressure.reclaimed_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_COMMITTED_PAGE_COUNT_PREFIX,
+                         statistics.memory_overcommit.committed_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PEAK_COMMITTED_PAGE_COUNT_PREFIX,
+                         statistics.memory_overcommit.peak_committed_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_ACTIVE_SLOT_COUNT_PREFIX,
+                         statistics.swap.active_slot_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_PEAK_SLOT_COUNT_PREFIX,
+                         statistics.swap.peak_active_slot_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_STORE_COUNT_PREFIX,
+                         statistics.swap.successful_store_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_LOAD_COUNT_PREFIX,
+                         statistics.swap.successful_load_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_CHECKSUM_FAILURE_COUNT_PREFIX,
+                         statistics.swap.checksum_failure_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OOM_INVOCATION_COUNT_PREFIX,
+                         statistics.oom_invocation_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OOM_KILL_COUNT_PREFIX,
+                         statistics.oom_kill_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OOM_LAST_VICTIM_PREFIX,
+                         statistics.last_oom_victim_process_id);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_ACTIVE_COUNT_PREFIX,
                          statistics.kernel_stacks_after_processes.active_stack_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KERNEL_STACK_SUCCESSFUL_CREATION_COUNT_PREFIX,
@@ -2199,8 +2271,35 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     if (AttachProcessVfs(vfs) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_INITIALIZATION_STAGE_PREFIX,
+                             static_cast<uint64_t>(GetUserSwapInitializationStage()));
         HaltProcessor();
     }
+    const MemoryPressureStatistics pressure_statistics = GetUserMemoryPressureStatistics();
+    const MemoryOvercommitStatistics overcommit_statistics = GetUserMemoryOvercommitStatistics();
+    const SwapManagerStatistics swap_statistics = GetUserSwapStatistics();
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_MEMORY_PRESSURE_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_RESIDENT_LIMIT_PREFIX,
+                         pressure_statistics.watermarks.resident_limit_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_MINIMUM_WATERMARK_PREFIX,
+                         pressure_statistics.watermarks.minimum_free_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_LOW_WATERMARK_PREFIX,
+                         pressure_statistics.watermarks.low_free_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_HIGH_WATERMARK_PREFIX,
+                         pressure_statistics.watermarks.high_free_page_count);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_SWAP_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_SLOT_CAPACITY_PREFIX,
+                         swap_statistics.slot_capacity);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_OVERCOMMIT_MODE_PREFIX,
+                         static_cast<uint64_t>(overcommit_statistics.mode));
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_COMMIT_LIMIT_PREFIX,
+                         overcommit_statistics.normal_commit_limit_page_count);
+    if (swap_statistics.successful_store_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+        swap_statistics.successful_load_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+        swap_statistics.active_slot_count != OS_KERNEL_MAIN_EMPTY_VALUE) {
+        HaltProcessor();
+    }
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_SWAP_SELF_TEST_PASSED_MESSAGE);
     if (user_program_selection == UserProgramSelection::Smoke) {
         CreateInitialDiskProcess(vga_console);
     }

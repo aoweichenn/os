@@ -1,6 +1,6 @@
-#include "os/kernel/fs/procfs.hpp"
+#include <os/kernel/fs/procfs.hpp>
 
-#include "os/abi/version.hpp"
+#include <os/abi/version.hpp>
 
 namespace os::kernel::fs {
 
@@ -57,6 +57,12 @@ constexpr char OS_KERNEL_PROCFS_UPTIME_PREFIX[] = "monotonic_nanoseconds ";
 constexpr char OS_KERNEL_PROCFS_MEMORY_MANAGED_PREFIX[] = "managed_bytes ";
 constexpr char OS_KERNEL_PROCFS_MEMORY_FREE_PREFIX[] = "free_bytes ";
 constexpr char OS_KERNEL_PROCFS_MEMORY_ALLOCATED_PREFIX[] = "allocated_bytes ";
+constexpr char OS_KERNEL_PROCFS_MEMORY_RESIDENT_LIMIT_PREFIX[] = "resident_limit_bytes ";
+constexpr char OS_KERNEL_PROCFS_MEMORY_SWAP_TOTAL_PREFIX[] = "swap_total_bytes ";
+constexpr char OS_KERNEL_PROCFS_MEMORY_SWAP_FREE_PREFIX[] = "swap_free_bytes ";
+constexpr char OS_KERNEL_PROCFS_MEMORY_COMMITTED_PREFIX[] = "committed_bytes ";
+constexpr char OS_KERNEL_PROCFS_MEMORY_COMMIT_LIMIT_PREFIX[] = "commit_limit_bytes ";
+constexpr char OS_KERNEL_PROCFS_MEMORY_OOM_KILL_COUNT_PREFIX[] = "oom_kills ";
 constexpr char OS_KERNEL_PROCFS_PROCESS_ACTIVE_PREFIX[] = "active_processes ";
 constexpr char OS_KERNEL_PROCFS_THREAD_ACTIVE_PREFIX[] = "active_threads ";
 constexpr char OS_KERNEL_PROCFS_PROCESS_CAPACITY_PREFIX[] = "process_capacity ";
@@ -562,7 +568,19 @@ Status Procfs::Render(const NodeKind kind, uint8_t *const destination,
                     writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_FREE_PREFIX) &&
                     writer.AppendLine(snapshot.free_memory_bytes) &&
                     writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_ALLOCATED_PREFIX) &&
-                    writer.AppendLine(snapshot.allocated_memory_bytes);
+                    writer.AppendLine(snapshot.allocated_memory_bytes) &&
+                    writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_RESIDENT_LIMIT_PREFIX) &&
+                    writer.AppendLine(snapshot.resident_limit_bytes) &&
+                    writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_SWAP_TOTAL_PREFIX) &&
+                    writer.AppendLine(snapshot.swap_total_bytes) &&
+                    writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_SWAP_FREE_PREFIX) &&
+                    writer.AppendLine(snapshot.swap_free_bytes) &&
+                    writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_COMMITTED_PREFIX) &&
+                    writer.AppendLine(snapshot.committed_memory_bytes) &&
+                    writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_COMMIT_LIMIT_PREFIX) &&
+                    writer.AppendLine(snapshot.commit_limit_bytes) &&
+                    writer.AppendLiteral(OS_KERNEL_PROCFS_MEMORY_OOM_KILL_COUNT_PREFIX) &&
+                    writer.AppendLine(snapshot.oom_kill_count);
     } else if (kind == NodeKind::Processes) {
         succeeded = writer.AppendLiteral(OS_KERNEL_PROCFS_PROCESS_ACTIVE_PREFIX) &&
                     writer.AppendLine(snapshot.active_process_count) &&

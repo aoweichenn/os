@@ -925,6 +925,35 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
 容量、峰值、申请与释放，避免 VGA 控制台吞吐改变调度和 fault 时序。详细算法见
 [ADR 0035](../adr/0035-anonymous-vma-demand-paging-user-heap.md)。
 
+## v2.5 内存压力模块契约
+
+`memory/memory_pressure.*` 只计算水位、回收计划、commit 上限和 OOM 分数，
+不访问页表、VFS 或调度器。Linux 兼容编号和默认值在该模块冻结；宿主单元和随机
+测试可以不启动 QEMU 就检查全部算术、溢出、下溢与确定性平分规则。
+
+`memory/swap_manager.*` 拥有槽元数据，不拥有磁盘文件或页帧。调用者提供整页
+read/write operation。Store 在写成功后发布映射；LoadAndRelease 在读满且校验
+一致后清槽；Clone 保留源槽并写出独立目标槽。任何 I/O 或校验失败不得降低
+active slot count。
+
+`user/user_memory.*` 负责把策略接到 VMA/PTE：
+
+- 只交换 Anonymous、ProgramBreak、UserStack 的非 COW present 页；
+- 单次扫描最多 65536 页并保存地址空间游标；
+- 换出顺序为 Store、Unmap、ReleaseFrame，失败逆序恢复；
+- 换入用新 frame/PTE 承载候选，SwapManager 成功后再减少 swapped count；
+- fork 为已换出独占页 clone 槽；unmap/exec/exit 释放 non-present 槽；
+- 正常销毁要求 mapped、swapped、committed 均归零。
+
+`process/process_runtime.*` 收集 Alive 候选并执行 OOM 结果。PID 1 永不进入可杀
+集合。非当前牺牲者的 fd、FsContext、futex、进程树、Ready/Blocked Thread 和
+UserAddressSpace 依次清理；当前牺牲者在异常出口转换为 SIGKILL。原 fault 最多
+重试一次。
+
+最终资源门禁同时要求 `MemoryPressureController::Validate`、
+`MemoryOvercommitAccountant::Validate`、`SwapManager::Validate` 成功，且全局
+committed 和 active swap 均为零。
+
 ## 已知边界
 
 - 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
@@ -944,10 +973,9 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
   但仍固定为 16 KiB；管理器由单 BSP 串行调用，尚无 per-CPU 缓存或远端
   TLB shootdown。
 - panic 只支持单核早期环境；SMP 停核和崩溃转储尚未实现。
-- Ring 0 页故障仍全部 panic；Ring 3 的合法匿名、program-break 与连续栈
-  not-present fault 已按需解析，guard、权限与越界只终止当前用户执行。
-  file-backed fault、按需 ELF、page cache 与写时复制已经实现；shared
-  anonymous、huge-page COW、swap 与多核 shootdown 尚未实现。
+- Ring 0 页故障仍全部 panic；Ring 3 的合法匿名、program-break、连续栈、
+  file-backed、COW 和 swap-in fault 已解析，guard、权限、越界和损坏 swap 只
+  终止相关用户执行。shared anonymous、huge-page COW 与多核 shootdown 尚未实现。
 - 当前仍是单 BSP、固定优先级轮转；内核已经具备 Process/Thread 两级生命周期、
   PID1、父子关系、Zombie/reap、spawn/exec/wait、WaitQueue、完整 x87/SSE2
   现场、fork、用户 Thread、进程组信号、事件式 wait、session 和单 TTY

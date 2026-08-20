@@ -1,7 +1,7 @@
 #pragma once
 
-#include "os/kernel/process/wait_queue.hpp"
-#include "os/kernel/time/deadline_queue.hpp"
+#include <os/kernel/process/wait_queue.hpp>
+#include <os/kernel/time/deadline_queue.hpp>
 
 #include <stdint.h>
 
@@ -202,6 +202,8 @@ class ThreadScheduler final {
     [[nodiscard]] ThreadSchedulerStatus
     TerminateCurrentProcess(uint64_t process_index, ThreadSchedulingDecision &decision,
                             uint64_t &terminated_thread_count) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus
+    TerminateNonCurrentProcess(uint64_t process_index, uint64_t &terminated_thread_count) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
     StopCurrentProcess(uint64_t process_index, ThreadSchedulingDecision &decision) noexcept;
     [[nodiscard]] ThreadSchedulerStatus ContinueProcess(uint64_t process_index) noexcept;

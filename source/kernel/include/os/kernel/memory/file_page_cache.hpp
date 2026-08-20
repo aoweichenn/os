@@ -1,7 +1,7 @@
 #pragma once
 
-#include "os/kernel/memory/physical_frame_allocator.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/kernel/memory/physical_frame_allocator.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
 
@@ -19,16 +19,11 @@ struct FilePageIdentity final {
     uint64_t page_index;
 };
 
-using FilePageAccessOperation = uint8_t *(*)(void *context,
-                                             uint64_t physical_address) noexcept;
-using FilePageReadOperation = bool (*)(void *context,
-                                       const FilePageIdentity &identity,
-                                       uint8_t *destination,
-                                       uint64_t capacity_bytes) noexcept;
-using FilePageWriteOperation = bool (*)(void *context,
-                                        const FilePageIdentity &identity,
-                                        const uint8_t *source,
-                                        uint64_t length_bytes) noexcept;
+using FilePageAccessOperation = uint8_t *(*)(void *context, uint64_t physical_address) noexcept;
+using FilePageReadOperation = bool (*)(void *context, const FilePageIdentity &identity,
+                                       uint8_t *destination, uint64_t capacity_bytes) noexcept;
+using FilePageWriteOperation = bool (*)(void *context, const FilePageIdentity &identity,
+                                        const uint8_t *source, uint64_t length_bytes) noexcept;
 
 enum class FilePageCacheEntryState : uint64_t {
     Empty,
@@ -103,28 +98,25 @@ class FilePageCache final {
     FilePageCache &operator=(const FilePageCache &) = delete;
 
     [[nodiscard]] FilePageCacheStatus
-    Initialize(FilePageCacheEntry *entries, uint64_t capacity,
-               uint64_t dirty_page_limit,
-               PhysicalFrameAllocator &frame_allocator,
-               void *page_access_context,
+    Initialize(FilePageCacheEntry *entries, uint64_t capacity, uint64_t dirty_page_limit,
+               PhysicalFrameAllocator &frame_allocator, void *page_access_context,
                FilePageAccessOperation page_access_operation) noexcept;
-    [[nodiscard]] FilePageCacheStatus
-    Acquire(const FilePageIdentity &identity, void *reader_context,
-            FilePageReadOperation read_operation, uint64_t &physical_address,
-            bool &cache_hit) noexcept;
-    [[nodiscard]] FilePageCacheStatus
-    Release(const FilePageIdentity &identity,
-            uint64_t physical_address) noexcept;
-    [[nodiscard]] FilePageCacheStatus
-    MarkDirty(const FilePageIdentity &identity,
-              uint64_t physical_address) noexcept;
-    [[nodiscard]] FilePageCacheStatus
-    Writeback(void *writer_context, FilePageWriteOperation write_operation,
-              uint64_t maximum_page_count,
-              uint64_t &written_page_count) noexcept;
-    [[nodiscard]] FilePageCacheStatus
-    Invalidate(const FileIdentity &identity) noexcept;
+    [[nodiscard]] FilePageCacheStatus Acquire(const FilePageIdentity &identity,
+                                              void *reader_context,
+                                              FilePageReadOperation read_operation,
+                                              uint64_t &physical_address, bool &cache_hit) noexcept;
+    [[nodiscard]] FilePageCacheStatus Release(const FilePageIdentity &identity,
+                                              uint64_t physical_address) noexcept;
+    [[nodiscard]] FilePageCacheStatus MarkDirty(const FilePageIdentity &identity,
+                                                uint64_t physical_address) noexcept;
+    [[nodiscard]] FilePageCacheStatus Writeback(void *writer_context,
+                                                FilePageWriteOperation write_operation,
+                                                uint64_t maximum_page_count,
+                                                uint64_t &written_page_count) noexcept;
+    [[nodiscard]] FilePageCacheStatus Invalidate(const FileIdentity &identity) noexcept;
     [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count) noexcept;
+    [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count,
+                                           uint64_t &reclaimed_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus Validate() const noexcept;
     [[nodiscard]] FilePageCacheStatistics Statistics() const noexcept;
     [[nodiscard]] FilePageCacheStatus Destroy() noexcept;
@@ -132,16 +124,13 @@ class FilePageCache final {
   private:
     [[nodiscard]] bool IdentitiesEqual(const FileIdentity &left,
                                        const FileIdentity &right) const noexcept;
-    [[nodiscard]] bool PageIdentitiesEqual(
-        const FilePageIdentity &left,
-        const FilePageIdentity &right) const noexcept;
+    [[nodiscard]] bool PageIdentitiesEqual(const FilePageIdentity &left,
+                                           const FilePageIdentity &right) const noexcept;
     [[nodiscard]] bool IdentityIsValid(const FileIdentity &identity) const noexcept;
     [[nodiscard]] uint64_t NextAccessGeneration() noexcept;
-    [[nodiscard]] FilePageCacheEntry *FindEntry(
-        const FilePageIdentity &identity) noexcept;
+    [[nodiscard]] FilePageCacheEntry *FindEntry(const FilePageIdentity &identity) noexcept;
     [[nodiscard]] FilePageCacheEntry *SelectLoadEntry() noexcept;
-    [[nodiscard]] FilePageCacheStatus ReleaseEntry(
-        FilePageCacheEntry &entry) noexcept;
+    [[nodiscard]] FilePageCacheStatus ReleaseEntry(FilePageCacheEntry &entry) noexcept;
 
     FilePageCacheEntry *entries_{nullptr};
     uint64_t capacity_{};

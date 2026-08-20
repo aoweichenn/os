@@ -1,19 +1,19 @@
-#include "os/kernel/process/process_runtime.hpp"
+#include <os/kernel/process/process_runtime.hpp>
 
-#include "os/kernel/arch/cpu_local.hpp"
-#include "os/kernel/arch/descriptor_tables.hpp"
-#include "os/kernel/arch/interrupt_runtime.hpp"
-#include "os/kernel/arch/native_system_call.hpp"
-#include "os/kernel/arch/processor.hpp"
-#include "os/kernel/arch/user_context.hpp"
-#include "os/kernel/core/freestanding_memory.hpp"
-#include "os/kernel/fs/legacy_file_system.hpp"
-#include "os/kernel/fs/root_file_system_format.hpp"
-#include "os/kernel/memory/memory_manager.hpp"
-#include "os/kernel/process/program_arguments.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/kernel/arch/cpu_local.hpp>
+#include <os/kernel/arch/descriptor_tables.hpp>
+#include <os/kernel/arch/interrupt_runtime.hpp>
+#include <os/kernel/arch/native_system_call.hpp>
+#include <os/kernel/arch/processor.hpp>
+#include <os/kernel/arch/user_context.hpp>
+#include <os/kernel/core/freestanding_memory.hpp>
 #include <os/kernel/device/port_io.hpp>
 #include <os/kernel/device/vga_text_console.hpp>
+#include <os/kernel/fs/legacy_file_system.hpp>
+#include <os/kernel/fs/root_file_system_format.hpp>
+#include <os/kernel/memory/memory_manager.hpp>
+#include <os/kernel/process/program_arguments.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
 
 namespace os::kernel {
 
@@ -26,6 +26,7 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_NORMALIZED_ERROR_CODE = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS = 0x202ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID = 1ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_WAKE_ALL_COUNT = OS_KERNEL_THREAD_CAPACITY_LIMIT;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_STACK_POINTER_PROBE_SIZE_BYTES = sizeof(uint64_t);
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FUNCTIONAL_MEMORY_BYTES = 256ULL * 1024ULL * 1024ULL;
@@ -123,6 +124,20 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_PROCESS_ID=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX[] =
     "[OS][KERNEL][FATAL] PROCESS_TREE_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX[] =
+    "[OS][KERNEL][FATAL] EXIT_STAGE=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX[] =
+    "[OS][KERNEL][FATAL] EXIT_STATUS=";
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_EXTENDED_STATE = 1ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_FUTEX = 2ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_WRITEBACK = 3ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_FILE_SYSTEM_CONTEXT = 4ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_SCHEDULER = 5ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_SIGNAL = 6ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_ADDRESS_SPACE = 7ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_PRIVILEGE_STACK = 8ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_CPU_LOCAL = 9ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_ACTIVATION = 10ULL;
 constexpr char OS_KERNEL_PROCESS_RUNTIME_SIGNAL_QUEUED_PREFIX[] =
     "[OS][KERNEL][SIGNAL] QUEUED_COUNT=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_SIGNAL_DELIVERED_PREFIX[] =
@@ -317,6 +332,7 @@ JobControlProcessState job_control_process_states[OS_KERNEL_PROCESS_CAPACITY_LIM
 SignalManager signal_manager;
 SignalProcessState signal_process_states[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 SignalThreadState signal_thread_states[OS_KERNEL_THREAD_CAPACITY_LIMIT];
+OomCandidate oom_candidates[OS_KERNEL_PROCESS_CAPACITY_LIMIT];
 ProgramArgumentPlan program_argument_plan;
 uint8_t launch_path_buffer[fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES];
 constinit IrqSaveSpinLock scheduler_lock{DisableInterrupts, RestoreInterrupts};
@@ -343,9 +359,26 @@ uint64_t pipe_broken_observation_count;
 uint64_t capacity_self_test_process_count;
 uint64_t capacity_self_test_thread_count;
 uint64_t capacity_self_test_threads_per_process;
+uint64_t oom_invocation_count;
+uint64_t oom_kill_count;
+uint64_t last_oom_victim_process_id;
+uint64_t last_oom_victim_score;
 UserThreadRuntimeStatistics user_thread_runtime_statistics;
 bool process_runtime_initialized;
 bool process_scheduling_active;
+bool current_process_oom_kill_pending;
+
+[[nodiscard]] bool CalculatePageCount(const uint64_t length_bytes, uint64_t &page_count) noexcept {
+    page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const uint64_t page_mask =
+        os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT;
+    if (length_bytes == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        length_bytes > UINT64_MAX - page_mask) {
+        return false;
+    }
+    page_count = (length_bytes + page_mask) / os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES;
+    return page_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+}
 
 [[nodiscard]] bool ResourceLimitKindIsValid(const os::abi::ResourceLimitKind kind) noexcept {
     return static_cast<uint64_t>(kind) < os::abi::OS_ABI_RESOURCE_LIMIT_KIND_COUNT;
@@ -653,6 +686,10 @@ void ResetRuntimeStorage() noexcept {
     for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          thread_index < OS_KERNEL_THREAD_CAPACITY_LIMIT; ++thread_index) {
         runtime_threads[thread_index] = ProcessRuntimeThread{};
+    }
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < OS_KERNEL_PROCESS_CAPACITY_LIMIT; ++process_index) {
+        oom_candidates[process_index] = OomCandidate{};
     }
     user_thread_runtime_statistics = UserThreadRuntimeStatistics{};
 }
@@ -2324,13 +2361,20 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     ProcessRuntimeProcess &process = runtime_processes[current_thread.process_index];
     ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
     runtime_thread.saved_frame = &frame;
-    if (SaveFxState(runtime_thread.extended_state) != ExtendedStateStatus::Succeeded) {
+    const ExtendedStateStatus save_status = SaveFxState(runtime_thread.extended_state);
+    if (save_status != ExtendedStateStatus::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_EXTENDED_STATE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX,
+                                 static_cast<uint64_t>(save_status));
         HaltProcessor();
     }
     uint64_t cancelled_futex_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     if (!CancelPrivateFutexRange(
             process.address_space.address_space_identifier, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, true, cancelled_futex_thread_count)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_FUTEX);
         HaltProcessor();
     }
     static_cast<void>(cancelled_futex_thread_count);
@@ -2347,11 +2391,20 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     // 最后一个 writable shared 后备引用消失前必须先把脏页移交给 VFS。
     // Sync 会同时重新写保护其他地址空间中的 alias，避免写回后继续无通知写入。
     if (!FlushOutstandingUserFilePages()) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_WRITEBACK);
         HaltProcessor();
     }
     CloseProcessIoDescriptors(process);
-    if (process_vfs != nullptr && process.file_system_context.initialized &&
-        process_vfs->ReleaseContext(process.file_system_context) != fs::Status::Succeeded) {
+    fs::Status release_context_status = fs::Status::Succeeded;
+    if (process_vfs != nullptr && process.file_system_context.initialized) {
+        release_context_status = process_vfs->ReleaseContext(process.file_system_context);
+    }
+    if (release_context_status != fs::Status::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_FILE_SYSTEM_CONTEXT);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX,
+                                 static_cast<uint64_t>(release_context_status));
         HaltProcessor();
     }
     uint64_t reparented_process_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -2390,6 +2443,10 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
         current_thread.process_index, decision, terminated_thread_count);
     scheduler_lock.Unlock(interrupts_were_enabled);
     if (scheduler_status != ThreadSchedulerStatus::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_SCHEDULER);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX,
+                                 static_cast<uint64_t>(scheduler_status));
         HaltProcessor();
     }
     for (uint64_t process_thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -2399,6 +2456,8 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
                 SignalManagerStatus::Succeeded &&
             signal_thread.process_index == current_thread.process_index &&
             !RemoveSignalThreadIfPresent(process_thread_index)) {
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                     OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_SIGNAL);
             HaltProcessor();
         }
     }
@@ -2411,7 +2470,12 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
 
     SetActiveUserAddressSpace(nullptr);
     ActivateKernelPageTable();
-    if (DestroyUserAddressSpace(process.address_space) != UserAddressSpaceStatus::Succeeded) {
+    const UserAddressSpaceStatus destroy_status = DestroyUserAddressSpace(process.address_space);
+    if (destroy_status != UserAddressSpaceStatus::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_ADDRESS_SPACE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX,
+                                 static_cast<uint64_t>(destroy_status));
         HaltProcessor();
     }
 
@@ -2423,6 +2487,8 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
             process_scheduling_active = false;
         }
         if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0())) {
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                     OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_PRIVILEGE_STACK);
             HaltProcessor();
         }
         if (GetCpuLocal().ClearCurrentThread(DefaultPrivilegeStackPointer0()) !=
@@ -2557,6 +2623,11 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     descriptor_reader_block_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_end_of_file_observation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     pipe_broken_observation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    oom_invocation_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    oom_kill_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    last_oom_victim_process_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    last_oom_victim_score = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    current_process_oom_kill_pending = false;
     process_vfs = nullptr;
     process_runtime_initialized = true;
     return ProcessRuntimeStatus::Succeeded;
@@ -2588,6 +2659,17 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept {
             }
             return ProcessRuntimeStatus::FileSystemFailure;
         }
+    }
+    if (AttachUserSwap(vfs) != UserAddressSpaceStatus::Succeeded) {
+        for (uint64_t rollback_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+             rollback_index < process_runtime_limits.process_capacity; ++rollback_index) {
+            ProcessRuntimeProcess &rollback_process = runtime_processes[rollback_index];
+            if (rollback_process.active && rollback_process.file_system_context.initialized &&
+                vfs.ReleaseContext(rollback_process.file_system_context) != fs::Status::Succeeded) {
+                HaltProcessor();
+            }
+        }
+        return ProcessRuntimeStatus::FileSystemFailure;
     }
     process_vfs = &vfs;
     return ProcessRuntimeStatus::Succeeded;
@@ -2763,8 +2845,9 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process
     }
     ProcessRuntimeProcess &parent_runtime_process = runtime_processes[parent_thread.process_index];
     UserAddressSpace child_address_space{};
-    const UserAddressSpaceStatus clone_status =
-        CloneUserAddressSpaceForFork(parent_runtime_process.address_space, child_address_space);
+    const UserAddressSpaceStatus clone_status = CloneUserAddressSpaceForFork(
+        parent_runtime_process.address_space, child_address_space,
+        security::IsSuperuser(parent_runtime_process.file_system_context.credentials));
     if (clone_status != UserAddressSpaceStatus::Succeeded) {
         WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FORK_FAILURE_STAGE_PREFIX,
                                  OS_KERNEL_PROCESS_RUNTIME_FORK_ADDRESS_SPACE_STAGE);
@@ -3441,11 +3524,15 @@ ExceptionFrame *ExitCurrentUserThread(ExceptionFrame &frame, const uint64_t exit
         if (!SetPrivilegeStackPointer0(DefaultPrivilegeStackPointer0()) ||
             GetCpuLocal().ClearCurrentThread(DefaultPrivilegeStackPointer0()) !=
                 CpuLocalStatus::Succeeded) {
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                     OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_CPU_LOCAL);
             HaltProcessor();
         }
         OsKernelReturnFromUserMode(swap_gs_required);
     }
     if (!ActivateThread(decision.current_thread_index)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_ACTIVATION);
         HaltProcessor();
     }
     return runtime_threads[decision.current_thread_index].saved_frame;
@@ -4396,6 +4483,10 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         user_page_references_after_processes.active_reference_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        !ValidateUserMemoryManagement() ||
+        GetUserMemoryOvercommitStatistics().committed_page_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        GetUserSwapStatistics().active_slot_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         private_futex_manager.Validate() != PrivateFutexStatus::Succeeded ||
         private_futex_manager.Statistics().active_entry_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
@@ -4466,6 +4557,13 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .resource_snapshot_before_processes = resource_snapshot_before_processes,
         .resource_snapshot_after_processes = resource_snapshot_after_processes,
         .resource_snapshot_difference = resource_snapshot_difference,
+        .memory_pressure = GetUserMemoryPressureStatistics(),
+        .memory_overcommit = GetUserMemoryOvercommitStatistics(),
+        .swap = GetUserSwapStatistics(),
+        .oom_invocation_count = oom_invocation_count,
+        .oom_kill_count = oom_kill_count,
+        .last_oom_victim_process_id = last_oom_victim_process_id,
+        .last_oom_victim_score = last_oom_victim_score,
         .ipc =
             ProcessIpcStatistics{
                 .pipe = process_pipe.Statistics(),
@@ -4739,9 +4837,23 @@ UserVirtualMemoryStatus MapCurrentProcessAnonymousMemory(const uint64_t requeste
         length_bytes > address_space_limit - current_virtual_bytes) {
         return UserVirtualMemoryStatus::ResourceLimitExceeded;
     }
+    uint64_t commit_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!CalculatePageCount(length_bytes, commit_page_count)) {
+        return UserVirtualMemoryStatus::InvalidRange;
+    }
+    if (CommitUserMemory(process.address_space, commit_page_count,
+                         security::IsSuperuser(process.file_system_context.credentials)) !=
+        MemoryOvercommitStatus::Succeeded) {
+        return UserVirtualMemoryStatus::CommitLimitExceeded;
+    }
     const UserVirtualMemoryStatus status =
         MapAnonymousMemory(process.address_space, requested_address, length_bytes, protection_flags,
                            map_flags, mapped_address);
+    if (status != UserVirtualMemoryStatus::Succeeded &&
+        UncommitUserMemory(process.address_space, commit_page_count) !=
+            MemoryOvercommitStatus::Succeeded) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
     process.result.mapped_page_count = process.address_space.mapped_page_count;
     return status;
 }
@@ -4796,6 +4908,8 @@ UserVirtualMemoryStatus UnmapCurrentProcessMemory(const uint64_t address,
         return UserVirtualMemoryStatus::ThreadMemoryInUse;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    const os::abi::VirtualMemoryStatistics statistics_before =
+        GetUserVirtualMemoryStatistics(process.address_space);
     VirtualMemoryArea area{};
     if (process.address_space.virtual_memory_map.FindContaining(address, area) !=
         VirtualMemoryAreaStatus::Succeeded) {
@@ -4811,6 +4925,17 @@ UserVirtualMemoryStatus UnmapCurrentProcessMemory(const uint64_t address,
                    : UnmapFileMemory(process.address_space, address, length_bytes))
             : UserVirtualMemoryStatus::InvalidRange;
     if (status == UserVirtualMemoryStatus::Succeeded) {
+        if (area.kind == VirtualMemoryAreaKind::Anonymous) {
+            const os::abi::VirtualMemoryStatistics statistics_after =
+                GetUserVirtualMemoryStatistics(process.address_space);
+            if (statistics_after.anonymous_page_count > statistics_before.anonymous_page_count ||
+                UncommitUserMemory(process.address_space,
+                                   statistics_before.anonymous_page_count -
+                                       statistics_after.anonymous_page_count) !=
+                    MemoryOvercommitStatus::Succeeded) {
+                return UserVirtualMemoryStatus::Corrupt;
+            }
+        }
         uint64_t cancelled_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
         if (!CancelPrivateFutexRange(process.address_space.address_space_identifier, address,
                                      length_bytes, false, cancelled_thread_count)) {
@@ -4833,8 +4958,42 @@ UserVirtualMemoryStatus SetCurrentProcessProgramBreak(const uint64_t requested_a
                 .current) {
         return UserVirtualMemoryStatus::ResourceLimitExceeded;
     }
+    const uint64_t previous_program_break_address = process.address_space.program_break_address;
+    const os::abi::VirtualMemoryStatistics statistics_before =
+        GetUserVirtualMemoryStatistics(process.address_space);
     const UserVirtualMemoryStatus status =
         SetProgramBreak(process.address_space, requested_address, program_break_address);
+    if (status == UserVirtualMemoryStatus::Succeeded &&
+        requested_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        const os::abi::VirtualMemoryStatistics statistics_after =
+            GetUserVirtualMemoryStatistics(process.address_space);
+        if (statistics_after.program_break_page_count >
+            statistics_before.program_break_page_count) {
+            const uint64_t additional_page_count = statistics_after.program_break_page_count -
+                                                   statistics_before.program_break_page_count;
+            if (CommitUserMemory(process.address_space, additional_page_count,
+                                 security::IsSuperuser(process.file_system_context.credentials)) !=
+                MemoryOvercommitStatus::Succeeded) {
+                uint64_t rollback_program_break_address = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+                if (SetProgramBreak(process.address_space, previous_program_break_address,
+                                    rollback_program_break_address) !=
+                        UserVirtualMemoryStatus::Succeeded ||
+                    rollback_program_break_address != previous_program_break_address) {
+                    return UserVirtualMemoryStatus::Corrupt;
+                }
+                program_break_address = previous_program_break_address;
+                return UserVirtualMemoryStatus::CommitLimitExceeded;
+            }
+        } else if (statistics_after.program_break_page_count <
+                   statistics_before.program_break_page_count) {
+            if (UncommitUserMemory(process.address_space,
+                                   statistics_before.program_break_page_count -
+                                       statistics_after.program_break_page_count) !=
+                MemoryOvercommitStatus::Succeeded) {
+                return UserVirtualMemoryStatus::Corrupt;
+            }
+        }
+    }
     process.result.mapped_page_count = process.address_space.mapped_page_count;
     return status;
 }
@@ -4849,6 +5008,7 @@ ProcessObservationSnapshot GetProcessObservationSnapshot() noexcept {
         .active_file_description_count =
             kernel_object_manager.Statistics().active_file_description_count,
         .active_pipe_count = dynamic_pipe_manager.Statistics().active_pipe_count,
+        .oom_kill_count = oom_kill_count,
     };
 }
 
@@ -6065,9 +6225,127 @@ ResolveCurrentProcessUserReturnMemory(const uint64_t instruction_pointer,
                                    stack_pointer);
 }
 
+[[nodiscard]] bool TerminateNonCurrentOomVictim(const uint64_t process_index) noexcept {
+    const uint64_t current_thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry current_thread{};
+    if (process_index >= process_runtime_limits.process_capacity ||
+        thread_scheduler.ReadThread(current_thread_index, current_thread) !=
+            ThreadSchedulerStatus::Succeeded ||
+        current_thread.process_index == process_index || !runtime_processes[process_index].active) {
+        return false;
+    }
+    ProcessRuntimeProcess &process = runtime_processes[process_index];
+    uint64_t cancelled_futex_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!CancelPrivateFutexRange(
+            process.address_space.address_space_identifier, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, true, cancelled_futex_thread_count) ||
+        !FlushOutstandingUserFilePages()) {
+        return false;
+    }
+    static_cast<void>(cancelled_futex_thread_count);
+    process.result.termination_reason = ProcessTerminationReason::Signal;
+    process.result.exit_code = OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE;
+    process.result.exception_vector = os::abi::OS_ABI_SIGNAL_KILL_NUMBER;
+    CloseProcessIoDescriptors(process);
+    if (process_vfs != nullptr && process.file_system_context.initialized &&
+        process_vfs->ReleaseContext(process.file_system_context) != fs::Status::Succeeded) {
+        return false;
+    }
+    uint64_t reparented_process_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (process_tree.MarkExited(process_index,
+                                ProcessTreeExitStatus{
+                                    .termination_reason = ProcessTreeTerminationReason::Signal,
+                                    .exit_code = OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE,
+                                    .exception_vector = os::abi::OS_ABI_SIGNAL_KILL_NUMBER,
+                                },
+                                reparented_process_count) != ProcessTreeStatus::Succeeded) {
+        return false;
+    }
+    static_cast<void>(reparented_process_count);
+    WakeRequiredThreads(WaitCondition::ChildProcess, WakeReason::ConditionSatisfied);
+
+    uint64_t terminated_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const ThreadSchedulerStatus terminate_status =
+        thread_scheduler.TerminateNonCurrentProcess(process_index, terminated_thread_count);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (terminate_status != ThreadSchedulerStatus::Succeeded) {
+        return false;
+    }
+    for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         thread_index < process_runtime_limits.thread_capacity; ++thread_index) {
+        SignalThreadState signal_thread{};
+        if (signal_manager.ReadThread(thread_index, signal_thread) ==
+                SignalManagerStatus::Succeeded &&
+            signal_thread.process_index == process_index &&
+            !RemoveSignalThreadIfPresent(thread_index)) {
+            return false;
+        }
+    }
+    user_thread_runtime_statistics.process_exit_cancelled_thread_count += terminated_thread_count;
+    if (DestroyUserAddressSpace(process.address_space) != UserAddressSpaceStatus::Succeeded) {
+        return false;
+    }
+    process.result.mapped_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    return true;
+}
+
+[[nodiscard]] bool TryRecoverFromOutOfMemory(const uint64_t current_process_index) noexcept {
+    if (oom_invocation_count == UINT64_MAX) {
+        return false;
+    }
+    ++oom_invocation_count;
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < process_runtime_limits.process_capacity; ++process_index) {
+        ProcessEntry scheduler_process{};
+        const bool eligible = runtime_processes[process_index].active &&
+                              thread_scheduler.ReadProcess(process_index, scheduler_process) ==
+                                  ThreadSchedulerStatus::Succeeded &&
+                              scheduler_process.state == ProcessState::Alive;
+        oom_candidates[process_index] = OomCandidate{
+            .process_id = eligible ? runtime_processes[process_index].result.process_id
+                                   : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+            .resident_page_count =
+                eligible ? runtime_processes[process_index].address_space.mapped_page_count
+                         : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+            .swapped_page_count =
+                eligible ? runtime_processes[process_index].address_space.swapped_page_count
+                         : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+            .score_adjustment = 0LL,
+            .protected_process = eligible && runtime_processes[process_index].result.process_id ==
+                                                 OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID,
+            .active = eligible,
+        };
+    }
+    const MemoryPressureStatistics pressure_statistics = GetUserMemoryPressureStatistics();
+    OomVictim victim{};
+    if (SelectOomVictim(oom_candidates, process_runtime_limits.process_capacity,
+                        pressure_statistics.watermarks.resident_limit_page_count,
+                        victim) != OomSelectionStatus::Succeeded ||
+        victim.candidate_index >= process_runtime_limits.process_capacity) {
+        return false;
+    }
+    last_oom_victim_process_id = victim.process_id;
+    last_oom_victim_score = victim.score;
+    if (oom_kill_count == UINT64_MAX) {
+        return false;
+    }
+    ++oom_kill_count;
+    if (victim.candidate_index == current_process_index) {
+        current_process_oom_kill_pending = true;
+        return false;
+    }
+    return TerminateNonCurrentOomVictim(victim.candidate_index);
+}
+
 bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_address) noexcept {
     const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
     if (!process_scheduling_active || !CurrentFrameIsValid(thread_index, frame)) {
+        return false;
+    }
+    ThreadEntry current_thread{};
+    if (thread_scheduler.ReadThread(thread_index, current_thread) !=
+        ThreadSchedulerStatus::Succeeded) {
         return false;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
@@ -6084,8 +6362,13 @@ bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_a
         process.address_space.stack_growth_page_fault_count;
     const uint64_t previous_file_fault_count = process.address_space.file_page_fault_count;
     const uint64_t previous_page_cache_hit_count = process.address_space.page_cache_hit_count;
-    const UserPageFaultStatus status = HandleUserPageFault(
+    UserPageFaultStatus status = HandleUserPageFault(
         process.address_space, fault_address, frame.error_code, AsUserContext(frame).stack_pointer);
+    if (status == UserPageFaultStatus::PageAllocationFailed &&
+        TryRecoverFromOutOfMemory(current_thread.process_index)) {
+        status = HandleUserPageFault(process.address_space, fault_address, frame.error_code,
+                                     AsUserContext(frame).stack_pointer);
+    }
     if (status != UserPageFaultStatus::Handled) {
         return false;
     }
@@ -6125,6 +6408,14 @@ ExceptionFrame *TerminateCurrentProcessFromExit(ExceptionFrame &frame,
 
 ExceptionFrame *TerminateCurrentProcessFromException(ExceptionFrame &frame,
                                                      const uint64_t page_fault_address) noexcept {
+    if (current_process_oom_kill_pending) {
+        current_process_oom_kill_pending = false;
+        frame.vector = os::abi::OS_ABI_SIGNAL_KILL_NUMBER;
+        frame.error_code = OS_KERNEL_PROCESS_RUNTIME_NORMALIZED_ERROR_CODE;
+        return CompleteCurrentThread(frame, ProcessTerminationReason::Signal,
+                                     OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE,
+                                     OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+    }
     return CompleteCurrentThread(frame, ProcessTerminationReason::Exception,
                                  OS_KERNEL_PROCESS_RUNTIME_SUCCESS_EXIT_CODE, page_fault_address);
 }

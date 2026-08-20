@@ -1,8 +1,8 @@
-#include "os/kernel/fs/root_file_system.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "root_file_system_test_support.hpp"
-#include "sparse_memory_block_device.hpp"
-#include "test_context.hpp"
+#include <os/kernel/fs/root_file_system.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <root_file_system_test_support.hpp>
+#include <sparse_memory_block_device.hpp>
+#include <test_context.hpp>
 
 #include <string_view>
 
@@ -11,6 +11,8 @@ namespace {
 constexpr std::string_view OS_TEST_ROOTFS_SUITE_NAME = "kernel/root_file_system/integration";
 constexpr std::string_view OS_TEST_ROOTFS_MOUNT_AND_VALIDATE =
     "预格式化 rootfs v4 必须挂载并通过全盘一致性验证";
+constexpr std::string_view OS_TEST_ROOTFS_DIRECTORY_CLOSE_WITH_DEVICE_FAILURE =
+    "已打开目录的 context 释放不得因底层读故障失败";
 constexpr std::string_view OS_TEST_ROOTFS_SPARSE_AND_INDIRECT =
     "完整数据区大小的稀疏文件必须经过五级间接块读写且空洞返回零";
 constexpr std::string_view OS_TEST_ROOTFS_NAMESPACE_MUTATIONS =
@@ -213,6 +215,17 @@ int main() {
         return test_context.ExitCode();
     }
     const uint64_t mounted_superblock_generation = root_file_system.GetSuperblock().generation;
+
+    os::kernel::fs::FsContext failure_close_context{};
+    const bool failure_close_context_initialized =
+        vfs.InitializeContext(failure_close_context) == os::kernel::fs::Status::Succeeded;
+    device.SetFailureModes(true, false, false);
+    const bool directory_close_avoids_device_io =
+        failure_close_context_initialized &&
+        vfs.ReleaseContext(failure_close_context) == os::kernel::fs::Status::Succeeded;
+    device.SetFailureModes(false, false, false);
+    test_context.Expect(directory_close_avoids_device_io,
+                        OS_TEST_ROOTFS_DIRECTORY_CLOSE_WITH_DEVICE_FAILURE);
 
     const bool sparse_created =
         vfs.CreateDirectory(context, OS_TEST_ROOTFS_ALPHA_PATH,

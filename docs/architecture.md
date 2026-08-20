@@ -2336,3 +2336,50 @@ journal 仍使用 metadata-only ordered 模式，但 descriptor 增至八块、�
 248 credits。测试以 1000 个断电点覆盖 1..248 个不同 target，并在恢复后
 执行二次 clean 检查。设计冻结见
 [ADR 0051](adr/0051-rootfs-v4-full-disk-links-and-recovery.md)。
+
+## v2.5 内存压力与恢复架构
+
+v2.5 在既有 buddy、VMA、page cache、COW、VFS 和 ProcessRuntime 之间增加三个
+独立策略对象，硬件页表和盘面文件系统仍由原模块拥有：
+
+```text
+PhysicalFrameAllocator statistics
+  -> MemoryPressureController(min/low/high, resident budget)
+       -> trim unreferenced clean FilePageCache pages
+       -> scan current UserAddressSpace anonymous pages
+            -> SwapManager.Store(full page + checksum)
+            -> UnmapUserPage
+            -> Release physical frame
+
+anonymous mmap / brk / fork
+  -> MemoryOvercommitAccountant(mode 0/1/2)
+  -> publish VMA only after charge succeeds
+  -> rollback or destroy uncharges exact pages
+
+unrecoverable user allocation
+  -> SelectOomVictim(resident + swap + adjustment)
+  -> terminate non-current victim or mark current SIGKILL
+  -> destroy victim UserAddressSpace
+  -> retry original fault once
+```
+
+参考机仍暴露 32768 MiB RAM。`MemoryPressureController` 使用 1048576 页的驻留
+预算，把会在宿主物化的页帧限制为 4 GiB；页帧分配器继续管理全部 32 GiB，
+因此高物理地址和容量语义不变。每次用户页分配前以页帧统计同步当前驻留数，
+低于 low 时回收至 high。64/256 MiB 档的预算等于 managed pages。
+
+swap 不编码进 non-present PTE。`SwapManager` 用
+`{address_space_identifier, virtual_page}` 作为唯一键，VMA 仍提供权限和页面
+种类。这样不必让页表空分支回收理解磁盘格式；页故障先查询 swap 映射，存在时
+分配候选 frame，读满并校验后才删除槽。销毁 VMA 时即使 PTE 不存在，也查询并
+释放对应槽。
+
+`/.os-swap` 是 rootfs v4 上的 root:root 0600 稀疏文件。VFS attach 建立 256 MiB
+逻辑长度并保持一个内核 OpenFile；该常驻 VFS 资源由既有持久资源折扣统计处理，
+不冒充 Process fd。启动自检经真实 VFS 写入和读回一个 4 KiB 槽，最终 active
+slot 必须恢复为零。
+
+overcommit 和记账不改变 ABI 编号。系统调用层仍把 commit 拒绝映射为现有
+out-of-memory 错误；`/proc/meminfo` 追加驻留预算、swap、commit 与 OOM 聚合值。
+详细事务顺序、默认值和非目标见
+[ADR 0053](adr/0053-memory-pressure-swap-overcommit-and-oom.md)。

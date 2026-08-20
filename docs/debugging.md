@@ -1894,3 +1894,55 @@ FIFO、canonical edit 和 EOF pending 是否尚未清空。
 完整快照。status B 决定 BCD/binary 和 12/24 小时，12 小时 PM 位不属于小时
 数值。世纪寄存器为零时项目只对 QEMU PC 回退到 20；任何非法月/日/时都必须
 返回设备失败，不能输出部分日期。RTC 失败不能影响 monotonic deadline。
+
+## v2.5 内存压力与 swap
+
+### 启动停在 `USER_EXECUTION_FAILED=0x11`
+
+同时读取 `SWAP_INITIALIZATION_STAGE`：1 表示 FsContext 已建立但 swap 文件 open
+失败，2 表示 open 后 chmod 失败，3 表示 chmod 后 sparse truncate 失败，4 表示
+truncate 后属性/稀疏性验证失败，5..8 依次表示 manager、pressure、overcommit
+或 VFS 槽自检失败。VFS 路径长度不得
+包含 C 字符串末尾 NUL；`/.os-swap` 的长度必须显式为 `sizeof(path)-1`。
+
+成功启动必须依次看到 `MEMORY_PRESSURE_READY`、`SWAP_READY` 和
+`SWAP_SELF_TEST_PASSED`。后两者缺失时不要继续启动 PID 1，也不要把 swap 静默
+降级为关闭状态。
+
+### 缺页在 low 水位附近反复失败
+
+先读 `/proc/meminfo` 的 `resident_limit_bytes`、`swap_free_bytes`、
+`committed_bytes` 和 `commit_limit_bytes`。再比较最终聚合的 clean cache、swap
+active、OOM invocation/victim。用户分配会回收到 high；内核紧急分配只保证
+min 保留，不保证用户 fault 一定成功。
+
+若 active swap 为 0，`FindSlot` 必须立即返回 MappingNotFound。对每个普通缺页
+扫描全部 65536 槽会把 TCG 交互测试拖到超时，看起来像调度死锁；修复应保留槽
+唯一性，不得通过关闭 swap 查询绕过。
+
+### swap 损坏后进程退出
+
+`SwapManager::LoadAndRelease` 返回 ChecksumMismatch 时槽必须仍为 active。候选
+frame/PTE 由 user_memory 逆序释放，相关 Process 随后被隔离；unmap/exit 再释放
+该槽。若损坏后 active 直接减少，说明唯一副本被静默丢弃。
+
+### 读取 uptime/free 时出现 `#DF`，RIP 落在 `CpuLocal::IncrementCounter`
+
+这通常不是 CpuLocal 计数器损坏，而是 IRQ 进入时 KernelStack 已越过 guard。
+不要在 procfs snapshot 回调中按值构造含数组的 `ProcessRuntimeStatistics`；只取
+轻量 `ProcessObservationSnapshot`。本项目曾为读取一个 OOM 计数把完整统计对象
+放入 16 KiB 栈，随后 PIT 入栈触发 guard fault 并升级为 double fault。
+
+### QEMU 仍有进度但撞到总超时
+
+先看带来宾单调时间的最后 marker。持续产生 fork/exec/wait、工具输出或管线
+marker 说明是宿主 TCG 降频，不是来宾死锁；无新 marker 才按逐步进度超时处理。
+v2.5 增加 swap 元数据 BSS 和启动 VFS I/O，总预算可以分档提高，但非黑 VGA、
+最终 READY、资源守恒和单步进度门禁不能删除。
+
+### 子进程打印 `EXIT_PID` 后系统停止
+
+检查 `[OS][KERNEL][FATAL] EXIT_STAGE`：1=FXSAVE，2=futex 取消，3=shared file
+writeback，4=FsContext，5=scheduler，6=signal thread，7=UserAddressSpace，
+8=RSP0，9=CpuLocal，10=下一个 Thread 激活。带状态的阶段同时打印 `EXIT_STATUS`。
+这些日志写入内存系统日志，不向活动 TTY 逐进程输出。

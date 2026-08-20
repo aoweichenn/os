@@ -1,8 +1,9 @@
-#include "os/kernel/user/user_memory.hpp"
+#include <os/kernel/user/user_memory.hpp>
 
-#include "os/kernel/memory/memory_manager.hpp"
-#include "os/kernel/memory/physical_frame_allocator.hpp"
-#include "os/kernel/user/file_backing.hpp"
+#include <os/kernel/memory/memory_manager.hpp>
+#include <os/kernel/memory/memory_pressure.hpp>
+#include <os/kernel/memory/physical_frame_allocator.hpp>
+#include <os/kernel/user/file_backing.hpp>
 
 namespace os::kernel {
 
@@ -22,6 +23,22 @@ constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_RESERVED_BIT = 1ULL << 3ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_PAGE_FAULT_INSTRUCTION_BIT = 1ULL << 4ULL;
 constexpr uint8_t OS_KERNEL_USER_MEMORY_ZERO_BYTE = 0U;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_DIRTY_PAGE_LIMIT_DIVISOR = 2ULL;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_HOST_RESIDENT_LIMIT_PAGE_COUNT = 1048576ULL;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_MAXIMUM_ALLOCATION_FRAME_COUNT = 4ULL;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_RECLAIM_SCAN_PAGE_LIMIT = 65536ULL;
+constexpr uint64_t OS_KERNEL_USER_SWAP_SLOT_CAPACITY = 65536ULL;
+constexpr uint64_t OS_KERNEL_USER_SWAP_FILE_SIZE_BYTES =
+    OS_KERNEL_USER_SWAP_SLOT_CAPACITY * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint8_t OS_KERNEL_USER_SWAP_FILE_PATH[] = "/.os-swap";
+constexpr uint64_t OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES =
+    sizeof(OS_KERNEL_USER_SWAP_FILE_PATH) - 1ULL;
+constexpr os::abi::FileMode OS_KERNEL_USER_SWAP_FILE_MODE =
+    os::abi::OS_ABI_FILE_MODE_OWNER_READ | os::abi::OS_ABI_FILE_MODE_OWNER_WRITE;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_MAXIMUM_PAGE_COUNT = 2048ULL;
+constexpr uint64_t OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_PERCENT = 3ULL;
+constexpr uint64_t OS_KERNEL_USER_SWAP_SELF_TEST_ADDRESS_SPACE_IDENTIFIER = UINT64_MAX;
+constexpr uint64_t OS_KERNEL_USER_SWAP_SELF_TEST_PATTERN_MULTIPLIER = 37ULL;
+constexpr uint8_t OS_KERNEL_USER_SWAP_SELF_TEST_PATTERN_SEED = 0x5AU;
 
 struct MemoryImageReaderContext final {
     const uint8_t *image;
@@ -29,6 +46,11 @@ struct MemoryImageReaderContext final {
 };
 
 struct VfsImageReaderContext final {
+    fs::Vfs *vfs;
+    fs::OpenFile open_file;
+};
+
+struct SwapIoContext final {
     fs::Vfs *vfs;
     fs::OpenFile open_file;
 };
@@ -42,12 +64,173 @@ FilePageCacheEntry user_file_page_cache_entries[OS_KERNEL_USER_FILE_PAGE_CACHE_M
 FilePageCache user_file_page_cache{};
 UserPageReferenceEntry user_page_reference_entries[OS_KERNEL_USER_PAGE_REFERENCE_CAPACITY]{};
 UserPageReferenceManager user_page_reference_manager{};
+MemoryPressureController user_memory_pressure_controller{};
+MemoryOvercommitAccountant user_memory_overcommit_accountant{};
+SwapSlotEntry user_swap_entries[OS_KERNEL_USER_SWAP_SLOT_CAPACITY]{};
+SwapManager user_swap_manager{};
+SwapIoContext user_swap_io_context{};
+fs::FsContext user_swap_file_system_context{};
+uint8_t user_swap_clone_scratch_page[OS_KERNEL_MEMORY_PAGE_SIZE_BYTES]{};
 UserAddressSpace *active_user_address_space;
 uint64_t next_address_space_identifier = OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
 bool user_virtual_memory_initialized;
+bool user_swap_attached;
+UserSwapInitializationStage user_swap_initialization_stage;
 
 [[nodiscard]] uint64_t Minimum(const uint64_t left, const uint64_t right) noexcept {
     return left < right ? left : right;
+}
+
+[[nodiscard]] bool ReadSwapSlot(void *const context, const uint64_t slot_index,
+                                uint8_t *const destination, const uint64_t length_bytes) noexcept {
+    if (context == nullptr || destination == nullptr ||
+        slot_index >= OS_KERNEL_USER_SWAP_SLOT_CAPACITY ||
+        length_bytes != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+        return false;
+    }
+    SwapIoContext &io_context = *static_cast<SwapIoContext *>(context);
+    if (io_context.vfs == nullptr || !io_context.open_file.open ||
+        slot_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+        return false;
+    }
+    uint64_t read_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    return io_context.vfs->ReadAt(io_context.open_file,
+                                  slot_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, destination,
+                                  length_bytes, read_bytes) == fs::Status::Succeeded &&
+           read_bytes == length_bytes;
+}
+
+[[nodiscard]] bool WriteSwapSlot(void *const context, const uint64_t slot_index,
+                                 const uint8_t *const source,
+                                 const uint64_t length_bytes) noexcept {
+    if (context == nullptr || source == nullptr ||
+        slot_index >= OS_KERNEL_USER_SWAP_SLOT_CAPACITY ||
+        length_bytes != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+        return false;
+    }
+    SwapIoContext &io_context = *static_cast<SwapIoContext *>(context);
+    if (io_context.vfs == nullptr || !io_context.open_file.open ||
+        slot_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+        return false;
+    }
+    uint64_t written_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    return io_context.vfs->WriteAt(io_context.open_file,
+                                   slot_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, source,
+                                   length_bytes, written_bytes) == fs::Status::Succeeded &&
+           written_bytes == length_bytes;
+}
+
+[[nodiscard]] uint8_t SwapSelfTestPattern(const uint64_t byte_index) noexcept {
+    return static_cast<uint8_t>(
+        (byte_index * OS_KERNEL_USER_SWAP_SELF_TEST_PATTERN_MULTIPLIER +
+         static_cast<uint64_t>(OS_KERNEL_USER_SWAP_SELF_TEST_PATTERN_SEED)) &
+        0xFFULL);
+}
+
+[[nodiscard]] bool RunUserSwapStorageSelfTest() noexcept {
+    for (uint64_t byte_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         byte_index < OS_KERNEL_MEMORY_PAGE_SIZE_BYTES; ++byte_index) {
+        user_swap_clone_scratch_page[byte_index] = SwapSelfTestPattern(byte_index);
+    }
+    const SwapPageIdentity identity{
+        .address_space_identifier = OS_KERNEL_USER_SWAP_SELF_TEST_ADDRESS_SPACE_IDENTIFIER,
+        .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+    };
+    uint64_t slot_index = UINT64_MAX;
+    if (user_swap_manager.Store(identity, user_swap_clone_scratch_page,
+                                OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                slot_index) != SwapManagerStatus::Succeeded) {
+        return false;
+    }
+    for (uint64_t byte_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         byte_index < OS_KERNEL_MEMORY_PAGE_SIZE_BYTES; ++byte_index) {
+        user_swap_clone_scratch_page[byte_index] = OS_KERNEL_USER_MEMORY_ZERO_BYTE;
+    }
+    if (user_swap_manager.LoadAndRelease(identity, user_swap_clone_scratch_page,
+                                         OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) !=
+        SwapManagerStatus::Succeeded) {
+        static_cast<void>(user_swap_manager.Release(identity));
+        return false;
+    }
+    for (uint64_t byte_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         byte_index < OS_KERNEL_MEMORY_PAGE_SIZE_BYTES; ++byte_index) {
+        if (user_swap_clone_scratch_page[byte_index] != SwapSelfTestPattern(byte_index)) {
+            return false;
+        }
+    }
+    return user_swap_manager.Validate() == SwapManagerStatus::Succeeded &&
+           user_swap_manager.Statistics().active_slot_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+}
+
+[[nodiscard]] bool SynchronizeUserMemoryPressure() noexcept {
+    return user_memory_pressure_controller.SynchronizeResident(
+               GetPhysicalFrameAllocatorStatistics().allocated_frame_count) ==
+           MemoryPressureStatus::Succeeded;
+}
+
+[[nodiscard]] bool SwapOutUserPages(UserAddressSpace &address_space, uint64_t target_page_count,
+                                    uint64_t excluded_virtual_address,
+                                    uint64_t &reclaimed_page_count) noexcept;
+
+[[nodiscard]] bool ReclaimCleanFilePages(const uint64_t target_page_count,
+                                         uint64_t &reclaimed_page_count) noexcept {
+    const FilePageCacheStatistics cache_statistics = user_file_page_cache.Statistics();
+    const uint64_t target_resident_page_count =
+        target_page_count < cache_statistics.resident_page_count
+            ? cache_statistics.resident_page_count - target_page_count
+            : OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    reclaimed_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const FilePageCacheStatus trim_status =
+        user_file_page_cache.Trim(target_resident_page_count, reclaimed_page_count);
+    return trim_status == FilePageCacheStatus::Succeeded ||
+           trim_status == FilePageCacheStatus::EntryBusy ||
+           trim_status == FilePageCacheStatus::DirtyPagesRemain;
+}
+
+[[nodiscard]] bool PrepareUserResidentAllocation(UserAddressSpace &address_space,
+                                                 const uint64_t requested_page_count,
+                                                 const uint64_t excluded_virtual_address) noexcept {
+    if (!SynchronizeUserMemoryPressure()) {
+        return false;
+    }
+    MemoryAllocationDecision decision{};
+    if (user_memory_pressure_controller.PrepareAllocation(requested_page_count,
+                                                          MemoryAllocationClass::User, decision) !=
+        MemoryPressureStatus::Succeeded) {
+        return false;
+    }
+    if (decision.action == MemoryAllocationAction::Allow) {
+        return true;
+    }
+    if (decision.action == MemoryAllocationAction::Reject) {
+        return false;
+    }
+    uint64_t clean_reclaimed_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (!ReclaimCleanFilePages(decision.target_reclaim_page_count, clean_reclaimed_page_count)) {
+        return false;
+    }
+    const uint64_t remaining_target_page_count =
+        clean_reclaimed_page_count < decision.target_reclaim_page_count
+            ? decision.target_reclaim_page_count - clean_reclaimed_page_count
+            : OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    uint64_t swapped_reclaimed_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (remaining_target_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
+        !SwapOutUserPages(address_space, remaining_target_page_count, excluded_virtual_address,
+                          swapped_reclaimed_page_count)) {
+        return false;
+    }
+    if (clean_reclaimed_page_count > UINT64_MAX - swapped_reclaimed_page_count ||
+        user_memory_pressure_controller.RecordReclaim(clean_reclaimed_page_count +
+                                                      swapped_reclaimed_page_count) !=
+            MemoryPressureStatus::Succeeded ||
+        !SynchronizeUserMemoryPressure()) {
+        return false;
+    }
+    MemoryAllocationDecision retry_decision{};
+    return user_memory_pressure_controller.PrepareAllocation(
+               requested_page_count, MemoryAllocationClass::User, retry_decision) ==
+               MemoryPressureStatus::Succeeded &&
+           retry_decision.action == MemoryAllocationAction::Allow;
 }
 
 [[nodiscard]] uint64_t AlignDownToPage(const uint64_t value) noexcept {
@@ -109,6 +292,155 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                                  PhysicalFrameAllocatorStatus::Succeeded;
 }
 
+[[nodiscard]] bool IsAnonymousSwapArea(const VirtualMemoryArea &area) noexcept {
+    return area.kind == VirtualMemoryAreaKind::Anonymous ||
+           area.kind == VirtualMemoryAreaKind::ProgramBreak ||
+           area.kind == VirtualMemoryAreaKind::UserStack;
+}
+
+[[nodiscard]] SwapPageIdentity MakeSwapIdentity(const UserAddressSpace &address_space,
+                                                const uint64_t virtual_address) noexcept {
+    return SwapPageIdentity{
+        .address_space_identifier = address_space.address_space_identifier,
+        .virtual_address = virtual_address,
+    };
+}
+
+[[nodiscard]] bool TrySwapOutPage(UserAddressSpace &address_space, const VirtualMemoryArea &area,
+                                  const uint64_t page_address, bool &page_reclaimed) noexcept {
+    page_reclaimed = false;
+    PageMapping mapping{};
+    const PageTableStatus query_status =
+        QueryAddressSpacePage(address_space.root_physical_address, page_address, mapping);
+    if (query_status == PageTableStatus::NotMapped) {
+        return true;
+    }
+    if (query_status != PageTableStatus::Succeeded || !mapping.permissions.user_accessible ||
+        mapping.permissions.copy_on_write ||
+        address_space.mapped_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return query_status == PageTableStatus::Succeeded && mapping.permissions.user_accessible &&
+               mapping.permissions.copy_on_write;
+    }
+    uint8_t *const page = PhysicalPagePointer(mapping.physical_address);
+    if (page == nullptr) {
+        return false;
+    }
+    const SwapPageIdentity identity = MakeSwapIdentity(address_space, page_address);
+    uint64_t slot_index = UINT64_MAX;
+    if (user_swap_manager.Store(identity, page, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, slot_index) !=
+        SwapManagerStatus::Succeeded) {
+        return false;
+    }
+    uint64_t unmapped_physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    uint64_t reclaimed_table_frame_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (UnmapUserPage(address_space.root_physical_address, page_address, unmapped_physical_address,
+                      reclaimed_table_frame_count) != KernelUserPageStatus::Succeeded ||
+        unmapped_physical_address != mapping.physical_address) {
+        static_cast<void>(user_swap_manager.Release(identity));
+        return false;
+    }
+    if (!ReleasePrivatePhysicalPage(unmapped_physical_address)) {
+        const bool mapping_restored =
+            MapExistingUserPage(address_space.root_physical_address, page_address,
+                                unmapped_physical_address, area.permissions.writable,
+                                area.permissions.executable) == KernelUserPageStatus::Succeeded;
+        const bool slot_released =
+            user_swap_manager.Release(identity) == SwapManagerStatus::Succeeded;
+        static_cast<void>(mapping_restored);
+        static_cast<void>(slot_released);
+        return false;
+    }
+    --address_space.mapped_page_count;
+    ++address_space.swapped_page_count;
+    ++address_space.swap_out_page_count;
+    if (address_space.swapped_page_count > address_space.peak_swapped_page_count) {
+        address_space.peak_swapped_page_count = address_space.swapped_page_count;
+    }
+    address_space.page_table_reclaimed_frame_count += reclaimed_table_frame_count;
+    page_reclaimed = true;
+    return true;
+}
+
+[[nodiscard]] bool
+ScanAndSwapUserPages(UserAddressSpace &address_space, const uint64_t scan_begin_address,
+                     const uint64_t scan_end_address, const uint64_t target_page_count,
+                     const uint64_t excluded_virtual_address, uint64_t &scanned_page_count,
+                     uint64_t &reclaimed_page_count) noexcept {
+    const uint64_t area_count = address_space.virtual_memory_map.AreaCount();
+    for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+         area_index < area_count && reclaimed_page_count < target_page_count &&
+         scanned_page_count < OS_KERNEL_USER_MEMORY_RECLAIM_SCAN_PAGE_LIMIT;
+         ++area_index) {
+        VirtualMemoryArea area{};
+        if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
+            VirtualMemoryAreaStatus::Succeeded) {
+            return false;
+        }
+        if (!IsAnonymousSwapArea(area) || area.end_address <= scan_begin_address ||
+            area.begin_address >= scan_end_address) {
+            continue;
+        }
+        uint64_t page_address =
+            area.begin_address < scan_begin_address ? scan_begin_address : area.begin_address;
+        while (page_address < area.end_address && page_address < scan_end_address &&
+               reclaimed_page_count < target_page_count &&
+               scanned_page_count < OS_KERNEL_USER_MEMORY_RECLAIM_SCAN_PAGE_LIMIT) {
+            ++scanned_page_count;
+            address_space.reclaim_scan_virtual_address =
+                page_address <= UINT64_MAX - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES
+                    ? page_address + OS_KERNEL_MEMORY_PAGE_SIZE_BYTES
+                    : OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+            if (page_address != excluded_virtual_address) {
+                bool page_reclaimed = false;
+                if (!TrySwapOutPage(address_space, area, page_address, page_reclaimed)) {
+                    return false;
+                }
+                if (page_reclaimed) {
+                    ++reclaimed_page_count;
+                }
+            }
+            if (page_address > UINT64_MAX - OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
+                break;
+            }
+            page_address += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool SwapOutUserPages(UserAddressSpace &address_space,
+                                    const uint64_t target_page_count,
+                                    const uint64_t excluded_virtual_address,
+                                    uint64_t &reclaimed_page_count) noexcept {
+    reclaimed_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (target_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return true;
+    }
+    if (!user_swap_attached ||
+        address_space.virtual_memory_map.Validate() != VirtualMemoryAreaStatus::Succeeded ||
+        address_space.address_space_identifier == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return false;
+    }
+    const uint64_t scan_begin_address = address_space.reclaim_scan_virtual_address;
+    uint64_t scanned_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (!ScanAndSwapUserPages(address_space, scan_begin_address, UINT64_MAX, target_page_count,
+                              excluded_virtual_address, scanned_page_count, reclaimed_page_count)) {
+        return false;
+    }
+    if (reclaimed_page_count < target_page_count &&
+        scan_begin_address != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
+        scanned_page_count < OS_KERNEL_USER_MEMORY_RECLAIM_SCAN_PAGE_LIMIT &&
+        !ScanAndSwapUserPages(address_space, OS_KERNEL_USER_MEMORY_EMPTY_VALUE, scan_begin_address,
+                              target_page_count, excluded_virtual_address, scanned_page_count,
+                              reclaimed_page_count)) {
+        return false;
+    }
+    if (reclaimed_page_count < target_page_count) {
+        address_space.reclaim_scan_virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    }
+    return true;
+}
+
 [[nodiscard]] bool ReadMemoryImage(void *const context, const uint64_t offset_bytes,
                                    uint8_t *const destination,
                                    const uint64_t length_bytes) noexcept {
@@ -165,8 +497,7 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                                      const UserFileBackingDescriptor &descriptor,
                                      FilePageIdentity &page_identity) noexcept {
     if (!IsFileBackedVirtualMemoryAreaKind(area.kind) ||
-        (area.permissions.writable &&
-         area.kind != VirtualMemoryAreaKind::FileShared) ||
+        (area.permissions.writable && area.kind != VirtualMemoryAreaKind::FileShared) ||
         page_virtual_address < area.begin_address) {
         return false;
     }
@@ -235,6 +566,11 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
 
     FilePageIdentity page_identity{};
     if (PageUsesFileCache(area, page_virtual_address, descriptor, page_identity)) {
+        if (!PrepareUserResidentAllocation(address_space,
+                                           OS_KERNEL_USER_MEMORY_MAXIMUM_ALLOCATION_FRAME_COUNT,
+                                           page_virtual_address)) {
+            return UserVirtualMemoryStatus::PageAllocationFailed;
+        }
         uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
         bool cache_hit = false;
         const FilePageCacheStatus cache_status = user_file_page_cache.Acquire(
@@ -242,14 +578,16 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
         if (cache_status == FilePageCacheStatus::CapacityExhausted) {
             return UserVirtualMemoryStatus::PageCacheExhausted;
         }
+        if (cache_status == FilePageCacheStatus::FrameAllocationFailed) {
+            return UserVirtualMemoryStatus::PageAllocationFailed;
+        }
         if (cache_status != FilePageCacheStatus::Succeeded) {
             return cache_status == FilePageCacheStatus::SourceReadFailed
                        ? UserVirtualMemoryStatus::FileReadFailed
                        : UserVirtualMemoryStatus::PageMappingFailed;
         }
         const bool map_writable =
-            area.permissions.writable &&
-            area.kind != VirtualMemoryAreaKind::FileShared;
+            area.permissions.writable && area.kind != VirtualMemoryAreaKind::FileShared;
         if (MapExistingUserPage(address_space.root_physical_address, page_virtual_address,
                                 physical_address, map_writable,
                                 area.permissions.executable) != KernelUserPageStatus::Succeeded) {
@@ -261,6 +599,11 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
     }
 
     uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    if (!PrepareUserResidentAllocation(address_space,
+                                       OS_KERNEL_USER_MEMORY_MAXIMUM_ALLOCATION_FRAME_COUNT,
+                                       page_virtual_address)) {
+        return UserVirtualMemoryStatus::PageAllocationFailed;
+    }
     const KernelUserPageStatus page_status = AllocateAndMapUserPage(
         address_space.root_physical_address, page_virtual_address, area.permissions.writable,
         area.permissions.executable, physical_address);
@@ -305,11 +648,81 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
     return true;
 }
 
+[[nodiscard]] UserVirtualMemoryStatus ResolveSwappedPage(UserAddressSpace &address_space,
+                                                         const uint64_t page_virtual_address,
+                                                         const VirtualMemoryArea &area,
+                                                         bool &swap_mapping_found) noexcept {
+    swap_mapping_found = false;
+    if (!user_swap_attached) {
+        return UserVirtualMemoryStatus::Succeeded;
+    }
+    const SwapPageIdentity identity = MakeSwapIdentity(address_space, page_virtual_address);
+    uint64_t slot_index = UINT64_MAX;
+    const SwapManagerStatus find_status = user_swap_manager.FindSlot(identity, slot_index);
+    static_cast<void>(slot_index);
+    if (find_status == SwapManagerStatus::MappingNotFound) {
+        return UserVirtualMemoryStatus::Succeeded;
+    }
+    if (find_status != SwapManagerStatus::Succeeded ||
+        address_space.swapped_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
+    swap_mapping_found = true;
+    if (!PrepareUserResidentAllocation(address_space,
+                                       OS_KERNEL_USER_MEMORY_MAXIMUM_ALLOCATION_FRAME_COUNT,
+                                       page_virtual_address)) {
+        return UserVirtualMemoryStatus::PageAllocationFailed;
+    }
+    uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const KernelUserPageStatus allocation_status = AllocateAndMapUserPage(
+        address_space.root_physical_address, page_virtual_address, area.permissions.writable,
+        area.permissions.executable, physical_address);
+    if (allocation_status == KernelUserPageStatus::FrameAllocationFailed) {
+        return UserVirtualMemoryStatus::PageAllocationFailed;
+    }
+    if (allocation_status != KernelUserPageStatus::Succeeded) {
+        return UserVirtualMemoryStatus::PageMappingFailed;
+    }
+    uint8_t *const page = PhysicalPagePointer(physical_address);
+    const SwapManagerStatus load_status =
+        page == nullptr
+            ? SwapManagerStatus::InvalidStorage
+            : user_swap_manager.LoadAndRelease(identity, page, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
+    if (load_status != SwapManagerStatus::Succeeded) {
+        uint64_t reclaimed_table_frame_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+        if (ReleaseUserPage(address_space.root_physical_address, page_virtual_address,
+                            reclaimed_table_frame_count) != KernelUserPageStatus::Succeeded) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        ++address_space.swap_read_failure_count;
+        if (load_status == SwapManagerStatus::ChecksumMismatch) {
+            ++address_space.swap_corruption_count;
+            return UserVirtualMemoryStatus::SwapCorrupt;
+        }
+        return UserVirtualMemoryStatus::SwapReadFailed;
+    }
+    --address_space.swapped_page_count;
+    ++address_space.swap_in_page_count;
+    RecordMappedPage(address_space, area, false, false);
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
 [[nodiscard]] UserVirtualMemoryStatus MapDemandPage(UserAddressSpace &address_space,
                                                     const uint64_t page_virtual_address,
                                                     const VirtualMemoryArea &area) noexcept {
+    bool swap_mapping_found = false;
+    const UserVirtualMemoryStatus swap_status =
+        ResolveSwappedPage(address_space, page_virtual_address, area, swap_mapping_found);
+    if (swap_mapping_found || swap_status != UserVirtualMemoryStatus::Succeeded) {
+        return swap_status;
+    }
     if (IsFileBackedVirtualMemoryAreaKind(area.kind)) {
         return MapFileDemandPage(address_space, page_virtual_address, area);
+    }
+    if (!PrepareUserResidentAllocation(address_space,
+                                       OS_KERNEL_USER_MEMORY_MAXIMUM_ALLOCATION_FRAME_COUNT,
+                                       page_virtual_address)) {
+        return UserVirtualMemoryStatus::PageAllocationFailed;
     }
     uint64_t page_physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     const KernelUserPageStatus page_status = AllocateAndMapUserPage(
@@ -342,6 +755,24 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
         const PageTableStatus query_status =
             QueryAddressSpacePage(address_space.root_physical_address, page_address, mapping);
         if (query_status == PageTableStatus::NotMapped) {
+            if (user_swap_attached &&
+                address_space.address_space_identifier != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+                const SwapPageIdentity swap_identity =
+                    MakeSwapIdentity(address_space, page_address);
+                uint64_t swap_slot_index = UINT64_MAX;
+                const SwapManagerStatus swap_status =
+                    user_swap_manager.FindSlot(swap_identity, swap_slot_index);
+                static_cast<void>(swap_slot_index);
+                if (swap_status == SwapManagerStatus::Succeeded) {
+                    if (address_space.swapped_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+                        user_swap_manager.Release(swap_identity) != SwapManagerStatus::Succeeded) {
+                        return UserVirtualMemoryStatus::PageReleaseFailed;
+                    }
+                    --address_space.swapped_page_count;
+                } else if (swap_status != SwapManagerStatus::MappingNotFound) {
+                    return UserVirtualMemoryStatus::Corrupt;
+                }
+            }
             continue;
         }
         if (query_status != PageTableStatus::Succeeded || !mapping.permissions.user_accessible ||
@@ -440,6 +871,10 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
         }
         ++address_space.copy_on_write_exclusive_restore_count;
     } else {
+        if (!PrepareUserResidentAllocation(address_space, OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT,
+                                           page_address)) {
+            return UserVirtualMemoryStatus::PageAllocationFailed;
+        }
         PhysicalFrame replacement_frame{};
         if (GetKernelPhysicalFrameAllocator().Allocate(replacement_frame) !=
             PhysicalFrameAllocatorStatus::Succeeded) {
@@ -476,16 +911,14 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
 }
 
 [[nodiscard]] UserVirtualMemoryStatus
-MakeSharedFilePageWritable(UserAddressSpace &address_space,
-                           const uint64_t page_address) noexcept {
+MakeSharedFilePageWritable(UserAddressSpace &address_space, const uint64_t page_address) noexcept {
     VirtualMemoryArea area{};
     PageMapping mapping{};
     if (address_space.virtual_memory_map.FindContaining(page_address, area) !=
             VirtualMemoryAreaStatus::Succeeded ||
-        area.kind != VirtualMemoryAreaKind::FileShared ||
-        !area.permissions.writable ||
-        QueryAddressSpacePage(address_space.root_physical_address, page_address,
-                              mapping) != PageTableStatus::Succeeded ||
+        area.kind != VirtualMemoryAreaKind::FileShared || !area.permissions.writable ||
+        QueryAddressSpacePage(address_space.root_physical_address, page_address, mapping) !=
+            PageTableStatus::Succeeded ||
         !mapping.permissions.user_accessible || mapping.permissions.writable ||
         mapping.permissions.copy_on_write) {
         return UserVirtualMemoryStatus::InvalidProtection;
@@ -497,15 +930,13 @@ MakeSharedFilePageWritable(UserAddressSpace &address_space,
         return UserVirtualMemoryStatus::Corrupt;
     }
     const FilePageCacheStatus dirty_status =
-        user_file_page_cache.MarkDirty(page_identity,
-                                       mapping.physical_address);
+        user_file_page_cache.MarkDirty(page_identity, mapping.physical_address);
     if (dirty_status == FilePageCacheStatus::DirtyLimitReached) {
         return UserVirtualMemoryStatus::PageCacheExhausted;
     }
     if (dirty_status != FilePageCacheStatus::Succeeded ||
-        ReplaceUserPage(address_space.root_physical_address, page_address,
-                        mapping.physical_address, true,
-                        mapping.permissions.executable,
+        ReplaceUserPage(address_space.root_physical_address, page_address, mapping.physical_address,
+                        true, mapping.permissions.executable,
                         false) != KernelUserPageStatus::Succeeded) {
         return UserVirtualMemoryStatus::PageMappingFailed;
     }
@@ -857,6 +1288,18 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
     }
     const PhysicalFrameAllocatorStatistics frame_statistics = GetPhysicalFrameAllocatorStatistics();
+    const uint64_t resident_limit_page_count = Minimum(
+        frame_statistics.managed_frame_count, OS_KERNEL_USER_MEMORY_HOST_RESIDENT_LIMIT_PAGE_COUNT);
+    if (user_memory_pressure_controller.Initialize(MemoryPressureConfiguration{
+            .managed_page_count = frame_statistics.managed_frame_count,
+            .initial_resident_page_count = frame_statistics.allocated_frame_count,
+            .resident_limit_page_count = resident_limit_page_count,
+            .swap_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .watermark_scale_factor = OS_KERNEL_MEMORY_PRESSURE_DEFAULT_WATERMARK_SCALE_FACTOR,
+            .swappiness = OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
+        }) != MemoryPressureStatus::Succeeded) {
+        return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+    }
     uint64_t page_cache_capacity =
         frame_statistics.managed_frame_count / OS_KERNEL_USER_MEMORY_FILE_CACHE_FRAME_DIVISOR;
     if (page_cache_capacity < OS_KERNEL_USER_MEMORY_FILE_CACHE_MINIMUM_CAPACITY) {
@@ -866,14 +1309,13 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
         page_cache_capacity = OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY;
     }
     uint64_t dirty_page_limit =
-        page_cache_capacity /
-        OS_KERNEL_USER_MEMORY_DIRTY_PAGE_LIMIT_DIVISOR;
+        page_cache_capacity / OS_KERNEL_USER_MEMORY_DIRTY_PAGE_LIMIT_DIVISOR;
     if (dirty_page_limit == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
         dirty_page_limit = OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
     }
     if (user_file_page_cache.Initialize(user_file_page_cache_entries, page_cache_capacity,
-                                        dirty_page_limit,
-                                        GetKernelPhysicalFrameAllocator(), nullptr,
+                                        dirty_page_limit, GetKernelPhysicalFrameAllocator(),
+                                        nullptr,
                                         AccessPhysicalPage) != FilePageCacheStatus::Succeeded) {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
     }
@@ -887,12 +1329,178 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
     return UserAddressSpaceStatus::Succeeded;
 }
 
+UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept {
+    user_swap_initialization_stage = UserSwapInitializationStage::NotStarted;
+    if (!user_virtual_memory_initialized || vfs.Validate() != fs::Status::Succeeded) {
+        return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+    }
+    if (user_swap_attached) {
+        user_swap_initialization_stage = UserSwapInitializationStage::Ready;
+        return UserAddressSpaceStatus::Succeeded;
+    }
+
+    fs::FsContext file_system_context{};
+    if (vfs.InitializeContext(file_system_context) != fs::Status::Succeeded) {
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::ContextReady;
+    fs::OpenFile open_file{};
+    const fs::OpenOptions options{
+        .readable = true,
+        .writable = true,
+        .create = true,
+        .truncate = false,
+        .append = false,
+    };
+    if (vfs.Open(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
+                 OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES, options,
+                 open_file) != fs::Status::Succeeded) {
+        static_cast<void>(vfs.ReleaseContext(file_system_context));
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::FileOpened;
+    if (vfs.ChangeMode(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
+                       OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES,
+                       OS_KERNEL_USER_SWAP_FILE_MODE) != fs::Status::Succeeded) {
+        static_cast<void>(vfs.Close(open_file));
+        static_cast<void>(vfs.ReleaseContext(file_system_context));
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::PermissionsReady;
+    if (vfs.Truncate(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
+                     OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES,
+                     OS_KERNEL_USER_SWAP_FILE_SIZE_BYTES) != fs::Status::Succeeded) {
+        static_cast<void>(vfs.Close(open_file));
+        static_cast<void>(vfs.ReleaseContext(file_system_context));
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::FileSized;
+    fs::NodeInformation swap_information{};
+    if (vfs.Stat(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
+                 OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES,
+                 swap_information) != fs::Status::Succeeded ||
+        swap_information.type != fs::NodeType::RegularFile ||
+        swap_information.size_bytes != OS_KERNEL_USER_SWAP_FILE_SIZE_BYTES ||
+        swap_information.allocated_size_bytes > OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+        swap_information.owner_user_identifier != os::abi::OS_ABI_ROOT_USER_IDENTIFIER ||
+        swap_information.owner_group_identifier != os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER ||
+        swap_information.mode !=
+            (os::abi::OS_ABI_FILE_MODE_REGULAR | OS_KERNEL_USER_SWAP_FILE_MODE)) {
+        static_cast<void>(vfs.Close(open_file));
+        static_cast<void>(vfs.ReleaseContext(file_system_context));
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::FileValidated;
+
+    user_swap_file_system_context = file_system_context;
+    user_swap_io_context = SwapIoContext{
+        .vfs = &vfs,
+        .open_file = open_file,
+    };
+    const PhysicalFrameAllocatorStatistics frame_statistics = GetPhysicalFrameAllocatorStatistics();
+    const uint64_t admin_reserve_page_count = Minimum(
+        (frame_statistics.managed_frame_count / OS_KERNEL_MEMORY_PRESSURE_PERCENT_DENOMINATOR) *
+                OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_PERCENT +
+            ((frame_statistics.managed_frame_count %
+              OS_KERNEL_MEMORY_PRESSURE_PERCENT_DENOMINATOR) *
+             OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_PERCENT) /
+                OS_KERNEL_MEMORY_PRESSURE_PERCENT_DENOMINATOR,
+        OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_MAXIMUM_PAGE_COUNT);
+    if (user_swap_manager.Initialize(user_swap_entries, OS_KERNEL_USER_SWAP_SLOT_CAPACITY,
+                                     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, &user_swap_io_context,
+                                     ReadSwapSlot, WriteSwapSlot) != SwapManagerStatus::Succeeded) {
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::ManagerReady;
+    if (user_memory_pressure_controller.ConfigureSwap(OS_KERNEL_USER_SWAP_SLOT_CAPACITY) !=
+        MemoryPressureStatus::Succeeded) {
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::PressureReady;
+    if (user_memory_overcommit_accountant.Initialize(MemoryOvercommitConfiguration{
+            .mode = MemoryOvercommitMode::Heuristic,
+            .physical_page_count = frame_statistics.managed_frame_count,
+            .swap_page_count = OS_KERNEL_USER_SWAP_SLOT_CAPACITY,
+            .overcommit_ratio_percent = OS_KERNEL_MEMORY_PRESSURE_DEFAULT_OVERCOMMIT_RATIO_PERCENT,
+            .admin_reserve_page_count = admin_reserve_page_count,
+            .user_reserve_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+        }) != MemoryOvercommitStatus::Succeeded) {
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::OvercommitReady;
+    if (!RunUserSwapStorageSelfTest()) {
+        return UserAddressSpaceStatus::SwapInitializationFailed;
+    }
+    user_swap_initialization_stage = UserSwapInitializationStage::StorageSelfTestPassed;
+    user_swap_attached = true;
+    user_swap_initialization_stage = UserSwapInitializationStage::Ready;
+    return UserAddressSpaceStatus::Succeeded;
+}
+
+UserSwapInitializationStage GetUserSwapInitializationStage() noexcept {
+    return user_swap_initialization_stage;
+}
+
 VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept {
     return user_virtual_memory_pool.Statistics();
 }
 
 FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept {
     return user_file_page_cache.Statistics();
+}
+
+MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept {
+    static_cast<void>(SynchronizeUserMemoryPressure());
+    return user_memory_pressure_controller.Statistics();
+}
+
+MemoryOvercommitStatistics GetUserMemoryOvercommitStatistics() noexcept {
+    return user_memory_overcommit_accountant.Statistics();
+}
+
+SwapManagerStatistics GetUserSwapStatistics() noexcept { return user_swap_manager.Statistics(); }
+
+bool ValidateUserMemoryManagement() noexcept {
+    return user_memory_pressure_controller.Validate() == MemoryPressureStatus::Succeeded &&
+           user_memory_overcommit_accountant.Validate() == MemoryOvercommitStatus::Succeeded &&
+           user_swap_manager.Validate() == SwapManagerStatus::Succeeded;
+}
+
+MemoryOvercommitStatus CommitUserMemory(UserAddressSpace &address_space, const uint64_t page_count,
+                                        const bool privileged) noexcept {
+    if (page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return MemoryOvercommitStatus::Succeeded;
+    }
+    if (address_space.committed_page_count > UINT64_MAX - page_count) {
+        return MemoryOvercommitStatus::CounterOverflow;
+    }
+    const MemoryOvercommitStatus commit_status =
+        user_memory_overcommit_accountant.TryCommit(page_count, privileged);
+    if (commit_status != MemoryOvercommitStatus::Succeeded) {
+        return commit_status;
+    }
+    address_space.committed_page_count += page_count;
+    if (address_space.committed_page_count > address_space.peak_committed_page_count) {
+        address_space.peak_committed_page_count = address_space.committed_page_count;
+    }
+    return MemoryOvercommitStatus::Succeeded;
+}
+
+MemoryOvercommitStatus UncommitUserMemory(UserAddressSpace &address_space,
+                                          const uint64_t page_count) noexcept {
+    if (page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return MemoryOvercommitStatus::Succeeded;
+    }
+    if (page_count > address_space.committed_page_count) {
+        return MemoryOvercommitStatus::CommitAccountingUnderflow;
+    }
+    const MemoryOvercommitStatus uncommit_status =
+        user_memory_overcommit_accountant.Uncommit(page_count);
+    if (uncommit_status != MemoryOvercommitStatus::Succeeded) {
+        return uncommit_status;
+    }
+    address_space.committed_page_count -= page_count;
+    return MemoryOvercommitStatus::Succeeded;
 }
 
 UserPageReferenceStatistics GetUserPageReferenceStatistics() noexcept {
@@ -1017,9 +1625,9 @@ RollbackForkClone(UserAddressSpace &parent_address_space, UserAddressSpace &chil
                : UserAddressSpaceStatus::RollbackFailed;
 }
 
-UserAddressSpaceStatus
-CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
-                             UserAddressSpace &child_address_space) noexcept {
+UserAddressSpaceStatus CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
+                                                    UserAddressSpace &child_address_space,
+                                                    const bool privileged) noexcept {
     child_address_space = UserAddressSpace{};
     if (parent_address_space.virtual_memory_map.Validate() != VirtualMemoryAreaStatus::Succeeded ||
         parent_address_space.root_physical_address == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
@@ -1097,6 +1705,11 @@ CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
         }
     }
 
+    if (!AssignAddressSpaceIdentifier(child_address_space)) {
+        return RollbackForkClone(parent_address_space, child_address_space,
+                                 UserAddressSpaceStatus::AddressSpaceIdentifierExhausted);
+    }
+
     for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE; area_index < area_count;
          ++area_index) {
         VirtualMemoryArea parent_area{};
@@ -1115,6 +1728,32 @@ CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
             const PageTableStatus query_status = QueryAddressSpacePage(
                 parent_address_space.root_physical_address, page_address, mapping);
             if (query_status == PageTableStatus::NotMapped) {
+                if (user_swap_attached) {
+                    const SwapPageIdentity parent_identity =
+                        MakeSwapIdentity(parent_address_space, page_address);
+                    uint64_t parent_slot_index = UINT64_MAX;
+                    const SwapManagerStatus find_status =
+                        user_swap_manager.FindSlot(parent_identity, parent_slot_index);
+                    static_cast<void>(parent_slot_index);
+                    if (find_status == SwapManagerStatus::Succeeded) {
+                        uint64_t child_slot_index = UINT64_MAX;
+                        if (user_swap_manager.Clone(
+                                parent_identity,
+                                MakeSwapIdentity(child_address_space, page_address),
+                                user_swap_clone_scratch_page, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                child_slot_index) != SwapManagerStatus::Succeeded) {
+                            return RollbackForkClone(parent_address_space, child_address_space,
+                                                     UserAddressSpaceStatus::ForkBackingFailure);
+                        }
+                        static_cast<void>(child_slot_index);
+                        ++child_address_space.swapped_page_count;
+                        child_address_space.peak_swapped_page_count =
+                            child_address_space.swapped_page_count;
+                    } else if (find_status != SwapManagerStatus::MappingNotFound) {
+                        return RollbackForkClone(parent_address_space, child_address_space,
+                                                 UserAddressSpaceStatus::RollbackFailed);
+                    }
+                }
                 continue;
             }
             if (query_status != PageTableStatus::Succeeded ||
@@ -1160,9 +1799,8 @@ CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
                 }
                 retained_private_page = true;
             }
-            const bool copy_on_write =
-                parent_area.permissions.writable &&
-                parent_area.kind != VirtualMemoryAreaKind::FileShared;
+            const bool copy_on_write = parent_area.permissions.writable &&
+                                       parent_area.kind != VirtualMemoryAreaKind::FileShared;
             if (MapExistingUserPage(child_address_space.root_physical_address, page_address,
                                     mapping.physical_address, false, mapping.permissions.executable,
                                     copy_on_write) != KernelUserPageStatus::Succeeded) {
@@ -1248,14 +1886,16 @@ CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
             parent_address_space.private_file_resident_page_count ||
         child_address_space.shared_file_resident_page_count !=
             parent_address_space.shared_file_resident_page_count ||
+        child_address_space.swapped_page_count != parent_address_space.swapped_page_count ||
         child_address_space.copy_on_write_page_count != copy_on_write_page_count ||
         parent_address_space.copy_on_write_page_count != copy_on_write_page_count) {
         return RollbackForkClone(parent_address_space, child_address_space,
                                  UserAddressSpaceStatus::RollbackFailed);
     }
-    if (!AssignAddressSpaceIdentifier(child_address_space)) {
+    if (CommitUserMemory(child_address_space, parent_address_space.committed_page_count,
+                         privileged) != MemoryOvercommitStatus::Succeeded) {
         return RollbackForkClone(parent_address_space, child_address_space,
-                                 UserAddressSpaceStatus::AddressSpaceIdentifierExhausted);
+                                 UserAddressSpaceStatus::CommitLimitExceeded);
     }
     ++parent_address_space.fork_clone_count;
     return UserAddressSpaceStatus::Succeeded;
@@ -1296,6 +1936,10 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
                     UserVirtualMemoryStatus::Succeeded) {
                 return UserAddressSpaceStatus::RollbackFailed;
             }
+        }
+        if (address_space.mapped_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+            address_space.swapped_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+            return UserAddressSpaceStatus::RollbackFailed;
         }
         if (address_space.root_physical_address != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
             DestroyUserPageTable(address_space.root_physical_address) !=
@@ -1345,6 +1989,11 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
         user_file_page_cache.Trim(OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
     if (trim_status != FilePageCacheStatus::Succeeded &&
         trim_status != FilePageCacheStatus::EntryBusy) {
+        return UserAddressSpaceStatus::RollbackFailed;
+    }
+    if (address_space.committed_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
+        UncommitUserMemory(address_space, address_space.committed_page_count) !=
+            MemoryOvercommitStatus::Succeeded) {
         return UserAddressSpaceStatus::RollbackFailed;
     }
     address_space = UserAddressSpace{};
@@ -1503,8 +2152,7 @@ UserVirtualMemoryStatus MapFileMemory(UserAddressSpace &address_space, fs::Vfs &
             OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
         private_mapping == shared_mapping ||
         (shared_mapping && writable &&
-         (length_bytes & OS_KERNEL_USER_MEMORY_PAGE_MASK) !=
-             OS_KERNEL_USER_MEMORY_EMPTY_VALUE)) {
+         (length_bytes & OS_KERNEL_USER_MEMORY_PAGE_MASK) != OS_KERNEL_USER_MEMORY_EMPTY_VALUE)) {
         return UserVirtualMemoryStatus::UnsupportedMapping;
     }
     fs::NodeInformation information{};
@@ -1718,44 +2366,36 @@ UserVirtualMemoryStatus TrimUserFilePageCache() noexcept {
                : UserVirtualMemoryStatus::Corrupt;
 }
 
-UserVirtualMemoryStatus
-ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept {
-    if (address_space.virtual_memory_map.Validate() !=
-        VirtualMemoryAreaStatus::Succeeded) {
+UserVirtualMemoryStatus ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept {
+    if (address_space.virtual_memory_map.Validate() != VirtualMemoryAreaStatus::Succeeded) {
         return UserVirtualMemoryStatus::NotInitialized;
     }
-    const uint64_t area_count =
-        address_space.virtual_memory_map.AreaCount();
-    for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-         area_index < area_count; ++area_index) {
+    const uint64_t area_count = address_space.virtual_memory_map.AreaCount();
+    for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE; area_index < area_count;
+         ++area_index) {
         VirtualMemoryArea area{};
         if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
             VirtualMemoryAreaStatus::Succeeded) {
             return UserVirtualMemoryStatus::Corrupt;
         }
-        if (area.kind != VirtualMemoryAreaKind::FileShared ||
-            !area.permissions.writable) {
+        if (area.kind != VirtualMemoryAreaKind::FileShared || !area.permissions.writable) {
             continue;
         }
-        for (uint64_t page_address = area.begin_address;
-             page_address < area.end_address;
+        for (uint64_t page_address = area.begin_address; page_address < area.end_address;
              page_address += OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
             PageMapping mapping{};
             const PageTableStatus query_status =
-                QueryAddressSpacePage(address_space.root_physical_address,
-                                      page_address, mapping);
+                QueryAddressSpacePage(address_space.root_physical_address, page_address, mapping);
             if (query_status == PageTableStatus::NotMapped) {
                 continue;
             }
             if (query_status != PageTableStatus::Succeeded ||
-                !mapping.permissions.user_accessible ||
-                mapping.permissions.copy_on_write) {
+                !mapping.permissions.user_accessible || mapping.permissions.copy_on_write) {
                 return UserVirtualMemoryStatus::Corrupt;
             }
             if (mapping.permissions.writable &&
-                ReplaceUserPage(address_space.root_physical_address,
-                                page_address, mapping.physical_address,
-                                false, mapping.permissions.executable,
+                ReplaceUserPage(address_space.root_physical_address, page_address,
+                                mapping.physical_address, false, mapping.permissions.executable,
                                 false) != KernelUserPageStatus::Succeeded) {
                 return UserVirtualMemoryStatus::PageMappingFailed;
             }
@@ -1764,13 +2404,11 @@ ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept {
     return UserVirtualMemoryStatus::Succeeded;
 }
 
-UserVirtualMemoryStatus WritebackUserFilePageCache(
-    const uint64_t maximum_page_count,
-    uint64_t &written_page_count) noexcept {
+UserVirtualMemoryStatus WritebackUserFilePageCache(const uint64_t maximum_page_count,
+                                                   uint64_t &written_page_count) noexcept {
     const FilePageCacheStatus writeback_status =
-        user_file_page_cache.Writeback(
-            &user_file_backing_manager, WriteUserFileBackingPage,
-            maximum_page_count, written_page_count);
+        user_file_page_cache.Writeback(&user_file_backing_manager, WriteUserFileBackingPage,
+                                       maximum_page_count, written_page_count);
     if (writeback_status == FilePageCacheStatus::Succeeded) {
         return UserVirtualMemoryStatus::Succeeded;
     }
@@ -1921,7 +2559,20 @@ UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
                                   : UserPageFaultStatus::PermissionDenied;
     }
 
-    if (area.kind == VirtualMemoryAreaKind::UserStack) {
+    bool swap_mapping = false;
+    if (user_swap_attached) {
+        uint64_t swap_slot_index = UINT64_MAX;
+        const SwapManagerStatus swap_status = user_swap_manager.FindSlot(
+            MakeSwapIdentity(address_space, page_address), swap_slot_index);
+        static_cast<void>(swap_slot_index);
+        if (swap_status == SwapManagerStatus::Succeeded) {
+            swap_mapping = true;
+        } else if (swap_status != SwapManagerStatus::MappingNotFound) {
+            return UserPageFaultStatus::Corrupt;
+        }
+    }
+
+    if (area.kind == VirtualMemoryAreaKind::UserStack && !swap_mapping) {
         if (page_address + OS_KERNEL_MEMORY_PAGE_SIZE_BYTES !=
                 address_space.stack_committed_bottom_virtual_address ||
             page_address < OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS ||
@@ -1943,11 +2594,17 @@ UserPageFaultStatus HandleUserPageFault(UserAddressSpace &address_space,
     if (map_status == UserVirtualMemoryStatus::PageCacheExhausted) {
         return UserPageFaultStatus::PageCacheExhausted;
     }
+    if (map_status == UserVirtualMemoryStatus::SwapReadFailed) {
+        return UserPageFaultStatus::SwapReadFailed;
+    }
+    if (map_status == UserVirtualMemoryStatus::SwapCorrupt) {
+        return UserPageFaultStatus::SwapCorrupt;
+    }
     if (map_status != UserVirtualMemoryStatus::Succeeded) {
         return UserPageFaultStatus::PageMappingFailed;
     }
     ++address_space.demand_page_fault_count;
-    if (area.kind == VirtualMemoryAreaKind::UserStack) {
+    if (area.kind == VirtualMemoryAreaKind::UserStack && !swap_mapping) {
         address_space.stack_committed_bottom_virtual_address = page_address;
         ++address_space.stack_growth_page_fault_count;
     }

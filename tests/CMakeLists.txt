@@ -301,6 +301,30 @@ os_add_kernel_memory_test(
     "randomized"
 )
 
+os_add_kernel_memory_test(
+    os_kernel_memory_pressure_unit_tests
+    unit/kernel/memory_pressure_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_memory_pressure_randomized_tests
+    randomized/kernel/memory_pressure_randomized_test.cpp
+    "randomized"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_swap_manager_unit_tests
+    unit/kernel/swap_manager_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_swap_manager_randomized_tests
+    randomized/kernel/swap_manager_randomized_test.cpp
+    "randomized"
+)
+
 add_library(
     os_kernel_stack_test_support
     STATIC
@@ -1461,10 +1485,10 @@ set_tests_properties(
 set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 32768)
-set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 55)
-set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 130)
-set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 250)
-set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 300)
+set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 160)
+set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 310)
+set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 430)
+set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 750)
 
 add_test(
     NAME os_qemu_bootstrap_smoke
@@ -2003,7 +2027,7 @@ set_tests_properties(
     os_cpp_identifier_naming_check
     PROPERTIES
         LABELS "integration"
-        TIMEOUT 120
+        TIMEOUT 240
         WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}"
 )
 

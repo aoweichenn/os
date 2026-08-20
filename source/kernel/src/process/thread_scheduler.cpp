@@ -1,4 +1,4 @@
-#include "os/kernel/process/thread_scheduler.hpp"
+#include <os/kernel/process/thread_scheduler.hpp>
 
 namespace os::kernel {
 
@@ -288,8 +288,7 @@ ThreadScheduler::HandleTimerTick(ThreadSchedulingDecision &decision) noexcept {
     this->cumulative_statistics_.timer_tick_count += OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
     this->elapsed_quantum_ticks_ += OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
     decision.current_thread_index = this->current_thread_index_;
-    if (this->elapsed_quantum_ticks_ < this->quantum_ticks_ ||
-        !this->HasSchedulableReadyThread()) {
+    if (this->elapsed_quantum_ticks_ < this->quantum_ticks_ || !this->HasSchedulableReadyThread()) {
         return ThreadSchedulerStatus::Succeeded;
     }
 
@@ -667,7 +666,50 @@ ThreadScheduler::TerminateNonRunningThread(const uint64_t thread_index) noexcept
     thread.state = ThreadState::Exited;
     --process.live_thread_count;
     ++process.exited_thread_count;
+    if (process.live_thread_count == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE) {
+        process.state = ProcessState::Zombie;
+        this->cumulative_statistics_.zombie_transition_count +=
+            OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    }
     return ThreadSchedulerStatus::Succeeded;
+}
+
+ThreadSchedulerStatus
+ThreadScheduler::TerminateNonCurrentProcess(const uint64_t process_index,
+                                            uint64_t &terminated_thread_count) noexcept {
+    terminated_thread_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
+    if (!this->initialized_) {
+        return ThreadSchedulerStatus::NotInitialized;
+    }
+    if (process_index >= this->process_capacity_) {
+        return ThreadSchedulerStatus::InvalidProcessIndex;
+    }
+    if (this->current_thread_index_ != OS_KERNEL_THREAD_INVALID_INDEX &&
+        this->threads_[this->current_thread_index_].process_index == process_index) {
+        return ThreadSchedulerStatus::InvalidCurrentThread;
+    }
+    ProcessEntry &process = this->processes_[process_index];
+    if (process.state != ProcessState::Alive ||
+        process.live_thread_count == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE) {
+        return ThreadSchedulerStatus::InvalidProcessState;
+    }
+    uint64_t thread_index = process.first_thread_index;
+    while (thread_index != OS_KERNEL_THREAD_INVALID_INDEX) {
+        const uint64_t next_thread_index = this->threads_[thread_index].next_process_thread_index;
+        if (this->threads_[thread_index].state != ThreadState::Exited) {
+            const ThreadSchedulerStatus terminate_status =
+                this->TerminateNonRunningThread(thread_index);
+            if (terminate_status != ThreadSchedulerStatus::Succeeded) {
+                return terminate_status;
+            }
+            ++terminated_thread_count;
+        }
+        thread_index = next_thread_index;
+    }
+    return process.state == ProcessState::Zombie &&
+                   terminated_thread_count != OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE
+               ? ThreadSchedulerStatus::Succeeded
+               : ThreadSchedulerStatus::CorruptedState;
 }
 
 ThreadSchedulerStatus
@@ -762,8 +804,7 @@ ThreadScheduler::StopCurrentProcess(const uint64_t process_index,
     process.state = ProcessState::Stopped;
     this->current_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
     this->elapsed_quantum_ticks_ = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
-    this->cumulative_statistics_.process_stop_count +=
-        OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    this->cumulative_statistics_.process_stop_count += OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
     this->SelectAfterCurrentStops(stopped_thread_index, decision);
     return ThreadSchedulerStatus::Succeeded;
 }

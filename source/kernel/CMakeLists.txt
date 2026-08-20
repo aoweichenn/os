@@ -70,11 +70,13 @@ set(
     include/os/kernel/memory/kernel_type_cache.hpp
     include/os/kernel/memory/kernel_type_cache.tpp
     include/os/kernel/memory/kernel_virtual_address_allocator.hpp
+    include/os/kernel/memory/memory_pressure.hpp
     include/os/kernel/memory/memory_manager.hpp
     include/os/kernel/memory/page_table.hpp
     include/os/kernel/memory/physical_frame_allocator.hpp
     include/os/kernel/memory/physical_memory_map.hpp
     include/os/kernel/memory/resource_snapshot.hpp
+    include/os/kernel/memory/swap_manager.hpp
     include/os/kernel/memory/user_page_reference.hpp
     include/os/kernel/memory/virtual_memory_area.hpp
 )
@@ -200,12 +202,14 @@ set(
     src/memory/kernel_stack_manager.cpp
     src/memory/kernel_type_cache.cpp
     src/memory/kernel_virtual_address_allocator.cpp
+    src/memory/memory_pressure.cpp
     src/memory/memory_manager.cpp
     src/memory/page_table.cpp
     src/memory/page_table_layout.cpp
     src/memory/physical_frame_allocator.cpp
     src/memory/physical_memory_map.cpp
     src/memory/resource_snapshot.cpp
+    src/memory/swap_manager.cpp
     src/memory/user_page_reference.cpp
     src/memory/virtual_memory_area.cpp
 )
@@ -320,11 +324,13 @@ add_library(
         src/memory/kernel_stack_manager.cpp
         src/memory/kernel_type_cache.cpp
         src/memory/kernel_virtual_address_allocator.cpp
+        src/memory/memory_pressure.cpp
         src/memory/page_table.cpp
         src/memory/page_table_layout.cpp
         src/memory/physical_frame_allocator.cpp
         src/memory/physical_memory_map.cpp
         src/memory/resource_snapshot.cpp
+        src/memory/swap_manager.cpp
         src/memory/user_page_reference.cpp
         src/memory/virtual_memory_area.cpp
         src/sync/spin_lock.cpp
@@ -334,10 +340,12 @@ add_library(
         include/os/kernel/memory/kernel_type_cache.hpp
         include/os/kernel/memory/kernel_type_cache.tpp
         include/os/kernel/memory/kernel_virtual_address_allocator.hpp
+        include/os/kernel/memory/memory_pressure.hpp
         include/os/kernel/memory/page_table.hpp
         include/os/kernel/memory/physical_frame_allocator.hpp
         include/os/kernel/memory/physical_memory_map.hpp
         include/os/kernel/memory/resource_snapshot.hpp
+        include/os/kernel/memory/swap_manager.hpp
         include/os/kernel/memory/user_page_reference.hpp
         include/os/kernel/memory/virtual_memory_area.hpp
         include/os/kernel/sync/spin_lock.hpp

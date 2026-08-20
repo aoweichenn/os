@@ -1,20 +1,20 @@
-#include "os/kernel/user/system_calls.hpp"
+#include <os/kernel/user/system_calls.hpp>
 
-#include "os/abi/system_call.hpp"
-#include "os/abi/time.hpp"
-#include "os/kernel/arch/cpu_local.hpp"
-#include "os/kernel/arch/descriptor_tables.hpp"
-#include "os/kernel/arch/interrupt_runtime.hpp"
-#include "os/kernel/arch/native_system_call.hpp"
-#include "os/kernel/arch/processor.hpp"
-#include "os/kernel/arch/user_context.hpp"
-#include "os/kernel/device/cmos_rtc.hpp"
-#include "os/kernel/memory/memory_manager.hpp"
-#include "os/kernel/process/process_runtime.hpp"
-#include "os/kernel/user/user_elf.hpp"
-#include "os/kernel/user/user_memory.hpp"
+#include <os/abi/system_call.hpp>
+#include <os/abi/time.hpp>
+#include <os/kernel/arch/cpu_local.hpp>
+#include <os/kernel/arch/descriptor_tables.hpp>
+#include <os/kernel/arch/interrupt_runtime.hpp>
+#include <os/kernel/arch/native_system_call.hpp>
+#include <os/kernel/arch/processor.hpp>
+#include <os/kernel/arch/user_context.hpp>
+#include <os/kernel/device/cmos_rtc.hpp>
 #include <os/kernel/device/port_io.hpp>
 #include <os/kernel/device/vga_text_console.hpp>
+#include <os/kernel/memory/memory_manager.hpp>
+#include <os/kernel/process/process_runtime.hpp>
+#include <os/kernel/user/user_elf.hpp>
+#include <os/kernel/user/user_memory.hpp>
 
 namespace os::kernel {
 
@@ -388,7 +388,8 @@ MapProcessResourceLimitStatus(const ProcessResourceLimitStatus status) noexcept 
     }
     if (status == UserVirtualMemoryStatus::AddressSpaceExhausted ||
         status == UserVirtualMemoryStatus::PageAllocationFailed ||
-        status == UserVirtualMemoryStatus::PageCacheExhausted) {
+        status == UserVirtualMemoryStatus::PageCacheExhausted ||
+        status == UserVirtualMemoryStatus::CommitLimitExceeded) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_OUT_OF_MEMORY;
     }
     if (status == UserVirtualMemoryStatus::MetadataExhausted) {

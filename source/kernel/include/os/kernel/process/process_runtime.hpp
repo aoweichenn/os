@@ -1,28 +1,28 @@
 #pragma once
 
-#include "os/abi/system_call.hpp"
-#include "os/kernel/arch/exception_frame.hpp"
-#include "os/kernel/arch/extended_state.hpp"
-#include "os/kernel/arch/user_context.hpp"
-#include "os/kernel/device/block_request.hpp"
-#include "os/kernel/fs/file_system.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/io/file_description.hpp"
-#include "os/kernel/io/file_table.hpp"
-#include "os/kernel/io/terminal.hpp"
-#include "os/kernel/ipc/pipe.hpp"
-#include "os/kernel/ipc/pipe_manager.hpp"
-#include "os/kernel/memory/kernel_stack_manager.hpp"
-#include "os/kernel/memory/physical_frame_allocator.hpp"
-#include "os/kernel/memory/resource_snapshot.hpp"
-#include "os/kernel/process/job_control.hpp"
-#include "os/kernel/process/process_tree.hpp"
-#include "os/kernel/process/signal_manager.hpp"
-#include "os/kernel/process/thread_scheduler.hpp"
-#include "os/kernel/sync/private_futex.hpp"
-#include "os/kernel/user/user_elf.hpp"
-#include "os/kernel/user/user_memory.hpp"
-#include "os/kernel/user/user_program_images.hpp"
+#include <os/abi/system_call.hpp>
+#include <os/kernel/arch/exception_frame.hpp>
+#include <os/kernel/arch/extended_state.hpp>
+#include <os/kernel/arch/user_context.hpp>
+#include <os/kernel/device/block_request.hpp>
+#include <os/kernel/fs/file_system.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/io/file_description.hpp>
+#include <os/kernel/io/file_table.hpp>
+#include <os/kernel/io/terminal.hpp>
+#include <os/kernel/ipc/pipe.hpp>
+#include <os/kernel/ipc/pipe_manager.hpp>
+#include <os/kernel/memory/kernel_stack_manager.hpp>
+#include <os/kernel/memory/physical_frame_allocator.hpp>
+#include <os/kernel/memory/resource_snapshot.hpp>
+#include <os/kernel/process/job_control.hpp>
+#include <os/kernel/process/process_tree.hpp>
+#include <os/kernel/process/signal_manager.hpp>
+#include <os/kernel/process/thread_scheduler.hpp>
+#include <os/kernel/sync/private_futex.hpp>
+#include <os/kernel/user/user_elf.hpp>
+#include <os/kernel/user/user_memory.hpp>
+#include <os/kernel/user/user_program_images.hpp>
 
 #include <stdint.h>
 
@@ -230,6 +230,13 @@ struct ProcessRuntimeStatistics final {
     ResourceSnapshot resource_snapshot_before_processes;
     ResourceSnapshot resource_snapshot_after_processes;
     ResourceSnapshotDifference resource_snapshot_difference;
+    MemoryPressureStatistics memory_pressure;
+    MemoryOvercommitStatistics memory_overcommit;
+    SwapManagerStatistics swap;
+    uint64_t oom_invocation_count;
+    uint64_t oom_kill_count;
+    uint64_t last_oom_victim_process_id;
+    uint64_t last_oom_victim_score;
     ProcessIpcStatistics ipc;
     UserThreadRuntimeStatistics user_threads;
     PrivateFutexStatistics private_futexes;
@@ -250,7 +257,12 @@ struct ProcessObservationSnapshot final {
     uint64_t thread_capacity;
     uint64_t active_file_description_count;
     uint64_t active_pipe_count;
+    uint64_t oom_kill_count;
 };
+
+inline constexpr uint64_t OS_KERNEL_PROCESS_OBSERVATION_MAXIMUM_SIZE_BYTES = 64ULL;
+static_assert(sizeof(ProcessObservationSnapshot) <=
+              OS_KERNEL_PROCESS_OBSERVATION_MAXIMUM_SIZE_BYTES);
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
 [[nodiscard]] ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept;

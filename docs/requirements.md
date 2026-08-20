@@ -201,6 +201,27 @@ v2.4 的本地身份、安全与资源边界要求：
 - 本版不得加入密码数据库、登录、网络身份、ACL、capabilities、LSM 或 user
   namespace。
 
+v2.5 的内存压力与恢复要求：
+
+- 单 BSP 只实现一个 Normal 内存域；按 min/low/high 三水位回收，不伪造 NUMA
+  或多 zone。32 GiB 参考机的已触碰驻留预算固定为 4 GiB，来宾报告 RAM 不变；
+- 用户分配低于 low 前必须回收到 high，内核紧急分配可以使用 low..min 保留；
+  先收缩未引用 clean page cache，再回写脏文件页，最后交换匿名/堆/栈页；
+- rootfs 提供 root:root 0600 的 256 MiB 稀疏 `/.os-swap`，共 65536 个 4 KiB 槽；
+  短写不得撤 PTE，短读或校验失败不得释放唯一槽；
+- fork 必须保留已换出页的父子私有语义；unmap、exec、exit 和 OOM kill 必须释放
+  未换入槽，正常整机结束 active swap 为 0；
+- overcommit 模式编号采用 Linux 0/1/2，默认 0，严格模式为 swap + 50% RAM；
+  匿名 mmap、brk 与 fork 提交，回滚和销毁成对撤销，正常整机 committed 为 0；
+- OOM 基础分数按 resident+swap 占允许页比例映射到 0..1000，支持 -1000..1000
+  adjustment；PID 1 与 -1000 不可杀，平分时按占用更大、PID 更小选择；
+- `/proc/meminfo` 必须暴露 managed/free/allocated、resident limit、swap total/free、
+  committed/commit limit 与 OOM kill 数；热路径不得逐页打印日志；
+- 纯逻辑必须覆盖阈值、回收计划、commit 和 OOM oracle；swap 必须覆盖读写失败、
+  校验损坏、容量、clone 与释放；64/256 MiB 和 32 GiB QEMU 仍使用同一生产路径；
+- 本版不加入网络、SMP、NUMA、THP、zswap、休眠恢复、memory cgroup 或可写 VM
+  sysctl。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

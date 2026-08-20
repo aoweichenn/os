@@ -1,8 +1,8 @@
-#include "os/kernel/fs/memfs.hpp"
-#include "os/kernel/fs/procfs.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/memory/kernel_heap.hpp"
-#include "test_context.hpp"
+#include <os/kernel/fs/memfs.hpp>
+#include <os/kernel/fs/procfs.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/memory/kernel_heap.hpp>
+#include <test_context.hpp>
 
 #include <string_view>
 
@@ -50,6 +50,8 @@ constexpr uint8_t OS_TEST_PROCFS_MEMORY_PATH[] = {
 constexpr char OS_TEST_PROCFS_MANAGED_LINE[] = "managed_bytes 67108864\n";
 constexpr char OS_TEST_PROCFS_FREE_LINE[] = "free_bytes 50331648\n";
 constexpr char OS_TEST_PROCFS_ALLOCATED_LINE[] = "allocated_bytes 16777216\n";
+constexpr char OS_TEST_PROCFS_SWAP_TOTAL_LINE[] = "swap_total_bytes 67108864\n";
+constexpr char OS_TEST_PROCFS_COMMIT_LIMIT_LINE[] = "commit_limit_bytes 83886080\n";
 
 struct SnapshotSource final {
     os::kernel::fs::ProcfsSnapshot snapshot;
@@ -91,6 +93,12 @@ int main() {
                 .managed_memory_bytes = OS_TEST_PROCFS_EXPECTED_MANAGED_BYTES,
                 .free_memory_bytes = OS_TEST_PROCFS_EXPECTED_FREE_BYTES,
                 .allocated_memory_bytes = OS_TEST_PROCFS_EXPECTED_ALLOCATED_BYTES,
+                .resident_limit_bytes = OS_TEST_PROCFS_EXPECTED_FREE_BYTES,
+                .swap_total_bytes = OS_TEST_PROCFS_EXPECTED_MANAGED_BYTES,
+                .swap_free_bytes = OS_TEST_PROCFS_EXPECTED_FREE_BYTES,
+                .committed_memory_bytes = OS_TEST_PROCFS_EXPECTED_ALLOCATED_BYTES,
+                .commit_limit_bytes = 80ULL * 1024ULL * 1024ULL,
+                .oom_kill_count = OS_TEST_PROCFS_EXPECTED_FAILURE_COUNT,
                 .active_process_count = OS_TEST_PROCFS_ACTIVE_PROCESS_COUNT,
                 .active_thread_count = OS_TEST_PROCFS_ACTIVE_THREAD_COUNT,
                 .process_capacity = OS_TEST_PROCFS_PROCESS_CAPACITY,
@@ -151,7 +159,11 @@ int main() {
         std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
             OS_TEST_PROCFS_FREE_LINE) != std::string_view::npos &&
         std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
-            OS_TEST_PROCFS_ALLOCATED_LINE) != std::string_view::npos;
+            OS_TEST_PROCFS_ALLOCATED_LINE) != std::string_view::npos &&
+        std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
+            OS_TEST_PROCFS_SWAP_TOTAL_LINE) != std::string_view::npos &&
+        std::string_view{reinterpret_cast<const char *>(memory_bytes), memory_read_bytes}.find(
+            OS_TEST_PROCFS_COMMIT_LIMIT_LINE) != std::string_view::npos;
     test_context.Expect(snapshot_contract_valid, OS_TEST_PROCFS_SNAPSHOT_CONTRACT);
 
     os::kernel::fs::OpenFile directory{};

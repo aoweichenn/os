@@ -1,12 +1,14 @@
 #pragma once
 
-#include "os/abi/virtual_memory.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/memory/file_page_cache.hpp"
-#include "os/kernel/memory/physical_frame_allocator.hpp"
-#include "os/kernel/memory/user_page_reference.hpp"
-#include "os/kernel/memory/virtual_memory_area.hpp"
-#include "os/kernel/user/user_elf.hpp"
+#include <os/abi/virtual_memory.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/memory/file_page_cache.hpp>
+#include <os/kernel/memory/memory_pressure.hpp>
+#include <os/kernel/memory/physical_frame_allocator.hpp>
+#include <os/kernel/memory/swap_manager.hpp>
+#include <os/kernel/memory/user_page_reference.hpp>
+#include <os/kernel/memory/virtual_memory_area.hpp>
+#include <os/kernel/user/user_elf.hpp>
 
 #include <stdint.h>
 
@@ -51,6 +53,15 @@ struct UserAddressSpace final {
     uint64_t copy_on_write_copy_count;
     uint64_t copy_on_write_exclusive_restore_count;
     uint64_t fork_clone_count;
+    uint64_t swapped_page_count;
+    uint64_t peak_swapped_page_count;
+    uint64_t swap_out_page_count;
+    uint64_t swap_in_page_count;
+    uint64_t swap_read_failure_count;
+    uint64_t swap_corruption_count;
+    uint64_t reclaim_scan_virtual_address;
+    uint64_t committed_page_count;
+    uint64_t peak_committed_page_count;
     uint64_t address_space_identifier;
     VirtualMemoryMap virtual_memory_map;
 };
@@ -70,6 +81,8 @@ enum class UserAddressSpaceStatus : uint64_t {
     ForkReferenceExhausted,
     ForkBackingFailure,
     AddressSpaceIdentifierExhausted,
+    SwapInitializationFailed,
+    CommitLimitExceeded,
     RollbackFailed,
 };
 
@@ -89,9 +102,12 @@ enum class UserVirtualMemoryStatus : uint64_t {
     FileReadFailed,
     FileWriteFailed,
     PageCacheExhausted,
+    SwapReadFailed,
+    SwapCorrupt,
     CopyOnWriteFailure,
     ThreadMemoryInUse,
     ResourceLimitExceeded,
+    CommitLimitExceeded,
     Corrupt,
 };
 
@@ -108,6 +124,8 @@ enum class UserPageFaultStatus : uint64_t {
     PageMappingFailed,
     FileReadFailed,
     PageCacheExhausted,
+    SwapReadFailed,
+    SwapCorrupt,
     CopyOnWriteFailure,
     Corrupt,
 };
@@ -125,9 +143,33 @@ enum class UserMemoryCopyStatus : uint64_t {
     PageResolutionFailed,
 };
 
+enum class UserSwapInitializationStage : uint64_t {
+    NotStarted,
+    ContextReady,
+    FileOpened,
+    PermissionsReady,
+    FileSized,
+    FileValidated,
+    ManagerReady,
+    PressureReady,
+    OvercommitReady,
+    StorageSelfTestPassed,
+    Ready,
+};
+
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
+[[nodiscard]] UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept;
+[[nodiscard]] UserSwapInitializationStage GetUserSwapInitializationStage() noexcept;
 [[nodiscard]] VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept;
 [[nodiscard]] FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept;
+[[nodiscard]] MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept;
+[[nodiscard]] MemoryOvercommitStatistics GetUserMemoryOvercommitStatistics() noexcept;
+[[nodiscard]] SwapManagerStatistics GetUserSwapStatistics() noexcept;
+[[nodiscard]] bool ValidateUserMemoryManagement() noexcept;
+[[nodiscard]] MemoryOvercommitStatus
+CommitUserMemory(UserAddressSpace &address_space, uint64_t page_count, bool privileged) noexcept;
+[[nodiscard]] MemoryOvercommitStatus UncommitUserMemory(UserAddressSpace &address_space,
+                                                        uint64_t page_count) noexcept;
 [[nodiscard]] UserPageReferenceStatistics GetUserPageReferenceStatistics() noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 LoadUserAddressSpace(const uint8_t *image, uint64_t image_size_bytes,
@@ -138,7 +180,7 @@ LoadUserAddressSpace(fs::Vfs &vfs, const fs::OpenFile &open_file, UserAddressSpa
                      UserElfValidationStatus &elf_validation_status) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
-                             UserAddressSpace &child_address_space) noexcept;
+                             UserAddressSpace &child_address_space, bool privileged) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 RestoreUserAddressSpaceAfterFailedFork(UserAddressSpace &parent_address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus

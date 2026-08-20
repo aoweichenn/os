@@ -1,4 +1,4 @@
-#include "os/kernel/fs/root_file_system.hpp"
+#include <os/kernel/fs/root_file_system.hpp>
 
 namespace os::kernel::fs {
 
@@ -1880,6 +1880,25 @@ Status RootFileSystem::CloseOperation(void *const context, const Vnode &vnode) n
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
     SpinLockGuard guard{file_system.lock_};
+    if (vnode.type == NodeType::Directory) {
+        // 目录持有 open reference 时不能被 rmdir 或复用，也不会进入 orphan。
+        // close 只归还既有引用，不能为了重复验证 inode 把设备瞬态引入退出路径。
+        if (!file_system.initialized_ || vnode.superblock != &file_system.vfs_superblock_ ||
+            vnode.identifier == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
+            vnode.identifier > file_system.disk_superblock_.inode_count ||
+            vnode.generation == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
+            return Status::InvalidHandle;
+        }
+        uint64_t &directory_open_count =
+            file_system.open_counts_[vnode.identifier - OS_KERNEL_ROOTFS_COUNTER_INCREMENT];
+        if (directory_open_count == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
+            file_system.statistics_.open_reference_count == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
+            return Status::InvalidHandle;
+        }
+        --directory_open_count;
+        --file_system.statistics_.open_reference_count;
+        return Status::Succeeded;
+    }
     RootInode inode{};
     const Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {

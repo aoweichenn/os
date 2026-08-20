@@ -1,7 +1,7 @@
-#include "os/kernel/process/thread_scheduler.hpp"
-#include "os/kernel/sync/mutex.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
-#include "test_context.hpp"
+#include <os/kernel/process/thread_scheduler.hpp>
+#include <os/kernel/sync/mutex.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
+#include <test_context.hpp>
 
 #include <string_view>
 
@@ -20,6 +20,8 @@ constexpr std::string_view OS_TEST_THREAD_SCHEDULER_STATE_LIFECYCLE =
     "Thread 退出回收与 Process Zombie 回收必须保持集合和计数守恒";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_PROCESS_EXIT_LIFECYCLE =
     "Process 退出必须同时撤销 Ready/Blocked sibling、清空等待队列并保留可回收 Thread";
+constexpr std::string_view OS_TEST_THREAD_SCHEDULER_NON_CURRENT_TERMINATION =
+    "OOM 路径必须能终止非当前 Process 且不改变当前 Running Thread";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_IMAGE_COMMIT =
     "exec 镜像提交必须只允许当前单线程 Process 原子更新 CR3 与用户栈";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_WAIT_QUEUE_FIFO =
@@ -473,6 +475,54 @@ void RestoreTestInterrupts(const bool interrupts_were_enabled) noexcept {
            scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded;
 }
 
+[[nodiscard]] bool ValidateNonCurrentProcessTermination() noexcept {
+    os::kernel::ProcessEntry processes[OS_TEST_THREAD_SCHEDULER_TEST_PROCESS_CAPACITY]{};
+    os::kernel::ThreadEntry threads[OS_TEST_THREAD_SCHEDULER_TEST_THREAD_CAPACITY]{};
+    os::kernel::ThreadScheduler scheduler{};
+    uint64_t current_process_index = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
+    uint64_t victim_process_index = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
+    os::kernel::ProcessId current_process_id{};
+    os::kernel::ProcessId victim_process_id{};
+    uint64_t current_thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    uint64_t victim_thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    os::kernel::ThreadId current_thread_id{};
+    os::kernel::ThreadId victim_thread_id{};
+    os::kernel::ThreadSchedulingDecision decision{};
+    if (!InitializeTestScheduler(scheduler, processes, threads) ||
+        !CreateTestProcess(scheduler, OS_TEST_THREAD_SCHEDULER_FIRST_INDEX, current_process_index,
+                           current_process_id) ||
+        !CreateTestThread(scheduler, current_process_index, OS_TEST_THREAD_SCHEDULER_FIRST_INDEX,
+                          current_thread_index, current_thread_id) ||
+        !CreateTestProcess(scheduler, OS_TEST_THREAD_SCHEDULER_SECOND_INDEX, victim_process_index,
+                           victim_process_id) ||
+        !CreateTestThread(scheduler, victim_process_index, OS_TEST_THREAD_SCHEDULER_SECOND_INDEX,
+                          victim_thread_index, victim_thread_id) ||
+        scheduler.Start(decision) != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.CurrentThreadIndex() != current_thread_index) {
+        return false;
+    }
+    uint64_t terminated_thread_count = OS_TEST_THREAD_SCHEDULER_EMPTY_VALUE;
+    os::kernel::ProcessEntry victim_process{};
+    os::kernel::ThreadEntry victim_thread{};
+    if (scheduler.TerminateNonCurrentProcess(victim_process_index, terminated_thread_count) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        terminated_thread_count != OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT ||
+        scheduler.CurrentThreadIndex() != current_thread_index ||
+        scheduler.ReadProcess(victim_process_index, victim_process) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        victim_process.state != os::kernel::ProcessState::Zombie ||
+        scheduler.ReadThread(victim_thread_index, victim_thread) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        victim_thread.state != os::kernel::ThreadState::Exited ||
+        scheduler.ReapExitedThread(victim_thread_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.ReapZombieProcess(victim_process_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded) {
+        return false;
+    }
+    return scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded;
+}
+
 [[nodiscard]] bool ValidateWaitQueueFifo() noexcept {
     os::kernel::ProcessEntry processes[OS_TEST_THREAD_SCHEDULER_TEST_PROCESS_CAPACITY]{};
     os::kernel::ThreadEntry threads[OS_TEST_THREAD_SCHEDULER_TEST_THREAD_CAPACITY]{};
@@ -749,6 +799,8 @@ int main() {
     test_context.Expect(ValidateStateLifecycle(), OS_TEST_THREAD_SCHEDULER_STATE_LIFECYCLE);
     test_context.Expect(ValidateProcessExitLifecycle(),
                         OS_TEST_THREAD_SCHEDULER_PROCESS_EXIT_LIFECYCLE);
+    test_context.Expect(ValidateNonCurrentProcessTermination(),
+                        OS_TEST_THREAD_SCHEDULER_NON_CURRENT_TERMINATION);
     test_context.Expect(ValidateImageCommit(), OS_TEST_THREAD_SCHEDULER_IMAGE_COMMIT);
     test_context.Expect(ValidateWaitQueueFifo(), OS_TEST_THREAD_SCHEDULER_WAIT_QUEUE_FIFO);
     test_context.Expect(ValidateWaitQueueClose(), OS_TEST_THREAD_SCHEDULER_WAIT_QUEUE_CLOSE);

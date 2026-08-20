@@ -1339,3 +1339,48 @@ integration、38 randomized、24 system，含 23 条 failure-path。64 MiB、256
 32 GiB 与 persistence 分别为 41.24、104.39、127.29、190.63 秒；10 万步 VFS
 命名空间随机模型为 147.11 秒。新增两个安全 ELF 的 audit 与 Python Kernel 模块
 白名单均包含在同一轮。
+
+## v2.5 内存压力、swap、overcommit 与 OOM 测试
+
+新增内存策略与 swap 两组单元/固定种子随机目标：
+
+- `os_kernel_memory_pressure_unit_tests` 锁定 32 GiB 原始页域水位
+  `min=5792, low=14180, high=22568` 与生产 4 GiB 驻留预算水位
+  `min=2048, low=3096, high=4144`、用户/内核保留差异、回收顺序、
+  overcommit 0/1/2、严格模式 `swap + 50% RAM` 和 OOM 平分；
+- `os_kernel_memory_pressure_randomized_tests` 执行 100000 步驻留/commit 事务，
+  每步核对容量、峰值、拒绝原子性和计数守恒；另用 4096 轮、每轮 32 个候选的
+  独立 oracle 对照 OOM 结果；
+- `os_kernel_swap_manager_unit_tests` 覆盖 round-trip、重复映射、容量、写失败、
+  读失败、校验损坏保留和显式 release；
+- `os_kernel_swap_manager_randomized_tests` 执行 100000 步 store/load/release，
+  逐步对照槽、页面内容、active/free 和 manager Validate；
+- file page cache 单元测试新增真实 reclaimed count；ThreadScheduler 单元测试新增
+  非当前进程终止，证明 OOM 不改变当前 Running Thread；
+- procfs 单元/集成/随机测试锁定 512 字节有界快照及 resident limit、swap、
+  committed、commit limit、OOM kill 字段。
+
+QEMU 成功路径在 VFS attach 时对 `/.os-swap` 做一次真实 4 KiB 写入、读回与
+校验，active slot 回到零后才启动 PID 1。64/256 MiB 和 32 GiB 正常退出还必须
+同时满足 committed=0、active swap=0、VMA/COW/页帧/KernelStack 资源守恒。
+
+交换损坏故障必须在 LoadAndRelease 返回 ChecksumMismatch 后保留槽；短读、短写
+同样保留映射。OOM 用例必须观察确定 victim、SIGKILL wait 结果、原 fault 最多
+一次重试和 PID 1 存活。32 GiB 用例继续触及 4 GiB 以上物理地址，但压力页数受
+4 GiB 驻留预算约束，宿主 RSS 不得随 32 GiB 标称 RAM 全量物化。
+
+v2.5 增加约 2 MiB swap 元数据 BSS 和启动 VFS 自检；手机 TCG 热降频时不能沿用
+v2.4 已接近上限的 45/120 秒内部总预算。总超时允许按档提升，但逐键/marker
+进度、非黑 VGA、截图、错误 marker 和资源守恒条件不放宽；无进度仍提前失败。
+
+最终本地串行候选轮次排除用户正在重写的书稿门禁，工程测试 188/188 通过、
+0 失败，总墙钟 709.34 秒：57 unit、67 integration、40 randomized、24 system，
+含 23 条 failure-path。bootstrap、functional、32 GiB primary、persistence 分别
+为 27.27、70.58、120.03、189.32 秒；VFS 命名空间随机模型 175.06 秒，C++
+标识符 AST 门禁 29.30 秒。单独采样的 32 GiB QEMU 宿主峰值 RSS 为 95976 KiB。
+
+统一轮次前保留三项真实修复轨迹：swap 路径长度误含 NUL 由初始化阶段 1 定位；
+procfs 为一个 OOM 计数在 16 KiB KernelStack 构造完整统计对象，PIT 入栈触发 #DF；
+FsContext 关闭已打开目录时重复读取 root inode，ATA 瞬态使退出停在 stage 4。
+三者分别以固定路径长度、轻量 observation snapshot、目录 close 无 I/O 不变量修复，
+最后统一轮次未放宽任何 marker 或失败判定。
