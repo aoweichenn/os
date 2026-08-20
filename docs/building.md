@@ -50,17 +50,13 @@ Python 入口依次执行：
    回归基线。
 5. 运行全部 CTest 测试，包括基于编译数据库的 Clang AST 标识符门禁、
    命名空间单词门禁、64 MiB bootstrap 与 256 MiB functional 系统用例。
-6. 发布前另用下文的有界命令运行 32 GiB capacity 主规格；它不进入日常
-   `verify`，避免每次局部验证都申请 32 GiB 来宾虚拟地址空间。
+6. 发布前运行 4 GiB `-mem-prealloc` 手机主规格；它不进入日常 `verify`，避免
+   每次局部验证都真实提交 4 GiB 宿主 RAM。
 
 正常 QEMU 系统用例包含显式 `-m 64` 的 bootstrap、`-m 256` 的 functional
-门禁和发布时显式 `-m 32768`
-的 32 GiB capacity 主规格；三者运行同一份 Shell、IPC、文件系统、用户隔离
-和资源生命周期实现。故障注入和最小兼容路径保留 64 MiB，以免重复为不相关
-失败分支建立大容量模型。QEMU
-默认按需提交来宾 RAM，宿主不要求实际装有 32 GiB 空闲内存，但必须允许创建
-相应大小的虚拟地址映射。若容器或 `ulimit` 限制虚拟内存，测试会在启动前
-明确失败。
+门禁和发布时显式 `-m 4096 -mem-prealloc` 的手机主规格；三者运行同一份 Shell、
+IPC、文件系统、用户隔离和资源生命周期实现。故障注入和最小兼容路径保留
+64 MiB。主规格会真实提交约 4 GiB RAM，宿主还需为 QEMU 和测试进程预留空间。
 
 ## 手动构建
 
@@ -73,13 +69,28 @@ python3 tools/os.py source-metrics
 python3 tools/os.py phone-book-export
 ```
 
+手机或桌面实际运行前，先把唯一 rootfs 与交换盘物化：
+
+```bash
+python3 tools/os.py materialize-image \
+  build/developer/images/boot_disk.img \
+  build/developer/images/boot_disk_allocated.img
+python3 tools/os.py materialize-image \
+  build/developer/images/swap_disk.img \
+  build/developer/images/swap_disk_allocated.img
+```
+
+两个命令合计需要约 156.44 GiB 可用空间。`audit-allocated-image` 可独立复查，
+`qemu-display` 默认也会拒绝 `st_blocks * 512 < st_size` 的路径。
+
 在有 GTK 图形会话的本机打开 VGA 窗口：
 
 ```bash
 python3 tools/os.py qemu-display \
   build/developer/images/firmware.bin \
-  build/developer/images/boot_disk.img \
-  131072 137438953472
+  build/developer/images/boot_disk_allocated.img \
+  131072 137438953472 \
+  --swap-disk-image build/developer/images/swap_disk_allocated.img
 ```
 
 纯终端环境可增加 `--display-backend curses`。默认使用磁盘快照；只有明确需要
@@ -138,19 +149,19 @@ termux-open-url http://127.0.0.1:6080/os_mobile.html
 适合拖动查看。竖屏时控制区固定在底部，横屏时移到右侧，把剩余区域全部留给
 等比 VGA 画面。目标 Shell 只接受当前 PS/2/ASCII 键盘路径支持的字符。
 
-只运行 32 GiB 正常整机验收：
+只运行 4 GiB 预分配正常整机验收：
 
 ```bash
 python3 tools/os.py qemu-firmware \
   build/developer/images/firmware.bin \
   build/developer/images/boot_disk.img \
   131072 137438953472 \
-  --memory-mebibytes 32768 \
+  --memory-mebibytes 4096 \
   --expected-outcome success
 ```
 
-`--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 32 GiB
-容量、高地址直映和回收验收。
+`--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 4 GiB 实体
+提交、PCI-hole 高地址直映和 28 GiB swap 验收。
 
 只运行 256 MiB 日常 functional 验收：
 
@@ -170,8 +181,7 @@ ctest --test-dir build/developer \
 
 该用例不是精简启动：它从磁盘启动 PID1，执行完整进程树、spawn/exec/wait、
 外部 Shell 命令、文件系统、用户隔离和 26 字段资源快照。64 MiB、256 MiB 与
-32 GiB 只改变 QEMU RAM
-规格，不切换实现。
+4 GiB 只改变 QEMU RAM 规格，不切换实现。
 
 只验证原生系统调用能力失败边界：
 

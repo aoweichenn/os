@@ -961,7 +961,8 @@ v2.0 已完成上述集成闭环。项目版本提升到 2.0.0，但 ABI 仍是 
 ## 第三周期：v2.1 至 v2.6
 
 第三周期把当前系统收敛为可在手机 QEMU 中使用的离线本地类 Unix 环境。参考机
-固定为 32 GiB RAM 和 128 GiB 稀疏磁盘；网络在整个周期中都是非目标。
+固定为 4 GiB 预分配 RAM、128 GiB rootfs 与 28 GiB 独立交换数据；网络在整个
+周期中都是非目标。工程故障副本保持稀疏，手机运行副本必须完整物化。
 
 | 版本 | 唯一主目标 | 状态 |
 | --- | --- | --- |
@@ -969,7 +970,7 @@ v2.0 已完成上述集成闭环。项目版本提升到 2.0.0，但 ABI 仍是 
 | v2.2 | 终端、Shell 与本地命令环境 | 本地候选完成，待 caw/手机发布闭环 |
 | v2.3 | 使用完整 128 GiB 的 rootfs v4 与可靠持久化 | 本地候选完成，待 caw/手机发布闭环 |
 | v2.4 | 本地身份、文件权限与资源限制 | 本地候选完成，待 caw/手机发布闭环 |
-| v2.5 | 32 GiB 内存规模下的回收、swap 与 OOM | 本地候选完成，待 caw/发布闭环 |
+| v2.5 | 4 GiB 实体内存、28 GiB 交换盘、回收与 OOM | caw 候选完成，待手机/发布闭环 |
 | v2.6 | 全系统集成、长稳验证与规范冻结 | 未开始 |
 
 每个版本必须独立完成实现、失败路径、全部相关测试、模块文档、ADR、发布记录、
@@ -1090,19 +1091,19 @@ mkfs、fsck、inspect、损坏注入、高 LBA 和断电矩阵必须同时完成
 **退出条件**
 
 - 凭据纯逻辑、VFS 权限、rootfs 持久化、proc/dev 和 ABI 均有独立宿主测试；
-- 64/256 MiB 与 32 GiB QEMU 使用同一安全探针，functional 还实际运行权限工具；
+- 64/256 MiB 与 4 GiB QEMU 使用同一安全探针，functional 还实际运行权限工具；
 - 全部分层和失败路径通过；caw、手机与正式发布身份继续留给 v2.6 闭环。
 
-### v2.5 32 GiB 内存压力与恢复
+### v2.5 4 GiB 实体内存与 28 GiB 交换盘
 
 **范围**
 
-- 单 Normal 域按 min/low/high 水位管理；32 GiB 参考机用 4 GiB 已触碰驻留
-  预算保护手机宿主，64/256 MiB 档仍使用自己的完整可管理内存。
+- 单 Normal 域按 min/low/high 水位管理；手机参考机用 `-mem-prealloc` 实际提交
+  4 GiB RAM，64/256 MiB 档仍使用自己的完整可管理内存。
 - 页分配先收缩未引用 clean file page；脏页回写与匿名 swap 进入同一有界回收
   计划，单次最多扫描 65536 个虚拟页。
-- `/.os-swap` 为 root:root 0600、256 MiB 稀疏文件；65536 个槽逐页校验，短 I/O
-  与损坏保留映射，fork/unmap/exec/exit 维护槽所有权。
+- secondary IDE master 提供 7340032 个 4 KiB 槽；28 GiB 数据和磁盘哈希元数据
+  逐页校验，短 I/O 与损坏保留映射，fork/unmap/exec/exit 维护槽所有权。
 - overcommit 采用 Linux 0/1/2 编号，默认 heuristic，严格模式按 swap + 50%
   RAM；匿名 mmap、brk、fork 与销毁路径提交/撤销守恒。
 - OOM 按 resident+swap 和 adjustment 确定性选取牺牲者，保护 PID 1；非当前
@@ -1116,8 +1117,8 @@ mkfs、fsck、inspect、损坏注入、高 LBA 和断电矩阵必须同时完成
   事务逐步对照驻留/commit 与 OOM oracle。
 - file page cache 裁剪返回真实释放页数；用户 demand fault 和 COW 分配已接入
   驻留预算与直接回收。
-- swap manager 已实现写后提交、读校验后释放、clone、损坏保留和统计；生产
-  rootfs 在 VFS attach 时建立稀疏交换文件并运行真实 4 KiB I/O 自检。
+- swap manager 已实现数据后元数据提交、读校验后 tombstone、clone、损坏保留和
+  统计；SwapStorage 通过独立 ATA 盘运行真实 4 KiB I/O 自检。
 - 匿名、program-break 和用户栈页可换出/换入；fork 复制已换出独占页；unmap、
   exec 和 exit 回收未换入槽。
 - mmap、brk、fork、失败回滚和地址空间销毁已接 overcommit；调度器支持 OOM
@@ -1127,8 +1128,9 @@ mkfs、fsck、inspect、损坏注入、高 LBA 和断电矩阵必须同时完成
 
 - 单元、集成、随机、tooling、失败路径与目标 ELF 审计通过，正常整机最终
   committed=0、active swap=0、COW/VMA/页帧资源守恒；
-- 64 MiB、256 MiB 与 32 GiB QEMU 通过，同一镜像验证非黑 VGA、内存日志、
-  swap 文件权限/稀疏性、4 GiB 以上地址和宿主 RSS 上界；
+- 64 MiB、256 MiB 与 4 GiB QEMU 通过，同一内核验证非黑 VGA、内存日志、
+  28 GiB swap 几何、4 GiB 以上重映射地址和宿主 RSS；
+- 128 GiB rootfs 与 28.44 GiB 交换盘运行副本通过无宿主空洞门禁；
 - 交换短读/短写/校验损坏和 OOM 无候选均有明确失败证据；长时间压力不死锁；
 - caw、手机和公开发布闭环仍由 v2.6 完成前，只能标记本地候选。
 
@@ -1136,7 +1138,7 @@ SMP、NUMA、THP、zswap、休眠恢复和 memory cgroup 不进入本版。
 
 ### v2.6 集成冻结与正式发布
 
-不增加主要机制。完成手机 32 GiB/128 GiB 整机、`caw` 全分层回归、长稳、
+不增加主要机制。完成手机 4 GiB/128 GiB/28 GiB swap 整机、`caw` 全分层回归、长稳、
 高 LBA、断电恢复、权限、内存压力和 UI 验证，冻结项目版本、ABI 次版本、
 rootfs v4、文档、教材和公开发布身份。
 
@@ -1161,7 +1163,7 @@ rootfs v4、文档、教材和公开发布身份。
 - 目标 ELF 必须审计段、权限、符号、ABI 和运行时依赖；
 - 完整回归必须通过 Clang AST 标识符门禁与命名空间单词门禁；
 - 随机测试验证性质和守恒，不以随机打印样例替代 oracle；
-- 32 GiB capacity 测试必须实际触及 4 GiB 以上地址。
+- 4 GiB `-mem-prealloc` 主规格必须实际触及 4 GiB 以上的 PCI-hole 重映射地址。
 
 ### 可观测性
 

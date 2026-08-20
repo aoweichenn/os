@@ -931,10 +931,14 @@ QEMU 日志只对 demand fault 与 stack growth 做二次幂采样；最终聚�
 不访问页表、VFS 或调度器。Linux 兼容编号和默认值在该模块冻结；宿主单元和随机
 测试可以不启动 QEMU 就检查全部算术、溢出、下溢与确定性平分规则。
 
-`memory/swap_manager.*` 拥有槽元数据，不拥有磁盘文件或页帧。调用者提供整页
-read/write operation。Store 在写成功后发布映射；LoadAndRelease 在读满且校验
-一致后清槽；Clone 保留源槽并写出独立目标槽。任何 I/O 或校验失败不得降低
-active slot count。
+`memory/swap_manager.*` 拥有开放寻址探测和事务语义，不拥有页帧。调用者提供
+磁盘元数据与整页 read/write operation。Store 在数据 flush 后发布映射；
+LoadAndRelease 在读满、校验一致且 tombstone 提交后清槽；Clone 保留源槽并写出
+独立目标槽。任何 I/O、元数据提交或校验失败不得降低 active slot count。
+
+`memory/swap_storage.*` 拥有 `OSSWAP01` 盘面、启动代次、64 字节哈希桶编码和
+secondary ATA 扇区换算。28 GiB 数据区与 448 MiB 元数据区都在独立交换盘，
+不会扩大 Kernel BSS；写页 flush 后才允许发布活动元数据。
 
 `user/user_memory.*` 负责把策略接到 VMA/PTE：
 

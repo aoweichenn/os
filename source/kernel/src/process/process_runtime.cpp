@@ -2633,7 +2633,7 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     return ProcessRuntimeStatus::Succeeded;
 }
 
-ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept {
+ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_device) noexcept {
     if (!process_runtime_initialized) {
         return ProcessRuntimeStatus::NotInitialized;
     }
@@ -2660,7 +2660,7 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept {
             return ProcessRuntimeStatus::FileSystemFailure;
         }
     }
-    if (AttachUserSwap(vfs) != UserAddressSpaceStatus::Succeeded) {
+    if (AttachUserSwap(swap_device) != UserAddressSpaceStatus::Succeeded) {
         for (uint64_t rollback_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
              rollback_index < process_runtime_limits.process_capacity; ++rollback_index) {
             ProcessRuntimeProcess &rollback_process = runtime_processes[rollback_index];

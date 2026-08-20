@@ -515,12 +515,11 @@ procfs 根/文件固定为 root:root 0555/0444；devfs 根为 root:root 0755，�
 设备为 root:tty 0660。详细盘面偏移、失败原子性和兼容边界见
 [ADR 0052](../adr/0052-linux-compatible-local-credentials-permissions-and-rlimits.md)。
 
-## v2.5 swap 文件与目录引用释放
+## v2.5 独立交换盘与目录引用释放
 
-VFS attach 以 root context 创建 `/.os-swap`，随后 chmod 0600、sparse truncate
-到 256 MiB，并核对类型、owner、mode、逻辑大小和已分配大小。内核保持一个
-OpenFile 与 FsContext，swap manager 只通过 ReadAt/WriteAt 访问，不进入用户 fd
-表或 file page cache。
+swap 已从 rootfs/VFS 移出，secondary IDE master 由 `SwapStorage` 直接管理；
+rootfs 不再保存 `/.os-swap`，交换 I/O 不占用 OpenFile、FsContext、inode 或
+journal credit。工程镜像的宿主稀疏性也不再代表来宾文件语义。
 
 FsContext 的 root/cwd 都是已经 open 的目录引用。rootfs 目录不会进入 orphan，
 持有 open reference 时 rmdir 必须返回 Busy，inode 不能被复用。因此目录 close

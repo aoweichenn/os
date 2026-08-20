@@ -1,21 +1,19 @@
-#include "os/kernel/device/ata_pio.hpp"
+#include <os/kernel/device/ata_pio.hpp>
 
-#include "os/kernel/device/device_model.hpp"
-#include "os/kernel/device/port_io.hpp"
+#include <os/kernel/device/device_model.hpp>
+#include <os/kernel/device/port_io.hpp>
 
 namespace os::kernel {
 
 namespace {
 
-constexpr uint16_t OS_KERNEL_ATA_DATA_PORT = 0x01F0U;
-constexpr uint16_t OS_KERNEL_ATA_SECTOR_COUNT_PORT = 0x01F2U;
-constexpr uint16_t OS_KERNEL_ATA_LBA_LOW_PORT = 0x01F3U;
-constexpr uint16_t OS_KERNEL_ATA_LBA_MID_PORT = 0x01F4U;
-constexpr uint16_t OS_KERNEL_ATA_LBA_HIGH_PORT = 0x01F5U;
-constexpr uint16_t OS_KERNEL_ATA_DRIVE_HEAD_PORT = 0x01F6U;
-constexpr uint16_t OS_KERNEL_ATA_COMMAND_STATUS_PORT = 0x01F7U;
-constexpr uint16_t OS_KERNEL_ATA_DEVICE_CONTROL_PORT = 0x03F6U;
-constexpr uint8_t OS_KERNEL_ATA_PRIMARY_MASTER_LBA_BASE = 0xE0U;
+constexpr uint16_t OS_KERNEL_ATA_DATA_PORT_OFFSET = 0x0000U;
+constexpr uint16_t OS_KERNEL_ATA_SECTOR_COUNT_PORT_OFFSET = 0x0002U;
+constexpr uint16_t OS_KERNEL_ATA_LBA_LOW_PORT_OFFSET = 0x0003U;
+constexpr uint16_t OS_KERNEL_ATA_LBA_MID_PORT_OFFSET = 0x0004U;
+constexpr uint16_t OS_KERNEL_ATA_LBA_HIGH_PORT_OFFSET = 0x0005U;
+constexpr uint16_t OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET = 0x0006U;
+constexpr uint16_t OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET = 0x0007U;
 constexpr uint8_t OS_KERNEL_ATA_DRIVE_HEAD_LBA_NIBBLE_MASK = 0x0FU;
 constexpr uint64_t OS_KERNEL_ATA_LBA_HEAD_SHIFT_BITS = 24ULL;
 constexpr uint64_t OS_KERNEL_ATA_LBA_MID_SHIFT_BITS = 8ULL;
@@ -134,16 +132,19 @@ AtaPioStatus AtaPioDevice::FlushCache() noexcept {
         this->RestoreInterruptMode();
         return status;
     }
-    WritePort8(OS_KERNEL_ATA_DRIVE_HEAD_PORT, OS_KERNEL_ATA_PRIMARY_MASTER_LBA_BASE);
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET,
+               OS_KERNEL_ATA_MASTER_LBA_BASE);
     this->ApplyDeviceSelectDelay();
-    WritePort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT, OS_KERNEL_ATA_FLUSH_CACHE_COMMAND);
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET,
+               OS_KERNEL_ATA_FLUSH_CACHE_COMMAND);
     status = this->WaitUntilNotBusy();
     this->RestoreInterruptMode();
     return status;
 }
 
-AtaPioStatus AtaPioDevice::InitializeAsynchronousRequests(
-    BlockRequest *const request_storage, const uint64_t request_capacity) noexcept {
+AtaPioStatus
+AtaPioDevice::InitializeAsynchronousRequests(BlockRequest *const request_storage,
+                                             const uint64_t request_capacity) noexcept {
     if (this->asynchronous_initialized_) {
         return AtaPioStatus::AlreadyInitialized;
     }
@@ -157,22 +158,20 @@ AtaPioStatus AtaPioDevice::InitializeAsynchronousRequests(
     this->interrupt_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->spurious_interrupt_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->timeout_recovery_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
-    this->timeout_recovery_failure_count_ =
-        OS_KERNEL_ATA_EMPTY_POLL_COUNT;
+    this->timeout_recovery_failure_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->software_reset_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->read_completion_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->write_completion_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->flush_completion_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->asynchronous_initialized_ = true;
-    WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT, OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
+    WritePort8(this->device_control_port_, OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
     return AtaPioStatus::Succeeded;
 }
 
 AtaPioStatus AtaPioDevice::SubmitAsynchronous(
-    const BlockOperation operation, const uint64_t logical_block_address,
-    uint8_t *const buffer, const uint64_t buffer_size_bytes,
-    const uint64_t owner_thread_index, const uint64_t deadline_nanoseconds,
-    uint64_t &request_identifier) noexcept {
+    const BlockOperation operation, const uint64_t logical_block_address, uint8_t *const buffer,
+    const uint64_t buffer_size_bytes, const uint64_t owner_thread_index,
+    const uint64_t deadline_nanoseconds, uint64_t &request_identifier) noexcept {
     if (!this->asynchronous_initialized_) {
         request_identifier = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
         return AtaPioStatus::NotInitialized;
@@ -181,16 +180,15 @@ AtaPioStatus AtaPioDevice::SubmitAsynchronous(
         request_identifier = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
         return AtaPioStatus::DeviceError;
     }
-    return this->request_queue_.Submit(
-               operation, logical_block_address, buffer, buffer_size_bytes,
-               owner_thread_index, deadline_nanoseconds, request_identifier) ==
-                   BlockRequestQueueStatus::Succeeded
+    return this->request_queue_.Submit(operation, logical_block_address, buffer, buffer_size_bytes,
+                                       owner_thread_index, deadline_nanoseconds,
+                                       request_identifier) == BlockRequestQueueStatus::Succeeded
                ? AtaPioStatus::Succeeded
                : AtaPioStatus::RequestQueueFailure;
 }
 
-AtaPioStatus AtaPioDevice::StartNextAsynchronous(
-    AtaPioCompletion &completion, bool &request_started) noexcept {
+AtaPioStatus AtaPioDevice::StartNextAsynchronous(AtaPioCompletion &completion,
+                                                 bool &request_started) noexcept {
     completion = AtaPioCompletion{};
     request_started = false;
     if (!this->asynchronous_initialized_) {
@@ -198,8 +196,7 @@ AtaPioStatus AtaPioDevice::StartNextAsynchronous(
     }
     BlockRequest request{};
     bool issued = false;
-    if (this->request_queue_.IssueNext(request, issued) !=
-        BlockRequestQueueStatus::Succeeded) {
+    if (this->request_queue_.IssueNext(request, issued) != BlockRequestQueueStatus::Succeeded) {
         return AtaPioStatus::RequestQueueFailure;
     }
     if (!issued) {
@@ -208,20 +205,17 @@ AtaPioStatus AtaPioDevice::StartNextAsynchronous(
     this->active_request_ = request;
     this->write_data_transferred_ = false;
     if (!this->controller_available_) {
-        return this->ResolveIssuedRequest(BlockRequestResult::DeviceError,
-                                          completion);
+        return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
     }
     const AtaPioStatus issue_status = this->PrepareAsynchronousRequest(request);
     if (issue_status != AtaPioStatus::Succeeded) {
-        return this->ResolveIssuedRequest(BlockRequestResult::DeviceError,
-                                          completion);
+        return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
     }
     request_started = true;
     return AtaPioStatus::Succeeded;
 }
 
-AtaPioStatus
-AtaPioDevice::HandleInterrupt(AtaPioCompletion &completion) noexcept {
+AtaPioStatus AtaPioDevice::HandleInterrupt(AtaPioCompletion &completion) noexcept {
     completion = AtaPioCompletion{};
     if (!this->asynchronous_initialized_) {
         return AtaPioStatus::NotInitialized;
@@ -229,56 +223,49 @@ AtaPioDevice::HandleInterrupt(AtaPioCompletion &completion) noexcept {
     ++this->interrupt_count_;
     if (this->active_request_.state != BlockRequestState::Issued) {
         ++this->spurious_interrupt_count_;
-        static_cast<void>(ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT));
+        static_cast<void>(
+            ReadPort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET));
         return AtaPioStatus::Succeeded;
     }
 
-    const uint8_t status = ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
+    const uint8_t status =
+        ReadPort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET);
     if ((status & OS_KERNEL_ATA_ERROR_STATUS_MASK) != OS_KERNEL_ATA_EMPTY_STATUS) {
-        return this->ResolveIssuedRequest(BlockRequestResult::DeviceError,
-                                          completion);
+        return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
     }
     if ((status & OS_KERNEL_ATA_STATUS_BUSY_BIT) != OS_KERNEL_ATA_EMPTY_STATUS) {
         ++this->spurious_interrupt_count_;
         return AtaPioStatus::Succeeded;
     }
     if (this->active_request_.operation == BlockOperation::Read) {
-        if ((status & OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT) ==
-            OS_KERNEL_ATA_EMPTY_STATUS) {
-            return this->ResolveIssuedRequest(BlockRequestResult::DeviceError,
-                                              completion);
+        if ((status & OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT) == OS_KERNEL_ATA_EMPTY_STATUS) {
+            return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
         }
         this->TransferReadSector(this->active_request_.buffer);
         ++this->read_completion_count_;
-        return this->ResolveIssuedRequest(BlockRequestResult::Succeeded,
-                                          completion);
+        return this->ResolveIssuedRequest(BlockRequestResult::Succeeded, completion);
     }
     if (this->active_request_.operation == BlockOperation::Write) {
         if (!this->write_data_transferred_) {
-            if ((status & OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT) ==
-                OS_KERNEL_ATA_EMPTY_STATUS) {
-                return this->ResolveIssuedRequest(
-                    BlockRequestResult::DeviceError, completion);
+            if ((status & OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT) == OS_KERNEL_ATA_EMPTY_STATUS) {
+                return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
             }
             this->TransferWriteSector(this->active_request_.buffer);
             this->write_data_transferred_ = true;
             return AtaPioStatus::Succeeded;
         }
         ++this->write_completion_count_;
-        return this->ResolveIssuedRequest(BlockRequestResult::Succeeded,
-                                          completion);
+        return this->ResolveIssuedRequest(BlockRequestResult::Succeeded, completion);
     }
     if (this->active_request_.operation == BlockOperation::Flush) {
         ++this->flush_completion_count_;
-        return this->ResolveIssuedRequest(BlockRequestResult::Succeeded,
-                                          completion);
+        return this->ResolveIssuedRequest(BlockRequestResult::Succeeded, completion);
     }
-    return this->ResolveIssuedRequest(BlockRequestResult::DeviceError,
-                                      completion);
+    return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
 }
 
-AtaPioStatus AtaPioDevice::ResolveTimeout(
-    const uint64_t now_nanoseconds, AtaPioCompletion &completion) noexcept {
+AtaPioStatus AtaPioDevice::ResolveTimeout(const uint64_t now_nanoseconds,
+                                          AtaPioCompletion &completion) noexcept {
     completion = AtaPioCompletion{};
     if (!this->asynchronous_initialized_) {
         return AtaPioStatus::NotInitialized;
@@ -307,8 +294,7 @@ AtaPioStatus AtaPioDevice::ResolveTimeout(
         .result = BlockRequestResult::TimedOut,
         .ready = true,
     };
-    if (this->request_queue_.Reap(request.identifier) !=
-        BlockRequestQueueStatus::Succeeded) {
+    if (this->request_queue_.Reap(request.identifier) != BlockRequestQueueStatus::Succeeded) {
         return AtaPioStatus::RequestQueueFailure;
     }
     this->active_request_ = BlockRequest{};
@@ -322,8 +308,7 @@ AtaPioStatistics AtaPioDevice::Statistics() const noexcept {
         .interrupt_count = this->interrupt_count_,
         .spurious_interrupt_count = this->spurious_interrupt_count_,
         .timeout_recovery_count = this->timeout_recovery_count_,
-        .timeout_recovery_failure_count =
-            this->timeout_recovery_failure_count_,
+        .timeout_recovery_failure_count = this->timeout_recovery_failure_count_,
         .software_reset_count = this->software_reset_count_,
         .read_completion_count = this->read_completion_count_,
         .write_completion_count = this->write_completion_count_,
@@ -361,26 +346,27 @@ AtaPioStatus AtaPioDevice::PrepareSectorRequest(const uint64_t logical_block_add
         return status;
     }
     const uint8_t drive_head = static_cast<uint8_t>(
-        OS_KERNEL_ATA_PRIMARY_MASTER_LBA_BASE |
+        OS_KERNEL_ATA_MASTER_LBA_BASE |
         static_cast<uint8_t>((logical_block_address >> OS_KERNEL_ATA_LBA_HEAD_SHIFT_BITS) &
                              OS_KERNEL_ATA_DRIVE_HEAD_LBA_NIBBLE_MASK));
-    WritePort8(OS_KERNEL_ATA_DRIVE_HEAD_PORT, drive_head);
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET, drive_head);
     this->ApplyDeviceSelectDelay();
-    WritePort8(OS_KERNEL_ATA_SECTOR_COUNT_PORT, OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
-    WritePort8(OS_KERNEL_ATA_LBA_LOW_PORT, static_cast<uint8_t>(logical_block_address));
-    WritePort8(OS_KERNEL_ATA_LBA_MID_PORT,
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_SECTOR_COUNT_PORT_OFFSET,
+               OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_LOW_PORT_OFFSET,
+               static_cast<uint8_t>(logical_block_address));
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_MID_PORT_OFFSET,
                static_cast<uint8_t>(logical_block_address >> OS_KERNEL_ATA_LBA_MID_SHIFT_BITS));
-    WritePort8(OS_KERNEL_ATA_LBA_HIGH_PORT,
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_HIGH_PORT_OFFSET,
                static_cast<uint8_t>(logical_block_address >> OS_KERNEL_ATA_LBA_HIGH_SHIFT_BITS));
-    WritePort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT, command);
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET, command);
     return AtaPioStatus::Succeeded;
 }
 
-AtaPioStatus
-AtaPioDevice::PrepareAsynchronousRequest(const BlockRequest &request) noexcept {
-    WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT,
-               OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
-    const uint8_t status = ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
+AtaPioStatus AtaPioDevice::PrepareAsynchronousRequest(const BlockRequest &request) noexcept {
+    WritePort8(this->device_control_port_, OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
+    const uint8_t status =
+        ReadPort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET);
     if ((status & OS_KERNEL_ATA_STATUS_BUSY_BIT) != OS_KERNEL_ATA_EMPTY_STATUS) {
         return AtaPioStatus::BusyTimeout;
     }
@@ -388,43 +374,38 @@ AtaPioDevice::PrepareAsynchronousRequest(const BlockRequest &request) noexcept {
         return AtaPioStatus::DeviceError;
     }
     if (request.operation == BlockOperation::Flush) {
-        WritePort8(OS_KERNEL_ATA_DRIVE_HEAD_PORT,
-                   OS_KERNEL_ATA_PRIMARY_MASTER_LBA_BASE);
+        WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET,
+                   OS_KERNEL_ATA_MASTER_LBA_BASE);
         this->ApplyDeviceSelectDelay();
-        WritePort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT,
+        WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET,
                    OS_KERNEL_ATA_FLUSH_CACHE_COMMAND);
         return AtaPioStatus::Succeeded;
     }
 
     const uint8_t drive_head = static_cast<uint8_t>(
-        OS_KERNEL_ATA_PRIMARY_MASTER_LBA_BASE |
-        static_cast<uint8_t>(
-            (request.logical_block_address >>
-             OS_KERNEL_ATA_LBA_HEAD_SHIFT_BITS) &
-            OS_KERNEL_ATA_DRIVE_HEAD_LBA_NIBBLE_MASK));
-    WritePort8(OS_KERNEL_ATA_DRIVE_HEAD_PORT, drive_head);
+        OS_KERNEL_ATA_MASTER_LBA_BASE |
+        static_cast<uint8_t>((request.logical_block_address >> OS_KERNEL_ATA_LBA_HEAD_SHIFT_BITS) &
+                             OS_KERNEL_ATA_DRIVE_HEAD_LBA_NIBBLE_MASK));
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET, drive_head);
     this->ApplyDeviceSelectDelay();
-    WritePort8(OS_KERNEL_ATA_SECTOR_COUNT_PORT,
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_SECTOR_COUNT_PORT_OFFSET,
                OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
-    WritePort8(OS_KERNEL_ATA_LBA_LOW_PORT,
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_LOW_PORT_OFFSET,
                static_cast<uint8_t>(request.logical_block_address));
     WritePort8(
-        OS_KERNEL_ATA_LBA_MID_PORT,
-        static_cast<uint8_t>(request.logical_block_address >>
-                             OS_KERNEL_ATA_LBA_MID_SHIFT_BITS));
+        this->command_block_base_port_ + OS_KERNEL_ATA_LBA_MID_PORT_OFFSET,
+        static_cast<uint8_t>(request.logical_block_address >> OS_KERNEL_ATA_LBA_MID_SHIFT_BITS));
     WritePort8(
-        OS_KERNEL_ATA_LBA_HIGH_PORT,
-        static_cast<uint8_t>(request.logical_block_address >>
-                             OS_KERNEL_ATA_LBA_HIGH_SHIFT_BITS));
-    WritePort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT,
-               request.operation == BlockOperation::Read
-                   ? OS_KERNEL_ATA_READ_SECTORS_COMMAND
-                   : OS_KERNEL_ATA_WRITE_SECTORS_COMMAND);
+        this->command_block_base_port_ + OS_KERNEL_ATA_LBA_HIGH_PORT_OFFSET,
+        static_cast<uint8_t>(request.logical_block_address >> OS_KERNEL_ATA_LBA_HIGH_SHIFT_BITS));
+    WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET,
+               request.operation == BlockOperation::Read ? OS_KERNEL_ATA_READ_SECTORS_COMMAND
+                                                         : OS_KERNEL_ATA_WRITE_SECTORS_COMMAND);
     return AtaPioStatus::Succeeded;
 }
 
-AtaPioStatus AtaPioDevice::ResolveIssuedRequest(
-    const BlockRequestResult result, AtaPioCompletion &completion) noexcept {
+AtaPioStatus AtaPioDevice::ResolveIssuedRequest(const BlockRequestResult result,
+                                                AtaPioCompletion &completion) noexcept {
     completion = AtaPioCompletion{};
     if (this->active_request_.state != BlockRequestState::Issued ||
         this->request_queue_.Complete(this->active_request_.identifier, result) !=
@@ -432,8 +413,7 @@ AtaPioStatus AtaPioDevice::ResolveIssuedRequest(
         return AtaPioStatus::RequestQueueFailure;
     }
     BlockRequest completed_request{};
-    if (this->request_queue_.Read(this->active_request_.identifier,
-                                  completed_request) !=
+    if (this->request_queue_.Read(this->active_request_.identifier, completed_request) !=
             BlockRequestQueueStatus::Succeeded ||
         this->request_queue_.Reap(this->active_request_.identifier) !=
             BlockRequestQueueStatus::Succeeded) {
@@ -453,32 +433,28 @@ AtaPioStatus AtaPioDevice::ResolveIssuedRequest(
 
 bool AtaPioDevice::HasOutstandingRequest() const noexcept {
     return this->asynchronous_initialized_ &&
-           this->request_queue_.Statistics().active_request_count !=
-               OS_KERNEL_ATA_EMPTY_POLL_COUNT;
+           this->request_queue_.Statistics().active_request_count != OS_KERNEL_ATA_EMPTY_POLL_COUNT;
 }
 
 void AtaPioDevice::EnterPollingMode() noexcept {
-    WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT,
-               OS_KERNEL_ATA_DISABLE_DEVICE_INTERRUPTS);
+    WritePort8(this->device_control_port_, OS_KERNEL_ATA_DISABLE_DEVICE_INTERRUPTS);
 }
 
 void AtaPioDevice::RestoreInterruptMode() noexcept {
     if (this->asynchronous_initialized_) {
-        WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT,
-                   OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
+        WritePort8(this->device_control_port_, OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
     }
 }
 
 void AtaPioDevice::TransferReadSector(uint8_t *const buffer) noexcept {
     for (uint64_t word_index = OS_KERNEL_ATA_FIRST_WORD_INDEX;
          word_index < OS_KERNEL_ATA_WORDS_PER_SECTOR; ++word_index) {
-        const uint16_t word = ReadPort16(OS_KERNEL_ATA_DATA_PORT);
+        const uint16_t word =
+            ReadPort16(this->command_block_base_port_ + OS_KERNEL_ATA_DATA_PORT_OFFSET);
         const uint64_t byte_index = word_index * OS_KERNEL_ATA_BYTES_PER_WORD;
-        buffer[byte_index] =
-            static_cast<uint8_t>(word & OS_KERNEL_ATA_LOW_BYTE_MASK);
+        buffer[byte_index] = static_cast<uint8_t>(word & OS_KERNEL_ATA_LOW_BYTE_MASK);
         buffer[byte_index + OS_KERNEL_ATA_HIGH_BYTE_OFFSET_BYTES] =
-            static_cast<uint8_t>(word >>
-                                 OS_KERNEL_ATA_HIGH_BYTE_SHIFT_BITS);
+            static_cast<uint8_t>(word >> OS_KERNEL_ATA_HIGH_BYTE_SHIFT_BITS);
     }
 }
 
@@ -488,20 +464,17 @@ void AtaPioDevice::TransferWriteSector(const uint8_t *const buffer) noexcept {
         const uint64_t byte_index = word_index * OS_KERNEL_ATA_BYTES_PER_WORD;
         const uint16_t word =
             static_cast<uint16_t>(buffer[byte_index]) |
-            static_cast<uint16_t>(static_cast<uint16_t>(
-                                      buffer[byte_index +
-                                             OS_KERNEL_ATA_HIGH_BYTE_OFFSET_BYTES])
-                                  << OS_KERNEL_ATA_HIGH_BYTE_SHIFT_BITS);
-        WritePort16(OS_KERNEL_ATA_DATA_PORT, word);
+            static_cast<uint16_t>(
+                static_cast<uint16_t>(buffer[byte_index + OS_KERNEL_ATA_HIGH_BYTE_OFFSET_BYTES])
+                << OS_KERNEL_ATA_HIGH_BYTE_SHIFT_BITS);
+        WritePort16(this->command_block_base_port_ + OS_KERNEL_ATA_DATA_PORT_OFFSET, word);
     }
 }
 
 AtaPioStatus AtaPioDevice::ResetController() noexcept {
-    WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT,
-               OS_KERNEL_ATA_SOFTWARE_RESET);
+    WritePort8(this->device_control_port_, OS_KERNEL_ATA_SOFTWARE_RESET);
     this->ApplyDeviceSelectDelay();
-    WritePort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT,
-               OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
+    WritePort8(this->device_control_port_, OS_KERNEL_ATA_ENABLE_DEVICE_INTERRUPTS);
     this->ApplyDeviceSelectDelay();
     ++this->software_reset_count_;
     return this->WaitUntilNotBusy();
@@ -510,7 +483,8 @@ AtaPioStatus AtaPioDevice::ResetController() noexcept {
 AtaPioStatus AtaPioDevice::WaitUntilNotBusy() const noexcept {
     uint64_t remaining_poll_count = OS_KERNEL_ATA_STATUS_POLL_LIMIT;
     while (remaining_poll_count > OS_KERNEL_ATA_EMPTY_POLL_COUNT) {
-        const uint8_t status = ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
+        const uint8_t status =
+            ReadPort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET);
         if ((status & OS_KERNEL_ATA_STATUS_BUSY_BIT) == OS_KERNEL_ATA_EMPTY_STATUS) {
             if ((status & OS_KERNEL_ATA_ERROR_STATUS_MASK) != OS_KERNEL_ATA_EMPTY_STATUS) {
                 return AtaPioStatus::DeviceError;
@@ -525,7 +499,8 @@ AtaPioStatus AtaPioDevice::WaitUntilNotBusy() const noexcept {
 AtaPioStatus AtaPioDevice::WaitForDataRequest() const noexcept {
     uint64_t remaining_poll_count = OS_KERNEL_ATA_STATUS_POLL_LIMIT;
     while (remaining_poll_count > OS_KERNEL_ATA_EMPTY_POLL_COUNT) {
-        const uint8_t status = ReadPort8(OS_KERNEL_ATA_COMMAND_STATUS_PORT);
+        const uint8_t status =
+            ReadPort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET);
         if ((status & OS_KERNEL_ATA_STATUS_BUSY_BIT) == OS_KERNEL_ATA_EMPTY_STATUS) {
             if ((status & OS_KERNEL_ATA_ERROR_STATUS_MASK) != OS_KERNEL_ATA_EMPTY_STATUS) {
                 return AtaPioStatus::DeviceError;
@@ -542,7 +517,7 @@ AtaPioStatus AtaPioDevice::WaitForDataRequest() const noexcept {
 void AtaPioDevice::ApplyDeviceSelectDelay() const noexcept {
     for (uint64_t read_count = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
          read_count < OS_KERNEL_ATA_DEVICE_SELECT_DELAY_READ_COUNT; ++read_count) {
-        static_cast<void>(ReadPort8(OS_KERNEL_ATA_DEVICE_CONTROL_PORT));
+        static_cast<void>(ReadPort8(this->device_control_port_));
     }
 }
 

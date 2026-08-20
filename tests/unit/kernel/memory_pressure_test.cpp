@@ -7,7 +7,7 @@ namespace {
 
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_SUITE_NAME = "kernel/memory_pressure/unit";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_WATERMARKS =
-    "32 GiB 页域和 4 GiB 生产驻留预算必须生成有序 min/low/high 水位";
+    "32 GiB 算法边界和 4 GiB 实体主规格必须生成有序 min/low/high 水位";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_DECISIONS =
     "用户、内核与回收分配必须遵守水位和紧急保留差异";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_ACCOUNTING = "驻留提交、释放和回收统计必须守恒";

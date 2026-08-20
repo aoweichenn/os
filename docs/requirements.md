@@ -9,9 +9,9 @@
 - 目标指令集为 x86-64。
 - 使用 QEMU TCG 模拟硬件，不要求宿主机采用 x86-64 架构。
 - QEMU 只提供硬件模型，不替代固件、引导程序或内核。
-- 64 MiB、256 MiB 与 32 GiB 分别作为启动兼容、完整功能和当前参考容量配置，
+- 64 MiB、256 MiB 与 4 GiB 分别作为启动兼容、完整功能和手机参考配置，
   不要求低内存配置承担高并发压力。
-- 32 GiB 是 v2.1 手机参考规格而不是实现上限；内核容量由 E820、处理器物理地址宽度
+- 4 GiB 是手机参考物理内存规格而不是实现上限；内核容量由 E820、处理器物理地址宽度
   和当前 direct-map 容量共同决定。
 - 正式 QEMU CPU 型号与必需 CPUID 特性必须冻结并在启动时检查；v2.0 要求
   long mode、NX、SSE2 与 `SYSCALL/SYSRET`。
@@ -114,7 +114,7 @@ v2 后续严格拆为六个小版本，顺序与验收由 [开发路线](roadmap
 整个周期的最终目标是手机 QEMU 中可见、可操作、可持久化并能在资源压力下
 恢复的离线本地类 Unix 环境。
 
-- **v2.1**：32 GiB/128 GiB 参考机、VGA 前台、内存日志、PS/2 输入和手机
+- **v2.1**：4 GiB/128 GiB 参考机、VGA 前台、内存日志、PS/2 输入和手机
   noVNC 交互。
 - **v2.2**：终端、Shell 组合语义和常用本地工具。
 - **v2.3**：能使用完整参考盘的 rootfs v4、大文件和崩溃恢复。
@@ -125,7 +125,7 @@ v2 后续严格拆为六个小版本，顺序与验收由 [开发路线](roadmap
 以下要求从 v2.1 开始生效：
 
 - 参考 RAM 精确为 32768 MiB；在物理内存较小的手机宿主上必须按需提交，
-  v2.1 不允许通过全量触碰 32 GiB 造成宿主换页风暴。
+  手机主规格必须用 `-mem-prealloc` 实际提交 4 GiB，不得用 32 GiB 惰性地址范围冒充。
 - 参考启动盘精确为 137438953472 字节，即 268435456 个 512 字节扇区，最后
   LBA 为 `0x0FFFFFFF`。镜像及其故障副本必须保持稀疏。
 - v2.1 的 rootfs v2 仍固定为 256 MiB；完整使用 128 GiB 是 v2.3 的退出条件，
@@ -204,11 +204,12 @@ v2.4 的本地身份、安全与资源边界要求：
 v2.5 的内存压力与恢复要求：
 
 - 单 BSP 只实现一个 Normal 内存域；按 min/low/high 三水位回收，不伪造 NUMA
-  或多 zone。32 GiB 参考机的已触碰驻留预算固定为 4 GiB，来宾报告 RAM 不变；
+  或多 zone。手机参考机报告并实际预分配 4 GiB RAM；
 - 用户分配低于 low 前必须回收到 high，内核紧急分配可以使用 low..min 保留；
   先收缩未引用 clean page cache，再回写脏文件页，最后交换匿名/堆/栈页；
-- rootfs 提供 root:root 0600 的 256 MiB 稀疏 `/.os-swap`，共 65536 个 4 KiB 槽；
-  短写不得撤 PTE，短读或校验失败不得释放唯一槽；
+- secondary IDE master 提供 28 GiB 可用数据的独立交换盘，共 7340032 个 4 KiB 槽；
+  每槽 64 字节磁盘元数据并独立校验，短写、短读、元数据提交失败或校验失败不得
+  释放唯一槽；
 - fork 必须保留已换出页的父子私有语义；unmap、exec、exit 和 OOM kill 必须释放
   未换入槽，正常整机结束 active swap 为 0；
 - overcommit 模式编号采用 Linux 0/1/2，默认 0，严格模式为 swap + 50% RAM；
@@ -218,7 +219,9 @@ v2.5 的内存压力与恢复要求：
 - `/proc/meminfo` 必须暴露 managed/free/allocated、resident limit、swap total/free、
   committed/commit limit 与 OOM kill 数；热路径不得逐页打印日志；
 - 纯逻辑必须覆盖阈值、回收计划、commit 和 OOM oracle；swap 必须覆盖读写失败、
-  校验损坏、容量、clone 与释放；64/256 MiB 和 32 GiB QEMU 仍使用同一生产路径；
+  校验损坏、容量、代次、clone 与释放；64/256 MiB 和 4 GiB QEMU 使用同一生产路径；
+- 128 GiB rootfs 与 30534537216 字节交换盘的手机运行副本必须完整物化；
+  `st_blocks * 512 < st_size` 时启动工具必须拒绝。故障矩阵副本可以保持稀疏；
 - 本版不加入网络、SMP、NUMA、THP、zswap、休眠恢复、memory cgroup 或可写 VM
   sysctl。
 

@@ -3,6 +3,7 @@
 #include <os/kernel/memory/memory_manager.hpp>
 #include <os/kernel/memory/memory_pressure.hpp>
 #include <os/kernel/memory/physical_frame_allocator.hpp>
+#include <os/kernel/memory/swap_storage.hpp>
 #include <os/kernel/user/file_backing.hpp>
 
 namespace os::kernel {
@@ -26,14 +27,6 @@ constexpr uint64_t OS_KERNEL_USER_MEMORY_DIRTY_PAGE_LIMIT_DIVISOR = 2ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_HOST_RESIDENT_LIMIT_PAGE_COUNT = 1048576ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_MAXIMUM_ALLOCATION_FRAME_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_RECLAIM_SCAN_PAGE_LIMIT = 65536ULL;
-constexpr uint64_t OS_KERNEL_USER_SWAP_SLOT_CAPACITY = 65536ULL;
-constexpr uint64_t OS_KERNEL_USER_SWAP_FILE_SIZE_BYTES =
-    OS_KERNEL_USER_SWAP_SLOT_CAPACITY * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-constexpr uint8_t OS_KERNEL_USER_SWAP_FILE_PATH[] = "/.os-swap";
-constexpr uint64_t OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES =
-    sizeof(OS_KERNEL_USER_SWAP_FILE_PATH) - 1ULL;
-constexpr os::abi::FileMode OS_KERNEL_USER_SWAP_FILE_MODE =
-    os::abi::OS_ABI_FILE_MODE_OWNER_READ | os::abi::OS_ABI_FILE_MODE_OWNER_WRITE;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_MAXIMUM_PAGE_COUNT = 2048ULL;
 constexpr uint64_t OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_PERCENT = 3ULL;
 constexpr uint64_t OS_KERNEL_USER_SWAP_SELF_TEST_ADDRESS_SPACE_IDENTIFIER = UINT64_MAX;
@@ -50,11 +43,6 @@ struct VfsImageReaderContext final {
     fs::OpenFile open_file;
 };
 
-struct SwapIoContext final {
-    fs::Vfs *vfs;
-    fs::OpenFile open_file;
-};
-
 VirtualMemoryAreaDescriptor
     user_virtual_memory_descriptors[OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY]{};
 VirtualMemoryAreaPool user_virtual_memory_pool{};
@@ -66,10 +54,8 @@ UserPageReferenceEntry user_page_reference_entries[OS_KERNEL_USER_PAGE_REFERENCE
 UserPageReferenceManager user_page_reference_manager{};
 MemoryPressureController user_memory_pressure_controller{};
 MemoryOvercommitAccountant user_memory_overcommit_accountant{};
-SwapSlotEntry user_swap_entries[OS_KERNEL_USER_SWAP_SLOT_CAPACITY]{};
 SwapManager user_swap_manager{};
-SwapIoContext user_swap_io_context{};
-fs::FsContext user_swap_file_system_context{};
+SwapStorage user_swap_storage{};
 uint8_t user_swap_clone_scratch_page[OS_KERNEL_MEMORY_PAGE_SIZE_BYTES]{};
 UserAddressSpace *active_user_address_space;
 uint64_t next_address_space_identifier = OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
@@ -79,45 +65,6 @@ UserSwapInitializationStage user_swap_initialization_stage;
 
 [[nodiscard]] uint64_t Minimum(const uint64_t left, const uint64_t right) noexcept {
     return left < right ? left : right;
-}
-
-[[nodiscard]] bool ReadSwapSlot(void *const context, const uint64_t slot_index,
-                                uint8_t *const destination, const uint64_t length_bytes) noexcept {
-    if (context == nullptr || destination == nullptr ||
-        slot_index >= OS_KERNEL_USER_SWAP_SLOT_CAPACITY ||
-        length_bytes != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
-        return false;
-    }
-    SwapIoContext &io_context = *static_cast<SwapIoContext *>(context);
-    if (io_context.vfs == nullptr || !io_context.open_file.open ||
-        slot_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
-        return false;
-    }
-    uint64_t read_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-    return io_context.vfs->ReadAt(io_context.open_file,
-                                  slot_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, destination,
-                                  length_bytes, read_bytes) == fs::Status::Succeeded &&
-           read_bytes == length_bytes;
-}
-
-[[nodiscard]] bool WriteSwapSlot(void *const context, const uint64_t slot_index,
-                                 const uint8_t *const source,
-                                 const uint64_t length_bytes) noexcept {
-    if (context == nullptr || source == nullptr ||
-        slot_index >= OS_KERNEL_USER_SWAP_SLOT_CAPACITY ||
-        length_bytes != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
-        return false;
-    }
-    SwapIoContext &io_context = *static_cast<SwapIoContext *>(context);
-    if (io_context.vfs == nullptr || !io_context.open_file.open ||
-        slot_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
-        return false;
-    }
-    uint64_t written_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-    return io_context.vfs->WriteAt(io_context.open_file,
-                                   slot_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, source,
-                                   length_bytes, written_bytes) == fs::Status::Succeeded &&
-           written_bytes == length_bytes;
 }
 
 [[nodiscard]] uint8_t SwapSelfTestPattern(const uint64_t byte_index) noexcept {
@@ -1329,9 +1276,9 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
     return UserAddressSpaceStatus::Succeeded;
 }
 
-UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept {
+UserAddressSpaceStatus AttachUserSwap(FileSystemBlockDevice &device) noexcept {
     user_swap_initialization_stage = UserSwapInitializationStage::NotStarted;
-    if (!user_virtual_memory_initialized || vfs.Validate() != fs::Status::Succeeded) {
+    if (!user_virtual_memory_initialized) {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
     }
     if (user_swap_attached) {
@@ -1339,64 +1286,10 @@ UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept {
         return UserAddressSpaceStatus::Succeeded;
     }
 
-    fs::FsContext file_system_context{};
-    if (vfs.InitializeContext(file_system_context) != fs::Status::Succeeded) {
+    if (user_swap_storage.Initialize(device) != SwapStorageStatus::Succeeded) {
         return UserAddressSpaceStatus::SwapInitializationFailed;
     }
-    user_swap_initialization_stage = UserSwapInitializationStage::ContextReady;
-    fs::OpenFile open_file{};
-    const fs::OpenOptions options{
-        .readable = true,
-        .writable = true,
-        .create = true,
-        .truncate = false,
-        .append = false,
-    };
-    if (vfs.Open(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
-                 OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES, options,
-                 open_file) != fs::Status::Succeeded) {
-        static_cast<void>(vfs.ReleaseContext(file_system_context));
-        return UserAddressSpaceStatus::SwapInitializationFailed;
-    }
-    user_swap_initialization_stage = UserSwapInitializationStage::FileOpened;
-    if (vfs.ChangeMode(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
-                       OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES,
-                       OS_KERNEL_USER_SWAP_FILE_MODE) != fs::Status::Succeeded) {
-        static_cast<void>(vfs.Close(open_file));
-        static_cast<void>(vfs.ReleaseContext(file_system_context));
-        return UserAddressSpaceStatus::SwapInitializationFailed;
-    }
-    user_swap_initialization_stage = UserSwapInitializationStage::PermissionsReady;
-    if (vfs.Truncate(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
-                     OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES,
-                     OS_KERNEL_USER_SWAP_FILE_SIZE_BYTES) != fs::Status::Succeeded) {
-        static_cast<void>(vfs.Close(open_file));
-        static_cast<void>(vfs.ReleaseContext(file_system_context));
-        return UserAddressSpaceStatus::SwapInitializationFailed;
-    }
-    user_swap_initialization_stage = UserSwapInitializationStage::FileSized;
-    fs::NodeInformation swap_information{};
-    if (vfs.Stat(file_system_context, OS_KERNEL_USER_SWAP_FILE_PATH,
-                 OS_KERNEL_USER_SWAP_FILE_PATH_LENGTH_BYTES,
-                 swap_information) != fs::Status::Succeeded ||
-        swap_information.type != fs::NodeType::RegularFile ||
-        swap_information.size_bytes != OS_KERNEL_USER_SWAP_FILE_SIZE_BYTES ||
-        swap_information.allocated_size_bytes > OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
-        swap_information.owner_user_identifier != os::abi::OS_ABI_ROOT_USER_IDENTIFIER ||
-        swap_information.owner_group_identifier != os::abi::OS_ABI_ROOT_GROUP_IDENTIFIER ||
-        swap_information.mode !=
-            (os::abi::OS_ABI_FILE_MODE_REGULAR | OS_KERNEL_USER_SWAP_FILE_MODE)) {
-        static_cast<void>(vfs.Close(open_file));
-        static_cast<void>(vfs.ReleaseContext(file_system_context));
-        return UserAddressSpaceStatus::SwapInitializationFailed;
-    }
-    user_swap_initialization_stage = UserSwapInitializationStage::FileValidated;
-
-    user_swap_file_system_context = file_system_context;
-    user_swap_io_context = SwapIoContext{
-        .vfs = &vfs,
-        .open_file = open_file,
-    };
+    user_swap_initialization_stage = UserSwapInitializationStage::StorageReady;
     const PhysicalFrameAllocatorStatistics frame_statistics = GetPhysicalFrameAllocatorStatistics();
     const uint64_t admin_reserve_page_count = Minimum(
         (frame_statistics.managed_frame_count / OS_KERNEL_MEMORY_PRESSURE_PERCENT_DENOMINATOR) *
@@ -1406,13 +1299,15 @@ UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept {
              OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_PERCENT) /
                 OS_KERNEL_MEMORY_PRESSURE_PERCENT_DENOMINATOR,
         OS_KERNEL_USER_MEMORY_ADMIN_RESERVE_MAXIMUM_PAGE_COUNT);
-    if (user_swap_manager.Initialize(user_swap_entries, OS_KERNEL_USER_SWAP_SLOT_CAPACITY,
-                                     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, &user_swap_io_context,
-                                     ReadSwapSlot, WriteSwapSlot) != SwapManagerStatus::Succeeded) {
+    if (user_swap_manager.Initialize(
+            user_swap_storage.SlotCapacity(), OS_KERNEL_MEMORY_PAGE_SIZE_BYTES, &user_swap_storage,
+            SwapStorage::ReadEntryOperation, SwapStorage::WriteEntryOperation,
+            SwapStorage::ReadPageOperation,
+            SwapStorage::WritePageOperation) != SwapManagerStatus::Succeeded) {
         return UserAddressSpaceStatus::SwapInitializationFailed;
     }
     user_swap_initialization_stage = UserSwapInitializationStage::ManagerReady;
-    if (user_memory_pressure_controller.ConfigureSwap(OS_KERNEL_USER_SWAP_SLOT_CAPACITY) !=
+    if (user_memory_pressure_controller.ConfigureSwap(user_swap_storage.SlotCapacity()) !=
         MemoryPressureStatus::Succeeded) {
         return UserAddressSpaceStatus::SwapInitializationFailed;
     }
@@ -1420,7 +1315,7 @@ UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept {
     if (user_memory_overcommit_accountant.Initialize(MemoryOvercommitConfiguration{
             .mode = MemoryOvercommitMode::Heuristic,
             .physical_page_count = frame_statistics.managed_frame_count,
-            .swap_page_count = OS_KERNEL_USER_SWAP_SLOT_CAPACITY,
+            .swap_page_count = user_swap_storage.SlotCapacity(),
             .overcommit_ratio_percent = OS_KERNEL_MEMORY_PRESSURE_DEFAULT_OVERCOMMIT_RATIO_PERCENT,
             .admin_reserve_page_count = admin_reserve_page_count,
             .user_reserve_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,

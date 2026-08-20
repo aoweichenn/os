@@ -26,9 +26,28 @@ constexpr uint64_t OS_TEST_SWAP_MANAGER_INVALID_SLOT = UINT64_MAX;
 
 struct TestStorage final {
     uint8_t bytes[OS_TEST_SWAP_MANAGER_STORAGE_SIZE_BYTES];
+    os::kernel::SwapSlotEntry entries[OS_TEST_SWAP_MANAGER_SLOT_CAPACITY];
     bool fail_next_read;
     bool fail_next_write;
 };
+
+[[nodiscard]] bool ReadEntry(void *const context, const uint64_t slot_index,
+                             os::kernel::SwapSlotEntry &entry) noexcept {
+    if (context == nullptr || slot_index >= OS_TEST_SWAP_MANAGER_SLOT_CAPACITY) {
+        return false;
+    }
+    entry = static_cast<TestStorage *>(context)->entries[slot_index];
+    return true;
+}
+
+[[nodiscard]] bool WriteEntry(void *const context, const uint64_t slot_index,
+                              const os::kernel::SwapSlotEntry &entry) noexcept {
+    if (context == nullptr || slot_index >= OS_TEST_SWAP_MANAGER_SLOT_CAPACITY) {
+        return false;
+    }
+    static_cast<TestStorage *>(context)->entries[slot_index] = entry;
+    return true;
+}
 
 [[nodiscard]] bool ReadSlot(void *const context, const uint64_t slot_index,
                             uint8_t *const destination, const uint64_t length_bytes) noexcept {
@@ -97,7 +116,6 @@ void FillPage(uint8_t *const page, const uint8_t seed) noexcept {
 int main() {
     os::test::TestContext test_context{OS_TEST_SWAP_MANAGER_SUITE_NAME};
     TestStorage storage{};
-    os::kernel::SwapSlotEntry entries[OS_TEST_SWAP_MANAGER_SLOT_CAPACITY]{};
     os::kernel::SwapManager manager{};
     uint8_t source[OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES]{};
     uint8_t destination[OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES]{};
@@ -105,12 +123,13 @@ int main() {
     const os::kernel::SwapPageIdentity first_identity = MakeIdentity(0ULL);
     uint64_t first_slot = OS_TEST_SWAP_MANAGER_INVALID_SLOT;
     const bool round_trip_valid =
-        manager.Initialize(entries, OS_TEST_SWAP_MANAGER_SLOT_CAPACITY,
-                           OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES, &storage, ReadSlot,
+        manager.Initialize(OS_TEST_SWAP_MANAGER_SLOT_CAPACITY, OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES,
+                           &storage, ReadEntry, WriteEntry, ReadSlot,
                            WriteSlot) == os::kernel::SwapManagerStatus::Succeeded &&
         manager.Store(first_identity, source, OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES, first_slot) ==
             os::kernel::SwapManagerStatus::Succeeded &&
-        first_slot == 0ULL && manager.Statistics().active_slot_count == 1ULL &&
+        first_slot < OS_TEST_SWAP_MANAGER_SLOT_CAPACITY &&
+        manager.Statistics().active_slot_count == 1ULL &&
         manager.LoadAndRelease(first_identity, destination, OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES) ==
             os::kernel::SwapManagerStatus::Succeeded &&
         PagesEqual(source, destination) && manager.Statistics().active_slot_count == 0ULL &&
@@ -147,7 +166,7 @@ int main() {
             capacity_valid &&
             manager.Store(MakeIdentity(slot_index), source, OS_TEST_SWAP_MANAGER_PAGE_SIZE_BYTES,
                           occupied_slots[slot_index]) == os::kernel::SwapManagerStatus::Succeeded &&
-            occupied_slots[slot_index] == slot_index;
+            occupied_slots[slot_index] < OS_TEST_SWAP_MANAGER_SLOT_CAPACITY;
     }
     uint64_t rejected_slot = 0ULL;
     capacity_valid =

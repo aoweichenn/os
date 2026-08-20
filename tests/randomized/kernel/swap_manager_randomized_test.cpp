@@ -23,7 +23,26 @@ constexpr uint64_t OS_TEST_SWAP_RANDOM_MULTIPLIER = 0x2545F4914F6CDD1DULL;
 
 struct TestStorage final {
     uint8_t bytes[OS_TEST_SWAP_RANDOM_STORAGE_SIZE_BYTES];
+    os::kernel::SwapSlotEntry entries[OS_TEST_SWAP_RANDOM_SLOT_CAPACITY];
 };
+
+[[nodiscard]] bool ReadEntry(void *const context, const uint64_t slot_index,
+                             os::kernel::SwapSlotEntry &entry) noexcept {
+    if (context == nullptr || slot_index >= OS_TEST_SWAP_RANDOM_SLOT_CAPACITY) {
+        return false;
+    }
+    entry = static_cast<TestStorage *>(context)->entries[slot_index];
+    return true;
+}
+
+[[nodiscard]] bool WriteEntry(void *const context, const uint64_t slot_index,
+                              const os::kernel::SwapSlotEntry &entry) noexcept {
+    if (context == nullptr || slot_index >= OS_TEST_SWAP_RANDOM_SLOT_CAPACITY) {
+        return false;
+    }
+    static_cast<TestStorage *>(context)->entries[slot_index] = entry;
+    return true;
+}
 
 [[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
     state ^= state >> OS_TEST_SWAP_RANDOM_SHIFT_FIRST;
@@ -84,7 +103,6 @@ void FillPage(uint8_t *const page, const uint64_t identity_index,
 int main() {
     os::test::TestContext test_context{OS_TEST_SWAP_RANDOM_SUITE_NAME};
     TestStorage storage{};
-    os::kernel::SwapSlotEntry entries[OS_TEST_SWAP_RANDOM_SLOT_CAPACITY]{};
     os::kernel::SwapManager manager{};
     uint64_t model_slot[OS_TEST_SWAP_RANDOM_IDENTITY_COUNT]{};
     uint64_t model_generation[OS_TEST_SWAP_RANDOM_IDENTITY_COUNT]{};
@@ -92,9 +110,10 @@ int main() {
          ++identity_index) {
         model_slot[identity_index] = UINT64_MAX;
     }
-    bool model_valid = manager.Initialize(entries, OS_TEST_SWAP_RANDOM_SLOT_CAPACITY,
-                                          OS_TEST_SWAP_RANDOM_PAGE_SIZE_BYTES, &storage, ReadSlot,
-                                          WriteSlot) == os::kernel::SwapManagerStatus::Succeeded;
+    bool model_valid =
+        manager.Initialize(OS_TEST_SWAP_RANDOM_SLOT_CAPACITY, OS_TEST_SWAP_RANDOM_PAGE_SIZE_BYTES,
+                           &storage, ReadEntry, WriteEntry, ReadSlot,
+                           WriteSlot) == os::kernel::SwapManagerStatus::Succeeded;
     uint64_t active_model_count = 0ULL;
     uint64_t random_state = OS_TEST_SWAP_RANDOM_SEED;
     uint8_t page[OS_TEST_SWAP_RANDOM_PAGE_SIZE_BYTES]{};

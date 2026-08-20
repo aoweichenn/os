@@ -1,6 +1,7 @@
 #pragma once
 
 #include <os/abi/virtual_memory.hpp>
+#include <os/kernel/fs/block_cache.hpp>
 #include <os/kernel/fs/vfs.hpp>
 #include <os/kernel/memory/file_page_cache.hpp>
 #include <os/kernel/memory/memory_pressure.hpp>
@@ -145,11 +146,7 @@ enum class UserMemoryCopyStatus : uint64_t {
 
 enum class UserSwapInitializationStage : uint64_t {
     NotStarted,
-    ContextReady,
-    FileOpened,
-    PermissionsReady,
-    FileSized,
-    FileValidated,
+    StorageReady,
     ManagerReady,
     PressureReady,
     OvercommitReady,
@@ -158,7 +155,7 @@ enum class UserSwapInitializationStage : uint64_t {
 };
 
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
-[[nodiscard]] UserAddressSpaceStatus AttachUserSwap(fs::Vfs &vfs) noexcept;
+[[nodiscard]] UserAddressSpaceStatus AttachUserSwap(FileSystemBlockDevice &device) noexcept;
 [[nodiscard]] UserSwapInitializationStage GetUserSwapInitializationStage() noexcept;
 [[nodiscard]] VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept;
 [[nodiscard]] FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept;

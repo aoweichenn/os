@@ -15,6 +15,7 @@ from os_tools.build import (
 )
 from os_tools.book_export import exportBookToPhone
 from os_tools.boot_image import writeBootDiskImages
+from os_tools.allocated_image import materializeImage, requireAllocatedImage
 from os_tools.elf_audit import auditFreestandingLibrary
 from os_tools.errors import OsToolError
 from os_tools.firmware_audit import auditFirmwareImage
@@ -590,6 +591,7 @@ from os_tools.rootfs_v4 import (
 )
 from os_tools.source_metrics import reportSourceMetrics
 from os_tools.stage1_image import auditStage1DiskImage
+from os_tools.swap_image import auditSwapImage, writeSwapImage
 from os_tools.toolchain import checkToolchain
 from os_tools.user_elf import auditUserElf
 
@@ -603,9 +605,9 @@ OS_TOOL_QEMU_PRIMARY_MEMORY_SIZE_BYTES = (
 )
 OS_TOOL_QEMU_MINIMUM_PHYSICAL_ADDRESS_WIDTH_BITS = 36
 OS_TOOL_QEMU_MINIMUM_VIRTUAL_ADDRESS_WIDTH_BITS = 48
-OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES = 2 * 1024 * 1024
-OS_TOOL_QEMU_MINIMUM_BUDDY_STORAGE_SIZE_BYTES = 4 * 1024 * 1024
-OS_TOOL_QEMU_MINIMUM_BUDDY_MAXIMUM_ORDER = 23
+OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES = 320 * 1024
+OS_TOOL_QEMU_MINIMUM_BUDDY_STORAGE_SIZE_BYTES = 512 * 1024
+OS_TOOL_QEMU_MINIMUM_BUDDY_MAXIMUM_ORDER = 20
 OS_TOOL_QEMU_MINIMUM_LARGE_PAGE_COUNT = 1
 OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS = (
     4 * 1024 * 1024 * 1024 + 4 * 1024
@@ -667,6 +669,7 @@ OS_TOOL_QEMU_PRIMARY_THREAD_CAPACITY = 512
 OS_TOOL_QEMU_PRIMARY_THREADS_PER_PROCESS = 64
 OS_TOOL_QEMU_PRIMARY_FILE_DESCRIPTOR_HARD_LIMIT = 4096
 OS_TOOL_QEMU_PRIMARY_PIPE_CAPACITY = 1024
+OS_TOOL_QEMU_CAPACITY_PROFILE_MEMORY_MEBIBYTES = 32 * 1024
 OS_TOOL_QEMU_VMA_DESCRIPTOR_CAPACITY = 8192
 OS_TOOL_QEMU_HEX_VALUE_WIDTH = 16
 
@@ -754,6 +757,22 @@ def handleCreateBootImages(arguments: argparse.Namespace) -> None:
     )
 
 
+def handleCreateSwapImage(arguments: argparse.Namespace) -> None:
+    writeSwapImage(arguments.imagePath)
+
+
+def handleAuditSwapImage(arguments: argparse.Namespace) -> None:
+    auditSwapImage(arguments.imagePath)
+
+
+def handleMaterializeImage(arguments: argparse.Namespace) -> None:
+    materializeImage(arguments.sourcePath, arguments.destinationPath)
+
+
+def handleAuditAllocatedImage(arguments: argparse.Namespace) -> None:
+    requireAllocatedImage(arguments.imagePath)
+
+
 def parseRootfsInstallFile(value: str) -> RootfsV4InstallFile:
     imagePath, separator, sourcePath = value.partition("=")
     if separator == "" or imagePath == "" or sourcePath == "":
@@ -821,6 +840,26 @@ def handleQemuSmoke(arguments: argparse.Namespace) -> None:
     )
 
 
+def resolveSwapDiskImage(
+    diskImagePath: Path,
+    requestedSwapDiskImagePath: Path | None,
+) -> Path:
+    if requestedSwapDiskImagePath is not None:
+        return requestedSwapDiskImagePath
+    swapFileName = (
+        "swap_disk_allocated.img"
+        if diskImagePath.name.endswith("_allocated.img")
+        else "swap_disk.img"
+    )
+    for directory in (diskImagePath.parent, diskImagePath.parent.parent):
+        candidate = directory / swapFileName
+        if candidate.is_file():
+            return candidate
+    raise OsToolError(
+        "未找到独立交换盘；请用 --swap-disk-image 显式指定。"
+    )
+
+
 def handleQemuDisplay(arguments: argparse.Namespace) -> None:
     displayBackend = arguments.displayBackend
     if displayBackend == "vnc":
@@ -843,13 +882,18 @@ def handleQemuDisplay(arguments: argparse.Namespace) -> None:
         arguments.memoryMebibytes,
         arguments.cpuModel,
         arguments.guestLogFilePath,
+        resolveSwapDiskImage(
+            arguments.diskImagePath,
+            arguments.swapDiskImagePath,
+        ),
+        not arguments.allowSparseEngineeringImages,
     )
 
 
 def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     if (
         arguments.memoryMebibytes >=
-        OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES
+        OS_TOOL_QEMU_CAPACITY_PROFILE_MEMORY_MEBIBYTES
     ):
         expectedProcessCapacity = OS_TOOL_QEMU_PRIMARY_PROCESS_CAPACITY
         expectedThreadCapacity = OS_TOOL_QEMU_PRIMARY_THREAD_CAPACITY
@@ -2593,6 +2637,10 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         minimumHexMarkerValues=minimumHexMarkerValues,
         memoryMebibytes=arguments.memoryMebibytes,
         cpuModel=arguments.cpuModel,
+        swapDiskImagePath=resolveSwapDiskImage(
+            arguments.diskImagePath,
+            arguments.swapDiskImagePath,
+        ),
     )
 
 
@@ -2605,6 +2653,10 @@ def handleQemuFileSystemPersistence(
         arguments.diskImagePath,
         arguments.expectedFirmwareSizeBytes,
         arguments.expectedDiskSizeBytes,
+        resolveSwapDiskImage(
+            arguments.diskImagePath,
+            arguments.swapDiskImagePath,
+        ),
     )
 
 
@@ -2738,6 +2790,39 @@ def createArgumentParser() -> argparse.ArgumentParser:
         help="把宿主文件离线安装到 rootfs，格式为 /镜像路径=/宿主路径",
     )
 
+    swapImageParser = addCommand(
+        subparsers,
+        "create-swap-image",
+        "创建带校验 superblock 的 28 GiB 原始交换盘",
+        handleCreateSwapImage,
+    )
+    swapImageParser.add_argument("imagePath", type=Path)
+
+    swapImageAuditParser = addCommand(
+        subparsers,
+        "audit-swap-image",
+        "检查原始交换盘的容量、几何和校验和",
+        handleAuditSwapImage,
+    )
+    swapImageAuditParser.add_argument("imagePath", type=Path)
+
+    materializeImageParser = addCommand(
+        subparsers,
+        "materialize-image",
+        "把工程稀疏镜像转换为宿主全块已分配的运行镜像",
+        handleMaterializeImage,
+    )
+    materializeImageParser.add_argument("sourcePath", type=Path)
+    materializeImageParser.add_argument("destinationPath", type=Path)
+
+    allocatedImageAuditParser = addCommand(
+        subparsers,
+        "audit-allocated-image",
+        "拒绝仍含宿主空洞的运行镜像",
+        handleAuditAllocatedImage,
+    )
+    allocatedImageAuditParser.add_argument("imagePath", type=Path)
+
     stage1AuditParser = addCommand(
         subparsers,
         "audit-stage1",
@@ -2865,6 +2950,19 @@ def createArgumentParser() -> argparse.ArgumentParser:
         dest="guestLogFilePath",
         help="把详细来宾日志持续导出到该宿主文件",
     )
+    qemuDisplayParser.add_argument(
+        "--swap-disk-image",
+        type=Path,
+        default=None,
+        dest="swapDiskImagePath",
+        help="独立交换盘；省略时在启动盘同级或上级目录查找",
+    )
+    qemuDisplayParser.add_argument(
+        "--allow-sparse-engineering-images",
+        action="store_true",
+        dest="allowSparseEngineeringImages",
+        help="仅调试时允许运行未物化镜像；手机正式运行不要使用",
+    )
 
     qemuFirmwareParser = addCommand(
         subparsers,
@@ -2889,6 +2987,12 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "主规格为 "
             f"{OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES} MiB"
         ),
+    )
+    qemuFirmwareParser.add_argument(
+        "--swap-disk-image",
+        type=Path,
+        default=None,
+        dest="swapDiskImagePath",
     )
     qemuFirmwareParser.add_argument(
         "--cpu-model",
@@ -2938,6 +3042,12 @@ def createArgumentParser() -> argparse.ArgumentParser:
         "expectedFirmwareSizeBytes", type=int
     )
     qemuPersistenceParser.add_argument("expectedDiskSizeBytes", type=int)
+    qemuPersistenceParser.add_argument(
+        "--swap-disk-image",
+        type=Path,
+        default=None,
+        dest="swapDiskImagePath",
+    )
 
     sourceMetricsParser = addCommand(
         subparsers,

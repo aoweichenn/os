@@ -126,8 +126,8 @@ class QemuRunnerToolTests(unittest.TestCase):
         cpuOptionIndex = command.index("-cpu")
         self.assertEqual(command[cpuOptionIndex + 1], cpuModel)
 
-    def testCreatesPrimary32GibMemoryCommand(self) -> None:
-        self.assertEqual(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES, 32 * 1024)
+    def testCreatesPrimary4GibPreallocatedMemoryCommand(self) -> None:
+        self.assertEqual(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES, 4 * 1024)
         command = createQemuFirmwareCommand(
             Path("firmware.bin"),
             Path("disk.img"),
@@ -138,6 +138,19 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertEqual(
             command[memoryOptionIndex + 1],
             str(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES),
+        )
+        self.assertIn("-mem-prealloc", command)
+
+    def testAttachesDedicatedSecondarySwapDisk(self) -> None:
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            swapDiskImagePath=Path("swap.img"),
+        )
+
+        self.assertIn(
+            "file=swap.img,format=raw,if=ide,index=2,snapshot=on",
+            command,
         )
 
     def testCreatesFunctional256MibMemoryCommand(self) -> None:
@@ -152,6 +165,7 @@ class QemuRunnerToolTests(unittest.TestCase):
             command[memoryOptionIndex + 1],
             str(OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES),
         )
+        self.assertNotIn("-mem-prealloc", command)
 
     def testSelectsBoundedTimeoutByMemoryProfile(self) -> None:
         self.assertEqual(

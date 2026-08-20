@@ -6,6 +6,7 @@ namespace {
 
 constexpr uint64_t OS_KERNEL_SWAP_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_SWAP_SINGLE_SLOT = 1ULL;
+constexpr uint64_t OS_KERNEL_SWAP_BITS_PER_BYTE = 8ULL;
 constexpr uint64_t OS_KERNEL_SWAP_FNV1A_OFFSET_BASIS = 14695981039346656037ULL;
 constexpr uint64_t OS_KERNEL_SWAP_FNV1A_PRIME = 1099511628211ULL;
 
@@ -15,17 +16,15 @@ constexpr uint64_t OS_KERNEL_SWAP_FNV1A_PRIME = 1099511628211ULL;
 
 }
 
-SwapManagerStatus SwapManager::Initialize(SwapSlotEntry *const entries,
-                                          const uint64_t slot_capacity,
+SwapManagerStatus SwapManager::Initialize(const uint64_t slot_capacity,
                                           const uint64_t page_size_bytes,
                                           void *const operation_context,
+                                          const SwapEntryReadOperation entry_read_operation,
+                                          const SwapEntryWriteOperation entry_write_operation,
                                           const SwapReadOperation read_operation,
                                           const SwapWriteOperation write_operation) noexcept {
     if (this->initialized_) {
         return SwapManagerStatus::AlreadyInitialized;
-    }
-    if (entries == nullptr) {
-        return SwapManagerStatus::InvalidStorage;
     }
     if (page_size_bytes == OS_KERNEL_SWAP_EMPTY_VALUE ||
         (page_size_bytes & (page_size_bytes - OS_KERNEL_SWAP_SINGLE_SLOT)) !=
@@ -36,17 +35,16 @@ SwapManagerStatus SwapManager::Initialize(SwapSlotEntry *const entries,
         slot_capacity > UINT64_MAX / page_size_bytes) {
         return SwapManagerStatus::InvalidCapacity;
     }
-    if (operation_context == nullptr || read_operation == nullptr || write_operation == nullptr) {
+    if (operation_context == nullptr || entry_read_operation == nullptr ||
+        entry_write_operation == nullptr || read_operation == nullptr ||
+        write_operation == nullptr) {
         return SwapManagerStatus::InvalidOperation;
     }
-    for (uint64_t slot_index = OS_KERNEL_SWAP_EMPTY_VALUE; slot_index < slot_capacity;
-         ++slot_index) {
-        entries[slot_index] = SwapSlotEntry{};
-    }
-    this->entries_ = entries;
     this->slot_capacity_ = slot_capacity;
     this->page_size_bytes_ = page_size_bytes;
     this->operation_context_ = operation_context;
+    this->entry_read_operation_ = entry_read_operation;
+    this->entry_write_operation_ = entry_write_operation;
     this->read_operation_ = read_operation;
     this->write_operation_ = write_operation;
     this->statistics_ = SwapManagerStatistics{
@@ -79,22 +77,17 @@ SwapManagerStatus SwapManager::Store(const SwapPageIdentity &identity, const uin
     if (source == nullptr || length_bytes != this->page_size_bytes_) {
         return SwapManagerStatus::InvalidStorage;
     }
-    uint64_t existing_slot_index = UINT64_MAX;
-    if (this->FindEntry(identity, existing_slot_index) != nullptr) {
-        return SwapManagerStatus::MappingAlreadyStored;
-    }
-    SwapSlotEntry *candidate = nullptr;
-    for (uint64_t candidate_index = OS_KERNEL_SWAP_EMPTY_VALUE;
-         candidate_index < this->slot_capacity_; ++candidate_index) {
-        if (!this->entries_[candidate_index].active) {
-            candidate = &this->entries_[candidate_index];
-            slot_index = candidate_index;
-            break;
-        }
-    }
-    if (candidate == nullptr) {
+    SwapSlotEntry candidate{};
+    bool found = false;
+    const SwapManagerStatus probe_status =
+        this->Probe(identity, ProbePurpose::Insert, slot_index, candidate, found);
+    if (probe_status != SwapManagerStatus::Succeeded) {
         slot_index = UINT64_MAX;
-        return SwapManagerStatus::CapacityExhausted;
+        return probe_status;
+    }
+    if (found) {
+        slot_index = UINT64_MAX;
+        return SwapManagerStatus::MappingAlreadyStored;
     }
     if (this->statistics_.active_slot_count == UINT64_MAX ||
         this->statistics_.successful_store_count == UINT64_MAX ||
@@ -110,11 +103,19 @@ SwapManagerStatus SwapManager::Store(const SwapPageIdentity &identity, const uin
         ++this->statistics_.failed_store_count;
         return SwapManagerStatus::WriteFailed;
     }
-    *candidate = SwapSlotEntry{
+    candidate = SwapSlotEntry{
         .identity = identity,
         .checksum = this->CalculateChecksum(source),
-        .active = true,
+        .state = SwapSlotState::Active,
     };
+    if (!this->entry_write_operation_(this->operation_context_, slot_index, candidate)) {
+        slot_index = UINT64_MAX;
+        if (this->statistics_.failed_store_count == UINT64_MAX) {
+            return SwapManagerStatus::CounterOverflow;
+        }
+        ++this->statistics_.failed_store_count;
+        return SwapManagerStatus::MetadataWriteFailed;
+    }
     ++this->statistics_.active_slot_count;
     --this->statistics_.free_slot_count;
     ++this->statistics_.successful_store_count;
@@ -136,8 +137,14 @@ SwapManagerStatus SwapManager::LoadAndRelease(const SwapPageIdentity &identity,
         return SwapManagerStatus::InvalidStorage;
     }
     uint64_t slot_index = UINT64_MAX;
-    SwapSlotEntry *const entry = this->FindEntry(identity, slot_index);
-    if (entry == nullptr) {
+    SwapSlotEntry entry{};
+    bool found = false;
+    const SwapManagerStatus probe_status =
+        this->Probe(identity, ProbePurpose::Find, slot_index, entry, found);
+    if (probe_status != SwapManagerStatus::Succeeded) {
+        return probe_status;
+    }
+    if (!found) {
         return SwapManagerStatus::MappingNotFound;
     }
     if (!this->read_operation_(this->operation_context_, slot_index, destination,
@@ -148,7 +155,7 @@ SwapManagerStatus SwapManager::LoadAndRelease(const SwapPageIdentity &identity,
         ++this->statistics_.failed_load_count;
         return SwapManagerStatus::ReadFailed;
     }
-    if (this->CalculateChecksum(destination) != entry->checksum) {
+    if (this->CalculateChecksum(destination) != entry.checksum) {
         if (this->statistics_.failed_load_count == UINT64_MAX ||
             this->statistics_.checksum_failure_count == UINT64_MAX) {
             return SwapManagerStatus::CounterOverflow;
@@ -162,7 +169,18 @@ SwapManagerStatus SwapManager::LoadAndRelease(const SwapPageIdentity &identity,
         this->statistics_.successful_load_count == UINT64_MAX) {
         return SwapManagerStatus::CounterOverflow;
     }
-    *entry = SwapSlotEntry{};
+    const SwapSlotEntry tombstone{
+        .identity = SwapPageIdentity{},
+        .checksum = OS_KERNEL_SWAP_EMPTY_VALUE,
+        .state = SwapSlotState::Tombstone,
+    };
+    if (!this->entry_write_operation_(this->operation_context_, slot_index, tombstone)) {
+        if (this->statistics_.failed_load_count == UINT64_MAX) {
+            return SwapManagerStatus::CounterOverflow;
+        }
+        ++this->statistics_.failed_load_count;
+        return SwapManagerStatus::MetadataWriteFailed;
+    }
     --this->statistics_.active_slot_count;
     ++this->statistics_.free_slot_count;
     ++this->statistics_.successful_load_count;
@@ -184,13 +202,15 @@ SwapManagerStatus SwapManager::Clone(const SwapPageIdentity &source_identity,
         return SwapManagerStatus::InvalidStorage;
     }
     uint64_t source_slot_index = UINT64_MAX;
-    const SwapSlotEntry *const source_entry = this->FindEntry(source_identity, source_slot_index);
-    if (source_entry == nullptr) {
-        return SwapManagerStatus::MappingNotFound;
+    SwapSlotEntry source_entry{};
+    bool source_found = false;
+    const SwapManagerStatus source_probe_status = this->Probe(
+        source_identity, ProbePurpose::Find, source_slot_index, source_entry, source_found);
+    if (source_probe_status != SwapManagerStatus::Succeeded) {
+        return source_probe_status;
     }
-    uint64_t existing_slot_index = UINT64_MAX;
-    if (this->FindEntry(destination_identity, existing_slot_index) != nullptr) {
-        return SwapManagerStatus::MappingAlreadyStored;
+    if (!source_found) {
+        return SwapManagerStatus::MappingNotFound;
     }
     if (!this->read_operation_(this->operation_context_, source_slot_index, scratch_page,
                                this->page_size_bytes_)) {
@@ -200,7 +220,7 @@ SwapManagerStatus SwapManager::Clone(const SwapPageIdentity &source_identity,
         ++this->statistics_.failed_clone_count;
         return SwapManagerStatus::ReadFailed;
     }
-    if (this->CalculateChecksum(scratch_page) != source_entry->checksum) {
+    if (this->CalculateChecksum(scratch_page) != source_entry.checksum) {
         if (this->statistics_.failed_clone_count == UINT64_MAX ||
             this->statistics_.checksum_failure_count == UINT64_MAX) {
             return SwapManagerStatus::CounterOverflow;
@@ -233,9 +253,14 @@ SwapManagerStatus SwapManager::Release(const SwapPageIdentity &identity) noexcep
         return SwapManagerStatus::InvalidIdentity;
     }
     uint64_t slot_index = UINT64_MAX;
-    SwapSlotEntry *const entry = this->FindEntry(identity, slot_index);
-    static_cast<void>(slot_index);
-    if (entry == nullptr) {
+    SwapSlotEntry entry{};
+    bool found = false;
+    const SwapManagerStatus probe_status =
+        this->Probe(identity, ProbePurpose::Find, slot_index, entry, found);
+    if (probe_status != SwapManagerStatus::Succeeded) {
+        return probe_status;
+    }
+    if (!found) {
         return SwapManagerStatus::MappingNotFound;
     }
     if (this->statistics_.active_slot_count == OS_KERNEL_SWAP_EMPTY_VALUE ||
@@ -243,7 +268,14 @@ SwapManagerStatus SwapManager::Release(const SwapPageIdentity &identity) noexcep
         this->statistics_.release_count == UINT64_MAX) {
         return SwapManagerStatus::CounterOverflow;
     }
-    *entry = SwapSlotEntry{};
+    const SwapSlotEntry tombstone{
+        .identity = SwapPageIdentity{},
+        .checksum = OS_KERNEL_SWAP_EMPTY_VALUE,
+        .state = SwapSlotState::Tombstone,
+    };
+    if (!this->entry_write_operation_(this->operation_context_, slot_index, tombstone)) {
+        return SwapManagerStatus::MetadataWriteFailed;
+    }
     --this->statistics_.active_slot_count;
     ++this->statistics_.free_slot_count;
     ++this->statistics_.release_count;
@@ -259,8 +291,17 @@ SwapManagerStatus SwapManager::FindSlot(const SwapPageIdentity &identity,
     if (!this->IdentityIsValid(identity)) {
         return SwapManagerStatus::InvalidIdentity;
     }
-    return this->FindEntry(identity, slot_index) == nullptr ? SwapManagerStatus::MappingNotFound
-                                                            : SwapManagerStatus::Succeeded;
+    if (this->statistics_.active_slot_count == OS_KERNEL_SWAP_EMPTY_VALUE) {
+        return SwapManagerStatus::MappingNotFound;
+    }
+    SwapSlotEntry entry{};
+    bool found = false;
+    const SwapManagerStatus probe_status =
+        this->Probe(identity, ProbePurpose::Find, slot_index, entry, found);
+    if (probe_status != SwapManagerStatus::Succeeded) {
+        return probe_status;
+    }
+    return found ? SwapManagerStatus::Succeeded : SwapManagerStatus::MappingNotFound;
 }
 
 SwapManagerStatistics SwapManager::Statistics() const noexcept {
@@ -268,41 +309,26 @@ SwapManagerStatistics SwapManager::Statistics() const noexcept {
 }
 
 SwapManagerStatus SwapManager::Validate() const noexcept {
-    if (!this->initialized_ || this->entries_ == nullptr || this->operation_context_ == nullptr ||
+    if (!this->initialized_ || this->operation_context_ == nullptr ||
+        this->entry_read_operation_ == nullptr || this->entry_write_operation_ == nullptr ||
         this->read_operation_ == nullptr || this->write_operation_ == nullptr) {
         return SwapManagerStatus::NotInitialized;
     }
-    uint64_t active_slot_count = OS_KERNEL_SWAP_EMPTY_VALUE;
-    for (uint64_t slot_index = OS_KERNEL_SWAP_EMPTY_VALUE; slot_index < this->slot_capacity_;
-         ++slot_index) {
-        const SwapSlotEntry &entry = this->entries_[slot_index];
-        if (!entry.active) {
-            if (entry.identity.address_space_identifier != OS_KERNEL_SWAP_EMPTY_VALUE ||
-                entry.identity.virtual_address != OS_KERNEL_SWAP_EMPTY_VALUE ||
-                entry.checksum != OS_KERNEL_SWAP_EMPTY_VALUE) {
-                return SwapManagerStatus::Corrupt;
-            }
-            continue;
-        }
-        if (!this->IdentityIsValid(entry.identity)) {
-            return SwapManagerStatus::Corrupt;
-        }
-        for (uint64_t comparison_index = slot_index + OS_KERNEL_SWAP_SINGLE_SLOT;
-             comparison_index < this->slot_capacity_; ++comparison_index) {
-            const SwapSlotEntry &comparison = this->entries_[comparison_index];
-            if (comparison.active && this->IdentitiesEqual(entry.identity, comparison.identity)) {
-                return SwapManagerStatus::Corrupt;
-            }
-        }
-        ++active_slot_count;
+    if (this->statistics_.slot_capacity != this->slot_capacity_ ||
+        this->statistics_.active_slot_count > this->slot_capacity_ ||
+        this->statistics_.free_slot_count !=
+            this->slot_capacity_ - this->statistics_.active_slot_count ||
+        this->statistics_.peak_active_slot_count < this->statistics_.active_slot_count ||
+        this->statistics_.peak_active_slot_count > this->slot_capacity_ ||
+        this->statistics_.successful_load_count > this->statistics_.successful_store_count ||
+        this->statistics_.release_count >
+            this->statistics_.successful_store_count - this->statistics_.successful_load_count ||
+        this->statistics_.successful_store_count - this->statistics_.successful_load_count -
+                this->statistics_.release_count !=
+            this->statistics_.active_slot_count) {
+        return SwapManagerStatus::Corrupt;
     }
-    return active_slot_count == this->statistics_.active_slot_count &&
-                   this->statistics_.free_slot_count == this->slot_capacity_ - active_slot_count &&
-                   this->statistics_.slot_capacity == this->slot_capacity_ &&
-                   this->statistics_.peak_active_slot_count >= active_slot_count &&
-                   this->statistics_.peak_active_slot_count <= this->slot_capacity_
-               ? SwapManagerStatus::Succeeded
-               : SwapManagerStatus::Corrupt;
+    return SwapManagerStatus::Succeeded;
 }
 
 bool SwapManager::IdentityIsValid(const SwapPageIdentity &identity) const noexcept {
@@ -318,54 +344,66 @@ bool SwapManager::IdentitiesEqual(const SwapPageIdentity &left,
            left.virtual_address == right.virtual_address;
 }
 
-SwapSlotEntry *SwapManager::FindEntry(const SwapPageIdentity &identity,
-                                      uint64_t &slot_index) noexcept {
-    if (this->statistics_.active_slot_count == OS_KERNEL_SWAP_EMPTY_VALUE) {
-        slot_index = UINT64_MAX;
-        return nullptr;
-    }
-    uint64_t observed_active_slot_count = OS_KERNEL_SWAP_EMPTY_VALUE;
-    for (uint64_t candidate_index = OS_KERNEL_SWAP_EMPTY_VALUE;
-         candidate_index < this->slot_capacity_; ++candidate_index) {
-        SwapSlotEntry &entry = this->entries_[candidate_index];
-        if (entry.active && this->IdentitiesEqual(entry.identity, identity)) {
-            slot_index = candidate_index;
-            return &entry;
-        }
-        if (entry.active) {
-            ++observed_active_slot_count;
-            if (observed_active_slot_count == this->statistics_.active_slot_count) {
-                break;
-            }
-        }
-    }
+SwapManagerStatus SwapManager::Probe(const SwapPageIdentity &identity, const ProbePurpose purpose,
+                                     uint64_t &slot_index, SwapSlotEntry &entry,
+                                     bool &found) const noexcept {
     slot_index = UINT64_MAX;
-    return nullptr;
+    entry = SwapSlotEntry{};
+    found = false;
+    uint64_t candidate_index = this->CalculateInitialSlot(identity);
+    uint64_t first_tombstone_index = UINT64_MAX;
+    for (uint64_t probe_count = OS_KERNEL_SWAP_EMPTY_VALUE; probe_count < this->slot_capacity_;
+         ++probe_count) {
+        SwapSlotEntry candidate{};
+        if (!this->entry_read_operation_(this->operation_context_, candidate_index, candidate)) {
+            return SwapManagerStatus::MetadataReadFailed;
+        }
+        if (candidate.state == SwapSlotState::Active) {
+            if (!this->IdentityIsValid(candidate.identity)) {
+                return SwapManagerStatus::Corrupt;
+            }
+            if (this->IdentitiesEqual(candidate.identity, identity)) {
+                slot_index = candidate_index;
+                entry = candidate;
+                found = true;
+                return SwapManagerStatus::Succeeded;
+            }
+        } else if (candidate.state == SwapSlotState::Tombstone) {
+            if (first_tombstone_index == UINT64_MAX) {
+                first_tombstone_index = candidate_index;
+            }
+        } else if (candidate.state == SwapSlotState::Empty) {
+            if (purpose == ProbePurpose::Insert) {
+                slot_index =
+                    first_tombstone_index == UINT64_MAX ? candidate_index : first_tombstone_index;
+            }
+            return SwapManagerStatus::Succeeded;
+        } else {
+            return SwapManagerStatus::Corrupt;
+        }
+        candidate_index = candidate_index + OS_KERNEL_SWAP_SINGLE_SLOT == this->slot_capacity_
+                              ? OS_KERNEL_SWAP_EMPTY_VALUE
+                              : candidate_index + OS_KERNEL_SWAP_SINGLE_SLOT;
+    }
+    if (purpose == ProbePurpose::Insert && first_tombstone_index != UINT64_MAX) {
+        slot_index = first_tombstone_index;
+        return SwapManagerStatus::Succeeded;
+    }
+    return purpose == ProbePurpose::Insert ? SwapManagerStatus::CapacityExhausted
+                                           : SwapManagerStatus::Succeeded;
 }
 
-const SwapSlotEntry *SwapManager::FindEntry(const SwapPageIdentity &identity,
-                                            uint64_t &slot_index) const noexcept {
-    if (this->statistics_.active_slot_count == OS_KERNEL_SWAP_EMPTY_VALUE) {
-        slot_index = UINT64_MAX;
-        return nullptr;
-    }
-    uint64_t observed_active_slot_count = OS_KERNEL_SWAP_EMPTY_VALUE;
-    for (uint64_t candidate_index = OS_KERNEL_SWAP_EMPTY_VALUE;
-         candidate_index < this->slot_capacity_; ++candidate_index) {
-        const SwapSlotEntry &entry = this->entries_[candidate_index];
-        if (entry.active && this->IdentitiesEqual(entry.identity, identity)) {
-            slot_index = candidate_index;
-            return &entry;
-        }
-        if (entry.active) {
-            ++observed_active_slot_count;
-            if (observed_active_slot_count == this->statistics_.active_slot_count) {
-                break;
-            }
+uint64_t SwapManager::CalculateInitialSlot(const SwapPageIdentity &identity) const noexcept {
+    uint64_t hash = OS_KERNEL_SWAP_FNV1A_OFFSET_BASIS;
+    const uint64_t values[] = {identity.address_space_identifier, identity.virtual_address};
+    for (const uint64_t value : values) {
+        for (uint64_t shift_bits = OS_KERNEL_SWAP_EMPTY_VALUE; shift_bits < 64ULL;
+             shift_bits += OS_KERNEL_SWAP_BITS_PER_BYTE) {
+            hash ^= (value >> shift_bits) & 0xFFULL;
+            hash *= OS_KERNEL_SWAP_FNV1A_PRIME;
         }
     }
-    slot_index = UINT64_MAX;
-    return nullptr;
+    return hash % this->slot_capacity_;
 }
 
 uint64_t SwapManager::CalculateChecksum(const uint8_t *const page) const noexcept {

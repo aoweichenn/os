@@ -2255,6 +2255,7 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     PrepareRequiredProcesses(vga_console, user_program_selection);
     InitializeKernelDevices(vga_console);
     AtaPioDevice file_system_device{};
+    AtaPioDevice swap_device{AtaPioChannel::Secondary};
     // rootfs 含全盘校验工作区，必须驻留 BSS，不能消耗有界内核栈。
     static fs::RootFileSystem file_system{};
     fs::Memfs memfs{};
@@ -2268,7 +2269,7 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     InitializeKernelVfs(vga_console, file_system, memfs, devfs, procfs, procfs_context, vfs,
                         devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
                         OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
-    if (AttachProcessVfs(vfs) != ProcessRuntimeStatus::Succeeded) {
+    if (AttachProcessVfs(vfs, swap_device) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_INITIALIZATION_STAGE_PREFIX,

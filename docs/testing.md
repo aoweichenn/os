@@ -29,8 +29,8 @@
 
 ## v2 演进测试配置契约
 
-当前 v2.1 使用具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
-32 GiB capacity 系统路径；v2.0 已发布证据中的 capacity 仍保持当时的 64 GiB
+当前参考配置使用具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
+4 GiB `-mem-prealloc` 手机主路径；v2.0 已发布证据中的 capacity 仍保持当时的 64 GiB
 历史事实。当前三档使用同一个 ThreadScheduler、deadline queue、
 SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
 历史链在 v1.18 加入 tool probe 后，bootstrap 正常链累计注册 73 个 Process、
@@ -44,7 +44,8 @@ capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | bootstrap | 64 MiB | 8 | 8 | 1 | 不规定 | 不规定 | 启动链、磁盘 PID1、异常、基础内存、全部历史故障镜像 |
 | functional | 256 MiB | 64 | 128 | 32 | 512 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
-| capacity | 32 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、soak 与长尾资源错误 |
+| phone-primary | 4 GiB | 64 | 128 | 32 | 512 | 128 | 实体 RAM、PCI-hole 高地址、28 GiB swap 与手机整机 |
+| optional-capacity | 32 GiB | 256 | 512 | 64 | 4096 | 1024 | 非手机的可选容量与长尾压力 |
 
 三种配置必须走同一启动链、相同动态对象实现和相同 ABI。测试配置只改变内存
 容量和运行时资源上限，不得通过条件编译换回固定 PCB、fd 或 pipe 表。
@@ -55,11 +56,11 @@ capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明
 | --- | --- |
 | 每次提交 | 受影响单元/集成/固定种子随机测试；64 MiB boot；256 MiB smoke |
 | 每个小版本 | 全部宿主测试与产物审计；完整 256 MiB functional |
-| nightly / 候选发布 | 完整 32 GiB capacity；soak；故障和崩溃点矩阵 |
+| nightly / 候选发布 | 完整 4 GiB phone-primary；soak；故障和崩溃点矩阵 |
 | v2.0 发布 | 三配置全量、全部故障镜像、教材/网站构建和发布溯源 |
 
-capacity 测试必须解析来宾日志证明实际使用 4 GiB 以上物理页，不能以
-“QEMU 参数写了 32G”替代高地址证据。functional/capacity 达到资源限制时，
+phone-primary 必须解析来宾日志证明实际使用 4 GiB 以上的 PCI-hole 重映射页，
+并采样宿主 RSS 证明 `-mem-prealloc` 生效。functional/capacity 达到资源限制时，
 必须验证调用返回明确错误、旧对象保持不变、本次资源全部回滚。
 
 ### 第二周期新增通用 oracle
@@ -863,11 +864,9 @@ Python 词法检查只承担 AST 风格选项无法表达的命名空间单词�
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
 工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
-规格选择的有界总截止：64 MiB 启动档为 35 秒；256 MiB 功能档需要完成
-90 个进程与时间探针验收，使用 120 秒；32 GiB 主规格因 Debug 构建需要
-扫描 16777216 个页状态而使用 240 秒。外层 CTest 分别使用 40、130 和 250 秒
-作为独立保险。三次启动的持久化用例对每次 QEMU 使用 35 秒内部截止，
-CTest 总预算为 100 秒；十万步 VFS 命名空间模型的硬上限为 300 秒，给 Debug
+规格选择的有界总截止：64 MiB、256 MiB 与 4 GiB 预分配档分别为 150、300、
+420 秒，QMP 建立另有 30 秒上界。外层 CTest 分别保留独立回收余量。三次启动的
+持久化用例也保持总上界；十万步 VFS 命名空间模型的硬上限为 300 秒，给 Debug
 构建在共享宿主上的完整双后端运行保留调度余量。所有路径都保持有限上界，不把扩大预算变成
 无限等待。
 捕获器通过 `subprocess` 生命周期管理回收进程，不依赖宿主 Shell 的
@@ -1355,29 +1354,35 @@ integration、38 randomized、24 system，含 23 条 failure-path。64 MiB、256
   读失败、校验损坏保留和显式 release；
 - `os_kernel_swap_manager_randomized_tests` 执行 100000 步 store/load/release，
   逐步对照槽、页面内容、active/free 和 manager Validate；
+- `os_kernel_swap_storage_unit_tests` 覆盖 superblock、启动代次、secondary ATA
+  扇区边界、真实数据/元数据顺序和无效盘面；tooling 同时锁定 28 GiB 几何；
 - file page cache 单元测试新增真实 reclaimed count；ThreadScheduler 单元测试新增
   非当前进程终止，证明 OOM 不改变当前 Running Thread；
 - procfs 单元/集成/随机测试锁定 512 字节有界快照及 resident limit、swap、
   committed、commit limit、OOM kill 字段。
 
-QEMU 成功路径在 VFS attach 时对 `/.os-swap` 做一次真实 4 KiB 写入、读回与
-校验，active slot 回到零后才启动 PID 1。64/256 MiB 和 32 GiB 正常退出还必须
+QEMU 成功路径在 secondary ATA attach 时对原始交换盘做一次真实 4 KiB 写入、
+读回与校验，active slot 回到零后才启动 PID 1。64/256 MiB 和 4 GiB 正常退出还必须
 同时满足 committed=0、active swap=0、VMA/COW/页帧/KernelStack 资源守恒。
 
 交换损坏故障必须在 LoadAndRelease 返回 ChecksumMismatch 后保留槽；短读、短写
 同样保留映射。OOM 用例必须观察确定 victim、SIGKILL wait 结果、原 fault 最多
-一次重试和 PID 1 存活。32 GiB 用例继续触及 4 GiB 以上物理地址，但压力页数受
-4 GiB 驻留预算约束，宿主 RSS 不得随 32 GiB 标称 RAM 全量物化。
+一次重试和 PID 1 存活。4 GiB 用例继续触及 `0x100000000` 以上重映射地址，
+宿主 RSS 必须接近实际预分配容量；swap 总槽精确为 `0x700000`。
 
-v2.5 增加约 2 MiB swap 元数据 BSS 和启动 VFS 自检；手机 TCG 热降频时不能沿用
-v2.4 已接近上限的 45/120 秒内部总预算。总超时允许按档提升，但逐键/marker
+v2.5 把 swap 元数据移到磁盘，并增加 4 GiB 预分配与 secondary ATA 自检；手机
+TCG 热降频时不能沿用 v2.4 已接近上限的 45/120 秒内部总预算。QMP 建立允许
+30 秒，但后续总超时仍有界；逐键/marker
 进度、非黑 VGA、截图、错误 marker 和资源守恒条件不放宽；无进度仍提前失败。
 
-最终本地串行候选轮次排除用户正在重写的书稿门禁，工程测试 188/188 通过、
+修订前最终本地串行候选轮次排除用户正在重写的书稿门禁，工程测试 188/188 通过、
 0 失败，总墙钟 709.34 秒：57 unit、67 integration、40 randomized、24 system，
 含 23 条 failure-path。bootstrap、functional、32 GiB primary、persistence 分别
 为 27.27、70.58、120.03、189.32 秒；VFS 命名空间随机模型 175.06 秒，C++
-标识符 AST 门禁 29.30 秒。单独采样的 32 GiB QEMU 宿主峰值 RSS 为 95976 KiB。
+标识符 AST 门禁 29.30 秒。当前修订在 caw 的全量 CTest 为 191/191、0 失败、
+181.28 秒：58 unit、69 integration、40 randomized、24 system，含 23 条
+failure-path。bootstrap、functional、4 GiB primary、persistence 分别为 7.96、
+22.98、24.51、45.71 秒；整轮宿主峰值 RSS 4266048 KiB。
 
 统一轮次前保留三项真实修复轨迹：swap 路径长度误含 NUL 由初始化阶段 1 定位；
 procfs 为一个 OOM 计数在 16 KiB KernelStack 构造完整统计对象，PIT 入栈触发 #DF；

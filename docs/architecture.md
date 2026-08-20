@@ -2363,10 +2363,11 @@ unrecoverable user allocation
   -> retry original fault once
 ```
 
-参考机仍暴露 32768 MiB RAM。`MemoryPressureController` 使用 1048576 页的驻留
-预算，把会在宿主物化的页帧限制为 4 GiB；页帧分配器继续管理全部 32 GiB，
-因此高物理地址和容量语义不变。每次用户页分配前以页帧统计同步当前驻留数，
-低于 low 时回收至 high。64/256 MiB 档的预算等于 managed pages。
+手机参考机暴露 4096 MiB RAM，QEMU 在进入 ROM 前用 `-mem-prealloc` 提交后备页。
+`MemoryPressureController` 的 1048576 页预算等于实际 managed RAM；每次用户页
+分配前以页帧统计同步当前驻留数，低于 low 时回收至 high。QEMU PC 会把 PCI
+hole 中的 RAM 重映射到 4 GiB 以上，因此该档仍覆盖高物理地址。64/256 MiB 档
+的预算同样等于各自 managed pages。
 
 swap 不编码进 non-present PTE。`SwapManager` 用
 `{address_space_identifier, virtual_page}` 作为唯一键，VMA 仍提供权限和页面
@@ -2374,10 +2375,17 @@ swap 不编码进 non-present PTE。`SwapManager` 用
 分配候选 frame，读满并校验后才删除槽。销毁 VMA 时即使 PTE 不存在，也查询并
 释放对应槽。
 
-`/.os-swap` 是 rootfs v4 上的 root:root 0600 稀疏文件。VFS attach 建立 256 MiB
-逻辑长度并保持一个内核 OpenFile；该常驻 VFS 资源由既有持久资源折扣统计处理，
-不冒充 Process fd。启动自检经真实 VFS 写入和读回一个 4 KiB 槽，最终 active
-slot 必须恢复为零。
+交换空间位于 secondary IDE master，不进入 rootfs 或用户 fd。`SwapStorage`
+验证 `OSSWAP01` superblock 后递增代次，通过 `0x170..0x177/0x376` 对 7340032
+个数据槽执行 PIO。每个哈希桶的 64 字节元数据保存代次、地址空间标识、虚拟页、
+页面校验和与元数据校验和；tombstone 保持开放寻址探测链，旧代项无需扫描即可
+视为空。启动自检
+按“数据写入与 flush、元数据提交与 flush、读回校验、tombstone 提交”完成真实
+4 KiB 往返，最终 active slot 恢复为零。
+
+构建树中的工程 rootfs、交换盘和故障副本可以保持宿主稀疏；它们只用于重复测试。
+手机运行前，`materialize-image` 对唯一 128 GiB rootfs 和 30534537216 字节交换盘
+执行 `posix_fallocate`，`qemu-display` 默认拒绝仍有宿主空洞的路径。
 
 overcommit 和记账不改变 ABI 编号。系统调用层仍把 commit 拒绝映射为现有
 out-of-memory 错误；`/proc/meminfo` 追加驻留预算、swap、commit 与 OOM 聚合值。

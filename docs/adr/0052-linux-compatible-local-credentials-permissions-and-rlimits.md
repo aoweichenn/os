@@ -108,7 +108,8 @@ limit；root 仍受项目的进程、fd、栈、堆和文件系统系统上限�
 - Ring 3 安全探针真实执行组/身份切换、4 字节 `RLIMIT_FSIZE` 短写、fork 继承、
   清理和 setuid/setgid exec；functional QEMU 还实际运行 chmod/chown/ln/
   readlink/umask 命令链；
-- caw 与手机 32 GiB/128 GiB 闭环仍由 v2.6 统一完成，本 ADR 只声明本地候选。
+- caw 与手机 4 GiB/128 GiB/独立交换盘闭环仍由 v2.6 统一完成，本 ADR 只声明
+  本地候选。
 
 ## 被拒绝的方案
 

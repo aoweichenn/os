@@ -325,6 +325,12 @@ os_add_kernel_memory_test(
     "randomized"
 )
 
+os_add_kernel_memory_test(
+    os_kernel_swap_storage_unit_tests
+    unit/kernel/swap_storage_test.cpp
+    "unit"
+)
+
 add_library(
     os_kernel_stack_test_support
     STATIC
@@ -1416,6 +1422,20 @@ add_test(
         audit-kernel-image
         "${OS_BOOT_DISK_IMAGE}"
 )
+
+add_test(
+    NAME os_swap_disk_layout
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        audit-swap-image
+        "${OS_SWAP_DISK_IMAGE}"
+)
+set_tests_properties(
+    os_swap_disk_layout
+    PROPERTIES
+        LABELS "integration"
+)
 set_tests_properties(
     os_kernel_disk_layout
     PROPERTIES
@@ -1484,7 +1504,7 @@ set_tests_properties(
 
 set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
 set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
-set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 32768)
+set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 4096)
 set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 160)
 set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 310)
 set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 430)

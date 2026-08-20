@@ -265,7 +265,8 @@ static_assert(sizeof(ProcessObservationSnapshot) <=
               OS_KERNEL_PROCESS_OBSERVATION_MAXIMUM_SIZE_BYTES);
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
-[[nodiscard]] ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs) noexcept;
+[[nodiscard]] ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs,
+                                                    FileSystemBlockDevice &swap_device) noexcept;
 [[nodiscard]] ProcessRuntimeStatus
 CreateProcess(UserProgramSelection selection, ProcessCreationResult &creation_result,
               UserElfValidationStatus &elf_validation_status,

@@ -2,7 +2,7 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v2.5 32 GiB 内存压力与恢复` 已形成本地候选。v2.1 已建立 Firmware、Stage 1、
+当前状态：`v2.5 4 GiB 实体内存与 28 GiB 交换盘` 已形成候选。v2.1 已建立 Firmware、Stage 1、
 Kernel、panic 以及 Ring 3 stdout/stderr 从 COM1 迁移到项目自研的 80×25 VGA
 文本控制台，并把详细系统诊断分流到只追加内存日志。进入 Shell 时屏幕清空；
 此后普通 Kernel 事件只进入宿主可导出的日志，TTY stdout/stderr 写 VGA，panic
@@ -15,8 +15,9 @@ glob、控制序列、完整重定向、CMOS UTC 和 43 个独立工具路径。
 本地证据见 [发布记录](docs/releases/v2.3.md) 和
 [ADR 0051](docs/adr/0051-rootfs-v4-full-disk-links-and-recovery.md)。v2.4 随后加入
 本地凭据、Unix mode、VFS DAC、set-ID exec、rlimit 与 47 个工具路径；v2.5
-已加入单域水位、4 GiB 手机宿主驻留预算、256 MiB 稀疏 swap、Linux 编号的
-overcommit 0/1/2、确定性 OOM 和 `/proc/meminfo` 压力统计，设计见
+已加入单域水位、4 GiB QEMU 预分配 RAM、28 GiB 独立 ATA 交换盘、Linux 编号的
+overcommit 0/1/2、确定性 OOM 和 `/proc/meminfo` 压力统计。工程故障镜像仍保持
+稀疏，手机实际运行的 rootfs 与交换盘必须先完整物化；设计见
 [ADR 0053](docs/adr/0053-memory-pressure-swap-overcommit-and-oom.md)，当前验证状态见
 [v2.5 发布记录](docs/releases/v2.5.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
@@ -38,9 +39,10 @@ QEMU PC 的 `fw_cfg` 硬件接口读取 `etc/e820`，自行规范化为 BootInfo
 内核读取 `CPUID.80000008H` 与 E820，按实际可用 RAM 动态放置 2-bit 页帧
 元数据，并建立从 `0xFFFF888000000000` 开始、容量 64 TiB 的高半区物理
 直映窗口。直映内部优先使用 2 MiB 页，边界退回 4 KiB 页；Stage 1 的低
-64 MiB 身份映射只负责启动，不再限制正式页帧管理。主 QEMU 规格为 32 GiB，
-最小兼容规格仍为 64 MiB；32 GiB 启动必须在 4 GiB 以上分配、写回并回收
-页帧。内核同时建立 W^X/NX/WP 权限、guard page 和 512 KiB 高半区内核堆，
+64 MiB 身份映射只负责启动，不再限制正式页帧管理。手机主 QEMU 规格为
+4 GiB `-mem-prealloc`，最小兼容规格仍为 64 MiB；QEMU PC 的 PCI hole 重映射
+使 4 GiB 档仍必须在 `0x100000000` 以上分配、写回并回收页帧。内核同时建立
+W^X/NX/WP 权限、guard page 和 512 KiB 高半区内核堆，
 并真实切换 CR3。该堆现已支持 best-fit、二次幂对齐、释放、前后合并、非法
 释放检测、完整一致性检查和生命周期统计；QEMU 启动自检完成真实写回后会
 释放全部对象并确认活动数归零。固定尺寸类型缓存在该堆上用一次后备申请同时
@@ -97,7 +99,7 @@ type cache、32 TiB KVA、动态双 guard 内核栈与页表空分支回收均�
 随机模型和 QEMU 真实生命周期验收。通用 `ScopeRollback` 已接管动态栈创建
 失败路径，`ReferenceCounter` 冻结强引用生命周期，`ResourceSnapshot` 同时
 核对 frame、buddy、heap、KVA 与栈的当前所有权。目标启动和四进程退出各做
-一次零差异验证；具名 256 MiB functional smoke 与 32 GiB 主规格共同通过，
+一次零差异验证；具名 256 MiB functional smoke 与 4 GiB 手机主规格共同通过，
 因此 v1.1 已闭环。
 v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符和文件系统
 上下文的共享资源容器，把 Thread 固定为唯一调度实体。独立单调 PID/TID
@@ -106,7 +108,8 @@ v1.2 已删除旧 PCB 调度器，把 Process 固定为地址空间、描述符�
 condition、timeout、signal、close、cancel 使用单赢家 WakeReason；SpinLock、
 IrqSaveSpinLock 和可睡眠 Mutex 的调用边界由测试冻结。运行时规格随同一镜像
 按 RAM 选择：64 MiB 兼容档为 8/8/1，256 MiB 为 64 Process/128 Thread/单进程
-32 Thread，32 GiB 为 256/512/64；启动容量自检建立真实页表根、动态栈和
+32 Thread；4 GiB 手机档沿用 64/128/32 的轻量资源配置，32 GiB 可选压力档才使用
+256/512/64。启动容量自检建立真实页表根、动态栈和
 FXSAVE 区，再退出、reap 并用 ResourceSnapshot 验证零差异。四个 Ring 3
 程序分别写入不同 XMM0、XMM15、MXCSR、x87 控制字和 ST0 模式，在抢占、
 阻塞、唤醒和退出边界反复校验。宿主固定种子模型执行 100000 步状态迁移，

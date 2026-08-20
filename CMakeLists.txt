@@ -32,6 +32,7 @@ add_subdirectory(source/kernel)
 
 set(OS_FIRMWARE_IMAGE_SIZE_BYTES 131072)
 set(OS_DISK_IMAGE_SIZE_BYTES 137438953472)
+set(OS_SWAP_DISK_IMAGE_SIZE_BYTES 30534537216)
 set(OS_IMAGE_SIZE_MISMATCH_INCREMENT 1)
 math(
     EXPR
@@ -64,6 +65,7 @@ set(
     "${OS_IMAGE_OUTPUT_DIRECTORY}/firmware_ide_error_failure.bin"
 )
 set(OS_BOOT_DISK_IMAGE "${OS_IMAGE_OUTPUT_DIRECTORY}/boot_disk.img")
+set(OS_SWAP_DISK_IMAGE "${OS_IMAGE_OUTPUT_DIRECTORY}/swap_disk.img")
 set(
     OS_STAGE1_INVALID_HEADER_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/stage1_invalid_header_disk.img"
@@ -156,6 +158,22 @@ add_custom_target(
         os_stage1_images
         "${OS_EMPTY_FIRMWARE_IMAGE}"
         "${OS_EMPTY_DISK_IMAGE}"
+        "${OS_SWAP_DISK_IMAGE}"
+)
+
+add_custom_command(
+    OUTPUT "${OS_SWAP_DISK_IMAGE}"
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/os.py"
+        create-swap-image
+        "${OS_SWAP_DISK_IMAGE}"
+    DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/os.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/os_tools/sparse_image.py"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/os_tools/swap_image.py"
+    COMMENT "生成 28 GiB 数据容量的原始交换盘镜像"
+    VERBATIM
 )
 
 if(BUILD_TESTING)

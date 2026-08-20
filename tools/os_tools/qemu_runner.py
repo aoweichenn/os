@@ -10,9 +10,11 @@ import threading
 import time
 
 from .boot_layout import OS_BOOT_LAYOUT_ROOTFS_START_LBA
+from .allocated_image import requireAllocatedImage
 from .errors import OsToolError
 from .process import runCommand
 from .sparse_image import copySparseImage
+from .swap_image import OS_SWAP_IMAGE_SIZE_BYTES
 
 
 OS_QEMU_SMOKE_TIMEOUT_SECONDS = 2.0
@@ -21,7 +23,7 @@ OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS = 300.0
 OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS = 420.0
 OS_QEMU_DEFAULT_CPU_MODEL = "qemu64"
 OS_QEMU_TERMINATION_TIMEOUT_SECONDS = 1.0
-OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS = 1.0
+OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS = 30.0
 OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS = 5.0
 OS_QEMU_QMP_RETRY_INTERVAL_SECONDS = 0.01
 OS_QEMU_VGA_TRACE_POLL_INTERVAL_SECONDS = 0.05
@@ -32,7 +34,7 @@ OS_QEMU_COMPLETION_POLL_INTERVAL_SECONDS = 0.01
 OS_QEMU_COMPLETION_SETTLE_SECONDS = 0.05
 OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES = 64
 OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES = 256
-OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES = 32 * 1024
+OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES = 4 * 1024
 OS_QEMU_VNC_BASE_TCP_PORT = 5900
 OS_QEMU_VNC_MAXIMUM_CONNECTION_COUNT = 8
 OS_QEMU_VNC_MAXIMUM_DISPLAY_NUMBER = 99
@@ -1638,6 +1640,7 @@ def createQemuFirmwareCommand(
     memoryMebibytes: int = OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     cpuModel: str = OS_QEMU_DEFAULT_CPU_MODEL,
     displayBackend: str = "none",
+    swapDiskImagePath: Path | None = None,
 ) -> list[str]:
     if memoryMebibytes < OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES:
         raise OsToolError(
@@ -1669,6 +1672,17 @@ def createQemuFirmwareCommand(
         "-drive",
         f"file={diskImagePath},format=raw,if=ide,snapshot={snapshotMode}",
     ]
+    if memoryMebibytes >= OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES:
+        command[command.index("-nodefaults"):command.index("-nodefaults")] = [
+            "-mem-prealloc"
+        ]
+    if swapDiskImagePath is not None:
+        command.extend(
+            (
+                "-drive",
+                f"file={swapDiskImagePath},format=raw,if=ide,index=2,snapshot={snapshotMode}",
+            )
+        )
     for qmpSocketPath in qmpSocketPaths:
         command.extend(
             (
@@ -1690,9 +1704,18 @@ def runQemuVgaDisplay(
     memoryMebibytes: int,
     cpuModel: str,
     guestLogFilePath: Path,
+    swapDiskImagePath: Path | None = None,
+    requireAllocatedStorage: bool = True,
 ) -> None:
     validateImageSize(firmwareImagePath, expectedFirmwareSizeBytes, "固件 ROM")
     validateImageSize(diskImagePath, expectedDiskSizeBytes, "启动磁盘镜像")
+    if swapDiskImagePath is not None:
+        validateImageSize(swapDiskImagePath, OS_SWAP_IMAGE_SIZE_BYTES, "交换盘镜像")
+    if requireAllocatedStorage:
+        requireAllocatedImage(diskImagePath)
+        if swapDiskImagePath is None:
+            raise OsToolError("实际运行必须提供已物化的独立交换盘。")
+        requireAllocatedImage(swapDiskImagePath)
     resolvedGuestLogFilePath = (
         guestLogFilePath
         if guestLogFilePath.is_absolute()
@@ -1713,6 +1736,7 @@ def runQemuVgaDisplay(
             memoryMebibytes,
             cpuModel,
             displayBackend,
+            swapDiskImagePath,
         )
         normalizedCommand = [str(argument) for argument in command]
         print(f"+ {shlex.join(normalizedCommand)}", flush=True)
@@ -1723,7 +1747,7 @@ def runQemuVgaDisplay(
 
         def captureGuestLog() -> None:
             connectionDeadline = (
-                time.monotonic() + OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS
+                time.monotonic() + OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS
             )
             while (
                 not traceQmpSocketPath.exists()
@@ -1743,7 +1767,7 @@ def runQemuVgaDisplay(
                     ) as guestLogFile,
                     socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as qmpSocket,
                 ):
-                    qmpSocket.settimeout(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS)
+                    qmpSocket.settimeout(OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS)
                     qmpSocket.connect(str(traceQmpSocketPath))
                     with qmpSocket.makefile("rwb", buffering=0) as qmpStream:
                         greetingLine = qmpStream.readline()
@@ -2117,7 +2141,7 @@ def runQemuWithTimedVgaTrace(
 
     def captureVgaTrace() -> None:
         connectionDeadline = (
-            time.monotonic() + OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS
+            time.monotonic() + OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS
         )
         while (
             not traceQmpSocketPath.exists()
@@ -2133,7 +2157,7 @@ def runQemuWithTimedVgaTrace(
         textDumpPath = traceDumpPath.with_name("vga-text.bin")
         try:
             with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as qmpSocket:
-                qmpSocket.settimeout(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS)
+                qmpSocket.settimeout(OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS)
                 qmpSocket.connect(str(traceQmpSocketPath))
                 with qmpSocket.makefile("rwb", buffering=0) as qmpStream:
                     greetingLine = qmpStream.readline()
@@ -2378,7 +2402,7 @@ def injectQemuText(
         return
 
     connectionDeadline = (
-        time.monotonic() + OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS
+        time.monotonic() + OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS
     )
     while (
         not qmpSocketPath.exists()
@@ -2391,7 +2415,7 @@ def injectQemuText(
 
     try:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as qmpSocket:
-            qmpSocket.settimeout(OS_QEMU_QMP_CONNECTION_TIMEOUT_SECONDS)
+            qmpSocket.settimeout(OS_QEMU_QMP_STARTUP_TIMEOUT_SECONDS)
             qmpSocket.connect(str(qmpSocketPath))
             with qmpSocket.makefile("rwb", buffering=0) as qmpStream:
                 greetingLine = qmpStream.readline()
@@ -2546,12 +2570,15 @@ def runQemuFirmwareBoot(
     cpuModel: str = OS_QEMU_DEFAULT_CPU_MODEL,
     keyboardStepTimeoutSeconds: float | None = None,
     vgaCaptureTimeoutSeconds: float = OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS,
+    swapDiskImagePath: Path | None = None,
 ) -> None:
     validateImageSize(
         firmwareImagePath,
         expectedFirmwareSizeBytes,
         "固件 ROM",
     )
+    if swapDiskImagePath is not None:
+        validateImageSize(swapDiskImagePath, OS_SWAP_IMAGE_SIZE_BYTES, "交换盘镜像")
     validateImageSize(
         diskImagePath,
         expectedDiskSizeBytes,
@@ -2631,6 +2658,8 @@ def runQemuFirmwareBoot(
             persistentDiskWrites,
             memoryMebibytes,
             cpuModel,
+            "none",
+            swapDiskImagePath,
         )
         try:
             (
@@ -2707,6 +2736,7 @@ def runQemuFileSystemPersistence(
     diskImagePath: Path,
     expectedFirmwareSizeBytes: int,
     expectedDiskSizeBytes: int,
+    swapDiskImagePath: Path,
 ) -> None:
     """在同一可写磁盘上连续启动两次，并对第三次启动注入超级块损坏。"""
     validateImageSize(
@@ -2714,6 +2744,7 @@ def runQemuFileSystemPersistence(
         expectedFirmwareSizeBytes,
         "固件 ROM",
     )
+    validateImageSize(swapDiskImagePath, OS_SWAP_IMAGE_SIZE_BYTES, "交换盘镜像")
     validateImageSize(
         diskImagePath,
         expectedDiskSizeBytes,
@@ -2731,7 +2762,9 @@ def runQemuFileSystemPersistence(
         prefix="os-qemu-file-system-"
     ) as temporaryDirectory:
         writableDiskPath = Path(temporaryDirectory) / "persistent_disk.img"
+        writableSwapDiskPath = Path(temporaryDirectory) / "persistent_swap.img"
         copySparseImage(diskImagePath, writableDiskPath)
+        copySparseImage(swapDiskImagePath, writableSwapDiskPath)
 
         runQemuFirmwareBoot(
             projectRoot,
@@ -2758,6 +2791,7 @@ def runQemuFileSystemPersistence(
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
             keyboardStepTimeoutSeconds=40.0,
             vgaCaptureTimeoutSeconds=10.0,
+            swapDiskImagePath=writableSwapDiskPath,
         )
         runQemuFirmwareBoot(
             projectRoot,
@@ -2783,6 +2817,7 @@ def runQemuFileSystemPersistence(
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
             keyboardStepTimeoutSeconds=40.0,
             vgaCaptureTimeoutSeconds=10.0,
+            swapDiskImagePath=writableSwapDiskPath,
         )
 
         superblockByteOffset = (
@@ -2819,5 +2854,6 @@ def runQemuFileSystemPersistence(
             ),
             persistentDiskWrites=True,
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
+            swapDiskImagePath=writableSwapDiskPath,
             vgaCaptureTimeoutSeconds=10.0,
         )

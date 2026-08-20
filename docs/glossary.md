@@ -241,8 +241,8 @@
 | THRE | UART 线路状态中的发送保持寄存器为空标志 |
 | fault injection | 主动制造设备或输入失败，以验证错误路径和恢复契约 |
 | memory watermark | 以 free page 数表示的 min/low/high 阈值；决定保留、直接回收和停止回收的边界 |
-| resident budget | 允许来宾实际触碰并由宿主物化的页帧上限；不等同于来宾报告 RAM |
-| swap slot | `/.os-swap` 中保存一个 4 KiB 匿名页及校验责任的固定编号位置 |
+| resident budget | 允许来宾驻留的物理页帧上限；4 GiB 手机档等于实际预分配 RAM |
+| swap slot | secondary ATA 交换盘中保存一个 4 KiB 匿名页的固定编号位置；身份与校验和位于磁盘哈希桶 |
 | overcommit | 在建立 VMA 时允许虚拟承诺超过即时空闲 RAM 的策略；模式编号 0/1/2 与 Linux 一致 |
 | commit limit | overcommit accountant 允许同时承诺的总页数上限 |
 | OOM score | 根据 resident+swap 占用和 adjustment 计算的牺牲者优先级 |

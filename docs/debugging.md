@@ -695,10 +695,8 @@ generation 写回 VFS mount generation。
 QEMU 捕获器因此使用两个边界：
 
 1. 逐行观察当前用例的最后一个必需里程碑；到达后保留短暂收尾窗口并回收进程。
-2. 未到达时，64 MiB 启动档以 35 秒、承担 90 个进程和时间探针验收的
-   256 MiB 功能档以 120 秒、32 GiB 主规格以 240 秒为总失败上界；主规格要在
-   Debug 构建中扫描约 8388608 个页状态。QMP 等待 `READY` 使用与当前内存规格
-   相同的预算，外层 CTest 分别保留额外回收余量。
+2. 未到达时，64 MiB、256 MiB 与 4 GiB 预分配档分别使用 150、300、420 秒
+   总失败上界；QMP 建立另有 30 秒上界，外层 CTest 保留进程回收余量。
 
 协议校验仍在进程结束后检查所有必需标记的顺序和全部禁止标记。这个设计既移除
 “所有宿主都同速”的假设，也让稳定停顿成为可重复诊断证据；不会把缺失 IRQ、
@@ -1899,11 +1897,11 @@ FIFO、canonical edit 和 EOF pending 是否尚未清空。
 
 ### 启动停在 `USER_EXECUTION_FAILED=0x11`
 
-同时读取 `SWAP_INITIALIZATION_STAGE`：1 表示 FsContext 已建立但 swap 文件 open
-失败，2 表示 open 后 chmod 失败，3 表示 chmod 后 sparse truncate 失败，4 表示
-truncate 后属性/稀疏性验证失败，5..8 依次表示 manager、pressure、overcommit
-或 VFS 槽自检失败。VFS 路径长度不得
-包含 C 字符串末尾 NUL；`/.os-swap` 的长度必须显式为 `sizeof(path)-1`。
+同时读取 `SWAP_INITIALIZATION_STAGE`：1 表示 `SwapStorage` 已验证 `OSSWAP01`
+superblock 并提交新代次，2..5 依次表示 manager、pressure、overcommit 或 ATA
+槽自检完成。值仍为 0 时，先确认 QEMU 命令含 secondary IDE 的交换盘，镜像精确
+为 30534537216 字节；再检查 `0x170..0x177`、`0x376` 和 superblock FNV-1a。
+不能降级为 rootfs 中的稀疏交换文件。
 
 成功启动必须依次看到 `MEMORY_PRESSURE_READY`、`SWAP_READY` 和
 `SWAP_SELF_TEST_PASSED`。后两者缺失时不要继续启动 PID 1，也不要把 swap 静默
@@ -1916,9 +1914,9 @@ truncate 后属性/稀疏性验证失败，5..8 依次表示 manager、pressure�
 active、OOM invocation/victim。用户分配会回收到 high；内核紧急分配只保证
 min 保留，不保证用户 fault 一定成功。
 
-若 active swap 为 0，`FindSlot` 必须立即返回 MappingNotFound。对每个普通缺页
-扫描全部 65536 槽会把 TCG 交互测试拖到超时，看起来像调度死锁；修复应保留槽
-唯一性，不得通过关闭 swap 查询绕过。
+若 active swap 为 0，`FindSlot` 必须立即返回 MappingNotFound。非空时从身份哈希
+桶开始探测，tombstone 继续、当前代的 Empty 停止；不得顺序扫描 7340032 个槽。
+若重启后仍找到旧槽，检查 superblock 代次是否先于 manager 初始化落盘。
 
 ### swap 损坏后进程退出
 
@@ -1937,8 +1935,9 @@ frame/PTE 由 user_memory 逆序释放，相关 Process 随后被隔离；unmap/
 
 先看带来宾单调时间的最后 marker。持续产生 fork/exec/wait、工具输出或管线
 marker 说明是宿主 TCG 降频，不是来宾死锁；无新 marker 才按逐步进度超时处理。
-v2.5 增加 swap 元数据 BSS 和启动 VFS I/O，总预算可以分档提高，但非黑 VGA、
-最终 READY、资源守恒和单步进度门禁不能删除。
+4 GiB `-mem-prealloc` 会在 QMP greeting 前实际触碰后备页；QMP 启动预算为 30 秒，
+与后续来宾总预算分离。若进程 RSS 没有接近 4 GiB，先检查命令是否缺少
+`-mem-prealloc`。非黑 VGA、最终 READY、资源守恒和单步进度门禁不能删除。
 
 ### 子进程打印 `EXIT_PID` 后系统停止
 
