@@ -1406,3 +1406,10 @@ PID1、参数探针、Shell、QEMU、README 和发布记录中的版本文本。
 
 soak 不替代全量 CTest、三启动持久化或故障矩阵。最终发布记录分别报告全量、
 物化启动和三轮 soak 的墙钟、峰值 RSS、强 marker 与主仓 SHA。
+
+首个 v2.6 Git 候选 `7a81b5b950615a6872db9d9404c8acafbcd7aab9` 在 caw 的
+全量 CTest 为 192/192、0 失败、196.55 秒：58 unit、70 integration、40
+randomized、24 system，含 23 条 failure-path。bootstrap、functional、4 GiB
+primary、persistence 分别为 8.77、24.33、26.31、48.65 秒，全量峰值 RSS
+4264028 KiB。两块已物化盘的三轮 soak 为 3/3、77.53 秒，峰值 RSS
+4267056 KiB。最终主仓 SHA 形成后必须重新生成清单并复查身份门禁。
