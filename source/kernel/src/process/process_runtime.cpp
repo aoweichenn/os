@@ -2633,6 +2633,35 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     return ProcessRuntimeStatus::Succeeded;
 }
 
+ProcessRuntimeStatus RefreshProcessRuntimeResourceBaseline() noexcept {
+    const ThreadSchedulerStatistics scheduler_statistics = thread_scheduler.Statistics();
+    if (!process_runtime_initialized || process_scheduling_active ||
+        scheduler_statistics.owned_process_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        scheduler_statistics.owned_thread_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return ProcessRuntimeStatus::AlreadyActive;
+    }
+    frames_before_processes = GetPhysicalFrameAllocatorStatistics();
+    virtual_addresses_before_processes = GetKernelVirtualAddressAllocator().Statistics();
+    kernel_stacks_before_processes = GetKernelStackManager().Statistics();
+    virtual_memory_areas_before_processes = GetUserVirtualMemoryPoolStatistics();
+    user_page_references_before_processes = GetUserPageReferenceStatistics();
+    resource_snapshot_before_processes = ResourceSnapshot{};
+    if (kernel_stacks_before_processes.active_stack_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        virtual_memory_areas_before_processes.active_descriptor_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        user_page_references_before_processes.active_entry_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        user_page_references_before_processes.active_reference_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        GetKernelResourceSnapshot(ResourceSnapshotSupplementalCounts{},
+                                  resource_snapshot_before_processes) !=
+            ResourceSnapshotStatus::Succeeded) {
+        return ProcessRuntimeStatus::ResourceLeakDetected;
+    }
+    return ProcessRuntimeStatus::Succeeded;
+}
+
 ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_device) noexcept {
     if (!process_runtime_initialized) {
         return ProcessRuntimeStatus::NotInitialized;

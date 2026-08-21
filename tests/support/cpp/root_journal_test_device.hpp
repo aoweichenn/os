@@ -1,7 +1,7 @@
 #pragma once
 
-#include "os/kernel/fs/block_cache.hpp"
-#include "os/kernel/fs/root_file_system_format.hpp"
+#include <os/kernel/fs/block_cache.hpp>
+#include <os/kernel/fs/root_file_system_format.hpp>
 
 #include <array>
 #include <stdint.h>
@@ -14,11 +14,12 @@ inline constexpr uint64_t OS_TEST_ROOT_JOURNAL_DEVICE_BLOCK_COUNT =
     os::kernel::fs::OS_KERNEL_ROOTFS_START_LBA + os::kernel::fs::OS_KERNEL_ROOTFS_TOTAL_BLOCK_COUNT;
 inline constexpr uint64_t OS_TEST_ROOT_JOURNAL_DEVICE_DISABLED_FAILURE_ORDINAL = 0ULL;
 
-class RootJournalTestDevice final : public os::kernel::FileSystemBlockDevice {
+class RootJournalTestDevice final
+    : public os::kernel::BlockDeviceAdapter<RootJournalTestDevice> {
   public:
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     ReadBlock(const uint64_t logical_block_address, uint8_t *const block,
-              const uint64_t block_size_bytes) noexcept override {
+              const uint64_t block_size_bytes) noexcept {
         if (block == nullptr) {
             return os::kernel::FileSystemBlockDeviceStatus::InvalidBuffer;
         }
@@ -36,7 +37,7 @@ class RootJournalTestDevice final : public os::kernel::FileSystemBlockDevice {
 
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     WriteBlock(const uint64_t logical_block_address, const uint8_t *const block,
-               const uint64_t block_size_bytes) noexcept override {
+               const uint64_t block_size_bytes) noexcept {
         if (block == nullptr) {
             return os::kernel::FileSystemBlockDeviceStatus::InvalidBuffer;
         }
@@ -56,7 +57,7 @@ class RootJournalTestDevice final : public os::kernel::FileSystemBlockDevice {
         return os::kernel::FileSystemBlockDeviceStatus::Succeeded;
     }
 
-    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept override {
+    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept {
         ++this->flush_attempt_count_;
         if (this->failed_flush_ordinal_ != OS_TEST_ROOT_JOURNAL_DEVICE_DISABLED_FAILURE_ORDINAL &&
             this->flush_attempt_count_ == this->failed_flush_ordinal_) {

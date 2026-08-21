@@ -9,7 +9,12 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
 - `legacy_pic` 拥有两片 8259A 的初始化、屏蔽、ISR 查询和 EOI。
 - `programmable_interval_timer` 配置 8254 通道 0。
 - `ps2_keyboard` 拥有 i8042 与键盘命令握手。
-- `block_request` 提供 64 位请求身份、FIFO、单飞完成与 Reap 生命周期。
+- `pci_model` 负责 BDF/configuration address、NVMe class code 和 memory BAR 纯逻辑；
+- `pci` 以 32 位端口访问 PCI configuration mechanism #1；
+- `nvme_model` 负责 CAP、CC/AQA、Identify、CQE 和 queue cursor 纯协议；
+- `nvme` 负责 BAR/MMIO、DMA admin queue、doorbell 与真实控制器生命周期；
+- `block_device` 定义不依赖文件系统和控制器类型的块设备协议与几何。
+- `block_request` 提供 64 位请求身份、FIFO 签发、多深度乱序完成与 Reap 生命周期。
 - `ata_pio` 保留有界 LBA28 PIO 轮询适配器，并提供 Read/Write/Flush 的
   IRQ14 异步请求；当前 rootfs 普通扇区访问仍走同步适配器，显式 sync 的
   最终 FLUSH 已接入 BlockIo。
@@ -71,20 +76,23 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
 ## 测试证据
 
 - 单元：PIC 向量与掩码失败原子性、PIT 范围/舍入/溢出、扫描码状态机、
-  ATA LBA/缓冲区/magic，以及 BlockRequest 参数、FIFO、单飞和单赢家。
+  ATA LBA/缓冲区/magic，以及 BlockRequest 几何、多块、设备能力和容量生命周期。
 - 集成：把 PIC 开放顺序、PIT 参数、键盘解码和 ATA 描述符校验组合为启动
   契约。
-- 随机：固定种子执行 4096 轮 IRQ 往返、PIT 有效频率和键盘 make/break。
+- 随机：固定种子执行 4096 轮 IRQ 往返、PIT 有效频率和键盘 make/break；块请求
+  另执行十万步多深度提交、FIFO 签发、乱序完成、超时、取消与回收模型。
 - ELF：要求 16 个硬件 IRQ 符号、公共入口、桩表和 C++ 分发器完整。
 - 系统：QEMU 真实产生 IRQ0；QMP 注入 `A` 键，来宾必须输出扫描码 `0x1E`
   和 `A_PRESSED`，同时禁止设备失败、异常与 panic。
 
 ## 当前限制
 
-- 单核、PIC 经 LAPIC virtual-wire 交付；没有 I/O APIC、LAPIC timer、
-  MSI/MSI-X 或 SMP 路由。
-- ATA 运行期已启用 IRQ14 与 64 槽 FIFO，但硬件通道仍是单飞 PIO；没有
-  DMA、tagged queue、AHCI/NVMe 或多控制器。ROM、Stage 1、early Kernel
+- 单核、PIC 经 LAPIC virtual-wire 交付；NVMe 使用单个 MSI-X 向量 `0x50`，尚无
+  I/O APIC、LAPIC timer、MSI-X 多向量亲和性或 SMP 路由。
+- ATA 运行期已启用 IRQ14 与 64 槽 FIFO，但硬件通道仍是单飞 PIO；没有 ATA
+  DMA、tagged queue 或 AHCI。Kernel 已有单控制器、单 namespace 的轮询 NVMe
+  I/O、16 页 PRP、四 outstanding 和单向量 MSI-X，但没有多 I/O queue、多控制器或
+  调度器异步接口。ROM、Stage 1、early Kernel
   自检及当前 rootfs 普通扇区适配器仍使用有界轮询；异步生产路径当前由
   显式 sync 的最终 FLUSH 验证。
 - PS/2 已解码左右 Shift/Ctrl、CapsLock、Basic Latin 和方向键；Ctrl-C/Z 转为
@@ -95,3 +103,34 @@ PIT 输入为 1193182 Hz，目标频率为 1000 Hz，实际除数为 `0x04A9`。
   Gregorian 换算；没有设置接口、时区数据库、闰秒表或持久校时服务。
 - 当前为单 BSP 动态 Process/Thread 调度器，仍使用固定四 tick 时间片；设备层
   尚未提供按最早 deadline 重新编程的 one-shot 时钟事件接口。
+
+## v2.7 通用块设备层
+
+`BlockDevice` 已从文件系统缓存头上移到设备模块。旧
+`FileSystemBlockDevice`/`FileSystemBlockDeviceStatus` 暂时是兼容别名，现有
+rootfs、journal、swap 和宿主测试设备继续工作，但新驱动只实现设备层类型。
+接口通过静态函数表和 `BlockDeviceAdapter<DriverType>` 分派，不使用 C++ virtual、
+RTTI 或 `__cxa_pure_virtual`，并保持 `constinit` ATA 运行时无全局构造依赖。
+
+通用队列不再读取 ATA 常量。驱动初始化队列时提交 `BlockDeviceGeometry`；ATA
+声明 512 字节、LBA28、单块和单 outstanding，后续 NVMe 根据 Identify/MDTS 与
+创建成功的 I/O queue 深度声明自己的几何。多个请求可处于 Issued，完成可以
+乱序；超时按 deadline/identifier 稳定选择一个请求，调用者可循环处理同一时刻
+到期的其余请求。
+
+`pci_model` 已支持 256 bus、每 bus 32 device、每 device 8 function 的 mechanism #1
+地址，识别 class code `01/08/02`，并解析 32/64 位 memory BAR 和尺寸探测掩码。
+`PciConfigurationSpace` 使用同一个 irq-save lock 保护 `0xCF8` 地址选择与 `0xCFC`
+数据读写，防止中断路径夹入另一笔访问。
+
+第三增量扫描总线，探测并分配 BAR0，在 KVA 建立 cache-disabled MMIO，完成
+CAP/VS、CC/CSTS、admin SQ/CQ、Identify Controller 与 Namespace 1。第四增量用
+Set Features 请求一对队列，创建深度 64 的 CQ1/SQ1，并经 `BlockDeviceAdapter`
+完成单页 Read/Write/Flush。真实 QEMU 证据识别 128 GiB、512 字节逻辑块，在末端
+8 个 LBA 回验 4 KiB 数据，退出时关闭控制器、解除 MMIO、释放六个 DMA 页并恢复
+原 BAR。
+
+当前每槽 16 页把单请求限制为 64 KiB，四槽 completion 按 CID 回收；EIO 与超时
+都会 reset 并重建队列。Namespace 1/2 已分别承载 Kernel rootfs/swap，缺失设备
+自动回退 ATA；ROM/Stage 1 仍从 ATA 启动。尚未实现链式多页 PRP list、多 I/O
+queue、调度器异步接口或 MSI-X 多向量。

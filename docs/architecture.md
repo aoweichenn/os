@@ -2251,7 +2251,8 @@ Shell 为每条外部管线建立一个 PGID，child 恢复默认 SIGINT/SIGTSTP
 
 ```text
 Thread / sync
-  → BlockRequestQueue：64 槽 FIFO，单个 Issued
+  → BlockRequestQueue：64 槽 FIFO，深度由设备几何声明
+    → ATA PIO 几何：512 B、单块、单个 Issued
   → AtaPioDevice：READ / WRITE / FLUSH
   → primary ATA IRQ14
   → slave PIC IR6 → master IR2 cascade → LAPIC LINT0 ExtINT
@@ -2285,9 +2286,63 @@ fork 的 FileShared 页不加 COW；FilePrivate 继续走 COW 且不回写。写
 代码控制流见
 [v1.16 学习章](learning/24-v1.16-irq14-block-request-writeback.md)。
 
+## v2.7 通用块设备层与 NVMe 演进架构
+
+块设备协议不再由文件系统缓存拥有：
+
+```text
+VFS / rootfs / journal / swap / file page cache
+  → BlockDevice
+    → BlockRequestQueue
+      ├→ AtaPioDevice：512 B、LBA28、单块、深度 1
+      └→ NvmeDevice：namespace 几何、多块、有限 queue depth
+```
+
+`BlockDeviceGeometry` 固定六项事实：逻辑块字节数、逻辑块数、单请求最大块数、
+最大 outstanding、写入能力与 Flush 能力。队列只解释这些事实，不包含 ATA 端口、
+NVMe opcode 或 PCI 地址。Queued 仍按 FIFO 进入设备，Issued 可以达到设备深度并
+乱序完成；每个请求继续以 64 位 identifier 与绝对 deadline 保持唯一生命周期。
+`BlockDevice` 自身使用静态函数表和类型化 adapter，不使用 C++ virtual/RTTI；
+因此宿主模型与 freestanding Kernel 复用同一分派而不引入纯虚运行时符号。
+
+NVMe 路径采用项目自研的最小 PCI 与控制器驱动：
+
+```text
+PCI configuration mechanism #1
+  → class/subclass/prog-if 定位 NVMe
+  → BAR0/1 解析与 MMIO 映射
+  → CAP/VS/CC/CSTS 状态机
+  → admin SQ/CQ：Identify + Create I/O CQ/SQ
+  → I/O SQ/CQ：Read / Write / Flush
+  → doorbell + command identifier + completion phase tag
+  → BlockRequest 唯一终态
+```
+
+首个目标只使用 QEMU NVMe 1.4 的一个控制器、namespace 1、一个 admin queue pair
+和一个 I/O queue pair。轮询路径先冻结 DMA 可见性、queue wrap、phase 翻转、
+MDTS 与 timeout；MSI-X 在相同完成状态机上替换轮询等待。ROM 与 Stage 1 不承担
+PCI/NVMe 复杂度，继续由 ATA PIO 加载 Kernel；rootfs/swap 在 Kernel 驱动证据
+完成后迁移。详细决策见
+[ADR 0055](adr/0055-v2-7-block-device-layer-and-nvme-path.md)。
+
+截至第五增量，configuration 扫描、BAR aperture 探测/分配/恢复、cache-disabled
+MMIO、CAP/VS、CC/CSTS、admin SQ/CQ、两条 Identify、Set Features、Create CQ1/SQ1
+以及 Read/Write/Flush 已经在真实 QEMU NVMe 1.4 设备上闭合。I/O queue 深度为 64；
+四个请求槽各有 16 个数据页和一页 PRP list，CQ 通过 CID 乱序归还槽位，几何声明
+64 KiB 和四 outstanding。MSI-X entry 0 经 IDT `0x50` 交付到 BSP LAPIC。
+
+错误 completion 或 deadline timeout 进入同一 reset 状态机：mask MSI-X，清 CC.EN，
+等待 RDY=0，重建 admin/I/O queue 后再 unmask。关闭控制器后归还 73 个 DMA 页、
+MMIO/KVA 和 BAR。
+
+第六增量把 NSID 1/2 分别包装为 rootfs/swap `BlockDevice`。Kernel 优先选择双
+namespace NVMe，缺失或可安全清理的初始化失败回退 ATA；ROM/Stage 1 始终从 ATA
+加载。Process runtime 在用户进程前把常驻控制器资源刷新进基线，进程结束验证
+设备仍在，最终 sync 后 shutdown 又验证资源回到 storage 初始化前。
+
 ## v2.3 rootfs v4 容量与恢复架构
 
-生产存储路径保持项目自有启动链和 ATA LBA28 驱动，只替换 rootfs 盘面与 VFS
+v2.3 至 v2.6 的生产存储路径保持项目自有启动链和 ATA LBA28 驱动，只替换 rootfs 盘面与 VFS
 语义：
 
 ```text

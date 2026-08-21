@@ -1495,6 +1495,93 @@ uint64_t PhysicalMemoryDirectMapAddress(const uint64_t physical_address) noexcep
     return OS_KERNEL_MEMORY_DIRECT_MAP_VIRTUAL_BASE + physical_address;
 }
 
+KernelMmioStatus MapKernelMmio(const uint64_t physical_address, const uint64_t size_bytes,
+                               KernelMmioMapping &mapping) noexcept {
+    if (!direct_map_active) {
+        return KernelMmioStatus::NotInitialized;
+    }
+    if (mapping.active || size_bytes == 0ULL ||
+        (physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        (size_bytes & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        physical_address >= current_page_table_physical_address_limit ||
+        size_bytes > current_page_table_physical_address_limit - physical_address) {
+        return KernelMmioStatus::InvalidRange;
+    }
+    const uint64_t page_count = size_bytes / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+    KernelVirtualAddressRange range{};
+    KernelVirtualAddressAllocator &allocator = GetKernelVirtualAddressAllocator();
+    if (allocator.TryAllocate(page_count, OS_KERNEL_MEMORY_KVA_SINGLE_UNIT, range) !=
+        KernelVirtualAddressAllocatorStatus::Succeeded) {
+        return KernelMmioStatus::VirtualAddressAllocationFailed;
+    }
+    const PagePermissions device_permissions{
+        .writable = true,
+        .executable = false,
+        .user_accessible = false,
+        .cache_disabled = true,
+    };
+    uint64_t mapped_page_count = 0ULL;
+    PageTableManager &manager = GetPageTableManager();
+    while (mapped_page_count < page_count) {
+        const uint64_t virtual_address =
+            range.begin_address + mapped_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        const uint64_t page_physical_address =
+            physical_address + mapped_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        if (manager.MapPage(virtual_address, page_physical_address, device_permissions) !=
+            PageTableStatus::Succeeded) {
+            break;
+        }
+        ++mapped_page_count;
+    }
+    if (mapped_page_count != page_count) {
+        bool rollback_succeeded = true;
+        while (mapped_page_count != 0ULL) {
+            --mapped_page_count;
+            const uint64_t virtual_address =
+                range.begin_address + mapped_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+            rollback_succeeded =
+                manager.UnmapPage(virtual_address) == PageTableStatus::Succeeded &&
+                rollback_succeeded;
+        }
+        rollback_succeeded =
+            allocator.TryRelease(range) == KernelVirtualAddressAllocatorStatus::Succeeded &&
+            rollback_succeeded;
+        return rollback_succeeded ? KernelMmioStatus::PageMappingFailed
+                                  : KernelMmioStatus::RollbackFailed;
+    }
+    mapping = KernelMmioMapping{
+        .virtual_address = range.begin_address,
+        .physical_address = physical_address,
+        .page_count = page_count,
+        .active = true,
+    };
+    return KernelMmioStatus::Succeeded;
+}
+
+KernelMmioStatus UnmapKernelMmio(KernelMmioMapping &mapping) noexcept {
+    if (!mapping.active || mapping.virtual_address == 0ULL || mapping.page_count == 0ULL) {
+        return KernelMmioStatus::InvalidRange;
+    }
+    PageTableManager &manager = GetPageTableManager();
+    for (uint64_t page_index = 0ULL; page_index < mapping.page_count; ++page_index) {
+        const uint64_t virtual_address =
+            mapping.virtual_address + page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        if (manager.UnmapPage(virtual_address) != PageTableStatus::Succeeded) {
+            return KernelMmioStatus::PageUnmappingFailed;
+        }
+    }
+    const KernelVirtualAddressRange range{
+        .begin_address = mapping.virtual_address,
+        .page_count = mapping.page_count,
+    };
+    if (GetKernelVirtualAddressAllocator().TryRelease(range) !=
+        KernelVirtualAddressAllocatorStatus::Succeeded) {
+        return KernelMmioStatus::VirtualAddressReleaseFailed;
+    }
+    mapping = KernelMmioMapping{};
+    return KernelMmioStatus::Succeeded;
+}
+
 KernelHeap &GetKernelHeap() noexcept {
     static KernelHeap heap{};
     return heap;

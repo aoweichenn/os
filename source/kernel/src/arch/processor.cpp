@@ -1,4 +1,4 @@
-#include "os/kernel/arch/processor.hpp"
+#include <os/kernel/arch/processor.hpp>
 
 namespace os::kernel {
 
@@ -29,6 +29,11 @@ constexpr uint64_t OS_KERNEL_PROCESSOR_CR0_WRITE_PROTECT_BIT = 0x000000000001000
 constexpr uint64_t OS_KERNEL_PROCESSOR_REGISTER_HALF_WIDTH_BITS = 32ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_RFLAGS_INTERRUPT_ENABLE_BIT = 0x0000000000000200ULL;
 constexpr uint64_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_REGISTER_OFFSET = 0x00000000000000F0ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_LOCAL_APIC_IDENTIFIER_REGISTER_OFFSET =
+    0x0000000000000020ULL;
+constexpr uint64_t OS_KERNEL_PROCESSOR_LOCAL_APIC_EOI_REGISTER_OFFSET = 0x00000000000000B0ULL;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_IDENTIFIER_SHIFT_BITS = 24U;
+constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_IDENTIFIER_MASK = 0xFFU;
 constexpr uint64_t OS_KERNEL_PROCESSOR_LOCAL_APIC_LINT0_REGISTER_OFFSET = 0x0000000000000350ULL;
 constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR_MASK = 0x000000FFU;
 constexpr uint32_t OS_KERNEL_PROCESSOR_LOCAL_APIC_SPURIOUS_VECTOR = 0x000000FFU;
@@ -244,6 +249,24 @@ bool ProcessorSupportsFiveLevelPaging() noexcept {
 uint64_t LocalApicPhysicalAddress() noexcept {
     return ReadModelSpecificRegisterValue(OS_KERNEL_PROCESSOR_IA32_APIC_BASE_MSR) &
            OS_KERNEL_PROCESSOR_IA32_APIC_BASE_ADDRESS_MASK;
+}
+
+uint64_t LocalApicIdentifier() noexcept {
+    if (!ProcessorSupportsLocalApic()) {
+        return 0ULL;
+    }
+    const uint32_t identifier_register =
+        *LocalApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_IDENTIFIER_REGISTER_OFFSET);
+    return static_cast<uint64_t>(
+        (identifier_register >> OS_KERNEL_PROCESSOR_LOCAL_APIC_IDENTIFIER_SHIFT_BITS) &
+        OS_KERNEL_PROCESSOR_LOCAL_APIC_IDENTIFIER_MASK);
+}
+
+void AcknowledgeLocalApicInterrupt() noexcept {
+    if (ProcessorSupportsLocalApic()) {
+        *LocalApicRegister(OS_KERNEL_PROCESSOR_LOCAL_APIC_EOI_REGISTER_OFFSET) = 0U;
+        asm volatile("" : : : "memory");
+    }
 }
 
 bool EnableKernelMemoryProtection() noexcept {

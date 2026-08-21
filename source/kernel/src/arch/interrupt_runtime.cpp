@@ -1,15 +1,16 @@
-#include "os/kernel/arch/interrupt_runtime.hpp"
+#include <os/kernel/arch/interrupt_runtime.hpp>
 
-#include "os/kernel/arch/cpu_local.hpp"
-#include "os/kernel/arch/processor.hpp"
-#include "os/kernel/device/ata_pio.hpp"
-#include "os/kernel/device/legacy_pic.hpp"
-#include "os/kernel/device/programmable_interval_timer.hpp"
-#include "os/kernel/device/ps2_keyboard.hpp"
-#include "os/kernel/process/process_runtime.hpp"
-#include "os/kernel/time/monotonic_clock.hpp"
+#include <os/kernel/arch/cpu_local.hpp>
+#include <os/kernel/arch/processor.hpp>
+#include <os/kernel/device/ata_pio.hpp>
+#include <os/kernel/device/legacy_pic.hpp>
+#include <os/kernel/device/nvme.hpp>
+#include <os/kernel/device/programmable_interval_timer.hpp>
+#include <os/kernel/device/ps2_keyboard.hpp>
+#include <os/kernel/process/process_runtime.hpp>
+#include <os/kernel/time/monotonic_clock.hpp>
 
-#include "os/abi/time.hpp"
+#include <os/abi/time.hpp>
 
 namespace os::kernel {
 
@@ -124,6 +125,13 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
 }
 
 void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
+    if (vector == OS_KERNEL_INTERRUPT_NVME_MSIX_VECTOR) {
+        if (!DispatchNvmeMsixInterrupt()) {
+            HaltProcessor();
+        }
+        AcknowledgeLocalApicInterrupt();
+        return;
+    }
     uint64_t interrupt_request = OS_KERNEL_INTERRUPT_EMPTY_COUNTER;
     if (!this->initialized_ || CalculateLegacyPicInterruptRequest(vector, interrupt_request) !=
                                    LegacyPicModelStatus::Succeeded) {
@@ -342,12 +350,14 @@ extern "C" ExceptionFrame *OsKernelDispatchHardwareInterrupt(ExceptionFrame *fra
     const bool returning_to_user = FrameOriginatedFromUser(*frame);
     kernel_interrupt_runtime.Dispatch(frame->vector);
     uint64_t interrupt_request = 0ULL;
-    if (CalculateLegacyPicInterruptRequest(frame->vector, interrupt_request) !=
-        LegacyPicModelStatus::Succeeded) {
+    const bool nvme_msix_interrupt = frame->vector == OS_KERNEL_INTERRUPT_NVME_MSIX_VECTOR;
+    if (!nvme_msix_interrupt &&
+        CalculateLegacyPicInterruptRequest(frame->vector, interrupt_request) !=
+            LegacyPicModelStatus::Succeeded) {
         HaltProcessor();
     }
     ExceptionFrame *resume_frame = frame;
-    if (interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
+    if (!nvme_msix_interrupt && interrupt_request == OS_KERNEL_INTERRUPT_TIMER_REQUEST) {
         const uint64_t expired_deadline_count =
             HandleProcessDeadlineInterrupt(kernel_interrupt_runtime.MonotonicNanoseconds());
         if (expired_deadline_count != OS_KERNEL_INTERRUPT_EMPTY_COUNTER) {

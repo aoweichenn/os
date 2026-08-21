@@ -1,9 +1,10 @@
-#include "os/kernel/arch/descriptor_tables.hpp"
+#include <os/kernel/arch/descriptor_tables.hpp>
 
-#include "os/abi/system_call.hpp"
-#include "os/kernel/arch/descriptor_layout.hpp"
-#include "os/kernel/device/device_model.hpp"
-#include "os/kernel/arch/exception_frame.hpp"
+#include <os/abi/system_call.hpp>
+#include <os/kernel/arch/descriptor_layout.hpp>
+#include <os/kernel/arch/interrupt_runtime.hpp>
+#include <os/kernel/arch/exception_frame.hpp>
+#include <os/kernel/device/device_model.hpp>
 
 namespace os::kernel {
 
@@ -79,6 +80,7 @@ extern "C" const uint64_t
     os_kernel_exception_stub_table[OS_KERNEL_EXCEPTION_ARCHITECTED_VECTOR_COUNT];
 extern "C" const uint64_t
     os_kernel_hardware_interrupt_stub_table[OS_KERNEL_DEVICE_LEGACY_IRQ_COUNT];
+extern "C" void OsKernelNvmeMsixInterruptEntry() noexcept;
 extern "C" void OsKernelSystemCallEntry() noexcept;
 
 extern "C" void OsKernelLoadGdtAndTss(const DescriptorTablePointer *descriptor_table,
@@ -191,6 +193,11 @@ void InitializeInterruptDescriptorTable() noexcept {
             OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR, OS_KERNEL_DESCRIPTOR_NO_IST,
             OS_KERNEL_DESCRIPTOR_RING0_INTERRUPT_GATE);
     }
+    kernel_interrupt_descriptor_table[OS_KERNEL_INTERRUPT_NVME_MSIX_VECTOR] =
+        CreateInterruptGateDescriptor(
+            reinterpret_cast<uint64_t>(&OsKernelNvmeMsixInterruptEntry),
+            OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR, OS_KERNEL_DESCRIPTOR_NO_IST,
+            OS_KERNEL_DESCRIPTOR_RING0_INTERRUPT_GATE);
     kernel_interrupt_descriptor_table[os::abi::OS_ABI_SYSTEM_CALL_VECTOR] =
         CreateInterruptGateDescriptor(reinterpret_cast<uint64_t>(&OsKernelSystemCallEntry),
                                       OS_KERNEL_DESCRIPTOR_KERNEL_CODE_SELECTOR,

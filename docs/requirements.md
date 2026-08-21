@@ -240,6 +240,33 @@ v2.6 的集成冻结要求：
 - 教材、手机 PDF、主仓、独立网站、Sites 保存版本、生产部署和公网检查属于
   同一发布闭环；任一项未完成时不得声明 v2.6 正式发布。
 
+## v2.7 通用块设备层与 NVMe 方向
+
+v2.6 保留为未公开的主工程候选，后续开发从 v2.7 继续，不修改 2.6.0、ABI
+2.3.0 或 rootfs v4 的冻结身份。v2.7 先建立设备无关块层，再实现一个自研 NVMe
+运行驱动；不同时扩展 AHCI、virtio-blk 或其他存储控制器。
+
+- `BlockDevice` 必须位于设备模块，VFS、rootfs、journal、swap 与页缓存不得识别
+  ATA/NVMe 类型、端口、BAR 或命令格式；旧文件系统设备名只允许作为过渡别名；
+- 驱动必须声明逻辑块大小、逻辑块数、单请求最大块数、最大 outstanding、写入与
+  Flush 能力；通用队列不得引用 ATA 扇区或 LBA28 常量；
+- 非整块传输、乘法溢出、末 LBA 越界、超传输上限、只读写入和不支持的 Flush
+  必须在请求发布前失败，不得消耗 identifier 或队列槽；
+- Queued 保持 FIFO 签发，Issued 数不超过设备深度，完成允许乱序；超时按最早
+  deadline、再按 identifier 确定选择，迟到完成不得覆盖第一个终态；
+- ATA PIO 继续负责 ROM、Stage 1、early Kernel 与回退，运行期声明 512 字节、
+  LBA28、单块、单飞；该兼容路径的 IRQ14、超时复位和持久化证据不能退化；
+- NVMe 首版只实现 QEMU NVMe 1.4 必选子集：单控制器、单 namespace、单 admin
+  queue pair、单 I/O queue pair 和基本 Read/Write/Flush；PCI 枚举、BAR/MMIO、
+  DMA 队列、doorbell、phase tag、超时复位与 MSI-X 均由项目实现；
+- 不使用 virtio、宿主 passthrough、外部固件/驱动或 `qemu -kernel` 代替上述路径；
+- rootfs/swap 只有在 NVMe 容量、Flush、故障、持久化和资源回收证据达到 ATA
+  基线后才切换，接口存在或 Identify 成功不等于生产迁移完成。
+
+第六增量已经满足上述迁移门禁：Kernel 运行期优先使用 NSID 1/2 的 rootfs/swap，
+三档 QEMU、EIO/timeout reset、两次重启恢复、损坏拒绝和 ATA 自动回退均进入测试；
+ROM 与 Stage 1 的 ATA 启动职责保持不变。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源
@@ -460,9 +487,10 @@ ABI v2.0.0、69 个系统调用、错误区间和关键结构偏移，用最小 
 
 ## v1.16 IRQ 块层与 writeback page cache 冻结要求
 
-- `BlockRequest` 必须保存 64 位单调 identifier、操作、LBA、缓冲区、所有者
-  Thread、绝对 deadline、状态和结果；复用槽位不能复用仍可观察的 identifier。
-- ATA primary channel 当前只允许一个 Issued 请求；Queued 必须 FIFO，完成
+- `BlockRequest` 必须保存 64 位单调 identifier、操作、LBA、逻辑块数、缓冲区、
+  所有者 Thread、绝对 deadline、状态和结果；复用槽位不能复用仍可观察的
+  identifier。v2.7 起几何和 Issued 深度由具体块设备声明。
+- ATA primary channel 当前仍只允许一个 Issued 请求；Queued 必须 FIFO，完成
   请求必须经 Reap 才释放容量。容量耗尽、identifier 耗尽和非法参数均不得
   修改已有队列。
 - ATA 适配器可以在复制冻结结果后立即 Reap，但唤醒必须同时匹配 owner

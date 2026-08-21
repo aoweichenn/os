@@ -1,7 +1,7 @@
 #pragma once
 
-#include "os/kernel/fs/block_cache.hpp"
-#include "os/kernel/fs/root_file_system_format.hpp"
+#include <os/kernel/fs/block_cache.hpp>
+#include <os/kernel/fs/root_file_system_format.hpp>
 
 #include <array>
 #include <stdint.h>
@@ -17,11 +17,12 @@ inline constexpr uint64_t OS_TEST_SPARSE_BLOCK_DEVICE_EMPTY_VALUE = 0ULL;
 inline constexpr uint8_t OS_TEST_SPARSE_BLOCK_DEVICE_ZERO_BYTE = 0U;
 
 // 逻辑容量按真实 rootfs v4 规格提供，未写入块隐式读取为全零，避免物化 128 GiB。
-class SparseMemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
+class SparseMemoryBlockDevice final
+    : public os::kernel::BlockDeviceAdapter<SparseMemoryBlockDevice> {
   public:
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     ReadBlock(const uint64_t logical_block_address, uint8_t *const block,
-              const uint64_t block_size_bytes) noexcept override {
+              const uint64_t block_size_bytes) noexcept {
         if (block == nullptr) {
             return os::kernel::FileSystemBlockDeviceStatus::InvalidBuffer;
         }
@@ -45,7 +46,7 @@ class SparseMemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
 
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     WriteBlock(const uint64_t logical_block_address, const uint8_t *const block,
-               const uint64_t block_size_bytes) noexcept override {
+               const uint64_t block_size_bytes) noexcept {
         if (block == nullptr) {
             return os::kernel::FileSystemBlockDeviceStatus::InvalidBuffer;
         }
@@ -78,7 +79,7 @@ class SparseMemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
         return os::kernel::FileSystemBlockDeviceStatus::Succeeded;
     }
 
-    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept override {
+    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept {
         if (this->fail_flushes_) {
             return os::kernel::FileSystemBlockDeviceStatus::FlushFailed;
         }

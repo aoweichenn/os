@@ -40,7 +40,18 @@ constexpr uint64_t OS_KERNEL_ATA_HIGH_BYTE_SHIFT_BITS = 8ULL;
 constexpr uint64_t OS_KERNEL_ATA_DEVICE_SELECT_DELAY_READ_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_ATA_FIRST_WORD_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_ATA_EMPTY_POLL_COUNT = 0ULL;
+constexpr uint64_t OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_ATA_SINGLE_OUTSTANDING_REQUEST_COUNT = 1ULL;
 constexpr uint8_t OS_KERNEL_ATA_EMPTY_STATUS = 0U;
+constexpr BlockDeviceGeometry OS_KERNEL_ATA_BLOCK_GEOMETRY{
+    .logical_block_size_bytes = OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES,
+    .logical_block_count = OS_KERNEL_DEVICE_ATA_MAXIMUM_LBA28 +
+                           OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT,
+    .maximum_transfer_block_count = OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT,
+    .maximum_outstanding_request_count = OS_KERNEL_ATA_SINGLE_OUTSTANDING_REQUEST_COUNT,
+    .write_supported = true,
+    .flush_supported = true,
+};
 
 }
 
@@ -148,7 +159,8 @@ AtaPioDevice::InitializeAsynchronousRequests(BlockRequest *const request_storage
     if (this->asynchronous_initialized_) {
         return AtaPioStatus::AlreadyInitialized;
     }
-    if (this->request_queue_.Initialize(request_storage, request_capacity) !=
+    if (this->request_queue_.Initialize(request_storage, request_capacity,
+                                        OS_KERNEL_ATA_BLOCK_GEOMETRY) !=
         BlockRequestQueueStatus::Succeeded) {
         return AtaPioStatus::RequestQueueFailure;
     }

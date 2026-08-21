@@ -1,4 +1,4 @@
-#include "os/kernel/device/port_io.hpp"
+#include <os/kernel/device/port_io.hpp>
 
 namespace os::kernel {
 
@@ -21,12 +21,22 @@ uint16_t ReadPort16(const uint16_t port) noexcept {
     return value;
 }
 
+uint32_t ReadPort32(const uint16_t port) noexcept {
+    uint32_t value = 0U;
+    asm volatile("in eax, dx" : "=a"(value) : "d"(port));
+    return value;
+}
+
 void WritePort8(const uint16_t port, const uint8_t value) noexcept {
     asm volatile("out dx, al" : : "a"(value), "d"(port));
 }
 
 void WritePort16(const uint16_t port, const uint16_t value) noexcept {
     asm volatile("out dx, ax" : : "a"(value), "d"(port));
+}
+
+void WritePort32(const uint16_t port, const uint32_t value) noexcept {
+    asm volatile("out dx, eax" : : "a"(value), "d"(port));
 }
 
 void WaitForPortIo() noexcept {

@@ -28,10 +28,16 @@ set(
 set(
     OS_KERNEL_DEVICE_HEADERS
     include/os/kernel/device/ata_pio.hpp
+    include/os/kernel/device/block_device.hpp
+    include/os/kernel/device/block_device.tpp
     include/os/kernel/device/block_request.hpp
     include/os/kernel/device/cmos_rtc.hpp
     include/os/kernel/device/device_model.hpp
     include/os/kernel/device/legacy_pic.hpp
+    include/os/kernel/device/nvme.hpp
+    include/os/kernel/device/nvme_model.hpp
+    include/os/kernel/device/pci.hpp
+    include/os/kernel/device/pci_model.hpp
     include/os/kernel/device/port_io.hpp
     include/os/kernel/device/programmable_interval_timer.hpp
     include/os/kernel/device/ps2_keyboard.hpp
@@ -162,10 +168,15 @@ set(
 set(
     OS_KERNEL_DEVICE_SOURCES
     src/device/ata_pio.cpp
+    src/device/block_device.cpp
     src/device/block_request.cpp
     src/device/cmos_rtc.cpp
     src/device/device_model.cpp
     src/device/legacy_pic.cpp
+    src/device/nvme.cpp
+    src/device/nvme_model.cpp
+    src/device/pci.cpp
+    src/device/pci_model.cpp
     src/device/port_io.cpp
     src/device/programmable_interval_timer.cpp
     src/device/ps2_keyboard.cpp
@@ -319,6 +330,24 @@ target_compile_options(
 )
 
 add_library(
+    os_kernel_block_device_host
+    STATIC
+        src/device/block_device.cpp
+        include/os/kernel/device/block_device.hpp
+        include/os/kernel/device/block_device.tpp
+)
+target_include_directories(
+    os_kernel_block_device_host
+    PUBLIC
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_kernel_block_device_host
+    PRIVATE
+        ${OS_COMMON_WARNING_FLAGS}
+)
+
+add_library(
     os_kernel_memory_model_host
     STATIC
         src/fs/block_cache.cpp
@@ -369,6 +398,7 @@ target_link_libraries(
     os_kernel_memory_model_host
     PRIVATE
         os_foundation_host
+        os_kernel_block_device_host
 )
 
 add_library(
@@ -376,9 +406,13 @@ add_library(
     STATIC
         src/device/block_request.cpp
         src/device/device_model.cpp
+        src/device/nvme_model.cpp
+        src/device/pci_model.cpp
         src/device/vga_text_console.cpp
         include/os/kernel/device/block_request.hpp
         include/os/kernel/device/device_model.hpp
+        include/os/kernel/device/nvme_model.hpp
+        include/os/kernel/device/pci_model.hpp
         include/os/kernel/device/vga_text_console.hpp
 )
 
@@ -416,6 +450,11 @@ target_compile_options(
     os_kernel_device_model_host
     PRIVATE
         ${OS_COMMON_WARNING_FLAGS}
+)
+target_link_libraries(
+    os_kernel_device_model_host
+    PUBLIC
+        os_kernel_block_device_host
 )
 
 add_library(
@@ -523,6 +562,7 @@ target_link_libraries(
     os_kernel_object_model_host
     PUBLIC
         os_foundation_host
+        os_kernel_block_device_host
         os_system_abi
 )
 target_compile_options(
@@ -586,6 +626,7 @@ target_include_directories(
 target_link_libraries(
     os_kernel_file_system_model_host
     PUBLIC
+        os_kernel_block_device_host
         os_system_abi
 )
 target_compile_options(
@@ -845,6 +886,10 @@ os_add_kernel_object_target(
     os_kernel_user_invalid_elf_objects
     "${PROJECT_SOURCE_DIR}/tests/system/kernel/user_invalid_elf_entry.cpp"
 )
+os_add_kernel_object_target(
+    os_kernel_nvme_timeout_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/nvme_timeout_entry.cpp"
+)
 
 set(
     OS_KERNEL_ELF_PATH
@@ -889,6 +934,12 @@ set(
     "Ring 3 非法 ELF 拒绝测试 ELF64 内核路径"
 )
 set(
+    OS_KERNEL_NVME_TIMEOUT_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_nvme_timeout.elf"
+    CACHE INTERNAL
+    "NVMe 命令超时恢复测试 ELF64 内核路径"
+)
+set(
     OS_KERNEL_PAYLOAD_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/kernel.payload.elf"
     CACHE INTERNAL
@@ -929,6 +980,12 @@ set(
     "${CMAKE_CURRENT_BINARY_DIR}/kernel_user_invalid_elf.payload.elf"
     CACHE INTERNAL
     "去除调试段的 Ring 3 非法 ELF 拒绝测试内核载荷路径"
+)
+set(
+    OS_KERNEL_NVME_TIMEOUT_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_nvme_timeout.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的 NVMe 命令超时恢复测试内核载荷路径"
 )
 
 function(
@@ -1045,6 +1102,12 @@ os_add_kernel_elf_target(
     "${OS_KERNEL_USER_INVALID_ELF_PATH}"
     "链接 Ring 3 非法 ELF 拒绝测试 ELF64 内核"
 )
+os_add_kernel_elf_target(
+    os_kernel_nvme_timeout_elf
+    os_kernel_nvme_timeout_objects
+    "${OS_KERNEL_NVME_TIMEOUT_ELF_PATH}"
+    "链接 NVMe 命令超时恢复测试 ELF64 内核"
+)
 
 os_add_kernel_payload_elf_target(
     os_kernel_payload_elf
@@ -1094,4 +1157,11 @@ os_add_kernel_payload_elf_target(
     "${OS_KERNEL_USER_INVALID_ELF_PATH}"
     "${OS_KERNEL_USER_INVALID_ELF_PAYLOAD_ELF_PATH}"
     "生成不含调试段的 Ring 3 非法 ELF 拒绝测试内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_nvme_timeout_payload_elf
+    os_kernel_nvme_timeout_elf
+    "${OS_KERNEL_NVME_TIMEOUT_ELF_PATH}"
+    "${OS_KERNEL_NVME_TIMEOUT_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的 NVMe 命令超时恢复测试内核载荷"
 )

@@ -1,4 +1,4 @@
-#include "os/kernel/device/block_request.hpp"
+#include <os/kernel/device/block_request.hpp>
 
 namespace os::kernel {
 
@@ -10,7 +10,8 @@ constexpr uint64_t OS_KERNEL_BLOCK_REQUEST_SINGLE_UNIT = 1ULL;
 }
 
 BlockRequestQueueStatus
-BlockRequestQueue::Initialize(BlockRequest *const storage, const uint64_t capacity) noexcept {
+BlockRequestQueue::Initialize(BlockRequest *const storage, const uint64_t capacity,
+                              const BlockDeviceGeometry &geometry) noexcept {
     if (this->initialized_) {
         return BlockRequestQueueStatus::AlreadyInitialized;
     }
@@ -20,6 +21,10 @@ BlockRequestQueue::Initialize(BlockRequest *const storage, const uint64_t capaci
     if (capacity == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
         return BlockRequestQueueStatus::InvalidCapacity;
     }
+    if (!this->GeometryIsValid(geometry) ||
+        geometry.maximum_outstanding_request_count > capacity) {
+        return BlockRequestQueueStatus::InvalidGeometry;
+    }
     for (uint64_t request_index = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
          request_index < capacity; ++request_index) {
         storage[request_index] = BlockRequest{};
@@ -27,12 +32,13 @@ BlockRequestQueue::Initialize(BlockRequest *const storage, const uint64_t capaci
     }
     this->storage_ = storage;
     this->capacity_ = capacity;
+    this->geometry_ = geometry;
     this->queue_head_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     this->queue_tail_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
-    this->issued_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     this->next_identifier_ = OS_KERNEL_BLOCK_REQUEST_FIRST_IDENTIFIER;
     this->statistics_ = BlockRequestQueueStatistics{};
     this->statistics_.capacity = capacity;
+    this->statistics_.geometry = geometry;
     this->initialized_ = true;
     return BlockRequestQueueStatus::Succeeded;
 }
@@ -45,8 +51,9 @@ BlockRequestQueueStatus BlockRequestQueue::Submit(
     if (!this->initialized_ || this->storage_ == nullptr) {
         return BlockRequestQueueStatus::NotInitialized;
     }
+    uint64_t logical_block_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
     if (!this->RequestIsValid(operation, logical_block_address, buffer, buffer_size_bytes,
-                              deadline_nanoseconds)) {
+                              deadline_nanoseconds, logical_block_count)) {
         return BlockRequestQueueStatus::InvalidRequest;
     }
     uint64_t request_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
@@ -65,6 +72,7 @@ BlockRequestQueueStatus BlockRequestQueue::Submit(
         .identifier = request_identifier,
         .operation = operation,
         .logical_block_address = logical_block_address,
+        .logical_block_count = logical_block_count,
         .buffer = buffer,
         .buffer_size_bytes = buffer_size_bytes,
         .owner_thread_index = owner_thread_index,
@@ -90,7 +98,8 @@ BlockRequestQueue::IssueNext(BlockRequest &request, bool &issued) noexcept {
     if (!this->initialized_ || this->storage_ == nullptr) {
         return BlockRequestQueueStatus::NotInitialized;
     }
-    if (this->issued_index_ != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX ||
+    if (this->statistics_.issued_request_count >=
+            this->geometry_.maximum_outstanding_request_count ||
         this->queue_head_index_ == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
         return this->Validate();
     }
@@ -102,10 +111,13 @@ BlockRequestQueue::IssueNext(BlockRequest &request, bool &issued) noexcept {
         return BlockRequestQueueStatus::Corrupt;
     }
     candidate.state = BlockRequestState::Issued;
-    this->issued_index_ = request_index;
     --this->statistics_.queued_request_count;
     ++this->statistics_.issued_request_count;
     ++this->statistics_.issue_count;
+    if (this->statistics_.issued_request_count >
+        this->statistics_.peak_issued_request_count) {
+        this->statistics_.peak_issued_request_count = this->statistics_.issued_request_count;
+    }
     request = candidate;
     issued = true;
     return BlockRequestQueueStatus::Succeeded;
@@ -117,7 +129,7 @@ BlockRequestQueue::Complete(const uint64_t request_identifier,
     if (!this->initialized_ || this->storage_ == nullptr) {
         return BlockRequestQueueStatus::NotInitialized;
     }
-    if (result == BlockRequestResult::None) {
+    if (!this->ResultIsTerminal(result)) {
         return BlockRequestQueueStatus::InvalidRequest;
     }
     BlockRequest *const request = this->Find(request_identifier);
@@ -129,13 +141,11 @@ BlockRequestQueue::Complete(const uint64_t request_identifier,
         return BlockRequestQueueStatus::RequestAlreadyResolved;
     }
     if (request->state != BlockRequestState::Issued ||
-        this->issued_index_ != this->IndexOf(*request) ||
-        this->statistics_.issued_request_count != OS_KERNEL_BLOCK_REQUEST_SINGLE_UNIT) {
+        this->statistics_.issued_request_count == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
         return BlockRequestQueueStatus::RequestNotIssued;
     }
     request->state = BlockRequestState::Completed;
     request->result = result;
-    this->issued_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     --this->statistics_.issued_request_count;
     ++this->statistics_.completed_request_count;
     this->RecordResolution(result);
@@ -149,22 +159,30 @@ BlockRequestQueueStatus BlockRequestQueue::ResolveTimeout(
     if (!this->initialized_ || this->storage_ == nullptr) {
         return BlockRequestQueueStatus::NotInitialized;
     }
-    if (this->issued_index_ == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+    BlockRequest *candidate = nullptr;
+    for (uint64_t request_index = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
+         request_index < this->capacity_; ++request_index) {
+        BlockRequest &current = this->storage_[request_index];
+        if (current.state != BlockRequestState::Issued ||
+            now_nanoseconds < current.deadline_nanoseconds) {
+            continue;
+        }
+        if (candidate == nullptr ||
+            current.deadline_nanoseconds < candidate->deadline_nanoseconds ||
+            (current.deadline_nanoseconds == candidate->deadline_nanoseconds &&
+             current.identifier < candidate->identifier)) {
+            candidate = &current;
+        }
+    }
+    if (candidate == nullptr) {
         return BlockRequestQueueStatus::Succeeded;
     }
-    BlockRequest &candidate = this->storage_[this->issued_index_];
-    if (candidate.state != BlockRequestState::Issued) {
-        return BlockRequestQueueStatus::Corrupt;
-    }
-    if (now_nanoseconds < candidate.deadline_nanoseconds) {
-        return BlockRequestQueueStatus::Succeeded;
-    }
-    request = candidate;
+    request = *candidate;
     const BlockRequestQueueStatus status =
-        this->Complete(candidate.identifier, BlockRequestResult::TimedOut);
+        this->Complete(candidate->identifier, BlockRequestResult::TimedOut);
     resolved = status == BlockRequestQueueStatus::Succeeded;
     if (resolved) {
-        request = candidate;
+        request = *candidate;
     }
     return status;
 }
@@ -240,6 +258,20 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
     if (!this->initialized_ || this->storage_ == nullptr) {
         return BlockRequestQueueStatus::NotInitialized;
     }
+    if (!this->GeometryIsValid(this->geometry_) ||
+        this->geometry_.maximum_outstanding_request_count > this->capacity_ ||
+        this->statistics_.capacity != this->capacity_ ||
+        this->statistics_.geometry.logical_block_size_bytes !=
+            this->geometry_.logical_block_size_bytes ||
+        this->statistics_.geometry.logical_block_count != this->geometry_.logical_block_count ||
+        this->statistics_.geometry.maximum_transfer_block_count !=
+            this->geometry_.maximum_transfer_block_count ||
+        this->statistics_.geometry.maximum_outstanding_request_count !=
+            this->geometry_.maximum_outstanding_request_count ||
+        this->statistics_.geometry.write_supported != this->geometry_.write_supported ||
+        this->statistics_.geometry.flush_supported != this->geometry_.flush_supported) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
     uint64_t active_request_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
     uint64_t queued_request_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
     uint64_t issued_request_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
@@ -253,9 +285,12 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
             }
             continue;
         }
+        uint64_t expected_logical_block_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
         if (request.identifier == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE ||
             !this->RequestIsValid(request.operation, request.logical_block_address, request.buffer,
-                                  request.buffer_size_bytes, request.deadline_nanoseconds)) {
+                                  request.buffer_size_bytes, request.deadline_nanoseconds,
+                                  expected_logical_block_count) ||
+            request.logical_block_count != expected_logical_block_count) {
             return BlockRequestQueueStatus::Corrupt;
         }
         ++active_request_count;
@@ -263,12 +298,9 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
             ++queued_request_count;
         } else if (request.state == BlockRequestState::Issued) {
             ++issued_request_count;
-            if (request_index != this->issued_index_) {
-                return BlockRequestQueueStatus::Corrupt;
-            }
         } else if (request.state == BlockRequestState::Completed) {
             ++completed_request_count;
-            if (request.result == BlockRequestResult::None) {
+            if (!this->ResultIsTerminal(request.result)) {
                 return BlockRequestQueueStatus::Corrupt;
             }
         } else {
@@ -306,7 +338,10 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
         issued_request_count != this->statistics_.issued_request_count ||
         completed_request_count != this->statistics_.completed_request_count ||
         observed_queue_count != queued_request_count ||
-        issued_request_count > OS_KERNEL_BLOCK_REQUEST_SINGLE_UNIT ||
+        issued_request_count > this->geometry_.maximum_outstanding_request_count ||
+        this->statistics_.peak_issued_request_count < issued_request_count ||
+        this->statistics_.peak_issued_request_count >
+            this->geometry_.maximum_outstanding_request_count ||
         active_request_count > this->capacity_) {
         return BlockRequestQueueStatus::Corrupt;
     }
@@ -317,24 +352,51 @@ BlockRequestQueueStatistics BlockRequestQueue::Statistics() const noexcept {
     return this->statistics_;
 }
 
+bool BlockRequestQueue::GeometryIsValid(const BlockDeviceGeometry &geometry) const noexcept {
+    return geometry.logical_block_size_bytes != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE &&
+           geometry.logical_block_count != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE &&
+           geometry.maximum_transfer_block_count != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE &&
+           geometry.maximum_transfer_block_count <= geometry.logical_block_count &&
+           geometry.maximum_outstanding_request_count != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE &&
+           geometry.logical_block_size_bytes <=
+               UINT64_MAX / geometry.maximum_transfer_block_count;
+}
+
+bool BlockRequestQueue::ResultIsTerminal(const BlockRequestResult result) const noexcept {
+    return result == BlockRequestResult::Succeeded || result == BlockRequestResult::DeviceError ||
+           result == BlockRequestResult::TimedOut || result == BlockRequestResult::Cancelled;
+}
+
 bool BlockRequestQueue::RequestIsValid(const BlockOperation operation,
                                        const uint64_t logical_block_address,
                                        const uint8_t *const buffer,
                                        const uint64_t buffer_size_bytes,
-                                       const uint64_t deadline_nanoseconds) const noexcept {
+                                       const uint64_t deadline_nanoseconds,
+                                       uint64_t &logical_block_count) const noexcept {
+    logical_block_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
     if (deadline_nanoseconds == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
         return false;
     }
     if (operation == BlockOperation::Flush) {
-        return logical_block_address == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE && buffer == nullptr &&
+        return this->geometry_.flush_supported &&
+               logical_block_address == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE && buffer == nullptr &&
                buffer_size_bytes == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
     }
     if (operation != BlockOperation::Read && operation != BlockOperation::Write) {
         return false;
     }
-    return buffer != nullptr &&
-           buffer_size_bytes == OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES &&
-           logical_block_address <= OS_KERNEL_DEVICE_ATA_MAXIMUM_LBA28;
+    if (operation == BlockOperation::Write && !this->geometry_.write_supported) {
+        return false;
+    }
+    if (buffer == nullptr || buffer_size_bytes == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE ||
+        buffer_size_bytes % this->geometry_.logical_block_size_bytes !=
+            OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
+        return false;
+    }
+    logical_block_count = buffer_size_bytes / this->geometry_.logical_block_size_bytes;
+    return logical_block_count <= this->geometry_.maximum_transfer_block_count &&
+           logical_block_address < this->geometry_.logical_block_count &&
+           logical_block_count <= this->geometry_.logical_block_count - logical_block_address;
 }
 
 BlockRequest *BlockRequestQueue::Find(const uint64_t request_identifier) noexcept {

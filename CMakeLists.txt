@@ -122,6 +122,10 @@ set(
     OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_user_invalid_elf/boot_disk.img"
 )
+set(
+    OS_KERNEL_NVME_TIMEOUT_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_nvme_timeout/boot_disk.img"
+)
 
 add_subdirectory(source/firmware)
 add_subdirectory(source/boot/stage1)

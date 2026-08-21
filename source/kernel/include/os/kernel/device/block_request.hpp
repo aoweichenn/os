@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/kernel/device/device_model.hpp"
+#include <os/kernel/device/block_device.hpp>
 
 #include <stdint.h>
 
@@ -35,6 +35,7 @@ struct BlockRequest final {
     uint64_t identifier;
     BlockOperation operation;
     uint64_t logical_block_address;
+    uint64_t logical_block_count;
     uint8_t *buffer;
     uint64_t buffer_size_bytes;
     uint64_t owner_thread_index;
@@ -46,11 +47,13 @@ struct BlockRequest final {
 
 struct BlockRequestQueueStatistics final {
     uint64_t capacity;
+    BlockDeviceGeometry geometry;
     uint64_t active_request_count;
     uint64_t queued_request_count;
     uint64_t issued_request_count;
     uint64_t completed_request_count;
     uint64_t peak_active_request_count;
+    uint64_t peak_issued_request_count;
     uint64_t submission_count;
     uint64_t issue_count;
     uint64_t successful_completion_count;
@@ -68,6 +71,7 @@ enum class BlockRequestQueueStatus : uint64_t {
     AlreadyInitialized,
     InvalidStorage,
     InvalidCapacity,
+    InvalidGeometry,
     InvalidRequest,
     CapacityExhausted,
     IdentifierExhausted,
@@ -86,7 +90,8 @@ class BlockRequestQueue final {
     BlockRequestQueue &operator=(const BlockRequestQueue &) = delete;
 
     [[nodiscard]] BlockRequestQueueStatus
-    Initialize(BlockRequest *storage, uint64_t capacity) noexcept;
+    Initialize(BlockRequest *storage, uint64_t capacity,
+               const BlockDeviceGeometry &geometry) noexcept;
     [[nodiscard]] BlockRequestQueueStatus
     Submit(BlockOperation operation, uint64_t logical_block_address, uint8_t *buffer,
            uint64_t buffer_size_bytes, uint64_t owner_thread_index,
@@ -106,9 +111,12 @@ class BlockRequestQueue final {
     [[nodiscard]] BlockRequestQueueStatistics Statistics() const noexcept;
 
   private:
+    [[nodiscard]] bool GeometryIsValid(const BlockDeviceGeometry &geometry) const noexcept;
+    [[nodiscard]] bool ResultIsTerminal(BlockRequestResult result) const noexcept;
     [[nodiscard]] bool RequestIsValid(BlockOperation operation, uint64_t logical_block_address,
                                       const uint8_t *buffer, uint64_t buffer_size_bytes,
-                                      uint64_t deadline_nanoseconds) const noexcept;
+                                      uint64_t deadline_nanoseconds,
+                                      uint64_t &logical_block_count) const noexcept;
     [[nodiscard]] BlockRequest *Find(uint64_t request_identifier) noexcept;
     [[nodiscard]] const BlockRequest *Find(uint64_t request_identifier) const noexcept;
     [[nodiscard]] bool FindFreeIndex(uint64_t &request_index) const noexcept;
@@ -119,9 +127,9 @@ class BlockRequestQueue final {
 
     BlockRequest *storage_{nullptr};
     uint64_t capacity_{};
+    BlockDeviceGeometry geometry_{};
     uint64_t queue_head_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
     uint64_t queue_tail_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
-    uint64_t issued_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
     uint64_t next_identifier_{OS_KERNEL_BLOCK_REQUEST_FIRST_IDENTIFIER};
     BlockRequestQueueStatistics statistics_{};
     bool initialized_{};

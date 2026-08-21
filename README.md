@@ -2,7 +2,8 @@
 
 这是一个从 CPU 复位向量开始自研的 x86-64 教学操作系统项目。QEMU 仅用于模拟硬件；固件、引导程序、模式切换、内核、运行时、驱动、用户空间和文件系统均由项目自行实现。
 
-当前状态：`v2.6 集成冻结与正式发布` 已形成 caw 主工程候选，手机与公开发布尚未完成。v2.1 已建立 Firmware、Stage 1、
+当前状态：`v2.6 集成冻结与正式发布` 已形成 caw 主工程候选，但公开发布已暂停；
+工程从 v2.7 继续建立通用块设备层与自研 NVMe 路径。v2.1 已建立 Firmware、Stage 1、
 Kernel、panic 以及 Ring 3 stdout/stderr 从 COM1 迁移到项目自研的 80×25 VGA
 文本控制台，并把详细系统诊断分流到只追加内存日志。进入 Shell 时屏幕清空；
 此后普通 Kernel 事件只进入宿主可导出的日志，TTY stdout/stderr 写 VGA，panic
@@ -24,6 +25,13 @@ v2.6 不增加主要内核机制，新增跨消费者发布身份、结构化产
 4 GiB 三轮长稳门禁；设计见
 [ADR 0054](docs/adr/0054-v2-6-release-identity-and-soak-gates.md)，候选状态见
 [v2.6 发布记录](docs/releases/v2.6.md)。
+v2.7 当前已把块设备协议上移到设备层，自行实现 PCI configuration、BAR/MMIO、
+NVMe admin/I/O queue、PRP list 和 MSI-X，并在 QEMU namespace 末端用四个
+outstanding 分别完成 64 KiB Write、Flush、Read 回验；EIO 与 CAP.TO 超时均会
+reset 并重建队列。Kernel 运行期 rootfs/swap 已分别迁移到 Namespace 1/2，设备
+缺失时自动回退 ATA；ROM 和 Stage 1 仍从 ATA 启动。当前边界见
+[v2.7 记录](docs/releases/v2.7.md) 和
+[ADR 0055](docs/adr/0055-v2-7-block-device-layer-and-nvme-path.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

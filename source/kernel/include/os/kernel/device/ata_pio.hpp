@@ -52,7 +52,7 @@ struct AtaPioStatistics final {
     uint64_t flush_completion_count;
 };
 
-class AtaPioDevice final : public FileSystemBlockDevice {
+class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice> {
   public:
     constexpr explicit AtaPioDevice(const AtaPioChannel channel = AtaPioChannel::Primary) noexcept
         : command_block_base_port_(channel == AtaPioChannel::Primary
@@ -82,11 +82,11 @@ class AtaPioDevice final : public FileSystemBlockDevice {
 
     [[nodiscard]] FileSystemBlockDeviceStatus
     ReadBlock(uint64_t logical_block_address, uint8_t *block,
-              uint64_t block_size_bytes) noexcept override;
+              uint64_t block_size_bytes) noexcept;
     [[nodiscard]] FileSystemBlockDeviceStatus
     WriteBlock(uint64_t logical_block_address, const uint8_t *block,
-               uint64_t block_size_bytes) noexcept override;
-    [[nodiscard]] FileSystemBlockDeviceStatus Flush() noexcept override;
+               uint64_t block_size_bytes) noexcept;
+    [[nodiscard]] FileSystemBlockDeviceStatus Flush() noexcept;
 
   private:
     [[nodiscard]] AtaPioStatus PrepareSectorRequest(uint64_t logical_block_address,

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/kernel/arch/processor_features.hpp"
+#include <os/kernel/arch/processor_features.hpp>
 
 #include <stdint.h>
 
@@ -33,6 +33,8 @@ void WriteControlRegister4(uint64_t value) noexcept;
 [[nodiscard]] bool ProcessorSupportsLocalApic() noexcept;
 [[nodiscard]] bool ProcessorSupportsFiveLevelPaging() noexcept;
 [[nodiscard]] uint64_t LocalApicPhysicalAddress() noexcept;
+[[nodiscard]] uint64_t LocalApicIdentifier() noexcept;
+void AcknowledgeLocalApicInterrupt() noexcept;
 [[nodiscard]] bool EnableKernelMemoryProtection() noexcept;
 [[nodiscard]] bool KernelMemoryProtectionEnabled() noexcept;
 [[nodiscard]] bool ConfigureLegacyInterruptRouting() noexcept;

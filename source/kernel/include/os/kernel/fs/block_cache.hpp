@@ -1,7 +1,8 @@
 #pragma once
 
-#include "os/kernel/fs/file_system_format.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/kernel/device/block_device.hpp>
+#include <os/kernel/fs/file_system_format.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
 
@@ -9,31 +10,8 @@ namespace os::kernel {
 
 inline constexpr uint64_t OS_KERNEL_BLOCK_CACHE_ENTRY_COUNT = 8ULL;
 
-enum class FileSystemBlockDeviceStatus : uint64_t {
-    Succeeded,
-    InvalidBlock,
-    InvalidBuffer,
-    ReadFailed,
-    WriteFailed,
-    FlushFailed,
-};
-
-class FileSystemBlockDevice {
-  public:
-    FileSystemBlockDevice() noexcept = default;
-    FileSystemBlockDevice(const FileSystemBlockDevice &) = delete;
-    FileSystemBlockDevice &operator=(const FileSystemBlockDevice &) = delete;
-
-    [[nodiscard]] virtual FileSystemBlockDeviceStatus
-    ReadBlock(uint64_t logical_block_address, uint8_t *block, uint64_t block_size_bytes) noexcept;
-    [[nodiscard]] virtual FileSystemBlockDeviceStatus
-    WriteBlock(uint64_t logical_block_address, const uint8_t *block,
-               uint64_t block_size_bytes) noexcept;
-    [[nodiscard]] virtual FileSystemBlockDeviceStatus Flush() noexcept;
-
-  protected:
-    ~FileSystemBlockDevice() noexcept = default;
-};
+using FileSystemBlockDeviceStatus = BlockDeviceStatus;
+using FileSystemBlockDevice = BlockDevice;
 
 enum class BlockCacheStatus : uint64_t {
     Succeeded,

@@ -153,12 +153,33 @@ enum class KernelUserPageStatus : uint64_t {
     PageTableDestructionFailed,
 };
 
+struct KernelMmioMapping final {
+    uint64_t virtual_address;
+    uint64_t physical_address;
+    uint64_t page_count;
+    bool active;
+};
+
+enum class KernelMmioStatus : uint64_t {
+    Succeeded,
+    NotInitialized,
+    InvalidRange,
+    VirtualAddressAllocationFailed,
+    PageMappingFailed,
+    PageUnmappingFailed,
+    VirtualAddressReleaseFailed,
+    RollbackFailed,
+};
+
 [[nodiscard]] KernelMemoryInitializationStatus
 InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] const KernelMemoryStatistics &GetKernelMemoryStatistics() noexcept;
 [[nodiscard]] PhysicalFrameAllocator &GetKernelPhysicalFrameAllocator() noexcept;
 [[nodiscard]] PhysicalFrameAllocatorStatistics GetPhysicalFrameAllocatorStatistics() noexcept;
 [[nodiscard]] uint64_t PhysicalMemoryDirectMapAddress(uint64_t physical_address) noexcept;
+[[nodiscard]] KernelMmioStatus MapKernelMmio(uint64_t physical_address, uint64_t size_bytes,
+                                             KernelMmioMapping &mapping) noexcept;
+[[nodiscard]] KernelMmioStatus UnmapKernelMmio(KernelMmioMapping &mapping) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
 [[nodiscard]] KernelVirtualAddressAllocator &GetKernelVirtualAddressAllocator() noexcept;
 [[nodiscard]] KernelStackManager &GetKernelStackManager() noexcept;

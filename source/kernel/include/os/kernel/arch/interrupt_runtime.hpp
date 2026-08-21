@@ -1,8 +1,8 @@
 #pragma once
 
-#include "os/kernel/device/device_model.hpp"
-#include "os/kernel/device/ata_pio.hpp"
-#include "os/kernel/arch/exception_frame.hpp"
+#include <os/kernel/arch/exception_frame.hpp>
+#include <os/kernel/device/ata_pio.hpp>
+#include <os/kernel/device/device_model.hpp>
 
 #include <stdint.h>
 
@@ -12,6 +12,7 @@ inline constexpr uint64_t OS_KERNEL_INTERRUPT_TIMER_REQUEST = 0ULL;
 inline constexpr uint64_t OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST = 1ULL;
 inline constexpr uint64_t OS_KERNEL_INTERRUPT_SPURIOUS_TEST_REQUEST = 7ULL;
 inline constexpr uint64_t OS_KERNEL_INTERRUPT_PRIMARY_ATA_REQUEST = 14ULL;
+inline constexpr uint64_t OS_KERNEL_INTERRUPT_NVME_MSIX_VECTOR = 0x50ULL;
 inline constexpr uint64_t OS_KERNEL_INTERRUPT_TARGET_TIMER_FREQUENCY_HZ = 1000ULL;
 
 enum class InterruptRuntimeStatus : uint64_t {

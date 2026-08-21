@@ -238,6 +238,11 @@ os_add_kernel_fault_disk(
     "${OS_KERNEL_USER_INVALID_ELF_PAYLOAD_ELF_PATH}"
     "生成 Ring 3 非法 ELF 拒绝磁盘镜像"
 )
+os_add_kernel_fault_disk(
+    "${OS_KERNEL_NVME_TIMEOUT_DISK_IMAGE}"
+    "${OS_KERNEL_NVME_TIMEOUT_PAYLOAD_ELF_PATH}"
+    "生成 NVMe 命令超时恢复测试磁盘镜像"
+)
 
 set(
     OS_STAGE1_CORE_TOOL_NAMES
@@ -421,6 +426,7 @@ add_custom_target(
         "${OS_KERNEL_USER_INVALID_OPCODE_DISK_IMAGE}"
         "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
         "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
+        "${OS_KERNEL_NVME_TIMEOUT_DISK_IMAGE}"
 )
 
 # Makefile 生成器不会把其他二进制目录中的文件级自定义命令自动提升为目标依赖。
@@ -435,6 +441,7 @@ add_dependencies(
     os_kernel_user_invalid_opcode_payload_elf
     os_kernel_user_page_fault_payload_elf
     os_kernel_user_invalid_elf_payload_elf
+    os_kernel_nvme_timeout_payload_elf
     os_user_init_elf
     os_user_shell_elf
     os_user_core_tool_elf

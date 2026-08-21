@@ -107,6 +107,54 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_NATIVE_SYSTEM_CALL_LSTAR_MARKER,
     OS_QEMU_KERNEL_NATIVE_SYSTEM_CALL_FMASK_MARKER,
     OS_QEMU_KERNEL_NATIVE_SYSTEM_CALL_EFER_MARKER,
+    OS_QEMU_KERNEL_NVME_BAR_ADDRESS_MARKER,
+    OS_QEMU_KERNEL_NVME_BAR_SIZE_MARKER,
+    OS_QEMU_KERNEL_NVME_CONTROLLER_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_IDENTIFY_FAILED_MARKER,
+    OS_QEMU_KERNEL_NVME_IDENTIFY_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_QUEUE_DEPTH_MARKER,
+    OS_QEMU_KERNEL_NVME_MAXIMUM_TRANSFER_BLOCK_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_QUEUE_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_TEST_LBA_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_TEST_BLOCK_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_WRITE_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_FLUSH_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_READ_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_TEST_CHECKSUM_MARKER,
+    OS_QEMU_KERNEL_NVME_DATA_VERIFIED_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_MSIX_TABLE_ENTRY_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_MSIX_TABLE_BAR_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_TEST_REQUEST_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_IO_TEST_TRANSFER_PAGE_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_PRP_LIST_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_PEAK_OUTSTANDING_MARKER,
+    OS_QEMU_KERNEL_NVME_MSIX_INTERRUPT_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_ZERO_MARKER,
+    OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_ZERO_MARKER,
+    OS_QEMU_KERNEL_NVME_MULTI_OUTSTANDING_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_MSIX_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_RESET_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_ZERO_MARKER,
+    OS_QEMU_KERNEL_STORAGE_BACKEND_ATA_MARKER,
+    OS_QEMU_KERNEL_STORAGE_BACKEND_NVME_MARKER,
+    OS_QEMU_KERNEL_NVME_STORAGE_FALLBACK_MARKER,
+    OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_BLOCK_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_BLOCK_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_STORAGE_SHUTDOWN_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_SIZE_MARKER,
+    OS_QEMU_KERNEL_NVME_NAMESPACE_COUNT_MARKER,
+    OS_QEMU_KERNEL_NVME_PCI_BDF_MARKER,
+    OS_QEMU_KERNEL_NVME_PCI_READY_MARKER,
+    OS_QEMU_KERNEL_NVME_RESOURCES_RECLAIMED_MARKER,
+    OS_QEMU_KERNEL_NVME_VERSION_MARKER,
     OS_QEMU_KERNEL_ENTERED_MARKER,
     OS_QEMU_KERNEL_EXCEPTION_MARKER,
     OS_QEMU_KERNEL_EXCEPTION_SELF_TEST_READY_MARKER,
@@ -615,6 +663,16 @@ OS_TOOL_QEMU_MINIMUM_FRAME_STATE_STORAGE_SIZE_BYTES = 320 * 1024
 OS_TOOL_QEMU_MINIMUM_BUDDY_STORAGE_SIZE_BYTES = 512 * 1024
 OS_TOOL_QEMU_MINIMUM_BUDDY_MAXIMUM_ORDER = 20
 OS_TOOL_QEMU_MINIMUM_LARGE_PAGE_COUNT = 1
+OS_TOOL_QEMU_NVME_MINIMUM_IO_QUEUE_DEPTH = 2
+OS_TOOL_QEMU_NVME_MINIMUM_TRANSFER_BLOCK_COUNT = 1
+OS_TOOL_QEMU_NVME_TEST_LOGICAL_BLOCK_ADDRESS = 0x0FFFFE00
+OS_TOOL_QEMU_NVME_TEST_LOGICAL_BLOCK_COUNT = 128
+OS_TOOL_QEMU_NVME_TEST_REQUEST_COUNT = 4
+OS_TOOL_QEMU_NVME_TEST_TRANSFER_PAGE_COUNT = 16
+OS_TOOL_QEMU_NVME_MINIMUM_MSIX_TABLE_ENTRY_COUNT = 1
+OS_TOOL_QEMU_NVME_MINIMUM_MSIX_INTERRUPT_COUNT = 1
+OS_TOOL_QEMU_NVME_MINIMUM_PEAK_OUTSTANDING_COUNT = 4
+OS_TOOL_QEMU_NVME_MINIMUM_TEST_CHECKSUM = 1
 OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS = (
     4 * 1024 * 1024 * 1024 + 4 * 1024
 )
@@ -921,6 +979,20 @@ def handleQemuDisplay(arguments: argparse.Namespace) -> None:
 
 
 def handleQemuFirmware(arguments: argparse.Namespace) -> None:
+    if (
+        arguments.expectedOutcome in ("nvme-io", "nvme-io-error", "nvme-io-timeout")
+        and arguments.nvmeDiskImagePath is None
+    ):
+        raise OsToolError("NVMe I/O 验收必须提供 --nvme-disk-image。")
+    if arguments.expectedOutcome == "nvme-storage" and (
+        arguments.nvmeDiskImagePath is None or arguments.nvmeSwapDiskImagePath is None
+    ):
+        raise OsToolError("NVMe storage 验收必须同时提供 root/swap namespace。")
+    if (
+        arguments.expectedOutcome == "nvme-io-error"
+        and arguments.nvmeFailureEvent is None
+    ):
+        raise OsToolError("NVMe 错误恢复验收必须提供 --nvme-failure-event。")
     if (
         arguments.memoryMebibytes >=
         OS_TOOL_QEMU_CAPACITY_PROFILE_MEMORY_MEBIBYTES
@@ -2324,6 +2396,215 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                     OS_TOOL_QEMU_HIGH_MEMORY_TEST_MINIMUM_ADDRESS,
                 ),
             )
+    elif arguments.expectedOutcome == "nvme-io":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_NVME_PCI_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_PCI_BDF_MARKER,
+            OS_QEMU_KERNEL_NVME_BAR_ADDRESS_MARKER,
+            OS_QEMU_KERNEL_NVME_BAR_SIZE_MARKER,
+            OS_QEMU_KERNEL_NVME_VERSION_MARKER,
+            OS_QEMU_KERNEL_NVME_CONTROLLER_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_NAMESPACE_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_SIZE_MARKER,
+            OS_QEMU_KERNEL_NVME_IDENTIFY_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_QUEUE_DEPTH_MARKER,
+            OS_QEMU_KERNEL_NVME_MAXIMUM_TRANSFER_BLOCK_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_QUEUE_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_MSIX_TABLE_ENTRY_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_MSIX_TABLE_BAR_MARKER,
+            OS_QEMU_KERNEL_NVME_MSIX_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_TEST_LBA_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_TEST_BLOCK_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_TEST_REQUEST_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_TEST_TRANSFER_PAGE_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_PRP_LIST_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_WRITE_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_FLUSH_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_READ_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_TEST_CHECKSUM_MARKER,
+            OS_QEMU_KERNEL_NVME_DATA_VERIFIED_MARKER,
+            OS_QEMU_KERNEL_NVME_PEAK_OUTSTANDING_MARKER,
+            OS_QEMU_KERNEL_NVME_MSIX_INTERRUPT_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_ZERO_MARKER,
+            OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_ZERO_MARKER,
+            OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_ZERO_MARKER,
+            OS_QEMU_KERNEL_NVME_MULTI_OUTSTANDING_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_RESOURCES_RECLAIMED_MARKER,
+            OS_QEMU_KERNEL_NVME_IO_READY_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_NVME_IDENTIFY_FAILED_MARKER,
+            OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_FATAL_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
+        minimumHexMarkerValues = (
+            (
+                OS_QEMU_KERNEL_NVME_IO_QUEUE_DEPTH_MARKER,
+                OS_TOOL_QEMU_NVME_MINIMUM_IO_QUEUE_DEPTH,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_MAXIMUM_TRANSFER_BLOCK_COUNT_MARKER,
+                OS_TOOL_QEMU_NVME_MINIMUM_TRANSFER_BLOCK_COUNT,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_IO_TEST_LBA_MARKER,
+                OS_TOOL_QEMU_NVME_TEST_LOGICAL_BLOCK_ADDRESS,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_IO_TEST_BLOCK_COUNT_MARKER,
+                OS_TOOL_QEMU_NVME_TEST_LOGICAL_BLOCK_COUNT,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_IO_TEST_CHECKSUM_MARKER,
+                OS_TOOL_QEMU_NVME_MINIMUM_TEST_CHECKSUM,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_MSIX_TABLE_ENTRY_COUNT_MARKER,
+                OS_TOOL_QEMU_NVME_MINIMUM_MSIX_TABLE_ENTRY_COUNT,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_IO_TEST_REQUEST_COUNT_MARKER,
+                OS_TOOL_QEMU_NVME_TEST_REQUEST_COUNT,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_IO_TEST_TRANSFER_PAGE_COUNT_MARKER,
+                OS_TOOL_QEMU_NVME_TEST_TRANSFER_PAGE_COUNT,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_PEAK_OUTSTANDING_MARKER,
+                OS_TOOL_QEMU_NVME_MINIMUM_PEAK_OUTSTANDING_COUNT,
+            ),
+            (
+                OS_QEMU_KERNEL_NVME_MSIX_INTERRUPT_COUNT_MARKER,
+                OS_TOOL_QEMU_NVME_MINIMUM_MSIX_INTERRUPT_COUNT,
+            ),
+        )
+    elif arguments.expectedOutcome == "nvme-io-error":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_ZERO_MARKER,
+            OS_QEMU_KERNEL_NVME_RESOURCES_RECLAIMED_MARKER,
+            OS_QEMU_KERNEL_NVME_RESET_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_IDENTIFY_FAILED_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_NVME_IO_READY_MARKER,
+            OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_FATAL_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
+        minimumHexMarkerValues = (
+            (OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_COUNT_MARKER, 1),
+            (OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_COUNT_MARKER, 1),
+        )
+    elif arguments.expectedOutcome == "nvme-io-timeout":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_ZERO_MARKER,
+            OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_RESOURCES_RECLAIMED_MARKER,
+            OS_QEMU_KERNEL_NVME_RESET_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_IDENTIFY_FAILED_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_NVME_IO_READY_MARKER,
+            OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_FATAL_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
+        minimumHexMarkerValues = (
+            (OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_COUNT_MARKER, 1),
+            (OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_COUNT_MARKER, 1),
+        )
+    elif arguments.expectedOutcome == "nvme-storage":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_STORAGE_BACKEND_NVME_MARKER,
+            OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_BLOCK_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_BLOCK_COUNT_MARKER,
+            OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_READY_MARKER,
+            OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER,
+            *completedKernelFileSystemInitializationMarkers,
+            *completedKernelInitialProcessMarkers,
+            *completedKernelUserSmokeMarkers,
+            *completedKernelFileSystemCompletionMarkers,
+            OS_QEMU_KERNEL_NVME_STORAGE_SHUTDOWN_READY_MARKER,
+            OS_QEMU_KERNEL_FILE_SIZE_MARKER,
+            OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
+            OS_QEMU_KERNEL_READY_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_STORAGE_BACKEND_ATA_MARKER,
+            OS_QEMU_KERNEL_NVME_STORAGE_FALLBACK_MARKER,
+            OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+            OS_QEMU_KERNEL_FATAL_MARKER,
+        )
+    elif arguments.expectedOutcome == "nvme-fallback":
+        requiredMarkers = (
+            OS_QEMU_FIRMWARE_RESET_MARKER,
+            OS_QEMU_FIRMWARE_VGA_READY_MARKER,
+            OS_QEMU_FIRMWARE_CLOCK_READY_MARKER,
+            OS_QEMU_FIRMWARE_STAGE1_HEADER_VALID_MARKER,
+            *completedLongModeMarkers,
+            *completedKernelLoadMarkers,
+            *completedKernelFoundationMarkers,
+            *completedKernelUserPreparationMarkers,
+            *completedKernelDeviceMarkers,
+            OS_QEMU_KERNEL_STORAGE_BACKEND_ATA_MARKER,
+        )
+        forbiddenMarkers = (
+            OS_QEMU_KERNEL_STORAGE_BACKEND_NVME_MARKER,
+            OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER,
+            OS_QEMU_KERNEL_EXCEPTION_MARKER,
+            OS_QEMU_KERNEL_PANIC_MARKER,
+        )
     elif arguments.expectedOutcome == "processor-feature-unsupported":
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -2657,7 +2938,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         forbiddenMarkers,
         keyboardInputText=(
             shellTestInput
-            if arguments.expectedOutcome == "success"
+            if arguments.expectedOutcome in ("success", "nvme-storage")
             else None
         ),
         keyboardReadyMarker=(
@@ -2671,6 +2952,9 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             arguments.diskImagePath,
             arguments.swapDiskImagePath,
         ),
+        nvmeDiskImagePath=arguments.nvmeDiskImagePath,
+        nvmeFailureEvent=arguments.nvmeFailureEvent,
+        nvmeSwapDiskImagePath=arguments.nvmeSwapDiskImagePath,
     )
 
 
@@ -2684,6 +2968,9 @@ def handleQemuSoak(arguments: argparse.Namespace) -> None:
     requireAllocatedImage(swapDiskImagePath)
     arguments.swapDiskImagePath = swapDiskImagePath
     arguments.expectedOutcome = "success"
+    arguments.nvmeDiskImagePath = None
+    arguments.nvmeFailureEvent = None
+    arguments.nvmeSwapDiskImagePath = None
     for iterationIndex in range(arguments.iterationCount):
         print(
             "QEMU 长稳迭代 "
@@ -2710,6 +2997,23 @@ def handleQemuFileSystemPersistence(
             arguments.diskImagePath,
             arguments.swapDiskImagePath,
         ),
+    )
+
+
+def handleQemuNvmeFileSystemPersistence(
+    arguments: argparse.Namespace,
+) -> None:
+    runQemuFileSystemPersistence(
+        OS_TOOL_PROJECT_ROOT,
+        arguments.firmwareImagePath,
+        arguments.diskImagePath,
+        arguments.expectedFirmwareSizeBytes,
+        arguments.expectedDiskSizeBytes,
+        resolveSwapDiskImage(
+            arguments.diskImagePath,
+            arguments.swapDiskImagePath,
+        ),
+        nvmeStorage=True,
     )
 
 
@@ -3068,6 +3372,27 @@ def createArgumentParser() -> argparse.ArgumentParser:
         dest="swapDiskImagePath",
     )
     qemuFirmwareParser.add_argument(
+        "--nvme-disk-image",
+        type=Path,
+        default=None,
+        dest="nvmeDiskImagePath",
+        help="附加给项目自研 NVMe 驱动的独立原始命名空间镜像",
+    )
+    qemuFirmwareParser.add_argument(
+        "--nvme-failure-event",
+        choices=("write_aio", "flush_to_disk"),
+        default=None,
+        dest="nvmeFailureEvent",
+        help="通过 QEMU blkdebug 为 NVMe backing 注入一次 EIO",
+    )
+    qemuFirmwareParser.add_argument(
+        "--nvme-swap-disk-image",
+        type=Path,
+        default=None,
+        dest="nvmeSwapDiskImagePath",
+        help="附加为 Namespace 2 的 NVMe swap 原始镜像",
+    )
+    qemuFirmwareParser.add_argument(
         "--cpu-model",
         default=OS_QEMU_DEFAULT_CPU_MODEL,
         dest="cpuModel",
@@ -3095,6 +3420,11 @@ def createArgumentParser() -> argparse.ArgumentParser:
             "kernel-invalid-opcode",
             "kernel-page-fault",
             "kernel-write-protection",
+            "nvme-io",
+            "nvme-io-error",
+            "nvme-io-timeout",
+            "nvme-storage",
+            "nvme-fallback",
             "user-invalid-opcode",
             "user-page-fault",
             "user-invalid-elf",
@@ -3148,6 +3478,23 @@ def createArgumentParser() -> argparse.ArgumentParser:
     )
     qemuPersistenceParser.add_argument("expectedDiskSizeBytes", type=int)
     qemuPersistenceParser.add_argument(
+        "--swap-disk-image",
+        type=Path,
+        default=None,
+        dest="swapDiskImagePath",
+    )
+
+    qemuNvmePersistenceParser = addCommand(
+        subparsers,
+        "qemu-nvme-file-system-persistence",
+        "在双 NVMe namespace 上验收重启持久化与损坏拒绝",
+        handleQemuNvmeFileSystemPersistence,
+    )
+    qemuNvmePersistenceParser.add_argument("firmwareImagePath", type=Path)
+    qemuNvmePersistenceParser.add_argument("diskImagePath", type=Path)
+    qemuNvmePersistenceParser.add_argument("expectedFirmwareSizeBytes", type=int)
+    qemuNvmePersistenceParser.add_argument("expectedDiskSizeBytes", type=int)
+    qemuNvmePersistenceParser.add_argument(
         "--swap-disk-image",
         type=Path,
         default=None,

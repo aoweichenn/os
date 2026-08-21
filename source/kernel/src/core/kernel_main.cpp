@@ -9,6 +9,7 @@
 #include <os/kernel/arch/processor_features.hpp>
 #include <os/kernel/device/ata_pio.hpp>
 #include <os/kernel/device/cmos_rtc.hpp>
+#include <os/kernel/device/nvme.hpp>
 #include <os/kernel/device/port_io.hpp>
 #include <os/kernel/device/vga_text_console.hpp>
 #include <os/kernel/fs/devfs.hpp>
@@ -243,6 +244,91 @@ constexpr char OS_KERNEL_MAIN_ATA_BOOT_DESCRIPTOR_VALID_MESSAGE[] =
     "[OS][KERNEL] ATA_BOOT_DESCRIPTOR_VALID\r\n";
 constexpr char OS_KERNEL_MAIN_ATA_IRQ14_READY_MESSAGE[] = "[OS][KERNEL] ATA_IRQ14_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ATA_REQUEST_CAPACITY_PREFIX[] = "[OS][KERNEL] ATA_REQUEST_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_NVME_IDENTIFY_FAILED_PREFIX[] =
+    "[OS][KERNEL] NVME_IDENTIFY_FAILED=";
+constexpr char OS_KERNEL_MAIN_NVME_PCI_READY_MESSAGE[] = "[OS][KERNEL] NVME_PCI_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_PCI_BDF_PREFIX[] = "[OS][KERNEL] NVME_PCI_BDF=";
+constexpr char OS_KERNEL_MAIN_NVME_BAR_ADDRESS_PREFIX[] = "[OS][KERNEL] NVME_BAR_ADDRESS=";
+constexpr char OS_KERNEL_MAIN_NVME_BAR_SIZE_PREFIX[] = "[OS][KERNEL] NVME_BAR_SIZE=";
+constexpr char OS_KERNEL_MAIN_NVME_VERSION_PREFIX[] = "[OS][KERNEL] NVME_VERSION=";
+constexpr char OS_KERNEL_MAIN_NVME_CONTROLLER_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_CONTROLLER_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_NAMESPACE_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_NAMESPACE_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_NAMESPACE_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_NAMESPACE_BLOCK_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_NAMESPACE_BLOCK_SIZE_PREFIX[] =
+    "[OS][KERNEL] NVME_NAMESPACE_BLOCK_SIZE=";
+constexpr char OS_KERNEL_MAIN_NVME_RESOURCES_RECLAIMED_MESSAGE[] =
+    "[OS][KERNEL] NVME_RESOURCES_RECLAIMED\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_IDENTIFY_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_IDENTIFY_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_IO_QUEUE_DEPTH_PREFIX[] =
+    "[OS][KERNEL] NVME_IO_QUEUE_DEPTH=";
+constexpr char OS_KERNEL_MAIN_NVME_MAXIMUM_TRANSFER_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_MAXIMUM_TRANSFER_BLOCK_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_IO_QUEUE_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_IO_QUEUE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_IO_TEST_LOGICAL_BLOCK_ADDRESS_PREFIX[] =
+    "[OS][KERNEL] NVME_IO_TEST_LBA=";
+constexpr char OS_KERNEL_MAIN_NVME_IO_TEST_LOGICAL_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_IO_TEST_BLOCK_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_IO_TEST_CHECKSUM_PREFIX[] =
+    "[OS][KERNEL] NVME_IO_TEST_CHECKSUM=";
+constexpr char OS_KERNEL_MAIN_NVME_MSIX_TABLE_ENTRY_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_MSIX_TABLE_ENTRIES=";
+constexpr char OS_KERNEL_MAIN_NVME_MSIX_TABLE_BAR_INDEX_PREFIX[] =
+    "[OS][KERNEL] NVME_MSIX_TABLE_BAR=";
+constexpr char OS_KERNEL_MAIN_NVME_IO_TEST_REQUEST_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_IO_TEST_REQUEST_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_IO_TEST_TRANSFER_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_IO_TEST_TRANSFER_PAGES=";
+constexpr char OS_KERNEL_MAIN_NVME_PEAK_OUTSTANDING_REQUEST_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_PEAK_OUTSTANDING=";
+constexpr char OS_KERNEL_MAIN_NVME_MSIX_INTERRUPT_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_MSIX_INTERRUPTS=";
+constexpr char OS_KERNEL_MAIN_NVME_CONTROLLER_RESET_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_CONTROLLER_RESETS=";
+constexpr char OS_KERNEL_MAIN_NVME_ERROR_COMPLETION_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_ERROR_COMPLETIONS=";
+constexpr char OS_KERNEL_MAIN_NVME_COMMAND_TIMEOUT_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_COMMAND_TIMEOUTS=";
+constexpr char OS_KERNEL_MAIN_NVME_PRP_LIST_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_PRP_LIST_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_MULTI_OUTSTANDING_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_MULTI_OUTSTANDING_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_MSIX_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_MSIX_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_WRITE_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_WRITE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_FLUSH_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_FLUSH_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_READ_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_READ_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_DATA_VERIFIED_MESSAGE[] =
+    "[OS][KERNEL] NVME_DATA_VERIFIED\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_IO_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_IO_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_RESET_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_RESET_READY\r\n";
+constexpr char OS_KERNEL_MAIN_STORAGE_BACKEND_ATA_MESSAGE[] =
+    "[OS][KERNEL] STORAGE_BACKEND=ATA\r\n";
+constexpr char OS_KERNEL_MAIN_STORAGE_BACKEND_NVME_MESSAGE[] =
+    "[OS][KERNEL] STORAGE_BACKEND=NVME\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_STORAGE_FALLBACK_PREFIX[] =
+    "[OS][KERNEL] NVME_STORAGE_FALLBACK=";
+constexpr char OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_ROOT_NAMESPACE_BLOCK_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_SWAP_NAMESPACE_BLOCK_COUNT_PREFIX[] =
+    "[OS][KERNEL] NVME_SWAP_NAMESPACE_BLOCK_COUNT=";
+constexpr char OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_ROOT_NAMESPACE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_SWAP_NAMESPACE_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_SWAP_NAMESPACE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_STORAGE_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_STORAGE_READY\r\n";
+constexpr char OS_KERNEL_MAIN_NVME_STORAGE_SHUTDOWN_READY_MESSAGE[] =
+    "[OS][KERNEL] NVME_STORAGE_SHUTDOWN_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ROOTFS_V4_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V4_MOUNTED\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE[] =
     "[OS][KERNEL] FILE_SYSTEM_CORRUPT\r\n";
@@ -663,6 +749,8 @@ constexpr char OS_KERNEL_MAIN_FILE_SIZE_PREFIX[] = "[OS][KERNEL] FILE_SIZE=";
 constexpr char OS_KERNEL_MAIN_LOAD_SEGMENT_COUNT_PREFIX[] = "[OS][KERNEL] LOAD_SEGMENTS=";
 constexpr char OS_KERNEL_MAIN_READY_MESSAGE[] = "[OS][KERNEL] READY\r\n";
 constexpr char OS_KERNEL_MAIN_TERMINAL_BANNER[] = "x86-64 OS v2.6 terminal ready\r\n";
+constexpr uint64_t OS_KERNEL_MAIN_PCI_BDF_BUS_SHIFT_BITS = 16ULL;
+constexpr uint64_t OS_KERNEL_MAIN_PCI_BDF_DEVICE_SHIFT_BITS = 8ULL;
 constexpr uint64_t OS_KERNEL_MAIN_TIMER_SELF_TEST_MINIMUM_TICK_COUNT = 16ULL;
 constexpr uint64_t OS_KERNEL_MAIN_PIC_SPURIOUS_SELF_TEST_EXPECTED_COUNT = 1ULL;
 constexpr int64_t OS_KERNEL_MAIN_USER_EXPECTED_EXIT_CODE = 0LL;
@@ -1101,6 +1189,144 @@ void InitializeKernelDevices(const VgaTextConsole &vga_console) noexcept {
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_TIMER_SELF_TEST_PASSED_MESSAGE);
 }
 
+void ProbeKernelNvme(const VgaTextConsole &vga_console) noexcept {
+    NvmeProbeResult result{};
+    const NvmeStatus status = ProbeNvmeController(GetMonotonicNanoseconds, result);
+    if (status == NvmeStatus::NotFound) {
+        return;
+    }
+    if (status != NvmeStatus::Succeeded) {
+        if (result.controller_reset_count != 0ULL) {
+            WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_CONTROLLER_RESET_COUNT_PREFIX,
+                                 result.controller_reset_count);
+            WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_ERROR_COMPLETION_COUNT_PREFIX,
+                                 result.error_completion_count);
+            WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_COMMAND_TIMEOUT_COUNT_PREFIX,
+                                 result.command_timeout_count);
+            if (result.resources_reclaimed) {
+                WriteRequiredMessage(vga_console,
+                                     OS_KERNEL_MAIN_NVME_RESOURCES_RECLAIMED_MESSAGE);
+            }
+            WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_RESET_READY_MESSAGE);
+        }
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_IDENTIFY_FAILED_PREFIX,
+                             static_cast<uint64_t>(status));
+        HaltProcessor();
+    }
+    const uint64_t packed_bdf =
+        (result.pci_controller.address.bus_number << OS_KERNEL_MAIN_PCI_BDF_BUS_SHIFT_BITS) |
+        (result.pci_controller.address.device_number << OS_KERNEL_MAIN_PCI_BDF_DEVICE_SHIFT_BITS) |
+        result.pci_controller.address.function_number;
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_PCI_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_PCI_BDF_PREFIX, packed_bdf);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_BAR_ADDRESS_PREFIX,
+                         result.bar_physical_address);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_BAR_SIZE_PREFIX, result.bar_size_bytes);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_VERSION_PREFIX, result.version);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_CONTROLLER_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_NAMESPACE_COUNT_PREFIX,
+                         result.controller_identity.namespace_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_NAMESPACE_BLOCK_COUNT_PREFIX,
+                         result.namespace_identity.logical_block_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_NAMESPACE_BLOCK_SIZE_PREFIX,
+                         result.namespace_identity.logical_block_size_bytes);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_IDENTIFY_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_IO_QUEUE_DEPTH_PREFIX,
+                         result.io_queue_depth);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_NVME_MAXIMUM_TRANSFER_BLOCK_COUNT_PREFIX,
+                         result.geometry.maximum_transfer_block_count);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_IO_QUEUE_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_MSIX_TABLE_ENTRY_COUNT_PREFIX,
+                         result.msix_table_entry_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_MSIX_TABLE_BAR_INDEX_PREFIX,
+                         result.msix_table_bar_index);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_MSIX_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_NVME_IO_TEST_LOGICAL_BLOCK_ADDRESS_PREFIX,
+                         result.io_test_logical_block_address);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_NVME_IO_TEST_LOGICAL_BLOCK_COUNT_PREFIX,
+                         result.io_test_logical_block_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_IO_TEST_REQUEST_COUNT_PREFIX,
+                         result.io_test_request_count);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_NVME_IO_TEST_TRANSFER_PAGE_COUNT_PREFIX,
+                         result.io_test_transfer_page_count);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_PRP_LIST_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_WRITE_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_FLUSH_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_READ_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_IO_TEST_CHECKSUM_PREFIX,
+                         result.io_test_checksum);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_DATA_VERIFIED_MESSAGE);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_NVME_PEAK_OUTSTANDING_REQUEST_COUNT_PREFIX,
+                         result.peak_outstanding_request_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_MSIX_INTERRUPT_COUNT_PREFIX,
+                         result.msix_interrupt_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_CONTROLLER_RESET_COUNT_PREFIX,
+                         result.controller_reset_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_ERROR_COMPLETION_COUNT_PREFIX,
+                         result.error_completion_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_COMMAND_TIMEOUT_COUNT_PREFIX,
+                         result.command_timeout_count);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_MULTI_OUTSTANDING_READY_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_RESOURCES_RECLAIMED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_IO_READY_MESSAGE);
+}
+
+struct KernelStorageDevices final {
+    BlockDevice *root_device;
+    BlockDevice *swap_device;
+    NvmeStorageRuntimeResult nvme_result;
+    bool nvme_active;
+};
+
+[[nodiscard]] KernelStorageDevices SelectKernelStorageDevices(
+    const VgaTextConsole &vga_console, AtaPioDevice &ata_root_device,
+    AtaPioDevice &ata_swap_device) noexcept {
+    KernelStorageDevices devices{
+        .root_device = &ata_root_device,
+        .swap_device = &ata_swap_device,
+        .nvme_result = NvmeStorageRuntimeResult{},
+        .nvme_active = false,
+    };
+    BlockDevice *nvme_root_device = nullptr;
+    BlockDevice *nvme_swap_device = nullptr;
+    const NvmeStatus status = InitializeNvmeStorageRuntime(
+        GetMonotonicNanoseconds, devices.nvme_result, nvme_root_device, nvme_swap_device);
+    if (status == NvmeStatus::Succeeded && nvme_root_device != nullptr &&
+        nvme_swap_device != nullptr) {
+        devices.root_device = nvme_root_device;
+        devices.swap_device = nvme_swap_device;
+        devices.nvme_active = true;
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_STORAGE_BACKEND_NVME_MESSAGE);
+        WriteRequiredHexLine(vga_console,
+                             OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_BLOCK_COUNT_PREFIX,
+                             devices.nvme_result.root_geometry.logical_block_count);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_READY_MESSAGE);
+        WriteRequiredHexLine(vga_console,
+                             OS_KERNEL_MAIN_NVME_SWAP_NAMESPACE_BLOCK_COUNT_PREFIX,
+                             devices.nvme_result.swap_geometry.logical_block_count);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_SWAP_NAMESPACE_READY_MESSAGE);
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_STORAGE_READY_MESSAGE);
+        return devices;
+    }
+    if (status == NvmeStatus::SecondaryNamespaceUnavailable) {
+        // 单 namespace 设备仍用于驱动验收；完成自检后，系统存储明确回退 ATA。
+        ProbeKernelNvme(vga_console);
+    } else if (status != NvmeStatus::NotFound) {
+        if (status == NvmeStatus::ResourceLeak) {
+            HaltProcessor();
+        }
+        WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_STORAGE_FALLBACK_PREFIX,
+                             static_cast<uint64_t>(status));
+    }
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_STORAGE_BACKEND_ATA_MESSAGE);
+    return devices;
+}
+
 [[nodiscard]] uint8_t ExpectedFileSystemPayloadByte(const uint64_t byte_index) noexcept {
     return static_cast<uint8_t>((byte_index * OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER +
                                  OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT) &
@@ -1190,7 +1416,7 @@ void WriteFileSystemStatistics(const VgaTextConsole &vga_console,
 }
 
 void InitializeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileSystem &file_system,
-                                AtaPioDevice &device) noexcept {
+                                BlockDevice &device) noexcept {
     const fs::Status mount_status = file_system.Initialize(
         device, OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER, false, ReadRootFileSystemTimestamp);
     if (mount_status != fs::Status::Succeeded) {
@@ -2254,8 +2480,14 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
 
     PrepareRequiredProcesses(vga_console, user_program_selection);
     InitializeKernelDevices(vga_console);
-    AtaPioDevice file_system_device{};
-    AtaPioDevice swap_device{AtaPioChannel::Secondary};
+    AtaPioDevice ata_file_system_device{};
+    AtaPioDevice ata_swap_device{AtaPioChannel::Secondary};
+    KernelStorageDevices storage_devices = SelectKernelStorageDevices(
+        vga_console, ata_file_system_device, ata_swap_device);
+    if (storage_devices.nvme_active &&
+        RefreshProcessRuntimeResourceBaseline() != ProcessRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
     // rootfs 含全盘校验工作区，必须驻留 BSS，不能消耗有界内核栈。
     static fs::RootFileSystem file_system{};
     fs::Memfs memfs{};
@@ -2265,11 +2497,11 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     fs::Vfs vfs{};
     static fs::DevfsDevice devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
-    InitializeKernelFileSystem(vga_console, file_system, file_system_device);
+    InitializeKernelFileSystem(vga_console, file_system, *storage_devices.root_device);
     InitializeKernelVfs(vga_console, file_system, memfs, devfs, procfs, procfs_context, vfs,
                         devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
                         OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
-    if (AttachProcessVfs(vfs, swap_device) != ProcessRuntimeStatus::Succeeded) {
+    if (AttachProcessVfs(vfs, *storage_devices.swap_device) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_INITIALIZATION_STAGE_PREFIX,
@@ -2311,6 +2543,15 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     ExecuteRequiredProcesses(vga_console, user_program_selection);
     FinalizeKernelFileSystem(vga_console, file_system, vfs, memfs,
                              user_program_selection == UserProgramSelection::Smoke);
+
+    if (storage_devices.nvme_active) {
+        if (ShutdownNvmeStorageRuntime(storage_devices.nvme_result) !=
+                NvmeStatus::Succeeded ||
+            !storage_devices.nvme_result.resources_reclaimed) {
+            HaltProcessor();
+        }
+        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_STORAGE_SHUTDOWN_READY_MESSAGE);
+    }
 
     if (!vga_console.TryWriteDiagnosticHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
                                                boot_info->kernel_file_size_bytes) ||

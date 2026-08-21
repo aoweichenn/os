@@ -981,8 +981,8 @@ v2.0 已完成上述集成闭环。项目版本提升到 2.0.0，但 ABI 仍是 
 
 **范围**
 
-- QEMU 参考 RAM 固定为 32768 MiB；手机只做按需提交和高地址冒烟，不触碰
-  全部来宾 RAM。
+- 手机 QEMU 参考 RAM 固定为 4096 MiB 并使用 `-mem-prealloc`；32 GiB 只保留为
+  非手机可选压力档，不属于本周期正式机器身份。
 - 启动盘固定为 137438953472 字节稀疏文件，即 LBA `0..0x0FFFFFFF`；本版
   rootfs v2 仍为固定 256 MiB，不宣称已可分配完整 128 GiB。
 - ROM 自行设置 VGA 文本模式、16 色 DAC 和 8×16 Basic Latin 字形；Firmware、
@@ -1000,8 +1000,8 @@ v2.0 已完成上述集成闭环。项目版本提升到 2.0.0，但 ABI 仍是 
   溢出；输出模式错误或共享版本不匹配必须拒绝接管。
 - 128 GiB 空镜像和启动镜像保持稀疏，逻辑末扇区精确等于 LBA28 最大值；
   普通构建、复制和故障镜像不能把稀疏洞实体化。
-- 64 MiB bootstrap、256 MiB functional 和 32 GiB capacity 使用同一代码；
-  capacity 必须实际读写并回收 4 GiB 以上页帧。
+- 64 MiB bootstrap、256 MiB functional 和 4 GiB primary 使用同一代码；
+  primary 必须实际读写 PCI hole 重映射后位于 4 GiB 物理地址以上的页帧。
 - 正常 Shell 画面没有 Kernel 统计刷屏；panic 和早期失败在屏幕可见，完整
   诊断在宿主日志可复现。
 - `caw` 隔离全量验证和手机 Termux/noVNC 交互证据通过，再完成发布闭环。
@@ -1163,6 +1163,42 @@ rootfs v4、文档、教材和公开发布身份。
 - 教材 PDF 与手机副本 SHA-256 相同，独立网站从该主仓 SHA 同步并通过测试/构建；
 - Sites 保存版本部署成功，公网首页、架构、路线、v2.6 文档、代码、教材、
   sitemap、robots 和 Worker 日志全部通过。
+
+## 第四周期：v2.7 起的核心机制深化
+
+用户决定暂停 v2.6 公开发布并继续演进 v2。第四周期不增加网络、USB、音频、
+图形或一组并行存储驱动；先把文件系统、缓存、内存回收和进程线程推进到可扩展
+的单核 Linux 式核心。v2.6 的候选证据作为回归基线保留，不回写其冻结身份。
+
+### v2.7 通用块设备层与自研 NVMe
+
+**范围**
+
+- 把块设备协议从文件系统模块上移到设备模块，rootfs、journal、swap 和页缓存
+  只依赖 `BlockDevice`；
+- 通用请求保存设备几何和逻辑块数，支持多块、有限多 outstanding、乱序完成、
+  确定超时与唯一终态；
+- ATA PIO 保持启动和回退；Kernel 自行实现最小 PCI/NVMe 1.4 单控制器、单
+  namespace、单 I/O queue；
+- QEMU 只模拟 `nvme` 设备，不使用 virtio、passthrough、外部固件或宿主驱动；
+- 本版不改 rootfs v4 格式、不增加系统调用，也不启动公开发布闭环。
+
+**增量顺序**
+
+1. 通用 `BlockDevice`、几何与多深度请求模型（已完成）；
+2. 最小 PCI configuration space 与 BAR/MMIO（已完成）；
+3. NVMe disable/enable、admin queue、Identify（已完成）；
+4. I/O queue、Read/Write/Flush 与有界轮询（已完成）；
+5. PRP list、四槽完成、MSI-X、超时/EIO reset 与故障矩阵（已完成）；
+6. rootfs/swap 迁移、ATA 回退、三档 QEMU 与重启持久化（已完成）。
+
+**退出条件**
+
+- 单元、集成和十万步随机请求模型覆盖所有几何、深度、乱序和失败边界；
+- 自研 NVMe 驱动在 QEMU 真实完成 Identify、数据读写、Flush 和重启持久化；
+- rootfs、swap、页缓存和 journal 不包含控制器分支；
+- ATA 启动/回退与 NVMe 正常路径使用同一上层镜像语义，故障不会错误报告稳定；
+- 全量 caw 回归零警告、零失败，主工程仍只标记工程候选。
 
 ## 跨阶段不可妥协门禁
 

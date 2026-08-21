@@ -1,4 +1,4 @@
-#include "os/kernel/fs/block_cache.hpp"
+#include <os/kernel/fs/block_cache.hpp>
 
 namespace os::kernel {
 
@@ -23,28 +23,6 @@ void ClearBlock(uint8_t *block) noexcept {
     }
 }
 
-}
-
-FileSystemBlockDeviceStatus
-FileSystemBlockDevice::ReadBlock(const uint64_t logical_block_address, uint8_t *block,
-                                 const uint64_t block_size_bytes) noexcept {
-    static_cast<void>(logical_block_address);
-    static_cast<void>(block);
-    static_cast<void>(block_size_bytes);
-    return FileSystemBlockDeviceStatus::ReadFailed;
-}
-
-FileSystemBlockDeviceStatus
-FileSystemBlockDevice::WriteBlock(const uint64_t logical_block_address, const uint8_t *block,
-                                  const uint64_t block_size_bytes) noexcept {
-    static_cast<void>(logical_block_address);
-    static_cast<void>(block);
-    static_cast<void>(block_size_bytes);
-    return FileSystemBlockDeviceStatus::WriteFailed;
-}
-
-FileSystemBlockDeviceStatus FileSystemBlockDevice::Flush() noexcept {
-    return FileSystemBlockDeviceStatus::FlushFailed;
 }
 
 void BlockCache::Initialize(FileSystemBlockDevice &device) noexcept {

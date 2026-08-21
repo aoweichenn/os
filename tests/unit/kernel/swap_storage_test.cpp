@@ -36,11 +36,11 @@ struct SectorRecord final {
     bool active;
 };
 
-class SparseSwapDevice final : public os::kernel::FileSystemBlockDevice {
+class SparseSwapDevice final : public os::kernel::BlockDeviceAdapter<SparseSwapDevice> {
   public:
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     ReadBlock(const uint64_t logical_block_address, uint8_t *const block,
-              const uint64_t block_size_bytes) noexcept override {
+              const uint64_t block_size_bytes) noexcept {
         if (this->fail_next_read_) {
             this->fail_next_read_ = false;
             return os::kernel::FileSystemBlockDeviceStatus::ReadFailed;
@@ -58,7 +58,7 @@ class SparseSwapDevice final : public os::kernel::FileSystemBlockDevice {
 
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     WriteBlock(const uint64_t logical_block_address, const uint8_t *const block,
-               const uint64_t block_size_bytes) noexcept override {
+               const uint64_t block_size_bytes) noexcept {
         if (this->fail_next_write_) {
             this->fail_next_write_ = false;
             return os::kernel::FileSystemBlockDeviceStatus::WriteFailed;
@@ -83,7 +83,7 @@ class SparseSwapDevice final : public os::kernel::FileSystemBlockDevice {
         return os::kernel::FileSystemBlockDeviceStatus::Succeeded;
     }
 
-    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept override {
+    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept {
         if (this->fail_next_flush_) {
             this->fail_next_flush_ = false;
             return os::kernel::FileSystemBlockDeviceStatus::FlushFailed;

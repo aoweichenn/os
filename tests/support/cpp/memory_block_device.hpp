@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/kernel/fs/block_cache.hpp"
+#include <os/kernel/fs/block_cache.hpp>
 
 #include <stdint.h>
 
@@ -9,11 +9,11 @@ namespace os::test {
 inline constexpr uint64_t OS_TEST_MEMORY_BLOCK_DEVICE_BLOCK_COUNT = 4096ULL;
 inline constexpr uint64_t OS_TEST_MEMORY_BLOCK_DEVICE_BLOCK_SIZE_BYTES = 512ULL;
 
-class MemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
+class MemoryBlockDevice final : public os::kernel::BlockDeviceAdapter<MemoryBlockDevice> {
   public:
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     ReadBlock(const uint64_t logical_block_address, uint8_t *block,
-              const uint64_t block_size_bytes) noexcept override {
+              const uint64_t block_size_bytes) noexcept {
         if (block == nullptr) {
             return os::kernel::FileSystemBlockDeviceStatus::InvalidBuffer;
         }
@@ -35,7 +35,7 @@ class MemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
 
     [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus
     WriteBlock(const uint64_t logical_block_address, const uint8_t *block,
-               const uint64_t block_size_bytes) noexcept override {
+               const uint64_t block_size_bytes) noexcept {
         if (block == nullptr) {
             return os::kernel::FileSystemBlockDeviceStatus::InvalidBuffer;
         }
@@ -55,7 +55,7 @@ class MemoryBlockDevice final : public os::kernel::FileSystemBlockDevice {
         return os::kernel::FileSystemBlockDeviceStatus::Succeeded;
     }
 
-    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept override {
+    [[nodiscard]] os::kernel::FileSystemBlockDeviceStatus Flush() noexcept {
         if (this->fail_flushes_) {
             return os::kernel::FileSystemBlockDeviceStatus::FlushFailed;
         }

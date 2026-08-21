@@ -962,9 +962,11 @@ committed 和 active swap 均为零。
 
 - 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
   timer/IPI、I/O APIC、MSI/MSI-X 与 SMP 路由尚未实现。
-- 键盘只保存一个待处理语义事件，ATA 仍是禁用设备 IRQ 的同步单扇区 PIO；
-  运行期已经通过 64 槽 BlockRequest FIFO 和 IRQ14 驱动单飞 PIO；
-  DMA、tagged queue、AHCI/NVMe 与多控制器尚未实现。
+- 键盘只保存一个待处理语义事件，ATA 仍保留同步单扇区 PIO，并通过 64 槽
+  BlockRequest FIFO 和 IRQ14 驱动运行期单飞 PIO；ATA DMA、tagged queue 和 AHCI
+  尚未实现。Kernel 已有单控制器、双 namespace、16 页 PRP、四 outstanding 和
+  单向量 MSI-X 的 NVMe rootfs/swap，并能对 EIO/timeout reset；多 I/O queue、
+  调度器异步接口、MSI-X 多向量与多控制器尚未实现。ATA 保留启动与回退。
 - 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态和 buddy
   位图仍按最高 RAM PFN 线性编码，极端稀疏物理地址空间、NUMA、zone、
   per-CPU page list 和分段 `vmemmap` 以后扩展。

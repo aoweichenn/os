@@ -155,6 +155,48 @@ class QemuRunnerToolTests(unittest.TestCase):
             command,
         )
 
+    def testAttachesDedicatedNvmeNamespace(self) -> None:
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            nvmeDiskImagePath=Path("nvme.img"),
+        )
+
+        self.assertIn(
+            "file=nvme.img,format=raw,if=none,id=os-nvme,snapshot=on",
+            command,
+        )
+        self.assertIn(
+            "nvme,serial=OSNVME0000000001,drive=os-nvme",
+            command,
+        )
+
+    def testAttachesNvmeNamespaceThroughBlkdebug(self) -> None:
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            nvmeDiskImagePath=Path("nvme.img"),
+            nvmeBlkdebugConfigPath=Path("nvme-blkdebug.conf"),
+        )
+
+        self.assertIn(
+            "file=blkdebug:nvme-blkdebug.conf:nvme.img,format=raw,"
+            "if=none,id=os-nvme,snapshot=off",
+            command,
+        )
+
+    def testAttachesTwoExplicitNvmeNamespaces(self) -> None:
+        command = createQemuFirmwareCommand(
+            Path("firmware.bin"),
+            Path("disk.img"),
+            nvmeDiskImagePath=Path("root.img"),
+            nvmeSwapDiskImagePath=Path("swap.img"),
+        )
+
+        self.assertIn("nvme,id=os-nvme-controller,serial=OSNVME0000000001", command)
+        self.assertIn("nvme-ns,drive=os-nvme-root,nsid=1", command)
+        self.assertIn("nvme-ns,drive=os-nvme-swap,nsid=2", command)
+
     def testCreatesFunctional256MibMemoryCommand(self) -> None:
         command = createQemuFirmwareCommand(
             Path("firmware.bin"),

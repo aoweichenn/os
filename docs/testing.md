@@ -1413,3 +1413,110 @@ randomized、24 system，含 23 条 failure-path。bootstrap、functional、4 Gi
 primary、persistence 分别为 8.77、24.33、26.31、48.65 秒，全量峰值 RSS
 4264028 KiB。两块已物化盘的三轮 soak 为 3/3、77.53 秒，峰值 RSS
 4267056 KiB。最终主仓 SHA 形成后必须重新生成清单并复查身份门禁。
+
+## v2.7 通用块设备层与 NVMe 测试
+
+第一增量不改变 QEMU 生产设备，先冻结可供 ATA 和 NVMe 共用的模型：
+
+- `os_kernel_block_request_unit_tests` 覆盖非法几何、队列深度大于容量、只读与
+  无 Flush 设备、非整块、超最大传输、末 LBA、多块计数、容量拒绝和槽位复用；
+- `os_kernel_block_request_completion_integration_tests` 用深度 2 同时签发两个
+  请求，验证乱序完成、IRQ/超时单赢家、补充签发与错误保留；
+- `os_kernel_block_request_randomized_tests` 使用 4096 字节块、最多 8 块传输和
+  深度 4 执行十万步模型，逐步比较 FIFO、Issued 上限、deadline/identifier
+  超时选择、唯一终态和最终零活动请求；
+- 既有 ATA IRQ14、bootstrap、functional、4 GiB、persistence 与 failure-path
+  继续作为零行为变化门禁。
+
+第二增量增加：
+
+- `os_kernel_pci_model_unit_tests` 覆盖 mechanism #1 精确编码、越界 BDF、未对齐
+  offset、NVMe `01/08/02`、缺席 vendor、32/64 位 memory BAR 与非法 size mask；
+- `os_kernel_pci_model_randomized_tests` 固定种子执行 4096 轮 BDF/offset 往返和
+  32/64 位二次幂 BAR aperture oracle；
+- freestanding symbol audit 必须继续证明 32 位 port I/O 与块设备类型擦除没有
+  引入 RTTI、异常、纯虚调用或外部运行时。
+
+PCI/NVMe 增量进入后必须依次增加 configuration/BAR 纯模型、CAP/CC/CSTS 状态机、
+SQ/CQ wrap 与 phase 随机模型、QEMU Identify、Read/Write/Flush、控制器超时复位、
+重启持久化和 ATA 回退。只看到 PCI 设备或 Identify 成功不构成存储验收。
+
+当前通用块层全量轮次在 caw 完成 192/192、0 失败，`verify` 190.96 秒、峰值 RSS
+4266252 KiB。加入 PCI model、32 位 configuration port 和两个测试目标后，最终
+轮次为 194/194、0 失败：59 unit、70 integration、41 randomized、24 system，
+含 23 条 failure-path；CTest 188.90 秒，完整 `verify` 189.81 秒，峰值 RSS
+4266600 KiB。该证据只证明块层与 PCI 基础不破坏现有系统，不证明 NVMe 已驱动。
+
+第三增量增加：
+
+- `os_kernel_nvme_model_unit_tests` 覆盖 CAP、CC、AQA、Identify Controller/Namespace、
+  PRP1、CID、CQE phase/status 与 Identify 数据边界；
+- `os_kernel_nvme_model_randomized_tests` 固定种子执行十万步 admin SQ/CQ 游标，逐步
+  对照 wrap 和 completion phase oracle；
+- 第三增量当时的 `os_qemu_nvme_identify` 附加独立 128 GiB raw NVMe namespace，
+  要求真实完成 BDF 扫描、16 KiB BAR 分配、NVMe 1.4.0 enable、两条 Identify 和
+  完整资源回收；第四增量已由覆盖其全部条件的 `os_qemu_nvme_io` 替代；
+- focused caw 轮次中，PCI/NVMe 四个纯模型、Python tooling 和 QEMU Identify 均
+  通过；QEMU 报告 namespace 为 `0x10000000` 个 512 字节逻辑块。
+
+第三增量全量 caw 回归为 197/197、0 失败：60 unit、70 integration、42
+randomized、25 system，含 23 条 failure-path；CTest 188.29 秒，完整 `verify`
+189.32 秒，峰值 RSS 4265184 KiB。NVMe Identify 系统测试为 0.66 秒，既有
+bootstrap、functional 与全部故障路径保持通过。
+
+第四增量把系统门禁升级为 `os_qemu_nvme_io`：
+
+- Set Features 请求一对队列，Create CQ1/SQ1 后必须报告深度 64；
+- 由 `BlockDevice` 在 LBA `0x0FFFFFF8` 写 8 个 512 字节块，完成 Flush 后读回；
+- 逐字节比较和 FNV 风格校验均通过，当前固定校验和为
+  `0x4C16736F7C9CA383`；
+- 命令模型覆盖非法 queue count/depth、Flush 携带数据、metadata namespace，随机
+  模型增加十万组 64 位 SLBA 和零基 NLB 编码；
+- focused caw 轮次中 NVMe 单元、随机、Python tooling 和真实 QEMU I/O 4/4 通过，
+  QEMU 路径约 0.7 秒。
+
+第四增量全量 caw 回归为 197/197、0 失败：60 unit、70 integration、42
+randomized、25 system，含 23 条 failure-path；最终 CTest 184.16 秒，完整
+`verify` 185.01 秒，峰值 RSS 4265616 KiB。既有 ATA bootstrap、functional、4 GiB、
+persistence 与全部故障路径继续通过。
+
+第四增量当时的系统测试在 `NVME_IO_READY` 处停止。它证明进程内真实数据 I/O 和 Flush
+completion，不把重启持久化、PRP list、异步多 outstanding、MSI-X 或 rootfs 迁移
+计入通过条件。
+
+第五增量把正常系统门禁扩展为 16 页 PRP、四 outstanding 和 MSI-X：
+
+- PCI 单元/随机模型覆盖 capability 链、MSI-X table/PBA BIR、LAPIC message
+  address/data 和逐向量 mask；
+- NVMe 单元/十万组随机模型覆盖 1 页空 PRP2、2 页直接 PRP2、3..16 页 packed list；
+- 正常 QEMU 从 LBA `0x0FFFFE00` 开始并发四笔 64 KiB Write/Read，要求峰值
+  outstanding 4、至少一次 MSI-X、reset/error/timeout 均为零；
+- `os_qemu_nvme_io_error_recovery` 在临时 sparse 副本上用 blkdebug 注入一次
+  `write_aio` EIO，要求 error completion 1、reset 1、资源回收且禁止 I/O ready；
+- `os_qemu_nvme_io_timeout_recovery` 使用专用内核抑制首批 Write doorbell，按 CAP.TO
+  等待约 7.5 秒，要求 timeout 1、reset 1、error completion 0 和资源回收。
+
+两个失败测试均在 `NVME_RESET_READY` 处停止；注入状态和临时 backing 不进入正常
+内核或源 namespace。
+
+第五增量最终 caw 回归为 199/199、0 失败：60 unit、70 integration、42
+randomized、27 system，含 25 条 failure-path；CTest 204.33 秒，完整 `verify`
+205.17 秒，峰值 RSS 4265240 KiB。既有 ATA、4 GiB、持久化和全部历史故障路径
+继续通过。
+
+第六增量增加生产存储矩阵：
+
+- `os_qemu_nvme_storage_bootstrap`、`functional`、`primary` 分别以 64 MiB、256 MiB、
+  4 GiB 挂显式 NSID 1/2，要求 rootfs、swap、用户工作负载、sync 和 controller
+  shutdown 全部完成；
+- `os_qemu_nvme_ata_fallback` 不挂 NVMe，在文件系统挂载前必须选择 ATA，禁止出现
+  NVMe storage ready；
+- `os_qemu_nvme_file_system_persistence` 使用四个隔离可写副本连续启动三次：第一次
+  写入/Flush，第二次从 NVMe root 恢复，第三次破坏 NVMe 超级块并拒绝挂载；
+- focused caw 中三档 storage、fallback、Python tooling 与 NVMe persistence 均
+  通过；bootstrap 7.91 秒、functional 约 22 秒、primary 约 24 秒、持久化 44 秒。
+
+第六增量最终 caw 回归为 204/204、0 失败：60 unit、70 integration、42
+randomized、32 system，含 25 条 failure-path；CTest 291.43 秒，完整 `verify`
+292.37 秒，峰值 RSS 4269244 KiB。三档 NVMe storage 分别为 7.86、22.87、25.24
+秒，ATA fallback 为 0.66 秒，NVMe 三启动持久化为 45.30 秒。

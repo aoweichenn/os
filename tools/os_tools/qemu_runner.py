@@ -41,6 +41,7 @@ OS_QEMU_VNC_BASE_TCP_PORT = 5900
 OS_QEMU_VNC_MAXIMUM_CONNECTION_COUNT = 8
 OS_QEMU_VNC_MAXIMUM_DISPLAY_NUMBER = 99
 OS_QEMU_VNC_LOOPBACK_ADDRESS = "127.0.0.1"
+OS_QEMU_NVME_BLKDEBUG_FAILURE_EVENTS = ("write_aio", "flush_to_disk")
 OS_QEMU_FILE_SYSTEM_START_LBA = OS_BOOT_LAYOUT_ROOTFS_START_LBA
 OS_QEMU_FILE_SYSTEM_SECTOR_SIZE_BYTES = 512
 OS_QEMU_FILE_SYSTEM_CORRUPTION_OFFSET_BYTES = 64
@@ -1511,6 +1512,112 @@ OS_QEMU_KERNEL_KEYBOARD_A_PRESSED_MARKER = (
 OS_QEMU_KERNEL_DEVICE_INITIALIZATION_FAILED_MARKER = (
     "[OS][KERNEL] DEVICE_INITIALIZATION_FAILED="
 )
+OS_QEMU_KERNEL_NVME_IDENTIFY_FAILED_MARKER = (
+    "[OS][KERNEL] NVME_IDENTIFY_FAILED="
+)
+OS_QEMU_KERNEL_NVME_PCI_READY_MARKER = "[OS][KERNEL] NVME_PCI_READY"
+OS_QEMU_KERNEL_NVME_PCI_BDF_MARKER = "[OS][KERNEL] NVME_PCI_BDF=0x"
+OS_QEMU_KERNEL_NVME_BAR_ADDRESS_MARKER = "[OS][KERNEL] NVME_BAR_ADDRESS=0x"
+OS_QEMU_KERNEL_NVME_BAR_SIZE_MARKER = "[OS][KERNEL] NVME_BAR_SIZE=0x"
+OS_QEMU_KERNEL_NVME_VERSION_MARKER = "[OS][KERNEL] NVME_VERSION=0x"
+OS_QEMU_KERNEL_NVME_CONTROLLER_READY_MARKER = (
+    "[OS][KERNEL] NVME_CONTROLLER_READY"
+)
+OS_QEMU_KERNEL_NVME_NAMESPACE_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_NAMESPACE_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_NAMESPACE_BLOCK_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_SIZE_MARKER = (
+    "[OS][KERNEL] NVME_NAMESPACE_BLOCK_SIZE=0x"
+)
+OS_QEMU_KERNEL_NVME_RESOURCES_RECLAIMED_MARKER = (
+    "[OS][KERNEL] NVME_RESOURCES_RECLAIMED"
+)
+OS_QEMU_KERNEL_NVME_IDENTIFY_READY_MARKER = (
+    "[OS][KERNEL] NVME_IDENTIFY_READY"
+)
+OS_QEMU_KERNEL_NVME_IO_QUEUE_DEPTH_MARKER = (
+    "[OS][KERNEL] NVME_IO_QUEUE_DEPTH=0x"
+)
+OS_QEMU_KERNEL_NVME_MAXIMUM_TRANSFER_BLOCK_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_MAXIMUM_TRANSFER_BLOCK_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_IO_QUEUE_READY_MARKER = "[OS][KERNEL] NVME_IO_QUEUE_READY"
+OS_QEMU_KERNEL_NVME_IO_TEST_LBA_MARKER = "[OS][KERNEL] NVME_IO_TEST_LBA=0x"
+OS_QEMU_KERNEL_NVME_IO_TEST_BLOCK_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_IO_TEST_BLOCK_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_WRITE_READY_MARKER = "[OS][KERNEL] NVME_WRITE_READY"
+OS_QEMU_KERNEL_NVME_FLUSH_READY_MARKER = "[OS][KERNEL] NVME_FLUSH_READY"
+OS_QEMU_KERNEL_NVME_READ_READY_MARKER = "[OS][KERNEL] NVME_READ_READY"
+OS_QEMU_KERNEL_NVME_IO_TEST_CHECKSUM_MARKER = (
+    "[OS][KERNEL] NVME_IO_TEST_CHECKSUM=0x"
+)
+OS_QEMU_KERNEL_NVME_DATA_VERIFIED_MARKER = "[OS][KERNEL] NVME_DATA_VERIFIED"
+OS_QEMU_KERNEL_NVME_IO_READY_MARKER = "[OS][KERNEL] NVME_IO_READY"
+OS_QEMU_KERNEL_NVME_MSIX_TABLE_ENTRY_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_MSIX_TABLE_ENTRIES=0x"
+)
+OS_QEMU_KERNEL_NVME_MSIX_TABLE_BAR_MARKER = "[OS][KERNEL] NVME_MSIX_TABLE_BAR=0x"
+OS_QEMU_KERNEL_NVME_IO_TEST_REQUEST_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_IO_TEST_REQUEST_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_IO_TEST_TRANSFER_PAGE_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_IO_TEST_TRANSFER_PAGES=0x"
+)
+OS_QEMU_KERNEL_NVME_PRP_LIST_READY_MARKER = "[OS][KERNEL] NVME_PRP_LIST_READY"
+OS_QEMU_KERNEL_NVME_PEAK_OUTSTANDING_MARKER = (
+    "[OS][KERNEL] NVME_PEAK_OUTSTANDING=0x"
+)
+OS_QEMU_KERNEL_NVME_MSIX_INTERRUPT_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_MSIX_INTERRUPTS=0x"
+)
+OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_ZERO_MARKER = (
+    "[OS][KERNEL] NVME_CONTROLLER_RESETS=0x0000000000000000"
+)
+OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_ZERO_MARKER = (
+    "[OS][KERNEL] NVME_ERROR_COMPLETIONS=0x0000000000000000"
+)
+OS_QEMU_KERNEL_NVME_MULTI_OUTSTANDING_READY_MARKER = (
+    "[OS][KERNEL] NVME_MULTI_OUTSTANDING_READY"
+)
+OS_QEMU_KERNEL_NVME_MSIX_READY_MARKER = "[OS][KERNEL] NVME_MSIX_READY"
+OS_QEMU_KERNEL_NVME_CONTROLLER_RESET_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_CONTROLLER_RESETS=0x"
+)
+OS_QEMU_KERNEL_NVME_ERROR_COMPLETION_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_ERROR_COMPLETIONS=0x"
+)
+OS_QEMU_KERNEL_NVME_RESET_READY_MARKER = "[OS][KERNEL] NVME_RESET_READY"
+OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_COMMAND_TIMEOUTS=0x"
+)
+OS_QEMU_KERNEL_NVME_COMMAND_TIMEOUT_ZERO_MARKER = (
+    "[OS][KERNEL] NVME_COMMAND_TIMEOUTS=0x0000000000000000"
+)
+OS_QEMU_KERNEL_STORAGE_BACKEND_ATA_MARKER = "[OS][KERNEL] STORAGE_BACKEND=ATA"
+OS_QEMU_KERNEL_STORAGE_BACKEND_NVME_MARKER = "[OS][KERNEL] STORAGE_BACKEND=NVME"
+OS_QEMU_KERNEL_NVME_STORAGE_FALLBACK_MARKER = (
+    "[OS][KERNEL] NVME_STORAGE_FALLBACK=0x"
+)
+OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_BLOCK_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_ROOT_NAMESPACE_BLOCK_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_BLOCK_COUNT_MARKER = (
+    "[OS][KERNEL] NVME_SWAP_NAMESPACE_BLOCK_COUNT=0x"
+)
+OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_READY_MARKER = (
+    "[OS][KERNEL] NVME_ROOT_NAMESPACE_READY"
+)
+OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_READY_MARKER = (
+    "[OS][KERNEL] NVME_SWAP_NAMESPACE_READY"
+)
+OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER = "[OS][KERNEL] NVME_STORAGE_READY"
+OS_QEMU_KERNEL_NVME_STORAGE_SHUTDOWN_READY_MARKER = (
+    "[OS][KERNEL] NVME_STORAGE_SHUTDOWN_READY"
+)
 OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER = (
     "[OS][KERNEL] FAULT_INJECTION=INVALID_OPCODE"
 )
@@ -1643,6 +1750,9 @@ def createQemuFirmwareCommand(
     cpuModel: str = OS_QEMU_DEFAULT_CPU_MODEL,
     displayBackend: str = "none",
     swapDiskImagePath: Path | None = None,
+    nvmeDiskImagePath: Path | None = None,
+    nvmeBlkdebugConfigPath: Path | None = None,
+    nvmeSwapDiskImagePath: Path | None = None,
 ) -> list[str]:
     if memoryMebibytes < OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES:
         raise OsToolError(
@@ -1685,6 +1795,46 @@ def createQemuFirmwareCommand(
                 f"file={swapDiskImagePath},format=raw,if=ide,index=2,snapshot={snapshotMode}",
             )
         )
+    if nvmeDiskImagePath is not None:
+        nvmeSnapshotMode = "off" if nvmeBlkdebugConfigPath is not None else snapshotMode
+        nvmeFileSpecification = (
+            f"blkdebug:{nvmeBlkdebugConfigPath}:{nvmeDiskImagePath}"
+            if nvmeBlkdebugConfigPath is not None
+            else str(nvmeDiskImagePath)
+        )
+        nvmeDrive = (
+            f"file={nvmeFileSpecification},format=raw,if=none,"
+            f"id=os-nvme,snapshot={nvmeSnapshotMode}"
+        )
+        if nvmeSwapDiskImagePath is None:
+            command.extend(
+                (
+                    "-drive",
+                    nvmeDrive,
+                    "-device",
+                    "nvme,serial=OSNVME0000000001,drive=os-nvme",
+                )
+            )
+        else:
+            nvmeRootDrive = nvmeDrive.replace("id=os-nvme", "id=os-nvme-root")
+            nvmeSwapDrive = (
+                f"file={nvmeSwapDiskImagePath},format=raw,if=none,"
+                f"id=os-nvme-swap,snapshot={snapshotMode}"
+            )
+            command.extend(
+                (
+                    "-drive",
+                    nvmeRootDrive,
+                    "-drive",
+                    nvmeSwapDrive,
+                    "-device",
+                    "nvme,id=os-nvme-controller,serial=OSNVME0000000001",
+                    "-device",
+                    "nvme-ns,drive=os-nvme-root,nsid=1",
+                    "-device",
+                    "nvme-ns,drive=os-nvme-swap,nsid=2",
+                )
+            )
     for qmpSocketPath in qmpSocketPaths:
         command.extend(
             (
@@ -2581,6 +2731,9 @@ def runQemuFirmwareBoot(
     keyboardStepTimeoutSeconds: float | None = None,
     vgaCaptureTimeoutSeconds: float = OS_QEMU_VGA_CAPTURE_TIMEOUT_SECONDS,
     swapDiskImagePath: Path | None = None,
+    nvmeDiskImagePath: Path | None = None,
+    nvmeFailureEvent: str | None = None,
+    nvmeSwapDiskImagePath: Path | None = None,
 ) -> None:
     validateImageSize(
         firmwareImagePath,
@@ -2589,6 +2742,25 @@ def runQemuFirmwareBoot(
     )
     if swapDiskImagePath is not None:
         validateImageSize(swapDiskImagePath, OS_SWAP_IMAGE_SIZE_BYTES, "交换盘镜像")
+    if nvmeDiskImagePath is not None:
+        validateImageSize(
+            nvmeDiskImagePath,
+            expectedDiskSizeBytes,
+            "NVMe 命名空间镜像",
+        )
+    if nvmeSwapDiskImagePath is not None:
+        validateImageSize(
+            nvmeSwapDiskImagePath,
+            OS_SWAP_IMAGE_SIZE_BYTES,
+            "NVMe swap namespace 镜像",
+        )
+        if nvmeDiskImagePath is None:
+            raise OsToolError("NVMe swap namespace 必须与 root namespace 一起提供。")
+    if nvmeFailureEvent is not None and (
+        nvmeDiskImagePath is None or
+        nvmeFailureEvent not in OS_QEMU_NVME_BLKDEBUG_FAILURE_EVENTS
+    ):
+        raise OsToolError("NVMe blkdebug 失败事件无效或缺少命名空间镜像。")
     validateImageSize(
         diskImagePath,
         expectedDiskSizeBytes,
@@ -2596,9 +2768,23 @@ def runQemuFirmwareBoot(
     )
 
     with tempfile.TemporaryDirectory(prefix="os-qemu-") as temporaryDirectory:
-        traceQmpSocketPath = Path(temporaryDirectory) / "vga-trace-qmp.sock"
-        inputQmpSocketPath = Path(temporaryDirectory) / "keyboard-qmp.sock"
-        traceDumpPath = Path(temporaryDirectory) / "vga-trace.bin"
+        temporaryPath = Path(temporaryDirectory)
+        traceQmpSocketPath = temporaryPath / "vga-trace-qmp.sock"
+        inputQmpSocketPath = temporaryPath / "keyboard-qmp.sock"
+        traceDumpPath = temporaryPath / "vga-trace.bin"
+        nvmeBlkdebugConfigPath: Path | None = None
+        activeNvmeDiskImagePath = nvmeDiskImagePath
+        if nvmeFailureEvent is not None:
+            nvmeBlkdebugConfigPath = temporaryPath / "nvme-blkdebug.conf"
+            activeNvmeDiskImagePath = temporaryPath / "nvme-failure.img"
+            copySparseImage(nvmeDiskImagePath, activeNvmeDiskImagePath)
+            nvmeBlkdebugConfigPath.write_text(
+                "[inject-error]\n"
+                f'event = "{nvmeFailureEvent}"\n'
+                'errno = "5"\n'
+                'once = "on"\n',
+                encoding="utf-8",
+            )
         keyboardReadyEvent = threading.Event()
         protocolCompleteEvent = threading.Event()
         qemuFinishedEvent = threading.Event()
@@ -2670,6 +2856,9 @@ def runQemuFirmwareBoot(
             cpuModel,
             "none",
             swapDiskImagePath,
+            activeNvmeDiskImagePath,
+            nvmeBlkdebugConfigPath,
+            nvmeSwapDiskImagePath,
         )
         try:
             (
@@ -2747,6 +2936,7 @@ def runQemuFileSystemPersistence(
     expectedFirmwareSizeBytes: int,
     expectedDiskSizeBytes: int,
     swapDiskImagePath: Path,
+    nvmeStorage: bool = False,
 ) -> None:
     """在同一可写磁盘上连续启动两次，并对第三次启动注入超级块损坏。"""
     validateImageSize(
@@ -2775,6 +2965,21 @@ def runQemuFileSystemPersistence(
         writableSwapDiskPath = Path(temporaryDirectory) / "persistent_swap.img"
         copySparseImage(diskImagePath, writableDiskPath)
         copySparseImage(swapDiskImagePath, writableSwapDiskPath)
+        writableNvmeRootPath: Path | None = None
+        writableNvmeSwapPath: Path | None = None
+        if nvmeStorage:
+            writableNvmeRootPath = Path(temporaryDirectory) / "persistent_nvme_root.img"
+            writableNvmeSwapPath = Path(temporaryDirectory) / "persistent_nvme_swap.img"
+            copySparseImage(diskImagePath, writableNvmeRootPath)
+            copySparseImage(swapDiskImagePath, writableNvmeSwapPath)
+        storageReadyMarkers = (
+            (
+                OS_QEMU_KERNEL_STORAGE_BACKEND_NVME_MARKER,
+                OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER,
+            )
+            if nvmeStorage
+            else (OS_QEMU_KERNEL_STORAGE_BACKEND_ATA_MARKER,)
+        )
 
         runQemuFirmwareBoot(
             projectRoot,
@@ -2783,6 +2988,7 @@ def runQemuFileSystemPersistence(
             expectedFirmwareSizeBytes,
             expectedDiskSizeBytes,
             (
+                *storageReadyMarkers,
                 OS_QEMU_KERNEL_ROOTFS_V4_MOUNTED_MARKER,
                 OS_QEMU_KERNEL_ROOTFS_JOURNAL_READY_MARKER,
                 OS_QEMU_USER_FILE_WRITTEN_MARKER,
@@ -2802,6 +3008,8 @@ def runQemuFileSystemPersistence(
             keyboardStepTimeoutSeconds=40.0,
             vgaCaptureTimeoutSeconds=10.0,
             swapDiskImagePath=writableSwapDiskPath,
+            nvmeDiskImagePath=writableNvmeRootPath,
+            nvmeSwapDiskImagePath=writableNvmeSwapPath,
         )
         runQemuFirmwareBoot(
             projectRoot,
@@ -2810,6 +3018,7 @@ def runQemuFileSystemPersistence(
             expectedFirmwareSizeBytes,
             expectedDiskSizeBytes,
             (
+                *storageReadyMarkers,
                 OS_QEMU_KERNEL_ROOTFS_V4_MOUNTED_MARKER,
                 OS_QEMU_KERNEL_ROOTFS_JOURNAL_READY_MARKER,
                 OS_QEMU_KERNEL_FILE_SYSTEM_PERSISTENCE_RESTORED_MARKER,
@@ -2828,14 +3037,19 @@ def runQemuFileSystemPersistence(
             keyboardStepTimeoutSeconds=40.0,
             vgaCaptureTimeoutSeconds=10.0,
             swapDiskImagePath=writableSwapDiskPath,
+            nvmeDiskImagePath=writableNvmeRootPath,
+            nvmeSwapDiskImagePath=writableNvmeSwapPath,
         )
 
+        persistentRootPath = (
+            writableNvmeRootPath if writableNvmeRootPath is not None else writableDiskPath
+        )
         superblockByteOffset = (
             OS_QEMU_FILE_SYSTEM_START_LBA *
             OS_QEMU_FILE_SYSTEM_SECTOR_SIZE_BYTES +
             OS_QEMU_FILE_SYSTEM_CORRUPTION_OFFSET_BYTES
         )
-        with writableDiskPath.open("r+b") as writableDisk:
+        with persistentRootPath.open("r+b") as writableDisk:
             writableDisk.seek(superblockByteOffset)
             originalByte = writableDisk.read(1)
             if len(originalByte) != 1:
@@ -2865,5 +3079,7 @@ def runQemuFileSystemPersistence(
             persistentDiskWrites=True,
             memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
             swapDiskImagePath=writableSwapDiskPath,
+            nvmeDiskImagePath=writableNvmeRootPath,
+            nvmeSwapDiskImagePath=writableNvmeSwapPath,
             vgaCaptureTimeoutSeconds=10.0,
         )

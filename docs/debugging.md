@@ -1965,3 +1965,87 @@ PID1/参数探针 `OS_STAGE`、Shell banner、QEMU 环境输出、README 和 v2.
 
 清单只接受 40 位小写 SHA。最终文档提交会改变 `HEAD`，所以主仓推送后必须用
 新 SHA 重新生成清单，再让网站同步；不得手改 JSON 中的 SHA。
+
+## v2.7 通用块设备层与 NVMe
+
+### 块请求在提交前返回 InvalidGeometry/InvalidRequest
+
+先读取驱动声明的 logical block size/count、maximum transfer、maximum
+outstanding、write 和 Flush 能力。buffer size 必须是逻辑块大小的整数倍；
+`LBA + block_count` 用减法边界检查，不能依赖可能溢出的直接加法。ATA 适配应
+固定为 512 字节、`0x10000000` 块、单块和深度 1。
+
+若队列仍有空槽但 `IssueNext` 没有签发，比较当前 Issued 数与设备深度；这不是
+容量耗尽。若多个请求同时到期，`ResolveTimeout` 每次只返回 deadline 最早、再按
+identifier 最小的一项，调用者必须继续处理其他到期请求。
+
+### 上层代码开始判断 ATA 或 NVMe
+
+这是分层错误。VFS、rootfs、journal、swap 和页缓存只能持有 `BlockDevice` 并
+使用逻辑块契约。PCI BDF、BAR、doorbell、command identifier、phase tag 与控制器
+复位只能出现在 PCI/NVMe 驱动；发现上层控制器分支时先修依赖边界，不继续扩散。
+
+### PCI configuration 读到全 `1` 或 BAR 为零
+
+先验证 mechanism #1 地址的 bit31=1、bus 位 23:16、device 位 15:11、function 位
+10:8、DWORD offset 位 7:2，低两位必须为零。vendor `0xFFFF` 表示该 function
+不存在，不应继续读 class/BAR。
+
+没有外部 BIOS 时 BAR 复位为零是预期状态，不能把零当 MMIO 地址访问。后续资源
+分配必须保存原 command/BAR，禁用 memory decode，写全 `1` 读取 aperture mask，
+恢复或写入对齐地址，再启用 memory/bus-master；任一步失败都要恢复旧配置。
+
+### NVME_IDENTIFY_FAILED
+
+先按状态值区分 PCI 扫描、BAR、MMIO、CAP/版本、enable timeout、command timeout、
+Identify 数据和资源回收。BAR 应回读为 16 KiB 对齐 memory BAR；doorbell 末地址
+必须落在 aperture 内。CSTS.CFS 置位时立即停止提交，不能继续等待 phase。
+
+若 command timeout，检查 SQE 为 64 字节、CQE 为 16 字节，AQA 深度使用零基值，
+ASQ/ACQ/PRP1 是 4 KiB 对齐物理地址；提交先写 SQE 再执行 DMA barrier、更新 tail
+doorbell。新 CQ 从 phase 1 开始，只有 phase、CID 和 status 同时匹配才算完成。
+`NVME_IO_READY` 之前必须出现 `NVME_RESOURCES_RECLAIMED`；缺失时检查控制器
+是否先清 CC.EN 并等 RDY=0，再解除 MMIO 和释放 DMA 页，最后恢复原 BAR/command。
+
+### NVME_IO_QUEUE_READY 之后没有 NVME_IO_READY
+
+先检查 Set Features `07h` 的 completion Dword 0 是否至少分配一对 SQ/CQ，再检查
+Create CQ1 先于 Create SQ1；QSIZE 是零基值，CQ/SQ 的 PC 必须为 1，SQ 的 CQID
+必须为 1。QID 1 的 submission/completion doorbell 索引分别是 2 和 3。
+
+若 Write/Read completion 失败，核对 opcode `01h/02h`、NSID 1、CDW10/11 的
+64 位 SLBA、CDW12 的零基 NLB 和 4 KiB 对齐 PRP1。当前最大传输就是一页；超过
+8 个 512 字节块必须在提交前拒绝，不能临时填 PRP2 指向不相关内存。Flush opcode
+为 `00h` 且不带数据指针。任一 timeout、错误 status、CID 或 SQID 不匹配都会冻结
+I/O；随后必须 reset 控制器，不能继续复用可能仍被 DMA 访问的队列。
+
+### MSI-X 到达但系统停在 Identify
+
+先检查 MSI-X function mask 和 entry vector mask。admin queue 仍可能使用 vector 0；
+在 CQ1/SQ1 创建前解除屏蔽会让中断入口看见尚未初始化的 I/O CQ。正确顺序是映射
+table、写入 LAPIC address/data、保持两级 mask，完成 Identify 和 Create CQ/SQ 后
+注册活动控制器并 unmask。ISR 必须 drain 到 phase 不匹配、更新 CQ1HDBL，再写 LAPIC
+EOI。
+
+### EIO 或 timeout 后仍有 DMA 资源
+
+错误 completion 和 timeout 都必须先冻结新提交。reset 顺序固定为 mask MSI-X、
+CC.EN=0、等待 CSTS.RDY=0、清 admin/I/O queue 和 CID 槽位、重新 enable、Set
+Features、Create CQ/SQ、最后 unmask。若 RDY 无法归零，宁可保留 DMA 页并报告失败，
+不能释放仍可能被控制器访问的 PRP list。`NVME_RESET_READY` 只在 reset 计数和资源
+回收都成立后输出。
+
+### 双 namespace 存在但 STORAGE_BACKEND 仍是 ATA
+
+先确认 controller 使用显式 `nvme-ns`，root 为 NSID 1、swap 为 NSID 2；简单
+`-device nvme,drive=...` 只创建一个隐式 namespace，只会进入驱动自检后回退。
+检查两次 Identify 的逻辑块数：root 应为 `0x10000000`，当前 swap 镜像应为
+`0x038E0008`。任何初始化失败都必须先 shutdown 并证明资源回收；`ResourceLeak`
+不得继续 ATA 回退。
+
+### NVMe 工作负载结束时报进程资源泄漏
+
+进程资源基线最初建立在 NVMe 初始化之前时，73 个 DMA 页和 MMIO KVA 会被误算为
+进程泄漏。双 namespace 选定后、首个用户进程创建前必须刷新持久内核资源基线；
+进程结束仍与该基线比较，最终文件系统 sync 后再 shutdown controller，并与 storage
+初始化前的 frame/KVA 统计比较。不能简单从最终计数中减去固定常量。
