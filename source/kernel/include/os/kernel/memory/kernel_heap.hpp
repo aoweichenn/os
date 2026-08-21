@@ -34,7 +34,7 @@ struct KernelHeapStatistics final {
 
 class KernelHeap final {
   public:
-    KernelHeap() noexcept;
+    constexpr KernelHeap() noexcept = default;
 
     // 堆直接使用给定连续虚拟区间存放块头和负载，不依赖任何外部运行库。
     [[nodiscard]] KernelHeapStatus Initialize(uint64_t base_address, uint64_t size_bytes) noexcept;
@@ -63,15 +63,15 @@ class KernelHeap final {
     void RemoveFreeBlock(BlockHeader *block) noexcept;
     void UpdateFollowingBlockPreviousSize(BlockHeader *block) noexcept;
 
-    uint64_t base_address_;
-    uint64_t size_bytes_;
-    uint64_t consumed_bytes_;
-    uint64_t allocation_count_;
-    uint64_t active_requested_bytes_;
-    uint64_t successful_allocation_count_;
-    uint64_t release_count_;
-    uint64_t peak_consumed_bytes_;
-    BlockHeader *free_list_head_;
+    uint64_t base_address_{};
+    uint64_t size_bytes_{};
+    uint64_t consumed_bytes_{};
+    uint64_t allocation_count_{};
+    uint64_t active_requested_bytes_{};
+    uint64_t successful_allocation_count_{};
+    uint64_t release_count_{};
+    uint64_t peak_consumed_bytes_{};
+    BlockHeader *free_list_head_{nullptr};
 };
 
 }

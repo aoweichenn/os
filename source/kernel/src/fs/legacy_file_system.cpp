@@ -266,6 +266,7 @@ Status LegacyFileSystem::Initialize(FileSystem &file_system, const uint64_t supe
         .operations = &LegacyFileSystem::operations,
         .backend_context = this,
         .maximum_name_length_bytes = OS_KERNEL_FILE_SYSTEM_MAXIMUM_NAME_LENGTH_BYTES,
+        .cache_regular_file_data = true,
         .read_only = read_only,
         .initialized = true,
     };

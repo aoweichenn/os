@@ -21,8 +21,12 @@ constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_WRITEBACK =
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_WRITEBACK_FAILURE =
     "写回失败必须保留 Error 页且重试成功前不得淘汰";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_DESTROY = "销毁后页帧统计必须恢复初始化基线";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_METADATA_FAILURE =
+    "动态地址空间元数据耗尽必须回滚 frame、record、page 和 radix 节点";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_TRIM_COUNT =
     "裁剪必须报告真实归还给页帧分配器的 clean 页数";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_TRUNCATE =
+    "truncate 必须拒绝活动范围外映射、丢弃脏页并清零保留尾页";
 
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MANAGED_PAGE_COUNT = 8ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_STATE_VALUES_PER_BYTE = 4ULL;
@@ -35,6 +39,9 @@ constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MANAGED_SIZE_BYTES =
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MEMORY_MAP_ENTRY_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_CAPACITY = 2ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_DIRTY_PAGE_LIMIT = 1ULL;
+constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_SIZE_BYTES = 64ULL * 1024ULL;
+constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_ALIGNMENT_BYTES = 64ULL;
+constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_TINY_METADATA_HEAP_SIZE_BYTES = 2048ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_FIRST_PAGE_INDEX = 0ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_SECOND_PAGE_INDEX = 1ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX = 2ULL;
@@ -141,11 +148,16 @@ int main() {
                                    OS_TEST_FILE_PAGE_CACHE_MANAGED_SIZE_BYTES) ==
         os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
     const os::kernel::PhysicalFrameAllocatorStatistics frames_before = frame_allocator.Statistics();
-    os::kernel::FilePageCacheEntry entries[OS_TEST_FILE_PAGE_CACHE_CAPACITY]{};
+    alignas(OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_ALIGNMENT_BYTES)
+        uint8_t metadata_heap_storage[OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_SIZE_BYTES]{};
+    os::kernel::KernelHeap metadata_heap{};
     os::kernel::FilePageCache cache{};
     const bool cache_initialized =
         allocator_initialized &&
-        cache.Initialize(entries, OS_TEST_FILE_PAGE_CACHE_CAPACITY,
+        metadata_heap.Initialize(reinterpret_cast<uint64_t>(metadata_heap_storage),
+                                 sizeof(metadata_heap_storage)) ==
+            os::kernel::KernelHeapStatus::Succeeded &&
+        cache.Initialize(metadata_heap, OS_TEST_FILE_PAGE_CACHE_CAPACITY,
                          OS_TEST_FILE_PAGE_CACHE_DIRTY_PAGE_LIMIT, frame_allocator, &memory,
                          AccessPage) == os::kernel::FilePageCacheStatus::Succeeded;
     test_context.Expect(cache_initialized, OS_TEST_FILE_PAGE_CACHE_INITIALIZE);
@@ -301,17 +313,92 @@ int main() {
         cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded;
     test_context.Expect(writeback_completed, OS_TEST_FILE_PAGE_CACHE_WRITEBACK);
 
+    constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_TRUNCATED_SIZE_BYTES = 100ULL;
+    memory.bytes[first_physical_address + OS_TEST_FILE_PAGE_CACHE_TRUNCATED_SIZE_BYTES] =
+        OS_TEST_FILE_PAGE_CACHE_LAST_PATTERN;
+    bool truncate_cache_hit = false;
+    uint64_t truncate_physical_address = 0ULL;
+    uint64_t resolved_size_bytes = 0ULL;
+    os::kernel::FilePageCacheEntry truncated_entry{};
+    const bool truncate_consistent =
+        cache.ObserveFileSize(file_identity,
+                              OS_TEST_FILE_PAGE_CACHE_CAPACITY *
+                                  os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Acquire(second_identity, &reader, ReadPage, truncate_physical_address,
+                      truncate_cache_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
+        truncate_cache_hit &&
+        cache.MarkDirty(second_identity, truncate_physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Truncate(file_identity, OS_TEST_FILE_PAGE_CACHE_TRUNCATED_SIZE_BYTES) ==
+            os::kernel::FilePageCacheStatus::EntryBusy &&
+        cache.Release(second_identity, truncate_physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Truncate(file_identity, OS_TEST_FILE_PAGE_CACHE_TRUNCATED_SIZE_BYTES) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.ResolveFileSize(file_identity, UINT64_MAX, resolved_size_bytes) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        resolved_size_bytes == OS_TEST_FILE_PAGE_CACHE_TRUNCATED_SIZE_BYTES &&
+        cache.ReadEntry(second_identity, truncated_entry) ==
+            os::kernel::FilePageCacheStatus::MappingNotFound &&
+        memory.bytes[first_physical_address + OS_TEST_FILE_PAGE_CACHE_TRUNCATED_SIZE_BYTES] == 0U &&
+        cache.Statistics().resident_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().dirty_page_count == 0ULL &&
+        cache.Statistics().truncated_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().truncated_tail_zero_count ==
+            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded;
+    test_context.Expect(truncate_consistent, OS_TEST_FILE_PAGE_CACHE_TRUNCATE);
+
     uint64_t reclaimed_page_count = 0ULL;
     const bool trim_count_valid =
         cache.Trim(0ULL, reclaimed_page_count) == os::kernel::FilePageCacheStatus::Succeeded &&
-        reclaimed_page_count == OS_TEST_FILE_PAGE_CACHE_CAPACITY &&
+        reclaimed_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Statistics().resident_page_count == 0ULL;
     test_context.Expect(trim_count_valid, OS_TEST_FILE_PAGE_CACHE_TRIM_COUNT);
 
     const bool destroyed =
         cache.Destroy() == os::kernel::FilePageCacheStatus::Succeeded &&
+        metadata_heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
+        metadata_heap.Statistics().allocation_count == 0ULL &&
         frame_allocator.Statistics().free_frame_count == frames_before.free_frame_count &&
         frame_allocator.Statistics().allocated_frame_count == frames_before.allocated_frame_count;
     test_context.Expect(destroyed, OS_TEST_FILE_PAGE_CACHE_DESTROY);
+
+    alignas(OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_ALIGNMENT_BYTES)
+        uint8_t tiny_metadata_heap_storage[OS_TEST_FILE_PAGE_CACHE_TINY_METADATA_HEAP_SIZE_BYTES]{};
+    os::kernel::KernelHeap tiny_metadata_heap{};
+    os::kernel::FilePageCache failing_cache{};
+    TestReader successful_reader{
+        .failure_page_index = OS_TEST_FILE_PAGE_CACHE_FAILURE_PAGE_INDEX,
+        .read_count = 0ULL,
+    };
+    uint64_t unavailable_metadata_physical_address = 0ULL;
+    bool unavailable_metadata_cache_hit = false;
+    const os::kernel::PhysicalFrameAllocatorStatistics frames_before_metadata_failure =
+        frame_allocator.Statistics();
+    const bool metadata_failure_atomic =
+        tiny_metadata_heap.Initialize(reinterpret_cast<uint64_t>(tiny_metadata_heap_storage),
+                                      sizeof(tiny_metadata_heap_storage)) ==
+            os::kernel::KernelHeapStatus::Succeeded &&
+        failing_cache.Initialize(tiny_metadata_heap, 64ULL, 32ULL, frame_allocator, &memory,
+                                 AccessPage) == os::kernel::FilePageCacheStatus::Succeeded &&
+        failing_cache.Acquire(MakePageIdentity(UINT64_MAX), &successful_reader, ReadPage,
+                              unavailable_metadata_physical_address,
+                              unavailable_metadata_cache_hit) ==
+            os::kernel::FilePageCacheStatus::MetadataAllocationFailed &&
+        !unavailable_metadata_cache_hit &&
+        failing_cache.Statistics().resident_page_count == 0ULL &&
+        failing_cache.Statistics().address_space_count == 0ULL &&
+        failing_cache.Statistics().metadata_allocation_failure_count == 1ULL &&
+        failing_cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded &&
+        failing_cache.Destroy() == os::kernel::FilePageCacheStatus::Succeeded &&
+        tiny_metadata_heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
+        tiny_metadata_heap.Statistics().allocation_count == 0ULL &&
+        frame_allocator.Statistics().allocated_frame_count ==
+            frames_before_metadata_failure.allocated_frame_count &&
+        frame_allocator.Statistics().free_frame_count ==
+            frames_before_metadata_failure.free_frame_count;
+    test_context.Expect(metadata_failure_atomic, OS_TEST_FILE_PAGE_CACHE_METADATA_FAILURE);
     return test_context.ExitCode();
 }

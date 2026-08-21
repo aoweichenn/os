@@ -70,6 +70,8 @@ set(
 )
 set(
     OS_KERNEL_MEMORY_HEADERS
+    include/os/kernel/memory/file_cache_address_space.hpp
+    include/os/kernel/memory/file_cache_identity.hpp
     include/os/kernel/memory/file_page_cache.hpp
     include/os/kernel/memory/kernel_heap.hpp
     include/os/kernel/memory/kernel_stack_manager.hpp
@@ -82,6 +84,7 @@ set(
     include/os/kernel/memory/physical_frame_allocator.hpp
     include/os/kernel/memory/physical_memory_map.hpp
     include/os/kernel/memory/resource_snapshot.hpp
+    include/os/kernel/memory/sparse_page_index.hpp
     include/os/kernel/memory/swap_manager.hpp
     include/os/kernel/memory/swap_storage.hpp
     include/os/kernel/memory/user_page_reference.hpp
@@ -209,6 +212,8 @@ set(
 )
 set(
     OS_KERNEL_MEMORY_SOURCES
+    src/memory/file_cache_address_space.cpp
+    src/memory/file_cache_identity.cpp
     src/memory/file_page_cache.cpp
     src/memory/kernel_heap.cpp
     src/memory/kernel_stack_manager.cpp
@@ -221,6 +226,7 @@ set(
     src/memory/physical_frame_allocator.cpp
     src/memory/physical_memory_map.cpp
     src/memory/resource_snapshot.cpp
+    src/memory/sparse_page_index.cpp
     src/memory/swap_manager.cpp
     src/memory/swap_storage.cpp
     src/memory/user_page_reference.cpp
@@ -351,6 +357,8 @@ add_library(
     os_kernel_memory_model_host
     STATIC
         src/fs/block_cache.cpp
+        src/memory/file_cache_address_space.cpp
+        src/memory/file_cache_identity.cpp
         src/memory/file_page_cache.cpp
         src/memory/kernel_heap.cpp
         src/memory/kernel_stack_manager.cpp
@@ -362,12 +370,15 @@ add_library(
         src/memory/physical_frame_allocator.cpp
         src/memory/physical_memory_map.cpp
         src/memory/resource_snapshot.cpp
+        src/memory/sparse_page_index.cpp
         src/memory/swap_manager.cpp
         src/memory/swap_storage.cpp
         src/memory/user_page_reference.cpp
         src/memory/virtual_memory_area.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/memory/file_page_cache.hpp
+        include/os/kernel/memory/file_cache_address_space.hpp
+        include/os/kernel/memory/file_cache_identity.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/memory/kernel_stack_manager.hpp
         include/os/kernel/memory/kernel_type_cache.hpp
@@ -378,6 +389,7 @@ add_library(
         include/os/kernel/memory/physical_frame_allocator.hpp
         include/os/kernel/memory/physical_memory_map.hpp
         include/os/kernel/memory/resource_snapshot.hpp
+        include/os/kernel/memory/sparse_page_index.hpp
         include/os/kernel/memory/swap_manager.hpp
         include/os/kernel/memory/swap_storage.hpp
         include/os/kernel/memory/user_page_reference.hpp
@@ -526,6 +538,7 @@ add_library(
         src/io/file_table.cpp
         src/ipc/pipe.cpp
         src/ipc/pipe_manager.cpp
+        src/memory/file_cache_identity.cpp
         src/memory/kernel_heap.cpp
         src/object/kernel_object.cpp
         src/security/credentials.cpp
@@ -547,6 +560,7 @@ add_library(
         include/os/kernel/io/file_table.hpp
         include/os/kernel/ipc/pipe.hpp
         include/os/kernel/ipc/pipe_manager.hpp
+        include/os/kernel/memory/file_cache_identity.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/object/kernel_object.hpp
         include/os/kernel/security/credentials.hpp

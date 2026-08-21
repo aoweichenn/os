@@ -102,21 +102,18 @@ v2.0 是中断可进入、内核不可抢占的单 BSP 内核：
 单 BSP 并不豁免锁顺序、引用计数和中断重入正确性，也不宣称已经具备 SMP
 安全性。
 
-### 三种正式配置与容量下限
+### 当前正式配置与容量下限
 
 数字是功能验收下限和运行时限制，不是固定数组形状。
 
 | 配置 | RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 职责 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| bootstrap | 64 MiB | 不规定 | 不规定 | 不规定 | 不规定 | 不规定 | 启动链、异常、基础内存和历史故障镜像 |
-| functional | 256 MiB | 64 | 128 | 32 | 512 | 128 | PID1、Shell、VM、线程、信号、TTY、持久化 |
-| capacity | 64 GiB | 256 | 512 | 64 | 4096 | 1024 | 全 RAM、高地址、容量、长时间压力 |
+| phone-primary | 4 GiB | 64 | 128 | 32 | 512 | 128 | 启动链、PID1、完整功能、PCI-hole 高内存、持久化和故障矩阵 |
 
-64 GiB 是主容量规格而不是实现上限。实际受管上界取 E820、CPUID 物理地址
-宽度、64 TiB direct-map 与运行时限制的交集。两种完整配置必须使用相同动态
-结构、64 位身份和失败语义。
+4 GiB 是当前验收规格而不是实现上限。实际受管上界取 E820、CPUID 物理地址
+宽度、64 TiB direct-map 与运行时限制的交集。
 
-capacity 还必须支持：
+独立宿主容量模型仍必须支持：
 
 - 1024 条按需获得缓冲页的 64 KiB 管道；
 - 4096 字节路径和 255 字节单组件；
@@ -131,10 +128,10 @@ capacity 还必须支持：
 
 | 时机 | 必须完成的证据 |
 | --- | --- |
-| 每次提交 | 受影响单元/集成/固定种子随机测试、64 MiB boot、256 MiB smoke |
-| 每个小版本 | 全部宿主测试、产物审计、完整 256 MiB functional |
-| nightly / 候选发布 | 完整 64 GiB capacity、soak、故障与崩溃点矩阵 |
-| v2.0 发布 | 三种配置、全部故障镜像、教材/网站构建、发布溯源 |
+| 每次提交 | 受影响单元/集成/固定种子随机测试、4 GiB primary smoke |
+| 每个小版本 | 全部宿主测试、产物审计、4 GiB 正常/持久化/故障矩阵 |
+| nightly / 候选发布 | 4 GiB soak、完整故障与崩溃点矩阵 |
+| 公开发布 | 4 GiB 全量、教材/网站构建、发布溯源 |
 
 随机失败必须报告种子和迭代位置；崩溃恢复失败必须报告断电点和镜像哈希。
 
@@ -1199,6 +1196,66 @@ rootfs v4、文档、教材和公开发布身份。
 - rootfs、swap、页缓存和 journal 不包含控制器分支；
 - ATA 启动/回退与 NVMe 正常路径使用同一上层镜像语义，故障不会错误报告稳定；
 - 全量 caw 回归零警告、零失败，主工程仍只标记工程候选。
+
+### v2.8 统一文件页缓存与写回回收
+
+**范围**
+
+- 以稳定文件身份和 64 位 page index 建立动态稀疏缓存地址空间；
+- buffered read/write、ELF/file fault 与 `MAP_SHARED` 最终共享同一权威页面；
+- Dirty/Writeback/Error 页面支持有界后台写回、按文件同步和错误推进；
+- clean file page、dirty writeback、匿名 swap 与 OOM 接入同一内存压力顺序；
+- rootfs v4、ABI 2.3.0、NVMe/ATA 选择和启动链不因缓存迁移改变。
+
+**增量顺序**
+
+1. 64 路动态 radix、`FileCacheAddressSpace`、状态/引用契约（已完成）；
+2. buffered read、ELF/file fault 与只读 shared 迁移（已完成）；
+3. buffered write、writable shared、truncate 与失效一致性（已完成）；
+4. 后台 writeback、Dirty 软硬水位和回压；
+5. `fsync`/`fdatasync`/`msync` 与 writeback error sequence；
+6. file reclaim、swap、direct reclaim 和 OOM 集成矩阵。
+
+**第一增量完成状态**
+
+`SparsePageIndex` 每层解释 6 bit，最多 11 层覆盖完整 `uint64_t`；Present、Dirty、
+Writeback、Error bitmap 在父节点聚合。插入先取得完整缺失路径，失败释放未发布
+节点；删除从叶到 root 裁剪空分支。`FileCacheAddressSpace` 动态拥有页元数据并冻结
+映射引用和状态转换，但尚未替换生产 `FilePageCache`。
+
+宿主单元覆盖全部层边界和 2 KiB 堆失败回滚；生命周期测试动态持有 8192 页；
+固定种子随机模型执行十万步；目标 Kernel 又在真实 Heap 上覆盖最高索引与失败路径。
+
+**第二增量完成状态**
+
+生产 `FilePageCache` 已删除固定 BSS entry 数组，改用文件身份注册表和动态地址空间。
+rootfs/legacy 的 VFS 普通读取、ELF header 读取和后续 file fault 使用同一缓存页；
+backend fill 显式走 `ReadUncachedAt`，procfs/memfs/devfs 不缓存。早期增量曾观察
+2/8/32 MiB 自适应 metadata arena；当前唯一 4 GiB 验收规格使用 32 MiB 和 8192 页。
+
+buffered write 仍在提交前撤销映射并失效 clean 页；writable shared 仍使用该动态
+cache 的 dirty/writeback 状态，因此一致性保持但尚未达到 write-through page cache。
+
+**第三增量完成状态**
+
+VFS cache capability 已扩展为 read/write/size/truncate 四个 hook；公共写按页取得
+唯一 frame，在修改前通过 Dirty hard limit，并用独立 retained writeback file 保证
+原 fd 关闭或 unlink 后仍能提交。缓存逻辑长度覆盖后端 `stat`，写回按 EOF 裁短最后
+一页并显式调用 `WriteUncachedAt`，不会递归回写缓存。
+
+普通写不再 revoke/invalidate。既有只读和 writable shared PTE 直接观察同一 frame；
+private COW 保持隔离。truncate 仅撤销 EOF 后驻留页，丢弃范围外 Clean/Dirty/Error，
+清零保留尾页；扩大只建立逻辑零区间。`sync` 继续先写保护 shared alias，再写回并
+释放 clean writeback 引用，最后进入 rootfs journal 与设备 Flush。
+
+**退出条件**
+
+- 4 GiB 配置可缓存超过 4096 页，容量不再由 Kernel BSS 固定数组决定；
+- lookup 不扫描全部驻留页面，同一文件页只有一个权威身份；
+- buffered read/write 与 mmap 对修改、truncate 和失效观察一致；
+- 写回失败保持 Error，按文件同步能向正确的打开实例报告新错误；
+- 低水位依次尝试 clean 回收、dirty 写回和匿名 swap，耗尽后才选择 OOM；
+- 4 GiB QEMU、NVMe/ATA fallback、重启持久化和故障矩阵全部保持通过。
 
 ## 跨阶段不可妥协门禁
 

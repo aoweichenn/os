@@ -2340,6 +2340,92 @@ namespace NVMe，缺失或可安全清理的初始化失败回退 ATA；ROM/Stag
 加载。Process runtime 在用户进程前把常驻控制器资源刷新进基线，进程结束验证
 设备仍在，最终 sync 后 shutdown 又验证资源回到 storage 初始化前。
 
+## v2.8 动态文件缓存地址空间
+
+第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：
+
+```text
+FileCacheIdentity
+  -> FileCacheAddressSpace
+       -> SparsePageIndex<uint64 page index>
+            level 10 ... level 0
+            Present / Dirty / Writeback / Error bitmap
+       -> FileCachePage metadata
+            physical address / mapping references / generation / state
+```
+
+radix 每层使用 page index 的 6 bit。level 0 的 64 个 slot 直接保存页面元数据，
+level 1..10 保存子节点；最高层只允许 slot 0..15，因此完整覆盖 64 位但不会发生
+移位截断。Lookup 最多访问 11 个节点。FindNext 根据父级 mark bitmap 跳过无目标
+状态的整棵子树。
+
+插入事务先申请 root growth 和缺失分支所需的全部节点。申请失败时这些节点尚未
+连接现有 root，可逆序释放；成功后才发布叶项。删除清空叶项后逐层更新 mark，
+释放空子树，并在高 root 只剩 slot 0 时提升其子节点。`Validate` 独立重算每个
+bitmap、节点/页面/状态计数和 canonical root 高度。
+
+`FileCacheAddressSpace` 只拥有页面元数据，物理 frame 继续由后续 cache/reclaim
+调用方拥有。锁顺序为 address-space、sparse-index、KernelHeap；没有任何一个锁下
+执行 VFS、设备 I/O、用户复制或调度。状态机只允许：
+
+```text
+Clean -> Dirty -> Writeback -> Clean
+                       `-----> Error -> Writeback
+```
+
+第二增量才让 buffered read、ELF/file fault 和 read-only shared mapping 进入这条
+路径。该迁移现已完成：
+
+```text
+VFS Read/ReadAt ─┐
+ELF header read ─┼→ FilePageCache → FileCacheAddressSpace → shared frame
+file #PF ────────┘                       │
+                                        └→ miss → VFS ReadUncachedAt → backend
+```
+
+`Superblock::cache_regular_file_data` 是缓存能力位。rootfs/legacy 为 true；memfs、
+procfs、devfs 为 false，避免把 `/proc` 动态内容固化。FileBacking 的 fault fill
+同样使用 uncached VFS 入口，防止 cache miss 递归。
+
+FilePageCache metadata 不再进入 BSS，也不占 512 KiB 通用 KernelHeap。实现仍可按
+managed RAM 选择 arena，但当前唯一 4 GiB 验收规格固定命中 buddy order 13，在
+direct map 上建立 32 MiB 专用 Heap并提供 8192 页容量。该持久 block 在
+ProcessRuntime 资源基线建立前取得。
+
+第三增量把 cacheable 普通文件的写路径改为：
+
+```text
+VFS Write/WriteAt
+  -> retain writeback OpenFile（按 FileIdentity 去重）
+  -> StatOpenFileUncached 取得后端 EOF
+  -> FilePageCache Acquire（partial page 只从后端 EOF 内填充）
+  -> MarkDirty -> copy -> publish cached logical size
+  -> shared PTE / buffered read 立即观察同一 frame
+
+sync
+  -> write-protect writable shared PTE
+  -> Dirty/Error -> Writeback
+  -> VFS WriteUncachedAt(offset, min(PAGE_SIZE, cached EOF - offset))
+  -> Clean 或 Error
+  -> release clean writeback OpenFile
+  -> rootfs journal sync -> BlockDevice Flush
+```
+
+retained writeback file 使原 fd 关闭或路径 unlink 后 inode 仍保持可写，避免 Dirty 页失去
+后端生命周期。逻辑文件长度保存在 cache address-space record 中，并通过 VFS size
+hook 覆盖后端 `stat`；后端只在 writeback 后推进盘面长度。`MAP_PRIVATE` 继续复制到
+私有 frame，不进入该状态机。
+
+truncate 在后端事务前先撤销文件偏移不小于新 EOF 的驻留 PTE；后端成功后，cache
+丢弃范围外 Clean/Dirty/Error 页并清零保留尾页。增长不申请页面，且会把旧 EOF 到
+新 EOF 间已经驻留的字节重新置零。Writeback 或仍有映射引用的待丢弃页返回 Busy；
+当前单 BSP、无后台 writeback，因此正常系统调用不会与 Writeback 并发。
+
+当前 cache miss 仍同步持有 cache lock，不声称已经具备现代 Linux 的并行 Loading
+waiter、readahead 或后台 dirty throttling。最终文件系统校验产生的 clean 页在
+storage shutdown 前统一裁剪，frame 统计恢复后才允许 NVMe controller 回收。决策见
+[ADR 0056](adr/0056-v2-8-dynamic-file-cache-address-space.md)。
+
 ## v2.3 rootfs v4 容量与恢复架构
 
 v2.3 至 v2.6 的生产存储路径保持项目自有启动链和 ATA LBA28 驱动，只替换 rootfs 盘面与 VFS

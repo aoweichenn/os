@@ -32,6 +32,13 @@ reset 并重建队列。Kernel 运行期 rootfs/swap 已分别迁移到 Namespac
 缺失时自动回退 ATA；ROM 和 Stage 1 仍从 ATA 启动。当前边界见
 [v2.7 记录](docs/releases/v2.7.md) 和
 [ADR 0055](docs/adr/0055-v2-7-block-device-layer-and-nvme-path.md)。
+v2.8 已完成前三个增量：64 位动态 radix、动态文件缓存地址空间和统一数据路径。
+rootfs/legacy 的 buffered read/write、ELF/file fault 与 `MAP_SHARED` 共享同一
+frame；普通写直接脏化缓存页，`truncate` 只撤销 EOF 后映射、丢弃范围外页并清零
+保留尾页，不再把整文件失效作为正常写入协议。边界见
+[v2.8 记录](docs/releases/v2.8.md) 与
+[ADR 0056](docs/adr/0056-v2-8-dynamic-file-cache-address-space.md)。
+当前自动 QEMU 验收统一使用 4 GiB `-mem-prealloc`，不再重复运行 64/256 MiB 档。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

@@ -1,5 +1,5 @@
-#include "os/kernel/memory/file_page_cache.hpp"
-#include "test_context.hpp"
+#include <os/kernel/memory/file_page_cache.hpp>
+#include <test_context.hpp>
 
 #include <string_view>
 
@@ -25,12 +25,15 @@ constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_MEMORY_SIZE_BYTES =
     OS_TEST_FILE_CACHE_RANDOM_MANAGED_PAGE_COUNT *
     os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY = 16ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_METADATA_HEAP_SIZE_BYTES = 1ULL * 1024ULL * 1024ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_METADATA_HEAP_ALIGNMENT_BYTES = 64ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT = 64ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_REFERENCE_CAPACITY = 4096ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_ITERATION_COUNT = 100000ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_ACQUIRE_PERCENT = 57ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_MARK_DIRTY_PERCENT = 13ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_WRITEBACK_PERCENT = 7ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_TRUNCATE_PERCENT = 5ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_PERCENT_SCALE = 100ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_WRITEBACK_MAXIMUM_PAGES = 4ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_RANDOM_WRITE_FAILURE_DIVISOR = 11ULL;
@@ -136,7 +139,7 @@ struct WriteContext final {
 }
 
 [[nodiscard]] bool EntriesAreConsistent(
-    const os::kernel::FilePageCacheEntry *const entries,
+    const os::kernel::FilePageCache &cache,
     const os::kernel::FilePageCacheStatistics &statistics) noexcept {
     uint64_t resident_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t referenced_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
@@ -144,45 +147,33 @@ struct WriteContext final {
     uint64_t dirty_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t writeback_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t error_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
-    for (uint64_t entry_index = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
-         entry_index < OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY;
-         ++entry_index) {
-        if (entries[entry_index].state ==
-            os::kernel::FilePageCacheEntryState::Empty) {
+    for (uint64_t page_index = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+         page_index < OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT; ++page_index) {
+        os::kernel::FilePageCacheEntry entry{};
+        const os::kernel::FilePageCacheStatus read_status =
+            cache.ReadEntry(MakeIdentity(page_index), entry);
+        if (read_status == os::kernel::FilePageCacheStatus::MappingNotFound) {
             continue;
+        }
+        if (read_status != os::kernel::FilePageCacheStatus::Succeeded) {
+            return false;
         }
         ++resident_count;
         dirty_count +=
-            entries[entry_index].state ==
-                    os::kernel::FilePageCacheEntryState::Dirty
+            entry.state == os::kernel::FilePageCacheEntryState::Dirty
                 ? OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT
                 : OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
         writeback_count +=
-            entries[entry_index].state ==
-                    os::kernel::FilePageCacheEntryState::Writeback
+            entry.state == os::kernel::FilePageCacheEntryState::Writeback
                 ? OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT
                 : OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
         error_count +=
-            entries[entry_index].state ==
-                    os::kernel::FilePageCacheEntryState::Error
+            entry.state == os::kernel::FilePageCacheEntryState::Error
                 ? OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT
                 : OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
-        reference_count += entries[entry_index].mapping_reference_count;
-        if (entries[entry_index].mapping_reference_count !=
-            OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE) {
+        reference_count += entry.mapping_reference_count;
+        if (entry.mapping_reference_count != OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE) {
             ++referenced_count;
-        }
-        for (uint64_t comparison_index =
-                 entry_index + OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT;
-             comparison_index <
-             OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY;
-             ++comparison_index) {
-            if (entries[comparison_index].state !=
-                    os::kernel::FilePageCacheEntryState::Empty &&
-                entries[comparison_index].identity.page_index ==
-                    entries[entry_index].identity.page_index) {
-                return false;
-            }
         }
     }
     return resident_count == statistics.resident_page_count &&
@@ -220,12 +211,16 @@ int main() {
         os::kernel::PhysicalFrameAllocatorStatus::Succeeded;
     const os::kernel::PhysicalFrameAllocatorStatistics baseline =
         frame_allocator.Statistics();
-    os::kernel::FilePageCacheEntry
-        entries[OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY]{};
+    alignas(OS_TEST_FILE_CACHE_RANDOM_METADATA_HEAP_ALIGNMENT_BYTES)
+        uint8_t metadata_heap_storage[OS_TEST_FILE_CACHE_RANDOM_METADATA_HEAP_SIZE_BYTES]{};
+    os::kernel::KernelHeap metadata_heap{};
     os::kernel::FilePageCache cache{};
     bool reference_valid =
         allocator_initialized &&
-        cache.Initialize(entries,
+        metadata_heap.Initialize(reinterpret_cast<uint64_t>(metadata_heap_storage),
+                                 sizeof(metadata_heap_storage)) ==
+            os::kernel::KernelHeapStatus::Succeeded &&
+        cache.Initialize(metadata_heap,
                          OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY,
                          OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY,
                          frame_allocator, &memory, AccessPage) ==
@@ -235,6 +230,7 @@ int main() {
     uint64_t reference_count = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
     uint64_t random_state = OS_TEST_FILE_CACHE_RANDOM_SEED;
     WriteContext write_context{};
+    uint64_t logical_page_count = OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT;
     for (uint64_t iteration = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
          reference_valid &&
          iteration < OS_TEST_FILE_CACHE_RANDOM_ITERATION_COUNT;
@@ -249,28 +245,24 @@ int main() {
         if (acquire) {
             const os::kernel::FilePageIdentity identity = MakeIdentity(
                 NextRandom(random_state) %
-                OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT);
-            bool identity_resident = false;
-            bool load_slot_available = false;
-            for (uint64_t entry_index =
-                     OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
-                 entry_index <
-                 OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY;
-                 ++entry_index) {
-                identity_resident =
-                    identity_resident ||
-                    (entries[entry_index].state !=
-                         os::kernel::FilePageCacheEntryState::Empty &&
-                     entries[entry_index].identity.page_index ==
-                         identity.page_index);
-                load_slot_available =
-                    load_slot_available ||
-                    entries[entry_index].state ==
-                        os::kernel::FilePageCacheEntryState::Empty ||
-                    (entries[entry_index].state ==
-                         os::kernel::FilePageCacheEntryState::Clean &&
-                     entries[entry_index].mapping_reference_count ==
-                         OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE);
+                logical_page_count);
+            os::kernel::FilePageCacheEntry observed_entry{};
+            const bool identity_resident =
+                cache.ReadEntry(identity, observed_entry) ==
+                os::kernel::FilePageCacheStatus::Succeeded;
+            bool load_slot_available =
+                cache.Statistics().resident_page_count < OS_TEST_FILE_CACHE_RANDOM_CACHE_CAPACITY;
+            for (uint64_t page_index = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+                 !load_slot_available && page_index < OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT;
+                 ++page_index) {
+                os::kernel::FilePageCacheEntry candidate_entry{};
+                if (cache.ReadEntry(MakeIdentity(page_index), candidate_entry) ==
+                        os::kernel::FilePageCacheStatus::Succeeded &&
+                    candidate_entry.state == os::kernel::FilePageCacheEntryState::Clean &&
+                    candidate_entry.mapping_reference_count ==
+                        OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE) {
+                    load_slot_available = true;
+                }
             }
             uint64_t physical_address =
                 OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
@@ -289,6 +281,11 @@ int main() {
                  status ==
                      os::kernel::FilePageCacheStatus::CapacityExhausted);
             if (reference_valid && should_succeed) {
+                reference_valid =
+                    cache.ObserveFileSize(
+                        identity.file,
+                        logical_page_count * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) ==
+                    os::kernel::FilePageCacheStatus::Succeeded;
                 references[reference_count] = ActiveReference{
                     .identity = identity,
                     .physical_address = physical_address,
@@ -307,6 +304,32 @@ int main() {
                 references[reference_count -
                            OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT];
             --reference_count;
+        }
+        if (reference_valid &&
+            NextRandom(random_state) % OS_TEST_FILE_CACHE_RANDOM_PERCENT_SCALE <
+                OS_TEST_FILE_CACHE_RANDOM_TRUNCATE_PERCENT) {
+            const uint64_t target_page_count =
+                NextRandom(random_state) % OS_TEST_FILE_CACHE_RANDOM_IDENTITY_COUNT +
+                OS_TEST_FILE_CACHE_RANDOM_SINGLE_UNIT;
+            bool range_busy = false;
+            for (uint64_t reference_index = OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE;
+                 reference_index < reference_count; ++reference_index) {
+                if (references[reference_index].identity.page_index >= target_page_count) {
+                    range_busy = true;
+                    break;
+                }
+            }
+            const os::kernel::FilePageCacheStatus truncate_status = cache.Truncate(
+                MakeIdentity(OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE).file,
+                target_page_count * os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
+            reference_valid =
+                (range_busy &&
+                 truncate_status == os::kernel::FilePageCacheStatus::EntryBusy) ||
+                (!range_busy &&
+                 truncate_status == os::kernel::FilePageCacheStatus::Succeeded);
+            if (reference_valid && !range_busy) {
+                logical_page_count = target_page_count;
+            }
         }
         if (reference_valid &&
             reference_count != OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
@@ -357,10 +380,10 @@ int main() {
             reference_valid &&
             cache.Validate() ==
                 os::kernel::FilePageCacheStatus::Succeeded &&
-            EntriesAreConsistent(entries, cache.Statistics());
+            EntriesAreConsistent(cache, cache.Statistics());
+        test_context.ExpectRandom(reference_valid, OS_TEST_FILE_CACHE_RANDOM_REFERENCE,
+                                  OS_TEST_FILE_CACHE_RANDOM_SEED, iteration);
     }
-    test_context.Expect(reference_valid,
-                        OS_TEST_FILE_CACHE_RANDOM_REFERENCE);
 
     bool drain_valid = reference_valid;
     while (drain_valid &&
@@ -388,12 +411,15 @@ int main() {
             OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
         cache.Statistics().failed_writeback_count !=
             OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
+        cache.Statistics().truncate_count != OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
         write_context.successful_write_count ==
             cache.Statistics().successful_writeback_count &&
         write_context.failed_write_count ==
             cache.Statistics().failed_writeback_count &&
         cache.Destroy() ==
             os::kernel::FilePageCacheStatus::Succeeded &&
+        metadata_heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
+        metadata_heap.Statistics().allocation_count == OS_TEST_FILE_CACHE_RANDOM_EMPTY_VALUE &&
         frame_allocator.Statistics().allocated_frame_count ==
             baseline.allocated_frame_count &&
         frame_allocator.Statistics().free_frame_count ==

@@ -1,7 +1,7 @@
-#include "os/user/system_call.hpp"
-#include "os/user/user_heap.hpp"
+#include <os/user/system_call.hpp>
+#include <os/user/user_heap.hpp>
 
-#include "os/abi/virtual_memory.hpp"
+#include <os/abi/virtual_memory.hpp>
 
 #include <stdint.h>
 
@@ -32,8 +32,10 @@ constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_MAP_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_SHARED_MAP\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_ACCESS_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_SHARED_ACCESS\r\n";
-constexpr char OS_USER_MEMORY_PROBE_FILE_INVALIDATION_FAILURE_MESSAGE[] =
-    "[OS][USER][VM][FAIL] FILE_INVALIDATION\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_COHERENCE_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_CACHE_COHERENCE\r\n";
+constexpr char OS_USER_MEMORY_PROBE_FILE_TRUNCATE_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] FILE_CACHE_TRUNCATE\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_PRIVATE_MAP_FAILURE_MESSAGE[] =
     "[OS][USER][VM][FAIL] FILE_PRIVATE_MAP\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_PRIVATE_ACCESS_FAILURE_MESSAGE[] =
@@ -460,7 +462,7 @@ template <uint64_t MessageSizeBytes>
         second_shared[OS_USER_MEMORY_PROBE_EMPTY_VALUE] !=
             OS_USER_MEMORY_PROBE_FILE_UPDATED_PATTERN) {
         return ReportFailure(
-            OS_USER_MEMORY_PROBE_FILE_INVALIDATION_FAILURE_MESSAGE);
+            OS_USER_MEMORY_PROBE_FILE_COHERENCE_FAILURE_MESSAGE);
     }
 
     descriptor = os::user::OpenFile(
@@ -559,8 +561,32 @@ template <uint64_t MessageSizeBytes>
             OS_USER_MEMORY_PROBE_FILE_PRIVATE_PATTERN &&
         os::user::CloseFile(static_cast<uint64_t>(descriptor)) ==
             OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE;
-    if (!private_not_written_back ||
-        os::user::UnmapMemory(
+    if (!private_not_written_back) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_FILE_PRIVATE_VERIFY_FAILURE_MESSAGE);
+    }
+    const bool truncate_consistent =
+        os::user::TruncateFile(OS_USER_MEMORY_PROBE_FILE_PATH,
+                               sizeof(OS_USER_MEMORY_PROBE_FILE_PATH),
+                               OS_USER_MEMORY_PROBE_FILE_PARTIAL_MAP_SIZE_BYTES) ==
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE &&
+        first_shared[OS_USER_MEMORY_PROBE_FILE_TAIL_OFFSET_BYTES] ==
+            OS_USER_MEMORY_PROBE_EMPTY_VALUE &&
+        second_shared[OS_USER_MEMORY_PROBE_FILE_TAIL_OFFSET_BYTES] ==
+            OS_USER_MEMORY_PROBE_EMPTY_VALUE &&
+        private_mapping[OS_USER_MEMORY_PROBE_FILE_TAIL_OFFSET_BYTES] ==
+            OS_USER_MEMORY_PROBE_FILE_UPDATED_PATTERN &&
+        os::user::TruncateFile(OS_USER_MEMORY_PROBE_FILE_PATH,
+                               sizeof(OS_USER_MEMORY_PROBE_FILE_PATH),
+                               OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES) ==
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE &&
+        first_shared[OS_USER_MEMORY_PROBE_FILE_TAIL_OFFSET_BYTES] ==
+            OS_USER_MEMORY_PROBE_EMPTY_VALUE &&
+        second_shared[OS_USER_MEMORY_PROBE_FILE_TAIL_OFFSET_BYTES] ==
+            OS_USER_MEMORY_PROBE_EMPTY_VALUE;
+    if (!truncate_consistent) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_FILE_TRUNCATE_FAILURE_MESSAGE);
+    }
+    if (os::user::UnmapMemory(
             static_cast<uint64_t>(first_shared_result),
             OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES) !=
             OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
@@ -576,12 +602,7 @@ template <uint64_t MessageSizeBytes>
             static_cast<uint64_t>(writable_shared_result),
             OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES) !=
             OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
-        if (!private_not_written_back) {
-            return ReportFailure(
-                OS_USER_MEMORY_PROBE_FILE_PRIVATE_VERIFY_FAILURE_MESSAGE);
-        }
-        return ReportFailure(
-            OS_USER_MEMORY_PROBE_FILE_UNMAP_FAILURE_MESSAGE);
+        return ReportFailure(OS_USER_MEMORY_PROBE_FILE_UNMAP_FAILURE_MESSAGE);
     }
     os::abi::VirtualMemoryStatistics after_unmap{};
     if (os::user::GetVirtualMemoryStatistics(after_unmap) !=

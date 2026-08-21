@@ -1,17 +1,21 @@
 #pragma once
 
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/memory/file_page_cache.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/memory/file_page_cache.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
 
 namespace os::kernel {
 
+using UserFileBackingWritebackRequiredOperation = bool (*)(
+    void *context, const FileIdentity &identity, bool &writeback_required) noexcept;
+
 enum class UserFileBackingKind : uint64_t {
     None,
     MemoryImage,
     VfsFile,
+    VfsWriteback,
 };
 
 struct UserFileBackingDescriptor final {
@@ -73,6 +77,12 @@ class UserFileBackingManager final {
     [[nodiscard]] UserFileBackingStatus
     WritePage(const FilePageIdentity &identity, const uint8_t *source,
               uint64_t length_bytes) noexcept;
+    [[nodiscard]] UserFileBackingStatus RetainWritebackFile(fs::Vfs &vfs,
+                                                            const fs::OpenFile &open_file,
+                                                            uint64_t size_bytes) noexcept;
+    [[nodiscard]] UserFileBackingStatus
+    ReleaseCleanWritebackFiles(void *context,
+                               UserFileBackingWritebackRequiredOperation operation) noexcept;
     [[nodiscard]] UserFileBackingStatus
     ReadDescriptor(uint64_t descriptor_index, uint64_t generation,
                    UserFileBackingDescriptor &descriptor) const noexcept;

@@ -28,7 +28,7 @@ inline constexpr uint64_t OS_KERNEL_USER_STACK_GUARD_VIRTUAL_ADDRESS =
 inline constexpr uint64_t OS_KERNEL_USER_VMA_DESCRIPTOR_POOL_CAPACITY = 8192ULL;
 inline constexpr uint64_t OS_KERNEL_USER_VMA_PER_PROCESS_HARD_LIMIT = 4096ULL;
 inline constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_CAPACITY = 1024ULL;
-inline constexpr uint64_t OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY = 4096ULL;
+inline constexpr uint64_t OS_KERNEL_USER_FILE_PAGE_CACHE_MAXIMUM_CAPACITY = 8192ULL;
 inline constexpr uint64_t OS_KERNEL_USER_PAGE_REFERENCE_CAPACITY = 32768ULL;
 
 struct UserAddressSpace final {
@@ -154,11 +154,27 @@ enum class UserSwapInitializationStage : uint64_t {
     Ready,
 };
 
+struct UserFilePageCacheRuntimeStatistics final {
+    uint64_t metadata_size_bytes;
+    uint64_t buffered_read_operation_count;
+    uint64_t buffered_read_page_count;
+    uint64_t buffered_read_cache_hit_count;
+    uint64_t buffered_read_bytes;
+    uint64_t buffered_write_operation_count;
+    uint64_t buffered_write_page_count;
+    uint64_t buffered_write_cache_hit_count;
+    uint64_t buffered_write_bytes;
+    uint64_t truncate_operation_count;
+};
+
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
 [[nodiscard]] UserAddressSpaceStatus AttachUserSwap(FileSystemBlockDevice &device) noexcept;
 [[nodiscard]] UserSwapInitializationStage GetUserSwapInitializationStage() noexcept;
 [[nodiscard]] VirtualMemoryAreaPoolStatistics GetUserVirtualMemoryPoolStatistics() noexcept;
 [[nodiscard]] FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept;
+[[nodiscard]] uint64_t GetUserFilePageCacheMetadataSizeBytes() noexcept;
+[[nodiscard]] UserFilePageCacheRuntimeStatistics GetUserFilePageCacheRuntimeStatistics() noexcept;
+[[nodiscard]] UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept;
 [[nodiscard]] MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept;
 [[nodiscard]] MemoryOvercommitStatistics GetUserMemoryOvercommitStatistics() noexcept;
 [[nodiscard]] SwapManagerStatistics GetUserSwapStatistics() noexcept;
@@ -200,11 +216,9 @@ MapFileMemory(UserAddressSpace &address_space, fs::Vfs &vfs, const fs::OpenFile 
                                                            uint64_t length_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 UnmapFileMemory(UserAddressSpace &address_space, uint64_t address, uint64_t length_bytes) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus RevokeUserFileMappings(UserAddressSpace &address_space,
-                                                             const FileIdentity &identity) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
-InvalidateUserFilePageCache(const FileIdentity &identity,
-                            uint64_t current_file_size_bytes) noexcept;
+TruncateUserFileMappings(UserAddressSpace &address_space, const FileIdentity &identity,
+                         uint64_t size_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus TrimUserFilePageCache() noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept;

@@ -9,9 +9,9 @@
 - 目标指令集为 x86-64。
 - 使用 QEMU TCG 模拟硬件，不要求宿主机采用 x86-64 架构。
 - QEMU 只提供硬件模型，不替代固件、引导程序或内核。
-- 64 MiB、256 MiB 与 4 GiB 分别作为启动兼容、完整功能和手机参考配置，
-  不要求低内存配置承担高并发压力。
-- 4 GiB 是手机参考物理内存规格而不是实现上限；内核容量由 E820、处理器物理地址宽度
+- 当前自动验收只使用 4 GiB `-mem-prealloc` 手机参考配置，不再把 64 MiB 或
+  256 MiB 作为独立系统测试档；成功、持久化和故障 QEMU 均从同一规格取证。
+- 4 GiB 是参考物理内存规格而不是实现上限；内核容量由 E820、处理器物理地址宽度
   和当前 direct-map 容量共同决定。
 - 正式 QEMU CPU 型号与必需 CPUID 特性必须冻结并在启动时检查；v2.0 要求
   long mode、NX、SSE2 与 `SYSCALL/SYSRET`。
@@ -81,7 +81,7 @@ v2.0 的目标不是成为完整 POSIX 或现代桌面系统，而是形成一�
 - clean page cache、dirty/writeback 和 ordered metadata journal 分阶段
   建立；事务必须预留 credits，并以 flush/commit/replay 证明恢复边界。
 
-正式功能矩阵如下；数字是运行时验收下限，不是固定数组长度：
+v2.0 发布时的历史功能矩阵如下；它只说明冻结发布证据，不再规定当前 QEMU 档位：
 
 | 配置 | RAM | Process | Thread | 每 Process Thread | fd hard | Pipe |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -266,6 +266,47 @@ v2.6 保留为未公开的主工程候选，后续开发从 v2.7 继续，不修
 第六增量已经满足上述迁移门禁：Kernel 运行期优先使用 NSID 1/2 的 rootfs/swap，
 三档 QEMU、EIO/timeout reset、两次重启恢复、损坏拒绝和 ATA 自动回退均进入测试；
 ROM 与 Stage 1 的 ATA 启动职责保持不变。
+
+## v2.8 动态文件缓存地址空间要求
+
+- 文件缓存身份必须包含 superblock/node 的 identifier 与 generation；fd 关闭、路径
+  rename 或硬链接不得产生第二个页面身份；
+- page index、计数、代次和物理地址均使用显式 `uint64_t`，索引必须覆盖
+  `UINT64_MAX` 且 lookup 不扫描全部驻留页面；
+- radix 节点只为实际出现的分支申请，插入失败不得发布部分 root/branch/leaf；删除
+  最后一项必须释放空分支并在可行时收缩 root；
+- Present、Dirty、Writeback、Error 标记必须在父节点聚合，范围查找不得进入没有
+  对应标记的子树；
+- 映射引用上溢/下溢、物理地址不匹配和非法状态转换必须在修改前失败；Dirty/Error
+  不得直接删除，Writeback 和活动映射必须保持 Busy；
+- 第一增量不得改变现有 VFS read/write、file fault、rootfs v4、ABI 或块设备行为；
+- 单元、8192 页生命周期、十万步随机参考模型和目标 Kernel 小堆失败回滚必须通过，
+  再开始生产读取路径迁移。
+- 第二增量后 `FilePageCache` 不得再持有外部固定 entry 数组；VFS buffered read、
+  ELF/file fault 与 `MAP_SHARED` 必须以相同 FileIdentity/page index 命中同一 frame；
+- cache fill 必须使用显式 uncached 后端入口，不能递归进入 VFS read hook；
+- 只有 superblock 声明 cacheable 的普通文件允许进入缓存；procfs 动态快照、devfs
+  字符设备和当前 memfs 保持直读；
+- 当前 4 GiB 验收必须报告 8192 页容量和 32 MiB metadata；metadata buddy block
+  必须进入进程资源基线，来宾结束不得产生 frame 差异；
+- metadata 申请失败必须同时回滚候选 frame、文件记录、page 和 radix 节点；
+  buffered read 部分成功只允许返回已复制的完整前缀。
+- 最终 payload 校验产生的 clean cache frame 必须在 storage shutdown 前归还，
+  `FILE_CACHE_RECLAIMED` 之后才允许 NVMe 资源基线比较。
+- 第三增量后，cacheable 普通文件的 `write`/`WriteAt` 必须先取得可跨 fd-close
+  存活的后端引用，再修改唯一缓存页并标记 Dirty；写入不得撤销现有 shared PTE，
+  同文件其他 fd 和 `MAP_SHARED` 必须立即观察到新字节；
+- 写入跨页、部分页或越过旧 EOF 时必须预读仍有效的旧字节，并把洞和后端 EOF
+  之后的区域保持为零；逻辑长度由缓存覆盖后端 `stat`，写回只提交 EOF 内字节；
+- `MAP_PRIVATE` 的写时复制页不得被 buffered write 或 shared write 覆盖，也不得进入
+  文件写回；
+- `truncate` 缩小时必须先撤销文件偏移不小于新 EOF 的驻留映射；范围外 Clean、Dirty
+  和 Error 页均可丢弃，Writeback 或活动引用返回 Busy，保留尾页从新 EOF 到页尾清零；
+- `truncate` 扩大不得急切分配页面，旧 EOF 到新 EOF 的驻留缓存字节必须归零；
+  后端 truncate 成功后，所有 FileBacking 长度与缓存逻辑长度必须同步更新；
+- `sync` 必须先重新写保护 writable shared PTE，再把 Dirty/Error 页经
+  `WriteUncachedAt` 写入，释放已无脏页的 writeback 打开引用，最后执行文件系统与
+  设备 flush；失败页保持 Error，不能报告稳定成功。
 
 ## v2.0 完成基线
 

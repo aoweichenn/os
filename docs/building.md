@@ -189,28 +189,16 @@ python3 tools/os.py qemu-firmware \
   --expected-outcome success
 ```
 
-`--memory-mebibytes 64` 可用于最小启动诊断，但不能替代发布前的 4 GiB 实体
-提交、PCI-hole 高地址直映和 28 GiB swap 验收。
-
-只运行 256 MiB 日常 functional 验收：
+只运行当前唯一 4 GiB 系统规格：
 
 ```bash
 ctest --test-dir build/developer \
   --output-on-failure \
-  -R '^os_qemu_functional_smoke$'
+  -R '^os_qemu_primary_smoke$'
 ```
 
-只运行 64 MiB 最小完整启动验收：
-
-```bash
-ctest --test-dir build/developer \
-  --output-on-failure \
-  -R '^os_qemu_bootstrap_smoke$'
-```
-
-该用例不是精简启动：它从磁盘启动 PID1，执行完整进程树、spawn/exec/wait、
-外部 Shell 命令、文件系统、用户隔离和 26 字段资源快照。64 MiB、256 MiB 与
-4 GiB 只改变 QEMU RAM 规格，不切换实现。
+该用例从磁盘启动 PID1，执行完整进程树、spawn/exec/wait、外部 Shell 命令、
+文件系统、用户隔离和资源快照。自动门禁不再注册 64/256 MiB 重复档。
 
 只验证原生系统调用能力失败边界：
 

@@ -210,6 +210,7 @@ Status Procfs::Initialize(const uint64_t superblock_identifier,
         .operations = &Procfs::operations,
         .backend_context = this,
         .maximum_name_length_bytes = OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES,
+        .cache_regular_file_data = false,
         .read_only = true,
         .initialized = true,
     };

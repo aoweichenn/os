@@ -186,6 +186,26 @@ constexpr char OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX[] =
     "[OS][KERNEL] TYPE_CACHE_PEAK_ACTIVE_OBJECTS=";
 constexpr char OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE[] =
     "[OS][KERNEL] TYPE_CACHE_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_INDEX_SELF_TEST_PASSED_MESSAGE[] =
+    "[OS][KERNEL] FILE_CACHE_INDEX_SELF_TEST_PASSED\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_DYNAMIC_READY_MESSAGE[] =
+    "[OS][KERNEL] FILE_CACHE_DYNAMIC_READY\r\n";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_CAPACITY_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_CAPACITY=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_METADATA_SIZE_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_METADATA_BYTES=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_READ_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_BUFFERED_READS=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_HIT_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_BUFFERED_HITS=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_BYTE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_BUFFERED_BYTES=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_WRITE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_BUFFERED_WRITES=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_TRUNCATE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_TRUNCATES=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_RECLAIMED_MESSAGE[] =
+    "[OS][KERNEL] FILE_CACHE_RECLAIMED\r\n";
 constexpr char OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE[] =
     "[OS][KERNEL] KVA_ALLOCATOR_READY\r\n";
 constexpr char OS_KERNEL_MAIN_KVA_WINDOW_BASE_PREFIX[] = "[OS][KERNEL] KVA_WINDOW_BASE=";
@@ -1100,6 +1120,7 @@ void InitializeKernelMemorySubsystem(const VgaTextConsole &vga_console,
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_PEAK_ACTIVE_OBJECT_COUNT_PREFIX,
                          statistics.type_cache_peak_active_object_count);
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_TYPE_CACHE_SELF_TEST_PASSED_MESSAGE);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_CACHE_INDEX_SELF_TEST_PASSED_MESSAGE);
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_KVA_WINDOW_BASE_PREFIX,
                          statistics.kva_window_begin_address);
@@ -2508,6 +2529,12 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
                              static_cast<uint64_t>(GetUserSwapInitializationStage()));
         HaltProcessor();
     }
+    const FilePageCacheStatistics file_cache_statistics = GetUserFilePageCacheStatistics();
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_CACHE_DYNAMIC_READY_MESSAGE);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_CAPACITY_PREFIX,
+                         file_cache_statistics.capacity);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_METADATA_SIZE_PREFIX,
+                         GetUserFilePageCacheMetadataSizeBytes());
     const MemoryPressureStatistics pressure_statistics = GetUserMemoryPressureStatistics();
     const MemoryOvercommitStatistics overcommit_statistics = GetUserMemoryOvercommitStatistics();
     const SwapManagerStatistics swap_statistics = GetUserSwapStatistics();
@@ -2543,6 +2570,24 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     ExecuteRequiredProcesses(vga_console, user_program_selection);
     FinalizeKernelFileSystem(vga_console, file_system, vfs, memfs,
                              user_program_selection == UserProgramSelection::Smoke);
+
+    const UserFilePageCacheRuntimeStatistics file_cache_runtime_statistics =
+        GetUserFilePageCacheRuntimeStatistics();
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_READ_COUNT_PREFIX,
+                         file_cache_runtime_statistics.buffered_read_operation_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_HIT_COUNT_PREFIX,
+                         file_cache_runtime_statistics.buffered_read_cache_hit_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_BYTE_COUNT_PREFIX,
+                         file_cache_runtime_statistics.buffered_read_bytes);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_WRITE_COUNT_PREFIX,
+                         file_cache_runtime_statistics.buffered_write_operation_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_TRUNCATE_COUNT_PREFIX,
+                         file_cache_runtime_statistics.truncate_operation_count);
+    if (TrimUserFilePageCache() != UserVirtualMemoryStatus::Succeeded ||
+        GetUserFilePageCacheStatistics().resident_page_count != OS_KERNEL_MAIN_EMPTY_VALUE) {
+        HaltProcessor();
+    }
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_CACHE_RECLAIMED_MESSAGE);
 
     if (storage_devices.nvme_active) {
         if (ShutdownNvmeStorageRuntime(storage_devices.nvme_result) !=

@@ -29,39 +29,30 @@
 
 ## v2 演进测试配置契约
 
-当前参考配置使用具名 64 MiB bootstrap smoke、256 MiB functional smoke 和
-4 GiB `-mem-prealloc` 手机主路径；v2.0 已发布证据中的 capacity 仍保持当时的 64 GiB
-历史事实。当前三档使用同一个 ThreadScheduler、deadline queue、
-SignalManager、TTY、JobControlManager、动态栈和页表实现；v1.15 的
-历史链在 v1.18 加入 tool probe 后，bootstrap 正常链累计注册 73 个 Process、
-完成 72 次 wait；functional/capacity 因 42 条完整 Shell 命令与四次作业
-状态转换累计注册 115 个 Process、观察 118 次成功 wait event。线程探针
-分别证明 1/32/64 单 Process Thread 上限，时间与信号探针在三档都走 ABI v2。
-functional 的 512 fd hard limit 和 128 Pipe、
-capacity 的 4096 fd 与 1024 Pipe 均由当前实现和独立容量测试证明。
+当前自动 QEMU 验收只有一个 RAM 规格：4 GiB `-mem-prealloc`。正常启动、NVMe、
+ATA fallback、持久化和故障镜像均使用该规格；64 MiB bootstrap 与 256 MiB
+functional 只保留在旧 release note 中，不再注册为 CTest。当前 4 GiB 路径使用
+同一个 ThreadScheduler、deadline queue、SignalManager、TTY、动态栈和页表实现，
+并运行完整 PID1、Shell、工具、VM、I/O、信号和资源回收协议。
 
 | 配置 | QEMU RAM | Process | Thread | 每 Process Thread | fd hard | Pipe | 测试职责 |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| bootstrap | 64 MiB | 8 | 8 | 1 | 不规定 | 不规定 | 启动链、磁盘 PID1、异常、基础内存、全部历史故障镜像 |
-| functional | 256 MiB | 64 | 128 | 32 | 512 | 128 | 完整用户功能、边界、失败回滚和小版本验收 |
-| phone-primary | 4 GiB | 64 | 128 | 32 | 512 | 128 | 实体 RAM、PCI-hole 高地址、28 GiB swap 与手机整机 |
-| optional-capacity | 32 GiB | 256 | 512 | 64 | 4096 | 1024 | 非手机的可选容量与长尾压力 |
+| phone-primary | 4 GiB | 64 | 128 | 32 | 512 | 128 | 启动、完整功能、PCI-hole 高地址、28 GiB swap、持久化与故障矩阵 |
 
-三种配置必须走同一启动链、相同动态对象实现和相同 ABI。测试配置只改变内存
-容量和运行时资源上限，不得通过条件编译换回固定 PCB、fd 或 pipe 表。
+4 GiB 是验收规格而不是实现上限；不得通过条件编译换回固定 PCB、fd 或 pipe 表。
 
 执行频率固定如下：
 
 | 时机 | 门禁 |
 | --- | --- |
-| 每次提交 | 受影响单元/集成/固定种子随机测试；64 MiB boot；256 MiB smoke |
-| 每个小版本 | 全部宿主测试与产物审计；完整 256 MiB functional |
-| nightly / 候选发布 | 完整 4 GiB phone-primary；soak；故障和崩溃点矩阵 |
-| v2.0 发布 | 三配置全量、全部故障镜像、教材/网站构建和发布溯源 |
+| 每次提交 | 受影响单元/集成/固定种子随机测试；4 GiB primary smoke |
+| 每个小版本 | 全部宿主测试、产物审计、4 GiB 正常/持久化/故障矩阵 |
+| nightly / 候选发布 | 4 GiB soak 与完整崩溃点矩阵 |
+| 公开发布 | 4 GiB 全量、教材/网站构建和发布溯源 |
 
-phone-primary 必须解析来宾日志证明实际使用 4 GiB 以上的 PCI-hole 重映射页，
-并采样宿主 RSS 证明 `-mem-prealloc` 生效。functional/capacity 达到资源限制时，
-必须验证调用返回明确错误、旧对象保持不变、本次资源全部回滚。
+phone-primary 必须解析来宾日志证明实际触及 4 GiB 以上的 PCI-hole 重映射页，
+并采样宿主 RSS 证明 `-mem-prealloc` 生效。达到资源限制时必须验证调用返回明确
+错误、旧对象保持不变、本次资源全部回滚。
 
 ### 第二周期新增通用 oracle
 
@@ -75,8 +66,8 @@ phone-primary 必须解析来宾日志证明实际使用 4 GiB 以上的 PCI-hol
   canonical 地址、RFLAGS 和特权状态被拒绝；
 - `AddressSpace`：VMA 永不重叠，PTE 权限由 VMA 推导，`CopyToUser` 不得
   绕过 COW；
-- `PageCache`：同一 `(Vnode, page index)` 只有一个权威页面，truncate/write
-  后旧映射不可见；
+- `PageCache`：同一 `(Vnode, page index)` 只有一个权威页面，write 后 shared alias
+  立即可见，truncate 后 EOF 外页不可驻留且尾区为零；
 - `Journal`：每个断电点恢复为旧事务或完整新事务，replay 幂等且 fsck 一致。
 
 随机 oracle 失败时输出固定种子、精确迭代和最后一项成功操作。崩溃注入还要
@@ -554,11 +545,9 @@ QEMU 自行异常退出仍视为失败。
   frame、buddy、heap、KVA 与栈全部恢复。只有两层检查都通过，才允许输出
   `RESOURCE_LIFECYCLE_SELF_TEST_PASSED` 和
   `PROCESS_RESOURCE_SNAPSHOT_MATCHED`；
-- `os_qemu_functional_smoke` 明确使用 256 MiB RAM，执行与 32 GiB 主路径
-  相同的磁盘 PID1、十一进程生命周期、Shell、exec、虚拟内存、文件系统、
-  用户隔离和资源快照
-  协议。它不是
-  只验证启动标记的缩减镜像，也不通过条件编译切换资源实现。
+- 该阶段曾用 256 MiB functional 与更大容量档执行相同磁盘 PID1、进程生命周期、
+  Shell、exec、虚拟内存、文件系统、用户隔离和资源快照协议；当前由唯一
+  `os_qemu_primary_smoke` 4 GiB 用例承接，不通过条件编译切换资源实现。
 
 ### v1.7 PID1、进程树与磁盘程序映像
 
@@ -658,9 +647,8 @@ runner 只要求它们至少出现且数值非零，不错误冻结为恰好一�
 非零且 acquire 等于 release。ProcessTree registered/exited/collected 为
 11，wait success 为 10，Zombie 为 0；这些新字段与既有资源快照共同通过。
 
-`os_qemu_bootstrap_smoke` 把 64 MiB 完整链固化为独立 CTest，而不是发布时
-手工传参。256 MiB functional 与 32 GiB capacity 运行同一 VM probe；三档
-只改变资源规格，不切换实现。
+该里程碑曾以 64 MiB/256 MiB/32 GiB 运行同一 VM probe；当前自动图已收束为
+`os_qemu_primary_smoke` 4 GiB 单规格，历史结果只保留在对应 release note。
 
 ## 验收证据
 
@@ -808,9 +796,8 @@ python3 tools/os.py test --layer failure-path
 | `os_kernel_root_file_system_format_unit_tests` | 单元 | rootfs v2 四类盘面结构、CRC、保留区和边界 |
 | `os_kernel_root_file_system_integration_tests` | 集成 | 稀疏、三级间接、完整命名空间、重挂载和设备失败 |
 | `os_kernel_root_file_system_capacity_integration_tests` | 容量/集成 | 真实 256 MiB 近满镜像、短写、ENOSPC 与一致性 |
-| `os_qemu_bootstrap_smoke` | 系统 | 64 MiB 完整 PID1、VM probe、故障策略与资源守恒 |
-| `os_qemu_functional_smoke` | 系统 | 256 MiB 完整 Shell、IPC、文件系统、用户隔离和资源快照路径 |
-| `os_qemu_stage1_load_success` | 系统 | 32 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
+| `os_qemu_primary_smoke` | 系统 | 4 GiB 完整 PID1、Shell、VM/I/O 探针、PCI-hole 高内存和资源守恒 |
+| `os_qemu_stage1_load_success` | 系统 | 4 GiB 全量页管理、direct-map、高内存读写和完整用户环境 |
 | `os_qemu_file_system_persistence` | 系统/失败路径 | 同盘双启动持久化与损坏 superblock 拒绝挂载 |
 | `os_qemu_firmware_vga_initialization_failure` | 系统/失败路径 | 首条 VGA 日志后的显示自检失败和禁止标记 |
 | `os_qemu_firmware_ide_busy_timeout_failure` | 系统/失败路径 | BSY 永久置位必须有界失败 |
@@ -863,9 +850,9 @@ Python 测试集合，因此加强结构证据而不虚增顶层 CTest 数量。
 Python 词法检查只承担 AST 风格选项无法表达的命名空间单词约束，并在扫描前
 屏蔽注释、普通/原始字符串和字符字面量。普通变量必须为小写蛇形，私有/受保护
 成员允许尾部下划线，自研 C/汇编函数符号仍使用大驼峰。QEMU、ELF 审计和镜像
-工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和按内存
-规格选择的有界总截止：64 MiB、256 MiB 与 4 GiB 预分配档分别为 150、300、
-420 秒，QMP 建立另有 30 秒上界。外层 CTest 分别保留独立回收余量。三次启动的
+工具由 Python 标准库实现。QEMU 捕获器同时拥有“最终里程碑到达”和 4 GiB
+`-mem-prealloc` 规格的有界总截止；QMP 建立另有 30 秒上界，外层 CTest 保留
+独立回收余量。三次启动的
 持久化用例也保持总上界；十万步 VFS 命名空间模型的硬上限为 300 秒，给 Debug
 构建在共享宿主上的完整双后端运行保留调度余量。所有路径都保持有限上界，不把扩大预算变成
 无限等待。
@@ -1520,3 +1507,65 @@ randomized、27 system，含 25 条 failure-path；CTest 204.33 秒，完整 `ve
 randomized、32 system，含 25 条 failure-path；CTest 291.43 秒，完整 `verify`
 292.37 秒，峰值 RSS 4269244 KiB。三档 NVMe storage 分别为 7.86、22.87、25.24
 秒，ATA fallback 为 0.66 秒，NVMe 三启动持久化为 45.30 秒。
+
+## v2.8 动态文件缓存地址空间测试
+
+第一增量增加三项宿主证据和一项既有 QEMU 门禁升级：
+
+- `os_kernel_file_cache_address_space_unit_tests` 覆盖 0/63/64/4095/4096、
+  `1 << 42`、`UINT64_MAX`、重复插入、三种状态 mark、范围首项、root 增长/收缩、
+  Dirty/Writeback/Error 重试、引用和 2 KiB Heap 中途失败回滚；
+- `os_kernel_file_cache_address_space_lifecycle_integration_tests` 在 4 MiB 独立测试堆
+  动态持有 8192 页，周期性 Validate 后逆序归还全部页面和 radix 节点；
+- `os_kernel_file_cache_address_space_randomized_tests` 以种子
+  `0x5632385041474543` 执行十万步 insert/retain/release/transition/remove/lookup/
+  find，每 256 步重算页面、引用、状态和 mark oracle；
+- Kernel 正常启动在全局 Heap 上覆盖稀疏最高索引，并在 2 KiB 子堆真实触发失败；
+  runner 要求 `FILE_CACHE_INDEX_SELF_TEST_PASSED` 恰出现一次。
+
+第一轮 focused caw 为 5/5、0 失败：上述三项、Python tooling 和 64 MiB bootstrap；
+三项新测试分别为约 0.00、0.72、2.40 秒，bootstrap 约 7.81 秒。第一增量最终全量
+回归为 207/207、0 失败：61 unit、71 integration、43 randomized、32 system，
+含 25 条 failure-path；CTest 292.28 秒，完整 `verify` 293.23 秒，峰值 RSS
+4267152 KiB。
+
+第二增量新增/升级以下证据：
+
+- 原 `FilePageCache` 单元与十万步随机测试改用动态 metadata Heap，并继续覆盖 LRU、
+  dirty limit、Error retry、writeback 和 frame 守恒；
+- `os_kernel_file_page_cache_dynamic_lifecycle_integration_tests` 动态持有 8192 个真实
+  frame，随后裁剪全部 radix/page/address-space metadata；
+- 单元测试在 2 KiB metadata Heap 中触发中途失败，要求候选 frame 和所有元数据归零；
+- VFS 单元测试分别验证 cache hook、`ReadUncachedAt` 和 superblock 禁止缓存路径；
+- 第二增量当时曾用三档核对容量与 metadata 几何，并要求 buffered read、shared
+  cache hit、交付字节数均非零；这些数据保留为历史证据，不再注册低内存 CTest。
+
+第二增量 focused 当前通过动态 cache/address-space/VFS、Python tooling 与 64 MiB
+bootstrap：最终 focused 16/16、0 失败，另有三档 QEMU 4/4。ATA functional 为
+23.45 秒；NVMe 64/256 MiB/4 GiB 为 8.38、23.64、24.48 秒。完整 caw 回归为
+208/208、0 失败：61 unit、72 integration、43 randomized、32 system，含 25 条
+failure-path；CTest 307.19 秒，完整 `verify` 308.04 秒，峰值 RSS 4269000 KiB；
+ATA/NVMe 三启动持久化分别为 46.73/47.25 秒。
+
+第三增量新增/升级以下证据：
+
+- `FilePageCache` 单元验证活动范围外映射使 truncate 返回 Busy，引用释放后可直接
+  丢弃 Dirty 页、归还 frame、更新逻辑 EOF，并把保留尾页清零；
+- 十万步 `os_kernel_file_page_cache_randomized_tests` 加入随机页对齐 grow/shrink，
+  每步继续重算 resident/reference/Dirty/Writeback/Error 守恒；
+- VFS 单元同时冻结 read/write/size/truncate 四个 hook，并验证 `ReadUncachedAt` 与
+  `WriteUncachedAt` 不递归；
+- QEMU `memory_probe` 要求 buffered write 无需失效即可同时更新两个 read-only shared
+  alias，writable shared 写入可由普通 read 观察，private COW 不回写；随后把同一文件
+  从 4096 缩到 3000 再扩回 4096，shared 尾部保持零而 private 页不变；
+- runner 以 `FILE_CACHE_BUFFERED_WRITES` 和 `FILE_CACHE_TRUNCATES` 非零替代旧的正常写
+  invalidation 计数要求。
+
+第三增量首轮 caw：定向 cache/address-space/file-backing/VFS 为 11/11、0 失败。
+最终策略只保留 4 GiB：NVMe primary 为 25.12 秒，ATA/NVMe 三启动持久化为
+47.96/48.51 秒。收束测试图后的最终 caw 回归为 205/205、0 失败：61 unit、
+72 integration、43 randomized、29 system，含 25 条 failure-path；CTest 301.22 秒，
+完整 `verify` 304.18 秒，峰值 RSS 4270220 KiB。最终轮 4 GiB primary smoke 为
+25.31 秒，NVMe primary 为 24.44 秒，ATA/NVMe 持久化为 51.02/51.08 秒。最后的
+writeback 状态预检加固后，caw 独立服务再次完成 205/205 CTest，0 失败、293.20 秒、
+峰值 RSS 4268880 KiB；其前置构建、格式与命名门禁通过。

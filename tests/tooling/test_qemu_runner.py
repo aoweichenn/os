@@ -6,8 +6,6 @@ from tools.os_tools.errors import OsToolError
 from tools.os_tools.qemu_runner import (
     OS_QEMU_DEFAULT_CPU_MODEL,
     OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
-    OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
-    OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
     OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
@@ -197,59 +195,29 @@ class QemuRunnerToolTests(unittest.TestCase):
         self.assertIn("nvme-ns,drive=os-nvme-root,nsid=1", command)
         self.assertIn("nvme-ns,drive=os-nvme-swap,nsid=2", command)
 
-    def testCreatesFunctional256MibMemoryCommand(self) -> None:
+    def testCreatesPrimary4096MibMemoryCommand(self) -> None:
         command = createQemuFirmwareCommand(
             Path("firmware.bin"),
             Path("disk.img"),
-            memoryMebibytes=OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES,
+            memoryMebibytes=OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES,
         )
 
         memoryOptionIndex = command.index("-m")
         self.assertEqual(
             command[memoryOptionIndex + 1],
-            str(OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES),
+            str(OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES),
         )
-        self.assertNotIn("-mem-prealloc", command)
+        self.assertIn("-mem-prealloc", command)
 
-    def testSelectsBoundedTimeoutByMemoryProfile(self) -> None:
-        self.assertEqual(
-            qemuFirmwareTimeoutSeconds(
-                OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES
-            ),
-            OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
-        )
-        self.assertEqual(
-            qemuFirmwareTimeoutSeconds(
-                OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES - 1
-            ),
-            OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
-        )
-        self.assertEqual(
-            qemuFirmwareTimeoutSeconds(
-                OS_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES
-            ),
-            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
-        )
-        self.assertEqual(
-            qemuFirmwareTimeoutSeconds(
-                OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES - 1
-            ),
-            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
-        )
+    def testSelectsBoundedTimeoutForPrimaryProfile(self) -> None:
         self.assertEqual(
             qemuFirmwareTimeoutSeconds(
                 OS_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES
             ),
             OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
         )
-        self.assertGreater(
-            OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
-            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
-        )
-        self.assertGreater(
-            OS_QEMU_FUNCTIONAL_FIRMWARE_TIMEOUT_SECONDS,
-            OS_QEMU_FIRMWARE_TIMEOUT_SECONDS,
-        )
+        self.assertGreater(OS_QEMU_PRIMARY_FIRMWARE_TIMEOUT_SECONDS,
+                           OS_QEMU_FIRMWARE_TIMEOUT_SECONDS)
 
     def testRejectsMemoryBelowBootstrapMinimum(self) -> None:
         with self.assertRaises(OsToolError):

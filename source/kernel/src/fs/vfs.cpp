@@ -105,6 +105,11 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
         .bytes_read = OS_KERNEL_VFS_EMPTY_VALUE,
         .bytes_written = OS_KERNEL_VFS_EMPTY_VALUE,
     };
+    this->regular_file_data_cache_context_ = nullptr;
+    this->regular_file_read_cache_operation_ = nullptr;
+    this->regular_file_write_cache_operation_ = nullptr;
+    this->regular_file_size_cache_operation_ = nullptr;
+    this->regular_file_truncate_cache_operation_ = nullptr;
     this->mounts_[OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER] = Mount{
         .identifier = OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER,
         .parent_mount_identifier = OS_KERNEL_VFS_INVALID_MOUNT_IDENTIFIER,
@@ -690,8 +695,21 @@ Status Vfs::Truncate(const FsContext &context, const uint8_t *const path,
     if (access_status != Status::Succeeded) {
         return access_status;
     }
-    return superblock->operations->truncate(superblock->backend_context, resolved.vnode,
-                                            size_bytes);
+    return this->TruncateNode(resolved.vnode, size_bytes);
+}
+
+Status Vfs::TruncateOpenFile(const OpenFile &open_file, const uint64_t size_bytes) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !open_file.writable || !this->PathIsValid(open_file.path) ||
+        open_file.path.vnode.type != NodeType::RegularFile) {
+        return Status::InvalidHandle;
+    }
+    if (open_file.path.vnode.superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    return this->TruncateNode(open_file.path.vnode, size_bytes);
 }
 
 Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
@@ -707,6 +725,11 @@ Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
         resolved.vnode.superblock->backend_context, resolved.vnode, backend_information);
     if (stat_status != Status::Succeeded) {
         return stat_status;
+    }
+    const Status cache_status =
+        this->ApplyRegularFileCachedSize(resolved.vnode, backend_information);
+    if (cache_status != Status::Succeeded) {
+        return cache_status;
     }
     information = NodeInformation{
         .mount_identifier = resolved.mount_identifier,
@@ -893,8 +916,7 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
         }
     }
     if (options.truncate) {
-        status = superblock->operations->truncate(superblock->backend_context, resolved.vnode,
-                                                  OS_KERNEL_VFS_EMPTY_VALUE);
+        status = this->TruncateNode(resolved.vnode, OS_KERNEL_VFS_EMPTY_VALUE);
         if (status != Status::Succeeded) {
             return status;
         }
@@ -1010,7 +1032,53 @@ Status Vfs::RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noex
     return Status::Succeeded;
 }
 
+Status Vfs::ConfigureRegularFileDataCache(
+    void *const context, const RegularFileReadCacheOperation read_operation,
+    const RegularFileWriteCacheOperation write_operation,
+    const RegularFileSizeCacheOperation size_operation,
+    const RegularFileTruncateCacheOperation truncate_operation) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (context == nullptr || read_operation == nullptr || write_operation == nullptr ||
+        size_operation == nullptr || truncate_operation == nullptr) {
+        return Status::InvalidArgument;
+    }
+    SpinLockGuard guard{this->lock_};
+    if (this->regular_file_data_cache_context_ != nullptr ||
+        this->regular_file_read_cache_operation_ != nullptr ||
+        this->regular_file_write_cache_operation_ != nullptr ||
+        this->regular_file_size_cache_operation_ != nullptr ||
+        this->regular_file_truncate_cache_operation_ != nullptr) {
+        return Status::AlreadyExists;
+    }
+    this->regular_file_data_cache_context_ = context;
+    this->regular_file_read_cache_operation_ = read_operation;
+    this->regular_file_write_cache_operation_ = write_operation;
+    this->regular_file_size_cache_operation_ = size_operation;
+    this->regular_file_truncate_cache_operation_ = truncate_operation;
+    return Status::Succeeded;
+}
+
 Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information) noexcept {
+    const Status status = this->StatOpenFileUncached(open_file, information);
+    if (status != Status::Succeeded || open_file.path.vnode.type != NodeType::RegularFile ||
+        !open_file.path.vnode.superblock->cache_regular_file_data ||
+        this->regular_file_size_cache_operation_ == nullptr) {
+        return status;
+    }
+    uint64_t size_bytes = information.size_bytes;
+    const Status cache_status = this->regular_file_size_cache_operation_(
+        this->regular_file_data_cache_context_, open_file.path.vnode, information.size_bytes,
+        size_bytes);
+    if (cache_status == Status::Succeeded) {
+        information.size_bytes = size_bytes;
+    }
+    return cache_status;
+}
+
+Status Vfs::StatOpenFileUncached(const OpenFile &open_file,
+                                 NodeInformation &information) noexcept {
     information = NodeInformation{};
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
@@ -1063,15 +1131,37 @@ Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
-    Superblock *const superblock = open_file.path.vnode.superblock;
-    const Status status =
-        superblock->operations->read(superblock->backend_context, open_file.path.vnode,
-                                     offset_bytes, destination, capacity_bytes, read_bytes);
+    const Status status = this->regular_file_read_cache_operation_ == nullptr ||
+                                  !open_file.path.vnode.superblock->cache_regular_file_data
+                              ? this->ReadUncachedAt(open_file, offset_bytes, destination,
+                                                     capacity_bytes, read_bytes)
+                              : this->regular_file_read_cache_operation_(
+                                    this->regular_file_data_cache_context_, open_file,
+                                    offset_bytes, destination, capacity_bytes, read_bytes);
     if (status == Status::Succeeded) {
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_read += read_bytes;
     }
     return status;
+}
+
+Status Vfs::ReadUncachedAt(const OpenFile &open_file, const uint64_t offset_bytes,
+                           uint8_t *const destination, const uint64_t capacity_bytes,
+                           uint64_t &read_bytes) noexcept {
+    read_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !this->PathIsValid(open_file.path) ||
+        open_file.path.vnode.type != NodeType::RegularFile) {
+        return Status::InvalidHandle;
+    }
+    if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const superblock = open_file.path.vnode.superblock;
+    return superblock->operations->read(superblock->backend_context, open_file.path.vnode,
+                                        offset_bytes, destination, capacity_bytes, read_bytes);
 }
 
 Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
@@ -1095,14 +1185,43 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    const Status status =
-        superblock->operations->write(superblock->backend_context, open_file.path.vnode,
-                                      offset_bytes, source, length_bytes, written_bytes);
+    const Status status = this->regular_file_write_cache_operation_ == nullptr ||
+                                  !superblock->cache_regular_file_data
+                              ? this->WriteUncachedAt(open_file, offset_bytes, source,
+                                                      length_bytes, written_bytes)
+                              : this->regular_file_write_cache_operation_(
+                                    this->regular_file_data_cache_context_, open_file, offset_bytes,
+                                    source, length_bytes, written_bytes);
     if (status == Status::Succeeded) {
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_written += written_bytes;
     }
     return status;
+}
+
+Status Vfs::WriteUncachedAt(const OpenFile &open_file, const uint64_t offset_bytes,
+                            const uint8_t *const source, const uint64_t length_bytes,
+                            uint64_t &written_bytes) noexcept {
+    written_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !this->PathIsValid(open_file.path) ||
+        open_file.path.vnode.type != NodeType::RegularFile) {
+        return Status::InvalidHandle;
+    }
+    if (!open_file.writable) {
+        return Status::PermissionDenied;
+    }
+    if (source == nullptr && length_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    Superblock *const superblock = open_file.path.vnode.superblock;
+    if (superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    return superblock->operations->write(superblock->backend_context, open_file.path.vnode,
+                                         offset_bytes, source, length_bytes, written_bytes);
 }
 
 Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t capacity_bytes,
@@ -1121,10 +1240,13 @@ Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t
     if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
-    Superblock *const superblock = open_file.path.vnode.superblock;
-    const Status status = superblock->operations->read(superblock->backend_context,
-                                                       open_file.path.vnode, open_file.offset_bytes,
-                                                       destination, capacity_bytes, read_bytes);
+    const Status status = this->regular_file_read_cache_operation_ == nullptr ||
+                                  !open_file.path.vnode.superblock->cache_regular_file_data
+                              ? this->ReadUncachedAt(open_file, open_file.offset_bytes, destination,
+                                                     capacity_bytes, read_bytes)
+                              : this->regular_file_read_cache_operation_(
+                                    this->regular_file_data_cache_context_, open_file,
+                                    open_file.offset_bytes, destination, capacity_bytes, read_bytes);
     if (status == Status::Succeeded) {
         if (open_file.offset_bytes > UINT64_MAX - read_bytes) {
             return Status::Corrupt;
@@ -1156,9 +1278,13 @@ Status Vfs::Write(OpenFile &open_file, const uint8_t *const source, const uint64
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    const Status status =
-        superblock->operations->write(superblock->backend_context, open_file.path.vnode,
-                                      open_file.offset_bytes, source, length_bytes, written_bytes);
+    const Status status = this->regular_file_write_cache_operation_ == nullptr ||
+                                  !superblock->cache_regular_file_data
+                              ? this->WriteUncachedAt(open_file, open_file.offset_bytes, source,
+                                                      length_bytes, written_bytes)
+                              : this->regular_file_write_cache_operation_(
+                                    this->regular_file_data_cache_context_, open_file,
+                                    open_file.offset_bytes, source, length_bytes, written_bytes);
     if (status == Status::Succeeded) {
         if (open_file.offset_bytes > UINT64_MAX - written_bytes) {
             return Status::Corrupt;
@@ -1415,7 +1541,15 @@ Status Vfs::ReadResourceUsage(ResourceUsage &usage) const noexcept {
 bool Vfs::IsInitialized() const noexcept {
     return this->initialized_ && this->mounts_ != nullptr &&
            this->mount_capacity_ != OS_KERNEL_VFS_EMPTY_VALUE &&
-           this->mount_count_ != OS_KERNEL_VFS_EMPTY_VALUE;
+           this->mount_count_ != OS_KERNEL_VFS_EMPTY_VALUE &&
+           ((this->regular_file_data_cache_context_ == nullptr) ==
+            (this->regular_file_read_cache_operation_ == nullptr)) &&
+           ((this->regular_file_data_cache_context_ == nullptr) ==
+            (this->regular_file_write_cache_operation_ == nullptr)) &&
+           ((this->regular_file_data_cache_context_ == nullptr) ==
+            (this->regular_file_size_cache_operation_ == nullptr)) &&
+           ((this->regular_file_data_cache_context_ == nullptr) ==
+            (this->regular_file_truncate_cache_operation_ == nullptr));
 }
 
 bool Vfs::PathIsValid(const Path &path) const noexcept {
@@ -1655,6 +1789,36 @@ Status Vfs::ReadNodeInformation(const Path &path, BackendNodeInformation &inform
     return expected_type != 0U && security::ModeTypeMatches(information.mode, expected_type)
                ? Status::Succeeded
                : Status::Corrupt;
+}
+
+Status Vfs::ApplyRegularFileCachedSize(const Vnode &vnode,
+                                       BackendNodeInformation &information) noexcept {
+    if (vnode.type != NodeType::RegularFile || !vnode.superblock->cache_regular_file_data ||
+        this->regular_file_size_cache_operation_ == nullptr) {
+        return Status::Succeeded;
+    }
+    uint64_t size_bytes = information.size_bytes;
+    const Status status = this->regular_file_size_cache_operation_(
+        this->regular_file_data_cache_context_, vnode, information.size_bytes, size_bytes);
+    if (status == Status::Succeeded) {
+        information.size_bytes = size_bytes;
+    }
+    return status;
+}
+
+Status Vfs::TruncateNode(const Vnode &vnode, const uint64_t size_bytes) noexcept {
+    if (vnode.superblock == nullptr || vnode.type != NodeType::RegularFile) {
+        return Status::InvalidArgument;
+    }
+    Superblock &superblock = *vnode.superblock;
+    const Status truncate_status =
+        superblock.operations->truncate(superblock.backend_context, vnode, size_bytes);
+    if (truncate_status != Status::Succeeded || !superblock.cache_regular_file_data ||
+        this->regular_file_truncate_cache_operation_ == nullptr) {
+        return truncate_status;
+    }
+    return this->regular_file_truncate_cache_operation_(this->regular_file_data_cache_context_,
+                                                        vnode, size_bytes);
 }
 
 Status Vfs::RequireAccess(const FsContext &context, const Path &path,

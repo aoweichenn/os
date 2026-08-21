@@ -122,6 +122,7 @@ enum class KernelMemoryInitializationStatus : uint64_t {
     HeapInitializationFailed,
     HeapSelfTestFailed,
     TypeCacheSelfTestFailed,
+    FileCacheAddressSpaceSelfTestFailed,
     KvaInitializationFailed,
     KvaSelfTestFailed,
     KernelStackManagerInitializationFailed,

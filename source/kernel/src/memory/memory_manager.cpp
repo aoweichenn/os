@@ -4,6 +4,7 @@
 #include <os/foundation/scope_rollback.hpp>
 #include <os/kernel/arch/descriptor_tables.hpp>
 #include <os/kernel/arch/processor.hpp>
+#include <os/kernel/memory/file_cache_address_space.hpp>
 #include <os/kernel/memory/page_table.hpp>
 #include <os/kernel/memory/physical_frame_allocator.hpp>
 #include <os/kernel/memory/physical_memory_map.hpp>
@@ -48,6 +49,17 @@ constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_VALUE_INDEX =
 constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_ALTERNATING_STEP = 2ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_FIRST_PATTERN = 0x5459504543414348ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_TYPE_CACHE_SELF_TEST_LAST_PATTERN = 0x53454C4654455354ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SUPERBLOCK_IDENTIFIER = 149ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SUPERBLOCK_GENERATION = 3ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_NODE_IDENTIFIER = 12289ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_NODE_GENERATION = 23ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT = 4ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FIRST_PAGE_INDEX = 0ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX = 64ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_THIRD_PAGE_INDEX = 4096ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_LAST_PAGE_INDEX = UINT64_MAX;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FAILURE_HEAP_SIZE_BYTES = 2048ULL;
+constexpr uint64_t OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FAILURE_HEAP_ALIGNMENT_BYTES = 64ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_PATTERN = 0x484947484652414DULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_SECOND_PATTERN = 0x4449524543544D50ULL;
 constexpr uint64_t OS_KERNEL_MEMORY_HIGH_FRAME_SELF_TEST_FIRST_VALUE_INDEX = 0ULL;
@@ -731,6 +743,136 @@ ValidateKernelMappings(const BootInfo &boot_info,
                heap_before_test.largest_free_allocation_bytes;
 }
 
+[[nodiscard]] bool RunFileCacheAddressSpaceSelfTest() noexcept {
+    KernelHeap &heap = GetKernelHeap();
+    const KernelHeapStatistics heap_before = heap.Statistics();
+    const FileCacheIdentity identity{
+        .superblock_identifier = OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SUPERBLOCK_IDENTIFIER,
+        .superblock_generation = OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SUPERBLOCK_GENERATION,
+        .node_identifier = OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_NODE_IDENTIFIER,
+        .node_generation = OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_NODE_GENERATION,
+    };
+    const uint64_t page_indices[OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT] = {
+        OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FIRST_PAGE_INDEX,
+        OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX,
+        OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_THIRD_PAGE_INDEX,
+        OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_LAST_PAGE_INDEX,
+    };
+
+    FileCacheAddressSpace address_space{};
+    if (address_space.Initialize(identity, heap) != FileCacheAddressSpaceStatus::Succeeded) {
+        return false;
+    }
+    for (uint64_t page_offset = 0ULL; page_offset < OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT;
+         ++page_offset) {
+        const FileCachePageState state =
+            page_offset == 1ULL ? FileCachePageState::Dirty : FileCachePageState::Clean;
+        if (address_space.Insert(page_indices[page_offset],
+                                 (page_offset + 1ULL) * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                 state) != FileCacheAddressSpaceStatus::Succeeded) {
+            return false;
+        }
+    }
+    FileCachePageSnapshot dirty_page{};
+    if (address_space.FindNext(0ULL, UINT64_MAX, FileCachePageState::Dirty, dirty_page) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        dirty_page.page_index != OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX ||
+        address_space.Retain(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_LAST_PAGE_INDEX,
+                             OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT *
+                                 OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        address_space.Release(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_LAST_PAGE_INDEX,
+                              OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT *
+                                  OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        address_space.Transition(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX,
+                                 2ULL * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                 FileCachePageState::Dirty, FileCachePageState::Writeback) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        address_space.Transition(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX,
+                                 2ULL * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                 FileCachePageState::Writeback, FileCachePageState::Error) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        address_space.Transition(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX,
+                                 2ULL * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                 FileCachePageState::Error, FileCachePageState::Writeback) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        address_space.Transition(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_SECOND_PAGE_INDEX,
+                                 2ULL * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                 FileCachePageState::Writeback, FileCachePageState::Clean) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        address_space.Validate() != FileCacheAddressSpaceStatus::Succeeded) {
+        return false;
+    }
+
+    for (uint64_t page_offset = OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT;
+         page_offset != 0ULL; --page_offset) {
+        const uint64_t index = page_offset - 1ULL;
+        if (address_space.Remove(page_indices[index],
+                                 (index + 1ULL) * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) !=
+            FileCacheAddressSpaceStatus::Succeeded) {
+            return false;
+        }
+    }
+    const FileCacheAddressSpaceStatistics successful_statistics = address_space.Statistics();
+    if (address_space.Validate() != FileCacheAddressSpaceStatus::Succeeded ||
+        successful_statistics.resident_page_count != 0ULL ||
+        successful_statistics.successful_insertion_count !=
+            OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT ||
+        successful_statistics.removal_count != OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_PAGE_COUNT ||
+        successful_statistics.index.peak_root_level !=
+            OS_KERNEL_SPARSE_PAGE_INDEX_MAXIMUM_ROOT_LEVEL ||
+        successful_statistics.index.peak_node_count == 0ULL ||
+        address_space.Destroy() != FileCacheAddressSpaceStatus::Succeeded) {
+        return false;
+    }
+
+    void *failure_heap_storage = nullptr;
+    if (heap.TryAllocate(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FAILURE_HEAP_SIZE_BYTES,
+                         OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FAILURE_HEAP_ALIGNMENT_BYTES,
+                         failure_heap_storage) != KernelHeapStatus::Succeeded) {
+        return false;
+    }
+    KernelHeap failure_heap{};
+    FileCacheAddressSpace failing_address_space{};
+    const bool failure_path_valid =
+        failure_heap.Initialize(reinterpret_cast<uint64_t>(failure_heap_storage),
+                                OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_FAILURE_HEAP_SIZE_BYTES) ==
+            KernelHeapStatus::Succeeded &&
+        failing_address_space.Initialize(identity, failure_heap) ==
+            FileCacheAddressSpaceStatus::Succeeded &&
+        failing_address_space.Insert(OS_KERNEL_MEMORY_FILE_CACHE_SELF_TEST_LAST_PAGE_INDEX,
+                                     OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+                                     FileCachePageState::Clean) ==
+            FileCacheAddressSpaceStatus::AllocationFailed &&
+        failing_address_space.Validate() == FileCacheAddressSpaceStatus::Succeeded &&
+        failing_address_space.Statistics().failed_insertion_count == 1ULL &&
+        failing_address_space.Statistics().index.allocation_failure_count == 1ULL &&
+        failure_heap.Validate() == KernelHeapStatus::Succeeded &&
+        failure_heap.Statistics().allocation_count == 0ULL &&
+        failing_address_space.Destroy() == FileCacheAddressSpaceStatus::Succeeded;
+    const bool failure_heap_released =
+        heap.TryRelease(failure_heap_storage) == KernelHeapStatus::Succeeded;
+    if (!failure_path_valid || !failure_heap_released ||
+        heap.Validate() != KernelHeapStatus::Succeeded) {
+        return false;
+    }
+
+    const KernelHeapStatistics heap_after = heap.Statistics();
+    if (heap_after.successful_allocation_count < heap_before.successful_allocation_count ||
+        heap_after.release_count < heap_before.release_count) {
+        return false;
+    }
+    const uint64_t allocation_delta =
+        heap_after.successful_allocation_count - heap_before.successful_allocation_count;
+    const uint64_t release_delta = heap_after.release_count - heap_before.release_count;
+    return allocation_delta != 0ULL && allocation_delta == release_delta &&
+           heap_after.consumed_bytes == heap_before.consumed_bytes &&
+           heap_after.allocation_count == heap_before.allocation_count &&
+           heap_after.active_requested_bytes == heap_before.active_requested_bytes &&
+           heap_after.largest_free_allocation_bytes == heap_before.largest_free_allocation_bytes;
+}
+
 [[nodiscard]] uint64_t KernelVirtualPageAddress(const KernelVirtualAddressRange range,
                                                 const uint64_t page_offset) noexcept {
     return range.begin_address + page_offset * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
@@ -1335,6 +1477,9 @@ KernelMemoryInitializationStatus InitializeKernelMemory(const BootInfo &boot_inf
     KernelTypeCacheStatistics type_cache_statistics{};
     if (!RunTypeCacheSelfTest(type_cache_statistics)) {
         return KernelMemoryInitializationStatus::TypeCacheSelfTestFailed;
+    }
+    if (!RunFileCacheAddressSpaceSelfTest()) {
+        return KernelMemoryInitializationStatus::FileCacheAddressSpaceSelfTestFailed;
     }
     uint64_t high_memory_test_physical_address = 0ULL;
     if (!RunHighMemorySelfTest(high_memory_test_physical_address)) {

@@ -26,8 +26,8 @@ v1.10 在真实交接之上建立处理器、内存、中断、设备、文件�
   spawn/exec/wait 生命周期。
 - 为每个用户地址空间维护 VMA，以用户 `#PF` 提交匿名、program-break 和
   受控增长栈页，并在 unmap/exec/exit 回收数据页、空页表分支与描述符。
-- 通过稳定文件后备按需解析 ELF/文件 VMA，并用有界 clean page cache
-  共享完整只读页；write/truncate 会撤销旧 PTE 并失效缓存。
+- 通过稳定文件后备按需解析 ELF/文件 VMA；buffered read/write 与
+  `MAP_SHARED` 共享动态文件页，write 直接脏化，truncate 只撤销 EOF 后 PTE。
 - 验收完成后进入 IF 开启的 `HLT` 事件循环，不返回 Stage 1。
 
 ## 文件布局
@@ -958,6 +958,35 @@ UserAddressSpace 依次清理；当前牺牲者在异常出口转换为 SIGKILL�
 `MemoryOvercommitAccountant::Validate`、`SwapManager::Validate` 成功，且全局
 committed 和 active swap 均为零。
 
+## v2.8 动态文件缓存索引模块契约
+
+`memory/sparse_page_index.*` 只管理 64 位整数索引到非空元数据指针的映射，不访问
+页帧、VFS 或块设备。64 路节点从 KernelHeap 动态取得；父节点的四个 bitmap 分别
+概括 Present、Dirty、Writeback 和 Error 子树。公开操作在索引锁内完成，插入的
+所有可能失败申请都发生在连接现有树之前。
+
+`memory/file_cache_address_space.*` 以一个 `FileCacheIdentity` 拥有页面元数据和
+稀疏索引。物理地址必须 4 KiB 对齐，但地址空间不释放物理 frame。Retain/Release
+只维护映射引用；Remove 只接受零引用 Clean 页；Discard 只供 truncate 丢弃零引用
+Clean/Dirty/Error 页并拒绝 Writeback；Transition 固定 Clean/Dirty/Writeback/Error
+有向边并同步 radix mark。
+
+第一增量保持 `memory/file_page_cache.*` 生产接口不变；`FileIdentity` 只是
+`FileCacheIdentity` 的兼容别名。第二增量已让 `memory/file_page_cache.*` 自身成为
+动态地址空间注册表：它拥有 frame、全局容量/LRU/dirty 统计和 writeback 选择，单个
+地址空间拥有 page metadata/radix/state/ref。
+
+`fs::Vfs` 的公共 Read/ReadAt/Write/WriteAt、stat 和 truncate 只在 superblock
+capability 为 true 时调用对应 data-cache hook；填页使用 `ReadUncachedAt`，写回使用
+`WriteUncachedAt`。`FilePageCache` 的 address-space record 同时保存逻辑 EOF，控制末页
+写回长度和 truncate 零区间。生产 metadata 使用独立 buddy-backed KernelHeap，不占
+通用 512 KiB Heap。当前 miss 仍由 cache spinlock 同步串行化；任何会睡眠的并行 fill
+必须先引入 Loading 状态和 waiter，不能直接放开锁制造重复页。
+
+`user/file_backing.*` 的 VfsWriteback 描述符按文件身份去重并保留后端 open reference。
+Dirty/Error 清空后通过反向查询回调释放，避免该模块直接依赖具体页缓存实现。共享映射
+描述符与 writeback 描述符都能执行末页短写；所有写回必须绕过 VFS 公共 cache hook。
+
 ## 已知边界
 
 - 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
@@ -996,6 +1025,9 @@ committed 和 active swap 均为零。
   生产 rootfs v4；unlink/rmdir/rename/truncate/stat、链接、时间戳、orphan、
   五级稀疏块树和 ordered journal 已完成。mount 拓扑仍仅在启动期建立；
   动态 unmount、dentry cache 与权限进入后续阶段。
+- v2.8 前三增量已有 64 位动态文件页 radix、统一 buffered read/write/file fault/
+  `MAP_SHARED` frame、逻辑 EOF 和精确 truncate；后台 worker、Dirty 软水位、按打开
+  实例错误序列和统一 direct reclaim 尚未完成。
 
 ## v1.10 COW 内核边界
 

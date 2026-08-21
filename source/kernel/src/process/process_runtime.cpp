@@ -98,8 +98,6 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_VM_FILE_FAULT_PREFIX[] =
     "[OS][KERNEL][VM] FILE_FAULT_COUNT=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_HIT_PREFIX[] =
     "[OS][KERNEL][VM] PAGE_CACHE_HIT_COUNT=";
-constexpr char OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_INVALIDATION_PREFIX[] =
-    "[OS][KERNEL][VM] PAGE_CACHE_INVALIDATION_COUNT=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_IO_DESCRIPTOR_READ_BLOCK_PREFIX[] =
     "[OS][KERNEL][IO] DESCRIPTOR_READ_BLOCK_COUNT=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_RESULT_PREFIX[] =
@@ -557,16 +555,6 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
 }
 
 [[nodiscard]] FileIdentity
-FileIdentityFromSnapshot(const FileDescriptionSnapshot &snapshot) noexcept {
-    return FileIdentity{
-        .superblock_identifier = snapshot.superblock_identifier,
-        .superblock_generation = snapshot.superblock_generation,
-        .node_identifier = snapshot.node_identifier,
-        .node_generation = snapshot.node_generation,
-    };
-}
-
-[[nodiscard]] FileIdentity
 FileIdentityFromInformation(const fs::NodeInformation &information) noexcept {
     return FileIdentity{
         .superblock_identifier = information.superblock_identifier,
@@ -578,35 +566,22 @@ FileIdentityFromInformation(const fs::NodeInformation &information) noexcept {
 
 void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) noexcept;
 
-[[nodiscard]] bool RevokeRuntimeFileMappings(const FileIdentity &identity,
-                                             const uint64_t current_file_size_bytes) noexcept {
+[[nodiscard]] bool PrepareRuntimeFileTruncate(const FileIdentity &identity,
+                                              const uint64_t size_bytes) noexcept {
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          process_index < process_runtime_limits.process_capacity; ++process_index) {
         ProcessRuntimeProcess &runtime_process = runtime_processes[process_index];
-        // Zombie 仍由父进程持有结果槽，但其地址空间已经销毁。文件写入和
-        // truncate 只需要撤销仍然存在的地址空间，不能把合法的 Zombie
-        // 生命周期误判为页缓存损坏。
+        // Zombie 仍由父进程持有结果槽，但其地址空间已经销毁。truncate 只处理
+        // 仍然存在的地址空间，不能把合法的 Zombie 生命周期误判为页缓存损坏。
         if (!runtime_process.active || runtime_process.address_space.root_physical_address ==
                                            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
             continue;
         }
-        if (RevokeUserFileMappings(runtime_process.address_space, identity) !=
+        if (TruncateUserFileMappings(runtime_process.address_space, identity, size_bytes) !=
             UserVirtualMemoryStatus::Succeeded) {
             return false;
         }
         runtime_process.result.mapped_page_count = runtime_process.address_space.mapped_page_count;
-    }
-    const uint64_t previous_invalidation_count =
-        GetUserFilePageCacheStatistics().invalidation_count;
-    if (InvalidateUserFilePageCache(identity, current_file_size_bytes) !=
-        UserVirtualMemoryStatus::Succeeded) {
-        return false;
-    }
-    const FilePageCacheStatistics statistics = GetUserFilePageCacheStatistics();
-    if (statistics.invalidation_count != previous_invalidation_count &&
-        IsPowerOfTwoCounter(statistics.invalidation_count)) {
-        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_VM_PAGE_CACHE_INVALIDATION_PREFIX,
-                                 statistics.invalidation_count);
     }
     return true;
 }
@@ -616,7 +591,11 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
     if (statistics.dirty_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
         statistics.writeback_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
         statistics.error_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
-        return true;
+        uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        return WritebackUserFilePageCache(OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                                          written_page_count) ==
+                   UserVirtualMemoryStatus::Succeeded &&
+               written_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     }
     return SyncCurrentProcessFileSystem() == FileSystemStatus::Succeeded;
 }
@@ -2670,6 +2649,9 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_
         return ProcessRuntimeStatus::AlreadyActive;
     }
     if (vfs.Validate() != fs::Status::Succeeded) {
+        return ProcessRuntimeStatus::FileSystemFailure;
+    }
+    if (AttachUserFilePageCache(vfs) != UserAddressSpaceStatus::Succeeded) {
         return ProcessRuntimeStatus::FileSystemFailure;
     }
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -5113,10 +5095,15 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
     if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
+    if (options.truncate && !options.writable) {
+        return FileSystemStatus::InvalidArgument;
+    }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     fs::OpenFile open_file{};
-    const fs::Status status =
-        process_vfs->Open(process.file_system_context, path, path_length_bytes, options, open_file);
+    fs::OpenOptions open_options = options;
+    open_options.truncate = false;
+    fs::Status status = process_vfs->Open(process.file_system_context, path, path_length_bytes,
+                                          open_options, open_file);
     if (status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(status);
     }
@@ -5127,14 +5114,27 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         return FileSystemStatus::InvalidArgument;
     }
     if (options.truncate) {
+        if (open_file.path.vnode.type != fs::NodeType::RegularFile) {
+            if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
+                HaltProcessor();
+            }
+            return FileSystemStatus::Unsupported;
+        }
         fs::NodeInformation information{};
         if (process_vfs->StatOpenFile(open_file, information) != fs::Status::Succeeded ||
-            !RevokeRuntimeFileMappings(FileIdentityFromInformation(information),
-                                       OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)) {
+            !PrepareRuntimeFileTruncate(FileIdentityFromInformation(information),
+                                        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)) {
             if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
                 HaltProcessor();
             }
             return FileSystemStatus::Corrupt;
+        }
+        status = process_vfs->TruncateOpenFile(open_file, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
+        if (status != fs::Status::Succeeded) {
+            if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
+                HaltProcessor();
+            }
+            return fs::ToFileSystemStatus(status);
         }
     }
     const uint64_t file_status_flags =
@@ -5245,13 +5245,6 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
         if (snapshot.kind == FileDescriptionKind::TerminalDevice) {
             process.result.console_bytes_written += written_bytes;
         } else {
-            FileDescriptionSnapshot current_snapshot{};
-            if (file_description_manager.ReadSnapshot(reference, current_snapshot) !=
-                    FileDescriptionStatus::Succeeded ||
-                !RevokeRuntimeFileMappings(FileIdentityFromSnapshot(snapshot),
-                                           current_snapshot.size_bytes)) {
-                return FileSystemStatus::Corrupt;
-            }
             process.result.file_system_bytes_written += written_bytes;
         }
     }
@@ -5341,14 +5334,12 @@ FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path, const uint64_t 
     if (size_bytes > file_size_limit) {
         return FileSystemStatus::FileTooLarge;
     }
+    if (!PrepareRuntimeFileTruncate(FileIdentityFromInformation(information), size_bytes)) {
+        return FileSystemStatus::Corrupt;
+    }
     const fs::Status truncate_status =
         process_vfs->Truncate(process.file_system_context, path, path_length_bytes, size_bytes);
-    if (truncate_status != fs::Status::Succeeded) {
-        return fs::ToFileSystemStatus(truncate_status);
-    }
-    return RevokeRuntimeFileMappings(FileIdentityFromInformation(information), size_bytes)
-               ? FileSystemStatus::Succeeded
-               : FileSystemStatus::Corrupt;
+    return fs::ToFileSystemStatus(truncate_status);
 }
 
 FileSystemStatus StatCurrentProcessPath(const uint8_t *path, const uint64_t path_length_bytes,
@@ -5590,14 +5581,6 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
             snapshot.kind == FileDescriptionKind::TerminalDevice) {
             process.result.console_bytes_written += written_bytes;
         } else if (snapshot.kind == FileDescriptionKind::RegularFile) {
-            FileDescriptionSnapshot current_snapshot{};
-            if (file_description_manager.ReadSnapshot(reference, current_snapshot) !=
-                    FileDescriptionStatus::Succeeded ||
-                !RevokeRuntimeFileMappings(FileIdentityFromSnapshot(snapshot),
-                                           current_snapshot.size_bytes)) {
-                file_system_status = FileSystemStatus::Corrupt;
-                return ProcessIoStatus::FileSystemFailure;
-            }
             process.result.file_system_bytes_written += written_bytes;
         } else if (snapshot.kind == FileDescriptionKind::PipeWriter) {
             process.result.pipe_bytes_written += written_bytes;

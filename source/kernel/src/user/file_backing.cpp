@@ -1,4 +1,4 @@
-#include "os/kernel/user/file_backing.hpp"
+#include <os/kernel/user/file_backing.hpp>
 
 namespace os::kernel {
 
@@ -10,6 +10,7 @@ constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_MEMORY_SUPERBLOCK_IDENTIFIER =
     UINT64_MAX - OS_KERNEL_USER_FILE_BACKING_SINGLE_UNIT;
 constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_MEMORY_SUPERBLOCK_GENERATION =
     OS_KERNEL_USER_FILE_BACKING_SINGLE_UNIT;
+constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_WRITEBACK_OWNER_IDENTIFIER = UINT64_MAX;
 
 void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                const uint64_t length_bytes) noexcept {
@@ -298,9 +299,9 @@ UserFileBackingStatus UserFileBackingManager::Read(
     uint64_t read_bytes = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
     return descriptor.kind == UserFileBackingKind::VfsFile &&
                    descriptor.vfs != nullptr &&
-                   descriptor.vfs->ReadAt(
-                       descriptor.open_file, offset_bytes, destination,
-                       length_bytes, read_bytes) == fs::Status::Succeeded &&
+                   descriptor.vfs->ReadAt(descriptor.open_file, offset_bytes, destination,
+                                          length_bytes, read_bytes) ==
+                       fs::Status::Succeeded &&
                    read_bytes == length_bytes
                ? UserFileBackingStatus::Succeeded
                : UserFileBackingStatus::ReadFailed;
@@ -312,8 +313,8 @@ UserFileBackingStatus UserFileBackingManager::WritePage(
     if (!this->initialized_) {
         return UserFileBackingStatus::NotInitialized;
     }
-    if (source == nullptr ||
-        length_bytes != OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+    if (source == nullptr || length_bytes == OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE ||
+        length_bytes > OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
         identity.page_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
         return UserFileBackingStatus::InvalidSource;
     }
@@ -326,20 +327,113 @@ UserFileBackingStatus UserFileBackingManager::WritePage(
         const UserFileBackingDescriptor &descriptor =
             this->descriptors_[descriptor_index];
         if (!descriptor.active ||
-            descriptor.kind != UserFileBackingKind::VfsFile ||
+            (descriptor.kind != UserFileBackingKind::VfsFile &&
+             descriptor.kind != UserFileBackingKind::VfsWriteback) ||
             !descriptor.open_file.writable || descriptor.vfs == nullptr ||
             !this->IdentitiesEqual(descriptor.identity, identity.file)) {
             continue;
         }
+        if (offset_bytes > descriptor.size_bytes ||
+            length_bytes > descriptor.size_bytes - offset_bytes) {
+            return UserFileBackingStatus::WriteFailed;
+        }
         uint64_t written_bytes = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
-        return descriptor.vfs->WriteAt(descriptor.open_file, offset_bytes,
-                                       source, length_bytes,
-                                       written_bytes) == fs::Status::Succeeded &&
+        return descriptor.vfs->WriteUncachedAt(descriptor.open_file, offset_bytes, source,
+                                               length_bytes, written_bytes) ==
+                       fs::Status::Succeeded &&
                        written_bytes == length_bytes
                    ? UserFileBackingStatus::Succeeded
                    : UserFileBackingStatus::WriteFailed;
     }
     return UserFileBackingStatus::WriteFailed;
+}
+
+UserFileBackingStatus
+UserFileBackingManager::RetainWritebackFile(fs::Vfs &vfs, const fs::OpenFile &open_file,
+                                            const uint64_t size_bytes) noexcept {
+    if (!this->initialized_) {
+        return UserFileBackingStatus::NotInitialized;
+    }
+    if (!open_file.open || !open_file.writable ||
+        open_file.path.vnode.type != fs::NodeType::RegularFile) {
+        return UserFileBackingStatus::InvalidSource;
+    }
+    const FileIdentity identity{
+        .superblock_identifier = open_file.path.vnode.superblock->identifier,
+        .superblock_generation = open_file.path.vnode.superblock->generation,
+        .node_identifier = open_file.path.vnode.identifier,
+        .node_generation = open_file.path.vnode.generation,
+    };
+    SpinLockGuard guard{this->lock_};
+    uint64_t candidate_index = UINT64_MAX;
+    for (uint64_t descriptor_index = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+         descriptor_index < this->capacity_; ++descriptor_index) {
+        UserFileBackingDescriptor &descriptor = this->descriptors_[descriptor_index];
+        if (descriptor.active && descriptor.kind == UserFileBackingKind::VfsWriteback &&
+            this->IdentitiesEqual(descriptor.identity, identity)) {
+            descriptor.size_bytes = size_bytes;
+            return UserFileBackingStatus::Succeeded;
+        }
+        if (!descriptor.active && candidate_index == UINT64_MAX) {
+            candidate_index = descriptor_index;
+        }
+    }
+    if (candidate_index == UINT64_MAX) {
+        return UserFileBackingStatus::CapacityExhausted;
+    }
+    fs::OpenFile retained_file{};
+    if (vfs.RetainOpenFile(open_file, retained_file) != fs::Status::Succeeded) {
+        return UserFileBackingStatus::InvalidSource;
+    }
+    this->descriptors_[candidate_index] = UserFileBackingDescriptor{
+        .kind = UserFileBackingKind::VfsWriteback,
+        .generation = this->NextGeneration(),
+        .owner_identifier = OS_KERNEL_USER_FILE_BACKING_WRITEBACK_OWNER_IDENTIFIER,
+        .identity = identity,
+        .size_bytes = size_bytes,
+        .memory_image = nullptr,
+        .vfs = &vfs,
+        .open_file = retained_file,
+        .active = true,
+    };
+    ++this->active_descriptor_count_;
+    return UserFileBackingStatus::Succeeded;
+}
+
+UserFileBackingStatus
+UserFileBackingManager::ReleaseCleanWritebackFiles(
+    void *const context, const UserFileBackingWritebackRequiredOperation operation) noexcept {
+    if (!this->initialized_) {
+        return UserFileBackingStatus::NotInitialized;
+    }
+    if (context == nullptr || operation == nullptr) {
+        return UserFileBackingStatus::InvalidSource;
+    }
+    SpinLockGuard guard{this->lock_};
+    for (uint64_t descriptor_index = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+         descriptor_index < this->capacity_; ++descriptor_index) {
+        UserFileBackingDescriptor &descriptor = this->descriptors_[descriptor_index];
+        if (!descriptor.active || descriptor.kind != UserFileBackingKind::VfsWriteback) {
+            continue;
+        }
+        bool writeback_required = false;
+        if (!operation(context, descriptor.identity, writeback_required)) {
+            return UserFileBackingStatus::Corrupt;
+        }
+        if (writeback_required) {
+            continue;
+        }
+        if (descriptor.vfs == nullptr ||
+            descriptor.vfs->Close(descriptor.open_file) != fs::Status::Succeeded) {
+            return UserFileBackingStatus::CloseFailed;
+        }
+        descriptor = UserFileBackingDescriptor{};
+        if (this->active_descriptor_count_ == OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE) {
+            return UserFileBackingStatus::Corrupt;
+        }
+        --this->active_descriptor_count_;
+    }
+    return UserFileBackingStatus::Succeeded;
 }
 
 UserFileBackingStatus UserFileBackingManager::ReadDescriptor(
@@ -402,7 +496,8 @@ UserFileBackingStatus UserFileBackingManager::Validate() const noexcept {
              (descriptor.size_bytes ==
                   OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE ||
               descriptor.memory_image == nullptr)) ||
-            (descriptor.kind == UserFileBackingKind::VfsFile &&
+            ((descriptor.kind == UserFileBackingKind::VfsFile ||
+              descriptor.kind == UserFileBackingKind::VfsWriteback) &&
              (descriptor.vfs == nullptr || !descriptor.open_file.open))) {
             return UserFileBackingStatus::Corrupt;
         }
@@ -428,10 +523,7 @@ bool UserFileBackingManager::IsIndexValid(
 
 bool UserFileBackingManager::IdentitiesEqual(
     const FileIdentity &left, const FileIdentity &right) const noexcept {
-    return left.superblock_identifier == right.superblock_identifier &&
-           left.superblock_generation == right.superblock_generation &&
-           left.node_identifier == right.node_identifier &&
-           left.node_generation == right.node_generation;
+    return FileCacheIdentitiesEqual(left, right);
 }
 
 uint64_t UserFileBackingManager::NextGeneration() noexcept {
@@ -478,13 +570,22 @@ bool ReadUserFileBackingPage(
                   read_capacity);
         return true;
     }
+    fs::NodeInformation source_information{};
+    if (descriptor.kind != UserFileBackingKind::VfsFile || descriptor.vfs == nullptr ||
+        descriptor.vfs->StatOpenFileUncached(descriptor.open_file, source_information) !=
+            fs::Status::Succeeded) {
+        return false;
+    }
+    if (offset_bytes >= source_information.size_bytes) {
+        return true;
+    }
+    const uint64_t source_read_capacity =
+        Minimum(read_capacity, source_information.size_bytes - offset_bytes);
     uint64_t read_bytes = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
-    return descriptor.kind == UserFileBackingKind::VfsFile &&
-           descriptor.vfs != nullptr &&
-           descriptor.vfs->ReadAt(descriptor.open_file, offset_bytes,
-                                  destination, read_capacity,
-                                  read_bytes) == fs::Status::Succeeded &&
-           read_bytes == read_capacity;
+    return descriptor.vfs->ReadUncachedAt(descriptor.open_file, offset_bytes, destination,
+                                          source_read_capacity, read_bytes) ==
+               fs::Status::Succeeded &&
+           read_bytes == source_read_capacity;
 }
 
 bool WriteUserFileBackingPage(

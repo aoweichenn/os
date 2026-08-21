@@ -43,16 +43,10 @@ struct alignas(OS_KERNEL_HEAP_BLOCK_ALIGNMENT_BYTES) KernelHeap::BlockHeader fin
     BlockHeader *next_free_block;
 };
 
-KernelHeap::KernelHeap() noexcept
-    : base_address_{0ULL}, size_bytes_{0ULL}, consumed_bytes_{0ULL}, allocation_count_{0ULL},
-      active_requested_bytes_{0ULL}, successful_allocation_count_{0ULL}, release_count_{0ULL},
-      peak_consumed_bytes_{0ULL}, free_list_head_{nullptr} {
-    static_assert(sizeof(BlockHeader) == OS_KERNEL_HEAP_BLOCK_HEADER_SIZE_BYTES);
-    static_assert(alignof(BlockHeader) == OS_KERNEL_HEAP_BLOCK_ALIGNMENT_BYTES);
-}
-
 KernelHeapStatus KernelHeap::Initialize(const uint64_t base_address,
                                         const uint64_t size_bytes) noexcept {
+    static_assert(sizeof(BlockHeader) == OS_KERNEL_HEAP_BLOCK_HEADER_SIZE_BYTES);
+    static_assert(alignof(BlockHeader) == OS_KERNEL_HEAP_BLOCK_ALIGNMENT_BYTES);
     if (this->size_bytes_ != OS_KERNEL_HEAP_EMPTY_VALUE) {
         return KernelHeapStatus::AlreadyInitialized;
     }

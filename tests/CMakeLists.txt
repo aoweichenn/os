@@ -290,6 +290,30 @@ os_add_kernel_memory_test(
 )
 
 os_add_kernel_memory_test(
+    os_kernel_file_page_cache_dynamic_lifecycle_integration_tests
+    integration/boot/file_page_cache_dynamic_lifecycle_test.cpp
+    "integration"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_file_cache_address_space_unit_tests
+    unit/kernel/file_cache_address_space_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_file_cache_address_space_lifecycle_integration_tests
+    integration/boot/file_cache_address_space_lifecycle_test.cpp
+    "integration"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_file_cache_address_space_randomized_tests
+    randomized/kernel/file_cache_address_space_randomized_test.cpp
+    "randomized"
+)
+
+os_add_kernel_memory_test(
     os_kernel_user_page_reference_unit_tests
     unit/kernel/user_page_reference_test.cpp
     "unit"
@@ -1522,16 +1546,12 @@ set_tests_properties(
         WILL_FAIL TRUE
 )
 
-set(OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES 64)
-set(OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES 256)
 set(OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES 4096)
-set(OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS 160)
-set(OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS 310)
 set(OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS 430)
 set(OS_TEST_QEMU_PERSISTENCE_TIMEOUT_SECONDS 750)
 
 add_test(
-    NAME os_qemu_bootstrap_smoke
+    NAME os_qemu_primary_smoke
     COMMAND
         "${Python3_EXECUTABLE}"
         "${PROJECT_SOURCE_DIR}/tools/os.py"
@@ -1541,37 +1561,15 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --memory-mebibytes
-        "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
         --expected-outcome
         success
 )
 set_tests_properties(
-    os_qemu_bootstrap_smoke
+    os_qemu_primary_smoke
     PROPERTIES
-        LABELS "system;bootstrap-smoke"
-        TIMEOUT "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
-)
-
-add_test(
-    NAME os_qemu_functional_smoke
-    COMMAND
-        "${Python3_EXECUTABLE}"
-        "${PROJECT_SOURCE_DIR}/tools/os.py"
-        qemu-firmware
-        "${OS_FIRMWARE_IMAGE}"
-        "${OS_BOOT_DISK_IMAGE}"
-        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
-        "${OS_DISK_IMAGE_SIZE_BYTES}"
-        --memory-mebibytes
-        "${OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES}"
-        --expected-outcome
-        success
-)
-set_tests_properties(
-    os_qemu_functional_smoke
-    PROPERTIES
-        LABELS "system;functional-smoke"
-        TIMEOUT "${OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS}"
+        LABELS "system;primary-smoke"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 
 add_test(
@@ -1585,7 +1583,7 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --memory-mebibytes
-        "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
         --nvme-disk-image
         "${OS_EMPTY_DISK_IMAGE}"
         --expected-outcome
@@ -1595,7 +1593,7 @@ set_tests_properties(
     os_qemu_nvme_io
     PROPERTIES
         LABELS "system;nvme"
-        TIMEOUT "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 
 add_test(
@@ -1609,7 +1607,7 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --memory-mebibytes
-        "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
         --nvme-disk-image
         "${OS_EMPTY_DISK_IMAGE}"
         --nvme-failure-event
@@ -1621,7 +1619,7 @@ set_tests_properties(
     os_qemu_nvme_io_error_recovery
     PROPERTIES
         LABELS "system;nvme;failure-path"
-        TIMEOUT "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 
 add_test(
@@ -1635,7 +1633,7 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --memory-mebibytes
-        "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
         --nvme-disk-image
         "${OS_EMPTY_DISK_IMAGE}"
         --expected-outcome
@@ -1645,7 +1643,7 @@ set_tests_properties(
     os_qemu_nvme_io_timeout_recovery
     PROPERTIES
         LABELS "system;nvme;failure-path"
-        TIMEOUT "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 
 function(os_add_qemu_nvme_storage_test OS_TEST_NAME OS_MEMORY_MEBIBYTES OS_TIMEOUT_SECONDS)
@@ -1677,16 +1675,6 @@ function(os_add_qemu_nvme_storage_test OS_TEST_NAME OS_MEMORY_MEBIBYTES OS_TIMEO
 endfunction()
 
 os_add_qemu_nvme_storage_test(
-    os_qemu_nvme_storage_bootstrap
-    "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
-    "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
-)
-os_add_qemu_nvme_storage_test(
-    os_qemu_nvme_storage_functional
-    "${OS_TEST_QEMU_FUNCTIONAL_GUEST_MEMORY_MEBIBYTES}"
-    "${OS_TEST_QEMU_FUNCTIONAL_TIMEOUT_SECONDS}"
-)
-os_add_qemu_nvme_storage_test(
     os_qemu_nvme_storage_primary
     "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
     "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
@@ -1703,7 +1691,7 @@ add_test(
         "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
         "${OS_DISK_IMAGE_SIZE_BYTES}"
         --memory-mebibytes
-        "${OS_TEST_QEMU_BOOTSTRAP_GUEST_MEMORY_MEBIBYTES}"
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
         --expected-outcome
         nvme-fallback
 )
@@ -1711,7 +1699,7 @@ set_tests_properties(
     os_qemu_nvme_ata_fallback
     PROPERTIES
         LABELS "system;nvme;fallback"
-        TIMEOUT "${OS_TEST_QEMU_BOOTSTRAP_TIMEOUT_SECONDS}"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 
 add_test(
@@ -2141,13 +2129,10 @@ set(
     OS_TEST_QEMU_VGA_TEST_NAMES
     os_qemu_hardware_smoke
     os_qemu_rejects_invalid_image_size
-    os_qemu_bootstrap_smoke
-    os_qemu_functional_smoke
+    os_qemu_primary_smoke
     os_qemu_nvme_io
     os_qemu_nvme_io_error_recovery
     os_qemu_nvme_io_timeout_recovery
-    os_qemu_nvme_storage_bootstrap
-    os_qemu_nvme_storage_functional
     os_qemu_nvme_storage_primary
     os_qemu_nvme_ata_fallback
     os_qemu_native_system_call_unsupported

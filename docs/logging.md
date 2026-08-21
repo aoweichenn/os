@@ -1221,3 +1221,23 @@ DeviceError、TimedOut 只在唯一解析边界记录；迟到 IRQ 进入累计�
 页缓存只在 sync 边界记录 writeback 状态/页数/VFS 结果；Dirty/Writeback
 的逐页状态转移由统计与测试观察，不冲 VGA 控制台。写回失败必须保留明确 error
 结果，不能用一条“sync complete”掩盖部分失败。
+
+## v2.8 统一文件页缓存日志
+
+Acquire、MarkDirty、每页 copy、truncate 扫描和 writeback 状态迁移都不逐次输出。
+Kernel 只在最终文件系统边界汇总：
+
+```text
+[OS][KERNEL] FILE_CACHE_BUFFERED_READS=0x...
+[OS][KERNEL] FILE_CACHE_BUFFERED_HITS=0x...
+[OS][KERNEL] FILE_CACHE_BUFFERED_BYTES=0x...
+[OS][KERNEL] FILE_CACHE_BUFFERED_WRITES=0x...
+[OS][KERNEL] FILE_CACHE_TRUNCATES=0x...
+[OS][KERNEL] FILE_CACHE_RECLAIMED
+```
+
+第三增量不再输出正常 write 的 `PAGE_CACHE_INVALIDATION_COUNT`；该 marker 只属于
+v1.9 的历史失效协议。runner 要求 buffered write 与 truncate 非零，并以用户态
+`FILE_MAPPING_CACHE_VERIFIED` 证明 shared/private/truncate 数据语义。故障仍由 sync
+边界的 WRITEBACK_STATUS 和禁止出现的用户 `[FAIL]` marker 表达，不把逐页诊断刷到
+VGA 终端。

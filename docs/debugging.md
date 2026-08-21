@@ -1542,11 +1542,10 @@ demand 与 stack 日志按每 Process 的二次幂累计采样，同一整机中
 它们属于最小数值断言，不属于精确 multiplicity。一次性用户 marker 与最终
 VMA 汇总才使用精确次数。
 
-若修改 runner 后卡住，先单独执行三个有界配置：
+若修改 runner 后卡住，先单独执行唯一 4 GiB 主规格和高内存交付路径：
 
 ```bash
-ctest --test-dir build/developer -R '^os_qemu_bootstrap_smoke$' --output-on-failure
-ctest --test-dir build/developer -R '^os_qemu_functional_smoke$' --output-on-failure
+ctest --test-dir build/developer -R '^os_qemu_primary_smoke$' --output-on-failure
 ctest --test-dir build/developer -R '^os_qemu_stage1_load_success$' --output-on-failure
 ```
 
@@ -1575,7 +1574,7 @@ basename。
 5. Pipe 的 writers 是否最终为零，buffered 为零后 reader 才收到 EOF。
 
 单独运行 `os_user_shell_execution_unit_tests` 排除解析图错误，再运行
-`os_qemu_functional_smoke`。两层都有截止时间；不要通过扩大 timeout 掩盖
+`os_qemu_primary_smoke`。两层都有截止时间；不要通过扩大 timeout 掩盖
 端点泄漏。
 
 ### functional 动态管道统计不守恒
@@ -1632,8 +1631,8 @@ ctest --test-dir build/developer \
   --output-on-failure
 ```
 
-最后运行 `os_qemu_bootstrap_smoke` 和 `os_qemu_functional_smoke`。两个系统用例
-均受总截止与静默截止约束；出现半发布竞态时应修复提交顺序，不能延长超时。
+最后运行 `os_qemu_primary_smoke`。系统用例受总截止与静默截止约束；出现半发布
+竞态时应修复提交顺序，不能延长超时。
 
 ## v1.13：单调时间、deadline 与 timed wait
 
@@ -1842,7 +1841,7 @@ Stage 对相同 target 的再次写不应新增 credit。若普通小操作耗�
 
 ```bash
 ctest --test-dir build/developer \
-  -R '^(os_kernel_terminal_unit_tests|os_kernel_job_control_unit_tests|os_kernel_terminal_job_control_integration_tests|os_kernel_job_control_randomized_tests|os_qemu_functional_smoke)$' \
+  -R '^(os_kernel_terminal_unit_tests|os_kernel_job_control_unit_tests|os_kernel_terminal_job_control_integration_tests|os_kernel_job_control_randomized_tests|os_qemu_primary_smoke)$' \
   --output-on-failure
 ```
 
@@ -2049,3 +2048,78 @@ Features、Create CQ/SQ、最后 unmask。若 RDY 无法归零，宁可保留 DM
 进程泄漏。双 namespace 选定后、首个用户进程创建前必须刷新持久内核资源基线；
 进程结束仍与该基线比较，最终文件系统 sync 后再 shutdown controller，并与 storage
 初始化前的 frame/KVA 统计比较。不能简单从最终计数中减去固定常量。
+
+## v2.8 动态文件缓存地址空间
+
+### SparsePageIndex Validate 返回 Corrupt
+
+先从叶节点重算 present 与三个状态 bitmap，再逐层比较父 slot 是否等于“子树中
+至少有一个对应项”。新分支常见错误是先连接空节点、最后写叶项，却没有从叶向 root
+重新传播摘要；Lookup 仍可能成功，但 Validate 和 FindNext 会发现父 bitmap 缺位。
+
+检查最高 level 只能使用 slot 0..15。`UINT64_MAX` 的 root level 应为 10，不能执行
+64 位或更大的移位。若 root level 大于 0 且只剩 slot 0，删除路径应提升该子节点并
+释放旧 root。
+
+### 插入返回 AllocationFailed 后 Heap 仍有活动块
+
+插入必须先收集本事务申请的全部节点，失败时按逆序释放，不得先把新 root 或缺失
+branch 写入现有树。比较 `entry_count/node_count/root_level` 应与调用前一致；累计
+`allocation_failure_count` 和 `rollback_node_release_count` 增长是预期诊断。
+
+若 `FileCacheAddressSpace` 已先申请 Page 元数据，index 插入失败后还必须释放 Page；
+tiny-heap 用例最终要求两层 `Validate` 成功且 Heap `allocation_count=0`。
+
+### 状态 mark 与页面状态不一致
+
+地址空间状态变更顺序是清旧 mark、设新 mark、更新状态计数、最后发布 Page state；
+设置新 mark 失败时先恢复旧 mark。Clean 没有独立 mark，FindNext(Clean) 通过 Present
+遍历后过滤。Dirty/Error 不能直接 Remove，Writeback 或引用非零返回 Busy。
+
+### VFS buffered read 递归直到栈耗尽
+
+cache miss 的 reader 不能调用 `Vfs::Read` 或 `ReadAt`，否则再次进入同一 cache hook。
+检查 FileBacking 和 VFS page reader 都必须调用 `ReadUncachedAt`。公开 read 只负责向
+调用者交付字节和统计；uncached 入口只调用 superblock backend，不再次统计。
+
+### `/proc` 内容读取后不再变化
+
+检查对应 Superblock 的 `cache_regular_file_data`。当前只允许 rootfs/legacy
+为 true；procfs、devfs、memfs 必须为 false。不能在通用回调里按 BackendKind 猜测，
+能力应由 superblock 显式声明并由 VFS 执行。
+
+### buffered write 后 shared 映射仍是旧内容
+
+普通写不得再调用全文件 revoke/invalidate。确认 VFS 进入 write cache hook，Acquire
+返回的物理地址与 shared PTE 相同，并且 MarkDirty 在复制前成功。若 partial write 使用
+写-only fd，fill 仍可通过内部 `ReadUncachedAt` 读取旧页；公共 Read/ReadAt 自身继续
+检查 readable 权限。
+
+若原 fd 关闭后 sync 返回 FileWriteFailed，检查 `RetainWritebackFile` 是否在修改页面前
+建立 VfsWriteback 描述符，以及 `WritePage` 是否调用 `WriteUncachedAt`。让 writeback
+再次进入公共 WriteAt 会递归脏化同一页；让描述符过早关闭则会破坏 unlink/orphan
+期间的 inode 生命周期。
+
+### truncate 后尾页出现旧数据或 cache 返回 Busy
+
+缩小前应对每个仍存活地址空间调用 `TruncateUserFileMappings`，只释放文件 page offset
+不小于新 EOF 的驻留页。VMA 与 FileBacking 保留，但其 size 在后端 truncate 成功后
+统一更新；再次 fault 到 EOF 外必须失败。
+
+`FilePageCache::Truncate` 先扫描待丢弃范围。仍有引用或处于 Writeback 时返回 Busy，
+不能先删一部分页；Clean/Dirty/Error 通过 Discard 移除。保留尾页必须从新 EOF 清到
+页末，扩大时还要清旧 EOF 到新 EOF 的已驻留字节。遍历有限 page-index 区间时，处理
+到 `last_page_index` 必须立即结束，不能用 `last + 1` 形成 InvalidPage。
+
+### 4 GiB 启动在 FilePageCache 初始化时耗尽
+
+当前唯一验收期望为：4 GiB、order 13、32 MiB metadata、8192 页。metadata block
+必须从 buddy 取得并用 direct-map 虚拟地址初始化专用 KernelHeap；不能重新塞回
+通用 512 KiB Heap或恢复 BSS 数组。低内存自适应分支不再作为系统门禁。
+
+### NVMe 工作负载完成但没有 STORAGE_SHUTDOWN_READY
+
+如果最后停在 buffered read 统计之后，检查 `FinalizeKernelFileSystem` 的 payload
+校验是否重新装入 clean 页。进程资源检查发生得更早，不能替代 storage shutdown
+前的 cache drain。必须先 `TrimUserFilePageCache`、确认 resident 为零并输出
+`FILE_CACHE_RECLAIMED`，再比较 NVMe 初始化前后的 frame/KVA。

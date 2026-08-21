@@ -1,8 +1,8 @@
 #pragma once
 
-#include "os/abi/security.hpp"
-#include "os/kernel/security/credentials.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/abi/security.hpp>
+#include <os/kernel/security/credentials.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
 
@@ -97,6 +97,20 @@ struct OpenFile final {
     bool writable;
     bool open;
 };
+
+using RegularFileReadCacheOperation = Status (*)(void *context, const OpenFile &open_file,
+                                                  uint64_t offset_bytes, uint8_t *destination,
+                                                  uint64_t capacity_bytes,
+                                                  uint64_t &read_bytes) noexcept;
+using RegularFileWriteCacheOperation = Status (*)(void *context, const OpenFile &open_file,
+                                                   uint64_t offset_bytes, const uint8_t *source,
+                                                   uint64_t length_bytes,
+                                                   uint64_t &written_bytes) noexcept;
+using RegularFileSizeCacheOperation = Status (*)(void *context, const Vnode &vnode,
+                                                  uint64_t backend_size_bytes,
+                                                  uint64_t &size_bytes) noexcept;
+using RegularFileTruncateCacheOperation = Status (*)(void *context, const Vnode &vnode,
+                                                      uint64_t size_bytes) noexcept;
 
 struct BackendNodeInformation final {
     uint64_t size_bytes;
@@ -196,6 +210,7 @@ struct Superblock final {
     const BackendOperations *operations;
     void *backend_context;
     uint64_t maximum_name_length_bytes;
+    bool cache_regular_file_data;
     bool read_only;
     bool initialized;
 };
@@ -264,6 +279,8 @@ class Vfs final {
                                           uint64_t &target_length_bytes) noexcept;
     [[nodiscard]] Status Truncate(const FsContext &context, const uint8_t *path,
                                   uint64_t path_length_bytes, uint64_t size_bytes) noexcept;
+    [[nodiscard]] Status TruncateOpenFile(const OpenFile &open_file,
+                                          uint64_t size_bytes) noexcept;
     [[nodiscard]] Status Stat(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, NodeInformation &information) noexcept;
     [[nodiscard]] Status CheckAccess(const FsContext &context, const uint8_t *path,
@@ -283,14 +300,27 @@ class Vfs final {
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
     [[nodiscard]] Status RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noexcept;
+    [[nodiscard]] Status ConfigureRegularFileDataCache(
+        void *context, RegularFileReadCacheOperation read_operation,
+        RegularFileWriteCacheOperation write_operation,
+        RegularFileSizeCacheOperation size_operation,
+        RegularFileTruncateCacheOperation truncate_operation) noexcept;
     [[nodiscard]] Status StatOpenFile(const OpenFile &open_file,
                                       NodeInformation &information) noexcept;
+    [[nodiscard]] Status StatOpenFileUncached(const OpenFile &open_file,
+                                              NodeInformation &information) noexcept;
     [[nodiscard]] Status ReadAt(const OpenFile &open_file, uint64_t offset_bytes,
                                 uint8_t *destination, uint64_t capacity_bytes,
                                 uint64_t &read_bytes) noexcept;
+    [[nodiscard]] Status ReadUncachedAt(const OpenFile &open_file, uint64_t offset_bytes,
+                                        uint8_t *destination, uint64_t capacity_bytes,
+                                        uint64_t &read_bytes) noexcept;
     [[nodiscard]] Status WriteAt(const OpenFile &open_file, uint64_t offset_bytes,
                                  const uint8_t *source, uint64_t length_bytes,
                                  uint64_t &written_bytes) noexcept;
+    [[nodiscard]] Status WriteUncachedAt(const OpenFile &open_file, uint64_t offset_bytes,
+                                         const uint8_t *source, uint64_t length_bytes,
+                                         uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status Read(OpenFile &open_file, uint8_t *destination, uint64_t capacity_bytes,
                               uint64_t &read_bytes) noexcept;
     [[nodiscard]] Status Write(OpenFile &open_file, const uint8_t *source, uint64_t length_bytes,
@@ -337,6 +367,9 @@ class Vfs final {
                                 uint64_t path_length_bytes, NodeType expected_type) noexcept;
     [[nodiscard]] Status ReadNodeInformation(const Path &path,
                                              BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status ApplyRegularFileCachedSize(const Vnode &vnode,
+                                                    BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status TruncateNode(const Vnode &vnode, uint64_t size_bytes) noexcept;
     [[nodiscard]] Status RequireAccess(const FsContext &context, const Path &path,
                                        uint32_t requested_access) noexcept;
     [[nodiscard]] Status RequireParentMutationAccess(const FsContext &context,
@@ -356,6 +389,11 @@ class Vfs final {
     uint8_t resolution_path_a_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     uint8_t resolution_path_b_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     Statistics statistics_{};
+    void *regular_file_data_cache_context_{nullptr};
+    RegularFileReadCacheOperation regular_file_read_cache_operation_{nullptr};
+    RegularFileWriteCacheOperation regular_file_write_cache_operation_{nullptr};
+    RegularFileSizeCacheOperation regular_file_size_cache_operation_{nullptr};
+    RegularFileTruncateCacheOperation regular_file_truncate_cache_operation_{nullptr};
     bool initialized_{};
 };
 
