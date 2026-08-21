@@ -243,7 +243,6 @@ os_add_kernel_fault_disk(
     "${OS_KERNEL_NVME_TIMEOUT_PAYLOAD_ELF_PATH}"
     "生成 NVMe 命令超时恢复测试磁盘镜像"
 )
-
 set(
     OS_STAGE1_CORE_TOOL_NAMES
     help
@@ -408,6 +407,59 @@ add_custom_command(
     VERBATIM
 )
 
+get_filename_component(
+    OS_KERNEL_RECLAIM_PRESSURE_OUTPUT_DIRECTORY
+    "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
+    DIRECTORY
+)
+add_custom_command(
+    OUTPUT "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        create-boot-images
+        "${OS_STAGE1_BINARY}"
+        "${OS_KERNEL_RECLAIM_PRESSURE_PAYLOAD_ELF_PATH}"
+        "${OS_KERNEL_RECLAIM_PRESSURE_OUTPUT_DIRECTORY}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        ${OS_STAGE1_ROOTFS_INSTALL_ARGUMENTS}
+    DEPENDS
+        "${OS_STAGE1_BINARY}"
+        "${OS_KERNEL_RECLAIM_PRESSURE_PAYLOAD_ELF_PATH}"
+        "${OS_USER_INIT_ELF_PATH}"
+        "${OS_USER_SHELL_ELF_PATH}"
+        "${OS_USER_CORE_TOOL_ELF_PATH}"
+        "${OS_USER_SMOKE_ELF_PATH}"
+        "${OS_USER_ORPHAN_PARENT_ELF_PATH}"
+        "${OS_USER_ORPHAN_CHILD_ELF_PATH}"
+        "${OS_USER_ARGUMENT_PROBE_ELF_PATH}"
+        "${OS_USER_EXEC_PROBE_ELF_PATH}"
+        "${OS_USER_EXEC_TARGET_ELF_PATH}"
+        "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
+        "${OS_USER_MEMORY_PROBE_ELF_PATH}"
+        "${OS_USER_FORK_PROBE_ELF_PATH}"
+        "${OS_USER_THREAD_PROBE_ELF_PATH}"
+        "${OS_USER_TIME_PROBE_ELF_PATH}"
+        "${OS_USER_SIGNAL_PROBE_ELF_PATH}"
+        "${OS_USER_MEMORY_GUARD_PROBE_ELF_PATH}"
+        "${OS_USER_MEMORY_PROTECTION_PROBE_ELF_PATH}"
+        "${OS_USER_TOOL_PROBE_ELF_PATH}"
+        "${OS_USER_SECURITY_PROBE_ELF_PATH}"
+        "${OS_USER_SECURITY_EXEC_TARGET_ELF_PATH}"
+        "${OS_USER_TRUNCATED_ELF_PATH}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_layout.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/boot_image.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_elf.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/kernel_image.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/rootfs_v2.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/rootfs_v4.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/sparse_image.py"
+        "${PROJECT_SOURCE_DIR}/tools/os_tools/stage1_image.py"
+    COMMENT "生成带完整用户环境的统一内存回收压力测试磁盘镜像"
+    VERBATIM
+)
+
 add_custom_target(
     os_stage1_images
     DEPENDS
@@ -427,6 +479,7 @@ add_custom_target(
         "${OS_KERNEL_USER_PAGE_FAULT_DISK_IMAGE}"
         "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
         "${OS_KERNEL_NVME_TIMEOUT_DISK_IMAGE}"
+        "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
 )
 
 # Makefile 生成器不会把其他二进制目录中的文件级自定义命令自动提升为目标依赖。
@@ -442,6 +495,7 @@ add_dependencies(
     os_kernel_user_page_fault_payload_elf
     os_kernel_user_invalid_elf_payload_elf
     os_kernel_nvme_timeout_payload_elf
+    os_kernel_reclaim_pressure_payload_elf
     os_user_init_elf
     os_user_shell_elf
     os_user_core_tool_elf

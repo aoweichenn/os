@@ -13,6 +13,8 @@ constexpr std::string_view OS_TEST_MEMORY_PRESSURE_DECISIONS =
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_ACCOUNTING = "驻留提交、释放和回收统计必须守恒";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RECLAIM_PLAN =
     "回收计划必须先利用干净缓存并有界安排回写和 swap";
+constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RECLAIM_EXECUTION =
+    "执行器必须固定 clean、writeback、swap 顺序并区分失败阶段";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_OVERCOMMIT =
     "overcommit 0/1/2 编号和严格模式 50% RAM 加 swap 上限必须稳定";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_OOM =
@@ -37,6 +39,7 @@ constexpr uint64_t OS_TEST_MEMORY_PRESSURE_EXPECTED_USER_RECLAIM_PAGE_COUNT = 16
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_COMMIT_PAGE_COUNT = 10ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RELEASE_PAGE_COUNT = 4ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RECLAIMED_PAGE_COUNT = 6ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RECONFIGURED_RESIDENT_LIMIT = 900ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OVERCOMMIT_PHYSICAL_PAGES = 1000ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OVERCOMMIT_SWAP_PAGES = 200ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OVERCOMMIT_ADMIN_RESERVE = 20ULL;
@@ -44,6 +47,66 @@ constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OVERCOMMIT_USER_RESERVE = 30ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OVERCOMMIT_NORMAL_LIMIT = 650ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OVERCOMMIT_PRIVILEGED_LIMIT = 700ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_OOM_ALLOWED_PAGES = 1000ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RECLAIM_STAGE_COUNT = 3ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_CLEAN_STAGE = 1ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_WRITEBACK_STAGE = 2ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_SWAP_STAGE = 3ULL;
+
+struct ReclaimOperationContext final {
+    uint64_t clean_capacity;
+    uint64_t writeback_capacity;
+    uint64_t swap_capacity;
+    uint64_t stages[OS_TEST_MEMORY_PRESSURE_RECLAIM_STAGE_COUNT];
+    uint64_t stage_count;
+    uint64_t failing_stage;
+};
+
+[[nodiscard]] uint64_t Minimum(const uint64_t left, const uint64_t right) noexcept {
+    return left < right ? left : right;
+}
+
+[[nodiscard]] bool ExecuteReclaimStage(ReclaimOperationContext &context,
+                                       const uint64_t stage,
+                                       const uint64_t capacity,
+                                       const uint64_t requested_page_count,
+                                       uint64_t &reclaimed_page_count) noexcept {
+    reclaimed_page_count = 0ULL;
+    if (context.stage_count >= OS_TEST_MEMORY_PRESSURE_RECLAIM_STAGE_COUNT ||
+        context.failing_stage == stage) {
+        return false;
+    }
+    context.stages[context.stage_count] = stage;
+    ++context.stage_count;
+    reclaimed_page_count = Minimum(capacity, requested_page_count);
+    return true;
+}
+
+[[nodiscard]] bool ReclaimClean(void *const context, const uint64_t requested_page_count,
+                                uint64_t &reclaimed_page_count) noexcept {
+    return context != nullptr &&
+           ExecuteReclaimStage(*static_cast<ReclaimOperationContext *>(context),
+                               OS_TEST_MEMORY_PRESSURE_CLEAN_STAGE,
+                               static_cast<ReclaimOperationContext *>(context)->clean_capacity,
+                               requested_page_count, reclaimed_page_count);
+}
+
+[[nodiscard]] bool ReclaimWritten(void *const context, const uint64_t requested_page_count,
+                                  uint64_t &reclaimed_page_count) noexcept {
+    return context != nullptr &&
+           ExecuteReclaimStage(*static_cast<ReclaimOperationContext *>(context),
+                               OS_TEST_MEMORY_PRESSURE_WRITEBACK_STAGE,
+                               static_cast<ReclaimOperationContext *>(context)->writeback_capacity,
+                               requested_page_count, reclaimed_page_count);
+}
+
+[[nodiscard]] bool ReclaimAnonymous(void *const context, const uint64_t requested_page_count,
+                                    uint64_t &reclaimed_page_count) noexcept {
+    return context != nullptr &&
+           ExecuteReclaimStage(*static_cast<ReclaimOperationContext *>(context),
+                               OS_TEST_MEMORY_PRESSURE_SWAP_STAGE,
+                               static_cast<ReclaimOperationContext *>(context)->swap_capacity,
+                               requested_page_count, reclaimed_page_count);
+}
 
 }
 
@@ -127,8 +190,15 @@ int main() {
             os::kernel::MemoryPressureStatus::Succeeded &&
         controller.SynchronizeResident(OS_TEST_MEMORY_PRESSURE_SMALL_INITIAL_RESIDENT) ==
             os::kernel::MemoryPressureStatus::Succeeded &&
+        controller.ConfigureResidentLimit(
+            OS_TEST_MEMORY_PRESSURE_RECONFIGURED_RESIDENT_LIMIT) ==
+            os::kernel::MemoryPressureStatus::Succeeded &&
+        controller.ConfigureResidentLimit(OS_TEST_MEMORY_PRESSURE_SMALL_INITIAL_RESIDENT - 1ULL) ==
+            os::kernel::MemoryPressureStatus::ResidentLimitExceeded &&
         controller.Statistics().resident_page_count ==
             OS_TEST_MEMORY_PRESSURE_SMALL_INITIAL_RESIDENT &&
+        controller.Statistics().watermarks.resident_limit_page_count ==
+            OS_TEST_MEMORY_PRESSURE_RECONFIGURED_RESIDENT_LIMIT &&
         controller.Statistics().allocation_request_count == 3ULL &&
         controller.Statistics().reclaim_request_count == 1ULL &&
         controller.Statistics().allowed_allocation_count == 1ULL &&
@@ -155,6 +225,75 @@ int main() {
         reclaim_plan.planned_reclaim_page_count == 9ULL &&
         reclaim_plan.unreclaimable_page_count == 3ULL;
     test_context.Expect(reclaim_plan_valid, OS_TEST_MEMORY_PRESSURE_RECLAIM_PLAN);
+
+    ReclaimOperationContext execution_context{
+        .clean_capacity = 3ULL,
+        .writeback_capacity = 4ULL,
+        .swap_capacity = 2ULL,
+        .stages = {},
+        .stage_count = 0ULL,
+        .failing_stage = 0ULL,
+    };
+    os::kernel::MemoryReclaimExecutionResult execution_result{};
+    const os::kernel::MemoryReclaimOperations reclaim_operations{
+        .reclaim_clean_file_pages = ReclaimClean,
+        .writeback_and_reclaim_file_pages = ReclaimWritten,
+        .swap_out_anonymous_pages = ReclaimAnonymous,
+    };
+    const bool execution_valid =
+        os::kernel::ExecuteMemoryReclaim(reclaim_plan, reclaim_operations, &execution_context,
+                                         execution_result) ==
+            os::kernel::MemoryReclaimExecutionStatus::Succeeded &&
+        execution_context.stage_count == OS_TEST_MEMORY_PRESSURE_RECLAIM_STAGE_COUNT &&
+        execution_context.stages[0ULL] == OS_TEST_MEMORY_PRESSURE_CLEAN_STAGE &&
+        execution_context.stages[1ULL] == OS_TEST_MEMORY_PRESSURE_WRITEBACK_STAGE &&
+        execution_context.stages[2ULL] == OS_TEST_MEMORY_PRESSURE_SWAP_STAGE &&
+        execution_result.clean_file_page_count == 3ULL &&
+        execution_result.reclaimed_written_file_page_count == 4ULL &&
+        execution_result.swapped_anonymous_page_count == 2ULL &&
+        execution_result.reclaimed_page_count == 9ULL;
+    execution_context = ReclaimOperationContext{
+        .clean_capacity = 3ULL,
+        .writeback_capacity = 4ULL,
+        .swap_capacity = 2ULL,
+        .stages = {},
+        .stage_count = 0ULL,
+        .failing_stage = OS_TEST_MEMORY_PRESSURE_WRITEBACK_STAGE,
+    };
+    const bool failure_stage_valid =
+        os::kernel::ExecuteMemoryReclaim(reclaim_plan, reclaim_operations, &execution_context,
+                                         execution_result) ==
+            os::kernel::MemoryReclaimExecutionStatus::FileWritebackFailed &&
+        execution_context.stage_count == 1ULL &&
+        execution_context.stages[0ULL] == OS_TEST_MEMORY_PRESSURE_CLEAN_STAGE;
+    execution_context = ReclaimOperationContext{
+        .clean_capacity = 0ULL,
+        .writeback_capacity = 0ULL,
+        .swap_capacity = 0ULL,
+        .stages = {},
+        .stage_count = 0ULL,
+        .failing_stage = 0ULL,
+    };
+    const bool no_progress_valid =
+        os::kernel::ExecuteMemoryReclaim(reclaim_plan, reclaim_operations, &execution_context,
+                                         execution_result) ==
+            os::kernel::MemoryReclaimExecutionStatus::NoProgress &&
+        execution_result.reclaimed_page_count == 0ULL;
+    execution_context = ReclaimOperationContext{
+        .clean_capacity = 3ULL,
+        .writeback_capacity = 4ULL,
+        .swap_capacity = 2ULL,
+        .stages = {},
+        .stage_count = 0ULL,
+        .failing_stage = OS_TEST_MEMORY_PRESSURE_SWAP_STAGE,
+    };
+    const bool swap_failure_valid =
+        os::kernel::ExecuteMemoryReclaim(reclaim_plan, reclaim_operations, &execution_context,
+                                         execution_result) ==
+        os::kernel::MemoryReclaimExecutionStatus::AnonymousSwapFailed;
+    test_context.Expect(execution_valid && failure_stage_valid && no_progress_valid &&
+                            swap_failure_valid,
+                        OS_TEST_MEMORY_PRESSURE_RECLAIM_EXECUTION);
 
     os::kernel::MemoryOvercommitAccountant strict_accountant{};
     const os::kernel::MemoryOvercommitConfiguration strict_configuration{

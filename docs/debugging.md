@@ -2082,6 +2082,24 @@ cache miss 的 reader 不能调用 `Vfs::Read` 或 `ReadAt`，否则再次进入
 检查 FileBacking 和 VFS page reader 都必须调用 `ReadUncachedAt`。公开 read 只负责向
 调用者交付字节和统计；uncached 入口只调用 superblock backend，不再次统计。
 
+### Loading 长期不消失或同一页读取两次
+
+miss 必须先在锁内插入 Loading，再执行 `ReadUncachedAt`。reader 回调中检查
+`CurrentSpinLockDepth()` 应为零；同页递归 Acquire 应返回 EntryBusy，不能再次进入
+reader。source read 失败时按 entry metadata、frame、空 address-space 的逆序清理；
+任一计数不归零会让 `FilePageCache::Validate` 报 Corrupt。
+
+### Dirty 超过软水位但 worker 不运行
+
+4 GiB 当前容量 8192 页，hard limit 约 1638 页，后台阈值约 819 页，目标约 409 页。
+检查 `background_writeback_requested` 是否在首次越过软水位时置位，以及
+`OsKernelPrepareUserReturn` 是否调用 `ServiceRuntimeFileWritebackWorker`。worker 只能在
+非 IRQ 安全点运行；放入 timer IRQ 会把 VFS I/O 带进中断上下文。
+
+每批最多 64 页。写回失败后 requested 清零、paused 置位且页面保持 Error；这是防止
+每次用户返回都重试的设计，不是 worker 丢失。显式 sync 成功后才解除暂停。硬水位
+仍不下降时，下一次普通 write 应返回设备/容量错误，不能无限等待。
+
 ### `/proc` 内容读取后不再变化
 
 检查对应 Superblock 的 `cache_regular_file_data`。当前只允许 rootfs/legacy
@@ -2123,3 +2141,52 @@ cache miss 的 reader 不能调用 `Vfs::Read` 或 `ReadAt`，否则再次进入
 校验是否重新装入 clean 页。进程资源检查发生得更早，不能替代 storage shutdown
 前的 cache drain。必须先 `TrimUserFilePageCache`、确认 resident 为零并输出
 `FILE_CACHE_RECLAIMED`，再比较 NVMe 初始化前后的 frame/KVA。
+
+### fsync 每次都重复报告同一个写回错误
+
+先区分 FileTableEntry 与 FileDescription。duplicate/fork 共享后者，所以错误报告后必须
+调用 `AdvanceWritebackErrorCursor` 更新共享游标；独立 open 才有不同游标。若新打开的
+fd 立即看到旧错误，检查 Register 是否采样 tracker 当前 sequence，而不是固定写零。
+最后一个独立实例关闭后 active record 应归零。
+
+### msync 返回成功但指定 shared 范围没有落盘
+
+检查 VA 到文件偏移的换算是否包含 `backing_file_offset_bytes`，末页必须用
+`first_offset + length - 1` 求闭 page-index。MS_SYNC 的顺序是全局写保护 writable
+shared alias、范围 WritebackFile、VFS Sync/设备 Flush；MAP_PRIVATE 只能验证范围，
+不能进入写回。MS_ASYNC 只挂 forced pending，若低于普通软水位却没有 worker，检查
+`forced_background_writeback_requested` 是否被普通 target 判断提前清掉。
+
+### 新同步 syscall 返回 InvalidArgument
+
+msync 地址必须 4 KiB 对齐、长度非零并完整落在 file-backed VMA 中；flags 必须恰好
+包含 ASYNC 或 SYNC 之一，可再带 INVALIDATE。fsync/fdatasync 当前只接受 regular-file
+FileDescription；管道、终端和目录返回 Unsupported，坏 fd 返回 InvalidHandle。
+
+### reclaim-pressure 在 PID1 创建前报告 ExecutableReadFailure
+
+先检查压力磁盘是否使用完整 `OS_STAGE1_ROOTFS_INSTALL_ARGUMENTS`。故障内核镜像生成器
+只放 Stage1/Kernel，空 rootfs 会在 3 秒左右失败，却让 runner 等到 deadline。若 rootfs
+完整，再检查 resident limit 的应用时点：必须先建立 ProcessRuntime/PID1、同步真实
+allocated frame，再降低 controller limit；不能在 32 MiB cache metadata 计入前冻结。
+
+### 压力回收后出现 USER_RETURN_REJECTED
+
+若 stack page status 为 NotMapped，检查跨进程 swap 是否换出了阻塞线程保存现场对应的
+用户栈页。PID1 必须排除；单线程进程保护 saved frame 的 RSP 页；存在多个不同活动用户
+栈时本轮跳过整个地址空间。不能在 user-return 路径临时分配一页掩盖错误，因为原栈数据
+仍在 swap 中。
+
+### 回收统计已输出但 runner 报 FILE_SYSTEM_PAYLOAD_VALID 缺失
+
+检查验收器的最终完成标记是否仍为 `READY`。`runQemuFirmwareBoot` 会在
+`requiredMarkers` 的最后一项出现时停止捕获；精确的 9216 页限额应作为一次性计数断言，
+不能追加到有序列表末尾。否则捕获会在内存统计处提前结束，后续 payload 校验本身尚未
+执行，看起来就像文件系统损坏。
+
+### 内存低于水位却直接 OOM
+
+检查三阶段统计：先有 clean trim，再有 written/reclaimed file，最后才是 anonymous
+swap。FileWritebackFailed 或 AnonymousSwapFailed 必须直接返回设备错误；只有执行成功或
+NoProgress 且重试仍不足时才调用 OOM。`MEMORY_RECLAIM_NO_PROGRESS` 持续增长通常表示
+候选全被引用、活动栈保护或 swap 已满，需要看具体阶段而不是增加无限重试。

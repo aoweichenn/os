@@ -1205,16 +1205,17 @@ rootfs v4、文档、教材和公开发布身份。
 - buffered read/write、ELF/file fault 与 `MAP_SHARED` 最终共享同一权威页面；
 - Dirty/Writeback/Error 页面支持有界后台写回、按文件同步和错误推进；
 - clean file page、dirty writeback、匿名 swap 与 OOM 接入同一内存压力顺序；
-- rootfs v4、ABI 2.3.0、NVMe/ATA 选择和启动链不因缓存迁移改变。
+- rootfs v4、NVMe/ATA 选择和启动链不因缓存迁移改变；第五增量只把 ABI 从 2.3.0
+  追加升级到 2.4.0，旧 1..84 编号与错误区间不变。
 
 **增量顺序**
 
 1. 64 路动态 radix、`FileCacheAddressSpace`、状态/引用契约（已完成）；
 2. buffered read、ELF/file fault 与只读 shared 迁移（已完成）；
 3. buffered write、writable shared、truncate 与失效一致性（已完成）；
-4. 后台 writeback、Dirty 软硬水位和回压；
-5. `fsync`/`fdatasync`/`msync` 与 writeback error sequence；
-6. file reclaim、swap、direct reclaim 和 OOM 集成矩阵。
+4. 后台 writeback、Dirty 软硬水位和回压（已完成）；
+5. `fsync`/`fdatasync`/`msync` 与 writeback error sequence（已完成）；
+6. file reclaim、swap、direct reclaim 和 OOM 集成矩阵（已完成）。
 
 **第一增量完成状态**
 
@@ -1247,6 +1248,42 @@ VFS cache capability 已扩展为 read/write/size/truncate 四个 hook；公共�
 private COW 保持隔离。truncate 仅撤销 EOF 后驻留页，丢弃范围外 Clean/Dirty/Error，
 清零保留尾页；扩大只建立逻辑零区间。`sync` 继续先写保护 shared alias，再写回并
 释放 clean writeback 引用，最后进入 rootfs journal 与设备 Flush。
+
+**第四增量完成状态**
+
+cache miss 先发布唯一 Loading entry 和 frame，再释放全局 cache lock 执行后端 fill；
+成功后原子转为 Clean，失败丢弃 Loading 并归还 frame。重入或未来并发观察者只会看到
+Busy，不会重复读取或发布第二个 frame。
+
+Dirty hard limit 从 50% 收紧为约 20%，后台阈值由其一半得到约 10%，worker 目标为
+约 5%。软水位只合并一次 pending 请求；单 BSP 不伪造 Kernel Thread，而是在返回
+用户态的非 IRQ 安全点执行最多 64 页的有界批次。每批前重新写保护全部 writable
+shared alias；硬水位在下一次普通写前先平衡。后台失败保留 Error、暂停自动重试，
+显式 sync 才重新尝试。
+
+**第五增量完成状态**
+
+`FileWritebackErrorTracker` 从页缓存专用 KernelHeap 动态维护“文件身份、当前错误序列、
+打开实例引用”；写回失败只对当时已有的独立 FileDescription 可见。独立 open 分别
+采样游标，duplicate/fork 因共享 FileDescription 而共享游标；错误报告后推进，历史错误
+不污染后来打开的实例。
+
+`FilePageCache::WritebackFile` 只选择指定文件和 page-index 范围。ABI 2.4.0 在旧编号
+84 后追加 `fsync`、`fdatasync`、`msync` 三项；同步调用按“写保护 shared PTE、范围
+writeback、错误游标推进、VFS/设备 Flush”执行。`MS_ASYNC` 只强制挂起后台请求，
+`MS_SYNC` 等待范围稳定；private 映射不进入写回。当前 rootfs 对 fdatasync 安全地执行
+完整 metadata Flush，语义正确但尚无相对 fsync 的 I/O 优化。
+
+**第六增量完成状态**
+
+`ExecuteMemoryReclaim` 固定 clean file、dirty writeback/reclaim、anonymous swap 三阶段，
+每个阶段独立返回失败，无实际进展时停止。生产驻留分配统一返回类型化结果；写回设备
+失败和 swap 失败不会错误进入 OOM，成功回收后重新同步真实页帧账本并只重试一次。
+
+ProcessRuntime 提供全局 shared PTE 写保护、跨进程轮转 swap 和 OOM 回调。PID1 被排除，
+单线程进程的活动用户返回栈页受保护，多用户栈进程本轮跳过；只有所有阶段仍不能满足
+请求时才选择 OOM victim。专用压力机仍使用 4 GiB `-mem-prealloc` 和真实 28 GiB swap，
+在 PID1 建立后把逻辑驻留预算降到 9216 页，完整运行同一用户环境与探针。
 
 **退出条件**
 

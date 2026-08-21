@@ -314,6 +314,18 @@ os_add_kernel_memory_test(
 )
 
 os_add_kernel_memory_test(
+    os_kernel_file_writeback_error_tracker_unit_tests
+    unit/kernel/file_writeback_error_tracker_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_file_writeback_error_tracker_randomized_tests
+    randomized/kernel/file_writeback_error_tracker_randomized_test.cpp
+    "randomized"
+)
+
+os_add_kernel_memory_test(
     os_kernel_user_page_reference_unit_tests
     unit/kernel/user_page_reference_test.cpp
     "unit"
@@ -1565,6 +1577,57 @@ add_test(
         --expected-outcome
         success
 )
+
+add_test(
+    NAME os_qemu_memory_reclaim_pressure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
+        --swap-disk-image
+        "${OS_SWAP_DISK_IMAGE}"
+        --expected-outcome
+        reclaim-pressure
+)
+set_tests_properties(
+    os_qemu_memory_reclaim_pressure
+    PROPERTIES
+        LABELS "system;memory;reclaim"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
+)
+add_test(
+    NAME os_qemu_nvme_memory_reclaim_pressure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
+        --swap-disk-image
+        "${OS_SWAP_DISK_IMAGE}"
+        --nvme-disk-image
+        "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
+        --nvme-swap-disk-image
+        "${OS_SWAP_DISK_IMAGE}"
+        --expected-outcome
+        reclaim-pressure
+)
+set_tests_properties(
+    os_qemu_nvme_memory_reclaim_pressure
+    PROPERTIES
+        LABELS "system;nvme;memory;reclaim"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
+)
 set_tests_properties(
     os_qemu_primary_smoke
     PROPERTIES
@@ -2130,6 +2193,8 @@ set(
     os_qemu_hardware_smoke
     os_qemu_rejects_invalid_image_size
     os_qemu_primary_smoke
+    os_qemu_memory_reclaim_pressure
+    os_qemu_nvme_memory_reclaim_pressure
     os_qemu_nvme_io
     os_qemu_nvme_io_error_recovery
     os_qemu_nvme_io_timeout_recovery

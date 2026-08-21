@@ -1,13 +1,13 @@
 #pragma once
 
-#include "os/abi/resource.hpp"
-#include "os/abi/security.hpp"
-#include "os/abi/signal.hpp"
-#include "os/abi/system_call.hpp"
-#include "os/abi/terminal.hpp"
-#include "os/abi/thread.hpp"
-#include "os/abi/version.hpp"
-#include "os/abi/virtual_memory.hpp"
+#include <os/abi/resource.hpp>
+#include <os/abi/security.hpp>
+#include <os/abi/signal.hpp>
+#include <os/abi/system_call.hpp>
+#include <os/abi/terminal.hpp>
+#include <os/abi/thread.hpp>
+#include <os/abi/version.hpp>
+#include <os/abi/virtual_memory.hpp>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -30,7 +30,7 @@ inline constexpr uint64_t OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES = 279ULL
 
 static_assert(static_cast<uint64_t>(SystemCallNumber::WriteLog) ==
               OS_ABI_LAYOUT_FIRST_SYSTEM_CALL_NUMBER);
-static_assert(static_cast<uint64_t>(SystemCallNumber::SetResourceLimit) ==
+static_assert(static_cast<uint64_t>(SystemCallNumber::SynchronizeMemory) ==
               OS_ABI_SYSTEM_CALL_LAST_NUMBER);
 static_assert(OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY == OS_ABI_SYSTEM_CALL_FIRST_ERROR);
 static_assert(OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED == OS_ABI_SYSTEM_CALL_LAST_ERROR);

@@ -16,6 +16,10 @@ constexpr char OS_USER_MEMORY_PROBE_BREAK_MESSAGE[] = "[OS][USER][VM] PROGRAM_BR
 constexpr char OS_USER_MEMORY_PROBE_STACK_MESSAGE[] = "[OS][USER][VM] STACK_GROWTH_VERIFIED\r\n";
 constexpr char OS_USER_MEMORY_PROBE_HEAP_MESSAGE[] =
     "[OS][USER][VM] USER_HEAP_RANDOMIZED_VERIFIED\r\n";
+constexpr char OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_MESSAGE[] =
+    "[OS][USER][VM] RECLAIM_PRESSURE_VERIFIED\r\n";
+constexpr char OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_FAILURE_MESSAGE[] =
+    "[OS][USER][VM][FAIL] RECLAIM_PRESSURE\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_MESSAGE[] =
     "[OS][USER][VM] FILE_MAPPING_CACHE_VERIFIED\r\n";
 constexpr char OS_USER_MEMORY_PROBE_FILE_SHARED_WRITEBACK_MESSAGE[] =
@@ -73,6 +77,10 @@ constexpr uint64_t OS_USER_MEMORY_PROBE_HEAP_GROWTH_BYTES = 64ULL * 1024ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_HEAP_SLOT_COUNT = 64ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_HEAP_ITERATION_COUNT = 5000ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_HEAP_MAXIMUM_ALLOCATION_BYTES = 8192ULL;
+constexpr uint64_t OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PAGE_COUNT = 512ULL;
+constexpr uint64_t OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_SIZE_BYTES =
+    OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PAGE_COUNT * os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES;
+constexpr uint64_t OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PATTERN_MASK = 0xFFULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_RANDOM_SEED = 0x56313848454150ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_RANDOM_SHIFT_FIRST = 12ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_RANDOM_SHIFT_SECOND = 25ULL;
@@ -82,6 +90,7 @@ constexpr uint8_t OS_USER_MEMORY_PROBE_FIRST_PATTERN = 0x5AU;
 constexpr uint8_t OS_USER_MEMORY_PROBE_SECOND_PATTERN = 0xA5U;
 constexpr uint64_t OS_USER_MEMORY_PROBE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES = 4096ULL;
+constexpr uint64_t OS_USER_MEMORY_PROBE_WRITEBACK_PRESSURE_PAGE_COUNT = 1024ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_FILE_PARTIAL_MAP_SIZE_BYTES = 3000ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_FILE_TAIL_OFFSET_BYTES = 3500ULL;
 constexpr uint64_t OS_USER_MEMORY_PROBE_TOUCHED_PAGE_COUNT = 2ULL;
@@ -209,6 +218,41 @@ template <uint64_t MessageSizeBytes>
            after_unmap.page_table_reclaimed_frame_count >
                before_map.page_table_reclaimed_frame_count &&
            WriteMessage(OS_USER_MEMORY_PROBE_UNMAP_MESSAGE);
+}
+
+[[nodiscard]] bool VerifyReclaimPressure() noexcept {
+    const int64_t map_result = os::user::MapAnonymousMemory(
+        os::abi::OS_ABI_MEMORY_MAP_AUTOMATIC_ADDRESS,
+        OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_SIZE_BYTES,
+        os::abi::OS_ABI_MEMORY_PROTECTION_READ | os::abi::OS_ABI_MEMORY_PROTECTION_WRITE,
+        os::abi::OS_ABI_MEMORY_MAP_NO_FLAGS);
+    if (map_result <= OS_USER_MEMORY_PROBE_FIRST_ERROR_RESULT) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_FAILURE_MESSAGE);
+    }
+    volatile uint8_t *const mapping =
+        reinterpret_cast<volatile uint8_t *>(static_cast<uint64_t>(map_result));
+    for (uint64_t page_index = OS_USER_MEMORY_PROBE_EMPTY_VALUE;
+         page_index < OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PAGE_COUNT; ++page_index) {
+        const uint8_t pattern = static_cast<uint8_t>(
+            static_cast<uint64_t>(OS_USER_MEMORY_PROBE_FIRST_PATTERN) ^
+            (page_index & OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PATTERN_MASK));
+        mapping[page_index * os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES] = pattern;
+    }
+    for (uint64_t page_index = OS_USER_MEMORY_PROBE_EMPTY_VALUE;
+         page_index < OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PAGE_COUNT; ++page_index) {
+        const uint8_t expected_pattern = static_cast<uint8_t>(
+            static_cast<uint64_t>(OS_USER_MEMORY_PROBE_FIRST_PATTERN) ^
+            (page_index & OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_PATTERN_MASK));
+        if (mapping[page_index * os::abi::OS_ABI_MEMORY_PAGE_SIZE_BYTES] != expected_pattern) {
+            return ReportFailure(OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_FAILURE_MESSAGE);
+        }
+    }
+    if (os::user::UnmapMemory(static_cast<uint64_t>(map_result),
+                              OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_SIZE_BYTES) !=
+        OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_FAILURE_MESSAGE);
+    }
+    return WriteMessage(OS_USER_MEMORY_PROBE_RECLAIM_PRESSURE_MESSAGE);
 }
 
 [[nodiscard]] bool VerifyProgramBreak() noexcept {
@@ -359,15 +403,20 @@ template <uint64_t MessageSizeBytes>
             os::abi::OS_ABI_FILE_OPEN_WRITE_FLAG |
             os::abi::OS_ABI_FILE_OPEN_CREATE_FLAG |
             os::abi::OS_ABI_FILE_OPEN_TRUNCATE_FLAG);
-    if (descriptor < OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
-        os::user::WriteDescriptor(
-            static_cast<uint64_t>(descriptor), file_initial_data,
-            sizeof(file_initial_data)) !=
-            static_cast<int64_t>(sizeof(file_initial_data)) ||
-        os::user::CloseFile(static_cast<uint64_t>(descriptor)) !=
-            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
-        return ReportFailure(
-            OS_USER_MEMORY_PROBE_FILE_CREATE_FAILURE_MESSAGE);
+    if (descriptor < OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_FILE_CREATE_FAILURE_MESSAGE);
+    }
+    for (uint64_t page_index = OS_USER_MEMORY_PROBE_EMPTY_VALUE;
+         page_index < OS_USER_MEMORY_PROBE_WRITEBACK_PRESSURE_PAGE_COUNT; ++page_index) {
+        if (os::user::WriteDescriptor(static_cast<uint64_t>(descriptor), file_initial_data,
+                                      sizeof(file_initial_data)) !=
+            static_cast<int64_t>(sizeof(file_initial_data))) {
+            return ReportFailure(OS_USER_MEMORY_PROBE_FILE_CREATE_FAILURE_MESSAGE);
+        }
+    }
+    if (os::user::CloseFile(static_cast<uint64_t>(descriptor)) !=
+        OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_FILE_CREATE_FAILURE_MESSAGE);
     }
 
     descriptor = os::user::OpenFile(
@@ -529,8 +578,36 @@ template <uint64_t MessageSizeBytes>
         return ReportFailure(
             OS_USER_MEMORY_PROBE_FILE_SHARED_SECOND_ALIAS_FAILURE_MESSAGE);
     }
-    if (os::user::SyncFileSystem() !=
+    if (os::user::SynchronizeMemory(
+            static_cast<uint64_t>(writable_shared_result),
+            OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES,
+            os::abi::OS_ABI_MEMORY_SYNC_ASYNCHRONOUS) !=
         OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE) {
+        return ReportFailure(OS_USER_MEMORY_PROBE_FILE_SHARED_SYNC_FAILURE_MESSAGE);
+    }
+    writable_shared_mapping[OS_USER_MEMORY_PROBE_EMPTY_VALUE] =
+        OS_USER_MEMORY_PROBE_FILE_SHARED_WRITE_PATTERN;
+    if (os::user::SynchronizeMemory(
+            static_cast<uint64_t>(writable_shared_result),
+            OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES,
+            os::abi::OS_ABI_MEMORY_SYNC_SYNCHRONOUS |
+                os::abi::OS_ABI_MEMORY_SYNC_INVALIDATE) !=
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
+        os::user::SynchronizeFileData(static_cast<uint64_t>(descriptor)) !=
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
+        os::user::SynchronizeFile(static_cast<uint64_t>(descriptor)) !=
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
+        os::user::SynchronizeMemory(
+            static_cast<uint64_t>(private_result),
+            OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES,
+            os::abi::OS_ABI_MEMORY_SYNC_SYNCHRONOUS) !=
+            OS_USER_MEMORY_PROBE_SUCCESS_EXIT_CODE ||
+        os::user::SynchronizeMemory(
+            static_cast<uint64_t>(writable_shared_result),
+            OS_USER_MEMORY_PROBE_FILE_PAGE_DATA_SIZE_BYTES,
+            os::abi::OS_ABI_MEMORY_SYNC_ASYNCHRONOUS |
+                os::abi::OS_ABI_MEMORY_SYNC_SYNCHRONOUS) !=
+            os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT) {
         return ReportFailure(
             OS_USER_MEMORY_PROBE_FILE_SHARED_SYNC_FAILURE_MESSAGE);
     }
@@ -622,7 +699,8 @@ template <uint64_t MessageSizeBytes>
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]]
 void OsUserEntry() noexcept {
     if (!WriteMessage(OS_USER_MEMORY_PROBE_STARTED_MESSAGE) || !VerifyAnonymousMemory() ||
-        !VerifyProgramBreak() || !VerifyStackGrowth() || !VerifyUserHeap() ||
+        !VerifyReclaimPressure() || !VerifyProgramBreak() || !VerifyStackGrowth() ||
+        !VerifyUserHeap() ||
         !VerifyFileMappings() ||
         !WriteMessage(OS_USER_MEMORY_PROBE_COMPLETED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_MEMORY_PROBE_FAILURE_EXIT_CODE);

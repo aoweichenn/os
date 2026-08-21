@@ -1,17 +1,22 @@
 #pragma once
 
-#include "os/kernel/fs/file_system.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/io/terminal.hpp"
-#include "os/kernel/ipc/pipe.hpp"
-#include "os/kernel/ipc/pipe_manager.hpp"
-#include "os/kernel/object/kernel_object.hpp"
+#include <os/kernel/fs/file_system.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/io/terminal.hpp>
+#include <os/kernel/ipc/pipe.hpp>
+#include <os/kernel/ipc/pipe_manager.hpp>
+#include <os/kernel/memory/file_cache_identity.hpp>
+#include <os/kernel/object/kernel_object.hpp>
 
 #include <stdint.h>
 
 namespace os::kernel {
 
 using FileDescriptionDeviceWriteOperation = TerminalDeviceWriteOperation;
+using FileDescriptionWritebackErrorRegisterOperation = bool (*)(
+    const FileCacheIdentity &identity, uint64_t &sampled_sequence) noexcept;
+using FileDescriptionWritebackErrorUnregisterOperation = bool (*)(
+    const FileCacheIdentity &identity) noexcept;
 
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG = 1ULL << 1ULL;
@@ -59,6 +64,10 @@ struct FileDescriptionCreateRequest final {
     PipeManager *pipe_manager;
     fs::Vfs *vfs;
     fs::OpenFile open_file;
+    FileCacheIdentity writeback_identity{};
+    FileDescriptionWritebackErrorRegisterOperation writeback_error_register_operation{nullptr};
+    FileDescriptionWritebackErrorUnregisterOperation writeback_error_unregister_operation{
+        nullptr};
 };
 
 struct FileDescriptionSnapshot final {
@@ -72,6 +81,7 @@ struct FileDescriptionSnapshot final {
     uint64_t node_identifier;
     uint64_t node_generation;
     uint64_t size_bytes;
+    uint64_t writeback_error_cursor;
 };
 
 struct RetainedRegularFile final {
@@ -119,6 +129,15 @@ class FileDescriptionManager final {
     [[nodiscard]] FileDescriptionStatus
     ReadDirectory(const KernelObjectReference &reference, fs::DirectoryEntry &entry,
                   bool &end_of_directory, FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    ReadWritebackErrorCursor(const KernelObjectReference &reference,
+                             uint64_t &writeback_error_cursor) noexcept;
+    [[nodiscard]] FileDescriptionStatus ReadSynchronizationState(
+        const KernelObjectReference &reference, FileCacheIdentity &identity,
+        uint64_t &writeback_error_cursor) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    AdvanceWritebackErrorCursor(const KernelObjectReference &reference,
+                                uint64_t writeback_error_sequence) noexcept;
     [[nodiscard]] FileDescriptionStatus ReadCanProgress(const KernelObjectReference &reference,
                                                         bool &can_progress) noexcept;
     [[nodiscard]] FileDescriptionStatus WriteCanProgress(const KernelObjectReference &reference,

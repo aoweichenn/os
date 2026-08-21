@@ -55,7 +55,8 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Insert(const uint64_t page_in
         OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
         return FileCacheAddressSpaceStatus::InvalidPage;
     }
-    if (state != FileCachePageState::Clean && state != FileCachePageState::Dirty) {
+    if (state != FileCachePageState::Loading && state != FileCachePageState::Clean &&
+        state != FileCachePageState::Dirty) {
         return FileCacheAddressSpaceStatus::InvalidState;
     }
     Page *existing_page = nullptr;
@@ -146,6 +147,9 @@ FileCacheAddressSpace::Retain(const uint64_t page_index, const uint64_t physical
     }
     if (page->physical_address != physical_address) {
         return FileCacheAddressSpaceStatus::InvalidPage;
+    }
+    if (page->state == FileCachePageState::Loading) {
+        return FileCacheAddressSpaceStatus::PageBusy;
     }
     if (page->mapping_reference_count == UINT64_MAX ||
         this->statistics_.active_mapping_reference_count == UINT64_MAX) {
@@ -293,7 +297,8 @@ FileCacheAddressSpace::Remove(const uint64_t page_index, const uint64_t physical
     if (page->mapping_reference_count != OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
         return FileCacheAddressSpaceStatus::PageBusy;
     }
-    if (page->state == FileCachePageState::Writeback) {
+    if (page->state == FileCachePageState::Loading ||
+        page->state == FileCachePageState::Writeback) {
         return FileCacheAddressSpaceStatus::PageBusy;
     }
     if (page->state != FileCachePageState::Clean) {
@@ -415,6 +420,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
     uint64_t resident_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t referenced_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t active_mapping_reference_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
+    uint64_t loading_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t clean_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t dirty_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t writeback_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
@@ -460,6 +466,9 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
             ++referenced_page_count;
         }
         switch (stored_page.state) {
+        case FileCachePageState::Loading:
+            ++loading_page_count;
+            break;
         case FileCachePageState::Clean:
             ++clean_page_count;
             break;
@@ -483,6 +492,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
                    referenced_page_count == this->statistics_.referenced_page_count &&
                    active_mapping_reference_count ==
                        this->statistics_.active_mapping_reference_count &&
+                   loading_page_count == this->statistics_.loading_page_count &&
                    clean_page_count == this->statistics_.clean_page_count &&
                    dirty_page_count == this->statistics_.dirty_page_count &&
                    writeback_page_count == this->statistics_.writeback_page_count &&
@@ -535,7 +545,9 @@ bool FileCacheAddressSpace::StateIsValid(const FileCachePageState state) noexcep
 
 bool FileCacheAddressSpace::TransitionIsValid(const FileCachePageState current_state,
                                               const FileCachePageState new_state) noexcept {
-    return (current_state == FileCachePageState::Clean && new_state == FileCachePageState::Dirty) ||
+    return (current_state == FileCachePageState::Loading &&
+            new_state == FileCachePageState::Clean) ||
+           (current_state == FileCachePageState::Clean && new_state == FileCachePageState::Dirty) ||
            (current_state == FileCachePageState::Dirty &&
             new_state == FileCachePageState::Writeback) ||
            (current_state == FileCachePageState::Error &&
@@ -546,11 +558,14 @@ bool FileCacheAddressSpace::TransitionIsValid(const FileCachePageState current_s
 }
 
 bool FileCacheAddressSpace::StateHasMark(const FileCachePageState state) noexcept {
-    return state != FileCachePageState::Clean;
+    return state == FileCachePageState::Dirty || state == FileCachePageState::Writeback ||
+           state == FileCachePageState::Error;
 }
 
 SparsePageIndexMark FileCacheAddressSpace::MarkForState(const FileCachePageState state) noexcept {
     switch (state) {
+    case FileCachePageState::Loading:
+        return SparsePageIndexMark::Present;
     case FileCachePageState::Dirty:
         return SparsePageIndexMark::Dirty;
     case FileCachePageState::Writeback:
@@ -611,6 +626,9 @@ FileCacheAddressSpace::ClearStateMark(const uint64_t page_index,
 
 void FileCacheAddressSpace::IncrementStateCount(const FileCachePageState state) noexcept {
     switch (state) {
+    case FileCachePageState::Loading:
+        ++this->statistics_.loading_page_count;
+        break;
     case FileCachePageState::Clean:
         ++this->statistics_.clean_page_count;
         break;
@@ -629,6 +647,9 @@ void FileCacheAddressSpace::IncrementStateCount(const FileCachePageState state) 
 bool FileCacheAddressSpace::DecrementStateCount(const FileCachePageState state) noexcept {
     uint64_t *state_count = nullptr;
     switch (state) {
+    case FileCachePageState::Loading:
+        state_count = &this->statistics_.loading_page_count;
+        break;
     case FileCachePageState::Clean:
         state_count = &this->statistics_.clean_page_count;
         break;

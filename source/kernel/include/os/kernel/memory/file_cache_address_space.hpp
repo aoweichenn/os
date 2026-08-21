@@ -9,6 +9,7 @@
 namespace os::kernel {
 
 enum class FileCachePageState : uint64_t {
+    Loading,
     Clean,
     Dirty,
     Writeback,
@@ -30,6 +31,7 @@ struct FileCacheAddressSpaceStatistics final {
     uint64_t active_mapping_reference_count;
     uint64_t peak_resident_page_count;
     uint64_t peak_active_mapping_reference_count;
+    uint64_t loading_page_count;
     uint64_t clean_page_count;
     uint64_t dirty_page_count;
     uint64_t writeback_page_count;

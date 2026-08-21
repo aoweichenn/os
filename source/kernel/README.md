@@ -224,3 +224,16 @@ SignalManager 不直接接入 Ready 队列；ProcessRuntime 只通过 ThreadSche
 唤醒。用户 frame 的 cookie、现场和页权限也只在当前 Thread 返回边界验证。
 设计理由见
 [ADR 0041](../../docs/adr/0041-process-signals-user-frame-and-sigreturn.md)。
+
+v2.8 的文件同步继续沿用同一对象边界：
+
+```text
+memory/file_page_cache.*                  文件/页范围 Dirty/Error 选择
+memory/file_writeback_error_tracker.*     文件错误序列与独立打开实例引用
+io/file_description.*                    duplicate/fork 共享的错误游标
+user/user_memory.*                        msync VMA 到文件页范围换算
+process/process_runtime.*                 fsync/fdatasync/msync 顺序编排
+user/system_calls.*                       ABI 2.4.0 的 85..87 分发
+memory/memory_pressure.*                  clean/writeback/swap 纯逻辑执行顺序
+process/process_runtime.*                 跨进程轮转、活动栈保护与 OOM 回调
+```

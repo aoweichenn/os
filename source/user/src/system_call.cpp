@@ -1,6 +1,6 @@
-#include "os/user/system_call.hpp"
+#include <os/user/system_call.hpp>
 
-#include "os/abi/system_call.hpp"
+#include <os/abi/system_call.hpp>
 
 namespace os::user {
 
@@ -395,6 +395,24 @@ int64_t SyncFileSystem() noexcept {
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SynchronizeFile(const uint64_t file_descriptor) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeFile),
+                            file_descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SynchronizeFileData(const uint64_t file_descriptor) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeFileData),
+                            file_descriptor, OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT,
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t SynchronizeMemory(const uint64_t address, const uint64_t length_bytes,
+                          const uint64_t flags) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeMemory),
+                            address, length_bytes, flags);
 }
 
 int64_t TryReadDescriptor(const uint64_t descriptor, uint8_t *const destination,

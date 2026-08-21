@@ -11,6 +11,8 @@ constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RANDOM_ACCOUNTING =
     "十万步驻留与 commit 随机事务必须逐步满足容量、峰值和回滚守恒";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RANDOM_OOM =
     "随机 OOM 候选必须与独立分数和确定性排序 oracle 一致";
+constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM =
+    "十万组回收计划和执行结果必须保持 clean、writeback、swap 顺序";
 
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_SEED = 0x4D454D5052455353ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_SHIFT_FIRST = 12ULL;
@@ -26,6 +28,57 @@ constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_MAXIMUM_TRANSACTION_PAGES = 31
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_OOM_CANDIDATE_COUNT = 32ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_OOM_ROUND_COUNT = 4096ULL;
 constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_OOM_ALLOWED_PAGES = 8192ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES = 64ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_STAGE_COUNT = 3ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_CLEAN_STAGE = 1ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_WRITEBACK_STAGE = 2ULL;
+constexpr uint64_t OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_SWAP_STAGE = 3ULL;
+
+struct ReclaimExecutionContext final {
+    uint64_t capacities[OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_STAGE_COUNT];
+    uint64_t stages[OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_STAGE_COUNT];
+    uint64_t stage_count;
+};
+
+[[nodiscard]] uint64_t Minimum(const uint64_t left, const uint64_t right) noexcept {
+    return left < right ? left : right;
+}
+
+[[nodiscard]] bool ReclaimStage(void *const context, const uint64_t stage,
+                                const uint64_t requested_page_count,
+                                uint64_t &reclaimed_page_count) noexcept {
+    reclaimed_page_count = 0ULL;
+    if (context == nullptr || stage == 0ULL ||
+        stage > OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_STAGE_COUNT) {
+        return false;
+    }
+    ReclaimExecutionContext &execution = *static_cast<ReclaimExecutionContext *>(context);
+    if (execution.stage_count >= OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_STAGE_COUNT) {
+        return false;
+    }
+    execution.stages[execution.stage_count] = stage;
+    ++execution.stage_count;
+    reclaimed_page_count = Minimum(execution.capacities[stage - 1ULL], requested_page_count);
+    return true;
+}
+
+[[nodiscard]] bool ReclaimClean(void *const context, const uint64_t requested_page_count,
+                                uint64_t &reclaimed_page_count) noexcept {
+    return ReclaimStage(context, OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_CLEAN_STAGE,
+                        requested_page_count, reclaimed_page_count);
+}
+
+[[nodiscard]] bool ReclaimWritten(void *const context, const uint64_t requested_page_count,
+                                  uint64_t &reclaimed_page_count) noexcept {
+    return ReclaimStage(context, OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_WRITEBACK_STAGE,
+                        requested_page_count, reclaimed_page_count);
+}
+
+[[nodiscard]] bool ReclaimAnonymous(void *const context, const uint64_t requested_page_count,
+                                    uint64_t &reclaimed_page_count) noexcept {
+    return ReclaimStage(context, OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_SWAP_STAGE,
+                        requested_page_count, reclaimed_page_count);
+}
 
 [[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
     state ^= state >> OS_TEST_MEMORY_PRESSURE_RANDOM_SHIFT_FIRST;
@@ -138,6 +191,113 @@ int main() {
                            accountant.Validate() == os::kernel::MemoryOvercommitStatus::Succeeded;
     }
     test_context.ExpectRandom(accounting_valid, OS_TEST_MEMORY_PRESSURE_RANDOM_ACCOUNTING,
+                              OS_TEST_MEMORY_PRESSURE_RANDOM_SEED,
+                              OS_TEST_MEMORY_PRESSURE_RANDOM_ITERATION_COUNT);
+
+    bool reclaim_valid = true;
+    const os::kernel::MemoryReclaimOperations reclaim_operations{
+        .reclaim_clean_file_pages = ReclaimClean,
+        .writeback_and_reclaim_file_pages = ReclaimWritten,
+        .swap_out_anonymous_pages = ReclaimAnonymous,
+    };
+    for (uint64_t iteration = 0ULL;
+         reclaim_valid && iteration < OS_TEST_MEMORY_PRESSURE_RANDOM_ITERATION_COUNT;
+         ++iteration) {
+        const uint64_t target_page_count =
+            NextRandom(random_state) % OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES;
+        const uint64_t clean_page_count =
+            NextRandom(random_state) % OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES;
+        const uint64_t dirty_page_count =
+            NextRandom(random_state) % OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES;
+        const uint64_t anonymous_page_count =
+            NextRandom(random_state) % OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES;
+        const uint64_t free_swap_page_count =
+            NextRandom(random_state) % OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES;
+        const uint64_t swappiness =
+            (NextRandom(random_state) & 1ULL) == 0ULL
+                ? 0ULL
+                : os::kernel::OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS;
+        os::kernel::MemoryReclaimPlan plan{};
+        reclaim_valid = os::kernel::PlanMemoryReclaim(
+                            os::kernel::MemoryReclaimInput{
+                                .target_page_count = target_page_count,
+                                .clean_file_page_count = clean_page_count,
+                                .dirty_file_page_count = dirty_page_count,
+                                .anonymous_page_count = anonymous_page_count,
+                                .free_swap_page_count = free_swap_page_count,
+                                .swappiness = swappiness,
+                            },
+                            plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded;
+        uint64_t remaining_page_count = target_page_count;
+        const uint64_t expected_clean_page_count = Minimum(remaining_page_count, clean_page_count);
+        remaining_page_count -= expected_clean_page_count;
+        const uint64_t expected_writeback_page_count =
+            Minimum(remaining_page_count, dirty_page_count);
+        remaining_page_count -= expected_writeback_page_count;
+        const uint64_t expected_swap_page_count =
+            swappiness == 0ULL
+                ? 0ULL
+                : Minimum(remaining_page_count,
+                          Minimum(anonymous_page_count, free_swap_page_count));
+        remaining_page_count -= expected_swap_page_count;
+        reclaim_valid =
+            reclaim_valid && plan.clean_file_page_count == expected_clean_page_count &&
+            plan.writeback_file_page_count == expected_writeback_page_count &&
+            plan.swap_out_page_count == expected_swap_page_count &&
+            plan.unreclaimable_page_count == remaining_page_count;
+
+        ReclaimExecutionContext context{
+            .capacities = {
+                expected_clean_page_count == 0ULL
+                    ? 0ULL
+                    : NextRandom(random_state) % (expected_clean_page_count + 1ULL),
+                expected_writeback_page_count == 0ULL
+                    ? 0ULL
+                    : NextRandom(random_state) % (expected_writeback_page_count + 1ULL),
+                expected_swap_page_count == 0ULL
+                    ? 0ULL
+                    : NextRandom(random_state) % (expected_swap_page_count + 1ULL),
+            },
+            .stages = {},
+            .stage_count = 0ULL,
+        };
+        os::kernel::MemoryReclaimExecutionResult result{};
+        const os::kernel::MemoryReclaimExecutionStatus execution_status =
+            os::kernel::ExecuteMemoryReclaim(plan, reclaim_operations, &context, result);
+        const uint64_t expected_reclaimed_page_count = context.capacities[0ULL] +
+                                                       context.capacities[1ULL] +
+                                                       context.capacities[2ULL];
+        const os::kernel::MemoryReclaimExecutionStatus expected_status =
+            plan.planned_reclaim_page_count != 0ULL && expected_reclaimed_page_count == 0ULL
+                ? os::kernel::MemoryReclaimExecutionStatus::NoProgress
+                : os::kernel::MemoryReclaimExecutionStatus::Succeeded;
+        reclaim_valid = reclaim_valid && execution_status == expected_status &&
+                        result.clean_file_page_count == context.capacities[0ULL] &&
+                        result.reclaimed_written_file_page_count == context.capacities[1ULL] &&
+                        result.swapped_anonymous_page_count == context.capacities[2ULL] &&
+                        result.reclaimed_page_count == expected_reclaimed_page_count;
+        uint64_t expected_stage_count = 0ULL;
+        if (plan.clean_file_page_count != 0ULL) {
+            reclaim_valid = reclaim_valid &&
+                            context.stages[expected_stage_count] ==
+                                OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_CLEAN_STAGE;
+            ++expected_stage_count;
+        }
+        if (plan.writeback_file_page_count != 0ULL) {
+            reclaim_valid = reclaim_valid &&
+                            context.stages[expected_stage_count] ==
+                                OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_WRITEBACK_STAGE;
+            ++expected_stage_count;
+        }
+        if (plan.swap_out_page_count != 0ULL) {
+            reclaim_valid = reclaim_valid &&
+                            context.stages[expected_stage_count] ==
+                                OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_SWAP_STAGE;
+            ++expected_stage_count;
+        }
+        reclaim_valid = reclaim_valid && context.stage_count == expected_stage_count;
+    }
+    test_context.ExpectRandom(reclaim_valid, OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM,
                               OS_TEST_MEMORY_PRESSURE_RANDOM_SEED,
                               OS_TEST_MEMORY_PRESSURE_RANDOM_ITERATION_COUNT);
 

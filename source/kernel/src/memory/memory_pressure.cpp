@@ -403,6 +403,27 @@ MemoryPressureController::ConfigureSwap(const uint64_t swap_page_count) noexcept
     return MemoryPressureStatus::Succeeded;
 }
 
+MemoryPressureStatus MemoryPressureController::ConfigureResidentLimit(
+    const uint64_t resident_limit_page_count) noexcept {
+    if (!this->initialized_) {
+        return MemoryPressureStatus::NotInitialized;
+    }
+    if (resident_limit_page_count == OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE ||
+        resident_limit_page_count > this->configuration_.managed_page_count ||
+        resident_limit_page_count < this->statistics_.resident_page_count) {
+        return MemoryPressureStatus::ResidentLimitExceeded;
+    }
+    MemoryWatermarks watermarks{};
+    const MemoryPressureStatus status = CalculateMemoryWatermarks(
+        resident_limit_page_count, this->configuration_.watermark_scale_factor, watermarks);
+    if (status != MemoryPressureStatus::Succeeded) {
+        return status;
+    }
+    this->configuration_.resident_limit_page_count = resident_limit_page_count;
+    this->statistics_.watermarks = watermarks;
+    return MemoryPressureStatus::Succeeded;
+}
+
 MemoryPressureStatus
 MemoryPressureController::RecordReclaim(const uint64_t reclaimed_page_count) noexcept {
     if (!this->initialized_) {
@@ -461,16 +482,9 @@ MemoryReclaimPlanStatus PlanMemoryReclaim(const MemoryReclaimInput &input,
     plan.clean_file_page_count = Minimum(remaining_page_count, input.clean_file_page_count);
     remaining_page_count -= plan.clean_file_page_count;
 
-    // swappiness=200 时优先匿名页；其余值先回写文件页，避免无必要地写入 swap。
-    if (input.swappiness == OS_KERNEL_MEMORY_PRESSURE_MAXIMUM_SWAPPINESS) {
-        plan.swap_out_page_count = Minimum(
-            remaining_page_count, Minimum(input.anonymous_page_count, input.free_swap_page_count));
-        remaining_page_count -= plan.swap_out_page_count;
-    }
     plan.writeback_file_page_count = Minimum(remaining_page_count, input.dirty_file_page_count);
     remaining_page_count -= plan.writeback_file_page_count;
-    if (input.swappiness != OS_KERNEL_MEMORY_PRESSURE_MAXIMUM_SWAPPINESS &&
-        input.swappiness != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE) {
+    if (input.swappiness != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE) {
         plan.swap_out_page_count = Minimum(
             remaining_page_count, Minimum(input.anonymous_page_count, input.free_swap_page_count));
         remaining_page_count -= plan.swap_out_page_count;
@@ -483,6 +497,51 @@ MemoryReclaimPlanStatus PlanMemoryReclaim(const MemoryReclaimInput &input,
     plan.planned_reclaim_page_count = planned_page_count;
     plan.unreclaimable_page_count = remaining_page_count;
     return MemoryReclaimPlanStatus::Succeeded;
+}
+
+MemoryReclaimExecutionStatus ExecuteMemoryReclaim(
+    const MemoryReclaimPlan &plan, const MemoryReclaimOperations &operations, void *const context,
+    MemoryReclaimExecutionResult &result) noexcept {
+    result = MemoryReclaimExecutionResult{};
+    if ((plan.clean_file_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+         operations.reclaim_clean_file_pages == nullptr) ||
+        (plan.writeback_file_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+         operations.writeback_and_reclaim_file_pages == nullptr) ||
+        (plan.swap_out_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+         operations.swap_out_anonymous_pages == nullptr)) {
+        return MemoryReclaimExecutionStatus::InvalidOperations;
+    }
+    if (plan.clean_file_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+        (!operations.reclaim_clean_file_pages(context, plan.clean_file_page_count,
+                                              result.clean_file_page_count) ||
+         result.clean_file_page_count > plan.clean_file_page_count)) {
+        return MemoryReclaimExecutionStatus::CleanReclaimFailed;
+    }
+    if (plan.writeback_file_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+        (!operations.writeback_and_reclaim_file_pages(context,
+                                                      plan.writeback_file_page_count,
+                                                      result.reclaimed_written_file_page_count) ||
+         result.reclaimed_written_file_page_count > plan.writeback_file_page_count)) {
+        return MemoryReclaimExecutionStatus::FileWritebackFailed;
+    }
+    if (plan.swap_out_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+        (!operations.swap_out_anonymous_pages(context, plan.swap_out_page_count,
+                                              result.swapped_anonymous_page_count) ||
+         result.swapped_anonymous_page_count > plan.swap_out_page_count)) {
+        return MemoryReclaimExecutionStatus::AnonymousSwapFailed;
+    }
+    uint64_t reclaimed_page_count = OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE;
+    if (!TryAdd(result.clean_file_page_count, result.reclaimed_written_file_page_count,
+                reclaimed_page_count) ||
+        !TryAdd(reclaimed_page_count, result.swapped_anonymous_page_count,
+                reclaimed_page_count)) {
+        return MemoryReclaimExecutionStatus::CounterOverflow;
+    }
+    result.reclaimed_page_count = reclaimed_page_count;
+    return plan.planned_reclaim_page_count != OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE &&
+                   reclaimed_page_count == OS_KERNEL_MEMORY_PRESSURE_EMPTY_VALUE
+               ? MemoryReclaimExecutionStatus::NoProgress
+               : MemoryReclaimExecutionStatus::Succeeded;
 }
 
 MemoryOvercommitStatus MemoryOvercommitAccountant::Initialize(

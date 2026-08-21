@@ -1,12 +1,12 @@
 #pragma once
 
-#include "os/abi/resource.hpp"
-#include "os/abi/security.hpp"
-#include "os/abi/signal.hpp"
-#include "os/abi/terminal.hpp"
-#include "os/abi/thread.hpp"
-#include "os/abi/time.hpp"
-#include "os/abi/virtual_memory.hpp"
+#include <os/abi/resource.hpp>
+#include <os/abi/security.hpp>
+#include <os/abi/signal.hpp>
+#include <os/abi/terminal.hpp>
+#include <os/abi/thread.hpp>
+#include <os/abi/time.hpp>
+#include <os/abi/virtual_memory.hpp>
 
 #include <stdint.h>
 
@@ -97,6 +97,9 @@ enum class SystemCallNumber : uint64_t {
     ReadSymbolicLink = 82ULL,
     GetResourceLimit = 83ULL,
     SetResourceLimit = 84ULL,
+    SynchronizeFile = 85ULL,
+    SynchronizeFileData = 86ULL,
+    SynchronizeMemory = 87ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;

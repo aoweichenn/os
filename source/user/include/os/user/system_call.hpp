@@ -1,6 +1,6 @@
 #pragma once
 
-#include "os/abi/system_call.hpp"
+#include <os/abi/system_call.hpp>
 
 #include <stdint.h>
 
@@ -79,6 +79,10 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t CloseFile(uint64_t file_descriptor) noexcept;
 [[nodiscard]] int64_t CreateDirectory(const char *path, uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t SyncFileSystem() noexcept;
+[[nodiscard]] int64_t SynchronizeFile(uint64_t file_descriptor) noexcept;
+[[nodiscard]] int64_t SynchronizeFileData(uint64_t file_descriptor) noexcept;
+[[nodiscard]] int64_t SynchronizeMemory(uint64_t address, uint64_t length_bytes,
+                                        uint64_t flags) noexcept;
 [[nodiscard]] int64_t TryReadDescriptor(uint64_t descriptor, uint8_t *destination,
                                         uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t TryWriteDescriptor(uint64_t descriptor, const uint8_t *source,

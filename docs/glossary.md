@@ -189,6 +189,11 @@
 | program break | 传统连续数据区的字节级逻辑末端；v1.8 用页级 VMA 表达其覆盖区，并在首次访问时提交物理页 |
 | zero-fill-on-demand | 匿名页第一次合法访问时分配完整清零 frame，再返回重试原指令的策略 |
 | page cache | 以 vnode 与页索引为身份缓存文件内容的内存页；clean、dirty、writeback 是不同状态 |
+| writeback error sequence | 文件级单调错误序列；独立打开实例以自己的游标判断是否还有未报告的写回失败 |
+| fsync / fdatasync | 等待指定打开文件的数据稳定；fsync 包含完整 metadata，fdatasync 至少包含重读所需 metadata |
+| msync | 按文件映射虚拟地址范围请求异步或同步写回；private COW 修改不进入底层文件 |
+| direct reclaim | 当前分配线程在返回失败前同步执行的 clean 回收、dirty 写回和匿名换出 |
+| reclaim progress | 一轮回收实际归还的页数；计划数或仅完成写盘但仍被引用的页不算进展 |
 | `MAP_PRIVATE` | 写入时产生私有 COW 页面、不把修改回写到底层文件的文件映射 |
 | `MAP_SHARED` | 多个映射观察同一文件页的策略；完整页可写映射由首次写保护故障标脏，显式 sync 回写 |
 | futex | 以用户地址上的值作为快速路径、仅在竞争时进入内核 WaitQueue 的同步机制 |

@@ -32,10 +32,16 @@ reset 并重建队列。Kernel 运行期 rootfs/swap 已分别迁移到 Namespac
 缺失时自动回退 ATA；ROM 和 Stage 1 仍从 ATA 启动。当前边界见
 [v2.7 记录](docs/releases/v2.7.md) 和
 [ADR 0055](docs/adr/0055-v2-7-block-device-layer-and-nvme-path.md)。
-v2.8 已完成前三个增量：64 位动态 radix、动态文件缓存地址空间和统一数据路径。
+v2.8 的六个核心增量已经实现：64 位动态 radix、动态文件缓存地址空间、统一数据
+路径、有界后台写回、按文件/映射范围同步和统一内存压力回收。
 rootfs/legacy 的 buffered read/write、ELF/file fault 与 `MAP_SHARED` 共享同一
 frame；普通写直接脏化缓存页，`truncate` 只撤销 EOF 后映射、丢弃范围外页并清零
-保留尾页，不再把整文件失效作为正常写入协议。边界见
+保留尾页。cache miss 以 Loading 占位后在锁外填页；Dirty 使用约 10%/20% 软硬
+水位，返回用户态安全点每批最多写回 64 页，失败暂停自动重试。ABI 2.4.0 追加
+`fsync`/`fdatasync`/`msync`；动态错误序列让独立 open 各报告一次写回失败，而
+duplicate/fork 共享同一游标。direct reclaim 固定执行 clean file trim、dirty
+writeback/trim、跨进程 anonymous swap，
+回收后仍无法满足原请求才进入 OOM；PID1 和活动返回栈页不会被跨进程换出。边界见
 [v2.8 记录](docs/releases/v2.8.md) 与
 [ADR 0056](docs/adr/0056-v2-8-dynamic-file-cache-address-space.md)。
 当前自动 QEMU 验收统一使用 4 GiB `-mem-prealloc`，不再重复运行 64/256 MiB 档。

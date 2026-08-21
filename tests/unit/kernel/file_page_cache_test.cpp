@@ -10,6 +10,8 @@ constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_INITIALIZE =
     "缓存必须以固定容量和外部页帧访问器初始化";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_HIT =
     "相同文件页必须共享唯一权威帧并累计映射引用";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_LOADING =
+    "cache miss 必须先发布 Loading 且在不持有 cache lock 时读取来源";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_LRU =
     "容量耗尽时必须回收最久未使用且没有映射引用的 clean 页";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_BUSY = "全部槽位仍被映射时必须明确返回容量耗尽";
@@ -27,6 +29,8 @@ constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_TRIM_COUNT =
     "裁剪必须报告真实归还给页帧分配器的 clean 页数";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_TRUNCATE =
     "truncate 必须拒绝活动范围外映射、丢弃脏页并清零保留尾页";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_WATERMARKS =
+    "Dirty 水位必须支持按文件范围写回、显式后台请求和硬水位回压";
 
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MANAGED_PAGE_COUNT = 8ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_STATE_VALUES_PER_BYTE = 4ULL;
@@ -39,6 +43,8 @@ constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MANAGED_SIZE_BYTES =
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_MEMORY_MAP_ENTRY_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_CAPACITY = 2ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_DIRTY_PAGE_LIMIT = 1ULL;
+constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY = 5ULL;
+constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_WATERMARK_DIRTY_LIMIT = 4ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_ALIGNMENT_BYTES = 64ULL;
 constexpr uint64_t OS_TEST_FILE_PAGE_CACHE_TINY_METADATA_HEAP_SIZE_BYTES = 2048ULL;
@@ -62,6 +68,11 @@ struct TestMemory final {
 struct TestReader final {
     uint64_t failure_page_index;
     uint64_t read_count;
+    os::kernel::FilePageCache *cache;
+    uint64_t maximum_spin_lock_depth;
+    os::kernel::FilePageCacheStatus loading_collision_status;
+    bool probe_loading_collision;
+    bool loading_collision_observed;
 };
 
 struct TestWriter final {
@@ -87,6 +98,18 @@ struct TestWriter final {
     TestReader &reader = *static_cast<TestReader *>(context);
     if (identity.page_index == reader.failure_page_index) {
         return false;
+    }
+    const uint64_t spin_lock_depth = os::kernel::CurrentSpinLockDepth();
+    if (reader.maximum_spin_lock_depth < spin_lock_depth) {
+        reader.maximum_spin_lock_depth = spin_lock_depth;
+    }
+    if (reader.probe_loading_collision && !reader.loading_collision_observed &&
+        reader.cache != nullptr) {
+        reader.loading_collision_observed = true;
+        uint64_t collision_physical_address = 0ULL;
+        bool collision_cache_hit = false;
+        reader.loading_collision_status = reader.cache->Acquire(
+            identity, &reader, ReadPage, collision_physical_address, collision_cache_hit);
     }
     ++reader.read_count;
     destination[OS_TEST_FILE_PAGE_CACHE_FIRST_PAGE_INDEX] =
@@ -165,6 +188,11 @@ int main() {
     TestReader reader{
         .failure_page_index = OS_TEST_FILE_PAGE_CACHE_FAILURE_PAGE_INDEX,
         .read_count = 0ULL,
+        .cache = &cache,
+        .maximum_spin_lock_depth = 0ULL,
+        .loading_collision_status = os::kernel::FilePageCacheStatus::Succeeded,
+        .probe_loading_collision = true,
+        .loading_collision_observed = false,
     };
     const os::kernel::FilePageIdentity first_identity =
         MakePageIdentity(OS_TEST_FILE_PAGE_CACHE_FIRST_PAGE_INDEX);
@@ -174,6 +202,15 @@ int main() {
         cache.Acquire(first_identity, &reader, ReadPage, first_physical_address, first_cache_hit) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         !first_cache_hit;
+    const bool loading_boundary_valid =
+        first_loaded && reader.loading_collision_observed &&
+        reader.loading_collision_status == os::kernel::FilePageCacheStatus::EntryBusy &&
+        reader.maximum_spin_lock_depth == 0ULL &&
+        cache.Statistics().loading_collision_count ==
+            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().unlocked_fill_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().loading_page_count == 0ULL;
+    test_context.Expect(loading_boundary_valid, OS_TEST_FILE_PAGE_CACHE_LOADING);
     uint64_t shared_physical_address = 0ULL;
     bool shared_cache_hit = false;
     const bool shared =
@@ -294,6 +331,7 @@ int main() {
         cache.Writeback(&writer, WritePage, OS_TEST_FILE_PAGE_CACHE_CAPACITY, written_page_count) ==
             os::kernel::FilePageCacheStatus::SourceWriteFailed &&
         written_page_count == 0ULL && cache.Statistics().error_page_count == 1ULL &&
+        cache.BackgroundWritebackPaused() && !cache.BackgroundWritebackRequested() &&
         cache.Invalidate(file_identity) == os::kernel::FilePageCacheStatus::DirtyPagesRemain;
     test_context.Expect(writeback_failure_preserved, OS_TEST_FILE_PAGE_CACHE_WRITEBACK_FAILURE);
 
@@ -310,6 +348,13 @@ int main() {
         cache.Statistics().error_page_count == 0ULL &&
         cache.Statistics().successful_writeback_count == 2ULL &&
         cache.Statistics().failed_writeback_count == 1ULL &&
+        cache.Statistics().background_dirty_page_threshold ==
+            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().background_dirty_page_target == 0ULL &&
+        cache.Statistics().background_writeback_request_count != 0ULL &&
+        cache.Statistics().dirty_backpressure_count ==
+            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        !cache.BackgroundWritebackPaused() && !cache.BackgroundWritebackRequested() &&
         cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded;
     test_context.Expect(writeback_completed, OS_TEST_FILE_PAGE_CACHE_WRITEBACK);
 
@@ -365,6 +410,96 @@ int main() {
         frame_allocator.Statistics().allocated_frame_count == frames_before.allocated_frame_count;
     test_context.Expect(destroyed, OS_TEST_FILE_PAGE_CACHE_DESTROY);
 
+    os::kernel::FilePageCache watermark_cache{};
+    TestReader watermark_reader{
+        .failure_page_index = UINT64_MAX,
+        .read_count = 0ULL,
+        .cache = &watermark_cache,
+        .maximum_spin_lock_depth = 0ULL,
+        .loading_collision_status = os::kernel::FilePageCacheStatus::Succeeded,
+        .probe_loading_collision = false,
+        .loading_collision_observed = false,
+    };
+    uint64_t watermark_physical_addresses[OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY]{};
+    bool watermarks_valid =
+        watermark_cache.Initialize(metadata_heap, OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY,
+                                   OS_TEST_FILE_PAGE_CACHE_WATERMARK_DIRTY_LIMIT, frame_allocator,
+                                   &memory, AccessPage) ==
+        os::kernel::FilePageCacheStatus::Succeeded;
+    for (uint64_t page_index = 0ULL;
+         watermarks_valid && page_index < OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY;
+         ++page_index) {
+        bool cache_hit = true;
+        watermarks_valid =
+            watermark_cache.Acquire(MakePageIdentity(page_index), &watermark_reader, ReadPage,
+                                    watermark_physical_addresses[page_index], cache_hit) ==
+                os::kernel::FilePageCacheStatus::Succeeded &&
+            !cache_hit &&
+            watermark_cache.Release(MakePageIdentity(page_index),
+                                    watermark_physical_addresses[page_index]) ==
+                os::kernel::FilePageCacheStatus::Succeeded;
+    }
+    uint64_t watermark_written_page_count = 0ULL;
+    os::kernel::FilePageCacheEntry range_entry{};
+    watermarks_valid =
+        watermarks_valid &&
+        watermark_cache.MarkDirty(MakePageIdentity(0ULL),
+                                  watermark_physical_addresses[0ULL]) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        !watermark_cache.BackgroundWritebackRequested() &&
+        watermark_cache.MarkDirty(MakePageIdentity(1ULL),
+                                  watermark_physical_addresses[1ULL]) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.BackgroundWritebackRequested() &&
+        watermark_cache.Writeback(&writer, WritePage, 1ULL, watermark_written_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_written_page_count == 1ULL &&
+        !watermark_cache.BackgroundWritebackRequested() &&
+        watermark_cache.MarkDirty(MakePageIdentity(2ULL),
+                                  watermark_physical_addresses[2ULL]) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.MarkDirty(MakePageIdentity(3ULL),
+                                  watermark_physical_addresses[3ULL]) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.MarkDirty(MakePageIdentity(0ULL),
+                                  watermark_physical_addresses[0ULL]) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.DirtyBackpressureRequired() &&
+        watermark_cache.MarkDirty(MakePageIdentity(4ULL),
+                                  watermark_physical_addresses[4ULL]) ==
+            os::kernel::FilePageCacheStatus::DirtyLimitReached &&
+        watermark_cache.Statistics().background_dirty_page_threshold == 2ULL &&
+        watermark_cache.Statistics().background_dirty_page_target == 1ULL &&
+        watermark_cache.Statistics().background_writeback_request_count == 2ULL &&
+        watermark_cache.Statistics().dirty_backpressure_count == 1ULL &&
+        watermark_cache.WritebackFile(
+            MakePageIdentity(OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX).file,
+            OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX,
+            OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX, &writer, WritePage, UINT64_MAX,
+            watermark_written_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_written_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        watermark_cache.ReadEntry(
+            MakePageIdentity(OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX), range_entry) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        range_entry.state == os::kernel::FilePageCacheEntryState::Clean &&
+        watermark_cache.RequestBackgroundWriteback() ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.BackgroundWritebackRequested() &&
+        watermark_cache.Statistics().explicit_background_writeback_request_count ==
+            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        watermark_cache.Writeback(&writer, WritePage, UINT64_MAX,
+                                  watermark_written_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        !watermark_cache.BackgroundWritebackRequested() &&
+        !watermark_cache.DirtyBackpressureRequired() &&
+        watermark_cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.Trim(0ULL) == os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.Destroy() == os::kernel::FilePageCacheStatus::Succeeded &&
+        metadata_heap.Statistics().allocation_count == 0ULL &&
+        frame_allocator.Statistics().allocated_frame_count == frames_before.allocated_frame_count;
+    test_context.Expect(watermarks_valid, OS_TEST_FILE_PAGE_CACHE_WATERMARKS);
+
     alignas(OS_TEST_FILE_PAGE_CACHE_METADATA_HEAP_ALIGNMENT_BYTES)
         uint8_t tiny_metadata_heap_storage[OS_TEST_FILE_PAGE_CACHE_TINY_METADATA_HEAP_SIZE_BYTES]{};
     os::kernel::KernelHeap tiny_metadata_heap{};
@@ -372,6 +507,11 @@ int main() {
     TestReader successful_reader{
         .failure_page_index = OS_TEST_FILE_PAGE_CACHE_FAILURE_PAGE_INDEX,
         .read_count = 0ULL,
+        .cache = &failing_cache,
+        .maximum_spin_lock_depth = 0ULL,
+        .loading_collision_status = os::kernel::FilePageCacheStatus::Succeeded,
+        .probe_loading_collision = false,
+        .loading_collision_observed = false,
     };
     uint64_t unavailable_metadata_physical_address = 0ULL;
     bool unavailable_metadata_cache_hit = false;

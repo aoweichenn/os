@@ -1,6 +1,6 @@
-#include "os/user/system_call.hpp"
+#include <os/user/system_call.hpp>
 
-#include "os/abi/system_call.hpp"
+#include <os/abi/system_call.hpp>
 
 #include <stdint.h>
 

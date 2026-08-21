@@ -17,6 +17,9 @@
 
 namespace os::kernel {
 
+[[nodiscard]] static bool TryRecoverFromOutOfMemory(uint64_t current_process_index,
+                                                     bool allow_current_victim) noexcept;
+
 namespace {
 
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE = 0ULL;
@@ -26,6 +29,8 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_NORMALIZED_ERROR_CODE = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INITIAL_USER_FLAGS = 0x202ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_PAGE_MASK =
+    OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID = 1ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_WAKE_ALL_COUNT = OS_KERNEL_THREAD_CAPACITY_LIMIT;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_STACK_POINTER_PROBE_SIZE_BYTES = sizeof(uint64_t);
@@ -108,10 +113,6 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_OTHER_THREAD_PROGRESS_PREFIX[]
     "[OS][KERNEL][BLOCK] OTHER_THREAD_PROGRESS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_ABANDONED_REQUEST_PREFIX[] =
     "[OS][KERNEL][BLOCK] ABANDONED_REQUEST=";
-constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_PROCESS_PREFIX[] =
-    "[OS][KERNEL][CACHE] PROTECT_FAILURE_PROCESS=";
-constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_STATUS_PREFIX[] =
-    "[OS][KERNEL][CACHE] PROTECT_FAILURE_STATUS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_WRITEBACK_STATUS_PREFIX[] =
     "[OS][KERNEL][CACHE] WRITEBACK_STATUS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_WRITTEN_PAGE_COUNT_PREFIX[] =
@@ -361,6 +362,11 @@ uint64_t oom_invocation_count;
 uint64_t oom_kill_count;
 uint64_t last_oom_victim_process_id;
 uint64_t last_oom_victim_score;
+uint64_t file_synchronization_count;
+uint64_t file_data_synchronization_count;
+uint64_t memory_synchronous_synchronization_count;
+uint64_t memory_asynchronous_synchronization_count;
+uint64_t anonymous_reclaim_process_cursor;
 UserThreadRuntimeStatistics user_thread_runtime_statistics;
 bool process_runtime_initialized;
 bool process_scheduling_active;
@@ -564,6 +570,15 @@ FileIdentityFromInformation(const fs::NodeInformation &information) noexcept {
     };
 }
 
+[[nodiscard]] FileIdentity FileIdentityFromVnode(const fs::Vnode &vnode) noexcept {
+    return FileIdentity{
+        .superblock_identifier = vnode.superblock->identifier,
+        .superblock_generation = vnode.superblock->generation,
+        .node_identifier = vnode.identifier,
+        .node_generation = vnode.generation,
+    };
+}
+
 void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) noexcept;
 
 [[nodiscard]] bool PrepareRuntimeFileTruncate(const FileIdentity &identity,
@@ -584,6 +599,138 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
         runtime_process.result.mapped_page_count = runtime_process.address_space.mapped_page_count;
     }
     return true;
+}
+
+[[nodiscard]] bool ProtectRuntimeSharedFileMappings() noexcept {
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < process_runtime_limits.process_capacity; ++process_index) {
+        ProcessRuntimeProcess &runtime_process = runtime_processes[process_index];
+        if (!runtime_process.active || runtime_process.address_space.root_physical_address ==
+                                           OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+            continue;
+        }
+        if (ProtectUserSharedFileMappings(runtime_process.address_space) !=
+            UserVirtualMemoryStatus::Succeeded) {
+            return false;
+        }
+    }
+    return true;
+}
+
+[[nodiscard]] bool ProtectRuntimeSharedFileMappingsForReclaim(void *const context) noexcept {
+    static_cast<void>(context);
+    return ProtectRuntimeSharedFileMappings();
+}
+
+[[nodiscard]] bool ReclaimRuntimeAnonymousPages(
+    void *const context, UserAddressSpace &requester, const uint64_t target_page_count,
+    const uint64_t excluded_virtual_address, const uint64_t protected_virtual_address,
+    uint64_t &reclaimed_page_count) noexcept {
+    static_cast<void>(context);
+    static_cast<void>(protected_virtual_address);
+    reclaimed_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (target_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        process_runtime_limits.process_capacity == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return true;
+    }
+    for (uint64_t scan_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+         scan_index < process_runtime_limits.process_capacity &&
+         reclaimed_page_count < target_page_count;
+         ++scan_index) {
+        const uint64_t process_index =
+            (anonymous_reclaim_process_cursor + scan_index) %
+            process_runtime_limits.process_capacity;
+        ProcessRuntimeProcess &process = runtime_processes[process_index];
+        if (!process.active || process.address_space.root_physical_address ==
+                                   OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+            process.result.process_id == OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID) {
+            continue;
+        }
+        uint64_t protected_stack_page_address = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        bool multiple_stack_pages = false;
+        for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+             thread_index < process_runtime_limits.thread_capacity; ++thread_index) {
+            if (!runtime_threads[thread_index].active ||
+                runtime_threads[thread_index].saved_frame == nullptr) {
+                continue;
+            }
+            ThreadEntry scheduler_thread{};
+            if (thread_scheduler.ReadThread(thread_index, scheduler_thread) !=
+                ThreadSchedulerStatus::Succeeded) {
+                return false;
+            }
+            if (scheduler_thread.process_index != process_index) {
+                continue;
+            }
+            const uint64_t stack_page_address =
+                AsUserContext(*runtime_threads[thread_index].saved_frame).stack_pointer &
+                ~OS_KERNEL_PROCESS_RUNTIME_PAGE_MASK;
+            if (protected_stack_page_address == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+                protected_stack_page_address = stack_page_address;
+            } else if (protected_stack_page_address != stack_page_address) {
+                multiple_stack_pages = true;
+                break;
+            }
+        }
+        if (multiple_stack_pages) {
+            continue;
+        }
+        const uint64_t remaining_page_count = target_page_count - reclaimed_page_count;
+        const uint64_t process_excluded_virtual_address =
+            &process.address_space == &requester ? excluded_virtual_address
+                                                 : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        uint64_t process_reclaimed_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        if (ReclaimUserAnonymousPages(process.address_space, remaining_page_count,
+                                      process_excluded_virtual_address,
+                                      protected_stack_page_address,
+                                      process_reclaimed_page_count) !=
+                UserVirtualMemoryStatus::Succeeded ||
+            reclaimed_page_count > UINT64_MAX - process_reclaimed_page_count) {
+            return false;
+        }
+        reclaimed_page_count += process_reclaimed_page_count;
+        process.result.mapped_page_count = process.address_space.mapped_page_count;
+    }
+    anonymous_reclaim_process_cursor =
+        (anonymous_reclaim_process_cursor + OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT) %
+        process_runtime_limits.process_capacity;
+    return true;
+}
+
+[[nodiscard]] bool RecoverRuntimeOutOfMemory(void *const context,
+                                             UserAddressSpace &requester,
+                                             const bool allow_current_victim) noexcept {
+    static_cast<void>(context);
+    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         process_index < process_runtime_limits.process_capacity; ++process_index) {
+        if (runtime_processes[process_index].active &&
+            &runtime_processes[process_index].address_space == &requester) {
+            return TryRecoverFromOutOfMemory(process_index, allow_current_victim);
+        }
+    }
+    return false;
+}
+
+[[nodiscard]] FileSystemStatus BalanceRuntimeFileWritebackPressure() noexcept {
+    if (!UserFileWritebackBackpressureRequired()) {
+        return FileSystemStatus::Succeeded;
+    }
+    RecordUserFileWritebackBackpressure();
+    if (UserFileWritebackWorkerPaused() || !ProtectRuntimeSharedFileMappings()) {
+        return UserFileWritebackWorkerPaused() ? FileSystemStatus::DeviceFailure
+                                               : FileSystemStatus::Corrupt;
+    }
+    uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus status = RunUserFileWritebackWorker(written_page_count);
+    if (status != UserVirtualMemoryStatus::Succeeded) {
+        return status == UserVirtualMemoryStatus::FileWriteFailed
+                   ? FileSystemStatus::DeviceFailure
+                   : FileSystemStatus::Corrupt;
+    }
+    return !UserFileWritebackBackpressureRequired() ||
+                   written_page_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE
+               ? FileSystemStatus::Succeeded
+               : FileSystemStatus::DeviceFailure;
 }
 
 [[nodiscard]] bool FlushOutstandingUserFilePages() noexcept {
@@ -2528,6 +2675,15 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
         return ProcessRuntimeStatus::DescriptorTableFailure;
     }
     ResetRuntimeStorage();
+    anonymous_reclaim_process_cursor = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!ConfigureUserMemoryReclaimOperations(UserMemoryReclaimOperations{
+            .protect_shared_mappings = ProtectRuntimeSharedFileMappingsForReclaim,
+            .reclaim_anonymous_pages = ReclaimRuntimeAnonymousPages,
+            .recover_out_of_memory = RecoverRuntimeOutOfMemory,
+            .context = nullptr,
+        })) {
+        return ProcessRuntimeStatus::AddressSpaceFailure;
+    }
     frames_before_processes = GetPhysicalFrameAllocatorStatistics();
     frames_after_processes = PhysicalFrameAllocatorStatistics{};
     virtual_addresses_before_processes = GetKernelVirtualAddressAllocator().Statistics();
@@ -2606,6 +2762,10 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     oom_kill_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     last_oom_victim_process_id = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     last_oom_victim_score = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    file_synchronization_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    file_data_synchronization_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    memory_synchronous_synchronization_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    memory_asynchronous_synchronization_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     current_process_oom_kill_pending = false;
     process_vfs = nullptr;
     process_runtime_initialized = true;
@@ -4569,12 +4729,19 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .resource_snapshot_after_processes = resource_snapshot_after_processes,
         .resource_snapshot_difference = resource_snapshot_difference,
         .memory_pressure = GetUserMemoryPressureStatistics(),
+        .memory_reclaim = GetUserMemoryReclaimStatistics(),
         .memory_overcommit = GetUserMemoryOvercommitStatistics(),
         .swap = GetUserSwapStatistics(),
         .oom_invocation_count = oom_invocation_count,
         .oom_kill_count = oom_kill_count,
         .last_oom_victim_process_id = last_oom_victim_process_id,
         .last_oom_victim_score = last_oom_victim_score,
+        .file_synchronization_count = file_synchronization_count,
+        .file_data_synchronization_count = file_data_synchronization_count,
+        .memory_synchronous_synchronization_count =
+            memory_synchronous_synchronization_count,
+        .memory_asynchronous_synchronization_count =
+            memory_asynchronous_synchronization_count,
         .ipc =
             ProcessIpcStatistics{
                 .pipe = process_pipe.Statistics(),
@@ -5157,6 +5324,12 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         .pipe_manager = nullptr,
         .vfs = process_vfs,
         .open_file = open_file,
+        .writeback_identity = terminal_device ? FileIdentity{}
+                                              : FileIdentityFromVnode(open_file.path.vnode),
+        .writeback_error_register_operation =
+            terminal_device ? nullptr : RegisterUserFileWritebackDescription,
+        .writeback_error_unregister_operation =
+            terminal_device ? nullptr : UnregisterUserFileWritebackDescription,
     };
     KernelObjectReference reference{};
     if (file_description_manager.Create(request, reference) != FileDescriptionStatus::Succeeded) {
@@ -5239,6 +5412,13 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
     }
     FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
     PipeStatus pipe_status = PipeStatus::Succeeded;
+    if (snapshot.kind == FileDescriptionKind::RegularFile &&
+        length_bytes != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        const FileSystemStatus balance_status = BalanceRuntimeFileWritebackPressure();
+        if (balance_status != FileSystemStatus::Succeeded) {
+            return balance_status;
+        }
+    }
     const FileDescriptionStatus status = file_description_manager.TryWrite(
         reference, source, length_bytes, written_bytes, file_system_status, pipe_status);
     if (status == FileDescriptionStatus::Succeeded) {
@@ -5421,23 +5601,8 @@ FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
     if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
-    for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
-         process_index < process_runtime_limits.process_capacity; ++process_index) {
-        if (!runtime_processes[process_index].active ||
-            runtime_processes[process_index].address_space.root_physical_address ==
-                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
-            continue;
-        }
-        const UserVirtualMemoryStatus protect_status =
-            ProtectUserSharedFileMappings(runtime_processes[process_index].address_space);
-        if (protect_status != UserVirtualMemoryStatus::Succeeded) {
-            WriteProcessRuntimeValue(
-                OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_PROCESS_PREFIX, process_index);
-            WriteProcessRuntimeValue(
-                OS_KERNEL_PROCESS_RUNTIME_FILE_CACHE_PROTECT_FAILURE_STATUS_PREFIX,
-                static_cast<uint64_t>(protect_status));
-            return FileSystemStatus::Corrupt;
-        }
+    if (!ProtectRuntimeSharedFileMappings()) {
+        return FileSystemStatus::Corrupt;
     }
     uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     const UserVirtualMemoryStatus writeback_status =
@@ -5453,6 +5618,116 @@ FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
     WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_SYSTEM_SYNC_STATUS_PREFIX,
                              static_cast<uint64_t>(sync_status));
     return fs::ToFileSystemStatus(sync_status);
+}
+
+FileSystemStatus SynchronizeCurrentProcessFile(const uint64_t file_descriptor,
+                                               const bool data_only) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    uint64_t &synchronization_count =
+        data_only ? file_data_synchronization_count : file_synchronization_count;
+    if (synchronization_count == UINT64_MAX) {
+        return FileSystemStatus::Corrupt;
+    }
+    ++synchronization_count;
+    KernelObjectReference reference{};
+    if (CurrentRuntimeProcess().file_table.Lookup(file_descriptor, reference) !=
+        FileTableStatus::Succeeded) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    FileIdentity identity{};
+    uint64_t sampled_sequence = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (file_description_manager.ReadSynchronizationState(reference, identity,
+                                                          sampled_sequence) !=
+            FileDescriptionStatus::Succeeded) {
+        return FileSystemStatus::Unsupported;
+    }
+    if (!ProtectRuntimeSharedFileMappings()) {
+        return FileSystemStatus::Corrupt;
+    }
+    uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus writeback_status = WritebackUserFilePageCacheRange(
+        identity, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, UINT64_MAX, UINT64_MAX,
+        written_page_count);
+    uint64_t current_sequence = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    FileWritebackError writeback_error = FileWritebackError::None;
+    if (CheckUserFileWritebackError(identity, sampled_sequence, current_sequence,
+                                    writeback_error) != UserVirtualMemoryStatus::Succeeded ||
+        file_description_manager.AdvanceWritebackErrorCursor(reference, current_sequence) !=
+            FileDescriptionStatus::Succeeded) {
+        return FileSystemStatus::Corrupt;
+    }
+    if (writeback_error != FileWritebackError::None ||
+        writeback_status == UserVirtualMemoryStatus::FileWriteFailed) {
+        return FileSystemStatus::DeviceFailure;
+    }
+    if (writeback_status != UserVirtualMemoryStatus::Succeeded) {
+        return FileSystemStatus::Corrupt;
+    }
+    return fs::ToFileSystemStatus(process_vfs->Sync());
+}
+
+FileSystemStatus SynchronizeCurrentProcessMemory(const uint64_t address,
+                                                 const uint64_t length_bytes,
+                                                 const uint64_t flags) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    const bool asynchronous =
+        (flags & os::abi::OS_ABI_MEMORY_SYNC_ASYNCHRONOUS) !=
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const bool synchronous =
+        (flags & os::abi::OS_ABI_MEMORY_SYNC_SYNCHRONOUS) !=
+        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if ((flags & ~os::abi::OS_ABI_MEMORY_SYNC_VALID_FLAG_MASK) !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        asynchronous == synchronous) {
+        return FileSystemStatus::InvalidArgument;
+    }
+    uint64_t &synchronization_count = synchronous
+                                          ? memory_synchronous_synchronization_count
+                                          : memory_asynchronous_synchronization_count;
+    if (synchronization_count == UINT64_MAX) {
+        return FileSystemStatus::Corrupt;
+    }
+    ++synchronization_count;
+    if (synchronous && !ProtectRuntimeSharedFileMappings()) {
+        return FileSystemStatus::Corrupt;
+    }
+    uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus status = SynchronizeUserFileMappings(
+        CurrentRuntimeProcess().address_space, address, length_bytes, synchronous,
+        written_page_count);
+    if (status == UserVirtualMemoryStatus::FileWriteFailed) {
+        return FileSystemStatus::DeviceFailure;
+    }
+    if (status == UserVirtualMemoryStatus::InvalidRange) {
+        return FileSystemStatus::InvalidArgument;
+    }
+    if (status != UserVirtualMemoryStatus::Succeeded) {
+        return FileSystemStatus::Corrupt;
+    }
+    return synchronous ? fs::ToFileSystemStatus(process_vfs->Sync())
+                       : FileSystemStatus::Succeeded;
+}
+
+FileSystemStatus ServiceRuntimeFileWritebackWorker() noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    if (!UserFileWritebackWorkerRequested()) {
+        return FileSystemStatus::Succeeded;
+    }
+    if (!ProtectRuntimeSharedFileMappings()) {
+        return FileSystemStatus::Corrupt;
+    }
+    uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus status = RunUserFileWritebackWorker(written_page_count);
+    return status == UserVirtualMemoryStatus::Succeeded ? FileSystemStatus::Succeeded
+           : status == UserVirtualMemoryStatus::FileWriteFailed
+               ? FileSystemStatus::DeviceFailure
+               : FileSystemStatus::Corrupt;
 }
 
 FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
@@ -5569,6 +5844,14 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
         const uint64_t available_bytes = file_size_limit - write_offset;
         if (effective_length_bytes > available_bytes) {
             effective_length_bytes = available_bytes;
+        }
+    }
+    if (snapshot.kind == FileDescriptionKind::RegularFile &&
+        effective_length_bytes != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        const FileSystemStatus balance_status = BalanceRuntimeFileWritebackPressure();
+        if (balance_status != FileSystemStatus::Succeeded) {
+            file_system_status = balance_status;
+            return ProcessIoStatus::FileSystemFailure;
         }
     }
     PipeStatus pipe_status = PipeStatus::Succeeded;
@@ -6302,7 +6585,8 @@ ResolveCurrentProcessUserReturnMemory(const uint64_t instruction_pointer,
     return true;
 }
 
-[[nodiscard]] bool TryRecoverFromOutOfMemory(const uint64_t current_process_index) noexcept {
+[[nodiscard]] static bool TryRecoverFromOutOfMemory(const uint64_t current_process_index,
+                                                    const bool allow_current_victim) noexcept {
     if (oom_invocation_count == UINT64_MAX) {
         return false;
     }
@@ -6324,8 +6608,11 @@ ResolveCurrentProcessUserReturnMemory(const uint64_t instruction_pointer,
                 eligible ? runtime_processes[process_index].address_space.swapped_page_count
                          : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
             .score_adjustment = 0LL,
-            .protected_process = eligible && runtime_processes[process_index].result.process_id ==
-                                                 OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID,
+            .protected_process =
+                eligible &&
+                (runtime_processes[process_index].result.process_id ==
+                     OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID ||
+                 (!allow_current_victim && process_index == current_process_index)),
             .active = eligible,
         };
     }
@@ -6355,11 +6642,6 @@ bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_a
     if (!process_scheduling_active || !CurrentFrameIsValid(thread_index, frame)) {
         return false;
     }
-    ThreadEntry current_thread{};
-    if (thread_scheduler.ReadThread(thread_index, current_thread) !=
-        ThreadSchedulerStatus::Succeeded) {
-        return false;
-    }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
     if (fault_address >= OS_KERNEL_USER_STACK_BOTTOM_VIRTUAL_ADDRESS &&
         fault_address < OS_KERNEL_USER_STACK_TOP_VIRTUAL_ADDRESS) {
@@ -6374,13 +6656,8 @@ bool HandleCurrentProcessPageFault(ExceptionFrame &frame, const uint64_t fault_a
         process.address_space.stack_growth_page_fault_count;
     const uint64_t previous_file_fault_count = process.address_space.file_page_fault_count;
     const uint64_t previous_page_cache_hit_count = process.address_space.page_cache_hit_count;
-    UserPageFaultStatus status = HandleUserPageFault(
+    const UserPageFaultStatus status = HandleUserPageFault(
         process.address_space, fault_address, frame.error_code, AsUserContext(frame).stack_pointer);
-    if (status == UserPageFaultStatus::PageAllocationFailed &&
-        TryRecoverFromOutOfMemory(current_thread.process_index)) {
-        status = HandleUserPageFault(process.address_space, fault_address, frame.error_code,
-                                     AsUserContext(frame).stack_pointer);
-    }
     if (status != UserPageFaultStatus::Handled) {
         return false;
     }

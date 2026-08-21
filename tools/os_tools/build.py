@@ -5,6 +5,7 @@ from .process import runCommand
 
 OS_BUILD_CMAKE_PRESET = "developer"
 OS_BUILD_CTEST_PRESET = "developer"
+OS_BUILD_CTEST_PARALLEL_JOB_COUNT = 20
 OS_BUILD_TEST_LAYERS = (
     "unit",
     "integration",
@@ -44,6 +45,8 @@ def testProject(projectRoot: Path, layer: str | None = None) -> None:
         "ctest",
         "--preset",
         OS_BUILD_CTEST_PRESET,
+        "--parallel",
+        str(OS_BUILD_CTEST_PARALLEL_JOB_COUNT),
     ]
     if layer is not None:
         command.extend(["--label-regex", f"^{layer}$"])

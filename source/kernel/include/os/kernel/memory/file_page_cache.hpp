@@ -25,6 +25,7 @@ using FilePageWriteOperation = bool (*)(void *context, const FilePageIdentity &i
 
 enum class FilePageCacheEntryState : uint64_t {
     Empty,
+    Loading,
     Clean,
     Dirty,
     Writeback,
@@ -45,6 +46,9 @@ struct FilePageCacheStatistics final {
     uint64_t referenced_page_count;
     uint64_t active_mapping_reference_count;
     uint64_t peak_resident_page_count;
+    uint64_t loading_page_count;
+    uint64_t loading_collision_count;
+    uint64_t unlocked_fill_count;
     uint64_t hit_count;
     uint64_t miss_count;
     uint64_t successful_load_count;
@@ -53,6 +57,8 @@ struct FilePageCacheStatistics final {
     uint64_t invalidation_count;
     uint64_t successful_acquire_count;
     uint64_t release_count;
+    uint64_t background_dirty_page_threshold;
+    uint64_t background_dirty_page_target;
     uint64_t dirty_page_limit;
     uint64_t dirty_page_count;
     uint64_t writeback_page_count;
@@ -69,6 +75,11 @@ struct FilePageCacheStatistics final {
     uint64_t truncate_count;
     uint64_t truncated_page_count;
     uint64_t truncated_tail_zero_count;
+    uint64_t background_writeback_request_count;
+    uint64_t explicit_background_writeback_request_count;
+    uint64_t dirty_backpressure_count;
+    bool background_writeback_requested;
+    bool background_writeback_paused;
 };
 
 enum class FilePageCacheStatus : uint64_t {
@@ -119,6 +130,12 @@ class FilePageCache final {
                                                 FilePageWriteOperation write_operation,
                                                 uint64_t maximum_page_count,
                                                 uint64_t &written_page_count) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    WritebackFile(const FileIdentity &identity, uint64_t first_page_index,
+                  uint64_t last_page_index, void *writer_context,
+                  FilePageWriteOperation write_operation, uint64_t maximum_page_count,
+                  uint64_t &written_page_count) noexcept;
+    [[nodiscard]] FilePageCacheStatus RequestBackgroundWriteback() noexcept;
     [[nodiscard]] FilePageCacheStatus Invalidate(const FileIdentity &identity) noexcept;
     [[nodiscard]] FilePageCacheStatus ObserveFileSize(const FileIdentity &identity,
                                                       uint64_t size_bytes) noexcept;
@@ -132,6 +149,9 @@ class FilePageCache final {
     [[nodiscard]] FilePageCacheStatus
     ReadAddressSpaceStatistics(const FileIdentity &identity,
                                FileCacheAddressSpaceStatistics &statistics) const noexcept;
+    [[nodiscard]] bool BackgroundWritebackRequested() const noexcept;
+    [[nodiscard]] bool DirtyBackpressureRequired() const noexcept;
+    [[nodiscard]] bool BackgroundWritebackPaused() const noexcept;
     [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count,
                                            uint64_t &reclaimed_page_count) noexcept;
@@ -160,6 +180,16 @@ class FilePageCache final {
                                             uint64_t &physical_address) noexcept;
     [[nodiscard]] FilePageCacheStatus
     SelectWritebackCandidate(AddressSpaceRecord *&record, FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] FilePageCacheStatus SelectWritebackCandidateInRange(
+        const FileIdentity &identity, uint64_t first_page_index, uint64_t last_page_index,
+        AddressSpaceRecord *&record, FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    WritebackInternal(const FileIdentity *identity, uint64_t first_page_index,
+                      uint64_t last_page_index, void *writer_context,
+                      FilePageWriteOperation write_operation, uint64_t maximum_page_count,
+                      uint64_t &written_page_count) noexcept;
+    [[nodiscard]] bool OutstandingDirtyPageCount(uint64_t &page_count) const noexcept;
+    void RefreshBackgroundWritebackRequest() noexcept;
     [[nodiscard]] FilePageCacheStatus
     MapAddressSpaceStatus(FileCacheAddressSpaceStatus status) const noexcept;
     [[nodiscard]] static FilePageCacheEntryState MapPageState(FileCachePageState state) noexcept;
@@ -169,12 +199,17 @@ class FilePageCache final {
     KernelHeap *metadata_heap_{nullptr};
     AddressSpaceRecord *address_spaces_{nullptr};
     uint64_t capacity_{};
+    uint64_t background_dirty_page_threshold_{};
+    uint64_t background_dirty_page_target_{};
     uint64_t dirty_page_limit_{};
     PhysicalFrameAllocator *frame_allocator_{nullptr};
     void *page_access_context_{nullptr};
     FilePageAccessOperation page_access_operation_{nullptr};
     uint64_t access_generation_{};
     FilePageCacheStatistics statistics_{};
+    bool background_writeback_requested_{};
+    bool background_writeback_paused_{};
+    bool forced_background_writeback_requested_{};
     mutable SpinLock lock_{};
     bool initialized_{};
 };

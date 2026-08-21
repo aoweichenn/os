@@ -20,7 +20,7 @@ constexpr std::string_view OS_TEST_FILE_CACHE_ADDRESS_SPACE_RECLAIM =
 constexpr std::string_view OS_TEST_FILE_CACHE_ADDRESS_SPACE_ROLLBACK =
     "节点分配失败必须回滚全部未发布分支且不保留条目";
 constexpr std::string_view OS_TEST_FILE_CACHE_ADDRESS_SPACE_STATES =
-    "文件缓存地址空间必须冻结引用和 Clean/Dirty/Writeback/Error 转换";
+    "文件缓存地址空间必须冻结 Loading 和 Clean/Dirty/Writeback/Error 转换";
 constexpr std::string_view OS_TEST_FILE_CACHE_ADDRESS_SPACE_DESTROY =
     "地址空间清空销毁后必须恢复堆活动分配基线";
 
@@ -41,6 +41,7 @@ constexpr uint64_t OS_TEST_FILE_CACHE_ADDRESS_SPACE_NODE_IDENTIFIER = 71ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_ADDRESS_SPACE_NODE_GENERATION = 11ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_ADDRESS_SPACE_FIRST_PHYSICAL_ADDRESS = 0x1000ULL;
 constexpr uint64_t OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_PHYSICAL_ADDRESS = 0x2000ULL;
+constexpr uint64_t OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS = 0x3000ULL;
 
 alignas(OS_TEST_FILE_CACHE_ADDRESS_SPACE_ALIGNMENT_BYTES) uint8_t
     index_heap_storage[OS_TEST_FILE_CACHE_ADDRESS_SPACE_HEAP_SIZE_BYTES]{};
@@ -208,6 +209,26 @@ int main() {
             os::kernel::FileCacheAddressSpaceStatus::Succeeded;
     bool state_contract_valid =
         address_space_initialized &&
+        address_space.Insert(OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_LEAF_INDEX,
+                             OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS,
+                             os::kernel::FileCachePageState::Loading) ==
+            os::kernel::FileCacheAddressSpaceStatus::Succeeded &&
+        address_space.Retain(OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_LEAF_INDEX,
+                             OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS) ==
+            os::kernel::FileCacheAddressSpaceStatus::PageBusy &&
+        address_space.Remove(OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_LEAF_INDEX,
+                             OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS) ==
+            os::kernel::FileCacheAddressSpaceStatus::PageBusy &&
+        address_space.Transition(OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_LEAF_INDEX,
+                                 OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS,
+                                 os::kernel::FileCachePageState::Loading,
+                                 os::kernel::FileCachePageState::Dirty) ==
+            os::kernel::FileCacheAddressSpaceStatus::InvalidState &&
+        address_space.Transition(OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_LEAF_INDEX,
+                                 OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS,
+                                 os::kernel::FileCachePageState::Loading,
+                                 os::kernel::FileCachePageState::Clean) ==
+            os::kernel::FileCacheAddressSpaceStatus::Succeeded &&
         address_space.Insert(OS_TEST_FILE_CACHE_ADDRESS_SPACE_FIRST_INDEX,
                              OS_TEST_FILE_CACHE_ADDRESS_SPACE_FIRST_PHYSICAL_ADDRESS,
                              os::kernel::FileCachePageState::Clean) ==
@@ -280,6 +301,9 @@ int main() {
     test_context.Expect(state_contract_valid, OS_TEST_FILE_CACHE_ADDRESS_SPACE_STATES);
 
     const bool address_space_destroyed =
+        address_space.Remove(OS_TEST_FILE_CACHE_ADDRESS_SPACE_SECOND_LEAF_INDEX,
+                             OS_TEST_FILE_CACHE_ADDRESS_SPACE_THIRD_PHYSICAL_ADDRESS) ==
+            os::kernel::FileCacheAddressSpaceStatus::Succeeded &&
         address_space.Remove(OS_TEST_FILE_CACHE_ADDRESS_SPACE_FIRST_INDEX,
                              OS_TEST_FILE_CACHE_ADDRESS_SPACE_FIRST_PHYSICAL_ADDRESS) ==
             os::kernel::FileCacheAddressSpaceStatus::Succeeded &&

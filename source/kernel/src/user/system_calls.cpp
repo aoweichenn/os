@@ -851,6 +851,21 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     return resume_frame;
 }
 
+[[nodiscard]] int64_t DispatchSynchronizeFile(const uint64_t descriptor,
+                                              const bool data_only) noexcept {
+    return MapFileSystemStatus(
+        SynchronizeCurrentProcessFile(descriptor, data_only),
+        static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
+}
+
+[[nodiscard]] int64_t DispatchSynchronizeMemory(const uint64_t address,
+                                                const uint64_t length_bytes,
+                                                const uint64_t flags) noexcept {
+    return MapFileSystemStatus(
+        SynchronizeCurrentProcessMemory(address, length_bytes, flags),
+        static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
+}
+
 [[nodiscard]] int64_t DispatchTryReadDescriptor(const uint64_t descriptor,
                                                 const uint64_t user_address,
                                                 const uint64_t capacity_bytes) noexcept {
@@ -2375,6 +2390,24 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
             frame->register_rdi, frame->register_rsi, frame->register_rdx));
         return frame;
     }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeFile)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchSynchronizeFile(frame->register_rdi, false));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeFileData)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchSynchronizeFile(frame->register_rdi, true));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeMemory)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchSynchronizeMemory(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx));
+        return frame;
+    }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);
     return frame;
 }
@@ -2395,6 +2428,11 @@ extern "C" ExceptionFrame *OsKernelDispatchSystemCall(ExceptionFrame *frame) noe
 
 extern "C" ExceptionFrame *OsKernelPrepareUserReturn(ExceptionFrame *frame) noexcept {
     if (frame == nullptr) {
+        HaltProcessor();
+    }
+    const FileSystemStatus writeback_status = ServiceRuntimeFileWritebackWorker();
+    if (writeback_status != FileSystemStatus::Succeeded &&
+        writeback_status != FileSystemStatus::DeviceFailure) {
         HaltProcessor();
     }
     ExceptionFrame *resume_frame = frame;

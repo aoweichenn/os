@@ -307,6 +307,39 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - `sync` 必须先重新写保护 writable shared PTE，再把 Dirty/Error 页经
   `WriteUncachedAt` 写入，释放已无脏页的 writeback 打开引用，最后执行文件系统与
   设备 flush；失败页保持 Error，不能报告稳定成功。
+- 第四增量后 cache miss 必须先发布唯一 Loading 身份并在全局 cache lock 外执行
+  source read；成功只允许 Loading→Clean，失败必须移除 entry、frame 和空地址空间；
+- Loading 页不得映射、脏化、淘汰、truncate 或 writeback；同页冲突不得启动第二次
+  后端读取。单 BSP 同步 I/O 可返回 Busy，未来可睡眠 I/O 才允许接 waiter；
+- Dirty 后台水位、硬水位和回落目标分别采用约 10%、20%、5% 的容量比例，计算必须
+  对小容量至少保留一个后台阈值，Dirty+Writeback+Error 共同计入硬水位；
+- 软水位请求必须合并，worker 每次最多写回 64 页并持续到目标水位；worker 只能在
+  非 IRQ 用户返回安全点运行，每批前写保护全部 writable shared alias；
+- 普通 write 发现硬水位时必须先执行有界平衡；后台写回失败保留 Error 并暂停自动
+  重试，不能在每次用户返回时忙循环，显式全局 sync 可以重新尝试。
+- 第五增量的写回错误必须按稳定文件身份形成单调序列；每个独立 open 采样自己的
+  游标，duplicate/fork 共享 FileDescription 游标。一次错误向同一打开实例最多报告
+  一次，错误发生后才打开的实例不得继承该历史错误；
+- `fsync`/`fdatasync` 必须只选择目标文件的 Dirty/Error 页，写回后检查并推进该
+  FileDescription 的错误游标，再执行 VFS metadata 与设备 Flush。当前 fdatasync
+  可以安全地多刷新 metadata，但不得少刷新文件大小和读取数据所需信息；
+- `msync` 地址必须页对齐、长度非零且完整覆盖 file-backed VMA；flags 必须恰含一个
+  ASYNC/SYNC，可附加 INVALIDATE。MAP_PRIVATE 不回写，MAP_SHARED 只写指定文件页范围；
+- MS_ASYNC 只排队并由有界 safe-point worker 推进，不能把整个范围同步写完后伪称
+  异步；MS_SYNC 返回成功前必须完成范围写回和设备 Flush；
+- ABI 2.4.0 只在 84 后追加 85..87，旧系统调用编号、结构布局、rootfs v4 和错误区间
+  -1..-59 均保持不变。
+- 第六增量的 direct reclaim 必须固定执行 clean file trim、dirty/error writeback 后
+  trim、anonymous swap；任一 I/O 阶段失败不得伪装成 OOM，无进展必须有限终止；
+- 回收成功后必须从物理分配器重新同步 resident 账本并只重试一次原分配；仍无法满足
+  时才允许 OOM。非当前 victim 完整释放后重试，当前 victim 只在 page-fault frame
+  上走 SIGKILL；
+- 跨进程匿名回收必须保存轮转游标和每地址空间扫描游标，单轮最多扫描 65536 页；
+  PID1、当前 fault 页和活动用户返回栈页不得换出，多用户栈地址空间保守跳过；
+- 4 GiB reclaim-pressure 门禁必须使用 `-mem-prealloc`、完整生产 rootfs 和真实交换盘；
+  测试驻留 limit 只能在 PID1 建立并同步真实 resident 后降低，不能用伪造页计数；
+- 压力门禁必须观察 clean reclaimed、dirty written/reclaimed、anonymous swapped 非零，
+  no-progress、writeback failure、swap checksum failure 和最终 active swap 均为零。
 
 ## v2.0 完成基线
 

@@ -109,6 +109,8 @@ class MemoryPressureController final {
     [[nodiscard]] MemoryPressureStatus ReleaseResident(uint64_t page_count) noexcept;
     [[nodiscard]] MemoryPressureStatus SynchronizeResident(uint64_t observed_page_count) noexcept;
     [[nodiscard]] MemoryPressureStatus ConfigureSwap(uint64_t swap_page_count) noexcept;
+    [[nodiscard]] MemoryPressureStatus
+    ConfigureResidentLimit(uint64_t resident_limit_page_count) noexcept;
     [[nodiscard]] MemoryPressureStatus RecordReclaim(uint64_t reclaimed_page_count) noexcept;
     [[nodiscard]] MemoryPressureStatistics Statistics() const noexcept;
     [[nodiscard]] MemoryPressureStatus Validate() const noexcept;
@@ -144,6 +146,36 @@ enum class MemoryReclaimPlanStatus : uint64_t {
 
 [[nodiscard]] MemoryReclaimPlanStatus PlanMemoryReclaim(const MemoryReclaimInput &input,
                                                         MemoryReclaimPlan &plan) noexcept;
+
+using MemoryReclaimOperation = bool (*)(void *context, uint64_t requested_page_count,
+                                        uint64_t &reclaimed_page_count) noexcept;
+
+struct MemoryReclaimOperations final {
+    MemoryReclaimOperation reclaim_clean_file_pages;
+    MemoryReclaimOperation writeback_and_reclaim_file_pages;
+    MemoryReclaimOperation swap_out_anonymous_pages;
+};
+
+struct MemoryReclaimExecutionResult final {
+    uint64_t clean_file_page_count;
+    uint64_t reclaimed_written_file_page_count;
+    uint64_t swapped_anonymous_page_count;
+    uint64_t reclaimed_page_count;
+};
+
+enum class MemoryReclaimExecutionStatus : uint64_t {
+    Succeeded,
+    InvalidOperations,
+    CleanReclaimFailed,
+    FileWritebackFailed,
+    AnonymousSwapFailed,
+    CounterOverflow,
+    NoProgress,
+};
+
+[[nodiscard]] MemoryReclaimExecutionStatus ExecuteMemoryReclaim(
+    const MemoryReclaimPlan &plan, const MemoryReclaimOperations &operations, void *context,
+    MemoryReclaimExecutionResult &result) noexcept;
 
 struct MemoryOvercommitConfiguration final {
     MemoryOvercommitMode mode;

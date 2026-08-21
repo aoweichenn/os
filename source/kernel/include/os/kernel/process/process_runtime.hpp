@@ -231,12 +231,17 @@ struct ProcessRuntimeStatistics final {
     ResourceSnapshot resource_snapshot_after_processes;
     ResourceSnapshotDifference resource_snapshot_difference;
     MemoryPressureStatistics memory_pressure;
+    UserMemoryReclaimStatistics memory_reclaim;
     MemoryOvercommitStatistics memory_overcommit;
     SwapManagerStatistics swap;
     uint64_t oom_invocation_count;
     uint64_t oom_kill_count;
     uint64_t last_oom_victim_process_id;
     uint64_t last_oom_victim_score;
+    uint64_t file_synchronization_count;
+    uint64_t file_data_synchronization_count;
+    uint64_t memory_synchronous_synchronization_count;
+    uint64_t memory_asynchronous_synchronization_count;
     ProcessIpcStatistics ipc;
     UserThreadRuntimeStatistics user_threads;
     PrivateFutexStatistics private_futexes;
@@ -429,6 +434,12 @@ ReadCurrentProcessSymbolicLink(const uint8_t *path, uint64_t path_length_bytes,
                                uint8_t *destination, uint64_t capacity_bytes,
                                uint64_t &target_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
+[[nodiscard]] FileSystemStatus SynchronizeCurrentProcessFile(uint64_t file_descriptor,
+                                                             bool data_only) noexcept;
+[[nodiscard]] FileSystemStatus SynchronizeCurrentProcessMemory(uint64_t address,
+                                                               uint64_t length_bytes,
+                                                               uint64_t flags) noexcept;
+[[nodiscard]] FileSystemStatus ServiceRuntimeFileWritebackWorker() noexcept;
 [[nodiscard]] FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus

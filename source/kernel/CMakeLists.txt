@@ -73,6 +73,7 @@ set(
     include/os/kernel/memory/file_cache_address_space.hpp
     include/os/kernel/memory/file_cache_identity.hpp
     include/os/kernel/memory/file_page_cache.hpp
+    include/os/kernel/memory/file_writeback_error_tracker.hpp
     include/os/kernel/memory/kernel_heap.hpp
     include/os/kernel/memory/kernel_stack_manager.hpp
     include/os/kernel/memory/kernel_type_cache.hpp
@@ -215,6 +216,7 @@ set(
     src/memory/file_cache_address_space.cpp
     src/memory/file_cache_identity.cpp
     src/memory/file_page_cache.cpp
+    src/memory/file_writeback_error_tracker.cpp
     src/memory/kernel_heap.cpp
     src/memory/kernel_stack_manager.cpp
     src/memory/kernel_type_cache.cpp
@@ -360,6 +362,7 @@ add_library(
         src/memory/file_cache_address_space.cpp
         src/memory/file_cache_identity.cpp
         src/memory/file_page_cache.cpp
+        src/memory/file_writeback_error_tracker.cpp
         src/memory/kernel_heap.cpp
         src/memory/kernel_stack_manager.cpp
         src/memory/kernel_type_cache.cpp
@@ -379,6 +382,7 @@ add_library(
         include/os/kernel/memory/file_page_cache.hpp
         include/os/kernel/memory/file_cache_address_space.hpp
         include/os/kernel/memory/file_cache_identity.hpp
+        include/os/kernel/memory/file_writeback_error_tracker.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/memory/kernel_stack_manager.hpp
         include/os/kernel/memory/kernel_type_cache.hpp
@@ -539,6 +543,7 @@ add_library(
         src/ipc/pipe.cpp
         src/ipc/pipe_manager.cpp
         src/memory/file_cache_identity.cpp
+        src/memory/file_writeback_error_tracker.cpp
         src/memory/kernel_heap.cpp
         src/object/kernel_object.cpp
         src/security/credentials.cpp
@@ -561,6 +566,7 @@ add_library(
         include/os/kernel/ipc/pipe.hpp
         include/os/kernel/ipc/pipe_manager.hpp
         include/os/kernel/memory/file_cache_identity.hpp
+        include/os/kernel/memory/file_writeback_error_tracker.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/object/kernel_object.hpp
         include/os/kernel/security/credentials.hpp
@@ -904,6 +910,10 @@ os_add_kernel_object_target(
     os_kernel_nvme_timeout_objects
     "${PROJECT_SOURCE_DIR}/tests/system/kernel/nvme_timeout_entry.cpp"
 )
+os_add_kernel_object_target(
+    os_kernel_reclaim_pressure_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/reclaim_pressure_entry.cpp"
+)
 
 set(
     OS_KERNEL_ELF_PATH
@@ -954,6 +964,12 @@ set(
     "NVMe 命令超时恢复测试 ELF64 内核路径"
 )
 set(
+    OS_KERNEL_RECLAIM_PRESSURE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_reclaim_pressure.elf"
+    CACHE INTERNAL
+    "统一内存回收压力测试 ELF64 内核路径"
+)
+set(
     OS_KERNEL_PAYLOAD_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/kernel.payload.elf"
     CACHE INTERNAL
@@ -1000,6 +1016,12 @@ set(
     "${CMAKE_CURRENT_BINARY_DIR}/kernel_nvme_timeout.payload.elf"
     CACHE INTERNAL
     "去除调试段的 NVMe 命令超时恢复测试内核载荷路径"
+)
+set(
+    OS_KERNEL_RECLAIM_PRESSURE_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_reclaim_pressure.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的统一内存回收压力测试内核载荷路径"
 )
 
 function(
@@ -1122,6 +1144,12 @@ os_add_kernel_elf_target(
     "${OS_KERNEL_NVME_TIMEOUT_ELF_PATH}"
     "链接 NVMe 命令超时恢复测试 ELF64 内核"
 )
+os_add_kernel_elf_target(
+    os_kernel_reclaim_pressure_elf
+    os_kernel_reclaim_pressure_objects
+    "${OS_KERNEL_RECLAIM_PRESSURE_ELF_PATH}"
+    "链接统一内存回收压力测试 ELF64 内核"
+)
 
 os_add_kernel_payload_elf_target(
     os_kernel_payload_elf
@@ -1178,4 +1206,11 @@ os_add_kernel_payload_elf_target(
     "${OS_KERNEL_NVME_TIMEOUT_ELF_PATH}"
     "${OS_KERNEL_NVME_TIMEOUT_PAYLOAD_ELF_PATH}"
     "生成不含调试段的 NVMe 命令超时恢复测试内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_reclaim_pressure_payload_elf
+    os_kernel_reclaim_pressure_elf
+    "${OS_KERNEL_RECLAIM_PRESSURE_ELF_PATH}"
+    "${OS_KERNEL_RECLAIM_PRESSURE_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的统一内存回收压力测试内核载荷"
 )

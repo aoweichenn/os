@@ -1,13 +1,14 @@
-#include "memory_block_device.hpp"
-#include "os/kernel/fs/file_system.hpp"
-#include "os/kernel/fs/legacy_file_system.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/io/file_description.hpp"
-#include "os/kernel/io/file_table.hpp"
-#include "os/kernel/ipc/pipe.hpp"
-#include "os/kernel/memory/kernel_heap.hpp"
-#include "os/kernel/object/kernel_object.hpp"
-#include "test_context.hpp"
+#include <memory_block_device.hpp>
+#include <os/kernel/fs/file_system.hpp>
+#include <os/kernel/fs/legacy_file_system.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/io/file_description.hpp>
+#include <os/kernel/io/file_table.hpp>
+#include <os/kernel/ipc/pipe.hpp>
+#include <os/kernel/memory/file_writeback_error_tracker.hpp>
+#include <os/kernel/memory/kernel_heap.hpp>
+#include <os/kernel/object/kernel_object.hpp>
+#include <test_context.hpp>
 
 #include <string_view>
 
@@ -21,6 +22,8 @@ constexpr std::string_view OS_TEST_FILE_DESCRIPTION_PIPE_LIFETIME =
     "管道端点只能在最后一个文件描述引用释放时关闭";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_APPEND_ATOMICITY =
     "独立 append 文件描述每次写入都必须重新定位到当前文件尾";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_CURSOR =
+    "duplicate 必须共享写回错误游标而独立打开保持自己的采样点";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_FINALIZATION =
     "文件表销毁后文件、管道、对象和堆资源必须全部归零";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_INVALID_DIRECTORY_CONFIGURATION =
@@ -33,6 +36,7 @@ constexpr uint64_t OS_TEST_FILE_DESCRIPTION_SUPERBLOCK_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_MOUNT_CAPACITY = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES = 4ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE = 1ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_FILE_DESCRIPTOR = 3ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_INDEPENDENT_FILE_DESCRIPTOR = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_DUPLICATE_FILE_DESCRIPTOR = 5ULL;
@@ -64,6 +68,8 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD[] = {
     static_cast<uint8_t>('Y'),
 };
 
+os::kernel::FileWritebackErrorTracker *writeback_error_tracker;
+
 [[nodiscard]] bool BytesEqual(const uint8_t *const left, const uint8_t *const right,
                               const uint64_t length_bytes) noexcept {
     if (left == nullptr || right == nullptr) {
@@ -76,6 +82,20 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD[] = {
         }
     }
     return true;
+}
+
+[[nodiscard]] bool RegisterWritebackDescription(
+    const os::kernel::FileCacheIdentity &identity, uint64_t &sampled_sequence) noexcept {
+    return writeback_error_tracker != nullptr &&
+           writeback_error_tracker->Register(identity, sampled_sequence) ==
+               os::kernel::FileWritebackErrorTrackerStatus::Succeeded;
+}
+
+[[nodiscard]] bool UnregisterWritebackDescription(
+    const os::kernel::FileCacheIdentity &identity) noexcept {
+    return writeback_error_tracker != nullptr &&
+           writeback_error_tracker->Unregister(identity) ==
+               os::kernel::FileWritebackErrorTrackerStatus::Succeeded;
 }
 
 [[nodiscard]] os::kernel::FileDescriptionStatus
@@ -103,6 +123,14 @@ CreateFileDescription(os::kernel::FileDescriptionManager &manager, os::kernel::f
         .pipe_manager = nullptr,
         .vfs = &vfs,
         .open_file = open_file,
+        .writeback_identity = os::kernel::FileCacheIdentity{
+            .superblock_identifier = open_file.path.vnode.superblock->identifier,
+            .superblock_generation = open_file.path.vnode.superblock->generation,
+            .node_identifier = open_file.path.vnode.identifier,
+            .node_generation = open_file.path.vnode.generation,
+        },
+        .writeback_error_register_operation = RegisterWritebackDescription,
+        .writeback_error_unregister_operation = UnregisterWritebackDescription,
     };
     return manager.Create(request, reference);
 }
@@ -185,12 +213,16 @@ int main() {
     os::kernel::KernelHeap heap{};
     os::kernel::KernelObjectManager object_manager{};
     os::kernel::FileDescriptionManager description_manager{};
+    os::kernel::FileWritebackErrorTracker error_tracker{};
     os::kernel::FileTable table{};
+    writeback_error_tracker = &error_tracker;
     const bool object_model_initialized =
         handles_opened &&
         heap.Initialize(reinterpret_cast<uint64_t>(heap_buffer),
                         OS_TEST_FILE_DESCRIPTION_HEAP_SIZE_BYTES) ==
             os::kernel::KernelHeapStatus::Succeeded &&
+        error_tracker.Initialize(heap) ==
+            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
         object_manager.Initialize(heap) == os::kernel::KernelObjectStatus::Succeeded &&
         description_manager.Initialize(object_manager) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
@@ -245,6 +277,52 @@ int main() {
                         os::kernel::OS_KERNEL_FILE_DESCRIPTOR_CLOSE_ON_EXEC_FLAG,
                         duplicate_file_descriptor) == os::kernel::FileTableStatus::Succeeded &&
         duplicate_file_descriptor == OS_TEST_FILE_DESCRIPTION_DUPLICATE_FILE_DESCRIPTOR;
+
+    os::kernel::KernelObjectReference cursor_reference{};
+    uint64_t shared_writeback_cursor = UINT64_MAX;
+    uint64_t duplicate_writeback_cursor = UINT64_MAX;
+    uint64_t independent_writeback_cursor = UINT64_MAX;
+    uint64_t current_writeback_sequence = UINT64_MAX;
+    os::kernel::FileWritebackError writeback_error = os::kernel::FileWritebackError::None;
+    const os::kernel::FileCacheIdentity writeback_identity{
+        .superblock_identifier = shared_open_file.path.vnode.superblock->identifier,
+        .superblock_generation = shared_open_file.path.vnode.superblock->generation,
+        .node_identifier = shared_open_file.path.vnode.identifier,
+        .node_generation = shared_open_file.path.vnode.generation,
+    };
+    const bool writeback_cursor_shared =
+        file_duplicated &&
+        error_tracker.Record(writeback_identity, os::kernel::FileWritebackError::InputOutput) ==
+            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_FILE_DESCRIPTOR, cursor_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.ReadWritebackErrorCursor(cursor_reference, shared_writeback_cursor) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        shared_writeback_cursor == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        error_tracker.Check(writeback_identity, shared_writeback_cursor,
+                            current_writeback_sequence, writeback_error) ==
+            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
+        current_writeback_sequence == OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
+        writeback_error == os::kernel::FileWritebackError::InputOutput &&
+        description_manager.AdvanceWritebackErrorCursor(
+            cursor_reference, current_writeback_sequence) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        cursor_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_DUPLICATE_FILE_DESCRIPTOR, cursor_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.ReadWritebackErrorCursor(cursor_reference,
+                                                     duplicate_writeback_cursor) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        duplicate_writeback_cursor == OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
+        cursor_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_INDEPENDENT_FILE_DESCRIPTOR, cursor_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.ReadWritebackErrorCursor(cursor_reference,
+                                                     independent_writeback_cursor) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        independent_writeback_cursor == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        cursor_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    test_context.Expect(writeback_cursor_shared, OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_CURSOR);
 
     uint8_t first_bytes[OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES]{};
     uint8_t second_bytes[OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES]{};
@@ -335,6 +413,10 @@ int main() {
                 sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD) &&
         first_append_snapshot.size_bytes == second_append_snapshot.offset_bytes &&
         second_append_snapshot.size_bytes == second_append_snapshot.offset_bytes &&
+        first_append_snapshot.writeback_error_cursor ==
+            OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
+        second_append_snapshot.writeback_error_cursor ==
+            OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
         first_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
         second_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
     test_context.Expect(append_atomic, OS_TEST_FILE_DESCRIPTION_APPEND_ATOMICITY);
@@ -410,10 +492,17 @@ int main() {
         object_manager.Statistics().active_object_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         description_manager.Statistics().failed_finalization_count ==
             OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        error_tracker.Validate() ==
+            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
+        error_tracker.Statistics().active_record_count ==
+            OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        error_tracker.Destroy() ==
+            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
         heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
         heap.Statistics().allocation_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded &&
         vfs.Validate() == os::kernel::fs::Status::Succeeded;
     test_context.Expect(finalized, OS_TEST_FILE_DESCRIPTION_FINALIZATION);
+    writeback_error_tracker = nullptr;
     return test_context.ExitCode();
 }

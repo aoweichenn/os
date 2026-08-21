@@ -967,9 +967,14 @@ committed 和 active swap 均为零。
 
 `memory/file_cache_address_space.*` 以一个 `FileCacheIdentity` 拥有页面元数据和
 稀疏索引。物理地址必须 4 KiB 对齐，但地址空间不释放物理 frame。Retain/Release
-只维护映射引用；Remove 只接受零引用 Clean 页；Discard 只供 truncate 丢弃零引用
-Clean/Dirty/Error 页并拒绝 Writeback；Transition 固定 Clean/Dirty/Writeback/Error
-有向边并同步 radix mark。
+只维护映射引用；Remove 只接受零引用 Clean 页；底层 Discard 接受零引用
+Loading/Clean/Dirty/Error 页并拒绝 Writeback。cache 层只在填页失败时丢弃 Loading，
+truncate 明确把 Loading 视为 Busy。Transition 固定 Loading 到 Clean 以及
+Clean/Dirty/Writeback/Error 之间的合法有向边，并同步 radix mark。
+
+第四增量增加 Loading 瞬态。`FilePageCache::Acquire` 在锁内取得 frame、地址空间和
+唯一 entry，随后释放 cache lock 执行 source read；完成时重新核对身份、frame、零引用
+和 Loading 状态，再转 Clean。Loading 不参与 Dirty radix mark，不能映射、回收或截断。
 
 第一增量保持 `memory/file_page_cache.*` 生产接口不变；`FileIdentity` 只是
 `FileCacheIdentity` 的兼容别名。第二增量已让 `memory/file_page_cache.*` 自身成为
@@ -980,12 +985,34 @@ Clean/Dirty/Error 页并拒绝 Writeback；Transition 固定 Clean/Dirty/Writeba
 capability 为 true 时调用对应 data-cache hook；填页使用 `ReadUncachedAt`，写回使用
 `WriteUncachedAt`。`FilePageCache` 的 address-space record 同时保存逻辑 EOF，控制末页
 写回长度和 truncate 零区间。生产 metadata 使用独立 buddy-backed KernelHeap，不占
-通用 512 KiB Heap。当前 miss 仍由 cache spinlock 同步串行化；任何会睡眠的并行 fill
-必须先引入 Loading 状态和 waiter，不能直接放开锁制造重复页。
+通用 512 KiB Heap。miss 仅在 cache spinlock 内发布唯一 Loading entry；来源读取在锁外
+执行。同页并发 miss 当前返回 EntryBusy，后续引入真正多核或可睡眠线程时再增加 waiter，
+不能阻塞在 spinlock 临界区。
 
 `user/file_backing.*` 的 VfsWriteback 描述符按文件身份去重并保留后端 open reference。
 Dirty/Error 清空后通过反向查询回调释放，避免该模块直接依赖具体页缓存实现。共享映射
 描述符与 writeback 描述符都能执行末页短写；所有写回必须绕过 VFS 公共 cache hook。
+
+`user/user_memory.*` 维护约 10%/20%/5% 的后台、硬和目标水位，以及 64 页批次统计。
+`process/process_runtime.*` 在 write 前处理硬水位，并在 `OsKernelPrepareUserReturn` 的
+非 IRQ 安全点运行 pending worker；每批前写保护全部 writable shared alias。失败使
+自动 worker 暂停，显式 sync 仍可重试 Error 页。
+
+`memory/file_writeback_error_tracker.*` 从页缓存 metadata Heap 动态维护文件级 sequence
+和独立打开实例引用。它不持有 VFS OpenFile，也不决定何时写盘；FileDescription 在
+创建/最终释放时注册和注销，页缓存 writer 失败时记录 InputOutput。Check 只比较采样
+游标，游标本身位于共享 FileDescription，因此 duplicate/fork 不会重复消费错误。
+
+第五增量的 `FilePageCache::WritebackFile` 按文件身份与闭 page-index 范围选页。
+`process/process_runtime.*` 将 fsync/fdatasync 和 msync 的范围、PTE 写保护、错误推进与
+VFS Flush 排序；MS_ASYNC 只强制后台 pending。当前没有 mlock 和不一致的第二份 shared
+cache，因此 MS_INVALIDATE 在完成统一权威页写回后不需额外撤销映射。
+
+`memory/memory_pressure.*` 的 `ExecuteMemoryReclaim` 只编排 clean、writeback、swap
+三种回调并核对实际计数，不访问 VFS、页表或调度器。`user/user_memory.*` 把
+FilePageCache/SwapManager 接成生产操作并维护分阶段统计；`process/process_runtime.*`
+提供跨进程轮转和 OOM。设备错误作为 FileWritebackFailed/AnonymousSwapFailed 向上传播，
+只有 Succeeded/NoProgress 后仍低于水位才进入 OOM。
 
 ## 已知边界
 
@@ -1025,9 +1052,10 @@ Dirty/Error 清空后通过反向查询回调释放，避免该模块直接依�
   生产 rootfs v4；unlink/rmdir/rename/truncate/stat、链接、时间戳、orphan、
   五级稀疏块树和 ordered journal 已完成。mount 拓扑仍仅在启动期建立；
   动态 unmount、dentry cache 与权限进入后续阶段。
-- v2.8 前三增量已有 64 位动态文件页 radix、统一 buffered read/write/file fault/
-  `MAP_SHARED` frame、逻辑 EOF 和精确 truncate；后台 worker、Dirty 软水位、按打开
-  实例错误序列和统一 direct reclaim 尚未完成。
+- v2.8 六个核心增量已有 64 位动态文件页 radix、统一 buffered read/write/file fault/
+  `MAP_SHARED` frame、逻辑 EOF、精确 truncate、锁外 fill、safe-point writeback、按打开
+  实例错误序列和统一 direct reclaim；可独立调度的 Kernel Thread、页 aging/LRU、
+  kswapd、memcg 与 NUMA reclaim 尚未完成。
 
 ## v1.10 COW 内核边界
 

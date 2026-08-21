@@ -1,6 +1,6 @@
-#include "os/kernel/io/file_description.hpp"
+#include <os/kernel/io/file_description.hpp>
 
-#include "os/kernel/fs/legacy_file_system.hpp"
+#include <os/kernel/fs/legacy_file_system.hpp>
 
 namespace os::kernel {
 
@@ -23,6 +23,9 @@ struct FileDescriptionStorage final {
     PipeManager *pipe_manager;
     fs::Vfs *vfs;
     fs::OpenFile open_file;
+    FileCacheIdentity writeback_identity;
+    uint64_t writeback_error_cursor;
+    FileDescriptionWritebackErrorUnregisterOperation writeback_error_unregister_operation;
 };
 
 [[nodiscard]] FileDescriptionStatus MapObjectStatus(const KernelObjectStatus status) noexcept {
@@ -97,10 +100,21 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
     if (!this->IsRequestValid(request)) {
         return FileDescriptionStatus::InvalidConfiguration;
     }
+    uint64_t writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    const bool writeback_registered = request.kind == FileDescriptionKind::RegularFile;
+    if (writeback_registered &&
+        !request.writeback_error_register_operation(request.writeback_identity,
+                                                    writeback_error_cursor)) {
+        return FileDescriptionStatus::ObjectFailure;
+    }
     const KernelObjectStatus create_status = this->object_manager_->CreateObject(
         KernelObjectType::FileDescription, static_cast<uint64_t>(request.kind),
         sizeof(FileDescriptionStorage), FileDescriptionManager::FinalizePayload, this, reference);
     if (create_status != KernelObjectStatus::Succeeded) {
+        if (writeback_registered) {
+            static_cast<void>(
+                request.writeback_error_unregister_operation(request.writeback_identity));
+        }
         return MapObjectStatus(create_status);
     }
 
@@ -110,6 +124,10 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
+        if (writeback_registered) {
+            static_cast<void>(
+                request.writeback_error_unregister_operation(request.writeback_identity));
+        }
         static_cast<void>(reference.Reset());
         return FileDescriptionStatus::ObjectFailure;
     }
@@ -124,6 +142,9 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         .pipe_manager = request.pipe_manager,
         .vfs = request.vfs,
         .open_file = request.open_file,
+        .writeback_identity = request.writeback_identity,
+        .writeback_error_cursor = writeback_error_cursor,
+        .writeback_error_unregister_operation = request.writeback_error_unregister_operation,
     };
     return FileDescriptionStatus::Succeeded;
 }
@@ -174,6 +195,9 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
                                                          : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
         .size_bytes = IsVfsBackedKind(storage.kind) ? information.size_bytes
                                                     : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .writeback_error_cursor = storage.kind == FileDescriptionKind::RegularFile
+                                      ? storage.writeback_error_cursor
+                                      : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
     };
     return FileDescriptionStatus::Succeeded;
 }
@@ -389,6 +413,79 @@ FileDescriptionManager::ReadDirectory(const KernelObjectReference &reference,
     return FileDescriptionStatus::Succeeded;
 }
 
+FileDescriptionStatus FileDescriptionManager::ReadWritebackErrorCursor(
+    const KernelObjectReference &reference, uint64_t &writeback_error_cursor) noexcept {
+    writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    SpinLock *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    SpinLockGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    writeback_error_cursor = storage.writeback_error_cursor;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::ReadSynchronizationState(
+    const KernelObjectReference &reference, FileCacheIdentity &identity,
+    uint64_t &writeback_error_cursor) noexcept {
+    identity = FileCacheIdentity{};
+    writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    SpinLock *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    SpinLockGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile ||
+        !FileCacheIdentityIsValid(storage.writeback_identity)) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    identity = storage.writeback_identity;
+    writeback_error_cursor = storage.writeback_error_cursor;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::AdvanceWritebackErrorCursor(
+    const KernelObjectReference &reference, const uint64_t writeback_error_sequence) noexcept {
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    SpinLock *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    SpinLockGuard guard{*operation_lock};
+    FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile ||
+        writeback_error_sequence < storage.writeback_error_cursor) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    storage.writeback_error_cursor = writeback_error_sequence;
+    return FileDescriptionStatus::Succeeded;
+}
+
 FileDescriptionStatus
 FileDescriptionManager::ReadCanProgress(const KernelObjectReference &reference,
                                         bool &can_progress) noexcept {
@@ -479,7 +576,11 @@ bool FileDescriptionManager::Finalize(void *const payload) noexcept {
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     bool finalized = true;
     if (IsVfsBackedKind(storage.kind)) {
-        finalized = storage.vfs != nullptr &&
+        const bool writeback_unregistered =
+            storage.kind != FileDescriptionKind::RegularFile ||
+            (storage.writeback_error_unregister_operation != nullptr &&
+             storage.writeback_error_unregister_operation(storage.writeback_identity));
+        finalized = writeback_unregistered && storage.vfs != nullptr &&
                     storage.vfs->Close(storage.open_file) == fs::Status::Succeeded;
     } else if (storage.kind == FileDescriptionKind::PipeReader) {
         if (storage.pipe == nullptr) {
@@ -561,7 +662,10 @@ bool FileDescriptionManager::IsRequestValid(
     return request.kind == FileDescriptionKind::RegularFile && (readable || writable) &&
            request.vfs != nullptr && request.open_file.open &&
            request.open_file.path.vnode.type == fs::NodeType::RegularFile &&
-           request.open_file.readable == readable && request.open_file.writable == writable;
+           request.open_file.readable == readable && request.open_file.writable == writable &&
+           FileCacheIdentityIsValid(request.writeback_identity) &&
+           request.writeback_error_register_operation != nullptr &&
+           request.writeback_error_unregister_operation != nullptr;
 }
 
 }

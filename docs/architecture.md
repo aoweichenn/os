@@ -2369,6 +2369,7 @@ bitmap、节点/页面/状态计数和 canonical root 高度。
 执行 VFS、设备 I/O、用户复制或调度。状态机只允许：
 
 ```text
+Loading -> Clean
 Clean -> Dirty -> Writeback -> Clean
                        `-----> Error -> Writeback
 ```
@@ -2419,12 +2420,61 @@ hook 覆盖后端 `stat`；后端只在 writeback 后推进盘面长度。`MAP_P
 truncate 在后端事务前先撤销文件偏移不小于新 EOF 的驻留 PTE；后端成功后，cache
 丢弃范围外 Clean/Dirty/Error 页并清零保留尾页。增长不申请页面，且会把旧 EOF 到
 新 EOF 间已经驻留的字节重新置零。Writeback 或仍有映射引用的待丢弃页返回 Busy；
-当前单 BSP、无后台 writeback，因此正常系统调用不会与 Writeback 并发。
+第三增量当时尚无后台 writeback，因此正常系统调用不会与 Writeback 并发；第四增量
+加入 safe-point worker 后，每个批次都先完成全局 shared PTE 写保护再选择 Writeback 页。
 
-当前 cache miss 仍同步持有 cache lock，不声称已经具备现代 Linux 的并行 Loading
-waiter、readahead 或后台 dirty throttling。最终文件系统校验产生的 clean 页在
-storage shutdown 前统一裁剪，frame 统计恢复后才允许 NVMe controller 回收。决策见
-[ADR 0056](adr/0056-v2-8-dynamic-file-cache-address-space.md)。
+第四增量后 cache miss 先发布 Loading，再在不持有 cache lock 时读取来源。当前
+单 BSP 同步后端没有可睡眠 waiter；同页重入返回 Busy。Dirty 达到约 10% 时挂起
+safe-point worker，每批最多写回 64 页并持续到约 5%；约 20% 硬水位在下一次 write
+前执行平衡。后台失败保留 Error 并暂停，显式 sync 才重试。最终文件系统校验产生的
+clean 页在 storage shutdown 前统一裁剪，frame 统计恢复后才允许 NVMe controller
+回收。决策见 [ADR 0056](adr/0056-v2-8-dynamic-file-cache-address-space.md)。
+
+第五增量把同步边界拆为文件、映射范围和全局三种：
+
+```text
+fsync/fdatasync(fd)
+  -> FileDescription 的 FileIdentity + writeback error cursor
+  -> 写保护全部 writable shared alias
+  -> WritebackFile(identity, 0..UINT64_MAX)
+  -> CheckAndAdvance(error sequence)
+  -> VFS Sync -> BlockCache Sync -> BlockDevice Flush
+
+msync(address, length, MS_SYNC)
+  -> 校验连续 file-backed VMA
+  -> private: 不回写
+  -> shared: VA 区间换算为 file page-index 区间
+  -> WritebackFile(identity, first..last) -> VFS/设备 Flush
+
+msync(..., MS_ASYNC)
+  -> 强制 background pending
+  -> user-return safe point 每批最多 64 页
+```
+
+错误追踪器按 FileIdentity 动态建记录，但引用单位是独立 FileDescription，而不是 fd
+表项。duplicate/fork 只增加同一 KernelObject 的强引用，所以天然共享游标；独立 open
+增加记录引用并采样当前 sequence。writeback 失败推进 sequence，fsync 检查后推进游标；
+最后一个打开实例关闭时记录释放，后来 open 不会看到历史错误。ABI 2.4.0 仅追加
+85..87，rootfs v4 与旧编号不变。
+
+第六增量把已有水位、页缓存、swap 与 OOM 串到单一分配入口：
+
+```text
+PrepareUserResidentAllocation
+  -> synchronize physical-frame resident count
+  -> MemoryPressureController::PrepareAllocation
+  -> ExecuteMemoryReclaim
+       1. Trim unreferenced Clean file pages
+       2. write-protect shared PTE -> Writeback Dirty/Error -> Trim new Clean pages
+       3. round-robin Process address spaces -> SwapStore -> unmap/release frame
+  -> synchronize resident count -> retry allocation once
+  -> still insufficient: ProcessRuntime OOM selection -> destroy victim -> retry once
+```
+
+执行器本身是无设备纯逻辑函数，只冻结顺序、实际回收计数和失败阶段；user_memory 提供
+三项生产操作，ProcessRuntime 通过回调提供全局 PTE 保护、跨进程扫描和 OOM，避免
+memory 模块反向依赖调度器。PID1 始终排除；单线程进程保存现场的用户栈页受保护，
+多个活动用户栈的地址空间本轮不参与跨进程 swap。
 
 ## v2.3 rootfs v4 容量与恢复架构
 

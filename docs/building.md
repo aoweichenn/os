@@ -38,6 +38,9 @@ QEMU 软件包可能连带安装 SeaBIOS 或 OVMF 文件，但项目运行命令
 python3 tools/os.py verify
 ```
 
+`test` 与 `verify` 默认使用 20 路 CTest 并行；全部 4 GiB QEMU 用例共享资源锁，
+因此仍一次只运行一个来宾。无需在命令行额外传 `-j`。
+
 Python 入口依次执行：
 
 1. 检查全部必要工具。

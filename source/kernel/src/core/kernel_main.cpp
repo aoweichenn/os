@@ -204,6 +204,24 @@ constexpr char OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_WRITE_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_CACHE_BUFFERED_WRITES=";
 constexpr char OS_KERNEL_MAIN_FILE_CACHE_TRUNCATE_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_CACHE_TRUNCATES=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_WORKER_RUN_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_WRITEBACK_WORKER_RUNS=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_WORKER_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_WRITEBACK_WORKER_PAGES=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_BACKPRESSURE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_WRITEBACK_BACKPRESSURE=";
+constexpr char OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_WORKER_FAILURE_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_CACHE_WRITEBACK_WORKER_FAILURES=";
+constexpr char OS_KERNEL_MAIN_FILE_SYNCHRONIZATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_SYNCHRONIZATIONS=";
+constexpr char OS_KERNEL_MAIN_FILE_DATA_SYNCHRONIZATION_COUNT_PREFIX[] =
+    "[OS][KERNEL] FILE_DATA_SYNCHRONIZATIONS=";
+constexpr char OS_KERNEL_MAIN_MEMORY_SYNCHRONOUS_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_SYNCHRONOUS_SYNCHRONIZATIONS=";
+constexpr char OS_KERNEL_MAIN_MEMORY_ASYNCHRONOUS_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_ASYNCHRONOUS_SYNCHRONIZATIONS=";
+constexpr char OS_KERNEL_MAIN_WRITEBACK_ERROR_ACTIVE_RECORD_COUNT_PREFIX[] =
+    "[OS][KERNEL] WRITEBACK_ERROR_ACTIVE_RECORDS=";
 constexpr char OS_KERNEL_MAIN_FILE_CACHE_RECLAIMED_MESSAGE[] =
     "[OS][KERNEL] FILE_CACHE_RECLAIMED\r\n";
 constexpr char OS_KERNEL_MAIN_KVA_ALLOCATOR_READY_MESSAGE[] =
@@ -701,8 +719,20 @@ constexpr char OS_KERNEL_MAIN_USER_PAGE_REFERENCE_EXCLUSIVE_RESTORE_COUNT_PREFIX
     "[OS][KERNEL] USER_PAGE_REFERENCE_EXCLUSIVE_RESTORES=";
 constexpr char OS_KERNEL_MAIN_MEMORY_PRESSURE_RESIDENT_PAGE_COUNT_PREFIX[] =
     "[OS][KERNEL] MEMORY_PRESSURE_RESIDENT_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_PRESSURE_LIMIT_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_PRESSURE_LIMIT_PAGES=";
 constexpr char OS_KERNEL_MAIN_MEMORY_PRESSURE_RECLAIM_COUNT_PREFIX[] =
     "[OS][KERNEL] MEMORY_PRESSURE_RECLAIMED_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_RECLAIM_CLEAN_FILE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_RECLAIM_CLEAN_FILE_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_RECLAIM_WRITTEN_FILE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_RECLAIM_WRITTEN_FILE_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_RECLAIM_RECLAIMED_WRITTEN_FILE_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_RECLAIM_RECLAIMED_WRITTEN_FILE_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_RECLAIM_SWAPPED_ANONYMOUS_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_RECLAIM_SWAPPED_ANONYMOUS_PAGES=";
+constexpr char OS_KERNEL_MAIN_MEMORY_RECLAIM_NO_PROGRESS_COUNT_PREFIX[] =
+    "[OS][KERNEL] MEMORY_RECLAIM_NO_PROGRESS=";
 constexpr char OS_KERNEL_MAIN_MEMORY_COMMITTED_PAGE_COUNT_PREFIX[] =
     "[OS][KERNEL] MEMORY_COMMITTED_PAGES=";
 constexpr char OS_KERNEL_MAIN_MEMORY_PEAK_COMMITTED_PAGE_COUNT_PREFIX[] =
@@ -2254,8 +2284,21 @@ void ExecuteRequiredProcesses(const VgaTextConsole &vga_console,
                          statistics.user_page_references_after_processes.exclusive_restore_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PRESSURE_RESIDENT_PAGE_COUNT_PREFIX,
                          statistics.memory_pressure.resident_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PRESSURE_LIMIT_PAGE_COUNT_PREFIX,
+                         statistics.memory_pressure.watermarks.resident_limit_page_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PRESSURE_RECLAIM_COUNT_PREFIX,
                          statistics.memory_pressure.reclaimed_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_RECLAIM_CLEAN_FILE_COUNT_PREFIX,
+                         statistics.memory_reclaim.clean_file_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_RECLAIM_WRITTEN_FILE_COUNT_PREFIX,
+                         statistics.memory_reclaim.written_file_page_count);
+    WriteRequiredHexLine(
+        vga_console, OS_KERNEL_MAIN_MEMORY_RECLAIM_RECLAIMED_WRITTEN_FILE_COUNT_PREFIX,
+        statistics.memory_reclaim.reclaimed_written_file_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_RECLAIM_SWAPPED_ANONYMOUS_COUNT_PREFIX,
+                         statistics.memory_reclaim.swapped_anonymous_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_RECLAIM_NO_PROGRESS_COUNT_PREFIX,
+                         statistics.memory_reclaim.no_progress_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_COMMITTED_PAGE_COUNT_PREFIX,
                          statistics.memory_overcommit.committed_page_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_PEAK_COMMITTED_PAGE_COUNT_PREFIX,
@@ -2563,6 +2606,9 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     if (user_program_selection == UserProgramSelection::Smoke) {
         CreateInitialDiskProcess(vga_console);
     }
+    if (!ApplyConfiguredUserMemoryResidentLimit()) {
+        HaltProcessor();
+    }
     if (!vga_console.ActivateTerminal() ||
         !vga_console.TryWriteTerminalString(OS_KERNEL_MAIN_TERMINAL_BANNER)) {
         HaltProcessor();
@@ -2573,6 +2619,9 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
 
     const UserFilePageCacheRuntimeStatistics file_cache_runtime_statistics =
         GetUserFilePageCacheRuntimeStatistics();
+    const ProcessRuntimeStatistics process_runtime_statistics = GetProcessRuntimeStatistics();
+    const FileWritebackErrorTrackerStatistics writeback_error_statistics =
+        GetUserFileWritebackErrorTrackerStatistics();
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_READ_COUNT_PREFIX,
                          file_cache_runtime_statistics.buffered_read_operation_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_HIT_COUNT_PREFIX,
@@ -2583,6 +2632,30 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
                          file_cache_runtime_statistics.buffered_write_operation_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_TRUNCATE_COUNT_PREFIX,
                          file_cache_runtime_statistics.truncate_operation_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_WORKER_RUN_COUNT_PREFIX,
+                         file_cache_runtime_statistics.writeback_worker_run_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_WORKER_PAGE_COUNT_PREFIX,
+                         file_cache_runtime_statistics.writeback_worker_written_page_count);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_BACKPRESSURE_COUNT_PREFIX,
+                         file_cache_runtime_statistics.writeback_backpressure_count);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_FILE_CACHE_WRITEBACK_WORKER_FAILURE_COUNT_PREFIX,
+                         file_cache_runtime_statistics.writeback_worker_failure_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYNCHRONIZATION_COUNT_PREFIX,
+                         process_runtime_statistics.file_synchronization_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_DATA_SYNCHRONIZATION_COUNT_PREFIX,
+                         process_runtime_statistics.file_data_synchronization_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_SYNCHRONOUS_COUNT_PREFIX,
+                         process_runtime_statistics.memory_synchronous_synchronization_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_MEMORY_ASYNCHRONOUS_COUNT_PREFIX,
+                         process_runtime_statistics.memory_asynchronous_synchronization_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_WRITEBACK_ERROR_ACTIVE_RECORD_COUNT_PREFIX,
+                         writeback_error_statistics.active_record_count);
+    if (writeback_error_statistics.active_record_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        writeback_error_statistics.active_open_description_count != OS_KERNEL_MAIN_EMPTY_VALUE) {
+        HaltProcessor();
+    }
     if (TrimUserFilePageCache() != UserVirtualMemoryStatus::Succeeded ||
         GetUserFilePageCacheStatistics().resident_page_count != OS_KERNEL_MAIN_EMPTY_VALUE) {
         HaltProcessor();

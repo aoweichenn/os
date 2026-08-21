@@ -12,6 +12,7 @@ constexpr uint64_t OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT = 1ULL;
 constexpr uint64_t OS_KERNEL_FILE_PAGE_CACHE_ZERO_BYTE = 0ULL;
 constexpr uint64_t OS_KERNEL_FILE_PAGE_CACHE_RECORD_ALIGNMENT_BYTES = 64ULL;
+constexpr uint64_t OS_KERNEL_FILE_PAGE_CACHE_RATIO_HALF_DIVISOR = 2ULL;
 
 }
 
@@ -46,6 +47,13 @@ FilePageCache::Initialize(KernelHeap &metadata_heap, const uint64_t capacity,
     this->metadata_heap_ = &metadata_heap;
     this->address_spaces_ = nullptr;
     this->capacity_ = capacity;
+    this->background_dirty_page_threshold_ =
+        dirty_page_limit / OS_KERNEL_FILE_PAGE_CACHE_RATIO_HALF_DIVISOR;
+    if (this->background_dirty_page_threshold_ == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+        this->background_dirty_page_threshold_ = OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT;
+    }
+    this->background_dirty_page_target_ =
+        this->background_dirty_page_threshold_ / OS_KERNEL_FILE_PAGE_CACHE_RATIO_HALF_DIVISOR;
     this->dirty_page_limit_ = dirty_page_limit;
     this->frame_allocator_ = &frame_allocator;
     this->page_access_context_ = page_access_context;
@@ -53,7 +61,13 @@ FilePageCache::Initialize(KernelHeap &metadata_heap, const uint64_t capacity,
     this->access_generation_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->statistics_ = FilePageCacheStatistics{};
     this->statistics_.capacity = capacity;
+    this->statistics_.background_dirty_page_threshold =
+        this->background_dirty_page_threshold_;
+    this->statistics_.background_dirty_page_target = this->background_dirty_page_target_;
     this->statistics_.dirty_page_limit = dirty_page_limit;
+    this->background_writeback_requested_ = false;
+    this->background_writeback_paused_ = false;
+    this->forced_background_writeback_requested_ = false;
     this->initialized_ = true;
     return FilePageCacheStatus::Succeeded;
 }
@@ -62,18 +76,22 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
                                            void *const reader_context,
                                            const FilePageReadOperation read_operation,
                                            uint64_t &physical_address, bool &cache_hit) noexcept {
-    SpinLockGuard guard{this->lock_};
     physical_address = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     cache_hit = false;
+    this->lock_.Lock();
+    const auto unlock_and_return = [this](const FilePageCacheStatus status) noexcept {
+        this->lock_.Unlock();
+        return status;
+    };
     if (!this->initialized_ || this->metadata_heap_ == nullptr ||
         this->frame_allocator_ == nullptr || this->page_access_operation_ == nullptr) {
-        return FilePageCacheStatus::NotInitialized;
+        return unlock_and_return(FilePageCacheStatus::NotInitialized);
     }
     if (!FileCacheIdentityIsValid(identity.file)) {
-        return FilePageCacheStatus::InvalidIdentity;
+        return unlock_and_return(FilePageCacheStatus::InvalidIdentity);
     }
     if (reader_context == nullptr || read_operation == nullptr) {
-        return FilePageCacheStatus::InvalidReader;
+        return unlock_and_return(FilePageCacheStatus::InvalidReader);
     }
 
     AddressSpaceRecord *record = this->FindAddressSpace(identity.file);
@@ -82,21 +100,24 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         const FileCacheAddressSpaceStatus lookup_status =
             record->address_space.Lookup(identity.page_index, page);
         if (lookup_status == FileCacheAddressSpaceStatus::Succeeded) {
+            if (page.state == FileCachePageState::Loading) {
+                ++this->statistics_.loading_collision_count;
+                return unlock_and_return(FilePageCacheStatus::EntryBusy);
+            }
             const uint64_t generation = this->NextAccessGeneration();
             if (generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
-                return FilePageCacheStatus::Corrupt;
+                return unlock_and_return(FilePageCacheStatus::Corrupt);
             }
             const FileCacheAddressSpaceStatus retain_status =
                 record->address_space.Retain(identity.page_index, page.physical_address);
             if (retain_status != FileCacheAddressSpaceStatus::Succeeded) {
-                return this->MapAddressSpaceStatus(retain_status);
+                return unlock_and_return(this->MapAddressSpaceStatus(retain_status));
             }
             if (record->address_space.Touch(identity.page_index, page.physical_address,
                                             generation) != FileCacheAddressSpaceStatus::Succeeded) {
-                return record->address_space.Release(identity.page_index, page.physical_address) ==
-                               FileCacheAddressSpaceStatus::Succeeded
-                           ? FilePageCacheStatus::Corrupt
-                           : FilePageCacheStatus::Corrupt;
+                static_cast<void>(
+                    record->address_space.Release(identity.page_index, page.physical_address));
+                return unlock_and_return(FilePageCacheStatus::Corrupt);
             }
             if (page.mapping_reference_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
                 ++this->statistics_.referenced_page_count;
@@ -106,10 +127,10 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
             ++this->statistics_.successful_acquire_count;
             physical_address = page.physical_address;
             cache_hit = true;
-            return FilePageCacheStatus::Succeeded;
+            return unlock_and_return(FilePageCacheStatus::Succeeded);
         }
         if (lookup_status != FileCacheAddressSpaceStatus::NotFound) {
-            return this->MapAddressSpaceStatus(lookup_status);
+            return unlock_and_return(this->MapAddressSpaceStatus(lookup_status));
         }
     }
 
@@ -123,15 +144,15 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
             this->SelectEvictionCandidate(eviction_record, eviction_page);
         if (select_status == FilePageCacheStatus::EntryBusy ||
             select_status == FilePageCacheStatus::DirtyPagesRemain) {
-            return FilePageCacheStatus::CapacityExhausted;
+            return unlock_and_return(FilePageCacheStatus::CapacityExhausted);
         }
         if (select_status != FilePageCacheStatus::Succeeded || eviction_record == nullptr) {
-            return select_status;
+            return unlock_and_return(select_status);
         }
         const FilePageCacheStatus eviction_status =
             this->Evict(*eviction_record, eviction_page, false, candidate_physical_address);
         if (eviction_status != FilePageCacheStatus::Succeeded) {
-            return eviction_status;
+            return unlock_and_return(eviction_status);
         }
         reusable_frame_available = true;
         record = this->FindAddressSpace(identity.file);
@@ -139,83 +160,118 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
     if (!reusable_frame_available) {
         PhysicalFrame frame{};
         if (this->frame_allocator_->Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
-            return FilePageCacheStatus::FrameAllocationFailed;
+            return unlock_and_return(FilePageCacheStatus::FrameAllocationFailed);
         }
         candidate_physical_address = frame.physical_address;
     }
-
-    uint8_t *const page_bytes =
-        this->page_access_operation_(this->page_access_context_, candidate_physical_address);
-    if (page_bytes == nullptr) {
-        static_cast<void>(this->frame_allocator_->Release(
-            PhysicalFrame{.physical_address = candidate_physical_address}));
-        ++this->statistics_.failed_load_count;
-        return FilePageCacheStatus::FrameAccessFailed;
-    }
-    for (uint64_t byte_index = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
-         byte_index < OS_KERNEL_MEMORY_PAGE_SIZE_BYTES; ++byte_index) {
-        page_bytes[byte_index] = static_cast<uint8_t>(OS_KERNEL_FILE_PAGE_CACHE_ZERO_BYTE);
-    }
-    if (!read_operation(reader_context, identity, page_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES)) {
-        const PhysicalFrameAllocatorStatus release_status = this->frame_allocator_->Release(
-            PhysicalFrame{.physical_address = candidate_physical_address});
-        ++this->statistics_.failed_load_count;
-        return release_status == PhysicalFrameAllocatorStatus::Succeeded
-                   ? FilePageCacheStatus::SourceReadFailed
-                   : FilePageCacheStatus::FrameReleaseFailed;
-    }
-
     if (record == nullptr) {
         const FilePageCacheStatus record_status = this->EnsureAddressSpace(identity.file, record);
         if (record_status != FilePageCacheStatus::Succeeded || record == nullptr) {
-            static_cast<void>(this->frame_allocator_->Release(
-                PhysicalFrame{.physical_address = candidate_physical_address}));
+            const PhysicalFrameAllocatorStatus release_status = this->frame_allocator_->Release(
+                PhysicalFrame{.physical_address = candidate_physical_address});
             ++this->statistics_.failed_load_count;
-            return record_status;
+            return unlock_and_return(release_status == PhysicalFrameAllocatorStatus::Succeeded
+                                         ? record_status
+                                         : FilePageCacheStatus::FrameReleaseFailed);
         }
     }
-    const uint64_t generation = this->NextAccessGeneration();
     const FileCacheAddressSpaceStatus insertion_status = record->address_space.Insert(
-        identity.page_index, candidate_physical_address, FileCachePageState::Clean);
-    if (generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
-        insertion_status != FileCacheAddressSpaceStatus::Succeeded ||
-        record->address_space.Retain(identity.page_index, candidate_physical_address) !=
-            FileCacheAddressSpaceStatus::Succeeded ||
-        record->address_space.Touch(identity.page_index, candidate_physical_address, generation) !=
-            FileCacheAddressSpaceStatus::Succeeded) {
-        if (insertion_status == FileCacheAddressSpaceStatus::Succeeded) {
-            FileCachePageSnapshot inserted_page{};
-            if (record->address_space.Lookup(identity.page_index, inserted_page) ==
-                    FileCacheAddressSpaceStatus::Succeeded &&
-                inserted_page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
-                static_cast<void>(
-                    record->address_space.Release(identity.page_index, candidate_physical_address));
-            }
-            static_cast<void>(
-                record->address_space.Remove(identity.page_index, candidate_physical_address));
-        }
-        static_cast<void>(this->frame_allocator_->Release(
-            PhysicalFrame{.physical_address = candidate_physical_address}));
+        identity.page_index, candidate_physical_address, FileCachePageState::Loading);
+    if (insertion_status != FileCacheAddressSpaceStatus::Succeeded) {
+        const PhysicalFrameAllocatorStatus release_status = this->frame_allocator_->Release(
+            PhysicalFrame{.physical_address = candidate_physical_address});
         static_cast<void>(this->DestroyAddressSpaceIfEmpty(*record));
         ++this->statistics_.failed_load_count;
         if (insertion_status == FileCacheAddressSpaceStatus::AllocationFailed) {
             ++this->statistics_.metadata_allocation_failure_count;
         }
-        return insertion_status == FileCacheAddressSpaceStatus::AllocationFailed
-                   ? FilePageCacheStatus::MetadataAllocationFailed
-                   : FilePageCacheStatus::Corrupt;
+        return unlock_and_return(
+            release_status != PhysicalFrameAllocatorStatus::Succeeded
+                ? FilePageCacheStatus::FrameReleaseFailed
+            : insertion_status == FileCacheAddressSpaceStatus::AllocationFailed
+                ? FilePageCacheStatus::MetadataAllocationFailed
+                : FilePageCacheStatus::Corrupt);
     }
 
     ++this->statistics_.resident_page_count;
+    ++this->statistics_.loading_page_count;
+    if (this->statistics_.peak_resident_page_count < this->statistics_.resident_page_count) {
+        this->statistics_.peak_resident_page_count = this->statistics_.resident_page_count;
+    }
+    this->lock_.Unlock();
+
+    uint8_t *const page_bytes =
+        this->page_access_operation_(this->page_access_context_, candidate_physical_address);
+    bool source_read_succeeded = page_bytes != nullptr;
+    if (page_bytes != nullptr) {
+        for (uint64_t byte_index = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+             byte_index < OS_KERNEL_MEMORY_PAGE_SIZE_BYTES; ++byte_index) {
+            page_bytes[byte_index] = static_cast<uint8_t>(OS_KERNEL_FILE_PAGE_CACHE_ZERO_BYTE);
+        }
+        source_read_succeeded =
+            read_operation(reader_context, identity, page_bytes, OS_KERNEL_MEMORY_PAGE_SIZE_BYTES);
+    }
+
+    this->lock_.Lock();
+    ++this->statistics_.unlocked_fill_count;
+    record = this->FindAddressSpace(identity.file);
+    FileCachePageSnapshot loading_page{};
+    if (record == nullptr ||
+        record->address_space.Lookup(identity.page_index, loading_page) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        loading_page.physical_address != candidate_physical_address ||
+        loading_page.state != FileCachePageState::Loading ||
+        loading_page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+        this->statistics_.loading_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+        return unlock_and_return(FilePageCacheStatus::Corrupt);
+    }
+    if (!source_read_succeeded) {
+        const FileCacheAddressSpaceStatus discard_status =
+            record->address_space.Discard(identity.page_index, candidate_physical_address);
+        const PhysicalFrameAllocatorStatus release_status = this->frame_allocator_->Release(
+            PhysicalFrame{.physical_address = candidate_physical_address});
+        if (discard_status != FileCacheAddressSpaceStatus::Succeeded ||
+            release_status != PhysicalFrameAllocatorStatus::Succeeded ||
+            this->statistics_.resident_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+            return unlock_and_return(FilePageCacheStatus::FrameReleaseFailed);
+        }
+        --this->statistics_.resident_page_count;
+        --this->statistics_.loading_page_count;
+        ++this->statistics_.failed_load_count;
+        const FilePageCacheStatus destroy_status = this->DestroyAddressSpaceIfEmpty(*record);
+        if (destroy_status != FilePageCacheStatus::Succeeded) {
+            return unlock_and_return(destroy_status);
+        }
+        return unlock_and_return(page_bytes == nullptr ? FilePageCacheStatus::FrameAccessFailed
+                                                       : FilePageCacheStatus::SourceReadFailed);
+    }
+
+    const uint64_t generation = this->NextAccessGeneration();
+    if (generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+        record->address_space.Transition(identity.page_index, candidate_physical_address,
+                                         FileCachePageState::Loading,
+                                         FileCachePageState::Clean) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        record->address_space.Retain(identity.page_index, candidate_physical_address) !=
+            FileCacheAddressSpaceStatus::Succeeded ||
+        record->address_space.Touch(identity.page_index, candidate_physical_address, generation) !=
+            FileCacheAddressSpaceStatus::Succeeded) {
+        FileCachePageSnapshot completed_page{};
+        if (record->address_space.Lookup(identity.page_index, completed_page) ==
+                FileCacheAddressSpaceStatus::Succeeded &&
+            completed_page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+            static_cast<void>(
+                record->address_space.Release(identity.page_index, candidate_physical_address));
+        }
+        return unlock_and_return(FilePageCacheStatus::Corrupt);
+    }
+    --this->statistics_.loading_page_count;
     ++this->statistics_.referenced_page_count;
     ++this->statistics_.active_mapping_reference_count;
     ++this->statistics_.successful_load_count;
     ++this->statistics_.successful_acquire_count;
-    if (this->statistics_.peak_resident_page_count < this->statistics_.resident_page_count) {
-        this->statistics_.peak_resident_page_count = this->statistics_.resident_page_count;
-    }
     physical_address = candidate_physical_address;
-    return FilePageCacheStatus::Succeeded;
+    return unlock_and_return(FilePageCacheStatus::Succeeded);
 }
 
 FilePageCacheStatus FilePageCache::Release(const FilePageIdentity &identity,
@@ -279,12 +335,18 @@ FilePageCacheStatus FilePageCache::MarkDirty(const FilePageIdentity &identity,
     if (page.state == FileCachePageState::Dirty) {
         return FilePageCacheStatus::Succeeded;
     }
-    if (page.state == FileCachePageState::Writeback) {
+    if (page.state == FileCachePageState::Loading ||
+        page.state == FileCachePageState::Writeback) {
         return FilePageCacheStatus::EntryBusy;
     }
-    if ((page.state == FileCachePageState::Clean || page.state == FileCachePageState::Error) &&
-        this->statistics_.dirty_page_count >= this->dirty_page_limit_) {
+    uint64_t outstanding_dirty_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!this->OutstandingDirtyPageCount(outstanding_dirty_page_count)) {
+        return FilePageCacheStatus::Corrupt;
+    }
+    if (page.state == FileCachePageState::Clean &&
+        outstanding_dirty_page_count >= this->dirty_page_limit_) {
         ++this->statistics_.dirty_limit_rejection_count;
+        ++this->statistics_.dirty_backpressure_count;
         return FilePageCacheStatus::DirtyLimitReached;
     }
     const FileCachePageState expected_state = page.state;
@@ -305,6 +367,7 @@ FilePageCacheStatus FilePageCache::MarkDirty(const FilePageIdentity &identity,
     }
     ++this->statistics_.dirty_page_count;
     ++this->statistics_.mark_dirty_count;
+    this->RefreshBackgroundWritebackRequest();
     return FilePageCacheStatus::Succeeded;
 }
 
@@ -312,12 +375,67 @@ FilePageCacheStatus FilePageCache::Writeback(void *const writer_context,
                                              const FilePageWriteOperation write_operation,
                                              const uint64_t maximum_page_count,
                                              uint64_t &written_page_count) noexcept {
+    return this->WritebackInternal(nullptr, OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE, UINT64_MAX,
+                                   writer_context, write_operation, maximum_page_count,
+                                   written_page_count);
+}
+
+FilePageCacheStatus FilePageCache::WritebackFile(
+    const FileIdentity &identity, const uint64_t first_page_index,
+    const uint64_t last_page_index, void *const writer_context,
+    const FilePageWriteOperation write_operation, const uint64_t maximum_page_count,
+    uint64_t &written_page_count) noexcept {
+    written_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!FileCacheIdentityIsValid(identity)) {
+        return FilePageCacheStatus::InvalidIdentity;
+    }
+    if (first_page_index > last_page_index) {
+        return FilePageCacheStatus::MappingNotFound;
+    }
+    return this->WritebackInternal(&identity, first_page_index, last_page_index, writer_context,
+                                   write_operation, maximum_page_count, written_page_count);
+}
+
+FilePageCacheStatus FilePageCache::RequestBackgroundWriteback() noexcept {
+    SpinLockGuard guard{this->lock_};
+    if (!this->initialized_) {
+        return FilePageCacheStatus::NotInitialized;
+    }
+    uint64_t outstanding_dirty_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!this->OutstandingDirtyPageCount(outstanding_dirty_page_count)) {
+        return FilePageCacheStatus::Corrupt;
+    }
+    if (outstanding_dirty_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+        return FilePageCacheStatus::Succeeded;
+    }
+    if (this->background_writeback_paused_) {
+        return FilePageCacheStatus::SourceWriteFailed;
+    }
+    this->forced_background_writeback_requested_ = true;
+    this->background_writeback_requested_ = true;
+    this->statistics_.background_writeback_requested = true;
+    if (this->statistics_.explicit_background_writeback_request_count != UINT64_MAX) {
+        ++this->statistics_.explicit_background_writeback_request_count;
+    }
+    return FilePageCacheStatus::Succeeded;
+}
+
+FilePageCacheStatus FilePageCache::WritebackInternal(
+    const FileIdentity *const filter_identity, const uint64_t first_page_index,
+    const uint64_t last_page_index, void *const writer_context,
+    const FilePageWriteOperation write_operation, const uint64_t maximum_page_count,
+    uint64_t &written_page_count) noexcept {
     written_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     if (!this->initialized_ || this->page_access_operation_ == nullptr) {
         return FilePageCacheStatus::NotInitialized;
     }
     if (writer_context == nullptr || write_operation == nullptr) {
         return FilePageCacheStatus::InvalidWriter;
+    }
+    {
+        SpinLockGuard guard{this->lock_};
+        this->background_writeback_paused_ = false;
+        this->statistics_.background_writeback_paused = false;
     }
     while (written_page_count < maximum_page_count) {
         FilePageIdentity identity{};
@@ -327,8 +445,13 @@ FilePageCacheStatus FilePageCache::Writeback(void *const writer_context,
             SpinLockGuard guard{this->lock_};
             AddressSpaceRecord *record = nullptr;
             FileCachePageSnapshot page{};
-            const FilePageCacheStatus select_status = this->SelectWritebackCandidate(record, page);
+            const FilePageCacheStatus select_status =
+                filter_identity == nullptr
+                    ? this->SelectWritebackCandidate(record, page)
+                    : this->SelectWritebackCandidateInRange(*filter_identity, first_page_index,
+                                                            last_page_index, record, page);
             if (select_status == FilePageCacheStatus::MappingNotFound) {
+                this->RefreshBackgroundWritebackRequest();
                 return FilePageCacheStatus::Succeeded;
             }
             if (select_status != FilePageCacheStatus::Succeeded || record == nullptr) {
@@ -403,9 +526,15 @@ FilePageCacheStatus FilePageCache::Writeback(void *const writer_context,
             if (write_succeeded) {
                 ++this->statistics_.successful_writeback_count;
                 ++written_page_count;
+                this->RefreshBackgroundWritebackRequest();
             } else {
                 ++this->statistics_.error_page_count;
                 ++this->statistics_.failed_writeback_count;
+                this->background_writeback_paused_ = true;
+                this->background_writeback_requested_ = false;
+                this->forced_background_writeback_requested_ = false;
+                this->statistics_.background_writeback_paused = true;
+                this->statistics_.background_writeback_requested = false;
                 return FilePageCacheStatus::SourceWriteFailed;
             }
         }
@@ -423,6 +552,7 @@ FilePageCacheStatus FilePageCache::Invalidate(const FileIdentity &identity) noex
         return FilePageCacheStatus::Succeeded;
     }
     const FileCachePageState states[] = {
+        FileCachePageState::Loading,
         FileCachePageState::Clean,
         FileCachePageState::Dirty,
         FileCachePageState::Writeback,
@@ -440,7 +570,8 @@ FilePageCacheStatus FilePageCache::Invalidate(const FileIdentity &identity) noex
             if (status != FileCacheAddressSpaceStatus::Succeeded) {
                 return this->MapAddressSpaceStatus(status);
             }
-            if (page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+            if (page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+                page.state == FileCachePageState::Loading) {
                 return FilePageCacheStatus::EntryBusy;
             }
             if (page.page_index == UINT64_MAX) {
@@ -558,6 +689,7 @@ FilePageCacheStatus FilePageCache::Truncate(const FileIdentity &identity,
              ? OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE
              : OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT);
     const FileCachePageState states[] = {
+        FileCachePageState::Loading,
         FileCachePageState::Clean,
         FileCachePageState::Dirty,
         FileCachePageState::Writeback,
@@ -576,6 +708,7 @@ FilePageCacheStatus FilePageCache::Truncate(const FileIdentity &identity,
                 return this->MapAddressSpaceStatus(status);
             }
             if (page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+                page.state == FileCachePageState::Loading ||
                 page.state == FileCachePageState::Writeback) {
                 return FilePageCacheStatus::EntryBusy;
             }
@@ -683,6 +816,7 @@ FilePageCacheStatus FilePageCache::Truncate(const FileIdentity &identity,
     record->size_bytes = size_bytes;
     record->size_known = true;
     ++this->statistics_.truncate_count;
+    this->RefreshBackgroundWritebackRequest();
     return record->address_space.Statistics().resident_page_count ==
                    OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE
                ? this->DestroyAddressSpace(*record)
@@ -705,6 +839,24 @@ FilePageCacheStatus FilePageCache::ReadAddressSpaceStatistics(
     }
     statistics = record->address_space.Statistics();
     return FilePageCacheStatus::Succeeded;
+}
+
+bool FilePageCache::BackgroundWritebackRequested() const noexcept {
+    SpinLockGuard guard{this->lock_};
+    return this->initialized_ && this->background_writeback_requested_;
+}
+
+bool FilePageCache::DirtyBackpressureRequired() const noexcept {
+    SpinLockGuard guard{this->lock_};
+    uint64_t outstanding_dirty_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    return this->initialized_ &&
+           this->OutstandingDirtyPageCount(outstanding_dirty_page_count) &&
+           outstanding_dirty_page_count >= this->dirty_page_limit_;
+}
+
+bool FilePageCache::BackgroundWritebackPaused() const noexcept {
+    SpinLockGuard guard{this->lock_};
+    return this->initialized_ && this->background_writeback_paused_;
 }
 
 FilePageCacheStatus FilePageCache::Trim(const uint64_t target_resident_page_count) noexcept {
@@ -767,6 +919,9 @@ FilePageCacheStatus FilePageCache::Validate() const noexcept {
         this->frame_allocator_ == nullptr || this->page_access_operation_ == nullptr ||
         this->metadata_heap_->Validate() != KernelHeapStatus::Succeeded ||
         this->capacity_ == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+        this->background_dirty_page_threshold_ == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+        this->background_dirty_page_threshold_ > this->dirty_page_limit_ ||
+        this->background_dirty_page_target_ >= this->background_dirty_page_threshold_ ||
         this->dirty_page_limit_ == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
         this->dirty_page_limit_ > this->capacity_) {
         return FilePageCacheStatus::NotInitialized;
@@ -775,6 +930,7 @@ FilePageCacheStatus FilePageCache::Validate() const noexcept {
     uint64_t resident_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     uint64_t referenced_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     uint64_t active_mapping_reference_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    uint64_t loading_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     uint64_t dirty_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     uint64_t writeback_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     uint64_t error_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
@@ -797,6 +953,7 @@ FilePageCacheStatus FilePageCache::Validate() const noexcept {
             referenced_page_count > UINT64_MAX - statistics.referenced_page_count ||
             active_mapping_reference_count >
                 UINT64_MAX - statistics.active_mapping_reference_count ||
+            loading_page_count > UINT64_MAX - statistics.loading_page_count ||
             dirty_page_count > UINT64_MAX - statistics.dirty_page_count ||
             writeback_page_count > UINT64_MAX - statistics.writeback_page_count ||
             error_page_count > UINT64_MAX - statistics.error_page_count) {
@@ -805,13 +962,19 @@ FilePageCacheStatus FilePageCache::Validate() const noexcept {
         resident_page_count += statistics.resident_page_count;
         referenced_page_count += statistics.referenced_page_count;
         active_mapping_reference_count += statistics.active_mapping_reference_count;
+        loading_page_count += statistics.loading_page_count;
         dirty_page_count += statistics.dirty_page_count;
         writeback_page_count += statistics.writeback_page_count;
         error_page_count += statistics.error_page_count;
         ++address_space_count;
     }
+    uint64_t outstanding_dirty_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!this->OutstandingDirtyPageCount(outstanding_dirty_page_count)) {
+        return FilePageCacheStatus::Corrupt;
+    }
     return address_space_count == this->statistics_.address_space_count &&
                    resident_page_count == this->statistics_.resident_page_count &&
+                   loading_page_count == this->statistics_.loading_page_count &&
                    referenced_page_count == this->statistics_.referenced_page_count &&
                    active_mapping_reference_count ==
                        this->statistics_.active_mapping_reference_count &&
@@ -819,7 +982,19 @@ FilePageCacheStatus FilePageCache::Validate() const noexcept {
                    writeback_page_count == this->statistics_.writeback_page_count &&
                    error_page_count == this->statistics_.error_page_count &&
                    resident_page_count <= this->capacity_ &&
-                   dirty_page_count <= this->dirty_page_limit_ &&
+                   outstanding_dirty_page_count <= this->dirty_page_limit_ &&
+                   this->statistics_.background_dirty_page_threshold ==
+                       this->background_dirty_page_threshold_ &&
+                   this->statistics_.background_dirty_page_target ==
+                       this->background_dirty_page_target_ &&
+                   this->statistics_.background_writeback_requested ==
+                       this->background_writeback_requested_ &&
+                   this->statistics_.background_writeback_paused ==
+                       this->background_writeback_paused_ &&
+                   (!this->background_writeback_paused_ ||
+                    !this->background_writeback_requested_) &&
+                   (!this->forced_background_writeback_requested_ ||
+                    this->background_writeback_requested_) &&
                    this->statistics_.peak_resident_page_count >= resident_page_count &&
                    this->statistics_.peak_address_space_count >= address_space_count &&
                    this->statistics_.successful_acquire_count ==
@@ -851,12 +1026,17 @@ FilePageCacheStatus FilePageCache::Destroy() noexcept {
     }
     this->metadata_heap_ = nullptr;
     this->capacity_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    this->background_dirty_page_threshold_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    this->background_dirty_page_target_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->dirty_page_limit_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->frame_allocator_ = nullptr;
     this->page_access_context_ = nullptr;
     this->page_access_operation_ = nullptr;
     this->access_generation_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->statistics_ = FilePageCacheStatistics{};
+    this->background_writeback_requested_ = false;
+    this->background_writeback_paused_ = false;
+    this->forced_background_writeback_requested_ = false;
     this->initialized_ = false;
     return FilePageCacheStatus::Succeeded;
 }
@@ -1046,6 +1226,78 @@ FilePageCacheStatus FilePageCache::SelectWritebackCandidate(AddressSpaceRecord *
     return FilePageCacheStatus::MappingNotFound;
 }
 
+FilePageCacheStatus FilePageCache::SelectWritebackCandidateInRange(
+    const FileIdentity &identity, const uint64_t first_page_index,
+    const uint64_t last_page_index, AddressSpaceRecord *&record,
+    FileCachePageSnapshot &page) noexcept {
+    record = this->FindAddressSpace(identity);
+    page = FileCachePageSnapshot{};
+    if (record == nullptr) {
+        return FilePageCacheStatus::MappingNotFound;
+    }
+    FileCacheAddressSpaceStatus status = record->address_space.FindNext(
+        first_page_index, last_page_index, FileCachePageState::Dirty, page);
+    if (status == FileCacheAddressSpaceStatus::Succeeded) {
+        return FilePageCacheStatus::Succeeded;
+    }
+    if (status != FileCacheAddressSpaceStatus::NotFound) {
+        return this->MapAddressSpaceStatus(status);
+    }
+    status = record->address_space.FindNext(first_page_index, last_page_index,
+                                            FileCachePageState::Error, page);
+    return status == FileCacheAddressSpaceStatus::Succeeded
+               ? FilePageCacheStatus::Succeeded
+           : status == FileCacheAddressSpaceStatus::NotFound
+               ? FilePageCacheStatus::MappingNotFound
+               : this->MapAddressSpaceStatus(status);
+}
+
+bool FilePageCache::OutstandingDirtyPageCount(uint64_t &page_count) const noexcept {
+    page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (this->statistics_.dirty_page_count >
+            UINT64_MAX - this->statistics_.writeback_page_count ||
+        this->statistics_.dirty_page_count + this->statistics_.writeback_page_count >
+            UINT64_MAX - this->statistics_.error_page_count) {
+        return false;
+    }
+    page_count = this->statistics_.dirty_page_count + this->statistics_.writeback_page_count +
+                 this->statistics_.error_page_count;
+    return true;
+}
+
+void FilePageCache::RefreshBackgroundWritebackRequest() noexcept {
+    uint64_t outstanding_dirty_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!this->OutstandingDirtyPageCount(outstanding_dirty_page_count)) {
+        this->background_writeback_paused_ = true;
+        this->background_writeback_requested_ = false;
+        this->forced_background_writeback_requested_ = false;
+    } else if (this->background_writeback_paused_) {
+        this->background_writeback_requested_ = false;
+        this->forced_background_writeback_requested_ = false;
+    } else {
+        const bool request_writeback = this->forced_background_writeback_requested_
+                                           ? outstanding_dirty_page_count !=
+                                                 OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE
+                                       : this->background_writeback_requested_
+                                           ? outstanding_dirty_page_count >
+                                                 this->background_dirty_page_target_
+                                           : outstanding_dirty_page_count >=
+                                                 this->background_dirty_page_threshold_;
+        if (this->forced_background_writeback_requested_ && !request_writeback) {
+            this->forced_background_writeback_requested_ = false;
+        }
+        if (request_writeback && !this->background_writeback_requested_) {
+            if (this->statistics_.background_writeback_request_count != UINT64_MAX) {
+                ++this->statistics_.background_writeback_request_count;
+            }
+        }
+        this->background_writeback_requested_ = request_writeback;
+    }
+    this->statistics_.background_writeback_requested =
+        this->background_writeback_requested_;
+    this->statistics_.background_writeback_paused = this->background_writeback_paused_;
+}
+
 FilePageCacheStatus
 FilePageCache::MapAddressSpaceStatus(const FileCacheAddressSpaceStatus status) const noexcept {
     switch (status) {
@@ -1084,6 +1336,8 @@ FilePageCache::MapAddressSpaceStatus(const FileCacheAddressSpaceStatus status) c
 
 FilePageCacheEntryState FilePageCache::MapPageState(const FileCachePageState state) noexcept {
     switch (state) {
+    case FileCachePageState::Loading:
+        return FilePageCacheEntryState::Loading;
     case FileCachePageState::Clean:
         return FilePageCacheEntryState::Clean;
     case FileCachePageState::Dirty:

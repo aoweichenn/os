@@ -1191,9 +1191,9 @@ regular ELF 文件。functional QEMU 又从 Shell 执行新增 13 个工具；cp
 经过 deadline，kill 投递默认忽略的 SIGCHLD。进程生命周期从 27 增至 42
 个 functional Shell child，并同步核对 created/exited/collected/wait。
 
-所有 `os_qemu_*` CTest 现在共享 `os_qemu_system_x86_64` 资源锁。调用
-`ctest --parallel 20` 时，145 个宿主测试仍可开满 CPU，24 个 QEMU 测试只会
-串行运行。该规则修复了多个 TCG 实例争抢 CPU 后让 10 秒故障路径产生虚假
+所有 `os_qemu_*` CTest 现在共享 `os_qemu_system_x86_64` 资源锁。`tools/os.py test`
+和 `verify` 默认调用 `ctest --parallel 20`；176 个宿主/审计测试可并行，29 个
+4 GiB QEMU 测试仍串行运行。该规则修复了多个 TCG 实例争抢 CPU 后让故障路径产生虚假
 timeout 的问题；不允许靠事后“失败再重跑”掩盖错误调度。
 
 远端发布验证使用唯一 `/tmp/aoweichen-os-*` 目录和每条命令的有限 timeout。
@@ -1569,3 +1569,70 @@ ATA/NVMe 三启动持久化分别为 46.73/47.25 秒。
 25.31 秒，NVMe primary 为 24.44 秒，ATA/NVMe 持久化为 51.02/51.08 秒。最后的
 writeback 状态预检加固后，caw 独立服务再次完成 205/205 CTest，0 失败、293.20 秒、
 峰值 RSS 4268880 KiB；其前置构建、格式与命名门禁通过。
+
+第四增量新增/升级以下证据：
+
+- `FileCacheAddressSpace` 直接拒绝 Retain/Remove Loading，只允许 Loading→Clean；
+  `FilePageCache` 又在 source reader 内递归 Acquire 同一身份，要求观察唯一 Loading
+  entry、明确返回 EntryBusy，且 source read 时 spinlock depth 为零；失败填页仍须撤销
+  entry、frame 和空地址空间；
+- 五页水位模型固定 hard=4、soft=2、target=1，覆盖后台请求合并、写回到 target 后停止、
+  hard 水位拒绝第五个 Dirty 页、全量写回以及最终 frame/metadata 守恒；十万步随机模型
+  继续逐步执行 Validate；
+- 4 GiB `memory_probe` 连续写入 1024 个文件页，正常 QEMU 必须观察非零 worker run/page、
+  零 worker failure，并继续完成 shared/private/truncate 语义；本轮定向运行实际观察
+  7 批、448 页、0 次回压、0 次失败；
+- `tools/os.py test` 与 `verify` 统一使用 `ctest --parallel 20`。所有 QEMU CTest 仍共享
+  `os_qemu_system_x86_64` 资源锁，因此宿主测试并发执行，但任意时刻最多运行一个
+  4 GiB 虚拟机；Python tooling 同时冻结带 layer 与不带 layer 的完整命令行。
+
+第四增量最终 focused 为 7/7、0 失败，并行实耗 5.01 秒。4 GiB primary、NVMe primary
+与 NVMe 三启动持久化为 3/3、0 失败，分别耗时 36.43、36.96、73.92 秒。完整并行
+`verify` 为 205/205、0 失败：61 unit、72 integration、43 randomized、29 system，
+含 25 条 failure-path；CTest 296.42 秒，完整 `verify` 297.47 秒，峰值 RSS
+4271608 KiB。Loading Retain/Remove 最终加固进入候选后，又完成无警告构建与 focused
+7/7，0 失败、5.01 秒。
+
+第五增量新增/升级以下证据：
+
+- `os_kernel_file_writeback_error_tracker_unit_tests` 覆盖多文件、多个独立打开实例、
+  序列推进、相对游标检查、最后引用释放和新 open 不继承历史错误；
+- `os_kernel_file_writeback_error_tracker_randomized_tests` 以固定种子执行十万步
+  register/unregister/record/check，每 256 步重算活动文件和打开实例 oracle；
+- FileDescription 生命周期把真实 tracker 接到创建/最终释放，验证 duplicate 共享游标、
+  独立 open 保留旧采样点；FilePageCache 单元验证文件范围选页和显式低水位 pending；
+- 4 GiB memory probe 调用 fsync、fdatasync、MS_ASYNC、MS_SYNC|MS_INVALIDATE，并验证
+  MAP_PRIVATE 不回写与 ASYNC|SYNC 非法组合。runner 要求四类调用计数非零、错误记录
+  最终为零；
+- ABI 门禁冻结 2.4.0、87 项调用、旧 1..84 编号、Linux-compatible msync 位值和
+  -1..-59 错误区间。
+
+第五增量最终 focused 为 8/8、0 失败，并行实耗 1.37 秒。4 GiB primary、NVMe primary
+和 NVMe 三启动持久化为 3/3、0 失败，分别耗时 37.08、38.20、74.68 秒。完整并行
+`verify` 为 207/207、0 失败：62 unit、72 integration、44 randomized、29 system，
+含 25 条 failure-path；CTest 302.97 秒，完整 `verify` 303.96 秒，峰值 RSS
+4269656 KiB。主路径 marker 为 worker 8 批/449 页、fsync/fdatasync 1/1、同步/异步
+msync 2/1、worker failure 0、活动错误记录 0。
+
+第六增量新增/升级以下证据：
+
+- MemoryPressure 单元冻结 clean→writeback→swap 调用顺序，并覆盖部分回收、写回失败、
+  swap 失败、无进展和运行期 resident-limit 降低；
+- `os_kernel_memory_pressure_randomized_tests` 新增十万组 reclaim plan/execution oracle，
+  随机对照三阶段计划、实际回收数、跳过空阶段与 NoProgress；
+- 新增 `os_qemu_memory_reclaim_pressure` 与
+  `os_qemu_nvme_memory_reclaim_pressure`：来宾仍为 4 GiB `-mem-prealloc`，分别使用
+  ATA/NVMe rootfs 与真实 28 GiB swap；PID1 建立后把逻辑预算降至 9216 页，memory
+  probe 实际触碰并回读 512 个匿名页，再执行 1024 页文件写入；
+- 门禁要求 clean file、dirty written/reclaimed、anonymous swapped 均非零，no-progress
+  为零；最终 committed=0、active swap=0、swap checksum failure=0，全部资源守恒；
+- 调试过程中先后捕获“空 rootfs 误作正常压力盘”和“PID1 返回栈被跨进程换出”两项
+  真实失败；最终镜像复用完整用户安装清单，回收候选显式保护 PID1/活动返回栈。
+
+最终 focused 的 cache/reclaim 单元、集成与随机模型为 10/10、0 失败，并行实耗
+5.05 秒；ATA/NVMe 两条 4 GiB 压力启动为 2/2、0 失败，分别耗时 38.44/38.37 秒。
+二者均由 runner 证明 resident limit 精确为 9216 页，clean/written/reclaimed-written/
+swapped 四阶段计数均非零，NoProgress 为 0。最终完整 `verify` 为 209/209、0 失败：
+62 unit、72 integration、44 randomized、31 system，含 25 条 failure-path；CTest
+373.78 秒。全量轮的 ATA/NVMe 压力分别为 38.07/40.15 秒，两条三启动持久化分别为
+74.89/74.62 秒；CAW 验证服务峰值约 5.54 GiB，QEMU 全程受资源锁串行。

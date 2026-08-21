@@ -583,3 +583,14 @@ umask、chmod/chown、硬/符号链接、readlink 和 get/set rlimit。Linux RLI
 `id` 输出 real/effective UID/GID 与组，`stat` 输出四位八进制 mode 和 owner；
 chmod、chown、ln、readlink 使用公开 syscall。umask 是 Shell builtin，因为外部
 子进程不能改变父 Shell 的创建掩码。
+
+## v2.8 文件同步 ABI
+
+ABI v2.4.0 保留 1..84，在末尾追加 85 `SynchronizeFile`、86
+`SynchronizeFileData`、87 `SynchronizeMemory`。用户封装分别对应 fsync、fdatasync
+和 msync 语义；msync flags 使用 ASYNC=1、INVALIDATE=2、SYNC=4。旧结构大小与
+-1..-59 错误区间不变，rootfs 盘面格式不受影响。
+
+memory probe 对同一文件同时保留两个 shared alias、一个 writable shared 和一个
+private COW 映射。它先提交 MS_ASYNC，再重新写脏并执行 MS_SYNC|MS_INVALIDATE，随后
+调用 fdatasync/fsync；private 映射上的 MS_SYNC 成功但不把 COW 字节写回。
