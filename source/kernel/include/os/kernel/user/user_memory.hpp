@@ -125,16 +125,25 @@ enum class UserResidentAllocationStatus : uint64_t {
 };
 
 using UserMemoryProtectSharedMappingsOperation = bool (*)(void *context) noexcept;
-using UserMemoryReclaimAnonymousOperation = bool (*)(
-    void *context, UserAddressSpace &requester, uint64_t target_page_count,
-    uint64_t excluded_virtual_address, uint64_t protected_virtual_address,
-    uint64_t &reclaimed_page_count) noexcept;
-using UserMemoryRecoverOutOfMemoryOperation = bool (*)(void *context,
-                                                       UserAddressSpace &requester,
+using UserMemoryRequestBackgroundReclaimOperation = bool (*)(void *context) noexcept;
+using UserMemoryPrepareAnonymousPageReleaseOperation = bool (*)(void *context,
+                                                                uint64_t physical_address) noexcept;
+using UserMemoryReclaimPageSelectionOperation = bool (*)(void *context, uint64_t physical_address,
+                                                         bool &selected) noexcept;
+using UserMemoryReclaimPageCompletionOperation = bool (*)(void *context,
+                                                          uint64_t physical_address) noexcept;
+using UserMemoryReclaimAnonymousOperation = bool (*)(void *context, UserAddressSpace &requester,
+                                                     uint64_t target_page_count,
+                                                     uint64_t excluded_virtual_address,
+                                                     uint64_t protected_virtual_address,
+                                                     uint64_t &reclaimed_page_count) noexcept;
+using UserMemoryRecoverOutOfMemoryOperation = bool (*)(void *context, UserAddressSpace &requester,
                                                        bool allow_current_victim) noexcept;
 
 struct UserMemoryReclaimOperations final {
     UserMemoryProtectSharedMappingsOperation protect_shared_mappings;
+    UserMemoryRequestBackgroundReclaimOperation request_background_reclaim;
+    UserMemoryPrepareAnonymousPageReleaseOperation prepare_anonymous_page_release;
     UserMemoryReclaimAnonymousOperation reclaim_anonymous_pages;
     UserMemoryRecoverOutOfMemoryOperation recover_out_of_memory;
     void *context;
@@ -144,6 +153,8 @@ struct UserMemoryReclaimStatistics final {
     uint64_t allocation_request_count;
     uint64_t immediate_allocation_count;
     uint64_t reclaim_cycle_count;
+    uint64_t planned_file_page_count;
+    uint64_t planned_anonymous_page_count;
     uint64_t clean_file_page_count;
     uint64_t written_file_page_count;
     uint64_t reclaimed_written_file_page_count;
@@ -217,6 +228,7 @@ struct UserFilePageCacheRuntimeStatistics final {
 
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
 [[nodiscard]] bool ConfigureUserMemoryResidentLimit(uint64_t resident_limit_page_count) noexcept;
+[[nodiscard]] bool ConfigureUserMemorySwappiness(uint64_t swappiness) noexcept;
 [[nodiscard]] bool ApplyConfiguredUserMemoryResidentLimit() noexcept;
 [[nodiscard]] UserAddressSpaceStatus AttachUserSwap(FileSystemBlockDevice &device) noexcept;
 [[nodiscard]] UserSwapInitializationStage GetUserSwapInitializationStage() noexcept;
@@ -224,18 +236,36 @@ struct UserFilePageCacheRuntimeStatistics final {
 [[nodiscard]] FilePageCacheStatistics GetUserFilePageCacheStatistics() noexcept;
 [[nodiscard]] uint64_t GetUserFilePageCacheMetadataSizeBytes() noexcept;
 [[nodiscard]] UserFilePageCacheRuntimeStatistics GetUserFilePageCacheRuntimeStatistics() noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+VisitUserFilePageCache(void *context, FilePageCacheVisitOperation operation) noexcept;
 [[nodiscard]] UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept;
 [[nodiscard]] MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept;
+[[nodiscard]] uint64_t GetUserMemorySwappiness() noexcept;
 [[nodiscard]] MemoryOvercommitStatistics GetUserMemoryOvercommitStatistics() noexcept;
 [[nodiscard]] SwapManagerStatistics GetUserSwapStatistics() noexcept;
 [[nodiscard]] bool ValidateUserMemoryManagement() noexcept;
 [[nodiscard]] bool
 ConfigureUserMemoryReclaimOperations(const UserMemoryReclaimOperations &operations) noexcept;
 [[nodiscard]] UserMemoryReclaimStatistics GetUserMemoryReclaimStatistics() noexcept;
-[[nodiscard]] UserVirtualMemoryStatus ReclaimUserAnonymousPages(
-    UserAddressSpace &address_space, uint64_t target_page_count,
-    uint64_t excluded_virtual_address, uint64_t protected_virtual_address,
-    uint64_t &reclaimed_page_count) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+ReclaimUserAnonymousPages(UserAddressSpace &address_space, uint64_t target_page_count,
+                          uint64_t excluded_virtual_address, uint64_t protected_virtual_address,
+                          uint64_t &reclaimed_page_count) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+ReclaimSelectedUserAnonymousPages(UserAddressSpace &address_space, uint64_t target_page_count,
+                                  uint64_t excluded_virtual_address,
+                                  uint64_t protected_virtual_address, void *context,
+                                  UserMemoryReclaimPageSelectionOperation selection_operation,
+                                  UserMemoryReclaimPageCompletionOperation completion_operation,
+                                  uint64_t &reclaimed_page_count) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+ReclaimSelectedUserFilePages(uint64_t maximum_page_count, void *context,
+                             FilePageCacheReclaimSelectionOperation selection_operation,
+                             FilePageCacheReclaimCompletionOperation completion_operation,
+                             uint64_t &reclaimed_page_count) noexcept;
+[[nodiscard]] bool
+RecordUserBackgroundMemoryReclaim(uint64_t clean_file_page_count, uint64_t written_file_page_count,
+                                  uint64_t swapped_anonymous_page_count) noexcept;
 [[nodiscard]] MemoryOvercommitStatus
 CommitUserMemory(UserAddressSpace &address_space, uint64_t page_count, bool privileged) noexcept;
 [[nodiscard]] MemoryOvercommitStatus UncommitUserMemory(UserAddressSpace &address_space,
@@ -273,34 +303,37 @@ MapFileMemory(UserAddressSpace &address_space, fs::Vfs &vfs, const fs::OpenFile 
                                                            uint64_t length_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 UnmapFileMemory(UserAddressSpace &address_space, uint64_t address, uint64_t length_bytes) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus
-TruncateUserFileMappings(UserAddressSpace &address_space, const FileIdentity &identity,
-                         uint64_t size_bytes) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus TruncateUserFileMappings(UserAddressSpace &address_space,
+                                                               const FileIdentity &identity,
+                                                               uint64_t size_bytes) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus TrimUserFilePageCache() noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 ProtectUserSharedFileMappings(UserAddressSpace &address_space) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus SynchronizeUserFileMappings(
-    UserAddressSpace &address_space, uint64_t address, uint64_t length_bytes,
-    bool synchronous, uint64_t &written_page_count) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+SynchronizeUserFileMappings(UserAddressSpace &address_space, uint64_t address,
+                            uint64_t length_bytes, bool synchronous,
+                            uint64_t &written_page_count) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 WritebackUserFilePageCache(uint64_t maximum_page_count, uint64_t &written_page_count) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus WritebackUserFilePageCacheRange(
-    const FileIdentity &identity, uint64_t first_page_index, uint64_t last_page_index,
-    uint64_t maximum_page_count, uint64_t &written_page_count) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+WritebackUserFilePageCacheRange(const FileIdentity &identity, uint64_t first_page_index,
+                                uint64_t last_page_index, uint64_t maximum_page_count,
+                                uint64_t &written_page_count) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus RequestUserFileWriteback() noexcept;
 [[nodiscard]] bool UserFileWritebackWorkerRequested() noexcept;
 [[nodiscard]] bool UserFileWritebackBackpressureRequired() noexcept;
 [[nodiscard]] bool UserFileWritebackWorkerPaused() noexcept;
 [[nodiscard]] UserVirtualMemoryStatus
 RunUserFileWritebackWorker(uint64_t &written_page_count) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+RunUserFileWritebackWorker(uint64_t maximum_page_count, uint64_t &written_page_count) noexcept;
 void RecordUserFileWritebackBackpressure() noexcept;
-[[nodiscard]] bool RegisterUserFileWritebackDescription(
-    const FileIdentity &identity, uint64_t &sampled_sequence) noexcept;
-[[nodiscard]] bool
-UnregisterUserFileWritebackDescription(const FileIdentity &identity) noexcept;
-[[nodiscard]] UserVirtualMemoryStatus CheckUserFileWritebackError(
-    const FileIdentity &identity, uint64_t sampled_sequence, uint64_t &current_sequence,
-    FileWritebackError &error) noexcept;
+[[nodiscard]] bool RegisterUserFileWritebackDescription(const FileIdentity &identity,
+                                                        uint64_t &sampled_sequence) noexcept;
+[[nodiscard]] bool UnregisterUserFileWritebackDescription(const FileIdentity &identity) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+CheckUserFileWritebackError(const FileIdentity &identity, uint64_t sampled_sequence,
+                            uint64_t &current_sequence, FileWritebackError &error) noexcept;
 [[nodiscard]] FileWritebackErrorTrackerStatistics
 GetUserFileWritebackErrorTrackerStatistics() noexcept;
 [[nodiscard]] UserVirtualMemoryStatus SetProgramBreak(UserAddressSpace &address_space,

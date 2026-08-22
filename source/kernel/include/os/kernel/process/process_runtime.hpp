@@ -12,13 +12,16 @@
 #include <os/kernel/io/terminal.hpp>
 #include <os/kernel/ipc/pipe.hpp>
 #include <os/kernel/ipc/pipe_manager.hpp>
+#include <os/kernel/memory/background_reclaim.hpp>
 #include <os/kernel/memory/kernel_stack_manager.hpp>
+#include <os/kernel/memory/page_aging.hpp>
 #include <os/kernel/memory/physical_frame_allocator.hpp>
 #include <os/kernel/memory/resource_snapshot.hpp>
 #include <os/kernel/process/job_control.hpp>
 #include <os/kernel/process/process_tree.hpp>
 #include <os/kernel/process/signal_manager.hpp>
 #include <os/kernel/process/thread_scheduler.hpp>
+#include <os/kernel/process/work_queue.hpp>
 #include <os/kernel/sync/private_futex.hpp>
 #include <os/kernel/user/user_elf.hpp>
 #include <os/kernel/user/user_memory.hpp>
@@ -98,6 +101,37 @@ enum class UserThreadStatus : uint64_t {
     AlreadyJoined,
     Deadlock,
     RuntimeFailure,
+};
+
+enum class KernelThreadRuntimeStatus : uint64_t {
+    Succeeded,
+    NotInitialized,
+    SchedulingActive,
+    InvalidEntry,
+    InvalidThreadKind,
+    CapacityExhausted,
+    StackFailure,
+    ContextFailure,
+    SchedulerFailure,
+    ExtendedStateFailure,
+    CpuLocalFailure,
+    NoReadyThread,
+};
+
+using KernelThreadEntryOperation = void (*)(void *context) noexcept;
+
+struct KernelThreadRuntimeStatistics final {
+    uint64_t active_thread_count;
+    uint64_t peak_active_thread_count;
+    uint64_t create_count;
+    uint64_t dispatch_count;
+    uint64_t yield_count;
+    uint64_t block_count;
+    uint64_t wake_count;
+    uint64_t exit_count;
+    uint64_t reap_count;
+    uint64_t user_to_kernel_switch_count;
+    uint64_t kernel_to_user_switch_count;
 };
 
 enum class PrivateFutexWaitStatus : uint64_t {
@@ -210,6 +244,12 @@ struct ProcessIpcStatistics final {
 
 struct ProcessRuntimeStatistics final {
     ThreadSchedulerStatistics scheduler;
+    KernelThreadRuntimeStatistics kernel_threads;
+    WorkQueueStatistics work_queue;
+    BackgroundReclaimStatistics background_reclaim;
+    bool background_reclaim_worker_failed;
+    PageAgingStatistics page_aging;
+    bool page_aging_worker_failed;
     ExtendedStateConfiguration extended_state;
     uint64_t configured_process_capacity;
     uint64_t configured_thread_capacity;
@@ -270,6 +310,20 @@ static_assert(sizeof(ProcessObservationSnapshot) <=
               OS_KERNEL_PROCESS_OBSERVATION_MAXIMUM_SIZE_BYTES);
 
 [[nodiscard]] ProcessRuntimeStatus InitializeProcessRuntime() noexcept;
+[[nodiscard]] KernelThreadRuntimeStatus
+CreateKernelThread(KernelThreadEntryOperation entry_operation, void *context,
+                   ThreadId &thread_id) noexcept;
+[[nodiscard]] KernelThreadRuntimeStatus ExecuteReadyKernelThreads() noexcept;
+[[nodiscard]] KernelThreadRuntimeStatus YieldCurrentKernelThread() noexcept;
+[[nodiscard]] KernelThreadRuntimeStatus BlockCurrentKernelThread(WaitQueue &wait_queue,
+                                                                 WaitCondition wait_condition,
+                                                                 WakeReason &wake_reason) noexcept;
+[[nodiscard]] KernelThreadRuntimeStatus
+BlockCurrentKernelThreadUntil(WaitQueue &wait_queue, WaitCondition wait_condition,
+                              uint64_t deadline_nanoseconds, WakeReason &wake_reason) noexcept;
+[[nodiscard]] KernelThreadRuntimeStatus
+WakeOneKernelThread(WaitQueue &wait_queue, WakeReason wake_reason, bool &wake_won) noexcept;
+[[nodiscard]] KernelThreadRuntimeStatistics GetKernelThreadRuntimeStatistics() noexcept;
 [[nodiscard]] ProcessRuntimeStatus RefreshProcessRuntimeResourceBaseline() noexcept;
 [[nodiscard]] ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs,
                                                     FileSystemBlockDevice &swap_device) noexcept;
@@ -436,10 +490,9 @@ ReadCurrentProcessSymbolicLink(const uint8_t *path, uint64_t path_length_bytes,
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
 [[nodiscard]] FileSystemStatus SynchronizeCurrentProcessFile(uint64_t file_descriptor,
                                                              bool data_only) noexcept;
-[[nodiscard]] FileSystemStatus SynchronizeCurrentProcessMemory(uint64_t address,
-                                                               uint64_t length_bytes,
-                                                               uint64_t flags) noexcept;
-[[nodiscard]] FileSystemStatus ServiceRuntimeFileWritebackWorker() noexcept;
+[[nodiscard]] FileSystemStatus
+SynchronizeCurrentProcessMemory(uint64_t address, uint64_t length_bytes, uint64_t flags) noexcept;
+[[nodiscard]] FileSystemStatus ScheduleRuntimeFileWritebackWorker() noexcept;
 [[nodiscard]] FileSystemStatus ChangeCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus

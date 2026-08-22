@@ -44,6 +44,62 @@ struct ReclaimExecutionContext final {
     return left < right ? left : right;
 }
 
+struct ReclaimPlanOracle final {
+    uint64_t file_budget_page_count;
+    uint64_t anonymous_budget_page_count;
+    uint64_t clean_file_page_count;
+    uint64_t writeback_file_page_count;
+    uint64_t swap_out_page_count;
+    uint64_t unreclaimable_page_count;
+};
+
+[[nodiscard]] ReclaimPlanOracle CalculateReclaimPlanOracle(
+    const uint64_t target_page_count, const uint64_t clean_page_count,
+    const uint64_t dirty_page_count, const uint64_t anonymous_page_count,
+    const uint64_t free_swap_page_count, const uint64_t swappiness) noexcept {
+    const uint64_t available_file_page_count = clean_page_count + dirty_page_count;
+    const uint64_t available_anonymous_page_count =
+        swappiness == 0ULL ? 0ULL : Minimum(anonymous_page_count, free_swap_page_count);
+    uint64_t desired_anonymous_page_count =
+        (target_page_count * swappiness) /
+        os::kernel::OS_KERNEL_MEMORY_PRESSURE_MAXIMUM_SWAPPINESS;
+    if (target_page_count >= 2ULL && available_file_page_count != 0ULL &&
+        available_anonymous_page_count != 0ULL && swappiness != 0ULL &&
+        swappiness != os::kernel::OS_KERNEL_MEMORY_PRESSURE_MAXIMUM_SWAPPINESS) {
+        if (desired_anonymous_page_count == 0ULL) {
+            desired_anonymous_page_count = 1ULL;
+        }
+        if (desired_anonymous_page_count == target_page_count) {
+            --desired_anonymous_page_count;
+        }
+    }
+    uint64_t file_budget_page_count =
+        Minimum(target_page_count - desired_anonymous_page_count, available_file_page_count);
+    uint64_t anonymous_budget_page_count =
+        Minimum(desired_anonymous_page_count, available_anonymous_page_count);
+    uint64_t remaining_page_count =
+        target_page_count - file_budget_page_count - anonymous_budget_page_count;
+    const uint64_t additional_file_page_count =
+        Minimum(remaining_page_count, available_file_page_count - file_budget_page_count);
+    file_budget_page_count += additional_file_page_count;
+    remaining_page_count -= additional_file_page_count;
+    const uint64_t additional_anonymous_page_count =
+        Minimum(remaining_page_count,
+                available_anonymous_page_count - anonymous_budget_page_count);
+    anonymous_budget_page_count += additional_anonymous_page_count;
+    remaining_page_count -= additional_anonymous_page_count;
+    const uint64_t expected_clean_page_count =
+        Minimum(file_budget_page_count, clean_page_count);
+    return ReclaimPlanOracle{
+        .file_budget_page_count = file_budget_page_count,
+        .anonymous_budget_page_count = anonymous_budget_page_count,
+        .clean_file_page_count = expected_clean_page_count,
+        .writeback_file_page_count = file_budget_page_count - expected_clean_page_count,
+        .swap_out_page_count = anonymous_budget_page_count,
+        .unreclaimable_page_count = remaining_page_count,
+    };
+}
+
 [[nodiscard]] bool ReclaimStage(void *const context, const uint64_t stage,
                                 const uint64_t requested_page_count,
                                 uint64_t &reclaimed_page_count) noexcept {
@@ -214,9 +270,8 @@ int main() {
         const uint64_t free_swap_page_count =
             NextRandom(random_state) % OS_TEST_MEMORY_PRESSURE_RANDOM_RECLAIM_MAXIMUM_PAGES;
         const uint64_t swappiness =
-            (NextRandom(random_state) & 1ULL) == 0ULL
-                ? 0ULL
-                : os::kernel::OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS;
+            NextRandom(random_state) %
+            (os::kernel::OS_KERNEL_MEMORY_PRESSURE_MAXIMUM_SWAPPINESS + 1ULL);
         os::kernel::MemoryReclaimPlan plan{};
         reclaim_valid = os::kernel::PlanMemoryReclaim(
                             os::kernel::MemoryReclaimInput{
@@ -228,23 +283,19 @@ int main() {
                                 .swappiness = swappiness,
                             },
                             plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded;
-        uint64_t remaining_page_count = target_page_count;
-        const uint64_t expected_clean_page_count = Minimum(remaining_page_count, clean_page_count);
-        remaining_page_count -= expected_clean_page_count;
-        const uint64_t expected_writeback_page_count =
-            Minimum(remaining_page_count, dirty_page_count);
-        remaining_page_count -= expected_writeback_page_count;
-        const uint64_t expected_swap_page_count =
-            swappiness == 0ULL
-                ? 0ULL
-                : Minimum(remaining_page_count,
-                          Minimum(anonymous_page_count, free_swap_page_count));
-        remaining_page_count -= expected_swap_page_count;
+        const ReclaimPlanOracle oracle = CalculateReclaimPlanOracle(
+            target_page_count, clean_page_count, dirty_page_count, anonymous_page_count,
+            free_swap_page_count, swappiness);
+        const uint64_t expected_clean_page_count = oracle.clean_file_page_count;
+        const uint64_t expected_writeback_page_count = oracle.writeback_file_page_count;
+        const uint64_t expected_swap_page_count = oracle.swap_out_page_count;
         reclaim_valid =
-            reclaim_valid && plan.clean_file_page_count == expected_clean_page_count &&
+            reclaim_valid && plan.file_budget_page_count == oracle.file_budget_page_count &&
+            plan.anonymous_budget_page_count == oracle.anonymous_budget_page_count &&
+            plan.clean_file_page_count == expected_clean_page_count &&
             plan.writeback_file_page_count == expected_writeback_page_count &&
             plan.swap_out_page_count == expected_swap_page_count &&
-            plan.unreclaimable_page_count == remaining_page_count;
+            plan.unreclaimable_page_count == oracle.unreclaimable_page_count;
 
         ReclaimExecutionContext context{
             .capacities = {

@@ -21,6 +21,7 @@
 | --- | --- |
 | `thread_scheduler.*` | Process/Thread 槽位、PID/TID、run queue、WaitQueue、状态转换 |
 | `wait_queue.*` | 有界 FIFO 等待队列状态与统计 |
+| `work_queue.*` | generation handle、即时 FIFO、延迟堆、取消、完成与 drain |
 | `process_tree.*` | 父子关系、Zombie、reparent、wait 和进程树不变量 |
 | `program_arguments.*` | `argc/argv/envp` 长度规划、栈地址计算和精确上限 |
 | `process_runtime.*` | 跨内存、VFS、fd、栈、现场和调度器的资源事务 |
@@ -52,7 +53,8 @@ ProcessRuntime 组合。
 
 ## 身份与容量
 
-- `ProcessId` 与 `ThreadId` 是单调 64 位身份；
+- `ProcessId` 与 User `ThreadId` 是低位单调 64 位身份；Kernel `ThreadId` 使用独立
+  高位区间；
 - `process_index` 与 `thread_index` 是内部可复用槽位；
 - 64 MiB：8 Process、8 Thread、每 Process 1 Thread；
 - 256 MiB：64 Process、128 Thread、每 Process 32 Thread；
@@ -60,6 +62,76 @@ ProcessRuntime 组合。
 - 配置由受管可用内存选择，不由宿主架构选择。
 
 用户 ABI 和日志只暴露 PID，不暴露槽位。
+
+## v2.9 Kernel Thread 第一增量
+
+`ThreadKind` 把旧 Thread 明确标记为 User，并增加 Kernel。Kernel 条目固定保持
+`process_index=UINT64_MAX`、用户栈/TLS/signal mask 为零，不进入 Process 链；高位 TID
+与用户 TID 分区。Process 停止、exec、signal、OOM 和用户线程 join 只接受 User kind。
+
+ProcessRuntime 为 Kernel kind 保存入口函数、opaque context、FXSAVE 区和 saved RSP。
+初始 RSP 指向动态 KernelStack 顶部的 72 字节上下文。汇编只实现协作切换；C++ 在切换
+前提交 scheduler 状态、保存 FX，在恢复目标 RSP 前更新 CpuLocal/TSS。退出条目必须先
+回到 dispatcher stack，随后才能 reap scheduler entry 并销毁其动态栈。
+
+`ExecuteReadyKernelThreads` 仍要求 `owned_user_thread_count==0`，用于独立生命周期测试；
+生产 `ExecuteProcesses` 已在第三增量成为混合 dispatcher。完整决定见
+[ADR 0057](../adr/0057-v2-9-kernel-thread-lifecycle.md)。
+
+第六增量的 OOM 回调把 Alive Process 映射为统一候选，保护 PID1，并能在不切走当前
+fault Thread 的前提下终止非当前 victim。专用用户程序让 victim 的 resident workset
+始终比 requester 大 64 页，wait event 以 `termination_reason=Signal` 和
+`exception_vector=SIGKILL` 验证结果；回收后的 ProcessTree、Scheduler、VMA、页表与
+frame 必须全部归零。决策见
+[ADR 0062](../adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
+
+### WorkQueue
+
+WorkQueue 不创建 Thread，也不调用任务。它只拥有 caller-storage entry、delayed heap、
+ready FIFO 和统计。`AcquireNext` 是锁内提交点；operation/context 快照交给 ProcessRuntime
+后，回调在锁外执行，再以 handle 完成。generation 防止 release/reuse 后的旧请求命中。
+
+同一 handle 的重复 pending 提交返回 AlreadyPending；即时提交遇到同一 Delayed handle
+会从 heap 删除并提升到 ready。cancel 从 FIFO O(1) 删除，或从
+最小堆 O(log n) 删除；Running 只能等待完成。drain 是提交屏障，不是忙等循环。第二增量
+第二增量先用独立批次 worker 验证组合。第三增量注册一个常驻 writeback handle，
+Worker 通过 `NextDeadline` 和 `KernelWork` WaitQueue park/unpark；用户返回点只负责提交，
+不执行 VFS I/O。设计见
+[ADR 0058](../adr/0058-v2-9-work-queue-state-and-drain.md)。
+
+### 混合 dispatcher 与 writeback Worker
+
+跨类型切换不把用户 ExceptionFrame 当作 Kernel RSP，也不反向解释。User→Kernel 和
+Kernel→User 都先返回 `ExecuteProcesses` 保存的 dispatcher stack，再由目标类型的汇编
+入口恢复现场。同类型 User→User、Kernel→Kernel 保持直接切换。Worker 每批完成后 yield，
+无任务时按 WorkQueue 最早 deadline 阻塞；最后一个用户线程退出后由 dispatcher 停止并
+回收。决策见 [ADR 0059](../adr/0059-v2-9-mixed-worker-writeback.md)。
+
+### 周期页面老化 WorkItem
+
+生产 Worker 的第二个持久 WorkHandle 每秒运行一次 aging。它先遍历文件页缓存，再扫描
+所有拥有用户 CR3 的 Process/VMA，通过页表接口读取并清除 A 位。最后一个 User Thread
+退出时，aging、writeback 与 background 三个 handle 一起取消、reset、release，
+PageAging 当前队列清零但累计证据保留。
+
+进程结果槽与地址空间寿命不同：Zombie 在父进程收集前仍 `active`，但退出路径已经把
+`root_physical_address` 清零；aging 将其视为无地址空间终态并跳过。拥有非零 CR3 的
+活动槽若 VMA 或页表采样失败，则记录一次聚合 failure stage/status 并停止周期重排。
+决策见 [ADR 0060](../adr/0060-v2-9-pte-accessed-page-aging.md)。
+
+### 后台水位回收 WorkItem
+
+`UserMemoryReclaimOperations::request_background_reclaim` 只负责把低水位事件合并到稳定
+background handle，并唤醒 `KernelWork` WaitQueue；分配/IRQ 路径不扫描页、不访问 VFS。
+Worker 读取 `BackgroundReclaimController` 决策后执行最多 64 页的 clean、writeback、
+anonymous 批次。无进展、仅写回和失败进入一秒 deadline 退避，成功回收且仍低于 high
+才即时重排。
+
+文件页 selection 同时核对显式 candidate 和 FilePageCache access generation，completion
+在 eviction 前调用 `PageAgingManager::Forget`。匿名 completion 在 swap 已写入、PTE 已
+撤销但 frame 尚未归还时忘记候选；失败可回滚 PTE 与 swap slot。controller 的 wake、
+sleep、batch、clean、writeback、anonymous、no-progress 和 failure 都只在最终统计区输出。
+决策见 [ADR 0061](../adr/0061-v2-9-background-watermark-reclaim.md)。
 
 ## ProcessTree 不变量
 

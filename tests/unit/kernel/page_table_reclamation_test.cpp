@@ -11,6 +11,8 @@ constexpr std::string_view OS_TEST_PAGE_TABLE_RECLAIM_ROOT_MODE =
     "页表根类型必须约束初始化入口并拒绝重复初始化";
 constexpr std::string_view OS_TEST_PAGE_TABLE_RECLAIM_SINGLE_PAGE =
     "独占根最后一页撤销后必须逐级回收三级中间表";
+constexpr std::string_view OS_TEST_PAGE_TABLE_RECLAIM_ACCESSED =
+    "Accessed 采样必须只清叶项 A 位并保留其余映射字段";
 constexpr std::string_view OS_TEST_PAGE_TABLE_RECLAIM_ADJACENT_PAGES =
     "同一末级表仍有映射时不得提前回收，最后一页才允许级联回收";
 constexpr std::string_view OS_TEST_PAGE_TABLE_RECLAIM_SHARED_ROOT =
@@ -32,6 +34,7 @@ constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_TWO_ENTRIES = 2ULL;
 constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_THREE_ENTRIES = 3ULL;
 constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_FIVE_PAGES = 5ULL;
 constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_ENTRY_PRESENT_WRITABLE = 0x3ULL;
+constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_ENTRY_ACCESSED = 0x20ULL;
 constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_ENTRY_ADDRESS_MASK = 0x000FFFFFFFFFF000ULL;
 constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_LEVEL4_SHIFT = 39ULL;
 constexpr uint64_t OS_TEST_PAGE_TABLE_RECLAIM_LEVEL4_INDEX_MASK = 0x1FFULL;
@@ -128,6 +131,35 @@ int main() {
             offset_mapping) == os::kernel::PageTableStatus::Succeeded &&
         offset_mapping.physical_address ==
             basic_data_frame.physical_address + OS_TEST_PAGE_TABLE_RECLAIM_QUERY_OFFSET;
+    const os::kernel::PageTableIndices basic_indices =
+        os::kernel::CalculatePageTableIndices(OS_TEST_PAGE_TABLE_RECLAIM_BASIC_ADDRESS);
+    uint64_t *const basic_root =
+        basic_environment.TableAt(basic_environment.PageTableManager().RootPhysicalAddress());
+    uint64_t *const basic_level3 =
+        basic_environment.TableAt(ChildTableAddress(basic_root[basic_indices.level4]));
+    uint64_t *const basic_level2 =
+        basic_environment.TableAt(ChildTableAddress(basic_level3[basic_indices.level3]));
+    uint64_t *const basic_level1 =
+        basic_environment.TableAt(ChildTableAddress(basic_level2[basic_indices.level2]));
+    const uint64_t basic_leaf_without_accessed = basic_level1[basic_indices.level1];
+    basic_level1[basic_indices.level1] |= OS_TEST_PAGE_TABLE_RECLAIM_ENTRY_ACCESSED;
+    bool first_accessed = false;
+    bool second_accessed = true;
+    os::kernel::PageMapping accessed_mapping{};
+    const bool accessed_sampling_valid =
+        basic_environment.PageTableManager().QueryPage(OS_TEST_PAGE_TABLE_RECLAIM_BASIC_ADDRESS,
+                                                       accessed_mapping) ==
+            os::kernel::PageTableStatus::Succeeded &&
+        accessed_mapping.accessed &&
+        basic_environment.PageTableManager().TestAndClearAccessed(
+            OS_TEST_PAGE_TABLE_RECLAIM_BASIC_ADDRESS, accessed_mapping, first_accessed) ==
+            os::kernel::PageTableStatus::Succeeded &&
+        first_accessed && basic_level1[basic_indices.level1] == basic_leaf_without_accessed &&
+        basic_environment.PageTableManager().TestAndClearAccessed(
+            OS_TEST_PAGE_TABLE_RECLAIM_BASIC_ADDRESS, accessed_mapping, second_accessed) ==
+            os::kernel::PageTableStatus::Succeeded &&
+        !second_accessed;
+    test_context.Expect(accessed_sampling_valid, OS_TEST_PAGE_TABLE_RECLAIM_ACCESSED);
     os::kernel::PageTableUnmapResult basic_result{};
     const bool basic_unmapped = offset_query_valid &&
                                 basic_environment.PageTableManager().UnmapPage(

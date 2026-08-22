@@ -237,3 +237,44 @@ user/system_calls.*                       ABI 2.4.0 的 85..87 分发
 memory/memory_pressure.*                  clean/writeback/swap 纯逻辑执行顺序
 process/process_runtime.*                 跨进程轮转、活动栈保护与 OOM 回调
 ```
+
+v2.9 第一增量在同一个调度器中增加不属于 Process 的 Kernel Thread：
+
+```text
+process/thread_scheduler.*   ThreadKind、独立高位 TID、run/wait/exited 状态
+memory/kernel_stack_manager.* 16 KiB 动态栈与双 guard
+arch/architecture.asm        首次进入、协作切换、挂起与返回 dispatcher
+process/process_runtime.*    entry/context、FXSAVE、CpuLocal/TSS、退出后 reap
+```
+
+独立生命周期 API 仍只执行没有 User Thread 的批次；生产 `ExecuteProcesses` 已支持
+User/Kernel 混合 dispatcher。设计理由见
+[ADR 0057](../../docs/adr/0057-v2-9-kernel-thread-lifecycle.md)。
+
+第二增量增加 `process/work_queue.*`：调用方提供 entry 与 delayed heap 存储，队列维护
+generation handle、即时 FIFO、延迟最小堆、合并、取消、完成和 drain。任务回调只由
+ProcessRuntime 的 Kernel Thread worker 在锁外执行。第三增量增加最早 deadline 查询和
+Delayed→Queued 即时提升，并让常驻 Worker 执行常规 writeback；user-return 只提交工作，
+timer IRQ 只唤醒。设计理由见
+[ADR 0058](../../docs/adr/0058-v2-9-work-queue-state-and-drain.md)。
+
+混合切换与 Worker 停止/回收边界见
+[ADR 0059](../../docs/adr/0059-v2-9-mixed-worker-writeback.md)。
+
+第四增量增加 `memory/page_aging.*` 与页表 A 位采样。PageAgingManager 以物理帧身份聚合
+alias，维护 file/anonymous 的 active/inactive 四队列；ProcessRuntime 用第二个周期
+WorkItem 填充观察，结束时只保留累计统计，不实际回收。元数据使用 frame+KVA 动态常驻
+分配，避免把大数组塞入 Kernel BSS。设计见
+[ADR 0060](../../docs/adr/0060-v2-9-pte-accessed-page-aging.md)。
+
+第五增量增加 `memory/background_reclaim.*` 和第三个生产 WorkHandle。low watermark
+唤醒、high watermark 停止，low 到 min 之间只排队，min 以下保留 direct fallback；
+Worker 按 clean/writeback/anonymous 执行最多 64 页并在无即时进展时退避。PageAging
+candidate 改为显式状态，file access generation 和 completion 防止复用 frame 误回收。
+设计见 [ADR 0061](../../docs/adr/0061-v2-9-background-watermark-reclaim.md)。
+
+第六增量让 direct/background 共用 `PlanMemoryReclaim` 的 0..200 swappiness 权重和
+file/anonymous 配额转赠。UserMemory 在私有匿名 frame 最后释放前通知 ProcessRuntime
+执行 aging forget；专用 OOM profile 用 swappiness 0 和 `/proc/meminfo` 动态工作集验证
+非当前 SIGKILL victim。设计见
+[ADR 0062](../../docs/adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。

@@ -193,6 +193,10 @@
 | fsync / fdatasync | 等待指定打开文件的数据稳定；fsync 包含完整 metadata，fdatasync 至少包含重读所需 metadata |
 | msync | 按文件映射虚拟地址范围请求异步或同步写回；private COW 修改不进入底层文件 |
 | direct reclaim | 当前分配线程在返回失败前同步执行的 clean 回收、dirty 写回和匿名换出 |
+| background reclaim | free pages 低于 low watermark 后由 Kernel Worker 分批执行、达到 high watermark 后休眠的异步回收 |
+| watermark hysteresis | 用不同的启动 low 与停止 high 阈值避免后台回收在边界反复唤醒和休眠 |
+| reclaim candidate | 已在 Inactive 状态连续冷却一轮且通过全部 alias 资格检查的显式 PageAging 条目 |
+| reclaim backoff | 无候选、仅完成写回或失败后等待 deadline 再重试，防止 Worker 忙循环的状态 |
 | reclaim progress | 一轮回收实际归还的页数；计划数或仅完成写盘但仍被引用的页不算进展 |
 | `MAP_PRIVATE` | 写入时产生私有 COW 页面、不把修改回写到底层文件的文件映射 |
 | `MAP_SHARED` | 多个映射观察同一文件页的策略；完整页可写映射由首次写保护故障标脏，显式 sync 回写 |
@@ -251,6 +255,19 @@
 | overcommit | 在建立 VMA 时允许虚拟承诺超过即时空闲 RAM 的策略；模式编号 0/1/2 与 Linux 一致 |
 | commit limit | overcommit accountant 允许同时承诺的总页数上限 |
 | OOM score | 根据 resident+swap 占用和 adjustment 计算的牺牲者优先级 |
+| swappiness | 0..200 的 file/anonymous 回收权重；0 禁止匿名 swap，200 优先匿名，候选不足时可转赠预算 |
+| reclaim budget | 单个 direct 或 background 批次分配给 file/anonymous 类别的目标页数，不等于实际完成数 |
+| Kernel Thread | 不属于用户 Process、使用内核 CR3 和动态 KernelStack 执行内核入口的调度实体 |
+| dispatcher stack | User 或 Kernel 调度入口保存的内核调用栈；跨类型切换先回到 dispatcher，再由目标现场形状重新进入 |
+| cooperative switch | 当前线程主动 yield/block/exit 才发生的上下文切换；不表示 timer 抢占 |
+| WorkQueue | 用 generation handle 管理即时 FIFO、延迟任务、取消、完成和 drain 的内核任务队列 |
+| work expediting | 即时请求把同一 handle 的 Delayed 项从 deadline heap 提升到 ready FIFO，避免继续等待旧截止时间 |
+| writeback Worker | 与 User Thread 同批运行、在 WorkQueue 锁外分批写脏文件页的常驻 Kernel Thread；IRQ 只负责唤醒 |
+| PTE Accessed | x86 页表叶项的 A 位；硬件在翻译被使用时置位，内核清除后可观察下一周期是否再次访问 |
+| active/inactive | 经典双队列近似 LRU；Active 表示近期访问，Inactive 连续未访问后才可成为回收候选 |
+| aging round | 周期 Worker 对 file cache 与全部用户 PTE 完成一次 alias 聚合和冷热状态转换的事务 |
+| reclaim candidate | 连续两轮未访问且没有 pinned/dirty/mapped 等排除条件的 Inactive 身份；第四增量只统计，不执行回收 |
+| drain | 封闭新的任务提交，并等待已有 Delayed/Queued/Running 全部到达终态的屏障 |
 | release identity | 项目、ABI、盘面、机器规格、来宾标记和主仓 SHA 共同组成的发布身份 |
 | structured disk identity | 对大盘固定关键范围、长度和宿主分配状态的哈希清单，避免全读空闲零区 |
 | soak | 在同一冻结产物上有界重复完整整机工作负载，用于发现跨轮次和长尾错误 |

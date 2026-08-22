@@ -17,6 +17,7 @@ constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PRESENT_BIT = 0x0000000000000001ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_WRITABLE_BIT = 0x0000000000000002ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_USER_BIT = 0x0000000000000004ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT = 0x0000000000000010ULL;
+constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_ACCESSED_BIT = 0x0000000000000020ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_COPY_ON_WRITE_BIT = 0x0000000000000200ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT = 0x8000000000000000ULL;
 constexpr uint64_t OS_KERNEL_PAGE_LAYOUT_PHYSICAL_ADDRESS_MASK = 0x000FFFFFFFFFF000ULL;
@@ -103,9 +104,9 @@ PageMapping DecodePageTableLeafEntry(const uint64_t entry) noexcept {
                 .executable = (entry & OS_KERNEL_PAGE_LAYOUT_NO_EXECUTE_BIT) == 0ULL,
                 .user_accessible = (entry & OS_KERNEL_PAGE_LAYOUT_USER_BIT) != 0ULL,
                 .cache_disabled = (entry & OS_KERNEL_PAGE_LAYOUT_CACHE_DISABLE_BIT) != 0ULL,
-                .copy_on_write =
-                    (entry & OS_KERNEL_PAGE_LAYOUT_COPY_ON_WRITE_BIT) != 0ULL,
+                .copy_on_write = (entry & OS_KERNEL_PAGE_LAYOUT_COPY_ON_WRITE_BIT) != 0ULL,
             },
+        .accessed = (entry & OS_KERNEL_PAGE_LAYOUT_ACCESSED_BIT) != 0ULL,
     };
 }
 

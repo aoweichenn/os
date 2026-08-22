@@ -24,6 +24,7 @@ constexpr uint64_t OS_KERNEL_THREAD_SCHEDULER_FIRST_INDEX = 0ULL;
 [[nodiscard]] ThreadEntry EmptyThreadEntry() noexcept {
     return ThreadEntry{
         .thread_id = ThreadId{},
+        .kind = ThreadKind::None,
         .process_index = OS_KERNEL_PROCESS_INVALID_INDEX,
         .state = ThreadState::Unused,
         .kernel_stack_slot_index = OS_KERNEL_THREAD_INVALID_INDEX,
@@ -43,7 +44,6 @@ constexpr uint64_t OS_KERNEL_THREAD_SCHEDULER_FIRST_INDEX = 0ULL;
         .wait_queue = nullptr,
     };
 }
-
 }
 
 ThreadSchedulerStatus ThreadScheduler::Initialize(ProcessEntry *const process_storage,
@@ -99,6 +99,7 @@ ThreadSchedulerStatus ThreadScheduler::Initialize(ProcessEntry *const process_st
     this->elapsed_quantum_ticks_ = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
     this->next_process_id_ = OS_KERNEL_THREAD_SCHEDULER_FIRST_IDENTIFIER;
     this->next_thread_id_ = OS_KERNEL_THREAD_SCHEDULER_FIRST_IDENTIFIER;
+    this->next_kernel_thread_id_ = OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER;
     this->ready_head_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
     this->ready_tail_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
     this->current_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
@@ -190,7 +191,7 @@ ThreadScheduler::CreateThread(const uint64_t process_index, const uint64_t kerne
     if (!this->FindFreeThread(free_thread_index)) {
         return ThreadSchedulerStatus::ThreadCapacityExhausted;
     }
-    if (this->next_thread_id_ == UINT64_MAX) {
+    if (this->next_thread_id_ >= OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER) {
         return ThreadSchedulerStatus::IdentifierExhausted;
     }
 
@@ -198,6 +199,7 @@ ThreadScheduler::CreateThread(const uint64_t process_index, const uint64_t kerne
     this->next_thread_id_ += OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
     this->threads_[free_thread_index] = ThreadEntry{
         .thread_id = assigned_thread_id,
+        .kind = ThreadKind::User,
         .process_index = process_index,
         .state = ThreadState::Ready,
         .kernel_stack_slot_index = kernel_stack_slot_index,
@@ -227,6 +229,56 @@ ThreadScheduler::CreateThread(const uint64_t process_index, const uint64_t kerne
     return ThreadSchedulerStatus::Succeeded;
 }
 
+ThreadSchedulerStatus ThreadScheduler::CreateKernelThread(const uint64_t kernel_stack_slot_index,
+                                                          uint64_t &thread_index,
+                                                          ThreadId &thread_id) noexcept {
+    if (!this->initialized_) {
+        return ThreadSchedulerStatus::NotInitialized;
+    }
+    if (kernel_stack_slot_index == OS_KERNEL_THREAD_INVALID_INDEX) {
+        return ThreadSchedulerStatus::InvalidKernelStack;
+    }
+    uint64_t free_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
+    if (!this->FindFreeThread(free_thread_index)) {
+        return ThreadSchedulerStatus::ThreadCapacityExhausted;
+    }
+    if (this->next_kernel_thread_id_ == UINT64_MAX) {
+        return ThreadSchedulerStatus::IdentifierExhausted;
+    }
+
+    const ThreadId assigned_thread_id{.value = this->next_kernel_thread_id_};
+    this->next_kernel_thread_id_ += OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    this->threads_[free_thread_index] = ThreadEntry{
+        .thread_id = assigned_thread_id,
+        .kind = ThreadKind::Kernel,
+        .process_index = OS_KERNEL_PROCESS_INVALID_INDEX,
+        .state = ThreadState::Ready,
+        .kernel_stack_slot_index = kernel_stack_slot_index,
+        .user_stack_pointer = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .thread_local_storage_base = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .signal_mask = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .run_tick_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .dispatch_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .block_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .wake_count = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE,
+        .wait_condition = WaitCondition::None,
+        .wake_reason = WakeReason::None,
+        .next_process_thread_index = OS_KERNEL_THREAD_INVALID_INDEX,
+        .previous_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX,
+        .next_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX,
+        .next_wait_thread_index = OS_KERNEL_THREAD_INVALID_INDEX,
+        .wait_queue = nullptr,
+    };
+    this->AppendReadyThread(free_thread_index);
+    this->cumulative_statistics_.created_thread_count +=
+        OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    this->cumulative_statistics_.created_kernel_thread_count +=
+        OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+    thread_index = free_thread_index;
+    thread_id = assigned_thread_id;
+    return ThreadSchedulerStatus::Succeeded;
+}
+
 ThreadSchedulerStatus ThreadScheduler::DiscardReadyThread(const uint64_t thread_index) noexcept {
     if (!this->initialized_) {
         return ThreadSchedulerStatus::NotInitialized;
@@ -235,8 +287,21 @@ ThreadSchedulerStatus ThreadScheduler::DiscardReadyThread(const uint64_t thread_
         return ThreadSchedulerStatus::InvalidThreadIndex;
     }
     ThreadEntry &thread = this->threads_[thread_index];
-    if (thread.state != ThreadState::Ready || thread.process_index >= this->process_capacity_) {
+    if (thread.state != ThreadState::Ready || thread.kind == ThreadKind::None) {
         return ThreadSchedulerStatus::InvalidThreadState;
+    }
+    if (thread.kind == ThreadKind::Kernel) {
+        if (thread.process_index != OS_KERNEL_PROCESS_INVALID_INDEX) {
+            return ThreadSchedulerStatus::CorruptedState;
+        }
+        this->RemoveReadyThread(thread_index);
+        thread = EmptyThreadEntry();
+        this->cumulative_statistics_.discarded_thread_count +=
+            OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+        return ThreadSchedulerStatus::Succeeded;
+    }
+    if (thread.kind != ThreadKind::User || thread.process_index >= this->process_capacity_) {
+        return ThreadSchedulerStatus::InvalidThreadKind;
     }
     ProcessEntry &process = this->processes_[thread.process_index];
     if (process.state != ProcessState::Alive ||
@@ -597,7 +662,17 @@ ThreadScheduler::TerminateCurrentThread(ThreadSchedulingDecision &decision) noex
 
     const uint64_t exited_thread_index = this->current_thread_index_;
     ThreadEntry &thread = this->threads_[exited_thread_index];
-    if (thread.process_index >= this->process_capacity_) {
+    if (thread.kind == ThreadKind::Kernel) {
+        if (thread.process_index != OS_KERNEL_PROCESS_INVALID_INDEX) {
+            return ThreadSchedulerStatus::CorruptedState;
+        }
+        thread.state = ThreadState::Exited;
+        this->current_thread_index_ = OS_KERNEL_THREAD_INVALID_INDEX;
+        this->elapsed_quantum_ticks_ = OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE;
+        this->SelectAfterCurrentStops(exited_thread_index, decision);
+        return ThreadSchedulerStatus::Succeeded;
+    }
+    if (thread.kind != ThreadKind::User || thread.process_index >= this->process_capacity_) {
         return ThreadSchedulerStatus::CorruptedState;
     }
     ProcessEntry &process = this->processes_[thread.process_index];
@@ -626,7 +701,7 @@ ThreadScheduler::TerminateNonRunningThread(const uint64_t thread_index) noexcept
         return ThreadSchedulerStatus::InvalidThreadIndex;
     }
     ThreadEntry &thread = this->threads_[thread_index];
-    if (thread.process_index >= this->process_capacity_) {
+    if (thread.kind != ThreadKind::User || thread.process_index >= this->process_capacity_) {
         return ThreadSchedulerStatus::CorruptedState;
     }
     ProcessEntry &process = this->processes_[thread.process_index];
@@ -837,6 +912,18 @@ ThreadSchedulerStatus ThreadScheduler::ReapExitedThread(const uint64_t thread_in
     if (thread.state != ThreadState::Exited) {
         return ThreadSchedulerStatus::ThreadNotExited;
     }
+    if (thread.kind == ThreadKind::Kernel) {
+        if (thread.process_index != OS_KERNEL_PROCESS_INVALID_INDEX) {
+            return ThreadSchedulerStatus::CorruptedState;
+        }
+        thread = EmptyThreadEntry();
+        this->cumulative_statistics_.reaped_thread_count +=
+            OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT;
+        return ThreadSchedulerStatus::Succeeded;
+    }
+    if (thread.kind != ThreadKind::User) {
+        return ThreadSchedulerStatus::InvalidThreadKind;
+    }
     if (thread.process_index >= this->process_capacity_) {
         return ThreadSchedulerStatus::CorruptedState;
     }
@@ -901,8 +988,8 @@ ThreadScheduler::CommitProcessImage(const uint64_t process_index, const uint64_t
         process.exited_thread_count != OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE) {
         return ThreadSchedulerStatus::InvalidProcessState;
     }
-    if (thread.process_index != process_index || thread.state != ThreadState::Running ||
-        this->current_thread_index_ != thread_index) {
+    if (thread.kind != ThreadKind::User || thread.process_index != process_index ||
+        thread.state != ThreadState::Running || this->current_thread_index_ != thread_index) {
         return ThreadSchedulerStatus::InvalidThreadState;
     }
     process.address_space_root_physical_address = address_space_root_physical_address;
@@ -975,6 +1062,9 @@ ThreadSchedulerStatus ThreadScheduler::SetCurrentThreadLocalStorageBase(
         this->threads_[this->current_thread_index_].state != ThreadState::Running) {
         return ThreadSchedulerStatus::InvalidCurrentThread;
     }
+    if (this->threads_[this->current_thread_index_].kind != ThreadKind::User) {
+        return ThreadSchedulerStatus::InvalidThreadKind;
+    }
     this->threads_[this->current_thread_index_].thread_local_storage_base =
         thread_local_storage_base;
     return ThreadSchedulerStatus::Succeeded;
@@ -988,6 +1078,9 @@ ThreadScheduler::SetCurrentThreadSignalMask(const uint64_t signal_mask) noexcept
     if (this->current_thread_index_ == OS_KERNEL_THREAD_INVALID_INDEX ||
         this->threads_[this->current_thread_index_].state != ThreadState::Running) {
         return ThreadSchedulerStatus::InvalidCurrentThread;
+    }
+    if (this->threads_[this->current_thread_index_].kind != ThreadKind::User) {
+        return ThreadSchedulerStatus::InvalidThreadKind;
     }
     this->threads_[this->current_thread_index_].signal_mask = signal_mask;
     return ThreadSchedulerStatus::Succeeded;
@@ -1066,7 +1159,8 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
                 return ThreadSchedulerStatus::CorruptedState;
             }
             const ThreadEntry &thread = this->threads_[thread_index];
-            if (thread.state == ThreadState::Unused || thread.process_index != process_index) {
+            if (thread.state == ThreadState::Unused || thread.kind != ThreadKind::User ||
+                thread.process_index != process_index) {
                 return ThreadSchedulerStatus::CorruptedState;
             }
             process_thread_seen[thread_index] = true;
@@ -1124,6 +1218,7 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
         if (thread.state == ThreadState::Unused) {
             if (process_thread_seen[thread_index] ||
                 thread.thread_id.value != OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE ||
+                thread.kind != ThreadKind::None ||
                 thread.process_index != OS_KERNEL_PROCESS_INVALID_INDEX ||
                 thread.kernel_stack_slot_index != OS_KERNEL_THREAD_INVALID_INDEX ||
                 thread.wait_queue != nullptr) {
@@ -1132,9 +1227,20 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
             continue;
         }
         ++observed_thread_count;
-        if (!process_thread_seen[thread_index] ||
+        const bool user_thread_valid =
+            thread.kind == ThreadKind::User && process_thread_seen[thread_index] &&
+            thread.process_index < this->process_capacity_ &&
+            thread.thread_id.value < OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER;
+        const bool kernel_thread_valid =
+            thread.kind == ThreadKind::Kernel && !process_thread_seen[thread_index] &&
+            thread.process_index == OS_KERNEL_PROCESS_INVALID_INDEX &&
+            thread.thread_id.value >= OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER &&
+            thread.user_stack_pointer == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE &&
+            thread.thread_local_storage_base == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE &&
+            thread.signal_mask == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE &&
+            thread.next_process_thread_index == OS_KERNEL_THREAD_INVALID_INDEX;
+        if ((!user_thread_valid && !kernel_thread_valid) ||
             thread.thread_id.value == OS_KERNEL_THREAD_SCHEDULER_EMPTY_VALUE ||
-            thread.process_index >= this->process_capacity_ ||
             thread.kernel_stack_slot_index == OS_KERNEL_THREAD_INVALID_INDEX) {
             return ThreadSchedulerStatus::CorruptedState;
         }
@@ -1175,6 +1281,8 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
     const ThreadSchedulerStatistics statistics = this->Statistics();
     if (observed_process_count != statistics.owned_process_count ||
         observed_thread_count != statistics.owned_thread_count ||
+        statistics.owned_thread_count !=
+            statistics.owned_user_thread_count + statistics.owned_kernel_thread_count ||
         ready_thread_count != statistics.ready_thread_count ||
         running_thread_count != statistics.running_thread_count ||
         running_thread_count > OS_KERNEL_THREAD_SCHEDULER_COUNTER_INCREMENT ||
@@ -1185,7 +1293,9 @@ ThreadSchedulerStatus ThreadScheduler::Validate() const noexcept {
                 this->cumulative_statistics_.reaped_process_count ||
         this->cumulative_statistics_.created_thread_count !=
             statistics.owned_thread_count + this->cumulative_statistics_.discarded_thread_count +
-                this->cumulative_statistics_.reaped_thread_count) {
+                this->cumulative_statistics_.reaped_thread_count ||
+        this->cumulative_statistics_.created_kernel_thread_count >
+            this->cumulative_statistics_.created_thread_count) {
         return ThreadSchedulerStatus::CorruptedState;
     }
     return ThreadSchedulerStatus::Succeeded;
@@ -1267,6 +1377,11 @@ ThreadSchedulerStatistics ThreadScheduler::Statistics() const noexcept {
             continue;
         }
         ++statistics.owned_thread_count;
+        if (this->threads_[thread_index].kind == ThreadKind::User) {
+            ++statistics.owned_user_thread_count;
+        } else if (this->threads_[thread_index].kind == ThreadKind::Kernel) {
+            ++statistics.owned_kernel_thread_count;
+        }
         if (state == ThreadState::Ready) {
             ++statistics.ready_thread_count;
         } else if (state == ThreadState::Running) {
@@ -1354,8 +1469,10 @@ bool ThreadScheduler::PopReadyThread(uint64_t &thread_index) noexcept {
         candidate_thread.previous_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
         candidate_thread.next_run_thread_index = OS_KERNEL_THREAD_INVALID_INDEX;
 
-        if (candidate_thread.process_index < this->process_capacity_ &&
-            this->processes_[candidate_thread.process_index].state == ProcessState::Alive) {
+        if (candidate_thread.kind == ThreadKind::Kernel ||
+            (candidate_thread.kind == ThreadKind::User &&
+             candidate_thread.process_index < this->process_capacity_ &&
+             this->processes_[candidate_thread.process_index].state == ProcessState::Alive)) {
             thread_index = candidate_thread_index;
             return true;
         }
@@ -1508,8 +1625,10 @@ bool ThreadScheduler::HasSchedulableReadyThread() const noexcept {
          thread_index != OS_KERNEL_THREAD_INVALID_INDEX;
          ++checked_thread_count) {
         const ThreadEntry &thread = this->threads_[thread_index];
-        if (thread.state == ThreadState::Ready && thread.process_index < this->process_capacity_ &&
-            this->processes_[thread.process_index].state == ProcessState::Alive) {
+        if (thread.state == ThreadState::Ready &&
+            (thread.kind == ThreadKind::Kernel ||
+             (thread.kind == ThreadKind::User && thread.process_index < this->process_capacity_ &&
+              this->processes_[thread.process_index].state == ProcessState::Alive))) {
             return true;
         }
         thread_index = thread.next_run_thread_index;

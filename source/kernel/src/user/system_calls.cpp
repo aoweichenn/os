@@ -2430,7 +2430,7 @@ extern "C" ExceptionFrame *OsKernelPrepareUserReturn(ExceptionFrame *frame) noex
     if (frame == nullptr) {
         HaltProcessor();
     }
-    const FileSystemStatus writeback_status = ServiceRuntimeFileWritebackWorker();
+    const FileSystemStatus writeback_status = ScheduleRuntimeFileWritebackWorker();
     if (writeback_status != FileSystemStatus::Succeeded &&
         writeback_status != FileSystemStatus::DeviceFailure) {
         HaltProcessor();

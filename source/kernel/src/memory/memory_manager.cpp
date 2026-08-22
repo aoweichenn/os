@@ -1727,6 +1727,108 @@ KernelMmioStatus UnmapKernelMmio(KernelMmioMapping &mapping) noexcept {
     return KernelMmioStatus::Succeeded;
 }
 
+KernelPageAllocationStatus AllocateKernelPages(const uint64_t page_count,
+                                               KernelPageAllocation &allocation) noexcept {
+    if (!direct_map_active) {
+        return KernelPageAllocationStatus::NotInitialized;
+    }
+    if (allocation.active) {
+        return KernelPageAllocationStatus::AlreadyActive;
+    }
+    if (page_count == 0ULL) {
+        return KernelPageAllocationStatus::InvalidPageCount;
+    }
+    KernelVirtualAddressRange range{};
+    KernelVirtualAddressAllocator &allocator = GetKernelVirtualAddressAllocator();
+    if (allocator.TryAllocate(page_count, OS_KERNEL_MEMORY_KVA_SINGLE_UNIT, range) !=
+        KernelVirtualAddressAllocatorStatus::Succeeded) {
+        return KernelPageAllocationStatus::VirtualAddressAllocationFailed;
+    }
+    const PagePermissions permissions{
+        .writable = true,
+        .executable = false,
+        .user_accessible = false,
+        .cache_disabled = false,
+    };
+    uint64_t mapped_page_count = 0ULL;
+    KernelPageAllocationStatus failure_status = KernelPageAllocationStatus::Succeeded;
+    PageTableManager &manager = GetPageTableManager();
+    while (mapped_page_count < page_count) {
+        PhysicalFrame frame{};
+        if (FrameAllocator().Allocate(frame) != PhysicalFrameAllocatorStatus::Succeeded) {
+            failure_status = KernelPageAllocationStatus::FrameAllocationFailed;
+            break;
+        }
+        const uint64_t virtual_address =
+            range.begin_address + mapped_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        if (manager.MapPage(virtual_address, frame.physical_address, permissions) !=
+            PageTableStatus::Succeeded) {
+            static_cast<void>(FrameAllocator().Release(frame));
+            failure_status = KernelPageAllocationStatus::PageMappingFailed;
+            break;
+        }
+        ++mapped_page_count;
+    }
+    if (mapped_page_count != page_count) {
+        bool rollback_succeeded = true;
+        while (mapped_page_count != 0ULL) {
+            --mapped_page_count;
+            const uint64_t virtual_address =
+                range.begin_address + mapped_page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+            PageMapping mapping{};
+            rollback_succeeded =
+                manager.QueryPage(virtual_address, mapping) == PageTableStatus::Succeeded &&
+                manager.UnmapPage(virtual_address) == PageTableStatus::Succeeded &&
+                FrameAllocator().Release(
+                    PhysicalFrame{.physical_address = mapping.physical_address}) ==
+                    PhysicalFrameAllocatorStatus::Succeeded &&
+                rollback_succeeded;
+        }
+        rollback_succeeded =
+            allocator.TryRelease(range) == KernelVirtualAddressAllocatorStatus::Succeeded &&
+            rollback_succeeded;
+        return rollback_succeeded ? failure_status : KernelPageAllocationStatus::RollbackFailed;
+    }
+    allocation = KernelPageAllocation{
+        .virtual_address = range.begin_address,
+        .page_count = page_count,
+        .active = true,
+    };
+    return KernelPageAllocationStatus::Succeeded;
+}
+
+KernelPageAllocationStatus ReleaseKernelPages(KernelPageAllocation &allocation) noexcept {
+    if (!allocation.active || allocation.virtual_address == 0ULL || allocation.page_count == 0ULL) {
+        return KernelPageAllocationStatus::InvalidPageCount;
+    }
+    PageTableManager &manager = GetPageTableManager();
+    for (uint64_t page_index = 0ULL; page_index < allocation.page_count; ++page_index) {
+        const uint64_t virtual_address =
+            allocation.virtual_address + page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+        PageMapping mapping{};
+        if (manager.QueryPage(virtual_address, mapping) != PageTableStatus::Succeeded) {
+            return KernelPageAllocationStatus::PageUnmappingFailed;
+        }
+        if (manager.UnmapPage(virtual_address) != PageTableStatus::Succeeded) {
+            return KernelPageAllocationStatus::PageUnmappingFailed;
+        }
+        if (FrameAllocator().Release(PhysicalFrame{.physical_address = mapping.physical_address}) !=
+            PhysicalFrameAllocatorStatus::Succeeded) {
+            return KernelPageAllocationStatus::FrameReleaseFailed;
+        }
+    }
+    const KernelVirtualAddressRange range{
+        .begin_address = allocation.virtual_address,
+        .page_count = allocation.page_count,
+    };
+    if (GetKernelVirtualAddressAllocator().TryRelease(range) !=
+        KernelVirtualAddressAllocatorStatus::Succeeded) {
+        return KernelPageAllocationStatus::VirtualAddressReleaseFailed;
+    }
+    allocation = KernelPageAllocation{};
+    return KernelPageAllocationStatus::Succeeded;
+}
+
 KernelHeap &GetKernelHeap() noexcept {
     static KernelHeap heap{};
     return heap;
@@ -1948,6 +2050,22 @@ PageTableStatus QueryAddressSpacePage(const uint64_t root_physical_address,
     PageTableManager page_table{FrameAllocator(), root_physical_address,
                                 ActivePageTableMemoryAccess(), root_kind};
     return page_table.QueryPage(virtual_address, mapping);
+}
+
+PageTableStatus TestAndClearAddressSpacePageAccessed(const uint64_t root_physical_address,
+                                                     const uint64_t virtual_address,
+                                                     PageMapping &mapping,
+                                                     bool &accessed) noexcept {
+    if (root_physical_address == 0ULL ||
+        (root_physical_address & OS_KERNEL_MEMORY_PAGE_MASK) != 0ULL ||
+        root_physical_address == GetPageTableManager().RootPhysicalAddress()) {
+        return PageTableStatus::NotInitialized;
+    }
+    PageTableMemoryAccess memory_access = ActivePageTableMemoryAccess();
+    memory_access.invalidate_active_mappings = root_physical_address == ReadPageTableRoot();
+    PageTableManager page_table{FrameAllocator(), root_physical_address, memory_access,
+                                PageTableRootKind::Process};
+    return page_table.TestAndClearAccessed(virtual_address, mapping, accessed);
 }
 
 PageTableStatus QueryActivePage(const uint64_t virtual_address, PageMapping &mapping) noexcept {

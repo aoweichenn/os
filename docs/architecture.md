@@ -2420,12 +2420,13 @@ hook 覆盖后端 `stat`；后端只在 writeback 后推进盘面长度。`MAP_P
 truncate 在后端事务前先撤销文件偏移不小于新 EOF 的驻留 PTE；后端成功后，cache
 丢弃范围外 Clean/Dirty/Error 页并清零保留尾页。增长不申请页面，且会把旧 EOF 到
 新 EOF 间已经驻留的字节重新置零。Writeback 或仍有映射引用的待丢弃页返回 Busy；
-第三增量当时尚无后台 writeback，因此正常系统调用不会与 Writeback 并发；第四增量
-加入 safe-point worker 后，每个批次都先完成全局 shared PTE 写保护再选择 Writeback 页。
+v2.8 第三增量当时尚无后台 writeback，因此正常系统调用不会与 Writeback 并发；v2.8
+第四增量加入 safe-point 批处理后，每个批次都先完成全局 shared PTE 写保护再选择页。
+v2.9.3 又把该批处理迁到常驻 Kernel Worker；单 BSP 下仍由调度提交点串行化。
 
-第四增量后 cache miss 先发布 Loading，再在不持有 cache lock 时读取来源。当前
+v2.8 第四增量后 cache miss 先发布 Loading，再在不持有 cache lock 时读取来源。当前
 单 BSP 同步后端没有可睡眠 waiter；同页重入返回 Busy。Dirty 达到约 10% 时挂起
-safe-point worker，每批最多写回 64 页并持续到约 5%；约 20% 硬水位在下一次 write
+后台请求，v2.9.3 常驻 Worker 每批最多写回 64 页并持续到约 5%；约 20% 硬水位在下一次 write
 前执行平衡。后台失败保留 Error 并暂停，显式 sync 才重试。最终文件系统校验产生的
 clean 页在 storage shutdown 前统一裁剪，frame 统计恢复后才允许 NVMe controller
 回收。决策见 [ADR 0056](adr/0056-v2-8-dynamic-file-cache-address-space.md)。
@@ -2475,6 +2476,208 @@ PrepareUserResidentAllocation
 三项生产操作，ProcessRuntime 通过回调提供全局 PTE 保护、跨进程扫描和 OOM，避免
 memory 模块反向依赖调度器。PID1 始终排除；单线程进程保存现场的用户栈页受保护，
 多个活动用户栈的地址空间本轮不参与跨进程 swap。
+
+V2.9.6 把 direct 与 background 的候选数量都输入同一个 weighted planner：
+
+```text
+anonymous_budget = floor(target * swappiness / 200)
+file_budget      = target - anonymous_budget
+both available   -> 1 <= anonymous_budget <= target - 1
+shortage         -> donate unused budget to the other class
+file budget      -> Clean trim -> Dirty/Error writeback
+```
+
+后台只把 PageAging 已提交 candidate 计入可用数量；direct 使用当前 cache/swap 统计。
+两条路径不再各自解释 swappiness。私有匿名 frame 最后释放前通过回调执行
+`PageAgingManager::Forget`，因此正常 unmap/exec/exit 与 OOM 不必等待下一轮观察清理。
+
+OOM 系统 profile 把 swappiness 固定为 0，并由用户程序读取 `/proc/meminfo` 的实时
+allocated/resident limit。子进程保留比父进程多 64 页的匿名工作集，父进程在 fault
+路径制造 no-progress；ProcessRuntime 只杀非当前子进程，释放地址空间后原 fault 重试
+一次。ATA/NVMe 使用相同 rootfs、真实 swap 与 4 GiB `-mem-prealloc`。
+
+## v2.9 Kernel Thread 生命周期
+
+第一增量让同一个 `ThreadScheduler` 表达两种所有权：
+
+```text
+User Thread                         Kernel Thread
+  -> Process thread list              -> process_index = invalid
+  -> user CR3 / stack / TLS            -> kernel CR3 / dynamic KernelStack
+  -> low TID                           -> high TID >= 0x8000000000000000
+  -> signal/user return frame          -> entry(context) + saved kernel RSP
+```
+
+Kernel Thread 初始栈从 16 KiB 动态栈顶向下放置 72 字节：六个 callee-saved 槽、
+RFLAGS、bootstrap RIP 和一个保持 SysV 入口对齐的哨兵槽。首次进入保存调用
+`ExecuteReadyKernelThreads` 的调度栈；yield/block 保存当前 RSP 后切到下一栈；没有
+就绪项的 block 保存 RSP 并回到调度循环；最后一个 exit 不再保存死亡调用链，直接恢复
+调度栈。FXSAVE/FXRSTOR 在 C++ 边界完成。
+
+```text
+dispatcher stack
+  -> Start(kernel A) -> enter A stack
+       A yield -> save A RSP -> activate B -> switch B stack
+       B block -> WaitQueue -> activate A -> switch A stack
+       A wake B / exit -> ...
+  <- final exit restores dispatcher stack
+  -> reap Exited entries -> destroy KernelStack -> validate baseline
+```
+
+所有切换先关闭中断，在下一 RSP 生效前更新 TSS.RSP0、CpuLocal current thread、FS base
+和 FX state。Ring 0 timer IRQ 当前只返回，不触发 Kernel Thread 抢占。第一增量还要求
+执行批次中不存在 User Thread；这个限制避免在用户异常/系统调用返回汇编尚未理解两种
+上下文时做不安全的跨类型切换。设计理由见
+[ADR 0057](adr/0057-v2-9-kernel-thread-lifecycle.md)。
+
+### WorkQueue 第二增量
+
+```text
+Register(operation, context)
+  -> WorkHandle(slot, generation)
+  -> Idle
+
+Queue(handle) -----------------------> ready FIFO
+QueueDelayed(handle, deadline) ------> delayed min-heap
+                                          |
+AcquireNext(now) -> promote due ----------'
+  -> Running -> unlock -> operation(context) -> Complete(result)
+  -> Completed -> Reset -> Idle -> Release -> Free
+```
+
+entry 数组保存状态和 FIFO 链，独立 `uint64_t[]` 保存 delayed heap；heap entry 回指自己的
+位置，使取消为 O(log n)。deadline 相同时使用全局 enqueue sequence 保持稳定。槽位释放
+后保留 generation，下次注册递增，因此旧 handle 不会误操作新任务。
+
+队列锁只保护状态和拓扑。`AcquireNext` 返回 operation/context 快照后锁已释放，worker
+执行失败也必须调用 `Complete(Failed)`，再继续下一项。`BeginDrain` 后注册和新的 Idle
+提交返回 DrainInProgress；已有任务全部离开 Delayed/Queued/Running 后才能 EndDrain。
+
+第二增量的 worker 在 PID1 前独立运行：三个即时项、一个延迟项、一个取消项和一个
+drain 拒绝项形成有界事务。它先证明 queue 与 Kernel Thread 能组合。完整决策见
+[ADR 0058](adr/0058-v2-9-work-queue-state-and-drain.md)。
+
+### 混合 dispatcher 与 writeback 第三增量
+
+User 与 Kernel 的现场形状不同，跨类型切换不直接解释对方的 RSP：
+
+```text
+User running --scheduler selects Kernel--> save user frame/FX
+  -> kernel CR3 + clear CpuLocal/SYSCALL/optional IRQ depth
+  -> restore user dispatcher stack
+  -> activate Kernel RSP/FX -> Worker
+
+Kernel running --yield/block/exit selects User--> save Kernel RSP/FX
+  -> clear Kernel CpuLocal ownership -> restore kernel dispatcher stack
+  -> activate user CR3/TSS/FS/FX -> user frame
+```
+
+两个汇编 dispatcher stack 任一时刻都只服务自己的入口；返回 C++ dispatcher 后再进入
+另一类型，因此用户 ExceptionFrame、Kernel callee-saved frame 和死亡线程栈不会混用。
+User→User 与 Kernel→Kernel 仍保留直接切换。Ring 0 timer 只设置 reschedule；Worker 在
+每个有界 batch 后主动 yield。
+
+```text
+user-return safe point
+  -> requested: Queue(handle)
+  -> dirty below threshold: QueueDelayed(handle, now + 5s)
+  -> immediate over delayed: remove heap + append ready
+  -> wake Worker / request reschedule
+
+Worker
+  -> AcquireNext(now) -> unlock -> protect aliases -> write <= 64 pages
+  -> Complete + Reset -> still requested ? Queue again : park
+  -> no ready work ? NextDeadline -> BlockCurrentKernelThreadUntil
+
+timer IRQ -> ExpireNextDeadline -> Ready + need_reschedule
+          -> never calls VFS/writeback/device I/O
+```
+
+5 秒来自 Linux 默认 `dirty_writeback_centisecs=500` 的同量级策略；这里冻结为内核常量，
+不是可调 sysctl。达到后台软水位或 `MS_ASYNC` 时即时提升。硬 Dirty limit 的
+`BalanceRuntimeFileWritebackPressure` 仍同步执行，`fsync`/`fdatasync`/同步 `msync` 和
+进程退出 flush 也保持同步完成语义。
+
+最后一个 User Thread 消失后 dispatcher 取消未到期工作、唤醒 Worker；Worker exit 后
+先 reap/destroy KernelStack，再 reset/release WorkHandle。资源快照、WaitQueue、deadline、
+CpuLocal 和 WorkQueue 当前状态必须同时归零。完整决策见
+[ADR 0059](adr/0059-v2-9-mixed-worker-writeback.md)。
+
+### PTE Accessed 与四队列老化第四增量
+
+x86 在页表翻译被使用时设置 leaf 的 Accessed 位。Worker 运行在内核 CR3，因此采样
+用户地址空间时直接通过物理 direct map 修改目标页表；用户 CR3 当前不活动，无需对当前
+TLB 执行无意义的失效。通用接口仍检查目标根：若目标 CR3 恰为当前根，清 A 后执行
+`invlpg`。下一次装载非活动 CR3 会自然取得已清除的叶项。
+
+```text
+periodic aging WorkItem (1 s)
+  -> BeginObservation(round)
+  -> visit every resident file-cache frame as File
+  -> for each Process with CR3
+       for each resident 4 KiB VMA page
+         TestAndClearAccessed
+         classify File / Anonymous
+         Observe(physical, kind, accessed, eligible)
+  -> EndObservation
+       accessed + inactive -> active
+       unaccessed + active -> inactive
+       unaccessed + inactive + eligible -> candidate observation
+       unseen -> remove
+```
+
+PageAging 不以虚拟地址为身份。shared mmap 和 fork 可以让多个 PTE 指向同一帧；每轮按
+`(physical_address, kind)` 合并，Accessed 取 OR，eligible 取 AND，任一热 alias 即保留
+热度，任一 pinned alias 即阻止候选。Writable FilePrivate 的独立副本归 Anonymous；
+cache-backed executable、只读 private 和 shared 映射归 File。
+
+帧分配器会复用物理地址。若旧 entry 本轮尚未观察而新对象以另一 kind 出现，说明是跨轮
+生命周期复用，manager 删除旧身份后重分类；若同一轮已经观察到两种 kind，则仍是所有权
+损坏。新身份统一进入 Active，所以必须经历“降级一轮 + Inactive 再冷一轮”才产生候选。
+
+当前可回收资格贴合已有执行器：只有未映射 Clean file frame 与非 PID1、非 UserStack、
+非 COW 的 Anonymous frame 可成为候选。Dirty/Writeback/Error、映射中的 file frame 和
+pinned alias 仍进入温度队列但 eligibility 为 false。Zombie 的结果槽仍保留时 CR3 已为
+零，扫描器跳过；非零 CR3 对应的 VMA 或页表错误会停止 aging。
+
+元数据不放在 BSS。ProcessRuntime 在资源基线前通过通用 KernelPageAllocation 为 entry
+和开放寻址 hash 分配真实 frames/KVA；4 GiB 档使用 4096/8192，32 GiB 档使用
+32768/65536。停止 Worker 后清空当前队列，常驻 backing allocation 仍属于基线。第四
+增量只输出候选证据，下一增量才允许水位 Worker 消费。见
+[ADR 0060](adr/0060-v2-9-pte-accessed-page-aging.md)。
+
+### 后台水位回收第五增量
+
+第五增量把分配者和回收者的触发区间分开。用户分配预计使 free pages 低于 low 时仍可
+提交，但通过回调合并 background WorkItem 并请求重调度；只有预计低于 min 或超过逻辑
+resident limit 时才进入原有 direct reclaim。`BackgroundReclaimController` 不访问页表、
+VFS 或设备，只维护以下滞回状态：
+
+```text
+Sleeping -- free < low --> Running -- free >= high --> Sleeping
+                              |
+                              +-- no progress / writeback only / failure
+                                      -> BackingOff(deadline) -> Running
+```
+
+每个 Running 决策的 target 为 `min(64, high-free)`。ProcessRuntime 在 Worker 上按
+clean file candidate、dirty/error writeback、anonymous candidate 顺序消费同一个 64 页
+操作预算；写回页要等下一轮 aging 重新确认 Clean/Inactive 后才算实际回收。批次完成后
+Worker 先 `Complete+Reset`，再即时或按退避 deadline 重排，最后 yield。timer IRQ 仍只
+到期 deadline 和请求重调度。
+
+candidate 是 `PageAgingEntry` 的显式提交状态。刚由 Active 降级的页虽然已是 Inactive，
+仍不是 candidate。FilePageCache 的 access generation 同时作为 file identity generation；
+缓存命中或容量复用改变 generation 后，旧候选回到 Active 冷却，后台选择还会再次比较
+当前 cache generation。成功 eviction/swap 在 frame 释放前调用 completion，从 aging hash
+和队列删除精确物理身份，避免同一批次重复消费。
+
+后台 clean file 使用 FilePageCache 的选择/完成回调，只释放 Clean 且零 mapping reference
+的页；匿名路径继续排除 PID1、活动返回栈、多用户栈地址空间和 COW alias。设备写回失败
+沿用 Error/paused 语义并使该 WorkItem 失败，controller 进入一秒退避；PageAging、cache
+或账本损坏则设置运行时失败门禁。最后一个 User Thread 退出时，writeback、aging 与
+background 三个 handle 一起取消和释放，controller reset 到 Sleeping。决策见
+[ADR 0061](adr/0061-v2-9-background-watermark-reclaim.md)。
 
 ## v2.3 rootfs v4 容量与恢复架构
 

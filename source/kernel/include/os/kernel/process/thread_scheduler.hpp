@@ -17,6 +17,7 @@ inline constexpr uint64_t OS_KERNEL_PROCESS_CAPACITY_LIMIT = 256ULL;
 inline constexpr uint64_t OS_KERNEL_THREAD_CAPACITY_LIMIT = 512ULL;
 inline constexpr uint64_t OS_KERNEL_CAPACITY_THREADS_PER_PROCESS = 64ULL;
 inline constexpr uint64_t OS_KERNEL_THREAD_DEFAULT_QUANTUM_TICKS = 4ULL;
+inline constexpr uint64_t OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER = 0x8000000000000000ULL;
 inline constexpr uint64_t OS_KERNEL_PROCESS_INVALID_INDEX = UINT64_MAX;
 inline constexpr uint64_t OS_KERNEL_THREAD_INVALID_INDEX = UINT64_MAX;
 
@@ -43,6 +44,12 @@ enum class ThreadState : uint64_t {
     Exited,
 };
 
+enum class ThreadKind : uint64_t {
+    None,
+    User,
+    Kernel,
+};
+
 enum class ThreadSchedulerStatus : uint64_t {
     Succeeded,
     NotInitialized,
@@ -59,6 +66,7 @@ enum class ThreadSchedulerStatus : uint64_t {
     IdentifierExhausted,
     InvalidAddressSpace,
     InvalidKernelStack,
+    InvalidThreadKind,
     InvalidProcessIndex,
     InvalidThreadIndex,
     InvalidProcessState,
@@ -93,6 +101,7 @@ struct ProcessEntry final {
 
 struct ThreadEntry final {
     ThreadId thread_id;
+    ThreadKind kind;
     uint64_t process_index;
     ThreadState state;
     uint64_t kernel_stack_slot_index;
@@ -129,6 +138,8 @@ struct ThreadSchedulerStatistics final {
     uint64_t stopped_process_count;
     uint64_t zombie_process_count;
     uint64_t owned_thread_count;
+    uint64_t owned_user_thread_count;
+    uint64_t owned_kernel_thread_count;
     uint64_t ready_thread_count;
     uint64_t running_thread_count;
     uint64_t blocked_thread_count;
@@ -137,6 +148,7 @@ struct ThreadSchedulerStatistics final {
     uint64_t discarded_process_count;
     uint64_t reaped_process_count;
     uint64_t created_thread_count;
+    uint64_t created_kernel_thread_count;
     uint64_t discarded_thread_count;
     uint64_t reaped_thread_count;
     uint64_t timer_tick_count;
@@ -169,6 +181,9 @@ class ThreadScheduler final {
     CreateThread(uint64_t process_index, uint64_t kernel_stack_slot_index,
                  uint64_t user_stack_pointer, uint64_t thread_local_storage_base,
                  uint64_t signal_mask, uint64_t &thread_index, ThreadId &thread_id) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus CreateKernelThread(uint64_t kernel_stack_slot_index,
+                                                           uint64_t &thread_index,
+                                                           ThreadId &thread_id) noexcept;
     [[nodiscard]] ThreadSchedulerStatus DiscardReadyThread(uint64_t thread_index) noexcept;
     [[nodiscard]] ThreadSchedulerStatus Start(ThreadSchedulingDecision &decision) noexcept;
     [[nodiscard]] ThreadSchedulerStatus
@@ -268,6 +283,7 @@ class ThreadScheduler final {
     uint64_t elapsed_quantum_ticks_{};
     uint64_t next_process_id_{};
     uint64_t next_thread_id_{};
+    uint64_t next_kernel_thread_id_{};
     uint64_t ready_head_thread_index_{OS_KERNEL_THREAD_INVALID_INDEX};
     uint64_t ready_tail_thread_index_{OS_KERNEL_THREAD_INVALID_INDEX};
     uint64_t current_thread_index_{OS_KERNEL_THREAD_INVALID_INDEX};

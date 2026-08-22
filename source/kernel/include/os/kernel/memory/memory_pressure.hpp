@@ -131,6 +131,8 @@ struct MemoryReclaimInput final {
 };
 
 struct MemoryReclaimPlan final {
+    uint64_t file_budget_page_count;
+    uint64_t anonymous_budget_page_count;
     uint64_t clean_file_page_count;
     uint64_t writeback_file_page_count;
     uint64_t swap_out_page_count;

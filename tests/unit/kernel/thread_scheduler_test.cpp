@@ -12,6 +12,8 @@ constexpr std::string_view OS_TEST_THREAD_SCHEDULER_INITIALIZATION_BOUNDARIES =
     "初始化必须拒绝空存储、非法容量、非法单进程线程数和零时间片";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_INVALID_KERNEL_STACK =
     "Thread 创建必须拒绝无效内核栈槽且保持调度器状态与输出不变";
+constexpr std::string_view OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_LIFECYCLE =
+    "Kernel Thread 必须脱离 Process 完成创建、让出、阻塞、唤醒、退出和回收";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_CAPACITY_AND_IDENTIFIERS =
     "容量模型必须建立 256 Process/512 Thread 且 PID/TID 永不绑定槽位复用";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_PROCESS_THREAD_LIMIT =
@@ -61,6 +63,7 @@ constexpr uint64_t OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT = 0ULL;
 constexpr uint64_t OS_TEST_THREAD_SCHEDULER_PROCESS_EXIT_THREAD_COUNT = 3ULL;
 constexpr uint64_t OS_TEST_THREAD_SCHEDULER_UPDATED_TLS_BASE = 0x60010000ULL;
+constexpr uint64_t OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_COUNT = 3ULL;
 
 bool test_interrupts_enabled = true;
 uint64_t test_disable_interrupt_count;
@@ -245,6 +248,122 @@ void RestoreTestInterrupts(const bool interrupts_were_enabled) noexcept {
            statistics.owned_thread_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT &&
            statistics.created_thread_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT &&
            scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded;
+}
+
+[[nodiscard]] bool ValidateKernelThreadLifecycle() noexcept {
+    os::kernel::ProcessEntry processes[OS_TEST_THREAD_SCHEDULER_TEST_PROCESS_CAPACITY]{};
+    os::kernel::ThreadEntry threads[OS_TEST_THREAD_SCHEDULER_TEST_THREAD_CAPACITY]{};
+    os::kernel::ThreadScheduler scheduler{};
+    os::kernel::WaitQueue wait_queue{};
+    if (!InitializeTestScheduler(scheduler, processes, threads) ||
+        wait_queue.Initialize(
+            os::kernel::WaitQueueId{.value = OS_TEST_THREAD_SCHEDULER_WAIT_QUEUE_ID}) !=
+            os::kernel::WaitQueueStatus::Succeeded) {
+        return false;
+    }
+
+    uint64_t first_thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    uint64_t second_thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    uint64_t discarded_thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    os::kernel::ThreadId first_thread_id{};
+    os::kernel::ThreadId second_thread_id{};
+    os::kernel::ThreadId discarded_thread_id{};
+    uint64_t rejected_thread_index = OS_TEST_THREAD_SCHEDULER_SECOND_INDEX;
+    os::kernel::ThreadId rejected_thread_id{
+        .value = OS_TEST_THREAD_SCHEDULER_SECOND_IDENTIFIER,
+    };
+    if (scheduler.CreateKernelThread(os::kernel::OS_KERNEL_THREAD_INVALID_INDEX,
+                                     rejected_thread_index, rejected_thread_id) !=
+            os::kernel::ThreadSchedulerStatus::InvalidKernelStack ||
+        rejected_thread_index != OS_TEST_THREAD_SCHEDULER_SECOND_INDEX ||
+        rejected_thread_id.value != OS_TEST_THREAD_SCHEDULER_SECOND_IDENTIFIER ||
+        scheduler.CreateKernelThread(OS_TEST_THREAD_SCHEDULER_FIRST_INDEX, first_thread_index,
+                                     first_thread_id) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.CreateKernelThread(OS_TEST_THREAD_SCHEDULER_SECOND_INDEX, second_thread_index,
+                                     second_thread_id) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.CreateKernelThread(OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_COUNT,
+                                     discarded_thread_index, discarded_thread_id) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.DiscardReadyThread(discarded_thread_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded) {
+        return false;
+    }
+    os::kernel::ThreadEntry first_thread{};
+    os::kernel::ThreadEntry second_thread{};
+    const os::kernel::ThreadSchedulerStatistics created_statistics = scheduler.Statistics();
+    if (scheduler.ReadThread(first_thread_index, first_thread) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.ReadThread(second_thread_index, second_thread) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        first_thread.kind != os::kernel::ThreadKind::Kernel ||
+        second_thread.kind != os::kernel::ThreadKind::Kernel ||
+        first_thread.process_index != os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX ||
+        second_thread.process_index != os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX ||
+        created_statistics.owned_process_count != OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT ||
+        created_statistics.owned_user_thread_count !=
+            OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT ||
+        created_statistics.owned_kernel_thread_count !=
+            OS_TEST_THREAD_SCHEDULER_SECOND_IDENTIFIER ||
+        created_statistics.created_kernel_thread_count !=
+            OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_COUNT) {
+        return false;
+    }
+
+    os::kernel::ThreadSchedulingDecision decision{};
+    if (scheduler.Start(decision) != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        decision.current_thread_index != first_thread_index ||
+        scheduler.SetCurrentThreadLocalStorageBase(OS_TEST_THREAD_SCHEDULER_UPDATED_TLS_BASE) !=
+            os::kernel::ThreadSchedulerStatus::InvalidThreadKind ||
+        scheduler.SetCurrentThreadSignalMask(OS_TEST_THREAD_SCHEDULER_SIGNAL_MASK) !=
+            os::kernel::ThreadSchedulerStatus::InvalidThreadKind ||
+        scheduler.YieldCurrentThread(decision) != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        decision.current_thread_index != second_thread_index ||
+        scheduler.BlockCurrentThread(wait_queue, os::kernel::WaitCondition::TestCondition,
+                                     decision) != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        decision.current_thread_index != first_thread_index) {
+        return false;
+    }
+    uint64_t woken_thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    bool wake_won = false;
+    if (scheduler.WakeOne(wait_queue, os::kernel::WakeReason::ConditionSatisfied,
+                          woken_thread_index,
+                          wake_won) != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        !wake_won || woken_thread_index != second_thread_index ||
+        scheduler.TerminateCurrentThread(decision) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        decision.current_thread_index != second_thread_index) {
+        return false;
+    }
+    os::kernel::WakeReason wake_reason = os::kernel::WakeReason::None;
+    if (scheduler.ConsumeCurrentThreadWakeReason(wake_reason) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        wake_reason != os::kernel::WakeReason::ConditionSatisfied ||
+        scheduler.TerminateCurrentThread(decision) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        !decision.completed ||
+        scheduler.ReapExitedThread(first_thread_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.ReapExitedThread(second_thread_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded) {
+        return false;
+    }
+    const os::kernel::ThreadSchedulerStatistics final_statistics = scheduler.Statistics();
+    return scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded &&
+           scheduler.ValidateWaitQueue(wait_queue) ==
+               os::kernel::ThreadSchedulerStatus::Succeeded &&
+           final_statistics.owned_process_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT &&
+           final_statistics.owned_thread_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT &&
+           final_statistics.created_thread_count == OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_COUNT &&
+           final_statistics.created_kernel_thread_count ==
+               OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_COUNT &&
+           final_statistics.discarded_thread_count ==
+               OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT &&
+           final_statistics.reaped_thread_count == OS_TEST_THREAD_SCHEDULER_SECOND_IDENTIFIER &&
+           final_statistics.yield_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT &&
+           final_statistics.block_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT &&
+           final_statistics.wake_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT;
 }
 
 [[nodiscard]] bool ValidateProcessThreadLimit() noexcept {
@@ -792,6 +911,8 @@ int main() {
                         OS_TEST_THREAD_SCHEDULER_INITIALIZATION_BOUNDARIES);
     test_context.Expect(ValidateInvalidKernelStackRejected(),
                         OS_TEST_THREAD_SCHEDULER_INVALID_KERNEL_STACK);
+    test_context.Expect(ValidateKernelThreadLifecycle(),
+                        OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_LIFECYCLE);
     test_context.Expect(ValidateCapacityAndIdentifiers(),
                         OS_TEST_THREAD_SCHEDULER_CAPACITY_AND_IDENTIFIERS);
     test_context.Expect(ValidateProcessThreadLimit(),

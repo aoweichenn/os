@@ -15,6 +15,8 @@ constexpr char OS_USER_INIT_ALL_CHILDREN_REAPED_MESSAGE[] =
 constexpr char OS_USER_INIT_NO_ZOMBIES_MESSAGE[] = "[OS][USER][INIT] NO_ZOMBIES\r\n";
 constexpr char OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] MEMORY_PROBE_REAPED\r\n";
+constexpr char OS_USER_INIT_OOM_PROBE_REAPED_MESSAGE[] =
+    "[OS][USER][INIT] OOM_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_VM_FAULT_POLICIES_MESSAGE[] =
     "[OS][USER][INIT] VM_FAULT_POLICIES_VERIFIED\r\n";
 constexpr char OS_USER_INIT_FORK_PROBE_REAPED_MESSAGE[] = "[OS][USER][INIT] FORK_PROBE_REAPED\r\n";
@@ -28,6 +30,7 @@ constexpr char OS_USER_INIT_SECURITY_PROBE_REAPED_MESSAGE[] =
     "[OS][USER][INIT] SECURITY_PROBE_REAPED\r\n";
 constexpr char OS_USER_INIT_PATH[] = "/sbin/init";
 constexpr char OS_USER_INIT_ENVIRONMENT[] = "OS_STAGE=v2.6";
+constexpr char OS_USER_INIT_OOM_PRESSURE_ENVIRONMENT[] = "OS_OOM_PRESSURE=1";
 constexpr char OS_USER_INIT_ORPHAN_PARENT_PATH[] = "/bin/orphan_parent";
 constexpr char OS_USER_INIT_ARGUMENT_PROBE_PATH[] = "/bin/argument_probe";
 constexpr char OS_USER_INIT_EXEC_PROBE_PATH[] = "/bin/exec_probe";
@@ -35,6 +38,7 @@ constexpr char OS_USER_INIT_FILE_SYSTEM_PROBE_PATH[] = "/bin/fs_probe";
 constexpr char OS_USER_INIT_SMOKE_PATH[] = "/bin/smoke";
 constexpr char OS_USER_INIT_SHELL_PATH[] = "/bin/sh";
 constexpr char OS_USER_INIT_MEMORY_PROBE_PATH[] = "/bin/memory_probe";
+constexpr char OS_USER_INIT_OOM_PROBE_PATH[] = "/bin/oom_probe";
 constexpr char OS_USER_INIT_FORK_PROBE_PATH[] = "/bin/fork_probe";
 constexpr char OS_USER_INIT_THREAD_PROBE_PATH[] = "/bin/thread_probe";
 constexpr char OS_USER_INIT_TIME_PROBE_PATH[] = "/bin/time_probe";
@@ -174,6 +178,12 @@ template <uint64_t MessageSizeBytes>
 extern "C" [[noreturn, gnu::section(".text.os_user_entry")]]
 void OsUserEntry(const uint64_t argument_count, const char *const *const arguments,
                  const char *const *const environment) noexcept {
+    const bool oom_pressure =
+        environment != nullptr && environment[OS_USER_INIT_COUNTER_INCREMENT] != nullptr &&
+        StringsEqual(environment[OS_USER_INIT_COUNTER_INCREMENT],
+                     OS_USER_INIT_OOM_PRESSURE_ENVIRONMENT,
+                     sizeof(OS_USER_INIT_OOM_PRESSURE_ENVIRONMENT) -
+                         OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES);
     if (os::user::GetProcessId() != OS_USER_INIT_EXPECTED_PROCESS_ID ||
         argument_count != OS_USER_INIT_COUNTER_INCREMENT || arguments == nullptr ||
         environment == nullptr ||
@@ -182,7 +192,7 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
         !StringsEqual(environment[OS_USER_INIT_FIRST_INDEX], OS_USER_INIT_ENVIRONMENT,
                       sizeof(OS_USER_INIT_ENVIRONMENT) -
                           OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES) ||
-        environment[OS_USER_INIT_COUNTER_INCREMENT] != nullptr ||
+        environment[oom_pressure ? 2ULL : OS_USER_INIT_COUNTER_INCREMENT] != nullptr ||
         !WriteMessage(OS_USER_INIT_STARTED_MESSAGE) ||
         !WriteMessage(OS_USER_INIT_ARGUMENTS_VALID_MESSAGE)) {
         os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
@@ -267,6 +277,15 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
                             os::abi::ProcessTerminationReason::Exited,
                             OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_FIRST_INDEX) ||
         !WriteMessage(OS_USER_INIT_MEMORY_PROBE_REAPED_MESSAGE)) {
+        os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
+    }
+    if (oom_pressure &&
+        (!RunExpectedProcess(OS_USER_INIT_OOM_PROBE_PATH,
+                             sizeof(OS_USER_INIT_OOM_PROBE_PATH) -
+                                 OS_USER_INIT_STRING_TERMINATOR_SIZE_BYTES,
+                             os::abi::ProcessTerminationReason::Exited,
+                             OS_USER_INIT_SUCCESS_EXIT_CODE, OS_USER_INIT_FIRST_INDEX) ||
+         !WriteMessage(OS_USER_INIT_OOM_PROBE_REAPED_MESSAGE))) {
         os::user::ExitProcess(OS_USER_INIT_FAILURE_EXIT_CODE);
     }
     if (!RunExpectedProcess(OS_USER_INIT_FORK_PROBE_PATH,

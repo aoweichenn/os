@@ -528,8 +528,8 @@ ABI 编号 4--9 分别为 `TryReadPipe`、`TryWritePipe`、
 - `ThreadEntry` 是唯一调度实体，保存 TID、Ready/Running/Blocked/Exited、
   三类侵入式队列链接、动态栈槽及执行统计；
 - `ProcessRuntimeProcess` 关联用户地址空间、描述符、文件句柄和终止结果；
-- `ProcessRuntimeThread` 关联 176 字节保存帧和 16 字节对齐的 512 字节
-  `FxSaveArea`。
+- User `ProcessRuntimeThread` 关联 176 字节保存帧；Kernel kind 关联入口、参数和保存的
+  内核 RSP；两者都拥有 16 字节对齐的 512 字节 `FxSaveArea`。
 
 创建按“用户地址空间 → Process → 动态栈 → Thread → 初始帧/FXSAVE 模板”
 逐层发布。任一步失败都只撤销已经取得的资源，输出身份和调度状态不出现半提交
@@ -539,9 +539,9 @@ Process。
 
 run queue 是 Thread 内的双向 FIFO；Process Thread 链和 WaitQueue 是单向
 侵入式链。`UINT64_MAX` 只表示“无槽索引”，零只表示“无 PID/TID”，两种
-哨兵不会混用。`Validate()` 扫描完整存储，证明每个活动 Thread 恰属于一个
-Process，Ready 链无环、最多一个 Running，以及累计 create/discard/reap
-与当前拥有量守恒。
+哨兵不会混用。`Validate()` 扫描完整存储，证明每个活动 User Thread 恰属于一个
+Process、每个 Kernel Thread 不属于任何 Process，Ready 链无环、最多一个 Running，
+以及累计 create/discard/reap 与当前拥有量守恒。
 
 当前四个阻塞对象分别拥有 pipe-readable、pipe-writable、
 descriptor-readable、descriptor-writable WaitQueue。阻塞一次性写入
@@ -1014,6 +1014,12 @@ FilePageCache/SwapManager 接成生产操作并维护分阶段统计；`process/
 提供跨进程轮转和 OOM。设备错误作为 FileWritebackFailed/AnonymousSwapFailed 向上传播，
 只有 Succeeded/NoProgress 后仍低于水位才进入 OOM。
 
+第六增量让 direct/background 都使用 `PlanMemoryReclaim` 的 file/anonymous 预算。
+swappiness 范围为 0..200；两类候选同时存在时至少各保留一页，候选不足的预算转赠给
+另一类。UserMemory 在私有匿名 frame 最后释放前通知 ProcessRuntime 删除 aging 身份，
+覆盖普通 unmap/exec/exit、swap completion 与 OOM kill。决策见
+[ADR 0062](../adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
+
 ## 已知边界
 
 - 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
@@ -1053,9 +1059,22 @@ FilePageCache/SwapManager 接成生产操作并维护分阶段统计；`process/
   五级稀疏块树和 ordered journal 已完成。mount 拓扑仍仅在启动期建立；
   动态 unmount、dentry cache 与权限进入后续阶段。
 - v2.8 六个核心增量已有 64 位动态文件页 radix、统一 buffered read/write/file fault/
-  `MAP_SHARED` frame、逻辑 EOF、精确 truncate、锁外 fill、safe-point writeback、按打开
-  实例错误序列和统一 direct reclaim；可独立调度的 Kernel Thread、页 aging/LRU、
-  kswapd、memcg 与 NUMA reclaim 尚未完成。
+  `MAP_SHARED` frame、逻辑 EOF、精确 truncate、锁外 fill、按打开实例错误序列和统一
+  direct reclaim；v2.9 已建立协作式 Kernel Thread、混合 User/Kernel dispatcher，并把
+  常规 writeback 迁入常驻 Worker。第四增量用 PTE Accessed 建立 file/anonymous
+  active/inactive 队列，第五增量已让 low/high 水位 Worker 消费显式候选；
+  direct/background 公平性矩阵、MGLRU、memcg 与 NUMA 尚未完成。
+- v2.9 WorkQueue 已有 generation WorkHandle、即时 FIFO、延迟最小堆、即时提升、合并、
+  取消、失败隔离和 drain；生产 Worker 通过真实 monotonic deadline 睡眠，IRQ 只负责到期
+  唤醒，硬 Dirty limit 仍由同步 direct fallback 保证前进。
+- `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
+  ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
+  96 个左右
+  的真实 frame 与两个 KVA allocation 常驻，32 GiB 档按最大容量分配；两者都在资源
+  基线前建立。
+- `memory/background_reclaim.*` 是只依赖 watermarks 的纯滞回状态机；ProcessRuntime
+  将其决策接到第三个持久 WorkHandle，并在 Worker 锁外调用 FilePageCache、writeback
+  与 SwapManager。low 到 min 留给后台调度，min 以下才走同步 direct fallback。
 
 ## v1.10 COW 内核边界
 

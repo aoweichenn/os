@@ -1294,6 +1294,122 @@ ProcessRuntime 提供全局 shared PTE 写保护、跨进程轮转 swap 和 OOM 
 - 低水位依次尝试 clean 回收、dirty 写回和匿名 swap，耗尽后才选择 OOM；
 - 4 GiB QEMU、NVMe/ATA fallback、重启持久化和故障矩阵全部保持通过。
 
+### v2.9 内核后台执行与工作集回收
+
+**范围**
+
+- 让调度器原生表达不属于用户 Process 的 Kernel Thread；
+- 建立 WorkQueue，并把 writeback 从 user-return safe point 迁移到可睡眠 worker；
+- 用 x86 PTE Accessed 位形成 file/anonymous 冷热队列；
+- 低水位唤醒后台回收，高水位停止，direct reclaim 只保留紧急路径；
+- 不增加网络、SMP、图形或无关硬件驱动。
+
+**增量顺序**
+
+1. Kernel Thread 生命周期、协作上下文切换和安全回收（已完成）；
+2. WorkQueue、延迟任务、合并、取消与 drain（已完成）；
+3. writeback worker 迁移和按时间老化（已完成）；
+4. PTE Accessed 采样与 active/inactive 队列（已完成）；
+5. 后台水位回收线程（已完成）；
+6. direct/background reclaim、swap 与 OOM 压力矩阵（已完成）。
+
+**第一增量完成状态**
+
+`ThreadEntry` 已显式区分 User 与 Kernel。Kernel Thread 不进入 Process 线程链，不拥有
+用户 CR3/栈/TLS/信号状态，并使用独立高位 TID，因而 PID1/TID1 不变。动态内核栈顶部
+预构造协作上下文；汇编在 IF 关闭时切换 RSP，FXSAVE 仍由 C++ 运行时显式管理。
+
+PID1 创建前会运行两个真实 Kernel Thread，依次完成两次 yield、一次 WaitQueue
+block/wake 和两次 exit；恢复调度栈后再 reap 并销毁目标栈。第一增量明确不让 Kernel
+Thread 与 User Thread 同批运行，也不迁移 writeback，为 WorkQueue 保留一个可验证的
+最小基础。
+
+**第二增量完成状态**
+
+`WorkQueue` 使用调用方长期持有的 entry/heap 存储。注册得到 generation handle；即时任务
+进入 FIFO，延迟任务进入 deadline/sequence 最小堆。重复提交合并，Queued/Delayed 可
+取消，Running 拒绝异步撤销；Completed/Cancelled 经 reset 后才能重排或 release。
+
+`BeginDrain` 封闭新注册和 Idle 提交，已有任务失败不会停止 drain。任务 operation 只由
+worker 在队列锁外执行。PID1 前的真实 worker 执行三个成功任务和一个失败任务，继续
+完成延迟项，最后释放全部六个句柄。
+
+**第三增量完成状态**
+
+生产 dispatcher 现在识别当前 ThreadKind：User→Kernel 先收束用户页表、CpuLocal、
+SYSCALL/IRQ 入口并回到 dispatcher，Kernel→User 保存 Kernel RSP 后同样回到 dispatcher，
+同类型切换仍走原有快速路径。Ring 0 timer 不直接抢占 Worker。
+
+常驻文件回写 Worker 以一个稳定 WorkHandle 工作。后台请求即时入队；仅有低水位 Dirty
+页时按 Linux 默认 5 秒窗口延迟，新的即时请求会提升 Delayed 项。Worker 用 scheduler
+deadline park/unpark，每批最多写 64 页后 yield。最后一个 User Thread 退出时取消残余
+任务并停止/reap Worker。硬 Dirty limit、显式同步和退出前 flush 仍是同步前进保证。
+
+**第四增量完成状态**
+
+`PageTableManager::TestAndClearAccessed` 读取 4 KiB 用户叶项的硬件 A 位，只清该位并在
+目标 CR3 当前活动时执行 `invlpg`。周期 WorkItem 每秒先登记全部 file-cache frame，再
+扫描拥有 CR3 的用户 VMA；同一物理帧的 alias 对 Accessed 做 OR、对回收资格做 AND。
+
+`PageAgingManager` 以物理帧和 File/Anonymous 分类为身份，维护 active-file、
+inactive-file、active-anonymous、inactive-anonymous 四条队列。新页先进入 Active；一次
+未访问降到 Inactive，连续第二次未访问且资格成立才记录 candidate；重新访问则提升。
+跨轮物理帧复用允许重分类，同轮两类并存仍判为损坏。Zombie 无 CR3 时跳过，PID1、
+UserStack、COW alias、映射中的 file page、Dirty/Writeback/Error 只参与温度观察，不成为
+候选。本增量不释放、写回或交换候选。
+
+元数据使用真实 frame+KVA 常驻分配：4 GiB 功能档为 4096 entry/8192 hash，32 GiB
+容量档为 32768/65536。两档均在 Process 资源基线前建立，不占 Kernel BSS，也不伪造
+resident 计数。
+
+**第五增量完成状态**
+
+`BackgroundReclaimController` 用 Sleeping/Running/BackingOff 表达 low 唤醒、high 停止和
+一秒退避；每个决策最多 64 页。用户分配在 low 到 min 之间只合并后台 WorkItem，低于
+min 才进入 direct reclaim。Worker 依次处理显式 cold clean file candidate、dirty/error
+writeback 和 cold anonymous candidate，每批后 yield；IRQ 和 WorkQueue 锁内不执行扫描
+或 I/O。
+
+PageAging candidate 已从派生条件改成显式提交状态，刚降级的页必须再冷一轮。文件缓存
+access generation 改变会撤销同类旧候选，selection 再核对当前 generation；成功 eviction/
+swap 在 frame 释放前 completion 并忘记 aging 身份。停止时三个持久 handle、controller、
+deadline、WaitQueue 与当前四队列一起归零。
+
+4 GiB ATA/NVMe pressure 已分别以 39.00/40.06 秒通过稳定门禁。ATA 首次有效轨迹观察
+wake/sleep 9/9、24 批、clean 588 页、writeback 329 页、anonymous 36 页和实际回收
+624 页；后台 failure 为零。该第五增量当时尚未冻结 direct/background 公平配额，后续由
+第六增量的统一 planner 与 OOM 组合矩阵完成。
+
+最终 CAW Debug `verify` 为 215/215、0 失败：65 unit、72 integration、47 randomized、
+31 system，含 25 条 failure-path，CTest 374.98 秒；全量 ATA/NVMe pressure 为
+38.40/41.19 秒，primary 为 36.49/36.84 秒，持久化为 72.49/74.89 秒。
+
+**第六增量完成状态**
+
+direct 与 background 现在共同调用 `PlanMemoryReclaim`。file/anonymous 配额按 Linux
+同范围的 0..200 swappiness 计算；两类均可用时保留最小公平份额，某类不足则把未用
+预算转赠另一类。file 预算内仍固定 clean-first、writeback-second。匿名 frame 的最后
+引用在 unmap/exec/exit/OOM 或 swap completion 后都会删除 aging 身份。
+
+新增 12288 页、swappiness 0 的 OOM profile。`oom_probe` 从 `/proc/meminfo` 读取实时
+resident headroom，保证匿名子进程比制造压力的父进程大 64 页，确定性验证非当前 victim
+SIGKILL、wait/reap、PID1 存活和全部资源归零。4 GiB ATA/NVMe OOM 分别 40.19/40.93 秒，
+reclaim-pressure 分别 39.05/39.52 秒；两种 OOM 路径均为一次 invocation/kill、零
+anonymous swap，并到达三项状态验证和 READY。
+
+最终 CAW Debug `verify` 为 218/218、0 失败：65 unit、73 integration、47 randomized、
+33 system，含 25 条 failure-path，CTest 476.96 秒；ATA/NVMe persistence 为
+77.80/79.08 秒。V2.9 实现完成，但仍保持工程候选且不启动公开发布闭环。
+
+**退出条件**
+
+- Kernel Thread 不改变 Process、PID1、用户 TID 和 ABI；
+- create/yield/block/wake/exit/reap 的正常与失败路径有纯模型和 QEMU 证据；
+- 完成后 scheduler entry、CpuLocal、动态栈、KVA 与 frame 恢复基线；
+- 4 GiB ATA/NVMe、持久化和既有故障矩阵保持通过；
+- 常规 writeback 已迁移；IRQ 不执行 VFS I/O，硬压力 direct fallback 必须继续守恒。
+- aging candidate 由第五、六增量消费；第四增量的历史边界仍不得回写。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

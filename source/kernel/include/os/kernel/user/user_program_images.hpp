@@ -7,6 +7,7 @@ namespace os::kernel {
 enum class UserProgramSelection : uint64_t {
     Shell,
     Smoke,
+    OomPressure,
     InvalidOpcode,
     PageFault,
     SchedulerWorker,

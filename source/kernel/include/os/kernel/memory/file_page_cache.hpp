@@ -40,6 +40,14 @@ struct FilePageCacheEntry final {
     FilePageCacheEntryState state;
 };
 
+using FilePageCacheVisitOperation = bool (*)(void *context,
+                                             const FilePageCacheEntry &entry) noexcept;
+using FilePageCacheReclaimSelectionOperation = bool (*)(void *context,
+                                                        const FilePageCacheEntry &entry,
+                                                        bool &selected) noexcept;
+using FilePageCacheReclaimCompletionOperation = bool (*)(void *context,
+                                                         const FilePageCacheEntry &entry) noexcept;
+
 struct FilePageCacheStatistics final {
     uint64_t capacity;
     uint64_t resident_page_count;
@@ -92,6 +100,7 @@ enum class FilePageCacheStatus : uint64_t {
     InvalidIdentity,
     InvalidReader,
     InvalidWriter,
+    InvalidVisitor,
     FrameAllocationFailed,
     MetadataAllocationFailed,
     MetadataReleaseFailed,
@@ -131,10 +140,9 @@ class FilePageCache final {
                                                 uint64_t maximum_page_count,
                                                 uint64_t &written_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus
-    WritebackFile(const FileIdentity &identity, uint64_t first_page_index,
-                  uint64_t last_page_index, void *writer_context,
-                  FilePageWriteOperation write_operation, uint64_t maximum_page_count,
-                  uint64_t &written_page_count) noexcept;
+    WritebackFile(const FileIdentity &identity, uint64_t first_page_index, uint64_t last_page_index,
+                  void *writer_context, FilePageWriteOperation write_operation,
+                  uint64_t maximum_page_count, uint64_t &written_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus RequestBackgroundWriteback() noexcept;
     [[nodiscard]] FilePageCacheStatus Invalidate(const FileIdentity &identity) noexcept;
     [[nodiscard]] FilePageCacheStatus ObserveFileSize(const FileIdentity &identity,
@@ -155,8 +163,15 @@ class FilePageCache final {
     [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus Trim(uint64_t target_resident_page_count,
                                            uint64_t &reclaimed_page_count) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    ReclaimCleanPages(uint64_t maximum_page_count, void *context,
+                      FilePageCacheReclaimSelectionOperation selection_operation,
+                      FilePageCacheReclaimCompletionOperation completion_operation,
+                      uint64_t &reclaimed_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus ReadEntry(const FilePageIdentity &identity,
                                                 FilePageCacheEntry &entry) const noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    VisitEntries(void *context, FilePageCacheVisitOperation operation) const noexcept;
     [[nodiscard]] FilePageCacheStatus Validate() const noexcept;
     [[nodiscard]] FilePageCacheStatistics Statistics() const noexcept;
     [[nodiscard]] FilePageCacheStatus Destroy() noexcept;
@@ -173,16 +188,19 @@ class FilePageCache final {
     [[nodiscard]] FilePageCacheStatus DestroyAddressSpace(AddressSpaceRecord &record) noexcept;
     [[nodiscard]] FilePageCacheStatus
     DestroyAddressSpaceIfEmpty(AddressSpaceRecord &record) noexcept;
-    [[nodiscard]] FilePageCacheStatus SelectEvictionCandidate(AddressSpaceRecord *&record,
-                                                              FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    SelectEvictionCandidate(void *context,
+                            FilePageCacheReclaimSelectionOperation selection_operation,
+                            AddressSpaceRecord *&record, FileCachePageSnapshot &page) noexcept;
     [[nodiscard]] FilePageCacheStatus Evict(AddressSpaceRecord &record,
                                             const FileCachePageSnapshot &page, bool release_frame,
                                             uint64_t &physical_address) noexcept;
     [[nodiscard]] FilePageCacheStatus
     SelectWritebackCandidate(AddressSpaceRecord *&record, FileCachePageSnapshot &page) noexcept;
-    [[nodiscard]] FilePageCacheStatus SelectWritebackCandidateInRange(
-        const FileIdentity &identity, uint64_t first_page_index, uint64_t last_page_index,
-        AddressSpaceRecord *&record, FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    SelectWritebackCandidateInRange(const FileIdentity &identity, uint64_t first_page_index,
+                                    uint64_t last_page_index, AddressSpaceRecord *&record,
+                                    FileCachePageSnapshot &page) noexcept;
     [[nodiscard]] FilePageCacheStatus
     WritebackInternal(const FileIdentity *identity, uint64_t first_page_index,
                       uint64_t last_page_index, void *writer_context,

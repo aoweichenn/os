@@ -1357,6 +1357,13 @@ QEMU 成功路径在 secondary ATA attach 时对原始交换盘做一次真实 4
 一次重试和 PID 1 存活。4 GiB 用例继续触及 `0x100000000` 以上重映射地址，
 宿主 RSS 必须接近实际预分配容量；swap 总槽精确为 `0x700000`。
 
+V2.9.6 另增加 ATA/NVMe `oom-pressure`。来宾固定 4 GiB `-mem-prealloc`、12288 页
+resident limit 和 swappiness 0；`oom_probe` 读取 `/proc/meminfo` 后动态计算 victim 与
+requester 页数，避免把存储后端的 cache 时序固化为常量。验收要求 `VICTIM_READY`、
+`VICTIM_KILLED`、`COMPLETED`、init reap 各一次，OOM invocation/kill 与 direct
+no-progress 至少一次，anonymous swap、active swap 和最终资源均为零。当前 ATA/NVMe
+分别 40.92/41.33 秒通过。
+
 v2.5 把 swap 元数据移到磁盘，并增加 4 GiB 预分配与 secondary ATA 自检；手机
 TCG 热降频时不能沿用 v2.4 已接近上限的 45/120 秒内部总预算。QMP 建立允许
 30 秒，但后续总超时仍有界；逐键/marker
@@ -1636,3 +1643,140 @@ swapped 四阶段计数均非零，NoProgress 为 0。最终完整 `verify` 为 
 62 unit、72 integration、44 randomized、31 system，含 25 条 failure-path；CTest
 373.78 秒。全量轮的 ATA/NVMe 压力分别为 38.07/40.15 秒，两条三启动持久化分别为
 74.89/74.62 秒；CAW 验证服务峰值约 5.54 GiB，QEMU 全程受资源锁串行。
+
+## v2.9 Kernel Thread 生命周期测试
+
+第一增量扩展既有 ThreadScheduler 两层证据：
+
+- 单元测试创建三个 Kernel Thread，先验证 invalid stack 不改输出，再丢弃一个 Ready
+  条目；剩余两个完成 Start、yield、WaitQueue block/wake、exit 和 reap，并要求
+  Process 数始终为零、用户 TLS/signal setter 明确拒绝 Kernel kind；
+- 十万步固定种子随机模型把 Kernel Thread 创建加入 User Process/Thread、run queue、
+  三个 WaitQueue、退出和回收操作，逐步对照 User/Kernel 拥有量与 kind/Process 关系；
+- 4 GiB QEMU 在 PID1 前进入真实动态栈，runner 精确要求 active=0、peak/create=2、
+  dispatch=5、yield=2、block/wake=1、exit/reap=2；随后完整用户工作负载继续运行；
+- 动态栈资源基线在自检完成后拍摄，Process 生命周期差值不会把 Kernel Thread 的历史
+  create/destroy 误判成用户资源泄漏。
+
+首轮 CAW Debug 构建通过；ThreadScheduler 单元/随机为 2/2、0 失败、并行实耗
+0.20 秒，focused 的 ThreadScheduler、命名与发布身份为 4/4、0 失败。最终完整
+`verify` 为 209/209、0 失败：62 unit、72 integration、44 randomized、31 system，
+含 25 条 failure-path；CTest 399.11 秒，CAW 服务峰值约 4.31 GiB。ATA/NVMe primary
+为 38.55/38.97 秒，ATA/NVMe pressure 为 40.59/41.62 秒，ATA/NVMe 三启动持久化为
+78.29/82.32 秒。
+
+首轮全量曾在重复的 `os_qemu_stage1_load_success` 观察一次旧 safe-point writeback
+`FILE_PARTIAL_ACCESS`：247 页成功后来源写失败，其余 208 项通过。相同源码隔离重跑
+39.34 秒通过，第二轮完整验证中的同项又以 38.75 秒通过，最终 209/209。该现象没有
+伴随 Kernel Thread marker、栈/CpuLocal 或资源守恒失败，作为后续 writeback worker
+迁移时的时序观测保留，不把一次重试伪装成从未发生。
+
+### WorkQueue 第二增量
+
+- `os_kernel_work_queue_unit_tests` 覆盖空存储/容量拒绝、即时 FIFO、重复合并、任务失败
+  后继续、delay/sequence 稳定顺序、取消、Running 拒绝取消、drain、reset/release 和
+  stale generation；
+- `os_kernel_work_queue_randomized_tests` 以种子 `0x573239574F524B51` 执行十万步，
+  参考模型逐步对照 entry 状态、ready 顺序、deadline 提升、句柄复用和全部历史统计；
+- QEMU 注册 6 个 WorkItem，峰值 pending 5；一个真实 Kernel Thread worker 取得并完成
+  4 项，其中 1 项失败，另有 1 项取消、1 次合并和 1 次 drain 拒绝；
+- worker 在 Acquire 返回后才调用 operation，队列最终 registered/queued/delayed/running
+  均为零。writeback 仍走旧 safe-point，不把本测试冒充生产迁移。
+
+首轮 CAW Debug 构建通过；新增单元/随机为 2/2、0 失败、并行实耗 0.07 秒，4 GiB
+ATA primary 为 1/1、0 失败、40.52 秒。最终 focused 的 WorkQueue、ThreadScheduler、
+命名和发布身份为 6/6、0 失败；完整 `verify` 为 211/211、0 失败：63 unit、
+72 integration、45 randomized、31 system，含 25 条 failure-path；CTest 413.64 秒，
+CAW 服务峰值约 4.35 GiB。ATA/NVMe primary 为 40.46/42.62 秒，ATA/NVMe pressure
+为 42.05/43.39 秒，两条三启动持久化为 82.43/81.74 秒。
+
+### 混合 Worker 与 writeback 第三增量
+
+- WorkQueue 单元模型新增 `NextDeadline` 与 Delayed→Queued 即时提升；十万步随机参考模型
+  每一步同时对照最早 deadline、expedited 统计、entry 状态和 FIFO 顺序；
+- 4 GiB QEMU 要求 Kernel Thread create/exit/reap 为 4，User→Kernel 和 Kernel→User
+  聚合均非零，生产 WorkQueue completion 高于 PID1 前自检基线，并在结束时清空
+  registered/queued/delayed/running、scheduler deadline、WaitQueue waiter 和动态栈；
+- ATA 主路径实际观察 User→Kernel/Kernel→User 各 16 次、Worker/自检合计 completion 15、
+  deadline 最终为零；CpuLocal IRQ depth、system-call active 和 current Thread 均归零；
+- 聚焦 CAW 构建零警告；WorkQueue/ThreadScheduler 单元与十万步随机 4/4、0 失败，
+  4 GiB ATA/NVMe primary 分别为 44.37/40.90 秒，用户 invalid-opcode/page-fault 两条
+  故障隔离为 2/2、0 失败。
+
+第三增量没有新增 64/256 MiB 自动规格；所有 QEMU 证据继续固定 4 GiB
+`-mem-prealloc`。硬 Dirty limit direct fallback、显式 sync 和退出 flush 保留既有测试，
+常规 user-return 只提交 WorkItem。普通 primary profile 继续要求后台 Worker run/page 非零；
+reclaim-pressure profile 允许 direct reclaim 抢先清空 Dirty 请求，改由 clean、dirty
+written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要求 Worker 写页非零。
+
+最终完整 `verify` 为 211/211、0 失败：63 unit、72 integration、45 randomized、
+31 system，含 25 条 failure-path；CTest 403.07 秒。最终轮 ATA/NVMe primary 为
+40.48/39.42 秒，ATA/NVMe reclaim-pressure 为 40.58/40.31 秒，两条三启动持久化为
+82.99/79.54 秒。完整轮开始前修正的 pressure profile 已在同一最终轮闭合，不依赖
+失败测试后的单项替代结果。
+
+### PTE Accessed 与四队列老化第四增量
+
+- `os_kernel_page_aging_unit_tests` 覆盖初始化/重复初始化、观察事务、连续冷却、提升、
+  alias OR/AND、同轮 kind 冲突、跨轮 frame 重分类、消失页与 reset；
+- `os_kernel_page_aging_randomized_tests` 以种子 `0x5632394147494E47` 执行 2000 轮、
+  每轮 50 次 alias 观察，共十万步；逐轮对照四队列、entry 快照、候选和 hash/list 不变量；
+- PageTable 单元测试直接设置真实 leaf A 位，验证 Query 可见、首次 test-and-clear 返回 true、
+  原始项除 A 外不变，第二次采样返回 false；
+- 4 GiB QEMU 由周期 Worker 读取真实用户 PTE。ATA focused 曾观察 25 轮、峰值 tracked
+  1142 页、referenced 529、unreferenced 6311、promotion 19、demotion 1181、candidate
+  observation 2356，结束后四队列、WorkItem、deadline 和资源快照均为零；
+- 元数据最初放入最大 BSS 导致 rootfs 初始化状态损坏，改为 frame+KVA 后恢复；随后又
+  通过失败 marker 定位并修复跨轮 frame 复用误报和 Zombie 无 CR3 的合法窗口。
+
+第四增量把 shell 历史输出从“精确 4 次”改为“至少 3 次”：VGA 轮询可能合并瞬时行重绘，
+一次命令只会产生至多 2 次 marker，而 3 次仍证明 Up 历史重放发生。其他 shell marker
+继续使用精确计数，行编辑器单元测试继续验证历史内容和上下选择。
+
+最终 CAW Debug `verify` 为 213/213、0 失败：64 unit、72 integration、46 randomized、
+31 system，含 25 条 failure-path；CTest 386.00 秒。最终轮 ATA/NVMe primary 为
+36.84/37.98 秒，ATA/NVMe reclaim-pressure 为 40.23/40.37 秒，ATA/NVMe 三启动持久化
+为 75.42/77.49 秒。所有自动 QEMU 仍固定 4 GiB `-mem-prealloc`，没有恢复 64/256 MiB
+重复规格。
+
+### 后台水位回收第五增量
+
+- `os_kernel_background_reclaim_unit_tests` 覆盖 low/high 滞回、64 页批次、无进展、
+  仅写回、失败退避、deadline 恢复、reset 和非法状态；
+- `os_kernel_background_reclaim_randomized_tests` 以种子 `0x563239424752434C` 执行十万步，
+  对照独立 Sleeping/Running/BackingOff 状态机和每批计数守恒；
+- PageAging 单元新增显式 candidate、file access generation 刷新与 Forget；十万步随机
+  oracle 同时核对 file/anonymous candidate 分类。FilePageCache 单元验证只回收选中的
+  Clean/零引用页并在 frame 释放前调用 completion；
+- MemoryPressure 单元冻结 low 到 min 的 User 分配为 Allow、min 以下为 Reclaim；
+  direct fallback 的执行器与失败语义保持原测试；
+- 聚焦 cache/pressure/background/aging 为 9/9、0 失败：4 unit、4 randomized、
+  1 integration，实耗 4.95 秒；
+- 4 GiB ATA/NVMe `reclaim-pressure` 分别 39.00/40.06 秒通过，门禁要求后台 wake/sleep、
+  batch、clean、writeback、total 非零和 failure=0，同时保持系统总 anonymous swap、
+  committed=0、active swap=0、checksum failure=0 与资源快照守恒；
+- ATA 首条有效轨迹观察 wake/sleep 9/9、24 批、clean 588、writeback 329、anonymous 36、
+  reclaimed 624、no-progress 1、failure 0。第二次轨迹由 clean/writeback 填满批次，后台
+  anonymous 为零而 direct anonymous 非零，因此第五增量不冻结调度相关的 anonymous
+  份额；该公平性由第六增量专用矩阵处理。
+
+最终 CAW Debug `verify` 为 215/215、0 失败：65 unit、72 integration、47 randomized、
+31 system，含 25 条 failure-path；CTest 374.98 秒。全量 ATA/NVMe reclaim-pressure 为
+38.40/41.19 秒，ATA/NVMe primary 为 36.49/36.84 秒，两条三启动持久化为
+72.49/74.89 秒。所有 QEMU 仍固定为 4 GiB `-mem-prealloc` 并受资源锁串行。
+
+### 统一公平配额与 OOM 第六增量
+
+- MemoryPressure 单元覆盖 swappiness 0/60/200、file/anonymous 最小公平份额与候选不足
+  转赠；十万步随机模型逐项对照独立 quota oracle；
+- direct/background 共用 planner。最终日志输出 swappiness 与 direct 累计 file/anonymous
+  预算；reclaim-pressure 继续要求 clean、writeback、系统总 anonymous 非零；
+- `oom_probe` 读取 `/proc/meminfo` 首个 256 字节块，按 ABI 单次文件传输上限解析
+  allocated/resident limit；victim 保留 512 页安全垫，requester 始终少 64 页；
+- `os_qemu_oom_pressure` 与 `os_qemu_nvme_oom_pressure` 要求一次 OOM invocation/kill、
+  direct no-progress 非零、swappiness/anonymous swap 为零，以及 SIGKILL wait/reap、PID1
+  存活和三项资源验证；最终分别 40.19/40.93 秒通过；
+- ATA/NVMe reclaim-pressure 回归分别 39.05/39.52 秒，persistence 为 77.80/79.08 秒；
+  focused planner/controller/ELF layout 为 5/5、0 失败；
+- 最终 CAW Debug `verify` 为 218/218、0 失败：65 unit、73 integration、47 randomized、
+  33 system，含 25 条 failure-path，CTest 476.96 秒。

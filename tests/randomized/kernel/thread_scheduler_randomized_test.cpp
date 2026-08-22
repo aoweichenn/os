@@ -1,5 +1,5 @@
-#include "os/kernel/process/thread_scheduler.hpp"
-#include "test_context.hpp"
+#include <os/kernel/process/thread_scheduler.hpp>
+#include <test_context.hpp>
 
 #include <string_view>
 
@@ -8,12 +8,10 @@ namespace {
 constexpr std::string_view OS_TEST_THREAD_RANDOMIZED_SUITE_NAME =
     "kernel/thread_scheduler/randomized";
 constexpr std::string_view OS_TEST_THREAD_RANDOMIZED_INVARIANTS =
-    "十万步创建、调度、阻塞、单赢家唤醒、退出和回收必须保持全部集合守恒";
-constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_SEED =
-    0x5448524541445632ULL;
+    "十万步 User/Kernel Thread 创建、调度、阻塞、单赢家唤醒、退出和回收必须守恒";
+constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_SEED = 0x5448524541445632ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_STEP_COUNT = 100000ULL;
-constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_MULTIPLIER =
-    6364136223846793005ULL;
+constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_MULTIPLIER = 6364136223846793005ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_INCREMENT =
     1442695040888963407ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY = 16ULL;
@@ -27,7 +25,8 @@ constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_INITIAL_THREADS_PER_PROCESS =
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_INITIAL_THREAD_COUNT =
     OS_TEST_THREAD_RANDOMIZED_INITIAL_PROCESS_COUNT *
     OS_TEST_THREAD_RANDOMIZED_INITIAL_THREADS_PER_PROCESS;
-constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_OPERATION_COUNT = 10ULL;
+constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_INITIAL_KERNEL_THREAD_COUNT = 4ULL;
+constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_OPERATION_COUNT = 11ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_TICK_OPERATION = 0ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_YIELD_OPERATION = 1ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_BLOCK_OPERATION = 2ULL;
@@ -38,6 +37,7 @@ constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_REAP_PROCESS_OPERATION = 6ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_CREATE_PROCESS_OPERATION = 7ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_CREATE_THREAD_OPERATION = 8ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_DISCARD_PROCESS_OPERATION = 9ULL;
+constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_CREATE_KERNEL_THREAD_OPERATION = 10ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_WAKE_REASON_COUNT = 5ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_THREAD_RANDOMIZED_FIRST_INDEX = 0ULL;
@@ -83,6 +83,7 @@ struct RandomizedModel final {
     os::kernel::ThreadScheduler scheduler;
     uint64_t last_process_id;
     uint64_t last_thread_id;
+    uint64_t last_kernel_thread_id;
     uint64_t address_space_ordinal;
     uint64_t stack_ordinal;
 };
@@ -116,8 +117,9 @@ struct RandomizedModel final {
     }
     model.last_process_id = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
     model.last_thread_id = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
-    model.address_space_ordinal =
-        OS_TEST_THREAD_RANDOMIZED_COUNTER_INCREMENT;
+    model.last_kernel_thread_id = os::kernel::OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER -
+                                  OS_TEST_THREAD_RANDOMIZED_COUNTER_INCREMENT;
+    model.address_space_ordinal = OS_TEST_THREAD_RANDOMIZED_COUNTER_INCREMENT;
     model.stack_ordinal = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
     return true;
 }
@@ -210,15 +212,31 @@ struct RandomizedModel final {
     return true;
 }
 
-[[nodiscard]] bool FindThreadInState(
-    RandomizedModel &model, const os::kernel::ThreadState state,
-    const uint64_t search_start, uint64_t &thread_index) noexcept {
+[[nodiscard]] bool CreateKernelThread(RandomizedModel &model) noexcept {
+    if (model.scheduler.Statistics().owned_thread_count >=
+        OS_TEST_THREAD_RANDOMIZED_THREAD_CAPACITY) {
+        return true;
+    }
+    uint64_t thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    os::kernel::ThreadId thread_id{};
+    const os::kernel::ThreadSchedulerStatus status =
+        model.scheduler.CreateKernelThread(model.stack_ordinal, thread_index, thread_id);
+    if (status != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        thread_id.value !=
+            model.last_kernel_thread_id + OS_TEST_THREAD_RANDOMIZED_COUNTER_INCREMENT) {
+        return false;
+    }
+    model.last_kernel_thread_id = thread_id.value;
+    ++model.stack_ordinal;
+    return true;
+}
+
+[[nodiscard]] bool FindThreadInState(RandomizedModel &model, const os::kernel::ThreadState state,
+                                     const uint64_t search_start, uint64_t &thread_index) noexcept {
     for (uint64_t search_offset = OS_TEST_THREAD_RANDOMIZED_FIRST_INDEX;
-         search_offset < OS_TEST_THREAD_RANDOMIZED_THREAD_CAPACITY;
-         ++search_offset) {
+         search_offset < OS_TEST_THREAD_RANDOMIZED_THREAD_CAPACITY; ++search_offset) {
         const uint64_t candidate_index =
-            (search_start + search_offset) %
-            OS_TEST_THREAD_RANDOMIZED_THREAD_CAPACITY;
+            (search_start + search_offset) % OS_TEST_THREAD_RANDOMIZED_THREAD_CAPACITY;
         os::kernel::ThreadEntry thread{};
         if (model.scheduler.ReadThread(candidate_index, thread) !=
             os::kernel::ThreadSchedulerStatus::Succeeded) {
@@ -303,13 +321,12 @@ struct RandomizedModel final {
         return false;
     }
 
-    uint64_t observed_process_count =
-        OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
-    uint64_t observed_thread_count =
-        OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
+    uint64_t observed_process_count = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
+    uint64_t observed_thread_count = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
+    uint64_t observed_user_thread_count = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
+    uint64_t observed_kernel_thread_count = OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE;
     for (uint64_t process_index = OS_TEST_THREAD_RANDOMIZED_FIRST_INDEX;
-         process_index < OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY;
-         ++process_index) {
+         process_index < OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY; ++process_index) {
         os::kernel::ProcessEntry process{};
         if (model.scheduler.ReadProcess(process_index, process) !=
             os::kernel::ThreadSchedulerStatus::Succeeded) {
@@ -336,14 +353,31 @@ struct RandomizedModel final {
             return false;
         }
         if (thread.state == os::kernel::ThreadState::Unused) {
+            if (thread.kind != os::kernel::ThreadKind::None) {
+                return false;
+            }
             continue;
         }
         ++observed_thread_count;
-        if ((thread.state == os::kernel::ThreadState::Blocked) !=
-                (thread.wait_queue != nullptr) ||
+        if (thread.kind == os::kernel::ThreadKind::User) {
+            if (thread.process_index >= OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY) {
+                return false;
+            }
+            ++observed_user_thread_count;
+        } else if (thread.kind == os::kernel::ThreadKind::Kernel) {
+            if (thread.process_index != os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX ||
+                thread.user_stack_pointer != OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE ||
+                thread.thread_local_storage_base != OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE ||
+                thread.signal_mask != OS_TEST_THREAD_RANDOMIZED_EMPTY_VALUE) {
+                return false;
+            }
+            ++observed_kernel_thread_count;
+        } else {
+            return false;
+        }
+        if ((thread.state == os::kernel::ThreadState::Blocked) != (thread.wait_queue != nullptr) ||
             (thread.state == os::kernel::ThreadState::Blocked) !=
-                (thread.wait_condition !=
-                 os::kernel::WaitCondition::None) ||
+                (thread.wait_condition != os::kernel::WaitCondition::None) ||
             (thread.state == os::kernel::ThreadState::Blocked &&
              thread.wake_reason != os::kernel::WakeReason::None)) {
             return false;
@@ -351,14 +385,14 @@ struct RandomizedModel final {
     }
     return observed_process_count == statistics.owned_process_count &&
            observed_thread_count == statistics.owned_thread_count &&
-           statistics.created_process_count ==
-               statistics.owned_process_count +
-                   statistics.discarded_process_count +
-                   statistics.reaped_process_count &&
-           statistics.created_thread_count ==
-               statistics.owned_thread_count +
-                   statistics.discarded_thread_count +
-                   statistics.reaped_thread_count;
+           observed_user_thread_count == statistics.owned_user_thread_count &&
+           observed_kernel_thread_count == statistics.owned_kernel_thread_count &&
+           statistics.created_process_count == statistics.owned_process_count +
+                                                   statistics.discarded_process_count +
+                                                   statistics.reaped_process_count &&
+           statistics.created_thread_count == statistics.owned_thread_count +
+                                                  statistics.discarded_thread_count +
+                                                  statistics.reaped_thread_count;
 }
 
 [[nodiscard]] bool SeedInitialWorkload(RandomizedModel &model) noexcept {
@@ -398,6 +432,12 @@ struct RandomizedModel final {
         }
         model.last_thread_id = thread_id.value;
         ++model.stack_ordinal;
+    }
+    for (uint64_t thread_ordinal = OS_TEST_THREAD_RANDOMIZED_FIRST_INDEX;
+         thread_ordinal < OS_TEST_THREAD_RANDOMIZED_INITIAL_KERNEL_THREAD_COUNT; ++thread_ordinal) {
+        if (!CreateKernelThread(model)) {
+            return false;
+        }
     }
     return StartReadyThreadIfNeeded(model) && ValidateModel(model);
 }
@@ -497,17 +537,16 @@ struct RandomizedModel final {
             model, search_start %
                        OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY);
     }
-    if (operation ==
-        OS_TEST_THREAD_RANDOMIZED_DISCARD_PROCESS_OPERATION) {
-        uint64_t process_index =
-            os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
+    if (operation == OS_TEST_THREAD_RANDOMIZED_DISCARD_PROCESS_OPERATION) {
+        uint64_t process_index = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
         return !FindProcessInStateWithoutThreads(
                    model, os::kernel::ProcessState::Alive,
-                   search_start %
-                       OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY,
-                   process_index) ||
+                   search_start % OS_TEST_THREAD_RANDOMIZED_PROCESS_CAPACITY, process_index) ||
                model.scheduler.DiscardProcess(process_index) ==
                    os::kernel::ThreadSchedulerStatus::Succeeded;
+    }
+    if (operation == OS_TEST_THREAD_RANDOMIZED_CREATE_KERNEL_THREAD_OPERATION) {
+        return CreateKernelThread(model);
     }
     return false;
 }

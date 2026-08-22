@@ -28,6 +28,7 @@ struct PageMapping final {
     uint64_t physical_address;
     uint64_t page_size_bytes;
     PagePermissions permissions;
+    bool accessed;
 };
 
 struct PageTableMemoryAccess final {
@@ -104,6 +105,8 @@ class PageTableManager final {
                                             PageTableUnmapResult &result) noexcept;
     [[nodiscard]] PageTableStatus QueryPage(uint64_t virtual_address,
                                             PageMapping &mapping) const noexcept;
+    [[nodiscard]] PageTableStatus
+    TestAndClearAccessed(uint64_t virtual_address, PageMapping &mapping, bool &accessed) noexcept;
     [[nodiscard]] PageTableStatus
     ReplacePage(uint64_t virtual_address, uint64_t physical_address,
                 PagePermissions permissions) noexcept;

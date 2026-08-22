@@ -45,6 +45,27 @@ writeback/trim、跨进程 anonymous swap，
 [v2.8 记录](docs/releases/v2.8.md) 与
 [ADR 0056](docs/adr/0056-v2-8-dynamic-file-cache-address-space.md)。
 当前自动 QEMU 验收统一使用 4 GiB `-mem-prealloc`，不再重复运行 64/256 MiB 档。
+v2.9 已加入协作式 Kernel Thread 和 generation WorkQueue。第三增量让一个常驻 Worker
+与 User Thread 共用调度器：跨类型切换统一返回 dispatcher，常规 writeback 不再在
+user-return 执行，而由 Worker 在锁外分批完成；低水位脏页按 Linux 默认 5 秒窗口老化，
+软水位请求可即时提升延迟任务。IRQ 只处理 deadline/重调度，硬脏页压力仍保留同步
+direct fallback。第四增量又以 x86 PTE Accessed 位建立 file/anonymous 的
+active/inactive 四队列：每秒由同一 Worker 汇总物理帧 alias，新页连续两轮未访问才成为
+候选。第五增量已加入 low/high 水位后台回收：low 到 min 留给 64 页 Worker 批次，min
+以下才走 direct fallback；无进展、仅写回和失败按 deadline 退避。候选消费同时核对
+file access generation，并在释放 frame 前删除 aging 身份。元数据由真实物理帧和 KVA
+承载，4 GiB/32 GiB 分别采用 4096/32768 页身份容量。第六增量又统一 direct/background
+的 0..200 swappiness 配额，候选不足会转赠预算；匿名 frame 在 unmap/exec/exit/OOM
+最后释放前同步删除 aging 身份。ATA/NVMe `oom-pressure` 使用 swappiness 0 和
+`/proc/meminfo` 动态预算，真实验证非当前 victim 的 SIGKILL、wait/reap 与资源归零。
+边界见
+[v2.9 记录](docs/releases/v2.9.md) 与
+[ADR 0057](docs/adr/0057-v2-9-kernel-thread-lifecycle.md)、
+[ADR 0058](docs/adr/0058-v2-9-work-queue-state-and-drain.md)、
+[ADR 0059](docs/adr/0059-v2-9-mixed-worker-writeback.md)、
+[ADR 0060](docs/adr/0060-v2-9-pte-accessed-page-aging.md)、
+[ADR 0061](docs/adr/0061-v2-9-background-watermark-reclaim.md)、
+[ADR 0062](docs/adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

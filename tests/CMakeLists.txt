@@ -350,6 +350,30 @@ os_add_kernel_memory_test(
 )
 
 os_add_kernel_memory_test(
+    os_kernel_background_reclaim_unit_tests
+    unit/kernel/background_reclaim_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_background_reclaim_randomized_tests
+    randomized/kernel/background_reclaim_randomized_test.cpp
+    "randomized"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_page_aging_unit_tests
+    unit/kernel/page_aging_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_page_aging_randomized_tests
+    randomized/kernel/page_aging_randomized_test.cpp
+    "randomized"
+)
+
+os_add_kernel_memory_test(
     os_kernel_swap_manager_unit_tests
     unit/kernel/swap_manager_test.cpp
     "unit"
@@ -779,6 +803,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_work_queue_unit_tests
+    unit/kernel/work_queue_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_private_futex_unit_tests
     unit/kernel/private_futex_test.cpp
     "unit"
@@ -826,6 +855,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_thread_scheduler_randomized_tests
     randomized/kernel/thread_scheduler_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_work_queue_randomized_tests
+    randomized/kernel/work_queue_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_process_test(
@@ -1370,6 +1404,10 @@ os_add_user_elf_audit_test(
     "${OS_USER_MEMORY_PROBE_ELF_PATH}"
 )
 os_add_user_elf_audit_test(
+    os_user_oom_probe_elf_layout
+    "${OS_USER_OOM_PROBE_ELF_PATH}"
+)
+os_add_user_elf_audit_test(
     os_user_fork_probe_elf_layout
     "${OS_USER_FORK_PROBE_ELF_PATH}"
 )
@@ -1626,6 +1664,56 @@ set_tests_properties(
     os_qemu_nvme_memory_reclaim_pressure
     PROPERTIES
         LABELS "system;nvme;memory;reclaim"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
+)
+add_test(
+    NAME os_qemu_oom_pressure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_OOM_PRESSURE_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
+        --swap-disk-image
+        "${OS_SWAP_DISK_IMAGE}"
+        --expected-outcome
+        oom-pressure
+)
+set_tests_properties(
+    os_qemu_oom_pressure
+    PROPERTIES
+        LABELS "system;memory;oom"
+        TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
+)
+add_test(
+    NAME os_qemu_nvme_oom_pressure
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        qemu-firmware
+        "${OS_FIRMWARE_IMAGE}"
+        "${OS_KERNEL_OOM_PRESSURE_DISK_IMAGE}"
+        "${OS_FIRMWARE_IMAGE_SIZE_BYTES}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        --memory-mebibytes
+        "${OS_TEST_QEMU_PRIMARY_GUEST_MEMORY_MEBIBYTES}"
+        --swap-disk-image
+        "${OS_SWAP_DISK_IMAGE}"
+        --nvme-disk-image
+        "${OS_KERNEL_OOM_PRESSURE_DISK_IMAGE}"
+        --nvme-swap-disk-image
+        "${OS_SWAP_DISK_IMAGE}"
+        --expected-outcome
+        oom-pressure
+)
+set_tests_properties(
+    os_qemu_nvme_oom_pressure
+    PROPERTIES
+        LABELS "system;nvme;memory;oom"
         TIMEOUT "${OS_TEST_QEMU_PRIMARY_TIMEOUT_SECONDS}"
 )
 set_tests_properties(
@@ -2195,6 +2283,8 @@ set(
     os_qemu_primary_smoke
     os_qemu_memory_reclaim_pressure
     os_qemu_nvme_memory_reclaim_pressure
+    os_qemu_oom_pressure
+    os_qemu_nvme_oom_pressure
     os_qemu_nvme_io
     os_qemu_nvme_io_error_recovery
     os_qemu_nvme_io_timeout_recovery

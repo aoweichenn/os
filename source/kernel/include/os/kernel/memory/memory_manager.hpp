@@ -161,6 +161,26 @@ struct KernelMmioMapping final {
     bool active;
 };
 
+struct KernelPageAllocation final {
+    uint64_t virtual_address;
+    uint64_t page_count;
+    bool active;
+};
+
+enum class KernelPageAllocationStatus : uint64_t {
+    Succeeded,
+    NotInitialized,
+    InvalidPageCount,
+    AlreadyActive,
+    VirtualAddressAllocationFailed,
+    FrameAllocationFailed,
+    PageMappingFailed,
+    PageUnmappingFailed,
+    FrameReleaseFailed,
+    VirtualAddressReleaseFailed,
+    RollbackFailed,
+};
+
 enum class KernelMmioStatus : uint64_t {
     Succeeded,
     NotInitialized,
@@ -181,6 +201,10 @@ InitializeKernelMemory(const BootInfo &boot_info) noexcept;
 [[nodiscard]] KernelMmioStatus MapKernelMmio(uint64_t physical_address, uint64_t size_bytes,
                                              KernelMmioMapping &mapping) noexcept;
 [[nodiscard]] KernelMmioStatus UnmapKernelMmio(KernelMmioMapping &mapping) noexcept;
+[[nodiscard]] KernelPageAllocationStatus
+AllocateKernelPages(uint64_t page_count, KernelPageAllocation &allocation) noexcept;
+[[nodiscard]] KernelPageAllocationStatus
+ReleaseKernelPages(KernelPageAllocation &allocation) noexcept;
 [[nodiscard]] KernelHeap &GetKernelHeap() noexcept;
 [[nodiscard]] KernelVirtualAddressAllocator &GetKernelVirtualAddressAllocator() noexcept;
 [[nodiscard]] KernelStackManager &GetKernelStackManager() noexcept;
@@ -214,6 +238,10 @@ GetKernelResourceSnapshot(const ResourceSnapshotSupplementalCounts &supplemental
 [[nodiscard]] PageTableStatus QueryAddressSpacePage(uint64_t root_physical_address,
                                                     uint64_t virtual_address,
                                                     PageMapping &mapping) noexcept;
+[[nodiscard]] PageTableStatus TestAndClearAddressSpacePageAccessed(uint64_t root_physical_address,
+                                                                   uint64_t virtual_address,
+                                                                   PageMapping &mapping,
+                                                                   bool &accessed) noexcept;
 [[nodiscard]] PageTableStatus QueryActivePage(uint64_t virtual_address,
                                               PageMapping &mapping) noexcept;
 [[nodiscard]] uint64_t GetKernelPageTableRoot() noexcept;

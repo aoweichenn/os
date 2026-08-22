@@ -17,6 +17,10 @@ global OsKernelSystemCallDispatch
 global OsKernelNativeSystemCallEntry
 global OsKernelEnterScheduledProcess
 global OsKernelReturnFromUserMode
+global OsKernelEnterScheduledKernelThread
+global OsKernelSwitchKernelThread
+global OsKernelSuspendScheduledKernelThread
+global OsKernelLeaveScheduledKernelThread
 global OsKernelInitializeFxState
 global OsKernelSaveFxState
 global OsKernelRestoreFxState
@@ -428,6 +432,93 @@ OsKernelEnterScheduledProcess:
     add rsp, 16
     iretq
 
+; 协作式 Kernel Thread 只需保存 SysV ABI 的被调用者保存寄存器与 RFLAGS。
+; 首次进入保存调度调用链；最后一个 Kernel Thread 退出后再恢复该调用链。
+OsKernelEnterScheduledKernelThread:
+    pushfq
+    cli
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    cmp qword [rel os_kernel_saved_kernel_thread_dispatch_stack], 0
+    jne .invalid_dispatch_stack
+    mov [rel os_kernel_saved_kernel_thread_dispatch_stack], rsp
+    mov rsp, rdi
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    popfq
+    ret
+
+.invalid_dispatch_stack:
+    ud2
+
+; rdi 指向当前 Thread 的 saved RSP，rsi 是下一 Thread 的 saved RSP。
+OsKernelSwitchKernelThread:
+    pushfq
+    cli
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    mov [rdi], rsp
+    mov rsp, rsi
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    popfq
+    ret
+
+; 没有就绪 Thread 时保存当前上下文并回到调度循环；被唤醒后可再次进入。
+OsKernelSuspendScheduledKernelThread:
+    pushfq
+    cli
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    mov [rdi], rsp
+    mov rsp, [rel os_kernel_saved_kernel_thread_dispatch_stack]
+    mov qword [rel os_kernel_saved_kernel_thread_dispatch_stack], 0
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    popfq
+    ret
+
+OsKernelLeaveScheduledKernelThread:
+    cli
+    mov rsp, [rel os_kernel_saved_kernel_thread_dispatch_stack]
+    mov qword [rel os_kernel_saved_kernel_thread_dispatch_stack], 0
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    popfq
+    ret
+
 OsKernelReturnFromUserMode:
     cli
     test rdi, rdi
@@ -500,6 +591,9 @@ os_kernel_nmi_observed:
     resq 1
 
 os_kernel_saved_user_mode_kernel_stack:
+    resq 1
+
+os_kernel_saved_kernel_thread_dispatch_stack:
     resq 1
 
 section .note.GNU-stack noalloc noexec nowrite progbits

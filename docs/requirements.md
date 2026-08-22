@@ -329,8 +329,9 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   异步；MS_SYNC 返回成功前必须完成范围写回和设备 Flush；
 - ABI 2.4.0 只在 84 后追加 85..87，旧系统调用编号、结构布局、rootfs v4 和错误区间
   -1..-59 均保持不变。
-- 第六增量的 direct reclaim 必须固定执行 clean file trim、dirty/error writeback 后
-  trim、anonymous swap；任一 I/O 阶段失败不得伪装成 OOM，无进展必须有限终止；
+- 第六增量的 direct/background reclaim 必须共享同一 0..200 swappiness planner；
+  file 配额内部固定执行 clean file trim、dirty/error writeback 后 trim，再按匿名配额
+  swap。候选不足允许转赠配额，任一 I/O 阶段失败不得伪装成 OOM；
 - 回收成功后必须从物理分配器重新同步 resident 账本并只重试一次原分配；仍无法满足
   时才允许 OOM。非当前 victim 完整释放后重试，当前 victim 只在 page-fault frame
   上走 SIGKILL；
@@ -338,8 +339,76 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   PID1、当前 fault 页和活动用户返回栈页不得换出，多用户栈地址空间保守跳过；
 - 4 GiB reclaim-pressure 门禁必须使用 `-mem-prealloc`、完整生产 rootfs 和真实交换盘；
   测试驻留 limit 只能在 PID1 建立并同步真实 resident 后降低，不能用伪造页计数；
-- 压力门禁必须观察 clean reclaimed、dirty written/reclaimed、anonymous swapped 非零，
-  no-progress、writeback failure、swap checksum failure 和最终 active swap 均为零。
+- reclaim-pressure 必须观察 clean reclaimed、dirty written/reclaimed、anonymous swapped
+  非零，no-progress、writeback failure、swap checksum failure 和最终 active swap 均为零；
+- OOM pressure 必须使用 swappiness 0、真实非当前 victim 与 SIGKILL wait/reap，观察一次
+  no-progress/invocation/kill、零 anonymous swap，并在 ATA/NVMe 上保持 PID1 和资源守恒。
+
+## v2.9 内核后台执行要求
+
+- ThreadScheduler 必须用强类型区分 User/Kernel Thread；Kernel Thread 不得进入
+  Process 线程链、进程树、OOM 候选、SignalManager 或用户地址空间；
+- User TID 必须保持从 1 开始且小于 `0x8000000000000000`；Kernel TID 从该边界开始，
+  两类标识不得因槽位复用而重复；
+- Kernel Thread 必须使用 KernelStackManager 动态栈和双 guard，初始/保存 RSP 始终
+  位于活动栈内；恢复调度栈前不得销毁退出线程的栈；
+- 协作切换必须保存 SysV callee-saved 寄存器、RFLAGS、RSP 和 FXSAVE 状态；切换提交
+  期间关闭中断，CpuLocal/TSS 必须先指向下一线程；
+- create、yield、block、wake、exit、reap 必须拥有类型化失败结果。创建中途失败必须
+  撤销 scheduler entry、动态栈、KVA 和 frame；
+- 独立批次 API 仍必须拒绝已有 User Thread；生产 dispatcher 必须能在 User/Kernel
+  两类 Running 上下文之间切换，并成对收束用户 CR3、FS、FXSAVE、TSS、CpuLocal、
+  SYSCALL 状态和 IRQ depth；Ring 0 仍为协作式，不伪称 timer 抢占；
+- 单元测试必须覆盖非法栈、用户专属状态拒绝和完整生命周期；固定种子随机模型必须
+  混合两类 Thread；4 GiB QEMU 必须真实执行 yield、block/wake、exit/reap 并最终归零。
+- WorkQueue 必须使用 `(slot,generation)` 句柄拒绝槽位复用后的 stale 操作；非 Free
+  条目必须恰处于 Idle/Delayed/Queued/Running/Completed/Cancelled 之一；
+- 即时任务必须 FIFO；延迟任务必须用 deadline、提交 sequence 形成稳定最小堆，只有
+  到期后才能进入 ready FIFO；worker 必须能读取最早 deadline，新的即时请求必须把同一
+  handle 的 Delayed 项提升到 ready，而不是被旧 deadline 拖住；
+- 相同 handle 已经 Delayed/Queued/Running 时必须合并，不得产生第二份执行；Queued/
+  Delayed 可取消，Running 不得伪装成已取消；
+- worker 必须先把条目提交为 Running、释放队列锁，再调用 operation；失败任务只能增加
+  自身失败统计，不能停止或丢弃后继任务；
+- drain 必须封闭新注册和 Idle 提交，且仅在 Delayed/Queued/Running 全为零后结束；
+- WorkQueue 单元与十万步随机参考模型必须覆盖容量、stale、合并、deadline、取消、失败、
+  reset/release 和 drain；4 GiB QEMU 最终必须 registered/queued/delayed/running 全为零。
+- 常规文件回写必须由常驻 Kernel Worker 在 WorkQueue 锁外执行；低于后台软水位但已有
+  Dirty 页时按 5 秒老化 deadline 提交，显式/软水位请求走即时提交；timer IRQ 只到期
+  deadline 和请求重调度，不得调用 VFS 或设备 I/O；
+- Worker 每个最多 64 页的 batch 后必须协作 yield；硬 Dirty limit 的同步回写保留为
+  direct backpressure 前进保证，`fsync`/`fdatasync`/同步 `msync` 保持调用方同步语义；
+- 最后一个 User Thread 退出时必须取消残余延迟项、唤醒并停止 Worker，再按
+  exit→reap→stack destroy→handle release 顺序恢复 scheduler、wait queue 和资源快照。
+- PTE Accessed 采样必须只修改 4 KiB leaf 的 A 位，保留物理地址、权限、COW 与 NX；
+  目标 CR3 当前活动时必须 `invlpg`，非活动 CR3 依赖下次 CR3 装载刷新；
+- aging 身份必须是 `(physical frame, File/Anonymous kind)`，同一轮所有 alias 的 Accessed
+  取 OR、reclaim eligibility 取 AND；同轮分类冲突必须失败，跨轮已释放帧复用允许重分类；
+- 必须维护 active/inactive × file/anonymous 四条无重复队列。新身份先 Active，一轮
+  未访问降级，连续第二轮未访问且资格成立才成为候选，Inactive 被访问必须提升；
+- PID1、UserStack、COW alias、映射中的 file page 和非 Clean file page 不得成为候选；
+  Zombie 已销毁 CR3 时必须跳过，拥有 CR3 的活动进程 VMA/页表损坏必须失败；
+- aging 元数据必须由真实物理帧和 KVA 映射承载，不得扩大 Kernel BSS 或使用稀疏宿主
+  文件代替内存；4 GiB 功能档至少 4096 entry，32 GiB 容量档使用 32768 entry；
+- 第四增量只统计 candidate，不得释放、writeback、swap 或改变 OOM；单元、十万步随机
+  和 4 GiB QEMU 必须覆盖 alias、冷热转换、帧重分类、消失页、容量与最终队列归零。
+- 第五增量必须把 candidate 保存为显式条目状态，刚由 Active 降级的页不得通过
+  `Inactive && eligible` 反推为候选；文件缓存 access generation 改变时必须撤销旧候选，
+  重新经过冷却后才能消费；
+- 后台回收控制器必须在 free pages 低于 low watermark 时从 Sleeping 进入 Running，达到
+  high watermark 后回到 Sleeping。low 到 min 之间用户分配只合并后台请求，低于 min
+  才允许同步 direct reclaim；
+- 后台 WorkItem 每批最多处理 64 页，并按 cold clean file、dirty/error writeback、cold
+  anonymous swap 顺序消耗同一批 I/O 预算；回收与 I/O 不得在 IRQ 或 WorkQueue 锁内执行，
+  每批后必须 yield；
+- 没有候选、仅完成写回或执行失败时必须进入有 deadline 的退避，不能立即自旋重排；
+  写回设备失败保留 Error/paused 语义，结构损坏必须使运行时验收失败；
+- 文件页和匿名页成功回收前必须提交精确候选 completion，从 PageAging 删除旧物理身份；
+  selection/completion 失败不得把未选页计入进展。停止时 writeback、aging、background
+  三个 handle 必须取消、reset、release，controller、deadline、队列与 waiter 全部归零；
+- 4 GiB ATA/NVMe pressure 门禁必须稳定观察后台 wake/sleep、batch、clean file、writeback
+  和总回收非零、后台 failure 为零；anonymous 的 direct/background 公平份额留给第六
+  增量，但系统总 anonymous swap 仍必须非零。
 
 ## v2.0 完成基线
 

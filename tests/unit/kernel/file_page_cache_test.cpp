@@ -27,6 +27,8 @@ constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_METADATA_FAILURE =
     "动态地址空间元数据耗尽必须回滚 frame、record、page 和 radix 节点";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_TRIM_COUNT =
     "裁剪必须报告真实归还给页帧分配器的 clean 页数";
+constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_SELECTED_RECLAIM =
+    "候选回收必须只释放选中 clean 页并在释放前提交完成回调";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_TRUNCATE =
     "truncate 必须拒绝活动范围外映射、丢弃脏页并清零保留尾页";
 constexpr std::string_view OS_TEST_FILE_PAGE_CACHE_WATERMARKS =
@@ -79,6 +81,37 @@ struct TestWriter final {
     uint64_t remaining_failure_count;
     uint64_t write_count;
 };
+
+struct TestReclaim final {
+    uint64_t selected_physical_address;
+    uint64_t selection_count;
+    uint64_t completion_count;
+};
+
+[[nodiscard]] bool SelectReclaimPage(void *const context,
+                                     const os::kernel::FilePageCacheEntry &entry,
+                                     bool &selected) noexcept {
+    if (context == nullptr) {
+        return false;
+    }
+    TestReclaim &reclaim = *static_cast<TestReclaim *>(context);
+    ++reclaim.selection_count;
+    selected = entry.physical_address == reclaim.selected_physical_address;
+    return true;
+}
+
+[[nodiscard]] bool CompleteReclaimPage(void *const context,
+                                       const os::kernel::FilePageCacheEntry &entry) noexcept {
+    if (context == nullptr) {
+        return false;
+    }
+    TestReclaim &reclaim = *static_cast<TestReclaim *>(context);
+    if (entry.physical_address != reclaim.selected_physical_address) {
+        return false;
+    }
+    ++reclaim.completion_count;
+    return true;
+}
 
 [[nodiscard]] uint8_t *AccessPage(void *const context, const uint64_t physical_address) noexcept {
     if (context == nullptr || physical_address > OS_TEST_FILE_PAGE_CACHE_MANAGED_SIZE_BYTES -
@@ -206,8 +239,7 @@ int main() {
         first_loaded && reader.loading_collision_observed &&
         reader.loading_collision_status == os::kernel::FilePageCacheStatus::EntryBusy &&
         reader.maximum_spin_lock_depth == 0ULL &&
-        cache.Statistics().loading_collision_count ==
-            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().loading_collision_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Statistics().unlocked_fill_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Statistics().loading_page_count == 0ULL;
     test_context.Expect(loading_boundary_valid, OS_TEST_FILE_PAGE_CACHE_LOADING);
@@ -352,8 +384,7 @@ int main() {
             OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Statistics().background_dirty_page_target == 0ULL &&
         cache.Statistics().background_writeback_request_count != 0ULL &&
-        cache.Statistics().dirty_backpressure_count ==
-            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().dirty_backpressure_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         !cache.BackgroundWritebackPaused() && !cache.BackgroundWritebackRequested() &&
         cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded;
     test_context.Expect(writeback_completed, OS_TEST_FILE_PAGE_CACHE_WRITEBACK);
@@ -366,9 +397,8 @@ int main() {
     uint64_t resolved_size_bytes = 0ULL;
     os::kernel::FilePageCacheEntry truncated_entry{};
     const bool truncate_consistent =
-        cache.ObserveFileSize(file_identity,
-                              OS_TEST_FILE_PAGE_CACHE_CAPACITY *
-                                  os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) ==
+        cache.ObserveFileSize(file_identity, OS_TEST_FILE_PAGE_CACHE_CAPACITY *
+                                                 os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         cache.Acquire(second_identity, &reader, ReadPage, truncate_physical_address,
                       truncate_cache_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
@@ -390,17 +420,27 @@ int main() {
         cache.Statistics().resident_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Statistics().dirty_page_count == 0ULL &&
         cache.Statistics().truncated_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
-        cache.Statistics().truncated_tail_zero_count ==
-            OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        cache.Statistics().truncated_tail_zero_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded;
     test_context.Expect(truncate_consistent, OS_TEST_FILE_PAGE_CACHE_TRUNCATE);
 
+    TestReclaim reclaim{
+        .selected_physical_address = first_physical_address,
+        .selection_count = 0ULL,
+        .completion_count = 0ULL,
+    };
     uint64_t reclaimed_page_count = 0ULL;
-    const bool trim_count_valid =
-        cache.Trim(0ULL, reclaimed_page_count) == os::kernel::FilePageCacheStatus::Succeeded &&
+    const bool selected_reclaim_valid =
+        cache.ReclaimCleanPages(OS_TEST_FILE_PAGE_CACHE_CAPACITY, &reclaim, SelectReclaimPage,
+                                CompleteReclaimPage, reclaimed_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
         reclaimed_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        reclaim.selection_count >= OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
+        reclaim.completion_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
         cache.Statistics().resident_page_count == 0ULL;
-    test_context.Expect(trim_count_valid, OS_TEST_FILE_PAGE_CACHE_TRIM_COUNT);
+    test_context.Expect(selected_reclaim_valid, OS_TEST_FILE_PAGE_CACHE_SELECTED_RECLAIM);
+    test_context.Expect(reclaimed_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE,
+                        OS_TEST_FILE_PAGE_CACHE_TRIM_COUNT);
 
     const bool destroyed =
         cache.Destroy() == os::kernel::FilePageCacheStatus::Succeeded &&
@@ -421,19 +461,18 @@ int main() {
         .loading_collision_observed = false,
     };
     uint64_t watermark_physical_addresses[OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY]{};
-    bool watermarks_valid =
-        watermark_cache.Initialize(metadata_heap, OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY,
-                                   OS_TEST_FILE_PAGE_CACHE_WATERMARK_DIRTY_LIMIT, frame_allocator,
-                                   &memory, AccessPage) ==
-        os::kernel::FilePageCacheStatus::Succeeded;
+    bool watermarks_valid = watermark_cache.Initialize(
+                                metadata_heap, OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY,
+                                OS_TEST_FILE_PAGE_CACHE_WATERMARK_DIRTY_LIMIT, frame_allocator,
+                                &memory, AccessPage) == os::kernel::FilePageCacheStatus::Succeeded;
     for (uint64_t page_index = 0ULL;
          watermarks_valid && page_index < OS_TEST_FILE_PAGE_CACHE_WATERMARK_CAPACITY;
          ++page_index) {
         bool cache_hit = true;
         watermarks_valid =
             watermark_cache.Acquire(MakePageIdentity(page_index), &watermark_reader, ReadPage,
-                                    watermark_physical_addresses[page_index], cache_hit) ==
-                os::kernel::FilePageCacheStatus::Succeeded &&
+                                    watermark_physical_addresses[page_index],
+                                    cache_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
             !cache_hit &&
             watermark_cache.Release(MakePageIdentity(page_index),
                                     watermark_physical_addresses[page_index]) ==
@@ -443,30 +482,23 @@ int main() {
     os::kernel::FilePageCacheEntry range_entry{};
     watermarks_valid =
         watermarks_valid &&
-        watermark_cache.MarkDirty(MakePageIdentity(0ULL),
-                                  watermark_physical_addresses[0ULL]) ==
+        watermark_cache.MarkDirty(MakePageIdentity(0ULL), watermark_physical_addresses[0ULL]) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         !watermark_cache.BackgroundWritebackRequested() &&
-        watermark_cache.MarkDirty(MakePageIdentity(1ULL),
-                                  watermark_physical_addresses[1ULL]) ==
+        watermark_cache.MarkDirty(MakePageIdentity(1ULL), watermark_physical_addresses[1ULL]) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         watermark_cache.BackgroundWritebackRequested() &&
         watermark_cache.Writeback(&writer, WritePage, 1ULL, watermark_written_page_count) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
-        watermark_written_page_count == 1ULL &&
-        !watermark_cache.BackgroundWritebackRequested() &&
-        watermark_cache.MarkDirty(MakePageIdentity(2ULL),
-                                  watermark_physical_addresses[2ULL]) ==
+        watermark_written_page_count == 1ULL && !watermark_cache.BackgroundWritebackRequested() &&
+        watermark_cache.MarkDirty(MakePageIdentity(2ULL), watermark_physical_addresses[2ULL]) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
-        watermark_cache.MarkDirty(MakePageIdentity(3ULL),
-                                  watermark_physical_addresses[3ULL]) ==
+        watermark_cache.MarkDirty(MakePageIdentity(3ULL), watermark_physical_addresses[3ULL]) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
-        watermark_cache.MarkDirty(MakePageIdentity(0ULL),
-                                  watermark_physical_addresses[0ULL]) ==
+        watermark_cache.MarkDirty(MakePageIdentity(0ULL), watermark_physical_addresses[0ULL]) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         watermark_cache.DirtyBackpressureRequired() &&
-        watermark_cache.MarkDirty(MakePageIdentity(4ULL),
-                                  watermark_physical_addresses[4ULL]) ==
+        watermark_cache.MarkDirty(MakePageIdentity(4ULL), watermark_physical_addresses[4ULL]) ==
             os::kernel::FilePageCacheStatus::DirtyLimitReached &&
         watermark_cache.Statistics().background_dirty_page_threshold == 2ULL &&
         watermark_cache.Statistics().background_dirty_page_target == 1ULL &&
@@ -474,22 +506,19 @@ int main() {
         watermark_cache.Statistics().dirty_backpressure_count == 1ULL &&
         watermark_cache.WritebackFile(
             MakePageIdentity(OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX).file,
-            OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX,
-            OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX, &writer, WritePage, UINT64_MAX,
-            watermark_written_page_count) ==
-            os::kernel::FilePageCacheStatus::Succeeded &&
+            OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX, OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX,
+            &writer, WritePage, UINT64_MAX,
+            watermark_written_page_count) == os::kernel::FilePageCacheStatus::Succeeded &&
         watermark_written_page_count == OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
-        watermark_cache.ReadEntry(
-            MakePageIdentity(OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX), range_entry) ==
-            os::kernel::FilePageCacheStatus::Succeeded &&
+        watermark_cache.ReadEntry(MakePageIdentity(OS_TEST_FILE_PAGE_CACHE_THIRD_PAGE_INDEX),
+                                  range_entry) == os::kernel::FilePageCacheStatus::Succeeded &&
         range_entry.state == os::kernel::FilePageCacheEntryState::Clean &&
         watermark_cache.RequestBackgroundWriteback() ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         watermark_cache.BackgroundWritebackRequested() &&
         watermark_cache.Statistics().explicit_background_writeback_request_count ==
             OS_TEST_FILE_PAGE_CACHE_SINGLE_REFERENCE &&
-        watermark_cache.Writeback(&writer, WritePage, UINT64_MAX,
-                                  watermark_written_page_count) ==
+        watermark_cache.Writeback(&writer, WritePage, UINT64_MAX, watermark_written_page_count) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
         !watermark_cache.BackgroundWritebackRequested() &&
         !watermark_cache.DirtyBackpressureRequired() &&
@@ -527,8 +556,7 @@ int main() {
                               unavailable_metadata_physical_address,
                               unavailable_metadata_cache_hit) ==
             os::kernel::FilePageCacheStatus::MetadataAllocationFailed &&
-        !unavailable_metadata_cache_hit &&
-        failing_cache.Statistics().resident_page_count == 0ULL &&
+        !unavailable_metadata_cache_hit && failing_cache.Statistics().resident_page_count == 0ULL &&
         failing_cache.Statistics().address_space_count == 0ULL &&
         failing_cache.Statistics().metadata_allocation_failure_count == 1ULL &&
         failing_cache.Validate() == os::kernel::FilePageCacheStatus::Succeeded &&

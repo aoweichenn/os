@@ -70,6 +70,7 @@ set(
 )
 set(
     OS_KERNEL_MEMORY_HEADERS
+    include/os/kernel/memory/background_reclaim.hpp
     include/os/kernel/memory/file_cache_address_space.hpp
     include/os/kernel/memory/file_cache_identity.hpp
     include/os/kernel/memory/file_page_cache.hpp
@@ -81,6 +82,7 @@ set(
     include/os/kernel/memory/kernel_virtual_address_allocator.hpp
     include/os/kernel/memory/memory_pressure.hpp
     include/os/kernel/memory/memory_manager.hpp
+    include/os/kernel/memory/page_aging.hpp
     include/os/kernel/memory/page_table.hpp
     include/os/kernel/memory/physical_frame_allocator.hpp
     include/os/kernel/memory/physical_memory_map.hpp
@@ -104,6 +106,7 @@ set(
     include/os/kernel/process/program_arguments.hpp
     include/os/kernel/process/thread_scheduler.hpp
     include/os/kernel/process/wait_queue.hpp
+    include/os/kernel/process/work_queue.hpp
 )
 set(
     OS_KERNEL_SYNCHRONIZATION_HEADERS
@@ -213,6 +216,7 @@ set(
 )
 set(
     OS_KERNEL_MEMORY_SOURCES
+    src/memory/background_reclaim.cpp
     src/memory/file_cache_address_space.cpp
     src/memory/file_cache_identity.cpp
     src/memory/file_page_cache.cpp
@@ -223,6 +227,7 @@ set(
     src/memory/kernel_virtual_address_allocator.cpp
     src/memory/memory_pressure.cpp
     src/memory/memory_manager.cpp
+    src/memory/page_aging.cpp
     src/memory/page_table.cpp
     src/memory/page_table_layout.cpp
     src/memory/physical_frame_allocator.cpp
@@ -247,6 +252,7 @@ set(
     src/process/program_arguments.cpp
     src/process/thread_scheduler.cpp
     src/process/wait_queue.cpp
+    src/process/work_queue.cpp
 )
 set(
     OS_KERNEL_SECURITY_SOURCES
@@ -291,7 +297,7 @@ set(
     ${OS_KERNEL_USER_SOURCES}
 )
 
-add_library(
+    add_library(
     os_kernel_boot_protocol_host
     STATIC
         src/boot/boot_info.cpp
@@ -359,6 +365,7 @@ add_library(
     os_kernel_memory_model_host
     STATIC
         src/fs/block_cache.cpp
+        src/memory/background_reclaim.cpp
         src/memory/file_cache_address_space.cpp
         src/memory/file_cache_identity.cpp
         src/memory/file_page_cache.cpp
@@ -368,6 +375,7 @@ add_library(
         src/memory/kernel_type_cache.cpp
         src/memory/kernel_virtual_address_allocator.cpp
         src/memory/memory_pressure.cpp
+        src/memory/page_aging.cpp
         src/memory/page_table.cpp
         src/memory/page_table_layout.cpp
         src/memory/physical_frame_allocator.cpp
@@ -380,6 +388,7 @@ add_library(
         src/memory/virtual_memory_area.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/memory/file_page_cache.hpp
+        include/os/kernel/memory/background_reclaim.hpp
         include/os/kernel/memory/file_cache_address_space.hpp
         include/os/kernel/memory/file_cache_identity.hpp
         include/os/kernel/memory/file_writeback_error_tracker.hpp
@@ -389,6 +398,7 @@ add_library(
         include/os/kernel/memory/kernel_type_cache.tpp
         include/os/kernel/memory/kernel_virtual_address_allocator.hpp
         include/os/kernel/memory/memory_pressure.hpp
+        include/os/kernel/memory/page_aging.hpp
         include/os/kernel/memory/page_table.hpp
         include/os/kernel/memory/physical_frame_allocator.hpp
         include/os/kernel/memory/physical_memory_map.hpp
@@ -489,6 +499,7 @@ add_library(
         src/process/program_arguments.cpp
         src/process/thread_scheduler.cpp
         src/process/wait_queue.cpp
+        src/process/work_queue.cpp
         src/sync/mutex.cpp
         src/sync/private_futex.cpp
         src/sync/spin_lock.cpp
@@ -498,6 +509,7 @@ add_library(
         include/os/kernel/process/signal_manager.hpp
         include/os/kernel/process/program_arguments.hpp
         include/os/kernel/process/wait_queue.hpp
+        include/os/kernel/process/work_queue.hpp
         include/os/kernel/sync/mutex.hpp
         include/os/kernel/sync/private_futex.hpp
         include/os/kernel/sync/spin_lock.hpp
@@ -914,6 +926,10 @@ os_add_kernel_object_target(
     os_kernel_reclaim_pressure_objects
     "${PROJECT_SOURCE_DIR}/tests/system/kernel/reclaim_pressure_entry.cpp"
 )
+os_add_kernel_object_target(
+    os_kernel_oom_pressure_objects
+    "${PROJECT_SOURCE_DIR}/tests/system/kernel/oom_pressure_entry.cpp"
+)
 
 set(
     OS_KERNEL_ELF_PATH
@@ -970,6 +986,12 @@ set(
     "统一内存回收压力测试 ELF64 内核路径"
 )
 set(
+    OS_KERNEL_OOM_PRESSURE_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_oom_pressure.elf"
+    CACHE INTERNAL
+    "OOM 受害者选择压力测试 ELF64 内核路径"
+)
+set(
     OS_KERNEL_PAYLOAD_ELF_PATH
     "${CMAKE_CURRENT_BINARY_DIR}/kernel.payload.elf"
     CACHE INTERNAL
@@ -1022,6 +1044,12 @@ set(
     "${CMAKE_CURRENT_BINARY_DIR}/kernel_reclaim_pressure.payload.elf"
     CACHE INTERNAL
     "去除调试段的统一内存回收压力测试内核载荷路径"
+)
+set(
+    OS_KERNEL_OOM_PRESSURE_PAYLOAD_ELF_PATH
+    "${CMAKE_CURRENT_BINARY_DIR}/kernel_oom_pressure.payload.elf"
+    CACHE INTERNAL
+    "去除调试段的 OOM 受害者选择压力测试内核载荷路径"
 )
 
 function(
@@ -1150,6 +1178,12 @@ os_add_kernel_elf_target(
     "${OS_KERNEL_RECLAIM_PRESSURE_ELF_PATH}"
     "链接统一内存回收压力测试 ELF64 内核"
 )
+os_add_kernel_elf_target(
+    os_kernel_oom_pressure_elf
+    os_kernel_oom_pressure_objects
+    "${OS_KERNEL_OOM_PRESSURE_ELF_PATH}"
+    "链接 OOM 受害者选择压力测试 ELF64 内核"
+)
 
 os_add_kernel_payload_elf_target(
     os_kernel_payload_elf
@@ -1213,4 +1247,11 @@ os_add_kernel_payload_elf_target(
     "${OS_KERNEL_RECLAIM_PRESSURE_ELF_PATH}"
     "${OS_KERNEL_RECLAIM_PRESSURE_PAYLOAD_ELF_PATH}"
     "生成不含调试段的统一内存回收压力测试内核载荷"
+)
+os_add_kernel_payload_elf_target(
+    os_kernel_oom_pressure_payload_elf
+    os_kernel_oom_pressure_elf
+    "${OS_KERNEL_OOM_PRESSURE_ELF_PATH}"
+    "${OS_KERNEL_OOM_PRESSURE_PAYLOAD_ELF_PATH}"
+    "生成不含调试段的 OOM 受害者选择压力测试内核载荷"
 )

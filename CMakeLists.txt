@@ -130,6 +130,10 @@ set(
     OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE
     "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_reclaim_pressure/boot_disk.img"
 )
+set(
+    OS_KERNEL_OOM_PRESSURE_DISK_IMAGE
+    "${OS_IMAGE_OUTPUT_DIRECTORY}/kernel_oom_pressure/boot_disk.img"
+)
 
 add_subdirectory(source/firmware)
 add_subdirectory(source/boot/stage1)

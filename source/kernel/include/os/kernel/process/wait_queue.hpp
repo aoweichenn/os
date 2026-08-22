@@ -22,6 +22,7 @@ enum class WaitCondition : uint64_t {
     Sleep,
     BlockIo,
     MutexAvailable,
+    KernelWork,
     TestCondition,
 };
 

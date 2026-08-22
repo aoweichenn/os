@@ -332,6 +332,8 @@ set(
     --rootfs-file
     "/bin/memory_probe=${OS_USER_MEMORY_PROBE_ELF_PATH}"
     --rootfs-file
+    "/bin/oom_probe=${OS_USER_OOM_PROBE_ELF_PATH}"
+    --rootfs-file
     "/bin/fork_probe=${OS_USER_FORK_PROBE_ELF_PATH}"
     --rootfs-file
     "/bin/thread_probe=${OS_USER_THREAD_PROBE_ELF_PATH}"
@@ -384,6 +386,7 @@ add_custom_command(
         "${OS_USER_EXEC_TARGET_ELF_PATH}"
         "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROBE_ELF_PATH}"
+        "${OS_USER_OOM_PROBE_ELF_PATH}"
         "${OS_USER_FORK_PROBE_ELF_PATH}"
         "${OS_USER_THREAD_PROBE_ELF_PATH}"
         "${OS_USER_TIME_PROBE_ELF_PATH}"
@@ -437,6 +440,7 @@ add_custom_command(
         "${OS_USER_EXEC_TARGET_ELF_PATH}"
         "${OS_USER_FILE_SYSTEM_PROBE_ELF_PATH}"
         "${OS_USER_MEMORY_PROBE_ELF_PATH}"
+        "${OS_USER_OOM_PROBE_ELF_PATH}"
         "${OS_USER_FORK_PROBE_ELF_PATH}"
         "${OS_USER_THREAD_PROBE_ELF_PATH}"
         "${OS_USER_TIME_PROBE_ELF_PATH}"
@@ -460,6 +464,30 @@ add_custom_command(
     VERBATIM
 )
 
+get_filename_component(
+    OS_KERNEL_OOM_PRESSURE_OUTPUT_DIRECTORY
+    "${OS_KERNEL_OOM_PRESSURE_DISK_IMAGE}"
+    DIRECTORY
+)
+add_custom_command(
+    OUTPUT "${OS_KERNEL_OOM_PRESSURE_DISK_IMAGE}"
+    COMMAND
+        "${Python3_EXECUTABLE}"
+        "${PROJECT_SOURCE_DIR}/tools/os.py"
+        create-boot-images
+        "${OS_STAGE1_BINARY}"
+        "${OS_KERNEL_OOM_PRESSURE_PAYLOAD_ELF_PATH}"
+        "${OS_KERNEL_OOM_PRESSURE_OUTPUT_DIRECTORY}"
+        "${OS_DISK_IMAGE_SIZE_BYTES}"
+        ${OS_STAGE1_ROOTFS_INSTALL_ARGUMENTS}
+    DEPENDS
+        "${OS_STAGE1_BINARY}"
+        "${OS_KERNEL_OOM_PRESSURE_PAYLOAD_ELF_PATH}"
+        "${OS_BOOT_DISK_IMAGE}"
+    COMMENT "生成带完整用户环境的 OOM 受害者选择压力测试磁盘镜像"
+    VERBATIM
+)
+
 add_custom_target(
     os_stage1_images
     DEPENDS
@@ -480,6 +508,7 @@ add_custom_target(
         "${OS_KERNEL_USER_INVALID_ELF_DISK_IMAGE}"
         "${OS_KERNEL_NVME_TIMEOUT_DISK_IMAGE}"
         "${OS_KERNEL_RECLAIM_PRESSURE_DISK_IMAGE}"
+        "${OS_KERNEL_OOM_PRESSURE_DISK_IMAGE}"
 )
 
 # Makefile 生成器不会把其他二进制目录中的文件级自定义命令自动提升为目标依赖。
@@ -496,6 +525,7 @@ add_dependencies(
     os_kernel_user_invalid_elf_payload_elf
     os_kernel_nvme_timeout_payload_elf
     os_kernel_reclaim_pressure_payload_elf
+    os_kernel_oom_pressure_payload_elf
     os_user_init_elf
     os_user_shell_elf
     os_user_core_tool_elf
@@ -507,6 +537,7 @@ add_dependencies(
     os_user_exec_target_elf
     os_user_file_system_probe_elf
     os_user_memory_probe_elf
+    os_user_oom_probe_elf
     os_user_fork_probe_elf
     os_user_thread_probe_elf
     os_user_time_probe_elf

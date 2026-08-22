@@ -13,6 +13,8 @@ constexpr std::string_view OS_TEST_MEMORY_PRESSURE_DECISIONS =
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_ACCOUNTING = "驻留提交、释放和回收统计必须守恒";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RECLAIM_PLAN =
     "回收计划必须先利用干净缓存并有界安排回写和 swap";
+constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RECLAIM_FAIRNESS =
+    "swappiness 必须形成文件/匿名配额并把未用份额归还给可推进侧";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_RECLAIM_EXECUTION =
     "执行器必须固定 clean、writeback、swap 顺序并区分失败阶段";
 constexpr std::string_view OS_TEST_MEMORY_PRESSURE_OVERCOMMIT =
@@ -65,10 +67,8 @@ struct ReclaimOperationContext final {
     return left < right ? left : right;
 }
 
-[[nodiscard]] bool ExecuteReclaimStage(ReclaimOperationContext &context,
-                                       const uint64_t stage,
-                                       const uint64_t capacity,
-                                       const uint64_t requested_page_count,
+[[nodiscard]] bool ExecuteReclaimStage(ReclaimOperationContext &context, const uint64_t stage,
+                                       const uint64_t capacity, const uint64_t requested_page_count,
                                        uint64_t &reclaimed_page_count) noexcept {
     reclaimed_page_count = 0ULL;
     if (context.stage_count >= OS_TEST_MEMORY_PRESSURE_RECLAIM_STAGE_COUNT ||
@@ -157,6 +157,7 @@ int main() {
         .swappiness = os::kernel::OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
     };
     os::kernel::MemoryAllocationDecision user_decision{};
+    os::kernel::MemoryAllocationDecision background_window_decision{};
     os::kernel::MemoryAllocationDecision kernel_decision{};
     os::kernel::MemoryAllocationDecision impossible_decision{};
     const bool decisions_valid =
@@ -169,6 +170,12 @@ int main() {
         user_decision.level == os::kernel::MemoryPressureLevel::BelowMinimum &&
         user_decision.target_reclaim_page_count ==
             OS_TEST_MEMORY_PRESSURE_EXPECTED_USER_RECLAIM_PAGE_COUNT &&
+        controller.PrepareAllocation(OS_TEST_MEMORY_PRESSURE_KERNEL_REQUEST_PAGE_COUNT,
+                                     os::kernel::MemoryAllocationClass::User,
+                                     background_window_decision) ==
+            os::kernel::MemoryPressureStatus::Succeeded &&
+        background_window_decision.action == os::kernel::MemoryAllocationAction::Allow &&
+        background_window_decision.level == os::kernel::MemoryPressureLevel::BelowLow &&
         controller.PrepareAllocation(OS_TEST_MEMORY_PRESSURE_KERNEL_REQUEST_PAGE_COUNT,
                                      os::kernel::MemoryAllocationClass::Kernel, kernel_decision) ==
             os::kernel::MemoryPressureStatus::Succeeded &&
@@ -190,8 +197,7 @@ int main() {
             os::kernel::MemoryPressureStatus::Succeeded &&
         controller.SynchronizeResident(OS_TEST_MEMORY_PRESSURE_SMALL_INITIAL_RESIDENT) ==
             os::kernel::MemoryPressureStatus::Succeeded &&
-        controller.ConfigureResidentLimit(
-            OS_TEST_MEMORY_PRESSURE_RECONFIGURED_RESIDENT_LIMIT) ==
+        controller.ConfigureResidentLimit(OS_TEST_MEMORY_PRESSURE_RECONFIGURED_RESIDENT_LIMIT) ==
             os::kernel::MemoryPressureStatus::Succeeded &&
         controller.ConfigureResidentLimit(OS_TEST_MEMORY_PRESSURE_SMALL_INITIAL_RESIDENT - 1ULL) ==
             os::kernel::MemoryPressureStatus::ResidentLimitExceeded &&
@@ -199,9 +205,9 @@ int main() {
             OS_TEST_MEMORY_PRESSURE_SMALL_INITIAL_RESIDENT &&
         controller.Statistics().watermarks.resident_limit_page_count ==
             OS_TEST_MEMORY_PRESSURE_RECONFIGURED_RESIDENT_LIMIT &&
-        controller.Statistics().allocation_request_count == 3ULL &&
+        controller.Statistics().allocation_request_count == 4ULL &&
         controller.Statistics().reclaim_request_count == 1ULL &&
-        controller.Statistics().allowed_allocation_count == 1ULL &&
+        controller.Statistics().allowed_allocation_count == 2ULL &&
         controller.Statistics().rejected_allocation_count == 1ULL &&
         controller.Statistics().reclaim_attempt_count == 1ULL &&
         controller.Validate() == os::kernel::MemoryPressureStatus::Succeeded;
@@ -219,12 +225,70 @@ int main() {
                 .swappiness = os::kernel::OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
             },
             reclaim_plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded &&
+        reclaim_plan.file_budget_page_count == 7ULL &&
+        reclaim_plan.anonymous_budget_page_count == 2ULL &&
         reclaim_plan.clean_file_page_count == 3ULL &&
         reclaim_plan.writeback_file_page_count == 4ULL &&
         reclaim_plan.swap_out_page_count == 2ULL &&
         reclaim_plan.planned_reclaim_page_count == 9ULL &&
         reclaim_plan.unreclaimable_page_count == 3ULL;
     test_context.Expect(reclaim_plan_valid, OS_TEST_MEMORY_PRESSURE_RECLAIM_PLAN);
+
+    os::kernel::MemoryReclaimPlan balanced_plan{};
+    os::kernel::MemoryReclaimPlan file_only_plan{};
+    os::kernel::MemoryReclaimPlan anonymous_only_plan{};
+    os::kernel::MemoryReclaimPlan donated_plan{};
+    const bool fairness_valid =
+        os::kernel::PlanMemoryReclaim(
+            os::kernel::MemoryReclaimInput{
+                .target_page_count = 64ULL,
+                .clean_file_page_count = 100ULL,
+                .dirty_file_page_count = 0ULL,
+                .anonymous_page_count = 100ULL,
+                .free_swap_page_count = 100ULL,
+                .swappiness = os::kernel::OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
+            },
+            balanced_plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded &&
+        balanced_plan.file_budget_page_count == 45ULL &&
+        balanced_plan.anonymous_budget_page_count == 19ULL &&
+        os::kernel::PlanMemoryReclaim(
+            os::kernel::MemoryReclaimInput{
+                .target_page_count = 64ULL,
+                .clean_file_page_count = 100ULL,
+                .dirty_file_page_count = 0ULL,
+                .anonymous_page_count = 100ULL,
+                .free_swap_page_count = 100ULL,
+                .swappiness = 0ULL,
+            },
+            file_only_plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded &&
+        file_only_plan.file_budget_page_count == 64ULL &&
+        file_only_plan.anonymous_budget_page_count == 0ULL &&
+        os::kernel::PlanMemoryReclaim(
+            os::kernel::MemoryReclaimInput{
+                .target_page_count = 64ULL,
+                .clean_file_page_count = 100ULL,
+                .dirty_file_page_count = 0ULL,
+                .anonymous_page_count = 100ULL,
+                .free_swap_page_count = 100ULL,
+                .swappiness = os::kernel::OS_KERNEL_MEMORY_PRESSURE_MAXIMUM_SWAPPINESS,
+            },
+            anonymous_only_plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded &&
+        anonymous_only_plan.file_budget_page_count == 0ULL &&
+        anonymous_only_plan.anonymous_budget_page_count == 64ULL &&
+        os::kernel::PlanMemoryReclaim(
+            os::kernel::MemoryReclaimInput{
+                .target_page_count = 64ULL,
+                .clean_file_page_count = 10ULL,
+                .dirty_file_page_count = 0ULL,
+                .anonymous_page_count = 100ULL,
+                .free_swap_page_count = 100ULL,
+                .swappiness = os::kernel::OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
+            },
+            donated_plan) == os::kernel::MemoryReclaimPlanStatus::Succeeded &&
+        donated_plan.file_budget_page_count == 10ULL &&
+        donated_plan.anonymous_budget_page_count == 54ULL &&
+        donated_plan.unreclaimable_page_count == 0ULL;
+    test_context.Expect(fairness_valid, OS_TEST_MEMORY_PRESSURE_RECLAIM_FAIRNESS);
 
     ReclaimOperationContext execution_context{
         .clean_capacity = 3ULL,

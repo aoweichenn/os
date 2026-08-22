@@ -369,8 +369,9 @@ class QemuRunnerToolTests(unittest.TestCase):
             "WORKER\r\nWORKER\r\nPREEMPTIONS=0x0000000000000004\r\n",
             (),
             (),
-            (("WORKER", 2),),
-            (("PREEMPTIONS=0x", 1),),
+            expectedMarkerCounts=(("WORKER", 2),),
+            minimumMarkerCounts=(("WORKER", 2),),
+            minimumHexMarkerValues=(("PREEMPTIONS=0x", 1),),
         )
 
     def testRejectsUnexpectedMarkerCount(self) -> None:
@@ -388,8 +389,16 @@ class QemuRunnerToolTests(unittest.TestCase):
                 "PREEMPTIONS=0x0000000000000000\r\n",
                 (),
                 (),
+                minimumHexMarkerValues=(("PREEMPTIONS=0x", 1),),
+            )
+
+    def testRejectsMarkerCountBelowMinimum(self) -> None:
+        with self.assertRaises(OsToolError):
+            validateVgaProtocol(
+                "WORKER\r\n",
                 (),
-                (("PREEMPTIONS=0x", 1),),
+                (),
+                minimumMarkerCounts=(("WORKER", 2),),
             )
 
     def createVgaTraceSnapshot(

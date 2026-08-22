@@ -9,6 +9,7 @@ namespace {
 constexpr uint64_t OS_KERNEL_PAGE_TABLE_PRESENT_BIT = 0x0000000000000001ULL;
 constexpr uint64_t OS_KERNEL_PAGE_TABLE_WRITABLE_BIT = 0x0000000000000002ULL;
 constexpr uint64_t OS_KERNEL_PAGE_TABLE_USER_BIT = 0x0000000000000004ULL;
+constexpr uint64_t OS_KERNEL_PAGE_TABLE_ACCESSED_BIT = 0x0000000000000020ULL;
 constexpr uint64_t OS_KERNEL_PAGE_TABLE_LARGE_PAGE_BIT = 0x0000000000000080ULL;
 constexpr uint64_t OS_KERNEL_PAGE_TABLE_PHYSICAL_ADDRESS_MASK = 0x000FFFFFFFFFF000ULL;
 constexpr uint64_t OS_KERNEL_PAGE_TABLE_LARGE_PAGE_PHYSICAL_ADDRESS_MASK = 0x000FFFFFFFE00000ULL;
@@ -521,6 +522,42 @@ PageTableManager::ReplacePage(const uint64_t virtual_address,
     if (this->memory_access_.invalidate_active_mappings) {
         InvalidatePage(virtual_address);
     }
+    return PageTableStatus::Succeeded;
+}
+
+PageTableStatus PageTableManager::TestAndClearAccessed(const uint64_t virtual_address,
+                                                       PageMapping &mapping,
+                                                       bool &accessed) noexcept {
+    if ((virtual_address & OS_KERNEL_PAGE_TABLE_PAGE_MASK) != OS_KERNEL_PAGE_TABLE_EMPTY_ENTRY) {
+        return PageTableStatus::InvalidAlignment;
+    }
+    const PageTableIndices indices = CalculatePageTableIndices(virtual_address);
+    if (!this->CanMutateAddress(indices)) {
+        return PageTableStatus::SharedBranchMutationDenied;
+    }
+    PageTableWalkPath path{};
+    const PageTableStatus walk_status = this->WalkToLeaf(virtual_address, path);
+    if (walk_status != PageTableStatus::Succeeded) {
+        return walk_status;
+    }
+    if ((*path.level1_entry & OS_KERNEL_PAGE_TABLE_PRESENT_BIT) ==
+        OS_KERNEL_PAGE_TABLE_EMPTY_ENTRY) {
+        return PageTableStatus::NotMapped;
+    }
+    const bool candidate_accessed = (*path.level1_entry & OS_KERNEL_PAGE_TABLE_ACCESSED_BIT) !=
+                                    OS_KERNEL_PAGE_TABLE_EMPTY_ENTRY;
+    PageMapping candidate_mapping = DecodePageTableLeafEntry(*path.level1_entry);
+    candidate_mapping.physical_address =
+        *path.level1_entry & OS_KERNEL_PAGE_TABLE_PHYSICAL_ADDRESS_MASK;
+    if (candidate_accessed) {
+        *path.level1_entry &= ~OS_KERNEL_PAGE_TABLE_ACCESSED_BIT;
+        // CR3 切换会刷新非活动地址空间；若调用方正在修改活动根，仍必须立即失效 TLB。
+        if (this->memory_access_.invalidate_active_mappings) {
+            InvalidatePage(virtual_address);
+        }
+    }
+    mapping = candidate_mapping;
+    accessed = candidate_accessed;
     return PageTableStatus::Succeeded;
 }
 

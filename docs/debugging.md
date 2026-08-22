@@ -2093,8 +2093,9 @@ reader。source read 失败时按 entry metadata、frame、空 address-space 的
 
 4 GiB 当前容量 8192 页，hard limit 约 1638 页，后台阈值约 819 页，目标约 409 页。
 检查 `background_writeback_requested` 是否在首次越过软水位时置位，以及
-`OsKernelPrepareUserReturn` 是否调用 `ServiceRuntimeFileWritebackWorker`。worker 只能在
-非 IRQ 安全点运行；放入 timer IRQ 会把 VFS I/O 带进中断上下文。
+`OsKernelPrepareUserReturn` 是否调用 `ScheduleRuntimeFileWritebackWorker`、WorkItem 是否
+Queued/Running，以及 `KernelWork` waiter 是否被唤醒。user-return 只提交；实际 VFS I/O
+必须在 Kernel Worker 上运行。timer IRQ 只能到期 scheduler deadline 和请求重调度。
 
 每批最多 64 页。写回失败后 requested 清零、paused 置位且页面保持 Error；这是防止
 每次用户返回都重试的设计，不是 worker 丢失。显式 sync 成功后才解除暂停。硬水位
@@ -2190,3 +2191,152 @@ allocated frame，再降低 controller limit；不能在 32 MiB cache metadata �
 swap。FileWritebackFailed 或 AnonymousSwapFailed 必须直接返回设备错误；只有执行成功或
 NoProgress 且重试仍不足时才调用 OOM。`MEMORY_RECLAIM_NO_PROGRESS` 持续增长通常表示
 候选全被引用、活动栈保护或 swap 已满，需要看具体阶段而不是增加无限重试。
+
+OOM profile 中 `MEMORY_RECLAIM_NO_PROGRESS=1` 是预期证据，不应套用普通成功路径的零值
+断言。若 `oom_probe` 杀到 requester，先比较 victim/requester 的 resident 页数；测试必须
+保证非当前 victim 更大。若日志停在 `OOM_PROBE_REAPED`，检查 runner 是否误把该中间
+标记追加成协议终点；最终终点仍必须是 Kernel `READY`。
+
+## v2.9 Kernel Thread 生命周期
+
+### 首次进入 Kernel Thread 后立即 #GP 或 #PF
+
+先核对预构造栈的九个 64 位槽：r15..rbx、RFLAGS、bootstrap RIP、alignment sentinel。
+恢复六个寄存器和 flags 后执行 `ret`，C++ bootstrap 入口的 RSP 必须满足 SysV 的
+`RSP % 16 == 8`。saved RSP 和 64 字节恢复窗口都必须落在同一活动 KernelStack 内。
+
+### yield 后恢复了错误线程或 CpuLocal 不一致
+
+切换期间必须先关闭中断，保存当前 FXSAVE，再让 ThreadScheduler 提交 Running/Ready，
+最后更新目标 TSS.RSP0、CpuLocal、FS base 和 FX state 后更换 RSP。若先开中断，timer
+可能在旧栈上观察新 current thread。第一增量不从 Ring 0 timer IRQ 发起抢占。
+
+### Kernel Thread 已 Exited 但动态栈无法销毁
+
+退出函数仍运行在目标栈上，不能原地 `TryDestroy`。有下一线程时先切走；最后一个退出
+时恢复 dispatcher stack。只有 `ExecuteReadyKernelThreads` 重新取得控制权后，才按
+scheduler reap、KernelStack destroy、runtime slot 清零的顺序处理。
+
+### PID1 的 TID 变成 3
+
+这表示 Kernel/User 共用了同一个低位 TID 游标。User TID 必须小于
+`0x8000000000000000` 并继续从 1 开始；Kernel TID 使用独立高位游标。不能通过修改
+PID1 验收常量掩盖身份空间污染。
+
+### 全量偶发在 FILE_PARTIAL_ACCESS 前只写回 247 页
+
+V2.9.1 首轮全量的重复 `os_qemu_stage1_load_success` 曾输出 writeback status `0xD`
+和 written pages `0xF7`，随后 memory probe 报 `FILE_PARTIAL_ACCESS`；同轮的 primary、
+ATA/NVMe pressure 和两条三启动持久化均通过。先检查 Kernel Thread 的九项 marker、
+动态栈 active、CpuLocal current 和资源快照，确认均归零后再隔离重跑该测试。
+
+本次隔离重跑与第二轮完整回归都通过，未得到可稳定复现的 Kernel Thread 根因。不要
+删除失败记录或放宽禁止 marker；后续把 writeback 迁移到 WorkQueue 时，应重点记录
+第一个后端失败的 `fs::Status`、文件身份和 journal transaction 状态，以区分设备波动、
+元数据 credit 与 retained backing 生命周期。
+
+### WorkQueue Validate 报 ready 或 delayed 重复
+
+Queued entry 必须只在 ready FIFO 出现一次，Delayed entry 必须只在 heap 出现一次。
+取消即时任务用双向链接 O(1) 移除；取消延迟任务按 entry 保存的 heap index 移除并重新
+bubble。不要只改 state 而留下旧索引，Validate 会把它识别为重复所有权。
+
+### delayed work 顺序不稳定
+
+最小堆键是 `(deadline_nanoseconds, enqueue_sequence)`。仅比较 deadline 会让相同到期
+时间的任务随 heap swap 改变顺序。到期项从 heap 逐个弹出并追加 ready FIFO，不能按
+slot index 扫描后直接执行。
+
+### worker 执行失败后 drain 永远不结束
+
+失败 operation 仍必须调用 `Complete(handle, Failed)`，把 Running 提交为 Completed；
+失败只进入统计，不暂停通用 worker。若回调异常路径直接返回，running_count 会保持 1，
+`EndDrain` 正确返回 DrainIncomplete。
+
+### 回调内观察到 spinlock depth 非零
+
+worker 只能执行 `AcquireNext` 返回的 operation/context 快照。队列锁在 Acquire 返回前
+已经释放；禁止新增“便利 ExecuteOne”并在锁内调用回调。生产 VFS writeback 会访问
+设备，持 spinlock 执行会导致不可恢复的锁/IRQ 反转。
+
+### User→Kernel 后下一次 SYSCALL 立即失败
+
+检查跨类型分支是否在恢复 user dispatcher stack 前调用 `ClearCurrentThread`。原生
+SYSCALL 尾部被放弃后不会再到 `OsKernelSelectUserReturn`，因此必须由 clear 路径收束
+system-call depth，并按进入方式决定是否 `swapgs`。最终聚合的
+`CPU_LOCAL_CURRENT_THREAD`、`CPU_LOCAL_IRQ_DEPTH` 和 `system_call_active` 必须归零。
+
+### timer 唤醒 Worker 后 IRQ depth 留为 1
+
+User timer IRQ 中若调度器选中 Kernel，C++ 会直接返回 dispatcher，不再回到硬件中断
+函数的普通尾部。该分支必须先显式 `LeaveInterrupt`；系统调用触发的返回前重调度则不能
+多减一次。用 CpuLocal 当前 interrupt depth 区分，不要在汇编里无条件修改。
+
+### Worker 有即时请求却仍等待 5 秒
+
+读取 WorkItem 状态。即时 `Queue` 遇到 Delayed 必须从 heap 移除、清 deadline、追加到
+ready FIFO，并增加 expedited 计数；只返回 AlreadyPending 会保留旧 deadline。提升后还要
+唤醒 `KernelWork` WaitQueue 并请求重调度。
+
+### 用户进程全部退出后调度器一直 idle
+
+blocked Worker 仍属于 live Thread，scheduler 不会自行宣告 complete。dispatcher 必须在
+没有 live User Thread 时设置 stop，取消残余 Queued/Delayed 项并唤醒 Worker；Worker
+exit/reap 后下一次 Start 才能完成。不要直接销毁仍 blocked/running 的动态栈。
+
+### 加入 aging 数组后 rootfs 在挂载前失败
+
+先看 Kernel BSS 终点与 frame-state/buddy metadata 物理起点。最大 32768 entry 与 hash
+直接放 BSS 会增加数 MiB，可能越过自研链接/物理布局边界。PageAging backing 必须通过
+KernelPageAllocation 使用真实 frame+KVA，并在 Process 资源基线前建立；不能靠提高 QEMU
+超时或修改 rootfs 状态码处理。
+
+### Aging 报 KindConflict，但物理帧已经换了用途
+
+比较 entry 的 `observed_round`。旧 kind 在当前 round 尚未观察，表示 frame 在两轮之间
+被释放并复用，应 remove 后 reclassify；旧 kind 已在本轮观察则说明同一帧同时被解释为
+File/Anonymous，必须保留 KindConflict。失败日志会输出 physical address、existing kind、
+observed kind、PID、虚拟地址、VMA kind 和 COW 位。
+
+### Aging 在进程退出附近报 CorruptedState
+
+ProcessRuntime 的 `active` 还承担 Zombie 结果槽寿命，不等于 CR3 存活。最后线程退出后
+地址空间先销毁，父进程稍后 wait 才释放结果槽；`root_physical_address==0` 的 active
+Zombie 必须跳过。非零 CR3 的 VMA Validate、页表 walk 或用户权限失败仍属于损坏。
+
+### Pressure 档在 PID1 启动前进入 OOM
+
+检查 `AGING CAPACITY/HASH_CAPACITY` 和 `MEMORY_PRESSURE_RESIDENT_PAGES`。4 GiB 档若误用
+32768/65536 最大元数据，会消耗数百额外 frame 并挤掉 `0x2400` 压力预算。功能档必须用
+4096/8192，32 GiB 才使用最大档；禁止从 resident 账本中隐藏这些真实 frame。
+
+### 后台回收 wake 非零但 reclaimed 始终为零
+
+先比较 aging 的 `CANDIDATE_OBSERVATIONS` 与后台 `BACKGROUND_BATCHES`。刚从 Active 降为
+Inactive 的页还不是 candidate，必须再完成一轮冷观察；没有候选时 controller 应进入
+BackingOff，而不是立即重复 WorkItem。若 file cache 持续命中，access generation 会变化，
+旧候选会被撤销，这是保护热页，不应通过删掉 generation 检查“修复”。
+
+### 后台回收后出现同一物理页重复释放
+
+检查 selection 和 completion 的顺序。FilePageCache completion 必须在精确 eviction 前
+调用 `PageAgingManager::Forget`；匿名 completion 位于 swap Store/PTE unmap 之后、frame
+release 之前。若仅减少 candidate 统计而不删除 hash/队列条目，同一批次会再次选择已经
+复用的物理地址。正常终态要求 tracked、四队列和 candidate 分类都为零。
+
+### 后台回收占满 CPU 或 deadline 无法归零
+
+读取 `BACKGROUND_NO_PROGRESS`、WorkQueue Delayed 和 scheduler active deadline。无候选、
+仅写回和失败都必须排到 `now+1s`，不能即时自重排；实际回收后才允许下一批即时执行。
+最后一个 User Thread 退出时 background handle 与 aging/writeback 一起取消，controller
+reset 到 Sleeping。只停止 Worker 而遗漏 delayed handle 会让 scheduler 永远不能完成。
+
+### pressure 测试的后台 anonymous 计数偶尔为零
+
+第五增量按 clean、writeback、anonymous 顺序共享 64 页预算；前两阶段可占满一批，而
+min watermark 的 direct fallback 仍可能完成匿名换出。因此稳定门禁要求后台 clean、
+writeback、total 和系统总 anonymous 非零，不要求每次后台 anonymous 非零。若需要冻结
+后台匿名份额，应运行第六增量的公平性专用矩阵，不能把普通协作调度时序设成精确断言。
+第六增量已冻结 planner 的配额算法，但实际完成数仍取决于当轮 PageAging candidate；
+因此 QEMU 稳定门禁检查统一计划、系统总匿名回收和 OOM 极端值，不要求每个后台批次都
+实际交换匿名页。
