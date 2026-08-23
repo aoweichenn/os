@@ -1994,3 +1994,27 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - final 4 GiB ATA primary 78.38 秒；ATA/NVMe reclaim 84.70/81.81 秒，ATA/NVMe OOM
   82.23/81.59 秒，NVMe 正常/EIO/timeout 2.62/2.56/10.12 秒，NVMe root primary
   78.36 秒，ATA/NVMe persistence 170.54/159.20 秒。
+
+### inode metadata 第二增量
+
+- `os_kernel_vfs_inode_metadata_cache_unit_tests` 覆盖 load owner、Loading 冲突、非法
+  mode/type、完成、命中、取消、失效、容量、LRU、dentry 保留和两级 generation ABA；
+- `os_kernel_vfs_inode_metadata_cache_integration_tests` 把可计数 backend 接入真实 VFS，
+  要求 stat/access/exec/open-file stat 共享 fill；逐项验证 chmod/write/truncate/link/rename/
+  unlink 后重新读取，并强制 Loading 与满容量旁路；
+- `os_kernel_vfs_inode_metadata_cache_randomized_tests` 使用种子 `0x494E4F44454D4554`
+  执行十万轮 owner/竞争/完成/取消/失效/复用，逐轮 active=0 并 Validate；
+- 相关 VFS、namespace、权限、打开文件、tool probe、tooling 和命名门禁为 16/16、0 失败、
+  62.05 秒；4 GiB ATA primary 定向复验 83.59 秒；
+- metadata 命中改变了调度窗口后，首轮 ATA reclaim 暴露 `tool_probe` 可能在 prefetch worker
+  完成前读完两页，最终 loaded/waste 非零但 useful 为零。验收仍要求 useful 非零；探针在
+  首个 4 字节 miss 后 `SleepFor(20 ms)`，再执行 demand 读。OOM 复验 86.06 秒，随后
+  primary/reclaim/OOM 为 81.95/82.65/84.61 秒，3/3 通过；
+- 本增量生产接线不增加 QEMU marker，系统测试继续以既有 VGA/QMP、资源归零、ATA/NVMe
+  与持久化断言证明无回归。
+- final fresh CAW clean Debug build 为 3418 步、零警告；`python3 tools/os.py verify` 为
+  246/246、0 失败：74 unit、83 integration、56 randomized、33 system，含 25 条
+  failure-path，CTest 976.90 秒、端到端 1054 秒；
+- final 4 GiB ATA primary 82.20 秒；ATA/NVMe reclaim 82.80/82.16 秒，ATA/NVMe OOM
+  84.38/81.80 秒，NVMe 正常/EIO/timeout 2.65/2.52/10.01 秒，NVMe root primary
+  76.80 秒，ATA/NVMe persistence 154.85/154.81 秒。

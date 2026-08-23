@@ -35,6 +35,12 @@ enum class VfsNamespaceEntryState : uint64_t {
     Stale,
 };
 
+enum class VfsInodeMetadataState : uint64_t {
+    Empty,
+    Loading,
+    Ready,
+};
+
 struct VfsDentryToken final {
     uint64_t slot_index;
     uint64_t generation;
@@ -43,6 +49,11 @@ struct VfsDentryToken final {
 struct VfsInodeToken final {
     uint64_t slot_index;
     uint64_t generation;
+};
+
+struct VfsInodeMetadataToken final {
+    VfsInodeToken inode_token;
+    uint64_t metadata_generation;
 };
 
 struct VfsDentrySlot final {
@@ -57,12 +68,15 @@ struct VfsDentrySlot final {
 
 struct VfsInodeSlot final {
     VfsInodeIdentity identity;
+    BackendNodeInformation metadata;
     uint64_t access_generation;
     uint64_t dentry_reference_count;
     uint64_t external_reference_count;
     uint64_t generation;
+    uint64_t metadata_generation;
     NodeType type;
     VfsNamespaceEntryState state;
+    VfsInodeMetadataState metadata_state;
 };
 
 struct VfsDentrySnapshot final {
@@ -87,6 +101,15 @@ struct VfsInodeSnapshot final {
     VfsNamespaceEntryState state;
 };
 
+struct VfsInodeMetadataSnapshot final {
+    VfsInodeMetadataToken token;
+    VfsInodeIdentity identity;
+    BackendNodeInformation metadata;
+    uint64_t access_generation;
+    NodeType type;
+    VfsInodeMetadataState state;
+};
+
 struct VfsNamespaceCacheStatistics final {
     uint64_t dentry_capacity;
     uint64_t inode_capacity;
@@ -104,6 +127,8 @@ struct VfsNamespaceCacheStatistics final {
     uint64_t referenced_inode_count;
     uint64_t inode_dentry_reference_count;
     uint64_t active_inode_external_reference_count;
+    uint64_t loading_inode_metadata_count;
+    uint64_t ready_inode_metadata_count;
     uint64_t peak_active_inode_count;
     uint64_t peak_inode_reference_count;
     uint64_t positive_publish_count;
@@ -125,6 +150,13 @@ struct VfsNamespaceCacheStatistics final {
     uint64_t stale_dentry_release_count;
     uint64_t stale_inode_release_count;
     uint64_t capacity_rejection_count;
+    uint64_t inode_metadata_hit_count;
+    uint64_t inode_metadata_miss_count;
+    uint64_t inode_metadata_load_start_count;
+    uint64_t inode_metadata_load_completion_count;
+    uint64_t inode_metadata_load_cancellation_count;
+    uint64_t inode_metadata_load_contention_count;
+    uint64_t inode_metadata_invalidation_count;
 };
 
 enum class VfsNamespaceCacheStatus : uint64_t {
@@ -136,8 +168,12 @@ enum class VfsNamespaceCacheStatus : uint64_t {
     InvalidKey,
     InvalidIdentity,
     InvalidNodeType,
+    InvalidMetadata,
     DentryNotFound,
     InodeNotFound,
+    InodeMetadataNotFound,
+    InodeMetadataLoadRequired,
+    InodeMetadataLoadInProgress,
     AlreadyCached,
     EntryConflict,
     CapacityExhausted,
@@ -167,6 +203,17 @@ class VfsNamespaceCache final {
     [[nodiscard]] VfsNamespaceCacheStatus AcquireInode(const VfsInodeIdentity &identity,
                                                        VfsInodeSnapshot &snapshot) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus ReleaseInode(VfsInodeToken token) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus
+    PrepareInodeMetadata(const VfsInodeIdentity &identity, NodeType type,
+                         VfsInodeMetadataToken &token,
+                         VfsInodeMetadataSnapshot &snapshot) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus
+    CompleteInodeMetadata(VfsInodeMetadataToken token,
+                          const BackendNodeInformation &metadata) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus
+    CancelInodeMetadata(VfsInodeMetadataToken token) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus
+    InvalidateInodeMetadata(const VfsInodeIdentity &identity) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus InvalidateDentry(const VfsDentryKey &key) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus
     InvalidateInode(const VfsInodeIdentity &identity) noexcept;
@@ -191,6 +238,7 @@ class VfsNamespaceCache final {
     [[nodiscard]] uint64_t FindInodeEvictionCandidate() const noexcept;
     [[nodiscard]] bool DentryTokenIsValid(VfsDentryToken token) const noexcept;
     [[nodiscard]] bool InodeTokenIsValid(VfsInodeToken token) const noexcept;
+    [[nodiscard]] bool InodeMetadataTokenIsValid(VfsInodeMetadataToken token) const noexcept;
     [[nodiscard]] bool TouchDentry(VfsDentrySlot &dentry) noexcept;
     [[nodiscard]] bool TouchInode(VfsInodeSlot &inode) noexcept;
     [[nodiscard]] bool MarkDentryStale(uint64_t slot_index, bool cascaded) noexcept;
@@ -200,6 +248,8 @@ class VfsNamespaceCache final {
                                         bool eviction) noexcept;
     [[nodiscard]] VfsDentrySnapshot SnapshotDentry(uint64_t slot_index) const noexcept;
     [[nodiscard]] VfsInodeSnapshot SnapshotInode(uint64_t slot_index) const noexcept;
+    [[nodiscard]] VfsInodeMetadataSnapshot
+    SnapshotInodeMetadata(uint64_t slot_index) const noexcept;
     [[nodiscard]] uint64_t NextAccessGeneration() noexcept;
 
     mutable SpinLock lock_{};
@@ -215,6 +265,8 @@ class VfsNamespaceCache final {
 [[nodiscard]] bool VfsInodeIdentityIsValid(const VfsInodeIdentity &identity) noexcept;
 [[nodiscard]] bool VfsInodeIdentitiesEqual(const VfsInodeIdentity &left,
                                            const VfsInodeIdentity &right) noexcept;
+[[nodiscard]] bool VfsInodeMetadataIsValid(const BackendNodeInformation &metadata,
+                                           NodeType type) noexcept;
 [[nodiscard]] bool VfsDentryKeyIsValid(const VfsDentryKey &key) noexcept;
 [[nodiscard]] bool VfsDentryKeysEqual(const VfsDentryKey &left, const VfsDentryKey &right) noexcept;
 [[nodiscard]] VfsNamespaceCacheStatus

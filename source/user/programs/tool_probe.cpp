@@ -1,7 +1,7 @@
-#include "os/user/system_call.hpp"
+#include <os/user/system_call.hpp>
 
-#include "os/abi/elf.hpp"
-#include "os/abi/system_call.hpp"
+#include <os/abi/elf.hpp>
+#include <os/abi/system_call.hpp>
 
 #include <stdint.h>
 
@@ -11,6 +11,11 @@ constexpr uint64_t OS_USER_TOOL_PROBE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_STRING_TERMINATOR_SIZE_BYTES = 1ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_ELF_MAGIC_SIZE_BYTES = 4ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_PAGE_SIZE_BYTES = 4096ULL;
+constexpr uint64_t OS_USER_TOOL_PROBE_NANOSECONDS_PER_MILLISECOND = 1000ULL * 1000ULL;
+constexpr uint64_t OS_USER_TOOL_PROBE_READAHEAD_SETTLE_MILLISECONDS = 20ULL;
+constexpr uint64_t OS_USER_TOOL_PROBE_READAHEAD_SETTLE_NANOSECONDS =
+    OS_USER_TOOL_PROBE_READAHEAD_SETTLE_MILLISECONDS *
+    OS_USER_TOOL_PROBE_NANOSECONDS_PER_MILLISECOND;
 constexpr uint64_t OS_USER_TOOL_PROBE_SEQUENTIAL_READ_LIMIT_BYTES =
     OS_USER_TOOL_PROBE_PAGE_SIZE_BYTES * 2ULL;
 constexpr uint64_t OS_USER_TOOL_PROBE_REQUIRED_TOOL_COUNT = 47ULL;
@@ -172,6 +177,11 @@ void OsUserEntry(const uint64_t argument_count, const char *const *const argumen
             static_cast<int64_t>(sizeof(readahead_magic)) ||
         !MagicIsValid(readahead_magic)) {
         ExitFailure(OS_USER_TOOL_PROBE_MAGIC_FAILURE_MESSAGE);
+    }
+    // 首次 miss 已提交异步预读；给 worker 一个确定窗口，后续 demand 才能验证真实 useful hit。
+    if (os::user::SleepFor(OS_USER_TOOL_PROBE_READAHEAD_SETTLE_NANOSECONDS) !=
+        OS_USER_TOOL_PROBE_SUCCESS_RESULT) {
+        ExitFailure(OS_USER_TOOL_PROBE_SEQUENTIAL_FAILURE_MESSAGE);
     }
     uint8_t sequential_buffer[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES]{};
     uint64_t total_read_bytes = sizeof(readahead_magic);

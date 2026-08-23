@@ -254,6 +254,8 @@ struct ResourceUsage final {
     uint64_t vnode_count;
 };
 
+class VfsNamespaceCache;
+
 class Vfs final {
   public:
     Vfs() noexcept = default;
@@ -315,6 +317,7 @@ class Vfs final {
                                   RegularFileWriteCacheOperation write_operation,
                                   RegularFileSizeCacheOperation size_operation,
                                   RegularFileTruncateCacheOperation truncate_operation) noexcept;
+    [[nodiscard]] Status ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept;
     [[nodiscard]] Status StatOpenFile(const OpenFile &open_file,
                                       NodeInformation &information) noexcept;
     [[nodiscard]] Status StatOpenFileUncached(const OpenFile &open_file,
@@ -380,6 +383,9 @@ class Vfs final {
                                 uint64_t path_length_bytes, NodeType expected_type) noexcept;
     [[nodiscard]] Status ReadNodeInformation(const Path &path,
                                              BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status ReadNodeInformationUncached(
+        const Path &path, BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status InvalidateNodeInformation(const Vnode &vnode) noexcept;
     [[nodiscard]] Status ApplyRegularFileCachedSize(const Vnode &vnode,
                                                     BackendNodeInformation &information) noexcept;
     [[nodiscard]] Status TruncateNode(const Vnode &vnode, uint64_t size_bytes) noexcept;
@@ -407,6 +413,7 @@ class Vfs final {
     RegularFileWriteCacheOperation regular_file_write_cache_operation_{nullptr};
     RegularFileSizeCacheOperation regular_file_size_cache_operation_{nullptr};
     RegularFileTruncateCacheOperation regular_file_truncate_cache_operation_{nullptr};
+    VfsNamespaceCache *namespace_cache_{nullptr};
     bool initialized_{};
 };
 

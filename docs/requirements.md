@@ -546,6 +546,17 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - unit、跨 mount/rename integration 与具名固定种子十万轮 randomized oracle 必须覆盖正常、
   边界、容量拒绝、类型冲突、ABA、失效和回收；
 - 第一增量不新增运行期日志、QEMU marker、系统调用、盘面格式或网络/硬件能力。
+- 第二增量必须缓存完整 backend inode metadata，并以 Empty/Loading/Ready 和独立 generation
+  ticket 阻止失效后的迟到 fill；Loading 不得被 LRU 回收；
+- `Stat`、权限检查、普通/目录/exec 打开、sticky/创建检查与打开文件 stat 必须共享 inode
+  identity；显式 uncached API 必须继续旁路，FilePageCache 逻辑 size 不得污染原始 metadata；
+- cache miss owner 只能在 spin lock 外访问 backend。并发 Loading、容量或 generation/counter
+  耗尽必须正确旁路，缓存不可用不得改变 backend 结果；
+- chmod/chown/write/truncate/create/link/rename/unlink/rmdir/symlink 成功后必须覆盖全部受影响
+  target/parent identity；backend 修改失败不得提前失效；
+- 生产内核必须使用调用方固定 BSS 槽，不得在 metadata 热路径分配、睡眠或逐项打印；
+- 第二增量必须覆盖非法 mode/type、失败取消、ABA、Loading/容量旁路，以及全部生产修改失效
+  矩阵；`Validate` 必须重算 Loading/Ready 计数和字段/状态相容性。
 
 ## v2.0 完成基线
 

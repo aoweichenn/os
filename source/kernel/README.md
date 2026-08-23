@@ -331,8 +331,10 @@ Loading，但不等待同页 owner。设计见
 候选。设计见
 [ADR 0071](../../docs/adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
 
-v2.11 第一增量增加 `fs/vfs_namespace_cache.*`。调用方固定槽保存完整 dentry key、正负项、
-Stale 旧引用、inode token 和两级 access generation；inode 失效会级联目标项和 child 正负
-dentry。当前模块只由 host 测试消费，不进入 `Vfs::Resolve`、后端 lookup、ProcessRuntime
-或来宾日志。设计见
-[ADR 0072](../../docs/adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)。
+v2.11 的 `fs/vfs_namespace_cache.*` 先冻结完整 dentry key、正负/Stale、inode token 和两级
+LRU；第二增量在同一 inode slot 增加 Empty/Loading/Ready metadata ticket。生产 VFS 的 stat、
+权限、open/exec 与打开文件 stat 已共享缓存，所有成功 mutation 按 target/parent 失效；
+uncached 页缓存边界继续直达 backend。内核 BSS 固定配置 4096/2048 槽，不增加来宾热路径
+日志；dentry lookup 仍待后续接入。设计见
+[ADR 0072](../../docs/adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md) 与
+[ADR 0073](../../docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)。

@@ -17,6 +17,7 @@
 #include <os/kernel/fs/procfs.hpp>
 #include <os/kernel/fs/root_file_system.hpp>
 #include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/fs/vfs_namespace_cache.hpp>
 #include <os/kernel/memory/memory_manager.hpp>
 #include <os/kernel/process/block_io_device.hpp>
 #include <os/kernel/process/process_runtime.hpp>
@@ -1047,6 +1048,8 @@ constexpr uint64_t OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER = 2ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER = 3ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_PROCESS_SUPERBLOCK_IDENTIFIER = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY = 64ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY = 4096ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY = 2048ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_NODE_LIMIT = 128ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE = 0U;
@@ -1753,6 +1756,7 @@ struct KernelProcfsContext final {
 void InitializeKernelVfs(const VgaTextConsole &vga_console, fs::RootFileSystem &file_system,
                          fs::Memfs &memfs, fs::Devfs &devfs, fs::Procfs &procfs,
                          KernelProcfsContext &procfs_context, fs::Vfs &vfs,
+                         fs::VfsNamespaceCache &namespace_cache,
                          fs::DevfsDevice *const devfs_devices, const uint64_t devfs_device_capacity,
                          fs::Mount *const mounts, const uint64_t mount_capacity) noexcept {
     fs::Status status = memfs.Initialize(
@@ -1760,6 +1764,9 @@ void InitializeKernelVfs(const VgaTextConsole &vga_console, fs::RootFileSystem &
         OS_KERNEL_MAIN_MEMFS_NODE_LIMIT, OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES);
     if (status == fs::Status::Succeeded) {
         status = vfs.Initialize(mounts, mount_capacity, file_system.GetSuperblock());
+    }
+    if (status == fs::Status::Succeeded) {
+        status = vfs.ConfigureNamespaceCache(namespace_cache);
     }
     fs::FsContext bootstrap_context{};
     if (status == fs::Status::Succeeded) {
@@ -2908,13 +2915,17 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         RefreshProcessRuntimeResourceBaseline() != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
     }
-    // rootfs 含全盘校验工作区，必须驻留 BSS，不能消耗有界内核栈。
+    // rootfs 校验区和命名空间固定槽必须驻留 BSS，不能消耗有界内核栈。
     static fs::RootFileSystem file_system{};
     fs::Memfs memfs{};
     fs::Devfs devfs{};
     fs::Procfs procfs{};
     KernelProcfsContext procfs_context{};
     fs::Vfs vfs{};
+    static fs::VfsNamespaceCache namespace_cache{};
+    static fs::VfsDentrySlot
+        namespace_dentry_storage[OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY]{};
+    static fs::VfsInodeSlot namespace_inode_storage[OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY]{};
     static fs::DevfsDevice devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
     static BlockIoDevice root_block_io_device{};
@@ -2934,9 +2945,17 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
             OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS, true) != RuntimeBlockIoStatus::Succeeded) {
         HaltProcessor();
     }
+    if (namespace_cache.Initialize(namespace_dentry_storage,
+                                   OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
+                                   namespace_inode_storage,
+                                   OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY) !=
+        fs::VfsNamespaceCacheStatus::Succeeded) {
+        HaltProcessor();
+    }
     InitializeKernelFileSystem(vga_console, file_system, root_block_io_device);
     InitializeKernelVfs(vga_console, file_system, memfs, devfs, procfs, procfs_context, vfs,
-                        devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
+                        namespace_cache, devfs_devices,
+                        fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
                         OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
     if (AttachProcessVfs(vfs, swap_block_io_device) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
@@ -3090,40 +3109,6 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     const bool readahead_proof_required =
         user_program_selection == UserProgramSelection::Smoke ||
         user_program_selection == UserProgramSelection::OomPressure;
-    if (process_runtime_statistics.file_readahead_worker_failed ||
-        readahead_request_statistics.active_request_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
-        readahead_request_statistics.enqueue_count !=
-            readahead_request_statistics.completion_count +
-                readahead_request_statistics.queued_cancellation_count ||
-        readahead_request_statistics.enqueue_count !=
-            file_description_statistics.readahead_schedule_count ||
-        readahead_request_statistics.capacity_rejection_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
-        file_description_statistics.readahead_schedule_rejection_count !=
-            OS_KERNEL_MAIN_EMPTY_VALUE ||
-        file_description_statistics.readahead_cancellation_failure_count !=
-            OS_KERNEL_MAIN_EMPTY_VALUE ||
-        readahead_feedback_statistics.active_stream_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
-        readahead_feedback_statistics.retiring_stream_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
-        readahead_feedback_statistics.active_task_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
-        readahead_feedback_statistics.registration_count !=
-            readahead_feedback_statistics.stream_release_count ||
-        readahead_feedback_statistics.task_retain_count !=
-            readahead_feedback_statistics.task_release_count ||
-        file_description_statistics.readahead_useful_page_count !=
-            readahead_feedback_statistics.useful_page_take_count ||
-        file_description_statistics.readahead_wasted_page_count !=
-            readahead_feedback_statistics.wasted_page_take_count ||
-        file_cache_runtime_statistics.readahead_failed_page_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
-        (readahead_proof_required &&
-         (file_description_statistics.readahead_useful_page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
-          file_description_statistics.readahead_wasted_page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
-          file_description_statistics.readahead_feedback_application_count ==
-              OS_KERNEL_MAIN_EMPTY_VALUE ||
-          file_description_statistics.readahead_cancellation_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
-          file_cache_runtime_statistics.readahead_loaded_page_count ==
-              OS_KERNEL_MAIN_EMPTY_VALUE))) {
-        HaltProcessor();
-    }
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_OBSERVATION_COUNT_PREFIX,
                          file_description_statistics.readahead_observation_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_SCHEDULE_COUNT_PREFIX,
@@ -3172,6 +3157,40 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
                          file_cache_runtime_statistics.readahead_failed_page_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_PRESSURE_STOP_COUNT_PREFIX,
                          file_cache_runtime_statistics.readahead_pressure_stop_count);
+    if (process_runtime_statistics.file_readahead_worker_failed ||
+        readahead_request_statistics.active_request_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_request_statistics.enqueue_count !=
+            readahead_request_statistics.completion_count +
+                readahead_request_statistics.queued_cancellation_count ||
+        readahead_request_statistics.enqueue_count !=
+            file_description_statistics.readahead_schedule_count ||
+        readahead_request_statistics.capacity_rejection_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        file_description_statistics.readahead_schedule_rejection_count !=
+            OS_KERNEL_MAIN_EMPTY_VALUE ||
+        file_description_statistics.readahead_cancellation_failure_count !=
+            OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.active_stream_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.retiring_stream_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.active_task_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.registration_count !=
+            readahead_feedback_statistics.stream_release_count ||
+        readahead_feedback_statistics.task_retain_count !=
+            readahead_feedback_statistics.task_release_count ||
+        file_description_statistics.readahead_useful_page_count !=
+            readahead_feedback_statistics.useful_page_take_count ||
+        file_description_statistics.readahead_wasted_page_count !=
+            readahead_feedback_statistics.wasted_page_take_count ||
+        file_cache_runtime_statistics.readahead_failed_page_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        (readahead_proof_required &&
+         (file_description_statistics.readahead_useful_page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_description_statistics.readahead_wasted_page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_description_statistics.readahead_feedback_application_count ==
+              OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_description_statistics.readahead_cancellation_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_cache_runtime_statistics.readahead_loaded_page_count ==
+              OS_KERNEL_MAIN_EMPTY_VALUE))) {
+        HaltProcessor();
+    }
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_SYNCHRONIZATION_COUNT_PREFIX,
                          process_runtime_statistics.file_synchronization_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_DATA_SYNCHRONIZATION_COUNT_PREFIX,

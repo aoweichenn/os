@@ -1438,3 +1438,10 @@ active/failure 为零。单 BSP 的真实调度可能让 waiter 数为零，因�
 第一增量是 host-only 纯模型，不接 `Vfs::Resolve`，因此不增加来宾 marker，也不逐 dentry、
 inode、引用、失效或 LRU 打印。成功证据只进入 CTest 与发布记录。生产接线后仍只允许最终
 聚合，路径解析热区不得把名称或每次 cache hit 刷到 VGA 终端。
+
+第二增量虽已接生产 inode metadata，也不新增 hit/miss/load/invalidate marker。模型统计由
+host integration 直接读取，4 GiB QEMU 继续使用既有最终聚合与 QMP 证据。Loading owner、
+旁路和 mutation 失效都不得逐操作写 VGA；未来确需观测时只能增加一次最终聚合。
+
+已有 readahead 最终聚合现在先输出再执行守恒判断；正常路径不增加行数，失败路径能保留
+useful/waste 与 request/feedback 终态，避免只留下黑屏或停机位置而无法区分调度和泄漏。

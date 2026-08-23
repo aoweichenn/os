@@ -1601,7 +1601,7 @@ V2.10 六个实现增量至此完成，但按用户要求继续保持工程候�
 **增量顺序**
 
 1. dentry/inode identity、Positive/Negative/Stale、引用、generation 与 LRU 纯模型（已完成）；
-2. inode metadata cache 与 stat/open/exec 共享；
+2. inode metadata cache 与 stat/open/exec 共享（已完成）；
 3. Positive dentry 生产 lookup 与同组件 miss 合并；
 4. Negative dentry、NotFound/EIO 分离和创建失效；
 5. create/link/rename/unlink/symlink/mkdir/rmdir、mount crossing 与 cwd/root 一致性；
@@ -1620,6 +1620,18 @@ Cached 正负 dentry；Stale 资源等全部引用归零后释放。dentry LRU �
 LRU 还要求零 dentry 引用。第一增量只验证线性纯模型，不接 `Vfs::Resolve`、不减少后端 I/O、
 不新增运行期日志。设计由
 [ADR 0072](adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md) 冻结。
+
+**第二增量完成状态**
+
+inode slot 已加入 backend 原始 metadata、Empty/Loading/Ready 和独立 generation ticket。
+失效会使旧 owner 的迟到 completion 永久无效；Loading 竞争者、容量或 generation 耗尽
+只旁路 backend，不把缓存状态变成新的系统调用失败。
+
+生产 VFS 已让 stat、权限检查、普通/目录/exec 打开、sticky/创建检查和打开文件 stat
+共享同一 identity。chmod/chown/write/truncate/create/link/rename/unlink/rmdir/symlink 成功后
+按 target/parent 失效；页缓存逻辑 size 在返回时覆盖原始缓存。内核固定配置 4096 dentry
+和 2048 inode 槽，不新增热路径分配或来宾日志。设计由
+[ADR 0073](adr/0073-v2-11-inode-metadata-load-and-invalidation.md) 冻结。
 
 **退出条件**
 

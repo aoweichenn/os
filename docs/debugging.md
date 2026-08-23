@@ -2523,3 +2523,38 @@ active=0 定位该问题。
 dentry candidate 必须是 Cached 且 external reference 为零；inode 还要满足 dentry reference
 和 external reference 都为零。Stale 不参与 LRU，因为零引用 Stale 应在 release/invalidating
 事务中立即回收。第一增量没有生产 shrinker，不能从 QEMU I/O 数推断 LRU 已接入。
+
+### chmod 后 stat 仍返回旧 mode
+
+先确认 backend `change_mode` 已成功，再检查 `InvalidateNodeInformation` 是否使用相同的
+superblock/node identifier+generation。失效发生在 backend commit 之前会让失败操作错误
+丢缓存；完全没有失效则 Ready 快照持续命中。integration 的 chmod 分段断言会在下一次
+`StatOpenFile` 未增加 backend stat 次数或 mode 未更新时失败。
+
+### 失效后 metadata 又恢复为旧值
+
+检查 completion ticket 的 inode generation 和 metadata generation，不能只比较 slot。
+Loading 期间发生 invalidate 会把状态改为 Empty，必要时释放 inode；迟到 completion 必须
+返回 `InvalidToken`。若直接按 identity 发布 backend 结果，就会重新引入 invalidate/fill
+竞态。
+
+### metadata cache 满后 stat 返回错误
+
+缓存容量不是用户 ABI 资源。`PrepareInodeMetadata` 的 CapacityExhausted、GenerationExhausted
+和 CounterOverflow，以及已有 Loading，都应让当前调用直接读取 backend 且不提交。只有
+身份/type 冲突或内部不变量损坏才映射为 VFS Corrupt。integration 会填满全部 inode slot
+并要求根目录 stat 仍成功。
+
+### Destroy 报告 EntriesRemain
+
+先检查 `loading_inode_metadata_count`。Loading 不能参加 LRU；owner 必须 Complete、Cancel，
+或由 mutation Invalidate 后才能销毁。Ready metadata-only inode 可以正常 Evict，带 dentry/
+external 引用的 inode 则必须由对应所有者先释放。
+
+### QEMU 最终 loaded/waste 非零但 useful 为零
+
+这表示预读请求执行了，但 demand 先于 worker completion 到达，不能删除 useful 非零门禁
+把它伪装成成功。`/bin/tool_probe` 的首个 4 字节 miss 用于提交预读，随后可睡眠 20 ms，
+再读取后续页；这验证真实 prefetched hit，同时不使用忙等或伪造统计。最终 readahead 聚合
+在守恒判断前输出，因此失败时先核对 useful/waste、enqueue/completion/cancellation 和
+active stream/task，再判断是调度窗口还是生命周期泄漏。

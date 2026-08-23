@@ -1,4 +1,5 @@
 #include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/fs/vfs_namespace_cache.hpp>
 
 namespace os::kernel::fs {
 
@@ -71,6 +72,15 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
     return 0U;
 }
 
+[[nodiscard]] VfsInodeIdentity InodeIdentityForVnode(const Vnode &vnode) noexcept {
+    return VfsInodeIdentity{
+        .superblock_identifier = vnode.superblock->identifier,
+        .superblock_generation = vnode.superblock->generation,
+        .node_identifier = vnode.identifier,
+        .node_generation = vnode.generation,
+    };
+}
+
 }
 
 Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity,
@@ -115,6 +125,7 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
     this->regular_file_write_cache_operation_ = nullptr;
     this->regular_file_size_cache_operation_ = nullptr;
     this->regular_file_truncate_cache_operation_ = nullptr;
+    this->namespace_cache_ = nullptr;
     this->mounts_[OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER] = Mount{
         .identifier = OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER,
         .parent_mount_identifier = OS_KERNEL_VFS_INVALID_MOUNT_IDENTIFIER,
@@ -452,9 +463,12 @@ Status Vfs::CreateDirectory(const FsContext &context, const uint8_t *const path,
         return attribute_status;
     }
     Vnode created{};
-    return superblock->operations->create(superblock->backend_context, resolution.parent.vnode,
-                                          resolution.name, resolution.name_length_bytes,
-                                          NodeType::Directory, attributes, created);
+    const Status create_status = superblock->operations->create(
+        superblock->backend_context, resolution.parent.vnode, resolution.name,
+        resolution.name_length_bytes, NodeType::Directory, attributes, created);
+    return create_status == Status::Succeeded
+               ? this->InvalidateNodeInformation(resolution.parent.vnode)
+               : create_status;
 }
 
 Status Vfs::RemoveFile(const FsContext &context, const uint8_t *const path,
@@ -538,10 +552,29 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
     } else if (destination_status != Status::NotFound) {
         return destination_status;
     }
-    return superblock->operations->rename(superblock->backend_context, source_parent.parent.vnode,
-                                          source_parent.name, source_parent.name_length_bytes,
-                                          destination_parent.parent.vnode, destination_parent.name,
-                                          destination_parent.name_length_bytes, replace);
+    const Status rename_status = superblock->operations->rename(
+        superblock->backend_context, source_parent.parent.vnode, source_parent.name,
+        source_parent.name_length_bytes, destination_parent.parent.vnode, destination_parent.name,
+        destination_parent.name_length_bytes, replace);
+    if (rename_status != Status::Succeeded) {
+        return rename_status;
+    }
+    const Status source_invalidation_status = this->InvalidateNodeInformation(source.vnode);
+    const Status source_parent_invalidation_status =
+        this->InvalidateNodeInformation(source_parent.parent.vnode);
+    const Status destination_parent_invalidation_status =
+        this->InvalidateNodeInformation(destination_parent.parent.vnode);
+    const Status destination_invalidation_status =
+        destination_status == Status::Succeeded
+            ? this->InvalidateNodeInformation(destination.vnode)
+            : Status::Succeeded;
+    if (source_invalidation_status != Status::Succeeded ||
+        source_parent_invalidation_status != Status::Succeeded ||
+        destination_parent_invalidation_status != Status::Succeeded ||
+        destination_invalidation_status != Status::Succeeded) {
+        return Status::Corrupt;
+    }
+    return Status::Succeeded;
 }
 
 Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
@@ -584,9 +617,19 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
     if (existing_status != Status::NotFound) {
         return existing_status;
     }
-    return superblock->operations->link(superblock->backend_context, source.vnode,
-                                        destination_parent.parent.vnode, destination_parent.name,
-                                        destination_parent.name_length_bytes);
+    const Status link_status = superblock->operations->link(
+        superblock->backend_context, source.vnode, destination_parent.parent.vnode,
+        destination_parent.name, destination_parent.name_length_bytes);
+    if (link_status != Status::Succeeded) {
+        return link_status;
+    }
+    const Status source_invalidation_status = this->InvalidateNodeInformation(source.vnode);
+    const Status parent_invalidation_status =
+        this->InvalidateNodeInformation(destination_parent.parent.vnode);
+    return source_invalidation_status == Status::Succeeded &&
+                   parent_invalidation_status == Status::Succeeded
+               ? Status::Succeeded
+               : Status::Corrupt;
 }
 
 Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const target,
@@ -643,9 +686,12 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
         return status;
     }
     Vnode vnode{};
-    return superblock->operations->create_symbolic_link(
+    const Status create_status = superblock->operations->create_symbolic_link(
         superblock->backend_context, destination_parent.parent.vnode, destination_parent.name,
         destination_parent.name_length_bytes, target, target_length_bytes, attributes, vnode);
+    return create_status == Status::Succeeded
+               ? this->InvalidateNodeInformation(destination_parent.parent.vnode)
+               : create_status;
 }
 
 Status Vfs::ReadSymbolicLink(const FsContext &context, const uint8_t *const path,
@@ -726,8 +772,7 @@ Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
         return status;
     }
     BackendNodeInformation backend_information{};
-    const Status stat_status = resolved.vnode.superblock->operations->stat(
-        resolved.vnode.superblock->backend_context, resolved.vnode, backend_information);
+    const Status stat_status = this->ReadNodeInformation(resolved, backend_information);
     if (stat_status != Status::Succeeded) {
         return stat_status;
     }
@@ -797,8 +842,11 @@ Status Vfs::ChangeMode(const FsContext &context, const uint8_t *const path,
         !security::IsMemberOfGroup(context.credentials, information.owner_group_identifier)) {
         updated_mode &= ~os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER;
     }
-    return superblock->operations->change_mode(superblock->backend_context, resolved.vnode,
-                                               updated_mode);
+    const Status change_status = superblock->operations->change_mode(
+        superblock->backend_context, resolved.vnode, updated_mode);
+    return change_status == Status::Succeeded
+               ? this->InvalidateNodeInformation(resolved.vnode)
+               : change_status;
 }
 
 Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
@@ -834,8 +882,12 @@ Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
         group_identifier == os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED
             ? information.owner_group_identifier
             : group_identifier;
-    return superblock->operations->change_owner(superblock->backend_context, resolved.vnode,
-                                                updated_user_identifier, updated_group_identifier);
+    const Status change_status = superblock->operations->change_owner(
+        superblock->backend_context, resolved.vnode, updated_user_identifier,
+        updated_group_identifier);
+    return change_status == Status::Succeeded
+               ? this->InvalidateNodeInformation(resolved.vnode)
+               : change_status;
 }
 
 Status Vfs::Open(const FsContext &context, const uint8_t *const path,
@@ -880,6 +932,10 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
             parent_superblock->backend_context, parent_resolution.parent.vnode,
             parent_resolution.name, parent_resolution.name_length_bytes, NodeType::RegularFile,
             attributes, created);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        status = this->InvalidateNodeInformation(parent_resolution.parent.vnode);
         if (status != Status::Succeeded) {
             return status;
         }
@@ -1065,12 +1121,56 @@ Status Vfs::ConfigureRegularFileDataCache(
     return Status::Succeeded;
 }
 
+Status Vfs::ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (cache.Validate() != VfsNamespaceCacheStatus::Succeeded) {
+        return Status::InvalidArgument;
+    }
+    SpinLockGuard guard{this->lock_};
+    if (this->namespace_cache_ != nullptr) {
+        return Status::AlreadyExists;
+    }
+    this->namespace_cache_ = &cache;
+    return Status::Succeeded;
+}
+
 Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information) noexcept {
-    const Status status = this->StatOpenFileUncached(open_file, information);
-    if (status != Status::Succeeded || open_file.path.vnode.type != NodeType::RegularFile ||
+    information = NodeInformation{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !this->PathIsValid(open_file.path)) {
+        return Status::InvalidHandle;
+    }
+    BackendNodeInformation backend_information{};
+    const Status status = this->ReadNodeInformation(open_file.path, backend_information);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    information = NodeInformation{
+        .mount_identifier = open_file.path.mount_identifier,
+        .superblock_identifier = open_file.path.vnode.superblock->identifier,
+        .superblock_generation = open_file.path.vnode.superblock->generation,
+        .node_identifier = open_file.path.vnode.identifier,
+        .generation = open_file.path.vnode.generation,
+        .type = open_file.path.vnode.type,
+        .size_bytes = backend_information.size_bytes,
+        .allocated_size_bytes = backend_information.allocated_size_bytes,
+        .link_count = backend_information.link_count,
+        .access_time_nanoseconds = backend_information.access_time_nanoseconds,
+        .modification_time_nanoseconds = backend_information.modification_time_nanoseconds,
+        .change_time_nanoseconds = backend_information.change_time_nanoseconds,
+        .birth_time_nanoseconds = backend_information.birth_time_nanoseconds,
+        .owner_user_identifier = backend_information.owner_user_identifier,
+        .owner_group_identifier = backend_information.owner_group_identifier,
+        .mode = backend_information.mode,
+    };
+    if (open_file.path.vnode.type != NodeType::RegularFile ||
         !open_file.path.vnode.superblock->cache_regular_file_data ||
         this->regular_file_size_cache_operation_ == nullptr) {
-        return status;
+        return Status::Succeeded;
     }
     uint64_t size_bytes = information.size_bytes;
     const Status cache_status = this->regular_file_size_cache_operation_(
@@ -1091,9 +1191,8 @@ Status Vfs::StatOpenFileUncached(const OpenFile &open_file, NodeInformation &inf
         return Status::InvalidHandle;
     }
     BackendNodeInformation backend_information{};
-    const Status stat_status = open_file.path.vnode.superblock->operations->stat(
-        open_file.path.vnode.superblock->backend_context, open_file.path.vnode,
-        backend_information);
+    const Status stat_status =
+        this->ReadNodeInformationUncached(open_file.path, backend_information);
     if (stat_status != Status::Succeeded) {
         return stat_status;
     }
@@ -1197,6 +1296,11 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
                                                         open_file, offset_bytes, source,
                                                         length_bytes, written_bytes);
     if (status == Status::Succeeded) {
+        const Status invalidation_status =
+            this->InvalidateNodeInformation(open_file.path.vnode);
+        if (invalidation_status != Status::Succeeded) {
+            return invalidation_status;
+        }
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_written += written_bytes;
     }
@@ -1224,8 +1328,12 @@ Status Vfs::WriteUncachedAt(const OpenFile &open_file, const uint64_t offset_byt
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    return superblock->operations->write(superblock->backend_context, open_file.path.vnode,
-                                         offset_bytes, source, length_bytes, written_bytes);
+    const Status write_status = superblock->operations->write(
+        superblock->backend_context, open_file.path.vnode, offset_bytes, source, length_bytes,
+        written_bytes);
+    return write_status == Status::Succeeded
+               ? this->InvalidateNodeInformation(open_file.path.vnode)
+               : write_status;
 }
 
 Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t capacity_bytes,
@@ -1301,6 +1409,11 @@ Status Vfs::Write(OpenFile &open_file, const uint8_t *const source, const uint64
     if (status == Status::Succeeded) {
         if (open_file.offset_bytes > UINT64_MAX - written_bytes) {
             return Status::Corrupt;
+        }
+        const Status invalidation_status =
+            this->InvalidateNodeInformation(open_file.path.vnode);
+        if (invalidation_status != Status::Succeeded) {
+            return invalidation_status;
         }
         open_file.offset_bytes += written_bytes;
         SpinLockGuard guard{this->lock_};
@@ -1511,6 +1624,10 @@ Status Vfs::Validate() noexcept {
         if (backend_status != Status::Succeeded) {
             return backend_status;
         }
+    }
+    if (this->namespace_cache_ != nullptr &&
+        this->namespace_cache_->Validate() != VfsNamespaceCacheStatus::Succeeded) {
+        return Status::Corrupt;
     }
     const Statistics statistics = this->ReadStatistics();
     return statistics.mount_count == this->mount_count_ ? Status::Succeeded : Status::Corrupt;
@@ -1783,11 +1900,74 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     if (sticky_status != Status::Succeeded) {
         return sticky_status;
     }
-    return superblock->operations->remove(superblock->backend_context, parent.parent.vnode,
-                                          parent.name, parent.name_length_bytes, expected_type);
+    const Status remove_status = superblock->operations->remove(
+        superblock->backend_context, parent.parent.vnode, parent.name, parent.name_length_bytes,
+        expected_type);
+    if (remove_status != Status::Succeeded) {
+        return remove_status;
+    }
+    const Status target_invalidation_status = this->InvalidateNodeInformation(resolved.vnode);
+    const Status parent_invalidation_status = this->InvalidateNodeInformation(parent.parent.vnode);
+    return target_invalidation_status == Status::Succeeded &&
+                   parent_invalidation_status == Status::Succeeded
+               ? Status::Succeeded
+               : Status::Corrupt;
 }
 
 Status Vfs::ReadNodeInformation(const Path &path, BackendNodeInformation &information) noexcept {
+    information = BackendNodeInformation{};
+    if (!this->PathIsValid(path)) {
+        return Status::InvalidArgument;
+    }
+    if (this->namespace_cache_ == nullptr) {
+        return this->ReadNodeInformationUncached(path, information);
+    }
+
+    VfsInodeMetadataToken load_token{};
+    VfsInodeMetadataSnapshot cached_snapshot{};
+    const VfsNamespaceCacheStatus prepare_status = this->namespace_cache_->PrepareInodeMetadata(
+        InodeIdentityForVnode(path.vnode), path.vnode.type, load_token, cached_snapshot);
+    if (prepare_status == VfsNamespaceCacheStatus::AlreadyCached) {
+        information = cached_snapshot.metadata;
+        return Status::Succeeded;
+    }
+    const bool owns_load =
+        prepare_status == VfsNamespaceCacheStatus::InodeMetadataLoadRequired;
+    const bool bypasses_cache =
+        prepare_status == VfsNamespaceCacheStatus::InodeMetadataLoadInProgress ||
+        prepare_status == VfsNamespaceCacheStatus::CapacityExhausted ||
+        prepare_status == VfsNamespaceCacheStatus::GenerationExhausted ||
+        prepare_status == VfsNamespaceCacheStatus::CounterOverflow;
+    if (!owns_load && !bypasses_cache) {
+        return Status::Corrupt;
+    }
+
+    // Loading 竞争者直接读取后端但不提交；只有持 generation ticket 的 owner 能填充缓存。
+    const Status backend_status = this->ReadNodeInformationUncached(path, information);
+    if (backend_status != Status::Succeeded) {
+        if (owns_load) {
+            const VfsNamespaceCacheStatus cancel_status =
+                this->namespace_cache_->CancelInodeMetadata(load_token);
+            if (cancel_status != VfsNamespaceCacheStatus::Succeeded &&
+                cancel_status != VfsNamespaceCacheStatus::InvalidToken) {
+                return Status::Corrupt;
+            }
+        }
+        return backend_status;
+    }
+    if (!owns_load) {
+        return Status::Succeeded;
+    }
+    const VfsNamespaceCacheStatus completion_status =
+        this->namespace_cache_->CompleteInodeMetadata(load_token, information);
+    return completion_status == VfsNamespaceCacheStatus::Succeeded ||
+                   completion_status == VfsNamespaceCacheStatus::InvalidToken
+               ? Status::Succeeded
+               : Status::Corrupt;
+}
+
+Status Vfs::ReadNodeInformationUncached(const Path &path,
+                                        BackendNodeInformation &information) noexcept {
     information = BackendNodeInformation{};
     if (!this->PathIsValid(path)) {
         return Status::InvalidArgument;
@@ -1798,8 +1978,22 @@ Status Vfs::ReadNodeInformation(const Path &path, BackendNodeInformation &inform
     if (status != Status::Succeeded) {
         return status;
     }
-    const os::abi::FileMode expected_type = ModeTypeForNode(path.vnode.type);
-    return expected_type != 0U && security::ModeTypeMatches(information.mode, expected_type)
+    return VfsInodeMetadataIsValid(information, path.vnode.type) ? Status::Succeeded
+                                                                 : Status::Corrupt;
+}
+
+Status Vfs::InvalidateNodeInformation(const Vnode &vnode) noexcept {
+    if (this->namespace_cache_ == nullptr) {
+        return Status::Succeeded;
+    }
+    if (vnode.superblock == nullptr) {
+        return Status::InvalidArgument;
+    }
+    const VfsNamespaceCacheStatus status =
+        this->namespace_cache_->InvalidateInodeMetadata(InodeIdentityForVnode(vnode));
+    return status == VfsNamespaceCacheStatus::Succeeded ||
+                   status == VfsNamespaceCacheStatus::InodeNotFound ||
+                   status == VfsNamespaceCacheStatus::InodeMetadataNotFound
                ? Status::Succeeded
                : Status::Corrupt;
 }
@@ -1826,9 +2020,16 @@ Status Vfs::TruncateNode(const Vnode &vnode, const uint64_t size_bytes) noexcept
     Superblock &superblock = *vnode.superblock;
     const Status truncate_status =
         superblock.operations->truncate(superblock.backend_context, vnode, size_bytes);
-    if (truncate_status != Status::Succeeded || !superblock.cache_regular_file_data ||
-        this->regular_file_truncate_cache_operation_ == nullptr) {
+    if (truncate_status != Status::Succeeded) {
         return truncate_status;
+    }
+    const Status invalidation_status = this->InvalidateNodeInformation(vnode);
+    if (invalidation_status != Status::Succeeded) {
+        return invalidation_status;
+    }
+    if (!superblock.cache_regular_file_data ||
+        this->regular_file_truncate_cache_operation_ == nullptr) {
+        return Status::Succeeded;
     }
     return this->regular_file_truncate_cache_operation_(this->regular_file_data_cache_context_,
                                                         vnode, size_bytes);

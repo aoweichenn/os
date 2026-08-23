@@ -284,6 +284,9 @@
 | writeback waiter | 在同页 I/O 完成前等待唯一成功/失败结果的 writer 或同步调用者；不自行重复提交设备请求 |
 | dentry | 目录中的“parent + name”到 inode 的命名空间关系；Positive 指向对象，Negative 表示已确认不存在 |
 | inode cache identity | 由 superblock 与 node identifier/generation 组成、可被多个 mount dentry 共享的节点身份 |
+| inode metadata | VFS 从 backend stat 取得的 size、allocated size、link count、时间、uid、gid 和 mode 原始快照 |
+| metadata load ticket | 同时绑定 inode slot/generation 与 metadata generation 的一次加载所有权；失效后迟到结果不能提交 |
+| metadata bypass | Loading 竞争或缓存容量/代次耗尽时直接读取 backend、只返回当前调用且不填充缓存的正确性路径 |
 | stale dentry | 已从新 lookup 中撤销、但因旧引用尚未释放而继续保留 identity 和 generation token 的目录项 |
 | PTE Accessed | x86 页表叶项的 A 位；硬件在翻译被使用时置位，内核清除后可观察下一周期是否再次访问 |
 | active/inactive | 经典双队列近似 LRU；Active 表示近期访问，Inactive 连续未访问后才可成为回收候选 |

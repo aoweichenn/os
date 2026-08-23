@@ -71,5 +71,7 @@ RuntimeMutex、设备或用户内存。
 ## 后果
 
 后续增量可以在不重新定义身份和资源所有权的前提下加入 inode metadata、positive/negative
-生产 lookup、miss 合并、命名空间修改失效和压力回收。当前仍没有减少任何一次后端 lookup，
-也不缓存 stat 字段；不应把 11.1 的纯模型统计写入来宾终端或宣称为 VFS 性能提升。
+生产 lookup、miss 合并、命名空间修改失效和压力回收。11.1 自身没有减少任何一次后端
+lookup，也不缓存 stat 字段；11.2 已在不改变本 ADR identity/lifecycle 的前提下接入 inode
+metadata，详见 [ADR 0073](0073-v2-11-inode-metadata-load-and-invalidation.md)。纯模型统计仍不
+写入来宾终端。

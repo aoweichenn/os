@@ -2617,10 +2617,25 @@ dentry key 保留 mount，因为同一 vnode 在不同挂载路径下属于不�
 dentry，形成父目录失效闭包。LRU 只选择 Cached 零引用项，dentry 淘汰释放 inode 的 dentry
 reference；inode 还要等 external/dentry 两类引用都为零。
 
-11.1 使用调用方固定槽和线性扫描，目的是冻结状态与失败事务。它不接 `Vfs::Resolve`，不
-访问 backend operations，不缓存 `BackendNodeInformation`，也不增加来宾日志。生产 hash、
-miss 合并与 metadata 填充由后续增量接入。详见
+11.1 使用调用方固定槽和线性扫描，目的是冻结状态与失败事务。该增量不接 `Vfs::Resolve`，
+不访问 backend operations，也不增加来宾日志。metadata 填充已由 11.2 接入；生产 dentry
+hash 与 miss 合并仍在后续。详见
 [ADR 0072](adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)。
+
+第二增量把 inode metadata 接入生产 VFS。slot 内的 metadata state 与 inode lifecycle
+分离：inode 可以因 dentry 存在而保持 Cached，同时 metadata 在 Empty、Loading、Ready
+之间变化。load ticket 同时绑定 inode generation 与 metadata generation；backend I/O 在
+锁外执行，完成时重新核对 ticket，关闭 invalidate 与迟到 fill 之间的竞态。
+
+读取方先按 identity 执行 `PrepareInodeMetadata`：Ready 返回快照，首个 miss 取得 ticket，
+Loading 或容量不足直接旁路。owner 完成 backend stat 后只有 ticket 仍有效才能提交；mutation
+commit 则按 target/parent 调用 `InvalidateInodeMetadata`。
+
+slot 保存 backend 原始字段。普通文件的 FilePageCache 逻辑 EOF 仍由既有 size hook 在返回前
+覆盖，所以写脏页改变的逻辑长度不要求伪造 backend metadata。显式 uncached stat 继续服务
+页缓存与文件后备层。生产 BSS 固定配置 4096 dentry/2048 inode 槽；11.2 尚未接 dentry
+lookup，也没有在 Loading 上建立 WaitQueue。详见
+[ADR 0073](adr/0073-v2-11-inode-metadata-load-and-invalidation.md)。
 
 ## v2.8 动态文件缓存地址空间
 
