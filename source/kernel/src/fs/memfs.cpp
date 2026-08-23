@@ -850,6 +850,7 @@ Status Memfs::ReadResourceUsageOperation(void *const context, ResourceUsage &usa
         .heap_active_requested_bytes = memfs.statistics_.active_heap_requested_bytes,
         .heap_allocation_count = memfs.statistics_.active_heap_allocation_count,
         .vnode_count = memfs.statistics_.active_node_count,
+        .namespace_backing = NamespaceBackingResourceUsage{},
     };
     return Status::Succeeded;
 }

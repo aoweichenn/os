@@ -1059,7 +1059,8 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
   生产 rootfs v4；unlink/rmdir/rename/truncate/stat、链接、时间戳、orphan、
   五级稀疏块树和 ordered journal 已完成。mount 拓扑仍仅在启动期建立；
   V2.11 已接生产 inode metadata、Positive/Negative dentry、hash/LRU 与 pressure shrinker；
-  动态 unmount 仍在后续。
+  V2.12 又以 64+64 shard、128 context、sequence retry 和双层真实页 backing 删除读侧全局
+  串行，pressure 可释放 preferred hash 页；动态 unmount、RCU walk 与 SMP 仍在后续。
 - v2.8 六个核心增量已有 64 位动态文件页 radix、统一 buffered read/write/file fault/
   `MAP_SHARED` frame、逻辑 EOF、精确 truncate、锁外 fill、按打开实例错误序列和统一
   direct reclaim；v2.9 已建立协作式 Kernel Thread、混合 User/Kernel dispatcher，并把

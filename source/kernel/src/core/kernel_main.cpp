@@ -17,6 +17,7 @@
 #include <os/kernel/fs/procfs.hpp>
 #include <os/kernel/fs/root_file_system.hpp>
 #include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/fs/vfs_namespace_backing.hpp>
 #include <os/kernel/fs/vfs_namespace_cache.hpp>
 #include <os/kernel/memory/memory_manager.hpp>
 #include <os/kernel/process/block_io_device.hpp>
@@ -1052,6 +1053,8 @@ constexpr uint64_t OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY = 4096ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY = 2048ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY = 8192ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY = 4096ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_COMPACT_DENTRY_HASH_BUCKET_CAPACITY = 4096ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_COMPACT_INODE_HASH_BUCKET_CAPACITY = 2048ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_NODE_LIMIT = 128ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE = 0U;
@@ -2155,26 +2158,32 @@ ProcessResourcesWereReclaimed(const ProcessRuntimeStatistics &statistics,
                OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
            statistics.frames_before_processes.managed_frame_count ==
                statistics.frames_after_processes.managed_frame_count &&
-           statistics.frames_before_processes.free_frame_count ==
-               statistics.frames_after_processes.free_frame_count &&
-           statistics.frames_before_processes.allocated_frame_count ==
-               statistics.frames_after_processes.allocated_frame_count &&
            statistics.frames_before_processes.reserved_frame_count ==
                statistics.frames_after_processes.reserved_frame_count &&
-           statistics.virtual_addresses_before_processes.free_page_count ==
-               statistics.virtual_addresses_after_processes.free_page_count &&
-           statistics.virtual_addresses_before_processes.allocated_page_count ==
-               statistics.virtual_addresses_after_processes.allocated_page_count &&
            statistics.virtual_addresses_before_processes.reserved_page_count ==
                statistics.virtual_addresses_after_processes.reserved_page_count &&
-           statistics.virtual_addresses_before_processes.active_descriptor_count ==
-               statistics.virtual_addresses_after_processes.active_descriptor_count &&
-           statistics.virtual_addresses_after_processes.successful_allocation_count ==
-               statistics.virtual_addresses_before_processes.successful_allocation_count +
-                   expected_virtual_address_lifecycle_count &&
-           statistics.virtual_addresses_after_processes.release_count ==
-               statistics.virtual_addresses_before_processes.release_count +
-                   expected_virtual_address_lifecycle_count &&
+           statistics.virtual_addresses_after_processes.successful_allocation_count >=
+               statistics.virtual_addresses_before_processes.successful_allocation_count &&
+           statistics.virtual_addresses_after_processes.release_count >=
+               statistics.virtual_addresses_before_processes.release_count &&
+           statistics.virtual_addresses_after_processes.active_allocation_count >=
+               statistics.virtual_addresses_before_processes.active_allocation_count &&
+           statistics.virtual_addresses_after_processes.successful_allocation_count -
+                   statistics.virtual_addresses_before_processes.successful_allocation_count >=
+               expected_virtual_address_lifecycle_count &&
+           statistics.virtual_addresses_after_processes.release_count -
+                   statistics.virtual_addresses_before_processes.release_count >=
+               expected_virtual_address_lifecycle_count &&
+           statistics.virtual_addresses_after_processes.successful_allocation_count -
+                   statistics.virtual_addresses_before_processes.successful_allocation_count >=
+               statistics.virtual_addresses_after_processes.release_count -
+                   statistics.virtual_addresses_before_processes.release_count &&
+           statistics.virtual_addresses_after_processes.successful_allocation_count -
+                   statistics.virtual_addresses_before_processes.successful_allocation_count -
+                   (statistics.virtual_addresses_after_processes.release_count -
+                    statistics.virtual_addresses_before_processes.release_count) ==
+               statistics.virtual_addresses_after_processes.active_allocation_count -
+                   statistics.virtual_addresses_before_processes.active_allocation_count &&
            statistics.kernel_stacks_before_processes.slot_capacity ==
                statistics.kernel_stacks_after_processes.slot_capacity &&
            statistics.kernel_stacks_before_processes.active_stack_count ==
@@ -2892,6 +2901,71 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_PAGE_FAULT_INJECTION_MESSAGE);
     TriggerPageFault();
 }
+
+struct VfsNamespacePreferredBackingContext final {
+    KernelPageAllocation *allocation;
+    uint64_t excluded_resident_page_count;
+};
+
+[[nodiscard]] fs::Status
+ReleaseVfsNamespacePreferredBacking(void *const context, uint64_t &released_page_count) noexcept {
+    released_page_count = OS_KERNEL_MAIN_EMPTY_VALUE;
+    if (context == nullptr) {
+        return fs::Status::InvalidArgument;
+    }
+    VfsNamespacePreferredBackingContext &backing =
+        *static_cast<VfsNamespacePreferredBackingContext *>(context);
+    if (backing.allocation == nullptr || !backing.allocation->active ||
+        backing.allocation->page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+        backing.excluded_resident_page_count == OS_KERNEL_MAIN_EMPTY_VALUE) {
+        return fs::Status::InvalidArgument;
+    }
+    const uint64_t page_count = backing.allocation->page_count;
+    if (ReleaseKernelPages(*backing.allocation) != KernelPageAllocationStatus::Succeeded ||
+        !ReleaseUserMemoryExcludedResidentPageCount(backing.excluded_resident_page_count)) {
+        return fs::Status::DeviceFailure;
+    }
+    backing.excluded_resident_page_count = OS_KERNEL_MAIN_EMPTY_VALUE;
+    released_page_count = page_count;
+    return fs::Status::Succeeded;
+}
+
+[[nodiscard]] bool
+CalculateVfsNamespaceBackingResourceUsage(const ResourceSnapshot &before,
+                                          const ResourceSnapshot &after, const uint64_t page_count,
+                                          fs::NamespaceBackingResourceUsage &usage) noexcept {
+    usage = fs::NamespaceBackingResourceUsage{};
+    if (page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+        after.allocated_frame_count < before.allocated_frame_count ||
+        after.buddy_active_block_count < before.buddy_active_block_count ||
+        after.virtual_address_allocated_page_count < before.virtual_address_allocated_page_count ||
+        after.virtual_address_active_descriptor_count <
+            before.virtual_address_active_descriptor_count ||
+        after.virtual_address_active_allocation_count <
+            before.virtual_address_active_allocation_count) {
+        return false;
+    }
+    const fs::NamespaceBackingResourceUsage candidate{
+        .page_count = page_count,
+        .allocated_frame_count = after.allocated_frame_count - before.allocated_frame_count,
+        .buddy_active_block_count =
+            after.buddy_active_block_count - before.buddy_active_block_count,
+        .virtual_address_allocated_page_count = after.virtual_address_allocated_page_count -
+                                                before.virtual_address_allocated_page_count,
+        .virtual_address_active_descriptor_count = after.virtual_address_active_descriptor_count -
+                                                   before.virtual_address_active_descriptor_count,
+        .virtual_address_active_allocation_count = after.virtual_address_active_allocation_count -
+                                                   before.virtual_address_active_allocation_count,
+    };
+    if (candidate.allocated_frame_count < page_count ||
+        candidate.buddy_active_block_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+        candidate.virtual_address_allocated_page_count != page_count ||
+        candidate.virtual_address_active_allocation_count != 1ULL) {
+        return false;
+    }
+    usage = candidate;
+    return true;
+}
 }
 
 [[noreturn]] void RunKernel(const BootInfo *boot_info, const KernelFaultInjection fault_injection,
@@ -2917,25 +2991,17 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         RefreshProcessRuntimeResourceBaseline() != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
     }
-    // rootfs 校验区和命名空间固定槽必须驻留 BSS，不能消耗有界内核栈。
+    // rootfs 校验区驻留 BSS；命名空间缓存由真实内核页长期持有，避免伪造稀疏容量。
     static fs::RootFileSystem file_system{};
     fs::Memfs memfs{};
     fs::Devfs devfs{};
     fs::Procfs procfs{};
     KernelProcfsContext procfs_context{};
-    fs::Vfs vfs{};
+    static fs::Vfs vfs{};
     static fs::VfsNamespaceCache namespace_cache{};
-    static fs::VfsDentrySlot
-        namespace_dentry_storage[OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY]{};
-    static fs::VfsInodeSlot namespace_inode_storage[OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY]{};
-    static fs::VfsNamespaceHashEntry
-        namespace_dentry_hash_entries[OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY]{};
-    static uint64_t
-        namespace_dentry_hash_buckets[OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY]{};
-    static fs::VfsNamespaceHashEntry
-        namespace_inode_hash_entries[OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY]{};
-    static uint64_t
-        namespace_inode_hash_buckets[OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY]{};
+    static KernelPageAllocation namespace_stable_pages{};
+    static KernelPageAllocation namespace_preferred_hash_pages{};
+    static VfsNamespacePreferredBackingContext namespace_preferred_backing_context{};
     static fs::DevfsDevice devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
     static BlockIoDevice root_block_io_device{};
@@ -2955,24 +3021,106 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
             OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS, true) != RuntimeBlockIoStatus::Succeeded) {
         HaltProcessor();
     }
-    if (namespace_cache.Initialize(namespace_dentry_storage,
-                                   OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
-                                   namespace_inode_storage,
-                                   OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY) !=
-            fs::VfsNamespaceCacheStatus::Succeeded ||
+    const fs::VfsNamespaceBackingConfiguration namespace_backing_configuration{
+        .dentry_capacity = OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
+        .inode_capacity = OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY,
+        .preferred_dentry_bucket_capacity = OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY,
+        .preferred_inode_bucket_capacity = OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY,
+        .compact_dentry_bucket_capacity = OS_KERNEL_MAIN_VFS_COMPACT_DENTRY_HASH_BUCKET_CAPACITY,
+        .compact_inode_bucket_capacity = OS_KERNEL_MAIN_VFS_COMPACT_INODE_HASH_BUCKET_CAPACITY,
+        .resolution_context_capacity = fs::OS_KERNEL_VFS_DEFAULT_RESOLUTION_CONTEXT_CAPACITY,
+        .page_size_bytes = OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+    };
+    fs::VfsNamespaceBackingLayout namespace_backing_layout{};
+    ResourceSnapshot before_stable_namespace_backing{};
+    ResourceSnapshot after_stable_namespace_backing{};
+    ResourceSnapshot after_preferred_namespace_backing{};
+    if (fs::CalculateVfsNamespaceBackingLayout(namespace_backing_configuration,
+                                               namespace_backing_layout) !=
+            fs::VfsNamespaceBackingStatus::Succeeded ||
+        GetKernelResourceSnapshot(before_stable_namespace_backing) !=
+            ResourceSnapshotStatus::Succeeded ||
+        AllocateKernelPages(namespace_backing_layout.stable_page_count, namespace_stable_pages) !=
+            KernelPageAllocationStatus::Succeeded ||
+        GetKernelResourceSnapshot(after_stable_namespace_backing) !=
+            ResourceSnapshotStatus::Succeeded) {
+        HaltProcessor();
+    }
+    if (AllocateKernelPages(namespace_backing_layout.preferred_page_count,
+                            namespace_preferred_hash_pages) !=
+        KernelPageAllocationStatus::Succeeded) {
+        static_cast<void>(ReleaseKernelPages(namespace_stable_pages));
+        HaltProcessor();
+    }
+    fs::NamespaceBackingResourceUsage stable_namespace_backing_usage{};
+    fs::NamespaceBackingResourceUsage preferred_namespace_backing_usage{};
+    if (GetKernelResourceSnapshot(after_preferred_namespace_backing) !=
+            ResourceSnapshotStatus::Succeeded ||
+        !CalculateVfsNamespaceBackingResourceUsage(
+            before_stable_namespace_backing, after_stable_namespace_backing,
+            namespace_backing_layout.stable_page_count, stable_namespace_backing_usage) ||
+        !CalculateVfsNamespaceBackingResourceUsage(
+            after_stable_namespace_backing, after_preferred_namespace_backing,
+            namespace_backing_layout.preferred_page_count, preferred_namespace_backing_usage)) {
+        static_cast<void>(ReleaseKernelPages(namespace_preferred_hash_pages));
+        static_cast<void>(ReleaseKernelPages(namespace_stable_pages));
+        HaltProcessor();
+    }
+    if (stable_namespace_backing_usage.allocated_frame_count >
+            UINT64_MAX - preferred_namespace_backing_usage.allocated_frame_count ||
+        !ConfigureUserMemoryExcludedResidentPageCount(
+            stable_namespace_backing_usage.allocated_frame_count +
+            preferred_namespace_backing_usage.allocated_frame_count)) {
+        static_cast<void>(ReleaseKernelPages(namespace_preferred_hash_pages));
+        static_cast<void>(ReleaseKernelPages(namespace_stable_pages));
+        HaltProcessor();
+    }
+    namespace_preferred_backing_context = VfsNamespacePreferredBackingContext{
+        .allocation = &namespace_preferred_hash_pages,
+        .excluded_resident_page_count = preferred_namespace_backing_usage.allocated_frame_count,
+    };
+    fs::VfsNamespaceBackingView namespace_backing_view{};
+    if (fs::BuildVfsNamespaceBackingView(
+            namespace_backing_configuration, namespace_backing_layout,
+            namespace_stable_pages.virtual_address,
+            namespace_stable_pages.page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+            namespace_preferred_hash_pages.virtual_address,
+            namespace_preferred_hash_pages.page_count * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+            namespace_backing_view) != fs::VfsNamespaceBackingStatus::Succeeded) {
+        static_cast<void>(ReleaseKernelPages(namespace_preferred_hash_pages));
+        static_cast<void>(ReleaseKernelPages(namespace_stable_pages));
+        HaltProcessor();
+    }
+    if (namespace_cache.Initialize(
+            namespace_backing_view.dentry_storage, OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
+            namespace_backing_view.inode_storage,
+            OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY) != fs::VfsNamespaceCacheStatus::Succeeded ||
         namespace_cache.ConfigureHashIndex(
-            namespace_dentry_hash_entries, OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
-            namespace_dentry_hash_buckets, OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY,
-            namespace_inode_hash_entries, OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY,
-            namespace_inode_hash_buckets, OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY) !=
+            namespace_backing_view.dentry_hash_entries, OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
+            namespace_backing_view.preferred_dentry_hash_buckets,
+            OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY,
+            namespace_backing_view.inode_hash_entries, OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY,
+            namespace_backing_view.preferred_inode_hash_buckets,
+            OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY) !=
             fs::VfsNamespaceCacheStatus::Succeeded) {
         HaltProcessor();
     }
     InitializeKernelFileSystem(vga_console, file_system, root_block_io_device);
     InitializeKernelVfs(vga_console, file_system, memfs, devfs, procfs, procfs_context, vfs,
-                        namespace_cache, devfs_devices,
-                        fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
-                        OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
+                        namespace_cache, devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY,
+                        mounts, OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
+    if (vfs.ConfigureResolutionContexts(namespace_backing_view.resolution_contexts,
+                                        fs::OS_KERNEL_VFS_DEFAULT_RESOLUTION_CONTEXT_CAPACITY) !=
+            fs::Status::Succeeded ||
+        vfs.ConfigureNamespaceCacheShrinkTier(
+            namespace_backing_view.compact_dentry_hash_buckets,
+            OS_KERNEL_MAIN_VFS_COMPACT_DENTRY_HASH_BUCKET_CAPACITY,
+            namespace_backing_view.compact_inode_hash_buckets,
+            OS_KERNEL_MAIN_VFS_COMPACT_INODE_HASH_BUCKET_CAPACITY, stable_namespace_backing_usage,
+            preferred_namespace_backing_usage, &namespace_preferred_backing_context,
+            ReleaseVfsNamespacePreferredBacking) != fs::Status::Succeeded) {
+        HaltProcessor();
+    }
     if (AttachProcessVfs(vfs, swap_block_io_device) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
@@ -3049,6 +3197,13 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     const UserFilePageCacheRuntimeStatistics file_cache_runtime_statistics =
         GetUserFilePageCacheRuntimeStatistics();
     const ProcessRuntimeStatistics process_runtime_statistics = GetProcessRuntimeStatistics();
+    const fs::Statistics final_vfs_statistics = vfs.ReadStatistics();
+    if (process_runtime_statistics.background_reclaim.batch_count != OS_KERNEL_MAIN_EMPTY_VALUE &&
+        (final_vfs_statistics.namespace_hash_shrink_count != 1ULL ||
+         final_vfs_statistics.released_namespace_page_count !=
+             namespace_backing_layout.preferred_page_count)) {
+        HaltProcessor();
+    }
     const FilePageLoadStatistics &file_page_load_statistics =
         process_runtime_statistics.file_page_loads;
     const FilePageWritebackStatistics &file_page_writeback_statistics =

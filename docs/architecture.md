@@ -2650,6 +2650,37 @@ miss 在全局 resolution transaction 内访问一次 backend，再发布结果�
 shrink 不计入物理页回收。详见
 [ADR 0075](adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。
 
+## v2.12 分片解析、sequence 与页后备 namespace
+
+生产解析不再持有全局 resolution transaction：完整 dentry key 的 hash 选择 64 个 lookup
+`RuntimeMutex` 之一，inode identity 选择独立的 64 个 metadata shard。同 key 在 shard 内
+二次查 cache、执行唯一 backend fill 并发布；不同 shard 可并行。涉及多个 inode 的写操作
+先去重 shard，按编号升序加锁、逆序释放。
+
+每次 path walk 从 128 槽 `VfsResolutionContext` pool 取得两个 4096 字节 scratch。namespace
+单写事务在 commit/invalidation 期间令 sequence 为奇数，结束后推进为新偶数。resolver 读取
+起始偶数、完成 walk 后复核；序列变化即丢弃 dentry 快照并有界重试，从而不依赖全局读锁
+关闭 rename/unlink/create/mount 可见性窗口。
+
+```text
+stable KernelPageAllocation
+  dentry/inode slots + hash entries
+  compact 4096/2048 buckets
+  128 resolution contexts
+
+preferred KernelPageAllocation
+  8192/4096 buckets
+        |
+        | first pressure shrink
+        v
+RebuildHashBuckets(compact) -> ReleaseKernelPages(preferred)
+```
+
+`VfsNamespaceBackingLayout` 对每段执行乘法/加法/对齐溢出检查。内核分别记录两次分配前后的
+frame、buddy、KVA page/descriptor/allocation 差值；资源快照按实际差值归一化。长期 namespace
+frame 不消耗 user resident budget，preferred 页释放后同步减少排除数。详见
+[ADR 0076](adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

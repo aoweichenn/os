@@ -1148,16 +1148,39 @@ SelectProcessRuntimeLimits(const uint64_t managed_memory_bytes) noexcept {
 
 [[nodiscard]] bool DiscountPersistentVfsResources(ResourceSnapshot &snapshot,
                                                   const fs::ResourceUsage &usage) noexcept {
+    const fs::NamespaceBackingResourceUsage &namespace_usage = usage.namespace_backing;
     if (snapshot.heap_consumed_bytes < usage.heap_consumed_bytes ||
         snapshot.heap_active_requested_bytes < usage.heap_active_requested_bytes ||
         snapshot.heap_allocation_count < usage.heap_allocation_count ||
-        snapshot.vnode_count < usage.vnode_count) {
+        snapshot.vnode_count < usage.vnode_count ||
+        snapshot.allocated_frame_count < namespace_usage.allocated_frame_count ||
+        snapshot.buddy_active_block_count < namespace_usage.buddy_active_block_count ||
+        snapshot.free_frame_count > UINT64_MAX - namespace_usage.allocated_frame_count ||
+        snapshot.virtual_address_allocated_page_count <
+            namespace_usage.virtual_address_allocated_page_count ||
+        snapshot.virtual_address_free_page_count >
+            UINT64_MAX - namespace_usage.virtual_address_allocated_page_count ||
+        snapshot.virtual_address_active_descriptor_count <
+            namespace_usage.virtual_address_active_descriptor_count ||
+        snapshot.virtual_address_active_allocation_count <
+            namespace_usage.virtual_address_active_allocation_count) {
         return false;
     }
     snapshot.heap_consumed_bytes -= usage.heap_consumed_bytes;
     snapshot.heap_active_requested_bytes -= usage.heap_active_requested_bytes;
     snapshot.heap_allocation_count -= usage.heap_allocation_count;
     snapshot.vnode_count -= usage.vnode_count;
+    snapshot.free_frame_count += namespace_usage.allocated_frame_count;
+    snapshot.allocated_frame_count -= namespace_usage.allocated_frame_count;
+    snapshot.buddy_active_block_count -= namespace_usage.buddy_active_block_count;
+    snapshot.virtual_address_free_page_count +=
+        namespace_usage.virtual_address_allocated_page_count;
+    snapshot.virtual_address_allocated_page_count -=
+        namespace_usage.virtual_address_allocated_page_count;
+    snapshot.virtual_address_active_descriptor_count -=
+        namespace_usage.virtual_address_active_descriptor_count;
+    snapshot.virtual_address_active_allocation_count -=
+        namespace_usage.virtual_address_active_allocation_count;
     return ValidateResourceSnapshot(snapshot) == ResourceSnapshotStatus::Succeeded;
 }
 
@@ -2374,7 +2397,7 @@ ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
     }
 
     if (process_vfs != nullptr) {
-        // 固定 BSS backing 不伪造物理页回收；这里只收缩可重建的命名空间逻辑条目。
+        // 先收缩逻辑条目；首次压力批次还会切到 compact hash 并归还 preferred backing 页。
         fs::NamespaceCacheReclaimResult namespace_reclaim{};
         if (process_vfs->ReclaimNamespaceCache(
                 OS_KERNEL_PROCESS_RUNTIME_BACKGROUND_RECLAIM_BATCH_PAGE_COUNT,

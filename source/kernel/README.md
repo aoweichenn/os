@@ -339,3 +339,10 @@ bucket 为 8192/4096，固定 BSS 不计作物理页回收，也不增加来宾�
 [ADR 0073](../../docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)、
 [ADR 0074](../../docs/adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md)、
 [ADR 0075](../../docs/adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。
+
+v2.12 用 64 个 dentry shard、64 个 inode metadata shard 和 128 个独立解析上下文删除读侧
+全局串行；namespace sequence 让跨 mutation 的 resolver 有界重试。`fs/vfs_namespace_backing.*`
+把 4096/2048 slot、index、compact bucket 和 scratch 放入真实内核页；首次压力批次在线重建
+hash 并释放 preferred 8192/4096 bucket 页。实际 frame/buddy/KVA 差值进入资源快照，稳定
+namespace 页不挤占 user resident budget。设计见
+[ADR 0076](../../docs/adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。

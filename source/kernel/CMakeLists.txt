@@ -58,6 +58,7 @@ set(
     include/os/kernel/fs/root_file_system_format.hpp
     include/os/kernel/fs/root_journal.hpp
     include/os/kernel/fs/vfs.hpp
+    include/os/kernel/fs/vfs_namespace_backing.hpp
     include/os/kernel/fs/vfs_namespace_cache.hpp
 )
 set(
@@ -213,6 +214,7 @@ set(
     src/fs/root_file_system_format.cpp
     src/fs/root_journal.cpp
     src/fs/vfs.cpp
+    src/fs/vfs_namespace_backing.cpp
     src/fs/vfs_namespace_cache.cpp
 )
 set(
@@ -584,6 +586,7 @@ add_library(
         src/fs/root_file_system_format.cpp
         src/fs/root_journal.cpp
         src/fs/vfs.cpp
+        src/fs/vfs_namespace_backing.cpp
         src/fs/vfs_namespace_cache.cpp
         src/io/terminal.cpp
         src/io/file_description.cpp
@@ -609,6 +612,7 @@ add_library(
         include/os/kernel/fs/vfs_namespace_cache.hpp
         include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
+        include/os/kernel/fs/vfs_namespace_backing.hpp
         include/os/kernel/io/terminal.hpp
         include/os/kernel/io/file_description.hpp
         include/os/kernel/io/file_table.hpp
@@ -670,6 +674,7 @@ add_library(
         src/fs/root_file_system_format.cpp
         src/fs/root_journal.cpp
         src/fs/vfs.cpp
+        src/fs/vfs_namespace_backing.cpp
         src/fs/vfs_namespace_cache.cpp
         src/memory/kernel_heap.cpp
         src/security/credentials.cpp
@@ -685,6 +690,7 @@ add_library(
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
+        include/os/kernel/fs/vfs_namespace_backing.hpp
         include/os/kernel/fs/vfs_namespace_cache.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/security/credentials.hpp

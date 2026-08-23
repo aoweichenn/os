@@ -107,6 +107,7 @@ uint8_t user_swap_clone_scratch_page[OS_KERNEL_MEMORY_PAGE_SIZE_BYTES]{};
 UserAddressSpace *active_user_address_space;
 uint64_t next_address_space_identifier = OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT;
 uint64_t user_memory_resident_limit_override_page_count;
+uint64_t user_memory_excluded_resident_page_count;
 uint64_t user_memory_swappiness;
 bool user_memory_swappiness_configured;
 bool user_virtual_memory_initialized;
@@ -189,9 +190,12 @@ SelectFilePageCacheRuntimeConfiguration(const uint64_t managed_page_count) noexc
 }
 
 [[nodiscard]] bool SynchronizeUserMemoryPressure() noexcept {
-    return user_memory_pressure_controller.SynchronizeResident(
-               GetPhysicalFrameAllocatorStatistics().allocated_frame_count) ==
-           MemoryPressureStatus::Succeeded;
+    const uint64_t allocated_frame_count =
+        GetPhysicalFrameAllocatorStatistics().allocated_frame_count;
+    return allocated_frame_count >= user_memory_excluded_resident_page_count &&
+           user_memory_pressure_controller.SynchronizeResident(
+               allocated_frame_count - user_memory_excluded_resident_page_count) ==
+               MemoryPressureStatus::Succeeded;
 }
 
 [[nodiscard]] bool SwapOutUserPages(UserAddressSpace &address_space, uint64_t target_page_count,
@@ -2057,6 +2061,7 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
     user_file_page_cache_readahead_pressure_stop_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     user_memory_reclaim_operations = UserMemoryReclaimOperations{};
     user_memory_reclaim_statistics = UserMemoryReclaimStatistics{};
+    user_memory_excluded_resident_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     if (!user_memory_swappiness_configured) {
         user_memory_swappiness = OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS;
     }
@@ -2070,6 +2075,34 @@ bool ConfigureUserMemoryResidentLimit(const uint64_t resident_limit_page_count) 
         return false;
     }
     user_memory_resident_limit_override_page_count = resident_limit_page_count;
+    return true;
+}
+
+bool ConfigureUserMemoryExcludedResidentPageCount(const uint64_t excluded_page_count) noexcept {
+    if (!user_virtual_memory_initialized ||
+        excluded_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        user_memory_excluded_resident_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+        return false;
+    }
+    user_memory_excluded_resident_page_count = excluded_page_count;
+    if (!SynchronizeUserMemoryPressure()) {
+        user_memory_excluded_resident_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+        return false;
+    }
+    return true;
+}
+
+bool ReleaseUserMemoryExcludedResidentPageCount(const uint64_t released_page_count) noexcept {
+    if (!user_virtual_memory_initialized ||
+        released_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        released_page_count > user_memory_excluded_resident_page_count) {
+        return false;
+    }
+    user_memory_excluded_resident_page_count -= released_page_count;
+    if (!SynchronizeUserMemoryPressure()) {
+        user_memory_excluded_resident_page_count += released_page_count;
+        return false;
+    }
     return true;
 }
 

@@ -572,6 +572,27 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - 最终必须通过 production-cache 并发/错误/修改 integration、memfs/rootfs 十万步 oracle、
   ATA/NVMe primary、reclaim/OOM、EIO/timeout 与三启动 persistence。
 
+## v2.12 可扩展、页后备命名空间要求
+
+- dentry miss 和 inode metadata miss 必须各按 64 个稳定 identity shard 协调；同 key 只能有
+  一个 backend owner，不同 shard 不得被全局 resolution/metadata 锁串行；
+- 生产 path walk 必须从 128 槽独立 scratch pool 获取上下文，容量耗尽明确失败，路径热区
+  不得动态分配；
+- metadata 多对象写操作必须将 shard 去重、升序加锁、逆序释放；namespace mutation 继续
+  单写，锁内不得等待用户指针或设备 IRQ；
+- namespace sequence 必须以偶数表示稳定、奇数表示 commit/invalidation 进行中；resolver
+  起止序列不同不得返回结果，重试必须有界；
+- page-backed layout 必须检查乘法、加法、对齐和地址范围溢出；错位、空或不足 storage 必须
+  fail closed；每个配置页都必须由真实 frame+KVA backing，不得使用稀疏宿主假容量；
+- hash bucket 必须支持持锁在线重建，重建前预检全部 slot/index；切换 compact 指针后才可
+  释放 preferred backing；
+- 资源账本必须记录实际 frame、buddy block、KVA page/descriptor/allocation 差值；首次压力
+  回收只允许释放一次 preferred tier，稳定 slot/context 页保留到 teardown；
+- 用户 resident budget 必须排除长期不可回收 namespace frame，preferred 页释放时同步减少
+  排除数；9216 页 reclaim profile 不得修改；
+- 不新增逐 lookup/stat/lock VGA 日志；验证必须覆盖同 key 合并、不同 shard 并行、metadata
+  并行、mutation retry、hash rebuild、release、溢出、十万步 oracle 和 4 GiB primary/reclaim。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

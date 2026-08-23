@@ -1658,6 +1658,35 @@ V2.11 六个工程增量至此闭合；按既有用户要求继续保持未发�
 - dentry/inode 元数据可由内存压力回收，引用项和进行中的 lookup 不能被释放；
 - ATA/NVMe primary、错误恢复、reclaim/OOM 与三启动 persistence 保持通过。
 
+### v2.12 可扩展、页后备 VFS 命名空间
+
+**范围**
+
+- 64 shard dentry/inode waiter 替代全局读侧事务，128 个解析上下文允许无关 path walk 并行；
+- 单写 namespace mutation 以偶/奇 sequence 让并发 resolver 检测提交并有界重试；
+- 4096/2048 固定容量保持不变，但 slot、index、bucket 和 scratch 使用真实内核页；
+- preferred 8192/4096 bucket 在首次 pressure 后重建到 compact 4096/2048 并归还物理页；
+- 不改变 ABI、rootfs v4、4 GiB/128 GiB 规格，不引入网络、SMP 或图形。
+
+**六个增量（全部完成）**
+
+1. lookup waiter 分片；
+2. 独立 resolution context 与无关路径并行；
+3. rename/unlink/create/mount sequence retry；
+4. 溢出安全的 page-backed layout 与真实 frame/KVA 所有权；
+5. 在线 hash rebuild、compact tier 和 preferred 页释放；
+6. concurrency、mutation、layout、pressure 与资源账本完整矩阵。
+
+设计由 [ADR 0076](adr/0076-v2-12-scalable-page-backed-vfs-namespace.md) 冻结。V2.12 只形成
+工程候选，不创建公开 tag。
+
+**退出条件**
+
+- 同 key miss 合并、不同 shard/metadata miss 并行，mutation 跨窗结果必须重试；
+- backing 每一页都来自真实分配，释放数与 frame/buddy/KVA 账本一致；
+- 9216 页压力规格不得因长期 namespace 页而漂移；pressure 必须触发 compact rebuild/release；
+- host oracle、4 GiB primary/reclaim 和完整 fresh CAW verify 全绿。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

@@ -277,6 +277,10 @@ struct UserFileReadaheadControl final {
 
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
 [[nodiscard]] bool ConfigureUserMemoryResidentLimit(uint64_t resident_limit_page_count) noexcept;
+[[nodiscard]] bool
+ConfigureUserMemoryExcludedResidentPageCount(uint64_t excluded_page_count) noexcept;
+[[nodiscard]] bool
+ReleaseUserMemoryExcludedResidentPageCount(uint64_t released_page_count) noexcept;
 [[nodiscard]] bool ConfigureUserMemorySwappiness(uint64_t swappiness) noexcept;
 [[nodiscard]] bool ApplyConfiguredUserMemoryResidentLimit() noexcept;
 [[nodiscard]] UserAddressSpaceStatus AttachUserSwap(FileSystemBlockDevice &device) noexcept;

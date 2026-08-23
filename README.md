@@ -100,6 +100,11 @@ EIO 不会变成 Negative；固定 BSS 不伪装物理页回收。边界见
 [ADR 0073](docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)、
 [ADR 0074](docs/adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md) 与
 [ADR 0075](docs/adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。
+v2.12 已把上述缓存推进为可扩展页后备实现：dentry/inode 各 64 个 waiter shard、128 个独立
+解析上下文、namespace sequence retry、真实稳定/preferred 页、在线 compact hash rebuild
+和 preferred 页释放均已接入；长期页从 user resident budget 精确排除，不改变 9216 页压力
+规格。边界见 [v2.12 记录](docs/releases/v2.12.md) 与
+[ADR 0076](docs/adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

@@ -2046,3 +2046,25 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - final 4 GiB ATA primary 71.15 秒；ATA/NVMe reclaim 74.79/82.83 秒，ATA/NVMe OOM
   75.51/74.41 秒，NVMe 正常/EIO/timeout 2.62/2.56/10.05 秒，NVMe root primary
   72.90 秒，ATA/NVMe persistence 141.98/139.42 秒。
+
+## v2.12 分片并发与页后备 namespace 测试
+
+- `os_kernel_vfs_namespace_backing_unit_tests` 覆盖稳定/preferred 双区域布局、类型对齐、页
+  取整、乘加溢出、错位地址和容量不足；
+- namespace cache unit 在已有 Cached 正负项上在线重建新 bucket，并继续验证命中、失效、
+  LRU、统计和 Destroy；
+- dentry production integration 配置八个解析上下文：八线程同 key 仍只有一次 backend lookup，
+  八个不同 shard 的 miss 必须出现 backend 并行峰值；另一线程在慢 lookup 中提交 mkdir，
+  resolver 必须观察 sequence 变化并至少重试一次；
+- inode metadata integration 选择四个不同 identity shard，强制 backend stat 延迟，要求四个
+  miss 并行且每个 identity 只 fill 一次；
+- 同一 production test 触发 namespace shrink，要求 bucket 从 32/32 重建到 16/16、release
+  callback 只调用一次、VFS released-page 统计精确；
+- fresh CAW focused 9/9、32.81 秒；final 4 GiB ATA primary 67.48 秒；精确 9216 页
+  ATA/NVMe reclaim pressure 在修正长期 namespace frame 的 user-budget 排除后分别
+  70.34/75.02 秒通过；
+- 不增加新 QEMU 文本 marker；system acceptance 仍要求 QMP `screendump` 至少 512 个非黑像素，
+  并在 background reclaim 非零时由内核终态断言 compact rebuild 和 preferred release。
+- final fresh CAW `python3 tools/os.py verify` 为 248/248、0 失败：75 unit、84 integration、
+  56 randomized、33 system，含 25 条 failure-path；CTest 823.47 秒，端到端约 934 秒；
+  ATA/NVMe persistence 为 132.89/135.06 秒。

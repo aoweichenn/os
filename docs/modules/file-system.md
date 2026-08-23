@@ -574,3 +574,20 @@ hash，Stale 只保留旧 token。LRU 与 background pressure 每批回收最多
 条目；固定 backing 不计入物理页。设计见
 [ADR 0074](../adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md) 与
 [ADR 0075](../adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。
+
+## v2.12 分片与页后备 namespace
+
+`Vfs` 现在为 dentry lookup 和 inode metadata 各维护 64 个 `RuntimeMutex` shard。读侧按稳定
+key/identity 选 shard；多 inode mutation 用 `MetadataLockGuard` 升序获取去重 shard。128 个
+`VfsResolutionContext` 从真实页稳定区提供独立 path scratch，生产解析不再依赖全局
+resolution lock。
+
+namespace mutation 仍保持单写，并以偶/奇 sequence 发布一致性。resolver 若跨过 commit，
+会撤销本轮缓存观察并最多重试八次；NotFound/EIO、mount/cwd/root、symlink、DAC、orphan 和
+打开 vnode generation 的 V2.11 语义保持不变。
+
+`vfs_namespace_backing.*` 只负责溢出安全的布局/视图，不自行分配。Kernel 用两个真实
+`KernelPageAllocation` 实例提供稳定区和 preferred bucket 区。首次 pressure shrink 先把
+cache 在线重建到稳定区的 compact bucket，再释放 preferred 页；实际 frame/buddy/KVA 差值
+进入 VFS 资源账本。详见
+[ADR 0076](../adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。

@@ -1317,6 +1317,11 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_vfs_namespace_backing_unit_tests
+    unit/kernel/vfs_namespace_backing_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
     os_kernel_vfs_inode_metadata_cache_unit_tests
     unit/kernel/vfs_inode_metadata_cache_test.cpp
     "unit"

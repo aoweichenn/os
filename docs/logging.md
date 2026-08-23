@@ -1449,3 +1449,10 @@ useful/waste 与 request/feedback 终态，避免只留下黑屏或停机位置�
 V2.11 后四个增量同样不新增逐 dentry/hash/shrink marker。Positive/Negative 与 backend
 lookup 次数由 hosted integration 直接计数；hash/index 由 Validate 审计；pressure shrinker
 由返回值和 VFS 统计验证。来宾继续只输出既有文件系统与内存最终聚合。
+
+## v2.12 命名空间并发与真实页日志边界
+
+V2.12 不逐 shard、waiter、sequence retry、context acquire、hash rebuild 或页释放打印。
+这些路径只维护有界统计，由 hosted 强制交错和 `Validate` 读取。4 GiB QEMU 继续复用既有
+内存压力、资源快照与 VGA 可见性协议；background reclaim 非零时，内核在终态静默断言
+hash shrink 恰一次且 released page 与 preferred layout 相等，失败才走既有 fail-stop。

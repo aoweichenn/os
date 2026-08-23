@@ -165,6 +165,7 @@ struct VfsNamespaceCacheStatistics final {
     uint64_t inode_metadata_load_cancellation_count;
     uint64_t inode_metadata_load_contention_count;
     uint64_t inode_metadata_invalidation_count;
+    uint64_t hash_rebuild_count;
 };
 
 enum class VfsNamespaceCacheStatus : uint64_t {
@@ -199,11 +200,14 @@ class VfsNamespaceCache final {
                                                      uint64_t dentry_capacity,
                                                      VfsInodeSlot *inode_storage,
                                                      uint64_t inode_capacity) noexcept;
-    [[nodiscard]] VfsNamespaceCacheStatus ConfigureHashIndex(
-        VfsNamespaceHashEntry *dentry_entries, uint64_t dentry_entry_capacity,
-        uint64_t *dentry_buckets, uint64_t dentry_bucket_capacity,
-        VfsNamespaceHashEntry *inode_entries, uint64_t inode_entry_capacity,
-        uint64_t *inode_buckets, uint64_t inode_bucket_capacity) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus
+    ConfigureHashIndex(VfsNamespaceHashEntry *dentry_entries, uint64_t dentry_entry_capacity,
+                       uint64_t *dentry_buckets, uint64_t dentry_bucket_capacity,
+                       VfsNamespaceHashEntry *inode_entries, uint64_t inode_entry_capacity,
+                       uint64_t *inode_buckets, uint64_t inode_bucket_capacity) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus
+    RebuildHashBuckets(uint64_t *dentry_buckets, uint64_t dentry_bucket_capacity,
+                       uint64_t *inode_buckets, uint64_t inode_bucket_capacity) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus PublishPositive(const VfsDentryKey &key,
                                                           const VfsInodeIdentity &inode_identity,
                                                           NodeType inode_type,
@@ -218,13 +222,11 @@ class VfsNamespaceCache final {
     [[nodiscard]] VfsNamespaceCacheStatus ReleaseInode(VfsInodeToken token) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus
     PrepareInodeMetadata(const VfsInodeIdentity &identity, NodeType type,
-                         VfsInodeMetadataToken &token,
-                         VfsInodeMetadataSnapshot &snapshot) noexcept;
+                         VfsInodeMetadataToken &token, VfsInodeMetadataSnapshot &snapshot) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus
     CompleteInodeMetadata(VfsInodeMetadataToken token,
                           const BackendNodeInformation &metadata) noexcept;
-    [[nodiscard]] VfsNamespaceCacheStatus
-    CancelInodeMetadata(VfsInodeMetadataToken token) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus CancelInodeMetadata(VfsInodeMetadataToken token) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus
     InvalidateInodeMetadata(const VfsInodeIdentity &identity) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus InvalidateDentry(const VfsDentryKey &key) noexcept;
@@ -291,8 +293,10 @@ class VfsNamespaceCache final {
                                            const VfsInodeIdentity &right) noexcept;
 [[nodiscard]] bool VfsInodeMetadataIsValid(const BackendNodeInformation &metadata,
                                            NodeType type) noexcept;
+[[nodiscard]] uint64_t VfsInodeIdentityHash(const VfsInodeIdentity &identity) noexcept;
 [[nodiscard]] bool VfsDentryKeyIsValid(const VfsDentryKey &key) noexcept;
 [[nodiscard]] bool VfsDentryKeysEqual(const VfsDentryKey &left, const VfsDentryKey &right) noexcept;
+[[nodiscard]] uint64_t VfsDentryKeyHash(const VfsDentryKey &key) noexcept;
 [[nodiscard]] VfsNamespaceCacheStatus
 BuildVfsDentryKey(uint64_t mount_identifier, const VfsInodeIdentity &parent, const uint8_t *name,
                   uint64_t name_length_bytes, VfsDentryKey &key) noexcept;

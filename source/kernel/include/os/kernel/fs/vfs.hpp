@@ -13,6 +13,9 @@ inline constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES = 4096ULL;
 inline constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES = 255ULL;
 inline constexpr uint64_t OS_KERNEL_VFS_DEFAULT_MOUNT_CAPACITY = 64ULL;
 inline constexpr uint64_t OS_KERNEL_VFS_INVALID_MOUNT_IDENTIFIER = UINT64_MAX;
+inline constexpr uint64_t OS_KERNEL_VFS_LOOKUP_LOCK_SHARD_COUNT = 64ULL;
+inline constexpr uint64_t OS_KERNEL_VFS_METADATA_LOCK_SHARD_COUNT = 64ULL;
+inline constexpr uint64_t OS_KERNEL_VFS_DEFAULT_RESOLUTION_CONTEXT_CAPACITY = 128ULL;
 
 enum class Status : uint64_t {
     Succeeded,
@@ -122,6 +125,8 @@ using RegularFileSizeCacheOperation = Status (*)(void *context, const Vnode &vno
                                                  uint64_t &size_bytes) noexcept;
 using RegularFileTruncateCacheOperation = Status (*)(void *context, const Vnode &vnode,
                                                      uint64_t size_bytes) noexcept;
+using NamespaceBackingReleaseOperation = Status (*)(void *context,
+                                                    uint64_t &released_page_count) noexcept;
 
 struct BackendNodeInformation final {
     uint64_t size_bytes;
@@ -252,11 +257,32 @@ struct Statistics final {
     uint64_t namespace_reclaim_operation_count;
     uint64_t reclaimed_dentry_count;
     uint64_t reclaimed_inode_count;
+    uint64_t namespace_retry_count;
+    uint64_t peak_resolution_context_count;
+    uint64_t namespace_hash_shrink_count;
+    uint64_t released_namespace_page_count;
 };
 
 struct NamespaceCacheReclaimResult final {
     uint64_t dentry_count;
     uint64_t inode_count;
+    uint64_t released_page_count;
+    bool hash_tier_shrunk;
+};
+
+struct VfsResolutionContext final {
+    uint8_t path_a[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES];
+    uint8_t path_b[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES];
+    bool active;
+};
+
+struct NamespaceBackingResourceUsage final {
+    uint64_t page_count;
+    uint64_t allocated_frame_count;
+    uint64_t buddy_active_block_count;
+    uint64_t virtual_address_allocated_page_count;
+    uint64_t virtual_address_active_descriptor_count;
+    uint64_t virtual_address_active_allocation_count;
 };
 
 struct ResourceUsage final {
@@ -264,6 +290,7 @@ struct ResourceUsage final {
     uint64_t heap_active_requested_bytes;
     uint64_t heap_allocation_count;
     uint64_t vnode_count;
+    NamespaceBackingResourceUsage namespace_backing;
 };
 
 class VfsNamespaceCache;
@@ -330,6 +357,13 @@ class Vfs final {
                                   RegularFileSizeCacheOperation size_operation,
                                   RegularFileTruncateCacheOperation truncate_operation) noexcept;
     [[nodiscard]] Status ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept;
+    [[nodiscard]] Status ConfigureResolutionContexts(VfsResolutionContext *contexts,
+                                                     uint64_t capacity) noexcept;
+    [[nodiscard]] Status ConfigureNamespaceCacheShrinkTier(
+        uint64_t *dentry_buckets, uint64_t dentry_bucket_capacity, uint64_t *inode_buckets,
+        uint64_t inode_bucket_capacity, const NamespaceBackingResourceUsage &stable_usage,
+        const NamespaceBackingResourceUsage &preferred_usage, void *backing_context,
+        NamespaceBackingReleaseOperation release_operation) noexcept;
     [[nodiscard]] Status ReclaimNamespaceCache(uint64_t maximum_dentry_count,
                                                uint64_t maximum_inode_count,
                                                NamespaceCacheReclaimResult &result) noexcept;
@@ -370,6 +404,38 @@ class Vfs final {
     [[nodiscard]] Status ReadResourceUsage(ResourceUsage &usage) const noexcept;
 
   private:
+    class NamespaceMutationGuard final {
+      public:
+        explicit NamespaceMutationGuard(Vfs &vfs) noexcept;
+        ~NamespaceMutationGuard() noexcept;
+        [[nodiscard]] bool Active() const noexcept;
+
+        NamespaceMutationGuard(const NamespaceMutationGuard &) = delete;
+        NamespaceMutationGuard &operator=(const NamespaceMutationGuard &) = delete;
+
+      private:
+        Vfs &vfs_;
+        bool active_;
+    };
+
+    class MetadataLockGuard final {
+      public:
+        MetadataLockGuard(Vfs &vfs, const Vnode *vnodes, uint64_t vnode_count) noexcept;
+        ~MetadataLockGuard() noexcept;
+        [[nodiscard]] bool Active() const noexcept;
+
+        MetadataLockGuard(const MetadataLockGuard &) = delete;
+        MetadataLockGuard &operator=(const MetadataLockGuard &) = delete;
+
+      private:
+        static constexpr uint64_t OS_KERNEL_VFS_METADATA_GUARD_MAXIMUM_VNODE_COUNT = 4ULL;
+
+        Vfs &vfs_;
+        uint64_t shard_indices_[OS_KERNEL_VFS_METADATA_GUARD_MAXIMUM_VNODE_COUNT]{};
+        uint64_t shard_count_{};
+        bool active_{};
+    };
+
     struct ParentResolution final {
         Path parent;
         uint8_t name[OS_KERNEL_VFS_MAXIMUM_NAME_LENGTH_BYTES];
@@ -390,7 +456,12 @@ class Vfs final {
                                        ParentResolution &resolution) noexcept;
     [[nodiscard]] Status ResolveInternal(const FsContext &context, const uint8_t *path,
                                          uint64_t path_length_bytes, bool follow_final_link,
+                                         VfsResolutionContext &resolution_context,
                                          Path &resolved_path) noexcept;
+    [[nodiscard]] Status ResolveWithFinalLinkOption(const FsContext &context, const uint8_t *path,
+                                                    uint64_t path_length_bytes,
+                                                    bool follow_final_link,
+                                                    Path &resolved_path) noexcept;
     [[nodiscard]] Status ReadPathName(const Path &path, uint8_t *name, uint64_t name_capacity_bytes,
                                       uint64_t &name_length_bytes) noexcept;
     [[nodiscard]] Status ValidateSuperblock(const Superblock &superblock) const noexcept;
@@ -398,8 +469,8 @@ class Vfs final {
                                 uint64_t path_length_bytes, NodeType expected_type) noexcept;
     [[nodiscard]] Status ReadNodeInformation(const Path &path,
                                              BackendNodeInformation &information) noexcept;
-    [[nodiscard]] Status ReadNodeInformationUncached(
-        const Path &path, BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status ReadNodeInformationUncached(const Path &path,
+                                                     BackendNodeInformation &information) noexcept;
     [[nodiscard]] Status InvalidateNodeInformation(const Vnode &vnode) noexcept;
     [[nodiscard]] Status LookupChild(const Path &parent, const uint8_t *name,
                                      uint64_t name_length_bytes, Vnode &child) noexcept;
@@ -418,15 +489,28 @@ class Vfs final {
                                                 NodeType type, os::abi::FileMode requested_mode,
                                                 NodeCreationAttributes &attributes) noexcept;
     void RecordResolution(Status status) noexcept;
+    [[nodiscard]] VfsResolutionContext *AcquireResolutionContext() noexcept;
+    void ReleaseResolutionContext(VfsResolutionContext &context) noexcept;
+    [[nodiscard]] uint64_t ReadNamespaceSequence() const noexcept;
+    [[nodiscard]] bool BeginNamespaceMutation() noexcept;
+    [[nodiscard]] bool EndNamespaceMutation() noexcept;
 
     Mount *mounts_{nullptr};
     uint64_t mount_capacity_{};
     uint64_t mount_count_{};
     mutable SpinLock lock_{};
     mutable RuntimeMutex resolution_lock_{};
-    mutable RuntimeMutex metadata_lock_{};
-    uint8_t resolution_path_a_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
-    uint8_t resolution_path_b_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
+    mutable RuntimeMutex metadata_locks_[OS_KERNEL_VFS_METADATA_LOCK_SHARD_COUNT]{};
+    mutable RuntimeMutex namespace_mutation_lock_{};
+    mutable RuntimeMutex namespace_reclaim_lock_{};
+    mutable RuntimeMutex lookup_locks_[OS_KERNEL_VFS_LOOKUP_LOCK_SHARD_COUNT]{};
+    mutable SpinLock resolution_context_lock_{};
+    VfsResolutionContext fallback_resolution_context_{};
+    VfsResolutionContext *resolution_contexts_{};
+    uint64_t resolution_context_capacity_{};
+    uint64_t active_resolution_context_count_{};
+    uint64_t peak_resolution_context_count_{};
+    uint64_t namespace_sequence_{};
     Statistics statistics_{};
     void *regular_file_data_cache_context_{nullptr};
     RegularFileReadCacheOperation regular_file_read_cache_operation_{nullptr};
@@ -434,6 +518,15 @@ class Vfs final {
     RegularFileSizeCacheOperation regular_file_size_cache_operation_{nullptr};
     RegularFileTruncateCacheOperation regular_file_truncate_cache_operation_{nullptr};
     VfsNamespaceCache *namespace_cache_{nullptr};
+    uint64_t *compact_dentry_hash_buckets_{};
+    uint64_t compact_dentry_hash_bucket_capacity_{};
+    uint64_t *compact_inode_hash_buckets_{};
+    uint64_t compact_inode_hash_bucket_capacity_{};
+    void *namespace_backing_context_{};
+    NamespaceBackingReleaseOperation namespace_backing_release_operation_{};
+    NamespaceBackingResourceUsage active_namespace_backing_usage_{};
+    NamespaceBackingResourceUsage preferred_namespace_backing_usage_{};
+    bool namespace_hash_tier_shrunk_{};
     bool initialized_{};
 };
 

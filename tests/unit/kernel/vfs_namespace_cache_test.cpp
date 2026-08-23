@@ -14,7 +14,7 @@ constexpr std::string_view OS_TEST_VFS_NAMESPACE_CACHE_CAPACITY_MESSAGE =
 constexpr std::string_view OS_TEST_VFS_NAMESPACE_CACHE_LRU_MESSAGE =
     "完整名称校验、inode 类型冲突和零引用 dentry/inode LRU 顺序必须稳定";
 constexpr std::string_view OS_TEST_VFS_NAMESPACE_CACHE_HASH_MESSAGE =
-    "调用方固定 hash storage 必须校验容量并保持发布、失效和回收索引一致";
+    "hash storage 必须校验容量，并在在线重建后保持发布、命中、失效和回收一致";
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_DENTRY_CAPACITY = 8ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_INODE_CAPACITY = 6ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_SMALL_CAPACITY = 1ULL;
@@ -23,6 +23,7 @@ constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_LRU_INODE_CAPACITY = 2ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_ROOT_MOUNT = 0ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY = 2ULL;
+constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY = 4ULL;
 
 [[nodiscard]] os::kernel::fs::VfsInodeIdentity Identity(const uint64_t node_identifier,
                                                         const uint64_t generation = 1ULL) noexcept {
@@ -223,10 +224,8 @@ BuildKey(const uint64_t mount_identifier, const os::kernel::fs::VfsInodeIdentity
 }
 
 [[nodiscard]] bool RunKeyAndLruScenario() noexcept {
-    os::kernel::fs::VfsDentrySlot
-        dentry_storage[OS_TEST_VFS_NAMESPACE_CACHE_LRU_DENTRY_CAPACITY]{};
-    os::kernel::fs::VfsInodeSlot
-        inode_storage[OS_TEST_VFS_NAMESPACE_CACHE_LRU_INODE_CAPACITY]{};
+    os::kernel::fs::VfsDentrySlot dentry_storage[OS_TEST_VFS_NAMESPACE_CACHE_LRU_DENTRY_CAPACITY]{};
+    os::kernel::fs::VfsInodeSlot inode_storage[OS_TEST_VFS_NAMESPACE_CACHE_LRU_INODE_CAPACITY]{};
     os::kernel::fs::VfsNamespaceCache cache{};
     const os::kernel::fs::VfsInodeIdentity root = Identity(21ULL);
     const os::kernel::fs::VfsInodeIdentity file = Identity(22ULL);
@@ -308,15 +307,16 @@ BuildKey(const uint64_t mount_identifier, const os::kernel::fs::VfsInodeIdentity
 }
 
 [[nodiscard]] bool RunHashConfigurationScenario() noexcept {
-    os::kernel::fs::VfsDentrySlot
-        dentry_storage[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    os::kernel::fs::VfsDentrySlot dentry_storage[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
     os::kernel::fs::VfsInodeSlot inode_storage[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
     os::kernel::fs::VfsNamespaceHashEntry
         dentry_hash_entries[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
-    uint64_t dentry_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    uint64_t dentry_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY]{};
+    uint64_t compact_dentry_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
     os::kernel::fs::VfsNamespaceHashEntry
         inode_hash_entries[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
-    uint64_t inode_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    uint64_t inode_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY]{};
+    uint64_t compact_inode_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
     os::kernel::fs::VfsNamespaceCache cache{};
     const os::kernel::fs::VfsInodeIdentity root = Identity(31ULL);
     const os::kernel::fs::VfsInodeIdentity file = Identity(32ULL);
@@ -329,28 +329,34 @@ BuildKey(const uint64_t mount_identifier, const os::kernel::fs::VfsInodeIdentity
         cache.Initialize(dentry_storage, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_storage,
                          OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
             os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
-        cache.ConfigureHashIndex(
-            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
-            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_SMALL_CAPACITY,
-            inode_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_buckets,
-            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+        cache.ConfigureHashIndex(dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
+                                 dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_SMALL_CAPACITY,
+                                 inode_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
+                                 inode_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
             os::kernel::fs::VfsNamespaceCacheStatus::InvalidCapacity &&
         cache.ConfigureHashIndex(
-            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
-            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_entries,
+            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, dentry_hash_buckets,
+            OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY, inode_hash_entries,
             OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_buckets,
-            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY) ==
             os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         cache.ConfigureHashIndex(
-            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
-            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_entries,
+            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, dentry_hash_buckets,
+            OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY, inode_hash_entries,
             OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_buckets,
-            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            OS_TEST_VFS_NAMESPACE_CACHE_PREFERRED_HASH_CAPACITY) ==
             os::kernel::fs::VfsNamespaceCacheStatus::AlreadyInitialized &&
         cache.PublishPositive(positive_key, file, os::kernel::fs::NodeType::RegularFile, token) ==
             os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         cache.PublishNegative(negative_key, token) ==
             os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.RebuildHashBuckets(
+            compact_dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
+            compact_inode_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.Statistics().hash_rebuild_count == 1ULL &&
+        cache.Statistics().dentry_hash_bucket_capacity ==
+            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY &&
         cache.InvalidateDentry(positive_key) ==
             os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         cache.Validate() == os::kernel::fs::VfsNamespaceCacheStatus::Succeeded;
