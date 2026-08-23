@@ -310,3 +310,9 @@ Thread 以 `Initializing -> Ready` 发布，退出以 Scheduler Zombie 先于 Pr
 直接领取同一结果。成功 owner 在广播前为全部 waiter 预留真实 page reference，避免 owner
 先释放后被 reclaim 抢先淘汰；失败在缓存资源撤销后广播同一终态。设计见
 [ADR 0067](../../docs/adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。
+
+第五增量 5a 增加 `memory/file_readahead.*`。策略实例对应未来共享 FileDescription，按
+DemandHit/DemandMiss/PrefetchedHit 推进 start/size/async-tail 窗口和 generation；默认
+32 页上限，顺序窗口按 4/2 倍增长，随机访问重置。四级内存压力和 useful/wasted 反馈只
+调整下一窗口。当前模块不提交 WorkItem 或 I/O，设计见
+[ADR 0068](../../docs/adr/0068-v2-10-per-open-file-readahead-policy.md)。

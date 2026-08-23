@@ -66,18 +66,22 @@ file access generation，并在释放 frame 前删除 aging 身份。元数据�
 [ADR 0060](docs/adr/0060-v2-9-pte-accessed-page-aging.md)、
 [ADR 0061](docs/adr/0061-v2-9-background-watermark-reclaim.md)、
 [ADR 0062](docs/adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
-v2.10 前四增量已完成：`BlockRequestQueue` 按实际解析顺序交付 completion，类型擦除
+v2.10 前四增量与第五增量 5a 已完成：`BlockRequestQueue` 按实际解析顺序交付
+completion，类型擦除
 `AsynchronousBlockDevice` 统一 ATA/NVMe，BlockIo 协调器与常驻 Worker 负责非 IRQ 完成；
 User Kernel stack 续体和 `RuntimeMutex` 又让生产 rootfs/swap 在真实 completion 上睡眠。
 `FilePageLoadCoordinator` 现在把同页 Loading 冲突合并到一次来源读取，并在完成广播前为
-waiter 预留真实页引用；预读和并发回收矩阵留给后续增量。
+waiter 预留真实页引用。第五增量 5a 又建立打开文件级 `FileReadaheadPolicy`：默认 32 页
+上限、Linux 风格 4/2 倍窗口增长、随机重置、反馈缩放和压力收缩均已由纯模型冻结；它尚未
+接入 FileDescription、Worker 或生产 I/O。并发回收矩阵留给后续增量。
 边界见
 [v2.10 记录](docs/releases/v2.10.md) 与
 [ADR 0063](docs/adr/0063-v2-10-ordered-block-completion-channel.md)、
 [ADR 0064](docs/adr/0064-v2-10-asynchronous-block-device-adapter.md)、
 [ADR 0065](docs/adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)、
 [ADR 0066](docs/adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)、
-[ADR 0067](docs/adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。
+[ADR 0067](docs/adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)、
+[ADR 0068](docs/adr/0068-v2-10-per-open-file-readahead-policy.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

@@ -1293,6 +1293,11 @@ runner 只校验三组守恒和最终零状态，不要求单 BSP 正常负载�
 失败广播和 completion-before-wait 由 host integration/randomized 测试观察，避免通过热路径
 日志或人为延迟改变 QEMU 调度。
 
+V2.10.5a 的 `FileReadaheadPolicy` 是纯 host/target 状态模块，尚未进入生产读路径，因此不
+增加 VGA 或内存日志 marker。窗口、feedback 和 pressure 的逐步行为由 unit/integration/
+randomized 测试观察。5b 真正提交预读后也只能在最终统计区增加聚合，不得逐页打印或用
+日志延迟人为制造异步命中。
+
 ## v2.9 Kernel Thread 聚合日志
 
 ```text

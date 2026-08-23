@@ -2471,6 +2471,42 @@ waiter 领取。
 仍走 Busy。详见
 [ADR 0067](adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。
 
+V2.10.5a 在生产接线前先增加打开文件级纯策略：
+
+```text
+FileReadaheadAccess
+  first page / requested pages / file pages
+  DemandHit | DemandMiss | PrefetchedHit
+  MemoryPressureLevel
+        |
+        v
+FileReadaheadPolicy（一个未来 FileDescription 一个实例）
+  last expected page
+  window = start + size + async tail
+  trigger page / generation
+  configured max / adaptive max / pressure max
+        |
+        v
+FileReadaheadDecision
+  window range
+  speculative prefetch range
+  trigger / generation / effective max
+```
+
+初始窗口复用 Linux `get_init_ra_size()` 的二次幂和 4/2 倍分档，异步触发复用
+`get_next_ra_size()` 的 4/2 倍增长。默认 32 页上限下，单页流依次产生 4、8、16、32 页
+窗口。decision 的窗口可以包含当前 demand 区间，但未来 worker 只消费 prefetch range；
+下一全异步窗口的首个页成为新触发页。
+
+压力上限与 `MemoryPressureLevel` 直接组合，BelowMinimum 清除窗口。useful/wasted 反馈只
+改变下一 decision 的 adaptive maximum，不改变已经发布的 generation。随机访问和显式
+reset 清除流位置但不清累计统计或 feedback 上限。
+
+5a 没有 FileDescription 字段、WorkHandle、缓存页预读标志或 I/O。5b/5c 接入时依赖方向
+固定为 FileDescription 拥有 policy，ProcessRuntime 消费 decision，FilePageCache 仍拥有
+唯一 Loading 和 frame；policy 不反向依赖这些模块。详见
+[ADR 0068](adr/0068-v2-10-per-open-file-readahead-policy.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

@@ -296,6 +296,24 @@ os_add_kernel_memory_test(
 )
 
 os_add_kernel_memory_test(
+    os_kernel_file_readahead_unit_tests
+    unit/kernel/file_readahead_test.cpp
+    "unit"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_file_readahead_stream_isolation_integration_tests
+    integration/boot/file_readahead_stream_isolation_test.cpp
+    "integration"
+)
+
+os_add_kernel_memory_test(
+    os_kernel_file_readahead_randomized_tests
+    randomized/kernel/file_readahead_randomized_test.cpp
+    "randomized"
+)
+
+os_add_kernel_memory_test(
     os_kernel_file_cache_address_space_unit_tests
     unit/kernel/file_cache_address_space_test.cpp
     "unit"

@@ -1074,7 +1074,10 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
   early boot 与受限 Kernel worker 仍同步回退。
 - v2.10.4 新增固定容量 `process/file_page_load.*`。同页 Loading 冲突在 cache lock 内登记，
   经 per-load WaitQueue 睡眠；owner 成功广播前为 waiter 预留真实 page reference，失败则在
-  entry/frame 撤销后广播同一错误。early/受限路径仍返回 Busy，预读尚未实现。
+  entry/frame 撤销后广播同一错误。early/受限路径仍返回 Busy，生产预读尚未实现。
+- v2.10.5a 新增 `memory/file_readahead.*` 纯策略。一个实例保存一个未来打开流的窗口、
+  async tail、触发页、generation、反馈和压力上限；不分配、不访问 VFS/cache/device。
+  默认 32 页以及 4/2 倍增长已冻结，生产预读仍等待 5b/5c 接线。
 - `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
   ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
   96 个左右

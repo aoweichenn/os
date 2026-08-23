@@ -1890,3 +1890,19 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   33 system，含 25 条 failure-path；CTest 907.05 秒，端到端 1052 秒；
 - fresh 4 GiB ATA primary 75.96 秒，ATA/NVMe reclaim 78.95/80.12 秒，ATA/NVMe OOM
   78.68/75.66 秒，NVMe root primary 69.58 秒，ATA/NVMe persistence 143.21/140.14 秒。
+
+### 打开文件级预读策略第五增量 5a
+
+- `os_kernel_file_readahead_unit_tests` 覆盖 4→8→16 窗口增长、随机重置后连续 miss 重建、
+  EOF 不提交、BelowHigh/BelowLow/BelowMinimum 收缩、wasted 减半、useful 恢复、非法
+  PrefetchedHit 和 `UINT64_MAX` 配置；
+- `os_kernel_file_readahead_stream_isolation_integration_tests` 交错两个策略实例，要求一个流的
+  feedback/pressure/reset 不改变另一个流的窗口、generation 或 adaptive maximum；
+- `os_kernel_file_readahead_randomized_tests` 使用种子 `0x5245414441484541` 执行十万步访问、
+  feedback 和 reset；独立模型逐字段比较 decision 和全部统计，每一步再调用 `Validate`；
+- 5a 新增 1 unit、1 integration、1 randomized CTest。它不要求新的 QEMU marker，因为
+  FileDescription、Worker 和生产 page-cache 接线尚未发生；
+- final fresh CAW `python3 tools/os.py verify` 为 231/231、0 失败：69 unit、78 integration、
+  51 randomized、33 system，含 25 条 failure-path；CTest 888.82 秒，端到端 1030 秒；
+- fresh 4 GiB ATA primary 71.51 秒，ATA/NVMe reclaim 79.25/73.06 秒，ATA/NVMe OOM
+  74.92/74.32 秒，NVMe root primary 69.47 秒，ATA/NVMe persistence 142.10/141.47 秒。

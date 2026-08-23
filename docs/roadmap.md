@@ -1426,7 +1426,7 @@ anonymous swap，并到达三项状态验证和 READY。
 3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待、3b 栈式
    User Kernel 续体、RuntimeMutex 锁拆分和生产迁移均已完成；
 4. FilePageCache Loading waiter 与同页 miss 合并（已完成）；
-5. 顺序预读、命中/浪费反馈与压力收缩；
+5. 顺序预读、命中/浪费反馈与压力收缩（5a 纯策略已完成，生产接入未完成）；
 6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
 
 **第一增量边界**
@@ -1503,6 +1503,22 @@ Loading 的 truncate/invalidate/reclaim/writeback 边界不放宽。强制重叠
 第四增量 final fresh CAW `verify` 为 228/228、0 失败：68 unit、77 integration、
 50 randomized、33 system，含 25 条 failure-path；CTest 907.05 秒。4 GiB ATA primary
 75.96 秒，ATA/NVMe reclaim 78.95/80.12 秒，ATA/NVMe persistence 143.21/140.14 秒。
+
+**第五增量 5a 边界**
+
+`FileReadaheadPolicy` 已把每个未来打开文件流的 start/size/async tail、触发页和 generation
+冻结为无分配纯状态。默认上限 32 页；单页顺序流按 4、8、16、32 增长，随机访问清除
+窗口。Balanced/BelowHigh/BelowLow/BelowMinimum 分别采用全量、1/2、1/4、关闭上限；浪费
+反馈减半，有用反馈翻倍恢复。EOF 裁剪、非法触发和所有计数失败保持原状态。
+
+5a 不接 FileDescription、不提交 WorkQueue、不创建 Loading，也不增加 QEMU marker。5b
+负责打开实例所有权、异步 Worker 和 FilePageCache 执行；5c 再接预读页身份、实际命中/
+浪费归因、close/truncate/invalidate/reclaim 取消。设计由
+[ADR 0068](adr/0068-v2-10-per-open-file-readahead-policy.md) 冻结。
+
+5a final fresh CAW `verify` 为 231/231、0 失败：69 unit、78 integration、51 randomized、
+33 system，含 25 条 failure-path；CTest 888.82 秒。4 GiB ATA primary 71.51 秒，ATA/NVMe
+reclaim 79.25/73.06 秒，ATA/NVMe persistence 142.10/141.47 秒。
 
 **退出条件**
 

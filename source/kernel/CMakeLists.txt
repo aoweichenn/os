@@ -76,6 +76,7 @@ set(
     include/os/kernel/memory/file_cache_address_space.hpp
     include/os/kernel/memory/file_cache_identity.hpp
     include/os/kernel/memory/file_page_cache.hpp
+    include/os/kernel/memory/file_readahead.hpp
     include/os/kernel/memory/file_writeback_error_tracker.hpp
     include/os/kernel/memory/kernel_heap.hpp
     include/os/kernel/memory/kernel_stack_manager.hpp
@@ -226,6 +227,7 @@ set(
     src/memory/file_cache_address_space.cpp
     src/memory/file_cache_identity.cpp
     src/memory/file_page_cache.cpp
+    src/memory/file_readahead.cpp
     src/memory/file_writeback_error_tracker.cpp
     src/memory/kernel_heap.cpp
     src/memory/kernel_stack_manager.cpp
@@ -379,6 +381,7 @@ add_library(
         src/memory/file_cache_address_space.cpp
         src/memory/file_cache_identity.cpp
         src/memory/file_page_cache.cpp
+        src/memory/file_readahead.cpp
         src/memory/file_writeback_error_tracker.cpp
         src/memory/kernel_heap.cpp
         src/memory/kernel_stack_manager.cpp
@@ -398,6 +401,7 @@ add_library(
         src/memory/virtual_memory_area.cpp
         src/sync/spin_lock.cpp
         include/os/kernel/memory/file_page_cache.hpp
+        include/os/kernel/memory/file_readahead.hpp
         include/os/kernel/memory/background_reclaim.hpp
         include/os/kernel/memory/file_cache_address_space.hpp
         include/os/kernel/memory/file_cache_identity.hpp

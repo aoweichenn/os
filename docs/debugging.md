@@ -2184,6 +2184,22 @@ failure；任一计数、token、WaitQueue 或预留引用不归零都会让 coo
 `FilePageCache::Validate` 或 ProcessRuntime 资源门禁失败。登记后的等待/完成协议损坏属于
 不可恢复内核错误，不应返回到可继续释放 buffer 的调用链。
 
+### 预读窗口意外放大或随机读仍持续预取
+
+5a 先检查输入 trigger，而不是检查设备：DemandHit 不提交；DemandMiss 只在初始、连续或
+回到第 0 页时建窗；PrefetchedHit 必须覆盖当前 `trigger_page_index`。若随机读仍保留旧窗，
+核对 `first_page_index` 是否错误地等于 `next_expected_page_index`，以及调用方是否把普通
+cache hit 误标为 PrefetchedHit。
+
+32 页默认配置的单页流应为 4、8、16、32。增长异常时对照 decision 的 window 与 prefetch
+范围：首个 demand 窗口包含请求页，真正预取数会少一个；后续全异步窗口两者相等。EOF
+附近窗口必须按 `file_page_count` 裁剪，裁剪到只剩 demand 区间时 action 为 None。
+
+窗口在压力下不收缩时检查传入的 `MemoryPressureLevel` 和 effective/adaptive/configured 三个
+上限；BelowMinimum 必须为 0 并清窗。feedback 只影响下一计划，不会改写当前 generation；
+若测试期待当前窗口立即缩短，测试本身违反提交稳定性。5a 没有实际预读页或 Worker，不能
+用 QEMU cache hit 推断策略已接入。
+
 ### Dirty 超过软水位但 worker 不运行
 
 4 GiB 当前容量 8192 页，hard limit 约 1638 页，后台阈值约 819 页，目标约 409 页。

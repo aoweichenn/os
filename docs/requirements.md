@@ -477,6 +477,20 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   worker 不得假装可睡眠，仍保留明确 Busy 边界；
 - 第四增量不得改变 ABI 2.4.0、rootfs v4、磁盘格式或 Loading 页的 writeback/reclaim/
   truncate/invalidate 禁止规则。
+- 第五增量 5a 的预读策略必须是无分配纯状态，不得直接访问 VFS、page cache、设备、
+  scheduler 或 WorkQueue；一个实例只表达一个未来打开文件流；
+- 默认最大窗口必须明确为 32 个 4 KiB 页。初始窗口按请求页数向上取二次幂并执行 Linux
+  1/32×4、1/4×2 分档，后续窗口按小窗口 4 倍、普通窗口 2 倍增长并封顶；
+- 首次/连续 DemandMiss 可以建立窗口，DemandHit 只推进流；PrefetchedHit 必须连续且覆盖
+  当前唯一触发页。随机访问必须清除窗口，EOF 必须裁剪且禁止零页提交；
+- Balanced、BelowHigh、BelowLow、BelowMinimum 的压力上限必须分别为配置上限、1/2、
+  1/4、0；非零压力上限至少保留 1 页，BelowMinimum 必须清除活动窗口；
+- wasted 大于 useful 时自适应上限向上取整减半，useful 大于 wasted 时翻倍恢复且不越过
+  配置上限；反馈不得修改已经发布的 generation 范围；
+- 非法配置、零长度或越界访问、伪造 PrefetchedHit、空反馈、计数上溢和 generation 耗尽
+  必须保持策略状态不变；`Validate` 必须独立重算分类、窗口、压力和统计守恒；
+- 5a 只冻结策略，不能宣称生产 readahead 已完成。FileDescription 所有权、异步执行、
+  预读页标记、实际反馈归因和生命周期取消必须留给 5b/5c。
 
 ## v2.0 完成基线
 
