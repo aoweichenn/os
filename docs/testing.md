@@ -1866,3 +1866,27 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - final fresh CAW `python3 tools/os.py verify` 为 224/224、0 失败：67 unit、75 integration、
   49 randomized、33 system，含 25 条 failure-path，CTest 868.49 秒。ATA/NVMe reclaim 为
   73.46/75.36 秒，OOM 为 73.26/73.00 秒，persistence 为 138.87/138.73 秒。
+
+### FilePageCache Loading waiter 第四增量
+
+- `os_kernel_file_page_load_unit_tests` 覆盖两个 waiter、等待先于完成、完成先于等待、成功/
+  失败同结果、generation 复用和统计守恒，并允许物理 frame 0 作为合法对齐身份；
+- `os_kernel_file_page_load_wait_queue_integration_tests` 组合 coordinator、ThreadScheduler 与
+  per-load WaitQueue，要求两个 waiter 精确广播、结果只领取一次且队列归零；
+- `os_kernel_file_page_load_randomized_tests` 以具名固定种子执行十万轮，每轮生成 0..7 个
+  waiter、随机 completion 分界、成功/失败和随机领取顺序，逐轮调用 `Validate`；
+- `os_kernel_file_page_cache_loading_merge_integration_tests` 用两个真实 host thread 强制重叠：
+  owner source reader 暂停到 waiter 已提交阻塞。成功路径要求只读一次、共享同一 frame，
+  owner 先释放后 invalidate 仍因预留 waiter reference 返回 Busy；失败路径要求只读一次且
+  owner/waiter 都得到 `SourceReadFailed`；
+- 原有 file-page cache unit/randomized/8192 页动态生命周期测试继续覆盖未配置回调时的
+  Busy 兼容、Loading 禁止修改、锁外 fill、回滚和容量边界；
+- 4 GiB `os_qemu_primary_smoke` 验证 Ring 3 多线程并发读内容、begin/completion、waiter/
+  result、wait/wake 三组值分别相等，active/failure 为零，并继续要求 screendump 至少
+  512 个非黑像素；单 BSP completion 先于下一 User Thread 时 waiter=0 是合法观测，强制
+  重叠证据由上述 integration 提供；
+- 第四增量新增 1 unit、2 integration、1 randomized CTest；final fresh CAW
+  `python3 tools/os.py verify` 为 228/228、0 失败：68 unit、77 integration、50 randomized、
+  33 system，含 25 条 failure-path；CTest 907.05 秒，端到端 1052 秒；
+- fresh 4 GiB ATA primary 75.96 秒，ATA/NVMe reclaim 78.95/80.12 秒，ATA/NVMe OOM
+  78.68/75.66 秒，NVMe root primary 69.58 秒，ATA/NVMe persistence 143.21/140.14 秒。

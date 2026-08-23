@@ -189,6 +189,8 @@
 | program break | 传统连续数据区的字节级逻辑末端；v1.8 用页级 VMA 表达其覆盖区，并在首次访问时提交物理页 |
 | zero-fill-on-demand | 匿名页第一次合法访问时分配完整清零 frame，再返回重试原指令的策略 |
 | page cache | 以 vnode 与页索引为身份缓存文件内容的内存页；clean、dirty、writeback 是不同状态 |
+| Loading waiter | 观察到同一文件页正在填充后，登记到唯一 load 并睡眠等待其成功或失败结果的线程；不得再次发起来源读取 |
+| page-reference handoff | owner 在完成广播前为每个 Loading waiter 预留真实页面引用，waiter 醒来后直接接管该引用的所有权协议 |
 | writeback error sequence | 文件级单调错误序列；独立打开实例以自己的游标判断是否还有未报告的写回失败 |
 | fsync / fdatasync | 等待指定打开文件的数据稳定；fsync 包含完整 metadata，fdatasync 至少包含重读所需 metadata |
 | msync | 按文件映射虚拟地址范围请求异步或同步写回；private COW 修改不进入底层文件 |
@@ -222,6 +224,7 @@
 | RuntimeMutex | 调度运行期以 Mutex/WaitQueue 睡眠、early boot 或不可睡眠边界退化为短 SpinLock 的固定布局互斥原语 |
 | initializing thread | 已取得 Thread 身份但尚未完成跨模块元数据提交、因此不能进入 Ready queue 的发布前状态 |
 | BlockIo ticket | 由协调器槽位与单调 generation 组成的等待凭据；同时核对 owner/request id，防止槽位复用后的旧等待取得新结果 |
+| FilePageLoad token | 由文件页 load 槽位与 generation 组成的等待凭据；配合文件页身份、frame 和 load generation 拒绝旧 waiter 误取复用槽结果 |
 | completion worker | 在非 IRQ Kernel Thread 上消费设备 completion、执行 DMA 数据收尾并精确唤醒 BlockIo owner 的常驻 bottom-half |
 | completion-before-wait | 设备在调用者提交 WaitQueue 阻塞前已经完成的竞争；协调器必须让调用者直接取结果，不能丢失事件 |
 | shallow I/O delegation | 把深层 VFS/cache/swap 请求复制到稳定 request 对象，由浅层 Kernel I/O Thread 提交和睡眠，避免保留任意 C++ 调用栈或持锁阻塞 |

@@ -58,6 +58,7 @@ FilePageCache::Initialize(KernelHeap &metadata_heap, const uint64_t capacity,
     this->frame_allocator_ = &frame_allocator;
     this->page_access_context_ = page_access_context;
     this->page_access_operation_ = page_access_operation;
+    this->load_wait_operations_ = FilePageLoadWaitOperations{};
     this->access_generation_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->statistics_ = FilePageCacheStatistics{};
     this->statistics_.capacity = capacity;
@@ -67,7 +68,27 @@ FilePageCache::Initialize(KernelHeap &metadata_heap, const uint64_t capacity,
     this->background_writeback_requested_ = false;
     this->background_writeback_paused_ = false;
     this->forced_background_writeback_requested_ = false;
+    this->load_wait_operations_configured_ = false;
     this->initialized_ = true;
+    return FilePageCacheStatus::Succeeded;
+}
+
+FilePageCacheStatus
+FilePageCache::ConfigureLoadingWait(const FilePageLoadWaitOperations &operations) noexcept {
+    SpinLockGuard guard{this->lock_};
+    if (!this->initialized_) {
+        return FilePageCacheStatus::NotInitialized;
+    }
+    if (this->load_wait_operations_configured_) {
+        return FilePageCacheStatus::AlreadyInitialized;
+    }
+    if (operations.available == nullptr || operations.begin == nullptr ||
+        operations.register_waiter == nullptr || operations.wait == nullptr ||
+        operations.waiter_count == nullptr || operations.complete == nullptr) {
+        return FilePageCacheStatus::InvalidDependency;
+    }
+    this->load_wait_operations_ = operations;
+    this->load_wait_operations_configured_ = true;
     return FilePageCacheStatus::Succeeded;
 }
 
@@ -101,7 +122,61 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         if (lookup_status == FileCacheAddressSpaceStatus::Succeeded) {
             if (page.state == FileCachePageState::Loading) {
                 ++this->statistics_.loading_collision_count;
-                return unlock_and_return(FilePageCacheStatus::EntryBusy);
+                if (!this->LoadingWaitAvailable()) {
+                    return unlock_and_return(FilePageCacheStatus::EntryBusy);
+                }
+                FilePageLoadToken waiter_token{};
+                if (!this->load_wait_operations_.register_waiter(
+                        this->load_wait_operations_.context, identity, page.physical_address,
+                        page.access_generation, waiter_token)) {
+                    return unlock_and_return(FilePageCacheStatus::LoadingWaitUnavailable);
+                }
+                this->lock_.Unlock();
+                FilePageCacheStatus load_result = FilePageCacheStatus::LoadingWaitFailed;
+                if (!this->load_wait_operations_.wait(this->load_wait_operations_.context,
+                                                      waiter_token, load_result)) {
+                    return FilePageCacheStatus::LoadingWaitFailed;
+                }
+                if (load_result != FilePageCacheStatus::Succeeded) {
+                    return load_result;
+                }
+                this->lock_.Lock();
+                record = this->FindAddressSpace(identity.file);
+                FileCachePageSnapshot completed_page{};
+                if (record == nullptr ||
+                    record->address_space.Lookup(identity.page_index, completed_page) !=
+                        FileCacheAddressSpaceStatus::Succeeded ||
+                    completed_page.physical_address != page.physical_address ||
+                    completed_page.state == FileCachePageState::Loading ||
+                    completed_page.mapping_reference_count ==
+                        OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+                    return unlock_and_return(FilePageCacheStatus::Corrupt);
+                }
+                const uint64_t generation = this->NextAccessGeneration();
+                if (generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+                    record->address_space.Touch(identity.page_index, page.physical_address,
+                                                generation) !=
+                        FileCacheAddressSpaceStatus::Succeeded) {
+                    const FileCacheAddressSpaceStatus release_status =
+                        record->address_space.Release(identity.page_index, page.physical_address);
+                    if (release_status == FileCacheAddressSpaceStatus::Succeeded &&
+                        this->statistics_.active_mapping_reference_count !=
+                            OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+                        --this->statistics_.active_mapping_reference_count;
+                        if (completed_page.mapping_reference_count ==
+                                OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT &&
+                            this->statistics_.referenced_page_count !=
+                                OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+                            --this->statistics_.referenced_page_count;
+                        }
+                    }
+                    return unlock_and_return(FilePageCacheStatus::Corrupt);
+                }
+                ++this->statistics_.hit_count;
+                ++this->statistics_.successful_acquire_count;
+                physical_address = page.physical_address;
+                cache_hit = true;
+                return unlock_and_return(FilePageCacheStatus::Succeeded);
             }
             const uint64_t generation = this->NextAccessGeneration();
             if (generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
@@ -196,6 +271,33 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
     if (this->statistics_.peak_resident_page_count < this->statistics_.resident_page_count) {
         this->statistics_.peak_resident_page_count = this->statistics_.resident_page_count;
     }
+    FilePageLoadToken owner_token{};
+    if (this->LoadingWaitAvailable()) {
+        FileCachePageSnapshot loading_page{};
+        if (record->address_space.Lookup(identity.page_index, loading_page) !=
+                FileCacheAddressSpaceStatus::Succeeded ||
+            loading_page.physical_address != candidate_physical_address ||
+            loading_page.state != FileCachePageState::Loading ||
+            !this->load_wait_operations_.begin(this->load_wait_operations_.context, identity,
+                                               candidate_physical_address,
+                                               loading_page.access_generation, owner_token)) {
+            const FileCacheAddressSpaceStatus discard_status =
+                record->address_space.Discard(identity.page_index, candidate_physical_address);
+            const PhysicalFrameAllocatorStatus release_status = this->frame_allocator_->Release(
+                PhysicalFrame{.physical_address = candidate_physical_address});
+            if (discard_status != FileCacheAddressSpaceStatus::Succeeded ||
+                release_status != PhysicalFrameAllocatorStatus::Succeeded ||
+                this->statistics_.resident_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+                this->statistics_.loading_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+                return unlock_and_return(FilePageCacheStatus::FrameReleaseFailed);
+            }
+            --this->statistics_.resident_page_count;
+            --this->statistics_.loading_page_count;
+            ++this->statistics_.failed_load_count;
+            static_cast<void>(this->DestroyAddressSpaceIfEmpty(*record));
+            return unlock_and_return(FilePageCacheStatus::LoadingWaitUnavailable);
+        }
+    }
     this->lock_.Unlock();
 
     uint8_t *const page_bytes =
@@ -221,6 +323,7 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         loading_page.state != FileCachePageState::Loading ||
         loading_page.mapping_reference_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
         this->statistics_.loading_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+        static_cast<void>(this->CompleteLoadingWait(owner_token, FilePageCacheStatus::Corrupt));
         return unlock_and_return(FilePageCacheStatus::Corrupt);
     }
     if (!source_read_succeeded) {
@@ -231,6 +334,8 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         if (discard_status != FileCacheAddressSpaceStatus::Succeeded ||
             release_status != PhysicalFrameAllocatorStatus::Succeeded ||
             this->statistics_.resident_page_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+            static_cast<void>(
+                this->CompleteLoadingWait(owner_token, FilePageCacheStatus::FrameReleaseFailed));
             return unlock_and_return(FilePageCacheStatus::FrameReleaseFailed);
         }
         --this->statistics_.resident_page_count;
@@ -238,10 +343,16 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         ++this->statistics_.failed_load_count;
         const FilePageCacheStatus destroy_status = this->DestroyAddressSpaceIfEmpty(*record);
         if (destroy_status != FilePageCacheStatus::Succeeded) {
+            static_cast<void>(this->CompleteLoadingWait(owner_token, destroy_status));
             return unlock_and_return(destroy_status);
         }
-        return unlock_and_return(page_bytes == nullptr ? FilePageCacheStatus::FrameAccessFailed
-                                                       : FilePageCacheStatus::SourceReadFailed);
+        const FilePageCacheStatus failure_status = page_bytes == nullptr
+                                                       ? FilePageCacheStatus::FrameAccessFailed
+                                                       : FilePageCacheStatus::SourceReadFailed;
+        if (!this->CompleteLoadingWait(owner_token, failure_status)) {
+            return unlock_and_return(FilePageCacheStatus::LoadingWaitFailed);
+        }
+        return unlock_and_return(failure_status);
     }
 
     const uint64_t generation = this->NextAccessGeneration();
@@ -260,14 +371,48 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
             static_cast<void>(
                 record->address_space.Release(identity.page_index, candidate_physical_address));
         }
+        static_cast<void>(this->CompleteLoadingWait(owner_token, FilePageCacheStatus::Corrupt));
         return unlock_and_return(FilePageCacheStatus::Corrupt);
     }
     --this->statistics_.loading_page_count;
     ++this->statistics_.referenced_page_count;
     ++this->statistics_.active_mapping_reference_count;
     ++this->statistics_.successful_load_count;
+    uint64_t waiter_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!this->LoadingWaiterCount(owner_token, waiter_count) ||
+        this->statistics_.active_mapping_reference_count > UINT64_MAX - waiter_count) {
+        static_cast<void>(
+            record->address_space.Release(identity.page_index, candidate_physical_address));
+        --this->statistics_.referenced_page_count;
+        --this->statistics_.active_mapping_reference_count;
+        static_cast<void>(this->CompleteLoadingWait(owner_token, FilePageCacheStatus::Corrupt));
+        return unlock_and_return(FilePageCacheStatus::LoadingWaitFailed);
+    }
+    uint64_t reserved_waiter_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    while (reserved_waiter_count < waiter_count &&
+           record->address_space.Retain(identity.page_index, candidate_physical_address) ==
+               FileCacheAddressSpaceStatus::Succeeded) {
+        ++reserved_waiter_count;
+    }
+    if (reserved_waiter_count != waiter_count) {
+        while (reserved_waiter_count != OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+            static_cast<void>(
+                record->address_space.Release(identity.page_index, candidate_physical_address));
+            --reserved_waiter_count;
+        }
+        static_cast<void>(
+            record->address_space.Release(identity.page_index, candidate_physical_address));
+        --this->statistics_.referenced_page_count;
+        --this->statistics_.active_mapping_reference_count;
+        static_cast<void>(this->CompleteLoadingWait(owner_token, FilePageCacheStatus::Corrupt));
+        return unlock_and_return(FilePageCacheStatus::Corrupt);
+    }
+    this->statistics_.active_mapping_reference_count += waiter_count;
     ++this->statistics_.successful_acquire_count;
     physical_address = candidate_physical_address;
+    if (!this->CompleteLoadingWait(owner_token, FilePageCacheStatus::Succeeded)) {
+        return unlock_and_return(FilePageCacheStatus::LoadingWaitFailed);
+    }
     return unlock_and_return(FilePageCacheStatus::Succeeded);
 }
 
@@ -1340,6 +1485,31 @@ bool FilePageCache::OutstandingDirtyPageCount(uint64_t &page_count) const noexce
     page_count = this->statistics_.dirty_page_count + this->statistics_.writeback_page_count +
                  this->statistics_.error_page_count;
     return true;
+}
+
+bool FilePageCache::LoadingWaitAvailable() const noexcept {
+    return this->load_wait_operations_configured_ &&
+           this->load_wait_operations_.available != nullptr &&
+           this->load_wait_operations_.available(this->load_wait_operations_.context);
+}
+
+bool FilePageCache::LoadingWaiterCount(const FilePageLoadToken token,
+                                       uint64_t &waiter_count) noexcept {
+    waiter_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    return token.generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+           (this->load_wait_operations_configured_ &&
+            this->load_wait_operations_.waiter_count != nullptr &&
+            this->load_wait_operations_.waiter_count(this->load_wait_operations_.context, token,
+                                                     waiter_count));
+}
+
+bool FilePageCache::CompleteLoadingWait(const FilePageLoadToken token,
+                                        const FilePageCacheStatus result) noexcept {
+    return token.generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE ||
+           (this->load_wait_operations_configured_ &&
+            this->load_wait_operations_.complete != nullptr &&
+            this->load_wait_operations_.complete(this->load_wait_operations_.context, token,
+                                                 result));
 }
 
 void FilePageCache::RefreshBackgroundWritebackRequest() noexcept {

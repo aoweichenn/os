@@ -828,6 +828,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_file_page_load_unit_tests
+    unit/kernel/file_page_load_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_private_futex_unit_tests
     unit/kernel/private_futex_test.cpp
     "unit"
@@ -863,6 +868,11 @@ os_add_kernel_process_test(
     "integration"
 )
 os_add_kernel_process_test(
+    os_kernel_file_page_load_wait_queue_integration_tests
+    integration/boot/file_page_load_wait_queue_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
     os_kernel_deadline_scheduling_integration_tests
     integration/boot/deadline_scheduling_integration_test.cpp
     "integration"
@@ -890,6 +900,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_block_io_randomized_tests
     randomized/kernel/block_io_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_file_page_load_randomized_tests
+    randomized/kernel/file_page_load_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_process_test(
@@ -1318,6 +1333,17 @@ set_tests_properties(
 )
 
 find_package(Threads REQUIRED)
+os_add_kernel_memory_test(
+    os_kernel_file_page_cache_loading_merge_integration_tests
+    integration/boot/file_page_cache_loading_merge_test.cpp
+    "integration"
+)
+target_link_libraries(
+    os_kernel_file_page_cache_loading_merge_integration_tests
+    PRIVATE
+        os_kernel_process_model_host
+        Threads::Threads
+)
 os_add_kernel_ipc_test(
     os_kernel_synchronization_integration_tests
     integration/boot/kernel_synchronization_test.cpp

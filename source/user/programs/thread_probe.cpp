@@ -1,8 +1,9 @@
-#include "os/user/synchronization.hpp"
-#include "os/user/system_call.hpp"
-#include "os/user/thread.hpp"
-
-#include "os/abi/thread.hpp"
+#include <os/abi/elf.hpp>
+#include <os/abi/system_call.hpp>
+#include <os/abi/thread.hpp>
+#include <os/user/synchronization.hpp>
+#include <os/user/system_call.hpp>
+#include <os/user/thread.hpp>
 
 #include <stdint.h>
 
@@ -18,9 +19,13 @@ constexpr char OS_USER_THREAD_PROBE_CAPACITY_READY_MESSAGE[] =
 constexpr char OS_USER_THREAD_PROBE_TLS_MESSAGE[] = "[OS][USER][THREAD] TLS_ISOLATED\r\n";
 constexpr char OS_USER_THREAD_PROBE_FUTEX_MESSAGE[] =
     "[OS][USER][THREAD] FUTEX_SYNCHRONIZATION_VERIFIED\r\n";
+constexpr char OS_USER_THREAD_PROBE_FILE_PAGE_LOADING_MESSAGE[] =
+    "[OS][USER][THREAD] FILE_PAGE_CONCURRENT_READS_VERIFIED\r\n";
 constexpr char OS_USER_THREAD_PROBE_JOIN_MESSAGE[] = "[OS][USER][THREAD] JOIN_RECLAIMED\r\n";
 constexpr char OS_USER_THREAD_PROBE_COMPLETED_MESSAGE[] = "[OS][USER][THREAD] COMPLETED\r\n";
+constexpr char OS_USER_THREAD_PROBE_COLD_FILE_PATH[] = "/bin/tool_probe";
 constexpr uint64_t OS_USER_THREAD_PROBE_STRING_TERMINATOR_BYTES = 1ULL;
+constexpr uint64_t OS_USER_THREAD_PROBE_ELF_MAGIC_SIZE_BYTES = 4ULL;
 constexpr uint64_t OS_USER_THREAD_PROBE_FUNCTIONAL_TOTAL_THREAD_COUNT = 32ULL;
 constexpr uint64_t OS_USER_THREAD_PROBE_CAPACITY_TOTAL_THREAD_COUNT = 64ULL;
 constexpr uint64_t OS_USER_THREAD_PROBE_MAIN_THREAD_COUNT = 1ULL;
@@ -35,13 +40,19 @@ constexpr uint64_t OS_USER_THREAD_PROBE_EXIT_VALUE_BASE = 0x1200ULL;
 constexpr int64_t OS_USER_THREAD_PROBE_SUCCESS_EXIT_CODE = 0LL;
 constexpr int64_t OS_USER_THREAD_PROBE_FAILURE_EXIT_CODE = 1LL;
 constexpr int64_t OS_USER_THREAD_PROBE_FIRST_ERROR_RESULT = -1LL;
+constexpr uint8_t OS_USER_THREAD_PROBE_ELF_MAGIC[OS_USER_THREAD_PROBE_ELF_MAGIC_SIZE_BYTES]{
+    os::abi::OS_ABI_ELF_MAGIC_BYTE_0,
+    os::abi::OS_ABI_ELF_MAGIC_BYTE_1,
+    os::abi::OS_ABI_ELF_MAGIC_BYTE_2,
+    os::abi::OS_ABI_ELF_MAGIC_BYTE_3,
+};
 
 struct WorkerArgument final {
     uint64_t worker_index;
 };
 
-alignas(os::abi::OS_ABI_THREAD_LOCAL_STORAGE_ALIGNMENT_BYTES)
-    os::user::ThreadRuntimeState main_runtime_state;
+alignas(os::abi::OS_ABI_THREAD_LOCAL_STORAGE_ALIGNMENT_BYTES) os::user::ThreadRuntimeState
+    main_runtime_state;
 os::user::Thread worker_threads[OS_USER_THREAD_PROBE_CAPACITY_WORKER_COUNT];
 WorkerArgument worker_arguments[OS_USER_THREAD_PROBE_CAPACITY_WORKER_COUNT];
 uint64_t worker_thread_ids[OS_USER_THREAD_PROBE_CAPACITY_WORKER_COUNT];
@@ -53,6 +64,7 @@ uint64_t ready_worker_count;
 uint64_t protected_counter;
 uint64_t once_execution_count;
 uint64_t tls_failure_count;
+uint64_t file_page_loading_failure_count;
 bool workers_released;
 
 template <uint64_t MessageSizeBytes>
@@ -65,6 +77,26 @@ template <uint64_t MessageSizeBytes>
 void RunOnce(void *const argument) noexcept {
     auto *const execution_count = static_cast<uint64_t *>(argument);
     *execution_count += OS_USER_THREAD_PROBE_COUNTER_INCREMENT;
+}
+
+[[nodiscard]] bool ReadColdFileMagic() noexcept {
+    const int64_t descriptor = os::user::OpenFile(OS_USER_THREAD_PROBE_COLD_FILE_PATH,
+                                                  sizeof(OS_USER_THREAD_PROBE_COLD_FILE_PATH) -
+                                                      OS_USER_THREAD_PROBE_STRING_TERMINATOR_BYTES,
+                                                  os::abi::OS_ABI_FILE_OPEN_READ_FLAG);
+    if (descriptor < OS_USER_THREAD_PROBE_SUCCESS_EXIT_CODE) {
+        return false;
+    }
+    uint8_t magic[OS_USER_THREAD_PROBE_ELF_MAGIC_SIZE_BYTES]{};
+    bool valid = os::user::ReadDescriptor(static_cast<uint64_t>(descriptor), magic,
+                                          sizeof(magic)) == static_cast<int64_t>(sizeof(magic));
+    for (uint64_t byte_index = OS_USER_THREAD_PROBE_FIRST_INDEX;
+         valid && byte_index < sizeof(magic); ++byte_index) {
+        valid = magic[byte_index] == OS_USER_THREAD_PROBE_ELF_MAGIC[byte_index];
+    }
+    return os::user::CloseDescriptor(static_cast<uint64_t>(descriptor)) ==
+               OS_USER_THREAD_PROBE_SUCCESS_EXIT_CODE &&
+           valid;
 }
 
 [[nodiscard]] uint64_t RunWorker(void *const argument) noexcept {
@@ -94,6 +126,14 @@ void RunOnce(void *const argument) noexcept {
         }
     }
     state_mutex.Unlock();
+
+    if (!ReadColdFileMagic()) {
+        if (!state_mutex.Lock()) {
+            return UINT64_MAX;
+        }
+        ++file_page_loading_failure_count;
+        state_mutex.Unlock();
+    }
 
     if (!once.Call(RunOnce, &once_execution_count)) {
         if (!state_mutex.Lock()) {
@@ -197,9 +237,11 @@ void OsUserEntry(uint64_t, const char *const *const, const char *const *const) n
     }
     const uint64_t expected_counter = worker_count * OS_USER_THREAD_PROBE_WORK_ITERATIONS;
     if (tls_failure_count != OS_USER_THREAD_PROBE_FIRST_INDEX ||
+        file_page_loading_failure_count != OS_USER_THREAD_PROBE_FIRST_INDEX ||
         once_execution_count != OS_USER_THREAD_PROBE_COUNTER_INCREMENT ||
         protected_counter != expected_counter || !WriteMessage(OS_USER_THREAD_PROBE_TLS_MESSAGE) ||
         !WriteMessage(OS_USER_THREAD_PROBE_FUTEX_MESSAGE) ||
+        !WriteMessage(OS_USER_THREAD_PROBE_FILE_PAGE_LOADING_MESSAGE) ||
         !WriteMessage(OS_USER_THREAD_PROBE_JOIN_MESSAGE) ||
         !WriteMessage(OS_USER_THREAD_PROBE_COMPLETED_MESSAGE)) {
         os::user::ExitProcess(OS_USER_THREAD_PROBE_FAILURE_EXIT_CODE);

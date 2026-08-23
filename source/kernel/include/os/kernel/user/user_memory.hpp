@@ -263,6 +263,8 @@ struct UserFilePageCacheRuntimeStatistics final {
 [[nodiscard]] UserVirtualMemoryStatus
 VisitUserFilePageCache(void *context, FilePageCacheVisitOperation operation) noexcept;
 [[nodiscard]] UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept;
+[[nodiscard]] UserAddressSpaceStatus
+ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operations) noexcept;
 [[nodiscard]] MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept;
 [[nodiscard]] uint64_t GetUserMemorySwappiness() noexcept;
 [[nodiscard]] MemoryOvercommitStatistics GetUserMemoryOvercommitStatistics() noexcept;

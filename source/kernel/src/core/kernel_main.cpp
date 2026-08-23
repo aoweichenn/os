@@ -561,6 +561,22 @@ constexpr char OS_KERNEL_MAIN_ROOT_BLOCK_IO_ASYNC_COUNT_PREFIX[] =
     "[OS][KERNEL][BLOCK_IO] ROOT_ASYNC_OPERATIONS=";
 constexpr char OS_KERNEL_MAIN_SWAP_BLOCK_IO_ASYNC_COUNT_PREFIX[] =
     "[OS][KERNEL][BLOCK_IO] SWAP_ASYNC_OPERATIONS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_ACTIVE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] ACTIVE=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_BEGIN_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] BEGINS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_WAITER_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] WAITERS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_WAIT_COMMIT_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] WAIT_COMMITS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_COMPLETION_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] COMPLETIONS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_WAKE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] BROADCAST_WAKES=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_FAILURE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] FAILURE_BROADCASTS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_RESULT_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_LOAD] RESULT_TAKES=";
 constexpr char OS_KERNEL_MAIN_USER_TO_KERNEL_SWITCH_COUNT_PREFIX[] =
     "[OS][KERNEL] USER_TO_KERNEL_SWITCHES=";
 constexpr char OS_KERNEL_MAIN_KERNEL_TO_USER_SWITCH_COUNT_PREFIX[] =
@@ -1883,8 +1899,7 @@ void CreateInitialDiskProcess(const VgaTextConsole &vga_console,
                             OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES,
         },
     };
-    const uint64_t environment_count =
-        selection == UserProgramSelection::OomPressure ? 2ULL : 1ULL;
+    const uint64_t environment_count = selection == UserProgramSelection::OomPressure ? 2ULL : 1ULL;
     ProcessCreationResult creation_result{};
     UserElfValidationStatus elf_validation_status = UserElfValidationStatus::Succeeded;
     UserAddressSpaceStatus address_space_status = UserAddressSpaceStatus::Succeeded;
@@ -1892,8 +1907,7 @@ void CreateInitialDiskProcess(const VgaTextConsole &vga_console,
         reinterpret_cast<const uint8_t *>(OS_KERNEL_MAIN_INIT_PATH),
         sizeof(OS_KERNEL_MAIN_INIT_PATH) - OS_KERNEL_MAIN_STRING_TERMINATOR_SIZE_BYTES, arguments,
         sizeof(arguments) / sizeof(arguments[OS_KERNEL_MAIN_FIRST_PROCESS_INDEX]), environment,
-        environment_count,
-        creation_result, elf_validation_status, address_space_status);
+        environment_count, creation_result, elf_validation_status, address_space_status);
     if (runtime_status == ProcessRuntimeStatus::InvalidElf) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_ELF_REJECTED_PREFIX,
                              static_cast<uint64_t>(elf_validation_status));
@@ -2143,7 +2157,8 @@ void ExecuteRequiredProcesses(const VgaTextConsole &vga_console,
 
     const ProcessRuntimeStatistics statistics = GetProcessRuntimeStatistics();
     const bool oom_pressure_execution = selection == UserProgramSelection::OomPressure;
-    const bool normal_execution = selection == UserProgramSelection::Smoke || oom_pressure_execution;
+    const bool normal_execution =
+        selection == UserProgramSelection::Smoke || oom_pressure_execution;
     const bool functional_shell_acceptance =
         normal_execution &&
         statistics.configured_process_capacity >= OS_KERNEL_PROCESS_FUNCTIONAL_CAPACITY;
@@ -2843,14 +2858,12 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         storage_devices.root_device == nullptr || storage_devices.swap_device == nullptr ||
         storage_devices.root_asynchronous_device == nullptr ||
         storage_devices.swap_asynchronous_device == nullptr ||
-        root_block_io_device.Initialize(*storage_devices.root_device,
-                                        *storage_devices.root_asynchronous_device,
-                                        OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS,
-                                        true) != RuntimeBlockIoStatus::Succeeded ||
-        swap_block_io_device.Initialize(*storage_devices.swap_device,
-                                        *storage_devices.swap_asynchronous_device,
-                                        OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS,
-                                        true) != RuntimeBlockIoStatus::Succeeded) {
+        root_block_io_device.Initialize(
+            *storage_devices.root_device, *storage_devices.root_asynchronous_device,
+            OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS, true) != RuntimeBlockIoStatus::Succeeded ||
+        swap_block_io_device.Initialize(
+            *storage_devices.swap_device, *storage_devices.swap_asynchronous_device,
+            OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS, true) != RuntimeBlockIoStatus::Succeeded) {
         HaltProcessor();
     }
     InitializeKernelFileSystem(vga_console, file_system, root_block_io_device);
@@ -2933,8 +2946,26 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     const UserFilePageCacheRuntimeStatistics file_cache_runtime_statistics =
         GetUserFilePageCacheRuntimeStatistics();
     const ProcessRuntimeStatistics process_runtime_statistics = GetProcessRuntimeStatistics();
+    const FilePageLoadStatistics &file_page_load_statistics =
+        process_runtime_statistics.file_page_loads;
     const FileWritebackErrorTrackerStatistics writeback_error_statistics =
         GetUserFileWritebackErrorTrackerStatistics();
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_ACTIVE_COUNT_PREFIX,
+                         file_page_load_statistics.active_load_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_BEGIN_COUNT_PREFIX,
+                         file_page_load_statistics.begin_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_WAITER_COUNT_PREFIX,
+                         file_page_load_statistics.waiter_registration_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_WAIT_COMMIT_COUNT_PREFIX,
+                         file_page_load_statistics.wait_commit_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_COMPLETION_COUNT_PREFIX,
+                         file_page_load_statistics.completion_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_WAKE_COUNT_PREFIX,
+                         file_page_load_statistics.broadcast_wake_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_FAILURE_COUNT_PREFIX,
+                         file_page_load_statistics.failure_broadcast_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_RESULT_COUNT_PREFIX,
+                         file_page_load_statistics.result_take_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_READ_COUNT_PREFIX,
                          file_cache_runtime_statistics.buffered_read_operation_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_HIT_COUNT_PREFIX,

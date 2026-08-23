@@ -2169,9 +2169,20 @@ cache miss 的 reader 不能调用 `Vfs::Read` 或 `ReadAt`，否则再次进入
 ### Loading 长期不消失或同一页读取两次
 
 miss 必须先在锁内插入 Loading，再执行 `ReadUncachedAt`。reader 回调中检查
-`CurrentSpinLockDepth()` 应为零；同页递归 Acquire 应返回 EntryBusy，不能再次进入
-reader。source read 失败时按 entry metadata、frame、空 address-space 的逆序清理；
-任一计数不归零会让 `FilePageCache::Validate` 报 Corrupt。
+`CurrentSpinLockDepth()` 应为零。未配置运行时回调或 early/受限上下文中的同页递归 Acquire
+仍应返回 EntryBusy；合格 User Thread 的冲突必须登记 `FilePageLoadToken`，不能再次进入
+reader。
+
+若发生 lost wakeup，检查登记是否仍在 cache lock 内、`PrepareWait + BlockCurrentThread`
+是否共用 scheduler lock，以及 owner 是否在同一 cache 临界区完成。成功广播前还必须先按
+登记数 Retain；否则 owner 先 Release 后，reclaim 可能让 waiter 再次 miss。核对最终
+`BEGINS=COMPLETIONS`、`WAITERS=RESULT_TAKES`、`WAIT_COMMITS=BROADCAST_WAKES` 和
+`ACTIVE=0`。
+
+source read 失败时按 entry metadata、frame、空 address-space 的逆序清理，再广播同一
+failure；任一计数、token、WaitQueue 或预留引用不归零都会让 coordinator、
+`FilePageCache::Validate` 或 ProcessRuntime 资源门禁失败。登记后的等待/完成协议损坏属于
+不可恢复内核错误，不应返回到可继续释放 buffer 的调用链。
 
 ### Dirty 超过软水位但 worker 不运行
 

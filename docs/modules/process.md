@@ -103,6 +103,19 @@ ProcessTree `MarkExited` 并唤醒 ChildProcess waiter。该顺序使 wait/reap 
 单向可见，不会因无关子进程唤醒形成半提交。完整决定见
 [ADR 0066](../adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。
 
+## v2.10 FilePageLoad 协调器
+
+第四增量的 `FilePageLoadCoordinator` 是不依赖 scheduler 的固定状态模块。load 槽保存文件页
+身份、frame、load generation、owner 和终态；per-thread waiter 保存槽位 generation 与
+Registered/Waiting/Ready 状态。ProcessRuntime 为每个槽提供独立 `FilePageLoading`
+WaitQueue，并在 scheduler lock 内组合 `PrepareWait + BlockCurrentThread` 或
+`Complete + WakeMany`。
+
+FilePageCache 通过静态回调使用该模块：冲突登记仍在 cache lock 内，owner 完成前查询精确
+waiter 数并预留页面引用。登记后的协议损坏 fail-stop；正常 ProcessRuntime 结束要求 load、
+waiter 和所有 per-slot queue 全部归零。设计见
+[ADR 0067](../adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。
+
 ### WorkQueue
 
 WorkQueue 不创建 Thread，也不调用任务。它只拥有 caller-storage entry、delayed heap、

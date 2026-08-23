@@ -1275,6 +1275,24 @@ VGA 终端。
 [OS][KERNEL] OOM_LAST_VICTIM=0x...
 ```
 
+V2.10.4 的 Loading 合并同样禁止逐 miss、逐 waiter 打印，只在全部用户进程结束后的
+文件系统统计区追加固定八行：
+
+```text
+[OS][KERNEL][FILE_PAGE_LOAD] ACTIVE=0x0000000000000000
+[OS][KERNEL][FILE_PAGE_LOAD] BEGINS=0x...
+[OS][KERNEL][FILE_PAGE_LOAD] WAITERS=0x...
+[OS][KERNEL][FILE_PAGE_LOAD] WAIT_COMMITS=0x...
+[OS][KERNEL][FILE_PAGE_LOAD] COMPLETIONS=0x...
+[OS][KERNEL][FILE_PAGE_LOAD] BROADCAST_WAKES=0x...
+[OS][KERNEL][FILE_PAGE_LOAD] FAILURE_BROADCASTS=0x0000000000000000
+[OS][KERNEL][FILE_PAGE_LOAD] RESULT_TAKES=0x...
+```
+
+runner 只校验三组守恒和最终零状态，不要求单 BSP 正常负载人为制造 waiter。强制重叠、
+失败广播和 completion-before-wait 由 host integration/randomized 测试观察，避免通过热路径
+日志或人为延迟改变 QEMU 调度。
+
 ## v2.9 Kernel Thread 聚合日志
 
 ```text

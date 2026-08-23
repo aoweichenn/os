@@ -114,7 +114,40 @@ enum class FilePageCacheStatus : uint64_t {
     ReferenceUnderflow,
     EntryBusy,
     FrameReleaseFailed,
+    LoadingWaitUnavailable,
+    LoadingWaitFailed,
     Corrupt,
+};
+
+struct FilePageLoadToken final {
+    uint64_t slot_index;
+    uint64_t generation;
+};
+
+using FilePageLoadWaitAvailableOperation = bool (*)(void *context) noexcept;
+using FilePageLoadBeginOperation = bool (*)(void *context, const FilePageIdentity &identity,
+                                            uint64_t physical_address, uint64_t load_generation,
+                                            FilePageLoadToken &token) noexcept;
+using FilePageLoadRegisterWaiterOperation = bool (*)(void *context,
+                                                     const FilePageIdentity &identity,
+                                                     uint64_t physical_address,
+                                                     uint64_t load_generation,
+                                                     FilePageLoadToken &token) noexcept;
+using FilePageLoadWaitOperation = bool (*)(void *context, FilePageLoadToken token,
+                                           FilePageCacheStatus &result) noexcept;
+using FilePageLoadWaiterCountOperation = bool (*)(void *context, FilePageLoadToken token,
+                                                  uint64_t &waiter_count) noexcept;
+using FilePageLoadCompleteOperation = bool (*)(void *context, FilePageLoadToken token,
+                                               FilePageCacheStatus result) noexcept;
+
+struct FilePageLoadWaitOperations final {
+    void *context;
+    FilePageLoadWaitAvailableOperation available;
+    FilePageLoadBeginOperation begin;
+    FilePageLoadRegisterWaiterOperation register_waiter;
+    FilePageLoadWaitOperation wait;
+    FilePageLoadWaiterCountOperation waiter_count;
+    FilePageLoadCompleteOperation complete;
 };
 
 class FilePageCache final {
@@ -127,6 +160,8 @@ class FilePageCache final {
     Initialize(KernelHeap &metadata_heap, uint64_t capacity, uint64_t dirty_page_limit,
                PhysicalFrameAllocator &frame_allocator, void *page_access_context,
                FilePageAccessOperation page_access_operation) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    ConfigureLoadingWait(const FilePageLoadWaitOperations &operations) noexcept;
     [[nodiscard]] FilePageCacheStatus Acquire(const FilePageIdentity &identity,
                                               void *reader_context,
                                               FilePageReadOperation read_operation,
@@ -207,6 +242,10 @@ class FilePageCache final {
                       FilePageWriteOperation write_operation, uint64_t maximum_page_count,
                       uint64_t &written_page_count) noexcept;
     [[nodiscard]] bool OutstandingDirtyPageCount(uint64_t &page_count) const noexcept;
+    [[nodiscard]] bool LoadingWaitAvailable() const noexcept;
+    [[nodiscard]] bool LoadingWaiterCount(FilePageLoadToken token, uint64_t &waiter_count) noexcept;
+    [[nodiscard]] bool CompleteLoadingWait(FilePageLoadToken token,
+                                           FilePageCacheStatus result) noexcept;
     void RefreshBackgroundWritebackRequest() noexcept;
     [[nodiscard]] FilePageCacheStatus
     MapAddressSpaceStatus(FileCacheAddressSpaceStatus status) const noexcept;
@@ -223,11 +262,13 @@ class FilePageCache final {
     PhysicalFrameAllocator *frame_allocator_{nullptr};
     void *page_access_context_{nullptr};
     FilePageAccessOperation page_access_operation_{nullptr};
+    FilePageLoadWaitOperations load_wait_operations_{};
     uint64_t access_generation_{};
     FilePageCacheStatistics statistics_{};
     bool background_writeback_requested_{};
     bool background_writeback_paused_{};
     bool forced_background_writeback_requested_{};
+    bool load_wait_operations_configured_{};
     mutable SpinLock lock_{};
     bool initialized_{};
 };

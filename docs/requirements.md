@@ -310,7 +310,8 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - 第四增量后 cache miss 必须先发布唯一 Loading 身份并在全局 cache lock 外执行
   source read；成功只允许 Loading→Clean，失败必须移除 entry、frame 和空地址空间；
 - Loading 页不得映射、脏化、淘汰、truncate 或 writeback；同页冲突不得启动第二次
-  后端读取。单 BSP 同步 I/O 可返回 Busy，未来可睡眠 I/O 才允许接 waiter；
+  后端读取。early boot、受限 Kernel worker 或调度停止期可返回 Busy；合格 User Thread
+  必须使用 v2.10.4 的 waiter，不得以单 BSP 为由退回重试；
 - Dirty 后台水位、硬水位和回落目标分别采用约 10%、20%、5% 的容量比例，计算必须
   对小容量至少保留一个后台阈值，Dirty+Writeback+Error 共同计入硬水位；
 - 软水位请求必须合并，worker 每次最多写回 64 页并持续到目标水位；worker 只能在
@@ -462,6 +463,20 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   独立 probe、EIO/timeout recovery 的 shutdown 仍必须回收 DMA/MMIO/PCI/MSI-X。
 - Process 退出必须先使 Scheduler 进入 `Zombie`，再发布 ProcessTree 退出事件并唤醒父进程；
   共享 ChildProcess 唤醒不得形成进程树已收集、调度器尚未回收的半提交。
+- 第四增量的 `FilePageLoadCoordinator` 必须使用固定容量 load 槽、per-thread waiter 和
+  generation token；同一 owner 同时最多登记一个 load，旧 token 不得命中复用槽；
+- 同页冲突必须在观察 `Loading` 的同一 cache 临界区登记 waiter 后才解锁；等待状态与
+  WaitQueue 入队必须在 scheduler lock 内一次提交，完成先于等待时不得阻塞；
+- 成功 owner 必须在完成广播前为全部已登记 waiter 预留真实 mapping reference；waiter
+  醒来接管该引用，owner 先释放时 invalidate、truncate 和 reclaim 仍必须返回 Busy；
+- 失败 owner 必须先撤销 Loading entry、frame 和空地址空间，再向同期 waiter 广播同一
+  终态；waiter 不得递归发起第二次来源读取；
+- `begin=completion`、`waiter registration=result take`、`wait commit=broadcast wake` 必须
+  由 coordinator `Validate`、固定种子随机模型和 QEMU 聚合 marker 联合验证；
+- waiter 登记后的协议损坏必须 fail-stop。early boot、IRQ、调度停止期和受限 Kernel
+  worker 不得假装可睡眠，仍保留明确 Busy 边界；
+- 第四增量不得改变 ABI 2.4.0、rootfs v4、磁盘格式或 Loading 页的 writeback/reclaim/
+  truncate/invalidate 禁止规则。
 
 ## v2.0 完成基线
 

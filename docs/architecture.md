@@ -2433,6 +2433,44 @@ early boot 和当前深层 Kernel worker 仍同步回退。单 BSP 的 aging/rec
 [ADR 0065](adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md) 与
 [ADR 0066](adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。
 
+V2.10.4 在文件缓存和调度器之间增加静态回调边界：
+
+```text
+owner Acquire miss（持 cache lock）
+  -> insert Loading(frame, load generation)
+  -> FilePageLoadCoordinator::Begin
+  -> 解 cache lock，执行唯一 source read
+
+waiter Acquire collision（持同一 cache lock）
+  -> RegisterWaiter(slot generation)
+  -> 解 cache lock
+  -> PrepareWait
+       | Completed：直接领取同一结果
+       ` Loading：Blocked(FilePageLoading, per-slot queue)
+
+owner source success（重新持 cache lock）
+  -> Loading -> Clean + owner Retain
+  -> 冻结 registered waiter count
+  -> 为每个 waiter 预留 Retain
+  -> Complete + exact WakeMany
+
+waiter wake
+  -> TakeResult
+  -> 验证 identity/frame/非 Loading
+  -> 接管预留引用，不递归 miss
+```
+
+登记发生在 cache lock 内，等待状态和 WaitQueue 入队发生在 scheduler lock 内；完成又在
+cache lock 内取得 scheduler lock。该固定顺序关闭 completion-before-block 窗口，且
+scheduler-lock 路径不反向进入 cache。成功引用在广播前已存在，所以 owner 即使先释放，
+reclaim/invalidate 也只能看到 Busy。失败则先撤销缓存资源，协调器单独保留终态至全部
+waiter 领取。
+
+协调器槽、waiter 和 WaitQueue 都按 Thread capacity 固定提供；token generation 阻止复用
+误交付。生产只向活动 User Kernel 续体开放，early boot、IRQ、停止期和受限 Kernel worker
+仍走 Busy。详见
+[ADR 0067](adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：
@@ -2517,8 +2555,9 @@ v2.8 第三增量当时尚无后台 writeback，因此正常系统调用不会�
 第四增量加入 safe-point 批处理后，每个批次都先完成全局 shared PTE 写保护再选择页。
 v2.9.3 又把该批处理迁到常驻 Kernel Worker；单 BSP 下仍由调度提交点串行化。
 
-v2.8 第四增量后 cache miss 先发布 Loading，再在不持有 cache lock 时读取来源。当前
-单 BSP 同步后端没有可睡眠 waiter；同页重入返回 Busy。Dirty 达到约 10% 时挂起
+v2.8 第四增量后 cache miss 先发布 Loading，再在不持有 cache lock 时读取来源；当时
+单 BSP 同步后端没有可睡眠 waiter，同页重入返回 Busy。v2.10.4 已让合格 User Thread 在
+同一 Loading 上登记并于解锁后睡眠，early/受限路径继续返回 Busy。Dirty 达到约 10% 时挂起
 后台请求，v2.9.3 常驻 Worker 每批最多写回 64 页并持续到约 5%；约 20% 硬水位在下一次 write
 前执行平衡。后台失败保留 Error 并暂停，显式 sync 才重试。最终文件系统校验产生的
 clean 页在 storage shutdown 前统一裁剪，frame 统计恢复后才允许 NVMe controller

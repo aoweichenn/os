@@ -347,8 +347,7 @@ PrepareUserResidentAllocation(UserAddressSpace &address_space, const uint64_t re
         return UserResidentAllocationStatus::Corrupt;
     }
     user_memory_reclaim_statistics.planned_file_page_count += plan.file_budget_page_count;
-    user_memory_reclaim_statistics.planned_anonymous_page_count +=
-        plan.anonymous_budget_page_count;
+    user_memory_reclaim_statistics.planned_anonymous_page_count += plan.anonymous_budget_page_count;
     UserMemoryReclaimContext reclaim_context{
         .address_space = &address_space,
         .excluded_virtual_address = excluded_virtual_address,
@@ -513,9 +512,8 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
             user_memory_reclaim_operations.context, physical_address)) {
         return false;
     }
-    return GetKernelPhysicalFrameAllocator().Release(
-               PhysicalFrame{.physical_address = physical_address}) ==
-           PhysicalFrameAllocatorStatus::Succeeded;
+    return GetKernelPhysicalFrameAllocator().Release(PhysicalFrame{
+               .physical_address = physical_address}) == PhysicalFrameAllocatorStatus::Succeeded;
 }
 
 [[nodiscard]] bool IsAnonymousSwapArea(const VirtualMemoryArea &area) noexcept {
@@ -1921,9 +1919,9 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
             .resident_limit_page_count = resident_limit_page_count,
             .swap_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
             .watermark_scale_factor = OS_KERNEL_MEMORY_PRESSURE_DEFAULT_WATERMARK_SCALE_FACTOR,
-                .swappiness = user_memory_swappiness_configured
-                                   ? user_memory_swappiness
-                                   : OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
+            .swappiness = user_memory_swappiness_configured
+                              ? user_memory_swappiness
+                              : OS_KERNEL_MEMORY_PRESSURE_DEFAULT_SWAPPINESS,
         }) != MemoryPressureStatus::Succeeded) {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
     }
@@ -2140,6 +2138,14 @@ UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept {
         return UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
     }
     return UserAddressSpaceStatus::Succeeded;
+}
+
+UserAddressSpaceStatus
+ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operations) noexcept {
+    return user_virtual_memory_initialized && user_file_page_cache.ConfigureLoadingWait(
+                                                  operations) == FilePageCacheStatus::Succeeded
+               ? UserAddressSpaceStatus::Succeeded
+               : UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
 }
 
 MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept {

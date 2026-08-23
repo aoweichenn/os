@@ -17,6 +17,7 @@
 #include <os/kernel/memory/page_aging.hpp>
 #include <os/kernel/memory/physical_frame_allocator.hpp>
 #include <os/kernel/memory/resource_snapshot.hpp>
+#include <os/kernel/process/file_page_load.hpp>
 #include <os/kernel/process/job_control.hpp>
 #include <os/kernel/process/process_tree.hpp>
 #include <os/kernel/process/signal_manager.hpp>
@@ -245,6 +246,7 @@ struct ProcessIpcStatistics final {
 struct ProcessRuntimeStatistics final {
     ThreadSchedulerStatistics scheduler;
     KernelThreadRuntimeStatistics kernel_threads;
+    FilePageLoadStatistics file_page_loads;
     WorkQueueStatistics work_queue;
     BackgroundReclaimStatistics background_reclaim;
     bool background_reclaim_worker_failed;

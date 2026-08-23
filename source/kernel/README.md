@@ -304,3 +304,9 @@ Kernel Thread 在非 IRQ 上消费设备完成并精确唤醒等待者。seconda
 Thread 以 `Initializing -> Ready` 发布，退出以 Scheduler Zombie 先于 ProcessTree event
 收束。设计见
 [ADR 0066](../../docs/adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。
+
+第四增量增加 `process/file_page_load.*` 与 `WaitCondition::FilePageLoading`。同页 cache miss
+冲突在唯一 Loading entry 上登记，等待先于完成时睡在 per-slot WaitQueue，完成先于等待时
+直接领取同一结果。成功 owner 在广播前为全部 waiter 预留真实 page reference，避免 owner
+先释放后被 reclaim 抢先淘汰；失败在缓存资源撤销后广播同一终态。设计见
+[ADR 0067](../../docs/adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。

@@ -1425,7 +1425,7 @@ anonymous swap，并到达三项状态验证和 READY。
 2. 异步 BlockDevice adapter 与 ATA/NVMe 统一接口（已完成）；
 3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待、3b 栈式
    User Kernel 续体、RuntimeMutex 锁拆分和生产迁移均已完成；
-4. FilePageCache Loading waiter 与同页 miss 合并；
+4. FilePageCache Loading waiter 与同页 miss 合并（已完成）；
 5. 顺序预读、命中/浪费反馈与压力收缩；
 6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
 
@@ -1485,6 +1485,24 @@ boot 和受限 Kernel worker 保留同步回退。设计由
 3b final fresh CAW `verify` 为 224/224、0 失败：67 unit、75 integration、49 randomized、
 33 system，含 25 条 failure-path，CTest 868.49 秒。4 GiB ATA primary 69.79 秒，ATA/NVMe
 reclaim 73.46/75.36 秒，ATA/NVMe persistence 138.87/138.73 秒。v2.10 仍为未发布工程候选。
+
+**第四增量边界**
+
+`FilePageLoadCoordinator` 用固定槽、per-thread waiter、per-slot WaitQueue 和 generation token
+保存同一次 Loading 的全部观察者。冲突线程在 cache lock 内登记后才解锁；owner 在同一
+锁内冻结 waiter 数，为每个 waiter 预留真实 page reference，再完成广播。完成先于等待
+提交时直接取结果，等待先于完成时精确唤醒；失败 entry 已撤销后，同一错误仍保存到最后
+一个 waiter 领取。
+
+early boot、受限 Kernel worker 和调度停止期继续保留 Busy，不伪装成可睡眠上下文；
+Loading 的 truncate/invalidate/reclaim/writeback 边界不放宽。强制重叠 host integration
+验证 owner 先释放后 waiter 引用仍阻止淘汰，固定种子十万轮模型覆盖 0..7 waiter 的成功、
+失败和随机领取。设计由
+[ADR 0067](adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md) 冻结。
+
+第四增量 final fresh CAW `verify` 为 228/228、0 失败：68 unit、77 integration、
+50 randomized、33 system，含 25 条 failure-path；CTest 907.05 秒。4 GiB ATA primary
+75.96 秒，ATA/NVMe reclaim 78.95/80.12 秒，ATA/NVMe persistence 143.21/140.14 秒。
 
 **退出条件**
 

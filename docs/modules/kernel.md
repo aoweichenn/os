@@ -986,7 +986,8 @@ capability 为 true 时调用对应 data-cache hook；填页使用 `ReadUncached
 `WriteUncachedAt`。`FilePageCache` 的 address-space record 同时保存逻辑 EOF，控制末页
 写回长度和 truncate 零区间。生产 metadata 使用独立 buddy-backed KernelHeap，不占
 通用 512 KiB Heap。miss 仅在 cache spinlock 内发布唯一 Loading entry；来源读取在锁外
-执行。同页并发 miss 当前返回 EntryBusy，后续引入真正多核或可睡眠线程时再增加 waiter，
+执行。v2.10.4 后，合格 User Thread 的同页并发 miss 在锁内登记、解锁后睡眠，成功广播前
+预留真实引用；early boot、受限 Kernel worker 和调度停止期仍返回 EntryBusy。任何路径都
 不能阻塞在 spinlock 临界区。
 
 `user/file_backing.*` 的 VfsWriteback 描述符按文件身份去重并保留后端 open reference。
@@ -1071,6 +1072,9 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
   secondary ATA IRQ15 probe；3b 又以 User Kernel stack 续体保存 FX/syscall/GS/CR3 状态，
   用 `RuntimeMutex` 拆除 VFS/cache/swap 锁内睡眠边界，并打开生产 root/swap 异步等待。
   early boot 与受限 Kernel worker 仍同步回退。
+- v2.10.4 新增固定容量 `process/file_page_load.*`。同页 Loading 冲突在 cache lock 内登记，
+  经 per-load WaitQueue 睡眠；owner 成功广播前为 waiter 预留真实 page reference，失败则在
+  entry/frame 撤销后广播同一错误。early/受限路径仍返回 Busy，预读尚未实现。
 - `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
   ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
   96 个左右
