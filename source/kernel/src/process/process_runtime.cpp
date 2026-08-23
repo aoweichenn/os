@@ -63,6 +63,7 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_LAUNCH_WAIT_QUEUE_ID = 0x8000000000
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY = 4ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY = 64ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FEEDBACK_CAPACITY = 4096ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_PAGE_LOAD_WAIT_QUEUE_BASE = 0x8000000000020000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_PROBE_TIMEOUT_NANOSECONDS =
     5ULL * 1000ULL * 1000ULL * 1000ULL;
@@ -582,6 +583,11 @@ FileReadaheadRequestSlot
     file_readahead_request_slots[OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY];
 uint64_t
     file_readahead_request_ready_storage[OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY];
+FileReadaheadRequest
+    file_readahead_cancelled_requests[OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY];
+FileReadaheadFeedbackLedger file_readahead_feedback_ledger;
+FileReadaheadFeedbackSlot
+    file_readahead_feedback_slots[OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FEEDBACK_CAPACITY];
 BackgroundReclaimController background_reclaim_controller;
 PageAgingManager page_aging_manager;
 PageAgingEntry *page_aging_entries;
@@ -645,6 +651,7 @@ struct BackgroundReclaimSelectionContext final {
 
 [[nodiscard]] bool ScheduleRuntimeBackgroundReclaimWork() noexcept;
 [[nodiscard]] bool ScheduleRuntimeFileReadaheadWork() noexcept;
+[[nodiscard]] bool CancelRuntimeFileReadaheadFile(const FileCacheIdentity &identity) noexcept;
 
 void RecordPageAgingFailure(const PageAgingFailureStage stage,
                             const PageAgingStatus status) noexcept {
@@ -876,6 +883,9 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
 
 [[nodiscard]] bool PrepareRuntimeFileTruncate(const FileIdentity &identity,
                                               const uint64_t size_bytes) noexcept {
+    if (!CancelRuntimeFileReadaheadFile(identity)) {
+        return false;
+    }
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          process_index < process_runtime_limits.process_capacity; ++process_index) {
         ProcessRuntimeProcess &runtime_process = runtime_processes[process_index];
@@ -2537,6 +2547,104 @@ QueueRuntimeBackgroundReclaimDecision(const BackgroundReclaimDecision &decision)
                : WorkExecutionResult::Failed;
 }
 
+[[nodiscard]] bool
+ReleaseRuntimeCancelledReadaheadRequests(const uint64_t cancelled_request_count) noexcept {
+    if (cancelled_request_count > OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY) {
+        return false;
+    }
+    bool released = true;
+    for (uint64_t request_index = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+         request_index < cancelled_request_count; ++request_index) {
+        FileReadaheadRequest &request = file_readahead_cancelled_requests[request_index];
+        const bool file_closed = request.vfs != nullptr &&
+                                 request.vfs->Close(request.open_file) == fs::Status::Succeeded;
+        const bool task_released = file_readahead_feedback_ledger.ReleaseTask(request.stream) ==
+                                   FileReadaheadFeedbackStatus::Succeeded;
+        if (!file_closed || !task_released) {
+            released = false;
+        }
+        request = FileReadaheadRequest{};
+    }
+    return released;
+}
+
+[[nodiscard]] bool RegisterRuntimeFileReadaheadStream(void *const context,
+                                                      const FileCacheIdentity &identity,
+                                                      FileReadaheadStreamToken &stream) noexcept {
+    static_cast<void>(context);
+    return file_readahead_feedback_ledger.RegisterStream(identity, stream) ==
+           FileReadaheadFeedbackStatus::Succeeded;
+}
+
+[[nodiscard]] bool TakeRuntimeFileReadaheadFeedback(void *const context,
+                                                    const FileReadaheadStreamToken stream,
+                                                    FileReadaheadFeedback &feedback) noexcept {
+    static_cast<void>(context);
+    return file_readahead_feedback_ledger.Take(stream, feedback) ==
+           FileReadaheadFeedbackStatus::Succeeded;
+}
+
+[[nodiscard]] bool
+RetireRuntimeFileReadaheadStream(void *const context,
+                                 const FileReadaheadStreamToken stream) noexcept {
+    static_cast<void>(context);
+    return file_readahead_feedback_ledger.RetireStream(stream) ==
+           FileReadaheadFeedbackStatus::Succeeded;
+}
+
+[[nodiscard]] bool
+RecordRuntimeFileReadaheadFeedback(void *const context, const FileReadaheadPageTag &tag,
+                                   const FileReadaheadFeedback &feedback) noexcept {
+    static_cast<void>(context);
+    return FileReadaheadPageTagIsValid(tag) &&
+           file_readahead_feedback_ledger.Record(tag.stream, feedback) ==
+               FileReadaheadFeedbackStatus::Succeeded;
+}
+
+[[nodiscard]] bool
+CancelRuntimeFileReadaheadStream(void *const context, const FileReadaheadStreamToken stream,
+                                 const uint64_t maximum_policy_generation) noexcept {
+    static_cast<void>(context);
+    uint64_t cancelled_request_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (file_readahead_request_queue.CancelStream(
+            stream, maximum_policy_generation, file_readahead_cancelled_requests,
+            OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY,
+            cancelled_request_count) != FileReadaheadRequestStatus::Succeeded ||
+        !ReleaseRuntimeCancelledReadaheadRequests(cancelled_request_count)) {
+        return false;
+    }
+    uint64_t discarded_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    return DiscardUserFilePrefetchedPages(stream, maximum_policy_generation,
+                                          discarded_page_count) ==
+           UserVirtualMemoryStatus::Succeeded;
+}
+
+[[nodiscard]] bool CancelRuntimeFileReadaheadFile(const FileCacheIdentity &identity) noexcept {
+    uint64_t cancelled_request_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    return file_readahead_request_queue.CancelFile(
+               identity, file_readahead_cancelled_requests,
+               OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY,
+               cancelled_request_count) == FileReadaheadRequestStatus::Succeeded &&
+           ReleaseRuntimeCancelledReadaheadRequests(cancelled_request_count);
+}
+
+[[nodiscard]] bool ContinueRuntimeFileReadahead(void *const context,
+                                                bool &continue_readahead) noexcept {
+    continue_readahead = false;
+    if (context == nullptr) {
+        return false;
+    }
+    const FileReadaheadRequestToken token =
+        *static_cast<const FileReadaheadRequestToken *>(context);
+    bool cancellation_requested = false;
+    if (file_readahead_request_queue.CancellationRequested(token, cancellation_requested) !=
+        FileReadaheadRequestStatus::Succeeded) {
+        return false;
+    }
+    continue_readahead = !cancellation_requested;
+    return true;
+}
+
 [[nodiscard]] bool ReadRuntimeFileReadaheadPressure(void *const context,
                                                     MemoryPressureLevel &pressure_level) noexcept {
     static_cast<void>(context);
@@ -2551,16 +2659,26 @@ QueueRuntimeBackgroundReclaimDecision(const BackgroundReclaimDecision &decision)
 
 [[nodiscard]] bool ScheduleRuntimeFileReadahead(void *const context, fs::Vfs &vfs,
                                                 const fs::OpenFile &open_file,
+                                                const FileReadaheadStreamToken stream,
                                                 const FileReadaheadDecision &decision) noexcept {
     static_cast<void>(context);
     if (!process_runtime_initialized || !process_scheduling_active ||
         kernel_work_thread_stop_requested || !file_readahead_work_registered ||
         decision.action != FileReadaheadAction::Submit ||
-        decision.prefetch_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        decision.prefetch_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        !FileReadaheadStreamTokenIsValid(stream)) {
+        return false;
+    }
+    if (file_readahead_feedback_ledger.RetainTask(stream) !=
+        FileReadaheadFeedbackStatus::Succeeded) {
         return false;
     }
     fs::OpenFile retained_open_file{};
     if (vfs.RetainOpenFile(open_file, retained_open_file) != fs::Status::Succeeded) {
+        if (file_readahead_feedback_ledger.ReleaseTask(stream) !=
+            FileReadaheadFeedbackStatus::Succeeded) {
+            HaltProcessor();
+        }
         return false;
     }
     FileReadaheadRequestToken token{};
@@ -2571,11 +2689,16 @@ QueueRuntimeBackgroundReclaimDecision(const BackgroundReclaimDecision &decision)
             .start_page_index = decision.prefetch_start_page_index,
             .page_count = decision.prefetch_page_count,
             .policy_generation = decision.generation,
+            .stream = stream,
         },
         token);
     static_cast<void>(token);
     if (enqueue_status != FileReadaheadRequestStatus::Succeeded) {
-        static_cast<void>(vfs.Close(retained_open_file));
+        if (vfs.Close(retained_open_file) != fs::Status::Succeeded ||
+            file_readahead_feedback_ledger.ReleaseTask(stream) !=
+                FileReadaheadFeedbackStatus::Succeeded) {
+            HaltProcessor();
+        }
         return false;
     }
     if (!ScheduleRuntimeFileReadaheadWork()) {
@@ -2606,14 +2729,38 @@ QueueRuntimeBackgroundReclaimDecision(const BackgroundReclaimDecision &decision)
     UserFileReadaheadResult result{};
     file_readahead_worker_io_active = true;
     const UserVirtualMemoryStatus prefetch_status = PrefetchUserFilePages(
-        *request.vfs, request.open_file, request.start_page_index, request.page_count, result);
+        *request.vfs, request.open_file, request.start_page_index, request.page_count,
+        FileReadaheadPageTag{
+            .stream = request.stream,
+            .policy_generation = request.policy_generation,
+        },
+        UserFileReadaheadControl{
+            .context = &token,
+            .continue_operation = ContinueRuntimeFileReadahead,
+        },
+        result);
     file_readahead_worker_io_active = false;
+    bool cancellation_requested = false;
+    const FileReadaheadRequestStatus cancellation_status =
+        file_readahead_request_queue.CancellationRequested(token, cancellation_requested);
+    uint64_t discarded_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus discard_status =
+        cancellation_status == FileReadaheadRequestStatus::Succeeded &&
+                (result.cancelled || cancellation_requested)
+            ? DiscardUserFilePrefetchedPages(request.stream, request.policy_generation,
+                                             discarded_page_count)
+            : UserVirtualMemoryStatus::Succeeded;
     const fs::Status close_status = request.vfs->Close(request.open_file);
     const FileReadaheadRequestStatus completion_status =
         file_readahead_request_queue.Complete(token);
+    const FileReadaheadFeedbackStatus task_release_status =
+        file_readahead_feedback_ledger.ReleaseTask(request.stream);
     if (prefetch_status != UserVirtualMemoryStatus::Succeeded ||
+        cancellation_status != FileReadaheadRequestStatus::Succeeded ||
+        discard_status != UserVirtualMemoryStatus::Succeeded ||
         close_status != fs::Status::Succeeded ||
-        completion_status != FileReadaheadRequestStatus::Succeeded) {
+        completion_status != FileReadaheadRequestStatus::Succeeded ||
+        task_release_status != FileReadaheadFeedbackStatus::Succeeded) {
         file_readahead_worker_failed = true;
         const FileReadaheadWorkerFailureStage failure_stage =
             prefetch_status != UserVirtualMemoryStatus::Succeeded
@@ -3059,6 +3206,13 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
     }
     if (file_readahead_request_queue.Validate() != FileReadaheadRequestStatus::Succeeded ||
         file_readahead_request_queue.Statistics().active_request_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_feedback_ledger.Validate() != FileReadaheadFeedbackStatus::Succeeded ||
+        file_readahead_feedback_ledger.Statistics().active_stream_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_feedback_ledger.Statistics().retiring_stream_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_feedback_ledger.Statistics().active_task_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         file_readahead_worker_io_active) {
         return false;
@@ -5712,7 +5866,11 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
         page_aging_hash = nullptr;
         return ProcessRuntimeStatus::AddressSpaceFailure;
     }
-    if (file_readahead_request_queue.Initialize(
+    if (file_readahead_feedback_ledger.Initialize(
+            file_readahead_feedback_slots,
+            OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FEEDBACK_CAPACITY) !=
+            FileReadaheadFeedbackStatus::Succeeded ||
+        file_readahead_request_queue.Initialize(
             file_readahead_request_slots, file_readahead_request_ready_storage,
             OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY) !=
             FileReadaheadRequestStatus::Succeeded ||
@@ -5823,8 +5981,16 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_
             .waiter_count = ReadRuntimeFilePageLoadWaiterCount,
             .complete = CompleteRuntimeFilePageLoad,
         }) != UserAddressSpaceStatus::Succeeded ||
+        ConfigureUserFilePageCacheReadaheadFeedback(FilePageReadaheadFeedbackOperations{
+            .context = &file_readahead_feedback_ledger,
+            .record = RecordRuntimeFileReadaheadFeedback,
+        }) != UserAddressSpaceStatus::Succeeded ||
         file_description_manager.ConfigureReadahead(FileDescriptionReadaheadOperations{
             .context = nullptr,
+            .register_stream = RegisterRuntimeFileReadaheadStream,
+            .take_feedback = TakeRuntimeFileReadaheadFeedback,
+            .cancel = CancelRuntimeFileReadaheadStream,
+            .retire_stream = RetireRuntimeFileReadaheadStream,
             .pressure = ReadRuntimeFileReadaheadPressure,
             .schedule = ScheduleRuntimeFileReadahead,
         }) != FileDescriptionStatus::Succeeded ||
@@ -7789,6 +7955,13 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         file_readahead_request_queue.Validate() != FileReadaheadRequestStatus::Succeeded ||
         file_readahead_request_queue.Statistics().active_request_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_feedback_ledger.Validate() != FileReadaheadFeedbackStatus::Succeeded ||
+        file_readahead_feedback_ledger.Statistics().active_stream_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_feedback_ledger.Statistics().retiring_stream_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_feedback_ledger.Statistics().active_task_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         kernel_work_queue.Validate() != WorkQueueStatus::Succeeded ||
         kernel_work_queue.Statistics().registered_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         background_reclaim_controller.Validate() != BackgroundReclaimStatus::Succeeded ||
@@ -7893,6 +8066,7 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .kernel_threads = kernel_thread_runtime_statistics,
         .file_page_loads = file_page_load_coordinator.Statistics(),
         .file_readahead_requests = file_readahead_request_queue.Statistics(),
+        .file_readahead_feedback = file_readahead_feedback_ledger.Statistics(),
         .file_readahead_worker_failed = file_readahead_worker_failed,
         .work_queue = kernel_work_queue.Statistics(),
         .background_reclaim = background_reclaim_controller.Statistics(),

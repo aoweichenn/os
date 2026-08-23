@@ -316,6 +316,9 @@ DemandHit/DemandMiss/PrefetchedHit 推进 start/size/async-tail 窗口和 genera
 32 页上限，顺序窗口按 4/2 倍增长，随机访问重置。四级内存压力和 useful/wasted 反馈只
 调整下一窗口。5b 已将其接入 FileDescription、VFS 缓存观测、64 槽 retained-OpenFile 请求
 FIFO 和常驻 Kernel worker；FilePageCache 用 Demand/Prefetch intent 与 one-shot 标记归因
-实际 useful/waste。预读 worker 可拥有新 Loading，但不等待同页 owner。设计见
+实际 useful/waste。5c 再用固定 FeedbackLedger、stream token 和 policy generation 把反馈
+交回 producer，并对 close/reset/BelowMinimum/truncate 执行有界取消。预读 worker 可拥有新
+Loading，但不等待同页 owner。设计见
 [ADR 0068](../../docs/adr/0068-v2-10-per-open-file-readahead-policy.md) 与
-[ADR 0069](../../docs/adr/0069-v2-10-production-readahead-execution.md)。
+[ADR 0069](../../docs/adr/0069-v2-10-production-readahead-execution.md)、
+[ADR 0070](../../docs/adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)。

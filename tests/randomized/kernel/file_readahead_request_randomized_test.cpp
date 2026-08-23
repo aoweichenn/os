@@ -81,6 +81,11 @@ MakeRequest(RandomizedModel &model, const uint64_t request_identifier) noexcept 
         .page_count = OS_TEST_FILE_READAHEAD_REQUEST_RANDOMIZED_FIRST_VALUE,
         .policy_generation =
             request_identifier + OS_TEST_FILE_READAHEAD_REQUEST_RANDOMIZED_FIRST_VALUE,
+        .stream =
+            os::kernel::FileReadaheadStreamToken{
+                .slot_index = OS_TEST_FILE_READAHEAD_REQUEST_RANDOMIZED_FIRST_VALUE,
+                .generation = OS_TEST_FILE_READAHEAD_REQUEST_RANDOMIZED_FIRST_VALUE,
+            },
     };
 }
 

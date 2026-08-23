@@ -27,6 +27,7 @@ struct FileDescriptionStorage final {
     uint64_t writeback_error_cursor;
     FileDescriptionWritebackErrorUnregisterOperation writeback_error_unregister_operation;
     FileReadaheadPolicy readahead_policy;
+    FileReadaheadStreamToken readahead_stream;
 };
 
 [[nodiscard]] FileDescriptionStatus MapObjectStatus(const KernelObjectStatus status) noexcept {
@@ -128,7 +129,9 @@ FileDescriptionStatus FileDescriptionManager::ConfigureReadahead(
     if (this->readahead_configured_) {
         return FileDescriptionStatus::AlreadyInitialized;
     }
-    if (operations.pressure == nullptr || operations.schedule == nullptr) {
+    if (operations.register_stream == nullptr || operations.take_feedback == nullptr ||
+        operations.cancel == nullptr || operations.retire_stream == nullptr ||
+        operations.pressure == nullptr || operations.schedule == nullptr) {
         return FileDescriptionStatus::InvalidDependency;
     }
     this->readahead_operations_ = operations;
@@ -146,6 +149,7 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
     }
     uint64_t writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
     FileReadaheadPolicy readahead_policy{};
+    FileReadaheadStreamToken readahead_stream{};
     const bool writeback_registered = request.kind == FileDescriptionKind::RegularFile;
     if (writeback_registered && !request.writeback_error_register_operation(
                                     request.writeback_identity, writeback_error_cursor)) {
@@ -161,10 +165,23 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         }
         return FileDescriptionStatus::ObjectFailure;
     }
+    if (request.kind == FileDescriptionKind::RegularFile && this->readahead_configured_ &&
+        !this->readahead_operations_.register_stream(
+            this->readahead_operations_.context, request.writeback_identity, readahead_stream)) {
+        if (writeback_registered) {
+            static_cast<void>(
+                request.writeback_error_unregister_operation(request.writeback_identity));
+        }
+        return FileDescriptionStatus::ObjectFailure;
+    }
     const KernelObjectStatus create_status = this->object_manager_->CreateObject(
         KernelObjectType::FileDescription, static_cast<uint64_t>(request.kind),
         sizeof(FileDescriptionStorage), FileDescriptionManager::FinalizePayload, this, reference);
     if (create_status != KernelObjectStatus::Succeeded) {
+        if (FileReadaheadStreamTokenIsValid(readahead_stream)) {
+            static_cast<void>(this->readahead_operations_.retire_stream(
+                this->readahead_operations_.context, readahead_stream));
+        }
         if (writeback_registered) {
             static_cast<void>(
                 request.writeback_error_unregister_operation(request.writeback_identity));
@@ -178,6 +195,10 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
+        if (FileReadaheadStreamTokenIsValid(readahead_stream)) {
+            static_cast<void>(this->readahead_operations_.retire_stream(
+                this->readahead_operations_.context, readahead_stream));
+        }
         if (writeback_registered) {
             static_cast<void>(
                 request.writeback_error_unregister_operation(request.writeback_identity));
@@ -200,6 +221,7 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         .writeback_error_cursor = writeback_error_cursor,
         .writeback_error_unregister_operation = request.writeback_error_unregister_operation,
         .readahead_policy = readahead_policy,
+        .readahead_stream = readahead_stream,
     };
     return FileDescriptionStatus::Succeeded;
 }
@@ -224,7 +246,11 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
         return FileDescriptionStatus::InvalidReference;
     }
     RuntimeMutexGuard guard{*operation_lock};
-    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
+    if (storage.kind == FileDescriptionKind::RegularFile && this->readahead_configured_ &&
+        !this->ApplyPendingReadaheadFeedback(storage.readahead_policy, storage.readahead_stream)) {
+        return FileDescriptionStatus::ObjectFailure;
+    }
     fs::NodeInformation information{};
     if (IsVfsBackedKind(storage.kind) &&
         (storage.vfs == nullptr ||
@@ -253,6 +279,9 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
         .writeback_error_cursor = storage.kind == FileDescriptionKind::RegularFile
                                       ? storage.writeback_error_cursor
                                       : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .readahead_stream = storage.kind == FileDescriptionKind::RegularFile
+                                ? storage.readahead_stream
+                                : FileReadaheadStreamToken{},
         .readahead = storage.kind == FileDescriptionKind::RegularFile
                          ? storage.readahead_policy.Statistics()
                          : FileReadaheadStatistics{},
@@ -355,6 +384,10 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         if (!ReadaheadObservationIsValid(readahead_observation)) {
             return FileDescriptionStatus::ObjectFailure;
         }
+        if (!this->ApplyPendingReadaheadFeedback(storage.readahead_policy,
+                                                 storage.readahead_stream)) {
+            return FileDescriptionStatus::ObjectFailure;
+        }
         uint64_t observed_first_page_index = readahead_observation.first_page_index;
         uint64_t observed_page_count = readahead_observation.requested_page_count;
         const FileReadaheadStatistics readahead_statistics = storage.readahead_policy.Statistics();
@@ -365,8 +398,6 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
             if (observed_end_page_index <= readahead_statistics.next_expected_page_index) {
                 SpinLockGuard statistics_guard{this->statistics_lock_};
                 ++this->statistics_.readahead_observation_count;
-                this->statistics_.readahead_useful_page_count +=
-                    readahead_observation.prefetched_hit_page_count;
                 observed_page_count = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
             } else {
                 observed_first_page_index = readahead_statistics.next_expected_page_index;
@@ -386,13 +417,6 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
             SpinLockGuard statistics_guard{this->statistics_lock_};
             ++this->statistics_.readahead_schedule_rejection_count;
         } else {
-            if (readahead_observation.prefetched_hit_page_count !=
-                    OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
-                storage.readahead_policy.RecordFeedback(
-                    readahead_observation.prefetched_hit_page_count,
-                    OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) != FileReadaheadStatus::Succeeded) {
-                return FileDescriptionStatus::ObjectFailure;
-            }
             const uint64_t observed_end_page_index =
                 observed_first_page_index + observed_page_count;
             const bool trigger_page_observed =
@@ -420,14 +444,29 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
                 return FileDescriptionStatus::ObjectFailure;
             }
             const bool schedule_required = decision.action == FileReadaheadAction::Submit;
+            const bool cancellation_required =
+                pressure_level == MemoryPressureLevel::BelowMinimum || decision.stream_reset;
+            const uint64_t maximum_cancelled_generation =
+                decision.action == FileReadaheadAction::Submit &&
+                        decision.generation != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE
+                    ? decision.generation - 1ULL
+                    : UINT64_MAX;
+            const bool cancellation_succeeded =
+                !cancellation_required ||
+                this->readahead_operations_.cancel(this->readahead_operations_.context,
+                                                   storage.readahead_stream,
+                                                   maximum_cancelled_generation);
+            if (!cancellation_succeeded) {
+                SpinLockGuard statistics_guard{this->statistics_lock_};
+                ++this->statistics_.readahead_cancellation_failure_count;
+                return FileDescriptionStatus::ObjectFailure;
+            }
             const bool schedule_succeeded =
-                !schedule_required ||
-                this->readahead_operations_.schedule(this->readahead_operations_.context,
-                                                     *storage.vfs, storage.open_file, decision);
+                !schedule_required || this->readahead_operations_.schedule(
+                                          this->readahead_operations_.context, *storage.vfs,
+                                          storage.open_file, storage.readahead_stream, decision);
             SpinLockGuard statistics_guard{this->statistics_lock_};
             ++this->statistics_.readahead_observation_count;
-            this->statistics_.readahead_useful_page_count +=
-                readahead_observation.prefetched_hit_page_count;
             if (schedule_required) {
                 ++this->statistics_.readahead_decision_count;
                 if (schedule_succeeded) {
@@ -435,6 +474,9 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
                 } else {
                     ++this->statistics_.readahead_schedule_rejection_count;
                 }
+            }
+            if (cancellation_required && cancellation_succeeded) {
+                ++this->statistics_.readahead_cancellation_count;
             }
         }
     }
@@ -711,6 +753,36 @@ FileDescriptionManagerStatistics FileDescriptionManager::Statistics() const noex
     return this->statistics_;
 }
 
+bool FileDescriptionManager::ApplyPendingReadaheadFeedback(
+    FileReadaheadPolicy &policy, const FileReadaheadStreamToken stream) noexcept {
+    if (!this->readahead_configured_ || !FileReadaheadStreamTokenIsValid(stream)) {
+        return !this->readahead_configured_;
+    }
+    FileReadaheadFeedback feedback{};
+    if (!this->readahead_operations_.take_feedback(this->readahead_operations_.context, stream,
+                                                   feedback)) {
+        return false;
+    }
+    if (feedback.useful_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+        feedback.wasted_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return true;
+    }
+    if (policy.RecordFeedback(feedback.useful_page_count, feedback.wasted_page_count) !=
+        FileReadaheadStatus::Succeeded) {
+        return false;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    if (this->statistics_.readahead_feedback_application_count == UINT64_MAX ||
+        this->statistics_.readahead_useful_page_count > UINT64_MAX - feedback.useful_page_count ||
+        this->statistics_.readahead_wasted_page_count > UINT64_MAX - feedback.wasted_page_count) {
+        return false;
+    }
+    ++this->statistics_.readahead_feedback_application_count;
+    this->statistics_.readahead_useful_page_count += feedback.useful_page_count;
+    this->statistics_.readahead_wasted_page_count += feedback.wasted_page_count;
+    return true;
+}
+
 bool FileDescriptionManager::FinalizePayload(void *const payload, void *const context) noexcept {
     if (context == nullptr) {
         return false;
@@ -727,11 +799,29 @@ bool FileDescriptionManager::Finalize(void *const payload) noexcept {
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     bool finalized = true;
     if (IsVfsBackedKind(storage.kind)) {
+        bool readahead_finalized = true;
+        if (storage.kind == FileDescriptionKind::RegularFile && this->readahead_configured_) {
+            const bool cancelled = this->readahead_operations_.cancel(
+                this->readahead_operations_.context, storage.readahead_stream, UINT64_MAX);
+            {
+                SpinLockGuard statistics_guard{this->statistics_lock_};
+                if (cancelled) {
+                    ++this->statistics_.readahead_cancellation_count;
+                } else {
+                    ++this->statistics_.readahead_cancellation_failure_count;
+                }
+            }
+            const bool feedback_applied = this->ApplyPendingReadaheadFeedback(
+                storage.readahead_policy, storage.readahead_stream);
+            const bool retired = this->readahead_operations_.retire_stream(
+                this->readahead_operations_.context, storage.readahead_stream);
+            readahead_finalized = cancelled && feedback_applied && retired;
+        }
         const bool writeback_unregistered =
             storage.kind != FileDescriptionKind::RegularFile ||
             (storage.writeback_error_unregister_operation != nullptr &&
              storage.writeback_error_unregister_operation(storage.writeback_identity));
-        finalized = writeback_unregistered && storage.vfs != nullptr &&
+        finalized = readahead_finalized && writeback_unregistered && storage.vfs != nullptr &&
                     storage.vfs->Close(storage.open_file) == fs::Status::Succeeded;
     } else if (storage.kind == FileDescriptionKind::PipeReader) {
         if (storage.pipe == nullptr) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <os/kernel/memory/file_cache_identity.hpp>
+#include <os/kernel/memory/file_readahead_feedback.hpp>
 #include <os/kernel/memory/sparse_page_index.hpp>
 #include <os/kernel/sync/spin_lock.hpp>
 
@@ -22,6 +23,7 @@ struct FileCachePageSnapshot final {
     uint64_t mapping_reference_count;
     uint64_t access_generation;
     FileCachePageState state;
+    FileReadaheadPageTag readahead_tag;
     bool prefetched;
 };
 
@@ -84,10 +86,14 @@ class FileCacheAddressSpace final {
                                                       uint64_t physical_address) noexcept;
     [[nodiscard]] FileCacheAddressSpaceStatus Touch(uint64_t page_index, uint64_t physical_address,
                                                     uint64_t access_generation) noexcept;
-    [[nodiscard]] FileCacheAddressSpaceStatus
-    MarkPrefetched(uint64_t page_index, uint64_t physical_address, bool &newly_marked) noexcept;
-    [[nodiscard]] FileCacheAddressSpaceStatus
-    ConsumePrefetched(uint64_t page_index, uint64_t physical_address, bool &prefetched) noexcept;
+    [[nodiscard]] FileCacheAddressSpaceStatus MarkPrefetched(uint64_t page_index,
+                                                             uint64_t physical_address,
+                                                             const FileReadaheadPageTag &tag,
+                                                             bool &newly_marked) noexcept;
+    [[nodiscard]] FileCacheAddressSpaceStatus ConsumePrefetched(uint64_t page_index,
+                                                                uint64_t physical_address,
+                                                                FileReadaheadPageTag &tag,
+                                                                bool &prefetched) noexcept;
     [[nodiscard]] FileCacheAddressSpaceStatus Transition(uint64_t page_index,
                                                          uint64_t physical_address,
                                                          FileCachePageState expected_state,

@@ -7,6 +7,7 @@
 #include <os/kernel/ipc/pipe_manager.hpp>
 #include <os/kernel/memory/file_cache_identity.hpp>
 #include <os/kernel/memory/file_readahead.hpp>
+#include <os/kernel/memory/file_readahead_feedback.hpp>
 #include <os/kernel/object/kernel_object.hpp>
 
 #include <stdint.h>
@@ -20,12 +21,24 @@ using FileDescriptionWritebackErrorUnregisterOperation =
     bool (*)(const FileCacheIdentity &identity) noexcept;
 using FileDescriptionReadaheadPressureOperation =
     bool (*)(void *context, MemoryPressureLevel &pressure_level) noexcept;
+using FileDescriptionReadaheadRegisterOperation = bool (*)(
+    void *context, const FileCacheIdentity &identity, FileReadaheadStreamToken &stream) noexcept;
+using FileDescriptionReadaheadFeedbackOperation = bool (*)(
+    void *context, FileReadaheadStreamToken stream, FileReadaheadFeedback &feedback) noexcept;
+using FileDescriptionReadaheadCancelOperation = bool (*)(
+    void *context, FileReadaheadStreamToken stream, uint64_t maximum_policy_generation) noexcept;
+using FileDescriptionReadaheadRetireOperation = bool (*)(void *context,
+                                                         FileReadaheadStreamToken stream) noexcept;
 using FileDescriptionReadaheadScheduleOperation =
     bool (*)(void *context, fs::Vfs &vfs, const fs::OpenFile &open_file,
-             const FileReadaheadDecision &decision) noexcept;
+             FileReadaheadStreamToken stream, const FileReadaheadDecision &decision) noexcept;
 
 struct FileDescriptionReadaheadOperations final {
     void *context;
+    FileDescriptionReadaheadRegisterOperation register_stream;
+    FileDescriptionReadaheadFeedbackOperation take_feedback;
+    FileDescriptionReadaheadCancelOperation cancel;
+    FileDescriptionReadaheadRetireOperation retire_stream;
     FileDescriptionReadaheadPressureOperation pressure;
     FileDescriptionReadaheadScheduleOperation schedule;
 };
@@ -93,6 +106,7 @@ struct FileDescriptionSnapshot final {
     uint64_t node_generation;
     uint64_t size_bytes;
     uint64_t writeback_error_cursor;
+    FileReadaheadStreamToken readahead_stream;
     FileReadaheadStatistics readahead;
 };
 
@@ -115,6 +129,10 @@ struct FileDescriptionManagerStatistics final {
     uint64_t readahead_schedule_count;
     uint64_t readahead_schedule_rejection_count;
     uint64_t readahead_useful_page_count;
+    uint64_t readahead_wasted_page_count;
+    uint64_t readahead_feedback_application_count;
+    uint64_t readahead_cancellation_count;
+    uint64_t readahead_cancellation_failure_count;
 };
 
 // FileDescription 是 fd 背后的共享状态。duplicate 只增加对象强引用，因此
@@ -167,6 +185,8 @@ class FileDescriptionManager final {
     [[nodiscard]] static bool FinalizePayload(void *payload, void *context) noexcept;
     [[nodiscard]] bool Finalize(void *payload) noexcept;
     [[nodiscard]] bool IsRequestValid(const FileDescriptionCreateRequest &request) const noexcept;
+    [[nodiscard]] bool ApplyPendingReadaheadFeedback(FileReadaheadPolicy &policy,
+                                                     FileReadaheadStreamToken stream) noexcept;
 
     KernelObjectManager *object_manager_;
     FileDescriptionReadaheadOperations readahead_operations_{};

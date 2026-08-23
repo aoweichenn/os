@@ -41,6 +41,22 @@ struct TestReader final {
     uint64_t read_count;
 };
 
+struct TestFeedback final {
+    uint64_t useful_page_count;
+    uint64_t wasted_page_count;
+};
+
+[[nodiscard]] bool RecordFeedback(void *const context, const os::kernel::FileReadaheadPageTag &tag,
+                                  const os::kernel::FileReadaheadFeedback &feedback) noexcept {
+    if (context == nullptr || !os::kernel::FileReadaheadPageTagIsValid(tag)) {
+        return false;
+    }
+    TestFeedback &recorded = *static_cast<TestFeedback *>(context);
+    recorded.useful_page_count += feedback.useful_page_count;
+    recorded.wasted_page_count += feedback.wasted_page_count;
+    return true;
+}
+
 [[nodiscard]] uint8_t *AccessPage(void *const context, const uint64_t physical_address) noexcept {
     if (context == nullptr || physical_address > OS_TEST_FILE_PAGE_PREFETCH_MEMORY_SIZE_BYTES -
                                                      os::kernel::OS_KERNEL_MEMORY_PAGE_SIZE_BYTES) {
@@ -104,6 +120,7 @@ int main() {
         uint8_t metadata_storage[OS_TEST_FILE_PAGE_PREFETCH_METADATA_SIZE_BYTES]{};
     os::kernel::KernelHeap metadata_heap{};
     os::kernel::FilePageCache cache{};
+    TestFeedback feedback{};
     const bool initialized =
         allocator_initialized &&
         metadata_heap.Initialize(reinterpret_cast<uint64_t>(metadata_storage),
@@ -111,7 +128,20 @@ int main() {
             os::kernel::KernelHeapStatus::Succeeded &&
         cache.Initialize(metadata_heap, OS_TEST_FILE_PAGE_PREFETCH_CACHE_CAPACITY,
                          OS_TEST_FILE_PAGE_PREFETCH_DIRTY_LIMIT, frame_allocator, &memory,
-                         AccessPage) == os::kernel::FilePageCacheStatus::Succeeded;
+                         AccessPage) == os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.ConfigureReadaheadFeedback(os::kernel::FilePageReadaheadFeedbackOperations{
+            .context = &feedback,
+            .record = RecordFeedback,
+        }) == os::kernel::FilePageCacheStatus::Succeeded;
+
+    const os::kernel::FileReadaheadPageTag readahead_tag{
+        .stream =
+            os::kernel::FileReadaheadStreamToken{
+                .slot_index = OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE,
+                .generation = OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE,
+            },
+        .policy_generation = OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE,
+    };
 
     TestReader reader{};
     const os::kernel::FilePageIdentity first_identity = MakeIdentity(0ULL);
@@ -121,8 +151,8 @@ int main() {
     const bool prefetched =
         initialized &&
         cache.Acquire(first_identity, &reader, ReadPage,
-                      os::kernel::FilePageAcquireIntent::Prefetch, physical_address, cache_hit,
-                      prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
+                      os::kernel::FilePageAcquireIntent::Prefetch, readahead_tag, physical_address,
+                      cache_hit, prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
         !cache_hit && !prefetched_hit &&
         cache.Release(first_identity, physical_address) ==
             os::kernel::FilePageCacheStatus::Succeeded;
@@ -141,7 +171,7 @@ int main() {
     prefetched_hit = false;
     const bool useful_hit =
         cache.Acquire(first_identity, &reader, ReadPage, os::kernel::FilePageAcquireIntent::Demand,
-                      physical_address, cache_hit,
+                      os::kernel::FileReadaheadPageTag{}, physical_address, cache_hit,
                       prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
         cache_hit && prefetched_hit &&
         cache.Release(first_identity, physical_address) ==
@@ -156,8 +186,8 @@ int main() {
     prefetched_hit = true;
     const bool existing_not_retagged =
         cache.Acquire(first_identity, &reader, ReadPage,
-                      os::kernel::FilePageAcquireIntent::Prefetch, physical_address, cache_hit,
-                      prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
+                      os::kernel::FilePageAcquireIntent::Prefetch, readahead_tag, physical_address,
+                      cache_hit, prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
         cache_hit && !prefetched_hit &&
         cache.Release(first_identity, physical_address) ==
             os::kernel::FilePageCacheStatus::Succeeded &&
@@ -171,26 +201,46 @@ int main() {
     prefetched_hit = true;
     const bool second_prefetched =
         cache.Acquire(second_identity, &reader, ReadPage,
-                      os::kernel::FilePageAcquireIntent::Prefetch, physical_address, cache_hit,
-                      prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
+                      os::kernel::FilePageAcquireIntent::Prefetch, readahead_tag, physical_address,
+                      cache_hit, prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
         !cache_hit && !prefetched_hit &&
         cache.Release(second_identity, physical_address) ==
             os::kernel::FilePageCacheStatus::Succeeded;
     const os::kernel::FilePageIdentity failure_identity =
         MakeIdentity(OS_TEST_FILE_PAGE_PREFETCH_FAILURE_PAGE_INDEX);
+    const os::kernel::FileReadaheadPageTag second_readahead_tag{
+        .stream = readahead_tag.stream,
+        .policy_generation = 2ULL,
+    };
+    uint64_t discarded_page_count = OS_TEST_FILE_PAGE_PREFETCH_EMPTY_VALUE;
     const bool waste_and_failure_accounted =
         second_prefetched &&
+        cache.DiscardPrefetched(readahead_tag.stream, readahead_tag.policy_generation,
+                                discarded_page_count) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
+        discarded_page_count == OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE &&
+        cache.ReadEntry(second_identity, entry) ==
+            os::kernel::FilePageCacheStatus::MappingNotFound &&
+        cache.Acquire(second_identity, &reader, ReadPage,
+                      os::kernel::FilePageAcquireIntent::Prefetch, second_readahead_tag,
+                      physical_address, cache_hit,
+                      prefetched_hit) == os::kernel::FilePageCacheStatus::Succeeded &&
+        cache.Release(second_identity, physical_address) ==
+            os::kernel::FilePageCacheStatus::Succeeded &&
         cache.Invalidate(first_identity.file) == os::kernel::FilePageCacheStatus::Succeeded &&
         cache.Acquire(failure_identity, &reader, ReadPage,
-                      os::kernel::FilePageAcquireIntent::Prefetch, physical_address, cache_hit,
+                      os::kernel::FilePageAcquireIntent::Prefetch, readahead_tag, physical_address,
+                      cache_hit,
                       prefetched_hit) == os::kernel::FilePageCacheStatus::SourceReadFailed &&
         cache.ReadEntry(failure_identity, entry) ==
             os::kernel::FilePageCacheStatus::MappingNotFound &&
-        cache.Statistics().successful_prefetch_load_count == 2ULL &&
+        cache.Statistics().successful_prefetch_load_count == 3ULL &&
         cache.Statistics().prefetched_page_count == OS_TEST_FILE_PAGE_PREFETCH_EMPTY_VALUE &&
         cache.Statistics().prefetched_hit_count == OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE &&
-        cache.Statistics().wasted_prefetched_page_count == OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE &&
-        cache.Statistics().failed_load_count == OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE;
+        cache.Statistics().wasted_prefetched_page_count == 2ULL &&
+        cache.Statistics().failed_load_count == OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE &&
+        feedback.useful_page_count == OS_TEST_FILE_PAGE_PREFETCH_FIRST_VALUE &&
+        feedback.wasted_page_count == 2ULL;
     test_context.Expect(waste_and_failure_accounted, OS_TEST_FILE_PAGE_PREFETCH_WASTE);
 
     const bool lifecycle_valid =

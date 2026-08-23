@@ -38,6 +38,7 @@ struct FilePageCacheEntry final {
     uint64_t mapping_reference_count;
     uint64_t access_generation;
     FilePageCacheEntryState state;
+    FileReadaheadPageTag readahead_tag;
     bool prefetched;
 };
 
@@ -77,6 +78,7 @@ struct FilePageCacheStatistics final {
     uint64_t prefetched_page_count;
     uint64_t prefetched_hit_count;
     uint64_t wasted_prefetched_page_count;
+    uint64_t readahead_feedback_record_count;
     uint64_t background_dirty_page_threshold;
     uint64_t background_dirty_page_target;
     uint64_t dirty_page_limit;
@@ -163,6 +165,14 @@ struct FilePageLoadWaitOperations final {
     FilePageLoadCompleteOperation complete;
 };
 
+using FilePageReadaheadFeedbackOperation = bool (*)(void *context, const FileReadaheadPageTag &tag,
+                                                    const FileReadaheadFeedback &feedback) noexcept;
+
+struct FilePageReadaheadFeedbackOperations final {
+    void *context;
+    FilePageReadaheadFeedbackOperation record;
+};
+
 class FilePageCache final {
   public:
     FilePageCache() noexcept = default;
@@ -175,6 +185,8 @@ class FilePageCache final {
                FilePageAccessOperation page_access_operation) noexcept;
     [[nodiscard]] FilePageCacheStatus
     ConfigureLoadingWait(const FilePageLoadWaitOperations &operations) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    ConfigureReadaheadFeedback(const FilePageReadaheadFeedbackOperations &operations) noexcept;
     [[nodiscard]] FilePageCacheStatus Acquire(const FilePageIdentity &identity,
                                               void *reader_context,
                                               FilePageReadOperation read_operation,
@@ -182,7 +194,8 @@ class FilePageCache final {
     [[nodiscard]] FilePageCacheStatus
     Acquire(const FilePageIdentity &identity, void *reader_context,
             FilePageReadOperation read_operation, FilePageAcquireIntent intent,
-            uint64_t &physical_address, bool &cache_hit, bool &prefetched_hit) noexcept;
+            const FileReadaheadPageTag &readahead_tag, uint64_t &physical_address, bool &cache_hit,
+            bool &prefetched_hit) noexcept;
     [[nodiscard]] FilePageCacheStatus Release(const FilePageIdentity &identity,
                                               uint64_t physical_address) noexcept;
     [[nodiscard]] FilePageCacheStatus MarkDirty(const FilePageIdentity &identity,
@@ -220,6 +233,9 @@ class FilePageCache final {
                       FilePageCacheReclaimSelectionOperation selection_operation,
                       FilePageCacheReclaimCompletionOperation completion_operation,
                       uint64_t &reclaimed_page_count) noexcept;
+    [[nodiscard]] FilePageCacheStatus DiscardPrefetched(FileReadaheadStreamToken stream,
+                                                        uint64_t maximum_policy_generation,
+                                                        uint64_t &discarded_page_count) noexcept;
     [[nodiscard]] FilePageCacheStatus ReadEntry(const FilePageIdentity &identity,
                                                 FilePageCacheEntry &entry) const noexcept;
     [[nodiscard]] FilePageCacheStatus
@@ -269,6 +285,8 @@ class FilePageCache final {
                                                  FilePageAcquireIntent intent,
                                                  bool &prefetched_hit) noexcept;
     [[nodiscard]] bool RecordPrefetchedDiscard(const FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] bool RecordReadaheadFeedback(const FileReadaheadPageTag &tag,
+                                               const FileReadaheadFeedback &feedback) noexcept;
     void RefreshBackgroundWritebackRequest() noexcept;
     [[nodiscard]] FilePageCacheStatus
     MapAddressSpaceStatus(FileCacheAddressSpaceStatus status) const noexcept;
@@ -286,12 +304,14 @@ class FilePageCache final {
     void *page_access_context_{nullptr};
     FilePageAccessOperation page_access_operation_{nullptr};
     FilePageLoadWaitOperations load_wait_operations_{};
+    FilePageReadaheadFeedbackOperations readahead_feedback_operations_{};
     uint64_t access_generation_{};
     FilePageCacheStatistics statistics_{};
     bool background_writeback_requested_{};
     bool background_writeback_paused_{};
     bool forced_background_writeback_requested_{};
     bool load_wait_operations_configured_{};
+    bool readahead_feedback_operations_configured_{};
     mutable SpinLock lock_{};
     bool initialized_{};
 };

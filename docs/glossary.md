@@ -193,6 +193,8 @@
 | page-reference handoff | owner 在完成广播前为每个 Loading waiter 预留真实页面引用，waiter 醒来后直接接管该引用的所有权协议 |
 | readahead window | 针对一个打开文件流预测的连续文件页区间；包含当前窗口总大小、异步尾部与触发下一窗口的页 |
 | adaptive readahead maximum | 根据 useful/wasted 反馈在 1 页到配置上限间调整、再与内存压力上限取最小值的未来窗口上限 |
+| readahead stream token | 用固定槽索引与 generation 标识一个共享打开流的弱身份；页缓存可据此归因，但不能访问 FileDescription 地址 |
+| retiring readahead stream | 最后描述引用已关闭、策略对象不再可用，但仍等待活动预读任务释放 token retain 的账本状态 |
 | writeback error sequence | 文件级单调错误序列；独立打开实例以自己的游标判断是否还有未报告的写回失败 |
 | fsync / fdatasync | 等待指定打开文件的数据稳定；fsync 包含完整 metadata，fdatasync 至少包含重读所需 metadata |
 | msync | 按文件映射虚拟地址范围请求异步或同步写回；private COW 修改不进入底层文件 |

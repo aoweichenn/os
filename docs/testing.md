@@ -1928,3 +1928,25 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - fresh 4 GiB ATA primary 为 72.42 秒，ATA/NVMe reclaim 为 75.17/77.46 秒，ATA/NVMe
   OOM 为 77.43/76.30 秒，NVMe root primary 为 70.08 秒，ATA/NVMe persistence 为
   144.32/142.86 秒。两条用户 `#UD/#PF` 隔离在无文件负载、零预读下分别 3.24/3.14 秒通过。
+
+### 预读取消与反馈第五增量 5c
+
+- `os_kernel_file_readahead_feedback_unit_tests` 覆盖注册、领取、Active→Retiring、task
+  retain/release、迟到反馈和 generation 槽复用；
+- `os_kernel_file_readahead_feedback_randomized_tests` 使用种子 `0x524146454544424B` 执行
+  十万步 register/record/take/retire/task/stale，逐步调用 `Validate`；
+- request unit 强制运行一个旧 generation、取消 FIFO 中间 queued 请求并保留更新请求，
+  验证 `enqueue=completion+queued cancellation+active`；原十万步 FIFO 随机模型继续通过；
+- page-cache integration 验证 tag producer、首次 Demand useful、按 generation 定向丢弃、
+  invalidate waste 和 source failure 回滚；
+- FileDescription integration 验证 duplicate token 共享、独立 open 隔离、BelowMinimum 取消，
+  并把 4 个 waste 反馈到 producer，使 adaptive maximum 从 32 页减为 16 页；
+- QEMU 要求 enqueue=terminal、feedback/cancellation/useful/waste 非零，stream/task/failure/
+  final resident 为零；逐页路径仍禁止日志。4 GiB ATA primary 实际观察 schedule/enqueue/
+  terminal `0x33/0x33/0x33`、completion/queued cancellation `0x3/0x30`、useful/waste
+  `0x1/0xD`、feedback application/cancellation `0x3/0x7D`，running cancellation、active
+  stream/task、stale waste、容量拒绝和失败均为 0；
+- final fresh CAW `python3 tools/os.py verify` 为 236/236、0 失败：71 unit、79 integration、
+  53 randomized、33 system，含 25 条 failure-path；CTest 1038.99 秒，端到端 1198 秒；
+- fresh 4 GiB ATA primary 86.47 秒，ATA/NVMe reclaim 85.05/82.94 秒，ATA/NVMe OOM
+  88.71/85.99 秒，NVMe root primary 83.06 秒，ATA/NVMe persistence 177.10/169.12 秒。

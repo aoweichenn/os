@@ -97,6 +97,12 @@ struct ReadaheadTestContext final {
     uint64_t scheduled_page_count;
     uint64_t generation_sum;
     uint64_t readahead_node_identifier;
+    uint64_t next_stream_slot_index;
+    uint64_t pending_useful_page_count;
+    uint64_t pending_wasted_page_count;
+    uint64_t cancellation_count;
+    uint64_t retirement_count;
+    os::kernel::MemoryPressureLevel pressure_level;
 };
 
 [[nodiscard]] os::kernel::fs::Status
@@ -151,6 +157,9 @@ ReadThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file,
         logical_size_bytes / OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES +
         (logical_size_bytes % OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES != 0ULL ? 1ULL : 0ULL);
     const bool simulated_prefetched_hit = readahead_file && offset_bytes != 0ULL;
+    if (simulated_prefetched_hit) {
+        ++test_context.pending_useful_page_count;
+    }
     observation = os::kernel::fs::RegularFileReadCacheObservation{
         .first_page_index = first_page_index,
         .requested_page_count = requested_page_count,
@@ -164,6 +173,60 @@ ReadThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file,
         .cache_used = true,
     };
     return os::kernel::fs::Status::Succeeded;
+}
+
+[[nodiscard]] bool RegisterReadaheadStream(void *const context,
+                                           const os::kernel::FileCacheIdentity &identity,
+                                           os::kernel::FileReadaheadStreamToken &stream) noexcept {
+    if (context == nullptr || !os::kernel::FileCacheIdentityIsValid(identity)) {
+        return false;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    stream = os::kernel::FileReadaheadStreamToken{
+        .slot_index = test_context.next_stream_slot_index,
+        .generation = 1ULL,
+    };
+    ++test_context.next_stream_slot_index;
+    return true;
+}
+
+[[nodiscard]] bool TakeReadaheadFeedback(void *const context,
+                                         const os::kernel::FileReadaheadStreamToken stream,
+                                         os::kernel::FileReadaheadFeedback &feedback) noexcept {
+    if (context == nullptr || !os::kernel::FileReadaheadStreamTokenIsValid(stream)) {
+        return false;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    feedback = os::kernel::FileReadaheadFeedback{
+        .useful_page_count = test_context.pending_useful_page_count,
+        .wasted_page_count = test_context.pending_wasted_page_count,
+    };
+    test_context.pending_useful_page_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    test_context.pending_wasted_page_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    return true;
+}
+
+[[nodiscard]] bool CancelReadahead(void *const context,
+                                   const os::kernel::FileReadaheadStreamToken stream,
+                                   const uint64_t maximum_policy_generation) noexcept {
+    if (context == nullptr || !os::kernel::FileReadaheadStreamTokenIsValid(stream) ||
+        maximum_policy_generation == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return false;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    ++test_context.cancellation_count;
+    return true;
+}
+
+[[nodiscard]] bool
+RetireReadaheadStream(void *const context,
+                      const os::kernel::FileReadaheadStreamToken stream) noexcept {
+    if (context == nullptr || !os::kernel::FileReadaheadStreamTokenIsValid(stream)) {
+        return false;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    ++test_context.retirement_count;
+    return true;
 }
 
 [[nodiscard]] os::kernel::fs::Status
@@ -208,18 +271,20 @@ WriteThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file
     if (context == nullptr) {
         return false;
     }
-    pressure_level = os::kernel::MemoryPressureLevel::Balanced;
+    pressure_level = static_cast<ReadaheadTestContext *>(context)->pressure_level;
     return true;
 }
 
 [[nodiscard]] bool ScheduleReadahead(void *const context, os::kernel::fs::Vfs &vfs,
                                      const os::kernel::fs::OpenFile &open_file,
+                                     const os::kernel::FileReadaheadStreamToken stream,
                                      const os::kernel::FileReadaheadDecision &decision) noexcept {
     if (context == nullptr) {
         return false;
     }
     ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
     if (test_context.vfs != &vfs || !open_file.open || !open_file.readable ||
+        !os::kernel::FileReadaheadStreamTokenIsValid(stream) ||
         decision.action != os::kernel::FileReadaheadAction::Submit ||
         decision.prefetch_page_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE ||
         decision.generation == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE) {
@@ -371,6 +436,12 @@ int main() {
         .scheduled_page_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
         .generation_sum = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
         .readahead_node_identifier = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .next_stream_slot_index = 1ULL,
+        .pending_useful_page_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .pending_wasted_page_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .cancellation_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .retirement_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .pressure_level = os::kernel::MemoryPressureLevel::Balanced,
     };
     const os::kernel::fs::OpenOptions read_options{
         .readable = true,
@@ -413,6 +484,10 @@ int main() {
             os::kernel::FileDescriptionStatus::Succeeded &&
         description_manager.ConfigureReadahead(os::kernel::FileDescriptionReadaheadOperations{
             .context = &readahead_test_context,
+            .register_stream = RegisterReadaheadStream,
+            .take_feedback = TakeReadaheadFeedback,
+            .cancel = CancelReadahead,
+            .retire_stream = RetireReadaheadStream,
             .pressure = ReadReadaheadPressure,
             .schedule = ScheduleReadahead,
         }) == os::kernel::FileDescriptionStatus::Succeeded &&
@@ -616,7 +691,20 @@ int main() {
                                     pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
         read_bytes ==
             sizeof(readahead_page_bytes) - OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES + 1ULL &&
-        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    readahead_test_context.pressure_level = os::kernel::MemoryPressureLevel::BelowMinimum;
+    readahead_reads_completed =
+        readahead_reads_completed &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR, operation_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.TryRead(operation_reference, readahead_page_bytes,
+                                    sizeof(readahead_page_bytes), read_bytes, file_system_status,
+                                    pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        read_bytes == sizeof(readahead_page_bytes) &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    readahead_test_context.pressure_level = os::kernel::MemoryPressureLevel::Balanced;
+    readahead_reads_completed =
+        readahead_reads_completed &&
         table.Lookup(OS_TEST_FILE_DESCRIPTION_INDEPENDENT_READAHEAD_FILE_DESCRIPTOR,
                      operation_reference) == os::kernel::FileTableStatus::Succeeded &&
         description_manager.TryRead(operation_reference, readahead_bytes, sizeof(readahead_bytes),
@@ -627,6 +715,7 @@ int main() {
     os::kernel::FileDescriptionSnapshot shared_readahead_snapshot{};
     os::kernel::FileDescriptionSnapshot duplicate_readahead_snapshot{};
     os::kernel::FileDescriptionSnapshot independent_readahead_snapshot{};
+    readahead_test_context.pending_wasted_page_count = 4ULL;
     readahead_reads_completed =
         readahead_reads_completed &&
         table.Lookup(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR, operation_reference) ==
@@ -647,14 +736,23 @@ int main() {
     const os::kernel::FileDescriptionManagerStatistics readahead_statistics =
         description_manager.Statistics();
     const bool readahead_ownership_valid =
-        readahead_reads_completed && shared_readahead_snapshot.readahead.access_count == 3ULL &&
+        readahead_reads_completed && shared_readahead_snapshot.readahead.access_count == 4ULL &&
         shared_readahead_snapshot.readahead.prefetched_hit_access_count == 1ULL &&
-        shared_readahead_snapshot.readahead.demand_hit_access_count == 1ULL &&
+        shared_readahead_snapshot.readahead.demand_hit_access_count == 2ULL &&
+        shared_readahead_snapshot.readahead.pressure_disabled_access_count == 1ULL &&
+        !shared_readahead_snapshot.readahead.window_active &&
+        shared_readahead_snapshot.readahead.adaptive_maximum_window_page_count == 16ULL &&
         duplicate_readahead_snapshot.readahead.access_count ==
             shared_readahead_snapshot.readahead.access_count &&
         duplicate_readahead_snapshot.readahead.generation ==
             shared_readahead_snapshot.readahead.generation &&
+        os::kernel::FileReadaheadStreamTokensEqual(duplicate_readahead_snapshot.readahead_stream,
+                                                   shared_readahead_snapshot.readahead_stream) &&
+        !os::kernel::FileReadaheadStreamTokensEqual(independent_readahead_snapshot.readahead_stream,
+                                                    shared_readahead_snapshot.readahead_stream) &&
         independent_readahead_snapshot.readahead.access_count == 1ULL &&
+        independent_readahead_snapshot.readahead.adaptive_maximum_window_page_count ==
+            os::kernel::OS_KERNEL_FILE_READAHEAD_DEFAULT_MAXIMUM_WINDOW_PAGE_COUNT &&
         readahead_test_context.schedule_count ==
             OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_SCHEDULE_COUNT &&
         readahead_test_context.scheduled_page_count ==
@@ -663,7 +761,9 @@ int main() {
             OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_GENERATION_SUM &&
         readahead_statistics.readahead_schedule_count ==
             OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_SCHEDULE_COUNT &&
-        readahead_statistics.readahead_useful_page_count == 2ULL &&
+        readahead_statistics.readahead_useful_page_count == 3ULL &&
+        readahead_statistics.readahead_wasted_page_count == 4ULL &&
+        readahead_statistics.readahead_feedback_application_count == 4ULL &&
         readahead_statistics.readahead_schedule_rejection_count ==
             OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
     test_context.Expect(readahead_ownership_valid, OS_TEST_FILE_DESCRIPTION_READAHEAD_OWNERSHIP);
@@ -797,6 +897,11 @@ int main() {
         object_manager.Statistics().active_object_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         description_manager.Statistics().failed_finalization_count ==
             OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        readahead_test_context.cancellation_count != OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        readahead_test_context.cancellation_count ==
+            readahead_test_context.retirement_count + 1ULL &&
+        readahead_test_context.pending_useful_page_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        readahead_test_context.pending_wasted_page_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         error_tracker.Validate() == os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
         error_tracker.Statistics().active_record_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         error_tracker.Destroy() == os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&

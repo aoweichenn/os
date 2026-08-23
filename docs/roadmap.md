@@ -1426,7 +1426,7 @@ anonymous swap，并到达三项状态验证和 READY。
 3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待、3b 栈式
    User Kernel 续体、RuntimeMutex 锁拆分和生产迁移均已完成；
 4. FilePageCache Loading waiter 与同页 miss 合并（已完成）；
-5. 顺序预读、命中/浪费反馈与压力收缩（5a 纯策略、5b 生产执行已完成，5c 取消/反馈待做）；
+5. 顺序预读、命中/浪费反馈与压力收缩（5a 纯策略、5b 生产执行、5c 取消/反馈均已完成）；
 6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
 
 **第一增量边界**
@@ -1540,8 +1540,24 @@ QMP VGA 非追加快照；同一 fresh 构建按原验收器重试 75.17 秒通�
 72.42 秒，NVMe root primary 70.08 秒，ATA/NVMe OOM 77.43/76.30 秒，ATA/NVMe
 persistence 144.32/142.86 秒。
 
-5c 仍负责按 generation 取消、把实际 waste 反馈回存活策略，以及与并发 writeback/reclaim
-错误路径的完整矩阵；因此 v2.10 继续保持工程候选，不发布版本标签。
+**第五增量 5c 边界**
+
+固定 4096 槽 FeedbackLedger 为每个共享 FileDescription 分配 generation token；请求和缓存页
+携带 token/policy generation。Demand、定向取消、truncate、invalidate、reclaim/trim 的
+useful/waste 进入 producer 账本，存活策略在 read/close 领取。queued 请求稳定摘除并释放
+OpenFile/task retain，running 每页检查取消，最后共享描述 close 进入 Retiring 后等 task
+归零再复用槽。random reset 只取消旧 generation，BelowMinimum/close 取消全部。
+
+5c 的 unit、两组固定种子十万步 randomized、cache/FileDescription integration 与 4 GiB
+QEMU 联合验证 terminal、task、feedback 和 stale 守恒。设计由
+[ADR 0070](adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md) 冻结。final fresh
+CAW `verify` 为 236/236、0 失败：71 unit、79 integration、53 randomized、33 system，
+含 25 条 failure-path；CTest 1038.99 秒，端到端 1198 秒。4 GiB ATA primary 86.47 秒，
+ATA/NVMe reclaim 85.05/82.94 秒，ATA/NVMe OOM 88.71/85.99 秒，NVMe root primary
+83.06 秒，ATA/NVMe persistence 177.10/169.12 秒。
+
+设备硬取消及并发 writeback/reclaim/Loading 的完整 EIO/timeout 矩阵仍由第六增量完成；
+v2.10 继续保持工程候选，不发布版本标签。
 
 **退出条件**
 

@@ -1078,7 +1078,9 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
 - v2.10.5a 新增 `memory/file_readahead.*` 纯策略；5b 已把实例放入共享 FileDescription，
   由 VFS 页级观测产生 decision，再经 `process/file_readahead_request.*` 固定 FIFO 和第四个
   持久 WorkHandle 异步填充 FilePageCache。任务持有 retained OpenFile；Demand/Prefetch
-  共用唯一 Loading，one-shot 页身份统计 useful/waste。generation 取消和反馈闭环留给 5c。
+  共用唯一 Loading。5c 新增 `memory/file_readahead_feedback.*` 固定账本，页保存
+  stream/policy generation；close/reset/pressure/truncate 可取消 queued/running 请求，
+  producer 领取 useful/waste 并调整后续窗口。设备硬取消和并发回收矩阵留给第六增量。
 - `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
   ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
   96 个左右

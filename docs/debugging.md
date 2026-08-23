@@ -2209,6 +2209,16 @@ waiter availability 是否仍只允许 User Thread，不能把两者重新合并
 既有页的 Prefetch 是否错误重标。最终应满足 `successful prefetch = resident + hit + waste`；
 trim 后 resident 必须为零。逐页日志会改变调度，诊断只能使用最终聚合和强制重叠 host 测试。
 
+5c 若出现 close 后任务泄漏，先核对 `enqueue=completion+queued cancellation+active`，再检查
+每个 cancelled queued request 是否同时 close retained OpenFile 和 release stream task。
+running 只能置标志，不能从槽中复制出来释放。stream 长期停在 Retiring 时检查 worker 的
+完成、取消后定向 `DiscardPrefetched` 和 `ReleaseTask` 顺序。
+
+策略没有收到 waste 时对照 cache 页的 stream/generation tag、ledger recorded/taken/stale/
+pending 守恒，以及 FileDescription 是否在 Retire 前执行 cancel→take。独立 open 的 token
+不同；把 consumer 的 token 写回 producer 页会让 feedback 错投。truncate 返回 Busy 时先
+确认是否仍有已提交的单页 Loading；5c 不伪造设备硬取消，完成后重试才是合法路径。
+
 ### Dirty 超过软水位但 worker 不运行
 
 4 GiB 当前容量 8192 页，hard limit 约 1638 页，后台阈值约 819 页，目标约 409 页。

@@ -59,6 +59,7 @@ FilePageCache::Initialize(KernelHeap &metadata_heap, const uint64_t capacity,
     this->page_access_context_ = page_access_context;
     this->page_access_operation_ = page_access_operation;
     this->load_wait_operations_ = FilePageLoadWaitOperations{};
+    this->readahead_feedback_operations_ = FilePageReadaheadFeedbackOperations{};
     this->access_generation_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->statistics_ = FilePageCacheStatistics{};
     this->statistics_.capacity = capacity;
@@ -69,7 +70,25 @@ FilePageCache::Initialize(KernelHeap &metadata_heap, const uint64_t capacity,
     this->background_writeback_paused_ = false;
     this->forced_background_writeback_requested_ = false;
     this->load_wait_operations_configured_ = false;
+    this->readahead_feedback_operations_configured_ = false;
     this->initialized_ = true;
+    return FilePageCacheStatus::Succeeded;
+}
+
+FilePageCacheStatus FilePageCache::ConfigureReadaheadFeedback(
+    const FilePageReadaheadFeedbackOperations &operations) noexcept {
+    SpinLockGuard guard{this->lock_};
+    if (!this->initialized_) {
+        return FilePageCacheStatus::NotInitialized;
+    }
+    if (this->readahead_feedback_operations_configured_) {
+        return FilePageCacheStatus::AlreadyInitialized;
+    }
+    if (operations.context == nullptr || operations.record == nullptr) {
+        return FilePageCacheStatus::InvalidDependency;
+    }
+    this->readahead_feedback_operations_ = operations;
+    this->readahead_feedback_operations_configured_ = true;
     return FilePageCacheStatus::Succeeded;
 }
 
@@ -99,13 +118,14 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
                                            uint64_t &physical_address, bool &cache_hit) noexcept {
     bool prefetched_hit = false;
     return this->Acquire(identity, reader_context, read_operation, FilePageAcquireIntent::Demand,
-                         physical_address, cache_hit, prefetched_hit);
+                         FileReadaheadPageTag{}, physical_address, cache_hit, prefetched_hit);
 }
 
 FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
                                            void *const reader_context,
                                            const FilePageReadOperation read_operation,
                                            const FilePageAcquireIntent intent,
+                                           const FileReadaheadPageTag &readahead_tag,
                                            uint64_t &physical_address, bool &cache_hit,
                                            bool &prefetched_hit) noexcept {
     physical_address = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
@@ -127,6 +147,12 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         return unlock_and_return(FilePageCacheStatus::InvalidReader);
     }
     if (intent != FilePageAcquireIntent::Demand && intent != FilePageAcquireIntent::Prefetch) {
+        return unlock_and_return(FilePageCacheStatus::InvalidDependency);
+    }
+    if ((intent == FilePageAcquireIntent::Demand && !FileReadaheadPageTagIsEmpty(readahead_tag)) ||
+        (intent == FilePageAcquireIntent::Prefetch &&
+         (!FileReadaheadPageTagIsValid(readahead_tag) ||
+          !this->readahead_feedback_operations_configured_))) {
         return unlock_and_return(FilePageCacheStatus::InvalidDependency);
     }
     if (intent == FilePageAcquireIntent::Prefetch) {
@@ -429,7 +455,7 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         (this->statistics_.prefetched_page_count == UINT64_MAX ||
          this->statistics_.successful_prefetch_load_count == UINT64_MAX ||
          record->address_space.MarkPrefetched(identity.page_index, candidate_physical_address,
-                                              newly_prefetched) !=
+                                              readahead_tag, newly_prefetched) !=
              FileCacheAddressSpaceStatus::Succeeded ||
          !newly_prefetched)) {
         static_cast<void>(
@@ -453,9 +479,11 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         static_cast<void>(
             record->address_space.Release(identity.page_index, candidate_physical_address));
         if (newly_prefetched) {
+            FileReadaheadPageTag consumed_tag{};
             bool consumed_prefetched = false;
             static_cast<void>(record->address_space.ConsumePrefetched(
-                identity.page_index, candidate_physical_address, consumed_prefetched));
+                identity.page_index, candidate_physical_address, consumed_tag,
+                consumed_prefetched));
             if (consumed_prefetched) {
                 --this->statistics_.prefetched_page_count;
                 --this->statistics_.successful_prefetch_load_count;
@@ -481,9 +509,11 @@ FilePageCacheStatus FilePageCache::Acquire(const FilePageIdentity &identity,
         static_cast<void>(
             record->address_space.Release(identity.page_index, candidate_physical_address));
         if (newly_prefetched) {
+            FileReadaheadPageTag consumed_tag{};
             bool consumed_prefetched = false;
             static_cast<void>(record->address_space.ConsumePrefetched(
-                identity.page_index, candidate_physical_address, consumed_prefetched));
+                identity.page_index, candidate_physical_address, consumed_tag,
+                consumed_prefetched));
             if (consumed_prefetched) {
                 --this->statistics_.prefetched_page_count;
                 --this->statistics_.successful_prefetch_load_count;
@@ -1160,6 +1190,64 @@ FilePageCache::ReclaimCleanPages(const uint64_t maximum_page_count, void *const 
     return FilePageCacheStatus::Succeeded;
 }
 
+FilePageCacheStatus FilePageCache::DiscardPrefetched(const FileReadaheadStreamToken stream,
+                                                     const uint64_t maximum_policy_generation,
+                                                     uint64_t &discarded_page_count) noexcept {
+    SpinLockGuard guard{this->lock_};
+    discarded_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+    if (!this->initialized_) {
+        return FilePageCacheStatus::NotInitialized;
+    }
+    if (!FileReadaheadStreamTokenIsValid(stream) ||
+        maximum_policy_generation == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+        return FilePageCacheStatus::InvalidIdentity;
+    }
+    while (true) {
+        AddressSpaceRecord *selected_record = nullptr;
+        FileCachePageSnapshot selected_page{};
+        for (AddressSpaceRecord *record = this->address_spaces_;
+             record != nullptr && selected_record == nullptr; record = record->next) {
+            uint64_t cursor = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+            while (true) {
+                FileCachePageSnapshot page{};
+                const FileCacheAddressSpaceStatus status = record->address_space.FindNext(
+                    cursor, UINT64_MAX, FileCachePageState::Clean, page);
+                if (status == FileCacheAddressSpaceStatus::NotFound) {
+                    break;
+                }
+                if (status != FileCacheAddressSpaceStatus::Succeeded) {
+                    return this->MapAddressSpaceStatus(status);
+                }
+                if (page.prefetched &&
+                    FileReadaheadStreamTokensEqual(page.readahead_tag.stream, stream) &&
+                    page.readahead_tag.policy_generation <= maximum_policy_generation &&
+                    page.mapping_reference_count == OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE) {
+                    selected_record = record;
+                    selected_page = page;
+                    break;
+                }
+                if (page.page_index == UINT64_MAX) {
+                    break;
+                }
+                cursor = page.page_index + OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT;
+            }
+        }
+        if (selected_record == nullptr) {
+            return FilePageCacheStatus::Succeeded;
+        }
+        uint64_t released_physical_address = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
+        const FilePageCacheStatus eviction_status =
+            this->Evict(*selected_record, selected_page, true, released_physical_address);
+        if (eviction_status != FilePageCacheStatus::Succeeded ||
+            released_physical_address != selected_page.physical_address ||
+            discarded_page_count == UINT64_MAX) {
+            return eviction_status == FilePageCacheStatus::Succeeded ? FilePageCacheStatus::Corrupt
+                                                                     : eviction_status;
+        }
+        ++discarded_page_count;
+    }
+}
+
 FilePageCacheStatus FilePageCache::ReadEntry(const FilePageIdentity &identity,
                                              FilePageCacheEntry &entry) const noexcept {
     SpinLockGuard guard{this->lock_};
@@ -1305,6 +1393,9 @@ FilePageCacheStatus FilePageCache::Validate() const noexcept {
                    prefetched_page_count == this->statistics_.prefetched_page_count &&
                    resolved_prefetched_page_count ==
                        this->statistics_.successful_prefetch_load_count &&
+                   this->statistics_.readahead_feedback_record_count ==
+                       this->statistics_.prefetched_hit_count +
+                           this->statistics_.wasted_prefetched_page_count &&
                    resident_page_count <= this->capacity_ &&
                    outstanding_dirty_page_count <= this->dirty_page_limit_ &&
                    this->statistics_.background_dirty_page_threshold ==
@@ -1356,11 +1447,15 @@ FilePageCacheStatus FilePageCache::Destroy() noexcept {
     this->frame_allocator_ = nullptr;
     this->page_access_context_ = nullptr;
     this->page_access_operation_ = nullptr;
+    this->load_wait_operations_ = FilePageLoadWaitOperations{};
+    this->readahead_feedback_operations_ = FilePageReadaheadFeedbackOperations{};
     this->access_generation_ = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE;
     this->statistics_ = FilePageCacheStatistics{};
     this->background_writeback_requested_ = false;
     this->background_writeback_paused_ = false;
     this->forced_background_writeback_requested_ = false;
+    this->load_wait_operations_configured_ = false;
+    this->readahead_feedback_operations_configured_ = false;
     this->initialized_ = false;
     return FilePageCacheStatus::Succeeded;
 }
@@ -1642,12 +1737,25 @@ bool FilePageCache::ConsumePrefetchedIfDemand(AddressSpaceRecord &record,
          this->statistics_.prefetched_hit_count == UINT64_MAX)) {
         return false;
     }
-    if (record.address_space.ConsumePrefetched(page.page_index, page.physical_address,
+    if (page.prefetched &&
+        !this->RecordReadaheadFeedback(
+            page.readahead_tag, FileReadaheadFeedback{
+                                    .useful_page_count = OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT,
+                                    .wasted_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE,
+                                })) {
+        return false;
+    }
+    FileReadaheadPageTag consumed_tag{};
+    if (record.address_space.ConsumePrefetched(page.page_index, page.physical_address, consumed_tag,
                                                prefetched_hit) !=
         FileCacheAddressSpaceStatus::Succeeded) {
         return false;
     }
     if (prefetched_hit) {
+        if (!FileReadaheadStreamTokensEqual(consumed_tag.stream, page.readahead_tag.stream) ||
+            consumed_tag.policy_generation != page.readahead_tag.policy_generation) {
+            return false;
+        }
         --this->statistics_.prefetched_page_count;
         ++this->statistics_.prefetched_hit_count;
     }
@@ -1662,8 +1770,28 @@ bool FilePageCache::RecordPrefetchedDiscard(const FileCachePageSnapshot &page) n
         this->statistics_.wasted_prefetched_page_count == UINT64_MAX) {
         return false;
     }
+    if (!this->RecordReadaheadFeedback(
+            page.readahead_tag, FileReadaheadFeedback{
+                                    .useful_page_count = OS_KERNEL_FILE_PAGE_CACHE_EMPTY_VALUE,
+                                    .wasted_page_count = OS_KERNEL_FILE_PAGE_CACHE_SINGLE_UNIT,
+                                })) {
+        return false;
+    }
     --this->statistics_.prefetched_page_count;
     ++this->statistics_.wasted_prefetched_page_count;
+    return true;
+}
+
+bool FilePageCache::RecordReadaheadFeedback(const FileReadaheadPageTag &tag,
+                                            const FileReadaheadFeedback &feedback) noexcept {
+    if (!FileReadaheadPageTagIsValid(tag) || !this->readahead_feedback_operations_configured_ ||
+        this->readahead_feedback_operations_.record == nullptr ||
+        this->statistics_.readahead_feedback_record_count == UINT64_MAX ||
+        !this->readahead_feedback_operations_.record(this->readahead_feedback_operations_.context,
+                                                     tag, feedback)) {
+        return false;
+    }
+    ++this->statistics_.readahead_feedback_record_count;
     return true;
 }
 
@@ -1761,6 +1889,7 @@ FilePageCacheEntry FilePageCache::Snapshot(const FileIdentity &identity,
         .mapping_reference_count = page.mapping_reference_count,
         .access_generation = page.access_generation,
         .state = FilePageCache::MapPageState(page.state),
+        .readahead_tag = page.readahead_tag,
         .prefetched = page.prefetched,
     };
 }

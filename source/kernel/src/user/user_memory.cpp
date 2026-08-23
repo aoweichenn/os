@@ -874,7 +874,7 @@ ReadVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
         bool prefetched_hit = false;
         const FilePageCacheStatus acquire_status = user_file_page_cache.Acquire(
             page_identity, &reader, ReadVfsFilePage, FilePageAcquireIntent::Demand,
-            physical_address, cache_hit, prefetched_hit);
+            FileReadaheadPageTag{}, physical_address, cache_hit, prefetched_hit);
         if (acquire_status != FilePageCacheStatus::Succeeded) {
             if (read_bytes != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
                 publish_observation();
@@ -2213,9 +2213,19 @@ ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operatio
                : UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
 }
 
+UserAddressSpaceStatus ConfigureUserFilePageCacheReadaheadFeedback(
+    const FilePageReadaheadFeedbackOperations &operations) noexcept {
+    return user_virtual_memory_initialized && user_file_page_cache.ConfigureReadaheadFeedback(
+                                                  operations) == FilePageCacheStatus::Succeeded
+               ? UserAddressSpaceStatus::Succeeded
+               : UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+}
+
 UserVirtualMemoryStatus PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &open_file,
                                               const uint64_t start_page_index,
                                               const uint64_t page_count,
+                                              const FileReadaheadPageTag &tag,
+                                              const UserFileReadaheadControl &control,
                                               UserFileReadaheadResult &result) noexcept {
     result = UserFileReadaheadResult{};
     if (!user_virtual_memory_initialized) {
@@ -2224,7 +2234,8 @@ UserVirtualMemoryStatus PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &
     if (!open_file.open || !open_file.readable ||
         open_file.path.vnode.type != fs::NodeType::RegularFile ||
         page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
-        start_page_index > UINT64_MAX - page_count) {
+        start_page_index > UINT64_MAX - page_count || !FileReadaheadPageTagIsValid(tag) ||
+        control.context == nullptr || control.continue_operation == nullptr) {
         return UserVirtualMemoryStatus::InvalidFile;
     }
     fs::NodeInformation information{};
@@ -2242,6 +2253,14 @@ UserVirtualMemoryStatus PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &
     };
     for (uint64_t page_ordinal = OS_KERNEL_USER_MEMORY_EMPTY_VALUE; page_ordinal < page_count;
          ++page_ordinal) {
+        bool continue_readahead = false;
+        if (!control.continue_operation(control.context, continue_readahead)) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (!continue_readahead) {
+            result.cancelled = true;
+            break;
+        }
         const uint64_t page_index = start_page_index + page_ordinal;
         if (page_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
             page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES >= information.size_bytes) {
@@ -2278,7 +2297,7 @@ UserVirtualMemoryStatus PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &
         bool cache_hit = false;
         bool prefetched_hit = false;
         const FilePageCacheStatus acquire_status = user_file_page_cache.Acquire(
-            page_identity, &reader, ReadVfsFilePage, FilePageAcquireIntent::Prefetch,
+            page_identity, &reader, ReadVfsFilePage, FilePageAcquireIntent::Prefetch, tag,
             physical_address, cache_hit, prefetched_hit);
         if (acquire_status == FilePageCacheStatus::EntryBusy ||
             acquire_status == FilePageCacheStatus::LoadingWaitUnavailable) {
@@ -2337,6 +2356,16 @@ UserVirtualMemoryStatus PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &
         ++user_file_page_cache_readahead_pressure_stop_count;
     }
     return UserVirtualMemoryStatus::Succeeded;
+}
+
+UserVirtualMemoryStatus DiscardUserFilePrefetchedPages(const FileReadaheadStreamToken stream,
+                                                       const uint64_t maximum_policy_generation,
+                                                       uint64_t &discarded_page_count) noexcept {
+    return user_file_page_cache.DiscardPrefetched(stream, maximum_policy_generation,
+                                                  discarded_page_count) ==
+                   FilePageCacheStatus::Succeeded
+               ? UserVirtualMemoryStatus::Succeeded
+               : UserVirtualMemoryStatus::Corrupt;
 }
 
 MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept {

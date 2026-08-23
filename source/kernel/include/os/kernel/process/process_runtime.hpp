@@ -249,6 +249,7 @@ struct ProcessRuntimeStatistics final {
     KernelThreadRuntimeStatistics kernel_threads;
     FilePageLoadStatistics file_page_loads;
     FileReadaheadRequestStatistics file_readahead_requests;
+    FileReadaheadFeedbackStatistics file_readahead_feedback;
     bool file_readahead_worker_failed;
     WorkQueueStatistics work_queue;
     BackgroundReclaimStatistics background_reclaim;

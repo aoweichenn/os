@@ -1,6 +1,7 @@
 #pragma once
 
 #include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/memory/file_readahead_feedback.hpp>
 #include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
@@ -21,6 +22,7 @@ struct FileReadaheadRequest final {
     uint64_t start_page_index;
     uint64_t page_count;
     uint64_t policy_generation;
+    FileReadaheadStreamToken stream;
 };
 
 struct FileReadaheadRequestToken final {
@@ -32,6 +34,7 @@ struct FileReadaheadRequestSlot final {
     FileReadaheadRequest request;
     uint64_t generation;
     FileReadaheadRequestState state;
+    bool cancellation_requested;
 };
 
 struct FileReadaheadRequestStatistics final {
@@ -44,6 +47,10 @@ struct FileReadaheadRequestStatistics final {
     uint64_t acquisition_count;
     uint64_t completion_count;
     uint64_t capacity_rejection_count;
+    uint64_t queued_cancellation_count;
+    uint64_t running_cancellation_request_count;
+    uint64_t active_running_cancellation_count;
+    uint64_t cancelled_completion_count;
 };
 
 enum class FileReadaheadRequestStatus : uint64_t {
@@ -72,6 +79,15 @@ class FileReadaheadRequestQueue final {
     [[nodiscard]] FileReadaheadRequestStatus Acquire(FileReadaheadRequestToken &token,
                                                      FileReadaheadRequest &request) noexcept;
     [[nodiscard]] FileReadaheadRequestStatus Complete(FileReadaheadRequestToken token) noexcept;
+    [[nodiscard]] FileReadaheadRequestStatus
+    CancelStream(FileReadaheadStreamToken stream, uint64_t maximum_policy_generation,
+                 FileReadaheadRequest *cancelled_request_storage,
+                 uint64_t cancelled_request_capacity, uint64_t &cancelled_request_count) noexcept;
+    [[nodiscard]] FileReadaheadRequestStatus
+    CancelFile(const FileCacheIdentity &identity, FileReadaheadRequest *cancelled_request_storage,
+               uint64_t cancelled_request_capacity, uint64_t &cancelled_request_count) noexcept;
+    [[nodiscard]] FileReadaheadRequestStatus
+    CancellationRequested(FileReadaheadRequestToken token, bool &cancellation_requested) noexcept;
     [[nodiscard]] FileReadaheadRequestStatistics Statistics() const noexcept;
     [[nodiscard]] FileReadaheadRequestStatus Validate() const noexcept;
 
@@ -79,6 +95,15 @@ class FileReadaheadRequestQueue final {
     [[nodiscard]] bool RequestIsValid(const FileReadaheadRequest &request) const noexcept;
     [[nodiscard]] bool TokenIsValid(FileReadaheadRequestToken token) const noexcept;
     [[nodiscard]] uint64_t FindFreeSlotIndex() const noexcept;
+    [[nodiscard]] FileReadaheadRequestStatus
+    CancelMatching(const FileReadaheadStreamToken *stream, const FileCacheIdentity *identity,
+                   uint64_t maximum_policy_generation,
+                   FileReadaheadRequest *cancelled_request_storage,
+                   uint64_t cancelled_request_capacity, uint64_t &cancelled_request_count) noexcept;
+    [[nodiscard]] bool RequestMatches(const FileReadaheadRequest &request,
+                                      const FileReadaheadStreamToken *stream,
+                                      const FileCacheIdentity *identity,
+                                      uint64_t maximum_policy_generation) const noexcept;
 
     mutable SpinLock lock_{};
     FileReadaheadRequestSlot *slots_{};

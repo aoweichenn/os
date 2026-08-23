@@ -221,14 +221,34 @@ constexpr char OS_KERNEL_MAIN_READAHEAD_SCHEDULE_REJECTION_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] SCHEDULE_REJECTIONS=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_USEFUL_PAGE_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] USEFUL_PAGES=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_WASTED_PAGE_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] WASTED_PAGES=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_FEEDBACK_APPLICATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] FEEDBACK_APPLICATIONS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_CANCELLATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] CANCELLATIONS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_CANCELLATION_FAILURE_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] CANCELLATION_FAILURES=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_ACTIVE_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] REQUEST_ACTIVE=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_ENQUEUE_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] REQUEST_ENQUEUES=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_COMPLETION_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] REQUEST_COMPLETIONS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_TERMINATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] REQUEST_TERMINATIONS=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_CAPACITY_REJECTION_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] REQUEST_CAPACITY_REJECTIONS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_QUEUED_CANCELLATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] REQUEST_QUEUED_CANCELLATIONS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_REQUEST_RUNNING_CANCELLATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] REQUEST_RUNNING_CANCELLATIONS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_FEEDBACK_ACTIVE_STREAM_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] FEEDBACK_ACTIVE_STREAMS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_FEEDBACK_ACTIVE_TASK_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] FEEDBACK_ACTIVE_TASKS=";
+constexpr char OS_KERNEL_MAIN_READAHEAD_FEEDBACK_STALE_WASTE_COUNT_PREFIX[] =
+    "[OS][KERNEL][READAHEAD] FEEDBACK_STALE_WASTE=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_WORKER_FAILURE_COUNT_PREFIX[] =
     "[OS][KERNEL][READAHEAD] WORKER_FAILURES=";
 constexpr char OS_KERNEL_MAIN_READAHEAD_LOADED_PAGE_COUNT_PREFIX[] =
@@ -3021,21 +3041,41 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         process_runtime_statistics.file_descriptions;
     const FileReadaheadRequestStatistics &readahead_request_statistics =
         process_runtime_statistics.file_readahead_requests;
+    const FileReadaheadFeedbackStatistics &readahead_feedback_statistics =
+        process_runtime_statistics.file_readahead_feedback;
     const bool readahead_proof_required =
         user_program_selection == UserProgramSelection::Smoke ||
         user_program_selection == UserProgramSelection::OomPressure;
     if (process_runtime_statistics.file_readahead_worker_failed ||
         readahead_request_statistics.active_request_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
         readahead_request_statistics.enqueue_count !=
-            readahead_request_statistics.completion_count ||
+            readahead_request_statistics.completion_count +
+                readahead_request_statistics.queued_cancellation_count ||
         readahead_request_statistics.enqueue_count !=
             file_description_statistics.readahead_schedule_count ||
         readahead_request_statistics.capacity_rejection_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
         file_description_statistics.readahead_schedule_rejection_count !=
             OS_KERNEL_MAIN_EMPTY_VALUE ||
+        file_description_statistics.readahead_cancellation_failure_count !=
+            OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.active_stream_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.retiring_stream_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.active_task_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        readahead_feedback_statistics.registration_count !=
+            readahead_feedback_statistics.stream_release_count ||
+        readahead_feedback_statistics.task_retain_count !=
+            readahead_feedback_statistics.task_release_count ||
+        file_description_statistics.readahead_useful_page_count !=
+            readahead_feedback_statistics.useful_page_take_count ||
+        file_description_statistics.readahead_wasted_page_count !=
+            readahead_feedback_statistics.wasted_page_take_count ||
         file_cache_runtime_statistics.readahead_failed_page_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
         (readahead_proof_required &&
          (file_description_statistics.readahead_useful_page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_description_statistics.readahead_wasted_page_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_description_statistics.readahead_feedback_application_count ==
+              OS_KERNEL_MAIN_EMPTY_VALUE ||
+          file_description_statistics.readahead_cancellation_count == OS_KERNEL_MAIN_EMPTY_VALUE ||
           file_cache_runtime_statistics.readahead_loaded_page_count ==
               OS_KERNEL_MAIN_EMPTY_VALUE))) {
         HaltProcessor();
@@ -3048,15 +3088,38 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
                          file_description_statistics.readahead_schedule_rejection_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_USEFUL_PAGE_COUNT_PREFIX,
                          file_description_statistics.readahead_useful_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_WASTED_PAGE_COUNT_PREFIX,
+                         file_description_statistics.readahead_wasted_page_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_FEEDBACK_APPLICATION_COUNT_PREFIX,
+                         file_description_statistics.readahead_feedback_application_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_CANCELLATION_COUNT_PREFIX,
+                         file_description_statistics.readahead_cancellation_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_CANCELLATION_FAILURE_COUNT_PREFIX,
+                         file_description_statistics.readahead_cancellation_failure_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_REQUEST_ACTIVE_COUNT_PREFIX,
                          readahead_request_statistics.active_request_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_REQUEST_ENQUEUE_COUNT_PREFIX,
                          readahead_request_statistics.enqueue_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_REQUEST_COMPLETION_COUNT_PREFIX,
                          readahead_request_statistics.completion_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_REQUEST_TERMINATION_COUNT_PREFIX,
+                         readahead_request_statistics.completion_count +
+                             readahead_request_statistics.queued_cancellation_count);
     WriteRequiredHexLine(vga_console,
                          OS_KERNEL_MAIN_READAHEAD_REQUEST_CAPACITY_REJECTION_COUNT_PREFIX,
                          readahead_request_statistics.capacity_rejection_count);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_READAHEAD_REQUEST_QUEUED_CANCELLATION_COUNT_PREFIX,
+                         readahead_request_statistics.queued_cancellation_count);
+    WriteRequiredHexLine(vga_console,
+                         OS_KERNEL_MAIN_READAHEAD_REQUEST_RUNNING_CANCELLATION_COUNT_PREFIX,
+                         readahead_request_statistics.running_cancellation_request_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_FEEDBACK_ACTIVE_STREAM_COUNT_PREFIX,
+                         readahead_feedback_statistics.active_stream_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_FEEDBACK_ACTIVE_TASK_COUNT_PREFIX,
+                         readahead_feedback_statistics.active_task_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_FEEDBACK_STALE_WASTE_COUNT_PREFIX,
+                         readahead_feedback_statistics.stale_wasted_page_drop_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_WORKER_FAILURE_COUNT_PREFIX,
                          process_runtime_statistics.file_readahead_worker_failed ? 1ULL : 0ULL);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_READAHEAD_LOADED_PAGE_COUNT_PREFIX,
@@ -3085,6 +3148,9 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     const FilePageCacheStatistics final_file_cache_statistics = GetUserFilePageCacheStatistics();
     if (final_file_cache_statistics.resident_page_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
         final_file_cache_statistics.prefetched_page_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        final_file_cache_statistics.readahead_feedback_record_count !=
+            readahead_feedback_statistics.useful_page_record_count +
+                readahead_feedback_statistics.wasted_page_record_count ||
         (readahead_proof_required &&
          (final_file_cache_statistics.successful_prefetch_load_count ==
               OS_KERNEL_MAIN_EMPTY_VALUE ||

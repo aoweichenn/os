@@ -2527,6 +2527,30 @@ BlockIo，但不能作为同页 Loading waiter 阻塞。缓存满或 BelowMinimu
 demand 页。完整设计见
 [ADR 0069](adr/0069-v2-10-production-readahead-execution.md)。
 
+V2.10.5c 用独立 token 关闭对象生命周期缺口：
+
+```text
+FileDescription stream token
+  -> request {stream, policy generation, retained OpenFile}
+  -> cache page {stream, policy generation}
+                  | Demand              | discard/truncate/reclaim
+                  v                     v
+             useful feedback       wasted feedback
+                  \_____________________/
+                            |
+                  fixed FeedbackLedger
+                            |
+                  producer 下次 read/close 领取
+                            |
+                  FileReadaheadPolicy::RecordFeedback
+```
+
+账本槽为 Active/Retiring/Free；stream close 时策略对象可以销毁，但槽要等活动 task 归零才
+复用。queued cancellation 从 FIFO 中间摘除并交还 OpenFile，running cancellation 在每页
+前观察；已经提交的单页 BlockIo 仍按正常 completion 收束。随机重置按 generation 过滤，
+BelowMinimum/close 取消全部，truncate 按文件身份取消。详见
+[ADR 0070](adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

@@ -18,7 +18,7 @@ struct alignas(OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_PAGE_ALIGNMENT_BYTES)
     uint64_t mapping_reference_count;
     uint64_t access_generation;
     FileCachePageState state;
-    bool prefetched;
+    FileReadaheadPageTag readahead_tag;
 };
 
 FileCacheAddressSpaceStatus FileCacheAddressSpace::Initialize(const FileCacheIdentity &identity,
@@ -86,7 +86,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Insert(const uint64_t page_in
         .mapping_reference_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE,
         .access_generation = this->access_generation_,
         .state = state,
-        .prefetched = false,
+        .readahead_tag = FileReadaheadPageTag{},
     };
     const SparsePageIndexStatus insertion_status = this->index_.Insert(page_index, page);
     if (insertion_status != SparsePageIndexStatus::Succeeded) {
@@ -233,11 +233,15 @@ FileCacheAddressSpace::Touch(const uint64_t page_index, const uint64_t physical_
 
 FileCacheAddressSpaceStatus FileCacheAddressSpace::MarkPrefetched(const uint64_t page_index,
                                                                   const uint64_t physical_address,
+                                                                  const FileReadaheadPageTag &tag,
                                                                   bool &newly_marked) noexcept {
     SpinLockGuard guard{this->lock_};
     newly_marked = false;
     if (!this->initialized_) {
         return FileCacheAddressSpaceStatus::NotInitialized;
+    }
+    if (!FileReadaheadPageTagIsValid(tag)) {
+        return FileCacheAddressSpaceStatus::InvalidPage;
     }
     Page *page = nullptr;
     const FileCacheAddressSpaceStatus status = this->LookupPage(page_index, page);
@@ -250,13 +254,13 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::MarkPrefetched(const uint64_t
     if (page->state != FileCachePageState::Clean) {
         return FileCacheAddressSpaceStatus::PageBusy;
     }
-    if (page->prefetched) {
+    if (FileReadaheadPageTagIsValid(page->readahead_tag)) {
         return FileCacheAddressSpaceStatus::Succeeded;
     }
     if (this->statistics_.prefetched_page_count == UINT64_MAX) {
         return FileCacheAddressSpaceStatus::Corrupt;
     }
-    page->prefetched = true;
+    page->readahead_tag = tag;
     ++this->statistics_.prefetched_page_count;
     newly_marked = true;
     return FileCacheAddressSpaceStatus::Succeeded;
@@ -264,8 +268,9 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::MarkPrefetched(const uint64_t
 
 FileCacheAddressSpaceStatus
 FileCacheAddressSpace::ConsumePrefetched(const uint64_t page_index, const uint64_t physical_address,
-                                         bool &prefetched) noexcept {
+                                         FileReadaheadPageTag &tag, bool &prefetched) noexcept {
     SpinLockGuard guard{this->lock_};
+    tag = FileReadaheadPageTag{};
     prefetched = false;
     if (!this->initialized_) {
         return FileCacheAddressSpaceStatus::NotInitialized;
@@ -281,13 +286,14 @@ FileCacheAddressSpace::ConsumePrefetched(const uint64_t page_index, const uint64
     if (page->state == FileCachePageState::Loading) {
         return FileCacheAddressSpaceStatus::PageBusy;
     }
-    if (!page->prefetched) {
+    if (!FileReadaheadPageTagIsValid(page->readahead_tag)) {
         return FileCacheAddressSpaceStatus::Succeeded;
     }
     if (this->statistics_.prefetched_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
         return FileCacheAddressSpaceStatus::Corrupt;
     }
-    page->prefetched = false;
+    tag = page->readahead_tag;
+    page->readahead_tag = FileReadaheadPageTag{};
     --this->statistics_.prefetched_page_count;
     prefetched = true;
     return FileCacheAddressSpaceStatus::Succeeded;
@@ -368,7 +374,7 @@ FileCacheAddressSpace::Remove(const uint64_t page_index, const uint64_t physical
     if (page->state != FileCachePageState::Clean) {
         return FileCacheAddressSpaceStatus::DirtyPagesRemain;
     }
-    const bool removed_prefetched = page->prefetched;
+    const bool removed_prefetched = FileReadaheadPageTagIsValid(page->readahead_tag);
     if (removed_prefetched &&
         this->statistics_.prefetched_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
         return FileCacheAddressSpaceStatus::Corrupt;
@@ -415,7 +421,7 @@ FileCacheAddressSpace::Discard(const uint64_t page_index,
         return FileCacheAddressSpaceStatus::PageBusy;
     }
     const FileCachePageState discarded_state = page->state;
-    const bool discarded_prefetched = page->prefetched;
+    const bool discarded_prefetched = FileReadaheadPageTagIsValid(page->readahead_tag);
     if (discarded_prefetched &&
         this->statistics_.prefetched_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
         return FileCacheAddressSpaceStatus::Corrupt;
@@ -524,7 +530,10 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
                 OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
             stored_page.access_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
             !FileCacheAddressSpace::StateIsValid(stored_page.state) ||
-            (stored_page.prefetched && stored_page.state != FileCachePageState::Clean)) {
+            (!FileReadaheadPageTagIsEmpty(stored_page.readahead_tag) &&
+             !FileReadaheadPageTagIsValid(stored_page.readahead_tag)) ||
+            (FileReadaheadPageTagIsValid(stored_page.readahead_tag) &&
+             stored_page.state != FileCachePageState::Clean)) {
             return FileCacheAddressSpaceStatus::Corrupt;
         }
         bool dirty_mark = false;
@@ -546,7 +555,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
         if (stored_page.mapping_reference_count != OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
             ++referenced_page_count;
         }
-        if (stored_page.prefetched) {
+        if (FileReadaheadPageTagIsValid(stored_page.readahead_tag)) {
             ++prefetched_page_count;
         }
         switch (stored_page.state) {
@@ -670,7 +679,8 @@ FileCachePageSnapshot FileCacheAddressSpace::Snapshot(const Page &page) noexcept
         .mapping_reference_count = page.mapping_reference_count,
         .access_generation = page.access_generation,
         .state = page.state,
-        .prefetched = page.prefetched,
+        .readahead_tag = page.readahead_tag,
+        .prefetched = FileReadaheadPageTagIsValid(page.readahead_tag),
     };
 }
 

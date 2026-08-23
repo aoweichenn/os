@@ -500,8 +500,18 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - `enqueue=completion+active` 与 `successful prefetch=resident+useful+wasted` 必须由
   Validate、host 测试和 4 GiB QEMU 聚合 marker 联合验证；最终 active、failure 和
   prefetched resident 必须为零；
-- 5b 完成生产异步填页与实际归因，但 generation 取消、waste 反馈回策略和完整并发
-  writeback/reclaim 错误矩阵仍留给 5c/第六增量。
+- 第五增量 5c 必须用固定容量 stream token 账本保存 producer 归因，不得把
+  FileDescription 指针写入 page cache；duplicate/fork 共享 token，独立 open 隔离；
+- 预读页必须保存 stream token 和 policy generation。首次 Demand 记录 useful，定向取消、
+  truncate、invalidate、reclaim/trim 记录 waste；recorded、taken、stale、pending 必须守恒；
+- queued cancellation 必须稳定摘除 FIFO 并交还 retained OpenFile 所有权；running 只置取消
+  标志，每页前检查，已提交的单页 BlockIo 完成后再丢弃，不能伪造设备硬取消；
+- random reset 只取消旧 generation，BelowMinimum 和最后共享描述 close 取消全部 generation；
+  truncate 必须在修改映射/缓存前取消同文件任务；
+- `enqueue=completion+queued cancellation+active`、`task retain=release+active`，关闭后迟到
+  反馈只能计入 stale，不能命中复用 token 或访问已销毁策略；
+- 5c 完成取消与反馈闭环；设备硬取消以及 writeback/reclaim/Loading 同时发生时的完整
+  EIO/timeout 矩阵仍留给第六增量。
 
 ## v2.0 完成基线
 
