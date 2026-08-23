@@ -18,6 +18,7 @@ struct alignas(OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_PAGE_ALIGNMENT_BYTES)
     uint64_t mapping_reference_count;
     uint64_t access_generation;
     FileCachePageState state;
+    bool prefetched;
 };
 
 FileCacheAddressSpaceStatus FileCacheAddressSpace::Initialize(const FileCacheIdentity &identity,
@@ -85,6 +86,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Insert(const uint64_t page_in
         .mapping_reference_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE,
         .access_generation = this->access_generation_,
         .state = state,
+        .prefetched = false,
     };
     const SparsePageIndexStatus insertion_status = this->index_.Insert(page_index, page);
     if (insertion_status != SparsePageIndexStatus::Succeeded) {
@@ -229,6 +231,68 @@ FileCacheAddressSpace::Touch(const uint64_t page_index, const uint64_t physical_
     return FileCacheAddressSpaceStatus::Succeeded;
 }
 
+FileCacheAddressSpaceStatus FileCacheAddressSpace::MarkPrefetched(const uint64_t page_index,
+                                                                  const uint64_t physical_address,
+                                                                  bool &newly_marked) noexcept {
+    SpinLockGuard guard{this->lock_};
+    newly_marked = false;
+    if (!this->initialized_) {
+        return FileCacheAddressSpaceStatus::NotInitialized;
+    }
+    Page *page = nullptr;
+    const FileCacheAddressSpaceStatus status = this->LookupPage(page_index, page);
+    if (status != FileCacheAddressSpaceStatus::Succeeded) {
+        return status;
+    }
+    if (page->physical_address != physical_address) {
+        return FileCacheAddressSpaceStatus::InvalidPage;
+    }
+    if (page->state != FileCachePageState::Clean) {
+        return FileCacheAddressSpaceStatus::PageBusy;
+    }
+    if (page->prefetched) {
+        return FileCacheAddressSpaceStatus::Succeeded;
+    }
+    if (this->statistics_.prefetched_page_count == UINT64_MAX) {
+        return FileCacheAddressSpaceStatus::Corrupt;
+    }
+    page->prefetched = true;
+    ++this->statistics_.prefetched_page_count;
+    newly_marked = true;
+    return FileCacheAddressSpaceStatus::Succeeded;
+}
+
+FileCacheAddressSpaceStatus
+FileCacheAddressSpace::ConsumePrefetched(const uint64_t page_index, const uint64_t physical_address,
+                                         bool &prefetched) noexcept {
+    SpinLockGuard guard{this->lock_};
+    prefetched = false;
+    if (!this->initialized_) {
+        return FileCacheAddressSpaceStatus::NotInitialized;
+    }
+    Page *page = nullptr;
+    const FileCacheAddressSpaceStatus status = this->LookupPage(page_index, page);
+    if (status != FileCacheAddressSpaceStatus::Succeeded) {
+        return status;
+    }
+    if (page->physical_address != physical_address) {
+        return FileCacheAddressSpaceStatus::InvalidPage;
+    }
+    if (page->state == FileCachePageState::Loading) {
+        return FileCacheAddressSpaceStatus::PageBusy;
+    }
+    if (!page->prefetched) {
+        return FileCacheAddressSpaceStatus::Succeeded;
+    }
+    if (this->statistics_.prefetched_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
+        return FileCacheAddressSpaceStatus::Corrupt;
+    }
+    page->prefetched = false;
+    --this->statistics_.prefetched_page_count;
+    prefetched = true;
+    return FileCacheAddressSpaceStatus::Succeeded;
+}
+
 FileCacheAddressSpaceStatus
 FileCacheAddressSpace::Transition(const uint64_t page_index, const uint64_t physical_address,
                                   const FileCachePageState expected_state,
@@ -304,6 +368,11 @@ FileCacheAddressSpace::Remove(const uint64_t page_index, const uint64_t physical
     if (page->state != FileCachePageState::Clean) {
         return FileCacheAddressSpaceStatus::DirtyPagesRemain;
     }
+    const bool removed_prefetched = page->prefetched;
+    if (removed_prefetched &&
+        this->statistics_.prefetched_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
+        return FileCacheAddressSpaceStatus::Corrupt;
+    }
     void *removed_entry = nullptr;
     const SparsePageIndexStatus erase_status = this->index_.Erase(page_index, removed_entry);
     if (erase_status != SparsePageIndexStatus::Succeeded || removed_entry != page) {
@@ -319,6 +388,9 @@ FileCacheAddressSpace::Remove(const uint64_t page_index, const uint64_t physical
         return FileCacheAddressSpaceStatus::Corrupt;
     }
     --this->statistics_.resident_page_count;
+    if (removed_prefetched) {
+        --this->statistics_.prefetched_page_count;
+    }
     ++this->statistics_.removal_count;
     return FileCacheAddressSpaceStatus::Succeeded;
 }
@@ -343,6 +415,11 @@ FileCacheAddressSpace::Discard(const uint64_t page_index,
         return FileCacheAddressSpaceStatus::PageBusy;
     }
     const FileCachePageState discarded_state = page->state;
+    const bool discarded_prefetched = page->prefetched;
+    if (discarded_prefetched &&
+        this->statistics_.prefetched_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
+        return FileCacheAddressSpaceStatus::Corrupt;
+    }
     void *removed_entry = nullptr;
     const SparsePageIndexStatus erase_status = this->index_.Erase(page_index, removed_entry);
     if (erase_status != SparsePageIndexStatus::Succeeded || removed_entry != page) {
@@ -353,12 +430,14 @@ FileCacheAddressSpace::Discard(const uint64_t page_index,
     if (this->heap_->TryRelease(page) != KernelHeapStatus::Succeeded) {
         return FileCacheAddressSpaceStatus::MetadataReleaseFailed;
     }
-    if (this->statistics_.resident_page_count ==
-            OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
+    if (this->statistics_.resident_page_count == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
         !this->DecrementStateCount(discarded_state)) {
         return FileCacheAddressSpaceStatus::Corrupt;
     }
     --this->statistics_.resident_page_count;
+    if (discarded_prefetched) {
+        --this->statistics_.prefetched_page_count;
+    }
     ++this->statistics_.removal_count;
     return FileCacheAddressSpaceStatus::Succeeded;
 }
@@ -425,6 +504,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
     uint64_t dirty_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t writeback_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t error_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
+    uint64_t prefetched_page_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     uint64_t search_page_index = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
     while (true) {
         uint64_t found_page_index = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
@@ -443,7 +523,8 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
              (OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_SINGLE_UNIT)) !=
                 OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
             stored_page.access_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
-            !FileCacheAddressSpace::StateIsValid(stored_page.state)) {
+            !FileCacheAddressSpace::StateIsValid(stored_page.state) ||
+            (stored_page.prefetched && stored_page.state != FileCachePageState::Clean)) {
             return FileCacheAddressSpaceStatus::Corrupt;
         }
         bool dirty_mark = false;
@@ -464,6 +545,9 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
         active_mapping_reference_count += stored_page.mapping_reference_count;
         if (stored_page.mapping_reference_count != OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE) {
             ++referenced_page_count;
+        }
+        if (stored_page.prefetched) {
+            ++prefetched_page_count;
         }
         switch (stored_page.state) {
         case FileCachePageState::Loading:
@@ -497,6 +581,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
                    dirty_page_count == this->statistics_.dirty_page_count &&
                    writeback_page_count == this->statistics_.writeback_page_count &&
                    error_page_count == this->statistics_.error_page_count &&
+                   prefetched_page_count == this->statistics_.prefetched_page_count &&
                    resident_page_count == index_statistics.entry_count &&
                    dirty_page_count == index_statistics.dirty_entry_count &&
                    writeback_page_count == index_statistics.writeback_entry_count &&
@@ -585,6 +670,7 @@ FileCachePageSnapshot FileCacheAddressSpace::Snapshot(const Page &page) noexcept
         .mapping_reference_count = page.mapping_reference_count,
         .access_generation = page.access_generation,
         .state = page.state,
+        .prefetched = page.prefetched,
     };
 }
 

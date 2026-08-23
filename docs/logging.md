@@ -1293,10 +1293,37 @@ runner 只校验三组守恒和最终零状态，不要求单 BSP 正常负载�
 失败广播和 completion-before-wait 由 host integration/randomized 测试观察，避免通过热路径
 日志或人为延迟改变 QEMU 调度。
 
-V2.10.5a 的 `FileReadaheadPolicy` 是纯 host/target 状态模块，尚未进入生产读路径，因此不
-增加 VGA 或内存日志 marker。窗口、feedback 和 pressure 的逐步行为由 unit/integration/
-randomized 测试观察。5b 真正提交预读后也只能在最终统计区增加聚合，不得逐页打印或用
-日志延迟人为制造异步命中。
+V2.10.5a 的策略逐步行为仍只由 host 测试观察。5b 生产接入后也禁止逐页或逐任务日志，只在
+进程、后台请求和文件系统全部收束后输出一次聚合：
+
+```text
+[OS][KERNEL][READAHEAD] OBSERVATIONS=0x...
+[OS][KERNEL][READAHEAD] SCHEDULES=0x...
+[OS][KERNEL][READAHEAD] SCHEDULE_REJECTIONS=0x0000000000000000
+[OS][KERNEL][READAHEAD] USEFUL_PAGES=0x...
+[OS][KERNEL][READAHEAD] REQUEST_ACTIVE=0x0000000000000000
+[OS][KERNEL][READAHEAD] REQUEST_ENQUEUES=0x...
+[OS][KERNEL][READAHEAD] REQUEST_COMPLETIONS=0x...
+[OS][KERNEL][READAHEAD] REQUEST_CAPACITY_REJECTIONS=0x0000000000000000
+[OS][KERNEL][READAHEAD] WORKER_FAILURES=0x0000000000000000
+[OS][KERNEL][READAHEAD] LOADED_PAGES=0x...
+[OS][KERNEL][READAHEAD] FAILED_PAGES=0x0000000000000000
+[OS][KERNEL][READAHEAD] PRESSURE_STOPS=0x...
+[OS][KERNEL][READAHEAD] PREFETCH_LOADS=0x...
+[OS][KERNEL][READAHEAD] PREFETCH_RESIDENT=0x0000000000000000
+[OS][KERNEL][READAHEAD] PREFETCH_HITS=0x...
+[OS][KERNEL][READAHEAD] PREFETCH_WASTE=0x...
+```
+
+所有 profile 都要求 schedule/enqueue/completion 守恒；Smoke/OOM 的真实文件负载另要求
+load/useful/hit 非零。纯 `#UD/#PF` 等不运行文件负载的故障 profile 允许这些值为零，但
+active/worker/cache failure/final resident 仍必须为零。`PREFETCH_RESIDENT` 在最终 trim 后
+采样；`PREFETCH_WASTE` 与 `PRESSURE_STOPS` 可以为零，不能为了制造非零统计插入延迟。
+
+正常路径还要求 `[OS][USER][TOOLS] SEQUENTIAL_READAHEAD_VERIFIED`。只有 worker 或工具探针
+失败时才允许输出 `[OS][KERNEL][READAHEAD][FAIL] ...` 或
+`[OS][USER][TOOLS][FAIL] ...`；runner 将两者视为禁止标记，stage/status 仅用于定位失败，
+不会进入成功路径终端输出。
 
 ## v2.9 Kernel Thread 聚合日志
 

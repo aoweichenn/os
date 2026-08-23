@@ -40,6 +40,7 @@ constexpr uint64_t OS_TEST_VFS_ROOT_NODE_LIMIT = 64ULL;
 constexpr uint64_t OS_TEST_VFS_CHILD_NODE_LIMIT = 32ULL;
 constexpr uint64_t OS_TEST_VFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint64_t OS_TEST_VFS_MOUNT_CAPACITY = 8ULL;
+constexpr uint64_t OS_TEST_VFS_PAGE_SIZE_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_VFS_CONSTRAINED_MOUNT_CAPACITY = 1ULL;
 constexpr uint64_t OS_TEST_VFS_CHILD_MOUNT_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_TEST_VFS_EXPECTED_ROOT_LENGTH_BYTES = 1ULL;
@@ -112,10 +113,12 @@ struct DataCacheContext final {
     uint64_t truncate_invocation_count;
 };
 
-[[nodiscard]] os::kernel::fs::Status ReadThroughCache(
-    void *const context, const os::kernel::fs::OpenFile &open_file,
-    const uint64_t offset_bytes, uint8_t *const destination, const uint64_t capacity_bytes,
-    uint64_t &read_bytes) noexcept {
+[[nodiscard]] os::kernel::fs::Status
+ReadThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file,
+                 const uint64_t offset_bytes, uint8_t *const destination,
+                 const uint64_t capacity_bytes, uint64_t &read_bytes,
+                 os::kernel::fs::RegularFileReadCacheObservation &observation) noexcept {
+    observation = os::kernel::fs::RegularFileReadCacheObservation{};
     if (context == nullptr) {
         return os::kernel::fs::Status::InvalidArgument;
     }
@@ -124,14 +127,38 @@ struct DataCacheContext final {
         return os::kernel::fs::Status::InvalidArgument;
     }
     ++cache_context.read_invocation_count;
-    return cache_context.vfs->ReadUncachedAt(open_file, offset_bytes, destination, capacity_bytes,
-                                              read_bytes);
+    const os::kernel::fs::Status status = cache_context.vfs->ReadUncachedAt(
+        open_file, offset_bytes, destination, capacity_bytes, read_bytes);
+    if (status == os::kernel::fs::Status::Succeeded) {
+        os::kernel::fs::NodeInformation information{};
+        if (cache_context.vfs->StatOpenFileUncached(open_file, information) !=
+            os::kernel::fs::Status::Succeeded) {
+            return os::kernel::fs::Status::InvalidHandle;
+        }
+        const uint64_t first_page_offset = offset_bytes & (OS_TEST_VFS_PAGE_SIZE_BYTES - 1ULL);
+        const uint64_t requested_page_count =
+            read_bytes == OS_TEST_VFS_EMPTY_VALUE
+                ? OS_TEST_VFS_EMPTY_VALUE
+                : (first_page_offset + read_bytes - 1ULL) / OS_TEST_VFS_PAGE_SIZE_BYTES + 1ULL;
+        observation = os::kernel::fs::RegularFileReadCacheObservation{
+            .first_page_index = offset_bytes / OS_TEST_VFS_PAGE_SIZE_BYTES,
+            .requested_page_count = requested_page_count,
+            .file_page_count =
+                information.size_bytes / OS_TEST_VFS_PAGE_SIZE_BYTES +
+                (information.size_bytes % OS_TEST_VFS_PAGE_SIZE_BYTES != 0ULL ? 1ULL : 0ULL),
+            .cache_hit_page_count = requested_page_count,
+            .cache_miss_page_count = OS_TEST_VFS_EMPTY_VALUE,
+            .prefetched_hit_page_count = OS_TEST_VFS_EMPTY_VALUE,
+            .cache_used = true,
+        };
+    }
+    return status;
 }
 
-[[nodiscard]] os::kernel::fs::Status WriteThroughCache(
-    void *const context, const os::kernel::fs::OpenFile &open_file,
-    const uint64_t offset_bytes, const uint8_t *const source, const uint64_t length_bytes,
-    uint64_t &written_bytes) noexcept {
+[[nodiscard]] os::kernel::fs::Status
+WriteThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file,
+                  const uint64_t offset_bytes, const uint8_t *const source,
+                  const uint64_t length_bytes, uint64_t &written_bytes) noexcept {
     if (context == nullptr) {
         return os::kernel::fs::Status::InvalidArgument;
     }
@@ -141,12 +168,13 @@ struct DataCacheContext final {
     }
     ++cache_context.write_invocation_count;
     return cache_context.vfs->WriteUncachedAt(open_file, offset_bytes, source, length_bytes,
-                                               written_bytes);
+                                              written_bytes);
 }
 
-[[nodiscard]] os::kernel::fs::Status ResolveSizeThroughCache(
-    void *const context, const os::kernel::fs::Vnode &vnode,
-    const uint64_t backend_size_bytes, uint64_t &size_bytes) noexcept {
+[[nodiscard]] os::kernel::fs::Status ResolveSizeThroughCache(void *const context,
+                                                             const os::kernel::fs::Vnode &vnode,
+                                                             const uint64_t backend_size_bytes,
+                                                             uint64_t &size_bytes) noexcept {
     if (context == nullptr || vnode.type != os::kernel::fs::NodeType::RegularFile) {
         return os::kernel::fs::Status::InvalidArgument;
     }
@@ -156,9 +184,9 @@ struct DataCacheContext final {
     return os::kernel::fs::Status::Succeeded;
 }
 
-[[nodiscard]] os::kernel::fs::Status RecordCachedTruncate(
-    void *const context, const os::kernel::fs::Vnode &vnode,
-    const uint64_t size_bytes) noexcept {
+[[nodiscard]] os::kernel::fs::Status RecordCachedTruncate(void *const context,
+                                                          const os::kernel::fs::Vnode &vnode,
+                                                          const uint64_t size_bytes) noexcept {
     static_cast<void>(size_bytes);
     if (context == nullptr || vnode.type != os::kernel::fs::NodeType::RegularFile) {
         return os::kernel::fs::Status::InvalidArgument;
@@ -228,41 +256,27 @@ int main() {
     test_context.Expect(working_directory_valid, OS_TEST_VFS_PATH_SEMANTICS);
 
     os::kernel::fs::FsContext cloned_context{};
-    uint8_t cloned_working_directory
-        [os::kernel::fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
-    uint64_t cloned_working_directory_length_bytes =
-        OS_TEST_VFS_EMPTY_VALUE;
+    uint8_t cloned_working_directory[os::kernel::fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
+    uint64_t cloned_working_directory_length_bytes = OS_TEST_VFS_EMPTY_VALUE;
     const bool context_clone_valid =
         working_directory_valid &&
-        vfs.CloneContext(context, cloned_context) ==
-            os::kernel::fs::Status::Succeeded &&
+        vfs.CloneContext(context, cloned_context) == os::kernel::fs::Status::Succeeded &&
         vfs.GetWorkingDirectory(
-            cloned_context, cloned_working_directory,
-            sizeof(cloned_working_directory),
-            cloned_working_directory_length_bytes) ==
+            cloned_context, cloned_working_directory, sizeof(cloned_working_directory),
+            cloned_working_directory_length_bytes) == os::kernel::fs::Status::Succeeded &&
+        cloned_working_directory_length_bytes == OS_TEST_VFS_EXPECTED_ALPHA_BETA_LENGTH_BYTES &&
+        BytesEqual(cloned_working_directory, OS_TEST_VFS_EXPECTED_ALPHA_BETA,
+                   cloned_working_directory_length_bytes) &&
+        vfs.ChangeDirectory(cloned_context, OS_TEST_VFS_COMPLEX_ROOT_PATH,
+                            sizeof(OS_TEST_VFS_COMPLEX_ROOT_PATH)) ==
             os::kernel::fs::Status::Succeeded &&
-        cloned_working_directory_length_bytes ==
-            OS_TEST_VFS_EXPECTED_ALPHA_BETA_LENGTH_BYTES &&
-        BytesEqual(
-            cloned_working_directory,
-            OS_TEST_VFS_EXPECTED_ALPHA_BETA,
-            cloned_working_directory_length_bytes) &&
-        vfs.ChangeDirectory(
-            cloned_context, OS_TEST_VFS_COMPLEX_ROOT_PATH,
-            sizeof(OS_TEST_VFS_COMPLEX_ROOT_PATH)) ==
+        vfs.GetWorkingDirectory(context, working_directory, sizeof(working_directory),
+                                working_directory_length_bytes) ==
             os::kernel::fs::Status::Succeeded &&
-        vfs.GetWorkingDirectory(
-            context, working_directory,
-            sizeof(working_directory),
-            working_directory_length_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
-        working_directory_length_bytes ==
-            OS_TEST_VFS_EXPECTED_ALPHA_BETA_LENGTH_BYTES &&
-        BytesEqual(
-            working_directory, OS_TEST_VFS_EXPECTED_ALPHA_BETA,
-            working_directory_length_bytes);
-    test_context.Expect(context_clone_valid,
-                        OS_TEST_VFS_CONTEXT_CLONE);
+        working_directory_length_bytes == OS_TEST_VFS_EXPECTED_ALPHA_BETA_LENGTH_BYTES &&
+        BytesEqual(working_directory, OS_TEST_VFS_EXPECTED_ALPHA_BETA,
+                   working_directory_length_bytes);
+    test_context.Expect(context_clone_valid, OS_TEST_VFS_CONTEXT_CLONE);
 
     uint8_t maximum_path[os::kernel::fs::OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     maximum_path[OS_TEST_VFS_EMPTY_VALUE] = static_cast<uint8_t>('/');
@@ -358,6 +372,7 @@ int main() {
     uint8_t policy_bypass_payload[sizeof(OS_TEST_VFS_PAYLOAD)]{};
     uint64_t read_bytes = OS_TEST_VFS_EMPTY_VALUE;
     uint64_t retained_read_bytes = OS_TEST_VFS_EMPTY_VALUE;
+    os::kernel::fs::RegularFileReadCacheObservation read_observation{};
     os::kernel::fs::NodeInformation retained_information{};
     DataCacheContext data_cache_context{
         .vfs = &vfs,
@@ -366,63 +381,62 @@ int main() {
         .size_invocation_count = OS_TEST_VFS_EMPTY_VALUE,
         .truncate_invocation_count = OS_TEST_VFS_EMPTY_VALUE,
     };
-    const bool file_read =
-        file_written &&
-        vfs.Open(context, OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH,
-                 sizeof(OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH), read_options,
-                 read_file) == os::kernel::fs::Status::Succeeded &&
-        vfs.Read(read_file, payload, sizeof(payload), read_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
-        read_bytes == sizeof(payload) &&
-        BytesEqual(payload, OS_TEST_VFS_PAYLOAD, sizeof(payload));
+    const bool file_read = file_written &&
+                           vfs.Open(context, OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH,
+                                    sizeof(OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH), read_options,
+                                    read_file) == os::kernel::fs::Status::Succeeded &&
+                           vfs.Read(read_file, payload, sizeof(payload), read_bytes) ==
+                               os::kernel::fs::Status::Succeeded &&
+                           read_bytes == sizeof(payload) &&
+                           BytesEqual(payload, OS_TEST_VFS_PAYLOAD, sizeof(payload));
     root_memfs.GetSuperblock().cache_regular_file_data = true;
     const bool retained_file_valid =
         file_read &&
-        vfs.RetainOpenFile(read_file, retained_file) ==
-            os::kernel::fs::Status::Succeeded &&
+        vfs.RetainOpenFile(read_file, retained_file) == os::kernel::fs::Status::Succeeded &&
         retained_file.offset_bytes == OS_TEST_VFS_EMPTY_VALUE &&
         vfs.StatOpenFile(retained_file, retained_information) ==
             os::kernel::fs::Status::Succeeded &&
-        retained_information.superblock_identifier ==
-            read_file.path.vnode.superblock->identifier &&
-        retained_information.node_identifier ==
-            read_file.path.vnode.identifier &&
-        retained_information.generation ==
-            read_file.path.vnode.generation &&
+        retained_information.superblock_identifier == read_file.path.vnode.superblock->identifier &&
+        retained_information.node_identifier == read_file.path.vnode.identifier &&
+        retained_information.generation == read_file.path.vnode.generation &&
         retained_information.size_bytes == sizeof(OS_TEST_VFS_PAYLOAD) &&
         vfs.Close(read_file) == os::kernel::fs::Status::Succeeded &&
-        vfs.ConfigureRegularFileDataCache(&data_cache_context, ReadThroughCache,
-                                          WriteThroughCache, ResolveSizeThroughCache,
-                                          RecordCachedTruncate) ==
+        vfs.ConfigureRegularFileDataCache(&data_cache_context, ReadThroughCache, WriteThroughCache,
+                                          ResolveSizeThroughCache, RecordCachedTruncate) ==
             os::kernel::fs::Status::Succeeded &&
-        vfs.ReadAt(retained_file, OS_TEST_VFS_EMPTY_VALUE,
-                   retained_payload, sizeof(retained_payload),
-                   retained_read_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
+        vfs.ReadAt(retained_file, OS_TEST_VFS_EMPTY_VALUE, retained_payload,
+                   sizeof(retained_payload),
+                   retained_read_bytes) == os::kernel::fs::Status::Succeeded &&
         retained_read_bytes == sizeof(retained_payload) &&
         retained_file.offset_bytes == OS_TEST_VFS_EMPTY_VALUE &&
-        BytesEqual(retained_payload, OS_TEST_VFS_PAYLOAD,
-                   sizeof(retained_payload));
+        BytesEqual(retained_payload, OS_TEST_VFS_PAYLOAD, sizeof(retained_payload)) &&
+        vfs.ReadObserved(retained_file, retained_payload, sizeof(retained_payload),
+                         retained_read_bytes,
+                         read_observation) == os::kernel::fs::Status::Succeeded &&
+        retained_read_bytes == sizeof(retained_payload) && read_observation.cache_used &&
+        read_observation.first_page_index == OS_TEST_VFS_EMPTY_VALUE &&
+        read_observation.requested_page_count == OS_TEST_VFS_COUNTER_INCREMENT &&
+        read_observation.file_page_count == OS_TEST_VFS_COUNTER_INCREMENT &&
+        read_observation.cache_hit_page_count == OS_TEST_VFS_COUNTER_INCREMENT &&
+        read_observation.cache_miss_page_count == OS_TEST_VFS_EMPTY_VALUE &&
+        read_observation.prefetched_hit_page_count == OS_TEST_VFS_EMPTY_VALUE;
     root_memfs.GetSuperblock().cache_regular_file_data = false;
     const bool read_cache_boundary_valid =
-        retained_file_valid &&
-        data_cache_context.read_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
+        retained_file_valid && data_cache_context.read_invocation_count == 2ULL &&
         vfs.ReadUncachedAt(retained_file, OS_TEST_VFS_EMPTY_VALUE, uncached_payload,
-                           sizeof(uncached_payload), retained_read_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
+                           sizeof(uncached_payload),
+                           retained_read_bytes) == os::kernel::fs::Status::Succeeded &&
         retained_read_bytes == sizeof(uncached_payload) &&
         BytesEqual(uncached_payload, OS_TEST_VFS_PAYLOAD, sizeof(uncached_payload)) &&
-        data_cache_context.read_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
+        data_cache_context.read_invocation_count == 2ULL &&
         vfs.ReadAt(retained_file, OS_TEST_VFS_EMPTY_VALUE, policy_bypass_payload,
-                   sizeof(policy_bypass_payload), retained_read_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
+                   sizeof(policy_bypass_payload),
+                   retained_read_bytes) == os::kernel::fs::Status::Succeeded &&
         retained_read_bytes == sizeof(policy_bypass_payload) &&
-        BytesEqual(policy_bypass_payload, OS_TEST_VFS_PAYLOAD,
-                   sizeof(policy_bypass_payload)) &&
-        data_cache_context.read_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
-        vfs.ConfigureRegularFileDataCache(&data_cache_context, ReadThroughCache,
-                                          WriteThroughCache, ResolveSizeThroughCache,
-                                          RecordCachedTruncate) ==
+        BytesEqual(policy_bypass_payload, OS_TEST_VFS_PAYLOAD, sizeof(policy_bypass_payload)) &&
+        data_cache_context.read_invocation_count == 2ULL &&
+        vfs.ConfigureRegularFileDataCache(&data_cache_context, ReadThroughCache, WriteThroughCache,
+                                          ResolveSizeThroughCache, RecordCachedTruncate) ==
             os::kernel::fs::Status::AlreadyExists &&
         vfs.Close(retained_file) == os::kernel::fs::Status::Succeeded;
     test_context.Expect(retained_file_valid, OS_TEST_VFS_RETAINED_FILE);
@@ -439,27 +453,26 @@ int main() {
     const bool data_cache_boundary_valid =
         read_cache_boundary_valid &&
         vfs.Open(context, OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH,
-                 sizeof(OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH), cache_write_options, write_file) ==
-            os::kernel::fs::Status::Succeeded &&
+                 sizeof(OS_TEST_VFS_MESSAGE_ABSOLUTE_PATH), cache_write_options,
+                 write_file) == os::kernel::fs::Status::Succeeded &&
         vfs.WriteAt(write_file, OS_TEST_VFS_EMPTY_VALUE, OS_TEST_VFS_PAYLOAD,
-                    sizeof(OS_TEST_VFS_PAYLOAD), written_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
+                    sizeof(OS_TEST_VFS_PAYLOAD),
+                    written_bytes) == os::kernel::fs::Status::Succeeded &&
         written_bytes == sizeof(OS_TEST_VFS_PAYLOAD) &&
         data_cache_context.write_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
         vfs.WriteUncachedAt(write_file, OS_TEST_VFS_EMPTY_VALUE, OS_TEST_VFS_PAYLOAD,
-                            sizeof(OS_TEST_VFS_PAYLOAD), written_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
+                            sizeof(OS_TEST_VFS_PAYLOAD),
+                            written_bytes) == os::kernel::fs::Status::Succeeded &&
         data_cache_context.write_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
         vfs.ReadUncachedAt(write_file, OS_TEST_VFS_EMPTY_VALUE, uncached_payload,
-                           sizeof(uncached_payload), retained_read_bytes) ==
-            os::kernel::fs::Status::Succeeded &&
+                           sizeof(uncached_payload),
+                           retained_read_bytes) == os::kernel::fs::Status::Succeeded &&
         retained_read_bytes == sizeof(uncached_payload) &&
         BytesEqual(uncached_payload, OS_TEST_VFS_PAYLOAD, sizeof(uncached_payload)) &&
         vfs.TruncateOpenFile(write_file, sizeof(OS_TEST_VFS_PAYLOAD)) ==
             os::kernel::fs::Status::Succeeded &&
         data_cache_context.truncate_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
-        vfs.StatOpenFile(write_file, cached_information) ==
-            os::kernel::fs::Status::Succeeded &&
+        vfs.StatOpenFile(write_file, cached_information) == os::kernel::fs::Status::Succeeded &&
         cached_information.size_bytes == sizeof(OS_TEST_VFS_PAYLOAD) &&
         data_cache_context.size_invocation_count == OS_TEST_VFS_COUNTER_INCREMENT &&
         vfs.Close(write_file) == os::kernel::fs::Status::Succeeded;

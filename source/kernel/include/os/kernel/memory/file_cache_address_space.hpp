@@ -22,6 +22,7 @@ struct FileCachePageSnapshot final {
     uint64_t mapping_reference_count;
     uint64_t access_generation;
     FileCachePageState state;
+    bool prefetched;
 };
 
 struct FileCacheAddressSpaceStatistics final {
@@ -36,6 +37,7 @@ struct FileCacheAddressSpaceStatistics final {
     uint64_t dirty_page_count;
     uint64_t writeback_page_count;
     uint64_t error_page_count;
+    uint64_t prefetched_page_count;
     uint64_t successful_insertion_count;
     uint64_t removal_count;
     uint64_t retain_count;
@@ -82,6 +84,10 @@ class FileCacheAddressSpace final {
                                                       uint64_t physical_address) noexcept;
     [[nodiscard]] FileCacheAddressSpaceStatus Touch(uint64_t page_index, uint64_t physical_address,
                                                     uint64_t access_generation) noexcept;
+    [[nodiscard]] FileCacheAddressSpaceStatus
+    MarkPrefetched(uint64_t page_index, uint64_t physical_address, bool &newly_marked) noexcept;
+    [[nodiscard]] FileCacheAddressSpaceStatus
+    ConsumePrefetched(uint64_t page_index, uint64_t physical_address, bool &prefetched) noexcept;
     [[nodiscard]] FileCacheAddressSpaceStatus Transition(uint64_t page_index,
                                                          uint64_t physical_address,
                                                          FileCachePageState expected_state,

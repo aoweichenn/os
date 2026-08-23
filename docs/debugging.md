@@ -2197,8 +2197,17 @@ cache hit 误标为 PrefetchedHit。
 
 窗口在压力下不收缩时检查传入的 `MemoryPressureLevel` 和 effective/adaptive/configured 三个
 上限；BelowMinimum 必须为 0 并清窗。feedback 只影响下一计划，不会改写当前 generation；
-若测试期待当前窗口立即缩短，测试本身违反提交稳定性。5a 没有实际预读页或 Worker，不能
-用 QEMU cache hit 推断策略已接入。
+若测试期待当前窗口立即缩短，测试本身违反提交稳定性。
+
+5b 生产路径无提交时依次检查 VFS observation 的 `cache_used/requested_page_count`、共享
+FileDescription 的 schedule 统计、64 槽请求 FIFO 和第四个持久 WorkHandle。队列满只应
+增加 rejection 并关闭刚 retained 的 OpenFile；成功入队后无法 queue/wake 属于 fail-stop。
+若 worker 卡在同页 Loading，检查 owner availability 是否允许当前预读 Kernel Thread，
+waiter availability 是否仍只允许 User Thread，不能把两者重新合并。
+
+命中统计异常时检查新 fill 是否在广播前标记 prefetched、首次 Demand 是否原子消费、对
+既有页的 Prefetch 是否错误重标。最终应满足 `successful prefetch = resident + hit + waste`；
+trim 后 resident 必须为零。逐页日志会改变调度，诊断只能使用最终聚合和强制重叠 host 测试。
 
 ### Dirty 超过软水位但 worker 不运行
 

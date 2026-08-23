@@ -105,6 +105,7 @@ set(
     include/os/kernel/process/block_io.hpp
     include/os/kernel/process/block_io_device.hpp
     include/os/kernel/process/file_page_load.hpp
+    include/os/kernel/process/file_readahead_request.hpp
     include/os/kernel/process/process_runtime.hpp
     include/os/kernel/process/job_control.hpp
     include/os/kernel/process/signal_manager.hpp
@@ -256,6 +257,7 @@ set(
     src/process/block_io.cpp
     src/process/block_io_device.cpp
     src/process/file_page_load.cpp
+    src/process/file_readahead_request.cpp
     src/process/process_runtime.cpp
     src/process/job_control.cpp
     src/process/signal_manager.cpp
@@ -512,6 +514,7 @@ add_library(
     STATIC
         src/process/block_io.cpp
         src/process/file_page_load.cpp
+        src/process/file_readahead_request.cpp
         src/process/process_tree.cpp
         src/process/job_control.cpp
         src/process/signal_manager.cpp
@@ -524,6 +527,7 @@ add_library(
         src/sync/spin_lock.cpp
         include/os/kernel/process/block_io.hpp
         include/os/kernel/process/file_page_load.hpp
+        include/os/kernel/process/file_readahead_request.hpp
         include/os/kernel/process/thread_scheduler.hpp
         include/os/kernel/process/job_control.hpp
         include/os/kernel/process/process_tree.hpp
@@ -616,6 +620,7 @@ target_link_libraries(
     PUBLIC
         os_foundation_host
         os_kernel_block_device_host
+        os_kernel_memory_model_host
         os_system_abi
 )
 target_compile_options(

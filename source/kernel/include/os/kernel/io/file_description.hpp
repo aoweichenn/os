@@ -6,6 +6,7 @@
 #include <os/kernel/ipc/pipe.hpp>
 #include <os/kernel/ipc/pipe_manager.hpp>
 #include <os/kernel/memory/file_cache_identity.hpp>
+#include <os/kernel/memory/file_readahead.hpp>
 #include <os/kernel/object/kernel_object.hpp>
 
 #include <stdint.h>
@@ -13,10 +14,21 @@
 namespace os::kernel {
 
 using FileDescriptionDeviceWriteOperation = TerminalDeviceWriteOperation;
-using FileDescriptionWritebackErrorRegisterOperation = bool (*)(
-    const FileCacheIdentity &identity, uint64_t &sampled_sequence) noexcept;
-using FileDescriptionWritebackErrorUnregisterOperation = bool (*)(
-    const FileCacheIdentity &identity) noexcept;
+using FileDescriptionWritebackErrorRegisterOperation =
+    bool (*)(const FileCacheIdentity &identity, uint64_t &sampled_sequence) noexcept;
+using FileDescriptionWritebackErrorUnregisterOperation =
+    bool (*)(const FileCacheIdentity &identity) noexcept;
+using FileDescriptionReadaheadPressureOperation =
+    bool (*)(void *context, MemoryPressureLevel &pressure_level) noexcept;
+using FileDescriptionReadaheadScheduleOperation =
+    bool (*)(void *context, fs::Vfs &vfs, const fs::OpenFile &open_file,
+             const FileReadaheadDecision &decision) noexcept;
+
+struct FileDescriptionReadaheadOperations final {
+    void *context;
+    FileDescriptionReadaheadPressureOperation pressure;
+    FileDescriptionReadaheadScheduleOperation schedule;
+};
 
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG = 1ULL << 1ULL;
@@ -66,8 +78,7 @@ struct FileDescriptionCreateRequest final {
     fs::OpenFile open_file;
     FileCacheIdentity writeback_identity{};
     FileDescriptionWritebackErrorRegisterOperation writeback_error_register_operation{nullptr};
-    FileDescriptionWritebackErrorUnregisterOperation writeback_error_unregister_operation{
-        nullptr};
+    FileDescriptionWritebackErrorUnregisterOperation writeback_error_unregister_operation{nullptr};
 };
 
 struct FileDescriptionSnapshot final {
@@ -82,6 +93,7 @@ struct FileDescriptionSnapshot final {
     uint64_t node_generation;
     uint64_t size_bytes;
     uint64_t writeback_error_cursor;
+    FileReadaheadStatistics readahead;
 };
 
 struct RetainedRegularFile final {
@@ -98,6 +110,11 @@ struct FileDescriptionManagerStatistics final {
     uint64_t bytes_written;
     uint64_t successful_finalization_count;
     uint64_t failed_finalization_count;
+    uint64_t readahead_observation_count;
+    uint64_t readahead_decision_count;
+    uint64_t readahead_schedule_count;
+    uint64_t readahead_schedule_rejection_count;
+    uint64_t readahead_useful_page_count;
 };
 
 // FileDescription 是 fd 背后的共享状态。duplicate 只增加对象强引用，因此
@@ -109,6 +126,8 @@ class FileDescriptionManager final {
     FileDescriptionManager &operator=(const FileDescriptionManager &) = delete;
 
     [[nodiscard]] FileDescriptionStatus Initialize(KernelObjectManager &object_manager) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    ConfigureReadahead(const FileDescriptionReadaheadOperations &operations) noexcept;
     [[nodiscard]] FileDescriptionStatus Create(const FileDescriptionCreateRequest &request,
                                                KernelObjectReference &reference) noexcept;
     [[nodiscard]] FileDescriptionStatus ReadSnapshot(const KernelObjectReference &reference,
@@ -132,9 +151,9 @@ class FileDescriptionManager final {
     [[nodiscard]] FileDescriptionStatus
     ReadWritebackErrorCursor(const KernelObjectReference &reference,
                              uint64_t &writeback_error_cursor) noexcept;
-    [[nodiscard]] FileDescriptionStatus ReadSynchronizationState(
-        const KernelObjectReference &reference, FileCacheIdentity &identity,
-        uint64_t &writeback_error_cursor) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    ReadSynchronizationState(const KernelObjectReference &reference, FileCacheIdentity &identity,
+                             uint64_t &writeback_error_cursor) noexcept;
     [[nodiscard]] FileDescriptionStatus
     AdvanceWritebackErrorCursor(const KernelObjectReference &reference,
                                 uint64_t writeback_error_sequence) noexcept;
@@ -150,9 +169,11 @@ class FileDescriptionManager final {
     [[nodiscard]] bool IsRequestValid(const FileDescriptionCreateRequest &request) const noexcept;
 
     KernelObjectManager *object_manager_;
+    FileDescriptionReadaheadOperations readahead_operations_{};
     mutable SpinLock statistics_lock_;
     FileDescriptionManagerStatistics statistics_;
     bool initialized_;
+    bool readahead_configured_{};
 };
 
 }

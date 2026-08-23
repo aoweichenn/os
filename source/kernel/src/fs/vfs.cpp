@@ -1082,8 +1082,7 @@ Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information
     return cache_status;
 }
 
-Status Vfs::StatOpenFileUncached(const OpenFile &open_file,
-                                 NodeInformation &information) noexcept {
+Status Vfs::StatOpenFileUncached(const OpenFile &open_file, NodeInformation &information) noexcept {
     information = NodeInformation{};
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
@@ -1136,13 +1135,14 @@ Status Vfs::ReadAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
-    const Status status = this->regular_file_read_cache_operation_ == nullptr ||
-                                  !open_file.path.vnode.superblock->cache_regular_file_data
-                              ? this->ReadUncachedAt(open_file, offset_bytes, destination,
-                                                     capacity_bytes, read_bytes)
-                              : this->regular_file_read_cache_operation_(
-                                    this->regular_file_data_cache_context_, open_file,
-                                    offset_bytes, destination, capacity_bytes, read_bytes);
+    RegularFileReadCacheObservation observation{};
+    const Status status =
+        this->regular_file_read_cache_operation_ == nullptr ||
+                !open_file.path.vnode.superblock->cache_regular_file_data
+            ? this->ReadUncachedAt(open_file, offset_bytes, destination, capacity_bytes, read_bytes)
+            : this->regular_file_read_cache_operation_(this->regular_file_data_cache_context_,
+                                                       open_file, offset_bytes, destination,
+                                                       capacity_bytes, read_bytes, observation);
     if (status == Status::Succeeded) {
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_read += read_bytes;
@@ -1190,13 +1190,12 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    const Status status = this->regular_file_write_cache_operation_ == nullptr ||
-                                  !superblock->cache_regular_file_data
-                              ? this->WriteUncachedAt(open_file, offset_bytes, source,
-                                                      length_bytes, written_bytes)
-                              : this->regular_file_write_cache_operation_(
-                                    this->regular_file_data_cache_context_, open_file, offset_bytes,
-                                    source, length_bytes, written_bytes);
+    const Status status =
+        this->regular_file_write_cache_operation_ == nullptr || !superblock->cache_regular_file_data
+            ? this->WriteUncachedAt(open_file, offset_bytes, source, length_bytes, written_bytes)
+            : this->regular_file_write_cache_operation_(this->regular_file_data_cache_context_,
+                                                        open_file, offset_bytes, source,
+                                                        length_bytes, written_bytes);
     if (status == Status::Succeeded) {
         SpinLockGuard guard{this->lock_};
         this->statistics_.bytes_written += written_bytes;
@@ -1231,7 +1230,15 @@ Status Vfs::WriteUncachedAt(const OpenFile &open_file, const uint64_t offset_byt
 
 Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t capacity_bytes,
                  uint64_t &read_bytes) noexcept {
+    RegularFileReadCacheObservation observation{};
+    return this->ReadObserved(open_file, destination, capacity_bytes, read_bytes, observation);
+}
+
+Status Vfs::ReadObserved(OpenFile &open_file, uint8_t *const destination,
+                         const uint64_t capacity_bytes, uint64_t &read_bytes,
+                         RegularFileReadCacheObservation &observation) noexcept {
     read_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    observation = RegularFileReadCacheObservation{};
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
     }
@@ -1245,13 +1252,14 @@ Status Vfs::Read(OpenFile &open_file, uint8_t *const destination, const uint64_t
     if (destination == nullptr && capacity_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
-    const Status status = this->regular_file_read_cache_operation_ == nullptr ||
-                                  !open_file.path.vnode.superblock->cache_regular_file_data
-                              ? this->ReadUncachedAt(open_file, open_file.offset_bytes, destination,
-                                                     capacity_bytes, read_bytes)
-                              : this->regular_file_read_cache_operation_(
-                                    this->regular_file_data_cache_context_, open_file,
-                                    open_file.offset_bytes, destination, capacity_bytes, read_bytes);
+    const Status status =
+        this->regular_file_read_cache_operation_ == nullptr ||
+                !open_file.path.vnode.superblock->cache_regular_file_data
+            ? this->ReadUncachedAt(open_file, open_file.offset_bytes, destination, capacity_bytes,
+                                   read_bytes)
+            : this->regular_file_read_cache_operation_(
+                  this->regular_file_data_cache_context_, open_file, open_file.offset_bytes,
+                  destination, capacity_bytes, read_bytes, observation);
     if (status == Status::Succeeded) {
         if (open_file.offset_bytes > UINT64_MAX - read_bytes) {
             return Status::Corrupt;
@@ -1283,13 +1291,13 @@ Status Vfs::Write(OpenFile &open_file, const uint8_t *const source, const uint64
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    const Status status = this->regular_file_write_cache_operation_ == nullptr ||
-                                  !superblock->cache_regular_file_data
-                              ? this->WriteUncachedAt(open_file, open_file.offset_bytes, source,
-                                                      length_bytes, written_bytes)
-                              : this->regular_file_write_cache_operation_(
-                                    this->regular_file_data_cache_context_, open_file,
-                                    open_file.offset_bytes, source, length_bytes, written_bytes);
+    const Status status =
+        this->regular_file_write_cache_operation_ == nullptr || !superblock->cache_regular_file_data
+            ? this->WriteUncachedAt(open_file, open_file.offset_bytes, source, length_bytes,
+                                    written_bytes)
+            : this->regular_file_write_cache_operation_(this->regular_file_data_cache_context_,
+                                                        open_file, open_file.offset_bytes, source,
+                                                        length_bytes, written_bytes);
     if (status == Status::Succeeded) {
         if (open_file.offset_bytes > UINT64_MAX - written_bytes) {
             return Status::Corrupt;

@@ -296,6 +296,12 @@ os_add_kernel_memory_test(
 )
 
 os_add_kernel_memory_test(
+    os_kernel_file_page_prefetch_lifecycle_integration_tests
+    integration/boot/file_page_prefetch_lifecycle_test.cpp
+    "integration"
+)
+
+os_add_kernel_memory_test(
     os_kernel_file_readahead_unit_tests
     unit/kernel/file_readahead_test.cpp
     "unit"
@@ -851,6 +857,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_file_readahead_request_unit_tests
+    unit/kernel/file_readahead_request_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_private_futex_unit_tests
     unit/kernel/private_futex_test.cpp
     "unit"
@@ -923,6 +934,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_file_page_load_randomized_tests
     randomized/kernel/file_page_load_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_file_readahead_request_randomized_tests
+    randomized/kernel/file_readahead_request_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_process_test(

@@ -62,6 +62,7 @@ constexpr uint32_t OS_KERNEL_PROCESS_RUNTIME_IA32_KERNEL_GS_BASE_MSR = 0xC000010
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_LAUNCH_WAIT_QUEUE_ID = 0x8000000000000106ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY = 4ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_PAGE_LOAD_WAIT_QUEUE_BASE = 0x8000000000020000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_PROBE_TIMEOUT_NANOSECONDS =
     5ULL * 1000ULL * 1000ULL * 1000ULL;
@@ -206,6 +207,16 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FORGET_FAILURE_STATUS_PREFIX
     "[OS][KERNEL][AGING][FAIL] FORGET_STATUS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FORGET_FAILURE_ADDRESS_PREFIX[] =
     "[OS][KERNEL][AGING][FAIL] FORGET_PHYSICAL_ADDRESS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FAILURE_STAGE_PREFIX[] =
+    "[OS][KERNEL][READAHEAD][FAIL] STAGE=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_STATUS_PREFIX[] =
+    "[OS][KERNEL][READAHEAD][FAIL] REQUEST_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_PREFETCH_STATUS_PREFIX[] =
+    "[OS][KERNEL][READAHEAD][FAIL] PREFETCH_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_CLOSE_STATUS_PREFIX[] =
+    "[OS][KERNEL][READAHEAD][FAIL] CLOSE_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_COMPLETION_STATUS_PREFIX[] =
+    "[OS][KERNEL][READAHEAD][FAIL] COMPLETION_STATUS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_PROCESS_ID=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX[] =
@@ -326,6 +337,13 @@ constexpr uint8_t OS_KERNEL_PROCESS_RUNTIME_TERMINAL_INTERRUPT_SEQUENCE[]{
 constexpr uint8_t OS_KERNEL_PROCESS_RUNTIME_TERMINAL_STOP_SEQUENCE[]{
     static_cast<uint8_t>('^'), static_cast<uint8_t>('Z'), static_cast<uint8_t>('\r'),
     static_cast<uint8_t>('\n')};
+
+enum class FileReadaheadWorkerFailureStage : uint64_t {
+    AcquireRequest = 1ULL,
+    Prefetch = 2ULL,
+    CloseFile = 3ULL,
+    CompleteRequest = 4ULL,
+};
 
 [[nodiscard]] bool IsPowerOfTwoCounter(const uint64_t value) noexcept {
     return value != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
@@ -558,6 +576,12 @@ uint64_t kernel_thread_self_test_step;
 WorkHandle file_writeback_work_handle;
 WorkHandle page_aging_work_handle;
 WorkHandle background_reclaim_work_handle;
+WorkHandle file_readahead_work_handle;
+FileReadaheadRequestQueue file_readahead_request_queue;
+FileReadaheadRequestSlot
+    file_readahead_request_slots[OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY];
+uint64_t
+    file_readahead_request_ready_storage[OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY];
 BackgroundReclaimController background_reclaim_controller;
 PageAgingManager page_aging_manager;
 PageAgingEntry *page_aging_entries;
@@ -569,8 +593,11 @@ uint64_t page_aging_hash_capacity;
 bool file_writeback_work_registered;
 bool page_aging_work_registered;
 bool background_reclaim_work_registered;
+bool file_readahead_work_registered;
 bool page_aging_worker_failed;
 bool background_reclaim_worker_failed;
+bool file_readahead_worker_failed;
+bool file_readahead_worker_io_active;
 bool kernel_work_thread_stop_requested;
 BlockIoCoordinator block_io_coordinator;
 BlockIoSlot block_io_slots[OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY];
@@ -617,6 +644,7 @@ struct BackgroundReclaimSelectionContext final {
 };
 
 [[nodiscard]] bool ScheduleRuntimeBackgroundReclaimWork() noexcept;
+[[nodiscard]] bool ScheduleRuntimeFileReadaheadWork() noexcept;
 
 void RecordPageAgingFailure(const PageAgingFailureStage stage,
                             const PageAgingStatus status) noexcept {
@@ -2509,6 +2537,131 @@ QueueRuntimeBackgroundReclaimDecision(const BackgroundReclaimDecision &decision)
                : WorkExecutionResult::Failed;
 }
 
+[[nodiscard]] bool ReadRuntimeFileReadaheadPressure(void *const context,
+                                                    MemoryPressureLevel &pressure_level) noexcept {
+    static_cast<void>(context);
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        kernel_work_thread_stop_requested) {
+        pressure_level = MemoryPressureLevel::BelowMinimum;
+        return false;
+    }
+    pressure_level = GetUserMemoryPressureLevel();
+    return true;
+}
+
+[[nodiscard]] bool ScheduleRuntimeFileReadahead(void *const context, fs::Vfs &vfs,
+                                                const fs::OpenFile &open_file,
+                                                const FileReadaheadDecision &decision) noexcept {
+    static_cast<void>(context);
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        kernel_work_thread_stop_requested || !file_readahead_work_registered ||
+        decision.action != FileReadaheadAction::Submit ||
+        decision.prefetch_page_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return false;
+    }
+    fs::OpenFile retained_open_file{};
+    if (vfs.RetainOpenFile(open_file, retained_open_file) != fs::Status::Succeeded) {
+        return false;
+    }
+    FileReadaheadRequestToken token{};
+    const FileReadaheadRequestStatus enqueue_status = file_readahead_request_queue.Enqueue(
+        FileReadaheadRequest{
+            .vfs = &vfs,
+            .open_file = retained_open_file,
+            .start_page_index = decision.prefetch_start_page_index,
+            .page_count = decision.prefetch_page_count,
+            .policy_generation = decision.generation,
+        },
+        token);
+    static_cast<void>(token);
+    if (enqueue_status != FileReadaheadRequestStatus::Succeeded) {
+        static_cast<void>(vfs.Close(retained_open_file));
+        return false;
+    }
+    if (!ScheduleRuntimeFileReadaheadWork()) {
+        // 入队后丢失唯一 drain 通知会泄漏 retained OpenFile，不能作为普通预测失败返回。
+        HaltProcessor();
+    }
+    return true;
+}
+
+[[nodiscard]] WorkExecutionResult ExecuteRuntimeFileReadaheadWork(void *const context) noexcept {
+    static_cast<void>(context);
+    FileReadaheadRequestToken token{};
+    FileReadaheadRequest request{};
+    const FileReadaheadRequestStatus acquire_status =
+        file_readahead_request_queue.Acquire(token, request);
+    if (acquire_status == FileReadaheadRequestStatus::NoQueuedRequest) {
+        return WorkExecutionResult::Succeeded;
+    }
+    if (acquire_status != FileReadaheadRequestStatus::Succeeded || request.vfs == nullptr) {
+        file_readahead_worker_failed = true;
+        WriteProcessRuntimeValue(
+            OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FAILURE_STAGE_PREFIX,
+            static_cast<uint64_t>(FileReadaheadWorkerFailureStage::AcquireRequest));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_STATUS_PREFIX,
+                                 static_cast<uint64_t>(acquire_status));
+        return WorkExecutionResult::Failed;
+    }
+    UserFileReadaheadResult result{};
+    file_readahead_worker_io_active = true;
+    const UserVirtualMemoryStatus prefetch_status = PrefetchUserFilePages(
+        *request.vfs, request.open_file, request.start_page_index, request.page_count, result);
+    file_readahead_worker_io_active = false;
+    const fs::Status close_status = request.vfs->Close(request.open_file);
+    const FileReadaheadRequestStatus completion_status =
+        file_readahead_request_queue.Complete(token);
+    if (prefetch_status != UserVirtualMemoryStatus::Succeeded ||
+        close_status != fs::Status::Succeeded ||
+        completion_status != FileReadaheadRequestStatus::Succeeded) {
+        file_readahead_worker_failed = true;
+        const FileReadaheadWorkerFailureStage failure_stage =
+            prefetch_status != UserVirtualMemoryStatus::Succeeded
+                ? FileReadaheadWorkerFailureStage::Prefetch
+            : close_status != fs::Status::Succeeded
+                ? FileReadaheadWorkerFailureStage::CloseFile
+                : FileReadaheadWorkerFailureStage::CompleteRequest;
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FAILURE_STAGE_PREFIX,
+                                 static_cast<uint64_t>(failure_stage));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_PREFETCH_STATUS_PREFIX,
+                                 static_cast<uint64_t>(prefetch_status));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_CLOSE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(close_status));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_COMPLETION_STATUS_PREFIX,
+                                 static_cast<uint64_t>(completion_status));
+        return WorkExecutionResult::Failed;
+    }
+    return WorkExecutionResult::Succeeded;
+}
+
+[[nodiscard]] bool ScheduleRuntimeFileReadaheadWork() noexcept {
+    if (!file_readahead_work_registered || kernel_work_thread_stop_requested) {
+        return false;
+    }
+    WorkQueueEntry entry{};
+    if (kernel_work_queue.Read(file_readahead_work_handle, entry) != WorkQueueStatus::Succeeded) {
+        return false;
+    }
+    if (entry.state == WorkState::Completed || entry.state == WorkState::Cancelled) {
+        if (kernel_work_queue.Reset(file_readahead_work_handle) != WorkQueueStatus::Succeeded) {
+            return false;
+        }
+    }
+    const WorkQueueStatus queue_status = kernel_work_queue.Queue(file_readahead_work_handle);
+    if (queue_status != WorkQueueStatus::Succeeded &&
+        queue_status != WorkQueueStatus::AlreadyPending &&
+        queue_status != WorkQueueStatus::AlreadyRunning) {
+        return false;
+    }
+    bool wake_won = false;
+    if (WakeOneKernelThread(kernel_work_wait_queue, WakeReason::ConditionSatisfied, wake_won) !=
+        KernelThreadRuntimeStatus::Succeeded) {
+        return false;
+    }
+    GetCpuLocal().RequestReschedule();
+    return true;
+}
+
 [[nodiscard]] bool WorkHandlesEqual(const WorkHandle left, const WorkHandle right) noexcept {
     return left.slot_index == right.slot_index && left.generation == right.generation;
 }
@@ -2680,6 +2833,13 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
                 !ScheduleRuntimeBackgroundReclaimWork()) {
                 HaltProcessor();
             }
+            if (!kernel_work_thread_stop_requested && !file_readahead_worker_failed &&
+                WorkHandlesEqual(execution.handle, file_readahead_work_handle) &&
+                file_readahead_request_queue.Statistics().active_request_count !=
+                    OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+                !ScheduleRuntimeFileReadaheadWork()) {
+                HaltProcessor();
+            }
             // 每个有界 batch 后都交还调度权，避免存储延迟垄断 Ring 0。
             if (!kernel_work_thread_stop_requested &&
                 YieldCurrentKernelThread() != KernelThreadRuntimeStatus::Succeeded) {
@@ -2731,11 +2891,14 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
 
 [[nodiscard]] bool PrepareRuntimeFileWritebackWorker() noexcept {
     if (file_writeback_work_registered || page_aging_work_registered ||
-        background_reclaim_work_registered || kernel_work_thread_stop_requested) {
+        background_reclaim_work_registered || file_readahead_work_registered ||
+        kernel_work_thread_stop_requested) {
         return false;
     }
     page_aging_worker_failed = false;
     background_reclaim_worker_failed = false;
+    file_readahead_worker_failed = false;
+    file_readahead_worker_io_active = false;
     if (kernel_work_queue.Register(ExecuteRuntimeFileWritebackWork, nullptr,
                                    file_writeback_work_handle) != WorkQueueStatus::Succeeded) {
         return false;
@@ -2782,6 +2945,22 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         return false;
     }
     background_reclaim_work_registered = true;
+    if (kernel_work_queue.Register(ExecuteRuntimeFileReadaheadWork, nullptr,
+                                   file_readahead_work_handle) != WorkQueueStatus::Succeeded) {
+        static_cast<void>(kernel_work_queue.Release(background_reclaim_work_handle));
+        static_cast<void>(kernel_work_queue.Cancel(page_aging_work_handle));
+        static_cast<void>(kernel_work_queue.Cancel(file_writeback_work_handle));
+        static_cast<void>(kernel_work_queue.Release(page_aging_work_handle));
+        static_cast<void>(kernel_work_queue.Release(file_writeback_work_handle));
+        file_writeback_work_registered = false;
+        page_aging_work_registered = false;
+        background_reclaim_work_registered = false;
+        file_writeback_work_handle = WorkHandle{};
+        page_aging_work_handle = WorkHandle{};
+        background_reclaim_work_handle = WorkHandle{};
+        return false;
+    }
+    file_readahead_work_registered = true;
     ThreadId block_io_thread_id{};
     ThreadId block_io_probe_thread_id{};
     ThreadId work_thread_id{};
@@ -2797,12 +2976,15 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         static_cast<void>(kernel_work_queue.Release(file_writeback_work_handle));
         static_cast<void>(kernel_work_queue.Release(page_aging_work_handle));
         static_cast<void>(kernel_work_queue.Release(background_reclaim_work_handle));
+        static_cast<void>(kernel_work_queue.Release(file_readahead_work_handle));
         file_writeback_work_registered = false;
         page_aging_work_registered = false;
         background_reclaim_work_registered = false;
+        file_readahead_work_registered = false;
         file_writeback_work_handle = WorkHandle{};
         page_aging_work_handle = WorkHandle{};
         background_reclaim_work_handle = WorkHandle{};
+        file_readahead_work_handle = WorkHandle{};
         return false;
     }
     if (block_io_thread_id.value < OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER ||
@@ -2818,7 +3000,7 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
 
 [[nodiscard]] bool RequestRuntimeFileWritebackWorkerStop() noexcept {
     if (!file_writeback_work_registered || !page_aging_work_registered ||
-        !background_reclaim_work_registered) {
+        !background_reclaim_work_registered || !file_readahead_work_registered) {
         return false;
     }
     kernel_work_thread_stop_requested = true;
@@ -2827,6 +3009,7 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         file_writeback_work_handle,
         page_aging_work_handle,
         background_reclaim_work_handle,
+        file_readahead_work_handle,
     };
     for (const WorkHandle handle : handles) {
         WorkQueueEntry entry{};
@@ -2846,14 +3029,15 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
 
 [[nodiscard]] bool ReleaseRuntimeFileWritebackWorker() noexcept {
     if (!file_writeback_work_registered || !page_aging_work_registered ||
-        !background_reclaim_work_registered || !block_io_completion_worker_started ||
-        !block_io_runtime_probe_succeeded) {
+        !background_reclaim_work_registered || !file_readahead_work_registered ||
+        !block_io_completion_worker_started || !block_io_runtime_probe_succeeded) {
         return false;
     }
     const WorkHandle handles[] = {
         file_writeback_work_handle,
         page_aging_work_handle,
         background_reclaim_work_handle,
+        file_readahead_work_handle,
     };
     for (const WorkHandle handle : handles) {
         WorkQueueEntry entry{};
@@ -2873,6 +3057,12 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         background_reclaim_controller.Statistics().state != BackgroundReclaimState::Sleeping) {
         return false;
     }
+    if (file_readahead_request_queue.Validate() != FileReadaheadRequestStatus::Succeeded ||
+        file_readahead_request_queue.Statistics().active_request_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        file_readahead_worker_io_active) {
+        return false;
+    }
     if (block_io_coordinator.Validate() != BlockIoStatus::Succeeded ||
         block_io_coordinator.Statistics().active_request_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
@@ -2887,12 +3077,15 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
     file_writeback_work_registered = false;
     page_aging_work_registered = false;
     background_reclaim_work_registered = false;
+    file_readahead_work_registered = false;
     file_writeback_work_handle = WorkHandle{};
     page_aging_work_handle = WorkHandle{};
     background_reclaim_work_handle = WorkHandle{};
+    file_readahead_work_handle = WorkHandle{};
     kernel_work_thread_stop_requested = false;
     block_io_completion_worker_stop_requested = false;
     block_io_completion_worker_started = false;
+    file_readahead_worker_io_active = false;
     return true;
 }
 
@@ -4550,6 +4743,25 @@ BlockCurrentRuntimeThreadInKernel(WaitQueue &wait_queue, const WaitCondition wai
 
 namespace {
 
+[[nodiscard]] bool RuntimeFilePageLoadingOwnerAvailable(void *const context) noexcept {
+    static_cast<void>(context);
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        !kernel_thread_dispatch_active) {
+        return false;
+    }
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry thread{};
+    if (thread_index >= process_runtime_limits.thread_capacity ||
+        thread_scheduler.ReadThread(thread_index, thread) != ThreadSchedulerStatus::Succeeded ||
+        !runtime_threads[thread_index].active) {
+        return false;
+    }
+    return (thread.kind == ThreadKind::User &&
+            runtime_threads[thread_index].saved_frame != nullptr &&
+            !runtime_threads[thread_index].user_kernel_continuation_active) ||
+           (thread.kind == ThreadKind::Kernel && file_readahead_worker_io_active);
+}
+
 [[nodiscard]] bool RuntimeFilePageLoadingWaitAvailable(void *const context) noexcept {
     static_cast<void>(context);
     if (!process_runtime_initialized || !process_scheduling_active ||
@@ -4570,7 +4782,7 @@ namespace {
                                             const uint64_t load_generation,
                                             FilePageLoadToken &token) noexcept {
     static_cast<void>(context);
-    if (!RuntimeFilePageLoadingWaitAvailable(nullptr)) {
+    if (!RuntimeFilePageLoadingOwnerAvailable(nullptr)) {
         token = FilePageLoadToken{};
         return false;
     }
@@ -4785,7 +4997,8 @@ bool RuntimeBlockIoWaitAvailable() noexcept {
            thread_scheduler.ReadThread(current_thread_index, current_thread) ==
                ThreadSchedulerStatus::Succeeded &&
            (current_thread.kind == ThreadKind::User ||
-            (current_thread.kind == ThreadKind::Kernel && block_io_runtime_probe_wait_active));
+            (current_thread.kind == ThreadKind::Kernel &&
+             (block_io_runtime_probe_wait_active || file_readahead_worker_io_active)));
 }
 
 RuntimeBlockIoStatus RegisterRuntimeBlockIoDevice(AsynchronousBlockDevice &device) noexcept {
@@ -5451,11 +5664,15 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
     file_writeback_work_handle = WorkHandle{};
     page_aging_work_handle = WorkHandle{};
     background_reclaim_work_handle = WorkHandle{};
+    file_readahead_work_handle = WorkHandle{};
     file_writeback_work_registered = false;
     page_aging_work_registered = false;
     background_reclaim_work_registered = false;
+    file_readahead_work_registered = false;
     page_aging_worker_failed = false;
     background_reclaim_worker_failed = false;
+    file_readahead_worker_failed = false;
+    file_readahead_worker_io_active = false;
     kernel_work_thread_stop_requested = false;
     if (background_reclaim_controller.Initialize(BackgroundReclaimConfiguration{
             .batch_page_count = OS_KERNEL_PROCESS_RUNTIME_BACKGROUND_RECLAIM_BATCH_PAGE_COUNT,
@@ -5495,7 +5712,11 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
         page_aging_hash = nullptr;
         return ProcessRuntimeStatus::AddressSpaceFailure;
     }
-    if (kernel_work_queue.Initialize(kernel_work_queue_entries, kernel_work_queue_delayed_heap,
+    if (file_readahead_request_queue.Initialize(
+            file_readahead_request_slots, file_readahead_request_ready_storage,
+            OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY) !=
+            FileReadaheadRequestStatus::Succeeded ||
+        kernel_work_queue.Initialize(kernel_work_queue_entries, kernel_work_queue_delayed_heap,
                                      OS_KERNEL_PROCESS_RUNTIME_WORK_QUEUE_CAPACITY) !=
             WorkQueueStatus::Succeeded ||
         !RunKernelThreadLifecycleSelfTest() || !RunKernelWorkQueueLifecycleSelfTest()) {
@@ -5594,6 +5815,7 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_
     }
     if (ConfigureUserFilePageCacheLoadingWait(FilePageLoadWaitOperations{
             .context = nullptr,
+            .owner_available = RuntimeFilePageLoadingOwnerAvailable,
             .available = RuntimeFilePageLoadingWaitAvailable,
             .begin = BeginRuntimeFilePageLoad,
             .register_waiter = RegisterRuntimeFilePageLoadWaiter,
@@ -5601,6 +5823,11 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_
             .waiter_count = ReadRuntimeFilePageLoadWaiterCount,
             .complete = CompleteRuntimeFilePageLoad,
         }) != UserAddressSpaceStatus::Succeeded ||
+        file_description_manager.ConfigureReadahead(FileDescriptionReadaheadOperations{
+            .context = nullptr,
+            .pressure = ReadRuntimeFileReadaheadPressure,
+            .schedule = ScheduleRuntimeFileReadahead,
+        }) != FileDescriptionStatus::Succeeded ||
         AttachUserFilePageCache(vfs) != UserAddressSpaceStatus::Succeeded) {
         return ProcessRuntimeStatus::FileSystemFailure;
     }
@@ -7386,12 +7613,17 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
     process_scheduling_active = true;
     kernel_thread_dispatch_active = true;
     while (process_scheduling_active) {
-        if (!HasLiveUserThread() && !kernel_work_thread_stop_requested &&
-            !RequestRuntimeFileWritebackWorkerStop()) {
-            process_scheduling_active = false;
-            kernel_thread_dispatch_active = false;
-            RestoreInterrupts(interrupts_were_enabled);
-            return ProcessRuntimeStatus::ThreadFailure;
+        if (!HasLiveUserThread() && !kernel_work_thread_stop_requested) {
+            const bool readahead_draining =
+                file_readahead_request_queue.Statistics().active_request_count !=
+                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+            if ((readahead_draining && !ScheduleRuntimeFileReadaheadWork()) ||
+                (!readahead_draining && !RequestRuntimeFileWritebackWorkerStop())) {
+                process_scheduling_active = false;
+                kernel_thread_dispatch_active = false;
+                RestoreInterrupts(interrupts_were_enabled);
+                return ProcessRuntimeStatus::ThreadFailure;
+            }
         }
         ThreadSchedulingDecision decision{};
         ThreadSchedulerStatus scheduler_status = ThreadSchedulerStatus::Succeeded;
@@ -7412,7 +7644,8 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
                     RestoreInterrupts(interrupts_were_enabled);
                     return ProcessRuntimeStatus::KernelStackFailure;
                 }
-                if (page_aging_worker_failed || background_reclaim_worker_failed) {
+                if (page_aging_worker_failed || background_reclaim_worker_failed ||
+                    file_readahead_worker_failed) {
                     process_scheduling_active = false;
                     kernel_thread_dispatch_active = false;
                     RestoreInterrupts(interrupts_were_enabled);
@@ -7493,6 +7726,12 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
             return ProcessRuntimeStatus::KernelStackFailure;
         }
     }
+    // 所有用户与后台请求都已结束；资源快照前回收无引用 clean cache，避免把持久缓存误判为
+    // Process 泄漏。运行期缓存行为不受此 quiescent 收束影响。
+    if (TrimUserFilePageCache() != UserVirtualMemoryStatus::Succeeded) {
+        RestoreInterrupts(interrupts_were_enabled);
+        return ProcessRuntimeStatus::ResourceLeakDetected;
+    }
     frames_after_processes = GetPhysicalFrameAllocatorStatistics();
     virtual_addresses_after_processes = GetKernelVirtualAddressAllocator().Statistics();
     kernel_stacks_after_processes = GetKernelStackManager().Statistics();
@@ -7547,6 +7786,9 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         block_io_coordinator.Statistics().active_request_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         !ValidateRuntimeFilePageLoadState() ||
+        file_readahead_request_queue.Validate() != FileReadaheadRequestStatus::Succeeded ||
+        file_readahead_request_queue.Statistics().active_request_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         kernel_work_queue.Validate() != WorkQueueStatus::Succeeded ||
         kernel_work_queue.Statistics().registered_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         background_reclaim_controller.Validate() != BackgroundReclaimStatus::Succeeded ||
@@ -7650,6 +7892,8 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .scheduler = thread_scheduler.Statistics(),
         .kernel_threads = kernel_thread_runtime_statistics,
         .file_page_loads = file_page_load_coordinator.Statistics(),
+        .file_readahead_requests = file_readahead_request_queue.Statistics(),
+        .file_readahead_worker_failed = file_readahead_worker_failed,
         .work_queue = kernel_work_queue.Statistics(),
         .background_reclaim = background_reclaim_controller.Statistics(),
         .background_reclaim_worker_failed = background_reclaim_worker_failed,

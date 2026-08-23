@@ -250,6 +250,7 @@ struct LoadingMergeScenario final {
                          &memory, AccessPage) != os::kernel::FilePageCacheStatus::Succeeded ||
         cache.ConfigureLoadingWait(os::kernel::FilePageLoadWaitOperations{
             .context = &scenario,
+            .owner_available = LoadingWaitAvailable,
             .available = LoadingWaitAvailable,
             .begin = BeginLoading,
             .register_waiter = RegisterLoadingWaiter,

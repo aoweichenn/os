@@ -38,6 +38,12 @@ struct FilePageCacheEntry final {
     uint64_t mapping_reference_count;
     uint64_t access_generation;
     FilePageCacheEntryState state;
+    bool prefetched;
+};
+
+enum class FilePageAcquireIntent : uint64_t {
+    Demand,
+    Prefetch,
 };
 
 using FilePageCacheVisitOperation = bool (*)(void *context,
@@ -65,6 +71,12 @@ struct FilePageCacheStatistics final {
     uint64_t invalidation_count;
     uint64_t successful_acquire_count;
     uint64_t release_count;
+    uint64_t prefetch_acquire_count;
+    uint64_t successful_prefetch_load_count;
+    uint64_t prefetch_existing_page_count;
+    uint64_t prefetched_page_count;
+    uint64_t prefetched_hit_count;
+    uint64_t wasted_prefetched_page_count;
     uint64_t background_dirty_page_threshold;
     uint64_t background_dirty_page_target;
     uint64_t dirty_page_limit;
@@ -142,6 +154,7 @@ using FilePageLoadCompleteOperation = bool (*)(void *context, FilePageLoadToken 
 
 struct FilePageLoadWaitOperations final {
     void *context;
+    FilePageLoadWaitAvailableOperation owner_available;
     FilePageLoadWaitAvailableOperation available;
     FilePageLoadBeginOperation begin;
     FilePageLoadRegisterWaiterOperation register_waiter;
@@ -166,6 +179,10 @@ class FilePageCache final {
                                               void *reader_context,
                                               FilePageReadOperation read_operation,
                                               uint64_t &physical_address, bool &cache_hit) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    Acquire(const FilePageIdentity &identity, void *reader_context,
+            FilePageReadOperation read_operation, FilePageAcquireIntent intent,
+            uint64_t &physical_address, bool &cache_hit, bool &prefetched_hit) noexcept;
     [[nodiscard]] FilePageCacheStatus Release(const FilePageIdentity &identity,
                                               uint64_t physical_address) noexcept;
     [[nodiscard]] FilePageCacheStatus MarkDirty(const FilePageIdentity &identity,
@@ -242,10 +259,16 @@ class FilePageCache final {
                       FilePageWriteOperation write_operation, uint64_t maximum_page_count,
                       uint64_t &written_page_count) noexcept;
     [[nodiscard]] bool OutstandingDirtyPageCount(uint64_t &page_count) const noexcept;
+    [[nodiscard]] bool LoadingOwnerAvailable() const noexcept;
     [[nodiscard]] bool LoadingWaitAvailable() const noexcept;
     [[nodiscard]] bool LoadingWaiterCount(FilePageLoadToken token, uint64_t &waiter_count) noexcept;
     [[nodiscard]] bool CompleteLoadingWait(FilePageLoadToken token,
                                            FilePageCacheStatus result) noexcept;
+    [[nodiscard]] bool ConsumePrefetchedIfDemand(AddressSpaceRecord &record,
+                                                 const FileCachePageSnapshot &page,
+                                                 FilePageAcquireIntent intent,
+                                                 bool &prefetched_hit) noexcept;
+    [[nodiscard]] bool RecordPrefetchedDiscard(const FileCachePageSnapshot &page) noexcept;
     void RefreshBackgroundWritebackRequest() noexcept;
     [[nodiscard]] FilePageCacheStatus
     MapAddressSpaceStatus(FileCacheAddressSpaceStatus status) const noexcept;

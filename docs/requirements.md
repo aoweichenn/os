@@ -489,8 +489,19 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   配置上限；反馈不得修改已经发布的 generation 范围；
 - 非法配置、零长度或越界访问、伪造 PrefetchedHit、空反馈、计数上溢和 generation 耗尽
   必须保持策略状态不变；`Validate` 必须独立重算分类、窗口、压力和统计守恒；
-- 5a 只冻结策略，不能宣称生产 readahead 已完成。FileDescription 所有权、异步执行、
-  预读页标记、实际反馈归因和生命周期取消必须留给 5b/5c。
+- 5a 只冻结策略；第五增量 5b 必须把策略实例放入共享 FileDescription，使 duplicate/fork
+  共享 offset 与预读状态、独立 open 隔离，并从 VFS 缓存读取获得实际页 hit/miss 观测；
+- 5b 预读任务必须使用固定容量 FIFO、generation token 和 retained OpenFile，由常驻 Kernel
+  worker 异步执行；队列满只拒绝预测，不能回滚已成功的 demand read，退出前必须排空任务；
+- FilePageCache 必须区分 Demand/Prefetch。新预取 Clean 页带 one-shot 标记，首次 demand
+  获取消费为 useful；invalidate/truncate/reclaim/trim 丢弃未消费标记必须计为 waste；
+- 预读 Kernel worker 只可成为新 Loading owner，不得等待已有同页 Loading；缓存满或
+  BelowMinimum 时停止预测，不得为预读驱逐 demand 页；
+- `enqueue=completion+active` 与 `successful prefetch=resident+useful+wasted` 必须由
+  Validate、host 测试和 4 GiB QEMU 聚合 marker 联合验证；最终 active、failure 和
+  prefetched resident 必须为零；
+- 5b 完成生产异步填页与实际归因，但 generation 取消、waste 反馈回策略和完整并发
+  writeback/reclaim 错误矩阵仍留给 5c/第六增量。
 
 ## v2.0 完成基线
 

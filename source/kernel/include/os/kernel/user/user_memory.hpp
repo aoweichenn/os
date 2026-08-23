@@ -248,6 +248,22 @@ struct UserFilePageCacheRuntimeStatistics final {
     uint64_t writeback_worker_written_page_count;
     uint64_t writeback_worker_failure_count;
     uint64_t writeback_backpressure_count;
+    uint64_t readahead_operation_count;
+    uint64_t readahead_requested_page_count;
+    uint64_t readahead_loaded_page_count;
+    uint64_t readahead_existing_page_count;
+    uint64_t readahead_busy_page_count;
+    uint64_t readahead_failed_page_count;
+    uint64_t readahead_pressure_stop_count;
+};
+
+struct UserFileReadaheadResult final {
+    uint64_t requested_page_count;
+    uint64_t loaded_page_count;
+    uint64_t existing_page_count;
+    uint64_t busy_page_count;
+    uint64_t failed_page_count;
+    bool pressure_stopped;
 };
 
 [[nodiscard]] UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept;
@@ -265,7 +281,11 @@ VisitUserFilePageCache(void *context, FilePageCacheVisitOperation operation) noe
 [[nodiscard]] UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operations) noexcept;
+[[nodiscard]] UserVirtualMemoryStatus
+PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &open_file, uint64_t start_page_index,
+                      uint64_t page_count, UserFileReadaheadResult &result) noexcept;
 [[nodiscard]] MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept;
+[[nodiscard]] MemoryPressureLevel GetUserMemoryPressureLevel() noexcept;
 [[nodiscard]] uint64_t GetUserMemorySwappiness() noexcept;
 [[nodiscard]] MemoryOvercommitStatistics GetUserMemoryOvercommitStatistics() noexcept;
 [[nodiscard]] SwapManagerStatistics GetUserSwapStatistics() noexcept;

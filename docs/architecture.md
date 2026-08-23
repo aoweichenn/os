@@ -2502,10 +2502,30 @@ FileReadaheadDecision
 改变下一 decision 的 adaptive maximum，不改变已经发布的 generation。随机访问和显式
 reset 清除流位置但不清累计统计或 feedback 上限。
 
-5a 没有 FileDescription 字段、WorkHandle、缓存页预读标志或 I/O。5b/5c 接入时依赖方向
-固定为 FileDescription 拥有 policy，ProcessRuntime 消费 decision，FilePageCache 仍拥有
-唯一 Loading 和 frame；policy 不反向依赖这些模块。详见
+5a 当时没有 FileDescription 字段、WorkHandle、缓存页预读标志或 I/O；其纯策略边界详见
 [ADR 0068](adr/0068-v2-10-per-open-file-readahead-policy.md)。
+
+V2.10.5b 已按该依赖方向接入生产路径：
+
+```text
+Ring 3 read
+  -> VFS cache hook -> demand Acquire + 实际页 hit/miss/prefetched-hit
+  -> shared FileDescription::FileReadaheadPolicy
+  -> decision + RetainOpenFile
+  -> 64 槽 FileReadaheadRequestQueue
+  -> persistent Kernel WorkHandle（一次执行一个请求）
+  -> PrefetchUserFilePages
+  -> FilePageCache Prefetch Acquire
+  -> 唯一 Loading owner -> 异步 BlockIo -> Clean + prefetched
+                                      demand 首次命中 -> useful
+                                      trim/invalidate -> waste
+```
+
+任务拥有 retained OpenFile，close/exec/exit 只释放描述符侧引用；Runtime 在停止 worker 前
+排空请求。owner 与 waiter availability 已分离，预读 Kernel worker 可创建并等待自己的
+BlockIo，但不能作为同页 Loading waiter 阻塞。缓存满或 BelowMinimum 时预测停止，不驱逐
+demand 页。完整设计见
+[ADR 0069](adr/0069-v2-10-production-readahead-execution.md)。
 
 ## v2.8 动态文件缓存地址空间
 

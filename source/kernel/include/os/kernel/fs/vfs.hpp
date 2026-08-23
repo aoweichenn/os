@@ -99,19 +99,29 @@ struct OpenFile final {
     bool open;
 };
 
-using RegularFileReadCacheOperation = Status (*)(void *context, const OpenFile &open_file,
-                                                  uint64_t offset_bytes, uint8_t *destination,
-                                                  uint64_t capacity_bytes,
-                                                  uint64_t &read_bytes) noexcept;
+struct RegularFileReadCacheObservation final {
+    uint64_t first_page_index;
+    uint64_t requested_page_count;
+    uint64_t file_page_count;
+    uint64_t cache_hit_page_count;
+    uint64_t cache_miss_page_count;
+    uint64_t prefetched_hit_page_count;
+    bool cache_used;
+};
+
+using RegularFileReadCacheOperation =
+    Status (*)(void *context, const OpenFile &open_file, uint64_t offset_bytes,
+               uint8_t *destination, uint64_t capacity_bytes, uint64_t &read_bytes,
+               RegularFileReadCacheObservation &observation) noexcept;
 using RegularFileWriteCacheOperation = Status (*)(void *context, const OpenFile &open_file,
-                                                   uint64_t offset_bytes, const uint8_t *source,
-                                                   uint64_t length_bytes,
-                                                   uint64_t &written_bytes) noexcept;
+                                                  uint64_t offset_bytes, const uint8_t *source,
+                                                  uint64_t length_bytes,
+                                                  uint64_t &written_bytes) noexcept;
 using RegularFileSizeCacheOperation = Status (*)(void *context, const Vnode &vnode,
-                                                  uint64_t backend_size_bytes,
-                                                  uint64_t &size_bytes) noexcept;
+                                                 uint64_t backend_size_bytes,
+                                                 uint64_t &size_bytes) noexcept;
 using RegularFileTruncateCacheOperation = Status (*)(void *context, const Vnode &vnode,
-                                                      uint64_t size_bytes) noexcept;
+                                                     uint64_t size_bytes) noexcept;
 
 struct BackendNodeInformation final {
     uint64_t size_bytes;
@@ -280,8 +290,7 @@ class Vfs final {
                                           uint64_t &target_length_bytes) noexcept;
     [[nodiscard]] Status Truncate(const FsContext &context, const uint8_t *path,
                                   uint64_t path_length_bytes, uint64_t size_bytes) noexcept;
-    [[nodiscard]] Status TruncateOpenFile(const OpenFile &open_file,
-                                          uint64_t size_bytes) noexcept;
+    [[nodiscard]] Status TruncateOpenFile(const OpenFile &open_file, uint64_t size_bytes) noexcept;
     [[nodiscard]] Status Stat(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, NodeInformation &information) noexcept;
     [[nodiscard]] Status CheckAccess(const FsContext &context, const uint8_t *path,
@@ -301,11 +310,11 @@ class Vfs final {
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
     [[nodiscard]] Status RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noexcept;
-    [[nodiscard]] Status ConfigureRegularFileDataCache(
-        void *context, RegularFileReadCacheOperation read_operation,
-        RegularFileWriteCacheOperation write_operation,
-        RegularFileSizeCacheOperation size_operation,
-        RegularFileTruncateCacheOperation truncate_operation) noexcept;
+    [[nodiscard]] Status
+    ConfigureRegularFileDataCache(void *context, RegularFileReadCacheOperation read_operation,
+                                  RegularFileWriteCacheOperation write_operation,
+                                  RegularFileSizeCacheOperation size_operation,
+                                  RegularFileTruncateCacheOperation truncate_operation) noexcept;
     [[nodiscard]] Status StatOpenFile(const OpenFile &open_file,
                                       NodeInformation &information) noexcept;
     [[nodiscard]] Status StatOpenFileUncached(const OpenFile &open_file,
@@ -324,6 +333,9 @@ class Vfs final {
                                          uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status Read(OpenFile &open_file, uint8_t *destination, uint64_t capacity_bytes,
                               uint64_t &read_bytes) noexcept;
+    [[nodiscard]] Status ReadObserved(OpenFile &open_file, uint8_t *destination,
+                                      uint64_t capacity_bytes, uint64_t &read_bytes,
+                                      RegularFileReadCacheObservation &observation) noexcept;
     [[nodiscard]] Status Write(OpenFile &open_file, const uint8_t *source, uint64_t length_bytes,
                                uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status ReadDirectory(OpenFile &open_file, DirectoryEntry &entry,

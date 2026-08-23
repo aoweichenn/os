@@ -1906,3 +1906,25 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   51 randomized、33 system，含 25 条 failure-path；CTest 888.82 秒，端到端 1030 秒；
 - fresh 4 GiB ATA primary 71.51 秒，ATA/NVMe reclaim 79.25/73.06 秒，ATA/NVMe OOM
   74.92/74.32 秒，NVMe root primary 69.47 秒，ATA/NVMe persistence 142.10/141.47 秒。
+
+### 生产顺序预读第五增量 5b
+
+- `os_kernel_file_readahead_request_unit_tests` 覆盖初始化、FIFO、满载拒绝、running 完成、
+  stale generation token 与槽位复用；
+- `os_kernel_file_readahead_request_randomized_tests` 使用固定种子 `0x5245414441484541` 执行
+  十万步 enqueue/acquire/乱序 complete，并逐步比较参考 FIFO、槽状态和全部统计；
+- `os_kernel_file_page_prefetch_lifecycle_integration_tests` 覆盖 Prefetch fill、one-shot demand
+  useful hit、既有页不重标、invalidate waste、来源失败回滚与最终 frame/heap 归零；
+- `os_kernel_file_description_lifecycle_integration_tests` 通过真实 VFS data-cache hook 验证
+  duplicate 共享 offset/策略、同页小 read 不重置、独立 open 隔离并各自提交 decision；
+- `os_qemu_primary_smoke` 在 4 GiB `-mem-prealloc` 下先验证 47 个真实工具 ELF，再顺序读取
+  未执行的 `/bin/smoke` 冷文件；要求 schedule/enqueue/completion 两组相等，loaded/useful/
+  prefetch-hit 非零，队列 active、worker/cache 失败和最终 prefetched resident 为零；仍以
+  QMP screendump 验证可见输出；
+- 5b 不新增逐页热路径日志，只在进程和文件系统全部收束后输出一次聚合统计。完整 fresh
+  CAW 构建与 CTest 覆盖 234 项：70 unit、79 integration、52 randomized、33 system，含
+  25 条 failure-path；严格轮次为 233/234，唯一异常是 ATA reclaim 的一次 QMP VGA
+  “非追加快照”，同一 fresh 构建按原验收器重试 75.17 秒通过；
+- fresh 4 GiB ATA primary 为 72.42 秒，ATA/NVMe reclaim 为 75.17/77.46 秒，ATA/NVMe
+  OOM 为 77.43/76.30 秒，NVMe root primary 为 70.08 秒，ATA/NVMe persistence 为
+  144.32/142.86 秒。两条用户 `#UD/#PF` 隔离在无文件负载、零预读下分别 3.24/3.14 秒通过。

@@ -26,6 +26,7 @@ struct FileDescriptionStorage final {
     FileCacheIdentity writeback_identity;
     uint64_t writeback_error_cursor;
     FileDescriptionWritebackErrorUnregisterOperation writeback_error_unregister_operation;
+    FileReadaheadPolicy readahead_policy;
 };
 
 [[nodiscard]] FileDescriptionStatus MapObjectStatus(const KernelObjectStatus status) noexcept {
@@ -75,6 +76,31 @@ struct FileDescriptionStorage final {
     return FileDescriptionStatus::InvalidArgument;
 }
 
+[[nodiscard]] bool
+ReadaheadObservationIsValid(const fs::RegularFileReadCacheObservation &observation) noexcept {
+    if (!observation.cache_used) {
+        return observation.first_page_index == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.requested_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.file_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.cache_hit_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.cache_miss_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.prefetched_hit_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    }
+    if (observation.requested_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return observation.cache_hit_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.cache_miss_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+               observation.prefetched_hit_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    }
+    return observation.file_page_count != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+           observation.first_page_index < observation.file_page_count &&
+           observation.requested_page_count <=
+               observation.file_page_count - observation.first_page_index &&
+           observation.cache_hit_page_count <= observation.requested_page_count &&
+           observation.cache_miss_page_count ==
+               observation.requested_page_count - observation.cache_hit_page_count &&
+           observation.prefetched_hit_page_count <= observation.cache_hit_page_count;
+}
+
 }
 
 FileDescriptionStatus
@@ -86,9 +112,27 @@ FileDescriptionManager::Initialize(KernelObjectManager &object_manager) noexcept
         return FileDescriptionStatus::InvalidDependency;
     }
     this->object_manager_ = &object_manager;
+    this->readahead_operations_ = FileDescriptionReadaheadOperations{};
     this->statistics_lock_ = SpinLock{};
     this->statistics_ = FileDescriptionManagerStatistics{};
     this->initialized_ = true;
+    this->readahead_configured_ = false;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::ConfigureReadahead(
+    const FileDescriptionReadaheadOperations &operations) noexcept {
+    if (!this->initialized_) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    if (this->readahead_configured_) {
+        return FileDescriptionStatus::AlreadyInitialized;
+    }
+    if (operations.pressure == nullptr || operations.schedule == nullptr) {
+        return FileDescriptionStatus::InvalidDependency;
+    }
+    this->readahead_operations_ = operations;
+    this->readahead_configured_ = true;
     return FileDescriptionStatus::Succeeded;
 }
 
@@ -101,10 +145,20 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         return FileDescriptionStatus::InvalidConfiguration;
     }
     uint64_t writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    FileReadaheadPolicy readahead_policy{};
     const bool writeback_registered = request.kind == FileDescriptionKind::RegularFile;
-    if (writeback_registered &&
-        !request.writeback_error_register_operation(request.writeback_identity,
-                                                    writeback_error_cursor)) {
+    if (writeback_registered && !request.writeback_error_register_operation(
+                                    request.writeback_identity, writeback_error_cursor)) {
+        return FileDescriptionStatus::ObjectFailure;
+    }
+    if (request.kind == FileDescriptionKind::RegularFile &&
+        readahead_policy.Initialize(FileReadaheadConfiguration{
+            .maximum_window_page_count = OS_KERNEL_FILE_READAHEAD_DEFAULT_MAXIMUM_WINDOW_PAGE_COUNT,
+        }) != FileReadaheadStatus::Succeeded) {
+        if (writeback_registered) {
+            static_cast<void>(
+                request.writeback_error_unregister_operation(request.writeback_identity));
+        }
         return FileDescriptionStatus::ObjectFailure;
     }
     const KernelObjectStatus create_status = this->object_manager_->CreateObject(
@@ -145,6 +199,7 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
         .writeback_identity = request.writeback_identity,
         .writeback_error_cursor = writeback_error_cursor,
         .writeback_error_unregister_operation = request.writeback_error_unregister_operation,
+        .readahead_policy = readahead_policy,
     };
     return FileDescriptionStatus::Succeeded;
 }
@@ -198,6 +253,9 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
         .writeback_error_cursor = storage.kind == FileDescriptionKind::RegularFile
                                       ? storage.writeback_error_cursor
                                       : OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE,
+        .readahead = storage.kind == FileDescriptionKind::RegularFile
+                         ? storage.readahead_policy.Statistics()
+                         : FileReadaheadStatistics{},
     };
     return FileDescriptionStatus::Succeeded;
 }
@@ -268,6 +326,7 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         return FileDescriptionStatus::PermissionDenied;
     }
     FileDescriptionStatus status = FileDescriptionStatus::InvalidArgument;
+    fs::RegularFileReadCacheObservation readahead_observation{};
     if (storage.kind == FileDescriptionKind::TerminalInput ||
         storage.kind == FileDescriptionKind::TerminalDevice) {
         const TerminalStatus terminal_status =
@@ -278,8 +337,8 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
                      ? FileDescriptionStatus::EndOfFile
                      : FileDescriptionStatus::InvalidArgument;
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
-        file_system_status = fs::ToFileSystemStatus(
-            storage.vfs->Read(storage.open_file, destination, capacity_bytes, read_bytes));
+        file_system_status = fs::ToFileSystemStatus(storage.vfs->ReadObserved(
+            storage.open_file, destination, capacity_bytes, read_bytes, readahead_observation));
         status = file_system_status == FileSystemStatus::Succeeded
                      ? FileDescriptionStatus::Succeeded
                      : FileDescriptionStatus::FileSystemFailure;
@@ -288,6 +347,96 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         status = MapPipeReadStatus(pipe_status);
     } else {
         status = FileDescriptionStatus::PermissionDenied;
+    }
+    if (status == FileDescriptionStatus::Succeeded &&
+        storage.kind == FileDescriptionKind::RegularFile && this->readahead_configured_ &&
+        readahead_observation.cache_used &&
+        readahead_observation.requested_page_count != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        if (!ReadaheadObservationIsValid(readahead_observation)) {
+            return FileDescriptionStatus::ObjectFailure;
+        }
+        uint64_t observed_first_page_index = readahead_observation.first_page_index;
+        uint64_t observed_page_count = readahead_observation.requested_page_count;
+        const FileReadaheadStatistics readahead_statistics = storage.readahead_policy.Statistics();
+        if (readahead_statistics.stream_active &&
+            observed_first_page_index < readahead_statistics.next_expected_page_index) {
+            const uint64_t observed_end_page_index =
+                observed_first_page_index + observed_page_count;
+            if (observed_end_page_index <= readahead_statistics.next_expected_page_index) {
+                SpinLockGuard statistics_guard{this->statistics_lock_};
+                ++this->statistics_.readahead_observation_count;
+                this->statistics_.readahead_useful_page_count +=
+                    readahead_observation.prefetched_hit_page_count;
+                observed_page_count = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+            } else {
+                observed_first_page_index = readahead_statistics.next_expected_page_index;
+                observed_page_count =
+                    observed_end_page_index - readahead_statistics.next_expected_page_index;
+            }
+        }
+        if (observed_page_count == OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+            SpinLockGuard statistics_guard{this->statistics_lock_};
+            ++this->statistics_.read_operation_count;
+            this->statistics_.bytes_read += read_bytes;
+            return status;
+        }
+        MemoryPressureLevel pressure_level = MemoryPressureLevel::Balanced;
+        if (!this->readahead_operations_.pressure(this->readahead_operations_.context,
+                                                  pressure_level)) {
+            SpinLockGuard statistics_guard{this->statistics_lock_};
+            ++this->statistics_.readahead_schedule_rejection_count;
+        } else {
+            if (readahead_observation.prefetched_hit_page_count !=
+                    OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+                storage.readahead_policy.RecordFeedback(
+                    readahead_observation.prefetched_hit_page_count,
+                    OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) != FileReadaheadStatus::Succeeded) {
+                return FileDescriptionStatus::ObjectFailure;
+            }
+            const uint64_t observed_end_page_index =
+                observed_first_page_index + observed_page_count;
+            const bool trigger_page_observed =
+                readahead_observation.prefetched_hit_page_count !=
+                    OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+                readahead_statistics.window_active &&
+                observed_first_page_index <= readahead_statistics.trigger_page_index &&
+                readahead_statistics.trigger_page_index < observed_end_page_index;
+            const FileReadaheadTrigger trigger = trigger_page_observed
+                                                     ? FileReadaheadTrigger::PrefetchedHit
+                                                 : readahead_observation.cache_miss_page_count !=
+                                                         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE
+                                                     ? FileReadaheadTrigger::DemandMiss
+                                                     : FileReadaheadTrigger::DemandHit;
+            FileReadaheadDecision decision{};
+            if (storage.readahead_policy.ObserveAccess(
+                    FileReadaheadAccess{
+                        .first_page_index = observed_first_page_index,
+                        .requested_page_count = observed_page_count,
+                        .file_page_count = readahead_observation.file_page_count,
+                        .trigger = trigger,
+                        .pressure_level = pressure_level,
+                    },
+                    decision) != FileReadaheadStatus::Succeeded) {
+                return FileDescriptionStatus::ObjectFailure;
+            }
+            const bool schedule_required = decision.action == FileReadaheadAction::Submit;
+            const bool schedule_succeeded =
+                !schedule_required ||
+                this->readahead_operations_.schedule(this->readahead_operations_.context,
+                                                     *storage.vfs, storage.open_file, decision);
+            SpinLockGuard statistics_guard{this->statistics_lock_};
+            ++this->statistics_.readahead_observation_count;
+            this->statistics_.readahead_useful_page_count +=
+                readahead_observation.prefetched_hit_page_count;
+            if (schedule_required) {
+                ++this->statistics_.readahead_decision_count;
+                if (schedule_succeeded) {
+                    ++this->statistics_.readahead_schedule_count;
+                } else {
+                    ++this->statistics_.readahead_schedule_rejection_count;
+                }
+            }
+        }
     }
     if (status == FileDescriptionStatus::Succeeded) {
         SpinLockGuard statistics_guard{this->statistics_lock_};
@@ -413,8 +562,9 @@ FileDescriptionManager::ReadDirectory(const KernelObjectReference &reference,
     return FileDescriptionStatus::Succeeded;
 }
 
-FileDescriptionStatus FileDescriptionManager::ReadWritebackErrorCursor(
-    const KernelObjectReference &reference, uint64_t &writeback_error_cursor) noexcept {
+FileDescriptionStatus
+FileDescriptionManager::ReadWritebackErrorCursor(const KernelObjectReference &reference,
+                                                 uint64_t &writeback_error_cursor) noexcept {
     writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
     if (!this->initialized_ || this->object_manager_ == nullptr) {
         return FileDescriptionStatus::NotInitialized;
@@ -436,9 +586,10 @@ FileDescriptionStatus FileDescriptionManager::ReadWritebackErrorCursor(
     return FileDescriptionStatus::Succeeded;
 }
 
-FileDescriptionStatus FileDescriptionManager::ReadSynchronizationState(
-    const KernelObjectReference &reference, FileCacheIdentity &identity,
-    uint64_t &writeback_error_cursor) noexcept {
+FileDescriptionStatus
+FileDescriptionManager::ReadSynchronizationState(const KernelObjectReference &reference,
+                                                 FileCacheIdentity &identity,
+                                                 uint64_t &writeback_error_cursor) noexcept {
     identity = FileCacheIdentity{};
     writeback_error_cursor = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
     if (!this->initialized_ || this->object_manager_ == nullptr) {

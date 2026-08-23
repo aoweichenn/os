@@ -28,6 +28,8 @@ constexpr std::string_view OS_TEST_FILE_DESCRIPTION_FINALIZATION =
     "文件表销毁后文件、管道、对象和堆资源必须全部归零";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_INVALID_DIRECTORY_CONFIGURATION =
     "目录描述必须拒绝与公开 flags 不一致的内部 OpenFile 能力";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_READAHEAD_OWNERSHIP =
+    "缓存观测必须驱动真实预读决策，duplicate 共享策略而独立 open 隔离策略";
 
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_HEAP_SIZE_BYTES = 512ULL * 1024ULL;
@@ -43,11 +45,29 @@ constexpr uint64_t OS_TEST_FILE_DESCRIPTION_DUPLICATE_FILE_DESCRIPTOR = 5ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_PIPE_READER_DESCRIPTOR = 6ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_PIPE_WRITER_DESCRIPTOR = 7ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_DUPLICATE_PIPE_WRITER_DESCRIPTOR = 8ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR = 9ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_INDEPENDENT_READAHEAD_FILE_DESCRIPTOR = 10ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_DUPLICATE_READAHEAD_FILE_DESCRIPTOR = 11ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES = 4096ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_SIZE_BYTES =
+    OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES + 510ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_LOGICAL_READAHEAD_FILE_SIZE_BYTES =
+    OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES * 8ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_SCHEDULE_COUNT = 3ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_PAGE_COUNT = 10ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_GENERATION_SUM = 4ULL;
 constexpr uint8_t OS_TEST_FILE_DESCRIPTION_FILE_PATH[] = {
     static_cast<uint8_t>('/'), static_cast<uint8_t>('f'), static_cast<uint8_t>('d'),
     static_cast<uint8_t>('v'), static_cast<uint8_t>('1'), static_cast<uint8_t>('4'),
     static_cast<uint8_t>('.'), static_cast<uint8_t>('b'), static_cast<uint8_t>('i'),
     static_cast<uint8_t>('n'),
+};
+constexpr uint8_t OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH[] = {
+    static_cast<uint8_t>('/'), static_cast<uint8_t>('r'), static_cast<uint8_t>('e'),
+    static_cast<uint8_t>('a'), static_cast<uint8_t>('d'), static_cast<uint8_t>('a'),
+    static_cast<uint8_t>('h'), static_cast<uint8_t>('e'), static_cast<uint8_t>('a'),
+    static_cast<uint8_t>('d'), static_cast<uint8_t>('.'), static_cast<uint8_t>('b'),
+    static_cast<uint8_t>('i'), static_cast<uint8_t>('n'),
 };
 constexpr uint8_t OS_TEST_FILE_DESCRIPTION_PAYLOAD[] = {
     static_cast<uint8_t>('A'), static_cast<uint8_t>('B'), static_cast<uint8_t>('C'),
@@ -70,6 +90,147 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD[] = {
 
 os::kernel::FileWritebackErrorTracker *writeback_error_tracker;
 
+struct ReadaheadTestContext final {
+    os::kernel::fs::Vfs *vfs;
+    uint64_t cache_read_count;
+    uint64_t schedule_count;
+    uint64_t scheduled_page_count;
+    uint64_t generation_sum;
+    uint64_t readahead_node_identifier;
+};
+
+[[nodiscard]] os::kernel::fs::Status
+ReadThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file,
+                 const uint64_t offset_bytes, uint8_t *const destination,
+                 const uint64_t capacity_bytes, uint64_t &read_bytes,
+                 os::kernel::fs::RegularFileReadCacheObservation &observation) noexcept {
+    observation = os::kernel::fs::RegularFileReadCacheObservation{};
+    if (context == nullptr) {
+        return os::kernel::fs::Status::InvalidArgument;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    os::kernel::fs::NodeInformation information{};
+    if (test_context.vfs == nullptr ||
+        test_context.vfs->StatOpenFileUncached(open_file, information) !=
+            os::kernel::fs::Status::Succeeded) {
+        return os::kernel::fs::Status::InvalidHandle;
+    }
+    const bool readahead_file =
+        open_file.path.vnode.identifier == test_context.readahead_node_identifier;
+    os::kernel::fs::Status status = os::kernel::fs::Status::Succeeded;
+    if (readahead_file) {
+        const uint64_t available_bytes =
+            offset_bytes < OS_TEST_FILE_DESCRIPTION_LOGICAL_READAHEAD_FILE_SIZE_BYTES
+                ? OS_TEST_FILE_DESCRIPTION_LOGICAL_READAHEAD_FILE_SIZE_BYTES - offset_bytes
+                : OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+        read_bytes = capacity_bytes < available_bytes ? capacity_bytes : available_bytes;
+        for (uint64_t byte_index = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE; byte_index < read_bytes;
+             ++byte_index) {
+            destination[byte_index] = static_cast<uint8_t>(byte_index & 0xFFULL);
+        }
+    } else {
+        status = test_context.vfs->ReadUncachedAt(open_file, offset_bytes, destination,
+                                                  capacity_bytes, read_bytes);
+    }
+    if (status != os::kernel::fs::Status::Succeeded) {
+        return status;
+    }
+    ++test_context.cache_read_count;
+    const uint64_t first_page_index = offset_bytes / OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES;
+    const uint64_t first_page_offset =
+        offset_bytes & (OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES - 1ULL);
+    const uint64_t requested_page_count =
+        read_bytes == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE
+            ? OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE
+            : (first_page_offset + read_bytes - 1ULL) / OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES +
+                  1ULL;
+    const uint64_t logical_size_bytes =
+        readahead_file ? OS_TEST_FILE_DESCRIPTION_LOGICAL_READAHEAD_FILE_SIZE_BYTES
+                       : information.size_bytes;
+    const uint64_t file_page_count =
+        logical_size_bytes / OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES +
+        (logical_size_bytes % OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES != 0ULL ? 1ULL : 0ULL);
+    const bool simulated_prefetched_hit = readahead_file && offset_bytes != 0ULL;
+    observation = os::kernel::fs::RegularFileReadCacheObservation{
+        .first_page_index = first_page_index,
+        .requested_page_count = requested_page_count,
+        .file_page_count = file_page_count,
+        .cache_hit_page_count =
+            simulated_prefetched_hit ? requested_page_count : OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .cache_miss_page_count =
+            simulated_prefetched_hit ? OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE : requested_page_count,
+        .prefetched_hit_page_count =
+            simulated_prefetched_hit ? 1ULL : OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .cache_used = true,
+    };
+    return os::kernel::fs::Status::Succeeded;
+}
+
+[[nodiscard]] os::kernel::fs::Status
+WriteThroughCache(void *const context, const os::kernel::fs::OpenFile &open_file,
+                  const uint64_t offset_bytes, const uint8_t *const source,
+                  const uint64_t length_bytes, uint64_t &written_bytes) noexcept {
+    if (context == nullptr) {
+        return os::kernel::fs::Status::InvalidArgument;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    return test_context.vfs == nullptr
+               ? os::kernel::fs::Status::InvalidArgument
+               : test_context.vfs->WriteUncachedAt(open_file, offset_bytes, source, length_bytes,
+                                                   written_bytes);
+}
+
+[[nodiscard]] os::kernel::fs::Status ResolveCachedSize(void *const context,
+                                                       const os::kernel::fs::Vnode &vnode,
+                                                       const uint64_t backend_size_bytes,
+                                                       uint64_t &size_bytes) noexcept {
+    if (context == nullptr || vnode.type != os::kernel::fs::NodeType::RegularFile) {
+        return os::kernel::fs::Status::InvalidArgument;
+    }
+    const ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    size_bytes = vnode.identifier == test_context.readahead_node_identifier
+                     ? OS_TEST_FILE_DESCRIPTION_LOGICAL_READAHEAD_FILE_SIZE_BYTES
+                     : backend_size_bytes;
+    return os::kernel::fs::Status::Succeeded;
+}
+
+[[nodiscard]] os::kernel::fs::Status RecordCachedTruncate(void *const context,
+                                                          const os::kernel::fs::Vnode &vnode,
+                                                          const uint64_t size_bytes) noexcept {
+    static_cast<void>(size_bytes);
+    return context != nullptr && vnode.type == os::kernel::fs::NodeType::RegularFile
+               ? os::kernel::fs::Status::Succeeded
+               : os::kernel::fs::Status::InvalidArgument;
+}
+
+[[nodiscard]] bool ReadReadaheadPressure(void *const context,
+                                         os::kernel::MemoryPressureLevel &pressure_level) noexcept {
+    if (context == nullptr) {
+        return false;
+    }
+    pressure_level = os::kernel::MemoryPressureLevel::Balanced;
+    return true;
+}
+
+[[nodiscard]] bool ScheduleReadahead(void *const context, os::kernel::fs::Vfs &vfs,
+                                     const os::kernel::fs::OpenFile &open_file,
+                                     const os::kernel::FileReadaheadDecision &decision) noexcept {
+    if (context == nullptr) {
+        return false;
+    }
+    ReadaheadTestContext &test_context = *static_cast<ReadaheadTestContext *>(context);
+    if (test_context.vfs != &vfs || !open_file.open || !open_file.readable ||
+        decision.action != os::kernel::FileReadaheadAction::Submit ||
+        decision.prefetch_page_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE ||
+        decision.generation == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return false;
+    }
+    ++test_context.schedule_count;
+    test_context.scheduled_page_count += decision.prefetch_page_count;
+    test_context.generation_sum += decision.generation;
+    return true;
+}
+
 [[nodiscard]] bool BytesEqual(const uint8_t *const left, const uint8_t *const right,
                               const uint64_t length_bytes) noexcept {
     if (left == nullptr || right == nullptr) {
@@ -84,15 +245,15 @@ os::kernel::FileWritebackErrorTracker *writeback_error_tracker;
     return true;
 }
 
-[[nodiscard]] bool RegisterWritebackDescription(
-    const os::kernel::FileCacheIdentity &identity, uint64_t &sampled_sequence) noexcept {
+[[nodiscard]] bool RegisterWritebackDescription(const os::kernel::FileCacheIdentity &identity,
+                                                uint64_t &sampled_sequence) noexcept {
     return writeback_error_tracker != nullptr &&
            writeback_error_tracker->Register(identity, sampled_sequence) ==
                os::kernel::FileWritebackErrorTrackerStatus::Succeeded;
 }
 
-[[nodiscard]] bool UnregisterWritebackDescription(
-    const os::kernel::FileCacheIdentity &identity) noexcept {
+[[nodiscard]] bool
+UnregisterWritebackDescription(const os::kernel::FileCacheIdentity &identity) noexcept {
     return writeback_error_tracker != nullptr &&
            writeback_error_tracker->Unregister(identity) ==
                os::kernel::FileWritebackErrorTrackerStatus::Succeeded;
@@ -123,12 +284,13 @@ CreateFileDescription(os::kernel::FileDescriptionManager &manager, os::kernel::f
         .pipe_manager = nullptr,
         .vfs = &vfs,
         .open_file = open_file,
-        .writeback_identity = os::kernel::FileCacheIdentity{
-            .superblock_identifier = open_file.path.vnode.superblock->identifier,
-            .superblock_generation = open_file.path.vnode.superblock->generation,
-            .node_identifier = open_file.path.vnode.identifier,
-            .node_generation = open_file.path.vnode.generation,
-        },
+        .writeback_identity =
+            os::kernel::FileCacheIdentity{
+                .superblock_identifier = open_file.path.vnode.superblock->identifier,
+                .superblock_generation = open_file.path.vnode.superblock->generation,
+                .node_identifier = open_file.path.vnode.identifier,
+                .node_generation = open_file.path.vnode.generation,
+            },
         .writeback_error_register_operation = RegisterWritebackDescription,
         .writeback_error_unregister_operation = UnregisterWritebackDescription,
     };
@@ -162,9 +324,15 @@ int main() {
     static os::test::MemoryBlockDevice device{};
     static os::kernel::FileSystem file_system{};
     alignas(64) static uint8_t heap_buffer[OS_TEST_FILE_DESCRIPTION_HEAP_SIZE_BYTES]{};
+    static uint8_t readahead_payload[OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_SIZE_BYTES]{};
+    for (uint64_t byte_index = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+         byte_index < sizeof(readahead_payload); ++byte_index) {
+        readahead_payload[byte_index] = static_cast<uint8_t>(byte_index & 0xFFULL);
+    }
 
     bool formatted = false;
     os::kernel::FileSystemHandle write_handle{};
+    os::kernel::FileSystemHandle readahead_write_handle{};
     const os::kernel::FileSystemOpenOptions write_options{
         .readable = false,
         .writable = true,
@@ -181,7 +349,14 @@ int main() {
                           sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD),
                           written_bytes) == os::kernel::FileSystemStatus::Succeeded &&
         written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD) &&
-        file_system.Close(write_handle) == os::kernel::FileSystemStatus::Succeeded;
+        file_system.Close(write_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        file_system.Open(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH,
+                         sizeof(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH), write_options,
+                         readahead_write_handle) == os::kernel::FileSystemStatus::Succeeded &&
+        file_system.Write(readahead_write_handle, readahead_payload, sizeof(readahead_payload),
+                          written_bytes) == os::kernel::FileSystemStatus::Succeeded &&
+        written_bytes == sizeof(readahead_payload) &&
+        file_system.Close(readahead_write_handle) == os::kernel::FileSystemStatus::Succeeded;
 
     os::kernel::fs::LegacyFileSystem legacy_adapter{};
     os::kernel::fs::Vfs vfs{};
@@ -189,6 +364,14 @@ int main() {
     os::kernel::fs::FsContext file_system_context{};
     os::kernel::fs::OpenFile shared_open_file{};
     os::kernel::fs::OpenFile independent_open_file{};
+    ReadaheadTestContext readahead_test_context{
+        .vfs = &vfs,
+        .cache_read_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .schedule_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .scheduled_page_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .generation_sum = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+        .readahead_node_identifier = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+    };
     const os::kernel::fs::OpenOptions read_options{
         .readable = true,
         .writable = false,
@@ -202,6 +385,9 @@ int main() {
             os::kernel::fs::Status::Succeeded &&
         vfs.Initialize(mounts, OS_TEST_FILE_DESCRIPTION_MOUNT_CAPACITY,
                        legacy_adapter.GetSuperblock()) == os::kernel::fs::Status::Succeeded &&
+        vfs.ConfigureRegularFileDataCache(
+            &readahead_test_context, ReadThroughCache, WriteThroughCache, ResolveCachedSize,
+            RecordCachedTruncate) == os::kernel::fs::Status::Succeeded &&
         vfs.InitializeContext(file_system_context) == os::kernel::fs::Status::Succeeded &&
         vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_FILE_PATH,
                  sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), read_options,
@@ -221,11 +407,15 @@ int main() {
         heap.Initialize(reinterpret_cast<uint64_t>(heap_buffer),
                         OS_TEST_FILE_DESCRIPTION_HEAP_SIZE_BYTES) ==
             os::kernel::KernelHeapStatus::Succeeded &&
-        error_tracker.Initialize(heap) ==
-            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
+        error_tracker.Initialize(heap) == os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
         object_manager.Initialize(heap) == os::kernel::KernelObjectStatus::Succeeded &&
         description_manager.Initialize(object_manager) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
+        description_manager.ConfigureReadahead(os::kernel::FileDescriptionReadaheadOperations{
+            .context = &readahead_test_context,
+            .pressure = ReadReadaheadPressure,
+            .schedule = ScheduleReadahead,
+        }) == os::kernel::FileDescriptionStatus::Succeeded &&
         table.Initialize(heap, object_manager, OS_TEST_FILE_DESCRIPTION_TABLE_LIMIT,
                          OS_TEST_FILE_DESCRIPTION_TABLE_LIMIT) ==
             os::kernel::FileTableStatus::Succeeded;
@@ -299,13 +489,13 @@ int main() {
         description_manager.ReadWritebackErrorCursor(cursor_reference, shared_writeback_cursor) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
         shared_writeback_cursor == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
-        error_tracker.Check(writeback_identity, shared_writeback_cursor,
-                            current_writeback_sequence, writeback_error) ==
+        error_tracker.Check(writeback_identity, shared_writeback_cursor, current_writeback_sequence,
+                            writeback_error) ==
             os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
         current_writeback_sequence == OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
         writeback_error == os::kernel::FileWritebackError::InputOutput &&
-        description_manager.AdvanceWritebackErrorCursor(
-            cursor_reference, current_writeback_sequence) ==
+        description_manager.AdvanceWritebackErrorCursor(cursor_reference,
+                                                        current_writeback_sequence) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
         cursor_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
         table.Lookup(OS_TEST_FILE_DESCRIPTION_DUPLICATE_FILE_DESCRIPTOR, cursor_reference) ==
@@ -362,6 +552,121 @@ int main() {
                    sizeof(second_bytes)) &&
         BytesEqual(independent_bytes, OS_TEST_FILE_DESCRIPTION_PAYLOAD, sizeof(independent_bytes));
     test_context.Expect(shared_offset_valid, OS_TEST_FILE_DESCRIPTION_SHARED_OFFSET);
+
+    os::kernel::fs::OpenFile readahead_open_file{};
+    os::kernel::fs::OpenFile independent_readahead_open_file{};
+    os::kernel::KernelObjectReference readahead_reference{};
+    os::kernel::KernelObjectReference independent_readahead_reference{};
+    uint64_t duplicate_readahead_descriptor = UINT64_MAX;
+    uint8_t readahead_bytes[OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES]{};
+    uint8_t readahead_page_bytes[OS_TEST_FILE_DESCRIPTION_PAGE_SIZE_BYTES]{};
+    const bool readahead_files_opened =
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH), read_options,
+                 readahead_open_file) == os::kernel::fs::Status::Succeeded &&
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_PATH), read_options,
+                 independent_readahead_open_file) == os::kernel::fs::Status::Succeeded;
+    if (readahead_files_opened) {
+        readahead_test_context.readahead_node_identifier =
+            readahead_open_file.path.vnode.identifier;
+    }
+    const bool readahead_descriptions_installed =
+        readahead_files_opened &&
+        CreateFileDescription(description_manager, vfs, readahead_open_file, readahead_reference) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        table.InstallExact(readahead_reference, OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR,
+                           OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        CreateFileDescription(description_manager, vfs, independent_readahead_open_file,
+                              independent_readahead_reference) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        table.InstallExact(independent_readahead_reference,
+                           OS_TEST_FILE_DESCRIPTION_INDEPENDENT_READAHEAD_FILE_DESCRIPTOR,
+                           OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        table.Duplicate(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR,
+                        OS_TEST_FILE_DESCRIPTION_DUPLICATE_READAHEAD_FILE_DESCRIPTOR,
+                        OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+                        duplicate_readahead_descriptor) == os::kernel::FileTableStatus::Succeeded &&
+        duplicate_readahead_descriptor ==
+            OS_TEST_FILE_DESCRIPTION_DUPLICATE_READAHEAD_FILE_DESCRIPTOR;
+    bool readahead_reads_completed =
+        readahead_descriptions_installed &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR, operation_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.TryRead(operation_reference, readahead_bytes, sizeof(readahead_bytes),
+                                    read_bytes, file_system_status,
+                                    pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        read_bytes == sizeof(readahead_bytes) &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_DUPLICATE_READAHEAD_FILE_DESCRIPTOR,
+                     operation_reference) == os::kernel::FileTableStatus::Succeeded &&
+        description_manager.TryRead(operation_reference, readahead_page_bytes,
+                                    sizeof(readahead_page_bytes), read_bytes, file_system_status,
+                                    pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        read_bytes == sizeof(readahead_page_bytes) &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR, operation_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.TryRead(operation_reference, readahead_page_bytes,
+                                    sizeof(readahead_page_bytes) -
+                                        OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES + 1ULL,
+                                    read_bytes, file_system_status,
+                                    pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        read_bytes ==
+            sizeof(readahead_page_bytes) - OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES + 1ULL &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_INDEPENDENT_READAHEAD_FILE_DESCRIPTOR,
+                     operation_reference) == os::kernel::FileTableStatus::Succeeded &&
+        description_manager.TryRead(operation_reference, readahead_bytes, sizeof(readahead_bytes),
+                                    read_bytes, file_system_status,
+                                    pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        read_bytes == sizeof(readahead_bytes) &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    os::kernel::FileDescriptionSnapshot shared_readahead_snapshot{};
+    os::kernel::FileDescriptionSnapshot duplicate_readahead_snapshot{};
+    os::kernel::FileDescriptionSnapshot independent_readahead_snapshot{};
+    readahead_reads_completed =
+        readahead_reads_completed &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_READAHEAD_FILE_DESCRIPTOR, operation_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.ReadSnapshot(operation_reference, shared_readahead_snapshot) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_DUPLICATE_READAHEAD_FILE_DESCRIPTOR,
+                     operation_reference) == os::kernel::FileTableStatus::Succeeded &&
+        description_manager.ReadSnapshot(operation_reference, duplicate_readahead_snapshot) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_INDEPENDENT_READAHEAD_FILE_DESCRIPTOR,
+                     operation_reference) == os::kernel::FileTableStatus::Succeeded &&
+        description_manager.ReadSnapshot(operation_reference, independent_readahead_snapshot) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    const os::kernel::FileDescriptionManagerStatistics readahead_statistics =
+        description_manager.Statistics();
+    const bool readahead_ownership_valid =
+        readahead_reads_completed && shared_readahead_snapshot.readahead.access_count == 3ULL &&
+        shared_readahead_snapshot.readahead.prefetched_hit_access_count == 1ULL &&
+        shared_readahead_snapshot.readahead.demand_hit_access_count == 1ULL &&
+        duplicate_readahead_snapshot.readahead.access_count ==
+            shared_readahead_snapshot.readahead.access_count &&
+        duplicate_readahead_snapshot.readahead.generation ==
+            shared_readahead_snapshot.readahead.generation &&
+        independent_readahead_snapshot.readahead.access_count == 1ULL &&
+        readahead_test_context.schedule_count ==
+            OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_SCHEDULE_COUNT &&
+        readahead_test_context.scheduled_page_count ==
+            OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_PAGE_COUNT &&
+        readahead_test_context.generation_sum ==
+            OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_GENERATION_SUM &&
+        readahead_statistics.readahead_schedule_count ==
+            OS_TEST_FILE_DESCRIPTION_EXPECTED_READAHEAD_SCHEDULE_COUNT &&
+        readahead_statistics.readahead_useful_page_count == 2ULL &&
+        readahead_statistics.readahead_schedule_rejection_count ==
+            OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    test_context.Expect(readahead_ownership_valid, OS_TEST_FILE_DESCRIPTION_READAHEAD_OWNERSHIP);
 
     os::kernel::fs::OpenFile first_append_open_file{};
     os::kernel::fs::OpenFile second_append_open_file{};
@@ -492,12 +797,9 @@ int main() {
         object_manager.Statistics().active_object_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         description_manager.Statistics().failed_finalization_count ==
             OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
-        error_tracker.Validate() ==
-            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
-        error_tracker.Statistics().active_record_count ==
-            OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
-        error_tracker.Destroy() ==
-            os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
+        error_tracker.Validate() == os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
+        error_tracker.Statistics().active_record_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        error_tracker.Destroy() == os::kernel::FileWritebackErrorTrackerStatus::Succeeded &&
         heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
         heap.Statistics().allocation_count == OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
         file_system.CheckConsistency() == os::kernel::FileSystemStatus::Succeeded &&

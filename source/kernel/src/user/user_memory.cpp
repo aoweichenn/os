@@ -88,6 +88,13 @@ uint64_t user_file_page_cache_writeback_worker_run_count;
 uint64_t user_file_page_cache_writeback_worker_written_page_count;
 uint64_t user_file_page_cache_writeback_worker_failure_count;
 uint64_t user_file_page_cache_writeback_backpressure_count;
+uint64_t user_file_page_cache_readahead_operation_count;
+uint64_t user_file_page_cache_readahead_requested_page_count;
+uint64_t user_file_page_cache_readahead_loaded_page_count;
+uint64_t user_file_page_cache_readahead_existing_page_count;
+uint64_t user_file_page_cache_readahead_busy_page_count;
+uint64_t user_file_page_cache_readahead_failed_page_count;
+uint64_t user_file_page_cache_readahead_pressure_stop_count;
 UserPageReferenceEntry user_page_reference_entries[OS_KERNEL_USER_PAGE_REFERENCE_CAPACITY]{};
 UserPageReferenceManager user_page_reference_manager{};
 MemoryPressureController user_memory_pressure_controller{};
@@ -771,12 +778,13 @@ SwapOutUserPages(UserAddressSpace &address_space, const uint64_t target_page_cou
            read_bytes == read_capacity;
 }
 
-[[nodiscard]] fs::Status ReadVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
-                                                 const uint64_t offset_bytes,
-                                                 uint8_t *const destination,
-                                                 const uint64_t capacity_bytes,
-                                                 uint64_t &read_bytes) noexcept {
+[[nodiscard]] fs::Status
+ReadVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
+                        const uint64_t offset_bytes, uint8_t *const destination,
+                        const uint64_t capacity_bytes, uint64_t &read_bytes,
+                        fs::RegularFileReadCacheObservation &observation) noexcept {
     read_bytes = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    observation = fs::RegularFileReadCacheObservation{};
     if (context == nullptr || (!open_file.open || !open_file.readable) ||
         (destination == nullptr && capacity_bytes != OS_KERNEL_USER_MEMORY_EMPTY_VALUE)) {
         return fs::Status::InvalidArgument;
@@ -791,11 +799,44 @@ SwapOutUserPages(UserAddressSpace &address_space, const uint64_t target_page_cou
     }
     if (capacity_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
         offset_bytes >= information.size_bytes) {
+        observation.cache_used = true;
         return fs::Status::Succeeded;
     }
     const FileIdentity identity = FileIdentityFromVnode(open_file.path.vnode);
     const uint64_t requested_read_bytes =
         Minimum(capacity_bytes, information.size_bytes - offset_bytes);
+    uint64_t cache_hit_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    uint64_t cache_miss_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    uint64_t prefetched_hit_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    const auto publish_observation = [&]() noexcept {
+        const uint64_t file_page_count =
+            information.size_bytes / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES +
+            (information.size_bytes % OS_KERNEL_MEMORY_PAGE_SIZE_BYTES !=
+                     OS_KERNEL_USER_MEMORY_EMPTY_VALUE
+                 ? OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT
+                 : OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
+        uint64_t requested_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+        if (read_bytes != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+            const uint64_t first_page_offset_bytes = offset_bytes & OS_KERNEL_USER_MEMORY_PAGE_MASK;
+            const uint64_t tail_bytes =
+                first_page_offset_bytes + read_bytes % OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
+            requested_page_count =
+                read_bytes / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES +
+                tail_bytes / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES +
+                (tail_bytes % OS_KERNEL_MEMORY_PAGE_SIZE_BYTES != OS_KERNEL_USER_MEMORY_EMPTY_VALUE
+                     ? OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT
+                     : OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
+        }
+        observation = fs::RegularFileReadCacheObservation{
+            .first_page_index = offset_bytes / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES,
+            .requested_page_count = requested_page_count,
+            .file_page_count = file_page_count,
+            .cache_hit_page_count = cache_hit_page_count,
+            .cache_miss_page_count = cache_miss_page_count,
+            .prefetched_hit_page_count = prefetched_hit_page_count,
+            .cache_used = true,
+        };
+    };
     if (user_file_page_cache_buffered_read_operation_count == UINT64_MAX) {
         return fs::Status::Corrupt;
     }
@@ -824,16 +865,19 @@ SwapOutUserPages(UserAddressSpace &address_space, const uint64_t target_page_cou
                                           OS_KERNEL_USER_MEMORY_COUNTER_INCREMENT,
                                           OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
                                           false) != UserResidentAllocationStatus::Succeeded) {
+            publish_observation();
             return read_bytes == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ? fs::Status::CapacityExhausted
                                                                    : fs::Status::Succeeded;
         }
         uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
         bool cache_hit = false;
+        bool prefetched_hit = false;
         const FilePageCacheStatus acquire_status = user_file_page_cache.Acquire(
-            page_identity, &reader, ReadVfsFilePage, physical_address, cache_hit);
-        static_cast<void>(cache_hit);
+            page_identity, &reader, ReadVfsFilePage, FilePageAcquireIntent::Demand,
+            physical_address, cache_hit, prefetched_hit);
         if (acquire_status != FilePageCacheStatus::Succeeded) {
             if (read_bytes != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+                publish_observation();
                 return fs::Status::Succeeded;
             }
             return acquire_status == FilePageCacheStatus::SourceReadFailed
@@ -870,10 +914,17 @@ SwapOutUserPages(UserAddressSpace &address_space, const uint64_t target_page_cou
         ++user_file_page_cache_buffered_read_page_count;
         if (cache_hit) {
             ++user_file_page_cache_buffered_read_cache_hit_count;
+            ++cache_hit_page_count;
+        } else {
+            ++cache_miss_page_count;
+        }
+        if (prefetched_hit) {
+            ++prefetched_hit_page_count;
         }
         user_file_page_cache_buffered_read_bytes += chunk_bytes;
         read_bytes += chunk_bytes;
     }
+    publish_observation();
     return fs::Status::Succeeded;
 }
 
@@ -1990,6 +2041,13 @@ UserAddressSpaceStatus InitializeUserVirtualMemory() noexcept {
     user_file_page_cache_writeback_worker_written_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     user_file_page_cache_writeback_worker_failure_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     user_file_page_cache_writeback_backpressure_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_operation_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_requested_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_loaded_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_existing_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_busy_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_failed_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    user_file_page_cache_readahead_pressure_stop_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
     user_memory_reclaim_operations = UserMemoryReclaimOperations{};
     user_memory_reclaim_statistics = UserMemoryReclaimStatistics{};
     if (!user_memory_swappiness_configured) {
@@ -2119,6 +2177,13 @@ UserFilePageCacheRuntimeStatistics GetUserFilePageCacheRuntimeStatistics() noexc
             user_file_page_cache_writeback_worker_written_page_count,
         .writeback_worker_failure_count = user_file_page_cache_writeback_worker_failure_count,
         .writeback_backpressure_count = user_file_page_cache_writeback_backpressure_count,
+        .readahead_operation_count = user_file_page_cache_readahead_operation_count,
+        .readahead_requested_page_count = user_file_page_cache_readahead_requested_page_count,
+        .readahead_loaded_page_count = user_file_page_cache_readahead_loaded_page_count,
+        .readahead_existing_page_count = user_file_page_cache_readahead_existing_page_count,
+        .readahead_busy_page_count = user_file_page_cache_readahead_busy_page_count,
+        .readahead_failed_page_count = user_file_page_cache_readahead_failed_page_count,
+        .readahead_pressure_stop_count = user_file_page_cache_readahead_pressure_stop_count,
     };
 }
 
@@ -2148,9 +2213,145 @@ ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operatio
                : UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
 }
 
+UserVirtualMemoryStatus PrefetchUserFilePages(fs::Vfs &vfs, const fs::OpenFile &open_file,
+                                              const uint64_t start_page_index,
+                                              const uint64_t page_count,
+                                              UserFileReadaheadResult &result) noexcept {
+    result = UserFileReadaheadResult{};
+    if (!user_virtual_memory_initialized) {
+        return UserVirtualMemoryStatus::NotInitialized;
+    }
+    if (!open_file.open || !open_file.readable ||
+        open_file.path.vnode.type != fs::NodeType::RegularFile ||
+        page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
+        start_page_index > UINT64_MAX - page_count) {
+        return UserVirtualMemoryStatus::InvalidFile;
+    }
+    fs::NodeInformation information{};
+    fs::NodeInformation source_information{};
+    if (vfs.StatOpenFile(open_file, information) != fs::Status::Succeeded ||
+        vfs.StatOpenFileUncached(open_file, source_information) != fs::Status::Succeeded) {
+        return UserVirtualMemoryStatus::InvalidFile;
+    }
+    result.requested_page_count = page_count;
+    const FileIdentity identity = FileIdentityFromVnode(open_file.path.vnode);
+    VfsFilePageReaderContext reader{
+        .vfs = &vfs,
+        .open_file = &open_file,
+        .source_size_bytes = source_information.size_bytes,
+    };
+    for (uint64_t page_ordinal = OS_KERNEL_USER_MEMORY_EMPTY_VALUE; page_ordinal < page_count;
+         ++page_ordinal) {
+        const uint64_t page_index = start_page_index + page_ordinal;
+        if (page_index > UINT64_MAX / OS_KERNEL_MEMORY_PAGE_SIZE_BYTES ||
+            page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES >= information.size_bytes) {
+            break;
+        }
+        if (GetUserMemoryPressureLevel() == MemoryPressureLevel::BelowMinimum) {
+            result.pressure_stopped = true;
+            break;
+        }
+        const FilePageIdentity page_identity{
+            .file = identity,
+            .page_index = page_index,
+        };
+        FilePageCacheEntry existing_entry{};
+        const FilePageCacheStatus existing_status =
+            user_file_page_cache.ReadEntry(page_identity, existing_entry);
+        if (existing_status == FilePageCacheStatus::Succeeded) {
+            if (existing_entry.state == FilePageCacheEntryState::Loading) {
+                ++result.busy_page_count;
+            } else {
+                ++result.existing_page_count;
+            }
+            continue;
+        }
+        if (existing_status != FilePageCacheStatus::MappingNotFound) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (user_file_page_cache.Statistics().resident_page_count >=
+            user_file_page_cache.Statistics().capacity) {
+            result.pressure_stopped = true;
+            break;
+        }
+        uint64_t physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+        bool cache_hit = false;
+        bool prefetched_hit = false;
+        const FilePageCacheStatus acquire_status = user_file_page_cache.Acquire(
+            page_identity, &reader, ReadVfsFilePage, FilePageAcquireIntent::Prefetch,
+            physical_address, cache_hit, prefetched_hit);
+        if (acquire_status == FilePageCacheStatus::EntryBusy ||
+            acquire_status == FilePageCacheStatus::LoadingWaitUnavailable) {
+            ++result.busy_page_count;
+            continue;
+        }
+        if (acquire_status == FilePageCacheStatus::CapacityExhausted ||
+            acquire_status == FilePageCacheStatus::FrameAllocationFailed ||
+            acquire_status == FilePageCacheStatus::MetadataAllocationFailed) {
+            result.pressure_stopped = true;
+            break;
+        }
+        if (acquire_status == FilePageCacheStatus::SourceReadFailed ||
+            acquire_status == FilePageCacheStatus::FrameAccessFailed) {
+            ++result.failed_page_count;
+            continue;
+        }
+        if (acquire_status != FilePageCacheStatus::Succeeded || prefetched_hit) {
+            if (acquire_status == FilePageCacheStatus::Succeeded) {
+                static_cast<void>(user_file_page_cache.Release(page_identity, physical_address));
+            }
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (user_file_page_cache.ObserveFileSize(identity, information.size_bytes) !=
+            FilePageCacheStatus::Succeeded) {
+            static_cast<void>(user_file_page_cache.Release(page_identity, physical_address));
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (user_file_page_cache.Release(page_identity, physical_address) !=
+            FilePageCacheStatus::Succeeded) {
+            return UserVirtualMemoryStatus::Corrupt;
+        }
+        if (cache_hit) {
+            ++result.existing_page_count;
+        } else {
+            ++result.loaded_page_count;
+        }
+    }
+    if (user_file_page_cache_readahead_operation_count == UINT64_MAX ||
+        !AccumulateCounter(user_file_page_cache_readahead_requested_page_count,
+                           result.requested_page_count) ||
+        !AccumulateCounter(user_file_page_cache_readahead_loaded_page_count,
+                           result.loaded_page_count) ||
+        !AccumulateCounter(user_file_page_cache_readahead_existing_page_count,
+                           result.existing_page_count) ||
+        !AccumulateCounter(user_file_page_cache_readahead_busy_page_count,
+                           result.busy_page_count) ||
+        !AccumulateCounter(user_file_page_cache_readahead_failed_page_count,
+                           result.failed_page_count) ||
+        (result.pressure_stopped &&
+         user_file_page_cache_readahead_pressure_stop_count == UINT64_MAX)) {
+        return UserVirtualMemoryStatus::Corrupt;
+    }
+    ++user_file_page_cache_readahead_operation_count;
+    if (result.pressure_stopped) {
+        ++user_file_page_cache_readahead_pressure_stop_count;
+    }
+    return UserVirtualMemoryStatus::Succeeded;
+}
+
 MemoryPressureStatistics GetUserMemoryPressureStatistics() noexcept {
     static_cast<void>(SynchronizeUserMemoryPressure());
     return user_memory_pressure_controller.Statistics();
+}
+
+MemoryPressureLevel GetUserMemoryPressureLevel() noexcept {
+    const MemoryPressureStatistics statistics = GetUserMemoryPressureStatistics();
+    const uint64_t resident_limit_page_count = statistics.watermarks.resident_limit_page_count;
+    const uint64_t free_page_count =
+        statistics.resident_page_count < resident_limit_page_count
+            ? resident_limit_page_count - statistics.resident_page_count
+            : OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
+    return ClassifyMemoryPressure(statistics.watermarks, free_page_count);
 }
 
 uint64_t GetUserMemorySwappiness() noexcept {

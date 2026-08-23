@@ -1426,7 +1426,7 @@ anonymous swap，并到达三项状态验证和 READY。
 3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待、3b 栈式
    User Kernel 续体、RuntimeMutex 锁拆分和生产迁移均已完成；
 4. FilePageCache Loading waiter 与同页 miss 合并（已完成）；
-5. 顺序预读、命中/浪费反馈与压力收缩（5a 纯策略已完成，生产接入未完成）；
+5. 顺序预读、命中/浪费反馈与压力收缩（5a 纯策略、5b 生产执行已完成，5c 取消/反馈待做）；
 6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
 
 **第一增量边界**
@@ -1519,6 +1519,29 @@ Loading 的 truncate/invalidate/reclaim/writeback 边界不放宽。强制重叠
 5a final fresh CAW `verify` 为 231/231、0 失败：69 unit、78 integration、51 randomized、
 33 system，含 25 条 failure-path；CTest 888.82 秒。4 GiB ATA primary 71.51 秒，ATA/NVMe
 reclaim 79.25/73.06 秒，ATA/NVMe persistence 142.10/141.47 秒。
+
+**第五增量 5b 边界**
+
+共享 FileDescription 现在拥有策略，VFS 缓存读取返回真实页级 hit/miss/prefetched-hit。
+decision 经 64 槽 generation FIFO 转交常驻 Kernel worker；请求持有 retained OpenFile，
+退出先排空再停止 worker。FilePageCache 的 Demand/Prefetch intent 共用唯一 Loading，新预取
+Clean 页用 one-shot 标记归因 useful，未消费失效/裁剪/回收归因 waste。
+
+预读 worker 只开放 Loading owner 能力，不等待已有同页 Loading；缓存满或 BelowMinimum
+停止预测，不驱逐 demand 页。队列满只拒绝预测，不改变 demand read。queue、cache 和
+FileDescription 的 unit/integration/十万步 randomized 加上 4 GiB QEMU 真实工具 ELF 顺序读
+共同证明 schedule/enqueue/completion 守恒、loaded/useful/hit 非零、失败/active/最终驻留为
+零。设计由
+[ADR 0069](adr/0069-v2-10-production-readahead-execution.md) 冻结。
+
+5b final fresh CAW 构建与 CTest 覆盖 234 项：70 unit、79 integration、52 randomized、
+33 system，含 25 条 failure-path。严格完整轮次 233/234，唯一异常为 ATA reclaim 的一次
+QMP VGA 非追加快照；同一 fresh 构建按原验收器重试 75.17 秒通过。4 GiB ATA primary
+72.42 秒，NVMe root primary 70.08 秒，ATA/NVMe OOM 77.43/76.30 秒，ATA/NVMe
+persistence 144.32/142.86 秒。
+
+5c 仍负责按 generation 取消、把实际 waste 反馈回存活策略，以及与并发 writeback/reclaim
+错误路径的完整矩阵；因此 v2.10 继续保持工程候选，不发布版本标签。
 
 **退出条件**
 
