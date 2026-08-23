@@ -106,6 +106,7 @@ set(
     include/os/kernel/process/block_io.hpp
     include/os/kernel/process/block_io_device.hpp
     include/os/kernel/process/file_page_load.hpp
+    include/os/kernel/process/file_page_writeback.hpp
     include/os/kernel/process/file_readahead_request.hpp
     include/os/kernel/process/process_runtime.hpp
     include/os/kernel/process/job_control.hpp
@@ -259,6 +260,7 @@ set(
     src/process/block_io.cpp
     src/process/block_io_device.cpp
     src/process/file_page_load.cpp
+    src/process/file_page_writeback.cpp
     src/process/file_readahead_request.cpp
     src/process/process_runtime.cpp
     src/process/job_control.cpp
@@ -518,6 +520,7 @@ add_library(
     STATIC
         src/process/block_io.cpp
         src/process/file_page_load.cpp
+        src/process/file_page_writeback.cpp
         src/process/file_readahead_request.cpp
         src/process/process_tree.cpp
         src/process/job_control.cpp
@@ -531,6 +534,7 @@ add_library(
         src/sync/spin_lock.cpp
         include/os/kernel/process/block_io.hpp
         include/os/kernel/process/file_page_load.hpp
+        include/os/kernel/process/file_page_writeback.hpp
         include/os/kernel/process/file_readahead_request.hpp
         include/os/kernel/process/thread_scheduler.hpp
         include/os/kernel/process/job_control.hpp

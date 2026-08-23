@@ -629,6 +629,22 @@ constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_FAILURE_COUNT_PREFIX[] =
     "[OS][KERNEL][FILE_PAGE_LOAD] FAILURE_BROADCASTS=";
 constexpr char OS_KERNEL_MAIN_FILE_PAGE_LOAD_RESULT_COUNT_PREFIX[] =
     "[OS][KERNEL][FILE_PAGE_LOAD] RESULT_TAKES=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_ACTIVE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] ACTIVE=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_BEGIN_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] BEGINS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_WAITER_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] WAITERS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_WAIT_COMMIT_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] WAIT_COMMITS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_COMPLETION_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] COMPLETIONS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_WAKE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] BROADCAST_WAKES=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_FAILURE_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] FAILURE_BROADCASTS=";
+constexpr char OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_RESULT_COUNT_PREFIX[] =
+    "[OS][KERNEL][FILE_PAGE_WRITEBACK] RESULT_TAKES=";
 constexpr char OS_KERNEL_MAIN_USER_TO_KERNEL_SWITCH_COUNT_PREFIX[] =
     "[OS][KERNEL] USER_TO_KERNEL_SWITCHES=";
 constexpr char OS_KERNEL_MAIN_KERNEL_TO_USER_SWITCH_COUNT_PREFIX[] =
@@ -3000,6 +3016,8 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     const ProcessRuntimeStatistics process_runtime_statistics = GetProcessRuntimeStatistics();
     const FilePageLoadStatistics &file_page_load_statistics =
         process_runtime_statistics.file_page_loads;
+    const FilePageWritebackStatistics &file_page_writeback_statistics =
+        process_runtime_statistics.file_page_writebacks;
     const FileWritebackErrorTrackerStatistics writeback_error_statistics =
         GetUserFileWritebackErrorTrackerStatistics();
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_ACTIVE_COUNT_PREFIX,
@@ -3018,6 +3036,32 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
                          file_page_load_statistics.failure_broadcast_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_LOAD_RESULT_COUNT_PREFIX,
                          file_page_load_statistics.result_take_count);
+    if (file_page_writeback_statistics.active_writeback_count != OS_KERNEL_MAIN_EMPTY_VALUE ||
+        file_page_writeback_statistics.begin_count !=
+            file_page_writeback_statistics.completion_count ||
+        file_page_writeback_statistics.waiter_registration_count !=
+            file_page_writeback_statistics.result_take_count ||
+        file_page_writeback_statistics.wait_commit_count !=
+            file_page_writeback_statistics.broadcast_wake_count ||
+        file_page_writeback_statistics.failure_broadcast_count != OS_KERNEL_MAIN_EMPTY_VALUE) {
+        HaltProcessor();
+    }
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_ACTIVE_COUNT_PREFIX,
+                         file_page_writeback_statistics.active_writeback_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_BEGIN_COUNT_PREFIX,
+                         file_page_writeback_statistics.begin_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_WAITER_COUNT_PREFIX,
+                         file_page_writeback_statistics.waiter_registration_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_WAIT_COMMIT_COUNT_PREFIX,
+                         file_page_writeback_statistics.wait_commit_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_COMPLETION_COUNT_PREFIX,
+                         file_page_writeback_statistics.completion_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_WAKE_COUNT_PREFIX,
+                         file_page_writeback_statistics.broadcast_wake_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_FAILURE_COUNT_PREFIX,
+                         file_page_writeback_statistics.failure_broadcast_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_PAGE_WRITEBACK_RESULT_COUNT_PREFIX,
+                         file_page_writeback_statistics.result_take_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_READ_COUNT_PREFIX,
                          file_cache_runtime_statistics.buffered_read_operation_count);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_FILE_CACHE_BUFFERED_HIT_COUNT_PREFIX,

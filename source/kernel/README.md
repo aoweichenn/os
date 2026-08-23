@@ -236,6 +236,7 @@ process/process_runtime.*                 fsync/fdatasync/msync 顺序编排
 user/system_calls.*                       ABI 2.4.0 的 85..87 分发
 memory/memory_pressure.*                  clean/writeback/swap 纯逻辑执行顺序
 process/process_runtime.*                 跨进程轮转、活动栈保护与 OOM 回调
+process/file_page_writeback.*             同页写回 generation、waiter 与结果广播
 ```
 
 v2.9 第一增量在同一个调度器中增加不属于 Process 的 Kernel Thread：
@@ -322,3 +323,10 @@ Loading，但不等待同页 owner。设计见
 [ADR 0068](../../docs/adr/0068-v2-10-per-open-file-readahead-policy.md) 与
 [ADR 0069](../../docs/adr/0069-v2-10-production-readahead-execution.md)、
 [ADR 0070](../../docs/adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)。
+
+第六增量增加 `process/file_page_writeback.*` 与 `WaitCondition::FilePageWriteback`。页缓存
+在 Dirty/Error→Writeback 前登记文件页、物理地址和新 access generation；同页 writer 与
+同步 writeback 在 cache lock 内登记，再锁外等待唯一成功或失败。writer 成功后重新脏化，
+同步者继续范围扫描；失败保留 Error/paused。Clean reclaim 仍可越过 Writeback 回收其他
+候选。设计见
+[ADR 0071](../../docs/adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。

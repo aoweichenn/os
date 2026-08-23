@@ -65,6 +65,8 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY = 4ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_FEEDBACK_CAPACITY = 4096ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_PAGE_LOAD_WAIT_QUEUE_BASE = 0x8000000000020000ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_PAGE_WRITEBACK_WAIT_QUEUE_BASE =
+    0x8000000000030000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_PROBE_TIMEOUT_NANOSECONDS =
     5ULL * 1000ULL * 1000ULL * 1000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_KERNEL_CONTEXT_REGISTER_SLOT_COUNT = 6ULL;
@@ -611,6 +613,10 @@ FilePageLoadCoordinator file_page_load_coordinator;
 FilePageLoadSlot file_page_load_slots[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 FilePageLoadWaiter file_page_load_waiters[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 WaitQueue file_page_load_wait_queues[OS_KERNEL_THREAD_CAPACITY_LIMIT];
+FilePageWritebackCoordinator file_page_writeback_coordinator;
+FilePageWritebackSlot file_page_writeback_slots[OS_KERNEL_THREAD_CAPACITY_LIMIT];
+FilePageWritebackWaiter file_page_writeback_waiters[OS_KERNEL_THREAD_CAPACITY_LIMIT];
+WaitQueue file_page_writeback_wait_queues[OS_KERNEL_THREAD_CAPACITY_LIMIT];
 AsynchronousBlockDevice *block_io_devices[OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY];
 uint64_t block_io_device_count;
 bool block_io_completion_worker_stop_requested;
@@ -5090,6 +5096,174 @@ namespace {
     return true;
 }
 
+[[nodiscard]] bool RuntimeFilePageWritebackOwnerAvailable(void *const context) noexcept {
+    static_cast<void>(context);
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        !kernel_thread_dispatch_active) {
+        return false;
+    }
+    const uint64_t thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry thread{};
+    if (thread_index >= process_runtime_limits.thread_capacity ||
+        thread_scheduler.ReadThread(thread_index, thread) != ThreadSchedulerStatus::Succeeded ||
+        !runtime_threads[thread_index].active) {
+        return false;
+    }
+    return (thread.kind == ThreadKind::User &&
+            runtime_threads[thread_index].saved_frame != nullptr &&
+            !runtime_threads[thread_index].user_kernel_continuation_active) ||
+           thread.kind == ThreadKind::Kernel;
+}
+
+[[nodiscard]] bool RuntimeFilePageWritebackWaitAvailable(void *const context) noexcept {
+    return RuntimeFilePageWritebackOwnerAvailable(context);
+}
+
+[[nodiscard]] bool BeginRuntimeFilePageWriteback(void *const context,
+                                                 const FilePageIdentity &identity,
+                                                 const uint64_t physical_address,
+                                                 const uint64_t writeback_generation,
+                                                 FilePageWritebackToken &token) noexcept {
+    static_cast<void>(context);
+    if (!RuntimeFilePageWritebackOwnerAvailable(nullptr)) {
+        token = FilePageWritebackToken{};
+        return false;
+    }
+    const uint64_t owner_thread_index = thread_scheduler.CurrentThreadIndex();
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const FilePageWritebackStatus status = file_page_writeback_coordinator.Begin(
+        identity, physical_address, writeback_generation, owner_thread_index, token);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    return status == FilePageWritebackStatus::Succeeded;
+}
+
+[[nodiscard]] bool RegisterRuntimeFilePageWritebackWaiter(void *const context,
+                                                          const FilePageIdentity &identity,
+                                                          const uint64_t physical_address,
+                                                          const uint64_t writeback_generation,
+                                                          FilePageWritebackToken &token) noexcept {
+    static_cast<void>(context);
+    if (!RuntimeFilePageWritebackWaitAvailable(nullptr)) {
+        token = FilePageWritebackToken{};
+        return false;
+    }
+    const uint64_t waiter_thread_index = thread_scheduler.CurrentThreadIndex();
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const FilePageWritebackStatus status = file_page_writeback_coordinator.RegisterWaiter(
+        identity, physical_address, writeback_generation, waiter_thread_index, token);
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    return status == FilePageWritebackStatus::Succeeded;
+}
+
+[[nodiscard]] bool WaitForRuntimeFilePageWriteback(void *const context,
+                                                   const FilePageWritebackToken token,
+                                                   FilePageCacheStatus &result) noexcept {
+    static_cast<void>(context);
+    result = FilePageCacheStatus::WritebackWaitFailed;
+    if (!RuntimeFilePageWritebackWaitAvailable(nullptr) ||
+        token.slot_index >= process_runtime_limits.thread_capacity) {
+        // 页缓存锁内登记完成后必须消费结果，否则 generation 槽与 waiter 身份无法回收。
+        HaltProcessor();
+    }
+    const uint64_t waiter_thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry waiter_thread{};
+    if (thread_scheduler.ReadThread(waiter_thread_index, waiter_thread) !=
+            ThreadSchedulerStatus::Succeeded ||
+        (waiter_thread.kind != ThreadKind::User && waiter_thread.kind != ThreadKind::Kernel)) {
+        HaltProcessor();
+    }
+    ProcessRuntimeThread &runtime_thread = runtime_threads[waiter_thread_index];
+    const bool interrupts_were_enabled = DisableInterrupts();
+    if (SaveFxState(runtime_thread.extended_state) != ExtendedStateStatus::Succeeded) {
+        HaltProcessor();
+    }
+    bool wait_required = false;
+    ThreadSchedulingDecision decision{};
+    const bool scheduler_interrupts_were_enabled = scheduler_lock.Lock();
+    const FilePageWritebackStatus prepare_status =
+        file_page_writeback_coordinator.PrepareWait(token, waiter_thread_index, wait_required);
+    ThreadSchedulerStatus block_status = ThreadSchedulerStatus::Succeeded;
+    if (prepare_status == FilePageWritebackStatus::Succeeded && wait_required) {
+        block_status =
+            thread_scheduler.BlockCurrentThread(file_page_writeback_wait_queues[token.slot_index],
+                                                WaitCondition::FilePageWriteback, decision);
+    }
+    scheduler_lock.Unlock(scheduler_interrupts_were_enabled);
+    if (prepare_status != FilePageWritebackStatus::Succeeded ||
+        block_status != ThreadSchedulerStatus::Succeeded) {
+        HaltProcessor();
+    }
+    if (wait_required) {
+        WakeReason wake_reason = WakeReason::None;
+        if (!SuspendBlockedRuntimeThread(waiter_thread_index, waiter_thread, runtime_thread,
+                                         decision, wake_reason) ||
+            wake_reason != WakeReason::ConditionSatisfied) {
+            HaltProcessor();
+        }
+    }
+    const bool take_interrupts_were_enabled = scheduler_lock.Lock();
+    const FilePageWritebackStatus take_status =
+        file_page_writeback_coordinator.TakeResult(token, waiter_thread_index, result);
+    scheduler_lock.Unlock(take_interrupts_were_enabled);
+    if (take_status != FilePageWritebackStatus::Succeeded) {
+        HaltProcessor();
+    }
+    RestoreInterrupts(interrupts_were_enabled);
+    return true;
+}
+
+[[nodiscard]] bool CompleteRuntimeFilePageWriteback(void *const context,
+                                                    const FilePageWritebackToken token,
+                                                    const FilePageCacheStatus result) noexcept {
+    static_cast<void>(context);
+    if (!process_runtime_initialized ||
+        token.slot_index >= process_runtime_limits.thread_capacity) {
+        HaltProcessor();
+    }
+    const uint64_t owner_thread_index = thread_scheduler.CurrentThreadIndex();
+    FilePageWritebackCompletionDecision decision{};
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    const FilePageWritebackStatus completion_status =
+        file_page_writeback_coordinator.Complete(token, owner_thread_index, result, decision);
+    uint64_t woken_thread_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    ThreadSchedulerStatus wake_status = ThreadSchedulerStatus::Succeeded;
+    if (completion_status == FilePageWritebackStatus::Succeeded &&
+        decision.wake_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        wake_status = thread_scheduler.WakeMany(
+            file_page_writeback_wait_queues[decision.slot_index], WakeReason::ConditionSatisfied,
+            decision.wake_count, woken_thread_count);
+    }
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (completion_status != FilePageWritebackStatus::Succeeded ||
+        wake_status != ThreadSchedulerStatus::Succeeded ||
+        woken_thread_count != decision.wake_count) {
+        // 页状态已经发布，协调器完成失败时不能安全遗忘已持有 token 的 waiter。
+        HaltProcessor();
+    }
+    if (woken_thread_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        GetCpuLocal().RequestReschedule();
+    }
+    return true;
+}
+
+[[nodiscard]] bool ValidateRuntimeFilePageWritebackState() noexcept {
+    if (file_page_writeback_coordinator.Validate() != FilePageWritebackStatus::Succeeded ||
+        file_page_writeback_coordinator.Statistics().active_writeback_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return false;
+    }
+    for (uint64_t slot_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         slot_index < process_runtime_limits.thread_capacity; ++slot_index) {
+        if (thread_scheduler.ValidateWaitQueue(file_page_writeback_wait_queues[slot_index]) !=
+                ThreadSchedulerStatus::Succeeded ||
+            file_page_writeback_wait_queues[slot_index].Statistics().waiting_thread_count !=
+                OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool AnyUserKernelContinuationActive() noexcept {
     for (uint64_t thread_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          thread_index < process_runtime_limits.thread_capacity; ++thread_index) {
@@ -5746,6 +5920,20 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
             return ProcessRuntimeStatus::SchedulerFailure;
         }
     }
+    if (file_page_writeback_coordinator.Initialize(
+            file_page_writeback_slots, process_runtime_limits.thread_capacity,
+            file_page_writeback_waiters,
+            process_runtime_limits.thread_capacity) != FilePageWritebackStatus::Succeeded) {
+        return ProcessRuntimeStatus::SchedulerFailure;
+    }
+    for (uint64_t slot_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         slot_index < process_runtime_limits.thread_capacity; ++slot_index) {
+        if (file_page_writeback_wait_queues[slot_index].Initialize(WaitQueueId{
+                .value = OS_KERNEL_PROCESS_RUNTIME_FILE_PAGE_WRITEBACK_WAIT_QUEUE_BASE + slot_index,
+            }) != WaitQueueStatus::Succeeded) {
+            return ProcessRuntimeStatus::SchedulerFailure;
+        }
+    }
     if (kernel_object_manager.Initialize(GetKernelHeap()) != KernelObjectStatus::Succeeded ||
         file_description_manager.Initialize(kernel_object_manager) !=
             FileDescriptionStatus::Succeeded) {
@@ -5980,6 +6168,15 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_
             .wait = WaitForRuntimeFilePageLoad,
             .waiter_count = ReadRuntimeFilePageLoadWaiterCount,
             .complete = CompleteRuntimeFilePageLoad,
+        }) != UserAddressSpaceStatus::Succeeded ||
+        ConfigureUserFilePageCacheWritebackWait(FilePageWritebackWaitOperations{
+            .context = nullptr,
+            .owner_available = RuntimeFilePageWritebackOwnerAvailable,
+            .available = RuntimeFilePageWritebackWaitAvailable,
+            .begin = BeginRuntimeFilePageWriteback,
+            .register_waiter = RegisterRuntimeFilePageWritebackWaiter,
+            .wait = WaitForRuntimeFilePageWriteback,
+            .complete = CompleteRuntimeFilePageWriteback,
         }) != UserAddressSpaceStatus::Succeeded ||
         ConfigureUserFilePageCacheReadaheadFeedback(FilePageReadaheadFeedbackOperations{
             .context = &file_readahead_feedback_ledger,
@@ -7951,7 +8148,7 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         block_io_coordinator.Validate() != BlockIoStatus::Succeeded ||
         block_io_coordinator.Statistics().active_request_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
-        !ValidateRuntimeFilePageLoadState() ||
+        !ValidateRuntimeFilePageLoadState() || !ValidateRuntimeFilePageWritebackState() ||
         file_readahead_request_queue.Validate() != FileReadaheadRequestStatus::Succeeded ||
         file_readahead_request_queue.Statistics().active_request_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
@@ -8065,6 +8262,7 @@ ProcessRuntimeStatistics GetProcessRuntimeStatistics() noexcept {
         .scheduler = thread_scheduler.Statistics(),
         .kernel_threads = kernel_thread_runtime_statistics,
         .file_page_loads = file_page_load_coordinator.Statistics(),
+        .file_page_writebacks = file_page_writeback_coordinator.Statistics(),
         .file_readahead_requests = file_readahead_request_queue.Statistics(),
         .file_readahead_feedback = file_readahead_feedback_ledger.Statistics(),
         .file_readahead_worker_failed = file_readahead_worker_failed,

@@ -2470,3 +2470,31 @@ writeback、total 和系统总 anonymous 非零，不要求每次后台 anonymou
 第六增量已冻结 planner 的配额算法，但实际完成数仍取决于当轮 PageAging candidate；
 因此 QEMU 稳定门禁检查统一计划、系统总匿名回收和 OOM 极端值，不要求每个后台批次都
 实际交换匿名页。
+
+### fsync 在 FILE_PAGE_WRITEBACK completion 前返回
+
+先比较 `BEGINS/COMPLETIONS` 和 `ACTIVE`。范围扫描不能只搜索 Dirty/Error；找不到候选时
+还要搜索范围内 Writeback，在仍持 cache lock 时按 identity、frame、access generation 登记
+waiter。若先解锁再登记，owner 可能完成并释放 coordinator 槽，随后出现 lost wakeup。
+
+等待提交必须在 scheduler lock 内连续执行 PrepareWait 和 BlockCurrentThread。完成先行时
+PrepareWait 返回无需阻塞，随后仍要 TakeResult。不要用轮询 page state 或重复发起
+Writeback 修复，这会破坏唯一设备请求和错误序列。
+
+### buffered write 或共享映射写故障得到 WritebackWaitUnavailable
+
+确认 owner 是否在进入 Dirty/Error→Writeback 前调用 Begin，并检查当前 Thread 是否满足
+运行时 writeback owner availability。若页面已经发布 Writeback 却没有 coordinator token，
+另一个 writer 无法安全等待。early boot/IRQ 中出现该状态属于调用边界错误；正常 User 或
+Kernel Thread 路径必须可登记。
+
+同时检查锁序：cache lock 可以短暂进入 scheduler lock 登记/完成，scheduler lock 路径不能
+反向访问 cache、VFS 或设备。wait 回调必须在 cache 解锁后执行。最终应满足 active=0、
+registration=take、commit=wake。
+
+### 写回失败后 Worker 反复占用 CPU
+
+SourceWriteFailed 必须把页留在 Error，清除 background request 并设置 paused；同期 waiter
+领取同一失败后返回，不能自行立即重试。只有显式 fsync/fdatasync/msync 或新的 writer 把
+Error 重新标为 Dirty 时才恢复。后台 controller 对失败批次进入 deadline backoff，不能用
+放宽 failure marker 隐藏忙循环。

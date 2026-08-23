@@ -869,6 +869,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_file_page_writeback_unit_tests
+    unit/kernel/file_page_writeback_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_file_readahead_request_unit_tests
     unit/kernel/file_readahead_request_test.cpp
     "unit"
@@ -914,6 +919,11 @@ os_add_kernel_process_test(
     "integration"
 )
 os_add_kernel_process_test(
+    os_kernel_file_page_writeback_wait_queue_integration_tests
+    integration/boot/file_page_writeback_wait_queue_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
     os_kernel_deadline_scheduling_integration_tests
     integration/boot/deadline_scheduling_integration_test.cpp
     "integration"
@@ -946,6 +956,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_file_page_load_randomized_tests
     randomized/kernel/file_page_load_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_file_page_writeback_randomized_tests
+    randomized/kernel/file_page_writeback_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_process_test(
@@ -1386,6 +1401,17 @@ os_add_kernel_memory_test(
 )
 target_link_libraries(
     os_kernel_file_page_cache_loading_merge_integration_tests
+    PRIVATE
+        os_kernel_process_model_host
+        Threads::Threads
+)
+os_add_kernel_memory_test(
+    os_kernel_file_page_writeback_concurrency_integration_tests
+    integration/boot/file_page_writeback_concurrency_test.cpp
+    "integration"
+)
+target_link_libraries(
+    os_kernel_file_page_writeback_concurrency_integration_tests
     PRIVATE
         os_kernel_process_model_host
         Threads::Threads

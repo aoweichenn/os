@@ -18,6 +18,7 @@
 #include <os/kernel/memory/physical_frame_allocator.hpp>
 #include <os/kernel/memory/resource_snapshot.hpp>
 #include <os/kernel/process/file_page_load.hpp>
+#include <os/kernel/process/file_page_writeback.hpp>
 #include <os/kernel/process/file_readahead_request.hpp>
 #include <os/kernel/process/job_control.hpp>
 #include <os/kernel/process/process_tree.hpp>
@@ -248,6 +249,7 @@ struct ProcessRuntimeStatistics final {
     ThreadSchedulerStatistics scheduler;
     KernelThreadRuntimeStatistics kernel_threads;
     FilePageLoadStatistics file_page_loads;
+    FilePageWritebackStatistics file_page_writebacks;
     FileReadaheadRequestStatistics file_readahead_requests;
     FileReadaheadFeedbackStatistics file_readahead_feedback;
     bool file_readahead_worker_failed;

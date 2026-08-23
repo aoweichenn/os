@@ -1080,7 +1080,11 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
   持久 WorkHandle 异步填充 FilePageCache。任务持有 retained OpenFile；Demand/Prefetch
   共用唯一 Loading。5c 新增 `memory/file_readahead_feedback.*` 固定账本，页保存
   stream/policy generation；close/reset/pressure/truncate 可取消 queued/running 请求，
-  producer 领取 useful/waste 并调整后续窗口。设备硬取消和并发回收矩阵留给第六增量。
+  producer 领取 useful/waste 并调整后续窗口。
+- v2.10.6 新增 `process/file_page_writeback.*`，按 Thread capacity 固定提供 writeback 槽、
+  per-thread waiter 和 per-slot WaitQueue。同页重新脏化或同步写回等待唯一 generation 结果，
+  其他 Clean 页仍可回收；失败广播保留 Error/paused 与打开实例错误序列。设备已签发请求
+  继续采用 best-effort cancel，SMP 和硬件 abort 不在本阶段。
 - `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
   ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
   96 个左右

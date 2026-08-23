@@ -1411,3 +1411,24 @@ worker 和一个生产 writeback Worker。dispatch/yield/block/wake、双向切�
 written 只表示写回完成，仍需下一轮 aging/clean eviction 才计入 reclaimed。pressure 门禁
 要求 wake/sleep、batch、clean、written、reclaimed 非零且 failure 为零；anonymous 份额
 受批次阶段时序影响，第五增量只要求系统总 anonymous swap 非零。
+
+## v2.10 文件页 Writeback 聚合日志
+
+第六增量只在进程和文件系统收束后的统计区追加八行，不在逐页写回、等待或唤醒热路径
+打印：
+
+```text
+[OS][KERNEL][FILE_PAGE_WRITEBACK] ACTIVE=0x0000000000000000
+[OS][KERNEL][FILE_PAGE_WRITEBACK] BEGINS=0x...
+[OS][KERNEL][FILE_PAGE_WRITEBACK] WAITERS=0x...
+[OS][KERNEL][FILE_PAGE_WRITEBACK] WAIT_COMMITS=0x...
+[OS][KERNEL][FILE_PAGE_WRITEBACK] COMPLETIONS=0x...
+[OS][KERNEL][FILE_PAGE_WRITEBACK] BROADCAST_WAKES=0x...
+[OS][KERNEL][FILE_PAGE_WRITEBACK] FAILURE_BROADCASTS=0x0000000000000000
+[OS][KERNEL][FILE_PAGE_WRITEBACK] RESULT_TAKES=0x...
+```
+
+正常 profile 要求 begin=completion、waiter=result take、wait commit=broadcast wake，且最终
+active/failure 为零。单 BSP 的真实调度可能让 waiter 数为零，因此 QEMU 不伪造非零竞争；
+强制重叠由 hosted concurrency 和 WaitQueue integration 提供。EIO/timeout profile 的失败
+证据使用设备层专用终态，不要求运行到正常统计尾部。

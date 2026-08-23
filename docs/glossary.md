@@ -280,6 +280,8 @@
 | WorkQueue | 用 generation handle 管理即时 FIFO、延迟任务、取消、完成和 drain 的内核任务队列 |
 | work expediting | 即时请求把同一 handle 的 Delayed 项从 deadline heap 提升到 ready FIFO，避免继续等待旧截止时间 |
 | writeback Worker | 与 User Thread 同批运行、在 WorkQueue 锁外分批写脏文件页的常驻 Kernel Thread；IRQ 只负责唤醒 |
+| writeback generation | 每次文件页进入 Writeback 时分配的 64 位代次；与文件页身份和物理地址共同定位唯一页级 I/O |
+| writeback waiter | 在同页 I/O 完成前等待唯一成功/失败结果的 writer 或同步调用者；不自行重复提交设备请求 |
 | PTE Accessed | x86 页表叶项的 A 位；硬件在翻译被使用时置位，内核清除后可观察下一周期是否再次访问 |
 | active/inactive | 经典双队列近似 LRU；Active 表示近期访问，Inactive 连续未访问后才可成为回收候选 |
 | aging round | 周期 Worker 对 file cache 与全部用户 PTE 完成一次 alias 聚合和冷热状态转换的事务 |

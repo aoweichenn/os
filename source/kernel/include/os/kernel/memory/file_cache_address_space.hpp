@@ -22,6 +22,7 @@ struct FileCachePageSnapshot final {
     uint64_t physical_address;
     uint64_t mapping_reference_count;
     uint64_t access_generation;
+    uint64_t writeback_generation;
     FileCachePageState state;
     FileReadaheadPageTag readahead_tag;
     bool prefetched;
@@ -86,6 +87,9 @@ class FileCacheAddressSpace final {
                                                       uint64_t physical_address) noexcept;
     [[nodiscard]] FileCacheAddressSpaceStatus Touch(uint64_t page_index, uint64_t physical_address,
                                                     uint64_t access_generation) noexcept;
+    [[nodiscard]] FileCacheAddressSpaceStatus
+    UpdateWritebackGeneration(uint64_t page_index, uint64_t physical_address,
+                              uint64_t expected_generation, uint64_t new_generation) noexcept;
     [[nodiscard]] FileCacheAddressSpaceStatus MarkPrefetched(uint64_t page_index,
                                                              uint64_t physical_address,
                                                              const FileReadaheadPageTag &tag,

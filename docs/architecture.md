@@ -2551,6 +2551,43 @@ FileDescription stream token
 BelowMinimum/close 取消全部，truncate 按文件身份取消。详见
 [ADR 0070](adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)。
 
+V2.10.6 让并发写回使用与 Loading 分离的等待域：
+
+```text
+owner Dirty/Error page（持 cache lock）
+  -> new immutable writeback generation -> Writeback
+  -> FilePageWritebackCoordinator::Begin
+  -> 解 cache lock -> BlockIo -> ATA/NVMe completion
+
+same-page writer / synchronous writeback（持 cache lock）
+  -> RegisterWaiter(identity, frame, writeback generation)
+  -> 解 cache lock -> PrepareWait -> Blocked(FilePageWriteback)
+
+owner completion（重新持 cache lock）
+  -> 校验 identity/frame/generation/Writeback
+  -> Clean | Error
+  -> Complete + exact WakeMany
+
+waiter wake
+  -> TakeResult
+  -> writer: Clean -> Dirty 后才修改页
+  -> sync: 继续扫描范围
+  -> failure: 返回同一 I/O 错误
+```
+
+writeback generation 与 LRU access generation 分字段保存，并发只读可以刷新热度而不改变
+进行中的 I/O 身份。页缓存锁只包含登记和状态发布，等待发生在锁外；scheduler lock 不反向
+进入 cache。一个
+owner 只能有一个 Writing，但旧 Completed 尚待领取时可开始下一页，避免唤醒后的调度延迟
+卡住 64 页批次。Clean reclaim 不等 Writeback，可同时释放其他未引用 Clean 页；需要脏页
+预算的 direct/background reclaim 经公共 writeback 等待后再回收。
+
+页级协调器只观察成功或来源失败；设备差异保留在 `AsynchronousBlockDevice` 和 BlockIo：
+ATA/NVMe 的 DeviceError、TimedOut、Cancelled 都先成为唯一设备终态，再由 writer 变成
+Error/paused 和打开实例错误序列。Loading/预读取消若已经提交设备请求，同样等待终态再按
+generation 丢弃。详见
+[ADR 0071](adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

@@ -510,8 +510,21 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   truncate 必须在修改映射/缓存前取消同文件任务；
 - `enqueue=completion+queued cancellation+active`、`task retain=release+active`，关闭后迟到
   反馈只能计入 stale，不能命中复用 token 或访问已销毁策略；
-- 5c 完成取消与反馈闭环；设备硬取消以及 writeback/reclaim/Loading 同时发生时的完整
-  EIO/timeout 矩阵仍留给第六增量。
+- 第六增量必须用独立固定容量 coordinator 管理 per-page Writeback；token 必须绑定文件页、
+  物理地址和 writeback generation，旧 token 不得命中复用槽；
+- 同页 MarkDirty、fsync/fdatasync 和同步 msync 必须在观察 Writeback 的 cache 临界区登记
+  waiter，再解锁进入 per-slot WaitQueue；completion-before-wait 不得丢失；
+- 写回成功后 writer waiter 才能把 Clean 重新脏化，同步 waiter 必须继续扫描范围；EIO、
+  timeout 或 cancel 映射出的失败必须原样广播，不得递归提交第二次 I/O；
+- `begin=completion+writing`、`waiter registration=result take+active`、
+  `wait commit=broadcast wake+waiting` 必须由 Validate、十万步随机模型和 QEMU 聚合验证；
+- Clean reclaim 必须能越过 Writeback 回收其他候选，不能释放设备仍在读取的 frame；
+  direct/background 脏页回收必须经公共 writeback 等待完成后再回收；
+- Loading 仍禁止 writeback/reclaim；取消中的预读若已经提交 BlockIo，必须等待唯一终态后
+  丢弃。已签发 ATA/NVMe 请求保持 best-effort cancel，不承诺硬件级 abort；
+- 第六增量故障矩阵必须组合页级 success/failure 广播、公共 BlockIo 的
+  Succeeded/DeviceError/TimedOut/Cancelled，以及 4 GiB ATA/NVMe primary、reclaim、OOM、
+  EIO/timeout 恢复与三启动 persistence；ABI 2.4.0、rootfs v4 和磁盘格式保持不变。
 
 ## v2.0 完成基线
 

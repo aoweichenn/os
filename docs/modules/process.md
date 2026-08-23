@@ -116,6 +116,20 @@ waiter 数并预留页面引用。登记后的协议损坏 fail-stop；正常 Pr
 waiter 和所有 per-slot queue 全部归零。设计见
 [ADR 0067](../adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)。
 
+## v2.10 FilePageWriteback 协调器
+
+第六增量的 `FilePageWritebackCoordinator` 与 Loading 使用不同的槽、waiter 和 WaitQueue。
+writeback 槽绑定文件页、frame、独立 writeback generation、owner 和终态；per-thread waiter
+保持 Registered/Waiting/Ready。一个 owner 只能有一个 Writing，但旧 Completed 尚未全部
+领取时可以继续下一页，避免批次被已经唤醒但尚未调度的 waiter 卡住。
+
+ProcessRuntime 在 scheduler lock 内组合 `PrepareWait + BlockCurrentThread` 与
+`Complete + WakeMany`，User/Kernel Thread 都可作为 owner 或 waiter。页缓存只在自己的锁内
+登记/发布，不在锁内阻塞；普通只读可刷新 LRU access generation，但不能改变写回身份。
+最终要求 writeback/waiter/per-slot queue 全部归零，并满足 begin/completion、
+registration/take、commit/wake 三组守恒。设计见
+[ADR 0071](../adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
+
 ### WorkQueue
 
 WorkQueue 不创建 Thread，也不调用任务。它只拥有 caller-storage entry、delayed heap、

@@ -24,6 +24,7 @@ enum class WaitCondition : uint64_t {
     BlockIoCompletion,
     ProcessIoDrain,
     FilePageLoading,
+    FilePageWriteback,
     MutexAvailable,
     KernelWork,
     TestCondition,

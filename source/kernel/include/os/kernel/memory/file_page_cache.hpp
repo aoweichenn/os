@@ -37,6 +37,7 @@ struct FilePageCacheEntry final {
     uint64_t physical_address;
     uint64_t mapping_reference_count;
     uint64_t access_generation;
+    uint64_t writeback_generation;
     FilePageCacheEntryState state;
     FileReadaheadPageTag readahead_tag;
     bool prefetched;
@@ -91,6 +92,8 @@ struct FilePageCacheStatistics final {
     uint64_t writeback_attempt_count;
     uint64_t successful_writeback_count;
     uint64_t failed_writeback_count;
+    uint64_t writeback_collision_count;
+    uint64_t writeback_wait_count;
     uint64_t address_space_count;
     uint64_t peak_address_space_count;
     uint64_t metadata_allocation_failure_count;
@@ -130,10 +133,17 @@ enum class FilePageCacheStatus : uint64_t {
     FrameReleaseFailed,
     LoadingWaitUnavailable,
     LoadingWaitFailed,
+    WritebackWaitUnavailable,
+    WritebackWaitFailed,
     Corrupt,
 };
 
 struct FilePageLoadToken final {
+    uint64_t slot_index;
+    uint64_t generation;
+};
+
+struct FilePageWritebackToken final {
     uint64_t slot_index;
     uint64_t generation;
 };
@@ -165,6 +175,31 @@ struct FilePageLoadWaitOperations final {
     FilePageLoadCompleteOperation complete;
 };
 
+using FilePageWritebackWaitAvailableOperation = bool (*)(void *context) noexcept;
+using FilePageWritebackBeginOperation = bool (*)(void *context, const FilePageIdentity &identity,
+                                                 uint64_t physical_address,
+                                                 uint64_t writeback_generation,
+                                                 FilePageWritebackToken &token) noexcept;
+using FilePageWritebackRegisterWaiterOperation = bool (*)(void *context,
+                                                          const FilePageIdentity &identity,
+                                                          uint64_t physical_address,
+                                                          uint64_t writeback_generation,
+                                                          FilePageWritebackToken &token) noexcept;
+using FilePageWritebackWaitOperation = bool (*)(void *context, FilePageWritebackToken token,
+                                                FilePageCacheStatus &result) noexcept;
+using FilePageWritebackCompleteOperation = bool (*)(void *context, FilePageWritebackToken token,
+                                                    FilePageCacheStatus result) noexcept;
+
+struct FilePageWritebackWaitOperations final {
+    void *context;
+    FilePageWritebackWaitAvailableOperation owner_available;
+    FilePageWritebackWaitAvailableOperation available;
+    FilePageWritebackBeginOperation begin;
+    FilePageWritebackRegisterWaiterOperation register_waiter;
+    FilePageWritebackWaitOperation wait;
+    FilePageWritebackCompleteOperation complete;
+};
+
 using FilePageReadaheadFeedbackOperation = bool (*)(void *context, const FileReadaheadPageTag &tag,
                                                     const FileReadaheadFeedback &feedback) noexcept;
 
@@ -185,6 +220,8 @@ class FilePageCache final {
                FilePageAccessOperation page_access_operation) noexcept;
     [[nodiscard]] FilePageCacheStatus
     ConfigureLoadingWait(const FilePageLoadWaitOperations &operations) noexcept;
+    [[nodiscard]] FilePageCacheStatus
+    ConfigureWritebackWait(const FilePageWritebackWaitOperations &operations) noexcept;
     [[nodiscard]] FilePageCacheStatus
     ConfigureReadaheadFeedback(const FilePageReadaheadFeedbackOperations &operations) noexcept;
     [[nodiscard]] FilePageCacheStatus Acquire(const FilePageIdentity &identity,
@@ -270,6 +307,12 @@ class FilePageCache final {
                                     uint64_t last_page_index, AddressSpaceRecord *&record,
                                     FileCachePageSnapshot &page) noexcept;
     [[nodiscard]] FilePageCacheStatus
+    SelectWritebackInProgress(const FileIdentity *identity, uint64_t first_page_index,
+                              uint64_t last_page_index, AddressSpaceRecord *&record,
+                              FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] bool RollbackWriteback(AddressSpaceRecord &record,
+                                         const FileCachePageSnapshot &page) noexcept;
+    [[nodiscard]] FilePageCacheStatus
     WritebackInternal(const FileIdentity *identity, uint64_t first_page_index,
                       uint64_t last_page_index, void *writer_context,
                       FilePageWriteOperation write_operation, uint64_t maximum_page_count,
@@ -280,6 +323,10 @@ class FilePageCache final {
     [[nodiscard]] bool LoadingWaiterCount(FilePageLoadToken token, uint64_t &waiter_count) noexcept;
     [[nodiscard]] bool CompleteLoadingWait(FilePageLoadToken token,
                                            FilePageCacheStatus result) noexcept;
+    [[nodiscard]] bool WritebackOwnerAvailable() const noexcept;
+    [[nodiscard]] bool WritebackWaitAvailable() const noexcept;
+    [[nodiscard]] bool CompleteWritebackWait(FilePageWritebackToken token,
+                                             FilePageCacheStatus result) noexcept;
     [[nodiscard]] bool ConsumePrefetchedIfDemand(AddressSpaceRecord &record,
                                                  const FileCachePageSnapshot &page,
                                                  FilePageAcquireIntent intent,
@@ -304,6 +351,7 @@ class FilePageCache final {
     void *page_access_context_{nullptr};
     FilePageAccessOperation page_access_operation_{nullptr};
     FilePageLoadWaitOperations load_wait_operations_{};
+    FilePageWritebackWaitOperations writeback_wait_operations_{};
     FilePageReadaheadFeedbackOperations readahead_feedback_operations_{};
     uint64_t access_generation_{};
     FilePageCacheStatistics statistics_{};
@@ -311,6 +359,7 @@ class FilePageCache final {
     bool background_writeback_paused_{};
     bool forced_background_writeback_requested_{};
     bool load_wait_operations_configured_{};
+    bool writeback_wait_operations_configured_{};
     bool readahead_feedback_operations_configured_{};
     mutable SpinLock lock_{};
     bool initialized_{};

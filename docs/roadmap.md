@@ -1427,7 +1427,7 @@ anonymous swap，并到达三项状态验证和 READY。
    User Kernel 续体、RuntimeMutex 锁拆分和生产迁移均已完成；
 4. FilePageCache Loading waiter 与同页 miss 合并（已完成）；
 5. 顺序预读、命中/浪费反馈与压力收缩（5a 纯策略、5b 生产执行、5c 取消/反馈均已完成）；
-6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
+6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵（已完成）。
 
 **第一增量边界**
 
@@ -1556,8 +1556,30 @@ CAW `verify` 为 236/236、0 失败：71 unit、79 integration、53 randomized�
 ATA/NVMe reclaim 85.05/82.94 秒，ATA/NVMe OOM 88.71/85.99 秒，NVMe root primary
 83.06 秒，ATA/NVMe persistence 177.10/169.12 秒。
 
-设备硬取消及并发 writeback/reclaim/Loading 的完整 EIO/timeout 矩阵仍由第六增量完成；
-v2.10 继续保持工程候选，不发布版本标签。
+**第六增量完成状态**
+
+`FilePageWritebackCoordinator` 按 Thread capacity 固定提供 writeback 槽、per-thread waiter 与
+per-slot WaitQueue。Dirty/Error 页进入 Writeback 时分配独立 writeback generation；同页 writer
+和同步调用在 cache lock 内登记，再锁外等待。成功 writer 只有在旧 I/O 完成后才能重新
+脏化，fsync/fdatasync/同步 msync 则继续扫描范围；失败向所有同期 waiter 广播同一结果。
+
+Clean reclaim 不等待当前 Writeback，可以回收其他无引用候选；脏页 direct/background
+reclaim 经公共 writeback 等待后再回收。Loading 和已取消预读仍等待已提交 BlockIo 的唯一
+终态后收束。已签发 ATA/NVMe 命令保持 best-effort cancel，不把无法保证的硬件 abort 写成
+系统能力。
+
+unit、WaitQueue integration、具名固定种子十万步 randomized 和强制 `std::thread` 交错分别
+验证完成先行、失败广播、旧 token、同页重新脏化、其他 Clean 页并发回收和 Error 重试。
+公共异步块模型的 success/EIO/timeout/cancel 与 4 GiB ATA/NVMe primary、reclaim、OOM、
+设备恢复和 persistence 共同形成分层故障矩阵。设计由
+[ADR 0071](adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md) 冻结。
+
+final fresh CAW `verify` 为 240/240、0 失败：72 unit、81 integration、54 randomized、
+33 system，含 25 条 failure-path；CTest 933.09 秒，端到端 1085 秒。4 GiB ATA primary
+73.90 秒，ATA/NVMe reclaim 81.34/80.23 秒，ATA/NVMe OOM 78.05/76.97 秒，NVMe root
+primary 72.26 秒，ATA/NVMe persistence 162.50/144.34 秒。
+
+V2.10 六个实现增量至此完成，但按用户要求继续保持工程候选，不发布版本标签。
 
 **退出条件**
 

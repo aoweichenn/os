@@ -66,7 +66,7 @@ file access generation，并在释放 frame 前删除 aging 身份。元数据�
 [ADR 0060](docs/adr/0060-v2-9-pte-accessed-page-aging.md)、
 [ADR 0061](docs/adr/0061-v2-9-background-watermark-reclaim.md)、
 [ADR 0062](docs/adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
-v2.10 前四增量与第五增量 5a 已完成：`BlockRequestQueue` 按实际解析顺序交付
+v2.10 六个增量已经完成：`BlockRequestQueue` 按实际解析顺序交付
 completion，类型擦除
 `AsynchronousBlockDevice` 统一 ATA/NVMe，BlockIo 协调器与常驻 Worker 负责非 IRQ 完成；
 User Kernel stack 续体和 `RuntimeMutex` 又让生产 rootfs/swap 在真实 completion 上睡眠。
@@ -75,7 +75,11 @@ waiter 预留真实页引用。第五增量 5a 又建立打开文件级 `FileRea
 上限、Linux 风格 4/2 倍窗口增长、随机重置、反馈缩放和压力收缩均已由纯模型冻结；5b 已
 把它接入共享 FileDescription、VFS 页观测、有界 retained-OpenFile 请求队列、Kernel worker
 和带 one-shot 预取身份的 FilePageCache。5c 又用 generation stream token 完成 producer
-反馈、close/reset/压力/truncate 取消和 stale 隔离；并发回收错误矩阵留给后续增量。
+反馈、close/reset/压力/truncate 取消和 stale 隔离。
+第六增量新增 per-page `FilePageWritebackCoordinator`：同页 `MarkDirty` 和同步 writeback
+等待唯一 generation 结果，其他 Clean 页仍可并发 reclaim；成功、EIO、timeout、cancel
+通过公共异步块终态与 ATA/NVMe 生产/持久化矩阵组合验证。已签发设备命令仍保持
+best-effort cancel，不伪造硬件 abort。
 边界见
 [v2.10 记录](docs/releases/v2.10.md) 与
 [ADR 0063](docs/adr/0063-v2-10-ordered-block-completion-channel.md)、
@@ -85,7 +89,8 @@ waiter 预留真实页引用。第五增量 5a 又建立打开文件级 `FileRea
 [ADR 0067](docs/adr/0067-v2-10-file-page-loading-waiter-and-reference-handoff.md)、
 [ADR 0068](docs/adr/0068-v2-10-per-open-file-readahead-policy.md)、
 [ADR 0069](docs/adr/0069-v2-10-production-readahead-execution.md)、
-[ADR 0070](docs/adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)。
+[ADR 0070](docs/adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)、
+[ADR 0071](docs/adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

@@ -290,6 +290,8 @@ VisitUserFilePageCache(void *context, FilePageCacheVisitOperation operation) noe
 [[nodiscard]] UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operations) noexcept;
+[[nodiscard]] UserAddressSpaceStatus
+ConfigureUserFilePageCacheWritebackWait(const FilePageWritebackWaitOperations &operations) noexcept;
 [[nodiscard]] UserAddressSpaceStatus ConfigureUserFilePageCacheReadaheadFeedback(
     const FilePageReadaheadFeedbackOperations &operations) noexcept;
 [[nodiscard]] UserVirtualMemoryStatus

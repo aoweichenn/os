@@ -1011,6 +1011,9 @@ WriteVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
             }
             return dirty_status == FilePageCacheStatus::DirtyLimitReached
                        ? fs::Status::CapacityExhausted
+                   : dirty_status == FilePageCacheStatus::SourceWriteFailed ||
+                           dirty_status == FilePageCacheStatus::FrameAccessFailed
+                       ? fs::Status::DeviceFailure
                        : fs::Status::Corrupt;
         }
         uint8_t *const page = PhysicalPagePointer(physical_address);
@@ -1607,6 +1610,10 @@ MakeSharedFilePageWritable(UserAddressSpace &address_space, const uint64_t page_
         user_file_page_cache.MarkDirty(page_identity, mapping.physical_address);
     if (dirty_status == FilePageCacheStatus::DirtyLimitReached) {
         return UserVirtualMemoryStatus::PageCacheExhausted;
+    }
+    if (dirty_status == FilePageCacheStatus::SourceWriteFailed ||
+        dirty_status == FilePageCacheStatus::FrameAccessFailed) {
+        return UserVirtualMemoryStatus::FileWriteFailed;
     }
     if (dirty_status != FilePageCacheStatus::Succeeded ||
         ReplaceUserPage(address_space.root_physical_address, page_address, mapping.physical_address,
@@ -2208,6 +2215,14 @@ UserAddressSpaceStatus AttachUserFilePageCache(fs::Vfs &vfs) noexcept {
 UserAddressSpaceStatus
 ConfigureUserFilePageCacheLoadingWait(const FilePageLoadWaitOperations &operations) noexcept {
     return user_virtual_memory_initialized && user_file_page_cache.ConfigureLoadingWait(
+                                                  operations) == FilePageCacheStatus::Succeeded
+               ? UserAddressSpaceStatus::Succeeded
+               : UserAddressSpaceStatus::VirtualMemoryInitializationFailed;
+}
+
+UserAddressSpaceStatus ConfigureUserFilePageCacheWritebackWait(
+    const FilePageWritebackWaitOperations &operations) noexcept {
+    return user_virtual_memory_initialized && user_file_page_cache.ConfigureWritebackWait(
                                                   operations) == FilePageCacheStatus::Succeeded
                ? UserAddressSpaceStatus::Succeeded
                : UserAddressSpaceStatus::VirtualMemoryInitializationFailed;

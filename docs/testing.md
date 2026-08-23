@@ -1950,3 +1950,28 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   53 randomized、33 system，含 25 条 failure-path；CTest 1038.99 秒，端到端 1198 秒；
 - fresh 4 GiB ATA primary 86.47 秒，ATA/NVMe reclaim 85.05/82.94 秒，ATA/NVMe OOM
   88.71/85.99 秒，NVMe root primary 83.06 秒，ATA/NVMe persistence 177.10/169.12 秒。
+
+### 文件页写回等待与故障矩阵第六增量
+
+- `os_kernel_file_page_writeback_unit_tests` 覆盖两个同期 waiter、完成前/完成后
+  PrepareWait、同 owner 在旧 Completed 未领取时继续下一页、失败广播和 stale token；
+- `os_kernel_file_page_writeback_randomized_tests` 使用种子 `0x5752495445574149` 执行十万轮
+  0..7 waiter 的成功/失败、完成先行、乱序 TakeResult，并逐轮调用 `Validate`；
+- `os_kernel_file_page_writeback_wait_queue_integration_tests` 把两个真实 scheduler Thread
+  阻塞到独立 `FilePageWriteback` WaitQueue，再由 owner 精确 WakeMany 并交付同一错误；
+- `os_kernel_file_page_writeback_concurrency_integration_tests` 使用三个 hosted Thread 强制
+  Writeback 与同页 MarkDirty、范围同步重叠；期间并发只读必须能刷新 LRU 且不改变
+  writeback generation，另一 Clean 页必须完成 reclaim。成功路径在旧 I/O 后重新脏化，
+  失败路径向 owner/两个 waiter 交付同一 SourceWriteFailed，再验证 Error→Dirty→Clean
+  显式恢复；该强制交错重复 100 轮通过；
+- 公共 asynchronous-device/BlockIo 单元、集成和随机模型继续覆盖 Succeeded、DeviceError、
+  TimedOut、Cancelled 的单赢家与 owner 唤醒；QEMU 分层矩阵覆盖 ATA/NVMe primary、reclaim、
+  OOM、NVMe EIO/timeout、ATA timeout/error 和两条三启动 persistence；
+- clean CAW Debug build 3370 步零警告；上述新增/相关 cache/address-space、BlockIo、异步
+  设备、tooling 和命名门禁为 18/18、0 失败，强制并发交错另重复 100 轮通过；
+- final fresh CAW `python3 tools/os.py verify` 为 240/240、0 失败：72 unit、81 integration、
+  54 randomized、33 system，含 25 条 failure-path；CTest 933.09 秒，端到端 1085 秒；
+- final 4 GiB ATA primary 73.90 秒；ATA/NVMe reclaim 81.34/80.23 秒，ATA/NVMe OOM
+  78.05/76.97 秒，NVMe EIO/timeout 2.29/9.72 秒，NVMe root primary 72.26 秒，ATA/NVMe
+  persistence 162.50/144.34 秒。正常 QEMU 的 writeback begin/completion 相等，最终
+  active/failure 为零；单 BSP waiter 允许为零，非零竞争由上述 hosted integration 提供。

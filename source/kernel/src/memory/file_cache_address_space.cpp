@@ -17,6 +17,7 @@ struct alignas(OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_PAGE_ALIGNMENT_BYTES)
     uint64_t physical_address;
     uint64_t mapping_reference_count;
     uint64_t access_generation;
+    uint64_t writeback_generation;
     FileCachePageState state;
     FileReadaheadPageTag readahead_tag;
 };
@@ -85,6 +86,7 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Insert(const uint64_t page_in
         .physical_address = physical_address,
         .mapping_reference_count = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE,
         .access_generation = this->access_generation_,
+        .writeback_generation = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE,
         .state = state,
         .readahead_tag = FileReadaheadPageTag{},
     };
@@ -231,6 +233,32 @@ FileCacheAddressSpace::Touch(const uint64_t page_index, const uint64_t physical_
     return FileCacheAddressSpaceStatus::Succeeded;
 }
 
+FileCacheAddressSpaceStatus FileCacheAddressSpace::UpdateWritebackGeneration(
+    const uint64_t page_index, const uint64_t physical_address, const uint64_t expected_generation,
+    const uint64_t new_generation) noexcept {
+    SpinLockGuard guard{this->lock_};
+    if (!this->initialized_) {
+        return FileCacheAddressSpaceStatus::NotInitialized;
+    }
+    if (expected_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
+        new_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
+        expected_generation == new_generation) {
+        return FileCacheAddressSpaceStatus::InvalidPage;
+    }
+    Page *page = nullptr;
+    const FileCacheAddressSpaceStatus status = this->LookupPage(page_index, page);
+    if (status != FileCacheAddressSpaceStatus::Succeeded) {
+        return status;
+    }
+    if (page->physical_address != physical_address ||
+        page->state != FileCachePageState::Writeback ||
+        page->writeback_generation != expected_generation) {
+        return FileCacheAddressSpaceStatus::InvalidState;
+    }
+    page->writeback_generation = new_generation;
+    return FileCacheAddressSpaceStatus::Succeeded;
+}
+
 FileCacheAddressSpaceStatus FileCacheAddressSpace::MarkPrefetched(const uint64_t page_index,
                                                                   const uint64_t physical_address,
                                                                   const FileReadaheadPageTag &tag,
@@ -328,6 +356,13 @@ FileCacheAddressSpace::Transition(const uint64_t page_index, const uint64_t phys
     if (!FileCacheAddressSpace::TransitionIsValid(expected_state, new_state)) {
         return FileCacheAddressSpaceStatus::InvalidState;
     }
+    if ((new_state == FileCachePageState::Writeback &&
+         (page->writeback_generation != OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
+          page->access_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE)) ||
+        (expected_state == FileCachePageState::Writeback &&
+         page->writeback_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE)) {
+        return FileCacheAddressSpaceStatus::Corrupt;
+    }
     const FileCacheAddressSpaceStatus clear_status =
         this->ClearStateMark(page_index, expected_state);
     if (clear_status != FileCacheAddressSpaceStatus::Succeeded) {
@@ -346,6 +381,11 @@ FileCacheAddressSpace::Transition(const uint64_t page_index, const uint64_t phys
     }
     this->IncrementStateCount(new_state);
     page->state = new_state;
+    if (new_state == FileCachePageState::Writeback) {
+        page->writeback_generation = page->access_generation;
+    } else if (expected_state == FileCachePageState::Writeback) {
+        page->writeback_generation = OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE;
+    }
     ++this->statistics_.state_transition_count;
     return FileCacheAddressSpaceStatus::Succeeded;
 }
@@ -529,6 +569,9 @@ FileCacheAddressSpaceStatus FileCacheAddressSpace::Validate() const noexcept {
              (OS_KERNEL_MEMORY_PAGE_SIZE_BYTES - OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_SINGLE_UNIT)) !=
                 OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
             stored_page.access_generation == OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE ||
+            ((stored_page.state == FileCachePageState::Writeback) !=
+             (stored_page.writeback_generation !=
+              OS_KERNEL_FILE_CACHE_ADDRESS_SPACE_EMPTY_VALUE)) ||
             !FileCacheAddressSpace::StateIsValid(stored_page.state) ||
             (!FileReadaheadPageTagIsEmpty(stored_page.readahead_tag) &&
              !FileReadaheadPageTagIsValid(stored_page.readahead_tag)) ||
@@ -678,6 +721,7 @@ FileCachePageSnapshot FileCacheAddressSpace::Snapshot(const Page &page) noexcept
         .physical_address = page.physical_address,
         .mapping_reference_count = page.mapping_reference_count,
         .access_generation = page.access_generation,
+        .writeback_generation = page.writeback_generation,
         .state = page.state,
         .readahead_tag = page.readahead_tag,
         .prefetched = FileReadaheadPageTagIsValid(page.readahead_tag),
