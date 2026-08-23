@@ -88,6 +88,30 @@ enum class UserAddressSpaceStatus : uint64_t {
     RollbackFailed,
 };
 
+enum class UserAddressSpaceDestructionStage : uint64_t {
+    None,
+    QueryPage,
+    SwapRelease,
+    BackingDescriptor,
+    FileCacheRelease,
+    PrivatePageRelease,
+    ValidateMap,
+    ReadArea,
+    ResidentAccounting,
+    DestroyPageTable,
+    ReleaseBacking,
+    DestroyMap,
+    TrimCache,
+    UncommitMemory,
+};
+
+struct UserAddressSpaceDestructionDiagnostics final {
+    UserAddressSpaceDestructionStage stage;
+    uint64_t virtual_address;
+    uint64_t physical_address;
+    uint64_t status;
+};
+
 enum class UserVirtualMemoryStatus : uint64_t {
     Succeeded,
     NotInitialized,
@@ -285,6 +309,8 @@ CloneUserAddressSpaceForFork(UserAddressSpace &parent_address_space,
 RestoreUserAddressSpaceAfterFailedFork(UserAddressSpace &parent_address_space) noexcept;
 [[nodiscard]] UserAddressSpaceStatus
 DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept;
+[[nodiscard]] UserAddressSpaceDestructionDiagnostics
+GetUserAddressSpaceDestructionDiagnostics() noexcept;
 [[nodiscard]] UserAddressSpaceStatus PrepareUserStack(UserAddressSpace &address_space,
                                                       uint64_t lowest_required_address) noexcept;
 [[nodiscard]] UserAddressSpaceStatus PrepareUserStackRange(UserAddressSpace &address_space,

@@ -43,6 +43,16 @@ struct BlockRequest final {
     BlockRequestState state;
     BlockRequestResult result;
     uint64_t next_queue_index;
+    uint64_t next_completion_index;
+};
+
+struct BlockCompletion final {
+    uint64_t request_identifier;
+    BlockOperation operation;
+    uint64_t logical_block_address;
+    uint64_t logical_block_count;
+    uint64_t owner_thread_index;
+    BlockRequestResult result;
 };
 
 struct BlockRequestQueueStatistics final {
@@ -61,6 +71,7 @@ struct BlockRequestQueueStatistics final {
     uint64_t timeout_completion_count;
     uint64_t cancellation_count;
     uint64_t reap_count;
+    uint64_t completion_delivery_count;
     uint64_t duplicate_resolution_count;
     uint64_t capacity_rejection_count;
 };
@@ -106,6 +117,8 @@ class BlockRequestQueue final {
     CancelQueued(uint64_t request_identifier) noexcept;
     [[nodiscard]] BlockRequestQueueStatus
     Read(uint64_t request_identifier, BlockRequest &request) const noexcept;
+    [[nodiscard]] BlockRequestQueueStatus
+    TakeCompletion(BlockCompletion &completion, bool &available) noexcept;
     [[nodiscard]] BlockRequestQueueStatus Reap(uint64_t request_identifier) noexcept;
     [[nodiscard]] BlockRequestQueueStatus Validate() const noexcept;
     [[nodiscard]] BlockRequestQueueStatistics Statistics() const noexcept;
@@ -123,6 +136,8 @@ class BlockRequestQueue final {
     [[nodiscard]] uint64_t IndexOf(const BlockRequest &request) const noexcept;
     void AppendQueuedIndex(uint64_t request_index) noexcept;
     [[nodiscard]] bool RemoveQueuedIndex(uint64_t request_index) noexcept;
+    void AppendCompletionIndex(uint64_t request_index) noexcept;
+    [[nodiscard]] bool RemoveCompletionIndex(uint64_t request_index) noexcept;
     void RecordResolution(BlockRequestResult result) noexcept;
 
     BlockRequest *storage_{nullptr};
@@ -130,6 +145,8 @@ class BlockRequestQueue final {
     BlockDeviceGeometry geometry_{};
     uint64_t queue_head_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
     uint64_t queue_tail_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
+    uint64_t completion_head_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
+    uint64_t completion_tail_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
     uint64_t next_identifier_{OS_KERNEL_BLOCK_REQUEST_FIRST_IDENTIFIER};
     BlockRequestQueueStatistics statistics_{};
     bool initialized_{};

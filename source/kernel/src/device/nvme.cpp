@@ -64,8 +64,6 @@ constexpr uint64_t OS_KERNEL_NVME_TEST_CHECKSUM_MULTIPLIER = 1099511628211ULL;
 alignas(OS_KERNEL_NVME_MEMORY_PAGE_SIZE_BYTES)
 uint8_t nvme_io_write_test_buffers[OS_KERNEL_NVME_TEST_REQUEST_COUNT]
                                   [OS_KERNEL_NVME_MAXIMUM_TRANSFER_SIZE_BYTES];
-alignas(OS_KERNEL_NVME_MEMORY_PAGE_SIZE_BYTES)
-uint8_t nvme_io_read_test_buffer[OS_KERNEL_NVME_MAXIMUM_TRANSFER_SIZE_BYTES];
 
 NvmeController *volatile active_nvme_controller;
 bool nvme_command_timeout_injection_armed;
@@ -110,6 +108,57 @@ void ProcessorPause() noexcept { asm volatile("pause" : : : "memory"); }
     return true;
 }
 
+[[nodiscard]] AsynchronousBlockDeviceStatus
+MapNvmeStatusToAsynchronousStatus(const NvmeStatus status) noexcept {
+    if (status == NvmeStatus::Succeeded) {
+        return AsynchronousBlockDeviceStatus::Succeeded;
+    }
+    if (status == NvmeStatus::IoNotReady) {
+        return AsynchronousBlockDeviceStatus::NotReady;
+    }
+    if (status == NvmeStatus::InvalidIoRequest || status == NvmeStatus::CommandBuildFailed) {
+        return AsynchronousBlockDeviceStatus::InvalidRequest;
+    }
+    if (status == NvmeStatus::IoRequestUnavailable) {
+        return AsynchronousBlockDeviceStatus::CapacityExhausted;
+    }
+    if (status == NvmeStatus::IoRequestNotFound) {
+        return AsynchronousBlockDeviceStatus::RequestNotFound;
+    }
+    if (status == NvmeStatus::CommandTimedOut || status == NvmeStatus::CommandCompletionFailed ||
+        status == NvmeStatus::ControllerResetFailed || status == NvmeStatus::ControllerFatal) {
+        return AsynchronousBlockDeviceStatus::DeviceFailure;
+    }
+    return AsynchronousBlockDeviceStatus::Corrupt;
+}
+
+[[nodiscard]] bool MapBlockOperationToNvmeOperation(const BlockOperation operation,
+                                                    NvmeIoOperation &nvme_operation) noexcept {
+    if (operation == BlockOperation::Read) {
+        nvme_operation = NvmeIoOperation::Read;
+        return true;
+    }
+    if (operation == BlockOperation::Write) {
+        nvme_operation = NvmeIoOperation::Write;
+        return true;
+    }
+    if (operation == BlockOperation::Flush) {
+        nvme_operation = NvmeIoOperation::Flush;
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] BlockOperation
+MapNvmeOperationToBlockOperation(const NvmeIoOperation operation) noexcept {
+    if (operation == NvmeIoOperation::Read) {
+        return BlockOperation::Read;
+    }
+    if (operation == NvmeIoOperation::Write) {
+        return BlockOperation::Write;
+    }
+    return BlockOperation::Flush;
+}
 }
 
 NvmeStatus NvmeNamespaceDevice::Initialize(
@@ -158,6 +207,48 @@ BlockDeviceStatus NvmeNamespaceDevice::Flush() noexcept {
 }
 
 const BlockDeviceGeometry &NvmeNamespaceDevice::Geometry() const noexcept {
+    return this->geometry_;
+}
+
+AsynchronousBlockDeviceStatus NvmeNamespaceDevice::SubmitBlockRequest(
+    const BlockOperation operation, const uint64_t logical_block_address, uint8_t *const buffer,
+    const uint64_t buffer_size_bytes, const uint64_t owner_thread_index,
+    const uint64_t deadline_nanoseconds, uint64_t &request_identifier) noexcept {
+    request_identifier = 0ULL;
+    return this->initialized_ && this->controller_ != nullptr
+               ? this->controller_->SubmitNamespaceBlockRequest(
+                     this->namespace_identifier_, this->geometry_, operation, logical_block_address,
+                     buffer, buffer_size_bytes, owner_thread_index, deadline_nanoseconds,
+                     request_identifier)
+               : AsynchronousBlockDeviceStatus::NotReady;
+}
+
+AsynchronousBlockDeviceStatus
+NvmeNamespaceDevice::CancelBlockRequest(const uint64_t request_identifier) noexcept {
+    return this->initialized_ && this->controller_ != nullptr
+               ? this->controller_->CancelNamespaceBlockRequest(this->namespace_identifier_,
+                                                                request_identifier)
+               : AsynchronousBlockDeviceStatus::NotReady;
+}
+
+AsynchronousBlockDeviceStatus
+NvmeNamespaceDevice::ResolveBlockTimeouts(const uint64_t now_nanoseconds) noexcept {
+    return this->initialized_ && this->controller_ != nullptr
+               ? this->controller_->ResolveNamespaceBlockTimeouts(now_nanoseconds)
+               : AsynchronousBlockDeviceStatus::NotReady;
+}
+
+AsynchronousBlockDeviceStatus NvmeNamespaceDevice::TakeBlockCompletion(BlockCompletion &completion,
+                                                                       bool &available) noexcept {
+    completion = BlockCompletion{};
+    available = false;
+    return this->initialized_ && this->controller_ != nullptr
+               ? this->controller_->TakeNamespaceBlockCompletion(this->namespace_identifier_,
+                                                                 completion, available)
+               : AsynchronousBlockDeviceStatus::NotReady;
+}
+
+BlockDeviceGeometry NvmeNamespaceDevice::AsynchronousGeometry() const noexcept {
     return this->geometry_;
 }
 
@@ -426,8 +517,10 @@ NvmeStatus NvmeController::ConfigureIoQueues(NvmeProbeResult &result) noexcept {
     this->outstanding_request_count_ = 0ULL;
     for (uint64_t slot_index = 0ULL;
          slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT; ++slot_index) {
-        this->io_request_slots_[slot_index].request_identifier = 0ULL;
-        this->io_request_slots_[slot_index].state = NvmeIoRequestState::Free;
+        NvmeIoRequestSlot &slot = this->io_request_slots_[slot_index];
+        if (!slot.asynchronous || slot.state != NvmeIoRequestState::Completed) {
+            this->ReleaseIoRequestSlot(slot);
+        }
     }
     this->io_ready_ = true;
     if (this->UnmaskMsix() != NvmeStatus::Succeeded) {
@@ -451,6 +544,12 @@ NvmeStatus NvmeController::RunIoSelfTest(NvmeProbeResult &result) noexcept {
         transfer_block_count * OS_KERNEL_NVME_TEST_REQUEST_COUNT;
     const uint64_t first_test_logical_block_address =
         this->geometry_.logical_block_count - total_test_block_count;
+    const uint64_t start_nanoseconds = this->time_operation_();
+    const uint64_t timeout_nanoseconds =
+        this->capabilities_.ready_timeout_milliseconds * OS_KERNEL_NVME_NANOSECONDS_PER_MILLISECOND;
+    const uint64_t deadline_nanoseconds = timeout_nanoseconds > UINT64_MAX - start_nanoseconds
+                                              ? UINT64_MAX
+                                              : start_nanoseconds + timeout_nanoseconds;
     uint64_t request_identifiers[OS_KERNEL_NVME_TEST_REQUEST_COUNT]{};
     for (uint64_t request_index = 0ULL; request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT;
          ++request_index) {
@@ -461,69 +560,73 @@ NvmeStatus NvmeController::RunIoSelfTest(NvmeProbeResult &result) noexcept {
                 NvmeTestPatternByte(byte_index, logical_block_address);
         }
     }
+    NvmeNamespaceDevice namespace_device{};
+    if (namespace_device.Initialize(*this, OS_KERNEL_NVME_PRIMARY_NAMESPACE_IDENTIFIER,
+                                    this->geometry_) != NvmeStatus::Succeeded) {
+        return NvmeStatus::IoSelfTestFailed;
+    }
+    AsynchronousBlockDevice &asynchronous_device = namespace_device;
     const bool interrupts_were_enabled = DisableInterrupts();
-    NvmeStatus status = NvmeStatus::Succeeded;
+    AsynchronousBlockDeviceStatus asynchronous_status = AsynchronousBlockDeviceStatus::Succeeded;
     for (uint64_t request_index = 0ULL;
-         request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT && status == NvmeStatus::Succeeded;
+         request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT &&
+         asynchronous_status == AsynchronousBlockDeviceStatus::Succeeded;
          ++request_index) {
         const uint64_t logical_block_address =
             first_test_logical_block_address + request_index * transfer_block_count;
-        status = this->SubmitIoRequest(
-            NvmeIoOperation::Write, logical_block_address, transfer_block_count,
-            OS_KERNEL_NVME_PRIMARY_NAMESPACE_IDENTIFIER, this->geometry_,
-            nvme_io_write_test_buffers[request_index], transfer_size_bytes,
-            request_identifiers[request_index]);
+        asynchronous_status = asynchronous_device.Submit(
+            BlockOperation::Write, logical_block_address, nvme_io_write_test_buffers[request_index],
+            transfer_size_bytes, OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX,
+            deadline_nanoseconds, request_identifiers[request_index]);
     }
     RestoreInterrupts(interrupts_were_enabled);
-    if (status != NvmeStatus::Succeeded) {
-        return status;
+    if (asynchronous_status != AsynchronousBlockDeviceStatus::Succeeded ||
+        this->WaitForAsynchronousCompletions(asynchronous_device, request_identifiers,
+                                             OS_KERNEL_NVME_TEST_REQUEST_COUNT,
+                                             BlockOperation::Write) != NvmeStatus::Succeeded) {
+        return NvmeStatus::IoSelfTestFailed;
     }
-    for (uint64_t request_index = 0ULL;
-         request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT && status == NvmeStatus::Succeeded;
-         ++request_index) {
-        status = this->WaitForIoRequest(request_identifiers[request_index], nullptr,
-                                        transfer_size_bytes);
-    }
-    if (status != NvmeStatus::Succeeded) {
-        return status;
-    }
-    BlockDevice &block_device = *this;
-    if (block_device.Flush() != BlockDeviceStatus::Succeeded) {
+    if (asynchronous_device.Submit(BlockOperation::Flush, 0ULL, nullptr, 0ULL,
+                                   OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX,
+                                   deadline_nanoseconds, request_identifiers[0]) !=
+            AsynchronousBlockDeviceStatus::Succeeded ||
+        this->WaitForAsynchronousCompletions(asynchronous_device, request_identifiers, 1ULL,
+                                             BlockOperation::Flush) != NvmeStatus::Succeeded) {
         return NvmeStatus::IoSelfTestFailed;
     }
     const bool read_interrupts_were_enabled = DisableInterrupts();
     for (uint64_t request_index = 0ULL;
-         request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT && status == NvmeStatus::Succeeded;
+         request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT &&
+         asynchronous_status == AsynchronousBlockDeviceStatus::Succeeded;
          ++request_index) {
         const uint64_t logical_block_address =
             first_test_logical_block_address + request_index * transfer_block_count;
-        status = this->SubmitIoRequest(
-            NvmeIoOperation::Read, logical_block_address, transfer_block_count,
-            OS_KERNEL_NVME_PRIMARY_NAMESPACE_IDENTIFIER, this->geometry_, nullptr,
-            transfer_size_bytes, request_identifiers[request_index]);
+        asynchronous_status = asynchronous_device.Submit(
+            BlockOperation::Read, logical_block_address, nvme_io_write_test_buffers[request_index],
+            transfer_size_bytes, OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX,
+            deadline_nanoseconds, request_identifiers[request_index]);
     }
     RestoreInterrupts(read_interrupts_were_enabled);
+    if (asynchronous_status != AsynchronousBlockDeviceStatus::Succeeded ||
+        this->WaitForAsynchronousCompletions(asynchronous_device, request_identifiers,
+                                             OS_KERNEL_NVME_TEST_REQUEST_COUNT,
+                                             BlockOperation::Read) != NvmeStatus::Succeeded) {
+        return NvmeStatus::IoSelfTestFailed;
+    }
     uint64_t checksum = OS_KERNEL_NVME_TEST_CHECKSUM_INITIAL_VALUE;
-    for (uint64_t request_index = 0ULL;
-         request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT && status == NvmeStatus::Succeeded;
+    for (uint64_t request_index = 0ULL; request_index < OS_KERNEL_NVME_TEST_REQUEST_COUNT;
          ++request_index) {
-        status = this->WaitForIoRequest(request_identifiers[request_index],
-                                        nvme_io_read_test_buffer, transfer_size_bytes);
-        if (status != NvmeStatus::Succeeded) {
-            break;
-        }
+        const uint64_t logical_block_address =
+            first_test_logical_block_address + request_index * transfer_block_count;
         for (uint64_t byte_index = 0ULL; byte_index < transfer_size_bytes; ++byte_index) {
-            if (nvme_io_read_test_buffer[byte_index] !=
-                nvme_io_write_test_buffers[request_index][byte_index]) {
+            if (nvme_io_write_test_buffers[request_index][byte_index] !=
+                NvmeTestPatternByte(byte_index, logical_block_address)) {
                 return NvmeStatus::DataVerificationFailed;
             }
-            checksum =
-                (checksum ^ static_cast<uint64_t>(nvme_io_read_test_buffer[byte_index])) *
-                OS_KERNEL_NVME_TEST_CHECKSUM_MULTIPLIER;
+            checksum = (checksum ^ static_cast<uint64_t>(
+                                       nvme_io_write_test_buffers[request_index][byte_index])) *
+                       OS_KERNEL_NVME_TEST_CHECKSUM_MULTIPLIER;
         }
-    }
-    if (status != NvmeStatus::Succeeded) {
-        return status;
     }
     result.io_test_logical_block_address = first_test_logical_block_address;
     result.io_test_logical_block_count = transfer_block_count;
@@ -593,6 +696,8 @@ NvmeStatus NvmeController::Shutdown() noexcept {
     this->time_operation_ = nullptr;
     this->geometry_ = BlockDeviceGeometry{};
     this->io_queue_depth_ = 0ULL;
+    this->io_completion_list_head_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    this->io_completion_list_tail_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     return NvmeStatus::Succeeded;
 }
 
@@ -629,10 +734,10 @@ BlockDeviceStatus NvmeController::ReadNamespaceBlocks(
         return validation_status;
     }
     uint64_t request_identifier = 0ULL;
-    return this->SubmitIoRequest(
-               NvmeIoOperation::Read, logical_block_address, logical_block_count,
-               namespace_identifier, geometry, nullptr, block_size_bytes,
-               request_identifier) == NvmeStatus::Succeeded &&
+    return this->SubmitIoRequest(NvmeIoOperation::Read, logical_block_address, logical_block_count,
+                                 namespace_identifier, geometry, nullptr, nullptr, block_size_bytes,
+                                 OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX, 0ULL, false,
+                                 request_identifier) == NvmeStatus::Succeeded &&
                    this->WaitForIoRequest(request_identifier, block, block_size_bytes) ==
                        NvmeStatus::Succeeded
                ? BlockDeviceStatus::Succeeded
@@ -652,10 +757,10 @@ BlockDeviceStatus NvmeController::WriteNamespaceBlocks(
                    : validation_status;
     }
     uint64_t request_identifier = 0ULL;
-    return this->SubmitIoRequest(
-               NvmeIoOperation::Write, logical_block_address, logical_block_count,
-               namespace_identifier, geometry, block, block_size_bytes,
-               request_identifier) == NvmeStatus::Succeeded &&
+    return this->SubmitIoRequest(NvmeIoOperation::Write, logical_block_address, logical_block_count,
+                                 namespace_identifier, geometry, block, nullptr, block_size_bytes,
+                                 OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX, 0ULL, false,
+                                 request_identifier) == NvmeStatus::Succeeded &&
                    this->WaitForIoRequest(request_identifier, nullptr, block_size_bytes) ==
                        NvmeStatus::Succeeded
                ? BlockDeviceStatus::Succeeded
@@ -668,13 +773,166 @@ BlockDeviceStatus NvmeController::FlushNamespace(
         return BlockDeviceStatus::FlushFailed;
     }
     uint64_t request_identifier = 0ULL;
-    return this->SubmitIoRequest(
-               NvmeIoOperation::Flush, 0ULL, 0ULL, namespace_identifier,
-               this->geometry_, nullptr, 0ULL, request_identifier) == NvmeStatus::Succeeded &&
+    return this->SubmitIoRequest(NvmeIoOperation::Flush, 0ULL, 0ULL, namespace_identifier,
+                                 this->geometry_, nullptr, nullptr, 0ULL,
+                                 OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX, 0ULL, false,
+                                 request_identifier) == NvmeStatus::Succeeded &&
                    this->WaitForIoRequest(request_identifier, nullptr, 0ULL) ==
                        NvmeStatus::Succeeded
                ? BlockDeviceStatus::Succeeded
                : BlockDeviceStatus::FlushFailed;
+}
+
+AsynchronousBlockDeviceStatus NvmeController::SubmitNamespaceBlockRequest(
+    const uint32_t namespace_identifier, const BlockDeviceGeometry &geometry,
+    const BlockOperation operation, const uint64_t logical_block_address, uint8_t *const buffer,
+    const uint64_t buffer_size_bytes, const uint64_t owner_thread_index,
+    const uint64_t deadline_nanoseconds, uint64_t &request_identifier) noexcept {
+    request_identifier = 0ULL;
+    NvmeIoOperation nvme_operation = NvmeIoOperation::Flush;
+    if (!MapBlockOperationToNvmeOperation(operation, nvme_operation) ||
+        deadline_nanoseconds == 0ULL || namespace_identifier == 0U) {
+        return AsynchronousBlockDeviceStatus::InvalidRequest;
+    }
+    uint64_t logical_block_count = 0ULL;
+    if (operation == BlockOperation::Flush) {
+        if (!geometry.flush_supported || logical_block_address != 0ULL || buffer != nullptr ||
+            buffer_size_bytes != 0ULL) {
+            return AsynchronousBlockDeviceStatus::InvalidRequest;
+        }
+    } else {
+        if (buffer == nullptr || buffer_size_bytes == 0ULL ||
+            geometry.logical_block_size_bytes == 0ULL ||
+            buffer_size_bytes % geometry.logical_block_size_bytes != 0ULL ||
+            (operation == BlockOperation::Write && !geometry.write_supported)) {
+            return AsynchronousBlockDeviceStatus::InvalidRequest;
+        }
+        logical_block_count = buffer_size_bytes / geometry.logical_block_size_bytes;
+        if (logical_block_count == 0ULL ||
+            logical_block_count > geometry.maximum_transfer_block_count ||
+            logical_block_address >= geometry.logical_block_count ||
+            logical_block_count > geometry.logical_block_count - logical_block_address) {
+            return AsynchronousBlockDeviceStatus::InvalidRequest;
+        }
+    }
+    const NvmeStatus submit_status = this->SubmitIoRequest(
+        nvme_operation, logical_block_address, logical_block_count, namespace_identifier, geometry,
+        operation == BlockOperation::Write ? buffer : nullptr,
+        operation == BlockOperation::Read ? buffer : nullptr, buffer_size_bytes, owner_thread_index,
+        deadline_nanoseconds, true, request_identifier);
+    return MapNvmeStatusToAsynchronousStatus(submit_status);
+}
+
+AsynchronousBlockDeviceStatus
+NvmeController::CancelNamespaceBlockRequest(const uint32_t namespace_identifier,
+                                            const uint64_t request_identifier) noexcept {
+    const bool interrupts_were_enabled = DisableInterrupts();
+    NvmeIoRequestSlot *const slot = this->FindIoRequestSlot(request_identifier);
+    if (slot == nullptr || !slot->asynchronous ||
+        slot->namespace_identifier != namespace_identifier) {
+        RestoreInterrupts(interrupts_were_enabled);
+        return AsynchronousBlockDeviceStatus::RequestNotFound;
+    }
+    const AsynchronousBlockDeviceStatus status =
+        slot->state == NvmeIoRequestState::Completed
+            ? AsynchronousBlockDeviceStatus::RequestAlreadyResolved
+            : AsynchronousBlockDeviceStatus::RequestInProgress;
+    RestoreInterrupts(interrupts_were_enabled);
+    return status;
+}
+
+AsynchronousBlockDeviceStatus
+NvmeController::ResolveNamespaceBlockTimeouts(const uint64_t now_nanoseconds) noexcept {
+    if (this->DrainIoCompletions() != NvmeStatus::Succeeded) {
+        return AsynchronousBlockDeviceStatus::DeviceFailure;
+    }
+    if (!this->io_ready_) {
+        this->ResolveAsynchronousResetFallout(0ULL);
+        return this->ResetController(true) == NvmeStatus::Succeeded
+                   ? AsynchronousBlockDeviceStatus::Succeeded
+                   : AsynchronousBlockDeviceStatus::DeviceFailure;
+    }
+    NvmeIoRequestSlot *expired_slot = nullptr;
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT;
+         ++slot_index) {
+        NvmeIoRequestSlot &slot = this->io_request_slots_[slot_index];
+        if (!slot.asynchronous || slot.state != NvmeIoRequestState::Submitted ||
+            now_nanoseconds < slot.deadline_nanoseconds) {
+            continue;
+        }
+        if (expired_slot == nullptr ||
+            slot.deadline_nanoseconds < expired_slot->deadline_nanoseconds ||
+            (slot.deadline_nanoseconds == expired_slot->deadline_nanoseconds &&
+             slot.request_identifier < expired_slot->request_identifier)) {
+            expired_slot = &slot;
+        }
+    }
+    if (expired_slot == nullptr) {
+        return AsynchronousBlockDeviceStatus::Succeeded;
+    }
+    const uint64_t timed_out_request_identifier = expired_slot->request_identifier;
+    this->command_timeout_count_ = this->command_timeout_count_ + 1ULL;
+    this->ResolveAsynchronousResetFallout(timed_out_request_identifier);
+    return this->ResetController(true) == NvmeStatus::Succeeded
+               ? AsynchronousBlockDeviceStatus::Succeeded
+               : AsynchronousBlockDeviceStatus::DeviceFailure;
+}
+
+AsynchronousBlockDeviceStatus NvmeController::TakeNamespaceBlockCompletion(
+    const uint32_t namespace_identifier, BlockCompletion &completion, bool &available) noexcept {
+    completion = BlockCompletion{};
+    available = false;
+    if (namespace_identifier == 0U) {
+        return AsynchronousBlockDeviceStatus::InvalidRequest;
+    }
+    if (!this->io_ready_) {
+        this->ResolveAsynchronousResetFallout(0ULL);
+        static_cast<void>(this->ResetController(true));
+    }
+    const bool interrupts_were_enabled = DisableInterrupts();
+    uint64_t slot_index = this->io_completion_list_head_index_;
+    while (slot_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        if (slot_index >= OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT) {
+            RestoreInterrupts(interrupts_were_enabled);
+            return AsynchronousBlockDeviceStatus::Corrupt;
+        }
+        NvmeIoRequestSlot &slot = this->io_request_slots_[slot_index];
+        if (slot.asynchronous && slot.state == NvmeIoRequestState::Completed &&
+            slot.namespace_identifier == namespace_identifier) {
+            if (slot.block_result == BlockRequestResult::Succeeded &&
+                slot.operation == NvmeIoOperation::Read &&
+                (slot.completion_buffer == nullptr || slot.transfer_size_bytes == 0ULL)) {
+                RestoreInterrupts(interrupts_were_enabled);
+                return AsynchronousBlockDeviceStatus::Corrupt;
+            }
+            if (!this->RemoveIoCompletionIndex(slot_index)) {
+                RestoreInterrupts(interrupts_were_enabled);
+                return AsynchronousBlockDeviceStatus::Corrupt;
+            }
+            RestoreInterrupts(interrupts_were_enabled);
+            if (slot.block_result == BlockRequestResult::Succeeded &&
+                slot.operation == NvmeIoOperation::Read) {
+                // NVMe 使用驱动自有 DMA 页；回拷在非 IRQ 的完成消费阶段执行。
+                this->CopyFromIoRequest(slot, slot.completion_buffer, slot.transfer_size_bytes);
+            }
+            completion = BlockCompletion{
+                .request_identifier = slot.request_identifier,
+                .operation = MapNvmeOperationToBlockOperation(slot.operation),
+                .logical_block_address = slot.logical_block_address,
+                .logical_block_count = slot.logical_block_count,
+                .owner_thread_index = slot.owner_thread_index,
+                .result = slot.block_result,
+            };
+            const bool release_interrupts_were_enabled = DisableInterrupts();
+            this->ReleaseIoRequestSlot(slot);
+            available = true;
+            RestoreInterrupts(release_interrupts_were_enabled);
+            return AsynchronousBlockDeviceStatus::Succeeded;
+        }
+        slot_index = slot.next_completion_index;
+    }
+    RestoreInterrupts(interrupts_were_enabled);
+    return AsynchronousBlockDeviceStatus::Succeeded;
 }
 
 NvmeStatus NvmeController::AllocateDmaPages() noexcept {
@@ -833,7 +1091,9 @@ NvmeStatus NvmeController::SubmitIoRequest(
     const NvmeIoOperation operation, const uint64_t logical_block_address,
     const uint64_t logical_block_count, const uint32_t namespace_identifier,
     const BlockDeviceGeometry &geometry, const uint8_t *const write_buffer,
-    const uint64_t transfer_size_bytes, uint64_t &request_identifier) noexcept {
+    uint8_t *const completion_buffer, const uint64_t transfer_size_bytes,
+    const uint64_t owner_thread_index, const uint64_t deadline_nanoseconds, const bool asynchronous,
+    uint64_t &request_identifier) noexcept {
     request_identifier = 0ULL;
     if (!this->io_ready_ || this->reset_in_progress_) {
         return NvmeStatus::IoNotReady;
@@ -841,37 +1101,60 @@ NvmeStatus NvmeController::SubmitIoRequest(
     if (namespace_identifier == 0U ||
         (operation == NvmeIoOperation::Flush &&
          (logical_block_address != 0ULL || logical_block_count != 0ULL ||
-          transfer_size_bytes != 0ULL || write_buffer != nullptr)) ||
+          transfer_size_bytes != 0ULL || write_buffer != nullptr ||
+          completion_buffer != nullptr)) ||
         (operation != NvmeIoOperation::Flush &&
-         (logical_block_count == 0ULL ||
-          logical_block_address >= geometry.logical_block_count ||
-          logical_block_count >
-              geometry.logical_block_count - logical_block_address ||
+         (logical_block_count == 0ULL || logical_block_address >= geometry.logical_block_count ||
+          logical_block_count > geometry.logical_block_count - logical_block_address ||
           logical_block_count > geometry.maximum_transfer_block_count ||
-          transfer_size_bytes !=
-              logical_block_count * geometry.logical_block_size_bytes))) {
+          transfer_size_bytes != logical_block_count * geometry.logical_block_size_bytes)) ||
+        (operation == NvmeIoOperation::Write && write_buffer == nullptr) ||
+        (asynchronous && operation == NvmeIoOperation::Read && completion_buffer == nullptr) ||
+        (asynchronous && deadline_nanoseconds == 0ULL)) {
         return NvmeStatus::InvalidIoRequest;
     }
     const bool interrupts_were_enabled = DisableInterrupts();
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT;
+         ++slot_index) {
+        const NvmeIoRequestSlot &active_slot = this->io_request_slots_[slot_index];
+        if (active_slot.state != NvmeIoRequestState::Free &&
+            active_slot.asynchronous != asynchronous) {
+            RestoreInterrupts(interrupts_were_enabled);
+            return NvmeStatus::IoRequestUnavailable;
+        }
+    }
     NvmeIoRequestSlot *const slot = this->FindFreeIoRequestSlot();
-    if (slot == nullptr) {
+    if (slot == nullptr || this->next_io_request_identifier_ == 0ULL ||
+        this->next_io_request_identifier_ == UINT64_MAX) {
         RestoreInterrupts(interrupts_were_enabled);
         return NvmeStatus::IoRequestUnavailable;
     }
     const uint16_t command_identifier = this->TakeIoCommandIdentifier();
+    if (command_identifier == 0U) {
+        RestoreInterrupts(interrupts_were_enabled);
+        return NvmeStatus::IoRequestUnavailable;
+    }
     slot->state = NvmeIoRequestState::Preparing;
-    slot->request_identifier = static_cast<uint64_t>(command_identifier);
+    slot->request_identifier = this->next_io_request_identifier_;
+    ++this->next_io_request_identifier_;
+    slot->completion_buffer = completion_buffer;
+    slot->owner_thread_index = owner_thread_index;
     slot->logical_block_address = logical_block_address;
     slot->logical_block_count = logical_block_count;
     slot->transfer_size_bytes = transfer_size_bytes;
+    slot->deadline_nanoseconds = deadline_nanoseconds;
+    slot->next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     slot->namespace_identifier = namespace_identifier;
+    slot->command_identifier = command_identifier;
     slot->operation = operation;
     slot->completion_status = NvmeStatus::IoNotReady;
+    slot->block_result = BlockRequestResult::None;
+    slot->asynchronous = asynchronous;
     RestoreInterrupts(interrupts_were_enabled);
 
     if (operation == NvmeIoOperation::Write) {
         if (write_buffer == nullptr || transfer_size_bytes == 0ULL) {
-            slot->state = NvmeIoRequestState::Free;
+            this->ReleaseIoRequestSlot(*slot);
             return NvmeStatus::InvalidIoRequest;
         }
         this->CopyToIoRequest(*slot, write_buffer, transfer_size_bytes);
@@ -879,7 +1162,7 @@ NvmeStatus NvmeController::SubmitIoRequest(
     NvmePrpMapping mapping{};
     if (this->PrepareIoRequestPrps(*slot, transfer_size_bytes, mapping) !=
         NvmeStatus::Succeeded) {
-        slot->state = NvmeIoRequestState::Free;
+        this->ReleaseIoRequestSlot(*slot);
         return NvmeStatus::CommandBuildFailed;
     }
     NvmeSubmissionEntry command{};
@@ -888,19 +1171,19 @@ NvmeStatus NvmeController::SubmitIoRequest(
                            logical_block_address, logical_block_count,
                            mapping.first_data_pointer, mapping.second_data_pointer,
                            command) != NvmeModelStatus::Succeeded) {
-        slot->state = NvmeIoRequestState::Free;
+        this->ReleaseIoRequestSlot(*slot);
         return NvmeStatus::CommandBuildFailed;
     }
     const bool submission_interrupts_were_enabled = DisableInterrupts();
     if (!this->io_ready_ || this->io_submission_tail_ >= this->io_queue_depth_) {
-        slot->state = NvmeIoRequestState::Free;
+        this->ReleaseIoRequestSlot(*slot);
         RestoreInterrupts(submission_interrupts_were_enabled);
         return NvmeStatus::IoNotReady;
     }
     this->io_submission_queue_[this->io_submission_tail_] = command;
     if (AdvanceNvmeSubmissionTail(this->io_queue_depth_, this->io_submission_tail_) !=
         NvmeModelStatus::Succeeded) {
-        slot->state = NvmeIoRequestState::Free;
+        this->ReleaseIoRequestSlot(*slot);
         RestoreInterrupts(submission_interrupts_were_enabled);
         return NvmeStatus::CommandBuildFailed;
     }
@@ -908,10 +1191,11 @@ NvmeStatus NvmeController::SubmitIoRequest(
     const uint64_t timeout_nanoseconds =
         this->capabilities_.ready_timeout_milliseconds *
         OS_KERNEL_NVME_NANOSECONDS_PER_MILLISECOND;
-    slot->deadline_nanoseconds =
-        timeout_nanoseconds > UINT64_MAX - start_nanoseconds
-            ? UINT64_MAX
-            : start_nanoseconds + timeout_nanoseconds;
+    if (!asynchronous) {
+        slot->deadline_nanoseconds = timeout_nanoseconds > UINT64_MAX - start_nanoseconds
+                                         ? UINT64_MAX
+                                         : start_nanoseconds + timeout_nanoseconds;
+    }
     slot->state = NvmeIoRequestState::Submitted;
     this->outstanding_request_count_ = this->outstanding_request_count_ + 1ULL;
     if (this->outstanding_request_count_ > this->peak_outstanding_request_count_) {
@@ -953,19 +1237,17 @@ NvmeStatus NvmeController::WaitForIoRequest(const uint64_t request_identifier,
                 slot->operation == NvmeIoOperation::Read) {
                 if (read_buffer == nullptr || transfer_size_bytes != slot->transfer_size_bytes) {
                     const bool invalid_release_interrupts_were_enabled = DisableInterrupts();
-                    slot->request_identifier = 0ULL;
-                    slot->state = NvmeIoRequestState::Free;
+                    this->ReleaseIoRequestSlot(*slot);
                     RestoreInterrupts(invalid_release_interrupts_were_enabled);
                     return NvmeStatus::InvalidIoRequest;
                 }
                 this->CopyFromIoRequest(*slot, read_buffer, transfer_size_bytes);
             }
             const bool release_interrupts_were_enabled = DisableInterrupts();
-            slot->request_identifier = 0ULL;
-            slot->state = NvmeIoRequestState::Free;
+            this->ReleaseIoRequestSlot(*slot);
             RestoreInterrupts(release_interrupts_were_enabled);
             if (completion_status != NvmeStatus::Succeeded) {
-                return this->ResetController() == NvmeStatus::Succeeded
+                return this->ResetController(false) == NvmeStatus::Succeeded
                            ? completion_status
                            : NvmeStatus::ControllerResetFailed;
             }
@@ -973,7 +1255,7 @@ NvmeStatus NvmeController::WaitForIoRequest(const uint64_t request_identifier,
         }
         if (this->time_operation_() >= deadline_nanoseconds) {
             this->command_timeout_count_ = this->command_timeout_count_ + 1ULL;
-            return this->ResetController() == NvmeStatus::Succeeded
+            return this->ResetController(false) == NvmeStatus::Succeeded
                        ? NvmeStatus::CommandTimedOut
                        : NvmeStatus::ControllerResetFailed;
         }
@@ -984,11 +1266,69 @@ NvmeStatus NvmeController::WaitForIoRequest(const uint64_t request_identifier,
         }
         const NvmeStatus drain_status = this->DrainIoCompletions();
         if (drain_status != NvmeStatus::Succeeded) {
-            return this->ResetController() == NvmeStatus::Succeeded
+            return this->ResetController(false) == NvmeStatus::Succeeded
                        ? NvmeStatus::CommandCompletionFailed
                        : NvmeStatus::ControllerResetFailed;
         }
     }
+}
+
+NvmeStatus NvmeController::WaitForAsynchronousCompletions(
+    AsynchronousBlockDevice &device, const uint64_t *const request_identifiers,
+    const uint64_t request_count, const BlockOperation expected_operation) noexcept {
+    if (request_identifiers == nullptr || request_count == 0ULL ||
+        request_count > OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT) {
+        return NvmeStatus::InvalidIoRequest;
+    }
+    bool completion_observed[OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT]{};
+    uint64_t completion_count = 0ULL;
+    while (completion_count < request_count) {
+        if (this->DrainIoCompletions() != NvmeStatus::Succeeded) {
+            return NvmeStatus::CommandCompletionFailed;
+        }
+        while (true) {
+            BlockCompletion completion{};
+            bool available = false;
+            if (device.TakeCompletion(completion, available) !=
+                AsynchronousBlockDeviceStatus::Succeeded) {
+                return NvmeStatus::IoSelfTestFailed;
+            }
+            if (!available) {
+                break;
+            }
+            uint64_t matched_index = request_count;
+            for (uint64_t request_index = 0ULL; request_index < request_count; ++request_index) {
+                if (request_identifiers[request_index] == completion.request_identifier) {
+                    matched_index = request_index;
+                    break;
+                }
+            }
+            if (matched_index == request_count || completion_observed[matched_index] ||
+                completion.operation != expected_operation ||
+                completion.owner_thread_index !=
+                    OS_KERNEL_BLOCK_REQUEST_KERNEL_OWNER_THREAD_INDEX ||
+                completion.result != BlockRequestResult::Succeeded) {
+                return NvmeStatus::IoSelfTestFailed;
+            }
+            completion_observed[matched_index] = true;
+            ++completion_count;
+        }
+        if (completion_count == request_count) {
+            return NvmeStatus::Succeeded;
+        }
+        if (device.ResolveTimeouts(this->time_operation_()) !=
+            AsynchronousBlockDeviceStatus::Succeeded) {
+            return NvmeStatus::CommandTimedOut;
+        }
+        const bool interrupts_were_enabled = DisableInterrupts();
+        RestoreInterrupts(interrupts_were_enabled);
+        if (interrupts_were_enabled) {
+            WaitForInterrupt();
+        } else {
+            ProcessorPause();
+        }
+    }
+    return NvmeStatus::Succeeded;
 }
 
 NvmeStatus NvmeController::DrainIoCompletions() noexcept {
@@ -1012,7 +1352,7 @@ NvmeStatus NvmeController::DrainIoCompletions() noexcept {
             break;
         }
         NvmeIoRequestSlot *const slot =
-            this->FindIoRequestSlot(static_cast<uint64_t>(completion_result.command_identifier));
+            this->FindIoCommandSlot(completion_result.command_identifier);
         if ((completion_status != NvmeModelStatus::Succeeded &&
              completion_status != NvmeModelStatus::CompletionFailed) ||
             completion_result.submission_queue_identifier !=
@@ -1029,8 +1369,20 @@ NvmeStatus NvmeController::DrainIoCompletions() noexcept {
         slot->completion_status = completion_status == NvmeModelStatus::Succeeded
                                       ? NvmeStatus::Succeeded
                                       : NvmeStatus::CommandCompletionFailed;
+        slot->block_result = completion_status == NvmeModelStatus::Succeeded
+                                 ? BlockRequestResult::Succeeded
+                                 : BlockRequestResult::DeviceError;
         slot->state = NvmeIoRequestState::Completed;
         this->outstanding_request_count_ = this->outstanding_request_count_ - 1ULL;
+        if (slot->asynchronous) {
+            const uint64_t slot_index = this->IndexOfIoRequestSlot(*slot);
+            if (slot_index == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+                this->io_ready_ = false;
+                RestoreInterrupts(interrupts_were_enabled);
+                return NvmeStatus::CommandCompletionFailed;
+            }
+            this->AppendIoCompletionIndex(slot_index);
+        }
         if (completion_status == NvmeModelStatus::CompletionFailed) {
             this->error_completion_count_ = this->error_completion_count_ + 1ULL;
             this->io_ready_ = false;
@@ -1052,7 +1404,7 @@ NvmeStatus NvmeController::DrainIoCompletions() noexcept {
     return NvmeStatus::Succeeded;
 }
 
-NvmeStatus NvmeController::ResetController() noexcept {
+NvmeStatus NvmeController::ResetController(const bool preserve_asynchronous_completions) noexcept {
     if (this->reset_in_progress_ || !this->mmio_mapping_.active) {
         return NvmeStatus::ControllerResetFailed;
     }
@@ -1080,8 +1432,15 @@ NvmeStatus NvmeController::ResetController() noexcept {
     this->outstanding_request_count_ = 0ULL;
     for (uint64_t slot_index = 0ULL;
          slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT; ++slot_index) {
-        this->io_request_slots_[slot_index].request_identifier = 0ULL;
-        this->io_request_slots_[slot_index].state = NvmeIoRequestState::Free;
+        NvmeIoRequestSlot &slot = this->io_request_slots_[slot_index];
+        if (!preserve_asynchronous_completions || !slot.asynchronous ||
+            slot.state != NvmeIoRequestState::Completed) {
+            this->ReleaseIoRequestSlot(slot);
+        }
+    }
+    if (!preserve_asynchronous_completions) {
+        this->io_completion_list_head_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+        this->io_completion_list_tail_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     }
     if (this->ConfigureAdminQueues() != NvmeStatus::Succeeded) {
         this->reset_in_progress_ = false;
@@ -1206,11 +1565,26 @@ uint16_t NvmeController::TakeIoCommandIdentifier() noexcept {
             this->next_io_command_identifier_ >= OS_KERNEL_NVME_LAST_IO_COMMAND_IDENTIFIER
                 ? OS_KERNEL_NVME_FIRST_IO_COMMAND_IDENTIFIER
                 : static_cast<uint16_t>(this->next_io_command_identifier_ + 1U);
-        if (this->FindIoRequestSlot(static_cast<uint64_t>(command_identifier)) == nullptr) {
+        if (this->FindIoCommandSlot(command_identifier) == nullptr) {
             return command_identifier;
         }
     }
     return 0U;
+}
+
+NvmeIoRequestSlot *NvmeController::FindIoCommandSlot(const uint16_t command_identifier) noexcept {
+    if (command_identifier == 0U) {
+        return nullptr;
+    }
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT;
+         ++slot_index) {
+        NvmeIoRequestSlot &slot = this->io_request_slots_[slot_index];
+        if (slot.state != NvmeIoRequestState::Free &&
+            slot.command_identifier == command_identifier) {
+            return &slot;
+        }
+    }
+    return nullptr;
 }
 
 NvmeIoRequestSlot *NvmeController::FindIoRequestSlot(
@@ -1237,6 +1611,107 @@ NvmeIoRequestSlot *NvmeController::FindFreeIoRequestSlot() noexcept {
         }
     }
     return nullptr;
+}
+
+uint64_t NvmeController::IndexOfIoRequestSlot(const NvmeIoRequestSlot &slot) const noexcept {
+    const uint64_t slot_address = reinterpret_cast<uint64_t>(&slot);
+    const uint64_t storage_address = reinterpret_cast<uint64_t>(this->io_request_slots_);
+    if (slot_address < storage_address) {
+        return OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    }
+    const uint64_t byte_offset = slot_address - storage_address;
+    if (byte_offset % sizeof(NvmeIoRequestSlot) != 0ULL) {
+        return OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    }
+    const uint64_t slot_index = byte_offset / sizeof(NvmeIoRequestSlot);
+    return slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT
+               ? slot_index
+               : OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+}
+
+void NvmeController::AppendIoCompletionIndex(const uint64_t slot_index) noexcept {
+    this->io_request_slots_[slot_index].next_completion_index =
+        OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    if (this->io_completion_list_tail_index_ == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        this->io_completion_list_head_index_ = slot_index;
+        this->io_completion_list_tail_index_ = slot_index;
+        return;
+    }
+    this->io_request_slots_[this->io_completion_list_tail_index_].next_completion_index =
+        slot_index;
+    this->io_completion_list_tail_index_ = slot_index;
+}
+
+bool NvmeController::RemoveIoCompletionIndex(const uint64_t slot_index) noexcept {
+    uint64_t previous_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    uint64_t current_index = this->io_completion_list_head_index_;
+    while (current_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        if (current_index >= OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT) {
+            return false;
+        }
+        if (current_index == slot_index) {
+            const uint64_t next_index =
+                this->io_request_slots_[current_index].next_completion_index;
+            if (previous_index == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+                this->io_completion_list_head_index_ = next_index;
+            } else {
+                this->io_request_slots_[previous_index].next_completion_index = next_index;
+            }
+            if (this->io_completion_list_tail_index_ == current_index) {
+                this->io_completion_list_tail_index_ = previous_index;
+            }
+            this->io_request_slots_[current_index].next_completion_index =
+                OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+            return true;
+        }
+        previous_index = current_index;
+        current_index = this->io_request_slots_[current_index].next_completion_index;
+    }
+    return false;
+}
+
+void NvmeController::ReleaseIoRequestSlot(NvmeIoRequestSlot &slot) noexcept {
+    slot.request_identifier = 0ULL;
+    slot.completion_buffer = nullptr;
+    slot.owner_thread_index = 0ULL;
+    slot.logical_block_address = 0ULL;
+    slot.logical_block_count = 0ULL;
+    slot.transfer_size_bytes = 0ULL;
+    slot.deadline_nanoseconds = 0ULL;
+    slot.next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    slot.namespace_identifier = 0U;
+    slot.command_identifier = 0U;
+    slot.operation = NvmeIoOperation::Read;
+    slot.completion_status = NvmeStatus::IoNotReady;
+    slot.block_result = BlockRequestResult::None;
+    slot.state = NvmeIoRequestState::Free;
+    slot.asynchronous = false;
+}
+
+void NvmeController::ResolveAsynchronousResetFallout(
+    const uint64_t timed_out_request_identifier) noexcept {
+    const bool interrupts_were_enabled = DisableInterrupts();
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_NVME_MAXIMUM_OUTSTANDING_REQUEST_COUNT;
+         ++slot_index) {
+        NvmeIoRequestSlot &slot = this->io_request_slots_[slot_index];
+        if (!slot.asynchronous || (slot.state != NvmeIoRequestState::Preparing &&
+                                   slot.state != NvmeIoRequestState::Submitted)) {
+            continue;
+        }
+        const bool timed_out = timed_out_request_identifier != 0ULL &&
+                               slot.request_identifier == timed_out_request_identifier;
+        if (slot.state == NvmeIoRequestState::Submitted &&
+            this->outstanding_request_count_ != 0ULL) {
+            this->outstanding_request_count_ = this->outstanding_request_count_ - 1ULL;
+        }
+        slot.completion_status =
+            timed_out ? NvmeStatus::CommandTimedOut : NvmeStatus::CommandCompletionFailed;
+        slot.block_result =
+            timed_out ? BlockRequestResult::TimedOut : BlockRequestResult::DeviceError;
+        slot.state = NvmeIoRequestState::Completed;
+        this->AppendIoCompletionIndex(slot_index);
+    }
+    RestoreInterrupts(interrupts_were_enabled);
 }
 
 NvmeStatus NvmeController::PrepareIoRequestPrps(NvmeIoRequestSlot &slot,
@@ -1377,7 +1852,7 @@ NvmeStatus NvmeController::ReleaseDmaPages() noexcept {
             slot.data_pages[page_index] = nullptr;
         }
         slot.prp_list_entries = nullptr;
-        slot.state = NvmeIoRequestState::Free;
+        this->ReleaseIoRequestSlot(slot);
     }
     released = ReleaseOwnedFrame(allocator, this->io_completion_frame_) && released;
     released = ReleaseOwnedFrame(allocator, this->io_submission_frame_) && released;
@@ -1472,12 +1947,17 @@ NvmeStatus ProbeNvmeController(const NvmeTimeOperation time_operation,
     return status;
 }
 
-NvmeStatus InitializeNvmeStorageRuntime(
-    const NvmeTimeOperation time_operation, NvmeStorageRuntimeResult &result,
-    BlockDevice *&root_device, BlockDevice *&swap_device) noexcept {
+NvmeStatus
+InitializeNvmeStorageRuntime(const NvmeTimeOperation time_operation,
+                             NvmeStorageRuntimeResult &result, BlockDevice *&root_device,
+                             BlockDevice *&swap_device,
+                             AsynchronousBlockDevice *&root_asynchronous_device,
+                             AsynchronousBlockDevice *&swap_asynchronous_device) noexcept {
     result = NvmeStorageRuntimeResult{};
     root_device = nullptr;
     swap_device = nullptr;
+    root_asynchronous_device = nullptr;
+    swap_asynchronous_device = nullptr;
     if (kernel_nvme_storage_runtime.active) {
         return NvmeStatus::AlreadyInitialized;
     }
@@ -1546,6 +2026,8 @@ NvmeStatus InitializeNvmeStorageRuntime(
     result.active = true;
     root_device = &kernel_nvme_storage_runtime.root_device;
     swap_device = &kernel_nvme_storage_runtime.swap_device;
+    root_asynchronous_device = &kernel_nvme_storage_runtime.root_device;
+    swap_asynchronous_device = &kernel_nvme_storage_runtime.swap_device;
     return NvmeStatus::Succeeded;
 }
 

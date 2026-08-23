@@ -18,6 +18,7 @@
 #include <os/kernel/fs/root_file_system.hpp>
 #include <os/kernel/fs/vfs.hpp>
 #include <os/kernel/memory/memory_manager.hpp>
+#include <os/kernel/process/block_io_device.hpp>
 #include <os/kernel/process/process_runtime.hpp>
 
 namespace os::kernel {
@@ -26,6 +27,7 @@ namespace {
 
 constexpr uint64_t OS_KERNEL_MAIN_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS = 5ULL * 1000ULL * 1000ULL * 1000ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BSS_PROBE_ZERO_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BSS_PROBE_WRITTEN_VALUE = 0xB007B007B007B007ULL;
 constexpr char OS_KERNEL_MAIN_ENTERED_MESSAGE[] = "[OS][KERNEL] ENTERED\r\n";
@@ -552,6 +554,15 @@ constexpr char OS_KERNEL_MAIN_KERNEL_THREAD_EXIT_COUNT_PREFIX[] =
     "[OS][KERNEL] KERNEL_THREAD_EXITS=";
 constexpr char OS_KERNEL_MAIN_KERNEL_THREAD_REAP_COUNT_PREFIX[] =
     "[OS][KERNEL] KERNEL_THREAD_REAPS=";
+constexpr char OS_KERNEL_MAIN_BLOCK_IO_REGISTRATION_COUNT_PREFIX[] =
+    "[OS][KERNEL][BLOCK_IO] REGISTRATIONS=";
+constexpr char OS_KERNEL_MAIN_BLOCK_IO_WAIT_COUNT_PREFIX[] = "[OS][KERNEL][BLOCK_IO] WAIT_COMMITS=";
+constexpr char OS_KERNEL_MAIN_BLOCK_IO_COMPLETION_COUNT_PREFIX[] =
+    "[OS][KERNEL][BLOCK_IO] COMPLETIONS=";
+constexpr char OS_KERNEL_MAIN_ROOT_BLOCK_IO_ASYNC_COUNT_PREFIX[] =
+    "[OS][KERNEL][BLOCK_IO] ROOT_ASYNC_OPERATIONS=";
+constexpr char OS_KERNEL_MAIN_SWAP_BLOCK_IO_ASYNC_COUNT_PREFIX[] =
+    "[OS][KERNEL][BLOCK_IO] SWAP_ASYNC_OPERATIONS=";
 constexpr char OS_KERNEL_MAIN_USER_TO_KERNEL_SWITCH_COUNT_PREFIX[] =
     "[OS][KERNEL] USER_TO_KERNEL_SWITCHES=";
 constexpr char OS_KERNEL_MAIN_KERNEL_TO_USER_SWITCH_COUNT_PREFIX[] =
@@ -893,7 +904,8 @@ constexpr uint64_t OS_KERNEL_MAIN_FUNCTIONAL_NORMAL_PROCESS_COUNT =
 constexpr uint64_t OS_KERNEL_MAIN_FAULT_PROCESS_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_THREAD_MAIN_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_KERNEL_THREAD_LIFECYCLE_COUNT = 2ULL;
-constexpr uint64_t OS_KERNEL_MAIN_KERNEL_THREAD_TOTAL_COUNT = 4ULL;
+constexpr uint64_t OS_KERNEL_MAIN_KERNEL_THREAD_TOTAL_COUNT = 6ULL;
+constexpr uint64_t OS_KERNEL_MAIN_KERNEL_THREAD_PEAK_ACTIVE_COUNT = 3ULL;
 constexpr uint64_t OS_KERNEL_MAIN_KERNEL_THREAD_MINIMUM_DISPATCH_COUNT = 7ULL;
 constexpr uint64_t OS_KERNEL_MAIN_WORK_QUEUE_REGISTERED_COUNT = 9ULL;
 constexpr uint64_t OS_KERNEL_MAIN_WORK_QUEUE_MINIMUM_COMPLETION_COUNT = 6ULL;
@@ -902,7 +914,7 @@ constexpr uint64_t OS_KERNEL_MAIN_PAGE_AGING_MINIMUM_CAPACITY = 4096ULL;
 constexpr uint64_t OS_KERNEL_MAIN_PAGE_AGING_HASH_CAPACITY_RATIO = 2ULL;
 constexpr uint64_t OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT = 1ULL;
-constexpr uint64_t OS_KERNEL_MAIN_FILE_WRITEBACK_WORKER_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_WRITEBACK_WORKER_COUNT = 3ULL;
 constexpr uint64_t OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_VIRTUAL_ADDRESS_LIFECYCLE_COUNT =
     OS_KERNEL_MAIN_BOOTSTRAP_NORMAL_PROCESS_COUNT +
     OS_KERNEL_MAIN_USER_THREAD_LIMIT_REJECTION_COUNT + OS_KERNEL_MAIN_TIME_PROBE_WORKER_COUNT;
@@ -1411,27 +1423,36 @@ void ProbeKernelNvme(const VgaTextConsole &vga_console) noexcept {
 struct KernelStorageDevices final {
     BlockDevice *root_device;
     BlockDevice *swap_device;
+    AsynchronousBlockDevice *root_asynchronous_device;
+    AsynchronousBlockDevice *swap_asynchronous_device;
     NvmeStorageRuntimeResult nvme_result;
     bool nvme_active;
 };
 
 [[nodiscard]] KernelStorageDevices
-SelectKernelStorageDevices(const VgaTextConsole &vga_console, AtaPioDevice &ata_root_device,
-                           AtaPioDevice &ata_swap_device) noexcept {
+SelectKernelStorageDevices(const VgaTextConsole &vga_console) noexcept {
     KernelStorageDevices devices{
-        .root_device = &ata_root_device,
-        .swap_device = &ata_swap_device,
+        .root_device = &GetRuntimeAtaRootBlockDevice(),
+        .swap_device = &GetRuntimeAtaSwapBlockDevice(),
+        .root_asynchronous_device = &GetRuntimeAtaRootAsynchronousBlockDevice(),
+        .swap_asynchronous_device = &GetRuntimeAtaSwapAsynchronousBlockDevice(),
         .nvme_result = NvmeStorageRuntimeResult{},
         .nvme_active = false,
     };
     BlockDevice *nvme_root_device = nullptr;
     BlockDevice *nvme_swap_device = nullptr;
+    AsynchronousBlockDevice *nvme_root_asynchronous_device = nullptr;
+    AsynchronousBlockDevice *nvme_swap_asynchronous_device = nullptr;
     const NvmeStatus status = InitializeNvmeStorageRuntime(
-        GetMonotonicNanoseconds, devices.nvme_result, nvme_root_device, nvme_swap_device);
+        GetMonotonicNanoseconds, devices.nvme_result, nvme_root_device, nvme_swap_device,
+        nvme_root_asynchronous_device, nvme_swap_asynchronous_device);
     if (status == NvmeStatus::Succeeded && nvme_root_device != nullptr &&
-        nvme_swap_device != nullptr) {
+        nvme_swap_device != nullptr && nvme_root_asynchronous_device != nullptr &&
+        nvme_swap_asynchronous_device != nullptr) {
         devices.root_device = nvme_root_device;
         devices.swap_device = nvme_swap_device;
+        devices.root_asynchronous_device = nvme_root_asynchronous_device;
+        devices.swap_asynchronous_device = nvme_swap_asynchronous_device;
         devices.nvme_active = true;
         WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_STORAGE_BACKEND_NVME_MESSAGE);
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_BLOCK_COUNT_PREFIX,
@@ -2594,7 +2615,7 @@ void ExecuteRequiredProcesses(const VgaTextConsole &vga_console,
         statistics.scheduler.owned_kernel_thread_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.kernel_threads.active_thread_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.kernel_threads.peak_active_thread_count ==
-            OS_KERNEL_MAIN_KERNEL_THREAD_LIFECYCLE_COUNT &&
+            OS_KERNEL_MAIN_KERNEL_THREAD_PEAK_ACTIVE_COUNT &&
         statistics.kernel_threads.create_count == OS_KERNEL_MAIN_KERNEL_THREAD_TOTAL_COUNT &&
         statistics.kernel_threads.dispatch_count >=
             OS_KERNEL_MAIN_KERNEL_THREAD_MINIMUM_DISPATCH_COUNT &&
@@ -2801,10 +2822,7 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
 
     PrepareRequiredProcesses(vga_console, user_program_selection);
     InitializeKernelDevices(vga_console);
-    AtaPioDevice ata_file_system_device{};
-    AtaPioDevice ata_swap_device{AtaPioChannel::Secondary};
-    KernelStorageDevices storage_devices =
-        SelectKernelStorageDevices(vga_console, ata_file_system_device, ata_swap_device);
+    KernelStorageDevices storage_devices = SelectKernelStorageDevices(vga_console);
     if (storage_devices.nvme_active &&
         RefreshProcessRuntimeResourceBaseline() != ProcessRuntimeStatus::Succeeded) {
         HaltProcessor();
@@ -2818,11 +2836,30 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     fs::Vfs vfs{};
     static fs::DevfsDevice devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
-    InitializeKernelFileSystem(vga_console, file_system, *storage_devices.root_device);
+    static BlockIoDevice root_block_io_device{};
+    static BlockIoDevice swap_block_io_device{};
+    if (RegisterRuntimeBlockIoDevice(GetRuntimeAtaRootAsynchronousBlockDevice()) !=
+            RuntimeBlockIoStatus::Succeeded ||
+        RegisterRuntimeBlockIoDevice(GetRuntimeAtaSwapAsynchronousBlockDevice()) !=
+            RuntimeBlockIoStatus::Succeeded ||
+        storage_devices.root_device == nullptr || storage_devices.swap_device == nullptr ||
+        storage_devices.root_asynchronous_device == nullptr ||
+        storage_devices.swap_asynchronous_device == nullptr ||
+        root_block_io_device.Initialize(*storage_devices.root_device,
+                                        *storage_devices.root_asynchronous_device,
+                                        OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS,
+                                        false) != RuntimeBlockIoStatus::Succeeded ||
+        swap_block_io_device.Initialize(*storage_devices.swap_device,
+                                        *storage_devices.swap_asynchronous_device,
+                                        OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS,
+                                        false) != RuntimeBlockIoStatus::Succeeded) {
+        HaltProcessor();
+    }
+    InitializeKernelFileSystem(vga_console, file_system, root_block_io_device);
     InitializeKernelVfs(vga_console, file_system, memfs, devfs, procfs, procfs_context, vfs,
                         devfs_devices, fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY, mounts,
                         OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY);
-    if (AttachProcessVfs(vfs, *storage_devices.swap_device) != ProcessRuntimeStatus::Succeeded) {
+    if (AttachProcessVfs(vfs, swap_block_io_device) != ProcessRuntimeStatus::Succeeded) {
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_USER_EXECUTION_FAILED_PREFIX,
                              static_cast<uint64_t>(ProcessRuntimeStatus::FileSystemFailure));
         WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_INITIALIZATION_STAGE_PREFIX,
@@ -2874,6 +2911,23 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         HaltProcessor();
     }
     ExecuteRequiredProcesses(vga_console, user_program_selection);
+    const BlockIoStatistics block_io_statistics = GetRuntimeBlockIoStatistics();
+    const BlockIoDeviceStatistics root_block_io_statistics = root_block_io_device.Statistics();
+    const BlockIoDeviceStatistics swap_block_io_statistics = swap_block_io_device.Statistics();
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BLOCK_IO_REGISTRATION_COUNT_PREFIX,
+                         block_io_statistics.registration_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BLOCK_IO_WAIT_COUNT_PREFIX,
+                         block_io_statistics.wait_commit_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_BLOCK_IO_COMPLETION_COUNT_PREFIX,
+                         block_io_statistics.completion_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOT_BLOCK_IO_ASYNC_COUNT_PREFIX,
+                         root_block_io_statistics.asynchronous_read_count +
+                             root_block_io_statistics.asynchronous_write_count +
+                             root_block_io_statistics.asynchronous_flush_count);
+    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_SWAP_BLOCK_IO_ASYNC_COUNT_PREFIX,
+                         swap_block_io_statistics.asynchronous_read_count +
+                             swap_block_io_statistics.asynchronous_write_count +
+                             swap_block_io_statistics.asynchronous_flush_count);
     FinalizeKernelFileSystem(vga_console, file_system, vfs, memfs,
                              user_program_selection == UserProgramSelection::Smoke ||
                                  user_program_selection == UserProgramSelection::OomPressure);

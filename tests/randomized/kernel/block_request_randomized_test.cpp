@@ -8,10 +8,10 @@ namespace {
 constexpr std::string_view OS_TEST_BLOCK_RANDOM_SUITE_NAME =
     "kernel/block_request/randomized";
 constexpr std::string_view OS_TEST_BLOCK_RANDOM_REFERENCE_MODEL =
-    "十万步多深度块请求模型不得乱序签发、重复解析、越界或泄漏请求";
+    "十万步多深度块请求模型不得乱序签发、重复解析、错序交付或泄漏请求";
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_CAPACITY = 32ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_OPERATION_COUNT = 100000ULL;
-constexpr uint64_t OS_TEST_BLOCK_RANDOM_OPERATION_KIND_COUNT = 7ULL;
+constexpr uint64_t OS_TEST_BLOCK_RANDOM_OPERATION_KIND_COUNT = 8ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_INITIAL_TIME_NS = 1ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_SUBMIT_OPERATION = 0ULL;
@@ -20,6 +20,8 @@ constexpr uint64_t OS_TEST_BLOCK_RANDOM_SUCCEED_OPERATION = 2ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_FAIL_OPERATION = 3ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_TIMEOUT_OPERATION = 4ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_CANCEL_OPERATION = 5ULL;
+constexpr uint64_t OS_TEST_BLOCK_RANDOM_TAKE_COMPLETION_OPERATION = 6ULL;
+constexpr uint64_t OS_TEST_BLOCK_RANDOM_DIRECT_REAP_OPERATION = 7ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_BLOCK_OPERATION_KIND_COUNT = 3ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_LOGICAL_BLOCK_SIZE_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_BLOCK_RANDOM_LOGICAL_BLOCK_COUNT = 65536ULL;
@@ -42,8 +44,13 @@ constexpr os::kernel::BlockDeviceGeometry OS_TEST_BLOCK_RANDOM_GEOMETRY{
 
 struct ReferenceRequest final {
     uint64_t identifier;
+    os::kernel::BlockOperation operation;
+    uint64_t logical_block_address;
+    uint64_t logical_block_count;
     uint64_t deadline_nanoseconds;
     os::kernel::BlockRequestState state;
+    os::kernel::BlockRequestResult result;
+    uint64_t completion_sequence;
 };
 
 [[nodiscard]] uint64_t NextRandom(uint64_t &state) noexcept {
@@ -102,6 +109,23 @@ struct ReferenceRequest final {
     return selected_index;
 }
 
+[[nodiscard]] uint64_t FindNextCompletionReference(
+    const ReferenceRequest *const requests) noexcept {
+    uint64_t selected_index = OS_TEST_BLOCK_RANDOM_CAPACITY;
+    for (uint64_t request_index = OS_TEST_BLOCK_RANDOM_EMPTY_VALUE;
+         request_index < OS_TEST_BLOCK_RANDOM_CAPACITY; ++request_index) {
+        if (requests[request_index].state != os::kernel::BlockRequestState::Completed) {
+            continue;
+        }
+        if (selected_index == OS_TEST_BLOCK_RANDOM_CAPACITY ||
+            requests[request_index].completion_sequence <
+                requests[selected_index].completion_sequence) {
+            selected_index = request_index;
+        }
+    }
+    return selected_index;
+}
+
 }
 
 int main() {
@@ -113,6 +137,8 @@ int main() {
     os::kernel::BlockRequestQueue queue{};
     uint64_t random_state = OS_TEST_BLOCK_RANDOM_SEED;
     uint64_t now_nanoseconds = OS_TEST_BLOCK_RANDOM_INITIAL_TIME_NS;
+    uint64_t next_completion_sequence = OS_TEST_BLOCK_RANDOM_INITIAL_TIME_NS;
+    uint64_t expected_completion_delivery_count = OS_TEST_BLOCK_RANDOM_EMPTY_VALUE;
     bool consistent =
         queue.Initialize(storage, OS_TEST_BLOCK_RANDOM_CAPACITY,
                          OS_TEST_BLOCK_RANDOM_GEOMETRY) ==
@@ -158,8 +184,13 @@ int main() {
                 if (consistent) {
                     reference[unused_index] = ReferenceRequest{
                         .identifier = identifier,
+                        .operation = operation,
+                        .logical_block_address = logical_block_address,
+                        .logical_block_count = transfer_block_count,
                         .deadline_nanoseconds = deadline_nanoseconds,
                         .state = os::kernel::BlockRequestState::Queued,
+                        .result = os::kernel::BlockRequestResult::None,
+                        .completion_sequence = OS_TEST_BLOCK_RANDOM_EMPTY_VALUE,
                     };
                 }
             }
@@ -193,6 +224,9 @@ int main() {
                     queue.Complete(reference[issued_index].identifier, result) ==
                     os::kernel::BlockRequestQueueStatus::Succeeded;
                 reference[issued_index].state = os::kernel::BlockRequestState::Completed;
+                reference[issued_index].result = result;
+                reference[issued_index].completion_sequence = next_completion_sequence;
+                ++next_completion_sequence;
             }
         } else if (operation_kind == OS_TEST_BLOCK_RANDOM_TIMEOUT_OPERATION) {
             now_nanoseconds += NextRandom(random_state) %
@@ -210,6 +244,9 @@ int main() {
                     request.identifier == reference[issued_index].identifier &&
                     request.result == os::kernel::BlockRequestResult::TimedOut;
                 reference[issued_index].state = os::kernel::BlockRequestState::Completed;
+                reference[issued_index].result = os::kernel::BlockRequestResult::TimedOut;
+                reference[issued_index].completion_sequence = next_completion_sequence;
+                ++next_completion_sequence;
             }
         } else if (operation_kind == OS_TEST_BLOCK_RANDOM_CANCEL_OPERATION) {
             const uint64_t queued_index =
@@ -219,8 +256,32 @@ int main() {
                     queue.CancelQueued(reference[queued_index].identifier) ==
                     os::kernel::BlockRequestQueueStatus::Succeeded;
                 reference[queued_index].state = os::kernel::BlockRequestState::Completed;
+                reference[queued_index].result = os::kernel::BlockRequestResult::Cancelled;
+                reference[queued_index].completion_sequence = next_completion_sequence;
+                ++next_completion_sequence;
             }
-        } else {
+        } else if (operation_kind == OS_TEST_BLOCK_RANDOM_TAKE_COMPLETION_OPERATION) {
+            const uint64_t completed_index = FindNextCompletionReference(reference);
+            os::kernel::BlockCompletion completion{};
+            bool available = false;
+            consistent =
+                queue.TakeCompletion(completion, available) ==
+                    os::kernel::BlockRequestQueueStatus::Succeeded &&
+                available == (completed_index < OS_TEST_BLOCK_RANDOM_CAPACITY);
+            if (consistent && available) {
+                const ReferenceRequest &expected = reference[completed_index];
+                consistent = completion.request_identifier == expected.identifier &&
+                             completion.operation == expected.operation &&
+                             completion.logical_block_address ==
+                                 expected.logical_block_address &&
+                             completion.logical_block_count == expected.logical_block_count &&
+                             completion.owner_thread_index ==
+                                 OS_TEST_BLOCK_RANDOM_OWNER_THREAD_INDEX &&
+                             completion.result == expected.result;
+                reference[completed_index] = ReferenceRequest{};
+                ++expected_completion_delivery_count;
+            }
+        } else if (operation_kind == OS_TEST_BLOCK_RANDOM_DIRECT_REAP_OPERATION) {
             const uint64_t completed_index =
                 FindReference(reference, os::kernel::BlockRequestState::Completed);
             if (completed_index < OS_TEST_BLOCK_RANDOM_CAPACITY) {
@@ -244,6 +305,9 @@ int main() {
                 queue.CancelQueued(reference[request_index].identifier) ==
                 os::kernel::BlockRequestQueueStatus::Succeeded;
             reference[request_index].state = os::kernel::BlockRequestState::Completed;
+            reference[request_index].result = os::kernel::BlockRequestResult::Cancelled;
+            reference[request_index].completion_sequence = next_completion_sequence;
+            ++next_completion_sequence;
         }
     }
     uint64_t issued_index = FindReference(reference, os::kernel::BlockRequestState::Issued);
@@ -252,16 +316,28 @@ int main() {
                                     os::kernel::BlockRequestResult::Succeeded) ==
                      os::kernel::BlockRequestQueueStatus::Succeeded;
         reference[issued_index].state = os::kernel::BlockRequestState::Completed;
+        reference[issued_index].result = os::kernel::BlockRequestResult::Succeeded;
+        reference[issued_index].completion_sequence = next_completion_sequence;
+        ++next_completion_sequence;
         issued_index = FindReference(reference, os::kernel::BlockRequestState::Issued);
     }
-    for (uint64_t request_index = OS_TEST_BLOCK_RANDOM_EMPTY_VALUE;
-         consistent && request_index < OS_TEST_BLOCK_RANDOM_CAPACITY; ++request_index) {
-        if (reference[request_index].state == os::kernel::BlockRequestState::Completed) {
-            consistent =
-                queue.Reap(reference[request_index].identifier) ==
-                os::kernel::BlockRequestQueueStatus::Succeeded;
-            reference[request_index] = ReferenceRequest{};
-        }
+    uint64_t completed_index = FindNextCompletionReference(reference);
+    while (consistent && completed_index < OS_TEST_BLOCK_RANDOM_CAPACITY) {
+        os::kernel::BlockCompletion completion{};
+        bool available = false;
+        const ReferenceRequest &expected = reference[completed_index];
+        consistent =
+            queue.TakeCompletion(completion, available) ==
+                os::kernel::BlockRequestQueueStatus::Succeeded &&
+            available && completion.request_identifier == expected.identifier &&
+            completion.operation == expected.operation &&
+            completion.logical_block_address == expected.logical_block_address &&
+            completion.logical_block_count == expected.logical_block_count &&
+            completion.owner_thread_index == OS_TEST_BLOCK_RANDOM_OWNER_THREAD_INDEX &&
+            completion.result == expected.result;
+        reference[completed_index] = ReferenceRequest{};
+        ++expected_completion_delivery_count;
+        completed_index = FindNextCompletionReference(reference);
     }
 
     const os::kernel::BlockRequestQueueStatistics statistics = queue.Statistics();
@@ -275,6 +351,7 @@ int main() {
                     statistics.timeout_completion_count +
                     statistics.cancellation_count &&
             statistics.submission_count == statistics.reap_count &&
+            statistics.completion_delivery_count == expected_completion_delivery_count &&
             statistics.issued_request_count == OS_TEST_BLOCK_RANDOM_EMPTY_VALUE &&
             statistics.peak_issued_request_count > OS_TEST_BLOCK_RANDOM_EMPTY_VALUE &&
             statistics.peak_issued_request_count <=

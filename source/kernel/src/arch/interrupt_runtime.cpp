@@ -7,6 +7,7 @@
 #include <os/kernel/device/nvme.hpp>
 #include <os/kernel/device/programmable_interval_timer.hpp>
 #include <os/kernel/device/ps2_keyboard.hpp>
+#include <os/kernel/process/block_io_device.hpp>
 #include <os/kernel/process/process_runtime.hpp>
 #include <os/kernel/time/monotonic_clock.hpp>
 
@@ -27,6 +28,7 @@ constexpr uint64_t OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA = 0ULL;
 constexpr uint64_t OS_KERNEL_INTERRUPT_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_INTERRUPT_EMPTY_COUNTER = 0ULL;
 constexpr uint64_t OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY = 64ULL;
+constexpr uint64_t OS_KERNEL_INTERRUPT_ATA_SERVICE_ITERATION_MULTIPLIER = 2ULL;
 constexpr uint8_t OS_KERNEL_INTERRUPT_ZERO_BYTE = 0U;
 
 class InterruptRuntime final {
@@ -38,6 +40,10 @@ class InterruptRuntime final {
     [[nodiscard]] InterruptRuntimeStatistics Statistics() const noexcept;
     [[nodiscard]] uint64_t MonotonicNanoseconds() const noexcept;
     [[nodiscard]] bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept;
+    [[nodiscard]] BlockDevice &RootBlockDevice() noexcept;
+    [[nodiscard]] BlockDevice &SwapBlockDevice() noexcept;
+    [[nodiscard]] AsynchronousBlockDevice &RootAsynchronousBlockDevice() noexcept;
+    [[nodiscard]] AsynchronousBlockDevice &SwapAsynchronousBlockDevice() noexcept;
     [[nodiscard]] AtaPioStatus SubmitAtaFlush(uint64_t owner_thread_index,
                                               uint64_t deadline_nanoseconds,
                                               uint64_t &request_identifier,
@@ -45,14 +51,15 @@ class InterruptRuntime final {
 
   private:
     void HandleKeyboardInterrupt() noexcept;
-    void DeliverAtaCompletion(const AtaPioCompletion &completion) noexcept;
-    void StartQueuedAtaRequests() noexcept;
+    void StartQueuedAtaRequests(AtaPioDevice &device) noexcept;
 
     LegacyPic pic_{};
     ProgrammableIntervalTimer timer_{};
     Ps2Keyboard keyboard_{};
-    AtaPioDevice ata_device_{};
-    BlockRequest ata_request_storage_[OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY]{};
+    AtaPioDevice ata_root_device_{};
+    AtaPioDevice ata_swap_device_{AtaPioChannel::Secondary};
+    BlockRequest ata_root_request_storage_[OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY]{};
+    BlockRequest ata_swap_request_storage_[OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY]{};
     ScanCodeSet1Decoder scan_code_decoder_{};
     PitConfiguration pit_configuration_{};
     MonotonicClock monotonic_clock_{};
@@ -97,7 +104,7 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
          byte_index < OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES; ++byte_index) {
         boot_descriptor_sector[byte_index] = OS_KERNEL_INTERRUPT_ZERO_BYTE;
     }
-    if (this->ata_device_.ReadSector(
+    if (this->ata_root_device_.ReadSector(
             OS_KERNEL_INTERRUPT_BOOT_DESCRIPTOR_LBA, boot_descriptor_sector,
             OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) != AtaPioStatus::Succeeded) {
         return InterruptRuntimeStatus::AtaReadFailed;
@@ -106,9 +113,12 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
                                           OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES)) {
         return InterruptRuntimeStatus::InvalidBootDescriptor;
     }
-    if (this->ata_device_.InitializeAsynchronousRequests(
-            this->ata_request_storage_, OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY) !=
-        AtaPioStatus::Succeeded) {
+    if (this->ata_root_device_.InitializeAsynchronousRequests(
+            this->ata_root_request_storage_, OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY) !=
+            AtaPioStatus::Succeeded ||
+        this->ata_swap_device_.InitializeAsynchronousRequests(
+            this->ata_swap_request_storage_, OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY) !=
+            AtaPioStatus::Succeeded) {
         return InterruptRuntimeStatus::AtaRequestInitializationFailed;
     }
 
@@ -117,6 +127,8 @@ InterruptRuntimeStatus InterruptRuntime::Initialize() noexcept {
         this->pic_.EnableInterruptRequest(OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) !=
             LegacyPicStatus::Succeeded ||
         this->pic_.EnableInterruptRequest(OS_KERNEL_INTERRUPT_PRIMARY_ATA_REQUEST) !=
+            LegacyPicStatus::Succeeded ||
+        this->pic_.EnableInterruptRequest(OS_KERNEL_INTERRUPT_SECONDARY_ATA_REQUEST) !=
             LegacyPicStatus::Succeeded) {
         return InterruptRuntimeStatus::PicConfigurationFailed;
     }
@@ -129,6 +141,7 @@ void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
         if (!DispatchNvmeMsixInterrupt()) {
             HaltProcessor();
         }
+        NotifyRuntimeBlockIoCompletion();
         AcknowledgeLocalApicInterrupt();
         return;
     }
@@ -144,28 +157,56 @@ void InterruptRuntime::Dispatch(const uint64_t vector) noexcept {
             MonotonicClockStatus::Succeeded) {
             HaltProcessor();
         }
-        AtaPioCompletion completion{};
-        if (this->ata_device_.ResolveTimeout(this->monotonic_clock_.Read().nanoseconds,
-                                             completion) != AtaPioStatus::Succeeded) {
+        const uint64_t now_nanoseconds = this->monotonic_clock_.Read().nanoseconds;
+        AtaPioCompletion root_completion{};
+        AtaPioCompletion swap_completion{};
+        if (this->ata_root_device_.ResolveTimeout(now_nanoseconds, root_completion) !=
+                AtaPioStatus::Succeeded ||
+            this->ata_swap_device_.ResolveTimeout(now_nanoseconds, swap_completion) !=
+                AtaPioStatus::Succeeded) {
             HaltProcessor();
         }
-        if (completion.ready) {
+        if (root_completion.ready || swap_completion.ready) {
             this->ata_timeout_count_ =
-                this->ata_timeout_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
-            this->DeliverAtaCompletion(completion);
-            this->StartQueuedAtaRequests();
+                this->ata_timeout_count_ +
+                (root_completion.ready ? OS_KERNEL_INTERRUPT_COUNTER_INCREMENT
+                                       : OS_KERNEL_INTERRUPT_EMPTY_COUNTER) +
+                (swap_completion.ready ? OS_KERNEL_INTERRUPT_COUNTER_INCREMENT
+                                       : OS_KERNEL_INTERRUPT_EMPTY_COUNTER);
+            this->ata_completion_count_ =
+                this->ata_completion_count_ +
+                (root_completion.ready ? OS_KERNEL_INTERRUPT_COUNTER_INCREMENT
+                                       : OS_KERNEL_INTERRUPT_EMPTY_COUNTER) +
+                (swap_completion.ready ? OS_KERNEL_INTERRUPT_COUNTER_INCREMENT
+                                       : OS_KERNEL_INTERRUPT_EMPTY_COUNTER);
         }
+        this->StartQueuedAtaRequests(this->ata_root_device_);
+        this->StartQueuedAtaRequests(this->ata_swap_device_);
+        ServiceRuntimeBlockIoTimeouts(now_nanoseconds);
     } else if (interrupt_request == OS_KERNEL_INTERRUPT_KEYBOARD_REQUEST) {
         this->HandleKeyboardInterrupt();
     } else if (interrupt_request == OS_KERNEL_INTERRUPT_PRIMARY_ATA_REQUEST) {
         AtaPioCompletion completion{};
-        if (this->ata_device_.HandleInterrupt(completion) != AtaPioStatus::Succeeded) {
+        if (this->ata_root_device_.HandleInterrupt(completion) != AtaPioStatus::Succeeded) {
             HaltProcessor();
         }
         if (completion.ready) {
-            this->DeliverAtaCompletion(completion);
-            this->StartQueuedAtaRequests();
+            this->ata_completion_count_ =
+                this->ata_completion_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
         }
+        this->StartQueuedAtaRequests(this->ata_root_device_);
+        NotifyRuntimeBlockIoCompletion();
+    } else if (interrupt_request == OS_KERNEL_INTERRUPT_SECONDARY_ATA_REQUEST) {
+        AtaPioCompletion completion{};
+        if (this->ata_swap_device_.HandleInterrupt(completion) != AtaPioStatus::Succeeded) {
+            HaltProcessor();
+        }
+        if (completion.ready) {
+            this->ata_completion_count_ =
+                this->ata_completion_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
+        }
+        this->StartQueuedAtaRequests(this->ata_swap_device_);
+        NotifyRuntimeBlockIoCompletion();
     }
 
     const LegacyPicStatus acknowledge_status = this->pic_.Acknowledge(interrupt_request);
@@ -182,7 +223,8 @@ InterruptRuntimeStatistics InterruptRuntime::Statistics() const noexcept {
     const bool interrupts_were_enabled = DisableInterrupts();
     const uint64_t timer_tick_count = this->timer_tick_count_;
     const MonotonicClockSnapshot monotonic_snapshot = this->monotonic_clock_.Read();
-    const AtaPioStatistics ata_statistics = this->ata_device_.Statistics();
+    const AtaPioStatistics ata_root_statistics = this->ata_root_device_.Statistics();
+    const AtaPioStatistics ata_swap_statistics = this->ata_swap_device_.Statistics();
     const InterruptRuntimeStatistics statistics{
         .timer_tick_count = timer_tick_count,
         .monotonic_nanoseconds = monotonic_snapshot.nanoseconds,
@@ -192,10 +234,11 @@ InterruptRuntimeStatistics InterruptRuntime::Statistics() const noexcept {
         .keyboard_interrupt_count = this->keyboard_interrupt_count_,
         .supported_keyboard_event_count = this->supported_keyboard_event_count_,
         .spurious_interrupt_count = this->spurious_interrupt_count_,
-        .ata_interrupt_count = ata_statistics.interrupt_count,
+        .ata_interrupt_count =
+            ata_root_statistics.interrupt_count + ata_swap_statistics.interrupt_count,
         .ata_completion_count = this->ata_completion_count_,
         .ata_timeout_count = this->ata_timeout_count_,
-        .ata_request_capacity = ata_statistics.request_queue.capacity,
+        .ata_request_capacity = ata_root_statistics.request_queue.capacity,
         .pic_mask = this->pic_.Mask(),
         .pit_divisor = this->pit_configuration_.divisor,
         .pit_actual_frequency_hz = this->pit_configuration_.actual_frequency_hz,
@@ -223,58 +266,53 @@ bool InterruptRuntime::TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
     return event_available;
 }
 
+BlockDevice &InterruptRuntime::RootBlockDevice() noexcept { return this->ata_root_device_; }
+
+BlockDevice &InterruptRuntime::SwapBlockDevice() noexcept { return this->ata_swap_device_; }
+
+AsynchronousBlockDevice &InterruptRuntime::RootAsynchronousBlockDevice() noexcept {
+    return this->ata_root_device_;
+}
+
+AsynchronousBlockDevice &InterruptRuntime::SwapAsynchronousBlockDevice() noexcept {
+    return this->ata_swap_device_;
+}
+
 AtaPioStatus InterruptRuntime::SubmitAtaFlush(const uint64_t owner_thread_index,
                                               const uint64_t deadline_nanoseconds,
                                               uint64_t &request_identifier,
                                               BlockRequestResult &immediate_result) noexcept {
     request_identifier = OS_KERNEL_INTERRUPT_EMPTY_COUNTER;
     immediate_result = BlockRequestResult::None;
-    const AtaPioStatus submit_status = this->ata_device_.SubmitAsynchronous(
-        BlockOperation::Flush, OS_KERNEL_INTERRUPT_EMPTY_COUNTER, nullptr,
-        OS_KERNEL_INTERRUPT_EMPTY_COUNTER, owner_thread_index, deadline_nanoseconds,
-        request_identifier);
-    if (submit_status != AtaPioStatus::Succeeded) {
-        return submit_status;
+    AsynchronousBlockDevice &asynchronous_device = this->ata_swap_device_;
+    const AsynchronousBlockDeviceStatus submit_status =
+        asynchronous_device.Submit(BlockOperation::Flush, OS_KERNEL_INTERRUPT_EMPTY_COUNTER,
+                                   nullptr, OS_KERNEL_INTERRUPT_EMPTY_COUNTER, owner_thread_index,
+                                   deadline_nanoseconds, request_identifier);
+    if (submit_status != AsynchronousBlockDeviceStatus::Succeeded) {
+        return submit_status == AsynchronousBlockDeviceStatus::NotReady
+                   ? AtaPioStatus::NotInitialized
+               : submit_status == AsynchronousBlockDeviceStatus::RequestInProgress
+                   ? AtaPioStatus::RequestInProgress
+               : submit_status == AsynchronousBlockDeviceStatus::DeviceFailure
+                   ? AtaPioStatus::DeviceError
+                   : AtaPioStatus::RequestQueueFailure;
     }
-    AtaPioCompletion completion{};
-    bool request_started = false;
-    const AtaPioStatus start_status =
-        this->ata_device_.StartNextAsynchronous(completion, request_started);
-    static_cast<void>(request_started);
-    if (start_status != AtaPioStatus::Succeeded) {
-        return start_status;
-    }
-    if (completion.ready) {
-        immediate_result = completion.result;
-    }
+    NotifyRuntimeBlockIoCompletion();
     return AtaPioStatus::Succeeded;
 }
 
-void InterruptRuntime::DeliverAtaCompletion(const AtaPioCompletion &completion) noexcept {
-    if (!completion.ready) {
-        HaltProcessor();
-    }
-    const ProcessRuntimeStatus completion_status = CompleteBlockIoRequest(
-        completion.owner_thread_index, completion.request_identifier, completion.result);
-    if (completion_status != ProcessRuntimeStatus::Succeeded &&
-        completion_status != ProcessRuntimeStatus::BlockIoRequestAbandoned) {
-        HaltProcessor();
-    }
-    this->ata_completion_count_ =
-        this->ata_completion_count_ + OS_KERNEL_INTERRUPT_COUNTER_INCREMENT;
-}
-
-void InterruptRuntime::StartQueuedAtaRequests() noexcept {
+void InterruptRuntime::StartQueuedAtaRequests(AtaPioDevice &device) noexcept {
     for (uint64_t iteration = OS_KERNEL_INTERRUPT_EMPTY_COUNTER;
-         iteration < OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY; ++iteration) {
+         iteration < OS_KERNEL_INTERRUPT_ATA_REQUEST_CAPACITY *
+                         OS_KERNEL_INTERRUPT_ATA_SERVICE_ITERATION_MULTIPLIER;
+         ++iteration) {
         AtaPioCompletion completion{};
         bool request_started = false;
-        if (this->ata_device_.StartNextAsynchronous(completion, request_started) !=
-            AtaPioStatus::Succeeded) {
+        if (device.StartNextAsynchronous(completion, request_started) != AtaPioStatus::Succeeded) {
             HaltProcessor();
         }
         if (completion.ready) {
-            this->DeliverAtaCompletion(completion);
             continue;
         }
         return;
@@ -333,6 +371,22 @@ uint64_t GetMonotonicNanoseconds() noexcept {
 
 bool TryTakeKeyboardEvent(KeyboardEvent &event) noexcept {
     return kernel_interrupt_runtime.TryTakeKeyboardEvent(event);
+}
+
+BlockDevice &GetRuntimeAtaRootBlockDevice() noexcept {
+    return kernel_interrupt_runtime.RootBlockDevice();
+}
+
+BlockDevice &GetRuntimeAtaSwapBlockDevice() noexcept {
+    return kernel_interrupt_runtime.SwapBlockDevice();
+}
+
+AsynchronousBlockDevice &GetRuntimeAtaRootAsynchronousBlockDevice() noexcept {
+    return kernel_interrupt_runtime.RootAsynchronousBlockDevice();
+}
+
+AsynchronousBlockDevice &GetRuntimeAtaSwapAsynchronousBlockDevice() noexcept {
+    return kernel_interrupt_runtime.SwapAsynchronousBlockDevice();
 }
 
 AtaPioStatus SubmitAsynchronousAtaFlush(const uint64_t owner_thread_index,

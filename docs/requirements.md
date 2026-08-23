@@ -407,8 +407,52 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   selection/completion 失败不得把未选页计入进展。停止时 writeback、aging、background
   三个 handle 必须取消、reset、release，controller、deadline、队列与 waiter 全部归零；
 - 4 GiB ATA/NVMe pressure 门禁必须稳定观察后台 wake/sleep、batch、clean file、writeback
-  和总回收非零、后台 failure 为零；anonymous 的 direct/background 公平份额留给第六
-  增量，但系统总 anonymous swap 仍必须非零。
+  和总回收非零、后台 failure 为零；第六增量已冻结 direct/background 共用的
+  swappiness 配额，系统总 anonymous swap 仍必须非零。
+
+## v2.10 异步块 I/O 与可等待页缓存要求
+
+- BlockRequest 必须分别维护 submit FIFO 与 completion FIFO；完成 FIFO 只按首次解析
+  发生顺序排列，不得按 identifier 或原提交顺序重排；
+- IRQ、timeout、cancel 对同一请求仍只能有一个赢家。成功、设备错误、超时和取消必须
+  恰产生一条 Completed 身份，重复解析只增加拒绝统计；
+- `BlockCompletion` 必须携带 request id、operation、LBA、block count、owner thread 和
+  terminal result；Take 后请求槽立即可复用，旧 id 必须失效；
+- completion 为空必须返回 `available=false`，不得忙等、伪造错误或改变计数；
+- 直接 Reap 已完成请求时必须从 completion FIFO 任意位置摘除，并保持其余顺序；
+- `submission=active+reap`、`resolution=completed+reap`、`delivery<=reap` 必须由
+  `Validate`、单元、集成和十万步随机 oracle 同时检查；
+- 第一增量只建立完成交付契约并迁移 ATA 内部消费，不得提前宣称 rootfs 或 NVMe 已完成
+  异步迁移；后续增量才能引入 BlockIo WaitQueue 和 FilePageCache Loading waiter；
+- 第二增量的 `AsynchronousBlockDevice` 必须与同步 `BlockDevice` 并列，不得迫使同步调用方
+  伪造 owner/deadline，也不得使用 virtual、RTTI、异常或动态分配实现分派；
+- ATA 与 NVMe namespace 必须通过同一 geometry、submit、best-effort cancel、timeout、
+  completion 接口工作；控制器端口、BAR、doorbell、phase 和 CID 不得泄漏给上层；
+- NVMe 公共 64 位 request id 必须与 16 位 command id 分离。CID 回绕不得命中仍活动或
+  待交付的旧请求，完成值只能携带公共 request id；
+- NVMe IRQ 只能解析 CQE 和发布完成，不得在 IRQ 中执行最多 64 KiB DMA 回拷；Read 数据
+  在非 IRQ TakeCompletion 阶段复制，复制完成前槽位和 caller buffer 所有权不得释放；
+- NVMe timeout reset 必须让最早到期请求得到 TimedOut、其余未完成异步请求得到
+  DeviceError，并保留 reset 前已排队的完成；
+- cancel 是 best-effort：ATA queued 请求可以 Cancelled，已签发 ATA/NVMe 请求必须返回
+  RequestInProgress 且保持原状态，不得宣称硬件命令已经撤销；
+- 第三增量 3a 的 `BlockIoCoordinator` 必须同时匹配 owner 与 request id，并以 generation
+  ticket 拒绝槽位复用后的旧等待；每个 owner 同时最多登记一个请求；
+- completion-before-wait 必须使 `PrepareWait` 直接返回完成，wait-before-completion 必须只
+  唤醒精确 Kernel Thread，abandon-before-completion 必须消费迟到完成但不唤醒旧 owner；
+- IRQ14、IRQ15、MSI-X 与 timer 只允许解析终态并通知 completion Worker；
+  `TakeCompletion`、NVMe Read DMA 回拷、协调器交付和 WaitQueue wake 必须在非 IRQ 上完成；
+- completion Worker 扫描为空后必须在关中断区复核单调通知 generation，再提交阻塞；
+  不得用无界轮询规避扫描与睡眠之间的丢通知窗口；
+- `AwaitRuntimeBlockIo` 仅允许浅层 Kernel Thread 调用。设备接受请求后，如果协调登记、
+  等待提交、唤醒原因或结果提取损坏，必须 fail-stop，不能返回并释放仍归设备所有的 buffer；
+- 当前 rootfs、journal、BlockCache、swap 和用户系统调用调用链不得直接打开异步包装：持有
+  spin lock 不得睡眠，用户阻塞模型也不能保留任意深层 Kernel C++ 栈；第三增量 3b 必须先
+  引入浅层 I/O worker 委托、稳定 request buffer 和锁临界区拆分；
+- 第三增量 3a 的整机证据必须经 secondary ATA IRQ15 完成一次真实 Kernel wait，并要求
+  coordinator registration/wait/completion 各为一、rootfs/swap async production 为零；
+- 最终生产异步路径不得在 IRQ 中分配、阻塞或调用 VFS，EIO/timeout/cancel 必须唤醒原
+  owner，退出和 unmap 必须能撤销或遗弃请求且不写入已释放 buffer。
 
 ## v2.0 完成基线
 

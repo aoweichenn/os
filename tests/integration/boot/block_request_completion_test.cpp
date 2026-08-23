@@ -15,6 +15,7 @@ constexpr uint64_t OS_TEST_BLOCK_COMPLETION_CAPACITY = 4ULL;
 constexpr uint64_t OS_TEST_BLOCK_COMPLETION_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_BLOCK_COMPLETION_SINGLE_EVENT_COUNT = 1ULL;
 constexpr uint64_t OS_TEST_BLOCK_COMPLETION_TWO_EVENT_COUNT = 2ULL;
+constexpr uint64_t OS_TEST_BLOCK_COMPLETION_THREE_EVENT_COUNT = 3ULL;
 constexpr uint64_t OS_TEST_BLOCK_COMPLETION_FIRST_DEADLINE_NS = 250ULL;
 constexpr uint64_t OS_TEST_BLOCK_COMPLETION_SECOND_DEADLINE_NS = 300ULL;
 constexpr uint64_t OS_TEST_BLOCK_COMPLETION_THIRD_DEADLINE_NS = 400ULL;
@@ -33,6 +34,21 @@ constexpr os::kernel::BlockDeviceGeometry OS_TEST_BLOCK_COMPLETION_GEOMETRY{
     .write_supported = true,
     .flush_supported = true,
 };
+
+[[nodiscard]] bool TakeExpectedCompletion(
+    os::kernel::BlockRequestQueue &queue, const uint64_t request_identifier,
+    const os::kernel::BlockRequestResult result) noexcept {
+    os::kernel::BlockCompletion completion{};
+    bool available = false;
+    return queue.TakeCompletion(completion, available) ==
+               os::kernel::BlockRequestQueueStatus::Succeeded &&
+           available && completion.request_identifier == request_identifier &&
+           completion.operation == os::kernel::BlockOperation::Flush &&
+           completion.logical_block_address == OS_TEST_BLOCK_COMPLETION_EMPTY_VALUE &&
+           completion.logical_block_count == OS_TEST_BLOCK_COMPLETION_EMPTY_VALUE &&
+           completion.owner_thread_index == OS_TEST_BLOCK_COMPLETION_OWNER_THREAD_INDEX &&
+           completion.result == result;
+}
 
 }
 
@@ -84,13 +100,19 @@ int main() {
             os::kernel::BlockRequestQueueStatus::Succeeded &&
         queue.IssueNext(request, issued) == os::kernel::BlockRequestQueueStatus::Succeeded &&
         issued && request.identifier == third_identifier &&
-        queue.Complete(second_identifier, os::kernel::BlockRequestResult::DeviceError) ==
-            os::kernel::BlockRequestQueueStatus::Succeeded &&
         queue.Complete(third_identifier, os::kernel::BlockRequestResult::Succeeded) ==
+            os::kernel::BlockRequestQueueStatus::Succeeded &&
+        queue.Complete(second_identifier, os::kernel::BlockRequestResult::DeviceError) ==
             os::kernel::BlockRequestQueueStatus::Succeeded &&
         queue.Read(second_identifier, request) ==
             os::kernel::BlockRequestQueueStatus::Succeeded &&
         request.result == os::kernel::BlockRequestResult::DeviceError &&
+        TakeExpectedCompletion(queue, first_identifier,
+                               os::kernel::BlockRequestResult::Succeeded) &&
+        TakeExpectedCompletion(queue, third_identifier,
+                               os::kernel::BlockRequestResult::Succeeded) &&
+        TakeExpectedCompletion(queue, second_identifier,
+                               os::kernel::BlockRequestResult::DeviceError) &&
         queue.Validate() == os::kernel::BlockRequestQueueStatus::Succeeded &&
         queue.Statistics().successful_completion_count ==
             OS_TEST_BLOCK_COMPLETION_TWO_EVENT_COUNT &&
@@ -98,6 +120,9 @@ int main() {
             OS_TEST_BLOCK_COMPLETION_SINGLE_EVENT_COUNT &&
         queue.Statistics().duplicate_resolution_count ==
             OS_TEST_BLOCK_COMPLETION_SINGLE_EVENT_COUNT &&
+        queue.Statistics().completion_delivery_count ==
+            OS_TEST_BLOCK_COMPLETION_THREE_EVENT_COUNT &&
+        queue.Statistics().active_request_count == OS_TEST_BLOCK_COMPLETION_EMPTY_VALUE &&
         queue.Statistics().peak_issued_request_count ==
             OS_TEST_BLOCK_COMPLETION_MAXIMUM_OUTSTANDING_REQUEST_COUNT;
     test_context.Expect(forward_progress, OS_TEST_BLOCK_COMPLETION_FORWARD_PROGRESS);

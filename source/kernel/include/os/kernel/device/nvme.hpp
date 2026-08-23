@@ -1,5 +1,6 @@
 #pragma once
 
+#include <os/kernel/device/asynchronous_block_device.hpp>
 #include <os/kernel/device/nvme_model.hpp>
 #include <os/kernel/device/pci.hpp>
 #include <os/kernel/memory/memory_manager.hpp>
@@ -85,19 +86,26 @@ struct NvmeIoRequestSlot final {
     PhysicalFrame prp_list_frame;
     uint64_t *prp_list_entries;
     uint64_t request_identifier;
+    uint8_t *completion_buffer;
+    uint64_t owner_thread_index;
     uint64_t logical_block_address;
     uint64_t logical_block_count;
     uint64_t transfer_size_bytes;
     uint64_t deadline_nanoseconds;
+    uint64_t next_completion_index;
     uint32_t namespace_identifier;
+    uint16_t command_identifier;
     NvmeIoOperation operation;
     NvmeStatus completion_status;
+    BlockRequestResult block_result;
     NvmeIoRequestState state;
+    bool asynchronous;
 };
 
 class NvmeController;
 
-class NvmeNamespaceDevice final : public BlockDeviceAdapter<NvmeNamespaceDevice> {
+class NvmeNamespaceDevice final : public BlockDeviceAdapter<NvmeNamespaceDevice>,
+                                  public AsynchronousBlockDeviceAdapter<NvmeNamespaceDevice> {
   public:
     constexpr NvmeNamespaceDevice() noexcept = default;
     NvmeNamespaceDevice(const NvmeNamespaceDevice &) = delete;
@@ -114,6 +122,17 @@ class NvmeNamespaceDevice final : public BlockDeviceAdapter<NvmeNamespaceDevice>
                                                uint64_t block_size_bytes) noexcept;
     [[nodiscard]] BlockDeviceStatus Flush() noexcept;
     [[nodiscard]] const BlockDeviceGeometry &Geometry() const noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    SubmitBlockRequest(BlockOperation operation, uint64_t logical_block_address, uint8_t *buffer,
+                       uint64_t buffer_size_bytes, uint64_t owner_thread_index,
+                       uint64_t deadline_nanoseconds, uint64_t &request_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    CancelBlockRequest(uint64_t request_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    ResolveBlockTimeouts(uint64_t now_nanoseconds) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus TakeBlockCompletion(BlockCompletion &completion,
+                                                                    bool &available) noexcept;
+    [[nodiscard]] BlockDeviceGeometry AsynchronousGeometry() const noexcept;
 
   private:
     NvmeController *controller_{};
@@ -160,6 +179,20 @@ class NvmeController final : public BlockDeviceAdapter<NvmeController> {
         uint64_t logical_block_address, const uint8_t *block,
         uint64_t block_size_bytes) noexcept;
     [[nodiscard]] BlockDeviceStatus FlushNamespace(uint32_t namespace_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    SubmitNamespaceBlockRequest(uint32_t namespace_identifier, const BlockDeviceGeometry &geometry,
+                                BlockOperation operation, uint64_t logical_block_address,
+                                uint8_t *buffer, uint64_t buffer_size_bytes,
+                                uint64_t owner_thread_index, uint64_t deadline_nanoseconds,
+                                uint64_t &request_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    CancelNamespaceBlockRequest(uint32_t namespace_identifier,
+                                uint64_t request_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    ResolveNamespaceBlockTimeouts(uint64_t now_nanoseconds) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    TakeNamespaceBlockCompletion(uint32_t namespace_identifier, BlockCompletion &completion,
+                                 bool &available) noexcept;
 
   private:
     [[nodiscard]] NvmeStatus AllocateDmaPages() noexcept;
@@ -171,16 +204,22 @@ class NvmeController final : public BlockDeviceAdapter<NvmeController> {
     [[nodiscard]] NvmeStatus SubmitAdminCommand(
         const NvmeSubmissionEntry &entry, uint16_t command_identifier,
         NvmeCompletionResult &completion_result) noexcept;
-    [[nodiscard]] NvmeStatus SubmitIoRequest(
-        NvmeIoOperation operation, uint64_t logical_block_address,
-        uint64_t logical_block_count, uint32_t namespace_identifier,
-        const BlockDeviceGeometry &geometry, const uint8_t *write_buffer,
-        uint64_t transfer_size_bytes, uint64_t &request_identifier) noexcept;
+    [[nodiscard]] NvmeStatus
+    SubmitIoRequest(NvmeIoOperation operation, uint64_t logical_block_address,
+                    uint64_t logical_block_count, uint32_t namespace_identifier,
+                    const BlockDeviceGeometry &geometry, const uint8_t *write_buffer,
+                    uint8_t *completion_buffer, uint64_t transfer_size_bytes,
+                    uint64_t owner_thread_index, uint64_t deadline_nanoseconds, bool asynchronous,
+                    uint64_t &request_identifier) noexcept;
     [[nodiscard]] NvmeStatus WaitForIoRequest(uint64_t request_identifier,
                                               uint8_t *read_buffer,
                                               uint64_t transfer_size_bytes) noexcept;
+    [[nodiscard]] NvmeStatus
+    WaitForAsynchronousCompletions(AsynchronousBlockDevice &device,
+                                   const uint64_t *request_identifiers, uint64_t request_count,
+                                   BlockOperation expected_operation) noexcept;
     [[nodiscard]] NvmeStatus DrainIoCompletions() noexcept;
-    [[nodiscard]] NvmeStatus ResetController() noexcept;
+    [[nodiscard]] NvmeStatus ResetController(bool preserve_asynchronous_completions) noexcept;
     [[nodiscard]] NvmeStatus SubmitQueueCommand(
         NvmeSubmissionEntry *submission_queue,
         volatile NvmeCompletionEntry *completion_queue, uint64_t queue_depth,
@@ -193,7 +232,13 @@ class NvmeController final : public BlockDeviceAdapter<NvmeController> {
         uint64_t block_size_bytes, uint64_t &logical_block_count) const noexcept;
     [[nodiscard]] uint16_t TakeIoCommandIdentifier() noexcept;
     [[nodiscard]] NvmeIoRequestSlot *FindIoRequestSlot(uint64_t request_identifier) noexcept;
+    [[nodiscard]] NvmeIoRequestSlot *FindIoCommandSlot(uint16_t command_identifier) noexcept;
     [[nodiscard]] NvmeIoRequestSlot *FindFreeIoRequestSlot() noexcept;
+    [[nodiscard]] uint64_t IndexOfIoRequestSlot(const NvmeIoRequestSlot &slot) const noexcept;
+    void AppendIoCompletionIndex(uint64_t slot_index) noexcept;
+    [[nodiscard]] bool RemoveIoCompletionIndex(uint64_t slot_index) noexcept;
+    void ReleaseIoRequestSlot(NvmeIoRequestSlot &slot) noexcept;
+    void ResolveAsynchronousResetFallout(uint64_t timed_out_request_identifier) noexcept;
     [[nodiscard]] NvmeStatus PrepareIoRequestPrps(NvmeIoRequestSlot &slot,
                                                   uint64_t transfer_size_bytes,
                                                   NvmePrpMapping &mapping) noexcept;
@@ -240,6 +285,9 @@ class NvmeController final : public BlockDeviceAdapter<NvmeController> {
     uint64_t io_completion_head_{};
     bool io_completion_phase_{true};
     uint16_t next_io_command_identifier_{OS_KERNEL_NVME_FIRST_IO_COMMAND_IDENTIFIER};
+    uint64_t next_io_request_identifier_{OS_KERNEL_BLOCK_REQUEST_FIRST_IDENTIFIER};
+    uint64_t io_completion_list_head_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
+    uint64_t io_completion_list_tail_index_{OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX};
     BlockDeviceGeometry geometry_{};
     volatile uint64_t outstanding_request_count_{};
     volatile uint64_t peak_outstanding_request_count_{};
@@ -264,9 +312,11 @@ struct NvmeStorageRuntimeResult final {
     bool resources_reclaimed;
 };
 
-[[nodiscard]] NvmeStatus InitializeNvmeStorageRuntime(
-    NvmeTimeOperation time_operation, NvmeStorageRuntimeResult &result,
-    BlockDevice *&root_device, BlockDevice *&swap_device) noexcept;
+[[nodiscard]] NvmeStatus
+InitializeNvmeStorageRuntime(NvmeTimeOperation time_operation, NvmeStorageRuntimeResult &result,
+                             BlockDevice *&root_device, BlockDevice *&swap_device,
+                             AsynchronousBlockDevice *&root_asynchronous_device,
+                             AsynchronousBlockDevice *&swap_asynchronous_device) noexcept;
 [[nodiscard]] NvmeStatus ShutdownNvmeStorageRuntime(
     NvmeStorageRuntimeResult &result) noexcept;
 

@@ -717,6 +717,21 @@ os_add_kernel_device_test(
     "randomized"
 )
 os_add_kernel_device_test(
+    os_kernel_asynchronous_block_device_unit_tests
+    unit/kernel/asynchronous_block_device_test.cpp
+    "unit"
+)
+os_add_kernel_device_test(
+    os_kernel_asynchronous_block_device_adapter_integration_tests
+    integration/boot/asynchronous_block_device_adapter_test.cpp
+    "integration"
+)
+os_add_kernel_device_test(
+    os_kernel_asynchronous_block_device_randomized_tests
+    randomized/kernel/asynchronous_block_device_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_device_test(
     os_kernel_pci_model_unit_tests
     unit/kernel/pci_model_test.cpp
     "unit"
@@ -808,6 +823,11 @@ os_add_kernel_process_test(
     "unit"
 )
 os_add_kernel_process_test(
+    os_kernel_block_io_unit_tests
+    unit/kernel/block_io_test.cpp
+    "unit"
+)
+os_add_kernel_process_test(
     os_kernel_private_futex_unit_tests
     unit/kernel/private_futex_test.cpp
     "unit"
@@ -838,6 +858,11 @@ os_add_kernel_process_test(
     "integration"
 )
 os_add_kernel_process_test(
+    os_kernel_block_io_wait_queue_integration_tests
+    integration/boot/block_io_wait_queue_test.cpp
+    "integration"
+)
+os_add_kernel_process_test(
     os_kernel_deadline_scheduling_integration_tests
     integration/boot/deadline_scheduling_integration_test.cpp
     "integration"
@@ -860,6 +885,11 @@ os_add_kernel_process_test(
 os_add_kernel_process_test(
     os_kernel_work_queue_randomized_tests
     randomized/kernel/work_queue_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_process_test(
+    os_kernel_block_io_randomized_tests
+    randomized/kernel/block_io_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_process_test(

@@ -12,6 +12,8 @@
 #include <os/kernel/fs/legacy_file_system.hpp>
 #include <os/kernel/fs/root_file_system_format.hpp>
 #include <os/kernel/memory/memory_manager.hpp>
+#include <os/kernel/process/block_io.hpp>
+#include <os/kernel/process/block_io_device.hpp>
 #include <os/kernel/process/program_arguments.hpp>
 #include <os/kernel/sync/spin_lock.hpp>
 
@@ -51,6 +53,11 @@ constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_SLEEP_QUEUE_ID = 7ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_QUEUE_ID = 8ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_KERNEL_THREAD_TEST_QUEUE_ID = 9ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_KERNEL_WORK_QUEUE_ID = 10ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_QUEUE_ID = 11ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY = 64ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY = 4ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_PROBE_TIMEOUT_NANOSECONDS =
+    5ULL * 1000ULL * 1000ULL * 1000ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_KERNEL_CONTEXT_REGISTER_SLOT_COUNT = 6ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_KERNEL_CONTEXT_FLAGS_SLOT = 6ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_KERNEL_CONTEXT_ENTRY_SLOT = 7ULL;
@@ -188,6 +195,10 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FAILURE_AREA_KIND_PREFIX[] =
     "[OS][KERNEL][AGING][FAIL] AREA_KIND=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FAILURE_COPY_ON_WRITE_PREFIX[] =
     "[OS][KERNEL][AGING][FAIL] COPY_ON_WRITE=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FORGET_FAILURE_STATUS_PREFIX[] =
+    "[OS][KERNEL][AGING][FAIL] FORGET_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FORGET_FAILURE_ADDRESS_PREFIX[] =
+    "[OS][KERNEL][AGING][FAIL] FORGET_PHYSICAL_ADDRESS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_PROCESS_ID=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX[] =
@@ -196,6 +207,14 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_STAGE=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_STAGE_PREFIX[] =
+    "[OS][KERNEL][FATAL] ADDRESS_SPACE_STAGE=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_VIRTUAL_ADDRESS_PREFIX[] =
+    "[OS][KERNEL][FATAL] ADDRESS_SPACE_VIRTUAL_ADDRESS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_PHYSICAL_ADDRESS_PREFIX[] =
+    "[OS][KERNEL][FATAL] ADDRESS_SPACE_PHYSICAL_ADDRESS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_DETAIL_STATUS_PREFIX[] =
+    "[OS][KERNEL][FATAL] ADDRESS_SPACE_DETAIL_STATUS=";
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_EXTENDED_STATE = 1ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_FUTEX = 2ULL;
 constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_WRITEBACK = 3ULL;
@@ -396,6 +415,7 @@ WaitQueue child_exit_wait_queue;
 WaitQueue thread_join_wait_queue;
 WaitQueue sleep_wait_queue;
 WaitQueue block_io_wait_queue;
+WaitQueue block_io_completion_wait_queue;
 WaitQueue kernel_thread_test_wait_queue;
 WaitQueue kernel_work_wait_queue;
 PrivateFutexManager private_futex_manager;
@@ -469,6 +489,14 @@ bool background_reclaim_work_registered;
 bool page_aging_worker_failed;
 bool background_reclaim_worker_failed;
 bool kernel_work_thread_stop_requested;
+BlockIoCoordinator block_io_coordinator;
+BlockIoSlot block_io_slots[OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY];
+AsynchronousBlockDevice *block_io_devices[OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY];
+uint64_t block_io_device_count;
+bool block_io_completion_worker_stop_requested;
+bool block_io_completion_worker_started;
+volatile uint64_t block_io_completion_notification_generation;
+bool block_io_runtime_probe_succeeded;
 bool kernel_thread_runtime_available;
 bool kernel_thread_dispatch_active;
 bool process_runtime_initialized;
@@ -770,6 +798,12 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
     static_cast<void>(context);
     const PageAgingStatus status =
         page_aging_manager.Forget(physical_address, PageAgingKind::Anonymous);
+    if (status != PageAgingStatus::Succeeded && status != PageAgingStatus::EntryNotFound) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FORGET_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(status));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_FORGET_FAILURE_ADDRESS_PREFIX,
+                                 physical_address);
+    }
     return status == PageAgingStatus::Succeeded || status == PageAgingStatus::EntryNotFound;
 }
 
@@ -1006,6 +1040,15 @@ void ResetRuntimeStorage() noexcept {
     kernel_thread_self_test_step = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     kernel_thread_runtime_available = false;
     kernel_thread_dispatch_active = false;
+    for (uint64_t device_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         device_index < OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY; ++device_index) {
+        block_io_devices[device_index] = nullptr;
+    }
+    block_io_device_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    block_io_completion_worker_stop_requested = false;
+    block_io_completion_worker_started = false;
+    block_io_completion_notification_generation = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    block_io_runtime_probe_succeeded = false;
 }
 
 [[nodiscard]] bool ReadThreadKernelStack(const uint64_t thread_index, KernelStack &stack) noexcept {
@@ -2162,6 +2205,122 @@ QueueRuntimeBackgroundReclaimDecision(const BackgroundReclaimDecision &decision)
     return left.slot_index == right.slot_index && left.generation == right.generation;
 }
 
+[[nodiscard]] bool WakeRuntimeBlockIoOwner(const uint64_t owner_thread_index) noexcept {
+    if (kernel_thread_runtime_statistics.wake_count == UINT64_MAX) {
+        return false;
+    }
+    ThreadEntry owner_thread{};
+    const bool interrupts_were_enabled = scheduler_lock.Lock();
+    bool wake_won = false;
+    const ThreadSchedulerStatus read_status =
+        thread_scheduler.ReadThread(owner_thread_index, owner_thread);
+    const ThreadSchedulerStatus wake_status =
+        read_status == ThreadSchedulerStatus::Succeeded && owner_thread.kind == ThreadKind::Kernel
+            ? thread_scheduler.WakeThread(block_io_wait_queue, owner_thread_index,
+                                          WakeReason::ConditionSatisfied, wake_won)
+            : ThreadSchedulerStatus::InvalidThreadIndex;
+    scheduler_lock.Unlock(interrupts_were_enabled);
+    if (wake_status != ThreadSchedulerStatus::Succeeded || !wake_won) {
+        return false;
+    }
+    ++kernel_thread_runtime_statistics.wake_count;
+    GetCpuLocal().RequestReschedule();
+    return true;
+}
+
+[[nodiscard]] bool ServiceRuntimeBlockIoCompletions(bool &made_progress) noexcept {
+    made_progress = false;
+    for (uint64_t device_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         device_index < block_io_device_count; ++device_index) {
+        AsynchronousBlockDevice *const device = block_io_devices[device_index];
+        if (device == nullptr) {
+            return false;
+        }
+        for (uint64_t completion_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+             completion_index < OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY; ++completion_index) {
+            BlockCompletion completion{};
+            bool available = false;
+            if (device->TakeCompletion(completion, available) !=
+                AsynchronousBlockDeviceStatus::Succeeded) {
+                return false;
+            }
+            if (!available) {
+                break;
+            }
+            made_progress = true;
+            BlockIoCompletionDecision decision{};
+            const bool completion_interrupts_were_enabled = DisableInterrupts();
+            const BlockIoStatus coordinator_status = block_io_coordinator.Complete(
+                completion.owner_thread_index, completion.request_identifier, completion.result,
+                decision);
+            RestoreInterrupts(completion_interrupts_were_enabled);
+            if (coordinator_status == BlockIoStatus::RequestNotFound) {
+                const ProcessRuntimeStatus legacy_status =
+                    CompleteBlockIoRequest(completion.owner_thread_index,
+                                           completion.request_identifier, completion.result);
+                if (legacy_status != ProcessRuntimeStatus::Succeeded &&
+                    legacy_status != ProcessRuntimeStatus::BlockIoRequestAbandoned) {
+                    return false;
+                }
+                continue;
+            }
+            if (coordinator_status != BlockIoStatus::Succeeded ||
+                (decision.wake_required && !WakeRuntimeBlockIoOwner(decision.owner_thread_index))) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+void RuntimeBlockIoCompletionWorker(void *const context) noexcept {
+    static_cast<void>(context);
+    while (true) {
+        const uint64_t observed_notification_generation =
+            block_io_completion_notification_generation;
+        bool made_progress = false;
+        if (!ServiceRuntimeBlockIoCompletions(made_progress)) {
+            HaltProcessor();
+        }
+        const BlockIoStatistics statistics = block_io_coordinator.Statistics();
+        if (block_io_completion_worker_stop_requested && block_io_runtime_probe_succeeded &&
+            statistics.active_request_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+            return;
+        }
+        if (made_progress) {
+            continue;
+        }
+        const bool interrupts_were_enabled = DisableInterrupts();
+        if (block_io_completion_notification_generation != observed_notification_generation) {
+            RestoreInterrupts(interrupts_were_enabled);
+            continue;
+        }
+        WakeReason wake_reason = WakeReason::None;
+        if (BlockCurrentKernelThread(block_io_completion_wait_queue,
+                                     WaitCondition::BlockIoCompletion,
+                                     wake_reason) != KernelThreadRuntimeStatus::Succeeded ||
+            (wake_reason != WakeReason::ConditionSatisfied &&
+             wake_reason != WakeReason::Cancelled)) {
+            RestoreInterrupts(interrupts_were_enabled);
+            HaltProcessor();
+        }
+        RestoreInterrupts(interrupts_were_enabled);
+    }
+}
+
+void RuntimeBlockIoProbeWorker(void *const context) noexcept {
+    static_cast<void>(context);
+    block_io_runtime_probe_succeeded =
+        AwaitRuntimeBlockIo(GetRuntimeAtaSwapAsynchronousBlockDevice(), BlockOperation::Flush,
+                            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, nullptr,
+                            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                            OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_PROBE_TIMEOUT_NANOSECONDS) ==
+        RuntimeBlockIoStatus::Succeeded;
+    if (!block_io_runtime_probe_succeeded) {
+        HaltProcessor();
+    }
+}
+
 void RuntimeFileWritebackWorker(void *const context) noexcept {
     static_cast<void>(context);
     while (!kernel_work_thread_stop_requested) {
@@ -2307,9 +2466,16 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         return false;
     }
     background_reclaim_work_registered = true;
-    ThreadId thread_id{};
-    if (CreateKernelThreadCore(RuntimeFileWritebackWorker, nullptr, thread_id) !=
-        KernelThreadRuntimeStatus::Succeeded) {
+    ThreadId block_io_thread_id{};
+    ThreadId block_io_probe_thread_id{};
+    ThreadId work_thread_id{};
+    if (CreateKernelThreadCore(RuntimeBlockIoCompletionWorker, nullptr, block_io_thread_id) !=
+            KernelThreadRuntimeStatus::Succeeded ||
+        CreateKernelThreadCore(RuntimeBlockIoProbeWorker, nullptr, block_io_probe_thread_id) !=
+            KernelThreadRuntimeStatus::Succeeded ||
+        CreateKernelThreadCore(RuntimeFileWritebackWorker, nullptr, work_thread_id) !=
+            KernelThreadRuntimeStatus::Succeeded) {
+        static_cast<void>(DiscardReadyKernelThreads());
         static_cast<void>(kernel_work_queue.Cancel(file_writeback_work_handle));
         static_cast<void>(kernel_work_queue.Cancel(page_aging_work_handle));
         static_cast<void>(kernel_work_queue.Release(file_writeback_work_handle));
@@ -2323,9 +2489,14 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         background_reclaim_work_handle = WorkHandle{};
         return false;
     }
-    if (thread_id.value < OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER) {
+    if (block_io_thread_id.value < OS_KERNEL_THREAD_FIRST_KERNEL_IDENTIFIER ||
+        block_io_probe_thread_id.value !=
+            block_io_thread_id.value + OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT ||
+        work_thread_id.value !=
+            block_io_probe_thread_id.value + OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT) {
         HaltProcessor();
     }
+    block_io_completion_worker_started = true;
     return true;
 }
 
@@ -2335,6 +2506,7 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         return false;
     }
     kernel_work_thread_stop_requested = true;
+    block_io_completion_worker_stop_requested = true;
     const WorkHandle handles[] = {
         file_writeback_work_handle,
         page_aging_work_handle,
@@ -2348,14 +2520,18 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
             return false;
         }
     }
-    bool wake_won = false;
-    return WakeOneKernelThread(kernel_work_wait_queue, WakeReason::Cancelled, wake_won) ==
-           KernelThreadRuntimeStatus::Succeeded;
+    bool work_wake_won = false;
+    bool block_io_wake_won = false;
+    return WakeOneKernelThread(kernel_work_wait_queue, WakeReason::Cancelled, work_wake_won) ==
+               KernelThreadRuntimeStatus::Succeeded &&
+           WakeOneKernelThread(block_io_completion_wait_queue, WakeReason::Cancelled,
+                               block_io_wake_won) == KernelThreadRuntimeStatus::Succeeded;
 }
 
 [[nodiscard]] bool ReleaseRuntimeFileWritebackWorker() noexcept {
     if (!file_writeback_work_registered || !page_aging_work_registered ||
-        !background_reclaim_work_registered) {
+        !background_reclaim_work_registered || !block_io_completion_worker_started ||
+        !block_io_runtime_probe_succeeded) {
         return false;
     }
     const WorkHandle handles[] = {
@@ -2381,6 +2557,15 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
         background_reclaim_controller.Statistics().state != BackgroundReclaimState::Sleeping) {
         return false;
     }
+    if (block_io_coordinator.Validate() != BlockIoStatus::Succeeded ||
+        block_io_coordinator.Statistics().active_request_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        block_io_wait_queue.Statistics().waiting_thread_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        block_io_completion_wait_queue.Statistics().waiting_thread_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return false;
+    }
     file_writeback_work_registered = false;
     page_aging_work_registered = false;
     background_reclaim_work_registered = false;
@@ -2388,6 +2573,8 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
     page_aging_work_handle = WorkHandle{};
     background_reclaim_work_handle = WorkHandle{};
     kernel_work_thread_stop_requested = false;
+    block_io_completion_worker_stop_requested = false;
+    block_io_completion_worker_started = false;
     return true;
 }
 
@@ -2415,6 +2602,9 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
     }
     if (wait_condition == WaitCondition::BlockIo) {
         return &block_io_wait_queue;
+    }
+    if (wait_condition == WaitCondition::BlockIoCompletion) {
+        return &block_io_completion_wait_queue;
     }
     if (wait_condition == WaitCondition::KernelWork) {
         return &kernel_work_wait_queue;
@@ -3937,10 +4127,22 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     ActivateKernelPageTable();
     const UserAddressSpaceStatus destroy_status = DestroyUserAddressSpace(process.address_space);
     if (destroy_status != UserAddressSpaceStatus::Succeeded) {
+        const UserAddressSpaceDestructionDiagnostics diagnostics =
+            GetUserAddressSpaceDestructionDiagnostics();
         WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STAGE_PREFIX,
                                  OS_KERNEL_PROCESS_RUNTIME_EXIT_STAGE_ADDRESS_SPACE);
         WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_STATUS_PREFIX,
                                  static_cast<uint64_t>(destroy_status));
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_STAGE_PREFIX,
+                                 static_cast<uint64_t>(diagnostics.stage));
+        WriteProcessRuntimeValue(
+            OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_VIRTUAL_ADDRESS_PREFIX,
+            diagnostics.virtual_address);
+        WriteProcessRuntimeValue(
+            OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_PHYSICAL_ADDRESS_PREFIX,
+            diagnostics.physical_address);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FATAL_ADDRESS_SPACE_DETAIL_STATUS_PREFIX,
+                                 diagnostics.status);
         HaltProcessor();
     }
 
@@ -3949,6 +4151,150 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     }
     return ActivateScheduledUserOrReturnToDispatcher(decision);
 }
+}
+
+bool RuntimeBlockIoWaitAvailable() noexcept {
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        !kernel_thread_dispatch_active || !block_io_completion_worker_started ||
+        CurrentSpinLockDepth() != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return false;
+    }
+    const uint64_t current_thread_index = thread_scheduler.CurrentThreadIndex();
+    ThreadEntry current_thread{};
+    return current_thread_index < process_runtime_limits.thread_capacity &&
+           thread_scheduler.ReadThread(current_thread_index, current_thread) ==
+               ThreadSchedulerStatus::Succeeded &&
+           current_thread.kind == ThreadKind::Kernel;
+}
+
+RuntimeBlockIoStatus RegisterRuntimeBlockIoDevice(AsynchronousBlockDevice &device) noexcept {
+    if (!process_runtime_initialized || process_scheduling_active) {
+        return RuntimeBlockIoStatus::NotAvailable;
+    }
+    const BlockDeviceGeometry geometry = device.Geometry();
+    if (geometry.logical_block_size_bytes == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        geometry.logical_block_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        geometry.maximum_transfer_block_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        geometry.maximum_outstanding_request_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return RuntimeBlockIoStatus::InvalidRequest;
+    }
+    for (uint64_t device_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         device_index < block_io_device_count; ++device_index) {
+        if (block_io_devices[device_index] == &device) {
+            return RuntimeBlockIoStatus::Succeeded;
+        }
+    }
+    if (block_io_device_count >= OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_DEVICE_CAPACITY) {
+        return RuntimeBlockIoStatus::NotAvailable;
+    }
+    block_io_devices[block_io_device_count] = &device;
+    ++block_io_device_count;
+    return RuntimeBlockIoStatus::Succeeded;
+}
+
+RuntimeBlockIoStatus AwaitRuntimeBlockIo(AsynchronousBlockDevice &device,
+                                         const BlockOperation operation,
+                                         const uint64_t logical_block_address,
+                                         uint8_t *const buffer, const uint64_t buffer_size_bytes,
+                                         const uint64_t timeout_nanoseconds) noexcept {
+    if (!RuntimeBlockIoWaitAvailable() ||
+        timeout_nanoseconds == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return RuntimeBlockIoStatus::NotAvailable;
+    }
+    bool device_registered = false;
+    for (uint64_t device_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         device_index < block_io_device_count; ++device_index) {
+        device_registered = device_registered || block_io_devices[device_index] == &device;
+    }
+    const uint64_t owner_thread_index = thread_scheduler.CurrentThreadIndex();
+    const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
+    if (!device_registered || owner_thread_index >= process_runtime_limits.thread_capacity ||
+        now_nanoseconds > UINT64_MAX - timeout_nanoseconds) {
+        return RuntimeBlockIoStatus::InvalidRequest;
+    }
+    const uint64_t deadline_nanoseconds = now_nanoseconds + timeout_nanoseconds;
+    const bool interrupts_were_enabled = DisableInterrupts();
+    uint64_t request_identifier = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const AsynchronousBlockDeviceStatus submit_status =
+        device.Submit(operation, logical_block_address, buffer, buffer_size_bytes,
+                      owner_thread_index, deadline_nanoseconds, request_identifier);
+    if (submit_status != AsynchronousBlockDeviceStatus::Succeeded) {
+        RestoreInterrupts(interrupts_were_enabled);
+        return submit_status == AsynchronousBlockDeviceStatus::InvalidRequest
+                   ? RuntimeBlockIoStatus::InvalidRequest
+                   : RuntimeBlockIoStatus::SubmitFailed;
+    }
+    BlockIoTicket ticket{};
+    if (block_io_coordinator.Register(request_identifier, owner_thread_index, ticket) !=
+        BlockIoStatus::Succeeded) {
+        // 请求已交给设备，协调器若拒绝登记就不能安全释放调用者缓冲区。
+        HaltProcessor();
+    }
+    NotifyRuntimeBlockIoCompletion();
+    bool wait_required = false;
+    if (block_io_coordinator.PrepareWait(ticket, wait_required) != BlockIoStatus::Succeeded) {
+        // 提交后的状态机损坏无法通过返回错误恢复，否则设备仍可能写入失效缓冲区。
+        HaltProcessor();
+    }
+    if (wait_required) {
+        WakeReason wake_reason = WakeReason::None;
+        if (BlockCurrentKernelThread(block_io_wait_queue, WaitCondition::BlockIo, wake_reason) !=
+                KernelThreadRuntimeStatus::Succeeded ||
+            wake_reason != WakeReason::ConditionSatisfied) {
+            // 当前设备协议尚无取消并等待硬件静止的能力，异常唤醒必须 fail-stop。
+            HaltProcessor();
+        }
+    }
+    BlockRequestResult result = BlockRequestResult::None;
+    if (block_io_coordinator.TakeResult(ticket, result) != BlockIoStatus::Succeeded) {
+        // 正常唤醒却取不到对应完成结果说明内核等待协议已经失去一致性。
+        HaltProcessor();
+    }
+    RestoreInterrupts(interrupts_were_enabled);
+    return result == BlockRequestResult::Succeeded   ? RuntimeBlockIoStatus::Succeeded
+           : result == BlockRequestResult::TimedOut  ? RuntimeBlockIoStatus::TimedOut
+           : result == BlockRequestResult::Cancelled ? RuntimeBlockIoStatus::Cancelled
+                                                     : RuntimeBlockIoStatus::DeviceFailed;
+}
+
+void NotifyRuntimeBlockIoCompletion() noexcept {
+    if (!process_runtime_initialized || !process_scheduling_active ||
+        !block_io_completion_worker_started) {
+        return;
+    }
+    if (block_io_completion_notification_generation == UINT64_MAX) {
+        HaltProcessor();
+    }
+    block_io_completion_notification_generation =
+        block_io_completion_notification_generation + OS_KERNEL_PROCESS_RUNTIME_COUNTER_INCREMENT;
+    bool wake_won = false;
+    if (WakeOneKernelThread(block_io_completion_wait_queue, WakeReason::ConditionSatisfied,
+                            wake_won) != KernelThreadRuntimeStatus::Succeeded) {
+        HaltProcessor();
+    }
+    if (wake_won) {
+        GetCpuLocal().RequestReschedule();
+    }
+}
+
+void ServiceRuntimeBlockIoTimeouts(const uint64_t now_nanoseconds) noexcept {
+    if (!process_runtime_initialized ||
+        block_io_device_count == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return;
+    }
+    for (uint64_t device_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
+         device_index < block_io_device_count; ++device_index) {
+        AsynchronousBlockDevice *const device = block_io_devices[device_index];
+        if (device == nullptr ||
+            device->ResolveTimeouts(now_nanoseconds) != AsynchronousBlockDeviceStatus::Succeeded) {
+            HaltProcessor();
+        }
+    }
+    NotifyRuntimeBlockIoCompletion();
+}
+
+BlockIoStatistics GetRuntimeBlockIoStatistics() noexcept {
+    return block_io_coordinator.Statistics();
 }
 
 KernelThreadRuntimeStatus CreateKernelThread(const KernelThreadEntryOperation entry_operation,
@@ -4333,6 +4679,9 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
             .value = OS_KERNEL_PROCESS_RUNTIME_SLEEP_QUEUE_ID}) != WaitQueueStatus::Succeeded ||
         block_io_wait_queue.Initialize(WaitQueueId{
             .value = OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_QUEUE_ID}) != WaitQueueStatus::Succeeded ||
+        block_io_completion_wait_queue.Initialize(
+            WaitQueueId{.value = OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_COMPLETION_QUEUE_ID}) !=
+            WaitQueueStatus::Succeeded ||
         kernel_thread_test_wait_queue.Initialize(
             WaitQueueId{.value = OS_KERNEL_PROCESS_RUNTIME_KERNEL_THREAD_TEST_QUEUE_ID}) !=
             WaitQueueStatus::Succeeded ||
@@ -4350,7 +4699,10 @@ ProcessRuntimeStatus InitializeProcessRuntime() noexcept {
             JobControlStatus::Succeeded ||
         signal_manager.Initialize(signal_process_states, process_runtime_limits.process_capacity,
                                   signal_thread_states, process_runtime_limits.thread_capacity) !=
-            SignalManagerStatus::Succeeded) {
+            SignalManagerStatus::Succeeded ||
+        block_io_coordinator.Initialize(block_io_slots,
+                                        OS_KERNEL_PROCESS_RUNTIME_BLOCK_IO_CAPACITY) !=
+            BlockIoStatus::Succeeded) {
         return ProcessRuntimeStatus::SchedulerFailure;
     }
     kernel_thread_runtime_available = true;
@@ -6360,6 +6712,17 @@ ProcessRuntimeStatus ExecuteProcesses() noexcept {
         thread_scheduler.ValidateWaitQueue(kernel_work_wait_queue) !=
             ThreadSchedulerStatus::Succeeded ||
         kernel_work_wait_queue.Statistics().waiting_thread_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        thread_scheduler.ValidateWaitQueue(block_io_wait_queue) !=
+            ThreadSchedulerStatus::Succeeded ||
+        block_io_wait_queue.Statistics().waiting_thread_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        thread_scheduler.ValidateWaitQueue(block_io_completion_wait_queue) !=
+            ThreadSchedulerStatus::Succeeded ||
+        block_io_completion_wait_queue.Statistics().waiting_thread_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
+        block_io_coordinator.Validate() != BlockIoStatus::Succeeded ||
+        block_io_coordinator.Statistics().active_request_count !=
             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
         kernel_work_queue.Validate() != WorkQueueStatus::Succeeded ||
         kernel_work_queue.Statistics().registered_count != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||

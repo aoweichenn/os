@@ -91,6 +91,7 @@ class UserFileBackingManager final {
                    uint64_t size_bytes) noexcept;
     [[nodiscard]] UserFileBackingStatus Validate() const noexcept;
     [[nodiscard]] uint64_t ActiveDescriptorCount() const noexcept;
+    [[nodiscard]] fs::Status LastCloseStatus() const noexcept;
 
   private:
     [[nodiscard]] bool IsIndexValid(uint64_t descriptor_index) const noexcept;
@@ -102,6 +103,7 @@ class UserFileBackingManager final {
     uint64_t capacity_{};
     uint64_t active_descriptor_count_{};
     uint64_t next_generation_{};
+    fs::Status last_close_status_{fs::Status::Succeeded};
     mutable SpinLock lock_{};
     bool initialized_{};
 };

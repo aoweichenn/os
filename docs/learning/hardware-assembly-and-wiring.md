@@ -217,7 +217,8 @@ ATA primary ── IRQ14 ─────┘
 
 PIC 被重映射到 `0x20..0x2F`，因此 IRQ0 对应 IDT vector `0x20`，IRQ1 对应
 `0x21`，IRQ14 对应 `0x2E`。v0.7 历史阶段只解除 IRQ0/IRQ1；v1.16 运行期
-还解除 master IRQ2 cascade 与 slave IRQ14，最终 mask 为 `0xBFF8`。
+还解除 master IRQ2 cascade 与 slave IRQ14；当前又为 secondary ATA 解除 IRQ15，最终
+mask 为 `0x3FF8`。
 ROM、Stage 1 和 early Kernel 仍以 nIEN 做有界轮询；运行期 BlockRequest
 队列才拥有红色 IRQ14 完成路径。
 

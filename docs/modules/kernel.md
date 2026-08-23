@@ -410,7 +410,7 @@ panic 不使用动态分配、格式化库、锁、异常、RTTI 或可失败的
 `IA32_APIC_BASE` 指定页映射为 RW/NX/PCD；运行时保持 LAPIC 全局启用，
 启用 SVR，并把 LVT LINT0 配为未屏蔽的 ExtINT，回读后再重映射 8259A。
 PIC 初始屏蔽所有 IRQ，只有 PIT、PS/2 和 ATA 自检全部成功后，才把掩码改为
-`0xBFF8` 并开放 IRQ0/IRQ1、master IRQ2 cascade 与 slave IRQ14。
+`0x3FF8` 并开放 IRQ0/IRQ1、master IRQ2 cascade 与 slave IRQ14/IRQ15。
 
 硬件 IRQ 桩统一压入零错误码和向量号，保存集合与异常 ABI 相同。分发器把
 向量 32..47 还原为 IRQ0..15：
@@ -817,7 +817,7 @@ Kernel 只嵌入启动模式需要直接选择的最小 smoke/异常夹具。模
 [OS][KERNEL] PROCESS_KERNEL_STACK_UPPER_GUARD=0x...
 [OS][KERNEL] LEGACY_INTERRUPT_ROUTING_READY
 [OS][KERNEL] PIC_READY
-[OS][KERNEL] PIC_MASK=0x...BFF8
+[OS][KERNEL] PIC_MASK=0x...3FF8
 [OS][KERNEL] PIT_READY
 [OS][KERNEL] PIT_DIVISOR=0x...04A9
 [OS][KERNEL] PIT_FREQUENCY_HZ=0x...03E8
@@ -1022,13 +1022,13 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
 
 ## 已知边界
 
-- 当前仅使用单核 PIC，并让本地 APIC LINT0 承担 virtual-wire；LAPIC
-  timer/IPI、I/O APIC、MSI/MSI-X 与 SMP 路由尚未实现。
-- 键盘只保存一个待处理语义事件，ATA 仍保留同步单扇区 PIO，并通过 64 槽
-  BlockRequest FIFO 和 IRQ14 驱动运行期单飞 PIO；ATA DMA、tagged queue 和 AHCI
+- 当前是单核 PIC + LAPIC LINT0 virtual-wire，NVMe 另使用一个 MSI-X 向量；LAPIC
+  timer/IPI、I/O APIC、通用 MSI/MSI-X 路由与 SMP 路由尚未实现。
+- 键盘只保存一个待处理语义事件，ATA 仍保留同步单扇区 PIO，并通过两组 64 槽
+  BlockRequest FIFO 和 IRQ14/IRQ15 驱动 primary/secondary 单飞 PIO；ATA DMA、tagged queue 和 AHCI
   尚未实现。Kernel 已有单控制器、双 namespace、16 页 PRP、四 outstanding 和
   单向量 MSI-X 的 NVMe rootfs/swap，并能对 EIO/timeout reset；多 I/O queue、
-  调度器异步接口、MSI-X 多向量与多控制器尚未实现。ATA 保留启动与回退。
+  MSI-X 多向量与多控制器尚未实现。ATA 保留启动与回退。
 - 当前 64 TiB direct-map 只支持四级页表，尚未启用 LA57；页帧状态和 buddy
   位图仍按最高 RAM PFN 线性编码，极端稀疏物理地址空间、NUMA、zone、
   per-CPU page list 和分段 `vmemmap` 以后扩展。
@@ -1063,10 +1063,14 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
   direct reclaim；v2.9 已建立协作式 Kernel Thread、混合 User/Kernel dispatcher，并把
   常规 writeback 迁入常驻 Worker。第四增量用 PTE Accessed 建立 file/anonymous
   active/inactive 队列，第五增量已让 low/high 水位 Worker 消费显式候选；
-  direct/background 公平性矩阵、MGLRU、memcg 与 NUMA 尚未完成。
+  第六增量已让 direct/background 共用 swappiness 配额；MGLRU、memcg 与 NUMA 尚未完成。
 - v2.9 WorkQueue 已有 generation WorkHandle、即时 FIFO、延迟最小堆、即时提升、合并、
   取消、失败隔离和 drain；生产 Worker 通过真实 monotonic deadline 睡眠，IRQ 只负责到期
   唤醒，硬 Dirty limit 仍由同步 direct fallback 保证前进。
+- v2.10.3a 已建立 64 槽 BlockIo coordinator、completion Worker、Kernel WaitQueue 和真实
+  secondary ATA IRQ15 probe。rootfs/swap 包装仍关闭异步开关；其 VFS/cache/swap 深层
+  调用必须先迁移到稳定 request + 浅层 I/O worker，不能持 spin lock 或保留用户系统调用
+  的任意 Kernel C++ 栈睡眠。
 - `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
   ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
   96 个左右

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <os/kernel/device/block_request.hpp>
+#include <os/kernel/device/asynchronous_block_device.hpp>
 #include <os/kernel/fs/block_cache.hpp>
 
 #include <stdint.h>
@@ -52,7 +52,8 @@ struct AtaPioStatistics final {
     uint64_t flush_completion_count;
 };
 
-class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice> {
+class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice>,
+                           public AsynchronousBlockDeviceAdapter<AtaPioDevice> {
   public:
     constexpr explicit AtaPioDevice(const AtaPioChannel channel = AtaPioChannel::Primary) noexcept
         : command_block_base_port_(channel == AtaPioChannel::Primary
@@ -79,6 +80,18 @@ class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice> {
     [[nodiscard]] AtaPioStatus ResolveTimeout(uint64_t now_nanoseconds,
                                               AtaPioCompletion &completion) noexcept;
     [[nodiscard]] AtaPioStatistics Statistics() const noexcept;
+
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    SubmitBlockRequest(BlockOperation operation, uint64_t logical_block_address, uint8_t *buffer,
+                       uint64_t buffer_size_bytes, uint64_t owner_thread_index,
+                       uint64_t deadline_nanoseconds, uint64_t &request_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    CancelBlockRequest(uint64_t request_identifier) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus
+    ResolveBlockTimeouts(uint64_t now_nanoseconds) noexcept;
+    [[nodiscard]] AsynchronousBlockDeviceStatus TakeBlockCompletion(BlockCompletion &completion,
+                                                                    bool &available) noexcept;
+    [[nodiscard]] BlockDeviceGeometry AsynchronousGeometry() const noexcept;
 
     [[nodiscard]] FileSystemBlockDeviceStatus
     ReadBlock(uint64_t logical_block_address, uint8_t *block,
@@ -120,5 +133,4 @@ class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice> {
     uint16_t command_block_base_port_{};
     uint16_t device_control_port_{};
 };
-
 }

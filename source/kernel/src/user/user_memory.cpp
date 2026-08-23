@@ -42,6 +42,8 @@ constexpr uint64_t OS_KERNEL_USER_SWAP_SELF_TEST_ADDRESS_SPACE_IDENTIFIER = UINT
 constexpr uint64_t OS_KERNEL_USER_SWAP_SELF_TEST_PATTERN_MULTIPLIER = 37ULL;
 constexpr uint8_t OS_KERNEL_USER_SWAP_SELF_TEST_PATTERN_SEED = 0x5AU;
 
+UserAddressSpaceDestructionDiagnostics user_address_space_destruction_diagnostics;
+
 struct MemoryImageReaderContext final {
     const uint8_t *image;
     uint64_t image_size_bytes;
@@ -1365,6 +1367,12 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
         }
         if (query_status != PageTableStatus::Succeeded || !mapping.permissions.user_accessible ||
             address_space.mapped_page_count == OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+            user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                .stage = UserAddressSpaceDestructionStage::QueryPage,
+                .virtual_address = page_address,
+                .physical_address = mapping.physical_address,
+                .status = static_cast<uint64_t>(query_status),
+            };
             return UserVirtualMemoryStatus::Corrupt;
         }
         uint64_t reclaimed_table_frame_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
@@ -1377,18 +1385,37 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
             IsFileBackedVirtualMemoryAreaKind(area.kind)) {
             UserFileBackingDescriptor descriptor{};
             if (!ReadBackingDescriptor(area, descriptor)) {
+                user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                    .stage = UserAddressSpaceDestructionStage::BackingDescriptor,
+                    .virtual_address = page_address,
+                    .physical_address = mapping.physical_address,
+                    .status = static_cast<uint64_t>(area_status),
+                };
                 return UserVirtualMemoryStatus::Corrupt;
             }
             cache_mapping = PageUsesFileCache(area, page_address, descriptor, page_identity);
         }
         if (cache_mapping) {
             uint64_t unmapped_physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-            if (UnmapUserPage(address_space.root_physical_address, page_address,
-                              unmapped_physical_address,
-                              reclaimed_table_frame_count) != KernelUserPageStatus::Succeeded ||
+            const KernelUserPageStatus unmap_status =
+                UnmapUserPage(address_space.root_physical_address, page_address,
+                              unmapped_physical_address, reclaimed_table_frame_count);
+            const FilePageCacheStatus release_status =
+                unmap_status == KernelUserPageStatus::Succeeded &&
+                        unmapped_physical_address == mapping.physical_address
+                    ? user_file_page_cache.Release(page_identity, unmapped_physical_address)
+                    : FilePageCacheStatus::Corrupt;
+            if (unmap_status != KernelUserPageStatus::Succeeded ||
                 unmapped_physical_address != mapping.physical_address ||
-                user_file_page_cache.Release(page_identity, unmapped_physical_address) !=
-                    FilePageCacheStatus::Succeeded) {
+                release_status != FilePageCacheStatus::Succeeded) {
+                user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                    .stage = UserAddressSpaceDestructionStage::FileCacheRelease,
+                    .virtual_address = page_address,
+                    .physical_address = mapping.physical_address,
+                    .status = unmap_status != KernelUserPageStatus::Succeeded
+                                  ? static_cast<uint64_t>(unmap_status)
+                                  : static_cast<uint64_t>(release_status),
+                };
                 return UserVirtualMemoryStatus::PageReleaseFailed;
             }
             if (address_space.shared_file_resident_page_count ==
@@ -1398,11 +1425,20 @@ void RecordMappedPage(UserAddressSpace &address_space, const VirtualMemoryArea &
             --address_space.shared_file_resident_page_count;
         } else {
             uint64_t unmapped_physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
-            if (UnmapUserPage(address_space.root_physical_address, page_address,
-                              unmapped_physical_address,
-                              reclaimed_table_frame_count) != KernelUserPageStatus::Succeeded ||
-                unmapped_physical_address != mapping.physical_address ||
-                !ReleasePrivatePhysicalPage(unmapped_physical_address)) {
+            const KernelUserPageStatus unmap_status =
+                UnmapUserPage(address_space.root_physical_address, page_address,
+                              unmapped_physical_address, reclaimed_table_frame_count);
+            const bool release_succeeded = unmap_status == KernelUserPageStatus::Succeeded &&
+                                           unmapped_physical_address == mapping.physical_address &&
+                                           ReleasePrivatePhysicalPage(unmapped_physical_address);
+            if (unmap_status != KernelUserPageStatus::Succeeded ||
+                unmapped_physical_address != mapping.physical_address || !release_succeeded) {
+                user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                    .stage = UserAddressSpaceDestructionStage::PrivatePageRelease,
+                    .virtual_address = page_address,
+                    .physical_address = mapping.physical_address,
+                    .status = static_cast<uint64_t>(unmap_status),
+                };
                 return UserVirtualMemoryStatus::PageReleaseFailed;
             }
             if (area_status == VirtualMemoryAreaStatus::Succeeded &&
@@ -2658,12 +2694,19 @@ RestoreUserAddressSpaceAfterFailedFork(UserAddressSpace &parent_address_space) n
 }
 
 UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) noexcept {
+    user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{};
     if (active_user_address_space == &address_space) {
         active_user_address_space = nullptr;
     }
     const VirtualMemoryAreaStatus validation_status = address_space.virtual_memory_map.Validate();
     if (validation_status != VirtualMemoryAreaStatus::Succeeded &&
         validation_status != VirtualMemoryAreaStatus::NotInitialized) {
+        user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+            .stage = UserAddressSpaceDestructionStage::ValidateMap,
+            .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .status = static_cast<uint64_t>(validation_status),
+        };
         return UserAddressSpaceStatus::RollbackFailed;
     }
     if (validation_status == VirtualMemoryAreaStatus::Succeeded) {
@@ -2672,19 +2715,39 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
              ++area_index) {
             VirtualMemoryArea area{};
             if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
-                    VirtualMemoryAreaStatus::Succeeded ||
-                ReleaseMappedPages(address_space, area.begin_address, area.end_address, false) !=
-                    UserVirtualMemoryStatus::Succeeded) {
+                VirtualMemoryAreaStatus::Succeeded) {
+                user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                    .stage = UserAddressSpaceDestructionStage::ReadArea,
+                    .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                    .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                    .status = area_index,
+                };
+                return UserAddressSpaceStatus::RollbackFailed;
+            }
+            if (ReleaseMappedPages(address_space, area.begin_address, area.end_address, false) !=
+                UserVirtualMemoryStatus::Succeeded) {
                 return UserAddressSpaceStatus::RollbackFailed;
             }
         }
         if (address_space.mapped_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE ||
             address_space.swapped_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE) {
+            user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                .stage = UserAddressSpaceDestructionStage::ResidentAccounting,
+                .virtual_address = address_space.mapped_page_count,
+                .physical_address = address_space.swapped_page_count,
+                .status = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            };
             return UserAddressSpaceStatus::RollbackFailed;
         }
         if (address_space.root_physical_address != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
             DestroyUserPageTable(address_space.root_physical_address) !=
                 KernelUserPageStatus::Succeeded) {
+            user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                .stage = UserAddressSpaceDestructionStage::DestroyPageTable,
+                .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                .physical_address = address_space.root_physical_address,
+                .status = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            };
             return UserAddressSpaceStatus::RollbackFailed;
         }
         for (uint64_t area_index = OS_KERNEL_USER_MEMORY_EMPTY_VALUE; area_index < area_count;
@@ -2692,6 +2755,12 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
             VirtualMemoryArea area{};
             if (address_space.virtual_memory_map.ReadAt(area_index, area) !=
                 VirtualMemoryAreaStatus::Succeeded) {
+                user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                    .stage = UserAddressSpaceDestructionStage::ReadArea,
+                    .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                    .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                    .status = area_index,
+                };
                 return UserAddressSpaceStatus::RollbackFailed;
             }
             if (!IsFileBackedVirtualMemoryAreaKind(area.kind)) {
@@ -2703,6 +2772,13 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
                 VirtualMemoryArea previous_area{};
                 if (address_space.virtual_memory_map.ReadAt(previous_index, previous_area) !=
                     VirtualMemoryAreaStatus::Succeeded) {
+                    user_address_space_destruction_diagnostics =
+                        UserAddressSpaceDestructionDiagnostics{
+                            .stage = UserAddressSpaceDestructionStage::ReadArea,
+                            .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                            .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                            .status = previous_index,
+                        };
                     return UserAddressSpaceStatus::RollbackFailed;
                 }
                 if (previous_area.backing_descriptor_index == area.backing_descriptor_index &&
@@ -2711,34 +2787,74 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
                     break;
                 }
             }
-            if (!already_released &&
-                user_file_backing_manager.Release(
-                    address_space.root_physical_address, area.backing_descriptor_index,
-                    area.backing_generation) != UserFileBackingStatus::Succeeded) {
+            const UserFileBackingStatus backing_release_status =
+                already_released
+                    ? UserFileBackingStatus::Succeeded
+                    : user_file_backing_manager.Release(address_space.root_physical_address,
+                                                        area.backing_descriptor_index,
+                                                        area.backing_generation);
+            if (backing_release_status != UserFileBackingStatus::Succeeded) {
+                user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                    .stage = UserAddressSpaceDestructionStage::ReleaseBacking,
+                    .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                    .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                    .status =
+                        backing_release_status == UserFileBackingStatus::CloseFailed
+                            ? static_cast<uint64_t>(user_file_backing_manager.LastCloseStatus())
+                            : static_cast<uint64_t>(backing_release_status),
+                };
                 return UserAddressSpaceStatus::RollbackFailed;
             }
         }
         if (address_space.virtual_memory_map.Destroy() != VirtualMemoryAreaStatus::Succeeded) {
+            user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+                .stage = UserAddressSpaceDestructionStage::DestroyMap,
+                .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+                .status = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            };
             return UserAddressSpaceStatus::RollbackFailed;
         }
     } else if (address_space.root_physical_address != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
                DestroyUserPageTable(address_space.root_physical_address) !=
                    KernelUserPageStatus::Succeeded) {
+        user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+            .stage = UserAddressSpaceDestructionStage::DestroyPageTable,
+            .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .physical_address = address_space.root_physical_address,
+            .status = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+        };
         return UserAddressSpaceStatus::RollbackFailed;
     }
     const FilePageCacheStatus trim_status =
         user_file_page_cache.Trim(OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
     if (trim_status != FilePageCacheStatus::Succeeded &&
         trim_status != FilePageCacheStatus::EntryBusy) {
+        user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+            .stage = UserAddressSpaceDestructionStage::TrimCache,
+            .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .status = static_cast<uint64_t>(trim_status),
+        };
         return UserAddressSpaceStatus::RollbackFailed;
     }
     if (address_space.committed_page_count != OS_KERNEL_USER_MEMORY_EMPTY_VALUE &&
         UncommitUserMemory(address_space, address_space.committed_page_count) !=
             MemoryOvercommitStatus::Succeeded) {
+        user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
+            .stage = UserAddressSpaceDestructionStage::UncommitMemory,
+            .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .physical_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,
+            .status = address_space.committed_page_count,
+        };
         return UserAddressSpaceStatus::RollbackFailed;
     }
     address_space = UserAddressSpace{};
     return UserAddressSpaceStatus::Succeeded;
+}
+
+UserAddressSpaceDestructionDiagnostics GetUserAddressSpaceDestructionDiagnostics() noexcept {
+    return user_address_space_destruction_diagnostics;
 }
 
 UserAddressSpaceStatus PrepareUserStack(UserAddressSpace &address_space,

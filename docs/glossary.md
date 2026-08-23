@@ -216,6 +216,13 @@
 | transaction credit | journal 在修改前为事务预留的元数据块额度，防止执行到一半才发现日志空间不足 |
 | ordered mode | 先持久化相关文件数据、再允许元数据 commit 落盘的 journal 顺序约束 |
 | BlockRequest | 表示一次可等待设备 I/O 的独立对象，具有提交、完成、错误和超时状态 |
+| completion FIFO | 按 IRQ、timeout、cancel 首次解析发生顺序保存块请求终态，交付后立即回收请求槽的有界队列 |
+| AsynchronousBlockDevice | 以静态函数表统一设备 geometry、submit、best-effort cancel、timeout 和 completion 的类型擦除接口 |
+| BlockIo ticket | 由协调器槽位与单调 generation 组成的等待凭据；同时核对 owner/request id，防止槽位复用后的旧等待取得新结果 |
+| completion worker | 在非 IRQ Kernel Thread 上消费设备 completion、执行 DMA 数据收尾并精确唤醒 BlockIo owner 的常驻 bottom-half |
+| completion-before-wait | 设备在调用者提交 WaitQueue 阻塞前已经完成的竞争；协调器必须让调用者直接取结果，不能丢失事件 |
+| shallow I/O delegation | 把深层 VFS/cache/swap 请求复制到稳定 request 对象，由浅层 Kernel I/O Thread 提交和睡眠，避免保留任意 C++ 调用栈或持锁阻塞 |
+| command identifier | NVMe CQE 使用的 16 位硬件命令身份；可回绕，不等于上层 64 位 request identifier |
 | `SYSCALL` / `SYSRET` | x86-64 快速特权转换指令；需要 MSR、内核栈、RFLAGS 掩码和 canonical 返回地址共同保证安全 |
 | CpuLocal | 每 CPU 的内核本地状态；当前单 BSP 实例保存 current Thread、可信入口栈、IRQ/抢占深度和重调度请求 |
 | UserContext | 统一保存初始进入、IRQ、INT 0x80 与 SYSCALL 用户现场的 176 字节结构 |

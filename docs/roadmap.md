@@ -1410,6 +1410,73 @@ anonymous swap，并到达三项状态验证和 READY。
 - 常规 writeback 已迁移；IRQ 不执行 VFS I/O，硬压力 direct fallback 必须继续守恒。
 - aging candidate 由第五、六增量消费；第四增量的历史边界仍不得回写。
 
+### v2.10 异步块 I/O 与可等待页缓存
+
+**范围**
+
+- 把已有 BlockRequest 多深度模型提升为设备无关的异步提交/完成契约；
+- 让 ATA/NVMe、rootfs、swap 和页缓存通过 WaitQueue 睡眠等待，不轮询、不返回瞬态 Busy；
+- 合并同页 Loading，加入有界顺序预读，并让 writeback/reclaim 与并发 I/O 保持守恒；
+- 不增加网络、SMP、图形和无关驱动，不改变 rootfs v4 与 ABI 2.4.0。
+
+**增量顺序**
+
+1. BlockRequest 有序 completion FIFO 与 owner 交付（已完成）；
+2. 异步 BlockDevice adapter 与 ATA/NVMe 统一接口（已完成）；
+3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待已完成，
+   3b 浅层 I/O 委托、锁拆分与生产迁移待完成；
+4. FilePageCache Loading waiter 与同页 miss 合并；
+5. 顺序预读、命中/浪费反馈与压力收缩；
+6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
+
+**第一增量边界**
+
+完成路径按实际解析顺序进入独立有界 FIFO；`TakeCompletion` 返回 request id、操作、LBA、
+块数、owner 与结果并立即回收槽。IRQ/timeout/cancel 仍由单赢家状态机解析，按 id 直接
+Reap 必须从 FIFO 中间安全摘除。ATA 先消费该公共出口；同步 BlockDevice 和 rootfs 迁移
+留给后续增量。
+
+第一增量最终 CAW Debug `verify` 为 218/218、0 失败：65 unit、73 integration、
+47 randomized、33 system，含 25 条 failure-path，CTest 453.70 秒；4 GiB ATA/NVMe
+primary、reclaim、OOM、persistence 与既有错误恢复协议保持通过。
+
+**第二增量边界**
+
+同步 `BlockDevice` 旁新增静态类型擦除 `AsynchronousBlockDevice`；ATA/NVMe namespace
+统一 geometry、submit、best-effort cancel、timeout 和 completion。NVMe 公共 request id
+与硬件 CID 分离，Read DMA 回拷留在非 IRQ take 阶段，timeout reset 保留所有已解析完成。
+生产 rootfs/swap、WaitQueue 和页缓存 Loading waiter 仍留给后续增量。
+
+第二增量最终 CAW Debug `verify` 为 221/221、0 失败：66 unit、74 integration、
+48 randomized、33 system，含 25 条 failure-path，CTest 472.08 秒；ATA/NVMe primary、
+reclaim、OOM、persistence 与 EIO/timeout reset 全部保持通过。
+
+**第三增量基础边界**
+
+`BlockIoCoordinator` 以 owner、request id 和 generation ticket 管理登记、等待、完成、遗弃
+与槽位复用；completion-before-wait 不丢唤醒。常驻 Kernel Thread 在非 IRQ 上消费
+`AsynchronousBlockDevice` completion、执行必要的数据收尾并精确唤醒 owner；IRQ14、IRQ15
+和 timer 只解析状态与通知。secondary ATA Flush probe 已真实走完 submit、IRQ15、Worker、
+WaitQueue 和结果回收。
+
+生产 rootfs/journal/cache 和 swap 本增量仍使用同步回退。原因不是设备接口缺失，而是这些
+深层调用持有 spin lock，用户系统调用阻塞还会展开 C++ 栈；直接打开异步包装会形成锁内
+睡眠或失效 buffer。下一增量先引入浅层 I/O worker 委托并拆分锁临界区，再迁移生产
+read/write/flush。该边界由
+[ADR 0065](adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md) 冻结。
+
+第三增量 3a 最终 CAW Debug `verify` 为 224/224、0 失败：67 unit、75 integration、
+49 randomized、33 system，含 25 条 failure-path，CTest 460.56 秒。4 GiB primary、
+ATA/NVMe reclaim 为 37.07/38.01/41.06 秒，ATA/NVMe persistence 为 74.10/76.16 秒。
+
+**退出条件**
+
+- completion 不丢失、不重复、不因乱序硬件完成改按 identifier 排序；
+- request、buffer、deadline 与 owner 的所有权在 submit 到 completion 之间唯一；
+- IRQ 路径不分配、不阻塞、不进入 VFS；
+- 同页 miss 最终只执行一次来源 I/O，所有 waiter 观察同一成功或失败；
+- ATA/NVMe primary、reclaim、OOM、persistence 与 EIO/timeout 全部保持通过。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

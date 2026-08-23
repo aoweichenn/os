@@ -49,6 +49,7 @@ UserFileBackingStatus UserFileBackingManager::Initialize(
     this->active_descriptor_count_ =
         OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
     this->next_generation_ = OS_KERNEL_USER_FILE_BACKING_SINGLE_UNIT;
+    this->last_close_status_ = fs::Status::Succeeded;
     this->lock_ = SpinLock{};
     this->initialized_ = true;
     return UserFileBackingStatus::Succeeded;
@@ -252,11 +253,13 @@ UserFileBackingStatus UserFileBackingManager::Release(
     if (descriptor.owner_identifier != owner_identifier) {
         return UserFileBackingStatus::OwnershipMismatch;
     }
-    if (descriptor.kind == UserFileBackingKind::VfsFile &&
-        (descriptor.vfs == nullptr ||
-         descriptor.vfs->Close(descriptor.open_file) !=
-             fs::Status::Succeeded)) {
-        return UserFileBackingStatus::CloseFailed;
+    if (descriptor.kind == UserFileBackingKind::VfsFile) {
+        this->last_close_status_ = descriptor.vfs == nullptr
+                                       ? fs::Status::InvalidHandle
+                                       : descriptor.vfs->Close(descriptor.open_file);
+        if (this->last_close_status_ != fs::Status::Succeeded) {
+            return UserFileBackingStatus::CloseFailed;
+        }
     }
     descriptor = UserFileBackingDescriptor{};
     if (this->active_descriptor_count_ ==
@@ -514,6 +517,14 @@ uint64_t UserFileBackingManager::ActiveDescriptorCount() const noexcept {
     }
     SpinLockGuard guard{this->lock_};
     return this->active_descriptor_count_;
+}
+
+fs::Status UserFileBackingManager::LastCloseStatus() const noexcept {
+    if (!this->initialized_) {
+        return fs::Status::NotInitialized;
+    }
+    SpinLockGuard guard{this->lock_};
+    return this->last_close_status_;
 }
 
 bool UserFileBackingManager::IsIndexValid(

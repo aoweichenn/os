@@ -403,7 +403,8 @@ SS=`0x1B`、用户栈顶、RFLAGS=`0x202`、CS=`0x23` 和 ELF 入口。RFLAGS
 | ICW4 | `0x01` | `0x01` | 8086/88 模式 |
 
 初始化后 IMR=`0xFFFF`。v0.7 首次设备闭环改为 `0xFFFC`，仅允许 IRQ0/IRQ1；
-v1.16 运行期改为 `0xBFF8`，同时允许 master IRQ2 cascade 与 slave IRQ14。
+v1.16 运行期曾改为 `0xBFF8`；当前为 `0x3FF8`，同时允许 master IRQ2 cascade 与
+slave IRQ14/IRQ15，分别服务 primary/secondary ATA。
 OCW3=`0x0B` 让 command 端口读取 ISR；非特定 EOI 为 `0x20`。
 
 IRQ7 若 ISR bit7=0，是主片虚假中断，不发送 EOI。IRQ15 若从片 ISR bit7=0，

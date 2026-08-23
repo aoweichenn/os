@@ -668,8 +668,8 @@ DATA 字是否按小端拆成 512 字节。
 ### IRQ14 请求提交后不完成
 
 先区分 early polling 与 runtime IRQ 路径。若 `ATA_IRQ14_READY` 缺失，检查
-请求队列是否在 STI 前初始化，以及 PIC mask 是否为 `0xBFF8`：master bit 2
-和 slave bit 6 缺一都收不到 IRQ14。
+请求队列是否在 STI 前初始化，以及 PIC mask 是否为 `0x3FF8`：master bit 2、slave bit 6
+和 bit 7 分别决定级联、IRQ14 与 IRQ15。primary 请求看 IRQ14，secondary 请求看 IRQ15。
 
 若 IRQ14 计数增长但请求不完成，按操作检查状态阶段：
 
@@ -685,6 +685,23 @@ DATA 字是否按小端拆成 512 字节。
 → Dirty/Error 写回 → VFS sync → ATA FLUSH”。Error 页不得被 Trim 淘汰。
 若同一 inode 出现两个 cache identity，检查 rootfs 是否错误地把 transaction
 generation 写回 VFS mount generation。
+
+### BlockIo Worker 或 IRQ15 probe 不完成
+
+先看 `PIC_MASK=...3FF8` 与 secondary ATA IRQ15 计数，再区分设备解析和 Worker 交付。
+IRQ15 只允许把 completion 发布到设备队列并递增通知 generation；DMA 回拷、协调器 Complete
+与 WaitQueue wake 都应出现在 completion Kernel Thread。若设备已有 completion 而 Worker
+仍睡眠，检查它是否在关中断区复核 notification generation 后才提交
+`BlockIoCompletion` 阻塞。
+
+若 coordinator 报 owner/request 不匹配，比较提交时的 Kernel Thread index、64 位 request
+id 与 ticket generation，不能用槽位或 ATA 通道号代替身份。`ROOT_ASYNC_OPERATIONS=0` 和
+`SWAP_ASYNC_OPERATIONS=0` 是当前安全边界，不是缺功能标记：生产 rootfs/swap 仍同步，只有
+浅层 secondary Flush probe 应让 registration/wait/completion 各增加一次。
+
+地址空间销毁失败现在额外输出 stage、virtual address、physical address 与 detail status；
+`ReleaseBacking` 阶段的 detail 会保留 file backing close status。先修复最早非零的精确
+阶段；不要把后续资源快照不一致当作根因。
 
 ### QEMU 捕获器为什么使用里程碑和总截止
 
@@ -1977,6 +1994,40 @@ outstanding、write 和 Flush 能力。buffer size 必须是逻辑块大小的�
 若队列仍有空槽但 `IssueNext` 没有签发，比较当前 Issued 数与设备深度；这不是
 容量耗尽。若多个请求同时到期，`ResolveTimeout` 每次只返回 deadline 最早、再按
 identifier 最小的一项，调用者必须继续处理其他到期请求。
+
+### 请求已 Completed 但 owner 没收到通知
+
+先比较 `completed_request_count`、`completion_delivery_count` 和 `reap_count`。Completed
+请求必须在 completion FIFO 恰出现一次；IRQ、timeout 或 cancel 不能只改状态而漏掉
+入队。`TakeCompletion` 按解析顺序交付并同时 Reap；恢复路径若按 id 直接 Reap，必须从
+FIFO 中间摘除。若 owner 已退出，后续增量应走显式 abandoned/cancel 语义，不能把旧
+buffer 地址继续交给驱动。
+
+### 异步设备 Submit 成功但 ATA 没有发命令
+
+公共 Submit 只取得请求所有权；ATA adapter 会尝试启动首项，后续 queued 请求由
+`InterruptRuntime::ServiceAtaRequests` 在完成或 timer 路径继续启动。若 queue 中有 Queued
+但 Issued 为零，检查 Service 是否先 TakeCompletion 再调用 StartNext；先启动后回收会让
+单深度设备一直看到旧 active 请求。
+
+### NVMe completion 找到错误 owner 或 CID 回绕后串单
+
+公共 request identifier 是 64 位单调身份，CQE 中的 16 位 CID 只用于查硬件槽。检查
+`FindIoCommandSlot` 和 `FindIoRequestSlot` 是否被混用，以及 free slot 是否同时清空两种
+身份。上层、WaitQueue 和日志不得把 CID 当 request id 保存。
+
+### NVMe Read 完成但 buffer 仍是旧数据
+
+IRQ 只把 slot 标成 Completed 并追加完成链，不执行大块复制。确认 TakeCompletion 在非
+IRQ 上下文调用、slot 尚未复用，并在发布 completion 前把驱动 DMA 页复制到 caller
+buffer。若 reset 发生，成功完成必须保留；未完成 Read 只能交付 DeviceError，不能复制
+不完整 DMA 内容。
+
+### Cancel 返回 RequestInProgress
+
+这是已签发硬件请求的 best-effort 拒绝，不是队列损坏。只有 ATA queued 请求可直接变为
+Cancelled；ATA active 和已经写入 NVMe SQ 的请求仍由正常 IRQ、timeout 或 reset 解析。
+调用方必须继续保留 buffer，直到收到唯一终态 completion。
 
 ### 上层代码开始判断 ATA 或 NVMe
 

@@ -2260,7 +2260,8 @@ Thread / sync
   → Complete 唯一结果 → Wake BlockIo owner → Reap
 ```
 
-当前 PIC mask 为 `0xBFF8`：master IRQ0、IRQ1、IRQ2 和 slave IRQ14 开放。
+当前 PIC mask 为 `0x3FF8`：master IRQ0、IRQ1、IRQ2 和 slave IRQ14、IRQ15 开放。
+IRQ14 服务 primary ATA，IRQ15 服务 secondary ATA，同时保留虚假 IRQ15 的 ISR 判定。
 IRQ14 handler 只推进一个扇区的 PIO 状态、分类 BSY/DRQ/DF/ERR、提交结果和
 EOI；不进入 VFS、不睡眠、不分配。PIT deadline 与设备 IRQ 竞争同一 Issued
 状态，超时获胜后执行 ATA software reset，迟到 IRQ 不能覆盖结果。
@@ -2339,6 +2340,80 @@ MMIO/KVA 和 BAR。
 namespace NVMe，缺失或可安全清理的初始化失败回退 ATA；ROM/Stage 1 始终从 ATA
 加载。Process runtime 在用户进程前把常驻控制器资源刷新进基线，进程结束验证
 设备仍在，最终 sync 后 shutdown 又验证资源回到 storage 初始化前。
+
+## v2.10 有序块完成通道
+
+V2.10.1 在同一 `BlockRequest` 存储上维护两条互不混用的侵入式链：
+
+```text
+Submit
+  -> Queued FIFO --IssueNext--> Issued
+                                 | IRQ / timeout / cancel 单赢家
+                                 v
+                             Completed FIFO
+                                 |
+                                 v
+                 TakeCompletion -> owner -> Reap slot
+```
+
+Queued FIFO 冻结设备签发顺序，Completed FIFO 冻结实际解析顺序。NVMe 可以先完成后提交
+的 CID，timeout 也可能先于迟到 IRQ；上层只消费完成 FIFO，不从 request id 猜事件顺序。
+`BlockCompletion` 是脱离内部链指针的值快照，交付后槽位立即复用。按 id 的恢复路径可以
+从 FIFO 中间 Reap，但必须保持其余相对顺序。
+
+ATA 单飞 IRQ/timeout 已改用公共 `TakeCompletion`，不再私有组合 `Read+Reap`。截至第一
+增量，ATA 仍自行提交和启动请求，NVMe/rootfs 仍走既有同步入口。
+
+V2.10.2 在同步 `BlockDevice` 旁增加类型擦除的 `AsynchronousBlockDevice`：
+
+```text
+BlockIo（第三增量 3a 已接入 Kernel Thread）
+  -> AsynchronousBlockDevice
+       -> ATA: BlockRequestQueue -> IRQ14/timer -> completion FIFO
+       -> NVMe namespace: 64-bit request id -> 16-bit CID -> CQ slot
+                                               -> non-IRQ DMA copy -> completion
+```
+
+静态函数表只暴露 geometry、submit、best-effort cancel、timeout service 和 take completion；
+控制器寄存器、doorbell、phase 与 reset 不越过设备层。ATA 生产系统调用已经使用该表。
+NVMe probe 自检通过同一表保持四请求并发，CQE 仍按 CID 找硬件槽，但 owner 只观察单调
+64 位 request id。NVMe IRQ 不复制最多 64 KiB 的 Read 数据；TakeCompletion 在非 IRQ
+阶段回拷 DMA 页并释放槽。超时 reset 把最早到期项解析为 TimedOut，其余未完成项解析为
+DeviceError，并保留 reset 前已经产生的完成。生产 rootfs/swap 仍使用同步接口，第三增量
+才引入 BlockIo WaitQueue 与 bottom-half。
+
+V2.10.3a 增加设备无关的协调器与非 IRQ completion Worker：
+
+```text
+Kernel I/O Thread
+  -> Submit(async device)
+  -> Register(owner, request id, generation ticket)
+  -> PrepareWait
+       | completion 已到：直接 TakeResult
+       ` 未到：Blocked(BlockIo)
+
+IRQ14 / IRQ15 / MSI-X / PIT timeout
+  -> resolve device request
+  -> notification generation++
+  -> wake completion Worker
+
+completion Worker（Kernel Thread，非 IRQ）
+  -> TakeCompletion / NVMe Read DMA copy
+  -> Complete(owner, request id)
+  -> exact wake -> TakeResult -> Free
+```
+
+协调器把 `Registered/Waiting/Completed/Abandoned` 保存在 64 个固定槽中。ticket generation
+阻止复用后的旧票命中；完成同时匹配 owner 与 request id。完成先于等待提交时，
+`PrepareWait` 不进入 WaitQueue；worker 扫描为空后在关中断区复核通知 generation，再睡在
+独立 `BlockIoCompletion` WaitQueue，两个方向共同关闭 lost wakeup。
+
+当前真实生产探针由浅层 Kernel Thread 向 secondary ATA 提交 Flush，经 IRQ15、completion
+Worker 和 `BlockIo` WaitQueue 返回。rootfs/swap `BlockIoDevice` 已建立，但 async 开关保持
+关闭：rootfs/journal/cache 会持有 spin lock，用户系统调用阻塞又会展开深层 C++ 栈，直接
+替换同步调用会造成锁内睡眠或失效 buffer。第三增量 3b 必须先引入浅层 I/O worker 委托、
+稳定 request storage 并拆分锁临界区，然后才迁移生产 read/write/flush。详见
+[ADR 0065](adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)。
 
 ## v2.8 动态文件缓存地址空间
 

@@ -278,3 +278,23 @@ file/anonymous 配额转赠。UserMemory 在私有匿名 frame 最后释放前�
 执行 aging forget；专用 OOM profile 用 swappiness 0 和 `/proc/meminfo` 动态工作集验证
 非当前 SIGKILL victim。设计见
 [ADR 0062](../../docs/adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
+
+v2.10 第一增量扩展 `device/block_request.*`：Queued FIFO 只负责签发，新的 completion
+FIFO 按 IRQ/timeout/cancel 首次解析顺序保存终态。`TakeCompletion` 交付 owner/result
+快照并回收槽，按 id 的恢复 Reap 可安全摘除中间项；ATA IRQ 与 timeout 已迁移到公共
+出口。设计见
+[ADR 0063](../../docs/adr/0063-v2-10-ordered-block-completion-channel.md)。
+
+第二增量增加 `device/asynchronous_block_device.*`，用静态函数表把 ATA/NVMe namespace
+统一为 geometry、submit、cancel、timeout 和 completion 接口。ATA 的系统调用提交与
+IRQ14/timer 服务已走该接口；NVMe probe 的四路 Read/Write/Flush 也走公共 adapter，
+公共 64 位 request id 不再等同于 16 位 command id。NVMe Read 的 DMA 回拷只在非 IRQ
+TakeCompletion 执行。设计见
+[ADR 0064](../../docs/adr/0064-v2-10-asynchronous-block-device-adapter.md)。
+
+第三增量 3a 增加 `process/block_io.*` 与 `process/block_io_device.*`。64 槽协调器用
+owner/request id/generation ticket 关闭 completion-before-wait 丢唤醒；常驻 completion
+Kernel Thread 在非 IRQ 上消费设备完成并精确唤醒等待者。secondary ATA Flush probe 真实
+经过 IRQ15、Worker、BlockIo WaitQueue 和结果回收。rootfs/swap 包装仍固定同步回退，待
+浅层 I/O worker 委托和锁临界区拆分后再迁移。设计见
+[ADR 0065](../../docs/adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)。

@@ -207,8 +207,8 @@ QEMU 自行异常退出仍视为失败。
 - 设备模型单元测试覆盖 PIC 的 IRQ/向量双向映射、掩码失败原子性，PIT
   频率范围、除数舍入与时间溢出，扫描码 make/break/`E0` 序列，以及 ATA
   LBA28、缓冲区长度和启动描述符 magic。
-- 启动集成测试按生产顺序开放 IRQ0、IRQ1、cascade IRQ2 与 IRQ14，核对最终
-  掩码 `0xBFF8`，并组合
+- 启动集成测试按生产顺序开放 IRQ0、IRQ1、cascade IRQ2、IRQ14 与 IRQ15，核对当前最终
+  掩码 `0x3FF8`，并组合
   PIT 配置、键盘 `A` 键解码和 LBA 0 描述符校验。
 - 固定种子 `0x1A7E22D3C4B5A697` 执行 4096 轮 IRQ 往返、PIT 有效参数和
   键盘按下/释放性质；每轮同时验证输出只在成功后改变。
@@ -1126,8 +1126,8 @@ rootfs、PIC 与 QEMU 证据：
   Error 保留、失败重试、clean LRU 与最终统计守恒；
 - rootfs 集成：普通写事务前后 mount generation 不变、transaction generation
   增长；
-- device bootstrap：slave IRQ14 自动开放 master cascade，最终 mask 为
-  `0xBFF8`。
+- device bootstrap：slave IRQ14/IRQ15 自动开放 master cascade；v1.16 历史 mask 为
+  `0xBFF8`，当前回归期望为 `0x3FF8`。
 
 QEMU 三档都要求 `ATA_IRQ14_READY` 与 `ATA_REQUEST_CAPACITY=0x40`。用户
 memory probe 让两个 shared alias 观察同一写入，执行 sync 后从文件接口读回，
@@ -1780,3 +1780,65 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   focused planner/controller/ELF layout 为 5/5、0 失败；
 - 最终 CAW Debug `verify` 为 218/218、0 失败：65 unit、73 integration、47 randomized、
   33 system，含 25 条 failure-path，CTest 476.96 秒。
+
+## v2.10 异步块 I/O 与可等待页缓存测试
+
+### 有序完成通道第一增量
+
+- `os_kernel_block_request_unit_tests` 新增完成值字段、空队列 unavailable、解析顺序交付
+  和交付后槽位复用；
+- `os_kernel_block_request_completion_integration_tests` 让 request 3 先于 request 2 完成，
+  要求交付顺序严格为 request 1、3、2，并保持 IRQ/timeout 单赢家；
+- `os_kernel_block_request_randomized_tests` 把十万步 oracle 扩为 submit、issue、success、
+  failure、timeout、cancel、direct reap、take completion 八种操作，独立保存完成 sequence，
+  并覆盖按 identifier 从完成 FIFO 中间摘除；
+- ATA IRQ 与 timeout 消费同一 `TakeCompletion`，既有设备模型和 QEMU IRQ14 负责生产证据；
+- 本增量不要求新增 QEMU marker；完整回归必须保持 ATA/NVMe primary、reclaim、OOM、
+  persistence 和 failure-path 原有协议。
+- fresh CAW 最终 `python3 tools/os.py verify` 为 218/218、0 失败：65 unit、73 integration、
+  47 randomized、33 system，含 25 条 failure-path，CTest 453.70 秒；
+- `os_qemu_primary_smoke` 为 37.41 秒，ATA/NVMe reclaim-pressure 为 37.72/39.01 秒，
+  OOM 为 39.62/40.34 秒，persistence 为 72.17/73.89 秒。
+
+### 异步 BlockDevice adapter 第二增量
+
+- `os_kernel_asynchronous_block_device_unit_tests` 经类型擦除接口覆盖未初始化、非法请求、
+  容量、乱序完成、queued cancel、issued cancel 拒绝、timeout、空完成与槽位回收；
+- `os_kernel_asynchronous_block_device_adapter_integration_tests` 用深度 1/3 的两类驱动执行
+  同一脚本，验证几何差异不会改变公共完成和错误语义；
+- `os_kernel_asynchronous_block_device_randomized_tests` 以固定种子执行十万步 submit、issue、
+  success、EIO、timeout、cancel 和 take，对照独立 owner/sequence 模型；
+- `os_qemu_primary_smoke` 负责 ATA 类型擦除 submit、timer timeout、IRQ14 completion 和
+  用户 sync 唤醒；`os_qemu_nvme_io` 的四路 Read/Write/Flush 已改走 namespace adapter；
+- `os_qemu_nvme_io_error_recovery` 与 `os_qemu_nvme_io_timeout_recovery` 必须继续观察 reset、
+  EIO/timeout 计数和 DMA/MMIO/frame 资源回收。
+- fresh CAW 最终 `python3 tools/os.py verify` 为 221/221、0 失败：66 unit、74 integration、
+  48 randomized、33 system，含 25 条 failure-path，CTest 472.08 秒；
+- `os_qemu_primary_smoke` 为 39.06 秒，NVMe 正常/EIO/timeout 为 2.25/2.20/10.93 秒；
+  ATA/NVMe reclaim-pressure 为 39.12/41.29 秒，OOM 为 40.75/41.61 秒，
+  persistence 为 75.00/76.80 秒。
+
+### BlockIo Kernel 等待第三增量 3a
+
+- `os_kernel_block_io_unit_tests` 覆盖初始化/容量、owner 唯一、完成先于等待、等待先于完成、
+  generation 复用、abandon/late completion、终态提取和统计守恒；
+- `os_kernel_block_io_wait_queue_integration_tests` 组合协调器与 WaitQueue，验证精确 owner
+  唤醒、单次结果交付和完成后队列归零；
+- `os_kernel_block_io_randomized_tests` 用具名固定种子执行十万步 register、prepare、complete、
+  take、abandon 与 stale ticket，对照独立槽位模型；
+- 4 GiB `os_qemu_primary_smoke` 由浅层 Kernel Thread 向 secondary ATA 提交 Flush，必须经
+  IRQ15、completion Worker、`BlockIo` WaitQueue 返回，并按顺序出现 registrations=1、
+  wait commits=1、completions=1；
+- primary 与 ATA/NVMe reclaim-pressure 必须要求 root/swap async operations=0，证明本阶段
+  没有把同步生产路径或持锁调用链误标为已迁移；
+- Kernel Thread 生命周期更新为六次创建/退出/reap、峰值三条活动线程；结束后协调器、两个
+  BlockIo WaitQueue、Kernel stack、KVA 和 frame 都必须归零；
+- PID1 在 probe 提交前异常退出时，停止请求不得让 completion Worker 提前退出；Worker
+  必须等 probe 已完成且协调器 active=0 后才能结束，用户 `#UD/#PF` 隔离用例负责回归；
+- completion Worker 消费 ATA FIFO 时，PIT/IRQ14/IRQ15 不得观察到 Reap 已摘链但计数尚未
+  更新的中间状态；完整 persistence 与压力矩阵负责在真实中断频率下回归该竞态；
+- PIC 集成必须观察 mask `0x3FF8`，即同时开放 primary IRQ14 与 secondary IRQ15，并保持
+  虚假 IRQ15 EOI 规则；
+- fresh CAW Debug `verify` 最终为 224/224、0 失败：67 unit、75 integration、
+  49 randomized、33 system，含 25 条 failure-path，CTest 460.56 秒；primary、ATA/NVMe
+  persistence 分别为 37.07、74.10/76.16 秒。

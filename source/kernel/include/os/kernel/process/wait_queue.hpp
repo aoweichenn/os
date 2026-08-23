@@ -21,6 +21,7 @@ enum class WaitCondition : uint64_t {
     PrivateFutex,
     Sleep,
     BlockIo,
+    BlockIoCompletion,
     MutexAvailable,
     KernelWork,
     TestCondition,

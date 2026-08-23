@@ -15,9 +15,8 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
 - `nvme` 负责 BAR/MMIO、DMA admin queue、doorbell 与真实控制器生命周期；
 - `block_device` 定义不依赖文件系统和控制器类型的块设备协议与几何。
 - `block_request` 提供 64 位请求身份、FIFO 签发、多深度乱序完成与 Reap 生命周期。
-- `ata_pio` 保留有界 LBA28 PIO 轮询适配器，并提供 Read/Write/Flush 的
-  IRQ14 异步请求；当前 rootfs 普通扇区访问仍走同步适配器，显式 sync 的
-  最终 FLUSH 已接入 BlockIo。
+- `ata_pio` 保留有界 LBA28 PIO 轮询适配器，并为 primary IRQ14、secondary IRQ15
+  提供 Read/Write/Flush 异步请求；当前 rootfs/swap 普通访问仍走同步适配器。
 - `interrupt_runtime` 组合设备、处理 IRQ、同步统计与延后日志事件。
 - `architecture.asm` 只负责处理器入口帧，不访问具体设备寄存器。
 
@@ -34,7 +33,7 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
   → i8042/键盘握手
   → ATA PIO 重读并校验 LBA 0
   → 初始化 64 槽 BlockRequestQueue
-  → 开放 IRQ0、IRQ1、master IRQ2 cascade 与 slave IRQ14
+  → 开放 IRQ0、IRQ1、master IRQ2 cascade 与 slave IRQ14/IRQ15
   → 软件 INT 0x27 验证虚假 IRQ7
   → STI
   → HLT 等待至少 16 个 IRQ0
@@ -58,10 +57,10 @@ IRQ0 先增加 timer tick、解析 deadline 与 ATA 请求超时、完成 PIC EO
 round-robin 调度器才返回不同的现场地址；汇编公共入口随后直接从该现场恢复。
 这条热路径不写系统日志或 VGA。IRQ1 从 `0x60` 取一个扫描码，解码器处理 make、break
 与 `0xE0` 前缀；运行时保存首个待消费事件，诊断记录发生在中断返回后的事件
-循环中，终端激活后不会移动前台光标。IRQ14 只处理当前单飞 ATA 请求的数据/状态阶段，提交唯一完成结果，
-先确认 slave 再确认 master，定向唤醒 BlockIo Thread 并启动下一请求；它
-不睡眠、不分配也不进入 VFS。IRQ7/IRQ15 会读取 ISR：虚假 IRQ7 不发 EOI，
-虚假 IRQ15 只向主片确认级联。
+循环中，终端激活后不会移动前台光标。IRQ14/IRQ15 分别处理 primary/secondary ATA
+当前单飞请求的数据/状态阶段，提交唯一完成、先确认 slave 再确认 master、通知 BlockIo
+completion Worker 并启动下一请求；它们不睡眠、不分配也不进入 VFS。IRQ7/IRQ15 会读取
+ISR：虚假 IRQ7 不发 EOI，虚假 IRQ15 只向主片确认级联。
 
 ## 时间语义
 
@@ -118,6 +117,25 @@ RTTI 或 `__cxa_pure_virtual`，并保持 `constinit` ATA 运行时无全局构�
 乱序；超时按 deadline/identifier 稳定选择一个请求，调用者可循环处理同一时刻
 到期的其余请求。
 
+V2.10.1 为同一存储增加 completion FIFO。请求由 IRQ、timeout 或 cancel 首次解析后按
+发生顺序入队；`TakeCompletion` 返回不含内部链指针的 owner/result 快照并回收槽。
+按 identifier 的直接 Reap 仍用于恢复，但会从完成链任意位置摘除。ATA completion 已
+迁移到该出口。设计见
+[ADR 0063](../adr/0063-v2-10-ordered-block-completion-channel.md)。
+
+V2.10.2 在同步 `BlockDevice` 旁增加独立 `AsynchronousBlockDevice` 静态函数表。ATA 与
+NVMe namespace 都暴露 geometry、submit、best-effort cancel、timeout service 和 ordered
+completion；上层不再识别 ATA active slot、NVMe CID 或 doorbell。ATA queued 请求可以
+取消，已经签发的 ATA/NVMe 请求返回 RequestInProgress。设计见
+[ADR 0064](../adr/0064-v2-10-asynchronous-block-device-adapter.md)。
+
+V2.10.3a 增加 `BlockIoCoordinator`、独立 completion WaitQueue 和常驻 Kernel Thread。
+IRQ/timer 只解析完成并递增通知 generation；Worker 在非 IRQ 上调用 `TakeCompletion`，再按
+owner/request id 精确发布结果与唤醒。secondary ATA Flush probe 已真实穿过 IRQ15 和
+Kernel wait。rootfs/swap 的 `BlockIoDevice` 当前明确关闭异步开关：现有 VFS/cache/swap
+调用链会持有 spin lock，必须先经浅层 I/O worker 委托和锁拆分后才能迁移。设计见
+[ADR 0065](../adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)。
+
 `pci_model` 已支持 256 bus、每 bus 32 device、每 device 8 function 的 mechanism #1
 地址，识别 class code `01/08/02`，并解析 32/64 位 memory BAR 和尺寸探测掩码。
 `PciConfigurationSpace` 使用同一个 irq-save lock 保护 `0xCF8` 地址选择与 `0xCFC`
@@ -130,7 +148,9 @@ Set Features 请求一对队列，创建深度 64 的 CQ1/SQ1，并经 `BlockDev
 8 个 LBA 回验 4 KiB 数据，退出时关闭控制器、解除 MMIO、释放六个 DMA 页并恢复
 原 BAR。
 
-当前每槽 16 页把单请求限制为 64 KiB，四槽 completion 按 CID 回收；EIO 与超时
-都会 reset 并重建队列。Namespace 1/2 已分别承载 Kernel rootfs/swap，缺失设备
+当前每槽 16 页把单请求限制为 64 KiB，四槽 completion 按 CQ 实际顺序交付；64 位
+request id 与 16 位 CID 分离。IRQ 只标记完成，Read DMA 回拷在非 IRQ take 阶段执行；
+EIO 与超时都会 reset 并保留已产生的公共完成。Namespace 1/2 已分别承载 Kernel rootfs/swap，缺失设备
 自动回退 ATA；ROM/Stage 1 仍从 ATA 启动。尚未实现链式多页 PRP list、多 I/O
-queue、调度器异步接口或 MSI-X 多向量。
+queue 或 MSI-X 多向量。V2.10.3a 已建立 BlockIo Kernel WaitQueue 与 completion Worker，
+但尚未迁移生产 rootfs/swap 读写。

@@ -27,6 +27,8 @@ set(
 )
 set(
     OS_KERNEL_DEVICE_HEADERS
+    include/os/kernel/device/asynchronous_block_device.hpp
+    include/os/kernel/device/asynchronous_block_device.tpp
     include/os/kernel/device/ata_pio.hpp
     include/os/kernel/device/block_device.hpp
     include/os/kernel/device/block_device.tpp
@@ -99,6 +101,8 @@ set(
 )
 set(
     OS_KERNEL_PROCESS_HEADERS
+    include/os/kernel/process/block_io.hpp
+    include/os/kernel/process/block_io_device.hpp
     include/os/kernel/process/process_runtime.hpp
     include/os/kernel/process/job_control.hpp
     include/os/kernel/process/signal_manager.hpp
@@ -174,6 +178,7 @@ set(
 )
 set(
     OS_KERNEL_DEVICE_SOURCES
+    src/device/asynchronous_block_device.cpp
     src/device/ata_pio.cpp
     src/device/block_device.cpp
     src/device/block_request.cpp
@@ -245,6 +250,8 @@ set(
 )
 set(
     OS_KERNEL_PROCESS_SOURCES
+    src/process/block_io.cpp
+    src/process/block_io_device.cpp
     src/process/process_runtime.cpp
     src/process/job_control.cpp
     src/process/signal_manager.cpp
@@ -430,11 +437,14 @@ target_link_libraries(
 add_library(
     os_kernel_device_model_host
     STATIC
+        src/device/asynchronous_block_device.cpp
         src/device/block_request.cpp
         src/device/device_model.cpp
         src/device/nvme_model.cpp
         src/device/pci_model.cpp
         src/device/vga_text_console.cpp
+        include/os/kernel/device/asynchronous_block_device.hpp
+        include/os/kernel/device/asynchronous_block_device.tpp
         include/os/kernel/device/block_request.hpp
         include/os/kernel/device/device_model.hpp
         include/os/kernel/device/nvme_model.hpp
@@ -493,6 +503,7 @@ add_library(
 add_library(
     os_kernel_process_model_host
     STATIC
+        src/process/block_io.cpp
         src/process/process_tree.cpp
         src/process/job_control.cpp
         src/process/signal_manager.cpp
@@ -503,6 +514,7 @@ add_library(
         src/sync/mutex.cpp
         src/sync/private_futex.cpp
         src/sync/spin_lock.cpp
+        include/os/kernel/process/block_io.hpp
         include/os/kernel/process/thread_scheduler.hpp
         include/os/kernel/process/job_control.hpp
         include/os/kernel/process/process_tree.hpp

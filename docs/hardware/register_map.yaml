@@ -418,7 +418,8 @@ chips:
       read_isr_ocw3: 0x0B
       initial_mask: 0xFFFF
       historical_v0_7_enabled_mask: 0xFFFC
-      current_v1_16_enabled_mask: 0xBFF8
+      historical_v1_16_enabled_mask: 0xBFF8
+      current_v2_10_enabled_mask: 0x3FF8
       spurious_irqs:
         - 7
         - 15
@@ -428,7 +429,7 @@ chips:
       irq2_cascade: 0x22
       irq14_ata_primary: 0x2E
       irq7_spurious_test: 0x27
-      irq15_spurious: 0x2F
+      irq15_ata_secondary_or_spurious: 0x2F
   vga_text_console:
     role: current-display-observability
     text_memory_address: 0x000B8000

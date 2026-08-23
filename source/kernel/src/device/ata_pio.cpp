@@ -1,5 +1,6 @@
 #include <os/kernel/device/ata_pio.hpp>
 
+#include <os/kernel/arch/processor.hpp>
 #include <os/kernel/device/device_model.hpp>
 #include <os/kernel/device/port_io.hpp>
 
@@ -53,6 +54,54 @@ constexpr BlockDeviceGeometry OS_KERNEL_ATA_BLOCK_GEOMETRY{
     .flush_supported = true,
 };
 
+[[nodiscard]] AsynchronousBlockDeviceStatus
+MapBlockRequestQueueStatus(const BlockRequestQueueStatus status) noexcept {
+    if (status == BlockRequestQueueStatus::Succeeded) {
+        return AsynchronousBlockDeviceStatus::Succeeded;
+    }
+    if (status == BlockRequestQueueStatus::NotInitialized) {
+        return AsynchronousBlockDeviceStatus::NotReady;
+    }
+    if (status == BlockRequestQueueStatus::InvalidRequest) {
+        return AsynchronousBlockDeviceStatus::InvalidRequest;
+    }
+    if (status == BlockRequestQueueStatus::CapacityExhausted ||
+        status == BlockRequestQueueStatus::IdentifierExhausted) {
+        return AsynchronousBlockDeviceStatus::CapacityExhausted;
+    }
+    if (status == BlockRequestQueueStatus::RequestNotFound) {
+        return AsynchronousBlockDeviceStatus::RequestNotFound;
+    }
+    if (status == BlockRequestQueueStatus::RequestNotQueued ||
+        status == BlockRequestQueueStatus::RequestNotIssued ||
+        status == BlockRequestQueueStatus::RequestNotCompleted) {
+        return AsynchronousBlockDeviceStatus::RequestInProgress;
+    }
+    if (status == BlockRequestQueueStatus::RequestAlreadyResolved) {
+        return AsynchronousBlockDeviceStatus::RequestAlreadyResolved;
+    }
+    return AsynchronousBlockDeviceStatus::Corrupt;
+}
+
+[[nodiscard]] AsynchronousBlockDeviceStatus MapAtaPioStatus(const AtaPioStatus status) noexcept {
+    if (status == AtaPioStatus::Succeeded) {
+        return AsynchronousBlockDeviceStatus::Succeeded;
+    }
+    if (status == AtaPioStatus::NotInitialized) {
+        return AsynchronousBlockDeviceStatus::NotReady;
+    }
+    if (status == AtaPioStatus::NullBuffer || status == AtaPioStatus::InvalidBufferSize ||
+        status == AtaPioStatus::InvalidLogicalBlockAddress) {
+        return AsynchronousBlockDeviceStatus::InvalidRequest;
+    }
+    if (status == AtaPioStatus::RequestInProgress) {
+        return AsynchronousBlockDeviceStatus::RequestInProgress;
+    }
+    if (status == AtaPioStatus::RequestQueueFailure) {
+        return AsynchronousBlockDeviceStatus::Corrupt;
+    }
+    return AsynchronousBlockDeviceStatus::DeviceFailure;
+}
 }
 
 AtaPioStatus AtaPioDevice::ReadSector(const uint64_t logical_block_address, uint8_t *buffer,
@@ -306,12 +355,50 @@ AtaPioStatus AtaPioDevice::ResolveTimeout(const uint64_t now_nanoseconds,
         .result = BlockRequestResult::TimedOut,
         .ready = true,
     };
-    if (this->request_queue_.Reap(request.identifier) != BlockRequestQueueStatus::Succeeded) {
-        return AtaPioStatus::RequestQueueFailure;
-    }
     this->active_request_ = BlockRequest{};
     this->write_data_transferred_ = false;
     return AtaPioStatus::Succeeded;
+}
+
+AsynchronousBlockDeviceStatus AtaPioDevice::SubmitBlockRequest(
+    const BlockOperation operation, const uint64_t logical_block_address, uint8_t *const buffer,
+    const uint64_t buffer_size_bytes, const uint64_t owner_thread_index,
+    const uint64_t deadline_nanoseconds, uint64_t &request_identifier) noexcept {
+    const AtaPioStatus submit_status =
+        this->SubmitAsynchronous(operation, logical_block_address, buffer, buffer_size_bytes,
+                                 owner_thread_index, deadline_nanoseconds, request_identifier);
+    if (submit_status != AtaPioStatus::Succeeded) {
+        return MapAtaPioStatus(submit_status);
+    }
+    AtaPioCompletion completion{};
+    bool request_started = false;
+    return MapAtaPioStatus(this->StartNextAsynchronous(completion, request_started));
+}
+
+AsynchronousBlockDeviceStatus
+AtaPioDevice::CancelBlockRequest(const uint64_t request_identifier) noexcept {
+    return MapBlockRequestQueueStatus(this->request_queue_.CancelQueued(request_identifier));
+}
+
+AsynchronousBlockDeviceStatus
+AtaPioDevice::ResolveBlockTimeouts(const uint64_t now_nanoseconds) noexcept {
+    AtaPioCompletion completion{};
+    return MapAtaPioStatus(this->ResolveTimeout(now_nanoseconds, completion));
+}
+
+AsynchronousBlockDeviceStatus AtaPioDevice::TakeBlockCompletion(BlockCompletion &completion,
+                                                                bool &available) noexcept {
+    // IRQ14/IRQ15 与 PIT timeout 会读同一队列；摘 completion 链和更新统计必须作为
+    // 单 BSP 原子提交，避免中断观察到 Reap 的中间状态。ATA 不做大块 DMA 回拷。
+    const bool interrupts_were_enabled = DisableInterrupts();
+    const BlockRequestQueueStatus status =
+        this->request_queue_.TakeCompletion(completion, available);
+    RestoreInterrupts(interrupts_were_enabled);
+    return MapBlockRequestQueueStatus(status);
+}
+
+BlockDeviceGeometry AtaPioDevice::AsynchronousGeometry() const noexcept {
+    return OS_KERNEL_ATA_BLOCK_GEOMETRY;
 }
 
 AtaPioStatistics AtaPioDevice::Statistics() const noexcept {
@@ -424,18 +511,11 @@ AtaPioStatus AtaPioDevice::ResolveIssuedRequest(const BlockRequestResult result,
             BlockRequestQueueStatus::Succeeded) {
         return AtaPioStatus::RequestQueueFailure;
     }
-    BlockRequest completed_request{};
-    if (this->request_queue_.Read(this->active_request_.identifier, completed_request) !=
-            BlockRequestQueueStatus::Succeeded ||
-        this->request_queue_.Reap(this->active_request_.identifier) !=
-            BlockRequestQueueStatus::Succeeded) {
-        return AtaPioStatus::RequestQueueFailure;
-    }
     completion = AtaPioCompletion{
-        .request_identifier = completed_request.identifier,
-        .owner_thread_index = completed_request.owner_thread_index,
-        .operation = completed_request.operation,
-        .result = completed_request.result,
+        .request_identifier = this->active_request_.identifier,
+        .owner_thread_index = this->active_request_.owner_thread_index,
+        .operation = this->active_request_.operation,
+        .result = result,
         .ready = true,
     };
     this->active_request_ = BlockRequest{};

@@ -29,12 +29,15 @@ BlockRequestQueue::Initialize(BlockRequest *const storage, const uint64_t capaci
          request_index < capacity; ++request_index) {
         storage[request_index] = BlockRequest{};
         storage[request_index].next_queue_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+        storage[request_index].next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     }
     this->storage_ = storage;
     this->capacity_ = capacity;
     this->geometry_ = geometry;
     this->queue_head_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     this->queue_tail_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    this->completion_head_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    this->completion_tail_index_ = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     this->next_identifier_ = OS_KERNEL_BLOCK_REQUEST_FIRST_IDENTIFIER;
     this->statistics_ = BlockRequestQueueStatistics{};
     this->statistics_.capacity = capacity;
@@ -80,6 +83,7 @@ BlockRequestQueueStatus BlockRequestQueue::Submit(
         .state = BlockRequestState::Queued,
         .result = BlockRequestResult::None,
         .next_queue_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX,
+        .next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX,
     };
     this->AppendQueuedIndex(request_index);
     ++this->statistics_.active_request_count;
@@ -144,8 +148,14 @@ BlockRequestQueue::Complete(const uint64_t request_identifier,
         this->statistics_.issued_request_count == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
         return BlockRequestQueueStatus::RequestNotIssued;
     }
+    const uint64_t request_index = this->IndexOf(*request);
+    if (request_index == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
     request->state = BlockRequestState::Completed;
     request->result = result;
+    request->next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    this->AppendCompletionIndex(request_index);
     --this->statistics_.issued_request_count;
     ++this->statistics_.completed_request_count;
     this->RecordResolution(result);
@@ -212,6 +222,8 @@ BlockRequestQueue::CancelQueued(const uint64_t request_identifier) noexcept {
     ++this->statistics_.completed_request_count;
     request->state = BlockRequestState::Completed;
     request->result = BlockRequestResult::Cancelled;
+    request->next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    this->AppendCompletionIndex(request_index);
     this->RecordResolution(BlockRequestResult::Cancelled);
     return BlockRequestQueueStatus::Succeeded;
 }
@@ -227,6 +239,43 @@ BlockRequestQueue::Read(const uint64_t request_identifier, BlockRequest &request
         return BlockRequestQueueStatus::RequestNotFound;
     }
     request = *found_request;
+    return BlockRequestQueueStatus::Succeeded;
+}
+
+BlockRequestQueueStatus BlockRequestQueue::TakeCompletion(BlockCompletion &completion,
+                                                          bool &available) noexcept {
+    completion = BlockCompletion{};
+    available = false;
+    if (!this->initialized_ || this->storage_ == nullptr) {
+        return BlockRequestQueueStatus::NotInitialized;
+    }
+    if (this->completion_head_index_ == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        return this->Validate();
+    }
+    if (this->completion_head_index_ >= this->capacity_ ||
+        this->statistics_.completion_delivery_count == UINT64_MAX) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+    const BlockRequest &request = this->storage_[this->completion_head_index_];
+    if (request.state != BlockRequestState::Completed ||
+        !this->ResultIsTerminal(request.result)) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+    completion = BlockCompletion{
+        .request_identifier = request.identifier,
+        .operation = request.operation,
+        .logical_block_address = request.logical_block_address,
+        .logical_block_count = request.logical_block_count,
+        .owner_thread_index = request.owner_thread_index,
+        .result = request.result,
+    };
+    const BlockRequestQueueStatus reap_status = this->Reap(request.identifier);
+    if (reap_status != BlockRequestQueueStatus::Succeeded) {
+        completion = BlockCompletion{};
+        return reap_status;
+    }
+    ++this->statistics_.completion_delivery_count;
+    available = true;
     return BlockRequestQueueStatus::Succeeded;
 }
 
@@ -246,8 +295,14 @@ BlockRequestQueue::Reap(const uint64_t request_identifier) noexcept {
         this->statistics_.completed_request_count == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
         return BlockRequestQueueStatus::Corrupt;
     }
+    const uint64_t request_index = this->IndexOf(*request);
+    if (request_index == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX ||
+        !this->RemoveCompletionIndex(request_index)) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
     *request = BlockRequest{};
     request->next_queue_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    request->next_completion_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
     --this->statistics_.active_request_count;
     --this->statistics_.completed_request_count;
     ++this->statistics_.reap_count;
@@ -280,7 +335,9 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
          request_index < this->capacity_; ++request_index) {
         const BlockRequest &request = this->storage_[request_index];
         if (request.state == BlockRequestState::Unused) {
-            if (request.identifier != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE) {
+            if (request.identifier != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE ||
+                request.next_queue_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX ||
+                request.next_completion_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
                 return BlockRequestQueueStatus::Corrupt;
             }
             continue;
@@ -295,10 +352,22 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
         }
         ++active_request_count;
         if (request.state == BlockRequestState::Queued) {
+            if (request.result != BlockRequestResult::None ||
+                request.next_completion_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+                return BlockRequestQueueStatus::Corrupt;
+            }
             ++queued_request_count;
         } else if (request.state == BlockRequestState::Issued) {
+            if (request.result != BlockRequestResult::None ||
+                request.next_queue_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX ||
+                request.next_completion_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+                return BlockRequestQueueStatus::Corrupt;
+            }
             ++issued_request_count;
         } else if (request.state == BlockRequestState::Completed) {
+            if (request.next_queue_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+                return BlockRequestQueueStatus::Corrupt;
+            }
             ++completed_request_count;
             if (!this->ResultIsTerminal(request.result)) {
                 return BlockRequestQueueStatus::Corrupt;
@@ -343,6 +412,49 @@ BlockRequestQueueStatus BlockRequestQueue::Validate() const noexcept {
         this->statistics_.peak_issued_request_count >
             this->geometry_.maximum_outstanding_request_count ||
         active_request_count > this->capacity_) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+
+    uint64_t observed_completion_count = OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE;
+    uint64_t completion_index = this->completion_head_index_;
+    previous_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    while (completion_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        if (completion_index >= this->capacity_ ||
+            this->storage_[completion_index].state != BlockRequestState::Completed ||
+            observed_completion_count >= this->capacity_) {
+            return BlockRequestQueueStatus::Corrupt;
+        }
+        previous_index = completion_index;
+        completion_index = this->storage_[completion_index].next_completion_index;
+        ++observed_completion_count;
+    }
+    if ((observed_completion_count == OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE &&
+         (this->completion_head_index_ != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX ||
+          this->completion_tail_index_ != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX)) ||
+        (observed_completion_count != OS_KERNEL_BLOCK_REQUEST_EMPTY_VALUE &&
+         previous_index != this->completion_tail_index_) ||
+        observed_completion_count != completed_request_count ||
+        this->statistics_.completion_delivery_count > this->statistics_.reap_count) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+    uint64_t resolution_count = this->statistics_.successful_completion_count;
+    if (resolution_count > UINT64_MAX - this->statistics_.device_error_completion_count) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+    resolution_count += this->statistics_.device_error_completion_count;
+    if (resolution_count > UINT64_MAX - this->statistics_.timeout_completion_count) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+    resolution_count += this->statistics_.timeout_completion_count;
+    if (resolution_count > UINT64_MAX - this->statistics_.cancellation_count ||
+        completed_request_count > UINT64_MAX - this->statistics_.reap_count ||
+        active_request_count > UINT64_MAX - this->statistics_.reap_count) {
+        return BlockRequestQueueStatus::Corrupt;
+    }
+    resolution_count += this->statistics_.cancellation_count;
+    if (resolution_count != completed_request_count + this->statistics_.reap_count ||
+        this->statistics_.submission_count !=
+            active_request_count + this->statistics_.reap_count) {
         return BlockRequestQueueStatus::Corrupt;
     }
     return BlockRequestQueueStatus::Succeeded;
@@ -463,6 +575,43 @@ void BlockRequestQueue::AppendQueuedIndex(const uint64_t request_index) noexcept
     }
     this->storage_[this->queue_tail_index_].next_queue_index = request_index;
     this->queue_tail_index_ = request_index;
+}
+
+void BlockRequestQueue::AppendCompletionIndex(const uint64_t request_index) noexcept {
+    if (this->completion_tail_index_ == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        this->completion_head_index_ = request_index;
+        this->completion_tail_index_ = request_index;
+        return;
+    }
+    this->storage_[this->completion_tail_index_].next_completion_index = request_index;
+    this->completion_tail_index_ = request_index;
+}
+
+bool BlockRequestQueue::RemoveCompletionIndex(const uint64_t request_index) noexcept {
+    uint64_t previous_index = OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+    uint64_t current_index = this->completion_head_index_;
+    while (current_index != OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+        if (current_index >= this->capacity_) {
+            return false;
+        }
+        if (current_index == request_index) {
+            const uint64_t next_index = this->storage_[current_index].next_completion_index;
+            if (previous_index == OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX) {
+                this->completion_head_index_ = next_index;
+            } else {
+                this->storage_[previous_index].next_completion_index = next_index;
+            }
+            if (this->completion_tail_index_ == current_index) {
+                this->completion_tail_index_ = previous_index;
+            }
+            this->storage_[current_index].next_completion_index =
+                OS_KERNEL_BLOCK_REQUEST_INVALID_INDEX;
+            return true;
+        }
+        previous_index = current_index;
+        current_index = this->storage_[current_index].next_completion_index;
+    }
+    return false;
 }
 
 bool BlockRequestQueue::RemoveQueuedIndex(const uint64_t request_index) noexcept {
