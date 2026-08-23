@@ -269,6 +269,7 @@ set(
     OS_KERNEL_SYNCHRONIZATION_SOURCES
     src/sync/mutex.cpp
     src/sync/private_futex.cpp
+    src/sync/runtime_mutex.cpp
     src/sync/spin_lock.cpp
 )
 set(

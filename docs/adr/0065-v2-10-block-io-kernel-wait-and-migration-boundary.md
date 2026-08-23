@@ -1,6 +1,6 @@
 # ADR 0065：V2.10 BlockIo 内核等待与安全迁移边界
 
-状态：已接受（第三增量基础）
+状态：已接受（第三增量 3a；生产迁移由 ADR 0066 延续）
 
 日期：2026-08-23
 
@@ -30,7 +30,7 @@ IRQ14、IRQ15、MSI-X 或 PIT timeout 只解析设备状态并增加通知 gener
 进展时睡在独立 `BlockIoCompletion` WaitQueue；睡前关闭中断并复核 generation，关闭
 “扫描为空”和“进入阻塞”之间的通知窗口。
 
-`AwaitRuntimeBlockIo` 只允许 Kernel Thread 调用。它在同一个关中断区提交请求、登记
+3a 时 `AwaitRuntimeBlockIo` 只允许 Kernel Thread 调用。它在同一个关中断区提交请求、登记
 ticket、通知 worker、提交等待并切换 Kernel 栈，醒来后取走唯一终态。请求一旦被设备接受，
 协调器损坏或异常唤醒采用 fail-stop；在设备尚无“取消并等待硬件静止”协议时，返回并释放
 caller buffer 会形成 use-after-free，不能伪装成普通 I/O 错误。
@@ -39,7 +39,7 @@ caller buffer 会形成 use-after-free，不能伪装成普通 I/O 错误。
 WaitQueue wake 和结果回收。primary ATA root 与 secondary ATA swap 使用不同控制器状态机，
 避免异步探针/旧 sync flush 与 rootfs 同步 I/O 交叉污染。
 
-`BlockIoDevice` 暂时包住 rootfs/swap 的同步和异步设备，但生产实例明确关闭
+3a 的 `BlockIoDevice` 暂时包住 rootfs/swap 的同步和异步设备，但生产实例明确关闭
 `asynchronous_wait_enabled`。early boot、用户系统调用、rootfs/journal/cache 以及 swap
 调用链继续同步；统计必须报告 root/swap async operation 为零，不能把 probe 当作生产迁移。
 
@@ -61,11 +61,10 @@ WaitQueue wake 和结果回收。primary ATA root 与 secondary ATA swap 使用�
 
 ## 后果
 
-系统已经具备可复用的 Kernel BlockIo 等待协议和 bottom-half worker，真实 IRQ15 probe
-证明调度闭环可运行，单元、集成和十万步模型证明状态机边界。代价是生产 rootfs/swap
-尚未异步化，`BlockIoDevice` 仍使用同步回退。
+本 ADR 完成时，系统具备可复用的 Kernel BlockIo 等待协议和 bottom-half worker，真实
+IRQ15 probe 证明调度闭环可运行，单元、集成和十万步模型证明状态机边界；生产
+rootfs/swap 当时仍使用同步回退。
 
-下一增量在实现 FilePageCache Loading waiter 前，必须先把深层设备访问改成“提交给浅层
-I/O worker + 调用者等待稳定对象”的委托模型，并把现有 spin lock 临界区拆为只保护状态
-提交的短区。完成这些前置条件后，才能逐条迁移 rootfs/swap read/write/flush；不得在当前
-接口上简单打开异步开关。
+3b 最终选择 ADR 0066 的“每 User Thread 独立 Kernel stack 续体 + RuntimeMutex”实现同一
+安全目标，而非单一浅层 I/O worker：锁临界区可睡眠、buffer 生命周期跨 completion 稳定，
+rootfs/swap 生产包装已经打开异步等待。FilePageCache Loading waiter 仍属于下一增量。

@@ -85,6 +85,24 @@ fault Thread 的前提下终止非当前 victim。专用用户程序让 victim �
 frame 必须全部归零。决策见
 [ADR 0062](../adr/0062-v2-9-unified-reclaim-fairness-and-oom-matrix.md)。
 
+## v2.10 User Kernel 续体与发布顺序
+
+3b 允许 User Thread 在自己的动态 KernelStack 上暂停深层文件系统/换页调用。挂起现场包含
+saved RSP、FX state、用户入口方法、CpuLocal 系统调用状态、双 GS 基址模式和 CR3 模式；
+恢复目标前由 dispatcher 更新 CpuLocal/TSS，再切回目标栈。User→User 不再在前任栈上准备
+后任返回，统一先回 dispatcher。
+
+跨模块创建先使用 `ThreadState::Initializing`：scheduler 建立身份和 Process 链，但不追加
+ready queue；ProcessRuntime 完成地址空间、Kernel stack、FileTable、FsContext、signal、
+job-control 与 runtime metadata 后调用 `PublishInitializingThread`。任一步失败都调用
+`DiscardInitializingThread`，该 Thread 从未获得执行机会。
+
+退出路径先排空同 Process 的其他续体和 sibling，再允许 writeback/close/context/address
+space 销毁阻塞；`TerminateCurrentThread` 使 Scheduler Process 进入 Zombie 后，才调用
+ProcessTree `MarkExited` 并唤醒 ChildProcess waiter。该顺序使 wait/reap 跨两个状态模块保持
+单向可见，不会因无关子进程唤醒形成半提交。完整决定见
+[ADR 0066](../adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。
+
 ### WorkQueue
 
 WorkQueue 不创建 Thread，也不调用任务。它只拥有 caller-storage entry、delayed heap、

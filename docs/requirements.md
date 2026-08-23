@@ -444,15 +444,24 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   `TakeCompletion`、NVMe Read DMA 回拷、协调器交付和 WaitQueue wake 必须在非 IRQ 上完成；
 - completion Worker 扫描为空后必须在关中断区复核单调通知 generation，再提交阻塞；
   不得用无界轮询规避扫描与睡眠之间的丢通知窗口；
-- `AwaitRuntimeBlockIo` 仅允许浅层 Kernel Thread 调用。设备接受请求后，如果协调登记、
-  等待提交、唤醒原因或结果提取损坏，必须 fail-stop，不能返回并释放仍归设备所有的 buffer；
-- 当前 rootfs、journal、BlockCache、swap 和用户系统调用调用链不得直接打开异步包装：持有
-  spin lock 不得睡眠，用户阻塞模型也不能保留任意深层 Kernel C++ 栈；第三增量 3b 必须先
-  引入浅层 I/O worker 委托、稳定 request buffer 和锁临界区拆分；
-- 第三增量 3a 的整机证据必须经 secondary ATA IRQ15 完成一次真实 Kernel wait，并要求
-  coordinator registration/wait/completion 各为一、rootfs/swap async production 为零；
+- `AwaitRuntimeBlockIo` 只允许具备独立 Kernel stack 的 Kernel Thread 或 User Kernel 续体
+  调用。设备接受请求后，如果协调登记、等待提交、唤醒原因或结果提取损坏，必须 fail-stop，
+  不能返回并释放仍归设备所有的 buffer；
+- User Kernel 续体必须成对保存/恢复 FX、系统调用入口、双 GS 基址状态和 CR3 模式；恢复
+  地址空间销毁路径时必须保持 Kernel page table，不能重新激活已释放的用户 CR3；
+- rootfs、journal、BlockCache、VFS resolution、文件后备、swap 和打开文件 payload 的可睡眠
+  临界区必须使用 `RuntimeMutex`；IRQ、持有其他 spin lock 和运行时未就绪路径不得睡眠；
+- 新 User Thread 必须以不可调度的 `Initializing` 状态完成跨模块初始化，全部元数据提交后
+  才能发布为 `Ready`，失败必须在从未运行过的前提下逆序丢弃；
+- 第三增量 3a 的历史证据经 secondary ATA IRQ15 完成一次真实 Kernel wait；3b 生产证据
+  必须要求 coordinator registration/wait/completion 非零且严格相等、root async operation
+  非零，发生匿名换出的 profile 还必须要求 swap async operation 非零；
 - 最终生产异步路径不得在 IRQ 中分配、阻塞或调用 VFS，EIO/timeout/cancel 必须唤醒原
   owner，退出和 unmap 必须能撤销或遗弃请求且不写入已释放 buffer。
+- 生产 root/swap NVMe controller 是系统级持久资源，正常 READY/事件循环不得提前关闭；
+  独立 probe、EIO/timeout recovery 的 shutdown 仍必须回收 DMA/MMIO/PCI/MSI-X。
+- Process 退出必须先使 Scheduler 进入 `Zombie`，再发布 ProcessTree 退出事件并唤醒父进程；
+  共享 ChildProcess 唤醒不得形成进程树已收集、调度器尚未回收的半提交。
 
 ## v2.0 完成基线
 

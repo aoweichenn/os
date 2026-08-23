@@ -2,7 +2,7 @@
 
 #include <os/kernel/fs/vfs.hpp>
 #include <os/kernel/memory/file_page_cache.hpp>
-#include <os/kernel/sync/spin_lock.hpp>
+#include <os/kernel/sync/runtime_mutex.hpp>
 
 #include <stdint.h>
 
@@ -104,7 +104,7 @@ class UserFileBackingManager final {
     uint64_t active_descriptor_count_{};
     uint64_t next_generation_{};
     fs::Status last_close_status_{fs::Status::Succeeded};
-    mutable SpinLock lock_{};
+    mutable RuntimeMutex lock_{};
     bool initialized_{};
 };
 

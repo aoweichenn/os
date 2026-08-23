@@ -768,20 +768,20 @@ OS_QEMU_KERNEL_THREAD_EXITS_SIX_MARKER = (
 OS_QEMU_KERNEL_THREAD_REAPS_SIX_MARKER = (
     "[OS][KERNEL] KERNEL_THREAD_REAPS=0x0000000000000006"
 )
-OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_ONE_MARKER = (
-    "[OS][KERNEL][BLOCK_IO] REGISTRATIONS=0x0000000000000001"
+OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER = (
+    "[OS][KERNEL][BLOCK_IO] REGISTRATIONS=0x"
 )
-OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_ONE_MARKER = (
-    "[OS][KERNEL][BLOCK_IO] WAIT_COMMITS=0x0000000000000001"
+OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_MARKER = (
+    "[OS][KERNEL][BLOCK_IO] WAIT_COMMITS=0x"
 )
-OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_ONE_MARKER = (
-    "[OS][KERNEL][BLOCK_IO] COMPLETIONS=0x0000000000000001"
+OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_MARKER = (
+    "[OS][KERNEL][BLOCK_IO] COMPLETIONS=0x"
 )
-OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_ZERO_MARKER = (
-    "[OS][KERNEL][BLOCK_IO] ROOT_ASYNC_OPERATIONS=0x0000000000000000"
+OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_MARKER = (
+    "[OS][KERNEL][BLOCK_IO] ROOT_ASYNC_OPERATIONS=0x"
 )
-OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_ZERO_MARKER = (
-    "[OS][KERNEL][BLOCK_IO] SWAP_ASYNC_OPERATIONS=0x0000000000000000"
+OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_MARKER = (
+    "[OS][KERNEL][BLOCK_IO] SWAP_ASYNC_OPERATIONS=0x"
 )
 OS_QEMU_USER_TO_KERNEL_SWITCHES_MARKER = (
     "[OS][KERNEL] USER_TO_KERNEL_SWITCHES=0x"
@@ -1852,9 +1852,6 @@ OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_READY_MARKER = (
     "[OS][KERNEL] NVME_SWAP_NAMESPACE_READY"
 )
 OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER = "[OS][KERNEL] NVME_STORAGE_READY"
-OS_QEMU_KERNEL_NVME_STORAGE_SHUTDOWN_READY_MARKER = (
-    "[OS][KERNEL] NVME_STORAGE_SHUTDOWN_READY"
-)
 OS_QEMU_KERNEL_INVALID_OPCODE_INJECTION_MARKER = (
     "[OS][KERNEL] FAULT_INJECTION=INVALID_OPCODE"
 )
@@ -2908,6 +2905,7 @@ def validateVgaProtocol(
     expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
+    matchingHexMarkerValues: tuple[tuple[str, str], ...] = (),
 ) -> None:
     for forbiddenMarker in forbiddenMarkers:
         if forbiddenMarker in vgaOutput:
@@ -2958,6 +2956,29 @@ def validateVgaProtocol(
                 f"{marker!r} 下界 {minimumValue}"
             )
 
+    for firstMarker, secondMarker in matchingHexMarkerValues:
+        firstMatches = re.findall(
+            re.escape(firstMarker) + r"([0-9A-Fa-f]{16})(?:\r?\n|$)",
+            vgaOutput,
+        )
+        secondMatches = re.findall(
+            re.escape(secondMarker) + r"([0-9A-Fa-f]{16})(?:\r?\n|$)",
+            vgaOutput,
+        )
+        if not firstMatches or not secondMatches:
+            raise OsToolError(
+                "VGA十六进制守恒统计缺失："
+                f"{firstMarker!r} 或 {secondMarker!r}"
+            )
+        firstValues = tuple(int(value, 16) for value in firstMatches)
+        secondValues = tuple(int(value, 16) for value in secondMatches)
+        if firstValues != secondValues:
+            raise OsToolError(
+                "VGA十六进制统计不守恒："
+                f"{firstMarker!r}={firstValues!r}，"
+                f"{secondMarker!r}={secondValues!r}"
+            )
+
 
 def runQemuFirmwareBoot(
     projectRoot: Path,
@@ -2972,6 +2993,7 @@ def runQemuFirmwareBoot(
     expectedMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumMarkerCounts: tuple[tuple[str, int], ...] = (),
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = (),
+    matchingHexMarkerValues: tuple[tuple[str, str], ...] = (),
     persistentDiskWrites: bool = False,
     memoryMebibytes: int = OS_QEMU_MINIMUM_GUEST_MEMORY_MEBIBYTES,
     cpuModel: str = OS_QEMU_DEFAULT_CPU_MODEL,
@@ -3159,6 +3181,7 @@ def runQemuFirmwareBoot(
                 expectedMarkerCounts,
                 minimumMarkerCounts,
                 minimumHexMarkerValues,
+                matchingHexMarkerValues,
             )
         except OsToolError as protocolError:
             print(timedVgaOutput, end="")

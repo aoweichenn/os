@@ -295,6 +295,12 @@ TakeCompletion 执行。设计见
 第三增量 3a 增加 `process/block_io.*` 与 `process/block_io_device.*`。64 槽协调器用
 owner/request id/generation ticket 关闭 completion-before-wait 丢唤醒；常驻 completion
 Kernel Thread 在非 IRQ 上消费设备完成并精确唤醒等待者。secondary ATA Flush probe 真实
-经过 IRQ15、Worker、BlockIo WaitQueue 和结果回收。rootfs/swap 包装仍固定同步回退，待
-浅层 I/O worker 委托和锁临界区拆分后再迁移。设计见
+经过 IRQ15、Worker、BlockIo WaitQueue 和结果回收。设计见
 [ADR 0065](../../docs/adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)。
+
+第三增量 3b 增加 User Kernel stack 续体和 `sync/runtime_mutex.*`。续体跨阻塞保存 FX、
+系统调用、GS 与 CR3 模式；RuntimeMutex 让 rootfs/VFS/cache/swap 的竞争者经 WaitQueue
+睡眠。root/swap 包装已打开异步等待，early boot 和受限 Kernel worker 保留同步回退；
+Thread 以 `Initializing -> Ready` 发布，退出以 Scheduler Zombie 先于 ProcessTree event
+收束。设计见
+[ADR 0066](../../docs/adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。

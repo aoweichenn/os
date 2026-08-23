@@ -1,10 +1,10 @@
 #pragma once
 
-#include "os/kernel/fs/block_cache.hpp"
-#include "os/kernel/fs/root_file_system_format.hpp"
-#include "os/kernel/fs/root_journal.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/kernel/fs/block_cache.hpp>
+#include <os/kernel/fs/root_file_system_format.hpp>
+#include <os/kernel/fs/root_journal.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/sync/runtime_mutex.hpp>
 
 #include <stdint.h>
 
@@ -230,7 +230,7 @@ class RootFileSystem final {
     uint64_t last_validated_transaction_generation_{};
     RootTimestampSource timestamp_source_{nullptr};
     RenameScratch rename_scratch_{};
-    mutable SpinLock lock_{};
+    mutable RuntimeMutex lock_{};
     bool initialized_{};
     bool failed_{};
     bool transaction_snapshot_valid_{};

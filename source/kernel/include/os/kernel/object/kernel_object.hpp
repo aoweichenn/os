@@ -1,7 +1,8 @@
 #pragma once
 
-#include "os/kernel/memory/kernel_heap.hpp"
-#include "os/kernel/sync/spin_lock.hpp"
+#include <os/kernel/memory/kernel_heap.hpp>
+#include <os/kernel/sync/runtime_mutex.hpp>
+#include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
 
@@ -130,7 +131,7 @@ class KernelObjectManager final {
                                                   KernelObjectReference &reference) noexcept;
     [[nodiscard]] KernelObjectStatus TryGetPayload(const KernelObjectReference &reference,
                                                    KernelObjectType expected_type, void *&payload,
-                                                   SpinLock *&operation_lock) noexcept;
+                                                   RuntimeMutex *&operation_lock) noexcept;
     [[nodiscard]] KernelObjectStatus AcquireHandle(const KernelObjectHandle &handle,
                                                    KernelObjectReference &reference) noexcept;
     [[nodiscard]] KernelObjectStatus DetachReference(KernelObjectReference &reference,

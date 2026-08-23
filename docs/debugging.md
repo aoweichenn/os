@@ -674,7 +674,7 @@ DATA 字是否按小端拆成 512 字节。
 若 IRQ14 计数增长但请求不完成，按操作检查状态阶段：
 
 - Read 要求 IRQ 时 DRQ=1，再从 data port 读 256 个 word；
-- Write 第一次 DRQ IRQ 负责写 256 个 word，之后还需完成 IRQ；
+- Write 在命令后轮询到 DRQ 就立即写 256 个 word，之后的 IRQ 负责完成；
 - Flush 没有数据阶段，只等待 BSY 清除且 ERR/DF 均为零。
 
 若 PIT 报 TimedOut，确认 ResolveTimeout 先冻结结果再执行 SRST；不要在设备
@@ -695,9 +695,10 @@ IRQ15 只允许把 completion 发布到设备队列并递增通知 generation；
 `BlockIoCompletion` 阻塞。
 
 若 coordinator 报 owner/request 不匹配，比较提交时的 Kernel Thread index、64 位 request
-id 与 ticket generation，不能用槽位或 ATA 通道号代替身份。`ROOT_ASYNC_OPERATIONS=0` 和
-`SWAP_ASYNC_OPERATIONS=0` 是当前安全边界，不是缺功能标记：生产 rootfs/swap 仍同步，只有
-浅层 secondary Flush probe 应让 registration/wait/completion 各增加一次。
+id 与 ticket generation，不能用槽位或 ATA 通道号代替身份。3b 后普通 primary 必须看到
+非零 `ROOT_ASYNC_OPERATIONS`，发生匿名换出的 reclaim profile 必须看到非零
+`SWAP_ASYNC_OPERATIONS`；registration/wait/completion 必须非零且严格相等。early boot 或
+受限 Kernel worker 的同步回退不应伪增这些计数。
 
 地址空间销毁失败现在额外输出 stage、virtual address、physical address 与 detail status；
 `ReleaseBacking` 阶段的 detail 会保留 file backing close status。先修复最早非零的精确
@@ -2023,11 +2024,43 @@ IRQ 上下文调用、slot 尚未复用，并在发布 completion 前把驱动 D
 buffer。若 reset 发生，成功完成必须保留；未完成 Read 只能交付 DeviceError，不能复制
 不完整 DMA 内容。
 
+### NVMe 负载完成后停在 FILE_CACHE_RECLAIMED
+
+生产 root/swap controller 不应在这里关机；它是事件循环仍可使用的系统级持久资源。
+确认 KernelMain 没有在 `FILE_CACHE_RECLAIMED` 后调用 `ShutdownNvmeStorageRuntime`。独立
+probe 或 EIO/timeout recovery 才负责 shutdown，并继续要求 DMA/MMIO/PCI/MSI-X 回收。
+
 ### Cancel 返回 RequestInProgress
 
 这是已签发硬件请求的 best-effort 拒绝，不是队列损坏。只有 ATA queued 请求可直接变为
 Cancelled；ATA active 和已经写入 NVMe SQ 的请求仍由正常 IRQ、timeout 或 reset 解析。
 调用方必须继续保留 buffer，直到收到唯一终态 completion。
+
+### wait 已看到退出，但 ReapZombieProcess 返回 ProcessNotZombie
+
+这是退出事件发布顺序错误，不是可重试的普通竞态。若 ProcessTree 先标记 Zombie，而
+Scheduler 的当前 Thread 还没有完成 `TerminateCurrentThread`，共享 ChildProcess WaitQueue
+上任意其他子进程的唤醒都可能让父进程提前收集树条目；重试随后只会得到 NoChild，形成
+信号、作业控制或调度器资源残留。
+
+检查 `CompleteCurrentThread` 顺序必须是：完成 writeback/close/address-space 清理，提交
+Scheduler Zombie，发布 ProcessTree exit，最后 wake parent。失败日志中的
+`WAIT_EVENT_CLEANUP_STAGE=1` 与 `ProcessNotZombie` 表明该不变量被破坏，不能在 shell 中
+循环重试掩盖。
+
+### User Kernel 续体恢复后立即页故障或 SWAPGS 漂移
+
+同时核对四种所有权：目标 Kernel RSP 必须落在该 Thread 的 stack，FX state 必须已保存，
+原生系统调用入口方法与 IA32_GS_BASE/IA32_KERNEL_GS_BASE 必须成对恢复，CR3 模式必须匹配
+续体阶段。退出/exec 在地址空间销毁后恢复时只能使用 Kernel page table；普通 I/O 返回才
+重新激活用户 CR3。不要在前任 User Thread 的 Kernel stack 上准备后任返回，应先回到
+dispatcher。
+
+### ATA 异步 Write 提交后没有首个 IRQ
+
+PIO Write 的设备握手与 Read 不对称。写命令后先轮询 DRQ，并在 DRQ 有效时立即向 data port
+传输扇区；设备通常只在数据阶段结束后产生完成 IRQ。若实现等待“首个写 IRQ”再传数据，
+QEMU 会永久等待 host data，BlockIo owner 也不会被唤醒。
 
 ### 上层代码开始判断 ATA 或 NVMe
 

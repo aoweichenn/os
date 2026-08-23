@@ -7,6 +7,7 @@ namespace {
 constexpr uint64_t OS_KERNEL_BLOCK_CACHE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_BLOCK_CACHE_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_BLOCK_CACHE_FIRST_ENTRY_INDEX = 0ULL;
+constexpr uint64_t OS_KERNEL_BLOCK_CACHE_WAIT_QUEUE_IDENTIFIER = 0x8000000000000101ULL;
 constexpr uint8_t OS_KERNEL_BLOCK_CACHE_ZERO_BYTE = 0U;
 
 void CopyBlock(uint8_t *destination, const uint8_t *source) noexcept {
@@ -26,7 +27,13 @@ void ClearBlock(uint8_t *block) noexcept {
 }
 
 void BlockCache::Initialize(FileSystemBlockDevice &device) noexcept {
-    SpinLockGuard guard{this->lock_};
+    if (!this->lock_.IsInitialized() &&
+        this->lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_BLOCK_CACHE_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded) {
+        return;
+    }
+    RuntimeMutexGuard guard{this->lock_};
     this->device_ = &device;
     this->access_generation_ = OS_KERNEL_BLOCK_CACHE_EMPTY_VALUE;
     this->statistics_ = BlockCacheStatistics{};
@@ -118,7 +125,7 @@ BlockCacheStatus BlockCache::ReadBlock(const uint64_t logical_block_address, uin
     if (block_size_bytes != OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES) {
         return BlockCacheStatus::InvalidBufferSize;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->initialized_ || this->device_ == nullptr) {
         return BlockCacheStatus::NotInitialized;
     }
@@ -139,7 +146,7 @@ BlockCacheStatus BlockCache::WriteBlock(const uint64_t logical_block_address, co
     if (block_size_bytes != OS_KERNEL_FILE_SYSTEM_BLOCK_SIZE_BYTES) {
         return BlockCacheStatus::InvalidBufferSize;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->initialized_ || this->device_ == nullptr) {
         return BlockCacheStatus::NotInitialized;
     }
@@ -154,7 +161,7 @@ BlockCacheStatus BlockCache::WriteBlock(const uint64_t logical_block_address, co
 }
 
 BlockCacheStatus BlockCache::Sync() noexcept {
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->initialized_ || this->device_ == nullptr) {
         return BlockCacheStatus::NotInitialized;
     }
@@ -173,7 +180,7 @@ BlockCacheStatus BlockCache::Sync() noexcept {
 }
 
 void BlockCache::Invalidate() noexcept {
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     for (uint64_t entry_index = OS_KERNEL_BLOCK_CACHE_FIRST_ENTRY_INDEX;
          entry_index < OS_KERNEL_BLOCK_CACHE_ENTRY_COUNT; ++entry_index) {
         this->entries_[entry_index] = Entry{};
@@ -181,7 +188,7 @@ void BlockCache::Invalidate() noexcept {
 }
 
 BlockCacheStatistics BlockCache::Statistics() const noexcept {
-    const SpinLockGuard guard{this->lock_};
+    const RuntimeMutexGuard guard{this->lock_};
     return this->statistics_;
 }
 

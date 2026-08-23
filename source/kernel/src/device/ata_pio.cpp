@@ -500,6 +500,16 @@ AtaPioStatus AtaPioDevice::PrepareAsynchronousRequest(const BlockRequest &reques
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_COMMAND_STATUS_PORT_OFFSET,
                request.operation == BlockOperation::Read ? OS_KERNEL_ATA_READ_SECTORS_COMMAND
                                                          : OS_KERNEL_ATA_WRITE_SECTORS_COMMAND);
+    if (request.operation == BlockOperation::Write) {
+        // PIO Write 不会为初始 DRQ 保证单独 IRQ；主机必须在签发命令后等待 DRQ、
+        // 立即送出一个扇区，再由最终完成 IRQ 解析请求。
+        const AtaPioStatus data_request_status = this->WaitForDataRequest();
+        if (data_request_status != AtaPioStatus::Succeeded) {
+            return data_request_status;
+        }
+        this->TransferWriteSector(request.buffer);
+        this->write_data_transferred_ = true;
+    }
     return AtaPioStatus::Succeeded;
 }
 

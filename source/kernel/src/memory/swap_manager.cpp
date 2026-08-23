@@ -9,6 +9,7 @@ constexpr uint64_t OS_KERNEL_SWAP_SINGLE_SLOT = 1ULL;
 constexpr uint64_t OS_KERNEL_SWAP_BITS_PER_BYTE = 8ULL;
 constexpr uint64_t OS_KERNEL_SWAP_FNV1A_OFFSET_BASIS = 14695981039346656037ULL;
 constexpr uint64_t OS_KERNEL_SWAP_FNV1A_PRIME = 1099511628211ULL;
+constexpr uint64_t OS_KERNEL_SWAP_WAIT_QUEUE_IDENTIFIER = 0x8000000000000105ULL;
 
 [[nodiscard]] uint64_t Maximum(const uint64_t left, const uint64_t right) noexcept {
     return left > right ? left : right;
@@ -40,6 +41,11 @@ SwapManagerStatus SwapManager::Initialize(const uint64_t slot_capacity,
         write_operation == nullptr) {
         return SwapManagerStatus::InvalidOperation;
     }
+    if (this->lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_SWAP_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded) {
+        return SwapManagerStatus::InvalidOperation;
+    }
     this->slot_capacity_ = slot_capacity;
     this->page_size_bytes_ = page_size_bytes;
     this->operation_context_ = operation_context;
@@ -67,6 +73,18 @@ SwapManagerStatus SwapManager::Initialize(const uint64_t slot_capacity,
 
 SwapManagerStatus SwapManager::Store(const SwapPageIdentity &identity, const uint8_t *const source,
                                      const uint64_t length_bytes, uint64_t &slot_index) noexcept {
+    if (!this->initialized_) {
+        slot_index = UINT64_MAX;
+        return SwapManagerStatus::NotInitialized;
+    }
+    RuntimeMutexGuard guard{this->lock_};
+    return this->StoreUnlocked(identity, source, length_bytes, slot_index);
+}
+
+SwapManagerStatus SwapManager::StoreUnlocked(const SwapPageIdentity &identity,
+                                             const uint8_t *const source,
+                                             const uint64_t length_bytes,
+                                             uint64_t &slot_index) noexcept {
     slot_index = UINT64_MAX;
     if (!this->initialized_) {
         return SwapManagerStatus::NotInitialized;
@@ -127,6 +145,16 @@ SwapManagerStatus SwapManager::Store(const SwapPageIdentity &identity, const uin
 SwapManagerStatus SwapManager::LoadAndRelease(const SwapPageIdentity &identity,
                                               uint8_t *const destination,
                                               const uint64_t capacity_bytes) noexcept {
+    if (!this->initialized_) {
+        return SwapManagerStatus::NotInitialized;
+    }
+    RuntimeMutexGuard guard{this->lock_};
+    return this->LoadAndReleaseUnlocked(identity, destination, capacity_bytes);
+}
+
+SwapManagerStatus SwapManager::LoadAndReleaseUnlocked(const SwapPageIdentity &identity,
+                                                      uint8_t *const destination,
+                                                      const uint64_t capacity_bytes) noexcept {
     if (!this->initialized_) {
         return SwapManagerStatus::NotInitialized;
     }
@@ -191,6 +219,11 @@ SwapManagerStatus SwapManager::Clone(const SwapPageIdentity &source_identity,
                                      const SwapPageIdentity &destination_identity,
                                      uint8_t *const scratch_page, const uint64_t capacity_bytes,
                                      uint64_t &destination_slot_index) noexcept {
+    if (!this->initialized_) {
+        destination_slot_index = UINT64_MAX;
+        return SwapManagerStatus::NotInitialized;
+    }
+    RuntimeMutexGuard guard{this->lock_};
     destination_slot_index = UINT64_MAX;
     if (!this->initialized_) {
         return SwapManagerStatus::NotInitialized;
@@ -232,7 +265,7 @@ SwapManagerStatus SwapManager::Clone(const SwapPageIdentity &source_identity,
     if (this->statistics_.successful_clone_count == UINT64_MAX) {
         return SwapManagerStatus::CounterOverflow;
     }
-    const SwapManagerStatus store_status = this->Store(
+    const SwapManagerStatus store_status = this->StoreUnlocked(
         destination_identity, scratch_page, this->page_size_bytes_, destination_slot_index);
     if (store_status != SwapManagerStatus::Succeeded) {
         if (this->statistics_.failed_clone_count == UINT64_MAX) {
@@ -246,6 +279,14 @@ SwapManagerStatus SwapManager::Clone(const SwapPageIdentity &source_identity,
 }
 
 SwapManagerStatus SwapManager::Release(const SwapPageIdentity &identity) noexcept {
+    if (!this->initialized_) {
+        return SwapManagerStatus::NotInitialized;
+    }
+    RuntimeMutexGuard guard{this->lock_};
+    return this->ReleaseUnlocked(identity);
+}
+
+SwapManagerStatus SwapManager::ReleaseUnlocked(const SwapPageIdentity &identity) noexcept {
     if (!this->initialized_) {
         return SwapManagerStatus::NotInitialized;
     }
@@ -284,6 +325,11 @@ SwapManagerStatus SwapManager::Release(const SwapPageIdentity &identity) noexcep
 
 SwapManagerStatus SwapManager::FindSlot(const SwapPageIdentity &identity,
                                         uint64_t &slot_index) const noexcept {
+    if (!this->initialized_) {
+        slot_index = UINT64_MAX;
+        return SwapManagerStatus::NotInitialized;
+    }
+    RuntimeMutexGuard guard{this->lock_};
     slot_index = UINT64_MAX;
     if (!this->initialized_) {
         return SwapManagerStatus::NotInitialized;
@@ -305,10 +351,18 @@ SwapManagerStatus SwapManager::FindSlot(const SwapPageIdentity &identity,
 }
 
 SwapManagerStatistics SwapManager::Statistics() const noexcept {
-    return this->initialized_ ? this->statistics_ : SwapManagerStatistics{};
+    if (!this->initialized_) {
+        return SwapManagerStatistics{};
+    }
+    RuntimeMutexGuard guard{this->lock_};
+    return this->statistics_;
 }
 
 SwapManagerStatus SwapManager::Validate() const noexcept {
+    if (!this->initialized_) {
+        return SwapManagerStatus::NotInitialized;
+    }
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->initialized_ || this->operation_context_ == nullptr ||
         this->entry_read_operation_ == nullptr || this->entry_write_operation_ == nullptr ||
         this->read_operation_ == nullptr || this->write_operation_ == nullptr) {

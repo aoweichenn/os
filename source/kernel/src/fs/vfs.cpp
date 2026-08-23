@@ -1,4 +1,4 @@
-#include "os/kernel/fs/vfs.hpp"
+#include <os/kernel/fs/vfs.hpp>
 
 namespace os::kernel::fs {
 
@@ -7,6 +7,7 @@ namespace {
 constexpr uint64_t OS_KERNEL_VFS_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_VFS_WAIT_QUEUE_IDENTIFIER = 0x8000000000000103ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_PATH_LENGTH_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_TRAVERSAL_COUNT = OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES;
@@ -84,6 +85,11 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
     if (superblock_status != Status::Succeeded) {
         return superblock_status;
     }
+    if (this->resolution_lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_VFS_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded) {
+        return Status::Corrupt;
+    }
     for (uint64_t mount_index = OS_KERNEL_VFS_FIRST_INDEX; mount_index < mount_capacity;
          ++mount_index) {
         mount_storage[mount_index] = Mount{};
@@ -92,7 +98,6 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
     this->mount_capacity_ = mount_capacity;
     this->mount_count_ = OS_KERNEL_VFS_COUNTER_INCREMENT;
     this->lock_ = SpinLock{};
-    this->resolution_lock_ = SpinLock{};
     this->statistics_ = Statistics{
         .mount_count = OS_KERNEL_VFS_COUNTER_INCREMENT,
         .path_resolution_count = OS_KERNEL_VFS_EMPTY_VALUE,
@@ -269,7 +274,7 @@ Status Vfs::MountAt(const FsContext &context, const uint8_t *const path,
 
 Status Vfs::Resolve(const FsContext &context, const uint8_t *const path,
                     const uint64_t path_length_bytes, Path &resolved_path) noexcept {
-    SpinLockGuard resolution_guard{this->resolution_lock_};
+    RuntimeMutexGuard resolution_guard{this->resolution_lock_};
     const Status status =
         this->ResolveInternal(context, path, path_length_bytes, true, resolved_path);
     this->RecordResolution(status);
@@ -619,7 +624,7 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
         return Status::Unsupported;
     }
     {
-        SpinLockGuard resolution_guard{this->resolution_lock_};
+        RuntimeMutexGuard resolution_guard{this->resolution_lock_};
         Path existing{};
         status = this->ResolveInternal(context, destination_path, destination_path_length_bytes,
                                        false, existing);
@@ -654,7 +659,7 @@ Status Vfs::ReadSymbolicLink(const FsContext &context, const uint8_t *const path
     Path resolved{};
     Status status = Status::Succeeded;
     {
-        SpinLockGuard resolution_guard{this->resolution_lock_};
+        RuntimeMutexGuard resolution_guard{this->resolution_lock_};
         status = this->ResolveInternal(context, path, path_length_bytes, false, resolved);
     }
     this->RecordResolution(status);
@@ -1731,7 +1736,7 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     Path resolved{};
     Status resolution_status = Status::Succeeded;
     {
-        SpinLockGuard resolution_guard{this->resolution_lock_};
+        RuntimeMutexGuard resolution_guard{this->resolution_lock_};
         resolution_status =
             this->ResolveInternal(context, path, path_length_bytes, false, resolved);
     }

@@ -2,7 +2,7 @@
 
 #include <os/kernel/device/block_device.hpp>
 #include <os/kernel/fs/file_system_format.hpp>
-#include <os/kernel/sync/spin_lock.hpp>
+#include <os/kernel/sync/runtime_mutex.hpp>
 
 #include <stdint.h>
 
@@ -62,7 +62,7 @@ class BlockCache final {
     Entry entries_[OS_KERNEL_BLOCK_CACHE_ENTRY_COUNT]{};
     uint64_t access_generation_{};
     BlockCacheStatistics statistics_{};
-    mutable SpinLock lock_{};
+    mutable RuntimeMutex lock_{};
     bool initialized_{false};
 };
 

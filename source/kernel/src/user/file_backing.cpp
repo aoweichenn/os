@@ -11,6 +11,8 @@ constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_MEMORY_SUPERBLOCK_IDENTIFIER =
 constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_MEMORY_SUPERBLOCK_GENERATION =
     OS_KERNEL_USER_FILE_BACKING_SINGLE_UNIT;
 constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_WRITEBACK_OWNER_IDENTIFIER = UINT64_MAX;
+constexpr uint64_t OS_KERNEL_USER_FILE_BACKING_WAIT_QUEUE_IDENTIFIER =
+    0x8000000000000104ULL;
 
 void CopyBytes(uint8_t *const destination, const uint8_t *const source,
                const uint64_t length_bytes) noexcept {
@@ -50,7 +52,13 @@ UserFileBackingStatus UserFileBackingManager::Initialize(
         OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
     this->next_generation_ = OS_KERNEL_USER_FILE_BACKING_SINGLE_UNIT;
     this->last_close_status_ = fs::Status::Succeeded;
-    this->lock_ = SpinLock{};
+    if (this->lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_USER_FILE_BACKING_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded) {
+        this->descriptors_ = nullptr;
+        this->capacity_ = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
+        return UserFileBackingStatus::Corrupt;
+    }
     this->initialized_ = true;
     return UserFileBackingStatus::Succeeded;
 }
@@ -70,7 +78,7 @@ UserFileBackingStatus UserFileBackingManager::AcquireMemoryImage(
         image_size_bytes == UINT64_MAX) {
         return UserFileBackingStatus::InvalidSource;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     for (uint64_t candidate_index =
              OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
          candidate_index < this->capacity_; ++candidate_index) {
@@ -128,7 +136,7 @@ UserFileBackingStatus UserFileBackingManager::AcquireVfsFile(
         return UserFileBackingStatus::InvalidSource;
     }
 
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     uint64_t candidate_index = UINT64_MAX;
     for (uint64_t observed_index =
              OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
@@ -185,7 +193,7 @@ UserFileBackingStatus UserFileBackingManager::Clone(
     if (owner_identifier == OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE) {
         return UserFileBackingStatus::InvalidSource;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->IsIndexValid(source_descriptor_index)) {
         return UserFileBackingStatus::InvalidDescriptor;
     }
@@ -241,7 +249,7 @@ UserFileBackingStatus UserFileBackingManager::Release(
     if (!this->initialized_) {
         return UserFileBackingStatus::NotInitialized;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->IsIndexValid(descriptor_index)) {
         return UserFileBackingStatus::InvalidDescriptor;
     }
@@ -281,7 +289,7 @@ UserFileBackingStatus UserFileBackingManager::Read(
         length_bytes == OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE) {
         return UserFileBackingStatus::InvalidSource;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->IsIndexValid(descriptor_index)) {
         return UserFileBackingStatus::InvalidDescriptor;
     }
@@ -323,7 +331,7 @@ UserFileBackingStatus UserFileBackingManager::WritePage(
     }
     const uint64_t offset_bytes =
         identity.page_index * OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     for (uint64_t descriptor_index =
              OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
          descriptor_index < this->capacity_; ++descriptor_index) {
@@ -367,7 +375,7 @@ UserFileBackingManager::RetainWritebackFile(fs::Vfs &vfs, const fs::OpenFile &op
         .node_identifier = open_file.path.vnode.identifier,
         .node_generation = open_file.path.vnode.generation,
     };
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     uint64_t candidate_index = UINT64_MAX;
     for (uint64_t descriptor_index = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
          descriptor_index < this->capacity_; ++descriptor_index) {
@@ -412,7 +420,7 @@ UserFileBackingManager::ReleaseCleanWritebackFiles(
     if (context == nullptr || operation == nullptr) {
         return UserFileBackingStatus::InvalidSource;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     for (uint64_t descriptor_index = OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
          descriptor_index < this->capacity_; ++descriptor_index) {
         UserFileBackingDescriptor &descriptor = this->descriptors_[descriptor_index];
@@ -446,7 +454,7 @@ UserFileBackingStatus UserFileBackingManager::ReadDescriptor(
     if (!this->initialized_) {
         return UserFileBackingStatus::NotInitialized;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     if (!this->IsIndexValid(descriptor_index) ||
         !this->descriptors_[descriptor_index].active ||
         this->descriptors_[descriptor_index].generation != generation) {
@@ -461,7 +469,7 @@ UserFileBackingStatus UserFileBackingManager::UpdateFileSize(
     if (!this->initialized_) {
         return UserFileBackingStatus::NotInitialized;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     for (uint64_t descriptor_index =
              OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
          descriptor_index < this->capacity_; ++descriptor_index) {
@@ -479,7 +487,7 @@ UserFileBackingStatus UserFileBackingManager::Validate() const noexcept {
     if (!this->initialized_ || this->descriptors_ == nullptr) {
         return UserFileBackingStatus::NotInitialized;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     uint64_t observed_active_count =
         OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
     for (uint64_t descriptor_index =
@@ -515,7 +523,7 @@ uint64_t UserFileBackingManager::ActiveDescriptorCount() const noexcept {
     if (!this->initialized_) {
         return OS_KERNEL_USER_FILE_BACKING_EMPTY_VALUE;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     return this->active_descriptor_count_;
 }
 
@@ -523,7 +531,7 @@ fs::Status UserFileBackingManager::LastCloseStatus() const noexcept {
     if (!this->initialized_) {
         return fs::Status::NotInitialized;
     }
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     return this->last_close_status_;
 }
 

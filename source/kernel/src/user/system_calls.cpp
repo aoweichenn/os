@@ -44,6 +44,8 @@ constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_REQUEST_PREFIX[] =
     "[OS][KERNEL][BLOCK] FLUSH_SUBMIT_REQUEST=";
 constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_TIME_PREFIX[] =
     "[OS][KERNEL][BLOCK] FLUSH_SUBMIT_TIME_NS=";
+constexpr char OS_KERNEL_SYSTEM_CALL_SPAWN_FAILURE_STATUS_PREFIX[] =
+    "[OS][KERNEL][PROC] SPAWN_FAILURE_STATUS=";
 constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_SUBMIT_STATUS_PREFIX[] =
     "[OS][KERNEL][BLOCK] FLUSH_SUBMIT_STATUS=";
 constexpr char OS_KERNEL_SYSTEM_CALL_ATA_FLUSH_IMMEDIATE_RESULT_PREFIX[] =
@@ -1305,6 +1307,11 @@ void WakePipeWaiters(const WaitCondition wait_condition) noexcept {
     }
     uint64_t process_id = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
     const ProcessRuntimeStatus status = SpawnCurrentProcess(request, process_id);
+    if (status != ProcessRuntimeStatus::Succeeded) {
+        const VgaTextConsole vga_console{VgaTextConsole::Hardware(WritePort8)};
+        WriteRequiredSystemCallValue(vga_console, OS_KERNEL_SYSTEM_CALL_SPAWN_FAILURE_STATUS_PREFIX,
+                                     static_cast<uint64_t>(status));
+    }
     return status == ProcessRuntimeStatus::Succeeded ? static_cast<int64_t>(process_id)
                                                      : MapProcessRuntimeStatus(status);
 }
@@ -2452,6 +2459,19 @@ extern "C" ExceptionFrame *OsKernelPrepareUserReturn(ExceptionFrame *frame) noex
             CpuLocalStatus::Succeeded) {
             HaltProcessor();
         }
+        resume_frame = TerminateCurrentProcessFromInvalidReturn(*resume_frame);
+    }
+    return resume_frame;
+}
+
+extern "C" ExceptionFrame *OsKernelPrepareDispatcherUserReturn(ExceptionFrame *frame) noexcept {
+    if (frame == nullptr || !CurrentThreadOwnsUserContext(*frame)) {
+        HaltProcessor();
+    }
+    ExceptionFrame *resume_frame = PrepareCurrentThreadSignalDelivery(*frame);
+    while (!PrepareUserReturnFrameMemory(*resume_frame) ||
+           !ValidateUserReturnFrame(*resume_frame)) {
+        LogRejectedUserReturn(*resume_frame);
         resume_frame = TerminateCurrentProcessFromInvalidReturn(*resume_frame);
     }
     return resume_frame;

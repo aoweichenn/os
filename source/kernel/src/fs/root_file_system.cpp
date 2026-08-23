@@ -7,6 +7,7 @@ namespace {
 constexpr uint64_t OS_KERNEL_ROOTFS_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_COUNTER_INCREMENT = 1ULL;
+constexpr uint64_t OS_KERNEL_ROOTFS_WAIT_QUEUE_IDENTIFIER = 0x8000000000000102ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_BITS_PER_BYTE = 8ULL;
 constexpr uint64_t OS_KERNEL_ROOTFS_MAXIMUM_TRAVERSAL_COUNT = OS_KERNEL_ROOTFS_INODE_COUNT;
 constexpr uint64_t OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT =
@@ -179,7 +180,13 @@ Status RootFileSystem::Initialize(FileSystemBlockDevice &device,
                    : Status::Corrupt;
     }
     this->cache_.Initialize(device);
-    this->lock_ = SpinLock{};
+    if (this->lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_ROOTFS_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded) {
+        this->cache_.Invalidate();
+        this->device_ = nullptr;
+        return Status::Corrupt;
+    }
     this->failed_ = false;
     this->statistics_ = RootFileSystemStatistics{};
     this->transaction_snapshot_valid_ = false;
@@ -257,7 +264,7 @@ Superblock &RootFileSystem::GetSuperblock() noexcept { return this->vfs_superblo
 const Superblock &RootFileSystem::GetSuperblock() const noexcept { return this->vfs_superblock_; }
 
 RootFileSystemStatistics RootFileSystem::ReadStatistics() const noexcept {
-    SpinLockGuard guard{this->lock_};
+    RuntimeMutexGuard guard{this->lock_};
     RootFileSystemStatistics statistics = this->statistics_;
     statistics.cache = this->cache_.Statistics();
     statistics.journal = this->journal_.Statistics();
@@ -1692,7 +1699,7 @@ Status RootFileSystem::LookupOperation(void *const context, const Vnode &directo
                    : Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode directory_inode{};
     Status status = file_system.ValidateVnode(directory, directory_inode);
     if (status != Status::Succeeded) {
@@ -1734,7 +1741,7 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
                    : Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -1859,7 +1866,7 @@ Status RootFileSystem::OpenOperation(void *const context, const Vnode &vnode) no
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode inode{};
     const Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {
@@ -1880,7 +1887,7 @@ Status RootFileSystem::CloseOperation(void *const context, const Vnode &vnode) n
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (vnode.type == NodeType::Directory) {
         // 目录持有 open reference 时不能被 rmdir 或复用，也不会进入 orphan。
         // close 只归还既有引用，不能为了重复验证 inode 把设备瞬态引入退出路径。
@@ -1946,7 +1953,7 @@ Status RootFileSystem::RemoveOperation(void *const context, const Vnode &directo
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2043,7 +2050,7 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2277,7 +2284,7 @@ Status RootFileSystem::LinkOperation(void *const context, const Vnode &source,
                    : Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2382,7 +2389,7 @@ Status RootFileSystem::CreateSymbolicLinkOperation(
                    : Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2515,7 +2522,7 @@ Status RootFileSystem::ReadSymbolicLinkOperation(void *const context, const Vnod
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode inode{};
     Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {
@@ -2541,7 +2548,7 @@ Status RootFileSystem::ParentOperation(void *const context, const Vnode &vnode,
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode inode{};
     Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {
@@ -2565,7 +2572,7 @@ Status RootFileSystem::ReadOperation(void *const context, const Vnode &vnode,
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode inode{};
     const Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {
@@ -2589,7 +2596,7 @@ Status RootFileSystem::WriteOperation(void *const context, const Vnode &vnode,
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2642,7 +2649,7 @@ Status RootFileSystem::TruncateOperation(void *const context, const Vnode &vnode
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2691,7 +2698,7 @@ Status RootFileSystem::ReadDirectoryOperation(void *const context, const Vnode &
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode directory_inode{};
     Status status = file_system.ValidateVnode(directory, directory_inode);
     if (status != Status::Succeeded) {
@@ -2738,7 +2745,7 @@ Status RootFileSystem::GetNameOperation(void *const context, const Vnode &vnode,
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode inode{};
     Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {
@@ -2780,7 +2787,7 @@ Status RootFileSystem::StatOperation(void *const context, const Vnode &vnode,
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     RootInode inode{};
     const Status status = file_system.ValidateVnode(vnode, inode);
     if (status != Status::Succeeded) {
@@ -2812,7 +2819,7 @@ Status RootFileSystem::ChangeModeOperation(void *const context, const Vnode &vno
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2844,7 +2851,7 @@ RootFileSystem::ChangeOwnerOperation(void *const context, const Vnode &vnode,
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (file_system.vfs_superblock_.read_only) {
         return Status::ReadOnly;
     }
@@ -2875,7 +2882,7 @@ Status RootFileSystem::SyncOperation(void *const context) noexcept {
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (!file_system.initialized_ || file_system.device_ == nullptr) {
         return Status::NotInitialized;
     }
@@ -2892,7 +2899,7 @@ Status RootFileSystem::ValidateOperation(void *const context) noexcept {
         return Status::InvalidArgument;
     }
     RootFileSystem &file_system = *static_cast<RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     return file_system.ValidateUnlocked();
 }
 
@@ -2903,7 +2910,7 @@ Status RootFileSystem::ReadResourceUsageOperation(void *const context,
         return Status::InvalidArgument;
     }
     const RootFileSystem &file_system = *static_cast<const RootFileSystem *>(context);
-    SpinLockGuard guard{file_system.lock_};
+    RuntimeMutexGuard guard{file_system.lock_};
     if (!file_system.initialized_) {
         return Status::NotInitialized;
     }

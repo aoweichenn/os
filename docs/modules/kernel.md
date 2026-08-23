@@ -1068,9 +1068,9 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
   取消、失败隔离和 drain；生产 Worker 通过真实 monotonic deadline 睡眠，IRQ 只负责到期
   唤醒，硬 Dirty limit 仍由同步 direct fallback 保证前进。
 - v2.10.3a 已建立 64 槽 BlockIo coordinator、completion Worker、Kernel WaitQueue 和真实
-  secondary ATA IRQ15 probe。rootfs/swap 包装仍关闭异步开关；其 VFS/cache/swap 深层
-  调用必须先迁移到稳定 request + 浅层 I/O worker，不能持 spin lock 或保留用户系统调用
-  的任意 Kernel C++ 栈睡眠。
+  secondary ATA IRQ15 probe；3b 又以 User Kernel stack 续体保存 FX/syscall/GS/CR3 状态，
+  用 `RuntimeMutex` 拆除 VFS/cache/swap 锁内睡眠边界，并打开生产 root/swap 异步等待。
+  early boot 与受限 Kernel worker 仍同步回退。
 - `memory/page_aging.*` 是不依赖 Process/VFS 的纯状态模块，调用方提供 entry/hash 存储；
   ProcessRuntime 负责 file-cache/PTE 观察、代际刷新和候选 completion。4 GiB 元数据通过
   96 个左右

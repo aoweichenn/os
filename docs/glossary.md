@@ -218,6 +218,9 @@
 | BlockRequest | 表示一次可等待设备 I/O 的独立对象，具有提交、完成、错误和超时状态 |
 | completion FIFO | 按 IRQ、timeout、cancel 首次解析发生顺序保存块请求终态，交付后立即回收请求槽的有界队列 |
 | AsynchronousBlockDevice | 以静态函数表统一设备 geometry、submit、best-effort cancel、timeout 和 completion 的类型擦除接口 |
+| User Kernel continuation | User Thread 在深层 Kernel 路径阻塞时，由独立 Kernel stack 连同 FX、syscall、GS 与 CR3 模式保存的可恢复执行点 |
+| RuntimeMutex | 调度运行期以 Mutex/WaitQueue 睡眠、early boot 或不可睡眠边界退化为短 SpinLock 的固定布局互斥原语 |
+| initializing thread | 已取得 Thread 身份但尚未完成跨模块元数据提交、因此不能进入 Ready queue 的发布前状态 |
 | BlockIo ticket | 由协调器槽位与单调 generation 组成的等待凭据；同时核对 owner/request id，防止槽位复用后的旧等待取得新结果 |
 | completion worker | 在非 IRQ Kernel Thread 上消费设备 completion、执行 DMA 数据收尾并精确唤醒 BlockIo owner 的常驻 bottom-half |
 | completion-before-wait | 设备在调用者提交 WaitQueue 阻塞前已经完成的竞争；协调器必须让调用者直接取结果，不能丢失事件 |

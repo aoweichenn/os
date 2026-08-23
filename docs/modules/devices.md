@@ -15,8 +15,8 @@ v0.7 的设备子系统负责单核启动阶段的传统 PC 中断与最小设�
 - `nvme` 负责 BAR/MMIO、DMA admin queue、doorbell 与真实控制器生命周期；
 - `block_device` 定义不依赖文件系统和控制器类型的块设备协议与几何。
 - `block_request` 提供 64 位请求身份、FIFO 签发、多深度乱序完成与 Reap 生命周期。
-- `ata_pio` 保留有界 LBA28 PIO 轮询适配器，并为 primary IRQ14、secondary IRQ15
-  提供 Read/Write/Flush 异步请求；当前 rootfs/swap 普通访问仍走同步适配器。
+- `ata_pio` 保留 early boot 的有界 LBA28 PIO 轮询适配器，并为 primary IRQ14、secondary
+  IRQ15 提供 Read/Write/Flush 异步请求；运行期 User rootfs/swap 走异步适配器。
 - `interrupt_runtime` 组合设备、处理 IRQ、同步统计与延后日志事件。
 - `architecture.asm` 只负责处理器入口帧，不访问具体设备寄存器。
 
@@ -132,9 +132,17 @@ completion；上层不再识别 ATA active slot、NVMe CID 或 doorbell。ATA qu
 V2.10.3a 增加 `BlockIoCoordinator`、独立 completion WaitQueue 和常驻 Kernel Thread。
 IRQ/timer 只解析完成并递增通知 generation；Worker 在非 IRQ 上调用 `TakeCompletion`，再按
 owner/request id 精确发布结果与唤醒。secondary ATA Flush probe 已真实穿过 IRQ15 和
-Kernel wait。rootfs/swap 的 `BlockIoDevice` 当前明确关闭异步开关：现有 VFS/cache/swap
+Kernel wait。3a 时 rootfs/swap 的 `BlockIoDevice` 明确关闭异步开关：现有 VFS/cache/swap
 调用链会持有 spin lock，必须先经浅层 I/O worker 委托和锁拆分后才能迁移。设计见
 [ADR 0065](../adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)。
+
+V2.10.3b 以 User Kernel stack 续体和 `RuntimeMutex` 完成上述安全前提，root/swap
+`BlockIoDevice` 已打开异步等待。ATA Write 在命令后轮询 DRQ 并立即传输数据，最终 IRQ
+发布 completion；NVMe 仍在非 IRQ `TakeCompletion` 阶段回拷 Read DMA。early boot 与
+受限 Kernel worker 保留同步回退。承载 root/swap 的 NVMe controller 是系统级持久资源，
+正常 `READY` 后仍保持活动；独立 probe 与 EIO/timeout recovery 继续验证 shutdown 后
+DMA/MMIO/PCI/MSI-X 全部回收。设计见
+[ADR 0066](../adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。
 
 `pci_model` 已支持 256 bus、每 bus 32 device、每 device 8 function 的 mechanism #1
 地址，识别 class code `01/08/02`，并解析 32/64 位 memory BAR 和尺寸探测掩码。
@@ -150,7 +158,7 @@ Set Features 请求一对队列，创建深度 64 的 CQ1/SQ1，并经 `BlockDev
 
 当前每槽 16 页把单请求限制为 64 KiB，四槽 completion 按 CQ 实际顺序交付；64 位
 request id 与 16 位 CID 分离。IRQ 只标记完成，Read DMA 回拷在非 IRQ take 阶段执行；
-EIO 与超时都会 reset 并保留已产生的公共完成。Namespace 1/2 已分别承载 Kernel rootfs/swap，缺失设备
-自动回退 ATA；ROM/Stage 1 仍从 ATA 启动。尚未实现链式多页 PRP list、多 I/O
-queue 或 MSI-X 多向量。V2.10.3a 已建立 BlockIo Kernel WaitQueue 与 completion Worker，
-但尚未迁移生产 rootfs/swap 读写。
+EIO 与超时都会 reset 并保留已产生的公共完成。Namespace 1/2 已分别承载 Kernel
+rootfs/swap，缺失设备自动回退 ATA；ROM/Stage 1 仍从 ATA 启动。尚未实现链式多页 PRP
+list、多 I/O queue 或 MSI-X 多向量。V2.10.3b 已把生产 User rootfs/swap 接入 BlockIo
+Kernel WaitQueue 与 completion Worker。

@@ -160,6 +160,40 @@ CpuLocalStatus CpuLocal::BeginSystemCall(const UserContextEntryMethod entry_meth
     return CpuLocalStatus::Succeeded;
 }
 
+CpuLocalStatus
+CpuLocal::SuspendSystemCall(UserContextEntryMethod &entry_method) noexcept {
+    entry_method = UserContextEntryMethod::Invalid;
+    if (this->initialized_ == OS_KERNEL_CPU_LOCAL_EMPTY_VALUE) {
+        return CpuLocalStatus::NotInitialized;
+    }
+    if (this->system_call_depth_ != OS_KERNEL_CPU_LOCAL_MAXIMUM_SYSTEM_CALL_DEPTH ||
+        (this->system_call_entry_method_ !=
+             static_cast<uint64_t>(UserContextEntryMethod::LegacyInterrupt) &&
+         this->system_call_entry_method_ !=
+             static_cast<uint64_t>(UserContextEntryMethod::NativeSystemCall))) {
+        return CpuLocalStatus::InvalidState;
+    }
+    entry_method = static_cast<UserContextEntryMethod>(this->system_call_entry_method_);
+    this->system_call_depth_ = OS_KERNEL_CPU_LOCAL_EMPTY_VALUE;
+    this->system_call_user_stack_pointer_ = OS_KERNEL_CPU_LOCAL_EMPTY_VALUE;
+    this->system_call_entry_method_ = OS_KERNEL_CPU_LOCAL_INVALID_ENTRY_METHOD;
+    return CpuLocalStatus::Succeeded;
+}
+
+CpuLocalStatus CpuLocal::ResumeSystemCall(const UserContextEntryMethod entry_method) noexcept {
+    if (this->initialized_ == OS_KERNEL_CPU_LOCAL_EMPTY_VALUE) {
+        return CpuLocalStatus::NotInitialized;
+    }
+    if (this->system_call_depth_ != OS_KERNEL_CPU_LOCAL_EMPTY_VALUE ||
+        (entry_method != UserContextEntryMethod::LegacyInterrupt &&
+         entry_method != UserContextEntryMethod::NativeSystemCall)) {
+        return CpuLocalStatus::InvalidState;
+    }
+    this->system_call_depth_ = OS_KERNEL_CPU_LOCAL_MAXIMUM_SYSTEM_CALL_DEPTH;
+    this->system_call_entry_method_ = static_cast<uint64_t>(entry_method);
+    return CpuLocalStatus::Succeeded;
+}
+
 CpuLocalStatus CpuLocal::EndSystemCall() noexcept {
     if (this->initialized_ == OS_KERNEL_CPU_LOCAL_EMPTY_VALUE) {
         return CpuLocalStatus::NotInitialized;

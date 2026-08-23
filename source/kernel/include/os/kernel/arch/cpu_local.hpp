@@ -60,6 +60,9 @@ class alignas(OS_KERNEL_CPU_LOCAL_CACHE_LINE_SIZE_BYTES) CpuLocal final {
     [[nodiscard]] CpuLocalStatus DisablePreemption() noexcept;
     [[nodiscard]] CpuLocalStatus EnablePreemption() noexcept;
     [[nodiscard]] CpuLocalStatus BeginSystemCall(UserContextEntryMethod entry_method) noexcept;
+    [[nodiscard]] CpuLocalStatus
+    SuspendSystemCall(UserContextEntryMethod &entry_method) noexcept;
+    [[nodiscard]] CpuLocalStatus ResumeSystemCall(UserContextEntryMethod entry_method) noexcept;
     [[nodiscard]] CpuLocalStatus EndSystemCall() noexcept;
     void RequestReschedule() noexcept;
     [[nodiscard]] bool ConsumeRescheduleRequest() noexcept;

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <os/kernel/sync/runtime_mutex.hpp>
+
 #include <stdint.h>
 
 namespace os::kernel {
@@ -103,6 +105,14 @@ class SwapManager final {
                                           bool &found) const noexcept;
     [[nodiscard]] uint64_t CalculateInitialSlot(const SwapPageIdentity &identity) const noexcept;
     [[nodiscard]] uint64_t CalculateChecksum(const uint8_t *page) const noexcept;
+    [[nodiscard]] SwapManagerStatus StoreUnlocked(const SwapPageIdentity &identity,
+                                                  const uint8_t *source,
+                                                  uint64_t length_bytes,
+                                                  uint64_t &slot_index) noexcept;
+    [[nodiscard]] SwapManagerStatus LoadAndReleaseUnlocked(const SwapPageIdentity &identity,
+                                                           uint8_t *destination,
+                                                           uint64_t capacity_bytes) noexcept;
+    [[nodiscard]] SwapManagerStatus ReleaseUnlocked(const SwapPageIdentity &identity) noexcept;
 
     uint64_t slot_capacity_{};
     uint64_t page_size_bytes_{};
@@ -112,6 +122,7 @@ class SwapManager final {
     SwapReadOperation read_operation_{};
     SwapWriteOperation write_operation_{};
     SwapManagerStatistics statistics_{};
+    mutable RuntimeMutex lock_{};
     bool initialized_{};
 };
 

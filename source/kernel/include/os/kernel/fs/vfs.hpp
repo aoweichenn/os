@@ -2,6 +2,7 @@
 
 #include <os/abi/security.hpp>
 #include <os/kernel/security/credentials.hpp>
+#include <os/kernel/sync/runtime_mutex.hpp>
 #include <os/kernel/sync/spin_lock.hpp>
 
 #include <stdint.h>
@@ -385,7 +386,7 @@ class Vfs final {
     uint64_t mount_capacity_{};
     uint64_t mount_count_{};
     mutable SpinLock lock_{};
-    mutable SpinLock resolution_lock_{};
+    mutable RuntimeMutex resolution_lock_{};
     uint8_t resolution_path_a_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     uint8_t resolution_path_b_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     Statistics statistics_{};

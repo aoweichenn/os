@@ -2346,6 +2346,7 @@ set_tests_properties(
     ${OS_TEST_QEMU_VGA_TEST_NAMES}
     PROPERTIES
         RESOURCE_LOCK "${OS_TEST_QEMU_RESOURCE_LOCK_NAME}"
+        RUN_SERIAL TRUE
 )
 
 add_test(

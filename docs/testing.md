@@ -1842,3 +1842,27 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - fresh CAW Debug `verify` 最终为 224/224、0 失败：67 unit、75 integration、
   49 randomized、33 system，含 25 条 failure-path，CTest 460.56 秒；primary、ATA/NVMe
   persistence 分别为 37.07、74.10/76.16 秒。
+
+### 生产 rootfs/swap 迁移第三增量 3b
+
+- `os_kernel_thread_scheduler_unit_tests` 覆盖不可调度 `Initializing` Thread 的发布、重复发布
+  拒绝和无副作用丢弃，并覆盖 `RuntimeMutex` 在调度器不可用时的 spin fallback；
+- `os_kernel_native_system_call_integration_tests` 覆盖原生系统调用入口方法的挂起、重复挂起
+  拒绝、非法恢复拒绝与成对恢复；
+- `os_python_tooling_unit_tests` 覆盖十六进制统计守恒验收：缺 marker 或 registration/wait/
+  completion 不相等必须失败；
+- 4 GiB `os_qemu_primary_smoke` 必须完整运行 16 级管线、后台/停止作业、rootfs、swap
+  self-test 和资源回收，要求 BlockIo registration/wait/completion 非零且相等、root async
+  operation 非零；
+- ATA/NVMe reclaim-pressure 在产生匿名换出时还必须要求 swap async operation 非零；OOM、
+  用户 `#UD/#PF`、NVMe EIO/timeout 和 persistence 继续验证早退、错误与三启动回收；
+- 退出顺序回归要求 Scheduler 先进入 `Zombie`、ProcessTree 再发布退出；共享 ChildProcess
+  WaitQueue 的无关唤醒不得让 `wait` 收集半提交状态；
+- 全部 QEMU VGA 用例除共享 resource lock 外设置 `RUN_SERIAL`：宿主测试仍按 20 路并行，
+  4 GiB `-mem-prealloc` 来宾不与高负载随机/格式测试重叠，避免 Stage 1 ATA 轮询受宿主
+  调度抖动产生假超时；
+- 一次 4 GiB ATA primary 聚焦运行记录 registration/wait/completion 均为 `0xD1C4`、root
+  async operation 为 `0xD1C3`；final fresh primary 69.79 秒通过；
+- final fresh CAW `python3 tools/os.py verify` 为 224/224、0 失败：67 unit、75 integration、
+  49 randomized、33 system，含 25 条 failure-path，CTest 868.49 秒。ATA/NVMe reclaim 为
+  73.46/75.36 秒，OOM 为 73.26/73.00 秒，persistence 为 138.87/138.73 秒。

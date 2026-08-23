@@ -1,6 +1,6 @@
-#include "os/kernel/object/kernel_object.hpp"
+#include <os/kernel/object/kernel_object.hpp>
 
-#include "os/foundation/reference_counter.hpp"
+#include <os/foundation/reference_counter.hpp>
 
 namespace os::kernel {
 
@@ -9,6 +9,7 @@ namespace {
 constexpr uint64_t OS_KERNEL_OBJECT_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_OBJECT_INITIAL_REFERENCE_COUNT = 1ULL;
 constexpr uint64_t OS_KERNEL_OBJECT_STORAGE_ALIGNMENT_BYTES = 64ULL;
+constexpr uint64_t OS_KERNEL_OBJECT_OPERATION_WAIT_QUEUE_BASE = 0x8000000000010000ULL;
 
 enum class KernelObjectState : uint64_t {
     Inactive,
@@ -34,7 +35,7 @@ struct alignas(OS_KERNEL_OBJECT_STORAGE_ALIGNMENT_BYTES) KernelObjectStorage fin
     uint64_t payload_size_bytes;
     KernelObjectFinalizeOperation finalize_operation;
     void *finalize_context;
-    SpinLock operation_lock;
+    RuntimeMutex operation_lock;
 };
 
 KernelObjectReference::KernelObjectReference() noexcept
@@ -145,7 +146,7 @@ KernelObjectStatus KernelObjectManager::CreateObject(
     storage->payload_size_bytes = payload_size_bytes;
     storage->finalize_operation = finalize_operation;
     storage->finalize_context = finalize_context;
-    storage->operation_lock = SpinLock{};
+    storage->operation_lock = RuntimeMutex{};
     uint8_t *const payload_bytes =
         reinterpret_cast<uint8_t *>(storage) + sizeof(KernelObjectStorage);
     for (uint64_t byte_index = OS_KERNEL_OBJECT_EMPTY_VALUE; byte_index < payload_size_bytes;
@@ -163,6 +164,16 @@ KernelObjectStatus KernelObjectManager::CreateObject(
         return this->statistics_.next_generation == UINT64_MAX
                    ? KernelObjectStatus::GenerationOverflow
                    : KernelObjectStatus::ReferenceOverflow;
+    }
+    if (this->statistics_.next_generation >
+            UINT64_MAX - OS_KERNEL_OBJECT_OPERATION_WAIT_QUEUE_BASE ||
+        storage->operation_lock.Initialize(WaitQueueId{
+            .value = OS_KERNEL_OBJECT_OPERATION_WAIT_QUEUE_BASE +
+                     this->statistics_.next_generation,
+        }) != RuntimeMutexStatus::Succeeded) {
+        this->lock_.Unlock();
+        static_cast<void>(this->heap_->TryRelease(allocation));
+        return KernelObjectStatus::GenerationOverflow;
     }
     storage->generation = this->statistics_.next_generation;
     ++this->statistics_.next_generation;
@@ -196,7 +207,7 @@ KernelObjectStatus KernelObjectManager::CreateObject(
 KernelObjectStatus KernelObjectManager::TryGetPayload(const KernelObjectReference &reference,
                                                       const KernelObjectType expected_type,
                                                       void *&payload,
-                                                      SpinLock *&operation_lock) noexcept {
+                                                      RuntimeMutex *&operation_lock) noexcept {
     payload = nullptr;
     operation_lock = nullptr;
     if (!this->IsInitialized()) {

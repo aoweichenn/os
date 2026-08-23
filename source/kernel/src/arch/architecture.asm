@@ -16,6 +16,8 @@ global OsKernelSystemCallEntry
 global OsKernelSystemCallDispatch
 global OsKernelNativeSystemCallEntry
 global OsKernelEnterScheduledProcess
+global OsKernelEnterScheduledUserContinuation
+global OsKernelSuspendScheduledUserContinuation
 global OsKernelReturnFromUserMode
 global OsKernelEnterScheduledKernelThread
 global OsKernelSwitchKernelThread
@@ -29,6 +31,7 @@ extern OsKernelDispatchException
 extern OsKernelDispatchHardwareInterrupt
 extern OsKernelDispatchSystemCall
 extern OsKernelPrepareUserReturn
+extern OsKernelPrepareDispatcherUserReturn
 extern OsKernelSelectUserReturn
 
 OS_KERNEL_ARCHITECTURE_KERNEL_CODE_SELECTOR equ 0x08
@@ -406,8 +409,16 @@ OsKernelEnterScheduledProcess:
     push r13
     push r14
     push r15
+    cmp qword [rel os_kernel_saved_user_mode_kernel_stack], 0
+    jne os_kernel_invalid_user_dispatch_stack
     mov [rel os_kernel_saved_user_mode_kernel_stack], rsp
     mov rsp, rdi
+
+    and rsp, -16
+    sti
+    call OsKernelPrepareDispatcherUserReturn
+    cli
+    mov rsp, rax
 
     mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
     mov ds, ax
@@ -431,6 +442,73 @@ OsKernelEnterScheduledProcess:
     pop rax
     add rsp, 16
     iretq
+
+; 用户 Thread 在深层系统调用中睡眠时保存 SysV 被调用者寄存器和当前 Ring 0 栈。
+; 唤醒后从同一 C++ continuation 返回，避免重放已经提交一半的 VFS/journal 事务。
+OsKernelEnterScheduledUserContinuation:
+    pushfq
+    cli
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    cmp qword [rel os_kernel_saved_user_mode_kernel_stack], 0
+    jne os_kernel_invalid_user_dispatch_stack
+    mov [rel os_kernel_saved_user_mode_kernel_stack], rsp
+    mov rsp, rdi
+
+    mov ax, OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov ss, ax
+    test rsi, rsi
+    jnz .continuation_gs_ready
+    mov ax, OS_KERNEL_ARCHITECTURE_USER_DATA_SELECTOR
+    mov gs, ax
+
+.continuation_gs_ready:
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    popfq
+    ret
+
+OsKernelSuspendScheduledUserContinuation:
+    pushfq
+    cli
+    push rbx
+    push rbp
+    push r12
+    push r13
+    push r14
+    push r15
+    mov [rdi], rsp
+    mov rsp, [rel os_kernel_saved_user_mode_kernel_stack]
+    mov qword [rel os_kernel_saved_user_mode_kernel_stack], 0
+
+    mov ax, OS_KERNEL_ARCHITECTURE_KERNEL_DATA_SELECTOR
+    mov ds, ax
+    mov es, ax
+    mov gs, ax
+    mov ss, ax
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    pop rbx
+    popfq
+    ret
+
+os_kernel_invalid_user_dispatch_stack:
+    ud2
 
 ; 协作式 Kernel Thread 只需保存 SysV ABI 的被调用者保存寄存器与 RFLAGS。
 ; 首次进入保存调度调用链；最后一个 Kernel Thread 退出后再恢复该调用链。

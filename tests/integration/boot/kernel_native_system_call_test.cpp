@@ -16,6 +16,8 @@ constexpr std::string_view OS_TEST_NATIVE_SYSTEM_CALL_DEPTH_MESSAGE =
     "IRQ 与抢占深度必须平衡并记录峰值";
 constexpr std::string_view OS_TEST_NATIVE_SYSTEM_CALL_ENTRY_MESSAGE =
     "系统调用入口状态必须区分原生与兼容路径并拒绝嵌套";
+constexpr std::string_view OS_TEST_NATIVE_SYSTEM_CALL_SUSPEND_MESSAGE =
+    "阻塞式内核续体必须挂起并恢复原系统调用入口方法";
 constexpr std::string_view OS_TEST_NATIVE_SYSTEM_CALL_RETURN_MESSAGE =
     "返回、延迟调度和可信栈证据必须形成一致统计";
 constexpr std::string_view OS_TEST_NATIVE_SYSTEM_CALL_CLEAR_MESSAGE =
@@ -118,6 +120,25 @@ int main() {
                             cpu_local.Statistics().maximum_interrupt_depth ==
                                 OS_TEST_NATIVE_SYSTEM_CALL_EXPECTED_INTERRUPT_DEPTH,
                         OS_TEST_NATIVE_SYSTEM_CALL_DEPTH_MESSAGE);
+
+    os::kernel::UserContextEntryMethod suspended_entry_method =
+        os::kernel::UserContextEntryMethod::Invalid;
+    const bool system_call_suspended_and_resumed =
+        cpu_local.SuspendSystemCall(suspended_entry_method) ==
+            os::kernel::CpuLocalStatus::Succeeded &&
+        suspended_entry_method == os::kernel::UserContextEntryMethod::NativeSystemCall &&
+        !cpu_local.NativeSystemCallActive() &&
+        cpu_local.SuspendSystemCall(suspended_entry_method) ==
+            os::kernel::CpuLocalStatus::InvalidState &&
+        cpu_local.ResumeSystemCall(os::kernel::UserContextEntryMethod::Initial) ==
+            os::kernel::CpuLocalStatus::InvalidState &&
+        cpu_local.ResumeSystemCall(os::kernel::UserContextEntryMethod::NativeSystemCall) ==
+            os::kernel::CpuLocalStatus::Succeeded &&
+        cpu_local.NativeSystemCallActive() &&
+        cpu_local.ResumeSystemCall(os::kernel::UserContextEntryMethod::NativeSystemCall) ==
+            os::kernel::CpuLocalStatus::InvalidState;
+    test_context.Expect(system_call_suspended_and_resumed,
+                        OS_TEST_NATIVE_SYSTEM_CALL_SUSPEND_MESSAGE);
 
     cpu_local.RequestReschedule();
     const bool reschedule_consumed =

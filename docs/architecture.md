@@ -2379,8 +2379,8 @@ BlockIo（第三增量 3a 已接入 Kernel Thread）
 NVMe probe 自检通过同一表保持四请求并发，CQE 仍按 CID 找硬件槽，但 owner 只观察单调
 64 位 request id。NVMe IRQ 不复制最多 64 KiB 的 Read 数据；TakeCompletion 在非 IRQ
 阶段回拷 DMA 页并释放槽。超时 reset 把最早到期项解析为 TimedOut，其余未完成项解析为
-DeviceError，并保留 reset 前已经产生的完成。生产 rootfs/swap 仍使用同步接口，第三增量
-才引入 BlockIo WaitQueue 与 bottom-half。
+DeviceError，并保留 reset 前已经产生的完成。第三增量已在其上加入 BlockIo WaitQueue、
+bottom-half 与生产 rootfs/swap 等待。
 
 V2.10.3a 增加设备无关的协调器与非 IRQ completion Worker：
 
@@ -2408,12 +2408,30 @@ completion Worker（Kernel Thread，非 IRQ）
 `PrepareWait` 不进入 WaitQueue；worker 扫描为空后在关中断区复核通知 generation，再睡在
 独立 `BlockIoCompletion` WaitQueue，两个方向共同关闭 lost wakeup。
 
-当前真实生产探针由浅层 Kernel Thread 向 secondary ATA 提交 Flush，经 IRQ15、completion
-Worker 和 `BlockIo` WaitQueue 返回。rootfs/swap `BlockIoDevice` 已建立，但 async 开关保持
-关闭：rootfs/journal/cache 会持有 spin lock，用户系统调用阻塞又会展开深层 C++ 栈，直接
-替换同步调用会造成锁内睡眠或失效 buffer。第三增量 3b 必须先引入浅层 I/O worker 委托、
-稳定 request storage 并拆分锁临界区，然后才迁移生产 read/write/flush。详见
-[ADR 0065](adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md)。
+V2.10.3b 把同一闭环扩展到生产 User 调用链：
+
+```text
+User syscall / page fault
+  -> RuntimeMutex（可睡眠；early/IRQ 不可用时短 spin fallback）
+  -> rootfs / journal / BlockCache / swap
+  -> BlockIoDevice async submit
+  -> BlockIo wait
+       -> 保存 target Kernel RSP、FX、syscall、GS、CR3 mode
+       -> 返回 dispatcher，运行其他 User/Kernel Thread
+  -> completion Worker exact wake
+  -> 切回 target Kernel stack，从原 C++ 调用点继续
+```
+
+每个 User Thread 的 Kernel stack 是续体所有权边界；用户到用户切换必须先回 dispatcher，
+不能在前任栈上准备后任返回。新线程先以 `Initializing` 完成地址空间、文件表、信号和
+作业控制提交，再发布 `Ready`。进程结束则完成可阻塞资源清理、使 Scheduler 进入
+`Zombie`，最后才发布 ProcessTree 退出事件，防止共享 child wait 唤醒观察半提交。
+
+root/swap `BlockIoDevice` 已打开异步等待。普通 User rootfs/swap 走真实 ATA/NVMe completion；
+early boot 和当前深层 Kernel worker 仍同步回退。单 BSP 的 aging/reclaim/writeback worker
+在活动 User Kernel 续体 epoch 跳过一次扫描，避免锁外窗口并发改动 VMA/PTE。详见
+[ADR 0065](adr/0065-v2-10-block-io-kernel-wait-and-migration-boundary.md) 与
+[ADR 0066](adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md)。
 
 ## v2.8 动态文件缓存地址空间
 

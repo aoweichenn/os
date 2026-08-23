@@ -1,5 +1,6 @@
 #include <os/kernel/process/thread_scheduler.hpp>
 #include <os/kernel/sync/mutex.hpp>
+#include <os/kernel/sync/runtime_mutex.hpp>
 #include <os/kernel/sync/spin_lock.hpp>
 #include <test_context.hpp>
 
@@ -12,6 +13,8 @@ constexpr std::string_view OS_TEST_THREAD_SCHEDULER_INITIALIZATION_BOUNDARIES =
     "初始化必须拒绝空存储、非法容量、非法单进程线程数和零时间片";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_INVALID_KERNEL_STACK =
     "Thread 创建必须拒绝无效内核栈槽且保持调度器状态与输出不变";
+constexpr std::string_view OS_TEST_THREAD_SCHEDULER_INITIALIZING_PUBLICATION =
+    "未完成初始化的 User Thread 必须不可调度，并支持原子发布或丢弃";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_LIFECYCLE =
     "Kernel Thread 必须脱离 Process 完成创建、让出、阻塞、唤醒、退出和回收";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_CAPACITY_AND_IDENTIFIERS =
@@ -36,6 +39,8 @@ constexpr std::string_view OS_TEST_THREAD_SCHEDULER_SPIN_LOCK_PROTOCOL =
     "spinlock 必须记录持锁深度，irq-save 锁必须恢复进入前中断状态";
 constexpr std::string_view OS_TEST_THREAD_SCHEDULER_SPIN_LOCK_BLOCK_REJECTED =
     "持有 spinlock 时 Mutex 不得调用调度器阻塞";
+constexpr std::string_view OS_TEST_THREAD_SCHEDULER_RUNTIME_MUTEX_FALLBACK =
+    "RuntimeMutex 在调度运行时不可用时必须退化为有界 spinlock";
 
 constexpr uint64_t OS_TEST_THREAD_SCHEDULER_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_THREAD_SCHEDULER_FIRST_IDENTIFIER = 1ULL;
@@ -247,6 +252,55 @@ void RestoreTestInterrupts(const bool interrupts_were_enabled) noexcept {
            thread_id.value == OS_TEST_THREAD_SCHEDULER_SECOND_IDENTIFIER &&
            statistics.owned_thread_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT &&
            statistics.created_thread_count == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT &&
+           scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded;
+}
+
+[[nodiscard]] bool ValidateInitializingThreadPublication() noexcept {
+    os::kernel::ProcessEntry processes[OS_TEST_THREAD_SCHEDULER_TEST_PROCESS_CAPACITY]{};
+    os::kernel::ThreadEntry threads[OS_TEST_THREAD_SCHEDULER_TEST_THREAD_CAPACITY]{};
+    os::kernel::ThreadScheduler scheduler{};
+    uint64_t process_index = os::kernel::OS_KERNEL_PROCESS_INVALID_INDEX;
+    os::kernel::ProcessId process_id{};
+    uint64_t thread_index = os::kernel::OS_KERNEL_THREAD_INVALID_INDEX;
+    os::kernel::ThreadId thread_id{};
+    os::kernel::ThreadSchedulingDecision decision{};
+    if (!InitializeTestScheduler(scheduler, processes, threads) ||
+        !CreateTestProcess(scheduler, OS_TEST_THREAD_SCHEDULER_FIRST_INDEX, process_index,
+                           process_id) ||
+        scheduler.CreateThread(
+            process_index, OS_TEST_THREAD_SCHEDULER_FIRST_INDEX,
+            OS_TEST_THREAD_SCHEDULER_USER_STACK_BASE, OS_TEST_THREAD_SCHEDULER_TLS_BASE,
+            OS_TEST_THREAD_SCHEDULER_SIGNAL_MASK, thread_index, thread_id, false) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.Validate() != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.Start(decision) != os::kernel::ThreadSchedulerStatus::NoReadyThread ||
+        scheduler.DiscardInitializingThread(thread_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded) {
+        return false;
+    }
+    const os::kernel::ThreadSchedulerStatistics discarded_statistics = scheduler.Statistics();
+    if (discarded_statistics.owned_thread_count !=
+            OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT ||
+        discarded_statistics.ready_thread_count !=
+            OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT ||
+        scheduler.CreateThread(
+            process_index, OS_TEST_THREAD_SCHEDULER_SECOND_INDEX,
+            OS_TEST_THREAD_SCHEDULER_USER_STACK_BASE, OS_TEST_THREAD_SCHEDULER_TLS_BASE,
+            OS_TEST_THREAD_SCHEDULER_SIGNAL_MASK, thread_index, thread_id, false) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.PublishInitializingThread(thread_index) !=
+            os::kernel::ThreadSchedulerStatus::Succeeded ||
+        scheduler.PublishInitializingThread(thread_index) !=
+            os::kernel::ThreadSchedulerStatus::InvalidThreadState ||
+        scheduler.Start(decision) != os::kernel::ThreadSchedulerStatus::Succeeded ||
+        decision.current_thread_index != thread_index) {
+        return false;
+    }
+    const os::kernel::ThreadSchedulerStatistics published_statistics = scheduler.Statistics();
+    return published_statistics.owned_thread_count ==
+               OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT &&
+           published_statistics.running_thread_count ==
+               OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT &&
            scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded;
 }
 
@@ -903,6 +957,27 @@ void RestoreTestInterrupts(const bool interrupts_were_enabled) noexcept {
            scheduler.Validate() == os::kernel::ThreadSchedulerStatus::Succeeded;
 }
 
+[[nodiscard]] bool ValidateRuntimeMutexFallback() noexcept {
+    os::kernel::RuntimeMutex runtime_mutex{};
+    if (runtime_mutex.Initialize(os::kernel::WaitQueueId{}) !=
+            os::kernel::RuntimeMutexStatus::InvalidWaitQueue ||
+        runtime_mutex.Initialize(
+            os::kernel::WaitQueueId{.value = OS_TEST_THREAD_SCHEDULER_MUTEX_QUEUE_ID}) !=
+            os::kernel::RuntimeMutexStatus::Succeeded ||
+        runtime_mutex.Initialize(
+            os::kernel::WaitQueueId{.value = OS_TEST_THREAD_SCHEDULER_MUTEX_QUEUE_ID}) !=
+            os::kernel::RuntimeMutexStatus::AlreadyInitialized) {
+        return false;
+    }
+    runtime_mutex.Lock();
+    const bool lock_held =
+        os::kernel::CurrentSpinLockDepth() == OS_TEST_THREAD_SCHEDULER_EXPECTED_SINGLE_COUNT;
+    runtime_mutex.Unlock();
+    return lock_held && runtime_mutex.IsInitialized() &&
+           !runtime_mutex.RuntimePrimitiveInitialized() &&
+           os::kernel::CurrentSpinLockDepth() == OS_TEST_THREAD_SCHEDULER_EXPECTED_ZERO_COUNT;
+}
+
 }
 
 int main() {
@@ -911,6 +986,8 @@ int main() {
                         OS_TEST_THREAD_SCHEDULER_INITIALIZATION_BOUNDARIES);
     test_context.Expect(ValidateInvalidKernelStackRejected(),
                         OS_TEST_THREAD_SCHEDULER_INVALID_KERNEL_STACK);
+    test_context.Expect(ValidateInitializingThreadPublication(),
+                        OS_TEST_THREAD_SCHEDULER_INITIALIZING_PUBLICATION);
     test_context.Expect(ValidateKernelThreadLifecycle(),
                         OS_TEST_THREAD_SCHEDULER_KERNEL_THREAD_LIFECYCLE);
     test_context.Expect(ValidateCapacityAndIdentifiers(),
@@ -929,5 +1006,7 @@ int main() {
     test_context.Expect(ValidateSpinLockProtocol(), OS_TEST_THREAD_SCHEDULER_SPIN_LOCK_PROTOCOL);
     test_context.Expect(ValidateSpinLockBlockRejected(),
                         OS_TEST_THREAD_SCHEDULER_SPIN_LOCK_BLOCK_REJECTED);
+    test_context.Expect(ValidateRuntimeMutexFallback(),
+                        OS_TEST_THREAD_SCHEDULER_RUNTIME_MUTEX_FALLBACK);
     return test_context.ExitCode();
 }

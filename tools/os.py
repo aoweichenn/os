@@ -147,7 +147,6 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_NVME_ROOT_NAMESPACE_READY_MARKER,
     OS_QEMU_KERNEL_NVME_SWAP_NAMESPACE_READY_MARKER,
     OS_QEMU_KERNEL_NVME_STORAGE_READY_MARKER,
-    OS_QEMU_KERNEL_NVME_STORAGE_SHUTDOWN_READY_MARKER,
     OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_COUNT_MARKER,
     OS_QEMU_KERNEL_NVME_NAMESPACE_BLOCK_SIZE_MARKER,
     OS_QEMU_KERNEL_NVME_NAMESPACE_COUNT_MARKER,
@@ -449,11 +448,11 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_THREAD_WAKES_MARKER,
     OS_QEMU_KERNEL_THREAD_EXITS_SIX_MARKER,
     OS_QEMU_KERNEL_THREAD_REAPS_SIX_MARKER,
-    OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_ONE_MARKER,
-    OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_ONE_MARKER,
-    OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_ONE_MARKER,
-    OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_ZERO_MARKER,
-    OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_ZERO_MARKER,
+    OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER,
+    OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_MARKER,
+    OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_MARKER,
+    OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_MARKER,
+    OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_MARKER,
     OS_QEMU_USER_TO_KERNEL_SWITCHES_MARKER,
     OS_QEMU_KERNEL_TO_USER_SWITCHES_MARKER,
     OS_QEMU_WORK_QUEUE_REGISTERED_ZERO_MARKER,
@@ -1786,11 +1785,11 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_RESOURCE_SNAPSHOT_PROCESS_LIFECYCLE_PASSED_MARKER,
         OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER,
         OS_QEMU_KERNEL_USER_RETURNED_TO_KERNEL_MARKER,
-        OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_ONE_MARKER,
-        OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_ONE_MARKER,
-        OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_ONE_MARKER,
-        OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_ZERO_MARKER,
-        OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_ZERO_MARKER,
+        OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER,
+        OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_MARKER,
+        OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_MARKER,
+        OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_MARKER,
+        OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_MARKER,
     )
     completedKernelFileSystemCompletionMarkers = (
         OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
@@ -1840,6 +1839,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
     expectedMarkerCounts: tuple[tuple[str, int], ...] = ()
     minimumMarkerCounts: tuple[tuple[str, int], ...] = ()
     minimumHexMarkerValues: tuple[tuple[str, int], ...] = ()
+    matchingHexMarkerValues: tuple[tuple[str, str], ...] = ()
     if arguments.expectedOutcome in ("success", "reclaim-pressure", "oom-pressure"):
         requiredMarkers = (
             OS_QEMU_FIRMWARE_RESET_MARKER,
@@ -2271,6 +2271,10 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         )
         minimumMarkerCounts = functionalShellMinimumMarkerCounts
         minimumHexMarkerValues = (
+            (OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER, 1),
+            (OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_MARKER, 1),
+            (OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_MARKER, 1),
+            (OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_MARKER, 1),
             (OS_QEMU_USER_TIME_MONOTONIC_START_MARKER, 1),
             (OS_QEMU_USER_TIME_MONOTONIC_WAKE_MARKER, 1),
             (OS_QEMU_KERNEL_TIME_PEAK_DEADLINES_MARKER, 1),
@@ -2589,6 +2593,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                 (OS_QEMU_KERNEL_MEMORY_RECLAIM_CLEAN_FILE_COUNT_MARKER, 1),
                 (OS_QEMU_KERNEL_MEMORY_RECLAIM_WRITTEN_FILE_COUNT_MARKER, 1),
                 (OS_QEMU_KERNEL_MEMORY_RECLAIM_SWAPPED_ANONYMOUS_COUNT_MARKER, 1),
+                (OS_QEMU_KERNEL_BLOCK_IO_SWAP_ASYNC_MARKER, 1),
             )
         if arguments.expectedOutcome == "oom-pressure":
             requiredMarkers = tuple(
@@ -2844,7 +2849,6 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             *completedKernelInitialProcessMarkers,
             *completedKernelUserSmokeMarkers,
             *completedKernelFileSystemCompletionMarkers,
-            OS_QEMU_KERNEL_NVME_STORAGE_SHUTDOWN_READY_MARKER,
             OS_QEMU_KERNEL_FILE_SIZE_MARKER,
             OS_QEMU_KERNEL_LOAD_SEGMENTS_MARKER,
             OS_QEMU_KERNEL_READY_MARKER,
@@ -2856,6 +2860,12 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             OS_QEMU_KERNEL_EXCEPTION_MARKER,
             OS_QEMU_KERNEL_PANIC_MARKER,
             OS_QEMU_KERNEL_FATAL_MARKER,
+        )
+        minimumHexMarkerValues = (
+            (OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER, 1),
+            (OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_MARKER, 1),
+            (OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_MARKER, 1),
+            (OS_QEMU_KERNEL_BLOCK_IO_ROOT_ASYNC_MARKER, 1),
         )
     elif arguments.expectedOutcome == "nvme-fallback":
         requiredMarkers = (
@@ -3199,6 +3209,23 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             *kernelFailureMarkers[2:],
         )
 
+    if arguments.expectedOutcome in (
+        "success",
+        "reclaim-pressure",
+        "oom-pressure",
+        "nvme-storage",
+    ):
+        matchingHexMarkerValues = (
+            (
+                OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER,
+                OS_QEMU_KERNEL_BLOCK_IO_WAIT_COMMITS_MARKER,
+            ),
+            (
+                OS_QEMU_KERNEL_BLOCK_IO_REGISTRATIONS_MARKER,
+                OS_QEMU_KERNEL_BLOCK_IO_COMPLETIONS_MARKER,
+            ),
+        )
+
     runQemuFirmwareBoot(
         OS_TOOL_PROJECT_ROOT,
         arguments.firmwareImagePath,
@@ -3223,6 +3250,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         expectedMarkerCounts=expectedMarkerCounts,
         minimumMarkerCounts=minimumMarkerCounts,
         minimumHexMarkerValues=minimumHexMarkerValues,
+        matchingHexMarkerValues=matchingHexMarkerValues,
         memoryMebibytes=arguments.memoryMebibytes,
         cpuModel=arguments.cpuModel,
         swapDiskImagePath=resolveSwapDiskImage(

@@ -119,7 +119,7 @@ FileDescriptionStatus FileDescriptionManager::Create(const FileDescriptionCreate
     }
 
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
@@ -157,7 +157,7 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
@@ -168,7 +168,7 @@ FileDescriptionManager::ReadSnapshot(const KernelObjectReference &reference,
     if (reference.ReadIdentity(identity) != KernelObjectStatus::Succeeded) {
         return FileDescriptionStatus::InvalidReference;
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     fs::NodeInformation information{};
     if (IsVfsBackedKind(storage.kind) &&
@@ -210,14 +210,14 @@ FileDescriptionManager::RetainRegularFile(const KernelObjectReference &reference
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr ||
         (storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
@@ -253,7 +253,7 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         return FileDescriptionStatus::InvalidArgument;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
@@ -261,7 +261,7 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
         return MapObjectStatus(payload_status);
     }
 
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
@@ -313,7 +313,7 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
         return FileDescriptionStatus::InvalidArgument;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
@@ -321,7 +321,7 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
         return MapObjectStatus(payload_status);
     }
 
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) ==
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
@@ -389,14 +389,14 @@ FileDescriptionManager::ReadDirectory(const KernelObjectReference &reference,
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     if (storage.kind != FileDescriptionKind::Directory ||
         (storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
@@ -420,14 +420,14 @@ FileDescriptionStatus FileDescriptionManager::ReadWritebackErrorCursor(
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     if (storage.kind != FileDescriptionKind::RegularFile) {
         return FileDescriptionStatus::InvalidArgument;
@@ -445,14 +445,14 @@ FileDescriptionStatus FileDescriptionManager::ReadSynchronizationState(
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     if (storage.kind != FileDescriptionKind::RegularFile ||
         !FileCacheIdentityIsValid(storage.writeback_identity)) {
@@ -469,14 +469,14 @@ FileDescriptionStatus FileDescriptionManager::AdvanceWritebackErrorCursor(
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
     if (storage.kind != FileDescriptionKind::RegularFile ||
         writeback_error_sequence < storage.writeback_error_cursor) {
@@ -494,14 +494,14 @@ FileDescriptionManager::ReadCanProgress(const KernelObjectReference &reference,
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
@@ -529,14 +529,14 @@ FileDescriptionManager::WriteCanProgress(const KernelObjectReference &reference,
         return FileDescriptionStatus::NotInitialized;
     }
     void *payload = nullptr;
-    SpinLock *operation_lock = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
     const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
         reference, KernelObjectType::FileDescription, payload, operation_lock);
     if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
         operation_lock == nullptr) {
         return MapObjectStatus(payload_status);
     }
-    SpinLockGuard guard{*operation_lock};
+    RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) ==
         OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {

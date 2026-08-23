@@ -355,8 +355,6 @@ constexpr char OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_READY_MESSAGE[] =
 constexpr char OS_KERNEL_MAIN_NVME_SWAP_NAMESPACE_READY_MESSAGE[] =
     "[OS][KERNEL] NVME_SWAP_NAMESPACE_READY\r\n";
 constexpr char OS_KERNEL_MAIN_NVME_STORAGE_READY_MESSAGE[] = "[OS][KERNEL] NVME_STORAGE_READY\r\n";
-constexpr char OS_KERNEL_MAIN_NVME_STORAGE_SHUTDOWN_READY_MESSAGE[] =
-    "[OS][KERNEL] NVME_STORAGE_SHUTDOWN_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ROOTFS_V4_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V4_MOUNTED\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE[] =
     "[OS][KERNEL] FILE_SYSTEM_CORRUPT\r\n";
@@ -2848,11 +2846,11 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         root_block_io_device.Initialize(*storage_devices.root_device,
                                         *storage_devices.root_asynchronous_device,
                                         OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS,
-                                        false) != RuntimeBlockIoStatus::Succeeded ||
+                                        true) != RuntimeBlockIoStatus::Succeeded ||
         swap_block_io_device.Initialize(*storage_devices.swap_device,
                                         *storage_devices.swap_asynchronous_device,
                                         OS_KERNEL_MAIN_BLOCK_IO_TIMEOUT_NANOSECONDS,
-                                        false) != RuntimeBlockIoStatus::Succeeded) {
+                                        true) != RuntimeBlockIoStatus::Succeeded) {
         HaltProcessor();
     }
     InitializeKernelFileSystem(vga_console, file_system, root_block_io_device);
@@ -2975,14 +2973,6 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
         HaltProcessor();
     }
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_CACHE_RECLAIMED_MESSAGE);
-
-    if (storage_devices.nvme_active) {
-        if (ShutdownNvmeStorageRuntime(storage_devices.nvme_result) != NvmeStatus::Succeeded ||
-            !storage_devices.nvme_result.resources_reclaimed) {
-            HaltProcessor();
-        }
-        WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_NVME_STORAGE_SHUTDOWN_READY_MESSAGE);
-    }
 
     if (!vga_console.TryWriteDiagnosticHexLine(OS_KERNEL_MAIN_FILE_SIZE_PREFIX,
                                                boot_info->kernel_file_size_bytes) ||

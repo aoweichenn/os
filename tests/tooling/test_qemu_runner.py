@@ -392,6 +392,34 @@ class QemuRunnerToolTests(unittest.TestCase):
                 minimumHexMarkerValues=(("PREEMPTIONS=0x", 1),),
             )
 
+    def testAcceptsMatchingHexStatistics(self) -> None:
+        validateVgaProtocol(
+            "SUBMITTED=0x0000000000000042\r\n"
+            "COMPLETED=0x0000000000000042\r\n",
+            (),
+            (),
+            matchingHexMarkerValues=(("SUBMITTED=0x", "COMPLETED=0x"),),
+        )
+
+    def testRejectsMismatchedHexStatistics(self) -> None:
+        with self.assertRaisesRegex(OsToolError, "不守恒"):
+            validateVgaProtocol(
+                "SUBMITTED=0x0000000000000042\r\n"
+                "COMPLETED=0x0000000000000041\r\n",
+                (),
+                (),
+                matchingHexMarkerValues=(("SUBMITTED=0x", "COMPLETED=0x"),),
+            )
+
+    def testRejectsMissingMatchingHexStatistic(self) -> None:
+        with self.assertRaisesRegex(OsToolError, "守恒统计缺失"):
+            validateVgaProtocol(
+                "SUBMITTED=0x0000000000000042\r\n",
+                (),
+                (),
+                matchingHexMarkerValues=(("SUBMITTED=0x", "COMPLETED=0x"),),
+            )
+
     def testRejectsMarkerCountBelowMinimum(self) -> None:
         with self.assertRaises(OsToolError):
             validateVgaProtocol(

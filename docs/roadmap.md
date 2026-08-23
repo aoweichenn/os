@@ -1423,8 +1423,8 @@ anonymous swap，并到达三项状态验证和 READY。
 
 1. BlockRequest 有序 completion FIFO 与 owner 交付（已完成）；
 2. 异步 BlockDevice adapter 与 ATA/NVMe 统一接口（已完成）；
-3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待已完成，
-   3b 浅层 I/O 委托、锁拆分与生产迁移待完成；
+3. BlockIo WaitQueue 与生产 rootfs/swap 迁移：3a 协调器/Worker/Kernel 等待、3b 栈式
+   User Kernel 续体、RuntimeMutex 锁拆分和生产迁移均已完成；
 4. FilePageCache Loading waiter 与同页 miss 合并；
 5. 顺序预读、命中/浪费反馈与压力收缩；
 6. 并发 writeback/reclaim 和 ATA/NVMe 错误、持久化矩阵。
@@ -1468,6 +1468,23 @@ read/write/flush。该边界由
 第三增量 3a 最终 CAW Debug `verify` 为 224/224、0 失败：67 unit、75 integration、
 49 randomized、33 system，含 25 条 failure-path，CTest 460.56 秒。4 GiB primary、
 ATA/NVMe reclaim 为 37.07/38.01/41.06 秒，ATA/NVMe persistence 为 74.10/76.16 秒。
+
+**第三增量生产迁移边界**
+
+3b 为 User Thread 保留可恢复的 Kernel stack 续体，并成对保存 FX、系统调用入口、GS 与
+CR3 模式；`RuntimeMutex` 在运行期竞争时睡眠，在 early boot/IRQ 不可睡眠边界退化为短
+spin lock。rootfs、VFS、BlockCache、文件后备和 swap 完成锁迁移，root/swap
+`BlockIoDevice` 打开异步等待。Thread 以 `Initializing -> Ready` 发布，退出以
+Scheduler `Zombie -> ProcessTree event` 发布，关闭半初始化运行和 wait 半提交窗口。
+
+普通 4 GiB ATA primary 必须观察非零 root async operation，且 BlockIo registration、wait、
+completion 严格相等；匿名换出压力 profile 还必须观察非零 swap async operation。early
+boot 和受限 Kernel worker 保留同步回退。设计由
+[ADR 0066](adr/0066-v2-10-stackful-user-kernel-continuation-and-runtime-mutex.md) 冻结。
+
+3b final fresh CAW `verify` 为 224/224、0 失败：67 unit、75 integration、49 randomized、
+33 system，含 25 条 failure-path，CTest 868.49 秒。4 GiB ATA primary 69.79 秒，ATA/NVMe
+reclaim 73.46/75.36 秒，ATA/NVMe persistence 138.87/138.73 秒。v2.10 仍为未发布工程候选。
 
 **退出条件**
 

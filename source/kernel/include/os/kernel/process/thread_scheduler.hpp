@@ -38,6 +38,7 @@ enum class ProcessState : uint64_t {
 
 enum class ThreadState : uint64_t {
     Unused,
+    Initializing,
     Ready,
     Running,
     Blocked,
@@ -180,7 +181,10 @@ class ThreadScheduler final {
     [[nodiscard]] ThreadSchedulerStatus
     CreateThread(uint64_t process_index, uint64_t kernel_stack_slot_index,
                  uint64_t user_stack_pointer, uint64_t thread_local_storage_base,
-                 uint64_t signal_mask, uint64_t &thread_index, ThreadId &thread_id) noexcept;
+                 uint64_t signal_mask, uint64_t &thread_index, ThreadId &thread_id,
+                 bool publish_ready = true) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus PublishInitializingThread(uint64_t thread_index) noexcept;
+    [[nodiscard]] ThreadSchedulerStatus DiscardInitializingThread(uint64_t thread_index) noexcept;
     [[nodiscard]] ThreadSchedulerStatus CreateKernelThread(uint64_t kernel_stack_slot_index,
                                                            uint64_t &thread_index,
                                                            ThreadId &thread_id) noexcept;
