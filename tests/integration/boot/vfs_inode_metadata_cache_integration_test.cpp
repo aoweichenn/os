@@ -261,13 +261,21 @@ int main() {
         vfs.Close(writable_file) == os::kernel::fs::Status::Succeeded &&
         vfs.RemoveFile(context, OS_TEST_VFS_INODE_METADATA_INTEGRATION_RENAMED_PATH,
                        sizeof(OS_TEST_VFS_INODE_METADATA_INTEGRATION_RENAMED_PATH)) ==
-            os::kernel::fs::Status::Succeeded &&
-        namespace_cache.InvalidateInodeMetadata(os::kernel::fs::VfsInodeIdentity{
+            os::kernel::fs::Status::Succeeded;
+    const os::kernel::fs::VfsNamespaceCacheStatus removed_metadata_status =
+        mutation_consistent
+            ? namespace_cache.InvalidateInodeMetadata(os::kernel::fs::VfsInodeIdentity{
             .superblock_identifier = renamed_path.vnode.superblock->identifier,
             .superblock_generation = renamed_path.vnode.superblock->generation,
             .node_identifier = renamed_path.vnode.identifier,
             .node_generation = renamed_path.vnode.generation,
-        }) == os::kernel::fs::VfsNamespaceCacheStatus::InodeNotFound &&
+        })
+            : os::kernel::fs::VfsNamespaceCacheStatus::Corrupt;
+    mutation_consistent =
+        mutation_consistent &&
+        (removed_metadata_status == os::kernel::fs::VfsNamespaceCacheStatus::InodeNotFound ||
+         removed_metadata_status ==
+             os::kernel::fs::VfsNamespaceCacheStatus::InodeMetadataNotFound) &&
         namespace_cache.Statistics().inode_metadata_hit_count >
             OS_TEST_VFS_INODE_METADATA_INTEGRATION_EMPTY_VALUE &&
         namespace_cache.Statistics().inode_metadata_invalidation_count >

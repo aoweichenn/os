@@ -12,6 +12,11 @@ constexpr uint8_t OS_KERNEL_VFS_NAMESPACE_CACHE_PATH_SEPARATOR = static_cast<uin
 constexpr uint8_t OS_KERNEL_VFS_NAMESPACE_CACHE_DOT_CHARACTER = static_cast<uint8_t>('.');
 constexpr uint8_t OS_KERNEL_VFS_NAMESPACE_CACHE_DELETE_CONTROL_CHARACTER = 0x7FU;
 constexpr uint8_t OS_KERNEL_VFS_NAMESPACE_CACHE_MAXIMUM_CONTROL_CHARACTER = 0x1FU;
+constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_CACHE_HASH_OFFSET = 1469598103934665603ULL;
+constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_CACHE_HASH_PRIME = 1099511628211ULL;
+constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_CACHE_UINT64_BYTE_COUNT = 8ULL;
+constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_CACHE_BITS_PER_BYTE = 8ULL;
+constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_CACHE_BYTE_MASK = 0xFFULL;
 
 [[nodiscard]] bool NodeTypeIsCacheable(const NodeType type) noexcept {
     return type == NodeType::RegularFile || type == NodeType::Directory ||
@@ -74,6 +79,41 @@ constexpr uint8_t OS_KERNEL_VFS_NAMESPACE_CACHE_MAXIMUM_CONTROL_CHARACTER = 0x1F
            metadata.mode == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
 }
 
+[[nodiscard]] uint64_t HashByte(const uint64_t hash_value, const uint8_t byte) noexcept {
+    return (hash_value ^ byte) * OS_KERNEL_VFS_NAMESPACE_CACHE_HASH_PRIME;
+}
+
+[[nodiscard]] uint64_t HashUint64(uint64_t hash_value, const uint64_t value) noexcept {
+    for (uint64_t byte_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         byte_index < OS_KERNEL_VFS_NAMESPACE_CACHE_UINT64_BYTE_COUNT; ++byte_index) {
+        const uint64_t shift = byte_index * OS_KERNEL_VFS_NAMESPACE_CACHE_BITS_PER_BYTE;
+        hash_value = HashByte(
+            hash_value,
+            static_cast<uint8_t>((value >> shift) & OS_KERNEL_VFS_NAMESPACE_CACHE_BYTE_MASK));
+    }
+    return hash_value;
+}
+
+[[nodiscard]] uint64_t HashInodeIdentity(const VfsInodeIdentity &identity) noexcept {
+    uint64_t hash_value = OS_KERNEL_VFS_NAMESPACE_CACHE_HASH_OFFSET;
+    hash_value = HashUint64(hash_value, identity.superblock_identifier);
+    hash_value = HashUint64(hash_value, identity.superblock_generation);
+    hash_value = HashUint64(hash_value, identity.node_identifier);
+    return HashUint64(hash_value, identity.node_generation);
+}
+
+[[nodiscard]] uint64_t HashDentryKey(const VfsDentryKey &key) noexcept {
+    uint64_t hash_value = HashUint64(OS_KERNEL_VFS_NAMESPACE_CACHE_HASH_OFFSET,
+                                    key.mount_identifier);
+    hash_value = HashUint64(hash_value, HashInodeIdentity(key.parent));
+    hash_value = HashUint64(hash_value, key.name_length_bytes);
+    for (uint64_t byte_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         byte_index < key.name_length_bytes; ++byte_index) {
+        hash_value = HashByte(hash_value, key.name[byte_index]);
+    }
+    return hash_value;
+}
+
 }
 
 VfsNamespaceCacheStatus VfsNamespaceCache::Initialize(VfsDentrySlot *const dentry_storage,
@@ -103,11 +143,80 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Initialize(VfsDentrySlot *const dentr
     this->dentry_capacity_ = dentry_capacity;
     this->inodes_ = inode_storage;
     this->inode_capacity_ = inode_capacity;
+    this->dentry_hash_entries_ = nullptr;
+    this->dentry_hash_buckets_ = nullptr;
+    this->dentry_hash_bucket_capacity_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+    this->inode_hash_entries_ = nullptr;
+    this->inode_hash_buckets_ = nullptr;
+    this->inode_hash_bucket_capacity_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     this->access_generation_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     this->statistics_ = VfsNamespaceCacheStatistics{};
     this->statistics_.dentry_capacity = dentry_capacity;
     this->statistics_.inode_capacity = inode_capacity;
     this->initialized_ = true;
+    return VfsNamespaceCacheStatus::Succeeded;
+}
+
+VfsNamespaceCacheStatus VfsNamespaceCache::ConfigureHashIndex(
+    VfsNamespaceHashEntry *const dentry_entries, const uint64_t dentry_entry_capacity,
+    uint64_t *const dentry_buckets, const uint64_t dentry_bucket_capacity,
+    VfsNamespaceHashEntry *const inode_entries, const uint64_t inode_entry_capacity,
+    uint64_t *const inode_buckets, const uint64_t inode_bucket_capacity) noexcept {
+    SpinLockGuard guard{this->lock_};
+    if (!this->initialized_) {
+        return VfsNamespaceCacheStatus::NotInitialized;
+    }
+    if (this->HashIndexIsConfigured()) {
+        return VfsNamespaceCacheStatus::AlreadyInitialized;
+    }
+    if (dentry_entries == nullptr || dentry_buckets == nullptr || inode_entries == nullptr ||
+        inode_buckets == nullptr) {
+        return VfsNamespaceCacheStatus::InvalidStorage;
+    }
+    if (dentry_entry_capacity != this->dentry_capacity_ ||
+        inode_entry_capacity != this->inode_capacity_ ||
+        dentry_bucket_capacity < this->dentry_capacity_ ||
+        inode_bucket_capacity < this->inode_capacity_ ||
+        dentry_bucket_capacity == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+        inode_bucket_capacity == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) {
+        return VfsNamespaceCacheStatus::InvalidCapacity;
+    }
+    if (this->statistics_.active_dentry_count != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+        this->statistics_.active_inode_count != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) {
+        return VfsNamespaceCacheStatus::EntriesRemain;
+    }
+    for (uint64_t slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         slot_index < dentry_entry_capacity; ++slot_index) {
+        dentry_entries[slot_index] = VfsNamespaceHashEntry{
+            .hash_value = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE,
+            .next_slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX,
+            .indexed = false,
+        };
+    }
+    for (uint64_t slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         slot_index < inode_entry_capacity; ++slot_index) {
+        inode_entries[slot_index] = VfsNamespaceHashEntry{
+            .hash_value = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE,
+            .next_slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX,
+            .indexed = false,
+        };
+    }
+    for (uint64_t bucket_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         bucket_index < dentry_bucket_capacity; ++bucket_index) {
+        dentry_buckets[bucket_index] = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+    }
+    for (uint64_t bucket_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         bucket_index < inode_bucket_capacity; ++bucket_index) {
+        inode_buckets[bucket_index] = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+    }
+    this->dentry_hash_entries_ = dentry_entries;
+    this->dentry_hash_buckets_ = dentry_buckets;
+    this->dentry_hash_bucket_capacity_ = dentry_bucket_capacity;
+    this->inode_hash_entries_ = inode_entries;
+    this->inode_hash_buckets_ = inode_buckets;
+    this->inode_hash_bucket_capacity_ = inode_bucket_capacity;
+    this->statistics_.dentry_hash_bucket_capacity = dentry_bucket_capacity;
+    this->statistics_.inode_hash_bucket_capacity = inode_bucket_capacity;
     return VfsNamespaceCacheStatus::Succeeded;
 }
 
@@ -221,6 +330,9 @@ VfsNamespaceCacheStatus VfsNamespaceCache::PublishPositive(const VfsDentryKey &k
             .state = VfsNamespaceEntryState::Cached,
             .metadata_state = VfsInodeMetadataState::Empty,
         };
+        if (!this->InsertInodeIndex(inode_index)) {
+            return VfsNamespaceCacheStatus::Corrupt;
+        }
         ++this->statistics_.active_inode_count;
         ++this->statistics_.cached_inode_count;
         if (this->statistics_.active_inode_count > this->statistics_.peak_active_inode_count) {
@@ -248,6 +360,9 @@ VfsNamespaceCacheStatus VfsNamespaceCache::PublishPositive(const VfsDentryKey &k
         .kind = VfsDentryKind::Positive,
         .state = VfsNamespaceEntryState::Cached,
     };
+    if (!this->InsertDentryIndex(dentry_index)) {
+        return VfsNamespaceCacheStatus::Corrupt;
+    }
     ++this->statistics_.active_dentry_count;
     ++this->statistics_.cached_positive_dentry_count;
     ++this->statistics_.positive_publish_count;
@@ -329,6 +444,9 @@ VfsNamespaceCacheStatus VfsNamespaceCache::PublishNegative(const VfsDentryKey &k
         .kind = VfsDentryKind::Negative,
         .state = VfsNamespaceEntryState::Cached,
     };
+    if (!this->InsertDentryIndex(dentry_index)) {
+        return VfsNamespaceCacheStatus::Corrupt;
+    }
     ++this->statistics_.active_dentry_count;
     ++this->statistics_.cached_negative_dentry_count;
     ++this->statistics_.negative_publish_count;
@@ -588,6 +706,9 @@ VfsNamespaceCacheStatus VfsNamespaceCache::PrepareInodeMetadata(
             .state = VfsNamespaceEntryState::Cached,
             .metadata_state = VfsInodeMetadataState::Loading,
         };
+        if (!this->InsertInodeIndex(inode_index)) {
+            return VfsNamespaceCacheStatus::Corrupt;
+        }
         ++this->statistics_.active_inode_count;
         ++this->statistics_.cached_inode_count;
         if (this->statistics_.active_inode_count > this->statistics_.peak_active_inode_count) {
@@ -767,6 +888,9 @@ VfsNamespaceCache::InvalidateInode(const VfsInodeIdentity &identity) noexcept {
         .slot_index = inode_index,
         .generation = inode.generation,
     };
+    if (!this->RemoveInodeIndex(inode_index)) {
+        return VfsNamespaceCacheStatus::Corrupt;
+    }
     if (inode.metadata_state == VfsInodeMetadataState::Loading) {
         --this->statistics_.loading_inode_metadata_count;
     } else if (inode.metadata_state == VfsInodeMetadataState::Ready) {
@@ -881,6 +1005,14 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Validate() const noexcept {
         this->inode_capacity_ == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) {
         return VfsNamespaceCacheStatus::NotInitialized;
     }
+    const bool any_hash_storage =
+        this->dentry_hash_entries_ != nullptr || this->dentry_hash_buckets_ != nullptr ||
+        this->dentry_hash_bucket_capacity_ != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+        this->inode_hash_entries_ != nullptr || this->inode_hash_buckets_ != nullptr ||
+        this->inode_hash_bucket_capacity_ != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+    if (any_hash_storage && !this->HashIndexIsConfigured()) {
+        return VfsNamespaceCacheStatus::Corrupt;
+    }
     uint64_t active_dentry_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     uint64_t cached_positive_dentry_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     uint64_t cached_negative_dentry_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
@@ -896,7 +1028,13 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Validate() const noexcept {
                 dentry.inode_token.generation != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
                 dentry.access_generation != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
                 dentry.external_reference_count != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
-                dentry.kind != VfsDentryKind::None) {
+                dentry.kind != VfsDentryKind::None ||
+                (this->HashIndexIsConfigured() &&
+                 (this->dentry_hash_entries_[dentry_index].indexed ||
+                  this->dentry_hash_entries_[dentry_index].hash_value !=
+                      OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+                  this->dentry_hash_entries_[dentry_index].next_slot_index !=
+                      OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX))) {
                 return VfsNamespaceCacheStatus::Corrupt;
             }
             continue;
@@ -914,6 +1052,21 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Validate() const noexcept {
               dentry.inode_token.generation != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE)) ||
             !CounterCanIncrease(active_dentry_reference_count, dentry.external_reference_count)) {
             return VfsNamespaceCacheStatus::Corrupt;
+        }
+        if (this->HashIndexIsConfigured()) {
+            const VfsNamespaceHashEntry &hash_entry =
+                this->dentry_hash_entries_[dentry_index];
+            const bool should_be_indexed = dentry.state == VfsNamespaceEntryState::Cached;
+            if (hash_entry.indexed != should_be_indexed ||
+                (should_be_indexed &&
+                 (hash_entry.hash_value != HashDentryKey(dentry.key) ||
+                  this->FindCachedDentry(dentry.key) != dentry_index)) ||
+                (!should_be_indexed &&
+                 (hash_entry.hash_value != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+                  hash_entry.next_slot_index !=
+                      OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX))) {
+                return VfsNamespaceCacheStatus::Corrupt;
+            }
         }
         ++active_dentry_count;
         active_dentry_reference_count += dentry.external_reference_count;
@@ -966,7 +1119,13 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Validate() const noexcept {
                 inode.metadata_generation != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
                 inode.type != NodeType::None ||
                 inode.metadata_state != VfsInodeMetadataState::Empty ||
-                !BackendNodeInformationIsEmpty(inode.metadata)) {
+                !BackendNodeInformationIsEmpty(inode.metadata) ||
+                (this->HashIndexIsConfigured() &&
+                 (this->inode_hash_entries_[inode_index].indexed ||
+                  this->inode_hash_entries_[inode_index].hash_value !=
+                      OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+                  this->inode_hash_entries_[inode_index].next_slot_index !=
+                      OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX))) {
                 return VfsNamespaceCacheStatus::Corrupt;
             }
             continue;
@@ -991,6 +1150,20 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Validate() const noexcept {
             !CounterCanIncrease(active_inode_external_reference_count,
                                 inode.external_reference_count)) {
             return VfsNamespaceCacheStatus::Corrupt;
+        }
+        if (this->HashIndexIsConfigured()) {
+            const VfsNamespaceHashEntry &hash_entry = this->inode_hash_entries_[inode_index];
+            const bool should_be_indexed = inode.state == VfsNamespaceEntryState::Cached;
+            if (hash_entry.indexed != should_be_indexed ||
+                (should_be_indexed &&
+                 (hash_entry.hash_value != HashInodeIdentity(inode.identity) ||
+                  this->FindCachedInode(inode.identity) != inode_index)) ||
+                (!should_be_indexed &&
+                 (hash_entry.hash_value != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE ||
+                  hash_entry.next_slot_index !=
+                      OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX))) {
+                return VfsNamespaceCacheStatus::Corrupt;
+            }
         }
         uint64_t observed_dentry_reference_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
         const VfsInodeToken token{
@@ -1048,7 +1221,57 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Validate() const noexcept {
             ++stale_inode_count;
         }
     }
-    return active_dentry_count == this->statistics_.active_dentry_count &&
+    if (this->HashIndexIsConfigured()) {
+        for (uint64_t bucket_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+             bucket_index < this->dentry_hash_bucket_capacity_; ++bucket_index) {
+            uint64_t slot_index = this->dentry_hash_buckets_[bucket_index];
+            uint64_t traversal_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+            while (slot_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX &&
+                   traversal_count < this->dentry_capacity_) {
+                if (slot_index >= this->dentry_capacity_ ||
+                    !this->dentry_hash_entries_[slot_index].indexed ||
+                    this->dentry_hash_entries_[slot_index].hash_value %
+                            this->dentry_hash_bucket_capacity_ !=
+                        bucket_index) {
+                    return VfsNamespaceCacheStatus::Corrupt;
+                }
+                slot_index = this->dentry_hash_entries_[slot_index].next_slot_index;
+                ++traversal_count;
+            }
+            if (slot_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX) {
+                return VfsNamespaceCacheStatus::Corrupt;
+            }
+        }
+        for (uint64_t bucket_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+             bucket_index < this->inode_hash_bucket_capacity_; ++bucket_index) {
+            uint64_t slot_index = this->inode_hash_buckets_[bucket_index];
+            uint64_t traversal_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+            while (slot_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX &&
+                   traversal_count < this->inode_capacity_) {
+                if (slot_index >= this->inode_capacity_ ||
+                    !this->inode_hash_entries_[slot_index].indexed ||
+                    this->inode_hash_entries_[slot_index].hash_value %
+                            this->inode_hash_bucket_capacity_ !=
+                        bucket_index) {
+                    return VfsNamespaceCacheStatus::Corrupt;
+                }
+                slot_index = this->inode_hash_entries_[slot_index].next_slot_index;
+                ++traversal_count;
+            }
+            if (slot_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX) {
+                return VfsNamespaceCacheStatus::Corrupt;
+            }
+        }
+    }
+    return this->statistics_.dentry_hash_bucket_capacity ==
+                       (this->HashIndexIsConfigured()
+                            ? this->dentry_hash_bucket_capacity_
+                            : OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) &&
+                   this->statistics_.inode_hash_bucket_capacity ==
+                       (this->HashIndexIsConfigured()
+                            ? this->inode_hash_bucket_capacity_
+                            : OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) &&
+                   active_dentry_count == this->statistics_.active_dentry_count &&
                    cached_positive_dentry_count == this->statistics_.cached_positive_dentry_count &&
                    cached_negative_dentry_count == this->statistics_.cached_negative_dentry_count &&
                    stale_dentry_count == this->statistics_.stale_dentry_count &&
@@ -1096,6 +1319,12 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Destroy() noexcept {
     this->dentry_capacity_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     this->inodes_ = nullptr;
     this->inode_capacity_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+    this->dentry_hash_entries_ = nullptr;
+    this->dentry_hash_buckets_ = nullptr;
+    this->dentry_hash_bucket_capacity_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+    this->inode_hash_entries_ = nullptr;
+    this->inode_hash_buckets_ = nullptr;
+    this->inode_hash_bucket_capacity_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     this->access_generation_ = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
     this->statistics_ = VfsNamespaceCacheStatistics{};
     this->initialized_ = false;
@@ -1103,6 +1332,28 @@ VfsNamespaceCacheStatus VfsNamespaceCache::Destroy() noexcept {
 }
 
 uint64_t VfsNamespaceCache::FindCachedDentry(const VfsDentryKey &key) const noexcept {
+    if (this->HashIndexIsConfigured()) {
+        const uint64_t hash_value = HashDentryKey(key);
+        uint64_t slot_index =
+            this->dentry_hash_buckets_[hash_value % this->dentry_hash_bucket_capacity_];
+        for (uint64_t traversal_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+             traversal_count < this->dentry_capacity_ &&
+             slot_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+             ++traversal_count) {
+            if (slot_index >= this->dentry_capacity_) {
+                return OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+            }
+            const VfsNamespaceHashEntry &entry = this->dentry_hash_entries_[slot_index];
+            const VfsDentrySlot &dentry = this->dentries_[slot_index];
+            if (entry.indexed && entry.hash_value == hash_value &&
+                dentry.state == VfsNamespaceEntryState::Cached &&
+                VfsDentryKeysEqual(dentry.key, key)) {
+                return slot_index;
+            }
+            slot_index = entry.next_slot_index;
+        }
+        return OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+    }
     for (uint64_t slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
          slot_index < this->dentry_capacity_; ++slot_index) {
         const VfsDentrySlot &dentry = this->dentries_[slot_index];
@@ -1114,6 +1365,28 @@ uint64_t VfsNamespaceCache::FindCachedDentry(const VfsDentryKey &key) const noex
 }
 
 uint64_t VfsNamespaceCache::FindCachedInode(const VfsInodeIdentity &identity) const noexcept {
+    if (this->HashIndexIsConfigured()) {
+        const uint64_t hash_value = HashInodeIdentity(identity);
+        uint64_t slot_index =
+            this->inode_hash_buckets_[hash_value % this->inode_hash_bucket_capacity_];
+        for (uint64_t traversal_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+             traversal_count < this->inode_capacity_ &&
+             slot_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+             ++traversal_count) {
+            if (slot_index >= this->inode_capacity_) {
+                return OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+            }
+            const VfsNamespaceHashEntry &entry = this->inode_hash_entries_[slot_index];
+            const VfsInodeSlot &inode = this->inodes_[slot_index];
+            if (entry.indexed && entry.hash_value == hash_value &&
+                inode.state == VfsNamespaceEntryState::Cached &&
+                VfsInodeIdentitiesEqual(inode.identity, identity)) {
+                return slot_index;
+            }
+            slot_index = entry.next_slot_index;
+        }
+        return OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+    }
     for (uint64_t slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
          slot_index < this->inode_capacity_; ++slot_index) {
         const VfsInodeSlot &inode = this->inodes_[slot_index];
@@ -1179,6 +1452,131 @@ uint64_t VfsNamespaceCache::FindInodeEvictionCandidate() const noexcept {
         }
     }
     return candidate_index;
+}
+
+bool VfsNamespaceCache::InsertDentryIndex(const uint64_t slot_index) noexcept {
+    if (!this->HashIndexIsConfigured()) {
+        return true;
+    }
+    if (slot_index >= this->dentry_capacity_ ||
+        this->dentries_[slot_index].state != VfsNamespaceEntryState::Cached ||
+        this->dentry_hash_entries_[slot_index].indexed) {
+        return false;
+    }
+    const uint64_t hash_value = HashDentryKey(this->dentries_[slot_index].key);
+    const uint64_t bucket_index = hash_value % this->dentry_hash_bucket_capacity_;
+    // bucket 只保存 Cached 项；Stale 旧 token 继续驻槽但不再参与新 lookup。
+    this->dentry_hash_entries_[slot_index] = VfsNamespaceHashEntry{
+        .hash_value = hash_value,
+        .next_slot_index = this->dentry_hash_buckets_[bucket_index],
+        .indexed = true,
+    };
+    this->dentry_hash_buckets_[bucket_index] = slot_index;
+    return true;
+}
+
+bool VfsNamespaceCache::InsertInodeIndex(const uint64_t slot_index) noexcept {
+    if (!this->HashIndexIsConfigured()) {
+        return true;
+    }
+    if (slot_index >= this->inode_capacity_ ||
+        this->inodes_[slot_index].state != VfsNamespaceEntryState::Cached ||
+        this->inode_hash_entries_[slot_index].indexed) {
+        return false;
+    }
+    const uint64_t hash_value = HashInodeIdentity(this->inodes_[slot_index].identity);
+    const uint64_t bucket_index = hash_value % this->inode_hash_bucket_capacity_;
+    this->inode_hash_entries_[slot_index] = VfsNamespaceHashEntry{
+        .hash_value = hash_value,
+        .next_slot_index = this->inode_hash_buckets_[bucket_index],
+        .indexed = true,
+    };
+    this->inode_hash_buckets_[bucket_index] = slot_index;
+    return true;
+}
+
+bool VfsNamespaceCache::RemoveDentryIndex(const uint64_t slot_index) noexcept {
+    if (!this->HashIndexIsConfigured()) {
+        return true;
+    }
+    if (slot_index >= this->dentry_capacity_ ||
+        !this->dentry_hash_entries_[slot_index].indexed) {
+        return false;
+    }
+    const uint64_t bucket_index = this->dentry_hash_entries_[slot_index].hash_value %
+                                  this->dentry_hash_bucket_capacity_;
+    uint64_t current_index = this->dentry_hash_buckets_[bucket_index];
+    uint64_t previous_index = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+    for (uint64_t traversal_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         traversal_count < this->dentry_capacity_ &&
+         current_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+         ++traversal_count) {
+        if (current_index >= this->dentry_capacity_) {
+            return false;
+        }
+        if (current_index == slot_index) {
+            const uint64_t next_index = this->dentry_hash_entries_[current_index].next_slot_index;
+            if (previous_index == OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX) {
+                this->dentry_hash_buckets_[bucket_index] = next_index;
+            } else {
+                this->dentry_hash_entries_[previous_index].next_slot_index = next_index;
+            }
+            this->dentry_hash_entries_[slot_index] = VfsNamespaceHashEntry{
+                .hash_value = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE,
+                .next_slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX,
+                .indexed = false,
+            };
+            return true;
+        }
+        previous_index = current_index;
+        current_index = this->dentry_hash_entries_[current_index].next_slot_index;
+    }
+    return false;
+}
+
+bool VfsNamespaceCache::RemoveInodeIndex(const uint64_t slot_index) noexcept {
+    if (!this->HashIndexIsConfigured()) {
+        return true;
+    }
+    if (slot_index >= this->inode_capacity_ || !this->inode_hash_entries_[slot_index].indexed) {
+        return false;
+    }
+    const uint64_t bucket_index = this->inode_hash_entries_[slot_index].hash_value %
+                                  this->inode_hash_bucket_capacity_;
+    uint64_t current_index = this->inode_hash_buckets_[bucket_index];
+    uint64_t previous_index = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+    for (uint64_t traversal_count = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+         traversal_count < this->inode_capacity_ &&
+         current_index != OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX;
+         ++traversal_count) {
+        if (current_index >= this->inode_capacity_) {
+            return false;
+        }
+        if (current_index == slot_index) {
+            const uint64_t next_index = this->inode_hash_entries_[current_index].next_slot_index;
+            if (previous_index == OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX) {
+                this->inode_hash_buckets_[bucket_index] = next_index;
+            } else {
+                this->inode_hash_entries_[previous_index].next_slot_index = next_index;
+            }
+            this->inode_hash_entries_[slot_index] = VfsNamespaceHashEntry{
+                .hash_value = OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE,
+                .next_slot_index = OS_KERNEL_VFS_NAMESPACE_CACHE_INVALID_SLOT_INDEX,
+                .indexed = false,
+            };
+            return true;
+        }
+        previous_index = current_index;
+        current_index = this->inode_hash_entries_[current_index].next_slot_index;
+    }
+    return false;
+}
+
+bool VfsNamespaceCache::HashIndexIsConfigured() const noexcept {
+    return this->dentry_hash_entries_ != nullptr && this->dentry_hash_buckets_ != nullptr &&
+           this->dentry_hash_bucket_capacity_ != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE &&
+           this->inode_hash_entries_ != nullptr && this->inode_hash_buckets_ != nullptr &&
+           this->inode_hash_bucket_capacity_ != OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
 }
 
 bool VfsNamespaceCache::DentryTokenIsValid(const VfsDentryToken token) const noexcept {
@@ -1249,6 +1647,9 @@ bool VfsNamespaceCache::MarkDentryStale(const uint64_t slot_index, const bool ca
     } else {
         return false;
     }
+    if (!this->RemoveDentryIndex(slot_index)) {
+        return false;
+    }
     dentry.state = VfsNamespaceEntryState::Stale;
     ++this->statistics_.stale_dentry_count;
     if (cascaded) {
@@ -1297,6 +1698,9 @@ bool VfsNamespaceCache::ReleaseDentrySlot(const uint64_t slot_index, const bool 
         if (cached_count == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) {
             return false;
         }
+        if (!this->RemoveDentryIndex(slot_index)) {
+            return false;
+        }
         --cached_count;
     } else if (dentry.state == VfsNamespaceEntryState::Stale) {
         if (this->statistics_.stale_dentry_count == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) {
@@ -1343,6 +1747,9 @@ bool VfsNamespaceCache::ReleaseInodeSlot(const uint64_t slot_index, const bool s
     }
     if (inode.state == VfsNamespaceEntryState::Cached) {
         if (this->statistics_.cached_inode_count == OS_KERNEL_VFS_NAMESPACE_CACHE_EMPTY_VALUE) {
+            return false;
+        }
+        if (!this->RemoveInodeIndex(slot_index)) {
             return false;
         }
         --this->statistics_.cached_inode_count;

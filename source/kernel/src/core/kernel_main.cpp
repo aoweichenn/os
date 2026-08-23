@@ -1050,6 +1050,8 @@ constexpr uint64_t OS_KERNEL_MAIN_VFS_PROCESS_SUPERBLOCK_IDENTIFIER = 4ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY = 64ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY = 4096ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY = 2048ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY = 8192ULL;
+constexpr uint64_t OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY = 4096ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_NODE_LIMIT = 128ULL;
 constexpr uint64_t OS_KERNEL_MAIN_MEMFS_MAXIMUM_FILE_SIZE_BYTES = 64ULL * 1024ULL;
 constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE = 0U;
@@ -2926,6 +2928,14 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
     static fs::VfsDentrySlot
         namespace_dentry_storage[OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY]{};
     static fs::VfsInodeSlot namespace_inode_storage[OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY]{};
+    static fs::VfsNamespaceHashEntry
+        namespace_dentry_hash_entries[OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY]{};
+    static uint64_t
+        namespace_dentry_hash_buckets[OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY]{};
+    static fs::VfsNamespaceHashEntry
+        namespace_inode_hash_entries[OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY]{};
+    static uint64_t
+        namespace_inode_hash_buckets[OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY]{};
     static fs::DevfsDevice devfs_devices[fs::OS_KERNEL_DEVFS_DEFAULT_DEVICE_CAPACITY]{};
     fs::Mount mounts[OS_KERNEL_MAIN_VFS_MOUNT_CAPACITY]{};
     static BlockIoDevice root_block_io_device{};
@@ -2949,7 +2959,13 @@ void WriteKeyboardEvent(const VgaTextConsole &vga_console, const KeyboardEvent &
                                    OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
                                    namespace_inode_storage,
                                    OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY) !=
-        fs::VfsNamespaceCacheStatus::Succeeded) {
+            fs::VfsNamespaceCacheStatus::Succeeded ||
+        namespace_cache.ConfigureHashIndex(
+            namespace_dentry_hash_entries, OS_KERNEL_MAIN_VFS_DENTRY_CACHE_CAPACITY,
+            namespace_dentry_hash_buckets, OS_KERNEL_MAIN_VFS_DENTRY_HASH_BUCKET_CAPACITY,
+            namespace_inode_hash_entries, OS_KERNEL_MAIN_VFS_INODE_CACHE_CAPACITY,
+            namespace_inode_hash_buckets, OS_KERNEL_MAIN_VFS_INODE_HASH_BUCKET_CAPACITY) !=
+            fs::VfsNamespaceCacheStatus::Succeeded) {
         HaltProcessor();
     }
     InitializeKernelFileSystem(vga_console, file_system, root_block_io_device);

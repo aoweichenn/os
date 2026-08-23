@@ -1445,3 +1445,7 @@ host integration 直接读取，4 GiB QEMU 继续使用既有最终聚合与 QMP
 
 已有 readahead 最终聚合现在先输出再执行守恒判断；正常路径不增加行数，失败路径能保留
 useful/waste 与 request/feedback 终态，避免只留下黑屏或停机位置而无法区分调度和泄漏。
+
+V2.11 后四个增量同样不新增逐 dentry/hash/shrink marker。Positive/Negative 与 backend
+lookup 次数由 hosted integration 直接计数；hash/index 由 Validate 审计；pressure shrinker
+由返回值和 VFS 统计验证。来宾继续只输出既有文件系统与内存最终聚合。

@@ -68,11 +68,23 @@ int main() {
         dentry_storage[OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_DENTRY_CAPACITY]{};
     os::kernel::fs::VfsInodeSlot
         inode_storage[OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_INODE_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceHashEntry
+        dentry_hash_entries[OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_DENTRY_CAPACITY]{};
+    uint64_t dentry_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_DENTRY_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceHashEntry
+        inode_hash_entries[OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_INODE_CAPACITY]{};
+    uint64_t inode_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_INODE_CAPACITY]{};
     os::kernel::fs::VfsNamespaceCache cache{};
     bool consistent =
         cache.Initialize(dentry_storage, OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_DENTRY_CAPACITY,
                          inode_storage, OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_INODE_CAPACITY) ==
-        os::kernel::fs::VfsNamespaceCacheStatus::Succeeded;
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.ConfigureHashIndex(
+            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_DENTRY_CAPACITY,
+            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_DENTRY_CAPACITY,
+            inode_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_INODE_CAPACITY,
+            inode_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_INODE_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded;
     uint64_t random_state = OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_SEED;
     uint64_t expected_positive_publish_count = OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_EMPTY_VALUE;
     uint64_t expected_negative_publish_count = OS_TEST_VFS_NAMESPACE_CACHE_RANDOMIZED_EMPTY_VALUE;

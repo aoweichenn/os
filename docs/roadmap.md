@@ -1602,10 +1602,10 @@ V2.10 六个实现增量至此完成，但按用户要求继续保持工程候�
 
 1. dentry/inode identity、Positive/Negative/Stale、引用、generation 与 LRU 纯模型（已完成）；
 2. inode metadata cache 与 stat/open/exec 共享（已完成）；
-3. Positive dentry 生产 lookup 与同组件 miss 合并；
-4. Negative dentry、NotFound/EIO 分离和创建失效；
-5. create/link/rename/unlink/symlink/mkdir/rmdir、mount crossing 与 cwd/root 一致性；
-6. hash/LRU shrinker、内存压力、ATA/NVMe 错误和持久化矩阵。
+3. Positive dentry 生产 lookup 与同组件 miss 合并（已完成）；
+4. Negative dentry、NotFound/EIO 分离和创建失效（已完成）；
+5. create/link/rename/unlink/symlink/mkdir/rmdir、mount crossing 与 cwd/root 一致性（已完成）；
+6. hash/LRU shrinker、内存压力、ATA/NVMe 错误和持久化矩阵（已完成）。
 
 **第一增量完成状态**
 
@@ -1632,6 +1632,23 @@ inode slot 已加入 backend 原始 metadata、Empty/Loading/Ready 和独立 gen
 按 target/parent 失效；页缓存逻辑 size 在返回时覆盖原始缓存。内核固定配置 4096 dentry
 和 2048 inode 槽，不新增热路径分配或来宾日志。设计由
 [ADR 0073](adr/0073-v2-11-inode-metadata-load-and-invalidation.md) 冻结。
+
+**第三至第五增量完成状态**
+
+生产 path walk 已命中 Positive/Negative dentry，只有 miss 访问 backend。NotFound 才发布
+Negative，EIO 等错误保持可重试。resolution transaction 让同 key 并发 miss 只有一个 owner；
+create/link/rename/remove/symlink 的 key 与 metadata 在 backend commit 后同事务失效。
+mount crossing、cwd/root、符号链接和打开文件 generation 继续由原 VFS 语义裁决。设计由
+[ADR 0074](adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md) 冻结。
+
+**第六增量完成状态**
+
+4096 dentry/2048 inode 固定槽分别使用 8192/4096 bucket 的调用方 hash backing。Cached
+项入 index，Stale 只保留旧 token；LRU 与 background pressure shrinker 回收可重建逻辑
+条目，但不把固定 BSS 计作物理页回收。生产与两个十万轮 oracle 全部启用 hash。设计由
+[ADR 0075](adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md) 冻结。
+
+V2.11 六个工程增量至此闭合；按既有用户要求继续保持未发布候选，不创建公开 tag。
 
 **退出条件**
 

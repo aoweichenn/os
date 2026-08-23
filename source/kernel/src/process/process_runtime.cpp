@@ -2373,6 +2373,18 @@ ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
         return WorkExecutionResult::Succeeded;
     }
 
+    if (process_vfs != nullptr) {
+        // 固定 BSS backing 不伪造物理页回收；这里只收缩可重建的命名空间逻辑条目。
+        fs::NamespaceCacheReclaimResult namespace_reclaim{};
+        if (process_vfs->ReclaimNamespaceCache(
+                OS_KERNEL_PROCESS_RUNTIME_BACKGROUND_RECLAIM_BATCH_PAGE_COUNT,
+                OS_KERNEL_PROCESS_RUNTIME_BACKGROUND_RECLAIM_BATCH_PAGE_COUNT,
+                namespace_reclaim) != fs::Status::Succeeded) {
+            background_reclaim_worker_failed = true;
+            return WorkExecutionResult::Failed;
+        }
+    }
+
     BackgroundReclaimSelectionContext selection{
         .failure_status = PageAgingStatus::Succeeded,
     };

@@ -245,6 +245,18 @@ struct Statistics final {
     uint64_t opened_directory_count;
     uint64_t bytes_read;
     uint64_t bytes_written;
+    uint64_t dentry_positive_hit_count;
+    uint64_t dentry_negative_hit_count;
+    uint64_t dentry_miss_count;
+    uint64_t dentry_publish_bypass_count;
+    uint64_t namespace_reclaim_operation_count;
+    uint64_t reclaimed_dentry_count;
+    uint64_t reclaimed_inode_count;
+};
+
+struct NamespaceCacheReclaimResult final {
+    uint64_t dentry_count;
+    uint64_t inode_count;
 };
 
 struct ResourceUsage final {
@@ -318,6 +330,9 @@ class Vfs final {
                                   RegularFileSizeCacheOperation size_operation,
                                   RegularFileTruncateCacheOperation truncate_operation) noexcept;
     [[nodiscard]] Status ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept;
+    [[nodiscard]] Status ReclaimNamespaceCache(uint64_t maximum_dentry_count,
+                                               uint64_t maximum_inode_count,
+                                               NamespaceCacheReclaimResult &result) noexcept;
     [[nodiscard]] Status StatOpenFile(const OpenFile &open_file,
                                       NodeInformation &information) noexcept;
     [[nodiscard]] Status StatOpenFileUncached(const OpenFile &open_file,
@@ -386,6 +401,10 @@ class Vfs final {
     [[nodiscard]] Status ReadNodeInformationUncached(
         const Path &path, BackendNodeInformation &information) noexcept;
     [[nodiscard]] Status InvalidateNodeInformation(const Vnode &vnode) noexcept;
+    [[nodiscard]] Status LookupChild(const Path &parent, const uint8_t *name,
+                                     uint64_t name_length_bytes, Vnode &child) noexcept;
+    [[nodiscard]] Status InvalidateDentryInformation(const Path &parent, const uint8_t *name,
+                                                     uint64_t name_length_bytes) noexcept;
     [[nodiscard]] Status ApplyRegularFileCachedSize(const Vnode &vnode,
                                                     BackendNodeInformation &information) noexcept;
     [[nodiscard]] Status TruncateNode(const Vnode &vnode, uint64_t size_bytes) noexcept;
@@ -405,6 +424,7 @@ class Vfs final {
     uint64_t mount_count_{};
     mutable SpinLock lock_{};
     mutable RuntimeMutex resolution_lock_{};
+    mutable RuntimeMutex metadata_lock_{};
     uint8_t resolution_path_a_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     uint8_t resolution_path_b_[OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES]{};
     Statistics statistics_{};

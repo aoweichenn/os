@@ -13,6 +13,8 @@ constexpr std::string_view OS_TEST_VFS_NAMESPACE_CACHE_CAPACITY_MESSAGE =
     "容量拒绝与 generation 复用必须保持原状态并拒绝旧 token";
 constexpr std::string_view OS_TEST_VFS_NAMESPACE_CACHE_LRU_MESSAGE =
     "完整名称校验、inode 类型冲突和零引用 dentry/inode LRU 顺序必须稳定";
+constexpr std::string_view OS_TEST_VFS_NAMESPACE_CACHE_HASH_MESSAGE =
+    "调用方固定 hash storage 必须校验容量并保持发布、失效和回收索引一致";
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_DENTRY_CAPACITY = 8ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_INODE_CAPACITY = 6ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_SMALL_CAPACITY = 1ULL;
@@ -20,6 +22,7 @@ constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_LRU_DENTRY_CAPACITY = 3ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_LRU_INODE_CAPACITY = 2ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_ROOT_MOUNT = 0ULL;
+constexpr uint64_t OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY = 2ULL;
 
 [[nodiscard]] os::kernel::fs::VfsInodeIdentity Identity(const uint64_t node_identifier,
                                                         const uint64_t generation = 1ULL) noexcept {
@@ -304,6 +307,63 @@ BuildKey(const uint64_t mount_identifier, const os::kernel::fs::VfsInodeIdentity
     return consistent;
 }
 
+[[nodiscard]] bool RunHashConfigurationScenario() noexcept {
+    os::kernel::fs::VfsDentrySlot
+        dentry_storage[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    os::kernel::fs::VfsInodeSlot inode_storage[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceHashEntry
+        dentry_hash_entries[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    uint64_t dentry_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceHashEntry
+        inode_hash_entries[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    uint64_t inode_hash_buckets[OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceCache cache{};
+    const os::kernel::fs::VfsInodeIdentity root = Identity(31ULL);
+    const os::kernel::fs::VfsInodeIdentity file = Identity(32ULL);
+    os::kernel::fs::VfsDentryKey positive_key{};
+    os::kernel::fs::VfsDentryKey negative_key{};
+    os::kernel::fs::VfsDentryToken token{};
+    bool consistent =
+        BuildKey(OS_TEST_VFS_NAMESPACE_CACHE_ROOT_MOUNT, root, "indexed", positive_key) &&
+        BuildKey(OS_TEST_VFS_NAMESPACE_CACHE_ROOT_MOUNT, root, "absent", negative_key) &&
+        cache.Initialize(dentry_storage, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_storage,
+                         OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.ConfigureHashIndex(
+            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
+            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_SMALL_CAPACITY,
+            inode_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_buckets,
+            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::InvalidCapacity &&
+        cache.ConfigureHashIndex(
+            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
+            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_entries,
+            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_buckets,
+            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.ConfigureHashIndex(
+            dentry_hash_entries, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY,
+            dentry_hash_buckets, OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_entries,
+            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY, inode_hash_buckets,
+            OS_TEST_VFS_NAMESPACE_CACHE_HASH_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::AlreadyInitialized &&
+        cache.PublishPositive(positive_key, file, os::kernel::fs::NodeType::RegularFile, token) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.PublishNegative(negative_key, token) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.InvalidateDentry(positive_key) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        cache.Validate() == os::kernel::fs::VfsNamespaceCacheStatus::Succeeded;
+    uint64_t evicted_count = OS_TEST_VFS_NAMESPACE_CACHE_EMPTY_VALUE;
+    consistent = consistent &&
+                 cache.EvictDentries(UINT64_MAX, evicted_count) ==
+                     os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+                 cache.EvictInodes(UINT64_MAX, evicted_count) ==
+                     os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+                 cache.Destroy() == os::kernel::fs::VfsNamespaceCacheStatus::Succeeded;
+    return consistent;
+}
+
 }
 
 int main() {
@@ -311,5 +371,6 @@ int main() {
     test_context.Expect(RunLifecycleScenario(), OS_TEST_VFS_NAMESPACE_CACHE_LIFECYCLE_MESSAGE);
     test_context.Expect(RunCapacityScenario(), OS_TEST_VFS_NAMESPACE_CACHE_CAPACITY_MESSAGE);
     test_context.Expect(RunKeyAndLruScenario(), OS_TEST_VFS_NAMESPACE_CACHE_LRU_MESSAGE);
+    test_context.Expect(RunHashConfigurationScenario(), OS_TEST_VFS_NAMESPACE_CACHE_HASH_MESSAGE);
     return test_context.ExitCode();
 }

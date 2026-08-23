@@ -74,4 +74,6 @@ RuntimeMutex、设备或用户内存。
 生产 lookup、miss 合并、命名空间修改失效和压力回收。11.1 自身没有减少任何一次后端
 lookup，也不缓存 stat 字段；11.2 已在不改变本 ADR identity/lifecycle 的前提下接入 inode
 metadata，详见 [ADR 0073](0073-v2-11-inode-metadata-load-and-invalidation.md)。纯模型统计仍不
-写入来宾终端。
+写入来宾终端。生产 dentry/hash/shrinker 已由
+[ADR 0074](0074-v2-11-production-dentry-lookup-and-namespace-mutation.md) 与
+[ADR 0075](0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md) 完成。

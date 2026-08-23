@@ -287,6 +287,9 @@
 | inode metadata | VFS 从 backend stat 取得的 size、allocated size、link count、时间、uid、gid 和 mode 原始快照 |
 | metadata load ticket | 同时绑定 inode slot/generation 与 metadata generation 的一次加载所有权；失效后迟到结果不能提交 |
 | metadata bypass | Loading 竞争或缓存容量/代次耗尽时直接读取 backend、只返回当前调用且不填充缓存的正确性路径 |
+| dentry miss owner | 在 resolution transaction 内对一个冷 key 执行唯一 backend lookup 并发布正负结果的调用者 |
+| namespace hash entry | 把 Cached dentry/inode 槽接入固定 bucket 链的索引节点；Stale 不在链中 |
+| namespace shrinker | 在容量或内存压力下回收零引用 Cached 逻辑条目的有界入口；固定 backing 不计作物理页回收 |
 | stale dentry | 已从新 lookup 中撤销、但因旧引用尚未释放而继续保留 identity 和 generation token 的目录项 |
 | PTE Accessed | x86 页表叶项的 A 位；硬件在翻译被使用时置位，内核清除后可观察下一周期是否再次访问 |
 | active/inactive | 经典双队列近似 LRU；Active 表示近期访问，Inactive 连续未访问后才可成为回收候选 |

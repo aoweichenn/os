@@ -56,6 +56,12 @@ struct VfsInodeMetadataToken final {
     uint64_t metadata_generation;
 };
 
+struct VfsNamespaceHashEntry final {
+    uint64_t hash_value;
+    uint64_t next_slot_index;
+    bool indexed;
+};
+
 struct VfsDentrySlot final {
     VfsDentryKey key;
     VfsInodeToken inode_token;
@@ -113,6 +119,8 @@ struct VfsInodeMetadataSnapshot final {
 struct VfsNamespaceCacheStatistics final {
     uint64_t dentry_capacity;
     uint64_t inode_capacity;
+    uint64_t dentry_hash_bucket_capacity;
+    uint64_t inode_hash_bucket_capacity;
     uint64_t active_dentry_count;
     uint64_t cached_positive_dentry_count;
     uint64_t cached_negative_dentry_count;
@@ -191,6 +199,11 @@ class VfsNamespaceCache final {
                                                      uint64_t dentry_capacity,
                                                      VfsInodeSlot *inode_storage,
                                                      uint64_t inode_capacity) noexcept;
+    [[nodiscard]] VfsNamespaceCacheStatus ConfigureHashIndex(
+        VfsNamespaceHashEntry *dentry_entries, uint64_t dentry_entry_capacity,
+        uint64_t *dentry_buckets, uint64_t dentry_bucket_capacity,
+        VfsNamespaceHashEntry *inode_entries, uint64_t inode_entry_capacity,
+        uint64_t *inode_buckets, uint64_t inode_bucket_capacity) noexcept;
     [[nodiscard]] VfsNamespaceCacheStatus PublishPositive(const VfsDentryKey &key,
                                                           const VfsInodeIdentity &inode_identity,
                                                           NodeType inode_type,
@@ -236,6 +249,11 @@ class VfsNamespaceCache final {
     [[nodiscard]] uint64_t FindFreeInode() const noexcept;
     [[nodiscard]] uint64_t FindDentryEvictionCandidate() const noexcept;
     [[nodiscard]] uint64_t FindInodeEvictionCandidate() const noexcept;
+    [[nodiscard]] bool InsertDentryIndex(uint64_t slot_index) noexcept;
+    [[nodiscard]] bool InsertInodeIndex(uint64_t slot_index) noexcept;
+    [[nodiscard]] bool RemoveDentryIndex(uint64_t slot_index) noexcept;
+    [[nodiscard]] bool RemoveInodeIndex(uint64_t slot_index) noexcept;
+    [[nodiscard]] bool HashIndexIsConfigured() const noexcept;
     [[nodiscard]] bool DentryTokenIsValid(VfsDentryToken token) const noexcept;
     [[nodiscard]] bool InodeTokenIsValid(VfsInodeToken token) const noexcept;
     [[nodiscard]] bool InodeMetadataTokenIsValid(VfsInodeMetadataToken token) const noexcept;
@@ -257,6 +275,12 @@ class VfsNamespaceCache final {
     uint64_t dentry_capacity_{};
     VfsInodeSlot *inodes_{};
     uint64_t inode_capacity_{};
+    VfsNamespaceHashEntry *dentry_hash_entries_{};
+    uint64_t *dentry_hash_buckets_{};
+    uint64_t dentry_hash_bucket_capacity_{};
+    VfsNamespaceHashEntry *inode_hash_entries_{};
+    uint64_t *inode_hash_buckets_{};
+    uint64_t inode_hash_bucket_capacity_{};
     uint64_t access_generation_{};
     VfsNamespaceCacheStatistics statistics_{};
     bool initialized_{};

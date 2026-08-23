@@ -557,6 +557,20 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - 生产内核必须使用调用方固定 BSS 槽，不得在 metadata 热路径分配、睡眠或逐项打印；
 - 第二增量必须覆盖非法 mode/type、失败取消、ABA、Loading/容量旁路，以及全部生产修改失效
   矩阵；`Validate` 必须重算 Loading/Ready 计数和字段/状态相容性。
+- 生产 component lookup 必须先查完整 dentry key；Positive/Negative 命中不得访问 backend，
+  同 key 并发 miss 最多一个 backend owner；
+- 只有明确 NotFound 可以发布 Negative，DeviceFailure、Corrupt、PermissionDenied 与未知错误
+  不得改变下一次 lookup 的 backend 可达性；
+- create/mkdir/symlink/link/rename/unlink/rmdir 的 backend commit 与全部受影响 dentry/metadata
+  失效之间不得存在 resolver 可见窗口；锁序固定为 resolution 后 metadata；
+- mount identifier 必须参与 key；mount crossing、cwd/root、符号链接、DAC、orphan 与打开 vnode
+  generation 继续由 VFS 原语义决定；
+- 生产 hash 必须使用调用方固定 storage，完整 key 二次判等；Cached 槽恰好进入一个 bucket，
+  Free/Stale 不得入 index，碰撞、删除和复用必须由 Validate 覆盖；
+- namespace shrinker 只能回收零引用 Cached 项，Loading/引用/Stale 不得参与；后台压力回收
+  必须有界，固定 BSS backing 不得计入 reclaimed physical pages；
+- 最终必须通过 production-cache 并发/错误/修改 integration、memfs/rootfs 十万步 oracle、
+  ATA/NVMe primary、reclaim/OOM、EIO/timeout 与三启动 persistence。
 
 ## v2.0 完成基线
 

@@ -2018,3 +2018,31 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - final 4 GiB ATA primary 82.20 秒；ATA/NVMe reclaim 82.80/82.16 秒，ATA/NVMe OOM
   84.38/81.80 秒，NVMe 正常/EIO/timeout 2.65/2.52/10.01 秒，NVMe root primary
   76.80 秒，ATA/NVMe persistence 154.85/154.81 秒。
+
+### production dentry 第三至第五增量
+
+- `os_kernel_vfs_dentry_cache_production_integration_tests` 用可计数 memfs backend 验证
+  Positive/Negative 命中、EIO 不发布 Negative、create/rename/remove 精确失效；
+- 同一测试用 8 个 hosted Thread 同时解析冷 key，要求 resolution transaction 只执行一次
+  backend lookup；显式 shrink 后再解析必须重新回填；
+- `os_kernel_vfs_namespace_randomized_tests` 的 memfs/rootfs 两条十万步独立 oracle 同时启用
+  production dentry+metadata cache，首轮 23.42 秒通过；
+- mount isolation 继续由跨 mount integration 验证，rootfs QEMU 覆盖硬/符号链接、cwd/root、
+  mount crossing、权限、orphan 与打开文件 generation；
+- 本增量不新增逐 lookup marker，backend 计数只由 host integration 读取。
+
+### hash、LRU 与 pressure shrinker 第六增量
+
+- namespace unit 覆盖 hash storage 非法/重复配置、发布、失效、回收与 Destroy；
+- 种子 `0x44454E5452594C52` 和 `0x494E4F44454D4554` 的两个十万轮模型启用最小
+  bucket，强制碰撞链、摘除和 generation 复用，分别 0.32/0.05 秒；
+- production integration 检查 16 slot/32 bucket 配置与 reclaim 统计，后台 worker 使用
+  64/64 有界 shrink batch；固定 BSS 不计入 reclaimed page；
+- 4 GiB ATA primary/reclaim/OOM 首轮为 69.97/73.53/74.02 秒；
+- VFS/cache/oracle/tooling/命名 focused 为 16/16、0 失败，CTest 34.32 秒。
+- final fresh CAW clean Debug build 为 3422 步、零警告；`python3 tools/os.py verify` 为
+  247/247、0 失败：74 unit、84 integration、56 randomized、33 system，含 25 条
+  failure-path，CTest 872.79 秒、端到端 964 秒；
+- final 4 GiB ATA primary 71.15 秒；ATA/NVMe reclaim 74.79/82.83 秒，ATA/NVMe OOM
+  75.51/74.41 秒，NVMe 正常/EIO/timeout 2.62/2.56/10.05 秒，NVMe root primary
+  72.90 秒，ATA/NVMe persistence 141.98/139.42 秒。

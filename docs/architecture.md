@@ -2618,8 +2618,8 @@ dentry，形成父目录失效闭包。LRU 只选择 Cached 零引用项，dentr
 reference；inode 还要等 external/dentry 两类引用都为零。
 
 11.1 使用调用方固定槽和线性扫描，目的是冻结状态与失败事务。该增量不接 `Vfs::Resolve`，
-不访问 backend operations，也不增加来宾日志。metadata 填充已由 11.2 接入；生产 dentry
-hash 与 miss 合并仍在后续。详见
+不访问 backend operations，也不增加来宾日志。metadata 填充已由 11.2 接入，生产 dentry
+与 hash 已由后续增量完成。详见
 [ADR 0072](adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)。
 
 第二增量把 inode metadata 接入生产 VFS。slot 内的 metadata state 与 inode lifecycle
@@ -2636,6 +2636,19 @@ slot 保存 backend 原始字段。普通文件的 FilePageCache 逻辑 EOF 仍�
 页缓存与文件后备层。生产 BSS 固定配置 4096 dentry/2048 inode 槽；11.2 尚未接 dentry
 lookup，也没有在 Loading 上建立 WaitQueue。详见
 [ADR 0073](adr/0073-v2-11-inode-metadata-load-and-invalidation.md)。
+
+第三至第五增量让 `LookupChild` 使用同一 cache。Positive/Negative 命中直接结束组件查询；
+miss 在全局 resolution transaction 内访问一次 backend，再发布结果。NotFound 与 EIO
+严格分离。命名空间 mutation 在 `resolution_lock_ -> metadata_lock_` 下提交并失效 key 与
+受影响 inode，避免 commit 后短暂命中旧项。mount crossing 在命中后执行，symlink target
+仍逐次读取，因此缓存不改变 mount/cwd/root/symlink 规则。详见
+[ADR 0074](adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md)。
+
+第六增量为同一槽表配置调用方 hash entry/bucket。Cached 项进入 bucket 链，Stale 旧项只
+保留 token；hash 只定位候选，最终仍完整判等。LRU 容量重试与 background pressure shrinker
+回收零引用逻辑条目。4096/2048 固定槽及其 8192/4096 buckets 全部在 BSS 中真实初始化，
+shrink 不计入物理页回收。详见
+[ADR 0075](adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。
 
 ## v2.8 动态文件缓存地址空间
 

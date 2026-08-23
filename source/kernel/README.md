@@ -331,10 +331,11 @@ Loading，但不等待同页 owner。设计见
 候选。设计见
 [ADR 0071](../../docs/adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
 
-v2.11 的 `fs/vfs_namespace_cache.*` 先冻结完整 dentry key、正负/Stale、inode token 和两级
-LRU；第二增量在同一 inode slot 增加 Empty/Loading/Ready metadata ticket。生产 VFS 的 stat、
-权限、open/exec 与打开文件 stat 已共享缓存，所有成功 mutation 按 target/parent 失效；
-uncached 页缓存边界继续直达 backend。内核 BSS 固定配置 4096/2048 槽，不增加来宾热路径
-日志；dentry lookup 仍待后续接入。设计见
+v2.11 的 `fs/vfs_namespace_cache.*` 已完整接入生产 dentry 与 inode metadata。Positive/
+Negative、metadata ticket、resolution/metadata 事务锁、mutation 失效、固定 hash、LRU 和
+pressure shrinker 使用同一 4096/2048 槽；uncached 页缓存边界继续直达 backend。生产
+bucket 为 8192/4096，固定 BSS 不计作物理页回收，也不增加来宾热路径日志。设计见
 [ADR 0072](../../docs/adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md) 与
-[ADR 0073](../../docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)。
+[ADR 0073](../../docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)、
+[ADR 0074](../../docs/adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md)、
+[ADR 0075](../../docs/adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。

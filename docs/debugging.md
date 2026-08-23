@@ -2558,3 +2558,33 @@ external 引用的 inode 则必须由对应所有者先释放。
 再读取后续页；这验证真实 prefetched hit，同时不使用忙等或伪造统计。最终 readahead 聚合
 在守恒判断前输出，因此失败时先核对 useful/waste、enqueue/completion/cancellation 和
 active stream/task，再判断是调度窗口还是生命周期泄漏。
+
+### create 后仍命中旧 Negative
+
+确认 initial Resolve 确实以 NotFound 发布 Negative，再检查 backend create 成功后的目标
+`VfsDentryKey` 是否与查询使用相同 mount/parent/name。create/mkdir/symlink 必须同时失效
+目标 key 和 parent metadata；只清 parent metadata 不会删除 Negative。
+
+### EIO 后下一次立即 NotFound
+
+检查 `LookupChild` 的发布分支。只有 `Status::NotFound` 能调用 `PublishNegative`；
+DeviceFailure、Corrupt、PermissionDenied 必须原样返回且不建项。production integration 会
+注入一次 DeviceFailure，随后要求 backend 再被调用，第三次 NotFound 才允许命中缓存。
+
+### rename 后旧名和新名混淆
+
+backend rename、source/destination key 与两个 parent metadata 必须在 resolution→metadata
+锁序下完成。source 和 destination 都要失效，包括此前缓存的 destination Negative 或被
+替换 Positive。不要只按 inode 失效，因为两个名称可能指向同一 inode。
+
+### hash 命中错误对象或 Validate 报 Corrupt
+
+先检查 bucket capacity 与 slot capacity，再检查 Cached 槽是否恰好有一个 indexed entry。
+失效必须先从 bucket 链摘除再转 Stale；碰撞后仍按完整 key/identity 判等。Free/Stale entry
+的 hash 必须为零且 next 为 invalid。两个十万轮 hash oracle 可稳定复现插入/摘除错误。
+
+### pressure 后缓存条目减少但 free page 不变
+
+这是固定 BSS 设计的预期结果。`ReclaimNamespaceCache` 释放的是可重建逻辑 identity 和槽，
+不是 backing page；因此不能把 dentry/inode 数加入 page reclaim accounting。检查 VFS
+reclaim 统计与下一次 backend refill，不要伪造物理内存下降。

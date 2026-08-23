@@ -124,7 +124,7 @@ FileTable。若对象创建或 fd 安装失败，RAII 最后引用会调用
 - 每次 lookup 后跟随子 Mount；
 - 尾部 `/` 要求最终对象为目录；
 - getcwd 从 vnode 父链反向重建，挂载根使用父文件系统中的挂载点名称；
-- 解析期间不申请内存；V2.11.1 已冻结正/负 dentry 纯模型，但尚未接入该生产路径。
+- 解析期间不申请内存；V2.11 已接入固定 hash 的正/负 dentry 与 inode metadata cache。
 
 当前 Mount 数组容量为 64，只在用户调度前发布；没有运行期 unmount。
 
@@ -432,8 +432,8 @@ Kernel 不再常驻一张约 32 MiB 的完整数据验证 bitmap。它以有界 
   在线修复或自动格式化；
 - 文件权限、uid/gid、umask、设备节点和扩展属性进入 v2.4；
 - v2.3 已冻结链接后端与路径语义，但用户态 `ln/readlink` 命令和权限检查进入 v2.4；
-- V2.11.2 已让生产 VFS 共享 inode metadata，但 dentry lookup 仍未缓存；动态 unmount 和
-  mount namespace 复制仍未实现；
+- V2.11 已缓存生产 dentry lookup 与 inode metadata；动态 unmount 和 mount namespace
+  复制仍未实现；
 - rootfs、legacy 和 memfs 都使用单实例锁串行化修改；
 - ATA 运行期使用单飞 IRQ14 PIO 和显式 FLUSH CACHE，没有 DMA 或 tagged
   queue；early boot 仍采用有界轮询。
@@ -558,3 +558,19 @@ target/parent。失败的 backend operation 不失效。生产内核用 BSS 固�
 没有 metadata 热路径分配或来宾逐项日志。并发 Loading waiter、Positive/Negative dentry
 接线与 shrinker 仍属于后续增量。详见
 [ADR 0073](../adr/0073-v2-11-inode-metadata-load-and-invalidation.md)。
+
+## v2.11 生产 dentry、hash 与 shrinker
+
+`ResolveInternal` 的普通组件统一进入 `LookupChild`。Positive/Negative 命中不访问 backend；
+miss 在 resolution transaction 内查询并发布。只有 NotFound 能成为 Negative，设备错误和
+权限错误保持下一次可重试。缓存不可发布时返回 backend 原结果。
+
+create/link/rename/remove/symlink 的 backend commit、dentry key 和 inode metadata 失效使用
+resolution→metadata 固定锁序。mount id 属于 key；命中 vnode 后仍执行 FollowMounts，cwd/
+root 保持打开 Path，symlink target 仍从 backend 读取；rmdir 级联撤销旧目录 child。
+
+生产 BSS 具有 4096 dentry、2048 inode、等量 hash entry 和 8192/4096 bucket。Cached 入
+hash，Stale 只保留旧 token。LRU 与 background pressure 每批回收最多 64/64 个零引用逻辑
+条目；固定 backing 不计入物理页。设计见
+[ADR 0074](../adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md) 与
+[ADR 0075](../adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。

@@ -91,13 +91,15 @@ best-effort cancel，不伪造硬件 abort。
 [ADR 0069](docs/adr/0069-v2-10-production-readahead-execution.md)、
 [ADR 0070](docs/adr/0070-v2-10-readahead-cancellation-and-feedback-ledger.md)、
 [ADR 0071](docs/adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
-v2.11 前两个增量已建立 `VfsNamespaceCache`：dentry key 使用 mount、parent inode
-generation 和完整名称，Positive/Negative/Stale、引用、ABA、级联失效和两级 LRU 已冻结；
-inode metadata 又增加 Empty/Loading/Ready ticket，并接入生产 stat、权限、open、exec 与
-mutation 失效。当前已减少同 vnode 的重复 backend stat，但 dentry lookup 尚未缓存。边界见
+v2.11 六个工程增量已建立生产 `VfsNamespaceCache`：完整 mount/parent/name dentry key、
+Positive/Negative/Stale、inode metadata ticket、并发 miss 合并、mutation 事务失效、固定
+hash、LRU 与 pressure shrinker 均已接入。重复 component lookup 与 stat 不再访问 backend，
+EIO 不会变成 Negative；固定 BSS 不伪装物理页回收。边界见
 [v2.11 记录](docs/releases/v2.11.md) 与
 [ADR 0072](docs/adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)、
-[ADR 0073](docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)。
+[ADR 0073](docs/adr/0073-v2-11-inode-metadata-load-and-invalidation.md)、
+[ADR 0074](docs/adr/0074-v2-11-production-dentry-lookup-and-namespace-mutation.md) 与
+[ADR 0075](docs/adr/0075-v2-11-namespace-hash-lru-and-pressure-shrinker.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

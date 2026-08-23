@@ -79,5 +79,6 @@ slot 和 2048 个 inode slot；初始化会逐槽写零，路径热区不分配�
 ## 后果
 
 重复 metadata 消费已经进入生产缓存，但路径组件 lookup 仍直接访问 backend；因此 11.2
-减少的是同 vnode 的重复 `stat`，不是 dentry lookup。下一增量可以复用同一 inode identity
-与失效接口接入 Positive dentry 和同组件 miss 协调。
+减少的是同 vnode 的重复 `stat`，不是 dentry lookup。后续增量已复用同一 inode identity
+与失效接口接入 Positive/Negative dentry、同组件 miss、hash 与 shrinker，详见 ADR 0074/
+0075。

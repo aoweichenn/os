@@ -1,10 +1,11 @@
-#include "os/kernel/fs/memfs.hpp"
-#include "os/kernel/fs/root_file_system.hpp"
-#include "os/kernel/fs/vfs.hpp"
-#include "os/kernel/memory/kernel_heap.hpp"
-#include "root_file_system_test_support.hpp"
-#include "sparse_memory_block_device.hpp"
-#include "test_context.hpp"
+#include <os/kernel/fs/memfs.hpp>
+#include <os/kernel/fs/root_file_system.hpp>
+#include <os/kernel/fs/vfs.hpp>
+#include <os/kernel/fs/vfs_namespace_cache.hpp>
+#include <os/kernel/memory/kernel_heap.hpp>
+#include <root_file_system_test_support.hpp>
+#include <sparse_memory_block_device.hpp>
+#include <test_context.hpp>
 
 #include <algorithm>
 #include <random>
@@ -36,6 +37,8 @@ constexpr uint64_t OS_TEST_VFS_RANDOM_HEAP_SIZE_BYTES = 16ULL * 1024ULL * 1024UL
 constexpr uint64_t OS_TEST_VFS_RANDOM_NODE_LIMIT = 384ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_MAXIMUM_FILE_SIZE_BYTES = 4096ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_MOUNT_CAPACITY = 4ULL;
+constexpr uint64_t OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY = 512ULL;
+constexpr uint64_t OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY = 1024ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_OPERATION_KIND_COUNT = 7ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_CREATE_OPERATION = 0ULL;
 constexpr uint64_t OS_TEST_VFS_RANDOM_RESOLVE_OPERATION = 1ULL;
@@ -458,6 +461,18 @@ int main() {
     os::kernel::KernelHeap heap{};
     os::kernel::fs::Memfs memfs{};
     os::kernel::fs::Mount mounts[OS_TEST_VFS_RANDOM_MOUNT_CAPACITY]{};
+    static os::kernel::fs::VfsDentrySlot
+        dentry_storage[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static os::kernel::fs::VfsInodeSlot
+        inode_storage[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static os::kernel::fs::VfsNamespaceHashEntry
+        dentry_hash_entries[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static uint64_t
+        dentry_hash_buckets[OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY]{};
+    static os::kernel::fs::VfsNamespaceHashEntry
+        inode_hash_entries[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static uint64_t inode_hash_buckets[OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceCache namespace_cache{};
     os::kernel::fs::Vfs vfs{};
     os::kernel::fs::FsContext context{};
     const bool initialized =
@@ -466,8 +481,18 @@ int main() {
         memfs.Initialize(
             heap, OS_TEST_VFS_RANDOM_SUPERBLOCK_IDENTIFIER, OS_TEST_VFS_RANDOM_NODE_LIMIT,
             OS_TEST_VFS_RANDOM_MAXIMUM_FILE_SIZE_BYTES) == os::kernel::fs::Status::Succeeded &&
+        namespace_cache.Initialize(dentry_storage, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY,
+                                   inode_storage, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        namespace_cache.ConfigureHashIndex(
+            dentry_hash_entries, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY,
+            dentry_hash_buckets, OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY,
+            inode_hash_entries, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY, inode_hash_buckets,
+            OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         vfs.Initialize(mounts, OS_TEST_VFS_RANDOM_MOUNT_CAPACITY, memfs.GetSuperblock()) ==
             os::kernel::fs::Status::Succeeded &&
+        vfs.ConfigureNamespaceCache(namespace_cache) == os::kernel::fs::Status::Succeeded &&
         vfs.InitializeContext(context) == os::kernel::fs::Status::Succeeded;
     if (!initialized) {
         test_context.Expect(false, OS_TEST_VFS_RANDOM_FINAL_STATE);
@@ -479,6 +504,7 @@ int main() {
     const bool memfs_released =
         memfs.ReadStatistics().active_node_count == memfs_result.node_count &&
         vfs.ReleaseContext(context) == os::kernel::fs::Status::Succeeded &&
+        namespace_cache.Destroy() == os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         memfs.Destroy() == os::kernel::fs::Status::Succeeded &&
         heap.Validate() == os::kernel::KernelHeapStatus::Succeeded &&
         heap.Statistics().allocation_count == OS_TEST_VFS_RANDOM_EMPTY_VALUE;
@@ -486,14 +512,39 @@ int main() {
     static os::test::SparseMemoryBlockDevice root_device{};
     static os::kernel::fs::RootFileSystem root_file_system{};
     os::kernel::fs::Mount root_mounts[OS_TEST_VFS_RANDOM_MOUNT_CAPACITY]{};
+    static os::kernel::fs::VfsDentrySlot
+        root_dentry_storage[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static os::kernel::fs::VfsInodeSlot
+        root_inode_storage[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static os::kernel::fs::VfsNamespaceHashEntry
+        root_dentry_hash_entries[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static uint64_t
+        root_dentry_hash_buckets[OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY]{};
+    static os::kernel::fs::VfsNamespaceHashEntry
+        root_inode_hash_entries[OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY]{};
+    static uint64_t
+        root_inode_hash_buckets[OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY]{};
+    os::kernel::fs::VfsNamespaceCache root_namespace_cache{};
     os::kernel::fs::Vfs root_vfs{};
     os::kernel::fs::FsContext root_context{};
     const bool root_initialized =
         os::test::FormatRootFileSystem(root_device) &&
         root_file_system.Initialize(root_device, OS_TEST_VFS_RANDOM_ROOT_SUPERBLOCK_IDENTIFIER) ==
             os::kernel::fs::Status::Succeeded &&
+        root_namespace_cache.Initialize(
+            root_dentry_storage, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY, root_inode_storage,
+            OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
+        root_namespace_cache.ConfigureHashIndex(
+            root_dentry_hash_entries, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY,
+            root_dentry_hash_buckets, OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY,
+            root_inode_hash_entries, OS_TEST_VFS_RANDOM_NAMESPACE_CACHE_CAPACITY,
+            root_inode_hash_buckets, OS_TEST_VFS_RANDOM_NAMESPACE_HASH_BUCKET_CAPACITY) ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         root_vfs.Initialize(root_mounts, OS_TEST_VFS_RANDOM_MOUNT_CAPACITY,
                             root_file_system.GetSuperblock()) ==
+            os::kernel::fs::Status::Succeeded &&
+        root_vfs.ConfigureNamespaceCache(root_namespace_cache) ==
             os::kernel::fs::Status::Succeeded &&
         root_vfs.InitializeContext(root_context) == os::kernel::fs::Status::Succeeded;
     RandomSequenceResult root_result{};
@@ -504,6 +555,8 @@ int main() {
     const bool root_released =
         root_initialized && root_vfs.Sync() == os::kernel::fs::Status::Succeeded &&
         root_vfs.ReleaseContext(root_context) == os::kernel::fs::Status::Succeeded &&
+        root_namespace_cache.Destroy() ==
+            os::kernel::fs::VfsNamespaceCacheStatus::Succeeded &&
         root_file_system.ReadStatistics().allocated_inode_count == root_result.node_count;
     test_context.Expect(memfs_result.valid && memfs_released && root_result.valid && root_released,
                         OS_TEST_VFS_RANDOM_FINAL_STATE);

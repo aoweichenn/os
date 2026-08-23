@@ -9,10 +9,12 @@ constexpr uint64_t OS_KERNEL_VFS_EMPTY_VALUE = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_FIRST_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_WAIT_QUEUE_IDENTIFIER = 0x8000000000000103ULL;
+constexpr uint64_t OS_KERNEL_VFS_METADATA_WAIT_QUEUE_IDENTIFIER = 0x8000000000000104ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_PATH_LENGTH_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_TRAVERSAL_COUNT = OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES;
 constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_SYMBOLIC_LINK_COUNT = 40ULL;
+constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_CACHE_RETRY_EVICTION_COUNT = 1ULL;
 constexpr uint8_t OS_KERNEL_VFS_PATH_SEPARATOR = static_cast<uint8_t>('/');
 constexpr uint8_t OS_KERNEL_VFS_DOT_CHARACTER = static_cast<uint8_t>('.');
 constexpr uint8_t OS_KERNEL_VFS_DELETE_CONTROL_CHARACTER = 0x7FU;
@@ -97,6 +99,9 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
     }
     if (this->resolution_lock_.Initialize(WaitQueueId{
             .value = OS_KERNEL_VFS_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded ||
+        this->metadata_lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_VFS_METADATA_WAIT_QUEUE_IDENTIFIER,
         }) != RuntimeMutexStatus::Succeeded) {
         return Status::Corrupt;
     }
@@ -119,6 +124,13 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
         .opened_directory_count = OS_KERNEL_VFS_EMPTY_VALUE,
         .bytes_read = OS_KERNEL_VFS_EMPTY_VALUE,
         .bytes_written = OS_KERNEL_VFS_EMPTY_VALUE,
+        .dentry_positive_hit_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .dentry_negative_hit_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .dentry_miss_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .dentry_publish_bypass_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .namespace_reclaim_operation_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .reclaimed_dentry_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .reclaimed_inode_count = OS_KERNEL_VFS_EMPTY_VALUE,
     };
     this->regular_file_data_cache_context_ = nullptr;
     this->regular_file_read_cache_operation_ = nullptr;
@@ -372,12 +384,7 @@ Status Vfs::ResolveInternal(const FsContext &context, const uint8_t *const path,
             return Status::NameTooLong;
         }
         Vnode child{};
-        const Status lookup_status = superblock->operations->lookup(
-            superblock->backend_context, current.vnode, name, name_length_bytes, child);
-        {
-            SpinLockGuard guard{this->lock_};
-            ++this->statistics_.component_lookup_count;
-        }
+        const Status lookup_status = this->LookupChild(current, name, name_length_bytes, child);
         if (lookup_status != Status::Succeeded) {
             return lookup_status;
         }
@@ -462,13 +469,23 @@ Status Vfs::CreateDirectory(const FsContext &context, const uint8_t *const path,
     if (attribute_status != Status::Succeeded) {
         return attribute_status;
     }
+    RuntimeMutexGuard resolution_guard{this->resolution_lock_};
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     Vnode created{};
     const Status create_status = superblock->operations->create(
         superblock->backend_context, resolution.parent.vnode, resolution.name,
         resolution.name_length_bytes, NodeType::Directory, attributes, created);
-    return create_status == Status::Succeeded
-               ? this->InvalidateNodeInformation(resolution.parent.vnode)
-               : create_status;
+    if (create_status != Status::Succeeded) {
+        return create_status;
+    }
+    const Status dentry_invalidation_status = this->InvalidateDentryInformation(
+        resolution.parent, resolution.name, resolution.name_length_bytes);
+    const Status parent_invalidation_status =
+        this->InvalidateNodeInformation(resolution.parent.vnode);
+    return dentry_invalidation_status == Status::Succeeded &&
+                   parent_invalidation_status == Status::Succeeded
+               ? Status::Succeeded
+               : Status::Corrupt;
 }
 
 Status Vfs::RemoveFile(const FsContext &context, const uint8_t *const path,
@@ -552,6 +569,8 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
     } else if (destination_status != Status::NotFound) {
         return destination_status;
     }
+    RuntimeMutexGuard resolution_guard{this->resolution_lock_};
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     const Status rename_status = superblock->operations->rename(
         superblock->backend_context, source_parent.parent.vnode, source_parent.name,
         source_parent.name_length_bytes, destination_parent.parent.vnode, destination_parent.name,
@@ -568,10 +587,17 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
         destination_status == Status::Succeeded
             ? this->InvalidateNodeInformation(destination.vnode)
             : Status::Succeeded;
+    const Status source_dentry_invalidation_status = this->InvalidateDentryInformation(
+        source_parent.parent, source_parent.name, source_parent.name_length_bytes);
+    const Status destination_dentry_invalidation_status = this->InvalidateDentryInformation(
+        destination_parent.parent, destination_parent.name,
+        destination_parent.name_length_bytes);
     if (source_invalidation_status != Status::Succeeded ||
         source_parent_invalidation_status != Status::Succeeded ||
         destination_parent_invalidation_status != Status::Succeeded ||
-        destination_invalidation_status != Status::Succeeded) {
+        destination_invalidation_status != Status::Succeeded ||
+        source_dentry_invalidation_status != Status::Succeeded ||
+        destination_dentry_invalidation_status != Status::Succeeded) {
         return Status::Corrupt;
     }
     return Status::Succeeded;
@@ -617,6 +643,8 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
     if (existing_status != Status::NotFound) {
         return existing_status;
     }
+    RuntimeMutexGuard resolution_guard{this->resolution_lock_};
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     const Status link_status = superblock->operations->link(
         superblock->backend_context, source.vnode, destination_parent.parent.vnode,
         destination_parent.name, destination_parent.name_length_bytes);
@@ -626,8 +654,12 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
     const Status source_invalidation_status = this->InvalidateNodeInformation(source.vnode);
     const Status parent_invalidation_status =
         this->InvalidateNodeInformation(destination_parent.parent.vnode);
+    const Status dentry_invalidation_status = this->InvalidateDentryInformation(
+        destination_parent.parent, destination_parent.name,
+        destination_parent.name_length_bytes);
     return source_invalidation_status == Status::Succeeded &&
-                   parent_invalidation_status == Status::Succeeded
+                   parent_invalidation_status == Status::Succeeded &&
+                   dentry_invalidation_status == Status::Succeeded
                ? Status::Succeeded
                : Status::Corrupt;
 }
@@ -685,13 +717,24 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
     if (status != Status::Succeeded) {
         return status;
     }
+    RuntimeMutexGuard resolution_guard{this->resolution_lock_};
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     Vnode vnode{};
     const Status create_status = superblock->operations->create_symbolic_link(
         superblock->backend_context, destination_parent.parent.vnode, destination_parent.name,
         destination_parent.name_length_bytes, target, target_length_bytes, attributes, vnode);
-    return create_status == Status::Succeeded
-               ? this->InvalidateNodeInformation(destination_parent.parent.vnode)
-               : create_status;
+    if (create_status != Status::Succeeded) {
+        return create_status;
+    }
+    const Status dentry_invalidation_status = this->InvalidateDentryInformation(
+        destination_parent.parent, destination_parent.name,
+        destination_parent.name_length_bytes);
+    const Status parent_invalidation_status =
+        this->InvalidateNodeInformation(destination_parent.parent.vnode);
+    return dentry_invalidation_status == Status::Succeeded &&
+                   parent_invalidation_status == Status::Succeeded
+               ? Status::Succeeded
+               : Status::Corrupt;
 }
 
 Status Vfs::ReadSymbolicLink(const FsContext &context, const uint8_t *const path,
@@ -842,6 +885,7 @@ Status Vfs::ChangeMode(const FsContext &context, const uint8_t *const path,
         !security::IsMemberOfGroup(context.credentials, information.owner_group_identifier)) {
         updated_mode &= ~os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER;
     }
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     const Status change_status = superblock->operations->change_mode(
         superblock->backend_context, resolved.vnode, updated_mode);
     return change_status == Status::Succeeded
@@ -882,6 +926,7 @@ Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
         group_identifier == os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED
             ? information.owner_group_identifier
             : group_identifier;
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     const Status change_status = superblock->operations->change_owner(
         superblock->backend_context, resolved.vnode, updated_user_identifier,
         updated_group_identifier);
@@ -927,6 +972,8 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
         if (status != Status::Succeeded) {
             return status;
         }
+        RuntimeMutexGuard resolution_guard{this->resolution_lock_};
+        RuntimeMutexGuard metadata_guard{this->metadata_lock_};
         Vnode created{};
         status = parent_superblock->operations->create(
             parent_superblock->backend_context, parent_resolution.parent.vnode,
@@ -935,9 +982,14 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
         if (status != Status::Succeeded) {
             return status;
         }
-        status = this->InvalidateNodeInformation(parent_resolution.parent.vnode);
-        if (status != Status::Succeeded) {
-            return status;
+        const Status dentry_invalidation_status = this->InvalidateDentryInformation(
+            parent_resolution.parent, parent_resolution.name,
+            parent_resolution.name_length_bytes);
+        const Status parent_invalidation_status =
+            this->InvalidateNodeInformation(parent_resolution.parent.vnode);
+        if (dentry_invalidation_status != Status::Succeeded ||
+            parent_invalidation_status != Status::Succeeded) {
+            return Status::Corrupt;
         }
         resolved = Path{
             .mount_identifier = parent_resolution.parent.mount_identifier,
@@ -1136,6 +1188,38 @@ Status Vfs::ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept {
     return Status::Succeeded;
 }
 
+Status Vfs::ReclaimNamespaceCache(const uint64_t maximum_dentry_count,
+                                  const uint64_t maximum_inode_count,
+                                  NamespaceCacheReclaimResult &result) noexcept {
+    result = NamespaceCacheReclaimResult{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (this->namespace_cache_ == nullptr) {
+        return Status::Succeeded;
+    }
+    if (this->namespace_cache_->EvictDentries(maximum_dentry_count, result.dentry_count) !=
+            VfsNamespaceCacheStatus::Succeeded ||
+        this->namespace_cache_->EvictInodes(maximum_inode_count, result.inode_count) !=
+            VfsNamespaceCacheStatus::Succeeded) {
+        result = NamespaceCacheReclaimResult{};
+        return Status::Corrupt;
+    }
+    {
+        SpinLockGuard guard{this->lock_};
+        if (this->statistics_.namespace_reclaim_operation_count == UINT64_MAX ||
+            this->statistics_.reclaimed_dentry_count > UINT64_MAX - result.dentry_count ||
+            this->statistics_.reclaimed_inode_count > UINT64_MAX - result.inode_count) {
+            result = NamespaceCacheReclaimResult{};
+            return Status::Corrupt;
+        }
+        ++this->statistics_.namespace_reclaim_operation_count;
+        this->statistics_.reclaimed_dentry_count += result.dentry_count;
+        this->statistics_.reclaimed_inode_count += result.inode_count;
+    }
+    return Status::Succeeded;
+}
+
 Status Vfs::StatOpenFile(const OpenFile &open_file, NodeInformation &information) noexcept {
     information = NodeInformation{};
     if (!this->IsInitialized()) {
@@ -1296,6 +1380,7 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
                                                         open_file, offset_bytes, source,
                                                         length_bytes, written_bytes);
     if (status == Status::Succeeded) {
+        RuntimeMutexGuard metadata_guard{this->metadata_lock_};
         const Status invalidation_status =
             this->InvalidateNodeInformation(open_file.path.vnode);
         if (invalidation_status != Status::Succeeded) {
@@ -1328,6 +1413,7 @@ Status Vfs::WriteUncachedAt(const OpenFile &open_file, const uint64_t offset_byt
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     const Status write_status = superblock->operations->write(
         superblock->backend_context, open_file.path.vnode, offset_bytes, source, length_bytes,
         written_bytes);
@@ -1410,6 +1496,7 @@ Status Vfs::Write(OpenFile &open_file, const uint8_t *const source, const uint64
         if (open_file.offset_bytes > UINT64_MAX - written_bytes) {
             return Status::Corrupt;
         }
+        RuntimeMutexGuard metadata_guard{this->metadata_lock_};
         const Status invalidation_status =
             this->InvalidateNodeInformation(open_file.path.vnode);
         if (invalidation_status != Status::Succeeded) {
@@ -1900,6 +1987,8 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     if (sticky_status != Status::Succeeded) {
         return sticky_status;
     }
+    RuntimeMutexGuard resolution_guard{this->resolution_lock_};
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     const Status remove_status = superblock->operations->remove(
         superblock->backend_context, parent.parent.vnode, parent.name, parent.name_length_bytes,
         expected_type);
@@ -1908,8 +1997,155 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     }
     const Status target_invalidation_status = this->InvalidateNodeInformation(resolved.vnode);
     const Status parent_invalidation_status = this->InvalidateNodeInformation(parent.parent.vnode);
+    const Status dentry_invalidation_status =
+        this->InvalidateDentryInformation(parent.parent, parent.name, parent.name_length_bytes);
+    Status descendant_invalidation_status = Status::Succeeded;
+    if (expected_type == NodeType::Directory && this->namespace_cache_ != nullptr) {
+        const VfsNamespaceCacheStatus cache_status =
+            this->namespace_cache_->InvalidateInode(InodeIdentityForVnode(resolved.vnode));
+        descendant_invalidation_status =
+            cache_status == VfsNamespaceCacheStatus::Succeeded ||
+                    cache_status == VfsNamespaceCacheStatus::InodeNotFound
+                ? Status::Succeeded
+                : Status::Corrupt;
+    }
     return target_invalidation_status == Status::Succeeded &&
-                   parent_invalidation_status == Status::Succeeded
+                   parent_invalidation_status == Status::Succeeded &&
+                   dentry_invalidation_status == Status::Succeeded &&
+                   descendant_invalidation_status == Status::Succeeded
+               ? Status::Succeeded
+               : Status::Corrupt;
+}
+
+Status Vfs::LookupChild(const Path &parent, const uint8_t *const name,
+                        const uint64_t name_length_bytes, Vnode &child) noexcept {
+    child = Vnode{};
+    if (!this->PathIsValid(parent) || parent.vnode.type != NodeType::Directory || name == nullptr ||
+        name_length_bytes == OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    VfsDentryKey key{};
+    bool cache_key_valid = false;
+    if (this->namespace_cache_ != nullptr) {
+        // ResolveInternal 持有 resolution_lock，同 key miss 在发布正负结果前不会产生第二个 owner。
+        cache_key_valid =
+            BuildVfsDentryKey(parent.mount_identifier, InodeIdentityForVnode(parent.vnode), name,
+                              name_length_bytes, key) == VfsNamespaceCacheStatus::Succeeded;
+        if (!cache_key_valid) {
+            return Status::Corrupt;
+        }
+        VfsDentrySnapshot snapshot{};
+        const VfsNamespaceCacheStatus acquire_status =
+            this->namespace_cache_->AcquireDentry(key, snapshot);
+        if (acquire_status == VfsNamespaceCacheStatus::Succeeded) {
+            Status result = Status::Corrupt;
+            if (snapshot.kind == VfsDentryKind::Negative) {
+                result = Status::NotFound;
+                SpinLockGuard guard{this->lock_};
+                ++this->statistics_.dentry_negative_hit_count;
+            } else if (snapshot.kind == VfsDentryKind::Positive &&
+                       snapshot.inode_identity.superblock_identifier ==
+                           parent.vnode.superblock->identifier &&
+                       snapshot.inode_identity.superblock_generation ==
+                           parent.vnode.superblock->generation &&
+                       snapshot.inode_identity.node_identifier != OS_KERNEL_VFS_EMPTY_VALUE &&
+                       snapshot.inode_identity.node_generation != OS_KERNEL_VFS_EMPTY_VALUE &&
+                       ModeTypeForNode(snapshot.inode_type) != 0U) {
+                child = Vnode{
+                    .superblock = parent.vnode.superblock,
+                    .identifier = snapshot.inode_identity.node_identifier,
+                    .generation = snapshot.inode_identity.node_generation,
+                    .type = snapshot.inode_type,
+                };
+                result = Status::Succeeded;
+                SpinLockGuard guard{this->lock_};
+                ++this->statistics_.dentry_positive_hit_count;
+            }
+            if (this->namespace_cache_->ReleaseDentry(snapshot.token) !=
+                VfsNamespaceCacheStatus::Succeeded) {
+                return Status::Corrupt;
+            }
+            return result;
+        }
+        if (acquire_status != VfsNamespaceCacheStatus::DentryNotFound &&
+            acquire_status != VfsNamespaceCacheStatus::CounterOverflow) {
+            return Status::Corrupt;
+        }
+        SpinLockGuard guard{this->lock_};
+        ++this->statistics_.dentry_miss_count;
+    }
+
+    Superblock *const superblock = parent.vnode.superblock;
+    const Status lookup_status = superblock->operations->lookup(
+        superblock->backend_context, parent.vnode, name, name_length_bytes, child);
+    {
+        SpinLockGuard guard{this->lock_};
+        ++this->statistics_.component_lookup_count;
+    }
+    if (lookup_status == Status::Succeeded &&
+        (child.superblock != superblock || child.identifier == OS_KERNEL_VFS_EMPTY_VALUE ||
+         child.generation == OS_KERNEL_VFS_EMPTY_VALUE || ModeTypeForNode(child.type) == 0U)) {
+        child = Vnode{};
+        return Status::Corrupt;
+    }
+    if (this->namespace_cache_ == nullptr || !cache_key_valid ||
+        (lookup_status != Status::Succeeded && lookup_status != Status::NotFound)) {
+        return lookup_status;
+    }
+
+    VfsDentryToken published_token{};
+    VfsNamespaceCacheStatus publish_status =
+        lookup_status == Status::Succeeded
+            ? this->namespace_cache_->PublishPositive(key, InodeIdentityForVnode(child), child.type,
+                                                      published_token)
+            : this->namespace_cache_->PublishNegative(key, published_token);
+    if (publish_status == VfsNamespaceCacheStatus::CapacityExhausted) {
+        // 缓存是可丢弃加速层；先回收一个 LRU 槽，仍不足时返回 backend 的原始结果。
+        uint64_t evicted_count = OS_KERNEL_VFS_EMPTY_VALUE;
+        if (this->namespace_cache_->EvictDentries(
+                OS_KERNEL_VFS_NAMESPACE_CACHE_RETRY_EVICTION_COUNT, evicted_count) !=
+                VfsNamespaceCacheStatus::Succeeded ||
+            this->namespace_cache_->EvictInodes(
+                OS_KERNEL_VFS_NAMESPACE_CACHE_RETRY_EVICTION_COUNT, evicted_count) !=
+                VfsNamespaceCacheStatus::Succeeded) {
+            return Status::Corrupt;
+        }
+        publish_status =
+            lookup_status == Status::Succeeded
+                ? this->namespace_cache_->PublishPositive(
+                      key, InodeIdentityForVnode(child), child.type, published_token)
+                : this->namespace_cache_->PublishNegative(key, published_token);
+    }
+    if (publish_status == VfsNamespaceCacheStatus::Succeeded ||
+        publish_status == VfsNamespaceCacheStatus::AlreadyCached) {
+        return lookup_status;
+    }
+    if (publish_status == VfsNamespaceCacheStatus::CapacityExhausted ||
+        publish_status == VfsNamespaceCacheStatus::GenerationExhausted ||
+        publish_status == VfsNamespaceCacheStatus::CounterOverflow) {
+        SpinLockGuard guard{this->lock_};
+        ++this->statistics_.dentry_publish_bypass_count;
+        return lookup_status;
+    }
+    return Status::Corrupt;
+}
+
+Status Vfs::InvalidateDentryInformation(const Path &parent, const uint8_t *const name,
+                                        const uint64_t name_length_bytes) noexcept {
+    if (this->namespace_cache_ == nullptr) {
+        return Status::Succeeded;
+    }
+    if (!this->PathIsValid(parent) || parent.vnode.type != NodeType::Directory || name == nullptr) {
+        return Status::InvalidArgument;
+    }
+    VfsDentryKey key{};
+    if (BuildVfsDentryKey(parent.mount_identifier, InodeIdentityForVnode(parent.vnode), name,
+                          name_length_bytes, key) != VfsNamespaceCacheStatus::Succeeded) {
+        return Status::Corrupt;
+    }
+    const VfsNamespaceCacheStatus status = this->namespace_cache_->InvalidateDentry(key);
+    return status == VfsNamespaceCacheStatus::Succeeded ||
+                   status == VfsNamespaceCacheStatus::DentryNotFound
                ? Status::Succeeded
                : Status::Corrupt;
 }
@@ -1919,6 +2155,7 @@ Status Vfs::ReadNodeInformation(const Path &path, BackendNodeInformation &inform
     if (!this->PathIsValid(path)) {
         return Status::InvalidArgument;
     }
+    RuntimeMutexGuard metadata_guard{this->metadata_lock_};
     if (this->namespace_cache_ == nullptr) {
         return this->ReadNodeInformationUncached(path, information);
     }
@@ -2018,14 +2255,17 @@ Status Vfs::TruncateNode(const Vnode &vnode, const uint64_t size_bytes) noexcept
         return Status::InvalidArgument;
     }
     Superblock &superblock = *vnode.superblock;
-    const Status truncate_status =
-        superblock.operations->truncate(superblock.backend_context, vnode, size_bytes);
-    if (truncate_status != Status::Succeeded) {
-        return truncate_status;
-    }
-    const Status invalidation_status = this->InvalidateNodeInformation(vnode);
-    if (invalidation_status != Status::Succeeded) {
-        return invalidation_status;
+    {
+        RuntimeMutexGuard metadata_guard{this->metadata_lock_};
+        const Status truncate_status =
+            superblock.operations->truncate(superblock.backend_context, vnode, size_bytes);
+        if (truncate_status != Status::Succeeded) {
+            return truncate_status;
+        }
+        const Status invalidation_status = this->InvalidateNodeInformation(vnode);
+        if (invalidation_status != Status::Succeeded) {
+            return invalidation_status;
+        }
     }
     if (!superblock.cache_regular_file_data ||
         this->regular_file_truncate_cache_operation_ == nullptr) {
