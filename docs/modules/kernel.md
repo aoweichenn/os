@@ -1058,7 +1058,7 @@ swappiness 范围为 0..200；两类候选同时存在时至少各保留一页�
 - VFS 已具有 Vnode、Mount、每 Process root/cwd、memfs、legacy 回归后端与
   生产 rootfs v4；unlink/rmdir/rename/truncate/stat、链接、时间戳、orphan、
   五级稀疏块树和 ordered journal 已完成。mount 拓扑仍仅在启动期建立；
-  动态 unmount、dentry cache 与权限进入后续阶段。
+  V2.11.1 已冻结 dentry/inode cache 纯模型，但尚未接生产 lookup；动态 unmount 仍在后续。
 - v2.8 六个核心增量已有 64 位动态文件页 radix、统一 buffered read/write/file fault/
   `MAP_SHARED` frame、逻辑 EOF、精确 truncate、锁外 fill、按打开实例错误序列和统一
   direct reclaim；v2.9 已建立协作式 Kernel Thread、混合 User/Kernel dispatcher，并把

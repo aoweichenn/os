@@ -124,7 +124,7 @@ FileTable。若对象创建或 fd 安装失败，RAII 最后引用会调用
 - 每次 lookup 后跟随子 Mount；
 - 尾部 `/` 要求最终对象为目录；
 - getcwd 从 vnode 父链反向重建，挂载根使用父文件系统中的挂载点名称；
-- 解析期间不申请内存，不缓存正/负 dentry。
+- 解析期间不申请内存；V2.11.1 已冻结正/负 dentry 纯模型，但尚未接入该生产路径。
 
 当前 Mount 数组容量为 64，只在用户调度前发布；没有运行期 unmount。
 
@@ -432,7 +432,8 @@ Kernel 不再常驻一张约 32 MiB 的完整数据验证 bitmap。它以有界 
   在线修复或自动格式化；
 - 文件权限、uid/gid、umask、设备节点和扩展属性进入 v2.4；
 - v2.3 已冻结链接后端与路径语义，但用户态 `ln/readlink` 命令和权限检查进入 v2.4；
-- 没有 dentry/inode cache、动态 unmount 或 mount namespace 复制；
+- V2.11.1 只有 dentry/inode cache 身份与生命周期纯模型，尚未减少生产 lookup；动态
+  unmount 和 mount namespace 复制仍未实现；
 - rootfs、legacy 和 memfs 都使用单实例锁串行化修改；
 - ATA 运行期使用单飞 IRQ14 PIO 和显式 FLUSH CACHE，没有 DMA 或 tagged
   queue；early boot 仍采用有界轮询。
@@ -527,3 +528,16 @@ FsContext 的 root/cwd 都是已经 open 的目录引用。rootfs 目录不会�
 普通文件 close 仍读取 inode，因为最后一个 orphan 引用可能需要启动回收事务。
 该区分让进程退出不再因一次无关 ATA 读瞬态卡在 FsContext 释放，同时保留
 open-unlink 文件的持久恢复语义。
+
+## v2.11 VFS 命名空间缓存纯模型
+
+第一增量新增 `fs/vfs_namespace_cache.*`，但不修改 `Vfs` 对象或 backend operation。dentry
+key 保存 mount、parent superblock/node generation 和完整名称；inode identity 不保存
+mount，使不同命名空间位置能共享同一 vnode 元数据身份。
+
+Positive/Negative kind 与 Cached/Stale state 分开。失效只撤销 lookup 可见性，有外部引用
+的旧项保留到最后 release；inode 失效级联目标 dentry 和全部 child 正负项。dentry/inode
+分别按 access generation 回收，后者必须同时没有 external 和 dentry reference。线性扫描
+仅用于验证第一增量语义，后续 hash、metadata 填充和 production lookup 不得改变 token、
+引用或失效合同。设计见
+[ADR 0072](../adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)。

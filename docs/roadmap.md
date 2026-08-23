@@ -1589,6 +1589,46 @@ V2.10 六个实现增量至此完成，但按用户要求继续保持工程候�
 - 同页 miss 最终只执行一次来源 I/O，所有 waiter 观察同一成功或失败；
 - ATA/NVMe primary、reclaim、OOM、persistence 与 EIO/timeout 全部保持通过。
 
+### v2.11 VFS 元数据缓存与可扩展路径解析
+
+**范围**
+
+- 以 Linux dcache/inode cache 的核心语义减少重复组件 lookup 和 stat 后端访问；
+- Positive、Negative、Stale、引用、generation 与 LRU 必须覆盖 mount 和命名空间修改；
+- 缓存只作为 VFS 加速层，不能改变 rootfs v4、打开文件、orphan、DAC 或符号链接语义；
+- 不增加网络、SMP、图形和无关硬件驱动，不改变 ABI 2.4.0 与 4 GiB/128 GiB 规格。
+
+**增量顺序**
+
+1. dentry/inode identity、Positive/Negative/Stale、引用、generation 与 LRU 纯模型（已完成）；
+2. inode metadata cache 与 stat/open/exec 共享；
+3. Positive dentry 生产 lookup 与同组件 miss 合并；
+4. Negative dentry、NotFound/EIO 分离和创建失效；
+5. create/link/rename/unlink/symlink/mkdir/rmdir、mount crossing 与 cwd/root 一致性；
+6. hash/LRU shrinker、内存压力、ATA/NVMe 错误和持久化矩阵。
+
+**第一增量完成状态**
+
+`VfsNamespaceCache` 使用调用方提供的固定 dentry/inode 槽。dentry key 是 mount、parent
+superblock/node generation 与完整 1..255 字节名称；inode identity 不含 mount，因此不同
+mount 的同一 vnode 可以共享 inode。Positive dentry 持 inode generation token，Negative
+不持 inode；Cached 失效后从 lookup 消失，但有引用的旧项保留为 Stale，允许同 key 新项与
+旧 token 并存。
+
+inode 分开保存 dentry/external 引用。inode 失效同时撤销所有指向它和以它为 parent 的
+Cached 正负 dentry；Stale 资源等全部引用归零后释放。dentry LRU 只回收零外部引用项，inode
+LRU 还要求零 dentry 引用。第一增量只验证线性纯模型，不接 `Vfs::Resolve`、不减少后端 I/O、
+不新增运行期日志。设计由
+[ADR 0072](adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md) 冻结。
+
+**退出条件**
+
+- 热路径重复组件解析不再访问后端，Negative 不能掩盖 EIO；
+- rename/unlink/create 后不存在陈旧命中，旧打开对象仍按 generation 保持生命周期；
+- mount crossing、root/cwd、符号链接、DAC 和 orphan 语义不因缓存改变；
+- dentry/inode 元数据可由内存压力回收，引用项和进行中的 lookup 不能被释放；
+- ATA/NVMe primary、错误恢复、reclaim/OOM 与三启动 persistence 保持通过。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

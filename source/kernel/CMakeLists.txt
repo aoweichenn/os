@@ -58,6 +58,7 @@ set(
     include/os/kernel/fs/root_file_system_format.hpp
     include/os/kernel/fs/root_journal.hpp
     include/os/kernel/fs/vfs.hpp
+    include/os/kernel/fs/vfs_namespace_cache.hpp
 )
 set(
     OS_KERNEL_IO_HEADERS
@@ -212,6 +213,7 @@ set(
     src/fs/root_file_system_format.cpp
     src/fs/root_journal.cpp
     src/fs/vfs.cpp
+    src/fs/vfs_namespace_cache.cpp
 )
 set(
     OS_KERNEL_IO_SOURCES
@@ -582,6 +584,7 @@ add_library(
         src/fs/root_file_system_format.cpp
         src/fs/root_journal.cpp
         src/fs/vfs.cpp
+        src/fs/vfs_namespace_cache.cpp
         src/io/terminal.cpp
         src/io/file_description.cpp
         src/io/file_table.cpp
@@ -603,6 +606,7 @@ add_library(
         include/os/kernel/fs/procfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
+        include/os/kernel/fs/vfs_namespace_cache.hpp
         include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
         include/os/kernel/io/terminal.hpp
@@ -666,6 +670,7 @@ add_library(
         src/fs/root_file_system_format.cpp
         src/fs/root_journal.cpp
         src/fs/vfs.cpp
+        src/fs/vfs_namespace_cache.cpp
         src/memory/kernel_heap.cpp
         src/security/credentials.cpp
         src/sync/spin_lock.cpp
@@ -680,6 +685,7 @@ add_library(
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/root_journal.hpp
         include/os/kernel/fs/vfs.hpp
+        include/os/kernel/fs/vfs_namespace_cache.hpp
         include/os/kernel/memory/kernel_heap.hpp
         include/os/kernel/security/credentials.hpp
         include/os/kernel/sync/spin_lock.hpp

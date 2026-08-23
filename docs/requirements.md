@@ -526,6 +526,27 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   Succeeded/DeviceError/TimedOut/Cancelled，以及 4 GiB ATA/NVMe primary、reclaim、OOM、
   EIO/timeout 恢复与三启动 persistence；ABI 2.4.0、rootfs v4 和磁盘格式保持不变。
 
+## v2.11 VFS 元数据缓存要求
+
+- 第一增量只能建立不接生产 VFS 的纯状态模型，不得声称已经减少后端 lookup/stat I/O；
+- dentry key 必须包含 mount identifier、parent superblock/node identifier+generation、名称
+  长度与全部名称字节；不得只用 hash、裸指针或 inode number 作为身份；
+- inode identity 必须包含 superblock 和 node 两级 identifier+generation，且不包含 mount，
+  允许多个 mount dentry 共享同一 inode；
+- 名称只允许 1..255 字节，拒绝控制字符、DEL、`/`、`.` 与 `..`，未使用的固定存储必须为零；
+- dentry 必须区分 Positive/Negative kind 与 Free/Cached/Stale state；Negative 不得持有 inode
+  token，EIO/Corrupt/PermissionDenied 不得发布为 Negative；
+- 失效必须先从 Cached lookup 集合删除。有外部引用的旧项进入 Stale，同 key 新 Cached 项可
+  并存；最后 release 后槽位复用必须增加 generation，旧 token 永久无效；
+- inode 必须分开统计 Positive dentry 引用和外部引用。inode 失效必须级联所有指向它以及以
+  它为 parent 的 Cached 正负 dentry；零引用 Stale 不得留存；
+- dentry LRU 只能回收 Cached 且零外部引用项；inode LRU 还必须要求零 dentry 引用；
+- `Validate` 必须独立重算全部当前计数、Positive→inode 引用、Cached key 唯一性、Stale 引用
+  合法性和父级失效闭包；
+- unit、跨 mount/rename integration 与具名固定种子十万轮 randomized oracle 必须覆盖正常、
+  边界、容量拒绝、类型冲突、ABA、失效和回收；
+- 第一增量不新增运行期日志、QEMU marker、系统调用、盘面格式或网络/硬件能力。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

@@ -1312,6 +1312,11 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_vfs_namespace_cache_unit_tests
+    unit/kernel/vfs_namespace_cache_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
     os_kernel_vfs_permission_unit_tests
     unit/kernel/vfs_permission_test.cpp
     "unit"
@@ -1344,6 +1349,11 @@ os_add_kernel_file_system_test(
 os_add_kernel_file_system_test(
     os_kernel_vfs_backend_contract_integration_tests
     integration/boot/vfs_backend_contract_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_vfs_namespace_cache_isolation_integration_tests
+    integration/boot/vfs_namespace_cache_isolation_test.cpp
     "integration"
 )
 os_add_kernel_file_system_test(
@@ -1384,6 +1394,11 @@ os_add_kernel_file_system_test(
 os_add_kernel_file_system_test(
     os_kernel_vfs_namespace_randomized_tests
     randomized/kernel/vfs_namespace_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
+    os_kernel_vfs_namespace_cache_randomized_tests
+    randomized/kernel/vfs_namespace_cache_randomized_test.cpp
     "randomized"
 )
 set(OS_TEST_VFS_NAMESPACE_RANDOMIZED_TIMEOUT_SECONDS 300)

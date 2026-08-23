@@ -2588,6 +2588,40 @@ Error/paused 和打开实例错误序列。Loading/预读取消若已经提交�
 generation 丢弃。详见
 [ADR 0071](adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
 
+## v2.11 VFS 命名空间缓存
+
+第一增量先建立独立于生产 path walk 的对象图：
+
+```text
+VfsDentryKey
+  mount id
+  parent VfsInodeIdentity
+  exact name bytes
+       |
+       v
+VfsDentrySlot
+  Positive ----generation token----> VfsInodeSlot
+  Negative                           identity/type
+  Cached | Stale                    dentry refs + external refs
+       |                                  |
+       +-- external references            +-- Cached | Stale
+       +-- access generation              +-- access generation
+```
+
+dentry key 保留 mount，因为同一 vnode 在不同挂载路径下属于不同命名空间位置；inode identity
+不保留 mount，使两个正项可以共享同一 superblock/node generation。完整名称留在 key 中，
+未来 hash 只用于定位候选，最终仍按长度和全部字节判等。
+
+失效与回收是两个动作。失效把 Cached 变为 Stale，使新 lookup 立即 miss；旧引用仍能读取
+原 identity，最后 release 才释放 token。inode 失效同时扫描指向它和以它为 parent 的 Cached
+dentry，形成父目录失效闭包。LRU 只选择 Cached 零引用项，dentry 淘汰释放 inode 的 dentry
+reference；inode 还要等 external/dentry 两类引用都为零。
+
+11.1 使用调用方固定槽和线性扫描，目的是冻结状态与失败事务。它不接 `Vfs::Resolve`，不
+访问 backend operations，不缓存 `BackendNodeInformation`，也不增加来宾日志。生产 hash、
+miss 合并与 metadata 填充由后续增量接入。详见
+[ADR 0072](adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

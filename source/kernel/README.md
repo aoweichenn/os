@@ -330,3 +330,9 @@ Loading，但不等待同页 owner。设计见
 同步者继续范围扫描；失败保留 Error/paused。Clean reclaim 仍可越过 Writeback 回收其他
 候选。设计见
 [ADR 0071](../../docs/adr/0071-v2-10-file-page-writeback-wait-and-failure-matrix.md)。
+
+v2.11 第一增量增加 `fs/vfs_namespace_cache.*`。调用方固定槽保存完整 dentry key、正负项、
+Stale 旧引用、inode token 和两级 access generation；inode 失效会级联目标项和 child 正负
+dentry。当前模块只由 host 测试消费，不进入 `Vfs::Resolve`、后端 lookup、ProcessRuntime
+或来宾日志。设计见
+[ADR 0072](../../docs/adr/0072-v2-11-vfs-namespace-cache-identity-and-lifecycle.md)。

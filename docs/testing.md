@@ -1975,3 +1975,22 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   78.05/76.97 秒，NVMe EIO/timeout 2.29/9.72 秒，NVMe root primary 72.26 秒，ATA/NVMe
   persistence 162.50/144.34 秒。正常 QEMU 的 writeback begin/completion 相等，最终
   active/failure 为零；单 BSP waiter 允许为零，非零竞争由上述 hosted integration 提供。
+
+## v2.11 VFS 命名空间缓存测试
+
+### 身份与生命周期第一增量
+
+- `os_kernel_vfs_namespace_cache_unit_tests` 覆盖 Positive/Negative、alias 共享 inode、两类
+  引用、Stale 并存、父 inode 级联、容量失败、255 字节名称、非法名称、类型冲突、LRU 和
+  generation ABA；
+- `os_kernel_vfs_namespace_cache_isolation_integration_tests` 交错两个 mount 的同 parent/name，
+  要求 dentry 隔离而 inode 共享；rename 风格顺序保留旧正项 Stale，同时发布旧名 Negative
+  和新名 Positive；
+- `os_kernel_vfs_namespace_cache_randomized_tests` 使用种子 `0x44454E5452594C52` 执行十万轮
+  正负发布、0..3 引用、dentry/inode 失效、替换、释放、LRU 与 ABA，每轮归零并 Validate；
+- 第一增量不接生产 VFS，不新增 QEMU marker；focused 为 6/6、0 失败、58.77 秒；final
+  fresh CAW `python3 tools/os.py verify` 为 243/243、0 失败：73 unit、82 integration、
+  55 randomized、33 system，含 25 条 failure-path，CTest 992.72 秒、端到端 1065 秒；
+- final 4 GiB ATA primary 78.38 秒；ATA/NVMe reclaim 84.70/81.81 秒，ATA/NVMe OOM
+  82.23/81.59 秒，NVMe 正常/EIO/timeout 2.62/2.56/10.12 秒，NVMe root primary
+  78.36 秒，ATA/NVMe persistence 170.54/159.20 秒。

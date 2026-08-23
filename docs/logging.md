@@ -1432,3 +1432,9 @@ written 只表示写回完成，仍需下一轮 aging/clean eviction 才计入 r
 active/failure 为零。单 BSP 的真实调度可能让 waiter 数为零，因此 QEMU 不伪造非零竞争；
 强制重叠由 hosted concurrency 和 WaitQueue integration 提供。EIO/timeout profile 的失败
 证据使用设备层专用终态，不要求运行到正常统计尾部。
+
+## v2.11 命名空间缓存日志边界
+
+第一增量是 host-only 纯模型，不接 `Vfs::Resolve`，因此不增加来宾 marker，也不逐 dentry、
+inode、引用、失效或 LRU 打印。成功证据只进入 CTest 与发布记录。生产接线后仍只允许最终
+聚合，路径解析热区不得把名称或每次 cache hit 刷到 VGA 终端。

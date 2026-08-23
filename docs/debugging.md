@@ -2498,3 +2498,28 @@ SourceWriteFailed 必须把页留在 Error，清除 background request 并设置
 领取同一失败后返回，不能自行立即重试。只有显式 fsync/fdatasync/msync 或新的 writer 把
 Error 重新标为 Dirty 时才恢复。后台 controller 对失败批次进入 deadline backoff，不能用
 放宽 failure marker 隐藏忙循环。
+
+### NamespaceCache 同名项命中错误 mount
+
+先打印或在 GDB 检查完整 `VfsDentryKey`，不能只比较 parent inode number 和名称。key 必须
+包含 mount identifier、parent superblock identifier/generation、node identifier/generation
+以及精确名称长度/全部字节。hash 相同不等于 key 相同；11.1 线性模型也必须执行完整比较。
+
+### inode 失效后 child Negative 仍命中
+
+`InvalidateInode` 不只撤销“指向该 inode”的正项，还必须撤销所有 parent identity 等于该
+inode 的正负 child。检查 `cascaded_dentry_invalidation_count` 和 Validate 的父级失效闭包。
+若只清 Positive，旧 Negative 会在目录修改后继续伪造 NotFound。
+
+### Stale 项零引用但容量仍耗尽
+
+Stale 只为旧引用保留。最后 `ReleaseDentry` 要释放槽并归还 inode dentry reference；Stale
+inode 的 dentry/external 两类引用都为零时也必须释放。若直接把 state 改成 Free 而不保留
+slot generation，旧 token 可能在复用后重新有效。用 unit 的容量场景和 randomized 每轮
+active=0 定位该问题。
+
+### LRU 回收了仍被路径引用的对象
+
+dentry candidate 必须是 Cached 且 external reference 为零；inode 还要满足 dentry reference
+和 external reference 都为零。Stale 不参与 LRU，因为零引用 Stale 应在 release/invalidating
+事务中立即回收。第一增量没有生产 shrinker，不能从 QEMU I/O 数推断 LRU 已接入。
