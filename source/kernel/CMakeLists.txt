@@ -55,6 +55,9 @@ set(
     include/os/kernel/fs/legacy_file_system.hpp
     include/os/kernel/fs/memfs.hpp
     include/os/kernel/fs/procfs.hpp
+    include/os/kernel/fs/root_block_group_allocator.hpp
+    include/os/kernel/fs/root_delayed_allocation.hpp
+    include/os/kernel/fs/root_extent_tree.hpp
     include/os/kernel/fs/root_file_system.hpp
     include/os/kernel/fs/root_file_system_format.hpp
     include/os/kernel/fs/root_file_system_v5_format.hpp
@@ -215,6 +218,9 @@ set(
     src/fs/legacy_file_system.cpp
     src/fs/memfs.cpp
     src/fs/procfs.cpp
+    src/fs/root_block_group_allocator.cpp
+    src/fs/root_delayed_allocation.cpp
+    src/fs/root_extent_tree.cpp
     src/fs/root_file_system.cpp
     src/fs/root_file_system_format.cpp
     src/fs/root_file_system_v5_format.cpp
@@ -591,6 +597,9 @@ add_library(
         src/fs/legacy_file_system.cpp
         src/fs/memfs.cpp
         src/fs/procfs.cpp
+        src/fs/root_block_group_allocator.cpp
+        src/fs/root_delayed_allocation.cpp
+        src/fs/root_extent_tree.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
         src/fs/root_file_system_v5_format.cpp
@@ -620,6 +629,9 @@ add_library(
         include/os/kernel/fs/legacy_file_system.hpp
         include/os/kernel/fs/memfs.hpp
         include/os/kernel/fs/procfs.hpp
+        include/os/kernel/fs/root_block_group_allocator.hpp
+        include/os/kernel/fs/root_delayed_allocation.hpp
+        include/os/kernel/fs/root_extent_tree.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/root_file_system_v5_format.hpp
@@ -687,6 +699,9 @@ add_library(
         src/fs/legacy_file_system.cpp
         src/fs/memfs.cpp
         src/fs/procfs.cpp
+        src/fs/root_block_group_allocator.cpp
+        src/fs/root_delayed_allocation.cpp
+        src/fs/root_extent_tree.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
         src/fs/root_file_system_v5_format.cpp
@@ -707,6 +722,9 @@ add_library(
         include/os/kernel/fs/legacy_file_system.hpp
         include/os/kernel/fs/memfs.hpp
         include/os/kernel/fs/procfs.hpp
+        include/os/kernel/fs/root_block_group_allocator.hpp
+        include/os/kernel/fs/root_delayed_allocation.hpp
+        include/os/kernel/fs/root_extent_tree.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
         include/os/kernel/fs/root_file_system_v5_format.hpp

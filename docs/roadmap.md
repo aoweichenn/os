@@ -1830,13 +1830,41 @@ V2.11 六个工程增量至此闭合；按既有用户要求继续保持未发�
 - 后续 revoke 不允许旧 payload 覆盖释放目标，orphan add/remove 与 inode metadata 原子；
 - 聚焦、命名、4 GiB ATA/NVMe 与 fresh CAW verify 全绿。
 
-### v2.18 至 v2.20 rootfs v5 小型 ext4 核心
+### v2.18 extent、分组 allocator、delayed allocation 与范围操作
 
-V2 文件系统终态不再以零散 syscall 数量衡量。v2.16/v2.17 基础完成后固定顺序为：
+**范围**
 
-1. v2.18：extent tree、multi-block allocator、delayed allocation 与范围操作；
-2. v2.19：变长目录项、HTree、可扩展 inode、xattr、ACL 与 quota；
-3. v2.20：v4→v5 离线迁移、完整 fsck、故障/性能/持久化矩阵和生产根切换。
+- 冻结 4 KiB extent leaf/index 与 initialized/unwritten/hole 语义；
+- 实现 canonical split/merge/depth、组内连续 reservation 和 ENOSPC rollback；
+- 实现 delayed writeback、fallocate、punch、truncate、SEEK_DATA/SEEK_HOLE 和范围查询；
+- 用 journal ordered 故障矩阵和十万步逐块 oracle 验收；
+- 不接入 v5 mount，不改变生产 rootfs v4。
+
+**六个增量（全部完成）**
+
+1. extent node、UUID/generation、CRC32C 与盘面损坏拒绝；
+2. 256 extent、85 node、深度 3 的 canonical tree；
+3. bitmap locality/partial/fallback 与 reservation commit/abort；
+4. delayed→unwritten→initialized writeback 和 capacity rollback；
+5. fallocate/punch/truncate/seek/range query；
+6. 64 点 ordered journal、十万步模型、文档与整机回归。
+
+设计由 [ADR 0083](adr/0083-v2-18-rootfs-v5-extents-allocation.md) 冻结。v2.18 保持工程候选，
+不创建公开 tag；生产 ABI 和实际 node block 写入留给 v2.20。
+
+**退出条件**
+
+- extent logical/physical ownership 唯一，状态转换和树高守恒；
+- allocator 所有成功/失败路径 bitmap/free/reservation 守恒；
+- metadata 新态只与稳定 data 共存，范围接口与逐块 oracle 一致；
+- 聚焦、命名、4 GiB ATA/NVMe 与 fresh CAW verify 全绿。
+
+### v2.19 至 v2.20 rootfs v5 小型 ext4 核心
+
+V2 文件系统终态不再以零散 syscall 数量衡量。v2.16..v2.18 基础完成后固定顺序为：
+
+1. v2.19：变长目录项、HTree、可扩展 inode、xattr、ACL 与 quota；
+2. v2.20：v4→v5 离线迁移、完整 fsck、故障/性能/持久化矩阵和生产根切换。
 
 每个阶段先在独立格式模型和小几何实验后端闭环；v2.20 前 rootfs v4 继续承担整机生产回归。
 V2 不追求 Linux ext4 盘面兼容，也不加入网络、GUI、更多设备、快照、压缩、加密或多设备。

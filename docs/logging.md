@@ -1523,3 +1523,13 @@ replay、skip、discard、checksum failure、capacity rejection 和 Flush 聚合
 断电矩阵通过 failure ordinal 和 CTest 失败上下文定位；不会为 128+96 个故障点分别打印记录。
 未来接入生产 mount 后，终端最多保留 journal Corrupt/DeviceFailure 的阶段和 sequence 聚合，
 详细 replay 证据进入宿主日志或只读 `/proc`，避免 VGA 重新变成串口式刷屏。
+
+## v2.18 extent/allocation 日志边界
+
+extent、allocator 和 delalloc 仍是独立模型，不向 VGA 输出每次 split、bitmap bit、reservation、
+logical→physical 映射、writeback 或 seek。正常路径只维护 insert/remove/convert、split/merge/
+depth、reserve/commit/abort/release/locality/ENOSPC、delayed/writeback/range-query 聚合统计。
+
+故障测试通过 TestContext、固定 seed 和 persistence ordinal 定位；生产接线后 allocator 明细应
+进入结构化宿主证据或 `/proc` 聚合。终端只保留不可恢复的 Corrupt、ENOSPC 汇总和设备失败
+阶段，不能为每个 4 KiB block 增加滚动日志。

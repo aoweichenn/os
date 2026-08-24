@@ -135,6 +135,11 @@ checkpoint、ordered data 先行稳定、跨事务 revoke、幂等 replay 和 50
 commit 与 recovery 双断电矩阵使用 volatile/durable sector 模型；它仍未接入生产 mount。边界见
 [v2.17 记录](docs/releases/v2.17.md) 与
 [ADR 0082](docs/adr/0082-v2-17-rootfs-v5-journal-v2.md)。
+v2.18 已加入独立 extent/allocation 模型：4 KiB leaf/index、canonical split/merge、组内连续
+reservation、delayed→unwritten→initialized writeback，以及 fallocate、打洞、truncate、
+SEEK_DATA/SEEK_HOLE 和 FIEMAP 类查询。extent metadata 与 ordered data 通过 journal v2 故障
+矩阵验证，但仍未进入生产 mount。边界见 [v2.18 记录](docs/releases/v2.18.md) 与
+[ADR 0083](docs/adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

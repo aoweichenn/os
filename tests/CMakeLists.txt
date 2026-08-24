@@ -1342,6 +1342,31 @@ os_add_kernel_file_system_test(
     "randomized"
 )
 os_add_kernel_file_system_test(
+    os_kernel_root_extent_tree_unit_tests
+    unit/kernel/root_extent_tree_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_block_group_allocator_unit_tests
+    unit/kernel/root_block_group_allocator_test.cpp
+    "unit;failure-path"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_delayed_allocation_integration_tests
+    integration/boot/root_delayed_allocation_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_extent_journal_ordering_integration_tests
+    integration/boot/root_extent_journal_ordering_test.cpp
+    "integration;failure-path"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_extent_allocator_randomized_tests
+    randomized/kernel/root_extent_allocator_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
     os_kernel_inode_io_coordinator_unit_tests
     unit/kernel/inode_io_coordinator_test.cpp
     "unit"

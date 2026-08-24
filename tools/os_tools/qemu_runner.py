@@ -2494,6 +2494,22 @@ def roundedVgaTraceSnapshotSize(requiredSizeBytes: int) -> int:
     return min(roundedSizeBytes, OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES)
 
 
+def selectAppendOnlyVgaTraceOutput(
+    previousOutput: str,
+    firstOutput: str,
+    confirmationOutput: str | None = None,
+) -> str:
+    """允许一次并发 pmemsave 撕裂，但持续的历史改写仍立即失败。"""
+    if firstOutput.startswith(previousOutput):
+        return firstOutput
+    if (
+        confirmationOutput is not None
+        and confirmationOutput.startswith(previousOutput)
+    ):
+        return confirmationOutput
+    raise OsToolError("VGA 验收区内容发生非追加修改")
+
+
 def validateVgaDisplaySnapshot(snapshot: bytes) -> None:
     headerLines = snapshot.split(b"\n", 3)
     if len(headerLines) != 4 or headerLines[0] != b"P6" or headerLines[2] != b"255":
@@ -2713,7 +2729,32 @@ def runQemuWithTimedVgaTrace(
                         output = decodeVgaTraceSnapshot(snapshot)
                         previousOutput = capturedOutput[0]
                         if not output.startswith(previousOutput):
-                            raise OsToolError("VGA 验收区内容发生非追加修改")
+                            time.sleep(OS_QEMU_VGA_TRACE_POLL_INTERVAL_SECONDS)
+                            confirmationSnapshot = readVgaTraceSnapshot(
+                                qmpStream,
+                                traceDumpPath,
+                                snapshotSizeBytes,
+                            )
+                            confirmationRequiredSizeBytes = (
+                                requiredVgaTraceSnapshotSize(
+                                    confirmationSnapshot
+                                )
+                            )
+                            if (
+                                confirmationRequiredSizeBytes
+                                > snapshotSizeBytes
+                            ):
+                                snapshotSizeBytes = roundedVgaTraceSnapshotSize(
+                                    confirmationRequiredSizeBytes
+                                )
+                                continue
+                            output = selectAppendOnlyVgaTraceOutput(
+                                previousOutput,
+                                output,
+                                decodeVgaTraceSnapshot(
+                                    confirmationSnapshot
+                                ),
+                            )
                         delta = output[len(previousOutput):]
                         capturedOutput[0] = output
                         pendingLine += delta

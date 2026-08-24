@@ -398,5 +398,12 @@ superblock、四个 descriptor/revoke/payload/commit/checkpoint 槽和 503-entry
 幂等 recovery。它们不替换 `root_journal.*` 的 v4 生产路径，也尚未创建 v5 mount。设计见
 [ADR 0082](../../docs/adr/0082-v2-17-rootfs-v5-journal-v2.md)。
 
+v2.18 新增 `fs/root_extent_tree.*`、`root_block_group_allocator.*` 和
+`root_delayed_allocation.*`。它们分别负责 4 KiB extent codec/canonical tree、外部 group bitmap
+reservation，以及 delayed→unwritten→initialized writeback 和范围操作。extent node 作为
+journal v2 metadata，data block 走 ordered barrier；当前仍是 hosted/独立格式模型，不替换
+rootfs v4 或扩展用户 ABI。设计见
+[ADR 0083](../../docs/adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
+
 Ring 3 的九个新包装由共享 object target 按 function section 编译；LLD 只保留每个 ELF 实际
 引用的包装，避免 ABI 扩展把无关程序的映射页和 rootfs 冷页工作集一起扩大。

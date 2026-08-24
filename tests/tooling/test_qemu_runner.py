@@ -29,6 +29,7 @@ from tools.os_tools.qemu_runner import (
     qemuKeyNameForCharacter,
     requiredVgaTraceSnapshotSize,
     roundedVgaTraceSnapshotSize,
+    selectAppendOnlyVgaTraceOutput,
     validateImageSize,
     validateQemuSoakIterationCount,
     validateVgaDisplaySnapshot,
@@ -494,6 +495,22 @@ class QemuRunnerToolTests(unittest.TestCase):
             decodeVgaTraceSnapshot(bytes(OS_QEMU_VGA_TRACE_REGION_SIZE_BYTES)),
             "",
         )
+
+    def testConfirmsTransientVgaTraceSnapshotRewrite(self) -> None:
+        self.assertEqual(
+            selectAppendOnlyVgaTraceOutput(
+                "RESET\nREADY\n",
+                "RESET\nBROKEN",
+                "RESET\nREADY\nNEXT\n",
+            ),
+            "RESET\nREADY\nNEXT\n",
+        )
+        with self.assertRaises(OsToolError):
+            selectAppendOnlyVgaTraceOutput(
+                "RESET\nREADY\n",
+                "RESET\nBROKEN",
+                "RESET\nREWRITTEN\n",
+            )
 
     def testRejectsUnsupportedVgaTraceVersion(self) -> None:
         with self.assertRaises(OsToolError):

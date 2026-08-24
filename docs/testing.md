@@ -2197,3 +2197,27 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   88 integration、59 randomized、33 system，含 26 条 failure-path；CTest 786.88 秒。ATA/NVMe
   primary、reclaim、OOM、persistence 分别为 65.06/62.89、69.15/69.58、68.30/68.11、
   128.15/127.00 秒；CAW 峰值宿主内存 6.7 GiB。
+
+## v2.18 extent/allocation 测试
+
+- `os_kernel_root_extent_tree_unit_tests` 覆盖 leaf/index round-trip、CRC、逻辑/物理 overlap、
+  256 extent→85 node/深度 3、批量删除后的深度收缩，以及 unwritten 中段 split/merge；
+- `os_kernel_root_block_group_allocator_unit_tests` 覆盖 journal protected range、locality、300-block
+  请求 partial、group fallback、reservation commit/abort、stale token、double free 和全盘 ENOSPC；
+- `os_kernel_root_delayed_allocation_integration_tests` 覆盖 delayed 无物理地址、writeback
+  unwritten→initialized、abort retry、fallocate keep-size、punch、EOF 外预分配 truncate、seek/query，
+  并强制 extent capacity 失败验证 bitmap rollback；
+- `os_kernel_root_extent_journal_ordering_integration_tests` 在 64 个 persistence ordinal 注入失败；
+  只要恢复后的 extent node 是新态，对应 data block 必须为新态；
+- `os_kernel_root_extent_allocator_randomized_tests` 以种子 `0x455854414C4C4F43` 执行十万步，
+  逐逻辑块 oracle 检查 Hole/Delayed/Unwritten/Initialized、physical block、free count、file size、
+  SEEK_DATA 和 SEEK_HOLE；
+- CAW 聚焦 5/5、0 失败，强制重编后总计 0.18 秒；最终 full verify 证据见
+  [v2.18 候选记录](releases/v2.18.md)。
+- 首轮 full verify 263/264，唯一失败为 NVMe storage 的单次 VGA trace 非追加采样；同一构建
+  不改代码定向 70.83 秒通过。runner 加入双快照确认，tooling unit 与定向 70.81 秒通过；持续
+  非追加仍由单元测试拒绝；
+- final fresh CAW 全构建 3685 个目标；`python3 tools/os.py verify` 为 264/264、0 失败：81 unit、
+  90 integration、60 randomized、33 system，含 28 failure-path；CTest 876.29 秒。ATA/NVMe
+  primary、reclaim、OOM、persistence 分别为 71.88/70.82、77.78/73.62、75.53/74.99、
+  144.56/141.94 秒；CAW 峰值宿主内存 6.5 GiB。

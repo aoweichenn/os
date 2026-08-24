@@ -702,3 +702,31 @@ sector 与 durable sector 分开，Flush 才合并，Crash 丢弃 volatile。这
 orphan block 以 0 表示空槽，非零 inode 必须位于 user inode 范围且唯一；entry count 必须重算
 一致。它本身不释放 extent，而是让后续 mount/recovery 知道哪些 inode 仍需完成 truncate 或
 unlink。决策见 [ADR 0082](../adr/0082-v2-17-rootfs-v5-journal-v2.md)。
+
+## v2.18 extent、allocator 与 delayed allocation
+
+`root_extent_tree.*` 同时提供盘面 codec 和 runtime canonical tree。盘面 node 有 123 个 entry；
+runtime 使用 4 路/256 extent/85 node/深度 3。Insert 同时检查 logical 和 physical ownership，
+Convert 可把任意完整覆盖的 Unwritten/Initialized 子范围 split，再由 Normalize 合并相邻同态
+连续映射；Remove 返回被删除交集的精确物理范围，供 allocator 释放。
+
+`root_block_group_allocator.*` 借用调用方提供的 descriptor、bitmap 和 free-count storage。
+Reserve 先置位并返回 slot+generation token；Commit 保留位，Abort 清位。扫描优先 preferred
+group，返回 exact 或满足 minimum 的 partial run，再循环 fallback。protected range、metadata、
+尾组越界位、active reservation 和 stale token 均不可释放。
+
+`root_delayed_allocation.*` 管理 64 个逻辑脏范围和一个 active writeback：
+
+```text
+ReserveWrite       delayed only
+BeginWriteback     allocator reserve + Unwritten insert
+CompleteWriteback  Unwritten→Initialized + reservation commit + delayed remove
+AbortWriteback     extent remove + reservation abort; delayed remains
+```
+
+Fallocate、PunchHole、Truncate 和 seek/query 复用相同状态。QueryRanges 最多输出 320 条，Delayed
+返回 NO_BLOCK，Unwritten 保持物理 ownership 但按 hole 处理。当前模块不处理已映射 Initialized
+extent 的覆盖写内容；那条路径继续由 FilePageCache 权威页和既有 writeback 协调。
+
+extent node 经 RootJournalV2 metadata payload 提交，data block 经 ordered payload 先稳定。完整
+边界见 [ADR 0083](../adr/0083-v2-18-rootfs-v5-extents-allocation.md)。

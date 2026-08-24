@@ -371,6 +371,16 @@ ctest --preset developer -R root_journal_v2 --output-on-failure
 512B sector、Flush、volatile cache 和 Crash。journal/orphan inode 的实际 v5 镜像映射从
 v2.18 allocator/extent 阶段开始。
 
+v2.18 extent/allocation 仍不修改实验镜像，定向 hosted 验证为：
+
+```bash
+ctest --preset developer -R 'root_(extent|block_group|delayed)' --output-on-failure
+```
+
+测试使用 1000-block/4-group 小几何和调用方提供的 bitmap storage；生产 128 GiB profile 仍由
+v2.16 几何测试覆盖。不要把 runtime 4 路树 fanout 误写成盘面容量：盘面 node 可容纳 123 entry，
+4 路只是为了在小测试中频繁触发 split/merge。
+
 ## Kernel ELF64 生成链
 
 ```text

@@ -2902,6 +2902,49 @@ orphan block 使用 UUID、generation、entry count、503 个 64 位 inode slot 
 保留给 journal/orphan inode，但 v2.18 extent/allocator 前不在 v5 镜像中建立它们的物理映射。
 完整决策见 [ADR 0082](adr/0082-v2-17-rootfs-v5-journal-v2.md)。
 
+## v2.18 extent、block-group allocator 与 delayed allocation
+
+v2.18 把逻辑文件块、物理 ownership 和 page-cache delayed 状态拆成三个模块：
+
+```text
+RootDelayedAllocation
+  → logical dirty range, no physical block
+  → BeginWriteback
+      → RootBlockGroupAllocator reservation
+      → RootExtentTree Unwritten
+  → data stable
+      → Initialized + reservation commit
+```
+
+extent 盘面节点为 4 KiB，小端 header/entry 和 CRC32C。leaf 保存 logical/physical/count/state，
+index 保存 logical/child/generation/covered count。盘面容量为 123 entry；hosted runtime 模型使用
+4 路节点和 256 extent 上限，最多 85 node、深度 3，以较小状态稳定覆盖 split、merge、深度增长
+与收缩。canonical extent 必须按 logical 排序，同时拒绝物理区间重复所有权。
+
+allocator 不复制生产 1024 张 bitmap，而是借用调用方 storage：
+
+```text
+preferred group first-fit/longest candidate
+  → exact run if available
+  → partial run when count >= minimum
+  → circular group fallback
+  → reservation marks bitmap
+      ├─ extent insert success → Commit
+      └─ mapping failure      → Abort / restore free count
+```
+
+journal 和其他 protected range 在扫描时视为占用。metadata、tail、未分配、active reservation 或
+重复释放都会拒绝；Validate 重算每组 free count，并检查 reservation 互不重叠。
+
+Delayed range 没有物理地址；Unwritten 已分配但按 hole/零语义处理；Initialized 才是稳定 data。
+Fallocate 创建 Unwritten，PunchHole 先预检 ownership 再删除和释放，Truncate shrink 还会释放
+EOF 外 keep-size 预分配。SEEK_DATA 识别 Delayed/Initialized，SEEK_HOLE 识别 absent/Unwritten，
+QueryRanges 返回三种映射状态。
+
+extent node 作为 journal metadata，文件块作为 ordered data；故障矩阵要求 recovered metadata
+一旦引用 Initialized extent，数据必已稳定。当前模型不创建生产 v5 mount，也不扩展 ABI；
+设计见 [ADR 0083](adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

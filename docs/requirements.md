@@ -711,6 +711,30 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 
 状态机与失败语义由 [ADR 0082](adr/0082-v2-17-rootfs-v5-journal-v2.md) 冻结。
 
+## v2.18 extent、allocator 与 delayed allocation 要求
+
+- extent leaf/index 必须使用 4 KiB、小端、64 位 logical/physical/count、UUID/generation 和
+  CRC32C；leaf 必须区分 Initialized/Unwritten，hole 不保存 entry；
+- logical overlap、physical duplicate ownership、非法 child、越界、未知 state、非零保留区和
+  checksum 错误必须在 decode/Insert/Validate 三层拒绝；
+- runtime 模型必须覆盖至少 256 extent、4 路、85 node 和深度 3，并验证 split/merge、树高增长/
+  收缩、中段状态转换和 canonical 相邻合并；
+- allocator 必须使用调用方 bitmap storage，优先 inode/preferred group 的连续 run，支持 minimum
+  下的 partial 与循环 group fallback；journal/protected range 不得分配或释放；
+- bitmap 修改必须先形成带 generation 的 reservation；extent 插入失败必须 Abort 并恢复 free
+  count，成功后才 Commit；ENOSPC、stale token、double free 不得改变状态；
+- hole buffered write 必须先登记 Delayed，writeback 时才取得物理块并插入 Unwritten；只有数据
+  稳定后才能转换 Initialized，失败保留 delayed 以便重试；
+- Fallocate 必须创建 Unwritten；PunchHole 不改变 file size；Truncate shrink 必须删除 EOF 外
+  delayed/mapped/keep-size 预分配；
+- SEEK_DATA 把 Delayed/Initialized 视为 data，SEEK_HOLE 把 absent/Unwritten 视为 hole；范围查询
+  必须区分三态且 Delayed 不得伪造 physical block；
+- extent+journal 故障矩阵必须证明 metadata-new implies ordered-data-new；固定种子十万步模型必须
+  核对 mapping、ownership、free count、file size 和 seek；
+- v2.18 不改变生产 rootfs v4、ABI v2.6.0、4 GiB/128 GiB、ATA/NVMe 和 VGA。
+
+设计由 [ADR 0083](adr/0083-v2-18-rootfs-v5-extents-allocation.md) 冻结。
+
 ## v2.15 每 inode I/O 协调要求
 
 - VFS 必须按完整 superblock/node identity 管理 128 个有界活跃 I/O 槽；同 identity 共享一个

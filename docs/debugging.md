@@ -2793,3 +2793,43 @@ superblock → clear slot。若先清 descriptor 或先推进 superblock，断�
 检查随机模型是否在每个状态决策都对完整 4 KiB payload 执行逐位 CRC32C。容量、覆盖和断电由
 unit/failure-path 直接测试；随机模型应保留十万步状态决策，只按固定比例执行真实 stage/commit，
 每 64 步抽查 durable home，并在结束时核对全部目标。
+
+## v2.18 extent/allocation 排错
+
+### allocator 返回成功但 extent 插入失败后 free count 变少
+
+检查调用方是否把 Reserve 当成最终分配。正确顺序是 Reserve → extent Insert → Commit；Insert
+失败必须使用原 token Abort。token 包含 generation，不能保存 slot 后自行清 bitmap。定向
+capacity 用例会把 tree 填满 256 extent，要求 BeginWriteback 返回 MappingFailed、delayed 保留且
+free count 完全恢复。
+
+### 两个文件 extent 指向同一物理块但 Validate 仍通过
+
+logical 不重叠不足以证明 ownership 唯一。检查 leaf decode、RootExtentTree::Insert 和 Validate
+是否都比较 physical range；只依赖 allocator 位图会让损坏镜像绕过检查。index child block 也
+必须唯一，且不得落入 journal/protected range。
+
+### fallocate 后 SEEK_DATA 错误返回预分配范围
+
+Fallocate 创建的是 Unwritten：有物理 ownership，但读取为零，本阶段 SEEK_HOLE 将其视为 hole。
+FIEMAP 类 QueryRanges 应返回 Unwritten 和真实 physical block；Delayed 才返回 NO_BLOCK。
+
+### truncate 后 EOF 外 keep-size extent 仍占块
+
+shrink 不能只 punch `[new_size, old_size)`。先扫描 extent/delayed 的最高逻辑结尾，再释放
+`[new_size, highest_mapping_end)`；否则 keep-size fallocate 位于旧 EOF 之后的块会泄漏。完成后
+同时核对 tree extent count、allocator free count 和 double-release 拒绝。
+
+### writeback 完成后数据仍可能是旧值
+
+BeginWriteback 只创建 Unwritten，调用方必须等 data stable 后才能 CompleteWriteback。生产 journal
+顺序应是 ordered data Flush 后再提交引用 Initialized extent 的 metadata。64 点 extent+journal
+用例以“metadata 新态蕴含 data 新态”检查这个边界。
+
+### QEMU 偶发报告 `VGA 验收区内容发生非追加修改`
+
+先用完全相同的 Kernel/镜像定向复现，并保留失败时刻。VGA trace 的 length 和 bytes 由 guest
+并发追加，QMP pmemsave 不是跨整个共享区的发布协议；一次快照可能跨越两个提交瞬间。runner
+首次发现非追加时等待一个 poll 并重新读取完整快照：第二份恢复已有前缀则采用确认结果；第二份
+仍改写历史才报告失败。不能无限重试，也不能删除 append-only 门禁。v2.18 首轮 NVMe storage
+在 11.56 秒触发一次，原构建定向 70.83 秒通过，双快照版定向 70.81 秒和 full verify 均通过。

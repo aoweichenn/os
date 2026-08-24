@@ -176,6 +176,12 @@
 | revoke | 较晚 committed transaction 声明某个旧 metadata target 不得再 replay，防止释放或改作他用的块被陈旧日志覆盖 |
 | orphan file | 保存已脱离目录但仍需在崩溃后完成 truncate/unlink 的 inode number；v2.17 冻结 CRC32C block 和事务原子性，尚未执行 extent 清理 |
 | ordered data | 不写入 metadata journal、但必须在引用它的新 metadata commit 前 Flush 到 home 的文件数据 |
+| extent | 用 logical start、physical start 和 block count 表示一段连续文件映射；相邻连续同态范围应合并 |
+| unwritten extent | 已占用物理块但尚未发布有效文件数据的 extent；文件系统读取按零处理，SEEK_HOLE 将其视为 hole |
+| delayed allocation | page cache 已有脏数据但尚未选择物理块的状态；writeback 才向 allocator 请求连续 run |
+| multi-block allocator | 一次从 block-group bitmap 选择连续多个块的分配器；优先局部组并减少 extent 碎片 |
+| reservation token | bitmap 临时置位后的 slot+generation 身份；mapping 成功后 commit，失败则 abort 回滚 |
+| `SEEK_DATA` / `SEEK_HOLE` | 从给定逻辑位置寻找下一段数据或空洞；v2.18 把 Delayed/Initialized 视为 data，Absent/Unwritten 视为 hole |
 | inode | 文件系统内部对象身份；保存类型、逻辑大小、generation、父关系和数据块索引，名字由目录项另行保存 |
 | inode generation | inode number 回收复用时递增的身份代次；目录项与 vnode 必须同时匹配编号和代次 |
 | direct block | inode 直接保存的数据块指针，小文件无需额外索引块 |
