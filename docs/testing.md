@@ -2221,3 +2221,11 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   90 integration、60 randomized、33 system，含 28 failure-path；CTest 876.29 秒。ATA/NVMe
   primary、reclaim、OOM、persistence 分别为 71.88/70.82、77.78/73.62、75.53/74.99、
   144.56/141.94 秒；CAW 峰值宿主内存 6.5 GiB。
+
+## v2.19 directory/metadata 测试
+
+- directory unit 覆盖 variable record/index CRC、512-entry/73-node/depth-2、lookup bound 和收缩；
+- inode metadata unit 覆盖 extension feature、xattr replace/remove、ACL 零权限与 mask、quota
+  hard/soft/grace 和 CRC；
+- randomized 以 `0x4449524D45544131` 执行十万步 directory/xattr/quota oracle；
+- CAW 聚焦 3/3、0 失败，0.03 秒；full verify 证据见 [v2.19](releases/v2.19.md)。

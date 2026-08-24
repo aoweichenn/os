@@ -1533,3 +1533,8 @@ depth、reserve/commit/abort/release/locality/ENOSPC、delayed/writeback/range-q
 故障测试通过 TestContext、固定 seed 和 persistence ordinal 定位；生产接线后 allocator 明细应
 进入结构化宿主证据或 `/proc` 聚合。终端只保留不可恢复的 Corrupt、ENOSPC 汇总和设备失败
 阶段，不能为每个 4 KiB block 增加滚动日志。
+
+## v2.19 directory/metadata 日志边界
+
+HTree lookup、xattr、ACL 和 quota 成功路径不输出 VGA；只维护 lookup node/collision、容量和
+quota rejection 聚合。损坏由 hosted codec/fsck 报告结构类型与 inode，不逐 entry 刷屏。

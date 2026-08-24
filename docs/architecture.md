@@ -2945,6 +2945,18 @@ extent node 作为 journal metadata，文件块作为 ordered data；故障矩�
 一旦引用 Initialized extent，数据必已稳定。当前模型不创建生产 v5 mount，也不扩展 ABI；
 设计见 [ADR 0083](adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
 
+## v2.19 variable directory 与 inode metadata
+
+目录 leaf 把 name/inode/type/hash 写成 8-byte aligned variable record；HTree 以 UUID-seeded 64-bit
+hash 路由到 leaf，碰撞继续比较名称。内存模型为 8 路、512 entry、73 node、深度 2。
+
+inode mapping root 的 extension v1 绑定 extent、directory、xattr pointer 及 ACL/quota generation。
+xattr 按 namespace/name 排序；ACL 按 POSIX owner→named user→group union+mask→other 顺序判断；
+quota 对 user/group 分别维护 block/inode hard/soft/grace。全部 metadata block 使用 CRC32C。
+
+这些结构尚未由 production `RootFileSystem` 读取；v2.20 必须新增真实 backend 后才能切换根。
+设计见 [ADR 0084](adr/0084-v2-19-directory-metadata-policy.md)。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

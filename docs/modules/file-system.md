@@ -730,3 +730,10 @@ extent 的覆盖写内容；那条路径继续由 FilePageCache 权威页和既�
 
 extent node 经 RootJournalV2 metadata payload 提交，data block 经 ordered payload 先稳定。完整
 边界见 [ADR 0083](../adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
+
+## v2.19 directory 与 inode policy metadata
+
+`root_directory_index.*` 提供 variable dirent codec 和 8 路 HTree；排序键为 `(hash,name)`，冷
+lookup 记录实际 node count。`root_inode_metadata.*` 提供 extension v1、sorted xattr、POSIX ACL
+和 user/group quota。decode 在任何 name/value copy 前验证长度，ACL 显式零权限不会回退，quota
+更新先验证候选再提交。盘面与策略见 [ADR 0084](../adr/0084-v2-19-directory-metadata-policy.md)。

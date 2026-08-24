@@ -405,5 +405,9 @@ journal v2 metadata，data block 走 ordered barrier；当前仍是 hosted/独�
 rootfs v4 或扩展用户 ABI。设计见
 [ADR 0083](../../docs/adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
 
+v2.19 新增 `fs/root_directory_index.*` 与 `root_inode_metadata.*`，实现 variable dirent/HTree、
+inode extension、xattr、ACL 和 quota 的独立格式/策略模型。它们尚未接入 production backend；
+边界见 [ADR 0084](../../docs/adr/0084-v2-19-directory-metadata-policy.md)。
+
 Ring 3 的九个新包装由共享 object target 按 function section 编译；LLD 只保留每个 ELF 实际
 引用的包装，避免 ABI 扩展把无关程序的映射页和 rootfs 冷页工作集一起扩大。

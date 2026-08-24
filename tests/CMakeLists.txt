@@ -1367,6 +1367,21 @@ os_add_kernel_file_system_test(
     "randomized"
 )
 os_add_kernel_file_system_test(
+    os_kernel_root_directory_index_unit_tests
+    unit/kernel/root_directory_index_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_inode_metadata_unit_tests
+    unit/kernel/root_inode_metadata_test.cpp
+    "unit;failure-path"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_directory_metadata_randomized_tests
+    randomized/kernel/root_directory_metadata_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
     os_kernel_inode_io_coordinator_unit_tests
     unit/kernel/inode_io_coordinator_test.cpp
     "unit"

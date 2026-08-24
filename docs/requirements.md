@@ -735,6 +735,18 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 
 设计由 [ADR 0083](adr/0083-v2-18-rootfs-v5-extents-allocation.md) 冻结。
 
+## v2.19 directory、xattr、ACL 与 quota 要求
+
+- dirent 必须变长、8 字节对齐、绑定 inode generation/name hash 并带 block CRC32C；损坏长度必须
+  在复制名称前拒绝；
+- HTree lookup 必须走有界 index path，hash collision 继续逐名称比较，不能以热 dentry 代替；
+- inode extension feature 必须与 extent/directory/xattr pointer 和 ACL/quota generation 一致；
+- xattr 必须按 namespace/name 排序并覆盖 replace/remove/capacity/checksum；
+- ACL 必须具备 owner/named user/group/mask/other，显式零权限不能错误回退到 group；
+- user/group quota 必须覆盖 hard、soft grace、release 和失败不变；
+- 固定种子十万步模型必须比较 directory/xattr/quota oracle；
+- v2.19 不得宣称 production v5 mount 已完成。
+
 ## v2.15 每 inode I/O 协调要求
 
 - VFS 必须按完整 superblock/node identity 管理 128 个有界活跃 I/O 槽；同 identity 共享一个

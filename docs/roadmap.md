@@ -1866,6 +1866,9 @@ V2 文件系统终态不再以零散 syscall 数量衡量。v2.16..v2.18 基础�
 1. v2.19：变长目录项、HTree、可扩展 inode、xattr、ACL 与 quota；
 2. v2.20：v4→v5 离线迁移、完整 fsck、故障/性能/持久化矩阵和生产根切换。
 
+v2.19 的 variable dirent/HTree、inode extension、xattr/ACL/quota 独立模型已完成；当前唯一剩余
+V2 阶段为 v2.20。退出条件仍是生产根真实切到 v5，不以 hosted model 数量替代。
+
 每个阶段先在独立格式模型和小几何实验后端闭环；v2.20 前 rootfs v4 继续承担整机生产回归。
 V2 不追求 Linux ext4 盘面兼容，也不加入网络、GUI、更多设备、快照、压缩、加密或多设备。
 范围由 [ADR 0079](adr/0079-v2-mini-ext4-rootfs-v5-program.md) 冻结。

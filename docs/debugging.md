@@ -2833,3 +2833,9 @@ BeginWriteback 只创建 Unwritten，调用方必须等 data stable 后才能 Co
 首次发现非追加时等待一个 poll 并重新读取完整快照：第二份恢复已有前缀则采用确认结果；第二份
 仍改写历史才报告失败。不能无限重试，也不能删除 append-only 门禁。v2.18 首轮 NVMe storage
 在 11.56 秒触发一次，原构建定向 70.83 秒通过，双快照版定向 70.81 秒和 full verify 均通过。
+
+## v2.19 directory/metadata 排错
+
+HTree hash 命中但名称不同必须继续扫描 collision leaf；xattr decode 必须先验证 name/value length
+再复制。ACL 中 named user 即使权限为零也已经匹配，不能回退 group。Quota limit 变更若低于
+当前 usage 必须失败且保留原 record。

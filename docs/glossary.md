@@ -182,6 +182,11 @@
 | multi-block allocator | 一次从 block-group bitmap 选择连续多个块的分配器；优先局部组并减少 extent 碎片 |
 | reservation token | bitmap 临时置位后的 slot+generation 身份；mapping 成功后 commit，失败则 abort 回滚 |
 | `SEEK_DATA` / `SEEK_HOLE` | 从给定逻辑位置寻找下一段数据或空洞；v2.18 把 Delayed/Initialized 视为 data，Absent/Unwritten 视为 hole |
+| variable dirent | 以 record length 跳到下一项的目录记录；名称只占实际长度并按对齐填充 |
+| HTree | 以名称 hash 路由目录 leaf 的有界树；hash 碰撞后仍须比较完整名称 |
+| xattr | 由 namespace、名称和二进制值组成的扩展属性；ACL/security metadata 可复用该容器 |
+| ACL mask | POSIX ACL 对 named user、group owner 和 named group 权限施加的共同上限 |
+| quota grace | 使用量超过 soft limit 后仍允许暂时写入的期限；到期后继续超限会被拒绝 |
 | inode | 文件系统内部对象身份；保存类型、逻辑大小、generation、父关系和数据块索引，名字由目录项另行保存 |
 | inode generation | inode number 回收复用时递增的身份代次；目录项与 vnode 必须同时匹配编号和代次 |
 | direct block | inode 直接保存的数据块指针，小文件无需额外索引块 |
