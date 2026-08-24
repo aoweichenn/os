@@ -220,6 +220,17 @@ constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_CLOSE_STATUS_PREFIX[] =
     "[OS][KERNEL][READAHEAD][FAIL] CLOSE_STATUS=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_COMPLETION_STATUS_PREFIX[] =
     "[OS][KERNEL][READAHEAD][FAIL] COMPLETION_STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STAGE_PREFIX[] =
+    "[OS][KERNEL][TRUNCATE][FAIL] STAGE=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX[] =
+    "[OS][KERNEL][TRUNCATE][FAIL] STATUS=";
+constexpr char OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_PROCESS_ID_PREFIX[] =
+    "[OS][KERNEL][TRUNCATE][FAIL] PROCESS_ID=";
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_CANCEL_STAGE = 1ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_PROTECT_STAGE = 2ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_MAPPING_STAGE = 3ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_WRITEBACK_STAGE = 4ULL;
+constexpr uint64_t OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_RELEASE_FAILURE_STATUS = UINT64_MAX;
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_EXIT_PROCESS_ID_PREFIX[] =
     "[OS][KERNEL][FATAL] EXIT_PROCESS_ID=";
 constexpr char OS_KERNEL_PROCESS_RUNTIME_FATAL_PROCESS_TREE_STATUS_PREFIX[] =
@@ -383,6 +394,9 @@ MapFileDescriptionStatus(const FileDescriptionStatus status) noexcept {
     if (status == FileDescriptionStatus::ObjectFailure) {
         return ProcessIoStatus::ObjectFailure;
     }
+    if (status == FileDescriptionStatus::NotSeekable) {
+        return ProcessIoStatus::NotSeekable;
+    }
     return ProcessIoStatus::InvalidArgument;
 }
 
@@ -467,6 +481,7 @@ struct ProcessRuntimeProcess final {
     FileTable file_table;
     fs::FsContext file_system_context;
     os::abi::ResourceLimit resource_limits[os::abi::OS_ABI_RESOURCE_LIMIT_KIND_COUNT];
+    bool address_space_stable;
     bool active;
 };
 
@@ -949,35 +964,96 @@ RetainDirectoryForAt(ProcessRuntimeProcess &process, const uint64_t directory_de
 
 void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) noexcept;
 
-[[nodiscard]] bool PrepareRuntimeFileTruncate(const FileIdentity &identity,
-                                              const uint64_t size_bytes) noexcept {
-    if (!CancelRuntimeFileReadaheadFile(identity)) {
+[[nodiscard]] bool RuntimeProcessAddressSpaceIsUsable(
+    const uint64_t process_index, const ProcessRuntimeProcess &runtime_process,
+    bool &address_space_usable) noexcept {
+    address_space_usable = false;
+    if (!runtime_process.active || !runtime_process.address_space_stable ||
+        runtime_process.address_space.root_physical_address ==
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return true;
+    }
+    ProcessTreeEntry tree_entry{};
+    if (process_tree.Read(process_index, tree_entry) != ProcessTreeStatus::Succeeded) {
         return false;
+    }
+    if (tree_entry.state == ProcessTreeState::Zombie) {
+        return true;
+    }
+    if (tree_entry.state != ProcessTreeState::Alive &&
+        tree_entry.state != ProcessTreeState::Stopped) {
+        return false;
+    }
+    address_space_usable = true;
+    return true;
+}
+
+[[nodiscard]] bool ProtectRuntimeSharedFileMappings() noexcept;
+
+[[nodiscard]] FileSystemStatus PrepareRuntimeFileTruncate(const FileIdentity &identity,
+                                                          const uint64_t size_bytes) noexcept {
+    if (!CancelRuntimeFileReadaheadFile(identity)) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_CANCEL_STAGE);
+        return FileSystemStatus::Corrupt;
+    }
+    if (!ProtectRuntimeSharedFileMappings()) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_PROTECT_STAGE);
+        return FileSystemStatus::Corrupt;
     }
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          process_index < process_runtime_limits.process_capacity; ++process_index) {
         ProcessRuntimeProcess &runtime_process = runtime_processes[process_index];
-        // Zombie 仍由父进程持有结果槽，但其地址空间已经销毁。truncate 只处理
-        // 仍然存在的地址空间，不能把合法的 Zombie 生命周期误判为页缓存损坏。
-        if (!runtime_process.active || runtime_process.address_space.root_physical_address ==
-                                           OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        // MarkExited 先发布 Zombie，地址空间随后才清理；这段过渡期不能再参与全局 VMA 扫描。
+        bool address_space_usable = false;
+        if (!RuntimeProcessAddressSpaceIsUsable(process_index, runtime_process,
+                                                address_space_usable)) {
+            return FileSystemStatus::Corrupt;
+        }
+        if (!address_space_usable) {
             continue;
         }
-        if (TruncateUserFileMappings(runtime_process.address_space, identity, size_bytes) !=
-            UserVirtualMemoryStatus::Succeeded) {
-            return false;
+        const UserVirtualMemoryStatus truncate_status =
+            TruncateUserFileMappings(runtime_process.address_space, identity, size_bytes);
+        if (truncate_status != UserVirtualMemoryStatus::Succeeded) {
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STAGE_PREFIX,
+                                     OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_MAPPING_STAGE);
+            WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX,
+                                     static_cast<uint64_t>(truncate_status));
+            WriteProcessRuntimeValue(
+                OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_PROCESS_ID_PREFIX,
+                runtime_process.result.process_id);
+            return FileSystemStatus::Corrupt;
         }
         runtime_process.result.mapped_page_count = runtime_process.address_space.mapped_page_count;
     }
-    return true;
+    uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    const UserVirtualMemoryStatus writeback_status = WritebackUserFilePageCacheRange(
+        identity, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, UINT64_MAX, UINT64_MAX,
+        written_page_count);
+    if (writeback_status != UserVirtualMemoryStatus::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STAGE_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_WRITEBACK_STAGE);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(writeback_status));
+        return writeback_status == UserVirtualMemoryStatus::FileWriteFailed
+                   ? FileSystemStatus::DeviceFailure
+                   : FileSystemStatus::Corrupt;
+    }
+    return FileSystemStatus::Succeeded;
 }
 
 [[nodiscard]] bool ProtectRuntimeSharedFileMappings() noexcept {
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          process_index < process_runtime_limits.process_capacity; ++process_index) {
         ProcessRuntimeProcess &runtime_process = runtime_processes[process_index];
-        if (!runtime_process.active || runtime_process.address_space.root_physical_address ==
-                                           OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        bool address_space_usable = false;
+        if (!RuntimeProcessAddressSpaceIsUsable(process_index, runtime_process,
+                                                address_space_usable)) {
+            return false;
+        }
+        if (!address_space_usable) {
             continue;
         }
         if (ProtectUserSharedFileMappings(runtime_process.address_space) !=
@@ -1057,7 +1133,7 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
         const uint64_t process_index = (anonymous_reclaim_process_cursor + scan_index) %
                                        process_runtime_limits.process_capacity;
         ProcessRuntimeProcess &process = runtime_processes[process_index];
-        if (!process.active ||
+        if (!process.active || !process.address_space_stable ||
             process.address_space.root_physical_address == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE ||
             process.result.process_id == OS_KERNEL_PROCESS_RUNTIME_INIT_PROCESS_ID) {
             continue;
@@ -1484,6 +1560,7 @@ void ResetRuntimeStorage() noexcept {
     }
     const ProcessRuntimeProcess &process = runtime_processes[thread.process_index];
     return GetCpuLocal().Statistics().current_thread_index == thread_index &&
+           process.address_space_stable &&
            process.address_space.root_physical_address != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
            ReadPageTableRoot() == process.address_space.root_physical_address;
 }
@@ -1507,7 +1584,7 @@ void ResetRuntimeStorage() noexcept {
     ProcessRuntimeProcess &process = runtime_processes[thread.process_index];
     ProcessRuntimeThread &runtime_thread = runtime_threads[thread_index];
     KernelStack stack{};
-    if (!process.active) {
+    if (!process.active || !process.address_space_stable) {
         user_thread_activation_failure_stage =
             OS_KERNEL_PROCESS_RUNTIME_USER_ACTIVATION_CONTEXT_STAGE;
         return false;
@@ -2333,7 +2410,7 @@ ObserveProcessPagesForAging(const ProcessRuntimeProcess &process) noexcept {
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
          process_index < process_runtime_limits.process_capacity; ++process_index) {
         const ProcessRuntimeProcess &process = runtime_processes[process_index];
-        if (process.active) {
+        if (process.active && process.address_space_stable) {
             process_observation_status = ObserveProcessPagesForAging(process);
             if (process_observation_status != PageAgingStatus::Succeeded) {
                 break;
@@ -2747,11 +2824,21 @@ CancelRuntimeFileReadaheadStream(void *const context, const FileReadaheadStreamT
 
 [[nodiscard]] bool CancelRuntimeFileReadaheadFile(const FileCacheIdentity &identity) noexcept {
     uint64_t cancelled_request_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    return file_readahead_request_queue.CancelFile(
-               identity, file_readahead_cancelled_requests,
-               OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY,
-               cancelled_request_count) == FileReadaheadRequestStatus::Succeeded &&
-           ReleaseRuntimeCancelledReadaheadRequests(cancelled_request_count);
+    const FileReadaheadRequestStatus request_status = file_readahead_request_queue.CancelFile(
+        identity, file_readahead_cancelled_requests,
+        OS_KERNEL_PROCESS_RUNTIME_FILE_READAHEAD_REQUEST_CAPACITY, cancelled_request_count);
+    if (request_status != FileReadaheadRequestStatus::Succeeded) {
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX,
+                                 static_cast<uint64_t>(request_status));
+        return false;
+    }
+    if (!ReleaseRuntimeCancelledReadaheadRequests(cancelled_request_count)) {
+        WriteProcessRuntimeValue(
+            OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX,
+            OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_RELEASE_FAILURE_STATUS);
+        return false;
+    }
+    return true;
 }
 
 [[nodiscard]] bool ContinueRuntimeFileReadahead(void *const context,
@@ -4090,6 +4177,7 @@ RegisterRuntimeProcess(UserAddressSpace &address_space, const UserProgramSelecti
                                                  : ProcessRuntimeStatus::FileSystemFailure;
     }
 
+    runtime_process.address_space_stable = true;
     runtime_process.active = true;
     runtime_threads[thread_index].saved_frame = saved_frame;
     runtime_threads[thread_index].user_stack_base_address =
@@ -4925,6 +5013,7 @@ CompleteCurrentThread(ExceptionFrame &frame, const ProcessTerminationReason term
     // 管线组长仍能作为稳定的 PGID 锚点，父子双方的 setpgid 不会产生竞态。
     user_thread_runtime_statistics.process_exit_cancelled_thread_count += terminated_sibling_count;
 
+    process.address_space_stable = false;
     SetActiveUserAddressSpace(nullptr);
     ActivateKernelPageTable();
     const UserAddressSpaceStatus destroy_status = DestroyUserAddressSpace(process.address_space);
@@ -6719,6 +6808,7 @@ ProcessRuntimeStatus ForkCurrentProcess(ExceptionFrame &frame, uint64_t &process
         .console_bytes_read = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
         .console_bytes_written = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
     };
+    child_runtime_process.address_space_stable = true;
     child_runtime_process.active = true;
     runtime_threads[child_thread_index].saved_frame = child_saved_frame;
     runtime_threads[child_thread_index].user_stack_base_address =
@@ -9014,13 +9104,16 @@ FileSystemStatus OpenCurrentProcessFileAt(const uint64_t directory_descriptor,
             return FileSystemStatus::Unsupported;
         }
         fs::NodeInformation information{};
-        if (process_vfs->StatOpenFile(open_file, information) != fs::Status::Succeeded ||
-            !PrepareRuntimeFileTruncate(FileIdentityFromInformation(information),
-                                        OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)) {
+        const FileSystemStatus prepare_status =
+            process_vfs->StatOpenFile(open_file, information) == fs::Status::Succeeded
+                ? PrepareRuntimeFileTruncate(FileIdentityFromInformation(information),
+                                             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)
+                : FileSystemStatus::Corrupt;
+        if (prepare_status != FileSystemStatus::Succeeded) {
             if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
                 HaltProcessor();
             }
-            return FileSystemStatus::Corrupt;
+            return prepare_status;
         }
         status = process_vfs->TruncateOpenFile(open_file, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
         if (status != fs::Status::Succeeded) {
@@ -9145,8 +9238,12 @@ FileSystemStatus WriteCurrentProcessFile(const uint64_t file_descriptor, const u
             return balance_status;
         }
     }
-    const FileDescriptionStatus status = file_description_manager.TryWrite(
-        reference, source, length_bytes, written_bytes, file_system_status, pipe_status);
+    const uint64_t file_size_limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
+            .current;
+    const FileDescriptionStatus status =
+        file_description_manager.TryWrite(reference, source, length_bytes, file_size_limit,
+                                          written_bytes, file_system_status, pipe_status);
     if (status == FileDescriptionStatus::Succeeded) {
         if (snapshot.kind == FileDescriptionKind::TerminalDevice) {
             process.result.console_bytes_written += written_bytes;
@@ -9240,8 +9337,10 @@ FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path, const uint64_t 
     if (size_bytes > file_size_limit) {
         return FileSystemStatus::FileTooLarge;
     }
-    if (!PrepareRuntimeFileTruncate(FileIdentityFromInformation(information), size_bytes)) {
-        return FileSystemStatus::Corrupt;
+    const FileSystemStatus prepare_status =
+        PrepareRuntimeFileTruncate(FileIdentityFromInformation(information), size_bytes);
+    if (prepare_status != FileSystemStatus::Succeeded) {
+        return prepare_status;
     }
     const fs::Status truncate_status =
         process_vfs->Truncate(process.file_system_context, path, path_length_bytes, size_bytes);
@@ -9756,26 +9855,8 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
         FileDescriptionStatus::Succeeded) {
         return ProcessIoStatus::ObjectFailure;
     }
-    uint64_t effective_length_bytes = length_bytes;
-    if (snapshot.kind == FileDescriptionKind::RegularFile && length_bytes != 0ULL) {
-        const uint64_t file_size_limit =
-            process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
-                .current;
-        const uint64_t write_offset =
-            (snapshot.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) != 0ULL
-                ? snapshot.size_bytes
-                : snapshot.offset_bytes;
-        if (write_offset >= file_size_limit) {
-            file_system_status = FileSystemStatus::FileTooLarge;
-            return ProcessIoStatus::FileSystemFailure;
-        }
-        const uint64_t available_bytes = file_size_limit - write_offset;
-        if (effective_length_bytes > available_bytes) {
-            effective_length_bytes = available_bytes;
-        }
-    }
     if (snapshot.kind == FileDescriptionKind::RegularFile &&
-        effective_length_bytes != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        length_bytes != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
         const FileSystemStatus balance_status = BalanceRuntimeFileWritebackPressure();
         if (balance_status != FileSystemStatus::Succeeded) {
             file_system_status = balance_status;
@@ -9784,7 +9865,12 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
     }
     PipeStatus pipe_status = PipeStatus::Succeeded;
     const FileDescriptionStatus description_status = file_description_manager.TryWrite(
-        reference, source, effective_length_bytes, written_bytes, file_system_status, pipe_status);
+        reference, source, length_bytes,
+        snapshot.kind == FileDescriptionKind::RegularFile
+            ? process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
+                  .current
+            : UINT64_MAX,
+        written_bytes, file_system_status, pipe_status);
     const ProcessIoStatus status = MapFileDescriptionStatus(description_status);
     if (status == ProcessIoStatus::Succeeded) {
         if (snapshot.kind == FileDescriptionKind::TerminalOutput ||
@@ -9802,6 +9888,201 @@ ProcessIoStatus TryWriteCurrentProcessDescriptor(const uint64_t descriptor,
         ++pipe_broken_observation_count;
     }
     return status;
+}
+
+ProcessIoStatus SeekCurrentProcessDescriptor(const uint64_t descriptor,
+                                             const int64_t displacement_bytes,
+                                             const FileSeekOrigin origin, uint64_t &offset_bytes,
+                                             FileSystemStatus &file_system_status) noexcept {
+    offset_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    KernelObjectReference reference{};
+    if (CurrentRuntimeProcess().file_table.Lookup(descriptor, reference) !=
+        FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return MapFileDescriptionStatus(file_description_manager.Seek(
+        reference, displacement_bytes, origin, offset_bytes, file_system_status));
+}
+
+ProcessIoStatus ReadCurrentProcessDescriptorAt(const uint64_t descriptor,
+                                               const uint64_t offset_bytes,
+                                               uint8_t *const destination,
+                                               const uint64_t capacity_bytes, uint64_t &read_bytes,
+                                               FileSystemStatus &file_system_status) noexcept {
+    read_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    KernelObjectReference reference{};
+    if (process.file_table.Lookup(descriptor, reference) != FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    const ProcessIoStatus status = MapFileDescriptionStatus(file_description_manager.TryReadAt(
+        reference, offset_bytes, destination, capacity_bytes, read_bytes, file_system_status));
+    if (status == ProcessIoStatus::Succeeded) {
+        process.result.file_system_bytes_read += read_bytes;
+    }
+    return status;
+}
+
+ProcessIoStatus WriteCurrentProcessDescriptorAt(const uint64_t descriptor,
+                                                const uint64_t offset_bytes,
+                                                const uint8_t *const source,
+                                                const uint64_t length_bytes,
+                                                uint64_t &written_bytes,
+                                                FileSystemStatus &file_system_status) noexcept {
+    written_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    KernelObjectReference reference{};
+    if (process.file_table.Lookup(descriptor, reference) != FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    if (length_bytes != OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        const FileSystemStatus balance_status = BalanceRuntimeFileWritebackPressure();
+        if (balance_status != FileSystemStatus::Succeeded) {
+            file_system_status = balance_status;
+            return ProcessIoStatus::FileSystemFailure;
+        }
+    }
+    const uint64_t file_size_limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
+            .current;
+    const ProcessIoStatus status = MapFileDescriptionStatus(
+        file_description_manager.TryWriteAt(reference, offset_bytes, source, length_bytes,
+                                            file_size_limit, written_bytes, file_system_status));
+    if (status == ProcessIoStatus::Succeeded) {
+        process.result.file_system_bytes_written += written_bytes;
+    }
+    return status;
+}
+
+ProcessIoStatus StatCurrentProcessDescriptor(const uint64_t descriptor,
+                                             fs::NodeInformation &information,
+                                             FileSystemStatus &file_system_status) noexcept {
+    information = fs::NodeInformation{};
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    KernelObjectReference reference{};
+    if (CurrentRuntimeProcess().file_table.Lookup(descriptor, reference) !=
+        FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return MapFileDescriptionStatus(
+        file_description_manager.Stat(reference, information, file_system_status));
+}
+
+ProcessIoStatus TruncateCurrentProcessDescriptor(const uint64_t descriptor,
+                                                 const uint64_t size_bytes,
+                                                 FileSystemStatus &file_system_status) noexcept {
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    KernelObjectReference reference{};
+    if (process.file_table.Lookup(descriptor, reference) != FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    const uint64_t file_size_limit =
+        process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
+            .current;
+    if (size_bytes > file_size_limit) {
+        file_system_status = FileSystemStatus::FileTooLarge;
+        return ProcessIoStatus::FileSystemFailure;
+    }
+    fs::NodeInformation information{};
+    const FileDescriptionStatus stat_status =
+        file_description_manager.Stat(reference, information, file_system_status);
+    if (stat_status != FileDescriptionStatus::Succeeded) {
+        return MapFileDescriptionStatus(stat_status);
+    }
+    if (information.type != fs::NodeType::RegularFile) {
+        file_system_status = FileSystemStatus::InvalidHandle;
+        return ProcessIoStatus::FileSystemFailure;
+    }
+    const FileSystemStatus prepare_status =
+        PrepareRuntimeFileTruncate(FileIdentityFromInformation(information), size_bytes);
+    if (prepare_status != FileSystemStatus::Succeeded) {
+        file_system_status = prepare_status;
+        return ProcessIoStatus::FileSystemFailure;
+    }
+    return MapFileDescriptionStatus(
+        file_description_manager.Truncate(reference, size_bytes, file_system_status));
+}
+
+ProcessIoStatus ChangeCurrentProcessDescriptorMode(const uint64_t descriptor,
+                                                   const os::abi::FileMode mode,
+                                                   FileSystemStatus &file_system_status) noexcept {
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    KernelObjectReference reference{};
+    if (process.file_table.Lookup(descriptor, reference) != FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return MapFileDescriptionStatus(file_description_manager.ChangeMode(
+        reference, process.file_system_context, mode, file_system_status));
+}
+
+ProcessIoStatus ChangeCurrentProcessDescriptorOwner(const uint64_t descriptor,
+                                                    const os::abi::UserIdentifier user_identifier,
+                                                    const os::abi::GroupIdentifier group_identifier,
+                                                    FileSystemStatus &file_system_status) noexcept {
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    KernelObjectReference reference{};
+    if (process.file_table.Lookup(descriptor, reference) != FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return MapFileDescriptionStatus(file_description_manager.ChangeOwner(
+        reference, process.file_system_context, user_identifier, group_identifier,
+        file_system_status));
+}
+
+ProcessIoStatus GetCurrentProcessFileStatusFlags(const uint64_t descriptor,
+                                                 uint64_t &file_status_flags) noexcept {
+    file_status_flags = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    KernelObjectReference reference{};
+    if (CurrentRuntimeProcess().file_table.Lookup(descriptor, reference) !=
+        FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return MapFileDescriptionStatus(
+        file_description_manager.GetStatusFlags(reference, file_status_flags));
+}
+
+ProcessIoStatus SetCurrentProcessFileStatusFlags(const uint64_t descriptor,
+                                                 const uint64_t file_status_flags) noexcept {
+    if (!IsProcessSchedulingActive()) {
+        return ProcessIoStatus::InvalidArgument;
+    }
+    KernelObjectReference reference{};
+    if (CurrentRuntimeProcess().file_table.Lookup(descriptor, reference) !=
+        FileTableStatus::Succeeded) {
+        return ProcessIoStatus::InvalidDescriptor;
+    }
+    return MapFileDescriptionStatus(
+        file_description_manager.SetStatusFlags(reference, file_status_flags));
 }
 
 ProcessIoStatus CloseCurrentProcessDescriptor(const uint64_t descriptor,
@@ -10535,6 +10816,7 @@ ResolveCurrentProcessUserReturnMemory(const uint64_t instruction_pointer,
         }
     }
     user_thread_runtime_statistics.process_exit_cancelled_thread_count += terminated_thread_count;
+    process.address_space_stable = false;
     if (DestroyUserAddressSpace(process.address_space) != UserAddressSpaceStatus::Succeeded) {
         return false;
     }

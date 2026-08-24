@@ -606,3 +606,20 @@ ABI v2.5.0 保留 1..87 和 -1..-59，在末尾追加 88..96：`OpenFileAt`、
 使用 48/40/48/40 字节固定请求结构；Kernel 只接受精确大小和已知 flag。用户包装不暴露
 Vnode 或 VFS handle。真实 `fs_probe` 用打开的 `/shared` 目录执行全部九个调用，核对普通
 文件类型、no-follow 符号链接类型、目标字节、rename/link/remove 和最终文件内容。
+
+## v2.14 打开文件描述 ABI
+
+ABI v2.6.0 保留 1..96，在末尾追加 97 `SeekDescriptor`、98 `ReadDescriptorAt`、99
+`WriteDescriptorAt`、100 `StatDescriptor`、101 `TruncateDescriptor`、102
+`ChangeDescriptorMode`、103 `ChangeDescriptorOwner`、104 `GetFileStatusFlags`、105
+`SetFileStatusFlags`；错误区间追加 -60 `NotSeekable`。
+
+seek origin 为 Beginning=0、Current=1、End=2；status flags 为 Readable=1、Writable=2、
+Append=4。用户 wrapper 只传固定宽度 descriptor、offset、长度和用户地址；fstat 沿用现有
+112 字节 `FileInformation`，没有新可变结构。`fs_probe` 以公开 wrapper 完成全部九项调用并
+在最后统一同步，成功不向 VGA 输出逐操作日志。
+
+九个 wrapper 位于独立共享 object target，并以 `-ffunction-sections` 编译；Ring 3 链接统一
+启用 `--gc-sections`。因此只有实际调用新 ABI 的 ELF 保留对应函数，其他静态程序不会因接口
+数量增长而无条件增加 text/rodata 映射页。linker script 仍 KEEP 基础
+`OsUserInvokeSystemCall` section，让完全不调用 syscall 的故障注入 ELF 也满足统一审计契约。

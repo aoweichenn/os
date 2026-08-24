@@ -143,6 +143,26 @@ set(
     -nostdinc++
 )
 
+# V2.14 的 fd 包装只编译一次并按函数分段；每个静态 Ring 3 ELF 只保留实际调用的包装，
+# 避免一次 ABI 扩展把无关程序的代码段、构建时间和 rootfs 工作集整体推高。
+add_library(
+    os_user_file_description_system_call_objects
+    OBJECT
+        src/file_description_system_call.cpp
+)
+target_link_libraries(os_user_file_description_system_call_objects PRIVATE os_system_abi)
+target_include_directories(
+    os_user_file_description_system_call_objects
+    PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
+target_compile_options(
+    os_user_file_description_system_call_objects
+    PRIVATE
+        ${OS_USER_FREESTANDING_COMPILE_OPTIONS}
+        -ffunction-sections
+)
+
 function(
     os_add_user_program
     OS_USER_TARGET
@@ -183,16 +203,20 @@ function(
             -T
             "${OS_USER_LINKER_SCRIPT}"
             --build-id=none
+            --gc-sections
             -z
             max-page-size=${OS_USER_MAXIMUM_PAGE_SIZE_BYTES}
             -o
             "${OS_USER_OUTPUT_PATH}"
             $<TARGET_OBJECTS:${OS_USER_OBJECT_TARGET}>
+            $<TARGET_OBJECTS:os_user_file_description_system_call_objects>
             "${OS_USER_SYSTEM_CALL_ASSEMBLY_OBJECT}"
             "${OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT}"
         DEPENDS
             ${OS_USER_OBJECT_TARGET}
             $<TARGET_OBJECTS:${OS_USER_OBJECT_TARGET}>
+            os_user_file_description_system_call_objects
+            $<TARGET_OBJECTS:os_user_file_description_system_call_objects>
             "${OS_USER_SYSTEM_CALL_ASSEMBLY_OBJECT}"
             "${OS_USER_EXTENDED_STATE_ASSEMBLY_OBJECT}"
             "${OS_USER_LINKER_SCRIPT}"

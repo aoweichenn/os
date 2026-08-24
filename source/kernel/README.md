@@ -357,3 +357,21 @@ v2.13 在 `fs/vfs.*` 增加 `DirectoryHandle`、单/双基准 `*At` 和 director
 同阶段 RootFS 将串行 read/write 的 4 KiB block scratch 迁入实例；`process_runtime.*` 再把
 background reclaim 规划、work acquire/complete/wait 与 writeback/swap I/O 拆成非嵌套阶段。
 动态 Kernel stack 仍为 4 个 mapped 页和上下 guard，不以扩容掩盖 pressure 栈回归。
+
+v2.14 在 `io/file_description.*` 增加 regular-file seek、positioned read/write、打开文件
+stat/truncate/mode/owner 与 status flags；duplicate/fork 继续共享顺序 offset，positioned I/O
+不修改它。`fs/vfs.*` 用共同 append RuntimeMutex 原子执行逻辑 EOF 查询、RLIMIT_FSIZE 裁剪和
+WriteAt，覆盖独立 open description；`process_runtime.*` 负责 truncate 前的 mapping/cache
+协调。`user/system_calls.*` 分发 ABI 2.6.0 的 97..105 与 -60 `NotSeekable`。设计见
+[ADR 0078](../../docs/adr/0078-v2-14-open-file-description-operations.md)。
+
+truncate 准备先取消 readahead、写保护共享映射、释放 EOF 外映射，并等待同 identity 的
+writeback 终态；VFS 只在准备成功后提交后端 size，避免 cache `EntryBusy` 形成半事务。
+全局映射扫描只接受 `address_space_stable` 且 ProcessTree Alive/Stopped；退出/OOM 在 Destroy
+前先清除 stable，不能用 active 或非零 CR3 猜测 teardown 中的 VMA 是否可读。
+
+buffered write 在可能阻塞的 page Acquire 返回后才 retain VfsWriteback backing，并紧接
+MarkDirty；descriptor size 预先覆盖完整 write end，避免 clean release 在 Dirty 发布前抢先关闭。
+
+Ring 3 的九个新包装由共享 object target 按 function section 编译；LLD 只保留每个 ELF 实际
+引用的包装，避免 ABI 扩展把无关程序的映射页和 rootfs 冷页工作集一起扩大。

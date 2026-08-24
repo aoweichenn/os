@@ -11,6 +11,7 @@ constexpr uint64_t OS_KERNEL_VFS_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_WAIT_QUEUE_IDENTIFIER = 0x8000000000000103ULL;
 constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_MUTATION_WAIT_QUEUE_IDENTIFIER = 0x8000000000000105ULL;
 constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_RECLAIM_WAIT_QUEUE_IDENTIFIER = 0x8000000000000106ULL;
+constexpr uint64_t OS_KERNEL_VFS_APPEND_WAIT_QUEUE_IDENTIFIER = 0x8000000000000107ULL;
 constexpr uint64_t OS_KERNEL_VFS_LOOKUP_WAIT_QUEUE_IDENTIFIER_BASE = 0x8000000000001100ULL;
 constexpr uint64_t OS_KERNEL_VFS_METADATA_WAIT_QUEUE_IDENTIFIER_BASE = 0x8000000000002100ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER = 0ULL;
@@ -232,6 +233,9 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
         }) != RuntimeMutexStatus::Succeeded ||
         this->namespace_reclaim_lock_.Initialize(WaitQueueId{
             .value = OS_KERNEL_VFS_NAMESPACE_RECLAIM_WAIT_QUEUE_IDENTIFIER,
+        }) != RuntimeMutexStatus::Succeeded ||
+        this->append_lock_.Initialize(WaitQueueId{
+            .value = OS_KERNEL_VFS_APPEND_WAIT_QUEUE_IDENTIFIER,
         }) != RuntimeMutexStatus::Succeeded) {
         return Status::Corrupt;
     }
@@ -1205,23 +1209,42 @@ Status Vfs::CheckAccess(const FsContext &context, const uint8_t *const path,
 
 Status Vfs::ChangeMode(const FsContext &context, const uint8_t *const path,
                        const uint64_t path_length_bytes, const os::abi::FileMode mode) noexcept {
-    if ((mode & ~os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK) != 0U) {
-        return Status::InvalidArgument;
-    }
     Path resolved{};
     const Status status = this->Resolve(context, path, path_length_bytes, resolved);
     if (status != Status::Succeeded) {
         return status;
     }
+    return this->ChangeNodeMode(context, resolved, mode);
+}
+
+Status Vfs::ChangeOpenFileMode(const FsContext &context, const OpenFile &open_file,
+                               const os::abi::FileMode mode) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!context.initialized ||
+        context.credentials.supplementary_group_count >
+            security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY ||
+        !open_file.open || !this->PathIsValid(open_file.path)) {
+        return Status::InvalidHandle;
+    }
+    return this->ChangeNodeMode(context, open_file.path, mode);
+}
+
+Status Vfs::ChangeNodeMode(const FsContext &context, const Path &path,
+                           const os::abi::FileMode mode) noexcept {
+    if ((mode & ~os::abi::OS_ABI_FILE_MODE_CHANGEABLE_MASK) != 0U) {
+        return Status::InvalidArgument;
+    }
     BackendNodeInformation information{};
-    const Status information_status = this->ReadNodeInformation(resolved, information);
+    const Status information_status = this->ReadNodeInformation(path, information);
     if (information_status != Status::Succeeded) {
         return information_status;
     }
     if (!security::CanChangeMode(context.credentials, information.owner_user_identifier)) {
         return Status::PermissionDenied;
     }
-    Superblock *const superblock = resolved.vnode.superblock;
+    Superblock *const superblock = path.vnode.superblock;
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
@@ -1234,13 +1257,13 @@ Status Vfs::ChangeMode(const FsContext &context, const uint8_t *const path,
         !security::IsMemberOfGroup(context.credentials, information.owner_group_identifier)) {
         updated_mode &= ~os::abi::OS_ABI_FILE_MODE_SET_GROUP_IDENTIFIER;
     }
-    MetadataLockGuard metadata_guard{*this, &resolved.vnode, 1ULL};
+    MetadataLockGuard metadata_guard{*this, &path.vnode, 1ULL};
     if (!metadata_guard.Active()) {
         return Status::Corrupt;
     }
-    const Status change_status = superblock->operations->change_mode(superblock->backend_context,
-                                                                     resolved.vnode, updated_mode);
-    return change_status == Status::Succeeded ? this->InvalidateNodeInformation(resolved.vnode)
+    const Status change_status =
+        superblock->operations->change_mode(superblock->backend_context, path.vnode, updated_mode);
+    return change_status == Status::Succeeded ? this->InvalidateNodeInformation(path.vnode)
                                               : change_status;
 }
 
@@ -1253,8 +1276,29 @@ Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
     if (status != Status::Succeeded) {
         return status;
     }
+    return this->ChangeNodeOwner(context, resolved, user_identifier, group_identifier);
+}
+
+Status Vfs::ChangeOpenFileOwner(const FsContext &context, const OpenFile &open_file,
+                                const os::abi::UserIdentifier user_identifier,
+                                const os::abi::GroupIdentifier group_identifier) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!context.initialized ||
+        context.credentials.supplementary_group_count >
+            security::OS_KERNEL_CREDENTIAL_SUPPLEMENTARY_GROUP_CAPACITY ||
+        !open_file.open || !this->PathIsValid(open_file.path)) {
+        return Status::InvalidHandle;
+    }
+    return this->ChangeNodeOwner(context, open_file.path, user_identifier, group_identifier);
+}
+
+Status Vfs::ChangeNodeOwner(const FsContext &context, const Path &path,
+                            const os::abi::UserIdentifier user_identifier,
+                            const os::abi::GroupIdentifier group_identifier) noexcept {
     BackendNodeInformation information{};
-    const Status information_status = this->ReadNodeInformation(resolved, information);
+    const Status information_status = this->ReadNodeInformation(path, information);
     if (information_status != Status::Succeeded) {
         return information_status;
     }
@@ -1263,7 +1307,7 @@ Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
                                   group_identifier)) {
         return Status::PermissionDenied;
     }
-    Superblock *const superblock = resolved.vnode.superblock;
+    Superblock *const superblock = path.vnode.superblock;
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
@@ -1277,14 +1321,13 @@ Status Vfs::ChangeOwner(const FsContext &context, const uint8_t *const path,
         group_identifier == os::abi::OS_ABI_GROUP_IDENTIFIER_UNCHANGED
             ? information.owner_group_identifier
             : group_identifier;
-    MetadataLockGuard metadata_guard{*this, &resolved.vnode, 1ULL};
+    MetadataLockGuard metadata_guard{*this, &path.vnode, 1ULL};
     if (!metadata_guard.Active()) {
         return Status::Corrupt;
     }
-    const Status change_status =
-        superblock->operations->change_owner(superblock->backend_context, resolved.vnode,
-                                             updated_user_identifier, updated_group_identifier);
-    return change_status == Status::Succeeded ? this->InvalidateNodeInformation(resolved.vnode)
+    const Status change_status = superblock->operations->change_owner(
+        superblock->backend_context, path.vnode, updated_user_identifier, updated_group_identifier);
+    return change_status == Status::Succeeded ? this->InvalidateNodeInformation(path.vnode)
                                               : change_status;
 }
 
@@ -2029,6 +2072,41 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
     return status;
 }
 
+Status Vfs::Append(const OpenFile &open_file, const uint8_t *const source,
+                   const uint64_t length_bytes, const uint64_t maximum_file_size_bytes,
+                   uint64_t &write_offset_bytes, uint64_t &written_bytes) noexcept {
+    write_offset_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    written_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!open_file.open || !open_file.writable || !this->PathIsValid(open_file.path) ||
+        open_file.path.vnode.type != NodeType::RegularFile) {
+        return Status::InvalidHandle;
+    }
+    if (source == nullptr && length_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    RuntimeMutexGuard append_guard{this->append_lock_};
+    NodeInformation information{};
+    const Status stat_status = this->StatOpenFile(open_file, information);
+    if (stat_status != Status::Succeeded) {
+        return stat_status;
+    }
+    write_offset_bytes = information.size_bytes;
+    if (length_bytes == OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::Succeeded;
+    }
+    if (write_offset_bytes >= maximum_file_size_bytes) {
+        return Status::FileTooLarge;
+    }
+    const uint64_t available_bytes = maximum_file_size_bytes - write_offset_bytes;
+    const uint64_t effective_length_bytes =
+        length_bytes < available_bytes ? length_bytes : available_bytes;
+    return this->WriteAt(open_file, write_offset_bytes, source, effective_length_bytes,
+                         written_bytes);
+}
+
 Status Vfs::WriteUncachedAt(const OpenFile &open_file, const uint64_t offset_bytes,
                             const uint8_t *const source, const uint64_t length_bytes,
                             uint64_t &written_bytes) noexcept {
@@ -2477,6 +2555,7 @@ bool Vfs::IsInitialized() const noexcept {
            this->resolution_lock_.IsInitialized() &&
            this->namespace_mutation_lock_.IsInitialized() &&
            this->namespace_reclaim_lock_.IsInitialized() &&
+           this->append_lock_.IsInitialized() &&
            ((this->regular_file_data_cache_context_ == nullptr) ==
             (this->regular_file_read_cache_operation_ == nullptr)) &&
            ((this->regular_file_data_cache_context_ == nullptr) ==

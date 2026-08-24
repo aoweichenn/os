@@ -2624,3 +2624,66 @@ panic 的 RBP、CR2、current-thread 和 entry-top 可证明 guard 越界。实�
 4 KiB block、约 1264 字节统计/规划和 worker 后处理现场；只拆规划帧仍可能不足。RootFS
 read/write scratch 应归串行实例所有，规划与 work 后处理再从设备 I/O 链退出；ATA 与 NVMe
 reclaim 必须同时复验，不能只凭 primary 判断。
+
+## v2.14 打开文件描述与定位 I/O 排错
+
+### seek 后顺序 read 的 offset 少一字节或多一字节
+
+先按实际返回字节数计算：seek 到 8 后读取 3 字节，shared offset 必须是 11，而不是按区间
+末端误写成 12。duplicate 只共享同一 FileDescription，不额外复制 offset；pread/pwrite 的
+显式 offset 完全不参与这条顺序游标。hosted lifecycle 和 Ring 3 探针都应在 positioned I/O
+前后再次 seek-current，定位是哪一步错误推进了游标。
+
+### 两个 append open 偶发覆盖或越过 RLIMIT
+
+只锁单个 FileDescription 不够，因为独立 open 有不同 operation lock。检查 EOF stat、
+RLIMIT_FSIZE 裁剪和 WriteAt 是否全部位于 `Vfs::Append` 的共同 RuntimeMutex 内；不要在
+ProcessRuntime 根据较早 snapshot 预裁剪。pwrite 在 Append 状态下也必须进入该事务，但成功
+后不能把实际 EOF 写回 FileDescription offset。
+
+### 新 fd 操作成功后 ProcessExit 报 `WRITEBACK_STATUS=0xD`
+
+0xD 对应 FilePageCache 的 `FrameAccessFailed`。先确认 `fs_probe` 的 positioned write、append、
+truncate 和 metadata 操作全部完成后执行最终 `SyncFileSystem`；只在更早的 payload 或 `*at`
+阶段同步，仍会让新写脏页滞留到退出清理。诊断时可临时分阶段同步定位首个失败边界，但生产
+路径只保留最后的聚合屏障和 `DESCRIPTION_IO` 失败 marker，不能把逐 syscall trace 留在 VGA。
+
+### 最终同步成功但随后 `VFS_STATUS=0xF`
+
+先区分 `Vfs::Validate` 和最终 payload oracle。V2.14 的 pwrite 会把 offset 20..22 改成 `POS`；
+若 Kernel 仍按 V2.13 的纯生成序列比较 256 字节，会把正确文件误报为 Corrupt。启动时为兼容
+旧持久盘可接受 legacy 或 positioned payload，当前启动的最终收束必须只接受 positioned 版本；
+不能通过放宽整个 payload 比较掩盖真实损坏。
+
+### set status flags 意外改变读写权限
+
+get 返回 Readable/Writable/Append 三项完整状态，set 输入也必须携带原 access bits。若调用能
+把只读 fd 变成 writable，检查是否错误地只验证了 Append mask。close-on-exec 属于 FileTable
+descriptor flag，传入 file status set 必须因未知位失败。
+
+### ftruncate 偶发 `DESCRIPTION_TRUNCATE_GROW`
+
+检查同一 identity 的页是否正由 background worker 写回。旧顺序会先提交 rootfs truncate，再让
+`FilePageCache::Truncate` 因 Writeback 返回 `EntryBusy`，形成“盘面成功、syscall 失败”。准备
+阶段必须先取消预读、写保护共享映射、释放 EOF 外映射，再用范围 writeback 的 waiter 等待同页
+终态；`[TRUNCATE][FAIL] STAGE=1..4` 分别表示 cancel/protect/mapping/writeback。不能靠延时探针
+或忽略 `EntryBusy` 掩盖竞态。
+
+若 stage=3、status=21 且同一 process id 正在退出，这是 teardown 窗口：RuntimeProcess 仍可能
+active、ProcessTree 尚为 Alive 且 CR3 非零，但 VMA/FileBacking 已开始逆序释放。检查 owner
+是否在 Destroy 前清除 `address_space_stable`，以及全局遍历是否同时要求 stable+Alive/Stopped；
+不能仅凭 `active && CR3!=0` 判断可用。
+
+若 stage=4、status=13 且页缓存随后也报 FileWriteFailed，检查 VfsWriteback descriptor 是否在
+Dirty 发布前被 clean-release。`Acquire` 可能阻塞，不能先 retain backing 再等待页面；应在
+Acquire 返回后 retain 到完整 write end，并紧接 MarkDirty。持久盘第二次启动比 snapshot 模式
+更容易稳定暴露该窗口。
+
+### ABI 扩展后 32 线程冷文件探针只退出一个 worker
+
+先比较 `llvm-readelf -S` 的用户 ELF text/rodata 边界和 `llvm-nm` 的新 wrapper。若未调用的
+97..105 包装仍被直接链接进每个静态程序，恰好跨过 4 KiB 边界会改变所有 ELF 的映射页和
+rootfs 冷页加载交错。新包装必须来自共享的 `-ffunction-sections` object，并由 LLD
+`--gc-sections` 删除未引用项；thread probe 中不应出现 `SeekDescriptor`，fs_probe 中必须出现。
+这不是依赖固定地址，而是避免无意义的全系统工作集放大；修正后仍须跑 4 GiB primary 验证
+真实并发页加载。

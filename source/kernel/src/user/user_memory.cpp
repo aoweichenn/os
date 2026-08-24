@@ -953,11 +953,13 @@ WriteVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
     if (vfs.StatOpenFile(open_file, information) != fs::Status::Succeeded ||
         vfs.StatOpenFileUncached(open_file, source_information) != fs::Status::Succeeded ||
         information.type != fs::NodeType::RegularFile ||
-        user_file_backing_manager.RetainWritebackFile(vfs, open_file, information.size_bytes) !=
-            UserFileBackingStatus::Succeeded ||
         user_file_page_cache_buffered_write_operation_count == UINT64_MAX) {
         return fs::Status::CapacityExhausted;
     }
+    const uint64_t requested_write_end_bytes = offset_bytes + length_bytes;
+    const uint64_t writeback_size_bytes = information.size_bytes < requested_write_end_bytes
+                                              ? requested_write_end_bytes
+                                              : information.size_bytes;
     ++user_file_page_cache_buffered_write_operation_count;
     const FileIdentity identity = FileIdentityFromVnode(open_file.path.vnode);
     VfsFilePageReaderContext reader{
@@ -1000,6 +1002,14 @@ WriteVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
                            acquire_status == FilePageCacheStatus::MetadataAllocationFailed
                        ? fs::Status::CapacityExhausted
                        : fs::Status::Corrupt;
+        }
+        // Acquire 可能阻塞；只有它返回后才发布 writeback backing，并在不再阻塞的窗口内
+        // MarkDirty。否则后台清理可在“retain 完成、Dirty 尚未可见”之间提前关闭 backing。
+        if (user_file_backing_manager.RetainWritebackFile(vfs, open_file,
+                                                          writeback_size_bytes) !=
+            UserFileBackingStatus::Succeeded) {
+            static_cast<void>(user_file_page_cache.Release(page_identity, physical_address));
+            return fs::Status::CapacityExhausted;
         }
         if (user_file_page_cache.ObserveFileSize(identity, information.size_bytes) !=
             FilePageCacheStatus::Succeeded) {

@@ -238,6 +238,9 @@ void WriteRequiredSystemCallValue(const VgaTextConsole &vga_console, const char 
     if (status == ProcessIoStatus::ObjectFailure) {
         return os::abi::OS_ABI_SYSTEM_CALL_RESULT_KERNEL_OBJECT_FAILURE;
     }
+    if (status == ProcessIoStatus::NotSeekable) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_NOT_SEEKABLE;
+    }
     return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
 }
 
@@ -1965,7 +1968,7 @@ DispatchWaitPrivateFutex(ExceptionFrame &frame, const uint64_t user_address,
 }
 
 [[nodiscard]] os::abi::FileInformation
-EncodeAtFileInformation(const fs::NodeInformation &node_information) noexcept {
+EncodeFileInformation(const fs::NodeInformation &node_information) noexcept {
     return os::abi::FileInformation{
         .mount_identifier = node_information.mount_identifier,
         .superblock_identifier = node_information.superblock_identifier,
@@ -2122,7 +2125,7 @@ EncodeAtFileInformation(const fs::NodeInformation &node_information) noexcept {
         return MapFileSystemStatus(
             status, static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
     }
-    const os::abi::FileInformation information = EncodeAtFileInformation(node_information);
+    const os::abi::FileInformation information = EncodeFileInformation(node_information);
     if (CopyToUser(request.information_address, sizeof(information),
                    reinterpret_cast<const uint8_t *>(&information),
                    request.information_size_bytes) != UserMemoryCopyStatus::Succeeded) {
@@ -2265,6 +2268,154 @@ EncodeAtFileInformation(const fs::NodeInformation &node_information) noexcept {
                                            request.destination_directory_descriptor,
                                            destination_path, request.destination_path_length_bytes),
         static_cast<uint64_t>(OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT));
+}
+
+[[nodiscard]] int64_t DecodeSignedOffset(const uint64_t encoded_offset) noexcept {
+    return encoded_offset <= static_cast<uint64_t>(INT64_MAX)
+               ? static_cast<int64_t>(encoded_offset)
+               : -1LL - static_cast<int64_t>(UINT64_MAX - encoded_offset);
+}
+
+[[nodiscard]] int64_t DispatchSeekDescriptor(const uint64_t descriptor,
+                                             const uint64_t encoded_displacement,
+                                             const uint64_t origin) noexcept {
+    FileSeekOrigin seek_origin = FileSeekOrigin::Beginning;
+    if (origin == os::abi::OS_ABI_SEEK_FROM_CURRENT) {
+        seek_origin = FileSeekOrigin::Current;
+    } else if (origin == os::abi::OS_ABI_SEEK_FROM_END) {
+        seek_origin = FileSeekOrigin::End;
+    } else if (origin != os::abi::OS_ABI_SEEK_FROM_BEGINNING) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    uint64_t offset_bytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status =
+        SeekCurrentProcessDescriptor(descriptor, DecodeSignedOffset(encoded_displacement),
+                                     seek_origin, offset_bytes, file_system_status);
+    return MapProcessIoStatus(status, offset_bytes, file_system_status);
+}
+
+[[nodiscard]] int64_t DispatchReadDescriptorAt(const uint64_t descriptor,
+                                               const uint64_t user_address,
+                                               const uint64_t capacity_bytes,
+                                               const uint64_t offset_bytes) noexcept {
+    if (capacity_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (capacity_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_TRANSFER_TOO_LARGE;
+    }
+    if (ValidateUserWritableMemory(user_address, capacity_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint8_t buffer[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES]{};
+    uint64_t read_bytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status = ReadCurrentProcessDescriptorAt(
+        descriptor, offset_bytes, buffer, capacity_bytes, read_bytes, file_system_status);
+    if (status == ProcessIoStatus::Succeeded &&
+        read_bytes != OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES &&
+        CopyToUser(user_address, read_bytes, buffer, capacity_bytes) !=
+            UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return MapProcessIoStatus(status, read_bytes, file_system_status);
+}
+
+[[nodiscard]] int64_t DispatchWriteDescriptorAt(const uint64_t descriptor,
+                                                const uint64_t user_address,
+                                                const uint64_t length_bytes,
+                                                const uint64_t offset_bytes) noexcept {
+    if (length_bytes == OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return OS_KERNEL_SYSTEM_CALL_DESCRIPTOR_SUCCESS_RESULT;
+    }
+    if (length_bytes > os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_DESCRIPTOR_TRANSFER_TOO_LARGE;
+    }
+    uint8_t buffer[os::abi::OS_ABI_SYSTEM_CALL_MAXIMUM_DESCRIPTOR_TRANSFER_SIZE_BYTES]{};
+    if (CopyFromUser(user_address, length_bytes, buffer, sizeof(buffer)) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    uint64_t written_bytes = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status = WriteCurrentProcessDescriptorAt(
+        descriptor, offset_bytes, buffer, length_bytes, written_bytes, file_system_status);
+    return MapProcessIoStatus(status, written_bytes, file_system_status);
+}
+
+[[nodiscard]] int64_t DispatchStatDescriptor(const uint64_t descriptor,
+                                             const uint64_t user_information_address,
+                                             const uint64_t information_size_bytes) noexcept {
+    if (information_size_bytes != sizeof(os::abi::FileInformation)) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (ValidateUserWritableMemory(user_information_address, information_size_bytes) !=
+        UserMemoryCopyStatus::Succeeded) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY;
+    }
+    fs::NodeInformation node_information{};
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status =
+        StatCurrentProcessDescriptor(descriptor, node_information, file_system_status);
+    if (status != ProcessIoStatus::Succeeded) {
+        return MapProcessIoStatus(status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                                  file_system_status);
+    }
+    const os::abi::FileInformation information = EncodeFileInformation(node_information);
+    if (CopyToUser(user_information_address, sizeof(information),
+                   reinterpret_cast<const uint8_t *>(&information),
+                   information_size_bytes) != UserMemoryCopyStatus::Succeeded) {
+        HaltProcessor();
+    }
+    return OS_KERNEL_SYSTEM_CALL_FILE_SYSTEM_SUCCESS_RESULT;
+}
+
+[[nodiscard]] int64_t DispatchTruncateDescriptor(const uint64_t descriptor,
+                                                 const uint64_t size_bytes) noexcept {
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status =
+        TruncateCurrentProcessDescriptor(descriptor, size_bytes, file_system_status);
+    return MapProcessIoStatus(status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                              file_system_status);
+}
+
+[[nodiscard]] int64_t DispatchChangeDescriptorMode(const uint64_t descriptor,
+                                                   const os::abi::FileMode mode) noexcept {
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status =
+        ChangeCurrentProcessDescriptorMode(descriptor, mode, file_system_status);
+    return MapProcessIoStatus(status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                              file_system_status);
+}
+
+[[nodiscard]] int64_t
+DispatchChangeDescriptorOwner(const uint64_t descriptor,
+                              const os::abi::UserIdentifier user_identifier,
+                              const os::abi::GroupIdentifier group_identifier) noexcept {
+    FileSystemStatus file_system_status = FileSystemStatus::Succeeded;
+    const ProcessIoStatus status = ChangeCurrentProcessDescriptorOwner(
+        descriptor, user_identifier, group_identifier, file_system_status);
+    return MapProcessIoStatus(status, OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                              file_system_status);
+}
+
+[[nodiscard]] int64_t DispatchGetFileStatusFlags(const uint64_t descriptor) noexcept {
+    uint64_t file_status_flags = OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES;
+    return MapProcessIoStatus(GetCurrentProcessFileStatusFlags(descriptor, file_status_flags),
+                              file_status_flags, FileSystemStatus::Succeeded);
+}
+
+[[nodiscard]] int64_t DispatchSetFileStatusFlags(const uint64_t descriptor,
+                                                 const uint64_t file_status_flags) noexcept {
+    if ((file_status_flags & ~os::abi::OS_ABI_FILE_STATUS_VALID_FLAG_MASK) !=
+        OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES) {
+        return os::abi::OS_ABI_SYSTEM_CALL_RESULT_INVALID_ARGUMENT;
+    }
+    return MapProcessIoStatus(SetCurrentProcessFileStatusFlags(descriptor, file_status_flags),
+                              OS_KERNEL_SYSTEM_CALL_EMPTY_TRANSFER_SIZE_BYTES,
+                              FileSystemStatus::Succeeded);
 }
 }
 
@@ -2775,6 +2926,57 @@ EncodeAtFileInformation(const fs::NodeInformation &node_information) noexcept {
         static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSymbolicLinkAt)) {
         frame->register_rax = static_cast<uint64_t>(
             DispatchCreateSymbolicLinkAt(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::SeekDescriptor)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSeekDescriptor(frame->register_rdi, frame->register_rsi, frame->register_rdx));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::ReadDescriptorAt)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchReadDescriptorAt(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx, frame->register_r10));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::WriteDescriptorAt)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchWriteDescriptorAt(
+            frame->register_rdi, frame->register_rsi, frame->register_rdx, frame->register_r10));
+        return frame;
+    }
+    if (system_call_number == static_cast<uint64_t>(os::abi::SystemCallNumber::StatDescriptor)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchStatDescriptor(frame->register_rdi, frame->register_rsi, frame->register_rdx));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::TruncateDescriptor)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchTruncateDescriptor(frame->register_rdi, frame->register_rsi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeDescriptorMode)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchChangeDescriptorMode(
+            frame->register_rdi, static_cast<os::abi::FileMode>(frame->register_rsi)));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::ChangeDescriptorOwner)) {
+        frame->register_rax = static_cast<uint64_t>(DispatchChangeDescriptorOwner(
+            frame->register_rdi, static_cast<os::abi::UserIdentifier>(frame->register_rsi),
+            static_cast<os::abi::GroupIdentifier>(frame->register_rdx)));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::GetFileStatusFlags)) {
+        frame->register_rax =
+            static_cast<uint64_t>(DispatchGetFileStatusFlags(frame->register_rdi));
+        return frame;
+    }
+    if (system_call_number ==
+        static_cast<uint64_t>(os::abi::SystemCallNumber::SetFileStatusFlags)) {
+        frame->register_rax = static_cast<uint64_t>(
+            DispatchSetFileStatusFlags(frame->register_rdi, frame->register_rsi));
         return frame;
     }
     frame->register_rax = static_cast<uint64_t>(os::abi::OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER);

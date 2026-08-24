@@ -1044,6 +1044,12 @@ constexpr uint64_t OS_KERNEL_MAIN_NO_PROCESS_IDENTIFIER = 0ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MULTIPLIER = 37ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_INCREMENT = 11ULL;
 constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK = 0xFFULL;
+constexpr uint64_t OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH_OFFSET_BYTES = 20ULL;
+constexpr uint8_t OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH[] = {
+    static_cast<uint8_t>('P'),
+    static_cast<uint8_t>('O'),
+    static_cast<uint8_t>('S'),
+};
 constexpr uint64_t OS_KERNEL_MAIN_VFS_ROOT_SUPERBLOCK_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_MEMFS_SUPERBLOCK_IDENTIFIER = 2ULL;
 constexpr uint64_t OS_KERNEL_MAIN_VFS_DEVICE_SUPERBLOCK_IDENTIFIER = 3ULL;
@@ -1574,8 +1580,20 @@ SelectKernelStorageDevices(const VgaTextConsole &vga_console) noexcept {
                                 OS_KERNEL_MAIN_FILE_SYSTEM_BYTE_MASK);
 }
 
+[[nodiscard]] uint8_t ExpectedPositionedFileSystemPayloadByte(
+    const uint64_t byte_index) noexcept {
+    if (byte_index >= OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH_OFFSET_BYTES &&
+        byte_index < OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH_OFFSET_BYTES +
+                         sizeof(OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH)) {
+        return OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH
+            [byte_index - OS_KERNEL_MAIN_FILE_SYSTEM_POSITIONED_PATCH_OFFSET_BYTES];
+    }
+    return ExpectedFileSystemPayloadByte(byte_index);
+}
+
 [[nodiscard]] fs::Status ValidateFileSystemPayload(fs::Vfs &vfs,
-                                                   const fs::FsContext &context) noexcept {
+                                                   const fs::FsContext &context,
+                                                   const bool require_positioned_patch) noexcept {
     const fs::OpenOptions options{
         .readable = true,
         .writable = false,
@@ -1592,12 +1610,22 @@ SelectKernelStorageDevices(const VgaTextConsole &vga_console) noexcept {
     }
     uint8_t payload[OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES]{};
     uint64_t read_bytes = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
-    bool valid = vfs.Read(file, payload, sizeof(payload), read_bytes) == fs::Status::Succeeded &&
-                 read_bytes == sizeof(payload);
+    const bool read_succeeded =
+        vfs.Read(file, payload, sizeof(payload), read_bytes) == fs::Status::Succeeded &&
+        read_bytes == sizeof(payload);
+    bool legacy_payload_valid = read_succeeded;
+    bool positioned_payload_valid = read_succeeded;
     for (uint64_t byte_index = OS_KERNEL_MAIN_FILE_SYSTEM_EMPTY_VALUE;
          byte_index < OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES; ++byte_index) {
-        valid = valid && payload[byte_index] == ExpectedFileSystemPayloadByte(byte_index);
+        legacy_payload_valid =
+            legacy_payload_valid &&
+            payload[byte_index] == ExpectedFileSystemPayloadByte(byte_index);
+        positioned_payload_valid =
+            positioned_payload_valid &&
+            payload[byte_index] == ExpectedPositionedFileSystemPayloadByte(byte_index);
     }
+    bool valid = require_positioned_patch ? positioned_payload_valid
+                                          : legacy_payload_valid || positioned_payload_valid;
     uint8_t end_of_file_probe = OS_KERNEL_MAIN_FILE_SYSTEM_ZERO_BYTE;
     read_bytes = OS_KERNEL_MAIN_FILE_SYSTEM_PAYLOAD_SIZE_BYTES;
     valid = valid &&
@@ -1841,7 +1869,8 @@ void InitializeKernelVfs(const VgaTextConsole &vga_console, fs::RootFileSystem &
     }
     bool persistence_restored = false;
     if (status == fs::Status::Succeeded) {
-        const fs::Status payload_status = ValidateFileSystemPayload(vfs, bootstrap_context);
+        const fs::Status payload_status =
+            ValidateFileSystemPayload(vfs, bootstrap_context, false);
         if (payload_status == fs::Status::Succeeded) {
             persistence_restored = true;
         } else if (payload_status != fs::Status::NotFound) {
@@ -1895,7 +1924,7 @@ void FinalizeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileSys
         validation_status = vfs.InitializeContext(validation_context);
     }
     if (validation_status == fs::Status::Succeeded && require_payload) {
-        validation_status = ValidateFileSystemPayload(vfs, validation_context);
+        validation_status = ValidateFileSystemPayload(vfs, validation_context, true);
     }
     if (validation_context.initialized) {
         const fs::Status release_status = vfs.ReleaseContext(validation_context);

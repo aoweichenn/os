@@ -2720,6 +2720,58 @@ ATA/NVMe 的函数序言落入 lower guard。RootFS 已由 `lock_` 串行，因�
 worker 的 acquire/complete/wait 也拆成非嵌套阶段。reclaim 计划、统计和 4 mapped + 2 guard
 栈几何均不改变。
 
+## v2.14 打开文件描述、定位 I/O 与原子追加
+
+FileDescription 继续是 open file description：FileTable 的多个 fd 和 fork 后的引用指向同一
+KernelObject，因此 `offset_bytes` 与 Append 状态自然共享。`Seek` 在对象 operation lock 下
+选择 Beginning/Current/End 基准并提交新 offset；End 基准通过 `StatOpenFile` 取得包含页缓存
+逻辑 size 的值。正负位移分支计算，不把 `INT64_MIN` 取负，也不允许结果越过 `INT64_MAX`。
+
+```text
+dup/fork fd references
+        |
+        v
+shared FileDescription -- Seek/Read/Write --> shared sequential offset
+        |
+        +-- ReadAt/WriteAt(offset) ----------> offset unchanged
+```
+
+pread/pwrite 在同一 operation lock 下验证对象类型和 access mode，但直接把显式 offset 交给
+VFS。append 是例外：为兼容 Linux，pwrite 遇到 Append 也进入 `Vfs::Append`，只是丢弃实际
+EOF 且不更新共享 offset。VFS 的共同 append RuntimeMutex 将 `StatOpenFile`、RLIMIT_FSIZE
+裁剪和 `WriteAt` 合成事务，因此两个独立 FileDescription 也不会选中同一旧 EOF。
+
+fstat、ftruncate、fchmod、fchown 都从 FileDescription 保存的 OpenFile/Path 进入 VFS，不重新
+解析名称。ftruncate 由 ProcessRuntime 先取得 identity、协调 file mapping/page cache，再在
+对象锁下提交后端 truncate；fchmod/fchown 复用相同 DAC 与 metadata shard invalidation。
+file status flags 留在 FileDescription，Readable/Writable 是不可变 access mode，只有 writable
+regular file 可切换 Append；FileTable 的 close-on-exec 仍是独立 descriptor 属性。
+
+truncate 准备按 cancel readahead → write-protect shared mappings → unmap EOF 外页 →
+`WritebackUserFilePageCacheRange` 的顺序执行。范围写回会登记并等待已经处于 Writeback 的同页，
+避免 VFS 后端已提交 size 后，cache truncate 才返回 `EntryBusy` 的半事务。失败按四阶段记录，
+并在 VFS commit 前原样返回 Corrupt 或 DeviceFailure。
+
+全局 mapping 遍历通过同一 `RuntimeProcessAddressSpaceIsUsable` 判定，同时要求 RuntimeProcess
+的 `address_space_stable` 与 ProcessTree Alive/Stopped。注册/fork 完整提交后 owner 才发布
+stable；退出和 OOM 在逆序销毁 FileBacking/VMA/页表前先清除。`active && CR3!=0` 或仍为 Alive
+都不能单独证明地址空间可遍历。
+
+buffered write 先 Acquire cache page；该步骤可能因读盘/Loading waiter 阻塞。返回后才 retain
+VfsWriteback backing，并把 descriptor size 一次设置为 `max(old_size, offset+length)`，随后在
+不再阻塞的窗口内 MarkDirty。旧顺序先 retain 再 Acquire，background clean release 可在 Dirty
+发布前关闭唯一 backing，慢速持久盘会把后续 writeback 变成 SourceWriteFailed。
+
+ABI v2.6.0 的 97..105 由 Ring 3 wrapper、系统调用 user-copy、ProcessRuntime 和
+FileDescriptionManager 四层接线。成功热路径只增加聚合统计；`fs_probe` 在新操作后建立最终
+同步屏障，避免其 Dirty 页被推迟到 ProcessExit。完整决策见
+[ADR 0078](adr/0078-v2-14-open-file-description-operations.md)。
+
+静态用户程序不应为未调用 ABI 承担常驻页面。九个新 wrapper 由共享 object target 编译一次，
+每个函数进入独立 section；LLD `--gc-sections` 只保留当前 ELF 实际引用的项。这样 fs_probe
+拥有完整 97..105 包装，而 thread/shell/tool 等程序的 text/rodata 页不会仅因 ABI 尾部增长
+被整体推高。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

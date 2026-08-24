@@ -30,10 +30,10 @@ inline constexpr uint64_t OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES = 279ULL
 
 static_assert(static_cast<uint64_t>(SystemCallNumber::WriteLog) ==
               OS_ABI_LAYOUT_FIRST_SYSTEM_CALL_NUMBER);
-static_assert(static_cast<uint64_t>(SystemCallNumber::CreateSymbolicLinkAt) ==
+static_assert(static_cast<uint64_t>(SystemCallNumber::SetFileStatusFlags) ==
               OS_ABI_SYSTEM_CALL_LAST_NUMBER);
 static_assert(OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY == OS_ABI_SYSTEM_CALL_FIRST_ERROR);
-static_assert(OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED == OS_ABI_SYSTEM_CALL_LAST_ERROR);
+static_assert(OS_ABI_SYSTEM_CALL_RESULT_NOT_SEEKABLE == OS_ABI_SYSTEM_CALL_LAST_ERROR);
 static_assert(sizeof(AtStatRequest) == OS_ABI_AT_STAT_REQUEST_SIZE_BYTES);
 static_assert(sizeof(AtReadSymbolicLinkRequest) == OS_ABI_AT_READ_SYMBOLIC_LINK_REQUEST_SIZE_BYTES);
 static_assert(sizeof(AtDualPathRequest) == OS_ABI_AT_DUAL_PATH_REQUEST_SIZE_BYTES);

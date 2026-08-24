@@ -1716,6 +1716,35 @@ V2.11 六个工程增量至此闭合；按既有用户要求继续保持未发�
 - ABI 1..87、错误区间、rootfs v4 和旧用户工具保持兼容；
 - hosted 强制交错、Ring 3 rootfs、4 GiB primary 与完整 fresh CAW verify 全绿。
 
+### v2.14 打开文件描述与定位 I/O
+
+**范围**
+
+- 让 regular file 拥有可显式调整且由 duplicate/fork 共享的顺序 offset；
+- 增加不改变共享 offset 的 positioned read/write，并冻结 Linux append+pwrite 行为；
+- 让独立 open description 的 append 在共同 VFS 串行点原子选择 EOF；
+- 让 stat/truncate/chmod/chown 直接针对稳定的打开 vnode，不再依赖路径重解析；
+- ABI v2.6.0 在 96 后追加九项 fd 调用，不改变 rootfs v4、4 GiB/128 GiB 与 VGA 边界。
+
+**六个增量（全部完成）**
+
+1. seek origin、共享 offset 与 `NotSeekable`；
+2. pread/pwrite 与 positioned offset 不变；
+3. 跨 description 原子 append、RLIMIT_FSIZE 与 status flags；
+4. fstat/ftruncate/fchmod/fchown 打开 vnode 路径；
+5. ABI v2.6.0 的 97..105、用户包装和 Ring 3 rootfs 探针；
+6. 生命周期、缓存/writeback、VGA、资源与完整 fresh CAW 回归。
+
+设计由 [ADR 0078](adr/0078-v2-14-open-file-description-operations.md) 冻结。V2.14 继续保持
+工程候选，不创建公开 tag。
+
+**退出条件**
+
+- duplicate/fork 共享 seek 结果，pread/pwrite 与 append+pwrite 均不移动顺序 offset；
+- 两个独立 append open 不覆盖，access mode 不可经 status flag set 提权；
+- ftruncate 与 positioned write 的页缓存、映射、RLIMIT 和最终 writeback 完整收束；
+- ABI 1..96、rootfs v4 与旧用户工具兼容，4 GiB primary/reclaim 和 fresh CAW verify 全绿。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

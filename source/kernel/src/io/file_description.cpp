@@ -1,5 +1,6 @@
 #include <os/kernel/io/file_description.hpp>
 
+#include <os/abi/system_call.hpp>
 #include <os/kernel/fs/legacy_file_system.hpp>
 
 namespace os::kernel {
@@ -7,6 +8,37 @@ namespace os::kernel {
 namespace {
 
 constexpr uint64_t OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE = 0ULL;
+
+static_assert(OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG ==
+              os::abi::OS_ABI_FILE_STATUS_READABLE_FLAG);
+static_assert(OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG ==
+              os::abi::OS_ABI_FILE_STATUS_WRITABLE_FLAG);
+static_assert(OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG ==
+              os::abi::OS_ABI_FILE_STATUS_APPEND_FLAG);
+
+[[nodiscard]] bool TryApplySeekDisplacement(const uint64_t base_offset_bytes,
+                                            const int64_t displacement_bytes,
+                                            uint64_t &offset_bytes) noexcept {
+    offset_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    if (base_offset_bytes > static_cast<uint64_t>(INT64_MAX)) {
+        return false;
+    }
+    if (displacement_bytes >= 0LL) {
+        const uint64_t positive_displacement_bytes = static_cast<uint64_t>(displacement_bytes);
+        if (base_offset_bytes > static_cast<uint64_t>(INT64_MAX) - positive_displacement_bytes) {
+            return false;
+        }
+        offset_bytes = base_offset_bytes + positive_displacement_bytes;
+        return true;
+    }
+    const uint64_t negative_displacement_bytes =
+        static_cast<uint64_t>(-(displacement_bytes + 1LL)) + 1ULL;
+    if (negative_displacement_bytes > base_offset_bytes) {
+        return false;
+    }
+    offset_bytes = base_offset_bytes - negative_displacement_bytes;
+    return true;
+}
 
 [[nodiscard]] bool IsVfsBackedKind(const FileDescriptionKind kind) noexcept {
     return kind == FileDescriptionKind::RegularFile || kind == FileDescriptionKind::Directory ||
@@ -519,12 +551,10 @@ FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReferenc
     return status;
 }
 
-FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReference &reference,
-                                                       const uint8_t *const source,
-                                                       const uint64_t length_bytes,
-                                                       uint64_t &written_bytes,
-                                                       FileSystemStatus &file_system_status,
-                                                       PipeStatus &pipe_status) noexcept {
+FileDescriptionStatus FileDescriptionManager::TryWrite(
+    const KernelObjectReference &reference, const uint8_t *const source,
+    const uint64_t length_bytes, const uint64_t maximum_file_size_bytes, uint64_t &written_bytes,
+    FileSystemStatus &file_system_status, PipeStatus &pipe_status) noexcept {
     written_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
     file_system_status = FileSystemStatus::Succeeded;
     pipe_status = PipeStatus::Succeeded;
@@ -568,24 +598,41 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
                          : FileDescriptionStatus::DeviceFailure;
         }
     } else if (storage.kind == FileDescriptionKind::RegularFile) {
+        uint64_t write_offset_bytes = storage.open_file.offset_bytes;
+        uint64_t effective_length_bytes = length_bytes;
         if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) !=
             OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
-            fs::NodeInformation information{};
-            const fs::Status stat_status =
-                storage.vfs->StatOpenFile(storage.open_file, information);
-            if (stat_status != fs::Status::Succeeded) {
-                file_system_status = fs::ToFileSystemStatus(stat_status);
-                return FileDescriptionStatus::FileSystemFailure;
+            const fs::Status append_status =
+                storage.vfs->Append(storage.open_file, source, length_bytes,
+                                    maximum_file_size_bytes, write_offset_bytes, written_bytes);
+            file_system_status = fs::ToFileSystemStatus(append_status);
+            status = file_system_status == FileSystemStatus::Succeeded
+                         ? FileDescriptionStatus::Succeeded
+                         : FileDescriptionStatus::FileSystemFailure;
+        } else {
+            if (length_bytes != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+                if (write_offset_bytes >= maximum_file_size_bytes) {
+                    file_system_status = FileSystemStatus::FileTooLarge;
+                    return FileDescriptionStatus::FileSystemFailure;
+                }
+                const uint64_t available_bytes = maximum_file_size_bytes - write_offset_bytes;
+                effective_length_bytes =
+                    length_bytes < available_bytes ? length_bytes : available_bytes;
             }
-            // 单 BSP 内核不会在 Stat 与 Write 之间调度；当前操作锁还保证 duplicate
-            // 共享描述符串行。未来 SMP 必须把这段事务下沉到 vnode/后端锁。
-            storage.open_file.offset_bytes = information.size_bytes;
+            file_system_status = fs::ToFileSystemStatus(storage.vfs->Write(
+                storage.open_file, source, effective_length_bytes, written_bytes));
+            status = file_system_status == FileSystemStatus::Succeeded
+                         ? FileDescriptionStatus::Succeeded
+                         : FileDescriptionStatus::FileSystemFailure;
         }
-        file_system_status = fs::ToFileSystemStatus(
-            storage.vfs->Write(storage.open_file, source, length_bytes, written_bytes));
-        status = file_system_status == FileSystemStatus::Succeeded
-                     ? FileDescriptionStatus::Succeeded
-                     : FileDescriptionStatus::FileSystemFailure;
+        if (status == FileDescriptionStatus::Succeeded &&
+            (storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) !=
+                OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+            if (write_offset_bytes > UINT64_MAX - written_bytes) {
+                return FileDescriptionStatus::ObjectFailure;
+            }
+            storage.open_file.offset_bytes = write_offset_bytes + written_bytes;
+        }
     } else if (storage.kind == FileDescriptionKind::PipeWriter) {
         pipe_status = storage.pipe->TryWrite(source, length_bytes, written_bytes);
         status = MapPipeWriteStatus(pipe_status);
@@ -598,6 +645,342 @@ FileDescriptionStatus FileDescriptionManager::TryWrite(const KernelObjectReferen
         this->statistics_.bytes_written += written_bytes;
     }
     return status;
+}
+
+FileDescriptionStatus FileDescriptionManager::Seek(const KernelObjectReference &reference,
+                                                   const int64_t displacement_bytes,
+                                                   const FileSeekOrigin origin,
+                                                   uint64_t &offset_bytes,
+                                                   FileSystemStatus &file_system_status) noexcept {
+    offset_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr) {
+        return FileDescriptionStatus::NotSeekable;
+    }
+    uint64_t base_offset_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    if (origin == FileSeekOrigin::Current) {
+        base_offset_bytes = storage.open_file.offset_bytes;
+    } else if (origin == FileSeekOrigin::End) {
+        fs::NodeInformation information{};
+        const fs::Status stat_status = storage.vfs->StatOpenFile(storage.open_file, information);
+        if (stat_status != fs::Status::Succeeded) {
+            file_system_status = fs::ToFileSystemStatus(stat_status);
+            return FileDescriptionStatus::FileSystemFailure;
+        }
+        base_offset_bytes = information.size_bytes;
+    } else if (origin != FileSeekOrigin::Beginning) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    if (!TryApplySeekDisplacement(base_offset_bytes, displacement_bytes, offset_bytes)) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    storage.open_file.offset_bytes = offset_bytes;
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.seek_operation_count;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus
+FileDescriptionManager::TryReadAt(const KernelObjectReference &reference,
+                                  const uint64_t offset_bytes, uint8_t *const destination,
+                                  const uint64_t capacity_bytes, uint64_t &read_bytes,
+                                  FileSystemStatus &file_system_status) noexcept {
+    read_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    if ((destination == nullptr && capacity_bytes != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) ||
+        offset_bytes > static_cast<uint64_t>(INT64_MAX)) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr) {
+        return FileDescriptionStatus::NotSeekable;
+    }
+    if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
+        OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return FileDescriptionStatus::PermissionDenied;
+    }
+    file_system_status = fs::ToFileSystemStatus(storage.vfs->ReadAt(
+        storage.open_file, offset_bytes, destination, capacity_bytes, read_bytes));
+    if (file_system_status != FileSystemStatus::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.positioned_read_operation_count;
+    this->statistics_.bytes_read += read_bytes;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus
+FileDescriptionManager::TryWriteAt(const KernelObjectReference &reference,
+                                   const uint64_t offset_bytes, const uint8_t *const source,
+                                   const uint64_t length_bytes,
+                                   const uint64_t maximum_file_size_bytes, uint64_t &written_bytes,
+                                   FileSystemStatus &file_system_status) noexcept {
+    written_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    if ((source == nullptr && length_bytes != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) ||
+        offset_bytes > static_cast<uint64_t>(INT64_MAX)) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr) {
+        return FileDescriptionStatus::NotSeekable;
+    }
+    if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) ==
+        OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return FileDescriptionStatus::PermissionDenied;
+    }
+    fs::Status write_status = fs::Status::Succeeded;
+    if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) !=
+        OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        uint64_t append_offset_bytes = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+        write_status =
+            storage.vfs->Append(storage.open_file, source, length_bytes, maximum_file_size_bytes,
+                                append_offset_bytes, written_bytes);
+    } else {
+        uint64_t effective_length_bytes = length_bytes;
+        if (length_bytes != OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+            if (offset_bytes >= maximum_file_size_bytes) {
+                file_system_status = FileSystemStatus::FileTooLarge;
+                return FileDescriptionStatus::FileSystemFailure;
+            }
+            const uint64_t available_bytes = maximum_file_size_bytes - offset_bytes;
+            effective_length_bytes =
+                length_bytes < available_bytes ? length_bytes : available_bytes;
+        }
+        write_status = storage.vfs->WriteAt(storage.open_file, offset_bytes, source,
+                                            effective_length_bytes, written_bytes);
+    }
+    file_system_status = fs::ToFileSystemStatus(write_status);
+    if (file_system_status != FileSystemStatus::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.positioned_write_operation_count;
+    this->statistics_.bytes_written += written_bytes;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::Stat(const KernelObjectReference &reference,
+                                                   fs::NodeInformation &information,
+                                                   FileSystemStatus &file_system_status) noexcept {
+    information = fs::NodeInformation{};
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (!IsVfsBackedKind(storage.kind) || storage.vfs == nullptr) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    file_system_status =
+        fs::ToFileSystemStatus(storage.vfs->StatOpenFile(storage.open_file, information));
+    if (file_system_status != FileSystemStatus::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.metadata_operation_count;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus
+FileDescriptionManager::Truncate(const KernelObjectReference &reference, const uint64_t size_bytes,
+                                 FileSystemStatus &file_system_status) noexcept {
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr) {
+        return FileDescriptionStatus::NotSeekable;
+    }
+    if ((storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) ==
+        OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return FileDescriptionStatus::PermissionDenied;
+    }
+    file_system_status =
+        fs::ToFileSystemStatus(storage.vfs->TruncateOpenFile(storage.open_file, size_bytes));
+    if (file_system_status != FileSystemStatus::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.metadata_operation_count;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus
+FileDescriptionManager::ChangeMode(const KernelObjectReference &reference,
+                                   const fs::FsContext &context, const os::abi::FileMode mode,
+                                   FileSystemStatus &file_system_status) noexcept {
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (!IsVfsBackedKind(storage.kind) || storage.vfs == nullptr) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    file_system_status =
+        fs::ToFileSystemStatus(storage.vfs->ChangeOpenFileMode(context, storage.open_file, mode));
+    if (file_system_status != FileSystemStatus::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.metadata_operation_count;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::ChangeOwner(
+    const KernelObjectReference &reference, const fs::FsContext &context,
+    const os::abi::UserIdentifier user_identifier, const os::abi::GroupIdentifier group_identifier,
+    FileSystemStatus &file_system_status) noexcept {
+    file_system_status = FileSystemStatus::Succeeded;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (!IsVfsBackedKind(storage.kind) || storage.vfs == nullptr) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    file_system_status = fs::ToFileSystemStatus(storage.vfs->ChangeOpenFileOwner(
+        context, storage.open_file, user_identifier, group_identifier));
+    if (file_system_status != FileSystemStatus::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.metadata_operation_count;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus FileDescriptionManager::GetStatusFlags(const KernelObjectReference &reference,
+                                                             uint64_t &file_status_flags) noexcept {
+    file_status_flags = OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE;
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    file_status_flags = storage.file_status_flags;
+    return FileDescriptionStatus::Succeeded;
+}
+
+FileDescriptionStatus
+FileDescriptionManager::SetStatusFlags(const KernelObjectReference &reference,
+                                       const uint64_t file_status_flags) noexcept {
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    if ((file_status_flags & ~OS_KERNEL_FILE_DESCRIPTION_VALID_STATUS_FLAG_MASK) !=
+        OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    FileDescriptionStorage &storage = *static_cast<FileDescriptionStorage *>(payload);
+    const uint64_t access_flags =
+        storage.file_status_flags & (OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG |
+                                     OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG);
+    if ((file_status_flags & (OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG |
+                              OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG)) != access_flags ||
+        ((file_status_flags & OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) !=
+             OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE &&
+         (storage.kind != FileDescriptionKind::RegularFile ||
+          (access_flags & OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) ==
+              OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE))) {
+        return FileDescriptionStatus::InvalidArgument;
+    }
+    storage.file_status_flags = file_status_flags;
+    SpinLockGuard statistics_guard{this->statistics_lock_};
+    ++this->statistics_.status_flag_update_count;
+    return FileDescriptionStatus::Succeeded;
 }
 
 FileDescriptionStatus

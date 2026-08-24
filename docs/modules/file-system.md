@@ -614,3 +614,15 @@ at operation、directory retain/release/active/peak，`Validate` 检查差值守
 inode、pointer、bitmap、allocate、file read/write、truncate、orphan 与 validation 的 4096
 字节块都不再放在栈上；RootFileSystem 由 `lock_` 串行，并为可能嵌套的 helper 分别持有实例
 scratch，避免相互覆盖并保持物理 BSS 所有权可见。
+
+## v2.14 打开 vnode 元数据与原子 append
+
+`ChangeOpenFileMode/ChangeOpenFileOwner` 从 OpenFile 保存的 Path 进入公共 `ChangeNodeMode/
+ChangeNodeOwner`，与路径版本共享 DAC、read-only、set-id 清理、metadata shard 和失效语义。
+`StatOpenFile` 继续把 FilePageCache 的逻辑 size 覆盖到 inode snapshot，供 fstat 与 SEEK_END
+观察尚未写回的正确 EOF。
+
+`Vfs::Append` 使用独立 RuntimeMutex，把逻辑 EOF 查询、RLIMIT_FSIZE 裁剪和 `WriteAt` 放入
+同一临界区；这比 FileDescription operation lock 多覆盖独立 open。零长度、部分写、FileTooLarge
+和 backend/cache 失败都返回精确 written/offset 结果，锁内不做 user-copy。设计见
+[ADR 0078](../adr/0078-v2-14-open-file-description-operations.md)。

@@ -19,6 +19,7 @@ SECTIONS
     .text ALIGN(OS_USER_PAGE_SIZE_BYTES) :
     {
         KEEP(*(.text.os_user_entry))
+        KEEP(*(.text.os_user_system_call_required))
         *(.text .text.*)
     } :text
 

@@ -616,6 +616,33 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - RootFS 4 KiB block scratch 与 pressure/worker 后处理帧必须在 writeback/swap 设备 I/O 链上
   分离；不得以扩大 16 KiB 动态 Kernel stack 或删除双 guard 掩盖 ATA/NVMe reclaim 栈不足。
 
+## v2.14 打开文件描述与定位 I/O 要求
+
+- regular file seek 必须支持 Beginning/Current/End；计算不得发生有符号溢出，负结果、超过
+  `INT64_MAX` 的结果和未知 origin 必须失败；pipe、terminal 与目录必须返回 `NotSeekable`；
+- duplicate/fork 必须共享 FileDescription offset；pread/pwrite 无论成功、部分完成或失败都
+  不得改变 offset，普通顺序 read/write 必须从最新共享 offset 继续；
+- append 必须在所有独立 open description 之间原子选择缓存逻辑 EOF 并写入；RLIMIT_FSIZE
+  必须在该串行点内按实际 EOF 裁剪，不能在 ProcessRuntime 用过期 size 预计算；
+- Linux 兼容的 append+pwrite 必须忽略调用 offset 写到 EOF，但不得推进共享 offset；关闭
+  append 后 positioned write 才使用显式 offset；
+- fstat/ftruncate/fchmod/fchown 必须针对打开 vnode 身份，不得重新解析原路径；truncate 必须
+  先取消预读、写保护共享映射、释放 EOF 外映射并等待同文件 writeback，再修改后端和 cache；
+  不得先提交盘面 size 后因 cache `EntryBusy` 向用户报告失败；权限与 owner 规则复用路径版本；
+- 全局映射写保护/truncate 扫描只能遍历 `address_space_stable` 且 Alive/Stopped 的进程；
+  owner 必须在退出/OOM Destroy 前清除 stable，不能以 active 或非零 CR3 替代；
+- buffered write 必须在阻塞式 page Acquire 后 retain writeback backing，并在无阻塞窗口内发布
+  Dirty；backing size 必须覆盖完整 write end，clean release 不得抢在 Dirty 之前关闭描述；
+- file status get 必须返回 Readable/Writable/Append；set 必须保留 access bits，只允许 writable
+  regular file 改变 Append，且不得混入 close-on-exec descriptor flag；
+- ABI v2.6.0 只追加 97..105 和 -60，保留 1..96、旧请求布局、rootfs v4 与磁盘格式；所有用户
+  指针必须在对象/VFS 锁外复制和验证；
+- FileDescription 必须统计 seek、positioned read/write、metadata 与 status update；正常路径
+  不得逐 fd/offset/syscall 输出到 VGA，失败路径只保留聚合诊断；
+- hosted lifecycle 必须覆盖 shared offset、positioned offset 不变、append 与非法 flags；Ring 3
+  必须在真实 rootfs 覆盖九项新调用，并通过 4 GiB ATA primary、ATA/NVMe reclaim 和完整
+  fresh CAW verify。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

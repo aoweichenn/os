@@ -1472,3 +1472,24 @@ V2.13 不逐 `dirfd`、path、retain/release、sequence 或 syscall 打印。VFS
 panic 报告补充 fault RBP、CpuLocal current-thread、entry stack top；double fault 也输出保留的
 CR2。它们只在 fail-stop 路径出现，用来区分普通设备错误与 Kernel stack lower-guard 越界，
 不进入正常终端或热路径日志。
+
+## v2.14 描述符定位与元数据日志边界
+
+V2.14 不逐 fd、seek offset、positioned transfer、append EOF、mode/owner 或 status flag 打印。
+FileDescriptionManager 只维护 seek、positioned read/write、metadata operation 和 status update
+聚合计数，hosted integration 直接读取；Ring 3 成功路径仍只使用既有 `FILE_WRITTEN` 与
+`FILE_VERIFIED`。
+
+新描述符操作只在失败时按 `DESCRIPTION_POSITIONED`、
+`DESCRIPTION_TRUNCATE_GROW/STAT/SHRINK`、`DESCRIPTION_METADATA/STATUS` 定位，最终同步失败
+使用 `DESCRIPTION_IO`；它们用来区分既有 `OPEN_AT/WRITE_AT/PATH_AT/READ_AT` 路径
+事务失败，成功路径不输出。新操作完成后的最终同步再产生一次既有 block completion 进展，
+因此正常 profile 的
+`OTHER_THREAD_PROGRESS=1` 精确计数由 3 增为 4；不增加新成功 marker 或逐块日志。
+
+truncate 组继续细分 grow/stat/shrink；Kernel 只在准备失败时输出
+`[TRUNCATE][FAIL] STAGE/STATUS/PROCESS_ID`。正常范围 writeback、等待和 cache truncate 不增加
+日志，避免把修复本身变成交互终端噪声。
+
+成功/reclaim/OOM QEMU profile 把初始 `[OS][KERNEL] FILE_SYSTEM_STATUS=` 也列为即时禁止标记；
+rootfs 挂载的 DeviceFailure 会立刻结束验收并保留轨迹，不再只因缺少最终 READY 等满 420 秒。

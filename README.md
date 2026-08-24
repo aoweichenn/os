@@ -111,6 +111,12 @@ v2.13 已在该命名空间之上建立稳定目录句柄与 `dirfd + *at` 事�
 symlink 的 `*at` 基础调用；namespace writer 从解析前串行到提交并按 expected sequence
 复验，并发同名 create 不会重入写锁。边界见 [v2.13 记录](docs/releases/v2.13.md) 与
 [ADR 0077](docs/adr/0077-v2-13-directory-handles-and-at-path-transactions.md)。
+v2.14 已补齐打开文件描述的基础操作：regular file 支持共享 offset seek，pread/pwrite 不改变
+offset；独立 open 的 append 由 VFS 在 EOF 选择与写入之间统一串行。ABI v2.6.0 在 96 后追加
+97..105，覆盖 fstat/ftruncate/fchmod/fchown 和 file status flags，新增 -60 `NotSeekable`；
+Ring 3 在真实 rootfs 上验证定位、元数据、append 与最终持久化。边界见
+[v2.14 记录](docs/releases/v2.14.md) 与
+[ADR 0078](docs/adr/0078-v2-14-open-file-description-operations.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

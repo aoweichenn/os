@@ -109,6 +109,15 @@ enum class SystemCallNumber : uint64_t {
     RenameAt = 94ULL,
     LinkAt = 95ULL,
     CreateSymbolicLinkAt = 96ULL,
+    SeekDescriptor = 97ULL,
+    ReadDescriptorAt = 98ULL,
+    WriteDescriptorAt = 99ULL,
+    StatDescriptor = 100ULL,
+    TruncateDescriptor = 101ULL,
+    ChangeDescriptorMode = 102ULL,
+    ChangeDescriptorOwner = 103ULL,
+    GetFileStatusFlags = 104ULL,
+    SetFileStatusFlags = 105ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -143,6 +152,16 @@ inline constexpr uint64_t OS_ABI_AT_REMOVE_DIRECTORY_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_ABI_AT_REMOVE_VALID_FLAG_MASK = OS_ABI_AT_REMOVE_DIRECTORY_FLAG;
 inline constexpr uint64_t OS_ABI_AT_STAT_NO_FOLLOW_FLAG = 1ULL << 0ULL;
 inline constexpr uint64_t OS_ABI_AT_STAT_VALID_FLAG_MASK = OS_ABI_AT_STAT_NO_FOLLOW_FLAG;
+inline constexpr uint64_t OS_ABI_SEEK_FROM_BEGINNING = 0ULL;
+inline constexpr uint64_t OS_ABI_SEEK_FROM_CURRENT = 1ULL;
+inline constexpr uint64_t OS_ABI_SEEK_FROM_END = 2ULL;
+inline constexpr uint64_t OS_ABI_FILE_STATUS_READABLE_FLAG = 1ULL << 0ULL;
+inline constexpr uint64_t OS_ABI_FILE_STATUS_WRITABLE_FLAG = 1ULL << 1ULL;
+inline constexpr uint64_t OS_ABI_FILE_STATUS_APPEND_FLAG = 1ULL << 2ULL;
+inline constexpr uint64_t OS_ABI_FILE_STATUS_ACCESS_FLAG_MASK =
+    OS_ABI_FILE_STATUS_READABLE_FLAG | OS_ABI_FILE_STATUS_WRITABLE_FLAG;
+inline constexpr uint64_t OS_ABI_FILE_STATUS_VALID_FLAG_MASK =
+    OS_ABI_FILE_STATUS_ACCESS_FLAG_MASK | OS_ABI_FILE_STATUS_APPEND_FLAG;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY = -1LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER = -2LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_WRITE_TOO_LARGE = -3LL;
@@ -202,6 +221,7 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NOT_CONTROLLING_TERMINAL = -5
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED = -57LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_CREDENTIAL_PERMISSION_DENIED = -58LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED = -59LL;
+inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NOT_SEEKABLE = -60LL;
 
 struct AtStatRequest final {
     uint64_t directory_descriptor;

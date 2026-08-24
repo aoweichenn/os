@@ -2088,3 +2088,38 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   75 unit、85 integration、56 randomized、33 system，含 25 条 failure-path；CTest 789.84
   秒，端到端约 926 秒；关键 4 GiB ATA primary、ATA/NVMe reclaim 分别为
   64.79/67.60/68.46 秒，完整证据见 [v2.13 候选记录](releases/v2.13.md)。
+
+## v2.14 打开文件描述与定位 I/O 测试
+
+- `os_abi_v2_contract_unit_tests` 冻结 97..105、seek origin、file status flag、ABI 2.6.0、
+  syscall count 105 和 -60 `NotSeekable`；release identity/tooling 同步拒绝旧计数；
+- `os_kernel_file_description_lifecycle_integration_tests` 让 duplicate 执行 seek 后从原引用读取，
+  证明共享 offset；pread 再证明 offset 不变，并覆盖负 seek、只读 Append 拒绝、独立 open
+  的双线程 128 次 append 与 Linux append+pwrite 语义；
+- 用户 ELF 构建按 function section 回收 97..105 包装：thread probe 的符号表不得保留未引用
+  `SeekDescriptor`，fs_probe 必须保留；所有 ELF 仍必须保留基础 syscall 桩，尤其是完全不调用
+  syscall 的 invalid-opcode/page-fault 注入程序；4 GiB primary 的 32 线程冷文件合并负责最终
+  运行验收；
+- VFS、rootfs integration 继续覆盖缓存逻辑 size、truncate、mode/owner metadata invalidation、
+  权限和最终资源守恒，不为 fd 版本复制第二套路径实现；
+- Ring 3 `fs_probe` 在真实 rootfs 上执行九项新 syscall，核对 offset 11、显式位置写入、grow/
+  shrink、mode/owner、flags、append 后 size 和最终 payload；目录 seek 必须返回 -60；
+- Kernel 最终 payload oracle 必须精确接受 offset 20..22 的 `POS`；启动恢复为兼容 V2.13 持久
+  盘可接受 legacy 或 positioned 两种完整 payload，不能逐字节混合接受；
+- 反复 primary 必须覆盖 background writeback 与 grow/stat/shrink ftruncate 交错；任何
+  `DESCRIPTION_TRUNCATE_*` 或 `[TRUNCATE][FAIL]` 都失败，不能以单次通过替代竞态验收；
+- Shell 外部工具退出与 fs_probe truncate 必须并发交错；teardown 进程即使 active/Alive 且
+  CR3 非零，只要 stable 已清除就不得进入 VMA 扫描，stage=3/status=21 视为生命周期回归；
+- ATA/NVMe `snapshot=off` 第二次启动必须重新写、append、shrink 同一 payload；stage=4/status=13
+  或 cache FileWriteFailed 说明 backing retain/Dirty 发布顺序回归；
+- 新操作后的 persistence barrier 使正常 profile 的 `OTHER_THREAD_PROGRESS=1` 精确计数由 3
+  增为 4；成功时不增加逐操作 marker，失败只按 positioned/truncate/metadata/status/sync
+  五组定位；
+- 系统验收继续固定 4 GiB `-mem-prealloc`、128 GiB 真实盘、reset-vector 自研启动链和 QMP
+  screendump 至少 512 个非黑像素；final primary、ATA/NVMe reclaim、ATA/NVMe persistence
+  分别为 64.68、67.31/68.17、130.29/129.40 秒；
+- 成功类 runner 必须把初始 `FILE_SYSTEM_STATUS=` 作为即时失败；挂载 DeviceFailure 不得等待
+  最终 marker 的完整墙钟预算。
+- final fresh CAW 构建 3457 个目标；`python3 tools/os.py verify` 为 249/249、0 失败：75 unit、
+  85 integration、56 randomized、33 system，含 25 条 failure-path；CTest 790.32 秒，verify
+  墙钟 791.41 秒。完整证据见 [v2.14 候选记录](releases/v2.14.md)。

@@ -10,7 +10,9 @@
 #include <os/kernel/object/kernel_object.hpp>
 #include <test_context.hpp>
 
+#include <atomic>
 #include <string_view>
+#include <thread>
 
 namespace {
 
@@ -22,6 +24,12 @@ constexpr std::string_view OS_TEST_FILE_DESCRIPTION_PIPE_LIFETIME =
     "管道端点只能在最后一个文件描述引用释放时关闭";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_APPEND_ATOMICITY =
     "独立 append 文件描述每次写入都必须重新定位到当前文件尾";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ATOMICITY =
+    "独立 append 文件描述并发写入不得覆盖或丢失任何记录";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_POSITIONED_IO =
+    "seek 必须由 duplicate 共享而 pread/pwrite 不得修改共享 offset";
+constexpr std::string_view OS_TEST_FILE_DESCRIPTION_STATUS_FLAGS =
+    "file status flags 必须共享、保留 access mode 并只允许 writable regular append";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_CURSOR =
     "duplicate 必须共享写回错误游标而独立打开保持自己的采样点";
 constexpr std::string_view OS_TEST_FILE_DESCRIPTION_FINALIZATION =
@@ -38,6 +46,8 @@ constexpr uint64_t OS_TEST_FILE_DESCRIPTION_SUPERBLOCK_IDENTIFIER = 1ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_MOUNT_CAPACITY = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES = 4ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES = 4ULL;
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ITERATION_COUNT = 64ULL;
+constexpr int64_t OS_TEST_FILE_DESCRIPTION_NEGATIVE_TRANSFER_DISPLACEMENT_BYTES = -4LL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE = 1ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_FILE_DESCRIPTOR = 3ULL;
 constexpr uint64_t OS_TEST_FILE_DESCRIPTION_INDEPENDENT_FILE_DESCRIPTOR = 4ULL;
@@ -87,6 +97,21 @@ constexpr uint8_t OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD[] = {
 constexpr uint8_t OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD[] = {
     static_cast<uint8_t>('Y'),
 };
+constexpr uint8_t OS_TEST_FILE_DESCRIPTION_POSITIONED_APPEND_PAYLOAD[] = {
+    static_cast<uint8_t>('Z'),
+};
+constexpr uint8_t OS_TEST_FILE_DESCRIPTION_FIRST_CONCURRENT_APPEND_BYTE =
+    static_cast<uint8_t>('M');
+constexpr uint8_t OS_TEST_FILE_DESCRIPTION_SECOND_CONCURRENT_APPEND_BYTE =
+    static_cast<uint8_t>('N');
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_APPEND_PREFIX_SIZE_BYTES =
+    sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD) +
+    sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD) +
+    sizeof(OS_TEST_FILE_DESCRIPTION_POSITIONED_APPEND_PAYLOAD) +
+    sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD);
+constexpr uint64_t OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_SIZE_BYTES =
+    OS_TEST_FILE_DESCRIPTION_APPEND_PREFIX_SIZE_BYTES +
+    OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ITERATION_COUNT * 2ULL;
 
 os::kernel::FileWritebackErrorTracker *writeback_error_tracker;
 
@@ -628,6 +653,42 @@ int main() {
         BytesEqual(independent_bytes, OS_TEST_FILE_DESCRIPTION_PAYLOAD, sizeof(independent_bytes));
     test_context.Expect(shared_offset_valid, OS_TEST_FILE_DESCRIPTION_SHARED_OFFSET);
 
+    uint8_t positioned_bytes[OS_TEST_FILE_DESCRIPTION_TRANSFER_SIZE_BYTES]{};
+    uint64_t positioned_offset_bytes = UINT64_MAX;
+    os::kernel::FileDescriptionSnapshot positioned_snapshot{};
+    uint64_t shared_status_flags = UINT64_MAX;
+    const bool positioned_io_valid =
+        table.Lookup(OS_TEST_FILE_DESCRIPTION_DUPLICATE_FILE_DESCRIPTOR, operation_reference) ==
+            os::kernel::FileTableStatus::Succeeded &&
+        description_manager.Seek(
+            operation_reference, OS_TEST_FILE_DESCRIPTION_NEGATIVE_TRANSFER_DISPLACEMENT_BYTES,
+            os::kernel::FileSeekOrigin::Current, positioned_offset_bytes,
+            file_system_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        positioned_offset_bytes == OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES &&
+        description_manager.TryReadAt(
+            operation_reference, OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES, positioned_bytes,
+            sizeof(positioned_bytes), read_bytes,
+            file_system_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        read_bytes == sizeof(positioned_bytes) &&
+        BytesEqual(positioned_bytes,
+                   OS_TEST_FILE_DESCRIPTION_PAYLOAD + OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES,
+                   sizeof(positioned_bytes)) &&
+        description_manager.ReadSnapshot(operation_reference, positioned_snapshot) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        positioned_snapshot.offset_bytes == OS_TEST_FILE_DESCRIPTION_SECOND_OFFSET_BYTES &&
+        description_manager.Seek(operation_reference, -1LL, os::kernel::FileSeekOrigin::Beginning,
+                                 positioned_offset_bytes, file_system_status) ==
+            os::kernel::FileDescriptionStatus::InvalidArgument &&
+        description_manager.GetStatusFlags(operation_reference, shared_status_flags) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        shared_status_flags == os::kernel::OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG &&
+        description_manager.SetStatusFlags(
+            operation_reference,
+            shared_status_flags | os::kernel::OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) ==
+            os::kernel::FileDescriptionStatus::InvalidArgument &&
+        operation_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    test_context.Expect(positioned_io_valid, OS_TEST_FILE_DESCRIPTION_POSITIONED_IO);
+
     os::kernel::fs::OpenFile readahead_open_file{};
     os::kernel::fs::OpenFile independent_readahead_open_file{};
     os::kernel::KernelObjectReference readahead_reference{};
@@ -780,6 +841,7 @@ int main() {
     os::kernel::KernelObjectReference first_append_reference{};
     os::kernel::KernelObjectReference second_append_reference{};
     uint64_t append_written_bytes = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    uint64_t append_status_flags = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
     os::kernel::FileDescriptionSnapshot first_append_snapshot{};
     os::kernel::FileDescriptionSnapshot second_append_snapshot{};
     const bool append_atomic =
@@ -795,15 +857,34 @@ int main() {
         CreateFileDescription(description_manager, vfs, second_append_open_file,
                               second_append_reference,
                               true) == os::kernel::FileDescriptionStatus::Succeeded &&
+        description_manager.GetStatusFlags(first_append_reference, append_status_flags) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        append_status_flags == (os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG |
+                                os::kernel::OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) &&
+        description_manager.SetStatusFlags(
+            first_append_reference, os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        description_manager.SetStatusFlags(
+            first_append_reference,
+            os::kernel::OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG |
+                os::kernel::OS_KERNEL_FILE_DESCRIPTION_APPEND_STATUS_FLAG) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
         description_manager.TryWrite(
             first_append_reference, OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD,
-            sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD), append_written_bytes,
+            sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD), UINT64_MAX, append_written_bytes,
             file_system_status, pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
         append_written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD) &&
-        description_manager.TryWrite(
-            second_append_reference, OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD,
-            sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD), append_written_bytes,
-            file_system_status, pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
+        description_manager.TryWriteAt(first_append_reference, OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+                                       OS_TEST_FILE_DESCRIPTION_POSITIONED_APPEND_PAYLOAD,
+                                       sizeof(OS_TEST_FILE_DESCRIPTION_POSITIONED_APPEND_PAYLOAD),
+                                       UINT64_MAX, append_written_bytes, file_system_status) ==
+            os::kernel::FileDescriptionStatus::Succeeded &&
+        append_written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_POSITIONED_APPEND_PAYLOAD) &&
+        description_manager.TryWrite(second_append_reference,
+                                     OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD,
+                                     sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD),
+                                     UINT64_MAX, append_written_bytes, file_system_status,
+                                     pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
         append_written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD) &&
         description_manager.ReadSnapshot(first_append_reference, first_append_snapshot) ==
             os::kernel::FileDescriptionStatus::Succeeded &&
@@ -815,16 +896,102 @@ int main() {
         second_append_snapshot.offset_bytes ==
             sizeof(OS_TEST_FILE_DESCRIPTION_PAYLOAD) +
                 sizeof(OS_TEST_FILE_DESCRIPTION_FIRST_APPEND_PAYLOAD) +
+                sizeof(OS_TEST_FILE_DESCRIPTION_POSITIONED_APPEND_PAYLOAD) +
                 sizeof(OS_TEST_FILE_DESCRIPTION_SECOND_APPEND_PAYLOAD) &&
         first_append_snapshot.size_bytes == second_append_snapshot.offset_bytes &&
         second_append_snapshot.size_bytes == second_append_snapshot.offset_bytes &&
         first_append_snapshot.writeback_error_cursor ==
             OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
         second_append_snapshot.writeback_error_cursor ==
-            OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE &&
-        first_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded &&
-        second_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+            OS_TEST_FILE_DESCRIPTION_WRITEBACK_ERROR_SEQUENCE;
     test_context.Expect(append_atomic, OS_TEST_FILE_DESCRIPTION_APPEND_ATOMICITY);
+    test_context.Expect(append_atomic, OS_TEST_FILE_DESCRIPTION_STATUS_FLAGS);
+
+    std::atomic<bool> start_concurrent_append{false};
+    std::atomic<uint64_t> concurrent_append_failure_count{OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE};
+    const auto append_worker = [&description_manager, &start_concurrent_append,
+                                &concurrent_append_failure_count](
+                                   const os::kernel::KernelObjectReference *const reference,
+                                   const uint8_t append_byte) noexcept {
+        while (!start_concurrent_append.load(std::memory_order_acquire)) {
+        }
+        for (uint64_t iteration = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+             iteration < OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ITERATION_COUNT; ++iteration) {
+            uint64_t written_bytes = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+            os::kernel::FileSystemStatus worker_file_system_status =
+                os::kernel::FileSystemStatus::Succeeded;
+            os::kernel::PipeStatus worker_pipe_status = os::kernel::PipeStatus::Succeeded;
+            if (reference == nullptr ||
+                description_manager.TryWrite(*reference, &append_byte, sizeof(append_byte),
+                                             UINT64_MAX, written_bytes,
+                                             worker_file_system_status,
+                                             worker_pipe_status) !=
+                    os::kernel::FileDescriptionStatus::Succeeded ||
+                written_bytes != sizeof(append_byte)) {
+                concurrent_append_failure_count.fetch_add(1ULL, std::memory_order_relaxed);
+                return;
+            }
+        }
+    };
+    std::thread first_append_thread{append_worker, &first_append_reference,
+                                    OS_TEST_FILE_DESCRIPTION_FIRST_CONCURRENT_APPEND_BYTE};
+    std::thread second_append_thread{append_worker, &second_append_reference,
+                                     OS_TEST_FILE_DESCRIPTION_SECOND_CONCURRENT_APPEND_BYTE};
+    start_concurrent_append.store(true, std::memory_order_release);
+    first_append_thread.join();
+    second_append_thread.join();
+
+    const os::kernel::fs::OpenOptions append_verification_options{
+        .readable = true,
+        .writable = false,
+        .create = false,
+        .truncate = false,
+        .append = false,
+    };
+    os::kernel::fs::OpenFile append_verification_open_file{};
+    uint8_t append_verification_bytes[OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_SIZE_BYTES]{};
+    uint64_t append_verification_read_bytes = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    uint64_t first_concurrent_append_byte_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    uint64_t second_concurrent_append_byte_count = OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE;
+    bool concurrent_append_atomic =
+        concurrent_append_failure_count.load(std::memory_order_relaxed) ==
+            OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE &&
+        vfs.Open(file_system_context, OS_TEST_FILE_DESCRIPTION_FILE_PATH,
+                 sizeof(OS_TEST_FILE_DESCRIPTION_FILE_PATH), append_verification_options,
+                 append_verification_open_file) == os::kernel::fs::Status::Succeeded &&
+        vfs.ReadAt(append_verification_open_file, OS_TEST_FILE_DESCRIPTION_EMPTY_VALUE,
+                   append_verification_bytes, sizeof(append_verification_bytes),
+                   append_verification_read_bytes) == os::kernel::fs::Status::Succeeded &&
+        append_verification_read_bytes == sizeof(append_verification_bytes);
+    for (uint64_t byte_index = OS_TEST_FILE_DESCRIPTION_APPEND_PREFIX_SIZE_BYTES;
+         concurrent_append_atomic && byte_index < sizeof(append_verification_bytes); ++byte_index) {
+        if (append_verification_bytes[byte_index] ==
+            OS_TEST_FILE_DESCRIPTION_FIRST_CONCURRENT_APPEND_BYTE) {
+            ++first_concurrent_append_byte_count;
+        } else if (append_verification_bytes[byte_index] ==
+                   OS_TEST_FILE_DESCRIPTION_SECOND_CONCURRENT_APPEND_BYTE) {
+            ++second_concurrent_append_byte_count;
+        } else {
+            concurrent_append_atomic = false;
+        }
+    }
+    const bool append_verification_close_succeeded =
+        !append_verification_open_file.open ||
+        vfs.Close(append_verification_open_file) == os::kernel::fs::Status::Succeeded;
+    const bool first_append_reference_released =
+        first_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    const bool second_append_reference_released =
+        second_append_reference.Reset() == os::kernel::KernelObjectStatus::Succeeded;
+    concurrent_append_atomic =
+        concurrent_append_atomic &&
+        first_concurrent_append_byte_count ==
+            OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ITERATION_COUNT &&
+        second_concurrent_append_byte_count ==
+            OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ITERATION_COUNT &&
+        append_verification_close_succeeded && first_append_reference_released &&
+        second_append_reference_released;
+    test_context.Expect(concurrent_append_atomic,
+                        OS_TEST_FILE_DESCRIPTION_CONCURRENT_APPEND_ATOMICITY);
 
     os::kernel::Pipe pipe{};
     pipe.Initialize();
@@ -863,7 +1030,7 @@ int main() {
         table.Lookup(duplicate_pipe_writer_descriptor, operation_reference) ==
             os::kernel::FileTableStatus::Succeeded &&
         description_manager.TryWrite(operation_reference, OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD,
-                                     sizeof(OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD),
+                                     sizeof(OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD), UINT64_MAX,
                                      pipe_written_bytes, file_system_status,
                                      pipe_status) == os::kernel::FileDescriptionStatus::Succeeded &&
         pipe_written_bytes == sizeof(OS_TEST_FILE_DESCRIPTION_PIPE_PAYLOAD) &&

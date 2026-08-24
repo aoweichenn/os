@@ -199,6 +199,7 @@ enum class ProcessIoStatus : uint64_t {
     PipeLimitExceeded,
     ObjectFailure,
     InvalidArgument,
+    NotSeekable,
 };
 
 struct ProcessCreationResult final {
@@ -547,6 +548,34 @@ TryReadCurrentProcessDescriptor(uint64_t descriptor, uint8_t *destination, uint6
 TryWriteCurrentProcessDescriptor(uint64_t descriptor, const uint8_t *source, uint64_t length_bytes,
                                  uint64_t &written_bytes,
                                  FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+SeekCurrentProcessDescriptor(uint64_t descriptor, int64_t displacement_bytes, FileSeekOrigin origin,
+                             uint64_t &offset_bytes, FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+ReadCurrentProcessDescriptorAt(uint64_t descriptor, uint64_t offset_bytes, uint8_t *destination,
+                               uint64_t capacity_bytes, uint64_t &read_bytes,
+                               FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+WriteCurrentProcessDescriptorAt(uint64_t descriptor, uint64_t offset_bytes, const uint8_t *source,
+                                uint64_t length_bytes, uint64_t &written_bytes,
+                                FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+StatCurrentProcessDescriptor(uint64_t descriptor, fs::NodeInformation &information,
+                             FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+TruncateCurrentProcessDescriptor(uint64_t descriptor, uint64_t size_bytes,
+                                 FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+ChangeCurrentProcessDescriptorMode(uint64_t descriptor, os::abi::FileMode mode,
+                                   FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+ChangeCurrentProcessDescriptorOwner(uint64_t descriptor, os::abi::UserIdentifier user_identifier,
+                                    os::abi::GroupIdentifier group_identifier,
+                                    FileSystemStatus &file_system_status) noexcept;
+[[nodiscard]] ProcessIoStatus
+GetCurrentProcessFileStatusFlags(uint64_t descriptor, uint64_t &file_status_flags) noexcept;
+[[nodiscard]] ProcessIoStatus SetCurrentProcessFileStatusFlags(uint64_t descriptor,
+                                                               uint64_t file_status_flags) noexcept;
 [[nodiscard]] ProcessIoStatus
 CloseCurrentProcessDescriptor(uint64_t descriptor, FileSystemStatus &file_system_status) noexcept;
 [[nodiscard]] ProcessIoStatus

@@ -387,6 +387,11 @@ class Vfs final {
                                      uint64_t path_length_bytes,
                                      os::abi::UserIdentifier user_identifier,
                                      os::abi::GroupIdentifier group_identifier) noexcept;
+    [[nodiscard]] Status ChangeOpenFileMode(const FsContext &context, const OpenFile &open_file,
+                                            os::abi::FileMode mode) noexcept;
+    [[nodiscard]] Status ChangeOpenFileOwner(const FsContext &context, const OpenFile &open_file,
+                                             os::abi::UserIdentifier user_identifier,
+                                             os::abi::GroupIdentifier group_identifier) noexcept;
     [[nodiscard]] Status Open(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, const OpenOptions &options,
                               OpenFile &open_file) noexcept;
@@ -433,6 +438,9 @@ class Vfs final {
     [[nodiscard]] Status WriteAt(const OpenFile &open_file, uint64_t offset_bytes,
                                  const uint8_t *source, uint64_t length_bytes,
                                  uint64_t &written_bytes) noexcept;
+    [[nodiscard]] Status Append(const OpenFile &open_file, const uint8_t *source,
+                                uint64_t length_bytes, uint64_t maximum_file_size_bytes,
+                                uint64_t &write_offset_bytes, uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status WriteUncachedAt(const OpenFile &open_file, uint64_t offset_bytes,
                                          const uint8_t *source, uint64_t length_bytes,
                                          uint64_t &written_bytes) noexcept;
@@ -546,6 +554,11 @@ class Vfs final {
     [[nodiscard]] Status ApplyRegularFileCachedSize(const Vnode &vnode,
                                                     BackendNodeInformation &information) noexcept;
     [[nodiscard]] Status TruncateNode(const Vnode &vnode, uint64_t size_bytes) noexcept;
+    [[nodiscard]] Status ChangeNodeMode(const FsContext &context, const Path &path,
+                                        os::abi::FileMode mode) noexcept;
+    [[nodiscard]] Status ChangeNodeOwner(const FsContext &context, const Path &path,
+                                         os::abi::UserIdentifier user_identifier,
+                                         os::abi::GroupIdentifier group_identifier) noexcept;
     [[nodiscard]] Status RequireAccess(const FsContext &context, const Path &path,
                                        uint32_t requested_access) noexcept;
     [[nodiscard]] Status RequireParentMutationAccess(const FsContext &context,
@@ -571,6 +584,7 @@ class Vfs final {
     mutable RuntimeMutex metadata_locks_[OS_KERNEL_VFS_METADATA_LOCK_SHARD_COUNT]{};
     mutable RuntimeMutex namespace_mutation_lock_{};
     mutable RuntimeMutex namespace_reclaim_lock_{};
+    mutable RuntimeMutex append_lock_{};
     mutable RuntimeMutex lookup_locks_[OS_KERNEL_VFS_LOOKUP_LOCK_SHARD_COUNT]{};
     mutable SpinLock resolution_context_lock_{};
     VfsResolutionContext fallback_resolution_context_{};

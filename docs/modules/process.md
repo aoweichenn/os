@@ -479,3 +479,20 @@ close、duplicate/fork 与 syscall 之间没有 payload 裸指针窗口。
 file writeback 和 anonymous swap。这样不改变计划和统计，却让阻塞 ATA/NVMe 路径保留明确
 的 16 KiB Kernel stack 余量。work acquire、operation、complete/requeue 和无任务等待也分成
 独立 helper，operation 执行时不再保留后处理临时状态。
+
+## v2.14 fd 定位、元数据与资源限制边界
+
+ProcessRuntime 的九个新入口只持有 FileTable 返回的 KernelObjectReference，不暴露 payload。
+seek/pread/pwrite/fstat/ftruncate/fchmod/fchown/status flags 均交由 FileDescriptionManager 在对象
+operation lock 下解释；user-copy 已在系统调用层完成，锁内不会缺页访问用户地址。
+
+普通 write 与 pwrite 不再基于调用前 snapshot 预裁剪 append。ProcessRuntime 把当前
+RLIMIT_FSIZE 传到 FileDescriptionManager/VFS，让原子 EOF 事务决定实际可写长度。ftruncate
+先 fstat 得到稳定 file identity；`PrepareRuntimeFileTruncate` 取消预读、写保护全部共享映射、
+释放 EOF 外映射，并通过 file-page writeback coordinator 等待同文件写回收束，再提交打开文件
+truncate。这样 cache Busy 不会出现在后端提交之后。`NotSeekable` 独立映射为 ABI -60。设计见
+[ADR 0078](../adr/0078-v2-14-open-file-description-operations.md)。
+
+共享映射写保护与 truncate VMA 扫描共用 runtime+ProcessTree gate。注册/fork 完整提交后才把
+`address_space_stable` 置 true；退出/OOM 在 Destroy 前先清除。只有 stable 且 Alive/Stopped
+可遍历，RuntimeProcess 的 `active`、非零 CR3 或单独的 ProcessTree 状态都不足以证明稳定。

@@ -77,6 +77,13 @@ enum class FileDescriptionStatus : uint64_t {
     DeviceFailure,
     FileSystemFailure,
     ObjectFailure,
+    NotSeekable,
+};
+
+enum class FileSeekOrigin : uint64_t {
+    Beginning,
+    Current,
+    End,
 };
 
 struct FileDescriptionCreateRequest final {
@@ -138,6 +145,11 @@ struct FileDescriptionManagerStatistics final {
     uint64_t readahead_feedback_application_count;
     uint64_t readahead_cancellation_count;
     uint64_t readahead_cancellation_failure_count;
+    uint64_t seek_operation_count;
+    uint64_t positioned_read_operation_count;
+    uint64_t positioned_write_operation_count;
+    uint64_t metadata_operation_count;
+    uint64_t status_flag_update_count;
 };
 
 // FileDescription 是 fd 背后的共享状态。duplicate 只增加对象强引用，因此
@@ -166,11 +178,41 @@ class FileDescriptionManager final {
                                                 uint64_t &read_bytes,
                                                 FileSystemStatus &file_system_status,
                                                 PipeStatus &pipe_status) noexcept;
-    [[nodiscard]] FileDescriptionStatus TryWrite(const KernelObjectReference &reference,
-                                                 const uint8_t *source, uint64_t length_bytes,
-                                                 uint64_t &written_bytes,
-                                                 FileSystemStatus &file_system_status,
-                                                 PipeStatus &pipe_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    TryWrite(const KernelObjectReference &reference, const uint8_t *source, uint64_t length_bytes,
+             uint64_t maximum_file_size_bytes, uint64_t &written_bytes,
+             FileSystemStatus &file_system_status, PipeStatus &pipe_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus Seek(const KernelObjectReference &reference,
+                                             int64_t displacement_bytes, FileSeekOrigin origin,
+                                             uint64_t &offset_bytes,
+                                             FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus TryReadAt(const KernelObjectReference &reference,
+                                                  uint64_t offset_bytes, uint8_t *destination,
+                                                  uint64_t capacity_bytes, uint64_t &read_bytes,
+                                                  FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    TryWriteAt(const KernelObjectReference &reference, uint64_t offset_bytes, const uint8_t *source,
+               uint64_t length_bytes, uint64_t maximum_file_size_bytes, uint64_t &written_bytes,
+               FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus Stat(const KernelObjectReference &reference,
+                                             fs::NodeInformation &information,
+                                             FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus Truncate(const KernelObjectReference &reference,
+                                                 uint64_t size_bytes,
+                                                 FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus ChangeMode(const KernelObjectReference &reference,
+                                                   const fs::FsContext &context,
+                                                   os::abi::FileMode mode,
+                                                   FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus ChangeOwner(const KernelObjectReference &reference,
+                                                    const fs::FsContext &context,
+                                                    os::abi::UserIdentifier user_identifier,
+                                                    os::abi::GroupIdentifier group_identifier,
+                                                    FileSystemStatus &file_system_status) noexcept;
+    [[nodiscard]] FileDescriptionStatus GetStatusFlags(const KernelObjectReference &reference,
+                                                       uint64_t &file_status_flags) noexcept;
+    [[nodiscard]] FileDescriptionStatus SetStatusFlags(const KernelObjectReference &reference,
+                                                       uint64_t file_status_flags) noexcept;
     [[nodiscard]] FileDescriptionStatus
     ReadDirectory(const KernelObjectReference &reference, fs::DirectoryEntry &entry,
                   bool &end_of_directory, FileSystemStatus &file_system_status) noexcept;

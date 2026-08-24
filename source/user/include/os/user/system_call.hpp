@@ -95,6 +95,21 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                      uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t WriteDescriptor(uint64_t descriptor, const uint8_t *source,
                                       uint64_t length_bytes) noexcept;
+[[nodiscard]] int64_t SeekDescriptor(uint64_t descriptor, int64_t displacement_bytes,
+                                     uint64_t origin) noexcept;
+[[nodiscard]] int64_t ReadDescriptorAt(uint64_t descriptor, uint8_t *destination,
+                                       uint64_t capacity_bytes, uint64_t offset_bytes) noexcept;
+[[nodiscard]] int64_t WriteDescriptorAt(uint64_t descriptor, const uint8_t *source,
+                                        uint64_t length_bytes, uint64_t offset_bytes) noexcept;
+[[nodiscard]] int64_t StatDescriptor(uint64_t descriptor,
+                                     os::abi::FileInformation &information) noexcept;
+[[nodiscard]] int64_t TruncateDescriptor(uint64_t descriptor, uint64_t size_bytes) noexcept;
+[[nodiscard]] int64_t ChangeDescriptorMode(uint64_t descriptor, os::abi::FileMode mode) noexcept;
+[[nodiscard]] int64_t ChangeDescriptorOwner(uint64_t descriptor,
+                                            os::abi::UserIdentifier user_identifier,
+                                            os::abi::GroupIdentifier group_identifier) noexcept;
+[[nodiscard]] int64_t GetFileStatusFlags(uint64_t descriptor) noexcept;
+[[nodiscard]] int64_t SetFileStatusFlags(uint64_t descriptor, uint64_t file_status_flags) noexcept;
 [[nodiscard]] int64_t CloseDescriptor(uint64_t descriptor) noexcept;
 [[nodiscard]] int64_t CreatePipe(os::abi::PipeDescriptorPair &descriptor_pair) noexcept;
 [[nodiscard]] int64_t DuplicateDescriptor(uint64_t source_descriptor, uint64_t minimum_descriptor,
