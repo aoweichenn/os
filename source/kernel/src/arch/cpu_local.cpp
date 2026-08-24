@@ -160,8 +160,7 @@ CpuLocalStatus CpuLocal::BeginSystemCall(const UserContextEntryMethod entry_meth
     return CpuLocalStatus::Succeeded;
 }
 
-CpuLocalStatus
-CpuLocal::SuspendSystemCall(UserContextEntryMethod &entry_method) noexcept {
+CpuLocalStatus CpuLocal::SuspendSystemCall(UserContextEntryMethod &entry_method) noexcept {
     entry_method = UserContextEntryMethod::Invalid;
     if (this->initialized_ == OS_KERNEL_CPU_LOCAL_EMPTY_VALUE) {
         return CpuLocalStatus::NotInitialized;
@@ -303,6 +302,12 @@ CpuLocalStatistics CpuLocal::Statistics() const noexcept {
 }
 
 uint64_t CpuLocal::Address() const noexcept { return this->self_address_; }
+
+uint64_t CpuLocal::CurrentThreadIndex() const noexcept { return this->current_thread_index_; }
+
+uint64_t CpuLocal::KernelEntryStackPointer() const noexcept {
+    return this->kernel_entry_stack_pointer_;
+}
 
 uint64_t CpuLocal::SystemCallUserStackPointer() const noexcept {
     return this->system_call_user_stack_pointer_;

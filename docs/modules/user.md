@@ -594,3 +594,15 @@ ABI v2.4.0 保留 1..84，在末尾追加 85 `SynchronizeFile`、86
 memory probe 对同一文件同时保留两个 shared alias、一个 writable shared 和一个
 private COW 映射。它先提交 MS_ASYNC，再重新写脏并执行 MS_SYNC|MS_INVALIDATE，随后
 调用 fdatasync/fsync；private 映射上的 MS_SYNC 成功但不把 COW 字节写回。
+
+## v2.13 目录相对路径 ABI
+
+ABI v2.5.0 保留 1..87 和 -1..-59，在末尾追加 88..96：`OpenFileAt`、
+`OpenDirectoryAt`、`CreateDirectoryAt`、`RemoveAt`、`StatAt`、`ReadSymbolicLinkAt`、
+`RenameAt`、`LinkAt`、`CreateSymbolicLinkAt`。`UINT64_MAX` 表示当前工作目录；绝对路径
+忽略传入 descriptor。
+
+寄存器足够的单路径调用直接传 `dirfd/path/length/flags`。stat、readlink、双路径和 symlink
+使用 48/40/48/40 字节固定请求结构；Kernel 只接受精确大小和已知 flag。用户包装不暴露
+Vnode 或 VFS handle。真实 `fs_probe` 用打开的 `/shared` 目录执行全部九个调用，核对普通
+文件类型、no-follow 符号链接类型、目标字节、rename/link/remove 和最终文件内容。

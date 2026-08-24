@@ -1687,6 +1687,35 @@ V2.11 六个工程增量至此闭合；按既有用户要求继续保持未发�
 - 9216 页压力规格不得因长期 namespace 页而漂移；pressure 必须触发 compact rebuild/release；
 - host oracle、4 GiB primary/reclaim 和完整 fresh CAW verify 全绿。
 
+### v2.13 目录句柄与 `*at` 路径事务
+
+**范围**
+
+- 用稳定目录 vnode 句柄表达 cwd 之外的相对路径基准，目录 rename 后句柄仍有效；
+- source/destination 可使用不同 `dirfd`，权限、root clamp、mount 和符号链接仍由 VFS 统一；
+- namespace writer 从解析前覆盖到 backend commit/cache invalidation，并复验 expected sequence；
+- ABI v2.5.0 在 87 后追加九项基础 `*at` 调用，不改变 rootfs v4 与磁盘格式；
+- 保持 4 GiB/128 GiB、单 BSP、VGA 终端与无网络/无无关驱动边界。
+
+**六个增量（全部完成）**
+
+1. `DirectoryHandle` retain/release 与 `ResolveAt`；
+2. 单目录 VFS `*At` 操作；
+3. writer 全路径串行、expected sequence 与同名 create 复验；
+4. ABI v2.5.0 的 88..93、请求布局和失败边界；
+5. 双 parent 94..96、目录 rename 后句柄和 Ring 3 rootfs 路径；
+6. 生命周期统计、并发、ABI、VGA、资源与完整 fresh CAW 回归。
+
+设计由 [ADR 0077](adr/0077-v2-13-directory-handles-and-at-path-transactions.md) 冻结。V2.13
+继续保持工程候选，不创建公开 tag。
+
+**退出条件**
+
+- close/duplicate/fork 与并发 `*at` 之间不存在悬空 FileDescription/VFS handle；
+- 双 parent mutation 不提交基于过期 namespace sequence 的解析结果；
+- ABI 1..87、错误区间、rootfs v4 和旧用户工具保持兼容；
+- hosted 强制交错、Ring 3 rootfs、4 GiB primary 与完整 fresh CAW verify 全绿。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

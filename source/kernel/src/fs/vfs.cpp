@@ -148,8 +148,9 @@ TrySubtractNamespaceBackingUsage(NamespaceBackingResourceUsage &usage,
 
 }
 
-Vfs::NamespaceMutationGuard::NamespaceMutationGuard(Vfs &vfs) noexcept
-    : vfs_{vfs}, active_{vfs.BeginNamespaceMutation()} {}
+Vfs::NamespaceMutationGuard::NamespaceMutationGuard(Vfs &vfs,
+                                                    const uint64_t expected_sequence) noexcept
+    : vfs_{vfs}, active_{vfs.BeginNamespaceMutation(expected_sequence)} {}
 
 Vfs::NamespaceMutationGuard::~NamespaceMutationGuard() noexcept {
     if (this->active_ && !this->vfs_.EndNamespaceMutation()) {
@@ -275,6 +276,11 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
         .peak_resolution_context_count = OS_KERNEL_VFS_EMPTY_VALUE,
         .namespace_hash_shrink_count = OS_KERNEL_VFS_EMPTY_VALUE,
         .released_namespace_page_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .at_path_operation_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .directory_handle_retain_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .directory_handle_release_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .active_directory_handle_count = OS_KERNEL_VFS_EMPTY_VALUE,
+        .peak_directory_handle_count = OS_KERNEL_VFS_EMPTY_VALUE,
     };
     this->regular_file_data_cache_context_ = nullptr;
     this->regular_file_read_cache_operation_ = nullptr;
@@ -404,6 +410,8 @@ Status Vfs::MountAt(const FsContext &context, const uint8_t *const path,
     if (superblock_status != Status::Succeeded) {
         return superblock_status;
     }
+    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
+    const uint64_t namespace_sequence = this->ReadNamespaceSequence();
     Path mount_point{};
     const Status resolution_status = this->Resolve(context, path, path_length_bytes, mount_point);
     if (resolution_status != Status::Succeeded) {
@@ -417,8 +425,7 @@ Status Vfs::MountAt(const FsContext &context, const uint8_t *const path,
         return Status::MountPointBusy;
     }
 
-    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-    NamespaceMutationGuard mutation_guard{*this};
+    NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
     if (!mutation_guard.Active()) {
         return Status::Corrupt;
     }
@@ -465,6 +472,20 @@ Status Vfs::Resolve(const FsContext &context, const uint8_t *const path,
         this->ResolveWithFinalLinkOption(context, path, path_length_bytes, true, resolved_path);
     this->RecordResolution(status);
     return status;
+}
+
+Status Vfs::ResolveAt(const FsContext &context, const DirectoryHandle *const directory,
+                      const uint8_t *const path, const uint64_t path_length_bytes,
+                      Path &resolved_path) noexcept {
+    FsContext at_context{};
+    const Status context_status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (context_status != Status::Succeeded) {
+        resolved_path = Path{};
+        return context_status;
+    }
+    this->RecordAtPathOperation();
+    return this->Resolve(at_context, path, path_length_bytes, resolved_path);
 }
 
 Status Vfs::ResolveWithFinalLinkOption(const FsContext &context, const uint8_t *const path,
@@ -670,6 +691,8 @@ Status Vfs::ResolveInternal(const FsContext &context, const uint8_t *const path,
 
 Status Vfs::CreateDirectory(const FsContext &context, const uint8_t *const path,
                             const uint64_t path_length_bytes) noexcept {
+    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
+    const uint64_t namespace_sequence = this->ReadNamespaceSequence();
     ParentResolution resolution{};
     const Status resolution_status =
         this->ResolveParent(context, path, path_length_bytes, resolution);
@@ -691,8 +714,7 @@ Status Vfs::CreateDirectory(const FsContext &context, const uint8_t *const path,
     if (attribute_status != Status::Succeeded) {
         return attribute_status;
     }
-    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-    NamespaceMutationGuard mutation_guard{*this};
+    NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
     if (!mutation_guard.Active()) {
         return Status::Corrupt;
     }
@@ -730,28 +752,63 @@ Status Vfs::RemoveDirectory(const FsContext &context, const uint8_t *const path,
 Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
                    const uint64_t source_path_length_bytes, const uint8_t *const destination_path,
                    const uint64_t destination_path_length_bytes, const bool replace) noexcept {
+    return this->RenameBetween(context, context, source_path, source_path_length_bytes, context,
+                               destination_path, destination_path_length_bytes, replace);
+}
+
+Status Vfs::RenameAt(const FsContext &context, const DirectoryHandle *const source_directory,
+                     const uint8_t *const source_path, const uint64_t source_path_length_bytes,
+                     const DirectoryHandle *const destination_directory,
+                     const uint8_t *const destination_path,
+                     const uint64_t destination_path_length_bytes, const bool replace) noexcept {
+    FsContext source_context{};
+    Status status = this->BuildAtContext(context, source_directory, source_path,
+                                         source_path_length_bytes, source_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    FsContext destination_context{};
+    status = this->BuildAtContext(context, destination_directory, destination_path,
+                                  destination_path_length_bytes, destination_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->RenameBetween(context, source_context, source_path, source_path_length_bytes,
+                               destination_context, destination_path, destination_path_length_bytes,
+                               replace);
+}
+
+Status Vfs::RenameBetween(const FsContext &process_context, const FsContext &source_context,
+                          const uint8_t *const source_path, const uint64_t source_path_length_bytes,
+                          const FsContext &destination_context,
+                          const uint8_t *const destination_path,
+                          const uint64_t destination_path_length_bytes,
+                          const bool replace) noexcept {
+    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
+    const uint64_t namespace_sequence = this->ReadNamespaceSequence();
     Path source{};
     const Status source_status =
-        this->Resolve(context, source_path, source_path_length_bytes, source);
+        this->Resolve(source_context, source_path, source_path_length_bytes, source);
     if (source_status != Status::Succeeded) {
         return source_status;
     }
-    if (this->PathsAreEqual(source, context.root) ||
+    if (this->PathsAreEqual(source, process_context.root) ||
         (source.vnode.type == NodeType::Directory &&
-         this->PathsAreEqual(source, context.current_working_directory)) ||
+         this->PathsAreEqual(source, process_context.current_working_directory)) ||
         this->FindChildMount(source) != nullptr) {
         return Status::Busy;
     }
 
     ParentResolution source_parent{};
     Status status =
-        this->ResolveParent(context, source_path, source_path_length_bytes, source_parent);
+        this->ResolveParent(source_context, source_path, source_path_length_bytes, source_parent);
     if (status != Status::Succeeded) {
         return status;
     }
     ParentResolution destination_parent{};
-    status = this->ResolveParent(context, destination_path, destination_path_length_bytes,
-                                 destination_parent);
+    status = this->ResolveParent(destination_context, destination_path,
+                                 destination_path_length_bytes, destination_parent);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -765,41 +822,40 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    status = this->RequireParentMutationAccess(context, source_parent.parent);
+    status = this->RequireParentMutationAccess(process_context, source_parent.parent);
     if (status != Status::Succeeded) {
         return status;
     }
-    status = this->RequireParentMutationAccess(context, destination_parent.parent);
+    status = this->RequireParentMutationAccess(process_context, destination_parent.parent);
     if (status != Status::Succeeded) {
         return status;
     }
-    status = this->CheckStickyRemoval(context, source_parent.parent, source);
+    status = this->CheckStickyRemoval(process_context, source_parent.parent, source);
     if (status != Status::Succeeded) {
         return status;
     }
 
     Path destination{};
-    const Status destination_status =
-        this->Resolve(context, destination_path, destination_path_length_bytes, destination);
+    const Status destination_status = this->Resolve(destination_context, destination_path,
+                                                    destination_path_length_bytes, destination);
     if (destination_status == Status::Succeeded) {
         if (destination.mount_identifier != destination_parent.parent.mount_identifier) {
             return Status::MountPointBusy;
         }
-        if (this->PathsAreEqual(destination, context.root) ||
+        if (this->PathsAreEqual(destination, process_context.root) ||
             (destination.vnode.type == NodeType::Directory &&
-             this->PathsAreEqual(destination, context.current_working_directory)) ||
+             this->PathsAreEqual(destination, process_context.current_working_directory)) ||
             this->FindChildMount(destination) != nullptr) {
             return Status::Busy;
         }
-        status = this->CheckStickyRemoval(context, destination_parent.parent, destination);
+        status = this->CheckStickyRemoval(process_context, destination_parent.parent, destination);
         if (status != Status::Succeeded) {
             return status;
         }
     } else if (destination_status != Status::NotFound) {
         return destination_status;
     }
-    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-    NamespaceMutationGuard mutation_guard{*this};
+    NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
     if (!mutation_guard.Active()) {
         return Status::Corrupt;
     }
@@ -843,8 +899,40 @@ Status Vfs::Rename(const FsContext &context, const uint8_t *const source_path,
 Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
                  const uint64_t source_path_length_bytes, const uint8_t *const destination_path,
                  const uint64_t destination_path_length_bytes) noexcept {
+    return this->LinkBetween(context, context, source_path, source_path_length_bytes, context,
+                             destination_path, destination_path_length_bytes);
+}
+
+Status Vfs::LinkAt(const FsContext &context, const DirectoryHandle *const source_directory,
+                   const uint8_t *const source_path, const uint64_t source_path_length_bytes,
+                   const DirectoryHandle *const destination_directory,
+                   const uint8_t *const destination_path,
+                   const uint64_t destination_path_length_bytes) noexcept {
+    FsContext source_context{};
+    Status status = this->BuildAtContext(context, source_directory, source_path,
+                                         source_path_length_bytes, source_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    FsContext destination_context{};
+    status = this->BuildAtContext(context, destination_directory, destination_path,
+                                  destination_path_length_bytes, destination_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->LinkBetween(context, source_context, source_path, source_path_length_bytes,
+                             destination_context, destination_path, destination_path_length_bytes);
+}
+
+Status Vfs::LinkBetween(const FsContext &process_context, const FsContext &source_context,
+                        const uint8_t *const source_path, const uint64_t source_path_length_bytes,
+                        const FsContext &destination_context, const uint8_t *const destination_path,
+                        const uint64_t destination_path_length_bytes) noexcept {
+    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
+    const uint64_t namespace_sequence = this->ReadNamespaceSequence();
     Path source{};
-    Status status = this->Resolve(context, source_path, source_path_length_bytes, source);
+    Status status = this->Resolve(source_context, source_path, source_path_length_bytes, source);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -852,8 +940,8 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
         return Status::PermissionDenied;
     }
     ParentResolution destination_parent{};
-    status = this->ResolveParent(context, destination_path, destination_path_length_bytes,
-                                 destination_parent);
+    status = this->ResolveParent(destination_context, destination_path,
+                                 destination_path_length_bytes, destination_parent);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -864,7 +952,7 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    status = this->RequireParentMutationAccess(context, destination_parent.parent);
+    status = this->RequireParentMutationAccess(process_context, destination_parent.parent);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -872,16 +960,15 @@ Status Vfs::Link(const FsContext &context, const uint8_t *const source_path,
         return Status::Unsupported;
     }
     Path existing{};
-    const Status existing_status =
-        this->Resolve(context, destination_path, destination_path_length_bytes, existing);
+    const Status existing_status = this->Resolve(destination_context, destination_path,
+                                                 destination_path_length_bytes, existing);
     if (existing_status == Status::Succeeded) {
         return Status::AlreadyExists;
     }
     if (existing_status != Status::NotFound) {
         return existing_status;
     }
-    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-    NamespaceMutationGuard mutation_guard{*this};
+    NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
     if (!mutation_guard.Active()) {
         return Status::Corrupt;
     }
@@ -925,6 +1012,8 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
             return Status::InvalidPath;
         }
     }
+    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
+    const uint64_t namespace_sequence = this->ReadNamespaceSequence();
     ParentResolution destination_parent{};
     Status status = this->ResolveParent(context, destination_path, destination_path_length_bytes,
                                         destination_parent);
@@ -958,8 +1047,7 @@ Status Vfs::CreateSymbolicLink(const FsContext &context, const uint8_t *const ta
     if (status != Status::Succeeded) {
         return status;
     }
-    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-    NamespaceMutationGuard mutation_guard{*this};
+    NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
     if (!mutation_guard.Active()) {
         return Status::Corrupt;
     }
@@ -1052,9 +1140,26 @@ Status Vfs::TruncateOpenFile(const OpenFile &open_file, const uint64_t size_byte
 
 Status Vfs::Stat(const FsContext &context, const uint8_t *const path,
                  const uint64_t path_length_bytes, NodeInformation &information) noexcept {
+    return this->StatAt(context, nullptr, path, path_length_bytes, true, information);
+}
+
+Status Vfs::StatAt(const FsContext &context, const DirectoryHandle *const directory,
+                   const uint8_t *const path, const uint64_t path_length_bytes,
+                   const bool follow_final_link, NodeInformation &information) noexcept {
     information = NodeInformation{};
+    FsContext at_context{};
+    const Status context_status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (context_status != Status::Succeeded) {
+        return context_status;
+    }
+    if (directory != nullptr) {
+        this->RecordAtPathOperation();
+    }
     Path resolved{};
-    const Status status = this->Resolve(context, path, path_length_bytes, resolved);
+    const Status status = this->ResolveWithFinalLinkOption(at_context, path, path_length_bytes,
+                                                           follow_final_link, resolved);
+    this->RecordResolution(status);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -1196,60 +1301,68 @@ Status Vfs::Open(const FsContext &context, const uint8_t *const path,
     Status status = this->Resolve(context, path, path_length_bytes, resolved);
     bool created_file = false;
     if (status == Status::NotFound && options.create) {
-        // 创建普通文件时保留尾部分隔符语义，避免先查找失败后误建同名文件。
-        if (PathRequestsDirectory(path, path_length_bytes)) {
-            return Status::NotDirectory;
-        }
-        ParentResolution parent_resolution{};
-        status = this->ResolveParent(context, path, path_length_bytes, parent_resolution);
-        if (status != Status::Succeeded) {
-            return status;
-        }
-        Superblock *const parent_superblock = parent_resolution.parent.vnode.superblock;
-        if (parent_superblock->read_only) {
-            return Status::ReadOnly;
-        }
-        status = this->RequireParentMutationAccess(context, parent_resolution.parent);
-        if (status != Status::Succeeded) {
-            return status;
-        }
-        NodeCreationAttributes attributes{};
-        status =
-            this->MakeCreationAttributes(context, parent_resolution.parent, NodeType::RegularFile,
-                                         os::abi::OS_ABI_DEFAULT_FILE_CREATION_MODE, attributes);
-        if (status != Status::Succeeded) {
-            return status;
-        }
         RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-        NamespaceMutationGuard mutation_guard{*this};
-        if (!mutation_guard.Active()) {
-            return Status::Corrupt;
-        }
-        MetadataLockGuard metadata_guard{*this, &parent_resolution.parent.vnode, 1ULL};
-        if (!metadata_guard.Active()) {
-            return Status::Corrupt;
-        }
-        Vnode created{};
-        status = parent_superblock->operations->create(
-            parent_superblock->backend_context, parent_resolution.parent.vnode,
-            parent_resolution.name, parent_resolution.name_length_bytes, NodeType::RegularFile,
-            attributes, created);
-        if (status != Status::Succeeded) {
+        const uint64_t namespace_sequence = this->ReadNamespaceSequence();
+        status = this->Resolve(context, path, path_length_bytes, resolved);
+        if (status != Status::Succeeded && status != Status::NotFound) {
             return status;
         }
-        const Status dentry_invalidation_status = this->InvalidateDentryInformation(
-            parent_resolution.parent, parent_resolution.name, parent_resolution.name_length_bytes);
-        const Status parent_invalidation_status =
-            this->InvalidateNodeInformation(parent_resolution.parent.vnode);
-        if (dentry_invalidation_status != Status::Succeeded ||
-            parent_invalidation_status != Status::Succeeded) {
-            return Status::Corrupt;
+        if (status == Status::NotFound) {
+            // 创建普通文件时保留尾部分隔符语义，避免先查找失败后误建同名文件。
+            if (PathRequestsDirectory(path, path_length_bytes)) {
+                return Status::NotDirectory;
+            }
+            ParentResolution parent_resolution{};
+            status = this->ResolveParent(context, path, path_length_bytes, parent_resolution);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            Superblock *const parent_superblock = parent_resolution.parent.vnode.superblock;
+            if (parent_superblock->read_only) {
+                return Status::ReadOnly;
+            }
+            status = this->RequireParentMutationAccess(context, parent_resolution.parent);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            NodeCreationAttributes attributes{};
+            status = this->MakeCreationAttributes(
+                context, parent_resolution.parent, NodeType::RegularFile,
+                os::abi::OS_ABI_DEFAULT_FILE_CREATION_MODE, attributes);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
+            if (!mutation_guard.Active()) {
+                return Status::Corrupt;
+            }
+            MetadataLockGuard metadata_guard{*this, &parent_resolution.parent.vnode, 1ULL};
+            if (!metadata_guard.Active()) {
+                return Status::Corrupt;
+            }
+            Vnode created{};
+            status = parent_superblock->operations->create(
+                parent_superblock->backend_context, parent_resolution.parent.vnode,
+                parent_resolution.name, parent_resolution.name_length_bytes, NodeType::RegularFile,
+                attributes, created);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            const Status dentry_invalidation_status =
+                this->InvalidateDentryInformation(parent_resolution.parent, parent_resolution.name,
+                                                  parent_resolution.name_length_bytes);
+            const Status parent_invalidation_status =
+                this->InvalidateNodeInformation(parent_resolution.parent.vnode);
+            if (dentry_invalidation_status != Status::Succeeded ||
+                parent_invalidation_status != Status::Succeeded) {
+                return Status::Corrupt;
+            }
+            resolved = Path{
+                .mount_identifier = parent_resolution.parent.mount_identifier,
+                .vnode = created,
+            };
+            created_file = true;
         }
-        resolved = Path{
-            .mount_identifier = parent_resolution.parent.mount_identifier,
-            .vnode = created,
-        };
-        created_file = true;
     }
     if (status != Status::Succeeded) {
         return status;
@@ -1397,6 +1510,174 @@ Status Vfs::RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noex
     retained_file = source;
     retained_file.offset_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
     return Status::Succeeded;
+}
+
+Status Vfs::RetainDirectoryHandle(const OpenFile &source, DirectoryHandle &handle) noexcept {
+    handle = DirectoryHandle{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!source.open || !this->PathIsValid(source.path) ||
+        source.path.vnode.type != NodeType::Directory) {
+        return Status::InvalidHandle;
+    }
+    Superblock *const superblock = source.path.vnode.superblock;
+    const Status status =
+        superblock->operations->open(superblock->backend_context, source.path.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    bool counters_available = false;
+    {
+        SpinLockGuard guard{this->lock_};
+        counters_available = this->statistics_.directory_handle_retain_count != UINT64_MAX &&
+                             this->statistics_.active_directory_handle_count != UINT64_MAX;
+        if (counters_available) {
+            ++this->statistics_.directory_handle_retain_count;
+            ++this->statistics_.active_directory_handle_count;
+            if (this->statistics_.active_directory_handle_count >
+                this->statistics_.peak_directory_handle_count) {
+                this->statistics_.peak_directory_handle_count =
+                    this->statistics_.active_directory_handle_count;
+            }
+        }
+    }
+    if (!counters_available) {
+        static_cast<void>(
+            superblock->operations->close(superblock->backend_context, source.path.vnode));
+        return Status::Corrupt;
+    }
+    handle = DirectoryHandle{
+        .path = source.path,
+        .active = true,
+    };
+    return Status::Succeeded;
+}
+
+Status Vfs::ReleaseDirectoryHandle(DirectoryHandle &handle) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!handle.active || !this->PathIsValid(handle.path) ||
+        handle.path.vnode.type != NodeType::Directory) {
+        return Status::InvalidHandle;
+    }
+    {
+        SpinLockGuard guard{this->lock_};
+        if (this->statistics_.directory_handle_release_count == UINT64_MAX ||
+            this->statistics_.active_directory_handle_count == OS_KERNEL_VFS_EMPTY_VALUE) {
+            return Status::Corrupt;
+        }
+    }
+    Superblock *const superblock = handle.path.vnode.superblock;
+    const Status status =
+        superblock->operations->close(superblock->backend_context, handle.path.vnode);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    handle = DirectoryHandle{};
+    SpinLockGuard guard{this->lock_};
+    ++this->statistics_.directory_handle_release_count;
+    --this->statistics_.active_directory_handle_count;
+    return Status::Succeeded;
+}
+
+Status Vfs::CreateDirectoryAt(const FsContext &context, const DirectoryHandle *const directory,
+                              const uint8_t *const path,
+                              const uint64_t path_length_bytes) noexcept {
+    FsContext at_context{};
+    const Status status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->CreateDirectory(at_context, path, path_length_bytes);
+}
+
+Status Vfs::RemoveFileAt(const FsContext &context, const DirectoryHandle *const directory,
+                         const uint8_t *const path, const uint64_t path_length_bytes) noexcept {
+    FsContext at_context{};
+    const Status status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->RemoveFile(at_context, path, path_length_bytes);
+}
+
+Status Vfs::RemoveDirectoryAt(const FsContext &context, const DirectoryHandle *const directory,
+                              const uint8_t *const path,
+                              const uint64_t path_length_bytes) noexcept {
+    FsContext at_context{};
+    const Status status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->RemoveDirectory(at_context, path, path_length_bytes);
+}
+
+Status Vfs::CreateSymbolicLinkAt(const FsContext &context, const uint8_t *const target,
+                                 const uint64_t target_length_bytes,
+                                 const DirectoryHandle *const destination_directory,
+                                 const uint8_t *const destination_path,
+                                 const uint64_t destination_path_length_bytes) noexcept {
+    FsContext at_context{};
+    const Status status = this->BuildAtContext(context, destination_directory, destination_path,
+                                               destination_path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->CreateSymbolicLink(at_context, target, target_length_bytes, destination_path,
+                                    destination_path_length_bytes);
+}
+
+Status Vfs::ReadSymbolicLinkAt(const FsContext &context, const DirectoryHandle *const directory,
+                               const uint8_t *const path, const uint64_t path_length_bytes,
+                               uint8_t *const destination, const uint64_t capacity_bytes,
+                               uint64_t &target_length_bytes) noexcept {
+    FsContext at_context{};
+    const Status status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        target_length_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->ReadSymbolicLink(at_context, path, path_length_bytes, destination, capacity_bytes,
+                                  target_length_bytes);
+}
+
+Status Vfs::OpenAt(const FsContext &context, const DirectoryHandle *const directory,
+                   const uint8_t *const path, const uint64_t path_length_bytes,
+                   const OpenOptions &options, OpenFile &open_file) noexcept {
+    FsContext at_context{};
+    const Status status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        open_file = OpenFile{};
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->Open(at_context, path, path_length_bytes, options, open_file);
+}
+
+Status Vfs::OpenDirectoryAt(const FsContext &context, const DirectoryHandle *const directory,
+                            const uint8_t *const path, const uint64_t path_length_bytes,
+                            OpenFile &open_file) noexcept {
+    FsContext at_context{};
+    const Status status =
+        this->BuildAtContext(context, directory, path, path_length_bytes, at_context);
+    if (status != Status::Succeeded) {
+        open_file = OpenFile{};
+        return status;
+    }
+    this->RecordAtPathOperation();
+    return this->OpenDirectory(at_context, path, path_length_bytes, open_file);
 }
 
 Status Vfs::ConfigureRegularFileDataCache(
@@ -2135,6 +2416,13 @@ Status Vfs::Validate() noexcept {
     return statistics.mount_count == this->mount_count_ &&
                    statistics.peak_resolution_context_count ==
                        this->peak_resolution_context_count_ &&
+                   statistics.directory_handle_retain_count >=
+                       statistics.directory_handle_release_count &&
+                   statistics.directory_handle_retain_count -
+                           statistics.directory_handle_release_count ==
+                       statistics.active_directory_handle_count &&
+                   statistics.peak_directory_handle_count >=
+                       statistics.active_directory_handle_count &&
                    (!this->namespace_hash_tier_shrunk_ ||
                     (statistics.namespace_hash_shrink_count == OS_KERNEL_VFS_COUNTER_INCREMENT &&
                      this->namespace_cache_->Statistics().dentry_hash_bucket_capacity ==
@@ -2212,6 +2500,31 @@ bool Vfs::PathIsValid(const Path &path) const noexcept {
 bool Vfs::PathsAreEqual(const Path &left, const Path &right) const noexcept {
     return left.mount_identifier == right.mount_identifier &&
            this->VnodesAreEqual(left.vnode, right.vnode);
+}
+
+Status Vfs::BuildAtContext(const FsContext &context, const DirectoryHandle *const directory,
+                           const uint8_t *const path, const uint64_t path_length_bytes,
+                           FsContext &at_context) const noexcept {
+    at_context = FsContext{};
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (!context.initialized || !this->PathIsValid(context.root) ||
+        !this->PathIsValid(context.current_working_directory) || path == nullptr ||
+        path_length_bytes == OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    at_context = context;
+    if (path[OS_KERNEL_VFS_FIRST_INDEX] == OS_KERNEL_VFS_PATH_SEPARATOR || directory == nullptr) {
+        return Status::Succeeded;
+    }
+    if (!directory->active || !this->PathIsValid(directory->path) ||
+        directory->path.vnode.type != NodeType::Directory) {
+        at_context = FsContext{};
+        return Status::InvalidHandle;
+    }
+    at_context.current_working_directory = directory->path;
+    return Status::Succeeded;
 }
 
 bool Vfs::VnodesAreEqual(const Vnode &left, const Vnode &right) const noexcept {
@@ -2375,6 +2688,8 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     if (expected_type != NodeType::RegularFile && expected_type != NodeType::Directory) {
         return Status::InvalidArgument;
     }
+    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
+    const uint64_t namespace_sequence = this->ReadNamespaceSequence();
     Path resolved{};
     const Status resolution_status =
         this->ResolveWithFinalLinkOption(context, path, path_length_bytes, false, resolved);
@@ -2413,8 +2728,7 @@ Status Vfs::Remove(const FsContext &context, const uint8_t *const path,
     if (sticky_status != Status::Succeeded) {
         return sticky_status;
     }
-    RuntimeMutexGuard mutation_lock_guard{this->namespace_mutation_lock_};
-    NamespaceMutationGuard mutation_guard{*this};
+    NamespaceMutationGuard mutation_guard{*this, namespace_sequence};
     if (!mutation_guard.Active()) {
         return Status::Corrupt;
     }
@@ -2871,11 +3185,12 @@ uint64_t Vfs::ReadNamespaceSequence() const noexcept {
     return this->namespace_sequence_;
 }
 
-bool Vfs::BeginNamespaceMutation() noexcept {
+bool Vfs::BeginNamespaceMutation(const uint64_t expected_sequence) noexcept {
     SpinLockGuard guard{this->lock_};
-    if ((this->namespace_sequence_ & OS_KERNEL_VFS_COUNTER_INCREMENT) !=
+    if (this->namespace_sequence_ != expected_sequence ||
+        (this->namespace_sequence_ & OS_KERNEL_VFS_COUNTER_INCREMENT) !=
             OS_KERNEL_VFS_EMPTY_VALUE ||
-        this->namespace_sequence_ == UINT64_MAX) {
+        this->namespace_sequence_ >= UINT64_MAX - OS_KERNEL_VFS_COUNTER_INCREMENT) {
         return false;
     }
     ++this->namespace_sequence_;
@@ -2924,6 +3239,13 @@ void Vfs::RecordResolution(const Status status) noexcept {
     ++this->statistics_.path_resolution_count;
     if (status != Status::Succeeded) {
         ++this->statistics_.failed_path_resolution_count;
+    }
+}
+
+void Vfs::RecordAtPathOperation() noexcept {
+    SpinLockGuard guard{this->lock_};
+    if (this->statistics_.at_path_operation_count != UINT64_MAX) {
+        ++this->statistics_.at_path_operation_count;
     }
 }
 

@@ -230,6 +230,22 @@ class RootFileSystem final {
     uint64_t last_validated_transaction_generation_{};
     RootTimestampSource timestamp_source_{nullptr};
     RenameScratch rename_scratch_{};
+    // RootFS 操作由 lock_ 串行；各层 scratch 独立，嵌套 helper 不共享同一块，也不压 Kernel 栈。
+    uint8_t initialization_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t superblock_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t read_inode_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t write_inode_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t read_pointer_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t write_pointer_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t read_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t write_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t find_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t allocate_data_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t read_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t write_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t truncate_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t orphan_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    uint8_t validation_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     mutable RuntimeMutex lock_{};
     bool initialized_{};
     bool failed_{};

@@ -30,10 +30,22 @@ inline constexpr uint64_t OS_ABI_LAYOUT_DIRECTORY_RESERVED_OFFSET_BYTES = 279ULL
 
 static_assert(static_cast<uint64_t>(SystemCallNumber::WriteLog) ==
               OS_ABI_LAYOUT_FIRST_SYSTEM_CALL_NUMBER);
-static_assert(static_cast<uint64_t>(SystemCallNumber::SynchronizeMemory) ==
+static_assert(static_cast<uint64_t>(SystemCallNumber::CreateSymbolicLinkAt) ==
               OS_ABI_SYSTEM_CALL_LAST_NUMBER);
 static_assert(OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY == OS_ABI_SYSTEM_CALL_FIRST_ERROR);
 static_assert(OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED == OS_ABI_SYSTEM_CALL_LAST_ERROR);
+static_assert(sizeof(AtStatRequest) == OS_ABI_AT_STAT_REQUEST_SIZE_BYTES);
+static_assert(sizeof(AtReadSymbolicLinkRequest) == OS_ABI_AT_READ_SYMBOLIC_LINK_REQUEST_SIZE_BYTES);
+static_assert(sizeof(AtDualPathRequest) == OS_ABI_AT_DUAL_PATH_REQUEST_SIZE_BYTES);
+static_assert(sizeof(AtSymbolicLinkRequest) == OS_ABI_AT_SYMBOLIC_LINK_REQUEST_SIZE_BYTES);
+static_assert(offsetof(AtStatRequest, information_size_bytes) ==
+              OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(AtReadSymbolicLinkRequest, destination_capacity_bytes) ==
+              OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(AtDualPathRequest, destination_path_length_bytes) ==
+              OS_ABI_LAYOUT_SIXTH_FIELD_OFFSET_BYTES);
+static_assert(offsetof(AtSymbolicLinkRequest, destination_path_length_bytes) ==
+              OS_ABI_LAYOUT_FIFTH_FIELD_OFFSET_BYTES);
 
 static_assert(offsetof(PipeDescriptorPair, reader_descriptor) ==
               OS_ABI_LAYOUT_FIRST_FIELD_OFFSET_BYTES);

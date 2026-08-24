@@ -2068,3 +2068,23 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - final fresh CAW `python3 tools/os.py verify` 为 248/248、0 失败：75 unit、84 integration、
   56 randomized、33 system，含 25 条 failure-path；CTest 823.47 秒，端到端约 934 秒；
   ATA/NVMe persistence 为 132.89/135.06 秒。
+
+## v2.13 目录句柄与 `*at` 测试
+
+- `os_kernel_vfs_at_path_integration_tests` 覆盖相对 create/stat、非法 handle、绝对路径忽略
+  handle、跨 parent rename、目录自身 rename 后旧 handle、remove 与完整 namespace 清理；
+- 四线程同名 create 由原子起跑门强制进入二次解析竞争，所有调用都必须成功且不得 writer
+  锁重入；另以四个不同名称验证同一 handle 的连续 mutation 和清理；
+- 生命周期断言 retain=release=2、active=0、peak=2，并要求 `Vfs::Validate`、Memfs 与 Heap
+  全部归零；
+- `os_abi_v2_unit_tests` 冻结 88..96、`AT_CWD`、remove/stat masks 和四个请求结构大小；
+- Ring 3 `fs_probe` 在真实 rootfs 上执行九类 `*at` 调用，比较 symlink 目标与文件数据；QEMU
+  primary 仍从 reset vector 启动并要求 screendump 至少 512 个非黑像素；
+- 新增 mutation 后必须同时跑 ATA/NVMe reclaim；设备提交函数入口的 vector 8 视为 Kernel
+  stack 回归，验收要求 RootFS block 与规划/后处理帧退出 I/O 链，不能靠增加 mapped 页通过；
+- 两次 `fs_probe` persistence barrier 使正常 profile 的 `OTHER_THREAD_PROGRESS=1` 精确计数为
+  3；runner 仍按精确值拒绝丢失或重复的 block completion 进展；
+- final fresh CAW clean build 为 3454 个目标；`python3 tools/os.py verify` 为 249/249、0 失败：
+  75 unit、85 integration、56 randomized、33 system，含 25 条 failure-path；CTest 789.84
+  秒，端到端约 926 秒；关键 4 GiB ATA primary、ATA/NVMe reclaim 分别为
+  64.79/67.60/68.46 秒，完整证据见 [v2.13 候选记录](releases/v2.13.md)。

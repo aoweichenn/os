@@ -2681,6 +2681,45 @@ frame、buddy、KVA page/descriptor/allocation 差值；资源快照按实际差
 frame 不消耗 user resident budget，preferred 页释放后同步减少排除数。详见
 [ADR 0076](adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。
 
+## v2.13 目录句柄、双基准解析与写事务
+
+目录 fd 背后的 FileDescription 仍拥有正常 `OpenFile`。每次 `*at` 调用在对象 operation lock
+下额外 retain 一个短期 `DirectoryHandle`，随后释放对象锁并进入 VFS；系统调用完成后释放
+该 handle。这样 syscall 不持有 FileTable/KernelObject 锁执行路径解析或设备 I/O，fd 并发
+close 也不能撤销已经取得的 vnode 引用。
+
+```text
+user dirfd
+  -> FileTable Lookup
+  -> FileDescription operation lock
+  -> VFS RetainDirectoryHandle(Path + backend open)
+  -> release object lock
+  -> BuildAtContext(process root/credentials + directory cwd)
+  -> VFS operation
+  -> ReleaseDirectoryHandle(backend close)
+```
+
+绝对路径和 `AT_CWD` 不取得目录 lease。`RenameAt/LinkAt` 分别建立 source/destination
+`FsContext`，但 mutation 权限始终使用调用进程 credentials。目录自身 rename 只改变 dentry，
+已打开 handle 保存的 vnode/mount identity 不变。
+
+所有 namespace writer 先取得 `namespace_mutation_lock_`，再解析路径并读取偶数 sequence。
+进入 backend commit 前，`NamespaceMutationGuard` 要求当前 sequence 精确等于捕获值，再切为
+奇数；commit 和 cache invalidation 结束后推进到新偶数。`open(create)` 在锁内二次解析，
+若竞争者已经创建就沿当前调用打开该 vnode，不递归调用 `Open`。
+
+ABI v2.5.0 的 88..96 由用户包装、固定请求结构、系统调用 user-copy 和 ProcessRuntime lease
+共同接线。双路径和 readlink 复用单 BSP 抢占保护的 8 KiB scratch，避免 16 KiB Kernel 栈
+上出现两块 4096 字节路径数组。设计与边界见
+[ADR 0077](adr/0077-v2-13-directory-handles-and-at-path-transactions.md)。
+
+新增 rootfs 事务会改变 pressure profile 的 worker 交错。原写回链在设备提交期间同时保留
+RootFS 4096 字节 block、1264 字节 pressure 规划和 416 字节 work 调度现场，Debug 构建可让
+ATA/NVMe 的函数序言落入 lower guard。RootFS 已由 `lock_` 串行，因此各层 block scratch 由
+文件系统实例按嵌套边界分别持有；`PrepareRuntimeBackgroundReclaimPlan` 先形成紧凑计划并返回，
+worker 的 acquire/complete/wait 也拆成非嵌套阶段。reclaim 计划、统计和 4 mapped + 2 guard
+栈几何均不改变。
+
 ## v2.8 动态文件缓存地址空间
 
 第一增量在现有 `FilePageCache` 旁建立新索引，不改变生产数据路径：

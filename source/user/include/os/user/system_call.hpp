@@ -72,12 +72,16 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t ClosePipeWriter() noexcept;
 [[nodiscard]] int64_t OpenFile(const char *path, uint64_t path_length_bytes,
                                uint64_t open_flags) noexcept;
+[[nodiscard]] int64_t OpenFileAt(uint64_t directory_descriptor, const char *path,
+                                 uint64_t path_length_bytes, uint64_t open_flags) noexcept;
 [[nodiscard]] int64_t ReadFile(uint64_t file_descriptor, uint8_t *destination,
                                uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t WriteFile(uint64_t file_descriptor, const uint8_t *source,
                                 uint64_t length_bytes) noexcept;
 [[nodiscard]] int64_t CloseFile(uint64_t file_descriptor) noexcept;
 [[nodiscard]] int64_t CreateDirectory(const char *path, uint64_t path_length_bytes) noexcept;
+[[nodiscard]] int64_t CreateDirectoryAt(uint64_t directory_descriptor, const char *path,
+                                        uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t SyncFileSystem() noexcept;
 [[nodiscard]] int64_t SynchronizeFile(uint64_t file_descriptor) noexcept;
 [[nodiscard]] int64_t SynchronizeFileData(uint64_t file_descriptor) noexcept;
@@ -104,11 +108,15 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t GetDescriptorSoftLimit() noexcept;
 [[nodiscard]] int64_t GetDescriptorHardLimit() noexcept;
 [[nodiscard]] int64_t OpenDirectory(const char *path, uint64_t path_length_bytes) noexcept;
+[[nodiscard]] int64_t OpenDirectoryAt(uint64_t directory_descriptor, const char *path,
+                                      uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t ReadDirectory(uint64_t descriptor, os::abi::DirectoryEntry &entry) noexcept;
 [[nodiscard]] int64_t ChangeDirectory(const char *path, uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t GetWorkingDirectory(char *destination, uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t UnlinkFile(const char *path, uint64_t path_length_bytes) noexcept;
 [[nodiscard]] int64_t RemoveDirectory(const char *path, uint64_t path_length_bytes) noexcept;
+[[nodiscard]] int64_t RemoveAt(uint64_t directory_descriptor, const char *path,
+                               uint64_t path_length_bytes, uint64_t flags) noexcept;
 [[nodiscard]] int64_t Rename(const char *source_path, uint64_t source_length_bytes,
                              const char *destination_path,
                              uint64_t destination_length_bytes) noexcept;
@@ -116,6 +124,9 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
                                    uint64_t size_bytes) noexcept;
 [[nodiscard]] int64_t StatFile(const char *path, uint64_t path_length_bytes,
                                os::abi::FileInformation &information) noexcept;
+[[nodiscard]] int64_t StatAt(uint64_t directory_descriptor, const char *path,
+                             uint64_t path_length_bytes, uint64_t flags,
+                             os::abi::FileInformation &information) noexcept;
 [[nodiscard]] int64_t ChangeMode(const char *path, uint64_t path_length_bytes,
                                  os::abi::FileMode mode) noexcept;
 [[nodiscard]] int64_t ChangeOwner(const char *path, uint64_t path_length_bytes,
@@ -124,11 +135,28 @@ InvokeLegacySystemCall(uint64_t system_call_number, uint64_t argument0, uint64_t
 [[nodiscard]] int64_t LinkFile(const char *source_path, uint64_t source_length_bytes,
                                const char *destination_path,
                                uint64_t destination_length_bytes) noexcept;
+[[nodiscard]] int64_t LinkAt(uint64_t source_directory_descriptor, const char *source_path,
+                             uint64_t source_length_bytes,
+                             uint64_t destination_directory_descriptor,
+                             const char *destination_path,
+                             uint64_t destination_length_bytes) noexcept;
+[[nodiscard]] int64_t RenameAt(uint64_t source_directory_descriptor, const char *source_path,
+                               uint64_t source_length_bytes,
+                               uint64_t destination_directory_descriptor,
+                               const char *destination_path,
+                               uint64_t destination_length_bytes) noexcept;
 [[nodiscard]] int64_t CreateSymbolicLink(const char *target, uint64_t target_length_bytes,
                                          const char *destination_path,
                                          uint64_t destination_length_bytes) noexcept;
+[[nodiscard]] int64_t CreateSymbolicLinkAt(const char *target, uint64_t target_length_bytes,
+                                           uint64_t destination_directory_descriptor,
+                                           const char *destination_path,
+                                           uint64_t destination_length_bytes) noexcept;
 [[nodiscard]] int64_t ReadSymbolicLink(const char *path, uint64_t path_length_bytes,
                                        char *destination, uint64_t capacity_bytes) noexcept;
+[[nodiscard]] int64_t ReadSymbolicLinkAt(uint64_t directory_descriptor, const char *path,
+                                         uint64_t path_length_bytes, char *destination,
+                                         uint64_t capacity_bytes) noexcept;
 [[nodiscard]] int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t ExecProcess(const os::abi::ProcessLaunchRequest &request) noexcept;
 [[nodiscard]] int64_t WaitProcess(uint64_t process_id, os::abi::ProcessWaitResult &result) noexcept;

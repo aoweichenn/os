@@ -365,6 +365,13 @@ int64_t OpenFile(const char *path, const uint64_t path_length_bytes,
                             reinterpret_cast<uint64_t>(path), path_length_bytes, open_flags);
 }
 
+int64_t OpenFileAt(const uint64_t directory_descriptor, const char *const path,
+                   const uint64_t path_length_bytes, const uint64_t open_flags) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::OpenFileAt),
+                            directory_descriptor, reinterpret_cast<uint64_t>(path),
+                            path_length_bytes, open_flags);
+}
+
 int64_t ReadFile(const uint64_t file_descriptor, uint8_t *destination,
                  const uint64_t capacity_bytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ReadFile),
@@ -388,6 +395,13 @@ int64_t CreateDirectory(const char *path, const uint64_t path_length_bytes) noex
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreateDirectory),
                             reinterpret_cast<uint64_t>(path), path_length_bytes,
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t CreateDirectoryAt(const uint64_t directory_descriptor, const char *const path,
+                          const uint64_t path_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreateDirectoryAt),
+                            directory_descriptor, reinterpret_cast<uint64_t>(path),
+                            path_length_bytes);
 }
 
 int64_t SyncFileSystem() noexcept {
@@ -537,6 +551,13 @@ int64_t OpenDirectory(const char *const path, const uint64_t path_length_bytes) 
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t OpenDirectoryAt(const uint64_t directory_descriptor, const char *const path,
+                        const uint64_t path_length_bytes) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::OpenDirectoryAt),
+                            directory_descriptor, reinterpret_cast<uint64_t>(path),
+                            path_length_bytes);
+}
+
 int64_t ReadDirectory(const uint64_t descriptor, os::abi::DirectoryEntry &entry) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ReadDirectory),
                             descriptor, reinterpret_cast<uint64_t>(&entry),
@@ -567,6 +588,13 @@ int64_t RemoveDirectory(const char *const path, const uint64_t path_length_bytes
                             OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
+int64_t RemoveAt(const uint64_t directory_descriptor, const char *const path,
+                 const uint64_t path_length_bytes, const uint64_t flags) noexcept {
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::RemoveAt),
+                            directory_descriptor, reinterpret_cast<uint64_t>(path),
+                            path_length_bytes, flags);
+}
+
 int64_t Rename(const char *const source_path, const uint64_t source_length_bytes,
                const char *const destination_path,
                const uint64_t destination_length_bytes) noexcept {
@@ -586,6 +614,22 @@ int64_t StatFile(const char *const path, const uint64_t path_length_bytes,
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::StatFile),
                             reinterpret_cast<uint64_t>(path), path_length_bytes,
                             reinterpret_cast<uint64_t>(&information), sizeof(information));
+}
+
+int64_t StatAt(const uint64_t directory_descriptor, const char *const path,
+               const uint64_t path_length_bytes, const uint64_t flags,
+               os::abi::FileInformation &information) noexcept {
+    const os::abi::AtStatRequest request{
+        .directory_descriptor = directory_descriptor,
+        .path_address = reinterpret_cast<uint64_t>(path),
+        .path_length_bytes = path_length_bytes,
+        .flags = flags,
+        .information_address = reinterpret_cast<uint64_t>(&information),
+        .information_size_bytes = sizeof(information),
+    };
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::StatAt),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t ChangeMode(const char *const path, const uint64_t path_length_bytes,
@@ -610,6 +654,41 @@ int64_t LinkFile(const char *const source_path, const uint64_t source_length_byt
                             reinterpret_cast<uint64_t>(destination_path), destination_length_bytes);
 }
 
+int64_t LinkAt(const uint64_t source_directory_descriptor, const char *const source_path,
+               const uint64_t source_length_bytes, const uint64_t destination_directory_descriptor,
+               const char *const destination_path,
+               const uint64_t destination_length_bytes) noexcept {
+    const os::abi::AtDualPathRequest request{
+        .source_directory_descriptor = source_directory_descriptor,
+        .source_path_address = reinterpret_cast<uint64_t>(source_path),
+        .source_path_length_bytes = source_length_bytes,
+        .destination_directory_descriptor = destination_directory_descriptor,
+        .destination_path_address = reinterpret_cast<uint64_t>(destination_path),
+        .destination_path_length_bytes = destination_length_bytes,
+    };
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::LinkAt),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
+int64_t RenameAt(const uint64_t source_directory_descriptor, const char *const source_path,
+                 const uint64_t source_length_bytes,
+                 const uint64_t destination_directory_descriptor,
+                 const char *const destination_path,
+                 const uint64_t destination_length_bytes) noexcept {
+    const os::abi::AtDualPathRequest request{
+        .source_directory_descriptor = source_directory_descriptor,
+        .source_path_address = reinterpret_cast<uint64_t>(source_path),
+        .source_path_length_bytes = source_length_bytes,
+        .destination_directory_descriptor = destination_directory_descriptor,
+        .destination_path_address = reinterpret_cast<uint64_t>(destination_path),
+        .destination_path_length_bytes = destination_length_bytes,
+    };
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::RenameAt),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t CreateSymbolicLink(const char *const target, const uint64_t target_length_bytes,
                            const char *const destination_path,
                            const uint64_t destination_length_bytes) noexcept {
@@ -618,11 +697,42 @@ int64_t CreateSymbolicLink(const char *const target, const uint64_t target_lengt
                             reinterpret_cast<uint64_t>(destination_path), destination_length_bytes);
 }
 
+int64_t CreateSymbolicLinkAt(const char *const target, const uint64_t target_length_bytes,
+                             const uint64_t destination_directory_descriptor,
+                             const char *const destination_path,
+                             const uint64_t destination_length_bytes) noexcept {
+    const os::abi::AtSymbolicLinkRequest request{
+        .target_address = reinterpret_cast<uint64_t>(target),
+        .target_length_bytes = target_length_bytes,
+        .destination_directory_descriptor = destination_directory_descriptor,
+        .destination_path_address = reinterpret_cast<uint64_t>(destination_path),
+        .destination_path_length_bytes = destination_length_bytes,
+    };
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSymbolicLinkAt),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
+}
+
 int64_t ReadSymbolicLink(const char *const path, const uint64_t path_length_bytes,
                          char *const destination, const uint64_t capacity_bytes) noexcept {
     return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ReadSymbolicLink),
                             reinterpret_cast<uint64_t>(path), path_length_bytes,
                             reinterpret_cast<uint64_t>(destination), capacity_bytes);
+}
+
+int64_t ReadSymbolicLinkAt(const uint64_t directory_descriptor, const char *const path,
+                           const uint64_t path_length_bytes, char *const destination,
+                           const uint64_t capacity_bytes) noexcept {
+    const os::abi::AtReadSymbolicLinkRequest request{
+        .directory_descriptor = directory_descriptor,
+        .path_address = reinterpret_cast<uint64_t>(path),
+        .path_length_bytes = path_length_bytes,
+        .destination_address = reinterpret_cast<uint64_t>(destination),
+        .destination_capacity_bytes = capacity_bytes,
+    };
+    return InvokeSystemCall(static_cast<uint64_t>(os::abi::SystemCallNumber::ReadSymbolicLinkAt),
+                            reinterpret_cast<uint64_t>(&request), sizeof(request),
+                            OS_USER_SYSTEM_CALL_UNUSED_ARGUMENT);
 }
 
 int64_t SpawnProcess(const os::abi::ProcessLaunchRequest &request) noexcept {

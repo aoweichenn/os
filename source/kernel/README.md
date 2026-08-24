@@ -346,3 +346,14 @@ v2.12 用 64 个 dentry shard、64 个 inode metadata shard 和 128 个独立解
 hash 并释放 preferred 8192/4096 bucket 页。实际 frame/buddy/KVA 差值进入资源快照，稳定
 namespace 页不挤占 user resident budget。设计见
 [ADR 0076](../../docs/adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。
+
+v2.13 在 `fs/vfs.*` 增加 `DirectoryHandle`、单/双基准 `*At` 和 directory handle 统计；
+`io/file_description.*` 只在对象 operation lock 下 retain 短期目录 lease，`process_runtime.*`
+在 VFS 调用后统一 release。namespace writer 从 path resolution 前持锁到 commit/invalidation，
+并用 expected even sequence 复验；同名 create 的锁内二次解析直接复用 vnode。
+`user/system_calls.*` 分发 ABI 2.5.0 的 88..96，双路径 scratch 保持单 BSP 抢占保护。设计见
+[ADR 0077](../../docs/adr/0077-v2-13-directory-handles-and-at-path-transactions.md)。
+
+同阶段 RootFS 将串行 read/write 的 4 KiB block scratch 迁入实例；`process_runtime.*` 再把
+background reclaim 规划、work acquire/complete/wait 与 writeback/swap I/O 拆成非嵌套阶段。
+动态 Kernel stack 仍为 4 个 mapped 页和上下 guard，不以扩容掩盖 pressure 栈回归。

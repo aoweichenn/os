@@ -116,6 +116,11 @@ struct RetainedRegularFile final {
     uint64_t file_status_flags;
 };
 
+struct RetainedDirectory final {
+    fs::Vfs *vfs;
+    fs::DirectoryHandle handle;
+};
+
 struct FileDescriptionManagerStatistics final {
     uint64_t read_operation_count;
     uint64_t write_operation_count;
@@ -153,6 +158,9 @@ class FileDescriptionManager final {
     [[nodiscard]] FileDescriptionStatus
     RetainRegularFile(const KernelObjectReference &reference,
                       RetainedRegularFile &retained_file) noexcept;
+    [[nodiscard]] FileDescriptionStatus
+    RetainDirectory(const KernelObjectReference &reference,
+                    RetainedDirectory &retained_directory) noexcept;
     [[nodiscard]] FileDescriptionStatus TryRead(const KernelObjectReference &reference,
                                                 uint8_t *destination, uint64_t capacity_bytes,
                                                 uint64_t &read_bytes,

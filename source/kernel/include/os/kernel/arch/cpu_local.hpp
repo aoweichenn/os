@@ -60,8 +60,7 @@ class alignas(OS_KERNEL_CPU_LOCAL_CACHE_LINE_SIZE_BYTES) CpuLocal final {
     [[nodiscard]] CpuLocalStatus DisablePreemption() noexcept;
     [[nodiscard]] CpuLocalStatus EnablePreemption() noexcept;
     [[nodiscard]] CpuLocalStatus BeginSystemCall(UserContextEntryMethod entry_method) noexcept;
-    [[nodiscard]] CpuLocalStatus
-    SuspendSystemCall(UserContextEntryMethod &entry_method) noexcept;
+    [[nodiscard]] CpuLocalStatus SuspendSystemCall(UserContextEntryMethod &entry_method) noexcept;
     [[nodiscard]] CpuLocalStatus ResumeSystemCall(UserContextEntryMethod entry_method) noexcept;
     [[nodiscard]] CpuLocalStatus EndSystemCall() noexcept;
     void RequestReschedule() noexcept;
@@ -73,6 +72,8 @@ class alignas(OS_KERNEL_CPU_LOCAL_CACHE_LINE_SIZE_BYTES) CpuLocal final {
     [[nodiscard]] CpuLocalStatus Validate() const noexcept;
     [[nodiscard]] CpuLocalStatistics Statistics() const noexcept;
     [[nodiscard]] uint64_t Address() const noexcept;
+    [[nodiscard]] uint64_t CurrentThreadIndex() const noexcept;
+    [[nodiscard]] uint64_t KernelEntryStackPointer() const noexcept;
     [[nodiscard]] uint64_t SystemCallUserStackPointer() const noexcept;
     [[nodiscard]] bool NativeSystemCallActive() const noexcept;
 

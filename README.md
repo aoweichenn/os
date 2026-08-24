@@ -105,6 +105,12 @@ v2.12 已把上述缓存推进为可扩展页后备实现：dentry/inode 各 64 
 和 preferred 页释放均已接入；长期页从 user resident budget 精确排除，不改变 9216 页压力
 规格。边界见 [v2.12 记录](docs/releases/v2.12.md) 与
 [ADR 0076](docs/adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。
+v2.13 已在该命名空间之上建立稳定目录句柄与 `dirfd + *at` 事务：绝对路径忽略目录 fd，
+相对路径在调用期间 retain 目录 vnode；目录 rename 后旧 fd 仍可解析。ABI v2.5.0 在旧
+1..87 后追加 88..96，覆盖 open/open-directory/mkdir/remove/stat/readlink/rename/link/
+symlink 的 `*at` 基础调用；namespace writer 从解析前串行到提交并按 expected sequence
+复验，并发同名 create 不会重入写锁。边界见 [v2.13 记录](docs/releases/v2.13.md) 与
+[ADR 0077](docs/adr/0077-v2-13-directory-handles-and-at-path-transactions.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

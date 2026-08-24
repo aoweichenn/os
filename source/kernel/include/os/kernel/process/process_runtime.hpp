@@ -453,6 +453,11 @@ void RecordCurrentProcessSystemCall() noexcept;
                                                       uint64_t path_length_bytes,
                                                       const fs::OpenOptions &options,
                                                       uint64_t &file_descriptor) noexcept;
+[[nodiscard]] FileSystemStatus OpenCurrentProcessFileAt(uint64_t directory_descriptor,
+                                                        const uint8_t *path,
+                                                        uint64_t path_length_bytes,
+                                                        const fs::OpenOptions &options,
+                                                        uint64_t &file_descriptor) noexcept;
 [[nodiscard]] FileSystemStatus ReadCurrentProcessFile(uint64_t file_descriptor,
                                                       uint8_t *destination, uint64_t capacity_bytes,
                                                       uint64_t &read_bytes) noexcept;
@@ -462,20 +467,36 @@ void RecordCurrentProcessSystemCall() noexcept;
 [[nodiscard]] FileSystemStatus CloseCurrentProcessFile(uint64_t file_descriptor) noexcept;
 [[nodiscard]] FileSystemStatus CreateCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus CreateCurrentProcessDirectoryAt(uint64_t directory_descriptor,
+                                                               const uint8_t *path,
+                                                               uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus RemoveCurrentProcessFile(const uint8_t *path,
                                                         uint64_t path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus RemoveCurrentProcessDirectory(const uint8_t *path,
                                                              uint64_t path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus RemoveCurrentProcessPathAt(uint64_t directory_descriptor,
+                                                          const uint8_t *path,
+                                                          uint64_t path_length_bytes,
+                                                          bool directory) noexcept;
 [[nodiscard]] FileSystemStatus
 RenameCurrentProcessPath(const uint8_t *source_path, uint64_t source_path_length_bytes,
                          const uint8_t *destination_path,
                          uint64_t destination_path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus RenameCurrentProcessPathAt(
+    uint64_t source_directory_descriptor, const uint8_t *source_path,
+    uint64_t source_path_length_bytes, uint64_t destination_directory_descriptor,
+    const uint8_t *destination_path, uint64_t destination_path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path,
                                                           uint64_t path_length_bytes,
                                                           uint64_t size_bytes) noexcept;
 [[nodiscard]] FileSystemStatus StatCurrentProcessPath(const uint8_t *path,
                                                       uint64_t path_length_bytes,
                                                       fs::NodeInformation &information) noexcept;
+[[nodiscard]] FileSystemStatus StatCurrentProcessPathAt(uint64_t directory_descriptor,
+                                                        const uint8_t *path,
+                                                        uint64_t path_length_bytes,
+                                                        bool follow_final_link,
+                                                        fs::NodeInformation &information) noexcept;
 [[nodiscard]] FileSystemStatus ChangeCurrentProcessPathMode(const uint8_t *path,
                                                             uint64_t path_length_bytes,
                                                             os::abi::FileMode mode) noexcept;
@@ -488,13 +509,25 @@ LinkCurrentProcessPath(const uint8_t *source_path, uint64_t source_path_length_b
                        const uint8_t *destination_path,
                        uint64_t destination_path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus
+LinkCurrentProcessPathAt(uint64_t source_directory_descriptor, const uint8_t *source_path,
+                         uint64_t source_path_length_bytes,
+                         uint64_t destination_directory_descriptor, const uint8_t *destination_path,
+                         uint64_t destination_path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus
 CreateCurrentProcessSymbolicLink(const uint8_t *target, uint64_t target_length_bytes,
                                  const uint8_t *destination_path,
                                  uint64_t destination_path_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus CreateCurrentProcessSymbolicLinkAt(
+    const uint8_t *target, uint64_t target_length_bytes, uint64_t destination_directory_descriptor,
+    const uint8_t *destination_path, uint64_t destination_path_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus
 ReadCurrentProcessSymbolicLink(const uint8_t *path, uint64_t path_length_bytes,
                                uint8_t *destination, uint64_t capacity_bytes,
                                uint64_t &target_length_bytes) noexcept;
+[[nodiscard]] FileSystemStatus
+ReadCurrentProcessSymbolicLinkAt(uint64_t directory_descriptor, const uint8_t *path,
+                                 uint64_t path_length_bytes, uint8_t *destination,
+                                 uint64_t capacity_bytes, uint64_t &target_length_bytes) noexcept;
 [[nodiscard]] FileSystemStatus SyncCurrentProcessFileSystem() noexcept;
 [[nodiscard]] FileSystemStatus SynchronizeCurrentProcessFile(uint64_t file_descriptor,
                                                              bool data_only) noexcept;
@@ -535,6 +568,10 @@ DuplicateCurrentProcessDescriptorTo(uint64_t source_descriptor, uint64_t destina
 [[nodiscard]] FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *path,
                                                            uint64_t path_length_bytes,
                                                            uint64_t &file_descriptor) noexcept;
+[[nodiscard]] FileSystemStatus OpenCurrentProcessDirectoryAt(uint64_t directory_descriptor,
+                                                             const uint8_t *path,
+                                                             uint64_t path_length_bytes,
+                                                             uint64_t &file_descriptor) noexcept;
 [[nodiscard]] FileSystemStatus ReadCurrentProcessDirectory(uint64_t file_descriptor,
                                                            fs::DirectoryEntry &entry,
                                                            bool &end_of_directory) noexcept;

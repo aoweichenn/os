@@ -3112,8 +3112,10 @@ UserAddressSpaceStatus DestroyUserAddressSpace(UserAddressSpace &address_space) 
     }
     const FilePageCacheStatus trim_status =
         user_file_page_cache.Trim(OS_KERNEL_USER_MEMORY_EMPTY_VALUE);
+    // cache 属于全系统；其他活动进程的脏页不能阻止当前地址空间退出。
     if (trim_status != FilePageCacheStatus::Succeeded &&
-        trim_status != FilePageCacheStatus::EntryBusy) {
+        trim_status != FilePageCacheStatus::EntryBusy &&
+        trim_status != FilePageCacheStatus::DirtyPagesRemain) {
         user_address_space_destruction_diagnostics = UserAddressSpaceDestructionDiagnostics{
             .stage = UserAddressSpaceDestructionStage::TrimCache,
             .virtual_address = OS_KERNEL_USER_MEMORY_EMPTY_VALUE,

@@ -1376,6 +1376,16 @@ os_add_kernel_file_system_test(
     integration/boot/vfs_dentry_cache_production_test.cpp
     "integration"
 )
+os_add_kernel_file_system_test(
+    os_kernel_vfs_at_path_integration_tests
+    integration/boot/vfs_at_path_test.cpp
+    "integration"
+)
+target_link_libraries(
+    os_kernel_vfs_at_path_integration_tests
+    PRIVATE
+        Threads::Threads
+)
 target_link_libraries(
     os_kernel_vfs_dentry_cache_production_integration_tests
     PRIVATE

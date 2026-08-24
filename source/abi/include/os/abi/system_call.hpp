@@ -100,6 +100,15 @@ enum class SystemCallNumber : uint64_t {
     SynchronizeFile = 85ULL,
     SynchronizeFileData = 86ULL,
     SynchronizeMemory = 87ULL,
+    OpenFileAt = 88ULL,
+    OpenDirectoryAt = 89ULL,
+    CreateDirectoryAt = 90ULL,
+    RemoveAt = 91ULL,
+    StatAt = 92ULL,
+    ReadSymbolicLinkAt = 93ULL,
+    RenameAt = 94ULL,
+    LinkAt = 95ULL,
+    CreateSymbolicLinkAt = 96ULL,
 };
 
 inline constexpr uint64_t OS_ABI_SYSTEM_CALL_VECTOR = 0x80ULL;
@@ -129,6 +138,11 @@ inline constexpr uint64_t OS_ABI_FILE_OPEN_APPEND_FLAG = 0x10ULL;
 inline constexpr uint64_t OS_ABI_FILE_OPEN_VALID_FLAG_MASK =
     OS_ABI_FILE_OPEN_READ_FLAG | OS_ABI_FILE_OPEN_WRITE_FLAG | OS_ABI_FILE_OPEN_CREATE_FLAG |
     OS_ABI_FILE_OPEN_TRUNCATE_FLAG | OS_ABI_FILE_OPEN_APPEND_FLAG;
+inline constexpr uint64_t OS_ABI_AT_CURRENT_WORKING_DIRECTORY = UINT64_MAX;
+inline constexpr uint64_t OS_ABI_AT_REMOVE_DIRECTORY_FLAG = 1ULL << 0ULL;
+inline constexpr uint64_t OS_ABI_AT_REMOVE_VALID_FLAG_MASK = OS_ABI_AT_REMOVE_DIRECTORY_FLAG;
+inline constexpr uint64_t OS_ABI_AT_STAT_NO_FOLLOW_FLAG = 1ULL << 0ULL;
+inline constexpr uint64_t OS_ABI_AT_STAT_VALID_FLAG_MASK = OS_ABI_AT_STAT_NO_FOLLOW_FLAG;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_INVALID_USER_MEMORY = -1LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_UNKNOWN_NUMBER = -2LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_WRITE_TOO_LARGE = -3LL;
@@ -188,6 +202,45 @@ inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_NOT_CONTROLLING_TERMINAL = -5
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_SESSION_PERMISSION_DENIED = -57LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_CREDENTIAL_PERMISSION_DENIED = -58LL;
 inline constexpr int64_t OS_ABI_SYSTEM_CALL_RESULT_RESOURCE_LIMIT_EXCEEDED = -59LL;
+
+struct AtStatRequest final {
+    uint64_t directory_descriptor;
+    uint64_t path_address;
+    uint64_t path_length_bytes;
+    uint64_t flags;
+    uint64_t information_address;
+    uint64_t information_size_bytes;
+};
+
+struct AtReadSymbolicLinkRequest final {
+    uint64_t directory_descriptor;
+    uint64_t path_address;
+    uint64_t path_length_bytes;
+    uint64_t destination_address;
+    uint64_t destination_capacity_bytes;
+};
+
+struct AtDualPathRequest final {
+    uint64_t source_directory_descriptor;
+    uint64_t source_path_address;
+    uint64_t source_path_length_bytes;
+    uint64_t destination_directory_descriptor;
+    uint64_t destination_path_address;
+    uint64_t destination_path_length_bytes;
+};
+
+struct AtSymbolicLinkRequest final {
+    uint64_t target_address;
+    uint64_t target_length_bytes;
+    uint64_t destination_directory_descriptor;
+    uint64_t destination_path_address;
+    uint64_t destination_path_length_bytes;
+};
+
+inline constexpr uint64_t OS_ABI_AT_STAT_REQUEST_SIZE_BYTES = 48ULL;
+inline constexpr uint64_t OS_ABI_AT_READ_SYMBOLIC_LINK_REQUEST_SIZE_BYTES = 40ULL;
+inline constexpr uint64_t OS_ABI_AT_DUAL_PATH_REQUEST_SIZE_BYTES = 48ULL;
+inline constexpr uint64_t OS_ABI_AT_SYMBOLIC_LINK_REQUEST_SIZE_BYTES = 40ULL;
 
 inline constexpr uint64_t OS_ABI_PIPE_DESCRIPTOR_PAIR_SIZE_BYTES = 16ULL;
 

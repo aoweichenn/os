@@ -155,11 +155,13 @@ Status RootFileSystem::Initialize(FileSystemBlockDevice &device,
     }
     this->device_ = &device;
     this->timestamp_source_ = timestamp_source;
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
     if (device.ReadBlock(OS_KERNEL_ROOTFS_START_LBA + OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK,
-                         block, sizeof(block)) != FileSystemBlockDeviceStatus::Succeeded ||
-        DecodeRootSuperblock(block, sizeof(block), this->disk_superblock_) !=
-            RootFormatStatus::Succeeded) {
+                         this->initialization_block_scratch_,
+                         sizeof(this->initialization_block_scratch_)) !=
+            FileSystemBlockDeviceStatus::Succeeded ||
+        DecodeRootSuperblock(this->initialization_block_scratch_,
+                             sizeof(this->initialization_block_scratch_),
+                             this->disk_superblock_) != RootFormatStatus::Succeeded) {
         this->device_ = nullptr;
         return Status::Corrupt;
     }
@@ -198,13 +200,15 @@ Status RootFileSystem::Initialize(FileSystemBlockDevice &device,
     ClearBytes(reinterpret_cast<uint8_t *>(this->validation_link_counts_),
                sizeof(this->validation_link_counts_));
 
-    Status status = this->ReadRelativeBlock(OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK, block);
+    Status status = this->ReadRelativeBlock(OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK,
+                                            this->initialization_block_scratch_);
     if (status != Status::Succeeded) {
         this->device_ = nullptr;
         return status;
     }
     const RootFormatStatus format_status =
-        DecodeRootSuperblock(block, sizeof(block), this->disk_superblock_);
+        DecodeRootSuperblock(this->initialization_block_scratch_,
+                             sizeof(this->initialization_block_scratch_), this->disk_superblock_);
     if (format_status != RootFormatStatus::Succeeded) {
         this->cache_.Invalidate();
         this->device_ = nullptr;
@@ -321,12 +325,13 @@ Status RootFileSystem::StageSuperblock() noexcept {
     if (!this->initialized_ || this->device_ == nullptr) {
         return Status::NotInitialized;
     }
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    if (EncodeRootSuperblock(this->disk_superblock_, block, sizeof(block)) !=
+    if (EncodeRootSuperblock(this->disk_superblock_, this->superblock_block_scratch_,
+                             sizeof(this->superblock_block_scratch_)) !=
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
-    return this->WriteMetadataBlock(OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK, block);
+    return this->WriteMetadataBlock(OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK,
+                                    this->superblock_block_scratch_);
 }
 
 Status RootFileSystem::BeginTransaction() noexcept {
@@ -424,13 +429,13 @@ Status RootFileSystem::ReadInode(const uint64_t inode_number, RootInode &inode) 
     const uint64_t relative_block = this->disk_superblock_.inode_table_start_relative_block +
                                     inode_offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
     const uint64_t block_offset_bytes = inode_offset_bytes % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    const Status read_status = this->ReadRelativeBlock(relative_block, block);
+    const Status read_status =
+        this->ReadRelativeBlock(relative_block, this->read_inode_block_scratch_);
     if (read_status != Status::Succeeded) {
         return read_status;
     }
-    return DecodeRootInode(block + block_offset_bytes, OS_KERNEL_ROOTFS_INODE_SIZE_BYTES, inode) ==
-                   RootFormatStatus::Succeeded
+    return DecodeRootInode(this->read_inode_block_scratch_ + block_offset_bytes,
+                           OS_KERNEL_ROOTFS_INODE_SIZE_BYTES, inode) == RootFormatStatus::Succeeded
                ? Status::Succeeded
                : Status::Corrupt;
 }
@@ -445,16 +450,15 @@ Status RootFileSystem::WriteInode(const uint64_t inode_number, const RootInode &
     const uint64_t relative_block = this->disk_superblock_.inode_table_start_relative_block +
                                     inode_offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
     const uint64_t block_offset_bytes = inode_offset_bytes % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    Status status = this->ReadRelativeBlock(relative_block, block);
+    Status status = this->ReadRelativeBlock(relative_block, this->write_inode_block_scratch_);
     if (status != Status::Succeeded) {
         return status;
     }
-    if (EncodeRootInode(inode, block + block_offset_bytes, OS_KERNEL_ROOTFS_INODE_SIZE_BYTES) !=
-        RootFormatStatus::Succeeded) {
+    if (EncodeRootInode(inode, this->write_inode_block_scratch_ + block_offset_bytes,
+                        OS_KERNEL_ROOTFS_INODE_SIZE_BYTES) != RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
-    status = this->WriteMetadataBlock(relative_block, block);
+    status = this->WriteMetadataBlock(relative_block, this->write_inode_block_scratch_);
     return status;
 }
 
@@ -465,13 +469,14 @@ Status RootFileSystem::ReadPointerBlock(const uint64_t relative_block,
         relative_block >= this->disk_superblock_.total_block_count) {
         return Status::Corrupt;
     }
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    const Status status = this->ReadRelativeBlock(relative_block, block);
+    const Status status =
+        this->ReadRelativeBlock(relative_block, this->read_pointer_block_scratch_);
     if (status != Status::Succeeded) {
         return status;
     }
-    return DecodeRootPointerBlock(block, sizeof(block), pointer_block) ==
-                   RootFormatStatus::Succeeded
+    return DecodeRootPointerBlock(this->read_pointer_block_scratch_,
+                                  sizeof(this->read_pointer_block_scratch_),
+                                  pointer_block) == RootFormatStatus::Succeeded
                ? Status::Succeeded
                : Status::Corrupt;
 }
@@ -482,12 +487,12 @@ Status RootFileSystem::WritePointerBlock(const uint64_t relative_block,
         relative_block >= this->disk_superblock_.total_block_count) {
         return Status::Corrupt;
     }
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    if (EncodeRootPointerBlock(pointer_block, block, sizeof(block)) !=
+    if (EncodeRootPointerBlock(pointer_block, this->write_pointer_block_scratch_,
+                               sizeof(this->write_pointer_block_scratch_)) !=
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
-    return this->WriteMetadataBlock(relative_block, block);
+    return this->WriteMetadataBlock(relative_block, this->write_pointer_block_scratch_);
 }
 
 Status RootFileSystem::ReadBitmapBit(const bool inode_bitmap, const uint64_t bit_index,
@@ -505,12 +510,11 @@ Status RootFileSystem::ReadBitmapBit(const bool inode_bitmap, const uint64_t bit
                                      : this->disk_superblock_.data_bitmap_start_relative_block;
     const uint64_t relative_block = start_block + bit_index / bits_per_block;
     const uint64_t block_bit_index = bit_index % bits_per_block;
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    const Status status = this->ReadRelativeBlock(relative_block, block);
+    const Status status = this->ReadRelativeBlock(relative_block, this->read_bitmap_block_scratch_);
     if (status != Status::Succeeded) {
         return status;
     }
-    allocated = BitmapBitIsSet(block, block_bit_index);
+    allocated = BitmapBitIsSet(this->read_bitmap_block_scratch_, block_bit_index);
     return Status::Succeeded;
 }
 
@@ -528,13 +532,12 @@ Status RootFileSystem::WriteBitmapBit(const bool inode_bitmap, const uint64_t bi
                                      : this->disk_superblock_.data_bitmap_start_relative_block;
     const uint64_t relative_block = start_block + bit_index / bits_per_block;
     const uint64_t block_bit_index = bit_index % bits_per_block;
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    Status status = this->ReadRelativeBlock(relative_block, block);
+    Status status = this->ReadRelativeBlock(relative_block, this->write_bitmap_block_scratch_);
     if (status != Status::Succeeded) {
         return status;
     }
-    SetBitmapBit(block, block_bit_index, allocated);
-    status = this->WriteMetadataBlock(relative_block, block);
+    SetBitmapBit(this->write_bitmap_block_scratch_, block_bit_index, allocated);
+    status = this->WriteMetadataBlock(relative_block, this->write_bitmap_block_scratch_);
     return status;
 }
 
@@ -555,15 +558,15 @@ Status RootFileSystem::FindFreeBitmapBit(const bool inode_bitmap, const uint64_t
     const uint64_t end_bit = first_bit + bit_count;
     while (current_bit < end_bit) {
         const uint64_t bitmap_block_index = current_bit / bits_per_block;
-        uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-        const Status status = this->ReadRelativeBlock(start_block + bitmap_block_index, block);
+        const Status status = this->ReadRelativeBlock(start_block + bitmap_block_index,
+                                                      this->find_bitmap_block_scratch_);
         if (status != Status::Succeeded) {
             return status;
         }
         const uint64_t block_end = Minimum(
             end_bit, (bitmap_block_index + OS_KERNEL_ROOTFS_COUNTER_INCREMENT) * bits_per_block);
         while (current_bit < block_end) {
-            if (!BitmapBitIsSet(block, current_bit % bits_per_block)) {
+            if (!BitmapBitIsSet(this->find_bitmap_block_scratch_, current_bit % bits_per_block)) {
                 bit_index = current_bit;
                 return Status::Succeeded;
             }
@@ -597,8 +600,8 @@ Status RootFileSystem::AllocateDataBlock(uint64_t &relative_block) noexcept {
         return status;
     }
     relative_block = this->disk_superblock_.data_start_relative_block + bit_index;
-    uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    status = this->WriteRelativeBlock(relative_block, block);
+    ClearBytes(this->allocate_data_block_scratch_, sizeof(this->allocate_data_block_scratch_));
+    status = this->WriteRelativeBlock(relative_block, this->allocate_data_block_scratch_);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -1209,13 +1212,13 @@ Status RootFileSystem::ReadFileBytes(RootInode &inode, const uint64_t offset_byt
             ClearBytes(destination + copied_bytes, chunk_bytes);
             this->statistics_.sparse_hole_read_bytes += chunk_bytes;
         } else {
-            uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-            status = this->ReadRelativeBlock(relative_block, block);
+            status = this->ReadRelativeBlock(relative_block, this->read_block_scratch_);
             if (status != Status::Succeeded) {
                 read_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
                 return status;
             }
-            CopyBytes(destination + copied_bytes, block + block_offset_bytes, chunk_bytes);
+            CopyBytes(destination + copied_bytes, this->read_block_scratch_ + block_offset_bytes,
+                      chunk_bytes);
         }
         copied_bytes += chunk_bytes;
     }
@@ -1266,14 +1269,15 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
         if (status != Status::Succeeded || relative_block == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
             return status == Status::Succeeded ? Status::Corrupt : status;
         }
-        uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-        status = this->ReadRelativeBlock(relative_block, block);
+        status = this->ReadRelativeBlock(relative_block, this->write_block_scratch_);
         if (status != Status::Succeeded) {
             return status;
         }
-        CopyBytes(block + block_offset_bytes, source + written_bytes, chunk_bytes);
-        status = metadata_content ? this->WriteMetadataBlock(relative_block, block)
-                                  : this->WriteRelativeBlock(relative_block, block);
+        CopyBytes(this->write_block_scratch_ + block_offset_bytes, source + written_bytes,
+                  chunk_bytes);
+        status = metadata_content
+                     ? this->WriteMetadataBlock(relative_block, this->write_block_scratch_)
+                     : this->WriteRelativeBlock(relative_block, this->write_block_scratch_);
         if (status != Status::Succeeded) {
             return status;
         }
@@ -1320,17 +1324,17 @@ Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootIn
             return status;
         }
         if (tail_relative_block != OS_KERNEL_ROOTFS_EMPTY_VALUE) {
-            uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-            status = this->ReadRelativeBlock(tail_relative_block, block);
+            status = this->ReadRelativeBlock(tail_relative_block, this->truncate_block_scratch_);
             if (status != Status::Succeeded) {
                 return status;
             }
             const uint64_t block_offset_bytes = size_bytes % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
-            ClearBytes(block + block_offset_bytes,
+            ClearBytes(this->truncate_block_scratch_ + block_offset_bytes,
                        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES - block_offset_bytes);
-            status = inode.type == RootNodeType::Directory
-                         ? this->WriteMetadataBlock(tail_relative_block, block)
-                         : this->WriteRelativeBlock(tail_relative_block, block);
+            status =
+                inode.type == RootNodeType::Directory
+                    ? this->WriteMetadataBlock(tail_relative_block, this->truncate_block_scratch_)
+                    : this->WriteRelativeBlock(tail_relative_block, this->truncate_block_scratch_);
             if (status != Status::Succeeded) {
                 return status;
             }
@@ -1548,16 +1552,15 @@ Status RootFileSystem::ReapOrphans() noexcept {
     for (uint64_t bitmap_block_index = OS_KERNEL_ROOTFS_FIRST_INDEX;
          bitmap_block_index < this->disk_superblock_.inode_bitmap_block_count;
          ++bitmap_block_index) {
-        uint8_t bitmap_block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
         Status status = this->ReadRelativeBlock(
             this->disk_superblock_.inode_bitmap_start_relative_block + bitmap_block_index,
-            bitmap_block);
+            this->orphan_bitmap_block_scratch_);
         if (status != Status::Succeeded) {
             return status;
         }
         for (uint64_t byte_index = OS_KERNEL_ROOTFS_FIRST_INDEX;
              byte_index < OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES; ++byte_index) {
-            const uint8_t allocated_bits = bitmap_block[byte_index];
+            const uint8_t allocated_bits = this->orphan_bitmap_block_scratch_[byte_index];
             if (allocated_bits == OS_KERNEL_ROOTFS_ZERO_BYTE) {
                 continue;
             }
@@ -3056,16 +3059,16 @@ Status RootFileSystem::CompareValidationBitmaps(uint64_t &allocated_inode_count,
     for (uint64_t bitmap_block_index = OS_KERNEL_ROOTFS_FIRST_INDEX;
          bitmap_block_index < this->disk_superblock_.inode_bitmap_block_count;
          ++bitmap_block_index) {
-        uint8_t block[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
         const Status status = this->ReadRelativeBlock(
-            this->disk_superblock_.inode_bitmap_start_relative_block + bitmap_block_index, block);
+            this->disk_superblock_.inode_bitmap_start_relative_block + bitmap_block_index,
+            this->validation_bitmap_block_scratch_);
         if (status != Status::Succeeded) {
             return status;
         }
         const uint64_t byte_start = bitmap_block_index * OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
         for (uint64_t byte_index = OS_KERNEL_ROOTFS_FIRST_INDEX;
              byte_index < OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES; ++byte_index) {
-            const uint8_t actual = block[byte_index];
+            const uint8_t actual = this->validation_bitmap_block_scratch_[byte_index];
             const uint8_t expected = this->validation_inode_bitmap_[byte_start + byte_index];
             if (actual != expected) {
                 return Status::Corrupt;

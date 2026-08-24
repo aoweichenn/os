@@ -2588,3 +2588,39 @@ backend rename、source/destination key 与两个 parent metadata 必须在 reso
 这是固定 BSS 设计的预期结果。`ReclaimNamespaceCache` 释放的是可重建逻辑 identity 和槽，
 不是 backing page；因此不能把 dentry/inode 数加入 page reclaim accounting。检查 VFS
 reclaim 统计与下一次 backend refill，不要伪造物理内存下降。
+
+## v2.13 目录句柄与 `*at` 排错
+
+### 并发同名 `openat(create)` 偶发停住
+
+检查首次 Resolve 为 NotFound 后的 writer 临界区。进入锁后必须二次 Resolve；若已由另一
+线程创建，应直接沿当前调用使用解析出的 vnode。不要在仍持有 `namespace_mutation_lock_`
+时递归调用 `Open`，非递归 RuntimeMutex 会形成自锁。hosted VFS test 用四线程原子起跑门
+持续覆盖该分支。
+
+### 进程退出时全局页缓存仍有 DirtyPagesRemain
+
+global FilePageCache 由所有活动进程共享；并发 `exec_probe` 退出时，`fs_probe` 可能正在写脏
+另一个文件。因此 Process teardown 可以接受 `DirtyPagesRemain`，但不能接受 Loading、
+Writeback 引用或内部损坏；全系统最终收束仍必须归零。
+
+同时检查路径探针是否在最后一次 metadata mutation 后执行了 `SyncFileSystem`。`linkat/
+renameat/symlinkat/removeat` 都会在最初 payload sync 之后重新脏化 rootfs；若不做第二次同步，
+大量后续事务会拖到最终 Shell 退出并放大块队列栈压力。这里的两条约束分别解决并发退出
+语义和探针自身 backlog，不能互相替代。
+
+### `readlinkat` 后立即出现 vector 8 / double fault
+
+先检查 Kernel stack 使用量。16 KiB Ring 0 栈不能同时承载 path 与 destination 两块最大
+4096 字节数组，再叠加 syscall/Process/VFS 调用帧。单 BSP 路径应在关闭抢占后复用 8 KiB
+静态 scratch；用户目标缓冲先验证，完成后再 CopyToUser。若以后进入 SMP，必须改成 per-CPU
+scratch，不能继续依赖全局数组。
+
+### reclaim profile 在 ATA/NVMe 提交函数入口 double fault
+
+若 RIP 落在 `BlockRequestQueue::RemoveQueuedIndex` 或 `NvmeController::SubmitIoRequest` 的函数
+序言写栈指令，先检查上游 background reclaim 帧，而不是放宽 VGA 验收或扩大 Kernel stack。
+panic 的 RBP、CR2、current-thread 和 entry-top 可证明 guard 越界。实际链路同时保留 RootFS
+4 KiB block、约 1264 字节统计/规划和 worker 后处理现场；只拆规划帧仍可能不足。RootFS
+read/write scratch 应归串行实例所有，规划与 work 后处理再从设备 I/O 链退出；ATA 与 NVMe
+reclaim 必须同时复验，不能只凭 primary 判断。

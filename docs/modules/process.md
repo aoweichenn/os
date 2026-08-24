@@ -461,3 +461,21 @@ NOFILE 与 FileTable soft limit 共用状态；FSIZE、DATA、STACK、AS 分别�
 root 能抬高 hard limit，且仍不能越过分档 Process/FileTable 和固定 8 MiB
 stack/data 等系统上限。详细规则见
 [ADR 0052](../adr/0052-linux-compatible-local-credentials-permissions-and-rlimits.md)。
+
+## v2.13 目录 fd 临时 lease
+
+ProcessRuntime 的 `*At` 入口先判断绝对路径或 `AT_CWD`；其他相对路径经 FileTable lookup，
+由 FileDescriptionManager 在对象 operation lock 下确认 Directory 并 retain VFS
+`DirectoryHandle`。取得 lease 后立即离开对象锁，VFS 操作完成再 release，因而 concurrent
+close、duplicate/fork 与 syscall 之间没有 payload 裸指针窗口。
+
+双路径 rename/link 分别 retain source/destination lease，失败也逆序释放；symlink target
+只是字节串，不作为 dirfd path 解析。Process 的 root、cwd、credentials 和 creation mask
+继续是权限来源。接口与锁序由
+[ADR 0077](../adr/0077-v2-13-directory-handles-and-at-path-transactions.md) 冻结。
+
+同阶段还把 background reclaim 拆为规划与执行两段。第一段读取 pressure/aging/cache/swap
+统计并产出紧凑 `RuntimeBackgroundReclaimPlan`；其大栈帧返回后，第二段才调用 clean reclaim、
+file writeback 和 anonymous swap。这样不改变计划和统计，却让阻塞 ATA/NVMe 路径保留明确
+的 16 KiB Kernel stack 余量。work acquire、operation、complete/requeue 和无任务等待也分成
+独立 helper，operation 执行时不再保留后处理临时状态。

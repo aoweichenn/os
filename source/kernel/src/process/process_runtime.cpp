@@ -655,6 +655,25 @@ struct BackgroundReclaimSelectionContext final {
     PageAgingStatus failure_status;
 };
 
+enum class RuntimeBackgroundReclaimPreparation : uint64_t {
+    NoWork,
+    Ready,
+    Failed,
+};
+
+enum class RuntimeKernelWorkAvailability : uint64_t {
+    Ready,
+    NoReadyWork,
+    Failed,
+};
+
+struct RuntimeBackgroundReclaimPlan final {
+    uint64_t now_nanoseconds;
+    uint64_t target_page_count;
+    MemoryReclaimPlan reclaim_plan;
+    bool failed;
+};
+
 [[nodiscard]] bool ScheduleRuntimeBackgroundReclaimWork() noexcept;
 [[nodiscard]] bool ScheduleRuntimeFileReadaheadWork() noexcept;
 [[nodiscard]] bool CancelRuntimeFileReadaheadFile(const FileCacheIdentity &identity) noexcept;
@@ -883,6 +902,49 @@ FileIdentityFromInformation(const fs::NodeInformation &information) noexcept {
         .node_identifier = vnode.identifier,
         .node_generation = vnode.generation,
     };
+}
+
+[[nodiscard]] FileSystemStatus
+RetainDirectoryForAt(ProcessRuntimeProcess &process, const uint64_t directory_descriptor,
+                     const uint8_t *const path, const uint64_t path_length_bytes,
+                     RetainedDirectory &retained_directory,
+                     const fs::DirectoryHandle *&directory_handle) noexcept {
+    retained_directory = RetainedDirectory{};
+    directory_handle = nullptr;
+    if (path == nullptr || path_length_bytes == OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE) {
+        return FileSystemStatus::InvalidArgument;
+    }
+    if (path[OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX] == static_cast<uint8_t>('/') ||
+        directory_descriptor == os::abi::OS_ABI_AT_CURRENT_WORKING_DIRECTORY) {
+        return FileSystemStatus::Succeeded;
+    }
+    KernelObjectReference reference{};
+    if (process.file_table.Lookup(directory_descriptor, reference) != FileTableStatus::Succeeded) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    if (file_description_manager.RetainDirectory(reference, retained_directory) !=
+        FileDescriptionStatus::Succeeded) {
+        return FileSystemStatus::InvalidHandle;
+    }
+    if (retained_directory.vfs != process_vfs || !retained_directory.handle.active) {
+        if (retained_directory.vfs != nullptr && retained_directory.handle.active) {
+            static_cast<void>(
+                retained_directory.vfs->ReleaseDirectoryHandle(retained_directory.handle));
+        }
+        retained_directory = RetainedDirectory{};
+        return FileSystemStatus::Corrupt;
+    }
+    directory_handle = &retained_directory.handle;
+    return FileSystemStatus::Succeeded;
+}
+
+[[nodiscard]] bool ReleaseDirectoryForAt(RetainedDirectory &retained_directory) noexcept {
+    if (!retained_directory.handle.active) {
+        return true;
+    }
+    return retained_directory.vfs != nullptr &&
+           retained_directory.vfs->ReleaseDirectoryHandle(retained_directory.handle) ==
+               fs::Status::Succeeded;
 }
 
 void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) noexcept;
@@ -2377,23 +2439,19 @@ CompleteAnonymousPageBackgroundReclaim(void *const context,
     return selection.failure_status == PageAgingStatus::Succeeded;
 }
 
-[[nodiscard]] WorkExecutionResult
-ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
-    static_cast<void>(context);
-    if (AnyUserKernelContinuationActive()) {
-        return WorkExecutionResult::Succeeded;
-    }
+[[nodiscard]] RuntimeBackgroundReclaimPreparation
+PrepareRuntimeBackgroundReclaimPlan(RuntimeBackgroundReclaimPlan &execution_plan) noexcept {
+    execution_plan = RuntimeBackgroundReclaimPlan{};
     const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
     const MemoryPressureStatistics pressure_statistics = GetUserMemoryPressureStatistics();
     BackgroundReclaimDecision decision{};
     if (background_reclaim_controller.Evaluate(
             pressure_statistics.watermarks, pressure_statistics.resident_page_count,
             now_nanoseconds, decision) != BackgroundReclaimStatus::Succeeded) {
-        background_reclaim_worker_failed = true;
-        return WorkExecutionResult::Failed;
+        return RuntimeBackgroundReclaimPreparation::Failed;
     }
     if (decision.action != BackgroundReclaimAction::Reclaim) {
-        return WorkExecutionResult::Succeeded;
+        return RuntimeBackgroundReclaimPreparation::NoWork;
     }
 
     if (process_vfs != nullptr) {
@@ -2403,14 +2461,10 @@ ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
                 OS_KERNEL_PROCESS_RUNTIME_BACKGROUND_RECLAIM_BATCH_PAGE_COUNT,
                 OS_KERNEL_PROCESS_RUNTIME_BACKGROUND_RECLAIM_BATCH_PAGE_COUNT,
                 namespace_reclaim) != fs::Status::Succeeded) {
-            background_reclaim_worker_failed = true;
-            return WorkExecutionResult::Failed;
+            return RuntimeBackgroundReclaimPreparation::Failed;
         }
     }
 
-    BackgroundReclaimSelectionContext selection{
-        .failure_status = PageAgingStatus::Succeeded,
-    };
     const PageAgingStatistics aging_statistics = page_aging_manager.Statistics();
     const FilePageCacheStatistics cache_statistics = GetUserFilePageCacheStatistics();
     uint64_t non_clean_file_page_count = cache_statistics.loading_page_count;
@@ -2445,7 +2499,7 @@ ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
             ? swap_statistics.slot_capacity - swap_statistics.active_slot_count
             : OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     failed = failed || swap_statistics.active_slot_count > swap_statistics.slot_capacity;
-    MemoryReclaimPlan plan{};
+    MemoryReclaimPlan reclaim_plan{};
     if (!failed &&
         PlanMemoryReclaim(
             MemoryReclaimInput{
@@ -2456,9 +2510,40 @@ ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
                 .free_swap_page_count = free_swap_page_count,
                 .swappiness = GetUserMemorySwappiness(),
             },
-            plan) != MemoryReclaimPlanStatus::Succeeded) {
+            reclaim_plan) != MemoryReclaimPlanStatus::Succeeded) {
         failed = true;
     }
+    execution_plan = RuntimeBackgroundReclaimPlan{
+        .now_nanoseconds = now_nanoseconds,
+        .target_page_count = decision.target_page_count,
+        .reclaim_plan = reclaim_plan,
+        .failed = failed,
+    };
+    return RuntimeBackgroundReclaimPreparation::Ready;
+}
+
+[[nodiscard]] WorkExecutionResult
+ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
+    static_cast<void>(context);
+    if (AnyUserKernelContinuationActive()) {
+        return WorkExecutionResult::Succeeded;
+    }
+    RuntimeBackgroundReclaimPlan execution_plan{};
+    const RuntimeBackgroundReclaimPreparation preparation_status =
+        PrepareRuntimeBackgroundReclaimPlan(execution_plan);
+    if (preparation_status == RuntimeBackgroundReclaimPreparation::NoWork) {
+        return WorkExecutionResult::Succeeded;
+    }
+    if (preparation_status != RuntimeBackgroundReclaimPreparation::Ready) {
+        background_reclaim_worker_failed = true;
+        return WorkExecutionResult::Failed;
+    }
+
+    BackgroundReclaimSelectionContext selection{
+        .failure_status = PageAgingStatus::Succeeded,
+    };
+    const MemoryReclaimPlan &plan = execution_plan.reclaim_plan;
+    bool failed = execution_plan.failed;
     uint64_t reclaimed_clean_file_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     uint64_t written_file_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
     uint64_t swapped_anonymous_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
@@ -2500,14 +2585,14 @@ ExecuteRuntimeBackgroundReclaimWork(void *const context) noexcept {
     }
     const BackgroundReclaimStatus record_status = background_reclaim_controller.RecordBatch(
         BackgroundReclaimBatchResult{
-            .requested_page_count = decision.target_page_count,
+            .requested_page_count = execution_plan.target_page_count,
             .clean_file_page_count = reclaimed_clean_file_page_count,
             .swapped_anonymous_page_count = swapped_anonymous_page_count,
             .reclaimed_page_count = reclaimed_page_count,
             .written_page_count = written_file_page_count,
             .failed = failed,
         },
-        now_nanoseconds);
+        execution_plan.now_nanoseconds);
     if (record_status != BackgroundReclaimStatus::Succeeded) {
         background_reclaim_worker_failed = true;
         return WorkExecutionResult::Failed;
@@ -2978,54 +3063,96 @@ void RuntimeBlockIoProbeWorker(void *const context) noexcept {
     }
 }
 
+[[nodiscard]] RuntimeKernelWorkAvailability
+PrepareRuntimeKernelWorkExecution(WorkExecution &execution) noexcept {
+    execution = WorkExecution{};
+    const WorkQueueStatus acquire_status =
+        kernel_work_queue.AcquireNext(GetMonotonicNanoseconds(), execution);
+    if (acquire_status == WorkQueueStatus::Succeeded) {
+        return execution.operation != nullptr ? RuntimeKernelWorkAvailability::Ready
+                                              : RuntimeKernelWorkAvailability::Failed;
+    }
+    return acquire_status == WorkQueueStatus::NoReadyWork
+               ? RuntimeKernelWorkAvailability::NoReadyWork
+               : RuntimeKernelWorkAvailability::Failed;
+}
+
+[[nodiscard]] bool
+CompleteRuntimeKernelWorkExecution(const WorkHandle completed_handle,
+                                   const WorkExecutionResult execution_result) noexcept {
+    if (kernel_work_queue.Complete(completed_handle, execution_result) !=
+            WorkQueueStatus::Succeeded ||
+        kernel_work_queue.Reset(completed_handle) != WorkQueueStatus::Succeeded) {
+        return false;
+    }
+    if (!kernel_work_thread_stop_requested &&
+        WorkHandlesEqual(completed_handle, file_writeback_work_handle) &&
+        UserFileWritebackWorkerRequested()) {
+        const WorkQueueStatus queue_status = kernel_work_queue.Queue(file_writeback_work_handle);
+        if (queue_status != WorkQueueStatus::Succeeded &&
+            queue_status != WorkQueueStatus::AlreadyPending) {
+            return false;
+        }
+    }
+    if (!kernel_work_thread_stop_requested && !page_aging_worker_failed &&
+        WorkHandlesEqual(completed_handle, page_aging_work_handle)) {
+        const uint64_t next_deadline_nanoseconds = GetMonotonicNanoseconds();
+        if (next_deadline_nanoseconds >
+                UINT64_MAX - OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_INTERVAL_NANOSECONDS ||
+            kernel_work_queue.QueueDelayed(
+                page_aging_work_handle,
+                next_deadline_nanoseconds +
+                    OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_INTERVAL_NANOSECONDS) !=
+                WorkQueueStatus::Succeeded) {
+            return false;
+        }
+    }
+    if (!kernel_work_thread_stop_requested && !background_reclaim_worker_failed &&
+        WorkHandlesEqual(completed_handle, background_reclaim_work_handle) &&
+        !ScheduleRuntimeBackgroundReclaimWork()) {
+        return false;
+    }
+    if (!kernel_work_thread_stop_requested && !file_readahead_worker_failed &&
+        WorkHandlesEqual(completed_handle, file_readahead_work_handle) &&
+        file_readahead_request_queue.Statistics().active_request_count !=
+            OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
+        !ScheduleRuntimeFileReadaheadWork()) {
+        return false;
+    }
+    return true;
+}
+
+[[nodiscard]] bool WaitForRuntimeKernelWork() noexcept {
+    uint64_t deadline_nanoseconds = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    bool deadline_available = false;
+    if (kernel_work_queue.NextDeadline(deadline_nanoseconds, deadline_available) !=
+        WorkQueueStatus::Succeeded) {
+        return false;
+    }
+    if (kernel_work_thread_stop_requested) {
+        return true;
+    }
+    WakeReason wake_reason = WakeReason::None;
+    const KernelThreadRuntimeStatus block_status =
+        deadline_available
+            ? BlockCurrentKernelThreadUntil(kernel_work_wait_queue, WaitCondition::KernelWork,
+                                            deadline_nanoseconds, wake_reason)
+            : BlockCurrentKernelThread(kernel_work_wait_queue, WaitCondition::KernelWork,
+                                       wake_reason);
+    return block_status == KernelThreadRuntimeStatus::Succeeded &&
+           (wake_reason == WakeReason::ConditionSatisfied || wake_reason == WakeReason::Timeout ||
+            wake_reason == WakeReason::Cancelled);
+}
+
 void RuntimeFileWritebackWorker(void *const context) noexcept {
     static_cast<void>(context);
     while (!kernel_work_thread_stop_requested) {
-        const uint64_t now_nanoseconds = GetMonotonicNanoseconds();
         WorkExecution execution{};
-        const WorkQueueStatus acquire_status =
-            kernel_work_queue.AcquireNext(now_nanoseconds, execution);
-        if (acquire_status == WorkQueueStatus::Succeeded) {
-            if (execution.operation == nullptr ||
-                kernel_work_queue.Complete(execution.handle,
-                                           execution.operation(execution.context)) !=
-                    WorkQueueStatus::Succeeded ||
-                kernel_work_queue.Reset(execution.handle) != WorkQueueStatus::Succeeded) {
-                HaltProcessor();
-            }
-            if (!kernel_work_thread_stop_requested &&
-                WorkHandlesEqual(execution.handle, file_writeback_work_handle) &&
-                UserFileWritebackWorkerRequested()) {
-                const WorkQueueStatus queue_status =
-                    kernel_work_queue.Queue(file_writeback_work_handle);
-                if (queue_status != WorkQueueStatus::Succeeded &&
-                    queue_status != WorkQueueStatus::AlreadyPending) {
-                    HaltProcessor();
-                }
-            }
-            if (!kernel_work_thread_stop_requested && !page_aging_worker_failed &&
-                WorkHandlesEqual(execution.handle, page_aging_work_handle)) {
-                const uint64_t next_deadline_nanoseconds = GetMonotonicNanoseconds();
-                if (next_deadline_nanoseconds >
-                        UINT64_MAX - OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_INTERVAL_NANOSECONDS ||
-                    kernel_work_queue.QueueDelayed(
-                        page_aging_work_handle,
-                        next_deadline_nanoseconds +
-                            OS_KERNEL_PROCESS_RUNTIME_PAGE_AGING_INTERVAL_NANOSECONDS) !=
-                        WorkQueueStatus::Succeeded) {
-                    HaltProcessor();
-                }
-            }
-            if (!kernel_work_thread_stop_requested && !background_reclaim_worker_failed &&
-                WorkHandlesEqual(execution.handle, background_reclaim_work_handle) &&
-                !ScheduleRuntimeBackgroundReclaimWork()) {
-                HaltProcessor();
-            }
-            if (!kernel_work_thread_stop_requested && !file_readahead_worker_failed &&
-                WorkHandlesEqual(execution.handle, file_readahead_work_handle) &&
-                file_readahead_request_queue.Statistics().active_request_count !=
-                    OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE &&
-                !ScheduleRuntimeFileReadaheadWork()) {
+        const RuntimeKernelWorkAvailability availability =
+            PrepareRuntimeKernelWorkExecution(execution);
+        if (availability == RuntimeKernelWorkAvailability::Ready) {
+            const WorkExecutionResult execution_result = execution.operation(execution.context);
+            if (!CompleteRuntimeKernelWorkExecution(execution.handle, execution_result)) {
                 HaltProcessor();
             }
             // 每个有界 batch 后都交还调度权，避免存储延迟垄断 Ring 0。
@@ -3035,28 +3162,7 @@ void RuntimeFileWritebackWorker(void *const context) noexcept {
             }
             continue;
         }
-        if (acquire_status != WorkQueueStatus::NoReadyWork) {
-            HaltProcessor();
-        }
-        uint64_t deadline_nanoseconds = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-        bool deadline_available = false;
-        if (kernel_work_queue.NextDeadline(deadline_nanoseconds, deadline_available) !=
-            WorkQueueStatus::Succeeded) {
-            HaltProcessor();
-        }
-        if (kernel_work_thread_stop_requested) {
-            break;
-        }
-        WakeReason wake_reason = WakeReason::None;
-        const KernelThreadRuntimeStatus block_status =
-            deadline_available
-                ? BlockCurrentKernelThreadUntil(kernel_work_wait_queue, WaitCondition::KernelWork,
-                                                deadline_nanoseconds, wake_reason)
-                : BlockCurrentKernelThread(kernel_work_wait_queue, WaitCondition::KernelWork,
-                                           wake_reason);
-        if (block_status != KernelThreadRuntimeStatus::Succeeded ||
-            (wake_reason != WakeReason::ConditionSatisfied && wake_reason != WakeReason::Timeout &&
-             wake_reason != WakeReason::Cancelled)) {
+        if (availability == RuntimeKernelWorkAvailability::Failed || !WaitForRuntimeKernelWork()) {
             HaltProcessor();
         }
     }
@@ -8854,6 +8960,15 @@ PipeStatus CloseCurrentProcessPipeWriter() noexcept {
 FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path_length_bytes,
                                         const fs::OpenOptions &options,
                                         uint64_t &file_descriptor) noexcept {
+    return OpenCurrentProcessFileAt(os::abi::OS_ABI_AT_CURRENT_WORKING_DIRECTORY, path,
+                                    path_length_bytes, options, file_descriptor);
+}
+
+FileSystemStatus OpenCurrentProcessFileAt(const uint64_t directory_descriptor,
+                                          const uint8_t *const path,
+                                          const uint64_t path_length_bytes,
+                                          const fs::OpenOptions &options,
+                                          uint64_t &file_descriptor) noexcept {
     file_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
     if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
@@ -8862,11 +8977,26 @@ FileSystemStatus OpenCurrentProcessFile(const uint8_t *path, const uint64_t path
         return FileSystemStatus::InvalidArgument;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    const FileSystemStatus directory_status =
+        RetainDirectoryForAt(process, directory_descriptor, path, path_length_bytes,
+                             retained_directory, directory_handle);
+    if (directory_status != FileSystemStatus::Succeeded) {
+        return directory_status;
+    }
     fs::OpenFile open_file{};
     fs::OpenOptions open_options = options;
     open_options.truncate = false;
-    fs::Status status = process_vfs->Open(process.file_system_context, path, path_length_bytes,
-                                          open_options, open_file);
+    fs::Status status = process_vfs->OpenAt(process.file_system_context, directory_handle, path,
+                                            path_length_bytes, open_options, open_file);
+    if (!ReleaseDirectoryForAt(retained_directory)) {
+        if (status == fs::Status::Succeeded &&
+            process_vfs->Close(open_file) != fs::Status::Succeeded) {
+            HaltProcessor();
+        }
+        return FileSystemStatus::Corrupt;
+    }
     if (status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(status);
     }
@@ -9191,6 +9321,183 @@ FileSystemStatus ReadCurrentProcessSymbolicLink(const uint8_t *const path,
     return fs::ToFileSystemStatus(
         process_vfs->ReadSymbolicLink(process.file_system_context, path, path_length_bytes,
                                       destination, capacity_bytes, target_length_bytes));
+}
+
+FileSystemStatus CreateCurrentProcessDirectoryAt(const uint64_t directory_descriptor,
+                                                 const uint8_t *const path,
+                                                 const uint64_t path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    FileSystemStatus status =
+        RetainDirectoryForAt(process, directory_descriptor, path, path_length_bytes,
+                             retained_directory, directory_handle);
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(process_vfs->CreateDirectoryAt(
+            process.file_system_context, directory_handle, path, path_length_bytes));
+    }
+    return ReleaseDirectoryForAt(retained_directory) ? status : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus RemoveCurrentProcessPathAt(const uint64_t directory_descriptor,
+                                            const uint8_t *const path,
+                                            const uint64_t path_length_bytes,
+                                            const bool directory) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    FileSystemStatus status =
+        RetainDirectoryForAt(process, directory_descriptor, path, path_length_bytes,
+                             retained_directory, directory_handle);
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(
+            directory ? process_vfs->RemoveDirectoryAt(process.file_system_context,
+                                                       directory_handle, path, path_length_bytes)
+                      : process_vfs->RemoveFileAt(process.file_system_context, directory_handle,
+                                                  path, path_length_bytes));
+    }
+    return ReleaseDirectoryForAt(retained_directory) ? status : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus StatCurrentProcessPathAt(const uint64_t directory_descriptor,
+                                          const uint8_t *const path,
+                                          const uint64_t path_length_bytes,
+                                          const bool follow_final_link,
+                                          fs::NodeInformation &information) noexcept {
+    information = fs::NodeInformation{};
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    FileSystemStatus status =
+        RetainDirectoryForAt(process, directory_descriptor, path, path_length_bytes,
+                             retained_directory, directory_handle);
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(
+            process_vfs->StatAt(process.file_system_context, directory_handle, path,
+                                path_length_bytes, follow_final_link, information));
+    }
+    return ReleaseDirectoryForAt(retained_directory) ? status : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus ReadCurrentProcessSymbolicLinkAt(const uint64_t directory_descriptor,
+                                                  const uint8_t *const path,
+                                                  const uint64_t path_length_bytes,
+                                                  uint8_t *const destination,
+                                                  const uint64_t capacity_bytes,
+                                                  uint64_t &target_length_bytes) noexcept {
+    target_length_bytes = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    FileSystemStatus status =
+        RetainDirectoryForAt(process, directory_descriptor, path, path_length_bytes,
+                             retained_directory, directory_handle);
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(process_vfs->ReadSymbolicLinkAt(
+            process.file_system_context, directory_handle, path, path_length_bytes, destination,
+            capacity_bytes, target_length_bytes));
+    }
+    return ReleaseDirectoryForAt(retained_directory) ? status : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus
+CreateCurrentProcessSymbolicLinkAt(const uint8_t *const target, const uint64_t target_length_bytes,
+                                   const uint64_t destination_directory_descriptor,
+                                   const uint8_t *const destination_path,
+                                   const uint64_t destination_path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    FileSystemStatus status =
+        RetainDirectoryForAt(process, destination_directory_descriptor, destination_path,
+                             destination_path_length_bytes, retained_directory, directory_handle);
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(process_vfs->CreateSymbolicLinkAt(
+            process.file_system_context, target, target_length_bytes, directory_handle,
+            destination_path, destination_path_length_bytes));
+    }
+    return ReleaseDirectoryForAt(retained_directory) ? status : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus RenameCurrentProcessPathAt(const uint64_t source_directory_descriptor,
+                                            const uint8_t *const source_path,
+                                            const uint64_t source_path_length_bytes,
+                                            const uint64_t destination_directory_descriptor,
+                                            const uint8_t *const destination_path,
+                                            const uint64_t destination_path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_source_directory{};
+    const fs::DirectoryHandle *source_directory_handle = nullptr;
+    FileSystemStatus status = RetainDirectoryForAt(
+        process, source_directory_descriptor, source_path, source_path_length_bytes,
+        retained_source_directory, source_directory_handle);
+    RetainedDirectory retained_destination_directory{};
+    const fs::DirectoryHandle *destination_directory_handle = nullptr;
+    if (status == FileSystemStatus::Succeeded) {
+        status = RetainDirectoryForAt(process, destination_directory_descriptor, destination_path,
+                                      destination_path_length_bytes, retained_destination_directory,
+                                      destination_directory_handle);
+    }
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(
+            process_vfs->RenameAt(process.file_system_context, source_directory_handle, source_path,
+                                  source_path_length_bytes, destination_directory_handle,
+                                  destination_path, destination_path_length_bytes, true));
+    }
+    const bool destination_released = ReleaseDirectoryForAt(retained_destination_directory);
+    const bool source_released = ReleaseDirectoryForAt(retained_source_directory);
+    return destination_released && source_released ? status : FileSystemStatus::Corrupt;
+}
+
+FileSystemStatus LinkCurrentProcessPathAt(const uint64_t source_directory_descriptor,
+                                          const uint8_t *const source_path,
+                                          const uint64_t source_path_length_bytes,
+                                          const uint64_t destination_directory_descriptor,
+                                          const uint8_t *const destination_path,
+                                          const uint64_t destination_path_length_bytes) noexcept {
+    if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
+        return FileSystemStatus::NotInitialized;
+    }
+    ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_source_directory{};
+    const fs::DirectoryHandle *source_directory_handle = nullptr;
+    FileSystemStatus status = RetainDirectoryForAt(
+        process, source_directory_descriptor, source_path, source_path_length_bytes,
+        retained_source_directory, source_directory_handle);
+    RetainedDirectory retained_destination_directory{};
+    const fs::DirectoryHandle *destination_directory_handle = nullptr;
+    if (status == FileSystemStatus::Succeeded) {
+        status = RetainDirectoryForAt(process, destination_directory_descriptor, destination_path,
+                                      destination_path_length_bytes, retained_destination_directory,
+                                      destination_directory_handle);
+    }
+    if (status == FileSystemStatus::Succeeded) {
+        status = fs::ToFileSystemStatus(
+            process_vfs->LinkAt(process.file_system_context, source_directory_handle, source_path,
+                                source_path_length_bytes, destination_directory_handle,
+                                destination_path, destination_path_length_bytes));
+    }
+    const bool destination_released = ReleaseDirectoryForAt(retained_destination_directory);
+    const bool source_released = ReleaseDirectoryForAt(retained_source_directory);
+    return destination_released && source_released ? status : FileSystemStatus::Corrupt;
 }
 
 FileSystemStatus SyncCurrentProcessFileSystem() noexcept {
@@ -9673,14 +9980,37 @@ ProcessIoStatus GetCurrentProcessDescriptorLimits(uint64_t &soft_limit,
 FileSystemStatus OpenCurrentProcessDirectory(const uint8_t *const path,
                                              const uint64_t path_length_bytes,
                                              uint64_t &file_descriptor) noexcept {
+    return OpenCurrentProcessDirectoryAt(os::abi::OS_ABI_AT_CURRENT_WORKING_DIRECTORY, path,
+                                         path_length_bytes, file_descriptor);
+}
+
+FileSystemStatus OpenCurrentProcessDirectoryAt(const uint64_t directory_descriptor,
+                                               const uint8_t *const path,
+                                               const uint64_t path_length_bytes,
+                                               uint64_t &file_descriptor) noexcept {
     file_descriptor = OS_KERNEL_PROCESS_RUNTIME_INVALID_FILE_DESCRIPTOR;
     if (!IsProcessSchedulingActive() || process_vfs == nullptr) {
         return FileSystemStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
+    RetainedDirectory retained_directory{};
+    const fs::DirectoryHandle *directory_handle = nullptr;
+    const FileSystemStatus directory_status =
+        RetainDirectoryForAt(process, directory_descriptor, path, path_length_bytes,
+                             retained_directory, directory_handle);
+    if (directory_status != FileSystemStatus::Succeeded) {
+        return directory_status;
+    }
     fs::OpenFile open_file{};
-    const fs::Status status =
-        process_vfs->OpenDirectory(process.file_system_context, path, path_length_bytes, open_file);
+    const fs::Status status = process_vfs->OpenDirectoryAt(
+        process.file_system_context, directory_handle, path, path_length_bytes, open_file);
+    if (!ReleaseDirectoryForAt(retained_directory)) {
+        if (status == fs::Status::Succeeded &&
+            process_vfs->Close(open_file) != fs::Status::Succeeded) {
+            HaltProcessor();
+        }
+        return FileSystemStatus::Corrupt;
+    }
     if (status != fs::Status::Succeeded) {
         return fs::ToFileSystemStatus(status);
     }

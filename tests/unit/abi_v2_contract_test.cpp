@@ -9,14 +9,16 @@ namespace {
 
 constexpr std::string_view OS_TEST_ABI_V2_SUITE_NAME = "abi/v2/unit";
 constexpr std::string_view OS_TEST_ABI_V2_VERSION_CONTRACT =
-    "ABI v2.4 必须保留旧编号并在末尾追加三个文件同步接口";
+    "ABI v2.5 必须保留旧编号并在末尾追加九个目录句柄相对路径接口";
 constexpr std::string_view OS_TEST_ABI_V2_ELF_CONTRACT =
     "ELF64 x86-64 小端静态可执行契约必须与加载器共享";
 constexpr std::string_view OS_TEST_ABI_V2_SECURITY_CONTRACT =
     "mode、RLIMIT 编号及身份结构必须与冻结的 Linux 兼容矩阵一致";
+constexpr std::string_view OS_TEST_ABI_V2_AT_PATH_CONTRACT =
+    "目录句柄相对路径调用的编号、标志与请求布局必须保持冻结";
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MAJOR_VERSION = 2ULL;
-constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MINOR_VERSION = 4ULL;
-constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_SYSTEM_CALL_COUNT = 87ULL;
+constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_MINOR_VERSION = 5ULL;
+constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_SYSTEM_CALL_COUNT = 96ULL;
 constexpr int64_t OS_TEST_ABI_V2_EXPECTED_FIRST_ERROR = -1LL;
 constexpr int64_t OS_TEST_ABI_V2_EXPECTED_LAST_ERROR = -59LL;
 constexpr uint64_t OS_TEST_ABI_V2_EXPECTED_ELF_HEADER_SIZE_BYTES = 64ULL;
@@ -52,6 +54,8 @@ int main() {
             static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeFile) == 85ULL &&
             static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeFileData) == 86ULL &&
             static_cast<uint64_t>(os::abi::SystemCallNumber::SynchronizeMemory) == 87ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::OpenFileAt) == 88ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSymbolicLinkAt) == 96ULL &&
             os::abi::OS_ABI_MEMORY_SYNC_ASYNCHRONOUS == 1ULL &&
             os::abi::OS_ABI_MEMORY_SYNC_INVALIDATE == 2ULL &&
             os::abi::OS_ABI_MEMORY_SYNC_SYNCHRONOUS == 4ULL &&
@@ -65,5 +69,27 @@ int main() {
             sizeof(os::abi::CredentialInformation) == 32ULL &&
             sizeof(os::abi::ResourceLimit) == 16ULL && sizeof(os::abi::FileInformation) == 112ULL,
         OS_TEST_ABI_V2_SECURITY_CONTRACT);
+    test_context.Expect(
+        static_cast<uint64_t>(os::abi::SystemCallNumber::OpenFileAt) == 88ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::OpenDirectoryAt) == 89ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::CreateDirectoryAt) == 90ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::RemoveAt) == 91ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::StatAt) == 92ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::ReadSymbolicLinkAt) == 93ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::RenameAt) == 94ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::LinkAt) == 95ULL &&
+            static_cast<uint64_t>(os::abi::SystemCallNumber::CreateSymbolicLinkAt) == 96ULL &&
+            os::abi::OS_ABI_AT_CURRENT_WORKING_DIRECTORY == UINT64_MAX &&
+            os::abi::OS_ABI_AT_REMOVE_DIRECTORY_FLAG == 1ULL &&
+            os::abi::OS_ABI_AT_REMOVE_VALID_FLAG_MASK == 1ULL &&
+            os::abi::OS_ABI_AT_STAT_NO_FOLLOW_FLAG == 1ULL &&
+            os::abi::OS_ABI_AT_STAT_VALID_FLAG_MASK == 1ULL &&
+            sizeof(os::abi::AtStatRequest) == os::abi::OS_ABI_AT_STAT_REQUEST_SIZE_BYTES &&
+            sizeof(os::abi::AtReadSymbolicLinkRequest) ==
+                os::abi::OS_ABI_AT_READ_SYMBOLIC_LINK_REQUEST_SIZE_BYTES &&
+            sizeof(os::abi::AtDualPathRequest) == os::abi::OS_ABI_AT_DUAL_PATH_REQUEST_SIZE_BYTES &&
+            sizeof(os::abi::AtSymbolicLinkRequest) ==
+                os::abi::OS_ABI_AT_SYMBOLIC_LINK_REQUEST_SIZE_BYTES,
+        OS_TEST_ABI_V2_AT_PATH_CONTRACT);
     return test_context.ExitCode();
 }

@@ -593,6 +593,29 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
 - 不新增逐 lookup/stat/lock VGA 日志；验证必须覆盖同 key 合并、不同 shard 并行、metadata
   并行、mutation retry、hash rebuild、release、溢出、十万步 oracle 和 4 GiB primary/reclaim。
 
+## v2.13 目录句柄与 `*at` 路径事务要求
+
+- `DirectoryHandle` 必须保留 mount+vnode identity 和后端打开引用；目录 rename 后旧句柄
+  继续工作，release 后再次使用必须返回 InvalidHandle；
+- 绝对路径必须忽略无关 `dirfd`，`AT_CWD` 使用 Process cwd；其他相对路径必须从类型为
+  Directory 的 FileDescription retain，普通文件、关闭或越界 fd 必须失败；
+- 单路径 `open/open-directory/mkdir/remove/stat/readlink` 和双路径 `rename/link/symlink`
+  必须共用 VFS 解析、DAC、root clamp、mount crossing、symlink 与 namespace cache 语义；
+- 双路径调用必须分别解释 source/destination 基准，但使用同一进程 root/credentials；两侧
+  目录 lease 无论成功或失败都必须释放；
+- namespace writer 必须在首次解析前取得单写锁，backend commit 前精确复验捕获的偶数
+  sequence；并发同名 create 二次解析成功后必须复用 vnode，不得递归取得 writer；
+- ABI v2.5.0 只追加 88..96，保留 1..87、-1..-59 和既有结构；复杂请求结构大小/偏移、
+  `AT_CWD`、remove/stat flag mask 必须静态与单元双重冻结；
+- 用户指针必须在进入 VFS 前完整复制/验证；两个最大路径不得同时放入 16 KiB Kernel 栈；
+  descriptor/object 锁不得跨 VFS、后端 I/O 或 user-copy；
+- VFS 必须统计 at operation、directory retain/release/active/peak 并在 `Validate` 守恒；不得
+  逐 syscall、路径、fd 或 sequence 向 VGA 打印；
+- hosted integration 必须覆盖非法/绝对/rename 后句柄、跨 parent、并发同名和不同名 create；
+  4 GiB ATA primary 必须由 Ring 3 在真实 rootfs 执行九类调用并满足 VGA 可见性与资源归零。
+- RootFS 4 KiB block scratch 与 pressure/worker 后处理帧必须在 writeback/swap 设备 I/O 链上
+  分离；不得以扩大 16 KiB 动态 Kernel stack 或删除双 guard 掩盖 ATA/NVMe reclaim 栈不足。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

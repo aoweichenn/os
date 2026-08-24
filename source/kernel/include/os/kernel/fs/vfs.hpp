@@ -102,6 +102,11 @@ struct OpenFile final {
     bool open;
 };
 
+struct DirectoryHandle final {
+    Path path;
+    bool active;
+};
+
 struct RegularFileReadCacheObservation final {
     uint64_t first_page_index;
     uint64_t requested_page_count;
@@ -261,6 +266,11 @@ struct Statistics final {
     uint64_t peak_resolution_context_count;
     uint64_t namespace_hash_shrink_count;
     uint64_t released_namespace_page_count;
+    uint64_t at_path_operation_count;
+    uint64_t directory_handle_retain_count;
+    uint64_t directory_handle_release_count;
+    uint64_t active_directory_handle_count;
+    uint64_t peak_directory_handle_count;
 };
 
 struct NamespaceCacheReclaimResult final {
@@ -309,31 +319,65 @@ class Vfs final {
                                  uint64_t path_length_bytes, Superblock &superblock) noexcept;
     [[nodiscard]] Status Resolve(const FsContext &context, const uint8_t *path,
                                  uint64_t path_length_bytes, Path &resolved_path) noexcept;
+    [[nodiscard]] Status ResolveAt(const FsContext &context, const DirectoryHandle *directory,
+                                   const uint8_t *path, uint64_t path_length_bytes,
+                                   Path &resolved_path) noexcept;
     [[nodiscard]] Status CreateDirectory(const FsContext &context, const uint8_t *path,
                                          uint64_t path_length_bytes) noexcept;
+    [[nodiscard]] Status CreateDirectoryAt(const FsContext &context,
+                                           const DirectoryHandle *directory, const uint8_t *path,
+                                           uint64_t path_length_bytes) noexcept;
     [[nodiscard]] Status RemoveFile(const FsContext &context, const uint8_t *path,
                                     uint64_t path_length_bytes) noexcept;
     [[nodiscard]] Status RemoveDirectory(const FsContext &context, const uint8_t *path,
                                          uint64_t path_length_bytes) noexcept;
+    [[nodiscard]] Status RemoveFileAt(const FsContext &context, const DirectoryHandle *directory,
+                                      const uint8_t *path, uint64_t path_length_bytes) noexcept;
+    [[nodiscard]] Status RemoveDirectoryAt(const FsContext &context,
+                                           const DirectoryHandle *directory, const uint8_t *path,
+                                           uint64_t path_length_bytes) noexcept;
     [[nodiscard]] Status Rename(const FsContext &context, const uint8_t *source_path,
                                 uint64_t source_path_length_bytes, const uint8_t *destination_path,
                                 uint64_t destination_path_length_bytes, bool replace) noexcept;
+    [[nodiscard]] Status RenameAt(const FsContext &context, const DirectoryHandle *source_directory,
+                                  const uint8_t *source_path, uint64_t source_path_length_bytes,
+                                  const DirectoryHandle *destination_directory,
+                                  const uint8_t *destination_path,
+                                  uint64_t destination_path_length_bytes, bool replace) noexcept;
     [[nodiscard]] Status Link(const FsContext &context, const uint8_t *source_path,
                               uint64_t source_path_length_bytes, const uint8_t *destination_path,
                               uint64_t destination_path_length_bytes) noexcept;
+    [[nodiscard]] Status LinkAt(const FsContext &context, const DirectoryHandle *source_directory,
+                                const uint8_t *source_path, uint64_t source_path_length_bytes,
+                                const DirectoryHandle *destination_directory,
+                                const uint8_t *destination_path,
+                                uint64_t destination_path_length_bytes) noexcept;
     [[nodiscard]] Status CreateSymbolicLink(const FsContext &context, const uint8_t *target,
                                             uint64_t target_length_bytes,
                                             const uint8_t *destination_path,
                                             uint64_t destination_path_length_bytes) noexcept;
+    [[nodiscard]] Status CreateSymbolicLinkAt(const FsContext &context, const uint8_t *target,
+                                              uint64_t target_length_bytes,
+                                              const DirectoryHandle *destination_directory,
+                                              const uint8_t *destination_path,
+                                              uint64_t destination_path_length_bytes) noexcept;
     [[nodiscard]] Status ReadSymbolicLink(const FsContext &context, const uint8_t *path,
                                           uint64_t path_length_bytes, uint8_t *destination,
                                           uint64_t capacity_bytes,
                                           uint64_t &target_length_bytes) noexcept;
+    [[nodiscard]] Status ReadSymbolicLinkAt(const FsContext &context,
+                                            const DirectoryHandle *directory, const uint8_t *path,
+                                            uint64_t path_length_bytes, uint8_t *destination,
+                                            uint64_t capacity_bytes,
+                                            uint64_t &target_length_bytes) noexcept;
     [[nodiscard]] Status Truncate(const FsContext &context, const uint8_t *path,
                                   uint64_t path_length_bytes, uint64_t size_bytes) noexcept;
     [[nodiscard]] Status TruncateOpenFile(const OpenFile &open_file, uint64_t size_bytes) noexcept;
     [[nodiscard]] Status Stat(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, NodeInformation &information) noexcept;
+    [[nodiscard]] Status StatAt(const FsContext &context, const DirectoryHandle *directory,
+                                const uint8_t *path, uint64_t path_length_bytes,
+                                bool follow_final_link, NodeInformation &information) noexcept;
     [[nodiscard]] Status CheckAccess(const FsContext &context, const uint8_t *path,
                                      uint64_t path_length_bytes,
                                      uint32_t requested_access) noexcept;
@@ -346,11 +390,20 @@ class Vfs final {
     [[nodiscard]] Status Open(const FsContext &context, const uint8_t *path,
                               uint64_t path_length_bytes, const OpenOptions &options,
                               OpenFile &open_file) noexcept;
+    [[nodiscard]] Status OpenAt(const FsContext &context, const DirectoryHandle *directory,
+                                const uint8_t *path, uint64_t path_length_bytes,
+                                const OpenOptions &options, OpenFile &open_file) noexcept;
     [[nodiscard]] Status OpenExecutable(const FsContext &context, const uint8_t *path,
                                         uint64_t path_length_bytes, OpenFile &open_file) noexcept;
     [[nodiscard]] Status OpenDirectory(const FsContext &context, const uint8_t *path,
                                        uint64_t path_length_bytes, OpenFile &open_file) noexcept;
+    [[nodiscard]] Status OpenDirectoryAt(const FsContext &context, const DirectoryHandle *directory,
+                                         const uint8_t *path, uint64_t path_length_bytes,
+                                         OpenFile &open_file) noexcept;
     [[nodiscard]] Status RetainOpenFile(const OpenFile &source, OpenFile &retained_file) noexcept;
+    [[nodiscard]] Status RetainDirectoryHandle(const OpenFile &source,
+                                               DirectoryHandle &handle) noexcept;
+    [[nodiscard]] Status ReleaseDirectoryHandle(DirectoryHandle &handle) noexcept;
     [[nodiscard]] Status
     ConfigureRegularFileDataCache(void *context, RegularFileReadCacheOperation read_operation,
                                   RegularFileWriteCacheOperation write_operation,
@@ -406,7 +459,7 @@ class Vfs final {
   private:
     class NamespaceMutationGuard final {
       public:
-        explicit NamespaceMutationGuard(Vfs &vfs) noexcept;
+        NamespaceMutationGuard(Vfs &vfs, uint64_t expected_sequence) noexcept;
         ~NamespaceMutationGuard() noexcept;
         [[nodiscard]] bool Active() const noexcept;
 
@@ -445,6 +498,9 @@ class Vfs final {
     [[nodiscard]] bool IsInitialized() const noexcept;
     [[nodiscard]] bool PathIsValid(const Path &path) const noexcept;
     [[nodiscard]] bool PathsAreEqual(const Path &left, const Path &right) const noexcept;
+    [[nodiscard]] Status BuildAtContext(const FsContext &context, const DirectoryHandle *directory,
+                                        const uint8_t *path, uint64_t path_length_bytes,
+                                        FsContext &at_context) const noexcept;
     [[nodiscard]] bool VnodesAreEqual(const Vnode &left, const Vnode &right) const noexcept;
     [[nodiscard]] Mount *FindMount(uint64_t mount_identifier) noexcept;
     [[nodiscard]] const Mount *FindMount(uint64_t mount_identifier) const noexcept;
@@ -467,6 +523,17 @@ class Vfs final {
     [[nodiscard]] Status ValidateSuperblock(const Superblock &superblock) const noexcept;
     [[nodiscard]] Status Remove(const FsContext &context, const uint8_t *path,
                                 uint64_t path_length_bytes, NodeType expected_type) noexcept;
+    [[nodiscard]] Status
+    RenameBetween(const FsContext &process_context, const FsContext &source_context,
+                  const uint8_t *source_path, uint64_t source_path_length_bytes,
+                  const FsContext &destination_context, const uint8_t *destination_path,
+                  uint64_t destination_path_length_bytes, bool replace) noexcept;
+    [[nodiscard]] Status LinkBetween(const FsContext &process_context,
+                                     const FsContext &source_context, const uint8_t *source_path,
+                                     uint64_t source_path_length_bytes,
+                                     const FsContext &destination_context,
+                                     const uint8_t *destination_path,
+                                     uint64_t destination_path_length_bytes) noexcept;
     [[nodiscard]] Status ReadNodeInformation(const Path &path,
                                              BackendNodeInformation &information) noexcept;
     [[nodiscard]] Status ReadNodeInformationUncached(const Path &path,
@@ -489,10 +556,11 @@ class Vfs final {
                                                 NodeType type, os::abi::FileMode requested_mode,
                                                 NodeCreationAttributes &attributes) noexcept;
     void RecordResolution(Status status) noexcept;
+    void RecordAtPathOperation() noexcept;
     [[nodiscard]] VfsResolutionContext *AcquireResolutionContext() noexcept;
     void ReleaseResolutionContext(VfsResolutionContext &context) noexcept;
     [[nodiscard]] uint64_t ReadNamespaceSequence() const noexcept;
-    [[nodiscard]] bool BeginNamespaceMutation() noexcept;
+    [[nodiscard]] bool BeginNamespaceMutation(uint64_t expected_sequence) noexcept;
     [[nodiscard]] bool EndNamespaceMutation() noexcept;
 
     Mount *mounts_{nullptr};

@@ -324,6 +324,37 @@ FileDescriptionManager::RetainRegularFile(const KernelObjectReference &reference
     return FileDescriptionStatus::Succeeded;
 }
 
+FileDescriptionStatus
+FileDescriptionManager::RetainDirectory(const KernelObjectReference &reference,
+                                        RetainedDirectory &retained_directory) noexcept {
+    retained_directory = RetainedDirectory{};
+    if (!this->initialized_ || this->object_manager_ == nullptr) {
+        return FileDescriptionStatus::NotInitialized;
+    }
+    void *payload = nullptr;
+    RuntimeMutex *operation_lock = nullptr;
+    const KernelObjectStatus payload_status = this->object_manager_->TryGetPayload(
+        reference, KernelObjectType::FileDescription, payload, operation_lock);
+    if (payload_status != KernelObjectStatus::Succeeded || payload == nullptr ||
+        operation_lock == nullptr) {
+        return MapObjectStatus(payload_status);
+    }
+    RuntimeMutexGuard guard{*operation_lock};
+    const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
+    if (storage.kind != FileDescriptionKind::Directory || storage.vfs == nullptr) {
+        return FileDescriptionStatus::PermissionDenied;
+    }
+    fs::DirectoryHandle handle{};
+    if (storage.vfs->RetainDirectoryHandle(storage.open_file, handle) != fs::Status::Succeeded) {
+        return FileDescriptionStatus::FileSystemFailure;
+    }
+    retained_directory = RetainedDirectory{
+        .vfs = storage.vfs,
+        .handle = handle,
+    };
+    return FileDescriptionStatus::Succeeded;
+}
+
 FileDescriptionStatus FileDescriptionManager::TryRead(const KernelObjectReference &reference,
                                                       uint8_t *const destination,
                                                       const uint64_t capacity_bytes,

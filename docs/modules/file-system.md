@@ -591,3 +591,26 @@ namespace mutation 仍保持单写，并以偶/奇 sequence 发布一致性。re
 cache 在线重建到稳定区的 compact bucket，再释放 preferred 页；实际 frame/buddy/KVA 差值
 进入 VFS 资源账本。详见
 [ADR 0076](../adr/0076-v2-12-scalable-page-backed-vfs-namespace.md)。
+
+## v2.13 目录句柄与 `*at` 事务
+
+`DirectoryHandle` 是从目录 `OpenFile` 临时 retain 的 VFS 能力，只保存 `Path` 和 active 状态。
+它额外持有后端 open 引用，因此目录被 rename 后仍按原 vnode 解析；release 后对象清零。
+`BuildAtContext` 让绝对路径忽略 handle，让 cwd 调用使用原 `FsContext`，并只对相对路径验证
+目录类型。
+
+单基准 `ResolveAt/OpenAt/OpenDirectoryAt/CreateDirectoryAt/RemoveFileAt/RemoveDirectoryAt/
+StatAt/ReadSymbolicLinkAt/CreateSymbolicLinkAt` 复用既有 VFS 原语。`RenameAt/LinkAt` 分别建立
+source/destination context，再进入一个 writer transaction；DAC 和 creation attributes 使用
+进程 context，不能由目录 fd 替换凭据或 root。
+
+namespace 修改锁现在覆盖首次解析到 backend commit。每个 writer 捕获 expected even
+sequence，`NamespaceMutationGuard` 在提交前精确复验后发布 odd/even 状态。并发
+`open(create)` 在锁内二次解析：若路径已出现则直接打开解析 vnode，避免锁重入。统计提供
+at operation、directory retain/release/active/peak，`Validate` 检查差值守恒。详见
+[ADR 0077](../adr/0077-v2-13-directory-handles-and-at-path-transactions.md)。
+
+真实 rootfs writeback 可能从 pressure worker 的深调用链进入。initialize、superblock、
+inode、pointer、bitmap、allocate、file read/write、truncate、orphan 与 validation 的 4096
+字节块都不再放在栈上；RootFileSystem 由 `lock_` 串行，并为可能嵌套的 helper 分别持有实例
+scratch，避免相互覆盖并保持物理 BSS 所有权可见。

@@ -1456,3 +1456,19 @@ V2.12 不逐 shard、waiter、sequence retry、context acquire、hash rebuild �
 这些路径只维护有界统计，由 hosted 强制交错和 `Validate` 读取。4 GiB QEMU 继续复用既有
 内存压力、资源快照与 VGA 可见性协议；background reclaim 非零时，内核在终态静默断言
 hash shrink 恰一次且 released page 与 preferred layout 相等，失败才走既有 fail-stop。
+
+## v2.13 目录句柄与 `*at` 日志边界
+
+V2.13 不逐 `dirfd`、path、retain/release、sequence 或 syscall 打印。VFS 只维护 at operation
+与 directory handle retain/release/active/peak 聚合值，hosted integration 直接读取并由
+`Validate` 守恒。Ring 3 `fs_probe` 成功时继续只使用既有 `FILE_WRITTEN/FILE_VERIFIED`
+聚合 marker；新增 `DIRECTORY_AT/OPEN_AT/WRITE_AT/PATH_AT/READ_AT` 只在失败时写入诊断日志，
+不向交互终端灌入正常路径细节。
+
+`fs_probe` 在 payload 写入后和全部 metadata mutation 后各执行一次全局同步，因此正常
+4 GiB profile 的 `BLOCK OTHER_THREAD_PROGRESS=1` 精确计数由 2 增为 3；这记录真实的第三次
+阻塞/调度进展，不新增逐块输出。
+
+panic 报告补充 fault RBP、CpuLocal current-thread、entry stack top；double fault 也输出保留的
+CR2。它们只在 fail-stop 路径出现，用来区分普通设备错误与 Kernel stack lower-guard 越界，
+不进入正常终端或热路径日志。
