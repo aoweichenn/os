@@ -1745,6 +1745,103 @@ V2.11 六个工程增量至此闭合；按既有用户要求继续保持未发�
 - ftruncate 与 positioned write 的页缓存、映射、RLIMIT 和最终 writeback 完整收束；
 - ABI 1..96、rootfs v4 与旧用户工具兼容，4 GiB primary/reclaim 和 fresh CAW verify 全绿。
 
+### v2.15 每 inode I/O 协调与页缓存提交边界
+
+**范围**
+
+- 建立 128 槽、完整 inode identity、generation token、LRU 与可睡眠 mutex 的协调器；
+- 让 write/pwrite/append、truncate、共享 mmap dirty、fsync/fdatasync 和同步 msync 进入同一
+  inode 级前台提交边界；
+- 删除 V2.14 全局 append mutex，不同 inode 能独立前进；
+- 把 truncate prepare 移入 VFS guard，后台 writeback 保持页状态机路径并避免递归锁；
+- 不改变 ABI v2.6.0、rootfs v4、4 GiB/128 GiB、ATA/NVMe 或 VGA 协议。
+
+**六个增量（全部完成）**
+
+1. `InodeIoCoordinator` identity/token/LRU/统计与 Validate；
+2. Write/WriteAt/Append 共同内部 helper 和全局 append mutex 删除；
+3. VFS truncate prepare hook、O_TRUNC/path/ftruncate 单入口；
+4. shared mmap dirty、fsync/fdatasync 与同步 msync 接线；
+5. 单元、双线程集成、prepare EIO 与十万步固定种子模型；
+6. freestanding 全构建、Ring 3 既有探针、4 GiB ATA/NVMe/persistence 和 fresh CAW 回归。
+
+设计由 [ADR 0080](adr/0080-v2-15-per-inode-io-coordination.md) 冻结。V2.15 继续保持工程候选，
+不创建公开 tag；rootfs v4 后端实例锁保留到 v5 block-group 阶段。
+
+**退出条件**
+
+- 同 inode 最大临界区并行度为一，不同 inode 强制交错能同时进入缓存层；
+- guard acquisition/release、referenced slot 和活动引用最终守恒，满容量明确失败；
+- truncate prepare 失败不改变 backend/cache，writeback 不发生 guard 递归死锁；
+- ABI/rootfs v4 与旧工具保持兼容，4 GiB primary/reclaim/persistence 和完整 fresh CAW verify 全绿。
+
+### v2.16 rootfs v5 block-group 盘面基础
+
+**范围**
+
+- 冻结 `OSRFV005` 的 4 KiB block、128 MiB group、256 字节 descriptor/inode 与 sparse backup；
+- 分别实现 freestanding C++ 和 Python 的显式小端编解码、CRC32C 与 fail-closed validation；
+- 提供实验 mkfs/inspect/fsck/corrupt，不改变生产 rootfs v4 mount；
+- 用 production 几何、小几何、十万步随机和十类损坏建立后续 journal/extent 的稳定输入。
+
+**六个增量（全部完成）**
+
+1. production profile、尾组、inode 密度与 reserved inode 编号；
+2. superblock/group descriptor/inode 编解码与 CRC32C；
+3. feature、保留区、算术、区间和 sparse backup 验证；
+4. Python mkfs/inspect/fsck/corrupt 与安全覆盖语义；
+5. 固定跨语言向量、十万步几何模型和十类损坏矩阵；
+6. 文档、全构建与 rootfs v4 整机回归。
+
+设计由 [ADR 0081](adr/0081-v2-16-rootfs-v5-block-group-format.md) 冻结。v2.16 继续保持工程候选，
+不创建公开 tag；v5 在 v2.20 前不进入生产根。
+
+**退出条件**
+
+- 参考几何精确形成 1024 group、15 份 copy、2097152 inode 与冻结空闲计数；
+- C++/Python 固定 checksum 一致，所有损坏类型由只读检查拒绝；
+- ABI/rootfs v4、4 GiB ATA/NVMe primary/reclaim/persistence 与 fresh CAW verify 全绿。
+
+### v2.17 journal v2、revoke、checkpoint 与 orphan file
+
+**范围**
+
+- 冻结 v5 journal superblock 和四个 descriptor/revoke/payload/commit/checkpoint 槽；
+- 实现 prepared → ordered data → commit 的持久顺序和独立 checkpoint；
+- 实现按 sequence 幂等 replay 与跨事务 revoke；
+- 实现 orphan block、幂等增删和与 inode metadata 同事务恢复；
+- 不接入 v5 mount，不改变生产 rootfs v4。
+
+**六个增量（全部完成）**
+
+1. journal superblock、slot、record、feature 和 UUID/CRC32C；
+2. 4 KiB 到 8×512B BlockDevice sector 适配；
+3. credit、sequence、prepared/ordered/commit 与四槽容量；
+4. checkpoint、slot reuse、revoke 和幂等 recovery；
+5. 503 槽 orphan block、128+96 断电点与十万步模型；
+6. 文档、全构建和 rootfs v4 整机回归。
+
+设计由 [ADR 0082](adr/0082-v2-17-rootfs-v5-journal-v2.md) 冻结。v2.17 继续保持工程候选，
+不创建公开 tag；journal/orphan inode 的 extent 映射留给 v2.18。
+
+**退出条件**
+
+- metadata 新态必然蕴含 ordered data 已稳定；commit/recovery 再断电后可继续恢复；
+- 后续 revoke 不允许旧 payload 覆盖释放目标，orphan add/remove 与 inode metadata 原子；
+- 聚焦、命名、4 GiB ATA/NVMe 与 fresh CAW verify 全绿。
+
+### v2.18 至 v2.20 rootfs v5 小型 ext4 核心
+
+V2 文件系统终态不再以零散 syscall 数量衡量。v2.16/v2.17 基础完成后固定顺序为：
+
+1. v2.18：extent tree、multi-block allocator、delayed allocation 与范围操作；
+2. v2.19：变长目录项、HTree、可扩展 inode、xattr、ACL 与 quota；
+3. v2.20：v4→v5 离线迁移、完整 fsck、故障/性能/持久化矩阵和生产根切换。
+
+每个阶段先在独立格式模型和小几何实验后端闭环；v2.20 前 rootfs v4 继续承担整机生产回归。
+V2 不追求 Linux ext4 盘面兼容，也不加入网络、GUI、更多设备、快照、压缩、加密或多设备。
+范围由 [ADR 0079](adr/0079-v2-mini-ext4-rootfs-v5-program.md) 冻结。
+
 ## 跨阶段不可妥协门禁
 
 ### 正确性

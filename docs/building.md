@@ -347,6 +347,30 @@ python3 tools/os.py corrupt-rootfs /tmp/rootfs-lab.img superblock-checksum
 `inspect-rootfs` 输出 JSON 摘要；`fsck-rootfs` 只读重建可达 inode/data
 bitmap；`corrupt-rootfs` 只用于具名故障注入。
 
+v2.16 的 v5 盘面使用独立命令，不能与生产 v4 混用：
+
+```bash
+python3 tools/os.py mkfs-rootfs-v5 /tmp/rootfs-v5-lab.img --create
+python3 tools/os.py inspect-rootfs-v5 /tmp/rootfs-v5-lab.img
+python3 tools/os.py fsck-rootfs-v5 /tmp/rootfs-v5-lab.img
+python3 tools/os.py corrupt-rootfs-v5 /tmp/rootfs-v5-lab.img descriptor-checksum
+```
+
+默认 profile 的逻辑镜像为 128 GiB，创建时可保持宿主稀疏；`--create` 不覆盖已有路径，
+`--force` 才允许显式重建。它目前只用于离线实验，不是手机运行盘，也不能替换构建图中的
+rootfs v4。小几何由 Python 测试直接传入 profile，避免日常故障矩阵扫描完整 inode table。
+
+v2.17 journal v2 目前是 freestanding 库与 hosted 故障模型，没有独立 CLI，也不会修改
+`mkfs-rootfs-v5` 创建的空镜像。定向验证使用 developer CTest preset：
+
+```bash
+ctest --preset developer -R root_journal_v2 --output-on-failure
+```
+
+不要把 hosted journal test device 生成的 4096-block 小介质当作 QEMU 磁盘；它只模拟
+512B sector、Flush、volatile cache 和 Crash。journal/orphan inode 的实际 v5 镜像映射从
+v2.18 allocator/extent 阶段开始。
+
 ## Kernel ELF64 生成链
 
 ```text

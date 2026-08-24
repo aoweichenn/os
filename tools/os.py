@@ -778,6 +778,13 @@ from os_tools.rootfs_v4 import (
     inspectRootfsV4,
     inspectionAsJson,
 )
+from os_tools.rootfs_v5 import (
+    OS_ROOTFS_V5_CORRUPTION_KINDS,
+    corruptRootfsV5,
+    formatRootfsV5,
+    inspectRootfsV5,
+    rootfsV5InspectionAsJson,
+)
 from os_tools.source_metrics import reportSourceMetrics
 from os_tools.stage1_image import auditStage1DiskImage
 from os_tools.swap_image import auditSwapImage, writeSwapImage
@@ -1056,6 +1063,42 @@ def handleCorruptRootfs(arguments: argparse.Namespace) -> None:
     corruptRootfsV4(arguments.imagePath, arguments.corruptionKind)
     print(
         "rootfs v4 损坏注入完成："
+        f"{arguments.corruptionKind} -> {arguments.imagePath}"
+    )
+
+
+def handleMkfsRootfsV5(arguments: argparse.Namespace) -> None:
+    superblock = formatRootfsV5(
+        arguments.imagePath,
+        createImage=arguments.createImage,
+        force=arguments.force,
+    )
+    print(
+        "rootfs v5 实验格式化完成："
+        f"{arguments.imagePath}，"
+        f"group={superblock.groupCount}，"
+        f"inode={superblock.inodeCount}。"
+    )
+
+
+def handleInspectRootfsV5(arguments: argparse.Namespace) -> None:
+    print(rootfsV5InspectionAsJson(inspectRootfsV5(arguments.imagePath)))
+
+
+def handleFsckRootfsV5(arguments: argparse.Namespace) -> None:
+    inspection = inspectRootfsV5(arguments.imagePath)
+    print(
+        "rootfs v5 只读一致性检查通过："
+        f"group={inspection.groupCount}，"
+        f"inode={inspection.inodeCount}，"
+        f"free-block={inspection.freeBlockCount}。"
+    )
+
+
+def handleCorruptRootfsV5(arguments: argparse.Namespace) -> None:
+    corruptRootfsV5(arguments.imagePath, arguments.corruptionKind)
+    print(
+        "rootfs v5 损坏注入完成："
         f"{arguments.corruptionKind} -> {arguments.imagePath}"
     )
 
@@ -3739,6 +3782,53 @@ def createArgumentParser() -> argparse.ArgumentParser:
     corruptRootfsParser.add_argument(
         "corruptionKind",
         choices=OS_ROOTFS_V4_CORRUPTION_KINDS,
+    )
+
+    mkfsRootfsV5Parser = addCommand(
+        subparsers,
+        "mkfs-rootfs-v5",
+        "创建自研 rootfs v5 block-group 实验镜像",
+        handleMkfsRootfsV5,
+    )
+    mkfsRootfsV5Parser.add_argument("imagePath", type=Path)
+    mkfsRootfsV5Parser.add_argument(
+        "--create",
+        action="store_true",
+        dest="createImage",
+        help="先创建 128 GiB 稀疏实验镜像",
+    )
+    mkfsRootfsV5Parser.add_argument(
+        "--force",
+        action="store_true",
+        help="允许覆盖已有 rootfs v5 元数据或路径",
+    )
+
+    inspectRootfsV5Parser = addCommand(
+        subparsers,
+        "inspect-rootfs-v5",
+        "以 JSON 输出 rootfs v5 group、inode 与备份摘要",
+        handleInspectRootfsV5,
+    )
+    inspectRootfsV5Parser.add_argument("imagePath", type=Path)
+
+    fsckRootfsV5Parser = addCommand(
+        subparsers,
+        "fsck-rootfs-v5",
+        "检查 rootfs v5 superblock/group/bitmap/inode/backup",
+        handleFsckRootfsV5,
+    )
+    fsckRootfsV5Parser.add_argument("imagePath", type=Path)
+
+    corruptRootfsV5Parser = addCommand(
+        subparsers,
+        "corrupt-rootfs-v5",
+        "向 rootfs v5 注入可重复的元数据损坏",
+        handleCorruptRootfsV5,
+    )
+    corruptRootfsV5Parser.add_argument("imagePath", type=Path)
+    corruptRootfsV5Parser.add_argument(
+        "corruptionKind",
+        choices=OS_ROOTFS_V5_CORRUPTION_KINDS,
     )
 
     qemuParser = addCommand(

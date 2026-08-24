@@ -2636,10 +2636,11 @@ reclaim 必须同时复验，不能只凭 primary 判断。
 
 ### 两个 append open 偶发覆盖或越过 RLIMIT
 
-只锁单个 FileDescription 不够，因为独立 open 有不同 operation lock。检查 EOF stat、
-RLIMIT_FSIZE 裁剪和 WriteAt 是否全部位于 `Vfs::Append` 的共同 RuntimeMutex 内；不要在
-ProcessRuntime 根据较早 snapshot 预裁剪。pwrite 在 Append 状态下也必须进入该事务，但成功
-后不能把实际 EOF 写回 FileDescription offset。
+只锁单个 FileDescription 不够，因为独立 open 有不同 operation lock。当前应检查 EOF stat、
+RLIMIT_FSIZE 裁剪和内部 write helper 是否全部位于同 identity 的 `RegularFileIoGuard` 内；
+V2.14 的共同 append RuntimeMutex 已在 V2.15 删除。不要在 ProcessRuntime 根据较早 snapshot
+预裁剪。pwrite 在 Append 状态下也必须进入该事务，但成功后不能把实际 EOF 写回
+FileDescription offset。
 
 ### 新 fd 操作成功后 ProcessExit 报 `WRITEBACK_STATUS=0xD`
 
@@ -2687,3 +2688,108 @@ rootfs 冷页加载交错。新包装必须来自共享的 `-ffunction-sections`
 `--gc-sections` 删除未引用项；thread probe 中不应出现 `SeekDescriptor`，fs_probe 中必须出现。
 这不是依赖固定地址，而是避免无意义的全系统工作集放大；修正后仍须跑 4 GiB primary 验证
 真实并发页加载。
+
+## v2.15 每 inode I/O 协调排错
+
+### 不同文件 append 仍然互相等待
+
+先确认 `Vfs` 中已经不存在 `append_lock_`，且 Append 在 `RegularFileIoGuard` 内调用的是
+`WriteAtWithinInodeIo`，不是重新进入公开 `WriteAt`。再比较两个 vnode 的完整 superblock/node
+identifier 与 generation；只按 inode number 或只按 64 路 metadata shard 会把不同文件误归
+同一锁。hosted 集成必须在 cache hook 内观察到两个不同 identity 同时进入，rootfs v4 后端
+实例锁导致的随后盘面串行不等于 VFS guard 仍是全局锁。
+
+### append 或 truncate 卡死在 writeback
+
+检查后台 `UserFileBackingManager::WritePage → Vfs::WriteUncachedAt` 是否错误取得
+`RegularFileIoGuard`。truncate/fsync 会持 guard 主动执行范围 writeback；uncached 回写若再次
+取得同 inode 的非递归 RuntimeMutex，会永久等待自己。前台 buffered/mmap 脏化取 guard，
+后台 writeback 只取 page/writeback waiter、backing、metadata/backend 锁。
+
+### ftruncate prepare 失败后文件长度已经变化
+
+检查 ProcessRuntime 是否仍在 VFS 外执行 `PrepareRuntimeFileTruncate`。当前唯一顺序应是
+`TruncateNode guard → prepare hook → backend truncate → cache truncate`。若 prepare EIO 后
+cache truncate 计数增加或 stat size 改变，说明 hook 被放在 commit 后，必须恢复失败前状态，
+不能把错误改成成功。
+
+### fsync 与同一 fd write 互相等待
+
+普通 write 的锁序是 FileDescription operation lock → inode guard。fsync 必须先 retain 临时
+OpenFile 并离开 operation lock，再取得 inode guard；writeback/sync 完成后释放 guard，最后才
+推进原 description 的 error cursor。若在 guard 内调用 `AdvanceWritebackErrorCursor`，另一线程
+可能持 operation lock 等 guard，形成反向锁环。
+
+### coordinator 返回 CapacityExhausted
+
+读取 hosted `InodeIoCoordinatorStatistics` 的 active reference、referenced slot 与 capacity。
+128 个不同 identity 真正同时活跃时容量错误是明确规格；若活动 Thread 很少却耗尽，检查 guard
+析构是否在所有早退路径执行、Release 是否把 token 清为 invalid，以及 waiting reference 是否
+在 RuntimeMutex 唤醒后减少。不得用全局 fallback mutex 掩盖引用泄漏。
+
+### 持久化偶发 `SMOKE_STATE_VALIDATION=0` 且 `SYSCALL_IRET_FALLBACKS=0`
+
+先确认用户日志已经出现 `SYSCALL_IRET_FALLBACK_RETURNED`。若包装器成功但计数为零，DF 系统
+调用可能恰在返回前被 timer 调度切走：该帧稍后从 dispatcher 统一 `IRETQ`，不会再经过
+`OsKernelSelectUserReturn`。`OsKernelPrepareDispatcherUserReturn` 必须按最终 frame 的 entry method
+记录这次 InterruptReturn；NativeSystemCall frame 因而同时增加 native fallback。不要删除
+`native_interrupt_return_count` 门禁或用重跑掩盖这个时序窗口。
+
+## v2.16 rootfs v5 格式排错
+
+### `inspect-rootfs-v5` 报 primary magic 或位置错误
+
+先确认输入是独立 v5 实验镜像，而不是当前生产 rootfs v4。v5 primary 固定从 LBA 32768 的
+相对块 0 读取；sector 为 512 字节、文件系统块为 4096 字节。工具不会扫描其他偏移猜测格式，
+也不会把空镜像自动格式化。创建实验盘应显式执行 `mkfs-rootfs-v5 --create`。
+
+### primary 正常但 backup 不一致
+
+copy group 只包括 0、1 和组号为 3/5/7 纯幂的组；参考几何共 15 份。每份必须包含相同的
+superblock 和完整 64-block GDT。不能只重算 primary checksum：backup 字节、descriptor table
+尾部零区或 bitmap checksum 任一分歧都必须重建实验镜像或由具名故障测试解释。
+
+### group descriptor 或 bitmap 校验通过但几何仍被拒绝
+
+checksum 只证明字节未再次变化，不证明内容合法。比较 descriptor 的 group index、first/block
+count、copy/GDT、两张 bitmap、128-block inode table 和 data start；这些字段必须由 superblock
+唯一推导。尾组只有 28672 块，bitmap 中超出真实组容量的 bit 必须置一。
+
+### fsck 拒绝非空 inode table
+
+v2.16 的 `fsck-rootfs-v5` 是初始空格式验证器，只允许 group 0 的 inode 1..15，其中 inode 2
+是根目录，其余 table 为零。它尚未理解 extent、目录项或 journal；不要用 `--force` 把未来
+数据覆盖成空盘。完整可达性 fsck 属于 v2.20。
+
+## v2.17 journal v2 排错
+
+### commit 成功后 metadata home 仍是旧值
+
+这是预期的 commit/checkpoint 分离。先读取 `PendingCommittedTransactionCount`；commit 只保证
+journal record 与 ordered data 稳定，必须调用 CheckpointOldest 或重新 Recover 才把 metadata
+写回 home。若 ordered data 仍是旧值而 commit 已有效，则检查 prepared Flush 与 commit 之间的
+ordered home Flush，不能把两次 Flush 合并到 commit 之后。
+
+### recovery 把有效事务当 incomplete 丢弃
+
+先检查 commit block 自身能否通过 magic/version/UUID/CRC32C。只有 commit 缺失或 commit 无效
+才是 incomplete；commit 有效后，descriptor/revoke checksum binding、payload CRC、target 范围
+或保留区错误必须返回 Corrupt。不要为了“能挂载”把 committed corruption 降级成 discard。
+
+### 释放后的块被旧 metadata replay 覆盖
+
+确认释放事务已经 committed，且 revoke target 使用文件系统相对 4 KiB block，不是设备 LBA。
+恢复必须在写任何 home block 前先验证所有 slot，再按 sequence 查找更晚 revoke；边扫描边重放
+会在尚未看到后续 revoke 时错误写入旧 payload。
+
+### checkpoint 期间二次断电后重复重放
+
+重复重放本身允许，home metadata 必须幂等。顺序应是 home Flush → checkpoint record Flush →
+superblock → clear slot。若先清 descriptor 或先推进 superblock，断电后可能把未稳定 home 当作
+完成；若 checkpoint record 已稳定但清槽失败，下次恢复只需清槽。
+
+### 十万步 journal 测试突然增加几十秒
+
+检查随机模型是否在每个状态决策都对完整 4 KiB payload 执行逐位 CRC32C。容量、覆盖和断电由
+unit/failure-path 直接测试；随机模型应保留十万步状态决策，只按固定比例执行真实 stage/commit，
+每 64 步抽查 durable home，并在结束时核对全部目标。

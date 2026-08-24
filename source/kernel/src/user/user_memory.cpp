@@ -1005,8 +1005,7 @@ WriteVfsFileThroughCache(void *const context, const fs::OpenFile &open_file,
         }
         // Acquire 可能阻塞；只有它返回后才发布 writeback backing，并在不再阻塞的窗口内
         // MarkDirty。否则后台清理可在“retain 完成、Dirty 尚未可见”之间提前关闭 backing。
-        if (user_file_backing_manager.RetainWritebackFile(vfs, open_file,
-                                                          writeback_size_bytes) !=
+        if (user_file_backing_manager.RetainWritebackFile(vfs, open_file, writeback_size_bytes) !=
             UserFileBackingStatus::Succeeded) {
             static_cast<void>(user_file_page_cache.Release(page_identity, physical_address));
             return fs::Status::CapacityExhausted;
@@ -1616,9 +1615,16 @@ MakeSharedFilePageWritable(UserAddressSpace &address_space, const uint64_t page_
     }
     UserFileBackingDescriptor descriptor{};
     FilePageIdentity page_identity{};
-    if (!ReadBackingDescriptor(area, descriptor) ||
+    if (!ReadBackingDescriptor(area, descriptor) || descriptor.vfs == nullptr ||
+        !descriptor.open_file.open ||
         !PageUsesFileCache(area, page_address, descriptor, page_identity)) {
         return UserVirtualMemoryStatus::Corrupt;
+    }
+    fs::RegularFileIoGuard inode_io_guard{*descriptor.vfs, descriptor.open_file.path.vnode};
+    if (!inode_io_guard.Active()) {
+        return inode_io_guard.AcquisitionStatus() == fs::Status::CapacityExhausted
+                   ? UserVirtualMemoryStatus::PageCacheExhausted
+                   : UserVirtualMemoryStatus::Corrupt;
     }
     const FilePageCacheStatus dirty_status =
         user_file_page_cache.MarkDirty(page_identity, mapping.physical_address);
@@ -3594,7 +3600,8 @@ UserVirtualMemoryStatus SynchronizeUserFileMappings(UserAddressSpace &address_sp
         const uint64_t current_end_address = Minimum(end_address, area.end_address);
         if (area.kind == VirtualMemoryAreaKind::FileShared) {
             UserFileBackingDescriptor descriptor{};
-            if (!ReadBackingDescriptor(area, descriptor)) {
+            if (!ReadBackingDescriptor(area, descriptor) || descriptor.vfs == nullptr ||
+                !descriptor.open_file.open) {
                 return UserVirtualMemoryStatus::Corrupt;
             }
             const uint64_t area_offset_bytes = current_address - area.begin_address;
@@ -3616,6 +3623,13 @@ UserVirtualMemoryStatus SynchronizeUserFileMappings(UserAddressSpace &address_sp
                                              OS_KERNEL_MEMORY_PAGE_SIZE_BYTES;
             shared_mapping_present = true;
             if (synchronous) {
+                fs::RegularFileIoGuard inode_io_guard{*descriptor.vfs,
+                                                      descriptor.open_file.path.vnode};
+                if (!inode_io_guard.Active()) {
+                    return inode_io_guard.AcquisitionStatus() == fs::Status::CapacityExhausted
+                               ? UserVirtualMemoryStatus::PageCacheExhausted
+                               : UserVirtualMemoryStatus::Corrupt;
+                }
                 uint64_t range_written_page_count = OS_KERNEL_USER_MEMORY_EMPTY_VALUE;
                 const UserVirtualMemoryStatus writeback_status = WritebackUserFilePageCacheRange(
                     descriptor.identity, first_page_index, last_page_index, UINT64_MAX,

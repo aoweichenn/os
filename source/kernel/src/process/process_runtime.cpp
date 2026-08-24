@@ -900,16 +900,6 @@ Pipe *capacity_pipe_entries[OS_KERNEL_PIPE_MANAGER_MAXIMUM_CAPACITY];
            statistics.release_count == capacity;
 }
 
-[[nodiscard]] FileIdentity
-FileIdentityFromInformation(const fs::NodeInformation &information) noexcept {
-    return FileIdentity{
-        .superblock_identifier = information.superblock_identifier,
-        .superblock_generation = information.superblock_generation,
-        .node_identifier = information.node_identifier,
-        .node_generation = information.generation,
-    };
-}
-
 [[nodiscard]] FileIdentity FileIdentityFromVnode(const fs::Vnode &vnode) noexcept {
     return FileIdentity{
         .superblock_identifier = vnode.superblock->identifier,
@@ -964,9 +954,9 @@ RetainDirectoryForAt(ProcessRuntimeProcess &process, const uint64_t directory_de
 
 void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) noexcept;
 
-[[nodiscard]] bool RuntimeProcessAddressSpaceIsUsable(
-    const uint64_t process_index, const ProcessRuntimeProcess &runtime_process,
-    bool &address_space_usable) noexcept {
+[[nodiscard]] bool RuntimeProcessAddressSpaceIsUsable(const uint64_t process_index,
+                                                      const ProcessRuntimeProcess &runtime_process,
+                                                      bool &address_space_usable) noexcept {
     address_space_usable = false;
     if (!runtime_process.active || !runtime_process.address_space_stable ||
         runtime_process.address_space.root_physical_address ==
@@ -1029,9 +1019,9 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
         runtime_process.result.mapped_page_count = runtime_process.address_space.mapped_page_count;
     }
     uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    const UserVirtualMemoryStatus writeback_status = WritebackUserFilePageCacheRange(
-        identity, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, UINT64_MAX, UINT64_MAX,
-        written_page_count);
+    const UserVirtualMemoryStatus writeback_status =
+        WritebackUserFilePageCacheRange(identity, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, UINT64_MAX,
+                                        UINT64_MAX, written_page_count);
     if (writeback_status != UserVirtualMemoryStatus::Succeeded) {
         WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STAGE_PREFIX,
                                  OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_WRITEBACK_STAGE);
@@ -1042,6 +1032,21 @@ void WriteProcessRuntimeValue(const char *const prefix, const uint64_t value) no
                    : FileSystemStatus::Corrupt;
     }
     return FileSystemStatus::Succeeded;
+}
+
+[[nodiscard]] fs::Status PrepareVfsRegularFileTruncate(void *const context, const fs::Vnode &vnode,
+                                                       const uint64_t size_bytes) noexcept {
+    if (context == nullptr || vnode.superblock == nullptr ||
+        vnode.type != fs::NodeType::RegularFile) {
+        return fs::Status::InvalidArgument;
+    }
+    const FileSystemStatus status =
+        PrepareRuntimeFileTruncate(FileIdentityFromVnode(vnode), size_bytes);
+    if (status == FileSystemStatus::Succeeded) {
+        return fs::Status::Succeeded;
+    }
+    return status == FileSystemStatus::DeviceFailure ? fs::Status::DeviceFailure
+                                                     : fs::Status::Corrupt;
 }
 
 [[nodiscard]] bool ProtectRuntimeSharedFileMappings() noexcept {
@@ -2833,9 +2838,8 @@ CancelRuntimeFileReadaheadStream(void *const context, const FileReadaheadStreamT
         return false;
     }
     if (!ReleaseRuntimeCancelledReadaheadRequests(cancelled_request_count)) {
-        WriteProcessRuntimeValue(
-            OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX,
-            OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_RELEASE_FAILURE_STATUS);
+        WriteProcessRuntimeValue(OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_FAILURE_STATUS_PREFIX,
+                                 OS_KERNEL_PROCESS_RUNTIME_FILE_TRUNCATE_RELEASE_FAILURE_STATUS);
         return false;
     }
     return true;
@@ -6421,7 +6425,9 @@ ProcessRuntimeStatus AttachProcessVfs(fs::Vfs &vfs, FileSystemBlockDevice &swap_
             .pressure = ReadRuntimeFileReadaheadPressure,
             .schedule = ScheduleRuntimeFileReadahead,
         }) != FileDescriptionStatus::Succeeded ||
-        AttachUserFilePageCache(vfs) != UserAddressSpaceStatus::Succeeded) {
+        AttachUserFilePageCache(vfs) != UserAddressSpaceStatus::Succeeded ||
+        vfs.ConfigureRegularFileTruncatePreparation(&vfs, PrepareVfsRegularFileTruncate) !=
+            fs::Status::Succeeded) {
         return ProcessRuntimeStatus::FileSystemFailure;
     }
     for (uint64_t process_index = OS_KERNEL_PROCESS_RUNTIME_FIRST_INDEX;
@@ -9076,10 +9082,8 @@ FileSystemStatus OpenCurrentProcessFileAt(const uint64_t directory_descriptor,
         return directory_status;
     }
     fs::OpenFile open_file{};
-    fs::OpenOptions open_options = options;
-    open_options.truncate = false;
-    fs::Status status = process_vfs->OpenAt(process.file_system_context, directory_handle, path,
-                                            path_length_bytes, open_options, open_file);
+    const fs::Status status = process_vfs->OpenAt(process.file_system_context, directory_handle,
+                                                  path, path_length_bytes, options, open_file);
     if (!ReleaseDirectoryForAt(retained_directory)) {
         if (status == fs::Status::Succeeded &&
             process_vfs->Close(open_file) != fs::Status::Succeeded) {
@@ -9095,33 +9099,6 @@ FileSystemStatus OpenCurrentProcessFileAt(const uint64_t directory_descriptor,
             HaltProcessor();
         }
         return FileSystemStatus::InvalidArgument;
-    }
-    if (options.truncate) {
-        if (open_file.path.vnode.type != fs::NodeType::RegularFile) {
-            if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
-                HaltProcessor();
-            }
-            return FileSystemStatus::Unsupported;
-        }
-        fs::NodeInformation information{};
-        const FileSystemStatus prepare_status =
-            process_vfs->StatOpenFile(open_file, information) == fs::Status::Succeeded
-                ? PrepareRuntimeFileTruncate(FileIdentityFromInformation(information),
-                                             OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE)
-                : FileSystemStatus::Corrupt;
-        if (prepare_status != FileSystemStatus::Succeeded) {
-            if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
-                HaltProcessor();
-            }
-            return prepare_status;
-        }
-        status = process_vfs->TruncateOpenFile(open_file, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE);
-        if (status != fs::Status::Succeeded) {
-            if (process_vfs->Close(open_file) != fs::Status::Succeeded) {
-                HaltProcessor();
-            }
-            return fs::ToFileSystemStatus(status);
-        }
     }
     const uint64_t file_status_flags =
         (options.readable ? OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG
@@ -9325,22 +9302,11 @@ FileSystemStatus TruncateCurrentProcessFile(const uint8_t *path, const uint64_t 
         return FileSystemStatus::NotInitialized;
     }
     ProcessRuntimeProcess &process = CurrentRuntimeProcess();
-    fs::NodeInformation information{};
-    const fs::Status stat_status =
-        process_vfs->Stat(process.file_system_context, path, path_length_bytes, information);
-    if (stat_status != fs::Status::Succeeded) {
-        return fs::ToFileSystemStatus(stat_status);
-    }
     const uint64_t file_size_limit =
         process.resource_limits[static_cast<uint64_t>(os::abi::ResourceLimitKind::FileSize)]
             .current;
     if (size_bytes > file_size_limit) {
         return FileSystemStatus::FileTooLarge;
-    }
-    const FileSystemStatus prepare_status =
-        PrepareRuntimeFileTruncate(FileIdentityFromInformation(information), size_bytes);
-    if (prepare_status != FileSystemStatus::Succeeded) {
-        return prepare_status;
     }
     const fs::Status truncate_status =
         process_vfs->Truncate(process.file_system_context, path, path_length_bytes, size_bytes);
@@ -9638,35 +9604,66 @@ FileSystemStatus SynchronizeCurrentProcessFile(const uint64_t file_descriptor,
         FileTableStatus::Succeeded) {
         return FileSystemStatus::InvalidHandle;
     }
-    FileIdentity identity{};
-    uint64_t sampled_sequence = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    if (file_description_manager.ReadSynchronizationState(reference, identity, sampled_sequence) !=
+    RetainedRegularFile retained_file{};
+    if (file_description_manager.RetainRegularFile(reference, retained_file) !=
         FileDescriptionStatus::Succeeded) {
         return FileSystemStatus::Unsupported;
     }
-    if (!ProtectRuntimeSharedFileMappings()) {
+    if (retained_file.vfs == nullptr || retained_file.vfs != process_vfs ||
+        !retained_file.open_file.open) {
+        if (retained_file.vfs != nullptr && retained_file.open_file.open &&
+            retained_file.vfs->Close(retained_file.open_file) != fs::Status::Succeeded) {
+            HaltProcessor();
+        }
         return FileSystemStatus::Corrupt;
     }
+
+    FileIdentity identity{};
+    uint64_t sampled_sequence = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+    FileSystemStatus result = FileSystemStatus::Succeeded;
+    bool writeback_attempted = false;
     uint64_t written_page_count = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    const UserVirtualMemoryStatus writeback_status =
-        WritebackUserFilePageCacheRange(identity, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE, UINT64_MAX,
-                                        UINT64_MAX, written_page_count);
-    uint64_t current_sequence = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
-    FileWritebackError writeback_error = FileWritebackError::None;
-    if (CheckUserFileWritebackError(identity, sampled_sequence, current_sequence,
-                                    writeback_error) != UserVirtualMemoryStatus::Succeeded ||
-        file_description_manager.AdvanceWritebackErrorCursor(reference, current_sequence) !=
-            FileDescriptionStatus::Succeeded) {
+    UserVirtualMemoryStatus writeback_status = UserVirtualMemoryStatus::Succeeded;
+    if (file_description_manager.ReadSynchronizationState(reference, identity, sampled_sequence) !=
+        FileDescriptionStatus::Succeeded) {
+        result = FileSystemStatus::Unsupported;
+    } else {
+        fs::RegularFileIoGuard inode_io_guard{*retained_file.vfs,
+                                              retained_file.open_file.path.vnode};
+        if (!inode_io_guard.Active()) {
+            result = fs::ToFileSystemStatus(inode_io_guard.AcquisitionStatus());
+        } else if (!ProtectRuntimeSharedFileMappings()) {
+            result = FileSystemStatus::Corrupt;
+        } else {
+            writeback_attempted = true;
+            writeback_status =
+                WritebackUserFilePageCacheRange(identity, OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE,
+                                                UINT64_MAX, UINT64_MAX, written_page_count);
+            if (writeback_status == UserVirtualMemoryStatus::FileWriteFailed) {
+                result = FileSystemStatus::DeviceFailure;
+            } else if (writeback_status != UserVirtualMemoryStatus::Succeeded) {
+                result = FileSystemStatus::Corrupt;
+            } else {
+                result = fs::ToFileSystemStatus(retained_file.vfs->Sync());
+            }
+        }
+    }
+    if (writeback_attempted) {
+        uint64_t current_sequence = OS_KERNEL_PROCESS_RUNTIME_EMPTY_VALUE;
+        FileWritebackError writeback_error = FileWritebackError::None;
+        if (CheckUserFileWritebackError(identity, sampled_sequence, current_sequence,
+                                        writeback_error) != UserVirtualMemoryStatus::Succeeded ||
+            file_description_manager.AdvanceWritebackErrorCursor(reference, current_sequence) !=
+                FileDescriptionStatus::Succeeded) {
+            result = FileSystemStatus::Corrupt;
+        } else if (writeback_error != FileWritebackError::None) {
+            result = FileSystemStatus::DeviceFailure;
+        }
+    }
+    if (retained_file.vfs->Close(retained_file.open_file) != fs::Status::Succeeded) {
         return FileSystemStatus::Corrupt;
     }
-    if (writeback_error != FileWritebackError::None ||
-        writeback_status == UserVirtualMemoryStatus::FileWriteFailed) {
-        return FileSystemStatus::DeviceFailure;
-    }
-    if (writeback_status != UserVirtualMemoryStatus::Succeeded) {
-        return FileSystemStatus::Corrupt;
-    }
-    return fs::ToFileSystemStatus(process_vfs->Sync());
+    return result;
 }
 
 FileSystemStatus SynchronizeCurrentProcessMemory(const uint64_t address,
@@ -10000,22 +9997,6 @@ ProcessIoStatus TruncateCurrentProcessDescriptor(const uint64_t descriptor,
             .current;
     if (size_bytes > file_size_limit) {
         file_system_status = FileSystemStatus::FileTooLarge;
-        return ProcessIoStatus::FileSystemFailure;
-    }
-    fs::NodeInformation information{};
-    const FileDescriptionStatus stat_status =
-        file_description_manager.Stat(reference, information, file_system_status);
-    if (stat_status != FileDescriptionStatus::Succeeded) {
-        return MapFileDescriptionStatus(stat_status);
-    }
-    if (information.type != fs::NodeType::RegularFile) {
-        file_system_status = FileSystemStatus::InvalidHandle;
-        return ProcessIoStatus::FileSystemFailure;
-    }
-    const FileSystemStatus prepare_status =
-        PrepareRuntimeFileTruncate(FileIdentityFromInformation(information), size_bytes);
-    if (prepare_status != FileSystemStatus::Succeeded) {
-        file_system_status = prepare_status;
         return ProcessIoStatus::FileSystemFailure;
     }
     return MapFileDescriptionStatus(

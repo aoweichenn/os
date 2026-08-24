@@ -166,6 +166,16 @@
 | memfs | 由 KernelHeap 支撑、断电即失的内存文件系统；v1.5 挂载于 `/tmp`，名称内联于节点，并精确统计节点与数据容量 |
 | rootfs v2 | v1.6 生产根格式；固定 256 MiB 区域，含版本化小端 superblock、bitmap、inode、目录项和三级间接块 |
 | rootfs v4 | v2.3 生产根格式；使用完整 128 GiB 参考盘，含 64 位几何、五级块树、链接、时间戳、orphan 与 248-credit journal |
+| rootfs v5 | V2 小型 ext4 的项目自研格式；v2.16 已冻结 4 KiB block、block group、256 字节 descriptor/inode、sparse backup 与 CRC32C，但尚未挂载或替换生产 v4 |
+| block group | 把文件系统块和 inode 元数据分成局部管理单元；v5 每个完整组为 32768 个 4 KiB 块，并拥有自己的两张 bitmap 与 inode table |
+| sparse superblock backup | 只在组 0、1 及组号为 3/5/7 纯幂的组保存 superblock 与完整 GDT 副本，降低固定备份开销并保留恢复证据 |
+| CRC32C | 使用 Castagnoli 多项式的 32 位循环冗余校验；v5 用于 superblock、descriptor、inode 和 bitmap，标准向量 `123456789` 为 `0xE3069283` |
+| journal descriptor | 描述一次事务的 metadata home target、journal payload index、payload CRC 和标志的记录；v2 每槽一个 |
+| commit record | 证明 descriptor、revoke、payload 和 ordered data 已按顺序稳定的哨兵；没有有效 commit 的 prepared 事务不会 replay |
+| checkpoint | 把 committed journal payload 写到最终 home block 并释放日志槽；它晚于 commit，可以在正常运行或恢复期间幂等执行 |
+| revoke | 较晚 committed transaction 声明某个旧 metadata target 不得再 replay，防止释放或改作他用的块被陈旧日志覆盖 |
+| orphan file | 保存已脱离目录但仍需在崩溃后完成 truncate/unlink 的 inode number；v2.17 冻结 CRC32C block 和事务原子性，尚未执行 extent 清理 |
+| ordered data | 不写入 metadata journal、但必须在引用它的新 metadata commit 前 Flush 到 home 的文件数据 |
 | inode | 文件系统内部对象身份；保存类型、逻辑大小、generation、父关系和数据块索引，名字由目录项另行保存 |
 | inode generation | inode number 回收复用时递增的身份代次；目录项与 vnode 必须同时匹配编号和代次 |
 | direct block | inode 直接保存的数据块指针，小文件无需额外索引块 |
@@ -299,3 +309,9 @@
 | release identity | 项目、ABI、盘面、机器规格、来宾标记和主仓 SHA 共同组成的发布身份 |
 | structured disk identity | 对大盘固定关键范围、长度和宿主分配状态的哈希清单，避免全读空闲零区 |
 | soak | 在同一冻结产物上有界重复完整整机工作负载，用于发现跨轮次和长尾错误 |
+| inode I/O identity | 由 superblock 与 node 的 identifier/generation 组成、用于串行同一文件逻辑 size 与映射提交的稳定身份 |
+| inode I/O guard | 持有某一 inode 活跃槽 RuntimeMutex 的 RAII 临界区；前台写、truncate、共享 mmap dirty 与同步共用 |
+| block group | 把磁盘切成局部 inode/data bitmap、inode table 和数据区的分配单元，降低全盘扫描与碎片 |
+| extent | 用逻辑起点、物理起点和连续块数描述一段文件映射；hole、unwritten 与 initialized 状态必须区分 |
+| delayed allocation | buffered write 先保留逻辑空间，在 writeback 时依据连续脏范围选择物理 extent 的分配策略 |
+| HTree | 以文件名 hash 定位目录叶块的有界索引；readdir 仍按稳定目录记录遍历叶块 |

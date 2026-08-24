@@ -643,6 +643,96 @@ ROM 与 Stage 1 的 ATA 启动职责保持不变。
   必须在真实 rootfs 覆盖九项新调用，并通过 4 GiB ATA primary、ATA/NVMe reclaim 和完整
   fresh CAW verify。
 
+## V2 小型 ext4 核心终态要求
+
+- V2 生产根必须是自研 rootfs v5；采用 ext4 的 4 KiB block、block group、extent、HTree、
+  ordered journal 和 xattr/ACL 等核心结构，但不得复制 Linux 源码或宣称 ext4 盘面兼容；
+- v5 必须使用项目 magic、compat/ro-compat/incompat feature、显式小端字段和 CRC32C；未知
+  required feature、错误几何、越界元数据、非零保留位或 checksum 错误必须拒绝 mount；
+- 128 GiB phone-primary 必须按约 128 MiB group 划分，inode 密度由 mkfs profile 保存到盘面；
+  Kernel 只按需读取 group/inode 元数据，不得常驻整盘 bitmap 或 inode table；
+- 普通文件必须使用有界 extent tree，区分 hole、unwritten 与 initialized；分配器必须支持
+  连续多块、组内局部性和 delayed allocation，ENOSPC 不得暴露旧介质字节；
+- 目录必须使用变长记录与名称 hash 索引；冷 lookup 的后端块访问受索引深度约束，不能以
+  VFS dentry 热缓存掩盖线性扫描；
+- journal 必须支持 descriptor、revoke、commit、checkpoint 与 orphan file，ordered 模式下
+  数据稳定先于新增 metadata 引用；replay 必须幂等且能恢复跨事务 truncate/orphan；
+- VFS/ABI 必须提供 `fallocate`、打洞、`SEEK_DATA/SEEK_HOLE` 与 extent 查询，并保持 buffered
+  read/write、shared mmap、writeback、fsync/fdatasync/msync 的同一缓存权威页；
+- v5 必须实现 xattr、POSIX ACL 与用户/组 quota；fscrypt、fs-verity、DAX、在线 resize、
+  reflink、快照、压缩、去重和多设备 RAID 不属于 V2；
+- rootfs v4 不原地改义；迁移必须从旧镜像读取并向另一份 v5 镜像写入，切换前后分别 fsck；
+- v5 切换生产根前必须通过小几何 ENOSPC、十万步 extent/allocator/HTree 模型、journal 断电
+  矩阵、4 GiB ATA/NVMe primary/reclaim/OOM/persistence 和无宿主空洞手机镜像门禁。
+
+完整范围与 v2.15..v2.20 顺序由
+[ADR 0079](adr/0079-v2-mini-ext4-rootfs-v5-program.md) 冻结。
+
+## v2.16 rootfs v5 block-group 盘面要求
+
+- `OSRFV005` 必须使用 4096 字节 block、512 字节 sector 和显式小端字段；production profile
+  必须固定 LBA 32768、33550336 block、32768 block/group、1024 group；
+- group descriptor 与 inode 必须各为 256 字节，每组 2048 inode；inode 1..15 保留，inode 2
+  必须是根目录，初始空盘计数必须为 33416241 free block、2097137 free inode；
+- 每组必须拥有独立 block bitmap、inode bitmap 和 inode table；尾组与 bitmap 越界位必须按
+  真实几何处理，任何 metadata/data 区间越界或重叠都拒绝；
+- 组 0、1 和 3/5/7 的纯幂组必须保存相同的 superblock/GDT，共 15 份；丢失或分歧不得由
+  primary 的成功掩盖；
+- superblock、descriptor、inode 与 bitmap 必须使用 CRC32C，标准向量和固定 profile checksum
+  必须跨 C++/Python 一致；未知 read-only/incompatible feature、缺失 required feature、非零
+  保留区或错误 checksum 必须 fail closed；
+- Kernel 侧格式库必须 freestanding、无动态分配并按字节编解码；宿主必须提供安全的
+  mkfs/inspect/fsck/corrupt，覆盖显式覆盖许可、JSON 摘要和逐类损坏；
+- v2.16 fsck 只验证初始空 v5 镜像；不得宣称已实现 v5 mount、可写文件、extent 或 journal；
+  rootfs v4、ABI v2.6.0、ATA/NVMe、4 GiB/128 GiB 与 VGA 生产门禁保持不变。
+
+盘面与失败语义由
+[ADR 0081](adr/0081-v2-16-rootfs-v5-block-group-format.md) 冻结。
+
+## v2.17 rootfs v5 journal v2 要求
+
+- journal v2 必须使用 4 KiB 项目小端记录和 CRC32C，不得复制 JBD2 big-endian magic/盘面；
+  journal superblock 必须绑定文件系统 UUID、几何、feature、sequence 和 generation；
+- 实验 journal 必须有界为 4 槽，每槽明确 descriptor、revoke、最多 16 个 metadata payload、
+  commit 和 checkpoint；单事务最多 8 个 ordered data、32 个 revoke；
+- 4 KiB 文件系统块必须通过 8 个连续 512B `BlockDevice` sector 访问，不得假设驱动接受 4 KiB
+  逻辑 sector；只有成功 Flush 才算稳定；
+- 提交必须严格执行 prepared metadata Flush → ordered data home Flush → commit Flush；commit 可见
+  时数据必须已经稳定，metadata 不得在 commit 前写入 home；
+- checkpoint 必须在 home metadata Flush 后写 checkpoint record，再更新 superblock 和清槽；
+  任一中间失败必须允许恢复重做；
+- recovery 必须先验证全部 committed transaction，再按 sequence 重放；后续 committed revoke
+  必须抑制旧 target，incomplete 可以丢弃，有效 commit 引用的损坏必须 Corrupt；
+- orphan block 必须绑定 UUID/generation，容纳 503 个唯一 64 位 user inode，add/remove 幂等，
+  满容量、越界、重复、计数和 checksum 均有验证；
+- commit 与 recovery 分别覆盖至少 128/96 个持久化故障点，十万步固定种子模型不得因重复 4 KiB
+  CRC 把完整 verify 拉长数十秒；
+- v2.17 不接入生产 mount，不改变 rootfs v4、ABI v2.6.0、4 GiB/128 GiB、ATA/NVMe 和 VGA。
+
+状态机与失败语义由 [ADR 0082](adr/0082-v2-17-rootfs-v5-journal-v2.md) 冻结。
+
+## v2.15 每 inode I/O 协调要求
+
+- VFS 必须按完整 superblock/node identity 管理 128 个有界活跃 I/O 槽；同 identity 共享一个
+  `RuntimeMutex`，不同 identity 不得经过共同 append mutex；零引用槽按 LRU 安全复用；
+- 槽 token 必须包含 generation；非法 identity、过期 token、重复 identity、引用/统计损坏
+  必须 fail closed；所有槽活跃时返回 `CapacityExhausted`，不得退化为全局串行；
+- `write/pwrite/append` 必须在 inode guard 内完成缓存逻辑 size、Dirty 发布、EOF 选择、
+  RLIMIT_FSIZE 裁剪和 metadata 失效；append+pwrite 继续不改变 FileDescription offset；
+- writable shared mmap 首次脏化必须在同一 inode guard 内完成 `MarkDirty` 与 writable PTE 发布；
+  truncate 持 guard 时不得有同 inode buffered/mmap writer 越过准备边界；
+- path truncate、open(O_TRUNC) 与 ftruncate 必须在 VFS guard 内调用统一 prepare hook，再提交
+  backend 和 cache；prepare 失败不得改变盘面 size、缓存 size 或调用 cache truncate；
+- fsync/fdatasync 与同步 msync 必须在 inode guard 内写保护映射、等待目标范围 writeback 并
+  执行 VFS sync；writeback error cursor 只能在 guard 释放后于 FileDescription lock 下推进；
+- 后台 writeback 不递归取得 inode guard，继续使用 Dirty/Writeback/Error、页 waiter、
+  backing 引用与后端事务；其失败必须向已有错误 sequence 报告；
+- 协调器必须统计 capacity、cached/referenced slot、活动引用、峰值、复用、替换和容量拒绝，
+  `Validate` 必须重算当前状态；正常路径不得逐 inode/lock 向 VGA 输出；
+- 测试必须覆盖非法初始化/token、两槽耗尽/LRU、同 inode 串行、不同 inode 并行、十万步固定
+  种子模型、truncate/write 强制交错、prepare EIO、既有双 append、mmap/fsync 和 4 GiB
+  ATA/NVMe/persistence 回归。
+
 ## v2.0 完成基线
 
 第一周期已完成 `v1.0 用户环境`；第二周期的 v1.1 已完整闭合内存分配与资源

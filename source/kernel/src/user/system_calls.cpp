@@ -3038,6 +3038,12 @@ extern "C" ExceptionFrame *OsKernelPrepareDispatcherUserReturn(ExceptionFrame *f
         LogRejectedUserReturn(*resume_frame);
         resume_frame = TerminateCurrentProcessFromInvalidReturn(*resume_frame);
     }
+    const UserContextEntryMethod entry_method =
+        DecodeUserContextEntryMethod(AsUserContext(*resume_frame));
+    if (GetCpuLocal().RecordUserReturn(entry_method, UserReturnMethod::InterruptReturn) !=
+        CpuLocalStatus::Succeeded) {
+        HaltProcessor();
+    }
     return resume_frame;
 }
 

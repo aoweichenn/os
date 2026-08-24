@@ -11,9 +11,9 @@ constexpr uint64_t OS_KERNEL_VFS_COUNTER_INCREMENT = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_WAIT_QUEUE_IDENTIFIER = 0x8000000000000103ULL;
 constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_MUTATION_WAIT_QUEUE_IDENTIFIER = 0x8000000000000105ULL;
 constexpr uint64_t OS_KERNEL_VFS_NAMESPACE_RECLAIM_WAIT_QUEUE_IDENTIFIER = 0x8000000000000106ULL;
-constexpr uint64_t OS_KERNEL_VFS_APPEND_WAIT_QUEUE_IDENTIFIER = 0x8000000000000107ULL;
 constexpr uint64_t OS_KERNEL_VFS_LOOKUP_WAIT_QUEUE_IDENTIFIER_BASE = 0x8000000000001100ULL;
 constexpr uint64_t OS_KERNEL_VFS_METADATA_WAIT_QUEUE_IDENTIFIER_BASE = 0x8000000000002100ULL;
+constexpr uint64_t OS_KERNEL_VFS_INODE_IO_WAIT_QUEUE_IDENTIFIER_BASE = 0x8000000000003100ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_MOUNT_IDENTIFIER = 0ULL;
 constexpr uint64_t OS_KERNEL_VFS_ROOT_PATH_LENGTH_BYTES = 1ULL;
 constexpr uint64_t OS_KERNEL_VFS_MAXIMUM_TRAVERSAL_COUNT = OS_KERNEL_VFS_MAXIMUM_PATH_LENGTH_BYTES;
@@ -88,6 +88,15 @@ void CopyBytes(uint8_t *const destination, const uint8_t *const source,
     };
 }
 
+[[nodiscard]] InodeIoIdentity InodeIoIdentityForVnode(const Vnode &vnode) noexcept {
+    return InodeIoIdentity{
+        .superblock_identifier = vnode.superblock->identifier,
+        .superblock_generation = vnode.superblock->generation,
+        .node_identifier = vnode.identifier,
+        .node_generation = vnode.generation,
+    };
+}
+
 [[nodiscard]] bool
 NamespaceBackingUsageIsValid(const NamespaceBackingResourceUsage &usage) noexcept {
     return usage.page_count != OS_KERNEL_VFS_EMPTY_VALUE &&
@@ -148,6 +157,24 @@ TrySubtractNamespaceBackingUsage(NamespaceBackingResourceUsage &usage,
 }
 
 }
+
+RegularFileIoGuard::RegularFileIoGuard(Vfs &vfs, const Vnode &vnode) noexcept : vfs_{&vfs} {
+    this->acquisition_status_ = vfs.AcquireRegularFileIo(vnode, this->token_);
+}
+
+RegularFileIoGuard::~RegularFileIoGuard() noexcept {
+    if (this->Active() && this->vfs_->ReleaseRegularFileIo(this->token_) != Status::Succeeded) {
+        while (true) {
+        }
+    }
+}
+
+bool RegularFileIoGuard::Active() const noexcept {
+    return this->acquisition_status_ == Status::Succeeded && this->vfs_ != nullptr &&
+           this->token_.slot_index != OS_KERNEL_INODE_IO_INVALID_SLOT_INDEX;
+}
+
+Status RegularFileIoGuard::AcquisitionStatus() const noexcept { return this->acquisition_status_; }
 
 Vfs::NamespaceMutationGuard::NamespaceMutationGuard(Vfs &vfs,
                                                     const uint64_t expected_sequence) noexcept
@@ -234,9 +261,10 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
         this->namespace_reclaim_lock_.Initialize(WaitQueueId{
             .value = OS_KERNEL_VFS_NAMESPACE_RECLAIM_WAIT_QUEUE_IDENTIFIER,
         }) != RuntimeMutexStatus::Succeeded ||
-        this->append_lock_.Initialize(WaitQueueId{
-            .value = OS_KERNEL_VFS_APPEND_WAIT_QUEUE_IDENTIFIER,
-        }) != RuntimeMutexStatus::Succeeded) {
+        this->inode_io_coordinator_.Initialize(this->inode_io_slots_,
+                                               OS_KERNEL_VFS_INODE_IO_CAPACITY,
+                                               OS_KERNEL_VFS_INODE_IO_WAIT_QUEUE_IDENTIFIER_BASE) !=
+            InodeIoCoordinatorStatus::Succeeded) {
         return Status::Corrupt;
     }
     for (uint64_t shard_index = OS_KERNEL_VFS_EMPTY_VALUE;
@@ -291,6 +319,8 @@ Status Vfs::Initialize(Mount *const mount_storage, const uint64_t mount_capacity
     this->regular_file_write_cache_operation_ = nullptr;
     this->regular_file_size_cache_operation_ = nullptr;
     this->regular_file_truncate_cache_operation_ = nullptr;
+    this->regular_file_truncate_prepare_context_ = nullptr;
+    this->regular_file_truncate_prepare_operation_ = nullptr;
     this->namespace_cache_ = nullptr;
     this->fallback_resolution_context_ = VfsResolutionContext{};
     this->resolution_contexts_ = nullptr;
@@ -1751,6 +1781,24 @@ Status Vfs::ConfigureRegularFileDataCache(
     return Status::Succeeded;
 }
 
+Status Vfs::ConfigureRegularFileTruncatePreparation(
+    void *const context, const RegularFileTruncatePrepareOperation prepare_operation) noexcept {
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (context == nullptr || prepare_operation == nullptr) {
+        return Status::InvalidArgument;
+    }
+    SpinLockGuard guard{this->lock_};
+    if (this->regular_file_truncate_prepare_context_ != nullptr ||
+        this->regular_file_truncate_prepare_operation_ != nullptr) {
+        return Status::AlreadyExists;
+    }
+    this->regular_file_truncate_prepare_context_ = context;
+    this->regular_file_truncate_prepare_operation_ = prepare_operation;
+    return Status::Succeeded;
+}
+
 Status Vfs::ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept {
     if (!this->IsInitialized()) {
         return Status::NotInitialized;
@@ -2051,6 +2099,18 @@ Status Vfs::WriteAt(const OpenFile &open_file, const uint64_t offset_bytes,
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
+    RegularFileIoGuard inode_io_guard{*this, open_file.path.vnode};
+    if (!inode_io_guard.Active()) {
+        return inode_io_guard.AcquisitionStatus();
+    }
+    return this->WriteAtWithinInodeIo(open_file, offset_bytes, source, length_bytes, written_bytes);
+}
+
+Status Vfs::WriteAtWithinInodeIo(const OpenFile &open_file, const uint64_t offset_bytes,
+                                 const uint8_t *const source, const uint64_t length_bytes,
+                                 uint64_t &written_bytes) noexcept {
+    written_bytes = OS_KERNEL_VFS_EMPTY_VALUE;
+    Superblock *const superblock = open_file.path.vnode.superblock;
     const Status status =
         this->regular_file_write_cache_operation_ == nullptr || !superblock->cache_regular_file_data
             ? this->WriteUncachedAt(open_file, offset_bytes, source, length_bytes, written_bytes)
@@ -2087,7 +2147,13 @@ Status Vfs::Append(const OpenFile &open_file, const uint8_t *const source,
     if (source == nullptr && length_bytes != OS_KERNEL_VFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
-    RuntimeMutexGuard append_guard{this->append_lock_};
+    if (open_file.path.vnode.superblock->read_only) {
+        return Status::ReadOnly;
+    }
+    RegularFileIoGuard inode_io_guard{*this, open_file.path.vnode};
+    if (!inode_io_guard.Active()) {
+        return inode_io_guard.AcquisitionStatus();
+    }
     NodeInformation information{};
     const Status stat_status = this->StatOpenFile(open_file, information);
     if (stat_status != Status::Succeeded) {
@@ -2103,8 +2169,8 @@ Status Vfs::Append(const OpenFile &open_file, const uint8_t *const source,
     const uint64_t available_bytes = maximum_file_size_bytes - write_offset_bytes;
     const uint64_t effective_length_bytes =
         length_bytes < available_bytes ? length_bytes : available_bytes;
-    return this->WriteAt(open_file, write_offset_bytes, source, effective_length_bytes,
-                         written_bytes);
+    return this->WriteAtWithinInodeIo(open_file, write_offset_bytes, source, effective_length_bytes,
+                                      written_bytes);
 }
 
 Status Vfs::WriteUncachedAt(const OpenFile &open_file, const uint64_t offset_bytes,
@@ -2202,28 +2268,17 @@ Status Vfs::Write(OpenFile &open_file, const uint8_t *const source, const uint64
     if (superblock->read_only) {
         return Status::ReadOnly;
     }
-    const Status status =
-        this->regular_file_write_cache_operation_ == nullptr || !superblock->cache_regular_file_data
-            ? this->WriteUncachedAt(open_file, open_file.offset_bytes, source, length_bytes,
-                                    written_bytes)
-            : this->regular_file_write_cache_operation_(this->regular_file_data_cache_context_,
-                                                        open_file, open_file.offset_bytes, source,
-                                                        length_bytes, written_bytes);
+    RegularFileIoGuard inode_io_guard{*this, open_file.path.vnode};
+    if (!inode_io_guard.Active()) {
+        return inode_io_guard.AcquisitionStatus();
+    }
+    const Status status = this->WriteAtWithinInodeIo(open_file, open_file.offset_bytes, source,
+                                                     length_bytes, written_bytes);
     if (status == Status::Succeeded) {
         if (open_file.offset_bytes > UINT64_MAX - written_bytes) {
             return Status::Corrupt;
         }
-        MetadataLockGuard metadata_guard{*this, &open_file.path.vnode, 1ULL};
-        if (!metadata_guard.Active()) {
-            return Status::Corrupt;
-        }
-        const Status invalidation_status = this->InvalidateNodeInformation(open_file.path.vnode);
-        if (invalidation_status != Status::Succeeded) {
-            return invalidation_status;
-        }
         open_file.offset_bytes += written_bytes;
-        SpinLockGuard guard{this->lock_};
-        this->statistics_.bytes_written += written_bytes;
     }
     return status;
 }
@@ -2490,6 +2545,9 @@ Status Vfs::Validate() noexcept {
         this->namespace_cache_->Validate() != VfsNamespaceCacheStatus::Succeeded) {
         return Status::Corrupt;
     }
+    if (this->inode_io_coordinator_.Validate() != InodeIoCoordinatorStatus::Succeeded) {
+        return Status::Corrupt;
+    }
     const Statistics statistics = this->ReadStatistics();
     return statistics.mount_count == this->mount_count_ &&
                    statistics.peak_resolution_context_count ==
@@ -2514,6 +2572,10 @@ Status Vfs::Validate() noexcept {
 Statistics Vfs::ReadStatistics() const noexcept {
     SpinLockGuard guard{this->lock_};
     return this->statistics_;
+}
+
+InodeIoCoordinatorStatistics Vfs::ReadInodeIoStatistics() const noexcept {
+    return this->inode_io_coordinator_.Statistics();
 }
 
 Status Vfs::ReadResourceUsage(ResourceUsage &usage) const noexcept {
@@ -2555,7 +2617,7 @@ bool Vfs::IsInitialized() const noexcept {
            this->resolution_lock_.IsInitialized() &&
            this->namespace_mutation_lock_.IsInitialized() &&
            this->namespace_reclaim_lock_.IsInitialized() &&
-           this->append_lock_.IsInitialized() &&
+           this->inode_io_coordinator_.IsInitialized() &&
            ((this->regular_file_data_cache_context_ == nullptr) ==
             (this->regular_file_read_cache_operation_ == nullptr)) &&
            ((this->regular_file_data_cache_context_ == nullptr) ==
@@ -2563,7 +2625,9 @@ bool Vfs::IsInitialized() const noexcept {
            ((this->regular_file_data_cache_context_ == nullptr) ==
             (this->regular_file_size_cache_operation_ == nullptr)) &&
            ((this->regular_file_data_cache_context_ == nullptr) ==
-            (this->regular_file_truncate_cache_operation_ == nullptr));
+            (this->regular_file_truncate_cache_operation_ == nullptr)) &&
+           ((this->regular_file_truncate_prepare_context_ == nullptr) ==
+            (this->regular_file_truncate_prepare_operation_ == nullptr));
 }
 
 bool Vfs::PathIsValid(const Path &path) const noexcept {
@@ -3096,6 +3160,17 @@ Status Vfs::TruncateNode(const Vnode &vnode, const uint64_t size_bytes) noexcept
     if (vnode.superblock == nullptr || vnode.type != NodeType::RegularFile) {
         return Status::InvalidArgument;
     }
+    RegularFileIoGuard inode_io_guard{*this, vnode};
+    if (!inode_io_guard.Active()) {
+        return inode_io_guard.AcquisitionStatus();
+    }
+    if (this->regular_file_truncate_prepare_operation_ != nullptr) {
+        const Status prepare_status = this->regular_file_truncate_prepare_operation_(
+            this->regular_file_truncate_prepare_context_, vnode, size_bytes);
+        if (prepare_status != Status::Succeeded) {
+            return prepare_status;
+        }
+    }
     Superblock &superblock = *vnode.superblock;
     {
         MetadataLockGuard metadata_guard{*this, &vnode, 1ULL};
@@ -3118,6 +3193,37 @@ Status Vfs::TruncateNode(const Vnode &vnode, const uint64_t size_bytes) noexcept
     }
     return this->regular_file_truncate_cache_operation_(this->regular_file_data_cache_context_,
                                                         vnode, size_bytes);
+}
+
+Status Vfs::AcquireRegularFileIo(const Vnode &vnode, InodeIoToken &token) noexcept {
+    token = InodeIoToken{
+        .slot_index = OS_KERNEL_INODE_IO_INVALID_SLOT_INDEX,
+        .generation = OS_KERNEL_VFS_EMPTY_VALUE,
+    };
+    if (!this->IsInitialized()) {
+        return Status::NotInitialized;
+    }
+    if (vnode.superblock == nullptr || vnode.type != NodeType::RegularFile ||
+        vnode.identifier == OS_KERNEL_VFS_EMPTY_VALUE ||
+        vnode.generation == OS_KERNEL_VFS_EMPTY_VALUE) {
+        return Status::InvalidArgument;
+    }
+    const InodeIoCoordinatorStatus status =
+        this->inode_io_coordinator_.Acquire(InodeIoIdentityForVnode(vnode), token);
+    if (status == InodeIoCoordinatorStatus::Succeeded) {
+        return Status::Succeeded;
+    }
+    if (status == InodeIoCoordinatorStatus::NotInitialized) {
+        return Status::NotInitialized;
+    }
+    return status == InodeIoCoordinatorStatus::CapacityExhausted ? Status::CapacityExhausted
+           : status == InodeIoCoordinatorStatus::InvalidIdentity ? Status::InvalidArgument
+                                                                 : Status::Corrupt;
+}
+
+Status Vfs::ReleaseRegularFileIo(InodeIoToken &token) noexcept {
+    const InodeIoCoordinatorStatus status = this->inode_io_coordinator_.Release(token);
+    return status == InodeIoCoordinatorStatus::Succeeded ? Status::Succeeded : Status::Corrupt;
 }
 
 Status Vfs::RequireAccess(const FsContext &context, const Path &path,

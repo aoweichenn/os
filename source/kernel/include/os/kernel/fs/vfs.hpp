@@ -1,6 +1,7 @@
 #pragma once
 
 #include <os/abi/security.hpp>
+#include <os/kernel/fs/inode_io_coordinator.hpp>
 #include <os/kernel/security/credentials.hpp>
 #include <os/kernel/sync/runtime_mutex.hpp>
 #include <os/kernel/sync/spin_lock.hpp>
@@ -16,6 +17,7 @@ inline constexpr uint64_t OS_KERNEL_VFS_INVALID_MOUNT_IDENTIFIER = UINT64_MAX;
 inline constexpr uint64_t OS_KERNEL_VFS_LOOKUP_LOCK_SHARD_COUNT = 64ULL;
 inline constexpr uint64_t OS_KERNEL_VFS_METADATA_LOCK_SHARD_COUNT = 64ULL;
 inline constexpr uint64_t OS_KERNEL_VFS_DEFAULT_RESOLUTION_CONTEXT_CAPACITY = 128ULL;
+inline constexpr uint64_t OS_KERNEL_VFS_INODE_IO_CAPACITY = 128ULL;
 
 enum class Status : uint64_t {
     Succeeded,
@@ -130,6 +132,8 @@ using RegularFileSizeCacheOperation = Status (*)(void *context, const Vnode &vno
                                                  uint64_t &size_bytes) noexcept;
 using RegularFileTruncateCacheOperation = Status (*)(void *context, const Vnode &vnode,
                                                      uint64_t size_bytes) noexcept;
+using RegularFileTruncatePrepareOperation = Status (*)(void *context, const Vnode &vnode,
+                                                       uint64_t size_bytes) noexcept;
 using NamespaceBackingReleaseOperation = Status (*)(void *context,
                                                     uint64_t &released_page_count) noexcept;
 
@@ -303,7 +307,29 @@ struct ResourceUsage final {
     NamespaceBackingResourceUsage namespace_backing;
 };
 
+class Vfs;
 class VfsNamespaceCache;
+
+// 同一 inode 的逻辑大小、页缓存脏化与 truncate 准备必须共享一个可睡眠临界区；
+// 后台 writeback 继续由页状态机协调，避免回写路径递归取得本 guard。
+class RegularFileIoGuard final {
+  public:
+    RegularFileIoGuard(Vfs &vfs, const Vnode &vnode) noexcept;
+    ~RegularFileIoGuard() noexcept;
+    [[nodiscard]] bool Active() const noexcept;
+    [[nodiscard]] Status AcquisitionStatus() const noexcept;
+
+    RegularFileIoGuard(const RegularFileIoGuard &) = delete;
+    RegularFileIoGuard &operator=(const RegularFileIoGuard &) = delete;
+
+  private:
+    Vfs *vfs_{};
+    InodeIoToken token_{
+        .slot_index = OS_KERNEL_INODE_IO_INVALID_SLOT_INDEX,
+        .generation = 0ULL,
+    };
+    Status acquisition_status_{Status::NotInitialized};
+};
 
 class Vfs final {
   public:
@@ -414,6 +440,8 @@ class Vfs final {
                                   RegularFileWriteCacheOperation write_operation,
                                   RegularFileSizeCacheOperation size_operation,
                                   RegularFileTruncateCacheOperation truncate_operation) noexcept;
+    [[nodiscard]] Status ConfigureRegularFileTruncatePreparation(
+        void *context, RegularFileTruncatePrepareOperation prepare_operation) noexcept;
     [[nodiscard]] Status ConfigureNamespaceCache(VfsNamespaceCache &cache) noexcept;
     [[nodiscard]] Status ConfigureResolutionContexts(VfsResolutionContext *contexts,
                                                      uint64_t capacity) noexcept;
@@ -462,9 +490,12 @@ class Vfs final {
     [[nodiscard]] Status Sync() noexcept;
     [[nodiscard]] Status Validate() noexcept;
     [[nodiscard]] Statistics ReadStatistics() const noexcept;
+    [[nodiscard]] InodeIoCoordinatorStatistics ReadInodeIoStatistics() const noexcept;
     [[nodiscard]] Status ReadResourceUsage(ResourceUsage &usage) const noexcept;
 
   private:
+    friend class RegularFileIoGuard;
+
     class NamespaceMutationGuard final {
       public:
         NamespaceMutationGuard(Vfs &vfs, uint64_t expected_sequence) noexcept;
@@ -553,7 +584,12 @@ class Vfs final {
                                                      uint64_t name_length_bytes) noexcept;
     [[nodiscard]] Status ApplyRegularFileCachedSize(const Vnode &vnode,
                                                     BackendNodeInformation &information) noexcept;
+    [[nodiscard]] Status WriteAtWithinInodeIo(const OpenFile &open_file, uint64_t offset_bytes,
+                                              const uint8_t *source, uint64_t length_bytes,
+                                              uint64_t &written_bytes) noexcept;
     [[nodiscard]] Status TruncateNode(const Vnode &vnode, uint64_t size_bytes) noexcept;
+    [[nodiscard]] Status AcquireRegularFileIo(const Vnode &vnode, InodeIoToken &token) noexcept;
+    [[nodiscard]] Status ReleaseRegularFileIo(InodeIoToken &token) noexcept;
     [[nodiscard]] Status ChangeNodeMode(const FsContext &context, const Path &path,
                                         os::abi::FileMode mode) noexcept;
     [[nodiscard]] Status ChangeNodeOwner(const FsContext &context, const Path &path,
@@ -584,8 +620,9 @@ class Vfs final {
     mutable RuntimeMutex metadata_locks_[OS_KERNEL_VFS_METADATA_LOCK_SHARD_COUNT]{};
     mutable RuntimeMutex namespace_mutation_lock_{};
     mutable RuntimeMutex namespace_reclaim_lock_{};
-    mutable RuntimeMutex append_lock_{};
     mutable RuntimeMutex lookup_locks_[OS_KERNEL_VFS_LOOKUP_LOCK_SHARD_COUNT]{};
+    InodeIoSlot inode_io_slots_[OS_KERNEL_VFS_INODE_IO_CAPACITY]{};
+    InodeIoCoordinator inode_io_coordinator_{};
     mutable SpinLock resolution_context_lock_{};
     VfsResolutionContext fallback_resolution_context_{};
     VfsResolutionContext *resolution_contexts_{};
@@ -599,6 +636,8 @@ class Vfs final {
     RegularFileWriteCacheOperation regular_file_write_cache_operation_{nullptr};
     RegularFileSizeCacheOperation regular_file_size_cache_operation_{nullptr};
     RegularFileTruncateCacheOperation regular_file_truncate_cache_operation_{nullptr};
+    void *regular_file_truncate_prepare_context_{nullptr};
+    RegularFileTruncatePrepareOperation regular_file_truncate_prepare_operation_{nullptr};
     VfsNamespaceCache *namespace_cache_{nullptr};
     uint64_t *compact_dentry_hash_buckets_{};
     uint64_t compact_dentry_hash_bucket_capacity_{};

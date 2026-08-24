@@ -487,12 +487,30 @@ seek/pread/pwrite/fstat/ftruncate/fchmod/fchown/status flags 均交由 FileDescr
 operation lock 下解释；user-copy 已在系统调用层完成，锁内不会缺页访问用户地址。
 
 普通 write 与 pwrite 不再基于调用前 snapshot 预裁剪 append。ProcessRuntime 把当前
-RLIMIT_FSIZE 传到 FileDescriptionManager/VFS，让原子 EOF 事务决定实际可写长度。ftruncate
-先 fstat 得到稳定 file identity；`PrepareRuntimeFileTruncate` 取消预读、写保护全部共享映射、
-释放 EOF 外映射，并通过 file-page writeback coordinator 等待同文件写回收束，再提交打开文件
-truncate。这样 cache Busy 不会出现在后端提交之后。`NotSeekable` 独立映射为 ABI -60。设计见
+RLIMIT_FSIZE 传到 FileDescriptionManager/VFS，让原子 EOF 事务决定实际可写长度。V2.14
+最初由 ProcessRuntime 先 fstat/prepare 再提交 truncate；V2.15 已把 prepare hook 移入 VFS
+每 inode guard，path、O_TRUNC 与 ftruncate 不再存在锁外 identity 窗口。`NotSeekable` 独立
+映射为 ABI -60。V2.14 接口决策见
 [ADR 0078](../adr/0078-v2-14-open-file-description-operations.md)。
 
 共享映射写保护与 truncate VMA 扫描共用 runtime+ProcessTree gate。注册/fork 完整提交后才把
 `address_space_stable` 置 true；退出/OOM 在 Destroy 前先清除。只有 stable 且 Alive/Stopped
 可遍历，RuntimeProcess 的 `active`、非零 CR3 或单独的 ProcessTree 状态都不足以证明稳定。
+
+## v2.15 inode I/O 与同步锁序
+
+FileDescriptionManager 仍先取得对象 operation lock，再调用 VFS 的每 inode guard；普通
+write/pwrite/append/ftruncate 因而先串行共享 description offset/status，再串行同 inode 的逻辑
+size 与缓存提交。不同 description 指向同 inode 时只共享后者，不同 inode 不再经过全局 append
+锁。
+
+fsync/fdatasync 不能反向形成 `inode guard → FileDescription operation lock`。ProcessRuntime
+先经 `RetainRegularFile` 取得短期 OpenFile 并离开对象锁，再持 inode guard 写保护映射、执行
+范围 writeback 和 VFS sync；guard 释放后才推进原 FileDescription 的 writeback error cursor，
+最后关闭短期引用。write-only regular file 也允许 retain 用于同步，但 mmap 入口仍独立要求
+readable。
+
+`PrepareVfsRegularFileTruncate` 是 VFS 配置期一次性 hook，把进程地址空间扫描和文件页等待
+放进 `TruncateNode` guard。后台 writeback 不取得该 guard，避免 truncate/fsync 主动回写时
+递归死锁。完整边界见
+[ADR 0080](../adr/0080-v2-15-per-inode-io-coordination.md)。

@@ -1493,3 +1493,33 @@ truncate 组继续细分 grow/stat/shrink；Kernel 只在准备失败时输出
 
 成功/reclaim/OOM QEMU profile 把初始 `[OS][KERNEL] FILE_SYSTEM_STATUS=` 也列为即时禁止标记；
 rootfs 挂载的 DeviceFailure 会立刻结束验收并保留轨迹，不再只因缺少最终 READY 等满 420 秒。
+
+## v2.15 每 inode I/O 协调日志边界
+
+V2.15 不逐 identity、slot、generation、guard acquire/release、append EOF、truncate 等待或
+fsync range 输出。协调器只维护 cached/referenced/active/peak、reuse/replacement/rejection
+聚合统计，hosted 单元与集成直接读取，`Vfs::Validate` 静默核对。
+
+来宾继续复用既有 truncate 失败 stage、FilePageCache writeback error、设备 EIO/timeout 和
+最终资源摘要；成功 write/append/mmap/fsync 不增加 VGA 行。rootfs v5 后续需要的 allocator、
+extent 与 journal 观测也默认进入结构化宿主证据或 `/proc` 聚合，不能回退为交互终端逐块日志。
+
+## v2.16 rootfs v5 格式工具日志边界
+
+v5 尚未进入来宾运行路径，因此 Kernel/VGA 不增加 mount、group、bitmap、checksum 或 backup
+成功日志。格式细节由宿主 `inspect-rootfs-v5`/`fsck-rootfs-v5` 的 JSON 摘要和退出状态承担；
+mkfs 成功只输出一次汇总，不逐 group、block 或 inode 打印。
+
+损坏测试通过具名 corruption kind 和非零退出定位。错误信息必须指出 superblock、descriptor、
+bitmap、inode 或 backup 层级，但不得把整个 128 GiB 扫描过程刷到交互终端。v2.17 若需要
+journal 轨迹，仍优先写入结构化 QMP/宿主证据，VGA 只保留失败阶段和最终聚合。
+
+## v2.17 journal v2 日志边界
+
+journal v2 仍是 hosted/独立格式模型，不向来宾 VGA 输出 sequence、slot、target、payload CRC、
+revoke、Flush 或 checkpoint 逐项日志。成功路径只维护 begin/commit/abort、stage、checkpoint、
+replay、skip、discard、checksum failure、capacity rejection 和 Flush 聚合统计，测试直接读取。
+
+断电矩阵通过 failure ordinal 和 CTest 失败上下文定位；不会为 128+96 个故障点分别打印记录。
+未来接入生产 mount 后，终端最多保留 journal Corrupt/DeviceFailure 的阶段和 sequence 聚合，
+详细 replay 证据进入宿主日志或只读 `/proc`，避免 VGA 重新变成串口式刷屏。

@@ -1287,6 +1287,16 @@ os_add_kernel_file_system_test(
     "unit"
 )
 os_add_kernel_file_system_test(
+    os_kernel_root_file_system_v5_format_unit_tests
+    unit/kernel/root_file_system_v5_format_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_file_system_v5_format_randomized_tests
+    randomized/kernel/root_file_system_v5_format_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
     os_kernel_credentials_unit_tests
     unit/kernel/credentials_test.cpp
     "unit"
@@ -1304,6 +1314,41 @@ os_add_kernel_file_system_test(
 os_add_kernel_file_system_test(
     os_kernel_root_journal_randomized_tests
     randomized/kernel/root_journal_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_v2_format_unit_tests
+    unit/kernel/root_journal_v2_format_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_v2_unit_tests
+    unit/kernel/root_journal_v2_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_v2_revoke_orphan_integration_tests
+    integration/boot/root_journal_v2_revoke_orphan_test.cpp
+    "integration"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_v2_crash_recovery_integration_tests
+    integration/boot/root_journal_v2_crash_recovery_test.cpp
+    "integration;failure-path"
+)
+os_add_kernel_file_system_test(
+    os_kernel_root_journal_v2_randomized_tests
+    randomized/kernel/root_journal_v2_randomized_test.cpp
+    "randomized"
+)
+os_add_kernel_file_system_test(
+    os_kernel_inode_io_coordinator_unit_tests
+    unit/kernel/inode_io_coordinator_test.cpp
+    "unit"
+)
+os_add_kernel_file_system_test(
+    os_kernel_inode_io_coordinator_randomized_tests
+    randomized/kernel/inode_io_coordinator_randomized_test.cpp
     "randomized"
 )
 os_add_kernel_file_system_test(
@@ -1381,6 +1426,11 @@ os_add_kernel_file_system_test(
     integration/boot/vfs_at_path_test.cpp
     "integration"
 )
+os_add_kernel_file_system_test(
+    os_kernel_vfs_inode_io_coordination_integration_tests
+    integration/boot/vfs_inode_io_coordination_test.cpp
+    "integration"
+)
 target_link_libraries(
     os_kernel_vfs_at_path_integration_tests
     PRIVATE
@@ -1449,6 +1499,16 @@ set_tests_properties(
 )
 
 find_package(Threads REQUIRED)
+target_link_libraries(
+    os_kernel_inode_io_coordinator_unit_tests
+    PRIVATE
+        Threads::Threads
+)
+target_link_libraries(
+    os_kernel_vfs_inode_io_coordination_integration_tests
+    PRIVATE
+        Threads::Threads
+)
 os_add_kernel_memory_test(
     os_kernel_file_page_cache_loading_merge_integration_tests
     integration/boot/file_page_cache_loading_merge_test.cpp

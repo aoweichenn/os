@@ -51,12 +51,16 @@ set(
     include/os/kernel/fs/devfs.hpp
     include/os/kernel/fs/file_system.hpp
     include/os/kernel/fs/file_system_format.hpp
+    include/os/kernel/fs/inode_io_coordinator.hpp
     include/os/kernel/fs/legacy_file_system.hpp
     include/os/kernel/fs/memfs.hpp
     include/os/kernel/fs/procfs.hpp
     include/os/kernel/fs/root_file_system.hpp
     include/os/kernel/fs/root_file_system_format.hpp
+    include/os/kernel/fs/root_file_system_v5_format.hpp
     include/os/kernel/fs/root_journal.hpp
+    include/os/kernel/fs/root_journal_v2.hpp
+    include/os/kernel/fs/root_journal_v2_format.hpp
     include/os/kernel/fs/vfs.hpp
     include/os/kernel/fs/vfs_namespace_backing.hpp
     include/os/kernel/fs/vfs_namespace_cache.hpp
@@ -207,12 +211,16 @@ set(
     src/fs/devfs.cpp
     src/fs/file_system.cpp
     src/fs/file_system_format.cpp
+    src/fs/inode_io_coordinator.cpp
     src/fs/legacy_file_system.cpp
     src/fs/memfs.cpp
     src/fs/procfs.cpp
     src/fs/root_file_system.cpp
     src/fs/root_file_system_format.cpp
+    src/fs/root_file_system_v5_format.cpp
     src/fs/root_journal.cpp
+    src/fs/root_journal_v2.cpp
+    src/fs/root_journal_v2_format.cpp
     src/fs/vfs.cpp
     src/fs/vfs_namespace_backing.cpp
     src/fs/vfs_namespace_cache.cpp
@@ -579,12 +587,16 @@ add_library(
         src/fs/devfs.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
+        src/fs/inode_io_coordinator.cpp
         src/fs/legacy_file_system.cpp
         src/fs/memfs.cpp
         src/fs/procfs.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
+        src/fs/root_file_system_v5_format.cpp
         src/fs/root_journal.cpp
+        src/fs/root_journal_v2.cpp
+        src/fs/root_journal_v2_format.cpp
         src/fs/vfs.cpp
         src/fs/vfs_namespace_backing.cpp
         src/fs/vfs_namespace_cache.cpp
@@ -604,13 +616,17 @@ add_library(
         include/os/kernel/fs/devfs.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
+        include/os/kernel/fs/inode_io_coordinator.hpp
         include/os/kernel/fs/legacy_file_system.hpp
         include/os/kernel/fs/memfs.hpp
         include/os/kernel/fs/procfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
+        include/os/kernel/fs/root_file_system_v5_format.hpp
         include/os/kernel/fs/vfs_namespace_cache.hpp
         include/os/kernel/fs/root_journal.hpp
+        include/os/kernel/fs/root_journal_v2.hpp
+        include/os/kernel/fs/root_journal_v2_format.hpp
         include/os/kernel/fs/vfs.hpp
         include/os/kernel/fs/vfs_namespace_backing.hpp
         include/os/kernel/io/terminal.hpp
@@ -667,12 +683,16 @@ add_library(
         src/fs/devfs.cpp
         src/fs/file_system.cpp
         src/fs/file_system_format.cpp
+        src/fs/inode_io_coordinator.cpp
         src/fs/legacy_file_system.cpp
         src/fs/memfs.cpp
         src/fs/procfs.cpp
         src/fs/root_file_system.cpp
         src/fs/root_file_system_format.cpp
+        src/fs/root_file_system_v5_format.cpp
         src/fs/root_journal.cpp
+        src/fs/root_journal_v2.cpp
+        src/fs/root_journal_v2_format.cpp
         src/fs/vfs.cpp
         src/fs/vfs_namespace_backing.cpp
         src/fs/vfs_namespace_cache.cpp
@@ -683,12 +703,16 @@ add_library(
         include/os/kernel/fs/devfs.hpp
         include/os/kernel/fs/file_system.hpp
         include/os/kernel/fs/file_system_format.hpp
+        include/os/kernel/fs/inode_io_coordinator.hpp
         include/os/kernel/fs/legacy_file_system.hpp
         include/os/kernel/fs/memfs.hpp
         include/os/kernel/fs/procfs.hpp
         include/os/kernel/fs/root_file_system.hpp
         include/os/kernel/fs/root_file_system_format.hpp
+        include/os/kernel/fs/root_file_system_v5_format.hpp
         include/os/kernel/fs/root_journal.hpp
+        include/os/kernel/fs/root_journal_v2.hpp
+        include/os/kernel/fs/root_journal_v2_format.hpp
         include/os/kernel/fs/vfs.hpp
         include/os/kernel/fs/vfs_namespace_backing.hpp
         include/os/kernel/fs/vfs_namespace_cache.hpp

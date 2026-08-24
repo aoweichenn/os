@@ -339,7 +339,8 @@ FileDescriptionManager::RetainRegularFile(const KernelObjectReference &reference
     RuntimeMutexGuard guard{*operation_lock};
     const FileDescriptionStorage &storage = *static_cast<const FileDescriptionStorage *>(payload);
     if (storage.kind != FileDescriptionKind::RegularFile || storage.vfs == nullptr ||
-        (storage.file_status_flags & OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG) ==
+        (storage.file_status_flags & (OS_KERNEL_FILE_DESCRIPTION_READABLE_STATUS_FLAG |
+                                      OS_KERNEL_FILE_DESCRIPTION_WRITABLE_STATUS_FLAG)) ==
             OS_KERNEL_FILE_DESCRIPTION_EMPTY_VALUE) {
         return FileDescriptionStatus::PermissionDenied;
     }

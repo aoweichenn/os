@@ -2123,3 +2123,77 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
 - final fresh CAW 构建 3457 个目标；`python3 tools/os.py verify` 为 249/249、0 失败：75 unit、
   85 integration、56 randomized、33 system，含 25 条 failure-path；CTest 790.32 秒，verify
   墙钟 791.41 秒。完整证据见 [v2.14 候选记录](releases/v2.14.md)。
+
+## v2.15 每 inode I/O 协调测试
+
+- `os_kernel_inode_io_coordinator_unit_tests` 覆盖空/脏 storage、零容量、wait queue 溢出、非法
+  identity/token、两槽同时引用、第三 identity 容量拒绝、LRU replacement 与过期 generation；
+- 同一单元使用两个 hosted Thread 强制第二个同 identity acquire 在 guard 外等待，要求临界区
+  并行峰值为一；两个不同 identity 必须在释放门打开前同时进入，证明不是 hash shard 或全局锁；
+- `os_kernel_inode_io_coordinator_randomized_tests` 使用固定种子 `0x494E4F4445494F31` 执行
+  十万步 acquire/release/reuse/reject，与 16 identity、8 active 的独立 oracle 逐步比较；
+- `os_kernel_vfs_inode_io_coordination_integration_tests` 把两个 memfs regular vnode 标为生产
+  cache 路径，在 write hook 内建立双线程屏障；不同 inode 必须同时到达，同 inode write 必须
+  等 truncate prepare、backend commit 和 cache truncate 完成；
+- 同一集成让 prepare hook 返回 DeviceFailure，要求 backend/cache size 与 cache truncate 计数
+  保持不变；最终 coordinator acquisition=release、active/referenced=0，VFS/Memfs/Heap 守恒；
+- `os_kernel_file_description_lifecycle_integration_tests` 继续验证两个独立 open 的 128 次 append
+  不覆盖；全局 append mutex 删除后结果与 offset oracle 不变；
+- file-page writeback concurrency、shared mmap、fsync/fdatasync/msync、rootfs、Ring 3 `fs_probe`
+  与 4 GiB ATA/NVMe/persistence 作为跨层回归；后台 writeback 不取得 inode guard，测试不得以
+  递归 mutex 通过单线程样例；
+- 正常路径不新增 VGA marker。系统测试继续从 reset vector 启动，并要求 QMP screendump 至少
+  512 个非黑像素、资源归零和既有 `OTHER_THREAD_PROGRESS` 精确计数。
+- 首轮 NVMe persistence 曾出现用户 marker 已确认 DF fallback 返回，但终态
+  `SYSCALL_IRET_FALLBACKS=0`；修复后定向三启动必须通过，并要求完整 verify 中原生 IRET 门禁
+  保持非零。该用例证明 dispatcher 调度返回也记录实际 IRET，不能通过删除 smoke 断言处理。
+- final fresh CAW `python3 tools/os.py verify` 为 252/252、0 失败：76 unit、86 integration、
+  57 randomized、33 system，含 25 条 failure-path；CTest 792.45 秒。ATA/NVMe primary、
+  reclaim、OOM、persistence 分别为 63.78/64.22、68.96/70.75、69.10/68.79、
+  128.45/130.22 秒；NVMe normal/EIO/timeout 为 2.29/2.28/10.43 秒。
+- 随后把同 inode 强制交错从“第二线程已尝试”加强为 coordinator active reference 已达到 2；
+  最终源码定向 coordinator/VFS/naming/book-source 4/4、0 失败。
+
+## v2.16 rootfs v5 block-group 格式测试
+
+- `os_kernel_root_file_system_v5_format_unit_tests` 检查 CRC32C 标准向量、128 GiB 冻结几何、
+  primary/backup/ordinary/final group、superblock/descriptor/inode 往返、feature 协商和 checksum
+  损坏；固定 profile 的三个盘面 checksum 防止字段偏移无声漂移；
+- `os_kernel_root_file_system_v5_format_randomized_tests` 以种子 `0x524F4F5456354752` 执行
+  十万次小几何，逐次检查 group 边界、尾组、inode 编号、sparse copy、descriptor 往返和
+  人工 overlap 拒绝；
+- `tests/tooling/test_rootfs_v5.py` 使用 1000 block、4 group、64 inode/group 的小镜像，验证
+  primary/三份 sparse copy、bitmap、reserved/root inode、空 inode table、JSON、宿主稀疏占用
+  和 `--force` 安全边界；
+- 同一工具测试逐类注入 superblock/descriptor/root inode checksum、required feature、block/
+  inode bitmap、backup superblock/GDT、reserved byte 和 group overlap 共十类损坏，每个副本都
+  必须被 inspect/fsck 拒绝；
+- v5 没有进入 QEMU mount。本阶段的 system gate 是既有 rootfs v4 在 4 GiB ATA/NVMe、reclaim、
+  OOM 和 persistence 中保持全绿；不能把 v4 整机通过写成 v5 已可启动。
+- final fresh CAW 全构建 3476 个目标；`python3 tools/os.py verify` 为 254/254、0 失败：77 unit、
+  86 integration、58 randomized、33 system，含 25 条 failure-path；CTest 784.45 秒。ATA/NVMe
+  primary、reclaim、OOM、persistence 分别为 65.21/63.65、66.59/68.34、68.41/68.28、
+  127.73/128.98 秒；完整证据见 [v2.16 候选记录](releases/v2.16.md)。
+
+## v2.17 journal v2 测试
+
+- `os_kernel_root_journal_v2_format_unit_tests` 覆盖 journal 几何、descriptor/revoke/commit/
+  checkpoint 往返、feature、重复 target、六类 checksum，以及 orphan 幂等增删和 503 槽边界；
+- `os_kernel_root_journal_v2_unit_tests` 覆盖未格式化、非法 credit、sequence 消耗、重复 stage、
+  ordered data 在 commit 前稳定、metadata 延迟到 checkpoint、四槽耗尽与复用；
+- `os_kernel_root_journal_v2_revoke_orphan_integration_tests` 提交两个未 checkpoint transaction，
+  后一个 revoke 必须让前一个 stale payload 跳过；orphan add/remove 与 inode metadata 随后作为
+  双块事务重放，第二次 recovery 必须 Clean；
+- `os_kernel_root_journal_v2_crash_recovery_integration_tests` 使用 volatile/durable sector：
+  128 个 commit 故障点覆盖 sequence/prepared/ordered/commit，96 个 recovery 故障点覆盖 home/
+  checkpoint/superblock/clear；最终 metadata 新态只能与 ordered 新态共存；
+- 同一 failure-path 在有效 commit 后破坏 payload，必须返回 Corrupt，不能按 incomplete 丢弃；
+- `os_kernel_root_journal_v2_randomized_tests` 以种子 `0x4A563252414E4431` 执行十万步，比较
+  metadata/ordered/revoke/abort/commit/checkpoint 与独立 home oracle。昂贵盘面操作分层采样后
+  从 46.51 秒降至 1.49 秒，状态步数和最终全目标核对不变；
+- CAW 聚焦 5/5、0 失败，总计 2.41 秒。v5 尚未 mount，system gate 仍由生产 rootfs v4 的
+  4 GiB ATA/NVMe/reclaim/OOM/persistence 承担，最终证据见 [v2.17 候选记录](releases/v2.17.md)。
+- final fresh CAW 全构建 3593 个目标；`python3 tools/os.py verify` 为 259/259、0 失败：79 unit、
+  88 integration、59 randomized、33 system，含 26 条 failure-path；CTest 786.88 秒。ATA/NVMe
+  primary、reclaim、OOM、persistence 分别为 65.06/62.89、69.15/69.58、68.30/68.11、
+  128.15/127.00 秒；CAW 峰值宿主内存 6.7 GiB。

@@ -117,6 +117,24 @@ offset；独立 open 的 append 由 VFS 在 EOF 选择与写入之间统一串�
 Ring 3 在真实 rootfs 上验证定位、元数据、append 与最终持久化。边界见
 [v2.14 记录](docs/releases/v2.14.md) 与
 [ADR 0078](docs/adr/0078-v2-14-open-file-description-operations.md)。
+v2.15 已把该全局 append 串行点替换为 128 槽每 inode I/O 协调器：write/pwrite/append、
+truncate、共享 mmap dirty、fsync/fdatasync 与同步 msync 共用稳定 identity guard；不同 inode
+可同时进入缓存层，后台 writeback 保持页状态机并避免递归锁。V2 的后续终点冻结为自研
+rootfs v5 小型 ext4 核心，按 block group、journal v2、extent/delayed allocation、HTree 与
+xattr/ACL/quota 依次推进。边界见 [v2.15 记录](docs/releases/v2.15.md)、
+[ADR 0080](docs/adr/0080-v2-15-per-inode-io-coordination.md) 与
+[ADR 0079](docs/adr/0079-v2-mini-ext4-rootfs-v5-program.md)。
+v2.16 已冻结独立 `OSRFV005` 盘面基础：4 KiB block、1024 个约 128 MiB group、
+256 字节 descriptor/inode、组内 bitmap/inode table、sparse superblock/GDT backup 与
+CRC32C；Kernel 和 Python 各自实现显式小端编解码，宿主新增 mkfs/inspect/fsck/corrupt。
+它尚未挂载或替换生产根，QEMU/手机继续使用 rootfs v4。边界见
+[v2.16 记录](docs/releases/v2.16.md) 与
+[ADR 0081](docs/adr/0081-v2-16-rootfs-v5-block-group-format.md)。
+v2.17 在该格式上建立独立 journal v2：四个有界事务槽、descriptor/revoke/payload/commit/
+checkpoint、ordered data 先行稳定、跨事务 revoke、幂等 replay 和 503 槽 orphan block。
+commit 与 recovery 双断电矩阵使用 volatile/durable sector 模型；它仍未接入生产 mount。边界见
+[v2.17 记录](docs/releases/v2.17.md) 与
+[ADR 0082](docs/adr/0082-v2-17-rootfs-v5-journal-v2.md)。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

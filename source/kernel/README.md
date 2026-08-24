@@ -103,6 +103,7 @@ v1.5/v1.6 的文件系统文件固定归属如下：
 
 ```text
 fs/vfs.*                       路径、Mount、FsContext 与 namespace mutation
+fs/inode_io_coordinator.*      每 inode 活跃 I/O 槽、generation token 与 LRU
 fs/memfs.*                     /tmp 内存后端和差分模型
 fs/legacy_file_system.*        旧盘面 VFS 适配，仅保留兼容回归
 fs/file_system.*               v0.11 旧格式实现
@@ -360,9 +361,8 @@ background reclaim 规划、work acquire/complete/wait 与 writeback/swap I/O �
 
 v2.14 在 `io/file_description.*` 增加 regular-file seek、positioned read/write、打开文件
 stat/truncate/mode/owner 与 status flags；duplicate/fork 继续共享顺序 offset，positioned I/O
-不修改它。`fs/vfs.*` 用共同 append RuntimeMutex 原子执行逻辑 EOF 查询、RLIMIT_FSIZE 裁剪和
-WriteAt，覆盖独立 open description；`process_runtime.*` 负责 truncate 前的 mapping/cache
-协调。`user/system_calls.*` 分发 ABI 2.6.0 的 97..105 与 -60 `NotSeekable`。设计见
+不修改它。其初始共同 append RuntimeMutex 已由 v2.15 的每 inode guard 替换。
+`user/system_calls.*` 分发 ABI 2.6.0 的 97..105 与 -60 `NotSeekable`。原始接口设计见
 [ADR 0078](../../docs/adr/0078-v2-14-open-file-description-operations.md)。
 
 truncate 准备先取消 readahead、写保护共享映射、释放 EOF 外映射，并等待同 identity 的
@@ -372,6 +372,31 @@ writeback 终态；VFS 只在准备成功后提交后端 size，避免 cache `En
 
 buffered write 在可能阻塞的 page Acquire 返回后才 retain VfsWriteback backing，并紧接
 MarkDirty；descriptor size 预先覆盖完整 write end，避免 clean release 在 Dirty 发布前抢先关闭。
+
+v2.15 新增 `fs/inode_io_coordinator.*`：128 个常驻 identity slot 各自持有 RuntimeMutex，
+generation token、零引用 LRU、容量拒绝和统计由短 SpinLock 保护。`fs/vfs.*` 的 Write/WriteAt/
+Append 共用不递归加锁的内部 helper；共享 mmap fault、fsync/fdatasync 与同步 msync 也取得同一
+inode guard。truncate prepare 由 `process_runtime.*` 配置为 VFS hook，在 guard 内完成映射保护、
+writeback 等待、后端提交与 cache truncate。后台 writeback 不取 guard，继续依赖页状态机，
+避免主动同步路径递归锁死。设计见
+[ADR 0080](../../docs/adr/0080-v2-15-per-inode-io-coordination.md)。
+
+V2 文件系统终态冻结为自研 rootfs v5 小型 ext4 核心；4 KiB block group、journal v2、extent、
+delayed allocation、HTree 和 xattr/ACL/quota 在 v2.16..v2.20 分阶段完成，v2.20 前生产根仍是
+rootfs v4。总体决策见
+[ADR 0079](../../docs/adr/0079-v2-mini-ext4-rootfs-v5-program.md)。
+
+v2.16 新增 `fs/root_file_system_v5_format.*`，冻结 `OSRFV005` 的 4 KiB block、128 MiB group、
+256 字节 descriptor/inode、sparse superblock/GDT backup 和 CRC32C。该库逐字节小端编解码，
+验证 feature、算术、尾组、保留区与初始 inode；不依赖动态分配，也不持有 BlockDevice/VFS
+对象。它尚未加入 rootfs mount，生产 v4 路径不变。盘面决策见
+[ADR 0081](../../docs/adr/0081-v2-16-rootfs-v5-block-group-format.md)。
+
+v2.17 新增 `fs/root_journal_v2_format.*` 与 `fs/root_journal_v2.*`。前者冻结 4 KiB journal
+superblock、四个 descriptor/revoke/payload/commit/checkpoint 槽和 503-entry orphan block；
+后者通过 8×512B sector 实现 prepared → ordered → commit、独立 checkpoint、跨事务 revoke 和
+幂等 recovery。它们不替换 `root_journal.*` 的 v4 生产路径，也尚未创建 v5 mount。设计见
+[ADR 0082](../../docs/adr/0082-v2-17-rootfs-v5-journal-v2.md)。
 
 Ring 3 的九个新包装由共享 object target 按 function section 编译；LLD 只保留每个 ELF 实际
 引用的包装，避免 ABI 扩展把无关程序的映射页和 rootfs 冷页工作集一起扩大。

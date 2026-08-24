@@ -622,7 +622,83 @@ ChangeNodeOwner`，与路径版本共享 DAC、read-only、set-id 清理、metad
 `StatOpenFile` 继续把 FilePageCache 的逻辑 size 覆盖到 inode snapshot，供 fstat 与 SEEK_END
 观察尚未写回的正确 EOF。
 
-`Vfs::Append` 使用独立 RuntimeMutex，把逻辑 EOF 查询、RLIMIT_FSIZE 裁剪和 `WriteAt` 放入
-同一临界区；这比 FileDescription operation lock 多覆盖独立 open。零长度、部分写、FileTooLarge
-和 backend/cache 失败都返回精确 written/offset 结果，锁内不做 user-copy。设计见
+V2.14 当时由 `Vfs::Append` 的共同 RuntimeMutex 把逻辑 EOF 查询、RLIMIT_FSIZE 裁剪和
+`WriteAt` 放入同一临界区；它比 FileDescription operation lock 多覆盖独立 open。零长度、
+部分写、FileTooLarge 和 backend/cache 失败都返回精确 written/offset，锁内不做 user-copy。
+V2.15 已用每 inode guard 替换该全局串行点。V2.14 原始决策见
 [ADR 0078](../adr/0078-v2-14-open-file-description-operations.md)。
+
+## v2.15 每 inode I/O 协调
+
+`inode_io_coordinator.*` 常驻 128 个活跃槽。identity 包含 superblock/node 的 identifier 与
+generation；token 再绑定槽 generation。短 SpinLock 只负责查找、LRU、引用和统计，实际等待
+发生在每槽独立 `RuntimeMutex`。零引用槽可替换，全部槽均被引用时返回 CapacityExhausted，
+不会退回全 VFS mutex。
+
+`RegularFileIoGuard` 当前覆盖 buffered Write/WriteAt、Append、truncate、共享 mmap 首次脏化、
+fsync/fdatasync 和同步 msync。Append 在 guard 内读取 FilePageCache 逻辑 size，并调用不重复
+加锁的内部 write helper；不同 inode 可以同时进入缓存层，同 inode 的独立 open 仍只会有一个
+逻辑 size/mapping 提交者。
+
+truncate prepare 现在由 ProcessRuntime 配置为 VFS hook。`TruncateNode` 取得 guard 后取消预读、
+写保护 shared PTE、释放 EOF 外映射并等待 writeback，再提交 backend size、metadata 失效和
+cache truncate。path truncate、O_TRUNC 和 ftruncate 共用该入口；prepare EIO 不触及后端或
+缓存长度。
+
+后台 writeback 保持页级 Dirty/Writeback/Error 与 waiter 状态机，不取得 inode guard。这样
+truncate/fsync 能在持 guard 时主动完成既有脏页，而 `WriteUncachedAt` 不会递归锁死；前台
+buffered/mmap writer 又不能在准备阶段新增同 inode 脏化。协调器统计由独立单元、十万步模型
+和 VFS 强制交错集成读取，正常 VGA 不增加逐 inode 日志。设计见
+[ADR 0080](../adr/0080-v2-15-per-inode-io-coordination.md)。
+
+rootfs v4 自身仍由实例锁串行后端修改。V2.16 起的新 rootfs v5 才以 4 KiB block group、
+extent、HTree 和 journal v2 拆分盘面并发；V2 总体边界见
+[ADR 0079](../adr/0079-v2-mini-ext4-rootfs-v5-program.md)。
+
+## v2.16 rootfs v5 格式模型
+
+`root_file_system_v5_format.*` 定义独立于 rootfs v4 的 `OSRFV005`。生产 profile 使用 4 KiB
+block、32768 block/group、1024 group、256 字节 descriptor/inode 和 2048 inode/group。
+所有盘面读写逐字段显式小端编码，不能 `reinterpret_cast` 或写入宿主 struct padding。
+
+格式模型当前提供：
+
+- production profile 规划及 64 位算术溢出、LBA/块对齐、尾组容量验证；
+- 组 0、1 和 3/5/7 纯幂组的 sparse superblock/GDT copy 定位；
+- group 内 copy、bitmap、inode table、data 区间与初始空闲计数的唯一推导；
+- superblock、descriptor、inode 的 CRC32C 编解码、feature 协商与保留字节拒绝；
+- reserved inode 与根 inode 的类型、mode、parent、generation 和零 mapping root 验证。
+
+该模块不持有 `BlockDevice`、Vnode、VFS mount 或动态内存，也不实现目录/数据块映射。Python
+`rootfs_v5.py` 独立实现同一语义，额外生成/检查 bitmap、inode table 和所有 sparse backup；
+二者由标准 CRC32C 和固定 production profile checksum 约束。v2.17 journal 不得改变已经冻结的
+基础偏移，只能通过 feature 和未使用字段演进。完整决策见
+[ADR 0081](../adr/0081-v2-16-rootfs-v5-block-group-format.md)。
+
+## v2.17 journal v2 与 orphan file
+
+`root_journal_v2_format.*` 只负责稳定盘面：journal superblock、descriptor tag、revoke array、
+commit、checkpoint 和 orphan block 均逐字段小端编码并使用 CRC32C。descriptor 的 target、
+payload index/checksum/flag 唯一绑定；commit 再绑定 descriptor/revoke checksum，不能通过重算
+单个损坏块绕过事务一致性。
+
+`RootJournalV2` 负责状态与 I/O。一个 active transaction 在内存中最多保留 16 个 metadata、
+8 个 ordered data 和 32 个 revoke；四个 committed slot 可以在 checkpoint 前并存。StageMetadata
+覆盖同 target 的旧 payload 并移除本事务 revoke；Revoke 移除本事务 staged metadata。credit
+耗尽必须在改变事务前返回，不能出现“报告失败但已经删除旧操作”的部分提交。
+
+```text
+Begin: reserve durable sequence
+Stage*: memory only
+Commit: journal prepared Flush → ordered home Flush → commit Flush
+Checkpoint: metadata home Flush → checkpoint Flush → superblock → clear slot
+Recover: validate all → sort sequence → apply later revoke → replay/checkpoint
+```
+
+设备接口仍按 512B sector；Read/WriteFileSystemBlock 负责 8-sector 聚合。测试 device 把 volatile
+sector 与 durable sector 分开，Flush 才合并，Crash 丢弃 volatile。这个模型用于证明 ordered
+蕴含关系和恢复幂等，不是 NVMe/ATA 驱动替身。
+
+orphan block 以 0 表示空槽，非零 inode 必须位于 user inode 范围且唯一；entry count 必须重算
+一致。它本身不释放 extent，而是让后续 mount/recovery 知道哪些 inode 仍需完成 truncate 或
+unlink。决策见 [ADR 0082](../adr/0082-v2-17-rootfs-v5-journal-v2.md)。
