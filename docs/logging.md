@@ -1538,3 +1538,13 @@ depth、reserve/commit/abort/release/locality/ENOSPC、delayed/writeback/range-q
 
 HTree lookup、xattr、ACL 和 quota 成功路径不输出 VGA；只维护 lookup node/collision、容量和
 quota rejection 聚合。损坏由 hosted codec/fsck 报告结构类型与 inode，不逐 entry 刷屏。
+
+## v2.20 rootfs v5 生产日志边界
+
+- 正常启动只新增一次 `ROOTFS_V5_MOUNTED` 和既有文件系统/journal 聚合计数；不逐 group、
+  extent、dirent、sector 或 journal payload 打印；
+- `ROOTFS_V4_MOUNTED` 不再出现在生产成功路径，v4 只由 hosted 回归测试观察；
+- fsck/migration 在宿主只输出最终 inode/directory/file/free-block 摘要；失败报告最接近根因的
+ 结构、group/inode/block 身份，不输出文件内容；
+- ATA 8-sector 请求仍只使用既有 request/interrupt/completion 聚合，不逐 sector 打印；
+- Kernel stack/QMP 调试中的寄存器和临时 trace 不是发布日志，问题关闭后不得加入正常终端。

@@ -2229,3 +2229,21 @@ written/reclaimed、anonymous swap 四项真实计数形成门禁，不错误要
   hard/soft/grace 和 CRC；
 - randomized 以 `0x4449524D45544131` 执行十万步 directory/xattr/quota oracle；
 - CAW 聚焦 3/3、0 失败，0.03 秒；full verify 证据见 [v2.19](releases/v2.19.md)。
+
+## v2.20 rootfs v5 生产切换测试
+
+- 启动镜像必须由 v5 mkfs/installer 生成；成功 system profile 必须出现
+  `ROOTFS_V5_MOUNTED`，`ROOTFS_V4_MOUNTED` 不再是生产成功证据；
+- v5 fsck 重算 primary/backup superblock、GDT、group bitmap、inode/extent/dirent、link、
+  orphan、全局 free/dir count 与重复 block 所有权；快速构建检查可跳过逐字节验证未分配
+  inode table，但发布 fsck 不得跳过；
+- v4→v5 migration 必须先通过 v4 fsck，拒绝原地覆盖，并对目标执行完整 v5 fsck；
+- 4 GiB ATA/NVMe primary、reclaim、OOM 和 persistence 使用同一 v5 语义；QEMU 继续要求
+  QMP screendump 至少 512 个非黑像素；
+- primary 对 page aging 要求 observation、referenced/unreferenced 与 demotion 非零；candidate
+  的定时语义由 page-aging unit/randomized 和 reclaim-pressure profile 验证，不再重复作为
+  primary 的抖动下界；
+- production ATA 4 KiB I/O 必须形成一个最多 8-sector BlockIo 请求；journal v2 原始 `Commit`
+  的 crash window 与 production `CommitAndCheckpoint` 都需要直接测试；
+- 反汇编审查需确认 `ReadInode`、directory codec、extent hot path 和 journal slot/checkpoint/reset
+  不在 16 KiB Kernel stack 上构造 4 KiB/大块临时对象。

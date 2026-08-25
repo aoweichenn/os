@@ -120,6 +120,166 @@ void SetBitmapBit(uint8_t *const bitmap, const uint64_t bit_index, const bool al
 
 }
 
+uint64_t RootFileSystem::ActiveBlockSizeBytes() const noexcept {
+    return this->v5_active_ ? OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES
+                            : OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+}
+
+uint64_t RootFileSystem::ActiveRootInodeNumber() const noexcept {
+    return this->v5_active_ ? OS_KERNEL_ROOTFS_V5_ROOT_INODE_NUMBER
+                            : OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER;
+}
+
+uint64_t RootFileSystem::ReadOpenReferenceCount(const uint64_t inode_number) const noexcept {
+    if (!this->v5_active_) {
+        return inode_number == 0ULL || inode_number > OS_KERNEL_ROOTFS_INODE_COUNT
+                   ? 0ULL
+                   : this->open_counts_[inode_number - 1ULL];
+    }
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_ROOTFS_V5_OPEN_REFERENCE_CAPACITY;
+         ++slot_index) {
+        if (this->v5_open_references_[slot_index].inode_number == inode_number) {
+            return this->v5_open_references_[slot_index].count;
+        }
+    }
+    return 0ULL;
+}
+
+Status RootFileSystem::RetainOpenReference(const uint64_t inode_number) noexcept {
+    if (!this->v5_active_) {
+        if (inode_number == 0ULL || inode_number > OS_KERNEL_ROOTFS_INODE_COUNT ||
+            this->open_counts_[inode_number - 1ULL] == UINT64_MAX) {
+            return Status::CapacityExhausted;
+        }
+        ++this->open_counts_[inode_number - 1ULL];
+        return Status::Succeeded;
+    }
+    V5OpenReference *free_slot = nullptr;
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_ROOTFS_V5_OPEN_REFERENCE_CAPACITY;
+         ++slot_index) {
+        V5OpenReference &slot = this->v5_open_references_[slot_index];
+        if (slot.inode_number == inode_number) {
+            if (slot.count == UINT64_MAX) {
+                return Status::CapacityExhausted;
+            }
+            ++slot.count;
+            return Status::Succeeded;
+        }
+        if (slot.inode_number == 0ULL && free_slot == nullptr) {
+            free_slot = &slot;
+        }
+    }
+    if (free_slot == nullptr) {
+        return Status::CapacityExhausted;
+    }
+    *free_slot = V5OpenReference{.inode_number = inode_number, .count = 1ULL};
+    return Status::Succeeded;
+}
+
+Status RootFileSystem::ReleaseOpenReference(const uint64_t inode_number) noexcept {
+    if (!this->v5_active_) {
+        if (inode_number == 0ULL || inode_number > OS_KERNEL_ROOTFS_INODE_COUNT ||
+            this->open_counts_[inode_number - 1ULL] == 0ULL) {
+            return Status::InvalidHandle;
+        }
+        --this->open_counts_[inode_number - 1ULL];
+        return Status::Succeeded;
+    }
+    for (uint64_t slot_index = 0ULL; slot_index < OS_KERNEL_ROOTFS_V5_OPEN_REFERENCE_CAPACITY;
+         ++slot_index) {
+        V5OpenReference &slot = this->v5_open_references_[slot_index];
+        if (slot.inode_number != inode_number) {
+            continue;
+        }
+        if (slot.count == 0ULL) {
+            return Status::InvalidHandle;
+        }
+        --slot.count;
+        if (slot.count == 0ULL) {
+            slot = V5OpenReference{};
+        }
+        return Status::Succeeded;
+    }
+    return Status::InvalidHandle;
+}
+
+Status RootFileSystem::ReadV5Block(const uint64_t relative_block, uint8_t *const block) noexcept {
+    if (this->device_ == nullptr || block == nullptr ||
+        relative_block >= this->v5_superblock_.total_block_count) {
+        return Status::InvalidArgument;
+    }
+    if (this->v5_journal_.IsActive() && this->v5_journal_.TryReadStagedMetadata(
+                                               relative_block, block,
+                                               OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES)) {
+        return Status::Succeeded;
+    }
+    const uint64_t first_sector = OS_KERNEL_ROOTFS_V5_FILE_SYSTEM_START_LBA +
+                                  relative_block * OS_KERNEL_ROOTFS_V5_SECTORS_PER_BLOCK;
+    return this->device_->ReadBlock(first_sector, block, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) ==
+                   FileSystemBlockDeviceStatus::Succeeded
+               ? Status::Succeeded
+               : this->FailDeviceOperation();
+}
+
+Status RootFileSystem::WriteV5Block(const uint64_t relative_block,
+                                    const uint8_t *const block) noexcept {
+    if (this->device_ == nullptr || block == nullptr ||
+        relative_block >= this->v5_superblock_.total_block_count) {
+        return Status::InvalidArgument;
+    }
+    const uint64_t first_sector = OS_KERNEL_ROOTFS_V5_FILE_SYSTEM_START_LBA +
+                                  relative_block * OS_KERNEL_ROOTFS_V5_SECTORS_PER_BLOCK;
+    return this->device_->WriteBlock(first_sector, block, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) ==
+                   FileSystemBlockDeviceStatus::Succeeded
+               ? Status::Succeeded
+               : this->FailDeviceOperation();
+}
+
+Status RootFileSystem::LoadV5GroupDescriptors() noexcept {
+    uint64_t loaded_relative_block = OS_KERNEL_ROOTFS_V5_NO_BLOCK;
+    for (uint64_t group_index = 0ULL; group_index < this->v5_superblock_.group_count;
+         ++group_index) {
+        const uint64_t byte_offset =
+            group_index * this->v5_superblock_.group_descriptor_size_bytes;
+        const uint64_t relative_block =
+            this->v5_superblock_.group_descriptor_table_start_block +
+            byte_offset / OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+        const uint64_t block_offset = byte_offset % OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+        if ((relative_block != loaded_relative_block &&
+             this->ReadV5Block(relative_block, this->read_block_scratch_) != Status::Succeeded) ||
+            DecodeRootV5GroupDescriptor(
+                this->v5_superblock_, this->read_block_scratch_ + block_offset,
+                this->v5_superblock_.group_descriptor_size_bytes,
+                this->v5_group_descriptors_[group_index]) != RootV5FormatStatus::Succeeded) {
+            return Status::Corrupt;
+        }
+        loaded_relative_block = relative_block;
+    }
+    return Status::Succeeded;
+}
+
+Status RootFileSystem::StageV5GroupDescriptor(const uint64_t group_index) noexcept {
+    if (!this->v5_active_ || group_index >= this->v5_superblock_.group_count) {
+        return Status::InvalidArgument;
+    }
+    const uint64_t byte_offset =
+        group_index * this->v5_superblock_.group_descriptor_size_bytes;
+    const uint64_t relative_block = this->v5_superblock_.group_descriptor_table_start_block +
+                                    byte_offset / OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+    const uint64_t block_offset = byte_offset % OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+    Status status = this->ReadRelativeBlock(relative_block, this->write_block_scratch_);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    if (EncodeRootV5GroupDescriptor(
+            this->v5_superblock_, this->v5_group_descriptors_[group_index],
+            this->write_block_scratch_ + block_offset,
+            this->v5_superblock_.group_descriptor_size_bytes) != RootV5FormatStatus::Succeeded) {
+        return Status::Corrupt;
+    }
+    return this->WriteMetadataBlock(relative_block, this->write_block_scratch_);
+}
+
 const BackendOperations RootFileSystem::operations{
     .lookup = RootFileSystem::LookupOperation,
     .create = RootFileSystem::CreateOperation,
@@ -155,12 +315,161 @@ Status RootFileSystem::Initialize(FileSystemBlockDevice &device,
     }
     this->device_ = &device;
     this->timestamp_source_ = timestamp_source;
+    bool v5_read_succeeded = true;
+    for (uint64_t sector_index = 0ULL; sector_index < OS_KERNEL_ROOTFS_V5_SECTORS_PER_BLOCK;
+         ++sector_index) {
+        if (device.ReadBlock(
+                OS_KERNEL_ROOTFS_V5_FILE_SYSTEM_START_LBA + sector_index,
+                this->initialization_block_scratch_ +
+                    sector_index * OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES,
+                OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES) != FileSystemBlockDeviceStatus::Succeeded) {
+            v5_read_succeeded = false;
+            break;
+        }
+    }
+    if (v5_read_succeeded &&
+        DecodeRootV5Superblock(this->initialization_block_scratch_,
+                               OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, this->v5_superblock_) ==
+            RootV5FormatStatus::Succeeded) {
+        this->v5_active_ = true;
+        if (this->ReadV5Block(this->v5_superblock_.group_descriptor_table_start_block,
+                              this->read_block_scratch_) != Status::Succeeded ||
+            DecodeRootV5GroupDescriptor(
+                this->v5_superblock_, this->read_block_scratch_,
+                this->v5_superblock_.group_descriptor_size_bytes,
+                this->v5_group_descriptors_[0]) != RootV5FormatStatus::Succeeded) {
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return Status::Corrupt;
+        }
+        const uint64_t journal_start = this->v5_group_descriptors_[0].data_start_block;
+        if (this->v5_journal_.Initialize(
+                device, this->v5_superblock_.file_system_start_lba,
+                this->v5_superblock_.total_block_count, this->v5_superblock_.inode_count,
+                journal_start, this->v5_superblock_.uuid) != RootJournalV2Status::Succeeded ||
+            this->v5_journal_.Open() != RootJournalV2Status::Succeeded) {
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return Status::Corrupt;
+        }
+        RootJournalV2RecoveryResult recovery_result = RootJournalV2RecoveryResult::Clean;
+        const RootJournalV2Status recovery_status = this->v5_journal_.Recover(recovery_result);
+        if (recovery_status != RootJournalV2Status::Succeeded) {
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return recovery_status == RootJournalV2Status::DeviceReadFailed ||
+                           recovery_status == RootJournalV2Status::DeviceWriteFailed ||
+                           recovery_status == RootJournalV2Status::DeviceFlushFailed
+                       ? Status::DeviceFailure
+                       : Status::Corrupt;
+        }
+        if (this->ReadV5Block(0ULL, this->initialization_block_scratch_) != Status::Succeeded ||
+            DecodeRootV5Superblock(this->initialization_block_scratch_,
+                                   OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES,
+                                   this->v5_superblock_) != RootV5FormatStatus::Succeeded ||
+            this->LoadV5GroupDescriptors() != Status::Succeeded) {
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return Status::Corrupt;
+        }
+        this->disk_superblock_ = RootSuperblock{
+            .version = OS_KERNEL_ROOTFS_V5_FORMAT_VERSION,
+            .block_size_bytes = OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES,
+            .total_block_count = this->v5_superblock_.total_block_count,
+            .journal_start_relative_block = journal_start,
+            .journal_block_count = OS_KERNEL_ROOTFS_V5_JOURNAL_BLOCK_COUNT,
+            .inode_bitmap_start_relative_block = 0ULL,
+            .inode_bitmap_block_count = this->v5_superblock_.group_count,
+            .inode_table_start_relative_block = 0ULL,
+            .inode_table_block_count = 0ULL,
+            .data_bitmap_start_relative_block = 0ULL,
+            .data_bitmap_block_count = this->v5_superblock_.group_count,
+            .data_start_relative_block = 0ULL,
+            .data_block_count = this->v5_superblock_.total_block_count,
+            .inode_count = this->v5_superblock_.inode_count,
+            .root_inode_number = this->v5_superblock_.root_inode_number,
+            .maximum_file_size_bytes =
+                this->v5_superblock_.total_block_count * this->v5_superblock_.block_size_bytes,
+            .transaction_state = RootTransactionState::Clean,
+            .transaction_generation = this->v5_journal_.Superblock().journal_generation,
+            .next_inode_generation = this->v5_superblock_.format_generation + 1ULL,
+            .feature_flags = OS_KERNEL_ROOTFS_REQUIRED_FEATURES,
+            .allocated_inode_count =
+                this->v5_superblock_.inode_count - this->v5_superblock_.free_inode_count,
+            .allocated_data_block_count =
+                this->v5_superblock_.total_block_count - this->v5_superblock_.free_block_count,
+            .allocated_metadata_block_count = 0ULL,
+        };
+        if (this->lock_.Initialize(WaitQueueId{
+                .value = OS_KERNEL_ROOTFS_WAIT_QUEUE_IDENTIFIER,
+            }) != RuntimeMutexStatus::Succeeded) {
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return Status::Corrupt;
+        }
+        this->failed_ = false;
+        this->statistics_ = RootFileSystemStatistics{};
+        this->transaction_snapshot_valid_ = false;
+        this->next_data_allocation_hint_ = journal_start + OS_KERNEL_ROOTFS_V5_JOURNAL_BLOCK_COUNT;
+        this->next_inode_allocation_hint_ = OS_KERNEL_ROOTFS_V5_FIRST_USER_INODE_NUMBER - 1ULL;
+        this->last_validated_transaction_generation_ = 0ULL;
+        ClearBytes(reinterpret_cast<uint8_t *>(this->open_counts_), sizeof(this->open_counts_));
+        ClearBytes(reinterpret_cast<uint8_t *>(this->v5_open_references_),
+                   sizeof(this->v5_open_references_));
+        this->initialized_ = true;
+        this->statistics_.transaction_generation =
+            this->v5_journal_.Superblock().journal_generation;
+        this->statistics_.allocated_inode_count = this->disk_superblock_.allocated_inode_count;
+        this->statistics_.allocated_data_block_count =
+            this->disk_superblock_.allocated_data_block_count;
+        this->statistics_.free_data_block_count = this->v5_superblock_.free_block_count;
+        RootInode root_inode{};
+        Status status = this->ReadInode(this->ActiveRootInodeNumber(), root_inode);
+        if (status != Status::Succeeded || root_inode.type != RootNodeType::Directory ||
+            root_inode.parent_inode_number != this->ActiveRootInodeNumber()) {
+            this->initialized_ = false;
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return status == Status::Succeeded ? Status::Corrupt : status;
+        }
+        this->vfs_superblock_ = Superblock{
+            .backend_kind = BackendKind::Root,
+            .identifier = superblock_identifier,
+            .generation = this->statistics_.transaction_generation,
+            .root = {},
+            .operations = &RootFileSystem::operations,
+            .backend_context = this,
+            .maximum_name_length_bytes = OS_KERNEL_ROOTFS_V5_DIRECTORY_MAXIMUM_NAME_LENGTH_BYTES,
+            .cache_regular_file_data = true,
+            .read_only = read_only,
+            .initialized = true,
+        };
+        this->vfs_superblock_.root = this->MakeVnode(this->ActiveRootInodeNumber(), root_inode);
+        if (!read_only) {
+            status = this->ReapV5Orphans();
+            if (status != Status::Succeeded) {
+                this->initialized_ = false;
+                this->vfs_superblock_ = Superblock{};
+                this->device_ = nullptr;
+                this->v5_active_ = false;
+                return status;
+            }
+        }
+        status = this->ValidateUnlocked();
+        if (status != Status::Succeeded) {
+            this->initialized_ = false;
+            this->vfs_superblock_ = Superblock{};
+            this->device_ = nullptr;
+            this->v5_active_ = false;
+            return status;
+        }
+        return Status::Succeeded;
+    }
+    this->v5_active_ = false;
     if (device.ReadBlock(OS_KERNEL_ROOTFS_START_LBA + OS_KERNEL_ROOTFS_SUPERBLOCK_RELATIVE_BLOCK,
-                         this->initialization_block_scratch_,
-                         sizeof(this->initialization_block_scratch_)) !=
+                         this->initialization_block_scratch_, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES) !=
             FileSystemBlockDeviceStatus::Succeeded ||
-        DecodeRootSuperblock(this->initialization_block_scratch_,
-                             sizeof(this->initialization_block_scratch_),
+        DecodeRootSuperblock(this->initialization_block_scratch_, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES,
                              this->disk_superblock_) != RootFormatStatus::Succeeded) {
         this->device_ = nullptr;
         return Status::Corrupt;
@@ -207,8 +516,8 @@ Status RootFileSystem::Initialize(FileSystemBlockDevice &device,
         return status;
     }
     const RootFormatStatus format_status =
-        DecodeRootSuperblock(this->initialization_block_scratch_,
-                             sizeof(this->initialization_block_scratch_), this->disk_superblock_);
+        DecodeRootSuperblock(this->initialization_block_scratch_, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES,
+                             this->disk_superblock_);
     if (format_status != RootFormatStatus::Succeeded) {
         this->cache_.Invalidate();
         this->device_ = nullptr;
@@ -270,8 +579,24 @@ const Superblock &RootFileSystem::GetSuperblock() const noexcept { return this->
 RootFileSystemStatistics RootFileSystem::ReadStatistics() const noexcept {
     RuntimeMutexGuard guard{this->lock_};
     RootFileSystemStatistics statistics = this->statistics_;
-    statistics.cache = this->cache_.Statistics();
-    statistics.journal = this->journal_.Statistics();
+    if (this->v5_active_) {
+        const RootJournalV2Statistics journal_statistics = this->v5_journal_.Statistics();
+        statistics.journal = RootJournalStatistics{
+            .transaction_begin_count = journal_statistics.transaction_begin_count,
+            .transaction_commit_count = journal_statistics.transaction_commit_count,
+            .transaction_abort_count = journal_statistics.transaction_abort_count,
+            .staged_block_count = journal_statistics.metadata_stage_count,
+            .checkpoint_block_count = journal_statistics.checkpoint_block_count,
+            .replay_count = journal_statistics.replay_transaction_count,
+            .discarded_incomplete_count = journal_statistics.discarded_incomplete_count,
+            .checksum_failure_count = journal_statistics.checksum_failure_count,
+            .credit_rejection_count = journal_statistics.capacity_rejection_count,
+            .flush_count = journal_statistics.flush_count,
+        };
+    } else {
+        statistics.cache = this->cache_.Statistics();
+        statistics.journal = this->journal_.Statistics();
+    }
     return statistics;
 }
 
@@ -282,6 +607,9 @@ Status RootFileSystem::ReadRelativeBlock(const uint64_t relative_block,
     }
     if (block == nullptr || relative_block >= this->disk_superblock_.total_block_count) {
         return Status::InvalidArgument;
+    }
+    if (this->v5_active_) {
+        return this->ReadV5Block(relative_block, block);
     }
     if (this->journal_.TryReadStaged(relative_block, block, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES)) {
         return Status::Succeeded;
@@ -299,6 +627,9 @@ Status RootFileSystem::WriteRelativeBlock(const uint64_t relative_block,
     if (block == nullptr || relative_block >= this->disk_superblock_.total_block_count) {
         return Status::InvalidArgument;
     }
+    if (this->v5_active_) {
+        return this->WriteV5Block(relative_block, block);
+    }
     const BlockCacheStatus status = this->cache_.WriteBlock(
         OS_KERNEL_ROOTFS_START_LBA + relative_block, block, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
     return status == BlockCacheStatus::Succeeded ? Status::Succeeded : this->FailDeviceOperation();
@@ -308,6 +639,16 @@ Status RootFileSystem::WriteMetadataBlock(const uint64_t relative_block,
                                           const uint8_t *const block) noexcept {
     if (!this->initialized_ || this->device_ == nullptr) {
         return Status::NotInitialized;
+    }
+    if (this->v5_active_) {
+        const RootJournalV2Status status = this->v5_journal_.StageMetadata(
+            relative_block, block, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+        if (status == RootJournalV2Status::Succeeded) {
+            return Status::Succeeded;
+        }
+        return status == RootJournalV2Status::CapacityExhausted ? Status::CapacityExhausted
+               : status == RootJournalV2Status::InvalidArgument ? Status::InvalidArgument
+                                                                : Status::IncompleteTransaction;
     }
     const RootJournalStatus status =
         this->journal_.Stage(relative_block, block, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
@@ -325,8 +666,16 @@ Status RootFileSystem::StageSuperblock() noexcept {
     if (!this->initialized_ || this->device_ == nullptr) {
         return Status::NotInitialized;
     }
+    if (this->v5_active_) {
+        if (EncodeRootV5Superblock(this->v5_superblock_, this->superblock_block_scratch_,
+                                   OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
+            RootV5FormatStatus::Succeeded) {
+            return Status::Corrupt;
+        }
+        return this->WriteMetadataBlock(0ULL, this->superblock_block_scratch_);
+    }
     if (EncodeRootSuperblock(this->disk_superblock_, this->superblock_block_scratch_,
-                             sizeof(this->superblock_block_scratch_)) !=
+                             OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES) !=
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
@@ -345,7 +694,8 @@ Status RootFileSystem::BeginTransaction() noexcept {
         return Status::ReadOnly;
     }
     if (this->disk_superblock_.transaction_state != RootTransactionState::Clean ||
-        this->disk_superblock_.transaction_generation == UINT64_MAX || this->journal_.IsActive()) {
+        this->disk_superblock_.transaction_generation == UINT64_MAX ||
+        (this->v5_active_ ? this->v5_journal_.IsActive() : this->journal_.IsActive())) {
         return Status::IncompleteTransaction;
     }
     const uint64_t next_sequence =
@@ -354,6 +704,27 @@ Status RootFileSystem::BeginTransaction() noexcept {
     this->transaction_statistics_snapshot_ = this->statistics_;
     this->transaction_data_allocation_hint_snapshot_ = this->next_data_allocation_hint_;
     this->transaction_inode_allocation_hint_snapshot_ = this->next_inode_allocation_hint_;
+    if (this->v5_active_) {
+        this->v5_transaction_superblock_snapshot_ = this->v5_superblock_;
+        for (uint64_t group_index = 0ULL; group_index < this->v5_superblock_.group_count;
+             ++group_index) {
+            this->v5_transaction_group_descriptor_snapshots_[group_index] =
+                this->v5_group_descriptors_[group_index];
+        }
+        const RootJournalV2Status begin_status = this->v5_journal_.Begin(
+            OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_METADATA_BLOCK_COUNT,
+            OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_ORDERED_DATA_BLOCK_COUNT,
+            OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_REVOKE_COUNT);
+        if (begin_status != RootJournalV2Status::Succeeded) {
+            return begin_status == RootJournalV2Status::CapacityExhausted
+                       ? Status::CapacityExhausted
+                       : Status::IncompleteTransaction;
+        }
+        this->transaction_snapshot_valid_ = true;
+        ++this->disk_superblock_.transaction_generation;
+        ++this->v5_superblock_.format_generation;
+        return Status::Succeeded;
+    }
     const RootJournalStatus begin_status =
         this->journal_.Begin(next_sequence, OS_KERNEL_ROOTFS_JOURNAL_MAXIMUM_CREDIT_COUNT);
     if (begin_status != RootJournalStatus::Succeeded) {
@@ -373,7 +744,7 @@ Status RootFileSystem::CommitTransaction() noexcept {
         return Status::DeviceFailure;
     }
     if (this->disk_superblock_.transaction_state != RootTransactionState::Clean ||
-        !this->journal_.IsActive()) {
+        !(this->v5_active_ ? this->v5_journal_.IsActive() : this->journal_.IsActive())) {
         return Status::IncompleteTransaction;
     }
     this->disk_superblock_.allocated_inode_count = this->statistics_.allocated_inode_count;
@@ -385,6 +756,19 @@ Status RootFileSystem::CommitTransaction() noexcept {
     if (status != Status::Succeeded) {
         this->AbortTransaction();
         return status;
+    }
+    if (this->v5_active_) {
+        const RootJournalV2Status commit_status =
+            this->v5_journal_.CommitAndCheckpoint(this->ReadCurrentTimestamp());
+        if (commit_status != RootJournalV2Status::Succeeded) {
+            return this->FailDeviceOperation();
+        }
+        this->statistics_.transaction_generation =
+            this->v5_journal_.Superblock().journal_generation;
+        this->disk_superblock_.transaction_generation =
+            this->statistics_.transaction_generation;
+        this->transaction_snapshot_valid_ = false;
+        return Status::Succeeded;
     }
     // ordered mode 要求普通文件数据先越过设备缓存边界，之后才允许 commit 持久化。
     if (this->cache_.Sync() != BlockCacheStatus::Succeeded) {
@@ -400,7 +784,9 @@ Status RootFileSystem::CommitTransaction() noexcept {
 }
 
 void RootFileSystem::AbortTransaction() noexcept {
-    if (this->journal_.IsActive()) {
+    if (this->v5_active_ && this->v5_journal_.IsActive()) {
+        static_cast<void>(this->v5_journal_.Abort());
+    } else if (this->journal_.IsActive()) {
         static_cast<void>(this->journal_.Abort());
     }
     if (this->transaction_snapshot_valid_) {
@@ -408,6 +794,14 @@ void RootFileSystem::AbortTransaction() noexcept {
         this->statistics_ = this->transaction_statistics_snapshot_;
         this->next_data_allocation_hint_ = this->transaction_data_allocation_hint_snapshot_;
         this->next_inode_allocation_hint_ = this->transaction_inode_allocation_hint_snapshot_;
+        if (this->v5_active_) {
+            this->v5_superblock_ = this->v5_transaction_superblock_snapshot_;
+            for (uint64_t group_index = 0ULL; group_index < this->v5_superblock_.group_count;
+                 ++group_index) {
+                this->v5_group_descriptors_[group_index] =
+                    this->v5_transaction_group_descriptor_snapshots_[group_index];
+            }
+        }
         this->transaction_snapshot_valid_ = false;
     }
 }
@@ -423,6 +817,111 @@ Status RootFileSystem::ReadInode(const uint64_t inode_number, RootInode &inode) 
     if (!this->initialized_ || inode_number == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
         inode_number > this->disk_superblock_.inode_count) {
         return !this->initialized_ ? Status::NotInitialized : Status::InvalidArgument;
+    }
+    if (this->v5_active_) {
+        const uint64_t group_index =
+            (inode_number - 1ULL) / this->v5_superblock_.inodes_per_group;
+        const uint64_t group_offset =
+            (inode_number - 1ULL) % this->v5_superblock_.inodes_per_group;
+        const uint64_t byte_offset = group_offset * this->v5_superblock_.inode_size_bytes;
+        const uint64_t relative_block =
+            this->v5_group_descriptors_[group_index].inode_table_start_block +
+            byte_offset / OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+        const uint64_t block_offset = byte_offset % OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+        const uint8_t *inode_block = this->read_inode_block_scratch_;
+        Status status = Status::Succeeded;
+        if (this->v5_inode_cache_valid_ &&
+            this->v5_inode_cache_relative_block_ == relative_block &&
+            !this->v5_journal_.IsActive()) {
+            inode_block = this->v5_inode_cache_block_;
+        } else {
+            status = this->ReadRelativeBlock(relative_block, this->read_inode_block_scratch_);
+            if (status == Status::Succeeded && !this->v5_journal_.IsActive()) {
+                CopyBytes(this->v5_inode_cache_block_, this->read_inode_block_scratch_,
+                          OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+                this->v5_inode_cache_relative_block_ = relative_block;
+                this->v5_inode_cache_valid_ = true;
+                inode_block = this->v5_inode_cache_block_;
+            }
+        }
+        RootV5Inode disk_inode{};
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        if (DecodeRootV5Inode(this->v5_superblock_, inode_block + block_offset,
+                              this->v5_superblock_.inode_size_bytes,
+                              disk_inode) != RootV5FormatStatus::Succeeded ||
+            disk_inode.inode_number != inode_number) {
+            return Status::Corrupt;
+        }
+        RootNodeType type = RootNodeType::Unused;
+        if (disk_inode.type == RootV5NodeType::RegularFile) {
+            type = RootNodeType::RegularFile;
+        } else if (disk_inode.type == RootV5NodeType::Directory) {
+            type = RootNodeType::Directory;
+        } else if (disk_inode.type == RootV5NodeType::SymbolicLink) {
+            type = RootNodeType::SymbolicLink;
+        }
+        inode = RootInode{
+            .type = type,
+            .flags = disk_inode.flags,
+            .size_bytes = disk_inode.size_bytes,
+            .generation = disk_inode.generation,
+            .link_count = disk_inode.link_count,
+            .allocated_data_block_count = disk_inode.allocated_block_count == 0ULL
+                                              ? 0ULL
+                                              : disk_inode.allocated_block_count - 1ULL,
+            .allocated_metadata_block_count =
+                disk_inode.allocated_block_count == 0ULL ? 0ULL : 1ULL,
+            .parent_inode_number = disk_inode.parent_inode_number,
+            .direct_blocks = {},
+            .single_indirect_block = 0ULL,
+            .double_indirect_block = 0ULL,
+            .triple_indirect_block = 0ULL,
+            .quadruple_indirect_block = 0ULL,
+            .quintuple_indirect_block = 0ULL,
+            .access_time_nanoseconds = disk_inode.access_time_nanoseconds,
+            .modification_time_nanoseconds = disk_inode.modification_time_nanoseconds,
+            .change_time_nanoseconds = disk_inode.change_time_nanoseconds,
+            .birth_time_nanoseconds = disk_inode.birth_time_nanoseconds,
+            .owner_user_identifier = disk_inode.owner_user_identifier,
+            .owner_group_identifier = disk_inode.owner_group_identifier,
+            .mode = disk_inode.mode,
+        };
+        if (disk_inode.allocated_block_count != 0ULL) {
+            RootInodeExtension extension{};
+            if (DecodeRootInodeExtension(disk_inode.mapping_root, sizeof(disk_inode.mapping_root),
+                                         extension) != RootInodeMetadataStatus::Succeeded ||
+                extension.flags != OS_KERNEL_ROOTFS_V5_INODE_EXTENSION_FLAG_EXTENTS) {
+                return Status::Corrupt;
+            }
+            inode.direct_blocks[0] = extension.extent_root_relative_block;
+        }
+        if (inode.type == RootNodeType::Directory && inode.direct_blocks[0] != 0ULL) {
+            RootExtentNode &extent_node = this->v5_extent_scratch_;
+            ClearBytes(reinterpret_cast<uint8_t *>(&extent_node), sizeof(extent_node));
+            status = this->ReadV5ExtentNode(inode, extent_node);
+            if (status != Status::Succeeded || extent_node.entry_count != 1ULL ||
+                extent_node.entries[0].logical_start_block != 0ULL ||
+                extent_node.entries[0].block_count_or_generation != 1ULL) {
+                return status == Status::Succeeded ? Status::Corrupt : status;
+            }
+            status = this->ReadRelativeBlock(extent_node.entries[0].physical_or_child_block,
+                                             this->read_block_scratch_);
+            RootDirectoryBlock &directory = this->v5_directory_scratch_;
+            ClearBytes(reinterpret_cast<uint8_t *>(&directory), sizeof(directory));
+            if (status != Status::Succeeded ||
+                DecodeRootDirectoryBlock(this->read_block_scratch_,
+                                         OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES,
+                                         directory) != RootDirectoryStatus::Succeeded ||
+                directory.directory_inode_number != inode_number ||
+                directory.directory_inode_generation != inode.generation) {
+                return status == Status::Succeeded ? Status::Corrupt : status;
+            }
+            inode.size_bytes =
+                directory.entry_count * OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES;
+        }
+        return type == RootNodeType::Unused ? Status::Corrupt : Status::Succeeded;
     }
     const uint64_t inode_offset_bytes =
         (inode_number - OS_KERNEL_ROOTFS_COUNTER_INCREMENT) * OS_KERNEL_ROOTFS_INODE_SIZE_BYTES;
@@ -445,6 +944,84 @@ Status RootFileSystem::WriteInode(const uint64_t inode_number, const RootInode &
         inode_number > this->disk_superblock_.inode_count) {
         return !this->initialized_ ? Status::NotInitialized : Status::InvalidArgument;
     }
+    if (this->v5_active_) {
+        this->v5_inode_cache_valid_ = false;
+        this->v5_inode_cache_relative_block_ = OS_KERNEL_ROOTFS_V5_NO_BLOCK;
+        const uint64_t group_index =
+            (inode_number - 1ULL) / this->v5_superblock_.inodes_per_group;
+        const uint64_t group_offset =
+            (inode_number - 1ULL) % this->v5_superblock_.inodes_per_group;
+        const uint64_t byte_offset = group_offset * this->v5_superblock_.inode_size_bytes;
+        const uint64_t relative_block =
+            this->v5_group_descriptors_[group_index].inode_table_start_block +
+            byte_offset / OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+        const uint64_t block_offset = byte_offset % OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+        Status status = this->ReadRelativeBlock(relative_block, this->write_inode_block_scratch_);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        if (inode.type == RootNodeType::Unused) {
+            ClearBytes(this->write_inode_block_scratch_ + block_offset,
+                       this->v5_superblock_.inode_size_bytes);
+            return this->WriteMetadataBlock(relative_block, this->write_inode_block_scratch_);
+        }
+        RootV5NodeType type = RootV5NodeType::Unused;
+        if (inode.type == RootNodeType::RegularFile) {
+            type = RootV5NodeType::RegularFile;
+        } else if (inode.type == RootNodeType::Directory) {
+            type = RootV5NodeType::Directory;
+        } else if (inode.type == RootNodeType::SymbolicLink) {
+            type = RootV5NodeType::SymbolicLink;
+        }
+        if (type == RootV5NodeType::Unused) {
+            return Status::Corrupt;
+        }
+        RootV5Inode disk_inode{
+            .inode_number = inode_number,
+            .generation = inode.generation,
+            .type = type,
+            .flags = inode.flags,
+            .size_bytes = inode.type == RootNodeType::Directory && inode.direct_blocks[0] != 0ULL
+                              ? OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES
+                              : inode.size_bytes,
+            .allocated_block_count =
+                inode.allocated_data_block_count + inode.allocated_metadata_block_count,
+            .link_count = inode.link_count,
+            .parent_inode_number = inode.parent_inode_number,
+            .access_time_nanoseconds = inode.access_time_nanoseconds,
+            .modification_time_nanoseconds = inode.modification_time_nanoseconds,
+            .change_time_nanoseconds = inode.change_time_nanoseconds,
+            .birth_time_nanoseconds = inode.birth_time_nanoseconds,
+            .owner_user_identifier = inode.owner_user_identifier,
+            .owner_group_identifier = inode.owner_group_identifier,
+            .mode = inode.mode,
+            .project_identifier = 0U,
+            .mapping_root = {},
+        };
+        if (inode.direct_blocks[0] != 0ULL) {
+            const RootInodeExtension extension{
+                .flags = OS_KERNEL_ROOTFS_V5_INODE_EXTENSION_FLAG_EXTENTS,
+                .extent_root_relative_block = inode.direct_blocks[0],
+                .xattr_relative_block = 0ULL,
+                .directory_index_root_relative_block = 0ULL,
+                .project_identifier = 0ULL,
+                .acl_generation = 0ULL,
+                .quota_generation = 0ULL,
+            };
+            if (EncodeRootInodeExtension(extension, disk_inode.mapping_root,
+                                         sizeof(disk_inode.mapping_root)) !=
+                RootInodeMetadataStatus::Succeeded) {
+                return Status::Corrupt;
+            }
+        }
+        if (EncodeRootV5Inode(this->v5_superblock_, disk_inode,
+                              this->write_inode_block_scratch_ + block_offset,
+                              this->v5_superblock_.inode_size_bytes) !=
+            RootV5FormatStatus::Succeeded) {
+            return Status::Corrupt;
+        }
+        return this->WriteMetadataBlock(relative_block, this->write_inode_block_scratch_);
+    }
     const uint64_t inode_offset_bytes =
         (inode_number - OS_KERNEL_ROOTFS_COUNTER_INCREMENT) * OS_KERNEL_ROOTFS_INODE_SIZE_BYTES;
     const uint64_t relative_block = this->disk_superblock_.inode_table_start_relative_block +
@@ -462,6 +1039,40 @@ Status RootFileSystem::WriteInode(const uint64_t inode_number, const RootInode &
     return status;
 }
 
+Status RootFileSystem::ReadV5ExtentNode(const RootInode &inode,
+                                        RootExtentNode &node) noexcept {
+    ClearBytes(reinterpret_cast<uint8_t *>(&node), sizeof(node));
+    if (!this->v5_active_ || inode.direct_blocks[0] == 0ULL) {
+        return Status::InvalidArgument;
+    }
+    const Status status =
+        this->ReadRelativeBlock(inode.direct_blocks[0], this->read_pointer_block_scratch_);
+    if (status != Status::Succeeded) {
+        return status;
+    }
+    return DecodeRootExtentLeafNode(this->v5_journal_.Superblock(),
+                                    this->read_pointer_block_scratch_,
+                                    OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES,
+                                    node) == RootExtentStatus::Succeeded
+               ? Status::Succeeded
+               : Status::Corrupt;
+}
+
+Status RootFileSystem::WriteV5ExtentNode(const RootInode &inode,
+                                         const RootExtentNode &node) noexcept {
+    if (!this->v5_active_ || inode.direct_blocks[0] == 0ULL) {
+        return Status::InvalidArgument;
+    }
+    if (EncodeRootExtentLeafNode(this->v5_journal_.Superblock(), node,
+                                 this->write_pointer_block_scratch_,
+                                 OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
+        RootExtentStatus::Succeeded) {
+        return Status::Corrupt;
+    }
+    return this->WriteMetadataBlock(inode.direct_blocks[0],
+                                    this->write_pointer_block_scratch_);
+}
+
 Status RootFileSystem::ReadPointerBlock(const uint64_t relative_block,
                                         RootPointerBlock &pointer_block) noexcept {
     pointer_block = RootPointerBlock{};
@@ -475,7 +1086,7 @@ Status RootFileSystem::ReadPointerBlock(const uint64_t relative_block,
         return status;
     }
     return DecodeRootPointerBlock(this->read_pointer_block_scratch_,
-                                  sizeof(this->read_pointer_block_scratch_),
+                                  OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES,
                                   pointer_block) == RootFormatStatus::Succeeded
                ? Status::Succeeded
                : Status::Corrupt;
@@ -488,7 +1099,7 @@ Status RootFileSystem::WritePointerBlock(const uint64_t relative_block,
         return Status::Corrupt;
     }
     if (EncodeRootPointerBlock(pointer_block, this->write_pointer_block_scratch_,
-                               sizeof(this->write_pointer_block_scratch_)) !=
+                               OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES) !=
         RootFormatStatus::Succeeded) {
         return Status::Corrupt;
     }
@@ -502,6 +1113,30 @@ Status RootFileSystem::ReadBitmapBit(const bool inode_bitmap, const uint64_t bit
         inode_bitmap ? this->disk_superblock_.inode_count : this->disk_superblock_.data_block_count;
     if (bit_index >= bit_count) {
         return Status::InvalidArgument;
+    }
+    if (this->v5_active_) {
+        const uint64_t group_index =
+            inode_bitmap ? bit_index / this->v5_superblock_.inodes_per_group
+                         : bit_index / this->v5_superblock_.blocks_per_group;
+        if (group_index >= this->v5_superblock_.group_count) {
+            return Status::InvalidArgument;
+        }
+        const RootV5GroupDescriptor &descriptor = this->v5_group_descriptors_[group_index];
+        const uint64_t local_bit =
+            inode_bitmap ? bit_index % this->v5_superblock_.inodes_per_group
+                         : bit_index - descriptor.first_block;
+        if (local_bit >= (inode_bitmap ? descriptor.inode_count : descriptor.block_count)) {
+            return Status::InvalidArgument;
+        }
+        const uint64_t bitmap_block =
+            inode_bitmap ? descriptor.inode_bitmap_block : descriptor.block_bitmap_block;
+        const Status status =
+            this->ReadRelativeBlock(bitmap_block, this->read_bitmap_block_scratch_);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        allocated = BitmapBitIsSet(this->read_bitmap_block_scratch_, local_bit);
+        return Status::Succeeded;
     }
     const uint64_t bits_per_block =
         OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES * OS_KERNEL_ROOTFS_BITS_PER_BYTE;
@@ -524,6 +1159,66 @@ Status RootFileSystem::WriteBitmapBit(const bool inode_bitmap, const uint64_t bi
         inode_bitmap ? this->disk_superblock_.inode_count : this->disk_superblock_.data_block_count;
     if (bit_index >= bit_count) {
         return Status::InvalidArgument;
+    }
+    if (this->v5_active_) {
+        const uint64_t group_index =
+            inode_bitmap ? bit_index / this->v5_superblock_.inodes_per_group
+                         : bit_index / this->v5_superblock_.blocks_per_group;
+        if (group_index >= this->v5_superblock_.group_count) {
+            return Status::InvalidArgument;
+        }
+        RootV5GroupDescriptor &descriptor = this->v5_group_descriptors_[group_index];
+        const uint64_t local_bit =
+            inode_bitmap ? bit_index % this->v5_superblock_.inodes_per_group
+                         : bit_index - descriptor.first_block;
+        if (local_bit >= (inode_bitmap ? descriptor.inode_count : descriptor.block_count)) {
+            return Status::InvalidArgument;
+        }
+        const uint64_t bitmap_block =
+            inode_bitmap ? descriptor.inode_bitmap_block : descriptor.block_bitmap_block;
+        Status status =
+            this->ReadRelativeBlock(bitmap_block, this->write_bitmap_block_scratch_);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        const bool was_allocated =
+            BitmapBitIsSet(this->write_bitmap_block_scratch_, local_bit);
+        if (was_allocated == allocated) {
+            return Status::Succeeded;
+        }
+        SetBitmapBit(this->write_bitmap_block_scratch_, local_bit, allocated);
+        if (inode_bitmap) {
+            if (allocated) {
+                if (descriptor.free_inode_count == 0ULL ||
+                    this->v5_superblock_.free_inode_count == 0ULL) {
+                    return Status::Corrupt;
+                }
+                --descriptor.free_inode_count;
+                --this->v5_superblock_.free_inode_count;
+            } else {
+                ++descriptor.free_inode_count;
+                ++this->v5_superblock_.free_inode_count;
+            }
+            descriptor.inode_bitmap_checksum = CalculateRootV5Crc32c(
+                this->write_bitmap_block_scratch_, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+        } else {
+            if (allocated) {
+                if (descriptor.free_block_count == 0ULL ||
+                    this->v5_superblock_.free_block_count == 0ULL) {
+                    return Status::Corrupt;
+                }
+                --descriptor.free_block_count;
+                --this->v5_superblock_.free_block_count;
+            } else {
+                ++descriptor.free_block_count;
+                ++this->v5_superblock_.free_block_count;
+            }
+            descriptor.block_bitmap_checksum = CalculateRootV5Crc32c(
+                this->write_bitmap_block_scratch_, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+        }
+        ++descriptor.metadata_generation;
+        status = this->WriteMetadataBlock(bitmap_block, this->write_bitmap_block_scratch_);
+        return status == Status::Succeeded ? this->StageV5GroupDescriptor(group_index) : status;
     }
     const uint64_t bits_per_block =
         OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES * OS_KERNEL_ROOTFS_BITS_PER_BYTE;
@@ -548,6 +1243,21 @@ Status RootFileSystem::FindFreeBitmapBit(const bool inode_bitmap, const uint64_t
         inode_bitmap ? this->disk_superblock_.inode_count : this->disk_superblock_.data_block_count;
     if (first_bit > available_bit_count || bit_count > available_bit_count - first_bit) {
         return Status::InvalidArgument;
+    }
+    if (this->v5_active_) {
+        const uint64_t end_bit = first_bit + bit_count;
+        for (uint64_t current_bit = first_bit; current_bit < end_bit; ++current_bit) {
+            bool allocated = false;
+            const Status status = this->ReadBitmapBit(inode_bitmap, current_bit, allocated);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            if (!allocated) {
+                bit_index = current_bit;
+                return Status::Succeeded;
+            }
+        }
+        return Status::CapacityExhausted;
     }
     const uint64_t bits_per_block =
         OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES * OS_KERNEL_ROOTFS_BITS_PER_BYTE;
@@ -581,6 +1291,51 @@ Status RootFileSystem::AllocateDataBlock(uint64_t &relative_block) noexcept {
     if (this->statistics_.free_data_block_count == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
         return Status::CapacityExhausted;
     }
+    if (this->v5_active_) {
+        uint64_t start_group =
+            this->next_data_allocation_hint_ / this->v5_superblock_.blocks_per_group;
+        if (start_group >= this->v5_superblock_.group_count) {
+            start_group = 0ULL;
+        }
+        for (uint64_t group_offset = 0ULL; group_offset < this->v5_superblock_.group_count;
+             ++group_offset) {
+            const uint64_t group_index =
+                (start_group + group_offset) % this->v5_superblock_.group_count;
+            const RootV5GroupDescriptor &descriptor =
+                this->v5_group_descriptors_[group_index];
+            if (descriptor.free_block_count == 0ULL) {
+                continue;
+            }
+            Status status = this->ReadRelativeBlock(descriptor.block_bitmap_block,
+                                                    this->find_bitmap_block_scratch_);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            for (uint64_t candidate = descriptor.data_start_block;
+                 candidate < descriptor.first_block + descriptor.block_count; ++candidate) {
+                const uint64_t local_bit = candidate - descriptor.first_block;
+                if (BitmapBitIsSet(this->find_bitmap_block_scratch_, local_bit)) {
+                    continue;
+                }
+                status = this->WriteBitmapBit(false, candidate, true);
+                if (status != Status::Succeeded) {
+                    return status;
+                }
+                relative_block = candidate;
+                ClearBytes(this->allocate_data_block_scratch_,
+                           OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+                status = this->WriteV5Block(relative_block,
+                                            this->allocate_data_block_scratch_);
+                if (status != Status::Succeeded) {
+                    return status;
+                }
+                --this->statistics_.free_data_block_count;
+                this->next_data_allocation_hint_ = candidate + 1ULL;
+                return Status::Succeeded;
+            }
+        }
+        return Status::CapacityExhausted;
+    }
     uint64_t search_start = this->next_data_allocation_hint_;
     if (search_start >= this->disk_superblock_.data_block_count) {
         search_start = OS_KERNEL_ROOTFS_FIRST_INDEX;
@@ -600,7 +1355,7 @@ Status RootFileSystem::AllocateDataBlock(uint64_t &relative_block) noexcept {
         return status;
     }
     relative_block = this->disk_superblock_.data_start_relative_block + bit_index;
-    ClearBytes(this->allocate_data_block_scratch_, sizeof(this->allocate_data_block_scratch_));
+    ClearBytes(this->allocate_data_block_scratch_, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
     status = this->WriteRelativeBlock(relative_block, this->allocate_data_block_scratch_);
     if (status != Status::Succeeded) {
         return status;
@@ -617,6 +1372,30 @@ Status RootFileSystem::AllocateDataBlock(uint64_t &relative_block) noexcept {
 }
 
 Status RootFileSystem::ReleaseDataBlock(const uint64_t relative_block) noexcept {
+    if (this->v5_active_) {
+        if (relative_block >= this->v5_superblock_.total_block_count) {
+            return Status::Corrupt;
+        }
+        const uint64_t group_index =
+            relative_block / this->v5_superblock_.blocks_per_group;
+        if (group_index >= this->v5_superblock_.group_count ||
+            relative_block < this->v5_group_descriptors_[group_index].data_start_block) {
+            return Status::Corrupt;
+        }
+        bool allocated = false;
+        Status status = this->ReadBitmapBit(false, relative_block, allocated);
+        if (status != Status::Succeeded || !allocated) {
+            return status == Status::Succeeded ? Status::Corrupt : status;
+        }
+        status = this->WriteBitmapBit(false, relative_block, false);
+        if (status == Status::Succeeded) {
+            ++this->statistics_.free_data_block_count;
+            if (relative_block < this->next_data_allocation_hint_) {
+                this->next_data_allocation_hint_ = relative_block;
+            }
+        }
+        return status;
+    }
     if (relative_block < this->disk_superblock_.data_start_relative_block ||
         relative_block >= this->disk_superblock_.total_block_count) {
         return Status::Corrupt;
@@ -644,18 +1423,20 @@ Status RootFileSystem::ReleaseDataBlock(const uint64_t relative_block) noexcept 
 Status RootFileSystem::AllocateInodeNumber(uint64_t &inode_number) noexcept {
     inode_number = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     uint64_t search_start = this->next_inode_allocation_hint_;
-    if (search_start < OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT ||
+    const uint64_t first_allocatable_bit =
+        this->v5_active_ ? OS_KERNEL_ROOTFS_V5_FIRST_USER_INODE_NUMBER - 1ULL
+                         : OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT;
+    if (search_start < first_allocatable_bit ||
         search_start >= this->disk_superblock_.inode_count) {
-        search_start = OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT;
+        search_start = first_allocatable_bit;
     }
     uint64_t bit_index = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     Status find_status = this->FindFreeBitmapBit(
         true, search_start, this->disk_superblock_.inode_count - search_start, bit_index);
     if (find_status == Status::CapacityExhausted &&
-        search_start > OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT) {
+        search_start > first_allocatable_bit) {
         find_status = this->FindFreeBitmapBit(
-            true, OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT,
-            search_start - OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT, bit_index);
+            true, first_allocatable_bit, search_start - first_allocatable_bit, bit_index);
     }
     if (find_status != Status::Succeeded) {
         return find_status;
@@ -668,13 +1449,13 @@ Status RootFileSystem::AllocateInodeNumber(uint64_t &inode_number) noexcept {
     ++this->statistics_.allocated_inode_count;
     this->next_inode_allocation_hint_ = bit_index + OS_KERNEL_ROOTFS_COUNTER_INCREMENT;
     if (this->next_inode_allocation_hint_ >= this->disk_superblock_.inode_count) {
-        this->next_inode_allocation_hint_ = OS_KERNEL_ROOTFS_FIRST_ALLOCATABLE_INODE_BITMAP_BIT;
+        this->next_inode_allocation_hint_ = first_allocatable_bit;
     }
     return Status::Succeeded;
 }
 
 Status RootFileSystem::ReleaseInodeNumber(const uint64_t inode_number) noexcept {
-    if (inode_number <= OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER ||
+    if (inode_number <= this->ActiveRootInodeNumber() ||
         inode_number > this->disk_superblock_.inode_count ||
         this->statistics_.allocated_inode_count <= OS_KERNEL_ROOTFS_COUNTER_INCREMENT) {
         return Status::Corrupt;
@@ -696,9 +1477,30 @@ Status RootFileSystem::RequiredBlocksForLogicalBlock(const RootInode &inode,
                                                      uint64_t &required_block_count) noexcept {
     required_block_count = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     const uint64_t maximum_logical_block_count =
-        this->disk_superblock_.maximum_file_size_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        this->disk_superblock_.maximum_file_size_bytes / this->ActiveBlockSizeBytes();
     if (logical_block >= maximum_logical_block_count) {
         return Status::FileTooLarge;
+    }
+    if (this->v5_active_) {
+        if (inode.direct_blocks[0] == 0ULL) {
+            required_block_count = 2ULL;
+            return Status::Succeeded;
+        }
+        RootExtentNode &node = this->v5_extent_scratch_;
+        ClearBytes(reinterpret_cast<uint8_t *>(&node), sizeof(node));
+        const Status status = this->ReadV5ExtentNode(inode, node);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        for (uint64_t entry_index = 0ULL; entry_index < node.entry_count; ++entry_index) {
+            const RootExtentNodeEntry &entry = node.entries[entry_index];
+            if (logical_block >= entry.logical_start_block &&
+                logical_block - entry.logical_start_block < entry.block_count_or_generation) {
+                return Status::Succeeded;
+            }
+        }
+        required_block_count = 1ULL;
+        return Status::Succeeded;
     }
     if (logical_block < OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT) {
         required_block_count = inode.direct_blocks[logical_block] == OS_KERNEL_ROOTFS_EMPTY_VALUE
@@ -766,9 +1568,97 @@ Status RootFileSystem::ResolveDataBlock(RootInode &inode, const uint64_t logical
                                         const bool allocate, uint64_t &relative_block) noexcept {
     relative_block = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     const uint64_t maximum_logical_block_count =
-        this->disk_superblock_.maximum_file_size_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        this->disk_superblock_.maximum_file_size_bytes / this->ActiveBlockSizeBytes();
     if (logical_block >= maximum_logical_block_count) {
         return Status::FileTooLarge;
+    }
+    if (this->v5_active_) {
+        RootExtentNode &node = this->v5_extent_scratch_;
+        ClearBytes(reinterpret_cast<uint8_t *>(&node), sizeof(node));
+        if (inode.direct_blocks[0] == 0ULL) {
+            if (!allocate) {
+                return Status::Succeeded;
+            }
+            if (this->active_mapping_inode_number_ == 0ULL) {
+                return Status::Corrupt;
+            }
+            Status status = this->AllocateDataBlock(inode.direct_blocks[0]);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            ++inode.allocated_metadata_block_count;
+            ++this->statistics_.allocated_metadata_block_count;
+            node.tree_generation = 1ULL;
+            node.inode_number = this->active_mapping_inode_number_;
+            node.inode_generation = inode.generation;
+            node.file_system_uuid = this->v5_superblock_.uuid;
+        } else {
+            const Status status = this->ReadV5ExtentNode(inode, node);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+        }
+        for (uint64_t entry_index = 0ULL; entry_index < node.entry_count; ++entry_index) {
+            const RootExtentNodeEntry &entry = node.entries[entry_index];
+            if (logical_block >= entry.logical_start_block &&
+                logical_block - entry.logical_start_block < entry.block_count_or_generation) {
+                relative_block = entry.physical_or_child_block +
+                                 logical_block - entry.logical_start_block;
+                return Status::Succeeded;
+            }
+        }
+        if (!allocate) {
+            return Status::Succeeded;
+        }
+        uint64_t data_block = 0ULL;
+        Status status = this->AllocateDataBlock(data_block);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        uint64_t insert_index = 0ULL;
+        while (insert_index < node.entry_count &&
+               node.entries[insert_index].logical_start_block < logical_block) {
+            ++insert_index;
+        }
+        if (insert_index > 0ULL) {
+            RootExtentNodeEntry &previous = node.entries[insert_index - 1ULL];
+            if (previous.logical_start_block + previous.block_count_or_generation ==
+                    logical_block &&
+                previous.physical_or_child_block + previous.block_count_or_generation ==
+                    data_block &&
+                previous.state_or_covered_block_count ==
+                    static_cast<uint64_t>(RootExtentState::Initialized)) {
+                ++previous.block_count_or_generation;
+                status = this->WriteV5ExtentNode(inode, node);
+                if (status == Status::Succeeded) {
+                    relative_block = data_block;
+                    ++inode.allocated_data_block_count;
+                    ++this->statistics_.allocated_data_block_count;
+                }
+                return status;
+            }
+        }
+        if (node.entry_count >= OS_KERNEL_ROOTFS_V5_EXTENT_NODE_ENTRY_CAPACITY) {
+            return Status::FileTooLarge;
+        }
+        for (uint64_t move_index = node.entry_count; move_index > insert_index; --move_index) {
+            node.entries[move_index] = node.entries[move_index - 1ULL];
+        }
+        node.entries[insert_index] = RootExtentNodeEntry{
+            .logical_start_block = logical_block,
+            .physical_or_child_block = data_block,
+            .block_count_or_generation = 1ULL,
+            .state_or_covered_block_count =
+                static_cast<uint64_t>(RootExtentState::Initialized),
+        };
+        ++node.entry_count;
+        status = this->WriteV5ExtentNode(inode, node);
+        if (status == Status::Succeeded) {
+            relative_block = data_block;
+            ++inode.allocated_data_block_count;
+            ++this->statistics_.allocated_data_block_count;
+        }
+        return status;
     }
     if (logical_block < OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT) {
         uint64_t &direct_block = inode.direct_blocks[logical_block];
@@ -888,6 +1778,9 @@ Status RootFileSystem::ResolveIndirectDataBlock(uint64_t &root_block, const uint
 
 Status RootFileSystem::ReleaseLogicalBlock(RootInode &inode,
                                            const uint64_t logical_block) noexcept {
+    if (this->v5_active_) {
+        return this->ReleaseLogicalBlockRange(inode, logical_block, logical_block + 1ULL);
+    }
     if (logical_block < OS_KERNEL_ROOTFS_DIRECT_BLOCK_COUNT) {
         uint64_t &direct_block = inode.direct_blocks[logical_block];
         if (direct_block == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
@@ -1004,12 +1897,83 @@ Status RootFileSystem::ReleaseLogicalBlockRange(RootInode &inode,
                                                 const uint64_t first_logical_block,
                                                 const uint64_t past_last_logical_block) noexcept {
     const uint64_t maximum_logical_block_count =
-        this->disk_superblock_.maximum_file_size_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        this->disk_superblock_.maximum_file_size_bytes / this->ActiveBlockSizeBytes();
     if (first_logical_block > past_last_logical_block ||
         past_last_logical_block > maximum_logical_block_count) {
         return Status::InvalidArgument;
     }
     if (first_logical_block == past_last_logical_block) {
+        return Status::Succeeded;
+    }
+    if (this->v5_active_) {
+        if (inode.direct_blocks[0] == 0ULL) {
+            return Status::Succeeded;
+        }
+        RootExtentNode &node = this->v5_extent_scratch_;
+        ClearBytes(reinterpret_cast<uint8_t *>(&node), sizeof(node));
+        Status status = this->ReadV5ExtentNode(inode, node);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        RootExtentNode &updated = this->v5_extent_secondary_scratch_;
+        CopyBytes(reinterpret_cast<uint8_t *>(&updated),
+                  reinterpret_cast<const uint8_t *>(&node), sizeof(node));
+        updated.entry_count = 0ULL;
+        for (uint64_t entry_index = 0ULL; entry_index < node.entry_count; ++entry_index) {
+            const RootExtentNodeEntry &entry = node.entries[entry_index];
+            const uint64_t entry_end =
+                entry.logical_start_block + entry.block_count_or_generation;
+            const uint64_t release_start = entry.logical_start_block < first_logical_block
+                                               ? first_logical_block
+                                               : entry.logical_start_block;
+            const uint64_t release_end = entry_end < past_last_logical_block
+                                             ? entry_end
+                                             : past_last_logical_block;
+            if (release_start >= release_end) {
+                updated.entries[updated.entry_count++] = entry;
+                continue;
+            }
+            if (entry.logical_start_block < release_start) {
+                updated.entries[updated.entry_count++] = RootExtentNodeEntry{
+                    .logical_start_block = entry.logical_start_block,
+                    .physical_or_child_block = entry.physical_or_child_block,
+                    .block_count_or_generation = release_start - entry.logical_start_block,
+                    .state_or_covered_block_count = entry.state_or_covered_block_count,
+                };
+            }
+            for (uint64_t logical_block = release_start; logical_block < release_end;
+                 ++logical_block) {
+                status = this->ReleaseDataBlock(
+                    entry.physical_or_child_block + logical_block - entry.logical_start_block);
+                if (status != Status::Succeeded || inode.allocated_data_block_count == 0ULL ||
+                    this->statistics_.allocated_data_block_count == 0ULL) {
+                    return status == Status::Succeeded ? Status::Corrupt : status;
+                }
+                --inode.allocated_data_block_count;
+                --this->statistics_.allocated_data_block_count;
+            }
+            if (release_end < entry_end) {
+                updated.entries[updated.entry_count++] = RootExtentNodeEntry{
+                    .logical_start_block = release_end,
+                    .physical_or_child_block =
+                        entry.physical_or_child_block + release_end - entry.logical_start_block,
+                    .block_count_or_generation = entry_end - release_end,
+                    .state_or_covered_block_count = entry.state_or_covered_block_count,
+                };
+            }
+        }
+        if (updated.entry_count != 0ULL) {
+            return this->WriteV5ExtentNode(inode, updated);
+        }
+        const uint64_t extent_root = inode.direct_blocks[0];
+        status = this->ReleaseDataBlock(extent_root);
+        if (status != Status::Succeeded || inode.allocated_metadata_block_count == 0ULL ||
+            this->statistics_.allocated_metadata_block_count == 0ULL) {
+            return status == Status::Succeeded ? Status::Corrupt : status;
+        }
+        inode.direct_blocks[0] = 0ULL;
+        --inode.allocated_metadata_block_count;
+        --this->statistics_.allocated_metadata_block_count;
         return Status::Succeeded;
     }
 
@@ -1195,13 +2159,14 @@ Status RootFileSystem::ReadFileBytes(RootInode &inode, const uint64_t offset_byt
         return Status::Succeeded;
     }
     read_bytes = Minimum(capacity_bytes, inode.size_bytes - offset_bytes);
+    const uint64_t block_size_bytes = this->ActiveBlockSizeBytes();
     uint64_t copied_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     while (copied_bytes < read_bytes) {
         const uint64_t absolute_offset = offset_bytes + copied_bytes;
-        const uint64_t logical_block = absolute_offset / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
-        const uint64_t block_offset_bytes = absolute_offset % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        const uint64_t logical_block = absolute_offset / block_size_bytes;
+        const uint64_t block_offset_bytes = absolute_offset % block_size_bytes;
         const uint64_t chunk_bytes = Minimum(
-            read_bytes - copied_bytes, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES - block_offset_bytes);
+            read_bytes - copied_bytes, block_size_bytes - block_offset_bytes);
         uint64_t relative_block = OS_KERNEL_ROOTFS_EMPTY_VALUE;
         Status status = this->ResolveDataBlock(inode, logical_block, false, relative_block);
         if (status != Status::Succeeded) {
@@ -1234,7 +2199,7 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
                                                    uint64_t &written_bytes) noexcept {
     written_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     if ((source == nullptr && length_bytes != OS_KERNEL_ROOTFS_EMPTY_VALUE) ||
-        !this->journal_.IsActive()) {
+        !(this->v5_active_ ? this->v5_journal_.IsActive() : this->journal_.IsActive())) {
         return Status::InvalidArgument;
     }
     if (length_bytes == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
@@ -1245,12 +2210,14 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
         return Status::FileTooLarge;
     }
 
+    this->active_mapping_inode_number_ = inode_number;
+    const uint64_t block_size_bytes = this->ActiveBlockSizeBytes();
     while (written_bytes < length_bytes) {
         const uint64_t absolute_offset = offset_bytes + written_bytes;
-        const uint64_t logical_block = absolute_offset / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
-        const uint64_t block_offset_bytes = absolute_offset % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        const uint64_t logical_block = absolute_offset / block_size_bytes;
+        const uint64_t block_offset_bytes = absolute_offset % block_size_bytes;
         const uint64_t chunk_bytes = Minimum(
-            length_bytes - written_bytes, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES - block_offset_bytes);
+            length_bytes - written_bytes, block_size_bytes - block_offset_bytes);
         uint64_t required_block_count = OS_KERNEL_ROOTFS_EMPTY_VALUE;
         Status status =
             this->RequiredBlocksForLogicalBlock(inode, logical_block, required_block_count);
@@ -1275,9 +2242,20 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
         }
         CopyBytes(this->write_block_scratch_ + block_offset_bytes, source + written_bytes,
                   chunk_bytes);
-        status = metadata_content
-                     ? this->WriteMetadataBlock(relative_block, this->write_block_scratch_)
-                     : this->WriteRelativeBlock(relative_block, this->write_block_scratch_);
+        if (metadata_content) {
+            status = this->WriteMetadataBlock(relative_block, this->write_block_scratch_);
+        } else if (this->v5_active_) {
+            const RootJournalV2Status journal_status = this->v5_journal_.StageOrderedData(
+                relative_block, this->write_block_scratch_,
+                OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+            status = journal_status == RootJournalV2Status::Succeeded
+                         ? Status::Succeeded
+                     : journal_status == RootJournalV2Status::CapacityExhausted
+                         ? Status::CapacityExhausted
+                         : Status::IncompleteTransaction;
+        } else {
+            status = this->WriteRelativeBlock(relative_block, this->write_block_scratch_);
+        }
         if (status != Status::Succeeded) {
             return status;
         }
@@ -1292,12 +2270,13 @@ Status RootFileSystem::WriteFileBytesInTransaction(const uint64_t inode_number, 
         return inode_status;
     }
     this->statistics_.bytes_written += written_bytes;
+    this->active_mapping_inode_number_ = 0ULL;
     return Status::Succeeded;
 }
 
 Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootInode &inode,
                                              const uint64_t size_bytes) noexcept {
-    if (!this->journal_.IsActive()) {
+    if (!(this->v5_active_ ? this->v5_journal_.IsActive() : this->journal_.IsActive())) {
         return Status::InvalidArgument;
     }
     if (inode.type == RootNodeType::Directory &&
@@ -1310,13 +2289,13 @@ Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootIn
     if (size_bytes == inode.size_bytes) {
         return Status::Succeeded;
     }
-    const uint64_t old_logical_block_count =
-        DivideRoundUp(inode.size_bytes, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
-    const uint64_t new_logical_block_count =
-        DivideRoundUp(size_bytes, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
+    this->active_mapping_inode_number_ = inode_number;
+    const uint64_t block_size_bytes = this->ActiveBlockSizeBytes();
+    const uint64_t old_logical_block_count = DivideRoundUp(inode.size_bytes, block_size_bytes);
+    const uint64_t new_logical_block_count = DivideRoundUp(size_bytes, block_size_bytes);
     if (size_bytes < inode.size_bytes &&
-        size_bytes % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES != OS_KERNEL_ROOTFS_EMPTY_VALUE) {
-        const uint64_t tail_logical_block = size_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        size_bytes % block_size_bytes != OS_KERNEL_ROOTFS_EMPTY_VALUE) {
+        const uint64_t tail_logical_block = size_bytes / block_size_bytes;
         uint64_t tail_relative_block = OS_KERNEL_ROOTFS_EMPTY_VALUE;
         Status status =
             this->ResolveDataBlock(inode, tail_logical_block, false, tail_relative_block);
@@ -1328,13 +2307,23 @@ Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootIn
             if (status != Status::Succeeded) {
                 return status;
             }
-            const uint64_t block_offset_bytes = size_bytes % OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+            const uint64_t block_offset_bytes = size_bytes % block_size_bytes;
             ClearBytes(this->truncate_block_scratch_ + block_offset_bytes,
-                       OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES - block_offset_bytes);
-            status =
-                inode.type == RootNodeType::Directory
-                    ? this->WriteMetadataBlock(tail_relative_block, this->truncate_block_scratch_)
-                    : this->WriteRelativeBlock(tail_relative_block, this->truncate_block_scratch_);
+                       block_size_bytes - block_offset_bytes);
+            if (inode.type == RootNodeType::Directory) {
+                status = this->WriteMetadataBlock(tail_relative_block,
+                                                  this->truncate_block_scratch_);
+            } else if (this->v5_active_) {
+                status = this->v5_journal_.StageOrderedData(
+                             tail_relative_block, this->truncate_block_scratch_,
+                             OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) ==
+                                 RootJournalV2Status::Succeeded
+                             ? Status::Succeeded
+                             : Status::IncompleteTransaction;
+            } else {
+                status =
+                    this->WriteRelativeBlock(tail_relative_block, this->truncate_block_scratch_);
+            }
             if (status != Status::Succeeded) {
                 return status;
             }
@@ -1348,7 +2337,9 @@ Status RootFileSystem::TruncateInTransaction(const uint64_t inode_number, RootIn
         }
     }
     inode.size_bytes = size_bytes;
-    return this->WriteInode(inode_number, inode);
+    const Status status = this->WriteInode(inode_number, inode);
+    this->active_mapping_inode_number_ = 0ULL;
+    return status;
 }
 
 Status RootFileSystem::ReadDirectoryEntryAt(RootInode &directory, const uint64_t offset_bytes,
@@ -1357,6 +2348,32 @@ Status RootFileSystem::ReadDirectoryEntryAt(RootInode &directory, const uint64_t
     if (directory.type != RootNodeType::Directory || offset_bytes > directory.size_bytes ||
         directory.size_bytes - offset_bytes < OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES) {
         return Status::InvalidArgument;
+    }
+    if (this->v5_active_) {
+        const Status status =
+            this->ReadV5DirectoryBlock(directory, this->v5_directory_scratch_);
+        const uint64_t entry_index = offset_bytes / OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES;
+        if (status != Status::Succeeded ||
+            entry_index >= this->v5_directory_scratch_.entry_count) {
+            return status == Status::Succeeded ? Status::Corrupt : status;
+        }
+        const RootDirectoryEntryV2 &disk_entry =
+            this->v5_directory_scratch_.entries[entry_index];
+        entry = RootDirectoryEntry{
+            .inode_number = disk_entry.inode_number,
+            .inode_generation = disk_entry.inode_generation,
+            .type = disk_entry.type == RootV5NodeType::RegularFile
+                        ? RootNodeType::RegularFile
+                    : disk_entry.type == RootV5NodeType::Directory
+                        ? RootNodeType::Directory
+                    : disk_entry.type == RootV5NodeType::SymbolicLink
+                        ? RootNodeType::SymbolicLink
+                        : RootNodeType::Unused,
+            .name_length_bytes = disk_entry.name_length_bytes,
+            .name = {},
+        };
+        CopyBytes(entry.name, disk_entry.name, disk_entry.name_length_bytes);
+        return entry.type == RootNodeType::Unused ? Status::Corrupt : Status::Succeeded;
     }
     uint8_t encoded[OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES]{};
     uint64_t read_bytes = OS_KERNEL_ROOTFS_EMPTY_VALUE;
@@ -1380,6 +2397,95 @@ Status RootFileSystem::WriteDirectoryEntryAt(const uint64_t directory_inode_numb
             OS_KERNEL_ROOTFS_EMPTY_VALUE) {
         return Status::InvalidArgument;
     }
+    if (this->v5_active_) {
+        RootDirectoryBlock &block = this->v5_directory_scratch_;
+        ClearBytes(reinterpret_cast<uint8_t *>(&block), sizeof(block));
+        Status status = Status::Succeeded;
+        if (directory.direct_blocks[0] == 0ULL) {
+            block.directory_inode_number = directory_inode_number;
+            block.directory_inode_generation = directory.generation;
+            block.block_generation = 1ULL;
+            block.file_system_uuid = this->v5_superblock_.uuid;
+        } else {
+            status = this->ReadV5DirectoryBlock(directory, block);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            if (block.block_generation == UINT64_MAX) {
+                return Status::CapacityExhausted;
+            }
+            ++block.block_generation;
+        }
+        const uint64_t entry_index = offset_bytes / OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES;
+        if (entry.type == RootNodeType::Unused) {
+            if (entry_index >= block.entry_count) {
+                return Status::Corrupt;
+            }
+            for (uint64_t move_index = entry_index + 1ULL; move_index < block.entry_count;
+                 ++move_index) {
+                block.entries[move_index - 1ULL] = block.entries[move_index];
+            }
+            --block.entry_count;
+            block.entries[block.entry_count] = RootDirectoryEntryV2{};
+        } else {
+            if (entry_index > block.entry_count ||
+                block.entry_count >= OS_KERNEL_ROOTFS_V5_DIRECTORY_MAXIMUM_ENTRY_COUNT) {
+                return Status::CapacityExhausted;
+            }
+            const RootV5NodeType disk_type =
+                entry.type == RootNodeType::RegularFile ? RootV5NodeType::RegularFile
+                : entry.type == RootNodeType::Directory ? RootV5NodeType::Directory
+                : entry.type == RootNodeType::SymbolicLink ? RootV5NodeType::SymbolicLink
+                                                          : RootV5NodeType::Unused;
+            if (disk_type == RootV5NodeType::Unused) {
+                return Status::Corrupt;
+            }
+            RootDirectoryEntryV2 disk_entry{
+                .inode_number = entry.inode_number,
+                .inode_generation = entry.inode_generation,
+                .name_hash = CalculateRootDirectoryNameHash(this->v5_superblock_.uuid, entry.name,
+                                                            entry.name_length_bytes),
+                .type = disk_type,
+                .name_length_bytes = entry.name_length_bytes,
+                .name = {},
+            };
+            CopyBytes(disk_entry.name, entry.name, entry.name_length_bytes);
+            if (entry_index == block.entry_count) {
+                ++block.entry_count;
+            }
+            block.entries[entry_index] = disk_entry;
+            for (uint64_t sort_index = 1ULL; sort_index < block.entry_count; ++sort_index) {
+                RootDirectoryEntryV2 candidate = block.entries[sort_index];
+                uint64_t insert_index = sort_index;
+                while (insert_index > 0ULL) {
+                    const RootDirectoryEntryV2 &previous = block.entries[insert_index - 1ULL];
+                    bool previous_after = previous.name_hash > candidate.name_hash;
+                    if (previous.name_hash == candidate.name_hash) {
+                        const uint64_t common = Minimum(previous.name_length_bytes,
+                                                        candidate.name_length_bytes);
+                        uint64_t byte_index = 0ULL;
+                        while (byte_index < common &&
+                               previous.name[byte_index] == candidate.name[byte_index]) {
+                            ++byte_index;
+                        }
+                        previous_after =
+                            byte_index < common
+                                ? previous.name[byte_index] > candidate.name[byte_index]
+                                : previous.name_length_bytes > candidate.name_length_bytes;
+                    }
+                    if (!previous_after) {
+                        break;
+                    }
+                    block.entries[insert_index] = previous;
+                    --insert_index;
+                }
+                block.entries[insert_index] = candidate;
+            }
+        }
+        directory.size_bytes =
+            block.entry_count * OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES;
+        return this->WriteV5DirectoryBlock(directory_inode_number, directory, block);
+    }
     uint8_t encoded[OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES]{};
     if (EncodeRootDirectoryEntry(entry, encoded, sizeof(encoded)) != RootFormatStatus::Succeeded) {
         return Status::Corrupt;
@@ -1391,6 +2497,51 @@ Status RootFileSystem::WriteDirectoryEntryAt(const uint64_t directory_inode_numb
     return status == Status::Succeeded && written_bytes == sizeof(encoded) ? Status::Succeeded
            : status == Status::Succeeded ? Status::CapacityExhausted
                                          : status;
+}
+
+Status RootFileSystem::ReadV5DirectoryBlock(RootInode &directory,
+                                             RootDirectoryBlock &block) noexcept {
+    ClearBytes(reinterpret_cast<uint8_t *>(&block), sizeof(block));
+    if (!this->v5_active_ || directory.type != RootNodeType::Directory ||
+        directory.direct_blocks[0] == 0ULL) {
+        return Status::InvalidArgument;
+    }
+    uint64_t relative_block = 0ULL;
+    const Status status = this->ResolveDataBlock(directory, 0ULL, false, relative_block);
+    if (status != Status::Succeeded || relative_block == 0ULL) {
+        return status == Status::Succeeded ? Status::Corrupt : status;
+    }
+    const Status read_status = this->ReadRelativeBlock(relative_block, this->read_block_scratch_);
+    if (read_status != Status::Succeeded) {
+        return read_status;
+    }
+    return DecodeRootDirectoryBlock(this->read_block_scratch_,
+                                    OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES,
+                                    block) == RootDirectoryStatus::Succeeded &&
+                   block.directory_inode_generation == directory.generation
+               ? Status::Succeeded
+               : Status::Corrupt;
+}
+
+Status RootFileSystem::WriteV5DirectoryBlock(const uint64_t inode_number, RootInode &directory,
+                                              const RootDirectoryBlock &block) noexcept {
+    this->active_mapping_inode_number_ = inode_number;
+    uint64_t relative_block = 0ULL;
+    Status status = this->ResolveDataBlock(directory, 0ULL, true, relative_block);
+    if (status != Status::Succeeded || relative_block == 0ULL) {
+        return status == Status::Succeeded ? Status::Corrupt : status;
+    }
+    if (EncodeRootDirectoryBlock(block, this->write_block_scratch_,
+                                 OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
+        RootDirectoryStatus::Succeeded) {
+        return Status::CapacityExhausted;
+    }
+    status = this->WriteMetadataBlock(relative_block, this->write_block_scratch_);
+    if (status == Status::Succeeded) {
+        status = this->WriteInode(inode_number, directory);
+    }
+    this->active_mapping_inode_number_ = 0ULL;
+    return status;
 }
 
 Status RootFileSystem::FindDirectoryEntry(RootInode &directory, const uint8_t *const name,
@@ -1493,14 +2644,16 @@ Status RootFileSystem::DirectoryIsEmpty(RootInode &directory, bool &empty) noexc
 
 Status RootFileSystem::RemoveInodeInTransaction(const uint64_t inode_number,
                                                 RootInode &inode) noexcept {
-    if (inode_number <= OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER ||
+    if (inode_number <= this->ActiveRootInodeNumber() ||
         inode_number > this->disk_superblock_.inode_count ||
-        this->open_counts_[inode_number - OS_KERNEL_ROOTFS_COUNTER_INCREMENT] !=
-            OS_KERNEL_ROOTFS_EMPTY_VALUE) {
+        this->ReadOpenReferenceCount(inode_number) != OS_KERNEL_ROOTFS_EMPTY_VALUE) {
         return Status::Busy;
     }
     const uint64_t old_logical_block_count =
-        DivideRoundUp(inode.size_bytes, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
+        this->v5_active_ && inode.type == RootNodeType::Directory &&
+                inode.direct_blocks[0] != 0ULL
+            ? 1ULL
+            : DivideRoundUp(inode.size_bytes, this->ActiveBlockSizeBytes());
     Status status = this->ReleaseLogicalBlockRange(inode, OS_KERNEL_ROOTFS_EMPTY_VALUE,
                                                    old_logical_block_count);
     if (status != Status::Succeeded) {
@@ -1521,7 +2674,7 @@ Status RootFileSystem::RemoveInodeInTransaction(const uint64_t inode_number,
 
 Status RootFileSystem::DropLinkInTransaction(const uint64_t inode_number,
                                              RootInode &inode) noexcept {
-    if (inode_number <= OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER ||
+    if (inode_number <= this->ActiveRootInodeNumber() ||
         inode_number > this->disk_superblock_.inode_count ||
         inode.link_count == OS_KERNEL_ROOTFS_EMPTY_VALUE || inode.type == RootNodeType::Directory) {
         return Status::Corrupt;
@@ -1531,8 +2684,7 @@ Status RootFileSystem::DropLinkInTransaction(const uint64_t inode_number,
         inode.change_time_nanoseconds = this->ReadCurrentTimestamp();
         return this->WriteInode(inode_number, inode);
     }
-    const uint64_t open_count =
-        this->open_counts_[inode_number - OS_KERNEL_ROOTFS_COUNTER_INCREMENT];
+    const uint64_t open_count = this->ReadOpenReferenceCount(inode_number);
     if (open_count == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
         return this->RemoveInodeInTransaction(inode_number, inode);
     }
@@ -1577,7 +2729,7 @@ Status RootFileSystem::ReapOrphans() noexcept {
                 if (inode_number > this->disk_superblock_.inode_count) {
                     return Status::Corrupt;
                 }
-                if (inode_number == OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER) {
+                if (inode_number == this->ActiveRootInodeNumber()) {
                     continue;
                 }
                 RootInode inode{};
@@ -1607,6 +2759,62 @@ Status RootFileSystem::ReapOrphans() noexcept {
                 }
                 ++this->statistics_.orphan_reap_count;
             }
+        }
+    }
+    return Status::Succeeded;
+}
+
+Status RootFileSystem::ReapV5Orphans() noexcept {
+    if (!this->v5_active_) {
+        return Status::InvalidArgument;
+    }
+    for (uint64_t group_index = 0ULL; group_index < this->v5_superblock_.group_count;
+         ++group_index) {
+        const RootV5GroupDescriptor &descriptor = this->v5_group_descriptors_[group_index];
+        RootV5GroupDescriptor initial_descriptor{};
+        if (BuildInitialRootV5GroupDescriptor(this->v5_superblock_, group_index,
+                                              initial_descriptor) !=
+            RootV5FormatStatus::Succeeded) {
+            return Status::Corrupt;
+        }
+        if (descriptor.free_inode_count == initial_descriptor.free_inode_count) {
+            continue;
+        }
+        Status status = this->ReadRelativeBlock(descriptor.inode_bitmap_block,
+                                                this->orphan_bitmap_block_scratch_);
+        if (status != Status::Succeeded) {
+            return status;
+        }
+        for (uint64_t local_inode_index = 0ULL; local_inode_index < descriptor.inode_count;
+             ++local_inode_index) {
+            const uint64_t inode_number = descriptor.inode_start_number + local_inode_index;
+            if (inode_number < this->v5_superblock_.first_user_inode_number ||
+                !BitmapBitIsSet(this->orphan_bitmap_block_scratch_, local_inode_index)) {
+                continue;
+            }
+            RootInode inode{};
+            status = this->ReadInode(inode_number, inode);
+            if (status != Status::Succeeded) {
+                return status;
+            }
+            if ((inode.flags & OS_KERNEL_ROOTFS_V5_INODE_FLAG_ORPHAN) == 0ULL) {
+                continue;
+            }
+            if (inode.link_count != 0ULL) {
+                return Status::Corrupt;
+            }
+            status = this->BeginTransaction();
+            if (status == Status::Succeeded) {
+                status = this->RemoveInodeInTransaction(inode_number, inode);
+            }
+            if (status == Status::Succeeded) {
+                status = this->CommitTransaction();
+            }
+            if (status != Status::Succeeded) {
+                this->AbortTransaction();
+                return status;
+            }
+            ++this->statistics_.orphan_reap_count;
         }
     }
     return Status::Succeeded;
@@ -1778,11 +2986,12 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
     if (status != Status::Succeeded) {
         return status;
     }
-    const uint64_t first_logical_block = slot_offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+    const uint64_t first_logical_block =
+        slot_offset_bytes / file_system.ActiveBlockSizeBytes();
     const uint64_t last_logical_block =
         (slot_offset_bytes + OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES -
          OS_KERNEL_ROOTFS_COUNTER_INCREMENT) /
-        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        file_system.ActiveBlockSizeBytes();
     uint64_t required_block_count = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     for (uint64_t logical_block = first_logical_block; logical_block <= last_logical_block;
          ++logical_block) {
@@ -1835,6 +3044,18 @@ Status RootFileSystem::CreateOperation(void *const context, const Vnode &directo
         .mode = attributes.mode,
     };
     ++file_system.disk_superblock_.next_inode_generation;
+    if (file_system.v5_active_ && type == NodeType::Directory) {
+        const uint64_t group_index =
+            (inode_number - 1ULL) / file_system.v5_superblock_.inodes_per_group;
+        ++file_system.v5_group_descriptors_[group_index].used_directory_count;
+        ++file_system.v5_group_descriptors_[group_index].metadata_generation;
+        ++file_system.v5_superblock_.allocated_directory_count;
+        status = file_system.StageV5GroupDescriptor(group_index);
+        if (status != Status::Succeeded) {
+            file_system.AbortTransaction();
+            return status;
+        }
+    }
     status = file_system.WriteInode(inode_number, inode);
     if (status != Status::Succeeded) {
         file_system.AbortTransaction();
@@ -1875,12 +3096,12 @@ Status RootFileSystem::OpenOperation(void *const context, const Vnode &vnode) no
     if (status != Status::Succeeded) {
         return status;
     }
-    uint64_t &open_count =
-        file_system.open_counts_[vnode.identifier - OS_KERNEL_ROOTFS_COUNTER_INCREMENT];
-    if (open_count == UINT64_MAX || file_system.statistics_.open_reference_count == UINT64_MAX) {
+    if (file_system.statistics_.open_reference_count == UINT64_MAX) {
         return Status::CapacityExhausted;
     }
-    ++open_count;
+    if (file_system.RetainOpenReference(vnode.identifier) != Status::Succeeded) {
+        return Status::CapacityExhausted;
+    }
     ++file_system.statistics_.open_reference_count;
     return Status::Succeeded;
 }
@@ -1900,13 +3121,14 @@ Status RootFileSystem::CloseOperation(void *const context, const Vnode &vnode) n
             vnode.generation == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
             return Status::InvalidHandle;
         }
-        uint64_t &directory_open_count =
-            file_system.open_counts_[vnode.identifier - OS_KERNEL_ROOTFS_COUNTER_INCREMENT];
-        if (directory_open_count == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
+        if (file_system.ReadOpenReferenceCount(vnode.identifier) ==
+                OS_KERNEL_ROOTFS_EMPTY_VALUE ||
             file_system.statistics_.open_reference_count == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
             return Status::InvalidHandle;
         }
-        --directory_open_count;
+        if (file_system.ReleaseOpenReference(vnode.identifier) != Status::Succeeded) {
+            return Status::InvalidHandle;
+        }
         --file_system.statistics_.open_reference_count;
         return Status::Succeeded;
     }
@@ -1915,12 +3137,11 @@ Status RootFileSystem::CloseOperation(void *const context, const Vnode &vnode) n
     if (status != Status::Succeeded) {
         return status;
     }
-    uint64_t &open_count =
-        file_system.open_counts_[vnode.identifier - OS_KERNEL_ROOTFS_COUNTER_INCREMENT];
-    if (open_count == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
+    if (file_system.ReadOpenReferenceCount(vnode.identifier) == OS_KERNEL_ROOTFS_EMPTY_VALUE ||
         file_system.statistics_.open_reference_count == OS_KERNEL_ROOTFS_EMPTY_VALUE) {
         return Status::InvalidHandle;
     }
+    const uint64_t open_count = file_system.ReadOpenReferenceCount(vnode.identifier);
     if (open_count == OS_KERNEL_ROOTFS_COUNTER_INCREMENT &&
         inode.link_count == OS_KERNEL_ROOTFS_EMPTY_VALUE &&
         (inode.flags & OS_KERNEL_ROOTFS_INODE_FLAG_ORPHAN) != OS_KERNEL_ROOTFS_EMPTY_VALUE) {
@@ -1928,11 +3149,14 @@ Status RootFileSystem::CloseOperation(void *const context, const Vnode &vnode) n
         if (reap_status != Status::Succeeded) {
             return reap_status;
         }
-        --open_count;
+        if (file_system.ReleaseOpenReference(vnode.identifier) != Status::Succeeded) {
+            file_system.AbortTransaction();
+            return Status::InvalidHandle;
+        }
         --file_system.statistics_.open_reference_count;
         reap_status = file_system.RemoveInodeInTransaction(vnode.identifier, inode);
         if (reap_status != Status::Succeeded) {
-            ++open_count;
+            static_cast<void>(file_system.RetainOpenReference(vnode.identifier));
             ++file_system.statistics_.open_reference_count;
             file_system.AbortTransaction();
             return reap_status;
@@ -1943,7 +3167,9 @@ Status RootFileSystem::CloseOperation(void *const context, const Vnode &vnode) n
         }
         return reap_status;
     }
-    --open_count;
+    if (file_system.ReleaseOpenReference(vnode.identifier) != Status::Succeeded) {
+        return Status::InvalidHandle;
+    }
     --file_system.statistics_.open_reference_count;
     return Status::Succeeded;
 }
@@ -1987,9 +3213,8 @@ Status RootFileSystem::RemoveOperation(void *const context, const Vnode &directo
         return status == Status::Succeeded ? Status::Corrupt : status;
     }
     if (child_inode.type == RootNodeType::Directory &&
-        file_system
-                .open_counts_[location.entry.inode_number - OS_KERNEL_ROOTFS_COUNTER_INCREMENT] !=
-            OS_KERNEL_ROOTFS_EMPTY_VALUE) {
+            file_system.ReadOpenReferenceCount(location.entry.inode_number) !=
+                OS_KERNEL_ROOTFS_EMPTY_VALUE) {
         return Status::Busy;
     }
     if (child_inode.type == RootNodeType::Directory) {
@@ -2020,6 +3245,24 @@ Status RootFileSystem::RemoveOperation(void *const context, const Vnode &directo
     if (status != Status::Succeeded) {
         file_system.AbortTransaction();
         return status;
+    }
+    if (file_system.v5_active_ && child_inode.type == RootNodeType::Directory) {
+        const uint64_t group_index =
+            (location.entry.inode_number - 1ULL) /
+            file_system.v5_superblock_.inodes_per_group;
+        if (file_system.v5_group_descriptors_[group_index].used_directory_count == 0ULL ||
+            file_system.v5_superblock_.allocated_directory_count == 0ULL) {
+            file_system.AbortTransaction();
+            return Status::Corrupt;
+        }
+        --file_system.v5_group_descriptors_[group_index].used_directory_count;
+        ++file_system.v5_group_descriptors_[group_index].metadata_generation;
+        --file_system.v5_superblock_.allocated_directory_count;
+        status = file_system.StageV5GroupDescriptor(group_index);
+        if (status != Status::Succeeded) {
+            file_system.AbortTransaction();
+            return status;
+        }
     }
     status = file_system.TrimDirectoryTail(directory.identifier, directory_inode);
     if (status != Status::Succeeded) {
@@ -2116,7 +3359,7 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
             if (ancestor_inode_number == source_location.entry.inode_number) {
                 return Status::LoopDetected;
             }
-            if (ancestor_inode_number == OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER) {
+            if (ancestor_inode_number == file_system.ActiveRootInodeNumber()) {
                 break;
             }
             ClearBytes(reinterpret_cast<uint8_t *>(&destination_inode), sizeof(destination_inode));
@@ -2126,7 +3369,7 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
             }
             ancestor_inode_number = destination_inode.parent_inode_number;
         }
-        if (ancestor_inode_number != OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER) {
+        if (ancestor_inode_number != file_system.ActiveRootInodeNumber()) {
             return Status::LoopDetected;
         }
     }
@@ -2150,8 +3393,7 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
                                                                 : Status::IsDirectory;
         }
         if (destination_inode.type == RootNodeType::Directory &&
-            file_system.open_counts_[destination_location.entry.inode_number -
-                                     OS_KERNEL_ROOTFS_COUNTER_INCREMENT] !=
+            file_system.ReadOpenReferenceCount(destination_location.entry.inode_number) !=
                 OS_KERNEL_ROOTFS_EMPTY_VALUE) {
             return Status::Busy;
         }
@@ -2172,11 +3414,11 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
             return status;
         }
         const uint64_t first_logical_block =
-            destination_location.offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+            destination_location.offset_bytes / file_system.ActiveBlockSizeBytes();
         const uint64_t last_logical_block =
             (destination_location.offset_bytes + OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES -
              OS_KERNEL_ROOTFS_COUNTER_INCREMENT) /
-            OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+            file_system.ActiveBlockSizeBytes();
         uint64_t required_block_count = OS_KERNEL_ROOTFS_EMPTY_VALUE;
         for (uint64_t logical_block = first_logical_block; logical_block <= last_logical_block;
              ++logical_block) {
@@ -2208,6 +3450,24 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
             file_system.AbortTransaction();
             return status;
         }
+        if (file_system.v5_active_ && destination_inode.type == RootNodeType::Directory) {
+            const uint64_t group_index =
+                (destination_location.entry.inode_number - 1ULL) /
+                file_system.v5_superblock_.inodes_per_group;
+            if (file_system.v5_group_descriptors_[group_index].used_directory_count == 0ULL ||
+                file_system.v5_superblock_.allocated_directory_count == 0ULL) {
+                file_system.AbortTransaction();
+                return Status::Corrupt;
+            }
+            --file_system.v5_group_descriptors_[group_index].used_directory_count;
+            ++file_system.v5_group_descriptors_[group_index].metadata_generation;
+            --file_system.v5_superblock_.allocated_directory_count;
+            status = file_system.StageV5GroupDescriptor(group_index);
+            if (status != Status::Succeeded) {
+                file_system.AbortTransaction();
+                return status;
+            }
+        }
     }
     RootDirectoryEntry &destination_entry = file_system.rename_scratch_.destination_entry;
     destination_entry.inode_number = source_location.entry.inode_number;
@@ -2221,6 +3481,14 @@ Status RootFileSystem::RenameOperation(void *const context, const Vnode &source_
     if (status != Status::Succeeded) {
         file_system.AbortTransaction();
         return status;
+    }
+    if (file_system.v5_active_ && same_parent) {
+        status = file_system.FindDirectoryEntry(source_parent_inode, source_name,
+                                                source_name_length_bytes, source_location);
+        if (status != Status::Succeeded) {
+            file_system.AbortTransaction();
+            return status;
+        }
     }
     RootDirectoryEntry &empty_entry = file_system.rename_scratch_.empty_entry;
     empty_entry.type = RootNodeType::Unused;
@@ -2325,11 +3593,12 @@ Status RootFileSystem::LinkOperation(void *const context, const Vnode &source,
     if (status != Status::Succeeded) {
         return status;
     }
-    const uint64_t first_logical_block = slot_offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+    const uint64_t first_logical_block =
+        slot_offset_bytes / file_system.ActiveBlockSizeBytes();
     const uint64_t last_logical_block =
         (slot_offset_bytes + OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES -
          OS_KERNEL_ROOTFS_COUNTER_INCREMENT) /
-        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        file_system.ActiveBlockSizeBytes();
     uint64_t required_block_count = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     for (uint64_t logical_block = first_logical_block; logical_block <= last_logical_block;
          ++logical_block) {
@@ -2427,12 +3696,13 @@ Status RootFileSystem::CreateSymbolicLinkOperation(
         return status;
     }
     uint64_t required_block_count =
-        DivideRoundUp(target_length_bytes, OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES);
-    const uint64_t first_logical_block = slot_offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        DivideRoundUp(target_length_bytes, file_system.ActiveBlockSizeBytes());
+    const uint64_t first_logical_block =
+        slot_offset_bytes / file_system.ActiveBlockSizeBytes();
     const uint64_t last_logical_block =
         (slot_offset_bytes + OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES -
          OS_KERNEL_ROOTFS_COUNTER_INCREMENT) /
-        OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES;
+        file_system.ActiveBlockSizeBytes();
     for (uint64_t logical_block = first_logical_block; logical_block <= last_logical_block;
          ++logical_block) {
         uint64_t block_requirement = OS_KERNEL_ROOTFS_EMPTY_VALUE;
@@ -2623,7 +3893,7 @@ Status RootFileSystem::WriteOperation(void *const context, const Vnode &vnode,
     }
     uint64_t first_required_block_count = OS_KERNEL_ROOTFS_EMPTY_VALUE;
     status = file_system.RequiredBlocksForLogicalBlock(
-        inode, offset_bytes / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES, first_required_block_count);
+        inode, offset_bytes / file_system.ActiveBlockSizeBytes(), first_required_block_count);
     if (status != Status::Succeeded) {
         return status;
     }
@@ -2754,7 +4024,7 @@ Status RootFileSystem::GetNameOperation(void *const context, const Vnode &vnode,
     if (status != Status::Succeeded) {
         return status;
     }
-    if (vnode.identifier == OS_KERNEL_ROOTFS_ROOT_INODE_NUMBER) {
+    if (vnode.identifier == file_system.ActiveRootInodeNumber()) {
         return Status::Succeeded;
     }
     RootInode parent_inode{};
@@ -2798,12 +4068,12 @@ Status RootFileSystem::StatOperation(void *const context, const Vnode &vnode,
     }
     const uint64_t allocated_block_count =
         inode.allocated_data_block_count + inode.allocated_metadata_block_count;
-    if (allocated_block_count > UINT64_MAX / OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES) {
+    if (allocated_block_count > UINT64_MAX / file_system.ActiveBlockSizeBytes()) {
         return Status::Corrupt;
     }
     information = BackendNodeInformation{
         .size_bytes = inode.size_bytes,
-        .allocated_size_bytes = allocated_block_count * OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES,
+        .allocated_size_bytes = allocated_block_count * file_system.ActiveBlockSizeBytes(),
         .link_count = inode.link_count,
         .access_time_nanoseconds = inode.access_time_nanoseconds,
         .modification_time_nanoseconds = inode.modification_time_nanoseconds,
@@ -2891,6 +4161,43 @@ Status RootFileSystem::SyncOperation(void *const context) noexcept {
     }
     if (file_system.failed_) {
         return Status::DeviceFailure;
+    }
+    if (file_system.v5_active_) {
+        if (EncodeRootV5Superblock(file_system.v5_superblock_,
+                                   file_system.superblock_block_scratch_,
+                                   OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
+            RootV5FormatStatus::Succeeded) {
+            return Status::Corrupt;
+        }
+        for (uint64_t group_index = 0ULL;
+             group_index < file_system.v5_superblock_.group_count; ++group_index) {
+            const RootV5GroupDescriptor &descriptor =
+                file_system.v5_group_descriptors_[group_index];
+            if ((descriptor.flags & OS_KERNEL_ROOTFS_V5_GROUP_FLAG_HAS_SUPERBLOCK_COPY) == 0ULL) {
+                continue;
+            }
+            Status status = file_system.WriteV5Block(descriptor.superblock_copy_block,
+                                                     file_system.superblock_block_scratch_);
+            for (uint64_t table_block = 0ULL;
+                 status == Status::Succeeded &&
+                 table_block < file_system.v5_superblock_.group_descriptor_table_block_count;
+                 ++table_block) {
+                status = file_system.ReadV5Block(
+                    file_system.v5_superblock_.group_descriptor_table_start_block + table_block,
+                    file_system.read_block_scratch_);
+                if (status == Status::Succeeded) {
+                    status = file_system.WriteV5Block(
+                        descriptor.group_descriptor_copy_start_block + table_block,
+                        file_system.read_block_scratch_);
+                }
+            }
+            if (status != Status::Succeeded) {
+                return status;
+            }
+        }
+        return file_system.device_->Flush() == FileSystemBlockDeviceStatus::Succeeded
+                   ? Status::Succeeded
+                   : file_system.FailDeviceOperation();
     }
     return file_system.cache_.Sync() == BlockCacheStatus::Succeeded
                ? Status::Succeeded
@@ -3088,6 +4395,254 @@ Status RootFileSystem::CompareValidationBitmaps(uint64_t &allocated_inode_count,
 }
 
 Status RootFileSystem::ValidateUnlocked() noexcept {
+    if (this->v5_active_) {
+        if (!this->initialized_ || this->device_ == nullptr || this->failed_ ||
+            !this->vfs_superblock_.initialized || this->vfs_superblock_.backend_context != this ||
+            this->vfs_superblock_.operations != &RootFileSystem::operations ||
+            this->v5_journal_.IsActive() ||
+            ValidateRootV5Superblock(this->v5_superblock_) != RootV5FormatStatus::Succeeded) {
+            return this->failed_ ? Status::DeviceFailure : Status::Corrupt;
+        }
+        if (this->last_validated_transaction_generation_ ==
+            this->disk_superblock_.transaction_generation) {
+            return Status::Succeeded;
+        }
+        uint64_t free_block_count = 0ULL;
+        uint64_t free_inode_count = 0ULL;
+        uint64_t directory_count = 0ULL;
+        for (uint64_t group_index = 0ULL; group_index < this->v5_superblock_.group_count;
+             ++group_index) {
+            const RootV5GroupDescriptor &descriptor =
+                this->v5_group_descriptors_[group_index];
+            if (ValidateRootV5GroupDescriptor(this->v5_superblock_, descriptor) !=
+                RootV5FormatStatus::Succeeded) {
+                return Status::Corrupt;
+            }
+            RootV5GroupDescriptor initial_descriptor{};
+            if (BuildInitialRootV5GroupDescriptor(this->v5_superblock_, group_index,
+                                                  initial_descriptor) !=
+                RootV5FormatStatus::Succeeded) {
+                return Status::Corrupt;
+            }
+            const bool group_has_runtime_allocations =
+                group_index == 0ULL ||
+                descriptor.free_block_count != initial_descriptor.free_block_count ||
+                descriptor.free_inode_count != initial_descriptor.free_inode_count ||
+                descriptor.used_directory_count != initial_descriptor.used_directory_count;
+            if (!group_has_runtime_allocations) {
+                free_block_count += descriptor.free_block_count;
+                free_inode_count += descriptor.free_inode_count;
+                directory_count += descriptor.used_directory_count;
+                continue;
+            }
+            Status status = this->ReadRelativeBlock(descriptor.block_bitmap_block,
+                                                    this->validation_bitmap_block_scratch_);
+            if (status != Status::Succeeded ||
+                CalculateRootV5Crc32c(this->validation_bitmap_block_scratch_,
+                                      OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
+                    descriptor.block_bitmap_checksum) {
+                return status == Status::Succeeded ? Status::Corrupt : status;
+            }
+            uint64_t group_free_blocks = 0ULL;
+            for (uint64_t bit_index = 0ULL; bit_index < descriptor.block_count; ++bit_index) {
+                group_free_blocks +=
+                    BitmapBitIsSet(this->validation_bitmap_block_scratch_, bit_index) ? 0ULL : 1ULL;
+            }
+            status = this->ReadRelativeBlock(descriptor.inode_bitmap_block,
+                                             this->validation_bitmap_block_scratch_);
+            if (status != Status::Succeeded ||
+                CalculateRootV5Crc32c(this->validation_bitmap_block_scratch_,
+                                      OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
+                    descriptor.inode_bitmap_checksum) {
+                return status == Status::Succeeded ? Status::Corrupt : status;
+            }
+            uint64_t group_free_inodes = 0ULL;
+            for (uint64_t bit_index = 0ULL; bit_index < descriptor.inode_count; ++bit_index) {
+                group_free_inodes +=
+                    BitmapBitIsSet(this->validation_bitmap_block_scratch_, bit_index) ? 0ULL : 1ULL;
+            }
+            if (group_free_blocks != descriptor.free_block_count ||
+                group_free_inodes != descriptor.free_inode_count) {
+                return Status::Corrupt;
+            }
+            free_block_count += group_free_blocks;
+            free_inode_count += group_free_inodes;
+            directory_count += descriptor.used_directory_count;
+        }
+        if (free_block_count != this->v5_superblock_.free_block_count ||
+            free_inode_count != this->v5_superblock_.free_inode_count ||
+            directory_count != this->v5_superblock_.allocated_directory_count) {
+            return Status::Corrupt;
+        }
+        ClearBytes(this->validation_inode_bitmap_, sizeof(this->validation_inode_bitmap_));
+        const uint64_t root_inode_number = this->ActiveRootInodeNumber();
+        SetBitmapBit(this->validation_inode_bitmap_, root_inode_number - 1ULL, true);
+        this->validation_queue_[0] = root_inode_number;
+        uint64_t queue_read_index = 0ULL;
+        uint64_t queue_write_index = 1ULL;
+        uint64_t reachable_directory_count = 0ULL;
+        uint64_t inode_data_block_count = 0ULL;
+        uint64_t inode_metadata_block_count = 0ULL;
+        const uint64_t bytes_read_before = this->statistics_.bytes_read;
+        const uint64_t hole_bytes_before = this->statistics_.sparse_hole_read_bytes;
+        uint64_t cached_inode_bitmap_group = OS_KERNEL_ROOTFS_V5_NO_BLOCK;
+        uint64_t cached_block_bitmap_group = OS_KERNEL_ROOTFS_V5_NO_BLOCK;
+        const auto read_validation_bit =
+            [this, &cached_inode_bitmap_group,
+             &cached_block_bitmap_group](const bool inode_bitmap, const uint64_t global_index,
+                                         bool &allocated) noexcept -> Status {
+            const uint64_t group_index =
+                inode_bitmap ? global_index / this->v5_superblock_.inodes_per_group
+                             : global_index / this->v5_superblock_.blocks_per_group;
+            if (group_index >= this->v5_superblock_.group_count) {
+                return Status::Corrupt;
+            }
+            uint64_t &cached_group =
+                inode_bitmap ? cached_inode_bitmap_group : cached_block_bitmap_group;
+            uint8_t *const bitmap = inode_bitmap ? this->orphan_bitmap_block_scratch_
+                                                 : this->validation_bitmap_block_scratch_;
+            const RootV5GroupDescriptor &descriptor =
+                this->v5_group_descriptors_[group_index];
+            if (cached_group != group_index) {
+                const Status status = this->ReadRelativeBlock(
+                    inode_bitmap ? descriptor.inode_bitmap_block : descriptor.block_bitmap_block,
+                    bitmap);
+                if (status != Status::Succeeded) {
+                    return status;
+                }
+                cached_group = group_index;
+            }
+            const uint64_t local_index =
+                inode_bitmap ? global_index % this->v5_superblock_.inodes_per_group
+                             : global_index - descriptor.first_block;
+            allocated = BitmapBitIsSet(bitmap, local_index);
+            return Status::Succeeded;
+        };
+        while (queue_read_index < queue_write_index) {
+            const uint64_t inode_number = this->validation_queue_[queue_read_index++];
+            bool inode_allocated = false;
+            Status status =
+                read_validation_bit(true, inode_number - 1ULL, inode_allocated);
+            RootInode inode{};
+            if (status != Status::Succeeded || !inode_allocated ||
+                this->ReadInode(inode_number, inode) != Status::Succeeded ||
+                inode.type == RootNodeType::Unused || inode.flags != 0ULL) {
+                return status == Status::Succeeded ? Status::Corrupt : status;
+            }
+            uint64_t extent_data_blocks = 0ULL;
+            if (inode.direct_blocks[0] != 0ULL) {
+                RootExtentNode &extent_node = this->v5_extent_scratch_;
+                ClearBytes(reinterpret_cast<uint8_t *>(&extent_node), sizeof(extent_node));
+                status = this->ReadV5ExtentNode(inode, extent_node);
+                if (status != Status::Succeeded || extent_node.inode_number != inode_number ||
+                    extent_node.inode_generation != inode.generation || extent_node.depth != 0ULL) {
+                    return status == Status::Succeeded ? Status::Corrupt : status;
+                }
+                for (uint64_t entry_index = 0ULL; entry_index < extent_node.entry_count;
+                     ++entry_index) {
+                    const RootExtentNodeEntry &extent = extent_node.entries[entry_index];
+                    extent_data_blocks += extent.block_count_or_generation;
+                    for (uint64_t block_offset = 0ULL;
+                         block_offset < extent.block_count_or_generation; ++block_offset) {
+                        bool block_allocated = false;
+                        status = read_validation_bit(
+                            false, extent.physical_or_child_block + block_offset,
+                            block_allocated);
+                        if (status != Status::Succeeded || !block_allocated) {
+                            return status == Status::Succeeded ? Status::Corrupt : status;
+                        }
+                    }
+                }
+                bool extent_root_allocated = false;
+                status = read_validation_bit(false, inode.direct_blocks[0],
+                                             extent_root_allocated);
+                if (status != Status::Succeeded || !extent_root_allocated ||
+                    extent_data_blocks != inode.allocated_data_block_count ||
+                    inode.allocated_metadata_block_count != 1ULL) {
+                    return status == Status::Succeeded ? Status::Corrupt : status;
+                }
+                ++inode_metadata_block_count;
+            } else if (inode.size_bytes != 0ULL || inode.allocated_data_block_count != 0ULL ||
+                       inode.allocated_metadata_block_count != 0ULL) {
+                return Status::Corrupt;
+            }
+            inode_data_block_count += extent_data_blocks;
+            if (inode_number == root_inode_number &&
+                (inode.type != RootNodeType::Directory ||
+                 inode.parent_inode_number != root_inode_number)) {
+                return Status::Corrupt;
+            }
+            if (inode.type != RootNodeType::Directory) {
+                continue;
+            }
+            ++reachable_directory_count;
+            for (uint64_t offset_bytes = 0ULL; offset_bytes < inode.size_bytes;
+                 offset_bytes += OS_KERNEL_ROOTFS_DIRECTORY_ENTRY_SIZE_BYTES) {
+                RootDirectoryEntry entry{};
+                status = this->ReadDirectoryEntryAt(inode, offset_bytes, entry);
+                if (status != Status::Succeeded || entry.inode_number == root_inode_number ||
+                    entry.inode_number > this->v5_superblock_.inode_count) {
+                    return status == Status::Succeeded ? Status::Corrupt : status;
+                }
+                RootInode child{};
+                status = this->ReadInode(entry.inode_number, child);
+                if (status != Status::Succeeded || child.generation != entry.inode_generation ||
+                    child.type != entry.type ||
+                    (child.type == RootNodeType::Directory &&
+                     child.parent_inode_number != inode_number)) {
+                    return status == Status::Succeeded ? Status::Corrupt : status;
+                }
+                const uint64_t child_bit = entry.inode_number - 1ULL;
+                if (BitmapBitIsSet(this->validation_inode_bitmap_, child_bit)) {
+                    if (child.type == RootNodeType::Directory) {
+                        return Status::Corrupt;
+                    }
+                    continue;
+                }
+                if (queue_write_index >= OS_KERNEL_ROOTFS_INODE_COUNT) {
+                    return Status::Corrupt;
+                }
+                SetBitmapBit(this->validation_inode_bitmap_, child_bit, true);
+                this->validation_queue_[queue_write_index++] = entry.inode_number;
+            }
+        }
+        const uint64_t expected_allocated_inodes =
+            this->v5_superblock_.inode_count - this->v5_superblock_.free_inode_count;
+        if (queue_write_index + this->v5_superblock_.reserved_inode_count - 1ULL !=
+                expected_allocated_inodes ||
+            reachable_directory_count != this->v5_superblock_.allocated_directory_count) {
+            return Status::Corrupt;
+        }
+        uint64_t open_reference_count = 0ULL;
+        for (uint64_t slot_index = 0ULL;
+             slot_index < OS_KERNEL_ROOTFS_V5_OPEN_REFERENCE_CAPACITY; ++slot_index) {
+            if (open_reference_count >
+                UINT64_MAX - this->v5_open_references_[slot_index].count) {
+                return Status::Corrupt;
+            }
+            open_reference_count += this->v5_open_references_[slot_index].count;
+        }
+        if (open_reference_count != this->statistics_.open_reference_count) {
+            return Status::Corrupt;
+        }
+        RootInode root_inode{};
+        const Status root_status = this->ReadInode(root_inode_number, root_inode);
+        if (root_status != Status::Succeeded ||
+            this->vfs_superblock_.root.identifier != root_inode_number ||
+            this->vfs_superblock_.root.generation != root_inode.generation ||
+            this->vfs_superblock_.root.type != NodeType::Directory) {
+            return root_status == Status::Succeeded ? Status::Corrupt : root_status;
+        }
+        this->statistics_.allocated_inode_count = expected_allocated_inodes;
+        this->statistics_.allocated_data_block_count = inode_data_block_count;
+        this->statistics_.allocated_metadata_block_count = inode_metadata_block_count;
+        this->statistics_.free_data_block_count = this->v5_superblock_.free_block_count;
+        this->statistics_.bytes_read = bytes_read_before;
+        this->statistics_.sparse_hole_read_bytes = hole_bytes_before;
+        this->last_validated_transaction_generation_ =
+            this->disk_superblock_.transaction_generation;
+        return Status::Succeeded;
+    }
     if (!this->initialized_ || this->device_ == nullptr || this->failed_ ||
         !this->vfs_superblock_.initialized || this->vfs_superblock_.backend_context != this ||
         this->vfs_superblock_.operations != &RootFileSystem::operations ||

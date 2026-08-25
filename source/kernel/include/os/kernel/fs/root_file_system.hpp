@@ -2,13 +2,19 @@
 
 #include <os/kernel/fs/block_cache.hpp>
 #include <os/kernel/fs/root_file_system_format.hpp>
+#include <os/kernel/fs/root_directory_index.hpp>
+#include <os/kernel/fs/root_extent_tree.hpp>
+#include <os/kernel/fs/root_inode_metadata.hpp>
 #include <os/kernel/fs/root_journal.hpp>
+#include <os/kernel/fs/root_journal_v2.hpp>
 #include <os/kernel/fs/vfs.hpp>
 #include <os/kernel/sync/runtime_mutex.hpp>
 
 #include <stdint.h>
 
 namespace os::kernel::fs {
+
+inline constexpr uint64_t OS_KERNEL_ROOTFS_V5_OPEN_REFERENCE_CAPACITY = 4096ULL;
 
 using RootTimestampSource = uint64_t (*)() noexcept;
 
@@ -62,6 +68,11 @@ class RootFileSystem final {
         DirectoryEntryLocation destination_location;
         RootDirectoryEntry destination_entry;
         RootDirectoryEntry empty_entry;
+    };
+
+    struct V5OpenReference final {
+        uint64_t inode_number;
+        uint64_t count;
     };
 
     [[nodiscard]] static Status LookupOperation(void *context, const Vnode &directory,
@@ -191,6 +202,7 @@ class RootFileSystem final {
     [[nodiscard]] Status RemoveInodeInTransaction(uint64_t inode_number, RootInode &inode) noexcept;
     [[nodiscard]] Status DropLinkInTransaction(uint64_t inode_number, RootInode &inode) noexcept;
     [[nodiscard]] Status ReapOrphans() noexcept;
+    [[nodiscard]] Status ReapV5Orphans() noexcept;
     [[nodiscard]] Status LoadRecoveryStatistics() noexcept;
     [[nodiscard]] uint64_t ReadCurrentTimestamp() const noexcept;
     [[nodiscard]] Status ValidateVnode(const Vnode &vnode, RootInode &inode) noexcept;
@@ -204,6 +216,23 @@ class RootFileSystem final {
                                              uint64_t &data_block_count) noexcept;
     [[nodiscard]] Status CompareValidationBitmaps(uint64_t &allocated_inode_count,
                                                   uint64_t &allocated_block_count) noexcept;
+    [[nodiscard]] uint64_t ActiveBlockSizeBytes() const noexcept;
+    [[nodiscard]] uint64_t ActiveRootInodeNumber() const noexcept;
+    [[nodiscard]] Status ReadV5Block(uint64_t relative_block, uint8_t *block) noexcept;
+    [[nodiscard]] Status WriteV5Block(uint64_t relative_block, const uint8_t *block) noexcept;
+    [[nodiscard]] Status LoadV5GroupDescriptors() noexcept;
+    [[nodiscard]] Status StageV5GroupDescriptor(uint64_t group_index) noexcept;
+    [[nodiscard]] Status ReadV5ExtentNode(const RootInode &inode,
+                                          RootExtentNode &node) noexcept;
+    [[nodiscard]] Status WriteV5ExtentNode(const RootInode &inode,
+                                           const RootExtentNode &node) noexcept;
+    [[nodiscard]] Status ReadV5DirectoryBlock(RootInode &directory,
+                                              RootDirectoryBlock &block) noexcept;
+    [[nodiscard]] Status WriteV5DirectoryBlock(uint64_t inode_number, RootInode &directory,
+                                               const RootDirectoryBlock &block) noexcept;
+    [[nodiscard]] uint64_t ReadOpenReferenceCount(uint64_t inode_number) const noexcept;
+    [[nodiscard]] Status RetainOpenReference(uint64_t inode_number) noexcept;
+    [[nodiscard]] Status ReleaseOpenReference(uint64_t inode_number) noexcept;
     [[nodiscard]] Vnode MakeVnode(uint64_t inode_number, const RootInode &inode) noexcept;
     [[nodiscard]] static NodeType ToVfsNodeType(RootNodeType type) noexcept;
     [[nodiscard]] static RootNodeType ToRootNodeType(NodeType type) noexcept;
@@ -217,8 +246,8 @@ class RootFileSystem final {
     RootSuperblock transaction_superblock_snapshot_{};
     Superblock vfs_superblock_{};
     uint64_t open_counts_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
-    uint8_t validation_inode_bitmap_[OS_KERNEL_ROOTFS_INODE_BITMAP_BLOCK_COUNT *
-                                     OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    V5OpenReference v5_open_references_[OS_KERNEL_ROOTFS_V5_OPEN_REFERENCE_CAPACITY]{};
+    uint8_t validation_inode_bitmap_[OS_KERNEL_ROOTFS_V5_INODE_COUNT / 8ULL]{};
     uint64_t validation_link_counts_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     uint64_t validation_queue_[OS_KERNEL_ROOTFS_INODE_COUNT]{};
     RootFileSystemStatistics statistics_{};
@@ -228,26 +257,40 @@ class RootFileSystem final {
     uint64_t transaction_data_allocation_hint_snapshot_{};
     uint64_t transaction_inode_allocation_hint_snapshot_{};
     uint64_t last_validated_transaction_generation_{};
+    uint64_t active_mapping_inode_number_{};
     RootTimestampSource timestamp_source_{nullptr};
     RenameScratch rename_scratch_{};
     // RootFS 操作由 lock_ 串行；各层 scratch 独立，嵌套 helper 不共享同一块，也不压 Kernel 栈。
-    uint8_t initialization_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t superblock_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t read_inode_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t write_inode_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t read_pointer_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t write_pointer_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t read_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t write_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t find_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t allocate_data_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t read_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t write_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t truncate_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t orphan_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
-    uint8_t validation_bitmap_block_scratch_[OS_KERNEL_ROOTFS_BLOCK_SIZE_BYTES]{};
+    RootV5Superblock v5_superblock_{};
+    RootV5Superblock v5_transaction_superblock_snapshot_{};
+    RootV5GroupDescriptor v5_group_descriptors_[OS_KERNEL_ROOTFS_V5_GROUP_COUNT]{};
+    RootV5GroupDescriptor
+        v5_transaction_group_descriptor_snapshots_[OS_KERNEL_ROOTFS_V5_GROUP_COUNT]{};
+    RootJournalV2 v5_journal_{};
+    RootExtentNode v5_extent_scratch_{};
+    RootExtentNode v5_extent_secondary_scratch_{};
+    RootDirectoryBlock v5_directory_scratch_{};
+    uint8_t initialization_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t superblock_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t read_inode_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t v5_inode_cache_block_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint64_t v5_inode_cache_relative_block_{OS_KERNEL_ROOTFS_V5_NO_BLOCK};
+    bool v5_inode_cache_valid_{};
+    uint8_t write_inode_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t read_pointer_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t write_pointer_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t read_bitmap_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t write_bitmap_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t find_bitmap_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t allocate_data_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t read_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t write_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t truncate_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t orphan_bitmap_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t validation_bitmap_block_scratch_[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
     mutable RuntimeMutex lock_{};
     bool initialized_{};
+    bool v5_active_{};
     bool failed_{};
     bool transaction_snapshot_valid_{};
 };

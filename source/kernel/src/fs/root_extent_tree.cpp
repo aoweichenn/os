@@ -231,7 +231,7 @@ void WriteU64(uint8_t *const bytes, const uint64_t offset_bytes, const uint64_t 
                                               const uint8_t *const block,
                                               const uint64_t block_size_bytes, const bool leaf,
                                               RootExtentNode &node) noexcept {
-    node = RootExtentNode{};
+    ClearBytes(reinterpret_cast<uint8_t *>(&node), sizeof(node));
     if (block == nullptr) {
         return RootExtentStatus::NullBuffer;
     }

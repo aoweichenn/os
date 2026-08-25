@@ -531,27 +531,48 @@ RootV5FormatStatus ValidateRootV5Superblock(const RootV5Superblock &superblock) 
         .creation_time_nanoseconds = superblock.creation_time_nanoseconds,
         .uuid = superblock.uuid,
     };
-    RootV5Superblock expected{};
-    const RootV5FormatStatus plan_status = PlanRootV5Superblock(profile, expected);
-    if (plan_status != RootV5FormatStatus::Succeeded) {
-        return plan_status;
+    const RootV5FormatStatus profile_status = ValidateProfile(profile);
+    if (profile_status != RootV5FormatStatus::Succeeded) {
+        return profile_status;
     }
-    return superblock.total_block_count == expected.total_block_count &&
-                   superblock.group_count == expected.group_count &&
-                   superblock.group_descriptor_table_start_block ==
-                       expected.group_descriptor_table_start_block &&
-                   superblock.group_descriptor_table_block_count ==
-                       expected.group_descriptor_table_block_count &&
-                   superblock.inode_count == expected.inode_count &&
-                   superblock.root_inode_number == expected.root_inode_number &&
-                   superblock.first_user_inode_number == expected.first_user_inode_number &&
-                   superblock.reserved_inode_count == expected.reserved_inode_count &&
-                   superblock.format_generation == expected.format_generation &&
-                   superblock.free_block_count == expected.free_block_count &&
-                   superblock.free_inode_count == expected.free_inode_count &&
-                   superblock.allocated_directory_count == expected.allocated_directory_count
-               ? RootV5FormatStatus::Succeeded
-               : RootV5FormatStatus::InvalidLayout;
+    const uint64_t sectors_per_block =
+        superblock.block_size_bytes / superblock.sector_size_bytes;
+    const uint64_t expected_total_block_count =
+        (superblock.device_sector_count - superblock.file_system_start_lba) / sectors_per_block;
+    uint64_t expected_group_count = 0ULL;
+    uint64_t descriptor_table_size_bytes = 0ULL;
+    uint64_t expected_descriptor_table_block_count = 0ULL;
+    uint64_t expected_inode_count = 0ULL;
+    if (!TryCeilDivide(expected_total_block_count, superblock.blocks_per_group,
+                       expected_group_count) ||
+        !TryMultiply(expected_group_count, superblock.group_descriptor_size_bytes,
+                     descriptor_table_size_bytes) ||
+        !TryCeilDivide(descriptor_table_size_bytes, superblock.block_size_bytes,
+                       expected_descriptor_table_block_count) ||
+        !TryMultiply(expected_group_count, superblock.inodes_per_group, expected_inode_count)) {
+        return RootV5FormatStatus::ArithmeticOverflow;
+    }
+    const bool geometry_valid =
+        superblock.total_block_count == expected_total_block_count &&
+        superblock.group_count == expected_group_count &&
+        superblock.group_descriptor_table_start_block ==
+            OS_KERNEL_ROOTFS_V5_GROUP_DESCRIPTOR_TABLE_START_BLOCK &&
+        superblock.group_descriptor_table_block_count ==
+            expected_descriptor_table_block_count &&
+        superblock.inode_count == expected_inode_count &&
+        superblock.root_inode_number == OS_KERNEL_ROOTFS_V5_ROOT_INODE_NUMBER &&
+        superblock.first_user_inode_number == OS_KERNEL_ROOTFS_V5_FIRST_USER_INODE_NUMBER &&
+        superblock.reserved_inode_count == OS_KERNEL_ROOTFS_V5_RESERVED_INODE_COUNT;
+    const bool counters_valid =
+        superblock.format_generation != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
+        superblock.free_block_count <= superblock.total_block_count &&
+        superblock.free_inode_count <=
+            superblock.inode_count - superblock.reserved_inode_count &&
+        superblock.allocated_directory_count != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
+        superblock.allocated_directory_count <=
+            superblock.inode_count - superblock.free_inode_count;
+    return geometry_valid && counters_valid ? RootV5FormatStatus::Succeeded
+                                            : RootV5FormatStatus::InvalidLayout;
 }
 
 RootV5FormatStatus ValidateRootV5GroupDescriptor(const RootV5Superblock &superblock,
@@ -572,7 +593,7 @@ RootV5FormatStatus ValidateRootV5GroupDescriptor(const RootV5Superblock &superbl
     if (expected_status != RootV5FormatStatus::Succeeded) {
         return expected_status;
     }
-    return descriptor.first_block == expected.first_block &&
+    const bool geometry_valid = descriptor.first_block == expected.first_block &&
                    descriptor.block_count == expected.block_count &&
                    descriptor.flags == expected.flags &&
                    descriptor.superblock_copy_block == expected.superblock_copy_block &&
@@ -587,13 +608,15 @@ RootV5FormatStatus ValidateRootV5GroupDescriptor(const RootV5Superblock &superbl
                    descriptor.data_start_block == expected.data_start_block &&
                    descriptor.data_block_count == expected.data_block_count &&
                    descriptor.inode_start_number == expected.inode_start_number &&
-                   descriptor.inode_count == expected.inode_count &&
-                   descriptor.free_block_count == expected.free_block_count &&
-                   descriptor.free_inode_count == expected.free_inode_count &&
-                   descriptor.used_directory_count == expected.used_directory_count &&
-                   descriptor.metadata_generation == expected.metadata_generation
-               ? RootV5FormatStatus::Succeeded
-               : RootV5FormatStatus::InvalidGroup;
+                   descriptor.inode_count == expected.inode_count;
+    const bool counters_valid =
+        descriptor.free_block_count <= descriptor.data_block_count &&
+        descriptor.free_inode_count <= descriptor.inode_count &&
+        descriptor.used_directory_count <=
+            descriptor.inode_count - descriptor.free_inode_count &&
+        descriptor.metadata_generation != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE;
+    return geometry_valid && counters_valid ? RootV5FormatStatus::Succeeded
+                                            : RootV5FormatStatus::InvalidGroup;
 }
 
 RootV5FormatStatus ValidateRootV5Inode(const RootV5Superblock &superblock,
@@ -624,16 +647,16 @@ RootV5FormatStatus ValidateRootV5Inode(const RootV5Superblock &superblock,
     if (inode.inode_number == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE ||
         inode.inode_number > superblock.inode_count ||
         inode.generation == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE ||
-        inode.flags != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE ||
-        inode.size_bytes != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE ||
-        inode.allocated_block_count != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE ||
-        !RootV5BytesAreZero(inode.mapping_root, sizeof(inode.mapping_root))) {
+        (inode.flags & ~OS_KERNEL_ROOTFS_V5_SUPPORTED_INODE_FLAGS) != 0ULL) {
         return RootV5FormatStatus::InvalidInode;
     }
     const bool root_inode = inode.inode_number == superblock.root_inode_number;
     const bool reserved_inode = inode.inode_number < superblock.first_user_inode_number;
     if (reserved_inode && !root_inode) {
         return inode.type == RootV5NodeType::Reserved &&
+                       inode.size_bytes == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
+                       inode.allocated_block_count == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
+                       RootV5BytesAreZero(inode.mapping_root, sizeof(inode.mapping_root)) &&
                        inode.link_count == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
                        inode.parent_inode_number == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
                        inode.owner_user_identifier == os::abi::OS_ABI_ROOT_USER_IDENTIFIER &&
@@ -641,6 +664,13 @@ RootV5FormatStatus ValidateRootV5Inode(const RootV5Superblock &superblock,
                        inode.mode == 0U
                    ? RootV5FormatStatus::Succeeded
                    : RootV5FormatStatus::InvalidInode;
+    }
+    const bool mapping_is_zero =
+        RootV5BytesAreZero(inode.mapping_root, sizeof(inode.mapping_root));
+    if ((inode.allocated_block_count == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE) != mapping_is_zero ||
+        (inode.allocated_block_count == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE &&
+         inode.size_bytes != OS_KERNEL_ROOTFS_V5_EMPTY_VALUE)) {
+        return RootV5FormatStatus::InvalidInode;
     }
     const os::abi::FileMode expected_mode = ExpectedModeType(inode.type);
     if (expected_mode == 0U || inode.link_count == OS_KERNEL_ROOTFS_V5_EMPTY_VALUE ||

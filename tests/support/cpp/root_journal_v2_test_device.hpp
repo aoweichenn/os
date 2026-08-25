@@ -28,18 +28,29 @@ class RootJournalV2TestDevice final
         if (block == nullptr) {
             return os::kernel::BlockDeviceStatus::InvalidBuffer;
         }
-        if (logical_block_address >= OS_TEST_ROOT_JOURNAL_V2_DEVICE_SECTOR_COUNT ||
-            block_size_bytes != os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES) {
+        if (block_size_bytes == 0ULL ||
+            block_size_bytes % os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES != 0ULL) {
             return os::kernel::BlockDeviceStatus::InvalidBlock;
         }
-        const auto volatile_iterator = this->volatile_sectors_.find(logical_block_address);
-        const auto durable_iterator = this->durable_sectors_.find(logical_block_address);
-        for (uint64_t byte_index = 0ULL; byte_index < block_size_bytes; ++byte_index) {
-            block[byte_index] = volatile_iterator != this->volatile_sectors_.end()
-                                    ? volatile_iterator->second[byte_index]
-                                : durable_iterator != this->durable_sectors_.end()
-                                    ? durable_iterator->second[byte_index]
-                                    : 0U;
+        const uint64_t sector_count =
+            block_size_bytes / os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES;
+        if (logical_block_address >= OS_TEST_ROOT_JOURNAL_V2_DEVICE_SECTOR_COUNT ||
+            sector_count > OS_TEST_ROOT_JOURNAL_V2_DEVICE_SECTOR_COUNT - logical_block_address) {
+            return os::kernel::BlockDeviceStatus::InvalidBlock;
+        }
+        for (uint64_t sector_index = 0ULL; sector_index < sector_count; ++sector_index) {
+            const uint64_t current_address = logical_block_address + sector_index;
+            const auto volatile_iterator = this->volatile_sectors_.find(current_address);
+            const auto durable_iterator = this->durable_sectors_.find(current_address);
+            for (uint64_t byte_index = 0ULL;
+                 byte_index < os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES; ++byte_index) {
+                block[sector_index * os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES +
+                      byte_index] = volatile_iterator != this->volatile_sectors_.end()
+                                        ? volatile_iterator->second[byte_index]
+                                    : durable_iterator != this->durable_sectors_.end()
+                                        ? durable_iterator->second[byte_index]
+                                        : 0U;
+            }
         }
         return os::kernel::BlockDeviceStatus::Succeeded;
     }
@@ -50,19 +61,31 @@ class RootJournalV2TestDevice final
         if (block == nullptr) {
             return os::kernel::BlockDeviceStatus::InvalidBuffer;
         }
-        if (logical_block_address >= OS_TEST_ROOT_JOURNAL_V2_DEVICE_SECTOR_COUNT ||
-            block_size_bytes != os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES) {
+        if (block_size_bytes == 0ULL ||
+            block_size_bytes % os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES != 0ULL) {
             return os::kernel::BlockDeviceStatus::InvalidBlock;
         }
-        ++this->persistence_attempt_count_;
-        if (this->persistence_attempt_count_ == this->failure_ordinal_) {
-            return os::kernel::BlockDeviceStatus::WriteFailed;
+        const uint64_t sector_count =
+            block_size_bytes / os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES;
+        if (logical_block_address >= OS_TEST_ROOT_JOURNAL_V2_DEVICE_SECTOR_COUNT ||
+            sector_count > OS_TEST_ROOT_JOURNAL_V2_DEVICE_SECTOR_COUNT - logical_block_address) {
+            return os::kernel::BlockDeviceStatus::InvalidBlock;
         }
-        StoredSector &sector = this->volatile_sectors_[logical_block_address];
-        for (uint64_t byte_index = 0ULL; byte_index < block_size_bytes; ++byte_index) {
-            sector[byte_index] = block[byte_index];
+        for (uint64_t sector_index = 0ULL; sector_index < sector_count; ++sector_index) {
+            ++this->persistence_attempt_count_;
+            if (this->persistence_attempt_count_ == this->failure_ordinal_) {
+                return os::kernel::BlockDeviceStatus::WriteFailed;
+            }
+            StoredSector &sector =
+                this->volatile_sectors_[logical_block_address + sector_index];
+            for (uint64_t byte_index = 0ULL;
+                 byte_index < os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES; ++byte_index) {
+                sector[byte_index] =
+                    block[sector_index * os::kernel::fs::OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES +
+                          byte_index];
+            }
+            ++this->write_count_;
         }
-        ++this->write_count_;
         return os::kernel::BlockDeviceStatus::Succeeded;
     }
 

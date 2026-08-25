@@ -247,7 +247,7 @@ RootDirectoryStatus EncodeRootDirectoryBlock(const RootDirectoryBlock &directory
 RootDirectoryStatus DecodeRootDirectoryBlock(const uint8_t *const block,
                                              const uint64_t block_size_bytes,
                                              RootDirectoryBlock &directory) noexcept {
-    directory = RootDirectoryBlock{};
+    ClearBytes(reinterpret_cast<uint8_t *>(&directory), sizeof(directory));
     if (block == nullptr) {
         return RootDirectoryStatus::NullBuffer;
     }

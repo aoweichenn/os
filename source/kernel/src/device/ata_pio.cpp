@@ -22,7 +22,6 @@ constexpr uint64_t OS_KERNEL_ATA_LBA_HIGH_SHIFT_BITS = 16ULL;
 constexpr uint8_t OS_KERNEL_ATA_READ_SECTORS_COMMAND = 0x20U;
 constexpr uint8_t OS_KERNEL_ATA_WRITE_SECTORS_COMMAND = 0x30U;
 constexpr uint8_t OS_KERNEL_ATA_FLUSH_CACHE_COMMAND = 0xE7U;
-constexpr uint8_t OS_KERNEL_ATA_SINGLE_SECTOR_COUNT = 0x01U;
 constexpr uint8_t OS_KERNEL_ATA_STATUS_ERROR_BIT = 0x01U;
 constexpr uint8_t OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT = 0x08U;
 constexpr uint8_t OS_KERNEL_ATA_STATUS_DEVICE_FAULT_BIT = 0x20U;
@@ -42,13 +41,14 @@ constexpr uint64_t OS_KERNEL_ATA_DEVICE_SELECT_DELAY_READ_COUNT = 4ULL;
 constexpr uint64_t OS_KERNEL_ATA_FIRST_WORD_INDEX = 0ULL;
 constexpr uint64_t OS_KERNEL_ATA_EMPTY_POLL_COUNT = 0ULL;
 constexpr uint64_t OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT = 1ULL;
+constexpr uint64_t OS_KERNEL_ATA_MAXIMUM_TRANSFER_BLOCK_COUNT = 8ULL;
 constexpr uint64_t OS_KERNEL_ATA_SINGLE_OUTSTANDING_REQUEST_COUNT = 1ULL;
 constexpr uint8_t OS_KERNEL_ATA_EMPTY_STATUS = 0U;
 constexpr BlockDeviceGeometry OS_KERNEL_ATA_BLOCK_GEOMETRY{
     .logical_block_size_bytes = OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES,
     .logical_block_count = OS_KERNEL_DEVICE_ATA_MAXIMUM_LBA28 +
                            OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT,
-    .maximum_transfer_block_count = OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT,
+    .maximum_transfer_block_count = OS_KERNEL_ATA_MAXIMUM_TRANSFER_BLOCK_COUNT,
     .maximum_outstanding_request_count = OS_KERNEL_ATA_SINGLE_OUTSTANDING_REQUEST_COUNT,
     .write_supported = true,
     .flush_supported = true,
@@ -126,7 +126,8 @@ AtaPioStatus AtaPioDevice::ReadSector(const uint64_t logical_block_address, uint
     }
     this->EnterPollingMode();
     AtaPioStatus status =
-        this->PrepareSectorRequest(logical_block_address, OS_KERNEL_ATA_READ_SECTORS_COMMAND);
+        this->PrepareSectorRequest(logical_block_address, OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT,
+                                   OS_KERNEL_ATA_READ_SECTORS_COMMAND);
     if (status != AtaPioStatus::Succeeded) {
         this->RestoreInterruptMode();
         return status;
@@ -163,7 +164,9 @@ AtaPioStatus AtaPioDevice::WriteSector(const uint64_t logical_block_address, con
     }
     this->EnterPollingMode();
     AtaPioStatus status =
-        this->PrepareSectorRequest(logical_block_address, OS_KERNEL_ATA_WRITE_SECTORS_COMMAND);
+        this->PrepareSectorRequest(logical_block_address,
+                                   OS_KERNEL_ATA_SINGLE_TRANSFER_BLOCK_COUNT,
+                                   OS_KERNEL_ATA_WRITE_SECTORS_COMMAND);
     if (status != AtaPioStatus::Succeeded) {
         this->RestoreInterruptMode();
         return status;
@@ -216,6 +219,7 @@ AtaPioDevice::InitializeAsynchronousRequests(BlockRequest *const request_storage
     this->active_request_ = BlockRequest{};
     this->controller_available_ = true;
     this->write_data_transferred_ = false;
+    this->active_transferred_sector_count_ = 0ULL;
     this->interrupt_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->spurious_interrupt_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
     this->timeout_recovery_count_ = OS_KERNEL_ATA_EMPTY_POLL_COUNT;
@@ -265,6 +269,7 @@ AtaPioStatus AtaPioDevice::StartNextAsynchronous(AtaPioCompletion &completion,
     }
     this->active_request_ = request;
     this->write_data_transferred_ = false;
+    this->active_transferred_sector_count_ = 0ULL;
     if (!this->controller_available_) {
         return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
     }
@@ -302,16 +307,29 @@ AtaPioStatus AtaPioDevice::HandleInterrupt(AtaPioCompletion &completion) noexcep
         if ((status & OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT) == OS_KERNEL_ATA_EMPTY_STATUS) {
             return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
         }
-        this->TransferReadSector(this->active_request_.buffer);
+        this->TransferReadSector(
+            this->active_request_.buffer + this->active_transferred_sector_count_ *
+                                               OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES);
+        ++this->active_transferred_sector_count_;
+        const uint64_t sector_count = this->active_request_.buffer_size_bytes /
+                                      OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES;
+        if (this->active_transferred_sector_count_ < sector_count) {
+            return AtaPioStatus::Succeeded;
+        }
         ++this->read_completion_count_;
         return this->ResolveIssuedRequest(BlockRequestResult::Succeeded, completion);
     }
     if (this->active_request_.operation == BlockOperation::Write) {
-        if (!this->write_data_transferred_) {
+        const uint64_t sector_count = this->active_request_.buffer_size_bytes /
+                                      OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES;
+        if (this->active_transferred_sector_count_ < sector_count) {
             if ((status & OS_KERNEL_ATA_STATUS_DATA_REQUEST_BIT) == OS_KERNEL_ATA_EMPTY_STATUS) {
                 return this->ResolveIssuedRequest(BlockRequestResult::DeviceError, completion);
             }
-            this->TransferWriteSector(this->active_request_.buffer);
+            this->TransferWriteSector(
+                this->active_request_.buffer + this->active_transferred_sector_count_ *
+                                                   OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES);
+            ++this->active_transferred_sector_count_;
             this->write_data_transferred_ = true;
             return AtaPioStatus::Succeeded;
         }
@@ -357,6 +375,7 @@ AtaPioStatus AtaPioDevice::ResolveTimeout(const uint64_t now_nanoseconds,
     };
     this->active_request_ = BlockRequest{};
     this->write_data_transferred_ = false;
+    this->active_transferred_sector_count_ = 0ULL;
     return AtaPioStatus::Succeeded;
 }
 
@@ -418,19 +437,47 @@ AtaPioStatistics AtaPioDevice::Statistics() const noexcept {
 FileSystemBlockDeviceStatus AtaPioDevice::ReadBlock(const uint64_t logical_block_address,
                                                     uint8_t *block,
                                                     const uint64_t block_size_bytes) noexcept {
-    return this->ReadSector(logical_block_address, block, block_size_bytes) ==
-                   AtaPioStatus::Succeeded
-               ? FileSystemBlockDeviceStatus::Succeeded
-               : FileSystemBlockDeviceStatus::ReadFailed;
+    if (block == nullptr || block_size_bytes == 0ULL ||
+        block_size_bytes % OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES != 0ULL) {
+        return FileSystemBlockDeviceStatus::ReadFailed;
+    }
+    const uint64_t sector_count = block_size_bytes / OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES;
+    if (sector_count > OS_KERNEL_ATA_MAXIMUM_TRANSFER_BLOCK_COUNT ||
+        logical_block_address > OS_KERNEL_DEVICE_ATA_MAXIMUM_LBA28 - (sector_count - 1ULL)) {
+        return FileSystemBlockDeviceStatus::ReadFailed;
+    }
+    for (uint64_t sector_index = 0ULL; sector_index < sector_count; ++sector_index) {
+        if (this->ReadSector(
+                logical_block_address + sector_index,
+                block + sector_index * OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES,
+                OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) != AtaPioStatus::Succeeded) {
+            return FileSystemBlockDeviceStatus::ReadFailed;
+        }
+    }
+    return FileSystemBlockDeviceStatus::Succeeded;
 }
 
 FileSystemBlockDeviceStatus AtaPioDevice::WriteBlock(const uint64_t logical_block_address,
                                                      const uint8_t *block,
                                                      const uint64_t block_size_bytes) noexcept {
-    return this->WriteSector(logical_block_address, block, block_size_bytes) ==
-                   AtaPioStatus::Succeeded
-               ? FileSystemBlockDeviceStatus::Succeeded
-               : FileSystemBlockDeviceStatus::WriteFailed;
+    if (block == nullptr || block_size_bytes == 0ULL ||
+        block_size_bytes % OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES != 0ULL) {
+        return FileSystemBlockDeviceStatus::WriteFailed;
+    }
+    const uint64_t sector_count = block_size_bytes / OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES;
+    if (sector_count > OS_KERNEL_ATA_MAXIMUM_TRANSFER_BLOCK_COUNT ||
+        logical_block_address > OS_KERNEL_DEVICE_ATA_MAXIMUM_LBA28 - (sector_count - 1ULL)) {
+        return FileSystemBlockDeviceStatus::WriteFailed;
+    }
+    for (uint64_t sector_index = 0ULL; sector_index < sector_count; ++sector_index) {
+        if (this->WriteSector(
+                logical_block_address + sector_index,
+                block + sector_index * OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES,
+                OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES) != AtaPioStatus::Succeeded) {
+            return FileSystemBlockDeviceStatus::WriteFailed;
+        }
+    }
+    return FileSystemBlockDeviceStatus::Succeeded;
 }
 
 FileSystemBlockDeviceStatus AtaPioDevice::Flush() noexcept {
@@ -439,6 +486,7 @@ FileSystemBlockDeviceStatus AtaPioDevice::Flush() noexcept {
 }
 
 AtaPioStatus AtaPioDevice::PrepareSectorRequest(const uint64_t logical_block_address,
+                                                const uint64_t sector_count,
                                                 const uint8_t command) noexcept {
     const AtaPioStatus status = this->WaitUntilNotBusy();
     if (status != AtaPioStatus::Succeeded) {
@@ -451,7 +499,7 @@ AtaPioStatus AtaPioDevice::PrepareSectorRequest(const uint64_t logical_block_add
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET, drive_head);
     this->ApplyDeviceSelectDelay();
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_SECTOR_COUNT_PORT_OFFSET,
-               OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
+               static_cast<uint8_t>(sector_count));
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_LOW_PORT_OFFSET,
                static_cast<uint8_t>(logical_block_address));
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_MID_PORT_OFFSET,
@@ -488,7 +536,8 @@ AtaPioStatus AtaPioDevice::PrepareAsynchronousRequest(const BlockRequest &reques
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_DRIVE_HEAD_PORT_OFFSET, drive_head);
     this->ApplyDeviceSelectDelay();
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_SECTOR_COUNT_PORT_OFFSET,
-               OS_KERNEL_ATA_SINGLE_SECTOR_COUNT);
+               static_cast<uint8_t>(request.buffer_size_bytes /
+                                    OS_KERNEL_DEVICE_ATA_SECTOR_SIZE_BYTES));
     WritePort8(this->command_block_base_port_ + OS_KERNEL_ATA_LBA_LOW_PORT_OFFSET,
                static_cast<uint8_t>(request.logical_block_address));
     WritePort8(
@@ -508,6 +557,7 @@ AtaPioStatus AtaPioDevice::PrepareAsynchronousRequest(const BlockRequest &reques
             return data_request_status;
         }
         this->TransferWriteSector(request.buffer);
+        this->active_transferred_sector_count_ = 1ULL;
         this->write_data_transferred_ = true;
     }
     return AtaPioStatus::Succeeded;
@@ -530,6 +580,7 @@ AtaPioStatus AtaPioDevice::ResolveIssuedRequest(const BlockRequestResult result,
     };
     this->active_request_ = BlockRequest{};
     this->write_data_transferred_ = false;
+    this->active_transferred_sector_count_ = 0ULL;
     return AtaPioStatus::Succeeded;
 }
 

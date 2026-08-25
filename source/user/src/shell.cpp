@@ -84,7 +84,7 @@ constexpr char OS_USER_SHELL_NONINTERACTIVE_OPTION[] = "-c";
 constexpr char OS_USER_SHELL_BANNER[] =
     "\r\nx86-64 OS Lab v2.6\r\n"
     "行编辑、环境变量、通配符、完整重定向与 47 个用户工具已经启用。\r\n"
-    "rootfs v4 已启用本地身份、权限、资源边界与断电恢复。\r\n";
+    "rootfs v5/ext4-mini 已启用 extent、分组分配、权限与断电恢复。\r\n";
 constexpr char OS_USER_SHELL_READY_MARKER[] = "[OS][USER][SHELL] READY\r\n";
 constexpr char OS_USER_SHELL_PROMPT_PREFIX[] = "[os:";
 constexpr char OS_USER_SHELL_PROMPT_SUFFIX[] = "]$ ";

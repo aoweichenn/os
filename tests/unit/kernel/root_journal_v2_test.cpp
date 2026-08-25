@@ -13,6 +13,8 @@ constexpr std::string_view OS_TEST_ROOT_JOURNAL_V2_ORDERED_MESSAGE =
     "ordered data 必须先稳定，metadata 只在 commit 后 checkpoint 到 home";
 constexpr std::string_view OS_TEST_ROOT_JOURNAL_V2_SLOT_MESSAGE =
     "四个 committed slot 必须有界，checkpoint 后才能安全复用";
+constexpr std::string_view OS_TEST_ROOT_JOURNAL_V2_PRODUCTION_COMMIT_MESSAGE =
+    "production commit+checkpoint 必须直接写 home block 且不遗留 pending slot";
 constexpr os::kernel::fs::RootV5Uuid OS_TEST_ROOT_JOURNAL_V2_UUID{
     .low = 0x1122334455667788ULL,
     .high = 0x8877665544332211ULL,
@@ -27,6 +29,7 @@ constexpr uint64_t OS_TEST_ROOT_JOURNAL_V2_METADATA_TARGET = 512ULL;
 constexpr uint64_t OS_TEST_ROOT_JOURNAL_V2_ORDERED_TARGET = 768ULL;
 constexpr uint64_t OS_TEST_ROOT_JOURNAL_V2_REVOKE_TARGET = 1024ULL;
 constexpr uint64_t OS_TEST_ROOT_JOURNAL_V2_SLOT_TARGET_BASE = 1280ULL;
+constexpr uint64_t OS_TEST_ROOT_JOURNAL_V2_PRODUCTION_TARGET = 1536ULL;
 constexpr uint8_t OS_TEST_ROOT_JOURNAL_V2_OLD_PATTERN = 0x17U;
 constexpr uint8_t OS_TEST_ROOT_JOURNAL_V2_METADATA_PATTERN = 0xA5U;
 constexpr uint8_t OS_TEST_ROOT_JOURNAL_V2_REPLACEMENT_PATTERN = 0xC3U;
@@ -136,6 +139,20 @@ int main() {
         BlockHasPattern(observed_block, OS_TEST_ROOT_JOURNAL_V2_REPLACEMENT_PATTERN);
     context.Expect(ordered_valid, OS_TEST_ROOT_JOURNAL_V2_ORDERED_MESSAGE);
 
+    FillBlock(metadata_block, OS_TEST_ROOT_JOURNAL_V2_REPLACEMENT_PATTERN);
+    const bool production_commit_valid =
+        journal.Begin(1ULL, 0ULL, 0ULL) == os::kernel::fs::RootJournalV2Status::Succeeded &&
+        journal.StageMetadata(OS_TEST_ROOT_JOURNAL_V2_PRODUCTION_TARGET, metadata_block,
+                              sizeof(metadata_block)) ==
+            os::kernel::fs::RootJournalV2Status::Succeeded &&
+        journal.CommitAndCheckpoint(OS_TEST_ROOT_JOURNAL_V2_COMMIT_TIME_NANOSECONDS + 1ULL) ==
+            os::kernel::fs::RootJournalV2Status::Succeeded &&
+        journal.PendingCommittedTransactionCount() == 0ULL;
+    device.ReadDurableFileSystemBlock(OS_TEST_ROOT_JOURNAL_V2_PRODUCTION_TARGET, observed_block);
+    context.Expect(production_commit_valid &&
+                       BlockHasPattern(observed_block, OS_TEST_ROOT_JOURNAL_V2_REPLACEMENT_PATTERN),
+                   OS_TEST_ROOT_JOURNAL_V2_PRODUCTION_COMMIT_MESSAGE);
+
     bool slots_valid = true;
     for (uint64_t slot_index = 0ULL;
          slots_valid && slot_index < os::kernel::fs::OS_KERNEL_ROOTFS_V5_JOURNAL_SLOT_COUNT;
@@ -159,8 +176,8 @@ int main() {
         journal.Begin(1ULL, 0ULL, 0ULL) == os::kernel::fs::RootJournalV2Status::Succeeded &&
         journal.Abort() == os::kernel::fs::RootJournalV2Status::Succeeded;
     const os::kernel::fs::RootJournalV2Statistics statistics = journal.Statistics();
-    slots_valid = slots_valid && statistics.transaction_commit_count == 5ULL &&
-                  statistics.checkpoint_transaction_count == 2ULL &&
+    slots_valid = slots_valid && statistics.transaction_commit_count == 6ULL &&
+                  statistics.checkpoint_transaction_count == 3ULL &&
                   statistics.capacity_rejection_count >= 2ULL;
     context.Expect(slots_valid, OS_TEST_ROOT_JOURNAL_V2_SLOT_MESSAGE);
     return context.ExitCode();

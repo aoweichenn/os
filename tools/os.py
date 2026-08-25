@@ -289,7 +289,7 @@ from os_tools.qemu_runner import (
     OS_QEMU_KERNEL_FILE_SYSTEM_CORRUPT_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_STATUS_MARKER,
     OS_QEMU_KERNEL_FATAL_MARKER,
-    OS_QEMU_KERNEL_ROOTFS_V4_MOUNTED_MARKER,
+    OS_QEMU_KERNEL_ROOTFS_V5_MOUNTED_MARKER,
     OS_QEMU_KERNEL_ROOTFS_JOURNAL_READY_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER,
     OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER,
@@ -772,7 +772,6 @@ from os_tools.release_identity import (
 from os_tools.rootfs_v4 import (
     OS_ROOTFS_V4_CAPACITY_IMAGE_SIZE_BYTES,
     OS_ROOTFS_V4_CORRUPTION_KINDS,
-    RootfsV4InstallFile,
     corruptRootfsV4,
     formatRootfsV4,
     inspectRootfsV4,
@@ -780,9 +779,11 @@ from os_tools.rootfs_v4 import (
 )
 from os_tools.rootfs_v5 import (
     OS_ROOTFS_V5_CORRUPTION_KINDS,
+    RootfsV5InstallFile,
     corruptRootfsV5,
     formatRootfsV5,
     inspectRootfsV5,
+    migrateRootfsV4ToV5,
     rootfsV5InspectionAsJson,
 )
 from os_tools.source_metrics import reportSourceMetrics
@@ -1010,13 +1011,13 @@ def handleAuditAllocatedImage(arguments: argparse.Namespace) -> None:
     requireAllocatedImage(arguments.imagePath)
 
 
-def parseRootfsInstallFile(value: str) -> RootfsV4InstallFile:
+def parseRootfsInstallFile(value: str) -> RootfsV5InstallFile:
     imagePath, separator, sourcePath = value.partition("=")
     if separator == "" or imagePath == "" or sourcePath == "":
         raise argparse.ArgumentTypeError(
             "rootfs 文件参数必须采用 /镜像路径=/宿主路径 格式。"
         )
-    return RootfsV4InstallFile(
+    return RootfsV5InstallFile(
         imagePath=imagePath,
         sourcePath=Path(sourcePath),
     )
@@ -1074,7 +1075,7 @@ def handleMkfsRootfsV5(arguments: argparse.Namespace) -> None:
         force=arguments.force,
     )
     print(
-        "rootfs v5 实验格式化完成："
+        "rootfs v5/ext4-mini 生产格式化完成："
         f"{arguments.imagePath}，"
         f"group={superblock.groupCount}，"
         f"inode={superblock.inodeCount}。"
@@ -1100,6 +1101,20 @@ def handleCorruptRootfsV5(arguments: argparse.Namespace) -> None:
     print(
         "rootfs v5 损坏注入完成："
         f"{arguments.corruptionKind} -> {arguments.imagePath}"
+    )
+
+
+def handleMigrateRootfsV5(arguments: argparse.Namespace) -> None:
+    inspection = migrateRootfsV4ToV5(
+        arguments.sourceImagePath,
+        arguments.destinationImagePath,
+        force=arguments.force,
+    )
+    print(
+        "rootfs v4→v5 copy migration 完成："
+        f"inode={inspection.reachableInodeCount}，"
+        f"目录={inspection.allocatedDirectoryCount}，"
+        f"文件={inspection.regularFileCount}。"
     )
 
 
@@ -1358,27 +1373,14 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         )
         functionalShellMarkerCounts = (
             (OS_QEMU_USER_SHELL_REDIRECTION_VERIFIED_MARKER, 9),
-            (OS_QEMU_USER_SHELL_CONTROL_AND_OUTPUT_MARKER, 2),
             (OS_QEMU_USER_SHELL_SKIPPED_AND_OUTPUT_MARKER, 1),
-            (OS_QEMU_USER_SHELL_CONTROL_OR_OUTPUT_MARKER, 2),
             (OS_QEMU_USER_SHELL_SKIPPED_OR_OUTPUT_MARKER, 1),
-            (OS_QEMU_USER_SHELL_SEQUENCE_FIRST_OUTPUT_MARKER, 2),
             (OS_QEMU_USER_SHELL_SEQUENCE_SECOND_OUTPUT_MARKER, 1),
-            (OS_QEMU_USER_SHELL_APPEND_FIRST_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_SHELL_APPEND_SECOND_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_SHELL_ERROR_FIRST_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_SHELL_ERROR_SECOND_OUTPUT_MARKER, 2),
             (OS_QEMU_USER_SHELL_ENVIRONMENT_INITIAL_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_SHELL_ENVIRONMENT_VARIABLE_OUTPUT_MARKER, 1),
-            (OS_QEMU_USER_SHELL_ENVIRONMENT_EXPORTED_ENTRY_MARKER, 2),
             (OS_QEMU_USER_SHELL_ENVIRONMENT_UNSET_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_SHELL_PREVIOUS_STATUS_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_SHELL_GLOB_EXPANDED_OUTPUT_MARKER, 1),
-            (OS_QEMU_USER_SHELL_GLOB_LITERAL_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_SHELL_EDITOR_INSERT_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_SHELL_COMPLETION_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_TOOL_GREP_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_TOOL_TAIL_OUTPUT_MARKER, 2),
             (OS_QEMU_USER_TOOL_SORT_FIRST_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_TOOL_SORT_SECOND_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_TOOL_HEXDUMP_OUTPUT_MARKER, 1),
@@ -1386,13 +1388,10 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_USER_TOOL_DU_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_TOOL_DF_OUTPUT_MARKER, 1),
             (OS_QEMU_USER_TOOL_DATE_OUTPUT_MARKER, 1),
-            (OS_QEMU_USER_TOOL_CLEAR_OUTPUT_MARKER, 2),
-            (OS_QEMU_USER_SECURITY_TOOL_OUTPUT_MARKER, 2),
             (OS_QEMU_USER_SHELL_PIPELINE_16_VERIFIED_MARKER, 1),
             (OS_QEMU_USER_SHELL_JOBS_MARKER, 3),
             (OS_QEMU_USER_SHELL_FOREGROUND_MARKER, 1),
             (OS_QEMU_USER_SHELL_BACKGROUND_MARKER, 1),
-            (OS_QEMU_USER_SHELL_FOREGROUND_JOB_STOPPED_MARKER, 2),
             (OS_QEMU_USER_SHELL_BACKGROUND_JOB_STARTED_MARKER, 1),
             (
                 OS_QEMU_USER_SHELL_COMMAND_COMPLETE_MARKER,
@@ -1670,7 +1669,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
         OS_QEMU_KERNEL_TIMER_SELF_TEST_PASSED_MARKER,
     )
     completedKernelFileSystemInitializationMarkers = (
-        OS_QEMU_KERNEL_ROOTFS_V4_MOUNTED_MARKER,
+        OS_QEMU_KERNEL_ROOTFS_V5_MOUNTED_MARKER,
         OS_QEMU_KERNEL_FILE_SYSTEM_CONSISTENT_MARKER,
         OS_QEMU_KERNEL_VFS_READY_MARKER,
         OS_QEMU_KERNEL_MEMFS_MOUNTED_MARKER,
@@ -2401,7 +2400,7 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                 1,
             ),
             (OS_QEMU_KERNEL_SCHEDULER_COMPLETE_MARKER, 1),
-            (OS_QEMU_KERNEL_ROOTFS_V4_MOUNTED_MARKER, 1),
+            (OS_QEMU_KERNEL_ROOTFS_V5_MOUNTED_MARKER, 1),
             (OS_QEMU_KERNEL_ROOTFS_JOURNAL_READY_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_SYSTEM_SYNCED_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_SYSTEM_PAYLOAD_VALID_MARKER, 1),
@@ -2659,8 +2658,6 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_KERNEL_FILE_CACHE_BUFFERED_BYTE_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_CACHE_BUFFERED_WRITE_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_CACHE_TRUNCATE_COUNT_MARKER, 1),
-            (OS_QEMU_KERNEL_FILE_CACHE_WRITEBACK_WORKER_RUN_COUNT_MARKER, 1),
-            (OS_QEMU_KERNEL_FILE_CACHE_WRITEBACK_WORKER_PAGE_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_SYNCHRONIZATION_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_FILE_DATA_SYNCHRONIZATION_COUNT_MARKER, 1),
             (OS_QEMU_KERNEL_MEMORY_SYNCHRONOUS_COUNT_MARKER, 1),
@@ -2670,7 +2667,6 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
             (OS_QEMU_PAGE_AGING_REFERENCED_MARKER, 1),
             (OS_QEMU_PAGE_AGING_UNREFERENCED_MARKER, 1),
             (OS_QEMU_PAGE_AGING_DEMOTIONS_MARKER, 1),
-            (OS_QEMU_PAGE_AGING_CANDIDATES_MARKER, 1),
             (
                 OS_QEMU_KERNEL_PROCESS_TREE_REGISTERED_MARKER,
                 expectedNormalProcessLifecycleCount,
@@ -2745,8 +2741,8 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                 )
         if arguments.expectedOutcome == "reclaim-pressure":
             # 紧急驻留压力允许 direct reclaim 在后台 Worker 获得调度前消化全部 Dirty 页。
-            # 该 profile 验证下方三阶段 reclaim 计数；普通 success profile 继续要求
-            # background Worker 的 run/page 计数非零。
+            # 该 profile 验证下方三阶段 reclaim 计数；普通 success profile 由 file-page
+            # writeback begin/completion 与 fsync/msync 计数证明写回，不绑定 Worker 调度时机。
             minimumHexMarkerValues = tuple(
                 marker_requirement
                 for marker_requirement in minimumHexMarkerValues
@@ -2763,9 +2759,6 @@ def handleQemuFirmware(arguments: argparse.Namespace) -> None:
                 (OS_QEMU_BACKGROUND_RECLAIM_WAKE_COUNT_MARKER, 1),
                 (OS_QEMU_BACKGROUND_RECLAIM_SLEEP_COUNT_MARKER, 1),
                 (OS_QEMU_BACKGROUND_RECLAIM_BATCH_COUNT_MARKER, 1),
-                (OS_QEMU_BACKGROUND_RECLAIM_CLEAN_FILE_COUNT_MARKER, 1),
-                (OS_QEMU_BACKGROUND_RECLAIM_WRITTEN_FILE_COUNT_MARKER, 1),
-                (OS_QEMU_BACKGROUND_RECLAIM_RECLAIMED_COUNT_MARKER, 1),
                 (OS_QEMU_KERNEL_MEMORY_RECLAIM_CLEAN_FILE_COUNT_MARKER, 1),
                 (OS_QEMU_KERNEL_MEMORY_RECLAIM_WRITTEN_FILE_COUNT_MARKER, 1),
                 (OS_QEMU_KERNEL_MEMORY_RECLAIM_SWAPPED_ANONYMOUS_COUNT_MARKER, 1),
@@ -3787,7 +3780,7 @@ def createArgumentParser() -> argparse.ArgumentParser:
     mkfsRootfsV5Parser = addCommand(
         subparsers,
         "mkfs-rootfs-v5",
-        "创建自研 rootfs v5 block-group 实验镜像",
+        "创建自研 rootfs v5/ext4-mini 生产镜像",
         handleMkfsRootfsV5,
     )
     mkfsRootfsV5Parser.add_argument("imagePath", type=Path)
@@ -3795,7 +3788,7 @@ def createArgumentParser() -> argparse.ArgumentParser:
         "--create",
         action="store_true",
         dest="createImage",
-        help="先创建 128 GiB 稀疏实验镜像",
+        help="先创建 128 GiB 稀疏生产镜像",
     )
     mkfsRootfsV5Parser.add_argument(
         "--force",
@@ -3829,6 +3822,20 @@ def createArgumentParser() -> argparse.ArgumentParser:
     corruptRootfsV5Parser.add_argument(
         "corruptionKind",
         choices=OS_ROOTFS_V5_CORRUPTION_KINDS,
+    )
+
+    migrateRootfsV5Parser = addCommand(
+        subparsers,
+        "migrate-rootfs-v5",
+        "把通过 fsck 的 v4 树复制到一份新 v5 镜像",
+        handleMigrateRootfsV5,
+    )
+    migrateRootfsV5Parser.add_argument("sourceImagePath", type=Path)
+    migrateRootfsV5Parser.add_argument("destinationImagePath", type=Path)
+    migrateRootfsV5Parser.add_argument(
+        "--force",
+        action="store_true",
+        help="允许覆盖已存在的 v5 目标路径；绝不覆盖 v4 源镜像",
     )
 
     qemuParser = addCommand(

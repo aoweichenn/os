@@ -74,6 +74,8 @@ class RootJournalV2 final {
     [[nodiscard]] bool TryReadStagedMetadata(uint64_t target_relative_block, uint8_t *block,
                                              uint64_t block_size_bytes) const noexcept;
     [[nodiscard]] RootJournalV2Status Commit(uint64_t commit_time_nanoseconds) noexcept;
+    [[nodiscard]] RootJournalV2Status CommitAndCheckpoint(
+        uint64_t commit_time_nanoseconds) noexcept;
     [[nodiscard]] RootJournalV2Status CheckpointOldest() noexcept;
     [[nodiscard]] RootJournalV2Status Abort() noexcept;
     [[nodiscard]] bool IsActive() const noexcept;
@@ -83,6 +85,7 @@ class RootJournalV2 final {
     [[nodiscard]] RootJournalV2Statistics Statistics() const noexcept;
 
   private:
+    static constexpr uint64_t OS_KERNEL_ROOTFS_V5_JOURNAL_SCRATCH_BLOCK_COUNT = 5ULL;
     struct StagedBlock final {
         uint8_t bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES];
         uint64_t target_relative_block;
@@ -120,6 +123,7 @@ class RootJournalV2 final {
     [[nodiscard]] RootJournalV2Status WriteCheckpointRecord(uint64_t slot_index, uint64_t sequence,
                                                             uint32_t commit_checksum) noexcept;
     [[nodiscard]] RootJournalV2Status ClearSlot(uint64_t slot_index) noexcept;
+    [[nodiscard]] RootJournalV2Status CheckpointActive(uint32_t commit_checksum) noexcept;
     [[nodiscard]] RootJournalV2Status CheckpointSlot(uint64_t slot_index, bool replay,
                                                      const SlotState *states,
                                                      uint64_t state_count) noexcept;
@@ -127,9 +131,12 @@ class RootJournalV2 final {
                                                          uint64_t sequence, const SlotState *states,
                                                          uint64_t state_count,
                                                          bool &revoked) noexcept;
+    void ClearStagedBlock(StagedBlock &block) noexcept;
     void ResetActiveTransaction() noexcept;
 
     BlockDevice *device_{nullptr};
+    uint8_t block_scratch_[OS_KERNEL_ROOTFS_V5_JOURNAL_SCRATCH_BLOCK_COUNT]
+                          [OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
     StagedBlock metadata_blocks_[OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_METADATA_BLOCK_COUNT]{};
     StagedBlock
         ordered_data_blocks_[OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_ORDERED_DATA_BLOCK_COUNT]{};

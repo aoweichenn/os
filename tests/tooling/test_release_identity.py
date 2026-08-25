@@ -26,7 +26,7 @@ OS_TEST_RELEASE_IDENTITY_REQUIRED_PATHS = (
     "README.md",
     "docs/releases/v2.6.md",
     "source/abi/include/os/abi/version.hpp",
-    "source/kernel/include/os/kernel/fs/root_file_system_format.hpp",
+    "source/kernel/include/os/kernel/fs/root_file_system_v5_format.hpp",
     "source/kernel/src/core/kernel_main.cpp",
     "source/user/programs/argument_probe.cpp",
     "source/user/programs/init.cpp",

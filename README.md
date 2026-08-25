@@ -141,9 +141,13 @@ SEEK_DATA/SEEK_HOLE 和 FIEMAP 类查询。extent metadata 与 ordered data 通�
 矩阵验证，但仍未进入生产 mount。边界见 [v2.18 记录](docs/releases/v2.18.md) 与
 [ADR 0083](docs/adr/0083-v2-18-rootfs-v5-extents-allocation.md)。
 v2.19 已建立 4 KiB 变长目录与 HTree、inode extension、xattr、POSIX ACL 和 user/group quota
-模型；512-entry 索引、CRC 损坏、ACL 优先级和 quota grace 均有直接测试。v2.20 production
-backend/migration 尚未完成，因此当前仍不能称为整个 V2 完成。边界见
+模型；512-entry 索引、CRC 损坏、ACL 优先级和 quota grace 均有直接测试。v2.20 已把
+`OSRFV005` 接入 production root：group bitmap/inode、extent、variable dirent、journal v2、
+orphan、完整 fsck 和 v4→v5 copy migration 使用同一盘面，ATA/NVMe 以 4 KiB transfer 运行。
+v4 只保留兼容回归，V2 实现范围完成；公开发布仍等待完整交付矩阵。边界见
 [v2.19 记录](docs/releases/v2.19.md) 与 [ADR 0084](docs/adr/0084-v2-19-directory-metadata-policy.md)。
+[v2.20 记录](docs/releases/v2.20.md) 与
+[ADR 0085](docs/adr/0085-v2-20-rootfs-v5-production-switch.md) 描述生产切换。
 `v2.0 集成发布`仍是最近一次冻结发布，不回写本次设备变更。v2.0 不新增核心机制，而是把 v1.1 至
 v1.18 已分别验收的资源、进程、虚拟内存、Unix I/O、线程、时间、信号、
 TTY、异步块层、日志文件系统和 ABI v2 收束为同一条可复现发布基线。ABI

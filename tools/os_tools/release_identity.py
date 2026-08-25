@@ -23,7 +23,7 @@ OS_RELEASE_IDENTITY_PROJECT_VERSION = "2.6.0"
 OS_RELEASE_IDENTITY_ABI_VERSION = "2.6.0"
 OS_RELEASE_IDENTITY_ABI_SYSTEM_CALL_COUNT = 105
 OS_RELEASE_IDENTITY_ABI_LAST_ERROR = -60
-OS_RELEASE_IDENTITY_ROOTFS_FORMAT_VERSION = 4
+OS_RELEASE_IDENTITY_ROOTFS_FORMAT_VERSION = 5
 OS_RELEASE_IDENTITY_PRIMARY_MEMORY_MEBIBYTES = 4096
 OS_RELEASE_IDENTITY_FIRMWARE_SIZE_BYTES = 131_072
 OS_RELEASE_IDENTITY_BOOT_PREFIX_HASH_SIZE_BYTES = 4 * 1024 * 1024
@@ -98,7 +98,7 @@ def auditReleaseIdentity(projectRoot: Path) -> ReleaseIdentity:
     )
     rootfsText = _readRequiredText(
         projectRoot,
-        "source/kernel/include/os/kernel/fs/root_file_system_format.hpp",
+        "source/kernel/include/os/kernel/fs/root_file_system_v5_format.hpp",
     )
     qemuText = _readRequiredText(projectRoot, "tools/os_tools/qemu_runner.py")
     kernelText = _readRequiredText(
@@ -165,7 +165,7 @@ def auditReleaseIdentity(projectRoot: Path) -> ReleaseIdentity:
     )
     _requirePattern(
         rootfsText,
-        r"\bOS_KERNEL_ROOTFS_FORMAT_VERSION\s*=\s*([0-9]+)ULL;",
+        r"\bOS_KERNEL_ROOTFS_V5_FORMAT_VERSION\s*=\s*([0-9]+)ULL;",
         str(OS_RELEASE_IDENTITY_ROOTFS_FORMAT_VERSION),
         "rootfs 格式版本",
     )

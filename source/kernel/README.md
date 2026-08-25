@@ -382,8 +382,8 @@ writeback 等待、后端提交与 cache truncate。后台 writeback 不取 guar
 [ADR 0080](../../docs/adr/0080-v2-15-per-inode-io-coordination.md)。
 
 V2 文件系统终态冻结为自研 rootfs v5 小型 ext4 核心；4 KiB block group、journal v2、extent、
-delayed allocation、HTree 和 xattr/ACL/quota 在 v2.16..v2.20 分阶段完成，v2.20 前生产根仍是
-rootfs v4。总体决策见
+delayed allocation、HTree 和 xattr/ACL/quota 在 v2.16..v2.20 分阶段完成。v2.20 已把生产根、
+启动镜像、fsck 与迁移切到 v5；rootfs v4 只保留兼容回归。总体决策见
 [ADR 0079](../../docs/adr/0079-v2-mini-ext4-rootfs-v5-program.md)。
 
 v2.16 新增 `fs/root_file_system_v5_format.*`，冻结 `OSRFV005` 的 4 KiB block、128 MiB group、
@@ -408,6 +408,14 @@ rootfs v4 或扩展用户 ABI。设计见
 v2.19 新增 `fs/root_directory_index.*` 与 `root_inode_metadata.*`，实现 variable dirent/HTree、
 inode extension、xattr、ACL 和 quota 的独立格式/策略模型。它们尚未接入 production backend；
 边界见 [ADR 0084](../../docs/adr/0084-v2-19-directory-metadata-policy.md)。
+
+v2.20 让 `fs/root_file_system.*` 同时识别 legacy v4 与 production v5。v5 通过组内 bitmap、
+256-byte inode extension、extent leaf 和 variable directory block 实现 lookup/create/read/write/
+truncate/link/symlink/rename/orphan；metadata 使用 journal v2 的 production commit+checkpoint。
+所有 4 KiB scratch 属于文件系统实例，避免越过 4-page Kernel stack。ATA READ/WRITE SECTORS
+一次最多搬运 8 sector，rootfs/journal 各只提交一次 BlockIo 请求。宿主 `rootfs_v5.py` 同步提供
+mkfs、installer、完整 fsck 与 v4→v5 copy migration。生产切换见
+[ADR 0085](../../docs/adr/0085-v2-20-rootfs-v5-production-switch.md)。
 
 Ring 3 的九个新包装由共享 object target 按 function section 编译；LLD 只保留每个 ELF 实际
 引用的包装，避免 ABI 扩展把无关程序的映射页和 rootfs 冷页工作集一起扩大。

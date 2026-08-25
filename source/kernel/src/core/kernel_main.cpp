@@ -409,7 +409,7 @@ constexpr char OS_KERNEL_MAIN_NVME_ROOT_NAMESPACE_READY_MESSAGE[] =
 constexpr char OS_KERNEL_MAIN_NVME_SWAP_NAMESPACE_READY_MESSAGE[] =
     "[OS][KERNEL] NVME_SWAP_NAMESPACE_READY\r\n";
 constexpr char OS_KERNEL_MAIN_NVME_STORAGE_READY_MESSAGE[] = "[OS][KERNEL] NVME_STORAGE_READY\r\n";
-constexpr char OS_KERNEL_MAIN_ROOTFS_V4_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V4_MOUNTED\r\n";
+constexpr char OS_KERNEL_MAIN_ROOTFS_V5_MOUNTED_MESSAGE[] = "[OS][KERNEL] ROOTFS_V5_MOUNTED\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_CORRUPT_MESSAGE[] =
     "[OS][KERNEL] FILE_SYSTEM_CORRUPT\r\n";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_PERSISTENCE_RESTORED_MESSAGE[] =
@@ -430,10 +430,10 @@ constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_METADATA_BLOCK_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_SYSTEM_ALLOCATED_METADATA_BLOCKS=";
 constexpr char OS_KERNEL_MAIN_FILE_SYSTEM_FREE_BLOCK_COUNT_PREFIX[] =
     "[OS][KERNEL] FILE_SYSTEM_FREE_DATA_BLOCKS=";
-constexpr char OS_KERNEL_MAIN_ROOTFS_V4_REGION_SIZE_PREFIX[] =
-    "[OS][KERNEL] ROOTFS_V4_REGION_BYTES=";
-constexpr char OS_KERNEL_MAIN_ROOTFS_V4_MAXIMUM_FILE_SIZE_PREFIX[] =
-    "[OS][KERNEL] ROOTFS_V4_MAX_FILE_BYTES=";
+constexpr char OS_KERNEL_MAIN_ROOTFS_V5_REGION_SIZE_PREFIX[] =
+    "[OS][KERNEL] ROOTFS_V5_REGION_BYTES=";
+constexpr char OS_KERNEL_MAIN_ROOTFS_V5_MAXIMUM_FILE_SIZE_PREFIX[] =
+    "[OS][KERNEL] ROOTFS_V5_MAX_FILE_BYTES=";
 constexpr char OS_KERNEL_MAIN_ROOTFS_JOURNAL_READY_MESSAGE[] =
     "[OS][KERNEL] ROOTFS_JOURNAL_READY\r\n";
 constexpr char OS_KERNEL_MAIN_ROOTFS_JOURNAL_CREDIT_CAPACITY_PREFIX[] =
@@ -1697,14 +1697,16 @@ void InitializeKernelFileSystem(const VgaTextConsole &vga_console, fs::RootFileS
                              static_cast<uint64_t>(mount_status));
         HaltProcessor();
     }
-    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_V4_MOUNTED_MESSAGE);
-    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V4_REGION_SIZE_PREFIX,
-                         fs::OS_KERNEL_ROOTFS_REGION_SIZE_BYTES);
-    WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_V4_MAXIMUM_FILE_SIZE_PREFIX,
-                         fs::OS_KERNEL_ROOTFS_MAXIMUM_FILE_SIZE_BYTES);
+    WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_V5_MOUNTED_MESSAGE);
+    WriteRequiredHexLine(
+        vga_console, OS_KERNEL_MAIN_ROOTFS_V5_REGION_SIZE_PREFIX,
+        fs::OS_KERNEL_ROOTFS_V5_TOTAL_BLOCK_COUNT * fs::OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
+    WriteRequiredHexLine(
+        vga_console, OS_KERNEL_MAIN_ROOTFS_V5_MAXIMUM_FILE_SIZE_PREFIX,
+        fs::OS_KERNEL_ROOTFS_V5_TOTAL_BLOCK_COUNT * fs::OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_READY_MESSAGE);
     WriteRequiredHexLine(vga_console, OS_KERNEL_MAIN_ROOTFS_JOURNAL_CREDIT_CAPACITY_PREFIX,
-                         fs::OS_KERNEL_ROOTFS_JOURNAL_MAXIMUM_CREDIT_COUNT);
+                         fs::OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_METADATA_BLOCK_COUNT);
     WriteRequiredMessage(vga_console, OS_KERNEL_MAIN_FILE_SYSTEM_CONSISTENT_MESSAGE);
     WriteFileSystemStatistics(vga_console, file_system);
 }
@@ -2804,9 +2806,7 @@ void ExecuteRequiredProcesses(const VgaTextConsole &vga_console,
               OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT &&
           statistics.page_aging.unreferenced_observation_count >=
               OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT &&
-          statistics.page_aging.demotion_count >= OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT &&
-          statistics.page_aging.reclaim_candidate_observation_count >=
-              OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT)) &&
+          statistics.page_aging.demotion_count >= OS_KERNEL_MAIN_MINIMUM_ENTRY_EVIDENCE_COUNT)) &&
         statistics.scheduler.active_deadline_count == OS_KERNEL_MAIN_KERNEL_STACK_EMPTY_COUNT &&
         statistics.scheduler.deadline_schedule_count ==
             statistics.scheduler.deadline_expiration_count +

@@ -103,6 +103,7 @@ class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice>,
 
   private:
     [[nodiscard]] AtaPioStatus PrepareSectorRequest(uint64_t logical_block_address,
+                                                    uint64_t sector_count,
                                                     uint8_t command) noexcept;
     [[nodiscard]] AtaPioStatus PrepareAsynchronousRequest(const BlockRequest &request) noexcept;
     [[nodiscard]] AtaPioStatus ResolveIssuedRequest(BlockRequestResult result,
@@ -122,6 +123,7 @@ class AtaPioDevice final : public BlockDeviceAdapter<AtaPioDevice>,
     bool asynchronous_initialized_{};
     bool controller_available_{true};
     bool write_data_transferred_{};
+    uint64_t active_transferred_sector_count_{};
     uint64_t interrupt_count_{};
     uint64_t spurious_interrupt_count_{};
     uint64_t timeout_recovery_count_{};

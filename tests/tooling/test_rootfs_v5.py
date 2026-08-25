@@ -11,8 +11,10 @@ from tools.os_tools.rootfs_v5 import (
     OS_ROOTFS_V5_GROUP_DESCRIPTOR_SIZE_BYTES,
     OS_ROOTFS_V5_INCOMPAT_BLOCK_GROUPS,
     OS_ROOTFS_V5_INODE_SIZE_BYTES,
+    OS_ROOTFS_V5_JOURNAL_BLOCK_COUNT,
     OS_ROOTFS_V5_READ_ONLY_COMPAT_METADATA_CRC32C,
     RootfsV5FormatProfile,
+    RootfsV5InstallFile,
     RootfsV5Uuid,
     buildInitialRootfsV5BlockBitmap,
     buildInitialRootfsV5GroupDescriptor,
@@ -26,6 +28,7 @@ from tools.os_tools.rootfs_v5 import (
     encodeRootfsV5Superblock,
     formatRootfsV5,
     inspectRootfsV5,
+    installRootfsV5Files,
     makeProductionRootfsV5FormatProfile,
     planRootfsV5Superblock,
     rootfsV5InspectionAsJson,
@@ -143,13 +146,22 @@ class RootfsV5ToolTests(unittest.TestCase):
                     + descriptor.blockBitmapBlock
                     * decodedSuperblock.blockSizeBytes
                 )
-                self.assertEqual(
-                    imageFile.read(decodedSuperblock.blockSizeBytes),
-                    buildInitialRootfsV5BlockBitmap(
-                        decodedSuperblock,
-                        descriptor,
-                    ),
+                blockBitmap = imageFile.read(decodedSuperblock.blockSizeBytes)
+                baselineBitmap = buildInitialRootfsV5BlockBitmap(
+                    decodedSuperblock,
+                    descriptor,
                 )
+                self.assertTrue(
+                    all(
+                        baseline & ~current == 0
+                        for baseline, current in zip(
+                            baselineBitmap,
+                            blockBitmap,
+                            strict=True,
+                        )
+                    )
+                )
+                self.assertNotEqual(blockBitmap, baselineBitmap)
                 imageFile.seek(
                     profile.fileSystemStartLba * profile.sectorSizeBytes
                     + descriptor.inodeBitmapBlock
@@ -208,10 +220,12 @@ class RootfsV5ToolTests(unittest.TestCase):
                     imageFile.read(decodedSuperblock.inodeSizeBytes),
                 )
                 imageFile.seek(rootOffset)
+                damagedMapping = bytearray(rootInode.mappingRoot)
+                damagedMapping[32] ^= 0x40
                 imageFile.write(
                     encodeRootfsV5Inode(
                         decodedSuperblock,
-                        replace(rootInode, mode=rootInode.mode ^ 0o055),
+                        replace(rootInode, mappingRoot=bytes(damagedMapping)),
                     )
                 )
             with self.assertRaises(ValueError):
@@ -219,6 +233,42 @@ class RootfsV5ToolTests(unittest.TestCase):
                     imagePath,
                     fileSystemStartLba=profile.fileSystemStartLba,
                 )
+
+    def testInstallerBuildsReachableExtentDirectoryTree(self) -> None:
+        profile = makeSmallProfile()
+        with tempfile.TemporaryDirectory() as temporaryDirectory:
+            temporaryPath = Path(temporaryDirectory)
+            imagePath = temporaryPath / "rootfs-v5.img"
+            initPath = temporaryPath / "init"
+            toolPath = temporaryPath / "tool"
+            initPath.write_bytes(b"init-v5")
+            toolPath.write_bytes(bytes(range(251)) * 25)
+            formatRootfsV5(imagePath, profile=profile, createImage=True)
+            inspection = installRootfsV5Files(
+                imagePath,
+                (
+                    RootfsV5InstallFile("/sbin/init", initPath),
+                    RootfsV5InstallFile("/bin/tool", toolPath),
+                ),
+                fileSystemStartLba=profile.fileSystemStartLba,
+                sectorSizeBytes=profile.sectorSizeBytes,
+            )
+            self.assertEqual(inspection.reachableInodeCount, 5)
+            self.assertEqual(inspection.allocatedDirectoryCount, 3)
+            self.assertEqual(inspection.regularFileCount, 2)
+            self.assertEqual(inspection.symbolicLinkCount, 0)
+            self.assertEqual(
+                inspection.journalStartBlock,
+                buildInitialRootfsV5GroupDescriptor(
+                    planRootfsV5Superblock(profile),
+                    0,
+                ).dataStartBlock,
+            )
+            self.assertLess(
+                inspection.freeBlockCount,
+                planRootfsV5Superblock(profile).freeBlockCount
+                - OS_ROOTFS_V5_JOURNAL_BLOCK_COUNT,
+            )
 
     def testFeatureCompatibilityRules(self) -> None:
         superblock = planRootfsV5Superblock(makeSmallProfile())

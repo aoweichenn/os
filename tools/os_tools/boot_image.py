@@ -1,4 +1,6 @@
 from pathlib import Path
+import errno
+import os
 import struct
 
 from .kernel_elf import OS_KERNEL_ELF_IDENT_CLASS_OFFSET, auditKernelElf
@@ -13,13 +15,13 @@ from .kernel_image import (
     calculateCrc32,
     createKernelDiskImageBytes,
 )
-from .rootfs_v4 import (
-    OS_ROOTFS_V4_BLOCK_SIZE_BYTES,
-    OS_ROOTFS_V4_MINIMUM_DISK_SIZE_BYTES,
-    OS_ROOTFS_V4_START_LBA,
-    RootfsV4InstallFile,
-    formatRootfsV4,
-    installRootfsV4Files,
+from .rootfs_v5 import (
+    OS_ROOTFS_V5_DEVICE_SIZE_BYTES,
+    OS_ROOTFS_V5_FILE_SYSTEM_START_LBA,
+    OS_ROOTFS_V5_SECTOR_SIZE_BYTES,
+    RootfsV5InstallFile,
+    formatRootfsV5,
+    installRootfsV5Files,
 )
 from .errors import OsToolError
 from .sparse_image import writeSparseImage
@@ -50,7 +52,7 @@ OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME = (
 )
 OS_BOOT_IMAGE_INVALID_KERNEL_ELF_CLASS = 0
 OS_BOOT_IMAGE_CONSTRUCTION_SIZE_BYTES = (
-    OS_ROOTFS_V4_START_LBA * OS_ROOTFS_V4_BLOCK_SIZE_BYTES
+    OS_ROOTFS_V5_FILE_SYSTEM_START_LBA * OS_ROOTFS_V5_SECTOR_SIZE_BYTES
 )
 
 
@@ -58,11 +60,58 @@ def writeBootImage(
     imagePath: Path,
     imagePrefix: bytes | bytearray,
     diskSizeBytes: int,
-    rootfsFiles: tuple[RootfsV4InstallFile, ...] = (),
+    rootfsFiles: tuple[RootfsV5InstallFile, ...] = (),
 ) -> None:
     writeSparseImage(imagePath, imagePrefix, diskSizeBytes)
-    formatRootfsV4(imagePath)
-    installRootfsV4Files(imagePath, rootfsFiles)
+    # writeSparseImage 已先截断为全零新文件；跳过 1024 组 inode table 的重复清零物化。
+    formatRootfsV5(
+        imagePath,
+        zeroInodeTables=False,
+        verifyUnallocatedInodes=False,
+        verifyResult=False,
+    )
+    installRootfsV5Files(
+        imagePath,
+        rootfsFiles,
+        verifyUnallocatedInodes=False,
+        verifyExisting=False,
+    )
+
+
+def cloneBootImageWithPrefix(
+    sourcePath: Path,
+    destinationPath: Path,
+    imagePrefix: bytes | bytearray,
+    diskSizeBytes: int,
+) -> None:
+    """只复制源盘已分配 extent，再覆盖启动前缀，保留 128 GiB 宿主空洞。"""
+    with sourcePath.open("rb", buffering=0) as sourceFile:
+        with destinationPath.open("w+b", buffering=0) as destinationFile:
+            destinationFile.truncate(diskSizeBytes)
+            sourceDescriptor = sourceFile.fileno()
+            destinationDescriptor = destinationFile.fileno()
+            cursor = 0
+            while cursor < diskSizeBytes:
+                try:
+                    dataOffset = os.lseek(sourceDescriptor, cursor, os.SEEK_DATA)
+                except OSError as error:
+                    if error.errno == errno.ENXIO:
+                        break
+                    raise OsToolError("宿主文件系统不支持稀疏 extent clone。") from error
+                holeOffset = os.lseek(sourceDescriptor, dataOffset, os.SEEK_HOLE)
+                sourceFile.seek(dataOffset)
+                destinationFile.seek(dataOffset)
+                remainingBytes = min(holeOffset, diskSizeBytes) - dataOffset
+                while remainingBytes > 0:
+                    content = sourceFile.read(min(1024 * 1024, remainingBytes))
+                    if not content:
+                        raise OsToolError("v5 稀疏启动盘 clone 遇到短读。")
+                    destinationFile.write(content)
+                    remainingBytes -= len(content)
+                cursor = holeOffset
+            destinationFile.seek(0)
+            destinationFile.write(imagePrefix)
+            destinationFile.flush()
 
 
 def createInvalidKernelElfDiskImage(
@@ -120,11 +169,11 @@ def writeBootDiskImages(
     kernelElfPath: Path,
     outputDirectory: Path,
     diskSizeBytes: int,
-    rootfsFiles: tuple[RootfsV4InstallFile, ...] = (),
+    rootfsFiles: tuple[RootfsV5InstallFile, ...] = (),
 ) -> None:
-    if diskSizeBytes < OS_ROOTFS_V4_MINIMUM_DISK_SIZE_BYTES:
+    if diskSizeBytes != OS_ROOTFS_V5_DEVICE_SIZE_BYTES:
         raise OsToolError(
-            "启动磁盘不足以容纳完整参考盘 rootfs v4 区域。"
+            "启动磁盘必须精确匹配 128 GiB rootfs v5 生产 profile。"
         )
     auditKernelElf(kernelElfPath.parent, kernelElfPath)
     stage1DiskImage = createStage1DiskImageBytes(
@@ -136,8 +185,9 @@ def writeBootDiskImages(
         kernelElfPath.read_bytes(),
     )
     outputDirectory.mkdir(parents=True, exist_ok=True)
+    validImagePath = outputDirectory / OS_BOOT_IMAGE_VALID_FILE_NAME
     writeBootImage(
-        outputDirectory / OS_BOOT_IMAGE_VALID_FILE_NAME,
+        validImagePath,
         validImage,
         diskSizeBytes,
         rootfsFiles,
@@ -147,12 +197,12 @@ def writeBootDiskImages(
     invalidStage1HeaderImage[
         OS_STAGE1_IMAGE_MAGIC_OFFSET
     ] ^= OS_STAGE1_IMAGE_CORRUPTION_BIT
-    writeBootImage(
+    cloneBootImageWithPrefix(
+        validImagePath,
         outputDirectory /
         OS_BOOT_IMAGE_INVALID_STAGE1_HEADER_FILE_NAME,
         invalidStage1HeaderImage,
         diskSizeBytes,
-        rootfsFiles,
     )
 
     invalidStage1ChecksumImage = bytearray(validImage)
@@ -163,12 +213,12 @@ def writeBootDiskImages(
     invalidStage1ChecksumImage[
         stage1PayloadOffset
     ] ^= OS_STAGE1_IMAGE_CORRUPTION_BIT
-    writeBootImage(
+    cloneBootImageWithPrefix(
+        validImagePath,
         outputDirectory /
         OS_BOOT_IMAGE_INVALID_STAGE1_CHECKSUM_FILE_NAME,
         invalidStage1ChecksumImage,
         diskSizeBytes,
-        rootfsFiles,
     )
 
     invalidKernelHeaderImage = bytearray(validImage)
@@ -179,12 +229,12 @@ def writeBootDiskImages(
     invalidKernelHeaderImage[
         kernelDescriptorOffset + OS_KERNEL_IMAGE_MAGIC_OFFSET
     ] ^= OS_KERNEL_IMAGE_CORRUPTION_BIT
-    writeBootImage(
+    cloneBootImageWithPrefix(
+        validImagePath,
         outputDirectory /
         OS_BOOT_IMAGE_INVALID_KERNEL_HEADER_FILE_NAME,
         invalidKernelHeaderImage,
         diskSizeBytes,
-        rootfsFiles,
     )
 
     invalidKernelChecksumImage = bytearray(validImage)
@@ -195,22 +245,22 @@ def writeBootDiskImages(
     invalidKernelChecksumImage[
         kernelPayloadOffset
     ] ^= OS_KERNEL_IMAGE_CORRUPTION_BIT
-    writeBootImage(
+    cloneBootImageWithPrefix(
+        validImagePath,
         outputDirectory /
         OS_BOOT_IMAGE_INVALID_KERNEL_CHECKSUM_FILE_NAME,
         invalidKernelChecksumImage,
         diskSizeBytes,
-        rootfsFiles,
     )
 
     invalidKernelElfImage = createInvalidKernelElfDiskImage(
         validImage,
         kernelElfPath.stat().st_size,
     )
-    writeBootImage(
+    cloneBootImageWithPrefix(
+        validImagePath,
         outputDirectory /
         OS_BOOT_IMAGE_INVALID_KERNEL_ELF_FILE_NAME,
         invalidKernelElfImage,
         diskSizeBytes,
-        rootfsFiles,
     )

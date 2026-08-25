@@ -737,3 +737,24 @@ extent node 经 RootJournalV2 metadata payload 提交，data block 经 ordered p
 lookup 记录实际 node count。`root_inode_metadata.*` 提供 extension v1、sorted xattr、POSIX ACL
 和 user/group quota。decode 在任何 name/value copy 前验证长度，ACL 显式零权限不会回退，quota
 更新先验证候选再提交。盘面与策略见 [ADR 0084](../adr/0084-v2-19-directory-metadata-policy.md)。
+
+## v2.20 production rootfs v5
+
+`RootFileSystem` 的 mount 探测顺序是 v5 后 v4。v5 把 4096-byte block 映射为一次
+`BlockDevice` transfer；group descriptor 常驻实例，bitmap/inode/extent/dirent 按需读取，
+已解码 inode block 使用单块只读缓存。动态 open reference 使用 4096 槽稀疏表，不为约两百万
+inode 常驻分配 16 MiB 计数数组。
+
+生产 inode 的 128-byte extension 指向 extent root；目录的 logical block 0 保存 variable
+dirent block，名称 hash 由 UUID seed 的 FNV-1a 计算。VFS 仍提供既有 lookup/create/remove/
+rename/link/symlink/read/write/truncate/readdir/stat/chmod/chown/sync 契约，v4 固定目录项与五级
+指针树只在 legacy 分支使用。
+
+journal v2 的 metadata credit 为 16、ordered data 为 8。`CommitAndCheckpoint` 保持
+prepared → ordered → commit → home blocks → checkpoint 的持久顺序，并避免在生产 Kernel stack
+重建整个 slot；`Commit` 继续供 crash recovery 测试制造已提交窗口。目录、extent、journal 的
+块 scratch 均为 `RootFileSystem`/`RootJournalV2` 成员。
+
+宿主 `rootfs_v5.py` 是盘面真值工具：mkfs/installer 生成启动树，完整 fsck 校验可达性和所有权，
+`migrate-rootfs-v5` 只做 v4→新 v5 的 copy migration。设计见
+[ADR 0085](../adr/0085-v2-20-rootfs-v5-production-switch.md)。

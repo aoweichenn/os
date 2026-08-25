@@ -104,16 +104,10 @@ RootJournalV2Status RootJournalV2::ReadFileSystemBlock(const uint64_t relative_b
     const uint64_t first_sector =
         this->file_system_start_lba_ +
         relative_block * OS_KERNEL_ROOTFS_V5_JOURNAL_DEVICE_SECTORS_PER_BLOCK;
-    for (uint64_t sector_index = 0ULL;
-         sector_index < OS_KERNEL_ROOTFS_V5_JOURNAL_DEVICE_SECTORS_PER_BLOCK; ++sector_index) {
-        if (this->device_->ReadBlock(first_sector + sector_index,
-                                     block + sector_index * OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES,
-                                     OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES) !=
-            BlockDeviceStatus::Succeeded) {
-            return RootJournalV2Status::DeviceReadFailed;
-        }
-    }
-    return RootJournalV2Status::Succeeded;
+    return this->device_->ReadBlock(first_sector, block, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) ==
+                   BlockDeviceStatus::Succeeded
+               ? RootJournalV2Status::Succeeded
+               : RootJournalV2Status::DeviceReadFailed;
 }
 
 RootJournalV2Status RootJournalV2::WriteFileSystemBlock(const uint64_t relative_block,
@@ -127,16 +121,10 @@ RootJournalV2Status RootJournalV2::WriteFileSystemBlock(const uint64_t relative_
     const uint64_t first_sector =
         this->file_system_start_lba_ +
         relative_block * OS_KERNEL_ROOTFS_V5_JOURNAL_DEVICE_SECTORS_PER_BLOCK;
-    for (uint64_t sector_index = 0ULL;
-         sector_index < OS_KERNEL_ROOTFS_V5_JOURNAL_DEVICE_SECTORS_PER_BLOCK; ++sector_index) {
-        if (this->device_->WriteBlock(first_sector + sector_index,
-                                      block + sector_index * OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES,
-                                      OS_KERNEL_ROOTFS_V5_SECTOR_SIZE_BYTES) !=
-            BlockDeviceStatus::Succeeded) {
-            return RootJournalV2Status::DeviceWriteFailed;
-        }
-    }
-    return RootJournalV2Status::Succeeded;
+    return this->device_->WriteBlock(first_sector, block, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) ==
+                   BlockDeviceStatus::Succeeded
+               ? RootJournalV2Status::Succeeded
+               : RootJournalV2Status::DeviceWriteFailed;
 }
 
 RootJournalV2Status RootJournalV2::FlushDevice() noexcept {
@@ -151,9 +139,10 @@ RootJournalV2Status RootJournalV2::FlushDevice() noexcept {
 }
 
 RootJournalV2Status RootJournalV2::WriteSuperblock() noexcept {
-    uint8_t block[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const block = this->block_scratch_[0];
     const RootJournalV2FormatStatus status =
-        EncodeRootJournalV2Superblock(this->superblock_, block, sizeof(block));
+        EncodeRootJournalV2Superblock(this->superblock_, block,
+                                      OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES);
     return status == RootJournalV2FormatStatus::Succeeded
                ? this->WriteFileSystemBlock(this->superblock_.journal_start_relative_block, block)
                : ConvertFormatStatus(status);
@@ -179,7 +168,11 @@ RootJournalV2Status RootJournalV2::Format(const uint64_t creation_time_nanosecon
     if (plan_status != RootJournalV2FormatStatus::Succeeded) {
         return RootJournalV2Status::InvalidArgument;
     }
-    uint8_t zero_block[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const zero_block = this->block_scratch_[0];
+    for (uint64_t byte_index = 0ULL; byte_index < OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+         ++byte_index) {
+        zero_block[byte_index] = 0U;
+    }
     for (uint64_t journal_block = 1ULL; journal_block < planned.journal_block_count;
          ++journal_block) {
         const RootJournalV2Status status = this->WriteFileSystemBlock(
@@ -207,7 +200,7 @@ RootJournalV2Status RootJournalV2::Open() noexcept {
     if (this->active_) {
         return RootJournalV2Status::AlreadyActive;
     }
-    uint8_t block[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const block = this->block_scratch_[0];
     RootJournalV2Status status =
         this->ReadFileSystemBlock(this->configured_journal_start_relative_block_, block);
     if (status != RootJournalV2Status::Succeeded) {
@@ -215,7 +208,7 @@ RootJournalV2Status RootJournalV2::Open() noexcept {
     }
     RootJournalV2Superblock decoded{};
     const RootJournalV2FormatStatus decode_status =
-        DecodeRootJournalV2Superblock(block, sizeof(block), decoded);
+        DecodeRootJournalV2Superblock(block, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, decoded);
     if (decode_status == RootJournalV2FormatStatus::InvalidMagic && BlockIsZero(block)) {
         return RootJournalV2Status::NotFormatted;
     }
@@ -250,13 +243,13 @@ RootJournalV2Status RootJournalV2::ReadSlotState(const uint64_t slot_index, Slot
     }
     const uint64_t slot_start = this->superblock_.journal_start_relative_block +
                                 RootJournalV2SlotStartRelativeBlock(slot_index);
-    uint8_t descriptor_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const descriptor_bytes = this->block_scratch_[0];
     RootJournalV2Status status = this->ReadFileSystemBlock(
         slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_DESCRIPTOR_RELATIVE_BLOCK, descriptor_bytes);
     if (status != RootJournalV2Status::Succeeded || BlockIsZero(descriptor_bytes)) {
         return status;
     }
-    uint8_t commit_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const commit_bytes = this->block_scratch_[1];
     status = this->ReadFileSystemBlock(
         slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_COMMIT_RELATIVE_BLOCK, commit_bytes);
     if (status != RootJournalV2Status::Succeeded) {
@@ -264,15 +257,16 @@ RootJournalV2Status RootJournalV2::ReadSlotState(const uint64_t slot_index, Slot
     }
     RootJournalV2Commit commit{};
     const RootJournalV2FormatStatus commit_status =
-        DecodeRootJournalV2Commit(this->superblock_, commit_bytes, sizeof(commit_bytes), commit);
+        DecodeRootJournalV2Commit(this->superblock_, commit_bytes,
+                                  OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, commit);
     if (commit_status != RootJournalV2FormatStatus::Succeeded) {
         state.incomplete = true;
         return RootJournalV2Status::Succeeded;
     }
     RootJournalV2Descriptor descriptor{};
     const RootJournalV2FormatStatus descriptor_status = DecodeRootJournalV2Descriptor(
-        this->superblock_, descriptor_bytes, sizeof(descriptor_bytes), descriptor);
-    uint8_t revoke_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+        this->superblock_, descriptor_bytes, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, descriptor);
+    uint8_t *const revoke_bytes = this->block_scratch_[2];
     status = this->ReadFileSystemBlock(
         slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_REVOKE_RELATIVE_BLOCK, revoke_bytes);
     if (status != RootJournalV2Status::Succeeded) {
@@ -280,7 +274,7 @@ RootJournalV2Status RootJournalV2::ReadSlotState(const uint64_t slot_index, Slot
     }
     RootJournalV2RevokeBlock revoke_block{};
     const RootJournalV2FormatStatus revoke_status = DecodeRootJournalV2RevokeBlock(
-        this->superblock_, revoke_bytes, sizeof(revoke_bytes), revoke_block);
+        this->superblock_, revoke_bytes, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, revoke_block);
     if (descriptor_status != RootJournalV2FormatStatus::Succeeded ||
         revoke_status != RootJournalV2FormatStatus::Succeeded ||
         descriptor.sequence != commit.sequence || descriptor.slot_index != commit.slot_index ||
@@ -296,7 +290,7 @@ RootJournalV2Status RootJournalV2::ReadSlotState(const uint64_t slot_index, Slot
         return RootJournalV2Status::Corrupt;
     }
     if (validate_payloads) {
-        uint8_t payload[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+        uint8_t *const payload = this->block_scratch_[3];
         for (uint64_t entry_index = 0ULL; entry_index < descriptor.metadata_block_count;
              ++entry_index) {
             status = this->ReadFileSystemBlock(
@@ -305,14 +299,14 @@ RootJournalV2Status RootJournalV2::ReadSlotState(const uint64_t slot_index, Slot
             if (status != RootJournalV2Status::Succeeded) {
                 return status;
             }
-            if (CalculateRootV5Crc32c(payload, sizeof(payload)) !=
+            if (CalculateRootV5Crc32c(payload, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
                 descriptor.tags[entry_index].payload_checksum) {
                 ++this->statistics_.checksum_failure_count;
                 return RootJournalV2Status::Corrupt;
             }
         }
     }
-    uint8_t checkpoint_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const checkpoint_bytes = this->block_scratch_[4];
     status = this->ReadFileSystemBlock(
         slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_CHECKPOINT_RELATIVE_BLOCK, checkpoint_bytes);
     if (status != RootJournalV2Status::Succeeded) {
@@ -321,7 +315,7 @@ RootJournalV2Status RootJournalV2::ReadSlotState(const uint64_t slot_index, Slot
     if (!BlockIsZero(checkpoint_bytes)) {
         RootJournalV2Checkpoint checkpoint{};
         if (DecodeRootJournalV2Checkpoint(this->superblock_, checkpoint_bytes,
-                                          sizeof(checkpoint_bytes),
+                                          OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES,
                                           checkpoint) != RootJournalV2FormatStatus::Succeeded ||
             checkpoint.sequence != commit.sequence || checkpoint.slot_index != commit.slot_index ||
             checkpoint.commit_checksum != ReadChecksum(commit_bytes)) {
@@ -341,7 +335,11 @@ RootJournalV2Status RootJournalV2::ClearSlot(const uint64_t slot_index) noexcept
     }
     const uint64_t slot_start = this->superblock_.journal_start_relative_block +
                                 RootJournalV2SlotStartRelativeBlock(slot_index);
-    uint8_t zero_block[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const zero_block = this->block_scratch_[0];
+    for (uint64_t byte_index = 0ULL; byte_index < OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+         ++byte_index) {
+        zero_block[byte_index] = 0U;
+    }
     const uint64_t clear_offsets[] = {
         OS_KERNEL_ROOTFS_V5_JOURNAL_DESCRIPTOR_RELATIVE_BLOCK,
         OS_KERNEL_ROOTFS_V5_JOURNAL_COMMIT_RELATIVE_BLOCK,
@@ -560,7 +558,7 @@ RootJournalV2Status RootJournalV2::Revoke(const uint64_t target_relative_block) 
             this->metadata_blocks_[move_index - 1ULL] = this->metadata_blocks_[move_index];
         }
         --this->metadata_block_count_;
-        this->metadata_blocks_[this->metadata_block_count_] = StagedBlock{};
+        this->ClearStagedBlock(this->metadata_blocks_[this->metadata_block_count_]);
         break;
     }
     this->revoke_targets_[this->revoke_count_] = target_relative_block;
@@ -618,13 +616,13 @@ RootJournalV2Status RootJournalV2::WritePreparedTransaction(uint32_t &descriptor
     for (uint64_t revoke_index = 0ULL; revoke_index < this->revoke_count_; ++revoke_index) {
         revoke_block.targets[revoke_index] = this->revoke_targets_[revoke_index];
     }
-    uint8_t descriptor_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
-    uint8_t revoke_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const descriptor_bytes = this->block_scratch_[0];
+    uint8_t *const revoke_bytes = this->block_scratch_[1];
     if (EncodeRootJournalV2Descriptor(this->superblock_, descriptor, descriptor_bytes,
-                                      sizeof(descriptor_bytes)) !=
+                                      OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
             RootJournalV2FormatStatus::Succeeded ||
         EncodeRootJournalV2RevokeBlock(this->superblock_, revoke_block, revoke_bytes,
-                                       sizeof(revoke_bytes)) !=
+                                       OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
             RootJournalV2FormatStatus::Succeeded) {
         return RootJournalV2Status::Corrupt;
     }
@@ -680,8 +678,9 @@ RootJournalV2Status RootJournalV2::WriteCommitRecord(const uint64_t commit_time_
         .revoke_checksum = revoke_checksum,
         .file_system_uuid = this->superblock_.file_system_uuid,
     };
-    uint8_t commit_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
-    if (EncodeRootJournalV2Commit(this->superblock_, commit, commit_bytes, sizeof(commit_bytes)) !=
+    uint8_t *const commit_bytes = this->block_scratch_[0];
+    if (EncodeRootJournalV2Commit(this->superblock_, commit, commit_bytes,
+                                  OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
         RootJournalV2FormatStatus::Succeeded) {
         return RootJournalV2Status::Corrupt;
     }
@@ -718,15 +717,87 @@ RootJournalV2Status RootJournalV2::Commit(const uint64_t commit_time_nanoseconds
     return status;
 }
 
+RootJournalV2Status RootJournalV2::CheckpointActive(const uint32_t commit_checksum) noexcept {
+    if (!this->active_ || this->active_slot_index_ >= this->superblock_.slot_count) {
+        return RootJournalV2Status::NotActive;
+    }
+    for (uint64_t entry_index = 0ULL; entry_index < this->metadata_block_count_; ++entry_index) {
+        const RootJournalV2Status status = this->WriteFileSystemBlock(
+            this->metadata_blocks_[entry_index].target_relative_block,
+            this->metadata_blocks_[entry_index].bytes);
+        if (status != RootJournalV2Status::Succeeded) {
+            return status;
+        }
+        ++this->statistics_.checkpoint_block_count;
+    }
+    RootJournalV2Status status = this->FlushDevice();
+    if (status == RootJournalV2Status::Succeeded) {
+        status = this->WriteCheckpointRecord(this->active_slot_index_, this->active_sequence_,
+                                             commit_checksum);
+    }
+    if (status != RootJournalV2Status::Succeeded) {
+        return status;
+    }
+    if (this->active_sequence_ > this->superblock_.last_checkpoint_sequence) {
+        if (this->superblock_.journal_generation == UINT64_MAX) {
+            return RootJournalV2Status::SequenceExhausted;
+        }
+        this->superblock_.last_checkpoint_sequence = this->active_sequence_;
+        ++this->superblock_.journal_generation;
+        status = this->WriteSuperblock();
+        if (status == RootJournalV2Status::Succeeded) {
+            status = this->FlushDevice();
+        }
+    }
+    if (status == RootJournalV2Status::Succeeded) {
+        status = this->ClearSlot(this->active_slot_index_);
+    }
+    if (status == RootJournalV2Status::Succeeded) {
+        ++this->statistics_.checkpoint_transaction_count;
+    }
+    return status;
+}
+
+RootJournalV2Status
+RootJournalV2::CommitAndCheckpoint(const uint64_t commit_time_nanoseconds) noexcept {
+    if (!this->active_) {
+        return this->initialized_ ? RootJournalV2Status::NotActive
+                                  : RootJournalV2Status::NotInitialized;
+    }
+    if (this->metadata_block_count_ == 0ULL && this->revoke_count_ == 0ULL) {
+        return RootJournalV2Status::InvalidArgument;
+    }
+    uint32_t descriptor_checksum = 0U;
+    uint32_t revoke_checksum = 0U;
+    RootJournalV2Status status =
+        this->WritePreparedTransaction(descriptor_checksum, revoke_checksum);
+    if (status == RootJournalV2Status::Succeeded) {
+        status = this->WriteOrderedData();
+    }
+    if (status == RootJournalV2Status::Succeeded) {
+        status =
+            this->WriteCommitRecord(commit_time_nanoseconds, descriptor_checksum, revoke_checksum);
+    }
+    if (status == RootJournalV2Status::Succeeded) {
+        ++this->statistics_.transaction_commit_count;
+        const uint32_t commit_checksum = ReadChecksum(this->block_scratch_[0]);
+        status = this->CheckpointActive(commit_checksum);
+    }
+    if (status == RootJournalV2Status::Succeeded) {
+        this->ResetActiveTransaction();
+    }
+    return status;
+}
+
 RootJournalV2Status RootJournalV2::LoadCommittedSlot(const uint64_t slot_index,
                                                      RootJournalV2Descriptor &descriptor,
                                                      RootJournalV2RevokeBlock &revoke_block,
                                                      RootJournalV2Commit &commit) noexcept {
     const uint64_t slot_start = this->superblock_.journal_start_relative_block +
                                 RootJournalV2SlotStartRelativeBlock(slot_index);
-    uint8_t descriptor_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
-    uint8_t revoke_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
-    uint8_t commit_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const descriptor_bytes = this->block_scratch_[0];
+    uint8_t *const revoke_bytes = this->block_scratch_[1];
+    uint8_t *const commit_bytes = this->block_scratch_[2];
     RootJournalV2Status status = this->ReadFileSystemBlock(
         slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_DESCRIPTOR_RELATIVE_BLOCK, descriptor_bytes);
     if (status == RootJournalV2Status::Succeeded) {
@@ -740,11 +811,14 @@ RootJournalV2Status RootJournalV2::LoadCommittedSlot(const uint64_t slot_index,
     if (status != RootJournalV2Status::Succeeded) {
         return status;
     }
-    if (DecodeRootJournalV2Descriptor(this->superblock_, descriptor_bytes, sizeof(descriptor_bytes),
-                                      descriptor) != RootJournalV2FormatStatus::Succeeded ||
-        DecodeRootJournalV2RevokeBlock(this->superblock_, revoke_bytes, sizeof(revoke_bytes),
-                                       revoke_block) != RootJournalV2FormatStatus::Succeeded ||
-        DecodeRootJournalV2Commit(this->superblock_, commit_bytes, sizeof(commit_bytes), commit) !=
+    if (DecodeRootJournalV2Descriptor(this->superblock_, descriptor_bytes,
+                                      OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, descriptor) !=
+            RootJournalV2FormatStatus::Succeeded ||
+        DecodeRootJournalV2RevokeBlock(this->superblock_, revoke_bytes,
+                                       OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, revoke_block) !=
+            RootJournalV2FormatStatus::Succeeded ||
+        DecodeRootJournalV2Commit(this->superblock_, commit_bytes,
+                                  OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES, commit) !=
             RootJournalV2FormatStatus::Succeeded ||
         descriptor.sequence != commit.sequence || descriptor.slot_index != commit.slot_index ||
         revoke_block.sequence != commit.sequence || revoke_block.slot_index != commit.slot_index) {
@@ -796,9 +870,9 @@ RootJournalV2Status RootJournalV2::WriteCheckpointRecord(const uint64_t slot_ind
         .commit_checksum = commit_checksum,
         .file_system_uuid = this->superblock_.file_system_uuid,
     };
-    uint8_t checkpoint_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const checkpoint_bytes = this->block_scratch_[0];
     if (EncodeRootJournalV2Checkpoint(this->superblock_, checkpoint, checkpoint_bytes,
-                                      sizeof(checkpoint_bytes)) !=
+                                      OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
         RootJournalV2FormatStatus::Succeeded) {
         return RootJournalV2Status::Corrupt;
     }
@@ -822,7 +896,7 @@ RootJournalV2Status RootJournalV2::CheckpointSlot(const uint64_t slot_index, con
     }
     const uint64_t slot_start = this->superblock_.journal_start_relative_block +
                                 RootJournalV2SlotStartRelativeBlock(slot_index);
-    uint8_t payload[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const payload = this->block_scratch_[0];
     for (uint64_t entry_index = 0ULL; entry_index < descriptor.metadata_block_count;
          ++entry_index) {
         bool revoked = false;
@@ -839,7 +913,7 @@ RootJournalV2Status RootJournalV2::CheckpointSlot(const uint64_t slot_index, con
             slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_PAYLOAD_START_RELATIVE_BLOCK + entry_index,
             payload);
         if (status != RootJournalV2Status::Succeeded ||
-            CalculateRootV5Crc32c(payload, sizeof(payload)) !=
+            CalculateRootV5Crc32c(payload, OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES) !=
                 descriptor.tags[entry_index].payload_checksum) {
             if (status == RootJournalV2Status::Succeeded) {
                 ++this->statistics_.checksum_failure_count;
@@ -862,7 +936,7 @@ RootJournalV2Status RootJournalV2::CheckpointSlot(const uint64_t slot_index, con
     if (status != RootJournalV2Status::Succeeded) {
         return status;
     }
-    uint8_t commit_bytes[OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES]{};
+    uint8_t *const commit_bytes = this->block_scratch_[1];
     status = this->ReadFileSystemBlock(
         slot_start + OS_KERNEL_ROOTFS_V5_JOURNAL_COMMIT_RELATIVE_BLOCK, commit_bytes);
     if (status == RootJournalV2Status::Succeeded) {
@@ -1029,12 +1103,12 @@ RootJournalV2Status RootJournalV2::Abort() noexcept {
 void RootJournalV2::ResetActiveTransaction() noexcept {
     for (uint64_t entry_index = 0ULL;
          entry_index < OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_METADATA_BLOCK_COUNT; ++entry_index) {
-        this->metadata_blocks_[entry_index] = StagedBlock{};
+        this->ClearStagedBlock(this->metadata_blocks_[entry_index]);
     }
     for (uint64_t entry_index = 0ULL;
          entry_index < OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_ORDERED_DATA_BLOCK_COUNT;
          ++entry_index) {
-        this->ordered_data_blocks_[entry_index] = StagedBlock{};
+        this->ClearStagedBlock(this->ordered_data_blocks_[entry_index]);
     }
     for (uint64_t revoke_index = 0ULL;
          revoke_index < OS_KERNEL_ROOTFS_V5_JOURNAL_MAXIMUM_REVOKE_COUNT; ++revoke_index) {
@@ -1049,6 +1123,16 @@ void RootJournalV2::ResetActiveTransaction() noexcept {
     this->ordered_data_block_count_ = OS_KERNEL_ROOTFS_V5_JOURNAL_EMPTY_VALUE;
     this->revoke_count_ = OS_KERNEL_ROOTFS_V5_JOURNAL_EMPTY_VALUE;
     this->active_ = false;
+}
+
+void RootJournalV2::ClearStagedBlock(StagedBlock &block) noexcept {
+    for (uint64_t byte_index = 0ULL; byte_index < OS_KERNEL_ROOTFS_V5_BLOCK_SIZE_BYTES;
+         ++byte_index) {
+        block.bytes[byte_index] = 0U;
+    }
+    block.target_relative_block = 0ULL;
+    block.checksum = 0U;
+    block.occupied = false;
 }
 
 uint64_t RootJournalV2::PendingCommittedTransactionCount() noexcept {

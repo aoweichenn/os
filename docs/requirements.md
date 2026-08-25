@@ -1245,3 +1245,15 @@ FileTable/KernelObject 锁在进入 FileDescription、VFS 和后端前释放。m
 - 64 MiB、256 MiB、64 GiB 三档必须运行同一 v1.8 PID1 工作负载；最终 VMA
   active 为零、free 等于 capacity、acquire/release 增量相同，并与既有
   frame、buddy、heap、KVA、stack、fd、object 和 VFS 守恒同时成立。
+
+## v2.20 rootfs v5 生产切换要求
+
+- 生产启动盘与 mount 必须使用 rootfs v5；禁止在 v5 容器内继续承载 v4 payload；
+- v5 backend 必须通过现有 VFS 契约完成普通文件、目录、硬链接、符号链接、rename、truncate、
+  权限、owner、open-unlink 与 sync；
+- metadata 必须经过 journal v2，普通数据遵守 ordered barrier；恢复必须幂等；
+- v5 的 4 KiB I/O 必须作为单次 BlockDevice transfer；ATA 最多 8 sector，NVMe 使用原生多块；
+- 任何 4 KiB directory/extent/journal scratch 不得作为生产 Kernel stack 局部对象；
+- mkfs、installer、完整 fsck、corrupt 和 v4→v5 非原地 copy migration 必须由项目工具实现；
+- 4 GiB ATA/NVMe、VGA、persistence 与 failure-path 结果必须出现 `ROOTFS_V5_MOUNTED`；
+- v4 格式与 backend 只保留只读兼容定义和 hosted 回归，不再作为发布身份。
